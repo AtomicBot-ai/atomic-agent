@@ -43,7 +43,9 @@ import { executeStep } from "./step-executor.js";
 import type { LlmStreamParams, StepEvent } from "./step-executor.js";
 import {
   ToolLoopTracker,
+  TEST_REPEAT_WARNING_THRESHOLD,
   formatRepeatNotice,
+  formatTestRepeatNotice,
   formatWanderingRedirect,
   formatForcedLoopReply,
 } from "./loop-detector.js";
@@ -347,7 +349,7 @@ export type AgentLoopEvent =
       /** Graduated severity from the `ToolLoopTracker`. */
       level?: "warn" | "critical" | "breaker";
       /** Which sub-detector fired. */
-      detector?: "generic_repeat" | "no_progress" | "wandering";
+      detector?: "generic_repeat" | "no_progress" | "wandering" | "test_repeat";
     }
   | {
       type: "loop_completed";
@@ -770,13 +772,26 @@ export class AgentLoop {
         // re-injected on every subsequent identical step.
         for (const sig of loopSignals) {
           if (sig.kind !== "warn") continue;
-          if (!loopTracker.shouldEmitWarning(sig.warningKey, sig.count)) {
+          // The test-repeat detector has its own floor: the 2nd
+          // equivalent run is already conclusive, so it must not wait
+          // for the generic warning threshold (default 3).
+          const emit =
+            sig.detector === "test_repeat"
+              ? loopTracker.shouldEmitWarning(
+                  sig.warningKey,
+                  sig.count,
+                  TEST_REPEAT_WARNING_THRESHOLD,
+                )
+              : loopTracker.shouldEmitWarning(sig.warningKey, sig.count);
+          if (!emit) {
             continue;
           }
           pendingNotice =
             sig.detector === "wandering"
               ? formatWanderingRedirect(sig.tool, sig.count)
-              : formatRepeatNotice(sig);
+              : sig.detector === "test_repeat"
+                ? formatTestRepeatNotice(sig)
+                : formatRepeatNotice(sig);
           this.deps.onEvent?.({
             type: "loop_detected",
             tool: sig.tool,
