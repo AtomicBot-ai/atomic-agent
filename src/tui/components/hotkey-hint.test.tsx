@@ -116,22 +116,22 @@ describe("HotkeyHint scroll chip", () => {
 // Renders are the expensive part of this file (~2s each under Ink), so
 // each case below is one render and asserts everything it can from it.
 describe("HotkeyHint draft chips", () => {
-  it("adds an esc / clear-draft chip once a draft exists", () => {
-    // The ctrl+p chip is not inert with a draft (the menu opens either
-    // way), so nothing is swapped out: the affordance rides as an extra
-    // chip on a wide surface and the shed ranks pay for it when the row
-    // narrows. Nine with the ctrl+r route and drag/select chips.
+  it("flips the esc chip to clear-draft once a draft exists", () => {
+    // With a draft, Esc clears it — so the strip must not promise the
+    // menu on that key, and no other chip does either: with ctrl+p
+    // retired, the menu is a second Esc (or the breadcrumb) away.
+    // Nine with the ctrl+r route, ctrl+n window and drag/select chips.
     const out = renderHint(chatState({ inputValue: "half a thought" }));
     expect(out).toContain("[esc]");
     expect(out).toContain("clear draft");
-    expect(out).toContain("[ctrl+p]");
+    expect(out).not.toContain("[ctrl+p]");
     expect(chipCount(out)).toBe(9);
   });
 
   it("keeps the empty idle footer free of the clear-draft chip", () => {
     const out = renderHint(chatState());
     expect(out).not.toContain("clear draft");
-    expect(out).toContain("[ctrl+p]");
+    expect(out).not.toContain("[ctrl+p]");
     expect(out).toContain("menu");
     // On an empty buffer Esc opens the menu, so the strip says so — the
     // same slot that carries `clear draft` once there is a draft.
@@ -163,6 +163,37 @@ describe("HotkeyHint draft chips", () => {
     expect(out).toContain("[esc]");
     expect(out).toContain("abort");
     expect(out).not.toContain("draft");
+  });
+});
+
+describe("HotkeyHint new-window chip", () => {
+  it("advertises the ctrl+n new-window key in the idle strip", () => {
+    // Ctrl+N opens a fresh OS terminal window running another
+    // atomic-agent in the same working dir. This chip is the only place
+    // the key is written down on screen (`/window` lives in the menu),
+    // and the binding is guarded off exactly where the other strips
+    // take over (palette, approval), so the idle strip is the one place
+    // advertising it is accurate.
+    const idle = renderHint(chatState());
+    expect(idle).toContain("[ctrl+n]");
+    expect(idle).toContain("new window");
+  });
+
+  it("keeps the modal and approval strips free of the ctrl+n chip", () => {
+    const modal = renderHint(chatState({ slashPaletteOpen: true }));
+    expect(modal).not.toContain("ctrl+n");
+    const approval = renderHint(chatState({ pendingApproval: fakeApproval() }));
+    expect(approval).not.toContain("ctrl+n");
+  });
+
+  it("sheds the convenience hint before the core chips on a narrow row", () => {
+    const out = renderHint(chatState(), 80);
+    expect(out.split("\n")).toHaveLength(1);
+    expect(out).not.toContain("ctrl+n");
+    // The essentials it must never displace are still standing.
+    expect(out).toContain("send");
+    expect(out).toContain("menu");
+    expect(out).toContain("quit");
   });
 });
 

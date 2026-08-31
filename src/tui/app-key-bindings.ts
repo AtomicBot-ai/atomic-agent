@@ -14,7 +14,6 @@ import type { WhileBusySubmitMode } from "../config/index.js";
 import {
   handleMenuKey,
   isMenuLeaderKey,
-  isMenuOpenKey,
   resolveLeaderChord,
 } from "./menu/menu-keys.js";
 import type { MenuNode } from "./menu/menu-registry.js";
@@ -341,8 +340,9 @@ export function handleAppKey(
     return true;
   }
   // The mode menu is a dropdown on the composer's toolbar, so it takes
-  // the keys while it is up — above the operator menu, because ctrl+p
-  // should close it and open the menu rather than land on both.
+  // the keys while it is up — above the operator menu, so a keystroke
+  // aimed past the dropdown closes it on the way through rather than
+  // landing on both surfaces at once.
   if (state.codingModeMenu) {
     if (key.escape) {
       dispatch({ type: "coding_mode_menu_closed" });
@@ -370,8 +370,9 @@ export function handleAppKey(
   if (handleMenuKey(input, key, { state, dispatch, activate: ctx.activateMenuNode })) {
     return true;
   }
-  // Below the menu on purpose: ctrl+p should still reach the menu from
-  // an open context panel, and opening the menu closes the panel.
+  // Below the menu on purpose: the `ctrl+g` leader should still reach
+  // the menu's chords from an open context panel, and activating a
+  // destination closes the panel.
   if (
     handleContextPanelKey(input, key, {
       state,
@@ -382,7 +383,7 @@ export function handleAppKey(
     return true;
   }
   // Same rung, same reason: the composer's route switches let ctrl-chords
-  // through so the menu stays reachable from inside one. They open only
+  // through so the global chords stay live from inside one. They open only
   // where the composer is the surface the operator is looking at — on a
   // Manage tab the row is off screen, and a switch anchored to it would
   // be a popup with no visible owner.
@@ -418,10 +419,6 @@ export function handleAppKey(
   }
   if (!state.slashPaletteOpen && isMenuLeaderKey(input, key)) {
     ctx.setMenuLeaderArmed(true);
-    return true;
-  }
-  if (!state.slashPaletteOpen && isMenuOpenKey(input, key)) {
-    dispatch({ type: "menu_opened" });
     return true;
   }
   if (
@@ -863,8 +860,11 @@ export type ApprovalHotkey =
  *     Claiming one would fix the typing collision in one direction and
  *     open it in the other — an operator mid-message would lose
  *     delete-word to a *deny*.
- *   - `ctrl+c` / `ctrl+p` / `ctrl+g` / `ctrl+l` / `ctrl+n` / `ctrl+o` /
- *     `ctrl+q` / `ctrl+r` / `ctrl+t` / `ctrl+x` are global.
+ *   - `ctrl+c` / `ctrl+g` / `ctrl+l` / `ctrl+n` / `ctrl+o` /
+ *     `ctrl+q` / `ctrl+r` / `ctrl+t` / `ctrl+x` are global. (`ctrl+p`
+ *     left this set when the menu moved to Esc, but stays off the
+ *     table: a chord that meant "menu" for years must not start
+ *     approving commands.)
  *   - `ctrl+s` is XOFF, which a terminal outside our raw mode (screen,
  *     an ssh hop with flow control on) can still eat.
  *

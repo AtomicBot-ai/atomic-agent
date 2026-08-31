@@ -217,6 +217,13 @@ const V0_2_2_SLASH_COMMANDS = [
     name: "context",
     description: "show where this session's context window went",
   },
+  // The rail's fold toggle: the mouse has the « control, this is the
+  // keyboard's route to the same flip.
+  {
+    name: "sidebar",
+    description:
+      "hide or show the session rail (the rail's « does the same)",
+  },
   {
     name: "uninstall",
     description:

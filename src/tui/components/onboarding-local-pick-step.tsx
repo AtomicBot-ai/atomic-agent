@@ -16,7 +16,7 @@ import { theme } from "../theme/theme.js";
 export const LOCAL_PICK_WINDOW = 6;
 
 /** Model-name column, wide enough for the catalog's longest id plus a gap. */
-const LABEL_COLUMNS = 18;
+const LABEL_COLUMNS = 24;
 /** Size column, right-aligned so the numbers compare down the column. */
 const SIZE_COLUMNS = 8;
 /** Gap between the size and the note that follows it. */
@@ -168,6 +168,9 @@ function note(pick: LocalModelPick, fit: OnboardingFit): string {
   const parts: string[] = [];
   if (pick.recommended) parts.push("★ recommended");
   parts.push(pick.fit === "over" ? `needs ${pick.ramLabel}` : pick.ramLabel);
+  // The warning tag outranks the description — it stays on even in the
+  // minimal tier, and truncation eats the sales pitch before it.
+  if (pick.tag) parts.push(pick.tag);
   if (fit.rowDetails) parts.push(pick.description);
   return parts.join(" · ");
 }
@@ -180,6 +183,8 @@ function note(pick: LocalModelPick, fit: OnboardingFit): string {
  */
 function noteColour(pick: LocalModelPick): string {
   if (pick.fit === "over") return theme.colors.warn;
+  // An uncensored row reads as a caution even on a machine it fits.
+  if (pick.uncensored) return theme.colors.warn;
   if (pick.recommended) return theme.colors.success;
   return theme.colors.muted;
 }

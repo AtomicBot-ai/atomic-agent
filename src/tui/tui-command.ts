@@ -46,6 +46,7 @@ import {
   currentTerminalLaunchInput,
   openAgentTerminalWindow,
 } from "./open-terminal-window.js";
+import { openUrlInBrowser } from "./open-url.js";
 import { detectKittyKeyboard } from "./detect-kitty-keyboard.js";
 import { setShiftEnterNewline } from "./shift-enter-support.js";
 import { makeTuiEventBus, TuiApp } from "./tui-app.js";
@@ -413,6 +414,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
           orchestrator.quit();
         },
         onNewWindowRequested: () => openNewAgentWindow(parsed.workingDir, bus),
+        onOpenUrlRequested: (url) => openUrlFromChat(url, bus),
         onMemoryDumpRequested: () => orchestrator.dumpProfile(),
         onSkillCatalogRequested: () => orchestrator.dumpSkillCatalog(),
         onPersistLlamaUrl: (nextUrl) => persistLlamaUrl(nextUrl, bus, orchestrator, runtime),
@@ -429,6 +431,16 @@ export async function tuiCommand(args: string[]): Promise<number> {
           bus.emit({ type: "ui_mode_set", mode: "debug" });
           bus.emit({ type: "tab_changed", tab: "tasks" });
           orchestrator.tasks.openDetail(taskId);
+        },
+        onTaskNewRequested: () => {
+          // Sidebar `+ new` on the Tasks header: land on the Tasks debug
+          // tab with the create form already open — the destination the
+          // in-panel `n` key reaches, minus the walk. The form-open
+          // action is the same one `n` dispatches, emitted on the bus
+          // for the reason the sibling above spells out.
+          bus.emit({ type: "ui_mode_set", mode: "debug" });
+          bus.emit({ type: "tab_changed", tab: "tasks" });
+          bus.emit({ type: "tasks_create_form_opened" });
         },
         onTaskOpenSessionRequested: (taskId) =>
           orchestrator.tasks.openSession(taskId),
@@ -783,6 +795,28 @@ function openNewAgentWindow(
       type: "system_message",
       variant: "warn",
       text: `could not open a new terminal window: ${result.reason}`,
+    });
+  })();
+}
+
+/**
+ * `[open <host>]` chip: hand `url` to the OS default browser. Success
+ * stays silent — the browser fronting itself *is* the feedback, and a
+ * chat-log line per opened link would be noise — but a failure is
+ * reported, because a chip that silently does nothing reads as a dead
+ * button (the same reasoning as `openNewAgentWindow` above).
+ */
+function openUrlFromChat(
+  url: string,
+  bus: ReturnType<typeof makeTuiEventBus>,
+): void {
+  void (async () => {
+    const result = await openUrlInBrowser(url);
+    if (result.ok) return;
+    bus.emit({
+      type: "system_message",
+      variant: "warn",
+      text: `could not open ${url}: ${result.reason}`,
     });
   })();
 }

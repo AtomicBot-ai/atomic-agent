@@ -655,7 +655,11 @@ describe("handleAppKey", () => {
 });
 
 describe("handleAppKey while a turn is running", () => {
-  it("Ctrl+P still opens the menu mid-run", () => {
+  it("the retired Ctrl+P no longer opens the menu — it falls through unclaimed", () => {
+    // The chord is gone, not remapped: nothing on this rung answers to
+    // it, so the press reaches the editor as an ordinary control chord
+    // the editor ignores. Esc-from-idle and the `ctrl+g` leader are the
+    // keyboard's surviving routes to the menu.
     const state = createInitialTuiState(stubSession());
     state.status = "running";
     const dispatch = vi.fn();
@@ -674,8 +678,8 @@ describe("handleAppKey while a turn is running", () => {
       setMenuLeaderArmed: vi.fn(),
       activateMenuNode: vi.fn(),
     });
-    expect(handled).toBe(true);
-    expect(dispatch).toHaveBeenCalledWith({ type: "menu_opened" });
+    expect(handled).toBe(false);
+    expect(dispatch).not.toHaveBeenCalledWith({ type: "menu_opened" });
   });
 });
 

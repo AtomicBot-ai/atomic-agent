@@ -143,6 +143,44 @@ describe("reduce sidebar + chat scroll actions", () => {
     expect(next.sidebarTasksCursor).toBe(0);
   });
 
+  it("toggles sidebarCollapsed and back", () => {
+    const initial = createInitialTuiState(SESSION);
+    expect(initial.sidebarCollapsed).toBe(false);
+    const folded = reduceTuiState(initial, {
+      type: "sidebar_collapse_toggled",
+    });
+    expect(folded.sidebarCollapsed).toBe(true);
+    const restored = reduceTuiState(folded, {
+      type: "sidebar_collapse_toggled",
+    });
+    expect(restored.sidebarCollapsed).toBe(false);
+  });
+
+  it("returns focus to the editor when the rail is folded from under it", () => {
+    const initial = createInitialTuiState(SESSION);
+    const onRail = { ...initial, chatFocus: "sidebar" as const };
+    const folded = reduceTuiState(onRail, {
+      type: "sidebar_collapse_toggled",
+    });
+    expect(folded.sidebarCollapsed).toBe(true);
+    expect(folded.chatFocus).toBe("editor");
+  });
+
+  it("leaves editor focus alone when the rail is folded or restored", () => {
+    const initial = createInitialTuiState(SESSION);
+    const folded = reduceTuiState(initial, {
+      type: "sidebar_collapse_toggled",
+    });
+    expect(folded.chatFocus).toBe("editor");
+    // Restoring never steals focus either — the operator asked for the
+    // rail back on screen, not for the keyboard to move there.
+    const restored = reduceTuiState(
+      { ...folded, chatFocus: "editor" as const },
+      { type: "sidebar_collapse_toggled" },
+    );
+    expect(restored.chatFocus).toBe("editor");
+  });
+
   it("sets sidebarSection on sidebar_section_focused", () => {
     const initial = createInitialTuiState(SESSION);
     const next = reduceTuiState(initial, {

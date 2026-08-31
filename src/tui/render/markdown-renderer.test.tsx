@@ -67,6 +67,37 @@ describe("MarkdownRenderer", () => {
     );
   });
 
+  it("linkifies a bare URL the GFM autolinker misses (non-ASCII host)", () => {
+    // marked leaves `https://пример.рф` as a plain `text` token — the
+    // GFM url rule only matches ASCII hosts — so this pins the
+    // splitUrlSegments fallback on the inline `text` path.
+    const { lastFrame } = render(
+      <MarkdownRenderer text="откройте https://пример.рф сейчас" />,
+    );
+    const text = lastFrame() ?? "";
+    expect(text).toContain(
+      "\u001b]8;;https://пример.рф\u001b\\https://пример.рф\u001b]8;;\u001b\\",
+    );
+  });
+
+  it("does not linkify a URL inside a codespan", () => {
+    const { lastFrame } = render(
+      <MarkdownRenderer text="run `https://cursor.com` verbatim" />,
+    );
+    const text = lastFrame() ?? "";
+    expect(strip(text)).toContain("https://cursor.com");
+    expect(text).not.toContain("\u001b]8;;");
+  });
+
+  it("does not linkify a URL inside a fenced code block", () => {
+    const { lastFrame } = render(
+      <MarkdownRenderer text={"```\ncurl https://cursor.com\n```"} />,
+    );
+    const text = lastFrame() ?? "";
+    expect(strip(text)).toContain("https://cursor.com");
+    expect(text).not.toContain("\u001b]8;;");
+  });
+
   it("renders bulleted lists with a bullet glyph", () => {
     const { lastFrame } = render(
       <MarkdownRenderer text={"- first\n- second"} />,

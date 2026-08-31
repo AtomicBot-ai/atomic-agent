@@ -1,5 +1,6 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
+import { LinkifiedText } from "../render/linkify-text.js";
 import { MarkdownRenderer } from "../render/markdown-renderer.js";
 import { theme } from "../theme/theme.js";
 
@@ -24,7 +25,9 @@ interface AssistantBubbleProps {
  * Markdown rendering is gated on `!streaming`: partial markdown
  * (half-opened `**`, fenced block missing its closing ```, dangling
  * list marker) lexes into ugly literals that flicker as the stream
- * arrives. Plain text while streaming, markdown once finalised.
+ * arrives. Plain text while streaming, markdown once finalised — but
+ * the plain-text phase still routes through `LinkifiedText`, so a URL
+ * is clickable the moment it appears, not only after the turn ends.
  */
 export function AssistantBubble({
   text,
@@ -49,7 +52,13 @@ export function AssistantBubble({
         paddingRight={1}
         flexDirection="column"
       >
-        {streaming ? <Text>{text}</Text> : <MarkdownRenderer text={text} />}
+        {streaming ? (
+          <Text>
+            <LinkifiedText text={text} />
+          </Text>
+        ) : (
+          <MarkdownRenderer text={text} />
+        )}
       </Box>
       {showFooter ? (
         <Box marginLeft={3}>
