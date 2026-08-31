@@ -303,6 +303,22 @@ export function reduceUiAction(
       };
     case "chat_focus_set":
       return { ...state, chatFocus: action.focus };
+    case "sidebar_collapse_toggled": {
+      const collapsed = !state.sidebarCollapsed;
+      // Folding the rail away takes its focus stop with it, so the
+      // keyboard goes home to the editor in the same action — a
+      // separate frame with focus on an undrawn surface is exactly the
+      // strand the resize effect in `tui-app.tsx` exists to fix, and
+      // this is the one flip the reducer can see coming itself.
+      return {
+        ...state,
+        sidebarCollapsed: collapsed,
+        chatFocus:
+          collapsed && state.chatFocus === "sidebar"
+            ? "editor"
+            : state.chatFocus,
+      };
+    }
     case "sidebar_section_focused":
       return { ...state, sidebarSection: action.section };
     case "sidebar_cursor_moved": {

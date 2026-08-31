@@ -268,6 +268,11 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
       return pureActions([], { triggerSessionNew: true });
     case "window":
       return pureActions([], { triggerNewWindow: true });
+    case "sidebar":
+      // Pure state, so no trigger flag: the toggle rides `actions` the
+      // way `/expand` and `/collapse` do, and the keyboard gets the
+      // same flip the rail's « control gives the mouse.
+      return pureActions([{ type: "sidebar_collapse_toggled" }]);
     case "tools":
       return dispatchToolsSub(parsed.args);
     case "skills":

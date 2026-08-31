@@ -553,6 +553,14 @@ export interface TuiAppCallbacks {
    * `atomic-agent tui` in the same working directory.
    */
   onNewWindowRequested?(): void;
+  /**
+   * An `[open <host>]` chip under a chat message: open `url` — always a
+   * normalised http(s) URL by the time it gets here — in the OS default
+   * browser. A callback rather than an in-component spawn so the chip
+   * stays presentational and the failure report can travel the bus as a
+   * system message.
+   */
+  onOpenUrlRequested?(url: string): void;
 }
 
 export interface TuiAppProps {
@@ -793,6 +801,14 @@ export function TuiApp({
   const terminalSize = useTerminalSize();
   const sidebarVisible =
     state.uiMode === "chat" &&
+    !state.sidebarCollapsed &&
+    isSidebarVisible(terminalSize.columns, terminalSize.rows);
+  // The `»` restore control is offered only while the fold is the
+  // operator's own choice AND the terminal could seat the rail: when
+  // the size gate is what hid it, a click could restore nothing.
+  const sidebarRestorable =
+    state.uiMode === "chat" &&
+    state.sidebarCollapsed &&
     isSidebarVisible(terminalSize.columns, terminalSize.rows);
   // The rail takes a share of the terminal rather than a flat 30
   // columns, and its two panes get a row budget cut from the terminal
@@ -906,9 +922,12 @@ export function TuiApp({
             state.localModelsPanel.removeConfirmId !== null)
         )));
 
-  // When the sidebar collapses below the width or height threshold
+  // When the sidebar drops below the width or height threshold
   // (terminal resized smaller), focus must follow back to the editor so
-  // Tab does not strand the operator on an invisible surface.
+  // Tab does not strand the operator on an invisible surface. The
+  // dependency is the derived `sidebarVisible`, so every flip is
+  // covered — the operator's own fold (`sidebarCollapsed`) included,
+  // though the reducer already reclaims focus on that path itself.
   useEffect(() => {
     if (!sidebarVisible && state.chatFocus === "sidebar") {
       dispatch({ type: "chat_focus_set", focus: "editor" });
@@ -1688,7 +1707,11 @@ export function TuiApp({
         bug rather than as chrome.
       */}
       <Box flexShrink={0}>
-        <StatusBar state={state} brand={!sidebarVisible} />
+        <StatusBar
+          state={state}
+          brand={!sidebarVisible}
+          railRestore={sidebarRestorable}
+        />
       </Box>
       {/*
         The design separates the top bar and the hint strip from the

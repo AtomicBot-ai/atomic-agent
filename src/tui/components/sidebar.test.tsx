@@ -85,6 +85,32 @@ describe("Sidebar", () => {
     expect(text).not.toContain("LLM");
   });
 
+  it("keeps the fold mark on the lockup row even without mouse support", () => {
+    // Rendered outside MouseProvider the chip is inert, but it stays on
+    // screen as the signpost to /sidebar — same degradation as `+ new`.
+    // On the lockup row, not a row of its own: `SIDEBAR_CHROME_ROWS`
+    // (pinned by sidebar-fit.test.tsx) must not move.
+    const { lastFrame } = render(
+      <Sidebar
+        width={32}
+        sessions={SESSIONS}
+        sessionsCursor={0}
+        currentSessionId="abcdef1234"
+        tasks={TASKS}
+        tasksCursor={0}
+        activeSection="sessions"
+        focused={false}
+      />,
+    );
+    const lines = strip(lastFrame() ?? "").split("\n");
+    const foldRow = lines.findIndex((line) => line.includes("«"));
+    // Row 0 is the rail's breathing row; the lockup's top row — the
+    // rail's top-right corner — is where the hinge sits, one row above
+    // the wordmark beside the mark's centre.
+    expect(foldRow).toBe(1);
+    expect(lines[foldRow + 1]).toContain("atomic-agent");
+  });
+
   it("puts a + new chip on the Tasks header with the counter mid-gap", () => {
     const { lastFrame } = render(
       <Sidebar

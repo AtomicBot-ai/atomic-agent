@@ -10,6 +10,14 @@ export interface TerminalLaunch {
   readonly args: readonly string[];
   /** Human name of the terminal being opened, for the chat confirmation. */
   readonly label: string;
+  /**
+   * win32 only: the args are already quoted for cmd.exe and must reach
+   * CreateProcess byte-for-byte. Node's default argv quoting cannot
+   * protect a `cmd /c start` line — it only quotes on whitespace, and
+   * cmd's operators (`&`, `^`, `|`) need double quotes, not backslash
+   * escapes. Set by `open-url.ts`; every terminal launch leaves it off.
+   */
+  readonly windowsVerbatimArguments?: boolean;
 }
 
 export interface TerminalLaunchInput {

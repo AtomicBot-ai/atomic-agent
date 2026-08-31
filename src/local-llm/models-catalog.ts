@@ -11,6 +11,7 @@ export type CuratedLocalModelId =
   | "qwen-3.6-27b"
   | "qwen-3.6-35b-a3b"
   | "qwen-3.8-27b"
+  | "qwen-3.8-27b-uncensored"
   | "gemma-4-e4b"
   | "gemma-4-12b"
   | "gemma-4-26b-a4b"
@@ -72,6 +73,14 @@ export interface LocalModelDef {
    */
   chatTemplateAsset?: string;
   tag?: string;
+  /**
+   * Reduced-refusal ("abliterated" / uncensored) weights. Such entries
+   * are opt-in only: the first-run picker pins them to the bottom of the
+   * model list, renders their `tag` as a warning, and never picks one as
+   * the auto-recommendation (`recommendLocalModel`) — downloading one
+   * must always be a deliberate act, not the path of least resistance.
+   */
+  uncensored?: boolean;
   /**
    * Vision capability flag. When `true`, the model has an associated
    * mmproj projector file that llama-server needs (via `--mmproj <path>`)
@@ -337,6 +346,44 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
       "https://huggingface.co/unsloth/Muse-Glimmer-30B-GGUF/resolve/main/mmproj-Muse-Glimmer-30B-Q8_0.gguf",
     mmprojFilename: "mmproj-Muse-Glimmer-30B-Q8_0.gguf",
     mmprojFileSizeGb: 2.05,
+  },
+  {
+    // Kept LAST on purpose: the Manage panel draws the catalog in array
+    // order and the onboarding picker pins uncensored entries to the
+    // bottom — an entry inserted above would put reduced-refusal weights
+    // ahead of the safe defaults.
+    //
+    // The `noMTP` file is deliberate: the repo's fused quants carry an
+    // inline MTP (speculative-decoding) head, while noMTP is a standard
+    // GGUF that any llama-server loads — and the daemon has no
+    // `--model-draft` wiring to use an MTP head anyway.
+    id: "qwen-3.8-27b-uncensored",
+    name: "Qwen3.8 27B Uncensored GGUF",
+    filename: "Qwen3.8-27B-Uncensored-noMTP-Q4_K_M.gguf",
+    huggingFaceUrl:
+      "https://huggingface.co/JonathanColetti/Qwen3.8-27B-Uncensored-GGUF/resolve/main/Qwen3.8-27B-Uncensored-noMTP-Q4_K_M.gguf",
+    fileSizeGb: 16.5,
+    sizeLabel: "16.5 GB",
+    description: "Reduced-refusal Qwen3.8 27B (abliterated)",
+    maxContextLength: 262_144,
+    contextLabel: "256K",
+    minRamGb: 20,
+    recommendedRamGb: 32,
+    family: "qwen",
+    tag: "Use at your own risk",
+    uncensored: true,
+    supportsVision: true,
+    // The vision file IS the projector — the model card states both
+    // vision files carry the same 334-tensor projector; it is simply not
+    // named "mmproj". Safe here: the installer and daemon key on the
+    // mmprojUrl/mmprojFilename *fields* (see `model-installer.ts`,
+    // `backend-paths.resolveMmprojFilePath`), never on filename patterns
+    // — `judgeGgufFile`'s "projector"/f16 rejections only run in the
+    // Hugging Face custom-add flow when picking MAIN weights.
+    mmprojUrl:
+      "https://huggingface.co/JonathanColetti/Qwen3.8-27B-Uncensored-GGUF/resolve/main/Qwen3.8-27B-Uncensored-vision-f16.gguf",
+    mmprojFilename: "Qwen3.8-27B-Uncensored-vision-f16.gguf",
+    mmprojFileSizeGb: 0.9,
   },
 ];
 

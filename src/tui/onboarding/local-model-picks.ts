@@ -21,6 +21,14 @@ export interface LocalModelPick {
   ramLabel: string;
   description: string;
   recommended: boolean;
+  /**
+   * Reduced-refusal weights. `orderLocalModelPicks` pins these below
+   * every other model, `recommendLocalModel` never proposes one, and the
+   * row renders `tag` in the warn tone.
+   */
+  uncensored: boolean;
+  /** The catalog's warning label for the row, e.g. "Use at your own risk". */
+  tag?: string;
 }
 
 /**
@@ -48,6 +56,11 @@ export function buildLocalModelPicks(
     ramLabel: `${def.recommendedRamGb} GB RAM`,
     description: def.description,
     recommended: def.id === recommendedId,
+    uncensored: def.uncensored === true,
+    // Only an uncensored entry's tag is a warning the first run must
+    // show; the marketing tags ("New", "Recommended") stay off this
+    // screen — the picker computes its own recommendation from RAM.
+    tag: def.uncensored === true ? def.tag : undefined,
   }));
 }
 
@@ -61,8 +74,13 @@ export function recommendLocalModel(
   ramGb: number,
   catalog: readonly LocalModelDef[] = LOCAL_MODELS_CATALOG,
 ): LocalModelId | null {
-  if (catalog.length === 0) return null;
-  const comfortable = catalog.filter((def) => def.recommendedRamGb <= ramGb);
+  // Reduced-refusal ("uncensored") entries are never candidates — not
+  // for the comfortable pick and not for any fallback. They stay in the
+  // list, tagged and pinned last, but choosing one has to be the
+  // operator's own act; the recommendation star must never point at one.
+  const candidates = catalog.filter((def) => def.uncensored !== true);
+  if (candidates.length === 0) return null;
+  const comfortable = candidates.filter((def) => def.recommendedRamGb <= ramGb);
   const quick = comfortable.filter(
     (def) => def.fileSizeGb <= FIRST_RUN_MAX_DOWNLOAD_GB,
   );
@@ -74,7 +92,7 @@ export function recommendLocalModel(
       def.fileSizeGb < best.fileSizeGb ? def : best,
     ).id;
   }
-  return catalog.reduce((best, def) =>
+  return candidates.reduce((best, def) =>
     def.fileSizeGb < best.fileSizeGb ? def : best,
   ).id;
 }
@@ -128,10 +146,18 @@ export function describeDownloadingModel(id: string | null): string {
 
 /** Rows ordered for the first run: the recommendation first, then by size. */
 export function orderLocalModelPicks(picks: readonly LocalModelPick[]): LocalModelPick[] {
-  return [...picks].sort((a, b) => {
+  const ordered = [...picks].sort((a, b) => {
     if (a.recommended !== b.recommended) return a.recommended ? -1 : 1;
     const fitRank = { fits: 0, tight: 1, over: 2 } as const;
     if (fitRank[a.fit] !== fitRank[b.fit]) return fitRank[a.fit] - fitRank[b.fit];
     return a.sizeLabel.localeCompare(b.sizeLabel, "en", { numeric: true });
   });
+  // Explicit pinning rule, applied AFTER the usual ordering: uncensored
+  // entries always sink below every other model, whatever their fit or
+  // size says — reaching one means scrolling past the safe defaults.
+  // (The Hugging Face row still comes after them; see buildLocalPickRows.)
+  return [
+    ...ordered.filter((pick) => !pick.uncensored),
+    ...ordered.filter((pick) => pick.uncensored),
+  ];
 }
