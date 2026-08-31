@@ -121,6 +121,7 @@ import { handleProvidersTabKey } from "./providers/providers-key-bindings.js";
 import { handleTelegramTabKey } from "./telegram/telegram-key-bindings.js";
 import { handlePrivacyTabKey } from "./privacy/privacy-key-bindings.js";
 import { ContextMenuPopup, ContextMenuProvider } from "./context-menu/index.js";
+import { createDragIntentTracker } from "./mouse/drag-intent.js";
 import { MouseProvider } from "./mouse/mouse-context.js";
 import { isPrimaryPress } from "./mouse/mouse-event.js";
 import {
@@ -248,6 +249,20 @@ export interface TuiAppCallbacks {
    * handler owns the escape sequences and the config write.
    */
   onMouseSupportRequested?(enabled: boolean | null): void;
+  /**
+   * A drag began on a cell no mouse target claims — message text, panel
+   * prose, empty rail space. Dragging across inert content is
+   * selecting, so the host opens the same pause window the modifier
+   * trigger uses (`selection-passthrough.beginWindow("drag")`) and the
+   * operator drags again with the terminal's own selection live.
+   */
+  onSelectionDragIntent?(): void;
+  /**
+   * The hint strip's `[drag] select text` chip was clicked: open the
+   * selection pause window right away, so the operator's next drag
+   * selects natively instead of arming the drag-intent detector first.
+   */
+  onSelectionPauseRequested?(): void;
   /** Start the Tasks-tab auto-refresh loop (first entry only). */
   onTasksAutoRefreshStart?(): void;
   /** Perform a one-shot refresh of the tasks list. */
@@ -659,10 +674,18 @@ export function TuiApp({
 
   useEffect(() => {
     if (!mouse) return;
-    return mouse.subscribe((event) => {
-      registry.dispatch(event);
+    // The registry is the only place that knows whether a press landed
+    // on anything, so the selection-intent detector sits right behind
+    // it: an unclaimed press followed by held motion is a drag over
+    // dead content, and the host answers by pausing mouse reporting so
+    // the terminal's own selection takes over (`drag-intent.ts`).
+    const dragIntent = createDragIntentTracker(() => {
+      callbacks.onSelectionDragIntent?.();
     });
-  }, [mouse, registry]);
+    return mouse.subscribe((event) => {
+      dragIntent.observe(event, registry.dispatch(event));
+    });
+  }, [mouse, registry, callbacks]);
 
   useEffect(() => {
     callbacks.onProvidersTabRefresh?.();

@@ -14,6 +14,18 @@ export {
   type MouseTrackingController,
   type MouseTrackingOptions,
 } from "./mouse-tracking.js";
+export {
+  createSelectionPassthrough,
+  DEFAULT_SELECTION_WINDOW_MS,
+  type SelectionPassthrough,
+  type SelectionPassthroughOptions,
+  type SelectionSuspendable,
+  type SelectionTrigger,
+} from "./selection-passthrough.js";
+export {
+  createDragIntentTracker,
+  type DragIntentTracker,
+} from "./drag-intent.js";
 export { createMouseStdin, type MouseStdin } from "./mouse-stdin.js";
 export {
   makeMouseSource,
