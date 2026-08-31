@@ -544,6 +544,14 @@ export interface TuiAppCallbacks {
    * `atomic-agent tui` in the same working directory.
    */
   onNewWindowRequested?(): void;
+  /**
+   * An `[open <host>]` chip under a chat message: open `url` — always a
+   * normalised http(s) URL by the time it gets here — in the OS default
+   * browser. A callback rather than an in-component spawn so the chip
+   * stays presentational and the failure report can travel the bus as a
+   * system message.
+   */
+  onOpenUrlRequested?(url: string): void;
 }
 
 export interface TuiAppProps {
