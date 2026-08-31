@@ -21,6 +21,14 @@ interface StatusBarProps {
    * copies of them read as a rendering bug rather than as chrome.
    */
   brand?: boolean;
+  /**
+   * Draw the `»` that reopens a rail the operator folded away. True only
+   * while the fold is the operator's own (`sidebarCollapsed`) AND the
+   * terminal could seat the rail — when the size gate is what hid it,
+   * there is nothing a click could restore, so no control is offered.
+   * `TuiApp` computes the condition; the bar stays presentational.
+   */
+  railRestore?: boolean;
 }
 
 /**
@@ -46,12 +54,14 @@ interface StatusBarProps {
 export function StatusBar({
   state,
   brand = true,
+  railRestore = false,
 }: StatusBarProps): ReactElement {
   const section = getCurrentSection(state);
   const title = currentSessionTitle(state);
   const { columns } = useTerminalSize();
   return (
     <Box>
+      {railRestore ? <RailRestoreButton /> : null}
       {brand ? (
         <>
           <Text color={theme.colors.accentSoft} bold>
@@ -172,6 +182,34 @@ function Breadcrumb({
         mouse.dispatch({ type: "menu_path_set", path: null });
         mouse.dispatch({ type: "menu_cursor_set", cursor: 0 });
         mouse.dispatch({ type: "menu_opened" });
+        return true;
+      }}
+    >
+      {label}
+    </MouseTarget>
+  );
+}
+
+/**
+ * The way back after the rail's `«` folded it away. It sits at the head
+ * of the bar — the cell nearest the corner the rail vacated — so the
+ * fold and the unfold read as two positions of the same hinge. One
+ * click brings the rail back; without mouse support the glyph stays as
+ * a signpost to `/sidebar`, inert like every other chip.
+ */
+function RailRestoreButton(): ReactElement {
+  const mouse = useMouseCommands();
+  const label = (
+    <Text>
+      <Chip label={theme.glyphs.railRestore} />{" "}
+    </Text>
+  );
+  if (!mouse) return label;
+  return (
+    <MouseTarget
+      onMouse={(hit) => {
+        if (!isPrimaryPress(hit.event)) return false;
+        mouse.dispatch({ type: "sidebar_collapse_toggled" });
         return true;
       }}
     >

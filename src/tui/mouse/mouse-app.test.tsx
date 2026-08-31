@@ -502,6 +502,31 @@ describe("TuiApp mouse", () => {
     });
   });
 
+  it("folds the rail from its « mark and restores it from the bar's »", async () => {
+    // The two positions of one hinge: « in the rail's top-right corner
+    // folds it away, » at the head of the status bar brings it back.
+    const app = mountApp();
+    await waitUntil(() => app.frame().includes("SESSIONS"), "the rail on screen");
+    await clickUntil(
+      app.mouse,
+      () => locate(app.frame(), "«"),
+      () => !app.frame().includes("SESSIONS"),
+      "click the fold mark",
+    );
+    expect(app.frame()).not.toContain("SESSIONS");
+    // The restore mark sits on the top row, so a top-down locate cannot
+    // confuse it with a transcript's own » lines further down.
+    await waitUntil(() => app.frame().includes("»"), "the restore mark");
+    await clickUntil(
+      app.mouse,
+      () => locate(app.frame(), "»"),
+      () => app.frame().includes("SESSIONS"),
+      "click the restore mark",
+    );
+    expect(app.frame()).toContain("SESSIONS");
+    app.unmount();
+  });
+
   it("puts a start-page tip in the composer when it is clicked", async () => {
     // The rows are suggestions, not buttons: the command lands in the
     // buffer with a trailing space and Enter stays the operator's.
