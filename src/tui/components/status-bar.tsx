@@ -34,7 +34,7 @@ interface StatusBarProps {
 /**
  * One-row operator status bar. Shows **where you are**, not where you could
  * go: the three-section pill row was a menu, and the menu now lives behind
- * `ctrl+p` where it can hold every destination instead of only the top three.
+ * Esc, where it can hold every destination instead of only the top three.
  * What is left is a breadcrumb — `Manage › Tasks` — which is the one thing
  * the popup cannot tell you, because you have to open it to read it.
  *
@@ -144,9 +144,9 @@ const SECTION_LABELS: Record<TuiSection, string> = {
  * #170 replaced that strip with this breadcrumb — the menu is now the one
  * navigation surface, and re-adding pills would give the same job two
  * competing controls. So the breadcrumb itself takes the click and opens
- * the menu, which is exactly what `ctrl+p` does. Clicking where you
- * already are is still meaningful here: the menu is a destination list,
- * not a reset.
+ * the menu, which is exactly what Esc does on an idle prompt. Clicking
+ * where you already are is still meaningful here: the menu is a
+ * destination list, not a reset.
  */
 function Breadcrumb({
   state,
@@ -176,9 +176,9 @@ function Breadcrumb({
     <MouseTarget
       onMouse={(hit) => {
         if (!isPrimaryPress(hit.event)) return false;
-        // Open at the top of the list, the same state `ctrl+p` produces,
-        // so the keyboard and the mouse land on one menu rather than two
-        // subtly different ones.
+        // Open at the top of the list, the same state the Esc route
+        // produces, so the keyboard and the mouse land on one menu
+        // rather than two subtly different ones.
         mouse.dispatch({ type: "menu_path_set", path: null });
         mouse.dispatch({ type: "menu_cursor_set", cursor: 0 });
         mouse.dispatch({ type: "menu_opened" });

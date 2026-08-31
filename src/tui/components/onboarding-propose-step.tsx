@@ -15,7 +15,7 @@ const EXPLAINER: readonly string[] = [
 
 const SKIP_ROW = {
   label: "Skip — take me to the agent",
-  detail: "you can add it later from the menu (ctrl+p)",
+  detail: "you can add it later from the menu (esc)",
 } as const;
 
 function acceptRow(offer: NonNullable<SecondBackendOffer>): {

@@ -1074,7 +1074,7 @@ export function TuiApp({
     // A modal's own targets register in an effect that flushes a frame
     // after it first paints. In that window the backdrop is the only
     // eligible target, so a second click arriving fast — a double-click
-    // on the rail's `[x]`, or an impatient one on `ctrl+p` — would be
+    // on the rail's `[x]`, or an impatient one on `☰ Menu` — would be
     // read as "clicked outside" and dismiss the surface that just
     // opened. Ignore presses until the modal has had that frame.
     if (Date.now() - modalOpenedAtRef.current < MODAL_CLICK_GRACE_MS) {
@@ -1337,8 +1337,8 @@ export function TuiApp({
     // Nothing left to cancel: Esc opens the menu. It is the LAST branch
     // on purpose — abort, close, back and clear-draft all outrank it, so
     // the key keeps every meaning it already had and gains one only when
-    // it would otherwise have done nothing. `ctrl+p` still opens the
-    // menu from anywhere, including mid-turn.
+    // it would otherwise have done nothing. The breadcrumb and the
+    // rail's menu chip still open it from anywhere, including mid-turn.
     dispatch({ type: "menu_path_set", path: null });
     dispatch({ type: "menu_cursor_set", cursor: 0 });
     dispatch({ type: "menu_opened" });

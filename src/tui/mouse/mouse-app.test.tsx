@@ -242,8 +242,8 @@ describe("TuiApp mouse", () => {
   // #165 was written against the Run / Observe / Manage pill strip and the
   // sub-tab strip. #170 replaced both with a breadcrumb plus one menu, so
   // the click target that used to switch sections now *opens the menu* —
-  // the same thing ctrl+p does. Navigating from there is the menu's own
-  // job and is covered by `menu-behaviour.test.ts`.
+  // the same thing Esc does on an idle prompt. Navigating from there is
+  // the menu's own job and is covered by `menu-behaviour.test.ts`.
   it("opens the menu when the breadcrumb is clicked", async () => {
     const app = mountApp();
     await waitUntil(() => app.frame().includes("R U N"), "the Run screen");
@@ -356,7 +356,8 @@ describe("TuiApp mouse", () => {
   describe("operator menu", () => {
     const openMenu = async (app: ReturnType<typeof mountApp>): Promise<void> => {
       await waitUntil(() => app.frame().includes("R U N"), "the Run screen");
-      app.stdin.write(String.fromCharCode(16));
+      // Esc on the empty idle prompt — the keyboard's route to the menu.
+      app.stdin.write(String.fromCharCode(27));
       await waitUntil(() => app.frame().includes("MENU"), "the menu");
     };
     /** The row the ▶ marker is sitting on. */
