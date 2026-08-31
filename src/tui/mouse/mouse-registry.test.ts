@@ -221,4 +221,28 @@ describe("MouseTargetRegistry", () => {
     registry.dispatch(press(0, 0));
     expect(calls).toBe(1);
   });
+
+  it("reports a captured event consumed even when the capturer declines it", () => {
+    const registry = new MouseTargetRegistry();
+    const ref = { current: node({ left: 0, top: 0, width: 10, height: 2 }) };
+    const kinds: string[] = [];
+    registry.register({
+      ref,
+      handler: (hit) => {
+        kinds.push(hit.event.kind);
+        // A capturer shrugging at this particular event. It still went
+        // to nobody else, so the dispatch must read consumed — a drag
+        // mid-capture is a live gesture, never a selection intent.
+        return false;
+      },
+    });
+    registry.capturePointer(ref);
+    const motion: TuiMouseEvent = { ...press(30, 20), kind: "motion" };
+    expect(registry.dispatch(motion)).toBe(true);
+    expect(kinds).toEqual(["motion"]);
+    // Released, the same far-away event has no target and falls out
+    // unconsumed — proof the capture was what made it `true` above.
+    registry.releasePointer();
+    expect(registry.dispatch(motion)).toBe(false);
+  });
 });

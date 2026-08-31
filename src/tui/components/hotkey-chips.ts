@@ -219,8 +219,9 @@ export function resolveChips(
   // it anyway — see `SIDEBAR_MIN_COLUMNS`), then the route chip (the
   // route line itself is clickable, so the keyboard hint is the first
   // luxury), then the new-window chip (a convenience the menu also
-  // carries as `/window`), then the newline key, then the menu chip. A
-  // draft flips the Esc chip to `clear draft` so the affordance on
+  // carries as `/window`), then the drag/select hint (the gesture works
+  // without ever reading it), then the newline key, then the menu chip.
+  // A draft flips the Esc chip to `clear draft` so the affordance on
   // screen is the one the next press performs — the menu is then a
   // second Esc (or the breadcrumb) away.
   return [
@@ -232,7 +233,7 @@ export function resolveChips(
     {
       key: hasShiftEnterNewline() ? "shift+enter" : "alt+enter",
       label: "newline",
-      shed: 5,
+      shed: 6,
     },
     {
       key: "tab",
@@ -263,12 +264,23 @@ export function resolveChips(
       shed: 4,
       onClick: (mouse) => mouse.callbacks.onNewWindowRequested?.(),
     },
+    // Text selection: the gesture is drag-twice (the first drag pauses
+    // mouse reporting, the second selects), and nothing on screen said
+    // so. The chip writes it down, and a click skips the first drag —
+    // it opens the same pause window directly, so the very next drag
+    // selects. Sheds early: the gesture works without the hint.
+    {
+      key: "drag",
+      label: "select text",
+      shed: 5,
+      onClick: (mouse) => mouse.callbacks.onSelectionPauseRequested?.(),
+    },
     // Esc opens the menu only on an empty buffer — with a draft it
     // clears the draft — so the strip advertises whichever one the next
     // press will actually do.
     ...(hasDraft
       ? [{ key: "esc", label: "clear draft" }]
-      : [{ key: "esc", label: "menu", shed: 6 }]),
+      : [{ key: "esc", label: "menu", shed: 7 }]),
     // A selection can only exist over a non-empty buffer, so the
     // clear-draft Esc chip is always alongside these two.
     ...(composerSelectionActive(state)

@@ -120,12 +120,12 @@ describe("HotkeyHint draft chips", () => {
     // With a draft, Esc clears it — so the strip must not promise the
     // menu on that key, and no other chip does either: with ctrl+p
     // retired, the menu is a second Esc (or the breadcrumb) away.
-    // Eight with the ctrl+r route and ctrl+n window chips.
+    // Nine with the ctrl+r route, ctrl+n window and drag/select chips.
     const out = renderHint(chatState({ inputValue: "half a thought" }));
     expect(out).toContain("[esc]");
     expect(out).toContain("clear draft");
     expect(out).not.toContain("[ctrl+p]");
-    expect(chipCount(out)).toBe(8);
+    expect(chipCount(out)).toBe(9);
   });
 
   it("keeps the empty idle footer free of the clear-draft chip", () => {
@@ -136,11 +136,16 @@ describe("HotkeyHint draft chips", () => {
     // On an empty buffer Esc opens the menu, so the strip says so — the
     // same slot that carries `clear draft` once there is a draft.
     expect(out).toContain("[esc]");
-    expect(chipCount(out)).toBe(8);
+    expect(chipCount(out)).toBe(9);
     // The keyboard route to the composer's three controls is written
     // down here, not only inside the popup it opens.
     expect(out).toContain("[ctrl+r]");
     expect(out).toContain("route");
+    // Text selection is drag-twice, which nothing on screen explained
+    // until this chip. It only makes sense where the transcript is the
+    // surface, so the idle strip is its one home.
+    expect(out).toContain("[drag]");
+    expect(out).toContain("select text");
   });
 
   it("tells the operator the draft survives an abort mid-turn", () => {
