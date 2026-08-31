@@ -127,6 +127,73 @@ describe("createMouseStdin", () => {
     expect(leaks).toBe(1);
   });
 
+  it("keeps stripping a straggler split across reads after the trip", async () => {
+    // The ssh re-chunking that garbles reports in the first place keeps
+    // doing it to the in-flight stragglers, so the post-trip stripper
+    // joins reads too — a remnant must not slip through in halves.
+    const source = makeSource();
+    let leaks = 0;
+    const { stdin } = createMouseStdin(
+      source as unknown as NodeJS.ReadStream,
+      () => {},
+      { mouseActive: () => true, onMouseTextLeak: () => (leaks += 1) },
+    );
+    source.write("[<0;3;4M[<0;3;5M");
+    expect(await collect(stdin)).toBe("");
+    source.write("[<0;9");
+    source.write(";9M");
+    expect(await collect(stdin)).toBe("");
+    expect(leaks).toBe(1);
+  });
+
+  it("strips a post-trip straggler arriving byte by byte", async () => {
+    const source = makeSource();
+    let leaks = 0;
+    const { stdin } = createMouseStdin(
+      source as unknown as NodeJS.ReadStream,
+      () => {},
+      { mouseActive: () => true, onMouseTextLeak: () => (leaks += 1) },
+    );
+    source.write("[<0;3;4M[<0;3;5M");
+    expect(await collect(stdin)).toBe("");
+    for (const byte of "[64;9;9M") source.write(byte);
+    expect(await collect(stdin)).toBe("");
+    expect(leaks).toBe(1);
+  });
+
+  it("withholds a partial straggler on the tripping chunk itself", async () => {
+    const source = makeSource();
+    let leaks = 0;
+    const { stdin } = createMouseStdin(
+      source as unknown as NodeJS.ReadStream,
+      () => {},
+      { mouseActive: () => true, onMouseTextLeak: () => (leaks += 1) },
+    );
+    source.write("[<0;3;4M[<0;3;5M[<0;9");
+    source.write(";9M");
+    expect(await collect(stdin)).toBe("");
+    expect(leaks).toBe(1);
+  });
+
+  it("releases withheld text that never becomes a remnant", async () => {
+    // Post-trip, a chunk-final remnant prefix is held back briefly; if
+    // nothing completes it, it was ordinary typing and must still land.
+    const source = makeSource();
+    let leaks = 0;
+    const { stdin } = createMouseStdin(
+      source as unknown as NodeJS.ReadStream,
+      () => {},
+      { mouseActive: () => true, onMouseTextLeak: () => (leaks += 1) },
+    );
+    source.write("[<0;3;4M[<0;3;5M");
+    expect(await collect(stdin)).toBe("");
+    source.write("x[<12");
+    expect(await collect(stdin)).toBe("x");
+    await sleepPastEscFlush();
+    expect(await collect(stdin)).toBe("[<12");
+    expect(leaks).toBe(1);
+  });
+
   it("trips the leak breaker on a slow drip of single remnants", async () => {
     // A lossy link stalls mid-report for longer than the ESC-split hold
     // and leaks one report per stall — never two in a chunk. By the

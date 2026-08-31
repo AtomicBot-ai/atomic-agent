@@ -53,6 +53,12 @@ const REPORT_REMNANT =
   /\[(?:<\d{1,4};\d{1,4};\d{1,4}[Mm]|\d{1,4};\d{1,4};\d{1,4}M)/g;
 
 /**
+ * A proper prefix of {@link REPORT_REMNANT} at the end of a chunk — the
+ * head of a remnant the next read may complete.
+ */
+const REPORT_REMNANT_PREFIX = /\[<?(?:\d{1,4}(?:;\d{0,4}){0,2})?$/;
+
+/**
  * Remnants in a single chunk before the breaker trips. One shape alone
  * could be a paste that happens to contain it; a terminal misreporting
  * the mouse produces bursts.
@@ -148,18 +154,48 @@ export function createMouseStdin(
     scanTail = joined.slice(-SCAN_TAIL_LENGTH);
     return fresh;
   };
+  // Stripping needs the same cross-read joining as counting — the ssh
+  // re-chunking that garbles reports keeps doing it to the in-flight
+  // stragglers — but unlike the counter it must keep the bytes out of
+  // Ink, so instead of scanning an already-forwarded tail it withholds
+  // a chunk-final remnant prefix until the rest arrives (stragglers
+  // trail each other by well under a millisecond) or a brief timer
+  // rules it ordinary typing, mirroring the ESC-split hold.
+  let stripHold = "";
+  let stripTimer: NodeJS.Timeout | null = null;
+  const flushStripHold = (): void => {
+    stripTimer = null;
+    if (stripHold.length === 0) return;
+    const held = stripHold;
+    stripHold = "";
+    passthrough.write(held);
+  };
+  const stripRemnants = (text: string): string => {
+    if (stripTimer) {
+      clearTimeout(stripTimer);
+      stripTimer = null;
+    }
+    let out = (stripHold + text).replace(REPORT_REMNANT, "");
+    stripHold = REPORT_REMNANT_PREFIX.exec(out)?.[0] ?? "";
+    if (stripHold.length > 0) {
+      out = out.slice(0, -stripHold.length);
+      stripTimer = setTimeout(flushStripHold, ESC_SPLIT_FLUSH_MS);
+      stripTimer.unref?.();
+    }
+    return out;
+  };
   const forwardText = (text: string): void => {
     if (text.length === 0) return;
     let out = text;
     if (leakTripped) {
-      out = out.replace(REPORT_REMNANT, "");
+      out = stripRemnants(out);
     } else if (options.onMouseTextLeak && (options.mouseActive?.() ?? true)) {
       const fresh = countFreshRemnants(text);
       if (fresh > 0) {
         remnantsSeen += fresh;
         if (fresh >= LEAK_TRIP_COUNT || remnantsSeen >= LEAK_TRIP_TOTAL) {
           leakTripped = true;
-          out = out.replace(REPORT_REMNANT, "");
+          out = stripRemnants(out);
           options.onMouseTextLeak();
         }
       }
@@ -213,8 +249,13 @@ export function createMouseStdin(
         clearTimeout(escTimer);
         escTimer = null;
       }
+      if (stripTimer) {
+        clearTimeout(stripTimer);
+        stripTimer = null;
+      }
       escHeld = false;
       pending = "";
+      stripHold = "";
     },
   };
 }
