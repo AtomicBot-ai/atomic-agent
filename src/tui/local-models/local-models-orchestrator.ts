@@ -1174,11 +1174,39 @@ export class LocalModelsOrchestrator {
         line: `local-llm: could not persist backendVariant — ${msg}; the CPU build is used for this session only`,
       });
     }
+    this.bus.emit({
+      type: "local_models_pull_started",
+      pull: {
+        kind: "backend",
+        modelId: "_backend",
+        label: "llama.cpp backend",
+        percent: 0,
+        transferredBytes: 0,
+        totalBytes: 0,
+        error: null,
+      },
+    });
     try {
-      await fallBackToCpuBackend(dataDir);
+      await fallBackToCpuBackend(dataDir, {
+        // Same hazard as the auto-update path above: without a deadline
+        // a stalled-open connection would pin the start on "starting"
+        // for the life of the process.
+        signal: AbortSignal.timeout(BACKEND_DOWNLOAD_TIMEOUT_MS),
+        onProgress: (percent: number, transferred: number, total: number) => {
+          this.bus.emit({
+            type: "local_models_pull_progress",
+            kind: "backend",
+            percent,
+            transferredBytes: transferred,
+            totalBytes: total,
+          });
+        },
+      });
+      this.bus.emit({ type: "local_models_pull_finished", kind: "backend" });
     } catch (dlErr) {
       const msg = dlErr instanceof Error ? dlErr.message : String(dlErr);
       const combined = `CPU backend fallback failed — ${msg} (original start failure: ${failureMsg})`;
+      this.bus.emit({ type: "local_models_pull_failed", kind: "backend", error: msg });
       this.bus.emit({ type: "local_models_daemon_error_set", message: combined });
       this.bus.emit({ type: "runtime_info", line: `local-llm: ${combined}` });
       return false;
