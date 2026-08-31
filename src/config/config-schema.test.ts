@@ -832,6 +832,71 @@ describe("parseUserConfigFile", () => {
     expect(parsed.localModels.managed.device).toBe("auto");
   });
 
+  it("defaults localModels.managed.tensorSplit to [] (multi-GPU split off)", () => {
+    const parsed = parseUserConfigFile({ version: USER_CONFIG_VERSION });
+    expect(parsed.localModels.managed.tensorSplit).toEqual([]);
+  });
+
+  it("migrates a v45 file by filling localModels.managed.tensorSplit=[]", () => {
+    const parsed = parseUserConfigFile({ version: 45 });
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(parsed.localModels.managed.tensorSplit).toEqual([]);
+  });
+
+  it("preserves an explicit localModels.managed.tensorSplit ratio list", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      localModels: { managed: { tensorSplit: [3, 1] } },
+    });
+    expect(parsed.localModels.managed.tensorSplit).toEqual([3, 1]);
+  });
+
+  it("accepts fractional ratios and zeros that skip a device", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      localModels: { managed: { tensorSplit: [0.6, 0, 0.4] } },
+    });
+    expect(parsed.localModels.managed.tensorSplit).toEqual([0.6, 0, 0.4]);
+  });
+
+  it("rejects a single-element tensorSplit (not a split)", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        localModels: { managed: { tensorSplit: [1] } },
+      }),
+    ).toThrow(/localModels.managed.tensorSplit/);
+  });
+
+  it("rejects negative, non-numeric, and non-finite tensorSplit ratios", () => {
+    for (const bad of [[1, -1], [1, "1"], [1, Number.NaN], [1, null]]) {
+      expect(() =>
+        parseUserConfigFile({
+          version: USER_CONFIG_VERSION,
+          localModels: { managed: { tensorSplit: bad } },
+        }),
+      ).toThrow(/localModels.managed.tensorSplit\[1\]/);
+    }
+  });
+
+  it("rejects an all-zero tensorSplit (offloads nowhere)", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        localModels: { managed: { tensorSplit: [0, 0] } },
+      }),
+    ).toThrow(/localModels.managed.tensorSplit/);
+  });
+
+  it("rejects a non-array tensorSplit", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        localModels: { managed: { tensorSplit: "3,1" } },
+      }),
+    ).toThrow(/localModels.managed.tensorSplit/);
+  });
+
   it("applies skills defaults when the section is absent", () => {
     const parsed = parseUserConfigFile({ version: USER_CONFIG_VERSION });
     expect(parsed.skills).toEqual(USER_CONFIG_DEFAULTS.skills);

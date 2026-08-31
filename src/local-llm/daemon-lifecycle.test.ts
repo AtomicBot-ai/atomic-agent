@@ -172,6 +172,52 @@ describe("buildLlamaServerArgs", () => {
     expect(args[args.indexOf("-ngl") + 1]).toBe("-1");
   });
 
+  it("appends --split-mode layer --tensor-split when tensorSplit is set", () => {
+    const args = buildLlamaServerArgs(
+      { ...baseOpts, tensorSplit: [3, 1] },
+      "/m.gguf",
+      "alias",
+    );
+    const modeIdx = args.indexOf("--split-mode");
+    expect(modeIdx).toBeGreaterThan(-1);
+    expect(args[modeIdx + 1]).toBe("layer");
+    const splitIdx = args.indexOf("--tensor-split");
+    expect(splitIdx).toBeGreaterThan(-1);
+    expect(args[splitIdx + 1]).toBe("3,1");
+    // No pinned device: llama.cpp must keep every GPU visible to split.
+    expect(args).not.toContain("--device");
+    expect(args[args.indexOf("-ngl") + 1]).toBe("-1");
+  });
+
+  it("keeps --device alongside the split for an explicit device list", () => {
+    const args = buildLlamaServerArgs(
+      { ...baseOpts, device: "Vulkan0,Vulkan1", tensorSplit: [0.6, 0.4] },
+      "/m.gguf",
+      "alias",
+    );
+    expect(args[args.indexOf("--device") + 1]).toBe("Vulkan0,Vulkan1");
+    expect(args[args.indexOf("--tensor-split") + 1]).toBe("0.6,0.4");
+  });
+
+  it("does NOT emit split flags when device is 'cpu' (nothing to split)", () => {
+    const args = buildLlamaServerArgs(
+      { ...baseOpts, device: "cpu", tensorSplit: [1, 1] },
+      "/m.gguf",
+      "alias",
+    );
+    expect(args).not.toContain("--split-mode");
+    expect(args).not.toContain("--tensor-split");
+    expect(args[args.indexOf("-ngl") + 1]).toBe("0");
+  });
+
+  it("does NOT emit split flags for an empty or absent tensorSplit", () => {
+    for (const opts of [baseOpts, { ...baseOpts, tensorSplit: [] }]) {
+      const args = buildLlamaServerArgs(opts, "/m.gguf", "alias");
+      expect(args).not.toContain("--split-mode");
+      expect(args).not.toContain("--tensor-split");
+    }
+  });
+
   it("emits both --chat-template-file and --mmproj together", () => {
     const args = buildLlamaServerArgs(
       {

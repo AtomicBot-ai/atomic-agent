@@ -987,6 +987,21 @@ export interface UserManagedLocalLlmConfig {
    */
   contextSize: number;
   /**
+   * Multi-GPU tensor split for the managed chat daemon. Empty (the
+   * default) keeps the single-device behavior: `device` auto-picks the
+   * best GPU and pins offload there. Two or more non-negative ratios
+   * (at least one positive, e.g. `[3, 1]` for a 75%/25% split) launch
+   * llama-server with `--split-mode layer --tensor-split <ratios>` so
+   * the model's layers spread across GPUs proportionally. With
+   * `device: "auto"` no single device is pinned — llama.cpp sees every
+   * GPU; an explicit comma-separated `device` list (e.g.
+   * `"Vulkan0,Vulkan1"`) restricts the split to those devices.
+   * `device: "cpu"` wins over this field and disables splitting. The
+   * embedding daemon is never split — it keeps pinning one device.
+   * Added in config v47; older files inherit `[]` transparently.
+   */
+  tensorSplit: number[];
+  /**
    * Stop the managed chat daemon when the last CLI session exits.
    * `true` (default) — closing the terminal frees the RAM/VRAM the
    * model was holding; a second live session keeps the daemon up (see
@@ -1638,7 +1653,13 @@ export interface UserConfigFile {
 // `"cpu"` here so auto-update stops reinstalling the broken GPU build.
 // Additive: older files transparently inherit `"auto"`, the exact
 // detection behaviour they already had.
-export const USER_CONFIG_VERSION = 46;
+// v47: localModels.managed gains `tensorSplit` (default `[]` = single-device
+// auto-pick, byte-identical launch args). Two or more ratios opt the managed
+// chat daemon into multi-GPU layer splitting (`--split-mode layer
+// --tensor-split <ratios>`). Older files transparently inherit `[]`. (Drafted
+// as a second v46, but v46 was already spent on `backendVariant` — the stamp
+// ships as v47 so the two additive changes keep distinct numbers.)
+export const USER_CONFIG_VERSION = 47;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -1773,6 +1794,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   43,
   44,
   45,
+  46,
   USER_CONFIG_VERSION,
 ];
 
@@ -1791,6 +1813,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       device: "auto",
       backendVariant: "auto",
       contextSize: 0,
+      tensorSplit: [],
     },
     embeddings: {
       enabled: false,
@@ -2540,6 +2563,50 @@ export function parseStringArrayOrNull(
   return result;
 }
 
+/**
+ * Parse `localModels.managed.tensorSplit` — the multi-GPU ratio list
+ * forwarded to llama-server as `--tensor-split`. `[]` / absent means
+ * "feature off" (single-device auto-pick). A non-empty list must name a
+ * ratio per GPU: at least two finite non-negative numbers with at least
+ * one positive (a lone ratio is not a split, and an all-zero list would
+ * make llama-server offload nowhere). Zeros are allowed inside the list
+ * to skip a device (e.g. `[1, 0, 1]` skips the middle GPU).
+ */
+export function parseTensorSplit(raw: unknown, field: string): number[] {
+  if (raw === undefined || raw === null) return [];
+  if (!Array.isArray(raw)) {
+    throw new ConfigValidationError(
+      field,
+      `expected number[], got ${JSON.stringify(raw)}`,
+    );
+  }
+  if (raw.length === 0) return [];
+  if (raw.length === 1) {
+    throw new ConfigValidationError(
+      field,
+      "expected at least two ratios (one per GPU) — a single ratio is not a split; use [] to disable",
+    );
+  }
+  const result: number[] = [];
+  for (let i = 0; i < raw.length; i++) {
+    const entry = raw[i];
+    if (typeof entry !== "number" || !Number.isFinite(entry) || entry < 0) {
+      throw new ConfigValidationError(
+        `${field}[${i}]`,
+        `expected finite non-negative number, got ${JSON.stringify(entry)}`,
+      );
+    }
+    result.push(entry);
+  }
+  if (!result.some((r) => r > 0)) {
+    throw new ConfigValidationError(
+      field,
+      "expected at least one positive ratio",
+    );
+  }
+  return result;
+}
+
 const SKILL_NAME_RE = /^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$/;
 
 /**
@@ -3159,6 +3226,10 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
       rawManaged.contextSize ??
         USER_CONFIG_DEFAULTS.localModels.managed.contextSize,
       "localModels.managed.contextSize",
+    ),
+    tensorSplit: parseTensorSplit(
+      rawManaged.tensorSplit,
+      "localModels.managed.tensorSplit",
     ),
   };
 

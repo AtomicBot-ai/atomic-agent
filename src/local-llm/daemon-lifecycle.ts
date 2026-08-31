@@ -61,6 +61,17 @@ export interface DaemonStartOptions {
    * `--ctx-size` exactly (clamped to the model's trained ceiling).
    */
   contextSize?: number;
+  /**
+   * Multi-GPU ratios (`localModels.managed.tensorSplit`). A non-empty
+   * list appends `--split-mode layer --tensor-split <r0,r1,…>` so the
+   * model's layers spread across GPUs proportionally, and switches the
+   * `auto` device resolution from "pin the best single GPU" to "leave
+   * every GPU visible" (see `resolveManagedDevice`). Ignored when the
+   * device resolves to `"cpu"` — nothing is offloaded, so there is
+   * nothing to split. Empty / undefined keeps the single-device launch
+   * byte-identical.
+   */
+  tensorSplit?: readonly number[];
 }
 
 /**
@@ -104,6 +115,9 @@ export function buildLlamaServerArgs(
   }
   if (opts.device && opts.device !== "cpu") {
     args.push("--device", opts.device);
+  }
+  if (opts.device !== "cpu" && opts.tensorSplit && opts.tensorSplit.length > 0) {
+    args.push("--split-mode", "layer", "--tensor-split", opts.tensorSplit.join(","));
   }
   if (opts.chatTemplateFile) {
     args.push("--chat-template-file", opts.chatTemplateFile);
@@ -316,7 +330,14 @@ export async function startDaemon(opts: DaemonStartOptions): Promise<{ pid: numb
     );
   }
 
-  const device = await resolveManagedDevice(binPath, opts.device);
+  // A configured tensor split flips `auto` device resolution to "leave
+  // every GPU visible" — pinning one `--device` would defeat the split.
+  // With no pinned device the context auto-sizer has no single VRAM
+  // figure to probe and degrades to its conservative no-VRAM default;
+  // operators splitting across GPUs can pin `contextSize` explicitly.
+  const device = await resolveManagedDevice(binPath, opts.device, {
+    multiGpu: (opts.tensorSplit?.length ?? 0) > 0,
+  });
   const contextSize = await resolveEffectiveContextSize(binPath, device, model, {
     configured: opts.contextSize ?? 0,
     hasMmproj: Boolean(opts.mmprojFile),
