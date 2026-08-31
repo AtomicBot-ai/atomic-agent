@@ -220,6 +220,7 @@ export function isPanelModalOpen(state: TuiState): boolean {
       state.localModelsPanel.embeddingOnboardingPrompt !== null ||
       state.providersPanel.chatModelPicker !== null ||
       state.llmPanel.externalUrlDraft !== null ||
+      state.llmPanel.externalCompatSteerUrl !== null ||
       state.llmPanel.stopLocalDaemonsPrompt !== null ||
       // Focused inline model filter is a text-entry surface: Tab/Ctrl+B
       // must not cycle the nav away mid-typing.

@@ -205,3 +205,113 @@ describe("external llama.cpp pane", () => {
     expect(next?.llmPanel.localCursor).toBe(state.llmPanel.localCursor);
   });
 });
+
+describe("openai-compat steer prompt", () => {
+  function steerState(url = "http://127.0.0.1:11434"): TuiState {
+    const state = externalState();
+    state.llmPanel = { ...state.llmPanel, externalCompatSteerUrl: url };
+    return state;
+  }
+
+  it("opens on the openai-compat verdict action and closes again", () => {
+    const opened = reduceLlmPanelAction(externalState(), {
+      type: "llm_external_compat_steer_opened",
+      url: "http://127.0.0.1:11434",
+    });
+    expect(opened?.llmPanel.externalCompatSteerUrl).toBe(
+      "http://127.0.0.1:11434",
+    );
+    const closed = reduceLlmPanelAction(opened!, {
+      type: "llm_external_compat_steer_closed",
+    });
+    expect(closed?.llmPanel.externalCompatSteerUrl).toBeNull();
+  });
+
+  it("y opens the provider wizard on the Ollama preset with the probed URL", () => {
+    const dispatched = press("y", emptyKey(), steerState());
+    expect(dispatched[0]).toEqual({ type: "llm_external_compat_steer_closed" });
+    expect(dispatched[1]).toEqual({ type: "llm_mode_set", mode: "cloud" });
+    expect(dispatched[2]).toMatchObject({
+      type: "providers_wizard_opened",
+      wizard: {
+        mode: "add",
+        kind: "openai-compatible",
+        presetId: "ollama",
+        baseUrlLine: "http://127.0.0.1:11434",
+        phase: "chat_model_line",
+      },
+    });
+  });
+
+  it("prefills the manual compat route for a non-Ollama server", () => {
+    const dispatched = press(
+      "",
+      emptyKey({ return: true }),
+      steerState("http://127.0.0.1:5001"),
+    );
+    expect(dispatched[2]).toMatchObject({
+      type: "providers_wizard_opened",
+      wizard: {
+        kind: "openai-compatible",
+        presetId: null,
+        baseUrlLine: "http://127.0.0.1:5001",
+        phase: "base_url",
+      },
+    });
+  });
+
+  it("n and Esc dismiss without opening the wizard", () => {
+    for (const [input, key] of [
+      ["n", emptyKey()],
+      ["", emptyKey({ escape: true })],
+    ] as const) {
+      const dispatched = press(input, key, steerState());
+      expect(dispatched).toEqual([{ type: "llm_external_compat_steer_closed" }]);
+    }
+  });
+
+  it("swallows panel hotkeys while the prompt is open", () => {
+    // Baseline first: without the prompt, `]` cycles the pane. The
+    // empty dispatch below then proves the steer swallowed the key —
+    // not that the fixture never wired it.
+    expect(press("]", emptyKey(), externalState())).toEqual([
+      { type: "llm_mode_set", mode: "fallback" },
+    ]);
+    expect(press("]", emptyKey(), steerState())).toEqual([]);
+  });
+
+  it("refuses to open while the URL editor is open", () => {
+    // The steer arrives asynchronously (the refused save's probe); by
+    // then Enter on the External row may have reopened the editor. The
+    // reducer skips the steer rather than stacking two modals — the
+    // editor's next save re-probes and re-offers it.
+    const editing = externalState();
+    editing.llmPanel = {
+      ...editing.llmPanel,
+      externalUrlDraft: "http://127.0.0.1:11434",
+    };
+    const next = reduceLlmPanelAction(editing, {
+      type: "llm_external_compat_steer_opened",
+      url: "http://127.0.0.1:11434",
+    });
+    expect(next?.llmPanel.externalCompatSteerUrl).toBeNull();
+  });
+
+  it("keeps the keyboard on the URL editor if both are somehow open", () => {
+    // Built directly (the reducer refuses to create this state) to pin
+    // the handler's precedence to the render order: the editor is the
+    // modal on screen, so it must be the one receiving keys — `y` types
+    // into the URL instead of invisibly accepting the hidden steer.
+    const state = steerState();
+    state.llmPanel = {
+      ...state.llmPanel,
+      externalUrlDraft: "http://127.0.0.1:808",
+    };
+    expect(press("8", emptyKey(), state)).toEqual([
+      { type: "llm_external_url_draft_set", value: "http://127.0.0.1:8088" },
+    ]);
+    expect(press("y", emptyKey(), state)).toEqual([
+      { type: "llm_external_url_draft_set", value: "http://127.0.0.1:808y" },
+    ]);
+  });
+});

@@ -886,6 +886,14 @@ function persistLlamaUrl(
       });
       if (!health.reachable) {
         report(describeLlamaHealthFailure(health, nextUrl));
+        // An openai-compat verdict has a real path forward — the same
+        // server saved as a cloud provider — so beyond naming it, open
+        // the steer prompt: `y` there deep-links into the provider
+        // wizard prefilled with this URL (Ollama URLs land on the
+        // Ollama preset) instead of leaving a dead-end refusal.
+        if (health.kind === "openai-compat") {
+          bus.emit({ type: "llm_external_compat_steer_opened", url: nextUrl });
+        }
         return;
       }
       persistUserLocalLlmUrl(nextUrl);
