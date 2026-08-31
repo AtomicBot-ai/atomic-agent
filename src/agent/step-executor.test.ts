@@ -1964,6 +1964,122 @@ describe("native_tools thinking-profile prompt hygiene (issue #283)", () => {
       text: "hi",
     });
   });
+
+  it("cross-transport fallover: a grammar-served stream (servedTransport stamp) keeps LIVE reasoning deltas under a native primary", async () => {
+    // The documented default hybrid chain: cloud native primary with a
+    // grammar local last resort (`appendLocal`). During an outage the
+    // sticky override serves every turn from the grammar link, whose
+    // GBNF output starts mid-`<think>` — the stream parser must adopt
+    // the SERVED transport (stamped on each chunk by the fallback seam)
+    // or live reasoning classification silently dies for the whole
+    // outage window.
+    const session = createEmptySessionState({ id: "s-283-e", workingDir: "/w" });
+    const raw =
+      'pondering deeply about it</think>\n[{"tool":"reply","args":{"text":"hi"}}]';
+    const finalCompletion = {
+      ...{
+        content: raw,
+        reasoningContent: "",
+        stop: true,
+        truncated: false,
+        timing: {
+          promptMs: 1,
+          predictedMs: 1,
+          promptTokens: 20,
+          predictedTokens: 5,
+        },
+        cacheHitTokens: 0,
+        slotId: 0,
+        modelId: "mock-local",
+      },
+      servedTransport: "grammar" as const,
+    };
+    const reasoningDeltas: string[] = [];
+    const reasoningEvents: string[] = [];
+    const outcome = await executeStep(
+      {
+        session,
+        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        stepIndex: 0,
+        signal: new AbortController().signal,
+        userMessage: "hi",
+      },
+      {
+        registry: makeReplyRegistry(),
+        slotManager: new SlotManager(2),
+        llmComplete: async () => finalCompletion,
+        llmCompleteStream: async function* () {
+          const stamp = { reasoningDelta: "", done: false, servedTransport: "grammar" as const };
+          yield { ...stamp, delta: "pondering deeply" };
+          yield { ...stamp, delta: " about it</think>\n" };
+          yield { ...stamp, delta: '[{"tool":"reply","args":{"text":"hi"}}]' };
+          return finalCompletion;
+        },
+        grammar: "",
+        profile: QWEN_THINK_PROFILE,
+        toolTransport: "native_tools",
+        toolCallAdapter: null,
+        supportsSlotAffinity: false,
+        onEvent: (ev) => {
+          if (ev.type === "reasoning_delta") reasoningDeltas.push(ev.text);
+          if (ev.type === "reasoning") reasoningEvents.push(ev.text);
+        },
+      },
+    );
+
+    // Live classification: the reasoning streamed as deltas while the
+    // model was still generating, not just post-hoc at parse time.
+    expect(reasoningDeltas.join("")).toBe("pondering deeply about it");
+    expect(reasoningEvents).toEqual(["pondering deeply about it"]);
+    expect(outcome.nextSession.turns.at(-1)).toMatchObject({
+      kind: "assistant_reply",
+      text: "hi",
+    });
+  });
+
+  it("cross-transport fallover: a native-served completion under a grammar primary is not swallowed as reasoning", async () => {
+    // The reverse (documented-unsupported) ordering: grammar primary,
+    // native-tools link below it. A chat completion never continues our
+    // text-completion prefill — prepending `<think>` here would swallow
+    // the clean reply whole as reasoning.
+    const session = createEmptySessionState({ id: "s-283-f", workingDir: "/w" });
+    const events: Array<{ type: string; text?: string }> = [];
+    const outcome = await executeStep(
+      {
+        session,
+        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        stepIndex: 0,
+        signal: new AbortController().signal,
+        userMessage: "hi",
+      },
+      {
+        registry: makeReplyRegistry(),
+        slotManager: new SlotManager(2),
+        llmComplete: async () => ({
+          ...mkCompletion("Just the answer."),
+          servedTransport: "native_tools" as const,
+        }),
+        grammar: "",
+        profile: QWEN_THINK_PROFILE,
+        toolTransport: "grammar",
+        toolCallAdapter: null,
+        supportsSlotAffinity: false,
+        onEvent: (ev) => {
+          events.push(ev as { type: string; text?: string });
+        },
+      },
+    );
+
+    expect(events.some((ev) => ev.type === "reasoning")).toBe(false);
+    expect(outcome.nextSession.turns.at(-1)).toMatchObject({
+      kind: "assistant_reply",
+      text: "Just the answer.",
+    });
+  });
 });
 
 describe("executeStep raw-network-failure classification", () => {

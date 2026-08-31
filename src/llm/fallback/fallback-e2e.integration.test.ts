@@ -25,6 +25,12 @@ import { OpenAiHttpError } from "../provider/openai/openai-http.js";
 import { ProviderFallbackChain } from "./provider-fallback-chain.js";
 import { DEFAULT_FALLBACK_TIMING } from "./fallback-config.js";
 import { runWithFallback } from "./run-with-fallback.js";
+import { QWEN_THINK_PROFILE } from "../model-profile.js";
+import {
+  createFallbackCompleter,
+  createFallbackStreamer,
+  type FallbackSeamDeps,
+} from "../../runtime/llm-fallback-seam.js";
 
 const TOOLS: ToolDescriptor[] = [
   {
@@ -297,5 +303,172 @@ describe("provider fallback chain end-to-end through the agent loop", () => {
 
     expect(result.reason).toBe("finish");
     expect(events.some((e) => e.type === "loop_failed")).toBe(false);
+  });
+
+  // --- think-tag profile fallover (issue #283 review) -------------------
+  // The documented default hybrid chain (`appendLocal`): a native-tools
+  // cloud primary with a grammar llama-server last resort, on a
+  // think-tag profile. These cases run the REAL bootstrap seams
+  // (`createFallbackCompleter` / `createFallbackStreamer`) so the
+  // per-chunk `servedTransport` stamp and the per-link prompt
+  // substitution are pinned end-to-end, not re-implemented inline.
+
+  function thinkSeamDeps(providers: Map<string, LlmProvider>): FallbackSeamDeps {
+    const chain = new ProviderFallbackChain({
+      resolve: () => ({
+        chain: ["cloud", "local"],
+        timing: DEFAULT_FALLBACK_TIMING,
+      }),
+    });
+    return {
+      fallbackChain: chain,
+      resolveSlice: (providerId) => {
+        const provider = providers.get(providerId)!;
+        return { provider, transport: provider.capabilities.toolTransport };
+      },
+      recordUnaryUsage: () => {},
+      recordStreamUsage: () => {},
+    };
+  }
+
+  function thinkFinish(): CompletionResult {
+    // Grammar output starts mid-think: the GBNF prelude root emits
+    // `body "</think>"` without the open tag.
+    return {
+      content:
+        'deliberating about the wrap-up</think>\n{"tool":"finish","args":{"summary":"done"}}',
+      reasoningContent: "",
+      stop: true,
+      truncated: false,
+      timing: { promptMs: 1, predictedMs: 1, promptTokens: 10, predictedTokens: 5 },
+      cacheHitTokens: 0,
+      slotId: 0,
+      modelId: "local-model",
+    };
+  }
+
+  it("think profile, streaming: a grammar-served fallover stream keeps LIVE reasoning deltas and the prefill-carrying prompt shape", async () => {
+    const cloudPrompts: string[] = [];
+    const localPrompts: string[] = [];
+    const primary = fakeProvider("cloud", "native_tools", async (request) => {
+      cloudPrompts.push(request.prompt);
+      throw new OpenAiHttpError("rate limited", 429, "http://cloud", false, null, "cloud");
+    });
+    const local: LlmProvider = {
+      ...fakeProvider("local", "grammar", async () => thinkFinish()),
+      // Stream in several chunks so live classification is observable:
+      // the reasoning text must surface as deltas BEFORE the stream ends.
+      async *completeStream(request) {
+        localPrompts.push(request.prompt);
+        yield { delta: "deliberating about", reasoningDelta: "", done: false };
+        yield { delta: " the wrap-up</think>\n", reasoningDelta: "", done: false };
+        yield {
+          delta: '{"tool":"finish","args":{"summary":"done"}}',
+          reasoningDelta: "",
+          done: true,
+        };
+        return thinkFinish();
+      },
+    };
+    const providers = new Map<string, LlmProvider>([
+      ["cloud", primary],
+      ["local", local],
+    ]);
+    const seamDeps = thinkSeamDeps(providers);
+
+    const events: AgentLoopEvent[] = [];
+    const reasoningDeltas: string[] = [];
+    const loop = new AgentLoop({
+      registry: buildDefaultToolRegistry(),
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: createFallbackCompleter(seamDeps),
+      llmCompleteStream: createFallbackStreamer(seamDeps),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      profile: QWEN_THINK_PROFILE,
+      toolTransport: "native_tools",
+      toolCallAdapter: openAiToolCallAdapter,
+      supportsSlotAffinity: false,
+      onEvent: (e) => {
+        events.push(e);
+        if (e.type === "llm_event" && e.event.type === "reasoning_delta") {
+          reasoningDeltas.push(e.event.text);
+        }
+      },
+    });
+
+    const session = createEmptySessionState({ id: "s-e2e-think-stream", workingDir });
+    const result = await loop.runTurn(session, {
+      userMessage: "wrap up",
+      maxSteps: 3,
+      signal: new AbortController().signal,
+    });
+
+    expect(result.reason).toBe("finish");
+    expect(events.some((e) => e.type === "loop_failed")).toBe(false);
+    // Live reasoning classification survives the cross-transport
+    // fallover: the grammar-served stream starts mid-`<think>`, and the
+    // parser adopted the served transport from the chunk stamp.
+    expect(reasoningDeltas.join("")).toBe("deliberating about the wrap-up");
+    // Per-link prompt shapes: the chat primary got the prefill-suppressed
+    // prompt (issue #283), the grammar link got the legacy
+    // prefill-carrying variant its template + GBNF prelude expect.
+    expect(cloudPrompts).toHaveLength(1);
+    expect(cloudPrompts[0]!.trimEnd().endsWith("<think>")).toBe(false);
+    expect(localPrompts).toHaveLength(1);
+    expect(localPrompts[0]!.trimEnd().endsWith("<think>")).toBe(true);
+  });
+
+  it("think profile, unary: a grammar-served fallover completion still surfaces its reasoning and reaches finish", async () => {
+    const localPrompts: string[] = [];
+    const primary = fakeProvider("cloud", "native_tools", async () => {
+      throw new OpenAiHttpError("rate limited", 429, "http://cloud", false, null, "cloud");
+    });
+    const local = fakeProvider("local", "grammar", async (request) => {
+      localPrompts.push(request.prompt);
+      return thinkFinish();
+    });
+    const providers = new Map<string, LlmProvider>([
+      ["cloud", primary],
+      ["local", local],
+    ]);
+    const seamDeps = thinkSeamDeps(providers);
+
+    const events: AgentLoopEvent[] = [];
+    const reasoningEvents: string[] = [];
+    const loop = new AgentLoop({
+      registry: buildDefaultToolRegistry(),
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: createFallbackCompleter(seamDeps),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      profile: QWEN_THINK_PROFILE,
+      toolTransport: "native_tools",
+      toolCallAdapter: openAiToolCallAdapter,
+      supportsSlotAffinity: false,
+      onEvent: (e) => {
+        events.push(e);
+        if (e.type === "llm_event" && e.event.type === "reasoning") {
+          reasoningEvents.push(e.event.text);
+        }
+      },
+    });
+
+    const session = createEmptySessionState({ id: "s-e2e-think-unary", workingDir });
+    const result = await loop.runTurn(session, {
+      userMessage: "wrap up",
+      maxSteps: 3,
+      signal: new AbortController().signal,
+    });
+
+    expect(result.reason).toBe("finish");
+    expect(events.some((e) => e.type === "loop_failed")).toBe(false);
+    expect(reasoningEvents).toEqual(["deliberating about the wrap-up"]);
+    expect(localPrompts).toHaveLength(1);
+    expect(localPrompts[0]!.trimEnd().endsWith("<think>")).toBe(true);
   });
 });

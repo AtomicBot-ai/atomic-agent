@@ -74,6 +74,17 @@ export function checkProfilePromptAligned(
         "prefill-suppressed prompt must not end with a reasoning prelude",
       );
     }
+    // Turn-framed profiles (Gemma 4) leak differently: their template
+    // artifact at the generation point is the model-turn opener, not a
+    // reasoning open tag. A suppressed prompt must carry neither.
+    const leakedFraming = getKnownTurnFramingTails().find((tail) =>
+      trimmed.endsWith(tail),
+    );
+    if (leakedFraming) {
+      violations.push(
+        "prefill-suppressed prompt must not end with a model-turn opener",
+      );
+    }
     return violations;
   }
 
@@ -104,4 +115,9 @@ function getKnownReasoningOpenTags(): string[] {
     QWEN_THINK_PROFILE.reasoningOpenTag.trimEnd(),
     GEMMA4_THINK_PROFILE.reasoningOpenTag.trimEnd(),
   ];
+}
+
+function getKnownTurnFramingTails(): string[] {
+  const framing = getReasoningTurnFraming(GEMMA4_THINK_PROFILE);
+  return framing ? [framing.assistantOpen.trimEnd()] : [];
 }
