@@ -1,6 +1,7 @@
 import type { Key } from "ink";
 import { getCachedOpenAiCompatModels } from "../../llm/provider/openai/fetch-openai-compat-models.js";
 import { getCachedGeminiModels } from "../../llm/provider/gemini/fetch-gemini-models.js";
+import { nextModelPricingFilter } from "../../llm/provider/model-pricing-filter.js";
 import { findProviderPreset } from "./provider-presets.js";
 import {
   handleWizardSearchKey,
@@ -199,6 +200,22 @@ export function handleProvidersWizardKey(
 
   if (!isListPhase(wizard.phase)) {
     return { handled: false };
+  }
+
+  // `p` cycles the price facet of the curated chat-model list: all →
+  // free → paid → all. Only reachable while the search box is closed —
+  // open, `handleWizardSearchKey` above consumed every printable key as
+  // query text, `p` included. Handled before the empty-list bailout so
+  // a facet that matched nothing can still be cycled away from.
+  if (wizard.phase === "pick_chat_model" && input === "p" && !key.ctrl && !key.meta) {
+    return {
+      handled: true,
+      wizard: {
+        ...wizard,
+        pricingFilter: nextModelPricingFilter(wizard.pricingFilter),
+        cursor: 0,
+      },
+    };
   }
 
   // One list for the whole screen: the render highlights row `cursor` of
