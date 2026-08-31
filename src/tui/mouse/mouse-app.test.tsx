@@ -153,6 +153,8 @@ function mountApp(): {
   deleted: string[];
   /** Clicks the Tasks header's `+ new` chip delivered to the host. */
   taskNews: number[];
+  /** Provider ids `/model` asked the orchestrator to ensure a catalog for. */
+  modelEnsures: Array<string | null>;
   unmount: () => void;
 } {
   const bus = makeTuiEventBus();
@@ -160,6 +162,7 @@ function mountApp(): {
   const deleted: string[] = [];
   const copied: string[] = [];
   const taskNews: number[] = [];
+  const modelEnsures: Array<string | null> = [];
   const clipboard = {
     copy: async (text: string) => {
       copied.push(text);
@@ -175,6 +178,8 @@ function mountApp(): {
         ...noopCallbacks(),
         onSessionDeleteConfirmed: (sessionId) => deleted.push(sessionId),
         onTaskNewRequested: () => taskNews.push(taskNews.length),
+        onProvidersInlineModelsEnsureRequested: (providerId) =>
+          modelEnsures.push(providerId),
       }}
       mouse={mouse}
     />
@@ -186,6 +191,7 @@ function mountApp(): {
     stdin,
     deleted,
     taskNews,
+    modelEnsures,
     copied,
     seedSessions: () => {
       bus.emit({
@@ -572,6 +578,35 @@ describe("TuiApp mouse", () => {
     expect(app.frame()).toContain("❯ /sessions");
     // Seeded, not run: no palette over the buffer we just filled.
     expect(app.frame()).not.toContain("/dump");
+    app.unmount();
+  });
+
+  it("runs the clicked slash-palette completion, not the typed prefix", async () => {
+    // "/mod" lists /mode (highlighted) and /model. Clicking /model must
+    // run /model — not submit the raw buffer, which is no command at all
+    // ("unknown command: /mod").
+    const app = mountApp();
+    await waitUntil(() => app.frame().includes("R U N"), "the Run screen");
+    app.stdin.write("/mod");
+    await waitUntil(
+      () => app.frame().includes("open chat model picker"),
+      "the /model row in the palette",
+    );
+    await delay(150);
+    // The /model row is not the highlighted one, so the first click only
+    // selects it; `clickUntil` keeps clicking until the second one
+    // activates and the command reaches the orchestrator callback.
+    await clickUntil(
+      app.mouse,
+      () => {
+        const at = locate(app.frame(), "open chat model picker");
+        return { x: at.x + 2, y: at.y };
+      },
+      () => app.modelEnsures.length > 0,
+      "click the /model completion",
+    );
+    expect(app.modelEnsures).toEqual([null]);
+    expect(app.frame()).not.toContain("unknown command");
     app.unmount();
   });
 

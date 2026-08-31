@@ -5,7 +5,7 @@ import type { SlashCommandDef } from "../commands/slash-commands.js";
 import { theme } from "../theme/theme.js";
 import { MouseListRow } from "../mouse/mouse-list-row.js";
 import { MOUSE_LAYER_MODAL } from "../mouse/mouse-registry.js";
-import { handleEditorSubmit } from "../submit-handler.js";
+import { runSlashCommand } from "../submit-handler.js";
 
 interface SlashPaletteProps {
   query: string;
@@ -65,10 +65,14 @@ export function SlashPalette(props: SlashPaletteProps): ReactElement | null {
             })
           }
           onActivate={(mouse) => {
-            const state = mouse.getState();
-            handleEditorSubmit(
-              state.inputValue,
-              state,
+            // The clicked row IS the choice: run its completion, the same
+            // way the palette-highlight branch in `handleEditorSubmit`
+            // runs the highlighted row on Enter. Submitting the raw
+            // buffer here would run the typed prefix instead, and a
+            // partial like "/mod" errors as an unknown command.
+            runSlashCommand(
+              `/${cmd.name}`,
+              mouse.getState(),
               mouse.dispatch,
               mouse.callbacks,
             );
