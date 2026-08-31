@@ -115,6 +115,39 @@ SMOKE screenshot=…/atomic-desktop-smoke.png failures=0
 It exits non-zero on any failure and always writes a screenshot, so it works as
 a CI gate. Renderer console errors are forwarded to stderr.
 
+## Building a testable .dmg
+
+```bash
+cd desktop
+npm install
+npm run dist
+```
+
+Output: `desktop/release/Atomic Agent-<version>-arm64.dmg` (Apple Silicon,
+about 121 MB).
+
+The build is **unsigned and un-notarised** — `mac.identity` is explicitly
+`null` so electron-builder does not pick up a stray keychain identity and fail
+half way. A DMG you build yourself carries no quarantine flag and opens
+normally. One you download or receive over AirDrop does, and macOS will refuse
+it; clear the flag or right-click → Open:
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/Atomic Agent.app"
+```
+
+The app does **not** bundle the agent. It looks for `atag` (or
+`atomic-agent`) in `~/.local/bin`, `/usr/local/bin` and `/opt/homebrew/bin`,
+or wherever `ATOMIC_AGENT_BIN` points. Without one the window still opens and
+says so instead of failing silently.
+
+The packaged app answers `--smoke` exactly like the dev build, which is how a
+release candidate gets checked before it goes anywhere:
+
+```bash
+"/Applications/Atomic Agent.app/Contents/MacOS/Atomic Agent" --smoke
+```
+
 ## Layout
 
 ```
