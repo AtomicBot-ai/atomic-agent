@@ -263,10 +263,11 @@ export async function tuiCommand(args: string[]): Promise<number> {
   // clicking panels, rows, tabs and the prompt work at all — the app
   // cannot see a click the terminal never reports. The cost is real and
   // was the reason this was previously left off: while reporting is on,
-  // the terminal stops doing its own drag-to-select. Shift+drag is the
-  // escape hatch — most terminals bypass reporting natively for a
-  // shifted drag, and `selectionPassthrough` below covers the ones that
-  // do not (Apple Terminal) by suspending reporting for a short window.
+  // the terminal stops doing its own drag-to-select. The escape hatch is
+  // `selectionPassthrough` below: a plain drag that starts on dead
+  // content — or a shift-/alt-modified press on a terminal without a
+  // native bypass (Apple Terminal) — suspends reporting for a short
+  // window so the terminal's own selection takes over.
   // Reporting also stays a toggle — `tui.mouse` in the config,
   // `--mouse` / `--no-mouse` per run, and `/mouse on|off` live. With
   // reporting off, behaviour is exactly what it was before:
@@ -283,10 +284,12 @@ export async function tuiCommand(args: string[]): Promise<number> {
   let mouseTracking: MouseTrackingController | null = mouseEnabled
     ? enableMouseTracking({ stdout: process.stdout })
     : null;
-  // Shift+drag selection: a shift-modified press means the operator is
-  // reaching for the terminal's own drag-to-select, not a click — see
-  // `selection-passthrough.ts` for why that report only ever arrives on
-  // a terminal without a native Shift-bypass. The `tracking` getter
+  // Text-selection passthrough: a shift- or alt-modified press means
+  // the operator is reaching for the terminal's own drag-to-select, not
+  // a click — see `selection-passthrough.ts` for why that report only
+  // ever arrives on a terminal without a native bypass. The same window
+  // also opens on a plain drag over dead content, via
+  // `onSelectionDragIntent` below. The `tracking` getter
   // reads the live `mouseTracking` binding because `/mouse on|off`
   // replaces the controller underneath the window; a captured one would
   // resume a controller nobody is using any more.
@@ -617,6 +620,12 @@ export async function tuiCommand(args: string[]): Promise<number> {
           restartRequested = true;
         },
         onMouseSupportRequested: setMouseEnabled,
+        // A drag that started on dead content (no target claimed the
+        // press) — the terminal-agnostic selection trigger. Same
+        // window, same timer, same auto-resume as the modifier path;
+        // only the notice differs, because THIS gesture is already
+        // lost to reporting and the operator has to drag again.
+        onSelectionDragIntent: () => selectionPassthrough.beginWindow("drag"),
       },
       // Unconditional on purpose. `mouseEnabled` is a startup-time
       // value, but `/mouse on` flips reporting *later* and cannot

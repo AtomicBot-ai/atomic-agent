@@ -127,7 +127,12 @@ export class MouseTargetRegistry {
     this.captured = null;
   }
 
-  /** Offers `event` to the matching targets; `true` when one claimed it. */
+  /**
+   * Offers `event` to the matching targets; `true` when one claimed it
+   * or a captured pointer took it. `false` means the event landed on
+   * dead content — the signal `drag-intent.ts` builds selection
+   * detection on.
+   */
   dispatch(event: TuiMouseEvent): boolean {
     const captured = this.captured;
     if (captured) {
@@ -138,12 +143,17 @@ export class MouseTargetRegistry {
       if (!rect || captured.layer < this.minLayer) {
         this.captured = null;
       } else {
-        return captured.handler({
+        captured.handler({
           event,
           localX: event.x - rect.left,
           localY: event.y - rect.top,
           rect,
         });
+        // Consumed regardless of what the handler said: while captured
+        // the event was routed exclusively and never offered to anyone
+        // else, so from the pipeline's point of view a live target took
+        // it — a drag mid-capture must not read as a selection intent.
+        return true;
       }
     }
     const hits: Array<{ target: RegisteredTarget; rect: MouseRect }> = [];

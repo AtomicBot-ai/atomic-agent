@@ -20,7 +20,12 @@ export {
   type SelectionPassthrough,
   type SelectionPassthroughOptions,
   type SelectionSuspendable,
+  type SelectionTrigger,
 } from "./selection-passthrough.js";
+export {
+  createDragIntentTracker,
+  type DragIntentTracker,
+} from "./drag-intent.js";
 export { createMouseStdin, type MouseStdin } from "./mouse-stdin.js";
 export {
   makeMouseSource,

@@ -95,6 +95,11 @@ function sgrPress(col: number, row: number): Buffer {
   return Buffer.from(`\u001B[<0;${col};${row}M`);
 }
 
+/** SGR 1006 alt-modified left press — the other modifier trigger. */
+function sgrAltPress(col: number, row: number): Buffer {
+  return Buffer.from(`\u001B[<8;${col};${row}M`);
+}
+
 /** SGR 1006 shift-modified left press — the selection-window trigger. */
 function sgrShiftPress(col: number, row: number): Buffer {
   return Buffer.from(`\u001B[<4;${col};${row}M`);
@@ -117,6 +122,13 @@ function makeFakeStdin(): NodeJS.ReadStream {
 interface Booted {
   readonly mouse: MouseSource | undefined;
   readonly setMouseEnabled: (next: boolean | null) => void;
+  /**
+   * The `onSelectionDragIntent` callback as `TuiApp` received it. The
+   * mounted tree is mocked out here, so the drag-intent tracker that
+   * would normally fire it is not running — tests invoke it directly,
+   * exactly as the tracker does on an unclaimed drag.
+   */
+  readonly selectionDragIntent: () => void;
   readonly seen: TuiMouseEvent[];
   /** Chat-bound `system_message` texts, in emit order. */
   readonly messages: string[];
@@ -148,7 +160,10 @@ async function bootTui(args: string[] = []): Promise<Booted> {
   const captured = props as {
     mouse?: MouseSource;
     bus?: { subscribe(listener: (action: TuiAction) => void): () => void };
-    callbacks: { onMouseSupportRequested?: (next: boolean | null) => void };
+    callbacks: {
+      onMouseSupportRequested?: (next: boolean | null) => void;
+      onSelectionDragIntent?: () => void;
+    };
   };
 
   const seen: TuiMouseEvent[] = [];
@@ -159,10 +174,13 @@ async function bootTui(args: string[] = []): Promise<Booted> {
   });
   const setMouseEnabled = captured.callbacks.onMouseSupportRequested;
   if (!setMouseEnabled) throw new Error("onMouseSupportRequested not wired");
+  const selectionDragIntent = captured.callbacks.onSelectionDragIntent;
+  if (!selectionDragIntent) throw new Error("onSelectionDragIntent not wired");
 
   return {
     mouse: captured.mouse,
     setMouseEnabled,
+    selectionDragIntent,
     seen,
     messages,
     stop: async () => {
@@ -332,6 +350,43 @@ describe("tuiCommand mouse wiring", () => {
 
     stdin.emit("data", sgrPress(5, 3));
     expect(app.seen).toHaveLength(0);
+    await app.stop();
+  });
+
+  it("an alt-modified press opens the selection window instead of clicking", async () => {
+    writeMouseConfig(true);
+    const app = await bootTui();
+
+    stdin.emit("data", sgrAltPress(5, 3));
+    expect(app.seen).toHaveLength(0);
+    expect(app.messages.some((m) => m.includes("drag to select"))).toBe(true);
+    await app.stop();
+  });
+
+  it("a drag intent suspends, says to drag again, and auto-resumes", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    writeMouseConfig(true);
+    const app = await bootTui();
+
+    // The unclaimed drag was detected in the tree; the wiring under
+    // test is what happens next.
+    app.selectionDragIntent();
+    expect(
+      app.messages.some((m) => m.includes("drag again to select")),
+    ).toBe(true);
+
+    // A report already in flight when the suspend landed is swallowed
+    // — it also never reaches the tree, so the drag-intent tracker
+    // cannot re-fire off the stale remainder of the gesture.
+    stdin.emit("data", sgrPress(5, 3));
+    expect(app.seen).toHaveLength(0);
+
+    await vi.advanceTimersByTimeAsync(DEFAULT_SELECTION_WINDOW_MS);
+    expect(trackingCalls.resumed).toBe(1);
+    expect(app.messages.some((m) => m.includes("mouse back on"))).toBe(true);
+
+    stdin.emit("data", sgrPress(5, 3));
+    expect(app.seen).toHaveLength(1);
     await app.stop();
   });
 });
