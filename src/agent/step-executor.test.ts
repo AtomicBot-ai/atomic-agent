@@ -514,6 +514,107 @@ describe("executeStep batch handling", () => {
     expect(events.some((event) => event.type === "parse_retry")).toBe(true);
   });
 
+  it("native_tools: the repair prompt mandates native function-calling, never a corrected JSON array", async () => {
+    // The repair replays with the SAME llmParams as the failed attempt —
+    // under `native_tools` that request carries the OpenAI `tools`
+    // payload and a stable prefix that forbids text-JSON emission.
+    // Appending the grammar repair mandate ("Emit a corrected JSON array
+    // only", "Use a length-1 array") onto that prefix re-creates the
+    // issue #285 dual mandate at the one retry a failing model gets
+    // before GrammarError kills the step.
+    const registry = makeRegistry();
+    const session = createEmptySessionState({
+      id: "s-native-repair-prompt",
+      workingDir: "/w",
+    });
+    const prompts: string[] = [];
+    let llmCalls = 0;
+
+    const outcome = await executeStep(
+      {
+        session,
+        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        stepIndex: 0,
+        signal: new AbortController().signal,
+        userMessage: "привет",
+      },
+      {
+        registry,
+        slotManager: new SlotManager(2),
+        async llmComplete({ prompt }) {
+          prompts.push(prompt);
+          llmCalls += 1;
+          if (llmCalls === 1) {
+            // Reasoning-only completion: unparseable, routes through the
+            // one-shot repair (the exact path issue #285 redirected).
+            return {
+              content: "",
+              reasoningContent: "Let me think about what to do here...",
+              stop: true,
+              truncated: false,
+              timing: {
+                promptMs: 1,
+                predictedMs: 1,
+                promptTokens: 20,
+                predictedTokens: 5,
+              },
+              cacheHitTokens: 0,
+              slotId: -1,
+              modelId: "openai/gpt-5.5",
+            };
+          }
+          return {
+            content: "",
+            reasoningContent: "",
+            stop: true,
+            truncated: false,
+            timing: {
+              promptMs: 1,
+              predictedMs: 1,
+              promptTokens: 20,
+              predictedTokens: 5,
+            },
+            cacheHitTokens: 0,
+            slotId: -1,
+            modelId: "openai/gpt-5.5",
+            toolCalls: [
+              {
+                id: "call-repaired",
+                type: "function",
+                function: {
+                  name: "reply",
+                  arguments: JSON.stringify({ text: "готово" }),
+                },
+              },
+            ],
+          };
+        },
+        grammar: "",
+        profile: PLAIN_INSTRUCT_PROFILE,
+        toolTransport: "native_tools",
+        toolCallAdapter: null,
+        supportsSlotAffinity: false,
+      },
+    );
+
+    expect(outcome.terminal).toBe("turn");
+    expect(prompts).toHaveLength(2);
+    const repairPrompt = prompts[1]!;
+    expect(repairPrompt).toContain("### tool-call-repair");
+    // Native corrective mandate present...
+    expect(repairPrompt).toContain("native function-calling interface");
+    expect(repairPrompt).toContain("do NOT write tool-call JSON as text");
+    // ...and no trace of the text-array mandate anywhere in the repair
+    // prompt (stable prefix included).
+    expect(repairPrompt).not.toContain("Emit a corrected JSON array");
+    expect(repairPrompt).not.toContain("Use a length-1 array");
+    expect(repairPrompt).not.toContain("Emit a JSON ARRAY of tool calls now");
+    expect(repairPrompt).not.toContain("length-1 array");
+    expect(repairPrompt).not.toContain("One tool-call array per step");
+  });
+
   it("repairs a native-tools reply call with empty args before execution", async () => {
     const registry = makeRegistry();
     const session = createEmptySessionState({

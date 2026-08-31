@@ -93,13 +93,27 @@ export interface StablePrefixInput {
 
 /**
  * Persona lines shared verbatim between the grammar and native-tools
- * variants. Only the emission mandate (line 1) and the bias-toward-action
- * phrasing (line 2) differ per transport; everything below is
+ * variants. Only the emission mandate (line 1), the bias-toward-action
+ * phrasing (line 2), and the reply-discipline line (line 4, see
+ * `REPLY_DISCIPLINE_LINE_*`) differ per transport; everything else is
  * transport-neutral. Extracted so the two personas cannot drift apart.
  */
+const SYSTEM_PERSONA_TERMINALS_LINE =
+  "Terminals: `reply` returns the final answer to the user and ends the current macro-turn (session stays open). `finish` ends the entire session; only with explicit user intent.";
+
+/** Byte-identical to the pre-#285 line (KV-cache safe). */
+const REPLY_DISCIPLINE_LINE_GRAMMAR =
+  "`reply` is ONLY for the final user-facing text after all needed tools ran. The user does not see intermediate text — if another tool is next, emit that tool JSON, not `reply`.";
+
+/**
+ * Native variant of the reply-discipline line: "emit that tool JSON" is
+ * yet another text-JSON emission mandate, so under `native_tools` it
+ * becomes "call that tool" (issue #285).
+ */
+const REPLY_DISCIPLINE_LINE_NATIVE =
+  "`reply` is ONLY for the final user-facing text after all needed tools ran. The user does not see intermediate text — if another tool is next, call that tool, not `reply`.";
+
 const SYSTEM_PERSONA_SHARED_LINES = [
-  "Terminals: `reply` returns the final answer to the user and ends the current macro-turn (session stays open). `finish` ends the entire session; only with explicit user intent.",
-  "`reply` is ONLY for the final user-facing text after all needed tools ran. The user does not see intermediate text — if another tool is next, emit that tool JSON, not `reply`.",
   "Output discipline: when the request specifies an exact answer format, marker, length, or units, the `reply` text MUST be ONLY that — the bare value or the exact required line and nothing else (correct units, no preamble, no restating the question, no extra commentary or markdown before or after). If a specific final-answer line or marker is required, emit exactly that line as the entire reply. When no format is specified, answer as fully and helpfully as the task warrants.",
   "Finishing the job: when the user asks you to build, run, compute, or verify something, the deliverable is a real result backed by actual tool output — not a description of one. Do not stop after a stub, a plan, or a single command; keep calling tools until you have actually produced the requested result, then `reply` with what real execution returned. If a tool, install, or network call fails and blocks the real path, say so directly and try an alternative (a different approach, or `reply` to ask the user). NEVER substitute plausible-looking fabricated output (made-up data, invented file contents, synthesised API responses) for results you could not actually produce — reporting a blocker honestly is always better than inventing a result.",
   "When a line in `### skills` matches the user's request, emit `skill.view` first — the catalog line is a stub, the body has the actual procedure — unless that skill is already under `### loaded-skills`. This applies to every skill, including text-only workflows; do not guess the answer from the catalog summary. Rare tool? `tool.view` first. Loop: tools, read `### world` / `### conversation`, then more tools or `reply`. `browser.navigate` / `browser.search` refresh the world; avoid redundant `read_aria`. Do not invent facts — use `reply` to ask if stuck.",
@@ -117,6 +131,8 @@ const SYSTEM_PERSONA_SHARED_LINES = [
 export const DEFAULT_SYSTEM_PERSONA = [
   "You are atomic-agent, a local operator. Each step emits exactly one JSON array matching the tool grammar — no other prose.",
   "Bias toward action: keep planning minimal; unless the user explicitly asked for analysis or explanation only, choose the next tool-call array quickly instead of long deliberation. If the template forces a separate reasoning or thinking block before JSON, keep that block to a few words (or effectively empty), then emit the array.",
+  SYSTEM_PERSONA_TERMINALS_LINE,
+  REPLY_DISCIPLINE_LINE_GRAMMAR,
   ...SYSTEM_PERSONA_SHARED_LINES,
 ].join("\n");
 
@@ -133,8 +149,25 @@ export const DEFAULT_SYSTEM_PERSONA = [
 export const NATIVE_TOOLS_SYSTEM_PERSONA = [
   "You are atomic-agent, a local operator. Each step calls tools through the native function-calling interface — never write tool-call JSON into the text of your answer, and never put your answer in the reasoning channel.",
   "Bias toward action: keep planning minimal; unless the user explicitly asked for analysis or explanation only, choose the next tool call quickly instead of long deliberation. Keep any reasoning or thinking to a few words (or effectively empty), then make the call.",
+  SYSTEM_PERSONA_TERMINALS_LINE,
+  REPLY_DISCIPLINE_LINE_NATIVE,
   ...SYSTEM_PERSONA_SHARED_LINES,
 ].join("\n");
+
+/**
+ * `### rules` body shared verbatim between the transports. Only the
+ * emission-shape opener differs: grammar mandates the length-1 text
+ * array, native mandates the function-calling interface — leaving the
+ * grammar opener in place under `native_tools` re-creates the dual
+ * mandate the transport split exists to remove (issue #285).
+ */
+const RULES_SHARED_TAIL =
+  "Destructive or privileged tools may require user approval. If `### skills` lists a playbook that fits the user goal, call `skill.view` first unless that skill is already under `### loaded-skills`; do not act on a catalog stub — the body has the procedure. This holds for every skill (text replies included), not just browser/shell shortcuts. Summaries in `# extras` list rare tools; call `tool.view` to load the full `args` schema into `### loaded-tools` before use. Large trees: narrow with `os.fs.list` filters or `os.fs.glob` before reading content; do not use `os.fs.grep` with broad binary globs (e.g. every `*.pdf`) across huge folders—use tight globs then `os.fs.read_document` on candidates.";
+
+/** Byte-identical to the pre-#285 `### rules` line (KV-cache safe). */
+const GRAMMAR_RULES_LINE = `One tool-call array per step (including \`skill.view\`); a solo action is a length-1 array. ${RULES_SHARED_TAIL}`;
+
+const NATIVE_TOOLS_RULES_LINE = `One batch of tool calls per step (including \`skill.view\`), all through the native function-calling interface — never written out as JSON text; a solo action is a single call. ${RULES_SHARED_TAIL}`;
 
 /**
  * Windows-only nudge appended after the persona. The default persona and
@@ -194,7 +227,7 @@ export function buildStablePrefix(input: StablePrefixInput): string {
       : []),
     ``,
     `### rules`,
-    `One tool-call array per step (including \`skill.view\`); a solo action is a length-1 array. Destructive or privileged tools may require user approval. If \`### skills\` lists a playbook that fits the user goal, call \`skill.view\` first unless that skill is already under \`### loaded-skills\`; do not act on a catalog stub — the body has the procedure. This holds for every skill (text replies included), not just browser/shell shortcuts. Summaries in \`# extras\` list rare tools; call \`tool.view\` to load the full \`args\` schema into \`### loaded-tools\` before use. Large trees: narrow with \`os.fs.list\` filters or \`os.fs.glob\` before reading content; do not use \`os.fs.grep\` with broad binary globs (e.g. every \`*.pdf\`) across huge folders—use tight globs then \`os.fs.read_document\` on candidates.`,
+    nativeTools ? NATIVE_TOOLS_RULES_LINE : GRAMMAR_RULES_LINE,
     ``,
     `### skills`,
     skills,

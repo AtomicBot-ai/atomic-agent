@@ -656,7 +656,12 @@ async function executeStepInner(
     const retryStartedAt = Date.now();
     completion = await deps.llmComplete({
       ...llmParams,
-      prompt: buildToolCallRepairPrompt(prompt.text, parsed.error, deps.profile),
+      prompt: buildToolCallRepairPrompt(
+        prompt.text,
+        parsed.error,
+        deps.profile,
+        deps.toolTransport,
+      ),
       // Bounded cap on the repair completion. Without it, reasoning
       // models (qwen-3.5-9b in particular) routinely fall into a
       // self-deliberation loop after a `BatchValidationError` and burn
@@ -1604,6 +1609,7 @@ function buildToolCallRepairPrompt(
   promptText: string,
   error: Error,
   profile?: ModelProfile,
+  toolTransport?: ToolCallTransport,
 ): string {
   // Strip the trailing reasoning open-tag prefill (e.g. `<think>` for
   // qwen-think, `<|channel>thought\n` for gemma4-think) before
@@ -1639,14 +1645,32 @@ function buildToolCallRepairPrompt(
       lines.push("per-call errors:", ...perCall);
     }
   }
-  lines.push(
-    "Emit a corrected JSON array only. No prose, no commentary after the array.",
-    "Use a length-1 array for `reply`, `finish`, approval-gated tools, or any call that depends on a previous result.",
-    "Do not repeat the invalid batch shape.",
-    "",
-    "### respond",
-    "Respond now.",
-  );
+  // The corrective mandate must match the request's transport. This
+  // repair replays with the SAME params as the failed attempt — under
+  // `native_tools` that request carries the OpenAI `tools` payload and a
+  // stable prefix that forbids text-JSON emission, so ordering a
+  // "corrected JSON array" here would re-create the exact dual mandate
+  // issue #285 removed, on the one retry a failing model gets before
+  // GrammarError ends the step.
+  if (toolTransport === "native_tools") {
+    lines.push(
+      "Call the tools again now, through the native function-calling interface (the `tools` payload on this API request) — do NOT write tool-call JSON as text, and do not leave the answer in the reasoning channel.",
+      "Make it a single tool call for `reply`, `finish`, approval-gated tools, or any call that depends on a previous result.",
+      "Do not repeat the invalid shape.",
+      "",
+      "### respond",
+      "Respond now.",
+    );
+  } else {
+    lines.push(
+      "Emit a corrected JSON array only. No prose, no commentary after the array.",
+      "Use a length-1 array for `reply`, `finish`, approval-gated tools, or any call that depends on a previous result.",
+      "Do not repeat the invalid batch shape.",
+      "",
+      "### respond",
+      "Respond now.",
+    );
+  }
   const openReasoning = renderOpenReasoningBlock(profile);
   if (openReasoning.length > 0) {
     lines.push(openReasoning);

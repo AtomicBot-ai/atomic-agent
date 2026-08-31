@@ -1286,6 +1286,17 @@ describe("buildPrompt tool transport (issue #285)", () => {
     expect(native.stablePrefix).not.toContain(
       "Each step emits exactly one JSON array matching the tool grammar",
     );
+    // ...including the `### rules` opener — every text-array mandate
+    // must go, not just the persona and `### instructions` ones.
+    expect(native.stablePrefix).not.toContain("One tool-call array per step");
+    expect(native.stablePrefix).not.toContain(
+      "a solo action is a length-1 array",
+    );
+    // ...and the persona's reply-discipline line ("emit that tool JSON").
+    expect(native.stablePrefix).not.toContain("emit that tool JSON");
+    expect(native.stablePrefix).toContain("call that tool, not `reply`");
+    expect(native.stablePrefix).toContain("### rules");
+    expect(native.stablePrefix).toContain("One batch of tool calls per step");
     expect(native.stablePrefix).toContain("native function-calling interface");
     // The catalog stays: a fallback chain can hand this session to a
     // grammar-only link, and the catalog carries tier/tool.view docs.
@@ -1303,6 +1314,9 @@ describe("buildPrompt tool transport (issue #285)", () => {
     expect(explicit.stablePrefix).toContain("Emit a JSON ARRAY of tool calls now");
     expect(explicit.stablePrefix).toContain(
       "Each step emits exactly one JSON array matching the tool grammar",
+    );
+    expect(explicit.stablePrefix).toContain(
+      "One tool-call array per step (including `skill.view`); a solo action is a length-1 array. Destructive or privileged tools may require user approval.",
     );
   });
 
