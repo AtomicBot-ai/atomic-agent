@@ -236,20 +236,44 @@ from silently deciding answer quality:
    than configured. Warning **once at construction** (not per search) is
    deliberate: a long autonomous run would drown in a per-query warning.
 
-`cacheTtlMinutes` stays at 15. The cache is per-process, in-memory, capped at
-256 entries, and keyed on the exact query string, so a longer TTL neither
-survives the per-task restarts a campaign does nor catches the near-miss
-rephrasings that actually burn quota — while it would serve staler results for
-time-sensitive lookups. A restart-surviving cache is the real fix and is not
-built.
+The result cache and the #241 provider cooldown **survive the process**
+(#256): given a `stateDir`, [transport/search-cache.ts](src/tools/os/web-search/transport/search-cache.ts)
+and [transport/provider-cooldown.ts](src/tools/os/web-search/transport/provider-cooldown.ts)
+mirror both to `<stateDir>/web-search-cache.json` /
+`web-search-cooldown.json`, so a campaign that runs one agent process per
+task inherits the last process's answers, parks, and strikes instead of
+starting cold and re-spending quota — the demand-side half of #179 that a
+longer TTL cannot reach, because a per-task process dies long before any
+TTL binds. Key, TTL (`cacheTtlMinutes`, default 60), the 256-entry FIFO
+cap, and the park/escalation ladder are unchanged — only the storage
+moved. Rows already expired and cooldown records staler than two doubling
+ceilings are dropped on load, a park that lapsed while nothing ran reads
+as expired, every write goes through tmp-file + rename, and a missing or
+corrupt file starts cold while a failed write is swallowed — persistence
+is an optimisation and must never fail a search. Concurrent processes
+race benignly (last writer wins; no locking). `web.search.persistCache:
+false` (config v46) opts back into the in-memory pair for workloads that
+want a cold cache per run. The key is still the exact query string, so
+near-miss rephrasings still miss — query normalisation is deferred by
+#256 for separate measurement.
 
 Pinned by [retry-after.test.ts](src/tools/os/web-search/transport/retry-after.test.ts),
 [search-http.test.ts](src/tools/os/web-search/transport/search-http.test.ts)
 (retry-then-succeed, `Retry-After` precedence, give-up-after-maxRetries,
 non-429 untouched, old-curl tolerance),
 [warn-missing-search-key.test.ts](src/tools/os/web-search/tool/warn-missing-search-key.test.ts),
-and [web-search-tool.test.ts](src/tools/os/web-search/tool/web-search-tool.test.ts)
-("warns once at construction, not once per search").
+[web-search-tool.test.ts](src/tools/os/web-search/tool/web-search-tool.test.ts)
+("warns once at construction, not once per search"; the persistent-cache
+describe: cross-instance hit, `persistCache: false`, no `stateDir`),
+[search-cache.test.ts](src/tools/os/web-search/transport/search-cache.test.ts)
+and [provider-cooldown.test.ts](src/tools/os/web-search/transport/provider-cooldown.test.ts)
+(round-trip, load-time expiry/eviction, ladder-across-restart, corrupt and
+malformed files), and the `#256` seam case in
+[bootstrap.test.ts](src/runtime/bootstrap.test.ts), which boots the real
+runtime against a pre-seeded `stateDir` and proves `os.web.search` answers
+from the file — so deleting the `stateDir` wiring in `createAgentRuntime`
+or `registerOsTools` fails loudly instead of silently shipping the
+in-memory behaviour.
 ## HTTP retry contract
 
 `os.web.fetch` and `os.http.request` both retry transient failures
@@ -1148,7 +1172,7 @@ The ladder (`agent.approvalLevel`, config v37; the binary `agent.approvalRequire
 | 4 | operator | + `shell` (guard verdict `approval_required` only), `script` (`skill.run_script`), `proc_kill` |
 | 5 | full trust | everything, including `browser_nonweb` (file://, javascript:), `trust_config`, and `other` |
 
-Categorisation lives at the call sites (fs tools resolve workspace/home/outside from the target path + `ctx.workingDir`); a write outside both the workspace and home maps to `other`, which asks on every level except 5 — the conservative default for anything a call site cannot place. Hardline shell-guard rules fire before the gate and block at **every** level. MCP tools stay outside the gate entirely (their `approval_gated` resource class only forces solo execution).
+Categorisation lives at the call sites (fs tools resolve workspace/home/outside from the target path + `ctx.workingDir`); a write outside both the workspace and home maps to `other`, which asks on every level except 5 — the conservative default for anything a call site cannot place. Hardline shell-guard rules fire before the gate and block at **every** level. MCP tools from a server at the default `approval_gated` trust go through the gate as category `other` (tools advertising `annotations.readOnlyHint === true` at discovery are exempt); `pure_read` servers bypass it — see §"MCP client".
 
 **One funnel for fs mutations.** Every fs-mutating tool (`os.fs.{write,edit,patch,trash,archive.extract}`) routes its prompt through `requireFsApproval` ([src/tools/os/fs-require-approval.ts](src/tools/os/fs-require-approval.ts)), which categorises (`categorizeFsMutation`) and calls the shared `requireApproval` in one step. A new mutate-tool cannot half-wire the ladder — classify against the wrong scope inputs or forget the `trust_config` guard — because the scope inputs (`workingDir`, `trustConfigPaths`) travel in the same request object as the prompt copy. The `kind` discriminator (`write` / `trash` / `extract`) selects the categorisation branch; `extract`'s directory-target exemption from the trust-config guard is encapsulated there (it passes `destDir` and the guard never fires).
 
@@ -1656,7 +1680,7 @@ When at least one server is configured, bootstrap:
 | [mcp-resource-class.ts](src/mcp/mcp-resource-class.ts) | `qualifyMcpToolName` / `splitMcpToolName` + `createMcpResourceClassResolver` (the per-server trust → `ResourceClass` mapper). |
 | [mcp-client.ts](src/mcp/mcp-client.ts) | **The only file that imports `@modelcontextprotocol/sdk`.** Wraps `Client` + the three transports (stdio / streamable_http / sse). Owns connect / refresh / RPC / close. |
 | [mcp-sampling-handler.ts](src/mcp/mcp-sampling-handler.ts) | Routes `sampling/createMessage` from MCP servers to `LlamaServerClient.complete` with `slotId: -1` + `cachePrompt: false`. Also imports the SDK for the `CreateMessageRequest` / `CreateMessageResult` shapes; no other module needs them. |
-| [mcp-tool-adapter.ts](src/mcp/mcp-tool-adapter.ts) | `createMcpToolDefinition(meta, client)` — wraps an MCP tool as a `ToolDefinition` for the registry. Projects the heterogenous MCP response into a single `output` string + structured `details`; folds errors into `status: "error"` so siblings inside a batch keep running. |
+| [mcp-tool-adapter.ts](src/mcp/mcp-tool-adapter.ts) | `createMcpToolDefinition(meta, client, gate?)` — wraps an MCP tool as a `ToolDefinition` for the registry. Routes gated calls through `requireApproval` before `tools/call` (see the trust table below). Projects the heterogenous MCP response into a single `output` string + structured `details`; folds errors into `status: "error"` so siblings inside a batch keep running (approval denials are stamped `details.approvalDenied`). |
 | [mcp-manager.ts](src/mcp/mcp-manager.ts) | One `McpClient` per server, lifecycle, status sink, tool register/unregister, dynamic resolver install/clear. |
 | [mcp-descriptor-builder.ts](src/mcp/mcp-descriptor-builder.ts) | `buildMcpToolDescriptor` + `buildMcpToolDescriptors` + `mergeMcpDescriptors`. Every MCP tool ships at tier `frequent` (full schema in the stable prefix — discoverability over prefix size). Server-then-tool alphabetical sort → deterministic stable-prefix bytes. |
 | [mcp-grammar-builder.ts](src/mcp/mcp-grammar-builder.ts) | `buildMcpToolNameRule` + `applyMcpToolNameRule`. Pure functions; deterministic sort + dedup ensure byte-stable output. |
@@ -1668,7 +1692,7 @@ Every MCP-namespaced tool resolves to a `ResourceClass` through the dynamic reso
 
 | Trust level on `McpServerConfig` | Resolved class | Behaviour |
 |---|---|---|
-| (default / omitted) | `approval_gated` | Every call routes through the approval gate; cannot appear in multi-call batches. Safe for arbitrary third-party servers. |
+| (default / omitted) | `approval_gated` | Every call routes through the approval gate (category `other`) and cannot appear in multi-call batches. Tools whose discovery-time `annotations.readOnlyHint` is exactly `true` skip the prompt; missing / malformed / non-boolean annotations fail closed to gated. Safe for arbitrary third-party servers. |
 | `pure_read` | `pure_read` | Fans out in parallel inside batches alongside `os.fs.read` / `os.git.*`. **Opt-in only.** Use for servers you trust never to mutate any state. |
 
 The aggregate native tools (`mcp.resource.*`, `mcp.prompt.*`) are classified as `pure_read` in the static `TOOL_RESOURCE_CLASS` table — they never mutate state regardless of which server they dispatch to.
@@ -1718,6 +1742,7 @@ Pinned by [mcp-client.test.ts](src/mcp/mcp-client.test.ts) (when added), [mcp-ma
 11. **`McpManager` is always constructed.** Bootstrap creates it even when `config.mcp.servers[]` is empty so the live-control surface (TUI MCP panel) can mutate without restarting the host. Empty configuration is a zero-cost no-op.
 12. **MCP `shutdown()` runs before browser / SQLite teardown.** Order: Telegram → MCP → browser → SQLite. In-flight sampling calls have a chance to drain before the LLM client is torn down.
 13. **Variant γ — live add / remove without restart.** `McpManager.addServerLive(config)` connects a new client, registers its tools into `ToolRegistry`, and returns the freshly-discovered tool metas. `McpManager.removeServerLive(name)` disconnects, unregisters tools, and drops the entry. Both are idempotent on the server name (duplicate add or absent remove short-circuit without error). The TUI MCP orchestrator pairs these calls with `runtime.refreshMcp()` so the GBNF grammar and the prompt's `### tools` catalog are rebuilt from the live manager state, and the model sees the new / dropped qualified names on the next inference. **KV-cache invalidation on the stable prefix is intentional and one-shot** — semantically equivalent to a runtime restart, just without the process churn. The four MCP meta-tools (`mcp.resources.{list,read}` / `mcp.prompts.{list,get}`) are registered on demand the first time a server lands so a zero-server cold start does not pollute the descriptor catalog. Pinned by `mcp-manager.test.ts > "variant γ — live add / remove"` (6 cases: brand-new connect + tool registration, duplicate-name short-circuit, connect failure isolation, disconnect + tool unregister, absent-name short-circuit, round-trip idempotency).
+14. **`approval_gated` trust means the approval gate, not just solo execution.** A tool from a server at the default trust calls `requireApproval` (category `other`, the shared `DangerousToolOptions` from bootstrap) before `tools/call`; a denial folds into `status: "error"` with `details.approvalDenied` and the server is never contacted. Exemption is decided once at registration from the discovery-time annotations — a strict boolean `readOnlyHint === true` and nothing else — so a hostile server can lie only about its own calls on a server the operator already chose to gate, and the descriptor bytes (stable prefix / KV cache) are untouched. `pure_read` trust bypasses the gate. Pinned by `mcp-tool-adapter.test.ts > "approval gating"` and `mcp-manager.test.ts > "passes deps.dangerous + resolved trust through to registered tools"`.
 
 ### Out of scope (deferred)
 

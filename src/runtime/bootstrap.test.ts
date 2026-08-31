@@ -18,6 +18,10 @@ import {
   USER_CONFIG_DEFAULTS,
   writeUserConfigFileSync,
 } from "../config/index.js";
+import {
+  buildSearchCacheKey,
+  createPersistentSearchCache,
+} from "../tools/os/web-search/transport/index.js";
 import type {
   BotFactory,
   BotInstance,
@@ -368,6 +372,77 @@ describe("createAgentRuntime", () => {
       ).rejects.toThrow(/approval denied/);
       expect(prompts).toHaveLength(1);
       expect(prompts[0]?.category).toBe("trust_config");
+    } finally {
+      await runtime.shutdown();
+    }
+  });
+
+  it("threads stateDir into os.web.search: a cache seeded by the last process answers without the network (#256)", async () => {
+    // Pins the enablement seam itself — the `stateDir: config.paths.stateDir`
+    // argument in createAgentRuntime and the pass-through in registerOsTools.
+    // Every other #256 test constructs the persistent cache or the tool
+    // directly, so deleting either wiring line would leave them all green
+    // while the shipped runtime silently regressed to the pre-#256 in-memory
+    // cache — the invisible-degradation failure mode #256 exists to close.
+    // Same idea as the trust_config case above pinning `trustConfigPaths`.
+    //
+    // The provider is a searxng instance on a closed local port, so a broken
+    // seam fails fast with a connection error instead of a live provider call;
+    // the passing path never leaves the cache file.
+    writeUserConfigFileSync(getUserConfigPath(stateDir), {
+      ...USER_CONFIG_DEFAULTS,
+      web: {
+        ...USER_CONFIG_DEFAULTS.web,
+        search: {
+          ...USER_CONFIG_DEFAULTS.web.search,
+          provider: "searxng",
+          fallback: [],
+          searxng: { instanceUrl: "http://127.0.0.1:9" },
+        },
+      },
+    });
+    resetConfigCache();
+
+    // What the previous per-task process left behind in stateDir.
+    const query = "query answered by the previous process";
+    const seeded = createPersistentSearchCache({
+      ttlMs: 60_000,
+      filePath: join(stateDir, "web-search-cache.json"),
+    });
+    seeded.set(
+      buildSearchCacheKey(
+        "searxng",
+        query,
+        USER_CONFIG_DEFAULTS.web.search.maxResults,
+      ),
+      [
+        {
+          title: "Seeded by the last process",
+          url: "https://example.com/seeded",
+          snippet: "still warm",
+        },
+      ],
+    );
+
+    const runtime = await createAgentRuntime({
+      workingDir,
+      approvalLevel: 5,
+      overrides: { browserBackend: backend, skipLlamaHealthCheck: true },
+    });
+    try {
+      const result = await runtime.toolRegistry.invoke(
+        "os.web.search",
+        { query },
+        {
+          workingDir,
+          sessionId: "s-search-persist",
+          stepIndex: 0,
+          signal: new AbortController().signal,
+        },
+      );
+      expect(result.status).toBe("ok");
+      expect(result.details.fromCache).toBe(true);
+      expect(result.summary).toContain("https://example.com/seeded");
     } finally {
       await runtime.shutdown();
     }

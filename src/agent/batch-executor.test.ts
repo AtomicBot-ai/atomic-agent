@@ -1,4 +1,7 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { ToolRegistry } from "../tools/tool-registry.js";
 import {
   compressToolResult,
@@ -962,3 +965,195 @@ describe("executeBatch under plan mode", () => {
 function out2LoopSignals(tracker: ToolLoopTracker): number {
   return tracker.check("os.fs.write", { path: "a" }).count;
 }
+
+describe("test-repeat gate (issue #118)", () => {
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), "atomic-test-repeat-"));
+    await writeFile(join(dir, "app.py"), "x = 1\n");
+  });
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  /** Shell stub returning a scripted summary per invocation. */
+  function shellRegistry(summaries: readonly string[]): {
+    registry: ToolRegistry;
+    calls: () => number;
+  } {
+    let i = 0;
+    const registry = buildRegistry(
+      {
+        "os.shell.run": async () =>
+          okResult(
+            "os.shell.run",
+            summaries[Math.min(i++, summaries.length - 1)]!,
+          ),
+      },
+      false,
+    );
+    return { registry, calls: () => i };
+  }
+
+  function testCtx(tracker: ToolLoopTracker) {
+    return { ...ctx(new AbortController().signal), workingDir: dir, tracker };
+  }
+
+  it("warns on the 2nd equivalent run against an unchanged workspace and still executes it", async () => {
+    const { registry, calls } = shellRegistry(["1 failed", "1 failed again"]);
+    const tracker = new ToolLoopTracker();
+    const context = testCtx(tracker);
+    const call = {
+      tool: "os.shell.run",
+      args: { cmd: "pytest", args: ["-k", "auth"] },
+    };
+
+    const first = await executeBatch(toBatchInputs([call]), registry, context);
+    expect(first.loopSignals).toEqual([]);
+
+    const second = await executeBatch(toBatchInputs([call]), registry, context);
+    const sig = second.loopSignals.find((s) => s.detector === "test_repeat");
+    expect(sig).toBeDefined();
+    expect(sig!.kind).toBe("warn");
+    expect(sig!.count).toBe(2);
+    expect(sig!.target).toBe("pytest -k auth");
+    expect(sig!.previousSummary).toBe("1 failed");
+    // Warn-only: the call still executed and returned the real result.
+    expect(calls()).toBe(2);
+    expect(second.results[0]!.compressed!.status).toBe("ok");
+    expect(second.results[0]!.compressed!.summary).toContain("again");
+  });
+
+  it("warns even when only timeoutMs changed (defeats the raw-args hash)", async () => {
+    const { registry } = shellRegistry(["3 passed"]);
+    const tracker = new ToolLoopTracker();
+    const context = testCtx(tracker);
+
+    await executeBatch(
+      toBatchInputs([
+        { tool: "os.shell.run", args: { cmd: "pytest", timeoutMs: 30_000 } },
+      ]),
+      registry,
+      context,
+    );
+    const second = await executeBatch(
+      toBatchInputs([
+        { tool: "os.shell.run", args: { cmd: "pytest", timeoutMs: 60_000 } },
+      ]),
+      registry,
+      context,
+    );
+    // The generic detector never fires here (different raw args), which
+    // is exactly the gap this detector closes.
+    const sig = second.loopSignals.find((s) => s.detector === "test_repeat");
+    expect(sig).toBeDefined();
+    expect(sig!.previousSummary).toBe("3 passed");
+  });
+
+  it("permits the rerun when any process changed the workspace in between", async () => {
+    const { registry } = shellRegistry(["1 failed"]);
+    const tracker = new ToolLoopTracker();
+    const context = testCtx(tracker);
+    const call = { tool: "os.shell.run", args: { cmd: "pytest" } };
+
+    await executeBatch(toBatchInputs([call]), registry, context);
+    // Out-of-band mutation — an Atomic write tool, a shell command, or an
+    // external editor are indistinguishable at the filesystem level.
+    await writeFile(join(dir, "app.py"), "x = 2 + 2\n");
+    const second = await executeBatch(toBatchInputs([call]), registry, context);
+    expect(
+      second.loopSignals.find((s) => s.detector === "test_repeat"),
+    ).toBeUndefined();
+  });
+
+  it("treats output churn under documented ignores as no progress", async () => {
+    await mkdir(join(dir, "coverage"));
+    const { registry } = shellRegistry(["2 passed"]);
+    const tracker = new ToolLoopTracker();
+    const context = testCtx(tracker);
+    const call = { tool: "os.shell.run", args: { cmd: "pytest" } };
+
+    await executeBatch(toBatchInputs([call]), registry, context);
+    // Only ignored output changed: this is not source progress.
+    await writeFile(join(dir, "coverage", "index.html"), "<html>new</html>");
+    const second = await executeBatch(toBatchInputs([call]), registry, context);
+    expect(
+      second.loopSignals.find((s) => s.detector === "test_repeat"),
+    ).toBeDefined();
+  });
+
+  it("keeps distinct cwd and filter args out of each other's streaks", async () => {
+    await mkdir(join(dir, "api"));
+    await writeFile(join(dir, "api", "mod.py"), "y = 1\n");
+    const { registry } = shellRegistry(["ok"]);
+    const tracker = new ToolLoopTracker();
+    const context = testCtx(tracker);
+
+    await executeBatch(
+      toBatchInputs([{ tool: "os.shell.run", args: { cmd: "pytest" } }]),
+      registry,
+      context,
+    );
+    const otherCwd = await executeBatch(
+      toBatchInputs([
+        { tool: "os.shell.run", args: { cmd: "pytest", cwd: "api" } },
+      ]),
+      registry,
+      context,
+    );
+    const otherFilter = await executeBatch(
+      toBatchInputs([
+        { tool: "os.shell.run", args: { cmd: "pytest", args: ["-k", "x"] } },
+      ]),
+      registry,
+      context,
+    );
+    expect(
+      otherCwd.loopSignals.find((s) => s.detector === "test_repeat"),
+    ).toBeUndefined();
+    expect(
+      otherFilter.loopSignals.find((s) => s.detector === "test_repeat"),
+    ).toBeUndefined();
+  });
+
+  it("never vetoes: every equivalent run still executes (warn-only)", async () => {
+    const { registry, calls } = shellRegistry(["same result"]);
+    const tracker = new ToolLoopTracker();
+    const context = testCtx(tracker);
+
+    for (let t = 0; t < 3; t += 1) {
+      // Distinct timeoutMs keeps the generic no-progress streak silent, so
+      // any signal below is the test-repeat detector's alone.
+      const out = await executeBatch(
+        toBatchInputs([
+          {
+            tool: "os.shell.run",
+            args: { cmd: "pytest", timeoutMs: 1_000 + t },
+          },
+        ]),
+        registry,
+        context,
+      );
+      expect(out.results[0]!.compressed!.status).toBe("ok");
+      for (const sig of out.loopSignals) {
+        expect(sig.kind).toBe("warn");
+      }
+    }
+    expect(calls()).toBe(3);
+  });
+
+  it("leaves unrecognized commands entirely to the generic detector", async () => {
+    const { registry } = shellRegistry(["listing"]);
+    const tracker = new ToolLoopTracker();
+    const context = testCtx(tracker);
+    const call = { tool: "os.shell.run", args: { cmd: "ls", args: ["-la"] } };
+
+    await executeBatch(toBatchInputs([call]), registry, context);
+    const second = await executeBatch(toBatchInputs([call]), registry, context);
+    expect(
+      second.loopSignals.find((s) => s.detector === "test_repeat"),
+    ).toBeUndefined();
+  });
+});

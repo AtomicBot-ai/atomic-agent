@@ -101,6 +101,16 @@ export interface WebSearchConfig {
    */
   cacheTtlMinutes: number;
   /**
+   * Persist the result cache and the provider cooldown under `stateDir`
+   * (v46, #256), so a campaign that runs one process per task inherits
+   * both instead of starting cold and re-spending quota on queries the
+   * last process already answered. Key/TTL/eviction semantics are
+   * unchanged — only the storage moves. Default `true`; set `false` for
+   * workloads that genuinely want a cold cache per run (reproducing a
+   * benchmark, for one).
+   */
+  persistCache: boolean;
+  /**
    * Ordered fallback providers tried (after the primary) when a search is
    * blocked / empty / throws. Default `["duckduckgo"]` — the keyless Exa
    * primary degrades to DuckDuckGo's keyless HTML endpoint. Both are
@@ -974,7 +984,7 @@ export interface UserManagedLocalLlmConfig {
    *     be baked into the binary.
    *   - `"vulkan"` / `"cuda-12.4"` / `"cuda-13.3"` — pin that build
    *     (and undo an automatic CPU fallback after a driver fix).
-   * Added in config v46; older files transparently get `"auto"`.
+   * Added in config v47; older files transparently get `"auto"`.
    */
   backendVariant: BackendVariantPreference;
   /**
@@ -998,7 +1008,7 @@ export interface UserManagedLocalLlmConfig {
    * `"Vulkan0,Vulkan1"`) restricts the split to those devices.
    * `device: "cpu"` wins over this field and disables splitting. The
    * embedding daemon is never split — it keeps pinning one device.
-   * Added in config v47; older files inherit `[]` transparently.
+   * Added in config v48; older files inherit `[]` transparently.
    */
   tensorSplit: number[];
   /**
@@ -1646,20 +1656,26 @@ export interface UserConfigFile {
 // implied. (It was drafted as a second v44, but v44 was already spent on
 // `customModels` in the same release — the stamp ships as v45 so the two
 // additive changes keep distinct numbers.)
-// v46: localModels.managed gains `backendVariant` — which llama.cpp
+// v46: web.search gains `persistCache` (#256) — persist the search result
+// cache and the provider cooldown under `stateDir` so a per-task process
+// starts warm instead of re-spending quota. Additive: an older file parses
+// with the default `true`, which is the new product behaviour; `false`
+// keeps both structures in-memory (the pre-v46 behaviour) for workloads
+// that want a cold cache per run.
+// v47: localModels.managed gains `backendVariant` — which llama.cpp
 // release zip the managed backend installs on Windows (`auto` | `cpu` |
 // `vulkan` | `cuda-12.4` | `cuda-13.3`). Exists for iGPU-only boxes whose
 // Vulkan build cannot load a model; the start-failure fallback persists
 // `"cpu"` here so auto-update stops reinstalling the broken GPU build.
 // Additive: older files transparently inherit `"auto"`, the exact
-// detection behaviour they already had.
-// v47: localModels.managed gains `tensorSplit` (default `[]` = single-device
+// detection behaviour they already had. (Drafted as a second v46, but v46
+// was already spent on `persistCache` — the additive changes keep distinct
+// sequential numbers.)
+// v48: localModels.managed gains `tensorSplit` (default `[]` = single-device
 // auto-pick, byte-identical launch args). Two or more ratios opt the managed
 // chat daemon into multi-GPU layer splitting (`--split-mode layer
-// --tensor-split <ratios>`). Older files transparently inherit `[]`. (Drafted
-// as a second v46, but v46 was already spent on `backendVariant` — the stamp
-// ships as v47 so the two additive changes keep distinct numbers.)
-export const USER_CONFIG_VERSION = 47;
+// --tensor-split <ratios>`). Older files transparently inherit `[]`.
+export const USER_CONFIG_VERSION = 48;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -1795,6 +1811,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   44,
   45,
   46,
+  47,
   USER_CONFIG_VERSION,
 ];
 
@@ -1847,6 +1864,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       maxResults: 8,
       timeoutMs: 15_000,
       cacheTtlMinutes: 60,
+      persistCache: true,
       fallback: ["duckduckgo"],
       searxng: {
         instanceUrl: null,
@@ -3392,6 +3410,10 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
           "web.search.cacheTtlMinutes",
           0,
           1440,
+        ),
+        persistCache: parseBool(
+          webSearch.persistCache ?? USER_CONFIG_DEFAULTS.web.search.persistCache,
+          "web.search.persistCache",
         ),
         fallback: parseWebSearchFallback(
           webSearch.fallback ?? USER_CONFIG_DEFAULTS.web.search.fallback,

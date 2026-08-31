@@ -27,6 +27,28 @@ export const LOOP_WARNING_BUCKET_SIZE = 10;
 
 export type LoopCheckLevel = "ok" | "warn" | "critical";
 
+/**
+ * Equivalent-run count at which the test-repeat detector (issue #118)
+ * warns: the 2nd recognized test command against an unchanged workspace
+ * fingerprint is already conclusive (the suite cannot produce new
+ * evidence), unlike the generic byte-repeat where a rerun may be an
+ * intentional retry. Warn-only — never routed into the veto/breaker.
+ */
+export const TEST_REPEAT_WARNING_THRESHOLD = 2;
+
+/**
+ * Verdict of `ToolLoopTracker.checkTestRepeat`: is this recognized test
+ * command an equivalent re-run against an unchanged workspace?
+ */
+export interface TestRepeatCheck {
+  /** True when the key repeats against an identical fingerprint. */
+  repeat: boolean;
+  /** 1 for a fresh/changed-workspace run; N for the Nth equivalent run. */
+  count: number;
+  /** Compressed summary of the previous equivalent run, when recorded. */
+  previousSummary?: string;
+}
+
 export interface ToolLoopTrackerOptions {
   /** Args-only repeat count that fires a `warn`. Min 2. Default 3. */
   warningThreshold?: number;
@@ -57,7 +79,7 @@ export interface LoopCheckVerdict {
    * distinct-args spread (wandering).
    */
   count: number;
-  detector: "generic_repeat" | "no_progress" | "wandering";
+  detector: "generic_repeat" | "no_progress" | "wandering" | "test_repeat";
   /** Stable key for warn de-duplication and breaker signalling. */
   warningKey: string;
   tool: string;
@@ -125,6 +147,22 @@ export class ToolLoopTracker {
   private readonly warningBuckets = new Map<string, number>();
   private consecutiveVetoSignature: string | null = null;
   private consecutiveVetoCount = 0;
+  /**
+   * Test-repeat detector state (issue #118): semantic test-command key →
+   * the workspace fingerprint captured before its latest run, how many
+   * equivalent runs in a row that fingerprint has seen, and the summary
+   * of the previous run's result (patched in by `recordOutcome`).
+   */
+  private readonly testRuns = new Map<
+    string,
+    { fingerprint: string; count: number; lastSummary?: string }
+  >();
+  /**
+   * Call-signature → semantic test key for runs dispatched but not yet
+   * completed, so `recordOutcome` can attach the result summary to the
+   * right `testRuns` entry without re-classifying the command.
+   */
+  private readonly pendingTestKeys = new Map<string, string>();
 
   constructor(options: ToolLoopTrackerOptions = {}) {
     this.warningThreshold = Math.max(2, options.warningThreshold ?? 3);
@@ -253,6 +291,7 @@ export class ToolLoopTracker {
    * signature differs from the one currently being vetoed.
    */
   recordOutcome(tool: string, args: unknown, result: CompressedToolResult): void {
+    this.noteTestOutcome(tool, args, result);
     if (isLoopVetoResult(result)) {
       this.patchLatestPending(tool, args, { vetoed: true });
       this.noteVeto(tool, args);
@@ -268,6 +307,71 @@ export class ToolLoopTracker {
         this.consecutiveVetoCount = 0;
       }
     }
+  }
+
+  /**
+   * Classify a recognized test command's prospective run against the
+   * stored `(key → fingerprint)` state (issue #118). Pure map lookup —
+   * the fingerprint walk happens at the call site, and only for
+   * recognized test commands. Call BEFORE `recordTestRun`.
+   */
+  checkTestRepeat(key: string, fingerprint: string): TestRepeatCheck {
+    const prev = this.testRuns.get(key);
+    if (prev === undefined || prev.fingerprint !== fingerprint) {
+      return { repeat: false, count: 1 };
+    }
+    return {
+      repeat: true,
+      count: prev.count + 1,
+      ...(prev.lastSummary !== undefined
+        ? { previousSummary: prev.lastSummary }
+        : {}),
+    };
+  }
+
+  /**
+   * Record a recognized test command being dispatched: store the
+   * fingerprint captured before this run and remember the call
+   * signature so `recordOutcome` can patch in the result summary. A
+   * changed fingerprint resets the equivalent-run count AND drops the
+   * stored summary — a later warning must cite a result produced
+   * against the current workspace state, never a pre-change one.
+   */
+  recordTestRun(
+    key: string,
+    fingerprint: string,
+    tool: string,
+    args: unknown,
+  ): void {
+    const prev = this.testRuns.get(key);
+    const unchanged = prev !== undefined && prev.fingerprint === fingerprint;
+    this.testRuns.set(key, {
+      fingerprint,
+      count: unchanged ? prev.count + 1 : 1,
+      ...(unchanged && prev.lastSummary !== undefined
+        ? { lastSummary: prev.lastSummary }
+        : {}),
+    });
+    this.pendingTestKeys.set(hashToolCall(tool, args), key);
+  }
+
+  /**
+   * Attach a completed run's summary to its pending test-key entry so
+   * the next equivalent-run warning can quote the previous result.
+   */
+  private noteTestOutcome(
+    tool: string,
+    args: unknown,
+    result: CompressedToolResult,
+  ): void {
+    const signature = hashToolCall(tool, args);
+    const key = this.pendingTestKeys.get(signature);
+    if (key === undefined) return;
+    this.pendingTestKeys.delete(signature);
+    if (isLoopVetoResult(result)) return;
+    const record = this.testRuns.get(key);
+    if (record === undefined) return;
+    this.testRuns.set(key, { ...record, lastSummary: result.summary });
   }
 
   /** Bump the consecutive-veto counter for this call's signature. */
@@ -297,13 +401,19 @@ export class ToolLoopTracker {
   /**
    * Emit a warn at most once per bucket of `warningBucketSize` repeats so
    * the `### notice` is not re-injected every step. Returns true when the
-   * caller should surface this warning.
+   * caller should surface this warning. `minCount` overrides the generic
+   * warning threshold for detectors with their own floor (the test-repeat
+   * detector warns from the 2nd equivalent run, see
+   * `TEST_REPEAT_WARNING_THRESHOLD`).
    */
-  shouldEmitWarning(warningKey: string, count: number): boolean {
-    if (count < this.warningThreshold) return false;
-    const bucket = Math.floor(
-      (count - this.warningThreshold) / this.warningBucketSize,
-    );
+  shouldEmitWarning(
+    warningKey: string,
+    count: number,
+    minCount = this.warningThreshold,
+  ): boolean {
+    const threshold = Math.max(1, minCount);
+    if (count < threshold) return false;
+    const bucket = Math.floor((count - threshold) / this.warningBucketSize);
     const prev = this.warningBuckets.get(warningKey) ?? -1;
     if (bucket <= prev) return false;
     this.warningBuckets.set(warningKey, bucket);
@@ -603,6 +713,47 @@ export function formatVetoInstruction(verdict: {
   detector?: LoopCheckVerdict["detector"];
 }): string {
   return formatLoopGuidance(verdict.tool, verdict.count, "veto", verdict);
+}
+
+/**
+ * Notice injected when a recognized test command was re-run against an
+ * unchanged workspace (issue #118, warn-only). The run has already
+ * executed when the model reads this — the wording is therefore an
+ * after-the-fact nudge, not a block, and explicitly leaves the
+ * intentional-repeat path open (nothing is vetoed; the generic loop
+ * protection stays fully active either way).
+ */
+export function formatTestRepeatNotice(verdict: {
+  count: number;
+  target?: string;
+  previousSummary?: string;
+}): string {
+  const target = sanitizeLoopTarget(verdict.target);
+  const label = target ? `\`${target}\`` : "the same test command";
+  const lines = [
+    `You ran ${label} ${verdict.count} times with no workspace change in between. No project file changed since the previous run, so this run could not produce new evidence.`,
+  ];
+  if (verdict.previousSummary !== undefined) {
+    const summary = sanitizeTestSummary(verdict.previousSummary);
+    if (summary !== undefined) {
+      lines.push(`Previous result: ${summary}`);
+    }
+  }
+  lines.push(
+    "Change the code or the test selection before re-running. If the repeat was intentional (e.g. probing for flakiness), continue — this is a warning, nothing was blocked.",
+  );
+  return lines.join("\n");
+}
+
+/**
+ * Compact a previous-result summary for inline quoting in a notice:
+ * whitespace collapsed to one line, length-capped. Returns `undefined`
+ * for an empty summary so the caller omits the line entirely.
+ */
+function sanitizeTestSummary(raw: string): string | undefined {
+  const cleaned = raw.replace(/\s+/g, " ").trim();
+  if (cleaned.length === 0) return undefined;
+  return cleaned.length > 300 ? `${cleaned.slice(0, 297)}...` : cleaned;
 }
 
 /**

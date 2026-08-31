@@ -176,7 +176,7 @@ export interface TraceLoopDetected extends TraceEventBase {
    */
   level?: "warn" | "critical" | "breaker";
   /** Which sub-detector fired. Optional for back-compat. */
-  detector?: "generic_repeat" | "no_progress" | "wandering";
+  detector?: "generic_repeat" | "no_progress" | "wandering" | "test_repeat";
 }
 
 /**

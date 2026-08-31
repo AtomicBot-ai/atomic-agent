@@ -233,6 +233,8 @@ export interface StepContext {
    * continuation) — contextual facts stay suppressed.
    */
   userMessage?: string | null;
+  /** Restrict this step to the terminal reply/finish tools. */
+  terminalOnly?: boolean;
 }
 
 /**
@@ -350,9 +352,14 @@ async function executeStepInner(
     deps.profile,
     deps.toolTransport,
   );
+  const stepToolDescriptors = ctx.terminalOnly
+    ? ctx.toolDescriptors.filter(
+        ({ name }) => name === "reply" || name === "finish",
+      )
+    : ctx.toolDescriptors;
   const promptInput: BuildPromptInput = {
     session: ctx.session,
-    toolDescriptors: ctx.toolDescriptors,
+    toolDescriptors: stepToolDescriptors,
     capabilities: ctx.capabilities,
     skillCatalog: ctx.skillCatalog,
     currentDate: formatCurrentDate(new Date()),
@@ -452,7 +459,7 @@ async function executeStepInner(
       deps,
       slotId: slot.slotId,
       sessionId: ctx.session.id,
-      toolDescriptors: ctx.toolDescriptors,
+      toolDescriptors: stepToolDescriptors,
       signal: ctx.signal,
     }),
     ...(grammarPrompt ? { grammarPrompt } : {}),
@@ -673,6 +680,22 @@ async function executeStepInner(
     deps.profile,
     parseDepsFor(completion, deps),
   );
+  if (ctx.terminalOnly && parsed.ok) {
+    const nonTerminal = parsed.batch.calls.find(
+      ({ tool }) => tool !== "reply" && tool !== "finish",
+    );
+    if (nonTerminal) {
+      parsed = {
+        ok: false,
+        error: new BatchValidationError(
+          "finalization step only accepts reply or finish",
+          [
+            `non-terminal tool is not allowed at the step budget: ${nonTerminal.tool}`,
+          ],
+        ),
+      };
+    }
+  }
   if (parsed.ok) {
     const validation = validateBatch(parsed.batch, deps.registry);
     if (!validation.ok) {
@@ -828,6 +851,22 @@ async function executeStepInner(
       deps.profile,
       parseDepsFor(completion, deps),
     );
+    if (ctx.terminalOnly && parsed.ok) {
+      const nonTerminal = parsed.batch.calls.find(
+        ({ tool }) => tool !== "reply" && tool !== "finish",
+      );
+      if (nonTerminal) {
+        parsed = {
+          ok: false,
+          error: new BatchValidationError(
+            "finalization step only accepts reply or finish",
+            [
+              `non-terminal tool is not allowed at the step budget: ${nonTerminal.tool}`,
+            ],
+          ),
+        };
+      }
+    }
     if (parsed.ok) {
       const validation = validateBatch(parsed.batch, deps.registry);
       if (!validation.ok) {
