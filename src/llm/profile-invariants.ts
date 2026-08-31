@@ -38,9 +38,23 @@ export function checkProfileGrammarAligned(
   return violations;
 }
 
+export interface PromptAlignmentOptions {
+  /**
+   * Whether the prompt was built with the reasoning prefill / turn
+   * framing at the generation point. `false` on the native-tools chat
+   * transport, where `buildPrompt` suppresses the prefill (a literal
+   * `<think>` shipped to an OpenAI-compatible endpoint is at best noise
+   * and at worst corrupted server-side — ollama/ollama#17248, issue
+   * #283) and the invariant flips: the prompt must NOT end with a
+   * reasoning prelude. Defaults to `true` (grammar-transport legacy).
+   */
+  promptCarriesPrefill?: boolean;
+}
+
 export function checkProfilePromptAligned(
   profile: ModelProfile,
   promptText: string,
+  options: PromptAlignmentOptions = {},
 ): string[] {
   const violations: string[] = [];
   const trimmed = promptText.trimEnd();
@@ -49,6 +63,16 @@ export function checkProfilePromptAligned(
     const leakedPrefix = getKnownReasoningOpenTags().find((tag) => trimmed.endsWith(tag));
     if (leakedPrefix) {
       violations.push("plain profile prompt must not end with a reasoning prelude");
+    }
+    return violations;
+  }
+
+  if (options.promptCarriesPrefill === false) {
+    const leakedPrefix = getKnownReasoningOpenTags().find((tag) => trimmed.endsWith(tag));
+    if (leakedPrefix) {
+      violations.push(
+        "prefill-suppressed prompt must not end with a reasoning prelude",
+      );
     }
     return violations;
   }

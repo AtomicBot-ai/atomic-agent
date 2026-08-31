@@ -1735,6 +1735,237 @@ describe("parallelToolCalls derivation (issue #104)", () => {
 });
 
 
+describe("native_tools thinking-profile prompt hygiene (issue #283)", () => {
+  // A think-tag prefill is a llama-server text-completion artifact. On
+  // the native-tools chat transport the prompt ships as a chat message
+  // to an OpenAI-compatible endpoint, where the literal `<think>` is at
+  // best noise and at worst corrupted server-side (Ollama Cloud,
+  // ollama/ollama#17248) — so it must never be sent there, and parsing
+  // must never assume a prefill that was not sent.
+  const grammarsDir = join(process.cwd(), "grammars");
+
+  function makeReplyRegistry() {
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "reply",
+      description: "reply",
+      readonly: true,
+      async run(args: Record<string, unknown>) {
+        return compressToolResult({
+          tool: "reply",
+          status: "ok",
+          output: String(args.text ?? ""),
+        });
+      },
+    });
+    return registry;
+  }
+
+  function mkCompletion(content: string) {
+    return {
+      content,
+      reasoningContent: "",
+      stop: true,
+      truncated: false,
+      timing: {
+        promptMs: 1,
+        predictedMs: 1,
+        promptTokens: 20,
+        predictedTokens: 5,
+      },
+      cacheHitTokens: 0,
+      slotId: -1,
+      modelId: "mock-cloud",
+    };
+  }
+
+  it("native_tools: the prompt carries no trailing <think> prefill and the reply is not mis-parsed as reasoning", async () => {
+    const session = createEmptySessionState({ id: "s-283-a", workingDir: "/w" });
+    const prompts: string[] = [];
+    const events: Array<{ type: string; text?: string }> = [];
+    const outcome = await executeStep(
+      {
+        session,
+        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        stepIndex: 0,
+        signal: new AbortController().signal,
+        userMessage: "hi",
+      },
+      {
+        registry: makeReplyRegistry(),
+        slotManager: new SlotManager(2),
+        llmComplete: async (params) => {
+          prompts.push(params.prompt);
+          return mkCompletion("All done.");
+        },
+        grammar: "",
+        profile: QWEN_THINK_PROFILE,
+        toolTransport: "native_tools",
+        toolCallAdapter: null,
+        supportsSlotAffinity: false,
+        onEvent: (ev) => {
+          events.push(ev as { type: string; text?: string });
+        },
+      },
+    );
+
+    // The literal open tag must not reach the chat endpoint.
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]!.trimEnd().endsWith("<think>")).toBe(false);
+    // ...and the plain-prose reply must not be re-prefixed with `<think>`
+    // and swallowed whole as reasoning.
+    expect(events.some((ev) => ev.type === "reasoning")).toBe(false);
+    expect(outcome.nextSession.turns.at(-1)).toMatchObject({
+      kind: "assistant_reply",
+      text: "All done.",
+    });
+  });
+
+  it("native_tools: streamed content deltas are not reclassified as pre-opened reasoning", async () => {
+    const session = createEmptySessionState({ id: "s-283-b", workingDir: "/w" });
+    const events: Array<{ type: string }> = [];
+    let captured: import("../llm/llama-server-client.js").CompletionResult | null =
+      null;
+    const finalCompletion = mkCompletion("Answer text");
+    const outcome = await executeStep(
+      {
+        session,
+        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        stepIndex: 0,
+        signal: new AbortController().signal,
+        userMessage: "hi",
+      },
+      {
+        registry: makeReplyRegistry(),
+        slotManager: new SlotManager(2),
+        llmComplete: async () => finalCompletion,
+        llmCompleteStream: async function* () {
+          yield { delta: "Answer ", reasoningDelta: "", done: false };
+          yield { delta: "text", reasoningDelta: "", done: false };
+          return finalCompletion;
+        },
+        grammar: "",
+        profile: QWEN_THINK_PROFILE,
+        toolTransport: "native_tools",
+        toolCallAdapter: null,
+        supportsSlotAffinity: false,
+        onCompletion: (c) => {
+          captured = c;
+        },
+        onEvent: (ev) => {
+          events.push(ev as { type: string });
+        },
+      },
+    );
+
+    // Without the fix the stream parser starts in `inside_think` and
+    // reclassifies the whole reply as reasoning (flushed at stream end
+    // into `reasoningContent` and surfaced as reasoning events).
+    expect(events.some((ev) => ev.type === "reasoning_delta")).toBe(false);
+    expect(events.some((ev) => ev.type === "reasoning")).toBe(false);
+    expect(captured).not.toBeNull();
+    expect(captured!.reasoningContent).toBe("");
+    expect(outcome.nextSession.turns.at(-1)).toMatchObject({
+      kind: "assistant_reply",
+      text: "Answer text",
+    });
+  });
+
+  it("native_tools: the one-shot repair prompt does not re-append the reasoning prefill", async () => {
+    const session = createEmptySessionState({ id: "s-283-c", workingDir: "/w" });
+    const prompts: string[] = [];
+    // Two terminal `reply` calls in one batch fail validation and route
+    // through the repair path.
+    const badBatch = JSON.stringify([
+      { tool: "reply", args: { text: "a" } },
+      { tool: "reply", args: { text: "b" } },
+    ]);
+    const goodBatch = JSON.stringify([{ tool: "reply", args: { text: "fixed" } }]);
+    const outcome = await executeStep(
+      {
+        session,
+        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        stepIndex: 0,
+        signal: new AbortController().signal,
+        userMessage: "hi",
+      },
+      {
+        registry: makeReplyRegistry(),
+        slotManager: new SlotManager(2),
+        llmComplete: async (params) => {
+          prompts.push(params.prompt);
+          return mkCompletion(prompts.length === 1 ? badBatch : goodBatch);
+        },
+        grammar: "",
+        profile: QWEN_THINK_PROFILE,
+        toolTransport: "native_tools",
+        toolCallAdapter: null,
+        supportsSlotAffinity: false,
+      },
+    );
+
+    expect(prompts).toHaveLength(2);
+    expect(prompts[1]).toContain("### tool-call-repair");
+    expect(prompts[1]!.trimEnd().endsWith("<think>")).toBe(false);
+    expect(outcome.toolResults[0]?.status).toBe("ok");
+  });
+
+  it("grammar transport regression: prefill still sent and reasoning still extracted", async () => {
+    const registry = makeReplyRegistry();
+    const grammar = await buildGrammar(QWEN_THINK_PROFILE, grammarsDir);
+    const session = createEmptySessionState({ id: "s-283-d", workingDir: "/w" });
+    const prompts: string[] = [];
+    const reasoningEvents: string[] = [];
+    const outcome = await executeStep(
+      {
+        session,
+        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        stepIndex: 0,
+        signal: new AbortController().signal,
+        userMessage: "hi",
+      },
+      {
+        registry,
+        slotManager: new SlotManager(2),
+        llmComplete: async (params) => {
+          prompts.push(params.prompt);
+          // Grammar output starts mid-think: body + close tag + array.
+          return {
+            ...mkCompletion(
+              'thinking it over</think>\n[{"tool":"reply","args":{"text":"hi"}}]',
+            ),
+            slotId: 0,
+            modelId: "mock-local",
+          };
+        },
+        grammar,
+        profile: QWEN_THINK_PROFILE,
+        toolTransport: "grammar",
+        toolCallAdapter: null,
+        supportsSlotAffinity: true,
+        onEvent: (ev) => {
+          if (ev.type === "reasoning") reasoningEvents.push(ev.text);
+        },
+      },
+    );
+
+    expect(prompts[0]!.trimEnd().endsWith("<think>")).toBe(true);
+    expect(reasoningEvents).toEqual(["thinking it over"]);
+    expect(outcome.nextSession.turns.at(-1)).toMatchObject({
+      kind: "assistant_reply",
+      text: "hi",
+    });
+  });
+});
+
 describe("executeStep raw-network-failure classification", () => {
   const grammarsDir = join(process.cwd(), "grammars");
 

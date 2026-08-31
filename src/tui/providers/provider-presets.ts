@@ -197,6 +197,14 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     baseUrl: "https://ollama.com",
     envVar: "OLLAMA_CLOUD_API_KEY",
     listsModelsWithoutKey: true,
+    // Known upstream quirk (issue #283): Ollama's serving layer corrupts
+    // literal thinking-tag strings (`<think>`/`</think>` and variants)
+    // that appear inside message content — silently dropping or mangling
+    // them (ollama/ollama#17248, #17617). atomic-agent no longer injects
+    // a reasoning prefill into chat-transport prompts, so its own
+    // requests are clean, but user text or tool output that happens to
+    // contain those literal strings can still be altered server-side
+    // until Ollama fixes it. Direct vendor APIs are unaffected.
     note: "hosted Ollama, models listed without a key",
   },
   {
