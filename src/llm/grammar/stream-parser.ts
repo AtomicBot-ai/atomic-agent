@@ -113,19 +113,30 @@ export function createStreamParser(options: StreamParserOptions = {}): StreamPar
           keepGoing = true;
           continue;
         }
-        const jsonIdx = findJsonToolStart(buffer);
-        if (jsonIdx !== -1) {
-          const before = buffer.slice(0, jsonIdx);
+        // A close-sentinel-less handoff to the tool call is only assumed
+        // when the buffer really starts a `{"tool": "` payload. A bare
+        // `{` / `[` inside genuine chain-of-thought (JSON snippets, array
+        // notation — routine when the model reasons about code) must NOT
+        // end the reasoning stream: doing so froze the live reasoning
+        // display for the rest of the step.
+        const start = findToolCallStart(buffer);
+        if (start !== null && start.resolved) {
+          const before = buffer.slice(0, start.index);
           if (before.length > 0) {
             out.push({ kind: "reasoning_delta", text: before });
           }
           out.push({ kind: "reasoning_close" });
-          buffer = buffer.slice(jsonIdx);
+          buffer = buffer.slice(start.index);
           state = "json_tool";
           keepGoing = true;
           continue;
         }
-        const cutAt = findSafeReasoningEmitIndex(buffer, reasoningCloseTag, closeHoldbackLen);
+        // Hold back an unresolved candidate (`{"to…` split by the chunk
+        // boundary) alongside the possible close-tag prefix; everything
+        // before either stays live reasoning.
+        const holdFrom = start === null ? buffer.length : start.index;
+        const safeIdx = findSafeReasoningEmitIndex(buffer, reasoningCloseTag, closeHoldbackLen);
+        const cutAt = Math.min(holdFrom, safeIdx);
         const emit = buffer.slice(0, cutAt);
         if (emit.length > 0) {
           out.push({ kind: "reasoning_delta", text: emit });
@@ -189,14 +200,14 @@ export function createStreamParser(options: StreamParserOptions = {}): StreamPar
     end(): StreamParseEvent[] {
       const out = advance();
       if (state === "inside_think") {
-        const jsonIdx = findJsonToolStart(buffer);
-        if (jsonIdx !== -1) {
-          const before = buffer.slice(0, jsonIdx);
+        const start = findToolCallStart(buffer);
+        if (start !== null && start.resolved) {
+          const before = buffer.slice(0, start.index);
           if (before.length > 0) {
             out.push({ kind: "reasoning_delta", text: before });
           }
           out.push({ kind: "reasoning_close" });
-          buffer = buffer.slice(jsonIdx);
+          buffer = buffer.slice(start.index);
           state = "json_tool";
           out.push(...advance());
         } else {
@@ -330,12 +341,91 @@ function escapeRegex(text: string): string {
 }
 
 /** Index of the first `[` or `{` that may start a grammar tool-call payload. */
-function findJsonToolStart(buffer: string): number {
-  const bracket = buffer.indexOf("[");
-  const brace = buffer.indexOf("{");
+function findJsonToolStart(buffer: string, from = 0): number {
+  const bracket = buffer.indexOf("[", from);
+  const brace = buffer.indexOf("{", from);
   if (bracket === -1) return brace;
   if (brace === -1) return bracket;
   return Math.min(bracket, brace);
+}
+
+/**
+ * Longest prefix a candidate may reach while still undecided:
+ * `[` + whitespace + `{` + whitespace + `"tool"` + whitespace + `:` +
+ * whitespace + `"`. Grammar output has next to no whitespace, so a
+ * candidate still unresolved past this budget is chain-of-thought, not
+ * a payload — the cap keeps the mid-think holdback (and thus the
+ * buffered memory) bounded.
+ */
+const TOOL_START_PROBE_CAP = 64;
+
+type ToolStartClass = "start" | "pending" | "no";
+
+interface ToolCallStartMatch {
+  index: number;
+  /** True when the `{"tool": "` shape is fully present at `index`. */
+  resolved: boolean;
+}
+
+/**
+ * Decide whether the text at `buffer[index]` (a `[` or `{`) begins a
+ * grammar tool-call payload — optional array opener, then `{`, then the
+ * `"tool"` key up to its opening value quote. "pending" means the
+ * buffer ended while still matching that shape, so the caller must
+ * wait for more stream before emitting the candidate as reasoning.
+ */
+function classifyToolCallStart(buffer: string, index: number): ToolStartClass {
+  let i = index;
+  const pending = (): ToolStartClass =>
+    i - index > TOOL_START_PROBE_CAP ? "no" : "pending";
+  if (buffer[i] === "[") {
+    i += 1;
+    i = skipJsonWhitespace(buffer, i);
+    if (i >= buffer.length) return pending();
+  }
+  if (buffer[i] !== "{") return "no";
+  i += 1;
+  i = skipJsonWhitespace(buffer, i);
+  const key = '"tool"';
+  for (let k = 0; k < key.length; k += 1, i += 1) {
+    if (i >= buffer.length) return pending();
+    if (buffer[i] !== key[k]) return "no";
+  }
+  i = skipJsonWhitespace(buffer, i);
+  if (i >= buffer.length) return pending();
+  if (buffer[i] !== ":") return "no";
+  i += 1;
+  i = skipJsonWhitespace(buffer, i);
+  if (i >= buffer.length) return pending();
+  return buffer[i] === '"' ? "start" : "no";
+}
+
+function skipJsonWhitespace(buffer: string, from: number): number {
+  let i = from;
+  while (i < buffer.length) {
+    const c = buffer[i]!;
+    if (c !== " " && c !== "\n" && c !== "\r" && c !== "\t") break;
+    i += 1;
+  }
+  return i;
+}
+
+/**
+ * First position in `buffer` that starts (resolved) or may still start
+ * (pending, cut off by the chunk boundary) a tool-call payload.
+ * Braces/brackets that provably do not are skipped — they are ordinary
+ * reasoning text.
+ */
+function findToolCallStart(buffer: string): ToolCallStartMatch | null {
+  let from = 0;
+  while (true) {
+    const idx = findJsonToolStart(buffer, from);
+    if (idx === -1) return null;
+    const cls = classifyToolCallStart(buffer, idx);
+    if (cls === "start") return { index: idx, resolved: true };
+    if (cls === "pending") return { index: idx, resolved: false };
+    from = idx + 1;
+  }
 }
 
 function holdPossibleTagStart(buffer: string, tag: string): string {
