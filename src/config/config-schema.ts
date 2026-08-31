@@ -96,6 +96,16 @@ export interface WebSearchConfig {
    */
   cacheTtlMinutes: number;
   /**
+   * Persist the result cache and the provider cooldown under `stateDir`
+   * (v46, #256), so a campaign that runs one process per task inherits
+   * both instead of starting cold and re-spending quota on queries the
+   * last process already answered. Key/TTL/eviction semantics are
+   * unchanged — only the storage moves. Default `true`; set `false` for
+   * workloads that genuinely want a cold cache per run (reproducing a
+   * benchmark, for one).
+   */
+  persistCache: boolean;
+  /**
    * Ordered fallback providers tried (after the primary) when a search is
    * blocked / empty / throws. Default `["duckduckgo"]` — the keyless Exa
    * primary degrades to DuckDuckGo's keyless HTML endpoint. Both are
@@ -1599,7 +1609,13 @@ export interface UserConfigFile {
 // implied. (It was drafted as a second v44, but v44 was already spent on
 // `customModels` in the same release — the stamp ships as v45 so the two
 // additive changes keep distinct numbers.)
-export const USER_CONFIG_VERSION = 45;
+// v46: web.search gains `persistCache` (#256) — persist the search result
+// cache and the provider cooldown under `stateDir` so a per-task process
+// starts warm instead of re-spending quota. Additive: an older file parses
+// with the default `true`, which is the new product behaviour; `false`
+// keeps both structures in-memory (the pre-v46 behaviour) for workloads
+// that want a cold cache per run.
+export const USER_CONFIG_VERSION = 46;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -1733,6 +1749,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   42,
   43,
   44,
+  45,
   USER_CONFIG_VERSION,
 ];
 
@@ -1783,6 +1800,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       maxResults: 8,
       timeoutMs: 15_000,
       cacheTtlMinutes: 60,
+      persistCache: true,
       fallback: ["duckduckgo"],
       searxng: {
         instanceUrl: null,
@@ -3264,6 +3282,10 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
           "web.search.cacheTtlMinutes",
           0,
           1440,
+        ),
+        persistCache: parseBool(
+          webSearch.persistCache ?? USER_CONFIG_DEFAULTS.web.search.persistCache,
+          "web.search.persistCache",
         ),
         fallback: parseWebSearchFallback(
           webSearch.fallback ?? USER_CONFIG_DEFAULTS.web.search.fallback,

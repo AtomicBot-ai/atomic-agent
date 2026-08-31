@@ -1221,6 +1221,11 @@ export async function createAgentRuntime(
     // where it lives. Pinned by the level-4 `trust_config` case in
     // bootstrap.test.ts.
     trustConfigPaths: getTrustConfigPaths(config.paths),
+    // Lets `os.web.search` persist its result cache and provider cooldown
+    // across processes (#256); `web.search.persistCache: false` opts out.
+    // Pinned by the `#256` seam case in bootstrap.test.ts — the direct
+    // persistence tests cannot see this line.
+    stateDir: config.paths.stateDir,
   });
   registerSkillTools(toolRegistry, skillRegistry, dangerous);
   toolRegistry.register(buildToolViewTool());

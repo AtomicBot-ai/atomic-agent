@@ -461,6 +461,29 @@ describe("parseUserConfigFile", () => {
     ).toThrow(/web.search.cacheTtlMinutes/);
   });
 
+  it("fills persistCache default true when migrating from v45 (#256)", () => {
+    const parsed = parseUserConfigFile({ version: 45 });
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(parsed.web.search.persistCache).toBe(true);
+  });
+
+  it("honours an explicit persistCache opt-out", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      web: { search: { persistCache: false } },
+    });
+    expect(parsed.web.search.persistCache).toBe(false);
+  });
+
+  it("rejects a non-boolean persistCache", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        web: { search: { persistCache: "yes please" } },
+      }),
+    ).toThrow(/web.search.persistCache/);
+  });
+
   it("rejects an invalid fallback entry", () => {
     expect(() =>
       parseUserConfigFile({

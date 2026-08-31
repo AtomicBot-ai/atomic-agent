@@ -1,3 +1,6 @@
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
+
 import type { WebSearchProviderName } from "../web-search-provider.js";
 
 /**
@@ -21,10 +24,16 @@ import type { WebSearchProviderName } from "../web-search-provider.js";
  * provider that can actually answer. When the park expires it is tried
  * again, and one success clears the record.
  *
- * **Per-runtime, like the result cache.** Not a global singleton and not
- * persisted: a quota window is a fact about the last few minutes, and a
- * cooldown restored from disk at start-up would park a provider on
- * yesterday's evidence.
+ * **Per-runtime by default, persisted on request (#256).** Not a global
+ * singleton: the tool owns one instance in its closure. The in-memory
+ * variant dies with the process — right for a long-lived session, but a
+ * campaign that runs one process per task then pays a fresh 429 at every
+ * start to rediscover a quota the last process hit minutes ago.
+ * `createPersistentProviderCooldown` writes the same entries through to
+ * disk so the next process inherits them. A quota window is still a fact
+ * about the last few minutes: a park that lapsed while nothing ran reads
+ * as expired, and a record whose park ended more than `2 * maxMs` ago is
+ * dropped on load rather than parking a provider on yesterday's evidence.
  */
 export interface ProviderCooldown {
   /** True while `name` is parked — the orchestrator skips it. */
@@ -49,6 +58,16 @@ export interface ProviderCooldownOptions {
   baseMs?: number;
   /** Ceiling on the doubling. */
   maxMs?: number;
+}
+
+export interface PersistentProviderCooldownOptions extends ProviderCooldownOptions {
+  /** Absolute path of the JSON file mirroring the cooldown on disk. */
+  filePath: string;
+  /**
+   * Injectable clock for the load-time age-out. The live methods keep
+   * taking `now` per call, exactly as the in-memory variant does.
+   */
+  now?: () => number;
 }
 
 /**
@@ -84,9 +103,37 @@ interface CooldownEntry {
 export function createProviderCooldown(
   options: ProviderCooldownOptions = {},
 ): ProviderCooldown {
+  return buildCooldown(options, new Map<WebSearchProviderName, CooldownEntry>(), undefined);
+}
+
+/**
+ * The same cooldown, mirrored to a JSON file so a new process inherits
+ * parks and strikes instead of paying a 429 to relearn them (#256).
+ * Park/escalation semantics are exactly those of `createProviderCooldown`;
+ * only the storage changes. Entries are loaded on creation (records whose
+ * park ended more than `2 * maxMs` ago are dropped as stale evidence) and
+ * written through on every `park`/`clear` via tmp-file + rename. A missing
+ * or corrupt file starts cold; a failed write is swallowed. Concurrent
+ * processes race benignly: last writer wins.
+ */
+export function createPersistentProviderCooldown(
+  options: PersistentProviderCooldownOptions,
+): ProviderCooldown {
+  const maxMs = options.maxMs ?? DEFAULT_MAX_MS;
+  const now = options.now ?? Date.now;
+  const entries = loadCooldownFile(options.filePath, now(), maxMs);
+  return buildCooldown(options, entries, () =>
+    saveCooldownFile(options.filePath, entries),
+  );
+}
+
+function buildCooldown(
+  options: ProviderCooldownOptions,
+  entries: Map<WebSearchProviderName, CooldownEntry>,
+  persist: (() => void) | undefined,
+): ProviderCooldown {
   const baseMs = options.baseMs ?? DEFAULT_BASE_MS;
   const maxMs = options.maxMs ?? DEFAULT_MAX_MS;
-  const entries = new Map<WebSearchProviderName, CooldownEntry>();
 
   function remainingMs(name: WebSearchProviderName, now: number): number {
     const entry = entries.get(name);
@@ -120,12 +167,69 @@ export function createProviderCooldown(
           : Math.min(MAX_HONOURED_RETRY_AFTER_MS, Math.max(0, retryAfterMs));
       const parkMs = Math.max(escalated, advertised);
       entries.set(name, { until: now + parkMs, strikes });
+      persist?.();
       return parkMs;
     },
     clear(name) {
-      entries.delete(name);
+      if (entries.delete(name)) persist?.();
     },
   };
+}
+
+function loadCooldownFile(
+  filePath: string,
+  now: number,
+  maxMs: number,
+): Map<WebSearchProviderName, CooldownEntry> {
+  const entries = new Map<WebSearchProviderName, CooldownEntry>();
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(filePath, "utf8"));
+  } catch {
+    // Missing on the very first run, or corrupt. A cold cooldown is the
+    // pre-#256 behaviour, so it is always a safe recovery.
+    return entries;
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return entries;
+  }
+  for (const [name, raw] of Object.entries(parsed)) {
+    const entry = raw as Partial<CooldownEntry> | null;
+    if (
+      typeof entry?.until !== "number" ||
+      !Number.isFinite(entry.until) ||
+      typeof entry.strikes !== "number" ||
+      !Number.isFinite(entry.strikes)
+    ) {
+      continue;
+    }
+    // Strikes outlive an expired park in-process (see `park`), and they
+    // survive a restart the same way — but not forever. A record whose
+    // park ended more than two ceilings ago is yesterday's evidence, and
+    // restoring it would restart the ladder near the top against a quota
+    // that has long since reset.
+    if (entry.until + 2 * maxMs <= now) continue;
+    entries.set(name as WebSearchProviderName, {
+      until: entry.until,
+      strikes: entry.strikes,
+    });
+  }
+  return entries;
+}
+
+function saveCooldownFile(
+  filePath: string,
+  entries: Map<WebSearchProviderName, CooldownEntry>,
+): void {
+  try {
+    mkdirSync(dirname(filePath), { recursive: true });
+    const tmp = `${filePath}.tmp-${process.pid}`;
+    writeFileSync(tmp, JSON.stringify(Object.fromEntries(entries)), "utf8");
+    renameSync(tmp, filePath);
+  } catch {
+    // Persistence is best-effort: a read-only stateDir or a full disk
+    // costs the next process its warm start, never this search.
+  }
 }
 
 /** `90000` -> `1m 30s`, for the line the model reads. */
