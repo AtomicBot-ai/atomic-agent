@@ -2,6 +2,7 @@ import { Text } from "ink";
 import type { Token, Tokens } from "marked";
 import type { ReactElement } from "react";
 import { theme } from "../theme/theme.js";
+import { LinkifiedText } from "./linkify-text.js";
 import { wrapOsc8 } from "./osc8-link.js";
 
 /**
@@ -63,7 +64,16 @@ export function InlineToken({ token }: { token: Token }): ReactElement {
       if (textTok.tokens && textTok.tokens.length > 0) {
         return <Text>{renderInline(textTok.tokens)}</Text>;
       }
-      return <Text>{textTok.text}</Text>;
+      // Leaf text runs through the same bare-URL detector as the
+      // user/system bubbles: marked's GFM autolinker misses some URLs
+      // (non-ASCII hosts, for one), and those land here as plain text
+      // instead of a `link` token. Code stays verbatim — `codespan`
+      // and fenced blocks never reach this case.
+      return (
+        <Text>
+          <LinkifiedText text={textTok.text} />
+        </Text>
+      );
     }
     default:
       return (

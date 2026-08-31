@@ -52,9 +52,10 @@ export function isComposerSwitchOpenKey(input: string, key: Key): boolean {
  * and Esc clears it before it closes anything — the model switch lists
  * 300+ catalog rows, and arrows alone were the only way across them.
  *
- * Ctrl- and Meta-chords deliberately fall through — `ctrl+p` is the way
- * out of every surface in this app, and a switch that swallowed it would
- * be the one place that rule stopped holding.
+ * Ctrl- and Meta-chords deliberately fall through — `ctrl+c` must still
+ * abort and the `ctrl+g` leader still arm from inside, and a switch that
+ * swallowed a global chord would be the one place those rules stopped
+ * holding.
  *
  * Returns `true` when the key was consumed.
  */

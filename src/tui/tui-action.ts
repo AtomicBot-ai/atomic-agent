@@ -175,6 +175,7 @@ export type TuiAction =
   /** Flip the composer's context detail panel (chip click, `/context`). */
   | { type: "context_panel_toggled" }
   | { type: "context_panel_closed" }
+  | { type: "context_pairs_selected"; pairs: number }
   | { type: "menu_query_changed"; query: string }
   | { type: "menu_cursor_moved"; delta: number }
   | { type: "menu_cursor_set"; cursor: number }
@@ -269,6 +270,8 @@ export type TuiAction =
   | { type: "chat_focus_toggled" }
   /** Set keyboard focus explicitly (used when the sidebar collapses below the width threshold). */
   | { type: "chat_focus_set"; focus: "editor" | "sidebar" }
+  /** Fold the rail away or bring it back (the rail's `«`, the bar's `»`, `/sidebar`). */
+  | { type: "sidebar_collapse_toggled" }
   /** Pick which sidebar pane (Sessions / Tasks) is the current Tab-cycle stop. */
   | { type: "sidebar_section_focused"; section: "sessions" | "tasks" }
   /** Move the sidebar's session-list cursor by N rows (clamped). */

@@ -1,4 +1,4 @@
-import { getConfig } from "../config/index.js";
+import { getConfig, USER_CONFIG_DEFAULTS } from "../config/index.js";
 import { getReasoningTurnFraming } from "../llm/model-profile.js";
 import { renderProfileSection } from "../memory/profile-renderer.js";
 import {
@@ -7,7 +7,10 @@ import {
 } from "../memory/notes-renderer.js";
 import { renderLessonsSection } from "../memory/lessons/lessons-renderer.js";
 import { renderProceduresSection } from "../memory/procedures/procedures-renderer.js";
-import { packConversation } from "../session/conversation-turn.js";
+import {
+  packConversation,
+  pairTokenCosts,
+} from "../session/conversation-turn.js";
 import {
   renderPackedConversation,
   renderWorldSnapshotSection,
@@ -83,17 +86,30 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
   const budgetTotal = input.tokenBudget ?? config.agent.tokenBudget;
   const conversationMaxTokens =
     input.conversationMaxTokens ?? config.agent.conversationMaxTokens;
-  // `0` means "let the window decide" (`CONVERSATION_CAP_AUTO`). The
-  // budget-share fallback below is still computed, because it is what
-  // the cap falls back to when nothing knows the window.
+  // `0` means "let the window decide" (`CONVERSATION_CAP_AUTO`).
   const conversationCapAuto = conversationMaxTokens <= CONVERSATION_CAP_AUTO;
+  const conversationMaxPairs =
+    input.conversationMaxPairs ?? config.agent.conversationMaxPairs;
   const worldSnapshotMaxTokens =
     input.worldSnapshotMaxTokens ?? config.agent.worldSnapshotMaxTokens;
   const completionMaxTokens =
     input.completionMaxTokens ?? config.localModels.completionMaxTokens;
 
+  // Under auto the conversation share is pinned to the schema default
+  // rather than left to `defaultBudget`'s `tokenBudget * 0.35`.
+  //
+  // That share is a sensible split of a *fixed* budget; it is a
+  // catastrophic ceiling for an operator who asked for no ceiling. With
+  // the default `tokenBudget: 3000` it is 1050 tokens, and when nothing
+  // knows the window `computeEffectiveConversationCap` returns the
+  // configured figure verbatim — so pressing "set auto" on a model whose
+  // window could not be probed took the transcript from 32k to 1050, a
+  // 30x cut in the exact direction the button promises to go. "Let the
+  // window decide" must never quietly mean "assume a tiny window".
   const limits = defaultBudget(budgetTotal, {
-    ...(conversationCapAuto ? {} : { conversation: conversationMaxTokens }),
+    conversation: conversationCapAuto
+      ? USER_CONFIG_DEFAULTS.agent.conversationMaxTokens
+      : conversationMaxTokens,
     worldSnapshot: worldSnapshotMaxTokens,
   });
 
@@ -215,7 +231,11 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     limits.worldSnapshot,
   );
 
-  const contextWindow = input.profile?.contextWindow ?? null;
+  // The probe first, then whatever the caller resolved (the provider
+  // catalogue, for a cloud model that has no `/props` to read). Before
+  // this the budget simply had no window off the local path.
+  const contextWindow =
+    input.profile?.contextWindow ?? input.contextWindow ?? null;
   const sessionTokenEstimate =
     estimateTokens(sessionPartsForBudget) + loadedToolsTokens;
   const conversationCapEffective = computeEffectiveConversationCap({
@@ -234,7 +254,12 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     completionMaxTokens,
   });
 
-  const packed = packConversation(input.session.turns, conversationCapEffective);
+  const packed = packConversation(input.session.turns, conversationCapEffective, {
+    maxPairs: conversationMaxPairs,
+    ...(input.session.macroTurnStarts
+      ? { macroTurnStarts: input.session.macroTurnStarts }
+      : {}),
+  });
   const conversation = renderPackedConversation(packed);
   const taskPolicy = renderTaskPolicy({
     userMessage: input.userMessage ?? null,
@@ -381,5 +406,13 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     conversationCapEffective,
     conversationCapAuto,
     droppedTurns: packed.droppedCount,
+    conversationPairs: packed.visiblePairs,
+    droppedPairs: packed.droppedPairs,
+    conversationPairsCap: conversationMaxPairs,
+    conversationBoundBy: packed.boundBy,
+    pairCosts: pairTokenCosts(
+      input.session.turns,
+      input.session.macroTurnStarts,
+    ),
   };
 }

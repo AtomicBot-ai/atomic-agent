@@ -216,11 +216,19 @@ describe("composer overlay mouse", () => {
       "expanded composer",
     );
 
-    // Ctrl+P. The menu owns input; the overlay clamps to its slot, so
-    // every menu row is painted — including `Manage`, which the
-    // ten-line frame's rectangle used to bury.
-    app.stdin.write("\u0010");
-    await waitUntil(() => app.frame().includes("enter go"), "menu open");
+    // Open the menu from the breadcrumb — the mouse route, and the one
+    // that keeps the draft (Esc would clear it first). The menu owns
+    // input; the overlay clamps to its slot, so every menu row is
+    // painted — including `Manage`, which the ten-line frame's
+    // rectangle used to bury. Re-click until it lands: targets register
+    // a frame after they first paint.
+    await waitUntil(() => {
+      if (!app.frame().includes("enter go")) {
+        const crumb = locateLast(app.frame(), "R U N");
+        app.mouse.emit(click(crumb.x + 1, crumb.y));
+      }
+      return app.frame().includes("enter go");
+    }, "menu open from the breadcrumb");
     // The row is visible at all — this locate is the half a regression
     // breaks first: un-clamped, `Manage` is overpainted and not on
     // screen, so there is nothing honest to click.

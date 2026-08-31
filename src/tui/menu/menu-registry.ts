@@ -556,6 +556,18 @@ export const MENU: readonly MenuNode[] = [
   },
   {
     kind: "action",
+    id: "setup.sidebar",
+    label: "Hide or show the sidebar",
+    group: "setup",
+    slash: {
+      name: "sidebar",
+      description:
+        "hide or show the session rail (the rail's « does the same)",
+      rank: 38,
+    },
+  },
+  {
+    kind: "action",
     id: "setup.analytics",
     label: "Analytics",
     group: "setup",

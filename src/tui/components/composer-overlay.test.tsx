@@ -197,11 +197,13 @@ describe("composer overlay growth", () => {
       "expanded composer",
     );
 
-    // Ctrl+P: the menu owns the keyboard, so the overlay must stop
-    // fighting it for the stage — the composer paints after the menu,
-    // and un-clamped it would bury the menu's bottom rows while the
-    // raised mouse floor kept routing clicks there.
-    app.stdin.write("\u0010");
+    // Open the menu the way that keeps the draft — the breadcrumb's
+    // dispatch (from the keyboard, Esc would clear the draft first).
+    // The menu owns the keyboard, so the overlay must stop fighting it
+    // for the stage — the composer paints after the menu, and
+    // un-clamped it would bury the menu's bottom rows while the raised
+    // mouse floor kept routing clicks there.
+    app.bus.emit({ type: "menu_opened" });
     await waitUntil(() => app.frame().includes("enter go"), "menu open");
     const withMenu = app.frame();
     // The composer fell back to its collapsed slot…

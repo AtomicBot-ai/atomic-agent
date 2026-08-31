@@ -37,6 +37,14 @@ export interface SidebarProps {
    */
   maxSessionRows?: number;
   maxTaskRows?: number;
+  /**
+   * Tasks counted as running in the header, measured over the FULL
+   * snapshot by the caller. The `tasks` prop is already the projected
+   * slice — filtered and capped by `selectSidebarTasks` — so counting
+   * it here read "5 running" while a sixth and seventh ran below the
+   * fold. Callers that do not measure fall back to the visible rows.
+   */
+  runningTaskCount?: number;
 }
 
 const DEFAULT_MAX_SESSION_ROWS = 10;
@@ -93,6 +101,7 @@ export function Sidebar(props: SidebarProps): ReactElement {
     sessionId = null,
     maxSessionRows = DEFAULT_MAX_SESSION_ROWS,
     maxTaskRows = DEFAULT_MAX_TASK_ROWS,
+    runningTaskCount,
   } = props;
   const sessionsActive = focused && activeSection === "sessions";
   const tasksActive = focused && activeSection === "tasks";
@@ -155,7 +164,8 @@ export function Sidebar(props: SidebarProps): ReactElement {
         title="Tasks"
         active={tasksActive}
         inner={inner}
-        counter={`${runningCount(tasks)} running`}
+        counter={`${runningTaskCount ?? runningCount(tasks)} running`}
+        trailing={<NewTaskButton />}
       />
       <TasksList
         tasks={tasks}
@@ -243,7 +253,10 @@ function RailBrand({
   sessionId: string | null;
 }): ReactElement {
   const art = RAIL_MARK;
-  const textWidth = Math.max(0, inner - MARK_COLUMNS - 1);
+  const textWidth = Math.max(
+    0,
+    inner - MARK_COLUMNS - 1 - COLLAPSE_COLUMNS,
+  );
   return (
     <Box flexDirection="column">
       <RailBlank />
@@ -269,6 +282,17 @@ function RailBrand({
             {clip(`v${getAppVersion()}`, textWidth)}
           </Text>
         </Box>
+        <Box flexGrow={1} />
+        {/*
+          The fold control rides the lockup's top row rather than a row
+          of its own, so the rail's chrome-row count — the promise
+          `SIDEBAR_CHROME_ROWS` makes to `sidebar-fit.test.tsx` — does
+          not move. The column wrapper keeps the click target one cell
+          tall; a bare child in this row stretches to the mark's three.
+        */}
+        <Box flexDirection="column" flexShrink={0}>
+          <CollapseRailButton />
+        </Box>
       </Box>
       {sessionId ? (
         <RailLine inner={inner} color={theme.colors.railMuted}>
@@ -281,6 +305,34 @@ function RailBrand({
 
 /** Width of {@link RAIL_MARK}, kept beside it so the lockup can measure. */
 const MARK_COLUMNS = 6;
+
+/** Cells the fold chip occupies at the lockup row's right edge: ` « `. */
+const COLLAPSE_COLUMNS = 3;
+
+/**
+ * Folds the rail away — the top-right corner of the rail, which is the
+ * hinge a collapsible drawer is grabbed by in any desktop application.
+ * The status bar grows the matching `»` while the rail is folded, and
+ * `/sidebar` is the keyboard route to the same flip. With mouse support
+ * off the glyph still renders as a signpost to that command, inert the
+ * same way `+ new` is.
+ */
+function CollapseRailButton(): ReactElement {
+  const mouse = useMouseCommands();
+  const label = <Chip label={theme.glyphs.railCollapse} />;
+  if (!mouse) return label;
+  return (
+    <MouseTarget
+      onMouse={(hit) => {
+        if (!isPrimaryPress(hit.event)) return false;
+        mouse.dispatch({ type: "sidebar_collapse_toggled" });
+        return true;
+      }}
+    >
+      {label}
+    </MouseTarget>
+  );
+}
 
 /**
  * Starts a fresh thread. It sits on the Sessions header because that is
@@ -310,10 +362,34 @@ function NewSessionButton(): ReactElement {
 }
 
 /**
- * The one control on the rail. `ctrl+p` opens the same menu; this is
- * what makes it reachable without knowing that, which was the whole
- * complaint about the old top bar — nothing on screen said the menu
- * existed.
+ * Starts a scheduled task. It sits on the Tasks header for the same
+ * reason the session `+ new` sits on Sessions: the control lives on the
+ * list the new thing joins. Clicking it lands on the Tasks tab with the
+ * create form already open — the same place the in-panel `n` key
+ * reaches, without having to know the panel or the key exists.
+ */
+function NewTaskButton(): ReactElement {
+  const mouse = useMouseCommands();
+  const label = <Chip label="+ new" />;
+  if (!mouse) return label;
+  return (
+    <MouseTarget
+      onMouse={(hit) => {
+        if (!isPrimaryPress(hit.event)) return false;
+        mouse.callbacks.onTaskNewRequested?.();
+        return true;
+      }}
+    >
+      {label}
+    </MouseTarget>
+  );
+}
+
+/**
+ * The one control on the rail. Esc on an empty idle prompt opens the
+ * same menu; this is what makes it reachable without knowing that,
+ * which was the whole complaint about the old top bar — nothing on
+ * screen said the menu existed.
  */
 function MenuButton({ inner }: { inner: number }): ReactElement {
   const mouse = useMouseCommands();
@@ -322,7 +398,7 @@ function MenuButton({ inner }: { inner: number }): ReactElement {
       <Chip label={`${theme.glyphs.menuGlyph} Menu`} />
       <Box flexGrow={1} />
       <Text color={theme.colors.railMuted} wrap="truncate">
-        ctrl+p
+        esc
       </Text>
     </Box>
   );
@@ -349,7 +425,10 @@ interface SectionHeaderProps {
   title: string;
   active: boolean;
   inner: number;
-  /** Right-aligned status, e.g. `0 running`. */
+  /**
+   * Status, e.g. `0 running`. Alone it rides the right edge; next to a
+   * `trailing` control it sits mid-gap between the title and the chip.
+   */
   counter?: string;
   /** Right-aligned control, e.g. the `+ new` chip. */
   trailing?: ReactNode;
@@ -362,9 +441,12 @@ function SectionHeader({
   counter,
   trailing,
 }: SectionHeaderProps): ReactElement {
-  // The header is a row, not a line: the counter and the `+ new` control
-  // are pushed to the right edge of the rail the way the design sets
-  // them, which a single clipped string cannot express.
+  // The header is a row, not a line: its cells are placed by spacers,
+  // which a single clipped string cannot express. With one of counter /
+  // trailing present it is pushed to the right edge the way the design
+  // sets it; with both, a second spacer seats the counter in the middle
+  // of the gap — status reads as its own cell rather than as a label
+  // glued to the chip.
   return (
     <Box width={inner} flexShrink={0}>
       <Text
@@ -380,12 +462,17 @@ function SectionHeader({
           {counter}
         </Text>
       ) : null}
+      {counter && trailing ? <Box flexGrow={1} /> : null}
       {trailing ?? null}
     </Box>
   );
 }
 
-/** Tasks the design counts in the header: the ones actually running. */
+/**
+ * Fallback for callers that pass no `runningTaskCount`: count what is
+ * visible. The rows here are the projected slice, so this undercounts
+ * once running tasks fall off the rail — the measured prop is the fix.
+ */
 function runningCount(tasks: readonly TaskSummaryRow[]): number {
   return tasks.filter((row) => row.status === "running").length;
 }

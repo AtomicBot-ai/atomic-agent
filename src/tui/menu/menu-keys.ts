@@ -23,11 +23,6 @@ export interface MenuKeyContext {
   activate: (node: MenuNode) => void;
 }
 
-/** True when the keypress opens the menu. */
-export function isMenuOpenKey(input: string, key: Key): boolean {
-  return key.ctrl && !key.meta && !key.shift && input === "p";
-}
-
 /** True when the keypress arms the `ctrl+g` leader. */
 export function isMenuLeaderKey(input: string, key: Key): boolean {
   return key.ctrl && !key.meta && !key.shift && input === "g";
@@ -39,7 +34,7 @@ export function isMenuLeaderKey(input: string, key: Key): boolean {
  * rather than falling through, so a mistyped leader can never land a stray
  * letter in the prompt or fire a panel hotkey.
  *
- * A chord is a *bare* key, same as the sibling predicates above insist on
+ * A chord is a *bare* key, same as the leader predicate above insists on
  * an unmodified `ctrl`. Ink reports `ctrl+c` as `input === "c"` with
  * `key.ctrl`, so without this guard the armed leader would read the abort
  * key as the MCP chord — and `ctrl+q` as quit, `ctrl+l` as the LLM tab.

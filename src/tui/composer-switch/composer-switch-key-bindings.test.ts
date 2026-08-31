@@ -153,10 +153,13 @@ describe("driving an open strip", () => {
     expect(app.at().composerSwitch).toBeNull();
   });
 
-  it("lets ctrl+p through so the menu stays reachable from inside", () => {
+  it("lets ctrl-chords through so the global chords stay live from inside", () => {
     const app = driver(cloudState());
     app.press("r", { ctrl: true });
-    expect(app.press("p", { ctrl: true })).toBe(false);
+    // The `ctrl+g` leader must still arm and `ctrl+c` still abort —
+    // the switch declines both so the rung below can claim them.
+    expect(app.press("g", { ctrl: true })).toBe(false);
+    expect(app.press("c", { ctrl: true })).toBe(false);
   });
 
   it("consumes ordinary typing so it cannot leak into the composer", () => {

@@ -8,6 +8,7 @@ import { theme } from "../theme/theme.js";
 import { AssistantBubble } from "./assistant-bubble.js";
 import type { CodingMode } from "../coding-mode.js";
 import { ChatCopyButton } from "./chat-copy-button.js";
+import { ChatLinkButtons } from "./chat-link-buttons.js";
 import { PlanHandoff } from "./plan-handoff.js";
 import { ChatTryAgainButton } from "./chat-try-again-button.js";
 import {
@@ -211,6 +212,7 @@ function FinalisedMessage({
         <Box flexDirection="row">
           <ChatCopyButton text={message.text} />
           <ChatTryAgainButton text={message.text} />
+          <ChatLinkButtons text={message.text} />
         </Box>
       </Box>
     );
@@ -245,7 +247,14 @@ function FinalisedMessage({
           text={message.text}
           toolSteps={message.toolSteps ?? 0}
         />
-        <ChatCopyButton text={message.text} />
+        {/* Link chips ride the copy row on user and assistant messages
+            only: those carry the URLs someone means to follow. System
+            bubbles are TUI runtime output, and their occasional URL is
+            documentation, not a destination. */}
+        <Box flexDirection="row">
+          <ChatCopyButton text={message.text} />
+          <ChatLinkButtons text={message.text} />
+        </Box>
         {planHandoff ? (
           <PlanHandoff
             onExecute={planHandoff.onExecute}

@@ -101,8 +101,8 @@ Terminal at 100×30 or larger for the first pass; smaller sizes are their own se
 - [ ] Add lines (alt+enter, or shift+enter on kitty-protocol terminals — hint strip states
       which): the input grows UPWARD over the content; background rows DO NOT move
 - [ ] Delete the lines: the original screen returns exactly
-- [ ] With a tall draft, ctrl+p menu is fully visible (composer collapses while a menu/modal
-      is open, re-expands after)
+- [ ] With a tall draft, the menu opened from the breadcrumb is fully visible (composer
+      collapses while a menu/modal is open, re-expands after)
 - [ ] Shift+arrows select text (all four directions); plain arrow collapses the selection
 - [ ] Ctrl+C with selection copies to the SYSTEM clipboard (paste it somewhere to check);
       without selection Ctrl+C keeps its abort/quit meaning
@@ -112,7 +112,8 @@ Terminal at 100×30 or larger for the first pass; smaller sizes are their own se
 
 Send a long prompt first (any model; a failing turn is fine — controls matter, not the answer):
 
-- [ ] While "thinking": ctrl+p opens the menu; session picker opens; nothing is frozen
+- [ ] While "thinking": clicking the breadcrumb opens the menu; session picker opens;
+      nothing is frozen (Esc is the abort, so the menu is mouse-only mid-turn)
 - [ ] New session mid-turn works; a notice says the old turn continues in background
 - [ ] The old session's row stays in the rail; switching back shows YOUR PROMPT and progress
       (not an empty pane), spinner still live if running

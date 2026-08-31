@@ -9,8 +9,7 @@ import {
   backdropRevertsThemePreview,
   resolveBackdropDismissal,
 } from "./backdrop-dismissal.js";
-import { CONVERSATION_CAP_AUTO } from "../prompt/token-budget.js";
-import { persistConversationMaxTokens } from "./persist-conversation-max-tokens.js";
+import { persistConversationMaxPairs } from "./persist-conversation-max-pairs.js";
 import { CodingModeChip } from "./components/coding-mode-chip.js";
 import { CodingModePopup } from "./components/coding-mode-popup.js";
 import { OnboardingScreen } from "./components/onboarding-screen.js";
@@ -75,7 +74,10 @@ import {
   THEMES,
 } from "./theme/theme.js";
 import { Sidebar } from "./components/sidebar.js";
-import { selectSidebarTasks } from "./sidebar-tasks-selector.js";
+import {
+  countRunningTasks,
+  selectSidebarTasks,
+} from "./sidebar-tasks-selector.js";
 import { SlashPalette } from "./components/slash-palette.js";
 import { StatusBar } from "./components/status-bar.js";
 import { TasksCancelModal } from "./components/tasks-cancel-modal.js";
@@ -119,6 +121,7 @@ import { handleProvidersTabKey } from "./providers/providers-key-bindings.js";
 import { handleTelegramTabKey } from "./telegram/telegram-key-bindings.js";
 import { handlePrivacyTabKey } from "./privacy/privacy-key-bindings.js";
 import { ContextMenuPopup, ContextMenuProvider } from "./context-menu/index.js";
+import { createDragIntentTracker } from "./mouse/drag-intent.js";
 import { MouseProvider } from "./mouse/mouse-context.js";
 import { isPrimaryPress } from "./mouse/mouse-event.js";
 import {
@@ -246,6 +249,20 @@ export interface TuiAppCallbacks {
    * handler owns the escape sequences and the config write.
    */
   onMouseSupportRequested?(enabled: boolean | null): void;
+  /**
+   * A drag began on a cell no mouse target claims — message text, panel
+   * prose, empty rail space. Dragging across inert content is
+   * selecting, so the host opens the same pause window the modifier
+   * trigger uses (`selection-passthrough.beginWindow("drag")`) and the
+   * operator drags again with the terminal's own selection live.
+   */
+  onSelectionDragIntent?(): void;
+  /**
+   * The hint strip's `[drag] select text` chip was clicked: open the
+   * selection pause window right away, so the operator's next drag
+   * selects natively instead of arming the drag-intent detector first.
+   */
+  onSelectionPauseRequested?(): void;
   /** Start the Tasks-tab auto-refresh loop (first entry only). */
   onTasksAutoRefreshStart?(): void;
   /** Perform a one-shot refresh of the tasks list. */
@@ -258,6 +275,12 @@ export interface TuiAppCallbacks {
    * detail view, mirroring what the operator would do manually.
    */
   onSidebarTaskActivated?(taskId: string): void;
+  /**
+   * Sidebar Tasks header: `+ new` clicked. The handler is expected to
+   * surface the Tasks debug tab with its create form open, mirroring
+   * the in-panel `n` key.
+   */
+  onTaskNewRequested?(): void;
   /** Switch the chat transcript to the task's session. */
   onTaskOpenSessionRequested?(taskId: string): void;
   /** Proceed with a task cancellation — the caller owns any confirm modal. */
@@ -545,6 +568,14 @@ export interface TuiAppCallbacks {
    * `atomic-agent tui` in the same working directory.
    */
   onNewWindowRequested?(): void;
+  /**
+   * An `[open <host>]` chip under a chat message: open `url` — always a
+   * normalised http(s) URL by the time it gets here — in the OS default
+   * browser. A callback rather than an in-component spawn so the chip
+   * stays presentational and the failure report can travel the bus as a
+   * system message.
+   */
+  onOpenUrlRequested?(url: string): void;
 }
 
 export interface TuiAppProps {
@@ -591,6 +622,13 @@ const WHEEL_SCROLL_LINES = 3;
  * can execute locally — file ops, browser automation, codebase Q&A —
  * rather than open-ended chat.
  */
+/**
+ * Stands in for the rotating pool when the field has one specific
+ * thing to say. A module-level constant so its identity is stable and
+ * the rotation effect does not resubscribe on every render.
+ */
+const NO_ROTATION: readonly string[] = [];
+
 const PROMPT_PLACEHOLDERS: readonly string[] = [
   "Type a message or `/` for commands…",
   "Ask anything about your codebase…",
@@ -622,16 +660,32 @@ export function TuiApp({
   // through a ref rather than a closure that may be a frame stale.
   const stateRef = useRef(state);
   stateRef.current = state;
+  /**
+   * The task count last written to the config, so a step can be based on
+   * it without waiting for a render. Follows the reducer back to `null`
+   * when the selection retires, which is the one place it is allowed to
+   * be reset from outside this file.
+   */
+  const selectedPairsRef = useRef<number | null>(null);
+  if (state.contextPanelPairsDraft === null) selectedPairsRef.current = null;
   const getState = useCallback(() => stateRef.current, []);
 
   useEffect(() => bus.subscribe(dispatch), [bus]);
 
   useEffect(() => {
     if (!mouse) return;
-    return mouse.subscribe((event) => {
-      registry.dispatch(event);
+    // The registry is the only place that knows whether a press landed
+    // on anything, so the selection-intent detector sits right behind
+    // it: an unclaimed press followed by held motion is a drag over
+    // dead content, and the host answers by pausing mouse reporting so
+    // the terminal's own selection takes over (`drag-intent.ts`).
+    const dragIntent = createDragIntentTracker(() => {
+      callbacks.onSelectionDragIntent?.();
     });
-  }, [mouse, registry]);
+    return mouse.subscribe((event) => {
+      dragIntent.observe(event, registry.dispatch(event));
+    });
+  }, [mouse, registry, callbacks]);
 
   useEffect(() => {
     callbacks.onProvidersTabRefresh?.();
@@ -770,6 +824,14 @@ export function TuiApp({
   const terminalSize = useTerminalSize();
   const sidebarVisible =
     state.uiMode === "chat" &&
+    !state.sidebarCollapsed &&
+    isSidebarVisible(terminalSize.columns, terminalSize.rows);
+  // The `»` restore control is offered only while the fold is the
+  // operator's own choice AND the terminal could seat the rail: when
+  // the size gate is what hid it, a click could restore nothing.
+  const sidebarRestorable =
+    state.uiMode === "chat" &&
+    state.sidebarCollapsed &&
     isSidebarVisible(terminalSize.columns, terminalSize.rows);
   // The rail takes a share of the terminal rather than a flat 30
   // columns, and its two panes get a row budget cut from the terminal
@@ -827,6 +889,23 @@ export function TuiApp({
     // A route switch owns ↑↓ / ←→ / Enter while it is up; the editor
     // keeping focus would act on the same keystroke a second time.
     state.composerSwitch === null &&
+    // The two confirm ladders own every key they see — `handleAppKey`
+    // returns true for anything while either is up. That is not enough
+    // on its own: the app handler and the chat editor are independent
+    // `useInput` subscriptions and returning true does not stop the
+    // second one, so the ladder's keystrokes were also landing in the
+    // draft behind it. Typing the uninstall confirmation left the word
+    // in the composer, and Esc closed the ladder *and* fell through to
+    // the editor's idle branch, opening the operator menu in the same
+    // press. They are named here, which is the only thing that actually
+    // stands the editor down.
+    //
+    // The coding-mode menu is deliberately NOT in this list: it closes
+    // on any unrecognised key and lets that key through, so an operator
+    // who opened it mid-sentence keeps typing. Unfocusing the editor
+    // there would swallow the letter that closed it.
+    !state.uninstall &&
+    !state.sessionDelete &&
     !menuLeaderArmed &&
     // An approval prompt no longer takes the keyboard away: the
     // operator answers the agent in the same field they always type in,
@@ -866,9 +945,12 @@ export function TuiApp({
             state.localModelsPanel.removeConfirmId !== null)
         )));
 
-  // When the sidebar collapses below the width or height threshold
+  // When the sidebar drops below the width or height threshold
   // (terminal resized smaller), focus must follow back to the editor so
-  // Tab does not strand the operator on an invisible surface.
+  // Tab does not strand the operator on an invisible surface. The
+  // dependency is the derived `sidebarVisible`, so every flip is
+  // covered — the operator's own fold (`sidebarCollapsed`) included,
+  // though the reducer already reclaims focus on that path itself.
   useEffect(() => {
     if (!sidebarVisible && state.chatFocus === "sidebar") {
       dispatch({ type: "chat_focus_set", focus: "editor" });
@@ -1015,7 +1097,7 @@ export function TuiApp({
     // A modal's own targets register in an effect that flushes a frame
     // after it first paints. In that window the backdrop is the only
     // eligible target, so a second click arriving fast — a double-click
-    // on the rail's `[x]`, or an impatient one on `ctrl+p` — would be
+    // on the rail's `[x]`, or an impatient one on `☰ Menu` — would be
     // read as "clicked outside" and dismiss the surface that just
     // opened. Ignore presses until the modal has had that frame.
     if (Date.now() - modalOpenedAtRef.current < MODAL_CLICK_GRACE_MS) {
@@ -1108,6 +1190,33 @@ export function TuiApp({
     [registry],
   );
 
+  /**
+   * Leave plan mode and tell the agent to carry out what it just
+   * proposed.
+   *
+   * Ordered deliberately: the mode changes *before* the message is sent,
+   * because the runtime reads plan mode per tool call and a message that
+   * arrived first would hit a turn whose first few calls were still
+   * being refused.
+   *
+   * The message goes through `handleEditorSubmit` rather than straight
+   * to `callbacks.onMessageSubmitted`, so it takes exactly the path a
+   * typed message takes — history, the log echo, the busy/steer gate —
+   * instead of a second submit path that has to be kept in step with it.
+   */
+  const executePlan = useCallback(
+    (mode: CodingMode) => {
+      dispatch({ type: "coding_mode_cycled", mode });
+      handleEditorSubmit(EXECUTE_PLAN_MESSAGE, stateRef.current, dispatch, callbacks);
+    },
+    [callbacks],
+  );
+
+  const dismissPlan = useCallback(
+    () => dispatch({ type: "plan_handoff_dismissed" }),
+    [],
+  );
+
   useInput((input, key) => {
     const appHandled = handleAppKey(input, key, {
       state,
@@ -1119,8 +1228,10 @@ export function TuiApp({
       menuLeaderArmed,
       setMenuLeaderArmed,
       activateMenuNode,
-      onSetCapAuto: setConversationCapAuto,
+      onStepPairs: stepConversationPairs,
       activateComposerSwitch,
+      onPlanExecute: executePlan,
+      onPlanDismiss: dismissPlan,
     });
     if (appHandled) return;
     // While the slash-command palette is open, let the (now-focused)
@@ -1249,8 +1360,8 @@ export function TuiApp({
     // Nothing left to cancel: Esc opens the menu. It is the LAST branch
     // on purpose — abort, close, back and clear-draft all outrank it, so
     // the key keeps every meaning it already had and gains one only when
-    // it would otherwise have done nothing. `ctrl+p` still opens the
-    // menu from anywhere, including mid-turn.
+    // it would otherwise have done nothing. The breadcrumb and the
+    // rail's menu chip still open it from anywhere, including mid-turn.
     dispatch({ type: "menu_path_set", path: null });
     dispatch({ type: "menu_cursor_set", cursor: 0 });
     dispatch({ type: "menu_opened" });
@@ -1476,58 +1587,52 @@ export function TuiApp({
   }, [codingMode, baseApprovalLevel, callbacks]);
 
   /**
-   * Write `agent.conversationMaxTokens: 0` and say so.
+   * Step the number of tasks the prompt carries.
    *
-   * No hot-apply call to make: `buildPrompt` reads the cap out of
-   * `getConfig()` on every build, so resetting the config cache — which
-   * the persist helper does — is what makes the next turn use it.
+   * Applied on the spot rather than staged behind a confirm: the
+   * selector *is* the setting, and the panel is already showing what
+   * this value costs, so there is nothing left for a second keystroke to
+   * confirm. `buildPrompt` reads `getConfig()` on every build, so the
+   * write plus the cache reset is the whole of the hot-apply and the
+   * next turn is packed against it.
    *
-   * Failing to write is reported rather than swallowed. The panel would
-   * otherwise keep showing the same ceiling with the same button beside
-   * it, and the operator would press it again.
+   * The clamp lives in the reducer so the number on screen can never be
+   * one the config would reject; this only reports a write that failed.
    */
-  const setConversationCapAuto = useCallback(() => {
+  const stepConversationPairs = useCallback((delta: number) => {
+    const cap = stateRef.current.contextUsage.conversationPairsCap;
+    // Nothing has been built yet, so there is no selector on screen and
+    // no honest base to step from. The reducer refuses the same case;
+    // writing here anyway would leave the config saying one thing and
+    // the panel another.
+    if (cap <= 0) return;
+    // The ref, not the rendered state. `stateRef` is refreshed during
+    // render, so two presses landing in one tick read the same base and
+    // step to the same number — while the reducer, applying each in
+    // turn, arrives somewhere else. Whatever was last persisted is the
+    // honest base, and it is known here synchronously.
+    const current = selectedPairsRef.current ?? stateRef.current.contextPanelPairsDraft ?? cap;
+    const next = Math.max(1, Math.min(100, current + delta));
+    if (next === current) return;
+    // Write first, then move the number. The other order leaves the
+    // panel showing a value the config never took: the write is
+    // tmp-file-then-rename, so a failure leaves the old value on disk
+    // and every later prompt packed against it, while the selector — and
+    // the whole projection above it — insists on the new one. Nothing
+    // would ever reconcile them either, because the draft is retired
+    // only when a prompt is built against the number it holds.
     try {
-      persistConversationMaxTokens(CONVERSATION_CAP_AUTO);
-      dispatch({
-        type: "system_message",
-        text: "transcript cap set to auto — it now fills whatever the model's window leaves",
-      });
+      persistConversationMaxPairs(next);
     } catch (err) {
       dispatch({
         type: "system_message",
-        text: `could not write the config: ${(err as Error).message}`,
+        text: `could not change the task limit: ${(err as Error).message}`,
       });
+      return;
     }
-    dispatch({ type: "context_panel_closed" });
+    selectedPairsRef.current = next;
+    dispatch({ type: "context_pairs_selected", pairs: next });
   }, []);
-
-  /**
-   * Leave plan mode and tell the agent to carry out what it just
-   * proposed.
-   *
-   * Ordered deliberately: the mode changes *before* the message is sent,
-   * because the runtime reads plan mode per tool call and a message that
-   * arrived first would hit a turn whose first few calls were still
-   * being refused.
-   *
-   * The message goes through `handleEditorSubmit` rather than straight
-   * to `callbacks.onMessageSubmitted`, so it takes exactly the path a
-   * typed message takes — history, the log echo, the busy/steer gate —
-   * instead of a second submit path that has to be kept in step with it.
-   */
-  const executePlan = useCallback(
-    (mode: CodingMode) => {
-      dispatch({ type: "coding_mode_cycled", mode });
-      handleEditorSubmit(EXECUTE_PLAN_MESSAGE, stateRef.current, dispatch, callbacks);
-    },
-    [callbacks],
-  );
-
-  const dismissPlan = useCallback(
-    () => dispatch({ type: "plan_handoff_dismissed" }),
-    [],
-  );
 
   const promptContextSlot = contextUsage ? (
     <ContextChip usage={contextUsage} layer={MOUSE_LAYER_PANEL} />
@@ -1625,7 +1730,11 @@ export function TuiApp({
         bug rather than as chrome.
       */}
       <Box flexShrink={0}>
-        <StatusBar state={state} brand={!sidebarVisible} />
+        <StatusBar
+          state={state}
+          brand={!sidebarVisible}
+          railRestore={sidebarRestorable}
+        />
       </Box>
       {/*
         The design separates the top bar and the hint strip from the
@@ -1644,6 +1753,7 @@ export function TuiApp({
             sessionsCursor={state.sidebarCursor}
             currentSessionId={state.session.sessionId}
             tasks={selectSidebarTasks(state.tasksPanel.rows)}
+            runningTaskCount={countRunningTasks(state.tasksPanel.rows)}
             tasksCursor={state.sidebarTasksCursor}
             activeSection={state.sidebarSection}
             focused={sidebarFocused}
@@ -1741,7 +1851,8 @@ export function TuiApp({
                   terminalSize.columns - 4 - (sidebarVisible ? sidebarWidth : 0)
                 }
                 reservedForReply={state.session.completionMaxTokens}
-                onSetAuto={setConversationCapAuto}
+                pairsDraft={state.contextPanelPairsDraft}
+                onStepPairs={stepConversationPairs}
               />
             ) : null}
             <ComposerSwitchPopup
@@ -1870,7 +1981,15 @@ export function TuiApp({
                 ? "Type to change the plan — it stays in plan mode…"
                 : "Type a message or `/` for commands…"
             }
-            rotatingPlaceholders={PROMPT_PLACEHOLDERS}
+            // No rotation while a plan is on offer. `PromptShell`
+            // resolves `rotated ?? placeholder`, so a rotating pool —
+            // which is never empty — outranks the specific line above
+            // and the plan hint could never appear on screen at all.
+            // The offer is the one moment the field has something
+            // particular to say, so it says it instead of rotating.
+            rotatingPlaceholders={
+              state.planHandoff ? NO_ROTATION : PROMPT_PLACEHOLDERS
+            }
             backend={promptBackend}
             model={promptLlm.model}
             provider={promptLlm.provider}

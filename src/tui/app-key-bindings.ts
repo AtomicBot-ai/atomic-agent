@@ -1,4 +1,4 @@
-import { CODING_MODES } from "./coding-mode.js";
+import { CODING_MODES, type CodingMode } from "./coding-mode.js";
 import { handleComposerSwitchKey } from "./composer-switch/composer-switch-key-bindings.js";
 import type { ComposerSwitchRow } from "./composer-switch/composer-switch-rows.js";
 import { handleContextPanelKey } from "./context-panel-keys.js";
@@ -14,7 +14,6 @@ import type { WhileBusySubmitMode } from "../config/index.js";
 import {
   handleMenuKey,
   isMenuLeaderKey,
-  isMenuOpenKey,
   resolveLeaderChord,
 } from "./menu/menu-keys.js";
 import type { MenuNode } from "./menu/menu-registry.js";
@@ -116,10 +115,42 @@ export interface AppKeyContext {
    * panel. Optional: surfaces without a config writer simply do not
    * bind the key.
    */
-  onSetCapAuto?: () => void;
+  /**
+   * Steps the context panel's task selector. A callback rather than an
+   * action because the work is a config write, and the reducer is pure.
+   */
+  onStepPairs?: (delta: number) => void;
   /** Run the row picked in one of the composer's route switches. */
   activateComposerSwitch: (row: ComposerSwitchRow) => void;
+  /**
+   * Carry out the plan on offer under `mode`, for the plan hand-off
+   * chords. Optional: a surface that draws no hand-off binds no keys.
+   */
+  onPlanExecute?: (mode: CodingMode) => void;
+  /** Decline the plan on offer without leaving plan mode. */
+  onPlanDismiss?: () => void;
 }
+
+/**
+ * The chord each plan verb answers to.
+ *
+ * Deliberately the same shape, and two of the same letters, as
+ * {@link APPROVAL_CHORDS}: both are a short-lived verdict taken while
+ * the composer stays live underneath, so both have to be modified keys —
+ * a bare `y` is text someone is typing. Sharing the keys is safe because
+ * the two offers can never be on screen together: an approval exists
+ * only inside a running turn, and the hand-off is only ever raised by a
+ * turn that has *finished*. The approval branch is still checked first,
+ * so if that assumption ever breaks the safety-critical prompt wins.
+ */
+export const PLAN_CHORDS = {
+  /** Run it, editing freely here and asking about everything else. */
+  auto: "y",
+  /** Run it and stop asking altogether. */
+  bypass: "b",
+  /** Put the plan away; stay in plan mode. */
+  dismiss: "d",
+} as const;
 
 /**
  * Global key-binding reducer executed outside the editor focus. Returns
@@ -264,6 +295,24 @@ export function handleAppKey(
   if (state.sessionDelete) {
     return handleSessionDeleteKey(input, key, ctx);
   }
+  // The plan hand-off. Below the ladders and below approvals, and
+  // reached only while an offer is actually standing — outside that the
+  // letters are ordinary text and must reach the draft untouched.
+  if (state.planHandoff && key.ctrl && !key.meta) {
+    const lower = input.toLowerCase();
+    if (lower === PLAN_CHORDS.auto) {
+      ctx.onPlanExecute?.("auto");
+      return true;
+    }
+    if (lower === PLAN_CHORDS.bypass) {
+      ctx.onPlanExecute?.("bypass");
+      return true;
+    }
+    if (lower === PLAN_CHORDS.dismiss) {
+      ctx.onPlanDismiss?.();
+      return true;
+    }
+  }
   // Only the visible thread's question is answerable from the
   // keyboard. The reducer never arms `pendingApproval` for another
   // session (a background request surfaces as a notice instead), but
@@ -291,8 +340,9 @@ export function handleAppKey(
     return true;
   }
   // The mode menu is a dropdown on the composer's toolbar, so it takes
-  // the keys while it is up — above the operator menu, because ctrl+p
-  // should close it and open the menu rather than land on both.
+  // the keys while it is up — above the operator menu, so a keystroke
+  // aimed past the dropdown closes it on the way through rather than
+  // landing on both surfaces at once.
   if (state.codingModeMenu) {
     if (key.escape) {
       dispatch({ type: "coding_mode_menu_closed" });
@@ -320,19 +370,20 @@ export function handleAppKey(
   if (handleMenuKey(input, key, { state, dispatch, activate: ctx.activateMenuNode })) {
     return true;
   }
-  // Below the menu on purpose: ctrl+p should still reach the menu from
-  // an open context panel, and opening the menu closes the panel.
+  // Below the menu on purpose: the `ctrl+g` leader should still reach
+  // the menu's chords from an open context panel, and activating a
+  // destination closes the panel.
   if (
     handleContextPanelKey(input, key, {
       state,
       dispatch,
-      ...(ctx.onSetCapAuto ? { onSetCapAuto: ctx.onSetCapAuto } : {}),
+      ...(ctx.onStepPairs ? { onStepPairs: ctx.onStepPairs } : {}),
     })
   ) {
     return true;
   }
   // Same rung, same reason: the composer's route switches let ctrl-chords
-  // through so the menu stays reachable from inside one. They open only
+  // through so the global chords stay live from inside one. They open only
   // where the composer is the surface the operator is looking at — on a
   // Manage tab the row is off screen, and a switch anchored to it would
   // be a popup with no visible owner.
@@ -368,10 +419,6 @@ export function handleAppKey(
   }
   if (!state.slashPaletteOpen && isMenuLeaderKey(input, key)) {
     ctx.setMenuLeaderArmed(true);
-    return true;
-  }
-  if (!state.slashPaletteOpen && isMenuOpenKey(input, key)) {
-    dispatch({ type: "menu_opened" });
     return true;
   }
   if (
@@ -813,8 +860,11 @@ export type ApprovalHotkey =
  *     Claiming one would fix the typing collision in one direction and
  *     open it in the other — an operator mid-message would lose
  *     delete-word to a *deny*.
- *   - `ctrl+c` / `ctrl+p` / `ctrl+g` / `ctrl+l` / `ctrl+n` / `ctrl+o` /
- *     `ctrl+q` / `ctrl+r` / `ctrl+t` / `ctrl+x` are global.
+ *   - `ctrl+c` / `ctrl+g` / `ctrl+l` / `ctrl+n` / `ctrl+o` /
+ *     `ctrl+q` / `ctrl+r` / `ctrl+t` / `ctrl+x` are global. (`ctrl+p`
+ *     left this set when the menu moved to Esc, but stays off the
+ *     table: a chord that meant "menu" for years must not start
+ *     approving commands.)
  *   - `ctrl+s` is XOFF, which a terminal outside our raw mode (screen,
  *     an ssh hop with flow control on) can still eat.
  *

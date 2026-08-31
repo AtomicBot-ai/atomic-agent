@@ -29,7 +29,9 @@ const NO: AdvanceDecision = { advance: false, immediate: false };
  *  - `transport` → advance (provider unreachable). Note every cloud
  *    `OpenAiHttpError` classifies as `transport` regardless of status, so
  *    a 404 model-not-found or a 401 dead key advances too — a different
- *    link may have the model or a working key.
+ *    link may have the model or a working key. Untyped socket failures
+ *    (undici's `TypeError: fetch failed` and friends, from surfaces that
+ *    do not wrap their own errors) land here too — see `isNetworkError`.
  *  - `model` → advance. This is a *defective completion* from a reachable
  *    provider (truncated / empty / no_stop), not "model not found"; the
  *    same prompt would reproduce it here, so another link is worth a try.

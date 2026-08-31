@@ -1,7 +1,10 @@
 import { randomUUID } from "node:crypto";
 
 import type { ParsedSentryDsn } from "./sentry-config.js";
-import type { ScrubbedErrorEvent } from "./error-scrubber.js";
+import type {
+  ScrubbedErrorEvent,
+  SentryStackFrame,
+} from "./error-scrubber.js";
 
 /** Constant context stamped on every envelope. */
 export interface EnvelopeMeta {
@@ -88,7 +91,9 @@ export function buildEnvelope(
         {
           type: ev.errorType,
           value: ev.message ?? ev.errorType,
-          stacktrace: { frames: ev.frames },
+          // `ev.frames` stays innermost-first for the fingerprint above;
+          // the wire format wants the opposite. See `toSentryFrameOrder`.
+          stacktrace: { frames: toSentryFrameOrder(ev.frames) },
         },
       ],
     },
@@ -103,6 +108,49 @@ export function buildEnvelope(
   const payload = JSON.stringify(event);
   const body = `${envelopeHeader}\n${itemHeader}\n${payload}\n`;
   return { eventId, body };
+}
+
+/** A stack frame as Sentry's ingest protocol wants it. */
+interface WireStackFrame {
+  function?: string;
+  filename: string;
+  lineno?: number;
+  colno?: number;
+  in_app: boolean;
+}
+
+/**
+ * Reorder and annotate frames for the wire.
+ *
+ * Two protocol details, both of which we were getting wrong:
+ *
+ *  - **Order.** Sentry lists a stack oldest frame FIRST, so the crash
+ *    site is the LAST entry — the opposite of V8, which puts the throw
+ *    site at index 0. Sending V8 order rendered every stack upside-down
+ *    in the UI and, worse, made Sentry read the culprit off the wrong
+ *    end: that is why the issue list is a wall of `async run`,
+ *    `async executeStep`, `async runOneTurn` — the outermost caller of
+ *    unrelated bugs — instead of the frame that actually threw.
+ *
+ *  - **`in_app`.** Nothing ever set it, so every frame was a system
+ *    frame (`in_app_frame_mix: "system-only"` on all of our issues) and
+ *    Sentry's culprit/grouping heuristics had nothing of ours to
+ *    prefer. Anything that is not a `node:` internal is ours — the
+ *    scrubber has already reduced paths to basenames, and the bundle
+ *    is a single file, so there is no dependency directory left to
+ *    distinguish.
+ *
+ * `ev.frames` is left untouched (a copy is reversed): the fingerprint
+ * reads `frames[0]` as the innermost frame, and flipping that would
+ * re-group every existing issue.
+ */
+function toSentryFrameOrder(frames: SentryStackFrame[]): WireStackFrame[] {
+  return frames
+    .map((frame) => ({
+      ...frame,
+      in_app: !frame.filename.startsWith("node:"),
+    }))
+    .reverse();
 }
 
 /** Build the `X-Sentry-Auth` header value for an envelope POST. */

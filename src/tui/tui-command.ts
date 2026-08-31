@@ -38,6 +38,7 @@ import {
   enableMouseTracking,
   type MouseTrackingController,
 } from "./mouse/mouse-tracking.js";
+import { createSelectionPassthrough } from "./mouse/selection-passthrough.js";
 import { isLocalBackendConfigured } from "./local-backend-readiness.js";
 import { needsOnboarding } from "./onboarding/needs-onboarding.js";
 import { createOnboardingState } from "./onboarding/onboarding-state.js";
@@ -45,6 +46,7 @@ import {
   currentTerminalLaunchInput,
   openAgentTerminalWindow,
 } from "./open-terminal-window.js";
+import { openUrlInBrowser } from "./open-url.js";
 import { detectKittyKeyboard } from "./detect-kitty-keyboard.js";
 import { setShiftEnterNewline } from "./shift-enter-support.js";
 import { makeTuiEventBus, TuiApp } from "./tui-app.js";
@@ -258,16 +260,20 @@ export async function tuiCommand(args: string[]): Promise<number> {
   // half of the old one and half of the new.
   const synchronizedOutput = enableSynchronizedOutput({ stdout: process.stdout });
 
-  // Mouse support. Enabling SGR tracking (1000 + 1006) is what makes
+  // Mouse support. Enabling SGR tracking (1002 + 1006) is what makes
   // clicking panels, rows, tabs and the prompt work at all — the app
   // cannot see a click the terminal never reports. The cost is real and
   // was the reason this was previously left off: while reporting is on,
-  // the terminal stops doing its own drag-to-select (Apple Terminal has
-  // no Shift-bypass at all). So it is a toggle, not a fact of life —
-  // `tui.mouse` in the config, `--mouse` / `--no-mouse` per run, and
-  // `/mouse on|off` live. With reporting off, behaviour is exactly what
-  // it was before: alternate-scroll (`\x1b[?1007h` from
-  // `enterAltScreen`) turns the wheel into cursor keys, which
+  // the terminal stops doing its own drag-to-select. The escape hatch is
+  // `selectionPassthrough` below: a plain drag that starts on dead
+  // content — or a shift-/alt-modified press on a terminal without a
+  // native bypass (Apple Terminal) — suspends reporting for a short
+  // window so the terminal's own selection takes over.
+  // Reporting also stays a toggle — `tui.mouse` in the config,
+  // `--mouse` / `--no-mouse` per run, and `/mouse on|off` live. With
+  // reporting off, behaviour is exactly what it was before:
+  // alternate-scroll (`\x1b[?1007h` from `enterAltScreen`) turns the
+  // wheel into cursor keys, which
   // `handleAppKey.shouldTreatArrowAsChatScroll` routes into
   // `chat_scrolled`.
   //
@@ -279,6 +285,19 @@ export async function tuiCommand(args: string[]): Promise<number> {
   let mouseTracking: MouseTrackingController | null = mouseEnabled
     ? enableMouseTracking({ stdout: process.stdout })
     : null;
+  // Text-selection passthrough: a shift- or alt-modified press means
+  // the operator is reaching for the terminal's own drag-to-select, not
+  // a click — see `selection-passthrough.ts` for why that report only
+  // ever arrives on a terminal without a native bypass. The same window
+  // also opens on a plain drag over dead content, via
+  // `onSelectionDragIntent` below. The `tracking` getter
+  // reads the live `mouseTracking` binding because `/mouse on|off`
+  // replaces the controller underneath the window; a captured one would
+  // resume a controller nobody is using any more.
+  const selectionPassthrough = createSelectionPassthrough({
+    tracking: () => mouseTracking,
+    notify: (text) => bus.emit({ type: "system_message", text }),
+  });
   // `mouseTracking` is the single source of truth for "is the mouse on",
   // and it is read here on every report rather than captured, so
   // `setMouseEnabled` reassigning it takes effect immediately. Normally
@@ -287,7 +306,15 @@ export async function tuiCommand(args: string[]): Promise<number> {
   // a multiplexer that swallowed the disable, or a bracketed paste whose
   // payload happens to contain an SGR report.
   const mouseStdin = createMouseStdin(process.stdin, (event) => {
-    if (mouseTracking) mouseSource.emit(event);
+    if (!mouseTracking) return;
+    // The passthrough sees every event before the app does: a consumed
+    // shift-press must never reach the hit test, and while the window
+    // is open a report that was already in flight when reporting
+    // stopped is swallowed too — the operator is selecting, not
+    // clicking.
+    if (selectionPassthrough.observe(event)) return;
+    if (mouseTracking.isSuspended()) return;
+    mouseSource.emit(event);
   });
   const setMouseEnabled = (next: boolean | null): void => {
     if (next === null) {
@@ -387,6 +414,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
           orchestrator.quit();
         },
         onNewWindowRequested: () => openNewAgentWindow(parsed.workingDir, bus),
+        onOpenUrlRequested: (url) => openUrlFromChat(url, bus),
         onMemoryDumpRequested: () => orchestrator.dumpProfile(),
         onSkillCatalogRequested: () => orchestrator.dumpSkillCatalog(),
         onPersistLlamaUrl: (nextUrl) => persistLlamaUrl(nextUrl, bus, orchestrator, runtime),
@@ -403,6 +431,16 @@ export async function tuiCommand(args: string[]): Promise<number> {
           bus.emit({ type: "ui_mode_set", mode: "debug" });
           bus.emit({ type: "tab_changed", tab: "tasks" });
           orchestrator.tasks.openDetail(taskId);
+        },
+        onTaskNewRequested: () => {
+          // Sidebar `+ new` on the Tasks header: land on the Tasks debug
+          // tab with the create form already open — the destination the
+          // in-panel `n` key reaches, minus the walk. The form-open
+          // action is the same one `n` dispatches, emitted on the bus
+          // for the reason the sibling above spells out.
+          bus.emit({ type: "ui_mode_set", mode: "debug" });
+          bus.emit({ type: "tab_changed", tab: "tasks" });
+          bus.emit({ type: "tasks_create_form_opened" });
         },
         onTaskOpenSessionRequested: (taskId) =>
           orchestrator.tasks.openSession(taskId),
@@ -594,6 +632,14 @@ export async function tuiCommand(args: string[]): Promise<number> {
           restartRequested = true;
         },
         onMouseSupportRequested: setMouseEnabled,
+        // A drag that started on dead content (no target claimed the
+        // press) — the terminal-agnostic selection trigger. Same
+        // window, same timer, same auto-resume as the modifier path;
+        // only the notice differs, because THIS gesture is already
+        // lost to reporting and the operator has to drag again.
+        onSelectionDragIntent: () => selectionPassthrough.beginWindow("drag"),
+        onSelectionPauseRequested: () =>
+          selectionPassthrough.beginWindow("chip"),
       },
       // Unconditional on purpose. `mouseEnabled` is a startup-time
       // value, but `/mouse on` flips reporting *later* and cannot
@@ -673,6 +719,9 @@ export async function tuiCommand(args: string[]): Promise<number> {
     try {
       // Diagnostics go back to stderr for whatever runs after the TUI.
       setConfigNoticeSink(null);
+      // The passthrough first: its pending resume must not fire into a
+      // controller that `disable()` below has already retired.
+      selectionPassthrough.dispose();
       mouseTracking?.disable();
       mouseStdin.dispose();
       altScreen.restore();
@@ -746,6 +795,28 @@ function openNewAgentWindow(
       type: "system_message",
       variant: "warn",
       text: `could not open a new terminal window: ${result.reason}`,
+    });
+  })();
+}
+
+/**
+ * `[open <host>]` chip: hand `url` to the OS default browser. Success
+ * stays silent — the browser fronting itself *is* the feedback, and a
+ * chat-log line per opened link would be noise — but a failure is
+ * reported, because a chip that silently does nothing reads as a dead
+ * button (the same reasoning as `openNewAgentWindow` above).
+ */
+function openUrlFromChat(
+  url: string,
+  bus: ReturnType<typeof makeTuiEventBus>,
+): void {
+  void (async () => {
+    const result = await openUrlInBrowser(url);
+    if (result.ok) return;
+    bus.emit({
+      type: "system_message",
+      variant: "warn",
+      text: `could not open ${url}: ${result.reason}`,
     });
   })();
 }
