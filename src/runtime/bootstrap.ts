@@ -1425,6 +1425,10 @@ export async function createAgentRuntime(
   const mcpManager = new McpManager(mcpServerConfigs, {
     toolRegistry,
     logger,
+    // Same approval wiring as the native dangerous tools: servers at
+    // the default `approval_gated` trust get their calls routed
+    // through `requireApproval` (issue #132).
+    dangerous,
     // Sampling handler is per-client; we install one for every
     // connecting server so the SDK advertises the capability. Routes
     // to LlamaServerClient with `slotId: -1` (invariant 1 in

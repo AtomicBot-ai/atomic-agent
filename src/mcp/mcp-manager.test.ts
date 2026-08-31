@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { setDynamicResourceClassResolver } from "../agent/tool-resource-class.js";
-import { ToolRegistry } from "../tools/tool-registry.js";
+import type { ApprovalGate } from "../approval/approval-gate.js";
+import type { DangerousToolOptions } from "../approval/dangerous-tool.js";
+import { ToolRegistry, type ToolContext } from "../tools/tool-registry.js";
 
 import type {
   McpServerCatalog,
@@ -155,6 +157,65 @@ describe("McpManager", () => {
     expect(tools.has("mcp.docs.lookup")).toBe(true);
     expect(mgr.listStatuses()[0]!.state).toBe("up");
     expect(mgr.listStatuses()[0]!.toolCount).toBe(2);
+  });
+
+  it("passes deps.dangerous + resolved trust through to registered tools", async () => {
+    const tools = new ToolRegistry();
+    FAKE_BY_NAME.set("gated", {
+      connect: async () => {},
+      close: async () => {},
+      catalog: {
+        server: "gated",
+        tools: [metaOf("gated", "do_thing")],
+        resources: [],
+        prompts: [],
+      },
+    });
+    FAKE_BY_NAME.set("readers", {
+      connect: async () => {},
+      close: async () => {},
+      catalog: {
+        server: "readers",
+        tools: [metaOf("readers", "lookup")],
+        resources: [],
+        prompts: [],
+      },
+    });
+    const requestedTools: string[] = [];
+    const dangerous: DangerousToolOptions = {
+      approvals: {
+        request: async (req: { tool: string }) => {
+          requestedTools.push(req.tool);
+          return { approvalId: "a", approved: false, reason: "no" };
+        },
+      } as unknown as ApprovalGate,
+      approvalRequired: true,
+    };
+    const mgr = new McpManager(
+      [
+        // No trust → resolves to the approval_gated default.
+        stdioConfig("gated"),
+        { ...stdioConfig("readers"), trust: "pure_read" },
+      ],
+      { toolRegistry: tools, dangerous },
+    );
+    await mgr.start();
+    const ctx: ToolContext = {
+      workingDir: "/tmp",
+      sessionId: "s",
+      stepIndex: 0,
+      signal: new AbortController().signal,
+    };
+    // Default-trust server: the denial reaches the tool result and the
+    // gate saw the qualified name.
+    const denied = await tools.get("mcp.gated.do_thing").run({}, ctx);
+    expect(requestedTools).toEqual(["mcp.gated.do_thing"]);
+    expect(denied.status).toBe("error");
+    expect(denied.details).toMatchObject({ approvalDenied: true });
+    // pure_read server: same runtime, no prompt.
+    const ok = await tools.get("mcp.readers.lookup").run({}, ctx);
+    expect(requestedTools).toEqual(["mcp.gated.do_thing"]);
+    expect(ok.status).toBe("ok");
   });
 
   it("start() isolates per-server failures", async () => {

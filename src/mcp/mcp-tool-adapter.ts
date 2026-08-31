@@ -2,26 +2,39 @@
  * Adapter that wraps an MCP tool descriptor as a `ToolDefinition`
  * usable by the existing `ToolRegistry`. The adapter:
  *
- *   1. Forwards `args` verbatim to the MCP server (the server is the
+ *   1. Routes the call through `requireApproval` when the owning
+ *      server's resolved trust is `approval_gated` — unless the tool
+ *      advertised `annotations.readOnlyHint === true` at discovery
+ *      time. Anything else (missing, malformed, non-boolean) fails
+ *      closed to gated.
+ *   2. Forwards `args` verbatim to the MCP server (the server is the
  *      source of truth for input-schema validation).
- *   2. Projects the heterogenous MCP response shape (a list of
+ *   3. Projects the heterogenous MCP response shape (a list of
  *      content blocks of types `text`, `image`, `resource`, …) into
  *      a single `output` string + structured `details` payload that
  *      `compressToolResult` can summarise the same way native tools
  *      are summarised.
- *   3. Folds any thrown `McpRequestError` (server-side `isError`,
+ *   4. Folds any thrown `McpRequestError` (server-side `isError`,
  *      transport failure, timeout) into a `status: "error"`
  *      `CompressedToolResult` so per-call failures never escape as
- *      thrown exceptions — siblings inside a batch keep running.
+ *      thrown exceptions — siblings inside a batch keep running. An
+ *      `ApprovalDeniedError` is folded the same way but stamped
+ *      distinctly (`details.approvalDenied`) so a denial is never
+ *      mistaken for a server-side failure.
  */
 
+import {
+  ApprovalDeniedError,
+  requireApproval,
+  type DangerousToolOptions,
+} from "../approval/dangerous-tool.js";
 import { compressToolResult } from "../compressor/result-compressor.js";
 import type { CompressedToolResult } from "../compressor/result-compressor.js";
 import type { ToolDefinition } from "../tools/tool-registry.js";
 
 import type { McpClient } from "./mcp-client.js";
 import { scrubErrorMessage } from "./mcp-errors.js";
-import type { McpToolMeta } from "./mcp-types.js";
+import type { McpToolMeta, McpTrustLevel } from "./mcp-types.js";
 
 /** Hard cap on the synthetic `output` string projected from an MCP response. */
 const MAX_PROJECTED_OUTPUT_CHARS = 8_000;
@@ -49,10 +62,44 @@ const MCP_COMPRESSOR_OPTIONS = {
   maxTailLines: Number.MAX_SAFE_INTEGER,
 } as const;
 
+/** Cap on the args-JSON snippet rendered into an approval preview. */
+const MAX_APPROVAL_PREVIEW_CHARS = 400;
+
+/**
+ * Consent wiring for one server's tools, resolved by `McpManager` at
+ * registration time.
+ */
+export interface McpToolGateOptions {
+  /** Resolved trust for the owning server (`config.trust ?? "approval_gated"`). */
+  trust: McpTrustLevel;
+  /**
+   * Shared approval-gate options (same object the native dangerous
+   * tools receive). Production wiring always passes it — absence is a
+   * test-only seam mirroring `DangerousToolOptions.approvalRequired`
+   * being `false`.
+   */
+  dangerous?: DangerousToolOptions;
+}
+
 export function createMcpToolDefinition(
   meta: McpToolMeta,
   client: McpClient,
+  gate?: McpToolGateOptions,
 ): ToolDefinition {
+  // Classified once, at registration, from discovery-time data — never
+  // from anything the server sends later — so the decision is stable
+  // for the tool's lifetime and the descriptor bytes (and with them
+  // the KV-cached stable prefix) are untouched. Only a strict boolean
+  // `readOnlyHint === true` exempts; missing, malformed, or string
+  // annotations fail closed to gated. This is deliberately NARROWER
+  // than the `readonly` field below (which also accepts
+  // `destructiveHint === false`): `readonly` feeds descriptor
+  // rendering, while skipping consent demands the server's strongest
+  // claim, exactly as the MCP spec defines `readOnlyHint`.
+  const dangerous = gate?.dangerous;
+  const gated =
+    gate?.trust === "approval_gated" &&
+    meta.annotations?.readOnlyHint !== true;
   return {
     name: meta.qualifiedName,
     description: meta.description || `MCP tool ${meta.rawName} on ${meta.server}`,
@@ -67,6 +114,20 @@ export function createMcpToolDefinition(
       meta.annotations?.destructiveHint === false,
     run: async (args, ctx): Promise<CompressedToolResult> => {
       try {
+        if (gated && dangerous) {
+          await requireApproval(
+            dangerous,
+            {
+              sessionId: ctx.sessionId,
+              tool: meta.qualifiedName,
+              category: "other",
+              reason: `call MCP tool ${meta.rawName} on server ${meta.server}`,
+              preview: buildApprovalPreview(args),
+              affectedResources: [meta.server],
+            },
+            ctx.signal,
+          );
+        }
         const res = await client.callTool(meta.rawName, args, ctx.signal);
         return compressToolResult(
           {
@@ -78,6 +139,25 @@ export function createMcpToolDefinition(
           MCP_COMPRESSOR_OPTIONS,
         );
       } catch (err) {
+        // A denial is an operator decision, not a server failure —
+        // stamp it so downstream consumers (loop detector, traces)
+        // never conflate the two, and keep the message unscrubbed:
+        // it is generated locally, never server data.
+        if (err instanceof ApprovalDeniedError) {
+          return compressToolResult(
+            {
+              tool: meta.qualifiedName,
+              status: "error",
+              output: err.message,
+              details: {
+                server: meta.server,
+                rawName: meta.rawName,
+                approvalDenied: true,
+              },
+            },
+            MCP_COMPRESSOR_OPTIONS,
+          );
+        }
         return compressToolResult(
           {
             tool: meta.qualifiedName,
@@ -93,6 +173,25 @@ export function createMcpToolDefinition(
       }
     },
   };
+}
+
+/**
+ * Render the outgoing arguments as a clipped JSON snippet for the
+ * approval prompt, so the operator sees what would be sent before
+ * deciding. Cyclic / unserialisable args degrade to a placeholder —
+ * the preview is best-effort, the gate itself never is.
+ */
+function buildApprovalPreview(args: Record<string, unknown>): string {
+  let json: string;
+  try {
+    json = JSON.stringify(args);
+  } catch {
+    return "(arguments not serialisable)";
+  }
+  if (json === undefined) return "(no arguments)";
+  return json.length > MAX_APPROVAL_PREVIEW_CHARS
+    ? `${json.slice(0, MAX_APPROVAL_PREVIEW_CHARS)}…`
+    : json;
 }
 
 /**
