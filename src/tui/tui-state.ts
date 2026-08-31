@@ -588,6 +588,16 @@ export interface TuiState {
    */
   sidebarSection: "sessions" | "tasks";
   /**
+   * The operator's own choice to fold the rail away — the `«` control
+   * on the rail, the `»` on the status bar, or `/sidebar`. Session-only,
+   * never persisted, and independent of the terminal-size gate: render
+   * time combines both (`!sidebarCollapsed && isSidebarVisible(...)`),
+   * so a rail folded by hand stays folded through resizes, and the
+   * restore control only appears when the terminal could actually seat
+   * the rail again.
+   */
+  sidebarCollapsed: boolean;
+  /**
    * Highlighted row in the sidebar's session list. `0` = newest session,
    * `recentSessions.length - 1` = oldest. Independent of
    * `sessionPickerCursor` so opening / closing the modal picker does not
@@ -802,6 +812,7 @@ export function createInitialTuiState(
     recentSessions: [],
     chatFocus: "editor",
     sidebarSection: "sessions",
+    sidebarCollapsed: false,
     sidebarCursor: 0,
     sidebarTasksCursor: 0,
     chatScrollOffset: 0,

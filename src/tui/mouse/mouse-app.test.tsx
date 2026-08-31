@@ -151,12 +151,15 @@ function mountApp(): {
   seedSessions: () => void;
   /** Session ids the app asked the host to delete. */
   deleted: string[];
+  /** Clicks the Tasks header's `+ new` chip delivered to the host. */
+  taskNews: number[];
   unmount: () => void;
 } {
   const bus = makeTuiEventBus();
   const mouse = makeMouseSource();
   const deleted: string[] = [];
   const copied: string[] = [];
+  const taskNews: number[] = [];
   const clipboard = {
     copy: async (text: string) => {
       copied.push(text);
@@ -171,6 +174,7 @@ function mountApp(): {
       callbacks={{
         ...noopCallbacks(),
         onSessionDeleteConfirmed: (sessionId) => deleted.push(sessionId),
+        onTaskNewRequested: () => taskNews.push(taskNews.length),
       }}
       mouse={mouse}
     />
@@ -181,6 +185,7 @@ function mountApp(): {
     mouse,
     stdin,
     deleted,
+    taskNews,
     copied,
     seedSessions: () => {
       bus.emit({
@@ -501,6 +506,55 @@ describe("TuiApp mouse", () => {
       expect(app.deleted).toEqual([]);
       app.unmount();
     });
+  });
+
+  it("folds the rail from its « mark and restores it from the bar's »", async () => {
+    // The two positions of one hinge: « in the rail's top-right corner
+    // folds it away, » at the head of the status bar brings it back.
+    const app = mountApp();
+    await waitUntil(() => app.frame().includes("SESSIONS"), "the rail on screen");
+    await clickUntil(
+      app.mouse,
+      () => locate(app.frame(), "«"),
+      () => !app.frame().includes("SESSIONS"),
+      "click the fold mark",
+    );
+    expect(app.frame()).not.toContain("SESSIONS");
+    // The restore mark sits on the top row, so a top-down locate cannot
+    // confuse it with a transcript's own » lines further down.
+    await waitUntil(() => app.frame().includes("»"), "the restore mark");
+    await clickUntil(
+      app.mouse,
+      () => locate(app.frame(), "»"),
+      () => app.frame().includes("SESSIONS"),
+      "click the restore mark",
+    );
+    expect(app.frame()).toContain("SESSIONS");
+    app.unmount();
+  });
+
+  it("requests a new task from the Tasks header's + new chip", async () => {
+    const app = mountApp();
+    await waitUntil(() => app.frame().includes("TASKS"), "the rail on screen");
+    // Two `+ new` chips are on screen — the Sessions header owns the
+    // first, so the one under test is the chip sharing a line with the
+    // TASKS label.
+    await clickUntil(
+      app.mouse,
+      () => {
+        const lines = app.frame().split("\n");
+        for (const [y, line] of lines.entries()) {
+          if (!line.includes("TASKS")) continue;
+          const x = line.indexOf("+ new");
+          if (x !== -1) return { x: x + 1, y };
+        }
+        throw new Error(`no "+ new" on the TASKS line:\n${app.frame()}`);
+      },
+      () => app.taskNews.length > 0,
+      "click the Tasks + new chip",
+    );
+    expect(app.taskNews.length).toBeGreaterThan(0);
+    app.unmount();
   });
 
   it("puts a start-page tip in the composer when it is clicked", async () => {
