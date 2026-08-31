@@ -1269,3 +1269,82 @@ describe("token-budget helpers", () => {
     expect(truncateToTokens("abc", 0)).toBe("");
   });
 });
+
+describe("buildPrompt tool transport (issue #285)", () => {
+  const base = () => ({
+    session: mkSession(),
+    toolDescriptors: TOOLS,
+    capabilities: CAPS,
+    skillCatalog: SKILLS,
+  });
+
+  it("native_tools prefix drops the text-JSON emission mandate but keeps the ### tools catalog", () => {
+    const native = buildPrompt({ ...base(), toolTransport: "native_tools" });
+    // The dual mandate: with an OpenAI `tools` payload on the request,
+    // the prompt must not also order text-JSON emission.
+    expect(native.stablePrefix).not.toContain("Emit a JSON ARRAY of tool calls now");
+    expect(native.stablePrefix).not.toContain(
+      "Each step emits exactly one JSON array matching the tool grammar",
+    );
+    // ...including the `### rules` opener — every text-array mandate
+    // must go, not just the persona and `### instructions` ones.
+    expect(native.stablePrefix).not.toContain("One tool-call array per step");
+    expect(native.stablePrefix).not.toContain(
+      "a solo action is a length-1 array",
+    );
+    // ...and the persona's reply-discipline line ("emit that tool JSON").
+    expect(native.stablePrefix).not.toContain("emit that tool JSON");
+    expect(native.stablePrefix).toContain("call that tool, not `reply`");
+    expect(native.stablePrefix).toContain("### rules");
+    expect(native.stablePrefix).toContain("One batch of tool calls per step");
+    expect(native.stablePrefix).toContain("native function-calling interface");
+    // The catalog stays: a fallback chain can hand this session to a
+    // grammar-only link, and the catalog carries tier/tool.view docs.
+    expect(native.stablePrefix).toContain("### tools");
+    expect(native.stablePrefix).toContain("# common (full)");
+    expect(native.stablePrefix).toContain("browser.navigate");
+    expect(native.stablePrefix).toContain("### instructions");
+  });
+
+  it("grammar prefix is byte-identical whether the transport is omitted or explicit", () => {
+    const implicit = buildPrompt(base());
+    const explicit = buildPrompt({ ...base(), toolTransport: "grammar" });
+    expect(explicit.stablePrefix).toBe(implicit.stablePrefix);
+    // And it still carries the legacy text-JSON mandate untouched.
+    expect(explicit.stablePrefix).toContain("Emit a JSON ARRAY of tool calls now");
+    expect(explicit.stablePrefix).toContain(
+      "Each step emits exactly one JSON array matching the tool grammar",
+    );
+    expect(explicit.stablePrefix).toContain(
+      "One tool-call array per step (including `skill.view`); a solo action is a length-1 array. Destructive or privileged tools may require user approval.",
+    );
+  });
+
+  it("stable prefix stays byte-stable across turns for a fixed transport", () => {
+    const turn1 = buildPrompt({ ...base(), toolTransport: "native_tools" });
+    const turn2 = buildPrompt({
+      ...base(),
+      session: mkSession({
+        turns: [
+          { kind: "user", text: "Check inbox", at: 1 },
+          { kind: "assistant_reply", text: "Done", at: 2 },
+          { kind: "user", text: "Now archive it", at: 3 },
+        ],
+      }),
+      toolTransport: "native_tools",
+    });
+    expect(turn2.stablePrefix).toBe(turn1.stablePrefix);
+  });
+
+  it("an explicit systemPersona override wins on both transports", () => {
+    const persona = "You are a test persona.";
+    const native = buildPrompt({
+      ...base(),
+      systemPersona: persona,
+      toolTransport: "native_tools",
+    });
+    const grammar = buildPrompt({ ...base(), systemPersona: persona });
+    expect(native.stablePrefix).toContain(persona);
+    expect(grammar.stablePrefix).toContain(persona);
+  });
+});
