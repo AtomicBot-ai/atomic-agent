@@ -40,6 +40,17 @@ contextBridge.exposeInMainWorld("atomic", {
   approve: (approvalId: string, decision: "allow-once" | "deny", reason?: string) =>
     ipcRenderer.invoke("agent:approve", { approvalId, decision, reason }),
 
+  /** Setup wizard: real config writes and the real model catalogue. */
+  configGet: () => ipcRenderer.invoke("cli:configGet"),
+  configSet: (key: string, value: string) => ipcRenderer.invoke("cli:configSet", { key, value }),
+  modelsList: () => ipcRenderer.invoke("cli:modelsList"),
+  modelsUse: (id: string) => ipcRenderer.invoke("cli:modelsUse", id),
+  modelsPull: (id: string) => ipcRenderer.invoke("cli:modelsPull", id),
+  cancelPull: () => ipcRenderer.invoke("cli:cancelPull"),
+  onPull: (cb: (payload: unknown) => void) => on("cli:pull", cb),
+  hostRam: () => ipcRenderer.invoke("app:hostRam"),
+  keyEnv: () => ipcRenderer.invoke("app:keyEnv"),
+
   /** Shell affordances. */
   chooseWorkspace: () => ipcRenderer.invoke("app:chooseWorkspace"),
   openExternal: (url: string) => ipcRenderer.invoke("app:openExternal", url),

@@ -6,13 +6,25 @@ import { writeFileSync } from "node:fs";
 
 import { AgentClient } from "./agent-client.js";
 import { buildMenu } from "./menu.js";
+import {
+  configGet,
+  configSet,
+  hostRamGb,
+  modelsList,
+  modelsPull,
+  modelsUse,
+  PROVIDER_KEY_ENV,
+} from "./agent-cli.js";
 
 const DEV = process.argv.includes("--dev");
 /** `--smoke` boots, waits for first paint, writes a screenshot, and exits. */
 const SMOKE = process.argv.includes("--smoke");
+/** `--onboarding` re-runs the setup wizard even on a configured install. */
+const FORCE_ONBOARDING = process.argv.includes("--onboarding");
 
 let win: BrowserWindow | null = null;
 let agent: AgentClient | null = null;
+let pull: { done: Promise<unknown>; cancel: () => void } | null = null;
 
 function send(channel: string, payload?: unknown): void {
   if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
@@ -136,8 +148,46 @@ function wireIpc(client: AgentClient): void {
       message: "Choose the folder the agent may work in",
     });
     if (picked.canceled || !picked.filePaths[0]) return null;
-    return picked.filePaths[0];
+    const dir = picked.filePaths[0];
+    // Telling the user to restart while the child keeps its old cwd is a lie;
+    // move it here instead.
+    client.status.workingDir = dir;
+    await client.stop();
+    void client.start();
+    return dir;
   });
+
+  // --- setup wizard: config writes and the local model catalogue ---
+  ipcMain.handle("cli:configGet", () => configGet());
+  ipcMain.handle("cli:configSet", (_event, payload: unknown) => {
+    const { key, value } = payload as { key?: unknown; value?: unknown };
+    if (typeof key !== "string" || typeof value !== "string") {
+      return { ok: false, error: "key and value must be strings" };
+    }
+    return configSet(key, value);
+  });
+  ipcMain.handle("cli:modelsList", () => modelsList());
+  ipcMain.handle("cli:modelsUse", (_event, id: unknown) =>
+    typeof id === "string" ? modelsUse(id) : { ok: false, error: "model id required" },
+  );
+  ipcMain.handle("cli:modelsPull", (_event, id: unknown) => {
+    if (typeof id !== "string") return { ok: false, error: "model id required" };
+    if (pull) return { ok: false, error: "a download is already running" };
+    const started = modelsPull(id, (line) => send("cli:pull", { id, line }));
+    pull = started;
+    void started.done.then((res) => {
+      pull = null;
+      send("cli:pull", { id, done: true, ok: res.ok, error: res.error ?? null });
+    });
+    return { ok: true, started: true };
+  });
+  ipcMain.handle("cli:cancelPull", () => {
+    if (!pull) return false;
+    pull.cancel();
+    return true;
+  });
+  ipcMain.handle("app:hostRam", () => hostRamGb());
+  ipcMain.handle("app:keyEnv", () => PROVIDER_KEY_ENV);
 
   ipcMain.handle("app:openExternal", (_event, url: unknown) => {
     if (typeof url === "string" && /^https?:\/\//.test(url)) void shell.openExternal(url);
@@ -159,9 +209,15 @@ async function smokeTest(): Promise<void> {
   };
 
   await new Promise((r) => setTimeout(r, 1500));
-  check("renderer painted", (await js<number>("document.querySelectorAll('.navrow').length")) === 4);
+  check("renderer painted", (await js<number>("document.querySelectorAll('.navrow').length")) === 3);
   check("toolbar titled", (await js<string>("document.querySelector('.tb-title b').textContent")) === "Chat");
   check("bridge exposed", await js<boolean>("!!window.atomic"));
+  check(
+    "no demo content",
+    !/Teletubbies|Tinky|Laa-Laa|Tubby|Noo-noo|custard/i.test(
+      await js<string>("document.body.innerText"),
+    ),
+  );
   // The window frame draws the menu bar and the traffic lights; the page
   // must not draw its own, and the toolbar has to be the drag handle.
   check(
@@ -186,6 +242,14 @@ async function smokeTest(): Promise<void> {
     await new Promise((r) => setTimeout(r, 500));
   }
   check("agent connected", state === "connected", `state=${state}`);
+
+  if (FORCE_ONBOARDING) {
+    const title = await js<string>(
+      "document.querySelector('#onboarding .ob-title')?.textContent ?? ''",
+    );
+    const options = await js<number>("document.querySelectorAll('#onboarding .ob-opt').length");
+    check("wizard opens", title.length > 0 && options === 3, `${JSON.stringify(title)} options=${options}`);
+  }
 
   if (state === "connected") {
     check("skills loaded", (await js<number>("window.__skills && window.__skills()")) > 0);
@@ -213,11 +277,12 @@ void app.whenReady().then(async () => {
   const workspace = process.env.ATOMIC_AGENT_WORKSPACE ?? homedir();
   agent = new AgentClient(workspace);
   win = createWindow();
-  buildMenu(win, (command) => send("app:menu", command));
+  buildMenu((command) => send("app:menu", command));
   wireIpc(agent);
 
   win.webContents.once("did-finish-load", () => {
     send("agent:status", agent?.status);
+    if (FORCE_ONBOARDING) send("app:menu", "onboarding");
     void agent?.start();
     if (SMOKE) void smokeTest();
   });

@@ -1,4 +1,4 @@
-import { app, Menu, shell, type BrowserWindow, type MenuItemConstructorOptions } from "electron";
+import { Menu, shell, type MenuItemConstructorOptions } from "electron";
 
 /**
  * The native menu bar.
@@ -8,7 +8,7 @@ import { app, Menu, shell, type BrowserWindow, type MenuItemConstructorOptions }
  * command palette cannot drift apart: both dispatch the same id, one
  * through IPC and one in-process.
  */
-export function buildMenu(win: BrowserWindow, send: (command: string) => void): void {
+export function buildMenu(send: (command: string) => void): void {
   const item = (
     label: string,
     command: string,
@@ -25,7 +25,7 @@ export function buildMenu(win: BrowserWindow, send: (command: string) => void): 
       label: "Atomic Agent",
       submenu: [
         { role: "about" },
-        item("Check for Updates…", "update"),
+        item("Run Setup Again…", "onboarding"),
         sep,
         item("Settings…", "settings:general", "CommandOrControl+,"),
         item("Privacy & Approvals…", "settings:privacy", "Shift+CommandOrControl+,"),
@@ -43,14 +43,9 @@ export function buildMenu(win: BrowserWindow, send: (command: string) => void): 
       label: "File",
       submenu: [
         item("New Session", "session:new", "CommandOrControl+N"),
-        item("New Scheduled Task…", "task:new", "Control+Command+N"),
         sep,
-        item("Switch Session…", "session:switch", "CommandOrControl+O"),
         item("Open Workspace…", "workspace:choose", "Shift+CommandOrControl+O"),
         sep,
-        item("Import from Hermes…", "settings:import"),
-        sep,
-        item("Write Debug Bundle", "dump", "Alt+Command+D"),
         sep,
         { role: "close" },
       ],
@@ -66,7 +61,6 @@ export function buildMenu(win: BrowserWindow, send: (command: string) => void): 
         { role: "paste" },
         { role: "selectAll" },
         sep,
-        item("Copy Session ID", "copy:session", "Control+Command+C"),
       ],
     },
     {
@@ -75,7 +69,6 @@ export function buildMenu(win: BrowserWindow, send: (command: string) => void): 
         item("Chat", "room:chat", "CommandOrControl+1"),
         item("Tasks", "room:tasks", "CommandOrControl+2"),
         item("Skills", "room:skills", "CommandOrControl+3"),
-        item("Memory", "room:memory", "CommandOrControl+4"),
         sep,
         item("Toggle Sidebar", "toggle:sidebar", "CommandOrControl+0"),
         item("Toggle Inspector", "toggle:inspector", "Alt+Command+0"),
@@ -90,8 +83,9 @@ export function buildMenu(win: BrowserWindow, send: (command: string) => void): 
           item("Dark", "theme:dark"),
         ] },
         sep,
-        { role: "reload" },
-        { role: "toggleDevTools" },
+        ...(process.argv.includes("--dev")
+          ? ([{ role: "reload" }, { role: "toggleDevTools" }] as MenuItemConstructorOptions[])
+          : []),
         { role: "togglefullscreen" },
       ],
     },
@@ -102,32 +96,14 @@ export function buildMenu(win: BrowserWindow, send: (command: string) => void): 
         item("Stop", "stop", "CommandOrControl+."),
         item("Clear Transcript", "clear", "CommandOrControl+Backspace"),
         sep,
-        item("Approve Request", "appr:y", "Y"),
-        item("Deny Request", "appr:n", "N"),
-        sep,
-        { label: "Run mode", submenu: [
-          item("Local", "mode:local", "Control+1"),
-          item("Cloud", "mode:cloud", "Control+2"),
-          item("Fusion", "mode:fusion", "Control+3"),
-          sep,
-          item("Cloud Share…", "runmode", "Control+Shift+C"),
-        ] },
         item("Choose Model…", "settings:models", "Shift+CommandOrControl+M"),
-        item("Approval Level…", "settings:privacy"),
       ],
     },
     {
       label: "Agent",
       submenu: [
-        item("Install Skill from Hub…", "skills:hub", "Shift+CommandOrControl+I"),
-        item("Enable or Disable Skill…", "room:skills"),
         sep,
-        item("New Scheduled Task…", "task:new"),
         sep,
-        item("MCP Servers…", "settings:mcp"),
-        item("Telegram…", "settings:channels"),
-        sep,
-        item("Built-in Tools Reference", "tools", "Alt+Command+T"),
         item("Restart Agent Runtime", "agent:restart"),
       ],
     },
@@ -152,6 +128,4 @@ export function buildMenu(win: BrowserWindow, send: (command: string) => void): 
 
   if (process.platform !== "darwin") template.shift();
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
-  void app;
-  void win;
 }

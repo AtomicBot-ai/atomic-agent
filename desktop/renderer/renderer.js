@@ -3,8 +3,18 @@
 /* The Electron preload exposes window.atomic. Without it (opened as a
    plain page) the app runs the scripted demo instead of a real agent. */
 const BR = typeof window !== "undefined" ? window.atomic : null;
-let WORKSPACE = '~/Teletubbies';
+let WORKSPACE = '';
 let LIVE_CAPS = null, LIVE_CONFIG = null;
+const OB = {
+  open: false, step: 'choose', choice: 0,
+  models: [], modelCur: 0, ram: 0, busy: false, log: [], error: null,
+  providers: [], keyEnv: {},
+};
+const OB_CHOICES = [
+  {id:'local',  t:'Local models',    d:'llama.cpp on this machine. Private, free per token, one download of 2.7–22 GB.'},
+  {id:'cloud',  t:'Cloud models',    d:'OpenRouter, Anthropic, Gemini, Groq and 20 more. Fastest to a working agent — needs an API key.'},
+  {id:'custom', t:'Custom endpoint', d:'An OpenAI-compatible or llama-server URL you already run. Nothing is downloaded, nothing else is asked.'},
+];
 
 /* ============================================================
    Atomic Agent Desktop — clickable prototype, no backend.
@@ -118,93 +128,6 @@ const CATS = [
 ];
 const LEVEL_NAMES = ['','Paranoid','Workspace','Home','Operator','Full trust'];
 
-const MENUS = [
-  ['Atomic Agent', [
-    ['About Atomic Agent','', 'about'],
-    ['Check for Updates…','', 'update'],
-    ['-'],
-    ['Settings…','⌘ ,','settings:general'],
-    ['Privacy & Approvals…','⇧ ⌘ ,','settings:privacy'],
-    ['-'],
-    ['Hide Atomic Agent','⌘ H','na'],
-    ['Quit Atomic Agent','⌘ Q','quit'],
-  ]],
-  ['File', [
-    ['New Session','⌘ N','session:new'],
-    ['New Scheduled Task…','⌃ ⌘ N','task:new'],
-    ['-'],
-    ['Switch Session…','⌘ O','session:switch'],
-    ['Open Workspace…','⇧ ⌘ O','na'],
-    ['-'],
-    ['Import from Hermes…','','settings:import'],
-    ['-'],
-    ['Export Transcript…','⇧ ⌘ E','na'],
-    ['Write Debug Bundle','⌥ ⌘ D','dump'],
-  ]],
-  ['Edit', [
-    ['Undo','⌘ Z','na'],['Redo','⇧ ⌘ Z','na'],['-'],
-    ['Cut','⌘ X','na'],['Copy','⌘ C','na'],['Paste','⌘ V','na'],['Select All','⌘ A','na'],['-'],
-    ['Find in Transcript…','⌘ F','na'],
-    ['Copy Last Reply','⇧ ⌘ C','copy:reply'],
-    ['Copy Session ID','⌃ ⌘ C','copy:session'],
-  ]],
-  ['View', [
-    ['Chat','⌘ 1','room:chat'],['Tasks','⌘ 2','room:tasks'],['Skills','⌘ 3','room:skills'],['Memory','⌘ 4','room:memory'],
-    ['-'],
-    ['@sidebar','⌘ 0','toggle:sidebar'],
-    ['@inspector','⌥ ⌘ 0','toggle:inspector'],
-    ['@console','⇧ ⌘ Y','toggle:console'],
-    ['-'],
-    ['Expand All Tool Cards','⌥ ⌘ E','cards:expand'],
-    ['Collapse All Tool Cards','⌥ ⌘ K','cards:collapse'],
-    ['-'],
-    ['#','Appearance'],
-    ['System','','theme:system'],
-    ['Light','','theme:light'],
-    ['Dark','','theme:dark'],
-  ]],
-  ['Run', [
-    ['Send','⌘ ↩','send'],
-    ['Stop','⌘ .','stop'],
-    ['Retry Last Turn','⌘ R','retry'],
-    ['Clear Transcript','⌘ ⌫','clear'],
-    ['-'],
-    ['Approve Request','Y','appr:y'],
-    ['Allow Category This Session','S','appr:s'],
-    ['Deny Request','N','appr:n'],
-    ['Abort Run','⎋','appr:esc'],
-    ['-'],
-    ['#','Run mode'],
-    ['Local','⌃ 1','mode:local'],
-    ['Cloud','⌃ 2','mode:cloud'],
-    ['Fusion','⌃ 3','mode:fusion'],
-    ['Cloud Share…','⌃ ⇧ C','runmode'],
-    ['-'],
-    ['Choose Model…','⇧ ⌘ M','settings:models'],
-    ['Approval Level…','','settings:privacy'],
-  ]],
-  ['Agent', [
-    ['Install Skill from Hub…','⇧ ⌘ I','skills:hub'],
-    ['Enable or Disable Skill…','','room:skills'],
-    ['-'],
-    ['New Scheduled Task…','⌃ ⌘ N','task:new'],
-    ['Run Task Now','','task:run'],
-    ['-'],
-    ['MCP Servers…','','settings:mcp'],
-    ['Telegram…','','settings:channels'],
-    ['-'],
-    ['Built-in Tools Reference','⌥ ⌘ T','tools'],
-    ['Restart Agent Runtime','','restart'],
-  ]],
-  ['Window', [['Minimize','⌘ M','na'],['Zoom','','na'],['-'],['Bring All to Front','','na']]],
-  ['Help', [
-    ['Atomic Agent Help','','na'],
-    ['Slash Commands Reference','','palette:slash'],
-    ['Keyboard Shortcuts','⌘ /','shortcuts'],
-    ['-'],
-    ['Release Notes','','na'],['Report an Issue…','','na'],['Open Data Folder','','na'],
-  ]],
-];
 
 /* palette catalogue — every row has a menu-bar home */
 const PAL = [
@@ -214,18 +137,14 @@ const PAL = [
     ['atom','World','Observe','/world','insp:world'],
     ['bolt','Reasoning','Observe','/reasoning','insp:reasoning'],
     ['console','Logs','Console','/logs','console:agent'],
-    ['console','LLM logs','Console','','console:llm'],
     ['tasks','Tasks','Library','⌘ 2','room:tasks'],
     ['skills','Skills','Library','⌘ 3','room:skills'],
-    ['memory','Memory','Library','⌘ 4','room:memory'],
     ['gear','Settings','Settings','⌘ ,','settings:general'],
     ['key','Privacy & Approvals','Settings','⇧ ⌘ ,','settings:privacy'],
-    ['link','MCP Servers','Settings','/mcp','settings:mcp'],
     ['cloud','Models & Providers','Settings','/llm','settings:models'],
   ]],
   ['Session', [
     ['plus','New session','keeps warm runtime','⌘ N','session:new'],
-    ['chat','Switch session…','open session picker','⌘ O','session:switch'],
     ['x','Clear transcript','keeps session','⌘ ⌫','clear'],
     ['copy','Show session id','','⌃ ⌘ C','copy:session'],
   ]],
@@ -234,22 +153,16 @@ const PAL = [
   ]],
   ['Run', [
     ['stop','Abort turn','','⌘ .','stop'],
-    ['cpu','Run type…','local | cloud | fusion [0-100]','','scope:run'],
     ['chevD','Expand all tool cards','','⌥ ⌘ E','cards:expand'],
     ['chevR','Collapse all tool cards','','⌥ ⌘ K','cards:collapse'],
   ]],
   ['Setup', [
     ['gear','Theme…','','','scope:theme'],
     ['skills','Enable or disable a skill…','','','room:skills'],
-    ['tasks','Create, cancel or run a task…','','','scope:task'],
     ['key','Approval level…','1..5','','scope:level'],
-    ['filter','Analytics','on | off | status','','analytics'],
   ]],
   ['Help', [
-    ['doc','Commands','list available slash commands','','palette:slash'],
     ['doc','List built-in tools','','⌥ ⌘ T','tools'],
-    ['doc','Write debug bundle','','⌥ ⌘ D','dump'],
-    ['x','Quit','','⌘ Q','quit'],
   ]],
 ];
 
@@ -277,54 +190,16 @@ const S = {
   log:[],
 };
 
-let SESSIONS = [
-  {id:'s1', t:'Episode scripts — zip by character', g:'TODAY', sub:'6 turns · 12m ago', st:'run'},
-  {id:'s2', t:'Rename the Po photos', g:'TODAY', sub:'11 turns · 2h ago', st:''},
-  {id:'s3', t:'Weekly Tubby Custard report', g:'YESTERDAY', sub:'4 turns · scheduled', st:''},
-  {id:'s4', t:'Summarise the Noo-noo manual', g:'EARLIER', sub:'9 turns · 3d ago', st:''},
-];
+let SESSIONS = [];
 
-const TASKS = [
-  {id:'t1', t:'Back up the Teletubbies folder', when:'every 6 hours', last:'last ran 2h ago · 14 firings', st:'run'},
-  {id:'t2', t:'Morning Tubby Custard digest', when:'every weekday 09:00', last:'last ran yesterday · 42 firings', st:'ok'},
-  {id:'t3', t:'Sun-baby sunrise check', when:'Mondays 08:00', last:'failed 6d ago · 3 firings', st:'bad'},
-];
+const TASKS = [];
 
-const MODELS = {
-  local: [
-    {id:'qwen3-8b-instruct',  q:'Q4_K_M',     size:'4.9 GB',  ctx:'32k',  state:'installed', fit:'fits this Mac'},
-    {id:'qwen3-30b-a3b',      q:'UD-Q4_K_XL', size:'17.2 GB', ctx:'64k',  state:'installed', fit:'tight — 18 GB free'},
-    {id:'llama-4-8b',         q:'Q5_K_M',     size:'6.1 GB',  ctx:'128k', state:'download',  fit:'fits this Mac'},
-    {id:'gemma-3-12b',        q:'Q4_K_M',     size:'7.3 GB',  ctx:'32k',  state:'download',  fit:'fits this Mac'},
-    {id:'phi-5-mini',         q:'Q6_K',       size:'2.8 GB',  ctx:'16k',  state:'download',  fit:'fits this Mac'},
-  ],
-  cloud: [
-    {id:'claude-opus-5',    v:'Anthropic', ctx:'200k', note:'strongest reasoning'},
-    {id:'claude-sonnet-5',  v:'Anthropic', ctx:'200k', note:'faster, cheaper'},
-    {id:'claude-haiku-4.5', v:'Anthropic', ctx:'200k', note:'cheapest, good for tool loops'},
-    {id:'gpt-x-turbo',      v:'OpenAI',    ctx:'128k', note:'needs an OpenAI key'},
-    {id:'gemini-3-pro',     v:'Google',    ctx:'1M',   note:'needs a Google key'},
-  ],
-  external: [
-    {id:'ollama · llama-4-8b', v:'http://127.0.0.1:11434/v1', ctx:'128k', note:'OpenAI-compatible'},
-  ],
-};
+const MODELS = { local: [], cloud: [], external: [] };
 const shortModel = (id) => id.replace(/-instruct$/, '');
 
-const SKILLS = [
-  {t:'pdf-extract', s:'vision · os.fs', v:'1.4.0', on:true, src:'hub'},
-  {t:'folder-tidy', s:'os.fs', v:'0.9.2', on:true, src:'local'},
-  {t:'web-research', s:'browser · os.http', v:'2.0.1', on:false, src:'hub'},
-];
-const HUB = [
-  {t:'custard-counter', s:'vision, memory.notes', d:'2.1k installs', repo:'clawhub/custard-counter'},
-  {t:'tubby-digest', s:'memory, os.http', d:'840 installs', repo:'clawhub/tubby-digest'},
-];
-const NOTES = [
-  {t:'Scripts are named character-episode.pdf', s:'learned 3 sessions ago · used 6×', tag:'note'},
-  {t:'Laa-Laa is the yellow one — Dipsy is green', s:'learned yesterday · used 2×', tag:'note'},
-  {t:'zip -j flattens paths — ask before flattening', s:'from a failed turn · applied 1×', tag:'lesson'},
-];
+const SKILLS = [];
+const HUB = [];
+const NOTES = [];
 
 /* ---------------- transcript ---------------- */
 let uid = 0;
@@ -341,17 +216,10 @@ S.log = [
    render
    ============================================================ */
 function render() {
-  renderMenubar(); renderToolbar(); renderSidebar(); renderContent();
+  renderToolbar(); renderSidebar(); renderContent();
   renderInspector(); renderConsole(); renderOverlays(); renderSettings(); renderToasts();
 }
 
-function renderMenubar() {
-  const b = $('#menubar');
-  b.innerHTML = '<span style="margin-right:6px;display:flex">' + MARK_COLOR + '</span>'
-    + MENUS.map((m, i) => '<button class="mb-item' + (i === 0 ? ' brand' : '') + (S.menuOpen === i ? ' open' : '')
-        + '" data-menu="' + i + '">' + esc(m[0]) + '</button>').join('')
-    + '<span id="mb-clock" class="tnum">14:32</span>';
-}
 
 function toolCount() { const n = S.log.filter((x) => x.k === 'tool').length; return n === 1 ? '1 tool call' : n + ' tool calls'; }
 function roomTitle() {
@@ -359,9 +227,9 @@ function roomTitle() {
     const ses = SESSIONS.find((x) => x.id === S.sessionId);
     return ['Chat', ses ? ses.t + ' · ' + (S.busy ? 'running' : S.pending ? 'waiting for you' : toolCount()) : ''];
   }
-  if (S.room === 'tasks')  return ['Tasks', TASKS.length + ' scheduled · 1 running'];
+  if (S.room === 'tasks')  return ['Tasks', TASKS.length + (TASKS.length === 1 ? ' task' : ' tasks')];
   if (S.room === 'skills') return ['Skills', SKILLS.filter((s) => s.on).length + ' enabled of ' + SKILLS.length];
-  return ['Memory', 'profile · notes · lessons · links'];
+  return ['Chat', ''];
 }
 
 function renderToolbar() {
@@ -380,9 +248,9 @@ function renderToolbar() {
 function renderSidebar() {
   const live = BR && S.live.state === 'connected';
   const nav = [['chat','Chat',''],
-               ['tasks','Tasks', String(TASKS.length || (live ? 0 : 3))],
-               ['skills','Skills', String(SKILLS.length || (live ? 0 : 2))],
-               ['memory','Memory', live ? '' : '24']];
+               ['tasks','Tasks', String(TASKS.length)],
+               ['skills','Skills', String(SKILLS.length)],
+               ];
   let groups = '', last = '';
   SESSIONS.forEach((s) => {
     if (s.g !== last) { groups += '<div class="sb-group micro">' + esc(s.g) + '</div>'; last = s.g; }
@@ -413,8 +281,7 @@ function renderContent() {
   const c = $('#content');
   if (S.room === 'chat')   { c.innerHTML = chatView(); afterChat(); return; }
   if (S.room === 'tasks')  { c.innerHTML = tasksView(); return; }
-  if (S.room === 'skills') { c.innerHTML = skillsView(); return; }
-  c.innerHTML = memoryView();
+  c.innerHTML = skillsView();
 }
 
 function chatView() {
@@ -427,13 +294,13 @@ function emptyChat() {
     + '<svg width="48" height="48" viewBox="0 0 64 64" fill="currentColor"><path d="M35.24 49.92a1.25 1.25 0 0 0 1.3-1.24 12.2 12.2 0 0 1 12.14-12.14 1.25 1.25 0 0 0 1.24-1.3v-6.47c0-.69-.56-1.24-1.24-1.24H37.72c-.69 0-1.24-.56-1.24-1.25V15.32c0-.69-.56-1.24-1.24-1.24h-6.47c-.69 0-1.24.56-1.3 1.24A12.2 12.2 0 0 1 15.32 27.46c-.68.06-1.24.61-1.24 1.3v6.47c0 .69.56 1.24 1.24 1.24h10.96c.69 0 1.24.56 1.24 1.25v10.95c0 .69.56 1.24 1.24 1.24z"/></svg></span>'
     + '<div style="font-size:22px;line-height:28px;font-weight:600;letter-spacing:-.02em">Ask it to do something on this machine</div>'
     + '<div class="ghost">'
-      + ['zip these episode scripts by character','rename the po photos in ~/Downloads','summarise the Noo-noo manual']
+      + ['what can you do?','summarise the files in this folder','check the disk space on this Mac']
           .map((g) => '<button class="ghostchip" data-fill="' + esc(g) + '">' + esc(g) + '</button>').join('')
     + '</div></div>';
 }
 
 function item(m) {
-  if (m.k === 'user') return '<div class="turn"><div class="gutter"><span class="avatar">T</span></div>'
+  if (m.k === 'user') return '<div class="turn"><div class="gutter"><span class="avatar">›</span></div>'
     + '<div class="prose usr">' + esc(m.text) + '</div></div>';
   if (m.k === 'assistant') return '<div class="turn"><div class="gutter"><span style="color:var(--accent-text);display:flex">' + MARK_MONO + '</span></div>'
     + '<div class="prose">' + esc(m.text) + '</div></div>';
@@ -454,7 +321,6 @@ function toolCard(m) {
   return '<div class="card' + (running ? ' running' : '') + (m.ok === false ? ' err' : '') + '" id="card-' + m.id + '">'
     + '<button class="cardhead" data-toggle="' + m.id + '" aria-expanded="' + (!!m.open) + '">'
       + glyph + '<span class="nm">' + esc(m.name) + '</span><span class="ar">' + esc(m.arg) + '</span>'
-      + (S.mode === 'fusion' ? '<span class="chip-route ' + m.where + '">' + m.where + '</span>' : '')
       + '<span class="du tnum">' + (running ? '…' : dur(m.ms)) + '</span>'
       + '<span class="ter" style="display:flex">' + ic(m.open ? 'chevD' : 'chevR') + '</span>'
     + '</button>'
@@ -485,14 +351,16 @@ function apprCard(m) {
     + '</dl>'
     + '<div class="apprbtns"><div class="apprgrp">'
       + '<button class="btn btn-p" data-appr="y">Approve' + keycaps('Y') + '</button>'
-      + (isTrust ? '' : '<button class="btn btn-t" data-appr="s">Allow &ldquo;' + esc(m.kind) + '&rdquo; this session' + keycaps('S') + '</button>')
-      + (isTrust ? '' : '<button class="btn btn-t" data-appr="a">Allow all &ldquo;' + esc(m.shape) + '&rdquo; commands this session' + keycaps('A') + '</button>')
+      + (isTrust || m.approvalId ? '' : '<button class="btn btn-t" data-appr="s">Allow &ldquo;' + esc(m.kind) + '&rdquo; this session' + keycaps('S') + '</button>')
+      + (isTrust || m.approvalId ? '' : '<button class="btn btn-t" data-appr="a">Allow all &ldquo;' + esc(m.shape) + '&rdquo; commands this session' + keycaps('A') + '</button>')
       + '<button class="btn btn-s" data-appr="n" id="denybtn">Deny' + keycaps('N') + '</button></div>'
       + '<button class="btn btn-g" data-appr="esc">Abort run' + keycaps('⎋') + '</button>'
     + '</div>'
     + '<div class="apprfoot">' + (isTrust
         ? 'trust-config writes are never granted for the session; y approves this call only'
-        : 'y approves this call once; s / a grant for this session only (never persisted); raise the standing level on the <button class="btn-g" style="text-decoration:underline" data-act="settings:privacy">Privacy</button> tab')
+        : (m.approvalId
+        ? 'y approves this call once, n refuses it. Session-wide grants are not offered here because the agent\u2019s HTTP API implements allow-once and deny only \u2014 raise the standing level on the <button class="btn-g" style="text-decoration:underline" data-act="settings:privacy">Privacy</button> tab.'
+        : 'y approves this call once; s / a grant for this session only (never persisted); raise the standing level on the <button class="btn-g" style="text-decoration:underline" data-act="settings:privacy">Privacy</button> tab'))
     + '</div></div>';
 }
 
@@ -516,9 +384,6 @@ function composer() {
       + '<div class="field"><textarea id="entry" rows="1" placeholder="' + (running ? 'Send to steer this turn…' : 'Ask for an outcome, or / for a command') + '"></textarea>'
       + sendButton() + '</div>'
       + '<div class="cfoot">'
-        + '<button class="cchip modechip" data-act="runmode" title="Run type">'
-          + ic(S.mode === 'cloud' ? 'cloud' : S.mode === 'local' ? 'cpu' : 'atom')
-          + S.mode + (S.mode === 'fusion' ? ' ' + S.share + '%' : '') + ic('chevD') + '</button>'
         + '<button class="cchip" data-act="settings:models">' + ic('cpu')
           + esc(shortModel(activeModel())) + ic('chevD') + '</button>'
         + '<span style="flex:1"></span>'
@@ -573,11 +438,8 @@ function tasksView() {
     + filtered.map((t) => '<button class="row"><span class="dot ' + t.st + '"></span>'
         + '<span class="main"><span class="t">' + esc(t.t) + '</span></span>'
         + '<span class="meta">' + esc(t.when) + ' · ' + esc(t.last) + '</span>'
-        + '<span class="acts"><span class="iconbtn" title="Run now">' + ic('play') + '</span>'
-        + '<span class="iconbtn" title="Edit">' + ic('gear') + '</span></span></button>').join('')
+        + '</button>').join('')
     + '</div>'
-    + '<div class="pad"><div class="panelcard"><div class="micro sec">Last result · back up the Teletubbies folder</div>'
-      + '<div class="mono sec">08:00:04  os.fs.list_dir ~/Teletubbies ✓\n08:00:05  os.fs.copy → ~/Backups/2026-08-26 ✓\n08:00:19  15 files · 42.1 MB · 14.8s</div></div></div>'
     + '</div>';
 }
 
@@ -586,7 +448,7 @@ function skillsView() {
     '<div class="row"><span class="ic sec" style="display:flex">' + ic('skills') + '</span>'
     + '<span class="main"><span class="t">' + esc(s.t) + '</span><span class="cap">' + esc(s.s) + '</span></span>'
     + '<span class="meta">v' + s.v + ' · ' + s.src + '</span>'
-    + '<button class="btn ' + (s.on ? 'btn-s' : 'btn-t') + '" data-skill="' + esc(s.t) + '">' + (s.on ? 'Enabled' : 'Enable') + '</button></div>').join('') + '</div>';
+    + '<span class="cap">' + (s.on ? 'enabled' : 'disabled') + '</span></div>').join('') + '</div>';
   const hub = '<div class="pad" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px">'
     + HUB.map((h) => '<div class="panelcard"><div class="hstack"><span class="hd">' + esc(h.t) + '</span>'
       + '<span class="cap" style="margin-left:auto">' + esc(h.d) + '</span></div>'
@@ -594,7 +456,6 @@ function skillsView() {
       + '<div class="mono ter">' + esc(h.repo) + '</div>'
       + '<button class="btn btn-t" style="align-self:flex-start">Install…</button></div>').join('') + '</div>';
   return '<div class="chead"><span class="hd">Skills</span>'
-    + segControl([['installed','Installed'],['hub','Hub']], S.skillsTab, 'skillstab:')
     + '<span class="grow"></span></div>'
     + '<div class="scroller">' + (S.skillsTab === 'installed' ? installed : hub) + '</div>';
 }
@@ -619,14 +480,14 @@ function renderInspector() {
   const el = $('#inspector');
   el.classList.toggle('hide', !S.inspector);
   if (!S.inspector) return;
-  const tabs = [['steps','Steps'],['reasoning','Reasoning'],['world','World'],['metrics','Metrics']];
+  const tabs = [['steps','Steps'],['reasoning','Reasoning'],['world','World']];
   let body = '';
   if (S.inspTab === 'steps') {
     const tools = S.log.filter((m) => m.k === 'tool');
     body = tools.length ? tools.map((m, i) => '<button class="step" data-goto="' + m.id + '">'
         + '<span class="ix">' + String(i + 1).padStart(2, '0') + '</span>'
         + '<span class="nm">' + esc(m.name) + '</span>'
-        + '<span class="hstack">' + (S.mode === 'fusion' ? '<span class="chip-route ' + m.where + '" style="height:16px;font-size:10px">' + m.where + '</span>' : '')
+        + '<span class="hstack">'
         + '<span class="mono ter tnum">' + dur(m.ok === null ? null : m.ms) + '</span></span></button>').join('')
       : '<p class="cap">No steps yet.</p>';
   } else if (S.inspTab === 'reasoning') {
@@ -635,34 +496,23 @@ function renderInspector() {
         + '<div class="mono sec" style="white-space:pre-wrap">' + esc(m.text) + '</div></div>').join('')
       : '<p class="cap">Reasoning appears here as the turn runs.</p>';
   } else if (S.inspTab === 'world') {
-    body = '<dl class="kvgrid"><dt>cwd</dt><dd class="mono">~/Teletubbies</dd>'
-      + '<dt>granted</dt><dd class="mono">rw ~/Teletubbies<br>r&nbsp; ~/Downloads</dd>'
-      + '<dt>skills</dt><dd>pdf-extract 1.4.0<br>folder-tidy 0.9.2</dd>'
-      + '<dt>tools</dt><dd>os.fs · os.shell · os.http · browser · memory · vision</dd></dl>';
-  } else {
-    body = '<dl class="kvgrid"><dt>prompt</dt><dd class="tnum">12,481 tok</dd><dt>completion</dt><dd class="tnum">1,904 tok</dd>'
-      + '<dt>stable prefix</dt><dd class="tnum">8,210 / tail 4,271</dd><dt>kv cache</dt><dd class="tnum">41% hit</dd>'
-      + '<dt>parse retries</dt><dd class="tnum">0</dd><dt>tools</dt><dd class="tnum">6 ok · 0 error</dd>'
-      + '<dt>llm time</dt><dd class="tnum">4.1s</dd><dt>step time</dt><dd class="tnum">6.8s</dd></dl>';
+    const caps = LIVE_CAPS || {};
+    const tools = Array.isArray(caps.tools) ? caps.tools.map((t) => t.name).join(' · ') : '';
+    body = caps.paths
+      ? '<dl class="kvgrid"><dt>cwd</dt><dd class="mono">' + esc(S.live.workingDir || '') + '</dd>'
+        + '<dt>state dir</dt><dd class="mono">' + esc(caps.paths.stateDir || '') + '</dd>'
+        + '<dt>skills</dt><dd>' + (SKILLS.length ? SKILLS.map((k) => esc(k.t)).join('<br>') : 'none installed') + '</dd>'
+        + '<dt>tools</dt><dd>' + esc(tools) + '</dd></dl>'
+      : '<p class="cap">Connect an agent to see what it can reach.</p>';
   }
   el.innerHTML = '<div class="insphead">' + segControl(tabs, S.inspTab, 'insp:') + '</div>'
     + '<div class="inspbody">' + body + '</div>'
-    + '<button class="inspfoot" data-act="copy:session">' + ic('copy') + 'Session 4f2a91…</button>';
+    + '<div class="inspfoot">' + (S.agentSession ? '<span class="mono">' + esc(String(S.agentSession).slice(0, 18)) + '…</span>' : 'no session yet') + '</div>';
 }
 
 /* ---------------- console ---------------- */
-const LOGS = [
-  ['09:41:02','info','runtime ready · 14 tools · 2 mcp servers'],
-  ['09:41:02','info','approval gate level=3 (home)'],
-  ['09:41:07','debug','tool os.fs.list_dir ok 41ms'],
-  ['09:41:08','debug','run_step step=2 route=local score=0.31'],
-  ['09:41:09','warn','mcp custard-api: auth failed (401) — server marked unhealthy'],
-  ['09:41:12','info','approval requested category=shell tool=os.shell.exec'],
-];
-const LLMLOGS = [
-  ['09:41:02','info','POST /v1/messages claude-opus-5 · 1.2k in · 184 out · stop=tool_use'],
-  ['09:41:08','info','POST :8080/completion qwen3-8b · 2.9k tok · 41 tok/s'],
-];
+const LOGS = [];
+const LLMLOGS = [];
 function renderConsole() {
   const el = $('#console');
   el.classList.toggle('hide', !S.consoleOpen);
@@ -680,7 +530,6 @@ function renderConsole() {
 
 /* ---------------- palette ---------------- */
 const SCOPES = {
-  run:   {label:'Run type', ph:'Choose a mode…', rows:[['cpu','Local','llama-server only','','mode:local'],['cloud','Cloud','cloud provider only','','mode:cloud'],['atom','Fusion','cloud plans, local executes','','mode:fusion']], dial:true},
   theme: {label:'Theme', ph:'Choose a theme…', rows:[['gear','System','follow macOS','','theme:system'],['gear','Light','','','theme:light'],['gear','Dark','','','theme:dark']]},
   task:  {label:'Task', ph:'Choose an action…', rows:[['plus','New task…','cron | interval | at','','task:new'],['play','Run a task now','','','task:run'],['x','Cancel a task','','','na']]},
   level: {label:'Approval level', ph:'Choose a level…', rows:CATS.length ? [1,2,3,4,5].map((n) => ['key', n + ' ' + LEVEL_NAMES[n], levelBlurb(n), '', 'level:' + n]) : []},
@@ -742,11 +591,9 @@ function paletteHTML() {
   if (flat === null) {
     PAL.forEach(([g, rows]) => {
       list += '<div class="palgroup micro">' + esc(g) + '</div>';
-      rows.slice(0, 6).forEach((r) => {
+      rows.forEach((r) => {
         list += palRowHTML({ic:r[0], t:r[1], cx:r[2], sc:r[3], act:r[4]}, idx++, '');
       });
-      if (rows.length > 6) list += '<button class="palrow" data-more="1"><span class="ic">' + ic('chevR')
-        + '</span><span class="ti sec">Show all (' + (rows.length - 6) + ' more)</span><span></span><span></span></button>';
     });
   } else if (flat.length === 0) {
     list = '<div class="palempty"><div style="font-weight:500">No results for &ldquo;' + esc(q) + '&rdquo;</div>'
@@ -800,14 +647,13 @@ function slashPopover() {
 function renderOverlays() {
   const o = $('#overlays');
   let html = '';
-  if (S.menuOpen !== null) html += menuPanelHTML(S.menuOpen);
   if (S.overlay === 'palette') html += paletteHTML();
-  if (S.overlay === 'runmode') html += runmodeHTML();
   if (S.overlay === 'context') html += contextHTML();
   if (S.overlay === 'sessions') html += sessionSheet();
   if (S.overlay === 'newtask') html += taskSheet();
   if (S.overlay === 'shortcuts') html += shortcutsSheet();
   if (S.alert) html += alertHTML();
+  if (OB.open) html = obHTML();
   o.innerHTML = html;
   o.style.pointerEvents = html ? 'auto' : 'none';
   o.style.position = 'absolute'; o.style.inset = '0'; o.style.zIndex = '20';
@@ -817,76 +663,19 @@ function renderOverlays() {
   if (cur) cur.scrollIntoView({block:'nearest'});
 }
 
-function menuPanelHTML(i) {
-  const [name, rows] = MENUS[i];
-  const x = Array.from(document.querySelectorAll('.mb-item')).find((b) => b.dataset.menu === String(i));
-  const left = x ? x.getBoundingClientRect().left : 40;
-  return '<div style="position:fixed;inset:0;z-index:30" data-closemenu="1"></div>'
-    + '<div class="menupanel" style="position:fixed;left:' + Math.round(left) + 'px;top:26px">'
-    + rows.map((r) => {
-      if (r[0] === '-') return '<div class="msep"></div>';
-      if (r[0] === '#') return '<div class="mgroup micro">' + esc(r[1]) + '</div>';
-      let label = r[0], disabled = false, why = '';
-      if (label === '@sidebar') label = 'Hide Sidebar';
-      if (label === '@inspector') label = S.inspector ? 'Hide Inspector' : 'Show Inspector';
-      if (label === '@console') label = S.consoleOpen ? 'Hide Console' : 'Show Console';
-      if (r[2] && r[2].startsWith('appr:') && !S.pending) { disabled = true; why = 'nothing waiting'; }
-      if (r[2] === 'stop' && !S.busy && !S.pending) { disabled = true; why = 'nothing running'; }
-      if (r[2] === 'mode:cloud' && false) { disabled = true; why = 'no provider'; }
-      if (r[2] === 'na') disabled = true;
-      const tick = (r[2] === 'theme:' + S.theme) ? '✓' : (r[2] === 'mode:' + S.mode ? '•' : '');
-      return '<button class="mrow' + (disabled ? ' dis' : '') + '"' + (disabled ? '' : ' data-act="' + r[2] + '"') + '>'
-        + '<span class="mtick">' + tick + '</span>'
-        + '<span class="mlb">' + esc(label) + (why ? ' <span class="why">(' + why + ')</span>' : '') + '</span>'
-        + '<span class="msc">' + (r[1] ? keycapsPlain(r[1]) : '') + '</span></button>';
-    }).join('') + '</div>';
-}
-function keycapsPlain(s) { return esc(s.replace(/ /g, ' ')); }
 
-function anchorStyle(sel, width) {
-  const el = document.querySelector(sel);
-  const win = $('#window').getBoundingClientRect();
-  if (!el) return 'right:24px;bottom:96px';
-  const r = el.getBoundingClientRect();
-  const left = Math.max(win.left + 8, Math.min(r.left, win.right - width - 8));
-  return 'position:fixed;left:' + Math.round(left) + 'px;bottom:' + Math.round(window.innerHeight - r.top + 8) + 'px;top:auto;right:auto';
-}
-
-function runmodeHTML() {
-  const modes = [['local','Local','llama-server only'],['cloud','Cloud','cloud provider only'],['fusion','Fusion','cloud plans, local executes']];
-  return '<div class="scrim" data-close="1" style="background:transparent">'
-    + '<div class="popover" style="' + anchorStyle('.modechip', 340) + '">'
-    + modes.map(([id, t, d]) => '<button class="poprow' + (S.mode === id ? ' on' : '') + '" data-act="mode:' + id + '">'
-        + '<span class="radio"></span><span><span style="font-weight:500">' + t + '</span>'
-        + '<span class="cap" style="display:block">' + d + '</span></span>'
-        + (S.mode === id ? '<span class="cap" style="margin-left:auto">current</span>' : '') + '</button>').join('')
-    + '<div style="padding:12px 16px;box-shadow:inset 0 1px 0 var(--line-soft)' + (S.mode === 'fusion' ? '' : ';opacity:.45') + '">'
-      + '<div class="hstack"><span class="cap">cloud share</span><span class="mono tnum" style="margin-left:auto">' + S.dialShare + '</span></div>'
-      + '<input class="slider" type="range" min="0" max="100" step="5" value="' + S.dialShare + '" id="dial">'
-      + '<div class="cap">' + esc(S.mode === 'fusion' ? shareBlurb(S.dialShare) : 'the dial only applies to Fusion') + '</div>'
-      + '<div class="hstack" style="margin-top:8px"><span class="mono cap">' + esc(shortModel(S.cloudModel)) + '</span><span class="ter">⇄</span><span class="mono cap">' + esc(shortModel(S.localModel)) + '</span>'
-      + '<button class="btn-g cap" style="margin-left:auto;text-decoration:underline" data-act="settings:models">Change…</button></div>'
-    + '</div>'
-    + '<div class="popfoot"><button class="btn btn-g" data-act="close">Cancel</button>'
-      + '<button class="btn btn-p" data-act="applydial">Apply</button></div></div></div>';
-}
 
 function contextHTML() {
-  const parts = [['System prompt', 2.1, 'var(--text-tertiary)'], ['Tool definitions', 3.4, 'var(--text-secondary)'],
-                 ['Memory recall', 1.2, 'var(--accent-text)'], ['Transcript', 11.3, 'var(--accent)']];
-  const total = 128;
-  const used = parts.reduce((n, p) => n + p[1], 0);
+  const total = ctxTotal(), used = ctxUsed();
   return '<div class="scrim" data-close="1" style="background:transparent">'
     + '<div class="popover" style="width:300px;' + anchorStyle('.ctxbtn', 300) + '">'
     + '<div style="padding:12px 16px 10px"><div class="hstack"><span class="hd">Context window</span>'
-      + '<span class="mono tnum sec" style="margin-left:auto">' + used.toFixed(1) + 'k / ' + total + 'k</span></div>'
-    + '<div class="ctxbar">' + parts.map((p) => '<i style="width:' + (p[1] / total * 100) + '%;background:' + p[2] + '"></i>').join('')
+      + '<span class="mono tnum sec" style="margin-left:auto">' + tok(used) + ' / ' + tok(total) + '</span></div>'
+    + '<div class="ctxbar"><i style="width:' + Math.min(100, (used / total) * 100) + '%;background:var(--accent)"></i>'
       + '<i style="flex:1;background:var(--bg-sunken)"></i></div>'
-    + '<dl class="kvgrid" style="margin-top:10px;grid-template-columns:1fr max-content;gap:5px 12px">'
-      + parts.map((p) => '<dt style="display:flex;align-items:center;gap:6px"><span class="swatch" style="background:' + p[2] + '"></span>' + p[0] + '</dt>'
-          + '<dd class="mono tnum">' + p[1].toFixed(1) + 'k</dd>').join('')
-      + '<dt class="ter">Free</dt><dd class="mono tnum ter">' + (total - used).toFixed(1) + 'k</dd></dl>'
-    + '<p class="cap" style="margin:10px 0 0">The transcript is compacted automatically once it passes 75%. Older tool output is summarised first.</p></div>'
+    + '<p class="cap" style="margin:10px 0 0">An estimate from the transcript this window has sent. '
+      + 'The agent also carries a system prompt, tool definitions and tool output that it does not report back, '
+      + 'so the real figure is higher.</p></div>'
     + '<div class="popfoot"><button class="btn btn-g" data-act="clear">Clear transcript</button>'
       + '<button class="btn btn-s" data-act="close">Done</button></div></div></div>';
 }
@@ -970,33 +759,17 @@ function settingsPane() {
   const p = S.settingsPane;
   if (p === 'privacy') return privacyPane();
   if (p === 'models') return modelsPane();
-  if (p === 'mcp') return '<div class="stack"><div class="hstack"><span class="hd">Servers</span>'
-    + '<button class="btn btn-p" style="margin-left:auto">Add via JSON…</button></div>'
-    + '<div class="rows">'
-    + '<div class="row"><span class="dot ok"></span><span class="main"><span class="t">filesystem</span><span class="cap">stdio</span></span>'
-      + '<span class="meta">11 tools · 0 resources · 0 prompts</span></div>'
-    + '<div class="row"><span class="dot bad"></span><span class="main"><span class="t">custard-api</span><span class="cap">http</span></span>'
-      + '<span class="meta">auth failed (401) — check <span class="mono">headers.Authorization</span></span>'
-      + '<button class="btn btn-t">Reconnect</button></div></div>'
-    + '<div class="panelcard"><div class="micro sec">filesystem · tools</div>'
-      + '<div class="mono sec">read_file · write_file · list_directory · move_file · search_files · get_file_info · create_directory</div></div></div>';
-  if (p === 'channels') return '<div class="panelcard"><div class="hstack"><span class="hd">Telegram</span>'
-    + '<span class="cap" style="margin-left:auto">stopped</span></div>'
-    + '<dl class="kvgrid"><dt>bot token</dt><dd><input class="btn btn-s" style="width:100%;height:28px;font-family:var(--font-mono)" value="•••••••••••••••••" type="password"></dd>'
-    + '<dt>paired</dt><dd>not paired</dd><dt>runs as</dt><dd>approval level ' + S.level + ' · ' + LEVEL_NAMES[S.level].toLowerCase() + '</dd></dl>'
-    + '<div class="hstack"><button class="btn btn-p">Start</button><button class="btn btn-s">Pair device…</button></div></div>';
-  if (p === 'import') return '<div class="stack"><div class="panelcard"><div class="hstack">' + ic('folder')
-    + '<span class="hd">Hermes detected</span><span class="cap" style="margin-left:auto">~/.hermes</span></div>'
-    + '<dl class="kvgrid"><dt>sessions</dt><dd>34 → atomic sessions</dd><dt>cron jobs</dt><dd>3 → tasks</dd>'
-    + '<dt>API keys</dt><dd class="sec">2 — skipped unless you tick “include keys”</dd></dl>'
-    + '<div class="hstack"><button class="btn btn-s">Dry run</button><button class="btn btn-p">Import</button></div></div></div>';
   if (p === 'appearance') return '<div class="panelcard"><span class="hd">Appearance</span>'
     + segControl([['system','System'],['light','Light'],['dark','Dark']], S.theme, 'theme:')
     + '<p class="cap" style="margin:0">Named terminal palettes (github, catppuccin, dracula, nord) remain available for the TUI.</p></div>';
-  return '<div class="stack"><div class="panelcard"><span class="hd">General</span>'
-    + '<dl class="kvgrid"><dt>workspace</dt><dd class="mono">~/Teletubbies</dd>'
-    + '<dt>launch at login</dt><dd>off</dd><dt>update channel</dt><dd>stable</dd>'
-    + '<dt>restore sessions</dt><dd>on open</dd></dl></div></div>';
+  return '<div class="stack"><div class="panelcard"><span class="hd">Workspace</span>'
+    + '<dl class="kvgrid"><dt>folder</dt><dd class="mono">' + esc(S.live.workingDir || '—') + '</dd>'
+    + '<dt>agent</dt><dd class="mono">' + esc(S.live.binary || 'not found') + '</dd>'
+    + '<dt>state</dt><dd>' + esc(liveLabel()) + '</dd></dl>'
+    + '<button class="btn btn-s" style="align-self:flex-start" data-act="workspace">Change folder…</button></div>'
+    + '<div class="panelcard"><span class="hd">Setup</span>'
+    + '<p class="cap" style="margin:0">Re-run the first-run wizard to change how the agent thinks.</p>'
+    + '<button class="btn btn-t" style="align-self:flex-start" data-act="onboarding">Run setup again…</button></div></div>';
 }
 
 function modelsPane() {
@@ -1102,11 +875,11 @@ function act(a) {
   if (a === 'context') { close(); S.overlay = 'context'; render(); return; }
   if (a === 'runmode') { close(); S.dialShare = S.share; S.overlay = 'runmode'; render(); return; }
   if (a === 'applydial') { S.share = S.dialShare; if (S.mode !== 'fusion' && S.dialShare > 0) S.mode = 'fusion'; close(); render(); toast('Run type applied', S.mode + (S.mode === 'fusion' ? ' · cloud share ' + S.share : '')); return; }
-  if (a === 'session:new') { close(); S.log = []; S.busy = false; S.pending = null; S.room = 'chat'; render(); toast('New session', 'Runtime stayed warm'); return; }
+  if (a === 'session:new') { close(); S.log = []; S.history = []; S.agentSession = null; S.busy = false; S.pending = null; S.room = 'chat'; render(); toast('New session', 'The next turn starts fresh'); return; }
   if (a === 'session:switch') { close(); S.overlay = 'sessions'; render(); return; }
   if (a === 'task:new') { close(); S.overlay = 'newtask'; render(); return; }
   if (a === 'task:run') { close(); render(); toast('Task started', 'Back up the Teletubbies folder'); return; }
-  if (a === 'clear') { close(); S.log = []; render(); toast('Transcript cleared', 'Session kept'); return; }
+  if (a === 'clear') { close(); S.log = []; S.history = []; render(); toast('Transcript cleared', 'The next turn starts fresh'); return; }
   if (a === 'stop') { close(); abort(); return; }
   if (a === 'send') { close(); submit(); return; }
   if (a === 'retry') { close(); render(); toast('Retrying last turn'); return; }
@@ -1154,35 +927,14 @@ function act(a) {
 }
 
 /* ---------------- the run ---------------- */
-const SCRIPT = [
-  {ph:'Thinking', d:500, f:() => S.log.push({id:nid(), k:'reason', steps:3, open:false,
-    text:'Three PDFs. "By character" means the name has to come from inside each file, not the filename.\nvision can read them directly — cheaper than shelling out to a converter.\nZipping needs shell. That is level 4 and we are at level ' + S.level + ', so it will ask.'})},
-  {ph:'os.fs.list_dir', d:420, f:() => pushTool('os.fs.list_dir', '~/Teletubbies', 'local', '{ "path": "~/Teletubbies" }')},
-  {ph:'os.fs.list_dir', d:380, f:() => endTool('tinky-winky-s01e04.pdf\ndipsy-s01e07.pdf\nlaa-laa-s02e02.pdf', 38)},
-  {ph:'vision.read_document', d:300, f:() => pushTool('vision.read_document', 'tinky-winky-s01e04.pdf', 'cloud', '{ "file": "tinky-winky-s01e04.pdf", "pages": "1-2" }')},
-  {ph:'vision.read_document', d:900, f:() => endTool('Character: Tinky Winky\nEpisode: S01E04 — The Magic Windmill\nType: episode script', 1240)},
-  {ph:'vision.read_document', d:260, f:() => pushTool('vision.read_document', 'dipsy-s01e07.pdf', 'local', '{ "file": "dipsy-s01e07.pdf" }')},
-  {ph:'vision.read_document', d:700, f:() => endTool('Character: Dipsy\nEpisode: S01E07 — Tubby Custard Ride\nType: episode script', 890)},
-  {ph:'vision.read_document', d:240, f:() => pushTool('vision.read_document', 'laa-laa-s02e02.pdf', 'local', '{ "file": "laa-laa-s02e02.pdf" }')},
-  {ph:'vision.read_document', d:660, f:() => endTool('Character: Laa-Laa\nEpisode: S02E02 — Dancing in the Rain\nType: episode script', 870)},
-  {ph:'Writing reply', d:420, f:() => S.log.push({id:nid(), k:'assistant',
-    text:'Three characters: Tinky Winky, Dipsy and Laa-Laa. I will zip each script under a character-and-episode name. That needs a shell command, which is above your current level.'})},
-  {ph:'Waiting', d:400, f:() => gate()},
-];
+
+
 
 function pushTool(name, arg, where, args) { S.log.push({id:nid(), k:'tool', name, arg, where, args, ok:null, open:false}); }
 function endTool(out, ms) {
   for (let i = S.log.length - 1; i >= 0; i--) {
     if (S.log[i].k === 'tool' && S.log[i].ok === null) { S.log[i].ok = true; S.log[i].out = out; S.log[i].ms = ms; break; }
   }
-}
-function gate() {
-  S.pending = {id:nid(), k:'approval', tool:'os.shell.exec', cat:'shell', kind:'shell command', lvl:4,
-    reason:'zip three episode scripts into per-character archives',
-    preview:'zip -j "Tinky-Winky-S01E04.zip" tinky-winky-s01e04.pdf',
-    shape:'zip', affectsBase:'Teletubbies', affectsDir:'~/'};
-  S.log.push(S.pending);
-  S.apprFocused = false;
 }
 
 let timer = null, step = 0, ticker = null;
@@ -1199,61 +951,26 @@ function submit() {
     render(); return;
   }
   S.log.push({id:nid(), k:'user', text});
-  if (S.live.state === 'connected') { startLiveTurn(text); return; }
-  S.busy = true; S.stick = true; step = 0; S.elapsed = 0;
-  clearInterval(ticker); ticker = setInterval(() => { S.elapsed++; const n = document.querySelector('.statusstrip .tnum'); if (n) n.textContent = (S.elapsed / 10).toFixed(1) + 's'; }, 100);
-  render(); tick();
-}
-function tick() {
-  if (step >= SCRIPT.length) { S.busy = false; clearInterval(ticker); render(); return; }
-  const s = SCRIPT[step++];
-  S.phase = s.ph;
-  timer = setTimeout(() => {
-    s.f();
-    if (S.pending) { S.busy = false; clearInterval(ticker); render(); return; }
-    render(); tick();
-  }, s.d);
+  if (S.live.state !== 'connected') {
+    // Nothing may be fabricated. If the agent is not answering, say so.
+    S.log.push({id:nid(), k:'system', text: S.live.state === 'starting'
+      ? 'the agent is still starting — send this again in a moment'
+      : esc(S.live.error || 'no agent is attached, so nothing was run')});
+    render();
+    return;
+  }
+  startLiveTurn(text);
 }
 function answer(key) {
-  const req = S.pending; if (!req) return;
-  if (req.approvalId && BR) { answerLive(req, key); return; }
-  S.pending = null; S.apprFocused = false;
-  const at = '14:32:0' + (2 + Math.min(7, S.grants.length));
-  if (key === 'n') {
-    req.state = 'denied'; req.at = at;
-    S.log.push({id:nid(), k:'assistant', text:'Left the files alone. I can rename them in place instead — that stays inside the workspace and won\'t ask.'});
-    S.busy = false; render(); return;
-  }
-  if (key === 'esc') { req.state = 'denied'; req.at = at; abort(); return; }
-  req.state = 'approved'; req.at = at;
-  if (key === 's') { S.grants.push('shell command · session'); S.log.push({id:nid(), k:'system', text:'granted: shell command for this session &nbsp;<button class="btn-g" style="text-decoration:underline" data-act="settings:privacy">Revoke</button>'}); }
-  if (key === 'a') { S.grants.push('zip commands · session'); S.log.push({id:nid(), k:'system', text:'granted: all “zip” commands for this session &nbsp;<button class="btn-g" style="text-decoration:underline" data-act="settings:privacy">Revoke</button>'}); }
-  const after = [
-    {ph:'os.shell.exec', d:240, f:() => pushTool('os.shell.exec', 'zip -j Tinky-Winky-S01E04.zip …', 'local', '{ "cmd": "zip -j Tinky-Winky-S01E04.zip tinky-winky-s01e04.pdf" }')},
-    {ph:'os.shell.exec', d:430, f:() => endTool('adding: tinky-winky-s01e04.pdf (deflated 6%)\nTinky-Winky-S01E04.zip · 812 KB', 340)},
-    {ph:'os.shell.exec', d:200, f:() => pushTool('os.shell.exec', 'zip -j Dipsy-S01E07.zip …', 'local', '{ "cmd": "zip -j Dipsy-S01E07.zip dipsy-s01e07.pdf" }')},
-    {ph:'os.shell.exec', d:360, f:() => endTool('Dipsy-S01E07.zip · 240 KB', 210)},
-    {ph:'os.shell.exec', d:200, f:() => pushTool('os.shell.exec', 'zip -j Laa-Laa-S02E02.zip …', 'local', '{ "cmd": "zip -j Laa-Laa-S02E02.zip laa-laa-s02e02.pdf" }')},
-    {ph:'os.shell.exec', d:340, f:() => endTool('Laa-Laa-S02E02.zip · 366 KB', 198)},
-    {ph:'Writing reply', d:340, f:() => {
-      S.log.push({id:nid(), k:'assistant', text:'Done — three archives in ~/Teletubbies:\n\n  Tinky-Winky-S01E04.zip   812 KB\n  Dipsy-S01E07.zip         240 KB\n  Laa-Laa-S02E02.zip       366 KB\n\nOriginals untouched. Every command is in the work log.'});
-      if (S.queued.length) { const q = S.queued.shift(); S.log.push({id:nid(), k:'user', text:q}); }
-    }},
-  ];
-  S.busy = true; S.stick = true; S.elapsed = 0;
-  clearInterval(ticker); ticker = setInterval(() => { S.elapsed++; const n = document.querySelector('.statusstrip .tnum'); if (n) n.textContent = (S.elapsed / 10).toFixed(1) + 's'; }, 100);
-  let i = 0;
-  const run = () => {
-    if (i >= after.length) { S.busy = false; clearInterval(ticker); render(); toast('Run finished', '9 steps · 2 cloud calls · 12.4s'); return; }
-    const s = after[i++]; S.phase = s.ph;
-    timer = setTimeout(() => { s.f(); render(); run(); }, s.d);
-  };
-  render(); run();
+  const req = S.pending;
+  if (!req) return;
+  answerLive(req, key);
 }
+
 function abort() {
   clearTimeout(timer); clearInterval(ticker);
   if (!S.busy && !S.pending) return;
-  S.busy = false; S.pending = null; step = SCRIPT.length;
+  S.busy = false; S.pending = null;
   S.log.push({id:nid(), k:'system', text:'turn aborted — everything produced so far is kept'});
   render();
 }
@@ -1305,6 +1022,14 @@ document.addEventListener('click', (e) => {
   const uq = t.closest('[data-unqueue]'); if (uq) { S.queued.splice(+uq.dataset.unqueue, 1); render(); return; }
   const rv = t.closest('[data-revoke]'); if (rv) { S.grants.splice(+rv.dataset.revoke, 1); render(); toast('Grant revoked'); return; }
   const ask = t.closest('[data-ask]'); if (ask) { const q = S.q; act('close'); S.draft = q; render(); submit(); return; }
+  const obc = t.closest('[data-ob-choice]');
+  if (obc) { OB.choice = +obc.dataset.obChoice; render(); return; }
+  const obm = t.closest('[data-ob-model]');
+  if (obm) { OB.modelCur = +obm.dataset.obModel; render(); return; }
+  const obp = t.closest('[data-ob-provider]');
+  if (obp) { OB.modelCur = +obp.dataset.obProvider; render(); return; }
+  const ob = t.closest('[data-ob]');
+  if (ob) { obAction(ob.dataset.ob); return; }
   const md = t.closest('[data-model]');
   if (md) {
     const id = md.dataset.model;
@@ -1347,13 +1072,12 @@ function refreshPalette() {
   if (!host) return;
   const sel = host.querySelector('#palq').selectionStart;
   const scroll = host.querySelector('.pallist').scrollTop;
-  $('#overlays').innerHTML = (S.menuOpen !== null ? menuPanelHTML(S.menuOpen) : '') + paletteHTML();
+  $('#overlays').innerHTML = paletteHTML();
   const q = $('#palq'); if (q) { q.focus(); q.setSelectionRange(sel, sel); }
   const l = $('#pallist'); if (l && !S.q) l.scrollTop = scroll;
   const cur = $('#overlays').querySelector('.palrow.on'); if (cur) cur.scrollIntoView({block:'nearest'});
 }
 function refreshDial() {
-  document.querySelectorAll('.mono.tnum').forEach(() => {});
   const wrap = $('#dial') ? $('#dial').parentElement : null;
   if (!wrap) return;
   const n = wrap.querySelector('.mono.tnum'); if (n) n.textContent = S.dialShare;
@@ -1364,7 +1088,7 @@ function flatPalRows() {
   const rows = palRows();
   if (rows) return rows;
   const out = [];
-  PAL.forEach(([g, r]) => r.slice(0, 6).forEach((x) => out.push({ic:x[0], t:x[1], cx:x[2], sc:x[3], act:x[4]})));
+  PAL.forEach(([g, r]) => r.forEach((x) => out.push({ic:x[0], t:x[1], cx:x[2], sc:x[3], act:x[4]})));
   return out;
 }
 function activatePal(i) {
@@ -1523,7 +1247,7 @@ async function loadResources() {
       last:t.status || 'pending', st:t.status === 'running' ? 'run' : t.status === 'failed' ? 'bad' : 'ok',
     }));
   }
-  if (sessions && sessions.ok && sessions.data && Array.isArray(sessions.data.sessions) && sessions.data.sessions.length) {
+  if (sessions && sessions.ok && sessions.data && Array.isArray(sessions.data.sessions)) {
     SESSIONS.length = 0;
     sessions.data.sessions.forEach((x, i) => SESSIONS.push({
       id:x.id || ('s' + i), t:x.title || x.goal || x.id, g:'RECENT',
@@ -1697,7 +1421,8 @@ if (BR) {
     if (a === 'workspace' || a === 'workspace:choose') {
       BR.chooseWorkspace().then((dir) => {
         if (!dir) return;
-        S.log.push({id:nid(), k:'system', text:'workspace → ' + esc(dir) + ' · restart the agent to use it'});
+        WORKSPACE = dir;
+        S.log.push({id:nid(), k:'system', text:'workspace → ' + esc(dir) + ' · the agent is restarting there'});
         render();
       });
       return;
@@ -1744,4 +1469,251 @@ function activeModel() {
     return S.localModel;
   }
   return S.mode === 'local' ? S.localModel : S.cloudModel;
+}
+
+/* ============================================================
+   Setup wizard — the same two steps the TUI runs on a fresh
+   install (src/tui/onboarding), with the same copy and the same
+   effect on config. It writes through `atag config set`, one
+   dotted key at a time, because PATCH /api/config re-defaults
+   every block it does not merge.
+   ============================================================ */
+
+
+
+/** Mirrors decideOnboarding(): completed/skipped wins, then a configured backend. */
+function needsOnboarding(cfg) {
+  const ob = (cfg && cfg.tui && cfg.tui.onboarding) || {};
+  if (ob.completedAt || ob.skippedAt) return false;
+  const lm = (cfg && cfg.localModels) || {};
+  const managedReady = lm.mode === 'managed' && lm.managed && lm.managed.modelId;
+  const localConfigured = (lm.mode === 'external' || lm.mode === 'custom') && lm.url;
+  const llm = (cfg && cfg.llm) || {};
+  const active = (llm.providers || []).find((p) => p.id === llm.activeTextProvider);
+  const cloudReady = !!active && active.kind !== 'llama-server';
+  return !(managedReady || localConfigured || cloudReady);
+}
+
+function fitFor(sizeLabel, ram) {
+  const gb = parseFloat(String(sizeLabel)) || 0;
+  const needed = Math.ceil(gb * 1.6);
+  if (needed <= ram) return {v:'fits', label:'fits this Mac'};
+  if (needed <= ram * 1.4) return {v:'tight', label:'tight on ' + ram + ' GB'};
+  return {v:'over', label:'needs about ' + needed + ' GB'};
+}
+
+async function openOnboarding() {
+  OB.open = true; OB.step = 'choose'; OB.choice = 0; OB.error = null; OB.log = [];
+  render();
+  if (!BR) return;
+  OB.ram = (await BR.hostRam()) || 0;
+  OB.keyEnv = (await BR.keyEnv()) || {};
+  const cfg = await BR.configGet();
+  if (cfg && cfg.ok && cfg.config && cfg.config.llm) {
+    OB.providers = (cfg.config.llm.providers || []).map((p) => ({
+      id: p.id, kind: p.kind, model: p.defaultChatModel || '', active: p.id === cfg.config.llm.activeTextProvider,
+    }));
+  }
+  render();
+}
+
+async function obLoadModels() {
+  OB.busy = true; OB.error = null; render();
+  const res = await BR.modelsList();
+  OB.busy = false;
+  if (!res || !res.ok) { OB.error = (res && res.error) || 'could not read the model catalogue'; render(); return; }
+  // Embedding models are a separate daemon; the chat wizard does not offer them.
+  OB.models = res.models.filter((m) => !/embed|bge|nomic|jina/i.test(m.id));
+  OB.modelCur = Math.max(0, OB.models.findIndex((m) => m.active));
+  render();
+}
+
+async function obFinish(kind, detail) {
+  OB.busy = true; render();
+  const stamp = new Date().toISOString();
+  const writes = [];
+  if (kind === 'local') {
+    writes.push(['localModels.mode', 'managed']);
+    writes.push(['tui.onboarding.localSetupSeenAt', stamp]);
+  }
+  if (kind === 'cloud') writes.push(['llm.activeTextProvider', detail]);
+  if (kind === 'custom') {
+    writes.push(['localModels.mode', 'custom']);
+    writes.push(['localModels.url', detail]);
+  }
+  writes.push(['tui.onboarding.introSeenAt', stamp]);
+  writes.push([kind === 'skip' ? 'tui.onboarding.skippedAt' : 'tui.onboarding.completedAt', stamp]);
+  for (const [key, value] of writes) {
+    const res = await BR.configSet(key, value);
+    if (res && res.ok === false) {
+      OB.busy = false;
+      OB.error = 'could not write ' + key + ': ' + (res.error || 'unknown error');
+      render();
+      return;
+    }
+  }
+  OB.busy = false; OB.open = false;
+  toast('Setup complete', kind === 'skip' ? 'You can run it again from the menu' : 'Restarting the agent…');
+  render();
+  BR.restart().then(applyStatus);
+}
+
+function obUseModel(model) {
+  if (model.downloaded) {
+    OB.busy = true; render();
+    BR.modelsUse(model.id).then((res) => {
+      OB.busy = false;
+      if (res && res.ok === false) { OB.error = res.error || 'could not select the model'; render(); return; }
+      obFinish('local', model.id);
+    });
+    return;
+  }
+  OB.step = 'pulling'; OB.log = ['downloading ' + model.id + ' · ' + model.size]; OB.pulling = model; render();
+  BR.modelsPull(model.id).then((res) => {
+    if (res && res.ok === false) { OB.error = res.error || 'could not start the download'; OB.step = 'local'; render(); }
+  });
+}
+
+function obHTML() {
+  const head = (step, title, sub) =>
+    '<div class="ob-head">'
+    + '<span class="ob-mark">' + MARK_COLOR.replace('width="16" height="16"', 'width="44" height="44"') + '</span>'
+    + '<span class="ob-step">' + esc(step === 1 ? 'setup · step 1 of 2' : step) + '</span>'
+    + '<span class="ob-title">' + esc(title) + '</span>'
+    + (sub ? '<span class="ob-sub">' + esc(sub) + '</span>' : '') + '</div>';
+  const err = OB.error ? '<div class="ob-note" style="color:var(--danger)">' + esc(OB.error) + '</div>' : '';
+
+  if (OB.step === 'choose') {
+    return '<div id="onboarding"><div class="ob">'
+      + head(1, 'Where should the model run?', 'atomic-agent can drive models three ways. Nothing here is permanent — you can add the others at any time from the menu.')
+      + '<div class="ob-list">' + OB_CHOICES.map((c, i) =>
+          '<button class="ob-opt' + (i === OB.choice ? ' on' : '') + '" data-ob-choice="' + i + '">'
+          + '<span class="radio"></span>'
+          + '<span><span class="t">' + esc(c.t) + '</span><br><span class="d">' + esc(c.d) + '</span></span>'
+          + '<span></span></button>').join('') + '</div>'
+      + err
+      + '<div class="ob-foot"><button class="btn btn-g" data-ob="skip">Skip for now</button>'
+      + '<span class="grow"></span>'
+      + '<button class="btn btn-p" data-ob="next">Continue</button></div>'
+      + '</div></div>';
+  }
+
+  if (OB.step === 'local') {
+    const rows = OB.models.length ? OB.models.map((m, i) => {
+      const fit = fitFor(m.size, OB.ram);
+      return '<button class="ob-opt' + (i === OB.modelCur ? ' on' : '') + '" data-ob-model="' + i + '">'
+        + '<span class="radio"></span>'
+        + '<span><span class="t mono" style="font-size:13px">' + esc(m.id) + '</span><br>'
+        + '<span class="d">' + esc(m.size) + ' · ' + esc(m.context) + ' context · ' + esc(fit.label)
+        + (m.downloaded ? ' · already on disk' : '') + '</span></span>'
+        + (m.active ? '<span class="tag">Active</span>' : fit.v === 'fits' && !m.downloaded ? '<span class="tag">Recommended</span>' : '<span></span>')
+        + '</button>';
+    }).join('') : '<div class="ob-note">' + (OB.busy ? 'reading the catalogue…' : 'no models listed') + '</div>';
+    return '<div id="onboarding"><div class="ob">'
+      + head('local models · step 2 of 2', 'Pick a local model', 'One download, then it runs offline. This machine reports ' + OB.ram + ' GB of RAM.')
+      + '<div class="ob-models">' + rows + '</div>' + err
+      + '<div class="ob-foot"><button class="btn btn-g" data-ob="back">Back</button>'
+      + '<span class="grow"></span>'
+      + '<button class="btn btn-p" data-ob="use"' + (OB.busy || !OB.models.length ? ' disabled' : '') + '>'
+      + (OB.models[OB.modelCur] && OB.models[OB.modelCur].downloaded ? 'Use this model' : 'Download and use') + '</button></div>'
+      + '</div></div>';
+  }
+
+  if (OB.step === 'pulling') {
+    return '<div id="onboarding"><div class="ob">'
+      + head('local models · step 2 of 2', 'Downloading', 'Hugging Face is sending the model. This runs in the background — you can leave it.')
+      + '<div class="ob-prog" id="ob-prog">' + esc(OB.log.slice(-8).join('\n')) + '</div>' + err
+      + '<div class="ob-foot"><button class="btn btn-s" data-ob="cancel">Cancel</button><span class="grow"></span></div>'
+      + '</div></div>';
+  }
+
+  if (OB.step === 'cloud') {
+    const rows = OB.providers.filter((p) => p.kind !== 'llama-server').map((p, i) =>
+      '<button class="ob-opt' + (i === OB.modelCur ? ' on' : '') + '" data-ob-provider="' + i + '">'
+      + '<span class="radio"></span>'
+      + '<span><span class="t">' + esc(p.id) + '</span><br><span class="d">'
+      + esc(p.model || 'configured provider') + ' · key from ' + esc(OB.keyEnv[p.kind] || 'the environment')
+      + '</span></span>' + (p.active ? '<span class="tag">Active</span>' : '<span></span>') + '</button>').join('');
+    return '<div id="onboarding"><div class="ob">'
+      + head('cloud models · step 2 of 2', 'Choose a cloud provider', 'These are the providers already in your config. Keys are read from the environment, not stored here.')
+      + '<div class="ob-list">' + (rows || '<div class="ob-note">No cloud provider is configured yet.</div>') + '</div>'
+      + '<div class="ob-note">To add one, set its key in your environment — for example '
+      + '<span class="mono">export ' + esc(OB.keyEnv.openrouter || 'OPENROUTER_API_KEY') + '=…</span> — then run setup again.</div>'
+      + err
+      + '<div class="ob-foot"><button class="btn btn-g" data-ob="back">Back</button><span class="grow"></span>'
+      + '<button class="btn btn-p" data-ob="useProvider"' + (rows ? '' : ' disabled') + '>Use this provider</button></div>'
+      + '</div></div>';
+  }
+
+  // custom
+  return '<div id="onboarding"><div class="ob">'
+    + head('custom endpoint · step 2 of 2', 'Point at your endpoint', 'An OpenAI-compatible or llama-server URL you already run.')
+    + '<input class="field-inp" id="ob-url" style="width:100%" placeholder="http://127.0.0.1:8080" value="' + esc(OB.url || '') + '">'
+    + err
+    + '<div class="ob-foot"><button class="btn btn-g" data-ob="back">Back</button><span class="grow"></span>'
+    + '<button class="btn btn-p" data-ob="useUrl">Use this endpoint</button></div>'
+    + '</div></div>';
+}
+
+
+function obAction(what) {
+  if (what === 'skip') { obFinish('skip', ''); return; }
+  if (what === 'back') { OB.step = 'choose'; OB.error = null; render(); return; }
+  if (what === 'next') {
+    const choice = OB_CHOICES[OB.choice];
+    OB.error = null;
+    OB.modelCur = 0;
+    OB.step = choice.id;
+    render();
+    if (choice.id === 'local') obLoadModels();
+    return;
+  }
+  if (what === 'use') { const m = OB.models[OB.modelCur]; if (m) obUseModel(m); return; }
+  if (what === 'useProvider') {
+    const list = OB.providers.filter((p) => p.kind !== 'llama-server');
+    const p = list[OB.modelCur];
+    if (p) obFinish('cloud', p.id);
+    return;
+  }
+  if (what === 'useUrl') {
+    const input = document.getElementById('ob-url');
+    const url = (input && input.value.trim()) || '';
+    if (!/^https?:\/\/\S+$/.test(url)) { OB.error = 'That does not look like a URL.'; render(); return; }
+    OB.url = url;
+    obFinish('custom', url);
+    return;
+  }
+  if (what === 'cancel') { BR.cancelPull(); OB.step = 'local'; render(); return; }
+}
+
+if (BR) {
+  BR.onPull((ev) => {
+    if (!ev) return;
+    if (ev.line) OB.log.push(ev.line);
+    if (ev.done) {
+      if (ev.ok && OB.pulling) {
+        BR.modelsUse(OB.pulling.id).then(() => obFinish('local', OB.pulling.id));
+      } else {
+        OB.error = ev.error || 'the download failed';
+        OB.step = 'local';
+        render();
+      }
+      return;
+    }
+    if (OB.open && OB.step === 'pulling') {
+      const box = document.getElementById('ob-prog');
+      if (box) { box.textContent = OB.log.slice(-8).join('\n'); box.scrollTop = box.scrollHeight; }
+    }
+  });
+
+  // First run: the wizard opens itself, exactly as the TUI does.
+  BR.configGet().then((res) => {
+    if (res && res.ok && needsOnboarding(res.config)) openOnboarding();
+  });
+
+  const prevAct = act;
+  act = function (a) {
+    if (a === 'onboarding') { openOnboarding(); return; }
+    return prevAct(a);
+  };
 }

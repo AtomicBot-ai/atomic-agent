@@ -480,3 +480,46 @@ body.electron #toolbar .searchbtn { -webkit-app-region: no-drag; }
 /* The sidebar header sits under the toolbar, so it needs no inset —
    but it must not swallow drags either. */
 body.electron .sb-head { -webkit-app-region: no-drag; }
+
+/* ---------------- setup wizard ---------------- */
+#onboarding {
+  position: absolute; inset: 0; z-index: 40;
+  background: var(--bg-content);
+  display: flex; align-items: center; justify-content: center;
+  padding: var(--s8);
+  -webkit-app-region: drag;
+}
+#onboarding > * { -webkit-app-region: no-drag; }
+.ob { width: min(560px, 100%); display: flex; flex-direction: column; gap: var(--s6); }
+.ob-head { display: flex; flex-direction: column; gap: var(--s3); align-items: center; text-align: center; }
+.ob-mark { opacity: .9; }
+.ob-step {
+  font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+.ob-title { font-size: 22px; line-height: 28px; font-weight: 600; letter-spacing: -.02em; }
+.ob-sub { font-size: 13px; color: var(--text-secondary); max-width: 44ch; }
+.ob-list { display: flex; flex-direction: column; gap: var(--s3); }
+.ob-opt {
+  display: grid; grid-template-columns: 20px 1fr auto; gap: var(--s4); align-items: center;
+  padding: var(--s4) var(--s5); width: 100%; text-align: left;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--bg-raised);
+}
+.ob-opt:hover { border-color: var(--line-strong); }
+.ob-opt.on { border-color: var(--accent); background: var(--accent-wash); }
+.ob-opt .t { font-size: 15px; font-weight: 500; }
+.ob-opt .d { font-size: 13px; color: var(--text-secondary); }
+.ob-opt .tag {
+  font-size: 11px; font-weight: 500; color: var(--accent-text);
+  border: 1px solid var(--accent-line); border-radius: 4px; padding: 1px 6px;
+}
+.ob-opt[disabled] { opacity: .5; cursor: default; }
+.ob-models { max-height: 46vh; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+.ob-foot { display: flex; align-items: center; gap: var(--s4); }
+.ob-foot .grow { flex: 1; }
+.ob-note { font-size: 12px; color: var(--text-tertiary); }
+.ob-prog {
+  font-family: var(--font-mono); font-size: 11px; color: var(--text-secondary);
+  background: var(--bg-sunken); border-radius: 6px; padding: var(--s3);
+  max-height: 120px; overflow-y: auto; white-space: pre-wrap;
+}
