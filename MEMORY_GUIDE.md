@@ -136,8 +136,10 @@ ignores them.
 
 ### Housekeeping you get for free
 
-- **Dedup** — a near-duplicate of an existing note (BM25 similarity above
-  `memory.dedup.fts5Threshold`, 0.85) is merged instead of inserted.
+- **Dedup** — a near-duplicate of an existing note is merged instead of
+  inserted: full-text search fetches the closest existing notes, and the best
+  candidate absorbs the write when its token-overlap (Jaccard) similarity
+  clears `memory.dedup.fts5Threshold` (0.85).
 - **Voting** — a post-turn sub-call votes surfaced memories up or down by
   usefulness; heavily downvoted profile facts stop rendering even if pinned.
 - **Eviction** — hard caps (1000 notes, 500 lessons, 500 procedures) with
@@ -175,8 +177,8 @@ The design is **pointers first, bodies on demand**:
 | Section | What it carries | Full body via |
 |---|---|---|
 | `### profile` | active facts, `- key: value` | already the full value |
-| `### lessons` | `*<id> [tags] activation` one-liners | `memory.lessons.recall { id }` |
-| `### procedures` | `><id> [tags] activation` one-liners | `memory.procedures.recall { id }` |
+| `### lessons` | top-2 BM25 hits for the current turn, `*<id> [tags] activation` one-liners | `memory.lessons.recall { id }` |
+| `### procedures` | top-2 BM25 hits for the current turn, `><id> [tags] activation` one-liners | `memory.procedures.recall { id }` |
 | `### memory-index` | up to 20 most recent notes (minus any already in `### recalled`), 60-char previews | `memory.notes.recall { id }` |
 | `### recalled` | top-3 BM25 hits for the current message, 160-char previews | `memory.notes.recall { id }` |
 
@@ -191,9 +193,17 @@ Two gates keep the tail small:
 The `### recalled` search runs once per turn against your current message.
 Short referential follow-ups ("and what about there?") are first expanded by
 a query rewriter (on by default) using the recent turns, and hits are
-expanded one hop through the link graph. Optionally, recall can be made
-hybrid (BM25 + embedding cosine) by enabling a local embedding model from the
-TUI's local-models panel — off by default.
+expanded one hop through the link graph.
+
+`### lessons` and `### procedures` are gated by the same per-turn recall
+query (your message plus recent tool-result summaries), matched against each
+row's activation, principle, and tags — only the top
+`memory.lessons.recallK` / `memory.procedures.recallK` hits (2 each) render,
+so a prompt on an unrelated topic carries no lesson or procedure rows at
+all. The complete list is always browsable in the TUI Memory tab.
+
+Optionally, recall can be made hybrid (BM25 + embedding cosine) by enabling
+a local embedding model from the TUI's local-models panel — off by default.
 
 ## Worked example 1 — a profile fact forms and comes back
 
@@ -314,14 +324,17 @@ older than 24 hours — the cluster is distilled in a single LLM call:
 - notes #31/#38/#44 are archived: gone from `### memory-index`, still
   readable by id.
 
-From then on, every prompt carries a one-line pointer:
+From then on, a prompt whose turn touches the topic carries a one-line
+pointer — like `### recalled`, lessons are query-matched (the turn's recall
+query against activation/principle/tags, top `memory.lessons.recallK` = 2),
+so the row appears when you talk Playwright, not in every prompt:
 
 ```
 ### lessons
 *4 [playwright] When a Playwright click flakes, prefer role-based locators over CSS selectors
 ```
 
-and when the topic actually comes up, the agent drills in:
+and the agent drills in for the full principle:
 
 ```
 you   › the checkout e2e test is flaky again on the pay button
