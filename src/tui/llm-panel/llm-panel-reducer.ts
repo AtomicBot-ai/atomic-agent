@@ -71,6 +71,16 @@ export function reduceLlmPanelAction(
         ...state,
         llmPanel: { ...panel, externalUrlDraft: action.value },
       };
+    case "llm_external_compat_steer_opened":
+      return {
+        ...state,
+        llmPanel: { ...panel, externalCompatSteerUrl: action.url },
+      };
+    case "llm_external_compat_steer_closed":
+      return {
+        ...state,
+        llmPanel: { ...panel, externalCompatSteerUrl: null },
+      };
     case "llm_cloud_filter_focus_set": {
       if (!action.focused) {
         return {

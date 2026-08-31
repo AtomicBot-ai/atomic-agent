@@ -205,3 +205,81 @@ describe("external llama.cpp pane", () => {
     expect(next?.llmPanel.localCursor).toBe(state.llmPanel.localCursor);
   });
 });
+
+describe("openai-compat steer prompt", () => {
+  function steerState(url = "http://127.0.0.1:11434"): TuiState {
+    const state = externalState();
+    state.llmPanel = { ...state.llmPanel, externalCompatSteerUrl: url };
+    return state;
+  }
+
+  it("opens on the openai-compat verdict action and closes again", () => {
+    const opened = reduceLlmPanelAction(externalState(), {
+      type: "llm_external_compat_steer_opened",
+      url: "http://127.0.0.1:11434",
+    });
+    expect(opened?.llmPanel.externalCompatSteerUrl).toBe(
+      "http://127.0.0.1:11434",
+    );
+    const closed = reduceLlmPanelAction(opened!, {
+      type: "llm_external_compat_steer_closed",
+    });
+    expect(closed?.llmPanel.externalCompatSteerUrl).toBeNull();
+  });
+
+  it("y opens the provider wizard on the Ollama preset with the probed URL", () => {
+    const dispatched = press("y", emptyKey(), steerState());
+    expect(dispatched[0]).toEqual({ type: "llm_external_compat_steer_closed" });
+    expect(dispatched[1]).toEqual({ type: "llm_mode_set", mode: "cloud" });
+    expect(dispatched[2]).toMatchObject({
+      type: "providers_wizard_opened",
+      wizard: {
+        mode: "add",
+        kind: "openai-compatible",
+        presetId: "ollama",
+        baseUrlLine: "http://127.0.0.1:11434",
+        phase: "chat_model_line",
+      },
+    });
+  });
+
+  it("prefills the manual compat route for a non-Ollama server", () => {
+    const dispatched = press(
+      "",
+      emptyKey({ return: true }),
+      steerState("http://127.0.0.1:5001"),
+    );
+    expect(dispatched[2]).toMatchObject({
+      type: "providers_wizard_opened",
+      wizard: {
+        kind: "openai-compatible",
+        presetId: null,
+        baseUrlLine: "http://127.0.0.1:5001",
+        phase: "base_url",
+      },
+    });
+  });
+
+  it("n and Esc dismiss without opening the wizard", () => {
+    for (const [input, key] of [
+      ["n", emptyKey()],
+      ["", emptyKey({ escape: true })],
+    ] as const) {
+      const dispatched = press(input, key, steerState());
+      expect(dispatched).toEqual([{ type: "llm_external_compat_steer_closed" }]);
+    }
+  });
+
+  it("swallows panel hotkeys while the prompt is open", () => {
+    // `s` is the daemon start/stop hotkey outside the modal.
+    const onStop = vi.fn();
+    const dispatched = press(
+      "s",
+      emptyKey(),
+      steerState(),
+      callbacks({ onLocalModelsDaemonStopRequested: onStop }),
+    );
+    expect(dispatched).toEqual([]);
+    expect(onStop).not.toHaveBeenCalled();
+  });
+});

@@ -1,6 +1,21 @@
 import type { HealthResult } from "./llama-server-health.js";
 
 /**
+ * True when `url` points at Ollama's default port. Ollama is the server
+ * operators point the External llama.cpp URL at most often (verified:
+ * `ollama serve` answers 404 on `/health` and OpenAI-shape on
+ * `/v1/models`, so the probe reports `openai-compat`), and the port is
+ * the one signal the probe already has without another round trip.
+ */
+export function looksLikeOllamaUrl(url: string): boolean {
+  try {
+    return new URL(url).port === "11434";
+  } catch {
+    return false;
+  }
+}
+
+/**
  * One operator-actionable line per probe verdict, shared by every
  * surface that saves an external llama.cpp URL (LLM tab External pane,
  * first-run wizard). Stub-verified failure shapes each map to what the
@@ -14,12 +29,17 @@ export function describeLlamaHealthFailure(
   switch (health.kind) {
     case "openai-compat":
       // A real server, wrong route: KoboldCpp / LM Studio / Ollama /
-      // vLLM speak /v1/* but not llama.cpp's native endpoints.
-      return (
-        `${url} answers like an OpenAI-compatible server, not llama.cpp. ` +
-        `Add it as a cloud provider instead: LLM tab › Cloud › n › ` +
-        `openai-compatible, base URL ${url}.`
-      );
+      // vLLM speak /v1/* but not llama.cpp's native endpoints. Port
+      // 11434 is named as Ollama outright — that is the server this
+      // verdict almost always is, and "openai-compatible" alone did not
+      // tell an Ollama user the message was about them.
+      return looksLikeOllamaUrl(url)
+        ? `${url} answers like Ollama (its default port), not llama.cpp. ` +
+            `Add it as a cloud provider instead: LLM tab › Cloud › n › ` +
+            `Ollama (local), base URL ${url}.`
+        : `${url} answers like an OpenAI-compatible server, not llama.cpp. ` +
+            `Add it as a cloud provider instead: LLM tab › Cloud › n › ` +
+            `openai-compatible, base URL ${url}.`;
     case "llama-loading":
       return (
         `${url} is a llama.cpp server still loading its model. ` +
