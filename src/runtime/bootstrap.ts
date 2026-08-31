@@ -1245,6 +1245,7 @@ export async function createAgentRuntime(
 
   let skillCatalog: readonly SkillCatalogEntry[] = buildSkillCatalog(
     skillRegistry.list(),
+    { tokenBudget: config.skills.catalogTokenBudget },
   );
 
   let grammar = await buildGrammar(profile, config.paths.grammarsDir, {
@@ -2181,7 +2182,9 @@ export async function createAgentRuntime(
         error: e.error,
       });
     }
-    skillCatalog = buildSkillCatalog(skillRegistry.list());
+    skillCatalog = buildSkillCatalog(skillRegistry.list(), {
+      tokenBudget: config.skills.catalogTokenBudget,
+    });
     options.handlers?.onSkillRegistryChange?.([...skillCatalog]);
   };
 

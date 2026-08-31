@@ -137,7 +137,9 @@ async function handleReplay(args: string[]): Promise<number> {
     projectDir: joinPath(workingDir, config.paths.projectSkillsDirName),
   });
   await skillRegistry.refresh();
-  const skillCatalog = buildSkillCatalog(skillRegistry.list());
+  const skillCatalog = buildSkillCatalog(skillRegistry.list(), {
+    tokenBudget: config.skills.catalogTokenBudget,
+  });
   const capabilities = await buildCapabilities({
     workingDir,
     browserChannel: config.browser.channel,

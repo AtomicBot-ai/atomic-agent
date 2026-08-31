@@ -1,5 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
@@ -33,6 +40,7 @@ import type {
   TabsInput,
   TypeInput,
 } from "../tools/browser/browser-backend.js";
+import { buildSkillCatalog } from "../skills/index.js";
 import type { LogRecord } from "../tracing/structured-logger.js";
 import type { AgentLoopEvent } from "../agent/agent-loop.js";
 import type { CompletionResult } from "../llm/llama-server-client.js";
@@ -96,6 +104,7 @@ describe("createAgentRuntime", () => {
     rmSync(workingDir, { recursive: true, force: true });
     delete process.env.ATOMIC_AGENT_STATE_DIR;
     delete process.env.ATOMIC_AGENT_GRAMMARS_DIR;
+    delete process.env.ATOMIC_AGENT_SKILLS_CATALOG_BUDGET;
     resetConfigCache();
   });
 
@@ -124,6 +133,70 @@ describe("createAgentRuntime", () => {
       expect(names).toContain("skill.run_script");
     } finally {
       await runtime.shutdown();
+    }
+  });
+
+  it("wires skills.catalogTokenBudget into the runtime skill catalog, at boot and on refresh", async () => {
+    // Regression guard for the call-site wiring itself: the original bug
+    // was `buildSkillCatalog` being called WITHOUT options in bootstrap,
+    // which silently pinned the catalog to the legacy 4096-char cap. The
+    // unit tests on `buildSkillCatalog` cannot catch that, so this test
+    // sets the env knob and asserts the built runtime honors it.
+    const writeProjectSkill = (name: string): void => {
+      const dir = join(workingDir, ".atomic-agent", "skills", name);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(
+        join(dir, "SKILL.md"),
+        [
+          "---",
+          `name: ${name}`,
+          `description: "${"d".repeat(120)}"`,
+          "version: 0.1.0",
+          "---",
+          "",
+          `# ${name}`,
+        ].join("\n"),
+        "utf8",
+      );
+    };
+    writeProjectSkill("budget-a");
+    writeProjectSkill("budget-b");
+
+    // 4 tokens x 8 chars/token = 32 chars: far below one rendered entry,
+    // so an honored budget collapses the catalog to the single
+    // always-kept first entry, while the legacy 4096-char default would
+    // keep every skill written above.
+    process.env.ATOMIC_AGENT_SKILLS_CATALOG_BUDGET = "4";
+    resetConfigCache();
+    const runtime = await createAgentRuntime({
+      workingDir,
+      approvalLevel: 5,
+      overrides: { browserBackend: backend, skipLlamaHealthCheck: true },
+    });
+    try {
+      expect(runtime.config.skills.catalogTokenBudget).toBe(4);
+      const records = runtime.skillRegistry.list();
+      expect(records.length).toBeGreaterThan(1);
+      // Sanity: with the default cap this registry yields a bigger catalog,
+      // so the assertion below genuinely discriminates wired vs unwired.
+      expect(buildSkillCatalog(records).length).toBeGreaterThan(1);
+      expect([...runtime.skillCatalog]).toEqual(
+        buildSkillCatalog(records, { tokenBudget: 4 }),
+      );
+      expect(runtime.skillCatalog).toHaveLength(1);
+
+      // Second call site: the refresh path must rebuild with the same
+      // configured budget, not fall back to the legacy cap.
+      writeProjectSkill("budget-c");
+      await runtime.refreshSkills();
+      expect(runtime.skillRegistry.list().length).toBeGreaterThan(
+        records.length,
+      );
+      expect(runtime.skillCatalog).toHaveLength(1);
+    } finally {
+      await runtime.shutdown();
+      delete process.env.ATOMIC_AGENT_SKILLS_CATALOG_BUDGET;
+      resetConfigCache();
     }
   });
 
@@ -939,6 +1012,7 @@ describe("createAgentRuntime steering", () => {
     rmSync(workingDir, { recursive: true, force: true });
     delete process.env.ATOMIC_AGENT_STATE_DIR;
     delete process.env.ATOMIC_AGENT_GRAMMARS_DIR;
+    delete process.env.ATOMIC_AGENT_SKILLS_CATALOG_BUDGET;
     resetConfigCache();
   });
 

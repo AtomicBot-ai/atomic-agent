@@ -333,6 +333,17 @@ export interface AtomicAgentConfig {
     launchTimeoutMs: number;
   };
   skills: {
+    /**
+     * Soft budget for the `### skills` catalog in the stable prefix,
+     * in tokens. `buildSkillCatalog` converts it to a char cap at
+     * `SKILL_CATALOG_CHARS_PER_TOKEN` (8) chars/token and drops
+     * catalog entries past the cap so the prompt stays bounded. Env
+     * `ATOMIC_AGENT_SKILLS_CATALOG_BUDGET`, default `512` — which
+     * maps to the historical hardcoded 4096-char cap, so an unset
+     * key keeps pre-existing behavior byte-for-byte. Env values are
+     * clamped to `[1, 100_000]` tokens, so a zero or negative value
+     * cannot drive `maxChars` to 0 and silently collapse the catalog.
+     */
     catalogTokenBudget: number;
     /**
      * Names of installed skills that should be hidden from the
