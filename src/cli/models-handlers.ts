@@ -9,6 +9,8 @@ import {
   downloadEmbeddingModel,
   downloadModel,
   EMBEDDING_MODELS_CATALOG,
+  fallBackToCpuBackend,
+  getConfiguredBackendVariant,
   getDaemonStatus,
   getEmbeddingDaemonStatus,
   getEmbeddingModelDef,
@@ -30,6 +32,7 @@ import {
   resolveMmprojFilePath,
   resolvePlatformAsset,
   resolveServerBinPath,
+  shouldFallBackToCpuBackend,
   startChatAndEmbeddingDaemons,
   stopChatAndEmbeddingDaemons,
 } from "../local-llm/index.js";
@@ -308,8 +311,8 @@ export async function runLocalModelsStart(): Promise<number> {
     `device:         ${describeDeviceChoice(cfg.localModels.managed.device, device)}\n`,
   );
 
-  try {
-    const result = await startChatAndEmbeddingDaemons({
+  const startWithDevice = (dev: string | undefined) =>
+    startChatAndEmbeddingDaemons({
       chat: {
         dataDir,
         modelId: mid,
@@ -317,7 +320,7 @@ export async function runLocalModelsStart(): Promise<number> {
         contextSize: cfg.localModels.managed.contextSize,
         ...(tpl ? { chatTemplateFile: tpl } : {}),
         ...(mmprojFile ? { mmprojFile } : {}),
-        ...(device ? { device } : {}),
+        ...(dev ? { device: dev } : {}),
       },
       ...(embRequested && embReady
         ? {
@@ -325,11 +328,48 @@ export async function runLocalModelsStart(): Promise<number> {
               dataDir,
               modelId: embCfg.modelId as never,
               port: embCfg.port,
-              ...(device ? { device } : {}),
+              ...(dev ? { device: dev } : {}),
             },
           }
         : {}),
     });
+
+  try {
+    let result: Awaited<ReturnType<typeof startWithDevice>>;
+    try {
+      result = await startWithDevice(device);
+    } catch (e) {
+      // Windows iGPU-only rescue: the installed GPU build spawned but
+      // never became healthy (its compute backend cannot load a model
+      // on this machine — e.g. Vulkan on an AMD APU), so swap in the
+      // CPU build the nightly also publishes and retry once.
+      if (
+        !shouldFallBackToCpuBackend({
+          installedAsset: readBackendVersion(dataDir)?.asset,
+          configuredVariant: getConfiguredBackendVariant(),
+          error: e,
+        })
+      ) {
+        throw e;
+      }
+      process.stderr.write(
+        "the GPU llama.cpp build failed to serve on this machine — falling back to the CPU build…\n",
+      );
+      persistBackendVariantCpu(cfg.paths.userConfigFile);
+      await fallBackToCpuBackend(dataDir, {
+        signal: AbortSignal.timeout(BACKEND_DOWNLOAD_TIMEOUT_MS),
+        onProgress: (p: number, t: number, tot: number) => {
+          const line = renderPullProgress("cpu backend zip", p, t, tot);
+          if (process.stderr.isTTY) process.stderr.write(`\r${line.padEnd(79)}`);
+          else if (p % 5 === 0 || p === 100) process.stderr.write(`${line}\n`);
+        },
+      });
+      if (process.stderr.isTTY) process.stderr.write("\n");
+      // The GPU device picked against the old binary is meaningless to
+      // the CPU build (it would reject `--device Vulkan0`).
+      process.stderr.write("retrying start on the CPU build…\n");
+      result = await startWithDevice("cpu");
+    }
     const visionLine = mmprojFile
       ? `, vision enabled (${m.mmprojFilename})`
       : m.supportsVision
@@ -358,6 +398,36 @@ export async function runLocalModelsStart(): Promise<number> {
   } catch (e) {
     process.stderr.write(`${e instanceof Error ? e.message : String(e)}\n`);
     return 1;
+  }
+}
+
+/**
+ * Record the CPU fallback as `localModels.managed.backendVariant = "cpu"`.
+ * Without this the next auto-update's variant-staleness check would
+ * resolve the GPU zip again and reinstall the build that just failed.
+ * Best-effort: a config write failure downgrades to a session-only
+ * fallback (`fallBackToCpuBackend` flips the in-process preference
+ * regardless) with a note.
+ */
+function persistBackendVariantCpu(path: string): void {
+  try {
+    const user = ensureUserConfigFileSync(path);
+    const next: UserConfigFile = {
+      ...user,
+      localModels: {
+        ...user.localModels,
+        managed: { ...user.localModels.managed, backendVariant: "cpu" },
+      },
+    };
+    writeUserConfigFileSync(path, next);
+    resetConfigCache();
+    process.stderr.write(
+      'recorded backendVariant "cpu" in config.json — set it to "auto" or "vulkan" to try the GPU build again (e.g. after a driver update)\n',
+    );
+  } catch (e) {
+    process.stderr.write(
+      `note: could not persist backendVariant — ${e instanceof Error ? e.message : String(e)}; the CPU build is used for this session only\n`,
+    );
   }
 }
 

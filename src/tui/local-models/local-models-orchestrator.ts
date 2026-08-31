@@ -12,6 +12,8 @@ import {
   downloadMmproj,
   downloadModel,
   EMBEDDING_MODELS_CATALOG,
+  fallBackToCpuBackend,
+  getConfiguredBackendVariant,
   getDaemonStatus,
   getEmbeddingDaemonStatus,
   getEmbeddingModelDef,
@@ -41,6 +43,7 @@ import {
   resolvePlatformAsset,
   resolveHuggingFaceGgufChoices,
   resolveServerBinPath,
+  shouldFallBackToCpuBackend,
   startChatAndEmbeddingDaemons,
   startEmbeddingDaemon,
   stopChatAndEmbeddingDaemons,
@@ -986,6 +989,11 @@ export class LocalModelsOrchestrator {
    */
   async startDaemon(opts?: {
     backendAlreadyChecked?: boolean;
+    /**
+     * Set by the retry the Windows CPU-backend fallback issues, so a
+     * start that fails even on the CPU build cannot recurse forever.
+     */
+    cpuFallbackAttempted?: boolean;
   }): Promise<boolean> {
     const cfg = getConfig();
     if (cfg.localModels.mode !== "managed") {
@@ -1112,6 +1120,16 @@ export class LocalModelsOrchestrator {
       return true;
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
+      if (
+        !opts?.cpuFallbackAttempted &&
+        shouldFallBackToCpuBackend({
+          installedAsset: readBackendVersion(dataDir)?.asset,
+          configuredVariant: getConfiguredBackendVariant(),
+          error: e,
+        })
+      ) {
+        return await this.fallBackToCpuBackendAndRetry(dataDir, msg);
+      }
       this.bus.emit({ type: "local_models_daemon_error_set", message: msg });
       this.bus.emit({ type: "runtime_info", line: `local-llm: start failed — ${msg}` });
       return false;
@@ -1119,6 +1137,88 @@ export class LocalModelsOrchestrator {
       this.endActiveRefresh();
       await this.refresh();
     }
+  }
+
+  /**
+   * Windows iGPU-only rescue: the installed GPU llama.cpp build spawned
+   * but never became healthy (the compute backend cannot load a model on
+   * this machine — e.g. Vulkan on an AMD APU), so swap in the CPU build
+   * the nightly also publishes and retry the start once. The choice is
+   * persisted as `localModels.managed.backendVariant = "cpu"` — without
+   * that, the next auto-update's variant-staleness check would reinstall
+   * the GPU build and re-break the machine.
+   */
+  private async fallBackToCpuBackendAndRetry(
+    dataDir: string,
+    failureMsg: string,
+  ): Promise<boolean> {
+    this.bus.emit({
+      type: "runtime_info",
+      line:
+        "local-llm: the GPU llama.cpp build failed to serve on this machine — " +
+        "falling back to the CPU build…",
+    });
+    try {
+      persistUserLocalModelsConfig({ managed: { backendVariant: "cpu" } });
+      this.bus.emit({
+        type: "runtime_info",
+        line:
+          'local-llm: recorded backendVariant "cpu" in config.json — set it to ' +
+          '"auto" or "vulkan" to try the GPU build again (e.g. after a driver update)',
+      });
+    } catch (persistErr) {
+      const msg =
+        persistErr instanceof Error ? persistErr.message : String(persistErr);
+      this.bus.emit({
+        type: "runtime_info",
+        line: `local-llm: could not persist backendVariant — ${msg}; the CPU build is used for this session only`,
+      });
+    }
+    this.bus.emit({
+      type: "local_models_pull_started",
+      pull: {
+        kind: "backend",
+        modelId: "_backend",
+        label: "llama.cpp backend",
+        percent: 0,
+        transferredBytes: 0,
+        totalBytes: 0,
+        error: null,
+      },
+    });
+    try {
+      await fallBackToCpuBackend(dataDir, {
+        // Same hazard as the auto-update path above: without a deadline
+        // a stalled-open connection would pin the start on "starting"
+        // for the life of the process.
+        signal: AbortSignal.timeout(BACKEND_DOWNLOAD_TIMEOUT_MS),
+        onProgress: (percent: number, transferred: number, total: number) => {
+          this.bus.emit({
+            type: "local_models_pull_progress",
+            kind: "backend",
+            percent,
+            transferredBytes: transferred,
+            totalBytes: total,
+          });
+        },
+      });
+      this.bus.emit({ type: "local_models_pull_finished", kind: "backend" });
+    } catch (dlErr) {
+      const msg = dlErr instanceof Error ? dlErr.message : String(dlErr);
+      const combined = `CPU backend fallback failed — ${msg} (original start failure: ${failureMsg})`;
+      this.bus.emit({ type: "local_models_pull_failed", kind: "backend", error: msg });
+      this.bus.emit({ type: "local_models_daemon_error_set", message: combined });
+      this.bus.emit({ type: "runtime_info", line: `local-llm: ${combined}` });
+      return false;
+    }
+    this.bus.emit({
+      type: "runtime_info",
+      line: "local-llm: CPU build installed — retrying start…",
+    });
+    return await this.startDaemon({
+      backendAlreadyChecked: true,
+      cpuFallbackAttempted: true,
+    });
   }
 
   /**

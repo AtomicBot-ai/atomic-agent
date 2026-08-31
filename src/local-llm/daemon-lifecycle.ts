@@ -260,6 +260,21 @@ export function readRunningPid(
   return pid;
 }
 
+/**
+ * Thrown when a spawned llama-server never reached a healthy `/health`
+ * within the deadline — the process crashed on startup or could not
+ * load the model. Typed (rather than a bare `Error`) so the Windows
+ * CPU-backend fallback can distinguish "the installed compute backend
+ * cannot serve on this machine" from pre-spawn failures like a missing
+ * model file, which no backend swap would fix.
+ */
+export class DaemonHealthError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "DaemonHealthError";
+  }
+}
+
 async function waitForHealthOkWithLog(dataDir: string, port: number, timeoutMs: number): Promise<void> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
@@ -275,7 +290,7 @@ async function waitForHealthOkWithLog(dataDir: string, port: number, timeoutMs: 
   } catch {
     tail = "(no log)";
   }
-  throw new Error(
+  throw new DaemonHealthError(
     `llama-server did not become healthy within ${timeoutMs}ms. Log tail:\n${tail}`,
   );
 }

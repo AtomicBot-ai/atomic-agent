@@ -11,6 +11,11 @@ import {
   isKnownLocalModelId,
   type LocalModelDef,
 } from "../local-llm/models-catalog.js";
+import {
+  BACKEND_VARIANT_PREFERENCES,
+  isBackendVariantPreference,
+  type BackendVariantPreference,
+} from "../local-llm/windows-backend-variant.js";
 import { parseCustomLocalModels } from "./custom-models-schema.js";
 import {
   MCP_SERVER_NAME_MAX_LENGTH,
@@ -957,6 +962,22 @@ export interface UserManagedLocalLlmConfig {
    */
   device: string;
   /**
+   * Which llama.cpp build (release zip) the managed backend installs.
+   * Windows-only — every other platform publishes a single asset.
+   *   - `"auto"` (default) — probe `nvidia-smi` and pick the newest CUDA
+   *     build the driver can run, else Vulkan.
+   *   - `"cpu"` — the CPU-only build. For machines whose Vulkan stack
+   *     cannot load a model at all (iGPU-only boxes); also written back
+   *     automatically when a GPU build fails to serve (see
+   *     `cpu-backend-fallback.ts`). Distinct from `device: "cpu"`, which
+   *     only disables offload — the broken compute backend would still
+   *     be baked into the binary.
+   *   - `"vulkan"` / `"cuda-12.4"` / `"cuda-13.3"` — pin that build
+   *     (and undo an automatic CPU fallback after a driver fix).
+   * Added in config v46; older files transparently get `"auto"`.
+   */
+  backendVariant: BackendVariantPreference;
+  /**
    * llama-server context window (`--ctx-size`) for the managed chat
    * daemon.
    *   - `0` (default) — auto: fit the context to the target device's
@@ -1610,7 +1631,14 @@ export interface UserConfigFile {
 // implied. (It was drafted as a second v44, but v44 was already spent on
 // `customModels` in the same release — the stamp ships as v45 so the two
 // additive changes keep distinct numbers.)
-export const USER_CONFIG_VERSION = 45;
+// v46: localModels.managed gains `backendVariant` — which llama.cpp
+// release zip the managed backend installs on Windows (`auto` | `cpu` |
+// `vulkan` | `cuda-12.4` | `cuda-13.3`). Exists for iGPU-only boxes whose
+// Vulkan build cannot load a model; the start-failure fallback persists
+// `"cpu"` here so auto-update stops reinstalling the broken GPU build.
+// Additive: older files transparently inherit `"auto"`, the exact
+// detection behaviour they already had.
+export const USER_CONFIG_VERSION = 46;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -1744,6 +1772,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   42,
   43,
   44,
+  45,
   USER_CONFIG_VERSION,
 ];
 
@@ -1760,6 +1789,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       autoUpdate: true,
       stopOnExit: true,
       device: "auto",
+      backendVariant: "auto",
       contextSize: 0,
     },
     embeddings: {
@@ -2094,6 +2124,17 @@ export function parseLocalLlmMode(raw: unknown, field: string): LocalLlmMode {
   throw new ConfigValidationError(
     field,
     `expected external|managed, got ${JSON.stringify(raw)}`,
+  );
+}
+
+export function parseBackendVariant(
+  raw: unknown,
+  field: string,
+): BackendVariantPreference {
+  if (isBackendVariantPreference(raw)) return raw;
+  throw new ConfigValidationError(
+    field,
+    `expected ${BACKEND_VARIANT_PREFERENCES.join("|")}, got ${JSON.stringify(raw)}`,
   );
 }
 
@@ -3108,6 +3149,11 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
     device: parseNonEmptyString(
       rawManaged.device ?? USER_CONFIG_DEFAULTS.localModels.managed.device,
       "localModels.managed.device",
+    ),
+    backendVariant: parseBackendVariant(
+      rawManaged.backendVariant ??
+        USER_CONFIG_DEFAULTS.localModels.managed.backendVariant,
+      "localModels.managed.backendVariant",
     ),
     contextSize: parseNonNegativeInt(
       rawManaged.contextSize ??

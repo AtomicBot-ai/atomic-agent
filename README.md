@@ -311,6 +311,8 @@ Managed mode downloads the backend, pulls GGUF models, selects the active model,
 
 The managed chat daemon stops when the last session exits, freeing the RAM and VRAM the model was holding; set `localModels.managed.stopOnExit: false` in `config.json` to keep the model warm between sessions. Daemons started standalone with `models start` are never touched.
 
+On Windows the backend zip is picked per machine (CUDA when a capable NVIDIA driver is present, Vulkan otherwise). If the GPU build cannot serve a model on your hardware — typical for iGPU-only boxes — the start falls back to the CPU build automatically and records `localModels.managed.backendVariant: "cpu"` in `config.json`; set it to `"auto"`, `"vulkan"`, `"cuda-12.4"` or `"cuda-13.3"` to pick a build yourself (e.g. after a driver update).
+
 Cloud models are searchable from the same command — by id, vendor, or capability, across every configured cloud provider:
 
 ```bash

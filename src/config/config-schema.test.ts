@@ -734,6 +734,35 @@ describe("parseUserConfigFile", () => {
     expect(parsed.localModels.managed.device).toBe("auto");
   });
 
+  it("defaults localModels.managed.backendVariant to 'auto', v45 files included", () => {
+    expect(
+      parseUserConfigFile({ version: USER_CONFIG_VERSION }).localModels.managed
+        .backendVariant,
+    ).toBe("auto");
+    // A pre-v46 file has no such key — it transparently inherits the
+    // detection behaviour it already had.
+    expect(
+      parseUserConfigFile({ version: 45 }).localModels.managed.backendVariant,
+    ).toBe("auto");
+  });
+
+  it("preserves an explicit localModels.managed.backendVariant", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      localModels: { managed: { backendVariant: "cpu" } },
+    });
+    expect(parsed.localModels.managed.backendVariant).toBe("cpu");
+  });
+
+  it("rejects an unknown localModels.managed.backendVariant", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        localModels: { managed: { backendVariant: "opencl" } },
+      }),
+    ).toThrow(/localModels.managed.backendVariant/);
+  });
+
   it("defaults localModels.managed.stopOnExit to true", () => {
     const parsed = parseUserConfigFile({ version: USER_CONFIG_VERSION });
     expect(parsed.localModels.managed.stopOnExit).toBe(true);

@@ -14,6 +14,7 @@ import {
   getUserConfigPath,
 } from "./config-file.js";
 import { setCustomLocalModels } from "../local-llm/models-catalog.js";
+import { setConfiguredBackendVariant } from "../local-llm/windows-backend-variant.js";
 import { loadDotenvFromStateDir } from "./load-dotenv.js";
 import { resolveLlmProviderApiKey } from "./resolve-llm-api-key.js";
 import type { UserLlmFileConfig } from "./llm-config.js";
@@ -118,6 +119,10 @@ export function loadConfig(): AtomicAgentConfig {
   // `getLocalModelDef` and `isKnownLocalModelId` resolve them everywhere
   // a curated id already works.
   setCustomLocalModels(user.localModels.customModels);
+  // Same push-in pattern: the backend-zip variant preference has to be
+  // visible to `resolveDownloadAsset`, which runs deep inside the
+  // config-free local-llm layer.
+  setConfiguredBackendVariant(user.localModels.managed.backendVariant);
   const grammarsDir = resolveAssetDir("ATOMIC_AGENT_GRAMMARS_DIR", "grammars");
 
   const browserChannel: BrowserChannel = readBrowserChannel(
