@@ -28,9 +28,12 @@ import {
 } from "../config/index.js";
 import type { TuiMouseEvent } from "./mouse/mouse-event.js";
 import type { MouseSource } from "./mouse/mouse-source.js";
+import type { TuiAction } from "./tui-action.js";
+import type { TuiEventBus } from "./tui-app.js";
 
 const inkRender = vi.hoisted(() => vi.fn());
 const trackingCalls = vi.hoisted(() => ({ enabled: 0, disabled: 0 }));
+const orchestratorCalls = vi.hoisted(() => ({ quits: 0 }));
 
 // `sea` is one of the few builtins Node only publishes under the
 // `node:` prefix, and Vite's builtin check strips that prefix — so the
@@ -72,7 +75,9 @@ vi.mock("./chat-orchestrator.js", () => ({
     telegram = { forwardStatus: () => {} };
     localModels = { autoStartIfReady: async () => {} };
     start(): void {}
-    quit(): void {}
+    quit(): void {
+      orchestratorCalls.quits += 1;
+    }
     async checkForUpdate(): Promise<void> {}
     async shutdown(): Promise<void> {}
   },
@@ -101,6 +106,8 @@ interface Booted {
   readonly mouse: MouseSource | undefined;
   readonly setMouseEnabled: (next: boolean | null) => void;
   readonly seen: TuiMouseEvent[];
+  /** Every bus action emitted after mount — system messages included. */
+  readonly actions: TuiAction[];
   readonly stop: () => Promise<number>;
 }
 
@@ -128,11 +135,14 @@ async function bootTui(args: string[] = []): Promise<Booted> {
   if (props === null) throw new Error("TuiApp never rendered");
   const captured = props as {
     mouse?: MouseSource;
+    bus: TuiEventBus;
     callbacks: { onMouseSupportRequested?: (next: boolean | null) => void };
   };
 
   const seen: TuiMouseEvent[] = [];
   captured.mouse?.subscribe((event) => seen.push(event));
+  const actions: TuiAction[] = [];
+  captured.bus.subscribe((action) => actions.push(action));
   const setMouseEnabled = captured.callbacks.onMouseSupportRequested;
   if (!setMouseEnabled) throw new Error("onMouseSupportRequested not wired");
 
@@ -140,6 +150,7 @@ async function bootTui(args: string[] = []): Promise<Booted> {
     mouse: captured.mouse,
     setMouseEnabled,
     seen,
+    actions,
     stop: async () => {
       releaseExit();
       return finished;
@@ -249,6 +260,64 @@ describe("tuiCommand mouse wiring", () => {
     app.setMouseEnabled(true);
     stdin.emit("data", sgrPress(7, 1));
     expect(app.seen).toHaveLength(1);
+    await app.stop();
+  });
+
+  it("auto-disables mouse support when reports leak through as text", async () => {
+    writeMouseConfig(true);
+    const app = await bootTui();
+    expect(trackingCalls.enabled).toBe(1);
+
+    // Two ESC-less report bodies in one read: the shape of a terminal
+    // (or ssh hop) answering the tracking request with an encoding the
+    // decoder cannot consume.
+    stdin.emit("data", Buffer.from("[<0;3;4M[<0;3;5M"));
+
+    expect(trackingCalls.disabled).toBe(1);
+    const notice = app.actions.find(
+      (action) => action.type === "system_message",
+    );
+    expect(notice).toBeDefined();
+    if (notice?.type === "system_message") {
+      expect(notice.variant).toBe("warn");
+      expect(notice.text).toContain("/mouse");
+      expect(notice.text).toContain("--no-mouse");
+    }
+    // Session-only: the persisted preference is untouched.
+    expect(getConfig().tui.mouse).toBe(true);
+
+    // Reporting is off, so a straggler event is dropped like after
+    // `/mouse off`.
+    stdin.emit("data", sgrPress(2, 2));
+    expect(app.seen).toHaveLength(0);
+    await app.stop();
+  });
+
+  it("a second signal restores the terminal and exits instead of hanging", async () => {
+    writeMouseConfig(true);
+    const before = process.listeners("SIGINT");
+    const app = await bootTui();
+    const added = process
+      .listeners("SIGINT")
+      .filter((listener) => !before.includes(listener));
+    expect(added).toHaveLength(1);
+    const onSignal = added[0] as () => void;
+
+    const exitSpy = vi
+      .spyOn(process, "exit")
+      .mockImplementation(() => undefined as never);
+    try {
+      orchestratorCalls.quits = 0;
+      onSignal();
+      expect(orchestratorCalls.quits).toBe(1);
+      expect(exitSpy).not.toHaveBeenCalled();
+
+      onSignal();
+      expect(orchestratorCalls.quits).toBe(1);
+      expect(exitSpy).toHaveBeenCalledWith(130);
+    } finally {
+      exitSpy.mockRestore();
+    }
     await app.stop();
   });
 });
