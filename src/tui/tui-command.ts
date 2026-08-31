@@ -18,6 +18,7 @@ import { isKnownLocalModelId } from "../local-llm/index.js";
 import { registerSession } from "../local-llm/session-registry.js";
 import { enterAltScreen } from "./alt-screen.js";
 import { enableSynchronizedOutput } from "./synchronized-output.js";
+import { legacyConhostStartupHint } from "./legacy-conhost.js";
 import { ChatOrchestrator } from "./chat-orchestrator.js";
 import { parseTuiArgs,
   nonInteractiveStdinError,
@@ -663,6 +664,16 @@ export async function tuiCommand(args: string[]): Promise<number> {
       variant: "warn",
       text: formatDotenvReadWarning(config.dotenv.path, config.dotenv.error),
     });
+  }
+
+  // The frozen Win10 conhost scrolls under full-height frames — the
+  // layout already reserves its bottom row (see `legacy-conhost.ts`);
+  // this is where the operator learns why, and that Windows Terminal
+  // does not need the workaround. Once per session, in the transcript,
+  // because anything printed before the alt screen is never seen.
+  const conhostHint = legacyConhostStartupHint();
+  if (conhostHint) {
+    bus.emit({ type: "system_message", text: conhostHint });
   }
 
   // If the user is in managed mode and the backend + model are ready
