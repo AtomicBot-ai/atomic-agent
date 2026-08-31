@@ -104,4 +104,56 @@ describe("decodeMouseEvents", () => {
     expect(events).toEqual([]);
     expect(rest).toBe(partial);
   });
+
+  it("consumes 1005 UTF-8 coordinates past the X10 byte ceiling", () => {
+    // 1005 shares the `ESC [ M` prefix; stdin is UTF-8-decoded before
+    // the parser sees it, so column 300 arrives as one character with
+    // code point 300 + 32.
+    const utf8 = `${ESC}[M${String.fromCharCode(32, 300 + 32, 40 + 32)}`;
+    const { events, text } = decodeMouseEvents(utf8);
+    expect(text).toBe("");
+    expect(events[0]).toMatchObject({ kind: "press", x: 299, y: 39 });
+  });
+
+  it("decodes a urxvt/1015 press instead of leaking it as text", () => {
+    const { events, text, rest } = decodeMouseEvents(`${ESC}[32;62;21M`);
+    expect(text).toBe("");
+    expect(rest).toBe("");
+    expect(events[0]).toMatchObject({
+      kind: "press",
+      button: "left",
+      x: 61,
+      y: 20,
+    });
+  });
+
+  it("decodes urxvt releases and wheel reports", () => {
+    const { events } = decodeMouseEvents(`${ESC}[35;5;4M${ESC}[96;5;4M`);
+    expect(events.map((event) => event.kind)).toEqual(["release", "wheel"]);
+    expect(events[1]?.wheel).toBe("up");
+  });
+
+  it("keeps the keyboard bytes around a urxvt report intact", () => {
+    const { events, text } = decodeMouseEvents(`a${ESC}[64;9;9Mb`);
+    expect(text).toBe("ab");
+    expect(events[0]).toMatchObject({ kind: "motion", button: "left" });
+  });
+
+  it("buffers a truncated urxvt report", () => {
+    const partial = `${ESC}[32;6`;
+    const first = decodeMouseEvents(partial);
+    expect(first.events).toEqual([]);
+    expect(first.text).toBe("");
+    expect(first.rest).toBe(partial);
+    const second = decodeMouseEvents(first.rest + "2;21M");
+    expect(second.events[0]).toMatchObject({ x: 61, y: 20 });
+  });
+
+  it("leaves a three-param CSI below the 1015 button floor to Ink", () => {
+    // No terminal sends this as input, but if one did it is not a
+    // mouse report — 1015 button codes start at 32.
+    const { events, text } = decodeMouseEvents(`${ESC}[1;2;3M`);
+    expect(events).toEqual([]);
+    expect(text).toBe(`${ESC}[1;2;3M`);
+  });
 });

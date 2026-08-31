@@ -41,6 +41,8 @@ import {
 } from "./mouse/mouse-tracking.js";
 import { createSelectionPassthrough } from "./mouse/selection-passthrough.js";
 import { isLocalBackendConfigured } from "./local-backend-readiness.js";
+import { makeEscalatingSignalHandler } from "./signal-escalation.js";
+import { restoreTerminalNow } from "./terminal-restore.js";
 import { needsOnboarding } from "./onboarding/needs-onboarding.js";
 import { createOnboardingState } from "./onboarding/onboarding-state.js";
 import {
@@ -240,14 +242,23 @@ export async function tuiCommand(args: string[]): Promise<number> {
   });
   orchestratorForChannelStatus = orchestrator;
 
-  const onSignal = (): void => orchestrator.quit();
-  process.once("SIGINT", onSignal);
-  process.once("SIGTERM", onSignal);
+  // First signal quits gracefully; a repeat (a wedged shutdown being
+  // Ctrl-C'd again, a `kill` after a hang) restores the terminal —
+  // mouse reporting off, alt screen left — and exits hard, instead of
+  // Node's default kill that skips `exit` hooks and leaves the shell
+  // printing `[<0;64;21M` on every click. See `signal-escalation.ts`.
+  const onSignal = makeEscalatingSignalHandler({
+    quit: () => orchestrator.quit(),
+    restoreTerminal: restoreTerminalNow,
+    exit: (code) => process.exit(code),
+  });
+  process.on("SIGINT", onSignal);
+  process.on("SIGTERM", onSignal);
   // SIGHUP fires when the terminal window is closed. Without a handler
   // the default action kills the process before `orchestrator.shutdown()`
   // runs, orphaning the managed llama-server with the model still in
   // RAM/VRAM — the exact complaint in #52.
-  process.once("SIGHUP", onSignal);
+  process.on("SIGHUP", onSignal);
 
   // Mark this process as a live TUI session so `stopOnExit` teardown can
   // tell "last session exits, stop the daemon" from "another window is
@@ -306,17 +317,38 @@ export async function tuiCommand(args: string[]): Promise<number> {
   // this keeps `/mouse off` honest for the cases where it still does:
   // a multiplexer that swallowed the disable, or a bracketed paste whose
   // payload happens to contain an SGR report.
-  const mouseStdin = createMouseStdin(process.stdin, (event) => {
-    if (!mouseTracking) return;
-    // The passthrough sees every event before the app does: a consumed
-    // shift-press must never reach the hit test, and while the window
-    // is open a report that was already in flight when reporting
-    // stopped is swallowed too — the operator is selecting, not
-    // clicking.
-    if (selectionPassthrough.observe(event)) return;
-    if (mouseTracking.isSuspended()) return;
-    mouseSource.emit(event);
-  });
+  const mouseStdin = createMouseStdin(
+    process.stdin,
+    (event) => {
+      if (!mouseTracking) return;
+      // The passthrough sees every event before the app does: a consumed
+      // shift-press must never reach the hit test, and while the window
+      // is open a report that was already in flight when reporting
+      // stopped is swallowed too — the operator is selecting, not
+      // clicking.
+      if (selectionPassthrough.observe(event)) return;
+      if (mouseTracking.isSuspended()) return;
+      mouseSource.emit(event);
+    },
+    {
+      mouseActive: () => mouseTracking !== null,
+      // The leak breaker: the terminal answered our tracking request
+      // with reports the decoder could not consume (seen over ssh with
+      // encoding-confused hops), and coordinates were about to be typed
+      // into the composer. Stop asking for reports — for this session
+      // only, so the persisted preference still serves terminals where
+      // the mouse works.
+      onMouseTextLeak: () => {
+        mouseTracking?.disable();
+        mouseTracking = null;
+        bus.emit({
+          type: "system_message",
+          variant: "warn",
+          text: "this terminal is sending garbled mouse reports — mouse support disabled for this session (/mouse on to retry, or launch with --no-mouse)",
+        });
+      },
+    },
+  );
   const setMouseEnabled = (next: boolean | null): void => {
     if (next === null) {
       bus.emit({
