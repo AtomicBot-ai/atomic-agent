@@ -438,6 +438,38 @@ describe("buildPrompt", () => {
     expect(prompt.tail).not.toContain("<|channel>thought");
   });
 
+  it("suppressReasoningPrefill drops the qwen think prefill (chat transports, issue #283)", () => {
+    const prompt = buildPrompt({
+      session: mkSession(),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      profile: QWEN_THINK_PROFILE,
+      suppressReasoningPrefill: true,
+    });
+    // The prompt must NOT ship a literal `<think>` to a chat endpoint —
+    // Ollama Cloud corrupts the string server-side (ollama/ollama#17248).
+    expect(prompt.tail.endsWith("<think>\n")).toBe(false);
+    expect(prompt.tail).not.toContain("<think>");
+    // The emit anchor stays the last directive before generation.
+    expect(prompt.tail.trimEnd().endsWith("Respond now.")).toBe(true);
+  });
+
+  it("suppressReasoningPrefill drops the gemma turn framing and system token (issue #283)", () => {
+    const prompt = buildPrompt({
+      session: mkSession(),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      profile: GEMMA4_THINK_PROFILE,
+      suppressReasoningPrefill: true,
+    });
+    expect(prompt.tail.endsWith("<turn|>\n<|turn>model\n")).toBe(false);
+    expect(prompt.tail).not.toContain("<|turn>");
+    expect(prompt.stablePrefix).not.toContain("<|turn>system");
+    expect(prompt.stablePrefix).not.toContain("<|think|>");
+  });
+
   it("does not append a think prelude for plain profiles", () => {
     const prompt = buildPrompt({
       session: mkSession(),
