@@ -1,6 +1,10 @@
 import { render } from "ink-testing-library";
 import { describe, expect, it } from "vitest";
 import { Sidebar } from "./sidebar.js";
+import {
+  countRunningTasks,
+  selectSidebarTasks,
+} from "../sidebar-tasks-selector.js";
 import type { TaskSummaryRow } from "../tasks/tasks-panel-state.js";
 import type { SessionPickerEntry } from "../tui-state.js";
 
@@ -105,6 +109,60 @@ describe("Sidebar", () => {
     // the wordmark beside the mark's centre.
     expect(foldRow).toBe(1);
     expect(lines[foldRow + 1]).toContain("atomic-agent");
+  });
+
+  it("puts a + new chip on the Tasks header with the counter mid-gap", () => {
+    const { lastFrame } = render(
+      <Sidebar
+        width={32}
+        sessions={SESSIONS}
+        sessionsCursor={0}
+        currentSessionId="abcdef1234"
+        tasks={TASKS}
+        tasksCursor={0}
+        activeSection="sessions"
+        focused={false}
+      />,
+    );
+    const line = strip(lastFrame() ?? "")
+      .split("\n")
+      .find((candidate) => candidate.includes("TASKS"));
+    // Both headers carry the control, so minting a task is exactly as
+    // discoverable as minting a session. The trailing literal space
+    // pins the chip's own padding cell, leaving the groups with the
+    // spacers alone.
+    const match = /TASKS(\s+)1 running(\s+) \+ new/.exec(line ?? "");
+    expect(match).not.toBeNull();
+    // The counter sits in the MIDDLE of the gap: real air on both
+    // sides, split evenly give or take the cell Yoga cannot halve.
+    const [, before, after] = match!;
+    expect(before!.length).toBeGreaterThanOrEqual(2);
+    expect(after!.length).toBeGreaterThanOrEqual(2);
+    expect(Math.abs(before!.length - after!.length)).toBeLessThanOrEqual(1);
+  });
+
+  it("counts running tasks over the full snapshot, not the visible slice", () => {
+    // Seven running, five rows on the rail: the header must still say
+    // seven. The count travels as its own prop because the `tasks`
+    // prop is the projected slice — counting it is how "5 running"
+    // got printed under seven live tasks.
+    const rows = Array.from({ length: 7 }, (_, idx) =>
+      taskRow({ id: `run-${idx}`, status: "running", userMessage: `run ${idx}` }),
+    );
+    const { lastFrame } = render(
+      <Sidebar
+        width={32}
+        sessions={SESSIONS}
+        sessionsCursor={0}
+        currentSessionId={null}
+        tasks={selectSidebarTasks(rows)}
+        tasksCursor={0}
+        activeSection="sessions"
+        focused={false}
+        runningTaskCount={countRunningTasks(rows)}
+      />,
+    );
+    expect(strip(lastFrame() ?? "")).toContain("7 running");
   });
 
   it("shows the empty state when there are no sessions", () => {

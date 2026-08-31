@@ -37,6 +37,14 @@ export interface SidebarProps {
    */
   maxSessionRows?: number;
   maxTaskRows?: number;
+  /**
+   * Tasks counted as running in the header, measured over the FULL
+   * snapshot by the caller. The `tasks` prop is already the projected
+   * slice — filtered and capped by `selectSidebarTasks` — so counting
+   * it here read "5 running" while a sixth and seventh ran below the
+   * fold. Callers that do not measure fall back to the visible rows.
+   */
+  runningTaskCount?: number;
 }
 
 const DEFAULT_MAX_SESSION_ROWS = 10;
@@ -93,6 +101,7 @@ export function Sidebar(props: SidebarProps): ReactElement {
     sessionId = null,
     maxSessionRows = DEFAULT_MAX_SESSION_ROWS,
     maxTaskRows = DEFAULT_MAX_TASK_ROWS,
+    runningTaskCount,
   } = props;
   const sessionsActive = focused && activeSection === "sessions";
   const tasksActive = focused && activeSection === "tasks";
@@ -155,7 +164,8 @@ export function Sidebar(props: SidebarProps): ReactElement {
         title="Tasks"
         active={tasksActive}
         inner={inner}
-        counter={`${runningCount(tasks)} running`}
+        counter={`${runningTaskCount ?? runningCount(tasks)} running`}
+        trailing={<NewTaskButton />}
       />
       <TasksList
         tasks={tasks}
@@ -352,6 +362,30 @@ function NewSessionButton(): ReactElement {
 }
 
 /**
+ * Starts a scheduled task. It sits on the Tasks header for the same
+ * reason the session `+ new` sits on Sessions: the control lives on the
+ * list the new thing joins. Clicking it lands on the Tasks tab with the
+ * create form already open — the same place the in-panel `n` key
+ * reaches, without having to know the panel or the key exists.
+ */
+function NewTaskButton(): ReactElement {
+  const mouse = useMouseCommands();
+  const label = <Chip label="+ new" />;
+  if (!mouse) return label;
+  return (
+    <MouseTarget
+      onMouse={(hit) => {
+        if (!isPrimaryPress(hit.event)) return false;
+        mouse.callbacks.onTaskNewRequested?.();
+        return true;
+      }}
+    >
+      {label}
+    </MouseTarget>
+  );
+}
+
+/**
  * The one control on the rail. `ctrl+p` opens the same menu; this is
  * what makes it reachable without knowing that, which was the whole
  * complaint about the old top bar — nothing on screen said the menu
@@ -391,7 +425,10 @@ interface SectionHeaderProps {
   title: string;
   active: boolean;
   inner: number;
-  /** Right-aligned status, e.g. `0 running`. */
+  /**
+   * Status, e.g. `0 running`. Alone it rides the right edge; next to a
+   * `trailing` control it sits mid-gap between the title and the chip.
+   */
   counter?: string;
   /** Right-aligned control, e.g. the `+ new` chip. */
   trailing?: ReactNode;
@@ -404,9 +441,12 @@ function SectionHeader({
   counter,
   trailing,
 }: SectionHeaderProps): ReactElement {
-  // The header is a row, not a line: the counter and the `+ new` control
-  // are pushed to the right edge of the rail the way the design sets
-  // them, which a single clipped string cannot express.
+  // The header is a row, not a line: its cells are placed by spacers,
+  // which a single clipped string cannot express. With one of counter /
+  // trailing present it is pushed to the right edge the way the design
+  // sets it; with both, a second spacer seats the counter in the middle
+  // of the gap — status reads as its own cell rather than as a label
+  // glued to the chip.
   return (
     <Box width={inner} flexShrink={0}>
       <Text
@@ -422,12 +462,17 @@ function SectionHeader({
           {counter}
         </Text>
       ) : null}
+      {counter && trailing ? <Box flexGrow={1} /> : null}
       {trailing ?? null}
     </Box>
   );
 }
 
-/** Tasks the design counts in the header: the ones actually running. */
+/**
+ * Fallback for callers that pass no `runningTaskCount`: count what is
+ * visible. The rows here are the projected slice, so this undercounts
+ * once running tasks fall off the rail — the measured prop is the fix.
+ */
 function runningCount(tasks: readonly TaskSummaryRow[]): number {
   return tasks.filter((row) => row.status === "running").length;
 }

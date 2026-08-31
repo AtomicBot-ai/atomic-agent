@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { selectSidebarTasks, SIDEBAR_TASKS_LIMIT } from "./sidebar-tasks-selector.js";
+import {
+  countRunningTasks,
+  selectSidebarTasks,
+  SIDEBAR_TASKS_LIMIT,
+} from "./sidebar-tasks-selector.js";
 import type { TaskSummaryRow } from "./tasks/tasks-panel-state.js";
 
 function row(overrides: Partial<TaskSummaryRow>): TaskSummaryRow {
@@ -71,5 +75,26 @@ describe("selectSidebarTasks", () => {
     );
     const result = selectSidebarTasks(many);
     expect(result).toHaveLength(SIDEBAR_TASKS_LIMIT);
+  });
+});
+
+describe("countRunningTasks", () => {
+  it("counts every running row, including the ones the rail truncates", () => {
+    const rows = Array.from({ length: SIDEBAR_TASKS_LIMIT + 2 }, (_, i) =>
+      row({ id: `r-${i}`, status: "running", updatedAt: i }),
+    );
+    // The projection tops out at the cap; the counter must not.
+    expect(selectSidebarTasks(rows)).toHaveLength(SIDEBAR_TASKS_LIMIT);
+    expect(countRunningTasks(rows)).toBe(SIDEBAR_TASKS_LIMIT + 2);
+  });
+
+  it("ignores rows in every other status", () => {
+    expect(
+      countRunningTasks([
+        row({ id: "a", status: "pending" }),
+        row({ id: "b", status: "completed", recurring: true }),
+        row({ id: "c", status: "failed" }),
+      ]),
+    ).toBe(0);
   });
 });

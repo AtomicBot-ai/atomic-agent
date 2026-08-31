@@ -74,7 +74,10 @@ import {
   THEMES,
 } from "./theme/theme.js";
 import { Sidebar } from "./components/sidebar.js";
-import { selectSidebarTasks } from "./sidebar-tasks-selector.js";
+import {
+  countRunningTasks,
+  selectSidebarTasks,
+} from "./sidebar-tasks-selector.js";
 import { SlashPalette } from "./components/slash-palette.js";
 import { StatusBar } from "./components/status-bar.js";
 import { TasksCancelModal } from "./components/tasks-cancel-modal.js";
@@ -257,6 +260,12 @@ export interface TuiAppCallbacks {
    * detail view, mirroring what the operator would do manually.
    */
   onSidebarTaskActivated?(taskId: string): void;
+  /**
+   * Sidebar Tasks header: `+ new` clicked. The handler is expected to
+   * surface the Tasks debug tab with its create form open, mirroring
+   * the in-panel `n` key.
+   */
+  onTaskNewRequested?(): void;
   /** Switch the chat transcript to the task's session. */
   onTaskOpenSessionRequested?(taskId: string): void;
   /** Proceed with a task cancellation — the caller owns any confirm modal. */
@@ -1721,6 +1730,7 @@ export function TuiApp({
             sessionsCursor={state.sidebarCursor}
             currentSessionId={state.session.sessionId}
             tasks={selectSidebarTasks(state.tasksPanel.rows)}
+            runningTaskCount={countRunningTasks(state.tasksPanel.rows)}
             tasksCursor={state.sidebarTasksCursor}
             activeSection={state.sidebarSection}
             focused={sidebarFocused}

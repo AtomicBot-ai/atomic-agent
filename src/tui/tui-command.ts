@@ -406,6 +406,16 @@ export async function tuiCommand(args: string[]): Promise<number> {
           bus.emit({ type: "tab_changed", tab: "tasks" });
           orchestrator.tasks.openDetail(taskId);
         },
+        onTaskNewRequested: () => {
+          // Sidebar `+ new` on the Tasks header: land on the Tasks debug
+          // tab with the create form already open — the destination the
+          // in-panel `n` key reaches, minus the walk. The form-open
+          // action is the same one `n` dispatches, emitted on the bus
+          // for the reason the sibling above spells out.
+          bus.emit({ type: "ui_mode_set", mode: "debug" });
+          bus.emit({ type: "tab_changed", tab: "tasks" });
+          bus.emit({ type: "tasks_create_form_opened" });
+        },
         onTaskOpenSessionRequested: (taskId) =>
           orchestrator.tasks.openSession(taskId),
         onTaskCancelConfirmed: (taskId) => orchestrator.tasks.cancelTask(taskId),
