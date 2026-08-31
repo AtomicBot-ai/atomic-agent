@@ -159,6 +159,10 @@ export interface TuiGlyphs {
   readonly menuCursor: string;
   /** Hamburger, for the rail's menu button. */
   readonly menuGlyph: string;
+  /** Folds the rail away; sits in its top-right corner. */
+  readonly railCollapse: string;
+  /** Reopens the folded rail; sits at the head of the status bar. */
+  readonly railRestore: string;
   readonly dotSeparator: string;
   readonly pipeSeparator: string;
 }
@@ -203,6 +207,8 @@ const GLYPHS: TuiGlyphs = {
   chevronRight: "▸",
   menuCursor: "▶",
   menuGlyph: "☰",
+  railCollapse: "«",
+  railRestore: "»",
   dotSeparator: "·",
   pipeSeparator: "|",
 };

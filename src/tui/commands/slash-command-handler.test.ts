@@ -103,6 +103,15 @@ describe("dispatchSlashCommand", () => {
     expect(dispatchSlashCommand("/new").triggerNewWindow).toBe(false);
   });
 
+  it("dispatches the rail fold toggle for /sidebar", () => {
+    // Pure state, so the toggle rides `actions` like /expand does —
+    // no trigger flag, no callback.
+    const result = dispatchSlashCommand("/sidebar");
+    expect(result.actions).toEqual([{ type: "sidebar_collapse_toggled" }]);
+    expect(result.forwardAsMessage).toBe(false);
+    expect(result.clearBuffer).toBe(true);
+  });
+
   it("opens the Memory tab for bare /memory", () => {
     const result = dispatchSlashCommand("/memory");
     expect(result.triggerMemoryDump).toBe(false);

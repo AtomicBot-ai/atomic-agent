@@ -96,7 +96,7 @@ describe("TuiApp (smoke)", () => {
     // breadcrumb and drops its own copy of the brand.
     expect(text).toContain("atomic-agent");
     // The status bar shows where you are, not a menu of where you could go —
-    // the three-section pill row moved into the ctrl+p menu.
+    // the three-section pill row moved into the operator menu.
     expect(text).toContain("R U N");
     expect(text).not.toContain("OBSERVE");
     expect(text).not.toContain("MANAGE");
@@ -415,14 +415,19 @@ describe("TuiApp (smoke)", () => {
     unmount();
   });
 
-  it("ctrl+p opens the operator menu over the prompt", async () => {
+  it("esc opens the operator menu over the prompt; the retired ctrl+p does not", async () => {
     const bus = makeTuiEventBus();
     const { lastFrame, stdin, unmount } = render(
       <TuiApp session={SESSION} bus={bus} callbacks={noopCallbacks()} />,
     );
     await new Promise((r) => setTimeout(r, 10));
+    // The retired chord first: its byte (0x10) must fall through as an
+    // ordinary unclaimed control chord instead of opening anything.
     stdin.write(String.fromCharCode(16));
-    await new Promise((r) => setTimeout(r, 20));
+    await new Promise((r) => setTimeout(r, 60));
+    expect(strip(lastFrame() ?? "")).not.toContain("esc close");
+    stdin.write(String.fromCharCode(27));
+    await new Promise((r) => setTimeout(r, 60));
     const text = strip(lastFrame() ?? "");
     expect(text).toContain("Menu");
     expect(text).toContain("GO");
@@ -437,8 +442,8 @@ describe("TuiApp (smoke)", () => {
       <TuiApp session={SESSION} bus={bus} callbacks={noopCallbacks()} />,
     );
     await new Promise((r) => setTimeout(r, 10));
-    stdin.write(String.fromCharCode(16));
-    await new Promise((r) => setTimeout(r, 20));
+    stdin.write(String.fromCharCode(27));
+    await new Promise((r) => setTimeout(r, 60));
     stdin.write("privacy");
     await new Promise((r) => setTimeout(r, 20));
     const text = strip(lastFrame() ?? "");
@@ -489,9 +494,10 @@ describe("TuiApp (smoke)", () => {
     );
     expect(idle).not.toContain("waiting for a chord");
     // Idle chips are back, and no chord fired on the way out. Matched on the
-    // chip key, not its label: a narrow runner wraps the strip and can split
-    // "menu" off its own chip.
-    expect(idle).toContain("[ctrl+p]");
+    // chip key, not its label — `[enter]` is on the idle strip and never on
+    // the armed one, and a narrow runner wraps the strip and can split a
+    // label off its own chip.
+    expect(idle).toContain("[enter]");
     expect(idle).not.toContain("MANAGE ▸");
     unmount();
   });
@@ -502,8 +508,8 @@ describe("TuiApp (smoke)", () => {
       <TuiApp session={SESSION} bus={bus} callbacks={noopCallbacks()} />,
     );
     await new Promise((r) => setTimeout(r, 10));
-    stdin.write(String.fromCharCode(16));
-    await new Promise((r) => setTimeout(r, 20));
+    stdin.write(String.fromCharCode(27));
+    await new Promise((r) => setTimeout(r, 60));
     expect(strip(lastFrame() ?? "")).toContain("esc close");
     stdin.write(String.fromCharCode(27));
     await new Promise((r) => setTimeout(r, 20));
@@ -520,8 +526,8 @@ describe("TuiApp (smoke)", () => {
     );
     await new Promise((r) => setTimeout(r, 10));
     const before = strip(lastFrame() ?? "").split("\n");
-    stdin.write(String.fromCharCode(16));
-    await new Promise((r) => setTimeout(r, 25));
+    stdin.write(String.fromCharCode(27));
+    await new Promise((r) => setTimeout(r, 60));
     const after = strip(lastFrame() ?? "").split("\n");
 
     // A popup composites on top; it must not add rows or push the prompt and

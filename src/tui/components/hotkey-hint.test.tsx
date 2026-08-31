@@ -116,27 +116,27 @@ describe("HotkeyHint scroll chip", () => {
 // Renders are the expensive part of this file (~2s each under Ink), so
 // each case below is one render and asserts everything it can from it.
 describe("HotkeyHint draft chips", () => {
-  it("adds an esc / clear-draft chip once a draft exists", () => {
-    // The ctrl+p chip is not inert with a draft (the menu opens either
-    // way), so nothing is swapped out: the affordance rides as an extra
-    // chip on a wide surface and the shed ranks pay for it when the row
-    // narrows. Nine with the ctrl+r route and ctrl+n window chips.
+  it("flips the esc chip to clear-draft once a draft exists", () => {
+    // With a draft, Esc clears it — so the strip must not promise the
+    // menu on that key, and no other chip does either: with ctrl+p
+    // retired, the menu is a second Esc (or the breadcrumb) away.
+    // Eight with the ctrl+r route and ctrl+n window chips.
     const out = renderHint(chatState({ inputValue: "half a thought" }));
     expect(out).toContain("[esc]");
     expect(out).toContain("clear draft");
-    expect(out).toContain("[ctrl+p]");
-    expect(chipCount(out)).toBe(9);
+    expect(out).not.toContain("[ctrl+p]");
+    expect(chipCount(out)).toBe(8);
   });
 
   it("keeps the empty idle footer free of the clear-draft chip", () => {
     const out = renderHint(chatState());
     expect(out).not.toContain("clear draft");
-    expect(out).toContain("[ctrl+p]");
+    expect(out).not.toContain("[ctrl+p]");
     expect(out).toContain("menu");
     // On an empty buffer Esc opens the menu, so the strip says so — the
     // same slot that carries `clear draft` once there is a draft.
     expect(out).toContain("[esc]");
-    expect(chipCount(out)).toBe(9);
+    expect(chipCount(out)).toBe(8);
     // The keyboard route to the composer's three controls is written
     // down here, not only inside the popup it opens.
     expect(out).toContain("[ctrl+r]");

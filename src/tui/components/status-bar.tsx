@@ -21,12 +21,20 @@ interface StatusBarProps {
    * copies of them read as a rendering bug rather than as chrome.
    */
   brand?: boolean;
+  /**
+   * Draw the `»` that reopens a rail the operator folded away. True only
+   * while the fold is the operator's own (`sidebarCollapsed`) AND the
+   * terminal could seat the rail — when the size gate is what hid it,
+   * there is nothing a click could restore, so no control is offered.
+   * `TuiApp` computes the condition; the bar stays presentational.
+   */
+  railRestore?: boolean;
 }
 
 /**
  * One-row operator status bar. Shows **where you are**, not where you could
  * go: the three-section pill row was a menu, and the menu now lives behind
- * `ctrl+p` where it can hold every destination instead of only the top three.
+ * Esc, where it can hold every destination instead of only the top three.
  * What is left is a breadcrumb — `Manage › Tasks` — which is the one thing
  * the popup cannot tell you, because you have to open it to read it.
  *
@@ -46,12 +54,14 @@ interface StatusBarProps {
 export function StatusBar({
   state,
   brand = true,
+  railRestore = false,
 }: StatusBarProps): ReactElement {
   const section = getCurrentSection(state);
   const title = currentSessionTitle(state);
   const { columns } = useTerminalSize();
   return (
     <Box>
+      {railRestore ? <RailRestoreButton /> : null}
       {brand ? (
         <>
           <Text color={theme.colors.accentSoft} bold>
@@ -134,9 +144,9 @@ const SECTION_LABELS: Record<TuiSection, string> = {
  * #170 replaced that strip with this breadcrumb — the menu is now the one
  * navigation surface, and re-adding pills would give the same job two
  * competing controls. So the breadcrumb itself takes the click and opens
- * the menu, which is exactly what `ctrl+p` does. Clicking where you
- * already are is still meaningful here: the menu is a destination list,
- * not a reset.
+ * the menu, which is exactly what Esc does on an idle prompt. Clicking
+ * where you already are is still meaningful here: the menu is a
+ * destination list, not a reset.
  */
 function Breadcrumb({
   state,
@@ -166,12 +176,40 @@ function Breadcrumb({
     <MouseTarget
       onMouse={(hit) => {
         if (!isPrimaryPress(hit.event)) return false;
-        // Open at the top of the list, the same state `ctrl+p` produces,
-        // so the keyboard and the mouse land on one menu rather than two
-        // subtly different ones.
+        // Open at the top of the list, the same state the Esc route
+        // produces, so the keyboard and the mouse land on one menu
+        // rather than two subtly different ones.
         mouse.dispatch({ type: "menu_path_set", path: null });
         mouse.dispatch({ type: "menu_cursor_set", cursor: 0 });
         mouse.dispatch({ type: "menu_opened" });
+        return true;
+      }}
+    >
+      {label}
+    </MouseTarget>
+  );
+}
+
+/**
+ * The way back after the rail's `«` folded it away. It sits at the head
+ * of the bar — the cell nearest the corner the rail vacated — so the
+ * fold and the unfold read as two positions of the same hinge. One
+ * click brings the rail back; without mouse support the glyph stays as
+ * a signpost to `/sidebar`, inert like every other chip.
+ */
+function RailRestoreButton(): ReactElement {
+  const mouse = useMouseCommands();
+  const label = (
+    <Text>
+      <Chip label={theme.glyphs.railRestore} />{" "}
+    </Text>
+  );
+  if (!mouse) return label;
+  return (
+    <MouseTarget
+      onMouse={(hit) => {
+        if (!isPrimaryPress(hit.event)) return false;
+        mouse.dispatch({ type: "sidebar_collapse_toggled" });
         return true;
       }}
     >

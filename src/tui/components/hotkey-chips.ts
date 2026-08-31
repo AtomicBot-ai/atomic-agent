@@ -113,7 +113,6 @@ export function resolveChips(
   if (menuLeaderArmed) {
     return [
       { key: MENU_LEADER_LABEL, label: "waiting for a chord" },
-      { key: "ctrl+p", label: "full menu" },
       { key: "esc", label: "cancel" },
     ];
   }
@@ -194,7 +193,6 @@ export function resolveChips(
         label: "back to Run",
         onClick: (mouse) => mouse.dispatch({ type: "ui_mode_set", mode: "chat" }),
       },
-      { key: "ctrl+p", label: "menu", shed: 2 },
       {
         key: "ctrl+c",
         label: ctrlCArmed ? "press again to quit" : "quit",
@@ -213,18 +211,18 @@ export function resolveChips(
       },
     ];
   }
-  // The strip fits one row by shedding, not by a fixed cap. `ctrl+p`
-  // holds the slot `/` used to: the menu contains every slash command
-  // as well as every destination, and `/` keeps working for anyone who
-  // already reaches for it. Shedding order: scroll (the wheel already
-  // does it), then the sidebar (narrow terminals collapse it anyway —
-  // see `SIDEBAR_MIN_COLUMNS`), then the route chip (the route line
-  // itself is clickable, so the keyboard hint is the first luxury),
-  // then the new-window chip (a convenience the menu also carries as
-  // `/window`), then the newline key, then the menu chip. A draft adds
-  // an `esc / clear draft` chip so the affordance is on screen exactly
-  // when it applies — `/` no longer opens the palette with a non-empty
-  // buffer, so nothing usable is displaced.
+  // The strip fits one row by shedding, not by a fixed cap. The menu
+  // chip holds the slot `/` used to: the menu contains every slash
+  // command as well as every destination, and `/` keeps working for
+  // anyone who already reaches for it. Shedding order: scroll (the
+  // wheel already does it), then the sidebar (narrow terminals collapse
+  // it anyway — see `SIDEBAR_MIN_COLUMNS`), then the route chip (the
+  // route line itself is clickable, so the keyboard hint is the first
+  // luxury), then the new-window chip (a convenience the menu also
+  // carries as `/window`), then the newline key, then the menu chip. A
+  // draft flips the Esc chip to `clear draft` so the affordance on
+  // screen is the one the next press performs — the menu is then a
+  // second Esc (or the breadcrumb) away.
   return [
     { key: "enter", label: "send" },
     // Shift+Enter only exists as a keystroke where the terminal speaks
@@ -270,8 +268,7 @@ export function resolveChips(
     // press will actually do.
     ...(hasDraft
       ? [{ key: "esc", label: "clear draft" }]
-      : [{ key: "esc", label: "menu", shed: 7 }]),
-    { key: "ctrl+p", label: "menu", shed: 6 },
+      : [{ key: "esc", label: "menu", shed: 6 }]),
     // A selection can only exist over a non-empty buffer, so the
     // clear-draft Esc chip is always alongside these two.
     ...(composerSelectionActive(state)
