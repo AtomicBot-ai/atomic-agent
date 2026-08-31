@@ -1,3 +1,7 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -248,5 +252,61 @@ describe("resolveManagedDevice", () => {
     expect(
       await resolveManagedDevice("/nonexistent/llama-server", undefined),
     ).toBeUndefined();
+  });
+
+  // Multi-GPU (`localModels.managed.tensorSplit` configured): `auto`
+  // must stop pinning the one best device — a pinned `--device` would
+  // defeat `--tensor-split` — while `cpu` and explicit ids keep their
+  // exact single-device semantics.
+  describe("multiGpu (tensor split configured)", () => {
+    it("still returns 'cpu' for the cpu sentinel", async () => {
+      expect(
+        await resolveManagedDevice("/nonexistent/llama-server", "cpu", {
+          multiGpu: true,
+        }),
+      ).toBe("cpu");
+    });
+
+    it("still passes an explicit device list through", async () => {
+      expect(
+        await resolveManagedDevice(
+          "/nonexistent/llama-server",
+          "Vulkan0,Vulkan1",
+          { multiGpu: true },
+        ),
+      ).toBe("Vulkan0,Vulkan1");
+    });
+
+    it.skipIf(process.platform === "win32")(
+      "does NOT pin a device for 'auto' even when enumeration would find GPUs",
+      async () => {
+        // A real fake binary that reports two GPUs: without multiGpu the
+        // auto pick pins the larger card; with multiGpu it must resolve
+        // to undefined so llama.cpp keeps both devices visible.
+        const dir = mkdtempSync(join(tmpdir(), "gpu-devices-test-"));
+        const bin = join(dir, "llama-server");
+        writeFileSync(
+          bin,
+          [
+            "#!/bin/sh",
+            'echo "Available devices:"',
+            'echo "  Vulkan0: NVIDIA GeForce RTX 4070 (8188 MiB, 8188 MiB free)"',
+            'echo "  Vulkan1: NVIDIA GeForce RTX 3090 (24576 MiB, 24000 MiB free)"',
+          ].join("\n"),
+          { mode: 0o755 },
+        );
+        try {
+          expect(await resolveManagedDevice(bin, "auto")).toBe("Vulkan1");
+          expect(
+            await resolveManagedDevice(bin, "auto", { multiGpu: true }),
+          ).toBeUndefined();
+          expect(
+            await resolveManagedDevice(bin, undefined, { multiGpu: true }),
+          ).toBeUndefined();
+        } finally {
+          rmSync(dir, { recursive: true, force: true });
+        }
+      },
+    );
   });
 });

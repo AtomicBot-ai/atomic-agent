@@ -1,4 +1,23 @@
 import type { HealthResult } from "./llama-server-health.js";
+// A leaf predicate with no imports of its own — the one home of the
+// loopback host spellings, shared here so the steer text and the
+// provider wizard agree on what "local" means.
+import { isLocalProviderUrl } from "../tui/providers/is-local-provider-url.js";
+
+/**
+ * True when `url` points at Ollama's default port. Ollama is the server
+ * operators point the External llama.cpp URL at most often (verified:
+ * `ollama serve` answers 404 on `/health` and OpenAI-shape on
+ * `/v1/models`, so the probe reports `openai-compat`), and the port is
+ * the one signal the probe already has without another round trip.
+ */
+export function looksLikeOllamaUrl(url: string): boolean {
+  try {
+    return new URL(url).port === "11434";
+  } catch {
+    return false;
+  }
+}
 
 /**
  * One operator-actionable line per probe verdict, shared by every
@@ -14,7 +33,25 @@ export function describeLlamaHealthFailure(
   switch (health.kind) {
     case "openai-compat":
       // A real server, wrong route: KoboldCpp / LM Studio / Ollama /
-      // vLLM speak /v1/* but not llama.cpp's native endpoints.
+      // vLLM speak /v1/* but not llama.cpp's native endpoints. Port
+      // 11434 is named as Ollama outright — that is the server this
+      // verdict almost always is, and "openai-compatible" alone did not
+      // tell an Ollama user the message was about them.
+      if (looksLikeOllamaUrl(url)) {
+        // The "Ollama (local)" preset row shows no base-URL screen — it
+        // saves its own localhost:11434 — so pointing at it is only
+        // followable when that is the server probed here. A remote
+        // Ollama goes through the manual compat row instead, which asks
+        // for the URL and so keeps the host.
+        return isLocalProviderUrl(url)
+          ? `${url} answers like Ollama (its default port), not llama.cpp. ` +
+              `Add it as a cloud provider instead: LLM tab › Cloud › n › ` +
+              `Ollama (local), base URL ${url}.`
+          : `${url} answers like Ollama (its default port), not llama.cpp. ` +
+              `Add it as a cloud provider instead: LLM tab › Cloud › n › ` +
+              `openai-compatible, base URL ${url} (any API key value ` +
+              `passes — a stock Ollama has no auth).`;
+      }
       return (
         `${url} answers like an OpenAI-compatible server, not llama.cpp. ` +
         `Add it as a cloud provider instead: LLM tab › Cloud › n › ` +

@@ -1,6 +1,11 @@
 import { useStdout } from "ink";
 import { useEffect, useState } from "react";
 
+import {
+  clampRowsForLegacyConhost,
+  isLegacyConhost,
+} from "../legacy-conhost.js";
+
 export interface TerminalSize {
   columns: number;
   rows: number;
@@ -18,6 +23,10 @@ const DEFAULT_ROWS = 24;
  *
  * The hook only listens while mounted — the listener is detached on
  * unmount to avoid leaking handlers into long-running processes.
+ *
+ * On a legacy Win10 conhost the reported height is one row short of the
+ * real terminal: a full-height frame scrolls that console, which is the
+ * "shaking" / duplicated-last-row report. See `legacy-conhost.ts`.
  */
 export function useTerminalSize(): TerminalSize {
   const { stdout } = useStdout();
@@ -35,8 +44,21 @@ export function useTerminalSize(): TerminalSize {
   return size;
 }
 
-function readSize(stdout: NodeJS.WriteStream | undefined): TerminalSize {
+/**
+ * Pure size read, exported for tests. The legacy-conhost row guard only
+ * applies to a real TTY: the fake stdouts used by tests, pipes and CI
+ * have no scrolling cursor, and their reported size is kept verbatim.
+ */
+export function readTerminalSize(
+  stdout: NodeJS.WriteStream | undefined,
+  legacyConhost: boolean,
+): TerminalSize {
   const columns = stdout?.columns ?? DEFAULT_COLUMNS;
   const rows = stdout?.rows ?? DEFAULT_ROWS;
-  return { columns, rows };
+  const guard = legacyConhost && stdout?.isTTY === true;
+  return { columns, rows: clampRowsForLegacyConhost(rows, guard) };
+}
+
+function readSize(stdout: NodeJS.WriteStream | undefined): TerminalSize {
+  return readTerminalSize(stdout, isLegacyConhost());
 }

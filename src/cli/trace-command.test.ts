@@ -106,6 +106,7 @@ describe("traceCommand", () => {
   afterEach(() => {
     rmSync(stateDir, { recursive: true, force: true });
     delete process.env.ATOMIC_AGENT_STATE_DIR;
+    delete process.env.ATOMIC_AGENT_SKILLS_CATALOG_BUDGET;
     resetConfigCache();
     vi.restoreAllMocks();
   });
@@ -179,6 +180,61 @@ describe("traceCommand", () => {
     expect(Array.isArray(parsed)).toBe(true);
     expect(parsed[0].type).toBe("session_started");
     expect(parsed[parsed.length - 1].type).toBe("turn_finished");
+  });
+
+  it("replay rebuilds the skill catalog with the configured token budget", async () => {
+    // Regression guard for the replay call-site wiring: `handleReplay`
+    // must pass `config.skills.catalogTokenBudget` to
+    // `buildSkillCatalog`. The skill catalog feeds the stable prefix, so
+    // an honored budget changes the recomputed hash; if replay silently
+    // fell back to the legacy 4096-char cap, both runs below would build
+    // the same two-entry catalog and print identical currentHash values.
+    const globalSkillsDir = join(stateDir, "skills");
+    for (const name of ["replay-budget-a", "replay-budget-b"]) {
+      mkdirSync(join(globalSkillsDir, name), { recursive: true });
+      writeFileSync(
+        join(globalSkillsDir, name, "SKILL.md"),
+        [
+          "---",
+          `name: ${name}`,
+          `description: "${"d".repeat(100)}"`,
+          "version: 0.1.0",
+          "---",
+          "",
+          `# ${name}`,
+        ].join("\n"),
+        "utf8",
+      );
+    }
+
+    const currentHashFromReplay = async (): Promise<string> => {
+      (process.stdout.write as ReturnType<typeof vi.fn>).mockClear();
+      const code = await traceCommand(["replay", "s-fixture"]);
+      // The fixture's recorded hash can never match a live prefix, so
+      // replay always reports drift (exit code 2).
+      expect(code).toBe(2);
+      const output = (process.stdout.write as ReturnType<typeof vi.fn>).mock
+        .calls.map((c) => c[0])
+        .join("");
+      const row = output
+        .split("\n")
+        .find((line) => line.includes("DRIFT"));
+      expect(row).toBeDefined();
+      const columns = (row as string).trim().split(/\s+/);
+      const currentHash = columns[columns.length - 1] as string;
+      expect(currentHash).toMatch(/^[0-9a-f]{16}$/);
+      return currentHash;
+    };
+
+    // Default budget: both catalog entries fit under the 4096-char cap.
+    const wideHash = await currentHashFromReplay();
+
+    // 4 tokens x 8 chars/token = 32 chars: the catalog is cut down to
+    // the single always-kept first entry, which must shift the prefix.
+    process.env.ATOMIC_AGENT_SKILLS_CATALOG_BUDGET = "4";
+    resetConfigCache();
+    const narrowHash = await currentHashFromReplay();
+    expect(narrowHash).not.toBe(wideHash);
   });
 
   it("fails gracefully for missing session", async () => {

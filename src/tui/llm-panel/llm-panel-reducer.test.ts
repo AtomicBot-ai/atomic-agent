@@ -59,6 +59,28 @@ describe("llm-panel reducer", () => {
     expect(refreshed.llmPanel.mode).toBe("cloud");
     expect(refreshed.llmPanel.syncModeToActiveRoute).toBe(false);
   });
+
+  it("cycles the cloud price facet and snaps the cursor to the top of the model section", () => {
+    const base = createInitialTuiState(fakeSession());
+    const state = {
+      ...base,
+      llmPanel: { ...base.llmPanel, mode: "cloud" as const, cloudCursor: 5 },
+      providersPanel: {
+        ...base.providersPanel,
+        rows: [providerRow("openrouter", "openrouter", true)],
+      },
+    };
+
+    const free = reduceTuiState(state, { type: "llm_cloud_pricing_cycled" });
+    expect(free.llmPanel.cloudModelPricing).toBe("free");
+    // One provider row above the model section, so its top is index 1.
+    expect(free.llmPanel.cloudCursor).toBe(1);
+
+    const paid = reduceTuiState(free, { type: "llm_cloud_pricing_cycled" });
+    expect(paid.llmPanel.cloudModelPricing).toBe("paid");
+    const all = reduceTuiState(paid, { type: "llm_cloud_pricing_cycled" });
+    expect(all.llmPanel.cloudModelPricing).toBe("all");
+  });
 });
 
 function providerRow(id: string, kind: string, isActiveText: boolean) {

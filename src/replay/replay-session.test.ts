@@ -138,6 +138,71 @@ describe("replaySession", () => {
         report.steps.every((s) => s.recordedHash === "deadbeef".repeat(8)),
       ).toBe(true);
       expect(report.steps[0]!.currentHash).not.toBe("deadbeef".repeat(8));
+      expect(report.steps.every((s) => s.matchedTransport === null)).toBe(true);
+    } finally {
+      rmSync(fx.tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("reports no drift for a native_tools-recorded trace when no transport is pinned", async () => {
+    // Since issue #285 the stable prefix differs by construction between
+    // the transports, and traces do not record which one served the
+    // session. An unpinned replay must therefore accept a match against
+    // either variant — otherwise every native-transport session (the
+    // default on openai / subscription-cli providers) reports 100% false
+    // drift.
+    const context = buildCurrentContext();
+    const nativeHash = hashPrefix(
+      buildStablePrefix({
+        toolDescriptors: context.toolDescriptors,
+        capabilities: context.capabilities,
+        skillCatalog: context.skillCatalog,
+        reasoningSystemToken: context.profile.reasoningSystemToken,
+        toolTransport: "native_tools",
+      }),
+    );
+    const fx = writeTrace({ recordedHash: nativeHash });
+    try {
+      const report = await replaySession({ path: fx.path, context });
+      expect(report.driftCount).toBe(0);
+      expect(
+        report.steps.every((s) => s.matchedTransport === "native_tools"),
+      ).toBe(true);
+      expect(report.steps.every((s) => s.currentHash === nativeHash)).toBe(
+        true,
+      );
+    } finally {
+      rmSync(fx.tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("a pinned transport restricts matching to that variant", async () => {
+    const context = buildCurrentContext();
+    const nativeHash = hashPrefix(
+      buildStablePrefix({
+        toolDescriptors: context.toolDescriptors,
+        capabilities: context.capabilities,
+        skillCatalog: context.skillCatalog,
+        reasoningSystemToken: context.profile.reasoningSystemToken,
+        toolTransport: "native_tools",
+      }),
+    );
+    const fx = writeTrace({ recordedHash: nativeHash });
+    try {
+      const pinnedNative = await replaySession({
+        path: fx.path,
+        context: { ...context, toolTransport: "native_tools" },
+      });
+      expect(pinnedNative.driftCount).toBe(0);
+
+      const pinnedGrammar = await replaySession({
+        path: fx.path,
+        context: { ...context, toolTransport: "grammar" },
+      });
+      expect(pinnedGrammar.driftCount).toBe(2);
+      expect(
+        pinnedGrammar.steps.every((s) => s.matchedTransport === null),
+      ).toBe(true);
     } finally {
       rmSync(fx.tmp, { recursive: true, force: true });
     }

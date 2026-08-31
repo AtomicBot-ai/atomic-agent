@@ -7,13 +7,83 @@ import { resolvePlatformAsset, type PlatformAsset } from "./platform-assets.js";
  * inside every zip is `llama-server.exe`; only the bundled compute
  * backend differs. We pick the fastest one the machine can actually run
  * and fall back to Vulkan (broadest GPU support, no CUDA driver
- * requirement) when no compatible NVIDIA driver is detected.
+ * requirement) when no compatible NVIDIA driver is detected. The CPU
+ * build is never picked by detection — it exists for boxes whose only
+ * "GPU" is an iGPU the Vulkan build cannot actually load a model on
+ * (e.g. AMD 5600G Vega), reached via `localModels.managed.backendVariant`
+ * or the automatic start-failure fallback in `cpu-backend-fallback.ts`.
  */
 export const WINDOWS_BACKEND_ASSETS = {
   vulkan: "llama-turboquant-windows-x64-vulkan.zip",
   cuda124: "llama-turboquant-windows-x64-cuda-12.4.zip",
   cuda133: "llama-turboquant-windows-x64-cuda-13.3.zip",
+  cpu: "llama-turboquant-windows-x64-cpu.zip",
 } as const;
+
+/**
+ * Operator-facing values for `localModels.managed.backendVariant`.
+ * `"auto"` keeps the nvidia-smi driven detection; the rest pin one of
+ * the Windows zips outright (no probe). Meaningful only on win32 —
+ * every other platform publishes a single asset, so the preference is
+ * ignored there.
+ */
+export const BACKEND_VARIANT_PREFERENCES = [
+  "auto",
+  "cpu",
+  "vulkan",
+  "cuda-12.4",
+  "cuda-13.3",
+] as const;
+
+export type BackendVariantPreference = (typeof BACKEND_VARIANT_PREFERENCES)[number];
+
+export function isBackendVariantPreference(
+  raw: unknown,
+): raw is BackendVariantPreference {
+  return BACKEND_VARIANT_PREFERENCES.includes(raw as BackendVariantPreference);
+}
+
+const ASSET_BY_VARIANT_PREFERENCE: Record<
+  Exclude<BackendVariantPreference, "auto">,
+  string
+> = {
+  cpu: WINDOWS_BACKEND_ASSETS.cpu,
+  vulkan: WINDOWS_BACKEND_ASSETS.vulkan,
+  "cuda-12.4": WINDOWS_BACKEND_ASSETS.cuda124,
+  "cuda-13.3": WINDOWS_BACKEND_ASSETS.cuda133,
+};
+
+/**
+ * Configured `localModels.managed.backendVariant`, pushed in by
+ * `loadConfig` the same way `setCustomLocalModels` publishes custom
+ * models — the local-llm layer stays config-free. Also flipped to
+ * `"cpu"` in-process by the start-failure fallback so the re-download
+ * that follows resolves the CPU zip without waiting for a config
+ * round-trip.
+ */
+let configuredBackendVariant: BackendVariantPreference = "auto";
+
+export function setConfiguredBackendVariant(v: BackendVariantPreference): void {
+  configuredBackendVariant = v;
+}
+
+export function getConfiguredBackendVariant(): BackendVariantPreference {
+  return configuredBackendVariant;
+}
+
+/**
+ * True when `assetName` is one of the Windows GPU builds (or an install
+ * old enough to predate `BackendVersionInfo.asset` — the CPU zip was not
+ * downloadable back then, so an undefined asset on win32 is a GPU build).
+ */
+export function isWindowsGpuBackendAsset(assetName: string | undefined): boolean {
+  if (assetName === undefined) return true;
+  return (
+    assetName === WINDOWS_BACKEND_ASSETS.vulkan ||
+    assetName === WINDOWS_BACKEND_ASSETS.cuda124 ||
+    assetName === WINDOWS_BACKEND_ASSETS.cuda133
+  );
+}
 
 export interface CudaVersion {
   major: number;
@@ -92,8 +162,14 @@ let cachedWindowsAsset: string | null = null;
  * result process-wide. Hardware does not change during a run, so we
  * probe `nvidia-smi` at most once; the hot path (`isBackendDownloaded`
  * poll) never triggers a probe because it only needs `binaryName`.
+ * A non-`auto` configured variant bypasses both the probe and the
+ * cache — the preference can change mid-process (config edit, CPU
+ * fallback), so it must never be shadowed by a stale detection result.
  */
 export function detectWindowsBackendAsset(): string {
+  if (configuredBackendVariant !== "auto") {
+    return ASSET_BY_VARIANT_PREFERENCE[configuredBackendVariant];
+  }
   if (cachedWindowsAsset !== null) return cachedWindowsAsset;
   cachedWindowsAsset = selectWindowsBackendAsset(detectDriverCudaVersion());
   return cachedWindowsAsset;

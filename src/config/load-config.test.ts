@@ -13,7 +13,11 @@ import { join } from "node:path";
 import { loadConfig } from "./load-config.js";
 import { resetConfigCache } from "./config-cache.js";
 import { getUserConfigPath, writeUserConfigFileSync } from "./config-file.js";
-import { USER_CONFIG_DEFAULTS, USER_CONFIG_VERSION } from "./config-schema.js";
+import {
+  ENV_DEFAULTS,
+  USER_CONFIG_DEFAULTS,
+  USER_CONFIG_VERSION,
+} from "./config-schema.js";
 
 describe("loadConfig", () => {
   let stateDir: string;
@@ -32,6 +36,7 @@ describe("loadConfig", () => {
     delete process.env.ATOMIC_AGENT_LLAMA_MAX_TOKENS;
     delete process.env.ATOMIC_AGENT_BROWSER_CHANNEL;
     delete process.env.ATOMIC_AGENT_GRAMMARS_DIR;
+    delete process.env.ATOMIC_AGENT_SKILLS_CATALOG_BUDGET;
     delete process.env.ATOMIC_LOADCONFIG_TEST_KEY;
     resetConfigCache();
     vi.restoreAllMocks();
@@ -59,6 +64,26 @@ describe("loadConfig", () => {
     process.env.ATOMIC_AGENT_LLAMA_MAX_TOKENS = "999999999";
     resetConfigCache();
     expect(loadConfig().localModels.completionMaxTokens).toBe(131_072);
+  });
+
+  it("clamps ATOMIC_AGENT_SKILLS_CATALOG_BUDGET to a positive range", () => {
+    // The budget multiplies into the skill catalog's char cap; 0 or a
+    // negative value would collapse the catalog, so the loader clamps.
+    expect(loadConfig().skills.catalogTokenBudget).toBe(
+      ENV_DEFAULTS.SKILLS_CATALOG_BUDGET,
+    );
+    process.env.ATOMIC_AGENT_SKILLS_CATALOG_BUDGET = "0";
+    resetConfigCache();
+    expect(loadConfig().skills.catalogTokenBudget).toBe(1);
+    process.env.ATOMIC_AGENT_SKILLS_CATALOG_BUDGET = "-64";
+    resetConfigCache();
+    expect(loadConfig().skills.catalogTokenBudget).toBe(1);
+    process.env.ATOMIC_AGENT_SKILLS_CATALOG_BUDGET = "999999999";
+    resetConfigCache();
+    expect(loadConfig().skills.catalogTokenBudget).toBe(100_000);
+    process.env.ATOMIC_AGENT_SKILLS_CATALOG_BUDGET = "2048";
+    resetConfigCache();
+    expect(loadConfig().skills.catalogTokenBudget).toBe(2048);
   });
 
   it("reads localModels.completionMaxTokens from the user config file", () => {

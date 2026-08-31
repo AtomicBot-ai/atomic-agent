@@ -2,6 +2,7 @@
 
 This document is the source-of-truth for how cross-session memory works in `atomic-agent`. It complements:
 
+- `MEMORY_GUIDE.md` — the operator-facing walkthrough with worked examples; start there if you want to *use* memory rather than modify it.
 - `ARCHITECTURE.md` — overall runtime topology and invariants.
 - `AGENTS.md` — short engineering summary for automated contributors.
 - `PROMPT.md` — full anatomy of the stable prefix and variable tail, including where the memory channels render in the prompt.

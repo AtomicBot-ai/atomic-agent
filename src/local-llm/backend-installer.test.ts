@@ -20,6 +20,7 @@ import {
 } from "./backend-installer.js";
 import { resolveServerBinPath } from "./backend-paths.js";
 import { readBackendVersion, writeBackendVersion } from "./backend-version.js";
+import { setConfiguredBackendVariant } from "./windows-backend-variant.js";
 
 /** Minimal GitHub releases-list payload for the macOS arm64 asset. */
 function releasesResponse(
@@ -479,6 +480,40 @@ describe("backend-installer", () => {
       const check = await checkForBackendUpdate(dir);
       expect(check.updateAvailable).toBe(true);
     } finally {
+      platformSpy.mockRestore();
+      archSpy.mockRestore();
+    }
+  });
+
+  it("offers the CPU zip as an update when backendVariant 'cpu' is configured over a Vulkan install", async () => {
+    // The CPU-fallback persistence loop-guard: after the fallback wrote
+    // backendVariant "cpu", the staleness check must resolve the CPU
+    // asset — not re-detect Vulkan and reinstall the build that just
+    // failed on this machine.
+    const platformSpy = vi.spyOn(process, "platform", "get").mockReturnValue("win32");
+    const archSpy = vi.spyOn(process, "arch", "get").mockReturnValue("x64");
+    setConfiguredBackendVariant("cpu");
+    writeBackendVersion(dir, {
+      tag: "turboquant-win",
+      downloadedAt: "2026-06-02T00:00:00.000Z",
+      asset: "llama-turboquant-windows-x64-vulkan.zip",
+      releasedAt: "2026-06-01T00:00:00Z",
+    });
+    globalThis.fetch = vi.fn(async () =>
+      releasesResponse([
+        {
+          tag: "turboquant-win",
+          publishedAt: "2026-06-01T00:00:00Z",
+          assetName: "llama-turboquant-windows-x64-cpu.zip",
+        },
+      ]),
+    ) as typeof fetch;
+
+    try {
+      const check = await checkForBackendUpdate(dir);
+      expect(check.updateAvailable).toBe(true);
+    } finally {
+      setConfiguredBackendVariant("auto");
       platformSpy.mockRestore();
       archSpy.mockRestore();
     }

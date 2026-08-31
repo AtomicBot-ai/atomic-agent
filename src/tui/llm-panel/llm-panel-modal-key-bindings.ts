@@ -3,6 +3,7 @@ import type { TuiAction } from "../tui-action.js";
 import type { TuiAppCallbacks } from "../tui-app.js";
 import type { TuiState } from "../tui-state.js";
 import { handleProvidersWizardKey } from "../providers/providers-wizard-key-bindings.js";
+import { wizardForOpenAiCompatUrl } from "../providers/openai-compat-steer.js";
 import { normalizeLocalLlmBaseUrl } from "../persist-user-local-models-config.js";
 import { filteredPickerModels } from "../providers/providers-panel-state.js";
 import { stopLocalDaemonsForCloudSelection } from "./llm-panel-primary-actions.js";
@@ -195,6 +196,33 @@ export function handleLlmModalKey(
     }
     if (input && input.length > 0 && !key.ctrl && !key.meta) {
       dispatch({ type: "llm_external_url_draft_set", value: urlDraft + input });
+      return true;
+    }
+    return true;
+  }
+
+  // Checked after the URL draft, matching `LlmPanelModals` render order:
+  // whichever modal is on screen must be the one holding the keyboard.
+  // (The reducer refuses to open the steer under an open draft, so both
+  // being non-null is unreachable today — this order keeps the handler
+  // correct even if a future path recreates that state.)
+  const steerUrl = state.llmPanel.externalCompatSteerUrl;
+  if (steerUrl !== null) {
+    // `y`/Enter accepts the steer: same two dispatches as the `n`
+    // hotkey (flip to the Cloud pane, open the add wizard), except the
+    // wizard opens on the OpenAI-compatible route with the refused URL
+    // already filled in — Ollama URLs land on the Ollama preset.
+    if (input.toLowerCase() === "y" || key.return) {
+      dispatch({ type: "llm_external_compat_steer_closed" });
+      dispatch({ type: "llm_mode_set", mode: "cloud" });
+      dispatch({
+        type: "providers_wizard_opened",
+        wizard: wizardForOpenAiCompatUrl(steerUrl),
+      });
+      return true;
+    }
+    if (input.toLowerCase() === "n" || key.escape) {
+      dispatch({ type: "llm_external_compat_steer_closed" });
       return true;
     }
     return true;

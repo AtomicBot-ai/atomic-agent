@@ -1,3 +1,5 @@
+import type { ModelPricingFilter } from "../../llm/provider/model-pricing-filter.js";
+
 /**
  * Panes of the LLM tab. `local` browses the managed llama.cpp catalog,
  * `cloud` the API providers, `external` the single base URL of a
@@ -36,6 +38,13 @@ export interface LlmPanelState {
    */
   externalUrlDraft: string | null;
   /**
+   * URL of a refused External save whose probe answered `openai-compat`
+   * (Ollama, LM Studio, vLLM…). Non-null opens the steer prompt: `y`
+   * deep-links into the provider wizard prefilled with this URL instead
+   * of leaving the operator at a dead-end verdict line.
+   */
+  externalCompatSteerUrl: string | null;
+  /**
    * Typed filter of the Cloud pane's inline model list. Persists when
    * the filter row loses focus (Esc keeps the text, like the modal did).
    */
@@ -46,6 +55,13 @@ export interface LlmPanelState {
    * `f` or `/model`.
    */
   cloudModelFilterFocused: boolean;
+  /**
+   * Price facet of the Cloud pane's inline model list, cycled with `p`.
+   * Own field rather than a term in `cloudModelFilter` so the two narrow
+   * independently, and separate from the providers wizard's facet so
+   * neither screen leaks its state into the other.
+   */
+  cloudModelPricing: ModelPricingFilter;
 }
 
 export function createInitialLlmPanelState(): LlmPanelState {
@@ -58,8 +74,10 @@ export function createInitialLlmPanelState(): LlmPanelState {
     syncModeToActiveRoute: false,
     stopLocalDaemonsPrompt: null,
     externalUrlDraft: null,
+    externalCompatSteerUrl: null,
     cloudModelFilter: "",
     cloudModelFilterFocused: false,
+    cloudModelPricing: "all",
   };
 }
 

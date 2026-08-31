@@ -23,6 +23,8 @@ export type { SkillChangeListener } from "./skill-registry.js";
 export {
   buildSkillCatalog,
   formatSkillCatalogLine,
+  SKILL_CATALOG_CHARS_PER_TOKEN,
+  DEFAULT_CATALOG_MAX_CHARS,
 } from "./skill-catalog.js";
 export type { BuildCatalogOptions } from "./skill-catalog.js";
 

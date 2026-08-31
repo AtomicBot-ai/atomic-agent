@@ -18,7 +18,10 @@ import {
   resourceClassFor,
 } from "./tool-resource-class.js";
 import { createStreamParser } from "../llm/grammar/stream-parser.js";
-import type { StreamParseEvent } from "../llm/grammar/stream-parser.js";
+import type {
+  StreamParseEvent,
+  StreamParser,
+} from "../llm/grammar/stream-parser.js";
 import { checkProfilePromptAligned } from "../llm/profile-invariants.js";
 import {
   CancelledError,
@@ -42,6 +45,7 @@ import { getDefaultArgsJsonSchema } from "../prompt/default-tool-args-schemas.js
 import { validateJsonSchemaValue } from "../llm/provider/openai/coerce-json-schema-value.js";
 import { buildPrompt } from "../prompt/build-prompt.js";
 import type { BuiltPrompt } from "../prompt/build-prompt.js";
+import type { BuildPromptInput } from "../prompt/build-prompt-types.js";
 import { formatCurrentDate } from "../prompt/current-date.js";
 import type {
   CapabilitiesSummary,
@@ -90,6 +94,19 @@ export type { PromptCapturedTokens, StepEvent } from "./step-events.js";
 
 export interface LlmStreamParams {
   prompt: string;
+  /**
+   * Lazy grammar-transport variant of `prompt`. Set when `prompt` was
+   * built prefill-suppressed for a native-tools primary while the
+   * profile still expects the reasoning prefill / turn framing at a
+   * text-completion generation point (issue #283). A cross-transport
+   * fallover hands this request to a grammar (llama-server) link whose
+   * chat template and GBNF prelude assume the open tag is pre-typed —
+   * the fallback seam substitutes this variant there, so each link
+   * receives the prompt shape its transport expects. A thunk so the
+   * second `buildPrompt` only runs if a grammar link is actually chosen;
+   * implementations memoize.
+   */
+  grammarPrompt?: () => string;
   grammar: string;
   slotId: number;
   sessionId: string;
@@ -331,18 +348,33 @@ async function executeStepInner(
   ctx: StepContext,
   deps: StepDependencies,
 ): Promise<StepOutcome> {
+  const promptCarriesPrefill = promptCarriesReasoningPrefill(
+    deps.profile,
+    deps.toolTransport,
+  );
   const stepToolDescriptors = ctx.terminalOnly
     ? ctx.toolDescriptors.filter(
         ({ name }) => name === "reply" || name === "finish",
       )
     : ctx.toolDescriptors;
-  const prompt = buildPrompt({
+  const promptInput: BuildPromptInput = {
     session: ctx.session,
     toolDescriptors: stepToolDescriptors,
     capabilities: ctx.capabilities,
     skillCatalog: ctx.skillCatalog,
     currentDate: formatCurrentDate(new Date()),
     profile: deps.profile,
+    // The prefix must match the request shape: a native-tools link gets
+    // native function-calling guidance instead of the text-JSON array
+    // mandate (issue #285). Configured transport, not `servedTransport`:
+    // the prompt is built before any fallback link serves the request.
+    ...(deps.toolTransport !== undefined
+      ? { toolTransport: deps.toolTransport }
+      : {}),
+    // Chat providers apply their own template server-side; a literal
+    // reasoning prefill there is at best echoed noise and at worst
+    // corrupted in transit (Ollama Cloud, ollama/ollama#17248).
+    suppressReasoningPrefill: deps.toolTransport === "native_tools",
     ...(deps.contextWindow !== undefined
       ? { contextWindow: deps.contextWindow }
       : {}),
@@ -355,7 +387,31 @@ async function executeStepInner(
     ...(ctx.userMessage !== undefined
       ? { userMessage: ctx.userMessage }
       : {}),
-  });
+  };
+  const prompt = buildPrompt(promptInput);
+  // A grammar (llama-server) fallback link behind a native-tools primary
+  // still needs the legacy prefill-carrying prompt shape — its template
+  // and GBNF prelude expect the reasoning open tag / turn framing at the
+  // generation point, which the main prompt above deliberately dropped.
+  // Lazy + memoized: the second build only runs if the fallback seam
+  // actually routes this request to a grammar link (sticky-fallover
+  // turns included). See `LlmStreamParams.grammarPrompt`.
+  const grammarPrompt =
+    deps.toolTransport === "native_tools" &&
+    deps.profile.requiresPromptThinkPrefix
+      ? memoizeText(
+          () =>
+            buildPrompt({
+              ...promptInput,
+              // The grammar link's template/GBNF prelude also expects the
+              // legacy text-JSON emission mandate, not the native
+              // function-calling guidance the primary prompt carries
+              // (issue #285) — rebuild for the grammar transport.
+              toolTransport: "grammar",
+              suppressReasoningPrefill: false,
+            }).text,
+        )
+      : undefined;
   const slot = deps.supportsSlotAffinity
     ? deps.slotManager.acquire(ctx.session.id, prompt.stablePrefix)
     : {
@@ -365,7 +421,9 @@ async function executeStepInner(
         cacheReused: false,
       };
   if (ctx.stepIndex === 0) {
-    const promptViolations = checkProfilePromptAligned(deps.profile, prompt.text);
+    const promptViolations = checkProfilePromptAligned(deps.profile, prompt.text, {
+      promptCarriesPrefill,
+    });
     if (promptViolations.length > 0) {
       deps.logger?.warn("profile/prompt invariant violated", {
         profile: deps.profile.id,
@@ -395,14 +453,17 @@ async function executeStepInner(
     promptTokens: prompt.tokens.total,
   });
 
-  const llmParams: LlmStreamParams = buildLlmStreamParams({
-    promptText: prompt.text,
-    deps,
-    slotId: slot.slotId,
-    sessionId: ctx.session.id,
-    toolDescriptors: stepToolDescriptors,
-    signal: ctx.signal,
-  });
+  const llmParams: LlmStreamParams = {
+    ...buildLlmStreamParams({
+      promptText: prompt.text,
+      deps,
+      slotId: slot.slotId,
+      sessionId: ctx.session.id,
+      toolDescriptors: stepToolDescriptors,
+      signal: ctx.signal,
+    }),
+    ...(grammarPrompt ? { grammarPrompt } : {}),
+  };
 
   const firstAttempt = await runInitialCompletion({
     ctx,
@@ -413,12 +474,25 @@ async function executeStepInner(
   });
   let completion = firstAttempt.completion;
 
+  // Parse-side prefill assumption for a given completion: keyed off the
+  // transport that actually served it (cross-transport fallover swaps
+  // it), never off the primary's configuration.
+  const assumesOpenReasoning = (c: CompletionResult): boolean =>
+    completionAssumesOpenReasoning(
+      deps.profile,
+      parseDepsFor(c, deps).toolTransport,
+    );
+
   // Prefer the dedicated `reasoning_content` channel when the server
   // (QwQ, DeepSeek-R1 with `--reasoning-format deepseek`) supplies it —
   // the content body then no longer embeds `<think>...</think>` blocks.
   // Fall back to extracting `<think>` from `content` for classic builds
   // and models that stream CoT inline.
-  let reasoning = resolveReasoning(completion, deps.profile);
+  let reasoning = resolveReasoning(
+    completion,
+    deps.profile,
+    assumesOpenReasoning(completion),
+  );
   if (reasoning.length > 0) {
     deps.onEvent?.({
       type: "reasoning",
@@ -670,9 +744,34 @@ async function executeStepInner(
     });
 
     const retryStartedAt = Date.now();
+    const repairError = parsed.error;
     completion = await deps.llmComplete({
       ...llmParams,
-      prompt: buildToolCallRepairPrompt(prompt.text, parsed.error, deps.profile),
+      prompt: buildToolCallRepairPrompt(
+        prompt.text,
+        repairError,
+        deps.profile,
+        deps.toolTransport,
+        promptCarriesPrefill,
+      ),
+      // The grammar-link variant must be repair-shaped too — spreading
+      // `llmParams` alone would hand a grammar fallback link the STALE
+      // base prompt without the repair notice. It is repair-shaped for
+      // the GRAMMAR transport: text-JSON corrective mandate (issue #285)
+      // and the prefill strip/re-append (the grammar prompt carries it).
+      ...(grammarPrompt
+        ? {
+            grammarPrompt: memoizeText(() =>
+              buildToolCallRepairPrompt(
+                grammarPrompt(),
+                repairError,
+                deps.profile,
+                "grammar",
+                true,
+              ),
+            ),
+          }
+        : {}),
       // Bounded cap on the repair completion. Without it, reasoning
       // models (qwen-3.5-9b in particular) routinely fall into a
       // self-deliberation loop after a `BatchValidationError` and burn
@@ -709,7 +808,11 @@ async function executeStepInner(
       cacheReused: slot.cacheReused,
     });
 
-    const retryReasoning = resolveReasoning(completion, deps.profile);
+    const retryReasoning = resolveReasoning(
+      completion,
+      deps.profile,
+      assumesOpenReasoning(completion),
+    );
     if (retryReasoning.length > 0) {
       deps.onEvent?.({
         type: "reasoning",
@@ -799,7 +902,11 @@ async function executeStepInner(
       // already applies — instead of failing the whole loop. Only
       // reasoning came back? Then there is no answer to deliver and the
       // `GrammarError` still stands.
-      const fallback = replyFallbackBatch(completion, deps.profile);
+      const fallback = replyFallbackBatch(
+        completion,
+        deps.profile,
+        assumesOpenReasoning(completion),
+      );
       if (fallback === null) {
         throw new GrammarError(
           parsed.error.message,
@@ -1020,6 +1127,7 @@ async function runInitialCompletion(
         deps.llmCompleteStream(llmParams),
         ctx.stepIndex,
         deps.profile,
+        deps.toolTransport,
         deps.onEvent,
       )
     : await deps.llmComplete(llmParams);
@@ -1043,6 +1151,68 @@ async function runInitialCompletion(
 }
 
 /**
+ * Whether the prompt built for this runtime carries the trailing
+ * reasoning-open prefill (`<think>` for qwen-think) / Gemma turn-framing
+ * tokens.
+ *
+ * The prefill is a llama-server *text-completion* artifact: the local
+ * template expects the open tag pre-typed at the generation point. On
+ * the native-tools chat transport the prompt ships as a chat message to
+ * an OpenAI-compatible endpoint, where the literal tag is at best noise
+ * the model echoes back and at worst corrupted server-side (Ollama
+ * Cloud mangles literal `<think>`/`</think>` strings —
+ * ollama/ollama#17248, issue #283) — so `buildPrompt` suppresses it
+ * there. This predicate keys the PROMPT-side consumers (the alignment
+ * invariant check, the repair prompt's strip/re-append). Parse-side
+ * consumers key off `completionAssumesOpenReasoning` with the transport
+ * that actually served the completion instead — the two differ on a
+ * cross-transport fallover.
+ */
+function promptCarriesReasoningPrefill(
+  profile: ModelProfile,
+  toolTransport: ToolCallTransport,
+): boolean {
+  return toolTransport !== "native_tools" && profile.requiresPromptThinkPrefix;
+}
+
+/**
+ * Whether a completion should be parsed as continuing an already-open
+ * reasoning block (re-prepending the open tag before extraction /
+ * pre-opening the stream parser's think state).
+ *
+ * Keyed purely off the transport that served (or is serving) the
+ * completion:
+ *  - **Grammar-served output always starts mid-think** — the GBNF
+ *    prelude root emits `body "</think>"` without the open tag — even
+ *    when the prompt did not prefill (a native-tools primary that fell
+ *    over to a grammar local link is handed the prefill-carrying
+ *    `grammarPrompt` variant anyway, see `LlmStreamParams.grammarPrompt`).
+ *  - **A chat (native-tools) completion never continues our
+ *    text-completion prefill**: the reply starts fresh server-side, so
+ *    prepending the open tag would swallow a clean reply whole as
+ *    reasoning. That holds even in the unsupported grammar-primary →
+ *    native-link ordering, where the outbound prompt still (incorrectly)
+ *    carries the literal prefill inside the chat message.
+ */
+function completionAssumesOpenReasoning(
+  profile: ModelProfile,
+  parseTransport: ToolCallTransport,
+): boolean {
+  if (!profile.requiresPromptThinkPrefix) return false;
+  return parseTransport !== "native_tools";
+}
+
+/**
+ * Memoize a lazily built prompt variant so the extra `buildPrompt` /
+ * repair-prompt render runs at most once per step however many fallback
+ * attempts consume it.
+ */
+function memoizeText(build: () => string): () => string {
+  let cached: string | null = null;
+  return () => (cached ??= build());
+}
+
+/**
  * Resolve the reasoning text for a completion, preferring the dedicated
  * `reasoning_content` channel when present and falling back to inline
  * `<think>...</think>` extraction for classic llama-server builds.
@@ -1050,13 +1220,18 @@ async function runInitialCompletion(
 function resolveReasoning(
   completion: CompletionResult,
   profile: ModelProfile,
+  assumeOpenReasoning: boolean,
 ): string {
   const fromChannel =
     typeof completion.reasoningContent === "string"
       ? completion.reasoningContent
       : "";
   if (fromChannel.length > 0) return fromChannel;
-  const normalizedContent = normalizeContent(completion, profile);
+  const normalizedContent = normalizeContent(
+    completion,
+    profile,
+    assumeOpenReasoning,
+  );
   const extracted = extractReasoning(
     normalizedContent,
     getReasoningTagOptions(profile),
@@ -1067,8 +1242,9 @@ function resolveReasoning(
 function normalizeContent(
   completion: CompletionResult,
   profile: ModelProfile,
+  assumeOpenReasoning: boolean,
 ): string {
-  return profile.requiresPromptThinkPrefix
+  return assumeOpenReasoning
     ? `${getReasoningOpenTagPrefix(profile)}${completion.content}`
     : completion.content;
 }
@@ -1093,9 +1269,11 @@ function isNativeToolsEmptyCompletionHandledByParser(
   // Reasoning-only completions (Qwen3.8 with preserve_thinking,
   // DeepSeek-R1 over OpenAI-compatible APIs): the model ends its turn
   // with all text in `reasoning_content`, `content` empty and no
-  // tool_calls. The parser salvages these — a GBNF-shaped batch inside
-  // the reasoning, or the reasoning itself as a `reply`. Only a
-  // completion with NOTHING in any channel routes through ModelError.
+  // tool_calls. The parser gets a crack at these: a GBNF-shaped batch
+  // inside the reasoning is recovered as real tool calls; anything else
+  // fails the parse and routes through the one-shot repair (never as a
+  // raw-CoT `reply` — issue #285). Only a completion with NOTHING in
+  // any channel routes through ModelError.
   const reasoning =
     typeof completion.reasoningContent === "string"
       ? completion.reasoningContent.trim()
@@ -1168,11 +1346,19 @@ function tryParseToolCalls(
   profile: ModelProfile,
   deps: Pick<StepDependencies, "toolTransport" | "toolCallAdapter">,
 ): ToolCallBatchParseResult {
+  const assumeOpenReasoning = completionAssumesOpenReasoning(
+    profile,
+    deps.toolTransport,
+  );
   try {
     if (deps.toolTransport === "native_tools") {
       if (completion.toolCalls && completion.toolCalls.length > 0) {
         const adapter = deps.toolCallAdapter ?? openAiToolCallAdapter;
-        const reasoning = resolveReasoning(completion, profile);
+        const reasoning = resolveReasoning(
+          completion,
+          profile,
+          assumeOpenReasoning,
+        );
         const batch = adapter.toolCallsToBatch(
           completion.toolCalls,
           reasoning,
@@ -1209,7 +1395,7 @@ function tryParseToolCalls(
       if (typeof replyText === "string" && replyText.trim().length > 0) {
         try {
           const grammarBatch = parseToolCalls(
-            normalizeContent(completion, profile),
+            normalizeContent(completion, profile, assumeOpenReasoning),
             getReasoningTagOptions(profile),
           );
           if (grammarBatch.calls.length > 0) {
@@ -1228,7 +1414,11 @@ function tryParseToolCalls(
         } catch {
           // Not a GBNF-shaped completion — fall through to the reply wrap.
         }
-        const reasoning = resolveReasoning(completion, profile);
+        const reasoning = resolveReasoning(
+          completion,
+          profile,
+          assumeOpenReasoning,
+        );
         return {
           ok: true,
           batch: {
@@ -1245,11 +1435,15 @@ function tryParseToolCalls(
         };
       }
       // Reasoning-only completion: no tool_calls, empty content, but the
-      // think channel carries text. Same two recovery paths as for plain
-      // content, applied to the reasoning body: models occasionally emit
-      // the GBNF-style call array inside the think block, and a model
-      // that reasoned its way to a final answer without ever leaving the
-      // think channel still has an answer worth delivering as `reply`.
+      // think channel carries text. Models occasionally emit the
+      // GBNF-style call array inside the think block — recover those
+      // calls (they are the model's real intent). Anything else is NOT
+      // salvaged: `reasoning_content` is internal scratch space by
+      // OpenAI-compatible convention, and wrapping it as a `reply` leaks
+      // raw chain-of-thought verbatim as deliberate agent speech (issue
+      // #285). Returning `ok: false` routes the completion through the
+      // same one-shot repair as every other unparseable body; a repair
+      // that fails too ends the step as a parse error, not a CoT leak.
       const reasoningText =
         typeof completion.reasoningContent === "string"
           ? completion.reasoningContent.trim()
@@ -1269,21 +1463,13 @@ function tryParseToolCalls(
             return { ok: true, batch: { ...grammarBatch, calls } };
           }
         } catch {
-          // Not GBNF-shaped — fall through to the reply wrap.
+          // Not GBNF-shaped — fall through to the parse failure below.
         }
         return {
-          ok: true,
-          batch: {
-            kind: "batch",
-            calls: [
-              {
-                tool: "reply",
-                args: { text: reasoningText },
-                reasoning: reasoningText,
-              },
-            ],
-            reasoning: reasoningText,
-          },
+          ok: false,
+          error: new Error(
+            "reasoning-only completion: no tool_calls, empty content, and the reasoning body is not a tool-call array",
+          ),
         };
       }
       return {
@@ -1294,7 +1480,7 @@ function tryParseToolCalls(
       };
     }
     const batch = parseToolCalls(
-      normalizeContent(completion, profile),
+      normalizeContent(completion, profile, assumeOpenReasoning),
       getReasoningTagOptions(profile),
     );
     return { ok: true, batch };
@@ -1315,9 +1501,10 @@ function tryParseToolCalls(
 function replyFallbackBatch(
   completion: CompletionResult,
   profile: ModelProfile,
+  assumeOpenReasoning: boolean,
 ): ToolCallBatch | null {
   const extracted = extractReasoning(
-    normalizeContent(completion, profile),
+    normalizeContent(completion, profile, assumeOpenReasoning),
     getReasoningTagOptions(profile),
   );
   const text = extracted.body.trim();
@@ -1327,7 +1514,7 @@ function replyFallbackBatch(
   // validation) — echoing that literal back at the user would be worse
   // than the `GrammarError`.
   if (text.startsWith("{") || text.startsWith("[")) return null;
-  const reasoning = resolveReasoning(completion, profile);
+  const reasoning = resolveReasoning(completion, profile, assumeOpenReasoning);
   return {
     kind: "batch",
     calls: [
@@ -1638,6 +1825,8 @@ function buildToolCallRepairPrompt(
   promptText: string,
   error: Error,
   profile?: ModelProfile,
+  toolTransport?: ToolCallTransport,
+  promptCarriedPrefill = true,
 ): string {
   // Strip the trailing reasoning open-tag prefill (e.g. `<think>` for
   // qwen-think, `<|channel>thought\n` for gemma4-think) before
@@ -1657,7 +1846,14 @@ function buildToolCallRepairPrompt(
   // `GrammarError: tool-call body is empty`. Letting the model think
   // normally in repair — bounded by `REPAIR_MAX_TOKENS` so it cannot
   // run away — restores grammar-clean output.
-  const baseText = stripTrailingReasoningPrefill(promptText, profile);
+  //
+  // When the prompt never carried the prefill (native-tools chat
+  // transport, issue #283) there is nothing to strip — and nothing to
+  // re-append either: adding `<think>` here would ship the literal tag
+  // to the cloud endpoint the main prompt deliberately keeps it out of.
+  const baseText = promptCarriedPrefill
+    ? stripTrailingReasoningPrefill(promptText, profile)
+    : promptText;
   const lines = [
     baseText.trimEnd(),
     "",
@@ -1673,15 +1869,35 @@ function buildToolCallRepairPrompt(
       lines.push("per-call errors:", ...perCall);
     }
   }
-  lines.push(
-    "Emit a corrected JSON array only. No prose, no commentary after the array.",
-    "Use a length-1 array for `reply`, `finish`, approval-gated tools, or any call that depends on a previous result.",
-    "Do not repeat the invalid batch shape.",
-    "",
-    "### respond",
-    "Respond now.",
-  );
-  const openReasoning = renderOpenReasoningBlock(profile);
+  // The corrective mandate must match the request's transport. This
+  // repair replays with the SAME params as the failed attempt — under
+  // `native_tools` that request carries the OpenAI `tools` payload and a
+  // stable prefix that forbids text-JSON emission, so ordering a
+  // "corrected JSON array" here would re-create the exact dual mandate
+  // issue #285 removed, on the one retry a failing model gets before
+  // GrammarError ends the step.
+  if (toolTransport === "native_tools") {
+    lines.push(
+      "Call the tools again now, through the native function-calling interface (the `tools` payload on this API request) — do NOT write tool-call JSON as text, and do not leave the answer in the reasoning channel.",
+      "Make it a single tool call for `reply`, `finish`, approval-gated tools, or any call that depends on a previous result.",
+      "Do not repeat the invalid shape.",
+      "",
+      "### respond",
+      "Respond now.",
+    );
+  } else {
+    lines.push(
+      "Emit a corrected JSON array only. No prose, no commentary after the array.",
+      "Use a length-1 array for `reply`, `finish`, approval-gated tools, or any call that depends on a previous result.",
+      "Do not repeat the invalid batch shape.",
+      "",
+      "### respond",
+      "Respond now.",
+    );
+  }
+  const openReasoning = promptCarriedPrefill
+    ? renderOpenReasoningBlock(profile)
+    : "";
   if (openReasoning.length > 0) {
     lines.push(openReasoning);
   }
@@ -1814,22 +2030,37 @@ async function consumeStream(
   stream: AsyncGenerator<StreamChunk, CompletionResult, void>,
   stepIndex: number,
   profile: ModelProfile,
+  primaryTransport: ToolCallTransport,
   onEvent?: (event: StepEvent) => void,
 ): Promise<CompletionResult> {
-  const parser = createStreamParser({
-    // Pre-opened only when the open tag is prefilled in the prompt. With
-    // model-emitted reasoning (Gemma 4 turn-framing) the parser must detect
-    // the open tag live in the stream instead.
-    preOpenedThink:
-      profile.requiresPromptThinkPrefix &&
-      !reasoningOpenEmittedByModel(profile),
-    ...(profile.reasoningStyle !== "none"
-      ? {
-          reasoningOpenTag: profile.reasoningOpenTag,
-          reasoningCloseTag: profile.reasoningCloseTag,
-        }
-      : {}),
-  });
+  // The parser's pre-opened state depends on which link SERVES the
+  // stream, not on the configured primary: a native-tools primary that
+  // fell over to a grammar local link streams GBNF output that starts
+  // mid-`<think>` (the fallback seam stamps `servedTransport` on every
+  // chunk precisely so this is knowable live — the final result's stamp
+  // arrives only after the last delta, too late to classify reasoning).
+  // Created lazily on the first chunk; unstamped chunks (direct,
+  // non-fallback path) key off the primary transport. With model-emitted
+  // reasoning (Gemma 4 turn-framing) the parser must always detect the
+  // open tag live in the stream instead.
+  let servedTransport: ToolCallTransport | undefined;
+  let parser: StreamParser | null = null;
+  const getParser = (): StreamParser => {
+    parser ??= createStreamParser({
+      preOpenedThink:
+        completionAssumesOpenReasoning(
+          profile,
+          servedTransport ?? primaryTransport,
+        ) && !reasoningOpenEmittedByModel(profile),
+      ...(profile.reasoningStyle !== "none"
+        ? {
+            reasoningOpenTag: profile.reasoningOpenTag,
+            reasoningCloseTag: profile.reasoningCloseTag,
+          }
+        : {}),
+    });
+    return parser;
+  };
   let accumulated = "";
   // Channel A (server-side `reasoning_content` SSE deltas: QwQ /
   // DeepSeek-R1 with `--reasoning-format deepseek`) is mutually exclusive
@@ -1859,6 +2090,11 @@ async function consumeStream(
       break;
     }
     const chunk = next.value;
+    // Latch the serving link's transport off the first stamped chunk —
+    // it is constant for the whole stream (a live stream is never
+    // restarted on another link) and must be known before the parser is
+    // first used.
+    servedTransport ??= chunk.servedTransport;
     // Channel A: dedicated `reasoning_content` deltas (QwQ, DeepSeek-R1
     // with `--reasoning-format deepseek`). Bypass the grammar parser —
     // these tokens never appear inside `<think>` or JSON, they come on a
@@ -1876,7 +2112,7 @@ async function consumeStream(
     // reasoning / reply-text deltas for us.
     if (chunk.delta.length > 0) {
       accumulated += chunk.delta;
-      emitParseEvents(parser.push(chunk.delta));
+      emitParseEvents(getParser().push(chunk.delta));
     }
     if (chunk.done) {
       // Some servers close the iterator right after the done frame; keep
@@ -1884,7 +2120,7 @@ async function consumeStream(
       // hanging.
     }
   }
-  emitParseEvents(parser.end());
+  emitParseEvents(getParser().end());
   // Prefer server-emitted channel A reasoning when present; otherwise
   // fall back to the parser-derived stream (legacy `/completion`
   // endpoint, which never sets `reasoning_content` server-side).

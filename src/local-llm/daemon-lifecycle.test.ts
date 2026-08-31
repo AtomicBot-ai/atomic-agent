@@ -1,19 +1,37 @@
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { resolveEmbeddingPidFilePath, resolvePidFilePath } from "./backend-paths.js";
+const spawnMock = vi.hoisted(() => vi.fn());
+const execSyncMock = vi.hoisted(() => vi.fn());
+const execFileMock = vi.hoisted(() => vi.fn());
+vi.mock("node:child_process", () => ({
+  spawn: spawnMock,
+  execSync: execSyncMock,
+  execFile: execFileMock,
+}));
+
+import {
+  resolveEmbeddingPidFilePath,
+  resolveModelFilePath,
+  resolvePidFilePath,
+  resolveServerBinPath,
+} from "./backend-paths.js";
 import {
   buildEmbeddingServerArgs,
   buildLlamaServerArgs,
+  DaemonHealthError,
   ForeignDaemonError,
   readRunningPid,
+  startDaemon,
   stopDaemon,
   stopEmbeddingDaemon,
   type DaemonStartOptions,
   type EmbeddingDaemonStartOptions,
 } from "./daemon-lifecycle.js";
+import { getLocalModelDef } from "./models-catalog.js";
 
 const baseOpts: DaemonStartOptions = {
   dataDir: "/tmp/data",
@@ -152,6 +170,52 @@ describe("buildLlamaServerArgs", () => {
     const args = buildLlamaServerArgs(baseOpts, "/m.gguf", "alias");
     expect(args).not.toContain("--device");
     expect(args[args.indexOf("-ngl") + 1]).toBe("-1");
+  });
+
+  it("appends --split-mode layer --tensor-split when tensorSplit is set", () => {
+    const args = buildLlamaServerArgs(
+      { ...baseOpts, tensorSplit: [3, 1] },
+      "/m.gguf",
+      "alias",
+    );
+    const modeIdx = args.indexOf("--split-mode");
+    expect(modeIdx).toBeGreaterThan(-1);
+    expect(args[modeIdx + 1]).toBe("layer");
+    const splitIdx = args.indexOf("--tensor-split");
+    expect(splitIdx).toBeGreaterThan(-1);
+    expect(args[splitIdx + 1]).toBe("3,1");
+    // No pinned device: llama.cpp must keep every GPU visible to split.
+    expect(args).not.toContain("--device");
+    expect(args[args.indexOf("-ngl") + 1]).toBe("-1");
+  });
+
+  it("keeps --device alongside the split for an explicit device list", () => {
+    const args = buildLlamaServerArgs(
+      { ...baseOpts, device: "Vulkan0,Vulkan1", tensorSplit: [0.6, 0.4] },
+      "/m.gguf",
+      "alias",
+    );
+    expect(args[args.indexOf("--device") + 1]).toBe("Vulkan0,Vulkan1");
+    expect(args[args.indexOf("--tensor-split") + 1]).toBe("0.6,0.4");
+  });
+
+  it("does NOT emit split flags when device is 'cpu' (nothing to split)", () => {
+    const args = buildLlamaServerArgs(
+      { ...baseOpts, device: "cpu", tensorSplit: [1, 1] },
+      "/m.gguf",
+      "alias",
+    );
+    expect(args).not.toContain("--split-mode");
+    expect(args).not.toContain("--tensor-split");
+    expect(args[args.indexOf("-ngl") + 1]).toBe("0");
+  });
+
+  it("does NOT emit split flags for an empty or absent tensorSplit", () => {
+    for (const opts of [baseOpts, { ...baseOpts, tensorSplit: [] }]) {
+      const args = buildLlamaServerArgs(opts, "/m.gguf", "alias");
+      expect(args).not.toContain("--split-mode");
+      expect(args).not.toContain("--tensor-split");
+    }
   });
 
   it("emits both --chat-template-file and --mmproj together", () => {
@@ -369,5 +433,54 @@ describe("stopDaemon / stopEmbeddingDaemon (cross-user ownership)", () => {
       await expect(stopEmbeddingDaemon(dataDir)).rejects.toBeInstanceOf(ForeignDaemonError);
       expect(existsSync(pidPath)).toBe(true);
     });
+  });
+});
+
+describe("startDaemon health-wait failure", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    spawnMock.mockReset();
+  });
+
+  it("throws DaemonHealthError when the spawned server never becomes healthy", async () => {
+    // The typed class is load-bearing: the Windows CPU-backend fallback
+    // keys on `instanceof DaemonHealthError` to distinguish "the compute
+    // backend cannot serve on this machine" from pre-spawn failures. A
+    // revert to a bare `Error` would silently disable the fallback.
+    const dataDir = mkdtempSync(`${tmpdir()}/atomic-daemon-health-`);
+    try {
+      const binPath = resolveServerBinPath(dataDir, "llama-server");
+      mkdirSync(dirname(binPath), { recursive: true });
+      writeFileSync(binPath, "#!/bin/sh\n", "utf-8");
+      const model = getLocalModelDef("qwen-3.5-4b");
+      const modelPath = resolveModelFilePath(dataDir, model.id, model.filename);
+      mkdirSync(dirname(modelPath), { recursive: true });
+      writeFileSync(modelPath, "gguf", "utf-8");
+
+      spawnMock.mockReturnValue({ pid: 4242, unref: () => {} });
+      // Every health probe fails — the "server" crashed right after spawn.
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => {
+          throw new Error("ECONNREFUSED");
+        }),
+      );
+
+      vi.useFakeTimers();
+      const started = startDaemon({
+        dataDir,
+        modelId: "qwen-3.5-4b",
+        port: 19099,
+        // Pinned device skips the --list-devices / VRAM probes so the
+        // whole wait runs on the mocked clock.
+        device: "cpu",
+      });
+      const rejects = expect(started).rejects.toBeInstanceOf(DaemonHealthError);
+      await vi.advanceTimersByTimeAsync(31_000);
+      await rejects;
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
   });
 });

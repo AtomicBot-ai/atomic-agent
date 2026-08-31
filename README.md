@@ -229,6 +229,8 @@ Atomic Agent's memory is not a giant chat log pasted back into the prompt. It's 
 - **Dedup and eviction** merge near-duplicate memories and evict by usefulness, not age, on by default.
 - **Reflection** runs after turns, off the main agent slot, and writes memory without blocking the reply.
 
+New to this? [MEMORY_GUIDE.md](MEMORY_GUIDE.md) walks the whole loop end to end — what gets stored when, where the SQLite file lives, how recall shows up in prompts, worked example transcripts, and how to inspect or wipe it all.
+
 ## Ways to Use It
 
 <details>
@@ -279,7 +281,7 @@ All six are designed here rather than transcribed from upstream terminal themes,
 
 **Mouse.** The TUI is clickable: the breadcrumb (which opens the menu, the same as Esc on an idle prompt), sidebar sessions and tasks, every list row (skills, tasks, memory, MCP, models, providers), the session / theme / slash pickers, approval buttons, tool cards, and the prompt itself — clicking in the input places the caret. A click selects a row, a second click on the selected row opens it, and the wheel scrolls the chat or walks the focused panel.
 
-While mouse reporting is on the terminal hands clicks to the app, so its own plain drag-to-select is unavailable — a terminal-level constraint, not a choice. **To select text, just drag over it**: a drag that starts on plain text (a chat message, panel prose, empty rail space) pauses the mouse for 10 seconds and says so in chat — drag again to select, then copy the way you normally would. The pause ends on its own and clicks come back. This works in every terminal, no modifier to remember. Some terminals also offer an instant path: a Shift-modified drag bypasses reporting natively on kitty, WezTerm, GNOME Terminal and Windows Terminal, and iTerm2 reserves Option for the same thing — there the selection happens immediately, no pause needed. Where the app sees the shifted or alt-modified press instead (Apple Terminal), it opens the same 10-second pause. To hand selection to the terminal permanently instead: `/mouse off` in the app, `atomic-agent tui --no-mouse` for one run, or `"tui": { "mouse": false }` in `<stateDir>/config.json`. With mouse off, wheel scrolling still works through the terminal's alternate-scroll mode, exactly as before.
+While mouse reporting is on the terminal hands clicks to the app, so its own plain drag-to-select is unavailable — a terminal-level constraint, not a choice. **To select text, just drag over it**: a drag that starts on plain text (a chat message, panel prose, empty rail space) pauses the mouse for 10 seconds and says so in chat — drag again to select, then copy the way you normally would. The pause ends on its own and clicks come back. This works in every terminal, no modifier to remember. Some terminals also offer an instant path: a Shift-modified drag bypasses reporting natively on kitty, WezTerm, GNOME Terminal and Windows Terminal, and iTerm2 reserves Option for the same thing — there the selection happens immediately, no pause needed. Where the app sees the shifted or alt-modified press instead (Apple Terminal), it opens the same 10-second pause. To hand selection to the terminal permanently instead: `/mouse off` in the app, `atomic-agent tui --no-mouse` for one run, or `"tui": { "mouse": false }` in `<stateDir>/config.json`. With mouse off, wheel scrolling still works through the terminal's alternate-scroll mode, exactly as before. If a terminal (or an ssh hop) answers the tracking request with reports the app cannot decode, the TUI turns mouse support off by itself for that session — with a chat notice — instead of letting coordinates spill into the composer.
 
 Cloud provider setup pulls each provider's full live model catalog, hundreds of models, instead of a short hardcoded list; OpenAI-compatible servers are asked for their own `/v1/models`. The picker filters as you type, and `/model` switches models mid-session.
 
@@ -310,6 +312,8 @@ atomic-agent tui --cwd /path/to/work
 Managed mode downloads the backend, pulls GGUF models, selects the active model, and starts detached chat / embedding daemons when configured.
 
 The managed chat daemon stops when the last session exits, freeing the RAM and VRAM the model was holding; set `localModels.managed.stopOnExit: false` in `config.json` to keep the model warm between sessions. Daemons started standalone with `models start` are never touched.
+
+On Windows the backend zip is picked per machine (CUDA when a capable NVIDIA driver is present, Vulkan otherwise). If the GPU build cannot serve a model on your hardware — typical for iGPU-only boxes — the start falls back to the CPU build automatically and records `localModels.managed.backendVariant: "cpu"` in `config.json`; set it to `"auto"`, `"vulkan"`, `"cuda-12.4"` or `"cuda-13.3"` to pick a build yourself (e.g. after a driver update).
 
 Cloud models are searchable from the same command — by id, vendor, or capability, across every configured cloud provider:
 
@@ -518,7 +522,7 @@ The promise is not magic secrecy. The promise is that the agent control plane do
 **Linux notes:**
 - **Desktop tools** (install via your package manager): `ripgrep` (file search; bundled binary used when present), `xclip`/`xsel` (X11) or `wl-clipboard` (Wayland) for clipboard, `libnotify-bin` for notifications, `wmctrl` for window control (X11/XWayland only), `gio` (glib2) or `trash-cli` for `fs.trash`.
 - **Browser:** Chromium-family sandboxing can fail under some Linux setups (containers, certain kernels). If Chrome refuses to launch, run it with `--no-sandbox`.
-- **GPU acceleration (managed mode):** the backend always starts and falls back to CPU when no GPU driver is available. For GPU offload install a Vulkan driver. Intel/AMD: `mesa-vulkan-drivers` (+ `vulkan-loader`/`libvulkan1`); NVIDIA: the stock proprietary driver bundles its Vulkan ICD. Device auto-selected at start; override with `atomic-agent models use-device <auto|cpu|Vulkan0>`, inspect with `atomic-agent models devices`, or press `G` in the TUI Models tab.
+- **GPU acceleration (managed mode):** the backend always starts and falls back to CPU when no GPU driver is available. For GPU offload install a Vulkan driver. Intel/AMD: `mesa-vulkan-drivers` (+ `vulkan-loader`/`libvulkan1`); NVIDIA: the stock proprietary driver bundles its Vulkan ICD. Device auto-selected at start; override with `atomic-agent models use-device <auto|cpu|Vulkan0>`, inspect with `atomic-agent models devices`, or press `G` in the TUI Models tab. Multi-GPU: set `localModels.managed.tensorSplit` in `config.json` (e.g. `[3, 1]` for a 75%/25% layer split) to launch llama-server with `--split-mode layer --tensor-split` across every visible GPU; combine with `use-device Vulkan0,Vulkan1` to restrict which devices join the split.
 
 </details>
 
@@ -643,7 +647,8 @@ npm run build
 Core docs:
 
 - [PROMPT.md](PROMPT.md): prompt anatomy
-- [MEMORY.md](MEMORY.md): memory and recall
+- [MEMORY_GUIDE.md](MEMORY_GUIDE.md): memory end to end, with worked examples
+- [MEMORY.md](MEMORY.md): memory and recall internals
 - [MEMORY_FABRIC_V2.md](MEMORY_FABRIC_V2.md) / [MEMORY_FABRIC_V2.5.md](MEMORY_FABRIC_V2.5.md): memory roadmap
 - [SKILLS.md](SKILLS.md): skill format
 - [BUNDLING.md](BUNDLING.md): release packaging

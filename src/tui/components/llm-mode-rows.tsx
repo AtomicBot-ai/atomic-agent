@@ -176,12 +176,13 @@ function CloudRows({
   const section = selectCloudModelSection(state);
   const filter = state.llmPanel.cloudModelFilter;
   const filterFocused = state.llmPanel.cloudModelFilterFocused;
+  const pricing = state.llmPanel.cloudModelPricing;
   const statusLine = section.status !== "ready";
   // Everything around the model window costs lines: section headers (3),
-  // their bottom margins (3), provider:/filter: (2), the counter (1),
-  // provider/embedding rows, plus a loading/error line when shown.
+  // their bottom margins (3), provider:/filter:/price: (3), the counter
+  // (1), provider/embedding rows, plus a loading/error line when shown.
   const overhead =
-    9 +
+    10 +
     Math.max(1, providerRows.length) +
     Math.max(1, embeddingRows.length) +
     (statusLine ? 1 : 0);
@@ -239,6 +240,19 @@ function CloudRows({
             ) : null}
           </Text>
         </PasteFieldTarget>
+        {/* The price facet stays visible even while narrowed to nothing:
+            "no match" under `price: free` explains itself, where a bare
+            empty list would read as a broken catalog. */}
+        <Text color={theme.colors.muted}>
+          {"price: "}
+          <Text
+            bold={pricing !== "all"}
+            color={pricing !== "all" ? theme.colors.accent : theme.colors.muted}
+          >
+            {pricing}
+          </Text>
+          {" · p cycles free/paid/all"}
+        </Text>
         {section.status === "loading" ? (
           <Text color={theme.colors.muted}>  fetching model list…</Text>
         ) : null}

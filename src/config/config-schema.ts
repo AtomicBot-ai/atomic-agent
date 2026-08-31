@@ -11,6 +11,11 @@ import {
   isKnownLocalModelId,
   type LocalModelDef,
 } from "../local-llm/models-catalog.js";
+import {
+  BACKEND_VARIANT_PREFERENCES,
+  isBackendVariantPreference,
+  type BackendVariantPreference,
+} from "../local-llm/windows-backend-variant.js";
 import { parseCustomLocalModels } from "./custom-models-schema.js";
 import {
   MCP_SERVER_NAME_MAX_LENGTH,
@@ -343,6 +348,17 @@ export interface AtomicAgentConfig {
     launchTimeoutMs: number;
   };
   skills: {
+    /**
+     * Soft budget for the `### skills` catalog in the stable prefix,
+     * in tokens. `buildSkillCatalog` converts it to a char cap at
+     * `SKILL_CATALOG_CHARS_PER_TOKEN` (8) chars/token and drops
+     * catalog entries past the cap so the prompt stays bounded. Env
+     * `ATOMIC_AGENT_SKILLS_CATALOG_BUDGET`, default `512` — which
+     * maps to the historical hardcoded 4096-char cap, so an unset
+     * key keeps pre-existing behavior byte-for-byte. Env values are
+     * clamped to `[1, 100_000]` tokens, so a zero or negative value
+     * cannot drive `maxChars` to 0 and silently collapse the catalog.
+     */
     catalogTokenBudget: number;
     /**
      * Names of installed skills that should be hidden from the
@@ -956,6 +972,22 @@ export interface UserManagedLocalLlmConfig {
    */
   device: string;
   /**
+   * Which llama.cpp build (release zip) the managed backend installs.
+   * Windows-only — every other platform publishes a single asset.
+   *   - `"auto"` (default) — probe `nvidia-smi` and pick the newest CUDA
+   *     build the driver can run, else Vulkan.
+   *   - `"cpu"` — the CPU-only build. For machines whose Vulkan stack
+   *     cannot load a model at all (iGPU-only boxes); also written back
+   *     automatically when a GPU build fails to serve (see
+   *     `cpu-backend-fallback.ts`). Distinct from `device: "cpu"`, which
+   *     only disables offload — the broken compute backend would still
+   *     be baked into the binary.
+   *   - `"vulkan"` / `"cuda-12.4"` / `"cuda-13.3"` — pin that build
+   *     (and undo an automatic CPU fallback after a driver fix).
+   * Added in config v47; older files transparently get `"auto"`.
+   */
+  backendVariant: BackendVariantPreference;
+  /**
    * llama-server context window (`--ctx-size`) for the managed chat
    * daemon.
    *   - `0` (default) — auto: fit the context to the target device's
@@ -964,6 +996,21 @@ export interface UserManagedLocalLlmConfig {
    *     model's trained context ceiling.
    */
   contextSize: number;
+  /**
+   * Multi-GPU tensor split for the managed chat daemon. Empty (the
+   * default) keeps the single-device behavior: `device` auto-picks the
+   * best GPU and pins offload there. Two or more non-negative ratios
+   * (at least one positive, e.g. `[3, 1]` for a 75%/25% split) launch
+   * llama-server with `--split-mode layer --tensor-split <ratios>` so
+   * the model's layers spread across GPUs proportionally. With
+   * `device: "auto"` no single device is pinned — llama.cpp sees every
+   * GPU; an explicit comma-separated `device` list (e.g.
+   * `"Vulkan0,Vulkan1"`) restricts the split to those devices.
+   * `device: "cpu"` wins over this field and disables splitting. The
+   * embedding daemon is never split — it keeps pinning one device.
+   * Added in config v48; older files inherit `[]` transparently.
+   */
+  tensorSplit: number[];
   /**
    * Stop the managed chat daemon when the last CLI session exits.
    * `true` (default) — closing the terminal frees the RAM/VRAM the
@@ -1615,7 +1662,20 @@ export interface UserConfigFile {
 // with the default `true`, which is the new product behaviour; `false`
 // keeps both structures in-memory (the pre-v46 behaviour) for workloads
 // that want a cold cache per run.
-export const USER_CONFIG_VERSION = 46;
+// v47: localModels.managed gains `backendVariant` — which llama.cpp
+// release zip the managed backend installs on Windows (`auto` | `cpu` |
+// `vulkan` | `cuda-12.4` | `cuda-13.3`). Exists for iGPU-only boxes whose
+// Vulkan build cannot load a model; the start-failure fallback persists
+// `"cpu"` here so auto-update stops reinstalling the broken GPU build.
+// Additive: older files transparently inherit `"auto"`, the exact
+// detection behaviour they already had. (Drafted as a second v46, but v46
+// was already spent on `persistCache` — the additive changes keep distinct
+// sequential numbers.)
+// v48: localModels.managed gains `tensorSplit` (default `[]` = single-device
+// auto-pick, byte-identical launch args). Two or more ratios opt the managed
+// chat daemon into multi-GPU layer splitting (`--split-mode layer
+// --tensor-split <ratios>`). Older files transparently inherit `[]`.
+export const USER_CONFIG_VERSION = 48;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -1750,6 +1810,8 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   43,
   44,
   45,
+  46,
+  47,
   USER_CONFIG_VERSION,
 ];
 
@@ -1766,7 +1828,9 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       autoUpdate: true,
       stopOnExit: true,
       device: "auto",
+      backendVariant: "auto",
       contextSize: 0,
+      tensorSplit: [],
     },
     embeddings: {
       enabled: false,
@@ -2101,6 +2165,17 @@ export function parseLocalLlmMode(raw: unknown, field: string): LocalLlmMode {
   throw new ConfigValidationError(
     field,
     `expected external|managed, got ${JSON.stringify(raw)}`,
+  );
+}
+
+export function parseBackendVariant(
+  raw: unknown,
+  field: string,
+): BackendVariantPreference {
+  if (isBackendVariantPreference(raw)) return raw;
+  throw new ConfigValidationError(
+    field,
+    `expected ${BACKEND_VARIANT_PREFERENCES.join("|")}, got ${JSON.stringify(raw)}`,
   );
 }
 
@@ -2502,6 +2577,50 @@ export function parseStringArrayOrNull(
       );
     }
     result.push(entry);
+  }
+  return result;
+}
+
+/**
+ * Parse `localModels.managed.tensorSplit` — the multi-GPU ratio list
+ * forwarded to llama-server as `--tensor-split`. `[]` / absent means
+ * "feature off" (single-device auto-pick). A non-empty list must name a
+ * ratio per GPU: at least two finite non-negative numbers with at least
+ * one positive (a lone ratio is not a split, and an all-zero list would
+ * make llama-server offload nowhere). Zeros are allowed inside the list
+ * to skip a device (e.g. `[1, 0, 1]` skips the middle GPU).
+ */
+export function parseTensorSplit(raw: unknown, field: string): number[] {
+  if (raw === undefined || raw === null) return [];
+  if (!Array.isArray(raw)) {
+    throw new ConfigValidationError(
+      field,
+      `expected number[], got ${JSON.stringify(raw)}`,
+    );
+  }
+  if (raw.length === 0) return [];
+  if (raw.length === 1) {
+    throw new ConfigValidationError(
+      field,
+      "expected at least two ratios (one per GPU) — a single ratio is not a split; use [] to disable",
+    );
+  }
+  const result: number[] = [];
+  for (let i = 0; i < raw.length; i++) {
+    const entry = raw[i];
+    if (typeof entry !== "number" || !Number.isFinite(entry) || entry < 0) {
+      throw new ConfigValidationError(
+        `${field}[${i}]`,
+        `expected finite non-negative number, got ${JSON.stringify(entry)}`,
+      );
+    }
+    result.push(entry);
+  }
+  if (!result.some((r) => r > 0)) {
+    throw new ConfigValidationError(
+      field,
+      "expected at least one positive ratio",
+    );
   }
   return result;
 }
@@ -3116,10 +3235,19 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
       rawManaged.device ?? USER_CONFIG_DEFAULTS.localModels.managed.device,
       "localModels.managed.device",
     ),
+    backendVariant: parseBackendVariant(
+      rawManaged.backendVariant ??
+        USER_CONFIG_DEFAULTS.localModels.managed.backendVariant,
+      "localModels.managed.backendVariant",
+    ),
     contextSize: parseNonNegativeInt(
       rawManaged.contextSize ??
         USER_CONFIG_DEFAULTS.localModels.managed.contextSize,
       "localModels.managed.contextSize",
+    ),
+    tensorSplit: parseTensorSplit(
+      rawManaged.tensorSplit,
+      "localModels.managed.tensorSplit",
     ),
   };
 
