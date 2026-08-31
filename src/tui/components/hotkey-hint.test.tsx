@@ -120,12 +120,12 @@ describe("HotkeyHint draft chips", () => {
     // With a draft, Esc clears it — so the strip must not promise the
     // menu on that key, and no other chip does either: with ctrl+p
     // retired, the menu is a second Esc (or the breadcrumb) away.
-    // Seven with the ctrl+r route chip.
+    // Eight with the ctrl+r route and ctrl+n window chips.
     const out = renderHint(chatState({ inputValue: "half a thought" }));
     expect(out).toContain("[esc]");
     expect(out).toContain("clear draft");
     expect(out).not.toContain("[ctrl+p]");
-    expect(chipCount(out)).toBe(7);
+    expect(chipCount(out)).toBe(8);
   });
 
   it("keeps the empty idle footer free of the clear-draft chip", () => {
@@ -136,7 +136,7 @@ describe("HotkeyHint draft chips", () => {
     // On an empty buffer Esc opens the menu, so the strip says so — the
     // same slot that carries `clear draft` once there is a draft.
     expect(out).toContain("[esc]");
-    expect(chipCount(out)).toBe(7);
+    expect(chipCount(out)).toBe(8);
     // The keyboard route to the composer's three controls is written
     // down here, not only inside the popup it opens.
     expect(out).toContain("[ctrl+r]");
@@ -158,6 +158,37 @@ describe("HotkeyHint draft chips", () => {
     expect(out).toContain("[esc]");
     expect(out).toContain("abort");
     expect(out).not.toContain("draft");
+  });
+});
+
+describe("HotkeyHint new-window chip", () => {
+  it("advertises the ctrl+n new-window key in the idle strip", () => {
+    // Ctrl+N opens a fresh OS terminal window running another
+    // atomic-agent in the same working dir. This chip is the only place
+    // the key is written down on screen (`/window` lives in the menu),
+    // and the binding is guarded off exactly where the other strips
+    // take over (palette, approval), so the idle strip is the one place
+    // advertising it is accurate.
+    const idle = renderHint(chatState());
+    expect(idle).toContain("[ctrl+n]");
+    expect(idle).toContain("new window");
+  });
+
+  it("keeps the modal and approval strips free of the ctrl+n chip", () => {
+    const modal = renderHint(chatState({ slashPaletteOpen: true }));
+    expect(modal).not.toContain("ctrl+n");
+    const approval = renderHint(chatState({ pendingApproval: fakeApproval() }));
+    expect(approval).not.toContain("ctrl+n");
+  });
+
+  it("sheds the convenience hint before the core chips on a narrow row", () => {
+    const out = renderHint(chatState(), 80);
+    expect(out.split("\n")).toHaveLength(1);
+    expect(out).not.toContain("ctrl+n");
+    // The essentials it must never displace are still standing.
+    expect(out).toContain("send");
+    expect(out).toContain("menu");
+    expect(out).toContain("quit");
   });
 });
 
