@@ -271,15 +271,47 @@ describe("openai-compat steer prompt", () => {
   });
 
   it("swallows panel hotkeys while the prompt is open", () => {
-    // `s` is the daemon start/stop hotkey outside the modal.
-    const onStop = vi.fn();
-    const dispatched = press(
-      "s",
-      emptyKey(),
-      steerState(),
-      callbacks({ onLocalModelsDaemonStopRequested: onStop }),
-    );
-    expect(dispatched).toEqual([]);
-    expect(onStop).not.toHaveBeenCalled();
+    // Baseline first: without the prompt, `]` cycles the pane. The
+    // empty dispatch below then proves the steer swallowed the key —
+    // not that the fixture never wired it.
+    expect(press("]", emptyKey(), externalState())).toEqual([
+      { type: "llm_mode_set", mode: "fallback" },
+    ]);
+    expect(press("]", emptyKey(), steerState())).toEqual([]);
+  });
+
+  it("refuses to open while the URL editor is open", () => {
+    // The steer arrives asynchronously (the refused save's probe); by
+    // then Enter on the External row may have reopened the editor. The
+    // reducer skips the steer rather than stacking two modals — the
+    // editor's next save re-probes and re-offers it.
+    const editing = externalState();
+    editing.llmPanel = {
+      ...editing.llmPanel,
+      externalUrlDraft: "http://127.0.0.1:11434",
+    };
+    const next = reduceLlmPanelAction(editing, {
+      type: "llm_external_compat_steer_opened",
+      url: "http://127.0.0.1:11434",
+    });
+    expect(next?.llmPanel.externalCompatSteerUrl).toBeNull();
+  });
+
+  it("keeps the keyboard on the URL editor if both are somehow open", () => {
+    // Built directly (the reducer refuses to create this state) to pin
+    // the handler's precedence to the render order: the editor is the
+    // modal on screen, so it must be the one receiving keys — `y` types
+    // into the URL instead of invisibly accepting the hidden steer.
+    const state = steerState();
+    state.llmPanel = {
+      ...state.llmPanel,
+      externalUrlDraft: "http://127.0.0.1:808",
+    };
+    expect(press("8", emptyKey(), state)).toEqual([
+      { type: "llm_external_url_draft_set", value: "http://127.0.0.1:8088" },
+    ]);
+    expect(press("y", emptyKey(), state)).toEqual([
+      { type: "llm_external_url_draft_set", value: "http://127.0.0.1:808y" },
+    ]);
   });
 });

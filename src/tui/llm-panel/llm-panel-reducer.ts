@@ -72,6 +72,13 @@ export function reduceLlmPanelAction(
         llmPanel: { ...panel, externalUrlDraft: action.value },
       };
     case "llm_external_compat_steer_opened":
+      // The steer arrives asynchronously — the refused save's /health
+      // probe can take seconds — and the operator may have reopened the
+      // URL editor meanwhile. Opening underneath it would split the
+      // modals (the draft renders, a hidden steer would contest the
+      // keys), so the steer yields: the editor's next save re-probes
+      // and re-offers it.
+      if (panel.externalUrlDraft !== null) return state;
       return {
         ...state,
         llmPanel: { ...panel, externalCompatSteerUrl: action.url },

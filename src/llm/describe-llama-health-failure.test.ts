@@ -34,8 +34,24 @@ describe("describeLlamaHealthFailure", () => {
       result({ kind: "openai-compat", status: 404, error: "http 404" }),
       "http://127.0.0.1:11434",
     );
-    expect(line).toContain("Ollama");
-    expect(line).toContain("base URL http://127.0.0.1:11434");
+    expect(line).toContain("answers like Ollama");
+    expect(line).toContain("Ollama (local), base URL http://127.0.0.1:11434");
+  });
+
+  it("routes a remote Ollama through the manual compat row, keeping its host", () => {
+    // The "Ollama (local)" preset row never shows a base-URL screen —
+    // followed by hand it saves the preset's own localhost:11434 — so
+    // for a remote host the instruction must go through the manual
+    // openai-compatible row, which asks for the URL.
+    const line = describeLlamaHealthFailure(
+      result({ kind: "openai-compat", status: 404, error: "http 404" }),
+      "http://192.168.1.50:11434",
+    );
+    expect(line).toContain("answers like Ollama");
+    expect(line).toContain(
+      "openai-compatible, base URL http://192.168.1.50:11434",
+    );
+    expect(line).not.toContain("Ollama (local)");
   });
 
   it("says wait, not reconfigure, while the model is loading", () => {
