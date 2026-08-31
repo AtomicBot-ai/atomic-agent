@@ -7,7 +7,7 @@ import {
   recommendLocalModel,
   FIRST_RUN_MAX_DOWNLOAD_GB,
 } from "./local-model-picks.js";
-import { setCustomLocalModels } from "../../local-llm/index.js";
+import { LOCAL_MODELS_CATALOG, setCustomLocalModels } from "../../local-llm/index.js";
 import type { LocalModelDef, LocalModelId } from "../../local-llm/index.js";
 
 function def(
@@ -15,6 +15,7 @@ function def(
   fileSizeGb: number,
   minRamGb: number,
   recommendedRamGb: number,
+  extra?: Partial<LocalModelDef>,
 ): LocalModelDef {
   return {
     id: id as LocalModelId,
@@ -29,6 +30,7 @@ function def(
     minRamGb,
     recommendedRamGb,
     family: "qwen",
+    ...extra,
   } as LocalModelDef;
 }
 
@@ -38,6 +40,8 @@ const CATALOG = [
   def("medium", 7, 8, 12),
   def("large", 18, 24, 32),
 ];
+
+const UNCENSORED_ID = "qwen-3.8-27b-uncensored";
 
 describe("recommendLocalModel", () => {
   it("picks the largest quick download the machine runs comfortably", () => {
@@ -59,6 +63,30 @@ describe("recommendLocalModel", () => {
   it("has nothing to say about an empty catalog", () => {
     expect(recommendLocalModel(16, [])).toBeNull();
   });
+
+  // The 16.5 GB uncensored file could never win the quick-download branch
+  // anyway (the ceiling is 8 GB) — but the fallbacks pick by size, so the
+  // guarantee is pinned across the whole RAM range, tiny hosts included.
+  it("never auto-recommends the uncensored model on any host", () => {
+    for (const ramGb of [1, 2, 4, 8, 16, 20, 24, 32, 48, 64, 128, 512]) {
+      expect(recommendLocalModel(ramGb, LOCAL_MODELS_CATALOG)).not.toBe(
+        UNCENSORED_ID,
+      );
+    }
+  });
+
+  // Structural, not accidental: even an uncensored model that would win
+  // on every usual criterion (comfortable, under the ceiling, largest)
+  // is excluded from the recommendation entirely.
+  it("excludes uncensored entries from recommendation even when they would win", () => {
+    const catalog = [
+      def("tame", 2, 4, 6),
+      def("edgy", 6, 4, 6, { uncensored: true, tag: "Use at your own risk" }),
+    ];
+    expect(recommendLocalModel(64, catalog)).toBe("tame");
+    // And a catalog of only uncensored entries recommends nothing at all.
+    expect(recommendLocalModel(64, [catalog[1]!])).toBeNull();
+  });
 });
 
 describe("buildLocalModelPicks", () => {
@@ -79,6 +107,44 @@ describe("orderLocalModelPicks", () => {
     expect(ordered[0]?.recommended).toBe(true);
     expect(ordered.at(-1)?.fit).toBe("over");
   });
+
+  // Pinned last even when the usual rule would rank it first: here the
+  // uncensored model is the only one that fits the host at all.
+  it("sinks an uncensored pick below every other model whatever its fit", () => {
+    const catalog = [
+      def("huge-a", 20, 24, 32),
+      def("huge-b", 22, 24, 32),
+      def("edgy", 3, 4, 6, { uncensored: true, tag: "Use at your own risk" }),
+    ];
+    const ordered = orderLocalModelPicks(buildLocalModelPicks(8, catalog));
+    expect(ordered.map((p) => p.id)).toEqual(["huge-a", "huge-b", "edgy"]);
+    expect(ordered.at(-1)?.fit).toBe("fits");
+  });
+
+  it("keeps the real catalog's uncensored entry as the last model row", () => {
+    // 16 GB would otherwise slot the 16.5 GB file mid-pack among the
+    // other "over" models; the pin overrides that size ordering.
+    for (const ramGb of [4, 16, 64]) {
+      const ordered = orderLocalModelPicks(
+        buildLocalModelPicks(ramGb, LOCAL_MODELS_CATALOG),
+      );
+      expect(ordered.at(-1)?.id).toBe(UNCENSORED_ID);
+      expect(ordered).toHaveLength(LOCAL_MODELS_CATALOG.length);
+    }
+  });
+
+  // Small machines still see it — with an honest fit label, not a faked
+  // one: 4 GB of RAM is under the 20 GB minimum, so the row says "over".
+  it("keeps the uncensored row present and honest on a small host", () => {
+    const ordered = orderLocalModelPicks(
+      buildLocalModelPicks(4, LOCAL_MODELS_CATALOG),
+    );
+    const last = ordered.at(-1);
+    expect(last?.id).toBe(UNCENSORED_ID);
+    expect(last?.fit).toBe("over");
+    expect(last?.tag).toBe("Use at your own risk");
+    expect(last?.recommended).toBe(false);
+  });
 });
 
 describe("buildLocalPickRows", () => {
@@ -93,6 +159,21 @@ describe("buildLocalPickRows", () => {
   // catalog still has to leave somewhere to go.
   it("offers the Hugging Face row even with no curated models", () => {
     expect(buildLocalPickRows([])).toEqual([{ kind: "hugging_face" }]);
+  });
+
+  // The full bottom of the first-run list, in order: every safe model,
+  // then the uncensored one, then the Hugging Face escape hatch.
+  it("puts the uncensored model directly above the Hugging Face row", () => {
+    const rows = buildLocalPickRows(
+      orderLocalModelPicks(buildLocalModelPicks(16, LOCAL_MODELS_CATALOG)),
+    );
+    expect(rows.at(-1)?.kind).toBe("hugging_face");
+    const lastModel = rows.at(-2);
+    expect(lastModel?.kind).toBe("model");
+    if (lastModel?.kind === "model") {
+      expect(lastModel.pick.id).toBe(UNCENSORED_ID);
+      expect(lastModel.pick.tag).toBe("Use at your own risk");
+    }
   });
 });
 
