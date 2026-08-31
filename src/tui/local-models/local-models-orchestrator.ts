@@ -74,14 +74,20 @@ import type { TuiEventBus } from "../tui-app.js";
  * resolved. `configured` is the raw config value (`auto` / `cpu` / a
  * device id); `resolved` is what `resolveManagedDevice` returned
  * (`undefined` ⇒ no GPU picked → llama.cpp default / CPU fallback).
+ * `multiGpu` (a configured tensor split) relabels the unresolved-`auto`
+ * case: there it means "all GPUs, split", not "no GPU detected".
  */
 function describeDeviceChoice(
   configured: string,
   resolved: string | undefined,
+  multiGpu = false,
 ): string {
   if (configured === "cpu") return "cpu (forced)";
   if (configured === "auto") {
-    return resolved ? `auto → ${resolved}` : "auto → CPU (no GPU detected)";
+    if (resolved) return `auto → ${resolved}`;
+    return multiGpu
+      ? "auto → all GPUs (tensor split)"
+      : "auto → CPU (no GPU detected)";
   }
   return resolved ?? configured;
 }
@@ -1053,16 +1059,21 @@ export class LocalModelsOrchestrator {
       // chat side stays the source of truth for `daemonPhase`.
       const embedding = this.buildEmbeddingStartOptions(cfg, dataDir);
       // Resolve the GPU preference once so chat + embedding land on the
-      // same device and the operator sees which one was picked.
+      // same device and the operator sees which one was picked. A
+      // configured tensor split keeps `auto` from pinning one device —
+      // the chat daemon needs every GPU visible to spread layers.
+      const tensorSplit = cfg.localModels.managed.tensorSplit;
+      const multiGpu = tensorSplit.length > 0;
       const { binaryName } = resolvePlatformAsset();
       const binPath = resolveServerBinPath(dataDir, binaryName);
       const device = await resolveManagedDevice(
         binPath,
         cfg.localModels.managed.device,
+        { multiGpu },
       );
       this.bus.emit({
         type: "runtime_info",
-        line: `local-llm: device ${describeDeviceChoice(cfg.localModels.managed.device, device)}`,
+        line: `local-llm: device ${describeDeviceChoice(cfg.localModels.managed.device, device, multiGpu)}`,
       });
       const gpuBudgetGb = await this.resolveGpuBudget(cfg, dataDir);
       if (classifyVramFit(def, gpuBudgetGb) === "insufficient") {
@@ -1081,6 +1092,7 @@ export class LocalModelsOrchestrator {
           mmprojFile,
           contextSize: cfg.localModels.managed.contextSize,
           ...(device ? { device } : {}),
+          ...(multiGpu ? { tensorSplit } : {}),
         },
         embedding: embedding
           ? { ...embedding, ...(device ? { device } : {}) }

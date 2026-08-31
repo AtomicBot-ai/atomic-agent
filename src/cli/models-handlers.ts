@@ -300,12 +300,18 @@ export async function runLocalModelsStart(): Promise<number> {
   }
 
   // Resolve the GPU preference once so both daemons land on the same
-  // device and we can name the chosen device in the start output.
+  // device and we can name the chosen device in the start output. A
+  // configured tensor split keeps `auto` from pinning one device — the
+  // chat daemon needs every GPU visible to spread layers across them.
+  const tensorSplit = cfg.localModels.managed.tensorSplit;
+  const multiGpu = tensorSplit.length > 0;
   const { binaryName } = resolvePlatformAsset();
   const binPath = resolveServerBinPath(dataDir, binaryName);
-  const device = await resolveManagedDevice(binPath, cfg.localModels.managed.device);
+  const device = await resolveManagedDevice(binPath, cfg.localModels.managed.device, {
+    multiGpu,
+  });
   process.stdout.write(
-    `device:         ${describeDeviceChoice(cfg.localModels.managed.device, device)}\n`,
+    `device:         ${describeDeviceChoice(cfg.localModels.managed.device, device, multiGpu)}\n`,
   );
 
   try {
@@ -318,6 +324,7 @@ export async function runLocalModelsStart(): Promise<number> {
         ...(tpl ? { chatTemplateFile: tpl } : {}),
         ...(mmprojFile ? { mmprojFile } : {}),
         ...(device ? { device } : {}),
+        ...(multiGpu ? { tensorSplit } : {}),
       },
       ...(embRequested && embReady
         ? {
@@ -377,15 +384,21 @@ export async function runLocalModelsStop(): Promise<number> {
  * resolved at start. `configured` is the raw config value (`auto` /
  * `cpu` / a device id); `resolved` is what `resolveManagedDevice`
  * returned (`undefined` means no GPU was picked → llama.cpp default /
- * CPU fallback).
+ * CPU fallback). `multiGpu` (a configured tensor split) relabels the
+ * unresolved-`auto` case: there it means "all GPUs, split", not "no
+ * GPU detected".
  */
 function describeDeviceChoice(
   configured: string,
   resolved: string | undefined,
+  multiGpu = false,
 ): string {
   if (configured === "cpu") return "cpu (forced, -ngl 0)";
   if (configured === "auto") {
-    return resolved ? `auto → ${resolved}` : "auto → CPU (no GPU detected)";
+    if (resolved) return `auto → ${resolved}`;
+    return multiGpu
+      ? "auto → all GPUs (tensor split)"
+      : "auto → CPU (no GPU detected)";
   }
   return resolved ?? configured;
 }
@@ -397,7 +410,12 @@ function describeDeviceChoice(
  */
 const BACKEND_DOWNLOAD_TIMEOUT_MS = 10 * 60_000;
 
-const DEVICE_ID_RE = /^[A-Za-z]+\d+$/;
+/**
+ * One backend device id, or a comma-separated list of them (llama-server
+ * accepts `--device Vulkan0,Vulkan1` — the multi-GPU restriction that
+ * pairs with `localModels.managed.tensorSplit`).
+ */
+const DEVICE_ID_RE = /^[A-Za-z]+\d+(,[A-Za-z]+\d+)*$/;
 
 /**
  * List compute devices reported by `llama-server --list-devices`. The
@@ -415,12 +433,13 @@ export async function runLocalModelsDevices(): Promise<number> {
   const { binaryName } = resolvePlatformAsset();
   const binPath = resolveServerBinPath(dataDir, binaryName);
   const configured = cfg.localModels.managed.device;
+  const multiGpu = cfg.localModels.managed.tensorSplit.length > 0;
   const devices = await listVulkanDevices(binPath);
-  const resolved = await resolveManagedDevice(binPath, configured);
+  const resolved = await resolveManagedDevice(binPath, configured, { multiGpu });
 
   process.stdout.write(`configured device: ${configured}\n`);
   process.stdout.write(
-    `effective device:  ${describeDeviceChoice(configured, resolved)}\n\n`,
+    `effective device:  ${describeDeviceChoice(configured, resolved, multiGpu)}\n\n`,
   );
   if (devices.length === 0) {
     process.stdout.write(
@@ -457,7 +476,8 @@ export async function runLocalModelsUseDevice(
   if (value !== "auto" && value !== "cpu" && !DEVICE_ID_RE.test(value)) {
     process.stderr.write(
       `invalid device ${JSON.stringify(value)}. Expected 'auto', 'cpu', or a device id ` +
-        "(e.g. Vulkan0 — see 'atomic-agent models devices').\n",
+        "(e.g. Vulkan0, or a comma-separated list like Vulkan0,Vulkan1 — " +
+        "see 'atomic-agent models devices').\n",
     );
     return 1;
   }
