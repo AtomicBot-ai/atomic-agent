@@ -292,9 +292,11 @@ export function loadConfig(): AtomicAgentConfig {
       ),
     },
     skills: {
-      catalogTokenBudget: readInt(
+      catalogTokenBudget: readBoundedPositiveInt(
         "ATOMIC_AGENT_SKILLS_CATALOG_BUDGET",
         ENV_DEFAULTS.SKILLS_CATALOG_BUDGET,
+        1,
+        100_000,
       ),
       disabled: user.skills.disabled,
       taps: user.skills.taps,

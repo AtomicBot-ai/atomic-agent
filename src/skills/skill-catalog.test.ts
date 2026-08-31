@@ -6,6 +6,7 @@ import {
   DEFAULT_CATALOG_MAX_CHARS,
   SKILL_CATALOG_CHARS_PER_TOKEN,
 } from "./skill-catalog.js";
+import { ENV_DEFAULTS } from "../config/config-schema.js";
 import type { SkillRecord } from "./skill-loader.js";
 
 function record(
@@ -91,17 +92,23 @@ describe("buildSkillCatalog", () => {
     expect(raised.length).toBe(records.length);
   });
 
-  it("shipped default budget of 512 tokens maps to the historical 4096-char cap", () => {
-    expect(512 * SKILL_CATALOG_CHARS_PER_TOKEN).toBe(DEFAULT_CATALOG_MAX_CHARS);
+  it("shipped default budget maps to the historical 4096-char cap", () => {
+    // Import the real shipped default so a drive-by change to either the
+    // default or the chars/token factor trips this guard.
+    expect(
+      ENV_DEFAULTS.SKILLS_CATALOG_BUDGET * SKILL_CATALOG_CHARS_PER_TOKEN,
+    ).toBe(DEFAULT_CATALOG_MAX_CHARS);
 
     // A record set sized to straddle the 4096-char boundary must be cut
     // at the same entry whether the caller passes nothing (legacy
-    // hardcoded cap) or the shipped config default of 512 tokens.
+    // hardcoded cap) or the shipped config default.
     const records = Array.from({ length: 12 }, (_, i) =>
       record(`skill-${i}`, "d".repeat(390)),
     );
     const legacy = buildSkillCatalog(records);
-    const configured = buildSkillCatalog(records, { tokenBudget: 512 });
+    const configured = buildSkillCatalog(records, {
+      tokenBudget: ENV_DEFAULTS.SKILLS_CATALOG_BUDGET,
+    });
     expect(configured).toEqual(legacy);
     expect(legacy.length).toBeLessThan(records.length);
   });
