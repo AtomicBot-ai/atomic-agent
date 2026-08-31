@@ -338,6 +338,219 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     expect(result.session.lastError).toMatch(/max_steps_reached: 2 steps/);
   });
 
+  it("reserves the final step for a terminal reply", async () => {
+    const registry = buildDefaultToolRegistry();
+    registry.register({
+      name: "noop",
+      description: "no-op",
+      readonly: true,
+      async run() {
+        return {
+          tool: "noop",
+          status: "ok",
+          summary: "verified",
+          details: {},
+          truncated: false,
+        };
+      },
+    });
+    let calls = 0;
+    const prompts: string[] = [];
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async (params) => {
+        calls += 1;
+        prompts.push(params.prompt);
+        return makeCompletion(
+          calls === 1
+            ? JSON.stringify({ tool: "noop", args: {} })
+            : JSON.stringify({ tool: "reply", args: { text: "verified" } }),
+        );
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "chat-finalize", workingDir }),
+      { userMessage: "verify", maxSteps: 2, signal: new AbortController().signal },
+    );
+
+    expect(calls).toBe(2);
+    expect(prompts[1]).toContain("final allowed step");
+    expect(result.reason).toBe("reply");
+    expect(result.stepCount).toBe(2);
+    expect(result.session.status).toBe("pending");
+    expect(result.session.turns.at(-1)).toMatchObject({
+      kind: "assistant_reply",
+      text: "verified",
+    });
+  });
+
+  it("keeps the cancelled outcome when the user aborts during the finalization step", async () => {
+    const registry = buildDefaultToolRegistry();
+    registry.register({
+      name: "noop",
+      description: "no-op",
+      readonly: true,
+      async run() {
+        return {
+          tool: "noop",
+          status: "ok",
+          summary: "noop",
+          details: {},
+          truncated: false,
+        };
+      },
+    });
+    let calls = 0;
+    const controller = new AbortController();
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () => {
+        calls += 1;
+        if (calls === 1) {
+          return makeCompletion(JSON.stringify({ tool: "noop", args: {} }));
+        }
+        // The user presses Esc while the reserved final inference is in
+        // flight — the provider surfaces it as an abort.
+        controller.abort();
+        const err = new Error("The operation was aborted");
+        err.name = "AbortError";
+        throw err;
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "chat-finalize-cancel", workingDir }),
+      { userMessage: "verify", maxSteps: 2, signal: controller.signal },
+    );
+
+    expect(calls).toBe(2);
+    expect(result.reason).toBe("cancelled");
+    expect(result.session.status).toBe("cancelled");
+    expect(result.session.lastError ?? "").not.toMatch(/max_steps/);
+  });
+
+  it("gives the finalization step one repair attempt, then preserves the stalled outcome", async () => {
+    const registry = buildDefaultToolRegistry();
+    let noopRuns = 0;
+    registry.register({
+      name: "noop",
+      description: "no-op",
+      readonly: true,
+      async run() {
+        noopRuns += 1;
+        return {
+          tool: "noop",
+          status: "ok",
+          summary: "noop",
+          details: {},
+          truncated: false,
+        };
+      },
+    });
+    let calls = 0;
+    const stepEventTypes: string[] = [];
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      // The model insists on a non-terminal tool even on the reserved
+      // final step and its repair attempt.
+      llmComplete: async () => {
+        calls += 1;
+        return makeCompletion(JSON.stringify({ tool: "noop", args: {} }));
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (event.type === "llm_event") stepEventTypes.push(event.event.type);
+      },
+    });
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "chat-finalize-stubborn", workingDir }),
+      { userMessage: "verify", maxSteps: 2, signal: new AbortController().signal },
+    );
+
+    // Step 0 executes the tool; the finalization step burns its first
+    // completion plus exactly one repair round-trip, and neither may
+    // execute the non-terminal call.
+    expect(calls).toBe(3);
+    expect(noopRuns).toBe(1);
+    expect(stepEventTypes.filter((t) => t === "parse_retry")).toHaveLength(1);
+    expect(result.reason).toBe("max_steps");
+    expect(result.session.status).toBe("stalled");
+    expect(result.session.lastError).toMatch(/max_steps_reached: 2 steps/);
+    expect(result.session.turns.at(-1)).toMatchObject({
+      kind: "assistant_reply",
+      text: expect.stringContaining("max_steps"),
+    });
+  });
+
+  it("treats the only step of a maxSteps=1 turn as terminal — no tool can ever run", async () => {
+    const registry = buildDefaultToolRegistry();
+    let noopRuns = 0;
+    registry.register({
+      name: "noop",
+      description: "no-op",
+      readonly: true,
+      async run() {
+        noopRuns += 1;
+        return {
+          tool: "noop",
+          status: "ok",
+          summary: "noop",
+          details: {},
+          truncated: false,
+        };
+      },
+    });
+    let calls = 0;
+    const prompts: string[] = [];
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async (params) => {
+        calls += 1;
+        prompts.push(params.prompt);
+        return makeCompletion(
+          calls === 1
+            ? JSON.stringify({ tool: "noop", args: {} })
+            : JSON.stringify({ tool: "reply", args: { text: "summary only" } }),
+        );
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "chat-one-step", workingDir }),
+      { userMessage: "hi", maxSteps: 1, signal: new AbortController().signal },
+    );
+
+    // With a budget of one, the single step IS the finalization step:
+    // the tool call is rejected before execution and the repair pass
+    // must produce the terminal reply.
+    expect(prompts[0]).toContain("final allowed step");
+    expect(calls).toBe(2);
+    expect(noopRuns).toBe(0);
+    expect(result.reason).toBe("reply");
+    expect(result.session.status).toBe("pending");
+    expect(result.session.turns.at(-1)).toMatchObject({
+      kind: "assistant_reply",
+      text: "summary only",
+    });
+  });
+
   it("injects a transient notice into the next prompt when a no-progress loop is detected", async () => {
     const registry = buildDefaultToolRegistry();
     registry.register({
