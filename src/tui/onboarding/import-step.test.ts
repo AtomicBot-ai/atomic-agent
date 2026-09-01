@@ -30,14 +30,14 @@ describe("buildImportPickRows", () => {
     expect(rows.map((r) => r.kind)).toEqual(["agent", "agent", "skip"]);
   });
 
-  it("grows the import row once something is ticked", () => {
+  it("grows the import row above skip once something is ticked", () => {
     const agents = buildImportAgentRows(detected).map((row, index) =>
       index === 0 ? { ...row, enabled: true } : row,
     );
     const rows = buildImportPickRows(agents);
-    expect(rows.map((r) => r.kind)).toEqual(["agent", "agent", "skip", "import"]);
-    const last = rows[rows.length - 1];
-    expect(last?.kind === "import" && last.picked).toBe(1);
+    expect(rows.map((r) => r.kind)).toEqual(["agent", "agent", "import", "skip"]);
+    const action = rows[2];
+    expect(action?.kind === "import" && action.picked).toBe(1);
   });
 
   it("labels the import row with the ticked count", () => {

@@ -92,10 +92,11 @@ export type OnboardingImportPickRow =
 
 /**
  * The pick screen's full row list: every detected agent as a tickbox,
- * then the skip row — always there, so leaving is never more than a
- * cursor-down away — and, once at least one agent is ticked, the import
- * action. One derivation shared by the render, the measure and the key
- * handler, so the three cannot disagree about what a cursor index means.
+ * then — once at least one agent is ticked — the import action, and the
+ * skip row always last, so leaving is never more than a cursor-down
+ * away. The primary action sits above the escape hatch. One derivation
+ * shared by the render, the measure and the key handler, so the three
+ * cannot disagree about what a cursor index means.
  */
 export function buildImportPickRows(
   agents: readonly OnboardingImportAgentRow[],
@@ -105,9 +106,9 @@ export function buildImportPickRows(
     index,
     agent,
   }));
-  rows.push({ kind: "skip" });
   const picked = agents.filter((agent) => agent.enabled).length;
   if (picked > 0) rows.push({ kind: "import", picked });
+  rows.push({ kind: "skip" });
   return rows;
 }
 

@@ -21,9 +21,9 @@ const AGENTS = [
 ];
 
 // Pick-screen row indices for the AGENTS fixture with both ticked:
-// 0-1 the agents, 2 the skip row, 3 the import row.
-const SKIP_ROW = 2;
-const IMPORT_ROW = 3;
+// 0-1 the agents, 2 the import row, 3 the skip row (always last).
+const IMPORT_ROW = 2;
+const SKIP_ROW = 3;
 
 function stateAt(
   step: OnboardingStep,
@@ -197,12 +197,12 @@ describe("import flow keys", () => {
     expect(driven.runs).toEqual([]);
   });
 
-  it("with everything unticked the import row does not exist and the list wraps past skip", () => {
+  it("with everything unticked the import row does not exist and the list wraps past it", () => {
     const unticked = AGENTS.map((a) => ({ ...a, enabled: false }));
-    // Rows are the two agents plus skip; the old import index wraps to
+    // Rows are the two agents plus skip; the old skip index wraps to
     // the first agent instead of importing nothing.
     const driven = drive(
-      stateAt("import_pick", { importAgents: unticked, cursor: IMPORT_ROW }),
+      stateAt("import_pick", { importAgents: unticked, cursor: SKIP_ROW }),
     );
     driven.handle("", returnKey());
     expect(driven.actions).toEqual([
