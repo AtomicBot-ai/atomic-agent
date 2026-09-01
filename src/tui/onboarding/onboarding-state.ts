@@ -32,10 +32,8 @@ export type OnboardingStep =
   | "custom_embedding_url"
   | "propose_second"
   | "wait_or_jump"
-  /** Last step: bring data over from other agents found on this machine. */
+  /** Last step: tick the agents to bring data over from, or skip. */
   | "import_pick"
-  /** Per-agent domain toggles for the picked agents. */
-  | "import_options"
   /** The dry-run result, awaiting a confirm before anything is written. */
   | "import_preview"
   /** The executed import's report; any key hands over to the agent. */

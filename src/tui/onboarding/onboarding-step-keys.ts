@@ -19,7 +19,7 @@ import {
 } from "./local-model-picks.js";
 import { handleHfPickKey } from "./onboarding-hf-keys.js";
 import { handleOnboardingKey } from "./onboarding-key-bindings.js";
-import { buildImportOptionRows } from "./import-step.js";
+import { buildImportOptionRows, buildImportPickRows } from "./import-step.js";
 import type { OnboardingUiState } from "./onboarding-state.js";
 
 /**
@@ -80,8 +80,6 @@ export function handleOnboardingStepKey(
       return handleProposeKey(input, key, ctx, onboarding);
     case "import_pick":
       return handleImportPickKey(input, key, ctx, onboarding);
-    case "import_options":
-      return handleImportOptionsKey(input, key, ctx, onboarding);
     case "import_preview":
       return handleImportPreviewKey(input, key, ctx, onboarding);
     case "import_done":
@@ -337,64 +335,36 @@ function handleImportPickKey(
     finishImport(ctx, onboarding);
     return true;
   }
-  const rows = onboarding.importAgents;
+  const rows = buildImportPickRows(onboarding.importAgents);
   if (moveImportCursor(input, key, ctx, rows.length)) return true;
-  if (input === " " && !key.ctrl) {
-    ctx.dispatch({
-      type: "onboarding_import_agent_toggled",
-      index: onboarding.cursor % Math.max(1, rows.length),
-    });
-    return true;
-  }
-  if (key.return) {
-    const picked = rows.filter((row) => row.enabled);
-    if (picked.length === 0) {
-      // Everything unticked and Enter is the same answer Esc gives.
+  const toggle = input === " " && !key.ctrl;
+  if (!toggle && !key.return) return false;
+  const row = rows[onboarding.cursor % rows.length];
+  if (!row) return true;
+  switch (row.kind) {
+    case "agent":
+      // Space and Enter both flip the tick — on a checkbox row there is
+      // nothing else Enter could honestly mean.
+      ctx.dispatch({ type: "onboarding_import_agent_toggled", index: row.index });
+      return true;
+    case "skip":
+      if (toggle) return true;
       finishImport(ctx, onboarding);
       return true;
-    }
-    ctx.dispatch({
-      type: "onboarding_import_options_opened",
-      options: buildImportOptionRows(rows),
-    });
-    return true;
-  }
-  return false;
-}
-
-function handleImportOptionsKey(
-  input: string,
-  key: Key,
-  ctx: OnboardingKeyContext,
-  onboarding: OnboardingUiState,
-): boolean {
-  if (onboarding.busy) return true;
-  if (key.escape) {
-    ctx.dispatch({ type: "onboarding_step_set", step: "import_pick" });
-    return true;
-  }
-  const rows = onboarding.importOptions;
-  if (moveImportCursor(input, key, ctx, rows.length)) return true;
-  if (input === " " && !key.ctrl) {
-    ctx.dispatch({
-      type: "onboarding_import_option_toggled",
-      index: onboarding.cursor % Math.max(1, rows.length),
-    });
-    return true;
-  }
-  if (key.return) {
-    if (!rows.some((row) => row.enabled)) {
-      finishImport(ctx, onboarding);
+    case "import": {
+      if (toggle) return true;
+      // Straight to the dry-run with the defaults — every non-secret
+      // domain of the ticked agents. The preview stays the gate before
+      // anything is written; the per-domain surface is `/import`'s.
+      const options = buildImportOptionRows(onboarding.importAgents);
+      ctx.dispatch({ type: "onboarding_import_run_started", options });
+      ctx.callbacks.onOnboardingImportRequested?.(
+        { agents: onboarding.importAgents, options },
+        false,
+      );
       return true;
     }
-    ctx.dispatch({ type: "onboarding_import_run_started" });
-    ctx.callbacks.onOnboardingImportRequested?.(
-      { agents: onboarding.importAgents, options: rows },
-      false,
-    );
-    return true;
   }
-  return false;
 }
 
 function handleImportPreviewKey(
@@ -406,10 +376,10 @@ function handleImportPreviewKey(
   void input;
   if (onboarding.busy) return true;
   if (key.escape) {
-    // Back to the toggles, not out of the flow: a preview that showed
+    // Back to the ticks, not out of the flow: a preview that showed
     // too much (or too little) is an invitation to adjust, and the
-    // skip exit is one more Esc away from there.
-    ctx.dispatch({ type: "onboarding_step_set", step: "import_options" });
+    // skip row is right there on that screen.
+    ctx.dispatch({ type: "onboarding_step_set", step: "import_pick" });
     return true;
   }
   if (key.return) {

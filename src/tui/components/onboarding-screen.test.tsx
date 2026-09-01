@@ -466,8 +466,13 @@ describe("OnboardingScreen", () => {
      * outcome local, no cloud provider on disk (fresh state dir), so
      * `decideSecondBackendOffer` WOULD pitch cloud — the flag is the
      * only thing standing between the operator and a second pitch.
+     * The import scan is injected so the machine the suite runs on
+     * cannot decide whether the import step appears.
      */
-    function renderFinished(skipSecondOffer: boolean) {
+    function renderFinished(
+      skipSecondOffer: boolean,
+      detected: Array<{ id: "hermes"; label: string; dir: string }> = [],
+    ) {
       const actions: TuiAction[] = [];
       const onboarding = {
         ...createOnboardingState("http://127.0.0.1:8080"),
@@ -483,6 +488,7 @@ describe("OnboardingScreen", () => {
           onboarding={onboarding}
           dispatch={(action) => actions.push(action)}
           callbacks={{}}
+          detectImportAgents={() => detected}
         />,
       );
       return { view, actions };
@@ -501,6 +507,19 @@ describe("OnboardingScreen", () => {
       // propose screen was never shown, so its stamp stays unset.
       expect(getConfig().tui.onboarding.proposedSecondBackendAt).toBeNull();
       expect(getConfig().tui.onboarding.skippedAt).toBeNull();
+    });
+
+    it("still raises the import step — the skip flag only bypasses the pitch", async () => {
+      const { actions } = renderFinished(true, [
+        { id: "hermes", label: "Hermes", dir: "/tmp/h" },
+      ]);
+      await untilStamped(() => getConfig().tui.onboarding.importOfferedAt !== null);
+      expect(actions.map((a) => a.type)).toContain("onboarding_import_opened");
+      expect(
+        actions.every((action) => action.type !== "onboarding_second_backend_offered"),
+      ).toBe(true);
+      // Import intercepted the close-out, so the flow is not retired yet.
+      expect(getConfig().tui.onboarding.completedAt).toBeNull();
     });
 
     it("a plain local finish still gets the cloud pitch", async () => {

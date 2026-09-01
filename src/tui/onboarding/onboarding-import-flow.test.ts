@@ -20,6 +20,11 @@ const AGENTS = [
   { id: "claude-code" as const, label: "Claude Code", dir: "/c", enabled: true },
 ];
 
+// Pick-screen row indices for the AGENTS fixture with both ticked:
+// 0-1 the agents, 2 the import row, 3 the skip row (always last).
+const IMPORT_ROW = 2;
+const SKIP_ROW = 3;
+
 function stateAt(
   step: OnboardingStep,
   over: Partial<NonNullable<TuiState["onboarding"]>> = {},
@@ -69,7 +74,7 @@ describe("import flow reducer", () => {
     expect(state.onboarding?.cursor).toBe(0);
   });
 
-  it("toggles agent and option rows by index", () => {
+  it("toggles agent rows by index", () => {
     let state = reduceTuiState(stateAt("finished"), {
       type: "onboarding_import_opened",
       agents: AGENTS,
@@ -82,32 +87,31 @@ describe("import flow reducer", () => {
       true,
       false,
     ]);
+  });
 
-    state = reduceTuiState(state, {
-      type: "onboarding_import_options_opened",
-      options: [
-        {
-          agent: "hermes",
-          agentLabel: "Hermes",
-          option: "sessions",
-          label: "Sessions",
-          description: "d",
-          secret: false,
-          enabled: true,
-        },
-      ],
+  it("a run started from the pick screen stores the option rows it sent", () => {
+    const options = [
+      {
+        agent: "hermes" as const,
+        agentLabel: "Hermes",
+        option: "sessions",
+        label: "Sessions",
+        description: "d",
+        secret: false,
+        enabled: true,
+      },
+    ];
+    const state = reduceTuiState(stateAt("import_pick"), {
+      type: "onboarding_import_run_started",
+      options,
     });
-    expect(state.onboarding?.step).toBe("import_options");
-    state = reduceTuiState(state, {
-      type: "onboarding_import_option_toggled",
-      index: 0,
-    });
-    expect(state.onboarding?.importOptions[0]?.enabled).toBe(false);
+    expect(state.onboarding?.busy).toBe(true);
+    expect(state.onboarding?.importOptions).toEqual(options);
   });
 
   it("routes a preview report to import_preview and an executed one to import_done", () => {
     const report = buildReport([], false);
-    let state = stateAt("import_options");
+    let state = stateAt("import_pick");
     state = reduceTuiState(state, { type: "onboarding_import_run_started" });
     expect(state.onboarding?.busy).toBe(true);
     state = reduceTuiState(state, {
@@ -138,14 +142,14 @@ describe("import flow reducer", () => {
   });
 
   it("surfaces a failed run as an inline error", () => {
-    let state = stateAt("import_options", { busy: true });
+    let state = stateAt("import_pick", { busy: true });
     state = reduceTuiState(state, {
       type: "onboarding_import_failed",
       error: "boom",
     });
     expect(state.onboarding?.busy).toBe(false);
     expect(state.onboarding?.error).toBe("boom");
-    expect(state.onboarding?.step).toBe("import_options");
+    expect(state.onboarding?.step).toBe("import_pick");
   });
 });
 
@@ -158,28 +162,53 @@ describe("import flow keys", () => {
     ]);
   });
 
-  it("enter on the pick screen opens the option toggles for the picked agents", () => {
-    const driven = drive(stateAt("import_pick"));
+  it("enter on an agent row toggles it too", () => {
+    const driven = drive(stateAt("import_pick", { cursor: 0 }));
+    driven.handle("", returnKey());
+    expect(driven.actions).toEqual([
+      { type: "onboarding_import_agent_toggled", index: 0 },
+    ]);
+  });
+
+  it("enter on the import row asks the host for a dry-run with the defaults", () => {
+    const driven = drive(stateAt("import_pick", { cursor: IMPORT_ROW }));
     driven.handle("", returnKey());
     expect(driven.actions).toHaveLength(1);
     const action = driven.actions[0]!;
-    if (action.type !== "onboarding_import_options_opened") {
+    if (action.type !== "onboarding_import_run_started") {
       throw new Error(`unexpected ${action.type}`);
     }
-    expect(action.options.some((o) => o.agent === "hermes")).toBe(true);
-    expect(action.options.some((o) => o.agent === "claude-code")).toBe(true);
+    // Both ticked agents contribute, non-secret domains on, secrets off.
+    expect(action.options?.some((o) => o.agent === "hermes")).toBe(true);
+    expect(action.options?.some((o) => o.agent === "claude-code")).toBe(true);
+    expect(action.options?.every((o) => o.enabled === !o.secret)).toBe(true);
+    expect(driven.runs).toHaveLength(1);
+    expect(driven.runs[0]?.execute).toBe(false);
+    expect(driven.runs[0]?.plan.agents).toEqual(AGENTS);
+    expect(driven.runs[0]?.plan.options).toEqual(action.options);
   });
 
-  it("enter with every agent unticked finishes the flow instead", () => {
-    const driven = drive(
-      stateAt("import_pick", {
-        importAgents: AGENTS.map((a) => ({ ...a, enabled: false })),
-      }),
-    );
+  it("enter on the skip row hands over to the agent", () => {
+    const driven = drive(stateAt("import_pick", { cursor: SKIP_ROW }));
     driven.handle("", returnKey());
     expect(driven.actions).toEqual([
       { type: "onboarding_finished", outcome: "local" },
     ]);
+    expect(driven.runs).toEqual([]);
+  });
+
+  it("with everything unticked the import row does not exist and the list wraps past it", () => {
+    const unticked = AGENTS.map((a) => ({ ...a, enabled: false }));
+    // Rows are the two agents plus skip; the old skip index wraps to
+    // the first agent instead of importing nothing.
+    const driven = drive(
+      stateAt("import_pick", { importAgents: unticked, cursor: SKIP_ROW }),
+    );
+    driven.handle("", returnKey());
+    expect(driven.actions).toEqual([
+      { type: "onboarding_import_agent_toggled", index: 0 },
+    ]);
+    expect(driven.runs).toEqual([]);
   });
 
   it("esc skips out of the pick screen with the earned outcome", () => {
@@ -190,23 +219,11 @@ describe("import flow keys", () => {
     ]);
   });
 
-  it("enter on the options screen asks the host for a dry-run", () => {
-    const options = [
-      {
-        agent: "hermes" as const,
-        agentLabel: "Hermes",
-        option: "sessions",
-        label: "Sessions",
-        description: "d",
-        secret: false,
-        enabled: true,
-      },
-    ];
-    const driven = drive(stateAt("import_options", { importOptions: options }));
-    driven.handle("", returnKey());
-    expect(driven.actions).toEqual([{ type: "onboarding_import_run_started" }]);
-    expect(driven.runs).toEqual([
-      { plan: { agents: AGENTS, options }, execute: false },
+  it("esc on the preview goes back to the ticks", () => {
+    const driven = drive(stateAt("import_preview"));
+    driven.handle("", escKey());
+    expect(driven.actions).toEqual([
+      { type: "onboarding_step_set", step: "import_pick" },
     ]);
   });
 
@@ -229,7 +246,7 @@ describe("import flow keys", () => {
   });
 
   it("keys freeze while a run is out", () => {
-    const driven = drive(stateAt("import_options", { busy: true }));
+    const driven = drive(stateAt("import_pick", { busy: true }));
     expect(driven.handle("", returnKey())).toBe(true);
     expect(driven.handle("", arrowKey("down"))).toBe(true);
     expect(driven.actions).toEqual([]);

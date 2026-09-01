@@ -45,15 +45,12 @@ export type OnboardingAction =
   /** Space on an agent row of the pick screen. */
   | { type: "onboarding_import_agent_toggled"; index: number }
   /**
-   * Enter on the pick screen: move to the domain toggles. Carries the
-   * rows built from the picked agents, for the same one-commit reason
-   * the HF resolve carries its repo.
+   * A preview or execute run left for the importers; keys freeze. The
+   * pick screen's import row sends the default option rows it built for
+   * the ticked agents (everything but secrets); the preview's confirm
+   * re-runs whatever is already stored and sends none.
    */
-  | { type: "onboarding_import_options_opened"; options: OnboardingImportOptionRow[] }
-  /** Space on a domain row of the options screen. */
-  | { type: "onboarding_import_option_toggled"; index: number }
-  /** A preview or execute run left for the importers; keys freeze. */
-  | { type: "onboarding_import_run_started" }
+  | { type: "onboarding_import_run_started"; options?: OnboardingImportOptionRow[] }
   /** The importers answered. Preview lands on `import_preview`, an executed run on `import_done`. */
   | { type: "onboarding_import_report"; report: ImportReport; executed: boolean }
   /** A run failed outright (option resolution, source access, …). */
