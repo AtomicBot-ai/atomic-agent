@@ -184,7 +184,7 @@ const V0_2_2_SLASH_COMMANDS = [
   {
     name: "privacy",
     description:
-      "open the Privacy tab (analytics opt-out + approval level) · subcommands: `/privacy analytics on|off` | `/privacy level 1..5` | `/privacy approve on|off`",
+      "open the Privacy tab (analytics opt-out + session grants) · subcommands: `/privacy analytics on|off`",
   },
   {
     name: "analytics",

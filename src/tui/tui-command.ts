@@ -427,10 +427,10 @@ export async function tuiCommand(args: string[]): Promise<number> {
           persistWhileBusyMode(mode, bus),
         // The mode is a stance for this session, so it moves the live
         // ladder and the live plan flag and writes neither to
-        // `config.json`. The Privacy tab remains the only surface that
-        // persists an approval level — otherwise a session that passed
-        // through `bypass` would leave the machine trusting everything
-        // on the next boot.
+        // `config.json`. The persisted baseline stays whatever
+        // `agent.approvalLevel` in config.json says — otherwise a
+        // session that passed through `bypass` would leave the machine
+        // trusting everything on the next boot.
         onCodingModeChanged: (_mode, resolved) => {
           runtime.setApprovalLevel(resolved.approvalLevel);
           runtime.setPlanMode(resolved.planMode);
@@ -657,8 +657,6 @@ export async function tuiCommand(args: string[]): Promise<number> {
           orchestrator.privacy.toggleAnalytics(),
         onAnalyticsSetEnabledRequested: (enabled) =>
           orchestrator.privacy.setAnalyticsEnabled(enabled),
-        onApprovalLevelSetRequested: (level) =>
-          orchestrator.privacy.setApprovalLevel(level),
         onPrivacyRefreshRequested: () => orchestrator.privacy.refresh(),
         onUpdateConfirmed: () => orchestrator.runUpdate(),
         onUpdateRestart: () => {

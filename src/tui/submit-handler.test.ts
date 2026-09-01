@@ -209,22 +209,6 @@ describe("handleEditorSubmit", () => {
     expect(onDebugBundleExportRequested).toHaveBeenCalledWith(state);
   });
 
-  it("maps /privacy level and the approve aliases onto onApprovalLevelSetRequested", () => {
-    const state = createInitialTuiState(fakeSession());
-    const onApprovalLevelSetRequested = vi.fn();
-    const dispatch = vi.fn();
-    const callbacks = stubCallbacks({ onApprovalLevelSetRequested });
-
-    handleEditorSubmit("/privacy level 3", state, dispatch, callbacks);
-    expect(onApprovalLevelSetRequested).toHaveBeenCalledWith(3);
-
-    handleEditorSubmit("/privacy approve on", state, dispatch, callbacks);
-    expect(onApprovalLevelSetRequested).toHaveBeenCalledWith(5);
-
-    handleEditorSubmit("/privacy approve off", state, dispatch, callbacks);
-    expect(onApprovalLevelSetRequested).toHaveBeenCalledWith(1);
-    expect(onApprovalLevelSetRequested).toHaveBeenCalledTimes(3);
-  });
 });
 
 describe("handleEditorSubmit while a turn is running", () => {

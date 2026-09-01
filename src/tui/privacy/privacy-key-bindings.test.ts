@@ -36,13 +36,13 @@ function emptyKey(overrides: Partial<Key> = {}): Key {
   };
 }
 
-function privacyState(level: 1 | 2 | 3 | 4 | 5, busy = false): TuiState {
+function privacyState(busy = false): TuiState {
   const state = createInitialTuiState(SESSION);
   return {
     ...state,
     uiMode: "debug",
     activeTab: "privacy",
-    privacyPanel: { ...state.privacyPanel, approvalLevel: level, busy },
+    privacyPanel: { ...state.privacyPanel, busy },
   };
 }
 
@@ -55,46 +55,10 @@ function ctx(state: TuiState, callbacks: Partial<TuiAppCallbacks>) {
 }
 
 describe("handlePrivacyTabKey", () => {
-  it("digits 1..5 jump the ladder to that level", () => {
-    const onApprovalLevelSetRequested = vi.fn();
-    const context = ctx(privacyState(1), { onApprovalLevelSetRequested });
-    for (const digit of ["1", "2", "3", "4", "5"]) {
-      expect(handlePrivacyTabKey(digit, emptyKey(), context)).toBe(true);
-    }
-    expect(onApprovalLevelSetRequested.mock.calls.map((c) => c[0])).toEqual([
-      1, 2, 3, 4, 5,
-    ]);
-  });
-
-  it("arrow keys step one level and clamp at the edges", () => {
-    const onApprovalLevelSetRequested = vi.fn();
-    const mid = ctx(privacyState(3), { onApprovalLevelSetRequested });
-    expect(
-      handlePrivacyTabKey("", emptyKey({ rightArrow: true }), mid),
-    ).toBe(true);
-    expect(onApprovalLevelSetRequested).toHaveBeenLastCalledWith(4);
-    expect(
-      handlePrivacyTabKey("", emptyKey({ leftArrow: true }), mid),
-    ).toBe(true);
-    expect(onApprovalLevelSetRequested).toHaveBeenLastCalledWith(2);
-
-    // At the edges the key is consumed but no redundant request fires.
-    onApprovalLevelSetRequested.mockClear();
-    const top = ctx(privacyState(5), { onApprovalLevelSetRequested });
-    expect(
-      handlePrivacyTabKey("", emptyKey({ rightArrow: true }), top),
-    ).toBe(true);
-    const bottom = ctx(privacyState(1), { onApprovalLevelSetRequested });
-    expect(
-      handlePrivacyTabKey("", emptyKey({ leftArrow: true }), bottom),
-    ).toBe(true);
-    expect(onApprovalLevelSetRequested).not.toHaveBeenCalled();
-  });
-
   it("keeps the analytics and refresh keys", () => {
     const onAnalyticsToggleRequested = vi.fn();
     const onPrivacyRefreshRequested = vi.fn();
-    const context = ctx(privacyState(2), {
+    const context = ctx(privacyState(), {
       onAnalyticsToggleRequested,
       onPrivacyRefreshRequested,
     });
@@ -104,16 +68,31 @@ describe("handlePrivacyTabKey", () => {
     expect(onPrivacyRefreshRequested).toHaveBeenCalledTimes(1);
   });
 
+  it("no longer claims the old approval-ladder keys", () => {
+    // Digits and arrows fall through: the approval stance lives in the
+    // composer's coding-mode control now, not on this tab.
+    const context = ctx(privacyState(), {});
+    for (const digit of ["1", "2", "3", "4", "5"]) {
+      expect(handlePrivacyTabKey(digit, emptyKey(), context)).toBe(false);
+    }
+    expect(
+      handlePrivacyTabKey("", emptyKey({ leftArrow: true }), context),
+    ).toBe(false);
+    expect(
+      handlePrivacyTabKey("", emptyKey({ rightArrow: true }), context),
+    ).toBe(false);
+  });
+
   it("swallows keys while busy and ignores other tabs", () => {
-    const onApprovalLevelSetRequested = vi.fn();
-    const busy = ctx(privacyState(1, true), { onApprovalLevelSetRequested });
-    expect(handlePrivacyTabKey("3", emptyKey(), busy)).toBe(true);
-    expect(onApprovalLevelSetRequested).not.toHaveBeenCalled();
+    const onAnalyticsToggleRequested = vi.fn();
+    const busy = ctx(privacyState(true), { onAnalyticsToggleRequested });
+    expect(handlePrivacyTabKey("a", emptyKey(), busy)).toBe(true);
+    expect(onAnalyticsToggleRequested).not.toHaveBeenCalled();
 
     const otherTab = ctx(
-      { ...privacyState(1), activeTab: "feed" },
-      { onApprovalLevelSetRequested },
+      { ...privacyState(), activeTab: "feed" },
+      { onAnalyticsToggleRequested },
     );
-    expect(handlePrivacyTabKey("3", emptyKey(), otherTab)).toBe(false);
+    expect(handlePrivacyTabKey("a", emptyKey(), otherTab)).toBe(false);
   });
 });

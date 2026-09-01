@@ -29,7 +29,6 @@ function reducePanel(
       return {
         ...panel,
         analyticsEnabled: action.analyticsEnabled,
-        approvalLevel: action.approvalLevel,
         sessionGrants: action.sessionGrants,
       };
     case "privacy_action_started":
