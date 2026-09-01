@@ -34,7 +34,8 @@
  * of memory` is the one that bit us — calls `abort()` from inside the
  * engine. No JavaScript runs after it, so no handler here (or anywhere)
  * fires. The only defence against that is not running out of heap; see
- * the `process.env.NODE_ENV` define in `scripts/bundle-sea.ts`.
+ * the `process.env.NODE_ENV` define in `scripts/bundle-sea.ts` (SEA
+ * binary) and `src/cli/env-defaults.ts` (unbundled `dist` runs).
  */
 
 type RestoreFn = () => void;

@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+// Must stay the first import: it defaults NODE_ENV before the imports
+// below load react-reconciler, which picks its build off that variable.
+import "./env-defaults.js";
 import { isSea } from "node:sea";
 import { argv, exit } from "node:process";
 import { runAgentCommand } from "./run-agent.js";
