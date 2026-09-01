@@ -1074,7 +1074,10 @@ function handleUninstallKey(
   if (key.return) {
     if (!isUninstallConfirmed(flow.typed)) return true;
     dispatch({ type: "uninstall_started" });
+    // The callback only flags the post-exit uninstall handoff;
+    // `quit_requested` is what unmounts Ink so the handoff is reached.
     callbacks.onUninstallConfirmed?.();
+    dispatch({ type: "quit_requested" });
     return true;
   }
   if (key.backspace || key.delete) {
