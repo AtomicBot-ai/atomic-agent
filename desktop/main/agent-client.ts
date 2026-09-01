@@ -277,7 +277,11 @@ export class AgentClient extends EventEmitter {
    * Run one turn. Deltas are emitted as `chat` events rather than
    * returned, so the renderer can paint tokens as they arrive.
    */
-  async chat(turnId: string, messages: Array<{ role: string; content: string }>): Promise<void> {
+  async chat(
+    turnId: string,
+    messages: Array<{ role: string; content: string }>,
+    sessionId?: string,
+  ): Promise<void> {
     const controller = new AbortController();
     this.turns.set(turnId, controller);
     try {
@@ -287,7 +291,16 @@ export class AgentClient extends EventEmitter {
         // tool_progress). Without this header the stream is plain OpenAI
         // chunks and the UI has no tool cards to draw.
         headers: { ...this.headers(), "x-atomic-extensions": "1" },
-        body: JSON.stringify({ model: "atomic-agent", stream: true, messages }),
+        // `session_id` continues the session the agent already holds
+        // (resolveSession loads it by id), so the turn inherits its
+        // history, its compaction state and its memory instead of the
+        // client replaying the transcript on every request.
+        body: JSON.stringify({
+          model: "atomic-agent",
+          stream: true,
+          messages,
+          ...(sessionId ? { session_id: sessionId } : {}),
+        }),
         signal: controller.signal,
       });
       if (!res.ok || !res.body) {

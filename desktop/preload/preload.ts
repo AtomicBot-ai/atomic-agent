@@ -30,8 +30,8 @@ contextBridge.exposeInMainWorld("atomic", {
   models: () => ipcRenderer.invoke("agent:models"),
 
   /** One turn of the agent loop, streamed back over `onChat`. */
-  chat: (messages: Array<{ role: string; content: string }>) =>
-    ipcRenderer.invoke("agent:chat", { messages }),
+  chat: (messages: Array<{ role: string; content: string }>, sessionId?: string) =>
+    ipcRenderer.invoke("agent:chat", { messages, sessionId }),
   cancel: (turnId: string) => ipcRenderer.invoke("agent:cancel", turnId),
   onChat: (cb: (payload: unknown) => void) => on("agent:chat", cb),
 

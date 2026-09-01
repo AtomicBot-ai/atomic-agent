@@ -112,7 +112,10 @@ function wireIpc(client: AgentClient): void {
   resource("models", () => client.models());
 
   ipcMain.handle("agent:chat", (_event, payload: unknown) => {
-    const { messages } = payload as { messages?: Array<{ role: string; content: string }> };
+    const { messages, sessionId } = payload as {
+      messages?: Array<{ role: string; content: string }>;
+      sessionId?: string;
+    };
     if (!Array.isArray(messages) || messages.length === 0) {
       return { ok: false, error: "messages must be a non-empty array" };
     }
@@ -121,7 +124,7 @@ function wireIpc(client: AgentClient): void {
       .map((m) => ({ role: m.role, content: m.content }));
     if (!clean.length) return { ok: false, error: "no usable messages" };
     const turnId = randomUUID();
-    void client.chat(turnId, clean);
+    void client.chat(turnId, clean, typeof sessionId === "string" ? sessionId : undefined);
     return { ok: true, turnId };
   });
 

@@ -1374,7 +1374,9 @@ function startLiveTurn(text) {
     if (n) n.textContent = (S.elapsed / 10).toFixed(1) + 's';
   }, 100);
   render();
-  BR.chat(S.history.slice()).then((res) => {
+  // The agent holds the session, so a turn sends the new message and the
+  // session id — not a replay of everything said so far.
+  BR.chat([{role:'user', content:text}], S.agentSession || undefined).then((res) => {
     if (!res || !res.ok) {
       S.busy = false; clearInterval(ticker);
       S.log.push({id:nid(), k:'system', text:'could not start the turn: ' + esc((res && res.error) || 'unknown error')});
