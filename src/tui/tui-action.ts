@@ -66,7 +66,7 @@ export type TuiAction =
   | { type: "skill_count_changed"; count: number }
   /**
    * Mirror the live approval-gate state into `state.session` so the
-   * diagnostics line ("approval on/off") tracks the Privacy-tab toggle.
+   * diagnostics line ("approval on/off") tracks the live gate level.
    */
   | { type: "approval_level_changed"; approvalLevel: number }
   | { type: "session_created"; sessionId: string }

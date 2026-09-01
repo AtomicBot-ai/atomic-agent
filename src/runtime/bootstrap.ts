@@ -568,7 +568,7 @@ export interface AgentRuntime {
    * navigation to non-web URLs. Hardline shell-guard rules still block
    * outright at every level (they fire before the gate). Persisting
    * `agent.approvalLevel` to `config.json` is the caller's
-   * responsibility (the TUI Privacy tab). Idempotent; pending prompts
+   * responsibility. Idempotent; pending prompts
    * are not resolved retroactively.
    */
   setApprovalLevel(level: number): void;

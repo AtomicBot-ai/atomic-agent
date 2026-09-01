@@ -2,7 +2,6 @@ import { render } from "ink-testing-library";
 import { describe, expect, it } from "vitest";
 
 import { PrivacyPanel } from "./privacy-panel.js";
-import type { ApprovalLevel } from "../../../approval/approval-level.js";
 import type { PrivacyPanelState } from "../privacy-panel-state.js";
 
 function panelState(
@@ -10,7 +9,6 @@ function panelState(
 ): PrivacyPanelState {
   return {
     analyticsEnabled: true,
-    approvalLevel: 1,
     busy: false,
     message: null,
     lastError: null,
@@ -25,112 +23,39 @@ function flat(frame: string | undefined): string {
   return (frame ?? "").replace(/\s+/g, " ");
 }
 
-function frameAt(level: ApprovalLevel): string {
-  return flat(
-    render(
-      <PrivacyPanel panel={panelState({ approvalLevel: level })} />,
-    ).lastFrame(),
-  );
+function renderFlat(overrides: Partial<PrivacyPanelState> = {}): string {
+  return flat(render(<PrivacyPanel panel={panelState(overrides)} />).lastFrame());
 }
 
-describe("PrivacyPanel — approval level row", () => {
-  it("renders every level with its name and summary", () => {
-    expect(frameAt(1)).toContain("1 (paranoid) · every gated action asks first");
-    expect(frameAt(2)).toContain(
-      "2 (workspace) · writes inside the project run without asking",
-    );
-    expect(frameAt(3)).toContain("3 (home)");
-    expect(frameAt(4)).toContain("4 (operator)");
-    expect(frameAt(5)).toContain(
-      "5 (full trust) · the agent runs every action without asking",
-    );
-  });
-
-  it("level 1 lists the full asking surface, never underselling the gate", () => {
-    // The user-facing coverage list may never undersell the internal
-    // category table in approval-level.ts (shell, file writes and
-    // deletes, HTTP, process kills, script runs, browser navigation to
-    // non-web URLs).
-    const frame = frameAt(1);
-    expect(frame).toContain("shell commands");
-    expect(frame).toContain("file writes and deletes");
-    expect(frame).toContain("HTTP requests");
-    expect(frame).toContain("process kills");
-    expect(frame).toContain("script runs");
-    expect(frame).toContain("browser navigation");
-    expect(frame).toContain("file://");
-    expect(frame).toContain("javascript:");
-  });
-
-  it("mid-ladder levels accumulate their coverage copy honestly", () => {
-    const l2 = frameAt(2);
-    expect(l2).toContain("inside the project directory");
-    expect(l2).toContain("symlinks pointing outside still ask");
-
-    const l3 = frameAt(3);
-    expect(l3).toContain("inside the project directory");
-    expect(l3).toContain("home directory");
-    expect(l3).toContain("Trash");
-    expect(l3).toContain("archive extraction");
-    expect(l3).toContain("HTTP requests");
-    expect(l3).toContain("SSRF guard stays on");
-
-    const l4 = frameAt(4);
-    expect(l4).toContain("inside the project directory");
-    expect(l4).toContain("home directory");
-    expect(l4).toContain("shell commands the guard flags for approval");
-    expect(l4).toContain("skill scripts");
-    expect(l4).toContain("process kills");
-  });
-
-  it("names what stays blocked at every level (hardline guards)", () => {
-    for (const level of [1, 2, 3, 4, 5] as const) {
-      expect(frameAt(level)).toContain("Hardline guards still block");
-    }
-  });
-
-  it("says config.json / .env always ask below level 5, and drops the line at 5", () => {
-    for (const level of [1, 2, 3, 4] as const) {
-      const frame = frameAt(level);
-      expect(frame).toContain("config.json and .env always ask below level 5");
-      expect(frame).toContain("cannot silently raise its own trust level");
-    }
-    // At full trust the caveat is gone — nothing asks, and the line
-    // would be a contradiction.
-    expect(frameAt(5)).not.toContain("always ask below level 5");
+describe("PrivacyPanel", () => {
+  it("no longer renders an approvals section or ladder hotkeys", () => {
+    // The approval stance is the coding-mode control in the composer;
+    // this tab keeps only analytics + the read-only session grants.
+    const frame = renderFlat();
+    expect(frame).not.toContain("Approvals");
+    expect(frame).not.toContain("approval level");
+    expect(frame).not.toContain("1-5: set approval level");
   });
 
   it("lists active session grants, and says none when there are none", () => {
     // Default fixture has no grants → the read-only section says so.
-    const empty = frameAt(1);
+    const empty = renderFlat();
     expect(empty).toContain("Session grants");
     expect(empty).toContain("none active");
 
-    const withGrants = flat(
-      render(
-        <PrivacyPanel
-          panel={panelState({
-            sessionGrants: { categories: ["shell", "http"], shapes: ["git"] },
-          })}
-        />,
-      ).lastFrame(),
-    );
+    const withGrants = renderFlat({
+      sessionGrants: { categories: ["shell", "http"], shapes: ["git"] },
+    });
     expect(withGrants).toContain("shell command");
     expect(withGrants).toContain("HTTP request");
     expect(withGrants).toContain("git");
     expect(withGrants).toContain("never persisted");
   });
 
-  it("keeps the analytics row intact next to the ladder", () => {
-    const { lastFrame } = render(
-      <PrivacyPanel
-        panel={panelState({ analyticsEnabled: false, approvalLevel: 3 })}
-      />,
-    );
-    const frame = flat(lastFrame());
+  it("keeps the analytics row and its hotkey hints", () => {
+    const frame = renderFlat({ analyticsEnabled: false });
     expect(frame).toContain("anonymous usage");
     expect(frame).toContain("a: analytics on");
     expect(frame).toContain("r: refresh");
-    expect(frame).toContain("1-5: set approval level");
   });
 });

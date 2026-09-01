@@ -290,9 +290,6 @@ export function runSlashCommand(
       result.mouseVerb === "status" ? null : result.mouseVerb === "on",
     );
   }
-  if (result.approvalLevelSet !== undefined) {
-    void callbacks.onApprovalLevelSetRequested?.(result.approvalLevelSet);
-  }
 }
 
 /**

@@ -546,13 +546,6 @@ export interface TuiAppCallbacks {
   onAnalyticsToggleRequested?(): void | Promise<void>;
   /** Privacy tab: set analytics to an explicit value (slash-command path). */
   onAnalyticsSetEnabledRequested?(enabled: boolean): void | Promise<void>;
-  /**
-   * Privacy tab: move the approval ladder to an explicit level (digit
-   * hotkeys, arrow steps, `/privacy level 1..5`, and the `/privacy
-   * approve on|off` aliases which map to 5 and 1). Persists
-   * `agent.approvalLevel` and hot-applies it to the live gate.
-   */
-  onApprovalLevelSetRequested?(level: number): void | Promise<void>;
   /** Privacy tab: re-read the persisted `analytics.enabled` snapshot. */
   onPrivacyRefreshRequested?(): void;
   /** Import tab: run a dry-run preview of the Hermes import. */
