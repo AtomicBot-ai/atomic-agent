@@ -531,6 +531,12 @@ export class AgentLoop {
 
     state = { ...state, status: "running" };
 
+    // The step loop below is where coding work actually happens. On each
+    // step the model sees the freshly built prompt (transcript + tool
+    // catalog + memory tail) and either emits tool calls — reading files,
+    // editing, running commands through the approval gate — or a terminal
+    // `reply`/`finish`. Tool results are appended to the conversation, so
+    // the next step's prompt carries everything the previous step learned.
     for (let i = 0; i < options.maxSteps; i += 1) {
       if (options.signal.aborted) {
         reason = "cancelled";
@@ -567,6 +573,9 @@ export class AgentLoop {
       }
       const noticeForThisStep = pendingNotice;
       pendingNotice = undefined;
+      // On the final allowed step the tool catalog collapses to the two
+      // terminal tools, so a long coding session ends with a summary of
+      // what was changed instead of being cut off mid-edit.
       const finalizationStep = i === options.maxSteps - 1;
       const finalizationNotice =
         "This is the final allowed step. Do not call any non-terminal tool; " +
