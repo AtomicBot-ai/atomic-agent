@@ -19,6 +19,10 @@ export const ONBOARDING_SUBTITLES: Record<OnboardingStep, string> = {
   local_download: "local models · downloading",
   propose_second: "one more thing",
   wait_or_jump: "almost there",
+  import_pick: "bring your data · one last step",
+  import_options: "bring your data · choose what",
+  import_preview: "bring your data · preview",
+  import_done: "bring your data · done",
   cloud: "cloud model · step 2 of 2",
   custom_chat_url: "custom endpoint · step 2 of 2",
   custom_embedding_url: "custom endpoint · embeddings",
@@ -64,6 +68,19 @@ export function onboardingFooterFor(
       return `c set up cloud meanwhile   s skip to the agent   ${quit}`;
     case "propose_second":
       return `↑/↓ move   enter select   esc skip   ${quit}`;
+    case "import_pick":
+      return `↑/↓ move   space toggle   enter continue   esc skip   ${quit}`;
+    case "import_options":
+      // While a run is out with the importers, Enter would double-run.
+      return onboarding.busy
+        ? `scanning…   ${quit}`
+        : `↑/↓ move   space toggle   enter preview   esc back   ${quit}`;
+    case "import_preview":
+      return onboarding.busy
+        ? `importing…   ${quit}`
+        : `enter import   esc adjust   ${quit}`;
+    case "import_done":
+      return `any key to start   ${quit}`;
     case "wait_or_jump":
       return `↑/↓ move   enter start or add a provider   ${quit}`;
     case "finished":

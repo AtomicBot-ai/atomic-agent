@@ -52,6 +52,11 @@ export interface OnboardingScreenCallbacks {
   onOnboardingStep?(step: string, outcome?: string): void;
   /** Start a model pull. Owned by `LocalModelsOrchestrator`. */
   onLocalModelsPullRequested?(modelId: LocalModelId): void;
+  /** Run the import step's preview (`execute: false`) or write (`true`). */
+  onOnboardingImportRequested?(
+    plan: import("../onboarding/import-step.js").OnboardingImportPlan,
+    execute: boolean,
+  ): void;
 }
 
 /** Named once — the offer screens quote it back at the operator. */
@@ -178,6 +183,9 @@ export function OnboardingScreen(props: {
     cloudLabel: CLOUD_READY_LABEL,
     hfRepo: onboarding.hfRepo,
     hfError: onboarding.step === "local_hf_ref" ? onboarding.error : null,
+    importAgents: onboarding.importAgents,
+    importOptions: onboarding.importOptions,
+    importReport: onboarding.importReport,
   });
 
   return (

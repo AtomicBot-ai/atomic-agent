@@ -66,7 +66,7 @@ atag
 > Need a second agent? Press **Ctrl+N** (or run `/window`) inside the TUI — it opens a new terminal window with a fresh atomic-agent in the same directory.
 
 > [!TIP]
-> Coming from Hermes or OpenClaw? Run `/import` in the TUI for a one-shot migration: sessions, cron jobs, and optionally your provider keys.
+> Coming from another agent? The first run offers to bring your data over from **Hermes, OpenClaw, Claude Code, or Codex** — skills, memory, MCP servers, sessions, cron jobs, and (opt-in) provider keys, with a dry-run preview before anything is written. Later, run `/import` in the TUI or `atomic-agent import <hermes|openclaw|claude-code|codex>` from the shell.
 
 ### Uninstall
 

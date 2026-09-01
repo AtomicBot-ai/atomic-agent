@@ -19,6 +19,7 @@ import {
 } from "./local-model-picks.js";
 import { handleHfPickKey } from "./onboarding-hf-keys.js";
 import { handleOnboardingKey } from "./onboarding-key-bindings.js";
+import { buildImportOptionRows } from "./import-step.js";
 import type { OnboardingUiState } from "./onboarding-state.js";
 
 /**
@@ -77,6 +78,14 @@ export function handleOnboardingStepKey(
       return handleWaitOrJumpKey(input, key, ctx, onboarding);
     case "propose_second":
       return handleProposeKey(input, key, ctx, onboarding);
+    case "import_pick":
+      return handleImportPickKey(input, key, ctx, onboarding);
+    case "import_options":
+      return handleImportOptionsKey(input, key, ctx, onboarding);
+    case "import_preview":
+      return handleImportPreviewKey(input, key, ctx, onboarding);
+    case "import_done":
+      return handleImportDoneKey(input, key, ctx, onboarding);
     case "cloud":
       return handleCloudKey(input, key, ctx);
     default:
@@ -290,6 +299,149 @@ function handleProposeKey(
     return true;
   }
   return false;
+}
+
+/** Hand over to the agent with whatever outcome the flow already earned. */
+function finishImport(ctx: OnboardingKeyContext, onboarding: OnboardingUiState): void {
+  ctx.dispatch({
+    type: "onboarding_finished",
+    outcome: onboarding.outcome ?? "skipped",
+  });
+}
+
+function moveImportCursor(
+  input: string,
+  key: Key,
+  ctx: OnboardingKeyContext,
+  length: number,
+): boolean {
+  if (key.upArrow || key.downArrow || input === "j" || input === "k") {
+    ctx.dispatch({
+      type: "onboarding_cursor_moved",
+      delta: key.upArrow || input === "k" ? -1 : 1,
+      length,
+    });
+    return true;
+  }
+  return false;
+}
+
+function handleImportPickKey(
+  input: string,
+  key: Key,
+  ctx: OnboardingKeyContext,
+  onboarding: OnboardingUiState,
+): boolean {
+  if (onboarding.busy) return true;
+  if (key.escape) {
+    finishImport(ctx, onboarding);
+    return true;
+  }
+  const rows = onboarding.importAgents;
+  if (moveImportCursor(input, key, ctx, rows.length)) return true;
+  if (input === " " && !key.ctrl) {
+    ctx.dispatch({
+      type: "onboarding_import_agent_toggled",
+      index: onboarding.cursor % Math.max(1, rows.length),
+    });
+    return true;
+  }
+  if (key.return) {
+    const picked = rows.filter((row) => row.enabled);
+    if (picked.length === 0) {
+      // Everything unticked and Enter is the same answer Esc gives.
+      finishImport(ctx, onboarding);
+      return true;
+    }
+    ctx.dispatch({
+      type: "onboarding_import_options_opened",
+      options: buildImportOptionRows(rows),
+    });
+    return true;
+  }
+  return false;
+}
+
+function handleImportOptionsKey(
+  input: string,
+  key: Key,
+  ctx: OnboardingKeyContext,
+  onboarding: OnboardingUiState,
+): boolean {
+  if (onboarding.busy) return true;
+  if (key.escape) {
+    ctx.dispatch({ type: "onboarding_step_set", step: "import_pick" });
+    return true;
+  }
+  const rows = onboarding.importOptions;
+  if (moveImportCursor(input, key, ctx, rows.length)) return true;
+  if (input === " " && !key.ctrl) {
+    ctx.dispatch({
+      type: "onboarding_import_option_toggled",
+      index: onboarding.cursor % Math.max(1, rows.length),
+    });
+    return true;
+  }
+  if (key.return) {
+    if (!rows.some((row) => row.enabled)) {
+      finishImport(ctx, onboarding);
+      return true;
+    }
+    ctx.dispatch({ type: "onboarding_import_run_started" });
+    ctx.callbacks.onOnboardingImportRequested?.(
+      { agents: onboarding.importAgents, options: rows },
+      false,
+    );
+    return true;
+  }
+  return false;
+}
+
+function handleImportPreviewKey(
+  input: string,
+  key: Key,
+  ctx: OnboardingKeyContext,
+  onboarding: OnboardingUiState,
+): boolean {
+  void input;
+  if (onboarding.busy) return true;
+  if (key.escape) {
+    // Back to the toggles, not out of the flow: a preview that showed
+    // too much (or too little) is an invitation to adjust, and the
+    // skip exit is one more Esc away from there.
+    ctx.dispatch({ type: "onboarding_step_set", step: "import_options" });
+    return true;
+  }
+  if (key.return) {
+    const report = onboarding.importReport;
+    const actionable =
+      report !== null &&
+      report.summary.migrated + report.summary.conflict > 0;
+    if (!actionable) {
+      finishImport(ctx, onboarding);
+      return true;
+    }
+    ctx.dispatch({ type: "onboarding_import_run_started" });
+    ctx.callbacks.onOnboardingImportRequested?.(
+      { agents: onboarding.importAgents, options: onboarding.importOptions },
+      true,
+    );
+    return true;
+  }
+  return false;
+}
+
+function handleImportDoneKey(
+  input: string,
+  key: Key,
+  ctx: OnboardingKeyContext,
+  onboarding: OnboardingUiState,
+): boolean {
+  void input;
+  if (key.ctrl) return false;
+  // The report was read (or not); any key hands over to the agent.
+  finishImport(ctx, onboarding);
+  return true;
 }
 
 // The cloud step *is* the providers wizard — same keys, same

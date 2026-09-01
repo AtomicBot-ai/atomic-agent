@@ -2,6 +2,11 @@ import type {
   HuggingFaceFile,
   HuggingFaceGgufChoice,
 } from "../../local-llm/index.js";
+import type { ImportReport } from "../../import/index.js";
+import type {
+  OnboardingImportAgentRow,
+  OnboardingImportOptionRow,
+} from "./import-step.js";
 
 /**
  * First-run flow state. Lives on `TuiState.onboarding` and is `null`
@@ -27,6 +32,14 @@ export type OnboardingStep =
   | "custom_embedding_url"
   | "propose_second"
   | "wait_or_jump"
+  /** Last step: bring data over from other agents found on this machine. */
+  | "import_pick"
+  /** Per-agent domain toggles for the picked agents. */
+  | "import_options"
+  /** The dry-run result, awaiting a confirm before anything is written. */
+  | "import_preview"
+  /** The executed import's report; any key hands over to the agent. */
+  | "import_done"
   | "finished";
 
 /**
@@ -78,6 +91,12 @@ export interface OnboardingUiState {
   hfReference: string;
   /** The repo those choices came from; `null` before anything resolves. */
   hfRepo: OnboardingHuggingFaceRepo | null;
+  /** Detected agents on the import pick screen; empty until offered. */
+  importAgents: OnboardingImportAgentRow[];
+  /** Domain toggles for the picked agents; empty until that screen opens. */
+  importOptions: OnboardingImportOptionRow[];
+  /** The last dry-run or executed report the import screens render. */
+  importReport: ImportReport | null;
 }
 
 /**
@@ -152,6 +171,9 @@ export function createOnboardingState(chatUrl: string): OnboardingUiState {
     error: null,
     hfReference: "",
     hfRepo: null,
+    importAgents: [],
+    importOptions: [],
+    importReport: null,
   };
 }
 
