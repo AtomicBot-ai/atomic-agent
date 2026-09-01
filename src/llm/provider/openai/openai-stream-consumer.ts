@@ -13,6 +13,8 @@ import {
 import { extractPartialReplyTextFromToolArguments } from "./tool-arguments-stream-parser.js";
 
 type MutableToolCall = {
+  /** Position in the final array. See `orderFor`. */
+  order: number;
   id?: string;
   type?: "function";
   function: {
@@ -20,6 +22,32 @@ type MutableToolCall = {
     arguments: string;
   };
 };
+
+/**
+ * Cross-event state for assembling streamed tool calls.
+ *
+ * A delta belongs to one call ("slot"), and the provider says which in one
+ * of two ways — or in neither:
+ *
+ *   - `index` — OpenAI's own scheme. Authoritative whenever it is present.
+ *   - `id` — one whole call per event and no index at all, as several
+ *     OpenAI-compatible providers do. Keying those by array position folds
+ *     every call onto slot 0, which merges distinct calls into one (#103).
+ *   - neither — a continuation of a call already opened, matched by
+ *     position against the slots that existed before this event.
+ */
+type ToolCallAccumulator = {
+  /** Slots by resolved key: `#<index>`, `@<id>`, or `~<n>` for neither. */
+  slots: Map<string, MutableToolCall>;
+  /** Slot key per call id, so a later id-only delta finds its own slot. */
+  keyById: Map<string, string>;
+  /** Next `order` to hand out for a slot the provider did not index. */
+  nextOrder: number;
+};
+
+function createToolCallAccumulator(): ToolCallAccumulator {
+  return { slots: new Map(), keyById: new Map(), nextOrder: 0 };
+}
 
 export function createOpenAiStreamConsumer(
   reasoningFormat: ReasoningFormat,
@@ -45,7 +73,7 @@ export function createOpenAiStreamConsumer(
       // NOT be conflated with either, since a still-open tool call's
       // arguments may be mid-stream.
       let terminalObserved = false;
-      const toolCalls = new Map<number, MutableToolCall>();
+      const toolCalls = createToolCallAccumulator();
       try {
         while (true) {
           if (signal?.aborted) break;
@@ -130,14 +158,28 @@ export function createOpenAiStreamConsumer(
 }
 
 function applyToolCallDeltas(
-  toolCalls: Map<number, MutableToolCall>,
+  accumulator: ToolCallAccumulator,
   deltas: readonly OpenAiToolCallDelta[],
 ): void {
+  // Snapshot before the loop: positional fallback matches against the slots
+  // that were open when the event arrived, never against ones it creates.
+  const openKeys = [...accumulator.slots.keys()];
+  let position = 0;
   for (const delta of deltas) {
-    const current = toolCalls.get(delta.index) ?? {
-      function: { name: "", arguments: "" },
-    };
-    if (delta.id) current.id = delta.id;
+    const key = resolveSlotKey(accumulator, delta, position, openKeys);
+    position += 1;
+    let current = accumulator.slots.get(key);
+    if (!current) {
+      current = {
+        order: orderFor(accumulator, delta),
+        function: { name: "", arguments: "" },
+      };
+      accumulator.slots.set(key, current);
+    }
+    if (delta.id) {
+      current.id = delta.id;
+      accumulator.keyById.set(delta.id, key);
+    }
     if (delta.type) current.type = delta.type;
     if (delta.function?.name) {
       current.function.name = mergeToolName(
@@ -148,8 +190,37 @@ function applyToolCallDeltas(
     if (delta.function?.arguments) {
       current.function.arguments += delta.function.arguments;
     }
-    toolCalls.set(delta.index, current);
   }
+}
+
+function resolveSlotKey(
+  accumulator: ToolCallAccumulator,
+  delta: OpenAiToolCallDelta,
+  position: number,
+  openKeys: readonly string[],
+): string {
+  if (typeof delta.index === "number") return `#${delta.index}`;
+  if (delta.id !== undefined) {
+    return accumulator.keyById.get(delta.id) ?? `@${delta.id}`;
+  }
+  return openKeys[position] ?? `~${accumulator.slots.size}`;
+}
+
+/**
+ * Provider indexes double as the output position, so a stream that opens
+ * slot 1 before slot 0 still ends up in the provider's order. Slots the
+ * provider never indexed queue up behind the highest index seen so far, in
+ * arrival order.
+ */
+function orderFor(
+  accumulator: ToolCallAccumulator,
+  delta: OpenAiToolCallDelta,
+): number {
+  if (typeof delta.index === "number") {
+    accumulator.nextOrder = Math.max(accumulator.nextOrder, delta.index + 1);
+    return delta.index;
+  }
+  return accumulator.nextOrder++;
 }
 
 /**
@@ -191,12 +262,12 @@ function buildFinalResult(args: {
   finishReason: string | null;
   modelId: string | null;
   usage?: CompletionUsage;
-  toolCalls: ReadonlyMap<number, MutableToolCall>;
+  toolCalls: ToolCallAccumulator;
   terminalObserved: boolean;
 }): StreamFinalResult {
-  const sortedToolCalls = [...args.toolCalls.entries()]
-    .sort(([a], [b]) => a - b)
-    .map(([, call]) => toOpenAiToolCall(call))
+  const sortedToolCalls = [...args.toolCalls.slots.values()]
+    .sort((a, b) => a.order - b.order)
+    .map((call) => toOpenAiToolCall(call))
     .filter((call): call is OpenAiToolCall => call !== null);
   return {
     content: args.content,
