@@ -322,9 +322,7 @@ function renderSidebar() {
         + '<span class="ic">' + ic(id) + '</span><span class="lb">' + label + '</span>'
         + '<span class="ct tnum">' + count + '</span></button>').join('') + '</div>'
     + '<div class="seswrap">' + groups + '</div>'
-    + '<button class="sb-foot" data-act="settings:models">'
-      + '<span class="dot ' + (!BR ? 'ok' : S.live.state === 'connected' ? 'ok' : S.live.state === 'starting' ? 'run' : 'bad') + '"></span>'
-      + '<span>' + esc(BR ? liveLabel() : 'llama-server · ' + shortModel(S.localModel)) + '</span></button>';
+    ;
 }
 
 /* ---------------- content ---------------- */
@@ -732,16 +730,43 @@ function anchorStyle(sel, width) {
 }
 
 function contextHTML() {
-  const total = ctxTotal(), used = ctxUsed();
+  const agent = (LIVE_CONFIG && LIVE_CONFIG.agent) || {};
+  const maxTokens = agent.conversationMaxTokens || 32000;
+  const maxPairs = agent.conversationMaxPairs || 20;
+  const win = CTX.window;
+  const pct = win ? Math.min(100, (CTX.tokens / win) * 100) : 0;
+  const dial = (label, key, value, step, min, max, note) =>
+    '<div class="ctxdial"><span class="col"><span>' + esc(label) + '</span>'
+    + '<span class="cap">' + esc(note) + '</span></span>'
+    + '<span class="hstack">'
+    + '<button class="btn btn-s" data-ctx-step="' + key + ':' + (-step) + '"' + (value <= min ? ' disabled' : '') + '>−</button>'
+    + '<span class="mono tnum" style="min-width:56px;text-align:center">' + tok(value) + '</span>'
+    + '<button class="btn btn-s" data-ctx-step="' + key + ':' + step + '"' + (value >= max ? ' disabled' : '') + '>+</button>'
+    + '</span></div>';
+
   return '<div class="scrim" data-close="1" style="background:transparent">'
-    + '<div class="popover" style="width:300px;' + anchorStyle('.ctxbtn', 300) + '">'
-    + '<div style="padding:12px 16px 10px"><div class="hstack"><span class="hd">Context window</span>'
-      + '<span class="mono tnum sec" style="margin-left:auto">' + tok(used) + ' / ' + tok(total) + '</span></div>'
-    + '<div class="ctxbar"><i style="width:' + Math.min(100, (used / total) * 100) + '%;background:var(--accent)"></i>'
-      + '<i style="flex:1;background:var(--bg-sunken)"></i></div>'
-    + '<p class="cap" style="margin:10px 0 0">An estimate from the transcript this window has sent. '
-      + 'The agent also carries a system prompt, tool definitions and tool output that it does not report back, '
-      + 'so the real figure is higher.</p></div>'
+    + '<div class="popover" style="width:360px;' + anchorStyle('.ctxbtn', 360) + '">'
+    + '<div style="padding:12px 16px 4px">'
+      + '<div class="hstack"><span class="hd">Context</span>'
+      + '<span class="mono tnum sec" style="margin-left:auto">' + tok(CTX.tokens)
+      + (win ? ' of ' + tok(win) : '') + '</span></div>'
+      + (win ? '<div class="ctxbar"><i style="width:' + pct + '%;background:var(--accent)"></i>'
+              + '<i style="flex:1;background:var(--bg-sunken)"></i></div>' : '')
+      + '<dl class="kvgrid" style="margin-top:10px;grid-template-columns:1fr max-content;gap:4px 12px">'
+        + '<dt>prompt scaffold</dt><dd class="mono tnum">' + tok(CTX.stablePrefix) + '</dd>'
+        + '<dt>conversation tail</dt><dd class="mono tnum">' + tok(CTX.tail) + '</dd>'
+        + (CTX.cacheHitTokens ? '<dt>cache hit</dt><dd class="mono tnum">' + tok(CTX.cacheHitTokens) + '</dd>' : '')
+      + '</dl>'
+      + '<p class="cap" style="margin:8px 0 0">'
+      + (CTX.source === 'provider'
+          ? 'counted by ' + esc(CTX.modelId || 'the model') + ' on the last prompt this session built'
+          : 'estimated — the last turn reported no count')
+      + ' — it moves when a turn runs, not while you type.</p>'
+    + '</div>'
+    + '<div class="ctxdials">'
+      + dial('Transcript budget', 'agent.conversationMaxTokens', maxTokens, 4000, 4000, 200000, 'tokens of history the packer may spend')
+      + dial('Pairs kept', 'agent.conversationMaxPairs', maxPairs, 5, 1, 100, 'user/assistant turns embedded in the prompt')
+    + '</div>'
     + '<div class="popfoot"><button class="btn btn-g" data-act="clear">Clear transcript</button>'
       + '<button class="btn btn-s" data-act="close">Done</button></div></div></div>';
 }
@@ -1042,7 +1067,7 @@ function act(a) {
     return;
   }
   if (k === 'cards')     { close(); S.log.forEach((m) => { if (m.k === 'tool') m.open = v === 'expand'; }); render(); return; }
-  if (k === 'ses')       { close(); S.sessionId = v; render(); return; }
+  if (k === 'ses')       { close(); openSession(v); return; }
   if (k === 'delask')    { const ss = SESSIONS.find((x) => x.id === v); if (!ss) return;
                            S.alert = {title:'Delete “' + ss.t + '”?', msg:'The transcript, its tool calls and its work log are removed from this machine. This cannot be undone.', ok:'Delete', act:'del:' + v};
                            render(); return; }
@@ -1175,6 +1200,8 @@ document.addEventListener('click', (e) => {
   if (selRow) { selActivate(SEL.rows[+selRow.dataset.selRow]); return; }
   const selPreset = t.closest('[data-sel-preset]');
   if (selPreset) { SEL.presetCur = +selPreset.dataset.selPreset; render(); return; }
+  const ctxStep = t.closest('[data-ctx-step]');
+  if (ctxStep) { ctxAdjust(ctxStep.dataset.ctxStep); return; }
   const modeRow = t.closest('[data-mode]');
   if (modeRow) { setCodingMode(modeRow.dataset.mode); return; }
   const mpPreset = t.closest('[data-preset]');
@@ -2356,13 +2383,13 @@ function codingModeChip() {
   const look = CODING_MODES.find((m) => m.id === id) || CODING_MODES[0];
   const colour = look.tone === 'bad' ? 'var(--danger)' : look.tone === 'warn' ? 'var(--warn)'
     : look.tone === 'accent' ? 'var(--accent-text)' : 'var(--success)';
-  return '<button class="cchip" data-act="modes" title="what the agent may do without asking" '
+  return '<button class="cchip cmodechip" data-act="modes" title="what the agent may do without asking" '
     + 'style="color:' + colour + '">' + ic('key') + esc(look.label) + ic('chevD') + '</button>';
 }
 
 function modesHTML() {
   return '<div class="scrim" data-close="1" style="background:transparent">'
-    + '<div class="popover" style="width:360px;' + anchorStyle('.cchip', 360) + '">'
+    + '<div class="popover" style="width:360px;' + anchorStyle('.cmodechip', 360) + '">'
     + CODING_MODES.map((m) => {
         const on = m.id === currentMode();
         const off = m.id === 'plan' && PLAN.supported === false;
@@ -2466,4 +2493,82 @@ async function selChooseBackend(id) {
   await refreshLiveConfig();
   closeSelector();
   toast('Local', pick.id + ' · starting the daemon');
+}
+
+/* ============================================================
+   Opening a session — the transcript comes from the agent's store
+   ============================================================ */
+
+async function openSession(id) {
+  if (!BR || !id) return;
+  S.sessionId = id;
+  S.room = 'chat';
+  S.log = [{id:nid(), k:'system', text:'loading session…'}];
+  S.busy = false; S.pending = null; S.stick = true;
+  render();
+
+  const res = await BR.session(id);
+  if (!res || !res.ok || !res.data) {
+    S.log = [{id:nid(), k:'system', text:'could not open that session: ' + esc((res && res.error) || 'unknown error')}];
+    render();
+    return;
+  }
+  const data = res.data;
+  const turns = Array.isArray(data.turns) ? data.turns : [];
+  const log = [];
+  turns.forEach((t) => {
+    if (t.kind === 'user') { log.push({id:nid(), k:'user', text:t.text || ''}); return; }
+    if (t.kind === 'assistant_reply') { log.push({id:nid(), k:'assistant', text:t.text || ''}); return; }
+    if (t.kind === 'assistant_tool_call') {
+      if (t.reasoning) log.push({id:nid(), k:'reason', steps:1, open:false, text:t.reasoning});
+      log.push({id:nid(), k:'tool', name:t.tool || 'tool',
+        arg: summariseArgs(t.args), args: JSON.stringify(t.args ?? {}, null, 2),
+        where:'local', ok:null, open:false});
+      return;
+    }
+    if (t.kind === 'tool_result') {
+      // Pair it with the call that is still open, so a loaded session
+      // shows what the tool actually returned — which the live stream
+      // does not carry.
+      for (let i = log.length - 1; i >= 0; i--) {
+        if (log[i].k === 'tool' && log[i].ok === null) {
+          log[i].ok = t.status === 'ok';
+          log[i].out = t.summary || '';
+          log[i].ms = 0;
+          return;
+        }
+      }
+      log.push({id:nid(), k:'tool', name:t.tool || 'tool', arg:'', ok:t.status === 'ok', out:t.summary || '', open:false, where:'local'});
+    }
+  });
+  S.log = log.length ? log : [{id:nid(), k:'system', text:'this session has no turns yet'}];
+  // Anything sent from here continues that session rather than starting a new one.
+  S.agentSession = id;
+  S.history = [];
+  render();
+  refreshContext();
+}
+
+async function ctxAdjust(spec) {
+  const at = spec.lastIndexOf(':');
+  const key = spec.slice(0, at);
+  const delta = Number(spec.slice(at + 1));
+  const agent = (LIVE_CONFIG && LIVE_CONFIG.agent) || {};
+  const current = agent[key.split('.')[1]] || 0;
+  const bounds = key.endsWith('conversationMaxPairs') ? [1, 100] : [4000, 200000];
+  const next = Math.max(bounds[0], Math.min(bounds[1], current + delta));
+  if (next === current) return;
+  // Write first, then repaint from what the config actually took.
+  const res = await BR.configSet(key, String(next));
+  if (res && res.ok === false) { toast('Could not change it', res.error || ''); return; }
+  await refreshLiveConfig();
+}
+if (typeof window !== 'undefined') {
+  window.__openSession = (id) => openSession(id);
+  window.__logLen = () => S.log.length;
+  window.__ctxAdjust = (spec) => ctxAdjust(spec);
+  window.__ctxCfg = () => {
+    const a = (LIVE_CONFIG && LIVE_CONFIG.agent) || {};
+    return {tokens:a.conversationMaxTokens, pairs:a.conversationMaxPairs};
+  };
 }

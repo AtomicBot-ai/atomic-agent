@@ -341,6 +341,26 @@ async function smokeTest(): Promise<void> {
     const models = await js<{ rows: number; err: string | null }>("window.__sel()");
     check("selector: model pane lists models", models.rows > 0, `${models.rows} rows${models.err ? " err=" + models.err : ""}`);
 
+    // Clicking a session must actually open it.
+    const opened = await js<{ turns: number; id: string }>(
+      "(async () => { const r = await window.atomic.sessions();"
+      + " const list = (r.data && r.data.sessions) || [];"
+      + " const pick = list.slice().sort((a,b) => (b.turnCount||0)-(a.turnCount||0))[0];"
+      + " if (!pick) return {turns:0,id:''};"
+      + " await window.__openSession(pick.id);"
+      + " return {turns: window.__logLen(), id: pick.id}; })()",
+    );
+    check("session opens from the sidebar", opened.turns > 1, `${opened.turns} entries from ${opened.id}`);
+
+    // The context dials must write config, not just repaint.
+    const before = await js<{ pairs: number }>("window.__ctxCfg()");
+    await js<void>("window.__ctxAdjust('agent.conversationMaxPairs:5')");
+    await new Promise((r) => setTimeout(r, 4000));
+    const after = await js<{ pairs: number }>("window.__ctxCfg()");
+    check("context dial writes config", after.pairs === before.pairs + 5, `${before.pairs} → ${after.pairs}`);
+    await js<void>(`window.__ctxAdjust('agent.conversationMaxPairs:-5')`);
+    await new Promise((r) => setTimeout(r, 3000));
+
     const mode = await js<string>("window.__mode()");
     check("coding mode resolves", ["default", "auto", "bypass"].includes(mode), mode);
   }
