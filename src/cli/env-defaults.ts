@@ -24,6 +24,11 @@
  * the ordering.
  *
  * An explicitly exported `NODE_ENV` — `development` for React
- * debugging, `test` under a runner — is left alone.
+ * debugging, `test` under a runner — is left alone. An *empty* value
+ * (`NODE_ENV=` in a shell export or dotenv line) counts as unset: the
+ * reconciler switch compares `=== "production"`, so an empty string
+ * would silently pick the development build all the same.
  */
-process.env.NODE_ENV ??= "production";
+if (!process.env.NODE_ENV) {
+  process.env.NODE_ENV = "production";
+}

@@ -37,6 +37,12 @@ describe("env-defaults", () => {
     expect(process.env.NODE_ENV).toBe("production");
   });
 
+  it("treats an empty NODE_ENV as unset", async () => {
+    process.env.NODE_ENV = "";
+    await import("./env-defaults.js");
+    expect(process.env.NODE_ENV).toBe("production");
+  });
+
   it("leaves an explicit NODE_ENV alone", async () => {
     process.env.NODE_ENV = "development";
     await import("./env-defaults.js");
