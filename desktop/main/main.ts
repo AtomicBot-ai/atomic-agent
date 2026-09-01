@@ -113,6 +113,12 @@ function wireIpc(client: AgentClient): void {
   resource("tasks", () => client.tasks());
   resource("sessions", () => client.sessions());
   resource("models", () => client.models());
+  ipcMain.handle("agent:session", (_event, id: unknown) =>
+    typeof id === "string" ? client.session(id).then((data) => ({ ok: true, data })).catch((e) => ({ ok: false, error: String(e) })) : { ok: false, error: "id required" },
+  );
+  ipcMain.handle("agent:planMode", (_event, enabled: unknown) =>
+    client.planMode(typeof enabled === "boolean" ? enabled : undefined),
+  );
 
   ipcMain.handle("agent:chat", (_event, payload: unknown) => {
     const { messages, sessionId } = payload as {

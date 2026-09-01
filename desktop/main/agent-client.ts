@@ -272,6 +272,30 @@ export class AgentClient extends EventEmitter {
   tasks = () => this.json<unknown>("/api/tasks");
   sessions = () => this.json<unknown>("/api/sessions");
   models = () => this.json<unknown>("/v1/models");
+  session = (id: string) => this.json<unknown>(`/api/sessions/${encodeURIComponent(id)}`);
+
+  /**
+   * Plan mode. The runtime keeps it as session state and reads it through
+   * a getter on every tool call, so this takes effect at the next step.
+   * Older agents have no such route — a 404 is reported as unsupported
+   * rather than as an error, so the UI can say why the control is off.
+   */
+  async planMode(enabled?: boolean): Promise<{ ok: boolean; planMode?: boolean; supported: boolean; error?: string }> {
+    try {
+      const res = await fetch(`${this.base()}/api/plan-mode`, {
+        method: enabled === undefined ? "GET" : "POST",
+        headers: this.headers(),
+        ...(enabled === undefined ? {} : { body: JSON.stringify({ enabled }) }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (res.status === 404) return { ok: false, supported: false, error: "this agent has no plan-mode route" };
+      if (!res.ok) return { ok: false, supported: true, error: `HTTP ${res.status}` };
+      const body = (await res.json()) as { planMode?: boolean };
+      return { ok: true, supported: true, planMode: !!body.planMode };
+    } catch (err) {
+      return { ok: false, supported: true, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
 
   /**
    * Run one turn. Deltas are emitted as `chat` events rather than

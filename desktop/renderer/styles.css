@@ -523,3 +523,16 @@ body.electron .sb-head { -webkit-app-region: no-drag; }
   background: var(--bg-sunken); border-radius: 6px; padding: var(--s3);
   max-height: 120px; overflow-y: auto; white-space: pre-wrap;
 }
+
+/* ---------------- model selector popup ---------------- */
+.selpop { width: 460px; max-width: calc(100vw - 32px); display: flex; flex-direction: column; max-height: 60vh; }
+.selhead {
+  flex: none; height: 36px; display: flex; align-items: center; gap: var(--s3);
+  padding: 0 var(--s5); font-size: 13px; font-weight: 500;
+  box-shadow: inset 0 -1px 0 var(--line-soft);
+}
+.selsearch { flex: none; padding: var(--s3) var(--s5); }
+.selbody { flex: 1; min-height: 0; overflow-y: auto; }
+/* The list scrolls inside the popup — it must never grow past the window. */
+.sellist { flex: 1; min-height: 0; max-height: 320px; overflow-y: auto; display: flex; flex-direction: column; }
+.selpop .popfoot { flex: none; }

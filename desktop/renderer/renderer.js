@@ -16,12 +16,14 @@ const SEL = {
   pulling:null, pullLine:'', busy:false, err:null,
 };
 /* Real token usage, read from the agent's trace after each turn. */
+const PLAN = { on:false, supported:null };
 const CTX = { tokens:0, source:null, stablePrefix:0, tail:0, cacheHitTokens:null, modelId:null, window:null, windowLabel:'' };
 /* default / auto / bypass. `plan` is deliberately absent: plan mode is a
    closure variable in the runtime with no route, no config key and no
    request field, so a desktop chip could only paint a state the agent
    does not have. */
 const CODING_MODES = [
+  {id:'plan', label:'plan', detail:'reads only, then proposes', tone:'accent'},
   {id:'default', label:'default', detail:'asks before risky steps', tone:'ok'},
   {id:'auto', label:'auto', detail:'edits this folder freely', tone:'warn'},
   {id:'bypass', label:'bypass permissions', detail:'never asks at all', tone:'bad'},
@@ -987,6 +989,8 @@ function act(a) {
   if (a === 'shortcuts') { close(); S.overlay = 'shortcuts'; render(); return; }
   if (a === 'context') { close(); S.overlay = 'context'; render(); return; }
   if (a === 'modes') { close(); S.overlay = 'modes'; render(); return; }
+  if (a === 'sel:add') { SEL.addOpen = true; SEL.presetCur = 0; SEL.err = null; render(); return; }
+  if (a === 'sel:browseLocal') { SEL.kind = 'model'; SEL.filter = ''; render(); selLoadLocal(); return; }
   if (a === 'sel:closeAdd') { SEL.addOpen = false; render(); return; }
   if (a === 'sel:savePreset') { selSavePreset(); return; }
   if (a === 'sel:cancelPull') { BR.cancelPull(); SEL.pulling = null; render(); return; }
@@ -1370,6 +1374,12 @@ function applyStatus(st) {
 
 async function loadResources() {
   if (!BR) return;
+  BR.planMode().then((res) => {
+    if (!res) return;
+    PLAN.supported = res.supported;
+    if (res.ok) PLAN.on = !!res.planMode;
+    render();
+  });
   const [caps, cfg, skills, tasks, sessions] = await Promise.all([
     BR.capabilities(), BR.config(), BR.skills(), BR.tasks(), BR.sessions(),
   ]);
@@ -1414,9 +1424,20 @@ async function loadResources() {
   if (sessions && sessions.ok && sessions.data && Array.isArray(sessions.data.sessions)) {
     SESSIONS.length = 0;
     sessions.data.sessions.forEach((x, i) => SESSIONS.push({
-      id:x.id || ('s' + i), t:x.title || x.goal || x.id, g:'RECENT',
-      sub:(x.turns ? x.turns + ' turns' : 'session'), st:'',
+      id:x.id || ('s' + i), t:x.id, g:'RECENT',
+      sub:(x.turnCount ? x.turnCount + (x.turnCount === 1 ? ' turn' : ' turns') : 'session'), st:'',
     }));
+    // A session id says nothing. Its first message says what it is about.
+    SESSIONS.slice(0, 20).forEach((row) => {
+      BR.session(row.id).then((res) => {
+        const turns = res && res.ok && res.data && res.data.turns;
+        if (!Array.isArray(turns)) return;
+        const first = turns.find((t) => t.kind === 'user' && t.text);
+        if (!first) return;
+        row.t = first.text.trim().replace(/\s+/g, ' ').slice(0, 72);
+        render();
+      });
+    });
     if (SESSIONS[0]) S.sessionId = SESSIONS[0].id;
   }
   render();
@@ -2099,7 +2120,6 @@ function selRows() {
         + (p.apiKeyEnvVar ? ' · key from ' + p.apiKeyEnvVar : p.apiKey ? '' : ' · no API key'),
       active: p.id === activeId,
     }));
-    rows.push({type:'addProvider', label:'Add a new provider', detail:'opens the preset list', lead:rows.length === 0});
     return rows;
   }
   // model pane
@@ -2129,13 +2149,7 @@ function selRows() {
 
 async function selActivate(row) {
   if (!row) return;
-  if (row.type === 'backend') {
-    SEL.kind = row.id === 'local' ? 'model' : 'provider';
-    SEL.cursor = 0; SEL.filter = ''; render(); selEnterModelPane();
-    if (row.id === 'local') selLoadLocal();
-    return;
-  }
-  if (row.type === 'addProvider') { SEL.addOpen = true; SEL.presetCur = 0; render(); return; }
+  if (row.type === 'backend') { selChooseBackend(row.id); return; }
   if (row.type === 'provider') {
     SEL.busy = true; render();
     const res = await BR.configSet('llm.activeTextProvider', row.id);
@@ -2178,57 +2192,87 @@ function selPull(id) {
 }
 
 function selectorHTML() {
-  const kinds = selKinds();
   const rows = selRows();
   SEL.rows = rows;
-  const tabs = '<div class="seg" style="margin:0">' + kinds.map((k) =>
-    '<button class="' + (SEL.kind === k ? 'on' : '') + '" data-sel-tab="' + k + '">' + k + '</button>').join('') + '</div>';
 
   if (SEL.pulling) {
-    return '<div class="scrim" data-close="1" style="background:transparent"><div class="popover" style="width:420px;'
-      + anchorStyle('.modelchip', 420) + '">'
-      + '<div style="padding:12px 16px"><div class="hd">Downloading ' + esc(SEL.pulling) + '</div>'
-      + '<p class="cap" style="margin:8px 0 0">' + esc(SEL.pullLine) + '</p>'
-      + '<p class="cap" style="margin:8px 0 0">It will be selected automatically when it lands.</p></div>'
-      + '<div class="popfoot"><button class="btn btn-s" data-act="sel:cancelPull">Cancel</button></div></div></div>';
+    return selShell('Downloading ' + SEL.pulling,
+      '<div class="selbody"><p class="cap">' + esc(SEL.pullLine) + '</p>'
+      + '<p class="cap">It is selected automatically when it lands.</p></div>',
+      '<button class="btn btn-s" data-act="sel:cancelPull">Cancel</button>');
   }
 
-  const body = SEL.addOpen
-    ? '<div style="padding:8px 0">'
-      + '<div class="modellist" style="max-height:32vh;overflow-y:auto">'
-      + PRESETS.map((p, i) => '<div class="modelrow' + (i === SEL.presetCur ? ' on' : '') + '" data-sel-preset="' + i + '">'
-          + '<span class="radio"></span><span class="col"><span class="nm">' + esc(p.label) + '</span>'
-          + '<span class="cap mono">' + esc(p.baseUrl) + '</span></span></div>').join('')
-      + '</div>'
-      + '<div style="padding:10px 16px 0"><input class="field-inp" id="sel-key" type="password" style="width:100%" placeholder="API key — blank reads ' + esc(PRESETS[SEL.presetCur].env) + '"></div>'
-      + '</div>'
-    : '<div class="sellist">'
-      + (SEL.modelsBusy || SEL.localBusy ? '<div class="pad cap">reading the catalogue…</div>' : '')
-      + (SEL.modelsErr ? '<div class="pad cap" style="color:var(--danger)">' + esc(SEL.modelsErr) + '</div>' : '')
-      + rows.map((r, i) => '<button class="modelrow' + (r.active ? ' on' : '') + (r.lead ? ' lead' : '') + '" data-sel-row="' + i + '">'
-          + '<span class="radio"' + (r.active ? ' style="border-color:var(--accent);border-width:4px"' : '') + '></span>'
-          + '<span class="col"><span class="nm' + (r.type === 'cloudModel' || r.type === 'localModel' ? ' mono' : '') + '">' + esc(r.label) + '</span>'
-          + '<span class="cap">' + esc(r.detail || '') + '</span></span>'
-          + (r.type === 'localModel' && !r.downloaded ? '<span class="cap">download</span>' : '')
-          + '</button>').join('')
-      + (!rows.length && !SEL.modelsBusy && !SEL.localBusy ? '<div class="pad cap">nothing to show</div>' : '')
-      + '</div>';
+  // Adding a provider is its own screen: the presets you have NOT
+  // configured yet. Mixing it into the provider list is what made
+  // "add" feel like another row that led nowhere.
+  if (SEL.addOpen) {
+    const taken = new Set(selProviders().map((p) => p.id));
+    const free = PRESETS.filter((p) => !taken.has(p.id));
+    return selShell('Add a provider',
+      '<div class="selbody">'
+      + (free.length
+        ? '<div class="sellist">' + free.map((p, i) =>
+            '<button class="modelrow' + (i === SEL.presetCur ? ' on' : '') + '" data-sel-preset="' + i + '">'
+            + '<span class="radio"' + (i === SEL.presetCur ? ' style="border-color:var(--accent);border-width:4px"' : '') + '></span>'
+            + '<span class="col"><span class="nm">' + esc(p.label) + '</span>'
+            + '<span class="cap mono">' + esc(p.baseUrl) + '</span></span></button>').join('') + '</div>'
+            + '<div style="padding:10px 16px 0"><input class="field-inp" id="sel-key" type="password" style="width:100%" '
+            + 'placeholder="API key — blank reads ' + esc((free[SEL.presetCur] || free[0]).env) + '"></div>'
+        : '<p class="cap" style="padding:16px">Every preset is already configured.</p>')
+      + '</div>',
+      '<button class="btn btn-g" data-act="sel:closeAdd">Back</button>'
+      + (free.length ? '<button class="btn btn-p" data-act="sel:savePreset">Add provider</button>' : ''));
+  }
 
-  const filter = (SEL.kind === 'model' && !SEL.addOpen)
-    ? '<div style="padding:8px 16px 0"><input class="field-inp" id="sel-filter" style="width:100%" placeholder="filter models" value="' + esc(SEL.filter) + '"></div>'
+  const title = SEL.kind === 'backend' ? 'Where it runs'
+    : SEL.kind === 'provider' ? 'Provider' : 'Model';
+
+  // An empty list is not a list — it is one action.
+  if (!rows.length && !SEL.modelsBusy && !SEL.localBusy) {
+    if (SEL.kind === 'provider') {
+      return selShell(title, '<div class="selbody"><p class="cap" style="padding:16px">No cloud provider is configured.</p></div>',
+        '<button class="btn btn-p" data-act="sel:add">Add a provider</button>');
+    }
+    if (SEL.kind === 'model' && selBackend() === 'local') {
+      return selShell(title, '<div class="selbody"><p class="cap" style="padding:16px">No local model is downloaded.</p></div>',
+        '<button class="btn btn-p" data-act="sel:browseLocal">Download a model</button>');
+    }
+    return selShell(title, '<div class="selbody"><p class="cap" style="padding:16px">Nothing to show.</p></div>', '');
+  }
+
+  const search = SEL.kind === 'model'
+    ? '<div class="selsearch"><input class="field-inp" id="sel-filter" style="width:100%" '
+      + 'placeholder="search models" value="' + esc(SEL.filter) + '"></div>'
     : '';
 
+  const list = '<div class="sellist">'
+    + (SEL.modelsBusy || SEL.localBusy ? '<div class="pad cap">reading the catalogue…</div>' : '')
+    + (SEL.modelsErr ? '<div class="pad cap" style="color:var(--danger)">' + esc(SEL.modelsErr) + '</div>' : '')
+    + rows.map((r, i) => '<button class="modelrow' + (r.active ? ' on' : '') + '" data-sel-row="' + i + '">'
+        + '<span class="radio"' + (r.active ? ' style="border-color:var(--accent);border-width:4px"' : '') + '></span>'
+        + '<span class="col"><span class="nm' + (r.type === 'cloudModel' || r.type === 'localModel' ? ' mono' : '') + '">'
+        + esc(r.label) + '</span><span class="cap">' + esc(r.detail || '') + '</span></span>'
+        + (r.type === 'localModel' && !r.downloaded ? '<span class="cap">download</span>' : '')
+        + '</button>').join('')
+    + '</div>';
+
+  const foot = SEL.kind === 'provider'
+    ? '<button class="btn btn-t" data-act="sel:add">Add a provider</button><button class="btn btn-s" data-act="close">Done</button>'
+    : '<button class="btn btn-s" data-act="close">Done</button>';
+
+  return selShell(title, search + list, foot);
+}
+
+/** One popup shell: fixed height, its own scroll, anchored to the chip. */
+function selShell(title, body, foot) {
   return '<div class="scrim" data-close="1" style="background:transparent">'
-    + '<div class="popover" style="width:460px;' + anchorStyle('.modelchip', 460) + '">'
-    + '<div style="padding:10px 16px 0;display:flex;align-items:center;gap:8px">' + tabs
+    + '<div class="popover selpop" style="' + anchorStyle('.modelchip', 460) + '">'
+    + '<div class="selhead">' + esc(title)
     + (SEL.busy ? '<span class="cap" style="margin-left:auto">saving…</span>' : '') + '</div>'
-    + filter + body
-    + (SEL.err ? '<div class="cap" style="padding:0 16px;color:var(--danger)">' + esc(SEL.err) + '</div>' : '')
-    + '<div class="popfoot">'
-    + (SEL.addOpen
-        ? '<button class="btn btn-g" data-act="sel:closeAdd">Back</button><button class="btn btn-p" data-act="sel:savePreset">Add provider</button>'
-        : '<button class="btn btn-s" data-act="close">Done</button>')
-    + '</div></div></div>';
+    + body
+    + (SEL.err ? '<div class="cap" style="padding:6px 16px;color:var(--danger)">' + esc(SEL.err) + '</div>' : '')
+    + (foot ? '<div class="popfoot">' + foot + '</div>' : '')
+    + '</div></div>';
 }
 
 async function selSavePreset() {
@@ -2300,6 +2344,7 @@ function contextChip() {
    ============================================================ */
 
 function currentMode() {
+  if (PLAN.on) return 'plan';
   if (S.level >= 5) return 'bypass';
   if (S.baseLevel != null && S.level > S.baseLevel) return 'auto';
   if (S.level >= 2 && (S.baseLevel == null || S.baseLevel < 2)) return 'auto';
@@ -2309,7 +2354,8 @@ function currentMode() {
 function codingModeChip() {
   const id = currentMode();
   const look = CODING_MODES.find((m) => m.id === id) || CODING_MODES[0];
-  const colour = look.tone === 'bad' ? 'var(--danger)' : look.tone === 'warn' ? 'var(--warn)' : 'var(--success)';
+  const colour = look.tone === 'bad' ? 'var(--danger)' : look.tone === 'warn' ? 'var(--warn)'
+    : look.tone === 'accent' ? 'var(--accent-text)' : 'var(--success)';
   return '<button class="cchip" data-act="modes" title="what the agent may do without asking" '
     + 'style="color:' + colour + '">' + ic('key') + esc(look.label) + ic('chevD') + '</button>';
 }
@@ -2319,9 +2365,11 @@ function modesHTML() {
     + '<div class="popover" style="width:360px;' + anchorStyle('.cchip', 360) + '">'
     + CODING_MODES.map((m) => {
         const on = m.id === currentMode();
-        return '<button class="poprow' + (on ? ' on' : '') + '" data-mode="' + m.id + '">'
-          + '<span class="radio"></span><span><span style="font-weight:500">' + esc(m.label) + '</span>'
-          + '<span class="cap" style="display:block">' + esc(m.detail) + '</span></span>'
+        const off = m.id === 'plan' && PLAN.supported === false;
+        return '<button class="poprow' + (on ? ' on' : '') + (off ? ' dim' : '') + '" data-mode="' + m.id + '">'
+          + '<span class="radio"' + (on ? ' style="border-color:var(--accent);border-width:4px"' : '') + '></span>'
+          + '<span><span style="font-weight:500">' + esc(m.label) + '</span>'
+          + '<span class="cap" style="display:block">' + esc(off ? 'needs an agent with the plan-mode route' : m.detail) + '</span></span>'
           + (on ? '<span class="cap" style="margin-left:auto">current</span>' : '') + '</button>';
       }).join('')
     + '<div style="padding:10px 16px"><p class="cap" style="margin:0">'
@@ -2333,6 +2381,28 @@ function modesHTML() {
 
 async function setCodingMode(id) {
   if (S.busy) { toast('Not while a turn is running'); return; }
+  if (id === 'plan' || PLAN.on) {
+    // Plan mode is runtime state, not a level: turning it on leaves the
+    // ladder exactly where it was, which is what makes `default` restore.
+    const want = id === 'plan';
+    S.overlay = null; render();
+    const res = await BR.planMode(want);
+    if (!res || !res.ok) {
+      PLAN.supported = res ? res.supported : true;
+      S.log.push({id:nid(), k:'system', text: res && res.supported === false
+        ? 'plan mode needs an agent build that carries the /api/plan-mode route'
+        : 'could not change plan mode: ' + esc((res && res.error) || '')});
+      render();
+      if (id !== 'plan') { /* fall through to the ladder modes below */ } else return;
+    } else {
+      PLAN.on = !!res.planMode; PLAN.supported = true;
+      S.log.push({id:nid(), k:'system', text: PLAN.on
+        ? 'plan mode — the agent reads and proposes; every tool that would change something is refused'
+        : 'plan mode off'});
+      render();
+      if (id === 'plan') return;
+    }
+  }
   const base = S.baseLevel == null ? S.level : S.baseLevel;
   const level = id === 'bypass' ? 5 : id === 'auto' ? Math.max(base, 2) : base;
   S.overlay = null; render();
@@ -2356,4 +2426,44 @@ if (typeof window !== 'undefined') {
   window.__ctx = () => ({tokens:CTX.tokens, source:CTX.source, window:CTX.window, stablePrefix:CTX.stablePrefix});
   window.__ctxRefresh = () => refreshContext();
   window.__mode = () => currentMode();
+}
+
+
+/**
+ * Choosing a backend is a choice, not a step: it picks something usable
+ * on that side and applies it. Only when there is nothing to pick does
+ * the popup stay open, showing the one action that would fix that.
+ */
+async function selChooseBackend(id) {
+  SEL.err = null;
+  if (id === 'cloud') {
+    const provs = selProviders();
+    if (!provs.length) { SEL.kind = 'provider'; render(); return; }
+    const already = provs.find((p) => p.id === selActiveProviderId());
+    const pick = already || provs[0];
+    SEL.busy = true; render();
+    const res = await BR.configSet('llm.activeTextProvider', pick.id);
+    SEL.busy = false;
+    if (res && res.ok === false) { SEL.err = res.error || 'could not switch to cloud'; render(); return; }
+    await refreshLiveConfig();
+    if (!pick.defaultChatModel) { SEL.kind = 'model'; render(); selLoadModels(pick.id); return; }
+    closeSelector();
+    toast('Cloud', pick.id + ' · ' + pick.defaultChatModel);
+    return;
+  }
+  // local
+  if (!SEL.local.length) await selLoadLocal();
+  const managed = (LIVE_CONFIG && LIVE_CONFIG.localModels && LIVE_CONFIG.localModels.managed) || {};
+  const onDisk = SEL.local.filter((m) => m.downloaded);
+  if (!onDisk.length) { SEL.kind = 'model'; render(); return; }
+  const pick = onDisk.find((m) => m.id === managed.modelId) || onDisk.find((m) => m.active) || onDisk[0];
+  SEL.busy = true; render();
+  const used = await BR.modelsUse(pick.id);
+  if (used && used.ok === false) { SEL.busy = false; SEL.err = used.error || 'could not select the model'; render(); return; }
+  await BR.configSet('llm.activeTextProvider', 'local-llama');
+  BR.modelsStart();
+  SEL.busy = false;
+  await refreshLiveConfig();
+  closeSelector();
+  toast('Local', pick.id + ' · starting the daemon');
 }

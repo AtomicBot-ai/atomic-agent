@@ -28,6 +28,8 @@ contextBridge.exposeInMainWorld("atomic", {
   tasks: () => ipcRenderer.invoke("agent:tasks"),
   sessions: () => ipcRenderer.invoke("agent:sessions"),
   models: () => ipcRenderer.invoke("agent:models"),
+  session: (id: string) => ipcRenderer.invoke("agent:session", id),
+  planMode: (enabled?: boolean) => ipcRenderer.invoke("agent:planMode", enabled),
 
   /** One turn of the agent loop, streamed back over `onChat`. */
   chat: (messages: Array<{ role: string; content: string }>, sessionId?: string) =>
