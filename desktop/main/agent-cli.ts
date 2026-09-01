@@ -160,3 +160,89 @@ export const PROVIDER_KEY_ENV: Record<string, string> = {
   aimlapi: "AIMLAPI_API_KEY",
   openai: "OPENAI_API_KEY",
 };
+
+/* ---------------------------------------------------------------
+   Cloud providers.
+
+   `llm.providers` is a list-valued key, and the CLI is explicit that
+   those "have no single-value spelling — set those with the whole-file
+   JSON form". So a provider edit reads the whole config, changes one
+   entry, and writes the whole file back. That is not the same hazard as
+   PATCH /api/config: this payload is the file we just read, so nothing
+   is dropped.
+
+   Every preset resolves to the existing `openai-compatible` kind with
+   `baseUrl` filled in — see src/tui/providers/provider-presets.ts.
+   --------------------------------------------------------------- */
+
+export interface ProviderEntry {
+  id: string;
+  kind: string;
+  baseUrl?: string;
+  apiKey?: string;
+  apiKeyEnvVar?: string;
+  apiKeyHeader?: string;
+  headers?: Record<string, string>;
+  defaultChatModel?: string;
+}
+
+async function configSetWhole(config: unknown): Promise<CliResult> {
+  return cli(["config", "set", JSON.stringify(config)], 30_000);
+}
+
+/** Add a provider, or replace the entry that already carries its id. */
+export async function upsertProvider(entry: ProviderEntry): Promise<CliResult> {
+  if (!/^[\w.-]{1,48}$/.test(entry.id)) {
+    return { ok: false, stdout: "", stderr: "", error: `not a provider id: ${entry.id}` };
+  }
+  const current = await configGet();
+  if (!current.ok || !current.config) {
+    return { ok: false, stdout: "", stderr: "", error: current.error ?? "could not read the config" };
+  }
+  const config = current.config as { llm?: { providers?: ProviderEntry[] } };
+  const llm = (config.llm ??= {});
+  const providers = (llm.providers ??= []);
+  const at = providers.findIndex((p) => p.id === entry.id);
+  const clean = Object.fromEntries(
+    Object.entries(entry).filter(([, v]) => v !== undefined && v !== ""),
+  ) as ProviderEntry;
+  if (at >= 0) providers[at] = { ...providers[at], ...clean };
+  else providers.push(clean);
+  return configSetWhole(config);
+}
+
+/** Point a configured provider at one of its models. */
+export async function setProviderModel(id: string, model: string): Promise<CliResult> {
+  if (!model.trim()) return { ok: false, stdout: "", stderr: "", error: "model required" };
+  return upsertProvider({ id, kind: "", defaultChatModel: model } as ProviderEntry);
+}
+
+export interface SearchedModel {
+  provider: string;
+  id: string;
+  kind?: string;
+  contextWindow?: number;
+  supportsVision?: boolean;
+  supportsTools?: string | boolean;
+}
+
+/** The provider's live model list, as `atag models search --json` reports it. */
+export async function modelsSearch(
+  query: string,
+  provider?: string,
+  limit = 40,
+): Promise<{ ok: boolean; models?: SearchedModel[]; error?: string }> {
+  const args = ["models", "search", query || "", "--limit", String(Math.min(200, Math.max(1, limit))), "--json"];
+  if (provider) {
+    if (!/^[\w.-]{1,48}$/.test(provider)) return { ok: false, error: "bad provider id" };
+    args.push("--provider", provider);
+  }
+  const res = await cli(args, 60_000);
+  if (!res.ok) return { ok: false, error: res.error };
+  try {
+    const parsed = JSON.parse(res.stdout) as SearchedModel[];
+    return { ok: true, models: Array.isArray(parsed) ? parsed : [] };
+  } catch {
+    return { ok: false, error: "models search did not return JSON" };
+  }
+}

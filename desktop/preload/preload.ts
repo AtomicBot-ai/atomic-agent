@@ -48,6 +48,11 @@ contextBridge.exposeInMainWorld("atomic", {
   modelsPull: (id: string) => ipcRenderer.invoke("cli:modelsPull", id),
   cancelPull: () => ipcRenderer.invoke("cli:cancelPull"),
   onPull: (cb: (payload: unknown) => void) => on("cli:pull", cb),
+  modelsSearch: (query: string, provider?: string, limit?: number) =>
+    ipcRenderer.invoke("cli:modelsSearch", { query, provider, limit }),
+  upsertProvider: (entry: Record<string, unknown>) => ipcRenderer.invoke("cli:upsertProvider", entry),
+  setProviderModel: (id: string, model: string) =>
+    ipcRenderer.invoke("cli:setProviderModel", { id, model }),
   hostRam: () => ipcRenderer.invoke("app:hostRam"),
   keyEnv: () => ipcRenderer.invoke("app:keyEnv"),
 

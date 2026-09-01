@@ -98,6 +98,32 @@ Honestly degraded, and labelled as such in the UI:
 Without an agent binary the window still opens and runs a scripted demo, so the
 design can be reviewed without an install.
 
+## Models and providers
+
+Settings → Models is live, through the CLI rather than the HTTP API.
+
+- **Local** lists the real catalogue from `atag models list` with real
+  on-disk state, sized against this machine's RAM. `Use` runs
+  `atag models use <id>`; `Download` runs `atag models pull <id>` and streams
+  its progress into the pane.
+- **Cloud** lists the providers in `llm.providers`. `Add provider` writes a
+  preset — every one resolves to the `openai-compatible` kind with `baseUrl`
+  filled in, exactly as `src/tui/providers/provider-presets.ts` does — with the
+  key either typed in or left to its environment variable. `Models…` searches
+  that provider's live catalogue via `atag models search <query> --provider
+  <id> --json` and `Select` writes `defaultChatModel`. `Use` switches
+  `llm.activeTextProvider`.
+
+`llm.providers` is a list-valued key, and the CLI states that those "have no
+single-value spelling — set those with the whole-file JSON form". So a provider
+edit reads the whole config, changes one entry, and writes the file back. That
+is not the `PATCH /api/config` hazard: the payload is the file just read, so
+nothing is dropped — asserted by the end-to-end test, which diffs every
+non-`llm` block before and after.
+
+`atag models search` requires a query, so the picker asks for one instead of
+showing an empty list.
+
 ## Verification
 
 `npm run smoke` launches the app for real, waits for the agent, and asserts:

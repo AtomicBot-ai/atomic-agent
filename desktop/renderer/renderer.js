@@ -5,6 +5,34 @@
 const BR = typeof window !== "undefined" ? window.atomic : null;
 let WORKSPACE = '';
 let LIVE_CAPS = null, LIVE_CONFIG = null;
+
+/* Models pane. Mirrors src/tui/providers/provider-presets.ts: every
+   preset resolves to the existing `openai-compatible` kind with baseUrl
+   filled in, so adding one is a config write, not a new provider kind. */
+const PRESETS = [
+  {id:'openrouter', label:'OpenRouter', kind:'openrouter', baseUrl:'https://openrouter.ai/api', env:'OPENROUTER_API_KEY'},
+  {id:'aimlapi', label:'AI/ML API', kind:'aimlapi', baseUrl:'https://api.aimlapi.com', env:'AIMLAPI_API_KEY'},
+  {id:'anthropic', label:'Anthropic (Claude)', kind:'openai-compatible', baseUrl:'https://api.anthropic.com', env:'ANTHROPIC_API_KEY', apiKeyHeader:'x-api-key', headers:{'anthropic-version':'2023-06-01'}},
+  {id:'groq', label:'Groq', kind:'openai-compatible', baseUrl:'https://api.groq.com/openai', env:'GROQ_API_KEY'},
+  {id:'deepseek', label:'DeepSeek', kind:'openai-compatible', baseUrl:'https://api.deepseek.com', env:'DEEPSEEK_API_KEY'},
+  {id:'mistral', label:'Mistral', kind:'openai-compatible', baseUrl:'https://api.mistral.ai', env:'MISTRAL_API_KEY'},
+  {id:'cerebras', label:'Cerebras', kind:'openai-compatible', baseUrl:'https://api.cerebras.ai', env:'CEREBRAS_API_KEY'},
+  {id:'together', label:'Together AI', kind:'openai-compatible', baseUrl:'https://api.together.xyz', env:'TOGETHER_API_KEY'},
+  {id:'fireworks', label:'Fireworks AI', kind:'openai-compatible', baseUrl:'https://api.fireworks.ai/inference', env:'FIREWORKS_API_KEY'},
+  {id:'xai', label:'xAI (Grok)', kind:'openai-compatible', baseUrl:'https://api.x.ai', env:'XAI_API_KEY'},
+  {id:'moonshot', label:'Moonshot AI (Kimi)', kind:'openai-compatible', baseUrl:'https://api.moonshot.ai', env:'MOONSHOT_API_KEY'},
+  {id:'perplexity', label:'Perplexity', kind:'openai-compatible', baseUrl:'https://api.perplexity.ai', env:'PERPLEXITY_API_KEY'},
+  {id:'nous', label:'Nous Research', kind:'openai-compatible', baseUrl:'https://inference-api.nousresearch.com', env:'NOUS_API_KEY'},
+  {id:'novita', label:'Novita AI', kind:'openai-compatible', baseUrl:'https://api.novita.ai/openai', env:'NOVITA_API_KEY'},
+  {id:'ollama', label:'Ollama (local)', kind:'openai-compatible', baseUrl:'http://localhost:11434', env:'OLLAMA_API_KEY', local:true},
+  {id:'lmstudio', label:'LM Studio (local)', kind:'openai-compatible', baseUrl:'http://localhost:1234', env:'LMSTUDIO_API_KEY', local:true},
+];
+const MP = {
+  local: [], localBusy: false, localErr: null, pulling: null, pullLog: [],
+  addOpen: false, presetCur: 0, apiKey: '',
+  pickFor: null, pickQuery: '', picks: [], pickBusy: false, pickErr: null,
+  busy: false, err: null,
+};
 const OB = {
   open: false, step: 'choose', choice: 0,
   models: [], modelCur: 0, ram: 0, busy: false, log: [], error: null,
@@ -773,47 +801,96 @@ function settingsPane() {
 }
 
 function modelsPane() {
-  const tab = S.modelTab;
-  const q = S.modelQuery.trim().toLowerCase();
-  const list = MODELS[tab].filter((m) => !q || m.id.toLowerCase().includes(q) || (m.v || m.q || '').toLowerCase().includes(q));
-  const sel = tab === 'local' ? S.localModel : tab === 'cloud' ? S.cloudModel : '';
-  const rows = list.length ? list.map((m) => {
-    const on = m.id === sel;
-    const right = tab === 'local'
-      ? (m.state === 'installed'
-          ? '<span class="cap">' + esc(m.size) + '</span>'
-          : '<button class="btn btn-t" style="height:24px" data-act="na">Download ' + esc(m.size) + '</button>')
-      : '<span class="cap">' + esc(m.note) + '</span>';
-    const meta = tab === 'local'
-      ? m.q + ' · ' + m.ctx + ' ctx · ' + m.fit
-      : (m.v || '') + ' · ' + m.ctx + ' ctx';
-    return '<div class="modelrow' + (on ? ' on' : '') + '" data-model="' + esc(m.id) + '" role="button" tabindex="0" aria-pressed="' + on + '">'
-      + '<span class="radio"></span>'
-      + '<span class="col"><span class="mono nm">' + esc(m.id) + '</span><span class="cap">' + esc(meta) + '</span></span>'
-      + right + '</div>';
-  }).join('') : '<div class="pad cap">No model matches &ldquo;' + esc(S.modelQuery) + '&rdquo;.</div>';
-
+  const tab = S.modelTab === 'cloud' ? 'cloud' : 'local';
   return '<div class="stack">'
-    + '<div class="hstack">'
-      + segControl([['local','Local'],['cloud','Cloud'],['external','External']], tab, 'modeltab:')
+    + '<div class="hstack">' + segControl([['local','Local'],['cloud','Cloud']], tab, 'modeltab:')
       + '<span style="flex:1"></span>'
-      + '<input class="field-inp" id="modelq" placeholder="Filter ' + MODELS[tab].length + ' models…" value="' + esc(S.modelQuery) + '">'
+      + (tab === 'local'
+          ? '<button class="btn btn-s" data-act="models:refresh">Refresh catalogue</button>'
+          : '<button class="btn btn-p" data-act="provider:add">' + ic('plus') + 'Add provider</button>')
     + '</div>'
-    + '<div class="card"><div class="card-h">' + (tab === 'local' ? 'llama-server · localhost:8080'
-        : tab === 'cloud' ? 'Anthropic · sk-ant-•••••••••4f2a' : 'OpenAI-compatible endpoints')
-      + '<span style="margin-left:auto" class="hstack"><span class="dot ok"></span><span class="cap">healthy</span></span></div>'
-      + '<div class="modellist">' + rows + '</div></div>'
-    + (tab === 'cloud' ? '<p class="cap">The provider catalogue is pulled live — 214 models here, filtered to the five you have used. Switching takes effect on the next turn.</p>' : '')
-    + (tab === 'external' ? '<div class="panelcard"><span class="hd">Add an endpoint</span>'
-        + '<input class="field-inp" style="width:100%" placeholder="http://127.0.0.1:11434/v1">'
-        + '<p class="cap" style="margin:0">Atomic asks the server for its own /v1/models list.</p></div>' : '')
-    + '<div class="panelcard"><span class="hd">Fallback chain</span>'
-      + '<div class="rows">'
-      + ['1 · Cloud — ' + shortModel(S.cloudModel), '2 · Local — ' + shortModel(S.localModel)].map((r) =>
-        '<div class="row" style="padding:0;height:32px"><span class="main"><span class="t" style="font-weight:400">' + esc(r) + '</span></span>'
-        + '<span class="meta">drag to reorder</span></div>').join('') + '</div>'
-      + '<p class="cap" style="margin:0">Health wins over the split: if the cloud provider fails mid-turn, the turn finishes locally.</p></div>'
+    + (MP.err ? '<div class="cap" style="color:var(--danger)">' + esc(MP.err) + '</div>' : '')
+    + (tab === 'local' ? localModelsSection() : cloudProvidersSection())
     + '</div>';
+}
+
+function localModelsSection() {
+  if (MP.pulling) {
+    return '<div class="card"><div class="card-h">downloading ' + esc(MP.pulling) + '</div>'
+      + '<div class="card-b"><div class="ob-prog" id="mp-prog">' + esc(MP.pullLog.slice(-8).join('\n')) + '</div>'
+      + '<button class="btn btn-s" style="align-self:flex-start" data-act="models:cancelPull">Cancel</button></div></div>';
+  }
+  if (MP.localBusy) return '<div class="card"><div class="card-b cap">reading the catalogue…</div></div>';
+  if (MP.localErr) return '<div class="card"><div class="card-b cap" style="color:var(--danger)">' + esc(MP.localErr) + '</div></div>';
+  if (!MP.local.length) {
+    return '<div class="card"><div class="card-b cap">No catalogue yet — Refresh catalogue reads it from the agent.</div></div>';
+  }
+  return '<div class="card"><div class="card-h">local models · ' + MP.local.length + '</div><div class="modellist">'
+    + MP.local.map((m) => {
+      const fit = fitFor(m.size, OB.ram || 16);
+      return '<div class="modelrow' + (m.active ? ' on' : '') + '">'
+        + '<span class="radio"' + (m.active ? ' style="border-color:var(--accent);border-width:4px"' : '') + '></span>'
+        + '<span class="col"><span class="mono nm">' + esc(m.id) + '</span>'
+        + '<span class="cap">' + esc(m.size) + ' · ' + esc(m.context) + ' context · ' + esc(fit.label)
+        + (m.downloaded ? ' · on disk' : '') + '</span></span>'
+        + (m.active
+            ? '<span class="cap">active</span>'
+            : m.downloaded
+              ? '<button class="btn btn-s" data-use-local="' + esc(m.id) + '">Use</button>'
+              : '<button class="btn btn-t" data-pull-local="' + esc(m.id) + '">Download</button>')
+        + '</div>';
+    }).join('') + '</div></div>';
+}
+
+function cloudProvidersSection() {
+  const providers = ((LIVE_CONFIG && LIVE_CONFIG.llm && LIVE_CONFIG.llm.providers) || [])
+    .filter((p) => p.kind !== 'llama-server');
+  const activeId = LIVE_CONFIG && LIVE_CONFIG.llm && LIVE_CONFIG.llm.activeTextProvider;
+  const rows = providers.length ? providers.map((p) =>
+    '<div class="modelrow' + (p.id === activeId ? ' on' : '') + '">'
+    + '<span class="radio"' + (p.id === activeId ? ' style="border-color:var(--accent);border-width:4px"' : '') + '></span>'
+    + '<span class="col"><span class="nm">' + esc(p.id) + '</span>'
+    + '<span class="cap">' + esc(p.kind) + (p.defaultChatModel ? ' · ' + esc(p.defaultChatModel) : ' · no model chosen')
+    + (p.apiKeyEnvVar ? ' · key from ' + esc(p.apiKeyEnvVar) : '') + '</span></span>'
+    + '<span class="hstack">'
+    + '<button class="btn btn-s" data-pick-models="' + esc(p.id) + '">Models…</button>'
+    + (p.id === activeId ? '<span class="cap">active</span>' : '<button class="btn btn-t" data-use-provider="' + esc(p.id) + '">Use</button>')
+    + '</span></div>').join('')
+    : '<div class="pad cap">No cloud provider configured yet.</div>';
+
+  const picker = MP.pickFor ? '<div class="card"><div class="card-h">models · ' + esc(MP.pickFor)
+    + '<span style="margin-left:auto"><button class="btn-g cap" data-act="provider:closePick">close</button></span></div>'
+    + '<div class="card-b">'
+    + '<input class="field-inp" id="mp-query" style="width:100%" placeholder="filter, e.g. claude, 70b, free" value="' + esc(MP.pickQuery) + '">'
+    + (MP.pickBusy ? '<div class="cap">searching…</div>' : '')
+    + (MP.pickErr ? '<div class="cap" style="color:var(--danger)">' + esc(MP.pickErr) + '</div>' : '')
+    + '<div class="modellist" style="max-height:38vh;overflow-y:auto">'
+    + (MP.picks.length ? MP.picks.map((m) =>
+        '<div class="modelrow"><span class="radio"></span>'
+        + '<span class="col"><span class="mono nm">' + esc(m.id) + '</span>'
+        + '<span class="cap">' + (m.contextWindow ? tok(m.contextWindow) + ' context' : '')
+        + (m.supportsTools && m.supportsTools !== 'none' ? ' · tools' : '')
+        + (m.supportsVision ? ' · vision' : '') + '</span></span>'
+        + '<button class="btn btn-t" data-set-model="' + esc(m.id) + '">Select</button></div>').join('')
+       : (MP.pickBusy ? '' : '<div class="pad cap">Type to search this provider\u2019s catalogue — try <span class="mono">claude</span>, <span class="mono">70b</span> or <span class="mono">free tools</span>.</div>'))
+    + '</div></div></div>' : '';
+
+  const add = MP.addOpen ? '<div class="card"><div class="card-h">add a provider'
+    + '<span style="margin-left:auto"><button class="btn-g cap" data-act="provider:closeAdd">close</button></span></div>'
+    + '<div class="card-b">'
+    + '<div class="modellist" style="max-height:34vh;overflow-y:auto">'
+    + PRESETS.map((p, i) => '<div class="modelrow' + (i === MP.presetCur ? ' on' : '') + '" data-preset="' + i + '">'
+        + '<span class="radio"></span><span class="col"><span class="nm">' + esc(p.label) + '</span>'
+        + '<span class="cap mono">' + esc(p.baseUrl) + '</span></span>'
+        + '<span class="cap">' + esc(p.env) + '</span></div>').join('')
+    + '</div>'
+    + '<input class="field-inp" id="mp-key" style="width:100%" type="password" placeholder="API key — optional, leave blank to use ' + esc(PRESETS[MP.presetCur].env) + '">'
+    + '<div class="hstack"><span class="cap">Saved to llm.providers. A blank key means the agent reads the environment variable instead.</span>'
+    + '<span style="flex:1"></span><button class="btn btn-p" data-act="provider:save"' + (MP.busy ? ' disabled' : '') + '>Add provider</button></div>'
+    + '</div></div>' : '';
+
+  return add + '<div class="card"><div class="card-h">cloud providers · ' + providers.length + '</div>'
+    + '<div class="modellist">' + rows + '</div></div>' + picker;
 }
 
 function privacyPane() {
@@ -920,7 +997,13 @@ function act(a) {
                              close(); render(); toast('Session deleted', gone); } return; }
   if (k === 'scope')     { S.scope = v; S.q = ''; S.cur = 0; S.dialShare = S.share; render(); return; }
   if (k === 'taskfilter'){ S.taskFilter = v; render(); return; }
-  if (k === 'modeltab')  { S.modelTab = v; S.modelQuery = ''; render(); return; }
+  if (k === 'modeltab')  { S.modelTab = v; MP.err = null; render(); if (v === 'local' && !MP.local.length) mpLoadLocal(); return; }
+  if (a === 'models:refresh') { mpLoadLocal(); return; }
+  if (a === 'models:cancelPull') { BR.cancelPull(); MP.pulling = null; render(); return; }
+  if (a === 'provider:add') { MP.addOpen = true; MP.err = null; render(); return; }
+  if (a === 'provider:closeAdd') { MP.addOpen = false; render(); return; }
+  if (a === 'provider:closePick') { MP.pickFor = null; MP.picks = []; render(); return; }
+  if (a === 'provider:save') { mpSaveProvider(); return; }
   if (k === 'skillstab') { S.skillsTab = v; render(); return; }
   if (k === 'memtab')    { S.memTab = v; render(); return; }
   if (k === 'appr')      { answer(v); return; }
@@ -1030,6 +1113,18 @@ document.addEventListener('click', (e) => {
   if (obp) { OB.modelCur = +obp.dataset.obProvider; render(); return; }
   const ob = t.closest('[data-ob]');
   if (ob) { obAction(ob.dataset.ob); return; }
+  const mpPreset = t.closest('[data-preset]');
+  if (mpPreset) { MP.presetCur = +mpPreset.dataset.preset; render(); return; }
+  const mpUseLocal = t.closest('[data-use-local]');
+  if (mpUseLocal) { mpUseLocalModel(mpUseLocal.dataset.useLocal); return; }
+  const mpPull = t.closest('[data-pull-local]');
+  if (mpPull) { mpPullModel(mpPull.dataset.pullLocal); return; }
+  const mpUseProv = t.closest('[data-use-provider]');
+  if (mpUseProv) { mpUseProvider(mpUseProv.dataset.useProvider); return; }
+  const mpPick = t.closest('[data-pick-models]');
+  if (mpPick) { MP.pickFor = mpPick.dataset.pickModels; MP.picks = []; MP.pickQuery = ''; MP.pickErr = null; render(); mpSearch(); return; }
+  const mpSet = t.closest('[data-set-model]');
+  if (mpSet) { mpSetModel(mpSet.dataset.setModel); return; }
   const md = t.closest('[data-model]');
   if (md) {
     const id = md.dataset.model;
@@ -1052,6 +1147,12 @@ document.addEventListener('input', (e) => {
     return;
   }
   if (e.target.id === 'palq') { S.q = e.target.value; S.cur = 0; refreshPalette(); return; }
+  if (e.target.id === 'mp-query') {
+    MP.pickQuery = e.target.value;
+    clearTimeout(MP.searchTimer);
+    MP.searchTimer = setTimeout(mpSearch, 350);
+    return;
+  }
   if (e.target.id === 'modelq') { S.modelQuery = e.target.value; const at = e.target.selectionStart; render();
     const n = $('#modelq'); if (n) { n.focus(); n.setSelectionRange(at, at); } return; }
   if (e.target.id === 'dial') { S.dialShare = +e.target.value; refreshDial(); return; }
@@ -1716,4 +1817,139 @@ if (BR) {
     if (a === 'onboarding') { openOnboarding(); return; }
     return prevAct(a);
   };
+}
+
+
+/* ---- Models pane: everything below drives the real agent ---- */
+
+async function mpLoadLocal() {
+  if (!BR) return;
+  MP.localBusy = true; MP.localErr = null; render();
+  const res = await BR.modelsList();
+  MP.localBusy = false;
+  if (!res || !res.ok) { MP.localErr = (res && res.error) || 'could not read the catalogue'; render(); return; }
+  MP.local = res.models.filter((m) => !/embed|bge|nomic|jina/i.test(m.id));
+  if (!OB.ram) BR.hostRam().then((r) => { OB.ram = r || 16; render(); });
+  render();
+}
+
+async function mpUseLocalModel(id) {
+  MP.err = null; render();
+  const res = await BR.modelsUse(id);
+  if (res && res.ok === false) { MP.err = res.error || 'could not switch model'; render(); return; }
+  toast('Local model selected', id);
+  await mpLoadLocal();
+  refreshLiveConfig();
+}
+
+function mpPullModel(id) {
+  MP.pulling = id; MP.pullLog = ['starting ' + id + '…']; MP.err = null; render();
+  BR.modelsPull(id).then((res) => {
+    if (res && res.ok === false) { MP.pulling = null; MP.err = res.error || 'could not start the download'; render(); }
+  });
+}
+
+async function mpUseProvider(id) {
+  MP.err = null; MP.busy = true; render();
+  const res = await BR.configSet('llm.activeTextProvider', id);
+  MP.busy = false;
+  if (res && res.ok === false) { MP.err = res.error || 'could not switch provider'; render(); return; }
+  toast('Provider selected', id + ' · takes effect on the next turn');
+  refreshLiveConfig();
+}
+
+async function mpSearch() {
+  if (!MP.pickFor) return;
+  if (!MP.pickQuery.trim()) { MP.picks = []; MP.pickBusy = false; MP.pickErr = null; render(); return; }
+  MP.pickBusy = true; MP.pickErr = null; render();
+  const res = await BR.modelsSearch(MP.pickQuery || '', MP.pickFor, 40);
+  MP.pickBusy = false;
+  if (!res || !res.ok) { MP.pickErr = (res && res.error) || 'search failed'; MP.picks = []; render(); return; }
+  MP.picks = res.models || [];
+  render();
+  const q = document.getElementById('mp-query');
+  if (q) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); }
+}
+
+async function mpSetModel(model) {
+  const id = MP.pickFor;
+  MP.busy = true; MP.err = null; render();
+  const res = await BR.setProviderModel(id, model);
+  MP.busy = false;
+  if (res && res.ok === false) { MP.err = res.error || 'could not set the model'; render(); return; }
+  MP.pickFor = null; MP.picks = [];
+  toast('Model selected', id + ' → ' + model);
+  refreshLiveConfig();
+}
+
+async function mpSaveProvider() {
+  const preset = PRESETS[MP.presetCur];
+  const keyInput = document.getElementById('mp-key');
+  const apiKey = (keyInput && keyInput.value.trim()) || '';
+  MP.busy = true; MP.err = null; render();
+  const entry = {
+    id: preset.id, kind: preset.kind, baseUrl: preset.baseUrl, apiKeyEnvVar: preset.env,
+  };
+  if (apiKey) entry.apiKey = apiKey;
+  if (preset.apiKeyHeader) entry.apiKeyHeader = preset.apiKeyHeader;
+  if (preset.headers) entry.headers = preset.headers;
+  const res = await BR.upsertProvider(entry);
+  MP.busy = false;
+  if (res && res.ok === false) { MP.err = res.error || 'could not save the provider'; render(); return; }
+  MP.addOpen = false;
+  toast('Provider added', preset.label + ' · pick a model with Models…');
+  refreshLiveConfig();
+}
+
+/** Re-read config so every chip and row reflects what was just written. */
+async function refreshLiveConfig() {
+  if (!BR) return;
+  const cfg = await BR.configGet();
+  if (cfg && cfg.ok && cfg.config) LIVE_CONFIG = cfg.config;
+  const provider = LIVE_CONFIG && LIVE_CONFIG.llm
+    && (LIVE_CONFIG.llm.providers || []).find((p) => p.id === LIVE_CONFIG.llm.activeTextProvider);
+  if (provider) {
+    S.mode = provider.kind === 'llama-server' ? 'local' : 'cloud';
+    if (provider.defaultChatModel) S.cloudModel = provider.defaultChatModel;
+  }
+  const managed = LIVE_CONFIG && LIVE_CONFIG.localModels && LIVE_CONFIG.localModels.managed;
+  if (managed && managed.modelId) S.localModel = managed.modelId;
+  render();
+}
+
+if (BR) {
+  BR.onPull((ev) => {
+    if (!ev || !MP.pulling) return;
+    if (ev.line) MP.pullLog.push(ev.line);
+    if (ev.done) {
+      const id = MP.pulling;
+      MP.pulling = null;
+      if (ev.ok) { toast('Downloaded', id); mpUseLocalModel(id); }
+      else { MP.err = ev.error || 'the download failed'; render(); }
+      return;
+    }
+    const box = document.getElementById('mp-prog');
+    if (box) { box.textContent = MP.pullLog.slice(-8).join('\n'); box.scrollTop = box.scrollHeight; }
+  });
+}
+
+/* Hooks for `electron . --smoke --models`. */
+if (typeof window !== 'undefined') {
+  window.__pane = (room, tab) => {
+    if (room === 'models') { S.settings = 1; S.settingsPane = 'models'; S.modelTab = tab; render(); if (tab === 'local') mpLoadLocal(); }
+  };
+  window.__mp = () => ({
+    local: MP.local.length,
+    picks: MP.picks.length,
+    firstPick: MP.picks[0] ? MP.picks[0].id : '',
+    err: MP.err,
+  });
+  window.__addProvider = (id) => {
+    const i = PRESETS.findIndex((p) => p.id === id);
+    if (i < 0) return;
+    MP.presetCur = i; MP.addOpen = true; render();
+    mpSaveProvider();
+  };
+  window.__pickModels = (id, query) => { MP.pickFor = id; MP.picks = []; MP.pickQuery = query || ''; render(); mpSearch(); };
+  window.__selectFirstModel = () => { if (MP.picks[0]) mpSetModel(MP.picks[0].id); };
 }

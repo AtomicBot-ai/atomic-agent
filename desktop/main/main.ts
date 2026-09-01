@@ -14,6 +14,10 @@ import {
   modelsPull,
   modelsUse,
   PROVIDER_KEY_ENV,
+  modelsSearch,
+  upsertProvider,
+  setProviderModel,
+  type ProviderEntry,
 } from "./agent-cli.js";
 
 const DEV = process.argv.includes("--dev");
@@ -21,6 +25,8 @@ const DEV = process.argv.includes("--dev");
 const SMOKE = process.argv.includes("--smoke");
 /** `--onboarding` re-runs the setup wizard even on a configured install. */
 const FORCE_ONBOARDING = process.argv.includes("--onboarding");
+/** `--models` drives the Models pane end to end and asserts config changed. */
+const MODELS_TEST = process.argv.includes("--models");
 
 let win: BrowserWindow | null = null;
 let agent: AgentClient | null = null;
@@ -186,6 +192,30 @@ function wireIpc(client: AgentClient): void {
     pull.cancel();
     return true;
   });
+  ipcMain.handle("cli:modelsSearch", (_event, payload: unknown) => {
+    const { query, provider, limit } = (payload ?? {}) as {
+      query?: unknown; provider?: unknown; limit?: unknown;
+    };
+    return modelsSearch(
+      typeof query === "string" ? query : "",
+      typeof provider === "string" ? provider : undefined,
+      typeof limit === "number" ? limit : 40,
+    );
+  });
+  ipcMain.handle("cli:upsertProvider", (_event, entry: unknown) => {
+    const e = entry as Partial<ProviderEntry>;
+    if (!e || typeof e.id !== "string" || typeof e.kind !== "string") {
+      return { ok: false, error: "id and kind are required" };
+    }
+    return upsertProvider(e as ProviderEntry);
+  });
+  ipcMain.handle("cli:setProviderModel", (_event, payload: unknown) => {
+    const { id, model } = (payload ?? {}) as { id?: unknown; model?: unknown };
+    if (typeof id !== "string" || typeof model !== "string") {
+      return { ok: false, error: "id and model are required" };
+    }
+    return setProviderModel(id, model);
+  });
   ipcMain.handle("app:hostRam", () => hostRamGb());
   ipcMain.handle("app:keyEnv", () => PROVIDER_KEY_ENV);
 
@@ -266,11 +296,63 @@ async function smokeTest(): Promise<void> {
     check("agent replied", reply.toLowerCase().includes("hello"), JSON.stringify(reply.slice(0, 80)));
   }
 
+  if (MODELS_TEST) await modelsTest(js, check);
+
   const image = await win.webContents.capturePage();
   const out = join(app.getPath("temp"), "atomic-desktop-smoke.png");
   writeFileSync(out, image.toPNG());
   process.stdout.write(`SMOKE screenshot=${out} failures=${fail.length}\n`);
   app.exit(fail.length === 0 ? 0 : 1);
+}
+
+async function modelsTest(
+  js: <T>(code: string) => Promise<T>,
+  check: (name: string, ok: boolean, detail?: string) => void,
+): Promise<void> {
+  const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  const cfg = async () => (await configGet()).config as {
+    llm?: { activeTextProvider?: string; providers?: Array<{ id: string; defaultChatModel?: string }> };
+  };
+
+  // Local catalogue
+  await js<void>("window.__pane('models','local')");
+  await wait(6000);
+  const localCount = await js<number>("window.__mp().local");
+  check("local catalogue loaded", localCount > 0, `${localCount} models`);
+  const hasDownload = await js<boolean>(
+    "!!document.querySelector('[data-pull-local]')",
+  );
+  check("local models offer a download", hasDownload);
+
+  // Add a provider
+  const before = await cfg();
+  const had = (before.llm?.providers ?? []).some((p) => p.id === "groq");
+  await js<void>("window.__pane('models','cloud')");
+  await js<void>("window.__addProvider('groq')");
+  await wait(4000);
+  const after = await cfg();
+  const added = (after.llm?.providers ?? []).find((p) => p.id === "groq");
+  check("provider added to config", !!added, had ? "(already present before)" : "groq written");
+
+  // List that provider's models and select one
+  const withKey = (after.llm?.providers ?? []).find((p) => p.id === "aimlapi") ? "aimlapi" : "groq";
+  await js<void>(`window.__pickModels(${JSON.stringify(withKey)}, "claude")`);
+  await wait(12_000);
+  const found = await js<number>("window.__mp().picks");
+  check("provider models listed", found > 0, `${found} models from ${withKey}`);
+
+  if (found > 0) {
+    const chosen = await js<string>("window.__mp().firstPick");
+    await js<void>("window.__selectFirstModel()");
+    await wait(5000);
+    const now = await cfg();
+    const entry = (now.llm?.providers ?? []).find((p) => p.id === withKey);
+    check(
+      "model written to the provider",
+      entry?.defaultChatModel === chosen,
+      `${entry?.defaultChatModel ?? "none"} === ${chosen}`,
+    );
+  }
 }
 
 void app.whenReady().then(async () => {
