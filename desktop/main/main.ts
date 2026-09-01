@@ -18,6 +18,9 @@ import {
   upsertProvider,
   setProviderModel,
   type ProviderEntry,
+  providerModels,
+  modelsStart,
+  traceUsage,
 } from "./agent-cli.js";
 
 const DEV = process.argv.includes("--dev");
@@ -219,6 +222,19 @@ function wireIpc(client: AgentClient): void {
     }
     return setProviderModel(id, model);
   });
+  ipcMain.handle("cli:providerModels", (_event, payload: unknown) => {
+    const { id, kind } = (payload ?? {}) as { id?: unknown; kind?: unknown };
+    if (typeof id !== "string") return { ok: false, error: "provider id required" };
+    return providerModels(id, typeof kind === "string" ? kind : "");
+  });
+  ipcMain.handle("cli:modelsStart", () => modelsStart());
+  ipcMain.handle("cli:traceUsage", (_event, payload: unknown) => {
+    const { stateDir, sessionId } = (payload ?? {}) as { stateDir?: unknown; sessionId?: unknown };
+    if (typeof stateDir !== "string" || typeof sessionId !== "string") {
+      return { ok: false, error: "stateDir and sessionId are required" };
+    }
+    return traceUsage(stateDir, sessionId);
+  });
   ipcMain.handle("app:hostRam", () => hostRamGb());
   ipcMain.handle("app:keyEnv", () => PROVIDER_KEY_ENV);
 
@@ -297,6 +313,30 @@ async function smokeTest(): Promise<void> {
       await new Promise((r) => setTimeout(r, 1000));
     }
     check("agent replied", reply.toLowerCase().includes("hello"), JSON.stringify(reply.slice(0, 80)));
+  }
+
+  if (state === "connected") {
+    // The gauge must read a real measurement out of the agent's trace.
+    await js<void>("window.__ctxRefresh()");
+    await new Promise((r) => setTimeout(r, 2500));
+    const ctx = await js<{ tokens: number; source: string | null; stablePrefix: number }>("window.__ctx()");
+    check(
+      "context measured from the trace",
+      ctx.tokens > 0 && !!ctx.source,
+      `${ctx.tokens} tokens (${ctx.source}), scaffold ${ctx.stablePrefix}`,
+    );
+
+    await js<void>("window.__selOpen('backend')");
+    const back = await js<{ rows: number; backend: string }>("window.__sel()");
+    check("selector: backend pane", back.rows === 2, `backend=${back.backend}`);
+
+    await js<void>("window.__selTab('model')");
+    await new Promise((r) => setTimeout(r, 9000));
+    const models = await js<{ rows: number; err: string | null }>("window.__sel()");
+    check("selector: model pane lists models", models.rows > 0, `${models.rows} rows${models.err ? " err=" + models.err : ""}`);
+
+    const mode = await js<string>("window.__mode()");
+    check("coding mode resolves", ["default", "auto", "bypass"].includes(mode), mode);
   }
 
   if (MODELS_TEST) await modelsTest(js, check);

@@ -6,6 +6,27 @@ const BR = typeof window !== "undefined" ? window.atomic : null;
 let WORKSPACE = '';
 let LIVE_CAPS = null, LIVE_CONFIG = null;
 
+/* The composer's model selector: one popup, panes walked left to right.
+   Local route is backend → model; cloud route is backend → provider →
+   model, which is what the TUI's composer meta row does. */
+const SEL = {
+  open:false, kind:'backend', cursor:0, filter:'',
+  rows:[], models:[], modelsFor:null, modelsBusy:false, modelsErr:null,
+  local:[], localBusy:false, addOpen:false, presetCur:0,
+  pulling:null, pullLine:'', busy:false, err:null,
+};
+/* Real token usage, read from the agent's trace after each turn. */
+const CTX = { tokens:0, source:null, stablePrefix:0, tail:0, cacheHitTokens:null, modelId:null, window:null, windowLabel:'' };
+/* default / auto / bypass. `plan` is deliberately absent: plan mode is a
+   closure variable in the runtime with no route, no config key and no
+   request field, so a desktop chip could only paint a state the agent
+   does not have. */
+const CODING_MODES = [
+  {id:'default', label:'default', detail:'asks before risky steps', tone:'ok'},
+  {id:'auto', label:'auto', detail:'edits this folder freely', tone:'warn'},
+  {id:'bypass', label:'bypass permissions', detail:'never asks at all', tone:'bad'},
+];
+
 /* Models pane. Mirrors src/tui/providers/provider-presets.ts: every
    preset resolves to the existing `openai-compatible` kind with baseUrl
    filled in, so adding one is a config write, not a new provider kind. */
@@ -212,7 +233,7 @@ const S = {
   stick:true,
   memTab:'notes', skillsTab:'installed', taskFilter:'all',
   toasts:[], toastId:0,
-  agentSession:null, reasonId:null,
+  agentSession:null, reasonId:null, baseLevel:null,
   live:{state: BR ? 'starting' : 'demo', binary:null, port:null, workingDir:'~', llama:null, error:null},
   history:[], turnId:null, streamId:null,
   log:[],
@@ -405,20 +426,22 @@ function composer() {
   const q = S.queued.length ? '<div class="qtray">' + S.queued.map((t, i) =>
       '<div class="qchip"><span class="ter">Queued</span><span style="flex:1;color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(t) + '</span>'
       + '<button class="iconbtn" style="width:20px;height:20px" data-unqueue="' + i + '">' + ic('x') + '</button></div>').join('') + '</div>' : '';
-  const gaugePct = Math.max(2, Math.min(100, Math.round((ctxUsed() / ctxTotal()) * 100)));
   return '<div class="composerwrap">' + status + q
     + '<div class="composer' + (running ? ' running' : '') + '" id="composer">'
       + (S.slash ? slashPopover() : '')
       + '<div class="field"><textarea id="entry" rows="1" placeholder="' + (running ? 'Send to steer this turn…' : 'Ask for an outcome, or / for a command') + '"></textarea>'
       + sendButton() + '</div>'
       + '<div class="cfoot">'
-        + '<button class="cchip" data-act="settings:models">' + ic('cpu')
+        + '<button class="cchip modechip" data-sel-open="backend">'
+          + ic(selBackend() === 'local' ? 'cpu' : 'cloud') + selBackend() + ic('chevD') + '</button>'
+        + (selBackend() === 'cloud'
+            ? '<button class="cchip" data-sel-open="provider">' + esc(selActiveProviderId() || 'no provider') + ic('chevD') + '</button>'
+            : '')
+        + '<button class="cchip modelchip" data-sel-open="model">'
           + esc(shortModel(activeModel())) + ic('chevD') + '</button>'
         + '<span style="flex:1"></span>'
-        + '<button class="cchip ctxbtn" data-act="context" title="Context window">'
-          + '<span class="gauge"><i style="width:' + gaugePct + '%"></i></span>'
-          + '<span class="tnum gaugelb">' + tok(ctxUsed()) + '/' + tok(ctxTotal()) + '</span></button>'
-        + '<button class="cchip" data-act="settings:privacy">' + ic('key') + 'L' + S.level + ' ' + LEVEL_NAMES[S.level].toLowerCase() + ic('chevD') + '</button>'
+        + contextChip()
+        + codingModeChip()
       + '</div>'
     + '</div></div>';
 }
@@ -677,6 +700,8 @@ function renderOverlays() {
   let html = '';
   if (S.overlay === 'palette') html += paletteHTML();
   if (S.overlay === 'context') html += contextHTML();
+  if (S.overlay === 'modes') html += modesHTML();
+  if (SEL.open) html += selectorHTML();
   if (S.overlay === 'sessions') html += sessionSheet();
   if (S.overlay === 'newtask') html += taskSheet();
   if (S.overlay === 'shortcuts') html += shortcutsSheet();
@@ -692,6 +717,17 @@ function renderOverlays() {
 }
 
 
+
+/** Pin a popover to the control that opened it, clamped inside the window. */
+function anchorStyle(sel, width) {
+  const el = document.querySelector(sel);
+  const win = $('#window').getBoundingClientRect();
+  if (!el) return 'right:24px;bottom:96px';
+  const r = el.getBoundingClientRect();
+  const left = Math.max(win.left + 8, Math.min(r.left, win.right - width - 8));
+  return 'position:fixed;left:' + Math.round(left) + 'px;bottom:'
+    + Math.round(window.innerHeight - r.top + 8) + 'px;top:auto;right:auto';
+}
 
 function contextHTML() {
   const total = ctxTotal(), used = ctxUsed();
@@ -943,13 +979,17 @@ function toast(t, s) {
 function act(a) {
   if (!a) return;
   const [k, v] = a.split(':');
-  const close = () => { S.overlay = null; S.menuOpen = null; S.scope = null; S.q = ''; S.cur = 0; S.alert = null; };
+  const close = () => { S.overlay = null; S.menuOpen = null; S.scope = null; S.q = ''; S.cur = 0; S.alert = null; SEL.open = false; SEL.addOpen = false; };
 
   if (a === 'close') { close(); render(); return; }
   if (a === 'palette') { close(); S.overlay = 'palette'; render(); return; }
   if (a === 'palette:slash') { close(); S.overlay = 'palette'; S.q = ''; render(); toast('Slash commands', 'Type / in the composer for the in-context list'); return; }
   if (a === 'shortcuts') { close(); S.overlay = 'shortcuts'; render(); return; }
   if (a === 'context') { close(); S.overlay = 'context'; render(); return; }
+  if (a === 'modes') { close(); S.overlay = 'modes'; render(); return; }
+  if (a === 'sel:closeAdd') { SEL.addOpen = false; render(); return; }
+  if (a === 'sel:savePreset') { selSavePreset(); return; }
+  if (a === 'sel:cancelPull') { BR.cancelPull(); SEL.pulling = null; render(); return; }
   if (a === 'runmode') { close(); S.dialShare = S.share; S.overlay = 'runmode'; render(); return; }
   if (a === 'applydial') { S.share = S.dialShare; if (S.mode !== 'fusion' && S.dialShare > 0) S.mode = 'fusion'; close(); render(); toast('Run type applied', S.mode + (S.mode === 'fusion' ? ' · cloud share ' + S.share : '')); return; }
   if (a === 'session:new') { close(); S.log = []; S.history = []; S.agentSession = null; S.busy = false; S.pending = null; S.room = 'chat'; render(); toast('New session', 'The next turn starts fresh'); return; }
@@ -986,7 +1026,17 @@ function act(a) {
                            else document.documentElement.setAttribute('data-theme', v);
                            render(); return; }
   if (k === 'mode')      { S.mode = v; if (S.overlay === 'palette') close(); render(); return; }
-  if (k === 'level')     { S.level = +v; close(); S.settings = 1; S.settingsPane = 'privacy'; render(); toast('Approval level ' + v, LEVEL_NAMES[+v]); return; }
+  if (k === 'level')     {
+    const level = Math.max(1, Math.min(5, +v));
+    close(); S.settings = 1; S.settingsPane = 'privacy'; render();
+    BR.configSet('agent.approvalLevel', String(level)).then((res) => {
+      if (res && res.ok === false) { toast('Could not change the level', res.error || ''); return; }
+      S.level = level; S.baseLevel = level; render();
+      toast('Approval level ' + level, LEVEL_NAMES[level] + ' · restarting the agent');
+      BR.restart().then(applyStatus);
+    });
+    return;
+  }
   if (k === 'cards')     { close(); S.log.forEach((m) => { if (m.k === 'tool') m.open = v === 'expand'; }); render(); return; }
   if (k === 'ses')       { close(); S.sessionId = v; render(); return; }
   if (k === 'delask')    { const ss = SESSIONS.find((x) => x.id === v); if (!ss) return;
@@ -1113,6 +1163,16 @@ document.addEventListener('click', (e) => {
   if (obp) { OB.modelCur = +obp.dataset.obProvider; render(); return; }
   const ob = t.closest('[data-ob]');
   if (ob) { obAction(ob.dataset.ob); return; }
+  const selOpen = t.closest('[data-sel-open]');
+  if (selOpen) { openSelector(selOpen.dataset.selOpen); return; }
+  const selTab = t.closest('[data-sel-tab]');
+  if (selTab) { SEL.kind = selTab.dataset.selTab; SEL.cursor = 0; SEL.filter = ''; SEL.addOpen = false; render(); selEnterModelPane(); return; }
+  const selRow = t.closest('[data-sel-row]');
+  if (selRow) { selActivate(SEL.rows[+selRow.dataset.selRow]); return; }
+  const selPreset = t.closest('[data-sel-preset]');
+  if (selPreset) { SEL.presetCur = +selPreset.dataset.selPreset; render(); return; }
+  const modeRow = t.closest('[data-mode]');
+  if (modeRow) { setCodingMode(modeRow.dataset.mode); return; }
   const mpPreset = t.closest('[data-preset]');
   if (mpPreset) { MP.presetCur = +mpPreset.dataset.preset; render(); return; }
   const mpUseLocal = t.closest('[data-use-local]');
@@ -1147,6 +1207,8 @@ document.addEventListener('input', (e) => {
     return;
   }
   if (e.target.id === 'palq') { S.q = e.target.value; S.cur = 0; refreshPalette(); return; }
+  if (e.target.id === 'sel-filter') { SEL.filter = e.target.value; const at = e.target.selectionStart; render();
+    const n = document.getElementById('sel-filter'); if (n) { n.focus(); n.setSelectionRange(at, at); } return; }
   if (e.target.id === 'mp-query') {
     MP.pickQuery = e.target.value;
     clearTimeout(MP.searchTimer);
@@ -1315,6 +1377,7 @@ async function loadResources() {
     LIVE_CAPS = caps.data;
     if (caps.data.agent && typeof caps.data.agent.approvalLevel === 'number') {
       S.level = Math.max(1, Math.min(5, caps.data.agent.approvalLevel));
+      if (S.baseLevel == null) S.baseLevel = S.level;
     }
   }
   if (cfg && cfg.ok && cfg.data && cfg.data.config) {
@@ -1425,6 +1488,7 @@ function onChatEvent(ev) {
     if (ev.kind === 'finish') return;
     S.busy = false; S.turnId = null; clearInterval(ticker);
     S.reasonId = null;
+    refreshContext();
     S.log.forEach((m) => {
       if (m.k === 'tool' && m.ok === null) { m.ok = true; m.out = m.out || '(result not exposed by the HTTP stream)'; m.ms = 0; }
     });
@@ -1921,6 +1985,15 @@ async function refreshLiveConfig() {
 
 if (BR) {
   BR.onPull((ev) => {
+    if (ev && SEL.pulling) {
+      if (ev.line) { SEL.pullLine = ev.line; const box = document.querySelector('.popover .cap'); if (box) box.textContent = ev.line; }
+      if (ev.done) {
+        const id = SEL.pulling; SEL.pulling = null;
+        if (ev.ok) selActivate({type:'localModel', id, downloaded:true});
+        else { SEL.err = ev.error || 'the download failed'; render(); }
+      }
+      return;
+    }
     if (!ev || !MP.pulling) return;
     if (ev.line) MP.pullLog.push(ev.line);
     if (ev.done) {
@@ -1954,4 +2027,333 @@ if (typeof window !== 'undefined') {
   };
   window.__pickModels = (id, query) => { MP.pickFor = id; MP.picks = []; MP.pickQuery = query || ''; render(); mpSearch(); };
   window.__selectFirstModel = () => { if (MP.picks[0]) mpSetModel(MP.picks[0].id); };
+}
+
+/* ============================================================
+   Model selector — backend → (provider) → model
+   ============================================================ */
+
+function selBackend() {
+  const p = activeProvider();
+  return p && p.kind === 'llama-server' ? 'local' : 'cloud';
+}
+function selKinds() { return selBackend() === 'local' ? ['backend','model'] : ['backend','provider','model']; }
+function selProviders() {
+  return ((LIVE_CONFIG && LIVE_CONFIG.llm && LIVE_CONFIG.llm.providers) || [])
+    .filter((p) => p.kind !== 'llama-server');
+}
+function selActiveProviderId() { return LIVE_CONFIG && LIVE_CONFIG.llm && LIVE_CONFIG.llm.activeTextProvider; }
+
+function openSelector(kind) {
+  SEL.open = true; SEL.kind = kind || 'backend'; SEL.cursor = 0; SEL.filter = ''; SEL.err = null;
+  render();
+  if (SEL.kind === 'model') selEnterModelPane();
+  if (SEL.kind === 'backend' && selBackend() === 'local' && !SEL.local.length) selLoadLocal();
+}
+function closeSelector() { SEL.open = false; SEL.addOpen = false; render(); }
+
+async function selLoadLocal() {
+  SEL.localBusy = true; render();
+  const res = await BR.modelsList();
+  SEL.localBusy = false;
+  SEL.local = res && res.ok ? res.models.filter((m) => !/embed|bge|nomic|jina/i.test(m.id)) : [];
+  if (!OB.ram) OB.ram = (await BR.hostRam()) || 16;
+  render();
+}
+
+async function selLoadModels(providerId) {
+  const entry = selProviders().find((p) => p.id === providerId);
+  SEL.modelsFor = providerId; SEL.models = []; SEL.modelsBusy = true; SEL.modelsErr = null; render();
+  const res = await BR.providerModels(providerId, (entry && entry.kind) || '');
+  SEL.modelsBusy = false;
+  if (!res || !res.ok) { SEL.modelsErr = (res && res.error) || 'could not list models'; render(); return; }
+  SEL.models = res.models || [];
+  render();
+}
+
+function selEnterModelPane() {
+  if (selBackend() === 'local') { if (!SEL.local.length) selLoadLocal(); return; }
+  const id = selActiveProviderId();
+  if (id && SEL.modelsFor !== id) selLoadModels(id);
+}
+
+/** Rows for the current pane, as objects the delegate can act on by index. */
+function selRows() {
+  if (SEL.kind === 'backend') {
+    const managed = (LIVE_CONFIG && LIVE_CONFIG.localModels && LIVE_CONFIG.localModels.managed) || {};
+    const provs = selProviders();
+    return [
+      {type:'backend', id:'local', label:'local',
+       detail: managed.modelId ? 'llama.cpp on this machine · ' + managed.modelId : 'no model downloaded yet',
+       active: selBackend() === 'local'},
+      {type:'backend', id:'cloud', label:'cloud',
+       detail: provs.length ? provs.length + (provs.length === 1 ? ' provider configured' : ' providers configured') : 'add a provider first',
+       active: selBackend() === 'cloud'},
+    ];
+  }
+  if (SEL.kind === 'provider') {
+    const activeId = selActiveProviderId();
+    const rows = selProviders().map((p) => ({
+      type:'provider', id:p.id, label:p.id,
+      detail: p.kind + ' · ' + (p.defaultChatModel || 'no model chosen')
+        + (p.apiKeyEnvVar ? ' · key from ' + p.apiKeyEnvVar : p.apiKey ? '' : ' · no API key'),
+      active: p.id === activeId,
+    }));
+    rows.push({type:'addProvider', label:'Add a new provider', detail:'opens the preset list', lead:rows.length === 0});
+    return rows;
+  }
+  // model pane
+  if (selBackend() === 'local') {
+    return SEL.local
+      .filter((m) => !SEL.filter || m.id.toLowerCase().includes(SEL.filter.toLowerCase()))
+      .map((m) => {
+        const fit = fitFor(m.size, OB.ram || 16);
+        return {type:'localModel', id:m.id, label:m.id, downloaded:m.downloaded, active:m.active,
+          detail: m.size + ' · ' + m.context + ' context · ' + fit.label + (m.downloaded ? ' · on disk' : '')};
+      });
+  }
+  const entry = selProviders().find((p) => p.id === selActiveProviderId());
+  const chosen = entry && entry.defaultChatModel;
+  const f = SEL.filter.toLowerCase();
+  return SEL.models
+    .filter((m) => {
+      if (!f) return true;
+      const tags = (m.supportsVision ? 'vision ' : '') + (m.supportsTools && m.supportsTools !== 'none' ? 'tools ' : '');
+      return (m.id + ' ' + tags).toLowerCase().includes(f);
+    })
+    .map((m) => ({type:'cloudModel', id:m.id, label:m.id, active:m.id === chosen,
+      detail: (m.contextWindow ? tok(m.contextWindow) + ' context' : '')
+        + (m.supportsTools && m.supportsTools !== 'none' ? ' · tools' : '')
+        + (m.supportsVision ? ' · vision' : '')}));
+}
+
+async function selActivate(row) {
+  if (!row) return;
+  if (row.type === 'backend') {
+    SEL.kind = row.id === 'local' ? 'model' : 'provider';
+    SEL.cursor = 0; SEL.filter = ''; render(); selEnterModelPane();
+    if (row.id === 'local') selLoadLocal();
+    return;
+  }
+  if (row.type === 'addProvider') { SEL.addOpen = true; SEL.presetCur = 0; render(); return; }
+  if (row.type === 'provider') {
+    SEL.busy = true; render();
+    const res = await BR.configSet('llm.activeTextProvider', row.id);
+    SEL.busy = false;
+    if (res && res.ok === false) { SEL.err = res.error || 'could not switch provider'; render(); return; }
+    await refreshLiveConfig();
+    SEL.kind = 'model'; SEL.cursor = 0; SEL.filter = ''; render();
+    selLoadModels(row.id);
+    return;
+  }
+  if (row.type === 'cloudModel') {
+    SEL.busy = true; render();
+    const res = await BR.setProviderModel(selActiveProviderId(), row.id);
+    SEL.busy = false;
+    if (res && res.ok === false) { SEL.err = res.error || 'could not select the model'; render(); return; }
+    await refreshLiveConfig();
+    closeSelector();
+    toast('Model selected', row.id);
+    return;
+  }
+  if (row.type === 'localModel') {
+    if (!row.downloaded) { selPull(row.id); return; }
+    SEL.busy = true; render();
+    const used = await BR.modelsUse(row.id);
+    if (used && used.ok === false) { SEL.busy = false; SEL.err = used.error || 'could not select the model'; render(); return; }
+    await BR.configSet('llm.activeTextProvider', 'local-llama');
+    BR.modelsStart();
+    SEL.busy = false;
+    await refreshLiveConfig();
+    closeSelector();
+    toast('Local model selected', row.id + ' · starting the daemon');
+  }
+}
+
+function selPull(id) {
+  SEL.pulling = id; SEL.pullLine = 'starting…'; SEL.err = null; render();
+  BR.modelsPull(id).then((res) => {
+    if (res && res.ok === false) { SEL.pulling = null; SEL.err = res.error || 'could not start the download'; render(); }
+  });
+}
+
+function selectorHTML() {
+  const kinds = selKinds();
+  const rows = selRows();
+  SEL.rows = rows;
+  const tabs = '<div class="seg" style="margin:0">' + kinds.map((k) =>
+    '<button class="' + (SEL.kind === k ? 'on' : '') + '" data-sel-tab="' + k + '">' + k + '</button>').join('') + '</div>';
+
+  if (SEL.pulling) {
+    return '<div class="scrim" data-close="1" style="background:transparent"><div class="popover" style="width:420px;'
+      + anchorStyle('.modelchip', 420) + '">'
+      + '<div style="padding:12px 16px"><div class="hd">Downloading ' + esc(SEL.pulling) + '</div>'
+      + '<p class="cap" style="margin:8px 0 0">' + esc(SEL.pullLine) + '</p>'
+      + '<p class="cap" style="margin:8px 0 0">It will be selected automatically when it lands.</p></div>'
+      + '<div class="popfoot"><button class="btn btn-s" data-act="sel:cancelPull">Cancel</button></div></div></div>';
+  }
+
+  const body = SEL.addOpen
+    ? '<div style="padding:8px 0">'
+      + '<div class="modellist" style="max-height:32vh;overflow-y:auto">'
+      + PRESETS.map((p, i) => '<div class="modelrow' + (i === SEL.presetCur ? ' on' : '') + '" data-sel-preset="' + i + '">'
+          + '<span class="radio"></span><span class="col"><span class="nm">' + esc(p.label) + '</span>'
+          + '<span class="cap mono">' + esc(p.baseUrl) + '</span></span></div>').join('')
+      + '</div>'
+      + '<div style="padding:10px 16px 0"><input class="field-inp" id="sel-key" type="password" style="width:100%" placeholder="API key — blank reads ' + esc(PRESETS[SEL.presetCur].env) + '"></div>'
+      + '</div>'
+    : '<div class="sellist">'
+      + (SEL.modelsBusy || SEL.localBusy ? '<div class="pad cap">reading the catalogue…</div>' : '')
+      + (SEL.modelsErr ? '<div class="pad cap" style="color:var(--danger)">' + esc(SEL.modelsErr) + '</div>' : '')
+      + rows.map((r, i) => '<button class="modelrow' + (r.active ? ' on' : '') + (r.lead ? ' lead' : '') + '" data-sel-row="' + i + '">'
+          + '<span class="radio"' + (r.active ? ' style="border-color:var(--accent);border-width:4px"' : '') + '></span>'
+          + '<span class="col"><span class="nm' + (r.type === 'cloudModel' || r.type === 'localModel' ? ' mono' : '') + '">' + esc(r.label) + '</span>'
+          + '<span class="cap">' + esc(r.detail || '') + '</span></span>'
+          + (r.type === 'localModel' && !r.downloaded ? '<span class="cap">download</span>' : '')
+          + '</button>').join('')
+      + (!rows.length && !SEL.modelsBusy && !SEL.localBusy ? '<div class="pad cap">nothing to show</div>' : '')
+      + '</div>';
+
+  const filter = (SEL.kind === 'model' && !SEL.addOpen)
+    ? '<div style="padding:8px 16px 0"><input class="field-inp" id="sel-filter" style="width:100%" placeholder="filter models" value="' + esc(SEL.filter) + '"></div>'
+    : '';
+
+  return '<div class="scrim" data-close="1" style="background:transparent">'
+    + '<div class="popover" style="width:460px;' + anchorStyle('.modelchip', 460) + '">'
+    + '<div style="padding:10px 16px 0;display:flex;align-items:center;gap:8px">' + tabs
+    + (SEL.busy ? '<span class="cap" style="margin-left:auto">saving…</span>' : '') + '</div>'
+    + filter + body
+    + (SEL.err ? '<div class="cap" style="padding:0 16px;color:var(--danger)">' + esc(SEL.err) + '</div>' : '')
+    + '<div class="popfoot">'
+    + (SEL.addOpen
+        ? '<button class="btn btn-g" data-act="sel:closeAdd">Back</button><button class="btn btn-p" data-act="sel:savePreset">Add provider</button>'
+        : '<button class="btn btn-s" data-act="close">Done</button>')
+    + '</div></div></div>';
+}
+
+async function selSavePreset() {
+  const preset = PRESETS[SEL.presetCur];
+  const input = document.getElementById('sel-key');
+  const apiKey = (input && input.value.trim()) || '';
+  SEL.busy = true; SEL.err = null; render();
+  const entry = {id:preset.id, kind:preset.kind, baseUrl:preset.baseUrl, apiKeyEnvVar:preset.env};
+  if (apiKey) entry.apiKey = apiKey;
+  if (preset.apiKeyHeader) entry.apiKeyHeader = preset.apiKeyHeader;
+  if (preset.headers) entry.headers = preset.headers;
+  let res = await BR.upsertProvider(entry);
+  if (res && res.ok === false) { SEL.busy = false; SEL.err = res.error || 'could not save the provider'; render(); return; }
+  res = await BR.configSet('llm.activeTextProvider', preset.id);
+  SEL.busy = false;
+  if (res && res.ok === false) { SEL.err = res.error || 'saved, but could not activate it'; render(); return; }
+  SEL.addOpen = false;
+  await refreshLiveConfig();
+  SEL.kind = 'model'; SEL.cursor = 0; render();
+  selLoadModels(preset.id);
+  toast('Provider added', preset.label);
+}
+
+/* ============================================================
+   Context gauge — real numbers, measured on the last prompt
+   ============================================================ */
+
+async function refreshContext() {
+  if (!BR || !S.agentSession) return;
+  const stateDir = LIVE_CAPS && LIVE_CAPS.paths && LIVE_CAPS.paths.stateDir;
+  if (!stateDir) return;
+  const res = await BR.traceUsage(stateDir, S.agentSession);
+  if (!res || !res.ok || !res.usage) return;
+  Object.assign(CTX, res.usage);
+  CTX.window = null; CTX.windowLabel = '';
+  const entry = selProviders().find((p) => p.id === selActiveProviderId());
+  if (entry && entry.defaultChatModel) {
+    const hit = SEL.models.find((m) => m.id === entry.defaultChatModel);
+    if (hit && hit.contextWindow) { CTX.window = hit.contextWindow; CTX.windowLabel = 'model window'; }
+  }
+  if (!CTX.window) {
+    const managed = (LIVE_CONFIG && LIVE_CONFIG.localModels && LIVE_CONFIG.localModels.managed) || {};
+    if (managed.contextSize) { CTX.window = managed.contextSize; CTX.windowLabel = 'loaded window'; }
+    else {
+      const row = SEL.local.find((m) => m.id === managed.modelId);
+      if (row && row.context) {
+        const n = parseFloat(row.context);
+        const mult = /m/i.test(row.context) ? 1e6 : /k/i.test(row.context) ? 1000 : 1;
+        if (n) { CTX.window = Math.round(n * mult); CTX.windowLabel = 'model max'; }
+      }
+    }
+  }
+  render();
+}
+
+function contextChip() {
+  if (!CTX.tokens) return '';
+  const label = CTX.window
+    ? tok(CTX.tokens) + '/' + tok(CTX.window)
+    : tok(CTX.tokens);
+  const pct = CTX.window ? Math.min(100, (CTX.tokens / CTX.window) * 100) : 0;
+  return '<button class="cchip ctxbtn" data-act="context" title="context">'
+    + (CTX.window ? '<span class="gauge"><i style="width:' + pct + '%"></i></span>' : '')
+    + '<span class="tnum gaugelb">' + label + '</span></button>';
+}
+
+/* ============================================================
+   Coding modes — a projection onto the approval ladder
+   ============================================================ */
+
+function currentMode() {
+  if (S.level >= 5) return 'bypass';
+  if (S.baseLevel != null && S.level > S.baseLevel) return 'auto';
+  if (S.level >= 2 && (S.baseLevel == null || S.baseLevel < 2)) return 'auto';
+  return 'default';
+}
+
+function codingModeChip() {
+  const id = currentMode();
+  const look = CODING_MODES.find((m) => m.id === id) || CODING_MODES[0];
+  const colour = look.tone === 'bad' ? 'var(--danger)' : look.tone === 'warn' ? 'var(--warn)' : 'var(--success)';
+  return '<button class="cchip" data-act="modes" title="what the agent may do without asking" '
+    + 'style="color:' + colour + '">' + ic('key') + esc(look.label) + ic('chevD') + '</button>';
+}
+
+function modesHTML() {
+  return '<div class="scrim" data-close="1" style="background:transparent">'
+    + '<div class="popover" style="width:360px;' + anchorStyle('.cchip', 360) + '">'
+    + CODING_MODES.map((m) => {
+        const on = m.id === currentMode();
+        return '<button class="poprow' + (on ? ' on' : '') + '" data-mode="' + m.id + '">'
+          + '<span class="radio"></span><span><span style="font-weight:500">' + esc(m.label) + '</span>'
+          + '<span class="cap" style="display:block">' + esc(m.detail) + '</span></span>'
+          + (on ? '<span class="cap" style="margin-left:auto">current</span>' : '') + '</button>';
+      }).join('')
+    + '<div style="padding:10px 16px"><p class="cap" style="margin:0">'
+    + 'Each mode is a level on the approval ladder. Changing it writes '
+    + '<span class="mono">agent.approvalLevel</span> and restarts the agent, because the gate reads its level once at boot.'
+    + '</p></div>'
+    + '<div class="popfoot"><button class="btn btn-s" data-act="close">Done</button></div></div></div>';
+}
+
+async function setCodingMode(id) {
+  if (S.busy) { toast('Not while a turn is running'); return; }
+  const base = S.baseLevel == null ? S.level : S.baseLevel;
+  const level = id === 'bypass' ? 5 : id === 'auto' ? Math.max(base, 2) : base;
+  S.overlay = null; render();
+  const res = await BR.configSet('agent.approvalLevel', String(level));
+  if (res && res.ok === false) {
+    S.log.push({id:nid(), k:'system', text:'could not change the mode: ' + esc(res.error || '')});
+    render();
+    return;
+  }
+  S.level = level;
+  S.log.push({id:nid(), k:'system',
+    text:'approval level → ' + level + ' · the agent was restarted to apply it'});
+  render();
+  BR.restart().then(applyStatus);
+}
+
+if (typeof window !== 'undefined') {
+  window.__sel = () => ({open:SEL.open, kind:SEL.kind, rows:SEL.rows.length, backend:selBackend(), err:SEL.err});
+  window.__selOpen = (kind) => openSelector(kind);
+  window.__selTab = (kind) => { SEL.kind = kind; SEL.cursor = 0; render(); selEnterModelPane(); };
+  window.__ctx = () => ({tokens:CTX.tokens, source:CTX.source, window:CTX.window, stablePrefix:CTX.stablePrefix});
+  window.__ctxRefresh = () => refreshContext();
+  window.__mode = () => currentMode();
 }

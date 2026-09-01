@@ -53,6 +53,10 @@ contextBridge.exposeInMainWorld("atomic", {
   upsertProvider: (entry: Record<string, unknown>) => ipcRenderer.invoke("cli:upsertProvider", entry),
   setProviderModel: (id: string, model: string) =>
     ipcRenderer.invoke("cli:setProviderModel", { id, model }),
+  providerModels: (id: string, kind: string) => ipcRenderer.invoke("cli:providerModels", { id, kind }),
+  modelsStart: () => ipcRenderer.invoke("cli:modelsStart"),
+  traceUsage: (stateDir: string, sessionId: string) =>
+    ipcRenderer.invoke("cli:traceUsage", { stateDir, sessionId }),
   hostRam: () => ipcRenderer.invoke("app:hostRam"),
   keyEnv: () => ipcRenderer.invoke("app:keyEnv"),
 

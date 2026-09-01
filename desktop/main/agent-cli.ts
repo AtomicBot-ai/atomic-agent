@@ -1,5 +1,7 @@
 import { execFile, spawn } from "node:child_process";
 import { totalmem } from "node:os";
+import { closeSync, openSync, readSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { promisify } from "node:util";
 
 import { resolveBinary } from "./agent-client.js";
@@ -245,4 +247,128 @@ export async function modelsSearch(
   } catch {
     return { ok: false, error: "models search did not return JSON" };
   }
+}
+
+/** Start the managed llama daemon after switching to a local model. */
+export async function modelsStart(): Promise<CliResult> {
+  return cli(["models", "start"], 90_000);
+}
+
+/**
+ * A provider's model list.
+ *
+ * Two quirks of `models search`, both load-bearing:
+ *  - it refuses an empty query, but a single space parses to zero terms
+ *    and returns the whole catalogue, which is how a picker shows rows
+ *    before the user types;
+ *  - only `openrouter` and `aimlapi` ship bundled catalogues, so every
+ *    other kind needs `--refresh` to fetch a live list.
+ */
+export async function providerModels(
+  providerId: string,
+  kind: string,
+): Promise<{ ok: boolean; models?: SearchedModel[]; error?: string }> {
+  if (!/^[\w.-]{1,48}$/.test(providerId)) return { ok: false, error: "bad provider id" };
+  const bundled = kind === "openrouter" || kind === "aimlapi";
+  const args = ["models", "search", " ", "--provider", providerId, "--limit", "200", "--json"];
+  if (!bundled) args.push("--refresh");
+  const res = await cli(args, 90_000);
+  if (!res.ok) return { ok: false, error: res.error };
+  try {
+    const parsed = JSON.parse(res.stdout) as SearchedModel[];
+    return { ok: true, models: Array.isArray(parsed) ? parsed : [] };
+  } catch {
+    return { ok: false, error: "models search did not return JSON" };
+  }
+}
+
+/* ---------------------------------------------------------------
+   Context usage.
+
+   The SSE `usage` frame is hardcoded zeros — `buildUsagePayload` in
+   src/http/openai-chunks.ts says so in its own comment. The honest
+   source is the append-only trace `serve` writes at
+   <stateDir>/traces/<sessionId>.ndjson, where `llm_completion` carries
+   the provider's real prompt count and `prompt_captured` carries the
+   scaffold/tail split. This is the same number the TUI's chip shows.
+   --------------------------------------------------------------- */
+
+export interface TraceUsage {
+  tokens: number;
+  source: "provider" | "estimate";
+  stablePrefix: number;
+  tail: number;
+  cacheHitTokens: number | null;
+  modelId: string | null;
+  turnIndex: number;
+}
+
+export async function traceUsage(
+  stateDir: string,
+  sessionId: string,
+): Promise<{ ok: boolean; usage?: TraceUsage; error?: string }> {
+  if (!/^[\w.-]{1,80}$/.test(sessionId)) return { ok: false, error: "bad session id" };
+  if (!stateDir) return { ok: false, error: "no state dir" };
+  const file = join(stateDir, "traces", `${sessionId}.ndjson`);
+  let text: string;
+  try {
+    const size = statSync(file).size;
+    const from = Math.max(0, size - 256 * 1024);
+    const fd = openSync(file, "r");
+    try {
+      const buf = Buffer.alloc(size - from);
+      readSync(fd, buf, 0, buf.length, from);
+      text = buf.toString("utf8");
+    } finally {
+      closeSync(fd);
+    }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : "no trace yet" };
+  }
+
+  const lines = text.split("\n");
+  let captured: { total?: number; stablePrefix?: number; tail?: number; turnIndex?: number } | null = null;
+  let completion: { promptTokens?: number; cacheHitTokens?: number; modelId?: string } | null = null;
+  for (let i = lines.length - 1; i >= 0 && (!captured || !completion); i--) {
+    const line = lines[i]?.trim();
+    if (!line || line[0] !== "{") continue;
+    let row: Record<string, unknown>;
+    try {
+      row = JSON.parse(line) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    const kind = row["event"] ?? row["type"] ?? row["kind"];
+    if (!completion && kind === "llm_completion") {
+      const timing = (row["timing"] ?? {}) as Record<string, number>;
+      completion = {
+        promptTokens: timing["promptTokens"],
+        cacheHitTokens: row["cacheHitTokens"] as number | undefined,
+        modelId: row["modelId"] as string | undefined,
+      };
+    }
+    if (!captured && kind === "prompt_captured") {
+      const tokens = (row["tokens"] ?? {}) as Record<string, number>;
+      captured = {
+        total: tokens["total"],
+        stablePrefix: tokens["stablePrefix"],
+        tail: tokens["tail"],
+        turnIndex: row["turnIndex"] as number | undefined,
+      };
+    }
+  }
+  if (!captured && !completion) return { ok: false, error: "no measurement in the trace yet" };
+  const provider = completion?.promptTokens && completion.promptTokens > 0 ? completion.promptTokens : 0;
+  return {
+    ok: true,
+    usage: {
+      tokens: provider || captured?.total || 0,
+      source: provider ? "provider" : "estimate",
+      stablePrefix: captured?.stablePrefix ?? 0,
+      tail: captured?.tail ?? 0,
+      cacheHitTokens: completion?.cacheHitTokens ?? null,
+      modelId: completion?.modelId ?? null,
+      turnIndex: captured?.turnIndex ?? 0,
+    },
+  };
 }
