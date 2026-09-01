@@ -375,6 +375,48 @@ else
   SHA_URL="${BASE}/releases/latest/download/${TAR_NAME}.sha256"
 fi
 
+# Preflight: is there a build for this platform at all?
+#
+# Not every slug the installer can *name* is one the release matrix
+# *publishes* — darwin-x64 is commented out of .github/workflows/release.yml,
+# so an Intel Mac used to reach `download` and die on a bare
+# "download failed: <url>" with a 404 behind it and no hint that the binary
+# had never existed. Say so instead, and say what to do about it.
+#
+# Only a literal 404 counts as "not published". Everything else — offline
+# (000), a proxy, a 5xx, no curl at all — falls through to the real
+# download, which reports failures as it always has. curl's own exit code
+# is no good here: a 404 after -L follows the release redirect surfaces as
+# 56, not 22, so read the status directly.
+asset_missing() {
+  have curl || return 1
+  _am_code="$(curl -sIL --retry 2 -o /dev/null -w '%{http_code}' "$1" 2>/dev/null || echo 000)"
+  [ "$_am_code" = "404" ]
+}
+
+no_build_published() {
+  echo "no published build for ${SLUG}." >&2
+  echo >&2
+  if [ "$SLUG" = "darwin-x64" ]; then
+    echo "atomic-agent does not publish a macOS Intel binary yet, and the Apple" >&2
+    echo "Silicon build will not run on this machine. Tracking:" >&2
+    echo "  https://github.com/${REPO}/issues/300" >&2
+  else
+    echo "${TAR_NAME} is not attached to this release. See what is published:" >&2
+    echo "  https://github.com/${REPO}/releases" >&2
+  fi
+  echo >&2
+  echo "to run atomic-agent here, build it from source (needs Node 25.7+):" >&2
+  echo "  git clone https://github.com/${REPO}.git" >&2
+  echo "  cd atomic-agent && npm install && npm run build" >&2
+  echo "  node dist/cli/index.js" >&2
+  exit 1
+}
+
+if asset_missing "$TAR_URL"; then
+  no_build_published
+fi
+
 TMPDIR="${TMPDIR:-/tmp}"
 WORK="$(mktemp -d "$TMPDIR/atomic-agent-install.XXXXXX")"
 TMP_BIN=""
