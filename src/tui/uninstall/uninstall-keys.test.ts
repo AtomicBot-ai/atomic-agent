@@ -156,6 +156,9 @@ describe("uninstall ladder keys", () => {
     );
     expect(dispatch).toHaveBeenCalledWith({ type: "uninstall_started" });
     expect(onUninstallConfirmed).toHaveBeenCalledOnce();
+    // Without this the app never unmounts and the post-exit removal
+    // in tui-command never runs — the ladder froze on "closing".
+    expect(dispatch).toHaveBeenCalledWith({ type: "quit_requested" });
   });
 
   it("backspace clears what was typed", () => {
