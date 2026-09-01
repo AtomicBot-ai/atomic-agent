@@ -113,13 +113,12 @@ export function useOnboardingLifecycle(input: {
     // The import step is the flow's actual last screen: it runs after
     // the second-backend offer settles (in either direction), and only
     // when a known agent's state dir exists on this machine. Same
-    // once-only contract as the offer above — stamped when shown. The
-    // download screen's skip exit bypasses this screen too: "skip to
-    // the agent" is a promise, and `/import` keeps working later.
+    // once-only contract as the offer above — stamped when shown. No
+    // path routes around it — not the download screen's skip exit, not
+    // an esc-skipped setup: every first run passes this screen once,
+    // and the screen's own skip row is the only way past it.
     if (
-      !onboarding.skipSecondOffer &&
       shouldOfferImport({
-        outcome,
         alreadyOffered: config.tui.onboarding.importOfferedAt !== null,
       })
     ) {

@@ -79,7 +79,7 @@ describe("useOnboardingLifecycle import offer", () => {
     expect(actions).toEqual([
       {
         type: "onboarding_import_opened",
-        agents: [{ id: "hermes", label: "Hermes", dir: "/tmp/h", enabled: true }],
+        agents: [{ id: "hermes", label: "Hermes", dir: "/tmp/h", enabled: false }],
       },
     ]);
     // Offered once, stamped now; the flow itself is not yet retired.
@@ -113,18 +113,18 @@ describe("useOnboardingLifecycle import offer", () => {
     expect(getConfig().tui.onboarding.importOfferedAt).toBeNull();
   });
 
-  it("never pitches an operator who skipped setup", () => {
+  it("is raised even for an operator who esc-skipped setup", () => {
     const detect = vi.fn(() => ONE_AGENT);
     const actions: TuiAction[] = [];
     render(
       <Harness outcome="skipped" detectAgents={detect} dispatch={(a) => actions.push(a)} />,
     );
-    expect(detect).not.toHaveBeenCalled();
-    expect(actions).toContainEqual({ type: "onboarding_set", onboarding: null });
-    expect(getConfig().tui.onboarding.skippedAt).not.toBeNull();
+    expect(detect).toHaveBeenCalled();
+    expect(actions.map((a) => a.type)).toContain("onboarding_import_opened");
+    expect(getConfig().tui.onboarding.importOfferedAt).not.toBeNull();
   });
 
-  it("honours the download skip's straight-to-the-agent promise", () => {
+  it("is raised even through the download skip's straight-to-the-agent exit", () => {
     const detect = vi.fn(() => ONE_AGENT);
     const actions: TuiAction[] = [];
     render(
@@ -135,8 +135,8 @@ describe("useOnboardingLifecycle import offer", () => {
         dispatch={(a) => actions.push(a)}
       />,
     );
-    expect(detect).not.toHaveBeenCalled();
-    expect(actions).toContainEqual({ type: "onboarding_set", onboarding: null });
-    expect(getConfig().tui.onboarding.importOfferedAt).toBeNull();
+    expect(detect).toHaveBeenCalled();
+    expect(actions.map((a) => a.type)).toContain("onboarding_import_opened");
+    expect(getConfig().tui.onboarding.importOfferedAt).not.toBeNull();
   });
 });

@@ -2,29 +2,33 @@ import { Box, Text } from "ink";
 import type { ReactElement } from "react";
 import type { ImportReport } from "../../import/index.js";
 import { MouseListRow } from "../mouse/mouse-list-row.js";
-import { plainKey } from "../mouse/synthetic-key.js";
+import { plainKey, returnKey } from "../mouse/synthetic-key.js";
 import { widestLine } from "../onboarding/centre-onboarding-block.js";
 import {
+  buildImportPickRows,
+  importActionLabel,
+  IMPORT_SKIP_LABEL,
   summarizeImportReport,
   type OnboardingImportAgentRow,
-  type OnboardingImportOptionRow,
 } from "../onboarding/import-step.js";
 import { handleOnboardingStepKey } from "../onboarding/onboarding-step-keys.js";
 import { ROW_INDENT, rowPrefix } from "../onboarding/onboarding-rows.js";
 import { theme } from "../theme/theme.js";
 
 /**
- * The first-run import screens: pick the agents found on this machine,
- * toggle what to bring over, read the dry-run, read the result. All
- * three are pure renders of `OnboardingUiState`; the keys live in
+ * The first-run import screens: tick the agents found on this machine
+ * (or take the skip row), read the dry-run, read the result. All pure
+ * renders of `OnboardingUiState`; the keys live in
  * `onboarding-step-keys.ts` and the runs in the import orchestrator.
  */
 
 const PICK_EXPLAINER: readonly string[] = [
   "Other agents keep skills, memory, sessions and keys on this machine.",
-  "Pick which ones to bring into atomic-agent — nothing is written before",
+  "Tick which ones to bring into atomic-agent — nothing is written before",
   "you see a preview, and nothing is ever removed from the source.",
 ];
+
+const SKIP_DETAIL = "Go straight to your agent — /import works any time later.";
 
 const CHECKBOX_ON = "[x] ";
 const CHECKBOX_OFF = "[ ] ";
@@ -77,6 +81,48 @@ function pressSpace(): NonNullable<Parameters<typeof MouseListRow>[0]["onActivat
   };
 }
 
+/** The action rows' click: the Enter the key table already routes. */
+function pressReturn(): NonNullable<Parameters<typeof MouseListRow>[0]["onActivate"]> {
+  return (mouse) => {
+    handleOnboardingStepKey("", returnKey(), {
+      state: mouse.getState(),
+      dispatch: mouse.dispatch,
+      callbacks: mouse.callbacks,
+    });
+  };
+}
+
+/** A plain action row: label, optional detail, Enter on click. */
+function ActionRow(props: {
+  selected: boolean;
+  index: number;
+  label: string;
+  detail: string | null;
+  bold?: boolean;
+}): ReactElement {
+  return (
+    <MouseListRow
+      selected={props.selected}
+      onSelect={(mouse) =>
+        mouse.dispatch({ type: "onboarding_cursor_set", cursor: props.index })
+      }
+      onActivate={pressReturn()}
+    >
+      <Box flexDirection="column" marginBottom={1}>
+        <Text
+          color={props.selected ? theme.colors.accent : undefined}
+          bold={props.selected || props.bold}
+        >
+          {`${rowPrefix(props.selected)}${props.label}`}
+        </Text>
+        {props.detail !== null ? (
+          <Text color={theme.colors.muted}>{`${ROW_INDENT}${props.detail}`}</Text>
+        ) : null}
+      </Box>
+    </MouseListRow>
+  );
+}
+
 export function measureOnboardingImportPickStep(
   agents: readonly OnboardingImportAgentRow[],
 ): number {
@@ -86,14 +132,20 @@ export function measureOnboardingImportPickStep(
       `${ROW_INDENT}${CHECKBOX_ON}${row.label}`,
       `${ROW_INDENT}    ${row.dir}`,
     ]),
+    `${ROW_INDENT}${IMPORT_SKIP_LABEL}`,
+    `${ROW_INDENT}${SKIP_DETAIL}`,
+    `${ROW_INDENT}${importActionLabel(agents.length)}`,
   ]);
 }
 
 export function OnboardingImportPickStep(props: {
   agents: readonly OnboardingImportAgentRow[];
   cursor: number;
+  busy: boolean;
+  error: string | null;
 }): ReactElement {
-  const count = Math.max(1, props.agents.length);
+  const rows = buildImportPickRows(props.agents);
+  const selected = props.cursor % rows.length;
   return (
     <Box flexDirection="column" flexShrink={0}>
       <Box flexDirection="column" marginBottom={1}>
@@ -103,52 +155,28 @@ export function OnboardingImportPickStep(props: {
           </Text>
         ))}
       </Box>
-      {props.agents.map((row, index) => (
-        <ToggleRow
-          key={row.id}
-          selected={props.cursor % count === index}
-          enabled={row.enabled}
-          index={index}
-          label={row.label}
-          detail={row.dir}
-          onToggle={pressSpace()}
-        />
-      ))}
-    </Box>
-  );
-}
-
-export function measureOnboardingImportOptionsStep(
-  options: readonly OnboardingImportOptionRow[],
-): number {
-  return widestLine(
-    options.flatMap((row) => [
-      `${ROW_INDENT}${CHECKBOX_ON}${row.agentLabel} · ${row.label}`,
-      `${ROW_INDENT}    ${row.description}`,
-    ]),
-  );
-}
-
-export function OnboardingImportOptionsStep(props: {
-  options: readonly OnboardingImportOptionRow[];
-  cursor: number;
-  busy: boolean;
-  error: string | null;
-}): ReactElement {
-  const count = Math.max(1, props.options.length);
-  return (
-    <Box flexDirection="column" flexShrink={0}>
-      {props.options.map((row, index) => (
-        <ToggleRow
-          key={`${row.agent}:${row.option}`}
-          selected={props.cursor % count === index}
-          enabled={row.enabled}
-          index={index}
-          label={`${row.agentLabel} · ${row.label}`}
-          detail={row.description}
-          onToggle={pressSpace()}
-        />
-      ))}
+      {rows.map((row, index) =>
+        row.kind === "agent" ? (
+          <ToggleRow
+            key={row.agent.id}
+            selected={selected === index}
+            enabled={row.agent.enabled}
+            index={index}
+            label={row.agent.label}
+            detail={row.agent.dir}
+            onToggle={pressSpace()}
+          />
+        ) : (
+          <ActionRow
+            key={row.kind}
+            selected={selected === index}
+            index={index}
+            label={row.kind === "skip" ? IMPORT_SKIP_LABEL : importActionLabel(row.picked)}
+            detail={row.kind === "skip" ? SKIP_DETAIL : null}
+            bold={row.kind === "import"}
+          />
+        ),
+      )}
       {props.busy ? (
         <Text color={theme.colors.muted}>scanning the sources…</Text>
       ) : null}

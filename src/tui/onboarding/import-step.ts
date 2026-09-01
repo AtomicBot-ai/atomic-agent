@@ -7,7 +7,6 @@ import {
   type ImportAgentId,
   type ImportReport,
 } from "../../import/index.js";
-import type { OnboardingOutcome } from "./onboarding-state.js";
 
 /**
  * The pure model behind the first-run import screens: which agents were
@@ -46,24 +45,26 @@ export interface OnboardingImportPlan {
 }
 
 export interface ImportOfferInputs {
-  /** How the flow finished. */
-  outcome: OnboardingOutcome;
   /** `tui.onboarding.importOfferedAt` — the offer was already made. */
   alreadyOffered: boolean;
 }
 
 /**
- * Whether the closing flow should raise the import step at all. Made
- * once, recorded in config when shown; an operator who esc-skipped the
- * whole setup asked to be left alone and is not pitched a migration on
- * the way out either.
+ * Whether the closing flow should raise the import step. Once per
+ * machine, recorded in config when shown — and that stamp is the ONLY
+ * gate: no outcome, shortcut or skip flag may route around this screen.
+ * The screen carries its own always-present skip row, so declining costs
+ * one keypress there instead.
  */
 export function shouldOfferImport(inputs: ImportOfferInputs): boolean {
-  if (inputs.alreadyOffered) return false;
-  return inputs.outcome !== "skipped";
+  return !inputs.alreadyOffered;
 }
 
-/** Detected agents as pick rows, all enabled — the preview is the gate. */
+/**
+ * Detected agents as pick rows, all unticked — importing someone's data
+ * is opt-in per agent, and the import row only appears once something
+ * is ticked.
+ */
 export function buildImportAgentRows(
   detected: readonly DetectedImportAgent[],
 ): OnboardingImportAgentRow[] {
@@ -71,8 +72,43 @@ export function buildImportAgentRows(
     id: agent.id,
     label: agent.label,
     dir: agent.dir,
-    enabled: true,
+    enabled: false,
   }));
+}
+
+/** The always-present last list row: straight to the agent, no import. */
+export const IMPORT_SKIP_LABEL = "Skip adding data from other agents";
+
+/** The action row's label, sized to what is ticked. */
+export function importActionLabel(picked: number): string {
+  return picked === 1 ? "Import from 1 agent" : `Import from ${picked} agents`;
+}
+
+/** One navigable row on the redesigned pick screen. */
+export type OnboardingImportPickRow =
+  | { kind: "agent"; index: number; agent: OnboardingImportAgentRow }
+  | { kind: "skip" }
+  | { kind: "import"; picked: number };
+
+/**
+ * The pick screen's full row list: every detected agent as a tickbox,
+ * then the skip row — always there, so leaving is never more than a
+ * cursor-down away — and, once at least one agent is ticked, the import
+ * action. One derivation shared by the render, the measure and the key
+ * handler, so the three cannot disagree about what a cursor index means.
+ */
+export function buildImportPickRows(
+  agents: readonly OnboardingImportAgentRow[],
+): OnboardingImportPickRow[] {
+  const rows: OnboardingImportPickRow[] = agents.map((agent, index) => ({
+    kind: "agent",
+    index,
+    agent,
+  }));
+  rows.push({ kind: "skip" });
+  const picked = agents.filter((agent) => agent.enabled).length;
+  if (picked > 0) rows.push({ kind: "import", picked });
+  return rows;
 }
 
 /**

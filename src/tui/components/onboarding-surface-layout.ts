@@ -28,7 +28,6 @@ import { measureOnboardingDownloadStep } from "./onboarding-download-step.js";
 import { measureOnboardingHeader } from "./onboarding-header.js";
 import { measureOnboardingHfPickStep } from "./onboarding-hf-pick-step.js";
 import {
-  measureOnboardingImportOptionsStep,
   measureOnboardingImportPickStep,
   measureOnboardingImportReportStep,
 } from "./onboarding-import-step.js";
@@ -148,11 +147,6 @@ function measureStepBody(input: MeasureInput): number {
       return Math.min(
         input.available,
         measureOnboardingImportPickStep(input.importAgents ?? []),
-      );
-    case "import_options":
-      return Math.min(
-        input.available,
-        measureOnboardingImportOptionsStep(input.importOptions ?? []),
       );
     case "import_preview":
       return Math.min(

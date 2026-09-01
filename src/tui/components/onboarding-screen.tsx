@@ -88,6 +88,12 @@ export function OnboardingScreen(props: {
    * 1.5s window has disarmed it, which reads as "Ctrl+C is broken".
    */
   ctrlCArmed?: boolean;
+  /**
+   * Injectable import-source scan for tests — without it the closing
+   * flow reads the real home dir, and whether the import step appears
+   * depends on the machine the suite runs on.
+   */
+  detectImportAgents?(): import("../../import/index.js").DetectedImportAgent[];
 }): ReactElement {
   const { onboarding, dispatch, callbacks } = props;
   const size = useTerminalSize();
@@ -154,6 +160,9 @@ export function OnboardingScreen(props: {
     ...(callbacks.onOnboardingStep === undefined
       ? {}
       : { onStep: callbacks.onOnboardingStep }),
+    ...(props.detectImportAgents === undefined
+      ? {}
+      : { detectAgents: props.detectImportAgents }),
   });
 
   // Both axes are centred on the block as a whole, never line by line:

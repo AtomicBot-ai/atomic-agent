@@ -11,7 +11,6 @@ import { OnboardingChooseStep } from "./onboarding-choose-step.js";
 import { OnboardingDownloadStep } from "./onboarding-download-step.js";
 import { OnboardingHuggingFaceFlow } from "./onboarding-hf-flow.js";
 import {
-  OnboardingImportOptionsStep,
   OnboardingImportPickStep,
   OnboardingImportReportStep,
 } from "./onboarding-import-step.js";
@@ -104,12 +103,6 @@ export function OnboardingStepBody(props: {
         {onboarding.step === "import_pick" ? (
           <OnboardingImportPickStep
             agents={onboarding.importAgents}
-            cursor={onboarding.cursor}
-          />
-        ) : null}
-        {onboarding.step === "import_options" ? (
-          <OnboardingImportOptionsStep
-            options={onboarding.importOptions}
             cursor={onboarding.cursor}
             busy={onboarding.busy}
             error={onboarding.error}

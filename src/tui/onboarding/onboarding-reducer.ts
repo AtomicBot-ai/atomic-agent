@@ -151,46 +151,29 @@ export function reduceOnboardingAction(
         },
       };
     }
-    case "onboarding_import_options_opened": {
-      if (!state.onboarding) return state;
-      return {
-        ...state,
-        onboarding: {
-          ...state.onboarding,
-          step: "import_options",
-          importOptions: action.options,
-          cursor: 0,
-          error: null,
-          busy: false,
-        },
-      };
-    }
-    case "onboarding_import_option_toggled": {
-      if (!state.onboarding) return state;
-      return {
-        ...state,
-        onboarding: {
-          ...state.onboarding,
-          importOptions: state.onboarding.importOptions.map((row, index) =>
-            index === action.index ? { ...row, enabled: !row.enabled } : row,
-          ),
-        },
-      };
-    }
     case "onboarding_import_run_started": {
       if (!state.onboarding) return state;
       return {
         ...state,
-        onboarding: { ...state.onboarding, busy: true, error: null },
+        onboarding: {
+          ...state.onboarding,
+          busy: true,
+          error: null,
+          // The pick screen's import row sends the defaults it built for
+          // the ticked agents; the preview's confirm sends none and
+          // re-runs what is already here.
+          importOptions: action.options ?? state.onboarding.importOptions,
+        },
       };
     }
     case "onboarding_import_report": {
       if (!state.onboarding) return state;
       // Only the import screens may receive a report: a late answer must
       // not yank a flow that moved on (or finished) back onto a result
-      // screen nobody is waiting for.
+      // screen nobody is waiting for. The dry-run is asked for from the
+      // pick screen, the write from the preview.
       const step = state.onboarding.step;
-      if (step !== "import_options" && step !== "import_preview") return state;
+      if (step !== "import_pick" && step !== "import_preview") return state;
       return {
         ...state,
         onboarding: {
