@@ -123,6 +123,93 @@ export function reduceOnboardingAction(
         },
       };
     }
+    case "onboarding_import_opened": {
+      if (!state.onboarding) return state;
+      return {
+        ...state,
+        onboarding: {
+          ...state.onboarding,
+          step: "import_pick",
+          importAgents: action.agents,
+          importOptions: [],
+          importReport: null,
+          cursor: 0,
+          error: null,
+          busy: false,
+        },
+      };
+    }
+    case "onboarding_import_agent_toggled": {
+      if (!state.onboarding) return state;
+      return {
+        ...state,
+        onboarding: {
+          ...state.onboarding,
+          importAgents: state.onboarding.importAgents.map((row, index) =>
+            index === action.index ? { ...row, enabled: !row.enabled } : row,
+          ),
+        },
+      };
+    }
+    case "onboarding_import_options_opened": {
+      if (!state.onboarding) return state;
+      return {
+        ...state,
+        onboarding: {
+          ...state.onboarding,
+          step: "import_options",
+          importOptions: action.options,
+          cursor: 0,
+          error: null,
+          busy: false,
+        },
+      };
+    }
+    case "onboarding_import_option_toggled": {
+      if (!state.onboarding) return state;
+      return {
+        ...state,
+        onboarding: {
+          ...state.onboarding,
+          importOptions: state.onboarding.importOptions.map((row, index) =>
+            index === action.index ? { ...row, enabled: !row.enabled } : row,
+          ),
+        },
+      };
+    }
+    case "onboarding_import_run_started": {
+      if (!state.onboarding) return state;
+      return {
+        ...state,
+        onboarding: { ...state.onboarding, busy: true, error: null },
+      };
+    }
+    case "onboarding_import_report": {
+      if (!state.onboarding) return state;
+      // Only the import screens may receive a report: a late answer must
+      // not yank a flow that moved on (or finished) back onto a result
+      // screen nobody is waiting for.
+      const step = state.onboarding.step;
+      if (step !== "import_options" && step !== "import_preview") return state;
+      return {
+        ...state,
+        onboarding: {
+          ...state.onboarding,
+          step: action.executed ? "import_done" : "import_preview",
+          importReport: action.report,
+          cursor: 0,
+          busy: false,
+          error: null,
+        },
+      };
+    }
+    case "onboarding_import_failed": {
+      if (!state.onboarding) return state;
+      return {
+        ...state,
+        onboarding: { ...state.onboarding, busy: false, error: action.error },
+      };
+    }
     case "onboarding_second_backend_offered": {
       if (!state.onboarding) return state;
       return {

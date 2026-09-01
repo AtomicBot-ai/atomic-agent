@@ -1675,7 +1675,14 @@ export interface UserConfigFile {
 // auto-pick, byte-identical launch args). Two or more ratios opt the managed
 // chat daemon into multi-GPU layer splitting (`--split-mode layer
 // --tensor-split <ratios>`). Older files transparently inherit `[]`.
-export const USER_CONFIG_VERSION = 48;
+// v49: a sixth stamp in `tui.onboarding` — `importOfferedAt`, written when
+// the first run offers the "bring your data over from another agent" step
+// (shown once, on the way out of setup, and only when a known agent's
+// state dir actually exists). Recorded when it is offered, not when it is
+// taken: a declined offer must not come back on a re-run after a reset.
+// Additive: an older file parses with it `null`, which reads as "never
+// offered", the same answer that file has always implied.
+export const USER_CONFIG_VERSION = 49;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -1812,6 +1819,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   45,
   46,
   47,
+  48,
   USER_CONFIG_VERSION,
 ];
 
@@ -2066,6 +2074,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
     mouse: true,
     onboarding: {
       completedAt: null,
+      importOfferedAt: null,
       introSeenAt: null,
       localSetupSeenAt: null,
       proposedSecondBackendAt: null,
@@ -4049,6 +4058,7 @@ export interface OnboardingState {
   skippedAt: string | null;
   proposedSecondBackendAt: string | null;
   localSetupSeenAt: string | null;
+  importOfferedAt: string | null;
 }
 
 /**
@@ -4078,6 +4088,10 @@ export function parseOnboardingState(raw: unknown): OnboardingState {
     localSetupSeenAt: parseTimestampOrNull(
       obj.localSetupSeenAt,
       "tui.onboarding.localSetupSeenAt",
+    ),
+    importOfferedAt: parseTimestampOrNull(
+      obj.importOfferedAt,
+      "tui.onboarding.importOfferedAt",
     ),
   };
 }

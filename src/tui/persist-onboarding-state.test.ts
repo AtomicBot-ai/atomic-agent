@@ -46,6 +46,7 @@ describe("persistOnboardingState", () => {
       skippedAt: null,
       proposedSecondBackendAt: null,
       localSetupSeenAt: null,
+      importOfferedAt: null,
     });
   });
 

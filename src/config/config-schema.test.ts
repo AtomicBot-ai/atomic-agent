@@ -16,6 +16,7 @@ describe("tui.onboarding (config v43, extended in v45)", () => {
       skippedAt: null,
       proposedSecondBackendAt: null,
       localSetupSeenAt: null,
+      importOfferedAt: null,
     });
     expect(parsed.tui.theme).toBe("nord");
   });

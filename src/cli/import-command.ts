@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { getConfig } from "../config/index.js";
+import { MemoryStore } from "../memory/index.js";
 import { SessionStore } from "../session/index.js";
 import { TaskStore } from "../tasks/index.js";
 import {
@@ -15,7 +16,18 @@ import {
   OpenclawOptionError,
   OPENCLAW_DEFAULT_AGENT,
   resolveOpenclawOptions,
+  ClaudeCodeImporter,
+  ClaudeCodeSource,
+  ClaudeCodeOptionError,
+  resolveClaudeCodeOptions,
+  CodexImporter,
+  CodexSource,
+  CodexOptionError,
+  resolveCodexOptions,
+  importAgentDir,
   type ImportOptionId,
+  type ClaudeCodeOptionId,
+  type CodexOptionId,
   type OpenclawOptionId,
   type ImportReport,
 } from "../import/index.js";
@@ -27,6 +39,8 @@ const HELP =
     "Subcommands:",
     "  hermes [options]          Import conversation history + cron jobs from ~/.hermes",
     "  openclaw [options]        Import conversation history + cron jobs from ~/.openclaw",
+    "  claude-code [options]     Import skills, memory, MCP servers + sessions from ~/.claude",
+    "  codex [options]           Import skills, instructions + sessions from ~/.codex",
     "",
     "Options (import hermes):",
     "  --source <dir>            Hermes state dir (default ~/.hermes, env HERMES_STATE_DIR)",
@@ -49,12 +63,35 @@ const HELP =
     "  --dry-run                 Preview only; never write",
     "  --yes                     Skip the interactive confirmation",
     "",
+    "Options (import claude-code):",
+    "  --source <dir>            Claude Code state dir (default ~/.claude, env CLAUDE_CODE_STATE_DIR)",
+    "  --include a,b             Add options (skills,memory,mcp,sessions)",
+    "  --exclude a,b             Remove options",
+    "  --migrate-secrets         Also copy ANTHROPIC_API_KEY (settings.json env) into <stateDir>/.env",
+    "  --limit N                 Cap the number of sessions imported (newest first)",
+    "  --overwrite               Overwrite destinations that differ (default: flag as conflict)",
+    "  --dry-run                 Preview only; never write",
+    "  --yes                     Skip the interactive confirmation",
+    "",
+    "Options (import codex):",
+    "  --source <dir>            Codex state dir (default ~/.codex, env CODEX_STATE_DIR)",
+    "  --include a,b             Add options (skills,memory,sessions)",
+    "  --exclude a,b             Remove options",
+    "  --migrate-secrets         Also copy OPENAI_API_KEY (auth.json) into <stateDir>/.env",
+    "  --limit N                 Cap the number of sessions imported (newest first)",
+    "  --overwrite               Overwrite destinations that differ (default: flag as conflict)",
+    "  --dry-run                 Preview only; never write",
+    "  --yes                     Skip the interactive confirmation",
+    "",
     "Examples:",
     "  atomic-agent import hermes --dry-run",
     "  atomic-agent import hermes --yes",
     "  atomic-agent import hermes --migrate-secrets --overwrite",
     "  atomic-agent import openclaw --dry-run",
     "  atomic-agent import openclaw --agent main --yes",
+    "  atomic-agent import claude-code --dry-run",
+    "  atomic-agent import claude-code --exclude sessions --yes",
+    "  atomic-agent import codex --limit 50 --yes",
   ].join("\n") + "\n";
 
 export async function importCommand(args: string[]): Promise<number> {
@@ -68,6 +105,12 @@ export async function importCommand(args: string[]): Promise<number> {
   }
   if (sub === "openclaw") {
     return importOpenclaw(args.slice(1));
+  }
+  if (sub === "claude-code") {
+    return importClaudeCode(args.slice(1));
+  }
+  if (sub === "codex") {
+    return importCodex(args.slice(1));
   }
   process.stderr.write(`unknown import source: ${sub}\n`);
   process.stderr.write(HELP);
@@ -278,6 +321,231 @@ async function importOpenclaw(args: string[]): Promise<number> {
     source.close();
     sessionStore.close();
     taskStore.close();
+  }
+}
+
+async function importClaudeCode(args: string[]): Promise<number> {
+  const sourceDir =
+    readOption(args, "--source") ?? importAgentDir("claude-code");
+  const include = parseCsv(readOption(args, "--include"));
+  const exclude = parseCsv(readOption(args, "--exclude"));
+  const migrateSecrets = args.includes("--migrate-secrets");
+  const overwrite = args.includes("--overwrite");
+  const dryRun = args.includes("--dry-run");
+  const yes = args.includes("--yes");
+  const limitRaw = readOption(args, "--limit");
+
+  let limit: number | undefined;
+  if (limitRaw !== undefined) {
+    limit = Number.parseInt(limitRaw, 10);
+    if (!Number.isFinite(limit) || limit < 0) {
+      process.stderr.write("--limit must be a non-negative integer\n");
+      return 1;
+    }
+  }
+
+  let options: ClaudeCodeOptionId[];
+  try {
+    options = resolveClaudeCodeOptions({ include, exclude, migrateSecrets });
+  } catch (err) {
+    if (err instanceof ClaudeCodeOptionError) {
+      process.stderr.write(`${err.message}\n`);
+      return 1;
+    }
+    throw err;
+  }
+
+  if (options.length === 0) {
+    process.stderr.write("nothing selected to import\n");
+    return 1;
+  }
+
+  const config = getConfig();
+  const sessionStore = new SessionStore({
+    dbFile: config.paths.sessionsDbFile,
+  });
+  // Dedup and eviction stay off on this handle: the importer does its
+  // own exact-content skip, and a near-match merge during an import
+  // would silently rewrite what the operator asked to copy verbatim.
+  const memoryStore = new MemoryStore({
+    dbFile: config.paths.memoryDbFile,
+    maxEntries: config.memory.notes.maxEntries,
+  });
+  const source = new ClaudeCodeSource(sourceDir);
+
+  try {
+    const importer = new ClaudeCodeImporter({
+      source,
+      sessionStore,
+      memoryStore,
+      stateDir: config.paths.stateDir,
+      userConfigFile: config.paths.userConfigFile,
+      globalSkillsDir: config.paths.globalSkillsDir,
+      workingDirFallback: process.cwd(),
+    });
+
+    process.stdout.write(`Source: ${sourceDir}\n`);
+    process.stdout.write(`Selected: ${options.join(", ")}\n\n`);
+
+    // Phase 1: preview.
+    const preview = await importer.run({
+      options,
+      execute: false,
+      overwrite,
+      limit,
+    });
+    process.stdout.write("Preview:\n");
+    process.stdout.write(`${formatReport(preview)}\n`);
+
+    if (dryRun) {
+      process.stdout.write("\nDry-run: nothing was written.\n");
+      return 0;
+    }
+
+    const actionable =
+      preview.summary.migrated + preview.summary.conflict > 0;
+    if (!actionable) {
+      process.stdout.write("\nNothing to import.\n");
+      return 0;
+    }
+
+    if (!yes) {
+      if (!process.stdin.isTTY) {
+        process.stdout.write(
+          "\nNon-interactive: re-run with --yes to apply, or --dry-run to preview only.\n",
+        );
+        return 0;
+      }
+      const confirmed = await confirm("\nApply this import? [y/N] ");
+      if (!confirmed) {
+        process.stdout.write("Aborted.\n");
+        return 0;
+      }
+    }
+
+    // Phase 2: execute.
+    const final = await importer.run({
+      options,
+      execute: true,
+      overwrite,
+      limit,
+    });
+    process.stdout.write("\nResult:\n");
+    process.stdout.write(`${formatReport(final)}\n`);
+    return final.summary.error > 0 ? 1 : 0;
+  } finally {
+    sessionStore.close();
+    memoryStore.close();
+  }
+}
+
+async function importCodex(args: string[]): Promise<number> {
+  const sourceDir = readOption(args, "--source") ?? importAgentDir("codex");
+  const include = parseCsv(readOption(args, "--include"));
+  const exclude = parseCsv(readOption(args, "--exclude"));
+  const migrateSecrets = args.includes("--migrate-secrets");
+  const overwrite = args.includes("--overwrite");
+  const dryRun = args.includes("--dry-run");
+  const yes = args.includes("--yes");
+  const limitRaw = readOption(args, "--limit");
+
+  let limit: number | undefined;
+  if (limitRaw !== undefined) {
+    limit = Number.parseInt(limitRaw, 10);
+    if (!Number.isFinite(limit) || limit < 0) {
+      process.stderr.write("--limit must be a non-negative integer\n");
+      return 1;
+    }
+  }
+
+  let options: CodexOptionId[];
+  try {
+    options = resolveCodexOptions({ include, exclude, migrateSecrets });
+  } catch (err) {
+    if (err instanceof CodexOptionError) {
+      process.stderr.write(`${err.message}\n`);
+      return 1;
+    }
+    throw err;
+  }
+
+  if (options.length === 0) {
+    process.stderr.write("nothing selected to import\n");
+    return 1;
+  }
+
+  const config = getConfig();
+  const sessionStore = new SessionStore({
+    dbFile: config.paths.sessionsDbFile,
+  });
+  const memoryStore = new MemoryStore({
+    dbFile: config.paths.memoryDbFile,
+    maxEntries: config.memory.notes.maxEntries,
+  });
+  const source = new CodexSource(sourceDir);
+
+  try {
+    const importer = new CodexImporter({
+      source,
+      sessionStore,
+      memoryStore,
+      stateDir: config.paths.stateDir,
+      globalSkillsDir: config.paths.globalSkillsDir,
+      workingDirFallback: process.cwd(),
+    });
+
+    process.stdout.write(`Source: ${sourceDir}\n`);
+    process.stdout.write(`Selected: ${options.join(", ")}\n\n`);
+
+    // Phase 1: preview.
+    const preview = await importer.run({
+      options,
+      execute: false,
+      overwrite,
+      limit,
+    });
+    process.stdout.write("Preview:\n");
+    process.stdout.write(`${formatReport(preview)}\n`);
+
+    if (dryRun) {
+      process.stdout.write("\nDry-run: nothing was written.\n");
+      return 0;
+    }
+
+    const actionable =
+      preview.summary.migrated + preview.summary.conflict > 0;
+    if (!actionable) {
+      process.stdout.write("\nNothing to import.\n");
+      return 0;
+    }
+
+    if (!yes) {
+      if (!process.stdin.isTTY) {
+        process.stdout.write(
+          "\nNon-interactive: re-run with --yes to apply, or --dry-run to preview only.\n",
+        );
+        return 0;
+      }
+      const confirmed = await confirm("\nApply this import? [y/N] ");
+      if (!confirmed) {
+        process.stdout.write("Aborted.\n");
+        return 0;
+      }
+    }
+
+    // Phase 2: execute.
+    const final = await importer.run({
+      options,
+      execute: true,
+      overwrite,
+      limit,
+    });
+    process.stdout.write("\nResult:\n");
+    process.stdout.write(`${formatReport(final)}\n`);
+    return final.summary.error > 0 ? 1 : 0;
+  } finally {
+    sessionStore.close();
+    memoryStore.close();
   }
 }
 
