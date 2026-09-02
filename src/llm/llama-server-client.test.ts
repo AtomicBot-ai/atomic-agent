@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import {
   LlamaServerClient,
   LlamaServerError,
@@ -471,6 +471,244 @@ describe("LlamaServerClient.completeStream", () => {
     });
     const result = await client.complete({ prompt: "x" });
     expect(result.reasoningContent).toBe("the plan");
+  });
+});
+
+/**
+ * The streaming deadline is an *idle* deadline: `requestTimeoutMs` bounds
+ * how long the server may stay silent, not how long the answer may be.
+ * It used to bound the whole generation, so a healthy reasoning model on
+ * CPU — or any llama-server on the far side of a LAN — was killed at
+ * exactly the budget with every token already produced thrown away, and
+ * neither the retry policy (`timedOut` is not retryable) nor the fallback
+ * chain (a self-inflicted timeout is not an immediate signal) recovered
+ * it. The cloud path never had this problem: `openAiFetch` clears its
+ * timer as soon as the fetch promise settles, i.e. at response headers.
+ */
+describe("LlamaServerClient.completeStream deadlines", () => {
+  interface PushableStream {
+    response: Response;
+    push: (text: string) => void;
+    close: () => void;
+  }
+
+  /**
+   * An SSE body the test drives by hand. Aborting the request signal
+   * errors the body mid-read, which is what undici does when the
+   * controller fires while the response is still streaming — the
+   * behaviour the production bug depends on.
+   */
+  function pushableSse(signal: AbortSignal | null | undefined): PushableStream {
+    const encoder = new TextEncoder();
+    let ctrl!: ReadableStreamDefaultController<Uint8Array>;
+    const stream = new ReadableStream<Uint8Array>({
+      start(c) {
+        ctrl = c;
+      },
+    });
+    let finished = false;
+    signal?.addEventListener("abort", () => {
+      if (finished) return;
+      finished = true;
+      ctrl.error(
+        Object.assign(new Error("The operation was aborted"), {
+          name: "AbortError",
+        }),
+      );
+    });
+    return {
+      response: new Response(stream, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      }),
+      push: (text: string) => {
+        if (!finished) ctrl.enqueue(encoder.encode(text));
+      },
+      close: () => {
+        if (finished) return;
+        finished = true;
+        ctrl.close();
+      },
+    };
+  }
+
+  function streamingClient(requestTimeoutMs: number): {
+    client: LlamaServerClient;
+    opened: () => PushableStream;
+  } {
+    let handle: PushableStream | null = null;
+    const client = new LlamaServerClient({
+      baseUrl: "http://127.0.0.1:9999",
+      requestTimeoutMs,
+      fetchImpl: createMockFetch(async (_url, init) => {
+        handle = pushableSse(init.signal);
+        return handle.response;
+      }),
+      completionRetries: 1,
+      completionRetryBackoffMs: 0,
+      sleep: async () => {},
+    });
+    return {
+      client,
+      opened: () => {
+        if (!handle) throw new Error("stream not opened yet");
+        return handle;
+      },
+    };
+  }
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("keeps streaming past requestTimeoutMs while chunks keep arriving", async () => {
+    // The regression test. Six chunks 999ms apart is 5,994ms of healthy
+    // generation under a 1,000ms budget — six times over the old
+    // wall-clock cap, and every one of those gaps is under it.
+    vi.useFakeTimers();
+    const { client, opened } = streamingClient(1_000);
+    const iterator = client.completeStream({ prompt: "hi" });
+    const deltas: string[] = [];
+    let final: { content: string } | null = null;
+    const consumed = (async () => {
+      while (true) {
+        const next = await iterator.next();
+        if (next.done) {
+          final = next.value;
+          return;
+        }
+        if (next.value.delta) deltas.push(next.value.delta);
+      }
+    })();
+
+    // Let the generator open the request and park on its first read().
+    await vi.advanceTimersByTimeAsync(0);
+    for (let i = 0; i < 6; i += 1) {
+      opened().push(`data: {"content":"t${i}","stop":false}\n\n`);
+      await vi.advanceTimersByTimeAsync(999);
+    }
+    opened().push('data: {"content":"","stop":true}\n\n');
+    await vi.advanceTimersByTimeAsync(0);
+    opened().close();
+    await vi.advanceTimersByTimeAsync(0);
+    await consumed;
+
+    expect(deltas.join("")).toBe("t0t1t2t3t4t5");
+    expect(final).not.toBeNull();
+    expect(final!.content).toBe("t0t1t2t3t4t5");
+  });
+
+  it("aborts a stream that goes silent for longer than requestTimeoutMs", async () => {
+    vi.useFakeTimers();
+    const { client, opened } = streamingClient(1_000);
+    const iterator = client.completeStream({ prompt: "hi" });
+    const deltas: string[] = [];
+    const failure = (async (): Promise<unknown> => {
+      try {
+        while (true) {
+          const next = await iterator.next();
+          if (next.done) return null;
+          if (next.value.delta) deltas.push(next.value.delta);
+        }
+      } catch (err) {
+        return err;
+      }
+    })();
+
+    await vi.advanceTimersByTimeAsync(0);
+    opened().push('data: {"content":"partial","stop":false}\n\n');
+    await vi.advanceTimersByTimeAsync(500);
+    // …and then the server goes quiet for a full budget.
+    await vi.advanceTimersByTimeAsync(1_001);
+    const err = await failure;
+
+    expect(deltas.join("")).toBe("partial");
+    expect(err).toBeInstanceOf(LlamaServerError);
+    const llamaErr = err as LlamaServerError;
+    expect(llamaErr.status).toBeNull();
+    // Still `timedOut` — see the field's doc comment. llama-server sends
+    // headers before it evaluates the prompt, so silence is not proof the
+    // provider is dead, and flipping this would turn a slow local model
+    // into an immediate fallover.
+    expect(llamaErr.timedOut).toBe(true);
+    expect(llamaErr.message).toContain("sent no data for 1000ms");
+    // The old advice is wrong for a stall: nothing was too long.
+    expect(llamaErr.message).not.toContain("lower completionMaxTokens");
+  });
+
+  it("still enforces a total deadline on the unary complete() path", async () => {
+    // Pinned deliberately. A non-streaming request has exactly one event
+    // to wait for, so it has no idle signal to refresh against — the
+    // wall-clock budget is all it can have.
+    vi.useFakeTimers();
+    const client = new LlamaServerClient({
+      baseUrl: "http://127.0.0.1:9999",
+      requestTimeoutMs: 1_000,
+      fetchImpl: createMockFetch(
+        (_url, init) =>
+          new Promise((_resolve, reject) => {
+            init.signal?.addEventListener("abort", () => {
+              reject(
+                Object.assign(new Error("aborted"), { name: "AbortError" }),
+              );
+            });
+          }),
+      ),
+      completionRetries: 1,
+      completionRetryBackoffMs: 0,
+      sleep: async () => {},
+    });
+    const failure = client.complete({ prompt: "hi" }).then(
+      () => null,
+      (err: unknown) => err,
+    );
+    await vi.advanceTimersByTimeAsync(1_001);
+    const err = (await failure) as LlamaServerError;
+
+    expect(err).toBeInstanceOf(LlamaServerError);
+    expect(err.timedOut).toBe(true);
+    expect(err.message).toContain("exceeded requestTimeoutMs (1000ms)");
+  });
+
+  it("lets an external abort cancel mid-stream without reporting a timeout", async () => {
+    // Esc in the TUI. The abort must not be laundered into our own
+    // idle-timeout error: `timedOut` stays false, so the fallback chain
+    // and `toLlmFailure` (which reads `ctx.signal.aborted`) still see a
+    // cancellation rather than a provider failure.
+    vi.useFakeTimers();
+    const { client, opened } = streamingClient(60_000);
+    const abort = new AbortController();
+    const iterator = client.completeStream({
+      prompt: "hi",
+      signal: abort.signal,
+    });
+    const deltas: string[] = [];
+    const failure = (async (): Promise<unknown> => {
+      try {
+        while (true) {
+          const next = await iterator.next();
+          if (next.done) return null;
+          if (next.value.delta) deltas.push(next.value.delta);
+        }
+      } catch (err) {
+        return err;
+      }
+    })();
+
+    await vi.advanceTimersByTimeAsync(0);
+    opened().push('data: {"content":"half","stop":false}\n\n');
+    await vi.advanceTimersByTimeAsync(10);
+    abort.abort();
+    await vi.advanceTimersByTimeAsync(0);
+    const err = await failure;
+
+    expect(deltas.join("")).toBe("half");
+    expect(err).toBeInstanceOf(LlamaServerError);
+    const llamaErr = err as LlamaServerError;
+    expect(llamaErr.timedOut).toBe(false);
+    expect(llamaErr.message).toMatch(/abort/i);
+    expect(llamaErr.message).not.toContain("requestTimeoutMs");
+    expect(llamaErr.message).not.toContain("sent no data");
   });
 });
 
