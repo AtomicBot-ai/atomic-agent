@@ -716,9 +716,11 @@ function reduceStepEvent(
     case "llm_completed": {
       // `prompt_built` carried an estimate (`estimateTokens` over-counts
       // by design); the provider just reported what its own tokenizer
-      // actually counted — llama.cpp from `tokens_evaluated`, an
-      // OpenAI-compatible cloud from `usage.prompt_tokens`. Prefer it,
-      // and leave the estimate standing when nothing was reported.
+      // actually counted — llama.cpp from `prompt_n + tokens_cached`
+      // (the whole prompt, not just the slice evaluated past the KV
+      // cache), an OpenAI-compatible cloud from `usage.prompt_tokens`.
+      // Prefer it, and leave the estimate standing when nothing was
+      // reported.
       const counted = event.completion.timing?.promptTokens ?? 0;
       if (counted <= 0) return state;
       return {

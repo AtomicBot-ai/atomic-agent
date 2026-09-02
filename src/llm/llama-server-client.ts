@@ -551,6 +551,17 @@ function normaliseCompletionResponse(
   payload: Record<string, unknown>,
 ): CompletionResult {
   const timings = (payload.timings ?? {}) as Record<string, unknown>;
+  // `prompt_n` / `tokens_evaluated` count only the tokens llama-server
+  // actually evaluated this request — the prefix reused from the KV
+  // cache (`tokens_cached`) is excluded. Every consumer of
+  // `timing.promptTokens` treats it as "how big was the prompt" (their
+  // fallback is `prompt.tokens.total`, and the TUI shows it as occupied
+  // context), so report the whole prompt: evaluated + cached. On a warm
+  // cache the raw `prompt_n` is a small fraction of the prompt and the
+  // context readout collapsed to it, then leapt back to the estimator's
+  // full figure the moment anything reprojected it.
+  const evaluatedTokens = toNumber(timings.prompt_n ?? payload.tokens_evaluated);
+  const cachedTokens = toNumber(payload.tokens_cached);
   return {
     content: typeof payload.content === "string" ? payload.content : "",
     reasoningContent:
@@ -562,10 +573,10 @@ function normaliseCompletionResponse(
     timing: {
       promptMs: toNumber(timings.prompt_ms),
       predictedMs: toNumber(timings.predicted_ms),
-      promptTokens: toNumber(timings.prompt_n ?? payload.tokens_evaluated),
+      promptTokens: evaluatedTokens + cachedTokens,
       predictedTokens: toNumber(timings.predicted_n ?? payload.tokens_predicted),
     },
-    cacheHitTokens: toNumber(payload.tokens_cached),
+    cacheHitTokens: cachedTokens,
     slotId: toNumber(payload.slot_id ?? payload.id_slot, -1),
     modelId:
       typeof payload.model === "string" ? payload.model : null,
