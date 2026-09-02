@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { LlamaServerError } from "../llm/llama-server-client.js";
+import { classifyFailure } from "../llm/reliability/classify-failure.js";
 import { formatAgentErrorForChat } from "./format-agent-error-for-chat.js";
 
 describe("formatAgentErrorForChat", () => {
@@ -45,5 +47,50 @@ describe("formatAgentErrorForChat", () => {
         llamaUrl: "http://127.0.0.1:19091",
       }),
     ).toBe("Turn failed [model]: empty completion");
+  });
+});
+
+describe("formatAgentErrorForChat — classified llama failures", () => {
+  // Mirrors the real pipeline: `agent-loop` classifies the thrown error
+  // and the reducer hands that category straight to the formatter. The
+  // hint is gated on `transport`, so the one failure where "check your
+  // llama URL" is exactly right — a 404 from a wrong `localModels.url` —
+  // used to be the one failure that never got it.
+  const local = {
+    activeProviderIsLocal: true,
+    llamaUrl: "http://127.0.0.1:19091",
+  };
+
+  it("carries the unreachable hint for a llama 404 on a local provider", () => {
+    const err = new LlamaServerError(
+      "llama-server returned http 404",
+      404,
+      local.llamaUrl,
+    );
+    const text = formatAgentErrorForChat(
+      classifyFailure(err),
+      err.message,
+      local,
+    );
+    expect(text).toContain("Turn failed [transport]");
+    expect(text).toContain(
+      "llama-server is not reachable at http://127.0.0.1:19091",
+    );
+  });
+
+  it("keeps a llama 400 as a grammar failure with no URL advice", () => {
+    const err = new LlamaServerError(
+      "llama-server returned http 400",
+      400,
+      local.llamaUrl,
+    );
+    const text = formatAgentErrorForChat(
+      classifyFailure(err),
+      err.message,
+      local,
+    );
+    expect(text).toBe(
+      "Turn failed [grammar]: llama-server returned http 400",
+    );
   });
 });

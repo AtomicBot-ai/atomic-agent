@@ -8,6 +8,11 @@ import {
   ToolExecutionError,
   TransportError,
 } from "./llm-failures.js";
+import {
+  SubscriptionCliAuthError,
+  SubscriptionCliInvocationError,
+  SubscriptionCliNotInstalledError,
+} from "../provider/subscription-cli/subscription-cli-errors.js";
 import { classifyFailure } from "./classify-failure.js";
 
 describe("classifyFailure", () => {
@@ -29,7 +34,7 @@ describe("classifyFailure", () => {
     expect(classifyFailure(err)).toBe("transport");
   });
 
-  it("maps LlamaServerError 4xx to grammar", () => {
+  it("maps LlamaServerError request-shape 4xx to grammar", () => {
     const err = new LlamaServerError("bad grammar", 400, "http://x");
     expect(classifyFailure(err)).toBe("grammar");
   });
@@ -85,5 +90,64 @@ describe("classifyFailure — raw network failures", () => {
       code: "ECONNRESET",
     });
     expect(classifyFailure(err)).toBe("cancelled");
+  });
+});
+
+describe("classifyFailure — llama-server HTTP statuses", () => {
+  // A 4xx that describes the *endpoint* must not be filed as `grammar`:
+  // that category blocks fallover (`shouldAdvance`) and tells the user
+  // their grammar is broken when the real answer is "that URL is not a
+  // llama-server". A 4xx that rejects the request itself stays grammar.
+  const cases: Array<[number | null, string]> = [
+    [null, "transport"],
+    [400, "grammar"],
+    [401, "transport"],
+    [402, "transport"],
+    [403, "transport"],
+    [404, "transport"],
+    [405, "transport"],
+    [408, "transport"],
+    [409, "transport"],
+    [413, "grammar"],
+    [422, "grammar"],
+    [429, "transport"],
+    [500, "transport"],
+    [503, "transport"],
+  ];
+
+  for (const [status, expected] of cases) {
+    it(`maps status ${status ?? "null"} to ${expected}`, () => {
+      const err = new LlamaServerError("boom", status, "http://x");
+      expect(classifyFailure(err)).toBe(expected);
+    });
+  }
+
+  it("leaves an unlisted 4xx on the request-shape side", () => {
+    // Conservative default: only the statuses we can name as
+    // endpoint/auth/availability earn a fallover.
+    expect(classifyFailure(new LlamaServerError("x", 418, "http://x"))).toBe(
+      "grammar",
+    );
+  });
+});
+
+describe("classifyFailure — subscription-CLI providers", () => {
+  it("maps a missing CLI binary to transport, not tool", () => {
+    // "claude is not on PATH" is a dead provider link, not a bug in our
+    // tool layer — the chain must be free to try the next provider.
+    const err = new SubscriptionCliNotInstalledError("claude", "Install it.");
+    expect(classifyFailure(err)).toBe("transport");
+  });
+
+  it("maps a signed-out CLI to transport, not tool", () => {
+    const err = new SubscriptionCliAuthError("codex", "Run /login.");
+    expect(classifyFailure(err)).toBe("transport");
+  });
+
+  it("still treats a failed CLI invocation as a tool failure", () => {
+    // The binary ran and came back unhappy: that is not evidence the
+    // link is unusable, so it keeps the non-advancing category.
+    const err = new SubscriptionCliInvocationError("claude exited 1", 1);
+    expect(classifyFailure(err)).toBe("tool");
   });
 });

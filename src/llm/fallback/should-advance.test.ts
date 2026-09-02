@@ -9,6 +9,10 @@ import {
   ToolExecutionError,
   CancelledError,
 } from "../reliability/llm-failures.js";
+import {
+  SubscriptionCliAuthError,
+  SubscriptionCliNotInstalledError,
+} from "../provider/subscription-cli/subscription-cli-errors.js";
 
 describe("shouldAdvance", () => {
   it("advances immediately on a cloud 429", () => {
@@ -75,12 +79,63 @@ describe("shouldAdvance", () => {
     });
   });
 
-  it("does NOT advance on a local llama 4xx (grammar category)", () => {
-    // LlamaServerError with a 4xx status classifies as grammar.
+  it("does NOT advance on a local llama 400 (request-shape, grammar category)", () => {
+    // A 400 is the server rejecting THIS request; the next link rejects
+    // it the same way, so falling over buys nothing.
     expect(shouldAdvance(new LlamaServerError("x", 400, "http://local"))).toEqual({
       advance: false,
       immediate: false,
     });
+  });
+
+  it("advances via threshold on a local llama 404 — the URL serves no completions", () => {
+    // The endpoint is permanently wrong (bad `localModels.url`, or a
+    // server that is not a llama-server). Not an immediate signal: 404 is
+    // not in the 429/408/5xx provider-down set, so it advances once the
+    // consecutive-failure threshold trips.
+    expect(shouldAdvance(new LlamaServerError("x", 404, "http://local"))).toEqual({
+      advance: true,
+      immediate: false,
+    });
+  });
+
+  it("advances via threshold on a local llama 405", () => {
+    expect(shouldAdvance(new LlamaServerError("x", 405, "http://local"))).toEqual({
+      advance: true,
+      immediate: false,
+    });
+  });
+
+  it("advances immediately on a local llama 429", () => {
+    // Transport category plus an unambiguous provider-down status — the
+    // `isImmediateSignal` status read already handled 429; it was simply
+    // unreachable while 4xx classified as grammar.
+    expect(shouldAdvance(new LlamaServerError("x", 429, "http://local"))).toEqual({
+      advance: true,
+      immediate: true,
+    });
+  });
+
+  it("advances immediately on a local llama 408", () => {
+    expect(shouldAdvance(new LlamaServerError("x", 408, "http://local"))).toEqual({
+      advance: true,
+      immediate: true,
+    });
+  });
+
+  it("advances on a subscription-CLI binary that is not installed", () => {
+    // No HTTP status to read, so it advances via the threshold — but it
+    // must advance: a missing `claude` binary otherwise pins the chain to
+    // a provider that can never serve a turn.
+    expect(
+      shouldAdvance(new SubscriptionCliNotInstalledError("claude", "Install it.")),
+    ).toEqual({ advance: true, immediate: false });
+  });
+
+  it("advances on a subscription-CLI provider that is signed out", () => {
+    expect(
+      shouldAdvance(new SubscriptionCliAuthError("codex", "Run /login.")),
+    ).toEqual({ advance: true, immediate: false });
   });
 
   it("advances via threshold on a TransportError carrying null status", () => {
