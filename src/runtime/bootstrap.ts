@@ -157,6 +157,8 @@ import type { AgentLoopEvent, RunTurnResult } from "../agent/agent-loop.js";
 import {
   SessionStore,
   createEmptySessionState,
+  SESSION_LLM_METADATA_KEY,
+  type SessionLlmStamp,
   type SessionState,
 } from "../session/index.js";
 
@@ -2303,6 +2305,18 @@ export async function createAgentRuntime(
     // remaining event of the turn and any tool call whose `pendingCalls`
     // entry went with it is logged with empty args.
     activeTraceSessions.add(session.id);
+    // Resolved before the turn runs, from the live config: the model the
+    // operator chose for this turn is what the session should remember,
+    // not whatever the config says by the time the turn finishes — and
+    // deliberately not the fallback chain's emergency substitute either.
+    const llmResolved = resolveLlmConfig(getConfig());
+    const llmEntry = llmResolved.providers.find(
+      (p) => p.id === llmResolved.activeTextProvider,
+    );
+    const llmStamp: SessionLlmStamp = {
+      providerId: llmResolved.activeTextProvider,
+      chatModel: llmEntry?.defaultChatModel ?? llmEntry?.model ?? null,
+    };
     return turnContext.run({ sessionId: session.id }, async () => {
       try {
         const result = await loop.runTurn(session, {
@@ -2310,8 +2324,17 @@ export async function createAgentRuntime(
           maxSteps: runOptions.maxSteps ?? config.agent.maxSteps,
           signal: runOptions.signal ?? new AbortController().signal,
         });
-        sessionStore.save(result.session);
-        return result;
+        // Stamp what this turn ran on so switching back into the session
+        // later can restore its provider/model (session-llm.ts).
+        const finished: SessionState = {
+          ...result.session,
+          metadata: {
+            ...result.session.metadata,
+            [SESSION_LLM_METADATA_KEY]: llmStamp,
+          },
+        };
+        sessionStore.save(finished);
+        return { ...result, session: finished };
       } finally {
         activeTraceSessions.delete(session.id);
         // A delete that arrived mid-turn was deferred to keep the pin honest;

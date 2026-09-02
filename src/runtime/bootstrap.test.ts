@@ -13,11 +13,17 @@ import { randomBytes } from "node:crypto";
 
 import { createAgentRuntime, managedLocalLlmHealthFailureHint } from "./bootstrap.js";
 import {
+  getConfig,
   getUserConfigPath,
   resetConfigCache,
   USER_CONFIG_DEFAULTS,
   writeUserConfigFileSync,
 } from "../config/index.js";
+import { resolveLlmConfig } from "../llm/provider/registry/index.js";
+import {
+  readSessionLlmStamp,
+  SESSION_LLM_METADATA_KEY,
+} from "../session/session-llm.js";
 import {
   buildSearchCacheKey,
   createPersistentSearchCache,
@@ -750,6 +756,41 @@ describe("createAgentRuntime", () => {
       });
       const reloaded = runtime.sessionStore.load(session.id)!;
       expect(reloaded.turnCount).toBe(1);
+    } finally {
+      await runtime.shutdown();
+    }
+  });
+
+  it("stamps the session with the provider/model the turn ran on", async () => {
+    const runtime = await createAgentRuntime({
+      workingDir,
+      approvalLevel: 5,
+      overrides: {
+        browserBackend: backend,
+        skipLlamaHealthCheck: true,
+        llamaComplete: async () => ({
+          content: JSON.stringify({
+            tool: "reply",
+            args: { text: "hi back" },
+          }),
+          timing: { promptTokens: 5, predictedTokens: 3 },
+          slotId: 0,
+          cacheReused: false,
+        }),
+      },
+    });
+    try {
+      const session = runtime.createSession();
+      const result = await runtime.runTurn(session, "hello", { maxSteps: 5 });
+      const expected = {
+        providerId: resolveLlmConfig(getConfig()).activeTextProvider,
+        chatModel: null,
+      };
+      // The returned state and the stored row agree, so switching back
+      // into this session later can restore its provider/model.
+      expect(result.session.metadata[SESSION_LLM_METADATA_KEY]).toEqual(expected);
+      const reloaded = runtime.sessionStore.load(session.id)!;
+      expect(readSessionLlmStamp(reloaded.metadata)).toEqual(expected);
     } finally {
       await runtime.shutdown();
     }

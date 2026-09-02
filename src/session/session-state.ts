@@ -140,6 +140,11 @@ export interface SessionState {
    *     webhook.
    *   - `ephemeralTask: true` + `scheduledBy: <sessionId>` — stamped on
    *     fresh sessions created by `tasks.schedule` with `newSession=true`.
+   *   - `llm: { providerId, chatModel }` — the text provider/model this
+   *     session runs on. Stamped by `executeTurn` at the top of every
+   *     turn and by the TUI when the operator picks a model mid-session;
+   *     read back on session switch to restore the session's own model.
+   *     See `session-llm.ts`.
    */
   metadata: Record<string, unknown>;
   /**

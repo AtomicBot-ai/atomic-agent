@@ -37,3 +37,8 @@ export type {
   ConversationTurn,
   PackedConversation,
 } from "./conversation-turn.js";
+export {
+  SESSION_LLM_METADATA_KEY,
+  readSessionLlmStamp,
+} from "./session-llm.js";
+export type { SessionLlmStamp } from "./session-llm.js";
