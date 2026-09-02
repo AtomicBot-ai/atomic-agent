@@ -20,12 +20,14 @@ import { createOpenAiStreamConsumer } from "./openai-stream-consumer.js";
 import { buildOpenAiChatBody } from "./openai-build-body.js";
 import {
   buildOpenAiHeaders,
+  createOpenAiAttemptBudget,
   openAiGetJson,
   openAiPostJson,
   openAiRetryBackoff,
   openAiStartStream,
   OpenAiHttpError,
   OPENAI_MAX_ATTEMPTS,
+  type OpenAiAttemptBudget,
   type OpenAiHttpDeps,
 } from "./openai-http.js";
 import { isNetworkError } from "../../reliability/network-error.js";
@@ -138,6 +140,13 @@ export class OpenAiProvider implements LlmProvider {
     // from the top and duplicate text the user already read, and because
     // sampling is non-deterministic no prefix dedupe can repair that.
     let committed = false;
+    // One completion, one budget. Passed into every open so a reopen
+    // draws from the same pot the opens do — the alternative is two
+    // nested loops of `OPENAI_MAX_ATTEMPTS` and 9 requests per turn.
+    const budget = createOpenAiAttemptBudget();
+    // Distinguishes "the loop finished a stream" from "the loop ran out
+    // of iterations", which is what makes the bound below safe to add.
+    let streamEnded = false;
 
     // The window this loop exists for: a provider answers 2xx, thinks for
     // a long time (reasoning models, cold routes), then drops the socket
@@ -146,15 +155,25 @@ export class OpenAiProvider implements LlmProvider {
     // death as a bare `Error: terminated` from the body reader — which
     // used to fail the whole turn ("Turn failed [transport]: terminated")
     // even though not one byte of output existed.
-    attempts: for (let attempt = 1; ; attempt += 1) {
-      let res: (Response & { body: NonNullable<Response["body"]> }) | undefined;
+    //
+    // The `attempt <= OPENAI_MAX_ATTEMPTS` bound is a structural
+    // backstop, not the working exit: every iteration spends at least one
+    // unit of `budget` and `canReopenStream` stops at zero, so the
+    // condition should never be what ends this loop. It is written anyway
+    // because this loop issues network requests, and a loop whose only
+    // termination is a helper's return value is one edit away from
+    // hammering a provider forever.
+    attempts: for (let attempt = 1; attempt <= OPENAI_MAX_ATTEMPTS; attempt += 1) {
       try {
         // Opening the stream (connect + status check) happens inside the
         // client's bounded retry, strictly before the first chunk exists.
-        res = await openAiStartStream(this.http, path, body, request);
+        const res = await openAiStartStream(this.http, path, body, request, budget);
         // A reopen starts from an empty transcript: whatever the dead
         // attempt accumulated was never yielded and must not be mixed
-        // into the fresh one.
+        // into the fresh one. With the built-in stream consumer nothing
+        // can accumulate without also committing, so this is dead weight
+        // for it; it is not dead for an injected `streamConsumer`, which
+        // may report content on a `done` chunk this loop does not yield.
         accumulated = "";
         accumulatedReasoning = "";
         streamFinal = undefined;
@@ -163,24 +182,65 @@ export class OpenAiProvider implements LlmProvider {
           const next = await stream.next();
           if (next.done) {
             streamFinal = next.value;
+            streamEnded = true;
             break attempts;
           }
           const chunk = next.value;
           if (chunk.delta) accumulated += chunk.delta;
           if (chunk.reasoningDelta) accumulatedReasoning += chunk.reasoningDelta;
           if (!chunk.done) {
+            // Set before the yield, deliberately: a caller that throws
+            // into this generator (`generator.throw()`, which is how a
+            // consumer reports its own failure into a stream it is
+            // draining) resumes us *inside* the catch below, with the
+            // yield never having returned. Set after the yield, that
+            // error would find `committed === false` and replay a
+            // completion the caller has already shown part of.
             committed = true;
             yield chunk;
           }
         }
       } catch (err) {
-        if (!canReopenStream(err, request.signal, committed, attempt)) throw err;
-        // Hand the dead socket back before opening a new one, or the
-        // retry leaks a connection out of undici's pool for the rest of
-        // the process.
-        await discardResponseBody(res);
-        await openAiRetryBackoff(attempt, request.signal);
+        // Cancellation first, and it throws rather than returning a
+        // verdict, because the *shape* of the error decides what the user
+        // gets. `classifyFailure` files every `OpenAiHttpError` as
+        // `transport` before it ever looks for an abort, and a bare
+        // `Error: terminated` from a body that died while the abort was
+        // in flight is `transport` too — either one makes `shouldAdvance`
+        // report an immediate provider-down signal, so the fallback chain
+        // switches links and starts the very completion the user just
+        // stopped. `signal.reason` is abort-shaped by construction.
+        if (request.signal?.aborted) throw cancellationError(request.signal, err);
+        if (!canReopenStream(err, committed, budget)) throw err;
+        // No `res.body.cancel()` here, on purpose. The only way to reach
+        // this line with a response in hand is `isNetworkError(err)` on
+        // an error raised by the body reader — i.e. the stream is already
+        // errored, `cancel()` on an errored stream rejects with the
+        // stored error, and undici has already destroyed the socket. A
+        // cancel call would be a swallowed no-op dressed up as hygiene.
+        await openAiRetryBackoff(OPENAI_MAX_ATTEMPTS - budget.remaining, request.signal);
+        // `sleep()` resolves on abort instead of rejecting, so without
+        // this the loop walks out of the backoff straight into the next
+        // open. Today that open throws before it fetches
+        // (`runOpenAiWithRetry` checks the signal first) and the check
+        // above catches it on the way through, which makes this line
+        // redundant *given* that behaviour — no test can tell the two
+        // apart, and the mutation sweep confirms it: dropping either
+        // check alone keeps the suite green, dropping both fails two
+        // tests. It stays because the invariant belongs to this loop:
+        // once the caller has cancelled, this loop issues nothing more,
+        // whatever the HTTP client decides to do about aborted signals.
+        if (request.signal?.aborted) throw cancellationError(request.signal, err);
       }
+    }
+    if (!streamEnded) {
+      // The backstop fired: `canReopenStream` let the loop run past its
+      // budget. Returning the empty completion assembled below would look
+      // to the user like a model that said nothing, so say what actually
+      // happened instead.
+      throw new Error(
+        "openai stream retry loop ended without a completion — canReopenStream and OPENAI_MAX_ATTEMPTS disagree",
+      );
     }
     const final = completionFromStreamFinal(
       streamFinal,
@@ -293,63 +353,85 @@ function completionFromStreamFinal(
 }
 
 /**
- * May a failure raised between "2xx headers received" and "first chunk
- * handed to our caller" be recovered by reopening the stream?
+ * The error a turn the user cancelled should fail with.
  *
- * The order of these guards is the contract, not a stylistic choice:
+ * `classifyFailure` reads cancellation off the error's *shape*, and the
+ * shapes that reach the retry loop when someone presses Esc are not
+ * reliably abort-shaped: a body that dies while the abort is in flight
+ * arrives as `Error: terminated` (→ `transport`), and an abort noticed
+ * inside `runOpenAiWithRetry` arrives as an `OpenAiHttpError` whose
+ * `transport` branch is checked *before* the abort branch. Either one
+ * makes `shouldAdvance` report an immediate provider-down signal, so the
+ * fallback chain switches links and starts the very completion the user
+ * just stopped.
  *
- * 1. **Committed.** Once a chunk has been yielded, nothing below matters.
- *    This is deliberately the strictest reading of "output": a chunk that
- *    carries only the provider's opening `role` delta commits the stream
- *    just as a text delta does. We cannot know what a downstream consumer
- *    did with it, and being wrong here means duplicating a user's reply.
- *    Reasoning deltas are output for the same reason — the TUI renders
- *    them live.
- * 2. **Cancellation.** A user pressing Esc is not a network failure, and
- *    an abort reaches us in several disguises (`AbortError`, a raw
- *    `Error: aborted`, or a custom `fetchImpl`'s own shape). The signal
- *    is the only reliable oracle, so it is consulted before the error is
- *    inspected at all — the ordering `network-error.ts` documents.
- * 3. **`OpenAiHttpError`.** The failure came from *opening* the stream,
- *    which already ran inside `runOpenAiWithRetry` and already spent the
- *    whole `OPENAI_MAX_ATTEMPTS` budget on 429s/5xx/connect errors.
- *    Retrying it here would silently square the budget (3 × 3) and delay
- *    a real, actionable message — a bad API key would be tried nine
- *    times. Only untyped body-read deaths get past this guard.
- * 4. **Shape.** Anything that is not a recognisable transport death — a
- *    bug in a stream consumer, a parse error — is a real error. Replaying
- *    it would just hide it behind three identical failures.
- * 5. **Budget.** One streaming completion gets `OPENAI_MAX_ATTEMPTS`
- *    total, shared with the open, not a fresh budget per layer.
+ * `signal.reason` is the abort's own error — a `DOMException` named
+ * `AbortError` when the aborter supplied nothing — so it classifies as
+ * `cancelled`. The original error is the fallback for signal doubles
+ * that never populate `reason`.
  */
-function canReopenStream(
-  err: unknown,
-  signal: AbortSignal | undefined,
-  committed: boolean,
-  attempt: number,
-): boolean {
-  if (committed) return false;
-  if (signal?.aborted) return false;
-  if (err instanceof OpenAiHttpError) return false;
-  if (!isNetworkError(err)) return false;
-  return attempt < OPENAI_MAX_ATTEMPTS;
+function cancellationError(signal: AbortSignal, fallback: unknown): unknown {
+  const reason: unknown = signal.reason;
+  return reason ?? fallback;
 }
 
 /**
- * Release a response whose body died mid-read, so the reopen does not
- * leak the socket. By the time we get here the stream consumer's
- * `finally` has released its reader lock, but the body itself still owns
- * the connection until it is cancelled. A body that refuses to cancel
- * (already errored, still locked) is not worth failing the turn over —
- * we are on our way to a fresh request either way.
+ * May a failure raised between "2xx headers received" and "first chunk
+ * handed to our caller" be recovered by reopening the stream?
+ *
+ * Cancellation is deliberately NOT one of these guards: the caller checks
+ * the signal before asking, because an aborted turn needs a specific
+ * error *thrown*, not a boolean returned (see `cancellationError`).
+ *
+ * The order of the guards that are here is the contract, not a stylistic
+ * choice:
+ *
+ * 1. **Committed.** Once a chunk has been yielded, nothing below matters.
+ *    This is a strict reading of "output": a chunk carrying only the
+ *    provider's opening `role` delta commits the stream just as a text
+ *    delta does. We cannot know what a downstream consumer did with it,
+ *    and being wrong here means duplicating a user's reply. Reasoning
+ *    deltas are output for the same reason — the TUI renders them live.
+ *
+ *    What this does NOT cover is a completion that streamed nothing but
+ *    tool-call arguments: `createOpenAiStreamConsumer` yields on a
+ *    `function.arguments` delta only once the accumulated arguments
+ *    contain reply text, so a `{"path":"a.txt"` in flight leaves
+ *    `committed` false and such a stream IS reopened. That is safe — no
+ *    text reached the user, and tools are dispatched only after the
+ *    completion returns — and it is what the reporter's case wants, since
+ *    a tool call whose arguments never finished streaming is not a usable
+ *    turn. It is spelled out because "any chunk we yielded" and "any byte
+ *    the provider sent" are not the same line.
+ * 2. **`OpenAiHttpError`.** The failure came from *opening* the stream,
+ *    inside `runOpenAiWithRetry`, which has already applied this client's
+ *    retry policy to it. Reopening here would quietly replace that policy
+ *    with a looser one, because `isNetworkError` says yes to failures
+ *    `isRetryableOpenAiError` deliberately says no to: our own request
+ *    timeout, and any non-retryable status whose body preview happens to
+ *    mention a socket. The shared budget makes this cheap rather than
+ *    catastrophic now — a *retryable* open failure has already drained
+ *    the budget, so guard 4 would stop it anyway — but a non-retryable
+ *    one still has budget left, and re-deciding a call the HTTP client
+ *    already made is how a deterministic failure turns into three
+ *    requests and a delayed, actionable message.
+ * 3. **Shape.** Anything that is not a recognisable transport death — a
+ *    bug in a stream consumer, a parse error — is a real error. Replaying
+ *    it would just hide it behind three identical failures.
+ * 4. **Budget.** One streaming completion gets `OPENAI_MAX_ATTEMPTS`
+ *    requests in total, shared with the opens: the same counter is passed
+ *    into `openAiStartStream`, so opens and reopens add up instead of
+ *    multiplying.
  */
-async function discardResponseBody(res: Response | undefined): Promise<void> {
-  if (!res?.body) return;
-  try {
-    await res.body.cancel();
-  } catch {
-    // Nothing left to release.
-  }
+function canReopenStream(
+  err: unknown,
+  committed: boolean,
+  budget: OpenAiAttemptBudget,
+): boolean {
+  if (committed) return false;
+  if (err instanceof OpenAiHttpError) return false;
+  if (!isNetworkError(err)) return false;
+  return budget.remaining > 0;
 }
 
 function applyToolCallTerminationSafety(

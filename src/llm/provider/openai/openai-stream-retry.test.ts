@@ -1,6 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { CompletionResult, StreamChunk } from "../completion-types.js";
+import type {
+  CompletionResult,
+  StreamChunk,
+  StreamFinalResult,
+} from "../completion-types.js";
+import type { StreamConsumer } from "../adapters/stream-consumer.js";
+import { classifyFailure } from "../../reliability/classify-failure.js";
+import { shouldAdvance } from "../../fallback/should-advance.js";
 import { OpenAiHttpError } from "./openai-http.js";
 import { OpenAiProvider } from "./openai-provider.js";
 
@@ -71,13 +78,46 @@ function streamingResponse(parts: readonly BodyPart[]): Response {
   });
 }
 
-function provider(fetchImpl: unknown): OpenAiProvider {
+function provider(
+  fetchImpl: unknown,
+  streamConsumer?: StreamConsumer,
+): OpenAiProvider {
   return new OpenAiProvider({
     id: "test",
     baseUrl: "https://example.invalid",
     apiKey: "",
     defaultChatModel: "qwen-test",
     fetchImpl: fetchImpl as typeof fetch,
+    ...(streamConsumer ? { streamConsumer } : {}),
+  });
+}
+
+/** One SSE event carrying a streamed `function.arguments` fragment. */
+function toolArgsFrame(
+  fragment: string,
+  extras: { name?: string; id?: string } = {},
+): string {
+  return frame({
+    model: "qwen-test",
+    choices: [
+      {
+        index: 0,
+        delta: {
+          tool_calls: [
+            {
+              index: 0,
+              ...(extras.id ? { id: extras.id } : {}),
+              type: "function",
+              function: {
+                ...(extras.name ? { name: extras.name } : {}),
+                arguments: fragment,
+              },
+            },
+          ],
+        },
+        finish_reason: null,
+      },
+    ],
   });
 }
 
@@ -225,8 +265,12 @@ describe("OpenAiProvider stream transport retry (pre-first-chunk)", () => {
     openGate();
     const { error } = await pending;
 
-    expect((error as Error).message).toBe("terminated");
     expect(fetchImpl).toHaveBeenCalledTimes(1);
+    // The shape matters as much as the absent retry: a turn the user
+    // stopped has to classify as `cancelled`, or the fallback chain reads
+    // it as a dead provider and restarts the completion on another link.
+    expect(classifyFailure(error)).toBe("cancelled");
+    expect(shouldAdvance(error).advance).toBe(false);
   });
 
   it("does not retry a failure that is not a transport death", async () => {
@@ -246,9 +290,9 @@ describe("OpenAiProvider stream transport retry (pre-first-chunk)", () => {
   });
 
   it("does not re-retry an open failure that already spent the HTTP budget", async () => {
-    // 500s are retried by `runOpenAiWithRetry` itself. If this layer
-    // retried the resulting `OpenAiHttpError` too, the budget would be
-    // squared (3 × 3 = 9 requests) instead of shared.
+    // 500s are retried by `runOpenAiWithRetry` itself, and those retries
+    // come out of the completion's budget — so by the time the error
+    // reaches this layer there is nothing left to spend on a reopen.
     const fetchImpl = vi.fn(
       async () => new Response("upstream exploded", { status: 500 }),
     );
@@ -267,11 +311,225 @@ describe("OpenAiProvider stream transport retry (pre-first-chunk)", () => {
       streamingResponse([new Error("terminated")]),
     );
 
+    const startedAt = Date.now();
     const { error } = await drainToError(
       provider(fetchImpl).completeStream({ prompt: "hi" }),
     );
 
     expect((error as Error).message).toBe("terminated");
     expect(fetchImpl).toHaveBeenCalledTimes(3);
+    // Two reopens means two `openAiRetryBackoff` waits (~150ms and
+    // ~300ms before jitter). Asserted as a floor because a reopen loop
+    // with no pacing is a provider-hammering loop, and nothing else here
+    // would notice if the backoff were dropped.
+    expect(Date.now() - startedAt).toBeGreaterThanOrEqual(200);
+  });
+});
+
+/**
+ * The budget is the whole reason this layer is safe to have: two bounded
+ * retry loops that do not share a counter are one multiplying loop. Each
+ * of these pins a scenario that cost 9 HTTP requests for a single turn
+ * while the sharing was only asserted in a comment.
+ */
+describe("OpenAiProvider stream transport retry (shared attempt budget)", () => {
+  it("spends one budget across opens and reopens, not one per layer", async () => {
+    // The worst shape: every open pays two 500s before it succeeds, and
+    // every body then dies before its first chunk. With a per-layer
+    // budget that is 3 opens x 3 attempts = 9 requests for one turn —
+    // nine billable prompt submissions.
+    let calls = 0;
+    const fetchImpl = vi.fn(async () => {
+      calls += 1;
+      return calls % 3 === 0
+        ? streamingResponse([new Error("terminated")])
+        : new Response("upstream exploded", { status: 500 });
+    });
+
+    const { error } = await drainToError(
+      provider(fetchImpl).completeStream({ prompt: "hi" }),
+    );
+
+    expect((error as Error).message).toBe("terminated");
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+  });
+
+  it("costs an unreachable provider three requests, not nine", async () => {
+    // `ECONNREFUSED` is the one open failure that is BOTH typed as an
+    // `OpenAiHttpError` and recognised by `isNetworkError`, so it is
+    // where the two layers most want to retry each other's work.
+    const fetchImpl = vi.fn(async () => {
+      throw Object.assign(new TypeError("fetch failed"), {
+        code: "ECONNREFUSED",
+      });
+    });
+
+    const { error } = await drainToError(
+      provider(fetchImpl).completeStream({ prompt: "hi" }),
+    );
+
+    expect(error).toBeInstanceOf(OpenAiHttpError);
+    expect((error as OpenAiHttpError).code).toBe("ECONNREFUSED");
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not reopen a non-retryable open failure that merely looks like a socket death", async () => {
+    // The case the `OpenAiHttpError` guard actually owns. A 400 is not
+    // retryable, so the HTTP client throws it with budget to spare — and
+    // its message carries the provider's body, which here mentions a
+    // socket, so `isNetworkError` says yes. Without that guard this layer
+    // would override the client's "deterministic, do not retry" verdict
+    // and spend the rest of the completion's budget on it.
+    const fetchImpl = vi.fn(
+      async () => new Response("socket hang up upstream", { status: 400 }),
+    );
+
+    const { error } = await drainToError(
+      provider(fetchImpl).completeStream({ prompt: "hi" }),
+    );
+
+    expect(error).toBeInstanceOf(OpenAiHttpError);
+    expect((error as OpenAiHttpError).status).toBe(400);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("OpenAiProvider stream transport retry (cancellation and commit ordering)", () => {
+  it("fails as cancelled when Esc lands during the inter-attempt backoff", async () => {
+    // The window this layer added: the first body is already dead, the
+    // reopen has not happened yet, and the user — who has been staring at
+    // a frozen screen for a minute — presses Esc. `sleep()` resolves on
+    // abort rather than throwing, so without an explicit re-check the
+    // loop walks straight into another request, and the failure it ends
+    // up producing classifies as `transport`, which makes the fallback
+    // chain switch providers and restart the turn the user just stopped.
+    const controller = new AbortController();
+    let firstFetchSeen: () => void = () => {};
+    const firstFetch = new Promise<void>((resolve) => {
+      firstFetchSeen = resolve;
+    });
+    const fetchImpl = vi.fn(async () => {
+      firstFetchSeen();
+      return streamingResponse([new Error("terminated")]);
+    });
+
+    const pending = drainToError(
+      provider(fetchImpl).completeStream({
+        prompt: "hi",
+        signal: controller.signal,
+      }),
+    );
+    await firstFetch;
+    // Comfortably inside the ~150ms first backoff, and after the body has
+    // errored (it errors on its very first `pull`).
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    controller.abort();
+    const { error } = await pending;
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(classifyFailure(error)).toBe("cancelled");
+    expect(shouldAdvance(error).advance).toBe(false);
+  });
+
+  it("treats output as delivered the moment it is yielded, not after", async () => {
+    // `generator.throw()` is how a consumer reports its own failure into
+    // a stream it is draining, and it resumes this generator *inside* the
+    // catch, with the yield never having returned. If `committed` were
+    // set after the yield instead of before, that error would find
+    // `committed === false` and replay a completion the caller has
+    // already shown part of.
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(
+        streamingResponse([contentFrame("part one"), STOP_FRAMES]),
+      )
+      .mockResolvedValueOnce(
+        streamingResponse([contentFrame("part one again"), STOP_FRAMES]),
+      );
+
+    const stream = provider(fetchImpl).completeStream({ prompt: "hi" });
+    const first = await stream.next();
+
+    expect(first.done).toBe(false);
+    await expect(stream.throw(new Error("terminated"))).rejects.toThrow(
+      "terminated",
+    );
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("reopens a stream that only ever streamed tool-call arguments", async () => {
+    // Not a hole in the committed rule but a documented edge of it: the
+    // consumer yields on a `function.arguments` delta only once the
+    // accumulated arguments contain reply text, so a tool call whose
+    // arguments were still in flight commits nothing and is replayed.
+    // Safe — nothing reached the user and tools are dispatched only after
+    // the completion returns — but it is a wider window than "any byte
+    // the provider sent", so it is pinned rather than left to be
+    // rediscovered as a surprise.
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(
+        streamingResponse([
+          toolArgsFrame("", { id: "c1", name: "read_file" }),
+          toolArgsFrame('{"path":"a.txt"'),
+          new Error("terminated"),
+        ]),
+      )
+      .mockResolvedValueOnce(
+        streamingResponse([
+          toolArgsFrame('{"path":"b.txt"}', { id: "c2", name: "read_file" }),
+          STOP_FRAMES,
+        ]),
+      );
+
+    const { chunks, result } = await drain(
+      provider(fetchImpl).completeStream({ prompt: "hi" }),
+    );
+
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(chunks.map((c) => c.delta).join("")).toBe("");
+    // Only the second attempt's tool call survives — the half-streamed
+    // arguments of the dead one must not stack onto it.
+    expect(result.toolCalls).toEqual([
+      {
+        id: "c2",
+        type: "function",
+        function: { name: "read_file", arguments: '{"path":"b.txt"}' },
+      },
+    ]);
+  });
+
+  it("starts a reopened stream from an empty transcript", async () => {
+    // The built-in consumer cannot accumulate without also committing, so
+    // the per-reopen reset only bites for an injected `streamConsumer` —
+    // a public constructor option — that reports content on a chunk this
+    // loop does not yield. Without the reset the replay stacks on top of
+    // the dead attempt's text.
+    let consumeCalls = 0;
+    const consumer: StreamConsumer = {
+      async *consume(): AsyncGenerator<StreamChunk, StreamFinalResult | void, void> {
+        consumeCalls += 1;
+        if (consumeCalls === 1) {
+          yield { delta: "ghost", reasoningDelta: "", done: true };
+          throw new Error("terminated");
+        }
+        yield { delta: "real", reasoningDelta: "", done: true };
+        return {
+          content: "",
+          reasoningContent: "",
+          finishReason: "stop",
+          modelId: "qwen-test",
+          terminalObserved: true,
+        };
+      },
+    };
+    const fetchImpl = vi.fn(async () => streamingResponse([STOP_FRAMES]));
+
+    const { result } = await drain(
+      provider(fetchImpl, consumer).completeStream({ prompt: "hi" }),
+    );
+
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(result.content).toBe("real");
   });
 });
