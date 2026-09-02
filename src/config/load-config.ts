@@ -162,6 +162,10 @@ export function loadConfig(): AtomicAgentConfig {
         "ATOMIC_AGENT_LLAMA_REQUEST_TIMEOUT_MS",
         ENV_DEFAULTS.REQUEST_TIMEOUT_MS,
       ),
+      streamTotalTimeoutMs: readInt(
+        "ATOMIC_AGENT_LLAMA_STREAM_TOTAL_TIMEOUT_MS",
+        ENV_DEFAULTS.STREAM_TOTAL_TIMEOUT_MS,
+      ),
       healthRetries: readInt(
         "ATOMIC_AGENT_LLAMA_HEALTH_RETRIES",
         ENV_DEFAULTS.HEALTH_RETRIES,
