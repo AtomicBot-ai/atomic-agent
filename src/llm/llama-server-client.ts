@@ -44,11 +44,24 @@ const ENV_SEED = parseIntEnv(process.env.ATOMIC_AGENT_LLAMA_SEED);
  *
  *  - `total` — the whole request was given `requestTimeoutMs` and never
  *    produced a response. The only signal a unary request has.
- *  - `idle` — a *stream* went `requestTimeoutMs` without sending a byte.
- *    A healthy generation refreshes this budget on every chunk, so it
- *    means the server went quiet, not that the answer was long.
+ *  - `first-token` — a *stream*'s headers arrived and then nothing did,
+ *    for `requestTimeoutMs`. llama.cpp answers with headers immediately
+ *    and only then evaluates the prompt, so this usually means the
+ *    prompt eval is still running, **not** that the server is broken.
+ *  - `idle` — a *stream* that had already sent at least one byte went
+ *    `requestTimeoutMs` without sending another. A healthy generation
+ *    refreshes this budget on every chunk, so it means the server went
+ *    quiet mid-reply, not that the answer was long.
+ *  - `stream-total` — a stream kept sending but never finished within
+ *    `streamTotalTimeoutMs`. The backstop that keeps a wedged or
+ *    hostile server from pinning a slot forever by dribbling one byte
+ *    just under the idle budget.
  */
-export type LlamaTimeoutKind = "total" | "idle";
+export type LlamaTimeoutKind =
+  | "total"
+  | "first-token"
+  | "idle"
+  | "stream-total";
 
 export class LlamaServerError extends Error {
   constructor(
@@ -57,8 +70,8 @@ export class LlamaServerError extends Error {
     public readonly url: string,
     /**
      * True when *our own* `requestTimeoutMs` controller fired rather than
-     * the transport failing — for either deadline, `total` or `idle`
-     * (see `LlamaTimeoutKind`). Both surface as `status === null`, but a
+     * the transport failing — for any of our deadlines (see
+     * `LlamaTimeoutKind`). Both surface as `status === null`, but a
      * timeout is a "the model is slower than the budget" signal, not a
      * transient blip — replaying it just burns another full timeout of
      * GPU time (3 attempts x 300s = 15 silent minutes). See
@@ -158,6 +171,12 @@ export interface LlamaServerClientOptions {
   baseUrl?: string;
   apiKey?: string | null;
   requestTimeoutMs?: number;
+  /**
+   * Overrides `config.localModels.streamTotalTimeoutMs`, the absolute
+   * cap on a single streaming response. Streaming only — a unary
+   * request is already bounded by `requestTimeoutMs`.
+   */
+  streamTotalTimeoutMs?: number;
   fetchImpl?: typeof fetch;
   /**
    * Overrides the retry budget for `complete()` and the initial fetch
@@ -187,6 +206,7 @@ export class LlamaServerClient {
   private readonly baseUrlOverride: string | undefined;
   private readonly apiKey: string | null;
   private readonly requestTimeoutMs: number;
+  private readonly streamTotalTimeoutMs: number;
   private readonly fetchImpl: typeof fetch;
   private readonly completionRetriesOverride: number | undefined;
   private readonly completionRetryBackoffMsOverride: number | undefined;
@@ -198,6 +218,8 @@ export class LlamaServerClient {
     this.apiKey = options.apiKey ?? config.localModels.apiKey;
     this.requestTimeoutMs =
       options.requestTimeoutMs ?? config.localModels.requestTimeoutMs;
+    this.streamTotalTimeoutMs =
+      options.streamTotalTimeoutMs ?? config.localModels.streamTotalTimeoutMs;
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.completionRetriesOverride = options.completionRetries;
     this.completionRetryBackoffMsOverride = options.completionRetryBackoffMs;
@@ -276,13 +298,14 @@ export class LlamaServerClient {
       controller: AbortController;
       cleanup: () => void;
       timedOut: () => LlamaTimeoutKind | null;
-      keepAlive: () => void;
+      keepAlive: (next: Exclude<LlamaTimeoutKind, "total">) => void;
+      startStreamDeadline: () => void;
     };
     try {
       opened = await this.runWithRetry(
         url,
         async () => {
-          const { controller, cleanup, timedOut, keepAlive } =
+          const { controller, cleanup, timedOut, keepAlive, startStreamDeadline } =
             this.createRequestController(request.signal);
           try {
             const response = await this.fetchImpl(url, {
@@ -294,7 +317,14 @@ export class LlamaServerClient {
             if (!response.ok || !response.body) {
               throw await buildHttpError(response, url);
             }
-            return { response, controller, cleanup, timedOut, keepAlive };
+            return {
+              response,
+              controller,
+              cleanup,
+              timedOut,
+              keepAlive,
+              startStreamDeadline,
+            };
           } catch (err) {
             cleanup();
             throw this.wrapTransportError(err, url, timedOut());
@@ -309,7 +339,8 @@ export class LlamaServerClient {
         cause: err,
       });
     }
-    const { response, cleanup, timedOut, keepAlive } = opened;
+    const { response, cleanup, timedOut, keepAlive, startStreamDeadline } =
+      opened;
     let finalResult: CompletionResult = {
       content: "",
       reasoningContent: "",
@@ -341,18 +372,27 @@ export class LlamaServerClient {
       // full budget rather than whatever the connect phase left over —
       // llama.cpp answers with headers immediately and only then evaluates
       // the prompt, so the first token can legitimately be minutes away.
-      keepAlive();
+      // Until a byte actually arrives the deadline reports `first-token`:
+      // a silence *before* the reply starts is most likely a long prompt
+      // eval, and telling that user their server "stopped responding" is
+      // the same bad advice this change exists to remove.
+      keepAlive("first-token");
+      // And an idle budget alone is not an upper bound — arm the absolute
+      // cap so a server dribbling one byte per (budget - 1)ms cannot pin
+      // this slot, session and process forever.
+      startStreamDeadline();
       let buffer = "";
       let accumulated = "";
       let accumulatedReasoning = "";
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
-        // A byte arrived: the server is alive, so start the clock over.
+        // A byte arrived: the server is alive, so start the clock over —
+        // and from now on a silence really is a mid-reply stall.
         // Deliberately not called on `done` — that breaks straight out of
         // the loop into `finally { cleanup() }` with nothing awaited in
         // between, so there is no window left for the timer to fire.
-        keepAlive();
+        keepAlive("idle");
         buffer += value;
         let eventEnd = buffer.indexOf("\n\n");
         while (eventEnd !== -1) {
@@ -408,6 +448,12 @@ export class LlamaServerClient {
    * Without that, `requestTimeoutMs` was a wall-clock cap on the whole
    * generation and killed healthy long answers at exactly the budget,
    * discarding every token already produced.
+   *
+   * An idle budget alone is not an upper bound: a server emitting one
+   * byte just under it streams forever. `startStreamDeadline()` arms the
+   * second, never-refreshed timer that puts a ceiling back on — see
+   * `streamTotalTimeoutMs`. So a live stream holds two pending timers,
+   * and `cleanup` clears both.
    */
   private createRequestController(externalSignal?: AbortSignal): {
     controller: AbortController;
@@ -418,11 +464,20 @@ export class LlamaServerClient {
      */
     timedOut: () => LlamaTimeoutKind | null;
     /**
-     * Restart the deadline and mark it an idle budget. A no-op once the
-     * request is already aborted, so a late call cannot resurrect a
-     * controller the caller or the timer has finished with.
+     * Restart the deadline and record what a subsequent expiry means:
+     * `first-token` once headers are in, `idle` once the body has
+     * actually produced something. A no-op once the request is already
+     * aborted or a deadline has already fired, so a byte that was still
+     * in the decode pipe when the abort landed cannot re-arm the timer
+     * or rewrite which deadline gets reported.
      */
-    keepAlive: () => void;
+    keepAlive: (next: Exclude<LlamaTimeoutKind, "total">) => void;
+    /**
+     * Arm the absolute streaming cap. Idempotent, and a no-op once the
+     * request is aborted. Called once, at response headers, so the cap
+     * measures the body and not the connect phase.
+     */
+    startStreamDeadline: () => void;
   } {
     const controller = new AbortController();
     let expired: LlamaTimeoutKind | null = null;
@@ -433,28 +488,43 @@ export class LlamaServerClient {
         controller.abort();
       }, this.requestTimeoutMs);
     let timer = arm();
+    let streamTimer: ReturnType<typeof setTimeout> | null = null;
     const timedOut = (): LlamaTimeoutKind | null => expired;
-    const keepAlive = (): void => {
+    const keepAlive = (next: Exclude<LlamaTimeoutKind, "total">): void => {
       if (expired !== null || controller.signal.aborted) return;
       clearTimeout(timer);
-      kind = "idle";
+      kind = next;
       timer = arm();
+    };
+    const startStreamDeadline = (): void => {
+      if (expired !== null || controller.signal.aborted) return;
+      if (streamTimer !== null) return;
+      streamTimer = setTimeout(() => {
+        expired = "stream-total";
+        controller.abort();
+      }, this.streamTotalTimeoutMs);
+    };
+    const clearTimers = (): void => {
+      clearTimeout(timer);
+      if (streamTimer !== null) clearTimeout(streamTimer);
     };
     if (!externalSignal) {
       return {
         controller,
-        cleanup: () => clearTimeout(timer),
+        cleanup: clearTimers,
         timedOut,
         keepAlive,
+        startStreamDeadline,
       };
     }
     if (externalSignal.aborted) {
       controller.abort();
       return {
         controller,
-        cleanup: () => clearTimeout(timer),
+        cleanup: clearTimers,
         timedOut,
         keepAlive,
+        startStreamDeadline,
       };
     }
     const onAbort = (): void => controller.abort();
@@ -463,8 +533,9 @@ export class LlamaServerClient {
       controller,
       timedOut,
       keepAlive,
+      startStreamDeadline,
       cleanup: () => {
-        clearTimeout(timer);
+        clearTimers();
         externalSignal.removeEventListener("abort", onAbort);
       },
     };
@@ -481,9 +552,36 @@ export class LlamaServerClient {
     timedOut: LlamaTimeoutKind | null,
   ): LlamaServerError {
     if (err instanceof LlamaServerError) return err;
-    // An idle stall and a blown total budget need opposite advice.
-    // "Lower completionMaxTokens" is meaningless when the server sent
-    // nothing at all — the answer was not too long, it never came.
+    // Each deadline needs its own advice. "Lower completionMaxTokens"
+    // is meaningless when the server sent nothing at all — the answer
+    // was not too long, it never came — and "the server stopped
+    // responding" is wrong when it never started, which for llama.cpp
+    // is the ordinary look of a long prompt eval.
+    if (timedOut === "first-token") {
+      return new LlamaServerError(
+        `llama-server accepted the request but sent no first token within ${this.requestTimeoutMs}ms — ` +
+          `it may still be evaluating the prompt; raise localModels.requestTimeoutMs, ` +
+          `or shorten the prompt/context if it is too large for this machine to evaluate in time`,
+        null,
+        url,
+        true,
+        undefined,
+        { cause: err },
+      );
+    }
+    if (timedOut === "stream-total") {
+      return new LlamaServerError(
+        `llama-server streamed for longer than streamTotalTimeoutMs (${this.streamTotalTimeoutMs}ms) without finishing — ` +
+          `data kept arriving, so this is the absolute cap on one streaming reply, not a stall; ` +
+          `raise localModels.streamTotalTimeoutMs (ATOMIC_AGENT_LLAMA_STREAM_TOTAL_TIMEOUT_MS) ` +
+          `or lower completionMaxTokens`,
+        null,
+        url,
+        true,
+        undefined,
+        { cause: err },
+      );
+    }
     if (timedOut === "idle") {
       return new LlamaServerError(
         `llama-server sent no data for ${this.requestTimeoutMs}ms mid-stream — ` +
