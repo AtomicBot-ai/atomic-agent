@@ -436,6 +436,13 @@ export interface TuiAppCallbacks {
    * above: only the callback layer reaches the orchestrator's bus.
    */
   onProvidersInlineModelsEnsureRequested?(providerId: string | null): void;
+  /**
+   * `/llm check`: run the provider contract probe against `providerId`
+   * (`null` = active text provider). Callback for the same reason as
+   * the two above. Explicit request only — the probe spends real
+   * requests and never runs on a turn path.
+   */
+  onProvidersContractProbeRequested?(providerId: string | null): void;
   /** Providers tab / LLM panel: switch the active embedding provider. */
   onProvidersSetActiveEmbedding?(id: string): void;
   /** Providers tab / LLM panel: select an exact embedding model. */

@@ -263,6 +263,21 @@ describe("dispatchSlashCommand", () => {
     ]);
   });
 
+  it("asks for a contract probe of the active provider on /llm check", () => {
+    const result = dispatchSlashCommand("/llm check");
+    expect(result.actions).toEqual([
+      { type: "providers_contract_probe_requested", providerId: null },
+    ]);
+    // The operator is told a request is about to be spent on their key.
+    expect(result.systemMessage).toContain("one request");
+  });
+
+  it("names /llm check in the usage line so it is discoverable", () => {
+    const result = dispatchSlashCommand("/llm nonsense");
+    expect(result.actions).toEqual([]);
+    expect(result.systemMessage).toContain("/llm check");
+  });
+
   it("signals triggerLocalModelsStatus for /models status", () => {
     const result = dispatchSlashCommand("/models status");
     expect(result.triggerLocalModelsStatus).toBe(true);

@@ -212,7 +212,7 @@ export function providerLabelForWizard(wizard: ProvidersWizardState): string {
 }
 
 /** The model this wizard run is about to save, before any defaulting. */
-function chosenModelForWizard(wizard: ProvidersWizardState): string {
+export function chosenModelForWizard(wizard: ProvidersWizardState): string {
   const typed = wizard.chatModelLine.trim();
   if (wizard.selectedChatModelId) return wizard.selectedChatModelId;
   if (typed.length > 0) return typed;
@@ -222,7 +222,7 @@ function chosenModelForWizard(wizard: ProvidersWizardState): string {
   return OPENAI_COMPAT_DEFAULT_CHAT_MODEL;
 }
 
-function endpointForKind(
+export function endpointForKind(
   kind: ProvidersWizardKind,
   wizard: ProvidersWizardState,
 ): { baseUrl: string; apiPathPrefix: string; extraHeaders?: Record<string, string> } {

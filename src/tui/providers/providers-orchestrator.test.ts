@@ -363,6 +363,73 @@ describe("ProvidersOrchestrator.completeWizard", () => {
     expect(failure?.error).toContain("rejected this key");
   });
 
+  it("runs the contract probe on explicit request and reports the verdict", async () => {
+    currentConfig = {
+      llm: {
+        activeTextProvider: "openrouter",
+        activeEmbeddingProvider: "local-llama-embed",
+        toolTransport: "auto",
+        providers: [
+          {
+            id: "openrouter",
+            kind: "openrouter",
+            apiKey: "sk-saved-key",
+            defaultChatModel: "vendor/configured-model",
+          },
+        ],
+      },
+    } as AtomicAgentConfig;
+    const bodies: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: unknown, init?: RequestInit) => {
+        bodies.push(String(init?.body ?? ""));
+        return new Response(
+          `data: ${JSON.stringify({
+            choices: [
+              {
+                delta: {
+                  tool_calls: [
+                    {
+                      index: 0,
+                      type: "function",
+                      function: {
+                        name: "atomic_contract_probe",
+                        arguments: '{"ok":true}',
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
+          })}\n\ndata: ${JSON.stringify({
+            choices: [{ delta: {}, finish_reason: "tool_calls" }],
+          })}\n\ndata: [DONE]\n\n`,
+          { status: 200 },
+        );
+      }),
+    );
+    const { ProvidersOrchestrator } = await importFreshOrchestrator();
+    const bus = fakeBus();
+    const orchestrator = new ProvidersOrchestrator(fakeRuntime(), bus as never);
+
+    await orchestrator.runContractProbe(null);
+
+    const lines = bus.emit.mock.calls
+      .map((call) => call[0] as { type: string; line?: string })
+      .filter((action) => action.type === "providers_status")
+      .map((action) => action.line ?? "");
+    expect(lines.some((line) => line.includes("can run a turn"))).toBe(true);
+    // The configured model, streamed, with the tools payload — the real
+    // turn contract, not a cheap stand-in.
+    expect(bodies[0]).toContain("vendor/configured-model");
+    expect(bodies[0]).toContain('"stream":true');
+    expect(bodies[0]).toContain("atomic_contract_probe");
+    // Nothing was written and nothing was activated: this is a read-only
+    // check an operator can run whenever they like.
+    expect(bodies).toHaveLength(1);
+  });
+
   it("hands the cancel back to the wizard while a check is in flight", async () => {
     currentConfig = configWithGemini();
     let releaseFetch: () => void = () => {};
