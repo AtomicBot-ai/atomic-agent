@@ -30,13 +30,27 @@ describe("StatusBar update banner", () => {
     expect(frame).toContain("Update");
   });
 
-  it("yields while the installer runs, and returns on failure", () => {
+  it("narrates the install instead of offering it while the installer runs", () => {
     const running = apply(offered(), [{ type: "update_started" }]);
-    expect(
-      strip(render(<StatusBar state={running} />).lastFrame() ?? ""),
-    ).not.toContain("Update");
+    const frame = strip(render(<StatusBar state={running} />).lastFrame() ?? "");
+    expect(frame).toContain("do not close");
+    // The button is gone: a second accept mid-install has no meaning.
+    expect(frame).not.toContain("Update");
+  });
 
-    const failed = apply(running, [
+  it("says a restart applies it once the installer lands", () => {
+    const done = apply(offered(), [
+      { type: "update_started" },
+      { type: "update_finished", ok: true, version: "9.9.9" },
+    ]);
+    const frame = strip(render(<StatusBar state={done} />).lastFrame() ?? "");
+    expect(frame).toContain("restart to apply");
+    expect(frame).not.toContain("Update");
+  });
+
+  it("returns to the offer — the retry path — after a failed install", () => {
+    const failed = apply(offered(), [
+      { type: "update_started" },
       { type: "update_finished", ok: false, error: "boom" },
     ]);
     expect(

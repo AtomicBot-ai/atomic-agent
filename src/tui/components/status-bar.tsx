@@ -12,7 +12,11 @@ import type { TuiState } from "../tui-state.js";
 import { getAppVersion } from "../../version.js";
 import { Chip, tracked } from "./chip.js";
 import { sessionTitleLine } from "./session-title.js";
-import { planUpdateBanner, UpdateBanner } from "./update-banner.js";
+import {
+  planUpdateBanner,
+  UpdateBanner,
+  type UpdateBannerPhase,
+} from "./update-banner.js";
 
 interface StatusBarProps {
   state: TuiState;
@@ -68,13 +72,17 @@ export function StatusBar({
   const title = currentSessionTitle(state);
   const { columns } = useTerminalSize();
   // The banner outlives the modal (`updateBanner` survives
-  // `update_dismissed`) and yields only to an update actually running
-  // or finished — `failed` keeps it up, because the banner is then the
-  // one remaining way to retry.
-  const banner =
-    state.updateStatus === "idle" || state.updateStatus === "failed"
-      ? state.updateBanner
-      : null;
+  // `update_dismissed`) and then narrates the whole lifecycle: the
+  // offer while nothing runs, "do not close" while the installer works,
+  // the restart hint once it lands. `failed` renders as a fresh offer,
+  // because the button is then the one remaining way to retry.
+  const banner = state.updateBanner;
+  const bannerPhase: UpdateBannerPhase =
+    state.updateStatus === "running"
+      ? "running"
+      : state.updateStatus === "done"
+        ? "done"
+        : "offer";
   // `chipBudget` reserves cells for a session tag whether or not one is
   // drawn — safe slack for the download chip, but it starves the banner
   // out of a fresh 70-column session where the corner is visibly empty.
@@ -85,7 +93,7 @@ export function StatusBar({
       (state.session.sessionId ? 0 : SESSION_TAG),
   );
   const bannerPlan = banner
-    ? planUpdateBanner(banner.latest, bannerBudget)
+    ? planUpdateBanner(banner.latest, bannerBudget, bannerPhase)
     : null;
   return (
     <Box {...(width ? { width } : {})}>
@@ -128,7 +136,11 @@ export function StatusBar({
               the bar knows its row width; content-sized bars (no
               `width`) collapse the spacer to two plain cells. */}
           <Box flexGrow={1} minWidth={2} />
-          <UpdateBanner latest={banner.latest} budget={bannerBudget} />
+          <UpdateBanner
+            latest={banner.latest}
+            phase={bannerPhase}
+            budget={bannerBudget}
+          />
         </>
       ) : null}
     </Box>

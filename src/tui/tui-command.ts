@@ -13,6 +13,7 @@ import { checkLlamaServer } from "../llm/llama-server-health.js";
 import { describeLlamaHealthFailure } from "../llm/describe-llama-health-failure.js";
 import { createAgentRuntime, type AgentRuntime } from "../runtime/bootstrap.js";
 import { getAppVersion } from "../version.js";
+import type { TuiAction } from "./tui-action.js";
 import type { LogRecord, LogSink } from "../tracing/structured-logger.js";
 import type { MetricSample, MetricSink } from "../tracing/metrics-collector.js";
 import { isKnownLocalModelId } from "../local-llm/index.js";
@@ -666,11 +667,12 @@ export async function tuiCommand(args: string[]): Promise<number> {
             ? // The testing ground must never reach install.sh: the
               // point of `--fake-update` is to look at the surfaces, and
               // "accept" on a dev build would install the real latest
-              // release over whatever is being worked on.
-              bus.emit({
-                type: "system_message",
-                text: `--fake-update: accepted (v${parsed.fakeUpdateVersion}); install skipped in fake mode`,
-              })
+              // release over whatever is being worked on. Instead, walk
+              // the same events the real installer emits so the whole
+              // lifecycle — "do not close" strip, feed lines, restart
+              // prompt — is on show. The restart re-execs this same dev
+              // command, which is a no-op by construction.
+              simulateFakeUpdate(bus, parsed.fakeUpdateVersion)
             : orchestrator.runUpdate(),
         onUpdateRestart: () => {
           restartRequested = true;
@@ -832,6 +834,31 @@ export async function tuiCommand(args: string[]): Promise<number> {
     return orchestrator.exitCode;
   }
   return orchestrator.exitCode;
+}
+
+/**
+ * `--fake-update` accept path: emit the exact event sequence
+ * `runUpdate` emits, on a human-watchable timeline, without ever
+ * touching the installer. Ends in `update_finished ok`, so the "press
+ * any key to restart" prompt is exercised too — the restart re-execs
+ * the same `tui --fake-update` command, landing back at the offer.
+ */
+function simulateFakeUpdate(
+  bus: ReturnType<typeof makeTuiEventBus>,
+  version: string,
+): void {
+  bus.emit({ type: "update_started" });
+  const script: readonly [number, TuiAction][] = [
+    [400, { type: "runtime_info", line: `[update] (fake) downloading atomic-agent v${version}…` }],
+    [1500, { type: "runtime_info", line: "[update] (fake) verifying checksum…" }],
+    [2200, { type: "runtime_info", line: "[update] (fake) installing — nothing on this machine is being replaced" }],
+    [3000, { type: "update_finished", ok: true, version }],
+  ];
+  for (const [delay, action] of script) {
+    // Unref'd so a Ctrl+C mid-"install" never has the process lingering
+    // on demo timers.
+    setTimeout(() => bus.emit(action), delay).unref();
+  }
 }
 
 /**
