@@ -10,6 +10,7 @@ import {
   type ModelProfile,
 } from "../llm/model-profile.js";
 import type { ModelProfileManager } from "../llm/model-profile-manager.js";
+import type { LocalBackendGate } from "../llm/local-backend-gate.js";
 import type { ToolRegistry } from "../tools/tool-registry.js";
 import {
   CancelledError,
@@ -108,6 +109,19 @@ export interface AgentLoopDependencies {
    * for the lifetime of the loop (test-mode wiring).
    */
   profileManager?: ModelProfileManager;
+  /**
+   * Gate for the `profileManager` probes above (issue #112). The manager
+   * talks to the local llama-server, so on a cloud turn its refreshes
+   * are pure `/props` noise against a backend nothing is routed to —
+   * `isActive()` false skips them. `ensureProbed()` covers the reverse
+   * case: the operator switched back to a local provider after a cloud
+   * boot that deferred the probes, and this turn is the first local one.
+   * It returns `true` when it just ran them, which already includes a
+   * fresh `/props` — the loop then skips its own refresh rather than
+   * probing twice. Absent (test / legacy wiring) means "always local",
+   * preserving the pre-#112 behaviour.
+   */
+  localBackend?: LocalBackendGate;
   /** Skill catalog (name + description only), rebuilt on install/uninstall. */
   skillCatalog: readonly SkillCatalogEntry[];
   /**
@@ -395,6 +409,15 @@ export class AgentLoop {
   constructor(private readonly deps: AgentLoopDependencies) {}
 
   /**
+   * Whether the local llama-server is the route this turn takes. No gate
+   * wired (test / legacy deps) reads as `true` so the profile manager
+   * behaves exactly as it did before issue #112.
+   */
+  private localBackendActive(): boolean {
+    return this.deps.localBackend?.isActive() ?? true;
+  }
+
+  /**
    * Drive one macro-turn:
    *   user message → 0..N tool steps → `reply` (or `finish` / max_steps).
    *
@@ -480,9 +503,13 @@ export class AgentLoop {
     // Proactively sync with the live `llama-server` before the first
     // step. Catches the case where the operator swapped the model
     // between turns — without this, step 0 would still build the prompt
-    // with the previous model's template.
-    if (this.deps.profileManager) {
-      await this.deps.profileManager.refresh();
+    // with the previous model's template. Skipped whole on a cloud turn
+    // (issue #112): there is no llama-server behind the prompt to sync
+    // with, and the probe would fail against a backend nobody is using.
+    if (this.deps.profileManager && this.localBackendActive()) {
+      if (!(await this.deps.localBackend?.ensureProbed())) {
+        await this.deps.profileManager.refresh();
+      }
     }
 
     let reason: AgentLoopReason = "max_steps";
@@ -545,8 +572,13 @@ export class AgentLoop {
       // Reactive refresh between steps: if the previous completion
       // observed a foreign `modelId`, rebuild profile + grammar so the
       // next prompt matches what `llama-server` is actually serving.
-      if (this.deps.profileManager) {
-        await this.deps.profileManager.refreshIfStale();
+      // Same cloud-turn gate as the turn-start refresh (issue #112) — a
+      // mid-turn fallover onto a local link is warmed by the fallback
+      // seam instead, at the point the link is picked.
+      if (this.deps.profileManager && this.localBackendActive()) {
+        if (!(await this.deps.localBackend?.ensureProbed())) {
+          await this.deps.profileManager.refreshIfStale();
+        }
       }
       this.deps.onEvent?.({ type: "step_started", stepIndex: i });
       const started = Date.now();

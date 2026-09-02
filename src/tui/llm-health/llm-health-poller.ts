@@ -1,5 +1,7 @@
 import { getConfig } from "../../config/index.js";
 import { checkLlamaServer } from "../../llm/llama-server-health.js";
+import { activeTextProviderIsLlamaServer } from "../../llm/provider/registry/active-text-provider.js";
+import { resolveLlmConfig } from "../../llm/provider/registry/provider-registry.js";
 import { llamaEndpointUrl } from "../../llm/llama-endpoint-url.js";
 import type { TuiAction } from "../tui-action.js";
 
@@ -114,11 +116,35 @@ export class LlmHealthPoller {
   async refreshModelLabel(): Promise<void> {
     this.modelFetchedForUrl = false;
     if (this.stopped) return;
+    // Same gate as `tick`: the Models tab can restart a managed daemon
+    // while the route is cloud, and the label this would fetch belongs
+    // to a backend that is not serving the session.
+    if (!this.localTextActive()) return;
     await this.fetchModelLabel();
+  }
+
+  /**
+   * Whether the local backend this poller watches is the route the
+   * operator is actually on. Read per tick from config rather than
+   * latched at construction: the active provider changes from the LLM
+   * tab, the composer switch and the provider wizard, and a poller that
+   * had to be told about each of them would miss the one that was added
+   * last (issue #112).
+   */
+  private localTextActive(): boolean {
+    return activeTextProviderIsLlamaServer(resolveLlmConfig(getConfig()));
   }
 
   private async tick(): Promise<void> {
     if (this.probing || this.stopped) return;
+    // Cloud route: probe nothing and emit nothing. The alternative —
+    // poll and hide — still costs a request every 3 s against a server
+    // nobody is running, and leaves a `down` reading in state that the
+    // context gauge (`select-context-usage`) would read as the active
+    // model's window. The interval keeps ticking so a switch back to a
+    // local provider resumes within one period, with no start/stop
+    // wiring on every switch path.
+    if (!this.localTextActive()) return;
     this.probing = true;
     if (!this.hasSettledResult) {
       this.emitter.emit({

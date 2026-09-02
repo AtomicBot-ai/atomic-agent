@@ -34,6 +34,20 @@ export interface FallbackSeamDeps {
   fallbackChain: ProviderFallbackChain;
   /** Resolve the served link's provider + transport for `providerId`. */
   resolveSlice: (providerId: string) => ResolvedLinkSlice;
+  /**
+   * Awaited once per attempt, before the completion is sent, with the
+   * link the chain picked. Exists for the state a link may need warmed
+   * before it can serve: a `llama-server` link reached by fallover from
+   * a cloud primary boots with its `/health` + `/props` probes deferred
+   * (issue #112), and this is the last point at which they can still
+   * run. Kept as a hook rather than folded into `resolveSlice` because
+   * that seam is synchronous, and rather than into the attempt body
+   * because only bootstrap knows what "warm" means for a link kind.
+   *
+   * Must not throw for a reachable link: a rejection here fails the
+   * attempt and advances the chain, same as a failed completion.
+   */
+  prepareLink?: (providerId: string) => Promise<void>;
   /** Fold a unary completion's usage into cost + meter (no-op when absent). */
   recordUnaryUsage: (params: LlmStreamParams, result: CompletionResult) => void;
   /** Fold a streamed completion's usage into the meter. */
@@ -79,6 +93,7 @@ export function createFallbackCompleter(
     runWithFallback(
       deps.fallbackChain,
       async (providerId) => {
+      await deps.prepareLink?.(providerId);
       const { provider, transport } = deps.resolveSlice(providerId);
       const base = {
         prompt: promptFor(params, transport),
@@ -142,6 +157,7 @@ export function createFallbackStreamer(
     primed: PrimedStream<StreamChunk, CompletionResult>;
     transport: ToolCallTransport;
   }> => {
+    await deps.prepareLink?.(providerId);
     const { provider, transport } = deps.resolveSlice(providerId);
     const base = {
       prompt: promptFor(params, transport),
