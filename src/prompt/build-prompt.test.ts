@@ -5,6 +5,7 @@ import {
   QWEN_THINK_PROFILE,
 } from "../llm/model-profile.js";
 import { buildPrompt } from "./build-prompt.js";
+import { DEFAULT_TOOL_DESCRIPTORS } from "./tool-descriptors.js";
 import { createEmptySessionState } from "../session/session-state.js";
 import type { SessionState } from "../session/session-state.js";
 import type {
@@ -230,6 +231,27 @@ describe("buildPrompt", () => {
     expect(prompt.stablePrefix).toContain("Large directories:");
     expect(prompt.stablePrefix).toContain("Large trees:");
     expect(prompt.stablePrefix).toContain("os.fs.read_document");
+  });
+
+  it("frequent-tool summaries send source files to os.fs.read, not read_document", () => {
+    // Issue #113: the stable prefix is where a model decides between the
+    // two readers, and it ships on every turn. Pinning the wording here
+    // (against the real descriptors, not the stub TOOLS above) keeps a
+    // future summary edit from quietly dropping the routing hint that
+    // stops models bouncing off read_document's unsupported-extension
+    // error on `.py` / `.ts` files.
+    const prompt = buildPrompt({
+      session: mkSession(),
+      toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    expect(prompt.stablePrefix).toContain(
+      "the default for source code and text files",
+    );
+    expect(prompt.stablePrefix).toContain(
+      "NOT for source code or text files: use os.fs.read",
+    );
   });
 
   it("stable prefix changes deterministically when a skill is removed from the catalog (skills.disabled)", () => {

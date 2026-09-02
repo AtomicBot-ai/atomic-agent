@@ -40,7 +40,7 @@ export function buildOsFsReadDocumentTool(
   return {
     name: "os.fs.read_document",
     description:
-      "Extract plain text (with light structure markers) from PDF, DOCX, DOC (legacy), XLSX, RTF, ODT, PPTX, and plain-text files. Auto-detects format by extension; override with `format`. Read-only, no approval required.",
+      'Extract plain text (with light structure markers) from PDF, DOCX, DOC (legacy), XLSX, RTF, ODT, PPTX, and plain-text files. NOT for source code or other UTF-8 text files — read those with os.fs.read. Auto-detects format by extension; override with `format` (the plain-text value is `format: "plain"`). Read-only, no approval required.',
     readonly: true,
     async run(rawArgs, ctx) {
       const args = await parseArgs(rawArgs, ctx.workingDir);
@@ -198,6 +198,24 @@ function parseSheetsArg(
 }
 
 /**
+ * Extensions that are almost certainly source code or other line-oriented
+ * text. They are deliberately NOT mapped to `plain`: `os.fs.read` is the
+ * right tool for them (offset/limit pagination, `lineNumbers`, no document
+ * extractor in the way). The set exists only so the rejection can say which
+ * tool to reach for next — without that, models retry `read_document` with
+ * an invented `format: "text"` and burn another step before discovering
+ * `os.fs.read` (issue #113).
+ */
+const SOURCE_LIKE_EXTENSIONS: ReadonlySet<string> = new Set([
+  "bash", "c", "cc", "cfg", "cjs", "clj", "conf", "cpp", "cs", "css", "cxx",
+  "dart", "env", "erl", "ex", "exs", "fish", "go", "gradle", "h", "hh", "hpp",
+  "hs", "ini", "ipynb", "java", "js", "jsonc", "jsx", "kt", "kts", "less",
+  "lua", "m", "mjs", "mm", "php", "pl", "pm", "properties", "proto", "ps1",
+  "py", "pyi", "r", "rb", "rs", "sass", "scala", "scss", "sh", "sql", "svelte",
+  "swift", "tf", "toml", "ts", "tsv", "tsx", "vue", "zsh",
+]);
+
+/**
  * Resolve extension → canonical format. `.html/.xml/.json/.csv` currently
  * fall through to `plain` — it's the safest default until we need format-
  * specific pretty-printing for them.
@@ -238,8 +256,16 @@ function detectFormat(absolute: string, override: unknown): DocumentFormat {
     case "yml":
       return "plain";
     default:
+      // Two shapes on purpose: for a source-like extension the answer is
+      // almost always "wrong tool", so name os.fs.read first and mention the
+      // override second; for anything else the extension carries no signal,
+      // so offer both. Either way the message spells out the accepted value
+      // `format: "plain"` — the bare word `format` invited `format: "text"`,
+      // which is not a known format and costs another failed step.
       throw new Error(
-        `os.fs.read_document: unsupported extension ".${ext}" (override with \`format\`)`,
+        SOURCE_LIKE_EXTENSIONS.has(ext)
+          ? `os.fs.read_document: ".${ext}" is a source/text file — use os.fs.read instead; if you intended document extraction, retry with \`format: "plain"\``
+          : `os.fs.read_document: unsupported extension ".${ext}" — use os.fs.read for source or text files, or retry with an explicit format (e.g. \`format: "plain"\`)`,
       );
   }
 }

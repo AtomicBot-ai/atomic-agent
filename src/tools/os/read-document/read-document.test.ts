@@ -104,6 +104,112 @@ describe("os.fs.read_document dispatcher", () => {
     );
   });
 
+  // Issue #113: a `.py` handed to read_document used to produce a generic
+  // "unsupported extension (override with `format`)" error, which sent
+  // models into `format: "text"` — not a known format — instead of over to
+  // os.fs.read. These pin both halves of the recovery hint.
+  it.each(["py", "ts", "rs"])(
+    "points .%s source files at os.fs.read and names format: \"plain\"",
+    async (ext) => {
+      const tool = buildOsFsReadDocumentTool({});
+      const path = join(dir, `module.${ext}`);
+      await writeFile(path, Buffer.from("print(1)\n"));
+
+      const error = await tool
+        .run({ path }, makeCtx(dir))
+        .then(() => undefined)
+        .catch((e: unknown) => e as Error);
+
+      expect(error).toBeInstanceOf(Error);
+      const message = (error as Error).message;
+      expect(message).toContain(`".${ext}" is a source/text file`);
+      expect(message).toContain("use os.fs.read instead");
+      expect(message).toContain('format: "plain"');
+      // The ambiguous bare-`format` phrasing is what produced the bad
+      // `format: "text"` guesses; it must not come back.
+      expect(message).not.toMatch(/override with `format`/);
+    },
+  );
+
+  it("offers os.fs.read and format: \"plain\" for an unknown binary extension", async () => {
+    const tool = buildOsFsReadDocumentTool({});
+    const path = join(dir, "blob.qzx");
+    await writeFile(path, Buffer.from([0x00, 0x01, 0x02]));
+
+    const error = await tool
+      .run({ path }, makeCtx(dir))
+      .then(() => undefined)
+      .catch((e: unknown) => e as Error);
+
+    expect(error).toBeInstanceOf(Error);
+    const message = (error as Error).message;
+    expect(message).toContain('unsupported extension ".qzx"');
+    expect(message).toContain("os.fs.read");
+    expect(message).toContain('format: "plain"');
+  });
+
+  it('reads a source file when format: "plain" is passed explicitly', async () => {
+    const tool = buildOsFsReadDocumentTool({
+      extractors: {
+        plain: fakeExtractor({ format: "plain", text: "print(1)" }),
+      },
+    });
+    const path = join(dir, "script.py");
+    await writeFile(path, Buffer.from("print(1)\n"));
+
+    const result = await tool.run({ path, format: "plain" }, makeCtx(dir));
+
+    expect(result.details.format).toBe("plain");
+    expect(result.summary).toContain("print(1)");
+  });
+
+  it("keeps document extensions routed to their own extractors", async () => {
+    // Guards the other half of issue #113: the new source-file branch must
+    // not have moved any real document format into the reject path.
+    const seen: string[] = [];
+    const tool = buildOsFsReadDocumentTool({
+      extractors: {
+        pdf: fakeExtractor({ format: "pdf", text: "p" }, () => seen.push("pdf")),
+        docx: fakeExtractor({ format: "docx", text: "d" }, () => seen.push("docx")),
+        xlsx: fakeExtractor({ format: "xlsx", text: "x" }, () => seen.push("xlsx")),
+        rtf: fakeExtractor({ format: "rtf", text: "r" }, () => seen.push("rtf")),
+        odt: fakeExtractor({ format: "odt", text: "o" }, () => seen.push("odt")),
+        pptx: fakeExtractor({ format: "pptx", text: "s" }, () => seen.push("pptx")),
+        plain: fakeExtractor({ format: "plain", text: "t" }, () => seen.push("plain")),
+      },
+    });
+    for (const name of [
+      "a.pdf",
+      "a.docx",
+      "a.xlsx",
+      "a.rtf",
+      "a.odt",
+      "a.pptx",
+      "a.txt",
+      "a.md",
+      "a.csv",
+      "a.json",
+      "a.yaml",
+    ]) {
+      const path = join(dir, name);
+      await writeFile(path, Buffer.from("x"));
+      await tool.run({ path }, makeCtx(dir));
+    }
+    expect(seen).toEqual([
+      "pdf",
+      "docx",
+      "xlsx",
+      "rtf",
+      "odt",
+      "pptx",
+      "plain",
+      "plain",
+      "plain",
+      "plain",
+      "plain",
+    ]);
+  });
+
   it("rejects unknown format overrides", async () => {
     const tool = buildOsFsReadDocumentTool({});
     const path = join(dir, "any.txt");
