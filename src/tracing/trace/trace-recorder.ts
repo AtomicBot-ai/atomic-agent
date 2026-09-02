@@ -383,6 +383,7 @@ export function createTraceRecorder(
             ...(event.detector !== undefined
               ? { detector: event.detector }
               : {}),
+            ...(event.read !== undefined ? { read: event.read } : {}),
           });
           return;
         case "loop_failed":

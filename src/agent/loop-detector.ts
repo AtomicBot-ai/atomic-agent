@@ -1,5 +1,12 @@
 import { createHash } from "node:crypto";
 import type { CompressedToolResult } from "../compressor/result-compressor.js";
+import {
+  describeCoverage,
+  mergeRange,
+  newlyCoveredCount,
+  type LineRange,
+  type ReadObservation,
+} from "./read-coverage.js";
 
 /**
  * Synthetic tool name used for batched-step diagnostics. A multi-call
@@ -35,6 +42,45 @@ export type LoopCheckLevel = "ok" | "warn" | "critical";
  * intentional retry. Warn-only — never routed into the veto/breaker.
  */
 export const TEST_REPEAT_WARNING_THRESHOLD = 2;
+
+/**
+ * No-progress read count at which the read-coverage detector (issue #114)
+ * warns. A single redundant re-read is ordinary behaviour — the model
+ * re-opens a file to re-orient itself, or widens a window it half
+ * remembers — so the floor is the SECOND consecutive read of one
+ * unchanged file that returned nothing new. Warn-only, like the
+ * test-repeat detector: nothing is ever vetoed on this signal.
+ */
+export const READ_REPEAT_WARNING_THRESHOLD = 2;
+
+/**
+ * Cap on files tracked for read coverage in one turn. A wide scan (a
+ * grep-driven sweep over hundreds of files) must not grow the tracker
+ * without bound, and the interesting file is always a recently read one,
+ * so the least-recently-read entry is evicted first. Eviction can only
+ * cost a detection, never cause a false one.
+ */
+const MAX_TRACKED_READ_FILES = 200;
+
+/**
+ * Verdict of `ToolLoopTracker.checkReadRepeat`: did this read show the
+ * model any line it had not already seen this turn?
+ */
+export interface ReadRepeatCheck {
+  /** True when the read returned no line the turn had not already seen. */
+  repeat: boolean;
+  /** Consecutive no-progress reads of this file version; ≥1 when `repeat`. */
+  count: number;
+  /** Compact list of lines already read, e.g. `"1-40, 88-120"`. */
+  covered: string;
+  /**
+   * Fingerprint of the version this file was last read at, when it was
+   * read before. Equal to the observation's own hash for a `repeat` —
+   * that equality IS the "unchanged content" half of the verdict, so the
+   * event carries both sides and a trace reader can check it.
+   */
+  previousFingerprint?: string;
+}
 
 /**
  * Verdict of `ToolLoopTracker.checkTestRepeat`: is this recognized test
@@ -79,7 +125,12 @@ export interface LoopCheckVerdict {
    * distinct-args spread (wandering).
    */
   count: number;
-  detector: "generic_repeat" | "no_progress" | "wandering" | "test_repeat";
+  detector:
+    | "generic_repeat"
+    | "no_progress"
+    | "wandering"
+    | "test_repeat"
+    | "read_repeat";
   /** Stable key for warn de-duplication and breaker signalling. */
   warningKey: string;
   tool: string;
@@ -163,6 +214,17 @@ export class ToolLoopTracker {
    * right `testRuns` entry without re-classifying the command.
    */
   private readonly pendingTestKeys = new Map<string, string>();
+  /**
+   * Read-coverage detector state (issue #114): canonical file path → the
+   * content fingerprint that path was last read at, the merged set of
+   * lines read at THAT fingerprint, and how many reads in a row have
+   * returned nothing outside it. Insertion order doubles as a
+   * least-recently-read order for eviction (see `MAX_TRACKED_READ_FILES`).
+   */
+  private readonly readCoverage = new Map<
+    string,
+    { contentHash: string; covered: LineRange[]; noProgress: number }
+  >();
 
   constructor(options: ToolLoopTrackerOptions = {}) {
     this.warningThreshold = Math.max(2, options.warningThreshold ?? 3);
@@ -353,6 +415,77 @@ export class ToolLoopTracker {
         : {}),
     });
     this.pendingTestKeys.set(hashToolCall(tool, args), key);
+  }
+
+  /**
+   * Classify a completed read against the coverage recorded for its file
+   * (issue #114). Pure — call BEFORE `recordRead`.
+   *
+   * Unlike the other detectors this one is post-hoc by necessity: which
+   * lines a read returns, and which version of the file it saw, are facts
+   * about the RESULT. There is nothing to gate at dispatch time, which is
+   * also why the signal is warn-only — the read has already happened, so
+   * blocking it would cost the model information without saving anything.
+   *
+   * No progress means: the file's content is byte-identical to what it
+   * was when this turn last read it, and every line this read returned
+   * was already returned earlier in the turn. A read that returned no
+   * lines at all (an offset past the end) also counts — it cannot have
+   * shown anything new — but only once the file has been seen at this
+   * version, so the first such read is never flagged.
+   */
+  checkReadRepeat(observation: ReadObservation): ReadRepeatCheck {
+    const prev = this.readCoverage.get(observation.path);
+    if (prev === undefined) return { repeat: false, count: 0, covered: "" };
+    const previousFingerprint = prev.contentHash;
+    if (prev.contentHash !== observation.contentHash) {
+      return { repeat: false, count: 0, covered: "", previousFingerprint };
+    }
+    const fresh =
+      observation.span === null
+        ? 0
+        : newlyCoveredCount(prev.covered, observation.span);
+    if (fresh > 0) {
+      return { repeat: false, count: 0, covered: "", previousFingerprint };
+    }
+    return {
+      repeat: true,
+      count: prev.noProgress + 1,
+      covered: describeCoverage(prev.covered),
+      previousFingerprint,
+    };
+  }
+
+  /**
+   * Fold a completed read into its file's coverage. Call AFTER
+   * `checkReadRepeat`.
+   *
+   * A different content fingerprint discards the previous coverage
+   * outright: the lines the turn read before belong to a version of the
+   * file that no longer exists, so counting them again would mark a
+   * genuinely new read as no progress. That reset is also what makes an
+   * edit-then-re-read cycle free of false warnings.
+   */
+  recordRead(observation: ReadObservation): void {
+    const prev = this.readCoverage.get(observation.path);
+    const sameVersion =
+      prev !== undefined && prev.contentHash === observation.contentHash;
+    const covered = sameVersion ? prev.covered : [];
+    const fresh =
+      observation.span === null ? 0 : newlyCoveredCount(covered, observation.span);
+    // Re-insert rather than mutate in place so the map's iteration order
+    // stays "least recently read first" for eviction.
+    this.readCoverage.delete(observation.path);
+    this.readCoverage.set(observation.path, {
+      contentHash: observation.contentHash,
+      covered:
+        observation.span === null ? covered : mergeRange(covered, observation.span),
+      noProgress: sameVersion && fresh === 0 ? prev.noProgress + 1 : 0,
+    });
+    if (this.readCoverage.size > MAX_TRACKED_READ_FILES) {
+      const oldest = this.readCoverage.keys().next();
+      if (!oldest.done) this.readCoverage.delete(oldest.value);
+    }
   }
 
   /**
@@ -743,6 +876,56 @@ export function formatTestRepeatNotice(verdict: {
     "Change the code or the test selection before re-running. If the repeat was intentional (e.g. probing for flakiness), continue — this is a warning, nothing was blocked.",
   );
   return lines.join("\n");
+}
+
+/**
+ * Notice injected when the same unchanged file was read again without
+ * reaching a new line (issue #114, warn-only).
+ *
+ * Deliberately concrete about WHAT was already read — the last returned
+ * range and the covered line set — because the failure mode this catches
+ * is the model not realising its shifted `offset`/`limit` landed inside
+ * text it already has. Line numbers and the path only: no file content
+ * appears here, in the event, or in the log line.
+ */
+export function formatReadRepeatNotice(verdict: {
+  count: number;
+  path: string;
+  startLine: number;
+  endLine: number;
+  totalLines: number;
+  covered: string;
+}): string {
+  const label = sanitizeReadPath(verdict.path);
+  const returned =
+    verdict.startLine === 0
+      ? "returned no lines at all"
+      : `returned lines ${verdict.startLine}-${verdict.endLine}`;
+  const lines = [
+    `You read ${label} ${verdict.count} times in a row without reaching a line you had not already read this turn. The last read ${returned}, and the file's content has not changed since the previous read.`,
+  ];
+  if (verdict.covered.length > 0) {
+    lines.push(
+      `Already read this turn: lines ${verdict.covered}${verdict.totalLines > 0 ? ` (of ${verdict.totalLines} readable lines)` : ""}.`,
+    );
+  }
+  lines.push(
+    "Re-reading a covered range returns the same text. Read a range you have not covered, open a different file, or act on what you already have. If the repeat was intentional, continue — this is a warning, nothing was blocked.",
+  );
+  return lines.join("\n");
+}
+
+/**
+ * Path label for the read-repeat notice. `sanitizeLoopTarget` keeps the
+ * HEAD of an over-long label, which is exactly wrong for a path — the
+ * identifying part of `/very/long/prefix/src/agent/loop-detector.ts` is
+ * its tail — so a long path is elided from the left instead.
+ */
+function sanitizeReadPath(raw: string): string {
+  const cleaned = raw.replace(/[`\r\n]+/g, " ").trim();
+  if (cleaned.length === 0) return "that file";
+  const label = cleaned.length > 80 ? `…${cleaned.slice(-77)}` : cleaned;
+  return `\`${label}\``;
 }
 
 /**
