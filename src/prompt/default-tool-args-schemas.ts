@@ -29,6 +29,7 @@
  *     guards the **shape**.
  */
 
+import { DOCUMENT_FORMATS } from "../tools/os/read-document/extractors/extractor-types.js";
 import type { ToolDescriptor } from "./stable-prefix.js";
 
 type Schema = Record<string, unknown>;
@@ -238,7 +239,11 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
     obj(
       {
         path: stringSchema,
-        format: stringSchema,
+        // Closed set, per the "enums match the runtime validators verbatim"
+        // convention above: `detectFormat` accepts exactly DOCUMENT_FORMATS
+        // and rejects anything else. Leaving it an open string is what let
+        // models emit the invented `format: "text"` (issue #113).
+        format: { type: "string", enum: [...DOCUMENT_FORMATS] },
         maxBytes: numberSchema,
         maxPages: numberSchema,
         pagesFrom: numberSchema,

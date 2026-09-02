@@ -250,7 +250,16 @@ describe("buildPrompt", () => {
       "the default for source code and text files",
     );
     expect(prompt.stablePrefix).toContain(
-      "NOT for source code or text files: use os.fs.read",
+      "NOT for source code: use os.fs.read",
+    );
+    // The summary must not claim read_document rejects text files — it
+    // extracts .txt/.md/.csv as `plain`, and a summary that contradicts the
+    // tool re-creates the very ambiguity this change removes.
+    expect(prompt.stablePrefix).not.toContain("NOT for source code or text files");
+    // The bad guess in issue #113 was `format: "text"`. The stable prefix
+    // carries the closed set so the guess is never reachable.
+    expect(prompt.stablePrefix).toContain(
+      "format?: 'pdf' | 'docx' | 'doc' | 'xlsx' | 'rtf' | 'odt' | 'pptx' | 'plain'",
     );
   });
 

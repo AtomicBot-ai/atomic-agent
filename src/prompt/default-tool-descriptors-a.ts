@@ -99,13 +99,20 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
   {
     // Models reach for read_document on `.py` / `.ts` source files, hit the
     // unsupported-extension error and burn a step guessing `format`. The
-    // summary therefore names the sibling tool explicitly: source and text
-    // go to os.fs.read, this one is for document extraction only.
+    // summary therefore names the sibling tool explicitly: source code goes
+    // to os.fs.read, this one is for document extraction. It deliberately
+    // does NOT say "not for text files" — this tool does read .txt/.md/.csv
+    // as `plain`, and a summary that contradicts the tool is the same
+    // ambiguity one level up.
+    //
+    // `format` is spelled out as a closed set for the same reason: the bad
+    // guess in issue #113 was `format: "text"`, and a model that guesses it
+    // preemptively never sees the runtime hint.
     name: "os.fs.read_document",
     summary:
-      "Extract plain text from documents — PDF, Office, ODF, RTF (markers in output). NOT for source code or text files: use os.fs.read. Read-only.",
+      "Extract plain text from documents — PDF, Office, ODF, RTF (markers in output). NOT for source code: use os.fs.read. Read-only.",
     argsSchema:
-      "{ path: string, format?: string, maxBytes?: number, maxPages?: number, pagesFrom?: number, pagesTo?: number, sheets?: (string | number)[], pageSeparators?: boolean, includeTables?: boolean }",
+      "{ path: string, format?: 'pdf' | 'docx' | 'doc' | 'xlsx' | 'rtf' | 'odt' | 'pptx' | 'plain', maxBytes?: number, maxPages?: number, pagesFrom?: number, pagesTo?: number, sheets?: (string | number)[], pageSeparators?: boolean, includeTables?: boolean }",
   },
   {
     name: "os.fs.archive.list",
