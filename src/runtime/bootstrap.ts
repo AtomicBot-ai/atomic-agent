@@ -568,7 +568,7 @@ export interface AgentRuntime {
    * navigation to non-web URLs. Hardline shell-guard rules still block
    * outright at every level (they fire before the gate). Persisting
    * `agent.approvalLevel` to `config.json` is the caller's
-   * responsibility (the TUI Privacy tab). Idempotent; pending prompts
+   * responsibility. Idempotent; pending prompts
    * are not resolved retroactively.
    */
   setApprovalLevel(level: number): void;
@@ -1221,6 +1221,11 @@ export async function createAgentRuntime(
     // where it lives. Pinned by the level-4 `trust_config` case in
     // bootstrap.test.ts.
     trustConfigPaths: getTrustConfigPaths(config.paths),
+    // Lets `os.web.search` persist its result cache and provider cooldown
+    // across processes (#256); `web.search.persistCache: false` opts out.
+    // Pinned by the `#256` seam case in bootstrap.test.ts — the direct
+    // persistence tests cannot see this line.
+    stateDir: config.paths.stateDir,
   });
   registerSkillTools(toolRegistry, skillRegistry, dangerous);
   toolRegistry.register(buildToolViewTool());
@@ -1245,6 +1250,7 @@ export async function createAgentRuntime(
 
   let skillCatalog: readonly SkillCatalogEntry[] = buildSkillCatalog(
     skillRegistry.list(),
+    { tokenBudget: config.skills.catalogTokenBudget },
   );
 
   let grammar = await buildGrammar(profile, config.paths.grammarsDir, {
@@ -1425,6 +1431,10 @@ export async function createAgentRuntime(
   const mcpManager = new McpManager(mcpServerConfigs, {
     toolRegistry,
     logger,
+    // Same approval wiring as the native dangerous tools: servers at
+    // the default `approval_gated` trust get their calls routed
+    // through `requireApproval` (issue #132).
+    dangerous,
     // Sampling handler is per-client; we install one for every
     // connecting server so the SDK advertises the capability. Routes
     // to LlamaServerClient with `slotId: -1` (invariant 1 in
@@ -2181,7 +2191,9 @@ export async function createAgentRuntime(
         error: e.error,
       });
     }
-    skillCatalog = buildSkillCatalog(skillRegistry.list());
+    skillCatalog = buildSkillCatalog(skillRegistry.list(), {
+      tokenBudget: config.skills.catalogTokenBudget,
+    });
     options.handlers?.onSkillRegistryChange?.([...skillCatalog]);
   };
 

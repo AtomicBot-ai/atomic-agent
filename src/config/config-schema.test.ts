@@ -16,6 +16,7 @@ describe("tui.onboarding (config v43, extended in v45)", () => {
       skippedAt: null,
       proposedSecondBackendAt: null,
       localSetupSeenAt: null,
+      importOfferedAt: null,
     });
     expect(parsed.tui.theme).toBe("nord");
   });
@@ -461,6 +462,29 @@ describe("parseUserConfigFile", () => {
     ).toThrow(/web.search.cacheTtlMinutes/);
   });
 
+  it("fills persistCache default true when migrating from v45 (#256)", () => {
+    const parsed = parseUserConfigFile({ version: 45 });
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(parsed.web.search.persistCache).toBe(true);
+  });
+
+  it("honours an explicit persistCache opt-out", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      web: { search: { persistCache: false } },
+    });
+    expect(parsed.web.search.persistCache).toBe(false);
+  });
+
+  it("rejects a non-boolean persistCache", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        web: { search: { persistCache: "yes please" } },
+      }),
+    ).toThrow(/web.search.persistCache/);
+  });
+
   it("rejects an invalid fallback entry", () => {
     expect(() =>
       parseUserConfigFile({
@@ -734,6 +758,35 @@ describe("parseUserConfigFile", () => {
     expect(parsed.localModels.managed.device).toBe("auto");
   });
 
+  it("defaults localModels.managed.backendVariant to 'auto', v45 files included", () => {
+    expect(
+      parseUserConfigFile({ version: USER_CONFIG_VERSION }).localModels.managed
+        .backendVariant,
+    ).toBe("auto");
+    // A pre-v46 file has no such key — it transparently inherits the
+    // detection behaviour it already had.
+    expect(
+      parseUserConfigFile({ version: 45 }).localModels.managed.backendVariant,
+    ).toBe("auto");
+  });
+
+  it("preserves an explicit localModels.managed.backendVariant", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      localModels: { managed: { backendVariant: "cpu" } },
+    });
+    expect(parsed.localModels.managed.backendVariant).toBe("cpu");
+  });
+
+  it("rejects an unknown localModels.managed.backendVariant", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        localModels: { managed: { backendVariant: "opencl" } },
+      }),
+    ).toThrow(/localModels.managed.backendVariant/);
+  });
+
   it("defaults localModels.managed.stopOnExit to true", () => {
     const parsed = parseUserConfigFile({ version: USER_CONFIG_VERSION });
     expect(parsed.localModels.managed.stopOnExit).toBe(true);
@@ -801,6 +854,71 @@ describe("parseUserConfigFile", () => {
     const parsed = parseUserConfigFile({ version: 25 });
     expect(parsed.version).toBe(USER_CONFIG_VERSION);
     expect(parsed.localModels.managed.device).toBe("auto");
+  });
+
+  it("defaults localModels.managed.tensorSplit to [] (multi-GPU split off)", () => {
+    const parsed = parseUserConfigFile({ version: USER_CONFIG_VERSION });
+    expect(parsed.localModels.managed.tensorSplit).toEqual([]);
+  });
+
+  it("migrates a v45 file by filling localModels.managed.tensorSplit=[]", () => {
+    const parsed = parseUserConfigFile({ version: 45 });
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(parsed.localModels.managed.tensorSplit).toEqual([]);
+  });
+
+  it("preserves an explicit localModels.managed.tensorSplit ratio list", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      localModels: { managed: { tensorSplit: [3, 1] } },
+    });
+    expect(parsed.localModels.managed.tensorSplit).toEqual([3, 1]);
+  });
+
+  it("accepts fractional ratios and zeros that skip a device", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      localModels: { managed: { tensorSplit: [0.6, 0, 0.4] } },
+    });
+    expect(parsed.localModels.managed.tensorSplit).toEqual([0.6, 0, 0.4]);
+  });
+
+  it("rejects a single-element tensorSplit (not a split)", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        localModels: { managed: { tensorSplit: [1] } },
+      }),
+    ).toThrow(/localModels.managed.tensorSplit/);
+  });
+
+  it("rejects negative, non-numeric, and non-finite tensorSplit ratios", () => {
+    for (const bad of [[1, -1], [1, "1"], [1, Number.NaN], [1, null]]) {
+      expect(() =>
+        parseUserConfigFile({
+          version: USER_CONFIG_VERSION,
+          localModels: { managed: { tensorSplit: bad } },
+        }),
+      ).toThrow(/localModels.managed.tensorSplit\[1\]/);
+    }
+  });
+
+  it("rejects an all-zero tensorSplit (offloads nowhere)", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        localModels: { managed: { tensorSplit: [0, 0] } },
+      }),
+    ).toThrow(/localModels.managed.tensorSplit/);
+  });
+
+  it("rejects a non-array tensorSplit", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        localModels: { managed: { tensorSplit: "3,1" } },
+      }),
+    ).toThrow(/localModels.managed.tensorSplit/);
   });
 
   it("applies skills defaults when the section is absent", () => {

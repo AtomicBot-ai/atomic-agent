@@ -1,17 +1,29 @@
 import type { AgentRuntime } from "../../runtime/bootstrap.js";
 import {
+  buildReport,
+  ClaudeCodeImporter,
+  ClaudeCodeSource,
+  CodexImporter,
+  CodexSource,
   HermesImporter,
   HermesSource,
+  IMPORT_AGENT_LABELS,
   ImportOptionError,
+  ONBOARDING_SESSION_LIMIT,
   resolveSelectedOptions,
   OpenclawImporter,
   OpenclawSource,
   OPENCLAW_DEFAULT_AGENT,
   resolveOpenclawOptions,
+  type ClaudeCodeOptionId,
+  type CodexOptionId,
+  type ImportAgentId,
+  type ImportItemResult,
   type ImportOptionId,
   type OpenclawOptionId,
   type ImportReport,
 } from "../../import/index.js";
+import type { OnboardingImportPlan } from "../onboarding/import-step.js";
 import type { TuiEventBus } from "../tui-app.js";
 import type { ImportFormState } from "./import-panel-state.js";
 
@@ -180,11 +192,153 @@ export class ImportOrchestrator {
     }
   }
 
+  /**
+   * The first-run flow's multi-source run: every picked agent in plan
+   * order, each with its own importer, folded into one report whose
+   * item kinds carry the agent's name (`Claude Code sessions`) so the
+   * summary reads without a legend. Conflicts stay conflicts —
+   * onboarding never overwrites — and the answer lands on the bus as
+   * `onboarding_import_report` / `onboarding_import_failed`.
+   */
+  async runOnboarding(plan: OnboardingImportPlan, execute: boolean): Promise<void> {
+    // Let the busy frame paint before the synchronous SQLite work begins.
+    await Promise.resolve();
+    const items: ImportItemResult[] = [];
+    let cronImported = false;
+    try {
+      for (const agent of plan.agents) {
+        if (!agent.enabled) continue;
+        const enabled = plan.options
+          .filter((row) => row.agent === agent.id && row.enabled)
+          .map((row) => row.option);
+        if (enabled.length === 0) continue;
+        const report = await this.runOnboardingAgent(agent.id, agent.dir, enabled, execute);
+        if (report === null) continue;
+        if (execute && enabled.includes("cron")) cronImported = true;
+        for (const item of report.items) {
+          items.push({ ...item, kind: `${IMPORT_AGENT_LABELS[agent.id]} ${item.kind}` });
+        }
+      }
+    } catch (err) {
+      this.bus.emit({
+        type: "onboarding_import_failed",
+        error: errorMessage(err),
+      });
+      return;
+    }
+    const report = buildReport(items, execute);
+    this.bus.emit({ type: "onboarding_import_report", report, executed: execute });
+    if (execute) {
+      this.bus.emit({
+        type: "runtime_info",
+        line: `import done: ${formatSummary(report)}`,
+      });
+      if (cronImported) this.deps.refreshTasks?.();
+    }
+  }
+
+  private async runOnboardingAgent(
+    id: ImportAgentId,
+    dir: string,
+    enabled: readonly string[],
+    execute: boolean,
+  ): Promise<ImportReport | null> {
+    const config = this.runtime.config;
+    const common = { execute, overwrite: false } as const;
+    switch (id) {
+      case "hermes": {
+        const options = enabled.filter(isHermesOption);
+        if (options.length === 0) return null;
+        const source = new HermesSource(dir);
+        try {
+          return new HermesImporter({
+            source,
+            sessionStore: this.runtime.sessionStore,
+            taskStore: this.runtime.taskStore,
+            stateDir: config.paths.stateDir,
+            maxAttempts: config.tasks.maxAttempts,
+            workingDirFallback: process.cwd(),
+          }).run({ ...common, options });
+        } finally {
+          source.close();
+        }
+      }
+      case "openclaw": {
+        const options = enabled.filter(isOpenclawOption);
+        if (options.length === 0) return null;
+        const source = new OpenclawSource(dir, OPENCLAW_DEFAULT_AGENT);
+        try {
+          return new OpenclawImporter({
+            source,
+            sessionStore: this.runtime.sessionStore,
+            taskStore: this.runtime.taskStore,
+            maxAttempts: config.tasks.maxAttempts,
+            workingDirFallback: process.cwd(),
+          }).run({ ...common, options });
+        } finally {
+          source.close();
+        }
+      }
+      case "claude-code": {
+        const options = enabled.filter(isClaudeCodeOption);
+        if (options.length === 0) return null;
+        return new ClaudeCodeImporter({
+          source: new ClaudeCodeSource(dir),
+          sessionStore: this.runtime.sessionStore,
+          memoryStore: this.runtime.notesStore,
+          stateDir: config.paths.stateDir,
+          userConfigFile: config.paths.userConfigFile,
+          globalSkillsDir: config.paths.globalSkillsDir,
+          workingDirFallback: process.cwd(),
+        }).run({ ...common, options, limit: ONBOARDING_SESSION_LIMIT });
+      }
+      case "codex": {
+        const options = enabled.filter(isCodexOption);
+        if (options.length === 0) return null;
+        return new CodexImporter({
+          source: new CodexSource(dir),
+          sessionStore: this.runtime.sessionStore,
+          memoryStore: this.runtime.notesStore,
+          stateDir: config.paths.stateDir,
+          globalSkillsDir: config.paths.globalSkillsDir,
+          workingDirFallback: process.cwd(),
+        }).run({ ...common, options, limit: ONBOARDING_SESSION_LIMIT });
+      }
+    }
+  }
+
   shutdown(): void {
     // No timers or open handles to release — the per-run source is always
     // closed inside the runHermes/runOpenclaw finally. Present for symmetry
     // with the other tab orchestrators.
   }
+}
+
+// The plan's option ids are already source-scoped by construction (each
+// row was built from that source's registry); the guards restate that
+// for the type system at the seam where the unions meet.
+function isHermesOption(id: string): id is ImportOptionId {
+  return id === "sessions" || id === "cron" || id === "secrets";
+}
+
+function isOpenclawOption(id: string): id is OpenclawOptionId {
+  return id === "sessions" || id === "cron";
+}
+
+function isClaudeCodeOption(id: string): id is ClaudeCodeOptionId {
+  return (
+    id === "skills" ||
+    id === "memory" ||
+    id === "mcp" ||
+    id === "sessions" ||
+    id === "secrets"
+  );
+}
+
+function isCodexOption(id: string): id is CodexOptionId {
+  return (
+    id === "skills" || id === "memory" || id === "sessions" || id === "secrets"
+  );
 }
 
 function parseLimit(raw: string): number | undefined {

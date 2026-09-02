@@ -30,7 +30,9 @@ export type OpenAiHttpDeps = {
  *    surface as aborts, but a timeout is "the provider is slower than
  *    the budget" — replaying it just burns another full timeout.
  *  - `retryAfterMs` is populated from a `retry-after` header when the
- *    provider sent one (429/503), so the retry loop can honor it.
+ *    provider sent one (429/503), falling back to structured
+ *    `RetryInfo` metadata in the error body, so the retry loop can
+ *    honor the provider's cooldown either way.
  */
 export class OpenAiHttpError extends Error {
   constructor(
@@ -280,12 +282,21 @@ async function httpErrorFromResponse(
   res: Response,
 ): Promise<OpenAiHttpError> {
   const text = await res.text().catch(() => "");
+  // The standard `retry-after` header wins; some providers advertise
+  // their cooldown only inside the error JSON (Gemini's OpenAI-compat
+  // endpoint sends `google.rpc.RetryInfo` and no header), so fall back
+  // to that for the throttling statuses the retry loop honors.
+  const retryAfterMs =
+    parseRetryAfterMs(res.headers.get("retry-after")) ??
+    (res.status === 429 || res.status === 503
+      ? parseRetryInfoDelayMs(text)
+      : null);
   return new OpenAiHttpError(
     `openai provider ${res.status}: ${text.slice(0, OPENAI_ERROR_DETAIL_MAX_LEN)}`,
     res.status,
     `${deps.baseUrl}${path}`,
     false,
-    parseRetryAfterMs(res.headers.get("retry-after")),
+    retryAfterMs,
     deps.label,
   );
 }
@@ -349,6 +360,41 @@ function resolveWaitMs(err: unknown, attemptNumber: number): number {
       ? Math.min(err.retryAfterMs, OPENAI_RETRY_AFTER_CAP_MS)
       : 0;
   return Math.max(backoff, retryAfter);
+}
+
+/**
+ * Cooldown from structured error JSON, for providers that never send a
+ * `retry-after` header. Gemini answers 429/503 with an
+ * `error.details[]` entry of `@type google.rpc.RetryInfo` whose
+ * `retryDelay` is a protobuf Duration string ("39s", "1.5s"). The
+ * duration grammar admits only non-negative seconds, so anything else —
+ * malformed, negative, non-string — is ignored and the caller keeps the
+ * plain exponential backoff. The result flows through the same
+ * `retryAfterMs` field as the header, so `resolveWaitMs` caps it at
+ * `OPENAI_RETRY_AFTER_CAP_MS` exactly like a header-declared wait.
+ */
+function parseRetryInfoDelayMs(body: string): number | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body) as unknown;
+  } catch {
+    return null;
+  }
+  if (!isRecord(parsed) || !isRecord(parsed.error)) return null;
+  const details = parsed.error.details;
+  if (!Array.isArray(details)) return null;
+  for (const detail of details) {
+    if (!isRecord(detail) || typeof detail.retryDelay !== "string") continue;
+    const match = /^(\d+(?:\.\d+)?)s$/.exec(detail.retryDelay);
+    if (!match) continue;
+    const ms = Math.round(Number(match[1]) * 1000);
+    if (Number.isFinite(ms)) return ms;
+  }
+  return null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function parseRetryAfterMs(header: string | null): number | null {

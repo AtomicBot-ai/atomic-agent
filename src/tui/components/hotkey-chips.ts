@@ -30,7 +30,7 @@ export interface HotkeyChip {
 
   /**
    * What a click on this chip does. Only chips with one unambiguous
-   * meaning get one — "alt+enter newline" or "↑↓ select" describe a
+   * meaning get one — "alt/option+enter newline" or "↑↓ select" describe a
    * gesture, not a command, so they stay plain text rather than
    * pretending to be buttons.
    */
@@ -231,7 +231,7 @@ export function resolveChips(
     // to Enter and would submit. Alt+Enter works in both worlds, so it
     // is what the strip promises when the protocol is absent.
     {
-      key: hasShiftEnterNewline() ? "shift+enter" : "alt+enter",
+      key: hasShiftEnterNewline() ? "shift+enter" : "alt/option+enter",
       label: "newline",
       shed: 6,
     },

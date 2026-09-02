@@ -161,6 +161,45 @@ describe("handleLlmPanelKey", () => {
     expect(typed).toEqual([{ type: "llm_cloud_filter_set", value: "c" }]);
   });
 
+  it("p cycles the price facet on the Cloud pane only, and is text in a focused filter", () => {
+    const base = seededState();
+    // On the Local pane the letter stays unclaimed.
+    const dispatchedLocal: TuiAction[] = [];
+    const handledLocal = handleLlmPanelKey("p", emptyKey(), {
+      state: base,
+      dispatch: (action) => dispatchedLocal.push(action),
+      callbacks: callbacks(),
+    });
+    expect(handledLocal).toBe(false);
+    expect(dispatchedLocal).toEqual([]);
+
+    const cloud = {
+      ...base,
+      llmPanel: { ...base.llmPanel, mode: "cloud" as const },
+    };
+    const dispatched: TuiAction[] = [];
+    const handled = handleLlmPanelKey("p", emptyKey(), {
+      state: cloud,
+      dispatch: (action) => dispatched.push(action),
+      callbacks: callbacks(),
+    });
+    expect(handled).toBe(true);
+    expect(dispatched).toEqual([{ type: "llm_cloud_pricing_cycled" }]);
+
+    // Focused filter: "p" is query text, never the facet key.
+    const focused = {
+      ...cloud,
+      llmPanel: { ...cloud.llmPanel, cloudModelFilterFocused: true },
+    };
+    const typed: TuiAction[] = [];
+    handleLlmPanelKey("p", emptyKey(), {
+      state: focused,
+      dispatch: (action) => typed.push(action),
+      callbacks: callbacks(),
+    });
+    expect(typed).toEqual([{ type: "llm_cloud_filter_set", value: "p" }]);
+  });
+
   it("selects an exact cloud embedding model", () => {
     const base = seededState();
     const state = {

@@ -22,7 +22,19 @@ export {
   type PlatformAsset,
 } from "./platform-assets.js";
 
-export { resolveDownloadAsset } from "./windows-backend-variant.js";
+export {
+  resolveDownloadAsset,
+  BACKEND_VARIANT_PREFERENCES,
+  getConfiguredBackendVariant,
+  isBackendVariantPreference,
+  isWindowsGpuBackendAsset,
+  setConfiguredBackendVariant,
+  type BackendVariantPreference,
+} from "./windows-backend-variant.js";
+export {
+  fallBackToCpuBackend,
+  shouldFallBackToCpuBackend,
+} from "./cpu-backend-fallback.js";
 
 export {
   resolveBackendDir,
@@ -87,6 +99,7 @@ export {
   getDaemonStatus,
   readRunningPid,
   classifyPidLiveness,
+  DaemonHealthError,
   ForeignDaemonError,
   probeLlamaHealth,
   buildLlamaServerArgs,

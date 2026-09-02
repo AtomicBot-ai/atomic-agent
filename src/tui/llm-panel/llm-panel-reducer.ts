@@ -1,3 +1,4 @@
+import { nextModelPricingFilter } from "../../llm/provider/model-pricing-filter.js";
 import type { TuiAction } from "../tui-action.js";
 import type { TuiState } from "../tui-state.js";
 import { isLlmPanelAction } from "./llm-panel-actions.js";
@@ -71,6 +72,23 @@ export function reduceLlmPanelAction(
         ...state,
         llmPanel: { ...panel, externalUrlDraft: action.value },
       };
+    case "llm_external_compat_steer_opened":
+      // The steer arrives asynchronously — the refused save's /health
+      // probe can take seconds — and the operator may have reopened the
+      // URL editor meanwhile. Opening underneath it would split the
+      // modals (the draft renders, a hidden steer would contest the
+      // keys), so the steer yields: the editor's next save re-probes
+      // and re-offers it.
+      if (panel.externalUrlDraft !== null) return state;
+      return {
+        ...state,
+        llmPanel: { ...panel, externalCompatSteerUrl: action.url },
+      };
+    case "llm_external_compat_steer_closed":
+      return {
+        ...state,
+        llmPanel: { ...panel, externalCompatSteerUrl: null },
+      };
     case "llm_cloud_filter_focus_set": {
       if (!action.focused) {
         return {
@@ -107,6 +125,25 @@ export function reduceLlmPanelAction(
       const next: TuiState = {
         ...state,
         llmPanel: { ...panel, cloudModelFilter: action.value },
+      };
+      const section = selectCloudModelSection(next);
+      return {
+        ...next,
+        llmPanel: {
+          ...next.llmPanel,
+          cloudCursor: section.sectionStart,
+        },
+      };
+    }
+    case "llm_cloud_pricing_cycled": {
+      // A facet change replaces the list wholesale, so the cursor snaps
+      // to the top of the new result set exactly like a filter edit.
+      const next: TuiState = {
+        ...state,
+        llmPanel: {
+          ...panel,
+          cloudModelPricing: nextModelPricingFilter(panel.cloudModelPricing),
+        },
       };
       const section = selectCloudModelSection(next);
       return {

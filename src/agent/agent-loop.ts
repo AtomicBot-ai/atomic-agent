@@ -43,7 +43,9 @@ import { executeStep } from "./step-executor.js";
 import type { LlmStreamParams, StepEvent } from "./step-executor.js";
 import {
   ToolLoopTracker,
+  TEST_REPEAT_WARNING_THRESHOLD,
   formatRepeatNotice,
+  formatTestRepeatNotice,
   formatWanderingRedirect,
   formatForcedLoopReply,
 } from "./loop-detector.js";
@@ -347,7 +349,7 @@ export type AgentLoopEvent =
       /** Graduated severity from the `ToolLoopTracker`. */
       level?: "warn" | "critical" | "breaker";
       /** Which sub-detector fired. */
-      detector?: "generic_repeat" | "no_progress" | "wandering";
+      detector?: "generic_repeat" | "no_progress" | "wandering" | "test_repeat";
     }
   | {
       type: "loop_completed";
@@ -529,6 +531,12 @@ export class AgentLoop {
 
     state = { ...state, status: "running" };
 
+    // The step loop below is where coding work actually happens. On each
+    // step the model sees the freshly built prompt (transcript + tool
+    // catalog + memory tail) and either emits tool calls — reading files,
+    // editing, running commands through the approval gate — or a terminal
+    // `reply`/`finish`. Tool results are appended to the conversation, so
+    // the next step's prompt carries everything the previous step learned.
     for (let i = 0; i < options.maxSteps; i += 1) {
       if (options.signal.aborted) {
         reason = "cancelled";
@@ -565,6 +573,13 @@ export class AgentLoop {
       }
       const noticeForThisStep = pendingNotice;
       pendingNotice = undefined;
+      // On the final allowed step the tool catalog collapses to the two
+      // terminal tools, so a long coding session ends with a summary of
+      // what was changed instead of being cut off mid-edit.
+      const finalizationStep = i === options.maxSteps - 1;
+      const finalizationNotice =
+        "This is the final allowed step. Do not call any non-terminal tool; " +
+        "summarize the completed work with reply, or end the session with finish.";
       try {
         const profileFacts = this.deps.profileFactsProvider?.();
         const activeProfile =
@@ -576,14 +591,26 @@ export class AgentLoop {
         const outcome = await executeStep(
           {
             session: state,
-            toolDescriptors: this.deps.toolDescriptors,
+            toolDescriptors: finalizationStep
+              ? this.deps.toolDescriptors.filter(
+                  ({ name }) => name === "reply" || name === "finish",
+                )
+              : this.deps.toolDescriptors,
             capabilities: this.deps.capabilities,
             skillCatalog: this.deps.skillCatalog,
             stepIndex: i,
             signal: options.signal,
-            ...(noticeForThisStep !== undefined
-              ? { transientNotice: noticeForThisStep }
+            ...(finalizationStep || noticeForThisStep !== undefined
+              ? {
+                  transientNotice: [
+                    noticeForThisStep,
+                    ...(finalizationStep ? [finalizationNotice] : []),
+                  ]
+                    .filter((notice): notice is string => notice !== undefined)
+                    .join("\n\n"),
+                }
               : {}),
+            ...(finalizationStep ? { terminalOnly: true } : {}),
             ...(profileFacts !== undefined ? { profileFacts } : {}),
             ...(options.userMessage !== undefined
               ? { userMessage: options.userMessage }
@@ -770,13 +797,26 @@ export class AgentLoop {
         // re-injected on every subsequent identical step.
         for (const sig of loopSignals) {
           if (sig.kind !== "warn") continue;
-          if (!loopTracker.shouldEmitWarning(sig.warningKey, sig.count)) {
+          // The test-repeat detector has its own floor: the 2nd
+          // equivalent run is already conclusive, so it must not wait
+          // for the generic warning threshold (default 3).
+          const emit =
+            sig.detector === "test_repeat"
+              ? loopTracker.shouldEmitWarning(
+                  sig.warningKey,
+                  sig.count,
+                  TEST_REPEAT_WARNING_THRESHOLD,
+                )
+              : loopTracker.shouldEmitWarning(sig.warningKey, sig.count);
+          if (!emit) {
             continue;
           }
           pendingNotice =
             sig.detector === "wandering"
               ? formatWanderingRedirect(sig.tool, sig.count)
-              : formatRepeatNotice(sig);
+              : sig.detector === "test_repeat"
+                ? formatTestRepeatNotice(sig)
+                : formatRepeatNotice(sig);
           this.deps.onEvent?.({
             type: "loop_detected",
             tool: sig.tool,
@@ -798,6 +838,33 @@ export class AgentLoop {
       } catch (err) {
         runError = err instanceof Error ? err : new Error(String(err));
         const category = classifyFailure(err);
+        // `cancelled` is user-initiated and should close the turn
+        // cleanly without marking the session as failed. Classified
+        // BEFORE the finalization guard below: a user abort during the
+        // reserved final step must keep its `cancelled` outcome
+        // (issue #107 — cancellation semantics remain unchanged), not
+        // be relabelled `max_steps`.
+        const cancelled =
+          err instanceof CancelledError ||
+          (err instanceof LlmFailure && err.category === "cancelled") ||
+          category === "cancelled";
+        if (finalizationStep && !cancelled) {
+          // A failed finalization must not execute more work or turn a
+          // bounded run into an unbounded retry. Preserve the established
+          // explicit max-steps/stalled outcome instead.
+          this.deps.logger?.warn(
+            "finalization step failed; preserving max-steps outcome",
+            {
+              sessionId: state.id,
+              stepIndex: i,
+              error: runError.message,
+              category,
+            },
+          );
+          stepsTaken += 1;
+          reason = "max_steps";
+          break;
+        }
         this.deps.logger?.error("agent loop failed", {
           sessionId: state.id,
           stepIndex: i,
@@ -813,13 +880,6 @@ export class AgentLoop {
           sessionId: state.id,
           category,
         });
-        // `cancelled` is user-initiated and should close the turn
-        // cleanly without marking the session as failed. Everything
-        // else keeps the existing failed-terminal contract.
-        const cancelled =
-          err instanceof CancelledError ||
-          (err instanceof LlmFailure && err.category === "cancelled") ||
-          category === "cancelled";
         if (cancelled) {
           state = { ...state, status: "cancelled" };
           this.deps.onEvent?.({ type: "loop_completed", reason: "cancelled" });

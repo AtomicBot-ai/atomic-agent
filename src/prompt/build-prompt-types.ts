@@ -1,4 +1,5 @@
 import type { ModelProfile } from "../llm/model-profile.js";
+import type { ToolCallTransport } from "../llm/provider/completion-types.js";
 import type { ProfileFact } from "../memory/profile-store.js";
 import type { SessionState } from "../session/session-state.js";
 import type {
@@ -14,6 +15,14 @@ export interface BuildPromptInput {
   capabilities: CapabilitiesSummary;
   skillCatalog: readonly SkillCatalogEntry[];
   systemPersona?: string;
+  /**
+   * Transport the serving link uses for tool calls. Forwarded into
+   * `buildStablePrefix`, where `"native_tools"` swaps the text-JSON
+   * emission mandate for native function-calling guidance (issue #285).
+   * Omitted or `"grammar"` keeps the stable prefix byte-identical to
+   * the legacy output.
+   */
+  toolTransport?: ToolCallTransport;
   /**
    * Pre-formatted current date (see `formatCurrentDate`) rendered as a
    * `CURRENT DATE:` line in the variable tail just before `### respond`.
@@ -41,6 +50,22 @@ export interface BuildPromptInput {
   completionMaxTokens?: number;
   transientNotice?: string;
   profile?: ModelProfile;
+  /**
+   * Suppress the llama-server template artifacts around the generation
+   * point: the trailing reasoning-open prefill (`<think>` for
+   * qwen-think) and the Gemma turn-framing tokens (system-turn opener,
+   * `<|think|>` system token, trailing turn close + model-turn opener).
+   *
+   * Set for prompts served over an OpenAI-compatible *chat* API
+   * (`toolTransport: "native_tools"`): there the prompt ships as a chat
+   * message, the provider applies its own template server-side, and a
+   * literal open tag is at best noise the model echoes back — and at
+   * worst corrupted server-side (Ollama Cloud mangles literal
+   * `<think>`/`</think>` strings; ollama/ollama#17248, issue #283).
+   * The prefill only makes sense on the raw text-completion (grammar)
+   * transport, where the local template expects the tag pre-typed.
+   */
+  suppressReasoningPrefill?: boolean;
   profileFacts?: readonly ProfileFact[];
   profileMaxTokens?: number;
   userMessage?: string | null;

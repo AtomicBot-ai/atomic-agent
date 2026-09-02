@@ -52,6 +52,11 @@ export interface OnboardingScreenCallbacks {
   onOnboardingStep?(step: string, outcome?: string): void;
   /** Start a model pull. Owned by `LocalModelsOrchestrator`. */
   onLocalModelsPullRequested?(modelId: LocalModelId): void;
+  /** Run the import step's preview (`execute: false`) or write (`true`). */
+  onOnboardingImportRequested?(
+    plan: import("../onboarding/import-step.js").OnboardingImportPlan,
+    execute: boolean,
+  ): void;
 }
 
 /** Named once — the offer screens quote it back at the operator. */
@@ -83,6 +88,12 @@ export function OnboardingScreen(props: {
    * 1.5s window has disarmed it, which reads as "Ctrl+C is broken".
    */
   ctrlCArmed?: boolean;
+  /**
+   * Injectable import-source scan for tests — without it the closing
+   * flow reads the real home dir, and whether the import step appears
+   * depends on the machine the suite runs on.
+   */
+  detectImportAgents?(): import("../../import/index.js").DetectedImportAgent[];
 }): ReactElement {
   const { onboarding, dispatch, callbacks } = props;
   const size = useTerminalSize();
@@ -149,6 +160,9 @@ export function OnboardingScreen(props: {
     ...(callbacks.onOnboardingStep === undefined
       ? {}
       : { onStep: callbacks.onOnboardingStep }),
+    ...(props.detectImportAgents === undefined
+      ? {}
+      : { detectAgents: props.detectImportAgents }),
   });
 
   // Both axes are centred on the block as a whole, never line by line:
@@ -178,6 +192,9 @@ export function OnboardingScreen(props: {
     cloudLabel: CLOUD_READY_LABEL,
     hfRepo: onboarding.hfRepo,
     hfError: onboarding.step === "local_hf_ref" ? onboarding.error : null,
+    importAgents: onboarding.importAgents,
+    importOptions: onboarding.importOptions,
+    importReport: onboarding.importReport,
   });
 
   return (

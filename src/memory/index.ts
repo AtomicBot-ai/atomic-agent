@@ -63,3 +63,12 @@ export type {
   HybridRecallOptions,
   LlamaEmbeddingClientOptions,
 } from "./embeddings/index.js";
+export {
+  DEFAULT_EXPORT_FOLDER,
+  ObsidianExportUsageError,
+  exportMemoryToObsidian,
+} from "./obsidian-export.js";
+export type {
+  ObsidianExportOptions,
+  ObsidianExportResult,
+} from "./obsidian-export.js";

@@ -18,6 +18,8 @@ import {
   type LoopCheckVerdict,
   type ToolLoopTracker,
 } from "./loop-detector.js";
+import { classifyTestCommand } from "./test-command-key.js";
+import { fingerprintWorkspace } from "./workspace-fingerprint.js";
 
 /**
  * Loop-detection signal surfaced upward from a batch execution. The
@@ -34,6 +36,17 @@ export interface BatchLoopSignal {
   count: number;
   detector: LoopCheckVerdict["detector"];
   warningKey: string;
+  /**
+   * `test_repeat` only: human-readable command label (`pytest -k auth`)
+   * for the notice text.
+   */
+  target?: string;
+  /**
+   * `test_repeat` only: compressed summary of the previous equivalent
+   * run, quoted in the notice so the model sees what re-running
+   * reproduced.
+   */
+  previousSummary?: string;
 }
 
 /**
@@ -566,6 +579,38 @@ function runSyncLoopGate(
       detector: verdict.detector,
       warningKey: verdict.warningKey,
     });
+  }
+
+  // Test-repeat gate (issue #118, companion of #114): a recognized test
+  // command re-run against an unchanged workspace fingerprint is a
+  // stronger no-progress signal than the generic byte-identical repeat —
+  // it survives timeout-only argument variation and timing noise in the
+  // output. Warn-only by design (the issue's acceptance criteria): the
+  // call always proceeds, which is also the intentional-repeat path, and
+  // the generic detectors above stay fully active. The fingerprint walk
+  // runs only here — recognized test commands only — never on ordinary
+  // shell calls. A `null` fingerprint (missing / oversized cwd) disables
+  // detection for this call rather than risking a false warning.
+  const testCommand = classifyTestCommand(tool, args, ctx.workingDir);
+  if (testCommand !== null) {
+    const fingerprint = fingerprintWorkspace(testCommand.cwd);
+    if (fingerprint !== null) {
+      const repeat = ctx.tracker.checkTestRepeat(testCommand.key, fingerprint);
+      ctx.tracker.recordTestRun(testCommand.key, fingerprint, tool, args);
+      if (repeat.repeat) {
+        loopSignals.push({
+          kind: "warn",
+          tool,
+          count: repeat.count,
+          detector: "test_repeat",
+          warningKey: `test_repeat:${testCommand.key}`,
+          target: testCommand.label,
+          ...(repeat.previousSummary !== undefined
+            ? { previousSummary: repeat.previousSummary }
+            : {}),
+        });
+      }
+    }
   }
   return { proceed: true };
 }

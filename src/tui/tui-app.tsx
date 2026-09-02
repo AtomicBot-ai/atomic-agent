@@ -493,6 +493,16 @@ export interface TuiAppCallbacks {
    * funnel so a drop-off can be attributed to a screen.
    */
   onOnboardingStep?(step: string, outcome?: string): void;
+  /**
+   * The first-run import step asked for a run. `execute: false` is the
+   * dry-run behind the preview screen, `true` the confirmed write. The
+   * answer comes back on the bus as `onboarding_import_report` /
+   * `onboarding_import_failed`.
+   */
+  onOnboardingImportRequested?(
+    plan: import("./onboarding/import-step.js").OnboardingImportPlan,
+    execute: boolean,
+  ): void;
   /** Providers tab: remove a provider by id from config + registry. */
   onProvidersRemove?(id: string): void;
   /** Slash-command surface: enable a skill explicitly (`/skill enable <name>`). */
@@ -546,13 +556,6 @@ export interface TuiAppCallbacks {
   onAnalyticsToggleRequested?(): void | Promise<void>;
   /** Privacy tab: set analytics to an explicit value (slash-command path). */
   onAnalyticsSetEnabledRequested?(enabled: boolean): void | Promise<void>;
-  /**
-   * Privacy tab: move the approval ladder to an explicit level (digit
-   * hotkeys, arrow steps, `/privacy level 1..5`, and the `/privacy
-   * approve on|off` aliases which map to 5 and 1). Persists
-   * `agent.approvalLevel` and hot-applies it to the live gate.
-   */
-  onApprovalLevelSetRequested?(level: number): void | Promise<void>;
   /** Privacy tab: re-read the persisted `analytics.enabled` snapshot. */
   onPrivacyRefreshRequested?(): void;
   /** Import tab: run a dry-run preview of the Hermes import. */

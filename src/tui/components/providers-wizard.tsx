@@ -294,15 +294,23 @@ function CatalogChatModelStep(props: {
 
   const service =
     kind === "openrouter" ? "Chat model (OpenRouter)" : "Chat model (AI/ML API)";
+  // The active price facet rides on the title so it stays visible even
+  // while the search box owns the hint line: a list narrowed to free
+  // rows must say so wherever the operator happens to be looking.
+  const facet = w.pricingFilter === "all" ? "" : ` · ${w.pricingFilter} only`;
   // The refresh notice rides on the title rather than the hint line: it
   // describes the list, not a key, and the hint already runs to the edge
   // of a 100-column terminal once the search box has had its say.
   const title = loading
-    ? `${service} · updating model list from API…`
-    : service;
+    ? `${service}${facet} · updating model list from API…`
+    : `${service}${facet}`;
+  // `p` is advertised only while the search box is closed; open, the
+  // letter types into the query instead of cycling the facet.
   const hints = pickListHints(
     w.search,
-    "PgUp/PgDn jump · Enter select",
+    w.search === null
+      ? `PgUp/PgDn jump · Enter select · p price: ${w.pricingFilter}`
+      : "PgUp/PgDn jump · Enter select",
     "Esc back",
     "Esc clears search, again backs out",
   );

@@ -18,6 +18,7 @@ import { isKnownLocalModelId } from "../local-llm/index.js";
 import { registerSession } from "../local-llm/session-registry.js";
 import { enterAltScreen } from "./alt-screen.js";
 import { enableSynchronizedOutput } from "./synchronized-output.js";
+import { legacyConhostStartupHint } from "./legacy-conhost.js";
 import { ChatOrchestrator } from "./chat-orchestrator.js";
 import { parseTuiArgs,
   nonInteractiveStdinError,
@@ -40,6 +41,8 @@ import {
 } from "./mouse/mouse-tracking.js";
 import { createSelectionPassthrough } from "./mouse/selection-passthrough.js";
 import { isLocalBackendConfigured } from "./local-backend-readiness.js";
+import { makeEscalatingSignalHandler } from "./signal-escalation.js";
+import { restoreTerminalNow } from "./terminal-restore.js";
 import { needsOnboarding } from "./onboarding/needs-onboarding.js";
 import { createOnboardingState } from "./onboarding/onboarding-state.js";
 import {
@@ -239,14 +242,23 @@ export async function tuiCommand(args: string[]): Promise<number> {
   });
   orchestratorForChannelStatus = orchestrator;
 
-  const onSignal = (): void => orchestrator.quit();
-  process.once("SIGINT", onSignal);
-  process.once("SIGTERM", onSignal);
+  // First signal quits gracefully; a repeat (a wedged shutdown being
+  // Ctrl-C'd again, a `kill` after a hang) restores the terminal —
+  // mouse reporting off, alt screen left — and exits hard, instead of
+  // Node's default kill that skips `exit` hooks and leaves the shell
+  // printing `[<0;64;21M` on every click. See `signal-escalation.ts`.
+  const onSignal = makeEscalatingSignalHandler({
+    quit: () => orchestrator.quit(),
+    restoreTerminal: restoreTerminalNow,
+    exit: (code) => process.exit(code),
+  });
+  process.on("SIGINT", onSignal);
+  process.on("SIGTERM", onSignal);
   // SIGHUP fires when the terminal window is closed. Without a handler
   // the default action kills the process before `orchestrator.shutdown()`
   // runs, orphaning the managed llama-server with the model still in
   // RAM/VRAM — the exact complaint in #52.
-  process.once("SIGHUP", onSignal);
+  process.on("SIGHUP", onSignal);
 
   // Mark this process as a live TUI session so `stopOnExit` teardown can
   // tell "last session exits, stop the daemon" from "another window is
@@ -305,17 +317,38 @@ export async function tuiCommand(args: string[]): Promise<number> {
   // this keeps `/mouse off` honest for the cases where it still does:
   // a multiplexer that swallowed the disable, or a bracketed paste whose
   // payload happens to contain an SGR report.
-  const mouseStdin = createMouseStdin(process.stdin, (event) => {
-    if (!mouseTracking) return;
-    // The passthrough sees every event before the app does: a consumed
-    // shift-press must never reach the hit test, and while the window
-    // is open a report that was already in flight when reporting
-    // stopped is swallowed too — the operator is selecting, not
-    // clicking.
-    if (selectionPassthrough.observe(event)) return;
-    if (mouseTracking.isSuspended()) return;
-    mouseSource.emit(event);
-  });
+  const mouseStdin = createMouseStdin(
+    process.stdin,
+    (event) => {
+      if (!mouseTracking) return;
+      // The passthrough sees every event before the app does: a consumed
+      // shift-press must never reach the hit test, and while the window
+      // is open a report that was already in flight when reporting
+      // stopped is swallowed too — the operator is selecting, not
+      // clicking.
+      if (selectionPassthrough.observe(event)) return;
+      if (mouseTracking.isSuspended()) return;
+      mouseSource.emit(event);
+    },
+    {
+      mouseActive: () => mouseTracking !== null,
+      // The leak breaker: the terminal answered our tracking request
+      // with reports the decoder could not consume (seen over ssh with
+      // encoding-confused hops), and coordinates were about to be typed
+      // into the composer. Stop asking for reports — for this session
+      // only, so the persisted preference still serves terminals where
+      // the mouse works.
+      onMouseTextLeak: () => {
+        mouseTracking?.disable();
+        mouseTracking = null;
+        bus.emit({
+          type: "system_message",
+          variant: "warn",
+          text: "this terminal is sending garbled mouse reports — mouse support disabled for this session (/mouse on to retry, or launch with --no-mouse)",
+        });
+      },
+    },
+  );
   const setMouseEnabled = (next: boolean | null): void => {
     if (next === null) {
       bus.emit({
@@ -394,10 +427,10 @@ export async function tuiCommand(args: string[]): Promise<number> {
           persistWhileBusyMode(mode, bus),
         // The mode is a stance for this session, so it moves the live
         // ladder and the live plan flag and writes neither to
-        // `config.json`. The Privacy tab remains the only surface that
-        // persists an approval level — otherwise a session that passed
-        // through `bypass` would leave the machine trusting everything
-        // on the next boot.
+        // `config.json`. The persisted baseline stays whatever
+        // `agent.approvalLevel` in config.json says — otherwise a
+        // session that passed through `bypass` would leave the machine
+        // trusting everything on the next boot.
         onCodingModeChanged: (_mode, resolved) => {
           runtime.setApprovalLevel(resolved.approvalLevel);
           runtime.setPlanMode(resolved.planMode);
@@ -540,6 +573,8 @@ export async function tuiCommand(args: string[]): Promise<number> {
           void orchestrator.providers.removeProviderById(id),
         onImportPreview: (form) => orchestrator.import.preview(form),
         onImportExecute: (form) => orchestrator.import.execute(form),
+        onOnboardingImportRequested: (plan, execute) =>
+          void orchestrator.import.runOnboarding(plan, execute),
         onMcpDetailRequested: (serverName) =>
           orchestrator.mcp.openDetail(serverName),
         onMcpAddServerSubmit: (json) => orchestrator.mcp.addServerFromJson(json),
@@ -624,8 +659,6 @@ export async function tuiCommand(args: string[]): Promise<number> {
           orchestrator.privacy.toggleAnalytics(),
         onAnalyticsSetEnabledRequested: (enabled) =>
           orchestrator.privacy.setAnalyticsEnabled(enabled),
-        onApprovalLevelSetRequested: (level) =>
-          orchestrator.privacy.setApprovalLevel(level),
         onPrivacyRefreshRequested: () => orchestrator.privacy.refresh(),
         onUpdateConfirmed: () => orchestrator.runUpdate(),
         onUpdateRestart: () => {
@@ -697,6 +730,16 @@ export async function tuiCommand(args: string[]): Promise<number> {
       variant: "warn",
       text: formatDotenvReadWarning(config.dotenv.path, config.dotenv.error),
     });
+  }
+
+  // The frozen Win10 conhost scrolls under full-height frames — the
+  // layout already reserves its bottom row (see `legacy-conhost.ts`);
+  // this is where the operator learns why, and that Windows Terminal
+  // does not need the workaround. Once per session, in the transcript,
+  // because anything printed before the alt screen is never seen.
+  const conhostHint = legacyConhostStartupHint();
+  if (conhostHint) {
+    bus.emit({ type: "system_message", text: conhostHint });
   }
 
   // If the user is in managed mode and the backend + model are ready
@@ -886,6 +929,14 @@ function persistLlamaUrl(
       });
       if (!health.reachable) {
         report(describeLlamaHealthFailure(health, nextUrl));
+        // An openai-compat verdict has a real path forward — the same
+        // server saved as a cloud provider — so beyond naming it, open
+        // the steer prompt: `y` there deep-links into the provider
+        // wizard prefilled with this URL (Ollama URLs land on the
+        // Ollama preset) instead of leaving a dead-end refusal.
+        if (health.kind === "openai-compat") {
+          bus.emit({ type: "llm_external_compat_steer_opened", url: nextUrl });
+        }
         return;
       }
       persistUserLocalLlmUrl(nextUrl);

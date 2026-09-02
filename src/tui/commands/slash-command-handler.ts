@@ -113,13 +113,6 @@ export interface SlashDispatchResult {
    */
   readonly setWhileBusyMode?: WhileBusySubmitMode;
   /**
-   * `/privacy level <1..5>` side-effect (with `/privacy approve on|off`
-   * kept as aliases for 5 and 1): move the approval ladder to an
-   * explicit level. The caller (submit-handler) maps this to
-   * `PrivacyOrchestrator.setApprovalLevel`.
-   */
-  readonly approvalLevelSet?: number;
-  /**
    * `/mouse [on|off]` — flip terminal mouse reporting at runtime, or
    * report the current state with no argument. The caller owns the
    * escape sequences and the config write, because both live outside
@@ -448,7 +441,6 @@ function pureActions(
     queueVerb: undefined,
     submitWhileBusy: undefined,
     setWhileBusyMode: undefined,
-    approvalLevelSet: undefined,
     ...overrides,
   };
 }
@@ -835,12 +827,11 @@ function dispatchTelegramSub(rawArgs: string): SlashDispatchResult {
 }
 
 /**
- * Sub-dispatcher for `/privacy [analytics <verb> | level <1..5> |
- * approve <on|off>]`. Bare `/privacy` opens the Privacy tab. `/privacy
- * analytics on|off|status` forwards to the same analytics side-effect
- * as the top-level `/analytics` command. `/privacy level 1..5` moves
- * the approval ladder; `/privacy approve on|off` stays as the
- * backward-compatible alias pair for levels 5 and 1.
+ * Sub-dispatcher for `/privacy [analytics <verb>]`. Bare `/privacy`
+ * opens the Privacy tab. `/privacy analytics on|off|status` forwards to
+ * the same analytics side-effect as the top-level `/analytics` command.
+ * The old `/privacy level` / `/privacy approve` surface is gone: the
+ * approval stance is the coding-mode control in the composer now.
  */
 function dispatchPrivacySub(rawArgs: string): SlashDispatchResult {
   const argPart = rawArgs.trim();
@@ -854,63 +845,8 @@ function dispatchPrivacySub(rawArgs: string): SlashDispatchResult {
   if ((bits[0] ?? "").toLowerCase() === "analytics") {
     return dispatchAnalyticsSub(bits.slice(1).join(" "));
   }
-  if ((bits[0] ?? "").toLowerCase() === "level") {
-    return dispatchApprovalLevelSub(bits.slice(1).join(" "));
-  }
-  if ((bits[0] ?? "").toLowerCase() === "approve") {
-    return dispatchApproveSub(bits.slice(1).join(" "));
-  }
   return pureActions([], {
-    systemMessage:
-      "usage: /privacy | /privacy analytics on|off|status | /privacy level 1..5 | /privacy approve on|off",
-  });
-}
-
-/**
- * Sub-dispatcher for `/privacy level <1..5>`. Opens the Privacy tab so
- * the ladder's new position (and its coverage copy) is visible, then
- * asks the caller to run `setApprovalLevel`. Rejects anything but an
- * integer 1..5: the level names an exact trust boundary, so a typo must
- * not land on a guessed one.
- */
-function dispatchApprovalLevelSub(rawArgs: string): SlashDispatchResult {
-  const raw = rawArgs.trim().split(/\s+/)[0] ?? "";
-  const level = Number.parseInt(raw, 10);
-  if (!/^[1-5]$/.test(raw) || Number.isNaN(level)) {
-    return pureActions([], {
-      systemMessage: "usage: /privacy level 1 | 2 | 3 | 4 | 5",
-    });
-  }
-  return pureActions(
-    [
-      { type: "ui_mode_set", mode: "debug" },
-      { type: "tab_changed", tab: "privacy" },
-    ],
-    { approvalLevelSet: level },
-  );
-}
-
-/**
- * Sub-dispatcher for `/privacy approve <on|off>` — the pre-ladder
- * command surface, kept as aliases so muscle memory and scripts
- * survive: `on` maps to level 5 (approve everything), `off` to level 1
- * (ask for everything). No bare form: the verb is deliberately explicit
- * because `on` means "run everything without asking".
- */
-function dispatchApproveSub(rawArgs: string): SlashDispatchResult {
-  const verb = rawArgs.trim().split(/\s+/)[0]?.toLowerCase() ?? "";
-  const openPrivacyTab: TuiAction[] = [
-    { type: "ui_mode_set", mode: "debug" },
-    { type: "tab_changed", tab: "privacy" },
-  ];
-  if (verb === "on") {
-    return pureActions(openPrivacyTab, { approvalLevelSet: 5 });
-  }
-  if (verb === "off") {
-    return pureActions(openPrivacyTab, { approvalLevelSet: 1 });
-  }
-  return pureActions([], {
-    systemMessage: "usage: /privacy approve on | off",
+    systemMessage: "usage: /privacy | /privacy analytics on|off|status",
   });
 }
 

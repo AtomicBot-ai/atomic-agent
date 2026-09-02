@@ -113,6 +113,17 @@ export interface StreamChunk {
   delta: string;
   reasoningDelta: string;
   done: boolean;
+  /**
+   * Tool-call transport of the link that is serving this stream.
+   * Providers never set it — the fallback streamer seam stamps it on
+   * every chunk so live consumers (the step executor's stream parser)
+   * can adapt to a cross-transport fallover BEFORE the final return
+   * value arrives: `CompletionResult.servedTransport` only exists once
+   * the stream finishes, which is too late to classify reasoning deltas
+   * live. Absent on the direct (non-wrapped) path, where the caller's
+   * configured `toolTransport` is authoritative.
+   */
+  servedTransport?: ToolCallTransport;
 }
 
 export interface StreamFinalResult {

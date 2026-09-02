@@ -9,15 +9,17 @@ import {
  *
  * The machinery for three of these already existed and was spread across
  * two places that do not look like each other: the five-step approval
- * ladder on the Privacy tab, and (as of this change) plan mode in the
- * agent loop. Neither is somewhere you go mid-thought. "Let it edit
- * without asking for the next ten minutes" and "read only, tell me what
- * you would do" are decisions made *while typing*, and a decision made
- * while typing needs to be one keystroke from the composer.
+ * ladder (persisted as `agent.approvalLevel`), and (as of this change)
+ * plan mode in the agent loop. Neither is somewhere you go mid-thought.
+ * "Let it edit without asking for the next ten minutes" and "read only,
+ * tell me what you would do" are decisions made *while typing*, and a
+ * decision made while typing needs to be one keystroke from the
+ * composer.
  *
  * So this is a projection, not a new subsystem. Each mode resolves to an
  * approval level and a plan-mode flag; nothing else in the app learns a
- * new concept, and the Privacy tab keeps working exactly as it did.
+ * new concept. This composer control is the one approval surface in the
+ * TUI — the old Privacy-tab ladder duplicated it and is gone.
  */
 export type CodingMode = "default" | "plan" | "auto" | "bypass";
 
@@ -76,7 +78,7 @@ const LOOKS: Readonly<Record<CodingMode, CodingModeLook>> = {
     label: "default",
     detail: "asks before risky steps",
     tone: "success",
-    summary: "default — approvals follow the level set on the Privacy tab",
+    summary: "default — approvals follow the configured approval level",
   },
   auto: {
     label: "auto",
@@ -107,7 +109,7 @@ export interface ResolvedCodingMode {
  * What a mode means to the runtime.
  *
  * `baseLevel` is the level the operator actually configured — the one
- * the Privacy tab shows and `config.json` holds. It is a parameter
+ * `config.json` holds. It is a parameter
  * rather than a constant because `default` has to *restore* it: a
  * session that went to `bypass` and back must land on the level it
  * started from, not on a hardcoded 1, or the control would quietly

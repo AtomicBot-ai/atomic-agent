@@ -23,6 +23,7 @@
  */
 
 import { setDynamicResourceClassResolver } from "../agent/tool-resource-class.js";
+import type { DangerousToolOptions } from "../approval/dangerous-tool.js";
 import type { StructuredLogger } from "../tracing/structured-logger.js";
 import type { ToolRegistry } from "../tools/tool-registry.js";
 
@@ -52,6 +53,15 @@ export interface McpManagerDeps extends McpClientDeps {
   onStatus?: McpStatusSink;
   /** Structured logger for lifecycle events. */
   logger?: StructuredLogger;
+  /**
+   * Approval-gate wiring — the same shared object the native
+   * dangerous tools (`os.shell.run`, `os.fs.write`, …) receive.
+   * Tools from a server whose resolved trust is `approval_gated`
+   * call `requireApproval` before every `tools/call` (discovery-time
+   * `annotations.readOnlyHint === true` exempts). Optional only as a
+   * test seam — production bootstrap always passes it.
+   */
+  dangerous?: DangerousToolOptions;
 }
 
 /**
@@ -309,8 +319,14 @@ export class McpManager {
 
   private registerToolsFor(s: ManagedServer): void {
     const catalog = s.client.getCatalog();
+    // Same resolution as `ensureResolver` — missing trust fails closed
+    // to `approval_gated`, so an unannotated server is gated by default.
+    const trust = s.config.trust ?? "approval_gated";
     for (const meta of catalog.tools) {
-      const def = createMcpToolDefinition(meta, s.client);
+      const def = createMcpToolDefinition(meta, s.client, {
+        trust,
+        dangerous: this.deps.dangerous,
+      });
       // ToolRegistry.register is last-writer-wins. Two servers
       // cannot collide because the qualified name carries the
       // server name; two distinct servers with the same raw tool

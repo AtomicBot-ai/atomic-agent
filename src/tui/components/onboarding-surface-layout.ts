@@ -21,11 +21,16 @@ import type {
   OnboardingHuggingFaceRepo,
   OnboardingStep,
 } from "../onboarding/onboarding-state.js";
+import type { OnboardingUiState } from "../onboarding/onboarding-state.js";
 import type { SecondBackendOffer } from "../onboarding/propose-second-backend.js";
 import { measureOnboardingChooseStep } from "./onboarding-choose-step.js";
 import { measureOnboardingDownloadStep } from "./onboarding-download-step.js";
 import { measureOnboardingHeader } from "./onboarding-header.js";
 import { measureOnboardingHfPickStep } from "./onboarding-hf-pick-step.js";
+import {
+  measureOnboardingImportPickStep,
+  measureOnboardingImportReportStep,
+} from "./onboarding-import-step.js";
 import { measureOnboardingHfRefStep } from "./onboarding-hf-ref-step.js";
 import { measureOnboardingLocalPickStep } from "./onboarding-local-pick-step.js";
 import { measureOnboardingProposeStep } from "./onboarding-propose-step.js";
@@ -59,6 +64,10 @@ export interface OnboardingBlockInput {
   hfRepo: OnboardingHuggingFaceRepo | null;
   /** The reference screen's error, which widens its block when long. */
   hfError?: string | null;
+  /** The import screens' rows and report, while the flow is on them. */
+  importAgents?: OnboardingUiState["importAgents"];
+  importOptions?: OnboardingUiState["importOptions"];
+  importReport?: OnboardingUiState["importReport"];
 }
 
 export function layOutOnboardingSurface(
@@ -134,6 +143,21 @@ function measureStepBody(input: MeasureInput): number {
             configuredLabel: input.configuredLabel,
           })
         : 0;
+    case "import_pick":
+      return Math.min(
+        input.available,
+        measureOnboardingImportPickStep(input.importAgents ?? []),
+      );
+    case "import_preview":
+      return Math.min(
+        input.available,
+        measureOnboardingImportReportStep(input.importReport ?? null, false),
+      );
+    case "import_done":
+      return Math.min(
+        input.available,
+        measureOnboardingImportReportStep(input.importReport ?? null, true),
+      );
     case "wait_or_jump":
       return measureOnboardingWaitOrJumpStep({
         pull: input.pull,

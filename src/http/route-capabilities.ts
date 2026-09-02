@@ -36,7 +36,7 @@ export function createCapabilitiesHandler(): HttpHandler {
         toolTimeoutMs: runtime.config.agent.toolTimeoutMs,
         // Source of truth. Live gate state, not the boot-time config
         // snapshot: reflects `--no-approval` boots and later
-        // `setApprovalLevel` calls (the Privacy-tab ladder), so admin UIs
+        // `setApprovalLevel` calls (the composer coding-mode control), so admin UIs
         // render the truth. Level-aware clients read this and ignore
         // `approvalRequired`.
         approvalLevel: runtime.getApprovalLevel(),

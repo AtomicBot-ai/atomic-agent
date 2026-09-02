@@ -183,4 +183,119 @@ describe("createFallbackStreamer (real bootstrap seam)", () => {
     const result = await drain(streamer(baseParams));
     expect(result.servedTransport).toBe("native_tools");
   });
+
+  it("stamps the served transport on EVERY chunk (live consumers cannot wait for the final result)", async () => {
+    const providers = new Map<string, LlmProvider>([
+      [
+        "cloud",
+        fakeProvider("cloud", "native_tools", async () => {
+          throw new OpenAiHttpError("rate limited", 429, "http://cloud", false, null, "cloud");
+        }),
+      ],
+      ["local", fakeProvider("local", "grammar", async () => answer("local"))],
+    ]);
+    const streamer = createFallbackStreamer(seamDeps(providers));
+    const gen = streamer(baseParams);
+    const chunks: StreamChunk[] = [];
+    let next = await gen.next();
+    while (!next.done) {
+      chunks.push(next.value);
+      next = await gen.next();
+    }
+    expect(chunks.length).toBeGreaterThan(0);
+    // The load-bearing assertion: the step executor's stream parser keys
+    // `preOpenedThink` off the serving link's transport, which it must
+    // learn from the FIRST chunk — the return-value stamp arrives after
+    // the last delta, too late to classify reasoning live.
+    for (const chunk of chunks) {
+      expect(chunk.servedTransport).toBe("grammar");
+    }
+  });
+});
+
+describe("per-link prompt substitution (grammarPrompt)", () => {
+  async function drain(
+    gen: AsyncGenerator<StreamChunk, CompletionResult, void>,
+  ): Promise<CompletionResult> {
+    let next = await gen.next();
+    while (!next.done) next = await gen.next();
+    return next.value;
+  }
+
+  function promptCapturingProviders(): {
+    providers: Map<string, LlmProvider>;
+    cloudPrompts: string[];
+    localPrompts: string[];
+    failCloud: () => void;
+  } {
+    const cloudPrompts: string[] = [];
+    const localPrompts: string[] = [];
+    let cloudFails = false;
+    const providers = new Map<string, LlmProvider>([
+      [
+        "cloud",
+        fakeProvider("cloud", "native_tools", async (request) => {
+          cloudPrompts.push(request.prompt);
+          if (cloudFails) {
+            throw new OpenAiHttpError("rate limited", 429, "http://cloud", false, null, "cloud");
+          }
+          return answer("cloud");
+        }),
+      ],
+      [
+        "local",
+        fakeProvider("local", "grammar", async (request) => {
+          localPrompts.push(request.prompt);
+          return answer("local");
+        }),
+      ],
+    ]);
+    return {
+      providers,
+      cloudPrompts,
+      localPrompts,
+      failCloud: () => {
+        cloudFails = true;
+      },
+    };
+  }
+
+  const paramsWithVariant = {
+    ...baseParams,
+    prompt: "suppressed prompt",
+    grammarPrompt: () => "prefill-carrying prompt",
+  };
+
+  it("unary: the native primary gets `prompt`, a grammar fallover link gets the `grammarPrompt` variant", async () => {
+    const { providers, cloudPrompts, localPrompts, failCloud } =
+      promptCapturingProviders();
+    const complete = createFallbackCompleter(seamDeps(providers));
+
+    await complete(paramsWithVariant);
+    expect(cloudPrompts).toEqual(["suppressed prompt"]);
+    expect(localPrompts).toEqual([]);
+
+    failCloud();
+    const result = await complete(paramsWithVariant);
+    expect(result.modelId).toBe("local-model");
+    expect(localPrompts).toEqual(["prefill-carrying prompt"]);
+  });
+
+  it("streaming: a grammar fallover link gets the `grammarPrompt` variant", async () => {
+    const { providers, localPrompts, failCloud } = promptCapturingProviders();
+    failCloud();
+    const streamer = createFallbackStreamer(seamDeps(providers));
+    const result = await drain(streamer(paramsWithVariant));
+    expect(result.servedTransport).toBe("grammar");
+    expect(localPrompts).toEqual(["prefill-carrying prompt"]);
+  });
+
+  it("absent variant: a grammar link falls back to the shared prompt", async () => {
+    const { providers, localPrompts, failCloud } = promptCapturingProviders();
+    failCloud();
+    const complete = createFallbackCompleter(seamDeps(providers));
+    const result = await complete({ ...baseParams, prompt: "shared prompt" });
+    expect(result.modelId).toBe("local-model");
+    expect(localPrompts).toEqual(["shared prompt"]);
+  });
 });

@@ -186,6 +186,71 @@ describe("createStreamParser", () => {
     expect(concatReply(events)).toBe("Привет!");
   });
 
+  it("keeps streaming reasoning past a brace inside the chain-of-thought", () => {
+    // The brace lands in the buffer while the close tag has not arrived
+    // yet — the old parser treated it as the tool-call start, closed the
+    // reasoning stream and froze the live display for the rest of the step.
+    const events = feedAll([
+      'the config is {"a": 1} so I should',
+      " change it</think>",
+      '{"tool":"reply","args":{"text":"ok"}}',
+    ], { preOpenedThink: true });
+    expect(concatReasoning(events)).toBe(
+      'the config is {"a": 1} so I should change it',
+    );
+    expect(events.filter((e) => e.kind === "reasoning_close")).toHaveLength(1);
+    expect(concatReply(events)).toBe("ok");
+  });
+
+  it("keeps streaming reasoning past an array bracket inside the chain-of-thought", () => {
+    const events = feedAll([
+      "<think>steps [1, 2] look",
+      " fine</think>",
+      '{"tool":"reply","args":{"text":"ok"}}',
+    ]);
+    expect(concatReasoning(events)).toBe("steps [1, 2] look fine");
+    expect(concatReply(events)).toBe("ok");
+  });
+
+  it("still hands off to a close-sentinel-less tool call after a decoy brace", () => {
+    const events = feedAll([
+      '<think>set {"a": 1} hmm ',
+      '{"tool":"reply","args":{"text":"hi"}}',
+    ]);
+    expect(concatReasoning(events)).toBe('set {"a": 1} hmm ');
+    expect(events.filter((e) => e.kind === "reasoning_close")).toHaveLength(1);
+    expect(concatReply(events)).toBe("hi");
+  });
+
+  it("holds back a possible tool-call start split by the chunk boundary", () => {
+    // `{"to` alone could still become `{"tool": …` — it must be neither
+    // emitted as reasoning nor treated as a payload until resolved.
+    const events = feedAll([
+      "<think>go ",
+      '{"to',
+      'ol":"os.exec","args":{"command":"ls"}}',
+    ]);
+    expect(concatReasoning(events)).toBe("go ");
+    expect(events.filter((e) => e.kind === "reasoning_close")).toHaveLength(1);
+    expect(events.filter((e) => e.kind === "reply_text_delta")).toHaveLength(0);
+  });
+
+  it("gives up on a brace followed by a long whitespace run and streams it as reasoning", () => {
+    const events = feedAll([
+      "<think>a {" + " ".repeat(80),
+      "b</think>",
+      '{"tool":"reply","args":{"text":"y"}}',
+    ]);
+    expect(concatReasoning(events)).toBe("a {" + " ".repeat(80) + "b");
+    expect(concatReply(events)).toBe("y");
+  });
+
+  it("treats an unresolved trailing brace at stream end as reasoning", () => {
+    const events = feedAll(["<think>ends with {\"a\": 1}"]);
+    expect(concatReasoning(events)).toBe('ends with {"a": 1}');
+    expect(events.at(-1)).toEqual({ kind: "reasoning_close" });
+  });
+
   it("splits reply.args.text across chunks preserving backslash escapes", () => {
     const raw =
       '{"tool":"reply","args":{"text":"a\\\\b\\nc"}}';
