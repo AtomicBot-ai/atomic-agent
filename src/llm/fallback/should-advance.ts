@@ -11,8 +11,14 @@ import { TransportError } from "../reliability/llm-failures.js";
  *    `false` means the error is deterministic (same request fails the
  *    same way everywhere) or is a cancellation — propagate it untouched.
  *  - `immediate`: an unambiguous provider-down signal (429 / 408 / 5xx /
- *    network-null) that should switch on the FIRST occurrence, bypassing
- *    the consecutive-failure threshold.
+ *    network-null). This does NOT control whether the chain switches —
+ *    `ProviderFallbackChain.advanceFrom` returns the next link on the
+ *    FIRST fallover-worthy failure whenever `advance` is true, immediate
+ *    or not. What it controls is the breaker: `registerFailure` arms the
+ *    cooldown right away on an immediate signal, instead of waiting for
+ *    `failureThreshold` consecutive failures. So `immediate` decides how
+ *    long the failed link stays quarantined across later turns, not the
+ *    in-turn switch.
  */
 export interface AdvanceDecision {
   advance: boolean;
