@@ -1272,6 +1272,17 @@ export function TuiApp({
     [state, callbacks],
   );
 
+  /**
+   * The composer's stop chip. Exactly the pair of calls the Esc branch
+   * in `handleAppKey` makes — one abort path, whichever way it was
+   * asked for. The chip only renders while `status === "running"`, so
+   * unlike Esc there is no precedence ladder to walk first.
+   */
+  const onStopRun = useCallback(() => {
+    callbacks.onAbort();
+    dispatch({ type: "abort_requested" });
+  }, [callbacks]);
+
   const onEditorChange = useCallback(
     (next: string) => {
       // An editor that is unmounting keeps its `useInput` subscription
@@ -2001,6 +2012,8 @@ export function TuiApp({
             rightSlot={promptRightSlot}
             contextSlot={promptContextSlot}
             modeSlot={promptModeSlot}
+            running={state.status === "running"}
+            onStop={onStopRun}
             focus={editorFocus}
             disabled={!canTypeMessage(state)}
             claimKey={composerClaimKey}
