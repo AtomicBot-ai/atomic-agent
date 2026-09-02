@@ -110,8 +110,13 @@ const OPENAI_ERROR_DETAIL_MAX_LEN = 300;
  * client's defaults (`localModels.completionRetries` = 3, 150ms base).
  * Deliberately not config-driven yet: the knob can follow once the
  * fallback work settles where such settings live for cloud providers.
+ *
+ * Exported because it is the budget for *one* streaming completion, not
+ * just for one HTTP call: `OpenAiProvider.completeStream` reopens a
+ * stream that died before its first chunk, and that reopen has to come
+ * out of this same budget rather than multiply it.
  */
-const OPENAI_MAX_ATTEMPTS = 3;
+export const OPENAI_MAX_ATTEMPTS = 3;
 const OPENAI_BACKOFF_BASE_MS = 150;
 /**
  * Ceiling on how long a provider's `retry-after` can stall one attempt.
@@ -172,7 +177,12 @@ export async function openAiPostJson(
  * connection errors, 429s, 5xxs — happen entirely inside the retry
  * loop, before the caller has consumed a single chunk, so retrying here
  * can never duplicate output. Once this resolves, the stream is live
- * and failures downstream are not retryable at this layer.
+ * and failures downstream are not retryable at this layer — the caller
+ * owns that window. `OpenAiProvider.completeStream` extends the same
+ * "nothing emitted yet, so a replay is free" argument a little further
+ * by reopening when the body dies before its first chunk; a failure that
+ * escapes *this* function has already spent `OPENAI_MAX_ATTEMPTS` and
+ * must not be retried again there.
  */
 export async function openAiStartStream(
   deps: OpenAiHttpDeps,
@@ -187,6 +197,24 @@ export async function openAiStartStream(
     }
     return res as Response & { body: NonNullable<Response["body"]> };
   });
+}
+
+/**
+ * Wait exactly as long as `runOpenAiWithRetry` would wait before its
+ * next try — same exponential base, same ±20% jitter, same abort-aware
+ * sleep. Exported so the one retry that lives *outside* this file
+ * (`OpenAiProvider.completeStream` reopening a stream that died before
+ * its first chunk) reuses this client's pacing instead of inventing a
+ * second set of magic numbers. `attemptNumber` is the 1-based attempt
+ * that just failed.
+ */
+export async function openAiRetryBackoff(
+  attemptNumber: number,
+  signal?: AbortSignal,
+): Promise<void> {
+  // `null` as the error: a body-read death carries no `retry-after`, so
+  // only the plain backoff applies.
+  await sleep(resolveWaitMs(null, attemptNumber), signal);
 }
 
 export async function openAiFetch(

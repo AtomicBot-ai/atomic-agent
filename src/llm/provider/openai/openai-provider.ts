@@ -22,9 +22,13 @@ import {
   buildOpenAiHeaders,
   openAiGetJson,
   openAiPostJson,
+  openAiRetryBackoff,
   openAiStartStream,
+  OpenAiHttpError,
+  OPENAI_MAX_ATTEMPTS,
   type OpenAiHttpDeps,
 } from "./openai-http.js";
+import { isNetworkError } from "../../reliability/network-error.js";
 import { normaliseOpenAiChatResponse } from "./openai-normalise-response.js";
 import { normalizeOpenAiBaseUrl } from "./normalize-openai-base-url.js";
 import { describeImageViaOpenAi } from "./openai-describe-image.js";
@@ -122,30 +126,60 @@ export class OpenAiProvider implements LlmProvider {
     request: CompletionRequest,
   ): AsyncGenerator<StreamChunk, CompletionResult, void> {
     const body = buildOpenAiChatBody(request, this.defaultChatModel, true, this.extraBody);
-    // Opening the stream (connect + status check) happens inside the
-    // client's bounded retry, strictly before the first chunk exists.
-    // From here on the stream is live and failures are terminal.
-    const res = await openAiStartStream(
-      this.http,
-      `${this.apiPathPrefix}/chat/completions`,
-      body,
-      request,
-    );
+    const path = `${this.apiPathPrefix}/chat/completions`;
     let accumulated = "";
     let accumulatedReasoning = "";
-    let streamFinal: StreamFinalResult | void;
-    const stream = this.streamConsumer.consume(res.body, request.signal);
-    while (true) {
-      const next = await stream.next();
-      if (next.done) {
-        streamFinal = next.value;
-        break;
-      }
-      const chunk = next.value;
-      if (chunk.delta) accumulated += chunk.delta;
-      if (chunk.reasoningDelta) accumulatedReasoning += chunk.reasoningDelta;
-      if (!chunk.done) {
-        yield chunk;
+    let streamFinal: StreamFinalResult | void = undefined;
+    // Flipped the instant the first chunk leaves this generator. Before
+    // that the caller has seen nothing, so throwing the half-opened
+    // stream away and starting over is invisible to everyone — the same
+    // argument `openAiStartStream` makes for retrying the open. After
+    // it, the stream is COMMITTED: a restart would replay the completion
+    // from the top and duplicate text the user already read, and because
+    // sampling is non-deterministic no prefix dedupe can repair that.
+    let committed = false;
+
+    // The window this loop exists for: a provider answers 2xx, thinks for
+    // a long time (reasoning models, cold routes), then drops the socket
+    // without ever emitting a delta. `openAiStartStream` has already
+    // returned by then, so its retry is spent, and undici surfaces the
+    // death as a bare `Error: terminated` from the body reader — which
+    // used to fail the whole turn ("Turn failed [transport]: terminated")
+    // even though not one byte of output existed.
+    attempts: for (let attempt = 1; ; attempt += 1) {
+      let res: (Response & { body: NonNullable<Response["body"]> }) | undefined;
+      try {
+        // Opening the stream (connect + status check) happens inside the
+        // client's bounded retry, strictly before the first chunk exists.
+        res = await openAiStartStream(this.http, path, body, request);
+        // A reopen starts from an empty transcript: whatever the dead
+        // attempt accumulated was never yielded and must not be mixed
+        // into the fresh one.
+        accumulated = "";
+        accumulatedReasoning = "";
+        streamFinal = undefined;
+        const stream = this.streamConsumer.consume(res.body, request.signal);
+        while (true) {
+          const next = await stream.next();
+          if (next.done) {
+            streamFinal = next.value;
+            break attempts;
+          }
+          const chunk = next.value;
+          if (chunk.delta) accumulated += chunk.delta;
+          if (chunk.reasoningDelta) accumulatedReasoning += chunk.reasoningDelta;
+          if (!chunk.done) {
+            committed = true;
+            yield chunk;
+          }
+        }
+      } catch (err) {
+        if (!canReopenStream(err, request.signal, committed, attempt)) throw err;
+        // Hand the dead socket back before opening a new one, or the
+        // retry leaks a connection out of undici's pool for the rest of
+        // the process.
+        await discardResponseBody(res);
+        await openAiRetryBackoff(attempt, request.signal);
       }
     }
     const final = completionFromStreamFinal(
@@ -256,6 +290,66 @@ function completionFromStreamFinal(
     toolCalls: streamFinal?.toolCalls,
     finishReason,
   };
+}
+
+/**
+ * May a failure raised between "2xx headers received" and "first chunk
+ * handed to our caller" be recovered by reopening the stream?
+ *
+ * The order of these guards is the contract, not a stylistic choice:
+ *
+ * 1. **Committed.** Once a chunk has been yielded, nothing below matters.
+ *    This is deliberately the strictest reading of "output": a chunk that
+ *    carries only the provider's opening `role` delta commits the stream
+ *    just as a text delta does. We cannot know what a downstream consumer
+ *    did with it, and being wrong here means duplicating a user's reply.
+ *    Reasoning deltas are output for the same reason — the TUI renders
+ *    them live.
+ * 2. **Cancellation.** A user pressing Esc is not a network failure, and
+ *    an abort reaches us in several disguises (`AbortError`, a raw
+ *    `Error: aborted`, or a custom `fetchImpl`'s own shape). The signal
+ *    is the only reliable oracle, so it is consulted before the error is
+ *    inspected at all — the ordering `network-error.ts` documents.
+ * 3. **`OpenAiHttpError`.** The failure came from *opening* the stream,
+ *    which already ran inside `runOpenAiWithRetry` and already spent the
+ *    whole `OPENAI_MAX_ATTEMPTS` budget on 429s/5xx/connect errors.
+ *    Retrying it here would silently square the budget (3 × 3) and delay
+ *    a real, actionable message — a bad API key would be tried nine
+ *    times. Only untyped body-read deaths get past this guard.
+ * 4. **Shape.** Anything that is not a recognisable transport death — a
+ *    bug in a stream consumer, a parse error — is a real error. Replaying
+ *    it would just hide it behind three identical failures.
+ * 5. **Budget.** One streaming completion gets `OPENAI_MAX_ATTEMPTS`
+ *    total, shared with the open, not a fresh budget per layer.
+ */
+function canReopenStream(
+  err: unknown,
+  signal: AbortSignal | undefined,
+  committed: boolean,
+  attempt: number,
+): boolean {
+  if (committed) return false;
+  if (signal?.aborted) return false;
+  if (err instanceof OpenAiHttpError) return false;
+  if (!isNetworkError(err)) return false;
+  return attempt < OPENAI_MAX_ATTEMPTS;
+}
+
+/**
+ * Release a response whose body died mid-read, so the reopen does not
+ * leak the socket. By the time we get here the stream consumer's
+ * `finally` has released its reader lock, but the body itself still owns
+ * the connection until it is cancelled. A body that refuses to cancel
+ * (already errored, still locked) is not worth failing the turn over —
+ * we are on our way to a fresh request either way.
+ */
+async function discardResponseBody(res: Response | undefined): Promise<void> {
+  if (!res?.body) return;
+  try {
+    await res.body.cancel();
+  } catch {
+    // Nothing left to release.
+  }
 }
 
 function applyToolCallTerminationSafety(
