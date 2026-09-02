@@ -8,7 +8,6 @@ import {
 } from "./classify-contract-probe.js";
 import {
   CONTRACT_PROBE_TOOL_NAME,
-  contractProbeFoundDefect,
   contractProbeProvesToolSupport,
   contractProbeToolDefinition,
 } from "./contract-probe-types.js";
@@ -216,17 +215,26 @@ describe("the synthetic probe tool", () => {
     expect(contractProbeProvesToolSupport("tools_supported")).toBe(true);
     for (const status of [
       "inconclusive_no_tool_call",
+      "forced_tool_choice_ignored",
       "stream_early_eof",
       "malformed_tool_call",
       "tools_payload_rejected",
+      "token_cap_rejected",
       "provider_error",
     ] as const) {
       expect(contractProbeProvesToolSupport(status)).toBe(false);
     }
   });
 
-  it("does not count an inconclusive auto answer as a defect", () => {
-    expect(contractProbeFoundDefect("inconclusive_no_tool_call")).toBe(false);
-    expect(contractProbeFoundDefect("stream_early_eof")).toBe(true);
+  it("counts a route that only refuses the forcing as proven", () => {
+    // Atomic never sends a forced tool choice (`step-executor` sends
+    // `auto` on every turn), so a route that refuses one and streams a
+    // complete call without it runs every real turn. Marking it
+    // unproven would warn operators about a bug they cannot hit and
+    // withhold "this install has a working backend" from an install
+    // that has one.
+    expect(contractProbeProvesToolSupport("forced_tool_choice_rejected")).toBe(
+      true,
+    );
   });
 });

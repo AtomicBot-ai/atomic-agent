@@ -167,4 +167,49 @@ describe("probeWizardContract", () => {
     );
     expect(bodies[0]).toContain("vendor/chosen-model");
   });
+  it("treats a route that only refuses the forcing as one that can run a turn", async () => {
+    // Refuses `tool_choice: {type:"function"}`, streams a complete call
+    // under `auto` — which is the only mode `step-executor` ever sends.
+    // Every real turn on this route works, so warning about it would be
+    // warning about a bug the operator is not having.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: unknown, init?: RequestInit) => {
+        const body = String(init?.body ?? "");
+        if (body.includes('"tool_choice":{')) {
+          return new Response(
+            JSON.stringify({ error: "tool_choice does not support being set to object" }),
+            { status: 400 },
+          );
+        }
+        return new Response(TOOL_CALL_STREAM, { status: 200 });
+      }),
+    );
+    const outcome = await probeWizardContract(wizard("openrouter"));
+
+    expect(outcome.result?.status).toBe("forced_tool_choice_rejected");
+    expect(outcome.proven).toBe(true);
+    expect(outcome.warning).toBeNull();
+    expect(outcome.summary).toContain("can run a turn");
+  });
+
+  it("does not tell a keyless-listing service its absent key was rejected", async () => {
+    // `wizardKeyIsOptional` is true for these presets because they list
+    // models without a key — not because a completion works without
+    // one. Probing anyway earns a 401 and the sentence "rejected the
+    // key" about a key nobody sent.
+    const fetchMock = vi.fn(async () => new Response("Unauthorized", { status: 401 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const outcome = await probeWizardContract(
+      wizard("openai-compatible", {
+        apiKeyBuffer: "",
+        presetId: "nous",
+        baseUrlLine: "https://inference-api.nousresearch.com",
+      }),
+    );
+
+    expect(outcome.skipped).toBe("no_api_key");
+    expect(outcome.summary).toContain("no API key");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });

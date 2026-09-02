@@ -532,11 +532,25 @@ export class ProvidersOrchestrator {
       // Every path here says what actually happened, including the ones
       // where no request went out. Reporting a skip as a pass would be
       // the silent "fully compatible" this whole check exists to stop.
-      const line = wizard
-        ? (await probeWizardContract(wizard)).summary
-        : `"${id}" has no provider kind that can be contract-checked.`;
+      const outcome = wizard ? await probeWizardContract(wizard) : null;
+      const line =
+        outcome?.summary ??
+        `"${id}" has no provider kind that can be contract-checked.`;
       this.bus.emit({ type: "providers_status", line });
       this.bus.emit({ type: "runtime_info", line });
+      // What the route actually said, on the one surface where it is
+      // worth the noise: this command was typed to diagnose something,
+      // and a verdict sentence alone leaves the operator guessing which
+      // 400 they are looking at. Bounded and credential-scrubbed at the
+      // source (`redactProviderDetail`), and only when there is a
+      // problem — a passing route's stream summary tells nobody
+      // anything.
+      if (outcome?.result && !outcome.proven && outcome.result.detail.length > 0) {
+        this.bus.emit({
+          type: "runtime_info",
+          line: `Route said: ${outcome.result.detail}`,
+        });
+      }
     } catch (err) {
       this.bus.emit({
         type: "providers_status",

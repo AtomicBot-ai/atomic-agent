@@ -38,14 +38,18 @@ export type ProviderContractStatus =
   /** One complete native tool call came back over the stream. */
   | "tools_supported"
   /**
-   * The route took the tools payload but chose to answer in prose under
-   * `tool_choice: auto`. That is a legal answer for a model, so it says
-   * nothing about whether the route can emit tool calls at all.
+   * The route took the tools payload but produced no callable tool for
+   * a reason that says nothing about the route: it answered in prose
+   * under `tool_choice: auto` (legal for a model), or the probe's own
+   * `max_tokens` cut the answer short.
    */
   | "inconclusive_no_tool_call"
   /**
    * The route accepted a forced named tool choice and then answered
-   * text anyway — it advertises the parameter without honoring it.
+   * text anyway — it advertises the parameter without honoring it — and
+   * called nothing under `auto` either. The second half matters: `auto`
+   * is the only mode a turn uses, so a route that ignores forcing but
+   * calls tools without it is reported as working, not as this.
    */
   | "forced_tool_choice_ignored"
   /**
@@ -58,6 +62,13 @@ export type ProviderContractStatus =
    * the same streamed completion once `tools` was removed.
    */
   | "tools_payload_rejected"
+  /**
+   * The route refused the `max_tokens` cap every Atomic turn carries
+   * (newer OpenAI models want `max_completion_tokens` instead). Nothing
+   * was learned about tools, and nothing needed to be: the turn path
+   * has no second field to try, so it would fail the same way.
+   */
+  | "token_cap_rejected"
   /** The configured model is unknown to this route. */
   | "model_unavailable"
   /** The endpoint refused the credential; nothing else was learned. */
@@ -97,6 +108,14 @@ export interface ProviderContractProbeTarget {
    */
   readonly model: string;
   readonly extraHeaders?: Record<string, string>;
+  /**
+   * What a turn would put in `parallel_tool_calls` for this provider —
+   * the executor's cap and the provider's declared capability, resolved
+   * by the caller because neither is visible from here. Defaults to
+   * `true`, which is what `buildOpenAiChatBody` sends for a provider
+   * that declares nothing.
+   */
+  readonly parallelToolCalls?: boolean;
 }
 
 export interface ProviderContractProbeResult {
@@ -117,34 +136,26 @@ export interface ProviderContractProbeResult {
 }
 
 /**
- * The one verdict that means "this route can run a turn". Everything
- * else is either a failure or an open question, and neither may be
- * reported as proven compatibility.
+ * The verdicts that mean "this route can run a turn". Everything else
+ * is either a failure or an open question, and neither may be reported
+ * as proven compatibility.
+ *
+ * Two of them qualify, because a turn is a narrower thing than the
+ * probe's primary instrument. `step-executor` sends
+ * `tool_choice: "auto"` on every request and never a forced or named
+ * choice — deliberately, with production-observed reasons written down
+ * beside it (Alibaba's Qwen-thinking gate answers `400 InvalidParameter`
+ * to a forced choice at all). A route that refuses the forcing and then
+ * streams a complete native tool call under `auto` therefore runs every
+ * real Atomic turn correctly, and calling it unproven would warn
+ * operators who are not hitting any bug. The forced rung stays first
+ * because it is the only mode in which "no tool call" is a statement
+ * about the route rather than about the model's mood.
  */
 export function contractProbeProvesToolSupport(
   status: ProviderContractStatus,
 ): boolean {
-  return status === "tools_supported";
-}
-
-/**
- * `true` when the probe learned something about the *route* rather than
- * about the model's whim. Used to decide whether a warning is worth
- * showing: an inconclusive auto-mode answer is not a defect to report.
- */
-export function contractProbeFoundDefect(
-  status: ProviderContractStatus,
-): boolean {
-  return (
-    status === "forced_tool_choice_ignored" ||
-    status === "forced_tool_choice_rejected" ||
-    status === "tools_payload_rejected" ||
-    status === "model_unavailable" ||
-    status === "endpoint_auth_failed" ||
-    status === "quota_or_routing_failed" ||
-    status === "stream_early_eof" ||
-    status === "malformed_tool_call"
-  );
+  return status === "tools_supported" || status === "forced_tool_choice_rejected";
 }
 
 /**

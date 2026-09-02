@@ -20,6 +20,7 @@
  * how a diagnostic tool loses their trust.
  */
 
+import { getConfig } from "../../config/index.js";
 import type { ProviderContractProbeTarget } from "../../llm/provider/verify/index.js";
 import { isLocalProviderUrl } from "./is-local-provider-url.js";
 import {
@@ -27,7 +28,6 @@ import {
   chosenModelForWizard,
   endpointForKind,
   providerLabelForWizard,
-  wizardKeyIsOptional,
 } from "./providers-wizard-target.js";
 import type { ProvidersWizardState } from "./providers-wizard-state.js";
 
@@ -57,18 +57,23 @@ export function contractProbeTargetForWizard(
   // this contract, and inventing one would probe a URL it never uses.
   if (kind === "claude-cli" || kind === "codex-cli") return skip("cli_backed");
 
-  const apiKey = apiKeyForWizard(wizard)?.trim() ?? "";
-  // Keyless is legitimate for local servers and keyless-listing
-  // services; a missing key everywhere else is already refused by the
-  // key screen, and probing without one would only re-report that.
-  if (!apiKey && !wizardKeyIsOptional(wizard)) return skip("no_api_key");
-
   const endpoint = endpointForKind(kind, wizard);
   // A server on this machine is the operator's own: reachable, free to
   // call, and a probe against it says more about their llama-server
   // flags than about a provider. The key check skips it for the same
-  // reason.
+  // reason. Checked before the key, because a local server having none
+  // is the *reason* it has none.
   if (isLocalProviderUrl(endpoint.baseUrl)) return skip("local_endpoint");
+
+  const apiKey = apiKeyForWizard(wizard)?.trim() ?? "";
+  // No key, no probe — including for the presets `wizardKeyIsOptional`
+  // lets through. That flag means "this service lists its models
+  // without a key", which is true of Nous, Novita, Ollama Cloud,
+  // SambaNova and Sarvam and says nothing about completions: they all
+  // answer a keyless one with a 401. Probing anyway would spend a
+  // request to tell the operator their key "was rejected" when no key
+  // was ever sent.
+  if (!apiKey) return skip("no_api_key");
 
   const model = chosenModelForWizard(wizard).trim();
   if (!model) return skip("no_model");
@@ -81,6 +86,13 @@ export function contractProbeTargetForWizard(
       apiPathPrefix: endpoint.apiPathPrefix,
       apiKey,
       model,
+      // What `buildOpenAiChatBody` would put in `parallel_tool_calls`
+      // for a provider saved from this wizard. The wizard has no screen
+      // for the per-provider `supportsTools` flag, so the executor's cap
+      // is the only half of the turn's expression that can differ here
+      // (`step-executor`: `maxParallelToolCalls > 1 &&
+      // supportsParallelTools`).
+      parallelToolCalls: getConfig().agent.maxParallelToolCalls > 1,
       ...(endpoint.extraHeaders ? { extraHeaders: endpoint.extraHeaders } : {}),
     },
   };

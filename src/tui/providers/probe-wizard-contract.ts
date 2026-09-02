@@ -8,13 +8,17 @@
  *    worth refusing because nothing downstream can work without one.
  *  - This answers "can this route run a turn", and the honest response
  *    to "no" is a warning, not a refusal. Some providers block synthetic
- *    probes outright; a custom endpoint the operator knows works must
- *    still be savable, and the operator is the one who decides whether
- *    to live with a route that fires tools only under `auto`.
+ *    probes outright, and a custom endpoint the operator knows works
+ *    must still be savable.
  *
  * What it must not do is let a failed probe pass for a proven one — the
  * caller keys "this install has a working cloud backend" off a clean
- * result, so an unproven route reports as unproven.
+ * result, so an unproven route reports as unproven. Nor may it warn
+ * about something a turn cannot hit: `contractProbeProvesToolSupport`
+ * counts a route that refuses a *forced* tool choice and streams a call
+ * under `auto` as proven, because `auto` is the only mode Atomic ever
+ * sends, and a warning there would be about a bug the operator is not
+ * having.
  */
 
 import {
@@ -40,7 +44,10 @@ export interface WizardContractProbeOutcome {
   readonly proven: boolean;
   /**
    * What to show the operator, or `null` when there is nothing worth
-   * saying: the route passed, or there was nothing here to probe.
+   * saying: the route ran a turn's worth of work, or there was nothing
+   * here to probe. `null` is also what the caller's
+   * "report a working backend" gate keys off, so a probe that ran and
+   * did not prove the route always fills this in.
    */
   readonly warning: string | null;
   /**
@@ -54,14 +61,6 @@ export interface WizardContractProbeOutcome {
   /** The raw verdict, for callers that log or branch on it. */
   readonly result: ProviderContractProbeResult | null;
 }
-
-/**
- * Tighter than the probe module's own budget. This one runs with an
- * operator watching a wizard screen: a route slow enough to blow
- * through it has told us something already, and the save can proceed
- * with the warning rather than holding the screen.
- */
-export const WIZARD_CONTRACT_PROBE_TIMEOUT_MS = 12_000;
 
 export async function probeWizardContract(
   wizard: ProvidersWizardState,
@@ -85,9 +84,12 @@ export async function probeWizardContract(
   }
   const target = resolved.target;
 
+  // No budget of its own: `PROVIDER_CONTRACT_PROBE_TIMEOUT_MS` is
+  // already sized for an operator watching a wizard screen, and this is
+  // the only entry point the probe has.
   const result = await runProviderContractProbe(target, {
     ...(opts.signal ? { signal: opts.signal } : {}),
-    timeoutMs: opts.timeoutMs ?? WIZARD_CONTRACT_PROBE_TIMEOUT_MS,
+    ...(opts.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
   });
   const proven = contractProbeProvesToolSupport(result.status);
   const summary = describeContractProbeOutcome(result, target.label);

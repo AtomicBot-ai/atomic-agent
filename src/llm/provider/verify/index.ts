@@ -15,7 +15,6 @@ export {
 } from "./classify-verify-response.js";
 export {
   CONTRACT_PROBE_TOOL_NAME,
-  contractProbeFoundDefect,
   contractProbeProvesToolSupport,
   contractProbeToolDefinition,
   type ProbeToolChoiceMode,

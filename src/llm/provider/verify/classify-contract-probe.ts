@@ -40,11 +40,13 @@ export function classifyContractProbeHttpFailure(
 ): ProviderContractStatus {
   const verdict = classifyVerifyResponse(httpStatus, body);
   if (verdict.kind === "retry_next_model") return "model_unavailable";
-  // The key check's "resend with the other max-tokens field" hint is
-  // meaningless here: the probe deliberately sends no token cap (see
-  // `run-contract-probe`), so a body naming those fields is the route
-  // complaining about something else it read in our request.
-  if (verdict.kind === "retry_token_field") return "provider_error";
+  // The key check answers this hint by resending with the other field.
+  // The probe must not: it sends the same `max_tokens` a turn sends
+  // (see `run-contract-probe`), and `buildOpenAiChatBody` has no
+  // `max_completion_tokens` fallback to switch to. Retrying would prove
+  // a route works in a shape Atomic never uses and report a pass for a
+  // route whose every turn 400s. So the refusal is the verdict.
+  if (verdict.kind === "retry_token_field") return "token_cap_rejected";
   switch (verdict.status) {
     case "invalid_key":
       return "endpoint_auth_failed";
@@ -73,7 +75,10 @@ export function contractProbeFailureIsTerminal(
   return (
     status === "endpoint_auth_failed" ||
     status === "quota_or_routing_failed" ||
-    status === "model_unavailable"
+    status === "model_unavailable" ||
+    // Every rung carries the same token cap, so the next one would be
+    // refused for the same reason — and it is a real finding already.
+    status === "token_cap_rejected"
   );
 }
 
@@ -92,6 +97,14 @@ export function classifyProbeStream(
 ): ProviderContractStatus {
   if (!observation.terminalObserved) return "stream_early_eof";
 
+  // The probe's own `max_tokens` ran out. A verbose or thinking model
+  // can spend it honestly before it gets to a tool call, or in the
+  // middle of one, so everything below this line would be blaming the
+  // route for a limit we set. The one thing still worth reading is a
+  // call that arrived *complete* despite the cut — that is proof, and
+  // it is checked below by the same rules as any other.
+  const truncatedByOurCap = observation.finishReason === "length";
+
   if (observation.sawToolCallDelta) {
     const call =
       observation.toolCalls.find((c) => c.name === CONTRACT_PROBE_TOOL_NAME) ??
@@ -99,13 +112,18 @@ export function classifyProbeStream(
     // Deltas arrived and still produced nothing callable. On the real
     // path this is the failure that surfaces as `tool not registered in
     // this agent`, several minutes into a turn.
-    if (!call || call.name.length === 0) return "malformed_tool_call";
-    // Only one function was offered, so any other name is the route
-    // inventing one — the call could never be dispatched.
-    if (call.name !== CONTRACT_PROBE_TOOL_NAME) return "malformed_tool_call";
-    if (!argumentsAreDispatchable(call.arguments)) return "malformed_tool_call";
-    return "tools_supported";
+    const dispatchable =
+      call !== undefined &&
+      call.name.length > 0 &&
+      // Only one function was offered, so any other name is the route
+      // inventing one — the call could never be dispatched.
+      call.name === CONTRACT_PROBE_TOOL_NAME &&
+      argumentsAreDispatchable(call.arguments);
+    if (dispatchable) return "tools_supported";
+    return truncatedByOurCap ? "inconclusive_no_tool_call" : "malformed_tool_call";
   }
+
+  if (truncatedByOurCap) return "inconclusive_no_tool_call";
 
   // No tool call at all. What that means depends entirely on what we
   // asked for, and conflating the two cases is the specific mistake
