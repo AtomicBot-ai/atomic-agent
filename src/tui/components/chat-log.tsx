@@ -270,7 +270,18 @@ function FinalisedMessage({
         text={message.text}
         warn={message.variant === "warn"}
       />
-      <ChatCopyButton text={message.text} />
+      <Box flexDirection="row">
+        <ChatCopyButton text={message.text} />
+        {/*
+          Only the abort notice sets `retryText`, and the button resends
+          THAT — the stopped turn's user prompt — not the notice's own
+          text. Same shared footer row as every other role, so
+          `estimateMessageHeight` stays role-blind.
+        */}
+        {message.retryText !== undefined ? (
+          <ChatTryAgainButton text={message.retryText} />
+        ) : null}
+      </Box>
     </Box>
   );
 }

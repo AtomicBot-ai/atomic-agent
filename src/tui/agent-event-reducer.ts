@@ -17,6 +17,7 @@ import {
   finishRun,
   finishRunWithoutHistory,
   finishTurn,
+  lastUserMessage,
   pushRing,
   startNewRun,
   upsertReasoning,
@@ -458,6 +459,42 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
       );
     }
     case "loop_failed": {
+      // A user-initiated abort is not a failure and must not dress like
+      // one: the operator pressed stop (the chip, Esc, Ctrl+C or
+      // `/abort`) and already knows the turn is dead. Instead of the
+      // warn-styled `Turn failed [cancelled]: This operation was
+      // aborted` wall, leave a calm system notice that says who stopped
+      // it — and carry the aborted turn's user message as `retryText`,
+      // so a mistaken click is one `[try again]` away from undone.
+      //
+      // `state.aborting` is checked alongside the category because the
+      // abort races the LLM stream: killing a response mid-flight can
+      // surface as `[model] model returned empty content` (or another
+      // category) before the AbortError ever propagates, and an
+      // operator who just pressed stop would read that as a provider
+      // failure they caused. Every abort entry point dispatches
+      // `abort_requested` first, and `finishRun` clears the flag, so
+      // the window is exactly the abort the operator asked for.
+      if (event.category === "cancelled" || state.aborting) {
+        const lastRunStatus = "stopped by user";
+        const prompt = lastUserMessage(state);
+        return finishRun(
+          appendChatMessage(
+            appendFeed(state, {
+              kind: "loop_failed",
+              stepIndex: null,
+              line: `» ${lastRunStatus}`,
+              color: "yellow",
+            }),
+            {
+              role: "system",
+              text: "Agent stopped by user.",
+              retryText: prompt.length > 0 ? prompt : undefined,
+            },
+          ),
+          { outcome: "cancelled", reason: lastRunStatus, lastRunStatus },
+        );
+      }
       const lastRunStatus = `failed [${event.category}]: ${event.error.message}`;
       const chatError = formatAgentErrorForChat(
         event.category,
