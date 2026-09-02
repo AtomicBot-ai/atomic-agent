@@ -39,6 +39,20 @@ export interface ReadObservation {
   span: LineRange | null;
   /** Lines visible in the read window (see `ReadCoverageDetail`). */
   totalLines: number;
+  /**
+   * Whether this read rendered `LINE_NUMBER|` prefixes. Part of the
+   * coverage IDENTITY, not of the span: the same lines rendered
+   * differently are different text, so a rendering switch starts a fresh
+   * coverage set exactly the way a content change does.
+   */
+  numbered: boolean;
+  /**
+   * Whether the file has content past `totalLines` that the read's byte
+   * budget hid. Only used to word the notice honestly — a repeat of an
+   * unreachable range is still a repeat, but the fix for it is a bigger
+   * `maxBytes`, not a different offset.
+   */
+  truncated: boolean;
 }
 
 /**
@@ -68,17 +82,28 @@ export function classifyReadResult(
         ? null
         : { start: detail.startLine, end: detail.endLine },
     totalLines: detail.totalLines,
+    numbered: detail.numbered,
+    truncated: detail.truncated,
   };
 }
 
 /**
  * How many lines of `span` are not already in `covered`.
  *
- * `covered` must be sorted, disjoint and non-adjacent (the shape
- * `mergeRange` maintains). Zero means the read was fully contained in
- * what the turn had already seen — the no-progress case the issue is
+ * `covered` is expected to be sorted, disjoint and non-adjacent (the
+ * shape `mergeRange` maintains). Zero means the read was fully contained
+ * in what the turn had already seen — the no-progress case the issue is
  * about, which a plain "same start line?" check misses whenever the model
  * shifts the offset.
+ *
+ * The result is clamped at zero so it is always a count of lines, never
+ * a negative number. `covered` reaching here overlapping violates that
+ * contract but is possible — this function is exported — and overlapping
+ * ranges subtract their shared lines once per range, so the raw
+ * arithmetic can go below zero. That matters because callers test the
+ * result BOTH ways: `> 0` means progress, and `=== 0` is what extends
+ * the no-progress streak. An unclamped `-6` would answer "no" to both
+ * and silently reset the streak.
  */
 export function newlyCoveredCount(
   covered: readonly LineRange[],

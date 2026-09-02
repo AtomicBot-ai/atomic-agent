@@ -157,6 +157,63 @@ describe("os.fs.read coverage detail", () => {
     expect(coverage.totalLines).toBe(2);
   });
 
+  it("reports the rendering mode the read actually used", async () => {
+    // The mode is part of the coverage identity: the same lines with
+    // `LINE_NUMBER|` prefixes are not the same text, so the detector has
+    // to be able to tell the two renderings apart.
+    await writeFile(join(dir, "a.txt"), "one\ntwo\nthree\n", "utf8");
+    expect((await readCoverageOf(dir, { path: "a.txt" })).numbered).toBe(false);
+    expect(
+      (await readCoverageOf(dir, { path: "a.txt", lineNumbers: true })).numbered,
+    ).toBe(true);
+    expect(
+      (
+        await readCoverageOf(dir, {
+          path: "a.txt",
+          offset: 1,
+          limit: 2,
+          lineNumbers: true,
+        })
+      ).numbered,
+    ).toBe(true);
+  });
+
+  it("flags a byte-capped read, in both modes, and only when the cap bites", async () => {
+    const body = Array.from({ length: 400 }, (_, i) => `line ${i + 1}`).join("\n");
+    await writeFile(join(dir, "big.txt"), `${body}\n`, "utf8");
+    expect((await readCoverageOf(dir, { path: "big.txt" })).truncated).toBe(false);
+    expect(
+      (await readCoverageOf(dir, { path: "big.txt", maxBytes: 200 })).truncated,
+    ).toBe(true);
+    expect(
+      (
+        await readCoverageOf(dir, {
+          path: "big.txt",
+          maxBytes: 200,
+          offset: 1,
+          limit: 5,
+        })
+      ).truncated,
+    ).toBe(true);
+  });
+
+  it("does not call a short line window byte-capped", async () => {
+    // The top-level `truncated` detail is also true when the requested
+    // window merely ended before the end of the file — a range another
+    // `offset` can still reach. The coverage flag answers the narrower
+    // question (is there content NO offset of this call can reach?), so
+    // it must stay false here or the notice would blame the byte cap for
+    // a range the model can simply ask for.
+    const body = Array.from({ length: 40 }, (_, i) => `line ${i + 1}`).join("\n");
+    await writeFile(join(dir, "mid.txt"), `${body}\n`, "utf8");
+    const result = await osFsReadTool.run(
+      { path: "mid.txt", offset: 1, limit: 5 },
+      makeCtx(dir),
+    );
+    expect(result.details.truncated).toBe(true);
+    expect(parseReadCoverage(result.details)?.truncated).toBe(false);
+  });
+
   it("reports an empty span for an empty file", async () => {
     await writeFile(join(dir, "empty.txt"), "", "utf8");
     const coverage = await readCoverageOf(dir, { path: "empty.txt" });
@@ -176,7 +233,27 @@ describe("parseReadCoverage", () => {
   };
 
   it("accepts a well-formed detail", () => {
-    expect(parseReadCoverage({ readCoverage: valid })).toEqual(valid);
+    const full = { ...valid, numbered: true, truncated: true };
+    expect(parseReadCoverage({ readCoverage: full })).toEqual(full);
+  });
+
+  it("defaults the rendering and byte-cap flags for a detail that predates them", () => {
+    // A replayed trace or an older session carries neither flag. The
+    // detector must keep working against it (degrading to "plain,
+    // un-capped read"), not reject the whole detail and switch itself off.
+    expect(parseReadCoverage({ readCoverage: valid })).toEqual({
+      ...valid,
+      numbered: false,
+      truncated: false,
+    });
+  });
+
+  it("reads a non-boolean rendering or cap flag as false", () => {
+    expect(
+      parseReadCoverage({
+        readCoverage: { ...valid, numbered: "yes", truncated: 1 },
+      }),
+    ).toMatchObject({ numbered: false, truncated: false });
   });
 
   it("returns null when the detail is absent (older or replayed results)", () => {

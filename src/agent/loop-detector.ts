@@ -216,14 +216,19 @@ export class ToolLoopTracker {
   private readonly pendingTestKeys = new Map<string, string>();
   /**
    * Read-coverage detector state (issue #114): canonical file path → the
-   * content fingerprint that path was last read at, the merged set of
-   * lines read at THAT fingerprint, and how many reads in a row have
-   * returned nothing outside it. Insertion order doubles as a
+   * content fingerprint and rendering that path was last read at, the
+   * merged set of lines read at THAT version, and how many reads in a
+   * row have returned nothing outside it. Insertion order doubles as a
    * least-recently-read order for eviction (see `MAX_TRACKED_READ_FILES`).
    */
   private readonly readCoverage = new Map<
     string,
-    { contentHash: string; covered: LineRange[]; noProgress: number }
+    {
+      contentHash: string;
+      numbered: boolean;
+      covered: LineRange[];
+      noProgress: number;
+    }
   >();
 
   constructor(options: ToolLoopTrackerOptions = {}) {
@@ -428,17 +433,23 @@ export class ToolLoopTracker {
    * blocking it would cost the model information without saving anything.
    *
    * No progress means: the file's content is byte-identical to what it
-   * was when this turn last read it, and every line this read returned
-   * was already returned earlier in the turn. A read that returned no
-   * lines at all (an offset past the end) also counts — it cannot have
-   * shown anything new — but only once the file has been seen at this
-   * version, so the first such read is never flagged.
+   * was when this turn last read it, it was rendered the same way, and
+   * every line this read returned was already returned earlier in the
+   * turn. A read that returned no lines at all (an offset past the end)
+   * also counts — it cannot have shown anything new — but only once the
+   * file has been seen at this version, so the first such read is never
+   * flagged.
+   *
+   * The rendering half of "version" is what keeps a plain read followed
+   * by a `lineNumbers: true` re-read of the same lines — the normal
+   * preparation for a precise edit — off this detector: that re-read
+   * does return text the model did not have.
    */
   checkReadRepeat(observation: ReadObservation): ReadRepeatCheck {
     const prev = this.readCoverage.get(observation.path);
     if (prev === undefined) return { repeat: false, count: 0, covered: "" };
     const previousFingerprint = prev.contentHash;
-    if (prev.contentHash !== observation.contentHash) {
+    if (!sameReadVersion(prev, observation)) {
       return { repeat: false, count: 0, covered: "", previousFingerprint };
     }
     const fresh =
@@ -460,16 +471,16 @@ export class ToolLoopTracker {
    * Fold a completed read into its file's coverage. Call AFTER
    * `checkReadRepeat`.
    *
-   * A different content fingerprint discards the previous coverage
-   * outright: the lines the turn read before belong to a version of the
-   * file that no longer exists, so counting them again would mark a
-   * genuinely new read as no progress. That reset is also what makes an
-   * edit-then-re-read cycle free of false warnings.
+   * A different content fingerprint — or a different rendering — discards
+   * the previous coverage outright: the lines the turn read before belong
+   * to a version of the file that no longer exists, or were rendered
+   * without the line numbers this read added, so counting them again
+   * would mark a genuinely new read as no progress. That reset is also
+   * what makes an edit-then-re-read cycle free of false warnings.
    */
   recordRead(observation: ReadObservation): void {
     const prev = this.readCoverage.get(observation.path);
-    const sameVersion =
-      prev !== undefined && prev.contentHash === observation.contentHash;
+    const sameVersion = prev !== undefined && sameReadVersion(prev, observation);
     const covered = sameVersion ? prev.covered : [];
     const fresh =
       observation.span === null ? 0 : newlyCoveredCount(covered, observation.span);
@@ -478,6 +489,7 @@ export class ToolLoopTracker {
     this.readCoverage.delete(observation.path);
     this.readCoverage.set(observation.path, {
       contentHash: observation.contentHash,
+      numbered: observation.numbered,
       covered:
         observation.span === null ? covered : mergeRange(covered, observation.span),
       noProgress: sameVersion && fresh === 0 ? prev.noProgress + 1 : 0,
@@ -879,6 +891,22 @@ export function formatTestRepeatNotice(verdict: {
 }
 
 /**
+ * Is this read looking at the same version of the file, rendered the
+ * same way, as the coverage already banked for it? Both halves have to
+ * hold: different bytes are different text, and so are the same bytes
+ * with `LINE_NUMBER|` prefixes the previous read did not have.
+ */
+function sameReadVersion(
+  entry: { contentHash: string; numbered: boolean },
+  observation: ReadObservation,
+): boolean {
+  return (
+    entry.contentHash === observation.contentHash &&
+    entry.numbered === observation.numbered
+  );
+}
+
+/**
  * Notice injected when the same unchanged file was read again without
  * reaching a new line (issue #114, warn-only).
  *
@@ -887,6 +915,15 @@ export function formatTestRepeatNotice(verdict: {
  * is the model not realising its shifted `offset`/`limit` landed inside
  * text it already has. Line numbers and the path only: no file content
  * appears here, in the event, or in the log line.
+ *
+ * The remediation sentence is chosen from three cases, because the same
+ * advice is not true of all of them. A read that returned nothing did
+ * NOT re-read a covered range — it asked for a range that does not
+ * exist, either past the end of the file or (when `truncated`) behind
+ * the read's byte budget — and telling that model to "read a range you
+ * have not covered" points it straight back at the request that just
+ * failed. Naming the reachable window, and the byte cap when there is
+ * one, is the only advice that can actually unstick it.
  */
 export function formatReadRepeatNotice(verdict: {
   count: number;
@@ -895,22 +932,44 @@ export function formatReadRepeatNotice(verdict: {
   endLine: number;
   totalLines: number;
   covered: string;
+  truncated?: boolean;
 }): string {
   const label = sanitizeReadPath(verdict.path);
-  const returned =
-    verdict.startLine === 0
-      ? "returned no lines at all"
-      : `returned lines ${verdict.startLine}-${verdict.endLine}`;
-  const lines = [
-    `You read ${label} ${verdict.count} times in a row without reaching a line you had not already read this turn. The last read ${returned}, and the file's content has not changed since the previous read.`,
-  ];
+  const empty = verdict.startLine === 0;
+  const reach =
+    verdict.totalLines > 0
+      ? `lines 1-${verdict.totalLines}`
+      : "no lines at all";
+  const lines: string[] = [];
+  if (empty) {
+    lines.push(
+      `You read ${label} ${verdict.count} times in a row without reaching a line you had not already read this turn. The last read returned no lines at all: the range you asked for is outside the part of the file this read can reach, which is ${reach}.`,
+    );
+  } else {
+    lines.push(
+      `You read ${label} ${verdict.count} times in a row without reaching a line you had not already read this turn. The last read returned lines ${verdict.startLine}-${verdict.endLine}, and the file's content has not changed since the previous read.`,
+    );
+  }
   if (verdict.covered.length > 0) {
     lines.push(
       `Already read this turn: lines ${verdict.covered}${verdict.totalLines > 0 ? ` (of ${verdict.totalLines} readable lines)` : ""}.`,
     );
   }
+  if (empty && verdict.truncated === true) {
+    lines.push(
+      `The file is larger than this read's \`maxBytes\` budget, so everything past line ${verdict.totalLines} is invisible to it no matter which \`offset\` you pass. Raise \`maxBytes\` to reach further into the file, or work with the part you can already see.`,
+    );
+  } else if (empty) {
+    lines.push(
+      `Asking for an \`offset\` past the end returns nothing. Stay inside ${reach}, open a different file, or act on what you already have.`,
+    );
+  } else {
+    lines.push(
+      "Re-reading a covered range returns the same text. Read a range you have not covered, open a different file, or act on what you already have.",
+    );
+  }
   lines.push(
-    "Re-reading a covered range returns the same text. Read a range you have not covered, open a different file, or act on what you already have. If the repeat was intentional, continue — this is a warning, nothing was blocked.",
+    "If the repeat was intentional, continue — this is a warning, nothing was blocked.",
   );
   return lines.join("\n");
 }

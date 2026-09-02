@@ -62,6 +62,13 @@ export interface BatchLoopSignal {
     endLine: number;
     /** Lines visible in the read window. */
     totalLines: number;
+    /**
+     * Whether the file has content past `totalLines` that the read's
+     * byte budget hid. The notice needs it to tell "you asked for a line
+     * past the end of the file" apart from "you asked for a line the
+     * byte cap hid", which have opposite fixes.
+     */
+    truncated: boolean;
     /** Compact list of lines already read this turn, e.g. `"1-40, 88-120"`. */
     covered: string;
     /** Content fingerprint this read saw. */
@@ -677,6 +684,7 @@ function observeReadCoverage(
       startLine: observation.span?.start ?? 0,
       endLine: observation.span?.end ?? 0,
       totalLines: observation.totalLines,
+      truncated: observation.truncated,
       covered: repeat.covered,
       fingerprint: observation.contentHash,
       // `checkReadRepeat` only reports a repeat when it has seen this

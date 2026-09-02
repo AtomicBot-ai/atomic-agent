@@ -114,10 +114,11 @@ async function readByBytes(
           size,
           truncated,
           bytesRead: toRead,
-          [READ_COVERAGE_DETAIL_KEY]: coverage(canonical, buffer, {
+          [READ_COVERAGE_DETAIL_KEY]: coverage(canonical, buffer, args, {
             startLine: lineCount === 0 ? 0 : 1,
             endLine: lineCount,
             totalLines: lineCount,
+            truncated,
           }),
         },
       },
@@ -177,10 +178,17 @@ async function readByLines(
         // end) reports an empty 0/0 span rather than a range it did not
         // return — the detector must never credit coverage for lines the
         // model never saw.
-        [READ_COVERAGE_DETAIL_KEY]: coverage(canonical, buffer, {
+        [READ_COVERAGE_DETAIL_KEY]: coverage(canonical, buffer, args, {
           startLine: sliced.length === 0 ? 0 : startIndex + 1,
           endLine: sliced.length === 0 ? 0 : startIndex + sliced.length,
           totalLines: total,
+          // Deliberately NOT `truncated` from the details above: that one
+          // also fires when the requested window merely ended before the
+          // end of the readable prefix, which another offset can still
+          // reach. The detector asks a narrower question — is there
+          // content no range of this call could return? — and only the
+          // byte cap makes that true.
+          truncated: fileBytesTruncated,
         }),
       },
     },
@@ -192,11 +200,16 @@ async function readByLines(
 function coverage(
   canonical: string,
   bytesRead: Buffer,
-  span: Pick<ReadCoverageDetail, "startLine" | "endLine" | "totalLines">,
+  args: ReadArgs,
+  span: Pick<
+    ReadCoverageDetail,
+    "startLine" | "endLine" | "totalLines" | "truncated"
+  >,
 ): ReadCoverageDetail {
   return {
     path: canonical,
     contentHash: hashReadContent(bytesRead),
+    numbered: args.lineNumbers,
     ...span,
   };
 }

@@ -44,6 +44,39 @@ describe("read coverage range algebra", () => {
     expect(newlyCoveredCount(covered, { start: 38, end: 45 })).toBe(0);
   });
 
+  it("merges a span that closes the gap between two intervals", () => {
+    // The mirror image of the case above: the new span is adjacent to
+    // the interval AFTER it, not before it. Both adjacency tests use a
+    // ±1 slack, and losing either one leaves a one-line seam that
+    // `describeCoverage` then renders as two ranges ("1-19, 20-30")
+    // while the module documents its coverage as non-adjacent.
+    const covered: LineRange[] = [
+      { start: 1, end: 10 },
+      { start: 20, end: 30 },
+    ];
+    expect(mergeRange(covered, { start: 11, end: 19 })).toEqual([
+      { start: 1, end: 30 },
+    ]);
+    // Adjacency on one side only still merges only that side.
+    expect(mergeRange(covered, { start: 12, end: 19 })).toEqual([
+      { start: 1, end: 10 },
+      { start: 12, end: 30 },
+    ]);
+  });
+
+  it("never reports a negative count for overlapping input", () => {
+    // `covered` is documented as disjoint, but `newlyCoveredCount` is
+    // exported and a caller can break that. Overlapping ranges subtract
+    // their shared lines once each, so the raw arithmetic goes negative —
+    // and a negative answers "no" to both `> 0` (progress) and `=== 0`
+    // (extend the streak), quietly disabling the detector.
+    const overlapping: LineRange[] = [
+      { start: 1, end: 10 },
+      { start: 5, end: 15 },
+    ];
+    expect(newlyCoveredCount(overlapping, { start: 5, end: 10 })).toBe(0);
+  });
+
   it("keeps disjoint ranges separate and sorted", () => {
     let covered = mergeRange([], { start: 50, end: 60 });
     covered = mergeRange(covered, { start: 1, end: 10 });
@@ -82,6 +115,8 @@ describe("classifyReadResult", () => {
     startLine: 3,
     endLine: 9,
     totalLines: 40,
+    numbered: true,
+    truncated: true,
   };
 
   it("extracts the observation from a successful read", () => {
@@ -96,6 +131,10 @@ describe("classifyReadResult", () => {
       contentHash: "hash1",
       span: { start: 3, end: 9 },
       totalLines: 40,
+      // The rendering and byte-cap flags are part of the observation:
+      // one decides coverage identity, the other the notice wording.
+      numbered: true,
+      truncated: true,
     });
   });
 
@@ -139,8 +178,9 @@ function observe(
   contentHash: string,
   span: LineRange | null,
   totalLines = 200,
+  numbered = false,
 ): Parameters<ToolLoopTracker["recordRead"]>[0] {
-  return { path, contentHash, span, totalLines };
+  return { path, contentHash, span, totalLines, numbered, truncated: false };
 }
 
 describe("ToolLoopTracker read-coverage detector", () => {
@@ -231,6 +271,34 @@ describe("ToolLoopTracker read-coverage detector", () => {
     ).toBe(false);
   });
 
+  it("resets coverage when the rendering changes", () => {
+    // Re-reading covered lines WITH line numbers returns text the model
+    // did not have — the numbers themselves, which is the usual last step
+    // before a precise edit. Flagging that would be a false positive, and
+    // the notice's "re-reading a covered range returns the same text"
+    // would be an untrue claim.
+    const tracker = new ToolLoopTracker();
+    tracker.recordRead(observe("/a.ts", "v1", { start: 1, end: 100 }));
+    const numbered = observe("/a.ts", "v1", { start: 10, end: 20 }, 200, true);
+    const check = tracker.checkReadRepeat(numbered);
+    expect(check.repeat).toBe(false);
+    // The content genuinely did not change; only the rendering did.
+    expect(check.previousFingerprint).toBe("v1");
+    tracker.recordRead(numbered);
+    // …and the numbered coverage starts fresh, so 1-100 is worth reading
+    // again in the new rendering, while a numbered re-read of 10-20 is not.
+    expect(
+      tracker.checkReadRepeat(
+        observe("/a.ts", "v1", { start: 1, end: 100 }, 200, true),
+      ).repeat,
+    ).toBe(false);
+    expect(
+      tracker.checkReadRepeat(
+        observe("/a.ts", "v1", { start: 12, end: 18 }, 200, true),
+      ).repeat,
+    ).toBe(true);
+  });
+
   it("keeps files independent, so a multi-file scan never trips", () => {
     const tracker = new ToolLoopTracker();
     for (let i = 0; i < 50; i += 1) {
@@ -299,6 +367,39 @@ describe("formatReadRepeatNotice", () => {
   it("words an empty return honestly", () => {
     const notice = formatReadRepeatNotice({ ...base, startLine: 0, endLine: 0 });
     expect(notice).toContain("returned no lines at all");
+    // An empty return did NOT re-read a covered range, so the notice must
+    // not say it did — that advice points back at the request that just
+    // came back empty.
+    expect(notice).not.toContain("Re-reading a covered range");
+    expect(notice).toContain("outside the part of the file this read can reach");
+    expect(notice).toContain("Stay inside lines 1-900");
+  });
+
+  it("blames the byte cap, not the offset, when the cap is what hid the lines", () => {
+    // The model asked for a line behind `maxBytes`. Telling it to "read a
+    // range you have not covered" is advice it cannot act on: no offset
+    // reaches past the cap. Naming the cap is the only way out.
+    const notice = formatReadRepeatNotice({
+      ...base,
+      startLine: 0,
+      endLine: 0,
+      truncated: true,
+    });
+    expect(notice).toContain("`maxBytes`");
+    expect(notice).toContain("Raise `maxBytes`");
+    expect(notice).toContain("past line 900");
+    expect(notice).not.toContain("Re-reading a covered range");
+    expect(notice).not.toContain("Stay inside");
+  });
+
+  it("keeps the covered-range advice for a genuinely redundant re-read", () => {
+    // The other side of the same fork: a read that DID return lines the
+    // turn already had gets the original advice, and never the byte-cap
+    // wording — the cap is irrelevant when the range came back.
+    const notice = formatReadRepeatNotice({ ...base, truncated: true });
+    expect(notice).toContain("Re-reading a covered range returns the same text");
+    expect(notice).not.toContain("Raise `maxBytes`");
+    expect(notice).toContain("content has not changed since the previous read");
   });
 });
 
@@ -458,6 +559,120 @@ describe("read-coverage detection end to end", () => {
     expect(
       await runRead(dir, tracker, { path: "src.ts", maxBytes: 4000, offset: 1, limit: 5 }),
     ).toEqual([]);
+  });
+
+  it("does not flag a numbered re-read of a range read plainly", async () => {
+    // The workflow this protects: read the file to understand it, then
+    // re-read the interesting range with `lineNumbers: true` to anchor an
+    // edit. The second read returns text the first one did not — the line
+    // numbers — so it is progress, and two more of them must still not
+    // reach the warn floor on the strength of the plain read alone.
+    expect(await runRead(dir, tracker, { path: "src.ts" })).toEqual([]);
+    expect(
+      await runRead(dir, tracker, {
+        path: "src.ts",
+        offset: 20,
+        limit: 30,
+        lineNumbers: true,
+      }),
+    ).toEqual([]);
+    // A shifted numbered read that stays inside the numbered coverage is
+    // still caught — the reset is per rendering, not an amnesty.
+    const signals = await runRead(dir, tracker, {
+      path: "src.ts",
+      offset: 25,
+      limit: 10,
+      lineNumbers: true,
+    });
+    expect(signals).toHaveLength(1);
+    expect(signals[0]?.detector).toBe("read_repeat");
+  });
+
+  it("blames the byte cap when the requested lines are behind it", async () => {
+    // 200 lines of ~9 bytes; a 300-byte cap makes everything past line ~30
+    // unreachable. The model asking for line 150 twice is not re-reading a
+    // covered range — it is asking for something no `offset` can deliver —
+    // so the signal has to carry that fact through to the notice.
+    const cap = { path: "src.ts", maxBytes: 300 };
+    expect(await runRead(dir, tracker, { ...cap, offset: 1, limit: 5 })).toEqual(
+      [],
+    );
+    expect(
+      await runRead(dir, tracker, { ...cap, offset: 150, limit: 10 }),
+    ).toHaveLength(1);
+    const signals = await runRead(dir, tracker, {
+      ...cap,
+      offset: 170,
+      limit: 10,
+    });
+    expect(signals).toHaveLength(1);
+    const read = signals[0]!.read!;
+    expect(read.startLine).toBe(0);
+    expect(read.endLine).toBe(0);
+    expect(read.truncated).toBe(true);
+    expect(read.totalLines).toBeLessThan(200);
+    const notice = formatReadRepeatNotice({ count: signals[0]!.count, ...read });
+    expect(notice).toContain("Raise `maxBytes`");
+    expect(notice).not.toContain("Re-reading a covered range");
+  });
+
+  it("blames the offset, not the cap, past the end of a fully readable file", async () => {
+    // Same empty return, opposite cause and opposite fix: the whole file
+    // fits in the byte budget, so the model simply asked past its end.
+    expect(await runRead(dir, tracker, { path: "src.ts" })).toEqual([]);
+    expect(
+      await runRead(dir, tracker, { path: "src.ts", offset: 500, limit: 10 }),
+    ).toHaveLength(1);
+    const signals = await runRead(dir, tracker, {
+      path: "src.ts",
+      offset: 900,
+      limit: 10,
+    });
+    const read = signals[0]!.read!;
+    expect(read.truncated).toBe(false);
+    const notice = formatReadRepeatNotice({ count: signals[0]!.count, ...read });
+    expect(notice).toContain("Stay inside lines 1-200");
+    expect(notice).not.toContain("Raise `maxBytes`");
+  });
+
+  it("keys the warn bucket by file version so a post-edit nudge survives", async () => {
+    // `shouldEmitWarning` de-duplicates per `warningKey`. Keyed by path
+    // alone, the bucket set while warning about the OLD content would
+    // swallow the first warning about the new content after an edit.
+    const file = join(dir, "src.ts");
+    expect(await runRead(dir, tracker, { path: "src.ts" })).toEqual([]);
+    const before = await runRead(dir, tracker, {
+      path: "src.ts",
+      offset: 10,
+      limit: 5,
+    });
+    expect(before[0]?.warningKey).toContain(before[0]!.read!.fingerprint);
+
+    await writeFile(file, "changed\nbody\nhere\n", "utf8");
+    expect(await runRead(dir, tracker, { path: "src.ts" })).toEqual([]);
+    const after = await runRead(dir, tracker, {
+      path: "src.ts",
+      offset: 2,
+      limit: 2,
+    });
+    expect(after[0]?.detector).toBe("read_repeat");
+    // Different content ⇒ different key ⇒ a fresh, unspent warn bucket.
+    expect(after[0]?.warningKey).not.toBe(before[0]?.warningKey);
+    const tracker2 = new ToolLoopTracker();
+    expect(
+      tracker2.shouldEmitWarning(
+        before[0]!.warningKey,
+        READ_REPEAT_WARNING_THRESHOLD,
+        READ_REPEAT_WARNING_THRESHOLD,
+      ),
+    ).toBe(true);
+    expect(
+      tracker2.shouldEmitWarning(
+        after[0]!.warningKey,
+        READ_REPEAT_WARNING_THRESHOLD,
+        READ_REPEAT_WARNING_THRESHOLD,
+      ),
+    ).toBe(true);
   });
 
   it("records nothing for a failed read", async () => {

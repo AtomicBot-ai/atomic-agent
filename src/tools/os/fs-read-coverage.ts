@@ -52,6 +52,33 @@ export interface ReadCoverageDetail {
    * largest `endLine` any range of this call could have returned.
    */
   totalLines: number;
+  /**
+   * Whether the returned text carried `LINE_NUMBER|` prefixes.
+   *
+   * Coverage is per rendering as well as per version, because the same
+   * lines rendered differently are not the same text: a model that read
+   * a file plainly and then re-reads a range with `lineNumbers: true` —
+   * the ordinary preparation for a precise edit — genuinely learns
+   * something it did not have. Treating that as a repeat would be a
+   * false positive, and the notice's "re-reading a covered range returns
+   * the same text" would be untrue.
+   *
+   * Absent on results produced before this field existed (a replayed
+   * trace, an older session); `parseReadCoverage` reads a missing value
+   * as `false`, which matches the tool's own default.
+   */
+  numbered: boolean;
+  /**
+   * Whether the file is larger than this read's byte budget, i.e. there
+   * is content past `totalLines` that NO range of this call could reach.
+   *
+   * The detector still flags repeated reads of an unreachable range —
+   * they return nothing and are pure waste — but the remediation it
+   * offers has to be different: "read a range you have not covered" is
+   * useless advice when the range the model wants is behind the byte
+   * cap. See `formatReadRepeatNotice`.
+   */
+  truncated: boolean;
 }
 
 /** Digest of the bytes a read looked at. Short — this is an identity, not a checksum. */
@@ -98,7 +125,20 @@ export function parseReadCoverage(
   // non-inverted range. A half-zero pair (0/5, 3/0) is incoherent.
   const empty = startLine === 0 && endLine === 0;
   if (!empty && (startLine < 1 || startLine > endLine)) return null;
-  return { path, contentHash, startLine, endLine, totalLines };
+  // `numbered` and `truncated` are booleans with a meaningful default:
+  // an older result that predates them is a plain, un-capped read as far
+  // as anything downstream is concerned. Reading them leniently (rather
+  // than rejecting the whole detail) keeps the detector working against
+  // replayed traces instead of silently switching itself off.
+  return {
+    path,
+    contentHash,
+    startLine,
+    endLine,
+    totalLines,
+    numbered: record.numbered === true,
+    truncated: record.truncated === true,
+  };
 }
 
 function asLineNumber(value: unknown): number | null {
