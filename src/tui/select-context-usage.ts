@@ -250,3 +250,28 @@ export function selectContextUsage(state: TuiState): ContextUsageView | null {
     sections,
   };
 }
+
+/**
+ * What the composer's chip renders: the measured view, reprojected at
+ * the operator's draft task count whenever one is in force.
+ *
+ * The detail panel has always projected the draft; the chip kept
+ * showing the last built prompt, so working the selector moved the
+ * panel's numbers while the bar under it sat still — and the one
+ * readout that survives closing the panel never said what was just
+ * chosen. Sharing the panel's own condition (`draft === pairsCap`
+ * means reality already caught up — see `prompt_built`, which retires
+ * the draft on exactly that match) keeps the two surfaces telling one
+ * story, and the draft outliving the panel is deliberate: the chip
+ * carries the chosen figure until a prompt is actually built against
+ * it.
+ */
+export function selectComposerContextUsage(
+  state: TuiState,
+): ContextUsageView | null {
+  const measured = selectContextUsage(state);
+  if (measured === null) return null;
+  const draft = state.contextPanelPairsDraft;
+  if (draft === null || draft === measured.pairsCap) return measured;
+  return usageAtPairs(measured, draft);
+}

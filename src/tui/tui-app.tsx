@@ -15,7 +15,10 @@ import { CodingModePopup } from "./components/coding-mode-popup.js";
 import { OnboardingScreen } from "./components/onboarding-screen.js";
 import { TerminalTooSmall } from "./components/terminal-too-small.js";
 import { ContextPanel } from "./components/context-panel.js";
-import { selectContextUsage } from "./select-context-usage.js";
+import {
+  selectComposerContextUsage,
+  selectContextUsage,
+} from "./select-context-usage.js";
 import { Box, Text, useApp, useInput, type DOMElement, type Key } from "ink";
 import type { HuggingFaceRepoChoices } from "../local-llm/index.js";
 import {
@@ -1637,8 +1640,13 @@ export function TuiApp({
     dispatch({ type: "context_pairs_selected", pairs: next });
   }, []);
 
-  const promptContextSlot = contextUsage ? (
-    <ContextChip usage={contextUsage} layer={MOUSE_LAYER_PANEL} />
+  // The chip follows the operator's draft task count the instant the
+  // selector moves; the panel keeps the measured view and projects the
+  // draft itself, so the two stay in step. See
+  // `selectComposerContextUsage`.
+  const composerContextUsage = selectComposerContextUsage(state);
+  const promptContextSlot = composerContextUsage ? (
+    <ContextChip usage={composerContextUsage} layer={MOUSE_LAYER_PANEL} />
   ) : null;
   // Always drawn, including in `default`. A control that appears only
   // once you are in an unusual mode is a control nobody discovers, and

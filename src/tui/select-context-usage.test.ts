@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProviderRow } from "./providers/providers-panel-state.js";
-import { selectContextUsage } from "./select-context-usage.js";
+import {
+  selectComposerContextUsage,
+  selectContextUsage,
+} from "./select-context-usage.js";
 import { fakeSession } from "./test-fixtures.js";
 import {
   createInitialTuiState,
@@ -88,6 +91,67 @@ describe("selectContextUsage", () => {
     );
     expect(view?.conversationPercent).toBe(100);
     expect(view?.droppedTurns).toBe(4);
+  });
+});
+
+describe("the composer chip follows the task-count draft", () => {
+  /** A session of three tasks, measured under a cap of 20. */
+  function measuredUsage(): ContextUsageState {
+    return usage({
+      tokens: 8_200,
+      contextWindow: 128_000,
+      conversationTokens: 900,
+      conversationPairs: 3,
+      conversationPairsCap: 20,
+      droppedPairs: 0,
+      pairCosts: [300, 280, 320],
+      sections: [
+        { label: "prompt scaffold", tokens: 6_100 },
+        { label: "conversation", tokens: 900 },
+      ],
+    });
+  }
+
+  it("shows the measurement while no draft is in force", () => {
+    const state = stateWith(measuredUsage());
+    expect(selectComposerContextUsage(state)).toEqual(
+      selectContextUsage(state),
+    );
+  });
+
+  /**
+   * The point of the selector: stepping the dial in the panel moves the
+   * chip on the same render, not one prompt build later.
+   */
+  it("reprojects at the draft the moment one exists", () => {
+    const state = stateWith(measuredUsage(), { contextPanelPairsDraft: 22 });
+    const view = selectComposerContextUsage(state);
+    // Everything outside the transcript plus every task that exists —
+    // dialing past the session's real size adds nothing.
+    expect(view?.tokens).toBe(6_100 + 900);
+    expect(view?.pairs).toBe(3);
+    expect(view?.pairsCap).toBe(22);
+    expect(view?.droppedPairs).toBe(0);
+  });
+
+  it("prices a draft below the measured count", () => {
+    const state = stateWith(measuredUsage(), { contextPanelPairsDraft: 2 });
+    const view = selectComposerContextUsage(state);
+    // The two newest tasks survive; the oldest is priced out.
+    expect(view?.conversationTokens).toBe(280 + 320);
+    expect(view?.pairs).toBe(2);
+    expect(view?.droppedPairs).toBe(1);
+  });
+
+  /**
+   * `prompt_built` retires the draft when reality catches up with it;
+   * until that dispatch lands a draft equal to the cap must already
+   * read as the measurement, or the chip would swap a real tokenizer
+   * count for an estimate on a no-op.
+   */
+  it("keeps the measurement when the draft equals the cap", () => {
+    const state = stateWith(measuredUsage(), { contextPanelPairsDraft: 20 });
+    expect(selectComposerContextUsage(state)?.tokens).toBe(8_200);
   });
 });
 
