@@ -12,6 +12,7 @@ import {
 import { checkLlamaServer } from "../llm/llama-server-health.js";
 import { describeLlamaHealthFailure } from "../llm/describe-llama-health-failure.js";
 import { createAgentRuntime, type AgentRuntime } from "../runtime/bootstrap.js";
+import { getAppVersion } from "../version.js";
 import type { LogRecord, LogSink } from "../tracing/structured-logger.js";
 import type { MetricSample, MetricSink } from "../tracing/metrics-collector.js";
 import { isKnownLocalModelId } from "../local-llm/index.js";
@@ -660,7 +661,17 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onAnalyticsSetEnabledRequested: (enabled) =>
           orchestrator.privacy.setAnalyticsEnabled(enabled),
         onPrivacyRefreshRequested: () => orchestrator.privacy.refresh(),
-        onUpdateConfirmed: () => orchestrator.runUpdate(),
+        onUpdateConfirmed: () =>
+          parsed.fakeUpdateVersion
+            ? // The testing ground must never reach install.sh: the
+              // point of `--fake-update` is to look at the surfaces, and
+              // "accept" on a dev build would install the real latest
+              // release over whatever is being worked on.
+              bus.emit({
+                type: "system_message",
+                text: `--fake-update: accepted (v${parsed.fakeUpdateVersion}); install skipped in fake mode`,
+              })
+            : orchestrator.runUpdate(),
         onUpdateRestart: () => {
           restartRequested = true;
         },
@@ -751,7 +762,18 @@ export async function tuiCommand(args: string[]): Promise<number> {
   // Fire-and-forget startup version check. Surfaces an in-app update
   // offer when a newer release is published; silently no-ops when
   // disabled, offline, rate-limited, or running a dev build.
-  void orchestrator.checkForUpdate();
+  // `--fake-update` bypasses the check (a dev build fails
+  // `canSelfUpdate` anyway) and emits the offer directly, so the modal
+  // and the status-bar banner can be exercised on demand.
+  if (parsed.fakeUpdateVersion) {
+    bus.emit({
+      type: "update_available",
+      current: getAppVersion(),
+      latest: parsed.fakeUpdateVersion,
+    });
+  } else {
+    void orchestrator.checkForUpdate();
+  }
 
   try {
     await ink.waitUntilExit();
