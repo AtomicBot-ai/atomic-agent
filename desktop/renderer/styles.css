@@ -542,3 +542,15 @@ body.electron .sb-head { -webkit-app-region: no-drag; }
 .ctxdial { display: flex; align-items: center; gap: var(--s4); padding: var(--s2) var(--s5); }
 .ctxdial .col { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; font-size: 13px; }
 .ctxdial .btn { min-width: 28px; justify-content: center; }
+
+/* tool card summary line (the TUI's └─ line) and grouped runs */
+.cardsum { padding: 4px 12px 7px 36px; font-size: 12px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-top: 1px solid var(--line-soft); }
+.cardsum.bad { color: var(--danger); }
+.cardhead .ar { font-family: var(--font-mono); font-size: 12px; }
+
+/* files and links inside replies */
+.filechip { display: inline-flex; align-items: center; gap: 5px; vertical-align: -3px; padding: 1px 8px 1px 5px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg-raised); color: var(--text-primary); font-size: 13px; font-weight: 500; }
+.filechip:hover { border-color: var(--accent-line); background: var(--accent-wash-soft); }
+.filechip svg { color: var(--accent-text); }
+.msglink { color: var(--accent-text); border-bottom: 1px solid var(--accent-line); }
+.modelrow.dim { opacity: .5; }

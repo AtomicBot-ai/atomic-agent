@@ -1,7 +1,7 @@
 {
   "name": "atomic-agent-desktop",
   "productName": "Atomic Agent",
-  "version": "0.5.0",
+  "version": "0.5.4",
   "description": "Desktop client for atomic-agent. Supervises a local `atag serve` process and drives it over the loopback HTTP API.",
   "license": "MIT",
   "private": true,

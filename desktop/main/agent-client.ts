@@ -275,23 +275,26 @@ export class AgentClient extends EventEmitter {
   session = (id: string) => this.json<unknown>(`/api/sessions/${encodeURIComponent(id)}`);
 
   /**
-   * Plan mode. The runtime keeps it as session state and reads it through
-   * a getter on every tool call, so this takes effect at the next step.
-   * Older agents have no such route — a 404 is reported as unsupported
-   * rather than as an error, so the UI can say why the control is off.
+   * The composer's coding mode, applied live on the runtime by
+   * /api/coding-mode exactly as the TUI does — no config write, no
+   * restart. Older agents have no such route; a 404 is reported as
+   * unsupported so the chip can say why it is off.
    */
-  async planMode(enabled?: boolean): Promise<{ ok: boolean; planMode?: boolean; supported: boolean; error?: string }> {
+  async codingMode(mode?: string): Promise<{
+    ok: boolean; supported: boolean; mode?: string; approvalLevel?: number;
+    planMode?: boolean; baseLevel?: number; error?: string;
+  }> {
     try {
-      const res = await fetch(`${this.base()}/api/plan-mode`, {
-        method: enabled === undefined ? "GET" : "POST",
+      const res = await fetch(`${this.base()}/api/coding-mode`, {
+        method: mode === undefined ? "GET" : "POST",
         headers: this.headers(),
-        ...(enabled === undefined ? {} : { body: JSON.stringify({ enabled }) }),
+        ...(mode === undefined ? {} : { body: JSON.stringify({ mode }) }),
         signal: AbortSignal.timeout(10_000),
       });
-      if (res.status === 404) return { ok: false, supported: false, error: "this agent has no plan-mode route" };
+      if (res.status === 404) return { ok: false, supported: false, error: "this agent has no coding-mode route" };
       if (!res.ok) return { ok: false, supported: true, error: `HTTP ${res.status}` };
-      const body = (await res.json()) as { planMode?: boolean };
-      return { ok: true, supported: true, planMode: !!body.planMode };
+      const body = (await res.json()) as { mode: string; approvalLevel: number; planMode: boolean; baseLevel: number };
+      return { ok: true, supported: true, ...body };
     } catch (err) {
       return { ok: false, supported: true, error: err instanceof Error ? err.message : String(err) };
     }
@@ -315,10 +318,7 @@ export class AgentClient extends EventEmitter {
         // tool_progress). Without this header the stream is plain OpenAI
         // chunks and the UI has no tool cards to draw.
         headers: { ...this.headers(), "x-atomic-extensions": "1" },
-        // `session_id` continues the session the agent already holds
-        // (resolveSession loads it by id), so the turn inherits its
-        // history, its compaction state and its memory instead of the
-        // client replaying the transcript on every request.
+        // `session_id` continues the session the agent already holds.
         body: JSON.stringify({
           model: "atomic-agent",
           stream: true,

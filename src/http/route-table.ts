@@ -37,9 +37,9 @@ import {
 } from "./route-tasks.js";
 import { createWebhookHandler } from "./route-webhooks.js";
 import {
-  createGetPlanModeHandler,
-  createSetPlanModeHandler,
-} from "./route-plan-mode.js";
+  createGetCodingModeHandler,
+  createSetCodingModeHandler,
+} from "./route-coding-mode.js";
 
 /**
  * Build the full atomic-agent HTTP route table. All handlers are
@@ -85,8 +85,8 @@ export function buildRouteTable(): RouteDefinition[] {
     },
     { method: "POST", path: "/api/approval/resolve", handler: createResolveApprovalHandler() },
     { method: "GET", path: "/api/events", handler: createApprovalEventsHandler() },
-    { method: "GET", path: "/api/plan-mode", handler: createGetPlanModeHandler() },
-    { method: "POST", path: "/api/plan-mode", handler: createSetPlanModeHandler() },
+    { method: "GET", path: "/api/coding-mode", handler: createGetCodingModeHandler() },
+    { method: "POST", path: "/api/coding-mode", handler: createSetCodingModeHandler() },
     { method: "POST", path: "/api/tasks", handler: createCreateTaskHandler() },
     { method: "GET", path: "/api/tasks", handler: createListTasksHandler() },
     { method: "GET", path: "/api/tasks/{id}", handler: createGetTaskHandler() },

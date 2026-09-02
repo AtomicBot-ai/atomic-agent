@@ -29,7 +29,7 @@ contextBridge.exposeInMainWorld("atomic", {
   sessions: () => ipcRenderer.invoke("agent:sessions"),
   models: () => ipcRenderer.invoke("agent:models"),
   session: (id: string) => ipcRenderer.invoke("agent:session", id),
-  planMode: (enabled?: boolean) => ipcRenderer.invoke("agent:planMode", enabled),
+  codingMode: (mode?: string) => ipcRenderer.invoke("agent:codingMode", mode),
 
   /** One turn of the agent loop, streamed back over `onChat`. */
   chat: (messages: Array<{ role: string; content: string }>, sessionId?: string) =>
@@ -64,6 +64,8 @@ contextBridge.exposeInMainWorld("atomic", {
 
   /** Shell affordances. */
   chooseWorkspace: () => ipcRenderer.invoke("app:chooseWorkspace"),
+  openPath: (path: string) => ipcRenderer.invoke("app:openPath", path),
+  fileMenu: (path: string) => ipcRenderer.invoke("app:fileMenu", path),
   openExternal: (url: string) => ipcRenderer.invoke("app:openExternal", url),
   onMenu: (cb: (command: unknown) => void) => on("app:menu", cb),
 

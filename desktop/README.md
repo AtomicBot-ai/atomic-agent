@@ -68,61 +68,50 @@ start two task schedulers against the same cron jobs.
 
 Real, driven by the running agent:
 
-- connection state, working directory and llama-server health
-- the transcript: your message, streamed reply, reasoning, tool calls
-- approval prompts, with the agent's own category, reason, preview and
-  affected paths, resolved over `/api/approval/resolve`
-- installed skills, durable tasks, persisted sessions, the tool inventory
-- approval level, active provider and model, and the context cap, all read
-  from the live config
+- connection state and working directory
+- the transcript: your message, the streamed reply, reasoning, and tool cards
+  whose args come off the stream (`tool_progress.label`) and whose result and
+  status are filled in from `GET /api/sessions/{id}` once the turn has been
+  saved — the stream never carries results, the session store does. The
+  duration is the wall time this window observes between a tool's frame and
+  the next frame, and the card's tooltip says so: neither the store (which
+  stamps one `at` on a call and its result) nor the trace (one `ts` at
+  completion) records how long a tool ran, so there is no agent-side number
+  to show. Three or more consecutive calls to the same tool fold into one
+  line.
+- file paths and URLs in replies: files are chips that open in the default
+  app, with a right-click menu (Open · Show in Finder · Copy Path · Save As…);
+  URLs open in the browser
+- approval prompts, resolved over `/api/approval/resolve`
+- installed skills, durable tasks, and sessions — named by their first
+  message and opened in full from the sidebar
+- the model selector: backend, provider and model chips, each opening one
+  pane; switching backend applies immediately; picking a model applies and
+  closes before the config write confirms
+- the add-provider wizard: the TUI's kind list (nothing preselected) → key /
+  base URL → verification by listing the provider's models under that key →
+  saved, activated, and a default model picked
+- the context gauge, measured from the agent's trace after each turn, with
+  the TUI's one control: tasks per turn (`agent.conversationMaxPairs`, 1–100)
+- coding modes default / plan / auto / bypass, applied live through
+  `/api/coding-mode` exactly as the TUI's `onCodingModeChanged` does — the
+  runtime's ladder and plan flag move, `config.json` is untouched. The Privacy
+  pane shows the persisted baseline read-only; the chip is the one approval
+  surface, as in the TUI since PR #303.
 
 Honestly degraded, and labelled as such in the UI:
 
-- **Session grants.** The approval card offers "allow this category" and
-  "allow all *shape* commands" because the TUI does. The HTTP API only
-  implements `allow-once` and `deny`, so those buttons behave as allow-once
-  and say so in the transcript.
-- **Tool results.** The stream carries tool *calls* but not their results;
-  cards close as done without a result body. Recovering them means reading
-  `GET /api/sessions/{id}` after the turn — not wired yet.
-- **Run modes and the cloud-share dial.** Local/Cloud/Fusion is a TUI concept
-  that the HTTP API does not expose. The chip reflects the active provider
-  from config and the dial is inert.
-- **Memory.** There is no HTTP route for it; the room shows demo content.
-- **Tasks and skills are read-only.** Creating, cancelling or enabling would
-  need `atag task` / `atag skill` subprocess calls.
-- Writing config is deliberately absent: `PATCH /api/config` re-defaults every
-  block it does not merge, so it would silently reset `llm.providers`,
-  `mcp.servers` and more. Config writes belong on `atag config set <key>`.
-
-Without an agent binary the window still opens and runs a scripted demo, so the
-design can be reviewed without an install.
-
-## Models and providers
-
-Settings → Models is live, through the CLI rather than the HTTP API.
-
-- **Local** lists the real catalogue from `atag models list` with real
-  on-disk state, sized against this machine's RAM. `Use` runs
-  `atag models use <id>`; `Download` runs `atag models pull <id>` and streams
-  its progress into the pane.
-- **Cloud** lists the providers in `llm.providers`. `Add provider` writes a
-  preset — every one resolves to the `openai-compatible` kind with `baseUrl`
-  filled in, exactly as `src/tui/providers/provider-presets.ts` does — with the
-  key either typed in or left to its environment variable. `Models…` searches
-  that provider's live catalogue via `atag models search <query> --provider
-  <id> --json` and `Select` writes `defaultChatModel`. `Use` switches
-  `llm.activeTextProvider`.
-
-`llm.providers` is a list-valued key, and the CLI states that those "have no
-single-value spelling — set those with the whole-file JSON form". So a provider
-edit reads the whole config, changes one entry, and writes the file back. That
-is not the `PATCH /api/config` hazard: the payload is the file just read, so
-nothing is dropped — asserted by the end-to-end test, which diffs every
-non-`llm` block before and after.
-
-`atag models search` requires a query, so the picker asks for one instead of
-showing an empty list.
+- **Coding modes need an agent that has `/api/coding-mode`.** That route is
+  added in this branch (`src/http/route-coding-mode.ts`); a binary without it
+  answers 404 and the chip says so rather than pretending.
+- **Session grants.** The HTTP API implements `allow-once` and `deny` only, so
+  the card offers exactly those.
+- **Subscription-CLI providers** (`claude-cli`, `codex-cli`) are not in the
+  desktop wizard: their config shape is not one this client writes.
+- **Memory** has no HTTP route; there is no Memory room.
+- **Tasks and skills are read-only.**
+- Writing config goes through `atag config set`, never `PATCH /api/config`,
+  which re-defaults every block it does not merge.
 
 ## Verification
 

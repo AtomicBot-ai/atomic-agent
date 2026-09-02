@@ -17,16 +17,35 @@ const SEL = {
 };
 /* Real token usage, read from the agent's trace after each turn. */
 const PLAN = { on:false, supported:null };
+/* The composer's stance. Read from and written to /api/coding-mode, which
+   moves the runtime's live ladder and plan flag exactly as the TUI's
+   onCodingModeChanged does — config.json is never touched. */
+const MODE = { current:'default', supported:null, baseLevel:null, approvalLevel:null };
+/* The add-provider wizard: pick_kind → configure → verifying. */
+const WIZ = { phase:null, row:null, apiKey:'', baseUrl:'', error:null, busy:false };
+/* Kind rows in the TUI's KIND_ROW_ORDER, minus the two subscription-CLI
+   kinds, whose config shape the desktop does not write. */
+const KIND_ROWS = [
+  {id:'openrouter', kind:'openrouter', label:'OpenRouter (cloud chat + optional cloud embed)', env:'OPENROUTER_API_KEY', defaultModel:'openrouter/auto'},
+  {id:'aimlapi', kind:'aimlapi', label:'AI/ML API (1000+ models, OpenAI-compatible)', env:'AIMLAPI_API_KEY'},
+  {id:'gemini', kind:'gemini', label:'Gemini (Google AI)', env:'GEMINI_API_KEY'},
+  {id:'openai-compatible', kind:'openai-compatible', label:'OpenAI-compatible API (custom base URL)', custom:true, defaultModel:'gpt-5.4-mini'},
+];
+const OPEN_GROUPS = new Set();
 const CTX = { tokens:0, source:null, stablePrefix:0, tail:0, cacheHitTokens:null, modelId:null, window:null, windowLabel:'' };
 /* default / auto / bypass. `plan` is deliberately absent: plan mode is a
    closure variable in the runtime with no route, no config key and no
    request field, so a desktop chip could only paint a state the agent
    does not have. */
 const CODING_MODES = [
-  {id:'plan', label:'plan', detail:'reads only, then proposes', tone:'accent'},
-  {id:'default', label:'default', detail:'asks before risky steps', tone:'ok'},
-  {id:'auto', label:'auto', detail:'edits this folder freely', tone:'warn'},
-  {id:'bypass', label:'bypass permissions', detail:'never asks at all', tone:'bad'},
+  {id:'default', label:'default', detail:'asks before risky steps', tone:'ok',
+   summary:'default — approvals follow the configured approval level'},
+  {id:'plan', label:'plan', detail:'reads only, then proposes', tone:'accent',
+   summary:'plan mode — the agent reads and proposes, and every tool that would change something is refused'},
+  {id:'auto', label:'auto', detail:'edits this folder freely', tone:'warn',
+   summary:'auto — file writes inside this workspace stop asking; everything else still does'},
+  {id:'bypass', label:'bypass permissions', detail:'never asks at all', tone:'bad',
+   summary:'bypass permissions — nothing asks, for the rest of this session. Hardline shell-guard rules still block.'},
 ];
 
 /* Models pane. Mirrors src/tui/providers/provider-presets.ts: every
@@ -50,6 +69,8 @@ const PRESETS = [
   {id:'ollama', label:'Ollama (local)', kind:'openai-compatible', baseUrl:'http://localhost:11434', env:'OLLAMA_API_KEY', local:true},
   {id:'lmstudio', label:'LM Studio (local)', kind:'openai-compatible', baseUrl:'http://localhost:1234', env:'LMSTUDIO_API_KEY', local:true},
 ];
+PRESETS.filter((p) => !['openrouter','aimlapi'].includes(p.id)).forEach((p) =>
+  KIND_ROWS.splice(KIND_ROWS.length - 1, 0, {id:p.id, kind:'openai-compatible', label:p.label, env:p.env, baseUrl:p.baseUrl, apiKeyHeader:p.apiKeyHeader, headers:p.headers}));
 const MP = {
   local: [], localBusy: false, localErr: null, pulling: null, pullLog: [],
   addOpen: false, presetCur: 0, apiKey: '',
@@ -334,7 +355,7 @@ function renderContent() {
 }
 
 function chatView() {
-  const body = S.log.length ? '<div class="col720">' + S.log.map(item).join('') + '</div>' : emptyChat();
+  const body = S.log.length ? '<div class="col720">' + renderItems() + '</div>' : emptyChat();
   return '<div class="scroller" id="scroller">' + body + '</div>' + composer();
 }
 
@@ -352,7 +373,7 @@ function item(m) {
   if (m.k === 'user') return '<div class="turn"><div class="gutter"><span class="avatar">›</span></div>'
     + '<div class="prose usr">' + esc(m.text) + '</div></div>';
   if (m.k === 'assistant') return '<div class="turn"><div class="gutter"><span style="color:var(--accent-text);display:flex">' + MARK_MONO + '</span></div>'
-    + '<div class="prose">' + esc(m.text) + '</div></div>';
+    + '<div class="prose">' + renderProse(m.text) + '</div></div>';
   if (m.k === 'system') return '<div class="sysrow"><span></span><span>' + m.text + '</span></div>';
   if (m.k === 'reason') return '<div class="turn"><div></div><div>'
     + '<button class="disc" data-toggle="' + m.id + '">' + ic(m.open ? 'chevD' : 'chevR') + 'Reasoning · ' + m.steps + ' steps</button>'
@@ -362,20 +383,44 @@ function item(m) {
   return '';
 }
 
+function previewArgs(args) {
+  let obj = args;
+  if (typeof args === 'string') { try { obj = JSON.parse(args); } catch { return args.length > 160 ? args.slice(0, 159) + '\u2026' : args; } }
+  if (!obj || typeof obj !== 'object') return '';
+  const fmt = (v) => {
+    if (v === null || v === undefined) return String(v);
+    if (typeof v === 'string') return JSON.stringify(v.length > 60 ? v.slice(0, 59) + '\u2026' : v);
+    if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+    try { const j = JSON.stringify(v); return j.length > 60 ? j.slice(0, 59) + '\u2026' : j; } catch { return '[object]'; }
+  };
+  const out = Object.entries(obj).map(([k, v]) => k + '=' + fmt(v)).join(' ');
+  return out.length > 160 ? out.slice(0, 159) + '\u2026' : out;
+}
+function argsBlock(args) {
+  if (!args) return '(no args)';
+  if (typeof args === 'string') { try { return JSON.stringify(JSON.parse(args), null, 2); } catch { return args; } }
+  try { return JSON.stringify(args, null, 2); } catch { return '[unserialisable args]'; }
+}
 function toolCard(m) {
   const running = m.ok === null;
   const glyph = running ? '<span class="dot run"></span>'
     : m.ok ? '<span style="color:var(--success);display:flex">' + ic('check') + '</span>'
            : '<span style="color:var(--danger);display:flex">' + ic('warn') + '</span>';
+  const summary = (m.out || '').trim().replace(/\s+/g, ' ');
+  const clipped = summary.length > 160 ? summary.slice(0, 159) + '\u2026' : summary;
   return '<div class="card' + (running ? ' running' : '') + (m.ok === false ? ' err' : '') + '" id="card-' + m.id + '">'
     + '<button class="cardhead" data-toggle="' + m.id + '" aria-expanded="' + (!!m.open) + '">'
-      + glyph + '<span class="nm">' + esc(m.name) + '</span><span class="ar">' + esc(m.arg) + '</span>'
-      + '<span class="du tnum">' + (running ? '…' : dur(m.ms)) + '</span>'
+      + glyph + '<span class="nm">' + esc(m.name) + '</span>'
+      + '<span class="du tnum" title="' + (m.ms ? 'measured by the agent' : 'wall time observed by this window, from the call frame to the next frame') + '">'
+      + (running ? '\u2026' : dur(m.ms || m.observedMs || 0) || '') + '</span>'
+      + (m.truncated ? '<span class="cap" style="color:var(--warn)">truncated</span>' : '')
+      + '<span class="ar">' + esc(previewArgs(m.args || m.arg)) + '</span>'
       + '<span class="ter" style="display:flex">' + ic(m.open ? 'chevD' : 'chevR') + '</span>'
     + '</button>'
+    + (!m.open && clipped ? '<div class="cardsum' + (m.ok === false ? ' bad' : '') + '">' + esc(clipped) + '</div>' : '')
     + (m.open ? '<div class="cardbody">'
-        + (m.args ? '<div class="micro sec">Args</div><pre>' + esc(m.args) + '</pre>' : '')
-        + '<div class="micro sec">Result</div><pre>' + esc(m.out || '—') + '</pre></div>' : '')
+        + '<div class="micro sec">args</div><pre>' + esc(argsBlock(m.args || m.arg)) + '</pre>'
+        + '<div class="micro sec">result</div><pre>' + esc(running ? '(pending)' : (m.out || '\u2014')) + '</pre></div>' : '')
     + '</div>';
 }
 
@@ -731,44 +776,33 @@ function anchorStyle(sel, width) {
 
 function contextHTML() {
   const agent = (LIVE_CONFIG && LIVE_CONFIG.agent) || {};
-  const maxTokens = agent.conversationMaxTokens || 32000;
-  const maxPairs = agent.conversationMaxPairs || 20;
+  const pairs = agent.conversationMaxPairs || 20;
   const win = CTX.window;
-  const pct = win ? Math.min(100, (CTX.tokens / win) * 100) : 0;
-  const dial = (label, key, value, step, min, max, note) =>
-    '<div class="ctxdial"><span class="col"><span>' + esc(label) + '</span>'
-    + '<span class="cap">' + esc(note) + '</span></span>'
-    + '<span class="hstack">'
-    + '<button class="btn btn-s" data-ctx-step="' + key + ':' + (-step) + '"' + (value <= min ? ' disabled' : '') + '>−</button>'
-    + '<span class="mono tnum" style="min-width:56px;text-align:center">' + tok(value) + '</span>'
-    + '<button class="btn btn-s" data-ctx-step="' + key + ':' + step + '"' + (value >= max ? ' disabled' : '') + '>+</button>'
-    + '</span></div>';
-
+  const title = CTX.tokens
+    ? 'context \u00b7 ' + tok(CTX.tokens) + (win ? ' of ' + tok(win) + ' \u00b7 ' + Math.min(100, Math.round(CTX.tokens / win * 100)) + '%' : ' \u00b7 window unknown')
+    : 'context \u00b7 not measured yet';
+  const rows = CTX.tokens
+    ? '<dl class="kvgrid" style="grid-template-columns:1fr max-content;gap:4px 12px">'
+      + '<dt>prompt scaffold</dt><dd class="mono tnum">' + tok(CTX.stablePrefix) + '</dd>'
+      + '<dt>conversation</dt><dd class="mono tnum">' + tok(CTX.tail) + '</dd>'
+      + (win ? '<dt class="ter">free</dt><dd class="mono tnum ter">' + tok(Math.max(0, win - CTX.tokens)) + '</dd>' : '')
+      + '</dl>'
+    : '<p class="cap" style="margin:0">send a message \u2014 the breakdown comes from the prompt the agent actually builds</p>';
   return '<div class="scrim" data-close="1" style="background:transparent">'
     + '<div class="popover" style="width:360px;' + anchorStyle('.ctxbtn', 360) + '">'
-    + '<div style="padding:12px 16px 4px">'
-      + '<div class="hstack"><span class="hd">Context</span>'
-      + '<span class="mono tnum sec" style="margin-left:auto">' + tok(CTX.tokens)
-      + (win ? ' of ' + tok(win) : '') + '</span></div>'
-      + (win ? '<div class="ctxbar"><i style="width:' + pct + '%;background:var(--accent)"></i>'
-              + '<i style="flex:1;background:var(--bg-sunken)"></i></div>' : '')
-      + '<dl class="kvgrid" style="margin-top:10px;grid-template-columns:1fr max-content;gap:4px 12px">'
-        + '<dt>prompt scaffold</dt><dd class="mono tnum">' + tok(CTX.stablePrefix) + '</dd>'
-        + '<dt>conversation tail</dt><dd class="mono tnum">' + tok(CTX.tail) + '</dd>'
-        + (CTX.cacheHitTokens ? '<dt>cache hit</dt><dd class="mono tnum">' + tok(CTX.cacheHitTokens) + '</dd>' : '')
-      + '</dl>'
-      + '<p class="cap" style="margin:8px 0 0">'
-      + (CTX.source === 'provider'
-          ? 'counted by ' + esc(CTX.modelId || 'the model') + ' on the last prompt this session built'
-          : 'estimated — the last turn reported no count')
-      + ' — it moves when a turn runs, not while you type.</p>'
+    + '<div style="padding:12px 16px 8px"><div class="hd" style="margin-bottom:8px">' + esc(title) + '</div>' + rows
+    + (CTX.tokens ? '<p class="cap" style="margin:8px 0 0">' + (CTX.source === 'provider'
+        ? 'counted by ' + esc(CTX.modelId || 'the model') : 'estimated from the built prompt') + '</p>' : '')
     + '</div>'
-    + '<div class="ctxdials">'
-      + dial('Transcript budget', 'agent.conversationMaxTokens', maxTokens, 4000, 4000, 200000, 'tokens of history the packer may spend')
-      + dial('Pairs kept', 'agent.conversationMaxPairs', maxPairs, 5, 1, 100, 'user/assistant turns embedded in the prompt')
-    + '</div>'
+    + '<div class="ctxdials"><div class="ctxdial"><span class="col"><span>tasks per turn</span>'
+      + '<span class="cap">sent each turn (1-100)</span></span>'
+      + '<span class="hstack">'
+      + '<button class="btn btn-s" data-ctx-step="agent.conversationMaxPairs:-1"' + (pairs <= 1 ? ' disabled' : '') + '>\u2212</button>'
+      + '<span class="mono tnum" style="min-width:40px;text-align:center">' + pairs + '</span>'
+      + '<button class="btn btn-s" data-ctx-step="agent.conversationMaxPairs:1"' + (pairs >= 100 ? ' disabled' : '') + '>+</button>'
+      + '</span></div></div>'
     + '<div class="popfoot"><button class="btn btn-g" data-act="clear">Clear transcript</button>'
-      + '<button class="btn btn-s" data-act="close">Done</button></div></div></div>';
+    + '<button class="btn btn-s" data-act="close">Done</button></div></div></div>';
 }
 
 function sessionSheet() {
@@ -958,7 +992,7 @@ function cloudProvidersSection() {
 
 function privacyPane() {
   const stops = [1, 2, 3, 4, 5].map((n) =>
-    '<button class="stopwrap' + (n <= S.level ? ' filled' : '') + (n === S.level ? ' on' : '') + '" data-act="level:' + n + '">'
+    '<button class="stopwrap' + (n <= S.level ? ' filled' : '') + (n === S.level ? ' on' : '') + '" disabled title="the mode chip on the composer is the approval surface">'
     + '<span class="stopdot">' + (n <= S.level ? '<span style="color:#fff;display:flex">' + ic('check') + '</span>' : '') + '</span>'
     + '<span class="stoplb">' + n + ' ' + LEVEL_NAMES[n] + '</span></button>').join('');
   const rows = CATS.map(([id, label, from]) => '<tr><td>' + esc(label)
@@ -1006,7 +1040,7 @@ function toast(t, s) {
 function act(a) {
   if (!a) return;
   const [k, v] = a.split(':');
-  const close = () => { S.overlay = null; S.menuOpen = null; S.scope = null; S.q = ''; S.cur = 0; S.alert = null; SEL.open = false; SEL.addOpen = false; };
+  const close = () => { S.overlay = null; S.menuOpen = null; S.scope = null; S.q = ''; S.cur = 0; S.alert = null; SEL.open = false; SEL.addOpen = false; WIZ.phase = null; };
 
   if (a === 'close') { close(); render(); return; }
   if (a === 'palette') { close(); S.overlay = 'palette'; render(); return; }
@@ -1014,7 +1048,10 @@ function act(a) {
   if (a === 'shortcuts') { close(); S.overlay = 'shortcuts'; render(); return; }
   if (a === 'context') { close(); S.overlay = 'context'; render(); return; }
   if (a === 'modes') { close(); S.overlay = 'modes'; render(); return; }
-  if (a === 'sel:add') { SEL.addOpen = true; SEL.presetCur = 0; SEL.err = null; render(); return; }
+  if (a === 'sel:add') { WIZ.phase = 'pick_kind'; WIZ.row = null; WIZ.apiKey = ''; WIZ.baseUrl = ''; WIZ.error = null; render(); return; }
+  if (a === 'wiz:back') { WIZ.phase = WIZ.phase === 'configure' ? 'pick_kind' : null; WIZ.error = null; render(); return; }
+  if (a === 'wiz:next') { wizNext(); return; }
+  if (a === 'wiz:cancel') { WIZ.phase = null; render(); return; }
   if (a === 'sel:browseLocal') { SEL.kind = 'model'; SEL.filter = ''; render(); selLoadLocal(); return; }
   if (a === 'sel:closeAdd') { SEL.addOpen = false; render(); return; }
   if (a === 'sel:savePreset') { selSavePreset(); return; }
@@ -1172,6 +1209,12 @@ document.addEventListener('click', (e) => {
   const rm = t.closest('[data-room]'); if (rm) { act('room:' + rm.dataset.room); return; }
   const dl = t.closest('[data-del]'); if (dl) { e.preventDefault(); e.stopPropagation(); act('delask:' + dl.dataset.del); return; }
   const ss = t.closest('[data-ses]'); if (ss) { act('ses:' + ss.dataset.ses); return; }
+  const grp = t.closest('[data-group]');
+  if (grp) { OPEN_GROUPS.add(grp.dataset.group); S.stick = false; render(); return; }
+  const fchip = t.closest('[data-file]');
+  if (fchip && BR) { BR.openPath(fchip.dataset.file.replace(/^~/, homeDir() || '~')).then((r) => { if (r && r.ok === false) toast('Could not open', r.error || ''); }); return; }
+  const mlink = t.closest('[data-url]');
+  if (mlink && BR) { e.preventDefault(); BR.openExternal(mlink.dataset.url); return; }
   const tg = t.closest('[data-toggle]');
   if (tg) { const m = S.log.find((x) => x.id === tg.dataset.toggle); if (m) { m.open = !m.open; S.stick = false; render(); } return; }
   const go = t.closest('[data-goto]');
@@ -1198,6 +1241,8 @@ document.addEventListener('click', (e) => {
   if (selTab) { SEL.kind = selTab.dataset.selTab; SEL.cursor = 0; SEL.filter = ''; SEL.addOpen = false; render(); selEnterModelPane(); return; }
   const selRow = t.closest('[data-sel-row]');
   if (selRow) { selActivate(SEL.rows[+selRow.dataset.selRow]); return; }
+  const wizKind = t.closest('[data-wiz-kind]');
+  if (wizKind) { WIZ.row = KIND_ROWS[+wizKind.dataset.wizKind]; WIZ.phase = 'configure'; WIZ.error = null; render(); return; }
   const selPreset = t.closest('[data-sel-preset]');
   if (selPreset) { SEL.presetCur = +selPreset.dataset.selPreset; render(); return; }
   const ctxStep = t.closest('[data-ctx-step]');
@@ -1401,10 +1446,10 @@ function applyStatus(st) {
 
 async function loadResources() {
   if (!BR) return;
-  BR.planMode().then((res) => {
+  BR.codingMode().then((res) => {
     if (!res) return;
-    PLAN.supported = res.supported;
-    if (res.ok) PLAN.on = !!res.planMode;
+    MODE.supported = res.supported;
+    if (res.ok) { MODE.current = res.mode; MODE.approvalLevel = res.approvalLevel; MODE.baseLevel = res.baseLevel; }
     render();
   });
   const [caps, cfg, skills, tasks, sessions] = await Promise.all([
@@ -1501,6 +1546,13 @@ function startLiveTurn(text) {
 function onChatEvent(ev) {
   if (!ev || ev.turnId !== S.turnId) return;
   const item = S.log.find((m) => m.id === S.streamId);
+  // Any frame after a running tool card brackets that tool's wall time as
+  // observed here. The trace's own measurement replaces it after the turn.
+  for (let i = S.log.length - 1; i >= 0; i--) {
+    const c = S.log[i];
+    if (c.k === 'tool' && c.ok === null && c.startedAt && !c.observedMs) { c.observedMs = Math.max(1, Date.now() - c.startedAt); break; }
+    if (c.k === 'tool') break;
+  }
 
   if (ev.kind === 'session_id') { S.agentSession = pick(ev.payload, 'sessionId', 'session_id', 'id'); return; }
   if (ev.kind === 'reasoning_progress') {
@@ -1520,9 +1572,9 @@ function onChatEvent(ev) {
   if (ev.kind === 'tool_progress') {
     const name = pick(ev.payload, 'tool', 'name') || 'tool';
     if (name === 'reply' || name === 'finish') return;
-    const arg = summariseArgs(pick(ev.payload, 'arguments', 'args', 'input'));
-    const card = {id:nid(), k:'tool', name, arg, where:S.mode === 'cloud' ? 'cloud' : 'local',
-                  ok:null, open:false, args:JSON.stringify(pick(ev.payload, 'arguments', 'args', 'input') ?? {}, null, 2)};
+    // The stream carries the args as `label` (stringified, clipped to 120).
+    const arg = pick(ev.payload, 'label') || '';
+    const card = {id:nid(), k:'tool', name, arg, ok:null, open:false, args:arg, startedAt:Date.now(), turn:S.turnId};
     S.log.splice(S.log.indexOf(item), 0, card);
     S.phase = name;
     render();
@@ -1537,9 +1589,8 @@ function onChatEvent(ev) {
     S.busy = false; S.turnId = null; clearInterval(ticker);
     S.reasonId = null;
     refreshContext();
-    S.log.forEach((m) => {
-      if (m.k === 'tool' && m.ok === null) { m.ok = true; m.out = m.out || '(result not exposed by the HTTP stream)'; m.ms = 0; }
-    });
+    reconcileToolCards();
+    // Cards stay pending until the session store describes them.
     if (item && item.text) S.history.push({role:'assistant', content:item.text});
     if (item && !item.text) item.text = ev.kind === 'aborted' ? '(stopped)' : '(no reply)';
     if (ev.kind === 'error') S.log.push({id:nid(), k:'system', text:'turn failed: ' + esc(ev.error || '')});
@@ -1680,8 +1731,9 @@ function activeProvider() {
 function activeModel() {
   if (BR && S.live.state === 'connected') {
     const p = activeProvider();
-    if (p && p.kind !== 'llama-server' && p.defaultChatModel) return p.defaultChatModel;
-    return S.localModel;
+    if (p && p.kind !== 'llama-server') return p.defaultChatModel || 'no model chosen';
+    const managed = (LIVE_CONFIG && LIVE_CONFIG.localModels && LIVE_CONFIG.localModels.managed) || {};
+    return managed.modelId || 'not configured';
   }
   return S.mode === 'local' ? S.localModel : S.cloudModel;
 }
@@ -2152,7 +2204,7 @@ function selRows() {
   // model pane
   if (selBackend() === 'local') {
     return SEL.local
-      .filter((m) => !SEL.filter || m.id.toLowerCase().includes(SEL.filter.toLowerCase()))
+      .filter((m) => !SEL.filter || modelMatches(m.id, m.family, SEL.filter))
       .map((m) => {
         const fit = fitFor(m.size, OB.ram || 16);
         return {type:'localModel', id:m.id, label:m.id, downloaded:m.downloaded, active:m.active,
@@ -2166,7 +2218,7 @@ function selRows() {
     .filter((m) => {
       if (!f) return true;
       const tags = (m.supportsVision ? 'vision ' : '') + (m.supportsTools && m.supportsTools !== 'none' ? 'tools ' : '');
-      return (m.id + ' ' + tags).toLowerCase().includes(f);
+      return modelMatches(m.id, tags, f);
     })
     .map((m) => ({type:'cloudModel', id:m.id, label:m.id, active:m.id === chosen,
       detail: (m.contextWindow ? tok(m.contextWindow) + ' context' : '')
@@ -2188,26 +2240,30 @@ async function selActivate(row) {
     return;
   }
   if (row.type === 'cloudModel') {
-    SEL.busy = true; render();
-    const res = await BR.setProviderModel(selActiveProviderId(), row.id);
-    SEL.busy = false;
-    if (res && res.ok === false) { SEL.err = res.error || 'could not select the model'; render(); return; }
-    await refreshLiveConfig();
+    // Apply and close first; the config write confirms in the background.
+    const pid = selActiveProviderId();
+    const entry = selProviders().find((p) => p.id === pid);
+    if (entry) entry.defaultChatModel = row.id;
+    S.cloudModel = row.id;
     closeSelector();
-    toast('Model selected', row.id);
+    BR.setProviderModel(pid, row.id).then((res) => {
+      if (res && res.ok === false) toast('Could not select the model', res.error || '');
+      refreshLiveConfig();
+    });
     return;
   }
   if (row.type === 'localModel') {
     if (!row.downloaded) { selPull(row.id); return; }
-    SEL.busy = true; render();
-    const used = await BR.modelsUse(row.id);
-    if (used && used.ok === false) { SEL.busy = false; SEL.err = used.error || 'could not select the model'; render(); return; }
-    await BR.configSet('llm.activeTextProvider', 'local-llama');
-    BR.modelsStart();
-    SEL.busy = false;
-    await refreshLiveConfig();
+    S.localModel = row.id;
+    if (LIVE_CONFIG && LIVE_CONFIG.localModels && LIVE_CONFIG.localModels.managed) LIVE_CONFIG.localModels.managed.modelId = row.id;
     closeSelector();
-    toast('Local model selected', row.id + ' · starting the daemon');
+    (async () => {
+      const used = await BR.modelsUse(row.id);
+      if (used && used.ok === false) { toast('Could not select the model', used.error || ''); refreshLiveConfig(); return; }
+      await BR.configSet('llm.activeTextProvider', 'local-llama');
+      BR.modelsStart();
+      refreshLiveConfig();
+    })();
   }
 }
 
@@ -2232,6 +2288,7 @@ function selectorHTML() {
   // Adding a provider is its own screen: the presets you have NOT
   // configured yet. Mixing it into the provider list is what made
   // "add" feel like another row that led nowhere.
+  if (WIZ.phase) return wizardHTML();
   if (SEL.addOpen) {
     const taken = new Set(selProviders().map((p) => p.id));
     const free = PRESETS.filter((p) => !taken.has(p.id));
@@ -2255,7 +2312,7 @@ function selectorHTML() {
     : SEL.kind === 'provider' ? 'Provider' : 'Model';
 
   // An empty list is not a list — it is one action.
-  if (!rows.length && !SEL.modelsBusy && !SEL.localBusy) {
+  if (!rows.length && !SEL.modelsBusy && !SEL.localBusy && !(SEL.kind === 'model' && SEL.filter)) {
     if (SEL.kind === 'provider') {
       return selShell(title, '<div class="selbody"><p class="cap" style="padding:16px">No cloud provider is configured.</p></div>',
         '<button class="btn btn-p" data-act="sel:add">Add a provider</button>');
@@ -2281,6 +2338,7 @@ function selectorHTML() {
         + esc(r.label) + '</span><span class="cap">' + esc(r.detail || '') + '</span></span>'
         + (r.type === 'localModel' && !r.downloaded ? '<span class="cap">download</span>' : '')
         + '</button>').join('')
+    + (!rows.length && !SEL.modelsBusy && !SEL.localBusy ? '<div class="pad cap">no models match \u201c' + esc(SEL.filter) + '\u201d</div>' : '')
     + '</div>';
 
   const foot = SEL.kind === 'provider'
@@ -2370,13 +2428,7 @@ function contextChip() {
    Coding modes — a projection onto the approval ladder
    ============================================================ */
 
-function currentMode() {
-  if (PLAN.on) return 'plan';
-  if (S.level >= 5) return 'bypass';
-  if (S.baseLevel != null && S.level > S.baseLevel) return 'auto';
-  if (S.level >= 2 && (S.baseLevel == null || S.baseLevel < 2)) return 'auto';
-  return 'default';
-}
+function currentMode() { return MODE.current; }
 
 function codingModeChip() {
   const id = currentMode();
@@ -2392,58 +2444,35 @@ function modesHTML() {
     + '<div class="popover" style="width:360px;' + anchorStyle('.cmodechip', 360) + '">'
     + CODING_MODES.map((m) => {
         const on = m.id === currentMode();
-        const off = m.id === 'plan' && PLAN.supported === false;
+        const off = MODE.supported === false;
         return '<button class="poprow' + (on ? ' on' : '') + (off ? ' dim' : '') + '" data-mode="' + m.id + '">'
           + '<span class="radio"' + (on ? ' style="border-color:var(--accent);border-width:4px"' : '') + '></span>'
           + '<span><span style="font-weight:500">' + esc(m.label) + '</span>'
-          + '<span class="cap" style="display:block">' + esc(off ? 'needs an agent with the plan-mode route' : m.detail) + '</span></span>'
+          + '<span class="cap" style="display:block">' + esc(off ? 'needs an agent with the coding-mode route' : m.detail) + '</span></span>'
           + (on ? '<span class="cap" style="margin-left:auto">current</span>' : '') + '</button>';
       }).join('')
     + '<div style="padding:10px 16px"><p class="cap" style="margin:0">'
-    + 'Each mode is a level on the approval ladder. Changing it writes '
-    + '<span class="mono">agent.approvalLevel</span> and restarts the agent, because the gate reads its level once at boot.'
+    + 'A stance for this session. It moves the live approval ladder and plan flag and writes nothing to config.'
     + '</p></div>'
     + '<div class="popfoot"><button class="btn btn-s" data-act="close">Done</button></div></div></div>';
 }
 
 async function setCodingMode(id) {
   if (S.busy) { toast('Not while a turn is running'); return; }
-  if (id === 'plan' || PLAN.on) {
-    // Plan mode is runtime state, not a level: turning it on leaves the
-    // ladder exactly where it was, which is what makes `default` restore.
-    const want = id === 'plan';
-    S.overlay = null; render();
-    const res = await BR.planMode(want);
-    if (!res || !res.ok) {
-      PLAN.supported = res ? res.supported : true;
-      S.log.push({id:nid(), k:'system', text: res && res.supported === false
-        ? 'plan mode needs an agent build that carries the /api/plan-mode route'
-        : 'could not change plan mode: ' + esc((res && res.error) || '')});
-      render();
-      if (id !== 'plan') { /* fall through to the ladder modes below */ } else return;
-    } else {
-      PLAN.on = !!res.planMode; PLAN.supported = true;
-      S.log.push({id:nid(), k:'system', text: PLAN.on
-        ? 'plan mode — the agent reads and proposes; every tool that would change something is refused'
-        : 'plan mode off'});
-      render();
-      if (id === 'plan') return;
-    }
-  }
-  const base = S.baseLevel == null ? S.level : S.baseLevel;
-  const level = id === 'bypass' ? 5 : id === 'auto' ? Math.max(base, 2) : base;
   S.overlay = null; render();
-  const res = await BR.configSet('agent.approvalLevel', String(level));
-  if (res && res.ok === false) {
-    S.log.push({id:nid(), k:'system', text:'could not change the mode: ' + esc(res.error || '')});
+  const res = await BR.codingMode(id);
+  if (!res || !res.ok) {
+    MODE.supported = res ? res.supported : true;
+    S.log.push({id:nid(), k:'system', text: res && res.supported === false
+      ? 'coding modes need an agent build that carries /api/coding-mode'
+      : 'could not change the mode: ' + esc((res && res.error) || '')});
     render();
     return;
   }
-  S.level = level;
-  S.log.push({id:nid(), k:'system',
-    text:'approval level → ' + level + ' · the agent was restarted to apply it'});
+  MODE.supported = true; MODE.current = res.mode; MODE.approvalLevel = res.approvalLevel; MODE.baseLevel = res.baseLevel;
+  const look = CODING_MODES.find((m) => m.id === res.mode);
+  S.log.push({id:nid(), k:'system', text: esc(look ? look.summary : res.mode)});
   render();
-  BR.restart().then(applyStatus);
 }
 
 if (typeof window !== 'undefined') {
@@ -2463,36 +2492,29 @@ if (typeof window !== 'undefined') {
  */
 async function selChooseBackend(id) {
   SEL.err = null;
+  const llm = LIVE_CONFIG && LIVE_CONFIG.llm;
   if (id === 'cloud') {
     const provs = selProviders();
     if (!provs.length) { SEL.kind = 'provider'; render(); return; }
-    const already = provs.find((p) => p.id === selActiveProviderId());
-    const pick = already || provs[0];
-    SEL.busy = true; render();
-    const res = await BR.configSet('llm.activeTextProvider', pick.id);
-    SEL.busy = false;
-    if (res && res.ok === false) { SEL.err = res.error || 'could not switch to cloud'; render(); return; }
-    await refreshLiveConfig();
-    if (!pick.defaultChatModel) { SEL.kind = 'model'; render(); selLoadModels(pick.id); return; }
+    const pick = provs.find((p) => p.id === selActiveProviderId()) || provs[0];
+    if (llm) llm.activeTextProvider = pick.id;
     closeSelector();
-    toast('Cloud', pick.id + ' · ' + pick.defaultChatModel);
+    BR.configSet('llm.activeTextProvider', pick.id).then((res) => {
+      if (res && res.ok === false) toast('Could not switch to cloud', res.error || '');
+      refreshLiveConfig();
+    });
     return;
   }
-  // local
-  if (!SEL.local.length) await selLoadLocal();
-  const managed = (LIVE_CONFIG && LIVE_CONFIG.localModels && LIVE_CONFIG.localModels.managed) || {};
-  const onDisk = SEL.local.filter((m) => m.downloaded);
-  if (!onDisk.length) { SEL.kind = 'model'; render(); return; }
-  const pick = onDisk.find((m) => m.id === managed.modelId) || onDisk.find((m) => m.active) || onDisk[0];
-  SEL.busy = true; render();
-  const used = await BR.modelsUse(pick.id);
-  if (used && used.ok === false) { SEL.busy = false; SEL.err = used.error || 'could not select the model'; render(); return; }
-  await BR.configSet('llm.activeTextProvider', 'local-llama');
-  BR.modelsStart();
-  SEL.busy = false;
-  await refreshLiveConfig();
+  // Local switches at once. A missing model is the model chip's problem,
+  // and it reads "not configured" until one is picked.
+  if (llm) llm.activeTextProvider = 'local-llama';
   closeSelector();
-  toast('Local', pick.id + ' · starting the daemon');
+  const managed = (LIVE_CONFIG && LIVE_CONFIG.localModels && LIVE_CONFIG.localModels.managed) || {};
+  BR.configSet('llm.activeTextProvider', 'local-llama').then((res) => {
+    if (res && res.ok === false) { toast('Could not switch to local', res.error || ''); refreshLiveConfig(); return; }
+    if (managed.modelId) BR.modelsStart();
+    refreshLiveConfig();
+  });
 }
 
 /* ============================================================
@@ -2555,7 +2577,7 @@ async function ctxAdjust(spec) {
   const delta = Number(spec.slice(at + 1));
   const agent = (LIVE_CONFIG && LIVE_CONFIG.agent) || {};
   const current = agent[key.split('.')[1]] || 0;
-  const bounds = key.endsWith('conversationMaxPairs') ? [1, 100] : [4000, 200000];
+  const bounds = [1, 100];
   const next = Math.max(bounds[0], Math.min(bounds[1], current + delta));
   if (next === current) return;
   // Write first, then repaint from what the config actually took.
@@ -2567,8 +2589,216 @@ if (typeof window !== 'undefined') {
   window.__openSession = (id) => openSession(id);
   window.__logLen = () => S.log.length;
   window.__ctxAdjust = (spec) => ctxAdjust(spec);
+  window.__ctxRefreshCfg = () => refreshLiveConfig();
   window.__ctxCfg = () => {
     const a = (LIVE_CONFIG && LIVE_CONFIG.agent) || {};
     return {tokens:a.conversationMaxTokens, pairs:a.conversationMaxPairs};
   };
+}
+
+
+/** "claude haiku" matches "claude/haiku", "claude.haiku", "claude-3-haiku": every
+    query token must appear once separators are flattened. */
+function modelMatches(id, tags, query) {
+  const flat = (t) => String(t || '').toLowerCase().replace(/[\/\.\-_:\s]+/g, ' ');
+  const hay = flat(id) + ' ' + flat(tags);
+  return flat(query).split(' ').filter(Boolean).every((tok) => hay.includes(tok));
+}
+
+
+/* ============================================================
+   Add-provider wizard — pick_kind → configure → verifying
+   ============================================================ */
+
+function wizardHTML() {
+  if (WIZ.phase === 'pick_kind') {
+    const taken = new Set(selProviders().map((p) => p.id));
+    return selShell('Add a provider',
+      '<div class="selbody"><div class="sellist">' + KIND_ROWS.map((k, i) =>
+        '<button class="modelrow' + (taken.has(k.id) ? ' dim' : '') + '" data-wiz-kind="' + i + '">'
+        + '<span class="col"><span class="nm">' + esc(k.label) + '</span>'
+        + '<span class="cap">' + esc(k.custom ? 'you supply the URL' : k.baseUrl || k.kind) + (taken.has(k.id) ? ' \u00b7 already configured' : '') + '</span></span></button>').join('')
+      + '</div></div>',
+      '<button class="btn btn-g" data-act="wiz:cancel">Cancel</button>');
+  }
+  const k = WIZ.row;
+  const fields = (k.custom
+      ? '<label class="cap">Base URL</label><input class="field-inp" id="wiz-url" style="width:100%" placeholder="https://host/v1" value="' + esc(WIZ.baseUrl) + '">'
+      : '')
+    + '<label class="cap">API key' + (k.env ? ' \u2014 blank reads ' + esc(k.env) : '') + '</label>'
+    + '<input class="field-inp" id="wiz-key" type="password" style="width:100%" value="' + esc(WIZ.apiKey) + '">';
+  const verifying = WIZ.phase === 'verifying';
+  return selShell(k.label,
+    '<div class="selbody" style="padding:12px 16px;display:flex;flex-direction:column;gap:8px">' + fields
+    + (verifying ? '<p class="cap">checking the key against the provider\u2019s model list\u2026</p>' : '')
+    + (WIZ.error ? '<p class="cap" style="color:var(--danger)">' + esc(WIZ.error) + '</p>' : '')
+    + '</div>',
+    '<button class="btn btn-g" data-act="wiz:back"' + (verifying ? ' disabled' : '') + '>Back</button>'
+    + '<button class="btn btn-p" data-act="wiz:next"' + (verifying ? ' disabled' : '') + '>' + (verifying ? 'Verifying\u2026' : 'Next') + '</button>');
+}
+
+async function wizNext() {
+  const k = WIZ.row; if (!k) return;
+  const key = document.getElementById('wiz-key'); WIZ.apiKey = (key && key.value.trim()) || '';
+  const url = document.getElementById('wiz-url'); WIZ.baseUrl = (url && url.value.trim()) || '';
+  if (k.custom && !/^https?:\/\/\S+$/.test(WIZ.baseUrl)) { WIZ.error = 'That does not look like a URL.'; render(); return; }
+  WIZ.phase = 'verifying'; WIZ.error = null; render();
+
+  const id = k.custom ? 'custom-' + WIZ.baseUrl.replace(/^https?:\/\//, '').replace(/[^\w.-]+/g, '-').slice(0, 32) : k.id;
+  const entry = {id, kind:k.kind};
+  if (k.baseUrl || k.custom) entry.baseUrl = k.custom ? WIZ.baseUrl : k.baseUrl;
+  if (k.env) entry.apiKeyEnvVar = k.env;
+  if (WIZ.apiKey) entry.apiKey = WIZ.apiKey;
+  if (k.apiKeyHeader) entry.apiKeyHeader = k.apiKeyHeader;
+  if (k.headers) entry.headers = k.headers;
+
+  let res = await BR.upsertProvider(entry);
+  if (res && res.ok === false) { WIZ.phase = 'configure'; WIZ.error = res.error || 'could not save the provider'; render(); return; }
+
+  // Verification: the provider answers with its model list under this key.
+  const listed = await BR.providerModels(id, k.kind);
+  if (!listed || !listed.ok || !(listed.models || []).length) {
+    WIZ.phase = 'configure';
+    WIZ.error = (listed && listed.error) || 'the provider returned no models for this key';
+    render();
+    return;
+  }
+  const model = k.defaultModel && listed.models.some((m) => m.id === k.defaultModel) ? k.defaultModel : listed.models[0].id;
+  await BR.setProviderModel(id, model);
+  await BR.configSet('llm.activeTextProvider', id);
+  WIZ.phase = null;
+  await refreshLiveConfig();
+  closeSelector();
+  toast('Provider added', k.label.split(' (')[0] + ' \u00b7 ' + model);
+}
+
+
+/** The transcript, with runs of the same tool folded into one line. */
+function renderItems() {
+  const items = S.log; let html = '';
+  for (let i = 0; i < items.length; i++) {
+    const m = items[i];
+    if (m.k === 'tool') {
+      let j = i; while (j + 1 < items.length && items[j + 1].k === 'tool' && items[j + 1].name === m.name) j++;
+      const run = items.slice(i, j + 1);
+      if (run.length >= 3 && !OPEN_GROUPS.has(m.id)) { html += groupCard(run); i = j; continue; }
+    }
+    html += item(m);
+  }
+  return html;
+}
+function groupCard(run) {
+  const m = run[0];
+  const ms = run.reduce((n, c) => n + (c.ms || c.observedMs || 0), 0);
+  const bad = run.filter((c) => c.ok === false).length;
+  const pending = run.some((c) => c.ok === null);
+  const glyph = pending ? '<span class="dot run"></span>'
+    : bad ? '<span style="color:var(--danger);display:flex">' + ic('warn') + '</span>'
+          : '<span style="color:var(--success);display:flex">' + ic('check') + '</span>';
+  const previews = run.map((c) => previewArgs(c.args || c.arg)).filter(Boolean);
+  return '<div class="turn"><div></div><div><div class="card">'
+    + '<button class="cardhead" data-group="' + m.id + '">' + glyph
+    + '<span class="nm">' + run.length + ' \u00d7 ' + esc(m.name) + '</span>'
+    + '<span class="du tnum">' + (pending ? '\u2026' : dur(ms)) + '</span>'
+    + (bad ? '<span class="cap" style="color:var(--danger)">' + bad + ' failed</span>' : '')
+    + '<span class="ar">' + esc(previews.slice(0, 3).join(' \u00b7 ') + (previews.length > 3 ? ' \u2026' : '')) + '</span>'
+    + '<span class="ter" style="display:flex">' + ic('chevR') + '</span></button>'
+    + '</div></div></div>';
+}
+
+/** After a turn, the session store has what the stream never carried:
+    the args, the result, and both timestamps. */
+async function reconcileToolCards(attempt = 0) {
+  if (!BR || !S.agentSession) return;
+  const cards = S.log.filter((m) => m.k === 'tool');
+  if (!cards.length) return;
+  const res = await BR.session(S.agentSession);
+  const turns = res && res.ok && res.data && Array.isArray(res.data.turns) ? res.data.turns : null;
+  const calls = [];
+  if (turns) {
+    for (let i = 0; i < turns.length; i++) {
+      const t = turns[i];
+      if (t.kind !== 'assistant_tool_call') continue;
+      // The cards skip the loop's own reply/finish tools; the store must too,
+      // or the newest call is always `reply` and nothing ever matches.
+      if (t.tool === 'reply' || t.tool === 'finish') continue;
+      let result = null;
+      for (let j = i + 1; j < turns.length; j++) {
+        if (turns[j].kind === 'tool_result') { result = turns[j]; break; }
+        if (turns[j].kind === 'assistant_tool_call') break;
+      }
+      calls.push({call:t, result});
+    }
+  }
+  const newest = calls[calls.length - 1];
+  const pendingCards = cards.filter((c) => c.ok === null);
+  const landed = newest && newest.result && newest.call.tool === cards[cards.length - 1].name
+    && newest.call.at >= (cards[cards.length - 1].startedAt || 0) - 5000;
+  if (!landed && attempt < 8) {
+    // 300ms, 600ms, 1.2s … ≈ 6s in total
+    setTimeout(() => reconcileToolCards(attempt + 1), 300 * Math.pow(2, Math.min(attempt, 4)));
+    return;
+  }
+  for (let c = cards.length - 1, k = calls.length - 1; c >= 0 && k >= 0; c--, k--) {
+    const card = cards[c], {call, result} = calls[k];
+    if (call.tool !== card.name) break;
+    card.args = call.args || card.args;
+    if (result) {
+      card.ok = result.status === 'ok';
+      card.out = result.summary || '';
+      card.truncated = !!result.truncated;
+      if (call.at && result.at) card.ms = Math.max(0, result.at - call.at);
+    }
+  }
+  // Whatever the store still does not describe is finished, just unmeasured.
+  pendingCards.forEach((c) => { if (c.ok === null) { c.ok = true; c.out = c.out || ''; } });
+  render();
+}
+
+/** Escaped prose with files as chips and URLs as links. */
+function renderProse(text) {
+  const URL_RE = /(?<![\w.])(?:https?:\/\/|www\.)[^\s<>"']+/g;
+  const FILE_RE = /(?<![\w\/])((?:~|\/)(?:[\w.@+-]+\/)*[\w.@+-]+\.[A-Za-z0-9]{1,6})(?![\w\/])/g;
+  let html = esc(text);
+  html = html.replace(URL_RE, (u) => {
+    const trail = (u.match(/[.,;:!?)\]}>"'\u00bb]+$/) || [''])[0];
+    const core = u.slice(0, u.length - trail.length);
+    const href = core.startsWith('www.') ? 'https://' + core : core;
+    return '<a class="msglink" href="#" data-url="' + href + '">' + core + '</a>' + trail;
+  });
+  html = html.replace(FILE_RE, (p) => {
+    const name = p.split('/').pop();
+    return '<button class="filechip" data-file="' + p + '" title="' + p + '">' + ic('doc') + '<span>' + name + '</span></button>';
+  });
+  return html;
+}
+function homeDir() {
+  const wd = S.live.workingDir || '';
+  return wd.startsWith('/Users/') ? wd.split('/').slice(0, 3).join('/') : '';
+}
+document.addEventListener('contextmenu', (e) => {
+  const f = e.target.closest && e.target.closest('[data-file]');
+  if (!f || !BR) return;
+  e.preventDefault();
+  BR.fileMenu(f.dataset.file.replace(/^~/, homeDir() || '~'));
+});
+
+/* Hooks for --smoke. */
+if (typeof window !== 'undefined') {
+  window.__modeState = () => ({supported:MODE.supported, current:MODE.current});
+  window.__search = (q) => { SEL.filter = q; return selRows().length; };
+  window.__wizOpen = () => { WIZ.phase = 'pick_kind'; WIZ.row = null; render(); return {rows:KIND_ROWS.length, selected:document.querySelectorAll('[data-wiz-kind].on').length}; };
+  window.__storeDiag = async () => {
+    if (!BR || !S.agentSession) return 'no session';
+    const r = await BR.session(S.agentSession);
+    const turns = (r && r.ok && r.data && r.data.turns) || [];
+    return JSON.stringify({session:S.agentSession, turns:turns.length, tail:turns.slice(-6).map((t) => ({kind:t.kind, tool:t.tool, at:t.at, status:t.status}))});
+  };
+  window.__cards = () => S.log.filter((m) => m.k === 'tool').map((m) => ({
+    name:m.name,
+    args: typeof (m.args || m.arg) === 'string' ? (m.args || m.arg) : JSON.stringify(m.args || m.arg || ''),
+    ms: m.ms || m.observedMs || 0, ok: m.ok,
+    live: !!m.startedAt,   // born on the stream this run, as opposed to loaded from the store
+  }));
+  window.__pushAssistant = (t) => { S.log.push({id:nid(), k:'assistant', text:t}); render(); return document.querySelectorAll('.filechip').length; };
 }

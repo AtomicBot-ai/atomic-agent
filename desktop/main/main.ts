@@ -116,8 +116,8 @@ function wireIpc(client: AgentClient): void {
   ipcMain.handle("agent:session", (_event, id: unknown) =>
     typeof id === "string" ? client.session(id).then((data) => ({ ok: true, data })).catch((e) => ({ ok: false, error: String(e) })) : { ok: false, error: "id required" },
   );
-  ipcMain.handle("agent:planMode", (_event, enabled: unknown) =>
-    client.planMode(typeof enabled === "boolean" ? enabled : undefined),
+  ipcMain.handle("agent:codingMode", (_event, mode: unknown) =>
+    client.codingMode(typeof mode === "string" ? mode : undefined),
   );
 
   ipcMain.handle("agent:chat", (_event, payload: unknown) => {
@@ -244,6 +244,42 @@ function wireIpc(client: AgentClient): void {
   ipcMain.handle("app:hostRam", () => hostRamGb());
   ipcMain.handle("app:keyEnv", () => PROVIDER_KEY_ENV);
 
+  // Files the agent produced: open, reveal, copy, save elsewhere.
+  const safePath = (p: unknown): string | null => {
+    if (typeof p !== "string" || !p.startsWith("/") || p.includes("\0")) return null;
+    return p;
+  };
+  ipcMain.handle("app:openPath", async (_event, p: unknown) => {
+    const path = safePath(p);
+    if (!path) return { ok: false, error: "not a path" };
+    const err = await shell.openPath(path);
+    return err ? { ok: false, error: err } : { ok: true };
+  });
+  ipcMain.handle("app:fileMenu", (event, p: unknown) => {
+    const path = safePath(p);
+    if (!path) return;
+    const { clipboard, Menu } = require("electron") as typeof import("electron");
+    const menu = Menu.buildFromTemplate([
+      { label: "Open", click: () => void shell.openPath(path) },
+      { label: "Show in Finder", click: () => shell.showItemInFolder(path) },
+      { type: "separator" },
+      { label: "Copy Path", click: () => clipboard.writeText(path) },
+      {
+        label: "Save As…",
+        click: async () => {
+          if (!win) return;
+          const { basename } = await import("node:path");
+          const picked = await dialog.showSaveDialog(win, { defaultPath: basename(path) });
+          if (picked.canceled || !picked.filePath) return;
+          const { copyFile } = await import("node:fs/promises");
+          await copyFile(path, picked.filePath);
+        },
+      },
+    ]);
+    const sender = BrowserWindow.fromWebContents(event.sender);
+    menu.popup(sender ? { window: sender } : {});
+  });
+
   ipcMain.handle("app:openExternal", (_event, url: unknown) => {
     if (typeof url === "string" && /^https?:\/\//.test(url)) void shell.openExternal(url);
   });
@@ -353,16 +389,61 @@ async function smokeTest(): Promise<void> {
     check("session opens from the sidebar", opened.turns > 1, `${opened.turns} entries from ${opened.id}`);
 
     // The context dials must write config, not just repaint.
+    // The dial test must leave the operator's setting exactly as it found it,
+    // even if an assertion in between throws.
     const before = await js<{ pairs: number }>("window.__ctxCfg()");
-    await js<void>("window.__ctxAdjust('agent.conversationMaxPairs:5')");
-    await new Promise((r) => setTimeout(r, 4000));
-    const after = await js<{ pairs: number }>("window.__ctxCfg()");
-    check("context dial writes config", after.pairs === before.pairs + 5, `${before.pairs} → ${after.pairs}`);
-    await js<void>(`window.__ctxAdjust('agent.conversationMaxPairs:-5')`);
-    await new Promise((r) => setTimeout(r, 3000));
+    try {
+      await js<void>("window.__ctxAdjust('agent.conversationMaxPairs:1')");
+      await new Promise((r) => setTimeout(r, 4000));
+      const after = await js<{ pairs: number }>("window.__ctxCfg()");
+      check("context dial writes config", after.pairs === before.pairs + 1, `${before.pairs} → ${after.pairs}`);
+    } finally {
+      await configSet("agent.conversationMaxPairs", String(before.pairs));
+      await js<void>("window.__ctxRefreshCfg && window.__ctxRefreshCfg()");
+    }
 
-    const mode = await js<string>("window.__mode()");
-    check("coding mode resolves", ["default", "auto", "bypass"].includes(mode), mode);
+    const modeState = await js<{ supported: boolean | null; current: string }>("window.__modeState()");
+    check(
+      "coding mode is live or honestly unavailable",
+      modeState.supported === false || ["default", "plan", "auto", "bypass"].includes(modeState.current),
+      modeState.supported === false ? "agent lacks /api/coding-mode (reported, not faked)" : `current=${modeState.current}`,
+    );
+
+    // "claude haiku" must find claude/haiku, claude.haiku, claude-3-haiku…
+    const hits = await js<number>("window.__search('claude haiku')");
+    check("search tokenizes across separators", hits > 0, `${hits} hits`);
+    await js<void>("window.__search('')");
+
+    const wiz = await js<{ rows: number; selected: number }>("window.__wizOpen()");
+    check("wizard lists kinds, none preselected", wiz.rows >= 4 && wiz.selected === 0, `${wiz.rows} kinds, ${wiz.selected} selected`);
+    await js<void>("window.__closeAll && window.__closeAll()");
+
+    // A tool-using turn: cards must carry the real args and a duration.
+    await js<void>("window.__ask('List the files in the current directory, then say done.')");
+    const toolDeadline = Date.now() + 150_000;
+    let cards: Array<{ name: string; args: string; ms: number; ok: boolean | null; live: boolean }> = [];
+    while (Date.now() < toolDeadline) {
+      await new Promise((r) => setTimeout(r, 2000));
+      cards = await js<typeof cards>("window.__cards()");
+      const reply = await js<string>("window.__lastReply()");
+      const born = cards.filter((c) => c.live);
+      if (born.length && born.every((c) => c.ok !== null) && /done/i.test(reply)) break;
+    }
+    // Only cards born on this run's stream can be timed; ones rebuilt from the
+    // store have no duration to show, because the store records none.
+    const live = cards.filter((c) => c.live);
+    const withArgs = live.filter((c) => /[{"]/.test(c.args) && c.args.length > 4);
+    const timed = live.filter((c) => c.ms > 0);
+    check("tool cards carry args", live.length > 0 && withArgs.length === live.length, `${withArgs.length}/${live.length} with real args`);
+    check("tool cards carry durations", live.length > 0 && timed.length === live.length, `${timed.length}/${live.length} timed (observed)`);
+    if (timed.length !== live.length) {
+      // Say what the cards held and what the store held, so a failure here is diagnosable from the log alone.
+      process.stdout.write(`DIAG cards=${JSON.stringify(cards)}\n`);
+      process.stdout.write(`DIAG store=${await js<string>("window.__storeDiag ? window.__storeDiag() : 'no hook'")}\n`);
+    }
+
+    const chips = await js<number>("window.__pushAssistant('Saved the report to /Users/valerii/Desktop/report.pdf and the notes to ~/notes/summary.md.')");
+    check("file paths render as chips", chips === 2, `${chips} chips`);
   }
 
   if (MODELS_TEST) await modelsTest(js, check);
