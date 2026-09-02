@@ -15,8 +15,17 @@ vi.mock("../../config/index.js", async (importOriginal) => {
 
 let currentConfig: AtomicAgentConfig;
 
+/**
+ * Enough of the real config for the paths under test: the contract
+ * probe reads `agent.maxParallelToolCalls` to send the
+ * `parallel_tool_calls` a turn would send, so a fixture without it
+ * would fail for a reason no user has.
+ */
+const AGENT_CONFIG = { maxParallelToolCalls: 8 } as AtomicAgentConfig["agent"];
+
 function configWithGemini(): AtomicAgentConfig {
   return {
+    agent: AGENT_CONFIG,
     llm: {
       activeTextProvider: "gemini",
       activeEmbeddingProvider: "local-llama-embed",
@@ -294,6 +303,7 @@ describe("ProvidersOrchestrator.completeWizard", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();
+    vi.doUnmock("../persist-llm-provider.js");
   });
 
   function wizardFor(kind: "openrouter" | "aimlapi"): ProvidersWizardState {
@@ -363,8 +373,153 @@ describe("ProvidersOrchestrator.completeWizard", () => {
     expect(failure?.error).toContain("rejected this key");
   });
 
+  /**
+   * The save path with only the disk writes stubbed: the real key
+   * check, the real contract probe and the real gate between them.
+   * Everything above this point in the file stops at a refused key, so
+   * without it nothing ever reaches the code that decides whether this
+   * install may be reported as having a working backend.
+   */
+  async function importOrchestratorWithStubbedDisk() {
+    vi.doMock("../persist-llm-provider.js", async (importOriginal) => {
+      const original =
+        await importOriginal<typeof import("../persist-llm-provider.js")>();
+      return {
+        ...original,
+        upsertLlmProvider: vi.fn(),
+        writeProviderApiKeyToDotenv: vi.fn(),
+        setActiveTextProviderInConfig: vi.fn(),
+      };
+    });
+    return importFreshOrchestrator();
+  }
+
+  /**
+   * Answers the pre-save key check with a live key, and hands the probe
+   * request — the streamed one, carrying `tools` — to the caller.
+   */
+  function stubSaveFetch(probeAnswer: () => Response) {
+    const bodies: Record<string, unknown>[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: unknown, init?: RequestInit) => {
+        if (!String(url).includes("/chat/completions")) {
+          return new Response(JSON.stringify({ data: [] }), { status: 200 });
+        }
+        const body = JSON.parse(String(init?.body ?? "{}")) as Record<
+          string,
+          unknown
+        >;
+        bodies.push(body);
+        if (body.stream !== true) {
+          return new Response(
+            JSON.stringify({ choices: [{ message: { content: "ok" } }] }),
+            { status: 200 },
+          );
+        }
+        return probeAnswer();
+      }),
+    );
+    return { bodies: () => bodies };
+  }
+
+  const PROBE_TOOL_CALL_SSE =
+    `data: ${JSON.stringify({
+      choices: [
+        {
+          delta: {
+            tool_calls: [
+              {
+                index: 0,
+                type: "function",
+                function: {
+                  name: "atomic_contract_probe",
+                  arguments: '{"ok":true}',
+                },
+              },
+            ],
+          },
+        },
+      ],
+    })}\n\ndata: ${JSON.stringify({
+      choices: [{ delta: {}, finish_reason: "tool_calls" }],
+    })}\n\ndata: [DONE]\n\n`;
+
+  /** Truncated mid-argument, with nothing announcing the end. */
+  const PROBE_EARLY_EOF_SSE = `data: ${JSON.stringify({
+    choices: [
+      {
+        delta: {
+          tool_calls: [
+            {
+              index: 0,
+              type: "function",
+              function: { name: "atomic_contract_probe", arguments: '{"ok"' },
+            },
+          ],
+        },
+      },
+    ],
+  })}\n\n`;
+
+  function wizardWithModel(): ProvidersWizardState {
+    return { ...wizardFor("openrouter"), selectedChatModelId: "vendor/picked-model" };
+  }
+
+  it("probes the route on save and reports a backend only once it is proven", async () => {
+    currentConfig = configWithGemini();
+    const fetches = stubSaveFetch(
+      () => new Response(PROBE_TOOL_CALL_SSE, { status: 200 }),
+    );
+    const { ProvidersOrchestrator } = await importOrchestratorWithStubbedDisk();
+    const bus = fakeBus();
+    const runtime = fakeRuntime();
+    const orchestrator = new ProvidersOrchestrator(runtime, bus as never);
+
+    await orchestrator.completeWizard(wizardWithModel());
+
+    // The key check, then the turn contract itself: streamed, with the
+    // tools payload, on the model the operator picked.
+    const probeBody = fetches.bodies()[1];
+    expect(probeBody?.stream).toBe(true);
+    expect(probeBody?.model).toBe("vendor/picked-model");
+    expect(JSON.stringify(probeBody?.tools)).toContain("atomic_contract_probe");
+
+    const types = bus.emit.mock.calls.map((call) => (call[0] as { type: string }).type);
+    expect(types).toContain("providers_wizard_succeeded");
+    expect(runtime.reportModelConfigured).toHaveBeenCalledWith(
+      "openrouter",
+      "cloud",
+    );
+  });
+
+  it("saves but reports no working backend when the probe fails", async () => {
+    currentConfig = configWithGemini();
+    stubSaveFetch(() => new Response(PROBE_EARLY_EOF_SSE, { status: 200 }));
+    const { ProvidersOrchestrator } = await importOrchestratorWithStubbedDisk();
+    const bus = fakeBus();
+    const runtime = fakeRuntime();
+    const orchestrator = new ProvidersOrchestrator(runtime, bus as never);
+
+    await orchestrator.completeWizard(wizardWithModel());
+
+    // The key is live, so the save stands — the probe is advisory and
+    // may never refuse one.
+    const types = bus.emit.mock.calls.map((call) => (call[0] as { type: string }).type);
+    expect(types).toContain("providers_wizard_succeeded");
+    // But the route was never shown to run a turn, so "this install has
+    // a working cloud backend" must not be claimed on its behalf.
+    expect(runtime.reportModelConfigured).not.toHaveBeenCalled();
+    const lines = bus.emit.mock.calls
+      .map((call) => call[0] as { type: string; line?: string })
+      .filter((action) => action.type === "providers_status")
+      .map((action) => action.line ?? "");
+    expect(lines.some((line) => line.includes("closed the stream"))).toBe(true);
+  });
+
   it("runs the contract probe on explicit request and reports the verdict", async () => {
     currentConfig = {
+      agent: AGENT_CONFIG,
       llm: {
         activeTextProvider: "openrouter",
         activeEmbeddingProvider: "local-llama-embed",
