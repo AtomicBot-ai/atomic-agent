@@ -37,3 +37,12 @@ export type {
   ConversationTurn,
   PackedConversation,
 } from "./conversation-turn.js";
+export {
+  CONVERSATION_SECTION_LABEL,
+  EMPTY_CONTEXT_USAGE,
+  contextUsageFromPrompt,
+} from "./context-usage.js";
+export type {
+  ContextUsageState,
+  ContextUsageSection,
+} from "./context-usage.js";

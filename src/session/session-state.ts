@@ -8,6 +8,7 @@ import {
   appendTurn,
   type ConversationTurn,
 } from "./conversation-turn.js";
+import type { ContextUsageState } from "./context-usage.js";
 
 export type SessionStatus =
   | "pending"
@@ -124,6 +125,16 @@ export interface SessionState {
   createdAt: number;
   updatedAt: number;
   lastError: string | null;
+  /**
+   * Snapshot of the last turn's window occupancy — what the TUI's
+   * context chip draws. Stamped by `executeTurn` right before the
+   * post-turn save (every origin funnels through it), so reopening or
+   * switching into a session restores the gauge immediately instead of
+   * showing nothing until the next prompt is built. Deliberately NOT
+   * ephemeral: the whole point is to survive the process. Absent on
+   * sessions that predate the field or have never run a turn.
+   */
+  contextUsage?: ContextUsageState;
   /**
    * Free-form session metadata. Reserved keys (set by the runtime, not
    * the agent — agents may read but must not overwrite them):

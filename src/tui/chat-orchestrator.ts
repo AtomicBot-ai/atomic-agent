@@ -544,6 +544,10 @@ export class ChatOrchestrator {
       workingDir: loaded.workingDir,
       messages: turnsToMessages(loaded.turns),
       running,
+      // Restore the context gauge this session persisted with its last
+      // turn (absent on threads that never ran one — the reducer then
+      // resets the chip rather than keeping the old thread's figure).
+      ...(loaded.contextUsage ? { contextUsage: loaded.contextUsage } : {}),
     });
     // The stored snapshot above misses everything the still-running
     // turn has said (a turn saves only when it finishes — for a thread
@@ -1061,6 +1065,9 @@ export class ChatOrchestrator {
         sessionId: turnSessionId,
         workingDir: this.session.workingDir,
         messages: turnsToMessages(this.session.turns),
+        ...(this.session.contextUsage
+          ? { contextUsage: this.session.contextUsage }
+          : {}),
       });
     }
     const next = this.queue.shift();
