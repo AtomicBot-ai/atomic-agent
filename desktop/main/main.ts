@@ -489,6 +489,15 @@ async function smokeTest(): Promise<void> {
     await js<void>("window.__closeAll && window.__closeAll()");
 
     // A tool-using turn: cards must carry the real args and a duration.
+    // Harness fix (separate commit, revertable on its own): the turn used to
+    // run inside a session that every smoke run grows by one more "List the
+    // files… / done" pair — once the model has listed the directory several
+    // times in its own context it answers a bare "done" with no tool call
+    // (lane store: api-2931b30b63359b7d at 102 turns and api-aa0c6938cede73f2,
+    // the id the agent derives from this very prompt, both 0 cards; 3 of 7
+    // runs on unchanged code). __sessionNew mints a client-side session id,
+    // which is the only way to get an empty session from /v1/chat/completions.
+    await js<void>("window.__sessionNew()");
     await js<void>("window.__ask('List the files in the current directory, then say done.')");
     const toolDeadline = Date.now() + 150_000;
     let cards: Array<{ name: string; args: string; ms: number; ok: boolean | null; live: boolean }> = [];

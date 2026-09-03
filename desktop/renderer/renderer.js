@@ -3634,3 +3634,13 @@ if (typeof window !== 'undefined') {
   window.__skillCount = () => (SK.rows ? SK.rows.length : null);
   window.__taskPreviewForm = async (fields) => { TK.mode = 'create'; TK.form = Object.assign(tkNewForm(), fields); render(); await tkPreview(); return TK.form ? TK.form.preview : null; };
 }
+
+/* Hook for --smoke (harness: the tool-card turn runs in a fresh session).
+   `session:new` alone is not enough: with no session_id the agent derives
+   `api-<sha256(system + first user message)>` (src/http/openai-session-id.ts),
+   so the same smoke prompt re-enters the same ever-growing session. A
+   client-supplied id creates an empty one (openai-chat-completions.ts
+   resolveSession). */
+if (typeof window !== 'undefined') {
+  window.__sessionNew = () => { act('session:new'); S.agentSession = 'smoke-' + Date.now().toString(16) + '-' + Math.floor(Math.random() * 1e6).toString(16); return S.agentSession; };
+}
