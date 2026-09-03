@@ -91,6 +91,14 @@ export class LlmHealthPoller {
     this.url = nextUrl;
     this.hasSettledResult = false;
     this.modelFetchedForUrl = false;
+    // Same gate as `tick` / `refreshModelLabel` (issue #112). The reset
+    // above is bookkeeping and always runs, but the *emit* is a claim
+    // about the session's model — and on a cloud route it would clear
+    // the label and window for a backend the session is not talking to.
+    // The follow-up `tick()` already returns early on a cloud route, so
+    // only this emit was ungated; leaving it in made "on a cloud route
+    // the poller emits nothing at all" untrue for `/llama <url>`.
+    if (!this.localTextActive()) return;
     this.emitter.emit({
       type: "llm_model_updated",
       model: null,

@@ -460,6 +460,27 @@ describe("LlmHealthPoller — gated on the active text provider", () => {
   let previousStateDir: string | undefined;
   let spy: ReturnType<typeof vi.spyOn>;
 
+  /** A cloud primary with a local EMBEDDING entry — the shape #112 is about. */
+  const CLOUD_LLM: UserConfigFile["llm"] = {
+    activeTextProvider: "cloudy",
+    activeEmbeddingProvider: "local-llama-embed",
+    providers: [
+      {
+        id: "cloudy",
+        kind: "openai-compatible",
+        baseUrl: "https://cloud.invalid",
+        defaultChatModel: "cloudy-1",
+        apiKey: "sk-test",
+      },
+      {
+        id: "local-llama-embed",
+        kind: "llama-server",
+        url: "http://127.0.0.1:19092",
+      },
+    ],
+    toolTransport: "auto",
+  };
+
   const writeLlm = (llm: UserConfigFile["llm"]): void => {
     writeUserConfigFileSync(getUserConfigPath(stateDir), {
       ...USER_CONFIG_DEFAULTS,
@@ -534,6 +555,63 @@ describe("LlmHealthPoller — gated on the active text provider", () => {
 
     expect(spy).toHaveBeenCalledTimes(1);
     expect(props).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * Issue #112 review, F4. `updateUrl` reset its bookkeeping and then
+   * emitted `llm_model_updated {model: null, contextWindow: null}`
+   * unconditionally — no request, but still a statement about the
+   * session's model, published on a route where this poller's backend is
+   * not the one serving. `/llama <url>` on a cloud session would blank
+   * the tray label the active provider had put there.
+   */
+  it("emits nothing from updateUrl while a cloud provider is active", async () => {
+    writeLlm(CLOUD_LLM);
+    const props = vi.fn(stubProps);
+    const capture = makeCapture();
+    const poller = new LlmHealthPoller(
+      capture,
+      "http://127.0.0.1:8080",
+      10_000,
+      props,
+    );
+    poller.start();
+    poller.updateUrl("http://127.0.0.1:9090");
+    await poller.refreshModelLabel();
+    await sleep(20);
+    poller.stop();
+
+    expect(capture.actions).toEqual([]);
+    expect(spy).toHaveBeenCalledTimes(0);
+    expect(props).toHaveBeenCalledTimes(0);
+  });
+
+  it("still announces a URL change on a local route (control)", async () => {
+    writeLlm(undefined);
+    spy.mockResolvedValue({
+      reachable: true,
+      status: 200,
+      error: null,
+      latencyMs: 1,
+    } satisfies HealthResult);
+    const capture = makeCapture();
+    const poller = new LlmHealthPoller(
+      capture,
+      "http://127.0.0.1:8080",
+      10_000,
+      stubProps,
+    );
+    poller.updateUrl("http://127.0.0.1:9090");
+    await sleep(20);
+    poller.stop();
+
+    expect(
+      capture.actions.filter((a) => a.type === "llm_model_updated"),
+    ).toContainEqual({
+      type: "llm_model_updated",
+      model: null,
+      contextWindow: null,
+    });
   });
 
   it("resumes within one tick after a hot switch back to a local provider", async () => {
