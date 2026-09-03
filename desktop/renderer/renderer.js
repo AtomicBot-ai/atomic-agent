@@ -88,6 +88,105 @@ const OB_CHOICES = [
   {id:'custom', t:'Custom endpoint', d:'An OpenAI-compatible or llama-server URL you already run. Nothing is downloaded, nothing else is asked.'},
 ];
 
+/* ---- Item 7: settings surface — the TUI menu tree + the Manage tabs ----
+   MENU_GROUPS mirrors src/tui/menu/menu-registry.ts (MENU_GROUP_ORDER,
+   MENU_GROUP_LABELS, every node label and its ctrl+g chord, in registry
+   order). A node with `tab` switches the right-hand panel; `na` marks a
+   node the desktop has no implementation for — it is drawn with the TUI
+   label and a muted note, never dropped. The user asked for the TUI menu
+   copied as it is, so the whole tree is here, not just Manage. */
+const MENU_GROUPS = [
+  ['Go', [
+    {id:'go.run', label:'Run', chord:'r'},
+    {id:'go.observe', label:'Observe', sub:[
+      {id:'go.observe.feed', label:'Feed', chord:'f'},
+      {id:'go.observe.world', label:'World', chord:'w'},
+      {id:'go.observe.reasoning', label:'Reasoning', chord:'e'},
+      {id:'go.observe.logs', label:'Logs', chord:'o'},
+      {id:'go.observe.llm-logs', label:'LLM logs', chord:'L'},
+    ]},
+    {id:'go.manage', label:'Manage', sub:[
+      {id:'go.manage.tasks', label:'Tasks', chord:'t', tab:'tasks'},
+      {id:'go.manage.skills', label:'Skills', chord:'s', tab:'skills'},
+      {id:'go.manage.memory', label:'Memory', chord:'m', tab:'memory'},
+      {id:'go.manage.mcp', label:'MCP', chord:'c', tab:'mcp'},
+      {id:'go.manage.llm', label:'LLM', chord:'l', tab:'llm'},
+      {id:'go.manage.telegram', label:'Telegram', chord:'g', tab:'telegram'},
+      {id:'go.manage.import', label:'Import', chord:'i', tab:'import'},
+      {id:'go.manage.privacy', label:'Privacy', chord:'p', tab:'privacy'},
+    ]},
+    {id:'go.debug', label:'Toggle debug pane'},
+  ]],
+  ['Session', [
+    {id:'session.new', label:'New session', chord:'n'},
+    {id:'session.switch', label:'Switch session…', chord:'u'},
+    {id:'session.clear', label:'Clear transcript'},
+    {id:'session.context', label:'Context window'},
+    {id:'session.id', label:'Show session id'},
+    {id:'session.window', label:'New terminal window', na:true},
+  ]],
+  ['Model', [
+    {id:'model.chat', label:'Switch chat model…', chord:'k'},
+  ]],
+  ['Run', [
+    {id:'run.mode', label:'Coding mode…', chord:'M'},
+    {id:'run.abort', label:'Abort turn', chord:'a'},
+    {id:'run.queue', label:'Queued messages', na:true},
+    {id:'run.steer', label:'Steer the running turn', na:true},
+    {id:'run.expand', label:'Expand all tool cards'},
+    {id:'run.collapse', label:'Collapse all tool cards'},
+  ]],
+  ['Setup', [
+    {id:'setup.theme', label:'Theme…', chord:'h'},
+    {id:'setup.mouse', label:'Mouse…', na:true},
+    {id:'setup.sidebar', label:'Hide or show the sidebar'},
+    {id:'setup.analytics', label:'Analytics'},
+    {id:'setup.skill', label:'Enable or disable a skill…'},
+    {id:'setup.task', label:'Create, cancel or run a task…'},
+  ]],
+  ['Help', [
+    {id:'help.commands', label:'Commands'},
+    {id:'help.tools', label:'List built-in tools'},
+    {id:'help.dump', label:'Write debug bundle', chord:'d', na:true},
+    {id:'help.quit', label:'Quit', chord:'q'},
+  ]],
+  ['Danger zone', [
+    {id:'danger.uninstall', label:'Uninstall atomic-agent…', na:true},
+  ]],
+];
+/* The desktop act each menu verb already has. Nodes with a `tab` and
+   nodes marked `na` are not in here. */
+const MENU_ACTS = {
+  'go.run':'room:chat', 'go.observe.feed':'insp:steps', 'go.observe.world':'insp:world',
+  'go.observe.reasoning':'insp:reasoning', 'go.observe.logs':'console:agent', 'go.observe.llm-logs':'console:llm',
+  'go.debug':'toggle:console',
+  'session.new':'session:new', 'session.switch':'session:switch', 'session.clear':'clear',
+  'session.context':'context', 'session.id':'session:id',
+  'model.chat':'selector:model',
+  'run.mode':'modes', 'run.abort':'stop', 'run.expand':'cards:expand', 'run.collapse':'cards:collapse',
+  'setup.theme':'palette:theme', 'setup.sidebar':'toggle:sidebar', 'setup.analytics':'settings:privacy',
+  'setup.skill':'settings:skills', 'setup.task':'settings:tasks',
+  'help.commands':'palette', 'help.tools':'tools', 'help.quit':'quit',
+};
+/* ids === MANAGE_TABS (src/tui/section.ts), labels from buildManageTabs. */
+const SETTINGS_TABS = [['tasks','Tasks','tasks'],['skills','Skills','skills'],['memory','Memory','doc'],['mcp','MCP','link'],
+                       ['llm','LLM','cpu'],['telegram','Telegram','chat'],['import','Import','folder'],['privacy','Privacy','key']];
+/* Settings shell state: the diagnostics line's tool counters, read from
+   the open session's tool_result rows (GET /api/sessions/{id}). */
+const SET = { tools:null, toolsFor:null, toolsBusy:false };
+/* Tasks tab state — the TUI's TasksPanelState, minus the firings ring
+   the HTTP API does not expose. */
+const TK = {
+  rows:[], filter:'all', search:'', searchOpen:false, auto:true, lastRefreshedAt:null, loading:false,
+  mode:'list', cursor:0, detailId:null, cancel:null, msg:null, err:null, timer:null,
+  form:null,
+};
+const TK_FILTER_ORDER = ['all','pending','running','completed','failed','blocked','cancelled','recurring'];
+/* Privacy tab state — the TUI's PrivacyPanelState (message / lastError / busy). */
+const PRIV = { busy:false, message:null, lastError:null };
+/* Renderer faults, counted for --smoke (`window.__errCount`). */
+let ERR_COUNT = 0;
+
 /* ============================================================
    Atomic Agent Desktop — clickable prototype, no backend.
    Command/menu wording, the slash registry and its rank order,
@@ -181,7 +280,7 @@ const SLASH = [
   ['task','create, cancel or run a task','new|cancel|run <id>'],
   ['telegram','telegram channel','enable|disable|start|stop|pair|token'],
   ['import','open the Import tab (one-shot migration)'],
-  ['privacy','analytics opt-out + approval level','level 1..5 | analytics on|off'],
+  ['privacy','analytics opt-out + session grants','analytics on|off'],
   ['analytics','toggle anonymous analytics','on|off|status'],
 ];
 
@@ -198,7 +297,6 @@ const CATS = [
   ['trust_config','agent trust config',5],
   ['other','uncategorised',5],
 ];
-const LEVEL_NAMES = ['','Paranoid','Workspace','Home','Operator','Full trust'];
 
 
 /* palette catalogue — every row has a menu-bar home */
@@ -209,19 +307,22 @@ const PAL = [
     ['atom','World','Observe','/world','insp:world'],
     ['bolt','Reasoning','Observe','/reasoning','insp:reasoning'],
     ['console','Logs','Console','/logs','console:agent'],
-    ['tasks','Tasks','Library','⌘ 2','room:tasks'],
-    ['skills','Skills','Library','⌘ 3','room:skills'],
-    ['gear','Settings','Settings','⌘ ,','settings:general'],
-    ['key','Privacy & Approvals','Settings','⇧ ⌘ ,','settings:privacy'],
-    ['cloud','Models & Providers','Settings','/llm','settings:models'],
+    ['tasks','Tasks','Manage','⌘ 2','settings:tasks'],
+    ['skills','Skills','Manage','⌘ 3','settings:skills'],
+    ['doc','Memory','Manage','⌘ 4','settings:memory'],
+    ['link','MCP','Manage','/mcp','settings:mcp'],
+    ['cpu','LLM','Manage','/llm','settings:llm'],
+    ['chat','Telegram','Manage','/telegram','settings:telegram'],
+    ['folder','Import','Manage','/import','settings:import'],
+    ['key','Privacy','Manage','⇧ ⌘ ,','settings:privacy'],
   ]],
   ['Session', [
     ['plus','New session','keeps warm runtime','⌘ N','session:new'],
     ['x','Clear transcript','keeps session','⌘ ⌫','clear'],
-    ['copy','Show session id','','⌃ ⌘ C','copy:session'],
+    ['copy','Show session id','','⌃ ⌘ C','session:id'],
   ]],
   ['Model', [
-    ['cloud','Switch chat model…','pull | use | status','⇧ ⌘ M','settings:models'],
+    ['cloud','Switch chat model…','pull | use | status','⇧ ⌘ M','selector:model'],
   ]],
   ['Run', [
     ['stop','Abort turn','','⌘ .','stop'],
@@ -230,8 +331,9 @@ const PAL = [
   ]],
   ['Setup', [
     ['gear','Theme…','','','scope:theme'],
-    ['skills','Enable or disable a skill…','','','room:skills'],
-    ['key','Approval level…','1..5','','scope:level'],
+    ['skills','Enable or disable a skill…','','','settings:skills'],
+    ['tasks','Create, cancel or run a task…','','','settings:tasks'],
+    ['key','Analytics','','','settings:privacy'],
   ]],
   ['Help', [
     ['doc','List built-in tools','','⌥ ⌘ T','tools'],
@@ -243,7 +345,7 @@ const S = {
   room:'chat', theme:'system',
   inspector:true, inspTab:'steps',
   consoleOpen:false, consoleTab:'agent',
-  settings:null, settingsPane:'general',
+  settings:null, settingsPane:'tasks',
   overlay:null, menuOpen:null, alert:null,
   q:'', cur:0, scope:null,
   slash:false, slashCur:0,
@@ -343,6 +445,8 @@ function renderSidebar() {
         + '<span class="ic">' + ic(id) + '</span><span class="lb">' + label + '</span>'
         + '<span class="ct tnum">' + count + '</span></button>').join('') + '</div>'
     + '<div class="seswrap">' + groups + '</div>'
+    // Item 7: the bottom-left settings entry. Lands on Go › Manage › Tasks, the TUI's default Manage tab.
+    + '<button class="sb-foot" data-act="settings:tasks" title="Settings (⌘ ,)">' + ic('gear') + '<span>Settings</span>' + keycaps('⌘ ,') + '</button>'
     ;
 }
 
@@ -523,20 +627,8 @@ function segControl(items, cur, actPrefix) {
 }
 
 function tasksView() {
-  const filtered = TASKS.filter((t) => S.taskFilter === 'all'
-    || (S.taskFilter === 'running' && t.st === 'run')
-    || (S.taskFilter === 'failed' && t.st === 'bad')
-    || (S.taskFilter === 'scheduled' && t.st !== 'run'));
-  return '<div class="chead"><span class="hd">Tasks</span>'
-    + segControl([['all','All'],['scheduled','Scheduled'],['running','Running'],['failed','Failed']], S.taskFilter, 'taskfilter:')
-    + '<span class="grow"></span><button class="btn btn-p" data-act="task:new">' + ic('plus') + 'New Task</button></div>'
-    + '<div class="scroller"><div class="rows">'
-    + filtered.map((t) => '<button class="row"><span class="dot ' + t.st + '"></span>'
-        + '<span class="main"><span class="t">' + esc(t.t) + '</span></span>'
-        + '<span class="meta">' + esc(t.when) + ' · ' + esc(t.last) + '</span>'
-        + '</button>').join('')
-    + '</div>'
-    + '</div>';
+  // Item 7: the Tasks room is the settings window's Tasks tab — one implementation.
+  return '<div class="scroller"><div class="tuiwrap">' + tasksTab() + '</div></div>';
 }
 
 function skillsView() {
@@ -627,14 +719,8 @@ function renderConsole() {
 /* ---------------- palette ---------------- */
 const SCOPES = {
   theme: {label:'Theme', ph:'Choose a theme…', rows:[['gear','System','follow macOS','','theme:system'],['gear','Light','','','theme:light'],['gear','Dark','','','theme:dark']]},
-  task:  {label:'Task', ph:'Choose an action…', rows:[['plus','New task…','cron | interval | at','','task:new'],['play','Run a task now','','','task:run'],['x','Cancel a task','','','na']]},
-  level: {label:'Approval level', ph:'Choose a level…', rows:CATS.length ? [1,2,3,4,5].map((n) => ['key', n + ' ' + LEVEL_NAMES[n], levelBlurb(n), '', 'level:' + n]) : []},
+  task:  {label:'Task', ph:'Choose an action…', rows:[['plus','New task…','cron | interval | at','','tasks:new'],['play','Run a task now','','','settings:tasks'],['x','Cancel a task','','','settings:tasks']]},
 };
-function levelBlurb(n) {
-  return {1:'every gated action asks first', 2:'file writes inside the workspace stop asking',
-          3:'writes under ~, Trash and HTTP stop asking', 4:'shell, skill scripts and process kills stop asking',
-          5:'nothing asks — including browser and trust config'}[n];
-}
 
 function palRows() {
   if (S.scope) return SCOPES[S.scope].rows.map((r) => ({ic:r[0], t:r[1], cx:r[2], sc:r[3], act:r[4]}));
@@ -863,38 +949,109 @@ function sheet(title, body, foot) {
 }
 
 /* ---------------- settings ---------------- */
+/* Item 7: the settings window is the TUI menu. Left column = the menu
+   tree (src/tui/menu/menu-registry.ts); right = the Manage sub-tab strip
+   (buildManageTabs, src/tui/components/debug-pane.tsx), the diagnostics
+   line (debug-diagnostics-line.tsx) and the active panel. The popup
+   title is the TUI's "Menu › Manage" (menu-selectors.ts). */
 function renderSettings() {
   const old = $('#settings'); if (old) old.remove();
   if (!S.settings) return;
-  const panes = [['general','General','gear'],['models','Models','cpu'],['mcp','MCP','link'],['channels','Channels','chat'],
-                 ['privacy','Privacy','key'],['import','Import','folder'],['appearance','Appearance','atom']];
+  const cur = settingsPaneId(S.settingsPane);
   const el = document.createElement('div');
   el.id = 'settings';
+  const strip = SETTINGS_TABS.map(([id, label], i) =>
+      (i ? '<span class="tabsep">  |  </span>' : '')
+      + '<button class="settab' + (cur === id ? ' on' : '') + '" data-act="settings:' + id + '">' + esc(label + tabSuffix(id)) + '</button>').join('');
   el.innerHTML = '<div class="setwin"><div class="settb">'
-    + '<div class="lights"><button class="lg" style="background:#FF5F57" data-act="close"></button>'
+    + '<div class="lights"><button class="lg" style="background:#FF5F57" data-act="settings:close"></button>'
       + '<span class="lg" style="background:var(--bg-active)"></span><span class="lg" style="background:var(--bg-active)"></span></div>'
-    + '<div class="settabs">' + panes.map(([id, label, icon]) =>
-        '<button class="settab' + (S.settingsPane === id ? ' on' : '') + '" data-act="settings:' + id + '">' + ic(icon) + esc(label) + '</button>').join('')
-    + '</div></div><div class="setbody">' + settingsPane() + '</div></div>';
+    + '<span class="setttl">Menu › Manage</span>'
+    + '<span style="flex:1"></span><button class="iconbtn" data-act="settings:close" title="Close (Esc)">' + ic('x') + '</button>'
+    + '</div><div class="setcols">'
+    + '<div class="setmenu">' + menuTreeHTML() + '</div>'
+    + '<div class="setmain"><div class="settabs">' + strip + '</div>'
+    + '<div class="setdiag">' + esc(diagLine()) + '</div>'
+    + '<div class="setbody">' + settingsPane() + '</div></div>'
+    + '</div></div>';
   el.querySelector('.lights').style.marginRight = '0';
   $('#window').appendChild(el);
 }
 
+/* The prototype's pane ids and the --models harness (`__pane('models')`)
+   still name panes that are now Manage tabs. */
+function settingsPaneId(v) {
+  if (SETTINGS_TABS.some((t) => t[0] === v)) return v;
+  return {models:'llm', channels:'telegram', general:'tasks', appearance:'tasks'}[v] || 'tasks';
+}
+
+/* Count suffix ` (N)` exactly as debug-pane.tsx suffix(): tasks = every
+   fetched row, skills = every installed skill, memory = rows of the
+   selected channel, mcp = configured servers. Zero → no suffix. */
+function tabSuffix(id) {
+  let n = 0;
+  if (id === 'tasks') n = TK.rows.length;
+  else if (id === 'skills') n = SKILLS.length;
+  else if (id === 'memory') n = 0; // the Memory tab lands in the next step of this branch; no channel is loaded yet
+  else if (id === 'mcp') n = ((LIVE_CONFIG && LIVE_CONFIG.mcp && LIVE_CONFIG.mcp.servers) || []).length;
+  return n === 0 ? '' : ' (' + n + ')';
+}
+
+function menuTreeHTML() {
+  const cur = settingsPaneId(S.settingsPane);
+  const row = (n, sub) => {
+    const on = n.tab && n.tab === cur;
+    const chord = n.chord ? '<span class="ch">ctrl+g ' + esc(n.chord) + '</span>' : '';
+    if (n.na) return '<div class="menurow na' + (sub ? ' sub' : '') + '" title="not available in the desktop"><span class="lb">' + esc(n.label) + '</span><span class="note">not available in the desktop</span></div>';
+    return '<button class="menurow' + (sub ? ' sub' : '') + (on ? ' on' : '') + '" data-act="menu:' + esc(n.id) + '"><span class="lb">' + esc(n.label) + '</span>' + chord + '</button>';
+  };
+  return MENU_GROUPS.map(([label, nodes]) =>
+    '<div class="menuhd">' + esc(label) + '</div>'
+    + nodes.map((n) => n.sub
+        ? '<div class="menurow parent"><span class="lb">' + esc(n.label) + ' →</span></div>' + n.sub.map((c) => row(c, true)).join('')
+        : row(n, false)).join('')).join('');
+}
+
+/* debug-diagnostics-line.tsx: `cwd | llama | llm — · step — | kv — |
+   tools <ok>ok/<err>err | approval L<n> | skills <n>`. The llm/step/kv
+   numbers are TUI process metrics the desktop does not have, so they
+   stay in the TUI's own null form; the tools counters come from the open
+   session's tool_result rows, or the segment is left out. */
+function diagLine() {
+  const home = homeDir();
+  const wd = WORKSPACE || S.live.workingDir || '';
+  const cwd = home && wd.startsWith(home) ? '~' + wd.slice(home.length) : (wd || '—');
+  const llama = (S.live.llama && S.live.llama.url) || (LIVE_CAPS && LIVE_CAPS.llama && LIVE_CAPS.llama.url) || '—';
+  const parts = ['cwd ' + cwd, 'llama ' + llama, 'llm — · step —', 'kv —'];
+  if (SET.tools && SET.toolsFor === S.agentSession) parts.push('tools ' + SET.tools.ok + 'ok/' + SET.tools.err + 'err');
+  parts.push('approval L' + (LIVE_CAPS && typeof S.level === 'number' ? S.level : '—'));
+  parts.push('skills ' + SKILLS.length);
+  return parts.join(' | ');
+}
+
+async function refreshDiag() {
+  if (!BR || !S.agentSession || SET.toolsBusy) return;
+  if (SET.toolsFor === S.agentSession && SET.tools) return;
+  SET.toolsBusy = true;
+  const res = await BR.session(S.agentSession);
+  SET.toolsBusy = false;
+  const turns = res && res.ok && res.data && Array.isArray(res.data.turns) ? res.data.turns : null;
+  if (!turns) return;
+  let ok = 0, err = 0;
+  turns.forEach((t) => { if (t.kind === 'tool_result') { if (t.status === 'ok') ok++; else err++; } });
+  SET.tools = {ok, err}; SET.toolsFor = S.agentSession;
+  if (S.settings) render();
+}
+
 function settingsPane() {
-  const p = S.settingsPane;
+  const p = settingsPaneId(S.settingsPane);
+  if (p === 'tasks') return tasksTab();
   if (p === 'privacy') return privacyPane();
-  if (p === 'models') return modelsPane();
-  if (p === 'appearance') return '<div class="panelcard"><span class="hd">Appearance</span>'
-    + segControl([['system','System'],['light','Light'],['dark','Dark']], S.theme, 'theme:')
-    + '<p class="cap" style="margin:0">Named terminal palettes (github, catppuccin, dracula, nord) remain available for the TUI.</p></div>';
-  return '<div class="stack"><div class="panelcard"><span class="hd">Workspace</span>'
-    + '<dl class="kvgrid"><dt>folder</dt><dd class="mono">' + esc(S.live.workingDir || '—') + '</dd>'
-    + '<dt>agent</dt><dd class="mono">' + esc(S.live.binary || 'not found') + '</dd>'
-    + '<dt>state</dt><dd>' + esc(liveLabel()) + '</dd></dl>'
-    + '<button class="btn btn-s" style="align-self:flex-start" data-act="workspace">Change folder…</button></div>'
-    + '<div class="panelcard"><span class="hd">Setup</span>'
-    + '<p class="cap" style="margin:0">Re-run the first-run wizard to change how the agent thinks.</p>'
-    + '<button class="btn btn-t" style="align-self:flex-start" data-act="onboarding">Run setup again…</button></div></div>';
+  if (p === 'llm') return comingNote('LLM') + modelsPane();
+  return comingNote(SETTINGS_TABS.find((t) => t[0] === p)[1]);
+}
+function comingNote(label) {
+  return '<div class="tui"><b>' + esc(label) + '</b><div class="ter">coming in the next step of this branch</div></div>';
 }
 
 function modelsPane() {
@@ -990,34 +1147,46 @@ function cloudProvidersSection() {
     + '<div class="modellist">' + rows + '</div></div>' + picker;
 }
 
+/* src/tui/privacy/components/privacy-panel.tsx after PR #303: analytics
+   + session grants, no ladder. The desktop's approval path only offers
+   allow-once/deny, so the runtime never accumulates grants and the TUI's
+   "none active" line is the truth here. The toggle is `atag config set
+   analytics.enabled`; the running agent keeps its boot-time client, so
+   the note and the Restart button say so. */
 function privacyPane() {
-  const stops = [1, 2, 3, 4, 5].map((n) =>
-    '<button class="stopwrap' + (n <= S.level ? ' filled' : '') + (n === S.level ? ' on' : '') + '" disabled title="the mode chip on the composer is the approval surface">'
-    + '<span class="stopdot">' + (n <= S.level ? '<span style="color:#fff;display:flex">' + ic('check') + '</span>' : '') + '</span>'
-    + '<span class="stoplb">' + n + ' ' + LEVEL_NAMES[n] + '</span></button>').join('');
-  const rows = CATS.map(([id, label, from]) => '<tr><td>' + esc(label)
-      + (id === 'trust_config' ? ' <span class="ter" style="display:inline-flex;vertical-align:-3px" title="a write to the file holding agent.approvalLevel could silently raise the ladder for the next boot">' + ic('key') + '</span>' : '')
-      + '</td>'
-    + [1,2,3,4,5].map((n) => '<td class="' + (n === S.level ? 'col-on' : '') + '">'
-        + '<span class="mdot' + (n >= from ? ' auto' : '') + '"></span>' + (n >= from ? 'auto' : 'asks') + '</td>').join('') + '</tr>').join('');
-  return '<div class="stack">'
-    + '<div><span class="hd">Approval level</span>'
-      + '<p class="cap" style="margin:4px 0 0">How far the agent may act before it asks. Each level makes a whole category stop asking — nothing else changes.</p></div>'
-    + '<div class="stepper">' + stops + '</div>'
-    + '<table class="matrix"><thead><tr><th>Category</th>' + [1,2,3,4,5].map((n) => '<th>L' + n + '</th>').join('') + '</tr></thead>'
-      + '<tbody>' + rows + '</tbody></table>'
-    + '<div class="panelcard"><div class="micro sec">Session grants</div>'
-      + (S.grants.length
-        ? '<div class="hstack" style="flex-wrap:wrap">' + S.grants.map((g, i) => '<span class="badge" style="background:var(--accent-wash);border-color:var(--accent-line);color:var(--accent-text)">'
-            + esc(g) + ' <button data-revoke="' + i + '" style="color:inherit">×</button></span>').join('') + '</div>'
-        : '<p class="cap" style="margin:0">None. Grants made from an approval card live here and are never persisted to disk.</p>')
-    + '</div>'
-    + '<div class="panelcard"><div class="hstack"><span class="hd">What leaves this machine</span></div>'
-      + '<div class="rows">'
-      + '<div class="row" style="padding:0;height:32px"><span class="main"><span class="t" style="font-weight:400">Model calls → Anthropic</span></span><span class="meta">cloud and fusion turns only</span></div>'
-      + '<div class="row" style="padding:0;height:32px"><span class="main"><span class="t" style="font-weight:400">Skill hub → clawhub</span></span><span class="meta">only when you install</span></div>'
-      + '<div class="row" style="padding:0;height:32px"><span class="main"><span class="t" style="font-weight:400">Anonymous analytics</span></span><span class="meta">off</span></div>'
-      + '</div></div></div>';
+  const a = LIVE_CONFIG && LIVE_CONFIG.analytics;
+  const known = !!a && typeof a.enabled === 'boolean';
+  const on = known && a.enabled;
+  return '<div class="tui">'
+    + '<b>Analytics</b>'
+    + '<div>   <span class="ter">anonymous usage </span>' + (known ? '<span class="' + (on ? 'tuimsg' : 'ter') + '">' + (on ? 'on' : 'off') + '</span>'
+        : '<span class="ter">— (analytics.enabled is not set in config.json; the agent uses its default)</span>')
+      + (PRIV.busy ? '<span class="ter">  …</span>' : '') + '</div>'
+    + '<div class="ter">   Product analytics + crash reports, fully anonymous. No message content, paths, args, or IP ever leave this machine — only an install id and coarse counters.</div>'
+    + '<b style="margin-top:8px">Session grants</b>'
+    + '<div class="ter">   none active — grants you make with [s] / [a] at a prompt appear here for this session</div>'
+    + (PRIV.message ? '<div class="tuimsg" style="margin-top:8px">   ' + esc(PRIV.message)
+        + ' <span class="ter">(the running agent picks it up after Restart Agent Runtime)</span> '
+        + '<button class="btn btn-s" data-act="agent:restart" style="height:22px">Restart Agent Runtime</button></div>' : '')
+    + (PRIV.lastError ? '<div class="tuierr" style="margin-top:8px">   ' + esc(PRIV.lastError) + '</div>' : '')
+    + '<div class="tuihint"><button data-act="privacy:analytics"' + (!LIVE_CONFIG || PRIV.busy ? ' disabled' : '') + '>a: analytics ' + (on ? 'off' : 'on') + '</button>'
+      + '<span>·</span><button data-act="privacy:refresh">r: refresh</button></div>'
+    + '</div>';
+}
+
+async function privacyToggle() {
+  if (!BR || !LIVE_CONFIG || PRIV.busy) return;
+  const a = LIVE_CONFIG.analytics;
+  const next = !(a && a.enabled);
+  PRIV.busy = true; PRIV.message = null; PRIV.lastError = null; render();
+  const res = await BR.configSet('analytics.enabled', String(next));
+  if (!res || res.ok === false) {
+    PRIV.lastError = 'analytics toggle failed: ' + ((res && res.error) || 'unknown error');
+  } else {
+    PRIV.message = next ? 'analytics enabled' : 'analytics disabled';
+  }
+  await refreshLiveConfig();
+  PRIV.busy = false; render();
 }
 
 /* ---------------- toasts ---------------- */
@@ -1069,10 +1238,26 @@ function act(a) {
   if (a === 'dump') { close(); render(); toast('Debug bundle written', '~/Documents/atomic-agent-debug'); return; }
   if (a === 'tools') { close(); S.inspector = true; S.inspTab = 'world'; render(); return; }
   if (a === 'restart') { close(); render(); toast('Agent runtime restarted'); return; }
-  if (a === 'quit') { close(); render(); toast('This is a prototype', 'Nothing to quit'); return; }
+  if (a === 'quit') { close(); if (BR && BR.quit) { BR.quit(); return; } render(); toast('This is a prototype', 'Nothing to quit'); return; }
   if (a === 'about') { close(); render(); toast('Atomic Agent 0.3.7', 'Local-first agent · GAIA L1 69.8%'); return; }
   if (a === 'update') { close(); render(); toast('You are up to date', 'Version 0.3.7, stable channel'); return; }
-  if (a === 'copy:session') { close(); render(); toast('Copied', 'Session 4f2a91-8b3c-4d1e'); return; }
+  if (a === 'copy:session' || a === 'session:id') {
+    // The TUI's /session prints the real id; the desktop shows the one it is talking to.
+    close(); render();
+    const id = S.agentSession || '';
+    if (!id) { toast('No session yet', 'send a message to start one'); return; }
+    toast('Session id', id);
+    if (navigator.clipboard) navigator.clipboard.writeText(id).catch(() => {});
+    return;
+  }
+  // Item 7: menu verbs that need the settings window out of the way first.
+  if (a === 'selector:model') { close(); S.settings = null; openSelector('model'); return; }
+  if (a === 'palette:theme') { close(); S.settings = null; S.overlay = 'palette'; S.scope = 'theme'; render(); return; }
+  if (a === 'settings:close') { close(); S.settings = null; render(); return; }
+  if (k === 'menu') { menuActivate(a.slice(5)); return; }
+  if (k === 'tasks') { tasksAct(a.slice(6)); return; }
+  if (a === 'privacy:analytics') { privacyToggle(); return; }
+  if (a === 'privacy:refresh') { refreshLiveConfig(); return; }
   if (a === 'copy:reply') { close(); render(); toast('Copied last reply'); return; }
   if (a === 'workspace') { close(); render(); toast('Workspace', '~/Teletubbies · rw'); return; }
   if (a === 'analytics') { close(); S.settings = 1; S.settingsPane = 'privacy'; render(); return; }
@@ -1086,23 +1271,12 @@ function act(a) {
   if (k === 'toggle')    { close(); if (v === 'sidebar') $('#sidebar').classList.toggle('rail');
                            else if (v === 'inspector') S.inspector = !S.inspector;
                            else S.consoleOpen = !S.consoleOpen; render(); return; }
-  if (k === 'settings')  { close(); S.settings = 1; S.settingsPane = v; render(); return; }
+  if (k === 'settings')  { close(); S.settings = 1; S.settingsPane = settingsPaneId(v); render(); refreshDiag(); return; }
   if (k === 'theme')     { close(); S.theme = v;
                            if (v === 'system') document.documentElement.removeAttribute('data-theme');
                            else document.documentElement.setAttribute('data-theme', v);
                            render(); return; }
   if (k === 'mode')      { S.mode = v; if (S.overlay === 'palette') close(); render(); return; }
-  if (k === 'level')     {
-    const level = Math.max(1, Math.min(5, +v));
-    close(); S.settings = 1; S.settingsPane = 'privacy'; render();
-    BR.configSet('agent.approvalLevel', String(level)).then((res) => {
-      if (res && res.ok === false) { toast('Could not change the level', res.error || ''); return; }
-      S.level = level; S.baseLevel = level; render();
-      toast('Approval level ' + level, LEVEL_NAMES[level] + ' · restarting the agent');
-      BR.restart().then(applyStatus);
-    });
-    return;
-  }
   if (k === 'cards')     { close(); S.log.forEach((m) => { if (m.k === 'tool') m.open = v === 'expand'; }); render(); return; }
   if (k === 'ses')       { close(); openSession(v); return; }
   if (k === 'delask')    { const ss = SESSIONS.find((x) => x.id === v); if (!ss) return;
@@ -1176,19 +1350,24 @@ function abort() {
 
 function runSlash(parts) {
   const name = parts[0];
-  const nav = {chat:'room:chat', tasks:'room:tasks', task:'task:new', skills:'room:skills', skill:'room:skills',
-    memory:'room:memory', feed:'insp:steps', world:'insp:world', reasoning:'insp:reasoning', observe:'insp:steps',
-    logs:'console:agent', manage:'settings:general', mcp:'settings:mcp', llm:'settings:models', model:'settings:models',
-    telegram:'settings:channels', import:'settings:import', privacy:'settings:privacy', analytics:'settings:privacy',
-    theme:'settings:appearance', sessions:'session:switch', new:'session:new', clear:'clear', abort:'stop',
-    session:'copy:session', dump:'dump', tools:'tools', quit:'quit', help:'palette', debug:'toggle:console',
-    expand:'cards:expand', collapse:'cards:collapse'};
+  const nav = {chat:'room:chat', tasks:'settings:tasks', task:'tasks:new', skills:'settings:skills', skill:'settings:skills',
+    memory:'settings:memory', feed:'insp:steps', world:'insp:world', reasoning:'insp:reasoning', observe:'insp:steps',
+    logs:'console:agent', manage:'settings:tasks', mcp:'settings:mcp', llm:'settings:llm', model:'selector:model',
+    telegram:'settings:telegram', import:'settings:import', privacy:'settings:privacy', analytics:'settings:privacy',
+    theme:'palette:theme', sessions:'session:switch', new:'session:new', clear:'clear', abort:'stop',
+    session:'session:id', dump:'dump', tools:'tools', quit:'quit', help:'palette', debug:'toggle:console',
+    expand:'cards:expand', collapse:'cards:collapse', mode:'modes', context:'context', sidebar:'toggle:sidebar'};
   if (name === 'run') {
     if (parts[1]) { S.mode = parts[1]; if (parts[2]) { S.share = Math.max(0, Math.min(100, +parts[2])); S.dialShare = S.share; } render(); toast('Run type ' + S.mode); }
     else act('runmode');
     return;
   }
-  if (name === 'privacy' && parts[1] === 'level' && parts[2]) { act('level:' + parts[2]); return; }
+  if (name === 'privacy' && parts[1] === 'analytics' && (parts[2] === 'on' || parts[2] === 'off')) {
+    act('settings:privacy');
+    const a = LIVE_CONFIG && LIVE_CONFIG.analytics;
+    if (!!(a && a.enabled) !== (parts[2] === 'on')) privacyToggle();
+    return;
+  }
   if (nav[name]) { act(nav[name]); return; }
   S.log.push({id:nid(), k:'system', text:'unknown command /' + esc(name) + ' — ⌘K lists everything'});
   render();
@@ -1283,6 +1462,10 @@ document.addEventListener('input', (e) => {
     return;
   }
   if (e.target.id === 'palq') { S.q = e.target.value; S.cur = 0; refreshPalette(); return; }
+  // Item 7: Tasks tab inputs edit state in place; only the preview block repaints.
+  if (e.target.dataset && e.target.dataset.tkField) { tkFieldInput(e.target.dataset.tkField, e.target.value); return; }
+  if (e.target.id === 'tk-search') { TK.search = e.target.value; TK.cursor = 0; const at = e.target.selectionStart; render();
+    const n = $('#tk-search'); if (n) { n.focus(); n.setSelectionRange(at, at); } return; }
   if (e.target.id === 'sel-filter') { SEL.filter = e.target.value; const at = e.target.selectionStart; render();
     const n = document.getElementById('sel-filter'); if (n) { n.focus(); n.setSelectionRange(at, at); } return; }
   if (e.target.id === 'mp-query') {
@@ -1357,9 +1540,11 @@ document.addEventListener('keydown', (e) => {
   }
 
   const mod = e.metaKey || e.ctrlKey;
+  // Item 7: Ctrl+Enter inside the Tasks create form submits the task, not the composer.
+  if (mod && k === 'Enter' && S.settings && e.target.dataset && e.target.dataset.tkField) { e.preventDefault(); tkSubmit(); return; }
   if (mod && !e.shiftKey && !e.altKey) {
-    const map = {k:'palette', '1':'room:chat', '2':'room:tasks', '3':'room:skills', '4':'room:memory',
-                 '0':'toggle:sidebar', n:'session:new', o:'session:switch', ',':'settings:general',
+    const map = {k:'palette', '1':'room:chat', '2':'room:tasks', '3':'room:skills', '4':'settings:memory',
+                 '0':'toggle:sidebar', n:'session:new', o:'session:switch', ',':'settings:tasks',
                  '.':'stop', '/':'shortcuts'};
     if (map[k.toLowerCase()]) { e.preventDefault(); act(map[k.toLowerCase()]); return; }
     if (k === 'Enter') { e.preventDefault(); submit(); return; }
@@ -1382,6 +1567,10 @@ document.addEventListener('keydown', (e) => {
     if (k === 'Backspace' && S.scope && !S.q) { e.preventDefault(); S.scope = null; S.cur = 0; render(); return; }
     if (k === 'Escape')    { e.preventDefault(); if (S.scope) { S.scope = null; S.cur = 0; render(); } else act('close'); return; }
     return;
+  }
+  // Item 7: keys inside the settings window (tab cycling, the Tasks tab's hotkeys, Esc).
+  if (S.settings && !S.overlay && S.menuOpen === null) {
+    if (settingsKey(e, k, inText)) return;
   }
   if (S.overlay || S.settings || S.menuOpen !== null) {
     if (k === 'Escape') { e.preventDefault(); if (S.settings) { S.settings = null; render(); } else act('close'); return; }
@@ -2801,4 +2990,408 @@ if (typeof window !== 'undefined') {
     live: !!m.startedAt,   // born on the stream this run, as opposed to loaded from the store
   }));
   window.__pushAssistant = (t) => { S.log.push({id:nid(), k:'assistant', text:t}); render(); return document.querySelectorAll('.filechip').length; };
+}
+
+/* ============================================================
+   Item 7 — settings surface: menu dispatch, the Tasks tab, keys
+   ============================================================ */
+
+/* A menu node: a Manage tab switches the panel; every other verb is the
+   desktop act it already has, run with the settings window closed. */
+function menuActivate(id) {
+  let node = null;
+  MENU_GROUPS.forEach(([, nodes]) => nodes.forEach((n) => {
+    if (n.id === id) node = n;
+    (n.sub || []).forEach((c) => { if (c.id === id) node = c; });
+  }));
+  if (!node || node.na) return;
+  if (node.tab) { S.settingsPane = node.tab; render(); refreshDiag(); return; }
+  const target = MENU_ACTS[id];
+  if (!target) return;
+  if (!target.startsWith('settings:')) S.settings = null;
+  act(target);
+}
+
+/* ---- Tasks tab: src/tui/components/tasks-*.tsx, tasks-summary.ts, tasks-filter.ts ---- */
+
+function formatScheduleLabel(schedule) {
+  if (!schedule) return '-';
+  if (schedule.kind === 'at') return 'at ' + formatUnixMs(schedule.at);
+  if (schedule.kind === 'cron') return 'cron: ' + schedule.expression + (schedule.tz ? ' (' + schedule.tz + ')' : '');
+  return 'every ' + formatIntervalMs(schedule.everyMs);
+}
+function formatUnixMs(ms) {
+  if (!Number.isFinite(ms)) return '-';
+  const d = new Date(ms);
+  if (Number.isNaN(d.getTime())) return '-';
+  const pad = (n) => String(n).padStart(2, '0');
+  return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+}
+function formatIntervalMs(ms) {
+  if (!Number.isFinite(ms) || ms <= 0) return ms + 'ms';
+  const seconds = Math.round(ms / 1000);
+  if (seconds < 60) return seconds + 's';
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return minutes + 'm';
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return hours + 'h';
+  return Math.round(hours / 24) + 'd';
+}
+function formatRelativeMs(target, now) {
+  if (target === null || target === undefined) return '-';
+  const deltaMs = target - now;
+  const abs = Math.abs(deltaMs);
+  if (abs < 1000) return 'now';
+  return (deltaMs >= 0 ? 'in ' : '') + formatIntervalMs(abs) + (deltaMs >= 0 ? '' : ' ago');
+}
+function tkTrunc(text, max) { text = String(text); return text.length <= max ? text : text.slice(0, max - 1) + '…'; }
+function tkShortId(id) { return id.length <= 10 ? id : id.slice(0, 10) + '…'; }
+
+/* toTaskSummaryRow — the record as GET /api/tasks returns it (recordToJson). */
+function tkRow(t) {
+  const collapsed = String(t.userMessage || '').replace(/\s+/g, ' ').trim();
+  return {
+    id:t.id, status:t.status || 'pending', origin:t.origin || '—', triggerSource:t.triggerSource || null,
+    sessionId:t.sessionId || null,
+    userMessage: collapsed.length <= 96 ? collapsed : collapsed.slice(0, 95) + '…',
+    scheduleKind: t.schedule ? t.schedule.kind : null, scheduleLabel: formatScheduleLabel(t.schedule || null),
+    recurring: !!t.recurring, scheduledFor: typeof t.scheduledFor === 'number' ? t.scheduledFor : null,
+    createdAt:t.createdAt, updatedAt:t.updatedAt, startedAt:t.startedAt ?? null, completedAt:t.completedAt ?? null,
+    attempts:t.attempts ?? 0, maxAttempts:t.maxAttempts ?? 0, lastError:t.lastError || null,
+  };
+}
+function tkVisibleRows() {
+  const needle = TK.search.trim().toLowerCase();
+  return TK.rows.filter((row) => {
+    if (TK.filter === 'recurring' ? !row.recurring : (TK.filter !== 'all' && row.status !== TK.filter)) return false;
+    if (!needle) return true;
+    return row.userMessage.toLowerCase().includes(needle) || row.id.toLowerCase().includes(needle)
+      || (row.sessionId !== null && row.sessionId.toLowerCase().includes(needle));
+  }).sort((a, b) => {
+    const aDue = a.scheduledFor ?? Number.POSITIVE_INFINITY, bDue = b.scheduledFor ?? Number.POSITIVE_INFINITY;
+    if (aDue !== bDue) return aDue - bDue;
+    return b.createdAt - a.createdAt;
+  });
+}
+function tkSelected() {
+  const rows = tkVisibleRows();
+  if (!rows.length) return null;
+  return rows[Math.max(0, Math.min(TK.cursor, rows.length - 1))];
+}
+function tasksVisible() {
+  return (S.settings && settingsPaneId(S.settingsPane) === 'tasks') || (!S.settings && S.room === 'tasks');
+}
+/* tasks-orchestrator.ts: refresh every 5 000 ms while the tab is open, limit 200. */
+function ensureTasksPoll() {
+  if (!BR) return;
+  if (TK.lastRefreshedAt === null && !TK.loading) setTimeout(() => tasksRefresh(), 0);
+  if (TK.timer) return;
+  TK.timer = setInterval(() => {
+    if (!tasksVisible()) { clearInterval(TK.timer); TK.timer = null; return; }
+    if (TK.auto) tasksRefresh(true);
+  }, 5000);
+}
+function tkTyping() {
+  const el = document.activeElement;
+  return !!el && (el.id === 'tk-search' || (el.dataset && el.dataset.tkField));
+}
+async function tasksRefresh(quiet) {
+  if (!BR || TK.loading) return;
+  TK.loading = true; TK.err = null;
+  if (!quiet) render();
+  const res = await BR.tasks();
+  TK.loading = false;
+  if (res && res.ok && res.data && Array.isArray(res.data.tasks)) {
+    TK.rows = res.data.tasks.slice(0, 200).map(tkRow);
+    TK.lastRefreshedAt = Date.now();
+    // The sidebar count reads TASKS; keep it in step with what the tab shows.
+    TASKS.length = 0;
+    res.data.tasks.forEach((t) => TASKS.push({
+      id:t.id, t:t.userMessage || t.id, when:t.schedule ? formatScheduleLabel(t.schedule) : 'once',
+      last:t.status || 'pending', st:t.status === 'running' ? 'run' : t.status === 'failed' ? 'bad' : 'ok',
+    }));
+  } else {
+    TK.err = 'tasks refresh failed: ' + ((res && res.error) || 'unknown error');
+  }
+  // A poll must not steal the caret from the search box or the create form.
+  if (!(quiet && tkTyping())) render();
+}
+
+function tasksTab() {
+  ensureTasksPoll();
+  if (TK.mode === 'create') return tkFormHTML();
+  if (TK.mode === 'detail') return tkDetailHTML();
+  return tkListHTML();
+}
+
+function tkStatusClass(status) {
+  return {running:'st-running', completed:'st-completed', failed:'st-failed', blocked:'st-blocked', cancelled:'st-cancelled'}[status] || 'st-pending';
+}
+function tkFilterBar(visibleCount) {
+  const now = Date.now();
+  const mode = TK.auto ? 'auto' : 'manual';
+  let refresh;
+  if (TK.lastRefreshedAt === null) refresh = mode + ' (never)';
+  else {
+    const seconds = Math.floor(Math.max(0, now - TK.lastRefreshedAt) / 1000);
+    refresh = seconds < 1 ? mode + ' (just now)' : seconds < 60 ? mode + ' (' + seconds + 's ago)' : mode + ' (' + Math.floor(seconds / 60) + 'm ago)';
+  }
+  const search = TK.searchOpen
+    ? '  ·  /<input id="tk-search" value="' + esc(TK.search) + '" placeholder="" autocomplete="off" spellcheck="false">'
+    : TK.search.length ? '  ·  /' + esc(TK.search) : '';
+  return '<div class="tuibar"><b>Tasks</b><span class="ter">  filter: ' + esc(TK.filter) + '  ·  ' + visibleCount + '/' + TK.rows.length
+    + search + '  ·  refresh: ' + esc(refresh) + (TK.loading ? '  ·  loading…' : '') + '</span></div>';
+}
+function tkMessages() {
+  return (TK.msg ? '<div class="tuimsg">' + esc(TK.msg) + '</div>' : '')
+    + (TK.err ? '<div class="tuierr">! ' + esc(TK.err) + '</div>' : '');
+}
+function tkCancelModal() {
+  if (!TK.cancel) return '';
+  return '<div class="tuimodal warn"><b style="color:var(--warn)">cancel ' + (TK.cancel.isRecurring ? 'recurring ' : '') + 'task?</b>'
+    + '<div><span class="ter">id:</span> ' + esc(TK.cancel.taskId) + '</div>'
+    + '<div class="tuihint" style="margin-top:2px"><span>this stops all future firings.</span>'
+    + '<button data-act="tasks:cancelConfirm">y = confirm</button><span>·</span><button data-act="tasks:cancelKeep">n / Esc = keep</button></div></div>';
+}
+function tkHint(key, label, act) {
+  return '<button data-act="' + act + '">' + esc(key + ' ' + label) + '</button><span>·</span>';
+}
+function tkListHTML() {
+  const rows = tkVisibleRows();
+  const now = Date.now();
+  const cur = Math.max(0, Math.min(TK.cursor, rows.length - 1));
+  let body;
+  if (!rows.length) {
+    body = '<div class="ter" style="padding:10px 0">no tasks match the current filter — press `n` to create one, `f` to cycle filter, `r` to refresh.</div>';
+  } else {
+    body = '<div class="tuihead">  status   schedule               next-run       session   message</div>'
+      + rows.map((row, i) => {
+        const sel = i === cur;
+        return '<button class="tuirow' + (sel ? ' on' : '') + '" data-task-row="' + esc(row.id) + '" data-act="tasks:detail:' + esc(row.id) + '">'
+          + (sel ? '▸' : ' ') + ' <span class="' + tkStatusClass(row.status) + '">' + esc(row.status.padEnd(9)) + '</span> '
+          + '<span class="ter">' + esc(tkTrunc(row.scheduleLabel, 22).padEnd(22) + ' ' + formatRelativeMs(row.scheduledFor, now).padEnd(14) + ' '
+            + (row.sessionId ? tkShortId(row.sessionId) : '—').padEnd(10)) + '</span> '
+          + esc(tkTrunc(row.userMessage, 64)) + '</button>';
+      }).join('');
+  }
+  const hints = '<div class="tuihint"><span>j/k move</span><span>·</span><span>Enter detail</span><span>·</span>'
+    + tkHint('n', 'new', 'tasks:new') + tkHint('c', 'cancel', 'tasks:cancel') + tkHint('R', 'run-now', 'tasks:run')
+    + tkHint('r', 'refresh', 'tasks:refresh') + tkHint('a', 'auto', 'tasks:auto') + tkHint('f', 'filter', 'tasks:filter')
+    + tkHint('/', 'search', 'tasks:search') + '<button data-act="tasks:clearSearch">Esc clear search</button></div>';
+  return '<div class="tui">' + tkFilterBar(rows.length) + tkMessages() + tkCancelModal() + body + hints + '</div>';
+}
+function tkDetailHTML() {
+  const row = TK.rows.find((r) => r.id === TK.detailId);
+  if (!row) {
+    return '<div class="tui"><div style="color:var(--warn);padding:10px 0">task ' + esc(TK.detailId || '?') + ' not found in the current snapshot. Press Esc to return to the list.</div>'
+      + '<div class="tuihint"><button data-act="tasks:back">Esc back</button></div></div>';
+  }
+  const now = Date.now();
+  const id = row.id;
+  return '<div class="tui">' + tkMessages() + tkCancelModal()
+    + '<div><b>' + esc(id) + '</b><span class="ter">  ·  ' + esc(row.origin) + '</span></div>'
+    + '<div><span class="ter">status:</span> ' + esc(row.status) + '  <span class="ter">schedule:</span> ' + esc(row.scheduleLabel) + (row.recurring ? ' (recurring)' : '') + '</div>'
+    + '<div><span class="ter">next-run:</span> ' + esc(formatRelativeMs(row.scheduledFor, now)) + ' <span class="ter">(' + esc(row.scheduledFor !== null ? formatUnixMs(row.scheduledFor) : '-') + ')</span></div>'
+    + '<div><span class="ter">attempts:</span> ' + row.attempts + '/' + row.maxAttempts + '  <span class="ter">session:</span> ' + esc(row.sessionId ?? '—') + '</div>'
+    + '<div class="ter">created: ' + esc(formatUnixMs(row.createdAt)) + ' · updated: ' + esc(formatUnixMs(row.updatedAt))
+      + (row.completedAt !== null ? ' · completed: ' + esc(formatUnixMs(row.completedAt)) : '') + '</div>'
+    + '<div class="ter" style="margin-top:8px">message:</div><div>' + esc(row.userMessage) + '</div>'
+    + (row.lastError ? '<div class="tuierr" style="margin-top:8px">last error: ' + esc(row.lastError) + '</div>' : '')
+    + '<div class="ter" style="margin-top:8px">recent firings:</div>'
+    // The TUI builds this feed in-process by diffing records between ticks; the HTTP API has no such surface.
+    + '<div class="ter">(firings are not exposed by the agent’s HTTP API)</div>'
+    + '<div class="tuihint">' + tkHint('o', 'open session', 'tasks:open:' + esc(id)) + tkHint('R', 'run-now', 'tasks:run:' + esc(id))
+      + tkHint('c', 'cancel', 'tasks:cancel:' + esc(id)) + '<button data-act="tasks:back">Esc back</button></div>'
+    + '</div>';
+}
+function tkNewForm() {
+  return {kind:'cron', cronExpression:'', intervalSeconds:'', atIsoOrMs:'', tz:'', message:'',
+          preview:{ok:false, error:null, nextFirings:[]}, submitting:false, error:null, timer:null};
+}
+function tkFormHTML() {
+  const f = TK.form || (TK.form = tkNewForm());
+  const label = (l) => '<span class="mk"></span><span class="lb"> ' + esc(l.padEnd(10)) + ': </span>';
+  const field = (l, name, value, placeholder) =>
+    '<div class="tkrow">' + label(l) + '<input data-tk-field="' + name + '" value="' + esc(value) + '" placeholder="' + esc(placeholder) + '" autocomplete="off" spellcheck="false"></div>';
+  const expr = f.kind === 'cron' ? field('cron', 'cronExpression', f.cronExpression, '0 * * * * (standard 5-field cron)')
+    : f.kind === 'interval' ? field('every (s)', 'intervalSeconds', f.intervalSeconds, '300')
+    : field('at', 'atIsoOrMs', f.atIsoOrMs, '2026-05-01T09:00:00Z or Unix-ms');
+  const canSubmit = f.preview.ok && !f.submitting;
+  return '<div class="tui"><div class="tuimodal"><b>new task</b>'
+    + '<div class="tkrow">' + label('kind') + ['cron','interval','at'].map((k, i) =>
+        (i ? '<span class="ter"> / </span>' : '') + '<button class="tkkind' + (f.kind === k ? ' on' : '') + '" data-act="tasks:kind:' + k + '">' + k + '</button>').join('') + '</div>'
+    + expr
+    + (f.kind === 'cron' ? field('tz', 'tz', f.tz, '(optional, e.g. Europe/Berlin)') : '')
+    + field('message', 'message', f.message, 'what should the agent do when this fires?')
+    + '<div id="tk-preview">' + tkPreviewHTML(f) + '</div>'
+    + '<div class="tuihint"><button data-act="tasks:submit"' + (canSubmit ? ' style="color:var(--success)"' : ' disabled') + '>Ctrl+Enter submit</button>'
+      + '<span>  · Tab next · Shift+Tab back · </span><button data-act="tasks:back">Esc cancel</button>' + (f.submitting ? '<span> · submitting…</span>' : '') + '</div>'
+    + '</div></div>';
+}
+function tkPreviewHTML(f) {
+  if (f.error) return '<div class="tuierr" style="margin-top:8px">error: ' + esc(f.error) + '</div>';
+  if (f.preview.error) return '<div class="tuierr" style="margin-top:8px">error: ' + esc(f.preview.error) + '</div>';
+  if (!f.preview.nextFirings.length) return '<div class="ter" style="margin-top:8px">(preview unavailable)</div>';
+  return '<div class="ter" style="margin-top:8px">next firings:</div>'
+    + f.preview.nextFirings.map((ms) => '<div class="ter">· ' + esc(formatUnixMs(ms)) + '</div>').join('');
+}
+function tkFieldInput(name, value) {
+  const f = TK.form || (TK.form = tkNewForm());
+  f[name] = value; f.error = null;
+  clearTimeout(f.timer);
+  f.timer = setTimeout(() => tkPreview(), 250);
+}
+/* The preview is the agent's own validator + cron-parser, run in the main process. */
+async function tkPreview() {
+  const f = TK.form; if (!f || !BR) return null;
+  const res = await BR.taskPreview({kind:f.kind, cronExpression:f.cronExpression, intervalSeconds:f.intervalSeconds, atIsoOrMs:f.atIsoOrMs, tz:f.tz, message:f.message});
+  if (TK.form !== f) return null;
+  if (!res || res.ok === false) { f.preview = {ok:false, error:(res && res.error) || 'preview failed', nextFirings:[]}; }
+  else f.preview = res.preview;
+  const box = document.getElementById('tk-preview');
+  if (box && !tkTyping()) render();
+  else if (box) { box.innerHTML = tkPreviewHTML(f); const b = document.querySelector('[data-act="tasks:submit"]'); if (b) { b.disabled = !(f.preview.ok && !f.submitting); b.style.color = f.preview.ok ? 'var(--success)' : ''; } }
+  return res;
+}
+/* Submit: validate like the TUI, then `atag task create` (POST /api/tasks
+   on 0.5.4 takes no schedule). Success line is the TUI's runtime_info. */
+async function tkSubmit() {
+  const f = TK.form; if (!f || !BR || f.submitting) return {ok:false, error:'no form'};
+  f.error = null;
+  const v = await tkPreview();
+  if (!v || v.ok === false || !v.schedule) return {ok:false, error:(f.preview && f.preview.error) || 'invalid'};
+  f.submitting = true; render();
+  const sc = v.schedule;
+  const expression = sc.kind === 'cron' ? sc.expression : sc.kind === 'interval' ? String(sc.everyMs / 1000) : String(sc.at);
+  const res = await BR.taskCreate({message:v.message, kind:sc.kind, expression, tz:sc.kind === 'cron' ? (sc.tz || '') : ''});
+  f.submitting = false;
+  if (!res || !res.ok) { f.error = (res && res.error) || 'task create failed'; render(); return {ok:false, error:f.error}; }
+  TK.msg = 'task ' + res.id + ' scheduled (' + sc.kind + ')';
+  toast('Task scheduled', TK.msg);
+  TK.mode = 'list'; TK.form = null;
+  await tasksRefresh();
+  return {ok:true, id:res.id};
+}
+/* Cancel: DELETE /api/tasks/{id}; the lines are the TUI orchestrator's. */
+async function tkCancel(id) {
+  if (!BR) return;
+  const res = await BR.cancelTask(id);
+  if (res && res.ok) {
+    const after = res.data || {};
+    TK.msg = after.status === 'cancelled' ? 'task ' + id + ' cancelled' : 'task ' + id + ' already ' + after.status + ' (cannot cancel)';
+  } else {
+    const msg = (res && res.error) || 'unknown error';
+    TK.msg = /not found/i.test(msg) ? 'task ' + id + ' not found' : 'cancel ' + id + ' failed: ' + msg;
+  }
+  TK.cancel = null;
+  await tasksRefresh();
+}
+/* Run-now: POST /api/tasks/{id}/run, one attempt, synchronous on the agent. */
+async function tkRunNow(id) {
+  if (!BR) return;
+  TK.msg = 'task ' + id + ' running…'; render();
+  const res = await BR.runTask(id);
+  if (res && res.ok) {
+    const t = res.data && res.data.task;
+    TK.msg = t ? 'task ' + id + ' run complete (status=' + t.status + ')' : 'task ' + id + ' skipped (already claimed or vanished)';
+  } else {
+    TK.msg = 'run-now ' + id + ' failed: ' + ((res && res.error) || 'unknown error');
+  }
+  await tasksRefresh();
+}
+function tasksAct(what) {
+  const [verb, ...rest] = what.split(':');
+  const arg = rest.join(':');
+  const sel = () => arg || (TK.mode === 'detail' ? TK.detailId : (tkSelected() || {}).id);
+  if (verb === 'new') { if (!S.settings) { S.settings = 1; S.settingsPane = 'tasks'; } TK.mode = 'create'; TK.form = tkNewForm(); TK.msg = null; render(); return; }
+  if (verb === 'kind') { const f = TK.form || (TK.form = tkNewForm()); f.kind = arg; f.error = null; render(); tkPreview(); return; }
+  if (verb === 'submit') { tkSubmit(); return; }
+  if (verb === 'back') { TK.mode = 'list'; TK.form = null; TK.cancel = null; render(); return; }
+  if (verb === 'detail') { TK.detailId = arg; const rows = tkVisibleRows(); const i = rows.findIndex((r) => r.id === arg); if (i >= 0) TK.cursor = i; TK.mode = 'detail'; render(); return; }
+  if (verb === 'open') {
+    const row = TK.rows.find((r) => r.id === sel());
+    if (!row) { TK.msg = 'task ' + sel() + ' not found'; render(); return; }
+    if (!row.sessionId) { TK.msg = 'task ' + row.id + ' has no session yet (one-shot not picked up)'; render(); return; }
+    S.settings = null; TK.mode = 'list'; openSession(row.sessionId); return;
+  }
+  if (verb === 'cancel') {
+    const id = sel(); if (!id) return;
+    const row = TK.rows.find((r) => r.id === id);
+    if (row && row.recurring) { TK.cancel = {taskId:id, isRecurring:true}; render(); return; }
+    tkCancel(id); return;
+  }
+  if (verb === 'cancelConfirm') { if (TK.cancel) tkCancel(TK.cancel.taskId); return; }
+  if (verb === 'cancelKeep') { TK.cancel = null; render(); return; }
+  if (verb === 'run') { const id = sel(); if (id) tkRunNow(id); return; }
+  if (verb === 'refresh') { tasksRefresh(); return; }
+  if (verb === 'auto') { TK.auto = !TK.auto; render(); return; }
+  if (verb === 'filter') { TK.filter = TK_FILTER_ORDER[(TK_FILTER_ORDER.indexOf(TK.filter) + 1) % TK_FILTER_ORDER.length]; TK.cursor = 0; render(); return; }
+  if (verb === 'search') { TK.searchOpen = true; render(); const n = $('#tk-search'); if (n) n.focus(); return; }
+  if (verb === 'clearSearch') { TK.searchOpen = false; TK.search = ''; TK.cursor = 0; render(); return; }
+}
+
+/* Keys inside the settings window. ←/→ and [ ] cycle the Manage tabs as
+   cycleSubTab does; the Tasks tab's letters are tasks-key-bindings.ts. */
+function settingsKey(e, k, inText) {
+  const pane = settingsPaneId(S.settingsPane);
+  const tk = pane === 'tasks';
+  const tkField = inText && e.target.dataset && e.target.dataset.tkField;
+  if (k === 'Escape') {
+    e.preventDefault();
+    if (tk && TK.cancel) { TK.cancel = null; render(); return true; }
+    if (tk && TK.mode !== 'list') { TK.mode = 'list'; TK.form = null; render(); return true; }
+    if (tk && (TK.searchOpen || TK.search)) { TK.searchOpen = false; TK.search = ''; render(); return true; }
+    S.settings = null; render(); return true;
+  }
+  if (tkField && (e.metaKey || e.ctrlKey) && k === 'Enter') { e.preventDefault(); tkSubmit(); return true; }
+  if (e.target.id === 'tk-search' && k === 'Enter') { e.preventDefault(); TK.searchOpen = false; render(); return true; }
+  if (inText) return false;
+  if (e.metaKey || e.ctrlKey || e.altKey) return false;
+  if (k === 'ArrowLeft' || k === 'ArrowRight' || k === '[' || k === ']') {
+    e.preventDefault();
+    const ids = SETTINGS_TABS.map((t) => t[0]);
+    const dir = (k === 'ArrowRight' || k === ']') ? 1 : -1;
+    S.settingsPane = ids[(ids.indexOf(pane) + dir + ids.length) % ids.length];
+    render(); return true;
+  }
+  if (!tk) return false;
+  if (TK.cancel) {
+    if (k === 'y') { e.preventDefault(); tkCancel(TK.cancel.taskId); return true; }
+    if (k === 'n') { e.preventDefault(); TK.cancel = null; render(); return true; }
+    return true;
+  }
+  if (TK.mode === 'detail') {
+    if (k === 'o') { e.preventDefault(); tasksAct('open'); return true; }
+    if (k === 'R') { e.preventDefault(); tasksAct('run'); return true; }
+    if (k === 'c') { e.preventDefault(); tasksAct('cancel'); return true; }
+    return false;
+  }
+  if (TK.mode !== 'list') return false;
+  const rows = tkVisibleRows();
+  if (k === 'j' || k === 'ArrowDown') { e.preventDefault(); TK.cursor = Math.min(TK.cursor + 1, Math.max(0, rows.length - 1)); render(); return true; }
+  if (k === 'k' || k === 'ArrowUp') { e.preventDefault(); TK.cursor = Math.max(TK.cursor - 1, 0); render(); return true; }
+  if (k === 'Enter') { e.preventDefault(); const r = tkSelected(); if (r) tasksAct('detail:' + r.id); return true; }
+  const map = {n:'new', c:'cancel', R:'run', r:'refresh', a:'auto', f:'filter', '/':'search'};
+  if (map[k]) { e.preventDefault(); tasksAct(map[k]); return true; }
+  return false;
+}
+
+/* Hooks for --smoke (Item 7: settings surface). */
+if (typeof window !== 'undefined') {
+  window.addEventListener('error', () => { ERR_COUNT++; });
+  window.addEventListener('unhandledrejection', () => { ERR_COUNT++; });
+  window.__menuGroups = () => MENU_GROUPS.map((g) => g[0]);
+  window.__settingsTabs = () => SETTINGS_TABS.map((t) => t[0]);
+  window.__settingsLabels = () => [...document.querySelectorAll('#settings .settab')].map((b) => b.textContent.replace(/\s*\((\d+|up|down)\)$/, '').trim());
+  window.__settingsOpen = (id) => { act('settings:' + id); return settingsPaneId(S.settingsPane); };
+  window.__settingsPane = () => (S.settings ? settingsPaneId(S.settingsPane) : null);
+  window.__settingsClose = () => { act('settings:close'); };
+  window.__settingsBody = () => (document.querySelector('#settings .setbody') || {}).innerText || '';
+  window.__errCount = () => ERR_COUNT;
+  window.__tasksRows = () => document.querySelectorAll('#settings [data-task-row]').length;
+  window.__tasksMsg = () => TK.msg || '';
+  window.__tasksRefresh = () => tasksRefresh();
+  window.__taskCreate = (fields) => { TK.mode = 'create'; TK.form = Object.assign(tkNewForm(), fields); render(); return tkSubmit(); };
+  window.__privacy = () => ({analyticsEnabled: !!(LIVE_CONFIG && LIVE_CONFIG.analytics && LIVE_CONFIG.analytics.enabled)});
+  window.__privacyToggle = () => privacyToggle();
 }

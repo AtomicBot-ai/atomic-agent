@@ -21,7 +21,10 @@ import {
   providerModels,
   modelsStart,
   traceUsage,
+  configUnset,
+  taskCreate,
 } from "./agent-cli.js";
+import { validateCreateForm, type TaskCreateFormInput } from "./task-schedule.js";
 
 const DEV = process.argv.includes("--dev");
 /** `--smoke` boots, waits for first paint, writes a screenshot, and exits. */
@@ -284,6 +287,67 @@ function wireIpc(client: AgentClient): void {
     if (typeof url === "string" && /^https?:\/\//.test(url)) void shell.openExternal(url);
   });
 
+  // --- Item 7 (settings surface): tasks, health, config unset, schedule preview ---
+  const taskId = (id: unknown): string | null =>
+    typeof id === "string" && /^[\w.-]{1,64}$/.test(id) ? id : null;
+  const wrap = async <T>(fn: () => Promise<T>) => {
+    try {
+      return { ok: true, data: await fn() };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  };
+  ipcMain.handle("agent:task", (_event, id: unknown) => {
+    const clean = taskId(id);
+    return clean ? wrap(() => client.task(clean)) : { ok: false, error: "task id required" };
+  });
+  ipcMain.handle("agent:cancelTask", (_event, id: unknown) => {
+    const clean = taskId(id);
+    return clean ? wrap(() => client.cancelTask(clean)) : { ok: false, error: "task id required" };
+  });
+  ipcMain.handle("agent:runTask", (_event, id: unknown) => {
+    const clean = taskId(id);
+    return clean ? wrap(() => client.runTask(clean)) : { ok: false, error: "task id required" };
+  });
+  ipcMain.handle("agent:health", () => wrap(() => client.health()));
+  // The menu's Quit: the app quits and `before-quit` stops the agent, as the TUI's /quit does.
+  ipcMain.handle("app:quit", () => { app.quit(); });
+  ipcMain.handle("cli:configUnset", (_event, key: unknown) =>
+    typeof key === "string" ? configUnset(key) : { ok: false, error: "key must be a string" },
+  );
+  ipcMain.handle("cli:taskCreate", (_event, input: unknown) => {
+    const { message, kind, expression, tz } = (input ?? {}) as {
+      message?: unknown; kind?: unknown; expression?: unknown; tz?: unknown;
+    };
+    if (typeof message !== "string" || !message.trim()) return { ok: false, error: "message required" };
+    if (kind !== "cron" && kind !== "interval" && kind !== "at") return { ok: false, error: "kind must be cron, interval or at" };
+    if (typeof expression !== "string" || !expression.trim()) return { ok: false, error: "schedule required" };
+    return taskCreate(
+      { message, kind, expression, ...(typeof tz === "string" && tz.trim() ? { tz: tz.trim() } : {}) },
+      client.status.workingDir,
+    );
+  });
+  // Pure: the TUI's form validator + cron-parser preview, no store access.
+  ipcMain.handle("app:taskPreview", (_event, payload: unknown) => {
+    const { form, now } = (payload ?? {}) as { form?: Record<string, unknown>; now?: unknown };
+    const str = (v: unknown) => (typeof v === "string" ? v : "");
+    const kindRaw = str(form?.kind);
+    const kind = kindRaw === "interval" || kindRaw === "at" ? kindRaw : "cron";
+    const input: TaskCreateFormInput = {
+      kind,
+      cronExpression: str(form?.cronExpression),
+      intervalSeconds: str(form?.intervalSeconds),
+      atIsoOrMs: str(form?.atIsoOrMs),
+      tz: str(form?.tz),
+      message: str(form?.message),
+    };
+    try {
+      return { ok: true, ...validateCreateForm(input, typeof now === "number" ? now : Date.now()) };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
   client.on("status", (status) => send("agent:status", status));
   client.on("chat", (event) => send("agent:chat", event));
   client.on("approval", (event) => send("agent:approval", event));
@@ -444,6 +508,9 @@ async function smokeTest(): Promise<void> {
 
     const chips = await js<number>("window.__pushAssistant('Saved the report to /Users/valerii/Desktop/report.pdf and the notes to ~/notes/summary.md.')");
     check("file paths render as chips", chips === 2, `${chips} chips`);
+
+    // --- Item 7 (settings surface): the TUI menu tree, the Manage tabs, Privacy and Tasks ---
+    await settingsTest(js, check);
   }
 
   if (MODELS_TEST) await modelsTest(js, check);
@@ -453,6 +520,155 @@ async function smokeTest(): Promise<void> {
   writeFileSync(out, image.toPNG());
   process.stdout.write(`SMOKE screenshot=${out} failures=${fail.length}\n`);
   app.exit(fail.length === 0 ? 0 : 1);
+}
+
+/**
+ * Item 7 (settings surface). Everything here reads the live agent or
+ * writes and restores the lane's own config; the analytics round trip
+ * and the task create/cancel round trip both clean up in `finally`.
+ */
+async function settingsTest(
+  js: <T>(code: string) => Promise<T>,
+  check: (name: string, ok: boolean, detail?: string) => void,
+): Promise<void> {
+  const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+  const GROUPS = ["Go", "Session", "Model", "Run", "Setup", "Help", "Danger zone"];
+  const TABS = ["tasks", "skills", "memory", "mcp", "llm", "telegram", "import", "privacy"];
+  const LABELS = ["Tasks", "Skills", "Memory", "MCP", "LLM", "Telegram", "Import", "Privacy"];
+
+  const groups = await js<string[]>("window.__menuGroups()");
+  check("settings: menu groups mirror the TUI", same(groups, GROUPS), JSON.stringify(groups));
+  const tabs = await js<string[]>("window.__settingsTabs()");
+  check("settings: tab ids mirror MANAGE_TABS", same(tabs, TABS), JSON.stringify(tabs));
+
+  // The bottom-left entry lands on Go › Manage › Tasks.
+  const foot = await js<{ present: boolean; text: string; pane: string }>(
+    "(() => { const f = document.querySelector('#sidebar .sb-foot'); if (!f) return {present:false,text:'',pane:''};"
+    + " f.click(); return {present:true, text:f.textContent, pane:window.__settingsPane()}; })()",
+  );
+  check("settings: bottom-left entry opens on Tasks", foot.present && /Settings/.test(foot.text) && foot.pane === "tasks", `pane=${foot.pane}`);
+  await js<void>("window.__settingsClose()");
+  const viaKey = await js<string>(
+    "(() => { document.dispatchEvent(new KeyboardEvent('keydown', {key: ',', metaKey: true, bubbles: true, cancelable: true})); return window.__settingsPane(); })()",
+  );
+  check("settings: Cmd+, opens on Tasks", viaKey === "tasks", `pane=${viaKey}`);
+
+  const labels = await js<string[]>("window.__settingsLabels()");
+  check("settings: tab labels mirror the TUI", same(labels, LABELS), JSON.stringify(labels));
+
+  const errBefore = await js<number>("window.__errCount()");
+  let allRender = true;
+  const details: string[] = [];
+  for (const id of TABS) {
+    const r = await js<{ pane: string; on: string; body: number }>(
+      `(() => { const pane = window.__settingsOpen(${JSON.stringify(id)});`
+      + " const on = (document.querySelector('#settings .settab.on') || {dataset:{}}).dataset.act || '';"
+      + " return {pane, on, body: window.__settingsBody().length}; })()",
+    );
+    const ok = r.pane === id && r.on === "settings:" + id && r.body > 0;
+    if (!ok) { allRender = false; details.push(`${id}: pane=${r.pane} on=${r.on} body=${r.body}`); }
+  }
+  const errAfter = await js<number>("window.__errCount()");
+  check("settings: every tab renders without errors", allRender && errAfter === errBefore, details.join("; ") || `errors ${errBefore}→${errAfter}`);
+
+  // Tab cycling with the arrow keys, as the TUI's cycleSubTab does.
+  const cycled = await js<string>(
+    "(() => { window.__settingsOpen('privacy');"
+    + " document.dispatchEvent(new KeyboardEvent('keydown', {key: 'ArrowRight', bubbles: true, cancelable: true}));"
+    + " return window.__settingsPane(); })()",
+  );
+  check("settings: ArrowRight wraps from Privacy to Tasks", cycled === "tasks", `pane=${cycled}`);
+
+  // Tasks tab: what GET /api/tasks holds is what the tab shows.
+  await js<void>("window.__settingsOpen('tasks')");
+  await wait(1500);
+  const taskState = await js<{ count: number; rows: number; body: string }>(
+    "(async () => { const r = await window.atomic.tasks(); const list = (r.data && r.data.tasks) || [];"
+    + " return {count: list.length, rows: window.__tasksRows(), body: window.__settingsBody()}; })()",
+  );
+  const tasksCopy = taskState.count === 0
+    ? taskState.body.includes("no tasks match the current filter — press `n` to create one")
+    : taskState.body.includes("status   schedule               next-run       session   message");
+  check("tasks tab: rows and copy come from GET /api/tasks", tasksCopy && taskState.rows === taskState.count, `${taskState.rows} rows for ${taskState.count} tasks`);
+
+  // The create form's preview is the agent's own cron-parser port.
+  const preview = await js<{ cron: number; every: number; at: number; bad: string }>(
+    "(async () => { const cron = await window.atomic.taskPreview({kind:'cron', cronExpression:'0 * * * *', message:'x'});"
+    + " const every = await window.atomic.taskPreview({kind:'interval', intervalSeconds:'300', message:'x'});"
+    + " const at = await window.atomic.taskPreview({kind:'at', atIsoOrMs:'2030-01-01T09:00:00Z', message:'x'});"
+    + " const bad = await window.atomic.taskPreview({kind:'cron', cronExpression:'not a cron', message:'x'});"
+    + " return {cron: cron.preview.nextFirings.length, every: every.preview.nextFirings.length, at: at.preview.nextFirings.length, bad: bad.preview.error || ''}; })()",
+  );
+  check(
+    "tasks tab: next-firings preview runs cron-parser",
+    preview.cron === 5 && preview.every === 5 && preview.at === 1 && /invalid cron expression/.test(preview.bad),
+    `cron=${preview.cron} every=${preview.every} at=${preview.at} bad=${JSON.stringify(preview.bad)}`,
+  );
+
+  // Create a one-shot task through `atag task create`, see it in the tab,
+  // cancel it through DELETE /api/tasks/{id}. The row stays cancelled in
+  // the lane's own store; nothing is ever run.
+  let createdId = "";
+  try {
+    const created = await js<{ ok: boolean; id?: string; error?: string; line: string }>(
+      "(async () => { const at = String(Date.now() + 5 * 365 * 24 * 3600 * 1000);"
+      + " const r = await window.__taskCreate({kind:'at', atIsoOrMs: at, message:'desktop smoke task — cancelled right away'});"
+      + " return Object.assign({}, r, {line: window.__tasksMsg()}); })()",
+    );
+    createdId = created.id ?? "";
+    check("tasks tab: create goes through atag task create", created.ok && !!createdId && created.line === `task ${createdId} scheduled (at)`, created.error ?? created.line);
+    if (createdId) {
+      await wait(1500);
+      const seen = await js<{ rows: number; has: boolean }>(
+        "(() => ({rows: window.__tasksRows(), has: window.__settingsBody().includes('desktop smoke task')}))()",
+      );
+      check("tasks tab: the new task appears in the list", seen.has, `${seen.rows} rows`);
+    }
+  } finally {
+    if (createdId) {
+      const cancelled = await js<{ ok: boolean; status: string; error?: string }>(
+        `(async () => { const r = await window.atomic.cancelTask(${JSON.stringify(createdId)});`
+        + " return {ok: !!(r && r.ok), status: (r && r.data && r.data.status) || '', error: r && r.error}; })()",
+      );
+      check("tasks tab: cancel goes through DELETE /api/tasks/{id}", cancelled.ok && cancelled.status === "cancelled", cancelled.error ?? `status=${cancelled.status}`);
+      await js<void>("window.__tasksRefresh()");
+    }
+  }
+
+  // Privacy: the TUI's post-#303 copy, and no ladder anywhere in it.
+  await js<void>("window.__settingsOpen('privacy')");
+  const priv = await js<string>("window.__settingsBody()");
+  const privacyCopy = ["Analytics", "anonymous usage", "Product analytics + crash reports, fully anonymous.", "Session grants", "none active"]
+    .every((s) => priv.includes(s));
+  const noLadder = !/Approvals|approval level|1-5: set approval level/.test(priv);
+  check("privacy tab: TUI copy, no approval ladder", privacyCopy && noLadder, privacyCopy ? (noLadder ? "" : "ladder text present") : "copy missing");
+
+  // Analytics round trip through `atag config set analytics.enabled`, restored in finally.
+  const before = await js<boolean | undefined>(
+    "(async () => { const r = await window.atomic.config(); const a = r.data && r.data.config && r.data.config.analytics; return a ? a.enabled : undefined; })()",
+  );
+  try {
+    await js<void>("window.__privacyToggle()");
+    let flipped = false;
+    const deadline = Date.now() + 8000;
+    while (Date.now() < deadline) {
+      await wait(500);
+      const now = await js<{ analyticsEnabled: boolean }>("window.__privacy()");
+      if (now.analyticsEnabled === !before) { flipped = true; break; }
+    }
+    const onDisk = await js<boolean | undefined>(
+      "(async () => { const r = await window.atomic.config(); const a = r.data && r.data.config && r.data.config.analytics; return a ? a.enabled : undefined; })()",
+    );
+    check("privacy tab: analytics toggle writes config", flipped && onDisk === !before, `${String(before)} → ${String(onDisk)}`);
+  } finally {
+    // LIVE_CONFIG is the user file: an unset key reads as undefined and
+    // must go back to unset, not to the string "undefined".
+    if (typeof before === "boolean") await configSet("analytics.enabled", String(before));
+    else await configUnset("analytics.enabled");
+    await js<void>("window.__ctxRefreshCfg && window.__ctxRefreshCfg()");
+  }
+  await js<void>("window.__settingsClose()");
 }
 
 async function modelsTest(

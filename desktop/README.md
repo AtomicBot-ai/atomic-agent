@@ -108,8 +108,20 @@ Honestly degraded, and labelled as such in the UI:
   the card offers exactly those.
 - **Subscription-CLI providers** (`claude-cli`, `codex-cli`) are not in the
   desktop wizard: their config shape is not one this client writes.
-- **Memory** has no HTTP route; there is no Memory room.
-- **Tasks and skills are read-only.**
+- **Settings is the TUI menu.** The bottom-left gear (and ⌘ ,) opens the
+  menu tree from `src/tui/menu/menu-registry.ts` with the Manage tabs on the
+  right. Menu verbs the desktop cannot do (new terminal window, mouse, debug
+  bundle, queued messages, steer, uninstall) keep their TUI label with a
+  "not available in the desktop" note. The diagnostics line prints the TUI's
+  null form (`llm — · step —`, `kv —`) for the process metrics this window
+  does not have; the tool counters come from the open session's store rows.
+- **Tasks** create through `atag task create` (POST /api/tasks on 0.5.4 takes
+  no schedule), cancel through `DELETE /api/tasks/{id}` and run-now through
+  `POST /api/tasks/{id}/run`; the next-firings preview is the agent's own
+  cron-parser. The firings feed is not exposed by the HTTP API and the tab
+  says so.
+- **Memory, skills, MCP, LLM, Telegram and Import tabs** land in the next
+  steps of this branch; skills are read-only until then.
 - Writing config goes through `atag config set`, never `PATCH /api/config`,
   which re-defaults every block it does not merge.
 

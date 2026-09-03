@@ -554,3 +554,56 @@ body.electron .sb-head { -webkit-app-region: no-drag; }
 .filechip svg { color: var(--accent-text); }
 .msglink { color: var(--accent-text); border-bottom: 1px solid var(--accent-line); }
 .modelrow.dim { opacity: .5; }
+
+/* ---------------- Item 7: settings surface (the TUI menu + Manage tabs) ---------------- */
+.sb-foot{width:100%;text-align:left}
+.sb-foot .kc{margin-left:auto}
+#sidebar.rail .sb-foot{justify-content:center;padding:0}
+#sidebar.rail .sb-foot .kc{display:none}
+.setwin{width:900px;height:640px}
+.settb .setttl{font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--text-secondary);margin-left:var(--s3)}
+.setcols{flex:1;min-height:0;display:flex}
+.setmenu{width:236px;flex:none;overflow-y:auto;border-right:1px solid var(--line);padding:var(--s2) 0 var(--s4);font-family:var(--font-mono);font-size:12px;background:var(--bg-window)}
+.menuhd{padding:10px 12px 2px;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-tertiary)}
+.menurow{display:flex;align-items:center;gap:6px;width:100%;height:24px;padding:0 12px;color:var(--text-primary);text-align:left;font-family:inherit;font-size:inherit}
+.menurow.sub{padding-left:26px}
+.menurow.parent{color:var(--text-secondary)}
+button.menurow:hover{background:var(--bg-hover)}
+.menurow.on{background:var(--accent-wash);color:var(--accent-text)}
+.menurow.na{color:var(--text-tertiary);cursor:default}
+.menurow .lb{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.menurow .ch{font-size:10px;color:var(--text-tertiary);white-space:nowrap}
+.menurow .note{font-size:10px;color:var(--text-tertiary);white-space:nowrap}
+.setmain{flex:1;min-width:0;display:flex;flex-direction:column}
+.setmain .settabs{margin:0;padding:8px 16px 0;flex-wrap:wrap;align-items:center;gap:0}
+.setmain .settab{font-family:var(--font-mono);font-size:12px;padding:0 6px;height:24px;gap:0;white-space:pre}
+.setmain .settab::before{content:"  ";white-space:pre}
+.setmain .settab.on::before{content:"▸ "}
+.tabsep{white-space:pre;color:var(--text-tertiary);font-family:var(--font-mono);font-size:12px}
+.setdiag{padding:4px 16px 8px;font-family:var(--font-mono);font-size:11px;color:var(--text-tertiary);white-space:pre-wrap;border-bottom:1px solid var(--line-soft)}
+.tui{font-family:var(--font-mono);font-size:12.5px;line-height:20px;white-space:pre-wrap;display:flex;flex-direction:column;gap:2px;color:var(--text-primary)}
+.tui b{color:var(--accent-text);font-weight:600}
+.tuibar{white-space:pre}
+.tuihead{color:var(--text-tertiary);white-space:pre;margin-top:6px}
+.tuirow{display:block;height:24px;line-height:24px;width:100%;text-align:left;white-space:pre;overflow:hidden;text-overflow:ellipsis;font-family:inherit;font-size:inherit;padding:0 4px;border-radius:4px;color:var(--text-primary)}
+.tuirow:hover{background:var(--bg-hover)}
+.tuirow.on{background:var(--accent-wash);color:var(--accent-text)}
+.tuihint{color:var(--text-tertiary);display:flex;flex-wrap:wrap;gap:0 4px;align-items:center;margin-top:8px;white-space:pre}
+.tuihint button,.tkkind{color:var(--text-secondary);font-family:inherit;font-size:inherit;padding:0 4px;border-radius:4px;height:22px}
+.tuihint button:hover,.tkkind:hover{background:var(--bg-hover);color:var(--text-primary)}
+.tuihint button:disabled{color:var(--text-tertiary);background:transparent}
+.tkkind.on{color:var(--accent-text);font-weight:600}
+.tuimodal{border:1px solid var(--accent);border-radius:8px;padding:8px 12px;margin:6px 0;display:flex;flex-direction:column;gap:2px}
+.tuimodal.warn{border-color:var(--warn)}
+.tkrow{display:flex;align-items:center;height:26px}
+.tkrow .mk{width:1ch;white-space:pre;color:var(--accent-text)}
+.tkrow .mk::before{content:" "}
+.tkrow:focus-within .mk::before{content:"▸"}
+.tkrow .lb{white-space:pre;color:var(--text-tertiary)}
+.tkrow input{flex:1;min-width:0;background:transparent;border:0;outline:none;font:inherit;color:var(--accent-text);border-bottom:1px solid var(--line-soft)}
+.tkrow input:focus{border-bottom-color:var(--accent)}
+.tkrow input::placeholder{font-style:italic;color:var(--text-tertiary)}
+#tk-search{background:transparent;border:0;border-bottom:1px solid var(--line-soft);outline:none;font:inherit;color:var(--accent-text);width:160px}
+.st-running{color:var(--accent-text)} .st-completed{color:var(--success)} .st-failed,.st-blocked{color:var(--danger)} .st-cancelled{color:var(--warn)} .st-pending{color:var(--text-tertiary)}
+.tuimsg{color:var(--accent-text)} .tuierr{color:var(--danger)}
+.tuiwrap{padding:var(--s5)}

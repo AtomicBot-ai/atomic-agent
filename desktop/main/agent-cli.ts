@@ -29,11 +29,15 @@ export interface CliResult {
   error?: string;
 }
 
-async function cli(args: string[], timeout = 30_000): Promise<CliResult> {
+async function cli(args: string[], timeout = 30_000, cwd?: string): Promise<CliResult> {
   const binary = resolveBinary();
   if (!binary) return { ok: false, stdout: "", stderr: "", error: "no atomic-agent binary found" };
   try {
-    const { stdout, stderr } = await run(binary, args, { timeout, maxBuffer: 8 * 1024 * 1024 });
+    const { stdout, stderr } = await run(binary, args, {
+      timeout,
+      maxBuffer: 8 * 1024 * 1024,
+      ...(cwd ? { cwd } : {}),
+    });
     return { ok: true, stdout, stderr };
   } catch (err) {
     const e = err as { stdout?: string; stderr?: string; message?: string };
@@ -371,4 +375,57 @@ export async function traceUsage(
       turnIndex: captured?.turnIndex ?? 0,
     },
   };
+}
+
+/* ---------------- Item 7 (settings surface): config unset + task create ---------------- */
+
+/** `atag config unset <key>` — restores one key to its schema default. */
+export async function configUnset(key: string): Promise<CliResult> {
+  if (!/^[a-zA-Z][\w.]{0,80}$/.test(key)) {
+    return { ok: false, stdout: "", stderr: "", error: `refusing to unset a suspicious key: ${key}` };
+  }
+  return cli(["config", "unset", key]);
+}
+
+export interface TaskCreateInput {
+  message: string;
+  kind: "cron" | "interval" | "at";
+  /** cron expression, interval seconds, or the `at` Unix-ms — already validated by task-schedule.ts. */
+  expression: string;
+  tz?: string;
+}
+
+/**
+ * The Tasks tab's "new task". POST /api/tasks on 0.5.4 takes no schedule,
+ * so the scheduled form goes through the CLI:
+ *   atag task create --message <m> --max-attempts 3 (--cron <expr> [--tz <tz>] | --every <s> | --at <ms>)
+ * `--max-attempts 3` matches what the TUI's own create path sets; the
+ * record's origin will read `cli` because the CLI has no origin flag.
+ * A recurring create boots a runtime inside the CLI, hence the long
+ * timeout and the workspace cwd.
+ */
+export async function taskCreate(
+  input: TaskCreateInput,
+  cwd?: string,
+): Promise<{ ok: boolean; id?: string; record?: unknown; error?: string }> {
+  const args = ["task", "create", "--message", input.message, "--max-attempts", "3"];
+  if (input.kind === "cron") {
+    args.push("--cron", input.expression);
+    if (input.tz) args.push("--tz", input.tz);
+  } else if (input.kind === "interval") {
+    args.push("--every", input.expression);
+  } else if (input.kind === "at") {
+    args.push("--at", input.expression);
+  } else {
+    return { ok: false, error: `unknown schedule kind: ${String(input.kind)}` };
+  }
+  const res = await cli(args, 120_000, cwd);
+  if (!res.ok) return { ok: false, error: res.error ?? "task create failed" };
+  try {
+    const record = JSON.parse(res.stdout) as { id?: string };
+    if (typeof record.id !== "string") return { ok: false, error: "task create printed no id" };
+    return { ok: true, id: record.id, record };
+  } catch {
+    return { ok: false, error: `task create did not print JSON: ${res.stdout.trim().slice(0, 200)}` };
+  }
 }
