@@ -1,3 +1,4 @@
+import type { StructuredLogger } from "../../tracing/structured-logger.js";
 import type { MemoryStore } from "../memory-store.js";
 import type {
   ReflectionInput,
@@ -40,6 +41,8 @@ export function createLinkAwareReflectionRunner(args: {
   notesStore: MemoryStore;
   /** Mirrors `LinkGeneratorRunnerDeps.minCandidates`. Defaults to 2. */
   minCandidates?: number;
+  /** Reports a hydration failure — see the guard in `reflect`. */
+  logger?: StructuredLogger;
 }): ReflectionRunner {
   const minCandidates = args.minCandidates ?? 2;
   return {
@@ -51,11 +54,24 @@ export function createLinkAwareReflectionRunner(args: {
       }
       const ids = input.recalledMemoryIds ?? [];
       if (ids.length < minCandidates) return;
+      // Same shutdown race as the vote-aware decorator: `notesStore`
+      // is a SQLite handle that runtime shutdown may close while this
+      // fire-and-forget continuation is pending, and a closed
+      // better-sqlite3 statement throws `TypeError`. `reflect()` must
+      // stay fire-safe for the agent loop's bare `void` call.
       const candidates: { id: number; body: string }[] = [];
-      for (const id of ids) {
-        const entry = args.notesStore.get(id);
-        if (!entry) continue;
-        candidates.push({ id: entry.id, body: entry.content });
+      try {
+        for (const id of ids) {
+          const entry = args.notesStore.get(id);
+          if (!entry) continue;
+          candidates.push({ id: entry.id, body: entry.content });
+        }
+      } catch (err) {
+        args.logger?.warn("link candidate hydration failed", {
+          sessionId: input.sessionId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        return;
       }
       if (candidates.length < minCandidates) return;
       try {

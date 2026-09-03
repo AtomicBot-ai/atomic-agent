@@ -1,3 +1,5 @@
+import type { StructuredLogger } from "../../tracing/structured-logger.js";
+
 import type { LessonStore } from "../lessons/lesson-store.js";
 import type { MemoryStore } from "../memory-store.js";
 import type { ProcedureStore } from "../procedures/procedure-store.js";
@@ -49,6 +51,8 @@ export function createVoteAwareReflectionRunner(args: {
   procedureStore?: ProcedureStore | null;
   /** Per-preview character cap. Defaults to 80. */
   previewChars?: number;
+  /** Reports a hydration failure — see the guard in `reflect`. */
+  logger?: StructuredLogger;
 }): ReflectionRunner {
   const previewChars = args.previewChars ?? 80;
   return {
@@ -58,7 +62,26 @@ export function createVoteAwareReflectionRunner(args: {
       } catch {
         // ReflectionRunner is already fire-safe — defence in depth.
       }
-      const candidates = hydrateCandidates(input, args, previewChars);
+      // Hydration reads four SQLite-backed stores. Those reads can
+      // throw — most often `TypeError: The database connection is not
+      // open`, because runtime shutdown settles the inner reflection
+      // via `abortPending()` and then closes every store while this
+      // fire-and-forget continuation is still pending. `reflect()` is
+      // contractually fire-safe (see `reflection-runner.ts`) and the
+      // agent loop calls it as a bare `void`, so a throw escaping here
+      // becomes an unhandled rejection rather than a swallowed miss.
+      let candidates: VoteCandidate[];
+      try {
+        candidates = hydrateCandidates(input, args, previewChars);
+      } catch (err) {
+        // Swallowing without a word would trade a visible crash for
+        // silent curation loss, so the failure still gets a line.
+        args.logger?.warn("vote candidate hydration failed", {
+          sessionId: input.sessionId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        return;
+      }
       if (candidates.length === 0) return;
       try {
         await args.voteRunner.run({
