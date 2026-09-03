@@ -1680,7 +1680,18 @@ export async function createAgentRuntime(
       if (!providerIdIsLlamaServer(resolveLlmConfig(getConfig()), providerId)) {
         return;
       }
-      await localBackend.ensureProbed();
+      // Tell the agent loop a local link is serving, so its turn-start
+      // refresh re-opens for as long as the outage lasts even though the
+      // ACTIVE provider stays cloud (issue #112 review, F1).
+      localBackend.noteLinkServed();
+      // `true` means the restore just ran, which already carries a fresh
+      // `/props`. Otherwise the local state is warm but possibly stale —
+      // and on a cloud-active turn the loop's own `refreshIfStale` is
+      // gated off, so this is the only place left that can consume the
+      // staleness `observeCompletionModelId` flagged. Cheap: a no-op
+      // unless a completion actually reported a different model.
+      if (await localBackend.ensureProbed()) return;
+      await profileManager?.refreshIfStale();
     },
     recordUnaryUsage,
     recordStreamUsage,

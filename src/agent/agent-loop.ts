@@ -506,8 +506,22 @@ export class AgentLoop {
     // with the previous model's template. Skipped whole on a cloud turn
     // (issue #112): there is no llama-server behind the prompt to sync
     // with, and the probe would fail against a backend nobody is using.
-    if (this.deps.profileManager && this.localBackendActive()) {
-      if (!(await this.deps.localBackend?.ensureProbed())) {
+    //
+    // ...unless the previous turn was actually SERVED by a local link
+    // through the fallback chain. `appendLocal` defaults to `true`, so a
+    // rate-limited cloud primary falls over to llama-server on every
+    // turn while the active provider stays cloud; without this second
+    // arm the profile and grammar would stay pinned to whatever the
+    // first fallover probed for the whole outage. Take-and-clear, so a
+    // recovered primary quiets the probes again after one turn.
+    const localLinkServedLastTurn =
+      this.deps.localBackend?.takeLinkServed?.() ?? false;
+    if (this.deps.profileManager) {
+      if (this.localBackendActive()) {
+        if (!(await this.deps.localBackend?.ensureProbed())) {
+          await this.deps.profileManager.refresh();
+        }
+      } else if (localLinkServedLastTurn) {
         await this.deps.profileManager.refresh();
       }
     }
@@ -572,9 +586,13 @@ export class AgentLoop {
       // Reactive refresh between steps: if the previous completion
       // observed a foreign `modelId`, rebuild profile + grammar so the
       // next prompt matches what `llama-server` is actually serving.
-      // Same cloud-turn gate as the turn-start refresh (issue #112) — a
-      // mid-turn fallover onto a local link is warmed by the fallback
-      // seam instead, at the point the link is picked.
+      // Same cloud-turn gate as the turn-start refresh (issue #112).
+      // Nothing is lost on a cloud turn that falls over: the fallback
+      // seam's `prepareLink` runs this same `refreshIfStale` for a
+      // `llama-server` link at the point the link is picked, which is
+      // strictly later than here and strictly closer to the request —
+      // the completion that flagged the manager stale may not even have
+      // happened yet when this line runs.
       if (this.deps.profileManager && this.localBackendActive()) {
         if (!(await this.deps.localBackend?.ensureProbed())) {
           await this.deps.profileManager.refreshIfStale();
