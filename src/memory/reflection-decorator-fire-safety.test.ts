@@ -324,13 +324,20 @@ describe("reflection decorators are fire-safe across a store close", () => {
   it("link-aware: a store that fails part-way yields no partial allowlist", async () => {
     const fx = makeFixture();
     const calls: LinkGeneratorInput[] = [];
+    // Three ids, failing on the third. Two is not enough to prove
+    // anything: `minCandidates` defaults to 2, so a truncated list of
+    // one is dropped by the length gate whether the guard returns or
+    // falls through. With three, a "continue with what we have" guard
+    // would hand the link-generator a 2-entry set that passes the
+    // gate — which is exactly the behaviour being ruled out.
+    const third = fx.memoryStore.store({ content: "note three" }).id;
     let reads = 0;
     const flaky = new Proxy(fx.memoryStore, {
       get(target, prop, receiver) {
         if (prop === "get") {
           return (id: number) => {
             reads += 1;
-            if (reads > 1) {
+            if (reads > 2) {
               throw new TypeError("The database connection is not open");
             }
             return target.get(id);
@@ -346,8 +353,14 @@ describe("reflection decorators are fire-safe across a store close", () => {
       notesStore: flaky,
     });
 
-    await expect(runner.reflect(inputFor(fx))).resolves.toBeUndefined();
-    expect(reads).toBe(2);
+    const input = inputFor(fx);
+    await expect(
+      runner.reflect({
+        ...input,
+        recalledMemoryIds: [...(input.recalledMemoryIds ?? []), third],
+      }),
+    ).resolves.toBeUndefined();
+    expect(reads).toBe(3);
     expect(calls).toEqual([]);
   });
 
