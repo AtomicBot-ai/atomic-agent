@@ -20,6 +20,7 @@ import type { UninstallAction } from "./uninstall/uninstall-actions.js";
 import type { FallbackPanelAction } from "./llm-panel/fallback/fallback-panel-actions.js";
 import type { WhileBusySubmitMode } from "../config/index.js";
 import type { ChatMessage, SessionPickerEntry, TuiTab, TuiUiMode } from "./tui-state.js";
+import type { ContextUsageState } from "../session/context-usage.js";
 
 /**
  * Every action the reducer knows how to fold into `TuiState`. All side
@@ -228,6 +229,14 @@ export type TuiAction =
        * pretending the session is idle. Absent means idle.
        */
       running?: boolean;
+      /**
+       * The target session's persisted window-occupancy snapshot, when
+       * it has one. The reducer restores the context chip from it;
+       * absent resets the gauge (a fresh session, or one that predates
+       * the persisted field) instead of leaving the previous thread's
+       * numbers on screen.
+       */
+      contextUsage?: ContextUsageState;
     }
   /** Header/runtime: user saved a new llama-server base URL (e.g. via /llama). */
   | { type: "llama_url_changed"; url: string }

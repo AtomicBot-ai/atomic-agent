@@ -157,6 +157,8 @@ import type { AgentLoopEvent, RunTurnResult } from "../agent/agent-loop.js";
 import {
   SessionStore,
   createEmptySessionState,
+  contextUsageFromPrompt,
+  type ContextUsageState,
   type SessionState,
 } from "../session/index.js";
 
@@ -827,6 +829,15 @@ export async function createAgentRuntime(
    * pointer.
    */
   const turnContext = new AsyncLocalStorage<{ sessionId: string }>();
+  /**
+   * The running turn's window occupancy, per session. Written by
+   * `emitAgentLoopEvent` (`prompt_built`, refined by `llm_completed`),
+   * consumed once by `executeTurn` when it stamps the finished session,
+   * and always cleared in its `finally` so an aborted turn cannot leak
+   * an entry — or bleed one turn's gauge into a session that never
+   * built a prompt of its own.
+   */
+  const lastTurnContextUsage = new Map<string, ContextUsageState>();
   const steeringInbox = new SteeringInbox();
   const turnController = new TurnController({
     onHookError: (err, ctxInfo) => {
@@ -852,6 +863,28 @@ export async function createAgentRuntime(
       const recorder = touchRecorder(ctx.sessionId);
       recorder?.onAgentEvent(event);
       turnController.emit(ctx.sessionId, event);
+      // Track the turn's window occupancy so `executeTurn` can stamp it
+      // onto the session before the post-turn save. Mirrors the TUI's own
+      // reduction: the `prompt_built` estimate, refined by the provider's
+      // real tokenizer count when the completion reports one.
+      if (event.type === "llm_event") {
+        const step = event.event;
+        if (step.type === "prompt_built") {
+          lastTurnContextUsage.set(
+            ctx.sessionId,
+            contextUsageFromPrompt(step.prompt),
+          );
+        } else if (step.type === "llm_completed") {
+          const counted = step.completion.timing?.promptTokens ?? 0;
+          const usage = lastTurnContextUsage.get(ctx.sessionId);
+          if (counted > 0 && usage) {
+            lastTurnContextUsage.set(ctx.sessionId, {
+              ...usage,
+              tokens: counted,
+            });
+          }
+        }
+      }
     }
     if (event.type === "loop_failed") {
       captureError(errorReporter, event.error, {
@@ -2310,9 +2343,19 @@ export async function createAgentRuntime(
           maxSteps: runOptions.maxSteps ?? config.agent.maxSteps,
           signal: runOptions.signal ?? new AbortController().signal,
         });
-        sessionStore.save(result.session);
-        return result;
+        // Stamp the turn's window occupancy so the stored session can
+        // restore the TUI's context gauge when it is reopened. A turn
+        // that built no prompt (failed before step 1) leaves whatever
+        // snapshot the previous turn persisted.
+        const usage = lastTurnContextUsage.get(session.id);
+        const finished =
+          usage === undefined
+            ? result.session
+            : { ...result.session, contextUsage: usage };
+        sessionStore.save(finished);
+        return usage === undefined ? result : { ...result, session: finished };
       } finally {
+        lastTurnContextUsage.delete(session.id);
         activeTraceSessions.delete(session.id);
         // A delete that arrived mid-turn was deferred to keep the pin honest;
         // complete it now that nothing is writing through the recorder.

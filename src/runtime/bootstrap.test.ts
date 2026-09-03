@@ -755,6 +755,41 @@ describe("createAgentRuntime", () => {
     }
   });
 
+  it("persists the turn's context usage onto the stored session", async () => {
+    const runtime = await createAgentRuntime({
+      workingDir,
+      approvalLevel: 5,
+      overrides: {
+        browserBackend: backend,
+        skipLlamaHealthCheck: true,
+        llamaComplete: async () => ({
+          content: JSON.stringify({
+            tool: "reply",
+            args: { text: "hi back" },
+          }),
+          timing: { promptTokens: 777, predictedTokens: 3 },
+          slotId: 0,
+          cacheReused: false,
+        }),
+      },
+    });
+    try {
+      const session = runtime.createSession();
+      const result = await runtime.runTurn(session, "hello", { maxSteps: 5 });
+      // `prompt_built` seeded the snapshot; `llm_completed`'s tokenizer
+      // count (777) replaced the estimate before the stamp.
+      expect(result.session.contextUsage).toBeDefined();
+      expect(result.session.contextUsage?.tokens).toBe(777);
+      expect(result.session.contextUsage?.sections.length).toBeGreaterThan(0);
+      // The stored row carries the same snapshot, so a later process —
+      // the TUI reopening this session — can restore the gauge.
+      const reloaded = runtime.sessionStore.load(session.id)!;
+      expect(reloaded.contextUsage).toEqual(result.session.contextUsage);
+    } finally {
+      await runtime.shutdown();
+    }
+  });
+
   it("refreshSkills rebuilds the catalog and notifies listeners", async () => {
     let notified: Array<{ name: string }> = [];
     const runtime = await createAgentRuntime({

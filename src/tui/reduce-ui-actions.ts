@@ -393,6 +393,11 @@ export function reduceUiAction(
         // this surface did not watch the turn start, so "elapsed since
         // re-attach" is the honest figure it can show.
         status: action.running ? "running" : "idle",
+        // The gauge belongs to the thread on screen: restore the target
+        // session's persisted snapshot, or reset when it has none —
+        // carrying the old thread's figure over would claim this one is
+        // exactly as full as the one just left.
+        contextUsage: action.contextUsage ?? EMPTY_CONTEXT_USAGE,
         messages: [...action.messages],
         reasoning: [],
         feed: [],
