@@ -8,7 +8,7 @@
   "type": "commonjs",
   "main": "out/main/main.js",
   "scripts": {
-    "build": "node scripts/ensure-electron.mjs && tsc -p tsconfig.json && node scripts/copy-renderer.mjs",
+    "build": "node scripts/ensure-electron.mjs && tsc -p tsconfig.json && node scripts/copy-renderer.mjs && node scripts/build-speech-helper.mjs",
     "lint": "tsc -p tsconfig.json --noEmit",
     "start": "npm run build && electron .",
     "dev": "npm run build && electron . --dev",
@@ -28,7 +28,14 @@
     "asar": true,
     "files": [
       "out/**",
+      "!out/native/**",
       "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "out/native/atomic-speech",
+        "to": "native/atomic-speech"
+      }
     ],
     "directories": {
       "output": "release",
@@ -49,7 +56,9 @@
       "hardenedRuntime": false,
       "gatekeeperAssess": false,
       "extendInfo": {
-        "LSMinimumSystemVersion": "12.0"
+        "LSMinimumSystemVersion": "12.0",
+        "NSMicrophoneUsageDescription": "Atomic Agent records your voice only while you hold the microphone button in the composer, and transcribes it on this Mac.",
+        "NSSpeechRecognitionUsageDescription": "Atomic Agent transcribes what you dictate using the on-device speech model. Nothing is sent to Apple."
       }
     },
     "dmg": {

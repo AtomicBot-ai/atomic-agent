@@ -787,3 +787,56 @@ button.menurow:hover{background:var(--bg-hover)}
    it up with the panel's right edge has to go or it lands 1px off centre. */
 #sidebar.rail .sb-list-head .sb-add{margin-right:0}
 @media (max-width:1000px){#sidebar .sb-list-head .sb-add{margin-right:0}}
+
+/* ---- Item 2: voice input ----
+   The microphone sits inside `.field`, immediately left of send, and the
+   interim strip sits above the composer — never inside the textarea, whose
+   value is S.draft and only S.draft. */
+.micbtn{width:28px;height:28px;flex:none;border-radius:999px;display:flex;align-items:center;justify-content:center;
+  background:transparent;color:var(--text-secondary)}
+.micbtn:hover:not([disabled]){background:var(--bg-hover);color:var(--text-primary)}
+.micbtn[disabled]{color:var(--text-disabled);cursor:default}
+.micbtn.rec{color:var(--danger);background:var(--danger-wash);animation:micpulse 1.4s var(--ease) infinite}
+@keyframes micpulse{0%,100%{opacity:1}50%{opacity:.55}}
+.voicestrip{padding:0 0 var(--s3)}
+.vsrow{display:flex;align-items:center;gap:var(--s3);min-height:28px;font-size:13px;color:var(--text-primary)}
+.vsdot{width:8px;height:8px;flex:none;border-radius:999px;background:var(--text-tertiary)}
+.vsdot.live{background:var(--danger);animation:micpulse 1.2s var(--ease) infinite}
+.vslevel{width:36px;height:4px;flex:none;border-radius:999px;background:var(--bg-sunken);overflow:hidden}
+.vslevel i{display:block;height:100%;background:var(--danger);transition:width .1s linear}
+.vstext{flex:1;min-width:0;white-space:pre-wrap;overflow-wrap:anywhere;max-height:46px;overflow-y:auto;line-height:23px}
+.vspart{opacity:.65}
+.vswait{color:var(--text-tertiary)}
+.vserr{flex:1;color:var(--danger);font-size:13px}
+.vschip{height:22px;flex:none;display:flex;align-items:center;gap:4px;padding:0 6px;border-radius:4px;
+  font-size:11px;color:var(--text-secondary)}
+.vschip:hover{background:var(--bg-hover);color:var(--text-primary)}
+.vschip.won{color:var(--accent-text);background:var(--accent-wash-soft)}
+.vsnote{font-size:11px;line-height:16px;color:var(--text-tertiary);padding-top:2px}
+.vsmenu{margin-top:var(--s3);border:1px solid var(--line);border-radius:8px;background:var(--bg-raised);
+  max-height:280px;overflow-y:auto;padding:var(--s2) 0}
+.vsmhead{padding:var(--s2) var(--s4) 2px;font-size:11px;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:.04em}
+.vsmrow{display:flex;align-items:center;gap:var(--s2);padding:0 var(--s2) 0 0}
+.vsmrow.on{background:var(--accent-wash-soft)}
+.vsmpick{flex:1;min-width:0;display:flex;align-items:center;gap:var(--s3);height:28px;padding:0 var(--s4);
+  font-size:13px;color:var(--text-primary);text-align:left}
+.vsmrow:hover{background:var(--bg-hover)}
+.vsmname{flex:none}
+.vsmtag{font-size:11px}
+.vsmnote{flex:1;min-width:0;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right}
+.vsmbadge{flex:none;font-size:10px;padding:1px 5px;border-radius:999px;background:var(--accent-wash);color:var(--accent-text)}
+.vsmadd{width:22px;height:22px;flex:none;display:flex;align-items:center;justify-content:center;border-radius:5px;color:var(--text-tertiary)}
+.vsmadd.on{color:var(--accent-text)}
+.vsmadd:hover{background:var(--bg-active);color:var(--text-primary)}
+.vsmerr{padding:var(--s2) var(--s4);font-size:11px;color:var(--danger)}
+.vsmfoot{padding:var(--s3) var(--s4) var(--s2);font-size:11px;line-height:16px;color:var(--text-tertiary)}
+.vsmempty{padding:var(--s3) var(--s4);font-size:12px;color:var(--text-secondary)}
+@media (prefers-reduced-motion:reduce){.micbtn.rec,.vsdot.live{animation:none}}
+
+/* ---- Item 2: voice input — review fixes ----
+   The error strip's own dismiss. Escape deliberately no longer clears the
+   error state (it would outrank whatever modal the user is looking at), so
+   the strip carries the control that does. */
+.vsx{width:22px;height:22px;flex:none;display:flex;align-items:center;justify-content:center;
+  border-radius:5px;color:var(--text-tertiary)}
+.vsx:hover{background:var(--bg-hover);color:var(--text-primary)}

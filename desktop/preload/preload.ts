@@ -131,6 +131,20 @@ contextBridge.exposeInMainWorld("atomic", {
 
   platform: process.platform,
 
+  /** Item 2 (voice input): on-device dictation.
+   *  `voiceAudio` is the only `ipcRenderer.send` on this bridge and the only
+   *  binary payload — it fires ten times a second while recording and there
+   *  is nothing to answer. The chunk crosses as a Uint8Array (main checks
+   *  for exactly that; it is NOT a Buffer on the other side). */
+  voiceProbe: () => ipcRenderer.invoke("voice:probe"),
+  voiceStart: (locales: string[]) => ipcRenderer.invoke("voice:start", locales),
+  voiceAudio: (chunk: Uint8Array) => ipcRenderer.send("voice:audio", chunk),
+  voiceStop: () => ipcRenderer.invoke("voice:stop"),
+  voiceCancel: () => ipcRenderer.invoke("voice:cancel"),
+  voiceInstall: (locale: string) => ipcRenderer.invoke("voice:install", locale),
+  voiceSetLocales: (locales: string[]) => ipcRenderer.invoke("voice:setLocales", locales),
+  onVoice: (cb: (payload: unknown) => void) => on("app:voice", cb),
+
   /** Lane B — backend switch: whole-file config writes + agent restart, main-process side. */
   switchBackend: (kind: "cloud" | "local") => ipcRenderer.invoke("cli:switchBackend", kind),
   activateProvider: (id: string) => ipcRenderer.invoke("cli:activateProvider", id),

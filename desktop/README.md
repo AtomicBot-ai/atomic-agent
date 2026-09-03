@@ -390,6 +390,105 @@ Honestly degraded, and labelled as such in the UI:
   actually calls, on the old server). The first-run setup still offers two
   choices, not the TUI's three. Choosing `local` from an external route
   converts it to managed, exactly as the TUI's own local row does.
+- **Voice input is Apple's on-device speech, and nothing else.** The
+  microphone button sits in the composer, left of Send. Press it and speak;
+  the words appear in a strip above the composer while you are still
+  talking, and land in the draft at your caret when you stop. Hold the
+  button and release to stop, or tap it once and click again to stop —
+  both work, because "unclick" reads either way. Escape throws the take
+  away, and it is tested first in the keydown handler so that a pending
+  approval, the palette, the slash popover or an open overlay cannot
+  swallow it and leave the microphone hot. It does *not* clear a voice
+  error strip: nothing else clears that state, so an Escape branch on it
+  would outrank whatever modal you were actually looking at for the rest of
+  the session — the error strip carries its own × instead.
+  Enter and the Send button stop the recording and insert the text
+  rather than sending: sending would post the draft as it stood before you
+  spoke and lose the transcript, so a second Enter is what sends. That holds
+  through the finalize window too — for the up-to-2.5 s while the helper is
+  still emitting its last segment the strip says `inserting what you said —
+  Enter and Send wait for it`, and they do wait; falling through there would
+  have sent the pre-dictation draft and dropped the transcript into an empty
+  composer a moment later.
+  The audio goes renderer → main → `out/native/atomic-speech`, a small
+  Swift helper running `SpeechAnalyzer` with a `SpeechTranscriber` (or a
+  `DictationTranscriber` for the languages the first one has no model for).
+  It never touches the network, is never written to disk, and never reaches
+  the agent — 0.5.5 has no audio route, no transcription tool and no config
+  key, so this feature makes no HTTP call, writes nothing to
+  `~/.atomic-agent/config.json` and never restarts `atag serve`. The chosen
+  languages live in Electron's `userData/voice.json`.
+  Until this feature there was no `setPermissionRequestHandler` at all and
+  Electron's default granted everything; both handlers now go in and deny
+  by default. What gets through is an audio-only `media` request while a
+  voice session you started is armed, plus both clipboard permissions. That
+  second exception is not cosmetic and it took a probe to get right: the
+  composer's "copy session id" is a `navigator.clipboard.writeText` whose
+  rejection is swallowed, so a denial breaks the copy while the toast still
+  claims success — and which permission Chromium asks for depends on
+  transient user activation. With a gesture behind it the request is
+  `clipboard-sanitized-write`; without one (an IPC-driven or timer-driven
+  copy) it is `clipboard-read`, and allowing only the first still denied the
+  write. Both handlers call the one `voicePermissionVerdict()`, and the
+  smoke asserts that function rather than a second copy of its body — and
+  asserts the verdicts directly as well as through a live write, because the
+  live write is refused before it ever reaches the gate when the window is
+  not focused, which let a real denial survive two green runs.
+  The strip's `On-device — the audio never leaves this Mac` was measured
+  before it shipped, not taken from documentation: a Russian dictation fed
+  at real time through both an `en-US` and a `ru-RU` analyzer, watched with
+  `nettop -P -x -L 6 -p <helper pid>`, produced no row at all for the helper
+  — the per-process capture is headers and nothing else — and the
+  all-process capture taken in the same window carries 612 rows, none of
+  them `corespeechd`, `com.apple.siri.embeddedspeech` or any other speech
+  daemon, while recording other processes moving hundreds of megabytes.
+  The Web Speech API is not an option here and was not guessed at: in
+  Electron 44 on-device reports `unavailable`, `install()` returns `false`
+  (no component updater), and a real recognition attempt ends
+  `["start","audiostart","audioend","error code=network","end"]` because
+  Electron ships without the Google key the network engine needs. Cloud
+  transcription was refused on purpose — every AIMLAPI speech model is a
+  submit-and-poll job, so it could only ever produce text after you stop,
+  never while you speak, and it would send your voice to a third party.
+- **Voice input: what is and is not possible.** `SpeechAnalyzer` is macOS
+  26+, so on anything older the button is disabled and says
+  `Voice input needs macOS 26 or later`; the app itself still runs from
+  macOS 12. Off macOS it says `Voice input works only on macOS`, and a
+  build without the helper says so too. 43 languages are available
+  on-device: 30 through `SpeechTranscriber`, which punctuates and cases,
+  and 13 more — Russian, Arabic, Dutch, Turkish, Thai, Vietnamese, Hebrew,
+  Danish, Finnish, Norwegian, Swedish, Malay and Flemish — only through
+  macOS's dictation model, which is on-device too but writes without
+  punctuation. The language menu says which is which, and says when a
+  language still has to download its model. Both the chip and the menu
+  label a locale with `Intl.DisplayNames`, so the default chip reads
+  `American English`, not `English (US)` — 43 locales that have to separate
+  en-US from en-GB and pt-BR from pt-PT cannot use hand-written labels. Apple's older
+  `SFSpeechRecognizer` lists 63 languages, and it is deliberately not used:
+  on this Mac only `en-US` reported `supportsOnDeviceRecognition`, so every
+  other language there would quietly upload your voice to Apple.
+  **Two languages at once** is offered and is real: add a second installed
+  language with `+` and both models hear the same audio, then the
+  higher-scoring transcript wins the whole take and the chip says which
+  language matched. The live text always follows the first language,
+  because until you stop there is nothing to compare against. That the
+  score can decide was measured on two fixtures, not assumed:
+
+  | audio | `en-US` (SpeechTranscriber) | `ru-RU` (DictationTranscriber) |
+  | --- | --- | --- |
+  | 5.0 s of English | 0.976, correct, wins the take | 0.285, and the words are nonsense |
+  | 6.1 s of Russian | **no result at all** — no partial, no final, no score | 0.75–0.83 depending on pacing, correct, wins the take |
+
+  That second row is the one that matters, and it is why the winner is not
+  chosen by comparing against the first language's score: on Russian speech
+  the `en-US` leg says nothing whatsoever, so a leg with no words has to
+  rank *below* a leg with words, or the shipped default (English first,
+  Russian added with `+`) would throw away the only transcript there was and
+  hand the composer an empty string. A take that really did produce nothing
+  says `Nothing was heard` rather than leaving the composer silently
+  unchanged. There is no auto-detection beyond this, and no analyzer takes
+  more than one locale.
+
 - **Tasks and Skills are the settings tabs.** ⌘2/⌘3, the palette hits and
   View › Tasks/Skills all open the settings window on that tab — one
   implementation, as the TUI's Manage tabs are. ⌘1 closes it and returns to
@@ -432,6 +531,36 @@ PASS backend: agent restarted and alive — state=connected port …
 PASS backend: local turn gate blocks with the TUI's text — … draft="hi"
 PASS backend: config round-trip back to cloud — provider=aimlapi …
 PASS backend: serve behind the file still restarts — file moved first: true …
+PASS mic button sits next to send — field children "TEXTAREA|micbtn|sendbtn mute"
+PASS every disabled case has a sentence — 8 named cases
+PASS voice reports itself honestly — available=true code= reason="" disabled=false
+PASS a disabled button carries the true reason — voice-os-too-old→off, voice-helper-missing→off, voice-not-macos→off
+PASS an idle strip is a hidden placeholder, not a missing node — hidden=true empty=true
+PASS interim renders without touching the draft — strip "refactor the login", draft "fix "
+PASS the on-device sentence is the one that ships — note "On-device — the audio never leaves this Mac · Enter or Send stops the recording and inserts the text; it does not send", offMachine false
+PASS segments accumulate — "Open the settings pane. Then switch the backend. Finally"
+PASS a take that ends on a final is not doubled — strip text "a. b.", partial ""
+PASS and the doubled sentence is not inserted either — "a. b."
+PASS final text is inserted at the caret and nothing is sent — draft "fix Open the settings pane. …", user messages 1→1
+PASS a cancelled recording inserts nothing — draft "fix ", state idle, strip hidden=true empty=true
+PASS Escape cancels a recording before every other Escape branch — state idle, scrollTop 0→0
+PASS Escape still cancels with the slash popover open — popover open before Esc=true
+PASS Escape still cancels with an approval pending — pending before Esc=true
+PASS an error strip keeps Escape and is dismissed by its own control — after Escape error, × present=true, then idle
+PASS the recording pulse survives the transcript repaints, and the strip still leaves on cancel — dot kept=true mic kept=true, text "refactor the login handler", dot after cancel=false
+PASS a second language can win the take — final "Открой панель настроек", winner ru-RU, chip "Russian (Russia) matched"
+PASS and the winning language is what gets inserted — "Открой панель настроек"
+PASS a second language wins even when the first one heard nothing — strip "Открой панель настроек и переключи бэкенд на облако", inserted "Открой панель настроек и переключи бэкенд на облако"
+PASS the language menu lists the on-device models and says one is active — 2 rows, foot "Transcribed on this Mac. One language is active at a time un"
+PASS the + control adds a second language and the choice is remembered — 4 rows, after + ["en-US","ru-RU"], voice.json ["en-US","ru-RU"]
+PASS choosing a new first language keeps the second one — after picking de-DE ["de-DE","ru-RU"], voice.json ["de-DE","ru-RU"]
+PASS an uninstalled language goes to the download, not to the selection — install asked for ["fr-FR"], languages still ["de-DE","ru-RU"]
+PASS the renderer cannot take the camera — getUserMedia({video:true}) → NotAllowedError
+PASS and cannot take the microphone outside a session the user started — armed=false; audio→false
+PASS the voice permission gate leaves the clipboard alone — verdicts sanitized-write+read=true; permissions.query(clipboard-write) → granted; writeText → OK; pasteboard held text/plain+…
+PASS the worklet ships next to the renderer
+PASS the speech helper answers — exit 0, 43 supported, 14 installed
+PASS nothing was written to the agent — config.json byte-identical across 4096 bytes
 SMOKE screenshot=…/atomic-desktop-smoke.png failures=0
 ```
 
@@ -479,6 +608,18 @@ it; clear the flag or right-click → Open:
 ```bash
 xattr -dr com.apple.quarantine "/Applications/Atomic Agent.app"
 ```
+
+The voice helper is compiled into `out/native/atomic-speech` by
+`scripts/build-speech-helper.mjs` on every `npm run build` (about two
+seconds; the step prints `speech helper: skipped` and the build carries on
+if there is no `swiftc`). It ships through `extraResources`, NOT through
+`files` — `asar` is on, and a binary inside an asar archive cannot be
+executed, so `out/native/**` is excluded from the archive and the same file
+is copied to `Contents/Resources/native/atomic-speech`. `mac.extendInfo`
+carries `NSMicrophoneUsageDescription`; without it TCC kills the packaged
+app the first time the renderer opens the microphone. The .app is ad-hoc
+signed, so its signature changes on every rebuild and macOS re-asks for
+microphone access after each new build — expected, not a bug.
 
 The app does **not** bundle the agent. It looks for `ATOMIC_AGENT_BIN` first,
 then `~/atag-agent/bin/atag`, then `atag` (or `atomic-agent`) in
@@ -533,9 +674,12 @@ desktop/
   main/backend-switch.ts the TUI's backend/provider/model decisions, main-side
   main/main.ts           lifecycle, window, IPC, the smoke harness
   main/menu.ts           the native menu bar
+  main/speech.ts         the one voice-input child: probe, start/stop, audio, install
+  native/atomic-speech.swift  on-device transcription (SpeechAnalyzer), NDJSON on stdout
   preload/preload.ts     the window.atomic bridge
-  renderer/              index.html · styles.css · renderer.js
+  renderer/              index.html · styles.css · renderer.js · voice-worklet.js
   scripts/copy-renderer.mjs
+  scripts/build-speech-helper.mjs
 ```
 
 The renderer is the design prototype, unbundled and unminified. `renderer.js`
