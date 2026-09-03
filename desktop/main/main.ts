@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { readFileSync, statSync, writeFileSync } from "node:fs";
+import { stat } from "node:fs/promises";   // item 5: the attachment strip stats what a turn wrote, nothing else
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
@@ -401,6 +402,27 @@ function wireIpc(client: AgentClient): void {
     const err = await shell.openPath(path);
     return err ? { ok: false, error: err } : { ok: true };
   });
+  // Item 5 (file attachments): read-only existence check for the paths a turn's
+  // write tools reported. fs.stat and nothing else — never open, never create.
+  // Cap: 64 paths per call; the renderer chunks longer lists so a 65th written
+  // file is not silently dropped.
+  ipcMain.handle("app:statPaths", async (_event, list: unknown) => {
+    if (!Array.isArray(list)) return { ok: false, error: "not a list" };
+    const files: Array<{ path: string; exists: boolean; kind: "file" | "dir" | null; size: number; mtimeMs: number }> = [];
+    for (const raw of list.slice(0, 64)) {
+      const expanded = typeof raw === "string" && raw.startsWith("~/") ? homedir() + raw.slice(1) : raw;
+      const path = safePath(expanded);
+      if (!path) continue;
+      try {
+        const st = await stat(path);
+        files.push({ path, exists: true, kind: st.isDirectory() ? "dir" : "file", size: st.size, mtimeMs: st.mtimeMs });
+      } catch {
+        files.push({ path, exists: false, kind: null, size: 0, mtimeMs: 0 });
+      }
+    }
+    return { ok: true, files };
+  });
+
   ipcMain.handle("app:fileMenu", (event, p: unknown) => {
     const path = safePath(p);
     if (!path) return;
@@ -931,6 +953,12 @@ async function smokeTest(): Promise<void> {
       process.stdout.write(`DIAG store=${await js<string>("window.__storeDiag ? window.__storeDiag() : 'no hook'")}\n`);
     }
 
+    // item 5: that turn listed files, it wrote none. os.fs.list / os.shell.run are
+    // not write tools, so the reply gets no "Saved to" strip no matter which
+    // existing paths it happens to name.
+    const attachedAfterList = await js<string[]>("window.__attach()");
+    check("a read-only turn attaches nothing", attachedAfterList.length === 0, JSON.stringify(attachedAfterList));
+
     // item 4: a fresh window on a session that already exists. "New session"
     // empties the transcript; the same first prompt derives the same id, so the
     // trace already holds an identical os.fs.list row from the turn above. The
@@ -970,6 +998,40 @@ async function smokeTest(): Promise<void> {
 
     const chips = await js<number>("window.__pushAssistant('Saved the report to /Users/valerii/Desktop/report.pdf and the notes to ~/notes/summary.md.')");
     check("file paths render as chips", chips === 2, `${chips} chips`);
+
+    // --- item 5: the attachment strip. Real files, real fs.stat, real collector. ---
+    // The harness writes its own temp file (as it does for the screenshot); the
+    // missing sibling is never created, so a chip for it would be a fabricated one.
+    const attachFile = join(app.getPath("temp"), "atomic-desktop-attach.txt");
+    writeFileSync(attachFile, "smoke\n");
+    const attachMissing = attachFile + ".missing";
+    type Strip = { chips: number; lines: number; label: string; paths: string[] };
+    const strip = await js<Strip>(
+      "window.__pushAssistantFiles('Done.', ["
+      + `{tool:'os.fs.write', args:{path:${JSON.stringify(attachFile)}, content:'smoke\\n'}, out:'wrote 6 bytes to ${attachFile} (replace)'},`
+      + `{tool:'os.fs.write', args:{path:${JSON.stringify(attachMissing)}, content:'x'}, out:'wrote 1 bytes to ${attachMissing} (replace)'},`
+      + `{tool:'os.fs.trash', args:{paths:[${JSON.stringify(attachFile)}]}, out:'moved 1 path(s) to Trash'}])`,
+    );
+    check(
+      "attachment strip: one chip for the file that is really there",
+      strip.chips === 1 && strip.paths.length === 1 && strip.paths[0] === attachFile,
+      JSON.stringify(strip),
+    );
+    check("attachment strip: the line says where", strip.label === "Saved to " + attachFile, JSON.stringify(strip.label));
+    // A path the reply only mentions was read, not written: inline chip, no strip.
+    const proseOnly = await js<Strip>(`window.__pushAssistantFiles('I read ' + ${JSON.stringify(attachFile)} + ' and it is fine.', [])`);
+    check(
+      "attachment strip: a mentioned file is never called saved",
+      proseOnly.chips === 0 && proseOnly.label === "" && proseOnly.paths.length === 0,
+      JSON.stringify(proseOnly),
+    );
+    // Cached on the item by signature: re-rendering neither duplicates the strip nor re-stats.
+    const stable = await js<{ strips: number; chips: number }>(
+      "(() => { render(); render(); render();"
+      + " const el = document.querySelectorAll('[data-attach]');"
+      + " return {strips: el.length, chips: document.querySelectorAll('.attach .filechip').length}; })()",
+    );
+    check("attachment strip: stable across re-renders", stable.strips === 1 && stable.chips === 1, JSON.stringify(stable));
 
     // item 4: a reopened session carries the trace's durations for every card
     // (the TUI shows 0ms here; the desktop shows the agent's number). A trace can

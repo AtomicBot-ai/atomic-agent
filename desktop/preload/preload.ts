@@ -69,6 +69,8 @@ contextBridge.exposeInMainWorld("atomic", {
   chooseWorkspace: () => ipcRenderer.invoke("app:chooseWorkspace"),
   openPath: (path: string) => ipcRenderer.invoke("app:openPath", path),
   fileMenu: (path: string) => ipcRenderer.invoke("app:fileMenu", path),
+  // item 5: existence check for the files a turn wrote (fs.stat only)
+  statPaths: (paths: string[]) => ipcRenderer.invoke("app:statPaths", paths),
   openExternal: (url: string) => ipcRenderer.invoke("app:openExternal", url),
   onMenu: (cb: (command: unknown) => void) => on("app:menu", cb),
 

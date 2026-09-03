@@ -669,3 +669,12 @@ button.menurow:hover{background:var(--bg-hover)}
 .impinp:focus{border-bottom-color:var(--accent)}
 .impinp::placeholder{font-style:italic;color:var(--text-tertiary)}
 .improw{white-space:pre}
+
+/* ---------------- Item 5: file attachments — the "Saved to …" strip ---------------- */
+.attach{margin-top:10px;padding-top:8px;border-top:1px solid var(--line-soft);display:flex;flex-direction:column;gap:4px;min-width:0}
+.attach-label{font-size:12px;line-height:16px;color:var(--text-secondary);overflow-wrap:anywhere;word-break:break-word}
+.attach-label .mono{font-family:var(--font-mono);color:var(--text-primary)}
+.attach-more{color:var(--text-tertiary)}
+.attach-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:2px;min-width:0}
+.attach .filechip{max-width:100%;padding:4px 10px 4px 7px;vertical-align:0;overflow:hidden}
+.attach .filechip span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

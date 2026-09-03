@@ -314,6 +314,23 @@ const IMP_REPORT_ROWS = 12; // import-panel.tsx maxRows
 const PROVIDER_KEY_ENV_FALLBACK = {openrouter:'OPENROUTER_API_KEY', anthropic:'ANTHROPIC_API_KEY', gemini:'GEMINI_API_KEY', groq:'GROQ_API_KEY', aimlapi:'AIMLAPI_API_KEY', openai:'OPENAI_API_KEY'}; // agent-cli.ts PROVIDER_KEY_ENV, the env names the LLM tab asks about
 const TG_PAIRING_NOTE = 'Pairing needs the live channel — open the Telegram tab in `atag tui` to pair';
 
+/* ---- Item 5: file attachments — what a turn actually wrote ----
+   The strip under an assistant reply is sourced ONLY from write-tool cards.
+   A path the reply merely mentions is already a chip inline (renderProse);
+   calling it "Saved to" would be provenance the turn never had. os.fs.trash
+   deletes, os.shell.run / skill.run_script name nothing they wrote (their
+   results carry cmd/args/cwd/exitCode only), so shell redirects are NOT
+   inferred — those tools are deliberately absent from this set.
+   The complete inventory of file-producing tools on this agent is these four
+   plus os.fs.trash as a deleter; memory.* writes the agent's own store and
+   os.git.* here is blame/branch/diff/log/show/status only. */
+const WRITE_TOOLS = new Set(['os.fs.write', 'os.fs.edit', 'os.fs.patch', 'os.fs.archive.extract']);
+/* One `Saved to <path>` line per file, then `…and N more`; the chips below
+   still carry every file. */
+const ATTACH_MAX_LINES = 8;
+/* app:statPaths stats at most 64 paths per call, so longer lists are chunked. */
+const ATTACH_STAT_CHUNK = 64;
+
 /* ============================================================
    Atomic Agent Desktop — clickable prototype, no backend.
    Command/menu wording, the slash registry and its rank order,
@@ -611,8 +628,9 @@ function emptyChat() {
 function item(m) {
   if (m.k === 'user') return '<div class="turn"><div class="gutter"><span class="avatar">›</span></div>'
     + '<div class="prose usr">' + esc(m.text) + '</div></div>';
+  // item 5: the reply, then the files this turn wrote, as an attachment footer.
   if (m.k === 'assistant') return '<div class="turn"><div class="gutter"><span style="color:var(--accent-text);display:flex">' + MARK_MONO + '</span></div>'
-    + '<div class="prose">' + renderProse(m.text) + '</div></div>';
+    + '<div><div class="prose">' + renderProse(m.text) + '</div>' + attachStrip(m) + '</div></div>';
   if (m.k === 'system') return '<div class="sysrow"><span></span><span>' + m.text + '</span></div>';
   if (m.k === 'reason') return '<div class="turn" id="turn-' + m.id + '"><div></div><div>'
     + '<button class="disc" data-toggle="' + m.id + '">' + ic(m.open ? 'chevD' : 'chevR') + 'Reasoning · ' + m.steps + ' steps</button>'
@@ -3475,6 +3493,9 @@ async function openSession(id) {
   // item 4: durations come from the agent's trace; repaint only if this transcript is still up.
   const shown = S.log;
   applyTraceDurations().then((changed) => { if (changed && S.log === shown) render(); });
+  // item 5: the session's own cwd resolves any relative path the write tools took.
+  const sessionCwd = typeof data.workingDir === 'string' ? data.workingDir : null;
+  refreshAttachments(sessionCwd).then((changed) => { if (changed && S.log === shown) render(); });
 }
 
 async function ctxAdjust(spec) {
@@ -3683,6 +3704,9 @@ async function reconcileToolCards(attempt = 0) {
   // Whatever the store still does not describe is finished, just unmeasured.
   pendingCards.forEach((c) => { if (c.ok === null) { c.ok = true; c.out = c.out || ''; } });
   await applyTraceDurations();   // item 4: live cards flip from observed wall time to the agent's number
+  // item 5: the store is the only place the write tools' args and result lines
+  // come from after a live turn, so the attachment strip is built here.
+  await refreshAttachments();
   render();
 }
 
@@ -3766,6 +3790,132 @@ document.addEventListener('contextmenu', (e) => {
   BR.fileMenu(f.dataset.file.replace(/^~/, homeDir() || '~'));
 });
 
+/* ============================================================
+   Item 5 — file attachments: "Saved to <path>" under the reply.
+
+   The user asked for it in these words: "When the agent has built
+   something, it should say that it saved to /path/to/file and have the
+   clickable icon with the filename on top of the message or at the bottom
+   of the message". Bottom was chosen of the two he allowed, so the reply's
+   first line stays where the eye lands and the strip reads as a mail
+   client's attachment footer. The wording is his, literally, one line per
+   file — the TUI has no post-turn "saved files" surface at all (a write is
+   only ever a tool card, src/tui/components/tool-card.tsx), so there is no
+   TUI copy to follow here.
+
+   Provenance rule: a path is only ever labelled "Saved to" when a write
+   tool in this same turn said it wrote it, and only after fs.stat confirms
+   the file is there. Paths the reply merely mentions stay inline chips.
+   ============================================================ */
+
+/** A card's args as an object: live cards carry the 120-char stream label
+    (JSON.parse fails on a clipped one → no chip, which is honest), the store
+    and loaded sessions carry the real thing. */
+function cardArgs(m) {
+  const a = m.args || m.arg;
+  if (a && typeof a === 'object') return a;
+  if (typeof a === 'string') { try { return JSON.parse(a); } catch (e) { return null; } }
+  return null;
+}
+
+/** Resolved the way the agent resolves it (src/tools/os/expand-home.ts
+    resolveUserPath): `~` kept for main to expand, absolute kept, relative
+    against the session's — or serve's — cwd. */
+function resolveAgentPath(p, cwd) {
+  if (!p || typeof p !== 'string') return null;
+  if (p === '~' || p.startsWith('~/')) return p;
+  if (p.startsWith('/')) return p;
+  const base = String(cwd || (S.live && S.live.workingDir) || '').replace(/\/+$/, '');
+  if (!base) return null;
+  return base + '/' + p.replace(/^\.\//, '');
+}
+
+/** Files a tool card wrote — the agent's own result line first, its args
+    second. Only ok cards, only the four write tools. */
+function cardWrittenPaths(m, cwd) {
+  if (m.k !== 'tool' || m.ok !== true || !WRITE_TOOLS.has(m.name)) return [];
+  const a = cardArgs(m) || {};
+  const out = String(m.out || '');
+  if (m.name === 'os.fs.write') {
+    // fs-write.ts: `wrote N bytes to <abs> (replace|append)`, possibly followed
+    // by "; the operator moved this write from <abs>" — the lazy group stops at
+    // the first ` (replace)`, so a TUI-side retarget still yields the real target.
+    const hit = out.match(/^wrote \d+ bytes to (.+?) \((?:replace|append)\)/m);
+    return [resolveAgentPath(hit ? hit[1] : a.path, cwd)];
+  }
+  if (m.name === 'os.fs.edit') return [resolveAgentPath(a.path, cwd)];   // result is the diff; the path is in args
+  if (m.name === 'os.fs.patch') {
+    // Dry runs write nothing, and a refused apply landed nothing.
+    if (a.apply !== true || !/^patch applied:/m.test(out)) return [];
+    const root = resolveAgentPath(a.rootDir, cwd) || cwd || (S.live && S.live.workingDir) || '';
+    // fs-patch.ts prints `  ✓ <rel>  +A/-R` per file, relative to rootDir.
+    return Array.from(out.matchAll(/^\s*✓ (.+?)\s{2}\+\d+\/-\d+/gm)).map((h) => resolveAgentPath(h[1], root));
+  }
+  if (m.name === 'os.fs.archive.extract') {
+    const hit = out.match(/^extracted \d+ entries \(\d+ bytes\) to (.+)$/m);
+    return [resolveAgentPath(hit ? hit[1] : a.destDir, cwd)];
+  }
+  return [];
+}
+
+/** Every path the write tools of this assistant item's turn reported. The
+    reply text is deliberately not read: a file the turn only mentioned is
+    not a file the turn saved. */
+function turnFilePaths(assistantItem, cwd) {
+  const idx = S.log.indexOf(assistantItem);
+  if (idx < 0) return [];
+  const paths = [];
+  for (let i = idx - 1; i >= 0 && S.log[i].k !== 'user'; i--) paths.push.apply(paths, cardWrittenPaths(S.log[i], cwd));
+  return Array.from(new Set(paths.filter(Boolean)));
+}
+
+/** Verify with fs.stat and cache on the item, so re-renders are stable.
+    Called from reconcileToolCards and openSession — never from render(),
+    which is synchronous and runs on every keystroke. */
+async function refreshAttachments(cwd) {
+  if (!BR || !BR.statPaths) return false;
+  let changed = false;
+  for (const m of S.log) {
+    if (m.k !== 'assistant') continue;
+    if (m.id === S.streamId && S.busy) continue;            // still streaming; its cards are not reconciled yet
+    const paths = turnFilePaths(m, cwd);
+    const sig = paths.join('\n');
+    if (sig === m.attachSig) continue;
+    m.attachSig = sig;
+    if (!paths.length) { if ((m.attach || []).length) changed = true; m.attach = []; continue; }
+    const found = [], seen = new Set();
+    for (let i = 0; i < paths.length; i += ATTACH_STAT_CHUNK) {
+      const r = await BR.statPaths(paths.slice(i, i + ATTACH_STAT_CHUNK));
+      const files = (r && r.ok && Array.isArray(r.files)) ? r.files : [];
+      for (const f of files) {
+        if (!f.exists || seen.has(f.path)) continue;
+        seen.add(f.path);
+        found.push({path:f.path, name:f.path.split('/').pop() || f.path, kind:f.kind});
+      }
+    }
+    m.attach = found;
+    changed = true;
+  }
+  return changed;
+}
+
+/** The attachment footer: his sentence per file, then the chips. */
+function attachStrip(m) {
+  const files = m.attach || [];
+  if (!files.length) return '';
+  const shown = files.slice(0, ATTACH_MAX_LINES);
+  const lines = shown.map((f) => '<div class="attach-label">Saved to <span class="mono">' + esc(f.path) + '</span></div>').join('')
+    + (files.length > shown.length ? '<div class="attach-label attach-more">…and ' + (files.length - shown.length) + ' more</div>' : '');
+  // The chips are the existing .filechip with an absolute data-file, so the
+  // existing click (BR.openPath) and contextmenu (BR.fileMenu) handlers work
+  // unchanged; a directory opens in Finder, which is its native viewer.
+  return '<div class="attach" data-attach="' + esc(m.id) + '">' + lines + '<div class="attach-chips">'
+    + files.map((f) => '<button class="filechip" data-file="' + esc(f.path) + '" title="' + esc(f.path) + '">'
+        + ic(f.kind === 'dir' ? 'folder' : 'doc') + '<span>' + esc(f.name) + '</span></button>').join('')
+    + '</div></div>';
+}
+
+
 /* Hooks for --smoke. */
 if (typeof window !== 'undefined') {
   window.__modeState = () => ({supported:MODE.supported, current:MODE.current});
@@ -3786,7 +3936,9 @@ if (typeof window !== 'undefined') {
     argsKey: m.argsKey || null,   // item 4: what the trace merge matches on
     live: !!m.startedAt,   // born on the stream this run, as opposed to loaded from the store
   }));
-  window.__pushAssistant = (t) => { S.log.push({id:nid(), k:'assistant', text:t}); render(); return document.querySelectorAll('.filechip').length; };
+  // item 5: counts the chips renderProse made, not the attachment strip's — the
+  // strip is a separate surface and must not skew this check.
+  window.__pushAssistant = (t) => { S.log.push({id:nid(), k:'assistant', text:t}); render(); return document.querySelectorAll('.prose .filechip').length; };
 }
 
 /* Hooks for --smoke: scroll-stable cards. Every toggle goes through the REAL
@@ -7270,4 +7422,31 @@ if (typeof window !== 'undefined') {
   window.__importRuns = () => IMP.runs;
   window.__importAct = (what) => { importAct(what); return window.__import(); };
   window.__importRun = async (execute) => { const r = await impRun(!!execute); return Object.assign({}, r, {state2: window.__import()}); };
+}
+
+/* Hooks for --smoke (item 5: file attachments). */
+if (typeof window !== 'undefined') {
+  /** Push a synthetic turn — user, tool cards, reply — and run the real
+      collector + the real app:statPaths over it. */
+  window.__pushAssistantFiles = async (text, calls) => {
+    S.log.push({id:nid(), k:'user', text:'(smoke)'});
+    (calls || []).forEach((c) => S.log.push({id:nid(), k:'tool', name:c.tool, args:c.args, arg:summariseArgs(c.args),
+      out:c.out || '', ok:c.ok !== false, open:false, where:'local'}));
+    const m = {id:nid(), k:'assistant', text:text || ''};
+    S.log.push(m);
+    render();
+    await refreshAttachments((S.live && S.live.workingDir) || null);
+    render();
+    const el = document.querySelector('[data-attach="' + m.id + '"]');
+    const label = el ? el.querySelector('.attach-label') : null;
+    return {chips: el ? el.querySelectorAll('.filechip').length : 0,
+            lines: el ? el.querySelectorAll('.attach-label').length : 0,
+            label: label ? label.textContent : '',
+            paths: (m.attach || []).map((f) => f.path)};
+  };
+  /** What the newest assistant item claims it saved. */
+  window.__attach = () => {
+    for (let i = S.log.length - 1; i >= 0; i--) if (S.log[i].k === 'assistant') return (S.log[i].attach || []).map((f) => f.path);
+    return [];
+  };
 }

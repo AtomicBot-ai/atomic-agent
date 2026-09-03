@@ -88,7 +88,22 @@ Real, driven by the running agent:
   tool fold into one line.
 - file paths and URLs in replies: files are chips that open in the default
   app, with a right-click menu (Open · Show in Finder · Copy Path · Save As…);
-  URLs open in the browser
+  URLs open in the browser. A mentioned path only becomes a chip when it
+  carries a 1–6 character extension, so a bare `/path/to/Makefile` or a
+  directory stays plain text
+- files a turn actually wrote — `os.fs.write`, `os.fs.edit`, `os.fs.patch`
+  with `apply: true`, `os.fs.archive.extract` — are attached under the reply
+  as a `Saved to <path>` line per file plus a chip. The paths come from the
+  session store: the call's own args and the tool's own result line (`wrote N
+  bytes to …`, the patch report's `✓ <file>` lines, `extracted … to <dir>`),
+  each confirmed with `fs.stat` before it is drawn, so a chip is never shown
+  for a file that is not there. Nothing else feeds the strip: a path the reply
+  merely mentions is an inline chip, not a saved file, and shell redirects are
+  not inferred — `os.shell.run` and `skill.run_script` name nothing they wrote,
+  so guessing from a command string is out. (`os.fs.trash` deletes and never
+  attaches; `memory.*` writes the agent's own store, and `os.git.*` on this
+  agent is blame/branch/diff/log/show/status only — those four are the whole
+  list of file-producing tools.)
 - approval prompts, resolved over `/api/approval/resolve`
 - installed skills, durable tasks, and sessions — named by their first
   message and opened in full from the sidebar
