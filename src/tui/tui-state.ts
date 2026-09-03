@@ -135,6 +135,14 @@ export interface ChatMessage {
   text: string;
   /** `warn` — failure / runtime error styling in {@link SystemBubble}. */
   variant?: ChatMessageVariant;
+  /**
+   * A user prompt this notice offers to re-run. Set on the system
+   * notice a user-initiated abort leaves in the chat: the stop was one
+   * click, so undoing a mistaken one should be too. `chat-log.tsx`
+   * renders a `[try again]` beside `[copy]` that resubmits THIS text —
+   * the aborted turn's user message — never the notice's own text.
+   */
+  retryText?: string;
   /** Number of tool steps the assistant ran inside this turn. */
   toolSteps?: number;
   /** Tool cards (call + result) attached to this assistant turn. */
