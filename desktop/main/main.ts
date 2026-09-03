@@ -4651,11 +4651,26 @@ async function settingsTestPartC(
       try { envText = readFileSync(envPath, "utf8"); mode = statSync(envPath).mode & 0o777; } catch { /* missing */ }
       const afterBody = await js<string>("window.__settingsBody()");
       const enabledNow = (await readCfg()).telegram?.enabled;
+      // r4 integration: the detail used to print only four of the nine
+      // conjuncts, so a failure said "saved mode=600 keys=[…] enabled=true"
+      // — every field it printed green — and named nothing that went wrong.
+      // The assertion is unchanged; each conjunct now reports itself.
+      const tgParts: Record<string, boolean> = {
+        ok: saved.ok,
+        quoted: envText.includes(`TELEGRAM_BOT_TOKEN="${token}"`),
+        mode600: mode === 0o600,
+        keysKept: keysBefore.every((k) => envText.includes(`${k}=`)),
+        hasToken: saved.state.hasToken === true,
+        enabled: enabledNow === true,
+        confirmCard: afterBody.includes("One last step — confirm it's you"),
+        pairingLine: afterBody.includes("Pairing needs the live channel — open the Telegram tab in `atag tui` to pair"),
+        restartButton: afterBody.includes("Restart Agent Runtime"),
+      };
       check(
         "telegram tab: the token lands in .env quoted, 0600, other keys kept, and the connect chain enables telegram",
-        saved.ok && envText.includes(`TELEGRAM_BOT_TOKEN="${token}"`) && mode === 0o600 && keysBefore.every((k) => envText.includes(`${k}=`)) && saved.state.hasToken === true
-          && enabledNow === true && afterBody.includes("One last step — confirm it's you") && afterBody.includes("Pairing needs the live channel — open the Telegram tab in `atag tui` to pair") && afterBody.includes("Restart Agent Runtime"),
-        `${saved.ok ? "saved" : "error=" + (saved.error ?? "?")} mode=${mode.toString(8)} keys=${JSON.stringify(dotenvKeys(stateDir).keys)} enabled=${String(enabledNow)}`,
+        Object.values(tgParts).every(Boolean),
+        `${saved.ok ? "saved" : "error=" + (saved.error ?? "?")} mode=${mode.toString(8)} keys=${JSON.stringify(dotenvKeys(stateDir).keys)} enabled=${String(enabledNow)}`
+          + ` failed=[${Object.entries(tgParts).filter(([, v]) => !v).map(([k]) => k).join(", ")}]`,
       );
       const cleared = await js<TgState>("window.__telegramClearToken()");
       let envAfter = "";
