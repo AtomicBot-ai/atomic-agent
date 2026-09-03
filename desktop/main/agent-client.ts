@@ -323,6 +323,39 @@ export class AgentClient extends EventEmitter {
     }
     return (text ? JSON.parse(text) : null) as T;
   }
+  /* Item 7C — mid-turn steering. `POST /api/sessions/{id}/steer` folds a
+     message into the turn already running; the loop drains the inbox at
+     step boundaries. 200 `{steered,sessionId}`, 409 "no turn accepting
+     steers", 429 inbox full. Its answer is the ONLY fact the caller
+     consults — verified live against the installed 0.5.5.
+
+     `request` already unwraps `error.message` from a non-2xx body, so the
+     agent's own 409/429 sentences reach the caller intact; the renderer
+     translates them rather than printing them, because "send the message
+     with POST /v1/chat/completions instead" is advice for an API client,
+     not for someone typing in a chat window. */
+  steer = (sessionId: string, text: string) =>
+    this.request<{ steered: boolean; sessionId: string }>(
+      "POST",
+      `/api/sessions/${encodeURIComponent(sessionId)}/steer`,
+      { text },
+    );
+  /** What a turn accepted but never delivered — the loss-recovery half. */
+  undeliveredSteers = (sessionId: string) =>
+    this.json<{
+      sessionId: string;
+      undelivered: Array<{ seq: number; text: string; parkedAt: number }>;
+      discarded: number;
+    }>(`/api/sessions/${encodeURIComponent(sessionId)}/steer`);
+  /** Mandatory partner of the GET: without it the parked store accumulates. */
+  ackSteers = (sessionId: string, through: number, discarded: number) =>
+    this.request<{ acked: number; remaining: number; discardsAcked: number; discarded: number }>(
+      "DELETE",
+      `/api/sessions/${encodeURIComponent(sessionId)}/steer?through=${encodeURIComponent(
+        String(through),
+      )}&discarded=${encodeURIComponent(String(discarded))}`,
+    );
+
   task = (id: string) => this.json<unknown>(`/api/tasks/${encodeURIComponent(id)}`);
   cancelTask = (id: string) => this.request<unknown>("DELETE", `/api/tasks/${encodeURIComponent(id)}`);
   /** Runs one attempt synchronously — an agent turn — so it waits longer than a read. */
@@ -488,7 +521,48 @@ export class AgentClient extends EventEmitter {
           continue;
         }
         if (frame.event && frame.event !== "message") {
+          if (frame.event === "error") {
+            /* DRIFT FIX (D1). The agent's error frame is
+               `{error, category}`; forwarding it only under `payload`
+               left the renderer reading `ev.error === undefined` and
+               printing the bare sentence `turn failed: `. The fields are
+               lifted to the top level here — `payload` is kept so nothing
+               that already reads it breaks.
+
+               Deliberately still `kind: "error"`. emitStreamError is the
+               one emitter for step_error, loop_failed AND the terminal
+               turn error, and the wire carries nothing that tells them
+               apart; renaming it would silently stop
+               `ev.kind === 'error'` marking the session as needing
+               attention. */
+            this.emit("chat", {
+              turnId,
+              kind: "error",
+              error: typeof chunk.error === "string" ? chunk.error : "",
+              category: typeof chunk.category === "string" ? chunk.category : null,
+              payload: chunk,
+            });
+            continue;
+          }
           this.emit("chat", { turnId, kind: frame.event, payload: chunk });
+          continue;
+        }
+        /* Item 7C — the steer-applied frame arrives UNNAMED (no `event:`
+           line), so it has to be matched on its body or it falls through
+           to the OpenAI-chunk path, where `choices[0]` is undefined and
+           it is dropped without trace. Verified live:
+           `data: {"object":"atomic.steer_applied","text":"…","step_index":1}`.
+
+           Like every extension frame (session_id, tool_progress, usage,
+           steer_undelivered, the named error), it exists only because the
+           request carries `x-atomic-extensions: 1` a few lines above. */
+        if (chunk.object === "atomic.steer_applied") {
+          this.emit("chat", {
+            turnId,
+            kind: "steer_applied",
+            text: typeof chunk.text === "string" ? chunk.text : "",
+            stepIndex: typeof chunk.step_index === "number" ? chunk.step_index : null,
+          });
           continue;
         }
         const choice = chunk.choices?.[0];

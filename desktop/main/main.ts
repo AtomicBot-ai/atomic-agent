@@ -2,7 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { stat } from "node:fs/promises";   // item 5: the attachment strip stats what a turn wrote, nothing else
 import { execFile, spawn } from "node:child_process";   // item 2 (voice input): the smoke spawns the speech helper with --probe
 import { promisify } from "node:util";
@@ -39,7 +39,19 @@ import {
   // Lane B — context before the first message (item 3)
   modelWindow,
   traceBaseline,
+  // Item 7A — add a model from Hugging Face
+  addCustomModelEntry,
 } from "./agent-cli.js";
+// Item 7A — the vendored port of the agent's huggingface-* modules; the
+// renderer's CSP forbids it from reaching huggingface.co itself.
+import {
+  buildCustomModelDef,
+  downloadProjector,
+  huggingFaceToken,
+  isSafeModelFilename,
+  resolveHuggingFaceGgufChoices,
+  type HuggingFaceRepoChoices,
+} from "./huggingface.js";
 import {
   activateProvider,
   selectCloudModel,
@@ -75,6 +87,8 @@ import {
   dotenvKeys,
   dotenvSet,
   envPresent,
+  // Item 7A — the HF_TOKEN asymmetry note on a gated listing (names only)
+  stateDirPath,
   type ImportRunInput,
 } from "./agent-cli.js";
 import { validateCreateForm, type TaskCreateFormInput } from "./task-schedule.js";
@@ -129,6 +143,13 @@ function writeVoicePrefs(locales: string[]): { ok: boolean; error?: string } {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
 }
+/* Item 7A — the Hugging Face lookup in flight, so a second reference
+   aborts the first (the TUI's `hfLookup` controller, verbatim). */
+let hfLookup: AbortController | null = null;
+/* Item 7A — the projector download in flight. It shares the `cli:pull`
+   stream with `cli:modelsPull` so the renderer needs one subscriber, so
+   it needs its own slot and both must refuse while the other runs. */
+let hfProjector: { controller: AbortController; id: string } | null = null;
 
 // Lane B — backend switch: the llm route `atag serve` booted with. serve
 // pins its provider at boot, so a switch whose write found the file already
@@ -295,6 +316,61 @@ function voicePermissionVerdict(
   return types.length > 0 && types.every((t) => t === "audio");
 }
 
+/**
+ * Item 7A — the def the renderer picked, rebuilt in main from the repo it
+ * was handed. The renderer never assembles a `LocalModelDef` itself: the
+ * id slug, the RAM estimates and the projector attachment are the agent's
+ * arithmetic (`buildCustomModelDef`), and a second implementation of them
+ * in the renderer is exactly the drift this port already risks once.
+ */
+function hfBuildDef(
+  payload: unknown,
+): { ok: true; def: ReturnType<typeof buildCustomModelDef> } | { ok: false; error: string } {
+  const { repo, index } = (payload ?? {}) as { repo?: unknown; index?: unknown };
+  const r = repo as HuggingFaceRepoChoices | undefined;
+  if (!r || typeof r.repoId !== "string" || !Array.isArray(r.choices)) {
+    return { ok: false, error: "no resolved repo to add from" };
+  }
+  const at = typeof index === "number" && Number.isInteger(index) ? index : 0;
+  const choice = r.choices[at];
+  if (!choice) return { ok: false, error: "that file is not in the list any more" };
+  try {
+    return {
+      ok: true,
+      def: buildCustomModelDef({
+        repoId: r.repoId,
+        revision: typeof r.revision === "string" && r.revision ? r.revision : "main",
+        file: { path: choice.path, sizeBytes: choice.sizeBytes },
+        mmproj: r.mmproj ?? null,
+      }),
+    };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/**
+ * The one honest thing this window can add to a gated-repo refusal.
+ *
+ * `atag models pull` reads HF_TOKEN out of <stateDir>/.env — load-config
+ * applies the NAMES into process.env on every CLI run — while this
+ * process sees only its own environment, so a gated repo can fail to LIST
+ * here and download fine. Names only: the value is never read.
+ *
+ * Extracted from the cli:hfResolve handler so the sentence can be
+ * asserted without a gated repo and a token on disk (review fix: it was
+ * the one string in this feature the desktop authored on top of the port,
+ * and nothing checked it).
+ */
+function hfGatedTokenHint(message: string, dir: string): string {
+  if (!/Hugging Face returned 40[13]/.test(message)) return message;
+  const names = dotenvKeys(dir).keys.filter((k) => k === "HF_TOKEN" || k === "HUGGING_FACE_HUB_TOKEN");
+  if (names.length === 0 || envPresent(names).length > 0) return message;
+  return message
+    + ` (${names.join(" / ")} is named in ${dir}/.env, which \`atag models pull\` reads and this window does not`
+    + " — start the app with it exported and the listing will see it too.)";
+}
+
 function wireIpc(client: AgentClient): void {
   ipcMain.handle("agent:status", () => client.status);
   ipcMain.handle("agent:start", () => client.start());
@@ -331,6 +407,42 @@ function wireIpc(client: AgentClient): void {
   ipcMain.handle("agent:codingMode", (_event, mode: unknown) =>
     client.codingMode(typeof mode === "string" ? mode : undefined),
   );
+
+  /* Item 7C — mid-turn steering. The 409/429 bodies come back as
+     `error.message` through `request`; the renderer decides what to say,
+     it never prints the agent's API-client advice. */
+  ipcMain.handle("agent:steer", async (_event, payload: unknown) => {
+    const { sessionId, text } = (payload ?? {}) as { sessionId?: unknown; text?: unknown };
+    if (typeof sessionId !== "string" || !sessionId) return { ok: false, error: "session id required" };
+    if (typeof text !== "string" || !text.trim()) return { ok: false, error: "text required" };
+    try {
+      const res = await client.steer(sessionId, text);
+      return { ok: true, steered: res.steered === true, sessionId: res.sessionId };
+    } catch (err) {
+      return { ok: false, steered: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+  ipcMain.handle("agent:undeliveredSteers", async (_event, sessionId: unknown) => {
+    if (typeof sessionId !== "string" || !sessionId) return { ok: false, error: "session id required" };
+    try {
+      return { ok: true, data: await client.undeliveredSteers(sessionId) };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+  ipcMain.handle("agent:ackSteers", async (_event, payload: unknown) => {
+    const { sessionId, through, discarded } = (payload ?? {}) as {
+      sessionId?: unknown; through?: unknown; discarded?: unknown;
+    };
+    if (typeof sessionId !== "string" || !sessionId) return { ok: false, error: "session id required" };
+    const t = typeof through === "number" && Number.isFinite(through) ? Math.trunc(through) : 0;
+    const d = typeof discarded === "number" && Number.isFinite(discarded) ? Math.trunc(discarded) : 0;
+    try {
+      return { ok: true, data: await client.ackSteers(sessionId, t, d) };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
 
   ipcMain.handle("agent:chat", (_event, payload: unknown) => {
     const { messages, sessionId } = payload as {
@@ -405,7 +517,7 @@ function wireIpc(client: AgentClient): void {
   );
   ipcMain.handle("cli:modelsPull", (_event, id: unknown) => {
     if (typeof id !== "string") return { ok: false, error: "model id required" };
-    if (pull) return { ok: false, error: "a download is already running" };
+    if (pull || hfProjector) return { ok: false, error: "a download is already running" };
     const started = modelsPull(id, (line) => send("cli:pull", { id, line }));
     pull = started;
     void started.done.then((res) => {
@@ -415,9 +527,132 @@ function wireIpc(client: AgentClient): void {
     return { ok: true, started: true };
   });
   ipcMain.handle("cli:cancelPull", () => {
+    // Item 7A: the one Cancel button covers both downloads, because the
+    // banner it lives under covers both phases.
+    if (hfProjector) {
+      hfProjector.controller.abort();
+      return true;
+    }
     if (!pull) return false;
     pull.cancel();
     return true;
+  });
+
+  /* ---- Item 7A: add a model from Hugging Face ------------------------
+     The desktop owns exactly two steps the agent exposes nowhere —
+     parsing the reference and listing the repo. Everything after that is
+     the agent's own: the entry goes into `localModels.customModels` with
+     the whole-file `atag config set`, and the download is the existing
+     `models pull` → `cli:pull` plumbing, unchanged.
+
+     Every error message is passed through UNTOUCHED. They are written for
+     the screen (huggingface-ref.ts says so in as many words) and the
+     smoke asserts four of them verbatim. */
+  ipcMain.handle("cli:hfResolve", async (_event, ref: unknown) => {
+    if (typeof ref !== "string" || ref.trim().length === 0) {
+      return { ok: false, error: "Type a repo id or a huggingface.co URL." };
+    }
+    if (ref.length > 512) return { ok: false, error: "that reference is too long to be a repo id or a URL" };
+    const controller = new AbortController();
+    hfLookup?.abort();
+    hfLookup = controller;
+    try {
+      const repo = await resolveHuggingFaceGgufChoices(ref, { signal: controller.signal });
+      if (hfLookup !== controller) return { ok: false, cancelled: true, error: "cancelled" };
+      hfLookup = null;
+      return { ok: true, repo };
+    } catch (err) {
+      if (hfLookup !== controller) return { ok: false, cancelled: true, error: "cancelled" };
+      hfLookup = null;
+      if (controller.signal.aborted) return { ok: false, cancelled: true, error: "cancelled" };
+      const message = err instanceof Error ? err.message : String(err);
+      return { ok: false, error: hfGatedTokenHint(message, stateDirPath()) };
+    }
+  });
+  ipcMain.handle("cli:hfCancel", () => {
+    // Escape mid-lookup: drop the socket, keep what was typed.
+    if (!hfLookup) return false;
+    hfLookup.abort();
+    hfLookup = null;
+    return true;
+  });
+  /** Build the def WITHOUT writing anything — what makes the add testable. */
+  ipcMain.handle("cli:hfDef", (_event, payload: unknown) => {
+    const built = hfBuildDef(payload);
+    return built.ok ? { ok: true, def: built.def } : built;
+  });
+  ipcMain.handle("cli:hfAdd", async (_event, payload: unknown) => {
+    const built = hfBuildDef(payload);
+    if (!built.ok) return built;
+    const res = await addCustomModelEntry(built.def as unknown as Record<string, unknown>);
+    if (!res.ok) return { ok: false, error: res.error ?? "could not write the config" };
+    return { ok: true, id: built.def.id, def: built.def };
+  });
+  /**
+   * `atag models pull` fetches weights only, so the projector is fetched
+   * here — reported on the SAME `cli:pull` stream the weights used, with
+   * the TUI's own phase label, because a download nobody can see is the
+   * failure this step exists to prevent.
+   *
+   * Progress LINES only, never a `done` frame: this call resolves to the
+   * caller, and a second `done` would re-enter the renderer's pull
+   * subscriber and run the post-download activation twice.
+   */
+  ipcMain.handle("cli:hfProjector", async (_event, payload: unknown) => {
+    const { id, mmprojUrl, mmprojFilename, name } = (payload ?? {}) as {
+      id?: unknown; mmprojUrl?: unknown; mmprojFilename?: unknown; name?: unknown;
+    };
+    if (typeof id !== "string" || !/^custom-[a-z0-9._-]{1,88}$/.test(id)) {
+      return { ok: false, error: "custom model id required" };
+    }
+    if (typeof mmprojUrl !== "string" || !mmprojUrl.startsWith("https://huggingface.co/")) {
+      return { ok: false, error: "the projector URL must be on huggingface.co" };
+    }
+    // The schema's own filename rule: this lands in a path join under
+    // <dataDir>/models/<id>/, and the name comes from a repo.
+    if (typeof mmprojFilename !== "string" || !isSafeModelFilename(mmprojFilename)) {
+      return { ok: false, error: "unsafe projector filename" };
+    }
+    if (pull || hfProjector) return { ok: false, error: "a download is already running" };
+    const st = await modelsStatus();
+    const dataDir = st.ok && st.status ? st.status.dataDir : null;
+    if (!dataDir) return { ok: false, error: `could not read the model data dir: ${st.error ?? "no data dir in \`atag models status\`"}` };
+    const dir = join(dataDir, "models", id);
+    const dest = join(dir, mmprojFilename);
+    const label = `${typeof name === "string" && name ? name : id} (mmproj)`;
+    // Matches downloadMmproj's own early return: the installer skips when
+    // the destination exists.
+    if (existsSync(dest)) {
+      send("cli:pull", { id, line: `${label} already on disk` });
+      return { ok: true, alreadyPresent: true };
+    }
+    const controller = new AbortController();
+    hfProjector = { controller, id };
+    send("cli:pull", { id, line: `${label} 0%` });
+    try {
+      mkdirSync(dir, { recursive: true });
+      await downloadProjector(mmprojUrl, dest, {
+        signal: controller.signal,
+        onProgress: (percent, transferred, total) =>
+          send("cli:pull", {
+            id,
+            line: total > 0
+              ? `${label} ${percent}% (${(transferred / 1e6).toFixed(1)} / ${(total / 1e6).toFixed(1)} MB)`
+              : `${label} ${(transferred / 1e6).toFixed(1)} MB`,
+          }),
+      });
+      send("cli:pull", { id, line: `${label} done` });
+      return { ok: true, path: dest };
+    } catch (err) {
+      const aborted = controller.signal.aborted;
+      const message = aborted
+        ? "the projector download was cancelled — a retry starts it from the beginning"
+        : err instanceof Error ? err.message : String(err);
+      send("cli:pull", { id, line: `${label} failed: ${message}` });
+      return { ok: false, error: message };
+    } finally {
+      hfProjector = null;
+    }
   });
   ipcMain.handle("cli:modelsSearch", (_event, payload: unknown) => {
     const { query, provider, limit } = (payload ?? {}) as {
@@ -1058,7 +1293,9 @@ async function smokeTest(): Promise<void> {
     // llama the provider's promptTokens is the KV-cache miss count.
     check(
       "context after the reply is measured, not projected",
-      ctx.tokens > 0 && ["provider", "estimate", "built"].includes(ctx.source ?? ""),
+      // Item 7C: `measured` is the session row's own contextUsage, which
+      // v0.5.5 persists and which now leads the ladder.
+      ctx.tokens > 0 && ["measured", "provider", "estimate", "built"].includes(ctx.source ?? ""),
       `source=${ctx.source}`,
     );
     const chipAfter = await js<{ label: string; proj: boolean } | null>("window.__ctxChip()");
@@ -1668,6 +1905,9 @@ async function smokeTest(): Promise<void> {
 
     // --- Item 2: voice input (no microphone is opened anywhere in it) ---
     await voiceTest(js, check);
+
+    // --- Item 7A + 7C: Hugging Face, steering, the stored gauge, the model stamp ---
+    await hfAndDeltaTest(js, check, sidFirst);
 
     // --- Item 6: the sidebar's two lists ---
     await sidebarTest(js, check);
@@ -3372,6 +3612,818 @@ async function settingsTestPartB(
     await js<void>("window.__mcpRefresh && window.__mcpRefresh()");
   }
   await js<void>("window.__settingsClose()");
+}
+
+/**
+ * Item 7A (add a model from Hugging Face) and item 7C (mid-turn steering,
+ * the persisted context gauge, the session's model stamp).
+ *
+ * STATE DIR. Two checks here write config — the add and its re-add — and
+ * both undo themselves through the product's own path (`atag models
+ * remove <custom-id>` deletes the files AND drops the config entry for a
+ * custom row), in a `finally`, against a snapshot taken first. Run the
+ * suite with ATOMIC_AGENT_STATE_DIR pointed somewhere disposable: without
+ * it, `agent-cli.ts` resolves `~/.atomic-agent` and these write the
+ * operator's real file.
+ *
+ * NOTHING HERE DOWNLOADS A MODEL. The heaviest network call is one
+ * ~2 KB repo listing; the add is asserted at the config, and the pull is
+ * never started.
+ */
+async function hfAndDeltaTest(
+  js: <T>(code: string) => Promise<T>,
+  check: (name: string, ok: boolean, detail?: string) => void,
+  sessionWithTurns: string,
+): Promise<void> {
+  const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  type Hf = {
+    open: boolean; step: string; reference: string; busy: boolean; error: string | null;
+    repoId: string | null; revision: string | null; choices: number; first: string | null; filenames: string[];
+    mmproj: string | null; hidden: string | null; cursor: number; ram: number; pendingMmproj: string | null;
+    rows: number; pulling: { id: string; phase?: string } | null; daemonPhase: string | null; confirm: string | null;
+  };
+  const networkDown = (e: string | null) => !!e && e.startsWith("Could not reach huggingface.co");
+
+  // ---- the row and the key are live ----
+  await js<Hf>("window.__llmOpen('local')");
+  const localBody0 = await js<string>("window.__settingsBody()");
+  const rowLive = await js<boolean>(
+    "[...document.querySelectorAll('#settings button')].some((b) => b.textContent === 'a add from hugging face' && !b.disabled)",
+  );
+  check(
+    "llm tab: the Hugging Face row is live and the Local pane signposts Ollama",
+    rowLive && localBody0.includes("a add from hugging face")
+      && localBody0.includes("Ollama is not a download source on this agent")
+      && localBody0.includes("Ollama (local)") && localBody0.includes("http://localhost:11434"),
+    `row enabled=${rowLive}`,
+  );
+  /* Review fix: the check above only proved the signpost's own text
+     exists. The path it points at is a different object — the Cloud
+     wizard's preset array — so it is asserted separately, off the array
+     the wizard renders from. Renaming or deleting the preset now fails
+     here, which the copy check alone could never notice. */
+  const ollamaPreset = await js<{ id: string; label: string; baseUrl: string; kind: string; local: boolean } | null>(
+    "window.__preset('ollama')",
+  );
+  check(
+    "llm tab: the Ollama signpost points at a preset that is really there",
+    !!ollamaPreset && ollamaPreset.label === "Ollama (local)"
+      && ollamaPreset.baseUrl === "http://localhost:11434"
+      && ollamaPreset.kind === "openai-compatible" && ollamaPreset.local === true
+      && localBody0.includes(ollamaPreset.label) && localBody0.includes(ollamaPreset.baseUrl),
+    JSON.stringify(ollamaPreset),
+  );
+  /* And the other half of the promise: this window never reads Ollama's
+     own model store. Asserted over the BUILT bundle, anchored to a PATH
+     SEGMENT rather than the bare substring — `result.ollama` in
+     agent-cli.js is a property name, not a directory.
+
+     The needle is assembled at runtime on purpose: written as a literal
+     it would appear in this very file and the scan would flag itself. */
+  const outDir = join(__dirname, "..");
+  const storeSegment = new RegExp('["\'`/\\\\]\\.' + "ollama\\b", "g");
+  const bundleHits: string[] = [];
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const p = join(dir, entry.name);
+      if (entry.isDirectory()) { walk(p); continue; }
+      if (!/\.(js|html|css|json)$/.test(entry.name)) continue;
+      const m = readFileSync(p, "utf8").match(storeSegment);
+      if (m) bundleHits.push(`${entry.name}: ${m.length}`);
+    }
+  };
+  try { walk(outDir); } catch (err) { bundleHits.push(`could not read ${outDir}: ${String(err)}`); }
+  check(
+    "llm tab: the built bundle builds no path into Ollama's own store - it is a provider here, never a store",
+    bundleHits.length === 0,
+    bundleHits.length ? bundleHits.join("; ") : `scanned ${outDir}`,
+  );
+  const opened = await js<Hf>("window.__llmHfOpen()");
+  const refBody = await js<string>("window.__settingsBody()");
+  const refCopy = [
+    "Which model?", "(it has to be a GGUF build)",
+    "unsloth/Qwen3.5-4B-GGUF · https://huggingface.co/owner/repo · a link to one .gguf",
+    "enter look it up", "ctrl+l clear", "esc back to the list",
+  ];
+  const refMissing = refCopy.filter((c) => !refBody.includes(c));
+  const hasInput = await js<boolean>("!!document.getElementById('llm-hf-ref')");
+  check(
+    "hf: `a` opens the reference editor with the TUI's copy",
+    opened.open && opened.step === "ref" && refMissing.length === 0 && hasInput,
+    refMissing.length ? `missing ${JSON.stringify(refMissing)}` : `ram=${opened.ram} input=${hasInput}`,
+  );
+
+  // ---- a bad reference is refused with the agent's own sentence ----
+  const bad = await js<Hf>("window.__llmHfResolve('not a ref at all')");
+  const badBody = await js<string>("window.__settingsBody()");
+  const badWanted = 'Not a Hugging Face URL or an owner/name id: "not a ref at all"';
+  const ds = await js<Hf>("window.__llmHfResolve('hf://datasets/foo/bar')");
+  check(
+    "hf: a bad reference shows the parser's own sentence, not 'invalid input'",
+    bad.error === badWanted && bad.repoId === null && badBody.includes(badWanted)
+      && ds.error === "hf://datasets/… points at a dataset, not a model repo",
+    `${JSON.stringify(bad.error)} / ${JSON.stringify(ds.error)}`,
+  );
+
+  /* Review fix: the desktop's own added sentence on that 401 — the only
+     string this feature authored on top of the port, and the only place
+     `dotenvKeys`/`envPresent` are consulted from the HF path. Driven over
+     a throwaway directory so it needs neither a gated repo nor a token in
+     the operator's own .env — and so "names only, never values" is
+     demonstrable: the file below holds a value the message must not show. */
+  const hintDir = join(app.getPath("temp"), `atag-hf-hint-${process.pid}`);
+  const base401 = "Hugging Face returned 401: either no such repo, or it is gated.";
+  const base403 = "Hugging Face returned 403: either no such repo, or it is gated.";
+  const base404 = "Hugging Face returned 404: no repo or revision by that name.";
+  let hintWith = "";
+  let hintWithout = "";
+  let hintOther = "";
+  try {
+    mkdirSync(hintDir, { recursive: true });
+    writeFileSync(join(hintDir, ".env"), "HF_TOKEN=hf_not-a-real-token\n");
+    hintWith = hfGatedTokenHint(base401, hintDir);
+    hintOther = hfGatedTokenHint(base404, hintDir);
+    rmSync(join(hintDir, ".env"), { force: true });
+    hintWithout = hfGatedTokenHint(base403, hintDir);
+  } finally {
+    rmSync(hintDir, { recursive: true, force: true });
+  }
+  // Exported in this process, the hint would be a lie — `models pull` and
+  // this window would both already see it — so it is correctly withheld.
+  const tokenExported = envPresent(["HF_TOKEN"]).length > 0;
+  const hintWanted = tokenExported
+    ? base401
+    : base401 + ` (HF_TOKEN is named in ${hintDir}/.env, which \`atag models pull\` reads and this window does not`
+      + " — start the app with it exported and the listing will see it too.)";
+  check(
+    "hf: a 401 with a token named in <stateDir>/.env says where `models pull` reads it, and never its value",
+    hintWith === hintWanted && !hintWith.includes("hf_not-a-real-token")
+      && hintWithout === base403 && hintOther === base404,
+    `${JSON.stringify(hintWith)}${tokenExported ? " (HF_TOKEN is exported here, so the hint is withheld)" : ""}`,
+  );
+
+  // ---- every paste form parses (network-gated) ----
+  const forms = [
+    "unsloth/Qwen3-4B-GGUF",
+    "https://huggingface.co/unsloth/Qwen3-4B-GGUF",
+    "https://huggingface.co/unsloth/Qwen3-4B-GGUF/tree/main",
+    "hf.co/unsloth/Qwen3-4B-GGUF",
+    "hf://unsloth/Qwen3-4B-GGUF",
+    "hf download unsloth/Qwen3-4B-GGUF Qwen3-4B-Q4_K_M.gguf --local-dir .",
+  ];
+  const parsed: string[] = [];
+  let offline = false;
+  for (const f of forms) {
+    const r = await js<Hf>(`window.__llmHfResolve(${JSON.stringify(f)})`);
+    if (networkDown(r.error)) { offline = true; break; }
+    parsed.push(`${f} -> ${r.repoId ?? "ERR " + r.error}`);
+  }
+  check(
+    "hf: every paste form the TUI accepts resolves to the same repo",
+    offline || parsed.every((p) => p.endsWith("-> unsloth/Qwen3-4B-GGUF")),
+    offline ? "skipped - huggingface.co is unreachable from this run" : JSON.stringify(parsed),
+  );
+
+  if (!offline) {
+    // ---- ranking, the hidden tally, the projector line, the 6-row window ----
+    const qwen = await js<Hf>("window.__llmHfResolve('unsloth/Qwen3-4B-GGUF')");
+    const qwenBody = await js<string>("window.__settingsBody()");
+    const painted = await js<number>("document.querySelectorAll('#settings [data-llm-row^=\"hf:\"]').length");
+    // Anchored to the code's own predicates rather than a looser regex: a
+    // quant whose name merely contains "f16" without a delimiter is
+    // correctly offered by isFullPrecisionGguf.
+    const rejects = /(^|[-_.])(?:f16|f32|bf16|fp16|fp32)(?=[-_.]|\.gguf$)|-\d{5}-of-\d{5}\.gguf$|(^|\/)mmproj[^/]*\.gguf$/i;
+    check(
+      "hf: choices are quant-ranked, windowed to 6, and hide what cannot be served",
+      qwen.step === "pick" && !!qwen.first && qwen.first.includes("Q4_K_XL")
+        && painted === Math.min(6, qwen.choices) && qwen.choices > 6
+        && qwenBody.includes("↓ " + (qwen.choices - 6) + " more")
+        && qwen.hidden === "1 more file hidden: 1 full-precision"
+        && qwen.filenames.every((f) => !rejects.test(f)),
+      `${qwen.choices} choices led by ${JSON.stringify(qwen.first)}, ${painted} painted, hidden ${JSON.stringify(qwen.hidden)}`,
+    );
+
+    // Escape steps back to the reference and keeps the repo; a second one leaves.
+    const backOnce = await js<Hf>("window.__llmHfKey('Escape')");
+    const closeOnce = await js<Hf>("window.__llmHfKey('Escape')");
+    check(
+      "hf: Escape steps back to the reference with the repo intact, then leaves the branch",
+      backOnce.step === "ref" && backOnce.open && backOnce.repoId === "unsloth/Qwen3-4B-GGUF" && !closeOnce.open,
+      `${backOnce.step}/${backOnce.repoId} then open=${closeOnce.open}`,
+    );
+
+    // A repo that is not a GGUF conversion refuses with the real sentence.
+    await js<Hf>("window.__llmHfOpen()");
+    const none = await js<Hf>("window.__llmHfResolve('meta-llama/Llama-3.1-8B-Instruct')");
+    check(
+      "hf: a repo that is not a GGUF conversion says exactly why",
+      none.error === "No .gguf files in meta-llama/Llama-3.1-8B-Instruct — that is the original model, not a GGUF conversion of it. Look for a \"-GGUF\" repo of the same name.",
+      JSON.stringify(none.error),
+    );
+
+    /* Review fix: the gated-repo arm — one of the four messages the
+       spec's drift mitigation names, and the only one that was
+       unasserted. huggingface.co answers 401 for a repo that is private
+       OR absent (it will not say which), so a repo id nobody owns drives
+       the real listing call into the real 401 branch without needing a
+       gated repo or a token. The sentence is the PORT's, byte for byte. */
+    const gated = await js<Hf>("window.__llmHfResolve('atag-smoke-no-such-owner-9f3a/does-not-exist')");
+    const gatedWanted = "Hugging Face returned 401: either no such repo, or it is gated. "
+      + (huggingFaceToken()
+        ? "Your HF_TOKEN does not grant access — accept the licence on huggingface.co."
+        : "If it is gated, accept its licence on huggingface.co and export HF_TOKEN.");
+    const gatedBody = await js<string>("window.__settingsBody()");
+    check(
+      "hf: a gated or absent repo shows the port's own 401 sentence",
+      networkDown(gated.error)
+        || (gated.error === gatedWanted && gated.repoId === null && gatedBody.includes(gatedWanted)),
+      networkDown(gated.error) ? "skipped - huggingface.co is unreachable from this run" : JSON.stringify(gated.error),
+    );
+
+    // The vision repo: one servable quant, a projector, the hidden tally.
+    const vis = await js<Hf>("window.__llmHfResolve('ggml-org/SmolVLM-256M-Instruct-GGUF')");
+    const visBody = await js<string>("window.__settingsBody()");
+    check(
+      "hf: a vision repo offers its one servable quant and says the projector comes with it",
+      vis.choices === 1 && vis.mmproj === "mmproj-SmolVLM-256M-Instruct-Q8_0.gguf"
+        && vis.hidden === "3 more files hidden: 1 full-precision, 2 vision projector"
+        && visBody.includes("vision projector in this repo — it is pulled alongside")
+        && visBody.includes(vis.hidden),
+      `${vis.choices} choice(s), mmproj ${vis.mmproj}, hidden ${JSON.stringify(vis.hidden)}`,
+    );
+
+    // The fit verdict warns in one direction and disables nothing.
+    const ram = await js<number>("window.atomic.hostRam()");
+    const huge = {
+      repoId: "smoke/huge-GGUF", revision: "main", mmproj: null, hidden: null,
+      choices: [{ path: "huge-Q4_K_M.gguf", filename: "huge-Q4_K_M.gguf", sizeBytes: 0, fileSizeGb: ram + 8, sizeLabel: `${ram + 8}.0 GB` }],
+    };
+    const warned = await js<Hf>(`window.__llmHfFakeRepo(${JSON.stringify(huge)})`);
+    const warnBody = await js<string>("window.__settingsBody()");
+    const wantWarn = `⚠ ${(ram + 8).toFixed(1)} GB model, ${ram} GB of RAM — it will run from disk, slowly.`;
+    const small = { ...huge, choices: [{ ...huge.choices[0]!, fileSizeGb: 0.2, sizeLabel: "200 MB" }] };
+    await js<Hf>(`window.__llmHfFakeRepo(${JSON.stringify(small)})`);
+    const smallBody = await js<string>("window.__settingsBody()");
+    check(
+      "hf: the RAM line warns above host memory, says nothing below it, and disables nothing",
+      warnBody.includes(wantWarn) && !smallBody.includes("GB of RAM — it will run from disk")
+        && warned.step === "pick" && warned.choices === 1,
+      `warn present=${warnBody.includes(wantWarn)} (${JSON.stringify(wantWarn)}); small pane warns=${smallBody.includes("GB of RAM — it will run from disk")}`,
+    );
+
+    // ---- the def is the agent's builder's, and asking for it writes nothing ----
+    await js<Hf>("window.__llmHfResolve('ggml-org/SmolVLM-256M-Instruct-GGUF')");
+    const cfgBeforeDef = JSON.stringify((await configGet()).config);
+    type Def = { ok: boolean; def?: Record<string, unknown>; error?: string };
+    const built = await js<Def>("window.__llmHfDef(0)");
+    const cfgAfterDef = JSON.stringify((await configGet()).config);
+    const d = built.def ?? {};
+    const id = String(d.id ?? "");
+    check(
+      "hf: the def is buildCustomModelDef's, and asking for it writes no config",
+      built.ok && cfgBeforeDef === cfgAfterDef
+        && id === "custom-ggml-org-smolvlm-256m-instruct-gguf-smolvlm-256m-instruct-q8_0"
+        && id.length <= 87 && /^custom-[a-z0-9._-]{1,80}$/.test(id)
+        && d.family === "custom" && d.filename === "SmolVLM-256M-Instruct-Q8_0.gguf"
+        && d.huggingFaceUrl === "https://huggingface.co/ggml-org/SmolVLM-256M-Instruct-GGUF/resolve/main/SmolVLM-256M-Instruct-Q8_0.gguf"
+        && d.maxContextLength === 0 && d.contextLabel === "auto" && d.supportsVision === true
+        && d.mmprojFilename === "mmproj-SmolVLM-256M-Instruct-Q8_0.gguf",
+      `${id} (${id.length} chars)${cfgBeforeDef === cfgAfterDef ? "" : " - CONFIG CHANGED"}`,
+    );
+
+    // ---- the add: one array element, nothing else, and no download ----
+    type Cfg = { localModels?: { customModels?: Array<{ id?: string }>; managed?: Record<string, unknown> } };
+    const snapshot = ((await configGet()).config ?? {}) as Cfg;
+    const beforeCustom = JSON.stringify(snapshot.localModels?.customModels ?? []);
+    const beforeManaged = JSON.stringify(snapshot.localModels?.managed ?? {});
+    try {
+      const added = await js<Hf & { started: { id: string } | null }>("window.__llmHfAddNoDownload(0)");
+      const cfg1 = ((await configGet()).config ?? {}) as Cfg;
+      const list1 = await modelsList();
+      const row = (list1.models ?? []).find((m) => m.id === id);
+      check(
+        "hf: the add writes one customModels entry, leaves managed alone and hands off to `models pull`",
+        (cfg1.localModels?.customModels ?? []).length === (JSON.parse(beforeCustom) as unknown[]).length + 1
+          && JSON.stringify(cfg1.localModels?.managed ?? {}) === beforeManaged
+          && !!row && row.family === "custom" && row.downloaded === false
+          && !added.open && !!added.started && added.started.id === id && added.pulling === null,
+        `row=${JSON.stringify(row)}; customModels ${(JSON.parse(beforeCustom) as unknown[]).length} -> ${(cfg1.localModels?.customModels ?? []).length}; handed off to ${JSON.stringify(added.started)}`,
+      );
+      // Re-adding the same repo+file is a refresh: the schema rejects
+      // duplicate ids, so a second successful write proves it too.
+      const readd = await addCustomModelEntry(built.def as Record<string, unknown>);
+      const cfg2 = ((await configGet()).config ?? {}) as Cfg;
+      const sameId = (cfg2.localModels?.customModels ?? []).filter((m) => m.id === id);
+      check(
+        "hf: re-adding the same repo+file refreshes the entry instead of duplicating it",
+        readd.ok && sameId.length === 1,
+        `${sameId.length} entries for ${id}${readd.ok ? "" : " - " + String(readd.error)}`,
+      );
+    } finally {
+      // The product's own undo: `models remove` deletes the files AND drops
+      // the config entry for a custom row, which is why no bespoke remove
+      // path exists in this window.
+      const removed = await modelsRemove(id);
+      const cfg3 = ((await configGet()).config ?? {}) as Cfg;
+      check(
+        "hf: `atag models remove` is the whole undo - customModels comes back byte-identical",
+        removed.ok && JSON.stringify(cfg3.localModels?.customModels ?? []) === beforeCustom,
+        `${removed.ok ? "removed" : String(removed.error)}; customModels=${JSON.stringify(cfg3.localModels?.customModels ?? [])}`,
+      );
+      await js<Hf>("window.__llmHfClose()");
+    }
+  }
+
+  // ---- the id guard the add needs, network or no network ----
+  const longId = "custom-" + "a".repeat(80); // 87 chars, buildCustomModelId's ceiling
+  const guards = [await modelsUse(longId), await modelsRemove(longId), await modelsPullGuard(longId)];
+  check(
+    "hf: an 87-character custom id reaches the CLI instead of this window's own regex",
+    guards.every((g) => !String(g.error ?? "").startsWith("not a model id")) && guards.every((g) => !g.ok),
+    guards.map((g) => JSON.stringify(String(g.error ?? "").slice(0, 40))).join(" | "),
+  );
+
+  // ---- the branch swallows every key it does not name ----
+  await js<Hf>("window.__llmHfOpen()");
+  const swallowed: Hf[] = [];
+  for (const k of ["s", "d", "B", "G"]) swallowed.push(await js<Hf>(`window.__llmHfKey(${JSON.stringify(k)})`));
+  const afterKeys = swallowed[swallowed.length - 1]!;
+  check(
+    "hf: a stray letter under the open editor starts no daemon and opens no confirm",
+    swallowed.every((x) => x.open) && afterKeys.daemonPhase === null
+      && afterKeys.confirm === null && afterKeys.pulling === null,
+    `daemonPhase=${afterKeys.daemonPhase} confirm=${afterKeys.confirm} pulling=${afterKeys.pulling ? afterKeys.pulling.id : null}`,
+  );
+  await js<Hf>("window.__llmHfClose()");
+
+  /* ---- a projector that did not land holds activation back ----
+     Review fix: llmAfterPull used to run llmPrimary() unconditionally, so
+     a failed or cancelled mmproj download still went pull -> use ->
+     start. `models start` appends --mmproj only when the file is on disk
+     (models-handlers.ts isMmprojDownloaded), so the operator got a
+     running daemon serving a vision model text-only, with nothing saying
+     why. The real cli:hfProjector call is driven into its own filename
+     guard, which refuses before any network or filesystem access - the
+     same {ok:false} the download-error and cancel arms produce. */
+  type AfterPull = { projector: string; activated: boolean; skipped: boolean; msg: string | null; body: string; pulling: unknown };
+  const mmFailed = await js<AfterPull>("window.__llmAfterPullProbe('bad/name.gguf')");
+  check(
+    "hf: a projector that did not land blocks auto-activation and says so on the pane",
+    mmFailed.projector === "failed" && mmFailed.activated === false && mmFailed.skipped === true
+      && mmFailed.pulling === null
+      && typeof mmFailed.msg === "string"
+      && mmFailed.msg.includes("unsafe projector filename")
+      && mmFailed.msg.includes("the model was not started: it would serve text only")
+      && mmFailed.body.includes("the model was not started: it would serve text only"),
+    `${JSON.stringify(mmFailed.msg)} activated=${mmFailed.activated} skipped=${mmFailed.skipped} painted=${mmFailed.body.includes("it would serve text only")}`,
+  );
+  await js<void>("window.__settingsClose()");
+
+  /* ---- the first-run row into the same branch ----
+     Review fix: obAction('hf') assigned S.settings/S.settingsPane by hand
+     and so skipped llmTabEntered(), which is what starts the 5 s `models
+     status` poll and issues the first llmRefresh(). Escaping out of the
+     branch then landed on a Local pane reading "no models listed" on a
+     machine that has them, with nothing to refresh it. */
+  const obLabel = await js<string>("window.__obHfRowLabel()");
+  type ObHf = {
+    pane: string; settings: boolean; branch: boolean; mode: string; polling: boolean;
+    refreshed: boolean; rows: number; body: string;
+  };
+  const obHf = await js<ObHf>("window.__obHfProbe()");
+  check(
+    "hf: the first-run row enters the LLM tab properly - the Local pane behind it is loaded, not empty",
+    obLabel === "Add a model from Hugging Face…"
+      && obHf.settings && obHf.pane === "llm" && obHf.mode === "local" && obHf.branch
+      && obHf.polling && obHf.refreshed && obHf.rows >= 0
+      && obHf.body.includes("a add from hugging face"),
+    `label=${JSON.stringify(obLabel)} pane=${obHf.pane} polling=${obHf.polling} refreshed=${obHf.refreshed} rows=${obHf.rows}`,
+  );
+  await js<void>("window.__settingsClose()");
+
+  /* ------------------------------------------------------------------
+     Item 7C - mid-turn steering.
+     ------------------------------------------------------------------ */
+  const menu = await js<Array<{ id: string; na: boolean }>>("window.__menuNodes()");
+  const steerRow = menu.find((n) => n.id === "run.steer");
+  check(
+    "steer: the menu row is no longer marked unavailable",
+    !!steerRow && steerRow.na === false,
+    JSON.stringify(steerRow),
+  );
+
+  /* ---- the GET leg, and its wiring on openSession ----
+     Review fix: the route was plumbed end to end (agent-client ->
+     agent:undeliveredSteers -> atomic.undeliveredSteers) and never
+     called, so the only recovery for a steer the route already accepted
+     was the `steer_undelivered` SSE frame - which a window that missed
+     the turn never sees, leaving those messages parked forever. */
+  await js<void>(`window.__openSession(${JSON.stringify(sessionWithTurns)})`);
+  await wait(1500);
+  type Undel = { ok?: boolean; error?: string; data?: { sessionId?: string; undelivered?: unknown[]; discarded?: number } };
+  const undel = await js<Undel>(`window.__undelivered(${JSON.stringify(sessionWithTurns)})`);
+  const wiredRecovery = await js<{ id: string; parked: number; discarded: number } | null>("window.__steerRecovery()");
+  const queuedBefore = await js<string[]>("window.__queued()");
+  const recovered = await js<{ queued: string[]; ahead: number; lines: string[]; recovery: { parked: number } | null }>(
+    `window.__recoverSteers(${JSON.stringify(sessionWithTurns)})`,
+  );
+  check(
+    "steer: the GET leg answers and openSession runs it, so an accepted steer is never stranded",
+    undel.ok === true && !!undel.data && Array.isArray(undel.data.undelivered)
+      && !!wiredRecovery && wiredRecovery.id === sessionWithTurns
+      && !!recovered.recovery
+      && recovered.recovery.parked === (undel.data.undelivered as unknown[]).length
+      && (recovered.recovery.parked === 0
+        ? JSON.stringify(recovered.queued) === JSON.stringify(queuedBefore)
+        : recovered.queued.length === queuedBefore.length + recovered.recovery.parked),
+    `route=${JSON.stringify(undel.ok === true ? undel.data : undel.error)}; openSession recovery=${JSON.stringify(wiredRecovery)}`,
+  );
+
+  /* Review fix: the check above passes with an empty store, where its own
+     ternary degrades to "nothing happened" — so the recovery BODY (the
+     unshift to the front, the STEER.ahead watermark, the sentence and the
+     mandatory DELETE) was executed by nothing in the suite. This drives
+     the real recoverParkedSteers over a fixed answer, the same technique
+     the `steer_undelivered` frame is asserted with. */
+  type Park = {
+    queued: string[]; ahead: number; added: string[];
+    acks: Array<{ id: string; seq: number; discarded: number }>;
+    recovery: { id: string; parked: number; discarded: number } | null;
+  };
+  await js<number>("window.__clearQueue()");
+  await js<number>("window.__seedQueue(2)");
+  const parked = await js<Park>(
+    "window.__steerParkProbe([{seq:4, text:'the first parked one', parked_at:1}, {seq:7, text:'and the second', parked_at:2}], 3)",
+  );
+  const parkedNone = await js<Park>("window.__steerParkProbe([], 0)");
+  await js<number>("window.__clearQueue()");
+  check(
+    "steer: parked messages go to the FRONT of the queue, are announced once, and are acked at the high seq",
+    JSON.stringify(parked.queued) === JSON.stringify(["the first parked one", "and the second", "seed 0", "seed 1"])
+      && parked.ahead === 2
+      && JSON.stringify(parked.added) === JSON.stringify(["2 messages arrived too late for the last turn here — sending them next"])
+      && JSON.stringify(parked.acks) === JSON.stringify([{ id: "probe-parked-session", seq: 7, discarded: 3 }])
+      && !!parked.recovery && parked.recovery.parked === 2 && parked.recovery.discarded === 3
+      && parkedNone.added.length === 0 && parkedNone.acks.length === 0
+      && JSON.stringify(parkedNone.queued) === JSON.stringify(["seed 0", "seed 1"]),
+    `queued=${JSON.stringify(parked.queued)} ahead=${parked.ahead} acks=${JSON.stringify(parked.acks)} said=${JSON.stringify(parked.added)}`,
+  );
+
+  /* Review fix (major): the steer POST is a round trip, and clicking
+     another chat inside it used to land chat A's user bubble and its
+     system line at the bottom of chat B, and hand A's text back into a
+     draft the user had since typed in B. Both arms of the answer are
+     driven, plus the control arm where nothing switches. */
+  type Switch = { a: string[]; b: string[]; draft: string; value: string | null; queued: string[]; ahead: number };
+  await js<number>("window.__clearQueue()");
+  const swSteered = await js<Switch>("window.__steerSwitchProbe({ok:true, steered:true})");
+  await js<number>("window.__clearQueue()");
+  const swQueued = await js<Switch>("window.__steerSwitchProbe({ok:true, steered:false})");
+  await js<number>("window.__clearQueue()");
+  const stayed = await js<Switch>("window.__steerSwitchProbe({ok:true, steered:true}, true)");
+  await js<number>("window.__clearQueue()");
+  const typed = "a draft typed in chat B";
+  const untouched = (r: Switch) =>
+    JSON.stringify(r.a) === JSON.stringify(["system:chat A"])
+    && JSON.stringify(r.b) === JSON.stringify(["system:chat B"])
+    && r.draft === typed && r.value === typed;
+  check(
+    "steer: a result that arrives after a chat switch writes into neither transcript and leaves the new draft alone",
+    untouched(swSteered) && untouched(swQueued)
+      // The park itself still happens - the queue tray is window-global.
+      && JSON.stringify(swQueued.queued) === JSON.stringify(["a message typed while chat A was running"])
+      && swQueued.ahead === 1
+      && JSON.stringify(swSteered.queued) === JSON.stringify([])
+      // Control: with no switch, the transcript is written exactly as before.
+      && JSON.stringify(stayed.a) === JSON.stringify([
+        "system:chat A",
+        "user:a message typed while chat A was running",
+        "system:steering the running turn — the agent reads it at the next step",
+      ])
+      && JSON.stringify(stayed.b) === JSON.stringify(["system:chat B"]),
+    `steered a=${JSON.stringify(swSteered.a)} b=${JSON.stringify(swSteered.b)} draft=${JSON.stringify(swSteered.draft)}`
+      + ` | refused queued=${JSON.stringify(swQueued.queued)} b=${JSON.stringify(swQueued.b)}`
+      + ` | control a=${JSON.stringify(stayed.a)}`,
+  );
+
+  // A message typed during a turn is offered to the running turn. The
+  // ROUTE's answer is what is asserted - not the model's obedience.
+  await wait(800);
+  await js<void>("window.__ask('List the files in the current directory, then say done.')");
+  type SteerAnswer = { ok?: boolean; steered?: boolean; error?: string };
+  let steered: SteerAnswer | null = null;
+  const steerDeadline = Date.now() + 90_000;
+  while (Date.now() < steerDeadline) {
+    const busy = await js<boolean>("window.__busy()");
+    if (busy) {
+      steered = await js<SteerAnswer>("window.__steer('Also mention the word BANANA once.')");
+      if (steered && steered.steered) break;
+    } else if (steered) break;
+    await wait(500);
+  }
+  check(
+    "steer: POST /api/sessions/{id}/steer folds a message into the running turn",
+    !!steered && steered.ok === true && steered.steered === true,
+    JSON.stringify(steered),
+  );
+  // Let the turn finish before anything else drives the composer.
+  const endDeadline = Date.now() + 150_000;
+  while (Date.now() < endDeadline && (await js<boolean>("window.__busy()"))) await wait(1000);
+
+  // A refusal parks the text ahead of ordinary backlog, in the TUI's words.
+  await js<number>("window.__clearQueue()");
+  const turnA = await js<string>("window.__fakeTurn()");
+  const refused = await js<{ queued: string[]; ahead: number; draft: string }>("window.__steerOrQueue('later, please')");
+  const refusedLines = await js<string[]>("window.__systemLines()");
+  check(
+    "steer: a refused steer is parked as the next turn, never dropped and never the agent's 409 text",
+    refused.queued.length === 1 && refused.queued[0] === "later, please" && refused.ahead === 1
+      && refusedLines.includes("steering the running turn — it cannot take this one, so it runs as the next turn")
+      && !refusedLines.some((l) => l.includes("POST /v1/chat/completions instead")),
+    JSON.stringify(refused),
+  );
+  // A full queue hands the text back to the editor rather than eating it.
+  await js<number>("window.__seedQueue(20)");
+  const full = await js<{ queued: string[]; ahead: number; draft: string }>("window.__steerOrQueue('overflow')");
+  const fullLines = await js<string[]>("window.__systemLines()");
+  check(
+    "steer: a full queue returns the text to the editor and says so",
+    full.queued.length === 20 && full.draft === "overflow"
+      && fullLines.includes("queue: full at 20 — the steer could not be parked (returned to the editor)"),
+    `${full.queued.length} queued, draft=${JSON.stringify(full.draft)}`,
+  );
+  await js<number>("window.__clearQueue()");
+  await js<void>("window.__ctxDraft('')");
+
+  // The undelivered leg: accepted, never read, re-queued at the front.
+  const late = await js<{ busy: boolean; lines: string[] }>(
+    `window.__chatEvent({turnId:${JSON.stringify(turnA)}, kind:'steer_undelivered', payload:{undelivered:[{seq:1, text:'too late', parked_at:1}]}})`,
+  );
+  const lateQueue = await js<string[]>("window.__queued()");
+  check(
+    "steer: a message accepted too late is re-queued at the front and announced",
+    lateQueue[0] === "too late" && late.lines.includes("1 message arrived too late for that turn — sending it next"),
+    JSON.stringify(lateQueue),
+  );
+  await js<number>("window.__clearQueue()");
+  // A steer applied from anywhere else still lands in this transcript.
+  await js<unknown>(`window.__chatEvent({turnId:${JSON.stringify(turnA)}, kind:'steer_applied', text:'from another client', stepIndex:1})`);
+  const entries = await js<string[]>("window.__steerEntries()");
+  check(
+    "steer: a steer_applied frame puts the message in the transcript",
+    entries.includes("from another client"),
+    JSON.stringify(entries),
+  );
+  // The while-busy affordance only appears with something in the editor;
+  // an empty one is the Stop button, which is right and unchanged.
+  await js<number>("window.__ctxDraft('something to steer with')");
+  const sendBtn = await js<{ act: string; title: string } | null>("window.__sendButton()");
+  await js<number>("window.__ctxDraft('')");
+  check(
+    "steer: the while-busy send button no longer promises a queue",
+    !!sendBtn && sendBtn.title === "Steer this turn" && sendBtn.act === "send",
+    JSON.stringify(sendBtn),
+  );
+
+  /* ---- DRIFT: the SSE error frame carries its message ---- */
+  const errored = await js<{ busy: boolean; lines: string[] }>(
+    `window.__chatEvent({turnId:${JSON.stringify(turnA)}, kind:'error', error:'boom', category:'transport'})`,
+  );
+  const turnB = await js<string>("window.__fakeTurn()");
+  const empty = await js<{ lines: string[] }>(
+    `window.__chatEvent({turnId:${JSON.stringify(turnB)}, kind:'error', error:''})`,
+  );
+  check(
+    "drift: a failed turn prints its message and its category, never a bare `turn failed: `",
+    errored.lines.includes("turn failed [transport]: boom")
+      && empty.lines.includes("turn failed: the agent gave no message")
+      && !empty.lines.some((l) => l === "turn failed: "),
+    JSON.stringify([...errored.lines, ...empty.lines].filter((l) => l.startsWith("turn failed"))),
+  );
+
+  /* ------------------------------------------------------------------
+     Item 7C - the persisted context gauge.
+     ------------------------------------------------------------------ */
+  await js<void>(`window.__openSession(${JSON.stringify(sessionWithTurns)})`);
+  await wait(2500);
+  await js<void>("window.__ctxRefresh()");
+  await wait(1500);
+  type Ctx = { tokens: number; source: string | null; window: number | null; windowLabel: string; stablePrefix: number };
+  const gauge = await js<Ctx>("window.__ctx()");
+  type Stored = {
+    tokens: number; contextWindow: number; sections: string[]; conversationBoundBy: string | null;
+    conversationPairs: number; conversationPairsCap: number;
+  } | null;
+  const stored = await js<Stored>("window.__ctxStored()");
+  const row = await js<{ ok?: boolean; data?: { contextUsage?: { tokens?: number } } }>(
+    `window.atomic.session(${JSON.stringify(sessionWithTurns)})`,
+  );
+  const agentTokens = row && row.data && row.data.contextUsage ? row.data.contextUsage.tokens ?? null : null;
+  check(
+    "gauge: the breakdown is the session's own, read straight off GET /api/sessions/{id}",
+    agentTokens === null
+      ? gauge.tokens > 0 && gauge.source !== null && stored === null
+      : !!stored && gauge.source === "measured" && gauge.tokens === agentTokens && stored.tokens === agentTokens
+        && stored.sections.includes("prompt scaffold") && stored.sections.includes("conversation"),
+    agentTokens === null
+      ? `this agent persists no contextUsage on ${sessionWithTurns} - the ladder fell through to ${gauge.source} (${gauge.tokens})`
+      : `${gauge.tokens} tokens (${gauge.source}) vs the agent's ${agentTokens}; sections ${JSON.stringify(stored ? stored.sections : null)}`,
+  );
+  if (agentTokens !== null && stored) {
+    await js<boolean>("window.__ctxOpen()");
+    const panel = await js<string>("((document.querySelector('.popover') || {}).textContent || '')");
+    const basis = await js<string>("window.__ctxBasis()");
+    const bound = await js<string>("window.__ctxBound()");
+    await js<void>("window.__ctxClose()");
+    // Review fix: the full sentence, not a shared prefix. `startsWith`
+    // on "older turns are being dropped — " matched all three arms, so
+    // even when it fired it could not tell the configured-cap sentence
+    // from the window-is-the-limit one.
+    const wantBound = !stored.conversationBoundBy
+      ? ""
+      : stored.conversationBoundBy === "pairs"
+        ? `older turns are being dropped — ${stored.conversationPairs} of ${stored.conversationPairsCap} turns kept`
+        : null;   // a token verdict: pinned by __ctxBoundProbe below, which can drive both of its arms
+    check(
+      "gauge: the panel draws the agent's own sections, its window and its binding verdict",
+      stored.sections.every((l) => panel.includes(l))
+        && basis === "measured on this session’s last turn"
+        && (stored.contextWindow > 0 ? gauge.window === stored.contextWindow && gauge.windowLabel === "prompt window" : true)
+        && (wantBound === null ? bound.startsWith("older turns are being dropped — ") : bound === wantBound),
+      `window=${gauge.window} (${gauge.windowLabel}) boundBy=${stored.conversationBoundBy} line=${JSON.stringify(bound)} basis=${JSON.stringify(basis)}`,
+    );
+  }
+  /* Review fix: every arm of the binding line, driven off a synthetic
+     session row. On a live agent `conversationBoundBy` is usually null,
+     so the three sentences never rendered and the assertion above
+     collapsed to "" === "". The probe restores the real snapshot. */
+  type Bound = { html: string; text: string };
+  const storedBeforeProbe = await js<Stored>("window.__ctxStored()");
+  const boundArms = {
+    none: await js<Bound>("window.__ctxBoundProbe({tokens:1, conversationBoundBy:null})"),
+    pairs: await js<Bound>(
+      "window.__ctxBoundProbe({tokens:1, conversationBoundBy:'pairs', conversationPairs:12, conversationPairsCap:20, droppedPairs:0})",
+    ),
+    cap: await js<Bound>(
+      "window.__ctxBoundProbe({tokens:1, conversationBoundBy:'tokens', conversationCapAuto:false, conversationCap:48000, conversationCapConfigured:48000, droppedPairs:3})",
+    ),
+    window: await js<Bound>(
+      "window.__ctxBoundProbe({tokens:1, conversationBoundBy:'tokens', conversationCapAuto:true, conversationCap:31000, conversationCapConfigured:48000, droppedPairs:0})",
+    ),
+  };
+  const boundWant = {
+    none: "",
+    pairs: "older turns are being dropped — 12 of 20 turns kept",
+    cap: "older turns are being dropped — the 48k-token transcript cap (agent.conversationMaxTokens) is the limit · 3 dropped so far",
+    window: "older turns are being dropped — the window is the limit, not a configured cap",
+  };
+  const boundBad = (Object.keys(boundWant) as Array<keyof typeof boundWant>)
+    .filter((k) => boundArms[k].text !== boundWant[k]);
+  const storedAfterProbe = await js<Stored>("window.__ctxStored()");
+  check(
+    "gauge: each binding verdict renders its own full sentence, and the probe leaves the row alone",
+    boundBad.length === 0 && JSON.stringify(storedAfterProbe) === JSON.stringify(storedBeforeProbe),
+    boundBad.length
+      ? boundBad.map((k) => `${k}: ${JSON.stringify(boundArms[k].text)}`).join(" | ")
+      : `all four arms exact; snapshot ${JSON.stringify(storedAfterProbe) === JSON.stringify(storedBeforeProbe) ? "intact" : "CLOBBERED"}`,
+  );
+  /* Review fix (D2): the basis line's `provider` arm — "(Nk of it reused
+     from its cache)", reworded because 0.5.5's promptTokens is evaluated
+     + cached rather than the KV-cache miss count. That arm cannot arise
+     on this state dir's route, so the reword shipped unguarded; the probe
+     plants the three fields the sentence reads and restores them. The
+     `after` wording is a regression the check names explicitly. */
+  type Basis = { text: string; live: { source: string | null; tokens: number; cacheHitTokens: number | null }; restored: boolean };
+  const basisArms = {
+    cached: await js<Basis>("window.__ctxBasisProbe({source:'provider', modelId:'glm-5.2', cacheHitTokens:12800})"),
+    fresh: await js<Basis>("window.__ctxBasisProbe({source:'provider', modelId:'glm-5.2', cacheHitTokens:0})"),
+    unnamed: await js<Basis>("window.__ctxBasisProbe({source:'provider', modelId:null, cacheHitTokens:null})"),
+  };
+  const basisWant = {
+    cached: "counted by glm-5.2 (12.8k of it reused from its cache)",
+    fresh: "counted by glm-5.2",
+    unnamed: "counted by the model",
+  };
+  const basisBad = (Object.keys(basisWant) as Array<keyof typeof basisWant>)
+    .filter((k) => basisArms[k].text !== basisWant[k]);
+  // The parenthetical describes the figure's composition, so the cache hit
+  // is PART of the counted total, never additional to it.
+  const liveBasis = basisArms.cached.live;
+  const cacheWithin = liveBasis.source !== "provider" || liveBasis.cacheHitTokens === null
+    || liveBasis.cacheHitTokens <= liveBasis.tokens;
+  check(
+    "gauge: the counted figure names the model and says the cache hit is part of it, not before it",
+    basisBad.length === 0 && !basisArms.cached.text.includes("after") && basisArms.cached.restored && cacheWithin,
+    basisBad.length
+      ? basisBad.map((k) => `${k}: ${JSON.stringify(basisArms[k].text)}`).join(" | ")
+      : `all three arms exact; live ${liveBasis.source ?? "-"} ${liveBasis.tokens}/${liveBasis.cacheHitTokens ?? "-"}`,
+  );
+  /* Review fix: the 0.5.5 snapshot used to be written before the
+     staleness guard, so a refresh for the session the user just left
+     could draw its trimming verdict over the session they are on. */
+  const stale = await js<{ survived: boolean }>("window.__ctxStaleProbe()");
+  check(
+    "gauge: an overtaken refresh writes no session snapshot over the session that overtook it",
+    stale.survived,
+    stale.survived ? "the newer session's snapshot survived" : "a stale refresh clobbered CTX055.stored",
+  );
+  const release = await js<{ released: boolean; window: number | null; label: string; releasedAgain: boolean; windowAgain: number | null }>(
+    "window.__ctxReleaseProbe()",
+  );
+  check(
+    "drift: a prompt-derived window is released when the route changes, and only then",
+    release.released && release.window === null && release.label === ""
+      && !release.releasedAgain && release.windowAgain === 999999,
+    JSON.stringify(release),
+  );
+  await js<void>("window.__ctxRefresh()");
+
+  /* ------------------------------------------------------------------
+     Item 7C - the session's model stamp: reported, never applied.
+     ------------------------------------------------------------------ */
+  const liveProvider = await js<string>("window.__activeProvider()");
+  type Probe = { stamp: { providerId: string; chatModel: string | null } | null; added: string[]; provider: string; model: string };
+  const gone = await js<Probe>("window.__sessStampProbe({llm:{providerId:'no-such-provider', chatModel:'ghost-model'}})");
+  const goneLine = 'this session last ran on "no-such-provider/ghost-model", which is no longer configured — keeping the current model';
+  check(
+    "stamp: a provider that is gone says so verbatim and offers nothing",
+    gone.stamp === null && gone.added.map(decodeEntities).some((t) => t === goneLine),
+    JSON.stringify(gone.added.map(decodeEntities)),
+  );
+  const offered = await js<Probe>("window.__sessStampProbe({llm:{providerId:'openrouter', chatModel:'a/model-this-session-ran-on'}})");
+  const cfgNow = ((await configGet()).config ?? {}) as { llm?: { providers?: Array<{ id: string }> } };
+  const hasOpenrouter = (cfgNow.llm?.providers ?? []).some((p) => p.id === "openrouter");
+  const providerAfter = await js<string>("window.__activeProvider()");
+  check(
+    "stamp: a configured provider is reported with an offer, and reporting it switches nothing",
+    hasOpenrouter
+      ? !!offered.stamp && offered.stamp.providerId === "openrouter"
+        && offered.added.some((t) => t.includes("this session ran on openrouter/a/model-this-session-ran-on") && t.includes("Switch to it"))
+        && providerAfter === liveProvider
+      : offered.stamp === null && providerAfter === liveProvider,
+    hasOpenrouter ? JSON.stringify(offered.stamp) : "no `openrouter` provider in this config - the gone-provider arm covers the copy",
+  );
+  /* Review fix: the stamp used to compare model BASENAMES, so on a
+     provider with vendor-prefixed ids a session stamped `openai/gpt-4.1`
+     opened while the provider is on `azure/gpt-4.1` read as "same model"
+     and no offer appeared. 0.5.5's planModelRestore compares the full id
+     against `provider.defaultChatModel ?? provider.model`, and so does
+     this window now. Both directions are pinned: the same id is silent,
+     an id sharing only its basename is not. */
+  const liveProviderModel = await js<string>("window.__activeProviderModel()");
+  if (liveProvider && liveProviderModel) {
+    const same = await js<Probe>(
+      `window.__sessStampProbe({llm:{providerId:${JSON.stringify(liveProvider)}, chatModel:${JSON.stringify(liveProviderModel)}}})`,
+    );
+    // Same basename, different vendor prefix - a different model to the agent.
+    const base = liveProviderModel.split("/").pop() ?? liveProviderModel;
+    const twin = `smoke-vendor/${base}`;
+    const differs = await js<Probe>(
+      `window.__sessStampProbe({llm:{providerId:${JSON.stringify(liveProvider)}, chatModel:${JSON.stringify(twin)}}})`,
+    );
+    check(
+      "stamp: the model comparison is the agent's full id, not a basename",
+      same.stamp === null && same.added.length === 0
+        && (twin === liveProviderModel
+          ? true
+          : !!differs.stamp && differs.stamp.chatModel === twin
+            && differs.added.some((t) => t.includes(twin) && t.includes("Switch to it"))),
+      `live ${liveProvider}/${liveProviderModel}; same-id silent=${same.stamp === null}; ${JSON.stringify(twin)} offered=${!!differs.stamp}`,
+    );
+  } else {
+    check(
+      "stamp: the model comparison is the agent's full id, not a basename",
+      true,
+      `skipped - the active provider (${JSON.stringify(liveProvider)}) carries no defaultChatModel/model to compare against`,
+    );
+  }
+
+  // The offer is refused while anything is running: applying costs a config
+  // write plus a serve restart, and a restart aborts turns in other chats.
+  const turnC = await js<string>("window.__fakeTurn()");
+  const refusedSwitch = await js<{ stamp: unknown; provider: string }>("window.__sessStampApply()");
+  await js<unknown>(`window.__chatEvent({turnId:${JSON.stringify(turnC)}, kind:'aborted'})`);
+  const providerEnd = await js<string>("window.__activeProvider()");
+  check(
+    "stamp: the offered switch is refused while a turn is running",
+    refusedSwitch.provider === liveProvider && providerEnd === liveProvider,
+    `provider ${refusedSwitch.provider} (live ${liveProvider})`,
+  );
+  await js<number>("window.__clearQueue()");
+}
+
+/** The log escapes its text; the smoke compares the sentence, not the markup. */
+function decodeEntities(text: string): string {
+  return text
+    .replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+    .replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+}
+
+/** `modelsPull` streams, so its id guard is probed without leaving a download running. */
+async function modelsPullGuard(id: string): Promise<{ ok: boolean; error?: string }> {
+  const started = modelsPull(id, () => {});
+  started.cancel();
+  return (await started.done) as { ok: boolean; error?: string };
 }
 
 /**

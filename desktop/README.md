@@ -38,11 +38,60 @@ generated per launch, so nothing outside this app can reach the agent.
 | One turn of the agent loop | `POST /v1/chat/completions` (SSE) |
 | Approval requests | `GET /api/events` (SSE) |
 | Approval verdicts | `POST /api/approval/resolve` |
+| Steering the turn already running | `POST /api/sessions/{id}/steer` |
+| What a turn accepted but never read | `GET` / `DELETE /api/sessions/{id}/steer` |
 
 The turn stream is sent with `X-Atomic-Extensions: 1`, which upgrades it from
 plain OpenAI chunks to atomic's named frames — `session_id`,
-`reasoning_progress`, `tool_progress` — so the transcript can draw real tool
-cards and a reasoning disclosure instead of a wall of text.
+`reasoning_progress`, `tool_progress`, `steer_undelivered`, and the error
+frame — so the transcript can draw real tool cards and a reasoning disclosure
+instead of a wall of text. Every one of those exists *only* because of that
+header; a second streaming caller that forgot it would get silence with no
+error to debug. One extension frame arrives **unnamed** and has to be matched
+on its body instead: `{"object":"atomic.steer_applied", …}`.
+
+**Mid-turn steering.** A message typed while a turn is running is offered to
+that turn over `POST /api/sessions/{id}/steer`, and the route's answer is the
+only fact consulted — not the window's own busy flag, which an approval and an
+abort both clear while the agent is still working. Accepted, it is announced
+in the TUI's words (`steering the running turn — the agent reads it at the
+next step`) and appears in the transcript. Refused, it is parked *ahead of*
+ordinary backlog (the TUI's `steeredAhead` watermark) and says so; with 20
+already parked it is handed back to the editor rather than eaten. A message
+the turn accepted and then never read comes back on `steer_undelivered`, is
+pushed to the front of the queue and acked with the DELETE, because `steer`
+already answered "yes" to it and dropping it would lose something the user
+watched being accepted. That frame only reaches a window that was attached
+to the turn, so opening a session also runs the **GET** leg once — a
+reconnect, an agent restart or a session opened after the fact would
+otherwise leave those messages parked on the server forever. It is skipped
+for a turn this window is streaming, where the frame will carry them, so the
+two paths cannot both queue the same message.
+
+**The context gauge is the agent's own.** `GET /api/sessions/{id}` carries
+`contextUsage` — the last turn's whole window occupancy: every section, both
+conversation caps, the per-pair costs and the physical window — so the panel
+reads it instead of scanning the trace, and can say which limit is trimming
+the transcript (`conversationBoundBy`) instead of guessing. The trace scan and
+the pre-message projection stay behind it for a session that has never
+finished a turn and for agents that persist no such field. The snapshot is
+committed only past the refresh's staleness guard, so a slow refresh for the
+session the user just left cannot draw its trimming verdict over the numbers
+of the session they are on. A prompt-derived window is released when the
+active `<providerId> <chatModel>` changes, so the gauge never draws a new
+model against the old model's scale.
+
+**The session's model stamp.** The same row carries `metadata.llm` — the
+provider and model that session last ran on. It is reported and never applied:
+`atag serve` pins its provider at boot, so switching costs a config write plus
+a child restart, and a restart aborts every turn this process is streaming,
+including ones in chats the user is not looking at. The offer is refused
+outright while anything is running. When the stamped provider is gone the
+window says so in the TUI's words and keeps the current model. The comparison
+is the agent's own: the FULL model id against the provider entry's
+`defaultChatModel ?? model`, the pair 0.5.5's `planModelRestore` tests — not
+the chip's display label and not the basename, which would read
+`openai/gpt-4.1` and `azure/gpt-4.1` as the same model.
 
 **Why not the NDJSON sidecar.** `dist/sidecar/main.js` exists only in a source
 checkout, and the shipped single-file binary has no `sidecar` subcommand. A
@@ -288,8 +337,10 @@ Honestly degraded, and labelled as such in the UI:
   overlay/palette/slash/approval/per-tab Escape still outrank it, and a
   half-written composer draft is left alone.
   Menu verbs the desktop cannot do (new terminal window, mouse, debug
-  bundle, queued messages, steer, uninstall) keep their TUI label with a
-  "not available in the desktop" note. The `ctrl+g <key>` chords in the menu
+  bundle, queued messages, uninstall) keep their TUI label with a
+  "not available in the desktop" note; `Steer the running turn` is live and
+  puts the caret in the composer, which is where steering happens. The
+  `ctrl+g <key>` chords in the menu
   column are bound: ctrl+g arms the prefix for 1.5 s, the next key runs that
   node. The diagnostics line prints the TUI's
   null form (`llm — · step —`, `kv —`) for the process metrics this window
@@ -327,9 +378,53 @@ Honestly degraded, and labelled as such in the UI:
   `/props`); Enter downloads / selects / starts through `models pull`,
   `models use`, `models start|stop`, `s`/`d`/`E`/`B`/`U`/`G` through the
   matching `models` subcommands and `localModels.managed.autoUpdate`, `L`
-  tails `<dataDir>/llama-server.log`. `a add from hugging face` is disabled:
-  the HF import lives in the TUI's editor and `atag models pull` takes
-  catalogue ids only. Cloud rows read `llm.providers` and show `key ok` /
+  tails `<dataDir>/llama-server.log`.
+- **`a add from hugging face`** is live. The installed agent exposes no way
+  to add one — `atag models --help` has no `add`, there is no HTTP route,
+  and the agent's own `resolveHuggingFaceGgufChoices` has callers only
+  inside `src/tui` — so `desktop/main/huggingface.ts` is a vendored port of
+  `src/local-llm/huggingface-{ref,api,fit,model-def,resolve}.ts` plus a trim
+  of `download-file.ts`, with the source paths in its header. It is a copy
+  because the desktop is a separate CommonJS project that compiles only its
+  own two directories; it will drift when the agent's copies change, and the
+  smoke's verbatim copy assertions are the only alarm. The reference is
+  parsed and the repo listed in the MAIN process (the renderer's CSP is
+  `connect-src 'none'`), the chosen file becomes a `LocalModelDef` from the
+  ported `buildCustomModelDef` and is spliced into `localModels.customModels`
+  with the whole-file `atag config set`, and the weights then come down
+  through the existing `atag models pull <custom-id>` → `cli:pull` banner
+  unchanged. Errors from the parser and from huggingface.co are shown
+  verbatim, because they are written for this screen. The RAM line warns and
+  nothing more: weights larger than physical memory still start, mapped from
+  disk. `atag models pull` fetches **weights only**, so the projector of a
+  vision repo is downloaded by this window afterwards, on the same banner
+  with the TUI's `<name> (mmproj)` phase label, and auto-activation waits for
+  it — `models start` appends `--mmproj` only when the file is already on
+  disk, so starting the daemon first would give a silently text-only daemon.
+  If the projector download fails or is cancelled the model is **not**
+  activated at all: the weights are on disk and the pane says so, rather than
+  starting a daemon that would serve a vision model text-only.
+  Removal needs nothing new: `atag models remove <custom-id>` deletes the
+  files and drops the config entry, so the pane's `d` is the whole undo. The
+  first-run wizard's step 2 carries the TUI's own pinned row,
+  `Add a model from Hugging Face…`, which opens this same branch in
+  Settings — one implementation, not two. Gated repos: a 401/403 listing adds
+  one line when `HF_TOKEN` is *named* in `<stateDir>/.env` (never its value),
+  because `atag models pull` reads that file and this window does not, so a
+  gated repo can fail to list here and download fine.
+- **Ollama is a provider here, never a download source.** atomic-agent has
+  no Ollama download path of any kind — no registry client, nothing reading
+  `~/.ollama`, no converter; the only Ollama code in the agent is two
+  provider presets, a health-failure hint and a steer modal, with zero hits
+  under `src/local-llm`. Offering "download from Ollama" would be a
+  capability this window invented, so the Local pane carries one
+  non-interactive line pointing at the thing that does work: `Cloud › n add
+  provider › Ollama (local)`, `http://localhost:11434`. Importing a model
+  Ollama already pulled is technically possible (its blobs are real GGUF)
+  and deliberately not built: `ollama rm` would dangle the link, Ollama keeps
+  the chat template in a separate manifest layer so an imported GGUF can be
+  served under the wrong one, and the schema's mandatory `huggingFaceUrl`
+  would have to be a placeholder. Cloud rows read `llm.providers` and show `key ok` /
   `missing key` from the key NAMES present in this process's env ∪
   `<stateDir>/.env` (never values); the text-model list is the provider's
   `atag models search --json` (no pricing in it, so the `price:` facet stays

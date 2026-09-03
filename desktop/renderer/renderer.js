@@ -189,7 +189,7 @@ const MENU_GROUPS = [
     {id:'run.mode', label:'Coding mode…', chord:'M'},
     {id:'run.abort', label:'Abort turn', chord:'a'},
     {id:'run.queue', label:'Queued messages', na:true},
-    {id:'run.steer', label:'Steer the running turn', na:true},
+    {id:'run.steer', label:'Steer the running turn'},
     {id:'run.expand', label:'Expand all tool cards'},
     {id:'run.collapse', label:'Collapse all tool cards'},
   ]],
@@ -220,6 +220,7 @@ const MENU_ACTS = {
   'session.context':'context', 'session.id':'session:id',
   'model.chat':'selector:model',
   'run.mode':'modes', 'run.abort':'stop', 'run.expand':'cards:expand', 'run.collapse':'cards:collapse',
+  'run.steer':'steer',
   'setup.theme':'palette:theme', 'setup.sidebar':'toggle:sidebar', 'setup.analytics':'settings:privacy',
   'setup.skill':'settings:skills', 'setup.task':'settings:tasks',
   'help.commands':'palette', 'help.tools':'tools', 'help.quit':'quit',
@@ -429,6 +430,45 @@ let voiceInstallBridge = (id) => (BR && BR.voiceInstall
    picture. See refreshVoice()/refreshMic(). */
 let VOICE_STRIP_KEY = null;
 let VOICE_MIC_KEY = null;
+
+/* ---- Item 7A: add a model from Hugging Face ----
+   The branch the TUI reaches with `a` in Manage › LLM › Local
+   (local-models-hf-branch.tsx). `open`/`step` are the desktop's own: the
+   TUI keeps them on LocalModelsPanelMode as "hfRef"|"hfPick", and the
+   remaining five fields are LocalModelsHfState field for field. `repo`
+   deliberately survives a step back, so re-opening the pick list costs no
+   second request. `ram` is app:hostRam (the same
+   Math.max(1, floor(totalmem()/1e9)) the TUI's warning is computed from).
+   `pendingMmproj` carries the projector across the weights download,
+   because `atag models pull` never fetches it. */
+const LLMHF = {open:false, step:'ref', reference:'', busy:false, error:null, repo:null, cursor:0, ram:0, pendingMmproj:null};
+const HF_PICK_WINDOW = 6;   // hf-pick-list.tsx HF_PICK_WINDOW
+const HF_REF_TITLE_TAIL = '(it has to be a GGUF build)';               // hf-reference-editor.tsx HF_REF_TITLE_LINE
+const HF_REF_EXAMPLES_LINE = 'unsloth/Qwen3.5-4B-GGUF · https://huggingface.co/owner/repo · a link to one .gguf'; // :11-12
+const HF_MMPROJ_LINE = '   vision projector in this repo — it is pulled alongside';                   // hf-pick-list.tsx HF_MMPROJ_LINE
+const HF_ROW_LABEL = 'Add a model from Hugging Face…';  // onboarding/local-model-picks.ts HUGGING_FACE_ROW_LABEL
+/* Authored here — the TUI has no counterpart, because the TUI's Local
+   pane never has to explain why Ollama is not in it. */
+const OLLAMA_SIGNPOST = 'Ollama (local) is a provider here, not a download source: add the running server under Cloud › n add provider › Ollama (local), http://localhost:11434. Ollama is not a download source on this agent — nothing on this pane downloads from it.';
+
+/* ---- Item 7C: what v0.5.5 answers that the desktop was projecting ----
+   `stored` is GET /api/sessions/{id}.contextUsage verbatim — the whole
+   prompt breakdown the agent now persists per session (sections, both
+   conversation caps, the pair costs, the physical window). `route` is the
+   `<providerId> <chatModel>` the current CTX.window was gauged for, so a
+   provider switch releases a prompt-derived window instead of drawing the
+   new model against the old model's scale. `stamp` is metadata.llm — the
+   provider/model the open session last ran on. */
+const CTX055 = {stored:null, route:null, stamp:null};
+/* Mid-turn steering. `ahead` is ChatOrchestrator.steeredAhead: a refused
+   steer is parked AHEAD of ordinary backlog and behind steers already
+   re-routed for the same turn, so typing order survives. `chain`
+   sequences steers per submit — the path is async where the queue was
+   synchronous and two Enters can otherwise interleave. */
+// `recovery` records the last GET /api/sessions/{id}/steer this window ran
+// (item 7C review fix) so the wiring on openSession is assertable.
+const STEER = {ahead:0, chain:Promise.resolve(), recovery:null};
+const MAX_QUEUED = 20; // chat-orchestrator.ts:66 MAX_QUEUED_MESSAGES
 
 /* ============================================================
    Atomic Agent Desktop — clickable prototype, no backend.
@@ -1022,7 +1062,10 @@ function composer() {
 
 function sendButton() {
   if (S.busy || S.pending) {
-    if (S.draft.trim()) return '<button class="sendbtn" data-act="send" title="Queue">' + ic('plus') + '</button>';
+    // Item 7C: this sends a steer into the running turn. It is parked as
+    // the next turn only when the agent refuses it, which is a fact the
+    // route answers and this button cannot know in advance.
+    if (S.draft.trim()) return '<button class="sendbtn" data-act="send" title="Steer this turn">' + ic('up') + '</button>';
     return '<button class="sendbtn stop" data-act="stop" title="Stop (Ctrl+.)">' + ic('stop') + '</button>';
   }
   return '<button class="sendbtn' + (S.draft.trim() ? '' : ' mute') + '" data-act="send" title="Send">' + ic('up') + '</button>';
@@ -1495,6 +1538,31 @@ function anchorStyle(sel, width) {
     + Math.round(window.innerHeight - r.top + 8) + 'px;top:auto;right:auto';
 }
 
+/**
+ * Item 7C — which limit is trimming the transcript, when one is.
+ *
+ * Nothing here is inferred: `conversationBoundBy` is the agent's own
+ * verdict on the session row, and it is `null` on a transcript nothing is
+ * trimming, in which case this line is absent rather than reassuring.
+ * The knob is named only when the configured cap is what bound the
+ * transcript — when the cap is auto, or the window clamped it below what
+ * was configured, the cap is not the thing to change and saying so would
+ * send the user to the wrong dial.
+ */
+function ctxBoundLine() {
+  const u = CTX055.stored;
+  if (!u || !u.conversationBoundBy) return '';
+  let text;
+  if (u.conversationBoundBy === 'pairs') {
+    text = 'older turns are being dropped — ' + (u.conversationPairs || 0) + ' of ' + (u.conversationPairsCap || 0) + ' turns kept';
+  } else if (u.conversationCapAuto === false && u.conversationCap === u.conversationCapConfigured) {
+    text = 'older turns are being dropped — the ' + fmtTokens(u.conversationCap) + '-token transcript cap (agent.conversationMaxTokens) is the limit';
+  } else {
+    text = 'older turns are being dropped — the window is the limit, not a configured cap';
+  }
+  if (u.droppedPairs > 0) text += ' · ' + u.droppedPairs + ' dropped so far';
+  return '<p class="cap ctxbound" style="margin:8px 0 0">' + esc(text) + '</p>';
+}
 function contextHTML() {
   const agent = (LIVE_CONFIG && LIVE_CONFIG.agent) || {};
   const pairs = agent.conversationMaxPairs || 20;
@@ -1519,7 +1587,9 @@ function contextHTML() {
     + '<dd class="mono tnum' + (dim ? ' ter' : '') + '">' + value + '</dd>';
   let body = '';
   if (CTX.tokens) {
-    if (CTX.source === 'built' && CTX.sections) body = CTX.sections.map((s) => row(s.label, fmtTokens(s.tokens))).join('');
+    if ((CTX.source === 'built' || CTX.source === 'measured') && CTX.sections && CTX.sections.length) {
+      body = CTX.sections.map((s) => row(s.label, fmtTokens(s.tokens))).join('');
+    }
     else if (proj) {
       body = row('prompt scaffold', fmtTokens(CTX.stablePrefix));
       if (S.draft.trim()) body += row('your draft', '~' + fmtTokens(CTX.draftTokens));
@@ -1536,6 +1606,7 @@ function contextHTML() {
   return '<div class="scrim" data-close="1" style="background:transparent">'
     + '<div class="popover" style="width:360px;' + anchorStyle('.ctxbtn', 360) + '">'
     + '<div style="padding:12px 16px 8px"><div class="hd" style="margin-bottom:8px">' + esc(title) + '</div>' + rows
+    + ctxBoundLine()
     + (CTX.tokens ? '<p class="cap ctxbasis" style="margin:8px 0 0">' + esc(ctxBasisLine()) + '</p>' : '')
     + '</div>'
     + '<div class="ctxdials"><div class="ctxdial"><span class="col"><span>tasks per turn</span>'
@@ -1901,7 +1972,18 @@ function toast(t, s) {
    ============================================================ */
 function act(a) {
   if (!a) return;
-  const [k, v] = a.split(':');
+  /* Item 7 lane fix, found by the suite rather than by a spec: `split(':')`
+     took only the FIRST segment as the value, and this agent's own session
+     ids are not colon-free — `hermes:20260511_162944_79a9e8` is a real row
+     in the store. So `ses:`, `pin:`, `unpin:`, `del:` and `delask:` all
+     acted on the string `hermes`: opening such a chat did nothing and
+     pinning it wrote a phantom id into prefs.json (which is exactly what
+     was sitting there when this was found). Every branch below wants the
+     whole tail; the multi-segment verbs (`llm:`, `tasks:`, `menu:` …) take
+     it with their own `a.slice(n)` and never read `v`. */
+  const colon = a.indexOf(':');
+  const k = colon < 0 ? a : a.slice(0, colon);
+  const v = colon < 0 ? undefined : a.slice(colon + 1);
   const close = () => { S.overlay = null; S.menuOpen = null; S.scope = null; S.q = ''; S.cur = 0; S.alert = null; SEL.open = false; SEL.addOpen = false; WIZ.phase = null; };
 
   // Item 2 (voice input): one seam for every voice verb.
@@ -1932,6 +2014,19 @@ function act(a) {
   if (a === 'session:switch') { close(); S.overlay = 'sessions'; render(); return; }
   if (a === 'clear') { close(); S.log = []; S.history = []; render(); toast('Transcript cleared', 'The next turn starts fresh'); return; }
   if (a === 'stop') { close(); abort(); return; }
+  if (a === 'sessmodel:apply') { applySessionModelStamp(); return; }
+  /* Item 7C — the menu's `Steer the running turn`. There is no separate
+     steer box: the composer IS the steer box while a turn runs, so the
+     verb puts the caret there and says what Enter will do. */
+  if (a === 'steer') {
+    close(); S.room = 'chat';
+    S.log.push({id:nid(), k:'system', text: S.busy || S.pending
+      ? 'type here — a message sent while the turn runs is folded into it at the next step'
+      : 'nothing is running here, so the next message starts a turn'});
+    render();
+    const el = $('#entry'); if (el) el.focus();
+    return;
+  }
   if (a === 'send') { close(); submit(); return; }
   if (a === 'retry') { close(); render(); toast('Retrying last turn'); return; }
   if (a === 'dump') { close(); render(); toast('Write debug bundle', 'not available in the desktop'); return; } // Item 7: no bundle writer in the desktop
@@ -2044,6 +2139,90 @@ function endTool(out, ms) {
 }
 
 let timer = null, step = 0, ticker = null;
+
+/**
+ * Item 7C — a message typed while a turn runs.
+ *
+ * The composer has promised "Send to steer this turn…" all along and the
+ * window parked the text in a local array instead, announcing that it
+ * "will reach the agent at the next step boundary". It did not: it ran as
+ * a separate turn afterwards. `POST /api/sessions/{id}/steer` folds it
+ * into the running turn for real, and has since ≤0.5.3.
+ *
+ * Ported from ChatOrchestrator.steerMessage (src/tui/chat-orchestrator.ts):
+ * the route's answer is the ONLY fact consulted — not S.busy, which is
+ * cleared by an approval and by abort() while the agent is still working
+ * — and on a refusal the text is parked AHEAD of ordinary backlog
+ * (queueAsSteer) rather than lost. The agent's own 409 sentence names
+ * POST /v1/chat/completions, which is advice for an API client and not
+ * for someone typing here, so it is translated, never printed.
+ */
+function steerOrQueue(text) {
+  // Sequenced: submit() clears the editor optimistically and returns, so
+  // two Enters in quick succession would otherwise interleave.
+  STEER.chain = STEER.chain.then(() => steerOrQueueRun(text)).catch(() => {});
+  return STEER.chain;
+}
+async function steerOrQueueRun(text, post) {
+  const sid = S.agentSession;
+  const send = post || ((id, t) => (BR && BR.steer ? BR.steer(id, t) : Promise.resolve(null)));
+  let steered = false;
+  if (sid && (post || (BR && BR.steer))) {
+    const res = await send(sid, text);
+    steered = !!(res && res.ok && res.steered);
+  }
+  /* Review fix: the POST above is a round trip, and the user can click
+     another chat inside it. openSession replaces S.log and clears
+     S.streamId, so pushSteerEntry's `S.log.push` fallback would stamp
+     chat A's user bubble — and A's system line — into chat B's
+     transcript, and the full-queue arm would overwrite a draft the user
+     has since typed in B (S.draft is this window's one editor). Same
+     defect class as the `!item` guards on the stream frames. The queue is
+     window-global by design, so the park itself still happens; only the
+     transcript and the editor are held back. */
+  const here = S.agentSession === sid;
+  if (steered) {
+    // The message the user typed belongs in the transcript, not only in a
+    // system line — spliced before the streaming item, as tool cards are.
+    // After a switch it belongs in neither transcript: the agent really
+    // did take it, and reopening that chat reads it back from the store.
+    if (here) {
+      pushSteerEntry(text);
+      S.log.push({id:nid(), k:'system', text:'steering the running turn — the agent reads it at the next step'});
+      render();
+    }
+    return;
+  }
+  if (S.queued.length >= MAX_QUEUED) {
+    // chat-orchestrator.ts: the optimistic submit already cleared the
+    // editor, so hand the text back rather than eat it — but only into an
+    // editor that is still the one it was typed in, or, after a switch,
+    // one the user has not typed into since. Stamping over another chat's
+    // draft is worse than losing a steer that could not be parked.
+    const e = $('#entry');
+    if (here || (!S.draft && !(e && e.value))) {
+      S.draft = text;
+      if (e) { e.value = text; autosize(e); }
+      ctxDraftChanged();
+    }
+    if (here) S.log.push({id:nid(), k:'system', text:'queue: full at ' + MAX_QUEUED + ' — the steer could not be parked (returned to the editor)'});
+    render(); return;
+  }
+  S.queued.splice(STEER.ahead, 0, text);
+  STEER.ahead += 1;
+  // The queue tray is window-global and shows the parked text either way;
+  // the sentence explaining it is only true in the chat it was typed in.
+  if (here) S.log.push({id:nid(), k:'system', text:'steering the running turn — it cannot take this one, so it runs as the next turn'});
+  render();
+}
+/** The steered message, positioned before the streaming assistant item. */
+function pushSteerEntry(text) {
+  const entry = {id:nid(), k:'user', text, steered:true};
+  const item = S.log.find((m) => m.id === S.streamId);
+  if (item) S.log.splice(S.log.indexOf(item), 0, entry);
+  else S.log.push(entry);
+}
+
 function submit() {
   // Item 2 (voice input): Enter, the Send button and Ctrl+Enter all land
   // here. While the microphone is open they stop the recording and insert
@@ -2067,11 +2246,7 @@ function submit() {
   S.draft = ''; if (e) { e.value = ''; autosize(e); }
   ctxDraftChanged(); // Lane B — item 3: the sent draft leaves the projection
   S.slash = false;
-  if (S.busy || S.pending) {
-    S.queued.push(text);
-    S.log.push({id:nid(), k:'system', text:'queued — will reach the agent at the next step boundary'});
-    render(); return;
-  }
+  if (S.busy || S.pending) { steerOrQueue(text); return; }
   S.log.push({id:nid(), k:'user', text});
   if (S.live.state !== 'connected') {
     // Nothing may be fabricated. If the agent is not answering, say so.
@@ -2240,7 +2415,7 @@ document.addEventListener('click', (e) => {
   if (fill) { S.draft = fill.dataset.fill; render(); const en = $('#entry'); if (en) { en.focus(); autosize(en); } return; }
   const pr = t.closest('[data-palrow]'); if (pr) { activatePal(+pr.dataset.palrow); return; }
   const sl = t.closest('[data-slash]'); if (sl) { acceptSlash(sl.dataset.slash); return; }
-  const uq = t.closest('[data-unqueue]'); if (uq) { S.queued.splice(+uq.dataset.unqueue, 1); render(); return; }
+  const uq = t.closest('[data-unqueue]'); if (uq) { const at = +uq.dataset.unqueue; S.queued.splice(at, 1); if (at < STEER.ahead) STEER.ahead -= 1; render(); return; }
   const rv = t.closest('[data-revoke]'); if (rv) { S.grants.splice(+rv.dataset.revoke, 1); render(); toast('Grant revoked'); return; }
   const ask = t.closest('[data-ask]'); if (ask) { const q = S.q; act('close'); S.draft = q; render(); submit(); return; }
   const obc = t.closest('[data-ob-choice]');
@@ -2292,6 +2467,13 @@ document.addEventListener('input', (e) => {
   if (e.target.id === 'mcp-json') { if (MCP.addModal) { MCP.addModal.json = e.target.value; MCP.addModal.error = null; } return; }
   // Item 7 part C: the LLM filter / URL prompt, the Telegram token prompt and the Import form edit state in place.
   if (e.target.id === 'llm-filter') { LLMP.filter = e.target.value; LLMP.cursor.cloud = llmCloudSectionStart(); llmRepaintList(); return; }
+  // Item 7A: editing the reference clears its error (local-models-reducer.ts:101-110).
+  // Nothing else repaints on a keystroke — a full render would drop the caret.
+  if (e.target.id === 'llm-hf-ref') {
+    LLMHF.reference = e.target.value;
+    if (LLMHF.error) { LLMHF.error = null; llmRepaint(); llmHfFocus(); }
+    return;
+  }
   if (e.target.id === 'llm-url') { LLMP.externalDraft = e.target.value; if (LLMP.externalInvalid) { LLMP.externalInvalid = false; llmRepaint(); const n = $('#llm-url'); if (n) { n.focus(); n.setSelectionRange(n.value.length, n.value.length); } } return; }
   if (e.target.id === 'tg-token') { if (TG.token.error) { TG.token.error = null; } return; }
   if (e.target.dataset && e.target.dataset.impField) { IMP.form[e.target.dataset.impField] = e.target.value; return; }
@@ -3157,6 +3339,37 @@ function onChatEvent(ev) {
     if (item) { item.text += ev.text; S.phase = 'Writing reply'; render(); }
     return;
   }
+  /* Item 7C — the agent read a steer at a step boundary. The frame comes
+     UNNAMED on the wire and is recognised in agent-client.ts by its
+     `object`. A steer sent from this window is already in the transcript;
+     one that arrived from anywhere else (a scheduled task, another
+     client, `atag tui`) is added here so the log says what the turn was
+     actually told. */
+  if (ev.kind === 'steer_applied') {
+    const text = String(ev.text || '');
+    if (!text || !item) return;
+    if (!S.log.some((m) => m.k === 'user' && m.steered && m.text === text)) { pushSteerEntry(text); render(); }
+    return;
+  }
+  /* Item 7C — accepted, and then the turn ended before it was read.
+     `steer` already answered "yes" to whoever sent these, so dropping
+     them would lose a message the user watched being accepted. They go to
+     the FRONT of the queue, ahead even of refused steers: they are
+     corrections aimed at the turn that just ran. */
+  if (ev.kind === 'steer_undelivered') {
+    const list = (ev.payload && Array.isArray(ev.payload.undelivered)) ? ev.payload.undelivered : [];
+    if (!list.length) return;
+    S.queued.unshift.apply(S.queued, list.map((u) => String((u && u.text) || '')));
+    STEER.ahead += list.length;
+    if (item) S.log.push({id:nid(), k:'system', text: list.length + ' message' + (list.length === 1 ? '' : 's')
+      + ' arrived too late for that turn — sending ' + (list.length === 1 ? 'it' : 'them') + ' next'});
+    // The parked store is the server's; ack it or it accumulates.
+    const seq = list.reduce((max, u) => Math.max(max, (u && Number(u.seq)) || 0), 0);
+    const sid = RUNNING.get(ev.turnId) || S.agentSession;
+    if (sid && BR && BR.ackSteers) BR.ackSteers(sid, seq, 0);
+    render();
+    return;
+  }
   if (ev.kind === 'done' || ev.kind === 'finish' || ev.kind === 'aborted' || ev.kind === 'error') {
     if (ev.kind === 'finish') return;
     S.busy = false; S.turnId = null; clearInterval(ticker);
@@ -3168,7 +3381,15 @@ function onChatEvent(ev) {
     if (item && !item.text) item.text = ev.kind === 'aborted' ? '(stopped)' : '(no reply)';
     // Review fix: only into the transcript this turn is actually streaming
     // into — otherwise the failure of chat A is announced inside chat B.
-    if (ev.kind === 'error' && item) S.log.push({id:nid(), k:'system', text:'turn failed: ' + esc(ev.error || '')});
+    // DRIFT FIX (D2 of the 0.5.5 review): the frame carries `{error, category}`
+    // and the desktop was reading `ev.error` off a payload it never lifted,
+    // so a failed turn printed the bare sentence `turn failed: `. The
+    // bracketed category mirrors the TUI's `failed [${category}]: …`.
+    if (ev.kind === 'error' && item) S.log.push({id:nid(), k:'system',
+      text:'turn failed' + (ev.category ? ' [' + esc(ev.category) + ']' : '') + ': ' + esc(ev.error || 'the agent gave no message')});
+    // A turn ended: the steer watermark belongs to the turn that is over
+    // (chat-orchestrator.ts resets steeredAhead with the queue).
+    STEER.ahead = 0;
     if (S.queued.length) {
       const q = S.queued.shift();
       // Lane B — backend switch: the gate is judged at turn START, so a
@@ -3545,9 +3766,22 @@ function obHTML() {
         + (m.active ? '<span class="tag">Active</span>' : fit.v === 'fits' && !m.downloaded ? '<span class="tag">Recommended</span>' : '<span></span>')
         + '</button>';
     }).join('') : '<div class="ob-note">' + (OB.busy ? 'reading the catalogue…' : 'no models listed') + '</div>';
+    /* Item 7A — the row the TUI pins into this same list
+       (src/tui/onboarding/local-model-picks.ts HUGGING_FACE_ROW_LABEL),
+       with its label verbatim. First run is where someone looks for this
+       before they have ever found Settings. It is a link rather than a
+       step of its own: the branch itself is one implementation, in
+       Settings › LLM › Local, and duplicating its two screens inside the
+       wizard would be a second one to keep in sync. Setup stays unfinished
+       until a model is actually chosen — the add's own pull → use → start
+       is what finishes it. */
+    const hfRow = '<button class="ob-opt" data-ob="hf"><span class="radio"></span>'
+      + '<span><span class="t">' + esc(HF_ROW_LABEL) + '</span><br>'
+      + '<span class="d">Paste a repo id or a huggingface.co link — it has to be a GGUF build. Opens Settings › LLM › Local.</span></span>'
+      + '<span></span></button>';
     return '<div id="onboarding"><div class="ob">'
       + head('local models · step 2 of 2', 'Pick a local model', 'One download, then it runs offline. This machine reports ' + OB.ram + ' GB of RAM.')
-      + '<div class="ob-models">' + rows + '</div>' + err
+      + '<div class="ob-models">' + rows + hfRow + '</div>' + err
       + '<div class="ob-foot"><button class="btn btn-g" data-ob="back">Back</button>'
       + '<span class="grow"></span>'
       + '<button class="btn btn-p" data-ob="use"' + (OB.busy || !OB.models.length ? ' disabled' : '') + '>'
@@ -3608,6 +3842,19 @@ function obAction(what) {
     return;
   }
   if (what === 'cancel') { BR.cancelPull(); OB.step = 'local'; render(); return; }
+  if (what === 'hf') {
+    // Same branch, same IPC, same config write as the `a` key in the
+    // Local pane — there is one Hugging Face flow in this window.
+    // Review fix: enter the tab the way every other route into it does,
+    // through act('settings:llm') → settingsPaneEntered → llmTabEntered.
+    // Assigning S.settings/S.settingsPane by hand skipped llmTabEntered,
+    // so escaping out of the branch landed on a Local pane with no rows
+    // and no daemon state until the user pressed `r`.
+    OB.open = false;
+    act('settings:llm');
+    llmAct('hf');
+    return;
+  }
 }
 
 if (BR) {
@@ -4122,12 +4369,20 @@ function relTime(at) {
 /** The panel's basis line: where the figure comes from, in one sentence. */
 function ctxBasisLine() {
   if (CTX.source === 'provider') {
-    // On llama the provider count is the KV-cache MISS count (the cached
-    // prefix is not re-evaluated), so say how much was reused rather than
-    // let a 1.0k figure read as if the projection had been six times off.
+    /* DRIFT FIX (D2 of the 0.5.5 review). This used to say the counted
+       figure came AFTER the cached prefix, because `timing.promptTokens`
+       was llama-server's `prompt_n` — the KV-cache MISS count. As of
+       0.5.5 it is evaluated + cached (llama-server-client.ts
+       normaliseCompletionResponse), i.e. the whole prompt, and the
+       parenthetical now explains the figure's composition rather than a
+       discrepancy with it. */
     return 'counted by ' + (CTX.modelId || 'the model')
-      + (CTX.cacheHitTokens > 0 ? ' (after ' + fmtTokens(CTX.cacheHitTokens) + ' reused from its cache)' : '');
+      + (CTX.cacheHitTokens > 0 ? ' (' + fmtTokens(CTX.cacheHitTokens) + ' of it reused from its cache)' : '');
   }
+  // The agent's own breakdown for this session's last turn, persisted on
+  // the session row. Still the agent's estimate until a completion
+  // refines it, which is why this does not say "measured by the model".
+  if (CTX.source === 'measured') return 'measured on this session’s last turn';
   if (CTX.source === 'estimate') return 'estimated from the built prompt';
   if (CTX.source === 'built') return 'built now from this workspace’s tools, skills and memory — before recall';
   const b = CTX.baseline;
@@ -4182,6 +4437,27 @@ async function resolveWindow() {
   return {window:null, label:''};
 }
 
+/**
+ * DRIFT FIX (D3 of the 0.5.5 review), on its own so the rule can be
+ * exercised directly. A prompt-derived window is set once and then
+ * treated as permanent by the two `windowLabel !== 'prompt window'`
+ * guards in refreshContext — with nothing anywhere resetting it, so
+ * after a provider or model change the gauge kept drawing the new model
+ * against the old model's scale for the rest of the window's life.
+ *
+ * This is the rule 0.5.5 added to the TUI (providers-reducer.ts
+ * activeTextRoute nulls contextUsage.contextWindow whenever the active
+ * `<providerId> <chatModel>` pair changes). It was latent while the only
+ * source of a prompt window was a route the installed binary 404s; the
+ * session snapshot makes it a live one.
+ */
+function ctxReleaseWindowOnRouteChange() {
+  const route = String(selActiveProviderId() || '') + ' ' + String(activeModel() || '');
+  const changed = CTX055.route !== null && CTX055.route !== route;
+  if (changed) { CTX.window = null; CTX.windowLabel = ''; }
+  CTX055.route = route;
+  return changed;
+}
 function ctxPairsCap() { return (LIVE_CONFIG && LIVE_CONFIG.agent && LIVE_CONFIG.agent.conversationMaxPairs) || 0; }
 
 // `stateDirOverride` exists for the smoke only (window.__ctxEmpty): it
@@ -4192,6 +4468,15 @@ async function refreshContext(stateDirOverride) {
   const seq = ++CTX.seq;
   const stateDir = (typeof stateDirOverride === 'string' && stateDirOverride)
     || (LIVE_CAPS && LIVE_CAPS.paths && LIVE_CAPS.paths.stateDir);
+  /* DRIFT FIX (D3 of the 0.5.5 review). A prompt-derived window was set
+     once and then treated as permanent by the two guards below, so after a
+     provider/model switch the gauge kept drawing against the previous
+     model's scale for the rest of the window's life. This is the rule
+     0.5.5 added to the TUI (providers-reducer.ts activeTextRoute nulls
+     contextUsage.contextWindow whenever the active <providerId>
+     <chatModel> pair changes) — and it stops being latent the moment the
+     session snapshot below starts supplying a real window. */
+  ctxReleaseWindowOnRouteChange();
   const windowP = resolveWindow().catch(() => ({window:null, label:''}));
   let usage = null;
   // (a) the branch route: the agent's own prompt, built now.
@@ -4207,12 +4492,46 @@ async function refreshContext(stateDirOverride) {
         builtWindow:r.contextWindow > 0 ? r.contextWindow : null};
     }
   }
-  // (b) this session's trace, once a turn has run.
+  /* (b) the session's own persisted breakdown. v0.5.5 stamps the last
+     turn's whole window occupancy onto SessionState — sections, both
+     conversation caps, the pair costs, the physical window — and serves
+     it verbatim on GET /api/sessions/{id}. It is a strictly better source
+     than the trace scan below: no file parsing, and it carries the things
+     the scan can never produce. Fetched here rather than carried over
+     from openSession, so the gauge cannot go stale: refreshContext also
+     runs at the end of every turn. Absent on a session that has never
+     finished a turn and on anything written before 0.5.5, which is why
+     the ladder below it stays. */
+  /* Staged in a local, committed to CTX055 only past the staleness guard
+     below. Everything else this ladder produces is funnelled through that
+     guard; writing the snapshot here directly would let a late-resolving
+     refresh for session A draw its trimming verdict (ctxBoundLine) over
+     session B's numbers, and a stale `= null` would blank a binding line
+     the current session legitimately has. */
+  let stored055 = null;
+  // `stateDirOverride` means "run the ladder as if this agent held no
+  // record of this session", so the session row is skipped with the trace
+  // file — reading it back off the live agent would contradict the very
+  // state the probe is exercising.
+  if (!usage && !stateDirOverride && S.agentSession && BR.session) {
+    const r = await BR.session(S.agentSession);
+    const u = r && r.ok && r.data ? r.data.contextUsage : null;
+    if (u && u.tokens > 0) {
+      stored055 = u;
+      const sec = (label) => { const x = (u.sections || []).find((y) => y.label === label); return x ? x.tokens : 0; };
+      usage = {tokens:u.tokens, source:'measured', stablePrefix:sec('prompt scaffold'),
+        tail: typeof u.conversationTokens === 'number' ? u.conversationTokens : sec('conversation'),
+        cacheHitTokens:null, modelId:null, baseline:null, sections:u.sections || [],
+        pairsCap: u.conversationPairsCap || 0, reserved:0,
+        builtWindow: u.contextWindow > 0 ? u.contextWindow : null};
+    }
+  }
+  // (c) this session's trace, once a turn has run.
   if (!usage && S.agentSession && stateDir) {
     const r = await BR.traceUsage(stateDir, S.agentSession);
     if (r && r.ok && r.usage) usage = Object.assign({}, r.usage, {baseline:null, sections:null, pairsCap:ctxPairsCap(), reserved:0, builtWindow:null});
   }
-  // (c) the projection: the last scaffold this agent built here + the draft.
+  // (d) the projection: the last scaffold this agent built here + the draft.
   if (!usage && stateDir && BR.traceBaseline) {
     const model = activeModel();
     const r = await BR.traceBaseline(stateDir, /^(no model chosen|not configured|download model|)$/.test(model) ? null : model,
@@ -4224,6 +4543,7 @@ async function refreshContext(stateDirOverride) {
     }
   }
   if (seq !== CTX.seq) return; // a newer refresh is on its way
+  CTX055.stored = stored055; // committed only for the session this refresh still owns
   if (!usage) {
     // Nothing measured and no trace to project from: the TUI's own
     // "not measured yet" state — chip hidden, never a zero.
@@ -4629,14 +4949,133 @@ async function openSession(id) {
   S.agentSession = id;
   S.history = [];
   markSeen(id);   // item 6: opening a chat is reading it
+  noteSessionModelStamp(data);
   render();
   refreshContext();
+  // Item 7C review fix: the GET leg of the steer route. The
+  // `steer_undelivered` SSE frame only reaches a window that was attached
+  // to the turn; a reconnect, an agent restart or a session opened after
+  // the fact leaves messages the route already said yes to parked on the
+  // server forever. Skipped for a turn this window IS streaming — the
+  // frame will carry those, and both paths acking would double-queue.
+  if (!live) recoverParkedSteers(id);
   // item 4: durations come from the agent's trace; repaint only if this transcript is still up.
   const shown = S.log;
   applyTraceDurations().then((changed) => { if (changed && S.log === shown) render(); });
   // item 5: the session's own cwd resolves any relative path the write tools took.
   const sessionCwd = typeof data.workingDir === 'string' ? data.workingDir : null;
   refreshAttachments(sessionCwd).then((changed) => { if (changed && S.log === shown) render(); });
+}
+
+/**
+ * Item 7C — what a turn accepted and never read, recovered by the GET.
+ *
+ * `GET /api/sessions/{id}/steer` is the server's parked store; the DELETE
+ * is its mandatory partner, or the store accumulates. Same treatment as
+ * the `steer_undelivered` frame: to the FRONT of the queue, because
+ * `steer` already answered "yes" to whoever sent them and they are
+ * corrections aimed at the turn that just ran.
+ *
+ * Silent when there is nothing parked, and silent on any error — this is
+ * a recovery path, not something the operator asked for, and a 404 on an
+ * agent older than 0.5.5 must not print in the transcript.
+ */
+async function recoverParkedSteers(id, probe) {
+  // `probe` injects the two bridge calls so the recovery BODY — the
+  // unshift, the watermark, the line and the mandatory DELETE — can be
+  // asserted; a live agent almost never has anything parked, so the
+  // check over the real route only ever proved the empty case.
+  const fetchParked = probe ? probe.fetch : (BR && BR.undeliveredSteers ? (sid) => BR.undeliveredSteers(sid) : null);
+  if (!fetchParked || !id) return;
+  const res = await fetchParked(id);
+  if (!res || !res.ok || !res.data) return;
+  if (S.agentSession !== id) return;   // the user moved on while this was in flight
+  const list = Array.isArray(res.data.undelivered) ? res.data.undelivered : [];
+  const discarded = Number(res.data.discarded) || 0;
+  STEER.recovery = {id, parked:list.length, discarded};
+  if (!list.length && !discarded) return;
+  if (list.length) {
+    S.queued.unshift.apply(S.queued, list.map((u) => String((u && u.text) || '')));
+    STEER.ahead += list.length;
+    S.log.push({id:nid(), k:'system', text: list.length + ' message' + (list.length === 1 ? '' : 's')
+      + ' arrived too late for the last turn here — sending ' + (list.length === 1 ? 'it' : 'them') + ' next'});
+  }
+  const seq = list.reduce((max, u) => Math.max(max, (u && Number(u.seq)) || 0), 0);
+  const ack = probe ? probe.ack : (BR && BR.ackSteers ? (sid, q, d) => BR.ackSteers(sid, q, d) : null);
+  if (ack) await ack(id, seq, discarded);
+  render();
+}
+
+/**
+ * Item 7C — the model this session last ran on.
+ *
+ * v0.5.5 stamps `metadata.llm = {providerId, chatModel}` on every turn
+ * and serves it on the session row, which openSession already fetches.
+ * The TUI re-applies it on switch; this window cannot. `atag serve` pins
+ * its provider at boot, so applying a stamp costs a config write plus a
+ * child restart — and a restart kills any turn running in another chat.
+ *
+ * So: show the stamp, offer the switch, never take it. The offer is
+ * refused outright while anything is running, exactly as the composer's
+ * backend chip refuses.
+ */
+function noteSessionModelStamp(data) {
+  CTX055.stamp = null;
+  const stamp = data && data.metadata && data.metadata.llm;
+  if (!stamp || typeof stamp.providerId !== 'string' || !stamp.providerId) return;
+  const model = typeof stamp.chatModel === 'string' && stamp.chatModel ? stamp.chatModel : null;
+  const liveProvider = selActiveProviderId() || '';
+  /* Review fix: compare what the AGENT compares. 0.5.5's planModelRestore
+     tests `turn.chatModel === (provider.defaultChatModel ?? provider.model)`
+     — the FULL id off the provider entry. The old comparison used
+     activeModel() (a display label, blank on an external route) and
+     matched on the basename only, so `openai/gpt-4.1` and `azure/gpt-4.1`
+     read as the same model and a real difference was suppressed. */
+  const liveEntry = llmProvider(liveProvider);
+  const liveModel = liveEntry ? (liveEntry.defaultChatModel || liveEntry.model || '') : '';
+  const shownModel = activeModel() || liveModel;   // the display label stays the chip's
+  if (stamp.providerId === liveProvider && (!model || sameModelId(model, liveModel))) return;
+  const known = llmProviders().some((p) => p.id === stamp.providerId);
+  const label = stamp.providerId + (model ? '/' + model : '');
+  if (!known) {
+    // The TUI's own sentence for a stamp whose provider has since been
+    // deleted (session-model-restore.ts describeModelRestore in 0.5.5).
+    S.log.push({id:nid(), k:'system', text: esc('this session last ran on "' + label + '", which is no longer configured — keeping the current model')});
+    return;
+  }
+  CTX055.stamp = {providerId: stamp.providerId, chatModel: model};
+  S.log.push({id:nid(), k:'system', text: esc('this session ran on ' + label + ' — the window is on ' + (liveProvider || 'no provider') + (shownModel ? '/' + shownModel : ''))
+    + ' <button class="btn btn-s" style="height:22px" data-act="sessmodel:apply">Switch to it</button>'
+    + ' <span class="ter">(a switch restarts the agent, so it is refused while any turn is running)</span>'});
+}
+/* Full-id comparison, matching 0.5.5's planModelRestore
+   (`turn.chatModel === (provider.defaultChatModel ?? provider.model)`).
+   Case and surrounding whitespace are normalised because config values
+   are typed by hand; the vendor prefix is NOT dropped — `openai/gpt-4.1`
+   and `azure/gpt-4.1` are different models to the agent, and collapsing
+   them hid a real difference. */
+function sameModelId(a, b) {
+  const norm = (x) => String(x || '').trim().toLowerCase();
+  return !!a && !!b && norm(a) === norm(b);
+}
+async function applySessionModelStamp() {
+  const stamp = CTX055.stamp;
+  if (!stamp || !BR) return;
+  // Not "if S.busy": a restart aborts every turn this process is
+  // streaming, including ones in chats the user is not looking at.
+  if (RUNNING.size > 0 || S.busy) { toast('Not while a turn is running'); return; }
+  // A local route has no cloud model to pick: `selectCloudModel` writes
+  // defaultChatModel on the provider entry, which llama-server ignores.
+  const entry = llmProvider(stamp.providerId);
+  const cloud = !!entry && entry.kind !== 'llama-server';
+  const res = cloud && stamp.chatModel && BR.selectCloudModel
+    ? await BR.selectCloudModel(stamp.providerId, stamp.chatModel)
+    : await BR.activateProvider(stamp.providerId);
+  if (!res || res.ok === false) { toast('Could not switch', (res && res.error) || ''); return; }
+  bswReport(res);
+  CTX055.stamp = null;
+  await refreshLiveConfig();
+  refreshContext();
 }
 
 async function ctxAdjust(spec) {
@@ -5380,6 +5819,13 @@ function localTurnGate() {
 if (typeof window !== 'undefined') {
   window.__switchBackend = (kind) => selChooseBackend(kind);
   window.__activeProvider = () => selActiveProviderId() || null;
+  /* The model id the AGENT compares a session stamp against —
+     `provider.defaultChatModel ?? provider.model`, not the chip's display
+     label (item 7C review fix). */
+  window.__activeProviderModel = () => {
+    const p = llmProvider(selActiveProviderId());
+    return p ? (p.defaultChatModel || p.model || '') : '';
+  };
   window.__lastSystem = () => {
     for (let i = S.log.length - 1; i >= 0; i--) if (S.log[i].k === 'system') return S.log[i].text || '';
     return '';
@@ -7632,6 +8078,10 @@ function llmTab() {
   if (LLMP.view === 'logs') return '<div class="tui">' + llmLogsHTML() + '</div>';
   const modal = llmModalHTML();
   if (modal) return '<div class="tui">' + modal + '</div>';
+  // Item 7A: llm-panel.tsx gives the Hugging Face branch the whole pane —
+  // "it owns every key while it is open, so drawing the model list behind
+  // it would be a list nothing can reach."
+  if (LLMHF.open) return '<div class="tui">' + llmHfHTML() + '</div>';
   const mode = LLMP.mode;
   const hint = llmFooterHint(mode);
   return '<div class="tui">'
@@ -7684,8 +8134,10 @@ function llmReport(line, source) { LLMP.statusLine = line; LLMP.statusSource = s
 function llmFooterHint(mode) {
   if (mode === 'fallback') return tuiHints(['j/k move', ['< > reorder', 'llm:fb:move:1'], ['a add link', 'llm:fb:add'], ['d remove', 'llm:fb:remove'], ['l toggle local', 'llm:fb:local'], ['←/→ switch pane', 'llm:mode:next'], ['r refresh', 'llm:refresh']]);
   if (mode === 'local') return tuiHints(['j/k move', ['Enter selected action', 'llm:enter'],
-    // llm-panel-key-bindings.ts `a`: the Hugging Face import needs the TUI's local-models-hf editor; `atag models pull` accepts catalogue ids only.
-    ['a add from hugging face', 'llm:hf', {disabled:true, title:'HF import needs the TUI — `atag models pull` accepts catalogue ids only'}],
+    // Item 7A — llm-panel-key-bindings.ts `a`: the reference is parsed and the repo listed in the
+    // main process (desktop/main/huggingface.ts, a port of the agent's own huggingface-* modules),
+    // the choice is written into localModels.customModels, and the download is `atag models pull`.
+    ['a add from hugging face', 'llm:hf'],
     ['←/→ switch Local/Cloud/External/Fallback', 'llm:mode:next'], ['s start/stop', 'llm:daemon'], ['r refresh', 'llm:refresh'],
     ['E embeddings on/off', 'llm:embToggle'], ['d remove', 'llm:remove'], ['B backend update', 'llm:backend'], ['U auto-update', 'llm:autoUpdate'], ['G device', 'llm:device'], ['L LLM logs', 'llm:logs']]);
   return tuiHints(['j/k move', ['Enter selected action', 'llm:enter'], ['←/→ switch Local/Cloud/External/Fallback', 'llm:mode:next'], ['f filter', 'llm:filter'],
@@ -7708,7 +8160,15 @@ function llmLocalHTML() {
   const cursor = LLMP.cursor.local;
   const text = rows.filter((r) => r.kind === 'localTextModel');
   const emb = rows.filter((r) => r.kind === 'localEmbeddingModel');
-  return llmSectionHTML('Local text models', text, 0, cursor) + llmSectionHTML('Local embeddings', emb, text.length, cursor);
+  return llmSectionHTML('Local text models', text, 0, cursor) + llmSectionHTML('Local embeddings', emb, text.length, cursor)
+    // Item 7B — the Ollama signpost. atomic-agent has no Ollama download
+    // path of any kind: `grep -rni ollama src/` finds provider presets, a
+    // health-failure hint and a steer modal, and ZERO hits under
+    // src/local-llm. Offering "download from Ollama" here would be a
+    // capability this window invented. What does work — adding the running
+    // server as an OpenAI-compatible provider — is named first, with its
+    // exact route, because that is the question this line exists to answer.
+    + '<div class="ter llm-ollama">' + esc(OLLAMA_SIGNPOST) + '</div>';
 }
 function llmCloudHTML() {
   const rows = llmCloudRows();
@@ -7803,6 +8263,121 @@ function llmModalHTML() {
   return '';
 }
 function llmLooksLikeOllama(url) { try { return new URL(url).port === '11434'; } catch (err) { return false; } }
+
+/* ============================================================
+   Item 7A — add a model from Hugging Face.
+   The two screens the TUI draws (hf-reference-editor.tsx then
+   hf-pick-list.tsx), against the port in desktop/main/huggingface.ts.
+   Every string below is quoted from those files; the parse and listing
+   errors are shown VERBATIM, never turned into "invalid input" —
+   huggingface-ref.ts says in as many words that the caller prints them.
+   ============================================================ */
+
+function llmHfInputValue() {
+  const n = document.getElementById('llm-hf-ref');
+  return n ? n.value : LLMHF.reference;
+}
+function llmHfFocus() {
+  const n = document.getElementById('llm-hf-ref');
+  if (n) { n.focus(); n.setSelectionRange(n.value.length, n.value.length); }
+}
+function llmHfClose() {
+  if (LLMHF.busy && BR && BR.hfCancel) BR.hfCancel();
+  LLMHF.open = false; LLMHF.busy = false; LLMHF.error = null; LLMHF.repo = null; LLMHF.reference = ''; LLMHF.cursor = 0;
+  llmRepaint();
+}
+function llmHfCancel() {
+  // local-models-hf-keys.ts: Escape mid-lookup drops the socket and keeps
+  // what was typed. The branch stays open.
+  LLMHF.reference = llmHfInputValue();
+  if (BR && BR.hfCancel) BR.hfCancel();
+  LLMHF.busy = false;
+  llmRepaint(); llmHfFocus();
+}
+async function llmHfResolve(raw) {
+  if (!BR || !BR.hfResolve) return;
+  const value = String(raw === undefined ? LLMHF.reference : raw);
+  LLMHF.reference = value; LLMHF.busy = true; LLMHF.error = null;
+  llmRepaint();
+  const res = await BR.hfResolve(value);
+  if (!LLMHF.open) return;
+  LLMHF.busy = false;
+  if (!res || res.ok !== true) {
+    if (res && res.cancelled) { llmRepaint(); llmHfFocus(); return; }
+    // Verbatim. huggingface-ref.ts:77-78 and huggingface-api.ts:45-58 are
+    // written for this screen.
+    LLMHF.error = (res && res.error) || 'the lookup failed';
+    llmRepaint(); llmHfFocus(); return;
+  }
+  LLMHF.repo = res.repo; LLMHF.cursor = 0; LLMHF.step = 'pick'; LLMHF.error = null;
+  llmRepaint();
+}
+async function llmHfAdd() {
+  if (!BR || !BR.hfAdd || !LLMHF.repo) return;
+  if (LLMP.pulling) { LLMHF.error = 'a download is already running'; llmRepaint(); return; }
+  const res = await BR.hfAdd(LLMHF.repo, LLMHF.cursor);
+  if (!res || res.ok !== true) { LLMHF.error = (res && res.error) || 'could not add the model'; llmRepaint(); return; }
+  const def = res.def || {};
+  // `atag models pull` fetches weights only, so the projector is parked
+  // here and fetched by this window once the weights land.
+  LLMHF.pendingMmproj = def.supportsVision && def.mmprojUrl && def.mmprojFilename
+    ? {id: res.id, url: def.mmprojUrl, filename: def.mmprojFilename, name: def.name || res.id}
+    : null;
+  LLMHF.open = false; LLMHF.busy = false; LLMHF.error = null; LLMHF.repo = null; LLMHF.reference = ''; LLMHF.cursor = 0;
+  // The same order the orchestrator takes: close the branch, then hand the
+  // id to the pull the curated rows use.
+  llmPull('chat', res.id);
+}
+/* hf-reference-editor.tsx then hf-pick-list.tsx. */
+function llmHfHTML() {
+  if (LLMHF.step === 'pick' && LLMHF.repo) return llmHfPickHTML();
+  const busy = LLMHF.busy;
+  return '<div class="llm-section llm-hf">'
+    + '<div>Which model? <span class="ter">' + esc(HF_REF_TITLE_TAIL) + '</span></div>'
+    + '<div class="ter">' + esc(HF_REF_EXAMPLES_LINE) + '</div>'
+    + '<div style="margin-top:8px"><input id="llm-hf-ref" value="' + esc(LLMHF.reference) + '" autocomplete="off" spellcheck="false" placeholder="owner/repo"'
+      + (busy ? ' disabled' : '') + '></div>'
+    + (!busy && LLMHF.reference.length > 0 ? '<div><button class="skpf" data-act="llm:hf:clear">[ clear ]</button></div>' : '')
+    + (busy ? '<div class="ter">asking huggingface.co…</div>' : '')
+    + (LLMHF.error ? '<div class="tuierr">' + esc(LLMHF.error) + '</div>' : '')
+    + (busy ? tuiHints([['esc cancel', 'llm:hf:cancel']])
+            : tuiHints([['enter look it up', 'llm:hf:look'], ['ctrl+l clear', 'llm:hf:clear'], ['esc back to the list', 'llm:hf:close']]))
+    + '</div>';
+}
+function llmHfPickHTML() {
+  const repo = LLMHF.repo;
+  const choices = repo.choices || [];
+  const cursor = Math.min(LLMHF.cursor, Math.max(0, choices.length - 1));
+  // hf-pick-list.tsx windowHfChoices, ported.
+  const start = Math.max(0, Math.min(cursor - HF_PICK_WINDOW + 2, choices.length - HF_PICK_WINDOW));
+  const visible = choices.slice(start, start + HF_PICK_WINDOW);
+  const below = choices.length - (start + visible.length);
+  const selected = choices[cursor];
+  // The fit check warns in one direction and nothing acts on it: weights
+  // bigger than RAM still start, because llama.cpp maps the file.
+  const warning = selected ? llmHfRamWarning(selected.fileSizeGb, LLMHF.ram) : null;
+  return '<div class="llm-section llm-hf"><b>' + esc(repo.repoId) + '</b>'
+    + visible.map((c, i) => {
+        const at = start + i;
+        const active = at === cursor;
+        // hfChoiceLine, verbatim: `${active ? '›  ' : '   '}${filename.padEnd(44)}${sizeLabel.padStart(9)}`
+        const line = (active ? '›  ' : '   ') + String(c.filename).padEnd(44) + String(c.sizeLabel).padStart(9);
+        return '<button class="tuirow' + (active ? ' on' : '') + '" data-llm-row="hf:' + esc(c.path) + '" data-act="llm:hf:row:' + at + '">' + esc(line) + '</button>';
+      }).join('')
+    + (below > 0 ? '<div class="ter">' + esc('   ↓ ' + below + ' more') + '</div>' : '')
+    + (repo.hidden ? '<div class="ter">' + esc('   ' + repo.hidden) + '</div>' : '')
+    + (repo.mmproj ? '<div class="ter">' + esc(HF_MMPROJ_LINE) + '</div>' : '')
+    + (warning ? '<div class="sk-off">' + esc('   ⚠ ' + warning) + '</div>' : '')
+    + (LLMHF.error ? '<div class="tuierr">' + esc('   ' + LLMHF.error) + '</div>' : '')
+    + tuiHints(['j/k move', ['Enter download', 'llm:hf:add'], ['esc back', 'llm:hf:back']])
+    + '</div>';
+}
+/* huggingface-fit.ts ramWarningFor, ported so the sentence matches the TUI's. */
+function llmHfRamWarning(fileSizeGb, hostRamGb) {
+  if (!(fileSizeGb > 0) || !(hostRamGb > 0)) return null;
+  if (fileSizeGb <= hostRamGb) return null;
+  return fileSizeGb.toFixed(1) + ' GB model, ' + hostRamGb + ' GB of RAM — it will run from disk, slowly.';
+}
 /* llm-panel.tsx DownloadBanner: the CLI streams lines, not a byte count, so the last line stands where the TUI draws its bar. */
 function llmDownloadBannerHTML() {
   const p = LLMP.pulling;
@@ -8177,7 +8752,23 @@ function llmAct(what) {
   if (verb === 'embedding') { llmActivateProviderEmbedding(); return; }
   if (verb === 'embToggle') { llmEmbToggle(); return; }
   if (verb === 'daemon') { llmDaemon(llmDaemonUp() ? 'stop' : 'start'); return; }
-  if (verb === 'hf') return; // disabled: the HF import needs the TUI
+  if (verb === 'hf') {
+    // llm-panel-key-bindings.ts:137-141 — `a` forces the Local pane first,
+    // then opens the branch.
+    if (arg === 'cancel') { llmHfCancel(); return; }
+    if (arg === 'back') { LLMHF.step = 'ref'; LLMHF.error = null; llmRepaint(); llmHfFocus(); return; }
+    if (arg === 'clear') { LLMHF.reference = ''; LLMHF.error = null; llmRepaint(); llmHfFocus(); return; }
+    if (arg === 'close') { llmHfClose(); return; }
+    if (arg === 'look') { llmHfResolve(llmHfInputValue()); return; }
+    if (arg === 'add') { llmHfAdd(); return; }
+    if (arg.startsWith('row:')) { LLMHF.cursor = +arg.slice(4) || 0; llmRepaint(); return; }
+    llmSetMode('local');
+    LLMHF.open = true; LLMHF.step = 'ref'; LLMHF.error = null; LLMHF.repo = null; LLMHF.cursor = 0; LLMHF.busy = false;
+    llmRepaint();
+    llmHfFocus();
+    if (BR && BR.hostRam && !LLMHF.ram) BR.hostRam().then((n) => { LLMHF.ram = Number(n) || 0; if (LLMHF.open) llmRepaint(); });
+    return;
+  }
   if (verb === 'backend') { llmBackendUpdate(); return; }
   if (verb === 'autoUpdate') { llmAutoUpdateToggle(); return; }
   if (verb === 'device') { llmDeviceCycle(); return; }
@@ -8258,6 +8849,17 @@ function llmKey(e, k, inText) {
     if (k === 'Escape') { e.preventDefault(); llmAct('external:cancel'); return true; }
     return false;
   }
+  /* Item 7A — the reference editor. local-models-hf-keys.ts:39-56: Escape
+     cancels the lookup while one is in flight and leaves the branch once it
+     is not (the least destructive reading first); ctrl+l — not ctrl+u,
+     which the editor itself binds — clears the reference and its error.
+     Ordinary typing falls through so the field types. */
+  if (e.target.id === 'llm-hf-ref') {
+    if (k === 'Escape') { e.preventDefault(); if (LLMHF.busy) llmHfCancel(); else llmHfClose(); return true; }
+    if (k === 'Enter' && !e.shiftKey) { e.preventDefault(); if (!LLMHF.busy) llmHfResolve(e.target.value); return true; }
+    if (k === 'l' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); if (!LLMHF.busy) llmAct('hf:clear'); return true; }
+    return false;
+  }
   if (inText || mod) return false;
   if (LLMP.view === 'logs') {
     if (k === 'Escape') { e.preventDefault(); llmAct('back'); return true; }
@@ -8275,6 +8877,25 @@ function llmKey(e, k, inText) {
     return true;
   }
   if (LLMP.externalDraft !== null) { if (k === 'Escape') { e.preventDefault(); llmAct('external:cancel'); return true; } return true; }
+  /* Item 7A — the branch owns every key it does not name, on BOTH steps
+     (local-models-hf-keys.ts, "Both steps swallow every key they do not
+     name"): a stray `s` or `d` under an open editor would otherwise start
+     a daemon or open a delete confirm while a repo name is being typed. */
+  if (LLMHF.open) {
+    if (LLMHF.step === 'pick') {
+      const n = LLMHF.repo ? LLMHF.repo.choices.length : 0;
+      // Escape goes back to the reference, not out of the branch: the
+      // resolved repo survives, so the file list costs no second request.
+      if (k === 'Escape') { e.preventDefault(); llmAct('hf:back'); return true; }
+      if (k === 'j' || k === 'ArrowDown') { e.preventDefault(); LLMHF.cursor = Math.min(LLMHF.cursor + 1, Math.max(0, n - 1)); llmRepaint(); return true; }
+      if (k === 'k' || k === 'ArrowUp') { e.preventDefault(); LLMHF.cursor = Math.max(LLMHF.cursor - 1, 0); llmRepaint(); return true; }
+      if (k === 'Enter') { e.preventDefault(); llmHfAdd(); return true; }
+      e.preventDefault(); return true;
+    }
+    if (k === 'Escape') { e.preventDefault(); if (LLMHF.busy) llmHfCancel(); else llmHfClose(); return true; }
+    if (k === 'Enter') { e.preventDefault(); if (!LLMHF.busy) llmHfResolve(llmHfInputValue()); return true; }
+    e.preventDefault(); return true;
+  }
   if (LLMP.mode === 'fallback') {
     if (LLMP.fallbackPicker) {
       const n = llmFallbackView().addableProviderIds.length;
@@ -8302,9 +8923,64 @@ function llmKey(e, k, inText) {
   if (k === ']' || k === 'ArrowRight') { e.preventDefault(); llmAct('mode:next'); return true; }
   const map = {e:'embedding', E:'embToggle', n:'add', c:'configure', s:'daemon', B:'backend', L:'logs', r:'refresh', d:'remove', U:'autoUpdate', G:'device'};
   if (map[k]) { e.preventDefault(); llmAct(map[k]); return true; }
-  if (k === 'a') { e.preventDefault(); return true; } // add from Hugging Face: needs the TUI
+  if (k === 'a') { e.preventDefault(); llmAct('hf'); return true; } // Item 7A — add from Hugging Face
   return false;
 }
+/**
+ * Item 7A — what happens after the weights land.
+ *
+ * `atag models pull` fetches the weights and stops, so a vision model
+ * added from Hugging Face would otherwise run text-only forever with
+ * nothing in `models list` or `models status` saying why. The projector
+ * is fetched here, on the SAME banner: the subscriber above drops every
+ * frame when `LLMP.pulling` is null, so the second phase claims the slot
+ * before it starts and releases it in a `finally`.
+ *
+ * Auto-activation waits for the projector, and is SKIPPED when the
+ * projector did not land. `models start` appends `--mmproj` only when
+ * the file is already on disk (src/cli/models-handlers.ts gates on
+ * isMmprojDownloaded), so starting the daemon after a failed or
+ * cancelled projector would give a silently text-only daemon for a model
+ * this window just labelled vision-capable — the same degradation the
+ * projector step exists to prevent. The failure is stated instead, and
+ * the row is left for the operator to start by hand.
+ */
+async function llmAfterPull(p) {
+  const mm = LLMHF.pendingMmproj;
+  let mmError = null;
+  let attempted = false;
+  if (mm && mm.id === p.id && BR && BR.hfProjector) {
+    attempted = true;
+    LLMHF.pendingMmproj = null;
+    LLMP.pulling = {kind:'chat', id:p.id, phase:'mmproj'};
+    LLMP.pullLog = [mm.name + ' (mmproj) 0%'];   // local-models-orchestrator.ts pullMmprojPhase's banner label
+    llmRepaint();
+    try {
+      const res = await BR.hfProjector(mm.id, mm.url, mm.filename, mm.name);
+      if (!res || res.ok !== true) mmError = (res && res.error) || 'the projector download failed';
+    } catch (e) {
+      mmError = 'the projector download failed: ' + ((e && e.message) || String(e));
+    } finally {
+      LLMP.pulling = null;
+    }
+  }
+  await llmRefresh();
+  /* The verdict is returned so the suite can assert the decision itself
+     rather than its side effects: `skipped` is true only when a failed or
+     cancelled projector held activation back. The message goes in
+     LLMP.msg, not LLMP.statusErr — statusErr belongs to `models status`
+     and the 5 s poll (llmApplyStatus) overwrites it within a tick. */
+  if (mmError) {
+    LLMP.msg = {text:'! ' + mmError
+      + ' — the weights are on disk, but the model was not started: it would serve text only. Press s to start it anyway.'};
+    llmRepaint();
+    return {projector:'failed', activated:false, skipped:true};
+  }
+  const row = llmRows('local').find((r) => r.model && r.model.id === p.id);
+  if (row && LLMP.mode === 'local') { llmPrimary(row); return {projector: attempted ? 'ok' : 'none', activated:true, skipped:false}; }
+  return {projector: attempted ? 'ok' : 'none', activated:false, skipped:false};
+}
+
 /* The pull stream for the LLM tab's downloads, guarded by its own owner flag like the SEL/MP subscribers. */
 if (BR) {
   BR.onPull((ev) => {
@@ -8312,8 +8988,8 @@ if (BR) {
     if (ev.line) { LLMP.pullLog.push(ev.line); const box = document.getElementById('llm-pull-line'); if (box) box.textContent = ev.line; }
     if (ev.done) {
       const p = LLMP.pulling; LLMP.pulling = null;
-      if (ev.ok) { LLMP.msg = {text:'local-llm: ' + p.id + ' installed'}; llmRefresh().then(() => { const row = llmRows('local').find((r) => r.model && r.model.id === p.id); if (row && LLMP.mode === 'local') llmPrimary(row); }); }
-      else { LLMP.statusErr = ev.error || 'the download failed'; llmRepaint(); }
+      if (ev.ok) { LLMP.msg = {text:'local-llm: ' + p.id + ' installed'}; llmAfterPull(p); }
+      else { LLMP.statusErr = ev.error || 'the download failed'; LLMHF.pendingMmproj = null; llmRepaint(); }
     }
   });
 }
@@ -9362,5 +10038,274 @@ if (typeof window !== 'undefined') {
       return Promise.resolve({ok:false, error:'not-downloaded-in-the-harness'});
     };
     return [];
+  };
+}
+
+/* Item 7A (Hugging Face) and item 7C (steer / context gauge / model
+   stamp): smoke hooks. Plain JSON out; nothing here does anything the
+   keyboard cannot. */
+if (typeof window !== 'undefined') {
+  window.__llmHf = () => ({open:LLMHF.open, step:LLMHF.step, reference:LLMHF.reference, busy:LLMHF.busy, error:LLMHF.error,
+    repoId: LLMHF.repo ? LLMHF.repo.repoId : null, revision: LLMHF.repo ? LLMHF.repo.revision : null,
+    choices: LLMHF.repo ? LLMHF.repo.choices.length : 0,
+    first: LLMHF.repo && LLMHF.repo.choices[0] ? LLMHF.repo.choices[0].filename : null,
+    filenames: LLMHF.repo ? LLMHF.repo.choices.map((c) => c.filename) : [],
+    mmproj: LLMHF.repo && LLMHF.repo.mmproj ? LLMHF.repo.mmproj.path : null,
+    hidden: LLMHF.repo ? LLMHF.repo.hidden : null, cursor:LLMHF.cursor, ram:LLMHF.ram,
+    pendingMmproj: LLMHF.pendingMmproj ? LLMHF.pendingMmproj.id : null,
+    rows: document.querySelectorAll('#settings [data-llm-row^="hf:"]').length,
+    pulling: LLMP.pulling ? Object.assign({}, LLMP.pulling) : null,
+    daemonPhase: LLMP.daemonPhase, confirm: LLMP.confirm ? LLMP.confirm.kind : null});
+  window.__llmHfOpen = async () => { llmAct('hf'); if (BR && BR.hostRam) LLMHF.ram = Number(await BR.hostRam()) || LLMHF.ram; llmRepaint(); return window.__llmHf(); };
+  window.__llmHfResolve = async (ref) => { await llmHfResolve(String(ref)); return window.__llmHf(); };
+  window.__llmHfCursor = (n) => { LLMHF.cursor = Number(n) || 0; llmRepaint(); return window.__llmHf(); };
+  window.__llmHfDef = (i) => (BR && BR.hfDef ? BR.hfDef(LLMHF.repo, Number(i) || 0) : Promise.resolve({ok:false, error:'no bridge'}));
+  window.__llmHfAdd = async (i) => { LLMHF.cursor = Number(i) || 0; await llmHfAdd(); return window.__llmHf(); };
+  // The real add, with the download it hands off to stopped immediately:
+  // the suite must be able to assert the config write without fetching
+  // gigabytes. `started` is the pull slot the add claimed, which is the
+  // proof that the handoff to the existing `models pull` plumbing happened.
+  window.__llmHfAddNoDownload = async (i) => {
+    LLMHF.cursor = Number(i) || 0;
+    await llmHfAdd();
+    const started = LLMP.pulling ? Object.assign({}, LLMP.pulling) : null;
+    llmAct('cancelPull');
+    return Object.assign(window.__llmHf(), {started});
+  };
+  window.__llmHfClose = () => { llmHfClose(); return window.__llmHf(); };
+  window.__llmHfKey = (key) => {
+    // The real key path, so "the branch swallows every key it does not
+    // name" is asserted against the handler and not against a copy of it.
+    const e = {key, target:document.body, preventDefault(){}, metaKey:false, ctrlKey:false, altKey:false, shiftKey:false};
+    const handled = llmKey(e, key, false);
+    return Object.assign(window.__llmHf(), {handled: handled === true});
+  };
+  window.__llmHfFakeRepo = (repo) => { LLMHF.open = true; LLMHF.step = 'pick'; LLMHF.repo = repo; LLMHF.cursor = 0; LLMHF.error = null; llmRepaint(); return window.__llmHf(); };
+  /* The post-pull decision on its own. The projector call is the REAL
+     one, driven into its own filename guard so it refuses before any
+     network or filesystem access — the same {ok:false} the error and the
+     cancel arms produce. Neither may go on to activate the model:
+     `models start` appends --mmproj only when the file is on disk, so
+     activating here would serve a vision model text-only. */
+  window.__llmAfterPullProbe = async (filename) => {
+    const msgBefore = LLMP.msg;
+    LLMHF.pendingMmproj = {id:'custom-smoke-probe', url:'https://huggingface.co/x/y/resolve/main/mmproj.gguf',
+      filename:String(filename), name:'smoke probe'};
+    try {
+      const verdict = await llmAfterPull({kind:'chat', id:'custom-smoke-probe'});
+      return Object.assign({}, verdict, {msg: LLMP.msg ? LLMP.msg.text : null,
+        body:(document.querySelector('#settings .setbody') || {}).innerText || '', pulling: LLMP.pulling});
+    } finally {
+      LLMHF.pendingMmproj = null; LLMP.msg = msgBefore; llmRepaint();
+    }
+  };
+
+  /* The first-run row into the same branch. It must enter the LLM tab the
+     way the menu does — through act('settings:llm') → llmTabEntered — or
+     escaping out of the branch lands on a Local pane with no rows and no
+     poll. Everything llmTabEntered owns is cleared first, so a pass means
+     the row started it and not some earlier visit. */
+  window.__obHfProbe = async () => {
+    S.settings = null;
+    if (LLMP.timer) { clearInterval(LLMP.timer); LLMP.timer = null; }
+    LLMP.lastRefreshedAt = null; LLMP.local = null;
+    OB.open = true;
+    obAction('hf');
+    const entered = {pane: settingsPaneId(S.settingsPane), settings: !!S.settings,
+      branch: LLMHF.open, mode: LLMP.mode, polling: LLMP.timer !== null};
+    llmHfClose();
+    for (let i = 0; i < 40 && LLMP.lastRefreshedAt === null; i++) await new Promise((r) => setTimeout(r, 250));
+    return Object.assign(entered, {refreshed: LLMP.lastRefreshedAt !== null,
+      rows: Array.isArray(LLMP.local) ? LLMP.local.length : -1,
+      body: (document.querySelector('#settings .setbody') || {}).innerText || ''});
+  };
+  window.__obHfRowLabel = () => HF_ROW_LABEL;
+  // The Cloud wizard's Ollama preset, read off the array the wizard
+  // renders from — so renaming or deleting it fails this check, which the
+  // Local pane's own signpost copy cannot.
+  window.__preset = (id) => {
+    const p = PRESETS.find((x) => x.id === String(id));
+    return p ? {id:p.id, label:p.label, baseUrl:p.baseUrl, kind:p.kind, local: p.local === true} : null;
+  };
+
+  window.__steer = (text) => (BR && BR.steer && S.agentSession ? BR.steer(S.agentSession, String(text)) : Promise.resolve({ok:false, error:'no session'}));
+  window.__steerOrQueue = (text) => steerOrQueue(String(text)).then(() => ({queued:S.queued.slice(), ahead:STEER.ahead, draft:S.draft}));
+  window.__queued = () => S.queued.slice();
+  window.__steerAhead = () => STEER.ahead;
+  window.__seedQueue = (n) => { S.queued.length = 0; for (let i = 0; i < n; i++) S.queued.push('seed ' + i); STEER.ahead = 0; render(); return S.queued.length; };
+  window.__clearQueue = () => { S.queued.length = 0; STEER.ahead = 0; render(); return S.queued.length; };
+  window.__turnId = () => S.turnId;
+  window.__chatEvent = (ev) => { onChatEvent(ev); return {busy:S.busy, turnId:S.turnId, lines:window.__systemLines()}; };
+  window.__steerEntries = () => S.log.filter((m) => m.k === 'user' && m.steered).map((m) => m.text);
+  // The GET leg on its own: what the route answers, and what the renderer
+  // does with it (front of the queue, one system line, then the DELETE).
+  window.__undelivered = (id) => (BR && BR.undeliveredSteers
+    ? BR.undeliveredSteers(String(id || S.agentSession || '')) : Promise.resolve({ok:false, error:'no bridge'}));
+  window.__recoverSteers = async (id) => {
+    STEER.recovery = null;
+    await recoverParkedSteers(String(id || S.agentSession || ''));
+    return {queued:S.queued.slice(), ahead:STEER.ahead, lines:window.__systemLines().slice(-1),
+      recovery: STEER.recovery ? Object.assign({}, STEER.recovery) : null};
+  };
+  window.__steerRecovery = () => (STEER.recovery ? Object.assign({}, STEER.recovery) : null);
+  window.__sendButton = () => { const b = document.querySelector('.sendbtn'); return b ? {act:b.dataset.act || '', title:b.title || ''} : null; };
+
+  window.__ctxSections = () => (CTX.sections || []).map((x) => x.label);
+  window.__ctxStored = () => (CTX055.stored ? Object.assign({}, CTX055.stored, {sections:(CTX055.stored.sections || []).map((x) => x.label)}) : null);
+  window.__ctxBound = () => ((document.querySelector('.popover .ctxbound') || {}).textContent || '');
+  /* A refresh that has been overtaken must write NOTHING — including the
+     0.5.5 session snapshot, which used to be assigned before the seq
+     guard. Start a refresh, overtake it, and the sentinel below has to
+     survive: otherwise session A's trimming verdict lands under session
+     B's numbers. */
+  window.__ctxStaleProbe = async () => {
+    const before = CTX055.stored;
+    const sentinel = {tokens:1, sections:[{label:'sentinel', tokens:1}], conversationBoundBy:null};
+    const p = refreshContext();
+    CTX055.stored = sentinel;
+    CTX.seq++;                       // the in-flight refresh is now stale
+    await p;
+    const survived = CTX055.stored === sentinel;
+    CTX055.stored = before;
+    return {survived};
+  };
+  /* Every arm of the binding line against a synthetic session row. On a
+     real agent `conversationBoundBy` is usually null, so the three
+     sentences would otherwise never render and the live assertion would
+     collapse to "" === "". Nothing is written: the snapshot is restored. */
+  window.__ctxBoundProbe = (u) => {
+    const before = CTX055.stored;
+    CTX055.stored = u;
+    let html = '';
+    try { html = ctxBoundLine(); } finally { CTX055.stored = before; }
+    const el = document.createElement('div'); el.innerHTML = html;
+    return {html, text: el.textContent || ''};
+  };
+  window.__ctxRoute = () => CTX055.route;
+  window.__ctxWindowLabel = () => CTX.windowLabel;
+  window.__sessStamp = () => (CTX055.stamp ? Object.assign({}, CTX055.stamp) : null);
+  // Drives the real noteSessionModelStamp against a synthetic session row,
+  // so the three outcomes can be pinned without depending on which model
+  // the sessions in this state dir happen to have run on.
+  window.__sessStampProbe = (metadata) => {
+    const before = S.log.length;
+    noteSessionModelStamp({metadata});
+    return {stamp: window.__sessStamp(), added: S.log.slice(before).map((m) => m.text),
+      lines: window.__systemLines().slice(-2), provider: selActiveProviderId() || '', model: activeModel() || ''};
+  };
+  window.__sessStampApply = async () => { await applySessionModelStamp(); return {stamp: window.__sessStamp(), provider: selActiveProviderId() || ''}; };
+  // D3: the release rule on its own. Plant a prompt-derived window, plant a
+  // stale route, then run the rule — the window must be let go exactly once.
+  window.__ctxReleaseProbe = () => {
+    CTX.window = 999999; CTX.windowLabel = 'prompt window'; CTX055.route = 'a-stale-provider a-stale-model';
+    const released = ctxReleaseWindowOnRouteChange();
+    const after = {released, window: CTX.window, label: CTX.windowLabel, route: CTX055.route};
+    CTX.window = 999999; CTX.windowLabel = 'prompt window';
+    const again = ctxReleaseWindowOnRouteChange();
+    return Object.assign(after, {releasedAgain: again, windowAgain: CTX.window});
+  };
+  // A turn this window is streaming, without an agent behind it: the real
+  // onChatEvent path for the frames a synthetic turn can carry.
+  window.__fakeTurn = () => {
+    const turnId = 'smoke-turn-' + Date.now().toString(16) + '-' + Math.floor(Math.random() * 1e6).toString(16);
+    const streaming = {id:nid(), k:'assistant', text:''};
+    S.streamId = streaming.id; S.log.push(streaming);
+    S.turnId = turnId; S.busy = true;
+    RUNNING.set(turnId, S.agentSession || null);
+    render();
+    return turnId;
+  };
+}
+
+/* ------------------------------------------------------------------
+   Review-fix harness hooks — Item 7 (steer, the stored gauge).
+   Three things the previous round shipped without assertions: the
+   chat-switch race inside the steer round trip, the GET leg's recovery
+   BODY (the live check only ever saw an empty store), and the D2 cache
+   parenthetical on the basis line (its `provider` arm cannot arise on
+   this state dir's route). Each probe drives the REAL function and puts
+   back everything it touched.
+   ------------------------------------------------------------------ */
+if (typeof window !== 'undefined') {
+  /* A steer whose POST resolves after the user has clicked another chat.
+     `answer` is what the route would have said; the injected sender does
+     the switch openSession does — new S.log, S.streamId cleared, a draft
+     typed in the new chat — from inside the round trip. */
+  window.__steerSwitchProbe = async (answer, stay) => {
+    const entry = $('#entry');
+    const keep = {sid:S.agentSession, log:S.log, streamId:S.streamId, draft:S.draft,
+      queued:S.queued.slice(), ahead:STEER.ahead, value: entry ? entry.value : null};
+    const logB = [{id:nid(), k:'system', text:'chat B'}];
+    const logA = [{id:nid(), k:'system', text:'chat A'}];
+    const typedInB = 'a draft typed in chat B';
+    S.agentSession = 'probe-chat-a'; S.log = logA; S.streamId = null; S.draft = '';
+    if (entry) entry.value = '';
+    let out = null;
+    try {
+      await steerOrQueueRun('a message typed while chat A was running', () => {
+        // `stay` is the control arm: no switch, so the transcript and the
+        // editor must be written exactly as they always were.
+        if (!stay) {
+          S.agentSession = 'probe-chat-b'; S.log = logB; S.streamId = null;
+          S.draft = typedInB;
+          const e = $('#entry'); if (e) e.value = typedInB;
+        }
+        return Promise.resolve(answer);
+      });
+      const e2 = $('#entry');
+      out = {a: logA.map((m) => m.k + ':' + (m.text || '')),
+        b: logB.map((m) => m.k + ':' + (m.text || '')),
+        draft: S.draft, value: e2 ? e2.value : null,
+        queued: S.queued.slice(), ahead: STEER.ahead};
+    } finally {
+      S.agentSession = keep.sid; S.log = keep.log; S.streamId = keep.streamId; S.draft = keep.draft;
+      S.queued.length = 0; S.queued.push.apply(S.queued, keep.queued); STEER.ahead = keep.ahead;
+      const e3 = $('#entry'); if (e3 && keep.value !== null) e3.value = keep.value;
+      render();
+    }
+    return out;
+  };
+  /* The GET leg with something actually parked: the real
+     recoverParkedSteers over a fixed answer, so the unshift, the
+     STEER.ahead watermark, the system line and the DELETE ack are all
+     executed. The two bridge calls are the only things injected. */
+  window.__steerParkProbe = async (undelivered, discarded) => {
+    const id = 'probe-parked-session';
+    const keep = {sid:S.agentSession, queued:S.queued.slice(), ahead:STEER.ahead,
+      logLen:S.log.length, recovery:STEER.recovery};
+    S.agentSession = id;
+    const acks = [];
+    let out = null;
+    try {
+      await recoverParkedSteers(id, {
+        fetch: (sid) => Promise.resolve({ok:true, data:{sessionId:sid, undelivered, discarded}}),
+        ack: (sid, seq, disc) => { acks.push({id:sid, seq, discarded:disc}); return Promise.resolve({ok:true}); },
+      });
+      out = {queued:S.queued.slice(), ahead:STEER.ahead, acks,
+        added: S.log.slice(keep.logLen).map((m) => m.text || ''),
+        recovery: STEER.recovery ? Object.assign({}, STEER.recovery) : null};
+    } finally {
+      S.agentSession = keep.sid;
+      S.queued.length = 0; S.queued.push.apply(S.queued, keep.queued); STEER.ahead = keep.ahead;
+      S.log.length = keep.logLen; STEER.recovery = keep.recovery;
+      render();
+    }
+    return out;
+  };
+  /* D2 — the basis line's `provider` arm. Plants the three fields the
+     sentence reads and restores them; also reports the live pair so the
+     "the cache hit is part of the counted figure" invariant is checked
+     against whatever the route really reported. */
+  window.__ctxBasisProbe = (u) => {
+    const keep = {source:CTX.source, modelId:CTX.modelId, cacheHitTokens:CTX.cacheHitTokens};
+    const live = {source:CTX.source, tokens:CTX.tokens, cacheHitTokens:CTX.cacheHitTokens};
+    let text = '';
+    try {
+      CTX.source = u.source; CTX.modelId = u.modelId; CTX.cacheHitTokens = u.cacheHitTokens;
+      text = ctxBasisLine();
+    } finally {
+      CTX.source = keep.source; CTX.modelId = keep.modelId; CTX.cacheHitTokens = keep.cacheHitTokens;
+    }
+    return {text, live, restored: CTX.source === keep.source && CTX.cacheHitTokens === keep.cacheHitTokens};
   };
 }

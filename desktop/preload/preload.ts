@@ -162,4 +162,18 @@ contextBridge.exposeInMainWorld("atomic", {
   llamaProps: (url: string, apiKey?: string) => ipcRenderer.invoke("agent:llamaProps", { url, apiKey }),
   contextPreview: (sessionId: string | null, message: string) =>
     ipcRenderer.invoke("agent:contextPreview", { sessionId, message }),
+
+  /** Item 7A — add a model from Hugging Face (the port lives in main/huggingface.ts). */
+  hfResolve: (ref: string) => ipcRenderer.invoke("cli:hfResolve", ref),
+  hfCancel: () => ipcRenderer.invoke("cli:hfCancel"),
+  hfDef: (repo: unknown, index: number) => ipcRenderer.invoke("cli:hfDef", { repo, index }),
+  hfAdd: (repo: unknown, index: number) => ipcRenderer.invoke("cli:hfAdd", { repo, index }),
+  hfProjector: (id: string, mmprojUrl: string, mmprojFilename: string, name?: string) =>
+    ipcRenderer.invoke("cli:hfProjector", { id, mmprojUrl, mmprojFilename, name }),
+
+  /** Item 7C — mid-turn steering (POST/GET/DELETE /api/sessions/{id}/steer). */
+  steer: (sessionId: string, text: string) => ipcRenderer.invoke("agent:steer", { sessionId, text }),
+  undeliveredSteers: (sessionId: string) => ipcRenderer.invoke("agent:undeliveredSteers", sessionId),
+  ackSteers: (sessionId: string, through: number, discarded: number) =>
+    ipcRenderer.invoke("agent:ackSteers", { sessionId, through, discarded }),
 });
