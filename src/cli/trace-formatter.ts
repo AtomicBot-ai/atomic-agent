@@ -81,7 +81,16 @@ function formatTraceEvent(event: TraceEvent, raw: boolean): string {
     case "parse_retry":
       return `${head} step=${event.stepIndex} attempt=${event.attempt} reason=${event.reason}`;
     case "loop_detected":
-      return `${head} step=${event.stepIndex} tool=${event.tool} count=${event.count}`;
+      return `${head} step=${event.stepIndex} tool=${event.tool} count=${event.count}${
+        event.detector !== undefined ? ` detector=${event.detector}` : ""
+      }${
+        // Read-repeat lines are unreadable without the file and range the
+        // detector was talking about; the fingerprints show that the
+        // content did not move between the two reads.
+        event.read !== undefined
+          ? ` path=${event.read.path} lines=${event.read.startLine}-${event.read.endLine} fingerprint=${event.read.previousFingerprint}→${event.read.fingerprint}`
+          : ""
+      }`;
     case "error":
       return `${head} message=${event.message}`;
     case "trace_truncated":

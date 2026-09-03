@@ -1,6 +1,12 @@
-import { open, stat } from "node:fs/promises";
+import { open, realpath, stat } from "node:fs/promises";
 import { compressToolResult } from "../../compressor/result-compressor.js";
 import { resolveUserPath } from "./expand-home.js";
+import {
+  hashReadContent,
+  READ_COVERAGE_DETAIL_KEY,
+  splitReadLines,
+  type ReadCoverageDetail,
+} from "./fs-read-coverage.js";
 import type { ToolDefinition } from "../tool-registry.js";
 
 const DEFAULT_MAX_BYTES = 64 * 1024;
@@ -46,16 +52,38 @@ export const osFsReadTool: ToolDefinition = {
     if (!info.isFile()) {
       throw new Error(`os.fs.read: ${absolute} is not a regular file`);
     }
+    const canonical = await canonicalize(absolute);
 
     if (args.offset !== undefined || args.limit !== undefined) {
-      return readByLines(absolute, info.size, args);
+      return readByLines(absolute, canonical, info.size, args);
     }
-    return readByBytes(absolute, info.size, args);
+    return readByBytes(absolute, canonical, info.size, args);
   },
 };
 
+/**
+ * Symlink-resolved path, used only as the read-coverage identity so that
+ * two reads of one file through different links are recognized as the
+ * same file. `details.path` keeps the unresolved absolute path the caller
+ * asked for — it is what the model and the UI have been shown all along,
+ * and rewriting it here would change every read's output.
+ *
+ * A failure (a race deleting the file between `stat` and here, a
+ * permission wall on a parent directory) degrades to the unresolved path:
+ * a slightly coarser identity is strictly better than failing a read that
+ * has already succeeded.
+ */
+async function canonicalize(absolute: string): Promise<string> {
+  try {
+    return await realpath(absolute);
+  } catch {
+    return absolute;
+  }
+}
+
 async function readByBytes(
   absolute: string,
+  canonical: string,
   size: number,
   args: ReadArgs,
 ): Promise<ReturnType<typeof compressToolResult>> {
@@ -69,6 +97,13 @@ async function readByBytes(
     const truncated = size > args.maxBytes;
     const body = buffer.toString("utf8");
     const text = args.lineNumbers ? prefixLineNumbers(body, 1) : body;
+    // Byte mode returns the whole (possibly byte-capped) prefix, so the
+    // returned range is lines 1..N of it. The top-level `startLine` /
+    // `totalLines` details stay absent here — byte-mode results have
+    // never carried them and consumers distinguish the two modes by
+    // exactly that — so the span is reported only inside the coverage
+    // detail, where it exists for the detector rather than for display.
+    const lineCount = splitReadLines(body).length;
     return compressToolResult(
       {
         tool: "os.fs.read",
@@ -79,6 +114,12 @@ async function readByBytes(
           size,
           truncated,
           bytesRead: toRead,
+          [READ_COVERAGE_DETAIL_KEY]: coverage(canonical, buffer, args, {
+            startLine: lineCount === 0 ? 0 : 1,
+            endLine: lineCount,
+            totalLines: lineCount,
+            truncated,
+          }),
         },
       },
       { maxSummaryLength: args.maxBytes, maxTailLines: 500 },
@@ -90,24 +131,20 @@ async function readByBytes(
 
 async function readByLines(
   absolute: string,
+  canonical: string,
   size: number,
   args: ReadArgs,
 ): Promise<ReturnType<typeof compressToolResult>> {
   const handle = await open(absolute, "r");
   let allLines: string[];
+  let buffer: Buffer;
   try {
     const toRead = Math.min(size, args.maxBytes);
-    const buffer = Buffer.alloc(toRead);
+    buffer = Buffer.alloc(toRead);
     if (toRead > 0) {
       await handle.read(buffer, 0, toRead, 0);
     }
-    const text = buffer.toString("utf8");
-    allLines = text.split(/\r?\n/);
-    // A trailing newline produces an empty final element; drop it so the
-    // caller's line numbers align with typical editor line counts.
-    if (allLines.length > 0 && allLines[allLines.length - 1] === "") {
-      allLines.pop();
-    }
+    allLines = splitReadLines(buffer.toString("utf8"));
   } finally {
     await handle.close();
   }
@@ -137,10 +174,44 @@ async function readByLines(
         startLine: total === 0 ? 0 : startIndex + 1,
         endLine: startIndex + sliced.length,
         returnedLines: sliced.length,
+        // A read that returned nothing (empty file, or an offset past the
+        // end) reports an empty 0/0 span rather than a range it did not
+        // return — the detector must never credit coverage for lines the
+        // model never saw.
+        [READ_COVERAGE_DETAIL_KEY]: coverage(canonical, buffer, args, {
+          startLine: sliced.length === 0 ? 0 : startIndex + 1,
+          endLine: sliced.length === 0 ? 0 : startIndex + sliced.length,
+          totalLines: total,
+          // Deliberately NOT `truncated` from the details above: that one
+          // also fires when the requested window merely ended before the
+          // end of the readable prefix, which another offset can still
+          // reach. The detector asks a narrower question — is there
+          // content no range of this call could return? — and only the
+          // byte cap makes that true.
+          truncated: fileBytesTruncated,
+        }),
       },
     },
     { maxSummaryLength: args.maxBytes, maxTailLines: 500 },
   );
+}
+
+/** Assemble the read-coverage detail for one successful read. */
+function coverage(
+  canonical: string,
+  bytesRead: Buffer,
+  args: ReadArgs,
+  span: Pick<
+    ReadCoverageDetail,
+    "startLine" | "endLine" | "totalLines" | "truncated"
+  >,
+): ReadCoverageDetail {
+  return {
+    path: canonical,
+    contentHash: hashReadContent(bytesRead),
+    numbered: args.lineNumbers,
+    ...span,
+  };
 }
 
 function resolveRange(

@@ -43,7 +43,9 @@ import { executeStep } from "./step-executor.js";
 import type { LlmStreamParams, StepEvent } from "./step-executor.js";
 import {
   ToolLoopTracker,
+  READ_REPEAT_WARNING_THRESHOLD,
   TEST_REPEAT_WARNING_THRESHOLD,
+  formatReadRepeatNotice,
   formatRepeatNotice,
   formatTestRepeatNotice,
   formatWanderingRedirect,
@@ -349,7 +351,25 @@ export type AgentLoopEvent =
       /** Graduated severity from the `ToolLoopTracker`. */
       level?: "warn" | "critical" | "breaker";
       /** Which sub-detector fired. */
-      detector?: "generic_repeat" | "no_progress" | "wandering" | "test_repeat";
+      detector?:
+        | "generic_repeat"
+        | "no_progress"
+        | "wandering"
+        | "test_repeat"
+        | "read_repeat";
+      /**
+       * `read_repeat` only: the resolved file, the range that read
+       * returned, and the fingerprint on either side of it (equal ⇒ the
+       * content did not change, which is what makes the read redundant).
+       * Line numbers and a path — never file content.
+       */
+      read?: {
+        path: string;
+        startLine: number;
+        endLine: number;
+        previousFingerprint: string;
+        fingerprint: string;
+      };
     }
   | {
       type: "loop_completed";
@@ -797,9 +817,13 @@ export class AgentLoop {
         // re-injected on every subsequent identical step.
         for (const sig of loopSignals) {
           if (sig.kind !== "warn") continue;
-          // The test-repeat detector has its own floor: the 2nd
-          // equivalent run is already conclusive, so it must not wait
-          // for the generic warning threshold (default 3).
+          // Two detectors carry their own floor because their signal is
+          // conclusive earlier than a byte-identical repeat is. A 2nd
+          // test run against an unchanged workspace cannot produce new
+          // evidence; a 2nd consecutive read of an unchanged file that
+          // returned nothing new cannot produce new text. Waiting for
+          // the generic threshold (default 3) would burn another step in
+          // both cases.
           const emit =
             sig.detector === "test_repeat"
               ? loopTracker.shouldEmitWarning(
@@ -807,7 +831,13 @@ export class AgentLoop {
                   sig.count,
                   TEST_REPEAT_WARNING_THRESHOLD,
                 )
-              : loopTracker.shouldEmitWarning(sig.warningKey, sig.count);
+              : sig.detector === "read_repeat"
+                ? loopTracker.shouldEmitWarning(
+                    sig.warningKey,
+                    sig.count,
+                    READ_REPEAT_WARNING_THRESHOLD,
+                  )
+                : loopTracker.shouldEmitWarning(sig.warningKey, sig.count);
           if (!emit) {
             continue;
           }
@@ -816,7 +846,9 @@ export class AgentLoop {
               ? formatWanderingRedirect(sig.tool, sig.count)
               : sig.detector === "test_repeat"
                 ? formatTestRepeatNotice(sig)
-                : formatRepeatNotice(sig);
+                : sig.detector === "read_repeat" && sig.read !== undefined
+                  ? formatReadRepeatNotice({ count: sig.count, ...sig.read })
+                  : formatRepeatNotice(sig);
           this.deps.onEvent?.({
             type: "loop_detected",
             tool: sig.tool,
@@ -824,12 +856,35 @@ export class AgentLoop {
             stepIndex: i,
             level: "warn",
             detector: sig.detector,
+            ...(sig.read !== undefined
+              ? {
+                  read: {
+                    path: sig.read.path,
+                    startLine: sig.read.startLine,
+                    endLine: sig.read.endLine,
+                    previousFingerprint: sig.read.previousFingerprint,
+                    fingerprint: sig.read.fingerprint,
+                  },
+                }
+              : {}),
           });
           this.deps.logger?.warn("no-progress loop detected", {
             sessionId: state.id,
             stepIndex: i,
             tool: sig.tool,
             count: sig.count,
+            detector: sig.detector,
+            // Path, range and fingerprints only — enough to reconstruct
+            // WHY the detector fired without putting a line of the file
+            // into the log.
+            ...(sig.read !== undefined
+              ? {
+                  path: sig.read.path,
+                  range: `${sig.read.startLine}-${sig.read.endLine}`,
+                  fingerprint: sig.read.fingerprint,
+                  previousFingerprint: sig.read.previousFingerprint,
+                }
+              : {}),
           });
         }
         state = await refreshMemoryContext(this.deps, state, options);
