@@ -19,6 +19,17 @@
  *  - the fallback chain falling over from a cloud link to a
  *    `llama-server` link mid-turn (`createFallbackCompleter` /
  *    `createFallbackStreamer` prepare each link before the attempt).
+ *
+ * The second path is not a one-off: a rate-limited or down cloud primary
+ * falls over on *every* turn, and `appendLocal` defaults to `true`, so
+ * that is the shape of the default config under an outage. Restoring
+ * once is not enough there — the operator can still swap the model
+ * behind `llama-server` mid-outage, and the active provider stays cloud
+ * the whole time, so the loop's own turn-start refresh never re-opens.
+ * {@link LocalBackendGate.noteLinkServed} / {@link
+ * LocalBackendGate.takeLinkServed} carry that fact from the seam to the
+ * loop so the profile keeps tracking the live server for as long as the
+ * local link keeps serving — and stops within one turn of it stopping.
  */
 
 export interface LocalBackendGate {
@@ -36,6 +47,27 @@ export interface LocalBackendGate {
    * usual refresh.
    */
   ensureProbed(): Promise<boolean>;
+  /**
+   * Record that a `llama-server` link just served — or is about to serve
+   * — an attempt while the *active* text provider is something else: a
+   * cloud→local fallover.
+   *
+   * The agent loop's turn-start refresh keys off the active provider,
+   * which stays cloud for the whole outage, so without this signal the
+   * profile and grammar would stay pinned to whatever the first fallover
+   * probed (issue #112 review, F1). Optional so legacy / test wiring that
+   * implements only the two original members still type-checks.
+   */
+  noteLinkServed?(): void;
+  /**
+   * Take-and-clear the {@link noteLinkServed} flag: `true` when a local
+   * link served since the last call. Read once per turn by the agent
+   * loop, which then refreshes the profile even though the active
+   * provider is cloud. Clearing is what keeps this self-limiting — once
+   * the cloud primary recovers, exactly one more turn refreshes and then
+   * the local probes go quiet again.
+   */
+  takeLinkServed?(): boolean;
 }
 
 export interface LocalBackendGateDeps {
@@ -55,6 +87,7 @@ export interface LocalBackendGateDeps {
 export class DeferredLocalBackendProbes implements LocalBackendGate {
   private restored: boolean;
   private inFlight: Promise<void> | null = null;
+  private linkServed = false;
 
   /**
    * @param probedAtBoot `true` when bootstrap already ran the probes
@@ -81,8 +114,14 @@ export class DeferredLocalBackendProbes implements LocalBackendGate {
       await this.inFlight;
       return false;
     }
-    this.inFlight = this.deps.restore();
     try {
+      // Inside the `try` so a SYNCHRONOUS throw from `restore` latches
+      // too. With the call outside it, the throw escaped before
+      // `inFlight` was even assigned and `restored` stayed `false` — the
+      // probes then re-armed on every single call, contradicting the
+      // contract below. Bootstrap's `restore` is `async` with a
+      // catch-all, so this was latent there, but the class is exported.
+      this.inFlight = this.deps.restore();
       await this.inFlight;
     } finally {
       // Latched even on failure. `restore` swallows its own errors, but
@@ -93,5 +132,15 @@ export class DeferredLocalBackendProbes implements LocalBackendGate {
       this.inFlight = null;
     }
     return true;
+  }
+
+  noteLinkServed(): void {
+    this.linkServed = true;
+  }
+
+  takeLinkServed(): boolean {
+    const served = this.linkServed;
+    this.linkServed = false;
+    return served;
   }
 }
