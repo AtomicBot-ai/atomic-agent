@@ -14,6 +14,17 @@ import type { ResolvedLlmConfig } from "./provider-registry.js";
  * id costs one probe against a backend nobody is using — while the
  * opposite mistake runs inference on an unprobed profile.
  *
+ * Not the only "is the route local?" predicate in the tree, and the two
+ * are NOT equivalent: `LocalModelsOrchestrator.autoStartIfReady` asks the
+ * same question by **id** (`activeTextProvider !== "local-llama"`). For a
+ * `llama-server` entry under a custom id the two disagree — this one
+ * calls it local, the orchestrator does not, so the managed daemon is
+ * not auto-started for it. That is pre-existing and errs toward less
+ * local activity (a custom-id local entry is almost always an external
+ * server the operator runs themselves), so it is left alone here rather
+ * than folded into this change; it is a divergence, not a shared
+ * default.
+ *
  * Lives beside `resolveLlmConfig` rather than under `src/tui/` because
  * `resolveLlmConfig` is a pure function of config with no I/O: the
  * answer is available at the very top of `buildRuntime`, long before a

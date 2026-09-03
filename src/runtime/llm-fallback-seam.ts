@@ -46,6 +46,17 @@ export interface FallbackSeamDeps {
    *
    * Must not throw for a reachable link: a rejection here fails the
    * attempt and advances the chain, same as a failed completion.
+   *
+   * The `providerId` says WHICH link is about to serve, not where it
+   * lives. Bootstrap's implementation warms the one local backend the
+   * runtime owns — the `ModelProfileManager` built over the shared
+   * `LlamaServerClient`, which reads `localModels.url` per request — so
+   * a second `llama-server` entry pointed at a different host is
+   * announced here but warmed against the configured URL. That is a
+   * pre-existing `ModelProfileManager` limitation (it is a singleton
+   * over one client, not a per-link cache), not something this hook
+   * introduces; multi-endpoint local links would need a manager per
+   * link before it could mean anything more.
    */
   prepareLink?: (providerId: string) => Promise<void>;
   /** Fold a unary completion's usage into cost + meter (no-op when absent). */
