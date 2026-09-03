@@ -15,6 +15,7 @@ import type {
   ToolDescriptor,
 } from "../prompt/stable-prefix.js";
 import type { ProfileFact } from "../memory/profile-store.js";
+import type { StructuredLogger } from "../tracing/structured-logger.js";
 import type {
   ReflectionInput,
   ReflectionRunner,
@@ -97,6 +98,7 @@ function makeFact(id: number): ProfileFact {
 function makeLoop(deps: {
   reflectionRunner: ReflectionRunner;
   profileFactsProvider?: () => readonly ProfileFact[];
+  logger?: StructuredLogger;
 }): AgentLoop {
   return new AgentLoop({
     registry: buildDefaultToolRegistry(),
@@ -112,7 +114,30 @@ function makeLoop(deps: {
     ...(deps.profileFactsProvider
       ? { profileFactsProvider: deps.profileFactsProvider }
       : {}),
+    ...(deps.logger ? { logger: deps.logger } : {}),
   });
+}
+
+interface Warning {
+  message: string;
+  fields?: Record<string, unknown>;
+}
+
+function capturingLogger(into: Warning[]): StructuredLogger {
+  return {
+    debug() {
+      /* unused */
+    },
+    info() {
+      /* unused */
+    },
+    warn(message: string, fields?: Record<string, unknown>) {
+      into.push({ message, ...(fields ? { fields } : {}) });
+    },
+    error() {
+      /* unused */
+    },
+  } as unknown as StructuredLogger;
 }
 
 /** Collect unhandled rejections raised while `body` runs. */
@@ -208,6 +233,46 @@ describe("AgentLoop reflection is background work, never a turn hazard", () => {
     // Reflection still fires — just without profile candidates.
     expect(inputs).toHaveLength(1);
     expect(inputs[0]!.recalledProfileFactIds).toBeUndefined();
+  });
+
+  it("both profile-facts guards report rather than swallow", async () => {
+    const warnings: Warning[] = [];
+    const inputs: ReflectionInput[] = [];
+    const loop = makeLoop({
+      reflectionRunner: {
+        async reflect(input: ReflectionInput) {
+          inputs.push(input);
+        },
+        abortPending() {
+          /* no-op */
+        },
+      },
+      profileFactsProvider: () => {
+        throw new TypeError("The database connection is not open");
+      },
+      logger: capturingLogger(warnings),
+    });
+    const session = createEmptySessionState({ id: "s4", workingDir });
+
+    const result = await loop.runTurn(session, {
+      userMessage: "hello",
+      maxSteps: 2,
+      signal: new AbortController().signal,
+    });
+
+    expect(result.reason).toBe("reply");
+    expect(inputs).toHaveLength(1);
+    // The step guard fires per step; the reflection guard fires once
+    // at the end of the turn. Neither may be silent.
+    const messages = warnings.map((w) => w.message);
+    expect(messages).toContain("profile facts unavailable for this step");
+    expect(messages).toContain("profile facts unavailable for reflection");
+    for (const w of warnings) {
+      expect(w.fields).toMatchObject({ sessionId: "s4" });
+      expect(String(w.fields?.error)).toContain(
+        "database connection is not open",
+      );
+    }
   });
 
   it("a healthy profileFactsProvider still supplies the allowlist", async () => {

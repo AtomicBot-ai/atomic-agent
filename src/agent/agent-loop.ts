@@ -656,9 +656,9 @@ export class AgentLoop {
       try {
         // `profileFactsProvider` is a raw `profileStore.list()`.
         // Dropping the facts is a real loss — `profile-renderer` emits
-        // pinned facts regardless of the contextual gate, so this
-        // omits the whole `### profile` section for the rest of the
-        // turn — but it is the lesser one: a throw here lands in the
+        // pinned facts regardless of the contextual gate, so this step
+        // renders with no `### profile` section at all — but it is the
+        // lesser one: a throw here lands in the
         // catch below, where a `TypeError` from a closed SQLite handle
         // classifies `tool` and fails the turn outright.
         let profileFacts: readonly ProfileFact[] | undefined;
@@ -1163,8 +1163,8 @@ export class AgentLoop {
           // recalled across all steps of this turn) ∪ (profile
           // facts currently active). Profile facts are not gated
           // by recall — they're always candidates because the
-          // renderer already surfaces them whenever they pass the
-          // contextual-keyword gate. Sourcing them here keeps the
+          // renderer surfaces them whenever they are pinned or pass
+          // the contextual-keyword gate. Sourcing them here keeps the
           // decorator's hydration cheap.
           // `profileFactsProvider` is a raw `profileStore.list()`.
           // It is only ever an input to the fire-and-forget reflection
@@ -1174,8 +1174,14 @@ export class AgentLoop {
           let profileFacts: readonly ProfileFact[] = [];
           try {
             profileFacts = this.deps.profileFactsProvider?.() ?? [];
-          } catch {
-            // best-effort: reflection candidates only
+          } catch (err) {
+            // Usually the step guard above has already warned for this
+            // turn — same provider, same store. Not always: the store
+            // can close between the last step and this block.
+            this.deps.logger?.warn("profile facts unavailable for reflection", {
+              sessionId: state.id,
+              error: err instanceof Error ? err.message : String(err),
+            });
           }
           // `reflect()` is documented fire-safe, but it is composed at
           // runtime from decorators that read SQLite stores. A bare
