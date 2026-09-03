@@ -42,6 +42,8 @@ import {
   switchBackend,
   type SwitchResult,
 } from "./backend-switch.js";
+// Lane B — context before the first message (item 3): the no-trace smoke dir.
+import { mkdirSync, rmSync } from "node:fs";
 
 const DEV = process.argv.includes("--dev");
 /** `--smoke` boots, waits for first paint, writes a screenshot, and exits. */
@@ -481,6 +483,41 @@ async function smokeTest(): Promise<void> {
       );
     }
     await js<void>("window.__ctxClose()");
+
+    // No trace at all (a fresh install, tracing off, or pruned): the same
+    // refresh against a real, empty state dir must land on the TUI's own
+    // pre-measurement screen — chip hidden, never a zero, never a constant.
+    // A branch agent with the preview route still answers "built" there,
+    // because the route needs no trace; that is the honest answer too.
+    const noTraceDir = join(app.getPath("temp"), `atag-smoke-notrace-${process.pid}`);
+    mkdirSync(noTraceDir, { recursive: true });
+    try {
+      const none = await js<PreCtx>(`window.__ctxEmpty(${JSON.stringify(noTraceDir)})`);
+      const noneChip = await js<boolean>("!!document.querySelector('.cfoot .ctxbtn')");
+      const noneOpen = await js<boolean>("window.__ctxOpen()");
+      const noneTitle = await js<string>("window.__ctxTitle()");
+      const noneLine = await js<boolean>(
+        "((document.querySelector('.popover') || {}).textContent || '').includes('send a message — the breakdown comes from the prompt the agent actually builds')",
+      );
+      await js<void>("window.__ctxClose()");
+      check(
+        "no trace → not measured yet, chip hidden",
+        none.previewSupported === true
+          ? none.source === "built"
+          : none.source === null && none.tokens === 0 && !noneChip && noneOpen && noneTitle === "context · not measured yet" && noneLine,
+        `source=${none.source} tokens=${none.tokens} chip=${noneChip} dial=${noneOpen} title=${JSON.stringify(noneTitle)} line=${noneLine}`,
+      );
+    } finally {
+      rmSync(noTraceDir, { recursive: true, force: true });
+      // Back to the real state dir before anything else reads the chip.
+      await js<void>("window.__ctxRefresh()");
+    }
+    const restored = await js<PreCtx>("window.__ctx()");
+    check(
+      "projection returns after the no-trace probe",
+      restored.source === pre.source && restored.tokens === pre.tokens,
+      `source=${restored.source} tokens=${restored.tokens} (was ${pre.source} ${pre.tokens})`,
+    );
   }
 
   if (state === "connected") {
@@ -579,6 +616,12 @@ async function smokeTest(): Promise<void> {
     await js<void>("window.__closeAll && window.__closeAll()");
 
     // A tool-using turn: cards must carry the real args and a duration.
+    // Lane B — item 3: ask on a fresh thread. The sidebar check above
+    // opened the most-turned stored session, whose transcript by now holds
+    // dozens of near-identical smoke turns; a model answering "done" from
+    // that history without calling a tool is a harness artefact, not a
+    // desktop defect (seen once: turn 49 of api-2931b30b63359b7d).
+    await js<void>("window.__ctxNew()");
     await js<void>("window.__ask('List the files in the current directory, then say done.')");
     const toolDeadline = Date.now() + 150_000;
     let cards: Array<{ name: string; args: string; ms: number; ok: boolean | null; live: boolean }> = [];

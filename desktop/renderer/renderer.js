@@ -2628,10 +2628,14 @@ async function resolveWindow() {
 
 function ctxPairsCap() { return (LIVE_CONFIG && LIVE_CONFIG.agent && LIVE_CONFIG.agent.conversationMaxPairs) || 0; }
 
-async function refreshContext() {
+// `stateDirOverride` exists for the smoke only (window.__ctxEmpty): it
+// runs this same path against a real directory that holds no trace, so
+// the "not measured yet" state is exercised rather than assumed.
+async function refreshContext(stateDirOverride) {
   if (!BR) return;
   const seq = ++CTX.seq;
-  const stateDir = LIVE_CAPS && LIVE_CAPS.paths && LIVE_CAPS.paths.stateDir;
+  const stateDir = (typeof stateDirOverride === 'string' && stateDirOverride)
+    || (LIVE_CAPS && LIVE_CAPS.paths && LIVE_CAPS.paths.stateDir);
   const windowP = resolveWindow().catch(() => ({window:null, label:''}));
   let usage = null;
   // (a) the branch route: the agent's own prompt, built now.
@@ -2681,12 +2685,26 @@ async function refreshContext() {
     if (w) { CTX.window = w.window; CTX.windowLabel = w.label; }
     else { CTX.window = null; CTX.windowLabel = ''; }
   }
-  render();
+  paintContext();
   if (w === undefined) {
     const late = await windowP;
     if (seq !== CTX.seq) return;
-    if (CTX.windowLabel !== 'prompt window') { CTX.window = late.window; CTX.windowLabel = late.label; render(); }
+    if (CTX.windowLabel !== 'prompt window') { CTX.window = late.window; CTX.windowLabel = late.label; paintContext(); }
   }
+}
+
+/**
+ * CTX is read by exactly two things — the composer chip and the context
+ * panel — so a refresh repaints the chip in place and rebuilds the page
+ * only while the panel is open. A render() here would rebuild #composer
+ * and drop the caret of a first message being typed (afterChat restores
+ * the text, not the focus), and this refresh now runs precisely while
+ * that message is being typed: at boot, on a provider/model change, on
+ * session:new and when a slow catalogue answer lands seconds later.
+ */
+function paintContext() {
+  if (S.overlay === 'context') { render(); return; }
+  repaintContextChip();
 }
 
 /** The draft's estimate: moves the projected figure only, never a measured one. */
@@ -3225,4 +3243,6 @@ if (typeof window !== 'undefined') {
   window.__ctxClose = () => { act('close'); render(); };
   window.__ctxChip = () => { const el = document.querySelector('.cfoot .ctxbtn'); return el ? {label:(el.querySelector('.gaugelb') || {}).textContent || '', proj:el.classList.contains('proj')} : null; };
   window.__ctxNew = () => { act('session:new'); return refreshContext().then(() => window.__ctx()); };
+  // The no-trace state, against a real empty directory: the caller restores with __ctxRefresh().
+  window.__ctxEmpty = (dir) => refreshContext(dir).then(() => window.__ctx());
 }
