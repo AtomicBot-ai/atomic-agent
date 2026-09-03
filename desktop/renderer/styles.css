@@ -575,11 +575,11 @@ button.menurow:hover{background:var(--bg-hover)}
 .menurow .ch{font-size:10px;color:var(--text-tertiary);white-space:nowrap}
 .menurow .note{font-size:10px;color:var(--text-tertiary);white-space:nowrap}
 .setmain{flex:1;min-width:0;display:flex;flex-direction:column}
-.setmain .settabs{margin:0;padding:8px 16px 0;flex-wrap:wrap;align-items:center;gap:0}
-.setmain .settab{font-family:var(--font-mono);font-size:12px;padding:0 6px;height:24px;gap:0;white-space:pre}
+.setmain .settabs{margin:0;padding:8px 10px 0;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:thin;align-items:center;gap:0}
+.setmain .settab{flex:none;font-family:var(--font-mono);font-size:12px;padding:0 2px;height:24px;gap:0;white-space:pre}
 .setmain .settab::before{content:"  ";white-space:pre}
 .setmain .settab.on::before{content:"▸ "}
-.tabsep{white-space:pre;color:var(--text-tertiary);font-family:var(--font-mono);font-size:12px}
+.tabsep{flex:none;white-space:pre;color:var(--text-tertiary);font-family:var(--font-mono);font-size:12px}
 .setdiag{padding:4px 16px 8px;font-family:var(--font-mono);font-size:11px;color:var(--text-tertiary);white-space:pre-wrap;border-bottom:1px solid var(--line-soft)}
 .tui{font-family:var(--font-mono);font-size:12.5px;line-height:20px;white-space:pre-wrap;display:flex;flex-direction:column;gap:2px;color:var(--text-primary)}
 .tui b{color:var(--accent-text);font-weight:600}
@@ -606,6 +606,7 @@ button.menurow:hover{background:var(--bg-hover)}
 #tk-search{background:transparent;border:0;border-bottom:1px solid var(--line-soft);outline:none;font:inherit;color:var(--accent-text);width:160px}
 .st-running{color:var(--accent-text)} .st-completed{color:var(--success)} .st-failed,.st-blocked{color:var(--danger)} .st-cancelled{color:var(--warn)} .st-pending{color:var(--text-tertiary)}
 .tuimsg{color:var(--accent-text)} .tuierr{color:var(--danger)}
+.sk-on{color:var(--success)} .sk-off{color:var(--warn)}
 .tuiwrap{padding:var(--s5)}
 /* Item 7 (settings surface): the TUI's `↑ N above` / `↓ N below` window lines, clickable here. */
 .tuimore{display:block;color:var(--text-tertiary);font-family:inherit;font-size:inherit;padding:0 4px;height:22px;line-height:22px;text-align:left;border-radius:4px;white-space:pre}

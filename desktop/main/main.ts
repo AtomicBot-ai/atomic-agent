@@ -314,9 +314,6 @@ function wireIpc(client: AgentClient): void {
   ipcMain.handle("agent:health", () => wrap(() => client.health()));
   // The menu's Quit: the app quits and `before-quit` stops the agent, as the TUI's /quit does.
   ipcMain.handle("app:quit", () => { app.quit(); });
-  ipcMain.handle("cli:configUnset", (_event, key: unknown) =>
-    typeof key === "string" ? configUnset(key) : { ok: false, error: "key must be a string" },
-  );
   ipcMain.handle("cli:taskCreate", (_event, input: unknown) => {
     const { message, kind, expression, tz } = (input ?? {}) as {
       message?: unknown; kind?: unknown; expression?: unknown; tz?: unknown;
@@ -635,7 +632,7 @@ async function settingsTest(
   const errBefore = await js<number>("window.__errCount()");
   let allRender = true;
   const details: string[] = [];
-  const PLACEHOLDER = ["skills", "memory", "mcp", "llm", "telegram", "import"];
+  const PLACEHOLDER = ["memory", "mcp", "llm", "telegram", "import"]; // skills shows the installed list from `atag skill list` already (read-only until the next step)
   for (const id of TABS) {
     const r = await js<{ pane: string; on: string; body: string }>(
       `(() => { const pane = window.__settingsOpen(${JSON.stringify(id)});`
@@ -690,6 +687,14 @@ async function settingsTest(
     skillsCli.ok && skillCount === (skillsCli.rows ?? []).length && skillsLabel === (skillCount ? `Skills (${skillCount})` : "Skills"),
     `count=${String(skillCount)} cli=${skillsCli.ok ? (skillsCli.rows ?? []).length : skillsCli.error} label=${JSON.stringify(skillsLabel)}`,
   );
+  // (After the count check, so `atag skill list` has answered.) Skills, this step: the installed list as skills-list.tsx draws it — the
+  // header row and one row per `atag skill list` line — so the palette's
+  // Skills rows and `/skills` land on a real list, not a placeholder.
+  const skl = await js<{ header: boolean; rows: number; cli: number | null }>(
+    "(() => { window.__settingsOpen('skills'); const body = window.__settingsBody();"
+    + " return {header: body.includes('state     source   version  name'), rows: document.querySelectorAll('#settings .setbody .tuirow').length, cli: window.__skillCount()}; })()",
+  );
+  check("settings: Skills tab lists every `atag skill list` row", skl.header && typeof skl.cli === "number" && skl.rows === skl.cli, JSON.stringify(skl));
 
   // Tasks tab: what GET /api/tasks holds is what the tab shows.
   await js<void>("window.__settingsOpen('tasks')");
@@ -725,6 +730,29 @@ async function settingsTest(
     preview.cron === 5 && preview.every === 5 && preview.at === 1 && /invalid cron expression/.test(preview.bad) && preview.shown,
     `cron=${preview.cron} every=${preview.every} at=${preview.at} bad=${JSON.stringify(preview.bad)} shown=${preview.shown}`,
   );
+
+  // Each `atag task create` allocates the task its own `s-<uuid>` session
+  // (TaskRunner.create for the recurring path) and the agent has no task
+  // delete, so without this every run left one more 0-turn "s-… session"
+  // row in the lane's sidebar. DELETE /api/sessions/{id} (0.5.4, idempotent)
+  // purges the fixture's session once the task is cancelled — only while
+  // it has no turns, so a one-shot the scheduler claimed keeps its transcript.
+  const purgeFixtureSession = async (taskId: string): Promise<string> => {
+    if (!agent) return "no agent";
+    try {
+      // GET /api/tasks/{id} answers the bare record (recordToJson); only the run route wraps it as {task}.
+      const t = (await agent.task(taskId)) as { sessionId?: unknown } | null;
+      const sid = t && typeof t.sessionId === "string" ? t.sessionId : "";
+      if (!sid) return "no session on the task";
+      const list = (await agent.sessions()) as { sessions?: Array<{ id?: unknown; turnCount?: unknown }> } | null;
+      const row = list?.sessions?.find((s) => s.id === sid);
+      if (row && typeof row.turnCount === "number" && row.turnCount > 0) return `kept ${sid} (${row.turnCount} turns)`;
+      await agent.deleteSession(sid);
+      return `purged ${sid}`;
+    } catch (err) {
+      return `purge failed: ${err instanceof Error ? err.message : String(err)}`;
+    }
+  };
 
   // Create a one-shot task through `atag task create`, see it in the tab,
   // cancel it through the tab's `c cancel` (DELETE /api/tasks/{id}). The
@@ -781,6 +809,8 @@ async function settingsTest(
         && (cancelled.line === `task ${createdId} cancelled` || cancelled.line === `task ${createdId} already completed (cannot cancel)`);
       check("tasks tab: `c cancel` goes through DELETE /api/tasks/{id}", oneShotOk, `modal=${JSON.stringify(cancelled.modal)} line=${JSON.stringify(cancelled.line)}`);
       if (!oneShotOk) await js<void>(`window.atomic.cancelTask(${JSON.stringify(createdId)})`); // never leave the fixture pending
+      const purged = await purgeFixtureSession(createdId);
+      check("tasks tab: the one-shot fixture's empty session is purged", !purged.startsWith("purge failed"), purged);
       await js<void>("window.__tasksRefresh()");
     }
   }
@@ -811,6 +841,8 @@ async function settingsTest(
       const recurringOk = asked && confirmed === `task ${recurringId} cancelled`;
       check("tasks tab: cancelling a recurring task asks first, `y` confirms", recurringOk, `asked=${asked} line=${JSON.stringify(confirmed)}`);
       if (!recurringOk) await js<void>(`window.atomic.cancelTask(${JSON.stringify(recurringId)})`); // never leave the fixture pending
+      const purged = await purgeFixtureSession(recurringId);
+      check("tasks tab: the recurring fixture's empty session is purged", purged.startsWith("purged"), purged);
       await js<void>("window.__tasksRefresh()");
     }
   }
@@ -822,6 +854,10 @@ async function settingsTest(
     .every((s) => priv.includes(s));
   const noLadder = !/Approvals|approval level|1-5: set approval level/.test(priv);
   check("privacy tab: TUI copy, no approval ladder", privacyCopy && noLadder, privacyCopy ? (noLadder ? "" : "ladder text present") : "copy missing");
+  // The TUI's tab strip is one line; with the count suffixes the eight
+  // labels used to wrap onto a second row inside the 900px window.
+  const stripRows = await js<number>("window.__settingsStripRows()");
+  check("settings: the Manage tab strip stays on one row", stripRows === 1, `${stripRows} row(s)`);
 
   // Analytics round trip through `atag config set analytics.enabled`, restored in finally.
   // `before` is the user file (what the restore needs); the tab shows and
@@ -836,7 +872,43 @@ async function settingsTest(
     if (typeof effective !== "boolean") await wait(500);
   }
   check("privacy tab: shows the effective analytics value", typeof effective === "boolean" && (typeof before !== "boolean" || before === effective), `file=${String(before)} effective=${String(effective)}`);
+  const readEffective = async (): Promise<boolean | null> => (await js<{ analyticsEnabled: boolean | null }>("window.__privacy()")).analyticsEnabled;
+  const readFile = () => js<boolean | undefined>(
+    "(async () => { const r = await window.atomic.config(); const a = r.data && r.data.config && r.data.config.analytics; return a ? a.enabled : undefined; })()",
+  );
+  // Waits for the write queue to drain, not only for the value to match —
+  // right after a slash the value may already read `want` while the write
+  // is still in flight.
+  const settle = async (want: boolean | null): Promise<boolean | null> => {
+    const deadline = Date.now() + 10000;
+    let now: boolean | null = null;
+    while (Date.now() < deadline) {
+      await wait(300);
+      const idle = await js<boolean>("window.__privacyIdle()");
+      now = await readEffective();
+      if (idle && now === want) break;
+    }
+    return now;
+  };
   try {
+    // The slash verbs write the value the user typed (`/privacy analytics on`
+    // = persistAnalyticsEnabled(true) in the TUI), never a toggle against the
+    // user file: with the key unset the effective value is the schema
+    // default, so asking for that same value must leave it in place …
+    const verbSame = effective ? "on" : "off";
+    await js<void>(`window.__runSlash(${JSON.stringify(`/privacy analytics ${verbSame}`)})`);
+    const sameAfter = await settle(effective);
+    const pane1 = await js<string | null>("window.__settingsPane()");
+    check("privacy slash: `/privacy analytics " + verbSame + "` keeps the effective value", sameAfter === effective && pane1 === "privacy", `effective=${String(sameAfter)} pane=${String(pane1)}`);
+    // … and asking for the other value flips it, through the same write as the `a` key.
+    const verbOther = effective ? "off" : "on";
+    await js<void>(`window.__runSlash(${JSON.stringify(`/analytics ${verbOther}`)})`);
+    const otherAfter = await settle(!effective);
+    const otherFile = await readFile();
+    check("privacy slash: `/analytics " + verbOther + "` writes analytics.enabled", otherAfter === !effective && otherFile === !effective, `effective=${String(otherAfter)} file=${String(otherFile)}`);
+    // Back to the starting value so the `a`-key round trip below starts where the tab did.
+    await js<void>(`window.__runSlash(${JSON.stringify(`/analytics ${verbSame}`)})`);
+    check("privacy slash: the slash and the `a` key agree", (await settle(effective)) === effective, "");
     await js<void>("window.__privacyToggle()");
     let flipped = false;
     const deadline = Date.now() + 8000;

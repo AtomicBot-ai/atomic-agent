@@ -277,6 +277,8 @@ export class AgentClient extends EventEmitter {
   sessions = () => this.json<unknown>("/api/sessions");
   models = () => this.json<unknown>("/v1/models");
   session = (id: string) => this.json<unknown>(`/api/sessions/${encodeURIComponent(id)}`);
+  /** `DELETE /api/sessions/{id}` — purge one session row (idempotent on 0.5.4). Harness-only today: the smoke removes the task fixtures' empty sessions. */
+  deleteSession = (id: string) => this.request<unknown>("DELETE", `/api/sessions/${encodeURIComponent(id)}`);
 
   // Item 7 (settings surface): the task routes the Tasks tab acts on and
   // /health for the diagnostics line. `request` is the writing sibling

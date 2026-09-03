@@ -193,7 +193,7 @@ const TK_MAX_ROWS = 14; // tasks-panel.tsx:24 — the Tasks list is a 14-row win
    schema default when the user file has no key): the user file from GET
    /api/config when it carries the key, else `atag config get
    analytics.enabled`; null until either has answered. */
-const PRIV = { busy:false, message:null, lastError:null, effective:null, effectiveBusy:false };
+const PRIV = { busy:false, message:null, lastError:null, effective:null, effectiveBusy:false, chain:Promise.resolve(), pending:0 }; // chain/pending: the analytics write queue
 /* The TUI's ctrl+g chord layer (menu-popup.tsx `ctrl+g <key>`): ctrl+g
    arms a 1.5 s prefix, the next key runs the menu node with that chord. */
 const CHORD = { pending:false, timer:null };
@@ -1097,11 +1097,34 @@ function settingsPane() {
   const p = settingsPaneId(S.settingsPane);
   if (p === 'tasks') return tasksTab();
   if (p === 'privacy') return privacyPane();
+  if (p === 'skills') return skillsListPane();
   if (p === 'llm') return comingNote('LLM') + modelsPane();
   return comingNote(SETTINGS_TABS.find((t) => t[0] === p)[1]);
 }
 function comingNote(label) {
   return '<div class="tui"><b>' + esc(label) + '</b><div class="ter">coming in the next step of this branch</div></div>';
+}
+/* Skills tab, this step of the branch: the installed list as
+   skills-list.tsx draws it — header row, rows from `atag skill list` (the
+   only surface that lists disabled skills) sorted enabled-first then alpha,
+   the TUI column widths (state 9 · [source] 9 · vN 8 · name 24/26 ·
+   description 60). The palette's Skills rows and `/skills` land here, so
+   they open a real list; toggle / detail / remove / hub follow in the next
+   step of this branch. */
+function skillsListPane() {
+  if (!SK.rows) {
+    return '<div class="tui"><b>Skills</b>' + (SK.err ? '<div class="tuierr">! ' + esc(SK.err) + '</div>' : '<div class="ter">loading skill list…</div>') + '</div>';
+  }
+  const rows = SK.rows.slice().sort((a, b) => (a.enabled === b.enabled ? a.name.localeCompare(b.name) : a.enabled ? -1 : 1));
+  const cell = (s, max, w) => { const t = s.length > max ? s.slice(0, max - 1) + '…' : s; return t.padEnd(w); };
+  const body = rows.length ? rows.map((r) => '<div class="tuirow">  '
+      + '<span class="' + (r.enabled ? 'sk-on' : 'sk-off') + '">' + (r.enabled ? 'enabled' : 'disabled').padEnd(9) + '</span>'
+      + esc(('[' + r.source + ']').padEnd(9) + ('v' + r.version).padEnd(8) + cell(r.name, 24, 26) + cell(r.description, 60, 60)) + '</div>').join('')
+    : '<div class="ter">no skills match the current filter — install one with `atomic-agent skill install`, or press `f` to cycle filter / `r` to refresh.</div>';
+  return '<div class="tui"><b>Skills</b>'
+    + '<div class="tuihead">  state     source   version  name                       description</div>' + body
+    + '<div class="ter">' + rows.length + ' shown · ' + rows.filter((r) => r.enabled).length + ' enabled · ' + rows.filter((r) => !r.enabled).length + ' disabled'
+    + ' — e toggle · Enter detail · d remove · Skills Hub: coming in the next step of this branch</div></div>';
 }
 
 function modelsPane() {
@@ -1254,16 +1277,30 @@ async function privacyToggle() {
   if (!BR || !LIVE_CONFIG || PRIV.busy) return;
   const eff = privacyEffective();
   if (typeof eff !== 'boolean') { privacyRefresh(); return; } // nothing to flip until the effective value is known
-  const next = !eff;
-  PRIV.busy = true; PRIV.message = null; PRIV.lastError = null; render();
-  const res = await BR.configSet('analytics.enabled', String(next));
-  if (!res || res.ok === false) {
-    PRIV.lastError = 'analytics toggle failed: ' + ((res && res.error) || 'unknown error');
-  } else {
-    PRIV.message = next ? 'analytics enabled' : 'analytics disabled';
-  }
-  await privacyRefresh();
-  PRIV.busy = false; render();
+  await privacySet(!eff);
+}
+/* privacy-orchestrator.ts setAnalyticsEnabled(enabled): persist the value
+   through `atag config set analytics.enabled <enabled>` (an absolute write —
+   the `a` key and the slash verbs both land here), then re-read. The
+   running agent keeps its boot-time client; the pane's restart note says so. */
+async function privacySet(enabled) {
+  if (!BR) return;
+  // Writes queue behind each other (`/analytics on` then `/analytics off`
+  // lands both, in order, as the TUI does) instead of dropping the second.
+  const run = async () => {
+    PRIV.busy = true; PRIV.message = null; PRIV.lastError = null; render();
+    const res = await BR.configSet('analytics.enabled', String(!!enabled));
+    if (!res || res.ok === false) {
+      PRIV.lastError = 'analytics toggle failed: ' + ((res && res.error) || 'unknown error');
+    } else {
+      PRIV.message = enabled ? 'analytics enabled' : 'analytics disabled';
+    }
+    await privacyRefresh();
+    PRIV.busy = false; render();
+  };
+  PRIV.pending++;
+  PRIV.chain = PRIV.chain.then(run, run);
+  try { await PRIV.chain; } finally { PRIV.pending--; }
 }
 
 /* ---------------- toasts ---------------- */
@@ -1424,6 +1461,21 @@ function abort() {
   render();
 }
 
+/* `/analytics on|enable|off|disable|status` (also reached as `/privacy
+   analytics …`): every verb opens the Privacy tab so the effect is
+   visible; on/off write the value the user typed — the TUI's
+   onAnalyticsSetEnabledRequested(true|false) is an absolute
+   persistAnalyticsEnabled, never a toggle — and `status` re-reads. A bare
+   `/analytics` prints the TUI's usage line. Comparing against the user
+   file here would flip the wrong way when analytics.enabled is unset (the
+   effective value is then the schema default, true). */
+function analyticsSlash(args) {
+  const verb = (args[0] || '').toLowerCase();
+  if (verb === 'on' || verb === 'enable' || verb === 'off' || verb === 'disable') { act('settings:privacy'); privacySet(verb === 'on' || verb === 'enable'); return; }
+  if (verb === 'status') { act('settings:privacy'); privacyRefresh(); return; }
+  S.log.push({id:nid(), k:'system', text:'usage: /analytics on | off | status'}); render();
+}
+
 function runSlash(parts) {
   const name = parts[0];
   const nav = {chat:'room:chat', tasks:'settings:tasks', task:'tasks:new', skills:'settings:skills', skill:'settings:skills',
@@ -1438,12 +1490,14 @@ function runSlash(parts) {
     else act('runmode');
     return;
   }
-  if (name === 'privacy' && parts[1] === 'analytics' && (parts[2] === 'on' || parts[2] === 'off')) {
-    act('settings:privacy');
-    const a = LIVE_CONFIG && LIVE_CONFIG.analytics;
-    if (!!(a && a.enabled) !== (parts[2] === 'on')) privacyToggle();
-    return;
+  // Item 7: `/privacy [analytics <verb>]` and `/analytics <verb>` as
+  // slash-command-handler.ts dispatchPrivacySub / dispatchAnalyticsSub.
+  const rest = parts.slice(1).filter(Boolean);
+  if (name === 'privacy' && rest.length) {
+    if (rest[0].toLowerCase() === 'analytics') { analyticsSlash(rest.slice(1)); return; }
+    S.log.push({id:nid(), k:'system', text:'usage: /privacy | /privacy analytics on|off|status'}); render(); return;
   }
+  if (name === 'analytics') { analyticsSlash(rest); return; }
   if (nav[name]) { act(nav[name]); return; }
   S.log.push({id:nid(), k:'system', text:'unknown command /' + esc(name) + ' — ⌘K lists everything'});
   render();
@@ -3621,6 +3675,10 @@ if (typeof window !== 'undefined') {
   window.__tasksNote = () => TK.note || '';
   window.__skillListCalls = () => SK.calls;
   window.__privacyToggle = () => privacyToggle();
+  window.__privacySet = (on) => privacySet(on).then(() => privacyEffective()); // the slash verbs' write path
+  window.__privacyIdle = () => !PRIV.busy && PRIV.pending === 0; // no analytics write queued or in flight
+  window.__runSlash = (line) => { runSlash(String(line).replace(/^\//, '').split(/\s+/)); }; // exactly what Enter on a `/…` composer line does
+  window.__settingsStripRows = () => new Set([...document.querySelectorAll('#settings .settab')].map((b) => b.offsetTop)).size; // 1 = the TUI's single-line strip
   window.__menuNodes = () => {
     const out = [];
     MENU_GROUPS.forEach(([group, nodes]) => nodes.forEach((n) => {

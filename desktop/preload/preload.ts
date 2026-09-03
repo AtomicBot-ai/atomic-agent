@@ -69,12 +69,11 @@ contextBridge.exposeInMainWorld("atomic", {
   openExternal: (url: string) => ipcRenderer.invoke("app:openExternal", url),
   onMenu: (cb: (command: unknown) => void) => on("app:menu", cb),
 
-  /** Item 7 (settings surface): tasks, health, config unset, schedule preview. */
+  /** Item 7 (settings surface): tasks, health, schedule preview. */
   task: (id: string) => ipcRenderer.invoke("agent:task", id),
   cancelTask: (id: string) => ipcRenderer.invoke("agent:cancelTask", id),
   runTask: (id: string) => ipcRenderer.invoke("agent:runTask", id),
   health: () => ipcRenderer.invoke("agent:health"),
-  configUnset: (key: string) => ipcRenderer.invoke("cli:configUnset", key),
   taskCreate: (input: { message: string; kind: string; expression: string; tz?: string }) =>
     ipcRenderer.invoke("cli:taskCreate", input),
   taskPreview: (form: Record<string, string>, now?: number) =>
