@@ -159,6 +159,8 @@ import {
   createEmptySessionState,
   contextUsageFromPrompt,
   type ContextUsageState,
+  SESSION_LLM_METADATA_KEY,
+  type SessionLlmStamp,
   type SessionState,
 } from "../session/index.js";
 
@@ -2336,6 +2338,18 @@ export async function createAgentRuntime(
     // remaining event of the turn and any tool call whose `pendingCalls`
     // entry went with it is logged with empty args.
     activeTraceSessions.add(session.id);
+    // Resolved before the turn runs, from the live config: the model the
+    // operator chose for this turn is what the session should remember,
+    // not whatever the config says by the time the turn finishes — and
+    // deliberately not the fallback chain's emergency substitute either.
+    const llmResolved = resolveLlmConfig(getConfig());
+    const llmEntry = llmResolved.providers.find(
+      (p) => p.id === llmResolved.activeTextProvider,
+    );
+    const llmStamp: SessionLlmStamp = {
+      providerId: llmResolved.activeTextProvider,
+      chatModel: llmEntry?.defaultChatModel ?? llmEntry?.model ?? null,
+    };
     return turnContext.run({ sessionId: session.id }, async () => {
       try {
         const result = await loop.runTurn(session, {
@@ -2346,14 +2360,20 @@ export async function createAgentRuntime(
         // Stamp the turn's window occupancy so the stored session can
         // restore the TUI's context gauge when it is reopened. A turn
         // that built no prompt (failed before step 1) leaves whatever
-        // snapshot the previous turn persisted.
+        // snapshot the previous turn persisted. The same save also
+        // stamps what this turn ran on, so switching back into the
+        // session later restores its provider/model (session-llm.ts).
         const usage = lastTurnContextUsage.get(session.id);
-        const finished =
-          usage === undefined
-            ? result.session
-            : { ...result.session, contextUsage: usage };
+        const finished: SessionState = {
+          ...result.session,
+          ...(usage === undefined ? {} : { contextUsage: usage }),
+          metadata: {
+            ...result.session.metadata,
+            [SESSION_LLM_METADATA_KEY]: llmStamp,
+          },
+        };
         sessionStore.save(finished);
-        return usage === undefined ? result : { ...result, session: finished };
+        return { ...result, session: finished };
       } finally {
         lastTurnContextUsage.delete(session.id);
         activeTraceSessions.delete(session.id);

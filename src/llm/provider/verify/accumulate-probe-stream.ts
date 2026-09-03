@@ -48,7 +48,18 @@ export function accumulateProbeStream(sse: string): ProbeStreamObservation {
   // it, so the no-op extractor keeps the parser call honest without
   // pulling provider reasoning formats into the check.
   const reasoning = createReasoningExtractor("none");
-  const calls = new Map<number, { name: string; arguments: string }>();
+  // Identity, not position: a delta may carry no `index` at all (some
+  // providers emit one whole call per event), so keying the map on
+  // `delta.index` would collapse every such call into slot 0 — the very
+  // bug the probe exists to catch. Same precedence the stream consumer
+  // uses: index > id > the call currently being assembled.
+  const calls = new Map<
+    string,
+    { index: number; name: string; arguments: string }
+  >();
+  let lastKey: string | null = null;
+  let nextOrdinal = 0;
+  let positionalCalls = 0;
   let text = "";
   let sawToolCallDelta = false;
   let finishReason: string | null = null;
@@ -64,23 +75,40 @@ export function accumulateProbeStream(sse: string): ProbeStreamObservation {
     if (chunk.done) terminalObserved = true;
     if (chunk.toolArgsDelta === true) sawToolCallDelta = true;
     for (const delta of chunk.toolCallDeltas) {
-      const current = calls.get(delta.index) ?? { name: "", arguments: "" };
+      let key: string;
+      if (delta.index !== undefined) {
+        key = `i:${delta.index}`;
+      } else if (delta.id !== undefined) {
+        key = `id:${delta.id}`;
+      } else if (delta.function?.name === undefined && lastKey !== null) {
+        // A bare argument fragment continues the call already open.
+        key = lastKey;
+      } else {
+        // A named delta with neither index nor id opens the next call.
+        key = `pos:${positionalCalls++}`;
+      }
+      const current = calls.get(key) ?? {
+        index: delta.index ?? nextOrdinal++,
+        name: "",
+        arguments: "",
+      };
       if (delta.function?.name) {
         current.name = mergeToolName(current.name, delta.function.name);
       }
       if (delta.function?.arguments) {
         current.arguments += delta.function.arguments;
       }
-      calls.set(delta.index, current);
+      calls.set(key, current);
+      lastKey = key;
     }
   }
 
   return {
     text,
-    toolCalls: [...calls.entries()]
-      .sort(([a], [b]) => a - b)
-      .map(([index, call]) => ({
-        index,
+    toolCalls: [...calls.values()]
+      .sort((a, b) => a.index - b.index)
+      .map((call) => ({
+        index: call.index,
         name: call.name,
         arguments: call.arguments,
       })),
