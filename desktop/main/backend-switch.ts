@@ -72,12 +72,17 @@ function transportFor(id: string): "grammar+llama-server" | "native_tools" {
   return id === LOCAL_ID ? "grammar+llama-server" : "native_tools";
 }
 
-/** `chat: started pid N, healthy on port P` → the TUI's ready line. */
-function readyLine(stdout: string, port: number | undefined): string {
+/**
+ * `chat: started pid N, healthy on port P` → the TUI's ready line;
+ * otherwise the CLI's own last stdout line, or nothing at all — never a
+ * URL with a port this process guessed (`daemon: started` is already in
+ * the result).
+ */
+function readyLine(stdout: string): string | undefined {
   const m = /chat: started pid (\d+), healthy on port (\d+)/.exec(stdout);
   if (m) return `local-llm: ready — pid ${m[1]} on http://127.0.0.1:${m[2]}`;
   const last = stdout.trim().split("\n").filter(Boolean).pop();
-  return last ? `local-llm: ${last}` : `local-llm: ready on http://127.0.0.1:${port ?? 19091}`;
+  return last ? `local-llm: ${last}` : undefined;
 }
 
 /**
@@ -97,6 +102,9 @@ export async function activateProvider(id: string): Promise<SwitchResult> {
   }
   const w = await setActiveTextProvider(id);
   if (!w.ok) return { ok: false, error: w.error };
+  // `restart` says the file moved. main.ts also restarts when the file did
+  // NOT move but `atag serve` booted on another route (the TUI or a hand
+  // edit changed the file while this window was open) — see applySwitch.
   let restart = w.changed;
   let daemon: DaemonEffect = "untouched";
   let daemonLine: string | undefined;
@@ -163,13 +171,13 @@ async function routeToLocal(modelId: string): Promise<SwitchResult> {
     } else {
       const st = await modelsStart();
       daemon = st.ok ? "restarted" : "start-failed";
-      daemonLine = st.ok ? readyLine(st.stdout, lm.managed?.port) : undefined;
+      daemonLine = st.ok ? readyLine(st.stdout) : undefined;
       if (!st.ok) error = st.error;
     }
   } else if (!running) {
     const st = await modelsStart();
     daemon = st.ok ? "started" : "start-failed";
-    daemonLine = st.ok ? readyLine(st.stdout, lm.managed?.port) : undefined;
+    daemonLine = st.ok ? readyLine(st.stdout) : undefined;
     if (!st.ok) error = st.error;
   }
   return {

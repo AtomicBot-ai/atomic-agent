@@ -57,6 +57,25 @@ let win: BrowserWindow | null = null;
 let agent: AgentClient | null = null;
 let pull: { done: Promise<unknown>; cancel: () => void } | null = null;
 
+// Lane B — backend switch: the llm route `atag serve` booted with. serve
+// pins its provider at boot, so a switch whose write found the file already
+// naming that provider (the TUI or a hand edit moved the file while this
+// window was open) still has to restart when serve is behind the file.
+interface BootRoute { provider: string; model: string | null }
+let bootRoute: Promise<BootRoute | null> = Promise.resolve(null);
+async function snapshotBootRoute(client: AgentClient): Promise<BootRoute | null> {
+  try {
+    const body = (await client.config()) as { config?: UserConfigShape };
+    const llm = body.config?.llm;
+    // No llm block: the runtime synthesizes a single local-llama entry.
+    const provider = llm?.activeTextProvider ?? "local-llama";
+    const entry = (llm?.providers ?? []).find((p) => p.id === provider);
+    return { provider, model: entry?.defaultChatModel ?? entry?.model ?? null };
+  } catch {
+    return null;
+  }
+}
+
 function send(channel: string, payload?: unknown): void {
   if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
 }
@@ -271,11 +290,19 @@ function wireIpc(client: AgentClient): void {
   // boot and has no reload route on 0.5.4, so a result that says
   // `restart` is followed by the same stop+start `agent:restart` does.
   const applySwitch = async (res: SwitchResult) => {
-    if (res.ok && res.restart) {
+    // The file moved (res.restart), or serve booted on a different route
+    // than the file now names — for a cloud route the chat model counts
+    // too, since serve pins the provider entry it read at boot.
+    const boot = await bootRoute;
+    const behind = !!res.ok && !!res.providerId && !!boot
+      && (boot.provider !== res.providerId
+        || (res.transport === "native_tools" && (boot.model ?? null) !== (res.model ?? null)));
+    const restart = !!res.ok && (!!res.restart || behind);
+    if (restart) {
       await client.stop();
       await client.start();
     }
-    return { ...res, status: client.status };
+    return { ...res, restart, status: client.status };
   };
   ipcMain.handle("cli:switchBackend", async (_event, kind: unknown) => {
     if (kind !== "cloud" && kind !== "local") return { ok: false, error: "backend must be cloud or local" };
@@ -365,6 +392,13 @@ function wireIpc(client: AgentClient): void {
   client.on("chat", (event) => send("agent:chat", event));
   client.on("approval", (event) => send("agent:approval", event));
   client.on("log", (event) => send("agent:log", event));
+
+  // Lane B — backend switch: snapshot the route serve booted with, as soon
+  // as it is healthy; a stopped or dead child has none.
+  client.on("status", (status: { state?: string }) => {
+    if (status.state === "connected") bootRoute = snapshotBootRoute(client);
+    else if (status.state === "stopped" || status.state === "error") bootRoute = Promise.resolve(null);
+  });
 }
 
 async function smokeTest(): Promise<void> {
@@ -768,8 +802,19 @@ async function backendSwitchTest(
       bad.error ?? "accepted",
     );
 
+    // The file moves first, without a restart — what the TUI or a hand
+    // edit does while this window is open. serve stays on its boot route,
+    // and the switch below, which finds nothing to write for the route,
+    // must still restart it.
+    const preMoved = await setActiveTextProvider("local-llama");
+
     // To local, through the same function the backend row's click runs.
     const toLocal = await js<SwitchResult>("window.__switchBackend('local')");
+    // Read once before the harness refreshes anything: this is what the
+    // renderer's own post-IPC refreshLiveConfig() produced.
+    const rawLocal = await js<{ backend: string; mode: string }>(
+      "({backend: window.__sel().backend, mode: document.querySelector('.modechip')?.textContent ?? ''})",
+    );
     const stLocal = await waitConnected();
     const afterLocal = await cfgNow();
     const port = afterLocal?.localModels?.managed?.port ?? 19091;
@@ -791,16 +836,30 @@ async function backendSwitchTest(
     );
     check(
       "backend: renderer follows the file",
-      localChips.backend === "local" && /local/.test(localChips.mode)
+      rawLocal.backend === "local" && /local/.test(rawLocal.mode)
+        && localChips.backend === "local" && /local/.test(localChips.mode)
         // With a managed model the chip names it; with none, it reads the
         // TUI's DOWNLOAD_MODEL_LABEL once the catalogue snapshot has landed.
         && (managedId ? localChips.model.includes(managedId) : /download model/.test(localChips.model)),
-      `backend=${localChips.backend} chip=${JSON.stringify(localChips.mode)} model=${JSON.stringify(localChips.model)}`,
+      `own refresh: backend=${rawLocal.backend} chip=${JSON.stringify(rawLocal.mode)}; after harness refresh: backend=${localChips.backend} chip=${JSON.stringify(localChips.mode)} model=${JSON.stringify(localChips.model)}`,
+    );
+    // The catalogue and key facts land seconds after the switch; their
+    // repaint must not rebuild the composer under a typing user.
+    const caret = await js<{ same: boolean; focused: boolean; start: number; end: number } | null>("window.__bswRepaintKeepsCaret()");
+    check(
+      "backend: late facts repaint keeps the caret",
+      !!caret && caret.same && caret.focused && caret.start === 6 && caret.end === 6,
+      caret ? `same textarea=${caret.same} focused=${caret.focused} caret=${caret.start}..${caret.end}` : "no composer",
     );
     check(
       "backend: agent restarted and alive",
       stLocal === "connected" && agent?.status.port !== portBefore,
       `state=${stLocal} port ${portBefore} → ${agent?.status.port}`,
+    );
+    check(
+      "backend: serve behind the file still restarts",
+      preMoved.ok && preMoved.changed && toLocal?.restart === true && agent?.status.port !== portBefore,
+      `file moved first: ${preMoved.changed}; restart=${toLocal?.restart}; port ${portBefore} → ${agent?.status.port}`,
     );
     const daemonUp = await localDaemonRunning();
     check(
@@ -840,6 +899,9 @@ async function backendSwitchTest(
     const cloud = (afterLocal?.llm?.providers ?? []).filter((p) => p.kind !== "llama-server");
     const expected = (cloud.find((p) => p.id === afterLocal?.llm?.activeTextProvider) ?? cloud.find((p) => providerHasKey(p)) ?? cloud[0])?.id;
     const toCloud = await js<SwitchResult>("window.__switchBackend('cloud')");
+    const rawCloud = await js<{ backend: string; provider: string }>(
+      "({backend: window.__sel().backend, provider: window.__activeProvider()})",
+    );
     const stCloud = await waitConnected();
     const afterCloud = await cfgNow();
     const cloudChips = await js<{ backend: string; mode: string; provider: string }>(
@@ -851,9 +913,10 @@ async function backendSwitchTest(
       !!toCloud?.ok && !!expected && toCloud.providerId === expected
         && afterCloud?.llm?.activeTextProvider === expected
         && !!activeEntry && activeEntry.kind !== "llama-server"
-        && stCloud === "connected" && cloudChips.backend === "cloud" && /cloud/.test(cloudChips.mode) && cloudChips.provider === expected,
+        && stCloud === "connected" && cloudChips.backend === "cloud" && /cloud/.test(cloudChips.mode) && cloudChips.provider === expected
+        && rawCloud.backend === "cloud" && rawCloud.provider === expected,
       toCloud?.ok
-        ? `provider=${toCloud.providerId} expected=${expected} chip=${JSON.stringify(cloudChips.mode)} state=${stCloud}`
+        ? `provider=${toCloud.providerId} expected=${expected} own refresh: ${rawCloud.backend}/${rawCloud.provider} chip=${JSON.stringify(cloudChips.mode)} state=${stCloud}`
         : `error=${toCloud?.error} needsProvider=${toCloud?.needsProvider} needsKey=${toCloud?.needsKey}`,
     );
     const daemonAfterCloud = await localDaemonRunning();

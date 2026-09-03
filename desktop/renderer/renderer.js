@@ -110,7 +110,7 @@ const OB_CHOICES = [
    says "download model" once it has, as the TUI's does — and `readyLoaded`
    whether the key facts have landed at all: until they have, the rows say
    "checking keys…" rather than a "no API key" that is not known yet. */
-const BSW = { line:'', readyIds:[], readyLoaded:false, localLoaded:false };
+const BSW = { line:'', readyIds:[], readyLoaded:false, localLoaded:false, gating:false };
 
 /* ============================================================
    Atomic Agent Desktop — clickable prototype, no backend.
@@ -510,9 +510,7 @@ function composer() {
         // no model control when there is no model (cloud provider without
         // a chatModel, or local before the snapshot lands); the pane stays
         // reachable through the provider chip and the backend rows.
-        + (activeModel()
-            ? '<button class="cchip modelchip" data-sel-open="model">' + esc(shortModel(activeModel())) + ic('chevD') + '</button>'
-            : '')
+        + modelChipHtml()
         + '<span style="flex:1"></span>'
         + contextChip()
         + codingModeChip()
@@ -1195,6 +1193,9 @@ function submit() {
   const e = $('#entry');
   const text = (e ? e.value : S.draft).trim();
   if (!text) return;
+  // Lane B — backend switch: a turn is waiting on the local gate's disk
+  // snapshot; the draft stays where it is until that one has been decided.
+  if (BSW.gating) return;
   if (text.startsWith('/')) { runSlash(text.slice(1).split(/\s+/)); S.draft = ''; if (e) { e.value = ''; autosize(e); } S.slash = false; ctxDraftChanged(); render(); return; }
   S.draft = ''; if (e) { e.value = ''; autosize(e); }
   ctxDraftChanged(); // Lane B — item 3: the sent draft leaves the projection
@@ -1217,8 +1218,23 @@ function submit() {
   // route (src/tui/local-turn-gate.ts). `atag serve` has no equivalent, so
   // without this a turn against a model that is not on disk burns the
   // transport retries and ends in a bare fetch error.
+  if (localTurnGate().kind === 'pending') {
+    // The TUI stats the disk synchronously; here the disk is one
+    // `atag models list` away. In the first seconds on the local route
+    // (before the catalogue snapshot has landed) that call is made now,
+    // so no turn ever bypasses the gate.
+    BSW.gating = true; render();
+    bswSnapshot().then(() => { BSW.gating = false; bswGatedTurn(text); });
+    return;
+  }
+  bswGatedTurn(text);
+}
+/** The gate's verdict, then the turn. */
+function bswGatedTurn(text) {
   const gate = localTurnGate();
-  if (gate.kind !== 'run') {
+  // 'pending' here means the snapshot could not be taken: nothing is known
+  // about the disk, so the turn runs and the agent reports what it finds.
+  if (gate.kind === 'notice' || gate.kind === 'block') {
     S.log.push({id:nid(), k:'system', text: esc(gate.text)});
     if (gate.kind === 'block') { render(); return; }
   }
@@ -3183,13 +3199,67 @@ function bswRefreshFacts() {
   if (!BR) return;
   BR.providersReady().then((r) => {
     // A failed read keeps the previous ids (and the previous "loaded" state).
-    if (r && r.ok && Array.isArray(r.ids)) { BSW.readyIds = r.ids; BSW.readyLoaded = true; render(); }
+    if (!(r && r.ok && Array.isArray(r.ids))) return;
+    const was = JSON.stringify([BSW.readyLoaded, BSW.readyIds]);
+    BSW.readyIds = r.ids; BSW.readyLoaded = true;
+    if (JSON.stringify([BSW.readyLoaded, BSW.readyIds]) !== was) bswRepaint();
   });
-  if (selBackend() === 'local' && !SEL.localBusy && !SEL.pulling) {
-    BR.modelsList().then((res) => {
-      if (res && res.ok) { SEL.local = res.models.filter((m) => !/embed|bge|nomic|jina/i.test(m.id)); BSW.localLoaded = true; render(); }
-    });
+  if (selBackend() === 'local' && !SEL.localBusy && !SEL.pulling) bswSnapshot();
+}
+/** The catalogue snapshot (`atag models list`): what is on disk, which is active. Resolves either way. */
+function bswSnapshot() {
+  if (!BR) return Promise.resolve();
+  return BR.modelsList().then((res) => {
+    if (!(res && res.ok)) return;
+    const was = JSON.stringify([BSW.localLoaded, SEL.local]);
+    SEL.local = res.models.filter((m) => !/embed|bge|nomic|jina/i.test(m.id)); BSW.localLoaded = true;
+    if (JSON.stringify([BSW.localLoaded, SEL.local]) !== was) bswRepaint();
+  }).catch(() => {});
+}
+/** The model chip, as the composer draws it: nothing when there is no model (the TUI renders no control then). */
+function modelChipHtml() {
+  const label = activeModel();
+  return label ? '<button class="cchip modelchip" data-sel-open="model">' + esc(shortModel(label)) + ic('chevD') + '</button>' : '';
+}
+/**
+ * What the two facts change on screen, repainted in place. These land
+ * seconds after a switch or the boot — two atag subprocesses — while the
+ * user may already be typing the first message; a full render() would
+ * rebuild #composer, and afterChat restores the text but not the caret.
+ * So: the model chip by an outerHTML swap (as repaintContextChip does),
+ * and the selector overlay only while it is open, with the filter box's
+ * caret carried across.
+ */
+function bswRepaint() {
+  const foot = document.querySelector('.cfoot');
+  if (foot) {
+    const html = modelChipHtml();
+    const el = foot.querySelector('.modelchip');
+    if (el) { if (!html) el.remove(); else if (el.outerHTML !== html) el.outerHTML = html; }
+    else if (html) { const spacer = foot.querySelector(':scope > span'); if (spacer) spacer.insertAdjacentHTML('beforebegin', html); }
   }
+  if (!SEL.open || OB.open) return;
+  const f = document.getElementById('sel-filter');
+  const caret = f && document.activeElement === f ? [f.selectionStart, f.selectionEnd] : null;
+  renderOverlays();
+  if (caret) { const n = document.getElementById('sel-filter'); if (n) { n.focus(); n.setSelectionRange(caret[0], caret[1]); } }
+}
+/**
+ * downloadProgressFor (src/tui/local-turn-gate.ts): the live pull line for
+ * this model, in the TUI's words — `downloading now — N% · X / Y` once the
+ * size is known, `downloading now…` before that, null when no pull of this
+ * model is in flight. The figures are the CLI's own progress line
+ * (`[=====     ] 45%  1.20 GB / 2.60 GB  file (4.2 GB)`), which is where the
+ * desktop's pull boxes get them too.
+ */
+function bswDownloadProgress(modelId) {
+  let line = null;
+  if (SEL.pulling === modelId) line = SEL.pullLine || '';
+  else if (MP.pulling === modelId) line = MP.pullLog[MP.pullLog.length - 1] || '';
+  else if (OB.pulling && OB.pulling.id === modelId) line = OB.log[OB.log.length - 1] || '';
+  if (line === null) return null;
+  const m = /(\d+)%\s+([\d.]+ [KMG]B)\s*\/\s*([\d.]+ [KMG]B)/.exec(line);
+  return m ? 'downloading now — ' + m[1] + '% · ' + m[2] + ' / ' + m[3] : 'downloading now…';
 }
 
 /** evaluateLocalTurnGate over LIVE_CONFIG and the cached catalogue. */
@@ -3203,17 +3273,14 @@ function localTurnGate() {
   const lm = cfg.localModels || {};
   if (!activeIsLocal || lm.mode !== 'managed') return {kind:'run'};
   const modelId = (lm.managed && lm.managed.modelId) || null;
-  // Disk state comes from the catalogue snapshot; before it lands nothing is known and the turn runs.
-  let downloaded = true;
-  if (modelId !== null && BSW.localLoaded) {
-    const row = SEL.local.find((m) => m.id === modelId);
-    downloaded = !!(row && row.downloaded);
-  }
-  if (modelId !== null && downloaded) return {kind:'run'};
-  const pulling = SEL.pulling === modelId || MP.pulling === modelId || (OB.pulling && OB.pulling.id === modelId);
+  // Disk state comes from the catalogue snapshot; until it has landed the
+  // verdict is 'pending' and submit() takes the snapshot before deciding.
+  if (modelId !== null && !BSW.localLoaded) return {kind:'pending'};
+  const row = modelId !== null ? SEL.local.find((m) => m.id === modelId) : null;
+  if (modelId !== null && row && row.downloaded) return {kind:'run'};
   const status = modelId === null
     ? 'no local model is selected — open Models (/local) to pick and download one'
-    : (pulling ? 'downloading now…' : 'not downloaded — open Models (/local) and press Enter on it to download');
+    : (bswDownloadProgress(modelId) || 'not downloaded — open Models (/local) and press Enter on it to download');
   const subject = modelId === null ? status : 'local model ' + modelId + ' is ' + status;
   // resolveFallbackChain: the configured chain (or just the active id), with local-llama appended unless appendLocal is false.
   const ids = new Set(providers.map((p) => p.id));
@@ -3233,7 +3300,17 @@ if (typeof window !== 'undefined') {
     for (let i = S.log.length - 1; i >= 0; i--) if (S.log[i].k === 'system') return S.log[i].text || '';
     return '';
   };
-  window.__bsw = () => ({line:BSW.line, readyIds:BSW.readyIds.slice(), readyLoaded:BSW.readyLoaded, localLoaded:BSW.localLoaded, turnBusy:S.busy, gate:localTurnGate()});
+  window.__bsw = () => ({line:BSW.line, readyIds:BSW.readyIds.slice(), readyLoaded:BSW.readyLoaded, localLoaded:BSW.localLoaded, gating:BSW.gating, turnBusy:S.busy, gate:localTurnGate()});
+  // The late-facts repaint must leave the composer's caret where it was.
+  window.__bswRepaintKeepsCaret = () => {
+    const e = document.getElementById('entry'); if (!e) return null;
+    e.focus(); e.value = 'typing mid-word'; e.setSelectionRange(6, 6);
+    bswRepaint(); // the path both late callbacks take
+    const n = document.getElementById('entry');
+    const out = {same: n === e, focused: document.activeElement === n, start: n ? n.selectionStart : -1, end: n ? n.selectionEnd : -1};
+    if (n) n.value = S.draft;
+    return out;
+  };
   // Every system line, entities decoded, so the smoke can pin the TUI's runtime_info copy.
   window.__systemLines = () => S.log.filter((m) => m.k === 'system').map((m) => {
     const t = document.createElement('textarea'); t.innerHTML = m.text || ''; return t.value;

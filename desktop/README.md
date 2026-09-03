@@ -102,7 +102,16 @@ Real, driven by the running agent:
   daemon has answered.
 - the TUI's pre-turn gate for the managed local route: with no local model
   selected, or one that is not on disk, the turn is refused with the TUI's
-  text (or runs with its notice when a fallback chain exists)
+  text (or runs with its notice when a fallback chain exists); a pull in
+  flight shows its percent and bytes from the CLI's own progress line
+- first-run setup (cloud provider or local model, the TUI's two writes and
+  copy). One desktop addition: choosing **Local models** on an install that
+  already has a cloud `llm` block moves `llm.activeTextProvider` to
+  `local-llama` (the pick goes through `selectLocalModel`, which is where the
+  route moves and the daemon starts). The TUI's onboarding never calls
+  `setActiveText` — its route lands on `local-llama` only because a fresh
+  install has no `llm` block — so on the TUI the same choice on such an
+  install leaves the cloud route active until the composer chip is used.
 - the add-provider wizard: the TUI's kind list (nothing preselected) → key /
   base URL → verification by listing the provider's models under that key →
   saved, activated, and a default model picked
@@ -136,7 +145,10 @@ Honestly degraded, and labelled as such in the UI:
   return.
 - **Switching backend/provider/model restarts `atag serve`** — the running
   agent pins its provider at boot and 0.5.4 has no reload route; a switch is
-  refused while a turn is running.
+  refused while a turn is running. The restart also happens when the file
+  already names the chosen route but the agent booted on another one (the
+  TUI or a hand edit moved the file while the window was open): main
+  remembers the route each `atag serve` came up on and compares.
 - **The `custom` (external llama.cpp URL) backend** is not offered, neither
   by the selector nor by the first-run setup (two choices, not the TUI's
   three): the TUI probes the URL before writing mode `external` + the
