@@ -80,6 +80,7 @@ contextBridge.exposeInMainWorld("atomic", {
   taskPreview: (form: Record<string, string>, now?: number) =>
     ipcRenderer.invoke("app:taskPreview", { form, now }),
   quit: () => ipcRenderer.invoke("app:quit"),
+  skillList: () => ipcRenderer.invoke("cli:skillList"),
 
   platform: process.platform,
 });

@@ -173,12 +173,16 @@ const SETTINGS_TABS = [['tasks','Tasks','tasks'],['skills','Skills','skills'],['
                        ['llm','LLM','cpu'],['telegram','Telegram','chat'],['import','Import','folder'],['privacy','Privacy','key']];
 /* Settings shell state: the diagnostics line's tool counters, read from
    the open session's tool_result rows (GET /api/sessions/{id}). */
-const SET = { tools:null, toolsFor:null, toolsBusy:false };
+const SET = { tools:null, toolsFor:null, toolsBusy:false, health:null, healthBusy:false };
+/* Installed skills incl. disabled ones, from `atag skill list` — the N in
+   the Skills tab's ` (N)` suffix (debug-pane.tsx:162 counts every loaded
+   row; GET /api/skills never carries disabled skills). */
+const SK = { rows:null, busy:false, err:null };
 /* Tasks tab state — the TUI's TasksPanelState, minus the firings ring
    the HTTP API does not expose. */
 const TK = {
   rows:[], filter:'all', search:'', searchOpen:false, auto:true, lastRefreshedAt:null, loading:false,
-  mode:'list', cursor:0, detailId:null, cancel:null, msg:null, err:null, timer:null,
+  primed:false, mode:'list', cursor:0, detailId:null, cancel:null, msg:null, err:null, timer:null,
   form:null,
 };
 const TK_FILTER_ORDER = ['all','pending','running','completed','failed','blocked','cancelled','recurring'];
@@ -307,8 +311,8 @@ const PAL = [
     ['atom','World','Observe','/world','insp:world'],
     ['bolt','Reasoning','Observe','/reasoning','insp:reasoning'],
     ['console','Logs','Console','/logs','console:agent'],
-    ['tasks','Tasks','Manage','⌘ 2','settings:tasks'],
-    ['skills','Skills','Manage','⌘ 3','settings:skills'],
+    ['tasks','Tasks','Manage','','settings:tasks'],
+    ['skills','Skills','Manage','','settings:skills'],
     ['doc','Memory','Manage','⌘ 4','settings:memory'],
     ['link','MCP','Manage','/mcp','settings:mcp'],
     ['cpu','LLM','Manage','/llm','settings:llm'],
@@ -991,7 +995,7 @@ function settingsPaneId(v) {
 function tabSuffix(id) {
   let n = 0;
   if (id === 'tasks') n = TK.rows.length;
-  else if (id === 'skills') n = SKILLS.length;
+  else if (id === 'skills') n = SK.rows ? SK.rows.length : 0; // no suffix until `atag skill list` has answered
   else if (id === 'memory') n = 0; // the Memory tab lands in the next step of this branch; no channel is loaded yet
   else if (id === 'mcp') n = ((LIVE_CONFIG && LIVE_CONFIG.mcp && LIVE_CONFIG.mcp.servers) || []).length;
   return n === 0 ? '' : ' (' + n + ')';
@@ -1019,9 +1023,9 @@ function menuTreeHTML() {
    session's tool_result rows, or the segment is left out. */
 function diagLine() {
   const home = homeDir();
-  const wd = WORKSPACE || S.live.workingDir || '';
+  const wd = (SET.health && SET.health.workingDir) || WORKSPACE || S.live.workingDir || '';
   const cwd = home && wd.startsWith(home) ? '~' + wd.slice(home.length) : (wd || '—');
-  const llama = (S.live.llama && S.live.llama.url) || (LIVE_CAPS && LIVE_CAPS.llama && LIVE_CAPS.llama.url) || '—';
+  const llama = (SET.health && SET.health.llamaUrl) || (S.live.llama && S.live.llama.url) || (LIVE_CAPS && LIVE_CAPS.llama && LIVE_CAPS.llama.url) || '—';
   const parts = ['cwd ' + cwd, 'llama ' + llama, 'llm — · step —', 'kv —'];
   if (SET.tools && SET.toolsFor === S.agentSession) parts.push('tools ' + SET.tools.ok + 'ok/' + SET.tools.err + 'err');
   parts.push('approval L' + (LIVE_CAPS && typeof S.level === 'number' ? S.level : '—'));
@@ -1030,16 +1034,44 @@ function diagLine() {
 }
 
 async function refreshDiag() {
-  if (!BR || !S.agentSession || SET.toolsBusy) return;
-  if (SET.toolsFor === S.agentSession && SET.tools) return;
+  if (!BR) return;
+  refreshHealth();
+  refreshSkillList();
+  // Pin the session id before the await: the counts belong to the session
+  // they were read from, never to whichever one is open when they arrive.
+  const id = S.agentSession;
+  if (!id || SET.toolsBusy) return;
+  if (SET.toolsFor === id && SET.tools) return;
   SET.toolsBusy = true;
-  const res = await BR.session(S.agentSession);
+  const res = await BR.session(id);
   SET.toolsBusy = false;
+  if (id !== S.agentSession) return;
   const turns = res && res.ok && res.data && Array.isArray(res.data.turns) ? res.data.turns : null;
   if (!turns) return;
   let ok = 0, err = 0;
   turns.forEach((t) => { if (t.kind === 'tool_result') { if (t.status === 'ok') ok++; else err++; } });
-  SET.tools = {ok, err}; SET.toolsFor = S.agentSession;
+  SET.tools = {ok, err}; SET.toolsFor = id;
+  if (S.settings) render();
+}
+/* GET /health: workingDir + llama.url for the diagnostics line's cwd/llama segments. */
+async function refreshHealth() {
+  if (!BR || !BR.health || SET.healthBusy) return;
+  SET.healthBusy = true;
+  const res = await BR.health();
+  SET.healthBusy = false;
+  if (!(res && res.ok && res.data)) return;
+  SET.health = {workingDir: typeof res.data.workingDir === 'string' ? res.data.workingDir : null,
+                llamaUrl: res.data.llama && typeof res.data.llama.url === 'string' ? res.data.llama.url : null};
+  if (S.settings) render();
+}
+/* `atag skill list` (cwd = workspace, so project skills count too). */
+async function refreshSkillList() {
+  if (!BR || !BR.skillList || SK.busy) return;
+  SK.busy = true;
+  const res = await BR.skillList();
+  SK.busy = false;
+  if (res && res.ok && Array.isArray(res.rows)) { SK.rows = res.rows; SK.err = null; }
+  else SK.err = (res && res.error) || 'skill list failed';
   if (S.settings) render();
 }
 
@@ -1235,7 +1267,7 @@ function act(a) {
   if (a === 'stop') { close(); abort(); return; }
   if (a === 'send') { close(); submit(); return; }
   if (a === 'retry') { close(); render(); toast('Retrying last turn'); return; }
-  if (a === 'dump') { close(); render(); toast('Debug bundle written', '~/Documents/atomic-agent-debug'); return; }
+  if (a === 'dump') { close(); render(); toast('Write debug bundle', 'not available in the desktop'); return; } // Item 7: no bundle writer in the desktop
   if (a === 'tools') { close(); S.inspector = true; S.inspTab = 'world'; render(); return; }
   if (a === 'restart') { close(); render(); toast('Agent runtime restarted'); return; }
   if (a === 'quit') { close(); if (BR && BR.quit) { BR.quit(); return; } render(); toast('This is a prototype', 'Nothing to quit'); return; }
@@ -1533,7 +1565,7 @@ document.addEventListener('keydown', (e) => {
   const inText = e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT';
 
   // approval scope — only while a card is pending and focus is not in a text field
-  if (S.pending && !inText) {
+  if (S.pending && !inText && !S.settings) { // Item 7: the settings window owns its keys while open
     const kk = k.toLowerCase();
     if (['y','s','a','n'].includes(kk)) { e.preventDefault(); answer(kk); return; }
     if (k === 'Escape') { e.preventDefault(); answer('esc'); return; }
@@ -3084,10 +3116,11 @@ function tasksVisible() {
 /* tasks-orchestrator.ts: refresh every 5 000 ms while the tab is open, limit 200. */
 function ensureTasksPoll() {
   if (!BR) return;
-  if (TK.lastRefreshedAt === null && !TK.loading) setTimeout(() => tasksRefresh(), 0);
+  if (!TK.primed) { TK.primed = true; setTimeout(() => tasksRefresh(), 0); }
   if (TK.timer) return;
   TK.timer = setInterval(() => {
-    if (!tasksVisible()) { clearInterval(TK.timer); TK.timer = null; return; }
+    // Tab hidden: stop polling; the next opening gets one immediate load again.
+    if (!tasksVisible()) { clearInterval(TK.timer); TK.timer = null; TK.primed = false; return; }
     if (TK.auto) tasksRefresh(true);
   }, 5000);
 }
@@ -3199,7 +3232,7 @@ function tkDetailHTML() {
     + (row.lastError ? '<div class="tuierr" style="margin-top:8px">last error: ' + esc(row.lastError) + '</div>' : '')
     + '<div class="ter" style="margin-top:8px">recent firings:</div>'
     // The TUI builds this feed in-process by diffing records between ticks; the HTTP API has no such surface.
-    + '<div class="ter">(firings are not exposed by the agent’s HTTP API)</div>'
+    + '<div class="ter">(firings are not exposed by the agent\'s HTTP API)</div>'
     + '<div class="tuihint">' + tkHint('o', 'open session', 'tasks:open:' + esc(id)) + tkHint('R', 'run-now', 'tasks:run:' + esc(id))
       + tkHint('c', 'cancel', 'tasks:cancel:' + esc(id)) + '<button data-act="tasks:back">Esc back</button></div>'
     + '</div>';
@@ -3394,4 +3427,16 @@ if (typeof window !== 'undefined') {
   window.__taskCreate = (fields) => { TK.mode = 'create'; TK.form = Object.assign(tkNewForm(), fields); render(); return tkSubmit(); };
   window.__privacy = () => ({analyticsEnabled: !!(LIVE_CONFIG && LIVE_CONFIG.analytics && LIVE_CONFIG.analytics.enabled)});
   window.__privacyToggle = () => privacyToggle();
+  window.__menuNodes = () => {
+    const out = [];
+    MENU_GROUPS.forEach(([group, nodes]) => nodes.forEach((n) => {
+      out.push({group, id:n.id, label:n.label, chord:n.chord || null, na:!!n.na, tab:n.tab || null, parent:!!n.sub});
+      (n.sub || []).forEach((c) => out.push({group, id:c.id, label:c.label, chord:c.chord || null, na:!!c.na, tab:c.tab || null, parent:false}));
+    }));
+    return out;
+  };
+  window.__menuActivate = (id) => { menuActivate(id); return {settings: !!S.settings, pane: S.settings ? settingsPaneId(S.settingsPane) : null, inspector: S.inspector, inspTab: S.inspTab}; };
+  window.__diag = () => ({line: diagLine(), session: S.agentSession, toolsFor: SET.toolsFor, health: SET.health});
+  window.__skillCount = () => (SK.rows ? SK.rows.length : null);
+  window.__taskPreviewForm = async (fields) => { TK.mode = 'create'; TK.form = Object.assign(tkNewForm(), fields); render(); await tkPreview(); return TK.form ? TK.form.preview : null; };
 }

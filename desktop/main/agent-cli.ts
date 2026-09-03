@@ -429,3 +429,40 @@ export async function taskCreate(
     return { ok: false, error: `task create did not print JSON: ${res.stdout.trim().slice(0, 200)}` };
   }
 }
+
+/* ---------------- Item 7 (settings surface): installed skills incl. disabled ---------------- */
+
+export interface SkillListRow {
+  name: string;
+  version: string;
+  source: string;
+  enabled: boolean;
+  description: string;
+}
+
+/**
+ * `atag skill list` — the only surface that lists disabled skills
+ * (GET /api/skills is the registry's filtered view). One TSV row per
+ * skill: `name\tv<ver>\t[<source>]\t<enabled|disabled>\t<description>`;
+ * a `[missing]` row is a disable-list entry that is no longer installed,
+ * kept as the CLI prints it (src/cli/skill.ts). Runs with cwd = workspace
+ * so project skills are seen.
+ */
+export async function skillList(cwd?: string): Promise<{ ok: boolean; rows?: SkillListRow[]; error?: string }> {
+  const res = await cli(["skill", "list"], 45_000, cwd);
+  if (!res.ok) return { ok: false, error: res.error };
+  const rows: SkillListRow[] = [];
+  for (const line of res.stdout.split("\n")) {
+    if (!line.trim() || line.startsWith("(no skills installed)")) continue;
+    const cells = line.split("\t");
+    if (cells.length < 4) return { ok: false, error: `could not parse skill list line: ${line.slice(0, 120)}` };
+    rows.push({
+      name: cells[0]!,
+      version: (cells[1] ?? "").replace(/^v/, ""),
+      source: (cells[2] ?? "").replace(/^\[|\]$/g, ""),
+      enabled: cells[3] === "enabled",
+      description: cells.slice(4).join("\t"),
+    });
+  }
+  return { ok: true, rows };
+}

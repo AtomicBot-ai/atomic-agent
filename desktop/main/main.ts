@@ -23,6 +23,7 @@ import {
   traceUsage,
   configUnset,
   taskCreate,
+  skillList,
 } from "./agent-cli.js";
 import { validateCreateForm, type TaskCreateFormInput } from "./task-schedule.js";
 
@@ -327,6 +328,7 @@ function wireIpc(client: AgentClient): void {
       client.status.workingDir,
     );
   });
+  ipcMain.handle("cli:skillList", () => skillList(client.status.workingDir));
   // Pure: the TUI's form validator + cron-parser preview, no store access.
   ipcMain.handle("app:taskPreview", (_event, payload: unknown) => {
     const { form, now } = (payload ?? {}) as { form?: Record<string, unknown>; now?: unknown };
@@ -542,6 +544,28 @@ async function settingsTest(
   const tabs = await js<string[]>("window.__settingsTabs()");
   check("settings: tab ids mirror MANAGE_TABS", same(tabs, TABS), JSON.stringify(tabs));
 
+  // Every node of the TUI menu tree, verbatim label and ctrl+g chord, in
+  // registry order (src/tui/menu/menu-registry.ts:107-675).
+  const NODES: Array<[string, string, string | null]> = [
+    ["Go", "Run", "r"], ["Go", "Observe", null], ["Go", "Feed", "f"], ["Go", "World", "w"], ["Go", "Reasoning", "e"],
+    ["Go", "Logs", "o"], ["Go", "LLM logs", "L"], ["Go", "Manage", null], ["Go", "Tasks", "t"], ["Go", "Skills", "s"],
+    ["Go", "Memory", "m"], ["Go", "MCP", "c"], ["Go", "LLM", "l"], ["Go", "Telegram", "g"], ["Go", "Import", "i"],
+    ["Go", "Privacy", "p"], ["Go", "Toggle debug pane", null],
+    ["Session", "New session", "n"], ["Session", "Switch session…", "u"], ["Session", "Clear transcript", null],
+    ["Session", "Context window", null], ["Session", "Show session id", null], ["Session", "New terminal window", null],
+    ["Model", "Switch chat model…", "k"],
+    ["Run", "Coding mode…", "M"], ["Run", "Abort turn", "a"], ["Run", "Queued messages", null],
+    ["Run", "Steer the running turn", null], ["Run", "Expand all tool cards", null], ["Run", "Collapse all tool cards", null],
+    ["Setup", "Theme…", "h"], ["Setup", "Mouse…", null], ["Setup", "Hide or show the sidebar", null], ["Setup", "Analytics", null],
+    ["Setup", "Enable or disable a skill…", null], ["Setup", "Create, cancel or run a task…", null],
+    ["Help", "Commands", null], ["Help", "List built-in tools", null], ["Help", "Write debug bundle", "d"], ["Help", "Quit", "q"],
+    ["Danger zone", "Uninstall atomic-agent…", null],
+  ];
+  const nodes = await js<Array<{ group: string; label: string; chord: string | null; na: boolean; tab: string | null }>>("window.__menuNodes()");
+  check("settings: every menu node has its TUI label and chord", same(nodes.map((n) => [n.group, n.label, n.chord]), NODES), JSON.stringify(nodes.map((n) => [n.group, n.label, n.chord])));
+  const manageTabs = nodes.filter((n) => n.tab).map((n) => n.tab);
+  check("settings: Manage children are the eight tabs", same(manageTabs, TABS), JSON.stringify(manageTabs));
+
   // The bottom-left entry lands on Go › Manage › Tasks.
   const foot = await js<{ present: boolean; text: string; pane: string }>(
     "(() => { const f = document.querySelector('#sidebar .sb-foot'); if (!f) return {present:false,text:'',pane:''};"
@@ -557,17 +581,60 @@ async function settingsTest(
   const labels = await js<string[]>("window.__settingsLabels()");
   check("settings: tab labels mirror the TUI", same(labels, LABELS), JSON.stringify(labels));
 
+  // The menu column: chords render as `ctrl+g <key>`, nodes the desktop
+  // cannot do keep their label with the note, and a verb dispatches its act.
+  const menuDom = await js<{ chord: string; naCount: number; naText: string }>(
+    "(() => { const t = document.querySelector('#settings [data-act=\"menu:go.manage.tasks\"] .ch');"
+    + " const na = [...document.querySelectorAll('#settings .menurow.na')];"
+    + " const win = na.find((r) => r.textContent.includes('New terminal window'));"
+    + " return {chord: t ? t.textContent : '', naCount: na.length, naText: win ? win.textContent : ''}; })()",
+  );
+  const naExpected = nodes.filter((n) => n.na).length;
+  check(
+    "settings: menu column renders chords and the not-available note",
+    menuDom.chord === "ctrl+g t" && menuDom.naCount === naExpected && menuDom.naText.includes("not available in the desktop"),
+    `chord=${JSON.stringify(menuDom.chord)} na=${menuDom.naCount}/${naExpected}`,
+  );
+  const dispatched = await js<{ settings: boolean; inspector: boolean; inspTab: string }>("window.__menuActivate('go.observe.world')");
+  check("settings: a menu verb dispatches its desktop act", !dispatched.settings && dispatched.inspector && dispatched.inspTab === "world", JSON.stringify(dispatched));
+  const viaNode = await js<{ settings: boolean; pane: string | null }>(
+    "(() => { window.__settingsOpen('tasks'); return window.__menuActivate('go.manage.privacy'); })()",
+  );
+  check("settings: a Manage node switches the panel", viaNode.settings && viaNode.pane === "privacy", JSON.stringify(viaNode));
+
+  // Diagnostics line: the TUI's null forms for the process metrics, the
+  // tools counter only for the open session, cwd/llama from /health.
+  let diag = { line: "", session: null as string | null, toolsFor: null as string | null, health: null as unknown };
+  for (let i = 0; i < 12; i++) {
+    diag = await js<typeof diag>("window.__diag()");
+    if (diag.health && (!diag.session || diag.toolsFor === diag.session)) break;
+    await wait(500);
+  }
+  const toolsSeg = /\| tools \d+ok\/\d+err \|/.test(diag.line);
+  const toolsOk = diag.session ? toolsSeg && diag.toolsFor === diag.session : !toolsSeg;
+  check(
+    "settings: diagnostics line uses the TUI null forms and counts tools only for the open session",
+    diag.line.startsWith("cwd ") && diag.line.includes(" | llama ") && diag.line.includes(" | llm — · step — | kv — |")
+      && / \| approval L\d \| skills \d+$/.test(diag.line) && !!diag.health && toolsOk,
+    `${diag.line} (session=${diag.session ?? "none"})`,
+  );
+
   const errBefore = await js<number>("window.__errCount()");
   let allRender = true;
   const details: string[] = [];
+  const PLACEHOLDER = ["skills", "memory", "mcp", "llm", "telegram", "import"];
   for (const id of TABS) {
-    const r = await js<{ pane: string; on: string; body: number }>(
+    const r = await js<{ pane: string; on: string; body: string }>(
       `(() => { const pane = window.__settingsOpen(${JSON.stringify(id)});`
       + " const on = (document.querySelector('#settings .settab.on') || {dataset:{}}).dataset.act || '';"
-      + " return {pane, on, body: window.__settingsBody().length}; })()",
+      + " return {pane, on, body: window.__settingsBody()}; })()",
     );
-    const ok = r.pane === id && r.on === "settings:" + id && r.body > 0;
-    if (!ok) { allRender = false; details.push(`${id}: pane=${r.pane} on=${r.on} body=${r.body}`); }
+    // A placeholder tab must say so with its TUI label; the real tabs are asserted below.
+    const bodyOk = PLACEHOLDER.includes(id)
+      ? r.body.includes(LABELS[TABS.indexOf(id)]!) && r.body.includes("coming in the next step of this branch")
+      : r.body.length > 0;
+    const ok = r.pane === id && r.on === "settings:" + id && bodyOk;
+    if (!ok) { allRender = false; details.push(`${id}: pane=${r.pane} on=${r.on} body=${r.body.slice(0, 60)}`); }
   }
   const errAfter = await js<number>("window.__errCount()");
   check("settings: every tab renders without errors", allRender && errAfter === errBefore, details.join("; ") || `errors ${errBefore}→${errAfter}`);
@@ -579,6 +646,19 @@ async function settingsTest(
     + " return window.__settingsPane(); })()",
   );
   check("settings: ArrowRight wraps from Privacy to Tasks", cycled === "tasks", `pane=${cycled}`);
+
+  // Skills count suffix: N = every installed skill incl. disabled, from `atag skill list`.
+  let skillCount: number | null = null;
+  for (let i = 0; i < 20 && skillCount === null; i++) { await wait(500); skillCount = await js<number | null>("window.__skillCount()"); }
+  const skillsCli = await js<{ ok: boolean; rows?: unknown[]; error?: string }>("window.atomic.skillList()");
+  const skillsLabel = await js<string>(
+    "(() => { window.__settingsOpen('skills'); const b = document.querySelector('#settings .settab.on'); return b ? b.textContent.trim() : ''; })()",
+  );
+  check(
+    "settings: Skills tab count is `atag skill list`",
+    skillsCli.ok && skillCount === (skillsCli.rows ?? []).length && skillsLabel === (skillCount ? `Skills (${skillCount})` : "Skills"),
+    `count=${String(skillCount)} cli=${skillsCli.ok ? (skillsCli.rows ?? []).length : skillsCli.error} label=${JSON.stringify(skillsLabel)}`,
+  );
 
   // Tasks tab: what GET /api/tasks holds is what the tab shows.
   await js<void>("window.__settingsOpen('tasks')");
@@ -592,28 +672,31 @@ async function settingsTest(
     : taskState.body.includes("status   schedule               next-run       session   message");
   check("tasks tab: rows and copy come from GET /api/tasks", tasksCopy && taskState.rows === taskState.count, `${taskState.rows} rows for ${taskState.count} tasks`);
 
-  // The create form's preview is the agent's own cron-parser port.
-  const preview = await js<{ cron: number; every: number; at: number; bad: string }>(
-    "(async () => { const cron = await window.atomic.taskPreview({kind:'cron', cronExpression:'0 * * * *', message:'x'});"
-    + " const every = await window.atomic.taskPreview({kind:'interval', intervalSeconds:'300', message:'x'});"
-    + " const at = await window.atomic.taskPreview({kind:'at', atIsoOrMs:'2030-01-01T09:00:00Z', message:'x'});"
-    + " const bad = await window.atomic.taskPreview({kind:'cron', cronExpression:'not a cron', message:'x'});"
-    + " return {cron: cron.preview.nextFirings.length, every: every.preview.nextFirings.length, at: at.preview.nextFirings.length, bad: bad.preview.error || ''}; })()",
+  // The create form's preview (form path: tkPreview → app:taskPreview) is the agent's own cron-parser port.
+  const preview = await js<{ cron: number; every: number; at: number; bad: string; shown: boolean }>(
+    "(async () => { const cron = await window.__taskPreviewForm({kind:'cron', cronExpression:'0 * * * *', message:'x'});"
+    + " const shown = window.__settingsBody().includes('next firings:');"
+    + " const every = await window.__taskPreviewForm({kind:'interval', intervalSeconds:'300', message:'x'});"
+    + " const at = await window.__taskPreviewForm({kind:'at', atIsoOrMs:'2030-01-01T09:00:00Z', message:'x'});"
+    + " const bad = await window.__taskPreviewForm({kind:'cron', cronExpression:'not a cron', message:'x'});"
+    + " return {cron: cron.nextFirings.length, every: every.nextFirings.length, at: at.nextFirings.length, bad: bad.error || '', shown}; })()",
   );
   check(
     "tasks tab: next-firings preview runs cron-parser",
-    preview.cron === 5 && preview.every === 5 && preview.at === 1 && /invalid cron expression/.test(preview.bad),
-    `cron=${preview.cron} every=${preview.every} at=${preview.at} bad=${JSON.stringify(preview.bad)}`,
+    preview.cron === 5 && preview.every === 5 && preview.at === 1 && /invalid cron expression/.test(preview.bad) && preview.shown,
+    `cron=${preview.cron} every=${preview.every} at=${preview.at} bad=${JSON.stringify(preview.bad)} shown=${preview.shown}`,
   );
 
   // Create a one-shot task through `atag task create`, see it in the tab,
-  // cancel it through DELETE /api/tasks/{id}. The row stays cancelled in
-  // the lane's own store; nothing is ever run.
+  // cancel it through DELETE /api/tasks/{id}. Nothing is ever run. The
+  // fixed message keeps the rows recognisable; the agent has no task
+  // delete (list/show/create/cancel/run/tick only), so each run leaves one
+  // cancelled row in the store the harness runs against.
   let createdId = "";
   try {
     const created = await js<{ ok: boolean; id?: string; error?: string; line: string }>(
       "(async () => { const at = String(Date.now() + 5 * 365 * 24 * 3600 * 1000);"
-      + " const r = await window.__taskCreate({kind:'at', atIsoOrMs: at, message:'desktop smoke task — cancelled right away'});"
+      + " const r = await window.__taskCreate({kind:'at', atIsoOrMs: at, message:'desktop smoke task'});"
       + " return Object.assign({}, r, {line: window.__tasksMsg()}); })()",
     );
     createdId = created.id ?? "";
