@@ -36,10 +36,7 @@ import {
   createRunTaskHandler,
 } from "./route-tasks.js";
 import { createWebhookHandler } from "./route-webhooks.js";
-import {
-  createGetCodingModeHandler,
-  createSetCodingModeHandler,
-} from "./route-coding-mode.js";
+import { createCodingModeHandlers } from "./route-coding-mode.js";
 import { createContextPreviewHandler } from "./route-context-preview.js";
 
 /**
@@ -50,6 +47,10 @@ import { createContextPreviewHandler } from "./route-context-preview.js";
  * and `/v1/models`.
  */
 export function buildRouteTable(): RouteDefinition[] {
+  // One closure for the GET and the POST: the coding mode is per-process
+  // state, and the live switches cannot be read back as the mode that
+  // set them (see route-coding-mode.ts `inferMode`).
+  const codingMode = createCodingModeHandlers();
   return [
     { method: "GET", path: "/health", handler: createHealthHandler(), requiresAuth: false },
     { method: "GET", path: "/v1/models", handler: createModelsHandler(), requiresAuth: false },
@@ -86,8 +87,8 @@ export function buildRouteTable(): RouteDefinition[] {
     },
     { method: "POST", path: "/api/approval/resolve", handler: createResolveApprovalHandler() },
     { method: "GET", path: "/api/events", handler: createApprovalEventsHandler() },
-    { method: "GET", path: "/api/coding-mode", handler: createGetCodingModeHandler() },
-    { method: "POST", path: "/api/coding-mode", handler: createSetCodingModeHandler() },
+    { method: "GET", path: "/api/coding-mode", handler: codingMode.get },
+    { method: "POST", path: "/api/coding-mode", handler: codingMode.set },
     { method: "POST", path: "/api/context-preview", handler: createContextPreviewHandler() },
     { method: "POST", path: "/api/tasks", handler: createCreateTaskHandler() },
     { method: "GET", path: "/api/tasks", handler: createListTasksHandler() },

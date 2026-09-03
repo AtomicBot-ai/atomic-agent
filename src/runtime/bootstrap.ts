@@ -166,6 +166,8 @@ import {
   SessionStore,
   createEmptySessionState,
   contextUsageFromPrompt,
+  recordTurn,
+  userTurn,
   type ContextUsageState,
   SESSION_LLM_METADATA_KEY,
   type SessionLlmStamp,
@@ -2471,6 +2473,16 @@ export async function createAgentRuntime(
         id: `preview-${randomUUID()}`,
         workingDir,
       });
+    }
+    // The draft belongs in the transcript, exactly as the loop puts it
+    // there (agent-loop.ts: `state = recordTurn(state, userTurn(text))`
+    // before the first step). `buildPrompt`'s own `userMessage` input
+    // never reaches the conversation section — it only feeds the profile
+    // keyword gate and the task policy — so without this the preview
+    // would price the draft at zero. Nothing is persisted: `session` is
+    // an in-memory value here and `sessionStore.save` is never called.
+    if (input.userMessage !== undefined && input.userMessage.length > 0) {
+      session = recordTurn(session, userTurn(input.userMessage));
     }
     const transport = resolveActiveLlmSlice().transport;
     return buildPrompt({
