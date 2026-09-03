@@ -11,8 +11,14 @@ import { TransportError } from "../reliability/llm-failures.js";
  *    `false` means the error is deterministic (same request fails the
  *    same way everywhere) or is a cancellation — propagate it untouched.
  *  - `immediate`: an unambiguous provider-down signal (429 / 408 / 5xx /
- *    network-null) that should switch on the FIRST occurrence, bypassing
- *    the consecutive-failure threshold.
+ *    network-null). This does NOT control whether the chain switches —
+ *    `ProviderFallbackChain.advanceFrom` returns the next link on the
+ *    FIRST fallover-worthy failure whenever `advance` is true, immediate
+ *    or not. What it controls is the breaker: `registerFailure` arms the
+ *    cooldown right away on an immediate signal, instead of waiting for
+ *    `failureThreshold` consecutive failures. So `immediate` decides how
+ *    long the failed link stays quarantined across later turns, not the
+ *    in-turn switch.
  */
 export interface AdvanceDecision {
   advance: boolean;
@@ -29,15 +35,21 @@ const NO: AdvanceDecision = { advance: false, immediate: false };
  *  - `transport` → advance (provider unreachable). Note every cloud
  *    `OpenAiHttpError` classifies as `transport` regardless of status, so
  *    a 404 model-not-found or a 401 dead key advances too — a different
- *    link may have the model or a working key. Untyped socket failures
+ *    link may have the model or a working key. The local path now agrees:
+ *    a llama-server 404/405 (the configured URL does not serve
+ *    completions) or 401/403/429 advances for the same reason. A
+ *    subscription-CLI provider whose binary is missing or is signed out
+ *    is the same story with no HTTP in it. Untyped socket failures
  *    (undici's `TypeError: fetch failed` and friends, from surfaces that
  *    do not wrap their own errors) land here too — see `isNetworkError`.
  *  - `model` → advance. This is a *defective completion* from a reachable
  *    provider (truncated / empty / no_stop), not "model not found"; the
  *    same prompt would reproduce it here, so another link is worth a try.
- *  - `grammar` / `tool` / `cancelled` → do not advance. A grammar/4xx
- *    failure is request-shape and repeats identically on every provider;
- *    a tool failure is our own bug; a cancellation is user intent.
+ *  - `grammar` / `tool` / `cancelled` → do not advance. A grammar failure
+ *    is request-shape — an unparseable completion, or the narrow band of
+ *    llama-server 4xx that rejects the request itself (400/413/422) —
+ *    and repeats identically on every provider; a tool failure is our own
+ *    bug; a cancellation is user intent.
  *
  * Immediate signals are read off the typed status carried by
  * `OpenAiHttpError` / `LlamaServerError` / `TransportError`: an explicit

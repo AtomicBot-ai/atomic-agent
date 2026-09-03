@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { reduceTuiState } from "./agent-event-reducer.js";
+import { EMPTY_CONTEXT_USAGE } from "./context-usage-from-prompt.js";
 import { reduceUiAction } from "./reduce-ui-actions.js";
 import { THEME_NAMES } from "./theme/theme.js";
 import { createInitialTuiState, type TuiSessionInfo } from "./tui-state.js";
@@ -176,6 +177,44 @@ describe("reduceUiAction message_queued", () => {
       messages: [],
     });
     expect(next?.queuedMessages).toEqual([]);
+  });
+
+  it("restores the target session's persisted context gauge on switch", () => {
+    const state = {
+      ...createInitialTuiState(SESSION),
+      contextUsage: { ...EMPTY_CONTEXT_USAGE, tokens: 999 },
+    };
+    const snapshot = {
+      ...EMPTY_CONTEXT_USAGE,
+      tokens: 4321,
+      conversationTokens: 2100,
+      conversationPairs: 2,
+      sections: [{ label: "conversation", tokens: 2100 }],
+    };
+    const next = reduceUiAction(state, {
+      type: "session_switched",
+      sessionId: "s2",
+      workingDir: "/tmp",
+      messages: [],
+      contextUsage: snapshot,
+    });
+    expect(next?.contextUsage).toEqual(snapshot);
+  });
+
+  it("resets the gauge when the target session carries no snapshot", () => {
+    // Carrying the old thread's figure over would claim the fresh
+    // session is exactly as full as the one just left.
+    const state = {
+      ...createInitialTuiState(SESSION),
+      contextUsage: { ...EMPTY_CONTEXT_USAGE, tokens: 999 },
+    };
+    const next = reduceUiAction(state, {
+      type: "session_switched",
+      sessionId: "s2",
+      workingDir: "/tmp",
+      messages: [],
+    });
+    expect(next?.contextUsage).toEqual(EMPTY_CONTEXT_USAGE);
   });
 });
 

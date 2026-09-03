@@ -6,8 +6,8 @@ import {
 } from "../local-llm/index.js";
 import { resolveFallbackChain } from "../llm/fallback/index.js";
 import {
+  activeTextProviderIsLlamaServer,
   resolveLlmConfig,
-  type ResolvedLlmConfig,
 } from "../llm/provider/registry/index.js";
 import { formatBytes } from "./hooks/use-transfer-rate.js";
 import type { LocalModelsPullState } from "./local-models/local-models-panel-state.js";
@@ -53,20 +53,12 @@ export type LocalTurnGateDecision =
   | { kind: "block"; text: string };
 
 /**
- * KIND-based local detection, mirroring `selectComposerBackend`: any
- * `llama-server` entry is the local route, because `LlamaServerProvider`
- * accepts a custom id (`options.id`) — keying on the literal
- * `local-llama` id would leave a renamed entry ungated. An active id
- * that resolves to no entry reads as local too, matching the composer's
- * no-active-row rule (and the no-`llm`-block default, which
- * `resolveLlmConfig` synthesizes as a `llama-server` entry anyway).
+ * Moved beside `resolveLlmConfig` (issue #112): `src/runtime/` and
+ * `src/sidecar/` gate their local probes on the same predicate and must
+ * not import from `src/tui/`. Re-exported here so the gate's original
+ * callers keep working.
  */
-export function activeTextProviderIsLlamaServer(
-  llm: ResolvedLlmConfig,
-): boolean {
-  const active = llm.providers.find((p) => p.id === llm.activeTextProvider);
-  return active === undefined || active.kind === "llama-server";
-}
+export { activeTextProviderIsLlamaServer };
 
 /**
  * Read the live facts from config + disk. Cheap on the happy path: the

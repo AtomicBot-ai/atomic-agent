@@ -1967,7 +1967,24 @@ function toLlmFailure(err: unknown, ctx: StepContext): LlmFailure {
     );
   }
   if (err instanceof LlamaServerError) {
-    if (err.status === null || err.status >= 500) {
+    // Delegate the status split to `classifyFailure` rather than
+    // restating it. This arm used to carry its own hardcoded copy
+    // (`status === null || >= 500` ⇒ transport, everything else ⇒
+    // grammar), and because `executeStep` rethrows *this* wrapper — and
+    // `classifyFailure`'s first line short-circuits on `LlmFailure` —
+    // the copy, not the classifier, decided the category the user reads.
+    // The two diverged the moment the taxonomy moved: a 404 from a wrong
+    // `localModels.url` still surfaced as `Turn failed [grammar]` with no
+    // unreachable hint. One taxonomy, one place.
+    //
+    // `classifyFailure` cannot return `cancelled`/`model`/`tool` for a
+    // `LlamaServerError` (its own arm returns only `transport` or
+    // `grammar`, and it is reached before the abort/network branches),
+    // and an aborted step has already been claimed by the
+    // `ctx.signal.aborted` check above — so nothing is laundered here.
+    // Only `transport` becomes a `TransportError`; every other answer
+    // keeps the historical `GrammarError`.
+    if (classifyFailure(err) === "transport") {
       return new TransportError(err.message, err.status, err.url, { cause: err });
     }
     return new GrammarError(err.message, "", { cause: err });

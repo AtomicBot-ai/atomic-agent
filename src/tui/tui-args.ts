@@ -17,6 +17,14 @@ export interface TuiArgs {
    * text selection for this run.
    */
   mouse: boolean | null;
+  /**
+   * Dev testing ground for the update surfaces: pretend this version is
+   * available on GitHub Releases. Skips the real check (and the real
+   * installer on accept), so the modal, the status-bar banner and their
+   * degradations can be eyeballed without publishing a release or
+   * running a stale binary. `null` in normal operation.
+   */
+  fakeUpdateVersion: string | null;
 }
 
 export type TuiArgsResult = TuiArgs | { error: string } | { help: true };
@@ -36,6 +44,7 @@ export const TUI_HELP =
     "  --skip-llama-setup   Skip the first-run local-model setup gate",
     "  --mouse              Force terminal mouse support on for this run",
     "  --no-mouse           Disable mouse support; restores drag-to-select",
+    "  --fake-update <ver>  Dev: pretend version <ver> is released (no real install)",
     "",
     "Needs an interactive terminal; in scripts use `atomic-agent run`.",
   ].join("\n") + "\n";
@@ -58,6 +67,7 @@ export function parseTuiArgs(args: string[]): TuiArgsResult {
   let noApproval = false;
   let skipLlamaSetup = false;
   let mouse: boolean | null = null;
+  let fakeUpdateVersion: string | null = null;
   for (let i = 0; i < args.length; i += 1) {
     const flag = args[i];
     switch (flag) {
@@ -90,6 +100,16 @@ export function parseTuiArgs(args: string[]): TuiArgsResult {
       case "--no-mouse":
         mouse = false;
         break;
+      case "--fake-update": {
+        const value = args[++i];
+        // A bare version, not a flag that happened to follow. Catching
+        // `--fake-update --no-mouse` here beats a banner advertising
+        // "v--no-mouse" ten minutes into a test session.
+        if (!value || value.startsWith("-"))
+          return { error: "--fake-update requires a version (e.g. --fake-update 9.9.9)" };
+        fakeUpdateVersion = value.replace(/^v/, "");
+        break;
+      }
       default:
         return { error: `unknown flag: ${flag}` };
     }
@@ -100,6 +120,7 @@ export function parseTuiArgs(args: string[]): TuiArgsResult {
     noApproval,
     skipLlamaSetup,
     mouse,
+    fakeUpdateVersion,
   };
 }
 

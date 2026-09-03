@@ -1,4 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import {
+  getUserConfigPath,
+  resetConfigCache,
+  USER_CONFIG_DEFAULTS,
+  writeUserConfigFileSync,
+} from "../../config/index.js";
+import type { UserConfigFile } from "../../config/index.js";
 
 import * as healthModule from "../../llm/llama-server-health.js";
 import type { HealthResult } from "../../llm/llama-server-health.js";
@@ -434,5 +445,208 @@ describe("LlmHealthPoller", () => {
     expect(
       capture.actions.map((a) => a.type).filter((t) => t.includes("rss")),
     ).toEqual([]);
+  });
+});
+/**
+ * Issue #112 — the footer poller is the noisiest local prober in the
+ * process: `/health` every 3 s plus a one-shot `/props`, from the moment
+ * the TUI mounts, whatever the route. On a cloud session that is a
+ * request every three seconds against a server nobody is running, and a
+ * `down` badge plus an `n_ctx` reading about a backend that is not
+ * serving the turn.
+ */
+describe("LlmHealthPoller — gated on the active text provider", () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "atomic-poller-gate-"));
+  let previousStateDir: string | undefined;
+  let spy: ReturnType<typeof vi.spyOn>;
+
+  /** A cloud primary with a local EMBEDDING entry — the shape #112 is about. */
+  const CLOUD_LLM: UserConfigFile["llm"] = {
+    activeTextProvider: "cloudy",
+    activeEmbeddingProvider: "local-llama-embed",
+    providers: [
+      {
+        id: "cloudy",
+        kind: "openai-compatible",
+        baseUrl: "https://cloud.invalid",
+        defaultChatModel: "cloudy-1",
+        apiKey: "sk-test",
+      },
+      {
+        id: "local-llama-embed",
+        kind: "llama-server",
+        url: "http://127.0.0.1:19092",
+      },
+    ],
+    toolTransport: "auto",
+  };
+
+  const writeLlm = (llm: UserConfigFile["llm"]): void => {
+    writeUserConfigFileSync(getUserConfigPath(stateDir), {
+      ...USER_CONFIG_DEFAULTS,
+      ...(llm ? { llm } : {}),
+    });
+    resetConfigCache();
+  };
+
+  beforeEach(() => {
+    previousStateDir = process.env.ATOMIC_AGENT_STATE_DIR;
+    process.env.ATOMIC_AGENT_STATE_DIR = stateDir;
+    spy = vi.spyOn(healthModule, "checkLlamaServer");
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    if (previousStateDir === undefined) {
+      delete process.env.ATOMIC_AGENT_STATE_DIR;
+    } else {
+      process.env.ATOMIC_AGENT_STATE_DIR = previousStateDir;
+    }
+    rmSync(getUserConfigPath(stateDir), { force: true });
+    resetConfigCache();
+  });
+
+  it("probes nothing at TUI startup when a cloud provider is active", async () => {
+    writeLlm({
+      activeTextProvider: "cloudy",
+      activeEmbeddingProvider: "local-llama-embed",
+      providers: [
+        {
+          id: "cloudy",
+          kind: "openai-compatible",
+          baseUrl: "https://cloud.invalid",
+          defaultChatModel: "cloudy-1",
+          apiKey: "sk-test",
+        },
+        { id: "local-llama-embed", kind: "llama-server", url: "http://127.0.0.1:19092" },
+      ],
+      toolTransport: "auto",
+    });
+    const props = vi.fn(stubProps);
+    const capture = makeCapture();
+    const poller = new LlmHealthPoller(capture, "http://127.0.0.1:8080", 10, props);
+    poller.start();
+    await sleep(40);
+    poller.stop();
+
+    // Exact counts: several tick windows elapsed, and every one of them
+    // must have cost zero requests.
+    expect(spy).toHaveBeenCalledTimes(0);
+    expect(props).toHaveBeenCalledTimes(0);
+    expect(capture.actions).toEqual([]);
+  });
+
+  it("probes on the same schedule as before when the route is local", async () => {
+    // The control: same poller, same timings, default (llama-server)
+    // config — one `/health` per tick and the one-shot `/props`.
+    writeLlm(undefined);
+    spy.mockResolvedValue({
+      reachable: true,
+      status: 200,
+      error: null,
+      latencyMs: 1,
+    } satisfies HealthResult);
+    const props = vi.fn(stubProps);
+    const capture = makeCapture();
+    const poller = new LlmHealthPoller(capture, "http://127.0.0.1:8080", 10_000, props);
+    poller.start();
+    await sleep(30);
+    poller.stop();
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(props).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * Issue #112 review, F4. `updateUrl` reset its bookkeeping and then
+   * emitted `llm_model_updated {model: null, contextWindow: null}`
+   * unconditionally — no request, but still a statement about the
+   * session's model, published on a route where this poller's backend is
+   * not the one serving. `/llama <url>` on a cloud session would blank
+   * the tray label the active provider had put there.
+   */
+  it("emits nothing from updateUrl while a cloud provider is active", async () => {
+    writeLlm(CLOUD_LLM);
+    const props = vi.fn(stubProps);
+    const capture = makeCapture();
+    const poller = new LlmHealthPoller(
+      capture,
+      "http://127.0.0.1:8080",
+      10_000,
+      props,
+    );
+    poller.start();
+    poller.updateUrl("http://127.0.0.1:9090");
+    await poller.refreshModelLabel();
+    await sleep(20);
+    poller.stop();
+
+    expect(capture.actions).toEqual([]);
+    expect(spy).toHaveBeenCalledTimes(0);
+    expect(props).toHaveBeenCalledTimes(0);
+  });
+
+  it("still announces a URL change on a local route (control)", async () => {
+    writeLlm(undefined);
+    spy.mockResolvedValue({
+      reachable: true,
+      status: 200,
+      error: null,
+      latencyMs: 1,
+    } satisfies HealthResult);
+    const capture = makeCapture();
+    const poller = new LlmHealthPoller(
+      capture,
+      "http://127.0.0.1:8080",
+      10_000,
+      stubProps,
+    );
+    poller.updateUrl("http://127.0.0.1:9090");
+    await sleep(20);
+    poller.stop();
+
+    expect(
+      capture.actions.filter((a) => a.type === "llm_model_updated"),
+    ).toContainEqual({
+      type: "llm_model_updated",
+      model: null,
+      contextWindow: null,
+    });
+  });
+
+  it("resumes within one tick after a hot switch back to a local provider", async () => {
+    writeLlm({
+      activeTextProvider: "cloudy",
+      activeEmbeddingProvider: "local-llama-embed",
+      providers: [
+        {
+          id: "cloudy",
+          kind: "openai-compatible",
+          baseUrl: "https://cloud.invalid",
+          defaultChatModel: "cloudy-1",
+          apiKey: "sk-test",
+        },
+        { id: "local-llama-embed", kind: "llama-server", url: "http://127.0.0.1:19092" },
+      ],
+      toolTransport: "auto",
+    });
+    spy.mockResolvedValue({
+      reachable: true,
+      status: 200,
+      error: null,
+      latencyMs: 1,
+    } satisfies HealthResult);
+    const capture = makeCapture();
+    const poller = new LlmHealthPoller(capture, "http://127.0.0.1:8080", 10, stubProps);
+    poller.start();
+    await sleep(40);
+    expect(spy).toHaveBeenCalledTimes(0);
+
+    // The operator picks the local backend again. No start/stop call
+    // reaches the poller — it re-reads config on its own tick.
+    writeLlm(undefined);
+    await sleep(40);
+    poller.stop();
+    expect(spy.mock.calls.length).toBeGreaterThan(0);
   });
 });

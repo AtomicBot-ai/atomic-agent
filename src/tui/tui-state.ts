@@ -4,6 +4,7 @@ import {
 } from "../approval/approval-level.js";
 import type { CodingMode } from "./coding-mode.js";
 import { EMPTY_CONTEXT_USAGE } from "./context-usage-from-prompt.js";
+import type { ContextUsageState } from "../session/context-usage.js";
 import type { ComposerSwitchState } from "./composer-switch/composer-switch-state.js";
 import type { ContextMenuState } from "./context-menu/context-menu-state.js";
 import type { ApprovalRequest } from "../approval/approval-gate.js";
@@ -135,6 +136,14 @@ export interface ChatMessage {
   text: string;
   /** `warn` — failure / runtime error styling in {@link SystemBubble}. */
   variant?: ChatMessageVariant;
+  /**
+   * A user prompt this notice offers to re-run. Set on the system
+   * notice a user-initiated abort leaves in the chat: the stop was one
+   * click, so undoing a mistaken one should be too. `chat-log.tsx`
+   * renders a `[try again]` beside `[copy]` that resubmits THIS text —
+   * the aborted turn's user message — never the notice's own text.
+   */
+  retryText?: string;
   /** Number of tool steps the assistant ran inside this turn. */
   toolSteps?: number;
   /** Tool cards (call + result) attached to this assistant turn. */
@@ -230,70 +239,15 @@ export interface RollingMetrics {
  * readout that answers "how full is the window right now". The window
  * does not empty when you press Enter.
  *
- * Every field is a snapshot of the most recent `prompt_built`, refined by
- * the completion's own token count when the provider reports one.
+ * The shape itself now lives in `src/session/context-usage.ts` — the
+ * runtime persists the same snapshot on `SessionState` so a reopened
+ * session can restore the gauge — and is re-exported here so TUI-side
+ * importers keep their path.
  */
-export interface ContextUsageState {
-  /**
-   * Tokens in the last prompt. An estimate at `prompt_built` time
-   * (`estimateTokens` over-counts by design), replaced by the real
-   * tokenizer count once the step completes and the provider reports
-   * `promptTokens`.
-   */
-  tokens: number | null;
-  /**
-   * Physical window the prompt was built against, when the runtime knows
-   * it. `null` on cloud providers, where the model profile carries no
-   * window — the chip resolves those from the model catalogue instead.
-   */
-  contextWindow: number | null;
-  /** Turns `packConversation` dropped to make the transcript fit. */
-  droppedTurns: number;
-  /** Tokens the `### conversation` section actually rendered to. */
-  conversationTokens: number;
-  /**
-   * Ceiling that section is packed to — `conversationCapEffective`. The
-   * one number that says when older turns start being dropped, and the
-   * only budget figure that is defined even when nobody knows the
-   * physical window (the clamp falls back to the configured cap).
-   */
-  conversationCap: number | null;
-  /**
-   * The cap as configured (`agent.conversationMaxTokens`), before the
-   * window clamp. Equal to `conversationCap` when config is what binds;
-   * larger when the window is. That comparison is the only way to tell
-   * an operator which knob actually moves their limit.
-   */
-  conversationCapConfigured: number | null;
-  /**
-   * The configured cap is `0` — auto. `conversationCapConfigured` is
-   * then a fallback rather than a ceiling, so the comparison above says
-   * nothing and the panel must not name `agent.conversationMaxTokens`
-   * as what is holding the transcript down. Nothing is: the window is.
-   */
-  conversationCapAuto: boolean;
-  /** Macro-turns the prompt carried. */
-  conversationPairs: number;
-  /** Macro-turns dropped whole. */
-  droppedPairs: number;
-  /** `agent.conversationMaxPairs` in force. */
-  conversationPairsCap: number;
-  /** Which limit trimmed history, when either did. */
-  conversationBoundBy: "pairs" | "tokens" | null;
-  /**
-   * Token cost of each macro-turn, oldest first — enough to price a
-   * different pair count without building another prompt, so moving the
-   * dial redraws the gauge while the operator is looking at it.
-   */
-  pairCosts: readonly number[];
-  /** Per-section breakdown, for the detail view. Empty before the first prompt. */
-  sections: readonly ContextUsageSection[];
-}
-
-export interface ContextUsageSection {
-  label: string;
-  tokens: number;
-}
+export type {
+  ContextUsageState,
+  ContextUsageSection,
+} from "../session/context-usage.js";
 
 export interface TuiSessionInfo {
   sessionId: string | null;
@@ -527,6 +481,15 @@ export interface TuiState {
    * offer was dismissed / accepted). Drives the {@link UpdateModal}.
    */
   updatePrompt: { current: string; latest: string } | null;
+  /**
+   * Persistent "a newer release exists" fact behind the status-bar
+   * banner. Set alongside {@link updatePrompt} and — unlike the prompt —
+   * NOT cleared by `update_dismissed`: skipping the modal means "not
+   * now", and the banner is what keeps the offer reachable afterwards.
+   * The bar hides it while an update is running or finished
+   * (`updateStatus`), so no reducer case ever needs to null it.
+   */
+  updateBanner: { current: string; latest: string } | null;
   /**
    * Lifecycle of an accepted self-update. `running` while `install.sh`
    * executes; `done` / `failed` after it settles. Purely informational —
@@ -790,6 +753,7 @@ export function createInitialTuiState(
     themePickerOriginal: "",
     aborting: false,
     updatePrompt: null,
+    updateBanner: null,
     updateStatus: "idle",
     ringBufferSize,
     tasksPanel: createInitialTasksPanelState(),

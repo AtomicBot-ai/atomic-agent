@@ -31,7 +31,11 @@ import { isProvidersAction } from "./providers-actions.js";
 import type { ProviderRow } from "./providers-panel-state.js";
 import { saveProviderWizardToConfig } from "./save-provider-wizard.js";
 import { verifyWizardBeforeSave } from "./verify-wizard-before-save.js";
-import { wizardKindForSubscriptionCli } from "./providers-wizard-state.js";
+import { probeWizardContract } from "./probe-wizard-contract.js";
+import {
+  createProvidersWizardState,
+  wizardKindForSubscriptionCli,
+} from "./providers-wizard-state.js";
 import type {
   ProvidersWizardKind,
   ProvidersWizardState,
@@ -50,6 +54,13 @@ export class ProvidersOrchestrator {
 
   /** Aborts the pre-save key check when the operator presses Esc. */
   private wizardVerifyAbort: AbortController | null = null;
+
+  /**
+   * Guards `/llm check` against a second run while one is in flight.
+   * The probe spends real requests against a route the operator may be
+   * paying per token for; a held-down key must not queue three of them.
+   */
+  private contractProbeRunning = false;
 
   constructor(
     private readonly runtime: AgentRuntime,
@@ -365,13 +376,25 @@ export class ProvidersOrchestrator {
       // A cancel already put the wizard back in an editable state; a
       // late verdict from the abandoned check must not overwrite it.
       if (abort.signal.aborted) return;
-      // The check is over; from here Esc has nothing to cancel and must
-      // not interrupt the save that follows.
-      this.wizardVerifyAbort = null;
       if (!gate.proceed) {
+        this.wizardVerifyAbort = null;
         this.bus.emit({ type: "providers_wizard_failed", error: gate.error });
         return;
       }
+      // A live key proves the account, not the route. Exercise the real
+      // contract once — streaming, tools payload, forced native tool
+      // call — before this provider is reported as working, so a route
+      // that only fails with `tools` in the body is named here instead
+      // of on the operator's first message.
+      //
+      // It cannot refuse the save (see `probe-wizard-contract`), but it
+      // runs while Esc can still abandon the whole submit, so nothing
+      // has reached disk yet if the operator gives up on a slow route.
+      const contract = await probeWizardContract(wizard, { signal: abort.signal });
+      if (abort.signal.aborted) return;
+      // Both checks are over; from here Esc has nothing to cancel and
+      // must not interrupt the save that follows.
+      this.wizardVerifyAbort = null;
       const built = saveProviderWizardToConfig(wizard);
       const exists = this.runtime.providerRegistry
         .listIds()
@@ -392,7 +415,12 @@ export class ProvidersOrchestrator {
       // an unreachable check is not a proven backend. A warned save that
       // turns out to work reports on a later verified save instead.
       // Only the provider id travels — never the key or the base URL.
-      if (gate.warning === null) {
+      //
+      // The contract probe joins the same gate: a route that could not
+      // stream a native tool call has not been shown to run a turn, and
+      // reporting it as a working backend would be the silent
+      // "fully compatible" this check exists to prevent.
+      if (gate.warning === null && contract.warning === null) {
         this.runtime.reportModelConfigured(built.entry.id, "cloud");
       }
       if (gate.warning) {
@@ -400,6 +428,10 @@ export class ProvidersOrchestrator {
         // will see it rather than letting the first chat message find out.
         this.bus.emit({ type: "providers_status", line: gate.warning });
         this.bus.emit({ type: "runtime_info", line: gate.warning });
+      }
+      if (contract.warning) {
+        this.bus.emit({ type: "providers_status", line: contract.warning });
+        this.bus.emit({ type: "runtime_info", line: contract.warning });
       }
       this.bus.emit({
         type: "runtime_info",
@@ -429,6 +461,104 @@ export class ProvidersOrchestrator {
       });
     } finally {
       if (this.wizardVerifyAbort === abort) this.wizardVerifyAbort = null;
+    }
+  }
+
+  /**
+   * Run the contract probe against a provider that is already saved
+   * (`null` = the active text provider), on explicit request — the
+   * `/llm check` command.
+   *
+   * This is the second of exactly two ways the probe ever runs: here,
+   * and once per wizard save. It is never on a turn path. A route can
+   * degrade after setup (a gateway drops a backend, an account runs
+   * dry), and until now the only way to find out was to send a real
+   * message and watch it fail.
+   *
+   * The provider is described to the probe through a `configure` wizard
+   * state — the same object the panel builds when the operator presses
+   * `c` on that row — so the endpoint, key and model resolution is
+   * literally the wizard's, not a second implementation that could
+   * drift from it.
+   */
+  async runContractProbe(providerId: string | null): Promise<void> {
+    if (this.contractProbeRunning) {
+      this.bus.emit({
+        type: "providers_status",
+        line: "A provider check is already running.",
+      });
+      return;
+    }
+    const config = getConfig();
+    const resolved = resolveLlmConfig(config);
+    const id = providerId ?? resolved.activeTextProvider;
+    const provider = id ? resolved.providers.find((p) => p.id === id) : undefined;
+    if (!id || !provider) {
+      this.bus.emit({
+        type: "providers_status",
+        line: "No provider to check — configure one first.",
+      });
+      return;
+    }
+    const fileEntry = config.llm?.providers.find((e) => e.id === id);
+    const kind = configureWizardKindForRow({
+      kind: provider.kind,
+      ...(fileEntry?.subscriptionCli
+        ? { subscriptionCli: { cli: fileEntry.subscriptionCli.cli } }
+        : {}),
+    });
+    const chatModel = fileEntry?.defaultChatModel ?? fileEntry?.model ?? null;
+    const wizard = kind
+      ? {
+          ...createProvidersWizardState("configure", {
+            providerId: id,
+            kind,
+            ...(fileEntry?.baseUrl ? { baseUrl: fileEntry.baseUrl } : {}),
+            ...(chatModel ? { chatModel } : {}),
+          }),
+          // The factory prefills `chatModelLine` only for CLI-backed
+          // kinds — a cloud reconfigure re-picks its model on the model
+          // screen. Nothing is being re-picked here, so the saved model
+          // is pinned directly; without it the probe would silently
+          // test the kind's default instead of the model this provider
+          // actually runs, and report a verdict about the wrong route.
+          ...(chatModel ? { selectedChatModelId: chatModel } : {}),
+        }
+      : null;
+
+    this.contractProbeRunning = true;
+    this.bus.emit({ type: "providers_busy", busy: true });
+    try {
+      // Every path here says what actually happened, including the ones
+      // where no request went out. Reporting a skip as a pass would be
+      // the silent "fully compatible" this whole check exists to stop.
+      const outcome = wizard ? await probeWizardContract(wizard) : null;
+      const line =
+        outcome?.summary ??
+        `"${id}" has no provider kind that can be contract-checked.`;
+      this.bus.emit({ type: "providers_status", line });
+      this.bus.emit({ type: "runtime_info", line });
+      // What the route actually said, on the one surface where it is
+      // worth the noise: this command was typed to diagnose something,
+      // and a verdict sentence alone leaves the operator guessing which
+      // 400 they are looking at. Bounded and credential-scrubbed at the
+      // source (`redactProviderDetail`), and only when there is a
+      // problem — a passing route's stream summary tells nobody
+      // anything.
+      if (outcome?.result && !outcome.proven && outcome.result.detail.length > 0) {
+        this.bus.emit({
+          type: "runtime_info",
+          line: `Route said: ${outcome.result.detail}`,
+        });
+      }
+    } catch (err) {
+      this.bus.emit({
+        type: "providers_status",
+        line: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      this.contractProbeRunning = false;
+      this.bus.emit({ type: "providers_busy", busy: false });
     }
   }
 

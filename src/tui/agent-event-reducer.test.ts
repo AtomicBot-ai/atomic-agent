@@ -353,6 +353,98 @@ describe("reduceTuiState", () => {
     expect(errMsg?.text).toBe("Turn failed [tool]: boom");
   });
 
+  it("renders a calm stopped-by-user notice with a retry prompt on a cancelled loop_failed", () => {
+    const initial = createInitialTuiState(fakeSession());
+    const next = apply(initial, [
+      { type: "agent_event", event: { type: "user_message", text: "count the stars" } },
+      { type: "message_submitted" },
+      {
+        type: "agent_event",
+        event: {
+          type: "loop_failed",
+          error: new Error("This operation was aborted"),
+          category: "cancelled",
+        },
+      },
+    ]);
+    expect(next.status).toBe("idle");
+    expect(next.lastRunStatus).toBe("stopped by user");
+    expect(next.runHistory[0]?.outcome).toBe("cancelled");
+    // No warn-styled "Turn failed" wall: the operator did this on
+    // purpose and the notice says so, carrying the aborted turn's
+    // prompt for the [try again] affordance.
+    const warn = next.messages.find(
+      (m) => m.role === "system" && m.variant === "warn",
+    );
+    expect(warn).toBeUndefined();
+    const notice = next.messages.find((m) => m.role === "system");
+    expect(notice?.text).toBe("Agent stopped by user.");
+    expect(notice?.retryText).toBe("count the stars");
+  });
+
+  it("treats any loop_failed during a requested abort as stopped-by-user", () => {
+    // The abort races the LLM stream: a killed response can surface as
+    // `[model] model returned empty content` before the AbortError
+    // does. With `abort_requested` on the books, that is still the
+    // operator's stop, not a provider failure.
+    const initial = createInitialTuiState(fakeSession());
+    const next = apply(initial, [
+      { type: "agent_event", event: { type: "user_message", text: "count the stars" } },
+      { type: "message_submitted" },
+      { type: "abort_requested" },
+      {
+        type: "agent_event",
+        event: {
+          type: "loop_failed",
+          error: new Error("model returned empty content"),
+          category: "model",
+        },
+      },
+    ]);
+    expect(next.lastRunStatus).toBe("stopped by user");
+    expect(next.aborting).toBe(false);
+    const notice = next.messages.find((m) => m.role === "system");
+    expect(notice?.text).toBe("Agent stopped by user.");
+    expect(notice?.retryText).toBe("count the stars");
+  });
+
+  it("keeps the warn styling for a loop_failed with no abort on the books", () => {
+    const initial = createInitialTuiState(fakeSession());
+    const next = apply(initial, [
+      { type: "message_submitted" },
+      {
+        type: "agent_event",
+        event: {
+          type: "loop_failed",
+          error: new Error("model returned empty content"),
+          category: "model",
+        },
+      },
+    ]);
+    const warn = next.messages.find(
+      (m) => m.role === "system" && m.variant === "warn",
+    );
+    expect(warn?.text).toBe("Turn failed [model]: model returned empty content");
+  });
+
+  it("leaves retryText off the stopped notice when no user message exists to re-run", () => {
+    const initial = createInitialTuiState(fakeSession());
+    const next = apply(initial, [
+      { type: "message_submitted" },
+      {
+        type: "agent_event",
+        event: {
+          type: "loop_failed",
+          error: new Error("This operation was aborted"),
+          category: "cancelled",
+        },
+      },
+    ]);
+    const notice = next.messages.find((m) => m.role === "system");
+    expect(notice?.text).toBe("Agent stopped by user.");
+    expect(notice?.retryText).toBeUndefined();
+  });
+
   it("appends the llama hint on transport failure for a custom-id llama-server route", () => {
     const initial = createInitialTuiState(fakeSession());
     const next = apply(initial, [
@@ -832,5 +924,36 @@ describe("turn_gate_blocked", () => {
     expect(blocked.messages.at(-1)?.text).toContain("dropped: second");
     // The feed line stays single-line even for a multi-line message.
     expect(blocked.feed.at(-1)?.line).not.toContain("\n");
+  });
+});
+
+describe("update banner state", () => {
+  const offer: TuiAction = {
+    type: "update_available",
+    current: "0.5.4",
+    latest: "9.9.9",
+  };
+
+  it("update_available raises both the modal and the banner", () => {
+    const next = reduceTuiState(createInitialTuiState(fakeSession()), offer);
+    expect(next.updatePrompt).toEqual({ current: "0.5.4", latest: "9.9.9" });
+    expect(next.updateBanner).toEqual({ current: "0.5.4", latest: "9.9.9" });
+  });
+
+  it("update_dismissed clears only the modal — the banner is the memory", () => {
+    const next = apply(createInitialTuiState(fakeSession()), [
+      offer,
+      { type: "update_dismissed" },
+    ]);
+    expect(next.updatePrompt).toBeNull();
+    expect(next.updateBanner).toEqual({ current: "0.5.4", latest: "9.9.9" });
+  });
+
+  it("a repeat offer while an update runs still changes nothing", () => {
+    const running = apply(createInitialTuiState(fakeSession()), [
+      offer,
+      { type: "update_started" },
+    ]);
+    expect(reduceTuiState(running, offer)).toBe(running);
   });
 });

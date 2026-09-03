@@ -5,6 +5,7 @@ import {
   QWEN_THINK_PROFILE,
 } from "../llm/model-profile.js";
 import { buildPrompt } from "./build-prompt.js";
+import { DEFAULT_TOOL_DESCRIPTORS } from "./tool-descriptors.js";
 import { createEmptySessionState } from "../session/session-state.js";
 import type { SessionState } from "../session/session-state.js";
 import type {
@@ -230,6 +231,36 @@ describe("buildPrompt", () => {
     expect(prompt.stablePrefix).toContain("Large directories:");
     expect(prompt.stablePrefix).toContain("Large trees:");
     expect(prompt.stablePrefix).toContain("os.fs.read_document");
+  });
+
+  it("frequent-tool summaries send source files to os.fs.read, not read_document", () => {
+    // Issue #113: the stable prefix is where a model decides between the
+    // two readers, and it ships on every turn. Pinning the wording here
+    // (against the real descriptors, not the stub TOOLS above) keeps a
+    // future summary edit from quietly dropping the routing hint that
+    // stops models bouncing off read_document's unsupported-extension
+    // error on `.py` / `.ts` files.
+    const prompt = buildPrompt({
+      session: mkSession(),
+      toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    expect(prompt.stablePrefix).toContain(
+      "the default for source code and text files",
+    );
+    expect(prompt.stablePrefix).toContain(
+      "NOT for source code: use os.fs.read",
+    );
+    // The summary must not claim read_document rejects text files — it
+    // extracts .txt/.md/.csv as `plain`, and a summary that contradicts the
+    // tool re-creates the very ambiguity this change removes.
+    expect(prompt.stablePrefix).not.toContain("NOT for source code or text files");
+    // The bad guess in issue #113 was `format: "text"`. The stable prefix
+    // carries the closed set so the guess is never reachable.
+    expect(prompt.stablePrefix).toContain(
+      "format?: 'pdf' | 'docx' | 'doc' | 'xlsx' | 'rtf' | 'odt' | 'pptx' | 'plain'",
+    );
   });
 
   it("stable prefix changes deterministically when a skill is removed from the catalog (skills.disabled)", () => {
