@@ -70,8 +70,23 @@ start two task schedulers against the same cron jobs.
 Real, driven by the running agent:
 
 - connection state and working directory
-- the transcript: your message, the streamed reply, reasoning, and tool cards
-  whose args come off the stream (`tool_progress.label`) and whose result and
+- the transcript: your message in a bubble on the right — text-width, capped
+  at 480px, with the outgoing-tail corner, the way a chat app draws your own
+  side — then the streamed reply, reasoning, and tool cards on the left with no
+  glyph beside them. Neither side carries a per-message marker any more; the
+  agent's mark appears once, at the end of a turn that has finished, on the
+  reply that closes it. A turn is the span from one of your messages to the
+  next, and the mark is withheld while the window is streaming, while a turn
+  waits on an approval, and for a turn that ends in an abort or a failure. A
+  turn running under some other origin has no stream here and therefore no
+  mark — 0.5.5 exposes no turn controller, the same limit the pulsating sidebar
+  dot carries. The visible cost of dropping the per-message glyph is that the
+  gap between a turn starting and its first delta is now an empty row: what
+  says the agent has begun is the composer's status strip (`Thinking`, the
+  elapsed timer and the Stop button), not a mark in the transcript.
+  Tool cards, reasoning blocks and approvals keep their own
+  check/warn/running glyphs: those describe a call's result, not a message.
+  A tool card's args come off the stream (`tool_progress.label`); its result and
   status are filled in from `GET /api/sessions/{id}` once the turn has been
   saved — the stream never carries results, the session store does. The
   duration is the agent's own: the trace row a tool writes when it finishes
@@ -143,6 +158,12 @@ Real, driven by the running agent:
   a claim about a different list. Chats can be pinned and unpinned from the row's hover button or
   its right-click menu (Pin/Unpin · Delete…), and **Delete really deletes**:
   `DELETE /api/sessions/{id}`, not a splice that the next load undoes.
+  Each list header carries a **+** on its own line: the one on Chats starts a
+  new chat, the one on Tasks opens Settings › Tasks with the create form up,
+  and on the Tasks header `N running` sits to the left of it. The head row —
+  the lockup and the workspace chip — carries no plus at all; the user asked
+  for it there and nowhere else. The dot on a row is a 6px ring seated on the
+  label's optical centre rather than on its line box.
   Pinning and the read stamps live in Electron's `userData/prefs.json` — per
   machine, per viewer — because the agent has no route and no store field for
   either, and its `config.json` is the operator's file. On a machine that has
@@ -151,7 +172,9 @@ Real, driven by the running agent:
   for it); ⌘3, the palette and View › Skills still open it, on Settings ›
   Skills. Collapsed — Setup › Hide or show the sidebar, or a window narrower
   than 1000px — the two lists stay as a column of dots, each row's tooltip
-  naming it, so the rail is still a way back into a chat.
+  naming it, so the rail is still a way back into a chat; the two list headers
+  stay too, stripped to their **+**, because 52px does not hold a label or the
+  counter and the rail would otherwise have no way to start anything.
 - **What the sidebar cannot know on 0.5.4.** `GET /api/sessions` never
   reports `running`: the store is written only when a turn ends, and no route
   exposes the turn controller. So the pulsating dot means "a turn started in
@@ -249,9 +272,22 @@ Honestly degraded, and labelled as such in the UI:
   the card offers exactly those.
 - **Subscription-CLI providers** (`claude-cli`, `codex-cli`) are not in the
   desktop wizard: their config shape is not one this client writes.
-- **Settings is the TUI menu.** The bottom-left gear (and ⌘ ,) opens the
-  menu tree from `src/tui/menu/menu-registry.ts` with the Manage tabs on the
-  right. Menu verbs the desktop cannot do (new terminal window, mouse, debug
+- **Settings is the TUI menu.** The bottom-left gear (and ⌘ , and Escape with
+  nothing else on screen) opens the menu tree from
+  `src/tui/menu/menu-registry.ts` with the Manage tabs on the right — minus the
+  `Go` group and its `Observe` submenu, which the user asked to remove.
+  Manage's eight children are a top-level `Manage` group instead, keeping their
+  labels and chords, so the group list is Manage · Session · Model · Run ·
+  Setup · Help · Danger zone. Nothing became unreachable (Run is ⌘1 and the
+  palette; Feed/World/Reasoning are the inspector button, the palette and the
+  slash verbs; Logs, LLM logs and the debug pane are ⌘⇧Y and the console's own
+  Agent/LLM segment) — the smoke asserts each of those routes and each of the
+  eight surviving chords rather than leaving it a claim — but six `ctrl+g`
+  chords — r, f, w, e, o, L — are dead and silent. Escape is the LAST branch of
+  the key handler: scroll-to-bottom, abort, the toast pop and every
+  overlay/palette/slash/approval/per-tab Escape still outrank it, and a
+  half-written composer draft is left alone.
+  Menu verbs the desktop cannot do (new terminal window, mouse, debug
   bundle, queued messages, steer, uninstall) keep their TUI label with a
   "not available in the desktop" note. The `ctrl+g <key>` chords in the menu
   column are bound: ctrl+g arms the prefix for 1.5 s, the next key runs that

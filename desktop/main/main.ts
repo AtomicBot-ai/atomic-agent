@@ -1559,6 +1559,9 @@ async function smokeTest(): Promise<void> {
     // --- Item 6: the sidebar's two lists ---
     await sidebarTest(js, check);
 
+    // --- r4-ui: the dot, the bubbles, the header pluses, Escape ---
+    await uiTest(js, check);
+
     // --- Lane B — backend switch (last: it restarts `atag serve` four times) ---
     // A round trip through the renderer's own switch path: to local and
     // back, with the file, the chips, the restarted agent and the daemon
@@ -1972,22 +1975,26 @@ async function settingsTest(
 ): Promise<void> {
   const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
   const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
-  const GROUPS = ["Go", "Session", "Model", "Run", "Setup", "Help", "Danger zone"];
+  // r4-ui item 5: the user asked for Go and Observe to leave the menu, so the
+  // eight Manage children are a top-level group now and the TUI's `Go` group is
+  // gone. This is a deliberate divergence recorded at MENU_GROUPS in renderer.js,
+  // not a relaxed assertion — the rest of the tree is still the registry's.
+  const GROUPS = ["Manage", "Session", "Model", "Run", "Setup", "Help", "Danger zone"];
   const TABS = ["tasks", "skills", "memory", "mcp", "llm", "telegram", "import", "privacy"];
   const LABELS = ["Tasks", "Skills", "Memory", "MCP", "LLM", "Telegram", "Import", "Privacy"];
 
   const groups = await js<string[]>("window.__menuGroups()");
-  check("settings: menu groups mirror the TUI", same(groups, GROUPS), JSON.stringify(groups));
+  check("settings: menu groups are the TUI's minus Go and Observe", same(groups, GROUPS), JSON.stringify(groups));
   const tabs = await js<string[]>("window.__settingsTabs()");
   check("settings: tab ids mirror MANAGE_TABS", same(tabs, TABS), JSON.stringify(tabs));
 
-  // Every node of the TUI menu tree, verbatim label and ctrl+g chord, in
-  // registry order (src/tui/menu/menu-registry.ts:107-675).
+  // Every node of the menu tree, verbatim label and ctrl+g chord, in registry
+  // order (src/tui/menu/menu-registry.ts:107-675) — except that Go, Observe and
+  // the debug pane are gone and Manage's eight children are their own group,
+  // with their labels and chords unchanged.
   const NODES: Array<[string, string, string | null]> = [
-    ["Go", "Run", "r"], ["Go", "Observe", null], ["Go", "Feed", "f"], ["Go", "World", "w"], ["Go", "Reasoning", "e"],
-    ["Go", "Logs", "o"], ["Go", "LLM logs", "L"], ["Go", "Manage", null], ["Go", "Tasks", "t"], ["Go", "Skills", "s"],
-    ["Go", "Memory", "m"], ["Go", "MCP", "c"], ["Go", "LLM", "l"], ["Go", "Telegram", "g"], ["Go", "Import", "i"],
-    ["Go", "Privacy", "p"], ["Go", "Toggle debug pane", null],
+    ["Manage", "Tasks", "t"], ["Manage", "Skills", "s"], ["Manage", "Memory", "m"], ["Manage", "MCP", "c"],
+    ["Manage", "LLM", "l"], ["Manage", "Telegram", "g"], ["Manage", "Import", "i"], ["Manage", "Privacy", "p"],
     ["Session", "New session", "n"], ["Session", "Switch session…", "u"], ["Session", "Clear transcript", null],
     ["Session", "Context window", null], ["Session", "Show session id", null], ["Session", "New terminal window", null],
     ["Model", "Switch chat model…", "k"],
@@ -2032,8 +2039,26 @@ async function settingsTest(
     menuDom.chord === "ctrl+g t" && menuDom.naCount === naExpected && menuDom.naText.includes("not available in the desktop"),
     `chord=${JSON.stringify(menuDom.chord)} na=${menuDom.naCount}/${naExpected}`,
   );
-  const dispatched = await js<{ settings: boolean; inspector: boolean; inspTab: string }>("window.__menuActivate('go.observe.world')");
-  check("settings: a menu verb dispatches its desktop act", !dispatched.settings && dispatched.inspector && dispatched.inspTab === "world", JSON.stringify(dispatched));
+  // `go.observe.world` used to prove this; that node is gone. `help.tools` is
+  // the surviving verb with the same observable result (the inspector on its
+  // World tab) and, unlike `session.context`, it leaves no overlay open across
+  // the checks that follow.
+  const dispatched = await js<{ settings: boolean; inspector: boolean; inspTab: string; overlay: string | null }>("window.__menuActivate('help.tools')");
+  check(
+    "settings: a menu verb dispatches its desktop act",
+    !dispatched.settings && dispatched.inspector && dispatched.inspTab === "world" && !dispatched.overlay,
+    JSON.stringify(dispatched),
+  );
+  const gone = await js<{ ids: string[]; subs: number; rows: number }>(
+    "(() => { window.__settingsOpen('tasks');"
+    + " return {ids: window.__menuNodes().filter((n) => /^go[.](run|observe|debug)/.test(n.id) || n.parent).map((n) => n.id),"
+    + " subs: window.__menuSubRows(), rows: document.querySelectorAll('#settings .setmenu .menurow').length}; })()",
+  );
+  check(
+    "settings: Go, Observe and the debug pane left the tree",
+    gone.ids.length === 0 && gone.subs === 0 && gone.rows === 32,
+    JSON.stringify(gone),
+  );
   const viaNode = await js<{ settings: boolean; pane: string | null }>(
     "(() => { window.__settingsOpen('tasks'); return window.__menuActivate('go.manage.privacy'); })()",
   );
@@ -3038,6 +3063,328 @@ async function modelsTest(
       );
     }
   }
+}
+
+/**
+ * r4-ui — the four things the user asked for, checked through the renderer's
+ * own hooks: the sidebar dot's size and seat (item 1), user bubbles and the
+ * one end-of-turn mark (item 3), a plus on each list header and none on the
+ * head row (item 4), and Escape opening the settings menu column without
+ * losing any dismissal it already had (item 5).
+ */
+async function uiTest(
+  js: <T>(code: string) => Promise<T>,
+  check: (name: string, ok: boolean, detail?: string) => void,
+): Promise<void> {
+  // --- item 1: the circles ---------------------------------------------------
+  const probe = await js<{
+    dots: Array<{ cls: string; w: number; h: number; border: number; bg: string; animation: string; shadow: string }>;
+    seat: { dotMid: number; capMid: number; xMid: number } | null;
+  } | null>("window.__dotProbe()");
+  const dots = probe ? probe.dots : [];
+  check(
+    "item 1: every sidebar dot is a 6px ring, not a paragraph",
+    dots.length === 3 && dots.every((d) => d.w === 6 && d.h === 6 && d.border === 1),
+    JSON.stringify(dots.map((d) => [d.cls, d.w, d.h, d.border])),
+  );
+  const empty = dots[0], filled = dots[1], running = dots[2];
+  check(
+    "item 1: read, waiting and running stay apart at 6px",
+    !!empty && !!filled && !!running
+      && /rgba\(0, 0, 0, 0\)|transparent/.test(empty.bg) && empty.animation === "none" && empty.shadow === "none"
+      && filled.animation === "none" && filled.shadow === "none" && !/rgba\(0, 0, 0, 0\)/.test(filled.bg)
+      && running.animation === "sdot-pulse" && running.shadow !== "none",
+    JSON.stringify(dots.map((d) => [d.cls, d.bg, d.animation, d.shadow])),
+  );
+  const seat = probe ? probe.seat : null;
+  check(
+    "item 1: the dot sits on the label's optical centre",
+    !!seat && seat.dotMid >= seat.capMid - 0.5 && seat.dotMid <= seat.xMid + 0.5,
+    seat ? `dot ${seat.dotMid.toFixed(2)}, cap-mid ${seat.capMid.toFixed(2)}, x-mid ${seat.xMid.toFixed(2)}` : "no probe row",
+  );
+  const ec = await js<{ found: boolean; display: string; strays: number }>("window.__emptyChatProbe()");
+  check(
+    "item 1: the empty-transcript screen kept its centring under .emptychat",
+    ec.found && ec.display === "flex" && ec.strays === 0,
+    JSON.stringify(ec),
+  );
+  // The fourth state: `prefers-reduced-motion: reduce` kills the pulse through
+  // the blanket `*{animation:none!important}`, so the halo is the only thing
+  // left telling a running dot from a filled one — and at 6px the wash is too
+  // faint for that, which is what the reduced-motion rule swaps out. The media
+  // feature is really emulated through the devtools protocol rather than read
+  // back out of the stylesheet, so what is measured is what the operator gets.
+  type Probe = { dots: Array<{ cls: string; w: number; h: number; border: number; bg: string; animation: string; shadow: string }> };
+  const dbg = win ? win.webContents.debugger : null;
+  let reduced: Probe | null = null;
+  let reducedErr = "";
+  try {
+    if (!dbg) throw new Error("no webContents to attach to");
+    if (!dbg.isAttached()) dbg.attach("1.3");
+    await dbg.sendCommand("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "reduce" }] });
+    reduced = await js<Probe | null>("window.__dotProbe()");
+  } catch (e) {
+    reducedErr = e instanceof Error ? e.message : String(e);
+  } finally {
+    try { if (dbg && dbg.isAttached()) await dbg.sendCommand("Emulation.setEmulatedMedia", { features: [] }); } catch { /* the assertion below reports it */ }
+    try { if (dbg && dbg.isAttached()) dbg.detach(); } catch { /* ditto */ }
+  }
+  const rmRun = reduced ? reduced.dots[2] : null;
+  const rmFilled = reduced ? reduced.dots[1] : null;
+  check(
+    "item 1: reduced motion still tells running from waiting at 6px",
+    !!rmRun && !!rmFilled && rmRun.w === 6 && rmRun.h === 6
+      // the emulation really took: the blanket rule killed the pulse
+      && rmRun.animation === "none"
+      // and what is left is a ring the filled dot does not have, and a heavier
+      // one than the animated state carries
+      && rmRun.shadow !== "none" && rmFilled.shadow === "none" && !!running && rmRun.shadow !== running.shadow,
+    reducedErr || JSON.stringify([rmRun, rmFilled, running ? running.shadow : null]),
+  );
+
+  // --- item 3: bubbles, empty gutters, one mark per finished turn -------------
+  // The end mark is withheld while a turn streams or an approval waits, and the
+  // sidebar checks above leave a turn running in another chat — so stop that
+  // first, or the mark's absence would prove nothing.
+  const quiet = await js<{ busy: boolean; pending: boolean; items: number }>("window.__quiesce()");
+  check("item 3: the window is at rest before the transcript checks", !quiet.busy && !quiet.pending, JSON.stringify(quiet));
+  await js<number>("window.__pushUser('a short one')");
+  await js<number>("window.__pushTool('read_file', {path:'a.txt'}, 'ok', false)");
+  await js<number>("window.__pushAssistant('done')");
+  type Shape = { k: string; glyphs: number; gutter: number | null; end: boolean; endLast: boolean; strip: boolean; left: number };
+  const shape = await js<Shape[]>("window.__turnShape()");
+  const tail = shape.slice(-3);
+  check(
+    // Two things, both positive: no row carries a `.avatar` or a `.gutter` (the
+    // user's `›` and the assistant's per-message mark), and every row that still
+    // uses the grid has an empty first cell. The user rows are only proof of the
+    // first half if there IS one on screen, so that is asserted too.
+    "item 3: no glyph in any transcript row",
+    shape.length > 0 && shape.every((t) => t.glyphs === 0 && (t.gutter === null || t.gutter === 0))
+      && shape.some((t) => t.k === "user") && shape.some((t) => t.gutter === 0),
+    JSON.stringify(shape.filter((t) => t.glyphs !== 0 || (t.gutter !== null && t.gutter !== 0))
+      .concat(shape.some((t) => t.k === "user") ? [] : [{ k: "no user row on screen" } as unknown as Shape])),
+  );
+  check(
+    "item 3: the agent's content column did not move",
+    tail.length === 3 && tail[1].k === "tool" && tail[2].k === "assistant" && tail[1].left === tail[2].left,
+    JSON.stringify(tail),
+  );
+  check(
+    "item 3: one mark, on the item that closes the finished turn",
+    tail.length === 3 && tail[0].k === "user" && !tail[0].end && !tail[1].end && tail[2].end && tail[2].endLast
+      && shape.every((t) => !t.end || (t.k === "assistant" && t.endLast)),
+    JSON.stringify(shape.map((t) => [t.k, t.end])),
+  );
+  const busyMarks = await js<{ during: { total: number; last: boolean }; after: { total: number; last: boolean } }>("window.__marksWhileBusy()");
+  check(
+    "item 3: a running turn carries no end mark",
+    !busyMarks.during.last && busyMarks.after.last && busyMarks.during.total === busyMarks.after.total - 1,
+    JSON.stringify(busyMarks),
+  );
+  // The turn that never produced a word: startLiveTurn pushes an empty assistant
+  // item before the first delta, and an abort or a failed BR.chat leaves it in
+  // S.log at rest. No poked flag here — the rows are the ones that path pushes.
+  const emptyTurn = await js<{ before: number; after: number; lastHasMark: boolean }>("window.__emptyTurnMark()");
+  check(
+    "item 3: a turn that produced no text gets no mark",
+    emptyTurn.after === emptyTurn.before && !emptyTurn.lastHasMark,
+    JSON.stringify(emptyTurn),
+  );
+  // The mark is appended AFTER attachStrip(m), and the only case that can catch
+  // a wrong order is a reply that really wrote a file. Same recipe as the
+  // attachment-strip checks earlier in the run: a real file, the real collector.
+  const endmarkFile = join(app.getPath("temp"), "atomic-desktop-endmark.txt");
+  writeFileSync(endmarkFile, "smoke\n");
+  await js<unknown>(
+    "window.__pushAssistantFiles('Saved it.', ["
+    + `{tool:'os.fs.write', args:{path:${JSON.stringify(endmarkFile)}, content:'smoke\\n'}, out:'wrote 6 bytes to ${endmarkFile} (replace)'}])`,
+  );
+  const stripShape = await js<Shape[]>("window.__turnShape()");
+  const stripTail = stripShape[stripShape.length - 1];
+  check(
+    "item 3: the mark closes the column below the attachment strip",
+    !!stripTail && stripTail.k === "assistant" && stripTail.strip && stripTail.end && stripTail.endLast
+      && stripShape.filter((t) => t.end).length === shape.filter((t) => t.end).length + 1,
+    JSON.stringify(stripShape.slice(-2)),
+  );
+  const bub = await js<{
+    right: number; width: number; colRight: number; colWidth: number;
+    marginLeft: string; rowDisplay: string; markW: number;
+  } | null>("window.__bubbleBox()");
+  check(
+    // `margin-left:auto` resolves to a used pixel value in getComputedStyle, so
+    // what is asserted is what it buys: a positive left margin, a box narrower
+    // than the column, and a right edge flush with the column's content box.
+    "item 3: the user's bubble is right-aligned and sized to its text",
+    !!bub && parseFloat(bub.marginLeft) > 0 && bub.rowDisplay === "block"
+      && Math.abs(bub.right - bub.colRight) <= 1 && bub.width < bub.colWidth / 2,
+    JSON.stringify(bub),
+  );
+  check("item 3: the end mark is 12px", !!bub && bub.markW === 12, bub ? String(bub.markW) : "no bubble");
+  // An unbroken 400-character message must not widen the column either.
+  await js<number>("window.__pushUser('x'.repeat(400))");
+  type Ov = { sw: number; cw: number; colRight: number; colWidth: number; track: number; maxRight: number };
+  const ov = await js<Ov>("window.__overflow()");
+  check(
+    // `track` is the grid's SECOND column, as the existing overflow checks read
+    // it; the guard is that it is still a number at all — a user row is
+    // display:block now and would report "none" → NaN if the selector took one.
+    "item 3: a long user message keeps inside the panel, and the grid still reads",
+    ov.sw === ov.cw && ov.maxRight <= ov.colRight + 1 && ov.track > 0 && ov.track <= ov.colWidth,
+    `scrollWidth ${ov.sw} vs clientWidth ${ov.cw}, max right ${ov.maxRight} vs column ${ov.colRight}, track ${ov.track} of ${ov.colWidth}`,
+  );
+
+  // --- item 4: the pluses ----------------------------------------------------
+  type Heads = {
+    headPlus: boolean; railWidth: number; rail: boolean;
+    heads: Array<{ list: string; act: string | null; right: number; centre: number; visible: boolean;
+                   counter: string | null; counterVisible: boolean; labelVisible: boolean; counterLeftOfPlus: boolean }>;
+  };
+  const heads = await js<Heads>("window.__sbHeads()");
+  check("item 4: no plus on the head row", heads.headPlus === false, JSON.stringify(heads.headPlus));
+  check(
+    "item 4: one plus per list header, and they line up",
+    heads.heads[0].act === "tasks:new" && heads.heads[1].act === "session:new" && heads.heads[0].right === heads.heads[1].right,
+    JSON.stringify(heads.heads.map((h) => [h.list, h.act, h.right])),
+  );
+  check(
+    "item 4: \"N running\" sits to the left of the Tasks plus",
+    /^\d+ running$/.test(heads.heads[0].counter ?? "") && heads.heads[0].counterLeftOfPlus,
+    JSON.stringify([heads.heads[0].counter, heads.heads[0].counterLeftOfPlus]),
+  );
+  const rail = await js<Heads>("window.__rail()");
+  check(
+    "item 4: the collapsed rail keeps both pluses and nothing else",
+    rail.rail && rail.heads.every((h) => h.visible && !h.labelVisible && Math.abs(h.centre - rail.railWidth / 2) <= 2)
+      && !rail.heads[0].counterVisible,
+    JSON.stringify([rail.railWidth, rail.heads.map((h) => [h.list, h.visible, h.labelVisible, h.centre])]),
+  );
+  await js<Heads>("window.__rail()"); // back to the full sidebar
+  const viaTasks = await js<{ pane: string | null; mode: string } | null>("window.__clickHead('tasks')");
+  check(
+    "item 4: the Tasks plus opens the create form",
+    !!viaTasks && viaTasks.pane === "tasks" && viaTasks.mode === "create",
+    JSON.stringify(viaTasks),
+  );
+  await js<void>("window.__tasksAct('back'); window.__settingsClose();");
+  const viaChats = await js<{ logLen: number; session: string | null; onRows: number } | null>("window.__clickHead('chats')");
+  check(
+    "item 4: the Chats plus starts a new chat",
+    !!viaChats && viaChats.logLen === 0 && viaChats.session === null && viaChats.onRows === 0,
+    JSON.stringify(viaChats),
+  );
+
+  // --- item 5: Escape --------------------------------------------------------
+  type Esc = {
+    pane: string | null; focusRow: boolean; focusAct: string; overlay: string | null;
+    sel: boolean; toasts: number; firstRowLabel: string;
+  };
+  // Nothing may be left over from the earlier tabs: a stale Tasks search or an
+  // open form would eat the Escape before the menu branch is reached.
+  // The window reopens on the pane it was last left on, and the earlier tabs
+  // left it elsewhere — so put it back on Tasks first, and clear the Tasks
+  // tab's own state, or a stale search or open form would eat the Escape
+  // before the menu branch is reached.
+  await js<number>("window.__settingsOpen('tasks'); window.__tasksAct('back'); window.__tasksAct('clearSearch'); window.__settingsClose(); window.__clearToasts()");
+  const opened = await js<Esc>("window.__esc()");
+  check(
+    "item 5: Escape with nothing open opens the menu on its first row",
+    opened.pane === "tasks" && opened.focusRow && opened.focusAct === "menu:go.manage.tasks" && opened.firstRowLabel === "Tasks",
+    JSON.stringify(opened),
+  );
+  // The focus ring is re-applied on every render while the window is open, so
+  // it has to let go the moment the operator clicks anywhere else — and a click
+  // on dead space is a blur to <body>, not to another element inside #settings.
+  // Without this the next full render (the tasks poll alone fires one every 5 s
+  // in exactly this state) drags focus back onto Tasks under their hands.
+  const blur = await js<{ focusedBefore: boolean; blurred: boolean; stolen: boolean; active: string } | null>("window.__menuFocusBlur()");
+  check(
+    "item 5: the menu stops grabbing focus once the operator clicks away",
+    !!blur && blur.focusedBefore && blur.blurred && !blur.stolen,
+    JSON.stringify(blur),
+  );
+  const closed = await js<Esc>("window.__esc()");
+  check("item 5: Escape closes the menu again, it does not reopen it", closed.pane === null, JSON.stringify(closed));
+  await js<string>("window.__clearToasts(); window.__openPalette()");
+  const pal = await js<Esc>("window.__esc()");
+  check("item 5: Escape still closes the palette", pal.overlay === null && pal.pane === null, JSON.stringify(pal));
+  await js<void>("window.__selOpen('model')");
+  await js<number>("window.__clearToasts()");
+  const sel = await js<Esc>("window.__esc()");
+  check(
+    "item 5: Escape still dismisses the model selector instead of stacking the menu on it",
+    sel.sel === false && sel.pane === null,
+    JSON.stringify(sel),
+  );
+  await js<number>("window.__settingsClose(); window.__clearToasts()");
+
+  // --- item 5: nothing became unreachable ------------------------------------
+  // Deleting a whole menu group and six chords is only defensible if every
+  // destination keeps a route. Asserted, not claimed in a comment: each of the
+  // eight hoisted Manage nodes still opens its pane both from the node and from
+  // its ctrl+g chord, and the three verbs that went with `Go`/`Observe`/the
+  // debug pane still run from their acts and still have a palette row.
+  const MANAGE: Array<[string, string]> = [
+    ["tasks", "t"], ["skills", "s"], ["memory", "m"], ["mcp", "c"],
+    ["llm", "l"], ["telegram", "g"], ["import", "i"], ["privacy", "p"],
+  ];
+  const nodeMisses: string[] = [];
+  const chordMisses: string[] = [];
+  for (const [tab, chord] of MANAGE) {
+    const viaNode = await js<{ settings: boolean; pane: string | null }>(
+      `(() => { window.__settingsClose(); return window.__menuActivate('go.manage.${tab}'); })()`,
+    );
+    if (!viaNode.settings || viaNode.pane !== tab) nodeMisses.push(`${tab}:${JSON.stringify(viaNode)}`);
+    const viaChord = await js<{ armed: boolean; pane: string | null; disarmed: boolean }>(
+      "(() => { window.__settingsClose();"
+      + " document.dispatchEvent(new KeyboardEvent('keydown', {key: 'g', ctrlKey: true, bubbles: true, cancelable: true}));"
+      + " const armed = window.__chordPending();"
+      + ` document.dispatchEvent(new KeyboardEvent('keydown', {key: ${JSON.stringify(chord)}, bubbles: true, cancelable: true}));`
+      + " return {armed, pane: window.__settingsPane(), disarmed: !window.__chordPending()}; })()",
+    );
+    if (!viaChord.armed || viaChord.pane !== tab || !viaChord.disarmed) chordMisses.push(`ctrl+g ${chord}:${JSON.stringify(viaChord)}`);
+  }
+  check("item 5: every Manage tab still opens from its node", nodeMisses.length === 0, nodeMisses.join("; "));
+  check("item 5: every Manage chord still reaches its tab", chordMisses.length === 0, chordMisses.join("; "));
+  await js<number>("window.__settingsClose(); window.__clearToasts()");
+
+  type Route = { room: string; inspector: boolean; inspTab: string; consoleOpen: boolean; consoleTab: string; settings: boolean };
+  type Panes = { room: string; inspector: boolean; inspTab: string; consoleOpen: boolean; consoleTab: string };
+  // Snapshotted first: these acts really open the inspector and the console,
+  // the inspector starts OPEN, and the backend-switch lane runs after this one.
+  const panesBefore = await js<Panes>("window.__panes()");
+  const routes = await js<{ chat: Route; world: Route; llm: Route }>(
+    "(() => { const chat = window.__route('room:chat');"
+    + " const world = window.__route('insp:world');"
+    + " const llm = window.__route('console:llm');"
+    + " return {chat, world, llm}; })()",
+  );
+  check(
+    "item 5: the deleted Go/Observe destinations still run from their acts",
+    routes.chat.room === "chat" && !routes.chat.settings
+      && routes.world.inspector && routes.world.inspTab === "world"
+      && routes.llm.consoleOpen && routes.llm.consoleTab === "llm",
+    JSON.stringify(routes),
+  );
+  const panesAfter = await js<Panes>(`window.__restorePanes(${JSON.stringify(panesBefore)})`);
+  check(
+    "item 5: the route probe leaves the panes where it found them",
+    JSON.stringify(panesAfter) === JSON.stringify(panesBefore),
+    JSON.stringify({ before: panesBefore, after: panesAfter }),
+  );
+  const palRows = await js<Array<[string, string]>>("window.__palRows()");
+  const WANT: Array<[string, string]> = [
+    ["Chat", "room:chat"], ["Feed", "insp:steps"], ["World", "insp:world"],
+    ["Reasoning", "insp:reasoning"], ["Logs", "console:agent"],
+  ];
+  const palMisses = WANT.filter(([t, a]) => !palRows.some((r) => r[0] === t && r[1] === a));
+  check(
+    "item 5: the palette still lists every destination that left the menu",
+    palMisses.length === 0,
+    JSON.stringify({ missing: palMisses, rows: palRows.length }),
+  );
+  await js<number>("window.__clearToasts()");
 }
 
 /** Lane B — backend switch. */
