@@ -385,6 +385,12 @@ const VOICE_REASONS = {
    helper or for corespeechd / com.apple.siri.embeddedspeech, in a window
    that did record other processes' bytes. */
 const VOICE_ONDEVICE = 'On-device — the audio never leaves this Mac';
+/* Item 2 (voice input): what the strip and the button last painted. The audio
+   tap repaints ten times a second, and re-creating an element restarts its
+   CSS animation — so these keys decide when a repaint is actually a new
+   picture. See refreshVoice()/refreshMic(). */
+let VOICE_STRIP_KEY = null;
+let VOICE_MIC_KEY = null;
 
 /* ============================================================
    Atomic Agent Desktop — clickable prototype, no backend.
@@ -983,7 +989,11 @@ function micButton() {
     + ' title="' + esc(title) + '" aria-label="' + esc(title) + '">' + ic('mic') + '</button>';
 }
 
-/** A locale's name in the reader's own language, never a bare tag. */
+/** A locale's name in the reader's own language, never a bare tag.
+    Deliberate copy substitution: the spec quoted the chip as `English (US)`.
+    A menu of 43 locales that has to distinguish en-US from en-GB, and
+    pt-BR from pt-PT, cannot use hand-written labels, so the chip and the
+    menu share this one function — `en-US` reads `American English` here. */
 function voiceLangName(id) {
   try {
     const n = new Intl.DisplayNames(undefined, {type:'language'}).of(id);
@@ -1006,18 +1016,17 @@ function voiceStripHTML() {
   if (!rec && !VOICE.menu && VOICE.state !== 'error') return '<div class="voicestrip" hidden></div>';
   let h = '<div class="voicestrip">';
   if (rec) {
-    const lvl = Math.max(0, Math.min(100, Math.round(VOICE.level * 140)));
     h += '<div class="vsrow">'
       + '<span class="vsdot' + (VOICE.state === 'recording' ? ' live' : '') + '"></span>'
-      + '<span class="vslevel"><i style="width:' + lvl + '%"></i></span>'
-      + '<span class="vstext">' + esc(VOICE.final)
-      + (VOICE.partial ? '<span class="vspart">' + esc(VOICE.partial) + '</span>' : '')
-      + (!VOICE.final && !VOICE.partial ? '<span class="vswait">' + (VOICE.state === 'starting' ? 'opening the microphone…' : 'listening…') + '</span>' : '')
-      + '</span>'
+      + '<span class="vslevel"><i style="width:' + voiceLevelPct() + '%"></i></span>'
+      + '<span class="vstext">' + voiceTextInner() + '</span>'
       + voiceChipHTML()
       + '</div>';
   } else if (VOICE.state === 'error' && VOICE.err) {
-    h += '<div class="vsrow"><span class="vserr">' + esc(VOICE.err) + '</span>' + voiceChipHTML() + '</div>';
+    // Its own dismiss, because Escape no longer clears this state — see the
+    // note on the Escape handler.
+    h += '<div class="vsrow"><span class="vserr">' + esc(VOICE.err) + '</span>' + voiceChipHTML()
+      + '<button class="vsx" data-act="voice:dismiss" title="Dismiss">' + ic('x') + '</button></div>';
   } else {
     h += '<div class="vsrow"><span class="vstext ter">Dictation language</span>' + voiceChipHTML() + '</div>';
   }
@@ -1026,6 +1035,31 @@ function voiceStripHTML() {
     + '</div>';
   if (VOICE.menu) h += voiceMenuHTML();
   return h + '</div>';
+}
+
+/* The two things that change on every 100 ms audio chunk, split out so the
+   repaint can patch them in place instead of re-creating the strip — see
+   refreshVoice(). */
+function voiceLevelPct() {
+  return Math.max(0, Math.min(100, Math.round(VOICE.level * 140)));
+}
+function voiceTextInner() {
+  return esc(VOICE.final)
+    + (VOICE.partial ? '<span class="vspart">' + esc(VOICE.partial) + '</span>' : '')
+    + (!VOICE.final && !VOICE.partial
+        ? '<span class="vswait">' + (VOICE.state === 'starting' ? 'opening the microphone…' : 'listening…') + '</span>'
+        : '');
+}
+/* Everything the strip's *structure* depends on. When this is unchanged the
+   markup is identical apart from the two volatile parts above, so the strip
+   keeps its elements — and with them the CSS animations that a replaced node
+   restarts from frame one. */
+function voiceShapeKey() {
+  return [VOICE.state, VOICE.menu ? 1 : 0, VOICE.err || '', VOICE.winner || '',
+    VOICE.available, VOICE.reason, VOICE.offMachine ? 1 : 0,
+    VOICE.locales.join(','), VOICE.supported.join(','), VOICE.installed.join(','),
+    VOICE.speechLocales.join(','), VOICE.dictationLocales.join(','),
+    VOICE.installing || '', VOICE.installErr || '', VOICE.installFraction].join('|');
 }
 
 function voiceChipHTML() {
@@ -2183,7 +2217,20 @@ document.addEventListener('input', (e) => {
     comment on the composer's input handler already warns about. */
 function refreshVoice() {
   const strip = document.querySelector('.voicestrip');
-  if (strip) strip.outerHTML = voiceStripHTML();
+  const key = voiceShapeKey();
+  if (strip && key === VOICE_STRIP_KEY) {
+    // Only the words and the level moved. The audio tap calls this ten times
+    // a second, and replacing an element restarts its CSS animation from the
+    // first frame — so the pulse on .vsdot.live only ever animates because
+    // this branch leaves the dot where it is.
+    const t = strip.querySelector('.vstext');
+    if (t) t.innerHTML = voiceTextInner();
+    const l = strip.querySelector('.vslevel i');
+    if (l) l.style.width = voiceLevelPct() + '%';
+  } else {
+    VOICE_STRIP_KEY = key;
+    if (strip) strip.outerHTML = voiceStripHTML();
+  }
   // The strip grows as the sentence does, so it is kept scrolled to the
   // words being said right now rather than to the start of the take.
   const t = document.querySelector('.voicestrip .vstext');
@@ -2192,7 +2239,14 @@ function refreshVoice() {
 }
 function refreshMic() {
   const b = document.querySelector('.micbtn');
-  if (b) b.outerHTML = micButton();
+  if (!b) { VOICE_MIC_KEY = null; return; }
+  // Same reason as above: .micbtn.rec carries the recording pulse, and this
+  // ran on every audio chunk. Nothing but these four fields reaches
+  // micButton(), so anything else is a repaint with no new pixels.
+  const key = VOICE.state + '|' + VOICE.available + '|' + VOICE.reason + '|' + VOICE.locales.join(',');
+  if (key === VOICE_MIC_KEY) return;
+  VOICE_MIC_KEY = key;
+  b.outerHTML = micButton();
 }
 
 /** Ask main what is actually possible. Never guessed, never cached over a
@@ -2232,6 +2286,11 @@ function voiceProbe() {
 function voiceAct(a) {
   if (a === 'voice') { voiceToggle(); return; }
   if (a === 'voice:lang') { VOICE.menu = !VOICE.menu; VOICE.installErr = null; refreshVoice(); return; }
+  // The error strip's own ×. Escape does not clear this state on purpose.
+  if (a === 'voice:dismiss') {
+    if (VOICE.state === 'error') { VOICE.state = 'idle'; VOICE.err = null; }
+    VOICE.menu = false; refreshVoice(); return;
+  }
   if (a.indexOf('voice:pick:') === 0) { voicePick(a.slice(11), false); return; }
   if (a.indexOf('voice:add:') === 0) { voicePick(a.slice(10), true); return; }
 }
@@ -2266,6 +2325,14 @@ function voiceInstall(id) {
     } else {
       VOICE.installErr = 'That language did not install (' + ((r && r.error) || 'unknown') + ')';
     }
+    refreshVoice();
+  }).catch((e) => {
+    // Without this the rejection pins VOICE.installing forever — the guard on
+    // the first line of this function then silently refuses every later
+    // install for the rest of the session — and lands as an unhandled
+    // rejection that the smoke mirrors to stderr.
+    VOICE.installing = null; VOICE.installFraction = 0;
+    VOICE.installErr = 'That language did not install (' + String((e && e.message) || e) + ')';
     refreshVoice();
   });
 }
@@ -2542,8 +2609,12 @@ document.addEventListener('keydown', (e) => {
   // overlay or menu, and the slash popover — and every one of them is a
   // perfectly normal state to be dictating in. A swallowed Escape would
   // leave the microphone hot with no way to discard the take.
+  // `error` is deliberately NOT in this list: an error strip is not
+  // time-critical and nothing else clears it, so leaving it here would let a
+  // stale failure outrank whatever modal the user is actually looking at for
+  // the rest of the session. It has its own × instead (voice:dismiss).
   if (k === 'Escape' && (VOICE.state === 'recording' || VOICE.state === 'starting'
-      || VOICE.state === 'finishing' || VOICE.state === 'error' || VOICE.menu)) {
+      || VOICE.state === 'finishing' || VOICE.menu)) {
     e.preventDefault(); voiceCancel(); return;
   }
 
@@ -8577,4 +8648,42 @@ if (typeof window !== 'undefined') {
   window.__voiceReprobe = () => voiceProbe().then(() => window.__voice());
   /** The literal sentences, so the harness asserts the shipped copy. */
   window.__voiceReasons = () => Object.assign({}, VOICE_REASONS, {ondevice: VOICE_ONDEVICE});
+}
+
+/* Item 2 (voice input) — review-fix hooks. Appended as their own block so
+   the merge with the other lanes stays a pure append. */
+if (typeof window !== 'undefined') {
+  /* Put the strip into the error state without a microphone, a helper or a
+     toast — voiceFail() would raise a toast that the general Escape branch
+     then pops, which would confuse the very check this exists for. */
+  window.__voiceSetError = (msg) => {
+    VOICE.state = 'error'; VOICE.err = String(msg); VOICE.final = ''; VOICE.partial = '';
+    VOICE.menu = false; VOICE.synthetic = true;
+    refreshVoice();
+    return window.__voice();
+  };
+  /* Element identity across a repaint. The recording pulse is a CSS
+     animation, and a replaced element starts it again from frame one — so
+     the dot and the button surviving a hundred repaints IS the animation. */
+  window.__voiceMark = () => {
+    const dot = document.querySelector('.voicestrip .vsdot');
+    const mic = document.querySelector('.composer .field .micbtn');
+    if (dot) dot.dataset.smokeMark = '1';
+    if (mic) mic.dataset.smokeMark = '1';
+    return { dot: !!dot, mic: !!mic };
+  };
+  window.__voiceMarked = () => {
+    const dot = document.querySelector('.voicestrip .vsdot');
+    const mic = document.querySelector('.composer .field .micbtn');
+    return {
+      dot: !!(dot && dot.dataset.smokeMark), mic: !!(mic && mic.dataset.smokeMark),
+      dotPresent: !!dot, micPresent: !!mic,
+    };
+  };
+  /* Click the error strip's dismiss the way the user does. */
+  window.__voiceDismiss = () => {
+    const b = document.querySelector('.voicestrip .vsx');
+    if (b) b.click();
+    return { clicked: !!b, voice: window.__voice() };
+  };
 }

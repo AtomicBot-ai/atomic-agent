@@ -349,7 +349,13 @@ Honestly degraded, and labelled as such in the UI:
   talking, and land in the draft at your caret when you stop. Hold the
   button and release to stop, or tap it once and click again to stop —
   both work, because "unclick" reads either way. Escape throws the take
-  away. Enter and the Send button stop the recording and insert the text
+  away, and it is tested first in the keydown handler so that a pending
+  approval, the palette, the slash popover or an open overlay cannot
+  swallow it and leave the microphone hot. It does *not* clear a voice
+  error strip: nothing else clears that state, so an Escape branch on it
+  would outrank whatever modal you were actually looking at for the rest of
+  the session — the error strip carries its own × instead.
+  Enter and the Send button stop the recording and insert the text
   rather than sending: sending would post the draft as it stood before you
   spoke and lose the transcript, so a second Enter is what sends.
   The audio goes renderer → main → `out/native/atomic-speech`, a small
@@ -360,6 +366,16 @@ Honestly degraded, and labelled as such in the UI:
   key, so this feature makes no HTTP call, writes nothing to
   `~/.atomic-agent/config.json` and never restarts `atag serve`. The chosen
   languages live in Electron's `userData/voice.json`.
+  Until this feature there was no `setPermissionRequestHandler` at all and
+  Electron's default granted everything; both handlers now go in and deny
+  by default. Exactly two things get through: an audio-only `media` request
+  while a voice session you started is armed, and
+  `clipboard-sanitized-write`, which is how Electron sees
+  `navigator.clipboard.writeText` — the composer's "copy session id" is a
+  writeText whose rejection is swallowed, so a deny-all gate broke the copy
+  while the toast still claimed success. Both handlers call the one
+  `voicePermissionVerdict()`, and the smoke asserts that function rather
+  than a second copy of its body.
   The strip's `On-device — the audio never leaves this Mac` was measured
   before it shipped, not taken from documentation: a 9.4 s live
   transcription watched with `nettop -P -L 10` produced no row at all for
@@ -383,7 +399,10 @@ Honestly degraded, and labelled as such in the UI:
   Danish, Finnish, Norwegian, Swedish, Malay and Flemish — only through
   macOS's dictation model, which is on-device too but writes without
   punctuation. The language menu says which is which, and says when a
-  language still has to download its model. Apple's older
+  language still has to download its model. Both the chip and the menu
+  label a locale with `Intl.DisplayNames`, so the default chip reads
+  `American English`, not `English (US)` — 43 locales that have to separate
+  en-US from en-GB and pt-BR from pt-PT cannot use hand-written labels. Apple's older
   `SFSpeechRecognizer` lists 63 languages, and it is deliberately not used:
   on this Mac only `en-US` reported `supportsOnDeviceRecognition`, so every
   other language there would quietly upload your voice to Apple.
@@ -454,13 +473,17 @@ PASS a cancelled recording inserts nothing — draft "fix ", state idle, strip h
 PASS Escape cancels a recording before every other Escape branch — state idle, scrollTop 0→0
 PASS Escape still cancels with the slash popover open — popover open before Esc=true
 PASS Escape still cancels with an approval pending — pending before Esc=true
+PASS an error strip keeps Escape and is dismissed by its own control — after Escape error, × present=true, then idle
+PASS the recording pulse survives the transcript repaints, and the strip still leaves on cancel — dot kept=true mic kept=true, text "refactor the login handler", dot after cancel=false
 PASS a second language can win the take — final "Открой панель настроек", winner ru-RU, chip "Russian (Russia) matched"
 PASS and the winning language is what gets inserted — "Открой панель настроек"
 PASS the language menu lists the on-device models and says one is active — 2 rows, foot "Transcribed on this Mac. One language is active at a time un"
 PASS the renderer cannot take the camera — getUserMedia({video:true}) → NotAllowedError
 PASS and cannot take the microphone outside a session the user started — armed=false; audio→false
+PASS the voice permission gate leaves the clipboard alone — permissions.query(clipboard-write) → granted; writeText → …
 PASS the worklet ships next to the renderer
 PASS the speech helper answers — exit 0, 43 supported, 14 installed
+PASS nothing was written to the agent — config.json byte-identical across 4096 bytes
 SMOKE screenshot=…/atomic-desktop-smoke.png failures=0
 ```
 

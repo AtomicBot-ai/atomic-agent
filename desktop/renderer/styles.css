@@ -746,3 +746,11 @@ button.menurow:hover{background:var(--bg-hover)}
 .vsmfoot{padding:var(--s3) var(--s4) var(--s2);font-size:11px;line-height:16px;color:var(--text-tertiary)}
 .vsmempty{padding:var(--s3) var(--s4);font-size:12px;color:var(--text-secondary)}
 @media (prefers-reduced-motion:reduce){.micbtn.rec,.vsdot.live{animation:none}}
+
+/* ---- Item 2: voice input — review fixes ----
+   The error strip's own dismiss. Escape deliberately no longer clears the
+   error state (it would outrank whatever modal the user is looking at), so
+   the strip carries the control that does. */
+.vsx{width:22px;height:22px;flex:none;display:flex;align-items:center;justify-content:center;
+  border-radius:5px;color:var(--text-tertiary)}
+.vsx:hover{background:var(--bg-hover);color:var(--text-primary)}

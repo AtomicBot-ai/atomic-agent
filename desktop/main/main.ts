@@ -245,8 +245,9 @@ function createWindow(): BrowserWindow {
   /* Item 2 (voice input): until this feature there was no permission handler
      at all, and Electron's default grants everything — the renderer could
      open the microphone, or the camera, without anyone asking. Both handlers
-     go in and both deny by default; the single exception is an audio-only
-     media request while a voice session the user started is armed.
+     go in and both deny by default; the exceptions are an audio-only media
+     request while a voice session the user started is armed, and the
+     clipboard write the composer already relied on (see the predicate).
 
      The two callbacks have deliberately different shapes and neither is a
      copy of the other: setPermissionRequestHandler is
@@ -255,30 +256,36 @@ function createWindow(): BrowserWindow {
      (webContents, permission, requestingOrigin, details) and RETURNS a
      boolean — returning nothing from it denies everything, the armed
      session included. */
-  const audioOnly = (details: { mediaTypes?: string[] } | undefined): boolean => {
-    const types = details?.mediaTypes ?? [];
-    return types.length > 0 && types.every((t) => t === "audio");
-  };
-  const allowVoice = (permission: string, details: { mediaTypes?: string[] } | undefined): boolean =>
-    permission === "media" && voice.armed && audioOnly(details);
-
   window.webContents.session.setPermissionRequestHandler((_wc, permission, callback, details) => {
-    callback(allowVoice(permission, details as { mediaTypes?: string[] } | undefined));
+    callback(voicePermissionVerdict(permission, details as { mediaTypes?: string[] } | undefined));
   });
   window.webContents.session.setPermissionCheckHandler((_wc, permission, _origin, details) =>
-    allowVoice(permission, details as unknown as { mediaTypes?: string[] } | undefined),
+    voicePermissionVerdict(permission, details as unknown as { mediaTypes?: string[] } | undefined),
   );
 
   void window.loadFile(join(__dirname, "..", "renderer", "index.html"));
   return window;
 }
 
-/** Exposed for the smoke: the same predicate the handlers above run, so the
- *  "the renderer cannot take the microphone unasked" case can be asserted
- *  without a live getUserMedia that would open the real device. */
-function voicePermissionVerdict(permission: string, mediaTypes: string[]): boolean {
-  const types = mediaTypes ?? [];
-  return permission === "media" && voice.armed && types.length > 0 && types.every((t) => t === "audio");
+/** The ONE predicate both handlers above run, and the one the smoke asserts.
+ *  It lives at module scope on purpose: while it was a closure inside
+ *  createWindow the check had to assert a textually parallel copy of it, and
+ *  the two bodies could drift apart without anything going red.
+ *
+ *  `clipboard-sanitized-write` is allowed. Electron routes
+ *  `navigator.clipboard.writeText` through these handlers under that name, and
+ *  the composer's "copy session id" (act('copy:session')) is a plain
+ *  writeText whose rejection is swallowed — denying it silently broke the
+ *  copy while the toast still said it had worked. It hands out no device and
+ *  no data, so it is not part of what this gate exists to stop. */
+function voicePermissionVerdict(
+  permission: string,
+  details: { mediaTypes?: string[] } | undefined,
+): boolean {
+  if (permission === "clipboard-sanitized-write") return true;
+  if (permission !== "media" || !voice.armed) return false;
+  const types = details?.mediaTypes ?? [];
+  return types.length > 0 && types.every((t) => t === "audio");
 }
 
 function wireIpc(client: AgentClient): void {
@@ -1502,6 +1509,10 @@ async function voiceTest(
 
   const before = await js<V>("window.__voice()");
   const draftBefore = await js<string>("window.__draft ? window.__draft().draft : ''");
+  // The acceptance line "nothing was written to the agent": this feature owns
+  // no route, no config leaf and no restart, and the snapshot below proves it
+  // rather than asserting it in prose. Compared at the end of the sub-suite.
+  const agentCfgBefore = JSON.stringify((await configGet()).config);
   try {
     // --- the button ------------------------------------------------------
     const mic = await js<Mic>("window.__voiceMic()");
@@ -1657,8 +1668,16 @@ async function voiceTest(
       const scrollBefore = await js<number>(
         "(() => { const s = document.getElementById('scroller'); if (!s) return -1; s.scrollTop = 0; return s.scrollTop; })()",
       );
+      // The slash branch is gated on `e.target.id === 'entry'`, so an Escape
+      // dispatched on `document` would sail past it and prove nothing about
+      // ordering. The slash case therefore strikes the key where the user
+      // strikes it — in the textarea. The approval branch is the opposite:
+      // it needs `!inText`, so its twin keeps dispatching on `document`.
       await js<unknown>(
-        "document.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true, cancelable:true}))",
+        (label === "slash"
+          ? "document.getElementById('entry')"
+          : "document")
+        + ".dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true, cancelable:true}))",
       );
       const after = await js<V>("window.__voice()");
       const d = await js<{ draft: string }>("window.__draft()");
@@ -1687,6 +1706,49 @@ async function voiceTest(
       "Escape still cancels with an approval pending",
       e3.pendingWasSet === true && e3.after.state === "idle" && e3.draft === "fix ",
       `pending before Esc=${e3.pendingWasSet}, state ${e3.after.state}, draft ${JSON.stringify(e3.draft)}`,
+    );
+    await js<unknown>('window.__ctxDraft("")');
+
+    // --- an error strip does not go on eating Escape ----------------------
+    // Nothing else clears the error state, so if Escape cancelled from it the
+    // next Escape struck anywhere — over a palette, a settings window, a
+    // pending approval — would be swallowed for the rest of the session.
+    await js<V>("window.__voiceSetError('the speech helper did not answer')");
+    await js<unknown>(
+      "document.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true, cancelable:true}))",
+    );
+    const afterEsc = await js<V>("window.__voice()");
+    const dismissed = await js<{ clicked: boolean; voice: V }>("window.__voiceDismiss()");
+    const stripGone = await js<Strip>("window.__voiceStrip()");
+    check(
+      "an error strip keeps Escape and is dismissed by its own control",
+      afterEsc.state === "error" && dismissed.clicked && dismissed.voice.state === "idle"
+        && !!stripGone && stripGone.hidden && stripGone.empty,
+      `after Escape ${afterEsc.state}, × present=${dismissed.clicked}, then ${dismissed.voice.state}`,
+    );
+
+    // --- the recording indicator is not re-created ten times a second -----
+    // .micbtn.rec and .vsdot.live carry a CSS pulse, and a replaced element
+    // restarts its animation at frame one — so the two nodes surviving a run
+    // of transcript events IS the animation working.
+    await js<V>("window.__voiceArm()");
+    const marked = await js<{ dot: boolean; mic: boolean }>("window.__voiceMark()");
+    for (const t of ["refactor", "refactor the login", "refactor the login handler"]) {
+      await js<V>(`window.__voiceEvent({type:'partial', text:'${t}'})`);
+    }
+    const survived = await js<{ dot: boolean; mic: boolean; dotPresent: boolean; micPresent: boolean }>(
+      "window.__voiceMarked()",
+    );
+    const stripLive = await js<Strip>("window.__voiceStrip()");
+    await js<V>("window.__voiceCancel()");
+    const afterShapeChange = await js<{ dot: boolean; micPresent: boolean }>("window.__voiceMarked()");
+    check(
+      "the recording pulse survives the transcript repaints, and the strip still leaves on cancel",
+      marked.dot && marked.mic && survived.dot && survived.mic
+        && !!stripLive && stripLive.text === "refactor the login handler"
+        && afterShapeChange.dot === false && afterShapeChange.micPresent === true,
+      `dot kept=${survived.dot} mic kept=${survived.mic}, text ${JSON.stringify(stripLive && stripLive.text)},`
+      + ` dot after cancel=${afterShapeChange.dot}`,
     );
     await js<unknown>('window.__ctxDraft("")');
 
@@ -1738,12 +1800,34 @@ async function voiceTest(
       "navigator.mediaDevices.getUserMedia({video:true}).then(() => 'GRANTED', (e) => e.name)",
     );
     check("the renderer cannot take the camera", cam === "NotAllowedError", `getUserMedia({video:true}) → ${cam}`);
+    // The very function both handlers call — not a copy of it.
     check(
       "and cannot take the microphone outside a session the user started",
-      voicePermissionVerdict("media", ["audio"]) === false
-        && voicePermissionVerdict("media", ["audio", "video"]) === false
-        && voicePermissionVerdict("geolocation", []) === false,
-      `armed=${voice.armed}; audio→${voicePermissionVerdict("media", ["audio"])}`,
+      voicePermissionVerdict("media", { mediaTypes: ["audio"] }) === false
+        && voicePermissionVerdict("media", { mediaTypes: ["audio", "video"] }) === false
+        && voicePermissionVerdict("geolocation", undefined) === false,
+      `armed=${voice.armed}; audio→${voicePermissionVerdict("media", { mediaTypes: ["audio"] })}`,
+    );
+    // ...and the gate did not take the clipboard down with it. Electron sees a
+    // writeText as `clipboard-sanitized-write`; a deny-all handler turns the
+    // permission state to "denied" and the composer's silent "copy session id"
+    // stops copying. The operator's own clipboard is restored below.
+    const { clipboard } = require("electron") as typeof import("electron");
+    const clipBefore = await clipboard.readText();   // Electron 44's clipboard is promise-based
+    const clip = await js<{ perm: string; write: string }>(
+      "(async () => { let perm = 'n/a';"
+      + " try { perm = (await navigator.permissions.query({name:'clipboard-write'})).state; }"
+      + " catch (e) { perm = 'query-threw:' + e.name; }"
+      + " let write = 'OK';"
+      + " try { await navigator.clipboard.writeText('atomic-desktop-smoke'); }"
+      + " catch (e) { write = e.name + ': ' + e.message; }"
+      + " return {perm, write}; })()",
+    );
+    await clipboard.writeText(clipBefore ?? "");
+    check(
+      "the voice permission gate leaves the clipboard alone",
+      clip.perm === "granted" && !/permission denied/i.test(clip.write),
+      `permissions.query(clipboard-write) → ${clip.perm}; writeText → ${clip.write}`,
     );
 
     // --- what actually ships ----------------------------------------------
@@ -1779,6 +1863,16 @@ async function voiceTest(
         `exit ${probe.code}, ${supported.length} supported, ${installed.length} installed`,
       );
     }
+
+    // --- nothing was written to the agent ---------------------------------
+    const agentCfgAfter = JSON.stringify((await configGet()).config);
+    check(
+      "nothing was written to the agent",
+      agentCfgBefore === agentCfgAfter,
+      agentCfgBefore === agentCfgAfter
+        ? `config.json byte-identical across ${agentCfgAfter.length} bytes`
+        : "the agent's config.json changed during the voice suite",
+    );
   } finally {
     await js<unknown>("window.__voiceCancel()").catch(() => undefined);
     await js<unknown>("window.__ctxDraft(" + JSON.stringify(draftBefore ?? "") + ")").catch(() => undefined);
