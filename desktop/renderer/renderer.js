@@ -1862,32 +1862,56 @@ function steerOrQueue(text) {
   STEER.chain = STEER.chain.then(() => steerOrQueueRun(text)).catch(() => {});
   return STEER.chain;
 }
-async function steerOrQueueRun(text) {
+async function steerOrQueueRun(text, post) {
   const sid = S.agentSession;
+  const send = post || ((id, t) => (BR && BR.steer ? BR.steer(id, t) : Promise.resolve(null)));
   let steered = false;
-  if (sid && BR && BR.steer) {
-    const res = await BR.steer(sid, text);
+  if (sid && (post || (BR && BR.steer))) {
+    const res = await send(sid, text);
     steered = !!(res && res.ok && res.steered);
   }
+  /* Review fix: the POST above is a round trip, and the user can click
+     another chat inside it. openSession replaces S.log and clears
+     S.streamId, so pushSteerEntry's `S.log.push` fallback would stamp
+     chat A's user bubble — and A's system line — into chat B's
+     transcript, and the full-queue arm would overwrite a draft the user
+     has since typed in B (S.draft is this window's one editor). Same
+     defect class as the `!item` guards on the stream frames. The queue is
+     window-global by design, so the park itself still happens; only the
+     transcript and the editor are held back. */
+  const here = S.agentSession === sid;
   if (steered) {
     // The message the user typed belongs in the transcript, not only in a
     // system line — spliced before the streaming item, as tool cards are.
-    pushSteerEntry(text);
-    S.log.push({id:nid(), k:'system', text:'steering the running turn — the agent reads it at the next step'});
-    render(); return;
+    // After a switch it belongs in neither transcript: the agent really
+    // did take it, and reopening that chat reads it back from the store.
+    if (here) {
+      pushSteerEntry(text);
+      S.log.push({id:nid(), k:'system', text:'steering the running turn — the agent reads it at the next step'});
+      render();
+    }
+    return;
   }
   if (S.queued.length >= MAX_QUEUED) {
     // chat-orchestrator.ts: the optimistic submit already cleared the
-    // editor, so hand the text back rather than eat it.
-    S.draft = text;
-    const e = $('#entry'); if (e) { e.value = text; autosize(e); }
-    ctxDraftChanged();
-    S.log.push({id:nid(), k:'system', text:'queue: full at ' + MAX_QUEUED + ' — the steer could not be parked (returned to the editor)'});
+    // editor, so hand the text back rather than eat it — but only into an
+    // editor that is still the one it was typed in, or, after a switch,
+    // one the user has not typed into since. Stamping over another chat's
+    // draft is worse than losing a steer that could not be parked.
+    const e = $('#entry');
+    if (here || (!S.draft && !(e && e.value))) {
+      S.draft = text;
+      if (e) { e.value = text; autosize(e); }
+      ctxDraftChanged();
+    }
+    if (here) S.log.push({id:nid(), k:'system', text:'queue: full at ' + MAX_QUEUED + ' — the steer could not be parked (returned to the editor)'});
     render(); return;
   }
   S.queued.splice(STEER.ahead, 0, text);
   STEER.ahead += 1;
-  S.log.push({id:nid(), k:'system', text:'steering the running turn — it cannot take this one, so it runs as the next turn'});
+  // The queue tray is window-global and shows the parked text either way;
+  // the sentence explaining it is only true in the chat it was typed in.
+  if (here) S.log.push({id:nid(), k:'system', text:'steering the running turn — it cannot take this one, so it runs as the next turn'});
   render();
 }
 /** The steered message, positioned before the streaming assistant item. */
@@ -4086,9 +4110,14 @@ async function openSession(id) {
  * a recovery path, not something the operator asked for, and a 404 on an
  * agent older than 0.5.5 must not print in the transcript.
  */
-async function recoverParkedSteers(id) {
-  if (!BR || !BR.undeliveredSteers || !id) return;
-  const res = await BR.undeliveredSteers(id);
+async function recoverParkedSteers(id, probe) {
+  // `probe` injects the two bridge calls so the recovery BODY — the
+  // unshift, the watermark, the line and the mandatory DELETE — can be
+  // asserted; a live agent almost never has anything parked, so the
+  // check over the real route only ever proved the empty case.
+  const fetchParked = probe ? probe.fetch : (BR && BR.undeliveredSteers ? (sid) => BR.undeliveredSteers(sid) : null);
+  if (!fetchParked || !id) return;
+  const res = await fetchParked(id);
   if (!res || !res.ok || !res.data) return;
   if (S.agentSession !== id) return;   // the user moved on while this was in flight
   const list = Array.isArray(res.data.undelivered) ? res.data.undelivered : [];
@@ -4102,7 +4131,8 @@ async function recoverParkedSteers(id) {
       + ' arrived too late for the last turn here — sending ' + (list.length === 1 ? 'it' : 'them') + ' next'});
   }
   const seq = list.reduce((max, u) => Math.max(max, (u && Number(u.seq)) || 0), 0);
-  if (BR.ackSteers) await BR.ackSteers(id, seq, discarded);
+  const ack = probe ? probe.ack : (BR && BR.ackSteers ? (sid, q, d) => BR.ackSteers(sid, q, d) : null);
+  if (ack) await ack(id, seq, discarded);
   render();
 }
 
@@ -8760,5 +8790,98 @@ if (typeof window !== 'undefined') {
     RUNNING.set(turnId, S.agentSession || null);
     render();
     return turnId;
+  };
+}
+
+/* ------------------------------------------------------------------
+   Review-fix harness hooks — Item 7 (steer, the stored gauge).
+   Three things the previous round shipped without assertions: the
+   chat-switch race inside the steer round trip, the GET leg's recovery
+   BODY (the live check only ever saw an empty store), and the D2 cache
+   parenthetical on the basis line (its `provider` arm cannot arise on
+   this state dir's route). Each probe drives the REAL function and puts
+   back everything it touched.
+   ------------------------------------------------------------------ */
+if (typeof window !== 'undefined') {
+  /* A steer whose POST resolves after the user has clicked another chat.
+     `answer` is what the route would have said; the injected sender does
+     the switch openSession does — new S.log, S.streamId cleared, a draft
+     typed in the new chat — from inside the round trip. */
+  window.__steerSwitchProbe = async (answer, stay) => {
+    const entry = $('#entry');
+    const keep = {sid:S.agentSession, log:S.log, streamId:S.streamId, draft:S.draft,
+      queued:S.queued.slice(), ahead:STEER.ahead, value: entry ? entry.value : null};
+    const logB = [{id:nid(), k:'system', text:'chat B'}];
+    const logA = [{id:nid(), k:'system', text:'chat A'}];
+    const typedInB = 'a draft typed in chat B';
+    S.agentSession = 'probe-chat-a'; S.log = logA; S.streamId = null; S.draft = '';
+    if (entry) entry.value = '';
+    let out = null;
+    try {
+      await steerOrQueueRun('a message typed while chat A was running', () => {
+        // `stay` is the control arm: no switch, so the transcript and the
+        // editor must be written exactly as they always were.
+        if (!stay) {
+          S.agentSession = 'probe-chat-b'; S.log = logB; S.streamId = null;
+          S.draft = typedInB;
+          const e = $('#entry'); if (e) e.value = typedInB;
+        }
+        return Promise.resolve(answer);
+      });
+      const e2 = $('#entry');
+      out = {a: logA.map((m) => m.k + ':' + (m.text || '')),
+        b: logB.map((m) => m.k + ':' + (m.text || '')),
+        draft: S.draft, value: e2 ? e2.value : null,
+        queued: S.queued.slice(), ahead: STEER.ahead};
+    } finally {
+      S.agentSession = keep.sid; S.log = keep.log; S.streamId = keep.streamId; S.draft = keep.draft;
+      S.queued.length = 0; S.queued.push.apply(S.queued, keep.queued); STEER.ahead = keep.ahead;
+      const e3 = $('#entry'); if (e3 && keep.value !== null) e3.value = keep.value;
+      render();
+    }
+    return out;
+  };
+  /* The GET leg with something actually parked: the real
+     recoverParkedSteers over a fixed answer, so the unshift, the
+     STEER.ahead watermark, the system line and the DELETE ack are all
+     executed. The two bridge calls are the only things injected. */
+  window.__steerParkProbe = async (undelivered, discarded) => {
+    const id = 'probe-parked-session';
+    const keep = {sid:S.agentSession, queued:S.queued.slice(), ahead:STEER.ahead,
+      logLen:S.log.length, recovery:STEER.recovery};
+    S.agentSession = id;
+    const acks = [];
+    let out = null;
+    try {
+      await recoverParkedSteers(id, {
+        fetch: (sid) => Promise.resolve({ok:true, data:{sessionId:sid, undelivered, discarded}}),
+        ack: (sid, seq, disc) => { acks.push({id:sid, seq, discarded:disc}); return Promise.resolve({ok:true}); },
+      });
+      out = {queued:S.queued.slice(), ahead:STEER.ahead, acks,
+        added: S.log.slice(keep.logLen).map((m) => m.text || ''),
+        recovery: STEER.recovery ? Object.assign({}, STEER.recovery) : null};
+    } finally {
+      S.agentSession = keep.sid;
+      S.queued.length = 0; S.queued.push.apply(S.queued, keep.queued); STEER.ahead = keep.ahead;
+      S.log.length = keep.logLen; STEER.recovery = keep.recovery;
+      render();
+    }
+    return out;
+  };
+  /* D2 — the basis line's `provider` arm. Plants the three fields the
+     sentence reads and restores them; also reports the live pair so the
+     "the cache hit is part of the counted figure" invariant is checked
+     against whatever the route really reported. */
+  window.__ctxBasisProbe = (u) => {
+    const keep = {source:CTX.source, modelId:CTX.modelId, cacheHitTokens:CTX.cacheHitTokens};
+    const live = {source:CTX.source, tokens:CTX.tokens, cacheHitTokens:CTX.cacheHitTokens};
+    let text = '';
+    try {
+      CTX.source = u.source; CTX.modelId = u.modelId; CTX.cacheHitTokens = u.cacheHitTokens;
+      text = ctxBasisLine();
+    } finally {
+      CTX.source = keep.source; CTX.modelId = keep.modelId; CTX.cacheHitTokens = keep.cacheHitTokens;
+    }
+    return {text, live, restored: CTX.source === keep.source && CTX.cacheHitTokens === keep.cacheHitTokens};
   };
 }

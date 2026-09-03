@@ -47,6 +47,7 @@ import {
 import {
   buildCustomModelDef,
   downloadProjector,
+  huggingFaceToken,
   isSafeModelFilename,
   resolveHuggingFaceGgufChoices,
   type HuggingFaceRepoChoices,
@@ -263,6 +264,28 @@ function hfBuildDef(
   }
 }
 
+/**
+ * The one honest thing this window can add to a gated-repo refusal.
+ *
+ * `atag models pull` reads HF_TOKEN out of <stateDir>/.env — load-config
+ * applies the NAMES into process.env on every CLI run — while this
+ * process sees only its own environment, so a gated repo can fail to LIST
+ * here and download fine. Names only: the value is never read.
+ *
+ * Extracted from the cli:hfResolve handler so the sentence can be
+ * asserted without a gated repo and a token on disk (review fix: it was
+ * the one string in this feature the desktop authored on top of the port,
+ * and nothing checked it).
+ */
+function hfGatedTokenHint(message: string, dir: string): string {
+  if (!/Hugging Face returned 40[13]/.test(message)) return message;
+  const names = dotenvKeys(dir).keys.filter((k) => k === "HF_TOKEN" || k === "HUGGING_FACE_HUB_TOKEN");
+  if (names.length === 0 || envPresent(names).length > 0) return message;
+  return message
+    + ` (${names.join(" / ")} is named in ${dir}/.env, which \`atag models pull\` reads and this window does not`
+    + " — start the app with it exported and the listing will see it too.)";
+}
+
 function wireIpc(client: AgentClient): void {
   ipcMain.handle("agent:status", () => client.status);
   ipcMain.handle("agent:start", () => client.start());
@@ -457,20 +480,8 @@ function wireIpc(client: AgentClient): void {
       if (hfLookup !== controller) return { ok: false, cancelled: true, error: "cancelled" };
       hfLookup = null;
       if (controller.signal.aborted) return { ok: false, cancelled: true, error: "cancelled" };
-      let message = err instanceof Error ? err.message : String(err);
-      // The one honest thing this window can add. `atag models pull` reads
-      // HF_TOKEN out of <stateDir>/.env (load-config applies the NAMES into
-      // process.env on every CLI run); this process sees only its own
-      // environment, so a gated repo can fail to LIST here and download
-      // fine. Names only — the value is never read.
-      if (/Hugging Face returned 40[13]/.test(message)) {
-        const dir = stateDirPath();
-        const names = dotenvKeys(dir).keys.filter((k) => k === "HF_TOKEN" || k === "HUGGING_FACE_HUB_TOKEN");
-        if (names.length > 0 && envPresent(names).length === 0) {
-          message += ` (${names.join(" / ")} is named in ${dir}/.env, which \`atag models pull\` reads and this window does not — start the app with it exported and the listing will see it too.)`;
-        }
-      }
-      return { ok: false, error: message };
+      const message = err instanceof Error ? err.message : String(err);
+      return { ok: false, error: hfGatedTokenHint(message, stateDirPath()) };
     }
   });
   ipcMain.handle("cli:hfCancel", () => {
@@ -2823,6 +2834,43 @@ async function hfAndDeltaTest(
     `${JSON.stringify(bad.error)} / ${JSON.stringify(ds.error)}`,
   );
 
+  /* Review fix: the desktop's own added sentence on that 401 — the only
+     string this feature authored on top of the port, and the only place
+     `dotenvKeys`/`envPresent` are consulted from the HF path. Driven over
+     a throwaway directory so it needs neither a gated repo nor a token in
+     the operator's own .env — and so "names only, never values" is
+     demonstrable: the file below holds a value the message must not show. */
+  const hintDir = join(app.getPath("temp"), `atag-hf-hint-${process.pid}`);
+  const base401 = "Hugging Face returned 401: either no such repo, or it is gated.";
+  const base403 = "Hugging Face returned 403: either no such repo, or it is gated.";
+  const base404 = "Hugging Face returned 404: no repo or revision by that name.";
+  let hintWith = "";
+  let hintWithout = "";
+  let hintOther = "";
+  try {
+    mkdirSync(hintDir, { recursive: true });
+    writeFileSync(join(hintDir, ".env"), "HF_TOKEN=hf_not-a-real-token\n");
+    hintWith = hfGatedTokenHint(base401, hintDir);
+    hintOther = hfGatedTokenHint(base404, hintDir);
+    rmSync(join(hintDir, ".env"), { force: true });
+    hintWithout = hfGatedTokenHint(base403, hintDir);
+  } finally {
+    rmSync(hintDir, { recursive: true, force: true });
+  }
+  // Exported in this process, the hint would be a lie — `models pull` and
+  // this window would both already see it — so it is correctly withheld.
+  const tokenExported = envPresent(["HF_TOKEN"]).length > 0;
+  const hintWanted = tokenExported
+    ? base401
+    : base401 + ` (HF_TOKEN is named in ${hintDir}/.env, which \`atag models pull\` reads and this window does not`
+      + " — start the app with it exported and the listing will see it too.)";
+  check(
+    "hf: a 401 with a token named in <stateDir>/.env says where `models pull` reads it, and never its value",
+    hintWith === hintWanted && !hintWith.includes("hf_not-a-real-token")
+      && hintWithout === base403 && hintOther === base404,
+    `${JSON.stringify(hintWith)}${tokenExported ? " (HF_TOKEN is exported here, so the hint is withheld)" : ""}`,
+  );
+
   // ---- every paste form parses (network-gated) ----
   const forms = [
     "unsloth/Qwen3-4B-GGUF",
@@ -2880,6 +2928,25 @@ async function hfAndDeltaTest(
       "hf: a repo that is not a GGUF conversion says exactly why",
       none.error === "No .gguf files in meta-llama/Llama-3.1-8B-Instruct — that is the original model, not a GGUF conversion of it. Look for a \"-GGUF\" repo of the same name.",
       JSON.stringify(none.error),
+    );
+
+    /* Review fix: the gated-repo arm — one of the four messages the
+       spec's drift mitigation names, and the only one that was
+       unasserted. huggingface.co answers 401 for a repo that is private
+       OR absent (it will not say which), so a repo id nobody owns drives
+       the real listing call into the real 401 branch without needing a
+       gated repo or a token. The sentence is the PORT's, byte for byte. */
+    const gated = await js<Hf>("window.__llmHfResolve('atag-smoke-no-such-owner-9f3a/does-not-exist')");
+    const gatedWanted = "Hugging Face returned 401: either no such repo, or it is gated. "
+      + (huggingFaceToken()
+        ? "Your HF_TOKEN does not grant access — accept the licence on huggingface.co."
+        : "If it is gated, accept its licence on huggingface.co and export HF_TOKEN.");
+    const gatedBody = await js<string>("window.__settingsBody()");
+    check(
+      "hf: a gated or absent repo shows the port's own 401 sentence",
+      networkDown(gated.error)
+        || (gated.error === gatedWanted && gated.repoId === null && gatedBody.includes(gatedWanted)),
+      networkDown(gated.error) ? "skipped - huggingface.co is unreachable from this run" : JSON.stringify(gated.error),
     );
 
     // The vision repo: one servable quant, a projector, the hidden tally.
@@ -3081,6 +3148,73 @@ async function hfAndDeltaTest(
     `route=${JSON.stringify(undel.ok === true ? undel.data : undel.error)}; openSession recovery=${JSON.stringify(wiredRecovery)}`,
   );
 
+  /* Review fix: the check above passes with an empty store, where its own
+     ternary degrades to "nothing happened" — so the recovery BODY (the
+     unshift to the front, the STEER.ahead watermark, the sentence and the
+     mandatory DELETE) was executed by nothing in the suite. This drives
+     the real recoverParkedSteers over a fixed answer, the same technique
+     the `steer_undelivered` frame is asserted with. */
+  type Park = {
+    queued: string[]; ahead: number; added: string[];
+    acks: Array<{ id: string; seq: number; discarded: number }>;
+    recovery: { id: string; parked: number; discarded: number } | null;
+  };
+  await js<number>("window.__clearQueue()");
+  await js<number>("window.__seedQueue(2)");
+  const parked = await js<Park>(
+    "window.__steerParkProbe([{seq:4, text:'the first parked one', parked_at:1}, {seq:7, text:'and the second', parked_at:2}], 3)",
+  );
+  const parkedNone = await js<Park>("window.__steerParkProbe([], 0)");
+  await js<number>("window.__clearQueue()");
+  check(
+    "steer: parked messages go to the FRONT of the queue, are announced once, and are acked at the high seq",
+    JSON.stringify(parked.queued) === JSON.stringify(["the first parked one", "and the second", "seed 0", "seed 1"])
+      && parked.ahead === 2
+      && JSON.stringify(parked.added) === JSON.stringify(["2 messages arrived too late for the last turn here — sending them next"])
+      && JSON.stringify(parked.acks) === JSON.stringify([{ id: "probe-parked-session", seq: 7, discarded: 3 }])
+      && !!parked.recovery && parked.recovery.parked === 2 && parked.recovery.discarded === 3
+      && parkedNone.added.length === 0 && parkedNone.acks.length === 0
+      && JSON.stringify(parkedNone.queued) === JSON.stringify(["seed 0", "seed 1"]),
+    `queued=${JSON.stringify(parked.queued)} ahead=${parked.ahead} acks=${JSON.stringify(parked.acks)} said=${JSON.stringify(parked.added)}`,
+  );
+
+  /* Review fix (major): the steer POST is a round trip, and clicking
+     another chat inside it used to land chat A's user bubble and its
+     system line at the bottom of chat B, and hand A's text back into a
+     draft the user had since typed in B. Both arms of the answer are
+     driven, plus the control arm where nothing switches. */
+  type Switch = { a: string[]; b: string[]; draft: string; value: string | null; queued: string[]; ahead: number };
+  await js<number>("window.__clearQueue()");
+  const swSteered = await js<Switch>("window.__steerSwitchProbe({ok:true, steered:true})");
+  await js<number>("window.__clearQueue()");
+  const swQueued = await js<Switch>("window.__steerSwitchProbe({ok:true, steered:false})");
+  await js<number>("window.__clearQueue()");
+  const stayed = await js<Switch>("window.__steerSwitchProbe({ok:true, steered:true}, true)");
+  await js<number>("window.__clearQueue()");
+  const typed = "a draft typed in chat B";
+  const untouched = (r: Switch) =>
+    JSON.stringify(r.a) === JSON.stringify(["system:chat A"])
+    && JSON.stringify(r.b) === JSON.stringify(["system:chat B"])
+    && r.draft === typed && r.value === typed;
+  check(
+    "steer: a result that arrives after a chat switch writes into neither transcript and leaves the new draft alone",
+    untouched(swSteered) && untouched(swQueued)
+      // The park itself still happens - the queue tray is window-global.
+      && JSON.stringify(swQueued.queued) === JSON.stringify(["a message typed while chat A was running"])
+      && swQueued.ahead === 1
+      && JSON.stringify(swSteered.queued) === JSON.stringify([])
+      // Control: with no switch, the transcript is written exactly as before.
+      && JSON.stringify(stayed.a) === JSON.stringify([
+        "system:chat A",
+        "user:a message typed while chat A was running",
+        "system:steering the running turn — the agent reads it at the next step",
+      ])
+      && JSON.stringify(stayed.b) === JSON.stringify(["system:chat B"]),
+    `steered a=${JSON.stringify(swSteered.a)} b=${JSON.stringify(swSteered.b)} draft=${JSON.stringify(swSteered.draft)}`
+      + ` | refused queued=${JSON.stringify(swQueued.queued)} b=${JSON.stringify(swQueued.b)}`
+      + ` | control a=${JSON.stringify(stayed.a)}`,
+  );
+
   // A message typed during a turn is offered to the running turn. The
   // ROUTE's answer is what is asserted - not the model's obedience.
   await wait(800);
@@ -3261,6 +3395,37 @@ async function hfAndDeltaTest(
     boundBad.length
       ? boundBad.map((k) => `${k}: ${JSON.stringify(boundArms[k].text)}`).join(" | ")
       : `all four arms exact; snapshot ${JSON.stringify(storedAfterProbe) === JSON.stringify(storedBeforeProbe) ? "intact" : "CLOBBERED"}`,
+  );
+  /* Review fix (D2): the basis line's `provider` arm — "(Nk of it reused
+     from its cache)", reworded because 0.5.5's promptTokens is evaluated
+     + cached rather than the KV-cache miss count. That arm cannot arise
+     on this state dir's route, so the reword shipped unguarded; the probe
+     plants the three fields the sentence reads and restores them. The
+     `after` wording is a regression the check names explicitly. */
+  type Basis = { text: string; live: { source: string | null; tokens: number; cacheHitTokens: number | null }; restored: boolean };
+  const basisArms = {
+    cached: await js<Basis>("window.__ctxBasisProbe({source:'provider', modelId:'glm-5.2', cacheHitTokens:12800})"),
+    fresh: await js<Basis>("window.__ctxBasisProbe({source:'provider', modelId:'glm-5.2', cacheHitTokens:0})"),
+    unnamed: await js<Basis>("window.__ctxBasisProbe({source:'provider', modelId:null, cacheHitTokens:null})"),
+  };
+  const basisWant = {
+    cached: "counted by glm-5.2 (12.8k of it reused from its cache)",
+    fresh: "counted by glm-5.2",
+    unnamed: "counted by the model",
+  };
+  const basisBad = (Object.keys(basisWant) as Array<keyof typeof basisWant>)
+    .filter((k) => basisArms[k].text !== basisWant[k]);
+  // The parenthetical describes the figure's composition, so the cache hit
+  // is PART of the counted total, never additional to it.
+  const liveBasis = basisArms.cached.live;
+  const cacheWithin = liveBasis.source !== "provider" || liveBasis.cacheHitTokens === null
+    || liveBasis.cacheHitTokens <= liveBasis.tokens;
+  check(
+    "gauge: the counted figure names the model and says the cache hit is part of it, not before it",
+    basisBad.length === 0 && !basisArms.cached.text.includes("after") && basisArms.cached.restored && cacheWithin,
+    basisBad.length
+      ? basisBad.map((k) => `${k}: ${JSON.stringify(basisArms[k].text)}`).join(" | ")
+      : `all three arms exact; live ${liveBasis.source ?? "-"} ${liveBasis.tokens}/${liveBasis.cacheHitTokens ?? "-"}`,
   );
   /* Review fix: the 0.5.5 snapshot used to be written before the
      staleness guard, so a refresh for the session the user just left
