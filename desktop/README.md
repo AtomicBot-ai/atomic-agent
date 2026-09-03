@@ -221,13 +221,24 @@ Real, driven by the running agent:
   `/api/coding-mode` exactly as the TUI's `onCodingModeChanged` does — the
   runtime's ladder and plan flag move, `config.json` is untouched. The Privacy
   pane shows the persisted baseline read-only; the chip is the one approval
-  surface, as in the TUI since PR #303.
+  surface, as in the TUI since PR #303. The route holds the chosen stance in
+  the closure its GET and POST share, because `resolveCodingMode` is not
+  injective and the live switches cannot be read back as the mode that set
+  them. Inference survives as the boot seed only, so an agent started with
+  `--no-approval` opens honestly — with the consequence that **at
+  `agent.approvalLevel: 5` the seed reports `bypass`, so the chip opens red
+  until a mode is chosen.** At that base `default`, `auto` and `bypass` are
+  also behaviourally identical (the ladder is already at maximum and only
+  `plan` changes anything), which the popover says in as many words; lower
+  `agent.approvalLevel` to make the modes differ.
 
 Honestly degraded, and labelled as such in the UI:
 
 - **Coding modes need an agent that has `/api/coding-mode`.** That route is
   added in this branch (`src/http/route-coding-mode.ts`); a binary without it
-  answers 404 and the chip says so rather than pretending.
+  answers 404 and the chip prints `mode —` rather than naming a stance the
+  agent does not have. The desktop prefers `~/atag-agent/bin/atag` for
+  exactly this reason (see *Packaging* below).
 - **The exact pre-message breakdown needs `POST /api/context-preview`,** a
   route added in this branch (`src/http/route-context-preview.ts`): the
   runtime builds — never runs, never persists — the prompt the next turn
@@ -404,6 +415,16 @@ route changed. Run it against a private `ATOMIC_AGENT_STATE_DIR`, never
 
 ## Building a testable .dmg
 
+**The app already installed at `/Applications/Atomic Agent.app` has none of
+this.** Its `app.asar` was built on 1 September, before the coding-mode chip
+existed: it carries no `/api/coding-mode` call and no `~/atag-agent`
+candidate in its binary search, so double-clicking it keeps spawning
+`~/.local/bin/atag` and keeps showing the chip's old, greyed-out state no
+matter what this branch does. `cd desktop && npm run start` from this
+worktree is what shows the fix today. Moving it into `/Applications` takes
+the `npm run dist` below plus a reinstall from the DMG it writes — that is a
+release step, and this branch deliberately does not perform it.
+
 ```bash
 cd desktop
 npm install
@@ -423,10 +444,42 @@ it; clear the flag or right-click → Open:
 xattr -dr com.apple.quarantine "/Applications/Atomic Agent.app"
 ```
 
-The app does **not** bundle the agent. It looks for `atag` (or
-`atomic-agent`) in `~/.local/bin`, `/usr/local/bin` and `/opt/homebrew/bin`,
-or wherever `ATOMIC_AGENT_BIN` points. Without one the window still opens and
-says so instead of failing silently.
+The app does **not** bundle the agent. It looks for `ATOMIC_AGENT_BIN` first,
+then `~/atag-agent/bin/atag`, then `atag` (or `atomic-agent`) in
+`~/.local/bin`, `/usr/local/bin` and `/opt/homebrew/bin`. Without one the
+window still opens and says so instead of failing silently. Whichever it
+started is printed in the diagnostics line as `agent <path>`, in both the
+supported and unsupported cases — the desktop can be running a different
+agent from the terminal's `atag`, and that has to be answerable from the
+window.
+
+`~/atag-agent/bin/atag` is the locally built agent, and it is deliberately
+preferred over the released install: a released 0.5.5 binary has no
+`/api/coding-mode`, which is what greys the coding-mode chip out. It is a
+three-line shebang script carrying an absolute node path (the app is spawned
+without a shell and a Finder-launched `.app` has a minimal `PATH`) over a
+checkout of this branch:
+
+```bash
+git clone <this repo> ~/atag-agent && cd ~/atag-agent
+# If it was cloned from a temporary worktree, repoint it at the repo that
+# outlives one — otherwise the next `git pull` has nowhere to go:
+git remote set-url origin https://github.com/AtomicBot-ai/atomic-agent
+npm install --engine-strict=false && npm run build
+mkdir -p ~/atag-agent/bin   # the repo ships no bin/; the build writes dist/ only
+printf '#!/bin/sh\nexec %s --enable-source-maps %s/dist/cli/index.js "$@"\n' \
+  "$(command -v node)" "$HOME/atag-agent" > ~/atag-agent/bin/atag
+chmod 755 ~/atag-agent/bin/atag && ~/atag-agent/bin/atag --version
+```
+
+Nothing under `~/.local/bin` is touched, so a terminal `atag` keeps running
+the released binary. Rollback is `rm -rf ~/atag-agent`; do exactly that once
+the route ships in a release, or the desktop will keep preferring a build
+that has fallen behind. Re-run `npm run build` and re-check `--version` after
+every pull: a missing `dist/cli/index.js` fails at spawn time with an
+unhelpful node error. The checkout tracks this branch, which exists only
+until it merges, so update it with `git pull origin main` (plus a rebuild)
+rather than a bare `git pull`.
 
 The packaged app answers `--smoke` exactly like the dev build, which is how a
 release candidate gets checked before it goes anywhere:

@@ -701,3 +701,14 @@ button.menurow:hover{background:var(--bg-hover)}
   #sidebar .sesrow{justify-content:center;padding:0}
   #sidebar .sb-list{padding:var(--s2) 0}
 }
+
+/* ============================================================
+   Coding-mode popover — the unavailable state (item 6)
+   ============================================================
+   `.dim` is applied to the mode rows when the agent has no
+   /api/coding-mode route, but the only `.dim` rules that existed were
+   `.palrow`, `.modelrow` and `.tuirow`, so the unavailable state was
+   invisible. A disabled row also has to stop looking clickable. */
+.poprow.dim{opacity:.5}
+.poprow[disabled]{cursor:default}
+.poprow[disabled]:hover{background:transparent}

@@ -270,6 +270,58 @@ describe("createTraceRecorder", () => {
     });
   });
 
+  it("carries the read-repeat detector payload into the recorded event", () => {
+    // A `read_repeat` trace line is unreadable without the file, the
+    // range and the fingerprint pair: those three are the whole evidence
+    // that the re-read was redundant. They have to survive the recorder,
+    // not just the agent-loop event.
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-7b", emit, now });
+    rec.onAgentEvent({ type: "turn_started", turnIndex: 0 });
+    rec.onAgentEvent({
+      type: "loop_detected",
+      tool: "os.fs.read",
+      count: 2,
+      stepIndex: 4,
+      level: "warn",
+      detector: "read_repeat",
+      read: {
+        path: "/repo/src/a.ts",
+        startLine: 90,
+        endLine: 119,
+        previousFingerprint: "ff01",
+        fingerprint: "ff01",
+      },
+    });
+    expect(events.find((e) => e.type === "loop_detected")).toMatchObject({
+      type: "loop_detected",
+      detector: "read_repeat",
+      read: {
+        path: "/repo/src/a.ts",
+        startLine: 90,
+        endLine: 119,
+        previousFingerprint: "ff01",
+        fingerprint: "ff01",
+      },
+    });
+  });
+
+  it("omits the read payload for detectors that have none", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-7c", emit, now });
+    rec.onAgentEvent({ type: "turn_started", turnIndex: 0 });
+    rec.onAgentEvent({
+      type: "loop_detected",
+      tool: "noop",
+      count: 3,
+      stepIndex: 1,
+      detector: "generic_repeat",
+    });
+    const event = events.find((e) => e.type === "loop_detected");
+    expect(event).toBeDefined();
+    expect("read" in event!).toBe(false);
+  });
+
   it("ignores noisy events (reasoning_delta, assistant_delta, llm_completed)", () => {
     const { events, emit } = collector();
     const rec = createTraceRecorder({ sessionId: "s-8", emit, now });

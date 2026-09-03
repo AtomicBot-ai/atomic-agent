@@ -19,6 +19,10 @@ import {
   classifyVerifyTransportError,
   isAbortError,
 } from "./classify-verify-response.js";
+import {
+  redactProviderDetail,
+  PROVIDER_DETAIL_MAX_LEN,
+} from "./redact-provider-detail.js";
 import type {
   ProviderVerifyResult,
   ProviderVerifyStatus,
@@ -35,8 +39,6 @@ export const PROVIDER_VERIFY_TIMEOUT_MS = 8_000;
 /** model → other token field → next model. Never more than that. */
 const MAX_VERIFY_REQUESTS = 3;
 
-/** Provider error bodies are quoted back bounded, same cap as the HTTP layer. */
-const VERIFY_DETAIL_MAX_LEN = 300;
 
 export async function verifyProviderKey(
   target: ProviderVerifyTarget,
@@ -168,7 +170,7 @@ function probeBody(
 
 async function readBounded(res: Response): Promise<string> {
   const text = await res.text().catch(() => "");
-  return text.slice(0, VERIFY_DETAIL_MAX_LEN);
+  return text.slice(0, PROVIDER_DETAIL_MAX_LEN);
 }
 
 function result(
@@ -183,16 +185,7 @@ function result(
     status,
     probedModel,
     httpStatus,
-    detail: redactKey(detail, apiKey).slice(0, VERIFY_DETAIL_MAX_LEN),
+    detail: redactProviderDetail(detail, apiKey),
     latencyMs: Date.now() - startedAt,
   };
-}
-
-/**
- * Some providers echo the offending credential back in the error body,
- * and this detail is headed for a status line and the log file.
- */
-function redactKey(detail: string, apiKey: string): string {
-  if (apiKey.length < 8) return detail;
-  return detail.split(apiKey).join("***");
 }

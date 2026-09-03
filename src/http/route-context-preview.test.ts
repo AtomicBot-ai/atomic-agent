@@ -46,7 +46,14 @@ describe("POST /api/context-preview", () => {
     // The TUI's own section labels, in the TUI's order: the scaffold first.
     expect(json.usage.sections[0]?.label).toBe("prompt scaffold");
     expect(json.usage.tokens).toBeGreaterThan(0);
-    expect(json.usage.conversationTokens).toBe(0);
+    // Not zero: an empty transcript still renders the conversation
+    // section's "(no messages yet)" placeholder, so the section has a
+    // small floor. The TUI's own panel shows the same figure on a fresh
+    // thread. The floor is the placeholder and nothing else, so it stays
+    // tiny — a fresh thread carrying real transcript tokens would break
+    // the upper bound. What must be exactly zero is the pair count.
+    expect(json.usage.conversationTokens).toBeGreaterThan(0);
+    expect(json.usage.conversationTokens).toBeLessThan(20);
     expect(json.usage.conversationPairs).toBe(0);
     expect(json.pairsCap).toBe(harness.runtime.config.agent.conversationMaxPairs);
     expect(json.usage.conversationPairsCap).toBe(json.pairsCap);

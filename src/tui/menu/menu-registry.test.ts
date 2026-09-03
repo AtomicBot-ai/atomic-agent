@@ -145,10 +145,12 @@ const V0_2_2_SLASH_COMMANDS = [
   },
   {
     name: "llm",
-    // Updated when the Fallback pane got its deep link: the palette must
-    // advertise all four panes, not the three that predate it.
+    // Updated when the Fallback pane got its deep link, and again for
+    // `/llm check`: every subcommand the handler answers has to be
+    // reachable from here, or it exists only for whoever types an
+    // invalid one and reads the usage line.
     description:
-      "open LLM Local/Cloud/External/Fallback panel · `/llm provider <id>` switch text provider · `/llm fallback` edit the fallover chain",
+      "open LLM Local/Cloud/External/Fallback panel · `/llm provider <id>` switch text provider · `/llm check` test the active route's streaming tool contract · `/llm fallback` edit the fallover chain",
   },
   {
     name: "mcp",

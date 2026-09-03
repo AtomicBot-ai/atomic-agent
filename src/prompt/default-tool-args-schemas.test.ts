@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 
+import { DOCUMENT_FORMATS } from "../tools/os/read-document/extractors/extractor-types.js";
 import { DEFAULT_TOOL_DESCRIPTORS } from "./tool-descriptors.js";
 import {
   attachDefaultArgsJsonSchema,
@@ -85,6 +86,38 @@ describe("default tool argsJsonSchema map", () => {
       items: { type: "string" },
       maxItems: 4,
     });
+  });
+
+  // Issue #113: `format` was an open string in both the JSON Schema and the
+  // stable-prefix argsSchema, so nothing stopped a model emitting the
+  // invented `format: "text"` that the issue is about. Both surfaces now
+  // carry the closed set, derived from the runtime declaration.
+  it("pins os.fs.read_document format as the closed DOCUMENT_FORMATS enum", () => {
+    const properties = (
+      getDefaultArgsJsonSchema("os.fs.read_document") as {
+        properties: Record<string, unknown>;
+      }
+    ).properties;
+    expect(properties.format).toEqual({
+      type: "string",
+      enum: ["pdf", "docx", "doc", "xlsx", "rtf", "odt", "pptx", "plain"],
+    });
+    // Verbatim against the runtime validator, not a second hand-written
+    // copy of it — that is the drift this module's header promises to avoid.
+    expect((properties.format as { enum: string[] }).enum).toEqual([
+      ...DOCUMENT_FORMATS,
+    ]);
+  });
+
+  it("spells the same closed format set into the read_document argsSchema", () => {
+    const descriptor = DEFAULT_TOOL_DESCRIPTORS.find(
+      (d) => d.name === "os.fs.read_document",
+    );
+    expect(descriptor).toBeDefined();
+    expect(descriptor!.argsSchema).toContain(
+      "format?: 'pdf' | 'docx' | 'doc' | 'xlsx' | 'rtf' | 'odt' | 'pptx' | 'plain'",
+    );
+    expect(descriptor!.argsSchema).not.toContain("format?: string");
   });
 
   it("does not leak vision.describe's maxItems onto other string[] schemas", () => {

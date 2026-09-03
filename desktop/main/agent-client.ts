@@ -51,12 +51,25 @@ export interface AgentStatus {
 const HEALTH_TIMEOUT_MS = 30_000;
 const HEALTH_POLL_MS = 300;
 
-/** Where a released install puts the binary, in order of preference. */
+/**
+ * Where the agent might be, in order of preference.
+ *
+ * `ATOMIC_AGENT_BIN` wins. Then `~/atag-agent/bin/atag`: a locally built
+ * agent, preferred when it exists because a released install can be
+ * behind the routes the desktop needs (a 0.5.5 SEA binary has no
+ * `/api/coding-mode`, which is what greys the coding-mode chip out).
+ * After that the released install, which is the normal case. Nothing
+ * here repoints `~/.local/bin/atag`, so a terminal `atag` keeps running
+ * whatever was installed; only the desktop prefers the local build, and
+ * the diagnostics line names the binary it actually started. Delete
+ * `~/atag-agent` to fall back.
+ */
 function candidateBinaries(): string[] {
   const fromEnv = process.env.ATOMIC_AGENT_BIN;
   const home = homedir();
   return [
     ...(fromEnv ? [fromEnv] : []),
+    join(home, "atag-agent", "bin", "atag"),
     join(home, ".local", "bin", "atag"),
     join(home, ".local", "bin", "atomic-agent"),
     "/usr/local/bin/atag",
@@ -332,6 +345,11 @@ export class AgentClient extends EventEmitter {
   async codingMode(mode?: string): Promise<{
     ok: boolean; supported: boolean; mode?: string; approvalLevel?: number;
     planMode?: boolean; baseLevel?: number; error?: string;
+    // The route returns its own copy of the mode's label/detail/tone/summary.
+    // The renderer prefers it over its local table so the two cannot drift,
+    // so it is declared rather than left to ride along on the body spread —
+    // an undeclared field is a field tsc cannot protect.
+    look?: { label: string; detail: string; tone: string; summary: string };
   }> {
     try {
       const res = await fetch(`${this.base()}/api/coding-mode`, {
@@ -342,7 +360,10 @@ export class AgentClient extends EventEmitter {
       });
       if (res.status === 404) return { ok: false, supported: false, error: "this agent has no coding-mode route" };
       if (!res.ok) return { ok: false, supported: true, error: `HTTP ${res.status}` };
-      const body = (await res.json()) as { mode: string; approvalLevel: number; planMode: boolean; baseLevel: number };
+      const body = (await res.json()) as {
+        mode: string; approvalLevel: number; planMode: boolean; baseLevel: number;
+        look?: { label: string; detail: string; tone: string; summary: string };
+      };
       return { ok: true, supported: true, ...body };
     } catch (err) {
       return { ok: false, supported: true, error: err instanceof Error ? err.message : String(err) };

@@ -61,6 +61,9 @@ vi.mock("../providers/verify-wizard-before-save.js", async (importOriginal) => {
 });
 
 const currentConfig = {
+  // The contract probe reads `agent.maxParallelToolCalls` to send the
+  // `parallel_tool_calls` a real turn would send.
+  agent: { maxParallelToolCalls: 8 },
   llm: {
     activeTextProvider: "local-llama",
     activeEmbeddingProvider: "local-llama-embed",
@@ -124,6 +127,72 @@ function stubGatedProbe(status = 429): ProbeGate {
     calls: () => calls,
   };
 }
+
+/**
+ * A fetch that lets the key check pass and answers the contract probe —
+ * the streamed request carrying `tools` — with `sse`.
+ */
+function stubProbeFetch(sse: string): { probeBodies: () => string[] } {
+  const probeBodies: string[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: unknown, init?: RequestInit) => {
+      if (!String(url).includes("/chat/completions")) {
+        return new Response(JSON.stringify({ data: [] }), { status: 200 });
+      }
+      const body = String(init?.body ?? "{}");
+      if (!body.includes('"stream":true')) {
+        return new Response(
+          JSON.stringify({ choices: [{ message: { content: "ok" } }] }),
+          { status: 200 },
+        );
+      }
+      probeBodies.push(body);
+      return new Response(sse, { status: 200 });
+    }),
+  );
+  return { probeBodies: () => probeBodies };
+}
+
+/** A complete native tool call: the one verdict that proves the route. */
+const PROBE_TOOL_CALL_SSE =
+  `data: ${JSON.stringify({
+    choices: [
+      {
+        delta: {
+          tool_calls: [
+            {
+              index: 0,
+              type: "function",
+              function: {
+                name: "atomic_contract_probe",
+                arguments: '{"ok":true}',
+              },
+            },
+          ],
+        },
+      },
+    ],
+  })}\n\ndata: ${JSON.stringify({
+    choices: [{ delta: {}, finish_reason: "tool_calls" }],
+  })}\n\ndata: [DONE]\n\n`;
+
+/** Truncated mid-argument, with nothing announcing the end. */
+const PROBE_EARLY_EOF_SSE = `data: ${JSON.stringify({
+  choices: [
+    {
+      delta: {
+        tool_calls: [
+          {
+            index: 0,
+            type: "function",
+            function: { name: "atomic_contract_probe", arguments: '{"ok"' },
+          },
+        ],
+      },
+    },
+  ],
+})}\n\n`;
 
 async function flush(times = 6): Promise<void> {
   for (let i = 0; i < times; i += 1) {
@@ -318,6 +387,53 @@ describe("CloudProviderOnboarding cancellation", () => {
     await flush(12);
     expect(saveMock).not.toHaveBeenCalled();
     expect(onFinished).toHaveBeenCalledTimes(1);
+    unmount();
+  });
+});
+
+describe("CloudProviderOnboarding contract probe", () => {
+  beforeEach(() => {
+    saveMock.mockClear();
+    gateOverrides.length = 0;
+    // The key itself is not what these tests are about; they are about
+    // what happens between a good key and the save.
+    gateOverrides.push(async () => ({ proceed: true, warning: null }));
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("exercises the streaming tool contract before finishing first-run", async () => {
+    const probe = stubProbeFetch(PROBE_TOOL_CALL_SSE);
+    const { stdin, onFinished, unmount } = await mountAtSubmitPoint();
+
+    stdin.write("\r");
+    await flush(12);
+
+    // First-run is where a route that cannot run a turn costs the most:
+    // the operator's very first message would otherwise be the test.
+    expect(probe.probeBodies()).toHaveLength(1);
+    expect(probe.probeBodies()[0]).toContain("atomic_contract_probe");
+    expect(saveMock).toHaveBeenCalledTimes(1);
+    expect(onFinished).toHaveBeenCalledWith("saved_cloud", undefined);
+    unmount();
+  });
+
+  it("carries the probe's verdict into the finish note without blocking the save", async () => {
+    stubProbeFetch(PROBE_EARLY_EOF_SSE);
+    const { stdin, onFinished, unmount } = await mountAtSubmitPoint();
+
+    stdin.write("\r");
+    await flush(12);
+
+    // Advisory, not a gate: the provider is saved either way, and the
+    // operator is told what the route did instead of finding out on
+    // their first message.
+    expect(saveMock).toHaveBeenCalledTimes(1);
+    expect(onFinished).toHaveBeenCalledTimes(1);
+    expect(onFinished.mock.calls[0]?.[0]).toBe("saved_cloud");
+    expect(String(onFinished.mock.calls[0]?.[1])).toContain("closed the stream");
     unmount();
   });
 });

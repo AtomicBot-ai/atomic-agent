@@ -12,9 +12,20 @@ import type { TuiState } from "../tui-state.js";
 import { getAppVersion } from "../../version.js";
 import { Chip, tracked } from "./chip.js";
 import { sessionTitleLine } from "./session-title.js";
+import {
+  planUpdateBanner,
+  UpdateBanner,
+  type UpdateBannerPhase,
+} from "./update-banner.js";
 
 interface StatusBarProps {
   state: TuiState;
+  /**
+   * Row width in cells. When set, the bar claims the full row and pins
+   * the update banner to its right edge; without it (unit tests, odd
+   * hosts) the bar stays content-sized and the banner trails the text.
+   */
+  width?: number;
   /**
    * Draw the `atomic-agent vX.Y.Z` lockup. False when the rail is on
    * screen: the rail already carries the brand and the version, and two
@@ -53,14 +64,39 @@ interface StatusBarProps {
  */
 export function StatusBar({
   state,
+  width,
   brand = true,
   railRestore = false,
 }: StatusBarProps): ReactElement {
   const section = getCurrentSection(state);
   const title = currentSessionTitle(state);
   const { columns } = useTerminalSize();
+  // The banner outlives the modal (`updateBanner` survives
+  // `update_dismissed`) and then narrates the whole lifecycle: the
+  // offer while nothing runs, "do not close" while the installer works,
+  // the restart hint once it lands. `failed` renders as a fresh offer,
+  // because the button is then the one remaining way to retry.
+  const banner = state.updateBanner;
+  const bannerPhase: UpdateBannerPhase =
+    state.updateStatus === "running"
+      ? "running"
+      : state.updateStatus === "done"
+        ? "done"
+        : "offer";
+  // `chipBudget` reserves cells for a session tag whether or not one is
+  // drawn — safe slack for the download chip, but it starves the banner
+  // out of a fresh 70-column session where the corner is visibly empty.
+  // Reclaim the reservation when no tag renders.
+  const bannerBudget = Math.max(
+    0,
+    rawBudget(columns, brand, title) +
+      (state.session.sessionId ? 0 : SESSION_TAG),
+  );
+  const bannerPlan = banner
+    ? planUpdateBanner(banner.latest, bannerBudget, bannerPhase)
+    : null;
   return (
-    <Box>
+    <Box {...(width ? { width } : {})}>
       {railRestore ? <RailRestoreButton /> : null}
       {brand ? (
         <>
@@ -76,7 +112,13 @@ export function StatusBar({
       {state.localModelsPanel.pull ? (
         <DownloadChip
           pull={state.localModelsPanel.pull}
-          budget={chipBudget(columns, brand, title)}
+          budget={
+            // The banner has already taken its cells from the same
+            // leftover; hand the chip what genuinely remains or the two
+            // meet in the middle and wrap the row.
+            chipBudget(columns, brand, title) -
+            (bannerPlan ? bannerPlan.width + 2 : 0)
+          }
         />
       ) : null}
       {title ? (
@@ -87,6 +129,19 @@ export function StatusBar({
             {title}
           </Text>
         </Text>
+      ) : null}
+      {banner && bannerPlan ? (
+        <>
+          {/* flexGrow pushes the banner into the top-right corner when
+              the bar knows its row width; content-sized bars (no
+              `width`) collapse the spacer to two plain cells. */}
+          <Box flexGrow={1} minWidth={2} />
+          <UpdateBanner
+            latest={banner.latest}
+            phase={bannerPhase}
+            budget={bannerBudget}
+          />
+        </>
       ) : null}
     </Box>
   );
@@ -105,13 +160,23 @@ export function StatusBar({
  * the header into a paragraph and push the whole app down the screen.
  */
 function chipBudget(columns: number, brand: boolean, title: string | null): number {
+  return Math.max(0, rawBudget(columns, brand, title));
+}
+
+/**
+ * The same leftover before clamping. The banner's session-tag reclaim
+ * must be added to THIS number — adding it after the clamp turned a
+ * 42-column deficit into 18 phantom cells and wrapped the bar.
+ */
+function rawBudget(columns: number, brand: boolean, title: string | null): number {
   const BRAND = 22;
   const BREADCRUMB = 14;
-  const SESSION_TAG = 18;
   const used =
     (brand ? BRAND : 0) + BREADCRUMB + SESSION_TAG + (title ? title.length + 4 : 0);
-  return Math.max(0, columns - used - 2);
+  return columns - used - 2;
 }
+
+const SESSION_TAG = 18;
 
 function currentSessionTitle(state: TuiState): string | null {
   const id = state.session.sessionId;

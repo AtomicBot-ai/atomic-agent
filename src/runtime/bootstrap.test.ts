@@ -13,11 +13,17 @@ import { randomBytes } from "node:crypto";
 
 import { createAgentRuntime, managedLocalLlmHealthFailureHint } from "./bootstrap.js";
 import {
+  getConfig,
   getUserConfigPath,
   resetConfigCache,
   USER_CONFIG_DEFAULTS,
   writeUserConfigFileSync,
 } from "../config/index.js";
+import { resolveLlmConfig } from "../llm/provider/registry/index.js";
+import {
+  readSessionLlmStamp,
+  SESSION_LLM_METADATA_KEY,
+} from "../session/session-llm.js";
 import {
   buildSearchCacheKey,
   createPersistentSearchCache,
@@ -750,6 +756,50 @@ describe("createAgentRuntime", () => {
       });
       const reloaded = runtime.sessionStore.load(session.id)!;
       expect(reloaded.turnCount).toBe(1);
+    } finally {
+      await runtime.shutdown();
+    }
+  });
+
+  it("stamps the stored session with the turn's context usage and provider/model", async () => {
+    const runtime = await createAgentRuntime({
+      workingDir,
+      approvalLevel: 5,
+      overrides: {
+        browserBackend: backend,
+        skipLlamaHealthCheck: true,
+        llamaComplete: async () => ({
+          content: JSON.stringify({
+            tool: "reply",
+            args: { text: "hi back" },
+          }),
+          timing: { promptTokens: 777, predictedTokens: 3 },
+          slotId: 0,
+          cacheReused: false,
+        }),
+      },
+    });
+    try {
+      const session = runtime.createSession();
+      const result = await runtime.runTurn(session, "hello", { maxSteps: 5 });
+      // `prompt_built` seeded the snapshot; `llm_completed`'s tokenizer
+      // count (777) replaced the estimate before the stamp.
+      expect(result.session.contextUsage).toBeDefined();
+      expect(result.session.contextUsage?.tokens).toBe(777);
+      expect(result.session.contextUsage?.sections.length).toBeGreaterThan(0);
+      const expectedLlm = {
+        providerId: resolveLlmConfig(getConfig()).activeTextProvider,
+        chatModel: null,
+      };
+      expect(result.session.metadata[SESSION_LLM_METADATA_KEY]).toEqual(
+        expectedLlm,
+      );
+      // The stored row carries the same snapshots, so a later process —
+      // the TUI reopening this session — restores both the gauge and the
+      // provider/model the session last ran on.
+      const reloaded = runtime.sessionStore.load(session.id)!;
+      expect(reloaded.contextUsage).toEqual(result.session.contextUsage);
+      expect(readSessionLlmStamp(reloaded.metadata)).toEqual(expectedLlm);
     } finally {
       await runtime.shutdown();
     }

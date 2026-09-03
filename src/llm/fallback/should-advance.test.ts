@@ -9,6 +9,10 @@ import {
   ToolExecutionError,
   CancelledError,
 } from "../reliability/llm-failures.js";
+import {
+  SubscriptionCliAuthError,
+  SubscriptionCliNotInstalledError,
+} from "../provider/subscription-cli/subscription-cli-errors.js";
 
 describe("shouldAdvance", () => {
   it("advances immediately on a cloud 429", () => {
@@ -75,12 +79,70 @@ describe("shouldAdvance", () => {
     });
   });
 
-  it("does NOT advance on a local llama 4xx (grammar category)", () => {
-    // LlamaServerError with a 4xx status classifies as grammar.
+  it("does NOT advance on a local llama 400 (request-shape, grammar category)", () => {
+    // A 400 is the server rejecting THIS request; the next link rejects
+    // it the same way, so falling over buys nothing.
     expect(shouldAdvance(new LlamaServerError("x", 400, "http://local"))).toEqual({
       advance: false,
       immediate: false,
     });
+  });
+
+  it("advances on a local llama 404 without arming the breaker — the URL serves no completions", () => {
+    // The endpoint is permanently wrong (bad `localModels.url`, or a
+    // server that is not a llama-server), so the chain must move off this
+    // link — and it moves on THIS failure: `advanceFrom` returns the next
+    // provider whenever `advance` is true, immediate or not.
+    // `immediate: false` is about the breaker, not the switch: 404 is not
+    // in the 429/408/5xx provider-down set, so the cooldown that keeps the
+    // link quarantined across later turns is armed only once the
+    // consecutive-failure threshold trips.
+    expect(shouldAdvance(new LlamaServerError("x", 404, "http://local"))).toEqual({
+      advance: true,
+      immediate: false,
+    });
+  });
+
+  it("advances on a local llama 405 without arming the breaker", () => {
+    expect(shouldAdvance(new LlamaServerError("x", 405, "http://local"))).toEqual({
+      advance: true,
+      immediate: false,
+    });
+  });
+
+  it("advances on a local llama 429 and arms the breaker on the first failure", () => {
+    // Transport category plus an unambiguous provider-down status — the
+    // `isImmediateSignal` status read already handled 429; it was simply
+    // unreachable while 4xx classified as grammar. The extra `immediate`
+    // buys the cooldown straight away, not an earlier switch.
+    expect(shouldAdvance(new LlamaServerError("x", 429, "http://local"))).toEqual({
+      advance: true,
+      immediate: true,
+    });
+  });
+
+  it("advances on a local llama 408 and arms the breaker on the first failure", () => {
+    expect(shouldAdvance(new LlamaServerError("x", 408, "http://local"))).toEqual({
+      advance: true,
+      immediate: true,
+    });
+  });
+
+  it("advances on a subscription-CLI binary that is not installed", () => {
+    // It must advance: a missing `claude` binary otherwise pins the chain
+    // to a provider that can never serve a turn — and the switch happens
+    // on this first failure. There is no HTTP status to read, so
+    // `immediate` is false and the breaker cooldown waits for the
+    // consecutive-failure threshold.
+    expect(
+      shouldAdvance(new SubscriptionCliNotInstalledError("claude", "Install it.")),
+    ).toEqual({ advance: true, immediate: false });
+  });
+
+  it("advances on a subscription-CLI provider that is signed out", () => {
+    expect(
+      shouldAdvance(new SubscriptionCliAuthError("codex", "Run /login.")),
+    ).toEqual({ advance: true, immediate: false });
   });
 
   it("advances via threshold on a TransportError carrying null status", () => {

@@ -4,6 +4,7 @@ import { extname } from "node:path";
 import { compressToolResult } from "../../../compressor/result-compressor.js";
 import { resolveUserPath } from "../expand-home.js";
 import type { ToolDefinition } from "../../tool-registry.js";
+import { DOCUMENT_FORMATS } from "./extractors/extractor-types.js";
 import type {
   DocumentFormat,
   Extractor,
@@ -40,7 +41,7 @@ export function buildOsFsReadDocumentTool(
   return {
     name: "os.fs.read_document",
     description:
-      "Extract plain text (with light structure markers) from PDF, DOCX, DOC (legacy), XLSX, RTF, ODT, PPTX, and plain-text files. Auto-detects format by extension; override with `format`. Read-only, no approval required.",
+      'Extract plain text (with light structure markers) from PDF, DOCX, DOC (legacy), XLSX, RTF, ODT, PPTX, and plain-text files. NOT for source code — read code with os.fs.read, which pages with offset/limit. Auto-detects format by extension; override with `format`, one of: pdf, docx, doc, xlsx, rtf, odt, pptx, plain. Read-only, no approval required.',
     readonly: true,
     async run(rawArgs, ctx) {
       const args = await parseArgs(rawArgs, ctx.workingDir);
@@ -198,16 +199,47 @@ function parseSheetsArg(
 }
 
 /**
- * Resolve extension → canonical format. `.html/.xml/.json/.csv` currently
- * fall through to `plain` — it's the safest default until we need format-
- * specific pretty-printing for them.
+ * Extensions that are almost certainly source code or configuration — both
+ * line-oriented, both better served by `os.fs.read` (offset/limit
+ * pagination, `lineNumbers`, no document extractor in the way), so they are
+ * deliberately NOT mapped to `plain`. The set exists only so the rejection
+ * can say which tool to reach for next — without that, models retry
+ * `read_document` with an invented `format: "text"` and burn another step
+ * before discovering `os.fs.read` (issue #113).
+ *
+ * Deliberately absent: delimited data (`csv`, `tsv`) and markup (`html`,
+ * `xml`, `md`, `log`, `json`, `yaml`) — those route to `plain` in the switch
+ * below, and a set entry here would make the error message assert a
+ * classification the switch contradicts.
+ *
+ * `env` only fires for the `name.env` shape: `extname("/x/.env")` is `""`,
+ * so a bare dotfile lands on the extensionless `case ""` arm and extracts as
+ * `plain`. That asymmetry is inherited from `extname`, not introduced here.
+ */
+const SOURCE_LIKE_EXTENSIONS: ReadonlySet<string> = new Set([
+  "bash", "c", "cc", "cfg", "cjs", "clj", "conf", "cpp", "cs", "css", "cxx",
+  "dart", "env", "erl", "ex", "exs", "fish", "go", "gradle", "h", "hh", "hpp",
+  "hs", "ini", "ipynb", "java", "js", "jsonc", "jsx", "kt", "kts", "less",
+  "lua", "m", "mjs", "mm", "php", "pl", "pm", "properties", "proto", "ps1",
+  "py", "pyi", "r", "rb", "rs", "sass", "scala", "scss", "sh", "sql", "svelte",
+  "swift", "tf", "toml", "ts", "tsx", "vue", "zsh",
+]);
+
+/**
+ * Resolve extension → canonical format. `.html/.xml/.json/.csv/.tsv`
+ * currently fall through to `plain` — it's the safest default until we need
+ * format-specific pretty-printing for them.
  */
 function detectFormat(absolute: string, override: unknown): DocumentFormat {
   if (typeof override === "string" && override.length > 0) {
     const norm = override.toLowerCase();
     if (isKnownFormat(norm)) return norm;
+    // Naming the accepted set here matters as much as it does in the
+    // extension branches below: a model that guesses `format: "text"`
+    // preemptively never sees the detectFormat hint, and a bare "unknown
+    // format override" leaves it with nowhere to go (issue #113).
     throw new Error(
-      `os.fs.read_document: unknown format override ${JSON.stringify(override)}`,
+      `os.fs.read_document: unknown format override ${JSON.stringify(override)} — expected one of ${DOCUMENT_FORMATS.join(", ")}; for source or text files use os.fs.read`,
     );
   }
   const ext = extname(absolute).toLowerCase().replace(/^\./, "");
@@ -231,6 +263,7 @@ function detectFormat(absolute: string, override: unknown): DocumentFormat {
     case "md":
     case "log":
     case "csv":
+    case "tsv":
     case "json":
     case "html":
     case "xml":
@@ -238,23 +271,22 @@ function detectFormat(absolute: string, override: unknown): DocumentFormat {
     case "yml":
       return "plain";
     default:
+      // Two shapes on purpose: for a source-like extension the answer is
+      // almost always "wrong tool", so name os.fs.read first and mention the
+      // override second; for anything else the extension carries no signal,
+      // so offer both. Either way the message spells out the accepted value
+      // `format: "plain"` — the bare word `format` invited `format: "text"`,
+      // which is not a known format and costs another failed step.
       throw new Error(
-        `os.fs.read_document: unsupported extension ".${ext}" (override with \`format\`)`,
+        SOURCE_LIKE_EXTENSIONS.has(ext)
+          ? `os.fs.read_document: ".${ext}" is a source or config file — use os.fs.read instead; if you intended document extraction, retry with \`format: "plain"\``
+          : `os.fs.read_document: unsupported extension ".${ext}" — use os.fs.read for source or text files, or retry with an explicit format (e.g. \`format: "plain"\`)`,
       );
   }
 }
 
 function isKnownFormat(value: string): value is DocumentFormat {
-  return (
-    value === "pdf" ||
-    value === "docx" ||
-    value === "doc" ||
-    value === "xlsx" ||
-    value === "rtf" ||
-    value === "odt" ||
-    value === "pptx" ||
-    value === "plain"
-  );
+  return (DOCUMENT_FORMATS as readonly string[]).includes(value);
 }
 
 /**

@@ -20,7 +20,23 @@ const PLAN = { on:false, supported:null };
 /* The composer's stance. Read from and written to /api/coding-mode, which
    moves the runtime's live ladder and plan flag exactly as the TUI's
    onCodingModeChanged does — config.json is never touched. */
-const MODE = { current:'default', supported:null, baseLevel:null, approvalLevel:null };
+/* `seq` counts the mode POSTs this window has issued — the CTX.seq idiom
+   one surface over. Both writers capture it before the request and drop
+   their reply if a newer choice has been made since, so a re-assert that
+   was already in flight cannot repaint the chip over an explicit click. */
+const MODE = { current:'default', supported:null, baseLevel:null, approvalLevel:null, seq:0 };
+/* Item 6 (coding mode): the last mode this window explicitly chose. The
+   stance is process state in the agent, so a backend switch — which
+   restarts it — drops back to the boot stance; this is what lets the
+   reconnect re-assert the operator's choice instead of painting a stale
+   label. `null` until something is chosen, and nothing is re-asserted
+   then. */
+let LAST_MODE = null;
+/* Item 6 (coding mode): a re-assert waiting for a running turn to end.
+   `{mode, timer}` while one is queued, `null` otherwise. The reconnect
+   path must not drop the operator's choice just because a turn happened
+   to be in flight when the agent came back. */
+let MODE_REASSERT = null;
 /* The add-provider wizard: pick_kind → configure → verifying. */
 const WIZ = { phase:null, row:null, apiKey:'', baseUrl:'', error:null, busy:false };
 /* Kind rows in the TUI's KIND_ROW_ORDER, minus the two subscription-CLI
@@ -52,10 +68,11 @@ function openFilePath(p) {
 const CTX = { tokens:0, source:null, stablePrefix:0, tail:0, draftTokens:0, cacheHitTokens:null, modelId:null,
   window:null, windowLabel:'', baseline:null, sections:null, pairsCap:0, reserved:0,
   previewSupported:null, seq:0, chipTimer:null, draftTimer:null };
-/* default / auto / bypass. `plan` is deliberately absent: plan mode is a
-   closure variable in the runtime with no route, no config key and no
-   request field, so a desktop chip could only paint a state the agent
-   does not have. */
+/* All four modes are live over GET/POST /api/coding-mode, plan included:
+   the route moves the runtime's approval ladder AND its plan flag, the
+   same pair the TUI's onCodingModeChanged moves, and writes nothing to
+   config. Copy is the TUI's verbatim; the route also returns its own
+   `look`, which setCodingMode prefers so the two cannot drift. */
 const CODING_MODES = [
   {id:'default', label:'default', detail:'asks before risky steps', tone:'ok',
    summary:'default — approvals follow the configured approval level'},
@@ -1407,6 +1424,15 @@ function diagLine() {
   // 'number'` was always true and a capabilities payload without the field
   // would have printed `approval L3` — a number this window never read.
   const lvl = LIVE_CAPS && LIVE_CAPS.agent && typeof LIVE_CAPS.agent.approvalLevel === 'number' ? S.level : null;
+  // Which agent answered. The desktop prefers a locally built agent at
+  // ~/atag-agent/bin/atag over the released install, so "it works here
+  // and not there" has to be answerable from the window — and it matters
+  // whether or not the coding-mode route is present, so this is printed
+  // in both cases. It sits before the approval segment deliberately: the
+  // TUI's line ends `approval L<n> | skills <n>` and the smoke pins that
+  // tail.
+  const bin = S.live.binary || '';
+  parts.push('agent ' + (bin ? (home && bin.startsWith(home) ? '~' + bin.slice(home.length) : bin) : '—'));
   parts.push('approval L' + (lvl === null ? '—' : lvl));
   parts.push('skills ' + SKILLS.length);
   return parts.join(' | ');
@@ -2144,12 +2170,7 @@ function applyStatus(st) {
 
 async function loadResources() {
   if (!BR) return;
-  BR.codingMode().then((res) => {
-    if (!res) return;
-    MODE.supported = res.supported;
-    if (res.ok) { MODE.current = res.mode; MODE.approvalLevel = res.approvalLevel; MODE.baseLevel = res.baseLevel; }
-    render();
-  });
+  loadCodingMode();
   const [caps, cfg, skills, tasks, sessions] = await Promise.all([
     BR.capabilities(), BR.config(), BR.skills(), BR.tasks(), BR.sessions(),
   ]);
@@ -3586,11 +3607,25 @@ function contextChip() {
 function currentMode() { return MODE.current; }
 
 function codingModeChip() {
+  // No route on this agent build: print the honest blank rather than a
+  // mode. Painting 'default' would name a stance the agent does not have.
+  if (MODE.supported === false) {
+    return '<button class="cchip cmodechip" data-act="modes" '
+      + 'title="this agent build has no /api/coding-mode route" '
+      + 'style="color:var(--text-disabled)">' + ic('key') + 'mode —' + ic('chevD') + '</button>';
+  }
   const id = currentMode();
   const look = CODING_MODES.find((m) => m.id === id) || CODING_MODES[0];
   const colour = look.tone === 'bad' ? 'var(--danger)' : look.tone === 'warn' ? 'var(--warn)'
     : look.tone === 'accent' ? 'var(--accent-text)' : 'var(--success)';
-  return '<button class="cchip cmodechip" data-act="modes" title="what the agent may do without asking" '
+  // At a configured level of 5 the agent seeds its stance by inference and
+  // reports `bypass`, because default/auto/bypass all resolve to level 5
+  // with plan off — so the chip opens red until a mode is chosen. Say so
+  // in the tooltip, where it is readable without opening the popover.
+  const title = MODE.baseLevel === 5
+    ? 'what the agent may do without asking — your configured approval level is 5 of 5, so default already approves everything'
+    : 'what the agent may do without asking';
+  return '<button class="cchip cmodechip" data-act="modes" title="' + esc(title) + '" '
     + 'style="color:' + colour + '">' + ic('key') + esc(look.label) + ic('chevD') + '</button>';
 }
 
@@ -3598,24 +3633,143 @@ function modesHTML() {
   return '<div class="scrim" data-close="1" style="background:transparent">'
     + '<div class="popover" style="width:360px;' + anchorStyle('.cmodechip', 360) + '">'
     + CODING_MODES.map((m) => {
-        const on = m.id === currentMode();
         const off = MODE.supported === false;
-        return '<button class="poprow' + (on ? ' on' : '') + (off ? ' dim' : '') + '" data-mode="' + m.id + '">'
+        // Nothing is "current" on an agent that has no such state, so no
+        // row is marked, and the rows carry no data-mode: the click
+        // handler keys off that attribute, so dropping it is what makes
+        // them genuinely inert rather than merely grey.
+        const on = !off && m.id === currentMode();
+        return '<button class="poprow' + (on ? ' on' : '') + (off ? ' dim' : '') + '"'
+          + (off ? ' disabled' : ' data-mode="' + m.id + '"') + '>'
           + '<span class="radio"' + (on ? ' style="border-color:var(--accent);border-width:4px"' : '') + '></span>'
           + '<span><span style="font-weight:500">' + esc(m.label) + '</span>'
           + '<span class="cap" style="display:block">' + esc(off ? 'needs an agent with the coding-mode route' : m.detail) + '</span></span>'
           + (on ? '<span class="cap" style="margin-left:auto">current</span>' : '') + '</button>';
       }).join('')
-    + '<div style="padding:10px 16px"><p class="cap" style="margin:0">'
-    + 'A stance for this session. It moves the live approval ladder and plan flag and writes nothing to config.'
-    + '</p></div>'
+    + '<div style="padding:10px 16px">'
+    + (MODE.supported === false
+        ? '<p class="cap" style="margin:0">'
+          + 'This agent build has no /api/coding-mode route, so the stance cannot be changed. Running '
+          + esc(S.live.binary || 'no binary') + '</p>'
+        : '<p class="cap" style="margin:0">'
+          + 'A stance for this session. It moves the live approval ladder and plan flag and writes nothing to config.'
+          + '</p>'
+          // The disclosure that stops a level-5 operator reading a working
+          // chip as a broken one: three of the four choices genuinely do
+          // not change what the agent does at that base.
+          + (MODE.baseLevel === 5
+              ? '<p class="cap" style="margin:6px 0 0">Your configured approval level is 5 of 5, so default already approves everything — lower agent.approvalLevel to make the modes differ.</p>'
+              : ''))
+    + '</div>'
     + '<div class="popfoot"><button class="btn btn-s" data-act="close">Done</button></div></div></div>';
+}
+
+/* Item 6 review fix: S.level has three writers and the diagnostics line
+   prints it raw, so the two that read the route's answer put it back
+   inside 1..5 themselves rather than trusting whoever fed them. Mirrors
+   clampApprovalLevel in src/tui/coding-mode.ts. `null` for anything that
+   is not a number: a missing level leaves S.level alone rather than
+   inventing one. */
+function clampLevel(n) {
+  return typeof n === 'number' ? Math.max(1, Math.min(5, n)) : null;
+}
+
+/*
+ * Re-assert the stance this window last chose, after the agent came back.
+ * Deliberately NOT setCodingMode: that is the click path, and it opens with
+ * `S.overlay = null; render()` and a `S.busy` toast-and-return. A reconnect
+ * is a background event the operator did not initiate, so it must (a) leave
+ * whatever overlay they have open alone, and (b) wait for a running turn
+ * instead of silently dropping the choice and leaving MODE on the boot
+ * stance. Silent on success — the chip is the report — and silent on
+ * failure beyond marking the route unsupported.
+ */
+function cancelModeReassert() {
+  if (!MODE_REASSERT) return;
+  clearInterval(MODE_REASSERT.timer);
+  MODE_REASSERT = null;
+}
+
+/*
+ * The connect-time read of the stance, lifted out of loadResources so the
+ * race below can be driven in a test.
+ *
+ * Review fix: this GET takes a seq ticket exactly as the two POST writers
+ * do. Without one a reconnect could silently undo a click. The operator
+ * presses `plan` while this GET is in flight; the GET's stale reply lands
+ * first, repaints the chip to the pre-click stance, sees
+ * `res.mode !== LAST_MODE` and re-asserts the OLD mode — which bumps
+ * MODE.seq, so the click's own reply is dropped by its own guard and a
+ * second POST puts the agent back where it was. The ticket makes the
+ * click win: it bumps seq past this one, and the stale reply is discarded
+ * whole, re-assert included.
+ */
+function loadCodingMode() {
+  if (!BR) return Promise.resolve();
+  const seq = ++MODE.seq;
+  return BR.codingMode().then((res) => {
+    if (!res) return;
+    if (seq !== MODE.seq) return;
+    MODE.supported = res.supported;
+    if (res.ok) { MODE.current = res.mode; MODE.approvalLevel = res.approvalLevel; MODE.baseLevel = res.baseLevel; }
+    render();
+    // The stance is process state in the agent, and the desktop restarts
+    // the agent on a backend switch — so re-assert what this window last
+    // chose rather than showing the boot stance as if it were the choice.
+    if (res.ok && LAST_MODE && res.mode !== LAST_MODE) reassertCodingMode(LAST_MODE);
+  });
+}
+
+function reassertCodingMode(id) {
+  if (!BR || !id) return;
+  if (S.busy) {
+    // Coalesce: a second reconnect while one is queued replaces the target
+    // rather than starting a second timer.
+    if (MODE_REASSERT) { MODE_REASSERT.mode = id; return; }
+    MODE_REASSERT = { mode: id, timer: setInterval(() => {
+      if (S.busy || !MODE_REASSERT) return;
+      const want = MODE_REASSERT.mode;
+      clearInterval(MODE_REASSERT.timer);
+      MODE_REASSERT = null;
+      reassertCodingMode(want);
+    }, 500) };
+    return;
+  }
+  // A queued re-assert that is no longer the pending one would fire a second
+  // POST for a stance the window has moved on from.
+  cancelModeReassert();
+  const seq = ++MODE.seq;
+  BR.codingMode(id).then((res) => {
+    // cancelModeReassert only cancels a re-assert still waiting for a turn;
+    // this is the same guard for one already in flight. An explicit click
+    // that landed while this POST was travelling owns the stance now, and
+    // its reply is the one the chip and the diagnostics level must show.
+    if (seq !== MODE.seq) return;
+    if (!res || !res.ok) { if (res) MODE.supported = res.supported; render(); return; }
+    MODE.supported = true; MODE.current = res.mode;
+    MODE.approvalLevel = res.approvalLevel; MODE.baseLevel = res.baseLevel;
+    LAST_MODE = res.mode;
+    const lvl = clampLevel(res.approvalLevel);
+    if (lvl !== null) {
+      S.level = lvl;
+      if (LIVE_CAPS && LIVE_CAPS.agent) LIVE_CAPS.agent.approvalLevel = lvl;
+    }
+    render();
+  });
 }
 
 async function setCodingMode(id) {
   if (S.busy) { toast('Not while a turn is running'); return; }
+  // An explicit click outranks anything the reconnect path is still waiting
+  // to re-assert: without this a queued re-assert would land after the turn
+  // ends and quietly put the stance back to what the window had before.
+  cancelModeReassert();
   S.overlay = null; render();
+  const seq = ++MODE.seq;
   const res = await BR.codingMode(id);
+  // A later click (or a re-assert fired after this one) already owns the
+  // stance: drop this reply rather than repainting the chip backwards.
+  if (seq !== MODE.seq) return;
   if (!res || !res.ok) {
     MODE.supported = res ? res.supported : true;
     S.log.push({id:nid(), k:'system', text: res && res.supported === false
@@ -3625,8 +3779,20 @@ async function setCodingMode(id) {
     return;
   }
   MODE.supported = true; MODE.current = res.mode; MODE.approvalLevel = res.approvalLevel; MODE.baseLevel = res.baseLevel;
+  LAST_MODE = res.mode;
+  // The diagnostics line reads the capabilities snapshot taken at connect,
+  // and the mode moves the LIVE ladder — so without this the line keeps
+  // printing the boot level while the chip says otherwise.
+  const lvl = clampLevel(res.approvalLevel);
+  if (lvl !== null) {
+    S.level = lvl;
+    if (LIVE_CAPS && LIVE_CAPS.agent) LIVE_CAPS.agent.approvalLevel = lvl;
+  }
+  // Prefer the agent's own copy over the local table: the two are
+  // identical today and this is what keeps them that way.
   const look = CODING_MODES.find((m) => m.id === res.mode);
-  S.log.push({id:nid(), k:'system', text: esc(look ? look.summary : res.mode)});
+  const summary = (res.look && res.look.summary) || (look ? look.summary : res.mode);
+  S.log.push({id:nid(), k:'system', text: esc(summary)});
   render();
 }
 
@@ -4225,7 +4391,8 @@ function attachStrip(m) {
 
 /* Hooks for --smoke. */
 if (typeof window !== 'undefined') {
-  window.__modeState = () => ({supported:MODE.supported, current:MODE.current});
+  window.__modeState = () => ({supported:MODE.supported, current:MODE.current,
+    approvalLevel:MODE.approvalLevel, baseLevel:MODE.baseLevel});
   window.__search = (q) => { SEL.filter = q; return selRows().length; };
   window.__wizOpen = () => { WIZ.phase = 'pick_kind'; WIZ.row = null; render(); return {rows:KIND_ROWS.length, selected:document.querySelectorAll('[data-wiz-kind].on').length}; };
   window.__storeDiag = async () => {
@@ -7939,4 +8106,57 @@ if (typeof window !== 'undefined') {
       settings: !!S.settings, pane: settingsPaneId(S.settingsPane), llmMode: LLMP.mode, selOpen: SEL.open,
     }));
   };
+}
+
+/* ============================================================
+   Smoke hooks — coding mode (item 6)
+   ============================================================ */
+if (typeof window !== 'undefined') {
+  /* The chip's own markup, so the smoke can assert what the operator
+     actually sees rather than the state behind it — the unsupported chip
+     must print 'mode —' and must not print a mode name. */
+  window.__chipHTML = () => codingModeChip();
+  /* Force the renderer into a mode state it cannot reach against a
+     capable agent, so the unsupported presentation is testable. Patch
+     back to restore; nothing here talks to the agent. */
+  window.__modeOverride = (patch) => { Object.assign(MODE, patch || {}); render(); };
+  /* The reconnect's re-assert path, and the overlay it must not touch.
+     Opening the popover through S.overlay directly rather than through
+     act() keeps this hook out of the shared dispatcher. */
+  window.__modeReassert = (id) => reassertCodingMode(id);
+  window.__modeOpenPopover = () => { S.overlay = 'modes'; render(); return S.overlay; };
+  window.__overlayNow = () => S.overlay;
+  window.__overlayClose = () => { S.overlay = null; render(); return S.overlay; };
+}
+
+/* ============================================================
+   Smoke hooks — coding mode, queued re-assert (item 6 review fix)
+   ============================================================ */
+if (typeof window !== 'undefined') {
+  /* The queued half of reassertCodingMode only runs while a turn is in
+     flight, which never happens at the point the smoke reaches it — so
+     the wait, the coalescing and the cancel-on-click were covered by
+     nothing. This drives S.busy directly rather than starting a real
+     turn: the branch under test reads exactly that flag. */
+  window.__modeBusy = (on) => { S.busy = !!on; render(); return S.busy; };
+  /* What is queued behind the running turn, if anything. */
+  window.__modeQueue = () => (MODE_REASSERT ? { mode: MODE_REASSERT.mode } : null);
+  /* The click path itself, so the cancel-a-queued-re-assert branch can be
+     exercised the way an operator reaches it. */
+  window.__modeSet = (id) => setCodingMode(id);
+}
+
+/* ============================================================
+   Smoke hooks — coding mode, the reconnect GET's seq ticket
+   ============================================================ */
+if (typeof window !== 'undefined') {
+  /* loadResources' connect-time GET, on its own. The race it guards
+     against needs the GET issued and a click landing before its reply, so
+     the smoke has to be able to fire the GET without reconnecting the
+     whole window. Returns the promise so the test can await both legs. */
+  window.__modeLoad = () => loadCodingMode();
+  /* What the window last chose, which is what the reconnect re-asserts.
+     The bug this guards is precisely a re-assert of a stale LAST_MODE
+     overwriting a fresher click. */
+  window.__modeLast = () => LAST_MODE;
 }

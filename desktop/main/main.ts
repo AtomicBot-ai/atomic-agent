@@ -1005,12 +1005,215 @@ async function smokeTest(): Promise<void> {
       await js<void>("window.__ctxRefreshCfg && window.__ctxRefreshCfg()");
     }
 
-    const modeState = await js<{ supported: boolean | null; current: string }>("window.__modeState()");
+    // Item 6 (coding mode). The old check here passed on exactly the
+    // failure it was meant to catch: `supported === false` short-circuited
+    // to PASS. Now the mode is driven through the REAL client rather than
+    // the renderer, so what is asserted is the agent, and the whole block
+    // restores `default` in a `finally` — the diagnostics check further
+    // down compares the renderer's level with a LIVE capabilities read,
+    // and would fail if this left the ladder moved.
+    const modeState = await js<{
+      supported: boolean | null; current: string;
+      approvalLevel: number | null; baseLevel: number | null;
+    }>("window.__modeState()");
+    // The locally built agent the desktop prefers. `supported === false`
+    // while running THAT binary is the exact regression this item is
+    // about: the capable agent is installed and the route is missing.
+    const preferredAgent = join(homedir(), "atag-agent", "bin", "atag");
     check(
       "coding mode is live or honestly unavailable",
-      modeState.supported === false || ["default", "plan", "auto", "bypass"].includes(modeState.current),
-      modeState.supported === false ? "agent lacks /api/coding-mode (reported, not faked)" : `current=${modeState.current}`,
+      modeState.supported === true
+        ? ["default", "plan", "auto", "bypass"].includes(modeState.current)
+        : agent!.status.binary !== preferredAgent,
+      `supported=${modeState.supported} current=${modeState.current} agent=${agent!.status.binary ?? "none"}`,
     );
+
+    const caps0 = (await agent!.capabilities()) as {
+      agent: { approvalLevel: number };
+      paths: { userConfigFile: string };
+    };
+    const modeSeed = await agent!.codingMode();
+    if (modeSeed.supported && typeof modeSeed.baseLevel === "number") {
+      const modeBase = modeSeed.baseLevel;
+      const cfgBefore = readFileSync(caps0.paths.userConfigFile);
+      // resolveCodingMode, restated: plan leaves the ladder and raises the
+      // plan flag; auto raises to at least 2 and never lowers; bypass is 5;
+      // default restores the configured base.
+      const wantFor = (m: string) =>
+        m === "plan" ? { level: modeBase, plan: true }
+          : m === "auto" ? { level: Math.max(modeBase, 2), plan: false }
+          : m === "bypass" ? { level: 5, plan: false }
+            : { level: modeBase, plan: false };
+      try {
+        const notes: string[] = [];
+        let roundTrip = true;
+        let resolvesRight = true;
+        for (const m of ["default", "plan", "auto", "bypass"]) {
+          const posted = await agent!.codingMode(m);
+          const readBack = await agent!.codingMode();
+          // Cross-checked through a different handler, so the numbers do
+          // not rest on the one that produced them.
+          const live = (await agent!.capabilities()) as { agent: { approvalLevel: number } };
+          const want = wantFor(m);
+          if (!(posted.ok && posted.mode === m && readBack.mode === m)) roundTrip = false;
+          if (!(posted.approvalLevel === want.level && posted.planMode === want.plan
+            && live.agent.approvalLevel === want.level)) resolvesRight = false;
+          notes.push(`${m}→post ${posted.mode}/get ${readBack.mode} L${posted.approvalLevel} plan=${posted.planMode} caps L${live.agent.approvalLevel}`);
+        }
+        // The assertion that catches the base-5 collision: before the route
+        // held the chosen stance in its closure, POST auto answered bypass.
+        check("coding mode round-trips every mode through the agent", roundTrip, notes.join("; "));
+        check(`coding mode resolves against the configured base L${modeBase}`, resolvesRight, notes.join("; "));
+
+        const levelBeforeBad = ((await agent!.capabilities()) as { agent: { approvalLevel: number } }).agent.approvalLevel;
+        const badMode = await agent!.codingMode("yolo");
+        const levelAfterBad = ((await agent!.capabilities()) as { agent: { approvalLevel: number } }).agent.approvalLevel;
+        check(
+          "coding mode refuses an unknown mode and changes nothing",
+          badMode.ok === false && badMode.error === "HTTP 400" && levelAfterBad === levelBeforeBad,
+          `error=${badMode.error ?? "none"} level ${levelBeforeBad} → ${levelAfterBad}`,
+        );
+
+        const cfgAfter = readFileSync(caps0.paths.userConfigFile);
+        check(
+          "coding mode writes nothing to config.json",
+          cfgBefore.equals(cfgAfter),
+          `${cfgBefore.length} → ${cfgAfter.length} bytes at ${caps0.paths.userConfigFile}`,
+        );
+      } finally {
+        await agent!.codingMode("default").catch(() => undefined);
+      }
+    } else {
+      // Without an `else` the four checks above just vanish and the run
+      // reports four fewer checks with nothing said about it — invisible
+      // unless someone diffs the counts. One explicit line instead, so
+      // the log stays self-describing about what it did NOT assert.
+      check(
+        "coding mode round-trip skipped: agent has no route",
+        modeSeed.supported === false,
+        `supported=${modeSeed.supported} baseLevel=${String(modeSeed.baseLevel)} agent=${agent!.status.binary ?? "none"}`,
+      );
+    }
+
+    // Finding 3's fix: the reconnect re-assert is NOT the click path. It
+    // must leave an overlay the operator opened alone — a backend switch
+    // restarts the agent and fires this without them asking.
+    const reassert = await js<{ before: string | null; after: string | null; mode: string }>(
+      "(async () => { const before = window.__modeOpenPopover();"
+      + " window.__modeReassert('default');"
+      + " await new Promise((r) => setTimeout(r, 1500));"
+      + " return {before, after: window.__overlayNow(), mode: window.__modeState().current}; })()",
+    );
+    await js<void>("window.__overlayClose()");
+    check(
+      "coding-mode re-assert leaves an open overlay alone",
+      reassert.before === "modes" && reassert.after === "modes",
+      `overlay ${String(reassert.before)} → ${String(reassert.after)}, mode=${reassert.mode}`,
+    );
+
+    // The other half of the re-assert, which the check above cannot reach:
+    // S.busy is false for the whole run, so the wait-for-the-turn branch,
+    // the coalescing of a second reconnect and the cancel-on-click path
+    // were asserted by nothing. Driving S.busy directly is exactly what
+    // the branch under test reads, and it needs no real turn.
+    if (modeSeed.supported) {
+      const q = await js<{
+        start: string; queued: string | null; coalesced: string | null;
+        duringBusy: string; afterWait: string; cancelled: boolean; afterCancel: string;
+      }>(
+        "(async () => {"
+        + " const start = window.__modeState().current;"
+        + " window.__modeBusy(true);"
+        + " window.__modeReassert('plan');"
+        + " const queued = window.__modeQueue();"
+        + " window.__modeReassert('bypass');"
+        + " const coalesced = window.__modeQueue();"
+        + " const duringBusy = window.__modeState().current;"
+        + " window.__modeBusy(false);"
+        + " await new Promise((r) => setTimeout(r, 2500));"
+        + " const afterWait = window.__modeState().current;"
+        + " window.__modeBusy(true); window.__modeReassert('plan'); window.__modeBusy(false);"
+        + " await window.__modeSet('default');"
+        + " const cancelled = window.__modeQueue() === null;"
+        + " await new Promise((r) => setTimeout(r, 1500));"
+        + " return {start, queued: queued && queued.mode, coalesced: coalesced && coalesced.mode,"
+        + "   duringBusy, afterWait, cancelled, afterCancel: window.__modeState().current}; })()",
+      );
+      check(
+        "coding-mode re-assert waits for the turn, coalesces, and yields to a click",
+        q.queued === "plan" && q.coalesced === "bypass" && q.duringBusy === q.start
+          && q.afterWait === "bypass" && q.cancelled && q.afterCancel === "default",
+        `queued=${String(q.queued)} coalesced=${String(q.coalesced)} duringBusy=${q.duringBusy}`
+          + ` afterWait=${q.afterWait} cancelled=${q.cancelled} afterCancel=${q.afterCancel}`,
+      );
+    } else {
+      check(
+        "coding-mode queued re-assert skipped: agent has no route",
+        modeSeed.supported === false,
+        `supported=${modeSeed.supported} agent=${agent!.status.binary ?? "none"}`,
+      );
+    }
+
+    // Review fix: the connect-time GET needed a seq ticket of its own.
+    // Staged exactly as the failure runs — the window last chose `auto`,
+    // the agent is moved to `default` behind its back (what an agent
+    // restart does), then the reconnect's GET and an operator click race.
+    // Unguarded, the GET's stale reply repainted the chip and re-asserted
+    // `auto`, which outranked the click and silently threw the choice
+    // away. `plan` must survive, in the window AND on the agent.
+    if (modeSeed.supported) {
+      try {
+        await js<void>("window.__modeSet('auto')");
+        await agent!.codingMode("default");
+        const race = await js<{ last: string | null; current: string; queued: unknown }>(
+          "(async () => { const load = window.__modeLoad(); const click = window.__modeSet('plan');"
+          + " await Promise.all([load, click]);"
+          + " await new Promise((r) => setTimeout(r, 900));"
+          + " return {last: window.__modeLast(), current: window.__modeState().current, queued: window.__modeQueue()}; })()",
+        );
+        const live = await agent!.codingMode();
+        check(
+          "coding-mode reconnect GET yields to a click instead of undoing it",
+          race.current === "plan" && race.last === "plan" && race.queued === null && live.mode === "plan",
+          `chip=${race.current} last=${String(race.last)} queued=${JSON.stringify(race.queued)} agent=${String(live.mode)}`,
+        );
+      } finally {
+        await js<void>("window.__modeSet('default')").catch(() => undefined);
+        await agent!.codingMode("default").catch(() => undefined);
+      }
+    }
+
+    // The unavailable presentation is real, not merely claimed: force the
+    // renderer into the state a routeless agent produces and read the
+    // chip's own markup back.
+    const wasSupported = modeState.supported;
+    try {
+      const chipOff = await js<string>(
+        "(() => { window.__modeOverride({supported:false}); return window.__chipHTML(); })()",
+      );
+      // The visible text only: the markup carries `data-act="modes"` and a
+      // tooltip, neither of which is what the operator reads.
+      const chipText = chipOff.replace(/<[^>]*>/g, "").trim();
+      const dimRule = readFileSync(join(__dirname, "..", "renderer", "styles.css"), "utf8");
+      const dimmed = /\.poprow\.dim\s*\{/.test(dimRule);
+      check(
+        "coding mode chip says 'mode —' when the agent has no route",
+        chipText === "mode —" && !/default|bypass|plan|auto/.test(chipText) && dimmed,
+        `chip=${JSON.stringify(chipText)}, .poprow.dim rule ${dimmed ? "present" : "MISSING"}`,
+      );
+      // The other half of item 6: the binary is named in the UNSUPPORTED
+      // case too. That is the case the operator actually needs it in —
+      // "coding modes need an agent build that carries the route" is only
+      // actionable next to the path of the build that answered.
+      const diagOff = await js<{ line: string }>("window.__diag()");
+      check(
+        "diagnostics names the agent binary even when the route is missing",
+        / \| agent [^|]+ \| approval L/.test(diagOff.line),
+        diagOff.line,
+      );
+    } finally {
+      await js<void>(`window.__modeOverride({supported:${JSON.stringify(wasSupported)}})`);
+    }
 
     // "claude haiku" must find claude/haiku, claude.haiku, claude-3-haiku…
     const hits = await js<number>("window.__search('claude haiku')");
@@ -1853,11 +2056,19 @@ async function settingsTest(
     "window.atomic.capabilities().then((c) => (c && c.ok && c.data && c.data.agent && typeof c.data.agent.approvalLevel === 'number' ? c.data.agent.approvalLevel : null))",
   );
   const expectedLevel = capsLevel === null ? "—" : String(Math.max(1, Math.min(5, capsLevel)));
+  // Item 6: which agent answered must be on the line in BOTH the supported
+  // and the unsupported case. The head and the tail of the line are pinned
+  // above and below this segment, so nothing else notices if it disappears
+  // — assert the segment itself, and that it carries a value rather than
+  // an empty slot. `[^|]+` covers both a path and the `—` null form.
+  const agentSeg = / \| agent [^|]+ \| approval L/.test(diag.line);
   check(
     "settings: diagnostics line uses the TUI null forms and counts tools only for the open session",
     diag.line.startsWith("cwd ") && diag.line.includes(" | llama ") && diag.line.includes(" | llm — · step — | kv — |")
+      && agentSeg
       && new RegExp(` \\| approval L${expectedLevel} \\| skills \\d+$`).test(diag.line) && !!diag.health && toolsOk,
-    `${diag.line} (session=${diag.session ?? "none"}, capabilities says ${capsLevel === null ? "no approvalLevel" : capsLevel})`,
+    `${diag.line} (session=${diag.session ?? "none"}, capabilities says ${capsLevel === null ? "no approvalLevel" : capsLevel}`
+      + `, agent segment ${agentSeg ? "present" : "MISSING"})`,
   );
 
   const errBefore = await js<number>("window.__errCount()");
