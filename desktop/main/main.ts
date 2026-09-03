@@ -21,6 +21,7 @@ import {
   providerModels,
   modelsStart,
   traceUsage,
+  traceTools,
 } from "./agent-cli.js";
 
 const DEV = process.argv.includes("--dev");
@@ -241,6 +242,14 @@ function wireIpc(client: AgentClient): void {
     }
     return traceUsage(stateDir, sessionId);
   });
+  // item 4: per-call tool durations from the trace
+  ipcMain.handle("cli:traceTools", (_event, payload: unknown) => {
+    const { stateDir, sessionId } = (payload ?? {}) as { stateDir?: unknown; sessionId?: unknown };
+    if (typeof stateDir !== "string" || typeof sessionId !== "string") {
+      return { ok: false, error: "stateDir and sessionId are required" };
+    }
+    return traceTools(stateDir, sessionId);
+  });
   ipcMain.handle("app:hostRam", () => hostRamGb());
   ipcMain.handle("app:keyEnv", () => PROVIDER_KEY_ENV);
 
@@ -419,31 +428,223 @@ async function smokeTest(): Promise<void> {
     await js<void>("window.__closeAll && window.__closeAll()");
 
     // A tool-using turn: cards must carry the real args and a duration.
-    await js<void>("window.__ask('List the files in the current directory, then say done.')");
-    const toolDeadline = Date.now() + 150_000;
-    let cards: Array<{ name: string; args: string; ms: number; ok: boolean | null; live: boolean }> = [];
-    while (Date.now() < toolDeadline) {
-      await new Promise((r) => setTimeout(r, 2000));
-      cards = await js<typeof cards>("window.__cards()");
-      const reply = await js<string>("window.__lastReply()");
-      const born = cards.filter((c) => c.live);
-      if (born.length && born.every((c) => c.ok !== null) && /done/i.test(reply)) break;
+    // item 4: the agent derives a session id from the first prompt, so a fixed
+    // prompt lands on one ever-growing session across runs, where the model
+    // eventually answers "done" from memory without calling a tool. The turn
+    // runs on a fresh session instead — "New session" plus a first prompt that
+    // carries a nonce — so the id is unique, the trace holds only this run's
+    // rows, and the model has nothing to answer from. One retry if it still
+    // skipped the tool.
+    type Card = { name: string; args: string; argsKey: string | null; ms: number; source: string | null; ok: boolean | null; live: boolean; traceTs: number | null; startedAt: number | null };
+    const toolTurn = async (prompt: string): Promise<Card[]> => {
+      await js<void>(`window.__ask(${JSON.stringify(prompt)})`);
+      const toolDeadline = Date.now() + 150_000;
+      let cs: Card[] = [];
+      while (Date.now() < toolDeadline) {
+        await new Promise((r) => setTimeout(r, 2000));
+        cs = await js<Card[]>("window.__cards()");
+        const reply = await js<string>("window.__lastReply()");
+        const born = cs.filter((c) => c.live);
+        if (born.length && born.every((c) => c.ok !== null) && /done/i.test(reply)) break;
+        if (!born.length && /done/i.test(reply) && !(await js<boolean>("window.__busy()"))) break;   // answered without a tool
+      }
+      // Once the turn is stored, every live card must switch from the wall time
+      // this window observed to the agent's own number out of the trace. A turn
+      // that made no call has nothing to switch: do not wait out the deadline.
+      if (!cs.some((c) => c.live)) return cs;
+      const traceDeadline = Date.now() + 8000;
+      while (Date.now() < traceDeadline) {
+        cs = await js<Card[]>("window.__cards()");
+        const born = cs.filter((c) => c.live);
+        if (born.length && born.every((c) => c.source === "trace")) break;
+        await new Promise((r) => setTimeout(r, 500));
+      }
+      return cs;
+    };
+    const nonce = Math.random().toString(36).slice(2, 8);
+    const listPrompt = `Run ${nonce}: call your file-listing tool on the current directory right now (do not answer from memory), then say done.`;
+    await js<number>("window.__newSession()");
+    let cards = await toolTurn(listPrompt);
+    if (!cards.some((c) => c.live)) {
+      process.stdout.write(`DIAG first tool turn made no tool call on ${await js<string>("window.__session()")}; retrying once\n`);
+      cards = await toolTurn(listPrompt);
     }
-    // Only cards born on this run's stream can be timed; ones rebuilt from the
-    // store have no duration to show, because the store records none.
     const live = cards.filter((c) => c.live);
     const withArgs = live.filter((c) => /[{"]/.test(c.args) && c.args.length > 4);
-    const timed = live.filter((c) => c.ms > 0);
+    const timed = live.filter((c) => c.source === "trace" && c.ms > 0);
     check("tool cards carry args", live.length > 0 && withArgs.length === live.length, `${withArgs.length}/${live.length} with real args`);
-    check("tool cards carry durations", live.length > 0 && timed.length === live.length, `${timed.length}/${live.length} timed (observed)`);
-    if (timed.length !== live.length) {
+    check("tool cards carry durations", live.length > 0 && timed.length === live.length, `${timed.length}/${live.length} timed from the trace: ${live.map((c) => c.ms + "ms").join(", ")}`);
+    if (live.length === 0 || timed.length !== live.length) {
       // Say what the cards held and what the store held, so a failure here is diagnosable from the log alone.
       process.stdout.write(`DIAG cards=${JSON.stringify(cards)}\n`);
       process.stdout.write(`DIAG store=${await js<string>("window.__storeDiag ? window.__storeDiag() : 'no hook'")}\n`);
     }
 
+    // item 4: a fresh window on a session that already exists. "New session"
+    // empties the transcript; the same first prompt derives the same id, so the
+    // trace already holds an identical os.fs.list row from the turn above. The
+    // live card must take its own row (trace ts after the card was born), never
+    // the stale one — that number would be shown as the agent's measurement.
+    // Proved without the model (it may answer from memory and skip the tool):
+    // __probeTrace pushes a live-shaped card born now plus a store-shaped copy of
+    // the same call onto the emptied transcript and runs the real merge.
+    const sidFirst = await js<string>("window.__session()");
+    const firstCard = live[0];
+    if (firstCard && firstCard.traceTs !== null) {
+      // The live card's lower bound is startedAt − 2 s: make sure the stale row is older than that.
+      const settle = firstCard.traceTs + 2500 - Date.now();
+      if (settle > 0) await new Promise((r) => setTimeout(r, settle));
+    }
+    await js<number>("window.__newSession()");
+    type Probe = { changed: boolean; live: { source: string | null; traceTs: number | null; ms: number | null; startedAt: number | null }; stored: { source: string | null; traceTs: number | null; ms: number | null } } | null;
+    const probe = firstCard && firstCard.argsKey
+      ? await js<Probe>(`window.__probeTrace(${JSON.stringify(sidFirst)}, ${JSON.stringify(firstCard.name)}, ${JSON.stringify(firstCard.argsKey)})`)
+      : null;
+    check(
+      "live card never takes a stale trace row",
+      !!probe && probe.live.source === null && probe.live.traceTs === null
+        && probe.stored.source === "trace" && probe.stored.traceTs === firstCard.traceTs && Number.isFinite(probe.stored.ms),
+      probe
+        ? `live card born ${probe.live.startedAt} stayed ${probe.live.source === null ? "unmeasured" : probe.live.source + " " + probe.live.traceTs}; store copy took row ${probe.stored.traceTs} (${probe.stored.ms}ms) on ${sidFirst}`
+        : "no live card with a trace row to probe against",
+    );
+
+    // item 4: a missing trace file must come back as a rejection, never hang the
+    // merge (readFile, not a readline stream over a stream that never opens).
+    const missing = await Promise.race([
+      js<{ ok: boolean; error?: string }>("window.atomic.traceTools(window.__stateDir(), 'no-such-session')"),
+      new Promise<{ ok: boolean; error?: string }>((r) => setTimeout(() => r({ ok: true, error: "timed out after 5 s" }), 5000)),
+    ]);
+    check("missing trace file rejects, never hangs", missing.ok === false && typeof missing.error === "string" && missing.error.length > 0, JSON.stringify(missing));
+
     const chips = await js<number>("window.__pushAssistant('Saved the report to /Users/valerii/Desktop/report.pdf and the notes to ~/notes/summary.md.')");
     check("file paths render as chips", chips === 2, `${chips} chips`);
+
+    // item 4: a reopened session carries the trace's durations for every card
+    // (the TUI shows 0ms here; the desktop shows the agent's number). A trace can
+    // legitimately say 0ms, so the only ms > 0 assertion is on the os.fs.list
+    // turn this run itself made. Known-data check (api-7a8e32e75a4f9298 →
+    // 9,8,10,71,111,434,17,56,86,668,15) is a manual step, not a smoke assertion.
+    // Reopened here, before the fold checks, so those run on a transcript that
+    // is known to carry cards instead of inheriting the tool turn's outcome.
+    const sid = sidFirst;
+    await js<void>(`window.__openSession(${JSON.stringify(sid)})`);
+    await new Promise((r) => setTimeout(r, 1500));
+    const reopened = await js<typeof cards>("window.__cards()");
+    const traced = reopened.filter((c) => !c.live && c.source === "trace" && Number.isFinite(c.ms) && /[{"]/.test(c.args));
+    check(
+      "reopened session carries trace durations",
+      reopened.length > 0 && traced.length === reopened.length,
+      `${traced.length}/${reopened.length} cards from the trace in ${sid}`,
+    );
+    const listed = reopened.filter((c) => c.name === "os.fs.list");
+    check(
+      "reopened os.fs.list turn is timed",
+      listed.length > 0 && listed.every((c) => c.ms > 0),
+      listed.map((c) => c.ms + "ms").join(", ") || "no os.fs.list card",
+    );
+    if (traced.length !== reopened.length || !listed.every((c) => c.ms > 0)) {
+      process.stdout.write(`DIAG reopened=${JSON.stringify(reopened)}\n`);
+    }
+    // Every finished duration cell reads as the TUI prints it (<n>ms) or is empty.
+    const cells = await js<string[]>("window.__overflow().durations");
+    check(
+      "durations read as the TUI prints them",
+      cells.length > 0 && cells.every((t) => /^\d+ms$/.test(t) || t === "" || t === "\u2026"),
+      JSON.stringify(cells.slice(0, 12)),
+    );
+
+    // Scroll-stable cards: folding a card must not move the transcript — the
+    // head stays put. The hooks click the real head button, so these fail if
+    // the [data-toggle] branch ever goes back to a full render().
+    // item 4: the card under test is pushed between the fillers (a real, closed,
+    // store-shaped card) so it has room above to scroll to and room below — a
+    // 1-turn session's own card sits at the top and cannot be placed at 120 px.
+    for (let n = 0; n < 6; n++) await js<void>(`window.__pushAssistant('filler ${n} ${"x".repeat(400)}')`);
+    await js<number>("window.__pushTool('os.fs.list', {path:'.'}, 'listed 3 entries', false)");
+    for (let n = 6; n < 12; n++) await js<void>(`window.__pushAssistant('filler ${n} ${"x".repeat(400)}')`);
+    const last = (await js<number>("window.__cards().length")) - 1;
+    const placed = await js<{ scrollTop: number; stick: boolean; below: number } | null>(`window.__scrollCardTo(${last}, 120)`);
+    check(
+      "transcript scrollable for the fold test",
+      !!placed && placed.scrollTop > 0 && !placed.stick && placed.below > 400,
+      JSON.stringify(placed),
+    );
+    type Tg = { open: boolean; flipped: boolean; body: boolean; headBefore: number; headAfter: number; scrollBefore: number; scrollAfter: number } | null;
+    const tgOpen = await js<Tg>(`window.__toggleCard(${last})`);
+    check(
+      "expand keeps the card head in place",
+      !!tgOpen && tgOpen.open && tgOpen.flipped && tgOpen.body
+        && Math.abs(tgOpen.headAfter - tgOpen.headBefore) <= 1 && tgOpen.scrollAfter === tgOpen.scrollBefore,
+      JSON.stringify(tgOpen),
+    );
+    const tgClose = await js<Tg>(`window.__toggleCard(${last})`);
+    check(
+      "collapse keeps the card head in place",
+      !!tgClose && !tgClose.open && tgClose.flipped && !tgClose.body
+        && Math.abs(tgClose.headAfter - tgClose.headBefore) <= 1 && tgClose.scrollAfter === tgClose.scrollBefore,
+      JSON.stringify(tgClose),
+    );
+    // The open state and the scroll position must both survive a whole-DOM render.
+    await js<void>(`window.__toggleCard(${last})`);
+    const s0 = await js<{ top: number } | null>("window.__scroll()");
+    await js<void>("window.__pushAssistant('repaint')");
+    const s1 = await js<{ top: number } | null>("window.__scroll()");
+    const fold = await js<{ open: boolean; body: boolean } | null>(`window.__foldState(${last})`);
+    const kept = !!fold && fold.open && fold.body;
+    check(
+      "open state and scroll survive a re-render",
+      kept && !!s0 && !!s1 && s1.top === s0.top,
+      `open kept=${kept} scroll ${s0 ? s0.top : "?"} → ${s1 ? s1.top : "?"}`,
+    );
+    // A folded run (>= 3 same-name cards) unfolds in place through the real
+    // [data-group] click. The opened session usually carries one; when it does
+    // not, say so instead of fabricating cards.
+    const grp = await js<{ members: boolean; headBefore: number; headAfter: number; scrollBefore: number; scrollAfter: number } | null>("window.__unfoldGroup()");
+    check(
+      "unfolding a run keeps its head in place",
+      grp === null || (grp.members && Math.abs(grp.headAfter - grp.headBefore) <= 1 && grp.scrollAfter === grp.scrollBefore),
+      grp ? JSON.stringify(grp) : "no folded run in this transcript (nothing to assert)",
+    );
+
+    // item 4: nothing widens the transcript column — a card with a 300-char
+    // argument and a 260-char path summary, a reply with a 300-char URL.
+    await js<number>("window.__pushTool('os.shell.run', {cmd:'python3', args:['-c', 'x'.repeat(300)]}, '/Users/valerii/' + 'a'.repeat(260) + '.tsx')");
+    type Ov = { sw: number; cw: number; colRight: number; colWidth: number; track: number; maxRight: number; durations: string[]; lastTitle: string };
+    const ov = await js<Ov>("window.__overflow()");
+    // item 4: that card is store-shaped (finished, no trace row) — it must print
+    // nothing and say so, never the TUI's fabricated 0ms.
+    check(
+      "no fake zero for an untraced call",
+      ov.durations.length > 0 && ov.durations[ov.durations.length - 1] === "" && ov.lastTitle === "no trace for this call",
+      `text ${JSON.stringify(ov.durations[ov.durations.length - 1])}, title ${JSON.stringify(ov.lastTitle)}`,
+    );
+    check(
+      "tool cards keep inside the panel",
+      ov.sw === ov.cw && ov.maxRight <= ov.colRight + 1 && ov.track > 0 && ov.track <= ov.colWidth,
+      `scrollWidth ${ov.sw} vs clientWidth ${ov.cw}, max right ${ov.maxRight} vs column ${ov.colRight}, track ${ov.track}px of ${ov.colWidth}`,
+    );
+    await js<number>("window.__pushAssistant('see https://example.com/' + 'a'.repeat(300))");
+    const ov2 = await js<Ov>("window.__overflow()");
+    check("long URLs keep inside the panel", ov2.sw === ov2.cw && ov2.maxRight <= ov2.colRight + 1, `scrollWidth ${ov2.sw} vs clientWidth ${ov2.cw}, max right ${ov2.maxRight} vs column ${ov2.colRight}`);
+    // item 4: the screenshot must show the wrapped card and URL just asserted. The fold
+    // checks left the scroller pinned (S.stick false), so bring the bottom into frame
+    // and give the compositor a moment before capturePage. A plain delay, not a
+    // requestAnimationFrame round-trip: an occluded window never fires rAF and would hang here.
+    const frame = await js<{ top: number; height: number; client: number; cards: number } | null>(
+      "(() => { const sc = document.getElementById('scroller'); if (!sc) return null; sc.scrollTop = sc.scrollHeight;"
+      + " return {top: sc.scrollTop, height: sc.scrollHeight, client: sc.clientHeight, cards: document.querySelectorAll('.card').length}; })()",
+    );
+    // An occluded window stops painting and capturePage returns its last frame
+    // (other windows cover this one while several smokes run side by side), so
+    // stop the throttling that halts paints, re-show the window and repaint.
+    win.webContents.setBackgroundThrottling(false);
+    win.show();
+    win.moveTop();
+    win.webContents.invalidate();
+    await new Promise((r) => setTimeout(r, 800));
+    // Several lanes share the screenshot path, so the frame state is also logged here.
+    process.stdout.write(`DIAG screenshot frame: ${frame ? `scrollTop ${frame.top} of ${frame.height} (viewport ${frame.client}), ${frame.cards} cards, bottom in frame=${frame.height - frame.top - frame.client < 2}` : "no scroller"}\n`);
   }
 
   if (MODELS_TEST) await modelsTest(js, check);

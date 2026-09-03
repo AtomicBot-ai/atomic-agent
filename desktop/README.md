@@ -73,12 +73,19 @@ Real, driven by the running agent:
   whose args come off the stream (`tool_progress.label`) and whose result and
   status are filled in from `GET /api/sessions/{id}` once the turn has been
   saved — the stream never carries results, the session store does. The
-  duration is the wall time this window observes between a tool's frame and
-  the next frame, and the card's tooltip says so: neither the store (which
-  stamps one `at` on a call and its result) nor the trace (one `ts` at
-  completion) records how long a tool ran, so there is no agent-side number
-  to show. Three or more consecutive calls to the same tool fold into one
-  line.
+  duration is the agent's own: the trace row a tool writes when it finishes
+  (`tool_invocation.ts`) minus the model completion of that step
+  (`llm_completion.ts`), which is the same interval the TUI's live card
+  shows. While a call is running the card shows the wall time this window
+  observes and the tooltip says so; a session without a trace shows no number
+  rather than a zero (the TUI prints 0ms for a reopened session — the store
+  stamps one `at` on a call and its result). Durations print as `<n>ms`,
+  as the TUI does — also in the inspector's Steps tab, which used to print
+  `1.9s` and now prints `1922ms`, and shows the same empty cell (with the
+  same tooltip) as the card for a finished call with no trace row, never
+  `…`. Long args, summaries and results wrap inside the card;
+  nothing widens the transcript. Three or more consecutive calls to the same
+  tool fold into one line.
 - file paths and URLs in replies: files are chips that open in the default
   app, with a right-click menu (Open · Show in Finder · Copy Path · Save As…);
   URLs open in the browser
@@ -124,6 +131,20 @@ PASS bridge exposed
 PASS agent connected — state=connected
 PASS skills loaded
 PASS agent replied — "hello there friend"
+…
+PASS live card never takes a stale trace row
+PASS missing trace file rejects, never hangs
+PASS reopened session carries trace durations
+PASS reopened os.fs.list turn is timed
+PASS durations read as the TUI prints them
+PASS transcript scrollable for the fold test
+PASS expand keeps the card head in place
+PASS collapse keeps the card head in place
+PASS open state and scroll survive a re-render
+PASS unfolding a run keeps its head in place
+PASS no fake zero for an untraced call
+PASS tool cards keep inside the panel
+PASS long URLs keep inside the panel
 SMOKE screenshot=…/atomic-desktop-smoke.png failures=0
 ```
 

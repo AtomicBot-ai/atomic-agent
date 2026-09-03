@@ -141,7 +141,7 @@ function ic(n, cls) {
 const MARK_COLOR = '<svg width="16" height="16" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="14" fill="#006AFF"/><path fill="#fff" d="M35.24 49.92a1.25 1.25 0 0 0 1.3-1.24 12.2 12.2 0 0 1 12.14-12.14 1.25 1.25 0 0 0 1.24-1.3v-6.47c0-.69-.56-1.24-1.24-1.24H37.72c-.69 0-1.24-.56-1.24-1.25V15.32c0-.69-.56-1.24-1.24-1.24h-6.47c-.69 0-1.24.56-1.3 1.24A12.2 12.2 0 0 1 15.32 27.46c-.68.06-1.24.61-1.24 1.3v6.47c0 .69.56 1.24 1.24 1.24h10.96c.69 0 1.24.56 1.24 1.25v10.95c0 .69.56 1.24 1.24 1.24z"/></svg>';
 const MARK_MONO = '<svg width="20" height="20" viewBox="0 0 64 64" fill="currentColor" aria-hidden="true"><path d="M35.24 49.92a1.25 1.25 0 0 0 1.3-1.24 12.2 12.2 0 0 1 12.14-12.14 1.25 1.25 0 0 0 1.24-1.3v-6.47c0-.69-.56-1.24-1.24-1.24H37.72c-.69 0-1.24-.56-1.24-1.25V15.32c0-.69-.56-1.24-1.24-1.24h-6.47c-.69 0-1.24.56-1.3 1.24A12.2 12.2 0 0 1 15.32 27.46c-.68.06-1.24.61-1.24 1.3v6.47c0 .69.56 1.24 1.24 1.24h10.96c.69 0 1.24.56 1.24 1.25v10.95c0 .69.56 1.24 1.24 1.24z"/></svg>';
 
-const dur = (ms) => ms == null ? '…' : ms < 1000 ? ms + 'ms' : (ms / 1000).toFixed(1) + 's';
+const dur = (ms) => ms == null ? '…' : ms + 'ms';   // item 4: as the TUI prints it (tool-card.tsx), never X.Xs
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const $ = (s) => document.querySelector(s);
 const keycaps = (str) => str ? str.split(' ').map((k) => '<span class="kc">' + esc(k) + '</span>').join('') : '';
@@ -349,7 +349,15 @@ function renderSidebar() {
 /* ---------------- content ---------------- */
 function renderContent() {
   const c = $('#content');
-  if (S.room === 'chat')   { c.innerHTML = chatView(); afterChat(); return; }
+  if (S.room === 'chat') {
+    // Scroll-stable cards: a whole-DOM render replaces #scroller, so remember
+    // where the old one was and hand it to afterChat (same capture-then-restore
+    // as refreshPalette does for .pallist). Nothing to keep while stuck to the
+    // bottom — afterChat snaps there anyway.
+    const prev = $('#scroller');
+    const keep = prev && !S.stick ? prev.scrollTop : null;
+    c.innerHTML = chatView(); afterChat(keep); return;
+  }
   if (S.room === 'tasks')  { c.innerHTML = tasksView(); return; }
   c.innerHTML = skillsView();
 }
@@ -375,10 +383,10 @@ function item(m) {
   if (m.k === 'assistant') return '<div class="turn"><div class="gutter"><span style="color:var(--accent-text);display:flex">' + MARK_MONO + '</span></div>'
     + '<div class="prose">' + renderProse(m.text) + '</div></div>';
   if (m.k === 'system') return '<div class="sysrow"><span></span><span>' + m.text + '</span></div>';
-  if (m.k === 'reason') return '<div class="turn"><div></div><div>'
+  if (m.k === 'reason') return '<div class="turn" id="turn-' + m.id + '"><div></div><div>'
     + '<button class="disc" data-toggle="' + m.id + '">' + ic(m.open ? 'chevD' : 'chevR') + 'Reasoning · ' + m.steps + ' steps</button>'
     + (m.open ? '<div class="discbody">' + esc(m.text) + '</div>' : '') + '</div></div>';
-  if (m.k === 'tool') return '<div class="turn"><div></div><div>' + toolCard(m) + '</div></div>';
+  if (m.k === 'tool') return '<div class="turn" id="turn-' + m.id + '"><div></div><div>' + toolCard(m) + '</div></div>';
   if (m.k === 'approval') return '<div class="turn"><div></div><div>' + apprCard(m) + '</div></div>';
   return '';
 }
@@ -411,8 +419,15 @@ function toolCard(m) {
   return '<div class="card' + (running ? ' running' : '') + (m.ok === false ? ' err' : '') + '" id="card-' + m.id + '">'
     + '<button class="cardhead" data-toggle="' + m.id + '" aria-expanded="' + (!!m.open) + '">'
       + glyph + '<span class="nm">' + esc(m.name) + '</span>'
-      + '<span class="du tnum" title="' + (m.ms ? 'measured by the agent' : 'wall time observed by this window, from the call frame to the next frame') + '">'
-      + (running ? '\u2026' : dur(m.ms || m.observedMs || 0) || '') + '</span>'
+      // item 4: the number is the agent's own (trace) once the turn is stored; while it runs, or
+      // until the store lands, the wall time this window observed. The TUI prints a fabricated
+      // 0ms for a store-rebuilt card (turns-to-messages.ts); the user rejected that zero, so a card
+      // with no trace row prints nothing and says so in the tooltip.
+      + '<span class="du tnum" title="' + (running ? 'running'
+          : m.msSource === 'trace' ? 'measured by the agent (trace): tool result minus the model completion of that step, including parse and any approval wait \u2014 the same interval the TUI shows'
+          : m.observedMs ? 'wall time observed by this window, from the call frame to the next frame'
+          : 'no trace for this call') + '">'
+      + (running ? '\u2026' : m.msSource === 'trace' ? dur(m.ms) : m.observedMs ? dur(m.observedMs) : '') + '</span>'
       + (m.truncated ? '<span class="cap" style="color:var(--warn)">truncated</span>' : '')
       + '<span class="ar">' + esc(previewArgs(m.args || m.arg)) + '</span>'
       + '<span class="ter" style="display:flex">' + ic(m.open ? 'chevD' : 'chevR') + '</span>'
@@ -499,7 +514,7 @@ function sendButton() {
   return '<button class="sendbtn' + (S.draft.trim() ? '' : ' mute') + '" data-act="send" title="Send">' + ic('up') + '</button>';
 }
 
-function afterChat() {
+function afterChat(keep) {
   const e = $('#entry');
   if (!e) return;
   e.value = S.draft;
@@ -511,10 +526,72 @@ function afterChat() {
       $('#toolbar').classList.toggle('scrolled', sc.scrollTop > 2);
     });
     if (S.stick) sc.scrollTop = sc.scrollHeight;
+    // Scroll-stable cards: a scrolled-up user is put back at the same pixel
+    // after a whole-DOM render (streaming deltas, reconcileToolCards, expand
+    // all). Deliberate divergence from the TUI: its chatScrollOffset is
+    // bottom-anchored (src/tui/tui-state.ts:614-621, chat-log.tsx:66-75) so its
+    // view slides as the tail grows; the desktop holds the pixel position
+    // because the user asked for the scroll not to move. The desktop still
+    // resets to the bottom exactly where the TUI does: turn start
+    // (reducer-helpers.ts:176 <-> startLiveTurn), session switch
+    // (reduce-ui-actions.ts:414 <-> openSession) and Esc (app-key-bindings.ts:505
+    // / tui-app.tsx:1327 <-> the Escape branch of the keydown handler).
+    else if (keep != null) sc.scrollTop = keep;
   }
   if (S.pending && !S.apprFocused) { const d = $('#denybtn'); if (d) { d.focus(); S.apprFocused = true; } }
 }
 function autosize(e) { e.style.height = 'auto'; e.style.height = Math.min(e.scrollHeight, 180) + 'px'; }
+
+/* ---- Scroll-stable cards ----
+   Fold or unfold one transcript entry in place. The scroller is not rebuilt
+   and scrollTop is not written, so everything above the entry — its own head
+   included — stays where it was on screen. Same rule as the TUI's
+   tool_expand_toggled reducer (src/tui/reduce-ui-actions.ts:58-67), which
+   touches toolsExpandedById only and never chatScrollOffset.
+   Deliberate divergence from the TUI's bottom-anchored offset: the TUI surface
+   is pinned to the bottom (tui-state.ts:614-621, chat-log.tsx:66-75), so there a
+   toggle keeps the BOTTOM edge fixed and lets the head move up; the desktop
+   keeps the HEAD still, which is what the user asked for. S.stick is therefore
+   recomputed from geometry instead of copied from the TUI (which leaves
+   chatScrollOffset untouched on tool_expand_toggled): a body that now extends
+   below the fold means the user is no longer at the bottom, so expanding the
+   tail card mid-turn stops auto-follow until Esc (the Escape branch of the
+   keydown handler, the desktop twin of the TUI's 'Esc to jump to latest')
+   restores it. That is also what keeps reconcileToolCards' delayed render()
+   from snapping to the bottom under an expanded card.
+   Chromium's own scroll anchoring is off for .scroller (overflow-anchor:none in
+   styles.css) so it cannot stack on top of the residual-drift correction. */
+function repaintEntry(m, anchorSel) {
+  const sc = $('#scroller');
+  const old = document.getElementById('turn-' + m.id);
+  if (!sc || !old) { render(); return; }
+  const before = (old.querySelector(anchorSel) || old).getBoundingClientRect().top;
+  old.outerHTML = item(m);
+  const fresh = document.getElementById('turn-' + m.id);
+  const anchor = fresh && (fresh.querySelector(anchorSel) || fresh);
+  const drift = anchor ? anchor.getBoundingClientRect().top - before : 0;
+  // Nothing above the entry changed, so drift is 0 unless the browser clamped
+  // scrollTop (a collapse near the end of the transcript). Correct what it can.
+  if (Math.abs(drift) > 0.5) sc.scrollTop += drift;
+  S.stick = sc.scrollHeight - sc.scrollTop - sc.clientHeight < 40;
+}
+
+/* Unfold a run of same-tool cards into its members, keeping the head where it is.
+   The run computation must stay byte-identical to renderItems or the members
+   and the fold would disagree. */
+function expandGroupInPlace(id) {
+  const sc = $('#scroller');
+  const old = document.getElementById('group-' + id);
+  const i = S.log.findIndex((x) => x.id === id);
+  if (!sc || !old || i < 0) { render(); return; }
+  let j = i; while (j + 1 < S.log.length && S.log[j + 1].k === 'tool' && S.log[j + 1].name === S.log[i].name) j++;
+  const before = (old.querySelector('.cardhead') || old).getBoundingClientRect().top;
+  old.outerHTML = S.log.slice(i, j + 1).map(item).join('');
+  const head = document.querySelector('#turn-' + id + ' .cardhead');
+  const drift = head ? head.getBoundingClientRect().top - before : 0;
+  if (Math.abs(drift) > 0.5) sc.scrollTop += drift;
+  S.stick = sc.scrollHeight - sc.scrollTop - sc.clientHeight < 40;
+}
 
 /* ---------------- rooms ---------------- */
 function segControl(items, cur, actPrefix) {
@@ -584,7 +661,13 @@ function renderInspector() {
         + '<span class="ix">' + String(i + 1).padStart(2, '0') + '</span>'
         + '<span class="nm">' + esc(m.name) + '</span>'
         + '<span class="hstack">'
-        + '<span class="mono ter tnum">' + dur(m.ok === null ? null : m.ms) + '</span></span></button>').join('')
+        // item 4: the same cell as the tool card — running is '…'; a finished step prints the trace's
+        // number, or the wall time this window observed, or nothing (never '…' or 0ms for a call with no trace row).
+        + '<span class="mono ter tnum" title="' + (m.ok === null ? 'running'
+            : m.msSource === 'trace' ? 'measured by the agent (trace): tool result minus the model completion of that step, including parse and any approval wait \u2014 the same interval the TUI shows'
+            : m.observedMs ? 'wall time observed by this window, from the call frame to the next frame'
+            : 'no trace for this call') + '">'
+        + (m.ok === null ? '\u2026' : m.msSource === 'trace' ? dur(m.ms) : m.observedMs ? dur(m.observedMs) : '') + '</span></span></button>').join('')
       : '<p class="cap">No steps yet.</p>';
   } else if (S.inspTab === 'reasoning') {
     const r = S.log.filter((m) => m.k === 'reason');
@@ -1210,13 +1293,15 @@ document.addEventListener('click', (e) => {
   const dl = t.closest('[data-del]'); if (dl) { e.preventDefault(); e.stopPropagation(); act('delask:' + dl.dataset.del); return; }
   const ss = t.closest('[data-ses]'); if (ss) { act('ses:' + ss.dataset.ses); return; }
   const grp = t.closest('[data-group]');
-  if (grp) { OPEN_GROUPS.add(grp.dataset.group); S.stick = false; render(); return; }
+  if (grp) { OPEN_GROUPS.add(grp.dataset.group); expandGroupInPlace(grp.dataset.group); return; }  // scroll-stable cards: in place, no scrollTop write
   const fchip = t.closest('[data-file]');
   if (fchip && BR) { BR.openPath(fchip.dataset.file.replace(/^~/, homeDir() || '~')).then((r) => { if (r && r.ok === false) toast('Could not open', r.error || ''); }); return; }
   const mlink = t.closest('[data-url]');
   if (mlink && BR) { e.preventDefault(); BR.openExternal(mlink.dataset.url); return; }
   const tg = t.closest('[data-toggle]');
-  if (tg) { const m = S.log.find((x) => x.id === tg.dataset.toggle); if (m) { m.open = !m.open; S.stick = false; render(); } return; }
+  // Scroll-stable cards: no S.stick = false, no render() — repaintEntry swaps the
+  // one entry and recomputes stick from geometry.
+  if (tg) { const m = S.log.find((x) => x.id === tg.dataset.toggle); if (m) { m.open = !m.open; repaintEntry(m, m.k === 'tool' ? '.cardhead' : '.disc'); } return; }
   const go = t.closest('[data-goto]');
   if (go) { const el = document.getElementById('card-' + go.dataset.goto);
             if (el) { S.stick = false; el.scrollIntoView({block:'center', behavior:'smooth'}); el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 400); } return; }
@@ -2545,6 +2630,7 @@ async function openSession(id) {
       if (t.reasoning) log.push({id:nid(), k:'reason', steps:1, open:false, text:t.reasoning});
       log.push({id:nid(), k:'tool', name:t.tool || 'tool',
         arg: summariseArgs(t.args), args: JSON.stringify(t.args ?? {}, null, 2),
+        argsKey: JSON.stringify(t.args ?? {}), at: t.at,   // item 4: what the trace merge matches on
         where:'local', ok:null, open:false});
       return;
     }
@@ -2556,7 +2642,7 @@ async function openSession(id) {
         if (log[i].k === 'tool' && log[i].ok === null) {
           log[i].ok = t.status === 'ok';
           log[i].out = t.summary || '';
-          log[i].ms = 0;
+          log[i].ms = undefined; log[i].msSource = null;   // item 4: the store carries no duration; the trace does
           return;
         }
       }
@@ -2569,6 +2655,9 @@ async function openSession(id) {
   S.history = [];
   render();
   refreshContext();
+  // item 4: durations come from the agent's trace; repaint only if this transcript is still up.
+  const shown = S.log;
+  applyTraceDurations().then((changed) => { if (changed && S.log === shown) render(); });
 }
 
 async function ctxAdjust(spec) {
@@ -2689,17 +2778,26 @@ function renderItems() {
 }
 function groupCard(run) {
   const m = run[0];
-  const ms = run.reduce((n, c) => n + (c.ms || c.observedMs || 0), 0);
+  // item 4: the run's total counts only members with a number (trace, or observed while live);
+  // the tooltip says when some are unmeasured, and a fold with no measured member prints nothing, never 0ms.
+  const measured = run.filter((c) => c.msSource === 'trace' || c.observedMs);
+  const ms = measured.reduce((n, c) => n + (c.msSource === 'trace' ? c.ms : c.observedMs), 0);
   const bad = run.filter((c) => c.ok === false).length;
   const pending = run.some((c) => c.ok === null);
+  // The title says where the numbers come from: a fold of live cards is window-observed until the store lands.
+  const observed = measured.filter((c) => c.msSource !== 'trace').length;
+  const duTitle = pending ? 'running'
+    : measured.length === run.length ? (observed ? 'sum of the calls; ' + observed + ' observed by this window until the store lands' : 'sum of the calls, measured by the agent (trace)')
+    : measured.length ? measured.length + ' of ' + run.length + ' calls measured' + (observed ? ' (' + observed + ' observed by this window until the store lands)' : '') + '; the rest have no trace row'
+    : 'no trace for these calls';
   const glyph = pending ? '<span class="dot run"></span>'
     : bad ? '<span style="color:var(--danger);display:flex">' + ic('warn') + '</span>'
           : '<span style="color:var(--success);display:flex">' + ic('check') + '</span>';
   const previews = run.map((c) => previewArgs(c.args || c.arg)).filter(Boolean);
-  return '<div class="turn"><div></div><div><div class="card">'
+  return '<div class="turn" id="group-' + m.id + '"><div></div><div><div class="card">'
     + '<button class="cardhead" data-group="' + m.id + '">' + glyph
     + '<span class="nm">' + run.length + ' \u00d7 ' + esc(m.name) + '</span>'
-    + '<span class="du tnum">' + (pending ? '\u2026' : dur(ms)) + '</span>'
+    + '<span class="du tnum" title="' + duTitle + '">' + (pending ? '\u2026' : measured.length ? dur(ms) : '') + '</span>'
     + (bad ? '<span class="cap" style="color:var(--danger)">' + bad + ' failed</span>' : '')
     + '<span class="ar">' + esc(previews.slice(0, 3).join(' \u00b7 ') + (previews.length > 3 ? ' \u2026' : '')) + '</span>'
     + '<span class="ter" style="display:flex">' + ic('chevR') + '</span></button>'
@@ -2743,16 +2841,69 @@ async function reconcileToolCards(attempt = 0) {
     const card = cards[c], {call, result} = calls[k];
     if (call.tool !== card.name) break;
     card.args = call.args || card.args;
+    card.at = call.at; card.argsKey = JSON.stringify(call.args ?? {});   // item 4: for the trace merge
     if (result) {
       card.ok = result.status === 'ok';
       card.out = result.summary || '';
       card.truncated = !!result.truncated;
-      if (call.at && result.at) card.ms = Math.max(0, result.at - call.at);
     }
   }
   // Whatever the store still does not describe is finished, just unmeasured.
   pendingCards.forEach((c) => { if (c.ok === null) { c.ok = true; c.out = c.out || ''; } });
+  await applyTraceDurations();   // item 4: live cards flip from observed wall time to the agent's number
   render();
+}
+
+/* item 4 — trace-measured tool durations.
+   The store stamps one `at` on a call and its result, so it carries no duration
+   (the TUI shows 0ms for a reopened session for the same reason). The trace does:
+   tool_invocation.ts − the llm_completion.ts of the same step is exactly the
+   interval the TUI's live card measures (tool_call_parsed → tool_call_executed). */
+async function applyTraceDurations() {
+  if (!BR || !S.agentSession || !BR.traceTools) return false;
+  const stateDir = LIVE_CAPS && LIVE_CAPS.paths && LIVE_CAPS.paths.stateDir;
+  if (!stateDir) return false;
+  const sid = S.agentSession, log = S.log;
+  const res = await BR.traceTools(stateDir, sid);
+  // A faster second click in the sidebar must not stamp this session's numbers on another transcript.
+  if (S.agentSession !== sid || S.log !== log) return false;
+  if (!res || !res.ok || !Array.isArray(res.rows)) return false;
+  // The store lists a batched step in batch-index order; the trace writes rows in
+  // completion order. Keep file order (turn indices restart when a later `serve`
+  // appends to the file) and stable-sort only each run of one (turn, step) by batchIndex.
+  const rows = []; let group = [];
+  const flush = () => { group.sort((a, b) => a.batchIndex - b.batchIndex); rows.push(...group); group = []; };
+  for (const r of res.rows) {
+    if (r.tool === 'reply' || r.tool === 'finish') continue;   // assistant_reply in the store, never a card
+    if (group.length && (group[0].turnIndex !== r.turnIndex || group[0].stepIndex !== r.stepIndex)) flush();
+    group.push(r);
+  }
+  flush();
+  const cards = log.filter((m) => m.k === 'tool');
+  let k = 0, hit = 0;
+  for (const card of cards) {
+    // A live card still running keeps observedMs and halts the walk; a store card whose
+    // result never landed (an interrupted turn) is skipped so the cards after it are still measured.
+    if (card.ok === null) { if (card.startedAt) break; continue; }
+    const at = card.at || 0;                         // = step finish, stamped after the whole batch returned
+    let found = -1;
+    for (let j = k; j < rows.length; j++) {
+      if (at && rows[j].ts > at + 5000) break;       // the trace has moved past this card
+      // No lower bound against `at`: a fast sibling of a slow batched call finishes long before the step's `at`.
+      // A card born on this window's stream has its own lower bound: startedAt is stamped on
+      // tool_call_parsed, always before the trace row is written. Without it a fresh window
+      // ("New session" + a first prompt whose derived id already exists) would take the earliest
+      // row of the reused session — a stale number shown as the agent's measurement.
+      if (card.startedAt && rows[j].ts < card.startedAt - 2000) continue;
+      if (rows[j].tool !== card.name) continue;
+      if (card.argsKey && rows[j].argsKey !== card.argsKey) continue;
+      found = j; break;
+    }
+    if (found < 0) continue;                         // leave unmeasured, never 0
+    k = found + 1;                                   // forward-only: a repeated identical call takes the next row
+    if (rows[found].ms != null) { card.ms = rows[found].ms; card.msSource = 'trace'; card.traceTs = rows[found].ts; hit++; }
+  }
+  return hit > 0;
 }
 
 /** Escaped prose with files as chips and URLs as links. */
@@ -2797,8 +2948,94 @@ if (typeof window !== 'undefined') {
   window.__cards = () => S.log.filter((m) => m.k === 'tool').map((m) => ({
     name:m.name,
     args: typeof (m.args || m.arg) === 'string' ? (m.args || m.arg) : JSON.stringify(m.args || m.arg || ''),
-    ms: m.ms || m.observedMs || 0, ok: m.ok,
+    ms: m.msSource === 'trace' ? m.ms : (m.observedMs || 0),   // item 4
+    source: m.msSource || (m.observedMs ? 'observed' : null), ok: m.ok,
+    traceTs: m.traceTs || null, startedAt: m.startedAt || null,   // item 4: the row a live card took must be its own
+    argsKey: m.argsKey || null,   // item 4: what the trace merge matches on
     live: !!m.startedAt,   // born on the stream this run, as opposed to loaded from the store
   }));
   window.__pushAssistant = (t) => { S.log.push({id:nid(), k:'assistant', text:t}); render(); return document.querySelectorAll('.filechip').length; };
+}
+
+/* Hooks for --smoke: scroll-stable cards. Every toggle goes through the REAL
+   click path (the document click listener → [data-toggle] / [data-group]), so
+   the checks fail if that branch ever goes back to a full render(). */
+if (typeof window !== 'undefined') {
+  window.__scroll = () => { const sc = $('#scroller'); return sc ? {top:sc.scrollTop, height:sc.scrollHeight, client:sc.clientHeight, stick:S.stick} : null; };
+  window.__foldState = (i) => {
+    const m = S.log.filter((x) => x.k === 'tool')[i]; if (!m) return null;
+    return {id:m.id, open:!!m.open, body:!!document.querySelector('#card-' + m.id + ' .cardbody')};
+  };
+  window.__scrollCardTo = (i, px) => {
+    const m = S.log.filter((x) => x.k === 'tool')[i]; const sc = $('#scroller');
+    if (m && !document.getElementById('card-' + m.id)) { // folded into a group: unfold the run it belongs to
+      let s = S.log.indexOf(m); while (s > 0 && S.log[s - 1].k === 'tool' && S.log[s - 1].name === m.name) s--;
+      if (document.getElementById('group-' + S.log[s].id)) { OPEN_GROUPS.add(S.log[s].id); expandGroupInPlace(S.log[s].id); }
+    }
+    const h = m && document.querySelector('#card-' + m.id + ' .cardhead');
+    if (!sc || !h) return null;
+    sc.scrollTop += h.getBoundingClientRect().top - sc.getBoundingClientRect().top - px;
+    S.stick = sc.scrollHeight - sc.scrollTop - sc.clientHeight < 40;
+    return {scrollTop:sc.scrollTop, stick:S.stick, below:sc.scrollHeight - sc.scrollTop - sc.clientHeight};
+  };
+  window.__toggleCard = (i) => {
+    const m = S.log.filter((x) => x.k === 'tool')[i]; const sc = $('#scroller');
+    const head = () => m && document.querySelector('#card-' + m.id + ' .cardhead');
+    const h0 = head(); if (!sc || !h0) return null;
+    const headBefore = h0.getBoundingClientRect().top, scrollBefore = sc.scrollTop, openBefore = !!m.open;
+    h0.click();                       // the document click listener → [data-toggle] branch → repaintEntry
+    const h1 = head();
+    return {id:m.id, open:!!m.open, flipped:m.open !== openBefore, body:!!document.querySelector('#card-' + m.id + ' .cardbody'),
+            headBefore, headAfter:h1 ? h1.getBoundingClientRect().top : NaN, scrollBefore, scrollAfter:sc.scrollTop};
+  };
+  window.__unfoldGroup = () => {
+    const g = document.querySelector('[data-group]'); const sc = $('#scroller'); if (!g || !sc) return null;
+    const id = g.dataset.group; sc.scrollTop += g.getBoundingClientRect().top - sc.getBoundingClientRect().top - 120;
+    // the hook's own scrollTop write happens BEFORE `before` is measured, so the assertion isolates the click
+    const before = g.getBoundingClientRect().top, scrollBefore = sc.scrollTop;
+    g.click();                        // [data-group] branch → expandGroupInPlace
+    const h = document.querySelector('#turn-' + id + ' .cardhead');
+    return {id, members:OPEN_GROUPS.has(id), headBefore:before, headAfter:h ? h.getBoundingClientRect().top : NaN, scrollBefore, scrollAfter:sc.scrollTop};
+  };
+}
+
+/* Hooks for --smoke: item 4 — cards stay inside the transcript column, durations
+   come from the trace. __pushTool pushes an ordinary finished card (no demo words),
+   __overflow measures what could widen the column. */
+if (typeof window !== 'undefined') {
+  window.__session = () => S.agentSession;
+  window.__newSession = () => { act('session:new'); return S.log.length; };   // exactly what the toolbar button does
+  window.__busy = () => S.busy;
+  window.__stateDir = () => (LIVE_CAPS && LIVE_CAPS.paths && LIVE_CAPS.paths.stateDir) || null;
+  // Deterministic stand-in for "a fresh window on a session whose trace already holds an identical
+  // row" (New session + a first prompt whose derived id already exists) — no model in the loop.
+  // Sets the session id as the stream would, pushes a live-shaped card (startedAt now, so the
+  // existing row predates it) and a store-shaped copy of the same call, then runs the real merge:
+  // the live card must stay unmeasured, the store copy takes the row.
+  window.__probeTrace = async (sid, name, argsKey) => {
+    S.agentSession = sid;
+    const mk = (live) => Object.assign({id:nid(), k:'tool', name, args: argsKey, argsKey, at: 0, ok:true, out:'', open:false, where:'local'}, live ? {startedAt: Date.now()} : {});
+    const liveCard = mk(true), storeCard = mk(false);
+    S.log.push(liveCard, storeCard);
+    const changed = await applyTraceDurations();
+    render();
+    const pick = (c) => ({source: c.msSource || null, traceTs: c.traceTs || null, ms: c.ms == null ? null : c.ms, startedAt: c.startedAt || null});
+    return {changed, live: pick(liveCard), stored: pick(storeCard)};
+  };
+  window.__pushTool = (name, args, summary, open = true) => {
+    S.log.push({id:nid(), k:'tool', name, args: JSON.stringify(args), argsKey: JSON.stringify(args), ok:true, out:summary, open, where:'local'});
+    render();
+    return document.querySelectorAll('.card').length;
+  };
+  window.__overflow = () => {
+    const sc = document.getElementById('scroller'); const col = document.querySelector('.col720');
+    const els = Array.from(document.querySelectorAll('.card,.prose,.cardbody pre,.appr'));
+    const turn = document.querySelector('.turn');
+    const track = turn ? parseFloat(getComputedStyle(turn).gridTemplateColumns.split(' ')[1]) : 0;
+    return {sw: sc ? sc.scrollWidth : 0, cw: sc ? sc.clientWidth : 0,
+            colRight: col ? Math.round(col.getBoundingClientRect().right) : 0, colWidth: col ? col.clientWidth : 0, track,
+            maxRight: Math.round(Math.max(0, ...els.map((c) => c.getBoundingClientRect().right))),
+            durations: Array.from(document.querySelectorAll('.card .du')).map((d) => d.textContent),
+            lastTitle: (() => { const d = document.querySelectorAll('.card .du'); return d.length ? d[d.length - 1].title : ''; })()};
+  };
 }

@@ -173,29 +173,34 @@ svg{display:block;flex:none}
 .col720{max-width:720px;margin:0 auto;padding:var(--s6) var(--s6) var(--s3)}
 
 /* transcript */
-.turn{display:grid;grid-template-columns:28px 1fr;gap:var(--s4);margin-bottom:var(--s6)}
+.turn{display:grid;grid-template-columns:28px minmax(0,1fr);gap:var(--s4);margin-bottom:var(--s6)}
+/* item 4: a grid cell's automatic minimum is its min-content width, so a long
+   nowrap preview or an unbroken token would widen the whole transcript column */
+.turn>*,.sysrow>*{min-width:0}
 .turn .gutter{padding-top:2px}
 .avatar{width:20px;height:20px;border-radius:6px;background:var(--bg-raised);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;color:var(--text-secondary)}
 .prose{font-size:15px;line-height:24px;white-space:pre-wrap;word-break:break-word}
 .prose.usr{color:var(--text-primary)}
-.sysrow{display:grid;grid-template-columns:28px 1fr;gap:var(--s4);margin-bottom:var(--s4);color:var(--text-secondary);font-size:13px}
+.sysrow{display:grid;grid-template-columns:28px minmax(0,1fr);gap:var(--s4);margin-bottom:var(--s4);color:var(--text-secondary);font-size:13px}
 
 .card{border:1px solid var(--line);background:var(--bg-raised);border-radius:8px;margin-bottom:var(--s3);overflow:hidden}
 .card.err{border-color:var(--danger);background:var(--danger-wash)}
 .card.running{border-color:var(--accent-line)}
-.cardhead{height:32px;display:flex;align-items:center;gap:var(--s3);padding:0 var(--s4);width:100%}
+.cardhead{min-height:32px;display:flex;align-items:flex-start;flex-wrap:wrap;gap:var(--s3);row-gap:2px;padding:6px var(--s4);width:100%;text-align:left}
+.cardhead>*{line-height:20px}
+.cardhead .ter{margin-left:auto}
 .cardhead:hover{background:var(--bg-hover)}
 .cardhead .nm{font-weight:600;white-space:nowrap}
-.cardhead .ar{font-family:var(--font-mono);font-size:12px;color:var(--text-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}
+.cardhead .ar{font-family:var(--font-mono);font-size:12px;color:var(--text-secondary);white-space:normal;overflow-wrap:anywhere;word-break:break-word;flex:1 1 200px;min-width:0}
 .cardhead .du{font-family:var(--font-mono);font-size:12px;color:var(--text-tertiary)}
 .cardbody{border-top:1px solid var(--line-soft);padding:var(--s4);display:flex;flex-direction:column;gap:var(--s2)}
-.cardbody pre{margin:0;font-family:var(--font-mono);font-size:12px;line-height:18px;color:var(--text-secondary);white-space:pre-wrap;max-height:320px;overflow:auto}
+.cardbody pre{margin:0;font-family:var(--font-mono);font-size:12px;line-height:18px;color:var(--text-secondary);white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;max-height:320px;overflow:auto;max-width:100%}
 .chip-route{height:18px;display:flex;align-items:center;padding:0 5px;border-radius:4px;font-size:11px;font-weight:500;flex:none}
 .chip-route.cloud{background:var(--accent);color:#fff}
 .chip-route.local{border:1px solid var(--line);color:var(--text-secondary)}
 .disc{display:flex;align-items:center;gap:var(--s2);height:24px;color:var(--text-secondary);font-size:13px;margin-bottom:var(--s3)}
 .disc:hover{color:var(--text-primary)}
-.discbody{border-left:2px solid var(--line);padding:var(--s2) 0 var(--s2) var(--s4);margin:0 0 var(--s4) 3px;color:var(--text-secondary);font-size:13px;line-height:20px;white-space:pre-wrap}
+.discbody{border-left:2px solid var(--line);padding:var(--s2) 0 var(--s2) var(--s4);margin:0 0 var(--s4) 3px;color:var(--text-secondary);font-size:13px;line-height:20px;white-space:pre-wrap;overflow-wrap:anywhere}
 
 /* approval */
 .appr{border:1px solid var(--warn-border);border-left:3px solid var(--warn);background:var(--warn-wash);border-radius:8px;padding:var(--s5);margin-bottom:var(--s5)}
@@ -204,11 +209,11 @@ svg{display:block;flex:none}
 .appr.ok{border-left-color:var(--success)}
 .apprhead{display:flex;align-items:center;gap:var(--s3);margin-bottom:var(--s4)}
 .badge{height:20px;display:flex;align-items:center;padding:0 6px;border-radius:4px;background:var(--warn-wash);color:var(--warn);font-size:11px;font-weight:500;border:1px solid var(--warn-border)}
-.dl{display:grid;grid-template-columns:max-content 1fr;gap:var(--s2) var(--s5);margin-bottom:var(--s4)}
+.dl{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:var(--s2) var(--s5);margin-bottom:var(--s4)}
 .dl dt{font-size:11px;color:var(--text-secondary);text-align:right;padding-top:2px}
-.dl dd{margin:0;font-size:13px}
+.dl dd{margin:0;font-size:13px;min-width:0;overflow-wrap:anywhere}
 .previewblk{font-family:var(--font-mono);font-size:12px;line-height:18px;background:var(--bg-raised);border-radius:4px;padding:var(--s2) var(--s3);word-break:break-all}
-.pathchip{display:inline-flex;align-items:baseline;gap:4px;background:var(--bg-raised);border-radius:4px;padding:2px 6px}
+.pathchip{display:inline-flex;flex-wrap:wrap;align-items:baseline;gap:4px;background:var(--bg-raised);border-radius:4px;padding:2px 6px;overflow-wrap:anywhere}
 .pathchip b{font-weight:500}
 .apprbtns{display:flex;align-items:center;justify-content:space-between;gap:var(--s3);flex-wrap:wrap;margin-bottom:var(--s3)}
 .apprgrp{display:flex;align-items:center;gap:var(--s3);flex-wrap:wrap}
@@ -544,9 +549,8 @@ body.electron .sb-head { -webkit-app-region: no-drag; }
 .ctxdial .btn { min-width: 28px; justify-content: center; }
 
 /* tool card summary line (the TUI's └─ line) and grouped runs */
-.cardsum { padding: 4px 12px 7px 36px; font-size: 12px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-top: 1px solid var(--line-soft); }
+.cardsum { padding: 4px 12px 7px 36px; font-size: 12px; line-height: 18px; color: var(--text-secondary); white-space: normal; overflow-wrap: anywhere; word-break: break-word; border-top: 1px solid var(--line-soft); }
 .cardsum.bad { color: var(--danger); }
-.cardhead .ar { font-family: var(--font-mono); font-size: 12px; }
 
 /* files and links inside replies */
 .filechip { display: inline-flex; align-items: center; gap: 5px; vertical-align: -3px; padding: 1px 8px 1px 5px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg-raised); color: var(--text-primary); font-size: 13px; font-weight: 500; }
@@ -554,3 +558,9 @@ body.electron .sb-head { -webkit-app-region: no-drag; }
 .filechip svg { color: var(--accent-text); }
 .msglink { color: var(--accent-text); border-bottom: 1px solid var(--accent-line); }
 .modelrow.dim { opacity: .5; }
+
+/* scroll-stable cards: the renderer owns the transcript's scroll position
+   (repaintEntry / afterChat(keep) in renderer.js); Chromium's own anchoring
+   would stack on top of the explicit drift correction and is lost anyway
+   whenever #scroller is rebuilt. */
+.scroller{overflow-anchor:none}
