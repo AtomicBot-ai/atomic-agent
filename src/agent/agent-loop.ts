@@ -654,12 +654,13 @@ export class AgentLoop {
         "This is the final allowed step. Do not call any non-terminal tool; " +
         "summarize the completed work with reply, or end the session with finish.";
       try {
-        // `profileFactsProvider` is a raw `profileStore.list()`. The
-        // facts are prompt decoration — the renderer already drops
-        // them when the contextual gate does not match — so a store
-        // failure must render the step without them rather than throw
-        // into the catch below, where a `TypeError` from a closed
-        // SQLite handle would be classified `tool` and fail the turn.
+        // `profileFactsProvider` is a raw `profileStore.list()`.
+        // Dropping the facts is a real loss — `profile-renderer` emits
+        // pinned facts regardless of the contextual gate, so this
+        // omits the whole `### profile` section for the rest of the
+        // turn — but it is the lesser one: a throw here lands in the
+        // catch below, where a `TypeError` from a closed SQLite handle
+        // classifies `tool` and fails the turn outright.
         let profileFacts: readonly ProfileFact[] | undefined;
         try {
           profileFacts = this.deps.profileFactsProvider?.();
