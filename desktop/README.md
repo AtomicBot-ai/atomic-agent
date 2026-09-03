@@ -141,7 +141,38 @@ Honestly degraded, and labelled as such in the UI:
   route, so an enabled server's state reads `—` (never an inferred up/down)
   and resources/prompts say they are not exposed. Add and remove rewrite
   `mcp.servers` through the whole-file `atag config set` and offer a restart.
-- **LLM, Telegram and Import tabs** land in the next steps of this branch.
+- **LLM** is the TUI's four panes. Local rows come from `atag models list`
+  and `models list-embeddings`, the route card's daemon line from
+  `atag models status` (the local route's model too — the desktop has no
+  `/props`); Enter downloads / selects / starts through `models pull`,
+  `models use`, `models start|stop`, `s`/`d`/`E`/`B`/`U`/`G` through the
+  matching `models` subcommands and `localModels.managed.autoUpdate`, `L`
+  tails `<dataDir>/llama-server.log`. `a add from hugging face` is disabled:
+  the HF import lives in the TUI's editor and `atag models pull` takes
+  catalogue ids only. Cloud rows read `llm.providers` and show `key ok` /
+  `missing key` from the key NAMES present in this process's env ∪
+  `<stateDir>/.env` (never values); the text-model list is the provider's
+  `atag models search --json` (no pricing in it, so the `price:` facet stays
+  at `all`); switching the route, the embedding provider, removing a provider
+  and every Fallback edit are whole-file writes of `llm.*` (0.5.4 has no
+  `llm` leaf) and say the running agent needs a restart — `atag serve` keeps
+  its boot-time registry, the TUI hot-reloads its own. The External pane
+  probes the URL from the main process (`/health`, `/props`, `/v1/models`,
+  the TUI's verdict lines and its Ollama/OpenAI-compatible steer) before it
+  writes `localModels.url` + `mode`. Fallover events are not on the HTTP
+  API, so the Fallback status line says so instead of "on primary".
+- **Telegram** shows config + `.env` facts only: `telegram.enabled`, the
+  owner, and whether `TELEGRAM_BOT_TOKEN` is set. The token prompt writes
+  the key through a port of `src/config/dotenv-writer.ts` (atomic rename,
+  0600, quoting for whitespace/shell characters); `T`/`O`/`e` clear the
+  token, unset the owner and flip `telegram.enabled`, each with the restart
+  note. The channel state, bot identity and pairing live inside the serve
+  process: the state reads `unknown`, and pairing says to use `atag tui`.
+- **Import** is the TUI's Hermes/OpenClaw form over `atag import <source>
+  … --dry-run` (preview) and `… --yes` (apply) — always exactly one of the
+  two, never a bare run (which exits 0 on a non-TTY having written nothing).
+  The CLI's report lines are parsed into the TUI's rows; "Nothing to import."
+  is its own state. Runs are refused while a turn is running.
 - Writing config goes through `atag config set`, never `PATCH /api/config`,
   which re-defaults every block it does not merge.
 

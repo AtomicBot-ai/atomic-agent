@@ -2,7 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { writeFileSync } from "node:fs";
+import { readFileSync, statSync, writeFileSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
@@ -32,6 +32,23 @@ import {
   skillSetDisabled,
   skillBrowse,
   skillInstall,
+  // Item 7 part C (LLM / Telegram / Import tabs)
+  modelsStatus,
+  modelsListEmbeddings,
+  modelsStop,
+  modelsRemove,
+  modelsPullEmbedding,
+  modelsUseEmbedding,
+  modelsUpdate,
+  modelsDevices,
+  modelsUseDevice,
+  importRun,
+  llamaLogTail,
+  llamaProbe,
+  dotenvKeys,
+  dotenvSet,
+  envPresent,
+  type ImportRunInput,
 } from "./agent-cli.js";
 import { validateCreateForm, type TaskCreateFormInput } from "./task-schedule.js";
 // Item 7 part B (Skills / Memory / MCP tabs)
@@ -411,6 +428,76 @@ function wireIpc(client: AgentClient): void {
     return memoryQuery(stateDir, name, Array.isArray(params) ? params : []);
   });
 
+  // --- Item 7 part C (LLM / Telegram / Import tabs) ---
+  ipcMain.handle("cli:modelsStatus", () => modelsStatus());
+  ipcMain.handle("cli:modelsListEmbeddings", () => modelsListEmbeddings());
+  ipcMain.handle("cli:modelsStop", () => modelsStop());
+  ipcMain.handle("cli:modelsRemove", (_event, id: unknown) =>
+    typeof id === "string" ? modelsRemove(id) : { ok: false, error: "model id required" },
+  );
+  // Shares the one `pull` slot and the `cli:pull` stream with `cli:modelsPull`.
+  ipcMain.handle("cli:modelsPullEmbedding", (_event, id: unknown) => {
+    if (typeof id !== "string") return { ok: false, error: "model id required" };
+    if (pull) return { ok: false, error: "a download is already running" };
+    const started = modelsPullEmbedding(id, (line) => send("cli:pull", { id, line }));
+    pull = started;
+    void started.done.then((res) => {
+      pull = null;
+      send("cli:pull", { id, done: true, ok: res.ok, error: res.error ?? null });
+    });
+    return { ok: true, started: true };
+  });
+  ipcMain.handle("cli:modelsUseEmbedding", (_event, id: unknown) =>
+    typeof id === "string" ? modelsUseEmbedding(id) : { ok: false, error: "embedding model id required" },
+  );
+  ipcMain.handle("cli:modelsUpdate", () => modelsUpdate());
+  ipcMain.handle("cli:modelsDevices", () => modelsDevices());
+  ipcMain.handle("cli:modelsUseDevice", (_event, id: unknown) =>
+    typeof id === "string" ? modelsUseDevice(id) : { ok: false, error: "device id required" },
+  );
+  // `atag config unset <leaf>` — the Telegram tab's `O clear owner` (telegram.ownerUserId back to its null default).
+  ipcMain.handle("cli:configUnset", (_event, key: unknown) =>
+    typeof key === "string" ? configUnset(key) : { ok: false, error: "key must be a string" },
+  );
+  ipcMain.handle("cli:importRun", (_event, input: unknown) => {
+    const i = (input ?? {}) as Record<string, unknown>;
+    const clean: ImportRunInput = {
+      source: i["source"] === "openclaw" ? "openclaw" : "hermes",
+      dir: typeof i["dir"] === "string" ? i["dir"] : "",
+      exclude: Array.isArray(i["exclude"]) ? (i["exclude"] as unknown[]).filter((x): x is string => typeof x === "string") : [],
+      secrets: i["secrets"] === true,
+      overwrite: i["overwrite"] === true,
+      limit: typeof i["limit"] === "string" ? i["limit"] : "",
+      execute: i["execute"] === true,
+    };
+    return importRun(clean, client.status.workingDir);
+  });
+  // import-panel-state.ts defaultSourceDir: the env override or ~/.hermes / ~/.openclaw.
+  ipcMain.handle("app:importDefaults", () => ({
+    hermes: process.env["HERMES_STATE_DIR"] ?? join(homedir(), ".hermes"),
+    openclaw: process.env["OPENCLAW_STATE_DIR"] ?? join(homedir(), ".openclaw"),
+  }));
+  ipcMain.handle("app:llamaLogTail", (_event, dataDir: unknown) =>
+    typeof dataDir === "string" && dataDir.startsWith("/") ? llamaLogTail(dataDir) : { ok: false, error: "data dir required" },
+  );
+  ipcMain.handle("app:llamaProbe", (_event, url: unknown) =>
+    typeof url === "string" ? llamaProbe(url) : { ok: false, error: "url required" },
+  );
+  ipcMain.handle("app:dotenvKeys", (_event, stateDir: unknown) =>
+    typeof stateDir === "string" && stateDir.startsWith("/") ? dotenvKeys(stateDir) : { ok: false, keys: [], exists: false, error: "state dir required" },
+  );
+  ipcMain.handle("app:envPresent", (_event, names: unknown) =>
+    envPresent(Array.isArray(names) ? names.filter((n): n is string => typeof n === "string").slice(0, 64) : []),
+  );
+  // The one key the desktop writes into .env: the Telegram bot token (the TUI's telegram-settings.ts setToken).
+  ipcMain.handle("app:dotenvSet", (_event, payload: unknown) => {
+    const { stateDir, key, value } = (payload ?? {}) as { stateDir?: unknown; key?: unknown; value?: unknown };
+    if (typeof stateDir !== "string" || !stateDir.startsWith("/")) return { ok: false, error: "state dir required" };
+    if (key !== "TELEGRAM_BOT_TOKEN") return { ok: false, error: "only TELEGRAM_BOT_TOKEN may be written from the desktop" };
+    if (value !== null && typeof value !== "string") return { ok: false, error: "value must be a string or null" };
+    return dotenvSet(stateDir, key, value);
+  });
+
   client.on("status", (status) => send("agent:status", status));
   client.on("chat", (event) => send("agent:chat", event));
   client.on("approval", (event) => send("agent:approval", event));
@@ -585,6 +672,8 @@ async function smokeTest(): Promise<void> {
     await settingsTest(js, check);
     // --- Item 7 part B: the Skills, Memory and MCP tabs ---
     await settingsTestPartB(js, check);
+    // --- Item 7 part C: the LLM, Telegram and Import tabs ---
+    await settingsTestPartC(js, check);
   }
 
   if (MODELS_TEST) await modelsTest(js, check);
@@ -694,7 +783,7 @@ async function settingsTest(
   const errBefore = await js<number>("window.__errCount()");
   let allRender = true;
   const details: string[] = [];
-  const PLACEHOLDER = ["llm", "telegram", "import"]; // Item 7 part B: Skills, Memory and MCP are real tabs now (asserted below); the rest still say so
+  const PLACEHOLDER: string[] = []; // Item 7 part C: every Manage tab is real now (LLM / Telegram / Import are asserted in settingsTestPartC)
   for (const id of TABS) {
     const r = await js<{ pane: string; on: string; body: string }>(
       `(() => { const pane = window.__settingsOpen(${JSON.stringify(id)});`
@@ -1296,6 +1385,255 @@ async function settingsTestPartB(
     await js<void>("window.__mcpRefresh && window.__mcpRefresh()");
   }
   await js<void>("window.__settingsClose()");
+}
+
+/**
+ * Item 7 part C: the LLM, Telegram and Import tabs. The LLM checks read
+ * `atag models list` / `list-embeddings` / `status` and the user file
+ * through the same wrappers the tab uses and assert that opening the tab
+ * writes nothing; the fallback `l` toggle round trip restores the `llm`
+ * block in `finally`; the Telegram token round trip (only with no token
+ * anywhere) writes and removes TELEGRAM_BOT_TOKEN in the lane's .env and
+ * restores telegram.enabled; the Import checks run `atag import` against
+ * a directory that does not exist, so nothing can be imported.
+ */
+async function settingsTestPartC(
+  js: <T>(code: string) => Promise<T>,
+  check: (name: string, ok: boolean, detail?: string) => void,
+): Promise<void> {
+  const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+  const until = async <T>(read: () => Promise<T>, ok: (v: T) => boolean, ms: number): Promise<T> => {
+    const deadline = Date.now() + ms;
+    let v = await read();
+    while (!ok(v) && Date.now() < deadline) { await wait(400); v = await read(); }
+    return v;
+  };
+  type Provider = { id: string; kind: string; apiKey?: string; apiKeyEnvVar?: string; defaultChatModel?: string; model?: string };
+  type Cfg = { llm?: { activeTextProvider?: string; activeEmbeddingProvider?: string; providers?: Provider[]; fallback?: { chain?: string[]; appendLocal?: boolean } }; localModels?: { url?: string; mode?: string; managed?: { modelId?: string } }; telegram?: { enabled?: boolean; ownerUserId?: number | null } };
+  type LlmPane = {
+    mode: string; rows: number; view: string; localRows: number; embRows: number; refreshed: number | null; localErr: string | null; statusErr: string | null;
+    status: { mode: string; dataDir: string | null; activeModel: string | null; daemon: string; health: string | null } | null; daemonLabel: string; statusLine: string; msg: string; restart: boolean;
+    keysKnown: boolean; modelsFor: string | null; models: number; modelsBusy: boolean; modelsErr: string | null; externalDraft: string | null; steerUrl: string | null;
+    activeText: string; providers: Array<{ id: string; kind: string; hasKey: boolean; active: boolean }>;
+    fallback: { links: Array<{ providerId: string; isActive: boolean; isAppendedLocal: boolean }>; addableProviderIds: string[]; appendLocal: boolean };
+    section: { provider: string | null; status: string; models: number; filtered: number }; flatRows: string[];
+  };
+  const pane = () => js<LlmPane>("window.__llmPane()");
+  const readCfg = async () => ((await configGet()).config ?? {}) as Cfg;
+
+  // ---- LLM: Local pane, no config write on open ----
+  const cfgBefore = JSON.stringify((await configGet()).config);
+  await js<void>("window.__settingsOpen('llm')");
+  const local = await until(pane, (p) => p.rows > 0 && p.refreshed !== null, 10_000);
+  const localBody = await js<string>("window.__settingsBody()");
+  const listCli = await modelsList();
+  const embCli = await modelsListEmbeddings();
+  const expectedLocal = (listCli.models ?? []).filter((m) => !/embed|bge|nomic|jina/i.test(m.id)).length + (embCli.models ?? []).length;
+  check(
+    "llm tab: Local pane rows come from atag models list + list-embeddings within 10 s",
+    local.mode === "local" && local.rows > 0 && local.rows === expectedLocal && local.localRows + local.embRows === expectedLocal && !local.localErr,
+    `${local.rows} rows painted, ${local.localRows}+${local.embRows} loaded, cli ${expectedLocal}${local.localErr ? " err=" + local.localErr : ""}`,
+  );
+  const localCopy = ["Active chat route", "current: ", "tools ", "provider embeddings: ", "local daemon: ", "Mode: Local | Cloud | External llama.cpp | Fallback", "Press ←/→ to switch mode",
+    "Local text models", "Local embeddings", "j/k move", "Enter selected action", "a add from hugging face", "s start/stop", "r refresh", "[downloaded]", "[remote]", "Enter: download"];
+  const localMissing = localCopy.filter((c) => !localBody.includes(c));
+  check("llm tab: route card, mode strip and the Local pane carry the TUI copy", localMissing.length === 0, localMissing.length ? `missing ${JSON.stringify(localMissing)}` : `status line ${JSON.stringify(local.statusLine)}`);
+  const cfgAfter = JSON.stringify((await configGet()).config);
+  check("llm tab: opening the tab writes no config", cfgBefore === cfgAfter, cfgBefore === cfgAfter ? "" : "config.json changed");
+  // The route card's daemon line and current model follow `atag models status` and the user file.
+  const st = await modelsStatus();
+  const cfg0 = await readCfg();
+  const activeText = cfg0.llm?.activeTextProvider ?? "local-llama";
+  const activeEntry = (cfg0.llm?.providers ?? []).find((p) => p.id === activeText);
+  const localRoute = !activeEntry || activeEntry.kind === "llama-server";
+  const expectedModel = localRoute ? (st.status?.activeModel ?? cfg0.localModels?.managed?.modelId ?? null) : (activeEntry?.defaultChatModel ?? activeEntry?.model ?? null);
+  const expectedDaemon = st.ok && st.status ? (st.status.daemonRunning ? (String(st.status.health).toLowerCase() === "ok" ? "running pid " : "pid ") : "stopped") : null;
+  const routeOk = !!expectedDaemon && local.daemonLabel.startsWith(expectedDaemon) && localBody.includes(`local daemon: ${local.daemonLabel} · mode ${cfg0.localModels?.mode ?? "external"}`)
+    && localBody.includes(`current: ${activeText}${expectedModel ? " / " + expectedModel : ""}`) && localBody.includes(localRoute ? "tools grammar · cache local slot/cache_prompt" : "tools native_tools · cache cloud: no slot affinity");
+  check("llm tab: route card follows the user file and atag models status", routeOk, `current ${activeText} / ${expectedModel ?? "—"} · daemon ${JSON.stringify(local.daemonLabel)} vs status ${st.ok ? st.status?.daemon : st.error}`);
+
+  // ---- LLM: Cloud pane ----
+  const cloud = await js<LlmPane>("window.__llmOpen('cloud')");
+  const cloudBody = await js<string>("window.__settingsBody()");
+  const cloudProviders = (cfg0.llm?.providers ?? []).filter((p) => p.kind !== "llama-server");
+  const stateDir = (await js<{ data?: { paths?: { stateDir?: string } } }>("window.atomic.capabilities()")).data?.paths?.stateDir ?? "";
+  const keyNames = (p: Provider): string[] => p.apiKeyEnvVar ? [p.apiKeyEnvVar] : p.kind === "openrouter" ? ["OPENROUTER_API_KEY"] : p.kind === "aimlapi" ? ["AIMLAPI_API_KEY"] : p.kind === "gemini" ? ["GEMINI_API_KEY"]
+    : p.kind === "openai-compatible" || p.kind === "qwen-openai-compatible" ? ["OPENAI_COMPAT_API_KEY", "OPENAI_API_KEY", "ATOMIC_AGENT_OPENAI_API_KEY"] : [];
+  const dotenv = stateDir ? dotenvKeys(stateDir).keys : [];
+  const expectKey = (p: Provider) => p.kind === "subscription-cli" || !!(p.apiKey && p.apiKey.length) || keyNames(p).some((n) => envPresent([n]).length > 0 || dotenv.includes(n));
+  const providersOk = cloud.providers.length === cloudProviders.length && cloudProviders.every((p) => {
+    const row = cloud.providers.find((r) => r.id === p.id);
+    const auth = p.kind === "subscription-cli" ? "cli auth" : expectKey(p) ? "key ok" : "missing key";
+    return !!row && row.hasKey === expectKey(p) && cloudBody.includes(`${p.id} [${p.kind}] ${auth}`) && cloudBody.includes(p.id === activeText ? `Current provider: ${p.id}` : expectKey(p) ? `Enter: switch cloud route to ${p.id}` : `Enter: configure API key for ${p.id}`);
+  });
+  const cloudCopy = ["Cloud providers", "Cloud text models", "provider: ", "filter: ", "price: all", "p cycles free/paid/all", "Cloud embeddings", "n add provider", "c configure", "f filter"];
+  const cloudMissing = cloudCopy.filter((c) => !cloudBody.includes(c));
+  check(
+    "llm tab: Cloud providers rows carry the key status from the env ∪ .env names",
+    cloud.mode === "cloud" && providersOk && cloudMissing.length === 0 && (cloudProviders.length > 0 || cloudBody.includes("No cloud providers configured. Press n to add one.")),
+    `${cloud.providers.map((p) => `${p.id}:${p.hasKey ? "key ok" : "missing key"}`).join(", ") || "no cloud providers"}${cloudMissing.length ? " missing " + JSON.stringify(cloudMissing) : ""}`,
+  );
+  const models = await until(pane, (p) => p.section.status !== "loading", 90_000);
+  const modelsBody = await js<string>("window.__settingsBody()");
+  const paintedModels = await js<number>("document.querySelectorAll('#settings [data-llm-row^=\"cloud-text:\"]').length");
+  const counter = models.section.filtered === 0 ? "no match" : `1/${models.section.filtered}`;
+  check(
+    "llm tab: Cloud text models is the provider's atag models search list windowed to 12 rows",
+    models.section.status === "ready" && paintedModels === Math.min(12, models.section.filtered) && modelsBody.includes(`↑/↓ move (${counter}`) && (cloudProviders.length === 0 || models.section.models > 0),
+    `provider ${models.section.provider ?? "none"}: ${models.section.models} models, ${paintedModels} painted, status ${models.section.status}${models.modelsErr ? " err=" + models.modelsErr : ""}`,
+  );
+
+  // ---- LLM: External pane + the probe ----
+  const ext = await js<LlmPane>("window.__llmOpen('external')");
+  const extBody = await js<string>("window.__settingsBody()");
+  const extUrl = cfg0.localModels?.url ?? "http://127.0.0.1:8080";
+  const extActive = cfg0.localModels?.mode === "external" && activeText === "local-llama";
+  check(
+    "llm tab: External pane is the one base-URL row with the two hint lines",
+    ext.rows === 1 && extBody.includes(`base URL ${extUrl} [`) && (extActive || extBody.includes("[not active]")) && extBody.includes("managed daemon: ") && extBody.includes("s start/stop")
+      && extBody.includes("← Local pane: pick a managed model to switch back") && extBody.includes(extActive ? "Enter: edit the base URL" : "Enter: point the chat route at an external llama.cpp"),
+    `${ext.rows} row(s), active=${extActive}`,
+  );
+  const cfgBeforeProbe = JSON.stringify((await configGet()).config);
+  const probed = await js<LlmPane>("window.__llmExternalSave('127.0.0.1:1')");
+  const cfgAfterProbe = JSON.stringify((await configGet()).config);
+  check(
+    "llm tab: an unreachable External URL is refused after the /health probe and writes nothing",
+    probed.statusLine.startsWith("local-llm /health failed at http://127.0.0.1:1: ") && probed.externalDraft === null && cfgBeforeProbe === cfgAfterProbe,
+    `${JSON.stringify(probed.statusLine)}${cfgBeforeProbe === cfgAfterProbe ? "" : " (config changed!)"}`,
+  );
+
+  // ---- LLM: Fallback pane (the resolver's effective chain) + the `l` round trip ----
+  const fb = await js<LlmPane>("window.__llmOpen('fallback')");
+  const fbBody = await js<string>("window.__settingsBody()");
+  const llmBlock = cfg0.llm ?? { activeTextProvider: "local-llama", providers: [{ id: "local-llama", kind: "llama-server" }] };
+  const providers = llmBlock.providers ?? [];
+  const configured = new Set(providers.map((p) => p.id));
+  const appendLocal = llmBlock.fallback?.appendLocal ?? true;
+  const requested = llmBlock.fallback?.chain?.length ? llmBlock.fallback.chain : [activeText];
+  const filtered = requested.filter((id) => configured.has(id));
+  const withPrimary = filtered[0] === activeText ? filtered : [activeText, ...filtered.filter((id) => id !== activeText)];
+  const localId = providers.find((p) => p.kind === "llama-server")?.id;
+  const chain = [...withPrimary];
+  if (appendLocal && localId && !chain.includes(localId)) chain.push(localId);
+  const expectedChain = chain.filter((id, i) => configured.has(id) && chain.indexOf(id) === i);
+  const fbLinks = fb.fallback.links.map((l) => l.providerId);
+  check(
+    "llm tab: Fallback pane shows the resolver's effective chain and the honest status line",
+    same(fbLinks, expectedChain) && fb.fallback.links[0]?.isActive === true && fbBody.includes("status: fallover events are not exposed by the agent's HTTP API") && fbBody.includes("Fallback chain")
+      && fbBody.includes(`1. ${expectedChain[0]}`) && fbBody.includes("active (primary)") && fbBody.includes(`append local as last resort: ${appendLocal ? "on" : "off"}`) && fbBody.includes("l to toggle") && fbBody.includes("< > reorder"),
+    `${JSON.stringify(fbLinks)} vs ${JSON.stringify(expectedChain)} appendLocal=${appendLocal}`,
+  );
+  const llmBefore = cfg0.llm;
+  if (llmBefore) {
+    try {
+      await js<void>("window.__llmAct('fb:local')");
+      const toggled = await until(pane, (p) => p.fallback.appendLocal === !appendLocal && !!p.msg, 10_000);
+      const onDisk = (await readCfg()).llm?.fallback?.appendLocal;
+      check(
+        "llm tab: l toggle writes llm.fallback.appendLocal through the whole-file config set and says restart",
+        toggled.fallback.appendLocal === !appendLocal && onDisk === !appendLocal && toggled.restart && toggled.msg.includes("llm.fallback saved"),
+        `pane=${toggled.fallback.appendLocal} disk=${String(onDisk)} msg=${JSON.stringify(toggled.msg)}`,
+      );
+    } finally {
+      await configSetPath("llm", llmBefore);
+      await js<void>("window.__llmRefresh()");
+    }
+  } else {
+    check("llm tab: l toggle writes llm.fallback.appendLocal through the whole-file config set and says restart", false, "no llm block in the user file — the round trip needs one to restore");
+  }
+
+  // ---- Telegram ----
+  await js<void>("window.__settingsOpen('telegram')");
+  type TgState = { hasToken: boolean | null; enabled: boolean | null; owner: unknown; mode: string; message: string; restart: boolean; lastError: string | null; keysKnown: boolean; dotenvKeys: string[] };
+  const tg = await until(() => js<TgState>("window.__telegram()"), (t) => t.keysKnown, 10_000);
+  const tgBody = await js<string>("window.__settingsBody()");
+  const tgLabel = await js<string>("(() => { const b = document.querySelector('#settings .settab.on'); return b ? b.textContent.trim() : ''; })()");
+  const envHas = envPresent(["TELEGRAM_BOT_TOKEN"]).length > 0;
+  const dotenvHas = stateDir ? dotenvKeys(stateDir).keys.includes("TELEGRAM_BOT_TOKEN") : false;
+  if (!envHas && !dotenvHas) {
+    check(
+      "telegram tab: no token anywhere → the Connect Telegram card, plain tab label",
+      tg.hasToken === false && tgBody.includes("Connect Telegram") && tgBody.includes("Create a bot with @BotFather, copy the token, and paste it here. The token is stored only on this machine.")
+        && tgBody.includes("Press Enter to paste a bot token") && tgBody.includes("a — advanced") && tgLabel === "Telegram",
+      `hasToken=${String(tg.hasToken)} label=${JSON.stringify(tgLabel)}`,
+    );
+  } else {
+    check(
+      "telegram tab: a token is present → the facts, channel state honestly unknown, plain tab label",
+      tg.hasToken === true && tgBody.includes("token set") && tgBody.includes("state unknown") && tgBody.includes("Pairing needs the live channel") === (tg.owner === null) && tgLabel === "Telegram",
+      `hasToken=${String(tg.hasToken)} owner=${String(tg.owner)} label=${JSON.stringify(tgLabel)}`,
+    );
+  }
+  // Token round trip through the dotenv-writer port — only when no token exists anywhere, so a real one is never touched.
+  if (!envHas && !dotenvHas && stateDir) {
+    const envPath = join(stateDir, ".env");
+    const keysBefore = dotenvKeys(stateDir).keys;
+    const enabledBefore = cfg0.telegram?.enabled;
+    try {
+      const token = "desktop smoke:token #1"; // whitespace + `#` → the writer must quote it for the loader
+      const saved = await js<{ ok: boolean; error?: string; state: TgState }>(`window.__telegramTokenSave(${JSON.stringify(token)})`);
+      let envText = "";
+      let mode = -1;
+      try { envText = readFileSync(envPath, "utf8"); mode = statSync(envPath).mode & 0o777; } catch { /* missing */ }
+      const afterBody = await js<string>("window.__settingsBody()");
+      const enabledNow = (await readCfg()).telegram?.enabled;
+      check(
+        "telegram tab: the token lands in .env quoted, 0600, other keys kept, and the connect chain enables telegram",
+        saved.ok && envText.includes(`TELEGRAM_BOT_TOKEN="${token}"`) && mode === 0o600 && keysBefore.every((k) => envText.includes(`${k}=`)) && saved.state.hasToken === true
+          && enabledNow === true && afterBody.includes("One last step — confirm it's you") && afterBody.includes("Pairing needs the live channel — open the Telegram tab in `atag tui` to pair") && afterBody.includes("Restart Agent Runtime"),
+        `${saved.ok ? "saved" : "error=" + (saved.error ?? "?")} mode=${mode.toString(8)} keys=${JSON.stringify(dotenvKeys(stateDir).keys)} enabled=${String(enabledNow)}`,
+      );
+      const cleared = await js<TgState>("window.__telegramClearToken()");
+      let envAfter = "";
+      try { envAfter = readFileSync(envPath, "utf8"); } catch { /* unlinked when empty */ }
+      check(
+        "telegram tab: T clear token removes the key and keeps the rest of .env",
+        cleared.hasToken === false && !envAfter.includes("TELEGRAM_BOT_TOKEN") && keysBefore.every((k) => envAfter.includes(`${k}=`)) && cleared.message === "token cleared",
+        `keys=${JSON.stringify(dotenvKeys(stateDir).keys)} msg=${JSON.stringify(cleared.message)}`,
+      );
+    } finally {
+      dotenvSet(stateDir, "TELEGRAM_BOT_TOKEN", null);
+      if (typeof enabledBefore === "boolean") await configSet("telegram.enabled", String(enabledBefore));
+      else await configUnset("telegram.enabled");
+      await js<void>("window.__telegramRefresh()");
+    }
+  }
+
+  // ---- Import ----
+  await js<void>("window.__settingsOpen('import')");
+  type ImpState = { mode: string; form: { source: string; sourceDir: string; sessions: boolean; cron: boolean; secrets: boolean; overwrite: boolean; limit: string; focus: string }; runs: number; notice: string | null; state: string | null;
+    report: { items: number; summary: { migrated: number; skipped: number; conflict: number; error: number }; first: { kind: string; status: string; reason: string | null } | null } | null; painted: number };
+  const imp = await until(() => js<ImpState>("window.__import()"), (i) => !!i.form.sourceDir, 5_000);
+  const impBody = await js<string>("window.__settingsBody()");
+  const labels = ["source-of", "source", "sessions", "cron", "secrets", "overwrite", "limit"];
+  const labelsOk = labels.every((l) => impBody.includes(`${l.padEnd(10)}: `));
+  check(
+    "import tab: the TUI form with its defaults, and no CLI run until Run preview",
+    imp.runs === 0 && impBody.includes("Import · Hermes → atomic-agent") && labelsOk && impBody.includes("Run preview") && impBody.includes("↑↓ move · ←/→ switch source · space toggle · type to edit · Enter on Run = preview · Ctrl+Enter preview")
+      && impBody.includes("OPENROUTER_API_KEY / AIMLAPI_API_KEY") && impBody.includes("replace differing destinations") && imp.form.source === "hermes" && imp.form.sessions && imp.form.cron && !imp.form.secrets && !imp.form.overwrite && imp.form.sourceDir.endsWith("/.hermes") && imp.mode === "configure",
+    `runs=${imp.runs} dir=${imp.form.sourceDir}`,
+  );
+  const dir = "/nonexistent-desktop-smoke-dir";
+  await js<void>(`window.__importAct(${JSON.stringify("field:sourceDir:" + dir)})`);
+  const prev = await js<{ ok: boolean; state?: string; error?: string; state2: ImpState }>("window.__importRun(false)");
+  const prevBody = await js<string>("window.__settingsBody()");
+  check(
+    "import tab: Run preview runs atag import --dry-run and parses the report into the TUI rows",
+    prev.ok && prev.state === "preview" && prev.state2.mode === "preview" && prev.state2.runs === 1 && prev.state2.report?.items === 2 && prev.state2.report.summary.skipped === 2 && prev.state2.painted === 2
+      && prevBody.includes("preview (dry-run) · 2 items") && prevBody.includes("skipped  [sessions]") && prevBody.includes(`(no state.db at ${dir}/state.db)`) && prevBody.includes("migrated=0 · skipped=2 · conflict=0 · error=0")
+      && prevBody.includes("y / Enter apply") && prevBody.includes("e edit") && prevBody.includes("Esc cancel"),
+    prev.ok ? `state=${prev.state} items=${prev.state2.report?.items} runs=${prev.state2.runs}` : `error=${prev.error ?? "?"}`,
+  );
+  const applied = await js<{ ok: boolean; state?: string; error?: string; state2: ImpState }>("window.__importRun(true)");
+  const appliedBody = await js<string>("window.__settingsBody()");
+  check(
+    "import tab: apply passes --yes and reports the CLI's own Nothing to import",
+    applied.ok && applied.state === "nothing" && applied.state2.mode === "done" && applied.state2.runs === 2 && appliedBody.includes("result · 2 items") && appliedBody.includes("Nothing to import.") && appliedBody.includes("Enter / Esc back to form"),
+    applied.ok ? `state=${applied.state} mode=${applied.state2.mode}` : `error=${applied.error ?? "?"}`,
+  );
+  await js<void>("window.__importAct('reset'); window.__settingsClose()");
 }
 
 async function modelsTest(

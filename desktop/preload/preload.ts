@@ -96,5 +96,25 @@ contextBridge.exposeInMainWorld("atomic", {
   memoryQuery: (stateDir: string, name: string, params?: unknown[]) =>
     ipcRenderer.invoke("app:memoryQuery", { stateDir, name, params: params ?? [] }),
 
+  /** Item 7 part C: the LLM, Telegram and Import tabs. */
+  modelsStatus: () => ipcRenderer.invoke("cli:modelsStatus"),
+  modelsListEmbeddings: () => ipcRenderer.invoke("cli:modelsListEmbeddings"),
+  modelsStop: () => ipcRenderer.invoke("cli:modelsStop"),
+  modelsRemove: (id: string) => ipcRenderer.invoke("cli:modelsRemove", id),
+  modelsPullEmbedding: (id: string) => ipcRenderer.invoke("cli:modelsPullEmbedding", id),
+  modelsUseEmbedding: (idOrDisable: string) => ipcRenderer.invoke("cli:modelsUseEmbedding", idOrDisable),
+  modelsUpdate: () => ipcRenderer.invoke("cli:modelsUpdate"),
+  modelsDevices: () => ipcRenderer.invoke("cli:modelsDevices"),
+  modelsUseDevice: (id: string) => ipcRenderer.invoke("cli:modelsUseDevice", id),
+  configUnset: (key: string) => ipcRenderer.invoke("cli:configUnset", key),
+  importRun: (input: Record<string, unknown>) => ipcRenderer.invoke("cli:importRun", input),
+  importDefaults: () => ipcRenderer.invoke("app:importDefaults"),
+  llamaLogTail: (dataDir: string) => ipcRenderer.invoke("app:llamaLogTail", dataDir),
+  llamaProbe: (url: string) => ipcRenderer.invoke("app:llamaProbe", url),
+  dotenvKeys: (stateDir: string) => ipcRenderer.invoke("app:dotenvKeys", stateDir),
+  envPresent: (names: string[]) => ipcRenderer.invoke("app:envPresent", names),
+  dotenvSet: (stateDir: string, key: string, value: string | null) =>
+    ipcRenderer.invoke("app:dotenvSet", { stateDir, key, value }),
+
   platform: process.platform,
 });

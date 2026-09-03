@@ -241,6 +241,55 @@ const MCP = {
 const MCP_TAB_ORDER = ['tools','resources','prompts'];
 const MCP_MAX_ROWS = 14;
 
+/* ---- Item 7 part C: the LLM, Telegram and Import tabs ----
+   Render-visible state for the three panels, hoisted for the same TDZ
+   reason as everything above. */
+/* LLM panel — the TUI's LlmPanelState (mode + one cursor per pane) with
+   what the desktop reads instead of the TUI's in-process orchestrators:
+   `atag models list` / `list-embeddings` / `status`, the provider's model
+   list from `atag models search --json`, /health for the External row,
+   and the key names present in the Electron env ∪ <stateDir>/.env. */
+const LLMP = {
+  mode:'local', cursor:{local:0, cloud:0, external:0, fallback:0}, view:'panel', // view: 'panel' | 'logs' (the `L` LLM-logs screen)
+  status:null, statusBusy:false, statusErr:null, // `atag models status`
+  local:null, localBusy:false, localErr:null, lastRefreshedAt:null, // `atag models list` rows
+  emb:null, embDaemon:null, // `atag models list-embeddings` rows + its trailer
+  models:[], modelsFor:null, modelsBusy:false, modelsErr:null, // `atag models search --json` for the Cloud text-models block
+  filter:'', filterFocused:false, pricing:'all',
+  health:null, // /health.llama for the External row's status
+  envKeys:null, dotenvKeys:null, // key NAMES present (never values)
+  busy:false, statusLine:null, statusSource:null, msg:null,
+  confirm:null, // {kind:'removeProvider'|'removeLocal'|'removeEmbedding', id, error, submitting}
+  externalDraft:null, externalInvalid:false, steerUrl:null,
+  fallbackPicker:null, // {cursor}
+  daemonPhase:null, // 'starting' | 'stopping' while a `models start|stop` runs (the TUI's daemonPhase)
+  logs:null, logsTimer:null, logsBusy:false,
+  pulling:null, pullLog:[], // {kind:'chat'|'embedding', id} while a `models pull[-embedding]` streams
+  timer:null, seq:0, inflight:null,
+};
+const LLM_PANEL_MODES = ['local','cloud','external','fallback']; // llm-panel-state.ts LLM_PANEL_MODES
+const LLM_MODE_LABELS = {local:'Local', cloud:'Cloud', external:'External llama.cpp', fallback:'Fallback'}; // llm-panel.tsx MODE_LABELS
+const LLM_MODEL_WINDOW = 12; // llm-mode-rows.tsx MODEL_WINDOW
+const LLM_LOG_LINES = 30; // local-llm-logs-panel.tsx DEFAULT_MAX_LINES
+/* Telegram panel — the TUI's TelegramPanelState minus the channel facts
+   the serve API does not expose (channelState, botUsername, botId). */
+const TG = {
+  keysKnown:false, dotenvKeys:[], envKeys:[], keysBusy:false,
+  showAdvanced:false, mode:'list', token:{error:null, submitting:false},
+  message:null, lastError:null, busy:false,
+  cfg:null, cfgBusy:false, // `atag config get telegram` — the effective values when the user file has no telegram.* key
+};
+/* Import panel — the TUI's ImportPanelState; the form is
+   createInitialImportFormState (hermes, ~/.hermes, sessions+cron on). */
+const IMP = {
+  mode:'configure', form:{source:'hermes', sourceDir:'', sessions:true, cron:true, secrets:false, overwrite:false, limit:'', focus:'sourceType'},
+  report:null, reportExecuted:false, notice:null, state:null, defaults:null, runs:0, busy:false,
+};
+const IMP_TOGGLE_FIELDS = ['sessions','cron','secrets','overwrite'];
+const IMP_REPORT_ROWS = 12; // import-panel.tsx maxRows
+const PROVIDER_KEY_ENV_FALLBACK = {openrouter:'OPENROUTER_API_KEY', anthropic:'ANTHROPIC_API_KEY', gemini:'GEMINI_API_KEY', groq:'GROQ_API_KEY', aimlapi:'AIMLAPI_API_KEY', openai:'OPENAI_API_KEY'}; // agent-cli.ts PROVIDER_KEY_ENV, the env names the LLM tab asks about
+const TG_PAIRING_NOTE = 'Pairing needs the live channel — open the Telegram tab in `atag tui` to pair';
+
 /* ============================================================
    Atomic Agent Desktop — clickable prototype, no backend.
    Command/menu wording, the slash registry and its rank order,
@@ -1125,6 +1174,10 @@ function settingsPaneEntered(opened) {
   if (pane === 'skills') skillsTabEntered();
   else if (pane === 'memory') memoryTabEntered();
   else if (pane === 'mcp') mcpTabEntered();
+  // Item 7 part C: the LLM / Telegram / Import tabs' first load on entry.
+  else if (pane === 'llm') llmTabEntered();
+  else if (pane === 'telegram') telegramTabEntered();
+  else if (pane === 'import') importTabEntered();
 }
 
 function settingsPane() {
@@ -1135,7 +1188,10 @@ function settingsPane() {
   if (p === 'skills') return skillsTab();
   if (p === 'memory') return memoryTab();
   if (p === 'mcp') return mcpTab();
-  if (p === 'llm') return comingNote('LLM') + modelsPane();
+  // Item 7 part C: the LLM, Telegram and Import tabs.
+  if (p === 'llm') return llmTab();
+  if (p === 'telegram') return telegramTab();
+  if (p === 'import') return importTab();
   return comingNote(SETTINGS_TABS.find((t) => t[0] === p)[1]);
 }
 function comingNote(label) {
@@ -1393,6 +1449,10 @@ function act(a) {
   if (k === 'skills') { close(); skillsAct(a.slice(7)); return; }
   if (k === 'memory') { close(); memoryAct(a.slice(7)); return; }
   if (k === 'mcp') { close(); mcpAct(a.slice(4)); return; }
+  // Item 7 part C: the LLM / Telegram / Import tabs' verbs.
+  if (k === 'llm') { close(); llmAct(a.slice(4)); return; }
+  if (k === 'telegram') { close(); telegramAct(a.slice(9)); return; }
+  if (k === 'import') { close(); importAct(a.slice(7)); return; }
   if (a === 'na') return;
 
   if (k === 'room')      { close(); S.room = v; render(); return; }
@@ -1614,6 +1674,11 @@ document.addEventListener('input', (e) => {
   // Item 7 part B: the hub search box and the MCP add-modal textarea edit state in place.
   if (e.target.id === 'skp-hubq') { SKP.hubQuery = e.target.value; return; }
   if (e.target.id === 'mcp-json') { if (MCP.addModal) { MCP.addModal.json = e.target.value; MCP.addModal.error = null; } return; }
+  // Item 7 part C: the LLM filter / URL prompt, the Telegram token prompt and the Import form edit state in place.
+  if (e.target.id === 'llm-filter') { LLMP.filter = e.target.value; LLMP.cursor.cloud = llmCloudSectionStart(); llmRepaintList(); return; }
+  if (e.target.id === 'llm-url') { LLMP.externalDraft = e.target.value; if (LLMP.externalInvalid) { LLMP.externalInvalid = false; llmRepaint(); const n = $('#llm-url'); if (n) { n.focus(); n.setSelectionRange(n.value.length, n.value.length); } } return; }
+  if (e.target.id === 'tg-token') { if (TG.token.error) { TG.token.error = null; } return; }
+  if (e.target.dataset && e.target.dataset.impField) { IMP.form[e.target.dataset.impField] = e.target.value; return; }
   if (e.target.id === 'tk-search') { TK.search = e.target.value; TK.cursor = 0; const at = e.target.selectionStart; tkRepaint();
     const n = $('#tk-search'); if (n) { n.focus(); n.setSelectionRange(at, at); } return; }
   if (e.target.id === 'sel-filter') { SEL.filter = e.target.value; const at = e.target.selectionStart; render();
@@ -3601,6 +3666,10 @@ function settingsKey(e, k, inText) {
   if (pane === 'skills' && skillsKey(e, k, inText)) return true;
   if (pane === 'memory' && memoryKey(e, k, inText)) return true;
   if (pane === 'mcp' && mcpKey(e, k, inText)) return true;
+  // Item 7 part C: the LLM / Telegram / Import tabs' keys (the LLM pane's ←/→ switch its mode, not the tab).
+  if (pane === 'llm' && llmKey(e, k, inText)) return true;
+  if (pane === 'telegram' && telegramKey(e, k, inText)) return true;
+  if (pane === 'import' && importKey(e, k, inText)) return true;
   if (k === 'Escape') { e.preventDefault(); S.settings = null; render(); return true; }
   if (inText) return false;
   if (e.metaKey || e.ctrlKey || e.altKey) return false;
@@ -5013,4 +5082,1343 @@ if (typeof window !== 'undefined') {
   window.__mcpAddSubmit = async (json) => { if (!MCP.addModal) mcpAct('add'); const r = await mcpAddSubmit(json); return Object.assign({}, r, {state: window.__mcp()}); };
   window.__mcpRemove = async (name) => { mcpAct('remove:' + name); await mcpRemoveConfirm(); return window.__mcp(); };
   window.__mcpRefresh = async () => { await mcpRefresh(); return window.__mcp(); };
+}
+
+/* ============================================================
+   Item 7 part C — the LLM, Telegram and Import tabs
+   ============================================================ */
+
+/* ---------------- LLM tab (llm-panel.tsx, llm-mode-rows.tsx, llm-panel-row-builders.ts,
+   llm-panel-selectors.ts, llm-panel-primary-actions.ts, llm-fallback-rows.tsx,
+   fallback-panel-selectors.ts, fallback-chain-edits.ts, llm-panel-modals.tsx,
+   local-llm-logs-panel.tsx, llm-panel-key-bindings.ts) ---------------- */
+
+function llmVisible() { return !!S.settings && settingsPaneId(S.settingsPane) === 'llm'; }
+/* persist-llm-provider.ts readLlmBlockOrDefault: a user file without an
+   `llm` block routes at the built-in local-llama entry. */
+function llmBlock() {
+  const llm = LIVE_CONFIG && LIVE_CONFIG.llm;
+  if (llm && Array.isArray(llm.providers)) return llm;
+  const lm = (LIVE_CONFIG && LIVE_CONFIG.localModels) || {};
+  const url = lm.mode === 'managed' ? 'http://127.0.0.1:' + ((lm.managed && lm.managed.port) || 19091) : (lm.url || 'http://127.0.0.1:8080');
+  return {activeTextProvider:'local-llama', activeEmbeddingProvider:'local-llama', toolTransport:'auto', providers:[{id:'local-llama', kind:'llama-server', url}]};
+}
+function llmProviders() { return (llmBlock().providers || []).filter((p) => p && typeof p.id === 'string'); }
+function llmCloudProviders() { return llmProviders().filter((p) => p.kind !== 'llama-server'); }
+function llmActiveTextId() { return llmBlock().activeTextProvider || 'local-llama'; }
+function llmActiveEmbId() { return llmBlock().activeEmbeddingProvider || 'local-llama'; }
+function llmProvider(id) { return llmProviders().find((p) => p.id === id) || null; }
+function llmLocalActive() { const p = llmProvider(llmActiveTextId()); return !!p && p.kind === 'llama-server'; }
+function llmLocalEmbActive() { const p = llmProvider(llmActiveEmbId()); return !!p && p.kind === 'llama-server'; }
+function llmLocalModels() { return (LIVE_CONFIG && LIVE_CONFIG.localModels) || {}; }
+function llmManaged() { return llmLocalModels().managed || {}; }
+function llmEmbCfg() { return llmLocalModels().embeddings || {}; }
+/* src/config/resolve-llm-api-key.ts: the entry's own key, its
+   apiKeyEnvVar, else the kind's shared variable(s); a subscription-CLI
+   entry authenticates through its CLI. */
+function llmKeyEnvNames(p) {
+  if (p.apiKeyEnvVar) return [p.apiKeyEnvVar];
+  if (p.kind === 'openrouter') return ['OPENROUTER_API_KEY'];
+  if (p.kind === 'aimlapi') return ['AIMLAPI_API_KEY'];
+  if (p.kind === 'gemini') return ['GEMINI_API_KEY'];
+  if (p.kind === 'openai-compatible' || p.kind === 'qwen-openai-compatible') return ['OPENAI_COMPAT_API_KEY', 'OPENAI_API_KEY', 'ATOMIC_AGENT_OPENAI_API_KEY'];
+  return [];
+}
+function llmKeyNamesPresent() { return new Set([].concat(LLMP.envKeys || [], LLMP.dotenvKeys || [])); }
+function llmHasKey(p) {
+  if (p.kind === 'subscription-cli') return true;
+  if (p.apiKey && String(p.apiKey).length) return true;
+  const present = llmKeyNamesPresent();
+  return llmKeyEnvNames(p).some((n) => present.has(n));
+}
+function llmKeysKnown() { return LLMP.envKeys !== null && LLMP.dotenvKeys !== null; }
+function llmDaemonPort() {
+  const st = LLMP.status;
+  if (st && st.daemonUrl) { try { return new URL(st.daemonUrl).port || '19091'; } catch (err) { /* fall through */ } }
+  return String(llmManaged().port || 19091);
+}
+/* llm-panel.tsx formatDaemon, from `atag models status` (daemon: running (pid N) | stopped; health: ok | …). */
+function llmFormatDaemon() {
+  if (LLMP.daemonPhase === 'starting') return 'starting';
+  if (LLMP.daemonPhase === 'stopping') return 'stopping';
+  const st = LLMP.status;
+  if (!st) return LLMP.statusErr ? 'unknown' : '…';
+  if (!st.daemonRunning) return 'stopped';
+  const health = String(st.health || '').toLowerCase();
+  if (/loading/.test(health)) return 'loading pid ' + st.daemonPid;
+  if (health === 'ok') return 'running pid ' + st.daemonPid + ' on 127.0.0.1:' + llmDaemonPort();
+  return 'pid ' + st.daemonPid + ' health unreachable';
+}
+function llmDaemonUp() { const st = LLMP.status; return LLMP.daemonPhase === 'starting' || !!(st && st.daemonRunning); }
+function llmDaemonHealthy() { const st = LLMP.status; return !!(st && st.daemonRunning && String(st.health || '').toLowerCase() === 'ok'); }
+function llmEmbDaemonHealthy() { const d = LLMP.embDaemon; return !!(d && d.running && String(d.health || '').toLowerCase() === 'ok'); }
+
+/* --- data --- */
+function llmTabEntered() {
+  if (LLMP.timer) { clearInterval(LLMP.timer); LLMP.timer = null; }
+  llmEnsurePoll();
+  if (LLMP.lastRefreshedAt === null && !LLMP.inflight) llmRefresh();
+  else if (!LLMP.inflight) llmRefreshStatus();
+}
+/* local-models-orchestrator refreshes the daemon status every 5 s while the tab is open; here that is one `atag models status` subprocess per tick. */
+function llmEnsurePoll() {
+  if (!BR || LLMP.timer) return;
+  LLMP.timer = setInterval(() => {
+    if (!llmVisible()) { clearInterval(LLMP.timer); LLMP.timer = null; llmStopLogs(); return; }
+    if (LLMP.view === 'panel' && !LLMP.inflight && !LLMP.pulling && !LLMP.daemonPhase && !LLMP.statusBusy && !llmTyping()) llmRefreshStatus(true);
+  }, 5000);
+}
+function llmTyping() { const el = document.activeElement; return !!el && (el.id === 'llm-filter' || el.id === 'llm-url' || el.id === 'wiz-key' || el.id === 'wiz-url' || el.id === 'sel-key'); }
+async function llmRefresh() {
+  if (!BR) return;
+  if (LLMP.inflight) return LLMP.inflight;
+  LLMP.inflight = llmRefreshRun();
+  try { await LLMP.inflight; } finally { LLMP.inflight = null; }
+}
+async function llmRefreshRun() {
+  const seq = ++LLMP.seq;
+  LLMP.localBusy = true; LLMP.localErr = null; LLMP.busy = true;
+  llmRepaint();
+  const stateDir = memStateDir();
+  const names = new Set(['TELEGRAM_BOT_TOKEN', 'ATOMIC_AGENT_LLAMA_API_KEY']);
+  llmProviders().forEach((p) => llmKeyEnvNames(p).forEach((n) => names.add(n)));
+  Object.keys(PROVIDER_KEY_ENV_FALLBACK).forEach((k) => names.add(PROVIDER_KEY_ENV_FALLBACK[k]));
+  const [cfg, list, emb, status, health, env, dotenv] = await Promise.all([
+    BR.configGet(), BR.modelsList(), BR.modelsListEmbeddings(), BR.modelsStatus(), BR.health(),
+    BR.envPresent([...names]), stateDir ? BR.dotenvKeys(stateDir) : Promise.resolve({ok:true, keys:[]}),
+  ]);
+  if (seq !== LLMP.seq) return;
+  if (cfg && cfg.ok && cfg.config) LIVE_CONFIG = cfg.config;
+  LLMP.localBusy = false; LLMP.busy = false; LLMP.lastRefreshedAt = Date.now();
+  if (list && list.ok) { LLMP.local = list.models.filter((m) => !/embed|bge|nomic|jina/i.test(m.id)); } // the chat catalog; embeddings come from list-embeddings
+  else { LLMP.local = LLMP.local || []; LLMP.localErr = (list && list.error) || 'could not read the catalogue'; }
+  if (emb && emb.ok) { LLMP.emb = emb.models; LLMP.embDaemon = emb.daemon || null; }
+  else { LLMP.emb = LLMP.emb || []; if (!LLMP.localErr) LLMP.localErr = (emb && emb.error) || 'could not read the embedding catalogue'; }
+  llmApplyStatus(status);
+  LLMP.health = health && health.ok && health.data && health.data.llama ? health.data.llama : null;
+  LLMP.envKeys = Array.isArray(env) ? env : [];
+  LLMP.dotenvKeys = dotenv && dotenv.ok ? dotenv.keys : [];
+  llmClampCursors();
+  llmRepaint();
+  llmEnsureModels();
+}
+function llmApplyStatus(status) {
+  if (status && status.ok && status.status) { LLMP.status = status.status; LLMP.statusErr = null; }
+  else { LLMP.statusErr = (status && status.error) || 'models status failed'; }
+}
+async function llmRefreshStatus(quiet) {
+  if (!BR || LLMP.statusBusy) return;
+  LLMP.statusBusy = true;
+  const before = JSON.stringify([LLMP.status, LLMP.statusErr, LLMP.health]);
+  const [status, health] = await Promise.all([BR.modelsStatus(), BR.health()]);
+  LLMP.statusBusy = false;
+  llmApplyStatus(status);
+  LLMP.health = health && health.ok && health.data && health.data.llama ? health.data.llama : null;
+  if (!quiet || before !== JSON.stringify([LLMP.status, LLMP.statusErr, LLMP.health])) llmRepaint();
+}
+/* The Cloud text-models block lists the active (or first) cloud provider's catalogue. */
+function llmCloudSectionProvider() {
+  const cloud = llmCloudProviders();
+  return cloud.find((p) => p.id === llmActiveTextId()) || cloud[0] || null;
+}
+async function llmEnsureModels() {
+  const p = llmCloudSectionProvider();
+  if (!p || !BR) return;
+  if (LLMP.modelsFor === p.id && (LLMP.modelsBusy || LLMP.models.length || LLMP.modelsErr)) return;
+  LLMP.modelsFor = p.id; LLMP.models = []; LLMP.modelsBusy = true; LLMP.modelsErr = null;
+  llmRepaint();
+  const res = await BR.providerModels(p.id, p.kind || '');
+  if (LLMP.modelsFor !== p.id) return;
+  LLMP.modelsBusy = false;
+  if (!res || !res.ok) LLMP.modelsErr = (res && res.error) || 'could not list models';
+  else LLMP.models = res.models || [];
+  llmClampCursors();
+  llmRepaint();
+}
+function llmRepaint() { if (llmVisible()) paneRepaintKeepFocus(llmTab()); }
+/* Only the model list repaints on a filter keystroke (the input keeps its caret). */
+function llmRepaintList() {
+  const box = document.getElementById('llm-cloud-models');
+  if (!box) { llmRepaint(); return; }
+  box.innerHTML = llmCloudModelListHTML();
+}
+
+/* --- rows (llm-panel-row-builders.ts) --- */
+function llmLocalRows() {
+  const rows = [];
+  const localActive = llmLocalActive();
+  const daemonWorks = llmDaemonHealthy();
+  (LLMP.local || []).forEach((m) => {
+    const active = localActive && m.active && daemonWorks;
+    const pull = LLMP.pulling && LLMP.pulling.kind === 'chat' && LLMP.pulling.id === m.id;
+    let primary, effect;
+    if (pull) { primary = 'downloading'; effect = 'Downloading…'; }
+    else if (!m.downloaded) { primary = 'download'; effect = 'Enter: download'; }
+    else if (!localActive || !m.active) { primary = 'use'; effect = 'Enter: select model'; }
+    else { const running = llmDaemonUp(); primary = running ? 'current' : 'start'; effect = running ? 'Current: local-llama/' + m.id : 'Enter: start local daemon for ' + m.id; }
+    // `models list` prints DL yes/no, not the mmproj state, so a downloaded row reads [downloaded] (never the TUI's gguf+mmproj variants).
+    rows.push({kind:'localTextModel', id:'local-text:' + m.id, model:m, active, primaryAction:primary, enterEffect:effect,
+      text:m.id + ' ' + m.size + ' [' + (m.downloaded ? 'downloaded' : 'remote') + ']'});
+  });
+  const embActive = llmLocalEmbActive();
+  const embWorks = llmEmbDaemonHealthy();
+  const embEnabled = llmEmbCfg().enabled === true;
+  (LLMP.emb || []).forEach((m) => {
+    const active = embActive && m.active && embWorks;
+    const pull = LLMP.pulling && LLMP.pulling.kind === 'embedding' && LLMP.pulling.id === m.id;
+    let primary, effect;
+    if (pull) { primary = 'downloading'; effect = 'Downloading…'; }
+    else if (!m.downloaded) { primary = 'download'; effect = 'Enter: download'; }
+    else if (!embActive || !m.active) { primary = 'use'; effect = 'Enter: select model'; }
+    else if (!embEnabled) { primary = 'enable'; effect = 'Enter: enable local embeddings for ' + m.id; }
+    else { primary = embWorks ? 'current' : 'start'; effect = embWorks ? 'Current: local embeddings/' + m.id : 'Enter: start embedding daemon for ' + m.id; }
+    rows.push({kind:'localEmbeddingModel', id:'local-embedding:' + m.id, model:m, active, primaryAction:primary, enterEffect:effect,
+      text:m.id + ' ' + m.size + ' [' + (m.downloaded ? 'downloaded' : 'remote') + ']'});
+  });
+  return rows;
+}
+function llmProviderRow(p) {
+  const hasKey = llmHasKey(p);
+  const active = p.id === llmActiveTextId();
+  const auth = p.kind === 'subscription-cli' ? 'cli auth' : hasKey ? 'key ok' : 'missing key';
+  return {kind:'cloudProvider', id:'cloud-provider:' + p.id, provider:p, active, available:hasKey,
+    primaryAction: !hasKey ? 'configure' : active ? 'current' : 'use',
+    enterEffect: !hasKey ? 'Enter: configure API key for ' + p.id : active ? 'Current provider: ' + p.id : 'Enter: switch cloud route to ' + p.id,
+    text: p.id + ' [' + p.kind + '] ' + auth};
+}
+function llmChatRow(p, modelId) {
+  const hasKey = llmHasKey(p);
+  const active = p.id === llmActiveTextId() && (p.defaultChatModel || p.model) === modelId;
+  // OpenRouter/AI-ML rows show formatOpenRouterChatModelDetails / formatAimlapiChatModelDetails in the TUI — an in-process catalogue
+  // formatter the CLI does not print, so every kind gets the generic effect here.
+  return {kind:'cloudChatModel', id:'cloud-text:' + p.id + ':' + modelId, provider:p, providerId:p.id, modelId, active, available:hasKey,
+    primaryAction: !hasKey ? 'configure' : active ? 'current' : 'use',
+    enterEffect: !hasKey ? 'Enter: configure ' + p.id + ' before using ' + modelId : active ? 'Current: ' + p.id + '/' + modelId : 'Enter: use ' + p.id + '/' + modelId,
+    text: p.id + '/' + modelId + ' [text]'};
+}
+function llmEmbRow(p, modelId) {
+  const hasKey = llmHasKey(p);
+  const active = p.id === llmActiveEmbId() && p.defaultEmbeddingModel === modelId;
+  return {kind:'cloudEmbeddingModel', id:'cloud-embedding:' + p.id + ':' + modelId, provider:p, providerId:p.id, modelId, active, available:hasKey,
+    primaryAction: !hasKey ? 'configure' : active ? 'current' : 'use',
+    enterEffect: !hasKey ? 'Enter: configure ' + p.id + ' before using embeddings' : active ? 'Current embedding: ' + p.id + '/' + modelId : 'Enter: use embedding ' + p.id + '/' + modelId,
+    text: p.id + '/' + modelId + ' [embedding]'};
+}
+/* llm-panel-row-builders.ts inlineModelsForProvider: chatModelOptions + the
+   current model first, then the catalogue (`atag models search --json`,
+   the same list the composer's selector reads). */
+function llmCloudSection() {
+  const p = llmCloudSectionProvider();
+  if (!p) return {provider:null, status:'ready', error:null, models:[], filtered:[], sectionStart:llmCloudProviders().length};
+  const out = [];
+  const add = (id) => { if (id && !out.includes(id)) out.push(id); };
+  add(p.defaultChatModel || p.model);
+  const chat = (LLMP.modelsFor === p.id ? LLMP.models : []).filter((m) => m && m.kind !== 'embedding');
+  chat.forEach((m) => add(m.id));
+  const status = LLMP.modelsFor === p.id ? (LLMP.modelsBusy ? 'loading' : LLMP.modelsErr ? 'error' : 'ready') : 'loading';
+  const f = LLMP.filter.trim().toLowerCase();
+  const filtered = f ? out.filter((id) => modelMatches(id, '', f)) : out;
+  return {provider:p, status, error:LLMP.modelsErr, models:out, filtered, sectionStart:llmCloudProviders().length};
+}
+function llmCloudSectionStart() { return llmCloudProviders().length; }
+function llmEmbModelsFor(p) {
+  const out = [];
+  if (p.defaultEmbeddingModel) out.push(p.defaultEmbeddingModel);
+  (LLMP.modelsFor === p.id ? LLMP.models : []).filter((m) => m && m.kind === 'embedding').forEach((m) => { if (!out.includes(m.id)) out.push(m.id); });
+  return out;
+}
+function llmCloudRows() {
+  const rows = llmCloudProviders().map(llmProviderRow);
+  const section = llmCloudSection();
+  if (section.provider) {
+    section.filtered.forEach((id) => rows.push(llmChatRow(section.provider, id)));
+    llmEmbModelsFor(section.provider).forEach((id) => rows.push(llmEmbRow(section.provider, id)));
+  }
+  return rows;
+}
+/* The External pane is one row: an external llama.cpp IS one base URL. */
+function llmExternalRows() {
+  const lm = llmLocalModels();
+  const active = lm.mode === 'external' && llmLocalActive();
+  const url = lm.url || 'http://127.0.0.1:8080';
+  return [{kind:'externalUrl', id:'external-url', url, active, available:true, primaryAction: active ? 'current' : 'use',
+    enterEffect: active ? 'Enter: edit the base URL' : 'Enter: point the chat route at an external llama.cpp',
+    text: 'base URL ' + url + ' [' + llmExternalStatus(active) + ']'}];
+}
+/* Health only describes the active route (llm-mode-rows.tsx externalStatus); the desktop's probe is /health.llama on the serve process. */
+function llmExternalStatus(active) {
+  if (!active) return 'not active';
+  const h = LLMP.health;
+  if (!h) return 'unknown';
+  const status = h.reachable ? 'healthy' : 'unreachable';
+  return typeof h.latencyMs === 'number' ? status + ' · ' + h.latencyMs + 'ms' : status;
+}
+function llmRows(mode) {
+  const m = mode || LLMP.mode;
+  if (m === 'cloud') return llmCloudRows();
+  if (m === 'external') return llmExternalRows();
+  if (m === 'fallback') return [];
+  return llmLocalRows();
+}
+function llmClampCursors() {
+  LLM_PANEL_MODES.forEach((m) => {
+    const n = m === 'fallback' ? llmFallbackRows().length : llmRows(m).length;
+    LLMP.cursor[m] = n ? Math.max(0, Math.min(LLMP.cursor[m], n - 1)) : 0;
+  });
+}
+function llmRowAt(i) { const rows = llmRows(); return rows.length ? rows[Math.max(0, Math.min(i === undefined ? LLMP.cursor[LLMP.mode] : i, rows.length - 1))] : null; }
+
+/* --- Fallback pane (fallback-config.ts resolveFallbackChain + fallback-panel-selectors.ts buildFallbackChainView, ported) --- */
+function llmFallbackView() {
+  const llm = llmBlock();
+  const providers = llmProviders();
+  const fb = llm.fallback || {};
+  const appendLocal = fb.appendLocal === undefined ? true : !!fb.appendLocal;
+  const explicitChain = Array.isArray(fb.chain) ? fb.chain.filter((x) => typeof x === 'string') : [];
+  const configured = new Set(providers.map((p) => p.id));
+  const activeId = llmActiveTextId();
+  const requested = explicitChain.length ? explicitChain : [activeId];
+  const filtered = requested.filter((id) => configured.has(id));
+  const withPrimary = filtered[0] === activeId ? filtered : [activeId].concat(filtered.filter((id) => id !== activeId));
+  const chain = withPrimary.slice();
+  const localEntry = providers.find((p) => p.kind === 'llama-server');
+  const localId = localEntry ? localEntry.id : null;
+  if (appendLocal && localId && !chain.includes(localId)) chain.push(localId);
+  const seen = new Set();
+  const effective = chain.filter((id) => configured.has(id) && !seen.has(id) && (seen.add(id), true));
+  const explicit = new Set(explicitChain);
+  const links = effective.map((id, index) => {
+    const p = providers.find((x) => x.id === id);
+    return {providerId:id, modelLabel: p ? (p.defaultChatModel || p.model || null) : null, kind: p ? p.kind : 'unknown', isActive:index === 0,
+      isAppendedLocal: appendLocal && id === localId && !explicit.has(id) && id !== activeId};
+  });
+  const inChain = new Set(effective);
+  return {links, addableProviderIds: providers.map((p) => p.id).filter((id) => !inChain.has(id)), appendLocal};
+}
+/* fallback-rows.ts selectFallbackPaneRows: one row per link, then the `+ add link` affordance when something is still addable. */
+function llmFallbackRows() {
+  const view = llmFallbackView();
+  const rows = view.links.map((link, index) => ({kind:'link', link, index}));
+  if (view.addableProviderIds.length) rows.push({kind:'add'});
+  return rows;
+}
+function llmFallbackRowAt() { const rows = llmFallbackRows(); return rows.length ? rows[Math.max(0, Math.min(LLMP.cursor.fallback, rows.length - 1))] : null; }
+function llmDeclaredChain(links) { return links.filter((l) => !l.isAppendedLocal).map((l) => l.providerId); }
+/* fallback-chain-edits.ts moveLink / addLink / removeLink, verbatim (null = clamped or refused edit, nothing to persist). */
+function llmMoveLink(links, providerId, delta) {
+  const chain = llmDeclaredChain(links);
+  const from = chain.indexOf(providerId);
+  if (from < 0) return null;
+  const to = from + delta;
+  if (to < 0 || to >= chain.length) return null;
+  const next = chain.slice(); const [moved] = next.splice(from, 1); next.splice(to, 0, moved);
+  return next;
+}
+function llmAddLink(links, providerId) { const chain = llmDeclaredChain(links); return chain.includes(providerId) ? null : chain.concat([providerId]); }
+function llmRemoveLink(links, providerId) {
+  const target = links.find((l) => l.providerId === providerId);
+  if (!target || target.isActive || target.isAppendedLocal) return null;
+  if (links.filter((l) => !l.isAppendedLocal).length <= 1) return null;
+  return llmDeclaredChain(links).filter((id) => id !== providerId);
+}
+
+/* --- rendering --- */
+function llmTab() {
+  llmEnsurePoll();
+  if (BR && LLMP.lastRefreshedAt === null && !LLMP.inflight) setTimeout(llmRefresh, 0); // reached without settingsPaneEntered (the --models harness's __pane)
+  if (LLMP.view === 'logs') return '<div class="tui">' + llmLogsHTML() + '</div>';
+  const modal = llmModalHTML();
+  if (modal) return '<div class="tui">' + modal + '</div>';
+  const mode = LLMP.mode;
+  const hint = llmFooterHint(mode);
+  return '<div class="tui">'
+    + (LLMP.daemonPhase === 'starting' ? '<div class="tuimodal llm-start"><b class="sk-on">⟳ Model is starting — please stand by</b><div class="ter">Loading the model into llama-server. Inputs are paused until it is ready.</div></div>' : '')
+    + (mode === 'local' && LLMP.pulling ? llmDownloadBannerHTML() : '')
+    + llmRouteCardHTML()
+    + '<div class="llm-modehead"><span>Mode: </span>' + LLM_PANEL_MODES.map((m, i) => (i ? '<span class="ter"> | </span>' : '')
+        + '<button class="llmmode' + (m === mode ? ' on' : '') + '" data-act="llm:mode:' + m + '">' + esc(LLM_MODE_LABELS[m]) + '</button>').join('') + '</div>'
+    + '<div class="ter">Press ←/→ to switch mode</div>'
+    + '<div class="ter llm-status" style="margin:4px 0 8px">' + esc(llmStatusLine()) + '</div>'
+    + (LLMP.msg ? (LLMP.msg.restart ? restartLine(LLMP.msg.text) : '<div class="tuimsg">' + esc(LLMP.msg.text) + '</div>') : '')
+    + (mode === 'fallback' ? llmFallbackHTML() : mode === 'cloud' ? llmCloudHTML() : mode === 'external' ? llmExternalHTML() : llmLocalHTML())
+    + hint + '</div>';
+}
+/* llm-panel.tsx RouteCard. `current:` is the provider's chat model; for the local route the TUI shows the daemon's /props model —
+   the desktop has no /props, so `atag models status` "active model:" stands in, then localModels.managed.modelId (the critique's fallback). */
+function llmRouteCardHTML() {
+  const activeId = llmActiveTextId();
+  const active = llmProvider(activeId);
+  const local = !!active && active.kind === 'llama-server';
+  let model = active ? (active.defaultChatModel || active.model || null) : null;
+  if (!model && local) model = (LLMP.status && LLMP.status.activeModel) || llmManaged().modelId || null;
+  const emb = llmProvider(llmActiveEmbId());
+  const lm = llmLocalModels();
+  const mode = lm.mode || 'external';
+  return '<div class="llm-route"><b>Active chat route</b>'
+    + '<div>current: <b>' + esc(active ? active.id : 'unknown') + '</b>' + (model ? '<span class="ter"> / ' + esc(model) + '</span>' : '') + '</div>'
+    + '<div class="ter">tools ' + (local ? 'grammar' : 'native_tools') + ' · cache ' + (local ? 'local slot/cache_prompt' : 'cloud: no slot affinity') + '</div>'
+    + '<div class="ter">provider embeddings: ' + (emb ? esc(emb.id) + (emb.defaultEmbeddingModel ? ' · ' + esc(emb.defaultEmbeddingModel) : '') : 'not configured') + '</div>'
+    + '<div class="ter">local daemon: ' + esc(llmFormatDaemon()) + ' · mode ' + esc(mode) + (mode === 'external' ? ' · ' + esc(lm.url || '') : '') + '</div>'
+    + '</div>';
+}
+/* llm-panel.tsx StatusLines: one line, the first that applies, else "status: ready". */
+function llmStatusLine() {
+  const m = LLMP.mode;
+  if (m === 'local') {
+    if (LLMP.localBusy && LLMP.lastRefreshedAt === null) return 'local catalog: loading';
+    if (LLMP.localErr) return 'local catalog: ' + LLMP.localErr;
+    if (LLMP.statusErr) return 'local daemon: ' + LLMP.statusErr;
+  } else if (m === 'external') {
+    if (LLMP.statusLine && LLMP.statusSource === 'external') return LLMP.statusLine;
+  } else {
+    if (LLMP.busy) return 'cloud providers: updating';
+    if (LLMP.statusLine && LLMP.statusSource === 'cloud') return 'cloud providers: ' + LLMP.statusLine;
+  }
+  return 'status: ready';
+}
+function llmReport(line, source) { LLMP.statusLine = line; LLMP.statusSource = source || 'cloud'; }
+/* llm-panel.tsx footerHint (the full form), each key a button. */
+function llmFooterHint(mode) {
+  if (mode === 'fallback') return tuiHints(['j/k move', ['< > reorder', 'llm:fb:move:1'], ['a add link', 'llm:fb:add'], ['d remove', 'llm:fb:remove'], ['l toggle local', 'llm:fb:local'], ['←/→ switch pane', 'llm:mode:next'], ['r refresh', 'llm:refresh']]);
+  if (mode === 'local') return tuiHints(['j/k move', ['Enter selected action', 'llm:enter'],
+    // llm-panel-key-bindings.ts `a`: the Hugging Face import needs the TUI's local-models-hf editor; `atag models pull` accepts catalogue ids only.
+    ['a add from hugging face', 'llm:hf', {disabled:true, title:'HF import needs the TUI — `atag models pull` accepts catalogue ids only'}],
+    ['←/→ switch Local/Cloud/External/Fallback', 'llm:mode:next'], ['s start/stop', 'llm:daemon'], ['r refresh', 'llm:refresh'],
+    ['E embeddings on/off', 'llm:embToggle'], ['d remove', 'llm:remove'], ['B backend update', 'llm:backend'], ['U auto-update', 'llm:autoUpdate'], ['G device', 'llm:device'], ['L LLM logs', 'llm:logs']]);
+  return tuiHints(['j/k move', ['Enter selected action', 'llm:enter'], ['←/→ switch Local/Cloud/External/Fallback', 'llm:mode:next'], ['f filter', 'llm:filter'],
+    ['n add provider', 'llm:add'], ['c configure', 'llm:configure'], ['r refresh', 'llm:refresh'], ['e embedding', 'llm:embedding'], ['d remove', 'llm:remove'], ['L LLM logs', 'llm:logs']]);
+}
+function llmRowHTML(row, index, cursor) {
+  const selected = index === cursor;
+  const mark = row.active ? '*' : selected ? '>' : ' ';
+  const extra = row.kind === 'localTextModel' && !row.model.downloaded ? ' data-pull-local="' + esc(row.model.id) + '"' : '';
+  return '<button class="tuirow' + (selected ? ' on' : '') + '" data-llm-row="' + esc(row.id) + '"' + extra + ' data-act="llm:row:' + index + '">'
+    + esc(mark + ' ' + row.text) + '<span class="ter"> · ' + esc(row.enterEffect) + '</span></button>';
+}
+function llmSectionHTML(title, rows, offset, cursor, empty, emphasise) {
+  return '<div class="llm-section"><b>' + esc(title) + '</b>'
+    + (rows.length ? rows.map((r, i) => llmRowHTML(r, offset + i, cursor)).join('')
+      : '<div class="' + (emphasise ? 'llm-empty' : 'ter') + '">  ' + esc(empty || 'No rows in this section yet.') + '</div>') + '</div>';
+}
+function llmLocalHTML() {
+  const rows = llmLocalRows();
+  const cursor = LLMP.cursor.local;
+  const text = rows.filter((r) => r.kind === 'localTextModel');
+  const emb = rows.filter((r) => r.kind === 'localEmbeddingModel');
+  return llmSectionHTML('Local text models', text, 0, cursor) + llmSectionHTML('Local embeddings', emb, text.length, cursor);
+}
+function llmCloudHTML() {
+  const rows = llmCloudRows();
+  const cursor = LLMP.cursor.cloud;
+  const providers = rows.filter((r) => r.kind === 'cloudProvider');
+  const emb = rows.filter((r) => r.kind === 'cloudEmbeddingModel');
+  const section = llmCloudSection();
+  const embOffset = providers.length + section.filtered.length;
+  return llmSectionHTML('Cloud providers', providers, 0, cursor, 'No cloud providers configured. Press n to add one.', true)
+    + '<div class="llm-section"><b>Cloud text models</b>'
+    + '<div class="ter">provider: <b>' + esc(section.provider ? section.provider.id : 'none') + '</b></div>'
+    + '<div class="ter">filter: <input id="llm-filter" value="' + esc(LLMP.filter) + '" autocomplete="off" spellcheck="false" placeholder="f to filter"></div>'
+    // The price facet needs the catalogue's pricing, which `atag models search --json` does not print: the facet stays at `all` and `p` is inert.
+    + '<div class="ter">price: ' + esc(LLMP.pricing) + ' · <button class="skpf" data-act="llm:pricing" disabled title="pricing is not in `atag models search --json` on this agent — the facet stays at all">p cycles free/paid/all</button></div>'
+    + '<div id="llm-cloud-models">' + llmCloudModelListHTML() + '</div></div>'
+    + llmSectionHTML('Cloud embeddings', emb, embOffset, cursor);
+}
+/* The 12-row window of the text-model rows around the cursor, with the TUI's counter line. */
+function llmCloudModelListHTML() {
+  const section = llmCloudSection();
+  const cursor = LLMP.cursor.cloud;
+  const rows = section.filtered.map((id) => llmChatRow(section.provider, id));
+  const cursorInSection = Math.max(0, Math.min(cursor - section.sectionStart, rows.length - 1));
+  const start = Math.max(0, Math.min(cursorInSection - Math.floor(LLM_MODEL_WINDOW / 2), rows.length - LLM_MODEL_WINDOW));
+  const visible = rows.slice(start, start + LLM_MODEL_WINDOW);
+  const counter = rows.length === 0 ? 'no match' : (cursorInSection + 1) + '/' + rows.length + (rows.length !== section.models.length ? ' of ' + section.models.length : '');
+  return (section.status === 'loading' ? '<div class="ter">  fetching model list…</div>' : '')
+    + (section.status === 'error' ? '<div class="tuierr">  model list unavailable (' + esc(section.error || 'unknown error') + ') - showing current model only</div>' : '')
+    + visible.map((r, i) => llmRowHTML(r, section.sectionStart + start + i, cursor)).join('')
+    + '<div class="ter">  ↑/↓ move (' + esc(counter) + ')' + (LLMP.filterFocused ? ' · type to filter · Enter select · Esc done' : '') + '</div>';
+}
+function llmExternalHTML() {
+  const rows = llmExternalRows();
+  return llmSectionHTML('External llama.cpp', rows, 0, LLMP.cursor.external)
+    + '<div class="ter">  managed daemon: ' + esc(llmFormatDaemon()) + ' · <button class="skpf" data-act="llm:daemon">s start/stop</button></div>'
+    + '<div class="ter">  ← <button class="skpf" data-act="llm:mode:local">Local pane</button>: pick a managed model to switch back</div>';
+}
+function llmFallbackHTML() {
+  const view = llmFallbackView();
+  const cursor = LLMP.cursor.fallback;
+  if (LLMP.fallbackPicker) {
+    const c = LLMP.fallbackPicker.cursor;
+    return '<div class="llm-section"><b>Add fallback link</b>'
+      + (view.addableProviderIds.length ? view.addableProviderIds.map((id, i) => '<button class="tuirow' + (i === c ? ' on' : '') + '" data-llm-row="fb-pick:' + esc(id) + '" data-act="llm:fb:pick:' + esc(id) + '">' + (i === c ? '&gt;' : ' ') + ' ' + esc(id) + '</button>').join('')
+        : '<div class="ter">  Every configured provider is already in the chain.</div>')
+      + '<div class="ter">  ↑/↓ move · Enter add · <button class="skpf" data-act="llm:fb:pickCancel">Esc cancel</button></div></div>';
+  }
+  const rows = llmFallbackRows();
+  // llm-fallback-rows.tsx StatusLine shows the last `provider_switched` event of the TUI process; the serve API exposes no fallover events.
+  return '<div class="ter" style="margin-bottom:8px">status: fallover events are not exposed by the agent\'s HTTP API</div>'
+    + '<div class="llm-section"><b>Fallback chain</b>'
+    + (view.links.length === 0 ? '<div class="ter">  No chain configured. Falls back to the active provider only.</div>' : '')
+    + rows.map((r, i) => {
+      const sel = i === cursor;
+      if (r.kind === 'add') return '<button class="tuirow' + (sel ? ' on' : '') + '" data-llm-row="fb-add" data-act="llm:fb:add">' + (sel ? '&gt;' : ' ') + ' + add link <span class="ter">· Enter or a to choose a provider</span></button>';
+      const l = r.link;
+      const note = l.isActive ? 'active (primary)' : l.isAppendedLocal ? 'local last resort (appendLocal)' : 'fallover link';
+      return '<button class="tuirow' + (sel ? ' on' : '') + '" data-llm-row="fb:' + esc(l.providerId) + '" data-act="llm:fb:select:' + i + '">' + (sel ? '&gt;' : ' ') + ' '
+        + esc((r.index + 1) + '. ' + l.providerId + (l.modelLabel ? '/' + l.modelLabel : '') + ' [' + l.kind + ']') + '<span class="ter"> · ' + esc(note) + '</span></button>';
+    }).join('') + '</div>'
+    + '<div class="ter">append local as last resort: <span class="' + (view.appendLocal ? 'sk-on' : 'ter') + '">' + (view.appendLocal ? 'on' : 'off') + '</span> · <button class="skpf" data-act="llm:fb:local">l to toggle</button></div>'
+    + '<div class="ter"><button class="skpf" data-act="llm:fb:move:-1">&lt;</button> <button class="skpf" data-act="llm:fb:move:1">&gt;</button> move priority · <button class="skpf" data-act="llm:fb:add">a add link</button> · <button class="skpf" data-act="llm:fb:remove">d remove</button> · <button class="skpf" data-act="llm:fb:local">l toggle local</button></div>';
+}
+/* llm-panel-modals.tsx PromptBox copy, one at a time; a modal takes the whole pane as in the TUI. */
+function llmModalHTML() {
+  const c = LLMP.confirm;
+  if (c) {
+    const err = c.error ? '<div class="tuierr">! ' + esc(c.error) + '</div>' : '';
+    const busy = c.submitting ? '<div class="ter">working…</div>' : '';
+    if (c.kind === 'removeProvider') return '<div class="tuimodal danger"><b style="color:var(--danger)">Remove provider ' + esc(c.id) + '?</b>' + err + busy
+      + tuiHints([['y confirm', 'llm:confirm', {disabled:c.submitting}], ['n/Esc cancel', 'llm:cancel']]) + '</div>';
+    if (c.kind === 'removeLocal') return '<div class="tuimodal danger"><b style="color:var(--danger)">Delete local model ' + esc(c.id) + '?</b>'
+      + '<div class="ter">Removes GGUF/mmproj files. y confirm · n/Esc cancel</div>' + err + busy + tuiHints([['y confirm', 'llm:confirm', {disabled:c.submitting}], ['n/Esc cancel', 'llm:cancel']]) + '</div>';
+    if (c.kind === 'removeEmbedding') return '<div class="tuimodal danger"><b style="color:var(--danger)">Delete local embedding model ' + esc(c.id) + '?</b>'
+      // `atag models remove` accepts chat catalogue ids only (runLocalModelsRemove isKnownLocalModelId), so the desktop cannot delete an embedding GGUF.
+      + '<div class="ter">y confirm · n/Esc cancel</div><div class="ter">(no CLI removes an embedding model on this agent — `atag models remove` accepts chat models only)</div>' + err
+      + tuiHints([['y confirm', 'llm:confirm', {disabled:true, title:'`atag models remove` accepts chat models only'}], ['n/Esc cancel', 'llm:cancel']]) + '</div>';
+  }
+  if (LLMP.externalDraft !== null) {
+    return '<div class="tuimodal"><b>External llama.cpp base URL</b>'
+      + '<div><input id="llm-url" value="' + esc(LLMP.externalDraft) + '" autocomplete="off" spellcheck="false" placeholder="http://host:8080"></div>'
+      + (LLMP.externalInvalid ? '<div class="tuierr">invalid URL</div>' : '')
+      + '<div class="ter">Saved after a /health probe succeeds. <button class="skpf" data-act="llm:external:save">Enter save</button> · <button class="skpf" data-act="llm:external:cancel">Esc cancel</button></div></div>';
+  }
+  if (LLMP.steerUrl !== null) {
+    const url = LLMP.steerUrl;
+    const ollama = llmLooksLikeOllama(url);
+    return '<div class="tuimodal"><b>' + (ollama ? 'Ollama detected — add it as a cloud provider?' : 'OpenAI-compatible server — add it as a cloud provider?') + '</b>'
+      + '<div>' + esc(url + ' answers like ' + (ollama ? 'Ollama' : 'an OpenAI-compatible server') + ', which the External llama.cpp route cannot drive.') + '</div>'
+      + tuiHints([['y open the provider wizard with this URL', 'llm:steer:y'], ['n/Esc dismiss', 'llm:steer:n']]) + '</div>';
+  }
+  return '';
+}
+function llmLooksLikeOllama(url) { try { return new URL(url).port === '11434'; } catch (err) { return false; } }
+/* llm-panel.tsx DownloadBanner: the CLI streams lines, not a byte count, so the last line stands where the TUI draws its bar. */
+function llmDownloadBannerHTML() {
+  const p = LLMP.pulling;
+  return '<div class="llm-section"><b>downloading — ' + esc(p.id) + '</b><div class="ter">model: ' + esc(p.id) + '</div>'
+    + '<div class="ter" id="llm-pull-line">' + esc(LLMP.pullLog[LLMP.pullLog.length - 1] || 'starting…') + '</div>'
+    + tuiHints([['cancel', 'llm:cancelPull']]) + '</div>';
+}
+/* local-llm-logs-panel.tsx: header (path or the waiting line), size · tail · last read, error, the last 30 lines coloured. */
+function llmLogsHTML() {
+  const l = LLMP.logs;
+  const header = l && l.path ? l.path : '(waiting for the first daemon start — no log file yet)';
+  const lines = l ? l.text.split('\n').filter((x) => x.length > 0) : [];
+  const tail = lines.slice(-LLM_LOG_LINES);
+  const color = (line) => { const lower = line.toLowerCase(); if (/\b(error|fatal|fail|abort)\b/.test(lower)) return 'tuierr'; if (/\b(warn|warning)\b/.test(lower)) return 'sk-off'; if (/\b(loading|loaded|ready|listening)\b/.test(lower)) return 'sk-on'; return ''; };
+  return '<div class="ter">' + esc(header) + '</div>'
+    + (l && typeof l.size === 'number' ? '<div class="ter">' + esc(llmFormatBytes(l.size)) + (l.truncated ? ' · showing tail only' : '') + (l.lastReadAt ? ' · last read ' + new Date(l.lastReadAt).toLocaleTimeString() : '') + '</div>' : '')
+    + (l && l.error ? '<div class="sk-off">' + esc(l.error) + '</div>' : '')
+    + '<div style="margin-top:8px">' + (tail.length === 0 ? '<div class="ter">' + (l && l.error ? '' : '(log is empty — start the daemon to see output)') + '</div>'
+      : tail.map((line) => '<div class="' + color(line) + '">' + esc(line) + '</div>').join('')) + '</div>'
+    + tuiHints([['Esc back', 'llm:back'], ['r refresh', 'llm:logsRefresh']]);
+}
+function llmFormatBytes(n) { if (n < 1024) return n + ' B'; if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB'; return (n / (1024 * 1024)).toFixed(1) + ' MB'; }
+
+/* --- writes --- */
+/* A whole-file write of one `llm.*` key (0.5.4 has no llm leaf). With no
+   `llm` block in the user file the default block is written around the key. */
+async function llmWrite(path, value) {
+  if (!BR) return {ok:false, error:'no bridge'};
+  const hasBlock = !!(LIVE_CONFIG && LIVE_CONFIG.llm && Array.isArray(LIVE_CONFIG.llm.providers));
+  if (hasBlock) return BR.configSetPath('llm.' + path, value);
+  const block = JSON.parse(JSON.stringify(llmBlock()));
+  const segs = path.split('.');
+  let node = block;
+  segs.slice(0, -1).forEach((sg) => { if (!node[sg] || typeof node[sg] !== 'object') node[sg] = {}; node = node[sg]; });
+  node[segs[segs.length - 1]] = value;
+  return BR.configSetPath('llm', block);
+}
+function llmFail(prefix, res) { return prefix + ': ' + ((res && res.error) || 'unknown error'); }
+/* The serve process keeps its boot-time provider registry (the TUI hot-reloads its own); every route write says so. */
+function llmRestartMsg(text) { LLMP.msg = {text, restart:true}; }
+async function llmSwitchProvider(id) {
+  LLMP.busy = true; llmRepaint();
+  const res = await llmWrite('activeTextProvider', id);
+  LLMP.busy = false;
+  if (!res || res.ok === false) { llmReport(llmFail('switch provider failed', res), 'cloud'); llmRepaint(); return false; }
+  await refreshLiveConfig();
+  const p = llmProvider(id);
+  const model = p ? (p.defaultChatModel || p.model || '') : '';
+  // providers-orchestrator.ts setActiveText: the providers_status line + the feed's runtime_info.
+  llmReport('Active text: ' + id + (model ? ' · ' + model : '') + ' · ' + (id === 'local-llama' ? 'grammar+llama-server' : 'native_tools'), 'cloud');
+  llmRestartMsg('Switched active text provider to "' + id + '". New messages use ' + (id === 'local-llama' ? 'grammar+llama-server' : 'native_tools') + '.');
+  // llm-panel-primary-actions.ts stopLocalDaemonsForCloudSelection: a cloud route stops the managed daemon.
+  if (id !== 'local-llama' && llmDaemonUp()) await llmDaemon('stop');
+  llmRepaint();
+  return true;
+}
+async function llmSelectChatModel(pid, modelId) {
+  LLMP.busy = true; llmRepaint();
+  const res = await BR.setProviderModel(pid, modelId);
+  if (!res || res.ok === false) { LLMP.busy = false; llmReport(llmFail('select model failed', res), 'cloud'); llmRepaint(); return; }
+  LLMP.busy = false;
+  // providers-orchestrator.ts selectChatModel: the model, then setActiveText(providerId).
+  if (!(await llmSwitchProvider(pid))) return;
+  llmRestartMsg('Selected chat model ' + pid + '/' + modelId + '.');
+  llmRepaint();
+}
+async function llmSelectEmbeddingModel(pid, modelId) {
+  LLMP.busy = true; llmRepaint();
+  let res = await BR.upsertProvider({id:pid, kind:'', defaultEmbeddingModel:modelId});
+  if (!res || res.ok === false) { LLMP.busy = false; llmReport(llmFail('select embedding failed', res), 'cloud'); llmRepaint(); return; }
+  res = await llmWrite('activeEmbeddingProvider', pid);
+  LLMP.busy = false;
+  if (!res || res.ok === false) { llmReport(llmFail('select embedding failed', res), 'cloud'); llmRepaint(); return; }
+  await refreshLiveConfig();
+  llmReport('Active embedding provider: ' + pid + ' (restart agent to apply if recall unchanged)', 'cloud');
+  llmRestartMsg('Selected embedding model ' + pid + '/' + modelId + '.');
+  // triggerCloudEmbeddingModel: a cloud embedding route turns the local embedding daemon off.
+  if (llmEmbCfg().enabled === true) await BR.modelsUseEmbedding('--disable');
+  llmRefresh();
+}
+async function llmActivateProviderEmbedding() {
+  // llm-panel-primary-actions.ts activateProviderEmbedding: the active cloud text provider, when it has an embedding model.
+  const p = llmProvider(llmActiveTextId());
+  if (!p || p.kind === 'llama-server' || !p.defaultEmbeddingModel) return;
+  const res = await llmWrite('activeEmbeddingProvider', p.id);
+  if (!res || res.ok === false) { llmReport(llmFail('set embedding provider failed', res), 'cloud'); llmRepaint(); return; }
+  await refreshLiveConfig();
+  llmReport('Active embedding provider: ' + p.id + ' (restart agent to apply if recall unchanged)', 'cloud');
+  llmRestartMsg('Active embedding provider: ' + p.id);
+  llmRepaint();
+}
+/* persist-llm-provider.ts removeLlmProvider, ported: the built-in entry stays, the active ids fall back to local-llama (or the first remaining). */
+async function llmRemoveProviderConfirm() {
+  const c = LLMP.confirm; if (!c || c.submitting) return;
+  c.submitting = true; c.error = null; llmRepaint();
+  const id = c.id;
+  if (id === 'local-llama') { c.submitting = false; c.error = 'cannot remove built-in provider "local-llama"'; llmRepaint(); return; }
+  const cfg = await BR.config();
+  const llm = cfg && cfg.ok && cfg.data && cfg.data.config && cfg.data.config.llm;
+  if (!llm || !Array.isArray(llm.providers)) { c.submitting = false; c.error = 'provider "' + id + '" is not configured'; llmRepaint(); return; }
+  const remaining = llm.providers.filter((p) => p && p.id !== id);
+  if (remaining.length === llm.providers.length) { c.submitting = false; c.error = 'provider "' + id + '" is not configured'; llmRepaint(); return; }
+  let activeTextProvider = llm.activeTextProvider, activeEmbeddingProvider = llm.activeEmbeddingProvider;
+  if (activeTextProvider === id) activeTextProvider = 'local-llama';
+  if (activeEmbeddingProvider === id) activeEmbeddingProvider = 'local-llama';
+  if (!remaining.some((p) => p.id === activeTextProvider)) activeTextProvider = remaining[0] ? remaining[0].id : 'local-llama';
+  if (!remaining.some((p) => p.id === activeEmbeddingProvider)) activeEmbeddingProvider = remaining[0] ? remaining[0].id : 'local-llama';
+  const res = await BR.configSetPath('llm', Object.assign({}, llm, {activeTextProvider, activeEmbeddingProvider, providers:remaining}));
+  c.submitting = false;
+  if (!res || res.ok === false) { c.error = (res && res.error) || 'config write failed'; llmRepaint(); return; }
+  LLMP.confirm = null;
+  await refreshLiveConfig();
+  llmRestartMsg('Removed provider "' + id + '" from config.');
+  llmClampCursors();
+  llmRefresh();
+}
+async function llmDaemon(which) {
+  if (!BR || LLMP.daemonPhase) return;
+  LLMP.daemonPhase = which === 'stop' ? 'stopping' : 'starting'; llmRepaint();
+  const res = which === 'stop' ? await BR.modelsStop() : await BR.modelsStart();
+  LLMP.daemonPhase = null;
+  if (!res || res.ok === false) { LLMP.statusErr = llmFail('models ' + which + ' failed', res); }
+  else LLMP.msg = {text:'local-llm: ' + (which === 'stop' ? 'daemon stopped' : 'daemon started') + (res.stdout && res.stdout.trim() ? ' — ' + res.stdout.trim().split('\n').pop() : '')};
+  await llmRefreshStatus();
+}
+async function llmEmbToggle() {
+  if (!BR) return;
+  const enabled = llmEmbCfg().enabled === true;
+  // local-models-orchestrator.ts toggleEmbeddingEnabled; `use-embedding <id>` enables + selects, `--disable` turns it off.
+  const target = enabled ? '--disable' : (llmEmbCfg().modelId || 'nomic-embed-text-v1.5');
+  LLMP.busy = true; llmRepaint();
+  const res = await BR.modelsUseEmbedding(target);
+  LLMP.busy = false;
+  if (!res || res.ok === false) { LLMP.statusErr = llmFail('use-embedding failed', res); llmRepaint(); return; }
+  LLMP.msg = {text:'local-llm: embeddings ' + (enabled ? 'disabled' : 'enabled')};
+  await refreshLiveConfig();
+  llmRefresh();
+}
+async function llmBackendUpdate() {
+  if (!BR || LLMP.busy) return;
+  LLMP.busy = true; LLMP.msg = {text:'local-llm: updating the llama.cpp backend…'}; llmRepaint();
+  const res = await BR.modelsUpdate();
+  LLMP.busy = false;
+  if (!res || res.ok === false) { LLMP.statusErr = llmFail('models update failed', res); }
+  else LLMP.msg = {text:'local-llm: backend update — ' + ((res.stdout || '').trim().split('\n').pop() || 'done')};
+  llmRefresh();
+}
+async function llmAutoUpdateToggle() {
+  if (!BR) return;
+  const next = !(llmManaged().autoUpdate !== false);
+  const res = await BR.configSet('localModels.managed.autoUpdate', String(next));
+  if (!res || res.ok === false) { LLMP.statusErr = llmFail('autoUpdate write failed', res); llmRepaint(); return; }
+  LLMP.msg = {text: next ? 'local-llm: backend auto-update on — a newer llama.cpp is fetched after start' : "local-llm: backend auto-update off — update manually with 'B'"};
+  await refreshLiveConfig();
+  llmRepaint();
+}
+/* local-models-orchestrator.ts cycleManagedDevice: auto → each GPU id → cpu → auto, persisted through `atag models use-device`. */
+async function llmDeviceCycle() {
+  if (!BR || LLMP.busy) return;
+  LLMP.busy = true; llmRepaint();
+  const dev = await BR.modelsDevices();
+  const ids = dev && dev.ok ? (dev.devices || []).map((d) => d.id) : [];
+  const order = ['auto'].concat(ids, ['cpu']);
+  const current = (dev && dev.ok && dev.configured) || llmManaged().device || 'auto';
+  const idx = order.indexOf(current);
+  const next = order[(idx + 1) % order.length];
+  const res = await BR.modelsUseDevice(next);
+  LLMP.busy = false;
+  if (!res || res.ok === false) { LLMP.statusErr = llmFail('use-device failed', res); llmRepaint(); return; }
+  LLMP.msg = {text:"local-llm: device → " + next + " (press 's' to restart and apply)"};
+  await refreshLiveConfig();
+  llmRepaint();
+}
+async function llmRemoveLocalConfirm() {
+  const c = LLMP.confirm; if (!c || c.submitting) return;
+  c.submitting = true; c.error = null; llmRepaint();
+  const res = await BR.modelsRemove(c.id);
+  c.submitting = false;
+  if (!res || res.ok === false) { c.error = (res && res.error) || 'remove failed'; llmRepaint(); return; }
+  LLMP.confirm = null;
+  LLMP.msg = {text:'local-llm: ' + c.id + ' removed'};
+  llmRefresh();
+}
+function llmPull(kind, id) {
+  if (!BR || LLMP.pulling) return;
+  LLMP.pulling = {kind, id}; LLMP.pullLog = ['starting ' + id + '…']; llmRepaint();
+  const p = kind === 'embedding' ? BR.modelsPullEmbedding(id) : BR.modelsPull(id);
+  p.then((res) => { if (res && res.ok === false) { LLMP.pulling = null; LLMP.statusErr = res.error || 'could not start the download'; llmRepaint(); } });
+}
+/* llm-panel-primary-actions.ts triggerLocalChatModel / triggerLocalEmbeddingModel / triggerCloud*, ported. */
+async function llmPrimary(row) {
+  if (!row || !BR) return;
+  if (row.kind === 'localTextModel') {
+    const m = row.model;
+    if (LLMP.pulling) return;
+    if (!m.downloaded) { llmPull('chat', m.id); return; }
+    if (!m.active) { const used = await BR.modelsUse(m.id); if (used && used.ok === false) { LLMP.statusErr = llmFail('models use failed', used); llmRepaint(); return; } }
+    if (!llmLocalActive()) { if (!(await llmSwitchProvider('local-llama'))) return; }
+    if (m.active && !llmDaemonUp()) { await llmDaemon('start'); return; }
+    await refreshLiveConfig();
+    llmRefresh();
+    return;
+  }
+  if (row.kind === 'localEmbeddingModel') {
+    const m = row.model;
+    if (LLMP.pulling) return;
+    if (!m.downloaded) { llmPull('embedding', m.id); if (!llmLocalEmbActive()) await llmWrite('activeEmbeddingProvider', 'local-llama'); return; }
+    if (!m.active) {
+      const res = await BR.modelsUseEmbedding(m.id);
+      if (!res || res.ok === false) { LLMP.statusErr = llmFail('use-embedding failed', res); llmRepaint(); return; }
+      if (!llmLocalEmbActive()) await llmWrite('activeEmbeddingProvider', 'local-llama');
+      await refreshLiveConfig(); llmRefresh(); return;
+    }
+    if (!llmLocalEmbActive()) { await llmWrite('activeEmbeddingProvider', 'local-llama'); await refreshLiveConfig(); }
+    if (llmEmbCfg().enabled !== true) { llmEmbToggle(); return; }
+    if (!(LLMP.embDaemon && LLMP.embDaemon.running)) { await llmDaemon('start'); return; }
+    llmRefresh();
+    return;
+  }
+  if (row.kind === 'cloudProvider') {
+    if (!row.available) { llmOpenWizard(row.provider); return; }
+    if (!row.active) await llmSwitchProvider(row.provider.id);
+    return;
+  }
+  if (row.kind === 'cloudChatModel') {
+    if (!row.available) { llmOpenWizard(row.provider); return; }
+    await llmSelectChatModel(row.providerId, row.modelId);
+    return;
+  }
+  if (row.kind === 'cloudEmbeddingModel') {
+    if (!row.available) { llmOpenWizard(row.provider); return; }
+    await llmSelectEmbeddingModel(row.providerId, row.modelId);
+    return;
+  }
+  if (row.kind === 'externalUrl') { LLMP.externalDraft = row.url; LLMP.externalInvalid = false; llmRepaint(); const n = $('#llm-url'); if (n) { n.focus(); n.select(); } }
+}
+/* The existing add-provider wizard (selectorHTML → wizardHTML) is the
+   composer's popup: it needs SEL.open and floats above the settings window
+   through the `#window:has(#settings) #overlays` rule in styles.css.
+   `n` opens it at pick_kind; `c` / a missing-key row opens it configured
+   for that provider (the wizard's kind row by id, then by kind, else the
+   custom row). */
+function llmOpenWizard(provider, baseUrl) {
+  SEL.open = true; SEL.addOpen = false; SEL.err = null;
+  WIZ.error = null; WIZ.busy = false; WIZ.apiKey = '';
+  if (provider) {
+    const row = KIND_ROWS.find((k) => k.id === provider.id) || KIND_ROWS.find((k) => k.kind === provider.kind && !k.custom) || KIND_ROWS.find((k) => k.custom);
+    WIZ.row = baseUrl ? Object.assign({}, row, {baseUrl}) : row;
+    WIZ.baseUrl = baseUrl || provider.baseUrl || '';
+    WIZ.phase = 'configure';
+  } else { WIZ.row = null; WIZ.baseUrl = ''; WIZ.phase = 'pick_kind'; }
+  render();
+}
+function llmNormalizeUrl(raw) {
+  const trimmed = String(raw || '').trim();
+  if (!trimmed) return null;
+  const withScheme = /^https?:\/\//i.test(trimmed) ? trimmed : 'http://' + trimmed;
+  try { new URL(withScheme); } catch (err) { return null; }
+  return withScheme;
+}
+/* tui-command.ts persistLlamaUrl: probe first (the main process runs the
+   /health + /props + /v1/models probes), report every verdict on the
+   pane's own status line, steer an OpenAI-compatible answer to the
+   provider wizard, and only a passing probe writes localModels.url +
+   mode external and points the chat route at local-llama. */
+async function llmExternalSave() {
+  const input = document.getElementById('llm-url');
+  const raw = input ? input.value : LLMP.externalDraft;
+  const url = llmNormalizeUrl(raw);
+  if (!url) { LLMP.externalDraft = raw || ''; LLMP.externalInvalid = true; llmRepaint(); return; }
+  LLMP.externalDraft = null; LLMP.externalInvalid = false;
+  llmReport('probing ' + url + '…', 'external'); llmRepaint();
+  const res = await BR.llamaProbe(url);
+  if (!res || !res.ok) { llmReport('local-llm /health failed at ' + url + ': ' + ((res && res.error) || 'probe failed'), 'external'); llmRepaint(); return; }
+  const p = res.probe;
+  if (!p.reachable) {
+    llmReport(p.message, 'external');
+    if (p.kind === 'openai-compat') LLMP.steerUrl = res.url;
+    llmRepaint(); return;
+  }
+  let w = await BR.configSet('localModels.url', res.url);
+  if (!w || w.ok === false) { llmReport(llmFail('localModels.url write failed', w), 'external'); llmRepaint(); return; }
+  w = await BR.configSet('localModels.mode', 'external');
+  if (!w || w.ok === false) { llmReport(llmFail('localModels.mode write failed', w), 'external'); llmRepaint(); return; }
+  await refreshLiveConfig();
+  if (llmActiveTextId() !== 'local-llama') { const r = await llmWrite('activeTextProvider', 'local-llama'); if (!r || r.ok === false) { llmReport(llmFail('switch to local-llama failed', r), 'external'); llmRepaint(); return; } await refreshLiveConfig(); }
+  llmReport('local-llm URL saved (' + p.latencyMs + 'ms)', 'external');
+  // The TUI rebuilds the registered provider in-process (runtime.reloadLlmProvider); the serve process needs the restart.
+  llmRestartMsg('local-llm URL saved: ' + res.url);
+  llmRefreshStatus();
+}
+async function llmFallbackPersist(chain, appendLocal) {
+  const llm = llmBlock();
+  const next = Object.assign({}, llm.fallback || {}, {chain, appendLocal});
+  LLMP.busy = true; llmRepaint();
+  const res = await llmWrite('fallback', next);
+  LLMP.busy = false;
+  if (!res || res.ok === false) { llmReport(llmFail('fallback write failed', res), 'cloud'); LLMP.msg = {text:'! ' + ((res && res.error) || 'fallback write failed')}; llmRepaint(); return; }
+  await refreshLiveConfig();
+  llmRestartMsg('llm.fallback saved: chain [' + chain.join(', ') + '], appendLocal ' + (appendLocal ? 'on' : 'off'));
+  llmClampCursors();
+  llmRepaint();
+}
+async function llmLogsOpen() {
+  LLMP.view = 'logs'; LLMP.logs = null; llmRepaint();
+  await llmLogsRefresh();
+  if (!LLMP.logsTimer) LLMP.logsTimer = setInterval(() => { if (!llmVisible() || LLMP.view !== 'logs') { llmStopLogs(); return; } llmLogsRefresh(); }, 1000);
+}
+function llmStopLogs() { if (LLMP.logsTimer) { clearInterval(LLMP.logsTimer); LLMP.logsTimer = null; } }
+async function llmLogsRefresh() {
+  if (!BR || LLMP.logsBusy) return;
+  let dataDir = LLMP.status && LLMP.status.dataDir;
+  if (!dataDir) { await llmRefreshStatus(true); dataDir = LLMP.status && LLMP.status.dataDir; }
+  if (!dataDir) { LLMP.logs = {path:null, size:null, truncated:false, text:'', lastReadAt:Date.now(), error:LLMP.statusErr ? 'models status failed: ' + LLMP.statusErr : null}; llmRepaint(); return; }
+  LLMP.logsBusy = true;
+  const res = await BR.llamaLogTail(dataDir);
+  LLMP.logsBusy = false;
+  const before = JSON.stringify(LLMP.logs && [LLMP.logs.size, LLMP.logs.text.length, LLMP.logs.error]);
+  LLMP.logs = res && res.ok ? res : {path:(res && res.path) || null, size:null, truncated:false, text:'', lastReadAt:Date.now(), error:(res && res.error) || 'log read failed'};
+  if (before !== JSON.stringify([LLMP.logs.size, LLMP.logs.text.length, LLMP.logs.error])) llmRepaint();
+}
+function llmSetMode(mode) {
+  if (!LLM_PANEL_MODES.includes(mode)) return;
+  LLMP.mode = mode; LLMP.filterFocused = false; LLMP.fallbackPicker = null;
+  llmRepaint();
+  if (mode === 'cloud') llmEnsureModels();
+}
+function llmAct(what) {
+  const [verb, ...rest] = what.split(':');
+  const arg = rest.join(':');
+  if (verb === 'mode') {
+    if (arg === 'next' || arg === 'prev') { const d = arg === 'next' ? 1 : -1; llmSetMode(LLM_PANEL_MODES[(LLM_PANEL_MODES.indexOf(LLMP.mode) + d + 4) % 4]); }
+    else llmSetMode(arg);
+    return;
+  }
+  if (verb === 'row') { const i = +arg; if (LLMP.mode === 'fallback') { LLMP.cursor.fallback = i; llmRepaint(); return; } LLMP.cursor[LLMP.mode] = i; llmPrimary(llmRowAt(i)); return; }
+  if (verb === 'select') { LLMP.cursor[LLMP.mode] = +arg; llmRepaint(); return; }
+  if (verb === 'enter') { if (LLMP.mode === 'fallback') { llmFallbackEnter(); return; } llmPrimary(llmRowAt()); return; }
+  if (verb === 'refresh') { llmRefresh(); return; }
+  if (verb === 'filter') { llmSetMode('cloud'); LLMP.filterFocused = true; llmRepaint(); const n = $('#llm-filter'); if (n) { n.focus(); n.setSelectionRange(n.value.length, n.value.length); } return; }
+  if (verb === 'pricing') return; // inert: pricing is not in the CLI's model list
+  if (verb === 'add') { llmSetMode('cloud'); llmOpenWizard(null); return; }
+  if (verb === 'configure') { llmSetMode('cloud'); const cloud = llmCloudProviders(); const p = cloud.find((x) => x.id === llmActiveTextId()) || cloud[0]; llmOpenWizard(p || null); return; }
+  if (verb === 'embedding') { llmActivateProviderEmbedding(); return; }
+  if (verb === 'embToggle') { llmEmbToggle(); return; }
+  if (verb === 'daemon') { llmDaemon(llmDaemonUp() ? 'stop' : 'start'); return; }
+  if (verb === 'hf') return; // disabled: the HF import needs the TUI
+  if (verb === 'backend') { llmBackendUpdate(); return; }
+  if (verb === 'autoUpdate') { llmAutoUpdateToggle(); return; }
+  if (verb === 'device') { llmDeviceCycle(); return; }
+  if (verb === 'logs') { llmLogsOpen(); return; }
+  if (verb === 'logsRefresh') { llmLogsRefresh(); return; }
+  if (verb === 'back') { llmStopLogs(); LLMP.view = 'panel'; llmRepaint(); return; }
+  if (verb === 'cancelPull') { if (BR) BR.cancelPull(); LLMP.pulling = null; llmRepaint(); return; }
+  if (verb === 'remove') {
+    if (LLMP.mode === 'fallback') { llmFallbackRemove(); return; }
+    const row = llmRowAt(); if (!row) return;
+    if (row.kind === 'cloudProvider' || row.kind === 'cloudChatModel' || row.kind === 'cloudEmbeddingModel') LLMP.confirm = {kind:'removeProvider', id:row.provider.id, error:null, submitting:false};
+    else if (row.kind === 'localTextModel' && row.model.downloaded) LLMP.confirm = {kind:'removeLocal', id:row.model.id, error:null, submitting:false};
+    else if (row.kind === 'localEmbeddingModel' && row.model.downloaded) LLMP.confirm = {kind:'removeEmbedding', id:row.model.id, error:null, submitting:false};
+    else return;
+    llmRepaint(); return;
+  }
+  if (verb === 'confirm') { const c = LLMP.confirm; if (!c) return; if (c.kind === 'removeProvider') llmRemoveProviderConfirm(); else if (c.kind === 'removeLocal') llmRemoveLocalConfirm(); return; }
+  if (verb === 'cancel') { LLMP.confirm = null; llmRepaint(); return; }
+  if (verb === 'external') {
+    if (arg === 'save') { llmExternalSave(); return; }
+    if (arg === 'cancel') { LLMP.externalDraft = null; LLMP.externalInvalid = false; llmRepaint(); return; }
+    if (arg === 'edit') { llmSetMode('external'); llmPrimary(llmExternalRows()[0]); return; }
+    return;
+  }
+  if (verb === 'steer') {
+    const url = LLMP.steerUrl; LLMP.steerUrl = null;
+    if (arg === 'y' && url) {
+      // openai-compat-steer.ts wizardForOpenAiCompatUrl: Ollama's port lands on its preset, anything else on the manual compat row, the probed URL prefilled.
+      llmSetMode('cloud');
+      const preset = llmLooksLikeOllama(url) ? KIND_ROWS.find((k) => k.id === 'ollama') : null;
+      llmOpenWizard(preset ? {id:preset.id, kind:preset.kind, baseUrl:url} : {id:'', kind:'openai-compatible', baseUrl:url, custom:true}, url);
+      if (!preset) WIZ.row = KIND_ROWS.find((k) => k.custom);
+      render();
+      return;
+    }
+    llmRepaint(); return;
+  }
+  if (verb === 'fb') {
+    const sub = rest[0]; const a2 = rest.slice(1).join(':');
+    const view = llmFallbackView();
+    if (sub === 'select') { LLMP.cursor.fallback = +a2; llmRepaint(); return; }
+    if (sub === 'move') { const row = llmFallbackRowAt(); if (row && row.kind === 'link') { const chain = llmMoveLink(view.links, row.link.providerId, +a2 < 0 ? -1 : 1); if (chain) llmFallbackPersist(chain, view.appendLocal); } return; }
+    if (sub === 'add') { LLMP.fallbackPicker = {cursor:0}; llmRepaint(); return; }
+    if (sub === 'pick') { LLMP.fallbackPicker = null; const chain = llmAddLink(view.links, a2); if (chain) llmFallbackPersist(chain, view.appendLocal); else llmRepaint(); return; }
+    if (sub === 'pickCancel') { LLMP.fallbackPicker = null; llmRepaint(); return; }
+    if (sub === 'remove') { llmFallbackRemove(); return; }
+    if (sub === 'local') { llmFallbackPersist(llmDeclaredChain(view.links), !view.appendLocal); return; }
+  }
+}
+function llmFallbackEnter() {
+  if (LLMP.fallbackPicker) { const ids = llmFallbackView().addableProviderIds; const id = ids[LLMP.fallbackPicker.cursor]; if (id) llmAct('fb:pick:' + id); else { LLMP.fallbackPicker = null; llmRepaint(); } return; }
+  llmAct('fb:add');
+}
+function llmFallbackRemove() {
+  const view = llmFallbackView();
+  const row = llmFallbackRowAt();
+  if (row && row.kind === 'link') { const chain = llmRemoveLink(view.links, row.link.providerId); if (chain) llmFallbackPersist(chain, view.appendLocal); }
+}
+/* llm-panel-key-bindings.ts + fallback-key-bindings.ts + the modal keys. */
+function llmKey(e, k, inText) {
+  const mod = e.metaKey || e.ctrlKey || e.altKey;
+  // The add-provider wizard / selector popup owns the keys while open (its inputs type; Esc closes it, not the window).
+  if (SEL.open || WIZ.phase) { if (k === 'Escape') { e.preventDefault(); act('close'); return true; } return inText ? false : true; }
+  if (e.target.id === 'llm-filter') {
+    if (k === 'Escape') { e.preventDefault(); LLMP.filterFocused = false; e.target.blur(); llmRepaint(); return true; }
+    if (k === 'Enter') { e.preventDefault(); const row = llmRowAt(); if (row && row.kind === 'cloudChatModel') { LLMP.filterFocused = false; llmPrimary(row); } return true; }
+    if (k === 'ArrowDown' || k === 'ArrowUp') {
+      e.preventDefault();
+      const s = llmCloudSection(); if (!s.filtered.length) return true;
+      const first = s.sectionStart, last = s.sectionStart + s.filtered.length - 1;
+      LLMP.cursor.cloud = Math.min(last, Math.max(first, LLMP.cursor.cloud + (k === 'ArrowDown' ? 1 : -1)));
+      llmRepaintList(); return true;
+    }
+    return false;
+  }
+  if (e.target.id === 'llm-url') {
+    if (k === 'Enter') { e.preventDefault(); llmExternalSave(); return true; }
+    if (k === 'Escape') { e.preventDefault(); llmAct('external:cancel'); return true; }
+    return false;
+  }
+  if (inText || mod) return false;
+  if (LLMP.view === 'logs') {
+    if (k === 'Escape') { e.preventDefault(); llmAct('back'); return true; }
+    if (k === 'r') { e.preventDefault(); llmLogsRefresh(); return true; }
+    return true;
+  }
+  if (LLMP.confirm) {
+    if (k === 'y' && LLMP.confirm.kind !== 'removeEmbedding') { e.preventDefault(); llmAct('confirm'); return true; }
+    if (k === 'n' || k === 'Escape') { e.preventDefault(); llmAct('cancel'); return true; }
+    return true;
+  }
+  if (LLMP.steerUrl !== null) {
+    if (k === 'y') { e.preventDefault(); llmAct('steer:y'); return true; }
+    if (k === 'n' || k === 'Escape') { e.preventDefault(); llmAct('steer:n'); return true; }
+    return true;
+  }
+  if (LLMP.externalDraft !== null) { if (k === 'Escape') { e.preventDefault(); llmAct('external:cancel'); return true; } return true; }
+  if (LLMP.mode === 'fallback') {
+    if (LLMP.fallbackPicker) {
+      const n = llmFallbackView().addableProviderIds.length;
+      if (k === 'Escape') { e.preventDefault(); llmAct('fb:pickCancel'); return true; }
+      if (k === 'j' || k === 'ArrowDown') { e.preventDefault(); LLMP.fallbackPicker.cursor = Math.min(LLMP.fallbackPicker.cursor + 1, Math.max(0, n - 1)); llmRepaint(); return true; }
+      if (k === 'k' || k === 'ArrowUp') { e.preventDefault(); LLMP.fallbackPicker.cursor = Math.max(LLMP.fallbackPicker.cursor - 1, 0); llmRepaint(); return true; }
+      if (k === 'Enter') { e.preventDefault(); llmFallbackEnter(); return true; }
+      return true;
+    }
+    const n = llmFallbackRows().length;
+    if (k === 'j' || k === 'ArrowDown') { e.preventDefault(); LLMP.cursor.fallback = Math.min(LLMP.cursor.fallback + 1, Math.max(0, n - 1)); llmRepaint(); return true; }
+    if (k === 'k' || k === 'ArrowUp') { e.preventDefault(); LLMP.cursor.fallback = Math.max(LLMP.cursor.fallback - 1, 0); llmRepaint(); return true; }
+    if (k === '<' || k === '>') { e.preventDefault(); llmAct('fb:move:' + (k === '<' ? -1 : 1)); return true; }
+    if (k === 'a' || k === 'Enter') { e.preventDefault(); llmAct('fb:add'); return true; }
+    if (k === 'd') { e.preventDefault(); llmAct('fb:remove'); return true; }
+    if (k === 'l') { e.preventDefault(); llmAct('fb:local'); return true; }
+  }
+  if (k === 'f') { e.preventDefault(); llmAct('filter'); return true; }
+  if (k === 'p' && LLMP.mode === 'cloud') { e.preventDefault(); return true; } // inert facet (no pricing in the CLI list)
+  const n = llmRows().length;
+  if (k === 'j' || k === 'ArrowDown') { e.preventDefault(); LLMP.cursor[LLMP.mode] = Math.min(LLMP.cursor[LLMP.mode] + 1, Math.max(0, n - 1)); llmRepaint(); return true; }
+  if (k === 'k' || k === 'ArrowUp') { e.preventDefault(); LLMP.cursor[LLMP.mode] = Math.max(LLMP.cursor[LLMP.mode] - 1, 0); llmRepaint(); return true; }
+  if (k === 'Enter') { e.preventDefault(); llmAct('enter'); return true; }
+  if (k === '[' || k === 'ArrowLeft') { e.preventDefault(); llmAct('mode:prev'); return true; }
+  if (k === ']' || k === 'ArrowRight') { e.preventDefault(); llmAct('mode:next'); return true; }
+  const map = {e:'embedding', E:'embToggle', n:'add', c:'configure', s:'daemon', B:'backend', L:'logs', r:'refresh', d:'remove', U:'autoUpdate', G:'device'};
+  if (map[k]) { e.preventDefault(); llmAct(map[k]); return true; }
+  if (k === 'a') { e.preventDefault(); return true; } // add from Hugging Face: needs the TUI
+  return false;
+}
+/* The pull stream for the LLM tab's downloads, guarded by its own owner flag like the SEL/MP subscribers. */
+if (BR) {
+  BR.onPull((ev) => {
+    if (!ev || !LLMP.pulling) return;
+    if (ev.line) { LLMP.pullLog.push(ev.line); const box = document.getElementById('llm-pull-line'); if (box) box.textContent = ev.line; }
+    if (ev.done) {
+      const p = LLMP.pulling; LLMP.pulling = null;
+      if (ev.ok) { LLMP.msg = {text:'local-llm: ' + p.id + ' installed'}; llmRefresh().then(() => { const row = llmRows('local').find((r) => r.model && r.model.id === p.id); if (row && LLMP.mode === 'local') llmPrimary(row); }); }
+      else { LLMP.statusErr = ev.error || 'the download failed'; llmRepaint(); }
+    }
+  });
+}
+
+/* ---------------- Telegram tab (setup-state.ts, telegram-panel.tsx, telegram-token-prompt.tsx,
+   tui-telegram-orchestrator.ts, telegram-key-bindings.ts). The channel state, bot identity and
+   pairing live inside the serve process's channel — nothing on the HTTP API exposes them, so
+   the tab shows config + .env facts and says where pairing happens. ---------------- */
+
+function telegramVisible() { return !!S.settings && settingsPaneId(S.settingsPane) === 'telegram'; }
+function tgCfgBlock() { const t = LIVE_CONFIG && LIVE_CONFIG.telegram; return t && typeof t === 'object' ? t : null; }
+function tgEnabled() { const t = tgCfgBlock(); if (t && typeof t.enabled === 'boolean') return t.enabled; return TG.cfg && typeof TG.cfg.enabled === 'boolean' ? TG.cfg.enabled : null; }
+function tgOwner() { const t = tgCfgBlock(); if (t && 'ownerUserId' in t) return t.ownerUserId === undefined ? null : t.ownerUserId; return TG.cfg && TG.cfg.ownerUserId !== undefined ? TG.cfg.ownerUserId : null; }
+function tgHasToken() { if (!TG.keysKnown) return null; return TG.dotenvKeys.includes('TELEGRAM_BOT_TOKEN') || TG.envKeys.includes('TELEGRAM_BOT_TOKEN'); }
+function telegramTabEntered() { tgRefresh(); }
+function tgRepaint() { if (telegramVisible()) paneRepaintKeepFocus(telegramTab()); }
+/* R refresh (orchestrator refreshSettings): config + the key names in the env and .env. */
+async function tgRefresh() {
+  if (!BR || TG.keysBusy) return;
+  TG.keysBusy = true;
+  const stateDir = memStateDir();
+  const [cfg, env, dotenv, eff] = await Promise.all([
+    BR.configGet(), BR.envPresent(['TELEGRAM_BOT_TOKEN']), stateDir ? BR.dotenvKeys(stateDir) : Promise.resolve({ok:true, keys:[]}),
+    tgCfgBlock() && typeof tgCfgBlock().enabled === 'boolean' ? Promise.resolve(null) : BR.configGetKey('telegram'),
+  ]);
+  TG.keysBusy = false;
+  if (cfg && cfg.ok && cfg.config) LIVE_CONFIG = cfg.config;
+  TG.envKeys = Array.isArray(env) ? env : [];
+  TG.dotenvKeys = dotenv && dotenv.ok ? dotenv.keys : [];
+  if (dotenv && dotenv.ok === false) TG.lastError = 'could not read .env: ' + (dotenv.error || 'unknown error');
+  if (eff && eff.ok && eff.value && typeof eff.value === 'object') TG.cfg = eff.value;
+  TG.keysKnown = true;
+  tgRepaint();
+}
+function telegramTab() {
+  const hasToken = tgHasToken();
+  const enabled = tgEnabled();
+  const owner = tgOwner();
+  let body = '';
+  if (TG.mode === 'tokenPrompt') body += tgTokenPromptHTML();
+  else if (hasToken === null) body += '<div class="ter">reading .env…</div>';
+  else if (!hasToken) {
+    // setup-state.ts not_connected (no token).
+    body += '<div class="tuimodal tgcard"><b>Connect Telegram</b>'
+      + '<div class="ter">Create a bot with @BotFather, copy the token, and paste it here. The token is stored only on this machine.</div>'
+      + '<div style="margin-top:8px"><button class="skpf skpaccent" data-act="telegram:token">Press Enter to paste a bot token</button></div></div>';
+  } else if (owner === null) {
+    // setup-state.ts needs_pairing; the CTA would open the pairing window, which only the live channel can.
+    body += '<div class="tuimodal tgcard"><b>One last step — confirm it\'s you</b>'
+      + '<div class="ter">Open Telegram, DM your bot any message. Atomic Agent will recognise you as the owner.</div>'
+      + '<div class="ter" style="margin-top:8px">' + esc(TG_PAIRING_NOTE) + '</div></div>';
+  } else {
+    // Token + owner: the TUI would say "✅ Telegram is connected" only with the channel `up`, which the desktop cannot see.
+    body += '<div class="ter">channel state is not exposed by the agent\'s HTTP API — the Telegram tab in `atag tui` shows it live</div>';
+  }
+  const advanced = TG.showAdvanced || (hasToken && owner !== null);
+  if (advanced && TG.mode !== 'tokenPrompt') body += tgAdvancedHTML(enabled, hasToken, owner);
+  // telegram-panel.tsx keeps `· <message>` inside AdvancedControls; here it is always shown, because the desktop's message carries the restart the serve process needs.
+  if (TG.message) body += '<div class="ter" style="margin-top:8px">· ' + esc(TG.message) + (TG.restart ? ' <span class="ter">(the agent loads .env and config.json at start)</span> <button class="btn btn-s" data-act="agent:restart" style="height:22px">Restart Agent Runtime</button>' : '') + '</div>';
+  return '<div class="tui">' + body
+    + '<div class="tuihint"><button data-act="telegram:advanced">' + (TG.showAdvanced ? 'a — hide advanced' : 'a — advanced') + '</button></div></div>';
+}
+/* telegram-panel.tsx AdvancedControls; `state` is the one fact the desktop cannot read. */
+function tgAdvancedHTML(enabled, hasToken, owner) {
+  return '<div style="margin-top:8px"><span class="ter">state </span><b class="ter" title="no channel status route in this agent\'s HTTP API — the state lives inside the serve process">unknown</b>'
+    + '<span class="ter">   enabled </span><span class="' + (enabled ? 'skpaccent' : 'ter') + '">' + (enabled === null ? '—' : enabled ? 'yes' : 'no') + '</span>'
+    + '<span class="ter">   token </span><span class="' + (hasToken ? 'skpaccent' : 'tuierr') + '">' + (hasToken === null ? '—' : hasToken ? 'set' : 'missing') + '</span>'
+    + '<span class="ter">   owner </span><span class="' + (owner === null ? 'tuierr' : 'skpaccent') + '">' + (owner === null ? 'unset' : esc(String(owner))) + '</span></div>'
+    + (TG.lastError ? '<div class="tuierr">! ' + esc(TG.lastError) + '</div>' : '')
+    + '<div class="tuihint" style="margin-top:8px">' + tuiBtn('e — ' + (enabled ? 'disable' : 'enable'), 'telegram:enable', {disabled:TG.busy || enabled === null}) + '<span>·</span>' + tuiBtn('r — restart', 'telegram:restart') + '<span>·</span>' + tuiBtn('R — refresh', 'telegram:refresh') + '</div>'
+    + '<div class="tuihint">' + tuiBtn('T — clear token', 'telegram:clearToken', {disabled:TG.busy || !hasToken}) + '<span>·</span>' + tuiBtn('O — clear owner', 'telegram:clearOwner', {disabled:TG.busy || owner === null}) + '<span>·</span>' + tuiBtn('t — change token', 'telegram:token') + '<span>·</span>' + tuiBtn('o — re-pair', 'telegram:pair', {disabled:true, title:TG_PAIRING_NOTE}) + '</div>'
+    ;
+}
+/* telegram-token-prompt.tsx: a password input masks the token; the value never reaches state or the DOM as text. */
+function tgTokenPromptHTML() {
+  const t = TG.token;
+  return '<div class="tuimodal tgcard"><b>bot token</b>'
+    + '<div class="ter">Paste the token issued by @BotFather. Saved to <span class="skpaccent">.env</span> at mode 0600.</div>'
+    + '<div><span class="ter">&gt; </span><input id="tg-token" type="password" autocomplete="off" spellcheck="false"' + (t.submitting ? ' disabled' : '') + '></div>'
+    + (t.error ? '<div class="tuierr">! ' + esc(t.error) + '</div>' : '')
+    + '<div class="ter"><button class="skpf" data-act="telegram:tokenSave"' + (t.submitting ? ' disabled' : '') + '>Enter to save</button> · <button class="skpf" data-act="telegram:tokenCancel">Esc to cancel</button> · Backspace to edit' + (t.submitting ? ' · saving…' : '') + '</div></div>';
+}
+function tgSetMessage(text, restart) { TG.message = text; TG.restart = !!restart; TG.lastError = null; }
+/* tui-telegram-orchestrator.ts submitToken: empty fails locally, then
+   channel.setToken → <stateDir>/.env TELEGRAM_BOT_TOKEN (the dotenv writer
+   port), "token saved", then the connect chain's next step — with a
+   channel the desktop cannot see, that is `set_enabled` when telegram is
+   off (setup-flow.ts decideConnectAction). */
+async function tgTokenSave(value) {
+  const input = document.getElementById('tg-token');
+  const raw = value !== undefined ? value : (input ? input.value : '');
+  const trimmed = String(raw || '').trim();
+  if (!trimmed) { TG.token.error = 'token is empty'; tgRepaint(); const n = $('#tg-token'); if (n) n.focus(); return {ok:false, error:'token is empty'}; }
+  const stateDir = memStateDir();
+  if (!BR || !stateDir) { TG.token.error = 'state dir unknown'; tgRepaint(); return {ok:false, error:'state dir unknown'}; }
+  TG.token.submitting = true; TG.busy = true; tgRepaint();
+  const res = await BR.dotenvSet(stateDir, 'TELEGRAM_BOT_TOKEN', trimmed);
+  if (!res || res.ok === false) { TG.token.submitting = false; TG.busy = false; TG.token.error = (res && res.error) || 'setToken failed'; TG.lastError = 'setToken failed: ' + TG.token.error; tgRepaint(); return {ok:false, error:TG.token.error}; }
+  TG.mode = 'list'; TG.token = {error:null, submitting:false};
+  tgSetMessage('token saved', true);
+  await tgRefresh();
+  if (tgEnabled() === false) {
+    const w = await BR.configSet('telegram.enabled', 'true');
+    if (!w || w.ok === false) TG.lastError = 'setEnabled failed: ' + ((w && w.error) || 'unknown error');
+    else tgSetMessage('telegram enabled', true);
+    await tgRefresh();
+  }
+  TG.busy = false; tgRepaint();
+  return {ok:true};
+}
+async function tgClearToken() {
+  const stateDir = memStateDir();
+  if (!BR || !stateDir || TG.busy) return;
+  TG.busy = true; tgRepaint();
+  const res = await BR.dotenvSet(stateDir, 'TELEGRAM_BOT_TOKEN', null);
+  TG.busy = false;
+  if (!res || res.ok === false) TG.lastError = 'clearToken failed: ' + ((res && res.error) || 'unknown error');
+  else tgSetMessage('token cleared', true);
+  await tgRefresh();
+}
+async function tgSetEnabled(enabled) {
+  if (!BR || TG.busy) return;
+  TG.busy = true; tgRepaint();
+  const res = await BR.configSet('telegram.enabled', String(!!enabled));
+  TG.busy = false;
+  if (!res || res.ok === false) TG.lastError = 'setEnabled failed: ' + ((res && res.error) || 'unknown error');
+  else tgSetMessage(enabled ? 'telegram enabled' : 'telegram disabled', true);
+  await tgRefresh();
+}
+async function tgClearOwner() {
+  if (!BR || TG.busy) return;
+  TG.busy = true; tgRepaint();
+  const res = await BR.configUnset('telegram.ownerUserId');
+  TG.busy = false;
+  if (!res || res.ok === false) TG.lastError = 'setOwnerUserId failed: ' + ((res && res.error) || 'unknown error');
+  else tgSetMessage('owner cleared — telegram now ignores all DMs', true);
+  await tgRefresh();
+}
+function telegramAct(what) {
+  const [verb] = what.split(':');
+  const arg = what.slice(verb.length + 1);
+  if (verb === 'advanced') { TG.showAdvanced = !TG.showAdvanced; tgRepaint(); return; }
+  if (verb === 'token') { TG.mode = 'tokenPrompt'; TG.token = {error:null, submitting:false}; tgRepaint(); const n = $('#tg-token'); if (n) n.focus(); return; }
+  if (verb === 'tokenSave') { tgTokenSave(arg || undefined); return; }
+  if (verb === 'tokenCancel') { TG.mode = 'list'; TG.token = {error:null, submitting:false}; tgRepaint(); return; }
+  if (verb === 'clearToken') { tgClearToken(); return; }
+  if (verb === 'enable') { const e = tgEnabled(); if (e !== null) tgSetEnabled(!e); return; }
+  if (verb === 'clearOwner') { tgClearOwner(); return; }
+  // `r — restart` restarts the channel in the TUI; the desktop restarts the agent runtime, which restarts the channel with it.
+  if (verb === 'restart') { tgSetMessage('telegram restarted with the agent runtime', false); act('agent:restart'); return; }
+  if (verb === 'refresh') { tgRefresh(); return; }
+  if (verb === 'pair') return; // disabled: pairing needs the live channel
+}
+/* telegram-key-bindings.ts: list-mode letters; the token prompt owns its input. */
+function telegramKey(e, k, inText) {
+  if (e.target.id === 'tg-token') {
+    if (k === 'Enter') { e.preventDefault(); tgTokenSave(); return true; }
+    if (k === 'Escape') { e.preventDefault(); telegramAct('tokenCancel'); return true; }
+    return false;
+  }
+  if (inText || e.metaKey || e.ctrlKey || e.altKey) return false;
+  if (TG.mode === 'tokenPrompt') { if (k === 'Escape') { e.preventDefault(); telegramAct('tokenCancel'); return true; } return false; }
+  // Enter = the connect flow's next step: paste a token, else (no owner) the pairing that needs the TUI.
+  if (k === 'Enter') { e.preventDefault(); if (tgHasToken() === false) telegramAct('token'); else if (tgOwner() === null) tgSetMessage(TG_PAIRING_NOTE, false), tgRepaint(); return true; }
+  const map = {a:'advanced', e:'enable', t:'token', T:'clearToken', o:'pair', O:'clearOwner', r:'restart', R:'refresh'};
+  if (map[k]) { e.preventDefault(); telegramAct(map[k]); return true; }
+  return false;
+}
+
+/* ---------------- Import tab (import-panel.tsx, import-panel-state.ts, import-key-bindings.ts,
+   import-orchestrator.ts). The run is `atag import <hermes|openclaw> … --dry-run|--yes` (the
+   HTTP API has no import route); its report lines are parsed into the TUI's rows. ---------------- */
+
+function importVisible() { return !!S.settings && settingsPaneId(S.settingsPane) === 'import'; }
+function impFocusOrder(source) { const order = ['sourceType', 'source', 'sessions', 'cron']; if (source === 'hermes') order.push('secrets'); order.push('overwrite', 'limit', 'run'); return order; }
+function impRepaint() { if (importVisible()) paneRepaintKeepFocus(importTab()); }
+async function importTabEntered() {
+  if (!BR || IMP.defaults) return;
+  const d = await BR.importDefaults();
+  if (d && d.hermes) { IMP.defaults = d; if (!IMP.form.sourceDir) IMP.form.sourceDir = d[IMP.form.source] || ''; impRepaint(); }
+}
+function impDefaultDir(source) { return IMP.defaults ? (IMP.defaults[source] || '') : (homeDir() ? homeDir() + (source === 'openclaw' ? '/.openclaw' : '/.hermes') : ''); }
+function importTab() {
+  const f = IMP.form;
+  const sourceLabel = f.source === 'openclaw' ? 'OpenClaw' : 'Hermes';
+  let body = '<b>Import · ' + sourceLabel + ' → atomic-agent</b>';
+  if (IMP.notice) body += '<div class="tuierr" style="margin-top:8px">! ' + esc(IMP.notice) + '</div>';
+  if (IMP.mode === 'configure') body += impFormHTML(f);
+  else if (IMP.mode === 'running') body += '<div class="ter" style="margin-top:8px">importing… please wait</div>';
+  else if ((IMP.mode === 'preview' || IMP.mode === 'done') && IMP.report) body += impReportHTML(IMP.report, IMP.mode === 'done');
+  return '<div class="tui">' + body + '</div>';
+}
+function impLabel(label, focused) { return '<span class="ter">' + esc((focused ? '▸' : ' ') + ' ' + label.padEnd(10) + ': ') + '</span>'; }
+function impFormHTML(f) {
+  const fc = f.focus;
+  const text = (label, field, placeholder) => '<div class="impline">' + impLabel(label, fc === field) + '<input class="impinp' + (f[field === 'source' ? 'sourceDir' : field] ? '' : ' empty') + '" data-imp-field="' + (field === 'source' ? 'sourceDir' : 'limit') + '" data-imp-focus="' + field + '" value="' + esc(f[field === 'source' ? 'sourceDir' : field]) + '" placeholder="' + esc(placeholder) + '" autocomplete="off" spellcheck="false"></div>';
+  const toggle = (label, field, hint) => '<div class="impline">' + impLabel(label, fc === field) + '<button class="skpf' + (f[field] ? ' sk-on' : ' ter') + '" data-act="import:toggle:' + field + '">[' + (f[field] ? '✓' : ' ') + ']</button>' + (hint ? '<span class="ter">  ' + esc(hint) + '</span>' : '') + '</div>';
+  return '<div class="tuimodal impform">'
+    + '<div class="impline">' + impLabel('source-of', fc === 'sourceType') + '<button class="skpf' + (f.source === 'hermes' ? ' sk-on' : ' ter') + '" data-act="import:source:hermes">' + (f.source === 'hermes' ? '‹hermes›' : ' hermes ') + '</button><span class="ter"> / </span><button class="skpf' + (f.source === 'openclaw' ? ' sk-on' : ' ter') + '" data-act="import:source:openclaw">' + (f.source === 'openclaw' ? '‹openclaw›' : ' openclaw ') + '</button></div>'
+    + text('source', 'source', f.source === 'openclaw' ? '~/.openclaw' : '~/.hermes')
+    + toggle('sessions', 'sessions') + toggle('cron', 'cron')
+    + (f.source === 'hermes' ? toggle('secrets', 'secrets', 'OPENROUTER_API_KEY / AIMLAPI_API_KEY') : '')
+    + toggle('overwrite', 'overwrite', 'replace differing destinations')
+    + text('limit', 'limit', '(no limit)')
+    + '<div class="impline" style="margin-top:8px"><button class="skpf' + (fc === 'run' ? ' sk-on' : ' ter') + '" data-act="import:preview"' + (IMP.busy ? ' disabled' : '') + '>' + (fc === 'run' ? '▸' : ' ') + ' Run preview</button></div>'
+    + '<div class="ter" style="margin-top:8px">↑↓ move · ←/→ switch source · space toggle · type to edit · Enter on Run = preview · Ctrl+Enter preview</div></div>';
+}
+/* import-panel.tsx ReportView / ReportRow / SummaryRow, over the parsed CLI report. */
+function impReportHTML(report, executed) {
+  const items = report.items.slice(0, IMP_REPORT_ROWS);
+  const hidden = report.items.length - items.length;
+  const s = report.summary;
+  const color = (st) => ({migrated:'sk-on', skipped:'ter', conflict:'sk-off', error:'tuierr'}[st] || 'ter');
+  return '<div style="margin-top:8px"><div class="ter">' + (executed ? 'result' : 'preview (dry-run)') + ' · ' + report.items.length + ' item' + (report.items.length === 1 ? '' : 's') + '</div>'
+    + items.map((it) => {
+      const arrow = it.source && it.destination ? it.source + ' → ' + it.destination : (it.source || it.destination || '');
+      return '<div class="improw" data-import-row="1"><span class="' + color(it.status) + '">' + esc(it.status.padEnd(8)) + '</span><span class="ter"> [' + esc(it.kind) + '] ' + esc(arrow) + (it.reason ? ' (' + esc(it.reason) + ')' : '') + '</span></div>';
+    }).join('')
+    + (hidden > 0 ? '<div class="ter">  … ' + hidden + ' more</div>' : '')
+    + '<div style="margin-top:8px"><span class="sk-on">migrated=' + s.migrated + '</span><span class="ter"> · skipped=' + s.skipped + '</span><span class="sk-off"> · conflict=' + s.conflict + '</span><span class="tuierr"> · error=' + s.error + '</span></div>'
+    + (IMP.state === 'nothing' ? '<div class="ter">Nothing to import.</div>' : '')
+    + (executed ? tuiHints([['Enter / Esc back to form', 'import:reset']]) : tuiHints([['y / Enter apply', 'import:apply', {disabled:IMP.busy}], ['e edit', 'import:reset'], ['Esc cancel', 'import:reset']]))
+    + '</div>';
+}
+/* import-orchestrator.ts runImport: the option set from the toggles, the
+   limit parsed, then one `atag import` subprocess — never while a turn is
+   running (it writes sessions.sqlite / tasks.sqlite beside the serve). */
+async function impRun(execute) {
+  if (!BR || IMP.busy) return {ok:false, error:'busy'};
+  if (S.busy) { IMP.notice = 'Not while a turn is running'; impRepaint(); return {ok:false, error:IMP.notice}; }
+  const f = IMP.form;
+  const limit = f.limit.trim();
+  if (limit && !/^\d+$/.test(limit)) { IMP.mode = 'configure'; IMP.notice = 'limit must be a non-negative integer'; impRepaint(); return {ok:false, error:IMP.notice}; }
+  const exclude = []; if (!f.sessions) exclude.push('sessions'); if (!f.cron) exclude.push('cron');
+  const selected = f.source === 'hermes' ? (f.sessions || f.cron || f.secrets) : (f.sessions || f.cron);
+  if (!selected) { IMP.mode = 'configure'; IMP.notice = f.source === 'hermes' ? 'nothing selected to import — enable sessions, cron or secrets' : 'nothing selected to import — enable sessions or cron'; impRepaint(); return {ok:false, error:IMP.notice}; }
+  IMP.mode = 'running'; IMP.notice = null; IMP.busy = true; IMP.runs++; impRepaint();
+  const res = await BR.importRun({source:f.source, dir:f.sourceDir.trim() || impDefaultDir(f.source), exclude, secrets:f.secrets, overwrite:f.overwrite, limit, execute});
+  IMP.busy = false;
+  if (!res || !res.ok) { IMP.mode = 'configure'; IMP.notice = (res && res.error) || 'import failed'; impRepaint(); return {ok:false, error:IMP.notice}; }
+  IMP.report = res.report; IMP.state = res.state;
+  if (res.state === 'non-interactive') { IMP.mode = 'configure'; IMP.notice = 'Non-interactive: re-run with --yes to apply, or --dry-run to preview only.'; impRepaint(); return {ok:false, error:IMP.notice}; }
+  if (execute) {
+    IMP.mode = 'done'; IMP.reportExecuted = true;
+    if (res.state === 'applied') {
+      const s = res.report.summary;
+      toast('import done', 'migrated=' + s.migrated + ' skipped=' + s.skipped + ' conflict=' + s.conflict + ' error=' + s.error);
+      if (f.cron) tasksRefresh();
+      if (f.sessions) loadResources();
+    }
+  } else { IMP.mode = 'preview'; IMP.reportExecuted = false; }
+  impRepaint();
+  return {ok:true, state:res.state, report:res.report};
+}
+function importAct(what) {
+  const [verb, ...rest] = what.split(':');
+  const arg = rest.join(':');
+  const f = IMP.form;
+  if (verb === 'source') { if (arg !== f.source && (arg === 'hermes' || arg === 'openclaw')) { f.source = arg; f.sourceDir = impDefaultDir(arg); if (arg !== 'hermes') f.secrets = false; f.focus = 'sourceType'; } impRepaint(); return; }
+  if (verb === 'toggle') { if (IMP_TOGGLE_FIELDS.includes(arg)) { f[arg] = !f[arg]; f.focus = arg; } impRepaint(); return; }
+  if (verb === 'field') { const [name, ...v] = rest; if (name === 'sourceDir' || name === 'limit') f[name] = v.join(':'); impRepaint(); return; }
+  if (verb === 'focus') { f.focus = arg; impRepaint(); return; }
+  if (verb === 'preview') { f.focus = 'run'; impRun(false); return; }
+  if (verb === 'apply') { if (IMP.mode === 'preview') impRun(true); return; }
+  if (verb === 'reset') { IMP.mode = 'configure'; IMP.report = null; IMP.reportExecuted = false; IMP.notice = null; IMP.state = null; impRepaint(); return; }
+}
+/* import-key-bindings.ts. Text rows are real inputs here: letters type into them, ↑/↓ and Enter walk the form. */
+function importKey(e, k, inText) {
+  const mod = e.metaKey || e.ctrlKey;
+  const f = IMP.form;
+  if (IMP.mode === 'running') return true;
+  if (IMP.mode === 'preview') {
+    if (inText) return false;
+    if (k === 'y' || k === 'Enter') { e.preventDefault(); importAct('apply'); return true; }
+    if (k === 'e' || k === 'n' || k === 'Escape') { e.preventDefault(); importAct('reset'); return true; }
+    return true;
+  }
+  if (IMP.mode === 'done') { if (k === 'Enter' || k === 'Escape') { e.preventDefault(); importAct('reset'); return true; } return !inText; }
+  const order = impFocusOrder(f.source);
+  const move = (d) => { const i = order.indexOf(f.focus); f.focus = order[((i < 0 ? 0 : i) + d + order.length) % order.length]; impRepaint(); const n = document.querySelector('[data-imp-focus="' + f.focus + '"]'); if (n) { n.focus(); n.setSelectionRange(n.value.length, n.value.length); } else { const b = document.activeElement; if (b && b.blur) b.blur(); } };
+  if (e.target.dataset && e.target.dataset.impFocus) {
+    f.focus = e.target.dataset.impFocus;
+    if (k === 'Escape') return false;
+    if (mod && k === 'Enter') { e.preventDefault(); importAct('preview'); return true; }
+    if (k === 'ArrowDown') { e.preventDefault(); move(1); return true; }
+    if (k === 'ArrowUp') { e.preventDefault(); move(-1); return true; }
+    if (k === 'Enter') { e.preventDefault(); move(1); return true; }
+    return false;
+  }
+  if (inText) return false;
+  if (k === 'Escape') return false;
+  if (mod && k === 'Enter') { e.preventDefault(); importAct('preview'); return true; }
+  if (e.altKey || mod) return false;
+  if (k === 'ArrowDown') { e.preventDefault(); move(1); return true; }
+  if (k === 'ArrowUp') { e.preventDefault(); move(-1); return true; }
+  if (k === 'Enter') {
+    e.preventDefault();
+    if (f.focus === 'run') importAct('preview');
+    else if (f.focus === 'sourceType') importAct('source:' + (f.source === 'hermes' ? 'openclaw' : 'hermes'));
+    else if (IMP_TOGGLE_FIELDS.includes(f.focus)) importAct('toggle:' + f.focus);
+    else move(1);
+    return true;
+  }
+  if (f.focus === 'sourceType') { if (k === ' ' || k === 'ArrowLeft' || k === 'ArrowRight') { e.preventDefault(); importAct('source:' + (f.source === 'hermes' ? 'openclaw' : 'hermes')); } return true; }
+  if (IMP_TOGGLE_FIELDS.includes(f.focus)) { if (k === ' ' || k === 'ArrowLeft' || k === 'ArrowRight') { e.preventDefault(); importAct('toggle:' + f.focus); } return true; }
+  if (f.focus === 'source' || f.focus === 'limit') { const n = document.querySelector('[data-imp-focus="' + f.focus + '"]'); if (n && k.length === 1) { n.focus(); return false; } }
+  return true;
+}
+
+/* Hooks for --smoke (Item 7 part C: the LLM, Telegram and Import tabs). */
+if (typeof window !== 'undefined') {
+  window.__llmPane = () => ({mode: LLMP.mode, rows: document.querySelectorAll('#settings [data-llm-row]').length, view: LLMP.view,
+    localRows: (LLMP.local || []).length, embRows: (LLMP.emb || []).length, refreshed: LLMP.lastRefreshedAt, localErr: LLMP.localErr, statusErr: LLMP.statusErr,
+    status: LLMP.status ? {mode: LLMP.status.mode, dataDir: LLMP.status.dataDir, activeModel: LLMP.status.activeModel, daemon: LLMP.status.daemon, health: LLMP.status.health} : null,
+    daemonLabel: llmFormatDaemon(), statusLine: llmStatusLine(), msg: LLMP.msg ? LLMP.msg.text : '', restart: !!(LLMP.msg && LLMP.msg.restart),
+    cursor: Object.assign({}, LLMP.cursor), keysKnown: llmKeysKnown(), modelsFor: LLMP.modelsFor, models: LLMP.models.length, modelsBusy: LLMP.modelsBusy, modelsErr: LLMP.modelsErr,
+    confirm: LLMP.confirm ? Object.assign({}, LLMP.confirm) : null, externalDraft: LLMP.externalDraft, steerUrl: LLMP.steerUrl, picker: LLMP.fallbackPicker ? Object.assign({}, LLMP.fallbackPicker) : null,
+    activeText: llmActiveTextId(), providers: llmCloudProviders().map((p) => ({id: p.id, kind: p.kind, hasKey: llmHasKey(p), active: p.id === llmActiveTextId()})),
+    fallback: llmFallbackView(), section: (() => { const s = llmCloudSection(); return {provider: s.provider ? s.provider.id : null, status: s.status, models: s.models.length, filtered: s.filtered.length}; })(),
+    flatRows: llmRows().map((r) => r.id)});
+  window.__llmOpen = async (mode) => { window.__settingsOpen('llm'); llmSetMode(mode || 'local'); if (LLMP.inflight) await LLMP.inflight; return window.__llmPane(); };
+  window.__llmAct = (what) => { llmAct(what); return window.__llmPane(); };
+  window.__llmRefresh = async () => { await llmRefresh(); return window.__llmPane(); };
+  window.__llmFallbackPersist = async (chain, appendLocal) => { await llmFallbackPersist(chain, appendLocal); return window.__llmPane(); };
+  window.__llmProbe = (url) => (BR ? BR.llamaProbe(url) : Promise.resolve({ok:false, error:'no bridge'}));
+  window.__llmExternalSave = async (url) => { llmSetMode('external'); LLMP.externalDraft = String(url); LLMP.externalInvalid = false; llmRepaint(); const n = document.getElementById('llm-url'); if (n) n.value = String(url); await llmExternalSave(); return window.__llmPane(); };
+  window.__telegram = () => ({hasToken: tgHasToken(), enabled: tgEnabled(), owner: tgOwner(), mode: TG.mode, showAdvanced: TG.showAdvanced, message: TG.message || '', restart: !!TG.restart,
+    lastError: TG.lastError, dotenvKeys: TG.dotenvKeys.slice(), envKeys: TG.envKeys.slice(), keysKnown: TG.keysKnown, busy: TG.busy, tokenError: TG.token.error});
+  window.__telegramAct = (what) => { telegramAct(what); return window.__telegram(); };
+  window.__telegramTokenSave = async (value) => { TG.mode = 'tokenPrompt'; TG.token = {error:null, submitting:false}; const r = await tgTokenSave(value); return Object.assign({}, r, {state: window.__telegram()}); };
+  window.__telegramClearToken = async () => { await tgClearToken(); return window.__telegram(); };
+  window.__telegramRefresh = async () => { await tgRefresh(); return window.__telegram(); };
+  window.__import = () => ({mode: IMP.mode, form: Object.assign({}, IMP.form), runs: IMP.runs, notice: IMP.notice, state: IMP.state, busy: IMP.busy,
+    report: IMP.report ? {items: IMP.report.items.length, summary: Object.assign({}, IMP.report.summary), first: IMP.report.items[0] || null} : null,
+    painted: document.querySelectorAll('#settings [data-import-row]').length});
+  window.__importRuns = () => IMP.runs;
+  window.__importAct = (what) => { importAct(what); return window.__import(); };
+  window.__importRun = async (execute) => { const r = await impRun(!!execute); return Object.assign({}, r, {state2: window.__import()}); };
 }

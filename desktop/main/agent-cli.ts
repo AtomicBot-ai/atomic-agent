@@ -2,6 +2,9 @@ import { execFile, spawn } from "node:child_process";
 import { totalmem } from "node:os";
 import { closeSync, openSync, readSync, statSync } from "node:fs";
 import { join } from "node:path";
+// Item 7 part C (LLM / Telegram / Import tabs): the .env writer and llama log tail.
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { promisify } from "node:util";
 
 import { resolveBinary } from "./agent-client.js";
@@ -658,4 +661,524 @@ export async function skillInstall(
   const message = (res.stderr.trim() || res.error || "install failed").split("\n").pop() ?? "";
   if (/flagged dangerous by the security scan/.test(res.stderr)) return { ok: false, blocked: true, message };
   return { ok: false, error: message };
+}
+
+/* ---------------- Item 7 part C (LLM / Telegram / Import tabs): models CLI, import, .env, llama probe ---------------- */
+
+const MODEL_ID_RE = /^[\w.-]{1,64}$/;
+
+export interface ModelsStatus {
+  mode: string;
+  dataDir: string | null;
+  backend: string | null;
+  /** First token of the `backend:` line — the tag the TUI prints in `llama.cpp backend [<tag>]`. */
+  backendTag: string | null;
+  compute: string | null;
+  activeModel: string | null;
+  activeDownloaded: boolean | null;
+  /** `running (pid N)` | `stopped` as the CLI prints it, plus the parsed pid. */
+  daemon: string;
+  daemonRunning: boolean;
+  daemonPid: number | null;
+  daemonUrl: string | null;
+  health: string | null;
+  url: string | null;
+}
+
+/**
+ * `atag models status` — `mode:`, `data dir:`, `backend:`, `compute:`,
+ * `active model:`, `daemon:`, `health:` in managed mode; `mode: external`
+ * + `url:` otherwise (src/cli/models-handlers.ts). Parsed by label, never
+ * by column.
+ */
+export async function modelsStatus(): Promise<{ ok: boolean; status?: ModelsStatus; error?: string }> {
+  const res = await cli(["models", "status"], 30_000);
+  if (!res.ok) return { ok: false, error: res.error };
+  const fields: Record<string, string> = {};
+  for (const line of res.stdout.split("\n")) {
+    const m = line.match(/^([a-z ]+):\s*(.*)$/);
+    if (m) fields[m[1]!.trim()] = (m[2] ?? "").trim();
+  }
+  if (!fields["mode"]) return { ok: false, error: "could not parse models status" };
+  const daemonLine = fields["daemon"] ?? "";
+  const pid = daemonLine.match(/pid (\d+)/);
+  const urlMatch = daemonLine.match(/https?:\/\/\S+/);
+  const active = fields["active model"] ?? "";
+  const activeId = active.split(/\s+/)[0] || null;
+  return {
+    ok: true,
+    status: {
+      mode: fields["mode"]!,
+      dataDir: fields["data dir"] || null,
+      backend: fields["backend"] || null,
+      backendTag: fields["backend"] ? (fields["backend"].split(/\s+/)[0] ?? null) : null,
+      compute: fields["compute"] || null,
+      activeModel: activeId && activeId !== "(none)" && activeId !== "none" ? activeId : null,
+      activeDownloaded: active ? /downloaded/.test(active) && !/not downloaded/.test(active) : null,
+      daemon: daemonLine.replace(/\s+https?:\/\/\S+\s*$/, "").trim() || "unknown",
+      daemonRunning: /^running/.test(daemonLine),
+      daemonPid: pid ? Number(pid[1]) : null,
+      daemonUrl: urlMatch ? urlMatch[0] : null,
+      health: fields["health"] || null,
+      url: fields["url"] || null,
+    },
+  };
+}
+
+export interface EmbeddingCatalogModel {
+  id: string;
+  size: string;
+  dim: string;
+  pooling: string;
+  downloaded: boolean;
+  active: boolean;
+}
+
+/**
+ * `atag models list-embeddings`: the `ID | SIZE | DIM | POOLING | DL | ACTIVE`
+ * table plus the trailer `embedding daemon: <running (pid N)|stopped> on
+ * port N, health: <h>`.
+ */
+export async function modelsListEmbeddings(): Promise<{
+  ok: boolean; models?: EmbeddingCatalogModel[]; daemon?: { running: boolean; pid: number | null; port: number | null; health: string }; error?: string;
+}> {
+  const res = await cli(["models", "list-embeddings"], 45_000);
+  if (!res.ok) return { ok: false, error: res.error };
+  const models: EmbeddingCatalogModel[] = [];
+  let daemon: { running: boolean; pid: number | null; port: number | null; health: string } | undefined;
+  for (const line of res.stdout.split("\n")) {
+    const trailer = line.match(/^embedding daemon:\s*(.+?) on port (\d+), health: (.*)$/);
+    if (trailer) {
+      const pid = trailer[1]!.match(/pid (\d+)/);
+      daemon = { running: /^running/.test(trailer[1]!), pid: pid ? Number(pid[1]) : null, port: Number(trailer[2]), health: trailer[3]!.trim() };
+      continue;
+    }
+    if (!line.includes("|")) continue;
+    const cells = line.split("|").map((c) => c.trim());
+    if (cells.length < 5 || cells[0] === "ID" || !cells[0]) continue;
+    models.push({
+      id: cells[0]!, size: cells[1] ?? "", dim: cells[2] ?? "", pooling: cells[3] ?? "",
+      downloaded: (cells[4] ?? "").toLowerCase() === "yes", active: (cells[5] ?? "").includes("*"),
+    });
+  }
+  if (!models.length) return { ok: false, error: "could not parse the embedding catalog" };
+  return { ok: true, models, ...(daemon ? { daemon } : {}) };
+}
+
+export async function modelsStop(): Promise<CliResult> {
+  return cli(["models", "stop"], 30_000);
+}
+
+/** `atag models remove <id>` — chat models only; the CLI refuses an active model while the daemon runs. */
+export async function modelsRemove(id: string): Promise<CliResult> {
+  if (!MODEL_ID_RE.test(id)) return { ok: false, stdout: "", stderr: "", error: `not a model id: ${id}` };
+  return cli(["models", "remove", id], 60_000);
+}
+
+/** `atag models pull-embedding <id>`, streamed like `modelsPull`. */
+export function modelsPullEmbedding(
+  id: string,
+  onLine: (line: string) => void,
+): { done: Promise<CliResult>; cancel: () => void } {
+  const binary = resolveBinary();
+  if (!binary || !MODEL_ID_RE.test(id)) {
+    return { done: Promise.resolve({ ok: false, stdout: "", stderr: "", error: "cannot start the download" }), cancel: () => {} };
+  }
+  const child = spawn(binary, ["models", "pull-embedding", id], { stdio: ["ignore", "pipe", "pipe"] });
+  let stdout = "";
+  let stderr = "";
+  const relay = (chunk: Buffer, sink: "out" | "err") => {
+    const text = chunk.toString("utf8");
+    if (sink === "out") stdout += text; else stderr += text;
+    for (const line of text.split(/[\r\n]/)) if (line.trim()) onLine(line.trim());
+  };
+  child.stdout.on("data", (c: Buffer) => relay(c, "out"));
+  child.stderr.on("data", (c: Buffer) => relay(c, "err"));
+  const done = new Promise<CliResult>((resolve) => {
+    child.on("exit", (code) => resolve(code === 0 ? { ok: true, stdout, stderr } : { ok: false, stdout, stderr, error: `download exited with code ${code ?? "null"}` }));
+    child.on("error", (err) => resolve({ ok: false, stdout, stderr, error: err.message }));
+  });
+  return { done, cancel: () => child.kill("SIGTERM") };
+}
+
+/** `atag models use-embedding <id>` or `--disable`. */
+export async function modelsUseEmbedding(idOrDisable: string): Promise<CliResult> {
+  if (idOrDisable !== "--disable" && !MODEL_ID_RE.test(idOrDisable)) {
+    return { ok: false, stdout: "", stderr: "", error: `not an embedding model id: ${idOrDisable}` };
+  }
+  return cli(["models", "use-embedding", idOrDisable], 60_000);
+}
+
+/** `atag models update` — downloads the latest backend; stops the daemon first. */
+export async function modelsUpdate(): Promise<CliResult> {
+  return cli(["models", "update"], 300_000);
+}
+
+export interface GpuDevice { id: string; vram: string; name: string; active: boolean }
+
+/** `atag models devices`: `configured device:`, `effective device:`, then the `ID | VRAM | DEVICE` table (`*` marks the active one). */
+export async function modelsDevices(): Promise<{ ok: boolean; configured?: string; effective?: string; devices?: GpuDevice[]; error?: string }> {
+  const res = await cli(["models", "devices"], 60_000);
+  if (!res.ok) return { ok: false, error: res.error };
+  const devices: GpuDevice[] = [];
+  let configured = "";
+  let effective = "";
+  for (const line of res.stdout.split("\n")) {
+    const c = line.match(/^configured device:\s*(.*)$/);
+    if (c) { configured = c[1]!.trim(); continue; }
+    const e = line.match(/^effective device:\s*(.*)$/);
+    if (e) { effective = e[1]!.trim(); continue; }
+    if (!line.includes("|")) continue;
+    const cells = line.split("|").map((x) => x.trim());
+    if (cells.length < 3 || cells[0] === "ID" || !cells[0]) continue;
+    const active = cells[0]!.startsWith("*");
+    devices.push({ id: cells[0]!.replace(/^\*\s*/, ""), vram: cells[1] ?? "", name: cells[2] ?? "", active });
+  }
+  return { ok: true, configured, effective, devices };
+}
+
+export async function modelsUseDevice(id: string): Promise<CliResult> {
+  if (!/^[\w.-]{1,32}$/.test(id)) return { ok: false, stdout: "", stderr: "", error: `not a device id: ${id}` };
+  return cli(["models", "use-device", id], 30_000);
+}
+
+export interface ImportRunInput {
+  source: "hermes" | "openclaw";
+  dir: string;
+  exclude: string[];
+  secrets: boolean;
+  overwrite: boolean;
+  limit: string;
+  execute: boolean;
+}
+export interface ImportItem { kind: string; status: string; source: string | null; destination: string | null; reason: string | null }
+export interface ImportReportParsed { items: ImportItem[]; summary: { migrated: number; skipped: number; conflict: number; error: number } }
+
+/**
+ * `atag import <hermes|openclaw> --source <dir> [--exclude a,b]
+ * [--migrate-secrets] [--overwrite] [--limit N] (--dry-run | --yes)`.
+ * Exactly one of the two flags is always passed: without either, a
+ * non-TTY run prints "Non-interactive: …" and exits 0 having written
+ * nothing (src/cli/import-command.ts). The report block
+ * (`  [<kind>] <status> <src -> dst>( (<reason>))` … `  ----` …
+ * `  migrated=… skipped=… conflict=… error=…`) is parsed into the TUI's
+ * rows; `state` names what the run did.
+ */
+export async function importRun(input: ImportRunInput, cwd?: string): Promise<{
+  ok: boolean; state?: "preview" | "applied" | "nothing" | "non-interactive"; report?: ImportReportParsed; stdout?: string; stderr?: string; error?: string;
+}> {
+  if (input.source !== "hermes" && input.source !== "openclaw") return { ok: false, error: "source must be hermes or openclaw" };
+  const dir = input.dir.trim();
+  if (!dir) return { ok: false, error: "source dir is empty" };
+  const args = ["import", input.source, "--source", dir];
+  const exclude = input.exclude.filter((x) => x === "sessions" || x === "cron");
+  if (exclude.length) args.push("--exclude", exclude.join(","));
+  if (input.secrets && input.source === "hermes") args.push("--migrate-secrets");
+  if (input.overwrite) args.push("--overwrite");
+  const limit = input.limit.trim();
+  if (limit) {
+    if (!/^\d+$/.test(limit)) return { ok: false, error: "limit must be a non-negative integer" };
+    args.push("--limit", limit);
+  }
+  args.push(input.execute ? "--yes" : "--dry-run");
+  const res = await cli(args, 300_000, cwd);
+  if (!res.ok && !res.stdout.trim()) return { ok: false, error: res.error, stdout: res.stdout, stderr: res.stderr };
+  const lines = res.stdout.replace(/\r\n/g, "\n").split("\n");
+  // The block after the LAST `Preview:` / `Result:` header is the one that describes what happened.
+  let start = -1;
+  lines.forEach((l, i) => { if (l === "Preview:" || l === "Result:") start = i; });
+  const items: ImportItem[] = [];
+  let summary = { migrated: 0, skipped: 0, conflict: 0, error: 0 };
+  let sawSummary = false;
+  if (start >= 0) {
+    for (const line of lines.slice(start + 1)) {
+      const s = line.match(/^\s*migrated=(\d+) skipped=(\d+) conflict=(\d+) error=(\d+)\s*$/);
+      if (s) { summary = { migrated: +s[1]!, skipped: +s[2]!, conflict: +s[3]!, error: +s[4]! }; sawSummary = true; break; }
+      const m = line.match(/^\s*\[([^\]]+)\]\s+(\S+)\s*(.*)$/);
+      if (!m) continue;
+      let rest = m[3]!.trim();
+      let reason: string | null = null;
+      if (rest.startsWith("(") && rest.endsWith(")")) { reason = rest.slice(1, -1); rest = ""; }
+      else { const r = rest.match(/^(.*?)\s\((.*)\)$/); if (r) { rest = r[1]!; reason = r[2]!; } }
+      let source: string | null = null;
+      let destination: string | null = null;
+      if (rest) {
+        const arrow = rest.indexOf(" -> ");
+        if (arrow >= 0) { source = rest.slice(0, arrow); destination = rest.slice(arrow + 4); }
+        else source = rest;
+      }
+      items.push({ kind: m[1]!, status: m[2]!, source, destination, reason });
+    }
+  }
+  if (!sawSummary) return { ok: false, error: res.error ?? `could not parse the import report: ${res.stdout.trim().slice(0, 200)}`, stdout: res.stdout, stderr: res.stderr };
+  const state = res.stdout.includes("Non-interactive:") ? "non-interactive"
+    : res.stdout.includes("Nothing to import.") ? "nothing"
+      : lines.includes("Result:") ? "applied" : "preview";
+  return { ok: true, state, report: { items, summary }, stdout: res.stdout, stderr: res.stderr };
+}
+
+/**
+ * Tail of `<dataDir>/llama-server.log` (src/local-llm/backend-paths.ts),
+ * the file behind the TUI's "LLM logs" tab: the last 64 KB, the size and
+ * whether the read was truncated. `path: null` when the file does not
+ * exist yet — the panel prints its "waiting for the first daemon start" line.
+ */
+export function llamaLogTail(dataDir: string): { ok: boolean; path: string | null; size: number | null; truncated: boolean; text: string; lastReadAt: number; error?: string } {
+  const file = join(dataDir, "llama-server.log");
+  try {
+    const size = statSync(file).size;
+    const from = Math.max(0, size - 64 * 1024);
+    const fd = openSync(file, "r");
+    try {
+      const buf = Buffer.alloc(size - from);
+      readSync(fd, buf, 0, buf.length, from);
+      return { ok: true, path: file, size, truncated: from > 0, text: buf.toString("utf8"), lastReadAt: Date.now() };
+    } finally {
+      closeSync(fd);
+    }
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") return { ok: true, path: null, size: null, truncated: false, text: "", lastReadAt: Date.now() };
+    return { ok: false, path: file, size: null, truncated: false, text: "", lastReadAt: Date.now(), error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/* .env — the same conventions as src/config/load-dotenv.ts and
+   src/config/dotenv-writer.ts. Only key NAMES ever cross to the renderer. */
+
+const DOTENV_KEY_PATTERN = /^[A-Z_][A-Z0-9_]*$/;
+const SECRET_FILE_MODE = 0o600;
+
+/** Names of the keys `<stateDir>/.env` carries (load-dotenv.ts parseLine: trimmed, `#` comments, `KEY=…`). Never values. */
+export function dotenvKeys(stateDir: string): { ok: boolean; keys: string[]; exists: boolean; error?: string } {
+  const path = join(stateDir, ".env");
+  let raw: string;
+  try {
+    raw = readFileSync(path, "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return { ok: true, keys: [], exists: false };
+    return { ok: false, keys: [], exists: true, error: err instanceof Error ? err.message : String(err) };
+  }
+  const keys: string[] = [];
+  for (const line of raw.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const eq = trimmed.indexOf("=");
+    if (eq === -1) continue;
+    const key = trimmed.slice(0, eq).trim();
+    if (DOTENV_KEY_PATTERN.test(key) && !keys.includes(key)) keys.push(key);
+  }
+  return { ok: true, keys, exists: true };
+}
+
+/** Which of `names` are set (non-empty) in this process's environment — the other half of the TUI's `process.env` view. Names only. */
+export function envPresent(names: string[]): string[] {
+  return names.filter((n) => DOTENV_KEY_PATTERN.test(n) && typeof process.env[n] === "string" && process.env[n]!.trim().length > 0);
+}
+
+/**
+ * src/config/dotenv-writer.ts setDotenvKey, ported verbatim: atomic
+ * `tmp` + `rename`, mode 0600, comments/blank lines/ordering preserved,
+ * quoting for values with whitespace or shell-special characters so
+ * `loadDotenvFromStateDir` reads the same string back, `null` removes the
+ * key (and unlinks a file that becomes empty). Never logs the value.
+ */
+export function dotenvSet(stateDir: string, key: string, value: string | null): { ok: boolean; path: string; preexisting: boolean; changed: boolean; error?: string } {
+  const path = join(stateDir, ".env");
+  if (!DOTENV_KEY_PATTERN.test(key)) return { ok: false, path, preexisting: false, changed: false, error: `invalid key '${key}'` };
+  try {
+    const existed = existsSync(path);
+    const original = existed ? readFileSync(path, "utf8") : "";
+    const updated = applyDotenvMutation(original, key, value);
+    if (updated === null) return { ok: true, path, preexisting: existed, changed: false };
+    if (updated === original && existed) return { ok: true, path, preexisting: true, changed: false };
+    if (updated.length === 0) {
+      if (existed) unlinkSync(path);
+      return { ok: true, path, preexisting: existed, changed: existed };
+    }
+    mkdirSync(dirname(path), { recursive: true });
+    const tmp = `${path}.tmp-${process.pid}`;
+    writeFileSync(tmp, updated, { encoding: "utf8", mode: SECRET_FILE_MODE });
+    try {
+      renameSync(tmp, path);
+    } catch (err) {
+      try { unlinkSync(tmp); } catch { /* best effort */ }
+      throw err;
+    }
+    try { chmodSync(path, SECRET_FILE_MODE); } catch { /* best effort on platforms without chmod */ }
+    return { ok: true, path, preexisting: existed, changed: true };
+  } catch (err) {
+    return { ok: false, path, preexisting: false, changed: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+function applyDotenvMutation(original: string, key: string, value: string | null): string | null {
+  const lines = original.length === 0 ? [] : original.split(/\r?\n/);
+  if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+  let foundIndex = -1;
+  for (let i = 0; i < lines.length; i += 1) {
+    if (dotenvLineMatchesKey(lines[i] ?? "", key)) { foundIndex = i; break; }
+  }
+  if (value === null) {
+    if (foundIndex === -1) return null;
+    lines.splice(foundIndex, 1);
+    return joinDotenvLines(lines);
+  }
+  const formatted = `${key}=${formatDotenvValue(value)}`;
+  if (foundIndex === -1) lines.push(formatted);
+  else lines[foundIndex] = formatted;
+  return joinDotenvLines(lines);
+}
+
+function dotenvLineMatchesKey(line: string, key: string): boolean {
+  const trimmed = line.trimStart();
+  if (trimmed.startsWith("#")) return false;
+  const eq = trimmed.indexOf("=");
+  if (eq === -1) return false;
+  return trimmed.slice(0, eq).trim() === key;
+}
+
+function formatDotenvValue(value: string): string {
+  if (value.length === 0) return "";
+  if (/[\s"'#\\]/.test(value)) {
+    if (value.includes('"') && !value.includes("'")) return `'${value}'`;
+    const escaped = value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    return `"${escaped}"`;
+  }
+  return value;
+}
+
+function joinDotenvLines(lines: string[]): string {
+  if (lines.length === 0) return "";
+  return `${lines.join("\n")}\n`;
+}
+
+/* External llama.cpp probe — src/llm/llama-server-health.ts checkLlamaServer
+   (retries 0, verifyAuth) + describe-llama-health-failure.ts, run in the
+   main process because the renderer cannot fetch. */
+
+export interface LlamaProbeResult {
+  reachable: boolean;
+  status: number | null;
+  kind: "llama-server" | "llama-loading" | "openai-compat" | "llama-auth" | "unknown";
+  error: string | null;
+  latencyMs: number;
+  /** describeLlamaHealthFailure(): the line the operator can act on; null when reachable. */
+  message: string | null;
+  ollama: boolean;
+}
+
+/** src/llm/llama-endpoint-url.ts llamaEndpointUrl, verbatim. */
+function llamaEndpointUrl(base: string, endpointPath: string): string {
+  const parsed = new URL(base);
+  let basePath = parsed.pathname.replace(/\/+$/, "");
+  if (basePath.toLowerCase().endsWith("/v1")) basePath = basePath.slice(0, -"/v1".length);
+  parsed.search = "";
+  parsed.hash = "";
+  parsed.pathname = `${basePath}${endpointPath}`;
+  return parsed.toString();
+}
+
+/** src/tui/persist-user-local-models-config.ts normalizeLocalLlmBaseUrl. */
+export function normalizeLocalLlmBaseUrl(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const withScheme = /^https?:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
+  try { new URL(withScheme); } catch { return null; }
+  return withScheme;
+}
+
+function looksLikeOllamaUrl(url: string): boolean {
+  try { return new URL(url).port === "11434"; } catch { return false; }
+}
+
+/** src/tui/providers/is-local-provider-url.ts: loopback hosts. */
+function isLocalProviderUrl(url: string): boolean {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "[::1]" || host === "0.0.0.0";
+  } catch { return false; }
+}
+
+function bodyLooksLikeLlamaHealth(text: string): boolean {
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return typeof parsed === "object" && parsed !== null && typeof (parsed as { status?: unknown }).status === "string";
+  } catch { return false; }
+}
+
+function bodyLooksLikeLlamaLoading(text: string): boolean {
+  if (bodyLooksLikeLlamaHealth(text)) return true;
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (typeof parsed !== "object" || parsed === null) return false;
+    const error = (parsed as { error?: unknown }).error;
+    if (typeof error !== "object" || error === null) return false;
+    const message = (error as { message?: unknown }).message;
+    return typeof message === "string" && message.toLowerCase().includes("loading");
+  } catch { return false; }
+}
+
+function describeLlamaHealthFailure(kind: LlamaProbeResult["kind"], error: string | null, url: string): string {
+  switch (kind) {
+    case "openai-compat":
+      if (looksLikeOllamaUrl(url)) {
+        return isLocalProviderUrl(url)
+          ? `${url} answers like Ollama (its default port), not llama.cpp. Add it as a cloud provider instead: LLM tab › Cloud › n › Ollama (local), base URL ${url}.`
+          : `${url} answers like Ollama (its default port), not llama.cpp. Add it as a cloud provider instead: LLM tab › Cloud › n › openai-compatible, base URL ${url} (any API key value passes — a stock Ollama has no auth).`;
+      }
+      return `${url} answers like an OpenAI-compatible server, not llama.cpp. Add it as a cloud provider instead: LLM tab › Cloud › n › openai-compatible, base URL ${url}.`;
+    case "llama-loading":
+      return `${url} is a llama.cpp server still loading its model. Give it a minute and save the URL again.`;
+    case "llama-auth":
+      return `${url}: ${error ?? "http 401 — API key required"}. Set ATOMIC_AGENT_LLAMA_API_KEY in the state dir's .env and retry.`;
+    default:
+      return `local-llm /health failed at ${url}: ${error ?? "unknown"}`;
+  }
+}
+
+export async function llamaProbe(rawUrl: string, timeoutMs = 8000): Promise<{ ok: boolean; url?: string; probe?: LlamaProbeResult; error?: string }> {
+  const url = normalizeLocalLlmBaseUrl(rawUrl);
+  if (!url) return { ok: false, error: "invalid URL" };
+  const apiKey = process.env["ATOMIC_AGENT_LLAMA_API_KEY"] || null;
+  const headers: Record<string, string> = { accept: "application/json", ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}) };
+  const start = Date.now();
+  let result: LlamaProbeResult;
+  try {
+    const response = await fetch(llamaEndpointUrl(url, "/health"), { method: "GET", headers, signal: AbortSignal.timeout(timeoutMs) });
+    const text = await response.text().catch(() => "");
+    if (!response.ok) {
+      if (response.status === 503 && bodyLooksLikeLlamaLoading(text)) {
+        result = { reachable: false, status: 503, kind: "llama-loading", error: "llama.cpp is still loading the model", latencyMs: Date.now() - start, message: null, ollama: false };
+      } else {
+        result = { reachable: false, status: response.status, kind: "unknown", error: `http ${response.status}`, latencyMs: Date.now() - start, message: null, ollama: false };
+      }
+    } else {
+      const isLlama = bodyLooksLikeLlamaHealth(text);
+      result = { reachable: isLlama, status: response.status, kind: isLlama ? "llama-server" : "unknown", error: isLlama ? null : "answered 200 but not with llama.cpp's /health shape", latencyMs: Date.now() - start, message: null, ollama: false };
+    }
+  } catch (err) {
+    result = { reachable: false, status: null, kind: "unknown", error: err instanceof Error ? err.message : String(err), latencyMs: Date.now() - start, message: null, ollama: false };
+  }
+  if (result.reachable) {
+    // verifyAuth: the key-guarded /props; only an explicit 401/403 flips the verdict.
+    try {
+      const response = await fetch(llamaEndpointUrl(url, "/props"), { method: "GET", headers, signal: AbortSignal.timeout(timeoutMs) });
+      if (response.status === 401 || response.status === 403) {
+        result = { ...result, reachable: false, status: response.status, kind: "llama-auth",
+          error: apiKey ? `http ${response.status} — the server rejected the configured API key` : `http ${response.status} — the server requires an API key (--api-key)` };
+      }
+    } catch { /* keep the passing /health */ }
+  } else if (result.kind === "unknown" && (result.status === 200 || result.status === 404)) {
+    try {
+      const response = await fetch(llamaEndpointUrl(url, "/v1/models"), { method: "GET", headers, signal: AbortSignal.timeout(timeoutMs) });
+      if (response.ok) {
+        const parsed: unknown = JSON.parse(await response.text());
+        if (typeof parsed === "object" && parsed !== null && Array.isArray((parsed as { data?: unknown }).data)) result = { ...result, kind: "openai-compat" };
+      }
+    } catch { /* stays unknown */ }
+  }
+  result.ollama = looksLikeOllamaUrl(url);
+  if (!result.reachable) result.message = describeLlamaHealthFailure(result.kind, result.error, url);
+  return { ok: true, url, probe: result };
 }

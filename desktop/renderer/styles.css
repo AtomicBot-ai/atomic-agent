@@ -628,3 +628,27 @@ button.menurow:hover{background:var(--bg-hover)}
 .tuiarea{display:block;width:100%;box-sizing:border-box;margin-top:8px;background:var(--bg-sunken);border:1px solid var(--line);border-radius:6px;padding:6px 8px;font:inherit;color:var(--text-primary);resize:vertical;outline:none;white-space:pre}
 .tuiarea:focus{border-color:var(--accent)}
 .tuiarea::placeholder{color:var(--text-tertiary)}
+/* ---------------- Item 7 part C: the LLM, Telegram and Import tabs ---------------- */
+/* The add-provider wizard (the composer's selector popup) floats above the settings window while it is open. */
+#window:has(#settings) #overlays{z-index:29}
+.llm-route{display:flex;flex-direction:column;gap:2px;margin-bottom:8px}
+.llm-modehead{white-space:pre}
+.llmmode{color:var(--text-tertiary);font-family:inherit;font-size:inherit;font-weight:600;padding:0 2px;border-radius:4px;height:22px}
+.llmmode:hover{background:var(--bg-hover);color:var(--text-primary)}
+.llmmode.on{color:var(--accent-text)}
+.llm-section{display:flex;flex-direction:column;gap:2px;margin-bottom:8px}
+.llm-empty{font-weight:600;color:var(--text-primary);white-space:pre}
+#llm-filter,#llm-url{background:transparent;border:0;border-bottom:1px solid var(--line-soft);outline:none;font:inherit;color:var(--accent-text);width:260px}
+#llm-filter:focus,#llm-url:focus{border-bottom-color:var(--accent)}
+#llm-filter::placeholder{color:var(--text-tertiary);font-style:normal}
+#llm-url{width:360px}
+.llm-start{border-color:var(--success)}
+.tgcard{margin-top:6px}
+#tg-token{background:transparent;border:0;border-bottom:1px solid var(--line-soft);outline:none;font:inherit;color:var(--accent-text);width:320px;letter-spacing:2px}
+#tg-token:focus{border-bottom-color:var(--accent)}
+.impform{margin-top:8px}
+.impline{display:flex;align-items:center;min-height:24px;white-space:pre}
+.impinp{flex:0 1 420px;min-width:0;background:transparent;border:0;border-bottom:1px solid var(--line-soft);outline:none;font:inherit;color:var(--accent-text)}
+.impinp:focus{border-bottom-color:var(--accent)}
+.impinp::placeholder{font-style:italic;color:var(--text-tertiary)}
+.improw{white-space:pre}
