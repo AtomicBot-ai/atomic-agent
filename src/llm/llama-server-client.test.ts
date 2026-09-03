@@ -50,7 +50,10 @@ describe("LlamaServerClient.complete", () => {
 
     expect(result.content).toBe('{"tool":"finish","args":{}}');
     expect(result.reasoningContent).toBe("");
-    expect(result.timing.promptTokens).toBe(40);
+    // 40 evaluated this request + 30 reused from the KV cache: the
+    // prompt the model saw was 70 tokens, and that is what occupancy
+    // consumers (the TUI context chip among them) need reported.
+    expect(result.timing.promptTokens).toBe(70);
     expect(result.cacheHitTokens).toBe(30);
     expect(result.slotId).toBe(2);
     expect(result.modelId).toBe("qwen-test");
@@ -63,6 +66,29 @@ describe("LlamaServerClient.complete", () => {
     expect(snapshot.body.cache_prompt).toBe(true);
     expect(snapshot.body.repeat_penalty).toBe(1.1);
     expect(snapshot.body.repeat_last_n).toBe(256);
+  });
+
+  it("reports the bare evaluated count when nothing was cached", async () => {
+    const client = new LlamaServerClient({
+      baseUrl: "http://127.0.0.1:9999",
+      fetchImpl: createMockFetch(async () =>
+        new Response(
+          JSON.stringify({
+            content: "ok",
+            stop: true,
+            truncated: false,
+            timings: { prompt_ms: 10, predicted_ms: 20, prompt_n: 40, predicted_n: 8 },
+            slot_id: 0,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      ),
+    });
+
+    const result = await client.complete({ prompt: "hello", maxTokens: 16 });
+
+    expect(result.timing.promptTokens).toBe(40);
+    expect(result.cacheHitTokens).toBe(0);
   });
 
   it("forwards explicit repeatPenalty / repeatLastN overrides", async () => {
