@@ -80,7 +80,11 @@ Real, driven by the running agent:
   waits on an approval, and for a turn that ends in an abort or a failure. A
   turn running under some other origin has no stream here and therefore no
   mark — 0.5.5 exposes no turn controller, the same limit the pulsating sidebar
-  dot carries. Tool cards, reasoning blocks and approvals keep their own
+  dot carries. The visible cost of dropping the per-message glyph is that the
+  gap between a turn starting and its first delta is now an empty row: what
+  says the agent has begun is the composer's status strip (`Thinking`, the
+  elapsed timer and the Stop button), not a mark in the transcript.
+  Tool cards, reasoning blocks and approvals keep their own
   check/warn/running glyphs: those describe a call's result, not a message.
   A tool card's args come off the stream (`tool_progress.label`); its result and
   status are filled in from `GET /api/sessions/{id}` once the turn has been
@@ -266,10 +270,12 @@ Honestly degraded, and labelled as such in the UI:
   Setup · Help · Danger zone. Nothing became unreachable (Run is ⌘1 and the
   palette; Feed/World/Reasoning are the inspector button, the palette and the
   slash verbs; Logs, LLM logs and the debug pane are ⌘⇧Y and the console's own
-  Agent/LLM segment), but six `ctrl+g` chords — r, f, w, e, o, L — are dead and
-  silent. Escape is the LAST branch of the key handler: scroll-to-bottom,
-  abort, the toast pop and every overlay/palette/slash/approval/per-tab Escape
-  still outrank it, and a half-written composer draft is left alone.
+  Agent/LLM segment) — the smoke asserts each of those routes and each of the
+  eight surviving chords rather than leaving it a claim — but six `ctrl+g`
+  chords — r, f, w, e, o, L — are dead and silent. Escape is the LAST branch of
+  the key handler: scroll-to-bottom, abort, the toast pop and every
+  overlay/palette/slash/approval/per-tab Escape still outrank it, and a
+  half-written composer draft is left alone.
   Menu verbs the desktop cannot do (new terminal window, mouse, debug
   bundle, queued messages, steer, uninstall) keep their TUI label with a
   "not available in the desktop" note. The `ctrl+g <key>` chords in the menu

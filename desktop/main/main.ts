@@ -2897,6 +2897,39 @@ async function uiTest(
     ec.found && ec.display === "flex" && ec.strays === 0,
     JSON.stringify(ec),
   );
+  // The fourth state: `prefers-reduced-motion: reduce` kills the pulse through
+  // the blanket `*{animation:none!important}`, so the halo is the only thing
+  // left telling a running dot from a filled one — and at 6px the wash is too
+  // faint for that, which is what the reduced-motion rule swaps out. The media
+  // feature is really emulated through the devtools protocol rather than read
+  // back out of the stylesheet, so what is measured is what the operator gets.
+  type Probe = { dots: Array<{ cls: string; w: number; h: number; border: number; bg: string; animation: string; shadow: string }> };
+  const dbg = win ? win.webContents.debugger : null;
+  let reduced: Probe | null = null;
+  let reducedErr = "";
+  try {
+    if (!dbg) throw new Error("no webContents to attach to");
+    if (!dbg.isAttached()) dbg.attach("1.3");
+    await dbg.sendCommand("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "reduce" }] });
+    reduced = await js<Probe | null>("window.__dotProbe()");
+  } catch (e) {
+    reducedErr = e instanceof Error ? e.message : String(e);
+  } finally {
+    try { if (dbg && dbg.isAttached()) await dbg.sendCommand("Emulation.setEmulatedMedia", { features: [] }); } catch { /* the assertion below reports it */ }
+    try { if (dbg && dbg.isAttached()) dbg.detach(); } catch { /* ditto */ }
+  }
+  const rmRun = reduced ? reduced.dots[2] : null;
+  const rmFilled = reduced ? reduced.dots[1] : null;
+  check(
+    "item 1: reduced motion still tells running from waiting at 6px",
+    !!rmRun && !!rmFilled && rmRun.w === 6 && rmRun.h === 6
+      // the emulation really took: the blanket rule killed the pulse
+      && rmRun.animation === "none"
+      // and what is left is a ring the filled dot does not have, and a heavier
+      // one than the animated state carries
+      && rmRun.shadow !== "none" && rmFilled.shadow === "none" && !!running && rmRun.shadow !== running.shadow,
+    reducedErr || JSON.stringify([rmRun, rmFilled, running ? running.shadow : null]),
+  );
 
   // --- item 3: bubbles, empty gutters, one mark per finished turn -------------
   // The end mark is withheld while a turn streams or an approval waits, and the
@@ -2907,13 +2940,19 @@ async function uiTest(
   await js<number>("window.__pushUser('a short one')");
   await js<number>("window.__pushTool('read_file', {path:'a.txt'}, 'ok', false)");
   await js<number>("window.__pushAssistant('done')");
-  type Shape = { k: string; gutter: number; end: boolean; endLast: boolean; left: number };
+  type Shape = { k: string; glyphs: number; gutter: number | null; end: boolean; endLast: boolean; strip: boolean; left: number };
   const shape = await js<Shape[]>("window.__turnShape()");
   const tail = shape.slice(-3);
   check(
+    // Two things, both positive: no row carries a `.avatar` or a `.gutter` (the
+    // user's `›` and the assistant's per-message mark), and every row that still
+    // uses the grid has an empty first cell. The user rows are only proof of the
+    // first half if there IS one on screen, so that is asserted too.
     "item 3: no glyph in any transcript row",
-    shape.length > 0 && shape.every((t) => t.gutter === 0),
-    JSON.stringify(shape.filter((t) => t.gutter !== 0)),
+    shape.length > 0 && shape.every((t) => t.glyphs === 0 && (t.gutter === null || t.gutter === 0))
+      && shape.some((t) => t.k === "user") && shape.some((t) => t.gutter === 0),
+    JSON.stringify(shape.filter((t) => t.glyphs !== 0 || (t.gutter !== null && t.gutter !== 0))
+      .concat(shape.some((t) => t.k === "user") ? [] : [{ k: "no user row on screen" } as unknown as Shape])),
   );
   check(
     "item 3: the agent's content column did not move",
@@ -2931,6 +2970,32 @@ async function uiTest(
     "item 3: a running turn carries no end mark",
     !busyMarks.during.last && busyMarks.after.last && busyMarks.during.total === busyMarks.after.total - 1,
     JSON.stringify(busyMarks),
+  );
+  // The turn that never produced a word: startLiveTurn pushes an empty assistant
+  // item before the first delta, and an abort or a failed BR.chat leaves it in
+  // S.log at rest. No poked flag here — the rows are the ones that path pushes.
+  const emptyTurn = await js<{ before: number; after: number; lastHasMark: boolean }>("window.__emptyTurnMark()");
+  check(
+    "item 3: a turn that produced no text gets no mark",
+    emptyTurn.after === emptyTurn.before && !emptyTurn.lastHasMark,
+    JSON.stringify(emptyTurn),
+  );
+  // The mark is appended AFTER attachStrip(m), and the only case that can catch
+  // a wrong order is a reply that really wrote a file. Same recipe as the
+  // attachment-strip checks earlier in the run: a real file, the real collector.
+  const endmarkFile = join(app.getPath("temp"), "atomic-desktop-endmark.txt");
+  writeFileSync(endmarkFile, "smoke\n");
+  await js<unknown>(
+    "window.__pushAssistantFiles('Saved it.', ["
+    + `{tool:'os.fs.write', args:{path:${JSON.stringify(endmarkFile)}, content:'smoke\\n'}, out:'wrote 6 bytes to ${endmarkFile} (replace)'}])`,
+  );
+  const stripShape = await js<Shape[]>("window.__turnShape()");
+  const stripTail = stripShape[stripShape.length - 1];
+  check(
+    "item 3: the mark closes the column below the attachment strip",
+    !!stripTail && stripTail.k === "assistant" && stripTail.strip && stripTail.end && stripTail.endLast
+      && stripShape.filter((t) => t.end).length === shape.filter((t) => t.end).length + 1,
+    JSON.stringify(stripShape.slice(-2)),
   );
   const bub = await js<{
     right: number; width: number; colRight: number; colWidth: number;
@@ -3017,6 +3082,17 @@ async function uiTest(
     opened.pane === "tasks" && opened.focusRow && opened.focusAct === "menu:go.manage.tasks" && opened.firstRowLabel === "Tasks",
     JSON.stringify(opened),
   );
+  // The focus ring is re-applied on every render while the window is open, so
+  // it has to let go the moment the operator clicks anywhere else — and a click
+  // on dead space is a blur to <body>, not to another element inside #settings.
+  // Without this the next full render (the tasks poll alone fires one every 5 s
+  // in exactly this state) drags focus back onto Tasks under their hands.
+  const blur = await js<{ focusedBefore: boolean; blurred: boolean; stolen: boolean; active: string } | null>("window.__menuFocusBlur()");
+  check(
+    "item 5: the menu stops grabbing focus once the operator clicks away",
+    !!blur && blur.focusedBefore && blur.blurred && !blur.stolen,
+    JSON.stringify(blur),
+  );
   const closed = await js<Esc>("window.__esc()");
   check("item 5: Escape closes the menu again, it does not reopen it", closed.pane === null, JSON.stringify(closed));
   await js<string>("window.__clearToasts(); window.__openPalette()");
@@ -3031,6 +3107,73 @@ async function uiTest(
     JSON.stringify(sel),
   );
   await js<number>("window.__settingsClose(); window.__clearToasts()");
+
+  // --- item 5: nothing became unreachable ------------------------------------
+  // Deleting a whole menu group and six chords is only defensible if every
+  // destination keeps a route. Asserted, not claimed in a comment: each of the
+  // eight hoisted Manage nodes still opens its pane both from the node and from
+  // its ctrl+g chord, and the three verbs that went with `Go`/`Observe`/the
+  // debug pane still run from their acts and still have a palette row.
+  const MANAGE: Array<[string, string]> = [
+    ["tasks", "t"], ["skills", "s"], ["memory", "m"], ["mcp", "c"],
+    ["llm", "l"], ["telegram", "g"], ["import", "i"], ["privacy", "p"],
+  ];
+  const nodeMisses: string[] = [];
+  const chordMisses: string[] = [];
+  for (const [tab, chord] of MANAGE) {
+    const viaNode = await js<{ settings: boolean; pane: string | null }>(
+      `(() => { window.__settingsClose(); return window.__menuActivate('go.manage.${tab}'); })()`,
+    );
+    if (!viaNode.settings || viaNode.pane !== tab) nodeMisses.push(`${tab}:${JSON.stringify(viaNode)}`);
+    const viaChord = await js<{ armed: boolean; pane: string | null; disarmed: boolean }>(
+      "(() => { window.__settingsClose();"
+      + " document.dispatchEvent(new KeyboardEvent('keydown', {key: 'g', ctrlKey: true, bubbles: true, cancelable: true}));"
+      + " const armed = window.__chordPending();"
+      + ` document.dispatchEvent(new KeyboardEvent('keydown', {key: ${JSON.stringify(chord)}, bubbles: true, cancelable: true}));`
+      + " return {armed, pane: window.__settingsPane(), disarmed: !window.__chordPending()}; })()",
+    );
+    if (!viaChord.armed || viaChord.pane !== tab || !viaChord.disarmed) chordMisses.push(`ctrl+g ${chord}:${JSON.stringify(viaChord)}`);
+  }
+  check("item 5: every Manage tab still opens from its node", nodeMisses.length === 0, nodeMisses.join("; "));
+  check("item 5: every Manage chord still reaches its tab", chordMisses.length === 0, chordMisses.join("; "));
+  await js<number>("window.__settingsClose(); window.__clearToasts()");
+
+  type Route = { room: string; inspector: boolean; inspTab: string; consoleOpen: boolean; consoleTab: string; settings: boolean };
+  type Panes = { room: string; inspector: boolean; inspTab: string; consoleOpen: boolean; consoleTab: string };
+  // Snapshotted first: these acts really open the inspector and the console,
+  // the inspector starts OPEN, and the backend-switch lane runs after this one.
+  const panesBefore = await js<Panes>("window.__panes()");
+  const routes = await js<{ chat: Route; world: Route; llm: Route }>(
+    "(() => { const chat = window.__route('room:chat');"
+    + " const world = window.__route('insp:world');"
+    + " const llm = window.__route('console:llm');"
+    + " return {chat, world, llm}; })()",
+  );
+  check(
+    "item 5: the deleted Go/Observe destinations still run from their acts",
+    routes.chat.room === "chat" && !routes.chat.settings
+      && routes.world.inspector && routes.world.inspTab === "world"
+      && routes.llm.consoleOpen && routes.llm.consoleTab === "llm",
+    JSON.stringify(routes),
+  );
+  const panesAfter = await js<Panes>(`window.__restorePanes(${JSON.stringify(panesBefore)})`);
+  check(
+    "item 5: the route probe leaves the panes where it found them",
+    JSON.stringify(panesAfter) === JSON.stringify(panesBefore),
+    JSON.stringify({ before: panesBefore, after: panesAfter }),
+  );
+  const palRows = await js<Array<[string, string]>>("window.__palRows()");
+  const WANT: Array<[string, string]> = [
+    ["Chat", "room:chat"], ["Feed", "insp:steps"], ["World", "insp:world"],
+    ["Reasoning", "insp:reasoning"], ["Logs", "console:agent"],
+  ];
+  const palMisses = WANT.filter(([t, a]) => !palRows.some((r) => r[0] === t && r[1] === a));
+  check(
+    "item 5: the palette still lists every destination that left the menu",
+    palMisses.length === 0,
+    JSON.stringify({ missing: palMisses, rows: palRows.length }),
+  );
+  await js<number>("window.__clearToasts()");
 }
 
 /** Lane B — backend switch. */

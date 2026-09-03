@@ -218,8 +218,8 @@ const SET = { tools:null, toolsFor:null, toolsBusy:false, health:null, healthBus
    rebuilds #settings on EVERY render() — a stream frame, the tasks poll, the
    diagnostics poll — which would drop that focus after a single frame. So the
    intent is a flag and renderSettings re-applies it; the flag is dropped the
-   moment the operator moves focus anywhere else in the window, or the window
-   closes. */
+   moment the focus is no longer on that first row — moved to another control,
+   or blurred to <body> by a click on dead space — or the window closes. */
 const MENUFOCUS = { want: false };
 /* Installed skills incl. disabled ones, from `atag skill list` — the N in
    the Skills tab's ` (N)` suffix (debug-pane.tsx:162 counts every loaded
@@ -1370,11 +1370,15 @@ function sheet(title, body, foot) {
    title is the TUI's "Menu › Manage" (menu-selectors.ts). */
 function renderSettings() {
   const old = $('#settings');
-  // r4-ui item 5: stop re-applying the Escape focus as soon as the operator has
-  // moved off the first menu row — otherwise the next render would steal focus
-  // back out of whatever they tabbed or clicked into.
-  if (MENUFOCUS.want && old && old.contains(document.activeElement)
-      && document.activeElement !== old.querySelector('.setmenu button.menurow')) MENUFOCUS.want = false;
+  // r4-ui item 5: stop re-applying the Escape focus as soon as the focus is off
+  // the first menu row — otherwise the next render would steal it back out of
+  // whatever the operator tabbed or clicked into. The test is deliberately NOT
+  // `old.contains(document.activeElement)`: clicking any non-focusable surface
+  // blurs to <body>, which is an ANCESTOR of #settings and not a descendant, so
+  // a containment test misses exactly that case and the next full render — a
+  // stream frame, the tasks poll, the diagnostics poll — would drag focus back
+  // onto the Tasks row seconds after an ordinary click on dead space.
+  if (MENUFOCUS.want && old && document.activeElement !== old.querySelector('.setmenu button.menurow')) MENUFOCUS.want = false;
   if (old) old.remove();
   if (!S.settings) { MENUFOCUS.want = false; return; }
   const cur = settingsPaneId(S.settingsPane);
@@ -1427,6 +1431,12 @@ function menuTreeHTML() {
     if (n.na) return '<div class="menurow na' + (sub ? ' sub' : '') + '" title="not available in the desktop"><span class="lb">' + esc(n.label) + '</span><span class="note">not available in the desktop</span></div>';
     return '<button class="menurow' + (sub ? ' sub' : '') + (on ? ' on' : '') + '" data-act="menu:' + esc(n.id) + '"><span class="lb">' + esc(n.label) + '</span>' + chord + '</button>';
   };
+  // r4-ui item 5: no node carries `sub` any more — `Observe` and `Manage` were
+  // the only two, and both left. The branch (and `.menurow.sub` / `.parent` in
+  // styles.css) is kept on purpose: MENU_GROUPS is a copy of the TUI registry
+  // and the next node pulled across may well be a parent, and it is what
+  // __menuSubRows() asserts zero of — delete the branch and that check stops
+  // meaning anything.
   return MENU_GROUPS.map(([label, nodes]) =>
     '<div class="menuhd">' + esc(label) + '</div>'
     + nodes.map((n) => n.sub
@@ -8056,17 +8066,6 @@ if (typeof window !== 'undefined') {
    r4-ui — hooks for `electron . --smoke` (items 1, 3, 4, 5)
    ============================================================ */
 if (typeof window !== 'undefined') {
-  /* Item 1: a dot's used box. The regression this guards is the class
-     collision — `sdot empty` used to pick up the empty-transcript container
-     rule and be floored at padding+border (~66px at DPR 1, ~67px at DPR 2). */
-  window.__dotBox = (sel) => {
-    const el = document.querySelector(sel);
-    if (!el) return null;
-    const r = el.getBoundingClientRect(), cs = getComputedStyle(el);
-    return {w: Math.round(r.width * 100) / 100, h: Math.round(r.height * 100) / 100,
-            border: parseFloat(cs.borderTopWidth), bg: cs.backgroundColor,
-            animation: cs.animationName, shadow: cs.boxShadow, cls: el.className};
-  };
   /* Item 1: the dot rides the LABEL, not the line box. The cap and x midpoints
      are computed from the live font rather than hard-coded, so a different font
      stack moves the target instead of turning a pixel into a lie. */
@@ -8084,7 +8083,6 @@ if (typeof window !== 'undefined') {
     return {dotMid: dr.top + dr.height / 2, capMid: base - mH.actualBoundingBoxAscent / 2,
             xMid: base - mx.actualBoundingBoxAscent / 2};
   }
-  window.__dotSeat = (sel) => dotSeatOf(document.querySelector(sel));
   /* Item 1: all three states measured together, on real rows inside the real
      list, whatever the agent's own sessions happen to look like. The `empty`
      row is the one that mattered: its state class used to collide with the
@@ -8124,18 +8122,27 @@ if (typeof window !== 'undefined') {
     return out;
   };
 
-  /* Item 3: what every transcript row is made of — its kind, whether its first
-     cell (the old glyph gutter) is empty, whether it carries the end mark, and
-     where its content starts. */
+  /* Item 3: what every transcript row is made of — its kind, whether a message
+     glyph came back, whether the grid rows' first cell is empty, whether the row
+     carries the end mark, and where its content starts. */
   window.__turnShape = () => [...document.querySelectorAll('#scroller .turn')].map((t) => {
     const body = t.querySelector('.prose,.card,.appr,.disc');
-    return {k: t.classList.contains('usr') ? 'user'
+    const usr = t.classList.contains('usr');
+    return {k: usr ? 'user'
               : t.querySelector('.card') ? 'tool'
               : t.querySelector('.appr') ? 'approval'
               : t.querySelector('.disc') ? 'reason'
               : t.querySelector('.prose') ? 'assistant' : 'other',
-            gutter: t.classList.contains('usr') ? 0 : (t.firstElementChild ? t.firstElementChild.innerHTML.trim().length : 0),
+            // The two per-message glyphs the user asked to be rid of: `.avatar`
+            // was the user's `›`, `.gutter` the assistant's mark. COUNTED, on
+            // every row, so either one coming back fails this — a user row's
+            // firstElementChild is the bubble now, so its emptiness says nothing.
+            glyphs: t.querySelectorAll('.avatar,.gutter').length,
+            // The 28px first cell of a grid row, which has to stay empty. A user
+            // row left the grid and has no such cell: null, not an invented 0.
+            gutter: usr ? null : (t.firstElementChild ? t.firstElementChild.innerHTML.trim().length : 0),
             end: !!t.querySelector('.endmark'),
+            strip: !!t.querySelector('.attach'),
             // The mark is appended AFTER attachStrip(m), so on a reply that
             // wrote files it must still be the last thing in the column.
             endLast: !!(t.lastElementChild && t.lastElementChild.lastElementChild
@@ -8160,10 +8167,13 @@ if (typeof window !== 'undefined') {
      mark is deliberately withheld while a turn is streaming or an approval is
      open, and the checks that run before these leave a turn going in another
      chat — so without this the mark's absence proves nothing either way. This
-     stops the leftover turn through the real abort path; it invents no state. */
+     stops the leftover turn through the real abort path; it invents no state.
+     A pending approval left without a running turn goes through the same call
+     abort() makes (dropPendingApproval), so the sidebar's filled dot is dropped
+     with it instead of being stranded by a raw assignment. */
   window.__quiesce = () => {
     if (S.busy) abort();
-    S.pending = null;
+    if (S.pending) dropPendingApproval();
     S.toasts = [];
     render();
     return {busy: S.busy, pending: !!S.pending, items: S.log.length};
@@ -8171,8 +8181,13 @@ if (typeof window !== 'undefined') {
   /* Item 3: a user message, pushed exactly as the composer's submit() pushes
      one — the counterpart of the existing __pushAssistant. */
   window.__pushUser = (text) => { S.log.push({id:nid(), k:'user', text: String(text)}); render(); return S.log.length; };
-  /* Item 3: the end mark never lands on a turn that is still running. S.busy is
-     set and put back here, so the assertion needs no live turn. */
+  /* Item 3: the end mark never lands on a turn that is still running, and the
+     turns above it keep theirs. S.busy is SET AND PUT BACK here — this is a
+     synthetic busy, not a live stream: reading the transcript mid-delta is a
+     race the suite would lose on a slow reply. What it does prove is the guard
+     itself (drop `S.busy || S.pending` from endMarkIds and `during.last` flips).
+     The empty streaming item that path really pushes is covered at rest by
+     __emptyTurnMark below, which needs no poked flag at all. */
   window.__marksWhileBusy = () => {
     const count = () => {
       const rows = [...document.querySelectorAll('#scroller .turn')];
@@ -8184,6 +8199,24 @@ if (typeof window !== 'undefined') {
     const during = count();
     S.busy = before; render();
     return {during, after: count()};
+  };
+  /* Item 3: the other half of "never on a live turn", and the one that needs no
+     poked flag at all. startLiveTurn pushes an EMPTY assistant item before the
+     first delta arrives; a turn aborted, or one whose BR.chat call fails, leaves
+     that item in S.log at rest. It must not collect a full stop under an empty
+     prose block — that is what endMarkIds' non-empty-text test is for. The two
+     rows are pushed exactly as that path pushes them and then taken back out. */
+  window.__emptyTurnMark = () => {
+    const before = document.querySelectorAll('#scroller .endmark').length;
+    S.log.push({id:nid(), k:'user', text:'(smoke) a turn that produced nothing'});
+    S.log.push({id:nid(), k:'assistant', text:''});   // startLiveTurn's `streaming`
+    render();
+    const rows = [...document.querySelectorAll('#scroller .turn')];
+    const out = {before, after: document.querySelectorAll('#scroller .endmark').length,
+                 lastHasMark: !!(rows.length && rows[rows.length - 1].querySelector('.endmark'))};
+    S.log.splice(S.log.length - 2, 2);
+    render();
+    return out;
   };
 
   /* Item 4: the head row carries no control, each list header carries one plus,
@@ -8230,4 +8263,59 @@ if (typeof window !== 'undefined') {
   window.__openPalette = () => { act('palette'); return S.overlay; };
   window.__rail = () => { act('toggle:sidebar'); return window.__sbHeads(); };
   window.__menuSubRows = () => document.querySelectorAll('#settings .menurow.sub, #settings .menurow.parent').length;
+  /* Item 5: the focus ring is re-applied on every render while MENUFOCUS.want
+     is up, so the flag has to drop the moment focus leaves the first menu row.
+     Clicking dead space is a blur to <body> and nothing else — no click handler
+     runs, because #settings carries no data-close — so that is what is done
+     here, followed by the full render that used to steal the focus back. */
+  window.__menuFocusBlur = () => {
+    const first = document.querySelector('#settings .setmenu button.menurow');
+    if (!first) return null;
+    const focusedBefore = document.activeElement === first;
+    if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+    const blurred = !document.activeElement || document.activeElement === document.body;
+    render();
+    const a = document.activeElement;
+    return {focusedBefore, blurred,
+            stolen: !!(a && a.classList && a.classList.contains('menurow')),
+            active: a ? (a.tagName + (a.className ? '.' + String(a.className).split(' ').join('.') : '')) : 'none'};
+  };
+  /* Item 5: the palette catalogue, so the harness can prove the destinations
+     that left the menu still have a row. S.q / S.scope decide whether palRows()
+     filters or scopes; both are put back untouched and nothing is repainted. */
+  window.__palRows = () => {
+    const q = S.q, scope = S.scope;
+    S.q = ''; S.scope = null;
+    const out = flatPalRows().map((r) => [r.t, r.act]);
+    S.q = q; S.scope = scope;
+    return out;
+  };
+  /* Item 5: run one act through the real dispatcher and report where the window
+     ended up — the check that Run, World and the LLM log kept a route after
+     their menu nodes were deleted. */
+  window.__route = (a) => {
+    act(a);
+    return {room: S.room, inspector: S.inspector, inspTab: S.inspTab,
+            consoleOpen: S.consoleOpen, consoleTab: S.consoleTab,
+            settings: !!S.settings, overlay: S.overlay};
+  };
+  /* Item 5: the routes above really open the inspector and the console, and the
+     backend-switch lane runs after this one — so the panes are snapshotted and
+     put back exactly, through the same acts, rather than being toggled off on
+     the assumption that they started closed (the inspector starts OPEN). */
+  window.__panes = () => ({room: S.room, inspector: S.inspector, inspTab: S.inspTab,
+                           consoleOpen: S.consoleOpen, consoleTab: S.consoleTab});
+  window.__restorePanes = (was) => {
+    act('room:' + was.room);
+    // `insp:<tab>` and `console:<tab>` are the only acts that set a tab, and
+    // both open their pane on the way — so a pane that was CLOSED on a given
+    // tab is put back by selecting the tab and then toggling the pane shut.
+    // Nothing is assigned by hand: the tab a closed pane would reopen on is
+    // state too, and the probe must not leave it moved.
+    act('insp:' + was.inspTab);
+    if (!was.inspector) act('toggle:inspector');
+    act('console:' + was.consoleTab);
+    if (!was.consoleOpen) act('toggle:console');
+    return window.__panes();
+  };
 }
