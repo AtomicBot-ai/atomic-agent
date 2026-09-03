@@ -838,7 +838,6 @@ function renderOverlays() {
   if (S.overlay === 'modes') html += modesHTML();
   if (SEL.open) html += selectorHTML();
   if (S.overlay === 'sessions') html += sessionSheet();
-  if (S.overlay === 'newtask') html += taskSheet();
   if (S.overlay === 'shortcuts') html += shortcutsSheet();
   if (S.alert) html += alertHTML();
   if (OB.open) html = obHTML();
@@ -906,17 +905,6 @@ function sessionSheet() {
   });
   return sheet('Switch session', '<input class="btn btn-s" style="width:100%;height:32px" placeholder="Filter sessions…">' + rows,
     '<button class="btn btn-s" data-act="close">Cancel</button><button class="btn btn-p" data-act="close">Open</button>');
-}
-
-function taskSheet() {
-  return sheet('New scheduled task',
-    '<dl class="kvgrid" style="gap:12px 16px">'
-    + '<dt>kind</dt><dd>' + segControl([['cron','cron'],['interval','interval'],['at','at']], 'cron', 'na:') + '</dd>'
-    + '<dt>expression</dt><dd><input class="btn btn-s" style="width:100%;height:28px;font-family:var(--font-mono)" value="0 8 * * 1-5"></dd>'
-    + '<dt>timezone</dt><dd><input class="btn btn-s" style="width:100%;height:28px" value="Europe/Berlin"></dd>'
-    + '<dt>message</dt><dd><textarea class="btn btn-s" style="width:100%;height:64px;padding:6px 10px" placeholder="what should the agent do when this fires?"></textarea></dd>'
-    + '<dt>next 5</dt><dd class="mono cap">Mon 09:00 · Tue 09:00 · Wed 09:00 · Thu 09:00 · Fri 09:00</dd></dl>',
-    '<button class="btn btn-s" data-act="close">Cancel</button><button class="btn btn-p" data-act="close">Create task</button>');
 }
 
 function shortcutsSheet() {
@@ -994,7 +982,7 @@ function settingsPaneId(v) {
    selected channel, mcp = configured servers. Zero → no suffix. */
 function tabSuffix(id) {
   let n = 0;
-  if (id === 'tasks') n = TK.rows.length;
+  if (id === 'tasks') n = TK.lastRefreshedAt === null ? TASKS.length : TK.rows.length; // until the tab's own fetch lands, GET /api/tasks from loadResources
   else if (id === 'skills') n = SK.rows ? SK.rows.length : 0; // no suffix until `atag skill list` has answered
   else if (id === 'memory') n = 0; // the Memory tab lands in the next step of this branch; no channel is loaded yet
   else if (id === 'mcp') n = ((LIVE_CONFIG && LIVE_CONFIG.mcp && LIVE_CONFIG.mcp.servers) || []).length;
@@ -1062,7 +1050,7 @@ async function refreshHealth() {
   if (!(res && res.ok && res.data)) return;
   SET.health = {workingDir: typeof res.data.workingDir === 'string' ? res.data.workingDir : null,
                 llamaUrl: res.data.llama && typeof res.data.llama.url === 'string' ? res.data.llama.url : null};
-  if (S.settings) render();
+  if (S.settings && !tkTyping()) render(); // a late /health answer must not drop the caret in the Tasks form
 }
 /* `atag skill list` (cwd = workspace, so project skills count too). */
 async function refreshSkillList() {
@@ -1072,7 +1060,7 @@ async function refreshSkillList() {
   SK.busy = false;
   if (res && res.ok && Array.isArray(res.rows)) { SK.rows = res.rows; SK.err = null; }
   else SK.err = (res && res.error) || 'skill list failed';
-  if (S.settings) render();
+  if (S.settings && !tkTyping()) render(); // same guard as refreshHealth
 }
 
 function settingsPane() {
@@ -1261,8 +1249,6 @@ function act(a) {
   if (a === 'applydial') { S.share = S.dialShare; if (S.mode !== 'fusion' && S.dialShare > 0) S.mode = 'fusion'; close(); render(); toast('Run type applied', S.mode + (S.mode === 'fusion' ? ' · cloud share ' + S.share : '')); return; }
   if (a === 'session:new') { close(); S.log = []; S.history = []; S.agentSession = null; S.busy = false; S.pending = null; S.room = 'chat'; render(); toast('New session', 'The next turn starts fresh'); return; }
   if (a === 'session:switch') { close(); S.overlay = 'sessions'; render(); return; }
-  if (a === 'task:new') { close(); S.overlay = 'newtask'; render(); return; }
-  if (a === 'task:run') { close(); render(); toast('Task started', 'Back up the Teletubbies folder'); return; }
   if (a === 'clear') { close(); S.log = []; S.history = []; render(); toast('Transcript cleared', 'The next turn starts fresh'); return; }
   if (a === 'stop') { close(); abort(); return; }
   if (a === 'send') { close(); submit(); return; }
@@ -1303,7 +1289,10 @@ function act(a) {
   if (k === 'toggle')    { close(); if (v === 'sidebar') $('#sidebar').classList.toggle('rail');
                            else if (v === 'inspector') S.inspector = !S.inspector;
                            else S.consoleOpen = !S.consoleOpen; render(); return; }
-  if (k === 'settings')  { close(); S.settings = 1; S.settingsPane = settingsPaneId(v); render(); refreshDiag(); return; }
+  if (k === 'settings')  { close(); S.settings = 1; S.settingsPane = settingsPaneId(v); render(); refreshDiag();
+    // The TUI starts its tasks orchestrator at mount, so `Tasks (N)` is right whichever tab opens first.
+    if (TK.lastRefreshedAt === null && !TK.loading) tasksRefresh(true);
+    return; }
   if (k === 'theme')     { close(); S.theme = v;
                            if (v === 'system') document.documentElement.removeAttribute('data-theme');
                            else document.documentElement.setAttribute('data-theme', v);
@@ -1496,7 +1485,7 @@ document.addEventListener('input', (e) => {
   if (e.target.id === 'palq') { S.q = e.target.value; S.cur = 0; refreshPalette(); return; }
   // Item 7: Tasks tab inputs edit state in place; only the preview block repaints.
   if (e.target.dataset && e.target.dataset.tkField) { tkFieldInput(e.target.dataset.tkField, e.target.value); return; }
-  if (e.target.id === 'tk-search') { TK.search = e.target.value; TK.cursor = 0; const at = e.target.selectionStart; render();
+  if (e.target.id === 'tk-search') { TK.search = e.target.value; TK.cursor = 0; const at = e.target.selectionStart; tkRepaint();
     const n = $('#tk-search'); if (n) { n.focus(); n.setSelectionRange(at, at); } return; }
   if (e.target.id === 'sel-filter') { SEL.filter = e.target.value; const at = e.target.selectionStart; render();
     const n = document.getElementById('sel-filter'); if (n) { n.focus(); n.setSelectionRange(at, at); } return; }
@@ -1565,7 +1554,7 @@ document.addEventListener('keydown', (e) => {
   const inText = e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT';
 
   // approval scope — only while a card is pending and focus is not in a text field
-  if (S.pending && !inText && !S.settings) { // Item 7: the settings window owns its keys while open
+  if (S.pending && !inText && !S.settings && !(S.room === 'tasks' && TK.cancel)) { // Item 7: the settings window (and the Tasks room's cancel modal) own their keys
     const kk = k.toLowerCase();
     if (['y','s','a','n'].includes(kk)) { e.preventDefault(); answer(kk); return; }
     if (k === 'Escape') { e.preventDefault(); answer('esc'); return; }
@@ -1573,7 +1562,7 @@ document.addEventListener('keydown', (e) => {
 
   const mod = e.metaKey || e.ctrlKey;
   // Item 7: Ctrl+Enter inside the Tasks create form submits the task, not the composer.
-  if (mod && k === 'Enter' && S.settings && e.target.dataset && e.target.dataset.tkField) { e.preventDefault(); tkSubmit(); return; }
+  if (mod && k === 'Enter' && e.target.dataset && e.target.dataset.tkField) { e.preventDefault(); tkSubmit(); return; }
   if (mod && !e.shiftKey && !e.altKey) {
     const map = {k:'palette', '1':'room:chat', '2':'room:tasks', '3':'room:skills', '4':'settings:memory',
                  '0':'toggle:sidebar', n:'session:new', o:'session:switch', ',':'settings:tasks',
@@ -1603,6 +1592,10 @@ document.addEventListener('keydown', (e) => {
   // Item 7: keys inside the settings window (tab cycling, the Tasks tab's hotkeys, Esc).
   if (S.settings && !S.overlay && S.menuOpen === null) {
     if (settingsKey(e, k, inText)) return;
+  }
+  // Item 7: the Tasks room is the same Tasks tab, so its j/k/n/c/R/r/a/f// keys work there too (no tab-cycling arrows).
+  if (!S.settings && !S.overlay && S.menuOpen === null && S.room === 'tasks') {
+    if (tasksKey(e, k, inText)) return;
   }
   if (S.overlay || S.settings || S.menuOpen !== null) {
     if (k === 'Escape') { e.preventDefault(); if (S.settings) { S.settings = null; render(); } else act('close'); return; }
@@ -3201,9 +3194,11 @@ function tkListHTML() {
       + rows.map((row, i) => {
         const sel = i === cur;
         return '<button class="tuirow' + (sel ? ' on' : '') + '" data-task-row="' + esc(row.id) + '" data-act="tasks:detail:' + esc(row.id) + '">'
-          + (sel ? '▸' : ' ') + ' <span class="' + tkStatusClass(row.status) + '">' + esc(row.status.padEnd(9)) + '</span> '
+          // TaskRow: `{chevron} {status(9)}{schedule(22)} {next(14)} {session(10)}{message}` — no
+          // separator after the status or session cells, so the columns sit under the header.
+          + (sel ? '▸' : ' ') + ' <span class="' + tkStatusClass(row.status) + '">' + esc(row.status.padEnd(9)) + '</span>'
           + '<span class="ter">' + esc(tkTrunc(row.scheduleLabel, 22).padEnd(22) + ' ' + formatRelativeMs(row.scheduledFor, now).padEnd(14) + ' '
-            + (row.sessionId ? tkShortId(row.sessionId) : '—').padEnd(10)) + '</span> '
+            + (row.sessionId ? tkShortId(row.sessionId) : '—').padEnd(10)) + '</span>'
           + esc(tkTrunc(row.userMessage, 64)) + '</button>';
       }).join('');
   }
@@ -3266,7 +3261,14 @@ function tkPreviewHTML(f) {
   if (f.preview.error) return '<div class="tuierr" style="margin-top:8px">error: ' + esc(f.preview.error) + '</div>';
   if (!f.preview.nextFirings.length) return '<div class="ter" style="margin-top:8px">(preview unavailable)</div>';
   return '<div class="ter" style="margin-top:8px">next firings:</div>'
-    + f.preview.nextFirings.map((ms) => '<div class="ter">· ' + esc(formatUnixMs(ms)) + '</div>').join('');
+    + f.preview.nextFirings.map((ms) => '<div class="ter">· ' + esc(formatUnixMs(ms)) + '</div>').join('')
+    // Item 7: honest degradation on 0.5.4 — the desktop cannot reach TaskRunner.create, only the CLI.
+    // The desktop submits through `atag task create --at`; on agent 0.5.4 that CLI path writes the
+    // one-shot through the bare TaskStore with no next-run (scheduled_for NULL), which the scheduler
+    // treats as due now — the row will show next-run "-" and be picked up at the next tick. The TUI
+    // creates in-process through TaskRunner.create and keeps the `at`; the desktop says so instead
+    // of pretending.
+    + (f.kind === 'at' ? '<div class="ter" style="margin-top:8px">note: on agent 0.5.4 `atag task create --at` stores no next-run for a one-shot, so the scheduler picks it up at its next tick (the row shows next-run "-"), not at the time above.</div>' : '');
 }
 function tkFieldInput(name, value) {
   const f = TK.form || (TK.form = tkNewForm());
@@ -3336,7 +3338,7 @@ function tasksAct(what) {
   const [verb, ...rest] = what.split(':');
   const arg = rest.join(':');
   const sel = () => arg || (TK.mode === 'detail' ? TK.detailId : (tkSelected() || {}).id);
-  if (verb === 'new') { if (!S.settings) { S.settings = 1; S.settingsPane = 'tasks'; } TK.mode = 'create'; TK.form = tkNewForm(); TK.msg = null; render(); return; }
+  if (verb === 'new') { if (!S.settings && S.room !== 'tasks') { S.settings = 1; S.settingsPane = 'tasks'; } TK.mode = 'create'; TK.form = tkNewForm(); TK.msg = null; render(); return; }
   if (verb === 'kind') { const f = TK.form || (TK.form = tkNewForm()); f.kind = arg; f.error = null; render(); tkPreview(); return; }
   if (verb === 'submit') { tkSubmit(); return; }
   if (verb === 'back') { TK.mode = 'list'; TK.form = null; TK.cancel = null; render(); return; }
@@ -3363,31 +3365,21 @@ function tasksAct(what) {
   if (verb === 'clearSearch') { TK.searchOpen = false; TK.search = ''; TK.cursor = 0; render(); return; }
 }
 
-/* Keys inside the settings window. ←/→ and [ ] cycle the Manage tabs as
-   cycleSubTab does; the Tasks tab's letters are tasks-key-bindings.ts. */
-function settingsKey(e, k, inText) {
-  const pane = settingsPaneId(S.settingsPane);
-  const tk = pane === 'tasks';
+/* The Tasks tab's keys (tasks-key-bindings.ts), shared by the settings
+   window and the Tasks room. Returns true when the key was consumed;
+   Escape falls through once there is no modal, form or search to clear. */
+function tasksKey(e, k, inText) {
   const tkField = inText && e.target.dataset && e.target.dataset.tkField;
   if (k === 'Escape') {
-    e.preventDefault();
-    if (tk && TK.cancel) { TK.cancel = null; render(); return true; }
-    if (tk && TK.mode !== 'list') { TK.mode = 'list'; TK.form = null; render(); return true; }
-    if (tk && (TK.searchOpen || TK.search)) { TK.searchOpen = false; TK.search = ''; render(); return true; }
-    S.settings = null; render(); return true;
+    if (TK.cancel) { e.preventDefault(); TK.cancel = null; render(); return true; }
+    if (TK.mode !== 'list') { e.preventDefault(); TK.mode = 'list'; TK.form = null; render(); return true; }
+    if (TK.searchOpen || TK.search) { e.preventDefault(); TK.searchOpen = false; TK.search = ''; render(); return true; }
+    return false;
   }
   if (tkField && (e.metaKey || e.ctrlKey) && k === 'Enter') { e.preventDefault(); tkSubmit(); return true; }
   if (e.target.id === 'tk-search' && k === 'Enter') { e.preventDefault(); TK.searchOpen = false; render(); return true; }
   if (inText) return false;
   if (e.metaKey || e.ctrlKey || e.altKey) return false;
-  if (k === 'ArrowLeft' || k === 'ArrowRight' || k === '[' || k === ']') {
-    e.preventDefault();
-    const ids = SETTINGS_TABS.map((t) => t[0]);
-    const dir = (k === 'ArrowRight' || k === ']') ? 1 : -1;
-    S.settingsPane = ids[(ids.indexOf(pane) + dir + ids.length) % ids.length];
-    render(); return true;
-  }
-  if (!tk) return false;
   if (TK.cancel) {
     if (k === 'y') { e.preventDefault(); tkCancel(TK.cancel.taskId); return true; }
     if (k === 'n') { e.preventDefault(); TK.cancel = null; render(); return true; }
@@ -3409,6 +3401,32 @@ function settingsKey(e, k, inText) {
   return false;
 }
 
+/* Keys inside the settings window. ←/→ and [ ] cycle the Manage tabs as
+   cycleSubTab does; the Tasks tab's letters are tasksKey above. */
+function settingsKey(e, k, inText) {
+  const pane = settingsPaneId(S.settingsPane);
+  if (pane === 'tasks' && tasksKey(e, k, inText)) return true;
+  if (k === 'Escape') { e.preventDefault(); S.settings = null; render(); return true; }
+  if (inText) return false;
+  if (e.metaKey || e.ctrlKey || e.altKey) return false;
+  if (k === 'ArrowLeft' || k === 'ArrowRight' || k === '[' || k === ']') {
+    e.preventDefault();
+    const ids = SETTINGS_TABS.map((t) => t[0]);
+    const dir = (k === 'ArrowRight' || k === ']') ? 1 : -1;
+    S.settingsPane = ids[(ids.indexOf(pane) + dir + ids.length) % ids.length];
+    render(); return true;
+  }
+  return false;
+}
+
+/* Repaint only the Tasks tab (the settings body or the Tasks room) —
+   the search box keeps its caret and the window is not rebuilt. */
+function tkRepaint() {
+  const box = S.settings ? document.querySelector('#settings .setbody') : document.querySelector('#content .tuiwrap');
+  if (!box) { render(); return; }
+  box.innerHTML = tasksTab();
+}
+
 /* Hooks for --smoke (Item 7: settings surface). */
 if (typeof window !== 'undefined') {
   window.addEventListener('error', () => { ERR_COUNT++; });
@@ -3424,6 +3442,7 @@ if (typeof window !== 'undefined') {
   window.__tasksRows = () => document.querySelectorAll('#settings [data-task-row]').length;
   window.__tasksMsg = () => TK.msg || '';
   window.__tasksRefresh = () => tasksRefresh();
+  window.__tasksAct = (what) => { tasksAct(what); return {cancel: TK.cancel ? Object.assign({}, TK.cancel) : null, mode: TK.mode, msg: TK.msg || ''}; };
   window.__taskCreate = (fields) => { TK.mode = 'create'; TK.form = Object.assign(tkNewForm(), fields); render(); return tkSubmit(); };
   window.__privacy = () => ({analyticsEnabled: !!(LIVE_CONFIG && LIVE_CONFIG.analytics && LIVE_CONFIG.analytics.enabled)});
   window.__privacyToggle = () => privacyToggle();

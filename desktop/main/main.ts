@@ -688,21 +688,33 @@ async function settingsTest(
   );
 
   // Create a one-shot task through `atag task create`, see it in the tab,
-  // cancel it through DELETE /api/tasks/{id}. Nothing is ever run. The
-  // fixed message keeps the rows recognisable; the agent has no task
-  // delete (list/show/create/cancel/run/tick only), so each run leaves one
-  // cancelled row in the store the harness runs against.
+  // cancel it through the tab's `c cancel` (DELETE /api/tasks/{id}). The
+  // fixed messages keep the rows recognisable; the agent has no task delete
+  // (list/show/create/cancel/run/tick only), so each run leaves two cancelled
+  // rows (this one and the recurring fixture below) in the store the harness
+  // runs against.
+  //
+  // On 0.5.4 `atag task create --at` takes the CLI's one-shot path, which
+  // writes through the bare TaskStore with no `scheduledFor` (only the
+  // recurring path goes through TaskRunner.create, which resolves it), so
+  // the row lands with `scheduled_for = NULL` — and the claim query takes
+  // NULL as "due now". The scheduler can therefore pick this row up
+  // milliseconds after creation — observed at +16 ms and +670 ms — whatever
+  // `--at` says; POST /api/tasks takes no schedule, so there is no other
+  // path. The cancel follows the create with no wait (the create already
+  // awaits the tab's refresh), and the message asks for a bare reply so a
+  // claimed run makes no tool calls. The TUI's own create goes through
+  // TaskRunner.create and does not have this problem.
   let createdId = "";
   try {
     const created = await js<{ ok: boolean; id?: string; error?: string; line: string }>(
       "(async () => { const at = String(Date.now() + 5 * 365 * 24 * 3600 * 1000);"
-      + " const r = await window.__taskCreate({kind:'at', atIsoOrMs: at, message:'desktop smoke task'});"
+      + " const r = await window.__taskCreate({kind:'at', atIsoOrMs: at, message:'desktop smoke task: reply with exactly the word done, use no tools'});"
       + " return Object.assign({}, r, {line: window.__tasksMsg()}); })()",
     );
     createdId = created.id ?? "";
     check("tasks tab: create goes through atag task create", created.ok && !!createdId && created.line === `task ${createdId} scheduled (at)`, created.error ?? created.line);
     if (createdId) {
-      await wait(1500);
       const seen = await js<{ rows: number; has: boolean }>(
         "(() => ({rows: window.__tasksRows(), has: window.__settingsBody().includes('desktop smoke task')}))()",
       );
@@ -710,11 +722,51 @@ async function settingsTest(
     }
   } finally {
     if (createdId) {
-      const cancelled = await js<{ ok: boolean; status: string; error?: string }>(
-        `(async () => { const r = await window.atomic.cancelTask(${JSON.stringify(createdId)});`
-        + " return {ok: !!(r && r.ok), status: (r && r.data && r.data.status) || '', error: r && r.error}; })()",
+      // `c cancel` on a one-shot row: the hint's own path (tasksAct → tkCancel →
+      // DELETE /api/tasks/{id}), no modal, and the orchestrator's runtime line.
+      const cancelled = await js<{ modal: unknown; line: string }>(
+        `(async () => { const first = window.__tasksAct(${JSON.stringify("cancel:" + createdId)});`
+        + ` const prefix = ${JSON.stringify(`task ${createdId} `)}; const deadline = Date.now() + 8000; let line = '';`
+        + " while (Date.now() < deadline) { line = window.__tasksMsg(); if (line.startsWith(prefix) && /cancelled|cannot cancel|not found/.test(line)) break; await new Promise((r) => setTimeout(r, 200)); }"
+        + " return {modal: first.cancel, line}; })()",
       );
-      check("tasks tab: cancel goes through DELETE /api/tasks/{id}", cancelled.ok && cancelled.status === "cancelled", cancelled.error ?? `status=${cancelled.status}`);
+      // A row the scheduler already finished reads `already completed (cannot
+      // cancel)` — that is the TUI's line too, and it means the tick won the
+      // race above, not that the cancel path is wrong.
+      const oneShotOk = cancelled.modal === null
+        && (cancelled.line === `task ${createdId} cancelled` || cancelled.line === `task ${createdId} already completed (cannot cancel)`);
+      check("tasks tab: `c cancel` goes through DELETE /api/tasks/{id}", oneShotOk, `modal=${JSON.stringify(cancelled.modal)} line=${JSON.stringify(cancelled.line)}`);
+      if (!oneShotOk) await js<void>(`window.atomic.cancelTask(${JSON.stringify(createdId)})`); // never leave the fixture pending
+      await js<void>("window.__tasksRefresh()");
+    }
+  }
+
+  // A recurring fixture (cron `0 0 29 2 *`: next firing 29 Feb 2028, so it
+  // never runs during the smoke) so `c cancel` shows the recurring-only
+  // modal and `y` confirms it through the settings window's key handler.
+  let recurringId = "";
+  try {
+    const rec = await js<{ ok: boolean; id?: string; error?: string; line: string }>(
+      "(async () => { const r = await window.__taskCreate({kind:'cron', cronExpression:'0 0 29 2 *', message:'desktop smoke recurring task'});"
+      + " return Object.assign({}, r, {line: window.__tasksMsg()}); })()",
+    );
+    recurringId = rec.id ?? "";
+    check("tasks tab: recurring create goes through atag task create", rec.ok && !!recurringId && rec.line === `task ${recurringId} scheduled (cron)`, rec.error ?? rec.line);
+  } finally {
+    if (recurringId) {
+      const modal = await js<{ cancel: { taskId: string; isRecurring: boolean } | null; msg: string }>(
+        `(() => { window.__settingsOpen('tasks'); return window.__tasksAct(${JSON.stringify("cancel:" + recurringId)}); })()`,
+      );
+      const asked = !!modal.cancel && modal.cancel.taskId === recurringId && modal.cancel.isRecurring === true && modal.msg !== `task ${recurringId} cancelled`;
+      const confirmed = await js<string>(
+        "(async () => { document.dispatchEvent(new KeyboardEvent('keydown', {key: 'y', bubbles: true, cancelable: true}));"
+        + ` const want = ${JSON.stringify(`task ${recurringId} cancelled`)}; const deadline = Date.now() + 8000; let line = '';`
+        + " while (Date.now() < deadline) { line = window.__tasksMsg(); if (line === want) break; await new Promise((r) => setTimeout(r, 200)); }"
+        + " return line; })()",
+      );
+      const recurringOk = asked && confirmed === `task ${recurringId} cancelled`;
+      check("tasks tab: cancelling a recurring task asks first, `y` confirms", recurringOk, `asked=${asked} line=${JSON.stringify(confirmed)}`);
+      if (!recurringOk) await js<void>(`window.atomic.cancelTask(${JSON.stringify(recurringId)})`); // never leave the fixture pending
       await js<void>("window.__tasksRefresh()");
     }
   }
