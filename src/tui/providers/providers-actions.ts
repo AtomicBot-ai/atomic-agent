@@ -89,6 +89,19 @@ export type ProvidersAction =
       generation: number;
       error: string;
     }
+  | {
+      /**
+       * Run the side-effect-free provider contract probe against
+       * `providerId` (`null` = active text provider), on explicit
+       * operator request (`/llm check`). Handled by
+       * `ProvidersOrchestrator.runContractProbe`; `submit-handler`
+       * routes it through `onProvidersContractProbeRequested` for the
+       * same reason as the picker request above — a dispatched reducer
+       * action never reaches the event bus the orchestrator listens on.
+       */
+      type: "providers_contract_probe_requested";
+      providerId: string | null;
+    }
   | { type: "providers_wizard_updated"; wizard: ProvidersWizardState }
   | { type: "providers_wizard_closed" }
   | { type: "providers_wizard_submit_started" }

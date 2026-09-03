@@ -175,7 +175,23 @@ export interface AtomicAgentConfig {
     /** Upper bound on `n_predict` for each completion when the caller omits `maxTokens`. */
     completionMaxTokens: number;
     healthTimeoutMs: number;
+    /**
+     * For a unary `complete()`, the whole-request budget. For
+     * `completeStream()`, an **idle** budget: how long llama-server may
+     * stay silent between bytes. A healthy generation refreshes it on
+     * every chunk, so it never caps how long an answer may be — see
+     * `streamTotalTimeoutMs` for that.
+     */
     requestTimeoutMs: number;
+    /**
+     * Absolute cap on one streaming response, measured from the moment
+     * response headers arrive. `requestTimeoutMs` only bounds silence,
+     * so without this a server dribbling one byte just under the idle
+     * budget would pin a slot, a session and — in headless `run` — a
+     * process forever. Deliberately far above any honest local
+     * generation; it is a backstop, not a budget.
+     */
+    streamTotalTimeoutMs: number;
     healthRetries: number;
     healthRetryBackoffMs: number;
     /**
@@ -2103,6 +2119,21 @@ export const ENV_DEFAULTS = {
   STATE_DIR: "~/.atomic-agent",
   HEALTH_TIMEOUT_MS: 3000,
   REQUEST_TIMEOUT_MS: 300_000,
+  /**
+   * 6 hours. The backstop on a single streaming response — see
+   * `AtomicAgentConfig.localModels.streamTotalTimeoutMs`.
+   *
+   * Chosen to clear the worst *honest* local generation by a wide
+   * margin: the default `completionMaxTokens` of 8 192 tokens decoded at
+   * 0.4 tok/s — slower than any CPU setup people actually sit through —
+   * is about 5.7 h. It is also 72x `REQUEST_TIMEOUT_MS`, so the idle
+   * deadline gets dozens of chances to fire first; if this one fires,
+   * the server was streaming continuously for six hours without
+   * finishing, which no local model this project targets does by
+   * accident. Raise it with `ATOMIC_AGENT_LLAMA_STREAM_TOTAL_TIMEOUT_MS`
+   * if you really do run a 131 072-token completion on a slow box.
+   */
+  STREAM_TOTAL_TIMEOUT_MS: 6 * 60 * 60 * 1_000,
   HEALTH_RETRIES: 5,
   HEALTH_BACKOFF_MS: 500,
   COMPLETION_RETRIES: 3,

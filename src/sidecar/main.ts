@@ -5,6 +5,8 @@ import { MessageRouter } from "./message-router.js";
 import { StdioProtocol } from "./stdio-protocol.js";
 import { getConfig } from "../config/index.js";
 import { checkLlamaServer } from "../llm/llama-server-health.js";
+import { activeTextProviderIsLlamaServer } from "../llm/provider/registry/active-text-provider.js";
+import { resolveLlmConfig } from "../llm/provider/registry/provider-registry.js";
 import { createAgentRuntime } from "../runtime/bootstrap.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
 import type { AgentLoopEvent } from "../agent/agent-loop.js";
@@ -250,18 +252,25 @@ export async function bootstrapSidecar(): Promise<{
       const runtime = await buildRuntime(workingDir);
       // Status probe for the desktop shell — one attempt; the retry
       // ladder only delayed the `llm_unavailable` event by 15.5 s.
-      const health = await checkLlamaServer({ retries: 0 });
-      if (!health.reachable) {
-        const hint =
-          config.localModels.mode === "managed"
-            ? "run atomic-agent models start"
-            : "check localModels.url or ATOMIC_AGENT_LLAMA_URL";
-        protocol.emitEvent("llm_unavailable", {
-          url: config.localModels.url,
-          error: health.error,
-          mode: config.localModels.mode,
-          hint,
-        });
+      //
+      // Only when the local backend is the route (issue #112). Config is
+      // re-read rather than closed over: the shell can rewrite it
+      // between sessions, and `llm_unavailable` about a llama-server the
+      // session never talks to is a failure report for a healthy run.
+      if (activeTextProviderIsLlamaServer(resolveLlmConfig(getConfig()))) {
+        const health = await checkLlamaServer({ retries: 0 });
+        if (!health.reachable) {
+          const hint =
+            config.localModels.mode === "managed"
+              ? "run atomic-agent models start"
+              : "check localModels.url or ATOMIC_AGENT_LLAMA_URL";
+          protocol.emitEvent("llm_unavailable", {
+            url: config.localModels.url,
+            error: health.error,
+            mode: config.localModels.mode,
+            hint,
+          });
+        }
       }
       const session = runtime.createSession({
         ...(request.payload.metadata

@@ -15,7 +15,10 @@ import { CodingModePopup } from "./components/coding-mode-popup.js";
 import { OnboardingScreen } from "./components/onboarding-screen.js";
 import { TerminalTooSmall } from "./components/terminal-too-small.js";
 import { ContextPanel } from "./components/context-panel.js";
-import { selectContextUsage } from "./select-context-usage.js";
+import {
+  selectComposerContextUsage,
+  selectContextUsage,
+} from "./select-context-usage.js";
 import { Box, Text, useApp, useInput, type DOMElement, type Key } from "ink";
 import type { HuggingFaceRepoChoices } from "../local-llm/index.js";
 import {
@@ -436,6 +439,13 @@ export interface TuiAppCallbacks {
    * above: only the callback layer reaches the orchestrator's bus.
    */
   onProvidersInlineModelsEnsureRequested?(providerId: string | null): void;
+  /**
+   * `/llm check`: run the provider contract probe against `providerId`
+   * (`null` = active text provider). Callback for the same reason as
+   * the two above. Explicit request only — the probe spends real
+   * requests and never runs on a turn path.
+   */
+  onProvidersContractProbeRequested?(providerId: string | null): void;
   /** Providers tab / LLM panel: switch the active embedding provider. */
   onProvidersSetActiveEmbedding?(id: string): void;
   /** Providers tab / LLM panel: select an exact embedding model. */
@@ -1272,6 +1282,17 @@ export function TuiApp({
     [state, callbacks],
   );
 
+  /**
+   * The composer's stop chip. Exactly the pair of calls the Esc branch
+   * in `handleAppKey` makes — one abort path, whichever way it was
+   * asked for. The chip only renders while `status === "running"`, so
+   * unlike Esc there is no precedence ladder to walk first.
+   */
+  const onStopRun = useCallback(() => {
+    callbacks.onAbort();
+    dispatch({ type: "abort_requested" });
+  }, [callbacks]);
+
   const onEditorChange = useCallback(
     (next: string) => {
       // An editor that is unmounting keeps its `useInput` subscription
@@ -1637,8 +1658,13 @@ export function TuiApp({
     dispatch({ type: "context_pairs_selected", pairs: next });
   }, []);
 
-  const promptContextSlot = contextUsage ? (
-    <ContextChip usage={contextUsage} layer={MOUSE_LAYER_PANEL} />
+  // The chip follows the operator's draft task count the instant the
+  // selector moves; the panel keeps the measured view and projects the
+  // draft itself, so the two stay in step. See
+  // `selectComposerContextUsage`.
+  const composerContextUsage = selectComposerContextUsage(state);
+  const promptContextSlot = composerContextUsage ? (
+    <ContextChip usage={composerContextUsage} layer={MOUSE_LAYER_PANEL} />
   ) : null;
   // Always drawn, including in `default`. A control that appears only
   // once you are in an unusual mode is a control nobody discovers, and
@@ -1735,6 +1761,7 @@ export function TuiApp({
       <Box flexShrink={0}>
         <StatusBar
           state={state}
+          width={terminalSize.columns - ROOT_PADDING_COLUMNS}
           brand={!sidebarVisible}
           railRestore={sidebarRestorable}
         />
@@ -2001,6 +2028,8 @@ export function TuiApp({
             rightSlot={promptRightSlot}
             contextSlot={promptContextSlot}
             modeSlot={promptModeSlot}
+            running={state.status === "running"}
+            onStop={onStopRun}
             focus={editorFocus}
             disabled={!canTypeMessage(state)}
             claimKey={composerClaimKey}

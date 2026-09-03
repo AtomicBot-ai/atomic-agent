@@ -77,7 +77,10 @@ export function resubmitChatMessage(
  * prose; sending it back would open a turn whose prompt is the previous
  * answer, which is not "try again" in any sense an operator means. A
  * system message is TUI runtime output — queue listings, turn-failed
- * lines — and re-sending one as a prompt is worse than nonsense. Asking
+ * lines — and re-sending one as a prompt is worse than nonsense. The
+ * one system notice that carries the button — "Agent stopped by user",
+ * via `ChatMessage.retryText` — is no exception: what it resends is the
+ * aborted turn's *user* prompt, never its own text. Asking
  * the model to have another go at the *same* question is a different
  * feature (it has to drop the last turn, not append one) and it is not
  * this button.

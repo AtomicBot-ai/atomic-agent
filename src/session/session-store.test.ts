@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SessionStore } from "./session-store.js";
 import { createEmptySessionState } from "./session-state.js";
+import { EMPTY_CONTEXT_USAGE } from "./context-usage.js";
 
 describe("SessionStore", () => {
   let tmp: string;
@@ -57,6 +58,27 @@ describe("SessionStore", () => {
     const loaded = store.load("s-tools");
     expect(loaded?.loadedTools).toHaveLength(1);
     expect(loaded?.loadedTools[0]?.name).toBe("os.git.show");
+  });
+
+  it("round-trips the persisted context-usage snapshot", () => {
+    const initial = createEmptySessionState({
+      id: "s-ctx",
+      workingDir: "/w",
+    });
+    const snapshot = {
+      ...EMPTY_CONTEXT_USAGE,
+      tokens: 12_345,
+      contextWindow: 131_072,
+      conversationTokens: 9_000,
+      conversationPairs: 4,
+      sections: [{ label: "conversation", tokens: 9_000 }],
+    };
+    store.save({ ...initial, contextUsage: snapshot });
+    const loaded = store.load("s-ctx");
+    expect(loaded?.contextUsage).toEqual(snapshot);
+    // A session written before the field existed simply has none.
+    store.save(createEmptySessionState({ id: "s-old", workingDir: "/w" }));
+    expect(store.load("s-old")?.contextUsage).toBeUndefined();
   });
 
   it("updates an existing session in place", () => {

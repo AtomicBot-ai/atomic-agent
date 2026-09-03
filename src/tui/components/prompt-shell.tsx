@@ -5,6 +5,7 @@ import { useRotatingPlaceholder } from "../hooks/use-rotating-placeholder.js";
 import { readableOn } from "../theme/readable-foreground.js";
 import { theme } from "../theme/theme.js";
 import { ComposerSendButton } from "./composer-send-button.js";
+import { ComposerStopButton } from "./composer-stop-button.js";
 import { MultiLineEditor, type MultiLineEditorProps } from "./multi-line-editor.js";
 import { PromptMetaBar } from "./prompt-meta-bar.js";
 
@@ -82,6 +83,16 @@ export interface PromptShellProps
   /** Optional context readout, rendered at the action bar's right end. */
   contextSlot?: ReactElement | null;
   modeSlot?: ReactElement | null;
+  /**
+   * A turn is in flight. Puts the stop chip into the field, next to
+   * Send — the one moment the composer has a destructive verb to offer.
+   */
+  running?: boolean;
+  /**
+   * Stop the running turn. The chat surface passes the same path Esc
+   * takes; the chip renders only when both `running` and this are set.
+   */
+  onStop?: () => void;
 }
 
 export function PromptShell(props: PromptShellProps): ReactElement {
@@ -97,6 +108,8 @@ export function PromptShell(props: PromptShellProps): ReactElement {
     rightSlot,
     contextSlot,
     modeSlot,
+    running,
+    onStop,
     focus,
     disabled,
     value,
@@ -196,6 +209,18 @@ export function PromptShell(props: PromptShellProps): ReactElement {
               bare
             />
           </Box>
+          {running && onStop ? (
+            <Box flexShrink={0} marginLeft={1}>
+              {/*
+                Stop sits between the buffer and Send, on exactly the
+                turns it can act on. Inside the field like Send, and for
+                the same reason: it is a verb for the run the operator
+                is watching, and the bar below already spends its slots
+                on status readouts.
+              */}
+              <ComposerStopButton onPress={onStop} layer={mouseLayer} />
+            </Box>
+          ) : null}
           <Box flexShrink={0} marginLeft={1}>
             <ComposerSendButton
               enabled={canSend}

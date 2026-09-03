@@ -10,6 +10,7 @@ import {
   type ModelProfile,
 } from "../llm/model-profile.js";
 import type { ModelProfileManager } from "../llm/model-profile-manager.js";
+import type { LocalBackendGate } from "../llm/local-backend-gate.js";
 import type { ToolRegistry } from "../tools/tool-registry.js";
 import {
   CancelledError,
@@ -43,7 +44,9 @@ import { executeStep } from "./step-executor.js";
 import type { LlmStreamParams, StepEvent } from "./step-executor.js";
 import {
   ToolLoopTracker,
+  READ_REPEAT_WARNING_THRESHOLD,
   TEST_REPEAT_WARNING_THRESHOLD,
+  formatReadRepeatNotice,
   formatRepeatNotice,
   formatTestRepeatNotice,
   formatWanderingRedirect,
@@ -108,6 +111,19 @@ export interface AgentLoopDependencies {
    * for the lifetime of the loop (test-mode wiring).
    */
   profileManager?: ModelProfileManager;
+  /**
+   * Gate for the `profileManager` probes above (issue #112). The manager
+   * talks to the local llama-server, so on a cloud turn its refreshes
+   * are pure `/props` noise against a backend nothing is routed to —
+   * `isActive()` false skips them. `ensureProbed()` covers the reverse
+   * case: the operator switched back to a local provider after a cloud
+   * boot that deferred the probes, and this turn is the first local one.
+   * It returns `true` when it just ran them, which already includes a
+   * fresh `/props` — the loop then skips its own refresh rather than
+   * probing twice. Absent (test / legacy wiring) means "always local",
+   * preserving the pre-#112 behaviour.
+   */
+  localBackend?: LocalBackendGate;
   /** Skill catalog (name + description only), rebuilt on install/uninstall. */
   skillCatalog: readonly SkillCatalogEntry[];
   /**
@@ -349,7 +365,25 @@ export type AgentLoopEvent =
       /** Graduated severity from the `ToolLoopTracker`. */
       level?: "warn" | "critical" | "breaker";
       /** Which sub-detector fired. */
-      detector?: "generic_repeat" | "no_progress" | "wandering" | "test_repeat";
+      detector?:
+        | "generic_repeat"
+        | "no_progress"
+        | "wandering"
+        | "test_repeat"
+        | "read_repeat";
+      /**
+       * `read_repeat` only: the resolved file, the range that read
+       * returned, and the fingerprint on either side of it (equal ⇒ the
+       * content did not change, which is what makes the read redundant).
+       * Line numbers and a path — never file content.
+       */
+      read?: {
+        path: string;
+        startLine: number;
+        endLine: number;
+        previousFingerprint: string;
+        fingerprint: string;
+      };
     }
   | {
       type: "loop_completed";
@@ -393,6 +427,15 @@ export interface RunTurnResult {
 
 export class AgentLoop {
   constructor(private readonly deps: AgentLoopDependencies) {}
+
+  /**
+   * Whether the local llama-server is the route this turn takes. No gate
+   * wired (test / legacy deps) reads as `true` so the profile manager
+   * behaves exactly as it did before issue #112.
+   */
+  private localBackendActive(): boolean {
+    return this.deps.localBackend?.isActive() ?? true;
+  }
 
   /**
    * Drive one macro-turn:
@@ -480,9 +523,27 @@ export class AgentLoop {
     // Proactively sync with the live `llama-server` before the first
     // step. Catches the case where the operator swapped the model
     // between turns — without this, step 0 would still build the prompt
-    // with the previous model's template.
+    // with the previous model's template. Skipped whole on a cloud turn
+    // (issue #112): there is no llama-server behind the prompt to sync
+    // with, and the probe would fail against a backend nobody is using.
+    //
+    // ...unless the previous turn was actually SERVED by a local link
+    // through the fallback chain. `appendLocal` defaults to `true`, so a
+    // rate-limited cloud primary falls over to llama-server on every
+    // turn while the active provider stays cloud; without this second
+    // arm the profile and grammar would stay pinned to whatever the
+    // first fallover probed for the whole outage. Take-and-clear, so a
+    // recovered primary quiets the probes again after one turn.
+    const localLinkServedLastTurn =
+      this.deps.localBackend?.takeLinkServed?.() ?? false;
     if (this.deps.profileManager) {
-      await this.deps.profileManager.refresh();
+      if (this.localBackendActive()) {
+        if (!(await this.deps.localBackend?.ensureProbed())) {
+          await this.deps.profileManager.refresh();
+        }
+      } else if (localLinkServedLastTurn) {
+        await this.deps.profileManager.refresh();
+      }
     }
 
     let reason: AgentLoopReason = "max_steps";
@@ -545,8 +606,17 @@ export class AgentLoop {
       // Reactive refresh between steps: if the previous completion
       // observed a foreign `modelId`, rebuild profile + grammar so the
       // next prompt matches what `llama-server` is actually serving.
-      if (this.deps.profileManager) {
-        await this.deps.profileManager.refreshIfStale();
+      // Same cloud-turn gate as the turn-start refresh (issue #112).
+      // Nothing is lost on a cloud turn that falls over: the fallback
+      // seam's `prepareLink` runs this same `refreshIfStale` for a
+      // `llama-server` link at the point the link is picked, which is
+      // strictly later than here and strictly closer to the request —
+      // the completion that flagged the manager stale may not even have
+      // happened yet when this line runs.
+      if (this.deps.profileManager && this.localBackendActive()) {
+        if (!(await this.deps.localBackend?.ensureProbed())) {
+          await this.deps.profileManager.refreshIfStale();
+        }
       }
       this.deps.onEvent?.({ type: "step_started", stepIndex: i });
       const started = Date.now();
@@ -797,9 +867,13 @@ export class AgentLoop {
         // re-injected on every subsequent identical step.
         for (const sig of loopSignals) {
           if (sig.kind !== "warn") continue;
-          // The test-repeat detector has its own floor: the 2nd
-          // equivalent run is already conclusive, so it must not wait
-          // for the generic warning threshold (default 3).
+          // Two detectors carry their own floor because their signal is
+          // conclusive earlier than a byte-identical repeat is. A 2nd
+          // test run against an unchanged workspace cannot produce new
+          // evidence; a 2nd consecutive read of an unchanged file that
+          // returned nothing new cannot produce new text. Waiting for
+          // the generic threshold (default 3) would burn another step in
+          // both cases.
           const emit =
             sig.detector === "test_repeat"
               ? loopTracker.shouldEmitWarning(
@@ -807,7 +881,13 @@ export class AgentLoop {
                   sig.count,
                   TEST_REPEAT_WARNING_THRESHOLD,
                 )
-              : loopTracker.shouldEmitWarning(sig.warningKey, sig.count);
+              : sig.detector === "read_repeat"
+                ? loopTracker.shouldEmitWarning(
+                    sig.warningKey,
+                    sig.count,
+                    READ_REPEAT_WARNING_THRESHOLD,
+                  )
+                : loopTracker.shouldEmitWarning(sig.warningKey, sig.count);
           if (!emit) {
             continue;
           }
@@ -816,7 +896,9 @@ export class AgentLoop {
               ? formatWanderingRedirect(sig.tool, sig.count)
               : sig.detector === "test_repeat"
                 ? formatTestRepeatNotice(sig)
-                : formatRepeatNotice(sig);
+                : sig.detector === "read_repeat" && sig.read !== undefined
+                  ? formatReadRepeatNotice({ count: sig.count, ...sig.read })
+                  : formatRepeatNotice(sig);
           this.deps.onEvent?.({
             type: "loop_detected",
             tool: sig.tool,
@@ -824,12 +906,35 @@ export class AgentLoop {
             stepIndex: i,
             level: "warn",
             detector: sig.detector,
+            ...(sig.read !== undefined
+              ? {
+                  read: {
+                    path: sig.read.path,
+                    startLine: sig.read.startLine,
+                    endLine: sig.read.endLine,
+                    previousFingerprint: sig.read.previousFingerprint,
+                    fingerprint: sig.read.fingerprint,
+                  },
+                }
+              : {}),
           });
           this.deps.logger?.warn("no-progress loop detected", {
             sessionId: state.id,
             stepIndex: i,
             tool: sig.tool,
             count: sig.count,
+            detector: sig.detector,
+            // Path, range and fingerprints only — enough to reconstruct
+            // WHY the detector fired without putting a line of the file
+            // into the log.
+            ...(sig.read !== undefined
+              ? {
+                  path: sig.read.path,
+                  range: `${sig.read.startLine}-${sig.read.endLine}`,
+                  fingerprint: sig.read.fingerprint,
+                  previousFingerprint: sig.read.previousFingerprint,
+                }
+              : {}),
           });
         }
         state = await refreshMemoryContext(this.deps, state, options);

@@ -697,8 +697,20 @@ function dispatchLlmSub(rawArgs: string): SlashDispatchResult {
       { type: "providers_refresh_requested" },
     ]);
   }
+  // `/llm check` exercises the real turn contract against the active
+  // provider — streaming, tools payload, a forced native tool call —
+  // and reports what came back. A reachable `/v1/models` says nothing
+  // about any of that, so until now the first real message was the
+  // test. Explicit only: it spends requests against the operator's own
+  // account and must never run on a turn path.
+  if (/^check$/i.test(argPart)) {
+    return pureActions([{ type: "providers_contract_probe_requested", providerId: null }], {
+      systemMessage:
+        "checking the active provider's streaming tool-call contract — this sends one request",
+    });
+  }
   return pureActions([], {
-    systemMessage: "usage: /llm | /llm provider <id> | /llm fallback",
+    systemMessage: "usage: /llm | /llm provider <id> | /llm check | /llm fallback",
   });
 }
 

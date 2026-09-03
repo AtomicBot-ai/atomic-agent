@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProviderRow } from "./providers/providers-panel-state.js";
-import { selectContextUsage } from "./select-context-usage.js";
+import {
+  selectComposerContextUsage,
+  selectContextUsage,
+} from "./select-context-usage.js";
 import { fakeSession } from "./test-fixtures.js";
 import {
   createInitialTuiState,
@@ -91,6 +94,67 @@ describe("selectContextUsage", () => {
   });
 });
 
+describe("the composer chip follows the task-count draft", () => {
+  /** A session of three tasks, measured under a cap of 20. */
+  function measuredUsage(): ContextUsageState {
+    return usage({
+      tokens: 8_200,
+      contextWindow: 128_000,
+      conversationTokens: 900,
+      conversationPairs: 3,
+      conversationPairsCap: 20,
+      droppedPairs: 0,
+      pairCosts: [300, 280, 320],
+      sections: [
+        { label: "prompt scaffold", tokens: 6_100 },
+        { label: "conversation", tokens: 900 },
+      ],
+    });
+  }
+
+  it("shows the measurement while no draft is in force", () => {
+    const state = stateWith(measuredUsage());
+    expect(selectComposerContextUsage(state)).toEqual(
+      selectContextUsage(state),
+    );
+  });
+
+  /**
+   * The point of the selector: stepping the dial in the panel moves the
+   * chip on the same render, not one prompt build later.
+   */
+  it("reprojects at the draft the moment one exists", () => {
+    const state = stateWith(measuredUsage(), { contextPanelPairsDraft: 22 });
+    const view = selectComposerContextUsage(state);
+    // Everything outside the transcript plus every task that exists —
+    // dialing past the session's real size adds nothing.
+    expect(view?.tokens).toBe(6_100 + 900);
+    expect(view?.pairs).toBe(3);
+    expect(view?.pairsCap).toBe(22);
+    expect(view?.droppedPairs).toBe(0);
+  });
+
+  it("prices a draft below the measured count", () => {
+    const state = stateWith(measuredUsage(), { contextPanelPairsDraft: 2 });
+    const view = selectComposerContextUsage(state);
+    // The two newest tasks survive; the oldest is priced out.
+    expect(view?.conversationTokens).toBe(280 + 320);
+    expect(view?.pairs).toBe(2);
+    expect(view?.droppedPairs).toBe(1);
+  });
+
+  /**
+   * `prompt_built` retires the draft when reality catches up with it;
+   * until that dispatch lands a draft equal to the cap must already
+   * read as the measurement, or the chip would swap a real tokenizer
+   * count for an estimate on a no-op.
+   */
+  it("keeps the measurement when the draft equals the cap", () => {
+    const state = stateWith(measuredUsage(), { contextPanelPairsDraft: 20 });
+    expect(selectComposerContextUsage(state)?.tokens).toBe(8_200);
+  });
+});
+
 describe("which limit holds the transcript down", () => {
   it("names config when the configured cap is what binds", () => {
     expect(selectContextUsage(stateWith(usage()))?.capSource).toBe("config");
@@ -174,6 +238,52 @@ describe("resolving the model's context window", () => {
       llmHealth: { ...base.llmHealth, contextWindow: 32_768 },
     });
     expect(view?.contextWindow).toBe(32_768);
+  });
+
+  /**
+   * Issue #112. The poller's window is a llama-server `n_ctx`, and after
+   * a local→cloud switch the last local reading is still sitting in
+   * `llmHealth`: `agent-event-reducer` deliberately PRESERVES
+   * `contextWindow` when an `llm_model_updated` omits it (which is
+   * exactly the shape `notifyCatalogModel` emits), so the stale value is
+   * reachable by design, not only by a lost race.
+   *
+   * Without the `localActive &&` guard in `resolveWindow` this returns
+   * 4096 — a local server's slot size drawn as a cloud model's context
+   * gauge. The row's model is deliberately uncatalogued so the guard is
+   * the ONLY thing standing between the poller's number and the result.
+   */
+  it("ignores the local poller's n_ctx while a cloud provider is the active route", () => {
+    const base = createInitialTuiState(fakeSession());
+    const cloudRow = providerRow({
+      kind: "openai-compatible",
+      chatModel: "vendor/never-heard-of-it",
+    });
+    const view = selectContextUsage({
+      ...base,
+      contextUsage: usage({ contextWindow: null }),
+      llmHealth: { ...base.llmHealth, contextWindow: 4096 },
+      providersPanel: { ...base.providersPanel, rows: [cloudRow] },
+    });
+    expect(view?.contextWindow).toBeNull();
+    expect(view?.percent).toBeNull();
+  });
+
+  it("still uses the poller's n_ctx when the active row IS the local backend", () => {
+    // The control: the guard must not cost the local route its window.
+    const base = createInitialTuiState(fakeSession());
+    const localRow = providerRow({
+      id: "local-llama",
+      kind: "llama-server",
+      chatModel: null,
+    });
+    const view = selectContextUsage({
+      ...base,
+      contextUsage: usage({ contextWindow: null }),
+      llmHealth: { ...base.llmHealth, contextWindow: 4096 },
+      providersPanel: { ...base.providersPanel, rows: [localRow] },
+    });
+    expect(view?.contextWindow).toBe(4096);
   });
 
   it("falls back to the active provider's catalogue on a cloud turn", () => {

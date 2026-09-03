@@ -1,4 +1,8 @@
 #!/usr/bin/env node
+// Must stay first: it defaults NODE_ENV to production before `ink`
+// pulls in react-reconciler, which picks its build at require time.
+// See src/cli/node-env-bootstrap.ts.
+import "./node-env-bootstrap.js";
 import { isSea } from "node:sea";
 import { argv, exit } from "node:process";
 import { runAgentCommand } from "./run-agent.js";
