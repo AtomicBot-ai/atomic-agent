@@ -75,6 +75,33 @@ function installCountingFetch(): LocalTraffic {
         });
       }
     }
+    // A WORKING cloud provider, so a "cloud turn" is a turn the cloud
+    // link actually SERVES. Answering it flatly would make the turn fail
+    // before the fallback chain's local tail is ever consulted, which is
+    // the one thing a zero-request assertion over cloud turns must not
+    // do.
+    if (url.includes("cloud.invalid") && url.includes("completions")) {
+      return new Response(
+        JSON.stringify({
+          id: "c1",
+          object: "chat.completion",
+          created: 1,
+          model: "cloudy-1",
+          choices: [
+            {
+              index: 0,
+              message: {
+                role: "assistant",
+                content: '{"tool":"finish","args":{"summary":"ok"}}',
+              },
+              finish_reason: "stop",
+            },
+          ],
+          usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
     // Everything else (analytics, update check, provider catalogues)
     // is answered flatly so no test ever reaches the network.
     return new Response("{}", {
@@ -179,6 +206,58 @@ describe("issue #112 — local probe gating at CLI bootstrap", () => {
           /llama|context window/i.test(r.message),
       );
       expect(complaints).toEqual([]);
+    } finally {
+      await runtime.shutdown();
+    }
+  });
+
+  /**
+   * Issue #112 review, F1. The gating is no longer a single latch: the
+   * loop refreshes the profile again whenever a `llama-server` link
+   * SERVED the previous turn, so that a sustained cloud->local fallover
+   * does not freeze the profile. That arm must stay shut on a session
+   * where the local link never serves — including turns 2 and 3, which a
+   * boot-only assertion would never reach.
+   *
+   * The config is the default fallover shape: `appendLocal` defaults to
+   * `true` and a `llama-server` text entry is configured, so the chain
+   * really is `[cloudy, local-llama]`; the cloud link simply keeps
+   * answering, and nothing behind it is touched.
+   */
+  it("makes zero local text requests across three cloud TURNS, not just at boot", async () => {
+    writeConfig(stateDir, {
+      llm: {
+        ...cloudLlm,
+        providers: [
+          CLOUD_PROVIDER,
+          { id: "local-llama", kind: "llama-server", url: "http://127.0.0.1:8080" },
+          LOCAL_EMBED_PROVIDER,
+        ],
+      },
+    });
+    const runtime = await boot();
+    try {
+      expect(traffic.countTo(TEXT_PORT)).toBe(0);
+      const session = runtime.createSession();
+      for (let i = 0; i < 3; i += 1) {
+        await runtime
+          .executeTurn(session, `hello ${i}`, {
+            maxSteps: 2,
+            signal: new AbortController().signal,
+          })
+          .catch(() => undefined);
+        // Reported with the turn index so a failure names the turn.
+        expect({ turn: i, local: traffic.countTo(TEXT_PORT) }).toEqual({
+          turn: i,
+          local: 0,
+        });
+      }
+      // ...and the turns really were served by the cloud link.
+      expect(
+        traffic.urls.filter(
+          (u) => u.includes("cloud.invalid") && u.includes("completions"),
+        ).length,
+      ).toBe(3);
     } finally {
       await runtime.shutdown();
     }
