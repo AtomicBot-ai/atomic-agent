@@ -128,31 +128,34 @@ const BSW = { line:'', readyIds:[], readyLoaded:false, localLoaded:false, gating
 /* ---- Item 7: settings surface — the TUI menu tree + the Manage tabs ----
    MENU_GROUPS mirrors src/tui/menu/menu-registry.ts (MENU_GROUP_ORDER,
    MENU_GROUP_LABELS, every node label and its ctrl+g chord, in registry
-   order). A node with `tab` switches the right-hand panel; `na` marks a
-   node the desktop has no implementation for — it is drawn with the TUI
-   label and a muted note, never dropped. The user asked for the TUI menu
-   copied as it is, so the whole tree is here, not just Manage. */
+   order) with ONE deliberate divergence, made on the user's instruction
+   ("Remove Go and Observe points from the menu"): the `Go` group and its
+   `Observe` submenu are not rendered. Manage's eight children are hoisted
+   to a top-level group labelled `Manage`, keeping their node ids, labels
+   and chords, so every settings tab stays reachable and the group list
+   reads Manage · Session · Model · Run · Setup · Help · Danger zone.
+   Nothing became unreachable: Run is ⌘1 and the palette's Chat row;
+   Observe's Feed/World/Reasoning are the toolbar's inspector button, the
+   palette rows and the slash verbs; Logs and LLM logs are ⌘⇧Y plus the
+   console's own Agent/LLM segment; the debug pane is that same ⌘⇧Y and
+   the toolbar's console button. What DOES go dead is six ctrl+g chords —
+   r, f, w, e, o and L. chordKey swallows an unmatched key silently, so
+   ctrl+g r now eats one keystroke and does nothing; that is left silent
+   deliberately, because a toast naming a route the user asked to remove
+   would reintroduce the menu entry in another form.
+   A node with `tab` switches the right-hand panel; `na` marks a node the
+   desktop has no implementation for — it is drawn with the TUI label and
+   a muted note, never dropped. */
 const MENU_GROUPS = [
-  ['Go', [
-    {id:'go.run', label:'Run', chord:'r'},
-    {id:'go.observe', label:'Observe', sub:[
-      {id:'go.observe.feed', label:'Feed', chord:'f'},
-      {id:'go.observe.world', label:'World', chord:'w'},
-      {id:'go.observe.reasoning', label:'Reasoning', chord:'e'},
-      {id:'go.observe.logs', label:'Logs', chord:'o'},
-      {id:'go.observe.llm-logs', label:'LLM logs', chord:'L'},
-    ]},
-    {id:'go.manage', label:'Manage', sub:[
-      {id:'go.manage.tasks', label:'Tasks', chord:'t', tab:'tasks'},
-      {id:'go.manage.skills', label:'Skills', chord:'s', tab:'skills'},
-      {id:'go.manage.memory', label:'Memory', chord:'m', tab:'memory'},
-      {id:'go.manage.mcp', label:'MCP', chord:'c', tab:'mcp'},
-      {id:'go.manage.llm', label:'LLM', chord:'l', tab:'llm'},
-      {id:'go.manage.telegram', label:'Telegram', chord:'g', tab:'telegram'},
-      {id:'go.manage.import', label:'Import', chord:'i', tab:'import'},
-      {id:'go.manage.privacy', label:'Privacy', chord:'p', tab:'privacy'},
-    ]},
-    {id:'go.debug', label:'Toggle debug pane'},
+  ['Manage', [
+    {id:'go.manage.tasks', label:'Tasks', chord:'t', tab:'tasks'},
+    {id:'go.manage.skills', label:'Skills', chord:'s', tab:'skills'},
+    {id:'go.manage.memory', label:'Memory', chord:'m', tab:'memory'},
+    {id:'go.manage.mcp', label:'MCP', chord:'c', tab:'mcp'},
+    {id:'go.manage.llm', label:'LLM', chord:'l', tab:'llm'},
+    {id:'go.manage.telegram', label:'Telegram', chord:'g', tab:'telegram'},
+    {id:'go.manage.import', label:'Import', chord:'i', tab:'import'},
+    {id:'go.manage.privacy', label:'Privacy', chord:'p', tab:'privacy'},
   ]],
   ['Session', [
     {id:'session.new', label:'New session', chord:'n'},
@@ -194,9 +197,8 @@ const MENU_GROUPS = [
 /* The desktop act each menu verb already has. Nodes with a `tab` and
    nodes marked `na` are not in here. */
 const MENU_ACTS = {
-  'go.run':'room:chat', 'go.observe.feed':'insp:steps', 'go.observe.world':'insp:world',
-  'go.observe.reasoning':'insp:reasoning', 'go.observe.logs':'console:agent', 'go.observe.llm-logs':'console:llm',
-  'go.debug':'toggle:console',
+  // The `go.run`, `go.observe.*` and `go.debug` entries went with their nodes
+  // (see the divergence note above); their destinations keep every other route.
   'session.new':'session:new', 'session.switch':'session:switch', 'session.clear':'clear',
   'session.context':'context', 'session.id':'session:id',
   'model.chat':'selector:model',
@@ -211,6 +213,14 @@ const SETTINGS_TABS = [['tasks','Tasks','tasks'],['skills','Skills','skills'],['
 /* Settings shell state: the diagnostics line's tool counters, read from
    the open session's tool_result rows (GET /api/sessions/{id}). */
 const SET = { tools:null, toolsFor:null, toolsBusy:false, health:null, healthBusy:false };
+/* r4-ui item 5: Escape opened the settings window on its menu column, so the
+   first menu row should carry the focus ring. renderSettings removes and
+   rebuilds #settings on EVERY render() — a stream frame, the tasks poll, the
+   diagnostics poll — which would drop that focus after a single frame. So the
+   intent is a flag and renderSettings re-applies it; the flag is dropped the
+   moment the operator moves focus anywhere else in the window, or the window
+   closes. */
+const MENUFOCUS = { want: false };
 /* Installed skills incl. disabled ones, from `atag skill list` — the N in
    the Skills tab's ` (N)` suffix (debug-pane.tsx:162 counts every loaded
    row; GET /api/skills never carries disabled skills). */
@@ -625,13 +635,22 @@ function renderSidebar() {
   const keepScroll = prevLists ? prevLists.scrollTop : 0;
   $('#sidebar').innerHTML =
     '<div class="sb-head">' + MARK_COLOR
-      + '<button class="wschip" data-act="workspace"><span>' + esc(BR ? WORKSPACE : '~/Teletubbies') + '</span>' + ic('chevD') + '</button>'
-      + '<button class="iconbtn" data-act="session:new" title="New session (Ctrl+N)" style="margin-left:auto">' + ic('plus') + '</button></div>'
+      // r4-ui item 4: "On the line in the top left part with the user's workspace
+      // thing, there should not be any plus." The head row is the lockup and the
+      // workspace chip now, nothing else; both pluses live on the list headers.
+      + '<button class="wschip" data-act="workspace"><span>' + esc(BR ? WORKSPACE : '~/Teletubbies') + '</span>' + ic('chevD') + '</button></div>'
     + '<div class="sb-lists">'
       + '<div class="sb-list" data-list="tasks">'
         + '<div class="sb-list-head micro"><span>Tasks</span>'
           // countRunningTasks (sidebar-tasks-selector.ts) counts the FULL snapshot, not the page.
-          + '<span class="ct tnum">' + tk.running + ' running</span></div>'
+          // r4-ui item 4: the counter is emitted BEFORE the plus, so "N running"
+          // sits to its left — the label takes flex:1, so both headers' plus
+          // buttons share one right edge whether or not a counter precedes them.
+          + '<span class="ct tnum">' + tk.running + ' running</span>'
+          // `tasks:new` reaches tasksAct('new'), which opens Settings › Tasks with
+          // the create form already up — the same destination the TUI's `+ new`
+          // chip on its Tasks header has.
+          + '<button class="iconbtn sb-add" data-act="tasks:new" title="New task" aria-label="New task">' + ic('plus') + '</button></div>'
         + (TASKS_ERR ? '<div class="sb-empty">' + esc(TASKS_ERR) + '</div>'
            : tk.rows.length ? tk.rows.map(taskRow).join('')
            // Not the TUI's "(no active tasks)" (sidebar.tsx:714), on purpose:
@@ -643,13 +662,17 @@ function renderSidebar() {
         + (tk.hidden > 0 ? '<button class="loadmore" data-more="tasks">Load more · ' + tk.hidden + ' more</button>' : '')
       + '</div>'
       + '<div class="sb-list" data-list="chats">'
-        + '<div class="sb-list-head micro"><span>Chats</span></div>'
+        // r4-ui item 4: "When I click on plus in the same line as chats, it
+        // creates a new chat." No counter on this list — the TUI's Sessions
+        // header carries none either.
+        + '<div class="sb-list-head micro"><span>Chats</span>'
+          + '<button class="iconbtn sb-add" data-act="session:new" title="New chat (⌘N)" aria-label="New chat">' + ic('plus') + '</button></div>'
         + (ch.rows.length ? ch.rows.map(chatRow).join('')
            : '<div class="sb-empty">(no sessions yet)</div>')   // sidebar.tsx:502
         + (ch.hidden > 0 ? '<button class="loadmore" data-more="chats">Load more · ' + ch.hidden + ' more</button>' : '')
       + '</div>'
     + '</div>'
-    // Item 7: the bottom-left settings entry. Lands on Go › Manage › Tasks, the TUI's default Manage tab.
+    // Item 7: the bottom-left settings entry. Lands on Manage › Tasks, the TUI's default Manage tab.
     + '<button class="sb-foot" data-act="settings:tasks" title="Settings (⌘ ,)">' + ic('gear') + '<span>Settings</span>' + keycaps('⌘ ,') + '</button>'
     ;
   if (keepScroll) {
@@ -760,7 +783,7 @@ function chatView() {
 }
 
 function emptyChat() {
-  return '<div class="empty"><span style="opacity:.25;color:var(--text-primary)">'
+  return '<div class="emptychat"><span style="opacity:.25;color:var(--text-primary)">'
     + '<svg width="48" height="48" viewBox="0 0 64 64" fill="currentColor"><path d="M35.24 49.92a1.25 1.25 0 0 0 1.3-1.24 12.2 12.2 0 0 1 12.14-12.14 1.25 1.25 0 0 0 1.24-1.3v-6.47c0-.69-.56-1.24-1.24-1.24H37.72c-.69 0-1.24-.56-1.24-1.25V15.32c0-.69-.56-1.24-1.24-1.24h-6.47c-.69 0-1.24.56-1.3 1.24A12.2 12.2 0 0 1 15.32 27.46c-.68.06-1.24.61-1.24 1.3v6.47c0 .69.56 1.24 1.24 1.24h10.96c.69 0 1.24.56 1.24 1.25v10.95c0 .69.56 1.24 1.24 1.24z"/></svg></span>'
     + '<div style="font-size:22px;line-height:28px;font-weight:600;letter-spacing:-.02em">Ask it to do something on this machine</div>'
     + '<div class="ghost">'
@@ -769,12 +792,25 @@ function emptyChat() {
     + '</div></div>';
 }
 
-function item(m) {
-  if (m.k === 'user') return '<div class="turn"><div class="gutter"><span class="avatar">›</span></div>'
-    + '<div class="prose usr">' + esc(m.text) + '</div></div>';
+/* r4-ui item 3: `end` is true for the one item that closes a finished turn
+   (endMarkIds decides which). The user's words: "not use the cross from agent
+   or this weird line from user inside the chat. Use the cross from agent only
+   at the end of the whole message from the agent, the last message from the
+   agent only, so that it shows that the whole process is finished". So the
+   per-message glyphs are gone from both sides; the user row becomes a bubble
+   that leaves the grid, and the agent row keeps the grid with an EMPTY first
+   cell so its content column stays where it is. Tool cards, reasoning blocks
+   and approvals keep their own check/warn/running glyphs — those describe a
+   call's RESULT, not a message, and the fold depends on them. */
+function item(m, end) {
+  // The bubble text still goes through esc() only. A user message has never
+  // been run through renderProse and must not start being, or a path someone
+  // typed turns into a clickable chip inside their own message.
+  if (m.k === 'user') return '<div class="turn usr"><div class="prose usr bubble">' + esc(m.text) + '</div></div>';
   // item 5: the reply, then the files this turn wrote, as an attachment footer.
-  if (m.k === 'assistant') return '<div class="turn"><div class="gutter"><span style="color:var(--accent-text);display:flex">' + MARK_MONO + '</span></div>'
-    + '<div><div class="prose">' + renderProse(m.text) + '</div>' + attachStrip(m) + '</div></div>';
+  if (m.k === 'assistant') return '<div class="turn"><div></div>'
+    + '<div><div class="prose">' + renderProse(m.text) + '</div>' + attachStrip(m)
+    + (end ? '<div class="endmark" title="turn complete">' + MARK_MONO + '</div>' : '') + '</div></div>';
   if (m.k === 'system') return '<div class="sysrow"><span></span><span>' + m.text + '</span></div>';
   if (m.k === 'reason') return '<div class="turn" id="turn-' + m.id + '"><div></div><div>'
     + '<button class="disc" data-toggle="' + m.id + '">' + ic(m.open ? 'chevD' : 'chevR') + 'Reasoning · ' + m.steps + ' steps</button>'
@@ -962,7 +998,9 @@ function repaintEntry(m, anchorSel) {
   const old = document.getElementById('turn-' + m.id);
   if (!sc || !old) { render(); return; }
   const before = (old.querySelector(anchorSel) || old).getBoundingClientRect().top;
-  old.outerHTML = item(m);
+  // r4-ui item 3: only tool and reason rows carry a `#turn-<id>` anchor, and
+  // this is the only way in here, so the end mark never applies to a repaint.
+  old.outerHTML = item(m, false);
   const fresh = document.getElementById('turn-' + m.id);
   const anchor = fresh && (fresh.querySelector(anchorSel) || fresh);
   const drift = anchor ? anchor.getBoundingClientRect().top - before : 0;
@@ -1331,8 +1369,14 @@ function sheet(title, body, foot) {
    line (debug-diagnostics-line.tsx) and the active panel. The popup
    title is the TUI's "Menu › Manage" (menu-selectors.ts). */
 function renderSettings() {
-  const old = $('#settings'); if (old) old.remove();
-  if (!S.settings) return;
+  const old = $('#settings');
+  // r4-ui item 5: stop re-applying the Escape focus as soon as the operator has
+  // moved off the first menu row — otherwise the next render would steal focus
+  // back out of whatever they tabbed or clicked into.
+  if (MENUFOCUS.want && old && old.contains(document.activeElement)
+      && document.activeElement !== old.querySelector('.setmenu button.menurow')) MENUFOCUS.want = false;
+  if (old) old.remove();
+  if (!S.settings) { MENUFOCUS.want = false; return; }
   const cur = settingsPaneId(S.settingsPane);
   const el = document.createElement('div');
   el.id = 'settings';
@@ -1352,6 +1396,7 @@ function renderSettings() {
     + '</div></div>';
   el.querySelector('.lights').style.marginRight = '0';
   $('#window').appendChild(el);
+  if (MENUFOCUS.want) { const first = el.querySelector('.setmenu button.menurow'); if (first) first.focus(); }
 }
 
 /* The prototype's pane ids and the --models harness (`__pane('models')`)
@@ -2103,6 +2148,35 @@ document.addEventListener('keydown', (e) => {
     if (sc && sc.scrollHeight - sc.scrollTop - sc.clientHeight > 40) { sc.scrollTop = sc.scrollHeight; S.stick = true; return; }
     if (S.busy) { abort(); return; }
     if (S.toasts.length) { S.toasts.pop(); renderToasts(); return; }
+    // r4-ui item 5: renderOverlays draws four surfaces that are NOT S.overlay,
+    // so the gate above (S.overlay || S.settings || S.menuOpen) does not catch
+    // them and Escape reaches this block with a modal on screen. Onboarding
+    // owns Escape itself and act('close') does not clear OB.open, so leave it
+    // alone; the selector, the provider wizard and the alert box are what
+    // close() clears. Without these two lines the menu below would open ON TOP
+    // of a live modal instead of dismissing it.
+    if (OB.open) return;
+    if (SEL.open || WIZ.phase || S.alert) { act('close'); return; }
+    /* "Escape button should open the menu" — the user's words, and the TUI's
+       own last-resort branch (tui-app.tsx onEscape). It is LAST on purpose:
+       scroll-to-bottom, abort, the toast pop, every overlay/settings/palette/
+       slash/approval/per-tab Escape above all outrank it, so the key keeps
+       every meaning it already had and gains one only where it would otherwise
+       have done nothing. The desktop's only menu is the settings window's menu
+       column (the README's contract: "Settings is the TUI menu"), so that is
+       what opens — not a second tree, and not the native macOS menu bar, which
+       is a different vocabulary altogether.
+       Deliberately NOT done here: clearing a half-written draft first, which is
+       the branch the TUI puts immediately above its own. The user asked for
+       Escape to open the menu, full stop, and clearing a composer draft on one
+       keypress with no undo is a destructive behaviour nobody asked for. So a
+       draft survives and the menu opens over it.
+       S.settingsPane is not reset either: it defaults to 'tasks' and otherwise
+       reopens where the operator left it. */
+    S.settings = 1;
+    MENUFOCUS.want = true;
+    render();
+    settingsPaneEntered(true);
     return;
   }
   if (!inText && k.length === 1 && !mod && S.room === 'chat') { const en = $('#entry'); if (en) en.focus(); }
@@ -3886,9 +3960,43 @@ async function wizNext() {
 }
 
 
+/* r4-ui item 3: which item carries the agent's full stop.
+   A TURN is the span of S.log from one k:'user' item to the next, so this
+   works identically for a live stream and for a session replayed from
+   GET /api/sessions/{id}. The mark goes on the span's LAST item, and only
+   when that item is a non-empty assistant reply:
+     - last ITEM, not last assistant, so a reopened multi-step turn that
+       stored its reply before further tool calls does not float a full stop
+       above the cards it is supposed to close. On the live path the two rules
+       are identical anyway — tool and reasoning rows splice in AHEAD of the
+       streaming item;
+     - non-empty, because startLiveTurn pushes an empty assistant item before
+       the first delta arrives, so a turn aborted or failed before any text
+       would otherwise get a bare dot under an empty prose block.
+   The TAIL span gets nothing while S.busy or S.pending: that covers the item
+   still streaming, a turn blocked on an approval, and a session reopened while
+   its turn runs elsewhere. 0.5.5 exposes no turn controller, so a turn running
+   under another origin has no stream here and no mark — the same honest limit
+   the pulsating sidebar dot already carries. A turn that ends with a system
+   row (abort, "turn failed") gets no mark either, which is right: nothing
+   says the whole process finished. */
+function endMarkIds() {
+  const segs = [[]];
+  S.log.forEach((m) => { if (m.k === 'user') segs.push([]); segs[segs.length - 1].push(m); });
+  const ids = new Set();
+  segs.forEach((seg, i) => {
+    if (!seg.length) return;
+    if (i === segs.length - 1 && (S.busy || S.pending)) return;
+    const last = seg[seg.length - 1];
+    if (last.k === 'assistant' && String(last.text || '').trim()) ids.add(last.id);
+  });
+  return ids;
+}
+
 /** The transcript, with runs of the same tool folded into one line. */
 function renderItems() {
   const items = S.log; let html = '';
+  const end = endMarkIds();
   for (let i = 0; i < items.length; i++) {
     const m = items[i];
     if (m.k === 'tool') {
@@ -3896,7 +4004,7 @@ function renderItems() {
       const run = items.slice(i, j + 1);
       if (run.length >= 3 && !OPEN_GROUPS.has(m.id)) { html += groupCard(run); i = j; continue; }
     }
-    html += item(m);
+    html += item(m, end.has(m.id));
   }
   return html;
 }
@@ -4329,7 +4437,10 @@ if (typeof window !== 'undefined') {
     // .cardsum is the COLLAPSED card's summary line — measured here since it is
     // one of the three min-content contributors the wrap rules had to defeat.
     const els = Array.from(document.querySelectorAll('.card,.prose,.cardbody pre,.appr,.cardsum'));
-    const turn = document.querySelector('.turn');
+    // r4-ui item 3: a user row is `display:block` now (the bubble), so its
+    // gridTemplateColumns is "none" and would read back NaN. Only the rows that
+    // still use the 28px/1fr grid can answer for the track.
+    const turn = document.querySelector('.turn:not(.usr)');
     const track = turn ? parseFloat(getComputedStyle(turn).gridTemplateColumns.split(' ')[1]) : 0;
     return {sw: sc ? sc.scrollWidth : 0, cw: sc ? sc.clientWidth : 0,
             colRight: col ? Math.round(col.getBoundingClientRect().right) : 0, colWidth: col ? col.clientWidth : 0, track,
@@ -5080,7 +5191,7 @@ if (typeof window !== 'undefined') {
     }));
     return out;
   };
-  window.__menuActivate = (id) => { menuActivate(id); return {settings: !!S.settings, pane: S.settings ? settingsPaneId(S.settingsPane) : null, inspector: S.inspector, inspTab: S.inspTab}; };
+  window.__menuActivate = (id) => { menuActivate(id); return {settings: !!S.settings, pane: S.settings ? settingsPaneId(S.settingsPane) : null, inspector: S.inspector, inspTab: S.inspTab, overlay: S.overlay}; };
   window.__diag = () => ({line: diagLine(), session: S.agentSession, toolsFor: SET.toolsFor, health: SET.health});
   window.__skillCount = () => (SK.rows ? SK.rows.length : null);
   window.__taskPreviewForm = async (fields) => { TK.mode = 'create'; TK.form = Object.assign(tkNewForm(), fields); render(); await tkPreview(); return TK.form ? TK.form.preview : null; };
@@ -7939,4 +8050,184 @@ if (typeof window !== 'undefined') {
       settings: !!S.settings, pane: settingsPaneId(S.settingsPane), llmMode: LLMP.mode, selOpen: SEL.open,
     }));
   };
+}
+
+/* ============================================================
+   r4-ui — hooks for `electron . --smoke` (items 1, 3, 4, 5)
+   ============================================================ */
+if (typeof window !== 'undefined') {
+  /* Item 1: a dot's used box. The regression this guards is the class
+     collision — `sdot empty` used to pick up the empty-transcript container
+     rule and be floored at padding+border (~66px at DPR 1, ~67px at DPR 2). */
+  window.__dotBox = (sel) => {
+    const el = document.querySelector(sel);
+    if (!el) return null;
+    const r = el.getBoundingClientRect(), cs = getComputedStyle(el);
+    return {w: Math.round(r.width * 100) / 100, h: Math.round(r.height * 100) / 100,
+            border: parseFloat(cs.borderTopWidth), bg: cs.backgroundColor,
+            animation: cs.animationName, shadow: cs.boxShadow, cls: el.className};
+  };
+  /* Item 1: the dot rides the LABEL, not the line box. The cap and x midpoints
+     are computed from the live font rather than hard-coded, so a different font
+     stack moves the target instead of turning a pixel into a lie. */
+  function dotSeatOf(row) {
+    const d = row && row.querySelector('.sdot'), t = row && row.querySelector('.t1');
+    if (!d || !t) return null;
+    const cs = getComputedStyle(t);
+    const c = document.createElement('canvas').getContext('2d');
+    c.font = cs.fontStyle + ' ' + cs.fontWeight + ' ' + cs.fontSize + ' ' + cs.fontFamily;
+    const mAll = c.measureText(t.textContent || 'x'), mx = c.measureText('x'), mH = c.measureText('H');
+    const tr = t.getBoundingClientRect(), lh = parseFloat(cs.lineHeight);
+    const base = tr.top + (tr.height - lh) / 2
+      + (lh - (mAll.fontBoundingBoxAscent + mAll.fontBoundingBoxDescent)) / 2 + mAll.fontBoundingBoxAscent;
+    const dr = d.getBoundingClientRect();
+    return {dotMid: dr.top + dr.height / 2, capMid: base - mH.actualBoundingBoxAscent / 2,
+            xMid: base - mx.actualBoundingBoxAscent / 2};
+  }
+  window.__dotSeat = (sel) => dotSeatOf(document.querySelector(sel));
+  /* Item 1: all three states measured together, on real rows inside the real
+     list, whatever the agent's own sessions happen to look like. The `empty`
+     row is the one that mattered: its state class used to collide with the
+     empty-transcript container rule and blow the dot up to ~66px. */
+  window.__dotProbe = () => {
+    const host = document.querySelector('[data-list="chats"]');
+    if (!host) return null;
+    const probe = document.createElement('div');
+    probe.innerHTML = ['empty', 'filled', 'running'].map((st) =>
+      '<button class="sesrow"><span class="sdot ' + st + '"></span><span class="t1">probe</span></button>').join('');
+    host.appendChild(probe);
+    const dots = [...probe.querySelectorAll('.sdot')].map((el) => {
+      const r = el.getBoundingClientRect(), cs = getComputedStyle(el);
+      return {cls: el.className, w: Math.round(r.width * 100) / 100, h: Math.round(r.height * 100) / 100,
+              border: parseFloat(cs.borderTopWidth), bg: cs.backgroundColor,
+              animation: cs.animationName, shadow: cs.boxShadow};
+    });
+    const seat = dotSeatOf(probe.querySelector('.sesrow'));
+    probe.remove();
+    return {dots, seat};
+  };
+  /* Item 1: the empty-transcript screen still centres itself under its new
+     class, and no `.empty` is left anywhere. Rendered into a detached probe so
+     the check does not have to destroy the transcript to see it. */
+  window.__emptyChatProbe = () => {
+    const host = document.createElement('div');
+    host.style.cssText = 'position:absolute;left:-9999px;top:0;width:600px;height:400px';
+    host.innerHTML = emptyChat();
+    document.body.appendChild(host);
+    const el = host.querySelector('.emptychat');
+    // `.empty` is also the sidebar dot's STATE class (`sdot empty`) — that is the
+    // collision itself, and those are meant to be there. What must be gone is any
+    // element still using it as the transcript container class.
+    const out = {found: !!el, display: el ? getComputedStyle(el).display : '',
+                 strays: document.querySelectorAll('.empty:not(.sdot)').length};
+    host.remove();
+    return out;
+  };
+
+  /* Item 3: what every transcript row is made of — its kind, whether its first
+     cell (the old glyph gutter) is empty, whether it carries the end mark, and
+     where its content starts. */
+  window.__turnShape = () => [...document.querySelectorAll('#scroller .turn')].map((t) => {
+    const body = t.querySelector('.prose,.card,.appr,.disc');
+    return {k: t.classList.contains('usr') ? 'user'
+              : t.querySelector('.card') ? 'tool'
+              : t.querySelector('.appr') ? 'approval'
+              : t.querySelector('.disc') ? 'reason'
+              : t.querySelector('.prose') ? 'assistant' : 'other',
+            gutter: t.classList.contains('usr') ? 0 : (t.firstElementChild ? t.firstElementChild.innerHTML.trim().length : 0),
+            end: !!t.querySelector('.endmark'),
+            // The mark is appended AFTER attachStrip(m), so on a reply that
+            // wrote files it must still be the last thing in the column.
+            endLast: !!(t.lastElementChild && t.lastElementChild.lastElementChild
+                        && t.lastElementChild.lastElementChild.classList.contains('endmark')),
+            left: body ? Math.round(body.getBoundingClientRect().left) : 0};
+  });
+  /* Item 3: the bubble's geometry against the column's CONTENT box. */
+  window.__bubbleBox = () => {
+    const rows = [...document.querySelectorAll('#scroller .turn.usr')];
+    const b = rows.length ? rows[rows.length - 1].querySelector('.prose.usr.bubble') : null;
+    const col = document.querySelector('.col720');
+    if (!b || !col) return null;
+    const ccs = getComputedStyle(col), br = b.getBoundingClientRect(), cr = col.getBoundingClientRect();
+    const mark = document.querySelector('.endmark svg');
+    return {right: Math.round(br.right), width: Math.round(br.width),
+            colRight: Math.round(cr.right - parseFloat(ccs.paddingRight)),
+            colWidth: Math.round(cr.width - parseFloat(ccs.paddingLeft) - parseFloat(ccs.paddingRight)),
+            marginLeft: getComputedStyle(b).marginLeft, rowDisplay: getComputedStyle(b.parentElement).display,
+            markW: mark ? Math.round(mark.getBoundingClientRect().width) : 0};
+  };
+  /* Item 3: put the window back at rest before the transcript checks. The end
+     mark is deliberately withheld while a turn is streaming or an approval is
+     open, and the checks that run before these leave a turn going in another
+     chat — so without this the mark's absence proves nothing either way. This
+     stops the leftover turn through the real abort path; it invents no state. */
+  window.__quiesce = () => {
+    if (S.busy) abort();
+    S.pending = null;
+    S.toasts = [];
+    render();
+    return {busy: S.busy, pending: !!S.pending, items: S.log.length};
+  };
+  /* Item 3: a user message, pushed exactly as the composer's submit() pushes
+     one — the counterpart of the existing __pushAssistant. */
+  window.__pushUser = (text) => { S.log.push({id:nid(), k:'user', text: String(text)}); render(); return S.log.length; };
+  /* Item 3: the end mark never lands on a turn that is still running. S.busy is
+     set and put back here, so the assertion needs no live turn. */
+  window.__marksWhileBusy = () => {
+    const count = () => {
+      const rows = [...document.querySelectorAll('#scroller .turn')];
+      return {total: document.querySelectorAll('#scroller .endmark').length,
+              last: !!(rows.length && rows[rows.length - 1].querySelector('.endmark'))};
+    };
+    const before = S.busy;
+    S.busy = true; render();
+    const during = count();
+    S.busy = before; render();
+    return {during, after: count()};
+  };
+
+  /* Item 4: the head row carries no control, each list header carries one plus,
+     the Tasks counter sits to the LEFT of its plus, and the two pluses share a
+     right edge. */
+  window.__sbHeads = () => ({
+    headPlus: !!document.querySelector('#sidebar .sb-head [data-act]:not(.wschip)'),
+    heads: ['tasks', 'chats'].map((l) => {
+      const h = document.querySelector('[data-list="' + l + '"] .sb-list-head');
+      if (!h) return {list: l, act: null};
+      const b = h.querySelector('button[data-act]'), c = h.querySelector('.ct');
+      return {list: l, act: b ? b.dataset.act : null,
+              right: b ? Math.round(b.getBoundingClientRect().right) : 0,
+              visible: !!(b && b.offsetParent),
+              centre: b ? Math.round(b.getBoundingClientRect().left + b.getBoundingClientRect().width / 2) : 0,
+              counter: c ? c.textContent : null,
+              counterVisible: !!(c && c.offsetParent),
+              labelVisible: !!(h.querySelector('span:first-child') && h.querySelector('span:first-child').offsetParent),
+              counterLeftOfPlus: !!(c && b) && c.getBoundingClientRect().right <= b.getBoundingClientRect().left};
+    }),
+    railWidth: Math.round(document.querySelector('#sidebar').getBoundingClientRect().width),
+    rail: document.querySelector('#sidebar').classList.contains('rail'),
+  });
+  window.__clickHead = (list) => {
+    const b = document.querySelector('[data-list="' + list + '"] .sb-list-head button[data-act]');
+    if (!b) return null;
+    b.click();
+    return {pane: S.settings ? settingsPaneId(S.settingsPane) : null, mode: TK.mode,
+            logLen: S.log.length, session: S.agentSession, onRows: document.querySelectorAll('#sidebar .sesrow.on').length};
+  };
+
+  /* Item 5: one Escape through the real document listener, and what the window
+     looked like afterwards. */
+  window.__esc = () => {
+    document.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true, cancelable:true}));
+    const a = document.activeElement;
+    return {pane: S.settings ? settingsPaneId(S.settingsPane) : null,
+            focusRow: !!(a && a.classList && a.classList.contains('menurow')),
+            focusAct: a && a.dataset ? (a.dataset.act || '') : '',
+            overlay: S.overlay, sel: SEL.open, busy: S.busy, toasts: S.toasts.length,
+            draft: S.draft, firstRowLabel: (document.querySelector('#settings .setmenu button.menurow .lb') || {}).textContent || ''};
+  };
+  window.__clearToasts = () => { S.toasts = []; renderToasts(); return S.toasts.length; };
+  window.__openPalette = () => { act('palette'); return S.overlay; };
+  window.__rail = () => { act('toggle:sidebar'); return window.__sbHeads(); };
+  window.__menuSubRows = () => document.querySelectorAll('#settings .menurow.sub, #settings .menurow.parent').length;
 }

@@ -160,8 +160,10 @@ svg{display:block;flex:none}
 /* item 4: a grid cell's automatic minimum is its min-content width, so a long
    nowrap preview or an unbroken token would widen the whole transcript column */
 .turn>*,.sysrow>*{min-width:0}
-.turn .gutter{padding-top:2px}
-.avatar{width:20px;height:20px;border-radius:6px;background:var(--bg-raised);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;color:var(--text-secondary)}
+/* r4-ui item 3: `.turn .gutter` (the assistant mark) and `.avatar` (the user
+   `›`) are gone — the user asked for neither glyph inside the chat. The
+   assistant row keeps the 28px grid track with an EMPTY first cell so its
+   content column does not move; the user row leaves the grid entirely. */
 .prose{font-size:15px;line-height:24px;white-space:pre-wrap;word-break:break-word}
 .prose.usr{color:var(--text-primary)}
 .sysrow{display:grid;grid-template-columns:28px minmax(0,1fr);gap:var(--s4);margin-bottom:var(--s4);color:var(--text-secondary);font-size:13px}
@@ -403,8 +405,13 @@ svg{display:block;flex:none}
 #toasts{position:absolute;right:var(--s5);bottom:var(--s5);display:flex;flex-direction:column;gap:var(--s3);z-index:29;align-items:flex-end}
 .toast{width:320px;background:var(--bg-overlay);border-radius:8px;box-shadow:var(--shadow-overlay);padding:var(--s4);border-left:3px solid var(--success);display:flex;gap:var(--s3);align-items:flex-start}
 
-.empty{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:var(--s4);text-align:center;padding:var(--s8)}
-.empty p{margin:0;max-width:360px;color:var(--text-secondary)}
+/* r4-ui item 1: renamed from `.empty`. The sidebar dot emits `sdot empty`
+   as its state class, so this container rule used to win on padding and
+   floor the 8px dot at padding+border (~66px at DPR 1, ~67px at DPR 2 —
+   box-sizing:border-box). The dot states are asserted by the harness, so
+   the transcript screen is what got renamed. */
+.emptychat{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:var(--s4);text-align:center;padding:var(--s8)}
+.emptychat p{margin:0;max-width:360px;color:var(--text-secondary)}
 .ghost{display:flex;gap:var(--s3);flex-wrap:wrap;justify-content:center}
 .ghostchip{height:28px;display:flex;align-items:center;padding:0 12px;border:1px solid var(--line);border-radius:999px;color:var(--text-secondary);font-size:13px}
 .ghostchip:hover{border-color:var(--line-strong);color:var(--text-primary)}
@@ -674,13 +681,24 @@ button.menurow:hover{background:var(--bg-hover)}
 .sb-empty{padding:4px 14px 6px;font-size:12px;color:var(--text-tertiary)}
 .sesrow{height:30px;gap:var(--s2);padding:0 6px 0 12px;border-radius:0}
 .sesrow .t1{flex:1;min-width:0;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-/* The dot: empty ring = executed and read, filled = wants you, pulsing = running. */
-.sdot{width:8px;height:8px;border-radius:999px;flex:none;box-sizing:border-box;border:1.5px solid var(--text-tertiary);background:transparent}
+/* r4-ui item 1: the dot is 6px with a 1px ring, seated 1px below the row's
+   flex centre so it rides the label's optical centre rather than its line box
+   (on a 30px row the flex centre is above both the cap midpoint and the x
+   midpoint of the 13px/18px label). The nudge is `top`, never `transform` —
+   sdot-pulse below owns transform and would overwrite it for the whole
+   animation. `position:relative` makes the row a paint context for the running
+   halo; if anyone ever gives .sesrow `overflow:hidden` the halo will clip.
+   Empty ring = executed and read, filled = wants you, pulsing = running. */
+.sdot{width:6px;height:6px;border-radius:999px;flex:none;box-sizing:border-box;border:1px solid var(--text-tertiary);background:transparent;position:relative;top:1px}
 .sdot.filled{background:var(--accent);border-color:var(--accent)}
-/* The ring is not decoration: `prefers-reduced-motion` kills the animation
-   (line 429), so a running dot has to differ from a filled one without it. */
-.sdot.running{background:var(--accent);border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-wash);animation:sdot-pulse 1.2s var(--ease) infinite}
+/* The halo is not decoration: `prefers-reduced-motion` kills the animation
+   (the blanket `*{animation:none!important}` rule earlier in this file), so a
+   running dot has to differ from a filled one without it. At 6px the wash
+   (alpha .16 dark / .10 light) is too faint to carry that on its own, so the
+   reduced-motion ring below swaps it for --accent-line (.35 / .30). */
+.sdot.running{background:var(--accent);border-color:var(--accent);box-shadow:0 0 0 1.5px var(--accent-wash);animation:sdot-pulse 1.2s var(--ease) infinite}
 @keyframes sdot-pulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.35);opacity:.45}}
+@media (prefers-reduced-motion:reduce){.sdot.running{box-shadow:0 0 0 2px var(--accent-line)}}
 .pinbtn{width:22px;height:22px;flex:none;visibility:hidden;color:var(--text-tertiary);display:flex;align-items:center;justify-content:center;border-radius:5px}
 .sesrow:hover .pinbtn,.sesrow.pinned .pinbtn{visibility:visible}
 .pinbtn:hover{background:var(--bg-hover);color:var(--text-primary)}
@@ -688,16 +706,74 @@ button.menurow:hover{background:var(--bg-hover)}
 .loadmore{height:26px;margin:2px 12px 0;border-radius:6px;font-size:12px;color:var(--accent-text);text-align:left;padding:0 6px}
 .loadmore:hover{background:var(--accent-wash-soft)}
 /* Rail and narrow window (review fix): the lists used to be hidden whole. With
-   the nav rows gone that left a 52px column holding nothing but + and the
-   gear — no way back into a chat without expanding the sidebar again. So the
-   rows stay and shrink to their dots; the row's own title carries the name. */
-#sidebar.rail .sb-list-head,#sidebar.rail .sesrow .t1,#sidebar.rail .pinbtn,
+   the nav rows gone that left a 52px column holding nothing but the head row
+   and the gear — no way back into a chat without expanding the sidebar again.
+   So the rows stay and shrink to their dots; the row's own title carries the
+   name. r4-ui item 4: the head row no longer carries a plus, so the two list
+   headers stay in the rail as well — stripped to their plus button, centred.
+   52px does not hold the labels or the `N running` counter, and both are
+   `span`s, so `> span` hides exactly those. */
+#sidebar.rail .sesrow .t1,#sidebar.rail .pinbtn,
 #sidebar.rail .loadmore,#sidebar.rail .sb-empty{display:none}
+#sidebar.rail .sb-list-head{justify-content:center;padding:0}
+#sidebar.rail .sb-list-head > span{display:none}
 #sidebar.rail .sesrow{justify-content:center;padding:0}
 #sidebar.rail .sb-list{padding:var(--s2) 0}
 @media (max-width:1000px){
-  #sidebar .sb-list-head,#sidebar .sesrow .t1,#sidebar .pinbtn,
+  #sidebar .sesrow .t1,#sidebar .pinbtn,
   #sidebar .loadmore,#sidebar .sb-empty{display:none}
+  #sidebar .sb-list-head{justify-content:center;padding:0}
+  #sidebar .sb-list-head > span{display:none}
   #sidebar .sesrow{justify-content:center;padding:0}
   #sidebar .sb-list{padding:var(--s2) 0}
 }
+
+
+/* ---------------- r4-ui item 3: user messages are bubbles ---------------- */
+/* "Messages from user should be sticky to the right side of the dialogue
+   screen, and they should be placed inside chat boxes, like when you are
+   having a chat on WhatsApp" — the user's words. The user row leaves the
+   28px/1fr grid so the bubble can size to its text; every other row keeps the
+   grid (with an empty first cell) and therefore its exact content x. */
+.turn.usr{display:block}
+/* `width:fit-content` + `margin-left:auto` is what makes the box the width of
+   the text and sticks it to the right edge of the column. The max-width caps a
+   long message: the percentage resolves against .col720's CONTENT box (720px
+   less 20px of padding each side = 680px, so 76% is ~517px) and only binds
+   below a ~632px column — at full width the 480px term always wins.
+   `overflow-wrap:anywhere` sits on top of the inherited
+   `white-space:pre-wrap;word-break:break-word`, so a single unbroken
+   300-character token still cannot widen the transcript. */
+.prose.usr.bubble{width:fit-content;max-width:min(76%,480px);margin-left:auto;padding:8px 12px;
+  border-radius:14px 14px 4px 14px;background:var(--accent-wash);border:1px solid var(--accent-line);
+  overflow-wrap:anywhere}
+/* Only the bottom-right corner is tightened: the outgoing-tail convention,
+   which reads as "mine" without drawing a tail. --accent-wash / --accent-line
+   are defined in all three token blocks (:root, the prefers-light block and
+   :root[data-theme="light"]), so the bubble is right in dark, light-by-
+   preference and light-by-choice without a new token. */
+
+/* The agent's full stop: one mark at the end of a FINISHED turn, never one per
+   message. It is appended inside the last assistant item, after the attachment
+   strip, so no `#turn-<id>` anchor moves and the fold/scroll-stability
+   machinery is untouched. The svg rule is what shrinks the shared 20px
+   MARK_MONO without duplicating its path data. */
+.endmark{margin-top:10px;color:var(--text-tertiary);display:flex}
+.endmark svg{width:12px;height:12px}
+
+/* ---------------- r4-ui item 4: a plus on each list header ---------------- */
+/* "Move the plus button to the same line as chats… There should also be a plus
+   button in the same line as tasks, and 'zero running' should be on the left
+   side of this plus. On the line in the top left part with the user's
+   workspace thing, there should not be any plus." — the user's words.
+   `.sb-list-head > span:first-child{flex:1}` above already pushes everything
+   after the label to the right edge, so both plus buttons share one right edge
+   whether or not a counter precedes them, and the counter lands to the LEFT of
+   the Tasks plus. The 20px override is required: .iconbtn is 28x28 and the
+   header is 26px tall. */
+.sb-list-head .sb-add{width:20px;height:20px;flex:none;border-radius:5px;color:var(--text-tertiary);margin-right:-2px}
+.sb-list-head .sb-add:hover{background:var(--bg-hover);color:var(--text-primary)}
+/* In the rail the plus is the row's only child, so the optical pull that lines
+   it up with the panel's right edge has to go or it lands 1px off centre. */
+#sidebar.rail .sb-list-head .sb-add{margin-right:0}
+@media (max-width:1000px){#sidebar .sb-list-head .sb-add{margin-right:0}}
