@@ -1005,12 +1005,107 @@ async function smokeTest(): Promise<void> {
       await js<void>("window.__ctxRefreshCfg && window.__ctxRefreshCfg()");
     }
 
-    const modeState = await js<{ supported: boolean | null; current: string }>("window.__modeState()");
+    // Item 6 (coding mode). The old check here passed on exactly the
+    // failure it was meant to catch: `supported === false` short-circuited
+    // to PASS. Now the mode is driven through the REAL client rather than
+    // the renderer, so what is asserted is the agent, and the whole block
+    // restores `default` in a `finally` — the diagnostics check further
+    // down compares the renderer's level with a LIVE capabilities read,
+    // and would fail if this left the ladder moved.
+    const modeState = await js<{
+      supported: boolean | null; current: string;
+      approvalLevel: number | null; baseLevel: number | null;
+    }>("window.__modeState()");
+    // The locally built agent the desktop prefers. `supported === false`
+    // while running THAT binary is the exact regression this item is
+    // about: the capable agent is installed and the route is missing.
+    const preferredAgent = join(homedir(), "atag-agent", "bin", "atag");
     check(
       "coding mode is live or honestly unavailable",
-      modeState.supported === false || ["default", "plan", "auto", "bypass"].includes(modeState.current),
-      modeState.supported === false ? "agent lacks /api/coding-mode (reported, not faked)" : `current=${modeState.current}`,
+      modeState.supported === true
+        ? ["default", "plan", "auto", "bypass"].includes(modeState.current)
+        : agent!.status.binary !== preferredAgent,
+      `supported=${modeState.supported} current=${modeState.current} agent=${agent!.status.binary ?? "none"}`,
     );
+
+    const caps0 = (await agent!.capabilities()) as {
+      agent: { approvalLevel: number };
+      paths: { userConfigFile: string };
+    };
+    const modeSeed = await agent!.codingMode();
+    if (modeSeed.supported && typeof modeSeed.baseLevel === "number") {
+      const modeBase = modeSeed.baseLevel;
+      const cfgBefore = readFileSync(caps0.paths.userConfigFile);
+      // resolveCodingMode, restated: plan leaves the ladder and raises the
+      // plan flag; auto raises to at least 2 and never lowers; bypass is 5;
+      // default restores the configured base.
+      const wantFor = (m: string) =>
+        m === "plan" ? { level: modeBase, plan: true }
+          : m === "auto" ? { level: Math.max(modeBase, 2), plan: false }
+          : m === "bypass" ? { level: 5, plan: false }
+            : { level: modeBase, plan: false };
+      try {
+        const notes: string[] = [];
+        let roundTrip = true;
+        let resolvesRight = true;
+        for (const m of ["default", "plan", "auto", "bypass"]) {
+          const posted = await agent!.codingMode(m);
+          const readBack = await agent!.codingMode();
+          // Cross-checked through a different handler, so the numbers do
+          // not rest on the one that produced them.
+          const live = (await agent!.capabilities()) as { agent: { approvalLevel: number } };
+          const want = wantFor(m);
+          if (!(posted.ok && posted.mode === m && readBack.mode === m)) roundTrip = false;
+          if (!(posted.approvalLevel === want.level && posted.planMode === want.plan
+            && live.agent.approvalLevel === want.level)) resolvesRight = false;
+          notes.push(`${m}→post ${posted.mode}/get ${readBack.mode} L${posted.approvalLevel} plan=${posted.planMode} caps L${live.agent.approvalLevel}`);
+        }
+        // The assertion that catches the base-5 collision: before the route
+        // held the chosen stance in its closure, POST auto answered bypass.
+        check("coding mode round-trips every mode through the agent", roundTrip, notes.join("; "));
+        check(`coding mode resolves against the configured base L${modeBase}`, resolvesRight, notes.join("; "));
+
+        const levelBeforeBad = ((await agent!.capabilities()) as { agent: { approvalLevel: number } }).agent.approvalLevel;
+        const badMode = await agent!.codingMode("yolo");
+        const levelAfterBad = ((await agent!.capabilities()) as { agent: { approvalLevel: number } }).agent.approvalLevel;
+        check(
+          "coding mode refuses an unknown mode and changes nothing",
+          badMode.ok === false && badMode.error === "HTTP 400" && levelAfterBad === levelBeforeBad,
+          `error=${badMode.error ?? "none"} level ${levelBeforeBad} → ${levelAfterBad}`,
+        );
+
+        const cfgAfter = readFileSync(caps0.paths.userConfigFile);
+        check(
+          "coding mode writes nothing to config.json",
+          cfgBefore.equals(cfgAfter),
+          `${cfgBefore.length} → ${cfgAfter.length} bytes at ${caps0.paths.userConfigFile}`,
+        );
+      } finally {
+        await agent!.codingMode("default").catch(() => undefined);
+      }
+    }
+
+    // The unavailable presentation is real, not merely claimed: force the
+    // renderer into the state a routeless agent produces and read the
+    // chip's own markup back.
+    const wasSupported = modeState.supported;
+    try {
+      const chipOff = await js<string>(
+        "(() => { window.__modeOverride({supported:false}); return window.__chipHTML(); })()",
+      );
+      // The visible text only: the markup carries `data-act="modes"` and a
+      // tooltip, neither of which is what the operator reads.
+      const chipText = chipOff.replace(/<[^>]*>/g, "").trim();
+      const dimRule = readFileSync(join(__dirname, "..", "renderer", "styles.css"), "utf8");
+      const dimmed = /\.poprow\.dim\s*\{/.test(dimRule);
+      check(
+        "coding mode chip says 'mode —' when the agent has no route",
+        chipText === "mode —" && !/default|bypass|plan|auto/.test(chipText) && dimmed,
+        `chip=${JSON.stringify(chipText)}, .poprow.dim rule ${dimmed ? "present" : "MISSING"}`,
+      );
+    } finally {
+      await js<void>(`window.__modeOverride({supported:${JSON.stringify(wasSupported)}})`);
+    }
 
     // "claude haiku" must find claude/haiku, claude.haiku, claude-3-haiku…
     const hits = await js<number>("window.__search('claude haiku')");

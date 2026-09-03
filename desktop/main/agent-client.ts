@@ -51,12 +51,25 @@ export interface AgentStatus {
 const HEALTH_TIMEOUT_MS = 30_000;
 const HEALTH_POLL_MS = 300;
 
-/** Where a released install puts the binary, in order of preference. */
+/**
+ * Where the agent might be, in order of preference.
+ *
+ * `ATOMIC_AGENT_BIN` wins. Then `~/atag-agent/bin/atag`: a locally built
+ * agent, preferred when it exists because a released install can be
+ * behind the routes the desktop needs (a 0.5.5 SEA binary has no
+ * `/api/coding-mode`, which is what greys the coding-mode chip out).
+ * After that the released install, which is the normal case. Nothing
+ * here repoints `~/.local/bin/atag`, so a terminal `atag` keeps running
+ * whatever was installed; only the desktop prefers the local build, and
+ * the diagnostics line names the binary it actually started. Delete
+ * `~/atag-agent` to fall back.
+ */
 function candidateBinaries(): string[] {
   const fromEnv = process.env.ATOMIC_AGENT_BIN;
   const home = homedir();
   return [
     ...(fromEnv ? [fromEnv] : []),
+    join(home, "atag-agent", "bin", "atag"),
     join(home, ".local", "bin", "atag"),
     join(home, ".local", "bin", "atomic-agent"),
     "/usr/local/bin/atag",

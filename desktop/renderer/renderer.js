@@ -21,6 +21,13 @@ const PLAN = { on:false, supported:null };
    moves the runtime's live ladder and plan flag exactly as the TUI's
    onCodingModeChanged does — config.json is never touched. */
 const MODE = { current:'default', supported:null, baseLevel:null, approvalLevel:null };
+/* Item 6 (coding mode): the last mode this window explicitly chose. The
+   stance is process state in the agent, so a backend switch — which
+   restarts it — drops back to the boot stance; this is what lets the
+   reconnect re-assert the operator's choice instead of painting a stale
+   label. `null` until something is chosen, and nothing is re-asserted
+   then. */
+let LAST_MODE = null;
 /* The add-provider wizard: pick_kind → configure → verifying. */
 const WIZ = { phase:null, row:null, apiKey:'', baseUrl:'', error:null, busy:false };
 /* Kind rows in the TUI's KIND_ROW_ORDER, minus the two subscription-CLI
@@ -52,10 +59,11 @@ function openFilePath(p) {
 const CTX = { tokens:0, source:null, stablePrefix:0, tail:0, draftTokens:0, cacheHitTokens:null, modelId:null,
   window:null, windowLabel:'', baseline:null, sections:null, pairsCap:0, reserved:0,
   previewSupported:null, seq:0, chipTimer:null, draftTimer:null };
-/* default / auto / bypass. `plan` is deliberately absent: plan mode is a
-   closure variable in the runtime with no route, no config key and no
-   request field, so a desktop chip could only paint a state the agent
-   does not have. */
+/* All four modes are live over GET/POST /api/coding-mode, plan included:
+   the route moves the runtime's approval ladder AND its plan flag, the
+   same pair the TUI's onCodingModeChanged moves, and writes nothing to
+   config. Copy is the TUI's verbatim; the route also returns its own
+   `look`, which setCodingMode prefers so the two cannot drift. */
 const CODING_MODES = [
   {id:'default', label:'default', detail:'asks before risky steps', tone:'ok',
    summary:'default — approvals follow the configured approval level'},
@@ -1407,6 +1415,15 @@ function diagLine() {
   // 'number'` was always true and a capabilities payload without the field
   // would have printed `approval L3` — a number this window never read.
   const lvl = LIVE_CAPS && LIVE_CAPS.agent && typeof LIVE_CAPS.agent.approvalLevel === 'number' ? S.level : null;
+  // Which agent answered. The desktop prefers a locally built agent at
+  // ~/atag-agent/bin/atag over the released install, so "it works here
+  // and not there" has to be answerable from the window — and it matters
+  // whether or not the coding-mode route is present, so this is printed
+  // in both cases. It sits before the approval segment deliberately: the
+  // TUI's line ends `approval L<n> | skills <n>` and the smoke pins that
+  // tail.
+  const bin = S.live.binary || '';
+  parts.push('agent ' + (bin ? (home && bin.startsWith(home) ? '~' + bin.slice(home.length) : bin) : '—'));
   parts.push('approval L' + (lvl === null ? '—' : lvl));
   parts.push('skills ' + SKILLS.length);
   return parts.join(' | ');
@@ -1602,7 +1619,19 @@ function toast(t, s) {
    ============================================================ */
 function act(a) {
   if (!a) return;
-  const [k, v] = a.split(':');
+  // The argument keeps every colon it was given. `const [k, v] = a.split(':')`
+  // truncated it at the first one, so an act over a session id that carries a
+  // colon — the `hermes:20260511_162944_79a9e8` ids a fleet run leaves in
+  // sessions.sqlite — reached `pin:` as the bare string "hermes": the pin was
+  // stored under an id no session has, the row never sorted first, and the
+  // button's title never flipped. `[verb, ...rest]` is what the rest of this
+  // file already does (the act wrappers all split that way); for an argument
+  // without a colon it is identical.
+  const [k, ...rest] = a.split(':');
+  // `undefined`, not "", when there is no argument at all — that is what the
+  // single-destructure form produced and what the branches below are written
+  // against.
+  const v = rest.length > 0 ? rest.join(':') : undefined;
   const close = () => { S.overlay = null; S.menuOpen = null; S.scope = null; S.q = ''; S.cur = 0; S.alert = null; SEL.open = false; SEL.addOpen = false; WIZ.phase = null; };
 
   if (a === 'close') { close(); render(); return; }
@@ -2149,6 +2178,10 @@ async function loadResources() {
     MODE.supported = res.supported;
     if (res.ok) { MODE.current = res.mode; MODE.approvalLevel = res.approvalLevel; MODE.baseLevel = res.baseLevel; }
     render();
+    // The stance is process state in the agent, and the desktop restarts
+    // the agent on a backend switch — so re-assert what this window last
+    // chose rather than showing the boot stance as if it were the choice.
+    if (res.ok && LAST_MODE && res.mode !== LAST_MODE) setCodingMode(LAST_MODE);
   });
   const [caps, cfg, skills, tasks, sessions] = await Promise.all([
     BR.capabilities(), BR.config(), BR.skills(), BR.tasks(), BR.sessions(),
@@ -3586,11 +3619,25 @@ function contextChip() {
 function currentMode() { return MODE.current; }
 
 function codingModeChip() {
+  // No route on this agent build: print the honest blank rather than a
+  // mode. Painting 'default' would name a stance the agent does not have.
+  if (MODE.supported === false) {
+    return '<button class="cchip cmodechip" data-act="modes" '
+      + 'title="this agent build has no /api/coding-mode route" '
+      + 'style="color:var(--text-disabled)">' + ic('key') + 'mode —' + ic('chevD') + '</button>';
+  }
   const id = currentMode();
   const look = CODING_MODES.find((m) => m.id === id) || CODING_MODES[0];
   const colour = look.tone === 'bad' ? 'var(--danger)' : look.tone === 'warn' ? 'var(--warn)'
     : look.tone === 'accent' ? 'var(--accent-text)' : 'var(--success)';
-  return '<button class="cchip cmodechip" data-act="modes" title="what the agent may do without asking" '
+  // At a configured level of 5 the agent seeds its stance by inference and
+  // reports `bypass`, because default/auto/bypass all resolve to level 5
+  // with plan off — so the chip opens red until a mode is chosen. Say so
+  // in the tooltip, where it is readable without opening the popover.
+  const title = MODE.baseLevel === 5
+    ? 'what the agent may do without asking — your configured approval level is 5 of 5, so default already approves everything'
+    : 'what the agent may do without asking';
+  return '<button class="cchip cmodechip" data-act="modes" title="' + esc(title) + '" '
     + 'style="color:' + colour + '">' + ic('key') + esc(look.label) + ic('chevD') + '</button>';
 }
 
@@ -3598,17 +3645,34 @@ function modesHTML() {
   return '<div class="scrim" data-close="1" style="background:transparent">'
     + '<div class="popover" style="width:360px;' + anchorStyle('.cmodechip', 360) + '">'
     + CODING_MODES.map((m) => {
-        const on = m.id === currentMode();
         const off = MODE.supported === false;
-        return '<button class="poprow' + (on ? ' on' : '') + (off ? ' dim' : '') + '" data-mode="' + m.id + '">'
+        // Nothing is "current" on an agent that has no such state, so no
+        // row is marked, and the rows carry no data-mode: the click
+        // handler keys off that attribute, so dropping it is what makes
+        // them genuinely inert rather than merely grey.
+        const on = !off && m.id === currentMode();
+        return '<button class="poprow' + (on ? ' on' : '') + (off ? ' dim' : '') + '"'
+          + (off ? ' disabled' : ' data-mode="' + m.id + '"') + '>'
           + '<span class="radio"' + (on ? ' style="border-color:var(--accent);border-width:4px"' : '') + '></span>'
           + '<span><span style="font-weight:500">' + esc(m.label) + '</span>'
           + '<span class="cap" style="display:block">' + esc(off ? 'needs an agent with the coding-mode route' : m.detail) + '</span></span>'
           + (on ? '<span class="cap" style="margin-left:auto">current</span>' : '') + '</button>';
       }).join('')
-    + '<div style="padding:10px 16px"><p class="cap" style="margin:0">'
-    + 'A stance for this session. It moves the live approval ladder and plan flag and writes nothing to config.'
-    + '</p></div>'
+    + '<div style="padding:10px 16px">'
+    + (MODE.supported === false
+        ? '<p class="cap" style="margin:0">'
+          + 'This agent build has no /api/coding-mode route, so the stance cannot be changed. Running '
+          + esc(S.live.binary || 'no binary') + '</p>'
+        : '<p class="cap" style="margin:0">'
+          + 'A stance for this session. It moves the live approval ladder and plan flag and writes nothing to config.'
+          + '</p>'
+          // The disclosure that stops a level-5 operator reading a working
+          // chip as a broken one: three of the four choices genuinely do
+          // not change what the agent does at that base.
+          + (MODE.baseLevel === 5
+              ? '<p class="cap" style="margin:6px 0 0">Your configured approval level is 5 of 5, so default already approves everything — lower agent.approvalLevel to make the modes differ.</p>'
+              : ''))
+    + '</div>'
     + '<div class="popfoot"><button class="btn btn-s" data-act="close">Done</button></div></div></div>';
 }
 
@@ -3625,8 +3689,17 @@ async function setCodingMode(id) {
     return;
   }
   MODE.supported = true; MODE.current = res.mode; MODE.approvalLevel = res.approvalLevel; MODE.baseLevel = res.baseLevel;
+  LAST_MODE = res.mode;
+  // The diagnostics line reads the capabilities snapshot taken at connect,
+  // and the mode moves the LIVE ladder — so without this the line keeps
+  // printing the boot level while the chip says otherwise.
+  S.level = res.approvalLevel;
+  if (LIVE_CAPS && LIVE_CAPS.agent) LIVE_CAPS.agent.approvalLevel = res.approvalLevel;
+  // Prefer the agent's own copy over the local table: the two are
+  // identical today and this is what keeps them that way.
   const look = CODING_MODES.find((m) => m.id === res.mode);
-  S.log.push({id:nid(), k:'system', text: esc(look ? look.summary : res.mode)});
+  const summary = (res.look && res.look.summary) || (look ? look.summary : res.mode);
+  S.log.push({id:nid(), k:'system', text: esc(summary)});
   render();
 }
 
@@ -4225,7 +4298,8 @@ function attachStrip(m) {
 
 /* Hooks for --smoke. */
 if (typeof window !== 'undefined') {
-  window.__modeState = () => ({supported:MODE.supported, current:MODE.current});
+  window.__modeState = () => ({supported:MODE.supported, current:MODE.current,
+    approvalLevel:MODE.approvalLevel, baseLevel:MODE.baseLevel});
   window.__search = (q) => { SEL.filter = q; return selRows().length; };
   window.__wizOpen = () => { WIZ.phase = 'pick_kind'; WIZ.row = null; render(); return {rows:KIND_ROWS.length, selected:document.querySelectorAll('[data-wiz-kind].on').length}; };
   window.__storeDiag = async () => {
@@ -7939,4 +8013,18 @@ if (typeof window !== 'undefined') {
       settings: !!S.settings, pane: settingsPaneId(S.settingsPane), llmMode: LLMP.mode, selOpen: SEL.open,
     }));
   };
+}
+
+/* ============================================================
+   Smoke hooks — coding mode (item 6)
+   ============================================================ */
+if (typeof window !== 'undefined') {
+  /* The chip's own markup, so the smoke can assert what the operator
+     actually sees rather than the state behind it — the unsupported chip
+     must print 'mode —' and must not print a mode name. */
+  window.__chipHTML = () => codingModeChip();
+  /* Force the renderer into a mode state it cannot reach against a
+     capable agent, so the unsupported presentation is testable. Patch
+     back to restore; nothing here talks to the agent. */
+  window.__modeOverride = (patch) => { Object.assign(MODE, patch || {}); render(); };
 }
