@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { DeferredLocalBackendProbes } from "./local-backend-gate.js";
+import {
+  createLocalLinkPreparer,
+  DeferredLocalBackendProbes,
+} from "./local-backend-gate.js";
 
 describe("DeferredLocalBackendProbes", () => {
   it("never restores when boot already probed (local-from-boot run)", async () => {
@@ -112,5 +115,75 @@ describe("DeferredLocalBackendProbes", () => {
     expect(gate.isActive()).toBe(false);
     active = true;
     expect(gate.isActive()).toBe(true);
+  });
+});
+
+describe("createLocalLinkPreparer", () => {
+  /**
+   * The three decisions bootstrap's `prepareLink` makes. Covered here
+   * because deleting any one of them from an inline closure inside
+   * `buildRuntime` used to survive every test in the tree.
+   */
+  const build = (opts: {
+    isLocalLink?: (id: string) => boolean;
+    probedAtBoot?: boolean;
+  } = {}) => {
+    const restore = vi.fn(async () => {});
+    const refreshIfStale = vi.fn(async () => {});
+    const gate = new DeferredLocalBackendProbes(
+      { isActive: () => false, restore },
+      opts.probedAtBoot ?? false,
+    );
+    const prepare = createLocalLinkPreparer({
+      gate,
+      isLocalLink: opts.isLocalLink ?? ((id) => id === "local"),
+      refreshIfStale,
+    });
+    return { gate, prepare, restore, refreshIfStale };
+  };
+
+  it("does nothing at all for a link that is not llama-server", async () => {
+    const { prepare, gate, restore, refreshIfStale } = build();
+    await prepare("cloudy");
+    expect(restore).toHaveBeenCalledTimes(0);
+    expect(refreshIfStale).toHaveBeenCalledTimes(0);
+    // The zero-request criterion in one assertion: a cloud attempt does
+    // not even record that a local link served.
+    expect(gate.takeLinkServed()).toBe(false);
+  });
+
+  it("marks the link served so the loop's turn-start refresh reopens", async () => {
+    const { prepare, gate } = build();
+    await prepare("local");
+    expect(gate.takeLinkServed()).toBe(true);
+  });
+
+  it("restores on the first local attempt and does not also refresh", async () => {
+    const { prepare, restore, refreshIfStale } = build();
+    await prepare("local");
+    expect(restore).toHaveBeenCalledTimes(1);
+    // The restore's own `/props` just landed; refreshing again would
+    // probe twice for one attempt.
+    expect(refreshIfStale).toHaveBeenCalledTimes(0);
+  });
+
+  it("falls through to refreshIfStale on every later local attempt", async () => {
+    // The reactive path the loop's between-steps refresh cannot serve
+    // while the active provider is cloud.
+    const { prepare, restore, refreshIfStale } = build();
+    await prepare("local");
+    await prepare("local");
+    await prepare("local");
+    expect(restore).toHaveBeenCalledTimes(1);
+    expect(refreshIfStale).toHaveBeenCalledTimes(2);
+  });
+
+  it("refreshes from the very first attempt on a local-from-boot run", async () => {
+    // Boot already probed, so there is nothing to restore — but the
+    // staleness flag still needs a consumer.
+    const { prepare, restore, refreshIfStale } = build({ probedAtBoot: true });
+    await prepare("local");
+    expect(restore).toHaveBeenCalledTimes(0);
+    expect(refreshIfStale).toHaveBeenCalledTimes(1);
   });
 });

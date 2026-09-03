@@ -144,3 +144,47 @@ export class DeferredLocalBackendProbes implements LocalBackendGate {
     return served;
   }
 }
+
+export interface LocalLinkPreparerDeps {
+  gate: LocalBackendGate;
+  /** Is `providerId` a `llama-server` link? Live, re-read per attempt. */
+  isLocalLink: (providerId: string) => boolean;
+  /**
+   * `ModelProfileManager.refreshIfStale`, bound. A no-op unless a
+   * completion reported a model the manager does not believe is loaded.
+   */
+  refreshIfStale: () => Promise<unknown>;
+}
+
+/**
+ * The fallback seam's `prepareLink`, as bootstrap wires it. A named
+ * function rather than an inline closure in `buildRuntime` so the three
+ * decisions it makes are testable on their own — inline, the only way to
+ * reach them was to boot a whole runtime and drive a real fallover.
+ *
+ * For a `llama-server` link, in order:
+ *
+ *  1. `noteLinkServed()` — tell the loop a local link is serving, so its
+ *     turn-start refresh reopens for the duration of the outage even
+ *     though the ACTIVE provider stays cloud.
+ *  2. `ensureProbed()` — replay the probes boot deferred. `true` means
+ *     they just ran and a fresh `/props` already landed; nothing more to
+ *     do for this attempt.
+ *  3. otherwise `refreshIfStale()` — on a cloud-active turn the loop's
+ *     own between-steps refresh is gated off, which leaves this the only
+ *     consumer of the staleness `observeCompletionModelId` flagged, and
+ *     it sits closer to the request than the line it replaces.
+ *
+ * Every other link kind returns on the first line: one predicate call,
+ * and no local request on a turn the local backend never serves.
+ */
+export function createLocalLinkPreparer(
+  deps: LocalLinkPreparerDeps,
+): (providerId: string) => Promise<void> {
+  return async (providerId: string): Promise<void> => {
+    if (!deps.isLocalLink(providerId)) return;
+    deps.gate.noteLinkServed?.();
+    if (await deps.gate.ensureProbed()) return;
+    await deps.refreshIfStale();
+  };
+}

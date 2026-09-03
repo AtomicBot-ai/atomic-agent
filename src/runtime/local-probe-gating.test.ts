@@ -33,7 +33,10 @@ interface LocalTraffic {
   /** Every URL the process asked for, in order. */
   urls: string[];
   countTo(hostPort: string, path?: string): number;
+  firstIndexOf(hostPort: string, path: string): number;
   reset(): void;
+  /** Flip the fake cloud provider to rate-limiting, to force a fallover. */
+  rateLimitCloud(): void;
 }
 
 /**
@@ -44,6 +47,7 @@ interface LocalTraffic {
  */
 function installCountingFetch(): LocalTraffic {
   const urls: string[] = [];
+  let cloudRateLimited = false;
   const impl: typeof fetch = async (input) => {
     const url =
       typeof input === "string"
@@ -81,6 +85,14 @@ function installCountingFetch(): LocalTraffic {
     // the one thing a zero-request assertion over cloud turns must not
     // do.
     if (url.includes("cloud.invalid") && url.includes("completions")) {
+      if (cloudRateLimited) {
+        // The shape that makes `runWithFallback` advance to the next
+        // link rather than fail the turn.
+        return new Response(JSON.stringify({ error: { message: "slow down" } }), {
+          status: 429,
+          headers: { "content-type": "application/json" },
+        });
+      }
       return new Response(
         JSON.stringify({
           id: "c1",
@@ -115,8 +127,13 @@ function installCountingFetch(): LocalTraffic {
     countTo: (hostPort, path) =>
       urls.filter((u) => u.includes(hostPort) && (!path || u.includes(path)))
         .length,
+    firstIndexOf: (hostPort, path) =>
+      urls.findIndex((u) => u.includes(hostPort) && u.includes(path)),
     reset: () => {
       urls.length = 0;
+    },
+    rateLimitCloud: () => {
+      cloudRateLimited = true;
     },
   };
 }
@@ -341,6 +358,69 @@ describe("issue #112 — local probe gating at CLI bootstrap", () => {
       // first local completion — none of which boot had done.
       expect(traffic.countTo(TEXT_PORT, "/health")).toBe(1);
       expect(traffic.countTo(TEXT_PORT, "/props")).toBe(1);
+    } finally {
+      await runtime.shutdown();
+    }
+  });
+
+  /**
+   * Issue #112 review, F1 + F7 — the fallover, end to end through a
+   * booted runtime rather than at the seam.
+   *
+   * Boot is cloud, so the local link starts with no `/health`, no
+   * `/props`, a `plain-instruct` profile and a one-slot pool. Then the
+   * cloud primary starts returning 429 and `appendLocal` (default
+   * `true`) routes every turn onto the llama-server link. Two things
+   * have to hold, and neither was covered end-to-end before: the link is
+   * warmed BEFORE its first completion, and it keeps being refreshed on
+   * later turns even though the active provider never stops being cloud.
+   */
+  it("a cloud->local FALLOVER warms the link before it serves, turn after turn", async () => {
+    writeConfig(stateDir, {
+      llm: {
+        ...cloudLlm,
+        providers: [
+          CLOUD_PROVIDER,
+          { id: "local-llama", kind: "llama-server", url: "http://127.0.0.1:8080" },
+          LOCAL_EMBED_PROVIDER,
+        ],
+      },
+    });
+    const runtime = await boot();
+    try {
+      expect(traffic.countTo(TEXT_PORT)).toBe(0);
+      traffic.rateLimitCloud();
+      const session = runtime.createSession();
+
+      const turn = async (n: number) =>
+        runtime
+          .executeTurn(session, `hello ${n}`, {
+            maxSteps: 1,
+            signal: new AbortController().signal,
+          })
+          .catch(() => undefined);
+
+      await turn(0);
+      // The deferred boot probes were replayed by the seam...
+      expect(traffic.countTo(TEXT_PORT, "/health")).toBe(1);
+      expect(traffic.countTo(TEXT_PORT, "/props")).toBe(1);
+      // ...and BEFORE the local link was asked to serve. Ordering is the
+      // whole point: a `/props` that lands after the completion has
+      // already been sent on a plain profile buys nothing.
+      const props = traffic.firstIndexOf(TEXT_PORT, "/props");
+      const completion = traffic.firstIndexOf(TEXT_PORT, "/completion");
+      expect(completion).toBeGreaterThan(-1);
+      expect(props).toBeLessThan(completion);
+
+      // Turns 2 and 3: the profile keeps tracking the live server. The
+      // active provider is still cloud, so before the F1 fix these were
+      // both zero and the profile stayed frozen for the whole outage.
+      await turn(1);
+      expect(traffic.countTo(TEXT_PORT, "/props")).toBe(2);
+      await turn(2);
+      expect(traffic.countTo(TEXT_PORT, "/props")).toBe(3);
+      // The restore stays one-shot: `/health` is not replayed per turn.
+      expect(traffic.countTo(TEXT_PORT, "/health")).toBe(1);
     } finally {
       await runtime.shutdown();
     }

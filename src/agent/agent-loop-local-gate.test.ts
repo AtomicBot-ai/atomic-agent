@@ -15,7 +15,10 @@ import { ModelProfileManager } from "../llm/model-profile-manager.js";
 import { GEMMA4_PROPS, QWEN3_PROPS } from "../llm/model-profile.fixtures.js";
 import { QWEN_THINK_PROFILE } from "../llm/model-profile.js";
 import { buildGrammar } from "../llm/grammar/build-grammar.js";
-import { DeferredLocalBackendProbes } from "../llm/local-backend-gate.js";
+import {
+  createLocalLinkPreparer,
+  DeferredLocalBackendProbes,
+} from "../llm/local-backend-gate.js";
 import { ProviderFallbackChain } from "../llm/fallback/index.js";
 import { DEFAULT_FALLBACK_TIMING } from "../llm/fallback/fallback-config.js";
 import { providerIdIsLlamaServer } from "../llm/provider/registry/active-text-provider.js";
@@ -355,13 +358,13 @@ describe("AgentLoop — sustained cloud→local fallover keeps the profile live"
         const provider = providers.get(providerId)!;
         return { provider, transport: provider.capabilities.toolTransport };
       },
-      // Verbatim from `bootstrap.ts`'s `fallbackSeamDeps`.
-      prepareLink: async (providerId) => {
-        if (!providerIdIsLlamaServer(LLM, providerId)) return;
-        gate.noteLinkServed();
-        if (await gate.ensureProbed()) return;
-        await profileManager.refreshIfStale();
-      },
+      // The REAL preparer `bootstrap.ts` wires into its seam deps, with
+      // the same three collaborators — not a re-implementation of it.
+      prepareLink: createLocalLinkPreparer({
+        gate,
+        isLocalLink: (providerId) => providerIdIsLlamaServer(LLM, providerId),
+        refreshIfStale: () => profileManager.refreshIfStale(),
+      }),
       recordUnaryUsage: () => {},
       recordStreamUsage: () => {},
     });

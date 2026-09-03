@@ -75,7 +75,10 @@ import {
   activeTextProviderIsLlamaServer,
   providerIdIsLlamaServer,
 } from "../llm/provider/registry/active-text-provider.js";
-import { DeferredLocalBackendProbes } from "../llm/local-backend-gate.js";
+import {
+  createLocalLinkPreparer,
+  DeferredLocalBackendProbes,
+} from "../llm/local-backend-gate.js";
 import { catalogForProvider } from "../llm/provider/catalog-for-provider.js";
 import { CostAccumulator } from "../llm/provider/cost-accumulator.js";
 import {
@@ -1676,23 +1679,14 @@ export async function createAgentRuntime(
     // cloud boot runs on deferred state (plain profile, one-slot pool,
     // no `/props`), so warm it here rather than infer against it.
     // No-op on every other attempt — one boolean after the first call.
-    prepareLink: async (providerId) => {
-      if (!providerIdIsLlamaServer(resolveLlmConfig(getConfig()), providerId)) {
-        return;
-      }
-      // Tell the agent loop a local link is serving, so its turn-start
-      // refresh re-opens for as long as the outage lasts even though the
-      // ACTIVE provider stays cloud (issue #112 review, F1).
-      localBackend.noteLinkServed();
-      // `true` means the restore just ran, which already carries a fresh
-      // `/props`. Otherwise the local state is warm but possibly stale —
-      // and on a cloud-active turn the loop's own `refreshIfStale` is
-      // gated off, so this is the only place left that can consume the
-      // staleness `observeCompletionModelId` flagged. Cheap: a no-op
-      // unless a completion actually reported a different model.
-      if (await localBackend.ensureProbed()) return;
-      await profileManager?.refreshIfStale();
-    },
+    prepareLink: createLocalLinkPreparer({
+      gate: localBackend,
+      isLocalLink: (providerId) =>
+        providerIdIsLlamaServer(resolveLlmConfig(getConfig()), providerId),
+      refreshIfStale: async () => {
+        await profileManager?.refreshIfStale();
+      },
+    }),
     recordUnaryUsage,
     recordStreamUsage,
   };
