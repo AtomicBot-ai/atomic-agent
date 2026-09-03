@@ -1915,6 +1915,9 @@ async function smokeTest(): Promise<void> {
     // --- r4-ui: the dot, the bubbles, the header pluses, Escape ---
     await uiTest(js, check);
 
+    // --- r4 integration: the seams between the four lanes ---
+    await r4SeamTest(js, check);
+
     // --- Lane B — backend switch (last: it restarts `atag serve` four times) ---
     // A round trip through the renderer's own switch path: to local and
     // back, with the file, the chips, the restarted agent and the daemon
@@ -5417,3 +5420,107 @@ app.on("before-quit", (event) => {
   agent = null;
   void client.stop().finally(() => app.quit());
 });
+
+/**
+ * r4 integration — the seams between the four lanes, asserted where each
+ * lane's own suite could not: every one of these checks needs code from two
+ * branches in the same window.
+ *
+ * (c) the transcript. r4-feat writes the session's model-stamp notice into
+ *     S.log; r4-ui turned user rows into bubbles and moved the agent's mark
+ *     to the end of a finished turn. The notice must be a system row —
+ *     no bubble, no end mark, and not a turn boundary.
+ * (b) the composer. r4-voice put the microphone and the interim strip in it;
+ *     r4-feat rewired submit() so Enter steers a running turn. Both controls
+ *     have to be on screen at once, and the voice guard has to sit ABOVE the
+ *     steer branch or Enter mid-dictation would post the pre-dictation draft.
+ * (d) the menu. r4-ui rewrote the group list; un-greying `run.steer` is
+ *     r4-feat's. The group list is asserted in settingsTestPartA and the
+ *     steer row in hfAndDeltaTest; what is asserted here is that the verb
+ *     r4-feat made live belongs to the group r4-ui rewrote.
+ */
+async function r4SeamTest(
+  js: <T>(code: string) => Promise<T>,
+  check: (name: string, ok: boolean, detail?: string) => void,
+): Promise<void> {
+  type Shape = {
+    added: number; kinds: string[]; classes: string[];
+    bubbles: number; endmarks: number; offers: number;
+    markedBefore: number; markedAfter: number;
+  };
+  // A provider that is not configured takes the "no longer configured" arm,
+  // which is the one notice this window can raise without a real session
+  // history behind it. Its shape in the DOM is what is under test, not its
+  // wording — hfAndDeltaTest already pins the sentence verbatim.
+  const gone = await js<Shape>(
+    "window.__stampRowShape({llm:{providerId:'no-such-provider-seam', chatModel:'ghost-model'}})",
+  );
+  check(
+    "seam: the session model-stamp notice is a system row, not a user bubble",
+    gone.added === 1 && gone.kinds[0] === "system"
+      && gone.classes.every((c) => /(^|\s)sysrow(\s|$)/.test(c))
+      && gone.bubbles === 0 && gone.endmarks === 0
+      && gone.markedAfter === gone.markedBefore,
+    `added=${gone.added} kinds=${JSON.stringify(gone.kinds)} classes=${JSON.stringify(gone.classes)}`
+      + ` bubbles=${gone.bubbles} endmarks=${gone.endmarks} marks ${gone.markedBefore}→${gone.markedAfter}`,
+  );
+
+  // The composer carries the microphone, the interim strip and the send
+  // button together, and the mic is not swallowed by the steer rewiring.
+  const composer = await js<{ mic: boolean; strip: boolean; send: boolean; entry: boolean }>(
+    "(() => ({mic: !!document.querySelector('#composer .field .micbtn[data-mic]'),"
+    + " strip: !!document.querySelector('.composerwrap .voicestrip'),"
+    + " send: !!document.querySelector('#composer .field .sendbtn'),"
+    + " entry: !!document.querySelector('#composer #entry')}))()",
+  );
+  check(
+    "seam: the composer carries the microphone, the voice strip and send at once",
+    composer.mic && composer.strip && composer.send && composer.entry,
+    JSON.stringify(composer),
+  );
+
+  // Enter while the microphone is open must stop the take and insert, never
+  // send and never steer: r4-voice's guard at the top of submit() has to sit
+  // above r4-feat's `if (S.busy || S.pending) { steerOrQueue(text); return; }`.
+  // S.busy is raised for the probe so the steer branch is genuinely the one
+  // that would run next — with it clear the check would pass vacuously — and
+  // dropped again in the finally below, along with the take and the draft.
+  const busyBefore = await js<boolean>("window.__busy()");
+  const draftBefore = await js<{ draft: string; entry: string | null }>("window.__draft()");
+  try {
+    const armed = await js<{ state: string; users: number; queued: number; busy: boolean }>(
+      "(async () => { window.__modeBusy(true); window.__voiceArm();"
+      + " const before = window.__draft().users, q = window.__queued().length;"
+      + " document.querySelector('#entry').value = 'typed before the microphone opened';"
+      + " document.querySelector('#entry').dispatchEvent(new KeyboardEvent('keydown',"
+      + " {key:'Enter', bubbles:true, cancelable:true}));"
+      + " await new Promise((r) => setTimeout(r, 300));"
+      + " return {state: window.__voice().state, users: window.__draft().users - before,"
+      + " queued: window.__queued().length - q, busy: window.__busy()}; })()",
+    );
+    check(
+      "seam: Enter while the microphone is open neither sends nor steers",
+      armed.users === 0 && armed.queued === 0
+        && armed.state !== "recording" && armed.state !== "starting",
+      JSON.stringify(armed),
+    );
+  } finally {
+    await js<unknown>("window.__voiceCancel()");
+    await js<unknown>(`window.__modeBusy(${busyBefore === true})`);
+    // __ctxDraft is the existing set-the-draft hook: it writes S.draft, re-costs
+    // the projection and renders, and afterChat() copies S.draft back into the
+    // textarea — so the composer ends exactly as this check found it.
+    await js<unknown>(`window.__ctxDraft(${JSON.stringify(draftBefore.draft ?? "")})`);
+  }
+
+  // The verb r4-feat un-greyed lives in the group list r4-ui rewrote.
+  const steerNode = await js<{ group: string; label: string; na: boolean } | null>(
+    "(() => { const n = window.__menuNodes().find((x) => x.id === 'run.steer'); return n ? {group:n.group, label:n.label, na:n.na} : null; })()",
+  );
+  check(
+    "seam: the live Steer verb sits in r4-ui's rewritten Run group",
+    !!steerNode && steerNode.group === "Run" && steerNode.na === false
+      && steerNode.label === "Steer the running turn",
+    JSON.stringify(steerNode),
+  );
+}

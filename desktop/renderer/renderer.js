@@ -4479,30 +4479,34 @@ async function refreshContext(stateDirOverride) {
   ctxReleaseWindowOnRouteChange();
   const windowP = resolveWindow().catch(() => ({window:null, label:''}));
   let usage = null;
-  // (a) the branch route: the agent's own prompt, built now.
-  if (BR.contextPreview && CTX.previewSupported !== false) {
-    const r = await BR.contextPreview(S.agentSession, S.draft);
-    if (r && r.supported === false) CTX.previewSupported = false;
-    else if (r && r.ok && r.usage) {
-      CTX.previewSupported = true;
-      const sec = (label) => { const s = (r.usage.sections || []).find((x) => x.label === label); return s ? s.tokens : 0; };
-      usage = {tokens:r.usage.tokens, source:'built', stablePrefix:sec('prompt scaffold'), tail:sec('conversation'),
-        cacheHitTokens:null, modelId:null, baseline:null, sections:r.usage.sections || [],
-        pairsCap:r.pairsCap || r.usage.conversationPairsCap || 0, reserved:r.reservedForReply || 0,
-        builtWindow:r.contextWindow > 0 ? r.contextWindow : null};
-    }
-  }
-  /* (b) the session's own persisted breakdown. v0.5.5 stamps the last
+  /* (a) the session's own persisted breakdown. v0.5.5 stamps the last
      turn's whole window occupancy onto SessionState — sections, both
      conversation caps, the pair costs, the physical window — and serves
-     it verbatim on GET /api/sessions/{id}. It is a strictly better source
-     than the trace scan below: no file parsing, and it carries the things
-     the scan can never produce. Fetched here rather than carried over
-     from openSession, so the gauge cannot go stale: refreshContext also
-     runs at the end of every turn. Absent on a session that has never
-     finished a turn and on anything written before 0.5.5, which is why
-     the ladder below it stays. */
-  /* Staged in a local, committed to CTX055 only past the staleness guard
+     it verbatim on GET /api/sessions/{id}. Fetched here rather than
+     carried over from openSession, so the gauge cannot go stale:
+     refreshContext also runs at the end of every turn. Absent on a
+     session that has never finished a turn and on anything written
+     before 0.5.5, which is why the rest of the ladder stays.
+
+     r4 INTEGRATION (seam e): this rung led the ladder in the merged tree,
+     which is where it was always meant to be — the check below it says so
+     in as many words ("`measured` is the session row's own contextUsage
+     … which now leads the ladder") — but it shipped BELOW the built
+     preview because the agent r4-feat ran against answered
+     /api/context-preview with a 404, so the two rungs were never live at
+     the same time. r4-mode's resolveBinary change made the locally built
+     agent the desktop's first choice, and that one answers the preview
+     route, so the preview started winning on every session and this rung
+     became unreachable — CTX055.stored stayed null, and with it the
+     panel's trimming line and pair costs. Worse, the two figures are not
+     interchangeable: the preview is built "before recall", so on the
+     session this run measured it read 7,376 tokens against the agent's
+     own 10,039 for the same session — a 26% understatement presented as
+     the window's occupancy. The session's own record of what the last
+     turn really occupied wins; the preview stays as what it is, a
+     pre-message projection for a session with no record yet.
+
+     Staged in a local, committed to CTX055 only past the staleness guard
      below. Everything else this ladder produces is funnelled through that
      guard; writing the snapshot here directly would let a late-resolving
      refresh for session A draw its trimming verdict (ctxBoundLine) over
@@ -4513,7 +4517,7 @@ async function refreshContext(stateDirOverride) {
   // record of this session", so the session row is skipped with the trace
   // file — reading it back off the live agent would contradict the very
   // state the probe is exercising.
-  if (!usage && !stateDirOverride && S.agentSession && BR.session) {
+  if (!stateDirOverride && S.agentSession && BR.session) {
     const r = await BR.session(S.agentSession);
     const u = r && r.ok && r.data ? r.data.contextUsage : null;
     if (u && u.tokens > 0) {
@@ -4524,6 +4528,22 @@ async function refreshContext(stateDirOverride) {
         cacheHitTokens:null, modelId:null, baseline:null, sections:u.sections || [],
         pairsCap: u.conversationPairsCap || 0, reserved:0,
         builtWindow: u.contextWindow > 0 ? u.contextWindow : null};
+    }
+  }
+  // (b) the branch route: the agent's own prompt, built now. This is the
+  // figure before the first message — a session with no persisted turn of
+  // its own — and it keeps costing the draft as it is typed, which is why
+  // it is still above the trace scan rather than beneath it.
+  if (!usage && BR.contextPreview && CTX.previewSupported !== false) {
+    const r = await BR.contextPreview(S.agentSession, S.draft);
+    if (r && r.supported === false) CTX.previewSupported = false;
+    else if (r && r.ok && r.usage) {
+      CTX.previewSupported = true;
+      const sec = (label) => { const s = (r.usage.sections || []).find((x) => x.label === label); return s ? s.tokens : 0; };
+      usage = {tokens:r.usage.tokens, source:'built', stablePrefix:sec('prompt scaffold'), tail:sec('conversation'),
+        cacheHitTokens:null, modelId:null, baseline:null, sections:r.usage.sections || [],
+        pairsCap:r.pairsCap || r.usage.conversationPairsCap || 0, reserved:r.reservedForReply || 0,
+        builtWindow:r.contextWindow > 0 ? r.contextWindow : null};
     }
   }
   // (c) this session's trace, once a turn has run.
@@ -10307,5 +10327,58 @@ if (typeof window !== 'undefined') {
       CTX.source = keep.source; CTX.modelId = keep.modelId; CTX.cacheHitTokens = keep.cacheHitTokens;
     }
     return {text, live, restored: CTX.source === keep.source && CTX.cacheHitTokens === keep.cacheHitTokens};
+  };
+}
+
+/* ============================================================
+   r4 integration — seam (c): the session model-stamp notice meets
+   r4-ui's user bubbles
+   ============================================================
+   r4-feat writes the "this session ran on <provider>/<model>" notice into
+   the transcript, and r4-ui turned user rows into right-hand bubbles with
+   the agent's mark moved to the end of a finished turn. The notice is
+   neither: it is `k:'system'`, so `item()` must render it as a `.sysrow`
+   with no `.prose.usr.bubble` around it and no `.endmark` in it, and it
+   must not split a turn the way a real user message does (endMarkIds
+   segments on `k === 'user'`). Nothing asserted that across the two
+   lanes, because each was written before the other landed.
+
+   The probe pushes the notice through the REAL noteSessionModelStamp,
+   renders, measures the DOM, then splices exactly what it added back out
+   and re-renders — the transcript it was handed is the transcript it
+   leaves. */
+if (typeof window !== 'undefined') {
+  window.__stampRowShape = (metadata) => {
+    const before = S.log.length;
+    const markedBefore = endMarkIds().size;
+    // noteSessionModelStamp writes CTX055.stamp as well as the transcript, and
+    // the checks around this one read it — so it is snapshotted, not zeroed.
+    const stampBefore = CTX055.stamp;
+    try {
+      noteSessionModelStamp({metadata});
+      render();
+      const added = S.log.slice(before);
+      const col = document.querySelector('#scroller .col720');
+      const rows = col ? [...col.children] : [];
+      const tail = rows.slice(rows.length - added.length);
+      return {
+        added: added.length,
+        kinds: added.map((m) => m.k),
+        // What the operator actually sees for the notice: the row's class,
+        // whether a bubble or an end mark got wrapped around it, and whether
+        // it carries the offer button the notice is supposed to carry.
+        classes: tail.map((n) => n.className),
+        bubbles: tail.filter((n) => n.querySelector('.prose.usr.bubble') || n.classList.contains('usr')).length,
+        endmarks: tail.filter((n) => n.querySelector('.endmark')).length,
+        offers: tail.filter((n) => n.querySelector('[data-act="sessmodel:apply"]')).length,
+        // A system row must not open a new turn segment, so the number of
+        // end marks in the transcript cannot move because of it.
+        markedAfter: endMarkIds().size, markedBefore,
+      };
+    } finally {
+      S.log.splice(before, S.log.length - before);
+      CTX055.stamp = stampBefore;
+      render();
+    }
   };
 }
