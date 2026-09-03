@@ -117,7 +117,12 @@ export async function modelsList(): Promise<{ ok: boolean; models?: CatalogModel
 }
 
 export async function modelsUse(id: string): Promise<CliResult> {
-  if (!/^[\w.-]{1,64}$/.test(id)) {
+  // Item 7A: 96, not 64. A model added from Hugging Face is
+  // `custom-` + slug.slice(0, 80) (src/local-llm/huggingface-model-def.ts
+  // buildCustomModelId), i.e. up to 87 characters — the first real one
+  // generated here was 69. At 64 this window refused a perfectly valid id
+  // with "not a model id", which reads as if the id were malformed.
+  if (!/^[\w.-]{1,96}$/.test(id)) {
     return { ok: false, stdout: "", stderr: "", error: `not a model id: ${id}` };
   }
   const res = await cli(["models", "use", id], 60_000);
@@ -141,7 +146,8 @@ export function modelsPull(
   onLine: (line: string) => void,
 ): { done: Promise<CliResult>; cancel: () => void } {
   const binary = resolveBinary();
-  if (!binary || !/^[\w.-]{1,64}$/.test(id)) {
+  // Item 7A: 96 — see modelsUse above (huggingface-model-def.ts:25).
+  if (!binary || !/^[\w.-]{1,96}$/.test(id)) {
     return {
       done: Promise.resolve({ ok: false, stdout: "", stderr: "", error: "cannot start the download" }),
       cancel: () => {},
@@ -241,6 +247,39 @@ export async function upsertProvider(entry: ProviderEntry): Promise<CliResult> {
   ) as ProviderEntry;
   if (at >= 0) providers[at] = { ...providers[at], ...clean };
   else providers.push(clean);
+  return configSetWhole(config);
+}
+
+/**
+ * Item 7A — add a model from Hugging Face. `localModels.customModels` is
+ * a list-valued key, so it has no `atag config set <leaf> <value>`
+ * spelling: this is the same read-modify-write-the-whole-file move
+ * `upsertProvider` makes just above, and for the same reason.
+ *
+ * Filter-and-append rather than replace-in-place, matching the agent's
+ * own `addCustomModel` (src/config/custom-models-store.ts): re-adding the
+ * same repo+file is a refresh, and the schema rejects duplicate ids.
+ *
+ * There is deliberately no remove helper. `atag models remove <custom-id>`
+ * deletes the files AND drops the config entry for a custom row
+ * (`runLocalModelsRemove`'s `if (wasCustom) removeCustomModel(idArg)`), so
+ * the LLM pane's existing `d` key is already the complete removal path.
+ */
+export async function addCustomModelEntry(
+  def: Record<string, unknown>,
+): Promise<CliResult> {
+  const id = typeof def.id === "string" ? def.id : "";
+  if (!/^custom-[a-z0-9._-]+$/.test(id)) {
+    return { ok: false, stdout: "", stderr: "", error: `not a custom model id: ${id}` };
+  }
+  const current = await configGet();
+  if (!current.ok || !current.config) {
+    return { ok: false, stdout: "", stderr: "", error: current.error ?? "could not read the config" };
+  }
+  const config = current.config as { localModels?: { customModels?: Array<{ id?: string }> } };
+  const localModels = (config.localModels ??= {});
+  const kept = (localModels.customModels ?? []).filter((m) => m && m.id !== id);
+  localModels.customModels = [...kept, def as { id?: string }];
   return configSetWhole(config);
 }
 
@@ -1241,7 +1280,8 @@ export async function skillInstall(
 
 /* ---------------- Item 7 part C (LLM / Telegram / Import tabs): models CLI, import, .env, llama probe ---------------- */
 
-const MODEL_ID_RE = /^[\w.-]{1,64}$/;
+/** Item 7A: 96 — a `custom-` id from the Hugging Face add runs to 87 (huggingface-model-def.ts:25). */
+const MODEL_ID_RE = /^[\w.-]{1,96}$/;
 
 export interface ModelsStatus {
   mode: string;

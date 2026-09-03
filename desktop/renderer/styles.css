@@ -701,3 +701,13 @@ button.menurow:hover{background:var(--bg-hover)}
   #sidebar .sesrow{justify-content:center;padding:0}
   #sidebar .sb-list{padding:var(--s2) 0}
 }
+
+/* ---- Item 7A: the Hugging Face branch in Settings › LLM › Local, and
+   the Ollama signpost under the model lists ---- */
+.llm-hf input{width:100%;max-width:520px;height:26px;padding:0 6px;border:1px solid var(--line);border-radius:5px;
+  background:var(--bg-sunken);color:var(--text-primary);font-family:var(--font-mono);font-size:12px}
+.llm-hf input:disabled{color:var(--text-tertiary)}
+.llm-hf .tuierr{white-space:pre-wrap;max-width:72ch;margin-top:4px}
+.llm-ollama{margin-top:10px;padding-top:8px;border-top:1px solid var(--line-soft);max-width:72ch;line-height:1.5}
+/* ---- Item 7C: the context panel's binding line ---- */
+.ctxbound{color:var(--warn)}
