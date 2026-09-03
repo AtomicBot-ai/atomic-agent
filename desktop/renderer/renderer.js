@@ -1877,6 +1877,10 @@ async function obLoadModels() {
 
 /** `restartedAlready`: the local path's selectLocalModel has restarted the agent itself. */
 async function obFinish(kind, detail, restartedAlready) {
+  // Lane B — backend switch: the cloud branch activates a provider, which
+  // restarts `atag serve` and would abort a running turn — same guard as
+  // every other switch entry point.
+  if (kind === 'cloud' && S.busy) { OB.error = 'Not while a turn is running'; render(); return; }
   OB.busy = true; render();
   const stamp = new Date().toISOString();
   const writes = [];
@@ -1931,7 +1935,9 @@ async function obFinish(kind, detail, restartedAlready) {
 function obUseModel(model) {
   if (model.downloaded) {
     // Lane B — backend switch: the TUI's pull-completion path writes the
-    // model and starts the daemon; selectLocalModel is that sequence.
+    // model and starts the daemon; selectLocalModel is that sequence. It
+    // restarts `atag serve`, so not while a turn is running.
+    if (S.busy) { OB.error = 'Not while a turn is running'; render(); return; }
     OB.busy = true; render();
     BR.selectLocalModel(model.id).then((res) => {
       OB.busy = false;

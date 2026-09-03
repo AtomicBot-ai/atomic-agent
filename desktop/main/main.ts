@@ -621,8 +621,15 @@ async function smokeTest(): Promise<void> {
     // dozens of near-identical smoke turns; a model answering "done" from
     // that history without calling a tool is a harness artefact, not a
     // desktop defect (seen once: turn 49 of api-2931b30b63359b7d).
+    // Lane B — backend switch: session:new alone is not enough — without a
+    // session_id the server keys the session on the first user message
+    // (src/http/openai-chat-completions.ts firstUserMessage), so the same
+    // prompt lands in the same stored session run after run and by its third
+    // turn the model answered "done" from history without a tool call. A
+    // per-run nonce in the prompt makes the derived session genuinely fresh.
     await js<void>("window.__ctxNew()");
-    await js<void>("window.__ask('List the files in the current directory, then say done.')");
+    const toolNonce = Date.now().toString(36);
+    await js<void>(`window.__ask('List the files in the current directory, then say done. (run ${toolNonce})')`);
     const toolDeadline = Date.now() + 150_000;
     let cards: Array<{ name: string; args: string; ms: number; ok: boolean | null; live: boolean }> = [];
     while (Date.now() < toolDeadline) {
