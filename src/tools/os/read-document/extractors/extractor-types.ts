@@ -6,15 +6,24 @@
  * keeps extractors pure and easy to test.
  */
 
-export type DocumentFormat =
-  | "pdf"
-  | "docx"
-  | "doc"
-  | "xlsx"
-  | "rtf"
-  | "odt"
-  | "pptx"
-  | "plain";
+/**
+ * The closed set of formats the dispatcher accepts, as a value so that the
+ * runtime validator, the error message that lists the valid overrides and
+ * the prompt-side arg schemas can all be derived from one declaration
+ * instead of three hand-maintained copies that drift (issue #113).
+ */
+export const DOCUMENT_FORMATS = [
+  "pdf",
+  "docx",
+  "doc",
+  "xlsx",
+  "rtf",
+  "odt",
+  "pptx",
+  "plain",
+] as const;
+
+export type DocumentFormat = (typeof DOCUMENT_FORMATS)[number];
 
 export interface ExtractorInput {
   data: Buffer;

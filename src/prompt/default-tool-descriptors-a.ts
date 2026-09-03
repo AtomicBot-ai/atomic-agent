@@ -47,7 +47,8 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
   },
   {
     name: "os.fs.read",
-    summary: "Read a UTF-8 file; use offset/limit for ranges, lineNumbers for 'LINE|'.",
+    summary:
+      "Read a UTF-8 file — the default for source code and text files; use offset/limit for ranges, lineNumbers for 'LINE|'.",
     argsSchema:
       "{ path: string, maxBytes?: number, offset?: number /* 1-based; neg=from end */, limit?: number, lineNumbers?: boolean }",
   },
@@ -96,10 +97,22 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
     argsSchema: "{ path: string, oldString: string, newString: string, replaceAll?: boolean }",
   },
   {
+    // Models reach for read_document on `.py` / `.ts` source files, hit the
+    // unsupported-extension error and burn a step guessing `format`. The
+    // summary therefore names the sibling tool explicitly: source code goes
+    // to os.fs.read, this one is for document extraction. It deliberately
+    // does NOT say "not for text files" — this tool does read .txt/.md/.csv
+    // as `plain`, and a summary that contradicts the tool is the same
+    // ambiguity one level up.
+    //
+    // `format` is spelled out as a closed set for the same reason: the bad
+    // guess in issue #113 was `format: "text"`, and a model that guesses it
+    // preemptively never sees the runtime hint.
     name: "os.fs.read_document",
-    summary: "Extract plain text from PDF, Office, ODF, etc. (markers in output). Read-only.",
+    summary:
+      "Extract plain text from documents — PDF, Office, ODF, RTF (markers in output). NOT for source code: use os.fs.read. Read-only.",
     argsSchema:
-      "{ path: string, format?: string, maxBytes?: number, maxPages?: number, pagesFrom?: number, pagesTo?: number, sheets?: (string | number)[], pageSeparators?: boolean, includeTables?: boolean }",
+      "{ path: string, format?: 'pdf' | 'docx' | 'doc' | 'xlsx' | 'rtf' | 'odt' | 'pptx' | 'plain', maxBytes?: number, maxPages?: number, pagesFrom?: number, pagesTo?: number, sheets?: (string | number)[], pageSeparators?: boolean, includeTables?: boolean }",
   },
   {
     name: "os.fs.archive.list",
