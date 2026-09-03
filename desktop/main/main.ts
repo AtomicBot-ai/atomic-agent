@@ -1111,6 +1111,49 @@ async function smokeTest(): Promise<void> {
       `overlay ${String(reassert.before)} → ${String(reassert.after)}, mode=${reassert.mode}`,
     );
 
+    // The other half of the re-assert, which the check above cannot reach:
+    // S.busy is false for the whole run, so the wait-for-the-turn branch,
+    // the coalescing of a second reconnect and the cancel-on-click path
+    // were asserted by nothing. Driving S.busy directly is exactly what
+    // the branch under test reads, and it needs no real turn.
+    if (modeSeed.supported) {
+      const q = await js<{
+        start: string; queued: string | null; coalesced: string | null;
+        duringBusy: string; afterWait: string; cancelled: boolean; afterCancel: string;
+      }>(
+        "(async () => {"
+        + " const start = window.__modeState().current;"
+        + " window.__modeBusy(true);"
+        + " window.__modeReassert('plan');"
+        + " const queued = window.__modeQueue();"
+        + " window.__modeReassert('bypass');"
+        + " const coalesced = window.__modeQueue();"
+        + " const duringBusy = window.__modeState().current;"
+        + " window.__modeBusy(false);"
+        + " await new Promise((r) => setTimeout(r, 2500));"
+        + " const afterWait = window.__modeState().current;"
+        + " window.__modeBusy(true); window.__modeReassert('plan'); window.__modeBusy(false);"
+        + " await window.__modeSet('default');"
+        + " const cancelled = window.__modeQueue() === null;"
+        + " await new Promise((r) => setTimeout(r, 1500));"
+        + " return {start, queued: queued && queued.mode, coalesced: coalesced && coalesced.mode,"
+        + "   duringBusy, afterWait, cancelled, afterCancel: window.__modeState().current}; })()",
+      );
+      check(
+        "coding-mode re-assert waits for the turn, coalesces, and yields to a click",
+        q.queued === "plan" && q.coalesced === "bypass" && q.duringBusy === q.start
+          && q.afterWait === "bypass" && q.cancelled && q.afterCancel === "default",
+        `queued=${String(q.queued)} coalesced=${String(q.coalesced)} duringBusy=${q.duringBusy}`
+          + ` afterWait=${q.afterWait} cancelled=${q.cancelled} afterCancel=${q.afterCancel}`,
+      );
+    } else {
+      check(
+        "coding-mode queued re-assert skipped: agent has no route",
+        modeSeed.supported === false,
+        `supported=${modeSeed.supported} agent=${agent!.status.binary ?? "none"}`,
+      );
+    }
+
     // The unavailable presentation is real, not merely claimed: force the
     // renderer into the state a routeless agent produces and read the
     // chip's own markup back.

@@ -462,6 +462,9 @@ checkout of this branch:
 
 ```bash
 git clone <this repo> ~/atag-agent && cd ~/atag-agent
+# If it was cloned from a temporary worktree, repoint it at the repo that
+# outlives one — otherwise the next `git pull` has nowhere to go:
+git remote set-url origin https://github.com/AtomicBot-ai/atomic-agent
 npm install --engine-strict=false && npm run build
 mkdir -p ~/atag-agent/bin   # the repo ships no bin/; the build writes dist/ only
 printf '#!/bin/sh\nexec %s --enable-source-maps %s/dist/cli/index.js "$@"\n' \
@@ -474,7 +477,9 @@ the released binary. Rollback is `rm -rf ~/atag-agent`; do exactly that once
 the route ships in a release, or the desktop will keep preferring a build
 that has fallen behind. Re-run `npm run build` and re-check `--version` after
 every pull: a missing `dist/cli/index.js` fails at spawn time with an
-unhelpful node error.
+unhelpful node error. The checkout tracks this branch, which exists only
+until it merges, so update it with `git pull origin main` (plus a rebuild)
+rather than a bare `git pull`.
 
 The packaged app answers `--smoke` exactly like the dev build, which is how a
 release candidate gets checked before it goes anywhere:

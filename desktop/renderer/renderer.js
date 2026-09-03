@@ -20,7 +20,11 @@ const PLAN = { on:false, supported:null };
 /* The composer's stance. Read from and written to /api/coding-mode, which
    moves the runtime's live ladder and plan flag exactly as the TUI's
    onCodingModeChanged does — config.json is never touched. */
-const MODE = { current:'default', supported:null, baseLevel:null, approvalLevel:null };
+/* `seq` counts the mode POSTs this window has issued — the CTX.seq idiom
+   one surface over. Both writers capture it before the request and drop
+   their reply if a newer choice has been made since, so a re-assert that
+   was already in flight cannot repaint the chip over an explicit click. */
+const MODE = { current:'default', supported:null, baseLevel:null, approvalLevel:null, seq:0 };
 /* Item 6 (coding mode): the last mode this window explicitly chose. The
    stance is process state in the agent, so a backend switch — which
    restarts it — drops back to the boot stance; this is what lets the
@@ -3669,6 +3673,16 @@ function modesHTML() {
     + '<div class="popfoot"><button class="btn btn-s" data-act="close">Done</button></div></div></div>';
 }
 
+/* Item 6 review fix: S.level has three writers and the diagnostics line
+   prints it raw, so the two that read the route's answer put it back
+   inside 1..5 themselves rather than trusting whoever fed them. Mirrors
+   clampApprovalLevel in src/tui/coding-mode.ts. `null` for anything that
+   is not a number: a missing level leaves S.level alone rather than
+   inventing one. */
+function clampLevel(n) {
+  return typeof n === 'number' ? Math.max(1, Math.min(5, n)) : null;
+}
+
 /*
  * Re-assert the stance this window last chose, after the agent came back.
  * Deliberately NOT setCodingMode: that is the click path, and it opens with
@@ -3703,13 +3717,22 @@ function reassertCodingMode(id) {
   // A queued re-assert that is no longer the pending one would fire a second
   // POST for a stance the window has moved on from.
   cancelModeReassert();
+  const seq = ++MODE.seq;
   BR.codingMode(id).then((res) => {
+    // cancelModeReassert only cancels a re-assert still waiting for a turn;
+    // this is the same guard for one already in flight. An explicit click
+    // that landed while this POST was travelling owns the stance now, and
+    // its reply is the one the chip and the diagnostics level must show.
+    if (seq !== MODE.seq) return;
     if (!res || !res.ok) { if (res) MODE.supported = res.supported; render(); return; }
     MODE.supported = true; MODE.current = res.mode;
     MODE.approvalLevel = res.approvalLevel; MODE.baseLevel = res.baseLevel;
     LAST_MODE = res.mode;
-    S.level = res.approvalLevel;
-    if (LIVE_CAPS && LIVE_CAPS.agent) LIVE_CAPS.agent.approvalLevel = res.approvalLevel;
+    const lvl = clampLevel(res.approvalLevel);
+    if (lvl !== null) {
+      S.level = lvl;
+      if (LIVE_CAPS && LIVE_CAPS.agent) LIVE_CAPS.agent.approvalLevel = lvl;
+    }
     render();
   });
 }
@@ -3721,7 +3744,11 @@ async function setCodingMode(id) {
   // ends and quietly put the stance back to what the window had before.
   cancelModeReassert();
   S.overlay = null; render();
+  const seq = ++MODE.seq;
   const res = await BR.codingMode(id);
+  // A later click (or a re-assert fired after this one) already owns the
+  // stance: drop this reply rather than repainting the chip backwards.
+  if (seq !== MODE.seq) return;
   if (!res || !res.ok) {
     MODE.supported = res ? res.supported : true;
     S.log.push({id:nid(), k:'system', text: res && res.supported === false
@@ -3735,8 +3762,11 @@ async function setCodingMode(id) {
   // The diagnostics line reads the capabilities snapshot taken at connect,
   // and the mode moves the LIVE ladder — so without this the line keeps
   // printing the boot level while the chip says otherwise.
-  S.level = res.approvalLevel;
-  if (LIVE_CAPS && LIVE_CAPS.agent) LIVE_CAPS.agent.approvalLevel = res.approvalLevel;
+  const lvl = clampLevel(res.approvalLevel);
+  if (lvl !== null) {
+    S.level = lvl;
+    if (LIVE_CAPS && LIVE_CAPS.agent) LIVE_CAPS.agent.approvalLevel = lvl;
+  }
   // Prefer the agent's own copy over the local table: the two are
   // identical today and this is what keeps them that way.
   const look = CODING_MODES.find((m) => m.id === res.mode);
@@ -8076,4 +8106,21 @@ if (typeof window !== 'undefined') {
   window.__modeOpenPopover = () => { S.overlay = 'modes'; render(); return S.overlay; };
   window.__overlayNow = () => S.overlay;
   window.__overlayClose = () => { S.overlay = null; render(); return S.overlay; };
+}
+
+/* ============================================================
+   Smoke hooks — coding mode, queued re-assert (item 6 review fix)
+   ============================================================ */
+if (typeof window !== 'undefined') {
+  /* The queued half of reassertCodingMode only runs while a turn is in
+     flight, which never happens at the point the smoke reaches it — so
+     the wait, the coalescing and the cancel-on-click were covered by
+     nothing. This drives S.busy directly rather than starting a real
+     turn: the branch under test reads exactly that flag. */
+  window.__modeBusy = (on) => { S.busy = !!on; render(); return S.busy; };
+  /* What is queued behind the running turn, if anything. */
+  window.__modeQueue = () => (MODE_REASSERT ? { mode: MODE_REASSERT.mode } : null);
+  /* The click path itself, so the cancel-a-queued-re-assert branch can be
+     exercised the way an operator reaches it. */
+  window.__modeSet = (id) => setCodingMode(id);
 }
