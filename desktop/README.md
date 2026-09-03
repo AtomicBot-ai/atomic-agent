@@ -72,14 +72,18 @@ two paths cannot both queue the same message.
 `contextUsage` — the last turn's whole window occupancy: every section, both
 conversation caps, the per-pair costs and the physical window — so the panel
 reads it instead of scanning the trace, and can say which limit is trimming
-the transcript (`conversationBoundBy`) instead of guessing. The trace scan and
-the pre-message projection stay behind it for a session that has never
-finished a turn and for agents that persist no such field. The snapshot is
-committed only past the refresh's staleness guard, so a slow refresh for the
-session the user just left cannot draw its trimming verdict over the numbers
-of the session they are on. A prompt-derived window is released when the
-active `<providerId> <chatModel>` changes, so the gauge never draws a new
-model against the old model's scale.
+the transcript (`conversationBoundBy`) instead of guessing. The pre-message
+preview (`POST /api/context-preview`), the trace scan and the projection stay
+behind it, for a session that has never finished a turn and for agents that
+persist no such field. That order matters now that the desktop prefers a
+locally built agent: the preview builds the next prompt *before recall*, so
+it reads low against what the last turn really occupied — 7.4k where the
+session's own record said 10.0k — and the smaller number is the projection,
+not the occupancy. The snapshot is committed only past the refresh's
+staleness guard, so a slow refresh for the session the user just left cannot
+draw its trimming verdict over the numbers of the session they are on. A
+prompt-derived window is released when the active `<providerId> <chatModel>`
+changes, so the gauge never draws a new model against the old model's scale.
 
 **The session's model stamp.** The same row carries `metadata.llm` — the
 provider and model that session last ran on. It is reported and never applied:
