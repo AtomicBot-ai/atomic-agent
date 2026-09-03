@@ -65,7 +65,11 @@ const CONVERSATION_CAP_FLOOR = 512;
  * 2. The health poller's reading of the same endpoint. Not redundant:
  *    `localModels.mode: "managed"` *defers* the boot probe, so a local
  *    turn can build its prompt with no window while the poller already
- *    has one.
+ *    has one. Only consulted while a local backend is the active route
+ *    (issue #112) — after a local→cloud switch the poller's last local
+ *    reading is still in state, and drawing the cloud model's gauge
+ *    against a llama-server `n_ctx` is a fabrication with a number
+ *    attached.
  * 3. The active cloud provider's catalogue. Read here, at render time,
  *    rather than resolved once into a `ProviderRow`: the live catalogue
  *    arrives from an async fetch at start-up, so anything baked into a
@@ -80,9 +84,10 @@ const CONVERSATION_CAP_FLOOR = 512;
 function resolveWindow(state: TuiState): number | null {
   const fromPrompt = state.contextUsage.contextWindow;
   if (fromPrompt !== null && fromPrompt > 0) return fromPrompt;
-  const fromPoller = state.llmHealth.contextWindow;
-  if (fromPoller !== null && fromPoller > 0) return fromPoller;
   const active = state.providersPanel.rows.find((row) => row.isActiveText);
+  const localActive = active === undefined || active.kind === "llama-server";
+  const fromPoller = state.llmHealth.contextWindow;
+  if (localActive && fromPoller !== null && fromPoller > 0) return fromPoller;
   if (!active?.chatModel) return null;
   const lookup = catalogEntryLookupForKind(active.kind);
   const entry = lookup?.(active.chatModel);

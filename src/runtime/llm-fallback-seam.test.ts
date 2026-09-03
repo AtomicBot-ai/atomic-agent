@@ -299,3 +299,115 @@ describe("per-link prompt substitution (grammarPrompt)", () => {
     expect(localPrompts).toEqual(["shared prompt"]);
   });
 });
+
+/**
+ * Issue #112. Boot skips the local `/health` + `/props` probes while a
+ * cloud provider is active, which leaves a `llama-server` link running
+ * on a deferred profile, a one-slot pool and no health reading. A
+ * cloud→local FALLOVER reaches that link without any config change and
+ * without the agent loop's turn-start refresh (it saw a cloud route when
+ * the turn began), so the seam is the last point at which the state can
+ * still be warmed. These tests pin the ordering: `prepareLink` for the
+ * link that is about to serve, before its completion is sent.
+ */
+describe("prepareLink — warming a link before it serves (issue #112)", () => {
+  function tracingDeps(
+    providers: Map<string, LlmProvider>,
+    trace: string[],
+  ): FallbackSeamDeps {
+    const deps = seamDeps(providers);
+    deps.prepareLink = async (providerId) => {
+      trace.push(`prepare:${providerId}`);
+    };
+    return deps;
+  }
+
+  it("prepares the local link before the fallover attempt is sent", async () => {
+    const trace: string[] = [];
+    const providers = new Map<string, LlmProvider>([
+      [
+        "cloud",
+        fakeProvider("cloud", "native_tools", async () => {
+          trace.push("serve:cloud");
+          throw new OpenAiHttpError(
+            "rate limited",
+            429,
+            "http://cloud",
+            false,
+            null,
+            "cloud",
+          );
+        }),
+      ],
+      [
+        "local",
+        fakeProvider("local", "grammar", async () => {
+          trace.push("serve:local");
+          return answer("local");
+        }),
+      ],
+    ]);
+    const result = await createFallbackCompleter(
+      tracingDeps(providers, trace),
+    )(baseParams);
+
+    expect(result.modelId).toBe("local-model");
+    // The load-bearing ordering: `prepare:local` sits BEFORE
+    // `serve:local`. Without the hook the local link would answer with
+    // its profile, grammar and slot pool never probed.
+    expect(trace).toEqual([
+      "prepare:cloud",
+      "serve:cloud",
+      "prepare:local",
+      "serve:local",
+    ]);
+  });
+
+  it("streaming: prepares the local link before the stream is opened", async () => {
+    const trace: string[] = [];
+    const providers = new Map<string, LlmProvider>([
+      [
+        "cloud",
+        fakeProvider("cloud", "native_tools", async () => {
+          trace.push("serve:cloud");
+          throw new OpenAiHttpError(
+            "rate limited",
+            429,
+            "http://cloud",
+            false,
+            null,
+            "cloud",
+          );
+        }),
+      ],
+      [
+        "local",
+        fakeProvider("local", "grammar", async () => {
+          trace.push("serve:local");
+          return answer("local");
+        }),
+      ],
+    ]);
+    const streamer = createFallbackStreamer(tracingDeps(providers, trace));
+    const gen = streamer(baseParams);
+    let next = await gen.next();
+    while (!next.done) next = await gen.next();
+
+    expect(next.value.servedTransport).toBe("grammar");
+    expect(trace).toEqual([
+      "prepare:cloud",
+      "serve:cloud",
+      "prepare:local",
+      "serve:local",
+    ]);
+  });
+
+  it("is optional — an unwired seam behaves exactly as before", async () => {
+    const providers = new Map<string, LlmProvider>([
+      ["cloud", fakeProvider("cloud", "native_tools", async () => answer("cloud"))],
+      ["local", fakeProvider("local", "grammar", async () => answer("local"))],
+    ]);
+    const result = await createFallbackCompleter(seamDeps(providers))(baseParams);
+    expect(result.modelId).toBe("cloud-model");
+  });
+});

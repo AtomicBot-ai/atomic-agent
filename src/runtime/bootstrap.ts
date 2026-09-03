@@ -71,6 +71,14 @@ import {
   resolveLlmConfig,
 } from "../llm/provider/index.js";
 import { resolveActiveToolTransport } from "../llm/provider/registry/resolve-tool-transport.js";
+import {
+  activeTextProviderIsLlamaServer,
+  providerIdIsLlamaServer,
+} from "../llm/provider/registry/active-text-provider.js";
+import {
+  createLocalLinkPreparer,
+  DeferredLocalBackendProbes,
+} from "../llm/local-backend-gate.js";
 import { catalogForProvider } from "../llm/provider/catalog-for-provider.js";
 import { CostAccumulator } from "../llm/provider/cost-accumulator.js";
 import {
@@ -933,34 +941,59 @@ export async function createAgentRuntime(
     approvalRequired: true,
   };
 
-  if (
-    !options.overrides?.skipLlamaHealthCheck &&
-    !options.overrides?.deferLlamaHealthCheck &&
-    !options.overrides?.llamaComplete
-  ) {
-    // One attempt, not the retry ladder: this probe exists to log a line,
-    // and with llama down the default ladder (5 attempts, exponential
-    // backoff) stalled every boot for 15.5 s before the loop then failed
-    // fast anyway. The first real completion is the retry.
-    const health = await checkLlamaServer({ retries: 0 });
-    if (!health.reachable) {
-      logger.warn("llama-server health check failed", {
-        error: health.error,
-        url: config.localModels.url,
-      });
-      if (config.localModels.mode === "managed") {
-        logger.warn(managedLocalLlmHealthFailureHint(config.localModels.managed.port), {
-          mode: "managed",
+  // Issue #112. Every local text probe below hangs off this one answer,
+  // and it is available here — hundreds of lines before
+  // `ProviderRegistry.fromConfig` resolves the active provider —
+  // because `resolveLlmConfig` is a pure function of config with no
+  // I/O. A cloud-backed boot must not open `/health` or `/props`
+  // against a llama-server nobody is routed to: the warnings it prints
+  // read as an active-backend failure while the real provider is fine.
+  const localTextActiveAtBoot = activeTextProviderIsLlamaServer(
+    resolveLlmConfig(config),
+  );
+
+  // The boot-time local `/health` line. Skipped whole when the route is
+  // cloud — including the "deferred" notice, which is advice about a
+  // backend this session never talks to.
+  const runBootHealthProbe = async (): Promise<void> => {
+    if (
+      !options.overrides?.skipLlamaHealthCheck &&
+      !options.overrides?.deferLlamaHealthCheck &&
+      !options.overrides?.llamaComplete
+    ) {
+      // One attempt, not the retry ladder: this probe exists to log a line,
+      // and with llama down the default ladder (5 attempts, exponential
+      // backoff) stalled every boot for 15.5 s before the loop then failed
+      // fast anyway. The first real completion is the retry.
+      const health = await checkLlamaServer({ retries: 0 });
+      if (!health.reachable) {
+        logger.warn("llama-server health check failed", {
+          error: health.error,
+          url: config.localModels.url,
+        });
+        if (config.localModels.mode === "managed") {
+          logger.warn(managedLocalLlmHealthFailureHint(config.localModels.managed.port), {
+            mode: "managed",
+          });
+        }
+      } else {
+        logger.info("llama-server reachable", {
+          url: config.localModels.url,
+          latencyMs: health.latencyMs,
         });
       }
-    } else {
-      logger.info("llama-server reachable", {
+    } else if (options.overrides?.deferLlamaHealthCheck) {
+      logger.info("llama-server health check deferred; runtime will refresh on first turn", {
         url: config.localModels.url,
-        latencyMs: health.latencyMs,
       });
     }
-  } else if (options.overrides?.deferLlamaHealthCheck) {
-    logger.info("llama-server health check deferred; runtime will refresh on first turn", {
+  };
+
+  if (localTextActiveAtBoot) {
+    await runBootHealthProbe();
+  } else {
+    logger.info("local llama probes skipped; active text provider is not local", {
+      activeTextProvider: resolveLlmConfig(config).activeTextProvider,
       url: config.localModels.url,
     });
   }
@@ -971,6 +1004,7 @@ export async function createAgentRuntime(
     llama,
     logger,
     config.localModels.url,
+    localTextActiveAtBoot,
   );
   const slotManager = new SlotManager(totalSlots ?? undefined);
   if (totalSlots !== null) {
@@ -993,19 +1027,31 @@ export async function createAgentRuntime(
   // generation budget makes every step come back `truncated` — the model
   // burns its remaining tokens and never closes a tool-call array. Loud
   // at startup because the failure mode downstream is silent.
-  const minUsableCtx = minUsableContextWindow(
-    config.localModels.completionMaxTokens,
-  );
-  if (profile.contextWindow && profile.contextWindow < minUsableCtx) {
-    logger.warn("context window too small for the agent prompt", {
-      contextWindow: profile.contextWindow,
-      required: minUsableCtx,
-      completionMaxTokens: config.localModels.completionMaxTokens,
-      hint:
-        config.localModels.mode === "managed"
-          ? "raise localModels.managed.contextSize, lower localModels.completionMaxTokens, or pick a model that fits VRAM"
-          : "start llama-server with a larger --ctx-size, or lower localModels.completionMaxTokens",
-    });
+  //
+  // Advice about the LOCAL server's `--ctx-size` only, so it rides the
+  // same gate as the probe that produced the number (issue #112): on a
+  // cloud route there is no `/props` reading to judge, and the hints it
+  // prints name flags a cloud provider does not have.
+  const warnOnSmallContextWindow = (
+    candidate: ReturnType<typeof detectModelProfile>,
+  ): void => {
+    const minUsableCtx = minUsableContextWindow(
+      config.localModels.completionMaxTokens,
+    );
+    if (candidate.contextWindow && candidate.contextWindow < minUsableCtx) {
+      logger.warn("context window too small for the agent prompt", {
+        contextWindow: candidate.contextWindow,
+        required: minUsableCtx,
+        completionMaxTokens: config.localModels.completionMaxTokens,
+        hint:
+          config.localModels.mode === "managed"
+            ? "raise localModels.managed.contextSize, lower localModels.completionMaxTokens, or pick a model that fits VRAM"
+            : "start llama-server with a larger --ctx-size, or lower localModels.completionMaxTokens",
+      });
+    }
+  };
+  if (localTextActiveAtBoot) {
+    warnOnSmallContextWindow(profile);
   }
 
   const browserBackend: BrowserBackend =
@@ -1325,6 +1371,42 @@ export async function createAgentRuntime(
 
   const getLiveProfile = () => profileManager?.getProfile() ?? profile;
 
+  // Issue #112. The manager above is built either way — construction is
+  // pure field assignment, no I/O — because deleting it on a cloud boot
+  // would leave a mid-turn fallover to a `llama-server` link running on
+  // a frozen `plain-instruct` profile with no way back. What is gated is
+  // its *probing*: the boot probes are deferred here and replayed once,
+  // lazily, by whichever path reaches local inference first (a provider
+  // switch, via the agent loop's turn-start gate, or a cloud→local
+  // fallover, via the fallback seam's `prepareLink`).
+  const localBackend = new DeferredLocalBackendProbes(
+    {
+      isActive: () =>
+        activeTextProviderIsLlamaServer(resolveLlmConfig(getConfig())),
+      restore: async () => {
+        logger.info("restoring local llama backend state", {
+          url: config.localModels.url,
+        });
+        try {
+          await runBootHealthProbe();
+          // `refresh()` is the deferred `/props`: profile, grammar and
+          // the slot pool (via `onTotalSlots`) in one round trip. It
+          // swallows its own failures and keeps the prior profile.
+          await profileManager?.refresh();
+          warnOnSmallContextWindow(getLiveProfile());
+        } catch (err) {
+          // The seam awaits this before a fallover attempt: a throw here
+          // would fail the link and advance the chain over a diagnostic.
+          // The completion itself is the real verdict on the backend.
+          logger.warn("local llama backend restore failed; continuing", {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      },
+    },
+    localTextActiveAtBoot,
+  );
+
   const providerRegistry = await ProviderRegistry.fromConfig(config, {
     config,
     llamaClient: llama,
@@ -1626,6 +1708,20 @@ export async function createAgentRuntime(
       const { provider, transport } = resolveActiveLlmSlice(providerId);
       return { provider, transport };
     },
+    // Issue #112. The one place that knows a cloud→local fallover is
+    // about to happen: the chain has already picked the link and the
+    // completion has not been sent. A `llama-server` link reached from a
+    // cloud boot runs on deferred state (plain profile, one-slot pool,
+    // no `/props`), so warm it here rather than infer against it.
+    // No-op on every other attempt — one boolean after the first call.
+    prepareLink: createLocalLinkPreparer({
+      gate: localBackend,
+      isLocalLink: (providerId) =>
+        providerIdIsLlamaServer(resolveLlmConfig(getConfig()), providerId),
+      refreshIfStale: async () => {
+        await profileManager?.refreshIfStale();
+      },
+    }),
     recordUnaryUsage,
     recordStreamUsage,
   };
@@ -2016,6 +2112,9 @@ export async function createAgentRuntime(
     profile,
     contextWindow: resolveCatalogContextWindow,
     ...(profileManager ? { profileManager } : {}),
+    // Gates the two `/props` refreshes the loop owns, and carries the
+    // lazy restore for a switch back to a local provider (issue #112).
+    localBackend,
     ...(config.memory.profile.enabled
       ? { profileFactsProvider: () => profileStore.list() }
       : {}),
@@ -2864,7 +2963,23 @@ async function resolveModelProfile(
   llama: LlamaServerClient,
   logger: StructuredLogger,
   llamaUrl: string,
+  /**
+   * `false` when the active text provider is not a `llama-server` link:
+   * the `/props` probe is skipped entirely and the run starts on the
+   * plain profile (issue #112). Deliberately silent — the cloud route is
+   * not a failed probe, and the "using plain fallback" warning below
+   * would say it was. A later switch or fallover to a local link warms
+   * the real profile through `DeferredLocalBackendProbes`.
+   */
+  probeLocal: boolean,
 ): Promise<ResolvedModelProfile> {
+  if (!probeLocal) {
+    return {
+      profile: PLAIN_INSTRUCT_PROFILE,
+      modelAlias: null,
+      totalSlots: null,
+    };
+  }
   if (overrides?.llamaPropsError) {
     logger.warn("model profile probe failed; using plain fallback", {
       error: overrides.llamaPropsError.message,
