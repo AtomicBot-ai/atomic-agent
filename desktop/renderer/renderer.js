@@ -349,7 +349,15 @@ function renderSidebar() {
 /* ---------------- content ---------------- */
 function renderContent() {
   const c = $('#content');
-  if (S.room === 'chat')   { c.innerHTML = chatView(); afterChat(); return; }
+  if (S.room === 'chat') {
+    // Scroll-stable cards: a whole-DOM render replaces #scroller, so remember
+    // where the old one was and hand it to afterChat (same capture-then-restore
+    // as refreshPalette does for .pallist). Nothing to keep while stuck to the
+    // bottom — afterChat snaps there anyway.
+    const prev = $('#scroller');
+    const keep = prev && !S.stick ? prev.scrollTop : null;
+    c.innerHTML = chatView(); afterChat(keep); return;
+  }
   if (S.room === 'tasks')  { c.innerHTML = tasksView(); return; }
   c.innerHTML = skillsView();
 }
@@ -375,10 +383,10 @@ function item(m) {
   if (m.k === 'assistant') return '<div class="turn"><div class="gutter"><span style="color:var(--accent-text);display:flex">' + MARK_MONO + '</span></div>'
     + '<div class="prose">' + renderProse(m.text) + '</div></div>';
   if (m.k === 'system') return '<div class="sysrow"><span></span><span>' + m.text + '</span></div>';
-  if (m.k === 'reason') return '<div class="turn"><div></div><div>'
+  if (m.k === 'reason') return '<div class="turn" id="turn-' + m.id + '"><div></div><div>'
     + '<button class="disc" data-toggle="' + m.id + '">' + ic(m.open ? 'chevD' : 'chevR') + 'Reasoning · ' + m.steps + ' steps</button>'
     + (m.open ? '<div class="discbody">' + esc(m.text) + '</div>' : '') + '</div></div>';
-  if (m.k === 'tool') return '<div class="turn"><div></div><div>' + toolCard(m) + '</div></div>';
+  if (m.k === 'tool') return '<div class="turn" id="turn-' + m.id + '"><div></div><div>' + toolCard(m) + '</div></div>';
   if (m.k === 'approval') return '<div class="turn"><div></div><div>' + apprCard(m) + '</div></div>';
   return '';
 }
@@ -499,7 +507,7 @@ function sendButton() {
   return '<button class="sendbtn' + (S.draft.trim() ? '' : ' mute') + '" data-act="send" title="Send">' + ic('up') + '</button>';
 }
 
-function afterChat() {
+function afterChat(keep) {
   const e = $('#entry');
   if (!e) return;
   e.value = S.draft;
@@ -511,10 +519,72 @@ function afterChat() {
       $('#toolbar').classList.toggle('scrolled', sc.scrollTop > 2);
     });
     if (S.stick) sc.scrollTop = sc.scrollHeight;
+    // Scroll-stable cards: a scrolled-up user is put back at the same pixel
+    // after a whole-DOM render (streaming deltas, reconcileToolCards, expand
+    // all). Deliberate divergence from the TUI: its chatScrollOffset is
+    // bottom-anchored (src/tui/tui-state.ts:614-621, chat-log.tsx:66-75) so its
+    // view slides as the tail grows; the desktop holds the pixel position
+    // because the user asked for the scroll not to move. The desktop still
+    // resets to the bottom exactly where the TUI does: turn start
+    // (reducer-helpers.ts:176 <-> startLiveTurn), session switch
+    // (reduce-ui-actions.ts:414 <-> openSession) and Esc (app-key-bindings.ts:505
+    // / tui-app.tsx:1327 <-> the Escape branch of the keydown handler).
+    else if (keep != null) sc.scrollTop = keep;
   }
   if (S.pending && !S.apprFocused) { const d = $('#denybtn'); if (d) { d.focus(); S.apprFocused = true; } }
 }
 function autosize(e) { e.style.height = 'auto'; e.style.height = Math.min(e.scrollHeight, 180) + 'px'; }
+
+/* ---- Scroll-stable cards ----
+   Fold or unfold one transcript entry in place. The scroller is not rebuilt
+   and scrollTop is not written, so everything above the entry — its own head
+   included — stays where it was on screen. Same rule as the TUI's
+   tool_expand_toggled reducer (src/tui/reduce-ui-actions.ts:58-67), which
+   touches toolsExpandedById only and never chatScrollOffset.
+   Deliberate divergence from the TUI's bottom-anchored offset: the TUI surface
+   is pinned to the bottom (tui-state.ts:614-621, chat-log.tsx:66-75), so there a
+   toggle keeps the BOTTOM edge fixed and lets the head move up; the desktop
+   keeps the HEAD still, which is what the user asked for. S.stick is therefore
+   recomputed from geometry instead of copied from the TUI (which leaves
+   chatScrollOffset untouched on tool_expand_toggled): a body that now extends
+   below the fold means the user is no longer at the bottom, so expanding the
+   tail card mid-turn stops auto-follow until Esc (the Escape branch of the
+   keydown handler, the desktop twin of the TUI's 'Esc to jump to latest')
+   restores it. That is also what keeps reconcileToolCards' delayed render()
+   from snapping to the bottom under an expanded card.
+   Chromium's own scroll anchoring is off for .scroller (overflow-anchor:none in
+   styles.css) so it cannot stack on top of the residual-drift correction. */
+function repaintEntry(m, anchorSel) {
+  const sc = $('#scroller');
+  const old = document.getElementById('turn-' + m.id);
+  if (!sc || !old) { render(); return; }
+  const before = (old.querySelector(anchorSel) || old).getBoundingClientRect().top;
+  old.outerHTML = item(m);
+  const fresh = document.getElementById('turn-' + m.id);
+  const anchor = fresh && (fresh.querySelector(anchorSel) || fresh);
+  const drift = anchor ? anchor.getBoundingClientRect().top - before : 0;
+  // Nothing above the entry changed, so drift is 0 unless the browser clamped
+  // scrollTop (a collapse near the end of the transcript). Correct what it can.
+  if (Math.abs(drift) > 0.5) sc.scrollTop += drift;
+  S.stick = sc.scrollHeight - sc.scrollTop - sc.clientHeight < 40;
+}
+
+/* Unfold a run of same-tool cards into its members, keeping the head where it is.
+   The run computation must stay byte-identical to renderItems or the members
+   and the fold would disagree. */
+function expandGroupInPlace(id) {
+  const sc = $('#scroller');
+  const old = document.getElementById('group-' + id);
+  const i = S.log.findIndex((x) => x.id === id);
+  if (!sc || !old || i < 0) { render(); return; }
+  let j = i; while (j + 1 < S.log.length && S.log[j + 1].k === 'tool' && S.log[j + 1].name === S.log[i].name) j++;
+  const before = (old.querySelector('.cardhead') || old).getBoundingClientRect().top;
+  old.outerHTML = S.log.slice(i, j + 1).map(item).join('');
+  const head = document.querySelector('#turn-' + id + ' .cardhead');
+  const drift = head ? head.getBoundingClientRect().top - before : 0;
+  if (Math.abs(drift) > 0.5) sc.scrollTop += drift;
+  S.stick = sc.scrollHeight - sc.scrollTop - sc.clientHeight < 40;
+}
 
 /* ---------------- rooms ---------------- */
 function segControl(items, cur, actPrefix) {
@@ -1210,13 +1280,15 @@ document.addEventListener('click', (e) => {
   const dl = t.closest('[data-del]'); if (dl) { e.preventDefault(); e.stopPropagation(); act('delask:' + dl.dataset.del); return; }
   const ss = t.closest('[data-ses]'); if (ss) { act('ses:' + ss.dataset.ses); return; }
   const grp = t.closest('[data-group]');
-  if (grp) { OPEN_GROUPS.add(grp.dataset.group); S.stick = false; render(); return; }
+  if (grp) { OPEN_GROUPS.add(grp.dataset.group); expandGroupInPlace(grp.dataset.group); return; }  // scroll-stable cards: in place, no scrollTop write
   const fchip = t.closest('[data-file]');
   if (fchip && BR) { BR.openPath(fchip.dataset.file.replace(/^~/, homeDir() || '~')).then((r) => { if (r && r.ok === false) toast('Could not open', r.error || ''); }); return; }
   const mlink = t.closest('[data-url]');
   if (mlink && BR) { e.preventDefault(); BR.openExternal(mlink.dataset.url); return; }
   const tg = t.closest('[data-toggle]');
-  if (tg) { const m = S.log.find((x) => x.id === tg.dataset.toggle); if (m) { m.open = !m.open; S.stick = false; render(); } return; }
+  // Scroll-stable cards: no S.stick = false, no render() — repaintEntry swaps the
+  // one entry and recomputes stick from geometry.
+  if (tg) { const m = S.log.find((x) => x.id === tg.dataset.toggle); if (m) { m.open = !m.open; repaintEntry(m, m.k === 'tool' ? '.cardhead' : '.disc'); } return; }
   const go = t.closest('[data-goto]');
   if (go) { const el = document.getElementById('card-' + go.dataset.goto);
             if (el) { S.stick = false; el.scrollIntoView({block:'center', behavior:'smooth'}); el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 400); } return; }
@@ -2696,7 +2768,7 @@ function groupCard(run) {
     : bad ? '<span style="color:var(--danger);display:flex">' + ic('warn') + '</span>'
           : '<span style="color:var(--success);display:flex">' + ic('check') + '</span>';
   const previews = run.map((c) => previewArgs(c.args || c.arg)).filter(Boolean);
-  return '<div class="turn"><div></div><div><div class="card">'
+  return '<div class="turn" id="group-' + m.id + '"><div></div><div><div class="card">'
     + '<button class="cardhead" data-group="' + m.id + '">' + glyph
     + '<span class="nm">' + run.length + ' \u00d7 ' + esc(m.name) + '</span>'
     + '<span class="du tnum">' + (pending ? '\u2026' : dur(ms)) + '</span>'
@@ -2801,4 +2873,46 @@ if (typeof window !== 'undefined') {
     live: !!m.startedAt,   // born on the stream this run, as opposed to loaded from the store
   }));
   window.__pushAssistant = (t) => { S.log.push({id:nid(), k:'assistant', text:t}); render(); return document.querySelectorAll('.filechip').length; };
+}
+
+/* Hooks for --smoke: scroll-stable cards. Every toggle goes through the REAL
+   click path (the document click listener → [data-toggle] / [data-group]), so
+   the checks fail if that branch ever goes back to a full render(). */
+if (typeof window !== 'undefined') {
+  window.__scroll = () => { const sc = $('#scroller'); return sc ? {top:sc.scrollTop, height:sc.scrollHeight, client:sc.clientHeight, stick:S.stick} : null; };
+  window.__foldState = (i) => {
+    const m = S.log.filter((x) => x.k === 'tool')[i]; if (!m) return null;
+    return {id:m.id, open:!!m.open, body:!!document.querySelector('#card-' + m.id + ' .cardbody')};
+  };
+  window.__scrollCardTo = (i, px) => {
+    const m = S.log.filter((x) => x.k === 'tool')[i]; const sc = $('#scroller');
+    if (m && !document.getElementById('card-' + m.id)) { // folded into a group: unfold the run it belongs to
+      let s = S.log.indexOf(m); while (s > 0 && S.log[s - 1].k === 'tool' && S.log[s - 1].name === m.name) s--;
+      if (document.getElementById('group-' + S.log[s].id)) { OPEN_GROUPS.add(S.log[s].id); expandGroupInPlace(S.log[s].id); }
+    }
+    const h = m && document.querySelector('#card-' + m.id + ' .cardhead');
+    if (!sc || !h) return null;
+    sc.scrollTop += h.getBoundingClientRect().top - sc.getBoundingClientRect().top - px;
+    S.stick = sc.scrollHeight - sc.scrollTop - sc.clientHeight < 40;
+    return {scrollTop:sc.scrollTop, stick:S.stick, below:sc.scrollHeight - sc.scrollTop - sc.clientHeight};
+  };
+  window.__toggleCard = (i) => {
+    const m = S.log.filter((x) => x.k === 'tool')[i]; const sc = $('#scroller');
+    const head = () => m && document.querySelector('#card-' + m.id + ' .cardhead');
+    const h0 = head(); if (!sc || !h0) return null;
+    const headBefore = h0.getBoundingClientRect().top, scrollBefore = sc.scrollTop, openBefore = !!m.open;
+    h0.click();                       // the document click listener → [data-toggle] branch → repaintEntry
+    const h1 = head();
+    return {id:m.id, open:!!m.open, flipped:m.open !== openBefore, body:!!document.querySelector('#card-' + m.id + ' .cardbody'),
+            headBefore, headAfter:h1 ? h1.getBoundingClientRect().top : NaN, scrollBefore, scrollAfter:sc.scrollTop};
+  };
+  window.__unfoldGroup = () => {
+    const g = document.querySelector('[data-group]'); const sc = $('#scroller'); if (!g || !sc) return null;
+    const id = g.dataset.group; sc.scrollTop += g.getBoundingClientRect().top - sc.getBoundingClientRect().top - 120;
+    // the hook's own scrollTop write happens BEFORE `before` is measured, so the assertion isolates the click
+    const before = g.getBoundingClientRect().top, scrollBefore = sc.scrollTop;
+    g.click();                        // [data-group] branch → expandGroupInPlace
+    const h = document.querySelector('#turn-' + id + ' .cardhead');
+    return {id, members:OPEN_GROUPS.has(id), headBefore:before, headAfter:h ? h.getBoundingClientRect().top : NaN, scrollBefore, scrollAfter:sc.scrollTop};
+  };
 }

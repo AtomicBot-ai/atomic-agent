@@ -124,6 +124,12 @@ PASS bridge exposed
 PASS agent connected — state=connected
 PASS skills loaded
 PASS agent replied — "hello there friend"
+…
+PASS transcript scrollable for the fold test
+PASS expand keeps the card head in place
+PASS collapse keeps the card head in place
+PASS open state and scroll survive a re-render
+PASS unfolding a run keeps its head in place
 SMOKE screenshot=…/atomic-desktop-smoke.png failures=0
 ```
 

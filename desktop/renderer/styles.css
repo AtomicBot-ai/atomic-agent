@@ -554,3 +554,9 @@ body.electron .sb-head { -webkit-app-region: no-drag; }
 .filechip svg { color: var(--accent-text); }
 .msglink { color: var(--accent-text); border-bottom: 1px solid var(--accent-line); }
 .modelrow.dim { opacity: .5; }
+
+/* scroll-stable cards: the renderer owns the transcript's scroll position
+   (repaintEntry / afterChat(keep) in renderer.js); Chromium's own anchoring
+   would stack on top of the explicit drift correction and is lost anyway
+   whenever #scroller is rebuilt. */
+.scroller{overflow-anchor:none}

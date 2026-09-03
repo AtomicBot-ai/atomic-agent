@@ -444,6 +444,54 @@ async function smokeTest(): Promise<void> {
 
     const chips = await js<number>("window.__pushAssistant('Saved the report to /Users/valerii/Desktop/report.pdf and the notes to ~/notes/summary.md.')");
     check("file paths render as chips", chips === 2, `${chips} chips`);
+
+    // Scroll-stable cards: folding a card must not move the transcript — the
+    // head stays put. The hooks click the real head button, so these fail if
+    // the [data-toggle] branch ever goes back to a full render().
+    for (let n = 0; n < 12; n++) await js<void>(`window.__pushAssistant('filler ${n} ${"x".repeat(400)}')`);
+    const last = (await js<number>("window.__cards().length")) - 1;
+    const placed = await js<{ scrollTop: number; stick: boolean; below: number } | null>(`window.__scrollCardTo(${last}, 120)`);
+    check(
+      "transcript scrollable for the fold test",
+      !!placed && placed.scrollTop > 0 && !placed.stick && placed.below > 400,
+      JSON.stringify(placed),
+    );
+    type Tg = { open: boolean; flipped: boolean; body: boolean; headBefore: number; headAfter: number; scrollBefore: number; scrollAfter: number } | null;
+    const tgOpen = await js<Tg>(`window.__toggleCard(${last})`);
+    check(
+      "expand keeps the card head in place",
+      !!tgOpen && tgOpen.open && tgOpen.flipped && tgOpen.body
+        && Math.abs(tgOpen.headAfter - tgOpen.headBefore) <= 1 && tgOpen.scrollAfter === tgOpen.scrollBefore,
+      JSON.stringify(tgOpen),
+    );
+    const tgClose = await js<Tg>(`window.__toggleCard(${last})`);
+    check(
+      "collapse keeps the card head in place",
+      !!tgClose && !tgClose.open && tgClose.flipped && !tgClose.body
+        && Math.abs(tgClose.headAfter - tgClose.headBefore) <= 1 && tgClose.scrollAfter === tgClose.scrollBefore,
+      JSON.stringify(tgClose),
+    );
+    // The open state and the scroll position must both survive a whole-DOM render.
+    await js<void>(`window.__toggleCard(${last})`);
+    const s0 = await js<{ top: number } | null>("window.__scroll()");
+    await js<void>("window.__pushAssistant('repaint')");
+    const s1 = await js<{ top: number } | null>("window.__scroll()");
+    const fold = await js<{ open: boolean; body: boolean } | null>(`window.__foldState(${last})`);
+    const kept = !!fold && fold.open && fold.body;
+    check(
+      "open state and scroll survive a re-render",
+      kept && !!s0 && !!s1 && s1.top === s0.top,
+      `open kept=${kept} scroll ${s0 ? s0.top : "?"} → ${s1 ? s1.top : "?"}`,
+    );
+    // A folded run (>= 3 same-name cards) unfolds in place through the real
+    // [data-group] click. The opened session usually carries one; when it does
+    // not, say so instead of fabricating cards.
+    const grp = await js<{ members: boolean; headBefore: number; headAfter: number; scrollBefore: number; scrollAfter: number } | null>("window.__unfoldGroup()");
+    check(
+      "unfolding a run keeps its head in place",
+      grp === null || (grp.members && Math.abs(grp.headAfter - grp.headBefore) <= 1 && grp.scrollAfter === grp.scrollBefore),
+      grp ? JSON.stringify(grp) : "no folded run in this transcript (nothing to assert)",
+    );
   }
 
   if (MODELS_TEST) await modelsTest(js, check);
