@@ -88,7 +88,11 @@ Real, driven by the running agent:
 - the model selector: backend, provider and model chips, each opening one
   pane, with the TUI's rows (cloud → local, `N providers ready` /
   `llama.cpp managed here`, provider rows `model` / `default model` /
-  `no API key`). Switching backend, provider or model is the TUI's own
+  `no API key`, then the TUI's trailing rows — `Add a new provider · opens
+  the wizard` and, on the local model pane, `Download more models… · opens
+  the local models pane`). The model chip reads `download model` whenever
+  the local route has nothing on disk, before it names the managed model,
+  as the TUI's does. Switching backend, provider or model is the TUI's own
   decision logic (`activateCloud` / `activateLocal` / `selectChatModel` /
   `triggerLocalChatModel`) ported into `desktop/main/backend-switch.ts`:
   the same whole-file config writes as `src/tui/persist-llm-provider.ts`
@@ -102,8 +106,13 @@ Real, driven by the running agent:
   daemon has answered.
 - the TUI's pre-turn gate for the managed local route: with no local model
   selected, or one that is not on disk, the turn is refused with the TUI's
-  text (or runs with its notice when a fallback chain exists); a pull in
-  flight shows its percent and bytes from the CLI's own progress line
+  text and the message goes back into the editor (`… (message returned to
+  the editor)`); a message drained from the queue is dropped with a preview
+  instead, as the TUI does; with a fallback chain the turn runs under the
+  TUI's notice; a pull in flight shows its percent and bytes from the CLI's
+  own progress line. When the disk snapshot itself cannot be read (`atag
+  models list` failed) the turn is sent and the transcript says so — the
+  TUI stats the disk directly and never has that case.
 - first-run setup (cloud provider or local model, the TUI's two writes and
   copy). One desktop addition: choosing **Local models** on an install that
   already has a cloud `llm` block moves `llm.activeTextProvider` to
@@ -167,15 +176,28 @@ PASS agent connected — state=connected
 PASS skills loaded
 PASS agent replied — "hello there friend"
 …
-PASS backend: config round-trip to local — active=local-llama mode=managed …
+PASS backend: config round-trip to local — from=aimlapi active=local-llama mode=managed … restart=true
 PASS backend: renderer follows the file — backend=local …
 PASS backend: agent restarted and alive — state=connected port …
+PASS backend: local turn gate blocks with the TUI's text — … draft="hi"
 PASS backend: config round-trip back to cloud — provider=aimlapi …
+PASS backend: serve behind the file still restarts — file moved first: true …
 SMOKE screenshot=…/atomic-desktop-smoke.png failures=0
 ```
 
 It exits non-zero on any failure and always writes a screenshot, so it works as
 a CI gate. Renderer console errors are forwarded to stderr.
+
+The `backend:` checks run on every plain `npm run smoke`, not only under
+`--models`: they switch the route cloud → local → cloud → local (the last
+leg with the file moved by hand first, the way the TUI or an editor would),
+so expect `atag serve` to be restarted four times (three switches plus the
+restore in `finally`) and the llama.cpp daemon to be started and stopped
+along the way. That needs a downloaded local model in the state dir and adds
+one to two minutes. The whole config file, the daemon state and a fresh
+agent are put back in `finally`, so a failing assertion cannot leave the
+route changed. Run it against a private `ATOMIC_AGENT_STATE_DIR`, never
+`~/.atomic-agent`.
 
 ## Building a testable .dmg
 

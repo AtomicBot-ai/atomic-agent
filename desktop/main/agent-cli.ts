@@ -687,6 +687,10 @@ export async function setActiveTextProvider(id: string): Promise<WriteResult> {
   const read = await readWholeConfig();
   if (!read.ok || !read.config) return { ok: false, changed: false, error: read.error };
   const cfg = read.config;
+  // A file without an llm block gets the synthesized one written, as the
+  // TUI's writeUserConfigFileSync does unconditionally — even when the id
+  // is the block's own default, so the file ends up carrying the block.
+  const synthesized = !cfg.llm;
   const llm = (cfg.llm ??= {
     activeTextProvider: "local-llama",
     activeEmbeddingProvider: "local-llama",
@@ -697,7 +701,7 @@ export async function setActiveTextProvider(id: string): Promise<WriteResult> {
   if (!providers.some((p) => p.id === id)) {
     return { ok: false, changed: false, error: `provider "${id}" is not configured` };
   }
-  if (llm.activeTextProvider === id) return { ok: true, changed: false };
+  if (llm.activeTextProvider === id && !synthesized) return { ok: true, changed: false };
   llm.activeTextProvider = id;
   const w = await configSetWhole(cfg);
   return w.ok ? { ok: true, changed: true } : { ok: false, changed: false, error: w.error };

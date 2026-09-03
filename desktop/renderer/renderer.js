@@ -1232,13 +1232,36 @@ function submit() {
 /** The gate's verdict, then the turn. */
 function bswGatedTurn(text) {
   const gate = localTurnGate();
-  // 'pending' here means the snapshot could not be taken: nothing is known
-  // about the disk, so the turn runs and the agent reports what it finds.
-  if (gate.kind === 'notice' || gate.kind === 'block') {
-    S.log.push({id:nid(), k:'system', text: esc(gate.text)});
-    if (gate.kind === 'block') { render(); return; }
+  if (gate.kind === 'pending') {
+    // The snapshot could not be taken (`atag models list` failed), so
+    // nothing is known about the disk. The TUI stats it and would decide;
+    // here the turn runs, and the transcript says so rather than letting
+    // it bypass the gate silently.
+    S.log.push({id:nid(), k:'system', text:'local model catalogue unavailable — sending anyway'});
   }
+  if (gate.kind === 'block') {
+    // chat-orchestrator.ts turn_gate_blocked + input_changed: the
+    // optimistic submit already cleared the editor, so the text is handed
+    // back and the line says so. The TUI adds the user line to the
+    // transcript only when the turn starts, so the one submit() pushed
+    // comes off again — the message lives in the editor, not twice.
+    const last = S.log[S.log.length - 1];
+    if (last && last.k === 'user' && last.text === text) S.log.pop();
+    S.log.push({id:nid(), k:'system', text: esc(gate.text + ' (message returned to the editor)')});
+    S.draft = text;
+    ctxDraftChanged();
+    render(); // afterChat() puts S.draft back into #entry
+    const e = $('#entry');
+    if (e) { autosize(e); e.focus(); e.setSelectionRange(e.value.length, e.value.length); }
+    return;
+  }
+  if (gate.kind === 'notice') S.log.push({id:nid(), k:'system', text: esc(gate.text)});
   startLiveTurn(text);
+}
+/** droppedPreview (src/tui/detached-turns.ts): one flat line, 60 columns. */
+function droppedPreview(text) {
+  const flat = text.replace(/\s+/g, ' ').trim();
+  return flat.length <= 60 ? flat : flat.slice(0, 59) + '…';
 }
 function answer(key) {
   const req = S.pending;
@@ -1683,7 +1706,21 @@ function onChatEvent(ev) {
     if (item && item.text) S.history.push({role:'assistant', content:item.text});
     if (item && !item.text) item.text = ev.kind === 'aborted' ? '(stopped)' : '(no reply)';
     if (ev.kind === 'error') S.log.push({id:nid(), k:'system', text:'turn failed: ' + esc(ev.error || '')});
-    if (S.queued.length) { const q = S.queued.shift(); S.log.push({id:nid(), k:'user', text:q}); startLiveTurn(q); return; }
+    if (S.queued.length) {
+      const q = S.queued.shift();
+      // Lane B — backend switch: the gate is judged at turn START, so a
+      // message parked behind a running turn is re-checked here. A drained
+      // message has no editor to go back to (the operator may be
+      // mid-draft), so the TUI drops it — announced with a preview, never
+      // silently — and stops draining (chat-orchestrator.ts fromQueue).
+      const gate = localTurnGate();
+      if (gate.kind === 'block') {
+        S.log.push({id:nid(), k:'system', text: esc(gate.text + '\n  dropped: ' + droppedPreview(q))});
+        render(); return;
+      }
+      if (gate.kind === 'notice') S.log.push({id:nid(), k:'system', text: esc(gate.text)});
+      S.log.push({id:nid(), k:'user', text:q}); startLiveTurn(q); return;
+    }
     render();
   }
 }
@@ -1825,10 +1862,14 @@ function activeModel() {
     // desktop keeps the chip as the pane's anchor and leaves it unlabelled.
     const p = activeProvider();
     if (p && p.kind !== 'llama-server') return p.defaultChatModel || p.model || '';
+    // DOWNLOAD_MODEL_LABEL first: selectComposerNeedsModelDownload (local
+    // route, snapshot loaded, no pull running, nothing on disk) is judged
+    // regardless of managed.modelId, and ComposerMetaControls renders the
+    // DownloadModelControl in preference to the model label — an id that
+    // names a file which is not there is not a model to show.
+    if (BSW.localLoaded && !SEL.pulling && !SEL.local.some((m) => m.downloaded)) return 'download model';
     const managed = (LIVE_CONFIG && LIVE_CONFIG.localModels && LIVE_CONFIG.localModels.managed) || {};
     if (managed.modelId) return managed.modelId;
-    // DOWNLOAD_MODEL_LABEL: local route, snapshot loaded, no pull running, nothing on disk.
-    if (BSW.localLoaded && !SEL.pulling && !SEL.local.some((m) => m.downloaded)) return 'download model';
     return '';
   }
   return S.mode === 'local' ? S.localModel : S.cloudModel;
@@ -2338,17 +2379,23 @@ function selRows() {
       detail: !BSW.readyLoaded ? 'checking keys…' : BSW.readyIds.includes(p.id) ? (p.defaultChatModel || p.model || 'default model') : 'no API key',
       active: p.id === activeId,
     }));
+    // The TUI's trailing row (intent addProvider): the same screen as the
+    // footer's "Add a provider" used to open.
+    rows.push({type:'action', id:'add', label:'Add a new provider', detail:'opens the wizard', active:false});
     return rows;
   }
   // model pane
   if (selBackend() === 'local') {
-    return SEL.local
+    const rows = SEL.local
       .filter((m) => !SEL.filter || modelMatches(m.id, m.family, SEL.filter))
       .map((m) => {
         const fit = fitFor(m.size, OB.ram || 16);
         return {type:'localModel', id:m.id, label:m.id, downloaded:m.downloaded, active:m.active,
           detail: m.size + ' · ' + m.context + ' context · ' + fit.label + (m.downloaded ? ' · on disk' : '')};
       });
+    // The TUI's deep-link row (model:local:download-more), outside the filter.
+    rows.push({type:'action', id:'downloadMore', label:'Download more models…', detail:'opens the local models pane', active:false});
+    return rows;
   }
   const entry = selProviders().find((p) => p.id === selActiveProviderId());
   const chosen = entry && entry.defaultChatModel;
@@ -2368,6 +2415,13 @@ function selRows() {
 async function selActivate(row) {
   if (!row) return;
   if (row.type === 'backend') { selChooseBackend(row.id); return; }
+  // The TUI's trailing rows: "Add a new provider" opens the wizard,
+  // "Download more models…" the local models pane (Settings › Models).
+  if (row.type === 'action') {
+    if (row.id === 'add') { act('sel:add'); return; }
+    act('settings:models'); S.modelTab = 'local'; render(); mpLoadLocal();
+    return;
+  }
   // Lane B — backend switch: every branch below writes through main's
   // port of the TUI's persist helpers and ends in an agent restart, so
   // none of them may run while a turn is in flight.
@@ -2463,16 +2517,12 @@ function selectorHTML() {
   const title = SEL.kind === 'backend' ? 'Where it runs'
     : SEL.kind === 'provider' ? 'Provider' : 'Model';
 
-  // An empty list is not a list — it is one action.
+  // An empty list is not a list — it is one action. The provider and
+  // local model panes always end in the TUI's action row ("Add a new
+  // provider" / "Download more models…"), so, as in the TUI, an empty
+  // provider list IS that one row; only the cloud model pane can be bare.
+  const real = rows.filter((r) => r.type !== 'action');
   if (!rows.length && !SEL.modelsBusy && !SEL.localBusy && !(SEL.kind === 'model' && SEL.filter)) {
-    if (SEL.kind === 'provider') {
-      return selShell(title, '<div class="selbody"><p class="cap" style="padding:16px">No cloud provider is configured.</p></div>',
-        '<button class="btn btn-p" data-act="sel:add">Add a provider</button>');
-    }
-    if (SEL.kind === 'model' && selBackend() === 'local') {
-      return selShell(title, '<div class="selbody"><p class="cap" style="padding:16px">No local model is downloaded.</p></div>',
-        '<button class="btn btn-p" data-act="sel:browseLocal">Download a model</button>');
-    }
     return selShell(title, '<div class="selbody"><p class="cap" style="padding:16px">Nothing to show.</p></div>', '');
   }
 
@@ -2490,12 +2540,11 @@ function selectorHTML() {
         + esc(r.label) + '</span><span class="cap">' + esc(r.detail || '') + '</span></span>'
         + (r.type === 'localModel' && !r.downloaded ? '<span class="cap">download</span>' : '')
         + '</button>').join('')
-    + (!rows.length && !SEL.modelsBusy && !SEL.localBusy ? '<div class="pad cap">no models match \u201c' + esc(SEL.filter) + '\u201d</div>' : '')
+    + (!real.length && SEL.kind === 'model' && SEL.filter && !SEL.modelsBusy && !SEL.localBusy ? '<div class="pad cap">no models match \u201c' + esc(SEL.filter) + '\u201d</div>' : '')
     + '</div>';
 
-  const foot = SEL.kind === 'provider'
-    ? '<button class="btn btn-t" data-act="sel:add">Add a provider</button><button class="btn btn-s" data-act="close">Done</button>'
-    : '<button class="btn btn-s" data-act="close">Done</button>';
+  // Adding a provider is the pane's own trailing row now, as in the TUI.
+  const foot = '<button class="btn btn-s" data-act="close">Done</button>';
 
   return selShell(title, search + list, foot);
 }
@@ -3301,6 +3350,8 @@ if (typeof window !== 'undefined') {
     return '';
   };
   window.__bsw = () => ({line:BSW.line, readyIds:BSW.readyIds.slice(), readyLoaded:BSW.readyLoaded, localLoaded:BSW.localLoaded, gating:BSW.gating, turnBusy:S.busy, gate:localTurnGate()});
+  // What the editor holds (the gate's block path hands the message back to it).
+  window.__draft = () => { const e = document.getElementById('entry'); return {draft:S.draft, entry:e ? e.value : null, users:S.log.filter((m) => m.k === 'user').length}; };
   // The late-facts repaint must leave the composer's caret where it was.
   window.__bswRepaintKeepsCaret = () => {
     const e = document.getElementById('entry'); if (!e) return null;

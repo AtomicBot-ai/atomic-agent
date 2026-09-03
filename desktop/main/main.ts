@@ -802,13 +802,10 @@ async function backendSwitchTest(
       bad.error ?? "accepted",
     );
 
-    // The file moves first, without a restart — what the TUI or a hand
-    // edit does while this window is open. serve stays on its boot route,
-    // and the switch below, which finds nothing to write for the route,
-    // must still restart it.
-    const preMoved = await setActiveTextProvider("local-llama");
-
-    // To local, through the same function the backend row's click runs.
+    // To local, through the same function the backend row's click runs —
+    // from the route the file is actually on (cloud, on the lane's state
+    // dir), so the write the user's click makes is the one asserted below.
+    const wasCloud = (beforeConfig?.llm?.providers ?? []).find((p) => p.id === beforeConfig?.llm?.activeTextProvider)?.kind !== "llama-server";
     const toLocal = await js<SwitchResult>("window.__switchBackend('local')");
     // Read once before the harness refreshes anything: this is what the
     // renderer's own post-IPC refreshLiveConfig() produced.
@@ -821,16 +818,23 @@ async function backendSwitchTest(
     check(
       "backend: config round-trip to local",
       !!toLocal?.ok
+        && wasCloud
+        // The route moved in the file, so the switch itself says restart.
+        && toLocal.restart === true
         && afterLocal?.llm?.activeTextProvider === "local-llama"
         && afterLocal?.localModels?.mode === "managed"
         && localEntry(afterLocal)?.url === `http://127.0.0.1:${port}`
         && afterLocal?.llm?.activeEmbeddingProvider === beforeConfig?.llm?.activeEmbeddingProvider
         && (afterLocal?.llm?.providers ?? []).length === (beforeConfig?.llm?.providers ?? []).length,
       toLocal?.ok
-        ? `active=${afterLocal?.llm?.activeTextProvider} mode=${afterLocal?.localModels?.mode} url=${localEntry(afterLocal)?.url} daemon=${toLocal.daemon}`
+        ? `from=${beforeConfig?.llm?.activeTextProvider} active=${afterLocal?.llm?.activeTextProvider} mode=${afterLocal?.localModels?.mode} url=${localEntry(afterLocal)?.url} daemon=${toLocal.daemon} restart=${toLocal.restart}`
         : `error=${toLocal?.error}`,
     );
     const managedId = afterLocal?.localModels?.managed?.modelId ?? null;
+    // The chip's precedence is the TUI's: `download model` whenever nothing
+    // is on disk (selectComposerNeedsModelDownload ignores managed.modelId),
+    // else the managed id.
+    const onDisk = ((await modelsList()).models ?? []).some((m) => m.downloaded && !/embed|bge|nomic|jina/i.test(m.id));
     const localChips = await js<{ backend: string; mode: string; model: string }>(
       "({backend: window.__sel().backend, mode: document.querySelector('.modechip')?.textContent ?? '', model: document.querySelector('.modelchip')?.textContent ?? ''})",
     );
@@ -838,10 +842,8 @@ async function backendSwitchTest(
       "backend: renderer follows the file",
       rawLocal.backend === "local" && /local/.test(rawLocal.mode)
         && localChips.backend === "local" && /local/.test(localChips.mode)
-        // With a managed model the chip names it; with none, it reads the
-        // TUI's DOWNLOAD_MODEL_LABEL once the catalogue snapshot has landed.
-        && (managedId ? localChips.model.includes(managedId) : /download model/.test(localChips.model)),
-      `own refresh: backend=${rawLocal.backend} chip=${JSON.stringify(rawLocal.mode)}; after harness refresh: backend=${localChips.backend} chip=${JSON.stringify(localChips.mode)} model=${JSON.stringify(localChips.model)}`,
+        && (managedId && onDisk ? localChips.model.includes(managedId) : /download model/.test(localChips.model)),
+      `own refresh: backend=${rawLocal.backend} chip=${JSON.stringify(rawLocal.mode)}; after harness refresh: backend=${localChips.backend} chip=${JSON.stringify(localChips.mode)} model=${JSON.stringify(localChips.model)} managed=${managedId} onDisk=${onDisk}`,
     );
     // The catalogue and key facts land seconds after the switch; their
     // repaint must not rebuild the composer under a typing user.
@@ -856,11 +858,6 @@ async function backendSwitchTest(
       stLocal === "connected" && agent?.status.port !== portBefore,
       `state=${stLocal} port ${portBefore} → ${agent?.status.port}`,
     );
-    check(
-      "backend: serve behind the file still restarts",
-      preMoved.ok && preMoved.changed && toLocal?.restart === true && agent?.status.port !== portBefore,
-      `file moved first: ${preMoved.changed}; restart=${toLocal?.restart}; port ${portBefore} → ${agent?.status.port}`,
-    );
     const daemonUp = await localDaemonRunning();
     check(
       "backend: daemon side effect mirrors the TUI (local)",
@@ -872,24 +869,29 @@ async function backendSwitchTest(
     );
 
     // The pre-turn gate: with no managed model selected the turn is refused
-    // with the TUI's exact text and no turn is opened.
+    // with the TUI's exact text, no turn is opened, and the message goes
+    // back to the editor (the TUI's turn_gate_blocked + input_changed).
     if (afterLocal && afterLocal.localModels?.managed) {
       const noModel = JSON.parse(JSON.stringify(afterLocal)) as UserConfigShape;
       noModel.localModels!.managed!.modelId = null;
       const cardsBefore = await js<number>("window.__cards().length");
+      const usersBefore = (await js<{ users: number }>("window.__draft()")).users;
       await configSetWhole(noModel);
       await js<void>("window.__ctxRefreshCfg()");
       await wait(1000);
       await js<void>("window.__ask('hi')");
       await wait(1500);
-      const gate = await js<{ last: string; busy: boolean; cards: number }>(
-        "({last: window.__lastSystem(), busy: window.__bsw().turnBusy, cards: window.__cards().length})",
+      const gate = await js<{ last: string; busy: boolean; cards: number; draft: string; entry: string | null; users: number }>(
+        "({last: window.__lastSystem(), busy: window.__bsw().turnBusy, cards: window.__cards().length, ...window.__draft()})",
       );
+      const blockLine = "no local model is selected — open Models (/local) to pick and download one (message returned to the editor)";
       check(
         "backend: local turn gate blocks with the TUI's text",
-        gate.last === "no local model is selected — open Models (/local) to pick and download one" && !gate.busy && gate.cards === cardsBefore,
-        `last=${JSON.stringify(gate.last)} busy=${gate.busy}`,
+        gate.last === blockLine && !gate.busy && gate.cards === cardsBefore
+          && gate.draft === "hi" && gate.entry === "hi" && gate.users === usersBefore,
+        `last=${JSON.stringify(gate.last)} busy=${gate.busy} draft=${JSON.stringify(gate.draft)} entry=${JSON.stringify(gate.entry)} user lines ${usersBefore} → ${gate.users}`,
       );
+      await js<void>("window.__ctxDraft('')");
       await configSetWhole(afterLocal);
       await js<void>("window.__ctxRefreshCfg()");
     }
@@ -940,6 +942,23 @@ async function backendSwitchTest(
       "backend: TUI runtime_info copy in the transcript",
       lines.includes(switchLine) && (toCloud?.daemon !== "stopped" || lines.includes(stopLine)),
       `switch=${lines.includes(switchLine)} stop=${lines.includes(stopLine)} daemon=${toCloud?.daemon}`,
+    );
+
+    // Third leg: the file moves first, without a restart — what the TUI or
+    // a hand edit does while this window is open. serve stays on the cloud
+    // route it booted on; the switch finds nothing to write for the route
+    // and must still restart it (main compares the boot route to the file).
+    const portCloud = agent?.status.port ?? null;
+    const preMoved = await setActiveTextProvider("local-llama");
+    const behind = await js<SwitchResult>("window.__switchBackend('local')");
+    const stBehind = await waitConnected();
+    const afterBehind = await cfgNow();
+    check(
+      "backend: serve behind the file still restarts",
+      preMoved.ok && preMoved.changed && !!behind?.ok && behind.restart === true
+        && afterBehind?.llm?.activeTextProvider === "local-llama"
+        && stBehind === "connected" && agent?.status.port !== portCloud,
+      `file moved first: ${preMoved.changed}; switch ok=${behind?.ok} restart=${behind?.restart} error=${behind?.error ?? ""}; state=${stBehind} port ${portCloud} → ${agent?.status.port}`,
     );
   } finally {
     if (beforeConfig) await configSetWhole(beforeConfig);
