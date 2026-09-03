@@ -26,12 +26,14 @@ import {
   traceUsage,
   traceTools,
   // Lane B — backend switch
+  chatModelsList,
   configSetWhole,
   localDaemonRunning,
   modelsStop,
   providerHasKey,
   providersReady,
   setActiveTextProvider,
+  setExternalLlamaUrl,
   useManagedMode,
   type UserConfigShape,
   // Lane B — context before the first message (item 3)
@@ -310,6 +312,9 @@ function wireIpc(client: AgentClient): void {
     return configSet(key, value);
   });
   ipcMain.handle("cli:modelsList", () => modelsList());
+  // Review fix (item 5): the chat route's half of the catalogue, subtracted
+  // by the CLI's own embedding catalogue instead of by a guess at names.
+  ipcMain.handle("cli:chatModelsList", () => chatModelsList());
   ipcMain.handle("cli:modelsUse", (_event, id: unknown) =>
     typeof id === "string" ? modelsUse(id) : { ok: false, error: "model id required" },
   );
@@ -432,6 +437,12 @@ function wireIpc(client: AgentClient): void {
     return applySwitch(await selectLocalModel(id));
   });
   ipcMain.handle("cli:useManagedMode", () => useManagedMode());
+  // Review fix (item 5): Settings › LLM › External writes mode + url + the
+  // local-llama provider url in one whole-file write, as the TUI's
+  // persistUserLocalLlmUrl does. Two leaf writes left the provider url stale.
+  ipcMain.handle("cli:setExternalLlamaUrl", (_event, url: unknown) =>
+    typeof url === "string" ? setExternalLlamaUrl(url) : { ok: false, changed: false, error: "url required" },
+  );
   ipcMain.handle("cli:providersReady", () => providersReady());
 
   // --- Lane B — context before the first message (item 3) ---
@@ -942,19 +953,27 @@ async function smokeTest(): Promise<void> {
     );
     const chipAfter = await js<{ label: string; proj: boolean } | null>("window.__ctxChip()");
     check("measured chip drops the projection mark", !!chipAfter && !chipAfter.proj && !chipAfter.label.startsWith("~"), JSON.stringify(chipAfter));
-    // A new thread flips back to the projection, with the same baseline.
+    // A new thread flips back to the projection, still on a real baseline.
+    // Review fix: the baseline's session id is NOT compared with the one read
+    // before the turn — traceBaseline ranks the newest turn-0 prompt in this
+    // workspace, so the run's own reply (a new api-<hash> session) legitimately
+    // becomes the new baseline and the old assertion went red for a correct
+    // projection. What the feature promises is the projection itself: the
+    // scaffold of SOME prompt this agent really built here.
     const fresh = await js<PreCtx>("window.__ctxNew()");
     check(
       "session:new flips back to the projection",
       pre?.source !== "projected"
         ? fresh.source === pre?.source
-        : fresh.source === "projected" && fresh.baseline?.sessionId === pre.baseline?.sessionId && fresh.tokens === fresh.stablePrefix,
-      `source=${fresh.source} tokens=${fresh.tokens} scaffold=${fresh.stablePrefix} baseline=${fresh.baseline?.sessionId}`,
+        : fresh.source === "projected" && !!fresh.baseline?.sessionId && fresh.tokens === fresh.stablePrefix,
+      `source=${fresh.source} tokens=${fresh.tokens} scaffold=${fresh.stablePrefix} baseline=${fresh.baseline?.sessionId} (was ${pre?.baseline?.sessionId})`,
     );
 
     await js<void>("window.__selOpen('backend')");
     const back = await js<{ rows: number; backend: string }>("window.__sel()");
-    check("selector: backend pane", back.rows === 2, `backend=${back.backend}`);
+    // Three rows since the review fix put the TUI's `custom` back (cloud,
+    // local, custom — composer-switch-rows.ts backendRows).
+    check("selector: backend pane", back.rows === 3, `backend=${back.backend}, ${back.rows} rows`);
 
     await js<void>("window.__selTab('model')");
     await new Promise((r) => setTimeout(r, 9000));
@@ -1112,17 +1131,25 @@ async function smokeTest(): Promise<void> {
     const attachFile = join(app.getPath("temp"), "atomic-desktop-attach.txt");
     writeFileSync(attachFile, "smoke\n");
     const attachMissing = attachFile + ".missing";
+    // Review fix: the trash card names a SECOND, really-existing file of its
+    // own. It used to name the same path the write card had already produced,
+    // so turnFilePaths' dedupe made the check pass whatever cardWrittenPaths
+    // did with os.fs.trash — adding it to WRITE_TOOLS would not have been
+    // caught. This file exists on disk and is never written by this turn, so
+    // it may only be absent from the strip because trash is not a write tool.
+    const attachTrashed = join(app.getPath("temp"), "atomic-desktop-attach-trashed.txt");
+    writeFileSync(attachTrashed, "smoke\n");
     type Strip = { chips: number; lines: number; label: string; paths: string[] };
     const strip = await js<Strip>(
       "window.__pushAssistantFiles('Done.', ["
       + `{tool:'os.fs.write', args:{path:${JSON.stringify(attachFile)}, content:'smoke\\n'}, out:'wrote 6 bytes to ${attachFile} (replace)'},`
       + `{tool:'os.fs.write', args:{path:${JSON.stringify(attachMissing)}, content:'x'}, out:'wrote 1 bytes to ${attachMissing} (replace)'},`
-      + `{tool:'os.fs.trash', args:{paths:[${JSON.stringify(attachFile)}]}, out:'moved 1 path(s) to Trash'}])`,
+      + `{tool:'os.fs.trash', args:{paths:[${JSON.stringify(attachTrashed)}]}, out:'moved 1 path(s) to Trash'}])`,
     );
     check(
       "attachment strip: one chip for the file that is really there",
-      strip.chips === 1 && strip.paths.length === 1 && strip.paths[0] === attachFile,
-      JSON.stringify(strip),
+      strip.chips === 1 && strip.paths.length === 1 && strip.paths[0] === attachFile && !strip.paths.includes(attachTrashed),
+      `${JSON.stringify(strip)} (the trashed sibling ${attachTrashed} exists on disk and must not be a chip)`,
     );
     check("attachment strip: the line says where", strip.label === "Saved to " + attachFile, JSON.stringify(strip.label));
     // A path the reply only mentions was read, not written: inline chip, no strip.
@@ -1139,6 +1166,27 @@ async function smokeTest(): Promise<void> {
       + " return {strips: el.length, chips: document.querySelectorAll('.attach .filechip').length}; })()",
     );
     check("attachment strip: stable across re-renders", stable.strips === 1 && stable.chips === 1, JSON.stringify(stable));
+    // Review fix: the chip is clickable — the real delegator hands the strip's
+    // absolute path to the same opener an inline chip uses. Nothing is opened:
+    // the opener is in dry-run for this click.
+    const clickedChip = await js<{ file: string; opened: string | null; hasMenu: boolean } | null>("window.__clickAttachChip()");
+    check(
+      "attachment strip: a chip opens the file it names",
+      !!clickedChip && clickedChip.file === attachFile && clickedChip.opened === attachFile && clickedChip.hasMenu,
+      clickedChip ? JSON.stringify(clickedChip) : "no chip to click",
+    );
+    // Review fix: the strip is cached by signature, so a file trashed AFTER it
+    // was drawn used to keep its "Saved to" line and its chip forever. A later
+    // os.fs.trash naming an attached path now expires that cache.
+    await js<number>(`window.__pushTool('os.fs.trash', {paths:[${JSON.stringify(attachFile)}]}, 'moved 1 path(s) to Trash', false)`);
+    rmSync(attachFile, { force: true });
+    const afterTrash = await js<{ paths: string[]; chips: number; labels: number }>("window.__reattach()");
+    check(
+      "attachment strip: a file trashed later stops being called saved",
+      afterTrash.chips === 0 && afterTrash.labels === 0 && afterTrash.paths.length === 0,
+      JSON.stringify(afterTrash),
+    );
+    rmSync(attachTrashed, { force: true });
 
     // item 4: a reopened session carries the trace's durations for every card
     // (the TUI shows 0ms here; the desktop shows the agent's number). A trace can
@@ -1218,13 +1266,32 @@ async function smokeTest(): Promise<void> {
       `open kept=${kept} scroll ${s0 ? s0.top : "?"} → ${s1 ? s1.top : "?"}`,
     );
     // A folded run (>= 3 same-name cards) unfolds in place through the real
-    // [data-group] click. The opened session usually carries one; when it does
-    // not, say so instead of fabricating cards.
-    const grp = await js<{ members: boolean; headBefore: number; headAfter: number; scrollBefore: number; scrollAfter: number } | null>("window.__unfoldGroup()");
+    // [data-group] click. Review fix: the reopened session never produced a
+    // run of three, so this used to read "nothing to assert" in every run and
+    // the [data-group] branch was covered by inspection only. The run is now a
+    // deterministic fixture — three consecutive same-name closed cards, which
+    // is exactly what renderItems folds — with fillers after it so the group
+    // has room below to be placed 120 px from the top.
+    type Groups = Array<{ id: string; head: string }>;
+    const groupsBefore = await js<Groups>("window.__groups()");
+    for (let n = 0; n < 3; n++) {
+      await js<number>(`window.__pushTool('os.fs.list', {path:'./fold-fixture-${n}'}, 'listed ${n} entries', false)`);
+    }
+    for (let n = 12; n < 18; n++) await js<void>(`window.__pushAssistant('filler ${n} ${"x".repeat(400)}')`);
+    const groupsAfter = await js<Groups>("window.__groups()");
+    const mine = groupsAfter.find((g) => !groupsBefore.some((b) => b.id === g.id));
+    check(
+      "three same-name cards in a row fold into one line",
+      groupsAfter.length === groupsBefore.length + 1 && !!mine && mine.head === "3 \u00d7 os.fs.list",
+      `${groupsBefore.length} → ${groupsAfter.length} folded runs; new head ${JSON.stringify(mine ? mine.head : null)}`,
+    );
+    type Grp = { members: boolean; headBefore: number; headAfter: number; scrollBefore: number; scrollAfter: number; cardsBefore: number; cardsAfter: number; groupsBefore: number; groupsAfter: number } | null;
+    const grp = await js<Grp>(mine ? `window.__unfoldGroup(${JSON.stringify(mine.id)})` : "window.__unfoldGroup()");
     check(
       "unfolding a run keeps its head in place",
-      grp === null || (grp.members && Math.abs(grp.headAfter - grp.headBefore) <= 1 && grp.scrollAfter === grp.scrollBefore),
-      grp ? JSON.stringify(grp) : "no folded run in this transcript (nothing to assert)",
+      !!grp && grp.members && Math.abs(grp.headAfter - grp.headBefore) <= 1 && grp.scrollAfter === grp.scrollBefore
+        && grp.cardsAfter === grp.cardsBefore + 2 && grp.groupsAfter === grp.groupsBefore - 1,
+      grp ? JSON.stringify(grp) : "no folded run on screen",
     );
 
     // item 4: nothing widens the transcript column — a card with a 300-char
@@ -1243,6 +1310,17 @@ async function smokeTest(): Promise<void> {
       "tool cards keep inside the panel",
       ov.sw === ov.cw && ov.maxRight <= ov.colRight + 1 && ov.track > 0 && ov.track <= ov.colWidth,
       `scrollWidth ${ov.sw} vs clientWidth ${ov.cw}, max right ${ov.maxRight} vs column ${ov.colRight}, track ${ov.track}px of ${ov.colWidth}`,
+    );
+    // Review fix: the same payload as a COLLAPSED card, so the assertion also
+    // covers `.cardsum` — the summary line whose nowrap/ellipsis rules had to
+    // go for the column to stop widening. __pushTool defaults to open, so the
+    // card above only ever exercised `.ar` and `.cardbody pre`.
+    await js<number>("window.__pushTool('os.shell.run', {cmd:'python3', args:['-c', 'x'.repeat(300)]}, '/Users/valerii/' + 'b'.repeat(260) + '.tsx', false)");
+    const ov3 = await js<Ov & { sums: number[] }>("window.__overflow()");
+    check(
+      "a collapsed card's summary keeps inside the panel",
+      ov3.sums.length > 0 && ov3.sw === ov3.cw && ov3.maxRight <= ov3.colRight + 1 && Math.max(...ov3.sums) <= ov3.colRight + 1,
+      `${ov3.sums.length} collapsed summaries, widest right ${Math.max(...ov3.sums)} vs column ${ov3.colRight}; scrollWidth ${ov3.sw} vs clientWidth ${ov3.cw}`,
     );
     await js<number>("window.__pushAssistant('see https://example.com/' + 'a'.repeat(300))");
     const ov2 = await js<Ov>("window.__overflow()");
@@ -1315,6 +1393,19 @@ async function sidebarTest(
       "sidebar is Tasks over Chats, with no nav rows",
       JSON.stringify(sb.headers) === '["Tasks","Chats"]' && sb.navrows === 0 && !sb.skillsRow && sb.subtitles === 0,
       `headers ${JSON.stringify(sb.headers)}, navrows ${sb.navrows}, skills row ${sb.skillsRow}, "N turns" lines ${sb.subtitles}`,
+    );
+    // Review fix: `subtitles === 0` above can only catch a reintroduced `.t2`
+    // class. This measures the row the user asked for — 30 px, one text line,
+    // and dot + name (+ pin on a chat row) as its only children.
+    type RowShape = { rows: number; minHeight: number; maxHeight: number; children: string[]; titleHeight: number; titleLineHeight: number; nowrap: boolean } | null;
+    const shape = await js<RowShape>("window.__rowShape()");
+    check(
+      "sidebar rows are one line: dot + name (+ pin)",
+      !!shape && shape.minHeight === 30 && shape.maxHeight === 30
+        && shape.children.length <= 3 && shape.children[0] === "sdot" && shape.children[1] === "t1"
+        && (shape.children.length === 2 || shape.children[2] === "pinbtn")
+        && shape.nowrap && shape.titleHeight <= shape.titleLineHeight + 1,
+      shape ? `${shape.rows} rows ${shape.minHeight}–${shape.maxHeight}px, children ${JSON.stringify(shape.children)}, title ${shape.titleHeight}px of line-height ${shape.titleLineHeight}, nowrap=${shape.nowrap}` : "no rows",
     );
     check("chats list carries the agent's sessions", sb.chats.length > 0, `${sb.chats.length} rows, ${sb.total} sessions with a turn`);
     if (sb.chats.length === 0) return;
@@ -1755,11 +1846,18 @@ async function settingsTest(
   }
   const toolsSeg = /\| tools \d+ok\/\d+err \|/.test(diag.line);
   const toolsOk = diag.session ? toolsSeg && diag.toolsFor === diag.session : !toolsSeg;
+  // Review fix: the approval segment is compared with what GET /api/capabilities
+  // actually carried — the old regex accepted any digit, so a payload without
+  // agent.approvalLevel would have passed with the prototype's demo L3.
+  const capsLevel = await js<number | null>(
+    "window.atomic.capabilities().then((c) => (c && c.ok && c.data && c.data.agent && typeof c.data.agent.approvalLevel === 'number' ? c.data.agent.approvalLevel : null))",
+  );
+  const expectedLevel = capsLevel === null ? "—" : String(Math.max(1, Math.min(5, capsLevel)));
   check(
     "settings: diagnostics line uses the TUI null forms and counts tools only for the open session",
     diag.line.startsWith("cwd ") && diag.line.includes(" | llama ") && diag.line.includes(" | llm — · step — | kv — |")
-      && / \| approval L\d \| skills \d+$/.test(diag.line) && !!diag.health && toolsOk,
-    `${diag.line} (session=${diag.session ?? "none"})`,
+      && new RegExp(` \\| approval L${expectedLevel} \\| skills \\d+$`).test(diag.line) && !!diag.health && toolsOk,
+    `${diag.line} (session=${diag.session ?? "none"}, capabilities says ${capsLevel === null ? "no approvalLevel" : capsLevel})`,
   );
 
   const errBefore = await js<number>("window.__errCount()");
@@ -1851,7 +1949,10 @@ async function settingsTest(
   const tasksCopy = taskState.rows === 0
     ? taskState.body.includes("no tasks match the current filter — press `n` to create one")
     : taskState.body.includes("status   schedule               next-run       session   message");
-  check("tasks tab: rows and copy come from GET /api/tasks?limit=200", tasksCopy && taskState.rows === Math.min(storeCount, 200), `${taskState.rows} rows, store holds ${storeCount}`);
+  // The route is called with limit=500 (agent-client tasks(); item 6 needs the
+  // whole list so the sidebar's Load more pages over real rows); the TAB then
+  // shows the TUI's first 200 of it, which is what this compares.
+  check("tasks tab: rows and copy come from GET /api/tasks, cut to the TUI's 200-row list", tasksCopy && taskState.rows === Math.min(storeCount, 200), `${taskState.rows} rows, store holds ${storeCount}`);
   // tasks-list.tsx windows the list at 14 rows around the cursor and prints the hidden counts.
   const w = taskState.win;
   const hidden = Math.max(0, w.visible - w.max);
@@ -2199,7 +2300,20 @@ async function settingsTestPartB(
     );
     await js<void>("window.__skillsAct('back')");
   } else {
-    check("skills hub: a GitHub-tap card says SKILL.md is pulled at install", false, `no [gh] row among ${hub.hubRows.length} browse rows (skills.taps empty or every tap warned)`);
+    // Review fix: `atag skill browse` warns per tap and still returns the
+    // ClawHub rows, so an unauthenticated GitHub rate limit (no GITHUB_TOKEN
+    // on this machine, anonymous quota spent) looks exactly like a regression
+    // here. The warning text is in hand — branch on it and skip with the
+    // reason, as the fixture-less checks above do, instead of going red for
+    // something this window did not do.
+    const rateLimited = /rate limit|GITHUB_TOKEN|403|401/i.test(hub.hubError ?? "");
+    check(
+      "skills hub: a GitHub-tap card says SKILL.md is pulled at install",
+      rateLimited,
+      rateLimited
+        ? `skipped — every GitHub tap warned: ${hub.hubError}`
+        : `no [gh] row among ${hub.hubRows.length} browse rows (skills.taps empty or every tap warned)${hub.hubError ? " hubError=" + hub.hubError : ""}`,
+    );
   }
   await js<void>("window.__skillsAct('search:pdf')");
   const found = await until(skills, (s) => !s.hubLoading, 120_000);
@@ -2485,6 +2599,36 @@ async function settingsTestPartC(
     probed.statusLine.startsWith("local-llm /health failed at http://127.0.0.1:1: ") && probed.externalDraft === null && cfgBeforeProbe === cfgAfterProbe,
     `${JSON.stringify(probed.statusLine)}${cfgBeforeProbe === cfgAfterProbe ? "" : " (config changed!)"}`,
   );
+  // Review fix (item 5): a passing probe saves through ONE whole-file write
+  // that moves localModels.mode/url AND llm.providers[local-llama].url
+  // together — the two leaf writes it replaces left the provider url (and so
+  // the runtime's actual endpoint) pointing at the old address. The probe
+  // itself needs a live llama-server, so the write helper is driven directly
+  // here and the renderer source is checked for the call it now makes.
+  {
+    const cfgBeforeExt = (await configGet()).config as Cfg | undefined;
+    const rendererSrcExt = readFileSync(join(__dirname, "..", "renderer", "renderer.js"), "utf8");
+    const callsHelper = /BR\.setExternalLlamaUrl\(/.test(rendererSrcExt) && !/configSet\(\s*['"]localModels\.(url|mode)['"]/.test(rendererSrcExt);
+    if (!cfgBeforeExt) {
+      check("llm tab: an External save moves mode, url and the provider url in one write", false, "could not read the config to restore it");
+    } else {
+      const savedExt = JSON.parse(JSON.stringify(cfgBeforeExt)) as Cfg;
+      try {
+        const probeUrl = "http://127.0.0.1:19199";
+        const wrote = await setExternalLlamaUrl(probeUrl);
+        const after = await readCfg();
+        const entry = after.llm?.providers?.find((p) => p.id === "local-llama") as { url?: string } | undefined;
+        const hadBlock = !!cfgBeforeExt.llm?.providers?.some((p) => p.id === "local-llama");
+        check(
+          "llm tab: an External save moves mode, url and the provider url in one write",
+          wrote.ok && after.localModels?.mode === "external" && after.localModels?.url === probeUrl && (hadBlock ? entry?.url === probeUrl : !entry) && callsHelper,
+          `mode=${String(after.localModels?.mode)} url=${String(after.localModels?.url)} provider=${hadBlock ? String(entry?.url) : "no local-llama entry in the file"} renderer=${callsHelper ? "BR.setExternalLlamaUrl" : "still leaf writes"}`,
+        );
+      } finally {
+        await configSetWhole(savedExt);
+      }
+    }
+  }
 
   // ---- LLM: Fallback pane (the resolver's effective chain) + the `l` round trip ----
   const fb = await js<LlmPane>("window.__llmOpen('fallback')");
@@ -2626,45 +2770,62 @@ async function modelsTest(
   const cfg = async () => (await configGet()).config as {
     llm?: { activeTextProvider?: string; providers?: Array<{ id: string; defaultChatModel?: string }> };
   };
-
-  // Local catalogue
-  await js<void>("window.__pane('models','local')");
-  await wait(6000);
-  const localCount = await js<number>("window.__mp().local");
-  check("local catalogue loaded", localCount > 0, `${localCount} models`);
-  const hasDownload = await js<boolean>(
-    "!!document.querySelector('[data-pull-local]')",
-  );
-  check("local models offer a download", hasDownload);
-
-  // Add a provider
-  const before = await cfg();
-  const had = (before.llm?.providers ?? []).some((p) => p.id === "groq");
-  await js<void>("window.__pane('models','cloud')");
-  await js<void>("window.__addProvider('groq')");
-  await wait(4000);
-  const after = await cfg();
-  const added = (after.llm?.providers ?? []).find((p) => p.id === "groq");
-  check("provider added to config", !!added, had ? "(already present before)" : "groq written");
-
-  // List that provider's models and select one
-  const withKey = (after.llm?.providers ?? []).find((p) => p.id === "aimlapi") ? "aimlapi" : "groq";
-  await js<void>(`window.__pickModels(${JSON.stringify(withKey)}, "claude")`);
-  await wait(12_000);
-  const found = await js<number>("window.__mp().picks");
-  check("provider models listed", found > 0, `${found} models from ${withKey}`);
-
-  if (found > 0) {
-    const chosen = await js<string>("window.__mp().firstPick");
-    await js<void>("window.__selectFirstModel()");
-    await wait(5000);
-    const now = await cfg();
-    const entry = (now.llm?.providers ?? []).find((p) => p.id === withKey);
-    check(
-      "model written to the provider",
-      entry?.defaultChatModel === chosen,
-      `${entry?.defaultChatModel ?? "none"} === ${chosen}`,
+  // This test writes config for real — it adds a provider and picks a model.
+  // Capture the whole file first and put it back in `finally`, the way every
+  // other config-writing check in this suite does, so a `--models` run leaves
+  // the operator's providers and chat model exactly as it found them.
+  const configBefore = (await configGet()).config;
+  try {
+    // Local catalogue
+    await js<void>("window.__pane('models','local')");
+    await wait(6000);
+    const localCount = await js<number>("window.__mp().local");
+    check("local catalogue loaded", localCount > 0, `${localCount} models`);
+    const hasDownload = await js<boolean>(
+      "!!document.querySelector('[data-pull-local]')",
     );
+    check("local models offer a download", hasDownload);
+
+    // Add a provider
+    const before = await cfg();
+    const had = (before.llm?.providers ?? []).some((p) => p.id === "groq");
+    await js<void>("window.__pane('models','cloud')");
+    await js<void>("window.__addProvider('groq')");
+    await wait(4000);
+    const after = await cfg();
+    const added = (after.llm?.providers ?? []).find((p) => p.id === "groq");
+    check("provider added to config", !!added, had ? "(already present before)" : "groq written");
+
+    // List that provider's models and select one
+    const withKey = (after.llm?.providers ?? []).find((p) => p.id === "aimlapi") ? "aimlapi" : "groq";
+    await js<void>(`window.__pickModels(${JSON.stringify(withKey)}, "claude")`);
+    await wait(12_000);
+    const found = await js<number>("window.__mp().picks");
+    check("provider models listed", found > 0, `${found} models from ${withKey}`);
+
+    if (found > 0) {
+      const chosen = await js<string>("window.__mp().firstPick");
+      await js<void>("window.__selectFirstModel()");
+      await wait(5000);
+      const now = await cfg();
+      const entry = (now.llm?.providers ?? []).find((p) => p.id === withKey);
+      check(
+        "model written to the provider",
+        entry?.defaultChatModel === chosen,
+        `${entry?.defaultChatModel ?? "none"} === ${chosen}`,
+      );
+    }
+
+  } finally {
+    if (configBefore) {
+      const restored = await configSetWhole(configBefore);
+      const now = await cfg();
+      check(
+        "models: the run put the config back",
+        restored.ok && JSON.stringify(now) === JSON.stringify(configBefore),
+        restored.ok ? "config restored" : `restore failed: ${restored.error ?? "?"}`,
+      );
+    }
   }
 }
 
@@ -2674,6 +2835,13 @@ async function backendSwitchTest(
   check: (name: string, ok: boolean, detail?: string) => void,
 ): Promise<void> {
   const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+  const until = async <T>(read: () => Promise<T>, ok: (v: T) => boolean, ms: number): Promise<T> => {
+    const deadline = Date.now() + ms;
+    let v = await read();
+    while (!ok(v) && Date.now() < deadline) { await wait(400); v = await read(); }
+    return v;
+  };
   const cfgNow = async () => (await configGet()).config as UserConfigShape | undefined;
   const waitConnected = async () => {
     const deadline = Date.now() + 60_000;
@@ -2745,7 +2913,8 @@ async function backendSwitchTest(
     // The chip's precedence is the TUI's: `download model` whenever nothing
     // is on disk (selectComposerNeedsModelDownload ignores managed.modelId),
     // else the managed id.
-    const onDisk = ((await modelsList()).models ?? []).some((m) => m.downloaded && !/embed|bge|nomic|jina/i.test(m.id));
+    // The chip's own list: `models list` minus the CLI's embedding catalogue.
+    const onDisk = ((await chatModelsList()).models ?? []).some((m) => m.downloaded);
     const localChips = await js<{ backend: string; mode: string; model: string }>(
       "({backend: window.__sel().backend, mode: document.querySelector('.modechip')?.textContent ?? '', model: document.querySelector('.modelchip')?.textContent ?? ''})",
     );
@@ -2756,6 +2925,58 @@ async function backendSwitchTest(
         && (managedId && onDisk ? localChips.model.includes(managedId) : /download model/.test(localChips.model)),
       `own refresh: backend=${rawLocal.backend} chip=${JSON.stringify(rawLocal.mode)}; after harness refresh: backend=${localChips.backend} chip=${JSON.stringify(localChips.mode)} model=${JSON.stringify(localChips.model)} managed=${managedId} onDisk=${onDisk}`,
     );
+    // Review fix: `custom` is a state the composer can be IN — the same
+    // local-llama provider entry with localModels.mode external. It used to
+    // read as `local`, which drew the managed row active and described a route
+    // the operator was not on. Driven from the file (the pane has no editor
+    // here; the External pane is the editor and the row deep-links to it).
+    type BackRows = { backend: string; chip: string; modelChip: boolean; rows: Array<{ id: string; label: string; detail: string; active: boolean }> };
+    const managedRows = await js<BackRows>("window.__backendRows()");
+    const cfgForCustom = await cfgNow();
+    if (cfgForCustom) {
+      const restoreCustom = JSON.parse(JSON.stringify(cfgForCustom)) as UserConfigShape;
+      try {
+        await setExternalLlamaUrl("http://127.0.0.1:19199");
+        await js<void>("window.__ctxRefreshCfg()");
+        const customRows = await until(() => js<BackRows>("window.__backendRows()"), (r) => r.backend === "custom", 8000);
+        const custom = customRows.rows.find((r) => r.id === "custom");
+        const localRow = customRows.rows.find((r) => r.id === "local");
+        check(
+          "backend: an external route reads as custom, not as the managed local one",
+          managedRows.backend === "local" && managedRows.rows.length === 3
+            && customRows.backend === "custom" && /custom/.test(customRows.chip) && !customRows.modelChip
+            && !!custom && custom.active && custom.detail.includes("http://127.0.0.1:19199") && custom.detail.includes("Settings › LLM › External")
+            && !!localRow && !localRow.active,
+          `managed: backend=${managedRows.backend} chip=${JSON.stringify(managedRows.chip)}; external: backend=${customRows.backend} chip=${JSON.stringify(customRows.chip)} custom.active=${custom?.active} local.active=${localRow?.active} detail=${JSON.stringify(custom?.detail)}`,
+        );
+        // Activating it writes nothing: it opens the pane that can probe a URL.
+        const cfgBeforeRow = JSON.stringify(await cfgNow());
+        const opened = await js<{ settings: boolean; pane: string; llmMode: string; selOpen: boolean }>("window.__backendActivate('custom')");
+        check(
+          "backend: the custom row opens the External pane and writes nothing",
+          opened.settings && opened.pane === "llm" && opened.llmMode === "external" && !opened.selOpen && JSON.stringify(await cfgNow()) === cfgBeforeRow,
+          `${JSON.stringify(opened)}${JSON.stringify(await cfgNow()) === cfgBeforeRow ? "" : " (config changed!)"}`,
+        );
+        await js<void>("window.__settingsClose()");
+      } finally {
+        await configSetWhole(restoreCustom);
+        await js<void>("window.__ctxRefreshCfg()");
+      }
+    }
+    // The chat route's model list is the catalogue minus the CLI's own
+    // embedding catalogue — a fact, not a guess at the ids' names.
+    const embCatalog = await modelsListEmbeddings();
+    const chatOnly = await chatModelsList();
+    const fullList = await modelsList();
+    const embIds = new Set((embCatalog.models ?? []).map((m) => m.id));
+    const expectedChat = (fullList.models ?? []).filter((m) => !embIds.has(m.id)).map((m) => m.id);
+    check(
+      "backend: the local switch subtracts the CLI's embedding catalogue, not a name guess",
+      chatOnly.ok === true && chatOnly.byCatalog === true && embCatalog.ok === true
+        && same((chatOnly.models ?? []).map((m) => m.id), expectedChat),
+      `${(fullList.models ?? []).length} catalogue rows − ${embIds.size} embedding rows = ${(chatOnly.models ?? []).length} chat rows (byCatalog=${String(chatOnly.byCatalog)})`,
+    );
+
     // The catalogue and key facts land seconds after the switch; their
     // repaint must not rebuild the composer under a typing user.
     const caret = await js<{ same: boolean; focused: boolean; start: number; end: number } | null>("window.__bswRepaintKeepsCaret()");
