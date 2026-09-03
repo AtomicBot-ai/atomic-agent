@@ -32,7 +32,16 @@ const KIND_ROWS = [
   {id:'openai-compatible', kind:'openai-compatible', label:'OpenAI-compatible API (custom base URL)', custom:true, defaultModel:'gpt-5.4-mini'},
 ];
 const OPEN_GROUPS = new Set();
-const CTX = { tokens:0, source:null, stablePrefix:0, tail:0, cacheHitTokens:null, modelId:null, window:null, windowLabel:'' };
+/* Lane B — context before the first message (item 3). `source` is
+   'provider' | 'estimate' (the trace, after a turn), 'built' (the branch
+   route's own prompt), or 'projected' — the turn-0 scaffold of the last
+   prompt this agent built in this workspace plus the draft's estimate,
+   always drawn with a '~' and the word "projected" until something real
+   replaces it. `previewSupported` caches the route's 404 per connection
+   the way MODE.supported does; `seq` drops a refresh that lost the race. */
+const CTX = { tokens:0, source:null, stablePrefix:0, tail:0, draftTokens:0, cacheHitTokens:null, modelId:null,
+  window:null, windowLabel:'', baseline:null, sections:null, pairsCap:0, reserved:0,
+  previewSupported:null, seq:0, chipTimer:null };
 /* default / auto / bypass. `plan` is deliberately absent: plan mode is a
    closure variable in the runtime with no route, no config key and no
    request field, so a desktop chip could only paint a state the agent
@@ -85,8 +94,23 @@ const OB = {
 const OB_CHOICES = [
   {id:'local',  t:'Local models',    d:'llama.cpp on this machine. Private, free per token, one download of 2.7–22 GB.'},
   {id:'cloud',  t:'Cloud models',    d:'OpenRouter, Anthropic, Gemini, Groq and 20 more. Fastest to a working agent — needs an API key.'},
-  {id:'custom', t:'Custom endpoint', d:'An OpenAI-compatible or llama-server URL you already run. Nothing is downloaded, nothing else is asked.'},
+  // Lane B — backend switch: the TUI's third choice, a custom endpoint, is
+  // not offered here. The TUI probes the URL (checkLlamaServer, verifyAuth)
+  // and then writes mode external + url + the local-llama provider url in
+  // ONE whole-file write (persistUserRemoteLlmUrls); the desktop has no
+  // probe, and a leaf write of localModels.url would leave the provider
+  // entry pointing at the managed port. Rather than write an unverified
+  // URL, the option stays out until the probe exists — set it up from the
+  // TUI (`atag`).
 ];
+/* Lane B — backend switch. What the chips and rows read while a switch
+   runs in main: `line` is the popup's status text, `readyIds` the cloud
+   providers with a usable key (the TUI's hasApiKey), `localLoaded`
+   whether the local catalogue snapshot has landed — the model chip only
+   says "download model" once it has, as the TUI's does — and `readyLoaded`
+   whether the key facts have landed at all: until they have, the rows say
+   "checking keys…" rather than a "no API key" that is not known yet. */
+const BSW = { line:'', readyIds:[], readyLoaded:false, localLoaded:false, gating:false };
 
 /* ============================================================
    Atomic Agent Desktop — clickable prototype, no backend.
@@ -497,8 +521,11 @@ function composer() {
         + (selBackend() === 'cloud'
             ? '<button class="cchip" data-sel-open="provider">' + esc(selActiveProviderId() || 'no provider') + ic('chevD') + '</button>'
             : '')
-        + '<button class="cchip modelchip" data-sel-open="model">'
-          + esc(shortModel(activeModel())) + ic('chevD') + '</button>'
+        // Lane B — backend switch: the TUI's ComposerMetaControls renders
+        // no model control when there is no model (cloud provider without
+        // a chatModel, or local before the snapshot lands); the pane stays
+        // reachable through the provider chip and the backend rows.
+        + modelChipHtml()
         + '<span style="flex:1"></span>'
         + contextChip()
         + codingModeChip()
@@ -861,21 +888,44 @@ function contextHTML() {
   const agent = (LIVE_CONFIG && LIVE_CONFIG.agent) || {};
   const pairs = agent.conversationMaxPairs || 20;
   const win = CTX.window;
+  // Lane B \u2014 context before the first message (item 3). Copy follows
+  // src/tui/components/context-panel.tsx: title(), buildRows() (the
+  // "reserved for reply" row is config.localModels.completionMaxTokens,
+  // tui-command.ts:232, and "free" is window \u2212 tokens \u2212 reserved, floored
+  // at 0), and the pre-measurement screen verbatim. The projected state
+  // is the desktop's own: the TUI has no figure before prompt_built.
+  const proj = CTX.source === 'projected';
+  const reserved = CTX.source === 'built' && CTX.reserved
+    ? CTX.reserved
+    : ((LIVE_CONFIG && LIVE_CONFIG.localModels && LIVE_CONFIG.localModels.completionMaxTokens) || 0);
+  const pct = win ? Math.min(100, Math.round(CTX.tokens / win * 100)) : 0;
   const title = CTX.tokens
-    ? 'context \u00b7 ' + tok(CTX.tokens) + (win ? ' of ' + tok(win) + ' \u00b7 ' + Math.min(100, Math.round(CTX.tokens / win * 100)) + '%' : ' \u00b7 window unknown')
+    ? 'context \u00b7 ' + (proj ? '~' : '') + fmtTokens(CTX.tokens)
+      + (win ? ' of ' + fmtTokens(win) + ' window \u00b7 ' + pct + '%' : ' \u00b7 window unknown')
+      + (proj ? ' \u00b7 projected' : '')
     : 'context \u00b7 not measured yet';
+  const row = (label, value, dim) => '<dt' + (dim ? ' class="ter"' : '') + '>' + esc(label) + '</dt>'
+    + '<dd class="mono tnum' + (dim ? ' ter' : '') + '">' + value + '</dd>';
+  let body = '';
+  if (CTX.tokens) {
+    if (CTX.source === 'built' && CTX.sections) body = CTX.sections.map((s) => row(s.label, fmtTokens(s.tokens))).join('');
+    else if (proj) {
+      body = row('prompt scaffold', fmtTokens(CTX.stablePrefix));
+      if (S.draft.trim()) body += row('your draft', '~' + fmtTokens(CTX.draftTokens));
+      body += row('conversation', '0');
+    } else body = row('prompt scaffold', fmtTokens(CTX.stablePrefix)) + row('conversation', fmtTokens(CTX.tail));
+    if (win) {
+      if (reserved > 0) body += row('reserved for reply', fmtTokens(reserved), true);
+      body += row('free', fmtTokens(Math.max(0, win - CTX.tokens - reserved)), true);
+    }
+  }
   const rows = CTX.tokens
-    ? '<dl class="kvgrid" style="grid-template-columns:1fr max-content;gap:4px 12px">'
-      + '<dt>prompt scaffold</dt><dd class="mono tnum">' + tok(CTX.stablePrefix) + '</dd>'
-      + '<dt>conversation</dt><dd class="mono tnum">' + tok(CTX.tail) + '</dd>'
-      + (win ? '<dt class="ter">free</dt><dd class="mono tnum ter">' + tok(Math.max(0, win - CTX.tokens)) + '</dd>' : '')
-      + '</dl>'
+    ? '<dl class="kvgrid" style="grid-template-columns:1fr max-content;gap:4px 12px">' + body + '</dl>'
     : '<p class="cap" style="margin:0">send a message \u2014 the breakdown comes from the prompt the agent actually builds</p>';
   return '<div class="scrim" data-close="1" style="background:transparent">'
     + '<div class="popover" style="width:360px;' + anchorStyle('.ctxbtn', 360) + '">'
     + '<div style="padding:12px 16px 8px"><div class="hd" style="margin-bottom:8px">' + esc(title) + '</div>' + rows
-    + (CTX.tokens ? '<p class="cap" style="margin:8px 0 0">' + (CTX.source === 'provider'
-        ? 'counted by ' + esc(CTX.modelId || 'the model') : 'estimated from the built prompt') + '</p>' : '')
+    + (CTX.tokens ? '<p class="cap ctxbasis" style="margin:8px 0 0">' + esc(ctxBasisLine()) + '</p>' : '')
     + '</div>'
     + '<div class="ctxdials"><div class="ctxdial"><span class="col"><span>tasks per turn</span>'
       + '<span class="cap">sent each turn (1-100)</span></span>'
@@ -1141,7 +1191,9 @@ function act(a) {
   if (a === 'sel:cancelPull') { BR.cancelPull(); SEL.pulling = null; render(); return; }
   if (a === 'runmode') { close(); S.dialShare = S.share; S.overlay = 'runmode'; render(); return; }
   if (a === 'applydial') { S.share = S.dialShare; if (S.mode !== 'fusion' && S.dialShare > 0) S.mode = 'fusion'; close(); render(); toast('Run type applied', S.mode + (S.mode === 'fusion' ? ' · cloud share ' + S.share : '')); return; }
-  if (a === 'session:new') { close(); S.log = []; S.history = []; S.agentSession = null; S.busy = false; S.pending = null; S.room = 'chat'; render(); toast('New session', 'The next turn starts fresh'); return; }
+  if (a === 'session:new') { close(); S.log = []; S.history = []; S.agentSession = null; S.busy = false; S.pending = null; S.room = 'chat'; render(); toast('New session', 'The next turn starts fresh');
+                             // Lane B — item 3: a new thread has a new window fill (the TUI resets contextUsage on session_created), so the chip goes back to the projection.
+                             refreshContext(); return; }
   if (a === 'session:switch') { close(); S.overlay = 'sessions'; render(); return; }
   if (a === 'task:new') { close(); S.overlay = 'newtask'; render(); return; }
   if (a === 'task:run') { close(); render(); toast('Task started', 'Back up the Teletubbies folder'); return; }
@@ -1224,8 +1276,12 @@ function submit() {
   const e = $('#entry');
   const text = (e ? e.value : S.draft).trim();
   if (!text) return;
-  if (text.startsWith('/')) { runSlash(text.slice(1).split(/\s+/)); S.draft = ''; if (e) { e.value = ''; autosize(e); } S.slash = false; render(); return; }
+  // Lane B — backend switch: a turn is waiting on the local gate's disk
+  // snapshot; the draft stays where it is until that one has been decided.
+  if (BSW.gating) return;
+  if (text.startsWith('/')) { runSlash(text.slice(1).split(/\s+/)); S.draft = ''; if (e) { e.value = ''; autosize(e); } S.slash = false; ctxDraftChanged(); render(); return; }
   S.draft = ''; if (e) { e.value = ''; autosize(e); }
+  ctxDraftChanged(); // Lane B — item 3: the sent draft leaves the projection
   S.slash = false;
   if (S.busy || S.pending) {
     S.queued.push(text);
@@ -1241,7 +1297,54 @@ function submit() {
     render();
     return;
   }
+  // Lane B — backend switch: the TUI's pre-turn gate for the managed local
+  // route (src/tui/local-turn-gate.ts). `atag serve` has no equivalent, so
+  // without this a turn against a model that is not on disk burns the
+  // transport retries and ends in a bare fetch error.
+  if (localTurnGate().kind === 'pending') {
+    // The TUI stats the disk synchronously; here the disk is one
+    // `atag models list` away. In the first seconds on the local route
+    // (before the catalogue snapshot has landed) that call is made now,
+    // so no turn ever bypasses the gate.
+    BSW.gating = true; render();
+    bswSnapshot().then(() => { BSW.gating = false; bswGatedTurn(text); });
+    return;
+  }
+  bswGatedTurn(text);
+}
+/** The gate's verdict, then the turn. */
+function bswGatedTurn(text) {
+  const gate = localTurnGate();
+  if (gate.kind === 'pending') {
+    // The snapshot could not be taken (`atag models list` failed), so
+    // nothing is known about the disk. The TUI stats it and would decide;
+    // here the turn runs, and the transcript says so rather than letting
+    // it bypass the gate silently.
+    S.log.push({id:nid(), k:'system', text:'local model catalogue unavailable — sending anyway'});
+  }
+  if (gate.kind === 'block') {
+    // chat-orchestrator.ts turn_gate_blocked + input_changed: the
+    // optimistic submit already cleared the editor, so the text is handed
+    // back and the line says so. The TUI adds the user line to the
+    // transcript only when the turn starts, so the one submit() pushed
+    // comes off again — the message lives in the editor, not twice.
+    const last = S.log[S.log.length - 1];
+    if (last && last.k === 'user' && last.text === text) S.log.pop();
+    S.log.push({id:nid(), k:'system', text: esc(gate.text + ' (message returned to the editor)')});
+    S.draft = text;
+    ctxDraftChanged();
+    render(); // afterChat() puts S.draft back into #entry
+    const e = $('#entry');
+    if (e) { autosize(e); e.focus(); e.setSelectionRange(e.value.length, e.value.length); }
+    return;
+  }
+  if (gate.kind === 'notice') S.log.push({id:nid(), k:'system', text: esc(gate.text)});
   startLiveTurn(text);
+}
+/** droppedPreview (src/tui/detached-turns.ts): one flat line, 60 columns. */
+function droppedPreview(text) {
+  const flat = text.replace(/\s+/g, ' ').trim();
+  return flat.length <= 60 ? flat : flat.slice(0, 59) + '…';
 }
 function answer(key) {
   const req = S.pending;
@@ -1360,6 +1463,10 @@ document.addEventListener('click', (e) => {
 document.addEventListener('input', (e) => {
   if (e.target.id === 'entry') {
     S.draft = e.target.value; autosize(e.target);
+    // Lane B — item 3: the draft's estimate moves the projected chip only
+    // (a 150 ms chip-only repaint — a render() here would reset the
+    // textarea from S.draft in afterChat() and move the caret).
+    ctxDraftChanged();
     const wasSlash = S.slash;
     S.slash = S.draft.startsWith('/');
     if (S.slash) { S.slashCur = 0; refreshSlash(); }
@@ -1598,6 +1705,11 @@ async function loadResources() {
     if (SESSIONS[0]) S.sessionId = SESSIONS[0].id;
   }
   render();
+  bswRefreshFacts();
+  // Lane B — item 3: caps + config are in, so the chip can carry a figure
+  // before any message. A fresh connection re-probes the preview route.
+  CTX.previewSupported = null;
+  refreshContext();
 }
 
 
@@ -1679,7 +1791,21 @@ function onChatEvent(ev) {
     if (item && item.text) S.history.push({role:'assistant', content:item.text});
     if (item && !item.text) item.text = ev.kind === 'aborted' ? '(stopped)' : '(no reply)';
     if (ev.kind === 'error') S.log.push({id:nid(), k:'system', text:'turn failed: ' + esc(ev.error || '')});
-    if (S.queued.length) { const q = S.queued.shift(); S.log.push({id:nid(), k:'user', text:q}); startLiveTurn(q); return; }
+    if (S.queued.length) {
+      const q = S.queued.shift();
+      // Lane B — backend switch: the gate is judged at turn START, so a
+      // message parked behind a running turn is re-checked here. A drained
+      // message has no editor to go back to (the operator may be
+      // mid-draft), so the TUI drops it — announced with a preview, never
+      // silently — and stops draining (chat-orchestrator.ts fromQueue).
+      const gate = localTurnGate();
+      if (gate.kind === 'block') {
+        S.log.push({id:nid(), k:'system', text: esc(gate.text + '\n  dropped: ' + droppedPreview(q))});
+        render(); return;
+      }
+      if (gate.kind === 'notice') S.log.push({id:nid(), k:'system', text: esc(gate.text)});
+      S.log.push({id:nid(), k:'user', text:q}); startLiveTurn(q); return;
+    }
     render();
   }
 }
@@ -1815,10 +1941,21 @@ function activeProvider() {
 }
 function activeModel() {
   if (BR && S.live.state === 'connected') {
+    // Lane B — backend switch: the TUI's selectPromptLlmMeta. A cloud
+    // provider shows its chatModel (defaultChatModel ?? model) and,
+    // when it has none, the TUI renders NO model control at all — the
+    // desktop keeps the chip as the pane's anchor and leaves it unlabelled.
     const p = activeProvider();
-    if (p && p.kind !== 'llama-server') return p.defaultChatModel || 'no model chosen';
+    if (p && p.kind !== 'llama-server') return p.defaultChatModel || p.model || '';
+    // DOWNLOAD_MODEL_LABEL first: selectComposerNeedsModelDownload (local
+    // route, snapshot loaded, no pull running, nothing on disk) is judged
+    // regardless of managed.modelId, and ComposerMetaControls renders the
+    // DownloadModelControl in preference to the model label — an id that
+    // names a file which is not there is not a model to show.
+    if (BSW.localLoaded && !SEL.pulling && !SEL.local.some((m) => m.downloaded)) return 'download model';
     const managed = (LIVE_CONFIG && LIVE_CONFIG.localModels && LIVE_CONFIG.localModels.managed) || {};
-    return managed.modelId || 'not configured';
+    if (managed.modelId) return managed.modelId;
+    return '';
   }
   return S.mode === 'local' ? S.localModel : S.cloudModel;
 }
@@ -1839,7 +1976,7 @@ function needsOnboarding(cfg) {
   if (ob.completedAt || ob.skippedAt) return false;
   const lm = (cfg && cfg.localModels) || {};
   const managedReady = lm.mode === 'managed' && lm.managed && lm.managed.modelId;
-  const localConfigured = (lm.mode === 'external' || lm.mode === 'custom') && lm.url;
+  const localConfigured = lm.mode === 'external' && lm.url;
   const llm = (cfg && cfg.llm) || {};
   const active = (llm.providers || []).find((p) => p.id === llm.activeTextProvider);
   const cloudReady = !!active && active.kind !== 'llama-server';
@@ -1880,19 +2017,19 @@ async function obLoadModels() {
   render();
 }
 
-async function obFinish(kind, detail) {
+/** `restartedAlready`: the local path's selectLocalModel has restarted the agent itself. */
+async function obFinish(kind, detail, restartedAlready) {
+  // Lane B — backend switch: the cloud branch activates a provider, which
+  // restarts `atag serve` and would abort a running turn — same guard as
+  // every other switch entry point.
+  if (kind === 'cloud' && S.busy) { OB.error = 'Not while a turn is running'; render(); return; }
   OB.busy = true; render();
   const stamp = new Date().toISOString();
   const writes = [];
-  if (kind === 'local') {
-    writes.push(['localModels.mode', 'managed']);
-    writes.push(['tui.onboarding.localSetupSeenAt', stamp]);
-  }
-  if (kind === 'cloud') writes.push(['llm.activeTextProvider', detail]);
-  if (kind === 'custom') {
-    writes.push(['localModels.mode', 'custom']);
-    writes.push(['localModels.url', detail]);
-  }
+  if (kind === 'local') writes.push(['tui.onboarding.localSetupSeenAt', stamp]);
+  // Lane B — backend switch: there is no 'custom' kind any more (see
+  // OB_CHOICES) — the CLI rejects the mode value and the desktop has no
+  // URL probe, so that branch is gone rather than half-fixed.
   writes.push(['tui.onboarding.introSeenAt', stamp]);
   writes.push([kind === 'skip' ? 'tui.onboarding.skippedAt' : 'tui.onboarding.completedAt', stamp]);
   for (const [key, value] of writes) {
@@ -1904,19 +2041,51 @@ async function obFinish(kind, detail) {
       return;
     }
   }
+  // Lane B — backend switch. Local: the TUI's onboarding writes
+  // localModels.mode "managed" through persistUserLocalModelsConfig (url
+  // sync included) — the model pick itself already went through
+  // selectLocalModel, which is where the route moves and the daemon
+  // starts. Cloud: the chosen provider is activated exactly as the
+  // provider row does it; that IPC restarts the agent by itself.
+  let restarted = false;
+  if (kind === 'local') {
+    const res = await BR.useManagedMode();
+    if (res && res.ok === false) { OB.busy = false; OB.error = 'could not write localModels.mode: ' + (res.error || 'unknown error'); render(); return; }
+    // selectLocalModel already bounced `atag serve` for its own writes;
+    // only a mode write that actually changed the file needs another one.
+    restarted = !!restartedAlready && !(res && res.changed);
+  }
+  if (kind === 'cloud') {
+    const res = await BR.activateProvider(detail);
+    if (!res || !res.ok) {
+      OB.busy = false;
+      OB.error = res && res.needsKey ? 'no API key for ' + detail + ' — set ' + (OB.keyEnv[detail] || 'its key') + ' in the environment first'
+        : 'could not activate ' + detail + ': ' + ((res && res.error) || 'unknown error');
+      render();
+      return;
+    }
+    bswReport(res);
+    restarted = !!res.restart;
+  }
   OB.busy = false; OB.open = false;
   toast('Setup complete', kind === 'skip' ? 'You can run it again from the menu' : 'Restarting the agent…');
   render();
+  if (restarted) { refreshLiveConfig(); return; }
   BR.restart().then(applyStatus);
 }
 
 function obUseModel(model) {
   if (model.downloaded) {
+    // Lane B — backend switch: the TUI's pull-completion path writes the
+    // model and starts the daemon; selectLocalModel is that sequence. It
+    // restarts `atag serve`, so not while a turn is running.
+    if (S.busy) { OB.error = 'Not while a turn is running'; render(); return; }
     OB.busy = true; render();
-    BR.modelsUse(model.id).then((res) => {
+    BR.selectLocalModel(model.id).then((res) => {
       OB.busy = false;
-      if (res && res.ok === false) { OB.error = res.error || 'could not select the model'; render(); return; }
-      obFinish('local', model.id);
+      if (!res || !res.ok) { OB.error = (res && res.error) || 'could not select the model'; render(); return; }
+      bswReport(res);
+      obFinish('local', model.id, !!res.restart);
     });
     return;
   }
@@ -1937,7 +2106,7 @@ function obHTML() {
 
   if (OB.step === 'choose') {
     return '<div id="onboarding"><div class="ob">'
-      + head(1, 'Where should the model run?', 'atomic-agent can drive models three ways. Nothing here is permanent — you can add the others at any time from the menu.')
+      + head(1, 'Where should the model run?', 'atomic-agent can drive models three ways; a custom endpoint is set up from the TUI. Nothing here is permanent — you can change it at any time from the menu.')
       + '<div class="ob-list">' + OB_CHOICES.map((c, i) =>
           '<button class="ob-opt' + (i === OB.choice ? ' on' : '') + '" data-ob-choice="' + i + '">'
           + '<span class="radio"></span>'
@@ -1997,14 +2166,10 @@ function obHTML() {
       + '</div></div>';
   }
 
-  // custom
-  return '<div id="onboarding"><div class="ob">'
-    + head('custom endpoint · step 2 of 2', 'Point at your endpoint', 'An OpenAI-compatible or llama-server URL you already run.')
-    + '<input class="field-inp" id="ob-url" style="width:100%" placeholder="http://127.0.0.1:8080" value="' + esc(OB.url || '') + '">'
-    + err
-    + '<div class="ob-foot"><button class="btn btn-g" data-ob="back">Back</button><span class="grow"></span>'
-    + '<button class="btn btn-p" data-ob="useUrl">Use this endpoint</button></div>'
-    + '</div></div>';
+  // Lane B — backend switch: the custom-endpoint step went with its
+  // OB_CHOICES entry; an unknown step falls back to the choice list.
+  OB.step = 'choose';
+  return obHTML();
 }
 
 
@@ -2027,14 +2192,6 @@ function obAction(what) {
     if (p) obFinish('cloud', p.id);
     return;
   }
-  if (what === 'useUrl') {
-    const input = document.getElementById('ob-url');
-    const url = (input && input.value.trim()) || '';
-    if (!/^https?:\/\/\S+$/.test(url)) { OB.error = 'That does not look like a URL.'; render(); return; }
-    OB.url = url;
-    obFinish('custom', url);
-    return;
-  }
   if (what === 'cancel') { BR.cancelPull(); OB.step = 'local'; render(); return; }
 }
 
@@ -2044,7 +2201,11 @@ if (BR) {
     if (ev.line) OB.log.push(ev.line);
     if (ev.done) {
       if (ev.ok && OB.pulling) {
-        BR.modelsUse(OB.pulling.id).then(() => obFinish('local', OB.pulling.id));
+        BR.selectLocalModel(OB.pulling.id).then((res) => {
+          if (!res || !res.ok) { OB.error = (res && res.error) || 'could not select the model'; OB.step = 'local'; render(); return; }
+          bswReport(res);
+          obFinish('local', OB.pulling.id, !!res.restart);
+        });
       } else {
         OB.error = ev.error || 'the download failed';
         OB.step = 'local';
@@ -2101,12 +2262,17 @@ function mpPullModel(id) {
 }
 
 async function mpUseProvider(id) {
+  if (S.busy) { toast('Not while a turn is running'); return; }
   MP.err = null; MP.busy = true; render();
-  const res = await BR.configSet('llm.activeTextProvider', id);
+  const res = await BR.activateProvider(id);
   MP.busy = false;
-  if (res && res.ok === false) { MP.err = res.error || 'could not switch provider'; render(); return; }
-  toast('Provider selected', id + ' · takes effect on the next turn');
-  refreshLiveConfig();
+  if (!res || !res.ok) {
+    MP.err = res && res.needsKey ? 'no API key for ' + id + ' — add one with the wizard or export its variable' : ((res && res.error) || 'could not switch provider');
+    render(); return;
+  }
+  bswReport(res);
+  toast('Provider selected', id + ' · restarting the agent');
+  await refreshLiveConfig();
 }
 
 async function mpSearch() {
@@ -2123,14 +2289,21 @@ async function mpSearch() {
 }
 
 async function mpSetModel(model) {
+  if (S.busy) { toast('Not while a turn is running'); return; }
   const id = MP.pickFor;
   MP.busy = true; MP.err = null; render();
-  const res = await BR.setProviderModel(id, model);
+  // The TUI's selectChatModel also activates the provider; here that
+  // means a restart of `atag serve` as well.
+  const res = await BR.selectCloudModel(id, model);
   MP.busy = false;
-  if (res && res.ok === false) { MP.err = res.error || 'could not set the model'; render(); return; }
+  if (!res || !res.ok) {
+    MP.err = res && res.needsKey ? 'no API key for ' + id + ' — add one with the wizard or export its variable' : ((res && res.error) || 'could not set the model');
+    render(); return;
+  }
   MP.pickFor = null; MP.picks = [];
-  toast('Model selected', id + ' → ' + model);
-  refreshLiveConfig();
+  bswReport(res, 'Selected chat model ' + id + '/' + model + '.');
+  toast('Model selected', id + ' → ' + model + ' · restarting the agent');
+  await refreshLiveConfig();
 }
 
 async function mpSaveProvider() {
@@ -2155,6 +2328,8 @@ async function mpSaveProvider() {
 /** Re-read config so every chip and row reflects what was just written. */
 async function refreshLiveConfig() {
   if (!BR) return;
+  // Lane B — item 3: a provider or model change moves the window and the baseline.
+  const ctxWas = selActiveProviderId() + '\n' + activeModel();
   const cfg = await BR.configGet();
   if (cfg && cfg.ok && cfg.config) LIVE_CONFIG = cfg.config;
   const provider = LIVE_CONFIG && LIVE_CONFIG.llm
@@ -2166,6 +2341,8 @@ async function refreshLiveConfig() {
   const managed = LIVE_CONFIG && LIVE_CONFIG.localModels && LIVE_CONFIG.localModels.managed;
   if (managed && managed.modelId) S.localModel = managed.modelId;
   render();
+  bswRefreshFacts();
+  if (selActiveProviderId() + '\n' + activeModel() !== ctxWas) refreshContext();
 }
 
 if (BR) {
@@ -2265,36 +2442,45 @@ function selEnterModelPane() {
 /** Rows for the current pane, as objects the delegate can act on by index. */
 function selRows() {
   if (SEL.kind === 'backend') {
-    const managed = (LIVE_CONFIG && LIVE_CONFIG.localModels && LIVE_CONFIG.localModels.managed) || {};
-    const provs = selProviders();
+    // Lane B — backend switch: composer-switch-rows.ts backendRows, in
+    // its order (cloud, local) with its details. The TUI's third row,
+    // custom (llama.cpp you run), needs the external-URL editor and is
+    // not offered here.
+    const ready = selProviders().filter((p) => BSW.readyIds.includes(p.id)).length;
     return [
-      {type:'backend', id:'local', label:'local',
-       detail: managed.modelId ? 'llama.cpp on this machine · ' + managed.modelId : 'no model downloaded yet',
-       active: selBackend() === 'local'},
       {type:'backend', id:'cloud', label:'cloud',
-       detail: provs.length ? provs.length + (provs.length === 1 ? ' provider configured' : ' providers configured') : 'add a provider first',
+       detail: !BSW.readyLoaded ? 'checking keys…' : ready > 0 ? ready + ' provider' + (ready === 1 ? '' : 's') + ' ready' : 'add a provider first',
        active: selBackend() === 'cloud'},
+      {type:'backend', id:'local', label:'local',
+       detail: 'llama.cpp managed here',
+       active: selBackend() === 'local'},
     ];
   }
   if (SEL.kind === 'provider') {
     const activeId = selActiveProviderId();
+    // providerRows: hasApiKey ? (chatModel ?? 'default model') : 'no API key'.
     const rows = selProviders().map((p) => ({
       type:'provider', id:p.id, label:p.id,
-      detail: p.kind + ' · ' + (p.defaultChatModel || 'no model chosen')
-        + (p.apiKeyEnvVar ? ' · key from ' + p.apiKeyEnvVar : p.apiKey ? '' : ' · no API key'),
+      detail: !BSW.readyLoaded ? 'checking keys…' : BSW.readyIds.includes(p.id) ? (p.defaultChatModel || p.model || 'default model') : 'no API key',
       active: p.id === activeId,
     }));
+    // The TUI's trailing row (intent addProvider): the same screen as the
+    // footer's "Add a provider" used to open.
+    rows.push({type:'action', id:'add', label:'Add a new provider', detail:'opens the wizard', active:false});
     return rows;
   }
   // model pane
   if (selBackend() === 'local') {
-    return SEL.local
+    const rows = SEL.local
       .filter((m) => !SEL.filter || modelMatches(m.id, m.family, SEL.filter))
       .map((m) => {
         const fit = fitFor(m.size, OB.ram || 16);
         return {type:'localModel', id:m.id, label:m.id, downloaded:m.downloaded, active:m.active,
           detail: m.size + ' · ' + m.context + ' context · ' + fit.label + (m.downloaded ? ' · on disk' : '')};
       });
+    // The TUI's deep-link row (model:local:download-more), outside the filter.
+    rows.push({type:'action', id:'downloadMore', label:'Download more models…', detail:'opens the local models pane', active:false});
+    return rows;
   }
   const entry = selProviders().find((p) => p.id === selActiveProviderId());
   const chosen = entry && entry.defaultChatModel;
@@ -2314,41 +2500,61 @@ function selRows() {
 async function selActivate(row) {
   if (!row) return;
   if (row.type === 'backend') { selChooseBackend(row.id); return; }
+  // The TUI's trailing rows: "Add a new provider" opens the wizard,
+  // "Download more models…" the local models pane (Settings › Models).
+  if (row.type === 'action') {
+    if (row.id === 'add') { act('sel:add'); return; }
+    act('settings:models'); S.modelTab = 'local'; render(); mpLoadLocal();
+    return;
+  }
+  // Lane B — backend switch: every branch below writes through main's
+  // port of the TUI's persist helpers and ends in an agent restart, so
+  // none of them may run while a turn is in flight.
+  if (S.busy) { toast('Not while a turn is running'); return; }
   if (row.type === 'provider') {
-    SEL.busy = true; render();
-    const res = await BR.configSet('llm.activeTextProvider', row.id);
-    SEL.busy = false;
-    if (res && res.ok === false) { SEL.err = res.error || 'could not switch provider'; render(); return; }
+    SEL.busy = true; SEL.err = null; BSW.line = 'switching…'; render();
+    const res = await BR.activateProvider(row.id);
+    SEL.busy = false; BSW.line = '';
+    if (!res || !res.ok) {
+      if (res && res.needsKey) { bswOpenKey(row.id); return; }
+      SEL.err = (res && res.error) || 'could not switch provider'; render(); return;
+    }
+    bswReport(res);
     await refreshLiveConfig();
     SEL.kind = 'model'; SEL.cursor = 0; SEL.filter = ''; render();
     selLoadModels(row.id);
     return;
   }
   if (row.type === 'cloudModel') {
-    // Apply and close first; the config write confirms in the background.
+    // Apply and close first; the write and the restart confirm in the background.
     const pid = selActiveProviderId();
     const entry = selProviders().find((p) => p.id === pid);
     if (entry) entry.defaultChatModel = row.id;
     S.cloudModel = row.id;
     closeSelector();
-    BR.setProviderModel(pid, row.id).then((res) => {
-      if (res && res.ok === false) toast('Could not select the model', res.error || '');
+    BR.selectCloudModel(pid, row.id).then((res) => {
+      if (!res || !res.ok) toast('Could not select the model', res && res.needsKey ? 'no API key for ' + pid : ((res && res.error) || ''));
+      else bswReport(res, 'Selected chat model ' + pid + '/' + row.id + '.');
       refreshLiveConfig();
     });
     return;
   }
   if (row.type === 'localModel') {
     if (!row.downloaded) { selPull(row.id); return; }
+    // The popup stays open until main answers: a daemon that fails to
+    // start has to be shown, and `models start` can take a while.
+    SEL.busy = true; SEL.err = null; BSW.line = 'starting ' + row.id + '…'; render();
+    const res = await BR.selectLocalModel(row.id);
+    SEL.busy = false; BSW.line = '';
+    if (!res || !res.ok) {
+      if (res && res.needsDownload) { selPull(row.id); return; }
+      SEL.err = (res && res.error) || 'could not select the model'; render(); return;
+    }
     S.localModel = row.id;
-    if (LIVE_CONFIG && LIVE_CONFIG.localModels && LIVE_CONFIG.localModels.managed) LIVE_CONFIG.localModels.managed.modelId = row.id;
     closeSelector();
-    (async () => {
-      const used = await BR.modelsUse(row.id);
-      if (used && used.ok === false) { toast('Could not select the model', used.error || ''); refreshLiveConfig(); return; }
-      await BR.configSet('llm.activeTextProvider', 'local-llama');
-      BR.modelsStart();
-      refreshLiveConfig();
-    })();
+    bswReport(res);
+    if (res.daemon === 'start-failed') toast('Local daemon did not start', res.error || '');
+    await refreshLiveConfig();
   }
 }
 
@@ -2396,16 +2602,12 @@ function selectorHTML() {
   const title = SEL.kind === 'backend' ? 'Where it runs'
     : SEL.kind === 'provider' ? 'Provider' : 'Model';
 
-  // An empty list is not a list — it is one action.
+  // An empty list is not a list — it is one action. The provider and
+  // local model panes always end in the TUI's action row ("Add a new
+  // provider" / "Download more models…"), so, as in the TUI, an empty
+  // provider list IS that one row; only the cloud model pane can be bare.
+  const real = rows.filter((r) => r.type !== 'action');
   if (!rows.length && !SEL.modelsBusy && !SEL.localBusy && !(SEL.kind === 'model' && SEL.filter)) {
-    if (SEL.kind === 'provider') {
-      return selShell(title, '<div class="selbody"><p class="cap" style="padding:16px">No cloud provider is configured.</p></div>',
-        '<button class="btn btn-p" data-act="sel:add">Add a provider</button>');
-    }
-    if (SEL.kind === 'model' && selBackend() === 'local') {
-      return selShell(title, '<div class="selbody"><p class="cap" style="padding:16px">No local model is downloaded.</p></div>',
-        '<button class="btn btn-p" data-act="sel:browseLocal">Download a model</button>');
-    }
     return selShell(title, '<div class="selbody"><p class="cap" style="padding:16px">Nothing to show.</p></div>', '');
   }
 
@@ -2423,12 +2625,11 @@ function selectorHTML() {
         + esc(r.label) + '</span><span class="cap">' + esc(r.detail || '') + '</span></span>'
         + (r.type === 'localModel' && !r.downloaded ? '<span class="cap">download</span>' : '')
         + '</button>').join('')
-    + (!rows.length && !SEL.modelsBusy && !SEL.localBusy ? '<div class="pad cap">no models match \u201c' + esc(SEL.filter) + '\u201d</div>' : '')
+    + (!real.length && SEL.kind === 'model' && SEL.filter && !SEL.modelsBusy && !SEL.localBusy ? '<div class="pad cap">no models match \u201c' + esc(SEL.filter) + '\u201d</div>' : '')
     + '</div>';
 
-  const foot = SEL.kind === 'provider'
-    ? '<button class="btn btn-t" data-act="sel:add">Add a provider</button><button class="btn btn-s" data-act="close">Done</button>'
-    : '<button class="btn btn-s" data-act="close">Done</button>';
+  // Adding a provider is the pane's own trailing row now, as in the TUI.
+  const foot = '<button class="btn btn-s" data-act="close">Done</button>';
 
   return selShell(title, search + list, foot);
 }
@@ -2436,9 +2637,9 @@ function selectorHTML() {
 /** One popup shell: fixed height, its own scroll, anchored to the chip. */
 function selShell(title, body, foot) {
   return '<div class="scrim" data-close="1" style="background:transparent">'
-    + '<div class="popover selpop" style="' + anchorStyle('.modelchip', 460) + '">'
+    + '<div class="popover selpop" style="' + anchorStyle(document.querySelector('.modelchip') ? '.modelchip' : '.modechip', 460) + '">'
     + '<div class="selhead">' + esc(title)
-    + (SEL.busy ? '<span class="cap" style="margin-left:auto">saving…</span>' : '') + '</div>'
+    + (SEL.busy ? '<span class="cap" style="margin-left:auto">' + esc(BSW.line || 'saving…') + '</span>' : '') + '</div>'
     + body
     + (SEL.err ? '<div class="cap" style="padding:6px 16px;color:var(--danger)">' + esc(SEL.err) + '</div>' : '')
     + (foot ? '<div class="popfoot">' + foot + '</div>' : '')
@@ -2456,9 +2657,15 @@ async function selSavePreset() {
   if (preset.headers) entry.headers = preset.headers;
   let res = await BR.upsertProvider(entry);
   if (res && res.ok === false) { SEL.busy = false; SEL.err = res.error || 'could not save the provider'; render(); return; }
-  res = await BR.configSet('llm.activeTextProvider', preset.id);
-  SEL.busy = false;
-  if (res && res.ok === false) { SEL.err = res.error || 'saved, but could not activate it'; render(); return; }
+  if (S.busy) { SEL.busy = false; SEL.err = 'saved, but not activated while a turn is running'; render(); refreshLiveConfig(); return; }
+  BSW.line = 'switching…';
+  res = await BR.activateProvider(preset.id);
+  SEL.busy = false; BSW.line = '';
+  if (!res || !res.ok) {
+    SEL.err = res && res.needsKey ? 'saved, but could not activate it: no API key (' + preset.env + ')' : 'saved, but could not activate it' + (res && res.error ? ': ' + res.error : '');
+    render(); refreshLiveConfig(); return;
+  }
+  bswReport(res);
   SEL.addOpen = false;
   await refreshLiveConfig();
   SEL.kind = 'model'; SEL.cursor = 0; render();
@@ -2470,41 +2677,219 @@ async function selSavePreset() {
    Context gauge — real numbers, measured on the last prompt
    ============================================================ */
 
-async function refreshContext() {
-  if (!BR || !S.agentSession) return;
-  const stateDir = LIVE_CAPS && LIVE_CAPS.paths && LIVE_CAPS.paths.stateDir;
-  if (!stateDir) return;
-  const res = await BR.traceUsage(stateDir, S.agentSession);
-  if (!res || !res.ok || !res.usage) return;
-  Object.assign(CTX, res.usage);
-  CTX.window = null; CTX.windowLabel = '';
-  const entry = selProviders().find((p) => p.id === selActiveProviderId());
-  if (entry && entry.defaultChatModel) {
-    const hit = SEL.models.find((m) => m.id === entry.defaultChatModel);
-    if (hit && hit.contextWindow) { CTX.window = hit.contextWindow; CTX.windowLabel = 'model window'; }
+/* ============================================================
+   Lane B — context before the first message (item 3)
+
+   The user's words: "I want to see the context before I am sending
+   a message, just to calculate the thing". The TUI shows nothing
+   before the first prompt_built (selectContextUsage returns null,
+   the panel says "not measured yet"), so there is no TUI logic to
+   copy for that state — the user's words override it, and the
+   figure shown is a labelled PROJECTION built only from data the
+   installed agent already produces:
+     scaffold  = turn-0 prompt_captured.tokens.stablePrefix of the
+                 newest trace built in this workspace (traceBaseline)
+     draft     = estimateTokens(S.draft), the runtime's own estimator
+     window    = /props n_ctx (local) or the provider catalogue
+     reserved  = localModels.completionMaxTokens, as the TUI panel
+   Precedence once something real exists: the branch route's built
+   prompt ('built') > the session's trace ('provider'|'estimate') >
+   the projection. The '~' and the word "projected" never come off
+   until one of the first two answers.
+   ============================================================ */
+
+/** Port of src/tui/components/format-tokens.ts formatTokens: 6.4k / 32k / 1.0M. */
+function fmtTokens(n) {
+  if (n < 1000) return String(n);
+  if (n < 1e6) { const k = n / 1000; return Number.isInteger(k) ? k + 'k' : k.toFixed(1) + 'k'; }
+  const m = n / 1e6; return Number.isInteger(m) ? m + 'M' : m.toFixed(1) + 'M';
+}
+/** Port of src/prompt/token-budget.ts estimateTokens (over-counts by ~10-15% on purpose). */
+function estimateTokens(text) {
+  if (!text || !text.length) return 0;
+  const words = text.trim().split(/\s+/).length;
+  return Math.max(Math.ceil(text.length / 3.6), Math.ceil(words * 1.4));
+}
+function relTime(at) {
+  const s = Math.max(0, Date.now() - at) / 1000;
+  if (s < 60) return 'just now';
+  const m = Math.floor(s / 60); if (m < 60) return m + (m === 1 ? ' minute ago' : ' minutes ago');
+  const h = Math.floor(m / 60); if (h < 24) return h + (h === 1 ? ' hour ago' : ' hours ago');
+  const d = Math.floor(h / 24); if (d === 1) return 'yesterday';
+  return d + ' days ago';
+}
+
+/** The panel's basis line: where the figure comes from, in one sentence. */
+function ctxBasisLine() {
+  if (CTX.source === 'provider') {
+    // On llama the provider count is the KV-cache MISS count (the cached
+    // prefix is not re-evaluated), so say how much was reused rather than
+    // let a 1.0k figure read as if the projection had been six times off.
+    return 'counted by ' + (CTX.modelId || 'the model')
+      + (CTX.cacheHitTokens > 0 ? ' (after ' + fmtTokens(CTX.cacheHitTokens) + ' reused from its cache)' : '');
   }
-  if (!CTX.window) {
+  if (CTX.source === 'estimate') return 'estimated from the built prompt';
+  if (CTX.source === 'built') return 'built now from this workspace’s tools, skills and memory — before recall';
+  const b = CTX.baseline;
+  if (!b) return '';
+  const place = b.workspaceMatch ? 'in this workspace' : 'in ' + (b.workingDir || 'another workspace');
+  // Never "(glm-5.2, not zhipu/glm-5.2)": the trace holds the provider's
+  // echoed id, so a basename match is the same model and a mismatch is
+  // stated as what the baseline was built for, not as a correction.
+  const built = b.modelMatch
+    ? 'for ' + b.modelId + ' ' + place
+    : place + (b.modelId ? ' (for ' + b.modelId + ')' : '');
+  return 'projected from the last prompt this agent built ' + built + ' — ' + b.sessionId + ', ' + relTime(b.at)
+    + '. The real figure comes from the prompt the agent actually builds.';
+}
+
+/**
+ * The window, in the TUI's order (src/tui/select-context-usage.ts
+ * resolveWindow): the prompt's own window → llama /props n_ctx →
+ * the provider catalogue → null. Nothing substitutes a default: the
+ * TUI's comment calls a gauge against a guessed scale a fabrication.
+ * Deliberate divergence from the TUI poller: it reads /props whichever
+ * provider is active; here /props is probed only when the active
+ * provider is llama-server, so a cloud gauge is never drawn against a
+ * local server's n_ctx. For the same reason the managed contextSize
+ * and catalogue "model max" fallbacks apply to the local route only.
+ */
+async function resolveWindow() {
+  const entry = activeProvider();
+  const local = !entry || entry.kind === 'llama-server';
+  if (local) {
+    const url = LIVE_CAPS && LIVE_CAPS.llama && LIVE_CAPS.llama.url;
+    if (url && BR.llamaProps) {
+      const key = (LIVE_CONFIG && LIVE_CONFIG.localModels && LIVE_CONFIG.localModels.apiKey) || undefined;
+      const p = await BR.llamaProps(url, key);
+      if (p && p.n_ctx > 0) return {window:p.n_ctx, label:'loaded window'};
+    }
     const managed = (LIVE_CONFIG && LIVE_CONFIG.localModels && LIVE_CONFIG.localModels.managed) || {};
-    if (managed.contextSize) { CTX.window = managed.contextSize; CTX.windowLabel = 'loaded window'; }
-    else {
-      const row = SEL.local.find((m) => m.id === managed.modelId);
-      if (row && row.context) {
-        const n = parseFloat(row.context);
-        const mult = /m/i.test(row.context) ? 1e6 : /k/i.test(row.context) ? 1000 : 1;
-        if (n) { CTX.window = Math.round(n * mult); CTX.windowLabel = 'model max'; }
-      }
+    if (managed.contextSize) return {window:managed.contextSize, label:'loaded window'};
+    const row = SEL.local.find((m) => m.id === managed.modelId);
+    if (row && row.context) {
+      const n = parseFloat(row.context);
+      const mult = /m/i.test(row.context) ? 1e6 : /k/i.test(row.context) ? 1000 : 1;
+      if (n) return {window:Math.round(n * mult), label:'model max'};
+    }
+    return {window:null, label:''};
+  }
+  const model = entry.defaultChatModel || entry.model;
+  if (model && BR.modelWindow) {
+    const r = await BR.modelWindow(entry.id, entry.kind, model);
+    if (r && r.ok && r.window > 0) return {window:r.window, label:'model window'};
+  }
+  return {window:null, label:''};
+}
+
+function ctxPairsCap() { return (LIVE_CONFIG && LIVE_CONFIG.agent && LIVE_CONFIG.agent.conversationMaxPairs) || 0; }
+
+// `stateDirOverride` exists for the smoke only (window.__ctxEmpty): it
+// runs this same path against a real directory that holds no trace, so
+// the "not measured yet" state is exercised rather than assumed.
+async function refreshContext(stateDirOverride) {
+  if (!BR) return;
+  const seq = ++CTX.seq;
+  const stateDir = (typeof stateDirOverride === 'string' && stateDirOverride)
+    || (LIVE_CAPS && LIVE_CAPS.paths && LIVE_CAPS.paths.stateDir);
+  const windowP = resolveWindow().catch(() => ({window:null, label:''}));
+  let usage = null;
+  // (a) the branch route: the agent's own prompt, built now.
+  if (BR.contextPreview && CTX.previewSupported !== false) {
+    const r = await BR.contextPreview(S.agentSession, S.draft);
+    if (r && r.supported === false) CTX.previewSupported = false;
+    else if (r && r.ok && r.usage) {
+      CTX.previewSupported = true;
+      const sec = (label) => { const s = (r.usage.sections || []).find((x) => x.label === label); return s ? s.tokens : 0; };
+      usage = {tokens:r.usage.tokens, source:'built', stablePrefix:sec('prompt scaffold'), tail:sec('conversation'),
+        cacheHitTokens:null, modelId:null, baseline:null, sections:r.usage.sections || [],
+        pairsCap:r.pairsCap || r.usage.conversationPairsCap || 0, reserved:r.reservedForReply || 0,
+        builtWindow:r.contextWindow > 0 ? r.contextWindow : null};
     }
   }
-  render();
+  // (b) this session's trace, once a turn has run.
+  if (!usage && S.agentSession && stateDir) {
+    const r = await BR.traceUsage(stateDir, S.agentSession);
+    if (r && r.ok && r.usage) usage = Object.assign({}, r.usage, {baseline:null, sections:null, pairsCap:ctxPairsCap(), reserved:0, builtWindow:null});
+  }
+  // (c) the projection: the last scaffold this agent built here + the draft.
+  if (!usage && stateDir && BR.traceBaseline) {
+    const model = activeModel();
+    const r = await BR.traceBaseline(stateDir, /^(no model chosen|not configured|download model|)$/.test(model) ? null : model,
+      (LIVE_CAPS && LIVE_CAPS.capabilities && LIVE_CAPS.capabilities.workingDir) || null);
+    if (r && r.ok && r.baseline) {
+      const b = r.baseline;
+      usage = {tokens:b.stablePrefix + CTX.draftTokens, source:'projected', stablePrefix:b.stablePrefix, tail:0,
+        cacheHitTokens:null, modelId:b.modelId, baseline:b, sections:null, pairsCap:ctxPairsCap(), reserved:0, builtWindow:null};
+    }
+  }
+  if (seq !== CTX.seq) return; // a newer refresh is on its way
+  if (!usage) {
+    // Nothing measured and no trace to project from: the TUI's own
+    // "not measured yet" state — chip hidden, never a zero.
+    Object.assign(CTX, {tokens:0, source:null, stablePrefix:0, tail:0, cacheHitTokens:null, modelId:null, baseline:null, sections:null, pairsCap:0, reserved:0});
+  } else {
+    const builtWindow = usage.builtWindow; delete usage.builtWindow;
+    Object.assign(CTX, usage);
+    if (builtWindow) { CTX.window = builtWindow; CTX.windowLabel = 'prompt window'; }
+  }
+  // The window resolves off the critical path: a cached catalogue answer
+  // is instant, a first --refresh is not, and the figure should not wait.
+  const w = await Promise.race([windowP, new Promise((r) => setTimeout(() => r(undefined), 2000))]);
+  if (seq !== CTX.seq) return;
+  if (CTX.windowLabel !== 'prompt window') {
+    if (w) { CTX.window = w.window; CTX.windowLabel = w.label; }
+    else { CTX.window = null; CTX.windowLabel = ''; }
+  }
+  paintContext();
+  if (w === undefined) {
+    const late = await windowP;
+    if (seq !== CTX.seq) return;
+    if (CTX.windowLabel !== 'prompt window') { CTX.window = late.window; CTX.windowLabel = late.label; paintContext(); }
+  }
+}
+
+/**
+ * CTX is read by exactly two things — the composer chip and the context
+ * panel — so a refresh repaints the chip in place and rebuilds the page
+ * only while the panel is open. A render() here would rebuild #composer
+ * and drop the caret of a first message being typed (afterChat restores
+ * the text, not the focus), and this refresh now runs precisely while
+ * that message is being typed: at boot, on a provider/model change, on
+ * session:new and when a slow catalogue answer lands seconds later.
+ */
+function paintContext() {
+  if (S.overlay === 'context') { render(); return; }
+  repaintContextChip();
+}
+
+/** The draft's estimate: moves the projected figure only, never a measured one. */
+function ctxDraftChanged() {
+  CTX.draftTokens = estimateTokens(S.draft);
+  if (CTX.source === 'projected') { CTX.tokens = CTX.stablePrefix + CTX.draftTokens; scheduleChipRepaint(); }
+}
+function scheduleChipRepaint() {
+  clearTimeout(CTX.chipTimer);
+  CTX.chipTimer = setTimeout(repaintContextChip, 150);
+}
+function repaintContextChip() {
+  const el = document.querySelector('.cfoot .ctxbtn');
+  const html = contextChip();
+  if (el) { if (html) el.outerHTML = html; else el.remove(); return; }
+  if (!html) return;
+  const next = document.querySelector('.cfoot .cmodechip');
+  if (next) next.insertAdjacentHTML('beforebegin', html);
 }
 
 function contextChip() {
   if (!CTX.tokens) return '';
-  const label = CTX.window
-    ? tok(CTX.tokens) + '/' + tok(CTX.window)
-    : tok(CTX.tokens);
+  const proj = CTX.source === 'projected';
+  const label = (proj ? '~' : '') + (CTX.window
+    ? fmtTokens(CTX.tokens) + '/' + fmtTokens(CTX.window)
+    : fmtTokens(CTX.tokens));
   const pct = CTX.window ? Math.min(100, (CTX.tokens / CTX.window) * 100) : 0;
-  return '<button class="cchip ctxbtn" data-act="context" title="context">'
+  return '<button class="cchip ctxbtn' + (proj ? ' proj' : '') + '" data-act="context" title="'
+    + (proj ? 'projected — nothing measured in this session yet' : 'context') + '">'
     + (CTX.window ? '<span class="gauge"><i style="width:' + pct + '%"></i></span>' : '')
     + '<span class="tnum gaugelb">' + label + '</span></button>';
 }
@@ -2564,7 +2949,10 @@ if (typeof window !== 'undefined') {
   window.__sel = () => ({open:SEL.open, kind:SEL.kind, rows:SEL.rows.length, backend:selBackend(), err:SEL.err});
   window.__selOpen = (kind) => openSelector(kind);
   window.__selTab = (kind) => { SEL.kind = kind; SEL.cursor = 0; render(); selEnterModelPane(); };
-  window.__ctx = () => ({tokens:CTX.tokens, source:CTX.source, window:CTX.window, stablePrefix:CTX.stablePrefix});
+  window.__ctx = () => ({tokens:CTX.tokens, source:CTX.source, window:CTX.window, windowLabel:CTX.windowLabel, stablePrefix:CTX.stablePrefix,
+    draftTokens:CTX.draftTokens, previewSupported:CTX.previewSupported,
+    baseline: CTX.baseline ? {sessionId:CTX.baseline.sessionId, at:CTX.baseline.at, modelId:CTX.baseline.modelId,
+      workingDir:CTX.baseline.workingDir, workspaceMatch:CTX.baseline.workspaceMatch, modelMatch:CTX.baseline.modelMatch} : null});
   window.__ctxRefresh = () => refreshContext();
   window.__mode = () => currentMode();
 }
@@ -2576,30 +2964,36 @@ if (typeof window !== 'undefined') {
  * the popup stay open, showing the one action that would fix that.
  */
 async function selChooseBackend(id) {
-  SEL.err = null;
-  const llm = LIVE_CONFIG && LIVE_CONFIG.llm;
-  if (id === 'cloud') {
-    const provs = selProviders();
-    if (!provs.length) { SEL.kind = 'provider'; render(); return; }
-    const pick = provs.find((p) => p.id === selActiveProviderId()) || provs[0];
-    if (llm) llm.activeTextProvider = pick.id;
-    closeSelector();
-    BR.configSet('llm.activeTextProvider', pick.id).then((res) => {
-      if (res && res.ok === false) toast('Could not switch to cloud', res.error || '');
-      refreshLiveConfig();
-    });
-    return;
+  // Lane B — backend switch. The decision (which provider, which model,
+  // what to do with the daemon) is the TUI's activateCloud/activateLocal,
+  // ported into main's switchBackend; the write is whole-file, and the
+  // agent is restarted by main because `atag serve` pins its provider at
+  // boot. A running turn would be aborted by that restart, so refuse.
+  if (S.busy) { toast('Not while a turn is running'); return {ok:false, error:'a turn is running'}; }
+  SEL.err = null; SEL.busy = true; BSW.line = id === 'local' ? 'switching to local…' : 'switching to cloud…'; render();
+  const res = await BR.switchBackend(id);
+  SEL.busy = false; BSW.line = '';
+  if (!res || !res.ok) {
+    if (res && res.needsProvider) { SEL.kind = 'provider'; SEL.addOpen = true; SEL.presetCur = 0; render(); return res; }
+    if (res && res.needsKey) { bswOpenKey(res.providerId); return res; }
+    SEL.err = (res && res.error) || 'could not switch to ' + id;
+    toast('Could not switch to ' + id, SEL.err);
+    render();
+    await refreshLiveConfig();
+    return res;
   }
-  // Local switches at once. A missing model is the model chip's problem,
-  // and it reads "not configured" until one is picked.
-  if (llm) llm.activeTextProvider = 'local-llama';
+  bswReport(res);
+  if (res.daemon === 'start-failed') toast('Local daemon did not start', res.error || '');
+  await refreshLiveConfig();
+  if (res.needsModel) {
+    // activateLocal with nothing on disk: the route moved, the model
+    // switch opens (its "download" rows lead to the pull).
+    SEL.kind = 'model'; SEL.cursor = 0; SEL.filter = ''; render();
+    selLoadLocal();
+    return res;
+  }
   closeSelector();
-  const managed = (LIVE_CONFIG && LIVE_CONFIG.localModels && LIVE_CONFIG.localModels.managed) || {};
-  BR.configSet('llm.activeTextProvider', 'local-llama').then((res) => {
-    if (res && res.ok === false) { toast('Could not switch to local', res.error || ''); refreshLiveConfig(); return; }
-    if (managed.modelId) BR.modelsStart();
-    refreshLiveConfig();
-  });
+  return res;
 }
 
 /* ============================================================
@@ -2733,7 +3127,13 @@ async function wizNext() {
   if (k.custom && !/^https?:\/\/\S+$/.test(WIZ.baseUrl)) { WIZ.error = 'That does not look like a URL.'; render(); return; }
   WIZ.phase = 'verifying'; WIZ.error = null; render();
 
-  const id = k.custom ? 'custom-' + WIZ.baseUrl.replace(/^https?:\/\//, '').replace(/[^\w.-]+/g, '-').slice(0, 32) : k.id;
+  // Lane B — backend switch: opened for an existing entry without a key
+  // (bswOpenKey), the write goes to that entry's own id, as the TUI's
+  // openProviderConfigFor does; a fresh pick keeps the preset id.
+  const existing = WIZ.forId ? selProviders().find((p) => p.id === WIZ.forId) : null;
+  WIZ.forId = null;
+  const id = existing && existing.kind === k.kind ? existing.id
+    : k.custom ? 'custom-' + WIZ.baseUrl.replace(/^https?:\/\//, '').replace(/[^\w.-]+/g, '-').slice(0, 32) : k.id;
   const entry = {id, kind:k.kind};
   if (k.baseUrl || k.custom) entry.baseUrl = k.custom ? WIZ.baseUrl : k.baseUrl;
   if (k.env) entry.apiKeyEnvVar = k.env;
@@ -2753,8 +3153,17 @@ async function wizNext() {
     return;
   }
   const model = k.defaultModel && listed.models.some((m) => m.id === k.defaultModel) ? k.defaultModel : listed.models[0].id;
-  await BR.setProviderModel(id, model);
-  await BR.configSet('llm.activeTextProvider', id);
+  // Lane B — backend switch: one write for the model + the activation, then
+  // the restart main does for it. Not while a turn runs.
+  if (S.busy) { WIZ.phase = 'configure'; WIZ.error = 'saved and verified, but not activated while a turn is running'; render(); refreshLiveConfig(); return; }
+  const sel = await BR.selectCloudModel(id, model);
+  if (!sel || !sel.ok) {
+    WIZ.phase = 'configure';
+    WIZ.error = sel && sel.needsKey ? 'saved, but the agent sees no key for it — enter one above or export ' + (k.env || 'its variable')
+      : 'saved, but could not activate it' + (sel && sel.error ? ': ' + sel.error : '');
+    render(); refreshLiveConfig(); return;
+  }
+  bswReport(sel, 'Selected chat model ' + id + '/' + model + '.');
   WIZ.phase = null;
   await refreshLiveConfig();
   closeSelector();
@@ -3038,4 +3447,173 @@ if (typeof window !== 'undefined') {
             durations: Array.from(document.querySelectorAll('.card .du')).map((d) => d.textContent),
             lastTitle: (() => { const d = document.querySelectorAll('.card .du'); return d.length ? d[d.length - 1].title : ''; })()};
   };
+}
+
+/* ============================================================
+   Lane B — backend switch: helpers and smoke hooks
+   ============================================================ */
+
+/** The TUI's runtime_info lines for a switch result, as system rows. */
+function bswReport(res, extra) {
+  if (!res || !res.ok) return;
+  if (res.providerId && res.transport) {
+    S.log.push({id:nid(), k:'system', text: esc('Switched active text provider to "' + res.providerId + '". New messages use ' + res.transport + '.')});
+  }
+  if (extra) S.log.push({id:nid(), k:'system', text: esc(extra)});
+  if (res.daemonLine) S.log.push({id:nid(), k:'system', text: esc(res.daemonLine)});
+  if (res.daemon === 'start-failed' && res.error) S.log.push({id:nid(), k:'system', text: esc('local-llm: ' + res.error)});
+  // No "restarting" line: main has already restarted `atag serve` by the
+  // time this runs, and applyStatus reports the reconnect itself.
+  render();
+}
+
+/** The TUI's answer to a provider without a key: its configure step. */
+function bswOpenKey(id) {
+  // The entry's kind decides which configure step opens (the TUI's
+  // openProviderConfigFor), so a hand-named entry gets one too; the id
+  // only matches a preset when the entry was created from it.
+  const entry = selProviders().find((p) => p.id === id);
+  const row = (entry && KIND_ROWS.find((k) => k.kind === entry.kind)) || KIND_ROWS.find((k) => k.id === id);
+  const env = (entry && entry.apiKeyEnvVar) || (row && row.env);
+  SEL.err = 'no API key for ' + id + (env ? ' — enter one or export ' + env : '');
+  if (row) { WIZ.row = row; WIZ.forId = id; WIZ.phase = 'configure'; WIZ.apiKey = ''; WIZ.baseUrl = (entry && entry.baseUrl) || ''; WIZ.error = SEL.err; }
+  render();
+}
+
+/** Which providers have a key (the rows' `ready` copy) and, on the local route, the catalogue snapshot the chip and the gate read. */
+function bswRefreshFacts() {
+  if (!BR) return;
+  BR.providersReady().then((r) => {
+    // A failed read keeps the previous ids (and the previous "loaded" state).
+    if (!(r && r.ok && Array.isArray(r.ids))) return;
+    const was = JSON.stringify([BSW.readyLoaded, BSW.readyIds]);
+    BSW.readyIds = r.ids; BSW.readyLoaded = true;
+    if (JSON.stringify([BSW.readyLoaded, BSW.readyIds]) !== was) bswRepaint();
+  });
+  if (selBackend() === 'local' && !SEL.localBusy && !SEL.pulling) bswSnapshot();
+}
+/** The catalogue snapshot (`atag models list`): what is on disk, which is active. Resolves either way. */
+function bswSnapshot() {
+  if (!BR) return Promise.resolve();
+  return BR.modelsList().then((res) => {
+    if (!(res && res.ok)) return;
+    const was = JSON.stringify([BSW.localLoaded, SEL.local]);
+    SEL.local = res.models.filter((m) => !/embed|bge|nomic|jina/i.test(m.id)); BSW.localLoaded = true;
+    if (JSON.stringify([BSW.localLoaded, SEL.local]) !== was) bswRepaint();
+  }).catch(() => {});
+}
+/** The model chip, as the composer draws it: nothing when there is no model (the TUI renders no control then). */
+function modelChipHtml() {
+  const label = activeModel();
+  return label ? '<button class="cchip modelchip" data-sel-open="model">' + esc(shortModel(label)) + ic('chevD') + '</button>' : '';
+}
+/**
+ * What the two facts change on screen, repainted in place. These land
+ * seconds after a switch or the boot — two atag subprocesses — while the
+ * user may already be typing the first message; a full render() would
+ * rebuild #composer, and afterChat restores the text but not the caret.
+ * So: the model chip by an outerHTML swap (as repaintContextChip does),
+ * and the selector overlay only while it is open, with the filter box's
+ * caret carried across.
+ */
+function bswRepaint() {
+  const foot = document.querySelector('.cfoot');
+  if (foot) {
+    const html = modelChipHtml();
+    const el = foot.querySelector('.modelchip');
+    if (el) { if (!html) el.remove(); else if (el.outerHTML !== html) el.outerHTML = html; }
+    else if (html) { const spacer = foot.querySelector(':scope > span'); if (spacer) spacer.insertAdjacentHTML('beforebegin', html); }
+  }
+  if (!SEL.open || OB.open) return;
+  const f = document.getElementById('sel-filter');
+  const caret = f && document.activeElement === f ? [f.selectionStart, f.selectionEnd] : null;
+  renderOverlays();
+  if (caret) { const n = document.getElementById('sel-filter'); if (n) { n.focus(); n.setSelectionRange(caret[0], caret[1]); } }
+}
+/**
+ * downloadProgressFor (src/tui/local-turn-gate.ts): the live pull line for
+ * this model, in the TUI's words — `downloading now — N% · X / Y` once the
+ * size is known, `downloading now…` before that, null when no pull of this
+ * model is in flight. The figures are the CLI's own progress line
+ * (`[=====     ] 45%  1.20 GB / 2.60 GB  file (4.2 GB)`), which is where the
+ * desktop's pull boxes get them too.
+ */
+function bswDownloadProgress(modelId) {
+  let line = null;
+  if (SEL.pulling === modelId) line = SEL.pullLine || '';
+  else if (MP.pulling === modelId) line = MP.pullLog[MP.pullLog.length - 1] || '';
+  else if (OB.pulling && OB.pulling.id === modelId) line = OB.log[OB.log.length - 1] || '';
+  if (line === null) return null;
+  const m = /(\d+)%\s+([\d.]+ [KMG]B)\s*\/\s*([\d.]+ [KMG]B)/.exec(line);
+  return m ? 'downloading now — ' + m[1] + '% · ' + m[2] + ' / ' + m[3] : 'downloading now…';
+}
+
+/** evaluateLocalTurnGate over LIVE_CONFIG and the cached catalogue. */
+function localTurnGate() {
+  const cfg = LIVE_CONFIG;
+  if (!cfg) return {kind:'run'};
+  const llm = cfg.llm || {};
+  const providers = llm.providers || [];
+  const active = providers.find((p) => p.id === llm.activeTextProvider);
+  const activeIsLocal = active === undefined || active.kind === 'llama-server';
+  const lm = cfg.localModels || {};
+  if (!activeIsLocal || lm.mode !== 'managed') return {kind:'run'};
+  const modelId = (lm.managed && lm.managed.modelId) || null;
+  // Disk state comes from the catalogue snapshot; until it has landed the
+  // verdict is 'pending' and submit() takes the snapshot before deciding.
+  if (modelId !== null && !BSW.localLoaded) return {kind:'pending'};
+  const row = modelId !== null ? SEL.local.find((m) => m.id === modelId) : null;
+  if (modelId !== null && row && row.downloaded) return {kind:'run'};
+  const status = modelId === null
+    ? 'no local model is selected — open Models (/local) to pick and download one'
+    : (bswDownloadProgress(modelId) || 'not downloaded — open Models (/local) and press Enter on it to download');
+  const subject = modelId === null ? status : 'local model ' + modelId + ' is ' + status;
+  // resolveFallbackChain: the configured chain (or just the active id), with local-llama appended unless appendLocal is false.
+  const ids = new Set(providers.map((p) => p.id));
+  const fb = llm.fallback || {};
+  const requested = (fb.chain && fb.chain.length) ? fb.chain : [llm.activeTextProvider];
+  const chain = [llm.activeTextProvider].concat(requested.filter((id) => ids.has(id) && id !== llm.activeTextProvider));
+  if (fb.appendLocal !== false) { const local = providers.find((p) => p.kind === 'llama-server'); if (local && !chain.includes(local.id)) chain.push(local.id); }
+  const length = chain.filter((id, i) => ids.has(id) && chain.indexOf(id) === i).length;
+  if (length > 1) return {kind:'notice', text: subject + ' — running this turn through the fallback chain'};
+  return {kind:'block', text: subject};
+}
+
+if (typeof window !== 'undefined') {
+  window.__switchBackend = (kind) => selChooseBackend(kind);
+  window.__activeProvider = () => selActiveProviderId() || null;
+  window.__lastSystem = () => {
+    for (let i = S.log.length - 1; i >= 0; i--) if (S.log[i].k === 'system') return S.log[i].text || '';
+    return '';
+  };
+  window.__bsw = () => ({line:BSW.line, readyIds:BSW.readyIds.slice(), readyLoaded:BSW.readyLoaded, localLoaded:BSW.localLoaded, gating:BSW.gating, turnBusy:S.busy, gate:localTurnGate()});
+  // What the editor holds (the gate's block path hands the message back to it).
+  window.__draft = () => { const e = document.getElementById('entry'); return {draft:S.draft, entry:e ? e.value : null, users:S.log.filter((m) => m.k === 'user').length}; };
+  // The late-facts repaint must leave the composer's caret where it was.
+  window.__bswRepaintKeepsCaret = () => {
+    const e = document.getElementById('entry'); if (!e) return null;
+    e.focus(); e.value = 'typing mid-word'; e.setSelectionRange(6, 6);
+    bswRepaint(); // the path both late callbacks take
+    const n = document.getElementById('entry');
+    const out = {same: n === e, focused: document.activeElement === n, start: n ? n.selectionStart : -1, end: n ? n.selectionEnd : -1};
+    if (n) n.value = S.draft;
+    return out;
+  };
+  // Every system line, entities decoded, so the smoke can pin the TUI's runtime_info copy.
+  window.__systemLines = () => S.log.filter((m) => m.k === 'system').map((m) => {
+    const t = document.createElement('textarea'); t.innerHTML = m.text || ''; return t.value;
+  });
+}
+
+/* Lane B — context before the first message (item 3): smoke hooks. */
+if (typeof window !== 'undefined') {
+  window.__ctxOpen = () => { S.overlay = 'context'; render(); return !!document.querySelector('.popover .ctxdial'); };
+  window.__ctxTitle = () => ((document.querySelector('.popover .hd') || {}).textContent || '');
+  window.__ctxBasis = () => ((document.querySelector('.popover .ctxbasis') || {}).textContent || '');
+  window.__ctxDraft = (t) => { S.draft = t; CTX.draftTokens = estimateTokens(t); if (CTX.source === 'projected') CTX.tokens = CTX.stablePrefix + CTX.draftTokens; render(); return CTX.tokens; };
+  window.__ctxClose = () => { act('close'); render(); };
+  window.__ctxChip = () => { const el = document.querySelector('.cfoot .ctxbtn'); return el ? {label:(el.querySelector('.gaugelb') || {}).textContent || '', proj:el.classList.contains('proj')} : null; };
+  window.__ctxNew = () => { act('session:new'); return refreshContext().then(() => window.__ctx()); };
+  // The no-trace state, against a real empty directory: the caller restores with __ctxRefresh().
+  window.__ctxEmpty = (dir) => refreshContext(dir).then(() => window.__ctx());
 }

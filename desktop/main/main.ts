@@ -22,7 +22,29 @@ import {
   modelsStart,
   traceUsage,
   traceTools,
+  // Lane B — backend switch
+  configSetWhole,
+  localDaemonRunning,
+  modelsStop,
+  providerHasKey,
+  providersReady,
+  setActiveTextProvider,
+  useManagedMode,
+  type UserConfigShape,
+  // Lane B — context before the first message (item 3)
+  modelWindow,
+  traceBaseline,
 } from "./agent-cli.js";
+import { readFileSync } from "node:fs";
+import {
+  activateProvider,
+  selectCloudModel,
+  selectLocalModel,
+  switchBackend,
+  type SwitchResult,
+} from "./backend-switch.js";
+// Lane B — context before the first message (item 3): the no-trace smoke dir.
+import { mkdirSync, rmSync } from "node:fs";
 
 const DEV = process.argv.includes("--dev");
 /** `--smoke` boots, waits for first paint, writes a screenshot, and exits. */
@@ -35,6 +57,25 @@ const MODELS_TEST = process.argv.includes("--models");
 let win: BrowserWindow | null = null;
 let agent: AgentClient | null = null;
 let pull: { done: Promise<unknown>; cancel: () => void } | null = null;
+
+// Lane B — backend switch: the llm route `atag serve` booted with. serve
+// pins its provider at boot, so a switch whose write found the file already
+// naming that provider (the TUI or a hand edit moved the file while this
+// window was open) still has to restart when serve is behind the file.
+interface BootRoute { provider: string; model: string | null }
+let bootRoute: Promise<BootRoute | null> = Promise.resolve(null);
+async function snapshotBootRoute(client: AgentClient): Promise<BootRoute | null> {
+  try {
+    const body = (await client.config()) as { config?: UserConfigShape };
+    const llm = body.config?.llm;
+    // No llm block: the runtime synthesizes a single local-llama entry.
+    const provider = llm?.activeTextProvider ?? "local-llama";
+    const entry = (llm?.providers ?? []).find((p) => p.id === provider);
+    return { provider, model: entry?.defaultChatModel ?? entry?.model ?? null };
+  } catch {
+    return null;
+  }
+}
 
 function send(channel: string, payload?: unknown): void {
   if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
@@ -253,6 +294,69 @@ function wireIpc(client: AgentClient): void {
   ipcMain.handle("app:hostRam", () => hostRamGb());
   ipcMain.handle("app:keyEnv", () => PROVIDER_KEY_ENV);
 
+  // --- Lane B — backend switch ---
+  // The write is only half of a switch: `atag serve` pins its provider at
+  // boot and has no reload route on 0.5.4, so a result that says
+  // `restart` is followed by the same stop+start `agent:restart` does.
+  const applySwitch = async (res: SwitchResult) => {
+    // The file moved (res.restart), or serve booted on a different route
+    // than the file now names — for a cloud route the chat model counts
+    // too, since serve pins the provider entry it read at boot.
+    const boot = await bootRoute;
+    const behind = !!res.ok && !!res.providerId && !!boot
+      && (boot.provider !== res.providerId
+        || (res.transport === "native_tools" && (boot.model ?? null) !== (res.model ?? null)));
+    const restart = !!res.ok && (!!res.restart || behind);
+    if (restart) {
+      await client.stop();
+      await client.start();
+    }
+    return { ...res, restart, status: client.status };
+  };
+  ipcMain.handle("cli:switchBackend", async (_event, kind: unknown) => {
+    if (kind !== "cloud" && kind !== "local") return { ok: false, error: "backend must be cloud or local" };
+    return applySwitch(await switchBackend(kind));
+  });
+  ipcMain.handle("cli:activateProvider", async (_event, id: unknown) => {
+    if (typeof id !== "string") return { ok: false, error: "provider id required" };
+    return applySwitch(await activateProvider(id));
+  });
+  ipcMain.handle("cli:selectCloudModel", async (_event, payload: unknown) => {
+    const { id, model } = (payload ?? {}) as { id?: unknown; model?: unknown };
+    if (typeof id !== "string" || typeof model !== "string") return { ok: false, error: "id and model are required" };
+    return applySwitch(await selectCloudModel(id, model));
+  });
+  ipcMain.handle("cli:selectLocalModel", async (_event, id: unknown) => {
+    if (typeof id !== "string") return { ok: false, error: "model id required" };
+    return applySwitch(await selectLocalModel(id));
+  });
+  ipcMain.handle("cli:useManagedMode", () => useManagedMode());
+  ipcMain.handle("cli:providersReady", () => providersReady());
+
+  // --- Lane B — context before the first message (item 3) ---
+  ipcMain.handle("cli:traceBaseline", (_event, payload: unknown) => {
+    const { stateDir, model, workingDir } = (payload ?? {}) as { stateDir?: unknown; model?: unknown; workingDir?: unknown };
+    if (typeof stateDir !== "string") return { ok: false, error: "stateDir is required" };
+    return traceBaseline(stateDir, {
+      model: typeof model === "string" && model ? model : null,
+      workingDir: typeof workingDir === "string" && workingDir ? workingDir : null,
+    });
+  });
+  ipcMain.handle("cli:modelWindow", async (_event, payload: unknown) => {
+    const { providerId, kind, model } = (payload ?? {}) as { providerId?: unknown; kind?: unknown; model?: unknown };
+    if (typeof providerId !== "string" || typeof model !== "string") return { ok: false, window: null, error: "providerId and model are required" };
+    return { ok: true, window: await modelWindow(providerId, typeof kind === "string" ? kind : "", model) };
+  });
+  ipcMain.handle("agent:llamaProps", (_event, payload: unknown) => {
+    const { url, apiKey } = (payload ?? {}) as { url?: unknown; apiKey?: unknown };
+    if (typeof url !== "string") return { ok: false, n_ctx: null, error: "url is required" };
+    return client.llamaProps(url, typeof apiKey === "string" && apiKey ? apiKey : undefined);
+  });
+  ipcMain.handle("agent:contextPreview", (_event, payload: unknown) => {
+    const { sessionId, message } = (payload ?? {}) as { sessionId?: unknown; message?: unknown };
+    return client.contextPreview(typeof sessionId === "string" && sessionId ? sessionId : null, typeof message === "string" ? message : "");
+  });
+
   // Files the agent produced: open, reveal, copy, save elsewhere.
   const safePath = (p: unknown): string | null => {
     if (typeof p !== "string" || !p.startsWith("/") || p.includes("\0")) return null;
@@ -297,6 +401,13 @@ function wireIpc(client: AgentClient): void {
   client.on("chat", (event) => send("agent:chat", event));
   client.on("approval", (event) => send("agent:approval", event));
   client.on("log", (event) => send("agent:log", event));
+
+  // Lane B — backend switch: snapshot the route serve booted with, as soon
+  // as it is healthy; a stopped or dead child has none.
+  client.on("status", (status: { state?: string }) => {
+    if (status.state === "connected") bootRoute = snapshotBootRoute(client);
+    else if (status.state === "stopped" || status.state === "error") bootRoute = Promise.resolve(null);
+  });
 }
 
 async function smokeTest(): Promise<void> {
@@ -348,7 +459,108 @@ async function smokeTest(): Promise<void> {
       "document.querySelector('#onboarding .ob-title')?.textContent ?? ''",
     );
     const options = await js<number>("document.querySelectorAll('#onboarding .ob-opt').length");
-    check("wizard opens", title.length > 0 && options === 3, `${JSON.stringify(title)} options=${options}`);
+    // Lane B — backend switch: two choices; the custom endpoint is not offered by the desktop.
+    check("wizard opens", title.length > 0 && options === 2, `${JSON.stringify(title)} options=${options}`);
+  }
+
+  // --- Lane B — context before the first message (item 3) ---
+  // Nothing has been sent yet, so this block has to run BEFORE the first
+  // __ask: the chip must already carry a labelled projection (or the TUI's
+  // "not measured yet" state) — never a zero, never a guessed window.
+  type PreCtx = {
+    tokens: number; source: string | null; window: number | null; windowLabel: string; stablePrefix: number;
+    draftTokens: number; previewSupported: boolean | null;
+    baseline: { sessionId: string; at: number; modelId: string | null; workspaceMatch: boolean; modelMatch: boolean } | null;
+  };
+  let pre: PreCtx | null = null;
+  if (state === "connected") {
+    await js<void>("window.__ctxRefresh()");
+    await new Promise((r) => setTimeout(r, 4000));
+    pre = await js<PreCtx>("window.__ctx()");
+    check(
+      "context has a basis before the first message",
+      pre.source === "projected" || pre.source === "built" || (pre.source === null && pre.tokens === 0),
+      JSON.stringify(pre),
+    );
+    if (pre.source === "projected") {
+      check(
+        "projection names its baseline",
+        !!pre.baseline && !!pre.baseline.sessionId && pre.baseline.at > 0 && pre.tokens >= pre.stablePrefix && pre.stablePrefix > 1000,
+        `${pre.tokens} from ${pre.baseline?.sessionId} (${pre.baseline?.modelId}, workspace=${pre.baseline?.workspaceMatch})`,
+      );
+      // 52 chars / 8 words → max(ceil(52/3.6)=15, ceil(8*1.4)=12) = 15 with the runtime's estimator.
+      const sentence = "hello there, please summarise this repository for me";
+      const withDraft = await js<number>(`window.__ctxDraft(${JSON.stringify(sentence)})`);
+      check("draft moves the projection by its estimate", withDraft === pre.stablePrefix + 15, `${pre.stablePrefix} + 15 → ${withDraft}`);
+      const chip = await js<{ label: string; proj: boolean } | null>("window.__ctxChip()");
+      check("projected chip is marked as such", !!chip && chip.proj && chip.label.startsWith("~"), JSON.stringify(chip));
+      const cleared = await js<number>("window.__ctxDraft('')");
+      check("empty draft returns to the scaffold", cleared === pre.stablePrefix, `${cleared} vs ${pre.stablePrefix}`);
+    }
+    // The bundled catalogues (openrouter, aimlapi) know their models' windows
+    // without the picker ever opening; any other kind may honestly not know.
+    const cfgForWindow = (await configGet()).config as UserConfigShape | undefined;
+    const activeForWindow = (cfgForWindow?.llm?.providers ?? []).find((p) => p.id === cfgForWindow?.llm?.activeTextProvider);
+    const bundledModel = !!activeForWindow && (activeForWindow.kind === "aimlapi" || activeForWindow.kind === "openrouter") && !!activeForWindow.defaultChatModel;
+    check(
+      "window resolved without opening the picker",
+      bundledModel ? pre.window! > 0 && pre.window !== 128000 : pre.window === null || pre.window > 0,
+      `window=${pre.window} (${pre.windowLabel || "unknown"}) provider=${activeForWindow?.kind ?? "none"}`,
+    );
+    const dial = await js<boolean>("window.__ctxOpen()");
+    check("panel opens with the dial before any turn", dial === true);
+    const title = await js<string>("window.__ctxTitle()");
+    check(
+      "panel title states its basis",
+      pre.source === null
+        ? title === "context · not measured yet"
+        : pre.source === "built" ? title.startsWith("context · ") : title.startsWith("context · ~") && /· projected$/.test(title),
+      title,
+    );
+    if (pre.source === "projected") {
+      const basis = await js<string>("window.__ctxBasis()");
+      check(
+        "panel basis line names the baseline",
+        basis.startsWith("projected from the last prompt this agent built ") && basis.endsWith("The real figure comes from the prompt the agent actually builds.") && !/, not /.test(basis),
+        basis,
+      );
+    }
+    await js<void>("window.__ctxClose()");
+
+    // No trace at all (a fresh install, tracing off, or pruned): the same
+    // refresh against a real, empty state dir must land on the TUI's own
+    // pre-measurement screen — chip hidden, never a zero, never a constant.
+    // A branch agent with the preview route still answers "built" there,
+    // because the route needs no trace; that is the honest answer too.
+    const noTraceDir = join(app.getPath("temp"), `atag-smoke-notrace-${process.pid}`);
+    mkdirSync(noTraceDir, { recursive: true });
+    try {
+      const none = await js<PreCtx>(`window.__ctxEmpty(${JSON.stringify(noTraceDir)})`);
+      const noneChip = await js<boolean>("!!document.querySelector('.cfoot .ctxbtn')");
+      const noneOpen = await js<boolean>("window.__ctxOpen()");
+      const noneTitle = await js<string>("window.__ctxTitle()");
+      const noneLine = await js<boolean>(
+        "((document.querySelector('.popover') || {}).textContent || '').includes('send a message — the breakdown comes from the prompt the agent actually builds')",
+      );
+      await js<void>("window.__ctxClose()");
+      check(
+        "no trace → not measured yet, chip hidden",
+        none.previewSupported === true
+          ? none.source === "built"
+          : none.source === null && none.tokens === 0 && !noneChip && noneOpen && noneTitle === "context · not measured yet" && noneLine,
+        `source=${none.source} tokens=${none.tokens} chip=${noneChip} dial=${noneOpen} title=${JSON.stringify(noneTitle)} line=${noneLine}`,
+      );
+    } finally {
+      rmSync(noTraceDir, { recursive: true, force: true });
+      // Back to the real state dir before anything else reads the chip.
+      await js<void>("window.__ctxRefresh()");
+    }
+    const restored = await js<PreCtx>("window.__ctx()");
+    check(
+      "projection returns after the no-trace probe",
+      restored.source === pre.source && restored.tokens === pre.tokens,
+      `source=${restored.source} tokens=${restored.tokens} (was ${pre.source} ${pre.tokens})`,
+    );
   }
 
   if (state === "connected") {
@@ -375,6 +587,25 @@ async function smokeTest(): Promise<void> {
       "context measured from the trace",
       ctx.tokens > 0 && !!ctx.source,
       `${ctx.tokens} tokens (${ctx.source}), scaffold ${ctx.stablePrefix}`,
+    );
+    // Lane B — item 3: after a reply the figure is a measurement, never the
+    // projection. tokens >= stablePrefix is deliberately NOT asserted: on
+    // llama the provider's promptTokens is the KV-cache miss count.
+    check(
+      "context after the reply is measured, not projected",
+      ctx.tokens > 0 && ["provider", "estimate", "built"].includes(ctx.source ?? ""),
+      `source=${ctx.source}`,
+    );
+    const chipAfter = await js<{ label: string; proj: boolean } | null>("window.__ctxChip()");
+    check("measured chip drops the projection mark", !!chipAfter && !chipAfter.proj && !chipAfter.label.startsWith("~"), JSON.stringify(chipAfter));
+    // A new thread flips back to the projection, with the same baseline.
+    const fresh = await js<PreCtx>("window.__ctxNew()");
+    check(
+      "session:new flips back to the projection",
+      pre?.source !== "projected"
+        ? fresh.source === pre?.source
+        : fresh.source === "projected" && fresh.baseline?.sessionId === pre.baseline?.sessionId && fresh.tokens === fresh.stablePrefix,
+      `source=${fresh.source} tokens=${fresh.tokens} scaffold=${fresh.stablePrefix} baseline=${fresh.baseline?.sessionId}`,
     );
 
     await js<void>("window.__selOpen('backend')");
@@ -645,6 +876,15 @@ async function smokeTest(): Promise<void> {
     await new Promise((r) => setTimeout(r, 800));
     // Several lanes share the screenshot path, so the frame state is also logged here.
     process.stdout.write(`DIAG screenshot frame: ${frame ? `scrollTop ${frame.top} of ${frame.height} (viewport ${frame.client}), ${frame.cards} cards, bottom in frame=${frame.height - frame.top - frame.client < 2}` : "no scroller"}\n`);
+
+
+    // --- Lane B — backend switch ---
+    // A round trip through the renderer's own switch path: to local and
+    // back, with the file, the chips, the restarted agent and the daemon
+    // all asserted. Everything is restored in finally — the whole file,
+    // the daemon state, and a fresh agent — so an assertion throw cannot
+    // leave the route changed.
+    await backendSwitchTest(js, check);
   }
 
   if (MODELS_TEST) await modelsTest(js, check);
@@ -703,6 +943,223 @@ async function modelsTest(
       entry?.defaultChatModel === chosen,
       `${entry?.defaultChatModel ?? "none"} === ${chosen}`,
     );
+  }
+}
+
+/** Lane B — backend switch. */
+async function backendSwitchTest(
+  js: <T>(code: string) => Promise<T>,
+  check: (name: string, ok: boolean, detail?: string) => void,
+): Promise<void> {
+  const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  const cfgNow = async () => (await configGet()).config as UserConfigShape | undefined;
+  const waitConnected = async () => {
+    const deadline = Date.now() + 60_000;
+    let st = "";
+    while (Date.now() < deadline) {
+      st = (await js<string>("window.__live && window.__live()")) ?? "";
+      if (st === "connected") break;
+      await wait(500);
+    }
+    await js<void>("window.__ctxRefreshCfg && window.__ctxRefreshCfg()");
+    await wait(1500);
+    return st;
+  };
+  const localEntry = (c: UserConfigShape | undefined) =>
+    (c?.llm?.providers ?? []).find((p) => p.id === "local-llama");
+
+  const beforeConfig = await cfgNow();
+  const daemonWasRunning = await localDaemonRunning();
+  const portBefore = agent?.status.port ?? null;
+  try {
+    // No dotted llm.* writes may remain in the renderer, and the guard must
+    // answer before the CLI's "unknown key" ever could.
+    const rendererSrc = readFileSync(join(__dirname, "..", "renderer", "renderer.js"), "utf8");
+    const dotted = rendererSrc.match(/configSet\(\s*['"]llm\./g) ?? [];
+    const guard = await configSet("llm.activeTextProvider", "x");
+    check(
+      "backend: no llm.* dotted writes remain",
+      dotted.length === 0 && guard.ok === false && /no dotted spelling/.test(guard.error ?? ""),
+      `${dotted.length} in renderer; guard: ${guard.error ?? "accepted"}`,
+    );
+
+    const snapshot = JSON.stringify(await cfgNow());
+    const bad = await setActiveTextProvider("nope");
+    check(
+      "backend: unknown id refused without writing",
+      bad.ok === false && bad.error === 'provider "nope" is not configured' && JSON.stringify(await cfgNow()) === snapshot,
+      bad.error ?? "accepted",
+    );
+
+    // To local, through the same function the backend row's click runs —
+    // from the route the file is actually on (cloud, on the lane's state
+    // dir), so the write the user's click makes is the one asserted below.
+    const wasCloud = (beforeConfig?.llm?.providers ?? []).find((p) => p.id === beforeConfig?.llm?.activeTextProvider)?.kind !== "llama-server";
+    const toLocal = await js<SwitchResult>("window.__switchBackend('local')");
+    // Read once before the harness refreshes anything: this is what the
+    // renderer's own post-IPC refreshLiveConfig() produced.
+    const rawLocal = await js<{ backend: string; mode: string }>(
+      "({backend: window.__sel().backend, mode: document.querySelector('.modechip')?.textContent ?? ''})",
+    );
+    const stLocal = await waitConnected();
+    const afterLocal = await cfgNow();
+    const port = afterLocal?.localModels?.managed?.port ?? 19091;
+    check(
+      "backend: config round-trip to local",
+      !!toLocal?.ok
+        && wasCloud
+        // The route moved in the file, so the switch itself says restart.
+        && toLocal.restart === true
+        && afterLocal?.llm?.activeTextProvider === "local-llama"
+        && afterLocal?.localModels?.mode === "managed"
+        && localEntry(afterLocal)?.url === `http://127.0.0.1:${port}`
+        && afterLocal?.llm?.activeEmbeddingProvider === beforeConfig?.llm?.activeEmbeddingProvider
+        && (afterLocal?.llm?.providers ?? []).length === (beforeConfig?.llm?.providers ?? []).length,
+      toLocal?.ok
+        ? `from=${beforeConfig?.llm?.activeTextProvider} active=${afterLocal?.llm?.activeTextProvider} mode=${afterLocal?.localModels?.mode} url=${localEntry(afterLocal)?.url} daemon=${toLocal.daemon} restart=${toLocal.restart}`
+        : `error=${toLocal?.error}`,
+    );
+    const managedId = afterLocal?.localModels?.managed?.modelId ?? null;
+    // The chip's precedence is the TUI's: `download model` whenever nothing
+    // is on disk (selectComposerNeedsModelDownload ignores managed.modelId),
+    // else the managed id.
+    const onDisk = ((await modelsList()).models ?? []).some((m) => m.downloaded && !/embed|bge|nomic|jina/i.test(m.id));
+    const localChips = await js<{ backend: string; mode: string; model: string }>(
+      "({backend: window.__sel().backend, mode: document.querySelector('.modechip')?.textContent ?? '', model: document.querySelector('.modelchip')?.textContent ?? ''})",
+    );
+    check(
+      "backend: renderer follows the file",
+      rawLocal.backend === "local" && /local/.test(rawLocal.mode)
+        && localChips.backend === "local" && /local/.test(localChips.mode)
+        && (managedId && onDisk ? localChips.model.includes(managedId) : /download model/.test(localChips.model)),
+      `own refresh: backend=${rawLocal.backend} chip=${JSON.stringify(rawLocal.mode)}; after harness refresh: backend=${localChips.backend} chip=${JSON.stringify(localChips.mode)} model=${JSON.stringify(localChips.model)} managed=${managedId} onDisk=${onDisk}`,
+    );
+    // The catalogue and key facts land seconds after the switch; their
+    // repaint must not rebuild the composer under a typing user.
+    const caret = await js<{ same: boolean; focused: boolean; start: number; end: number } | null>("window.__bswRepaintKeepsCaret()");
+    check(
+      "backend: late facts repaint keeps the caret",
+      !!caret && caret.same && caret.focused && caret.start === 6 && caret.end === 6,
+      caret ? `same textarea=${caret.same} focused=${caret.focused} caret=${caret.start}..${caret.end}` : "no composer",
+    );
+    check(
+      "backend: agent restarted and alive",
+      stLocal === "connected" && agent?.status.port !== portBefore,
+      `state=${stLocal} port ${portBefore} → ${agent?.status.port}`,
+    );
+    const daemonUp = await localDaemonRunning();
+    check(
+      "backend: daemon side effect mirrors the TUI (local)",
+      toLocal?.needsModel
+        ? toLocal.daemon === "untouched"
+        : (daemonUp && ["started", "restarted", "untouched"].includes(toLocal?.daemon ?? ""))
+          || (toLocal?.daemon === "start-failed" && !!toLocal.error),
+      `daemon=${toLocal?.daemon} running=${daemonUp}${toLocal?.error ? " error=" + toLocal.error : ""}`,
+    );
+
+    // The pre-turn gate: with no managed model selected the turn is refused
+    // with the TUI's exact text, no turn is opened, and the message goes
+    // back to the editor (the TUI's turn_gate_blocked + input_changed).
+    if (afterLocal && afterLocal.localModels?.managed) {
+      const noModel = JSON.parse(JSON.stringify(afterLocal)) as UserConfigShape;
+      noModel.localModels!.managed!.modelId = null;
+      const cardsBefore = await js<number>("window.__cards().length");
+      const usersBefore = (await js<{ users: number }>("window.__draft()")).users;
+      await configSetWhole(noModel);
+      await js<void>("window.__ctxRefreshCfg()");
+      await wait(1000);
+      await js<void>("window.__ask('hi')");
+      await wait(1500);
+      const gate = await js<{ last: string; busy: boolean; cards: number; draft: string; entry: string | null; users: number }>(
+        "({last: window.__lastSystem(), busy: window.__bsw().turnBusy, cards: window.__cards().length, ...window.__draft()})",
+      );
+      const blockLine = "no local model is selected — open Models (/local) to pick and download one (message returned to the editor)";
+      check(
+        "backend: local turn gate blocks with the TUI's text",
+        gate.last === blockLine && !gate.busy && gate.cards === cardsBefore
+          && gate.draft === "hi" && gate.entry === "hi" && gate.users === usersBefore,
+        `last=${JSON.stringify(gate.last)} busy=${gate.busy} draft=${JSON.stringify(gate.draft)} entry=${JSON.stringify(gate.entry)} user lines ${usersBefore} → ${gate.users}`,
+      );
+      await js<void>("window.__ctxDraft('')");
+      await configSetWhole(afterLocal);
+      await js<void>("window.__ctxRefreshCfg()");
+    }
+
+    // Back to cloud: the TUI picks the active cloud provider, else the first
+    // with a key, else the first configured.
+    const cloud = (afterLocal?.llm?.providers ?? []).filter((p) => p.kind !== "llama-server");
+    const expected = (cloud.find((p) => p.id === afterLocal?.llm?.activeTextProvider) ?? cloud.find((p) => providerHasKey(p)) ?? cloud[0])?.id;
+    const toCloud = await js<SwitchResult>("window.__switchBackend('cloud')");
+    const rawCloud = await js<{ backend: string; provider: string }>(
+      "({backend: window.__sel().backend, provider: window.__activeProvider()})",
+    );
+    const stCloud = await waitConnected();
+    const afterCloud = await cfgNow();
+    const cloudChips = await js<{ backend: string; mode: string; provider: string }>(
+      "({backend: window.__sel().backend, mode: document.querySelector('.modechip')?.textContent ?? '', provider: window.__activeProvider()})",
+    );
+    const activeEntry = (afterCloud?.llm?.providers ?? []).find((p) => p.id === afterCloud?.llm?.activeTextProvider);
+    check(
+      "backend: config round-trip back to cloud",
+      !!toCloud?.ok && !!expected && toCloud.providerId === expected
+        && afterCloud?.llm?.activeTextProvider === expected
+        && !!activeEntry && activeEntry.kind !== "llama-server"
+        && stCloud === "connected" && cloudChips.backend === "cloud" && /cloud/.test(cloudChips.mode) && cloudChips.provider === expected
+        && rawCloud.backend === "cloud" && rawCloud.provider === expected,
+      toCloud?.ok
+        ? `provider=${toCloud.providerId} expected=${expected} own refresh: ${rawCloud.backend}/${rawCloud.provider} chip=${JSON.stringify(cloudChips.mode)} state=${stCloud}`
+        : `error=${toCloud?.error} needsProvider=${toCloud?.needsProvider} needsKey=${toCloud?.needsKey}`,
+    );
+    const daemonAfterCloud = await localDaemonRunning();
+    check(
+      "backend: daemon side effect mirrors the TUI (cloud)",
+      !daemonAfterCloud || toCloud?.daemon === "stop-failed",
+      `daemon=${toCloud?.daemon} running=${daemonAfterCloud}`,
+    );
+    // Write 2 of activateProvider: a successful stop is followed by
+    // memory.embeddings.enabled=false (the TUI's stopDaemon order).
+    check(
+      "backend: hybrid recall off after the daemon stop",
+      toCloud?.daemon !== "stopped" || afterCloud?.memory?.embeddings?.enabled === false,
+      `daemon=${toCloud?.daemon} memory.embeddings.enabled=${afterCloud?.memory?.embeddings?.enabled}`,
+    );
+    // The TUI's runtime_info lines, verbatim, in the transcript.
+    const lines = (await js<string[]>("window.__systemLines()")) ?? [];
+    const switchLine = `Switched active text provider to "${expected}". New messages use native_tools.`;
+    const stopLine = "local-llm: daemons stopped — hybrid recall off (embedding switch unchanged)";
+    check(
+      "backend: TUI runtime_info copy in the transcript",
+      lines.includes(switchLine) && (toCloud?.daemon !== "stopped" || lines.includes(stopLine)),
+      `switch=${lines.includes(switchLine)} stop=${lines.includes(stopLine)} daemon=${toCloud?.daemon}`,
+    );
+
+    // Third leg: the file moves first, without a restart — what the TUI or
+    // a hand edit does while this window is open. serve stays on the cloud
+    // route it booted on; the switch finds nothing to write for the route
+    // and must still restart it (main compares the boot route to the file).
+    const portCloud = agent?.status.port ?? null;
+    const preMoved = await setActiveTextProvider("local-llama");
+    const behind = await js<SwitchResult>("window.__switchBackend('local')");
+    const stBehind = await waitConnected();
+    const afterBehind = await cfgNow();
+    check(
+      "backend: serve behind the file still restarts",
+      preMoved.ok && preMoved.changed && !!behind?.ok && behind.restart === true
+        && afterBehind?.llm?.activeTextProvider === "local-llama"
+        && stBehind === "connected" && agent?.status.port !== portCloud,
+      `file moved first: ${preMoved.changed}; switch ok=${behind?.ok} restart=${behind?.restart} error=${behind?.error ?? ""}; state=${stBehind} port ${portCloud} → ${agent?.status.port}`,
+    );
+  } finally {
+    if (beforeConfig) await configSetWhole(beforeConfig);
+    if (daemonWasRunning !== (await localDaemonRunning())) {
+      if (daemonWasRunning) await modelsStart();
+      else await modelsStop();
+    }
+    if (agent) {
+      await agent.stop();
+      await agent.start();
+    }
+    await waitConnected();
   }
 }
 

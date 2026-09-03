@@ -73,4 +73,21 @@ contextBridge.exposeInMainWorld("atomic", {
   onMenu: (cb: (command: unknown) => void) => on("app:menu", cb),
 
   platform: process.platform,
+
+  /** Lane B — backend switch: whole-file config writes + agent restart, main-process side. */
+  switchBackend: (kind: "cloud" | "local") => ipcRenderer.invoke("cli:switchBackend", kind),
+  activateProvider: (id: string) => ipcRenderer.invoke("cli:activateProvider", id),
+  selectCloudModel: (id: string, model: string) => ipcRenderer.invoke("cli:selectCloudModel", { id, model }),
+  selectLocalModel: (id: string) => ipcRenderer.invoke("cli:selectLocalModel", id),
+  useManagedMode: () => ipcRenderer.invoke("cli:useManagedMode"),
+  providersReady: () => ipcRenderer.invoke("cli:providersReady"),
+
+  /** Lane B — context before the first message (item 3): the projection's sources. */
+  traceBaseline: (stateDir: string, model: string | null, workingDir: string | null) =>
+    ipcRenderer.invoke("cli:traceBaseline", { stateDir, model, workingDir }),
+  modelWindow: (providerId: string, kind: string, model: string) =>
+    ipcRenderer.invoke("cli:modelWindow", { providerId, kind, model }),
+  llamaProps: (url: string, apiKey?: string) => ipcRenderer.invoke("agent:llamaProps", { url, apiKey }),
+  contextPreview: (sessionId: string | null, message: string) =>
+    ipcRenderer.invoke("agent:contextPreview", { sessionId, message }),
 });

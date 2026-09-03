@@ -564,3 +564,9 @@ body.electron .sb-head { -webkit-app-region: no-drag; }
    would stack on top of the explicit drift correction and is lost anyway
    whenever #scroller is rebuilt. */
 .scroller{overflow-anchor:none}
+
+
+/* Lane B — context before the first message (item 3): a projection is visibly not a measurement */
+.ctxbtn.proj .gauge i { background: repeating-linear-gradient(90deg, var(--text-tertiary) 0 3px, transparent 3px 5px); }
+.ctxbtn.proj:hover .gauge i { background: repeating-linear-gradient(90deg, var(--accent) 0 3px, transparent 3px 5px); }
+.ctxbtn.proj .gaugelb { font-style: italic; }
