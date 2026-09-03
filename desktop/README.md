@@ -313,6 +313,29 @@ Real, driven by the running agent:
   also behaviourally identical (the ladder is already at maximum and only
   `plan` changes anything), which the popover says in as many words; lower
   `agent.approvalLevel` to make the modes differ.
+- **the plan hand-off bar**, a port of `src/tui/components/plan-handoff.tsx`.
+  A plan-mode turn that finishes with a reply ends in three controls under that
+  reply — `▶ run it · auto`, `▶ run it · bypass permissions`, and a quiet
+  `✕ dismiss plan` — plus the TUI's own sentence saying the third option is
+  still to type. Enforcement itself is the agent's and needed nothing here:
+  `runPlanModeGate` refuses every mutating tool before dispatch, which is why a
+  plan turn ends in a proposal rather than a run of commands. The two run
+  buttons **await** the mode change and send only once the agent has confirmed
+  it — stricter than the TUI, which dispatches both in one tick — and the
+  message then goes through the ordinary submit path, so the bubble, the
+  history, the busy gate and steering all behave. Dismiss deliberately stays in
+  plan mode: rejecting a plan rejects that plan, not the act of planning, and
+  dropping out of plan mode there would hand the agent its tools back at the
+  moment you said no. The offer is retired by the next turn, by any mode change
+  away from `plan`, by dismiss — and, unlike the TUI (whose `session_switched`
+  reducer forgets to, so its bar re-attaches to another thread's transcript),
+  by a session switch. At `agent.approvalLevel: 5` the two run buttons resolve
+  to the same stance, and the bar says so where the choice is made.
+- **typed prose under an open approval is the verdict**, as in the TUI
+  (`src/tui/submit-handler.ts`): the call is denied with your words as the
+  model-visible reason, and the same text then goes into the running turn — in
+  that order, awaited, because a steer that arrived first would be pushed at a
+  turn still parked on the gate. The card's footer says so on screen.
 
 Honestly degraded, and labelled as such in the UI:
 
@@ -324,7 +347,25 @@ Honestly degraded, and labelled as such in the UI:
   on, not an answer, and at `agent.approvalLevel: 5` the live stance is
   really `bypass` — so the chip names a mode only once the route has
   confirmed one. The desktop prefers `~/atag-agent/bin/atag` for
-  exactly this reason (see *Packaging* below).
+  exactly this reason (see *Packaging* below). The plan hand-off rides on the
+  same route, so a binary without it draws no bar at all: with no plan mode
+  there is nothing to hand off from.
+- **No session-wide approval grants, and no target-path retargeting.** The TUI
+  offers both (`[s]` allow-category, `[a]` allow-shape, `edit target path…`)
+  because it reaches the gate in process. On the wire, `ResolveBody` in
+  `src/http/route-approval.ts` is `{approvalId, decision, reason}` and
+  `parseDecision` maps the decision to a bare boolean — nothing can carry a
+  grant scope or a `pathOverride`. So the card draws Approve / Deny / Abort and
+  says why, rather than a button it cannot honour; the `s` and `a` keys that
+  used to fire a grant-shaped verdict were removed for the same reason. Loosen
+  the standing stance with the mode control in the composer instead.
+- **The plan hand-off is live-turn only.** It is raised off the turn's own
+  terminal frame, so a plan-mode turn that finished in another chat, or under a
+  scheduled task, leaves nothing to hang it on: the store records no "this turn
+  ran in plan mode" fact (plan mode is process state, deliberately not
+  persisted), and inferring one from the reply text would be fabrication. It
+  therefore disappears on reload; the mode chip and a typed instruction are the
+  fallback, exactly as before.
 - **The exact pre-message breakdown needs `POST /api/context-preview`,** a
   route added in this branch (`src/http/route-context-preview.ts`): the
   runtime builds — never runs, never persists — the prompt the next turn

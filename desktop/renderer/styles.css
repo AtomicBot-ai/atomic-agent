@@ -866,3 +866,22 @@ button.menurow:hover{background:var(--bg-hover)}
    the four sub-lines beneath them were plain HTML and collapsed to one space.
    `pre-wrap`, not `pre`: a long error must still wrap inside the pane. */
 .llm-hf .ter,.llm-hf .sk-off,.llm-hf .tuierr{white-space:pre-wrap}
+
+/* ---- Item 1: the plan hand-off bar ----------------------------------------
+   Under the last assistant message of a finished plan turn, inside its content
+   column. `flex-wrap` rather than a width breakpoint, as the TUI's own bar
+   does: the column decides how much room there is, so a narrow window drops
+   the third button onto its own line instead of overflowing.
+
+   Tones are the TUI's — warn for auto, error for bypass, the quiet badge face
+   for dismiss — carried as WASH fills with the token as the foreground, which
+   is the face `.appr` and `.btn-danger` already use here. A solid `--warn`
+   fill with white text (the obvious reading of the TUI's `backgroundColor`)
+   is illegible on the dark theme's #E5A93C; the TUI avoids that with
+   readableOn(tone) and this avoids it by not fighting the token. */
+.planbar{display:flex;align-items:center;gap:var(--s3);flex-wrap:wrap;margin-top:var(--s4)}
+.planrun.warn{background:var(--warn-wash);border:1px solid var(--warn-border);color:var(--warn)}
+.planrun.warn:hover{background:var(--warn-wash);border-color:var(--warn)}
+.planrun.bad{background:var(--danger-wash);border:1px solid var(--danger);color:var(--danger)}
+.planrun.bad:hover{background:var(--danger);color:var(--bg-content)}
+.planhint{flex-basis:100%;margin:var(--s2) 0 0}
