@@ -1,5 +1,5 @@
-import type { ApprovalGate, ApprovalRequest } from "../../approval/index.js";
-import { formatApprovalCategory } from "../../approval/index.js";
+import type { ApprovalGate, ApprovalGrantScope, ApprovalRequest } from "../../approval/index.js";
+import { canGrantCategory, canGrantShape, formatApprovalCategory } from "../../approval/index.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 
 import type { TelegramApi } from "./outbound-sender.js";
@@ -19,6 +19,18 @@ const APPROVAL_TIMEOUT_MS_DEFAULT = 8 * 60 * 1000;
  * belongs to a different feature and is dropped on receipt.
  */
 const CALLBACK_PREFIX = "appr:";
+
+/**
+ * Longest `commandShape` rendered into a button label or a toast. Real
+ * shapes are argv[0] basenames (`git`, `npm`), but nothing upstream
+ * bounds the field. An oversize `reply_markup` is rejected by Telegram,
+ * and `dispatch` turns a send failure into an auto-deny — so an
+ * unbounded label could deny an approval the operator never saw.
+ */
+const SHAPE_LABEL_MAX = 32;
+
+/** The four button kinds encoded in `callback_data`. */
+type CallbackKind = "y" | "n" | "s" | "a";
 
 /**
  * Narrow shape of a `callback_query` update consumed by the bridge.
@@ -61,17 +73,23 @@ export interface ApprovalBridgeDeps {
 interface PendingState {
   chatId: number;
   messageId: number;
+  /**
+   * The request the keyboard was built from. Retained so a decision is
+   * checked and described against the real request instead of the
+   * operator-supplied `callback_data` — see invariant 5.
+   */
+  request: ApprovalRequest;
   cancelTimer: () => void;
 }
 
 /**
- * Per-channel bridge that turns an `ApprovalRequest` into a 2-button
+ * Per-channel bridge that turns an `ApprovalRequest` into an
  * inline-keyboard message and routes the operator's reply back to
  * `ApprovalGate.resolve`. The bridge owns:
  *
  *  - one outbound message per pending approval (sent via `dispatch`);
  *  - one auto-deny timer per pending approval (default 8 min);
- *  - the `callback_query` parser that decodes `appr:<id>:y|n`.
+ *  - the `callback_query` parser that decodes `appr:<id>:y|n|s|a`.
  *
  * Locked invariants — pinned by the colocated test file:
  *
@@ -92,6 +110,17 @@ interface PendingState {
  *    in-flight approvals comes from the caller's own abort signal
  *    (`runtime.shutdown()` aborts every in-flight turn, which aborts
  *    the gate via `ApprovalGate`'s `signal` parameter).
+ * 5. **A grant is re-checked, and the toast never overstates it.** The
+ *    `s`/`a` rows only appear when `canGrantCategory` / `canGrantShape`
+ *    allow them, but `callback_data` arrives from the operator's client
+ *    and a keyboard can outlive the state it was built from — so the
+ *    scope is checked again against the retained request before it
+ *    reaches the gate, exactly as the TUI and CLI prompts do. A scope
+ *    that no longer applies degrades to a plain approval: the gate
+ *    would drop it anyway (`recordGrant` refuses `trust_config` and a
+ *    shapeless shell request), and the toast, built from the request's
+ *    own category/shape, then says "Approved" rather than announcing a
+ *    standing exception that does not exist.
  *
  * Known UX gap (non-functional, deferred to slice 3):
  *
@@ -149,7 +178,7 @@ export class ApprovalBridge {
       const sent = await this.deps.api.sendMessage(
         chatId,
         formatApprovalText(request),
-        { reply_markup: buildKeyboard(request.approvalId) },
+        { reply_markup: buildKeyboard(request) },
       );
       const id = (sent as { message_id?: number } | null)?.message_id;
       if (typeof id !== "number") {
@@ -181,7 +210,12 @@ export class ApprovalBridge {
       chatId,
       messageId,
     );
-    this.pending.set(request.approvalId, { chatId, messageId, cancelTimer });
+    this.pending.set(request.approvalId, {
+      chatId,
+      messageId,
+      request,
+      cancelTimer,
+    });
   }
 
   /**
@@ -204,8 +238,7 @@ export class ApprovalBridge {
     const parts = data.slice(CALLBACK_PREFIX.length).split(":");
     if (parts.length !== 2) return;
     const [approvalId, kind] = parts;
-    if (!approvalId || (kind !== "y" && kind !== "n")) return;
-    const approved = kind === "y";
+    if (!approvalId || (kind !== "y" && kind !== "n" && kind !== "s" && kind !== "a")) return;
 
     const pending = this.pending.get(approvalId);
     if (!pending) {
@@ -218,13 +251,22 @@ export class ApprovalBridge {
     pending.cancelTimer();
     this.pending.delete(approvalId);
 
+    // Both grant buttons approve; only the scope differs, and only if
+    // the retained request still supports it (invariant 5).
+    const approved = kind !== "n";
+    const grant = grantScope(kind, pending.request);
+
     const resolved = this.deps.approvals.resolve({
       approvalId,
       approved,
+      grant,
       reason: "telegram",
     });
 
-    await this.acknowledge(update.id, approved ? "Approved" : "Denied");
+    await this.acknowledge(
+      update.id,
+      decisionToast(pending.request, approved, grant),
+    );
     if (resolved) {
       await this.editFinal(
         pending.chatId,
@@ -310,23 +352,78 @@ export class ApprovalBridge {
   }
 }
 
-function buildKeyboard(approvalId: string): {
+/**
+ * The scope a callback kind asks for, or `undefined` when this request
+ * cannot carry it. `y`/`n` never grant; `s`/`a` grant only what the
+ * keyboard was entitled to offer.
+ */
+function grantScope(
+  kind: CallbackKind,
+  request: ApprovalRequest,
+): ApprovalGrantScope | undefined {
+  if (kind === "s" && canGrantCategory(request)) return "category";
+  if (kind === "a" && canGrantShape(request)) return "shape";
+  return undefined;
+}
+
+/**
+ * Text for the button's spinner toast — the one surface that tells the
+ * operator what they just authorised, so it names the grant that was
+ * actually recorded and stays silent when none was.
+ */
+function decisionToast(
+  request: ApprovalRequest,
+  approved: boolean,
+  grant: ApprovalGrantScope | undefined,
+): string {
+  if (!approved) return "Denied";
+  if (!grant) return "Approved";
+  const subject =
+    grant === "shape" && request.commandShape
+      ? `"${shapeLabel(request.commandShape)}"`
+      : formatApprovalCategory(request.category);
+  return `Approved (${subject} granted for session)`;
+}
+
+/** `commandShape` clipped to something a narrow client can render. */
+function shapeLabel(shape: string): string {
+  return shape.length <= SHAPE_LABEL_MAX
+    ? shape
+    : `${shape.slice(0, SHAPE_LABEL_MAX - 1)}…`;
+}
+
+function buildKeyboard(request: ApprovalRequest): {
   inline_keyboard: Array<Array<{ text: string; callback_data: string }>>;
 } {
-  return {
-    inline_keyboard: [
-      [
-        {
-          text: "✅ Approve",
-          callback_data: `${CALLBACK_PREFIX}${approvalId}:y`,
-        },
-        {
-          text: "❌ Deny",
-          callback_data: `${CALLBACK_PREFIX}${approvalId}:n`,
-        },
-      ],
+  const rows: Array<Array<{ text: string; callback_data: string }>> = [
+    [
+      {
+        text: "✅ Approve",
+        callback_data: `${CALLBACK_PREFIX}${request.approvalId}:y`,
+      },
+      {
+        text: "❌ Deny",
+        callback_data: `${CALLBACK_PREFIX}${request.approvalId}:n`,
+      },
     ],
-  };
+  ];
+  if (canGrantCategory(request)) {
+    rows.push([
+      {
+        text: "🔓 Grant category for session",
+        callback_data: `${CALLBACK_PREFIX}${request.approvalId}:s`,
+      },
+    ]);
+  }
+  if (canGrantShape(request) && request.commandShape) {
+    rows.push([
+      {
+        text: `🔓 Grant "${shapeLabel(request.commandShape)}" for session`,
+        callback_data: `${CALLBACK_PREFIX}${request.approvalId}:a`,
+      },
+    ]);
+  }
+  return { inline_keyboard: rows };
 }
 
 /**

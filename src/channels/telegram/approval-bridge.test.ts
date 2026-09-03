@@ -4,6 +4,7 @@ import type {
   ApprovalDecision,
   ApprovalRequest,
 } from "../../approval/index.js";
+import { ApprovalGate } from "../../approval/index.js";
 import { StructuredLogger } from "../../tracing/structured-logger.js";
 
 import {
@@ -90,9 +91,22 @@ function req(approvalId = "abc"): ApprovalRequest {
   };
 }
 
+type Keyboard = {
+  inline_keyboard: Array<Array<{ text: string; callback_data: string }>>;
+};
+
+/** The `reply_markup` of the Nth `sendMessage` call (default: the first). */
+function keyboardOf(
+  sendMessage: ReturnType<typeof vi.fn>,
+  call = 0,
+): Keyboard {
+  const opts = sendMessage.mock.calls[call]![2] as { reply_markup: Keyboard };
+  return opts.reply_markup;
+}
+
 function callback(
   approvalId: string,
-  kind: "y" | "n",
+  kind: "y" | "n" | "s" | "a",
   fromId: number = 42,
 ): InboundCallbackUpdate {
   return {
@@ -104,9 +118,59 @@ function callback(
 }
 
 describe("ApprovalBridge.dispatch", () => {
-  it("sends a 2-button inline keyboard with the right callback_data", async () => {
+  it("sends inline keyboard with grant buttons when applicable", async () => {
     const h = makeHarness();
-    await h.bridge.dispatch(req("abc"), 7);
+    const r = req("abc");
+    r.commandShape = "git";
+    await h.bridge.dispatch(r, 7);
+
+    expect(h.api.sendMessage).toHaveBeenCalledTimes(1);
+    // Exact match, not `toContain`: the row order and every
+    // `callback_data` are part of the wire contract. A shape row that
+    // emitted `:s` would grant the whole category instead of the one
+    // binary the operator agreed to.
+    expect(keyboardOf(h.api.sendMessage)).toEqual({
+      inline_keyboard: [
+        [
+          { text: "✅ Approve", callback_data: "appr:abc:y" },
+          { text: "❌ Deny", callback_data: "appr:abc:n" },
+        ],
+        [
+          { text: "🔓 Grant category for session", callback_data: "appr:abc:s" },
+        ],
+        [
+          { text: `🔓 Grant "git" for session`, callback_data: "appr:abc:a" },
+        ],
+      ],
+    });
+  });
+
+  it("omits grant buttons when not applicable (trust_config)", async () => {
+    const h = makeHarness();
+    const r = req("abc");
+    // trust_config is the only non-grantable category — no s or a buttons
+    r.category = "trust_config";
+    await h.bridge.dispatch(r, 7);
+
+    const buttons = keyboardOf(h.api.sendMessage).inline_keyboard.flat();
+    expect(buttons.map((b) => b.text)).toEqual(["✅ Approve", "❌ Deny"]);
+  });
+
+  it("bounds the button label when the command shape is oversize", async () => {
+    const h = makeHarness();
+    const r = req("abc");
+    r.commandShape = "x".repeat(80);
+    await h.bridge.dispatch(r, 7);
+
+    const shapeRow = keyboardOf(h.api.sendMessage).inline_keyboard.at(-1)!;
+    expect(shapeRow[0]!.text).toBe(`🔓 Grant "${"x".repeat(31)}…" for session`);
+    expect(shapeRow[0]!.callback_data).toBe("appr:abc:a");
+  });
+
+  it("sends an inline keyboard with approve, deny, and grant buttons", async () => {
+    const h = makeHarness();
+    const r = req("abc");
+    await h.bridge.dispatch(r, 7);
 
     expect(h.api.sendMessage).toHaveBeenCalledTimes(1);
     const args = h.api.sendMessage.mock.calls[0]!;
@@ -114,15 +178,17 @@ describe("ApprovalBridge.dispatch", () => {
     const text = args[1] as string;
     expect(text).toContain("Approval requested");
     expect(text).toContain("os.shell.run");
-    // R5: the ladder category is surfaced to the Telegram operator.
     expect(text).toContain("kind: shell command");
     expect(text).toContain("git push");
-    const opts = args[2] as { reply_markup: unknown };
-    expect(opts.reply_markup).toEqual({
+    // Shell requests get approve/deny + grant-category row (no shape button without commandShape)
+    expect(keyboardOf(h.api.sendMessage)).toEqual({
       inline_keyboard: [
         [
           { text: "✅ Approve", callback_data: "appr:abc:y" },
           { text: "❌ Deny", callback_data: "appr:abc:n" },
+        ],
+        [
+          { text: "🔓 Grant category for session", callback_data: "appr:abc:s" },
         ],
       ],
     });
@@ -239,6 +305,38 @@ describe("ApprovalBridge.handleCallback", () => {
     expect(h.approvals.decisions).toEqual([]);
   });
 
+  it("grants category on `s` callback", async () => {
+    const h = makeHarness();
+    const r = req("abc");
+    r.commandShape = "git";
+    await h.bridge.dispatch(r, 7);
+
+    await h.bridge.handleCallback(callback("abc", "s"));
+
+    expect(h.approvals.decisions).toEqual([
+      { approvalId: "abc", approved: true, grant: "category", reason: "telegram" },
+    ]);
+    expect(h.api.answerCallbackQuery).toHaveBeenCalledWith("cb-1", {
+      text: "Approved (shell command granted for session)",
+    });
+  });
+
+  it("grants shape on `a` callback", async () => {
+    const h = makeHarness();
+    const r = req("abc");
+    r.commandShape = "git";
+    await h.bridge.dispatch(r, 7);
+
+    await h.bridge.handleCallback(callback("abc", "a"));
+
+    expect(h.approvals.decisions).toEqual([
+      { approvalId: "abc", approved: true, grant: "shape", reason: "telegram" },
+    ]);
+    expect(h.api.answerCallbackQuery).toHaveBeenCalledWith("cb-1", {
+      text: `Approved ("git" granted for session)`,
+    });
+  });
+
   it("drops a malformed callback (wrong kind)", async () => {
     const h = makeHarness();
     await h.bridge.dispatch(req("abc"), 7);
@@ -275,6 +373,87 @@ describe("ApprovalBridge.handleCallback", () => {
     await h.bridge.handleCallback(callback("abc", "y"));
 
     expect(h.scheduled[0]!.cancelled).toBe(true);
+  });
+});
+
+describe("ApprovalBridge grants against a real ApprovalGate", () => {
+  /**
+   * Bridge wired to a real `ApprovalGate` instead of the recording stub.
+   * The stub accepts whatever decision it is handed, so it cannot show
+   * whether the toast agrees with the trust state the operator actually
+   * has; only the real gate can.
+   */
+  function gateHarness(params: Omit<ApprovalRequest, "approvalId">): {
+    h: TestHarness;
+    gate: ApprovalGate;
+    decision: Promise<ApprovalDecision>;
+    request: ApprovalRequest;
+  } {
+    const emitted: ApprovalRequest[] = [];
+    const gate = new ApprovalGate({ emit: (r) => emitted.push(r) });
+    const h = makeHarness({ approvals: gate });
+    const decision = gate.request(params);
+    return { h, gate, decision, request: emitted[0]! };
+  }
+
+  it("approves without claiming a category grant the gate refuses", async () => {
+    const { h, gate, decision, request } = gateHarness({
+      sessionId: "s-1",
+      tool: "trust.config.write",
+      category: "trust_config",
+      reason: "raise the standing approval level",
+    });
+    await h.bridge.dispatch(request, 7);
+
+    // Forged payload: the keyboard never offers `:s` for trust_config.
+    await h.bridge.handleCallback(callback(request.approvalId, "s"));
+
+    expect((await decision).approved).toBe(true);
+    expect(gate.sessionGrants("s-1")).toEqual({ categories: [], shapes: [] });
+    expect(h.api.answerCallbackQuery).toHaveBeenCalledWith("cb-1", {
+      text: "Approved",
+    });
+  });
+
+  it("approves without claiming a shape grant when the request has no command shape", async () => {
+    const { h, gate, decision, request } = gateHarness({
+      sessionId: "s-1",
+      tool: "os.shell.run",
+      category: "shell",
+      reason: "opaque command, no shape to grant",
+      preview: "bash -c 'echo hi'",
+    });
+    await h.bridge.dispatch(request, 7);
+
+    await h.bridge.handleCallback(callback(request.approvalId, "a"));
+
+    expect((await decision).approved).toBe(true);
+    expect(gate.sessionGrants("s-1")).toEqual({ categories: [], shapes: [] });
+    expect(h.api.answerCallbackQuery).toHaveBeenCalledWith("cb-1", {
+      text: "Approved",
+    });
+  });
+
+  it("records the grant the gate accepts and names it in the toast", async () => {
+    const { h, gate, decision, request } = gateHarness({
+      sessionId: "s-1",
+      tool: "os.shell.run",
+      category: "shell",
+      reason: "skill needs to run \"git push\"",
+      commandShape: "git",
+    });
+    await h.bridge.dispatch(request, 7);
+
+    await h.bridge.handleCallback(callback(request.approvalId, "a"));
+
+    expect((await decision).approved).toBe(true);
+    expect(gate.sessionGrants("s-1")).toEqual({
+      categories: [],
+      shapes: ["git"],
+    });
+    expect(h.api.answerCallbackQuery).toHaveBeenCalledWith("cb-1", {
+      text: `Approved ("git" granted for session)`,
+    });
   });
 });
 
