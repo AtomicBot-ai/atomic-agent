@@ -926,3 +926,34 @@ describe("turn_gate_blocked", () => {
     expect(blocked.feed.at(-1)?.line).not.toContain("\n");
   });
 });
+
+describe("update banner state", () => {
+  const offer: TuiAction = {
+    type: "update_available",
+    current: "0.5.4",
+    latest: "9.9.9",
+  };
+
+  it("update_available raises both the modal and the banner", () => {
+    const next = reduceTuiState(createInitialTuiState(fakeSession()), offer);
+    expect(next.updatePrompt).toEqual({ current: "0.5.4", latest: "9.9.9" });
+    expect(next.updateBanner).toEqual({ current: "0.5.4", latest: "9.9.9" });
+  });
+
+  it("update_dismissed clears only the modal — the banner is the memory", () => {
+    const next = apply(createInitialTuiState(fakeSession()), [
+      offer,
+      { type: "update_dismissed" },
+    ]);
+    expect(next.updatePrompt).toBeNull();
+    expect(next.updateBanner).toEqual({ current: "0.5.4", latest: "9.9.9" });
+  });
+
+  it("a repeat offer while an update runs still changes nothing", () => {
+    const running = apply(createInitialTuiState(fakeSession()), [
+      offer,
+      { type: "update_started" },
+    ]);
+    expect(reduceTuiState(running, offer)).toBe(running);
+  });
+});

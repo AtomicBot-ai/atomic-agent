@@ -536,6 +536,15 @@ export interface TuiState {
    */
   updatePrompt: { current: string; latest: string } | null;
   /**
+   * Persistent "a newer release exists" fact behind the status-bar
+   * banner. Set alongside {@link updatePrompt} and — unlike the prompt —
+   * NOT cleared by `update_dismissed`: skipping the modal means "not
+   * now", and the banner is what keeps the offer reachable afterwards.
+   * The bar hides it while an update is running or finished
+   * (`updateStatus`), so no reducer case ever needs to null it.
+   */
+  updateBanner: { current: string; latest: string } | null;
+  /**
    * Lifecycle of an accepted self-update. `running` while `install.sh`
    * executes; `done` / `failed` after it settles. Purely informational —
    * the user must relaunch to pick up a `done` update.
@@ -798,6 +807,7 @@ export function createInitialTuiState(
     themePickerOriginal: "",
     aborting: false,
     updatePrompt: null,
+    updateBanner: null,
     updateStatus: "idle",
     ringBufferSize,
     tasksPanel: createInitialTasksPanelState(),

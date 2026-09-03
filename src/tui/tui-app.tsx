@@ -1753,6 +1753,7 @@ export function TuiApp({
       <Box flexShrink={0}>
         <StatusBar
           state={state}
+          width={terminalSize.columns - ROOT_PADDING_COLUMNS}
           brand={!sidebarVisible}
           railRestore={sidebarRestorable}
         />

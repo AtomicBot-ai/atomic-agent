@@ -45,3 +45,30 @@ describe("parseTuiArgs mouse flags", () => {
     expect(TUI_HELP).toContain("--mouse");
   });
 });
+
+describe("parseTuiArgs --fake-update", () => {
+  it("stays off by default", () => {
+    expect(parseTuiArgs([])).toMatchObject({ fakeUpdateVersion: null });
+  });
+
+  it("captures the pretended version", () => {
+    expect(parseTuiArgs(["--fake-update", "9.9.9"])).toMatchObject({
+      fakeUpdateVersion: "9.9.9",
+    });
+  });
+
+  it("tolerates a v-prefixed version, since releases are tagged that way", () => {
+    expect(parseTuiArgs(["--fake-update", "v9.9.9"])).toMatchObject({
+      fakeUpdateVersion: "9.9.9",
+    });
+  });
+
+  it("refuses a missing or flag-shaped value", () => {
+    expect(parseTuiArgs(["--fake-update"])).toHaveProperty("error");
+    expect(parseTuiArgs(["--fake-update", "--no-mouse"])).toHaveProperty("error");
+  });
+
+  it("advertises the flag in --help", () => {
+    expect(TUI_HELP).toContain("--fake-update");
+  });
+});
