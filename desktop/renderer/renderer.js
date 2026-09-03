@@ -186,6 +186,7 @@ const TK = {
   form:null,
 };
 const TK_FILTER_ORDER = ['all','pending','running','completed','failed','blocked','cancelled','recurring'];
+const TK_MAX_ROWS = 14; // tasks-panel.tsx:24 — the Tasks list is a 14-row window around the cursor, as in the TUI
 /* Privacy tab state — the TUI's PrivacyPanelState (message / lastError / busy). */
 const PRIV = { busy:false, message:null, lastError:null };
 /* Renderer faults, counted for --smoke (`window.__errCount`). */
@@ -1039,7 +1040,7 @@ async function refreshDiag() {
   let ok = 0, err = 0;
   turns.forEach((t) => { if (t.kind === 'tool_result') { if (t.status === 'ok') ok++; else err++; } });
   SET.tools = {ok, err}; SET.toolsFor = id;
-  if (S.settings) render();
+  if (S.settings) tkRenderKeepCaret(); // a late /api/sessions/{id} answer must not drop the caret in the Tasks form
 }
 /* GET /health: workingDir + llama.url for the diagnostics line's cwd/llama segments. */
 async function refreshHealth() {
@@ -3124,7 +3125,7 @@ function tkTyping() {
 async function tasksRefresh(quiet) {
   if (!BR || TK.loading) return;
   TK.loading = true; TK.err = null;
-  if (!quiet) render();
+  if (!quiet) tkRenderKeepCaret();
   const res = await BR.tasks();
   TK.loading = false;
   if (res && res.ok && res.data && Array.isArray(res.data.tasks)) {
@@ -3140,7 +3141,8 @@ async function tasksRefresh(quiet) {
     TK.err = 'tasks refresh failed: ' + ((res && res.error) || 'unknown error');
   }
   // A poll must not steal the caret from the search box or the create form.
-  if (!(quiet && tkTyping())) render();
+  if (quiet && tkTyping()) return;
+  tkRenderKeepCaret();
 }
 
 function tasksTab() {
@@ -3190,8 +3192,18 @@ function tkListHTML() {
   if (!rows.length) {
     body = '<div class="ter" style="padding:10px 0">no tasks match the current filter — press `n` to create one, `f` to cycle filter, `r` to refresh.</div>';
   } else {
+    // tasks-list.tsx:37-41: window the rows around the cursor (row-window.ts
+    // computeWindowStart) and say how many are hidden above / below. The
+    // hidden-count lines are buttons here (a page up / page down for the
+    // mouse) — the TUI reaches them with j/k only.
+    const start = computeWindowStart(cur, rows.length, TK_MAX_ROWS);
+    const page = rows.slice(start, start + TK_MAX_ROWS);
+    const hiddenBefore = start;
+    const hiddenAfter = Math.max(0, rows.length - start - page.length);
     body = '<div class="tuihead">  status   schedule               next-run       session   message</div>'
-      + rows.map((row, i) => {
+      + (hiddenBefore > 0 ? '<button class="tuimore" data-act="tasks:page:up">↑ ' + hiddenBefore + ' above</button>' : '')
+      + page.map((row, idx) => {
+        const i = idx + start;
         const sel = i === cur;
         return '<button class="tuirow' + (sel ? ' on' : '') + '" data-task-row="' + esc(row.id) + '" data-act="tasks:detail:' + esc(row.id) + '">'
           // TaskRow: `{chevron} {status(9)}{schedule(22)} {next(14)} {session(10)}{message}` — no
@@ -3200,7 +3212,8 @@ function tkListHTML() {
           + '<span class="ter">' + esc(tkTrunc(row.scheduleLabel, 22).padEnd(22) + ' ' + formatRelativeMs(row.scheduledFor, now).padEnd(14) + ' '
             + (row.sessionId ? tkShortId(row.sessionId) : '—').padEnd(10)) + '</span>'
           + esc(tkTrunc(row.userMessage, 64)) + '</button>';
-      }).join('');
+      }).join('')
+      + (hiddenAfter > 0 ? '<button class="tuimore" data-act="tasks:page:down">↓ ' + hiddenAfter + ' below</button>' : '');
   }
   const hints = '<div class="tuihint"><span>j/k move</span><span>·</span><span>Enter detail</span><span>·</span>'
     + tkHint('n', 'new', 'tasks:new') + tkHint('c', 'cancel', 'tasks:cancel') + tkHint('R', 'run-now', 'tasks:run')
@@ -3324,7 +3337,7 @@ async function tkCancel(id) {
 /* Run-now: POST /api/tasks/{id}/run, one attempt, synchronous on the agent. */
 async function tkRunNow(id) {
   if (!BR) return;
-  TK.msg = 'task ' + id + ' running…'; render();
+  TK.msg = 'task ' + id + ' running…'; tkRenderKeepCaret();
   const res = await BR.runTask(id);
   if (res && res.ok) {
     const t = res.data && res.data.task;
@@ -3359,6 +3372,7 @@ function tasksAct(what) {
   if (verb === 'cancelKeep') { TK.cancel = null; render(); return; }
   if (verb === 'run') { const id = sel(); if (id) tkRunNow(id); return; }
   if (verb === 'refresh') { tasksRefresh(); return; }
+  if (verb === 'page') { const n = tkVisibleRows().length; TK.cursor = Math.max(0, Math.min(TK.cursor + (arg === 'up' ? -TK_MAX_ROWS : TK_MAX_ROWS), n - 1)); render(); return; }
   if (verb === 'auto') { TK.auto = !TK.auto; render(); return; }
   if (verb === 'filter') { TK.filter = TK_FILTER_ORDER[(TK_FILTER_ORDER.indexOf(TK.filter) + 1) % TK_FILTER_ORDER.length]; TK.cursor = 0; render(); return; }
   if (verb === 'search') { TK.searchOpen = true; render(); const n = $('#tk-search'); if (n) n.focus(); return; }
@@ -3389,6 +3403,7 @@ function tasksKey(e, k, inText) {
     if (k === 'o') { e.preventDefault(); tasksAct('open'); return true; }
     if (k === 'R') { e.preventDefault(); tasksAct('run'); return true; }
     if (k === 'c') { e.preventDefault(); tasksAct('cancel'); return true; }
+    if (k === 'r') { e.preventDefault(); tasksAct('refresh'); return true; }
     return false;
   }
   if (TK.mode !== 'list') return false;
@@ -3409,6 +3424,11 @@ function settingsKey(e, k, inText) {
   if (k === 'Escape') { e.preventDefault(); S.settings = null; render(); return true; }
   if (inText) return false;
   if (e.metaKey || e.ctrlKey || e.altKey) return false;
+  // privacy-panel.tsx keys: `a` toggles analytics, `r` re-reads the config.
+  if (pane === 'privacy') {
+    if (k === 'a') { e.preventDefault(); privacyToggle(); return true; }
+    if (k === 'r') { e.preventDefault(); refreshLiveConfig(); return true; }
+  }
   if (k === 'ArrowLeft' || k === 'ArrowRight' || k === '[' || k === ']') {
     e.preventDefault();
     const ids = SETTINGS_TABS.map((t) => t[0]);
@@ -3426,6 +3446,27 @@ function tkRepaint() {
   if (!box) { render(); return; }
   box.innerHTML = tasksTab();
 }
+/* row-window.ts computeWindowStart, verbatim. */
+function computeWindowStart(cursor, total, size) {
+  if (size <= 0) return 0;
+  if (total <= size) return 0;
+  if (cursor < size) return 0;
+  return Math.min(cursor - size + 1, total - size);
+}
+/* Render after an await that may land while the user is typing in the Tasks
+   search box or create form: repaint the tab in place and put the caret back
+   where it was instead of rebuilding the window around the input. */
+function tkRenderKeepCaret() {
+  const el = document.activeElement;
+  if (!tkTyping()) { render(); return; }
+  const id = el.id, field = el.dataset ? el.dataset.tkField : null;
+  const at = el.selectionStart, end = el.selectionEnd;
+  tkRepaint();
+  const n = id ? document.getElementById(id) : (field ? document.querySelector('[data-tk-field="' + field + '"]') : null);
+  if (!n) return;
+  n.focus();
+  if (typeof at === 'number') { try { n.setSelectionRange(at, end); } catch (e) { /* select/checkbox: no caret */ } }
+}
 
 /* Hooks for --smoke (Item 7: settings surface). */
 if (typeof window !== 'undefined') {
@@ -3439,7 +3480,11 @@ if (typeof window !== 'undefined') {
   window.__settingsClose = () => { act('settings:close'); };
   window.__settingsBody = () => (document.querySelector('#settings .setbody') || {}).innerText || '';
   window.__errCount = () => ERR_COUNT;
-  window.__tasksRows = () => document.querySelectorAll('#settings [data-task-row]').length;
+  window.__tasksRows = () => TK.rows.length; // rows loaded from GET /api/tasks?limit=200 (the tab label's N)
+  window.__tasksWindow = () => ({painted: document.querySelectorAll('#settings [data-task-row]').length, visible: tkVisibleRows().length, max: TK_MAX_ROWS,
+    above: (document.querySelector('#settings [data-act="tasks:page:up"]') || {}).textContent || '', below: (document.querySelector('#settings [data-act="tasks:page:down"]') || {}).textContent || ''});
+  window.__tasksSearch = (q) => { TK.search = q; TK.searchOpen = false; TK.cursor = 0; render(); return tkVisibleRows().map((r) => r.id); };
+  window.__sessionNew = () => { act('session:new'); return S.agentSession; };
   window.__tasksMsg = () => TK.msg || '';
   window.__tasksRefresh = () => tasksRefresh();
   window.__tasksAct = (what) => { tasksAct(what); return {cancel: TK.cancel ? Object.assign({}, TK.cancel) : null, mode: TK.mode, msg: TK.msg || ''}; };

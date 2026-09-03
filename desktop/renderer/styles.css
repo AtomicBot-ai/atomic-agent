@@ -607,3 +607,6 @@ button.menurow:hover{background:var(--bg-hover)}
 .st-running{color:var(--accent-text)} .st-completed{color:var(--success)} .st-failed,.st-blocked{color:var(--danger)} .st-cancelled{color:var(--warn)} .st-pending{color:var(--text-tertiary)}
 .tuimsg{color:var(--accent-text)} .tuierr{color:var(--danger)}
 .tuiwrap{padding:var(--s5)}
+/* Item 7 (settings surface): the TUI's `↑ N above` / `↓ N below` window lines, clickable here. */
+.tuimore{display:block;color:var(--text-tertiary);font-family:inherit;font-size:inherit;padding:0 4px;height:22px;line-height:22px;text-align:left;border-radius:4px;white-space:pre}
+.tuimore:hover{background:var(--bg-hover);color:var(--text-primary)}

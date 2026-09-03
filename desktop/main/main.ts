@@ -485,6 +485,13 @@ async function smokeTest(): Promise<void> {
     await js<void>("window.__closeAll && window.__closeAll()");
 
     // A tool-using turn: cards must carry the real args and a duration.
+    // Item 7 (settings surface) fix: the turn used to run inside the largest
+    // stored session, which every run grows by one more "List the files… /
+    // done" pair — once the model has listed the directory several times in
+    // its own context it answers a bare "done" with no tool call (seen in
+    // the lane store: session api-2931b30b63359b7d, 103 turns, 0 cards).
+    // A fresh session makes the check measure the cards, not the history.
+    await js<void>("window.__sessionNew()");
     await js<void>("window.__ask('List the files in the current directory, then say done.')");
     const toolDeadline = Date.now() + 150_000;
     let cards: Array<{ name: string; args: string; ms: number; ok: boolean | null; live: boolean }> = [];
@@ -663,14 +670,22 @@ async function settingsTest(
   // Tasks tab: what GET /api/tasks holds is what the tab shows.
   await js<void>("window.__settingsOpen('tasks')");
   await wait(1500);
-  const taskState = await js<{ count: number; rows: number; body: string }>(
-    "(async () => { const r = await window.atomic.tasks(); const list = (r.data && r.data.tasks) || [];"
-    + " return {count: list.length, rows: window.__tasksRows(), body: window.__settingsBody()}; })()",
+  // The harness reads the store through the route's own cap (limit=500), so
+  // the tab's count is checked against what the store holds up to the TUI's
+  // 200-row list limit — not against the same 200-row call the tab makes.
+  const storeCount = await agent!.tasksList(500).then((r) => ((r as { tasks?: unknown[] }).tasks ?? []).length).catch(() => -1);
+  const taskState = await js<{ rows: number; body: string; win: { painted: number; visible: number; max: number; above: string; below: string } }>(
+    "(() => ({rows: window.__tasksRows(), body: window.__settingsBody(), win: window.__tasksWindow()}))()",
   );
-  const tasksCopy = taskState.count === 0
+  const tasksCopy = taskState.rows === 0
     ? taskState.body.includes("no tasks match the current filter — press `n` to create one")
     : taskState.body.includes("status   schedule               next-run       session   message");
-  check("tasks tab: rows and copy come from GET /api/tasks", tasksCopy && taskState.rows === taskState.count, `${taskState.rows} rows for ${taskState.count} tasks`);
+  check("tasks tab: rows and copy come from GET /api/tasks?limit=200", tasksCopy && taskState.rows === Math.min(storeCount, 200), `${taskState.rows} rows, store holds ${storeCount}`);
+  // tasks-list.tsx windows the list at 14 rows around the cursor and prints the hidden counts.
+  const w = taskState.win;
+  const hidden = Math.max(0, w.visible - w.max);
+  const windowOk = w.painted === Math.min(w.visible, w.max) && w.above === "" && (hidden === 0 ? w.below === "" : w.below === `↓ ${hidden} below`);
+  check("tasks tab: list is a 14-row window with the TUI's hidden-count lines", windowOk, `painted=${w.painted} visible=${w.visible} below=${JSON.stringify(w.below)}`);
 
   // The create form's preview (form path: tkPreview → app:taskPreview) is the agent's own cron-parser port.
   const preview = await js<{ cron: number; every: number; at: number; bad: string; shown: boolean }>(
@@ -715,10 +730,12 @@ async function settingsTest(
     createdId = created.id ?? "";
     check("tasks tab: create goes through atag task create", created.ok && !!createdId && created.line === `task ${createdId} scheduled (at)`, created.error ?? created.line);
     if (createdId) {
+      // A one-shot with no scheduledFor sorts last, so it may sit outside the
+      // 14-row window: find it the way the TUI does, through `/` search.
       const seen = await js<{ rows: number; has: boolean }>(
-        "(() => ({rows: window.__tasksRows(), has: window.__settingsBody().includes('desktop smoke task')}))()",
+        "(() => { const ids = window.__tasksSearch('desktop smoke task'); const has = window.__settingsBody().includes('desktop smoke task'); window.__tasksSearch(''); return {rows: ids.length, has}; })()",
       );
-      check("tasks tab: the new task appears in the list", seen.has, `${seen.rows} rows`);
+      check("tasks tab: the new task appears in the list", seen.has && seen.rows >= 1, `${seen.rows} matching rows`);
     }
   } finally {
     if (createdId) {

@@ -269,7 +269,11 @@ export class AgentClient extends EventEmitter {
   capabilities = () => this.json<unknown>("/api/capabilities");
   config = () => this.json<unknown>("/api/config");
   skills = () => this.json<unknown>("/api/skills");
-  tasks = () => this.json<unknown>("/api/tasks");
+  // Item 7 (settings surface): the TUI lists with DEFAULT_LIST_LIMIT = 200
+  // (tasks-orchestrator.ts:25); route-tasks.ts defaults to 50 and caps at 500,
+  // so the limit has to be on the URL or the tab falls behind the TUI.
+  tasks = () => this.tasksList(200);
+  tasksList = (limit: number) => this.json<unknown>(`/api/tasks?limit=${encodeURIComponent(String(limit))}`);
   sessions = () => this.json<unknown>("/api/sessions");
   models = () => this.json<unknown>("/v1/models");
   session = (id: string) => this.json<unknown>(`/api/sessions/${encodeURIComponent(id)}`);
