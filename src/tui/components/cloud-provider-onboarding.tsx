@@ -14,6 +14,7 @@ import { createProvidersWizardState } from "../providers/providers-wizard-state.
 import type { ProvidersWizardState } from "../providers/providers-wizard-state.js";
 import { saveProviderWizardToConfig } from "../providers/save-provider-wizard.js";
 import { verifyWizardBeforeSave } from "../providers/verify-wizard-before-save.js";
+import { probeWizardContract } from "../providers/probe-wizard-contract.js";
 import { theme } from "../theme/theme.js";
 import { ProvidersWizard } from "./providers-wizard.js";
 
@@ -86,8 +87,24 @@ export function CloudProviderOnboarding(props: {
           setSubmitting(false);
           return;
         }
+        // The key is good; whether the route can run a turn is a
+        // separate question, and first-run is exactly where getting it
+        // wrong costs the most — the operator's first message is
+        // otherwise the test. Advisory only: it cannot stop the save,
+        // and it rides the same abort, so Esc still abandons the whole
+        // submit with nothing written.
+        const contract = await probeWizardContract(nextWizard, {
+          signal: abort.signal,
+        });
+        if (!checkStillWanted(abort)) return;
         saveProviderWizardToConfig(nextWizard);
-        props.onFinished("saved_cloud", gate.warning ?? undefined);
+        const notes = [gate.warning, contract.warning].filter(
+          (note): note is string => Boolean(note),
+        );
+        props.onFinished(
+          "saved_cloud",
+          notes.length > 0 ? notes.join(" ") : undefined,
+        );
       } catch (err) {
         // An abandoned run does not get to report a failure either: it
         // would paint over the screen the operator was handed back, and
