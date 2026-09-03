@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { stat } from "node:fs/promises";   // item 5: the attachment strip stats what a turn wrote, nothing else
-import { execFile, spawn } from "node:child_process";   // item 2 (voice input): the smoke spawns the speech helper with --probe
+import { execFile, execFileSync, spawn } from "node:child_process";   // item 2 (voice input): the smoke spawns the speech helper with --probe, and `say` writes its audio fixture
 import { promisify } from "node:util";
 
 import { AgentClient } from "./agent-client.js";
@@ -1276,6 +1276,33 @@ async function smokeTest(): Promise<void> {
       await new Promise((r) => setTimeout(r, 1000));
     }
     check("agent replied", reply.toLowerCase().includes("hello"), JSON.stringify(reply.slice(0, 80)));
+    // r4-ui item 3 review fix: the end mark's LIVE path. Every other check on
+    // the mark drives synthetic pushes (and, for the guard, a poked S.busy),
+    // so nothing proved that a turn the agent really streamed collects its
+    // full stop when its done frame lands. Asserted at rest, not mid-delta:
+    // reading the transcript between deltas is a race the suite would lose.
+    if (reply.trim()) {
+      let atRest = false;
+      for (let i = 0; i < 40 && !atRest; i++) {
+        atRest = !(await js<boolean>("window.__busy()"));
+        if (!atRest) await new Promise((r) => setTimeout(r, 500));
+      }
+      type MarkRow = { k: string; end: boolean; endLast: boolean };
+      const liveRows = await js<MarkRow[]>("window.__turnShape()");
+      const liveTail = liveRows[liveRows.length - 1];
+      check(
+        "the turn the agent really streamed carries the end mark",
+        atRest && !!liveTail && liveTail.k === "assistant" && liveTail.end && liveTail.endLast
+          && liveRows.every((t) => !t.end || (t.k === "assistant" && t.endLast)),
+        `at rest=${atRest}, rows=${JSON.stringify(liveRows.map((t) => [t.k, t.end]))}`,
+      );
+    } else {
+      // A turn that produced no text is owed no mark — that is the rule this
+      // check exists to prove, and "agent replied" above has already gone red
+      // for the provider outage. Asserting here too would report one failure
+      // twice under a name that blames the mark.
+      process.stdout.write("SKIP the end mark's live path — the turn produced no reply\n");
+    }
   }
 
   if (state === "connected") {
@@ -1361,7 +1388,7 @@ async function smokeTest(): Promise<void> {
     // and would fail if this left the ladder moved.
     const modeState = await js<{
       supported: boolean | null; current: string;
-      approvalLevel: number | null; baseLevel: number | null;
+      approvalLevel: number | null; baseLevel: number | null; known: boolean;
     }>("window.__modeState()");
     // The locally built agent the desktop prefers. `supported === false`
     // while running THAT binary is the exact regression this item is
@@ -1534,6 +1561,7 @@ async function smokeTest(): Promise<void> {
     // renderer into the state a routeless agent produces and read the
     // chip's own markup back.
     const wasSupported = modeState.supported;
+    const wasKnown = modeState.known;
     try {
       const chipOff = await js<string>(
         "(() => { window.__modeOverride({supported:false}); return window.__chipHTML(); })()",
@@ -1558,8 +1586,40 @@ async function smokeTest(): Promise<void> {
         / \| agent [^|]+ \| approval L/.test(diagOff.line),
         diagOff.line,
       );
+      // Review fix: the same blank, one state earlier. `current` starts on the
+      // seed 'default' and a failed GET leaves it there, so a chip painted
+      // from it names a stance the agent never confirmed — at approvalLevel 5
+      // the live stance is `bypass`. `known` is what separates the two, and
+      // the popover must mark no row current in that state either.
+      const unconfirmed = await js<{ chip: string; current: number }>(
+        "(() => { window.__modeOverride({supported:true, known:false});"
+        + " const html = window.__chipHTML();"
+        + " window.__modeOpenPopover();"
+        + " const cur = document.querySelectorAll('.popover .poprow.on').length;"
+        + " window.__overlayClose();"
+        + " return {chip: html.replace(/<[^>]*>/g, '').trim(), current: cur}; })()",
+      );
+      check(
+        "coding mode chip says 'mode —' until the agent has answered",
+        unconfirmed.chip === "mode —" && unconfirmed.current === 0,
+        `chip=${JSON.stringify(unconfirmed.chip)}, rows marked current=${unconfirmed.current}`,
+      );
     } finally {
-      await js<void>(`window.__modeOverride({supported:${JSON.stringify(wasSupported)}})`);
+      await js<void>(
+        `window.__modeOverride({supported:${JSON.stringify(wasSupported)}, known:${JSON.stringify(wasKnown)}})`,
+      );
+    }
+    // ...and once it HAS answered the chip names the stance, so the blank
+    // above is a state this window really leaves — not one it is stuck in.
+    if (modeState.supported === true) {
+      const chipLive = await js<string>("window.__chipHTML()");
+      const chipLiveText = chipLive.replace(/<[^>]*>/g, "").trim();
+      check(
+        "coding mode chip names the stance the agent confirmed",
+        modeState.known === true
+          && ["default", "plan", "auto", "bypass permissions"].includes(chipLiveText),
+        `known=${modeState.known} chip=${JSON.stringify(chipLiveText)}`,
+      );
     }
 
     // "claude haiku" must find claude/haiku, claude.haiku, claude-3-haiku…
@@ -2097,6 +2157,43 @@ async function voiceTest(
       `draft ${JSON.stringify(ins.draft)}, user messages ${usersBefore}→${ins.users}, state ${ins.voice.state}`,
     );
 
+    // --- a segment that arrives after the finalize window -----------------
+    // voiceStop waits up to 2.5 s for the helper's `done`; a `final` that
+    // misses it used to be accumulated into a strip nobody could see and then
+    // wiped by the next take — the tail of the dictation lost in silence.
+    await js<unknown>("window.__ctxDraft('fix ')");
+    await js<V>("window.__voiceArm()");
+    await js<V>("window.__voiceEvent({type:'final', text:'Open the settings pane.'})");
+    const onTime = await js<{ draft: string }>("window.__voiceStop()");
+    const late = await js<{ draft: string; entry: string; state: string; lateTake: number | null; toasts: string[] }>(
+      "window.__voiceLateProbe(' Then switch the backend.')",
+    );
+    check(
+      "a segment that misses the finalize window is inserted, and says it was late",
+      onTime.draft === "fix Open the settings pane."
+        && late.draft === "fix Open the settings pane. Then switch the backend."
+        && late.entry === late.draft && late.lateTake === null
+        && late.toasts.some((t) => t.startsWith("Voice input: The end of that take arrived late")),
+      `on time ${JSON.stringify(onTime.draft)} → late ${JSON.stringify(late.draft)}, toasts ${JSON.stringify(late.toasts)}`,
+    );
+    await js<V>("window.__voiceCancel()");
+    await js<unknown>("window.__ctxDraft('')");
+
+    // --- losing the window mid-sentence -----------------------------------
+    // The discard is right (a recording the operator walked away from must not
+    // stay hot) but it used to happen in silence: the strip simply vanished.
+    await js<unknown>("window.__ctxDraft('fix ')");
+    await js<V>("window.__voiceArm()");
+    await js<V>("window.__voiceEvent({type:'partial', text:'half a sentence'})");
+    const blurred = await js<{ state: string; draft: string; toasts: string[] }>("window.__voiceBlurProbe()");
+    check(
+      "a take thrown away by a lost window says so",
+      blurred.state === "idle" && blurred.draft === "fix "
+        && blurred.toasts.some((t) => t === "Voice input: The window lost focus, so that recording was thrown away"),
+      `state ${blurred.state}, draft ${JSON.stringify(blurred.draft)}, toasts ${JSON.stringify(blurred.toasts)}`,
+    );
+    await js<unknown>("window.__ctxDraft('')");
+
     // --- a cancelled take inserts nothing ---------------------------------
     await js<unknown>("window.__ctxDraft('fix ')");
     await js<V>("window.__voiceArm()");
@@ -2446,6 +2543,96 @@ async function voiceTest(
         probe.code === 0 && supported.includes("en-US") && installed.every((l) => supported.includes(l)),
         `exit ${probe.code}, ${supported.length} supported, ${installed.length} installed`,
       );
+
+      /* Review fix: everything above this line is synthetic — __voiceArm and
+         __voiceEvent drive the state machine with events nobody produced. The
+         capture chain itself (VoiceSession.audio's guards, the helper turning
+         PCM into partials and then a final) was asserted by nothing. It needs
+         no microphone: `say` writes the take, the REAL VoiceSession spawns the
+         REAL helper, and the audio is paced in through the very method the
+         IPC handler calls. Skipped, out loud, when the model for en-US is not
+         on this Mac or `say` cannot write the fixture. */
+      const fixtureWav = join(app.getPath("temp"), "atomic-desktop-voice.wav");
+      const SPOKEN = "Refactor the login handler and add a unit test for the expired token case.";
+      let pcm: Buffer | null = null;
+      if (installed.includes("en-US")) {
+        try {
+          rmSync(fixtureWav, { force: true });
+          execFileSync("say", ["--data-format=LEI16@16000", "--file-format=WAVE", "-o", fixtureWav, SPOKEN],
+            { stdio: "ignore", timeout: 60_000 });
+          // `say` writes a WAVE with a padding chunk before `data`, so the
+          // chunks are walked rather than a 44-byte header assumed.
+          const wav = readFileSync(fixtureWav);
+          for (let at = 12; at + 8 <= wav.length;) {
+            const id = wav.toString("ascii", at, at + 4);
+            const size = wav.readUInt32LE(at + 4);
+            if (id === "data") { pcm = wav.subarray(at + 8, Math.min(wav.length, at + 8 + size)); break; }
+            at += 8 + size + (size % 2);
+          }
+        } catch { pcm = null; }
+      }
+      if (!pcm || pcm.length < 32_000) {
+        process.stdout.write(
+          `SKIP live speech capture — ${installed.includes("en-US") ? "no fixture from `say`" : "no en-US model on this Mac"}
+`,
+        );
+      } else {
+        const events: Array<Record<string, unknown>> = [];
+        const armedBefore = voice.armed;
+        // Unarmed, with no session: the guard's first line. It must be a
+        // no-op, not a throw and not a write into somebody else's child.
+        voice.audio(new Uint8Array(3200));
+        const started = await voice.start(["en-US"], (p) => { events.push(p); });
+        const armedDuring = voice.armed;
+        const done = new Promise<void>((resolve) => {
+          const at = setInterval(() => {
+            if (events.some((e) => e.type === "done" || e.type === "closed")) { clearInterval(at); resolve(); }
+          }, 100);
+          setTimeout(() => { clearInterval(at); resolve(); }, 45_000);
+        });
+        // Four times real time: the helper's partials track the AUDIO clock,
+        // not the wall clock, so this shortens the run without changing what
+        // it proves. Three payloads the guards must drop are fed in the
+        // middle of the take — if any of them reached the child's stdin the
+        // sample stream would shift and the transcript would come out wrong,
+        // which is what makes this a test of the guards and not a claim.
+        const CH = 3200;
+        for (let at = 0; at < pcm.length; at += CH) {
+          const slice = pcm.subarray(at, Math.min(pcm.length, at + CH));
+          voice.audio(new Uint8Array(slice));
+          if (at === CH * 8) {
+            voice.audio(new Int16Array(1600));            // not a Uint8Array
+            voice.audio(new Uint8Array(65_537));          // over MAX_CHUNK
+            voice.audio(new Uint8Array(0));               // empty
+            voice.audio("not audio at all" as unknown);   // not a typed array
+          }
+          await wait(25);
+        }
+        voice.stop();
+        const armedAfterStop = voice.armed;
+        // ...and a chunk after the stop is refused too: the session is no
+        // longer armed, whatever the child is still finishing.
+        voice.audio(new Uint8Array(3200));
+        await done;
+        const kinds = events.map((e) => String(e.type));
+        const firstPartial = kinds.indexOf("partial");
+        const firstFinal = kinds.indexOf("final");
+        const finalText = String(
+          (events.find((e) => e.type === "final") ?? {}).text ?? "",
+        ).trim().toLowerCase();
+        check(
+          "voice: real audio reaches the helper and comes back as partials, then a final",
+          started.ok === true && !armedBefore && armedDuring && !armedAfterStop
+            && firstPartial >= 0 && firstFinal > firstPartial
+            && finalText.includes("expired token")
+            && finalText.replace(/[.,]/g, "") === SPOKEN.toLowerCase().replace(/[.,]/g, ""),
+          `${kinds.length} events (${kinds.slice(0, 3).join(",")}…), first partial at ${firstPartial},`
+          + ` final at ${firstFinal}, armed ${armedBefore}→${armedDuring}→${armedAfterStop},`
+          + ` heard ${JSON.stringify(finalText)}`,
+        );
+        voice.cancel();
+        rmSync(fixtureWav, { force: true });
+      }
     }
 
     // --- nothing was written to the agent ---------------------------------
@@ -4059,17 +4246,35 @@ async function hfAndDeltaTest(
     "window.__steerParkProbe([{seq:4, text:'the first parked one', parked_at:1}, {seq:7, text:'and the second', parked_at:2}], 3)",
   );
   const parkedNone = await js<Park>("window.__steerParkProbe([], 0)");
+  // Review fix: the arm where the store overflowed and nothing is left to
+  // re-queue. Those steers were ACCEPTED — the window printed "steering the
+  // running turn" for each — and the DELETE used to ack them in silence.
+  const parkedGone = await js<Park>("window.__steerParkProbe([], 4)");
   await js<number>("window.__clearQueue()");
   check(
     "steer: parked messages go to the FRONT of the queue, are announced once, and are acked at the high seq",
     JSON.stringify(parked.queued) === JSON.stringify(["the first parked one", "and the second", "seed 0", "seed 1"])
       && parked.ahead === 2
-      && JSON.stringify(parked.added) === JSON.stringify(["2 messages arrived too late for the last turn here — sending them next"])
+      && JSON.stringify(parked.added) === JSON.stringify([
+        "3 earlier messages were accepted for this session and then dropped by the agent"
+          + " before the turn read them — its parked store overflowed",
+        "2 messages arrived too late for the last turn here — sending them next",
+      ])
       && JSON.stringify(parked.acks) === JSON.stringify([{ id: "probe-parked-session", seq: 7, discarded: 3 }])
       && !!parked.recovery && parked.recovery.parked === 2 && parked.recovery.discarded === 3
       && parkedNone.added.length === 0 && parkedNone.acks.length === 0
       && JSON.stringify(parkedNone.queued) === JSON.stringify(["seed 0", "seed 1"]),
     `queued=${JSON.stringify(parked.queued)} ahead=${parked.ahead} acks=${JSON.stringify(parked.acks)} said=${JSON.stringify(parked.added)}`,
+  );
+  check(
+    "steer: an accepted steer the agent dropped is said out loud, not just acked",
+    JSON.stringify(parkedGone.added) === JSON.stringify([
+      "4 earlier messages were accepted for this session and then dropped by the agent"
+        + " before the turn read them — its parked store overflowed",
+    ])
+      && JSON.stringify(parkedGone.acks) === JSON.stringify([{ id: "probe-parked-session", seq: 0, discarded: 4 }])
+      && JSON.stringify(parkedGone.queued) === JSON.stringify(["seed 0", "seed 1"]),
+    `said=${JSON.stringify(parkedGone.added)} acks=${JSON.stringify(parkedGone.acks)}`,
   );
 
   /* Review fix (major): the steer POST is a round trip, and clicking
@@ -4176,6 +4381,35 @@ async function hfAndDeltaTest(
     "steer: a steer_applied frame puts the message in the transcript",
     entries.includes("from another client"),
     JSON.stringify(entries),
+  );
+  // Review fix: the de-dupe that keeps this window's own steer from printing
+  // twice used to key on the TEXT, so the second of two identical steers in
+  // one turn was swallowed and the transcript understated what the turn was
+  // told. Both are sent through the real steer path and both frames come back.
+  const echo = await js<{ sent: number; entries: string[] }>(
+    "window.__steerEchoProbe('keep going', 2)",
+  );
+  check(
+    "steer: the same words steered twice show twice, and a foreign steer still shows",
+    echo.sent === 2
+      && JSON.stringify(echo.entries) === JSON.stringify(["keep going", "keep going", "from another client"]),
+    `sent=${echo.sent} entries=${JSON.stringify(echo.entries)}`,
+  );
+  // Review fix: "it cannot take this one" is a refusal, and the turn is not
+  // asked at all before its session_id has arrived. That branch says so.
+  const noSession = await js<{ lines: string[]; queued: string[]; ahead: number }>(
+    "window.__steerNoSessionProbe('typed before the session id arrived')",
+  );
+  await js<number>("window.__clearQueue()");
+  check(
+    "steer: a turn that was never asked does not get the refusal sentence",
+    JSON.stringify(noSession.queued) === JSON.stringify(["typed before the session id arrived"])
+      && noSession.ahead === 1
+      && noSession.lines.includes(
+        "system:the running turn has not reported its session yet — it could not be asked,"
+        + " so this runs as the next turn")
+      && !noSession.lines.some((l) => l.includes("it cannot take this one")),
+    JSON.stringify(noSession.lines),
   );
   // The while-busy affordance only appears with something in the editor;
   // an empty one is the Stop button, which is right and unchanged.
@@ -4822,10 +5056,17 @@ async function uiTest(
     JSON.stringify(dots.map((d) => [d.cls, d.bg, d.animation, d.shadow])),
   );
   const seat = probe ? probe.seat : null;
+  // Review fix: the band this used to accept (capMid-0.5 .. xMid+0.5, ~2.2px
+  // wide) also accepted the row's plain flex centre — the misalignment the
+  // whole item is about — so deleting `top:1px` from styles.css left the suite
+  // green. The spec's own acceptance is the MIDPOINT of cap and x, ±0.5px,
+  // which the shipped dot hits exactly and an un-nudged one misses by 1px.
+  const seatMid = seat ? (seat.capMid + seat.xMid) / 2 : 0;
   check(
     "item 1: the dot sits on the label's optical centre",
-    !!seat && seat.dotMid >= seat.capMid - 0.5 && seat.dotMid <= seat.xMid + 0.5,
-    seat ? `dot ${seat.dotMid.toFixed(2)}, cap-mid ${seat.capMid.toFixed(2)}, x-mid ${seat.xMid.toFixed(2)}` : "no probe row",
+    !!seat && Math.abs(seat.dotMid - seatMid) <= 0.5,
+    seat ? `dot ${seat.dotMid.toFixed(2)}, target ${seatMid.toFixed(2)}`
+      + ` (cap-mid ${seat.capMid.toFixed(2)}, x-mid ${seat.xMid.toFixed(2)})` : "no probe row",
   );
   const ec = await js<{ found: boolean; display: string; strays: number }>("window.__emptyChatProbe()");
   check(
@@ -4901,10 +5142,16 @@ async function uiTest(
       && shape.every((t) => !t.end || (t.k === "assistant" && t.endLast)),
     JSON.stringify(shape.map((t) => [t.k, t.end])),
   );
-  const busyMarks = await js<{ during: { total: number; last: boolean }; after: { total: number; last: boolean } }>("window.__marksWhileBusy()");
+  type Marks = { total: number; last: boolean };
+  const busyMarks = await js<{ during: Marks; duringPending: Marks; after: Marks }>("window.__marksWhileBusy()");
   check(
-    "item 3: a running turn carries no end mark",
-    !busyMarks.during.last && busyMarks.after.last && busyMarks.during.total === busyMarks.after.total - 1,
+    // Both halves of the guard: a streaming turn and a turn blocked on an
+    // approval. The live path — a turn the agent really streamed — is asserted
+    // where the suite drives one, right after "agent replied".
+    "item 3: a running turn, or one waiting on an approval, carries no end mark",
+    !busyMarks.during.last && !busyMarks.duringPending.last && busyMarks.after.last
+      && busyMarks.during.total === busyMarks.after.total - 1
+      && busyMarks.duringPending.total === busyMarks.after.total - 1,
     JSON.stringify(busyMarks),
   );
   // The turn that never produced a word: startLiveTurn pushes an empty assistant
@@ -4963,20 +5210,27 @@ async function uiTest(
   // --- item 4: the pluses ----------------------------------------------------
   type Heads = {
     headPlus: boolean; railWidth: number; rail: boolean;
-    heads: Array<{ list: string; act: string | null; right: number; centre: number; visible: boolean;
+    heads: Array<{ list: string; act: string | null; buttons: number; right: number; centre: number; visible: boolean;
                    counter: string | null; counterVisible: boolean; labelVisible: boolean; counterLeftOfPlus: boolean }>;
   };
   const heads = await js<Heads>("window.__sbHeads()");
   check("item 4: no plus on the head row", heads.headPlus === false, JSON.stringify(heads.headPlus));
   check(
+    // ONE plus per header, counted — a second control appearing in a list
+    // header later would otherwise slip past a first-match selector.
     "item 4: one plus per list header, and they line up",
-    heads.heads[0].act === "tasks:new" && heads.heads[1].act === "session:new" && heads.heads[0].right === heads.heads[1].right,
-    JSON.stringify(heads.heads.map((h) => [h.list, h.act, h.right])),
+    heads.heads[0].act === "tasks:new" && heads.heads[1].act === "session:new"
+      && heads.heads[0].buttons === 1 && heads.heads[1].buttons === 1
+      && heads.heads[0].right === heads.heads[1].right,
+    JSON.stringify(heads.heads.map((h) => [h.list, h.act, h.buttons, h.right])),
   );
   check(
-    "item 4: \"N running\" sits to the left of the Tasks plus",
-    /^\d+ running$/.test(heads.heads[0].counter ?? "") && heads.heads[0].counterLeftOfPlus,
-    JSON.stringify([heads.heads[0].counter, heads.heads[0].counterLeftOfPlus]),
+    // ...and the Chats header carries no counter at all, which is what the
+    // TUI's Sessions header does. Captured before, asserted now.
+    "item 4: \"N running\" sits to the left of the Tasks plus, and Chats has no counter",
+    /^\d+ running$/.test(heads.heads[0].counter ?? "") && heads.heads[0].counterLeftOfPlus
+      && heads.heads[1].counter === null,
+    JSON.stringify([heads.heads[0].counter, heads.heads[0].counterLeftOfPlus, heads.heads[1].counter]),
   );
   const rail = await js<Heads>("window.__rail()");
   check(
@@ -5003,7 +5257,7 @@ async function uiTest(
   // --- item 5: Escape --------------------------------------------------------
   type Esc = {
     pane: string | null; focusRow: boolean; focusAct: string; overlay: string | null;
-    sel: boolean; toasts: number; firstRowLabel: string;
+    sel: boolean; toasts: number; firstRowLabel: string; draft: string;
   };
   // Nothing may be left over from the earlier tabs: a stale Tasks search or an
   // open form would eat the Escape before the menu branch is reached.
@@ -5031,16 +5285,51 @@ async function uiTest(
   );
   const closed = await js<Esc>("window.__esc()");
   check("item 5: Escape closes the menu again, it does not reopen it", closed.pane === null, JSON.stringify(closed));
-  await js<string>("window.__clearToasts(); window.__openPalette()");
+  // Review fix: these two used to discard the state they had just opened and
+  // then assert `overlay === null` / `sel === false` — exactly what a FAILED
+  // open leaves behind, so neither proved Escape dismissed anything. The
+  // pre-Escape state is now captured and asserted open first.
+  const palOpen = await js<string | null>("window.__clearToasts(); window.__openPalette()");
   const pal = await js<Esc>("window.__esc()");
-  check("item 5: Escape still closes the palette", pal.overlay === null && pal.pane === null, JSON.stringify(pal));
-  await js<void>("window.__selOpen('model')");
+  check(
+    "item 5: Escape still closes the palette",
+    palOpen !== null && pal.overlay === null && pal.pane === null,
+    `opened=${JSON.stringify(palOpen)} then ${JSON.stringify(pal)}`,
+  );
+  const selOpen = await js<boolean>("window.__selOpen('model')");
   await js<number>("window.__clearToasts()");
   const sel = await js<Esc>("window.__esc()");
   check(
     "item 5: Escape still dismisses the model selector instead of stacking the menu on it",
-    sel.sel === false && sel.pane === null,
-    JSON.stringify(sel),
+    selOpen === true && sel.sel === false && sel.pane === null,
+    `opened=${selOpen} then ${JSON.stringify(sel)}`,
+  );
+  // (c) the deliberate divergence: the TUI clears a half-written draft on the
+  // Escape above its menu branch and this window does NOT — clearing text on
+  // one keypress with no undo is destructive and nobody asked for it. The
+  // draft survives and the menu opens over it, asserted rather than claimed.
+  await js<unknown>("window.__ctxDraft('half a sentence')");
+  // Scroll-to-bottom outranks the menu branch, as it should — put the
+  // transcript where it does not answer this Escape first.
+  await js<unknown>(
+    "(() => { const s = document.getElementById('scroller'); if (s) s.scrollTop = s.scrollHeight; })()",
+  );
+  const withDraft = await js<Esc>("window.__clearToasts(); window.__esc()");
+  check(
+    "item 5: Escape opens the menu over a draft and leaves the draft alone",
+    withDraft.draft === "half a sentence" && withDraft.pane !== null,
+    `draft=${JSON.stringify(withDraft.draft)} pane=${JSON.stringify(withDraft.pane)}`,
+  );
+  await js<number>("window.__settingsClose(); window.__clearToasts()");
+  await js<unknown>("window.__ctxDraft('')");
+  // (d) precedence: mid-turn Escape aborts and must NOT open the menu. The
+  // busy flag is poked and put back, the same synthetic-busy technique the
+  // end-mark check uses; the abort's own system row is taken back out.
+  const midTurn = await js<{ pane: string | null; busy: boolean; aborted: boolean }>("window.__escWhileBusy()");
+  check(
+    "item 5: Escape mid-turn still aborts the turn instead of opening the menu",
+    midTurn.aborted && !midTurn.busy && midTurn.pane === null,
+    JSON.stringify(midTurn),
   );
   await js<number>("window.__settingsClose(); window.__clearToasts()");
 
@@ -5461,7 +5750,7 @@ async function r4SeamTest(
   type Shape = {
     added: number; kinds: string[]; classes: string[];
     bubbles: number; endmarks: number; offers: number;
-    markedBefore: number; markedAfter: number;
+    markedBefore: number; markedAfter: number; busy: boolean;
   };
   // A provider that is not configured takes the "no longer configured" arm,
   // which is the one notice this window can raise without a real session
@@ -5471,13 +5760,19 @@ async function r4SeamTest(
     "window.__stampRowShape({llm:{providerId:'no-such-provider-seam', chatModel:'ghost-model'}})",
   );
   check(
+    // Review fix: `markedAfter === markedBefore` used to compare 0 with 0 — the
+    // transcript here carried no end mark, so the notice could have eaten one
+    // unseen (it did: a trailing system row was the segment's last item).
+    // __stampRowShape now plants a finished turn first, so markedBefore is 1
+    // and the notice has a full stop it could take away.
     "seam: the session model-stamp notice is a system row, not a user bubble",
     gone.added === 1 && gone.kinds[0] === "system"
       && gone.classes.every((c) => /(^|\s)sysrow(\s|$)/.test(c))
       && gone.bubbles === 0 && gone.endmarks === 0
-      && gone.markedAfter === gone.markedBefore,
+      && !gone.busy && gone.markedBefore === 1 && gone.markedAfter === 1,
     `added=${gone.added} kinds=${JSON.stringify(gone.kinds)} classes=${JSON.stringify(gone.classes)}`
-      + ` bubbles=${gone.bubbles} endmarks=${gone.endmarks} marks ${gone.markedBefore}→${gone.markedAfter}`,
+      + ` bubbles=${gone.bubbles} endmarks=${gone.endmarks} marks ${gone.markedBefore}→${gone.markedAfter}`
+      + ` busy=${gone.busy}`,
   );
 
   // The composer carries the microphone, the interim strip and the send

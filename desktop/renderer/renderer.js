@@ -24,7 +24,19 @@ const PLAN = { on:false, supported:null };
    one surface over. Both writers capture it before the request and drop
    their reply if a newer choice has been made since, so a re-assert that
    was already in flight cannot repaint the chip over an explicit click. */
-const MODE = { current:'default', supported:null, baseLevel:null, approvalLevel:null, seq:0 };
+/* `known` is the review fix: `current` starts on the SEED 'default', which is
+   a guess, not the agent's answer. Before the first GET resolves — and after a
+   GET or POST that came back !ok (agent-client returns {ok:false,
+   supported:true} for a timeout or a network error) — the window has no
+   confirmed stance, and at the operator's approvalLevel 5 the live stance is
+   really `bypass`. `known` goes true only when the route answers, and the chip
+   prints the same blank it prints for a routeless agent until then. */
+const MODE = { current:'default', supported:null, baseLevel:null, approvalLevel:null, seq:0, known:false };
+/* src/approval/approval-level.ts MAX_APPROVAL_LEVEL. The two base-5
+   disclosures below and clampLevel all read it rather than the literal, so a
+   ladder that grows a rung moves the copy with it instead of leaving
+   "5 of 5" firing at the wrong ceiling. */
+const MAX_APPROVAL_LEVEL = 5;
 /* Item 6 (coding mode): the last mode this window explicitly chose. The
    stance is process state in the agent, so a backend switch — which
    restarts it — drops back to the boot stance; this is what lets the
@@ -339,7 +351,8 @@ const LLM_LOG_LINES = 30; // local-llm-logs-panel.tsx DEFAULT_MAX_LINES
 /* Telegram panel — the TUI's TelegramPanelState minus the channel facts
    the serve API does not expose (channelState, botUsername, botId). */
 const TG = {
-  keysKnown:false, dotenvKeys:[], envKeys:[], keysBusy:false,
+  // `keysChain` serializes tgRefresh — see the note on that function.
+  keysKnown:false, dotenvKeys:[], envKeys:[], keysBusy:false, keysChain:null,
   showAdvanced:false, mode:'list', token:{error:null, submitting:false},
   message:null, lastError:null, busy:false,
   cfg:null, cfgBusy:false, // `atag config get telegram` — the effective values when the user file has no telegram.* key
@@ -395,6 +408,13 @@ const VOICE = {
   pressAt:0, pressStarted:false, pointerCycle:0,
   stream:null, ac:null, node:null, src:null, gain:null,
   doneResolve:null, doneTimer:null, synthetic:false, seq:0,
+  /* Review fix: the take voiceStop gave up waiting for. A `final` that misses
+     the 2.5 s finalize window used to be accumulated into VOICE.final and then
+     wiped by the next voiceStart — the tail of a dictation vanished with no
+     message at all. `lateTake` holds the seq of that take, and a segment that
+     turns up while it is still the current one is inserted where the on-time
+     one would have gone. */
+  lateTake:null,
 };
 /* One sentence per impossible case, and never an empty one. The main
    process names the case; this table owns the words. */
@@ -449,7 +469,7 @@ const HF_MMPROJ_LINE = '   vision projector in this repo — it is pulled alongs
 const HF_ROW_LABEL = 'Add a model from Hugging Face…';  // onboarding/local-model-picks.ts HUGGING_FACE_ROW_LABEL
 /* Authored here — the TUI has no counterpart, because the TUI's Local
    pane never has to explain why Ollama is not in it. */
-const OLLAMA_SIGNPOST = 'Ollama (local) is a provider here, not a download source: add the running server under Cloud › n add provider › Ollama (local), http://localhost:11434. Ollama is not a download source on this agent — nothing on this pane downloads from it.';
+const OLLAMA_SIGNPOST = 'Ollama (local) is a provider here: add the running server under Cloud › n add provider › Ollama (local), http://localhost:11434. Ollama is not a download source on this agent — nothing on this pane downloads from it.';
 
 /* ---- Item 7C: what v0.5.5 answers that the desktop was projecting ----
    `stored` is GET /api/sessions/{id}.contextUsage verbatim — the whole
@@ -467,7 +487,13 @@ const CTX055 = {stored:null, route:null, stamp:null};
    synchronous and two Enters can otherwise interleave. */
 // `recovery` records the last GET /api/sessions/{id}/steer this window ran
 // (item 7C review fix) so the wiring on openSession is assertable.
-const STEER = {ahead:0, chain:Promise.resolve(), recovery:null};
+/* `mine` is the review fix for the steer_applied de-dupe: the frame that comes
+   back for a steer THIS window sent must not print a second bubble, but keying
+   that on the text alone swallowed the second of two identical steers ("keep
+   going", "stop that") and made the transcript understate what the turn was
+   told. Each accepted steer this window put in the transcript adds one entry
+   here and the matching frame consumes exactly one. */
+const STEER = {ahead:0, chain:Promise.resolve(), recovery:null, mine:[]};
 const MAX_QUEUED = 20; // chat-orchestrator.ts:66 MAX_QUEUED_MESSAGES
 
 /* ============================================================
@@ -764,7 +790,11 @@ function renderSidebar() {
           // r4-ui item 4: the counter is emitted BEFORE the plus, so "N running"
           // sits to its left — the label takes flex:1, so both headers' plus
           // buttons share one right edge whether or not a counter precedes them.
-          + '<span class="ct tnum">' + tk.running + ' running</span>'
+          // Review fix: with the tasks fetch failed there is no snapshot to
+          // count, and "0 running" directly above "could not load tasks: …"
+          // states a number this window does not have. The counter is dropped
+          // for that state — the error line below is the honest report.
+          + (TASKS_ERR ? '' : '<span class="ct tnum">' + tk.running + ' running</span>')
           // `tasks:new` reaches tasksAct('new'), which opens Settings › Tasks with
           // the create form already up — the same destination the TUI's `+ new`
           // chip on its Tasks header has.
@@ -1298,7 +1328,11 @@ function expandGroupInPlace(id) {
   if (!sc || !old || i < 0) { render(); return; }
   let j = i; while (j + 1 < S.log.length && S.log[j + 1].k === 'tool' && S.log[j + 1].name === S.log[i].name) j++;
   const before = (old.querySelector('.cardhead') || old).getBoundingClientRect().top;
-  old.outerHTML = S.log.slice(i, j + 1).map(item).join('');
+  // r4-ui item 3 review fix: `.map(item)` handed Array.prototype.map's INDEX
+  // to item()'s second parameter, so every member after the first unfolded
+  // with a truthy `end`. Harmless while the run is all tool cards, but the
+  // sibling call site (repaintEntry) passes an explicit false for a reason.
+  old.outerHTML = S.log.slice(i, j + 1).map((m) => item(m, false)).join('');
   const head = document.querySelector('#turn-' + id + ' .cardhead');
   const drift = head ? head.getBoundingClientRect().top - before : 0;
   if (Math.abs(drift) > 0.5) sc.scrollTop += drift;
@@ -2167,7 +2201,15 @@ async function steerOrQueueRun(text, post) {
   const sid = S.agentSession;
   const send = post || ((id, t) => (BR && BR.steer ? BR.steer(id, t) : Promise.resolve(null)));
   let steered = false;
+  /* Review fix: "it cannot take this one" is a REFUSAL, and there is one
+     branch where nothing was refused because nothing was asked — a brand-new
+     chat whose first turn has not reported its session_id yet (S.busy is
+     already true and the composer already says "Send to steer this turn"), or
+     an older preload with no BR.steer. The outcome is the same, the
+     attribution is not, so that case gets its own sentence. */
+  let asked = false;
   if (sid && (post || (BR && BR.steer))) {
+    asked = true;
     const res = await send(sid, text);
     steered = !!(res && res.ok && res.steered);
   }
@@ -2187,6 +2229,7 @@ async function steerOrQueueRun(text, post) {
     // After a switch it belongs in neither transcript: the agent really
     // did take it, and reopening that chat reads it back from the store.
     if (here) {
+      STEER.mine.push(text);
       pushSteerEntry(text);
       S.log.push({id:nid(), k:'system', text:'steering the running turn — the agent reads it at the next step'});
       render();
@@ -2212,7 +2255,9 @@ async function steerOrQueueRun(text, post) {
   STEER.ahead += 1;
   // The queue tray is window-global and shows the parked text either way;
   // the sentence explaining it is only true in the chat it was typed in.
-  if (here) S.log.push({id:nid(), k:'system', text:'steering the running turn — it cannot take this one, so it runs as the next turn'});
+  if (here) S.log.push({id:nid(), k:'system', text: asked
+    ? 'steering the running turn — it cannot take this one, so it runs as the next turn'
+    : 'the running turn has not reported its session yet — it could not be asked, so this runs as the next turn'});
   render();
 }
 /** The steered message, positioned before the streaming assistant item. */
@@ -2744,6 +2789,7 @@ function voiceTeardownAudio() {
 function voiceStop() {
   if (VOICE.state !== 'recording' && VOICE.state !== 'starting') return Promise.resolve();
   VOICE.seq++;
+  VOICE.lateTake = null;
   VOICE.state = 'finishing';
   refreshVoice();
   voiceTeardownAudio();
@@ -2751,7 +2797,13 @@ function voiceStop() {
   BR.voiceStop();
   return new Promise((resolve) => {
     VOICE.doneResolve = resolve;
-    VOICE.doneTimer = setTimeout(() => { VOICE.doneTimer = null; voiceSettle(); }, 2500);
+    VOICE.doneTimer = setTimeout(() => {
+      VOICE.doneTimer = null;
+      // The helper did not finish inside the window. Whatever it still owes is
+      // claimable until the next take starts — see VOICE.lateTake.
+      VOICE.lateTake = VOICE.seq;
+      voiceSettle();
+    }, 2500);
   }).then(() => voiceInsert());
 }
 function voiceSettle() {
@@ -2796,10 +2848,24 @@ function voiceInsert() {
   return text;
 }
 
+/** A segment that arrived after voiceStop gave up waiting. The take is
+    already closed and the strip is gone, so nothing on screen would ever show
+    it and the next take would wipe it — insert it where the on-time segment
+    would have gone, and say that it was late so the words do not simply appear
+    in the composer a second after the operator stopped talking. */
+function voiceInsertLate() {
+  if (VOICE.lateTake === null || VOICE.lateTake !== VOICE.seq) return;
+  if (!(VOICE.final + VOICE.partial).trim()) return;
+  VOICE.lateTake = null;
+  const text = voiceInsert();
+  if (text) toast('Voice input', 'The end of that take arrived late — it was added to the message');
+}
+
 /** Throw the take away: kill the helper, close the microphone, insert
     nothing. Also what Escape does. */
-function voiceCancel() {
+function voiceCancel(reason) {
   VOICE.seq++;
+  VOICE.lateTake = null;
   if (VOICE.doneTimer) { clearTimeout(VOICE.doneTimer); VOICE.doneTimer = null; }
   VOICE.doneResolve = null;
   voiceTeardownAudio();
@@ -2807,6 +2873,12 @@ function voiceCancel() {
   VOICE.state = 'idle'; VOICE.final = ''; VOICE.partial = ''; VOICE.err = null;
   VOICE.winner = null; VOICE.menu = false; VOICE.synthetic = false;
   refreshVoice();
+  // Review fix: a discard the user did not ask for has to say so. Escape and
+  // the explicit abandons pass nothing and stay silent — the operator knows
+  // what they just pressed; the window-blur discard passes its reason, because
+  // otherwise a notification or a Cmd-Tab mid-sentence reads as the button
+  // randomly stopping. Same argument as voiceInsert's "Nothing was heard".
+  if (reason) toast('Voice input', reason);
 }
 
 /** One helper event. The accumulation rule lives here and it is the one
@@ -2819,11 +2891,12 @@ function voiceEvent(o) {
   const t = o.type;
   if (t === 'ready') { VOICE.activeLocales = o.locales || VOICE.locales.slice(); }
   else if (t === 'partial') { VOICE.partial = String(o.text == null ? '' : o.text); }
-  else if (t === 'final') { VOICE.final += String(o.text == null ? '' : o.text); VOICE.partial = ''; }
+  else if (t === 'final') { VOICE.final += String(o.text == null ? '' : o.text); VOICE.partial = ''; voiceInsertLate(); }
   else if (t === 'replace') {
     // Two languages heard the same audio and the second one scored higher.
     VOICE.final = String(o.text == null ? '' : o.text); VOICE.partial = '';
     VOICE.winner = o.locale || null;
+    voiceInsertLate();
   }
   else if (t === 'install') { VOICE.installFraction = +o.fraction || 0; }
   else if (t === 'installed') { if (o.locale && VOICE.installed.indexOf(o.locale) < 0) VOICE.installed = VOICE.installed.concat([o.locale]); }
@@ -2988,11 +3061,15 @@ document.addEventListener('keydown', (e) => {
     if (S.toasts.length) { S.toasts.pop(); renderToasts(); return; }
     // r4-ui item 5: renderOverlays draws four surfaces that are NOT S.overlay,
     // so the gate above (S.overlay || S.settings || S.menuOpen) does not catch
-    // them and Escape reaches this block with a modal on screen. Onboarding
-    // owns Escape itself and act('close') does not clear OB.open, so leave it
-    // alone; the selector, the provider wizard and the alert box are what
-    // close() clears. Without these two lines the menu below would open ON TOP
-    // of a live modal instead of dismissing it.
+    // them and Escape reaches this block with a modal on screen. The selector,
+    // the provider wizard and the alert box are what act('close') clears.
+    // Onboarding is the exception and Escape is DELIBERATELY inert during it:
+    // the wizard has no cancel (act('close') does not clear OB.open), and
+    // there is no other handler for the key while it is up — first-run setup
+    // is a sequence the operator finishes or quits the app out of. Correction
+    // to an earlier comment here: nothing else "owns" Escape in that state.
+    // Without these two lines the menu below would open ON TOP of a live
+    // modal instead of dismissing it.
     if (OB.open) return;
     if (SEL.open || WIZ.phase || S.alert) { act('close'); return; }
     /* "Escape button should open the menu" — the user's words, and the TUI's
@@ -3348,7 +3425,12 @@ function onChatEvent(ev) {
   if (ev.kind === 'steer_applied') {
     const text = String(ev.text || '');
     if (!text || !item) return;
-    if (!S.log.some((m) => m.k === 'user' && m.steered && m.text === text)) { pushSteerEntry(text); render(); }
+    // One entry per steer this window sent, consumed once — so two identical
+    // steers in one turn show as two bubbles, and a frame for a steer sent
+    // from anywhere else always shows.
+    const mine = STEER.mine.indexOf(text);
+    if (mine >= 0) { STEER.mine.splice(mine, 1); return; }
+    pushSteerEntry(text); render();
     return;
   }
   /* Item 7C — accepted, and then the turn ended before it was read.
@@ -3361,7 +3443,10 @@ function onChatEvent(ev) {
     if (!list.length) return;
     S.queued.unshift.apply(S.queued, list.map((u) => String((u && u.text) || '')));
     STEER.ahead += list.length;
-    if (item) S.log.push({id:nid(), k:'system', text: list.length + ' message' + (list.length === 1 ? '' : 's')
+    // `note:true`: a notice about the SESSION, appended after a turn that may
+    // well have finished — endMarkIds steps over it rather than treating it as
+    // the turn's outcome and deleting the turn's full stop.
+    if (item) S.log.push({id:nid(), k:'system', note:true, text: list.length + ' message' + (list.length === 1 ? '' : 's')
       + ' arrived too late for that turn — sending ' + (list.length === 1 ? 'it' : 'them') + ' next'});
     // The parked store is the server's; ack it or it accumulates.
     const seq = list.reduce((max, u) => Math.max(max, (u && Number(u.seq)) || 0), 0);
@@ -3388,8 +3473,12 @@ function onChatEvent(ev) {
     if (ev.kind === 'error' && item) S.log.push({id:nid(), k:'system',
       text:'turn failed' + (ev.category ? ' [' + esc(ev.category) + ']' : '') + ': ' + esc(ev.error || 'the agent gave no message')});
     // A turn ended: the steer watermark belongs to the turn that is over
-    // (chat-orchestrator.ts resets steeredAhead with the queue).
+    // (chat-orchestrator.ts resets steeredAhead with the queue). The
+    // sent-and-not-yet-echoed list goes with it — a `steer_applied` for this
+    // turn cannot arrive after its done frame, and carrying entries into the
+    // next turn would swallow a bubble there.
     STEER.ahead = 0;
+    STEER.mine.length = 0;
     if (S.queued.length) {
       const q = S.queued.shift();
       // Lane B — backend switch: the gate is judged at turn START, so a
@@ -4658,6 +4747,15 @@ function codingModeChip() {
       + 'title="this agent build has no /api/coding-mode route" '
       + 'style="color:var(--text-disabled)">' + ic('key') + 'mode —' + ic('chevD') + '</button>';
   }
+  // The same blank, for the same reason, one state earlier: the route has not
+  // answered yet (or its last answer was an error). Painting the seed would
+  // name a stance the agent has not confirmed — at approvalLevel 5 it would
+  // say a green `default` while the live stance is `bypass`.
+  if (!MODE.known) {
+    return '<button class="cchip cmodechip" data-act="modes" '
+      + 'title="the agent has not reported a stance yet" '
+      + 'style="color:var(--text-disabled)">' + ic('key') + 'mode —' + ic('chevD') + '</button>';
+  }
   const id = currentMode();
   const look = CODING_MODES.find((m) => m.id === id) || CODING_MODES[0];
   const colour = look.tone === 'bad' ? 'var(--danger)' : look.tone === 'warn' ? 'var(--warn)'
@@ -4666,8 +4764,9 @@ function codingModeChip() {
   // reports `bypass`, because default/auto/bypass all resolve to level 5
   // with plan off — so the chip opens red until a mode is chosen. Say so
   // in the tooltip, where it is readable without opening the popover.
-  const title = MODE.baseLevel === 5
-    ? 'what the agent may do without asking — your configured approval level is 5 of 5, so default already approves everything'
+  const title = MODE.baseLevel === MAX_APPROVAL_LEVEL
+    ? 'what the agent may do without asking — your configured approval level is '
+      + MAX_APPROVAL_LEVEL + ' of ' + MAX_APPROVAL_LEVEL + ', so default already approves everything'
     : 'what the agent may do without asking';
   return '<button class="cchip cmodechip" data-act="modes" title="' + esc(title) + '" '
     + 'style="color:' + colour + '">' + ic('key') + esc(look.label) + ic('chevD') + '</button>';
@@ -4682,7 +4781,8 @@ function modesHTML() {
         // row is marked, and the rows carry no data-mode: the click
         // handler keys off that attribute, so dropping it is what makes
         // them genuinely inert rather than merely grey.
-        const on = !off && m.id === currentMode();
+        // ...and nothing is "current" before the route has answered either.
+        const on = !off && MODE.known && m.id === currentMode();
         return '<button class="poprow' + (on ? ' on' : '') + (off ? ' dim' : '') + '"'
           + (off ? ' disabled' : ' data-mode="' + m.id + '"') + '>'
           + '<span class="radio"' + (on ? ' style="border-color:var(--accent);border-width:4px"' : '') + '></span>'
@@ -4701,8 +4801,9 @@ function modesHTML() {
           // The disclosure that stops a level-5 operator reading a working
           // chip as a broken one: three of the four choices genuinely do
           // not change what the agent does at that base.
-          + (MODE.baseLevel === 5
-              ? '<p class="cap" style="margin:6px 0 0">Your configured approval level is 5 of 5, so default already approves everything — lower agent.approvalLevel to make the modes differ.</p>'
+          + (MODE.baseLevel === MAX_APPROVAL_LEVEL
+              ? '<p class="cap" style="margin:6px 0 0">Your configured approval level is ' + MAX_APPROVAL_LEVEL
+                + ' of ' + MAX_APPROVAL_LEVEL + ', so default already approves everything — lower agent.approvalLevel to make the modes differ.</p>'
               : ''))
     + '</div>'
     + '<div class="popfoot"><button class="btn btn-s" data-act="close">Done</button></div></div></div>';
@@ -4715,7 +4816,7 @@ function modesHTML() {
    is not a number: a missing level leaves S.level alone rather than
    inventing one. */
 function clampLevel(n) {
-  return typeof n === 'number' ? Math.max(1, Math.min(5, n)) : null;
+  return typeof n === 'number' ? Math.max(1, Math.min(MAX_APPROVAL_LEVEL, n)) : null;
 }
 
 /*
@@ -4755,7 +4856,10 @@ function loadCodingMode() {
     if (!res) return;
     if (seq !== MODE.seq) return;
     MODE.supported = res.supported;
-    if (res.ok) { MODE.current = res.mode; MODE.approvalLevel = res.approvalLevel; MODE.baseLevel = res.baseLevel; }
+    // Only an `ok` answer moves the stance. A failed GET leaves `current`
+    // where it was and `known` false, so the chip keeps the blank rather than
+    // painting the seed as if the agent had confirmed it.
+    if (res.ok) { MODE.current = res.mode; MODE.approvalLevel = res.approvalLevel; MODE.baseLevel = res.baseLevel; MODE.known = true; }
     render();
     // The stance is process state in the agent, and the desktop restarts
     // the agent on a backend switch — so re-assert what this window last
@@ -4790,7 +4894,7 @@ function reassertCodingMode(id) {
     // its reply is the one the chip and the diagnostics level must show.
     if (seq !== MODE.seq) return;
     if (!res || !res.ok) { if (res) MODE.supported = res.supported; render(); return; }
-    MODE.supported = true; MODE.current = res.mode;
+    MODE.supported = true; MODE.current = res.mode; MODE.known = true;
     MODE.approvalLevel = res.approvalLevel; MODE.baseLevel = res.baseLevel;
     LAST_MODE = res.mode;
     const lvl = clampLevel(res.approvalLevel);
@@ -4822,7 +4926,8 @@ async function setCodingMode(id) {
     render();
     return;
   }
-  MODE.supported = true; MODE.current = res.mode; MODE.approvalLevel = res.approvalLevel; MODE.baseLevel = res.baseLevel;
+  MODE.supported = true; MODE.current = res.mode; MODE.known = true;
+  MODE.approvalLevel = res.approvalLevel; MODE.baseLevel = res.baseLevel;
   LAST_MODE = res.mode;
   // The diagnostics line reads the capabilities snapshot taken at connect,
   // and the mode moves the LIVE ladder — so without this the line keeps
@@ -4842,7 +4947,9 @@ async function setCodingMode(id) {
 
 if (typeof window !== 'undefined') {
   window.__sel = () => ({open:SEL.open, kind:SEL.kind, rows:SEL.rows.length, backend:selBackend(), err:SEL.err});
-  window.__selOpen = (kind) => openSelector(kind);
+  // Review fix: returns the state the caller is about to Escape out of, so a
+  // check on the dismissal cannot pass on a selector that never opened.
+  window.__selOpen = (kind) => { openSelector(kind); return SEL.open; };
   window.__selTab = (kind) => { SEL.kind = kind; SEL.cursor = 0; render(); selEnterModelPane(); };
   window.__ctx = () => ({tokens:CTX.tokens, source:CTX.source, window:CTX.window, windowLabel:CTX.windowLabel, stablePrefix:CTX.stablePrefix,
     draftTokens:CTX.draftTokens, previewSupported:CTX.previewSupported,
@@ -5014,10 +5121,21 @@ async function recoverParkedSteers(id, probe) {
   const discarded = Number(res.data.discarded) || 0;
   STEER.recovery = {id, parked:list.length, discarded};
   if (!list.length && !discarded) return;
+  /* Review fix: `discarded` is the count of steers this route ACCEPTED —
+     the window printed "steering the running turn" for each of them — and
+     then evicted when the session's parked store overflowed. It was carried
+     into the DELETE and never mentioned, so with nothing left parked the ack
+     went out in silence. Same argument as the parked ones: dropping it would
+     lose something the user watched being accepted. */
+  if (discarded) {
+    S.log.push({id:nid(), k:'system', note:true, text: discarded + ' earlier message'
+      + (discarded === 1 ? ' was' : 's were') + ' accepted for this session and then dropped by the agent'
+      + ' before the turn read ' + (discarded === 1 ? 'it' : 'them') + ' — its parked store overflowed'});
+  }
   if (list.length) {
     S.queued.unshift.apply(S.queued, list.map((u) => String((u && u.text) || '')));
     STEER.ahead += list.length;
-    S.log.push({id:nid(), k:'system', text: list.length + ' message' + (list.length === 1 ? '' : 's')
+    S.log.push({id:nid(), k:'system', note:true, text: list.length + ' message' + (list.length === 1 ? '' : 's')
       + ' arrived too late for the last turn here — sending ' + (list.length === 1 ? 'it' : 'them') + ' next'});
   }
   const seq = list.reduce((max, u) => Math.max(max, (u && Number(u.seq)) || 0), 0);
@@ -5060,11 +5178,14 @@ function noteSessionModelStamp(data) {
   if (!known) {
     // The TUI's own sentence for a stamp whose provider has since been
     // deleted (session-model-restore.ts describeModelRestore in 0.5.5).
-    S.log.push({id:nid(), k:'system', text: esc('this session last ran on "' + label + '", which is no longer configured — keeping the current model')});
+    S.log.push({id:nid(), k:'system', note:true, text: esc('this session last ran on "' + label + '", which is no longer configured — keeping the current model')});
     return;
   }
   CTX055.stamp = {providerId: stamp.providerId, chatModel: model};
-  S.log.push({id:nid(), k:'system', text: esc('this session ran on ' + label + ' — the window is on ' + (liveProvider || 'no provider') + (shownModel ? '/' + shownModel : ''))
+  // `note:true` (see endMarkIds): this row is appended to a REPLAYED
+  // transcript whose last turn finished long ago, so it must not take that
+  // turn's full stop away.
+  S.log.push({id:nid(), k:'system', note:true, text: esc('this session ran on ' + label + ' — the window is on ' + (liveProvider || 'no provider') + (shownModel ? '/' + shownModel : ''))
     + ' <button class="btn btn-s" style="height:22px" data-act="sessmodel:apply">Switch to it</button>'
     + ' <span class="ter">(a switch restarts the agent, so it is refused while any turn is running)</span>'});
 }
@@ -5234,7 +5355,15 @@ async function wizNext() {
    under another origin has no stream here and no mark — the same honest limit
    the pulsating sidebar dot already carries. A turn that ends with a system
    row (abort, "turn failed") gets no mark either, which is right: nothing
-   says the whole process finished. */
+   says the whole process finished.
+   Review fix: NOT every system row says that. A handful are notices ABOUT the
+   session rather than about the turn — the model stamp openSession appends
+   after replaying a stored transcript, the parked-steer recovery, the
+   `steer_undelivered` ack — and they are pushed after a turn that really did
+   finish. Left counted, they silently deleted the full stop of the last
+   completed turn, which is the one turn the operator is looking at. Those
+   rows carry `note:true` and are stepped over here; an abort or a failure
+   carries no such flag and still suppresses the mark. */
 function endMarkIds() {
   const segs = [[]];
   S.log.forEach((m) => { if (m.k === 'user') segs.push([]); segs[segs.length - 1].push(m); });
@@ -5242,8 +5371,10 @@ function endMarkIds() {
   segs.forEach((seg, i) => {
     if (!seg.length) return;
     if (i === segs.length - 1 && (S.busy || S.pending)) return;
-    const last = seg[seg.length - 1];
-    if (last.k === 'assistant' && String(last.text || '').trim()) ids.add(last.id);
+    let at = seg.length - 1;
+    while (at >= 0 && seg[at].k === 'system' && seg[at].note) at--;
+    const last = at >= 0 ? seg[at] : null;
+    if (last && last.k === 'assistant' && String(last.text || '').trim()) ids.add(last.id);
   });
   return ids;
 }
@@ -5589,7 +5720,7 @@ function attachStrip(m) {
 /* Hooks for --smoke. */
 if (typeof window !== 'undefined') {
   window.__modeState = () => ({supported:MODE.supported, current:MODE.current,
-    approvalLevel:MODE.approvalLevel, baseLevel:MODE.baseLevel});
+    approvalLevel:MODE.approvalLevel, baseLevel:MODE.baseLevel, known:MODE.known});
   window.__search = (q) => { SEL.filter = q; return selRows().length; };
   window.__wizOpen = () => { WIZ.phase = 'pick_kind'; WIZ.row = null; render(); return {rows:KIND_ROWS.length, selected:document.querySelectorAll('[data-wiz-kind].on').length}; };
   window.__storeDiag = async () => {
@@ -8321,9 +8452,14 @@ async function llmHfResolve(raw) {
   llmRepaint();
   const res = await BR.hfResolve(value);
   if (!LLMHF.open) return;
+  /* Review fix: the cancelled arm has to come BEFORE `busy = false`. Escape
+     cancels lookup A and Enter starts B; A's late reply then cleared B's busy
+     flag, so the editor lost `asking huggingface.co…`, got `[ clear ]` back
+     and offered `esc back to the list` while B was still in flight. Whoever
+     cancelled A already put the flag where it belongs. */
+  if (res && res.cancelled) { llmRepaint(); llmHfFocus(); return; }
   LLMHF.busy = false;
   if (!res || res.ok !== true) {
-    if (res && res.cancelled) { llmRepaint(); llmHfFocus(); return; }
     // Verbatim. huggingface-ref.ts:77-78 and huggingface-api.ts:45-58 are
     // written for this screen.
     LLMHF.error = (res && res.error) || 'the lookup failed';
@@ -8781,7 +8917,16 @@ function llmAct(what) {
     if (arg === 'close') { llmHfClose(); return; }
     if (arg === 'look') { llmHfResolve(llmHfInputValue()); return; }
     if (arg === 'add') { llmHfAdd(); return; }
-    if (arg.startsWith('row:')) { LLMHF.cursor = +arg.slice(4) || 0; llmRepaint(); return; }
+    if (arg.startsWith('row:')) {
+      // MouseListRow's contract in the TUI (src/tui/mouse/mouse-list-row.tsx):
+      // the first click selects, a second click on the SELECTED row activates.
+      // Without this the HF pick list was the one list in this pane a mouse
+      // could not act on — the Local model rows above activate on the first
+      // click, and the footer's `Enter download` was the only mouse route.
+      const at = +arg.slice(4) || 0;
+      if (at === LLMHF.cursor) { llmHfAdd(); return; }
+      LLMHF.cursor = at; llmRepaint(); return;
+    }
     llmSetMode('local');
     LLMHF.open = true; LLMHF.step = 'ref'; LLMHF.error = null; LLMHF.repo = null; LLMHF.cursor = 0; LLMHF.busy = false;
     llmRepaint();
@@ -9026,9 +9171,21 @@ function tgOwner() { const t = tgCfgBlock(); if (t && 'ownerUserId' in t) return
 function tgHasToken() { if (!TG.keysKnown) return null; return TG.dotenvKeys.includes('TELEGRAM_BOT_TOKEN') || TG.envKeys.includes('TELEGRAM_BOT_TOKEN'); }
 function telegramTabEntered() { tgRefresh(); }
 function tgRepaint() { if (telegramVisible()) paneRepaintKeepFocus(telegramTab()); }
-/* R refresh (orchestrator refreshSettings): config + the key names in the env and .env. */
-async function tgRefresh() {
-  if (!BR || TG.keysBusy) return;
+/* R refresh (orchestrator refreshSettings): config + the key names in the env and .env.
+   Review fix: a refresh asked for while one was in flight used to be DROPPED
+   (`if (TG.keysBusy) return`). tgTokenSave awaits its own tgRefresh right after
+   writing the key, so a refresh already running — the tab's entry refresh, or
+   the settings poll — made that await return without re-reading .env, and a
+   token that had just been written showed as `missing` with no confirm card.
+   Refreshes are serialized now: the second one runs after the first instead of
+   being thrown away. */
+function tgRefresh() {
+  if (!BR) return Promise.resolve();
+  TG.keysChain = (TG.keysChain || Promise.resolve()).then(tgRefreshOnce, tgRefreshOnce);
+  return TG.keysChain;
+}
+async function tgRefreshOnce() {
+  if (!BR) return;
   TG.keysBusy = true;
   const stateDir = memStateDir();
   const [cfg, env, dotenv, eff] = await Promise.all([
@@ -9734,7 +9891,15 @@ if (typeof window !== 'undefined') {
     S.busy = true; render();
     const during = count();
     S.busy = before; render();
-    return {during, after: count()};
+    /* Review fix: the guard is `S.busy || S.pending` and only the first half
+       was exercised. The approval-blocked half is poked the same way, with the
+       same request shape __voicePending uses, and put back exactly. */
+    const pendBefore = S.pending;
+    S.pending = pendBefore || {id:'endmark-smoke', k:'approval', approvalId:'endmark-smoke'};
+    render();
+    const duringPending = count();
+    S.pending = pendBefore; render();
+    return {during, duringPending, after: count()};
   };
   /* Item 3: the other half of "never on a live turn", and the one that needs no
      poked flag at all. startLiveTurn pushes an EMPTY assistant item before the
@@ -9765,6 +9930,9 @@ if (typeof window !== 'undefined') {
       if (!h) return {list: l, act: null};
       const b = h.querySelector('button[data-act]'), c = h.querySelector('.ct');
       return {list: l, act: b ? b.dataset.act : null,
+              // Review fix: "one plus per header" is the literal ask, so the
+              // count is reported rather than left to the first match.
+              buttons: h.querySelectorAll('button[data-act]').length,
               right: b ? Math.round(b.getBoundingClientRect().right) : 0,
               visible: !!(b && b.offsetParent),
               centre: b ? Math.round(b.getBoundingClientRect().left + b.getBoundingClientRect().width / 2) : 0,
@@ -9884,7 +10052,9 @@ if (typeof window !== 'undefined') {
   // nothing until the second click. Synthetic sessions are exempt too: the
   // harness runs with the window behind other windows.
   window.addEventListener('blur', () => {
-    if (!VOICE.synthetic && VOICE.state === 'recording') voiceCancel();
+    if (!VOICE.synthetic && VOICE.state === 'recording') {
+      voiceCancel('The window lost focus, so that recording was thrown away');
+    }
   });
   // Leaving the chat, opening another session or starting a new one all
   // abandon the take rather than carrying it into a different draft.
@@ -10349,6 +10519,15 @@ if (typeof window !== 'undefined') {
    leaves. */
 if (typeof window !== 'undefined') {
   window.__stampRowShape = (metadata) => {
+    /* Review fix: the mark-count half of this probe was vacuous. At this point
+       in the run the transcript carries no end mark at all, so `markedAfter ===
+       markedBefore` compared 0 with 0 and could never have seen the notice
+       delete a mark. A finished turn is pushed first — user then a non-empty
+       assistant, exactly the shape endMarkIds marks — and taken back out with
+       the notice, so markedBefore is genuinely 1 and the sub-assertion bites. */
+    const base = S.log.length;
+    S.log.push({id:nid(), k:'user', text:'(smoke) a turn that finished'});
+    S.log.push({id:nid(), k:'assistant', text:'and its reply'});
     const before = S.log.length;
     const markedBefore = endMarkIds().size;
     // noteSessionModelStamp writes CTX055.stamp as well as the transcript, and
@@ -10374,11 +10553,133 @@ if (typeof window !== 'undefined') {
         // A system row must not open a new turn segment, so the number of
         // end marks in the transcript cannot move because of it.
         markedAfter: endMarkIds().size, markedBefore,
+        // The mark is only withheld from a running turn, so the count above
+        // means nothing unless the window is at rest — reported, not assumed.
+        busy: !!S.busy || !!S.pending,
       };
     } finally {
-      S.log.splice(before, S.log.length - before);
+      S.log.splice(base, S.log.length - base);
       CTX055.stamp = stampBefore;
       render();
     }
+  };
+}
+
+/* ============================================================
+   r4 review fixes — smoke hooks for the gaps the per-ask verifiers found
+   ============================================================ */
+if (typeof window !== 'undefined') {
+  /* escape-menu (d): the precedence the menu branch leans on but nothing
+     tested — a running turn takes Escape first, and the menu does not open.
+     S.busy is poked and put back (the same synthetic-busy technique the
+     end-mark probe uses; a real turn mid-flight is a race the suite would
+     lose), and abort()'s own system row is taken back out afterwards, so the
+     transcript this hook was handed is the transcript it leaves. */
+  /* voice: the segment that arrives after voiceStop gave up waiting. The real
+     path sets VOICE.lateTake from the 2500 ms fallback timer, which a smoke run
+     has no business sitting through — the flag it sets is planted instead, and
+     the `final` after it goes through the REAL voiceEvent → voiceInsertLate →
+     voiceInsert chain. */
+  window.__voiceLateProbe = (text) => {
+    VOICE.lateTake = VOICE.seq;
+    S.toasts = [];
+    // The state this models is "the take closed and the draft has not been
+    // touched since", so the caret sits at the end of the draft. Pinned here
+    // rather than assumed: a background render (the 5 s tasks poll) rewrites
+    // the textarea's value between the stop and the late segment.
+    const e = $('#entry');
+    if (e) { try { e.setSelectionRange(S.draft.length, S.draft.length); } catch (err) {} }
+    voiceEvent({type:'final', text:String(text)});
+    return {draft:S.draft, entry:(($('#entry') || {}).value) || '', state:VOICE.state,
+            lateTake:VOICE.lateTake, toasts:S.toasts.map((x) => x.t + ': ' + x.s)};
+  };
+  /* voice: losing the window mid-sentence. The blur handler exempts synthetic
+     takes (the harness runs with the window behind others), so the flag is
+     dropped for the length of one real `blur` event and put back. */
+  window.__voiceBlurProbe = () => {
+    const wasSynthetic = VOICE.synthetic;
+    VOICE.synthetic = false;
+    S.toasts = [];
+    window.dispatchEvent(new Event('blur'));
+    const out = {state:VOICE.state, draft:S.draft, toasts:S.toasts.map((x) => x.t + ': ' + x.s)};
+    VOICE.synthetic = wasSynthetic;
+    return out;
+  };
+  /* delta-055: the branch where the running turn was never ASKED — a chat
+     whose first turn has not reported its session_id yet. The state is real
+     (S.agentSession null), the transcript is a private one, and everything is
+     put back. Nothing is injected: the absence of a session is the input. */
+  window.__steerNoSessionProbe = async (text) => {
+    const keep = {sid:S.agentSession, log:S.log, streamId:S.streamId,
+      queued:S.queued.slice(), ahead:STEER.ahead, draft:S.draft};
+    const log = [{id:nid(), k:'system', text:'a chat with no session yet'}];
+    S.agentSession = null; S.log = log; S.streamId = null; S.draft = '';
+    S.queued.length = 0; STEER.ahead = 0;
+    let out = null;
+    try {
+      await steerOrQueueRun(String(text));
+      out = {lines: log.map((m) => m.k + ':' + (m.text || '')), queued: S.queued.slice(), ahead: STEER.ahead};
+    } finally {
+      S.agentSession = keep.sid; S.log = keep.log; S.streamId = keep.streamId; S.draft = keep.draft;
+      S.queued.length = 0; S.queued.push.apply(S.queued, keep.queued); STEER.ahead = keep.ahead;
+      render();
+    }
+    return out;
+  };
+  /* delta-055: the same words steered twice in one turn. Both are accepted,
+     both belong in the transcript, and both `steer_applied` frames must be
+     recognised as this window's own — the old text-keyed de-dupe printed one
+     bubble and swallowed the other. The frames go through the REAL
+     onChatEvent, against a real streaming item and turn id. */
+  window.__steerEchoProbe = async (text, times) => {
+    const keep = {sid:S.agentSession, log:S.log, streamId:S.streamId, turnId:S.turnId,
+      busy:S.busy, queued:S.queued.slice(), ahead:STEER.ahead, mine:STEER.mine.slice()};
+    const log = [{id:nid(), k:'system', text:'echo probe'}];
+    const streaming = {id:nid(), k:'assistant', text:''};
+    const turnId = 'smoke-echo-' + Date.now().toString(16);
+    S.agentSession = 'probe-echo-session'; S.log = log; log.push(streaming);
+    S.streamId = streaming.id; S.turnId = turnId; S.busy = true;
+    STEER.mine.length = 0;
+    RUNNING.set(turnId, S.agentSession);
+    let out = null;
+    try {
+      const n = Number(times) || 1;
+      for (let i = 0; i < n; i++) {
+        await steerOrQueueRun(String(text), () => Promise.resolve({ok:true, steered:true}));
+      }
+      const sent = log.filter((m) => m.k === 'user' && m.steered).length;
+      for (let i = 0; i < n; i++) onChatEvent({turnId, kind:'steer_applied', text:String(text), stepIndex:i + 1});
+      // ...and one from somewhere else, which must always show.
+      onChatEvent({turnId, kind:'steer_applied', text:'from another client', stepIndex:99});
+      out = {sent, entries: log.filter((m) => m.k === 'user' && m.steered).map((m) => m.text)};
+    } finally {
+      RUNNING.delete(turnId);
+      S.agentSession = keep.sid; S.log = keep.log; S.streamId = keep.streamId; S.turnId = keep.turnId;
+      S.busy = keep.busy;
+      S.queued.length = 0; S.queued.push.apply(S.queued, keep.queued); STEER.ahead = keep.ahead;
+      STEER.mine.length = 0; STEER.mine.push.apply(STEER.mine, keep.mine);
+      render();
+    }
+    return out;
+  };
+  window.__escWhileBusy = () => {
+    const keep = {busy: S.busy, settings: S.settings, len: S.log.length};
+    S.busy = true; S.settings = 0;
+    render();
+    // Scroll-to-bottom is the branch ABOVE abort, and it would answer this
+    // Escape instead — the probe is about the abort/menu ordering, so the
+    // transcript is put where a user watching a turn has it.
+    const sc = $('#scroller');
+    if (sc) sc.scrollTop = sc.scrollHeight;
+    document.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true, cancelable:true}));
+    const out = {pane: S.settings ? settingsPaneId(S.settingsPane) : null, busy: S.busy,
+                 // abort() is what the branch calls, and its system line is
+                 // the only observable it leaves behind.
+                 aborted: S.log.length > keep.len
+                   && /turn aborted/.test(S.log[S.log.length - 1].text || '')};
+    S.log.length = keep.len;
+    S.busy = keep.busy; S.settings = keep.settings;
+    render();
+    return out;
   };
 }

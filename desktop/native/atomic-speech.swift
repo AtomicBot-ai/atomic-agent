@@ -284,10 +284,29 @@ func transcribe(_ localeIds: [String]) async {
   // stdin: raw 16 kHz mono s16le. A pipe read can split a sample in half,
   // so an odd trailing byte is carried into the next read rather than
   // silently shifting every sample after it by one byte.
+  //
+  // The read runs on a Thread of its own, not inline in this async function.
+  // `availableData` blocks, and inline it held one of Swift's cooperative
+  // threads for the whole take while `leg.consume()` needed a thread to drain
+  // `analyzer.results`. Measured, not reasoned about: with
+  // LIBDISPATCH_COOPERATIVE_POOL_STRICT=1 (a one-thread pool) the inline
+  // version emitted NOTHING until stdin closed — the live strip would have sat
+  // on "listening…" for the whole dictation and dumped the text on stop — while
+  // this shape emitted its first partial at 4.14 s, the same as on the wide
+  // pool. On a many-core Mac the default pool hides the difference; that is
+  // luck, not design.
   let handle = FileHandle.standardInput
   var residue = Data()
-  while true {
-    let chunk = handle.availableData
+  let (rawStream, rawCont) = AsyncStream<Data>.makeStream()
+  let reader = Thread {
+    while true {
+      let c = handle.availableData
+      if c.isEmpty { rawCont.finish(); break }
+      rawCont.yield(c)
+    }
+  }
+  reader.start()
+  for await chunk in rawStream {
     if chunk.isEmpty { break }
     residue.append(chunk)
     let usable = residue.count - (residue.count % 2)

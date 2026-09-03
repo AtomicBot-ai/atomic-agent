@@ -130,7 +130,13 @@ Real, driven by the running agent:
   agent's mark appears once, at the end of a turn that has finished, on the
   reply that closes it. A turn is the span from one of your messages to the
   next, and the mark is withheld while the window is streaming, while a turn
-  waits on an approval, and for a turn that ends in an abort or a failure. A
+  waits on an approval, and for a turn that ends in an abort or a failure.
+  Not every system row counts as that ending: the session model stamp, the
+  parked-steer recovery and the `steer_undelivered` notice are notes about the
+  session appended after a turn that really did finish, they carry `note:true`,
+  and the mark steps over them — otherwise reopening a session with a model
+  stamp deleted the full stop of the last turn in it, which is the one turn you
+  are looking at. A
   turn running under some other origin has no stream here and therefore no
   mark — 0.5.5 exposes no turn controller, the same limit the pulsating sidebar
   dot carries. The visible cost of dropping the per-message glyph is that the
@@ -313,7 +319,11 @@ Honestly degraded, and labelled as such in the UI:
 - **Coding modes need an agent that has `/api/coding-mode`.** That route is
   added in this branch (`src/http/route-coding-mode.ts`); a binary without it
   answers 404 and the chip prints `mode —` rather than naming a stance the
-  agent does not have. The desktop prefers `~/atag-agent/bin/atag` for
+  agent does not have. The same blank stands before the first GET has come
+  back, and after one that failed: `default` is the seed this window starts
+  on, not an answer, and at `agent.approvalLevel: 5` the live stance is
+  really `bypass` — so the chip names a mode only once the route has
+  confirmed one. The desktop prefers `~/atag-agent/bin/atag` for
   exactly this reason (see *Packaging* below).
 - **The exact pre-message breakdown needs `POST /api/context-preview`,** a
   route added in this branch (`src/http/route-context-preview.ts`): the
@@ -339,7 +349,9 @@ Honestly degraded, and labelled as such in the UI:
   chords — r, f, w, e, o, L — are dead and silent. Escape is the LAST branch of
   the key handler: scroll-to-bottom, abort, the toast pop and every
   overlay/palette/slash/approval/per-tab Escape still outrank it, and a
-  half-written composer draft is left alone.
+  half-written composer draft is left alone. During first-run onboarding
+  Escape is deliberately inert: the wizard has no cancel, so the key neither
+  dismisses it nor stacks the menu on top of it.
   Menu verbs the desktop cannot do (new terminal window, mouse, debug
   bundle, queued messages, uninstall) keep their TUI label with a
   "not available in the desktop" note; `Steer the running turn` is live and
@@ -408,6 +420,11 @@ Honestly degraded, and labelled as such in the UI:
   If the projector download fails or is cancelled the model is **not**
   activated at all: the weights are on disk and the pane says so, rather than
   starting a daemon that would serve a vision model text-only.
+  The pick list follows the TUI's `MouseListRow` contract rather than the
+  Local pane's model rows: the first click on a file selects it, a second
+  click on the selected one starts the download — the rows above it activate
+  on the first click, and a file list is the one place where that would be an
+  expensive misclick.
   Removal needs nothing new: `atag models remove <custom-id>` deletes the
   files and drops the config entry, so the pane's `d` is the whole undo. The
   first-run wizard's step 2 carries the TUI's own pinned row,
@@ -492,7 +509,15 @@ Honestly degraded, and labelled as such in the UI:
 - **Voice input is Apple's on-device speech, and nothing else.** The
   microphone button sits in the composer, left of Send. Press it and speak;
   the words appear in a strip above the composer while you are still
-  talking, and land in the draft at your caret when you stop. Hold the
+  talking, and land in the draft at your caret when you stop. "While you are
+  still talking" is Apple's cadence, not an instant one: measured on this Mac,
+  the first partial lands about four seconds into the take and the text then
+  grows in roughly four-second bursts, so anything shorter than that appears
+  only when you stop. (Verified with an independently structured helper as
+  well — it is SpeechAnalyzer's cadence, not this code's. What IS this code's
+  is that the helper reads stdin on a thread of its own: read inline it starved
+  the results consumer on a narrow cooperative pool and emitted nothing at all
+  until stdin closed.) Hold the
   button and release to stop, or tap it once and click again to stop —
   both work, because "unclick" reads either way. Escape throws the take
   away, and it is tested first in the keydown handler so that a pending
@@ -747,6 +772,15 @@ printf '#!/bin/sh\nexec %s --enable-source-maps %s/dist/cli/index.js "$@"\n' \
   "$(command -v node)" "$HOME/atag-agent" > ~/atag-agent/bin/atag
 chmod 755 ~/atag-agent/bin/atag && ~/atag-agent/bin/atag --version
 ```
+
+The smoke suite depends on this: the four live coding-mode round-trip checks
+run only when the agent it spawned carries `/api/coding-mode`, which in
+practice means this checkout. Without it the block collapses to the single
+line `coding mode round-trip skipped: agent has no route`, and the suite is
+then proving the chip's honest-blank path rather than the feature. A routeless
+binary that IS the preferred one still fails, so the skip cannot hide a
+regression — but a green run on a machine that has never been through this
+recipe is a smaller claim than one on a machine that has.
 
 Nothing under `~/.local/bin` is touched, so a terminal `atag` keeps running
 the released binary. Rollback is `rm -rf ~/atag-agent`; do exactly that once

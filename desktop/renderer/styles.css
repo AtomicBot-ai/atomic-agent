@@ -684,12 +684,18 @@ button.menurow:hover{background:var(--bg-hover)}
 /* r4-ui item 1: the dot is 6px with a 1px ring, seated 1px below the row's
    flex centre so it rides the label's optical centre rather than its line box
    (on a 30px row the flex centre is above both the cap midpoint and the x
-   midpoint of the 13px/18px label). The nudge is `top`, never `transform` —
+   midpoint of the 13px/18px label). That nudge rides `.sesrow .sdot` below,
+   not this rule — see the note there. The nudge is `top`, never `transform` —
    sdot-pulse below owns transform and would overwrite it for the whole
    animation. `position:relative` makes the row a paint context for the running
    halo; if anyone ever gives .sesrow `overflow:hidden` the halo will clip.
    Empty ring = executed and read, filled = wants you, pulsing = running. */
-.sdot{width:6px;height:6px;border-radius:999px;flex:none;box-sizing:border-box;border:1px solid var(--text-tertiary);background:transparent;position:relative;top:1px}
+.sdot{width:6px;height:6px;border-radius:999px;flex:none;box-sizing:border-box;border:1px solid var(--text-tertiary);background:transparent;position:relative}
+/* Review fix: the 1px nudge was measured against the SIDEBAR row (30px,
+   13px/18px label) and is scoped to it. The session-switcher sheet emits the
+   same dot inside `.row` (40px, the default label size), where the optical
+   centre sits elsewhere and the same pixel would be an untested guess. */
+.sesrow .sdot{top:1px}
 .sdot.filled{background:var(--accent);border-color:var(--accent)}
 /* The halo is not decoration: `prefers-reduced-motion` kills the animation
    (the blanket `*{animation:none!important}` rule earlier in this file), so a
@@ -850,3 +856,13 @@ button.menurow:hover{background:var(--bg-hover)}
 .llm-ollama{margin-top:10px;padding-top:8px;border-top:1px solid var(--line-soft);max-width:72ch;line-height:1.5}
 /* ---- Item 7C: the context panel's binding line ---- */
 .ctxbound{color:var(--warn)}
+
+/* ---- r4 review fixes (hf-models) ------------------------------------------
+   The Hugging Face pick list is a port of the TUI's screen and carries its
+   leading indentation verbatim: HF_MMPROJ_LINE, the `↓ N more` line, the
+   hidden-files note and the RAM warning all open with three spaces that mark
+   them as annotations of the list rather than list items. `.tuirow` is
+   white-space:pre so the choice rows keep their padEnd/padStart columns, but
+   the four sub-lines beneath them were plain HTML and collapsed to one space.
+   `pre-wrap`, not `pre`: a long error must still wrap inside the pane. */
+.llm-hf .ter,.llm-hf .sk-off,.llm-hf .tuierr{white-space:pre-wrap}
