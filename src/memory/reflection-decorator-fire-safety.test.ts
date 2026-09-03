@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { MemoryStore } from "./memory-store.js";
+import type { StructuredLogger } from "../tracing/structured-logger.js";
 import { ProfileStore } from "./profile-store.js";
 import { LessonStore } from "./lessons/lesson-store.js";
 import { ProcedureStore } from "./procedures/procedure-store.js";
@@ -279,6 +280,164 @@ describe("reflection decorators are fire-safe across a store close", () => {
 
     await expect(runner.reflect(inputFor(fx))).resolves.toBeUndefined();
     expect(calls).toHaveLength(0);
+  });
+
+  it("vote-aware: a store that fails part-way yields no partial allowlist", async () => {
+    const fx = makeFixture();
+    const calls: VoteRunnerInput[] = [];
+    // `memoryStore` answers the first id, then the handle goes away —
+    // the interleaving where hydration is already under way when
+    // shutdown lands. Guarding wholesale (not per-id) is a deliberate
+    // choice: the vote-runner scores a *set*, and a silently truncated
+    // allowlist would let it deprecate the entries that happened to be
+    // hydrated before the failure.
+    let reads = 0;
+    const flaky = new Proxy(fx.memoryStore, {
+      get(target, prop, receiver) {
+        if (prop === "get") {
+          return (id: number) => {
+            reads += 1;
+            if (reads > 1) {
+              throw new TypeError("The database connection is not open");
+            }
+            return target.get(id);
+          };
+        }
+        return Reflect.get(target, prop, receiver) as unknown;
+      },
+    }) as MemoryStore;
+
+    const runner = createVoteAwareReflectionRunner({
+      reflection: innerRunner(),
+      voteRunner: recordingVoteRunner(calls),
+      memoryStore: flaky,
+      lessonStore: fx.lessonStore,
+      profileStore: fx.profileStore,
+      procedureStore: fx.procedureStore,
+    });
+
+    await expect(runner.reflect(inputFor(fx))).resolves.toBeUndefined();
+    expect(reads).toBe(2);
+    expect(calls).toEqual([]);
+  });
+
+  it("link-aware: a store that fails part-way yields no partial allowlist", async () => {
+    const fx = makeFixture();
+    const calls: LinkGeneratorInput[] = [];
+    let reads = 0;
+    const flaky = new Proxy(fx.memoryStore, {
+      get(target, prop, receiver) {
+        if (prop === "get") {
+          return (id: number) => {
+            reads += 1;
+            if (reads > 1) {
+              throw new TypeError("The database connection is not open");
+            }
+            return target.get(id);
+          };
+        }
+        return Reflect.get(target, prop, receiver) as unknown;
+      },
+    }) as MemoryStore;
+
+    const runner = createLinkAwareReflectionRunner({
+      reflection: innerRunner(),
+      linkGenerator: recordingLinkGenerator(calls),
+      notesStore: flaky,
+    });
+
+    await expect(runner.reflect(inputFor(fx))).resolves.toBeUndefined();
+    expect(reads).toBe(2);
+    expect(calls).toEqual([]);
+  });
+
+  it("the guards are not narrowed to TypeError — any store error is contained", async () => {
+    const fx = makeFixture();
+    const voteCalls: VoteRunnerInput[] = [];
+    const linkCalls: LinkGeneratorInput[] = [];
+    // `MemoryStore.get` validates its id first and answers a bad one
+    // with a plain `MemoryValidationError`, not a `TypeError`. The
+    // closed-handle case is merely the one Sentry saw most.
+    const boom = new Proxy(fx.memoryStore, {
+      get(target, prop, receiver) {
+        if (prop === "get") {
+          return () => {
+            throw new RangeError("Too few parameter values were provided");
+          };
+        }
+        return Reflect.get(target, prop, receiver) as unknown;
+      },
+    }) as MemoryStore;
+
+    const vote = createVoteAwareReflectionRunner({
+      reflection: innerRunner(),
+      voteRunner: recordingVoteRunner(voteCalls),
+      memoryStore: boom,
+      lessonStore: fx.lessonStore,
+      profileStore: fx.profileStore,
+      procedureStore: fx.procedureStore,
+    });
+    const link = createLinkAwareReflectionRunner({
+      reflection: innerRunner(),
+      linkGenerator: recordingLinkGenerator(linkCalls),
+      notesStore: boom,
+    });
+
+    await expect(vote.reflect(inputFor(fx))).resolves.toBeUndefined();
+    await expect(link.reflect(inputFor(fx))).resolves.toBeUndefined();
+    expect(voteCalls).toEqual([]);
+    expect(linkCalls).toEqual([]);
+  });
+
+  it("a hydration failure is logged, not silently swallowed", async () => {
+    const fx = makeFixture();
+    const warnings: { message: string; fields?: Record<string, unknown> }[] = [];
+    const logger = {
+      debug() {
+        /* unused */
+      },
+      info() {
+        /* unused */
+      },
+      warn(message: string, fields?: Record<string, unknown>) {
+        warnings.push({ message, ...(fields ? { fields } : {}) });
+      },
+      error() {
+        /* unused */
+      },
+    } as unknown as StructuredLogger;
+
+    const voteCalls: VoteRunnerInput[] = [];
+    const vote = createVoteAwareReflectionRunner({
+      reflection: innerRunner(() => fx.closeAll()),
+      voteRunner: recordingVoteRunner(voteCalls),
+      memoryStore: fx.memoryStore,
+      lessonStore: fx.lessonStore,
+      profileStore: fx.profileStore,
+      procedureStore: fx.procedureStore,
+      logger,
+    });
+    await vote.reflect(inputFor(fx));
+
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]!.message).toBe("vote candidate hydration failed");
+    expect(warnings[0]!.fields).toMatchObject({ sessionId: "s1" });
+    expect(String(warnings[0]!.fields?.error)).toContain(
+      "database connection is not open",
+    );
+
+    const fx2 = makeFixture();
+    const linkCalls: LinkGeneratorInput[] = [];
+    const link = createLinkAwareReflectionRunner({
+      reflection: innerRunner(() => fx2.closeAll()),
+      linkGenerator: recordingLinkGenerator(linkCalls),
+      notesStore: fx2.memoryStore,
+      logger,
+    });
+    await link.reflect(inputFor(fx2));
+
+    expect(warnings).toHaveLength(2);
+    expect(warnings[1]!.message).toBe("link candidate hydration failed");
   });
 
   it("both decorators composed: the close race still cannot reject", async () => {

@@ -169,6 +169,7 @@ describe("AgentLoop reflection is background work, never a turn hazard", () => {
         signal: new AbortController().signal,
       });
       expect(result.session.id).toBe("s1");
+      expect(result.reason).toBe("reply");
     });
 
     expect(called).toBe(true);
@@ -198,6 +199,11 @@ describe("AgentLoop reflection is background work, never a turn hazard", () => {
       signal: new AbortController().signal,
     });
 
+    // The load-bearing assertion: on main this returns
+    // `reason: "failed"` / `status: "failed"` — the session id alone
+    // is the same either way, so it proves nothing on its own.
+    expect(result.reason).toBe("reply");
+    expect(result.session.status).not.toBe("failed");
     expect(result.session.id).toBe("s2");
     // Reflection still fires — just without profile candidates.
     expect(inputs).toHaveLength(1);

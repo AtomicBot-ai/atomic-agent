@@ -505,8 +505,11 @@ export class AgentLoop {
     // strictly larger memory set.
     //
     // Shutdown path still calls `abortPending()` with no sessionId
-    // to drain every in-flight reflection before the runtime tears
-    // down SQLite handles.
+    // before the runtime tears down SQLite handles. Note that it
+    // *signals* — nothing is awaited, so a reflection can still be
+    // resuming when the stores close. That is why the decorators and
+    // this call site guard their store reads rather than relying on
+    // the abort to have finished.
 
     if (options.userMessage !== undefined) {
       const text = options.userMessage;
@@ -1213,7 +1216,12 @@ export class AgentLoop {
             ...(segmentationActive && transcript.length > 0
               ? { transcript }
               : {}),
-          }).catch(() => {});
+          }).catch((err: unknown) => {
+            this.deps.logger?.warn("reflection failed after dispatch", {
+              sessionId: state.id,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          });
         }
       }
     }
