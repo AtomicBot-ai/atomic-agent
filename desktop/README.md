@@ -415,6 +415,16 @@ route changed. Run it against a private `ATOMIC_AGENT_STATE_DIR`, never
 
 ## Building a testable .dmg
 
+**The app already installed at `/Applications/Atomic Agent.app` has none of
+this.** Its `app.asar` was built on 1 September, before the coding-mode chip
+existed: it carries no `/api/coding-mode` call and no `~/atag-agent`
+candidate in its binary search, so double-clicking it keeps spawning
+`~/.local/bin/atag` and keeps showing the chip's old, greyed-out state no
+matter what this branch does. `cd desktop && npm run start` from this
+worktree is what shows the fix today. Moving it into `/Applications` takes
+the `npm run dist` below plus a reinstall from the DMG it writes — that is a
+release step, and this branch deliberately does not perform it.
+
 ```bash
 cd desktop
 npm install
@@ -453,6 +463,7 @@ checkout of this branch:
 ```bash
 git clone <this repo> ~/atag-agent && cd ~/atag-agent
 npm install --engine-strict=false && npm run build
+mkdir -p ~/atag-agent/bin   # the repo ships no bin/; the build writes dist/ only
 printf '#!/bin/sh\nexec %s --enable-source-maps %s/dist/cli/index.js "$@"\n' \
   "$(command -v node)" "$HOME/atag-agent" > ~/atag-agent/bin/atag
 chmod 755 ~/atag-agent/bin/atag && ~/atag-agent/bin/atag --version

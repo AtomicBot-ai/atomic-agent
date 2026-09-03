@@ -1083,7 +1083,33 @@ async function smokeTest(): Promise<void> {
       } finally {
         await agent!.codingMode("default").catch(() => undefined);
       }
+    } else {
+      // Without an `else` the four checks above just vanish and the run
+      // reports four fewer checks with nothing said about it — invisible
+      // unless someone diffs the counts. One explicit line instead, so
+      // the log stays self-describing about what it did NOT assert.
+      check(
+        "coding mode round-trip skipped: agent has no route",
+        modeSeed.supported === false,
+        `supported=${modeSeed.supported} baseLevel=${String(modeSeed.baseLevel)} agent=${agent!.status.binary ?? "none"}`,
+      );
     }
+
+    // Finding 3's fix: the reconnect re-assert is NOT the click path. It
+    // must leave an overlay the operator opened alone — a backend switch
+    // restarts the agent and fires this without them asking.
+    const reassert = await js<{ before: string | null; after: string | null; mode: string }>(
+      "(async () => { const before = window.__modeOpenPopover();"
+      + " window.__modeReassert('default');"
+      + " await new Promise((r) => setTimeout(r, 1500));"
+      + " return {before, after: window.__overlayNow(), mode: window.__modeState().current}; })()",
+    );
+    await js<void>("window.__overlayClose()");
+    check(
+      "coding-mode re-assert leaves an open overlay alone",
+      reassert.before === "modes" && reassert.after === "modes",
+      `overlay ${String(reassert.before)} → ${String(reassert.after)}, mode=${reassert.mode}`,
+    );
 
     // The unavailable presentation is real, not merely claimed: force the
     // renderer into the state a routeless agent produces and read the

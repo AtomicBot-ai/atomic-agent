@@ -28,6 +28,11 @@ const MODE = { current:'default', supported:null, baseLevel:null, approvalLevel:
    label. `null` until something is chosen, and nothing is re-asserted
    then. */
 let LAST_MODE = null;
+/* Item 6 (coding mode): a re-assert waiting for a running turn to end.
+   `{mode, timer}` while one is queued, `null` otherwise. The reconnect
+   path must not drop the operator's choice just because a turn happened
+   to be in flight when the agent came back. */
+let MODE_REASSERT = null;
 /* The add-provider wizard: pick_kind → configure → verifying. */
 const WIZ = { phase:null, row:null, apiKey:'', baseUrl:'', error:null, busy:false };
 /* Kind rows in the TUI's KIND_ROW_ORDER, minus the two subscription-CLI
@@ -1619,19 +1624,7 @@ function toast(t, s) {
    ============================================================ */
 function act(a) {
   if (!a) return;
-  // The argument keeps every colon it was given. `const [k, v] = a.split(':')`
-  // truncated it at the first one, so an act over a session id that carries a
-  // colon — the `hermes:20260511_162944_79a9e8` ids a fleet run leaves in
-  // sessions.sqlite — reached `pin:` as the bare string "hermes": the pin was
-  // stored under an id no session has, the row never sorted first, and the
-  // button's title never flipped. `[verb, ...rest]` is what the rest of this
-  // file already does (the act wrappers all split that way); for an argument
-  // without a colon it is identical.
-  const [k, ...rest] = a.split(':');
-  // `undefined`, not "", when there is no argument at all — that is what the
-  // single-destructure form produced and what the branches below are written
-  // against.
-  const v = rest.length > 0 ? rest.join(':') : undefined;
+  const [k, v] = a.split(':');
   const close = () => { S.overlay = null; S.menuOpen = null; S.scope = null; S.q = ''; S.cur = 0; S.alert = null; SEL.open = false; SEL.addOpen = false; WIZ.phase = null; };
 
   if (a === 'close') { close(); render(); return; }
@@ -2181,7 +2174,7 @@ async function loadResources() {
     // The stance is process state in the agent, and the desktop restarts
     // the agent on a backend switch — so re-assert what this window last
     // chose rather than showing the boot stance as if it were the choice.
-    if (res.ok && LAST_MODE && res.mode !== LAST_MODE) setCodingMode(LAST_MODE);
+    if (res.ok && LAST_MODE && res.mode !== LAST_MODE) reassertCodingMode(LAST_MODE);
   });
   const [caps, cfg, skills, tasks, sessions] = await Promise.all([
     BR.capabilities(), BR.config(), BR.skills(), BR.tasks(), BR.sessions(),
@@ -3676,8 +3669,57 @@ function modesHTML() {
     + '<div class="popfoot"><button class="btn btn-s" data-act="close">Done</button></div></div></div>';
 }
 
+/*
+ * Re-assert the stance this window last chose, after the agent came back.
+ * Deliberately NOT setCodingMode: that is the click path, and it opens with
+ * `S.overlay = null; render()` and a `S.busy` toast-and-return. A reconnect
+ * is a background event the operator did not initiate, so it must (a) leave
+ * whatever overlay they have open alone, and (b) wait for a running turn
+ * instead of silently dropping the choice and leaving MODE on the boot
+ * stance. Silent on success — the chip is the report — and silent on
+ * failure beyond marking the route unsupported.
+ */
+function cancelModeReassert() {
+  if (!MODE_REASSERT) return;
+  clearInterval(MODE_REASSERT.timer);
+  MODE_REASSERT = null;
+}
+
+function reassertCodingMode(id) {
+  if (!BR || !id) return;
+  if (S.busy) {
+    // Coalesce: a second reconnect while one is queued replaces the target
+    // rather than starting a second timer.
+    if (MODE_REASSERT) { MODE_REASSERT.mode = id; return; }
+    MODE_REASSERT = { mode: id, timer: setInterval(() => {
+      if (S.busy || !MODE_REASSERT) return;
+      const want = MODE_REASSERT.mode;
+      clearInterval(MODE_REASSERT.timer);
+      MODE_REASSERT = null;
+      reassertCodingMode(want);
+    }, 500) };
+    return;
+  }
+  // A queued re-assert that is no longer the pending one would fire a second
+  // POST for a stance the window has moved on from.
+  cancelModeReassert();
+  BR.codingMode(id).then((res) => {
+    if (!res || !res.ok) { if (res) MODE.supported = res.supported; render(); return; }
+    MODE.supported = true; MODE.current = res.mode;
+    MODE.approvalLevel = res.approvalLevel; MODE.baseLevel = res.baseLevel;
+    LAST_MODE = res.mode;
+    S.level = res.approvalLevel;
+    if (LIVE_CAPS && LIVE_CAPS.agent) LIVE_CAPS.agent.approvalLevel = res.approvalLevel;
+    render();
+  });
+}
+
 async function setCodingMode(id) {
   if (S.busy) { toast('Not while a turn is running'); return; }
+  // An explicit click outranks anything the reconnect path is still waiting
+  // to re-assert: without this a queued re-assert would land after the turn
+  // ends and quietly put the stance back to what the window had before.
+  cancelModeReassert();
   S.overlay = null; render();
   const res = await BR.codingMode(id);
   if (!res || !res.ok) {
@@ -8027,4 +8069,11 @@ if (typeof window !== 'undefined') {
      capable agent, so the unsupported presentation is testable. Patch
      back to restore; nothing here talks to the agent. */
   window.__modeOverride = (patch) => { Object.assign(MODE, patch || {}); render(); };
+  /* The reconnect's re-assert path, and the overlay it must not touch.
+     Opening the popover through S.overlay directly rather than through
+     act() keeps this hook out of the shared dispatcher. */
+  window.__modeReassert = (id) => reassertCodingMode(id);
+  window.__modeOpenPopover = () => { S.overlay = 'modes'; render(); return S.overlay; };
+  window.__overlayNow = () => S.overlay;
+  window.__overlayClose = () => { S.overlay = null; render(); return S.overlay; };
 }

@@ -345,6 +345,11 @@ export class AgentClient extends EventEmitter {
   async codingMode(mode?: string): Promise<{
     ok: boolean; supported: boolean; mode?: string; approvalLevel?: number;
     planMode?: boolean; baseLevel?: number; error?: string;
+    // The route returns its own copy of the mode's label/detail/tone/summary.
+    // The renderer prefers it over its local table so the two cannot drift,
+    // so it is declared rather than left to ride along on the body spread —
+    // an undeclared field is a field tsc cannot protect.
+    look?: { label: string; detail: string; tone: string; summary: string };
   }> {
     try {
       const res = await fetch(`${this.base()}/api/coding-mode`, {
@@ -355,7 +360,10 @@ export class AgentClient extends EventEmitter {
       });
       if (res.status === 404) return { ok: false, supported: false, error: "this agent has no coding-mode route" };
       if (!res.ok) return { ok: false, supported: true, error: `HTTP ${res.status}` };
-      const body = (await res.json()) as { mode: string; approvalLevel: number; planMode: boolean; baseLevel: number };
+      const body = (await res.json()) as {
+        mode: string; approvalLevel: number; planMode: boolean; baseLevel: number;
+        look?: { label: string; detail: string; tone: string; summary: string };
+      };
       return { ok: true, supported: true, ...body };
     } catch (err) {
       return { ok: false, supported: true, error: err instanceof Error ? err.message : String(err) };
