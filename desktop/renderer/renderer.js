@@ -677,18 +677,22 @@ function taskDot(t) {
   return ['filled', 'finished — not read yet'];
 }
 
+/* The name and the dot's meaning ride on the row, not on the dot: in the
+   collapsed rail the dot is the only part of the row still on screen, and it
+   has to say which chat or task it stands for. */
 function taskRow(t) {
   const [state, tip] = taskDot(t);
-  return '<button class="sesrow" data-task="' + esc(t.id) + '">'
-    + '<span class="sdot ' + state + '" title="' + esc(tip) + '"></span>'
+  return '<button class="sesrow" data-task="' + esc(t.id) + '" title="' + esc(t.t + ' · ' + tip) + '">'
+    + '<span class="sdot ' + state + '"></span>'
     + '<span class="t1">' + esc(t.t) + '</span></button>';
 }
 
 function chatRow(s) {
   const [state, tip] = chatDot(s);
   const pinned = PREFS.pinned.includes(s.id);
-  return '<button class="sesrow' + (s.id === S.sessionId ? ' on' : '') + (pinned ? ' pinned' : '') + '" data-ses="' + esc(s.id) + '">'
-    + '<span class="sdot ' + state + '" title="' + esc(tip) + '"></span>'
+  return '<button class="sesrow' + (s.id === S.sessionId ? ' on' : '') + (pinned ? ' pinned' : '') + '" data-ses="' + esc(s.id) + '"'
+    + ' title="' + esc(s.t + ' · ' + tip + (pinned ? ' · pinned' : '')) + '">'
+    + '<span class="sdot ' + state + '"></span>'
     + '<span class="t1">' + esc(s.t) + '</span>'
     + '<span class="pinbtn iconbtn" data-pin="' + esc(s.id) + '" title="' + (pinned ? 'Unpin' : 'Pin') + '" role="button">' + ic('pin') + '</span>'
     + '</button>';
@@ -1670,7 +1674,7 @@ function act(a) {
   if (a === 'sel:cancelPull') { BR.cancelPull(); SEL.pulling = null; render(); return; }
   if (a === 'runmode') { close(); S.dialShare = S.share; S.overlay = 'runmode'; render(); return; }
   if (a === 'applydial') { S.share = S.dialShare; if (S.mode !== 'fusion' && S.dialShare > 0) S.mode = 'fusion'; close(); render(); toast('Run type applied', S.mode + (S.mode === 'fusion' ? ' · cloud share ' + S.share : '')); return; }
-  if (a === 'session:new') { close(); S.log = []; S.history = []; S.agentSession = null; S.busy = false; S.pending = null; S.room = 'chat';
+  if (a === 'session:new') { close(); S.log = []; S.history = []; S.agentSession = null; S.busy = false; dropPendingApproval(); S.room = 'chat';
                              S.sessionId = '';   // item 6: a fresh thread has no row of its own yet, so no row is highlighted
                              render(); toast('New session', 'The next turn starts fresh');
                              // Lane B — item 3: a new thread has a new window fill (the TUI resets contextUsage on session_created), so the chip goes back to the projection.
@@ -1722,8 +1726,9 @@ function act(a) {
     close();
     // Integration seam (sidebar rows, ⌘2/⌘3, palette hits, View › Tasks/Skills): lane C made the
     // Tasks and Skills tabs the one implementation, so a room switch to either opens the settings
-    // window on that tab (the sidebar keeps its Tasks/Skills rows and counts). The chat room closes
-    // the settings window, so ⌘1 always lands on the transcript.
+    // window on that tab. Item 6 took the Tasks and Skills nav rows out of the sidebar, but every
+    // other way in still lands here: ⌘2/⌘3, the palette rows, the slash verbs and View ›
+    // Tasks/Skills. The chat room closes the settings window, so ⌘1 always lands on the transcript.
     if (v === 'tasks' || v === 'skills') { act('settings:' + v); return; }
     if (v === 'chat') S.settings = null;
     S.room = v; render(); return;
@@ -1884,7 +1889,7 @@ function abort() {
   // way or the other. The `aborted` frame clears the RUNNING entry, so the dot
   // pulses until the agent has actually stopped.
   if (S.turnId && BR) BR.cancel(S.turnId);
-  S.busy = false; S.pending = null;
+  S.busy = false; dropPendingApproval();
   S.log.push({id:nid(), k:'system', text:'turn aborted — everything produced so far is kept'});
   render();
 }
@@ -2344,10 +2349,19 @@ function nameVisibleSessions() {
   sidebarChats().rows.filter((row) => !row.named).forEach((row) => {
     row.named = true;
     BR.session(row.id).then((res) => {
+      /* Review fix: applySessions rebuilds SESSIONS with fresh objects while a
+         naming fetch is in flight (refreshSessions runs after every turn), and
+         the new object copies `named: true` with the id still standing in for
+         the name. Writing the name onto the discarded object left that row
+         showing `api-2931b30b63359b7d` for the life of the window, so find the
+         row that is on the list now. */
+      const cur = SESSIONS.find((x) => x.id === row.id);
+      if (!cur) return;
       const turns = res && res.ok && res.data && res.data.turns;
-      if (!Array.isArray(turns)) { row.named = false; return; }
+      if (!Array.isArray(turns)) { cur.named = false; return; }
       const first = turns.find((t) => t.kind === 'user' && t.text);
-      row.t = first ? first.text.trim().replace(/\s+/g, ' ').slice(0, 72) : '(empty)';
+      cur.t = first ? first.text.trim().replace(/\s+/g, ' ').slice(0, 72) : '(empty)';
+      cur.named = true;
       render();
     });
   });
@@ -2424,8 +2438,22 @@ function onChatEvent(ev) {
       const sid = RUNNING.get(ev.turnId);
       RUNNING.delete(ev.turnId);
       if (ev.kind === 'error' && sid) ATTN.add(sid);
+      // Review fix: the turn is over, so nothing of it is waiting for an
+      // approval any more. Without this the row kept saying "waiting for your
+      // approval" for the rest of the window's life when the turn ended (an
+      // abort, an error, the backend-switch restart) with a request open.
+      if (sid) PENDING_APPROVALS.delete(sid);
+      // Review fix: the composer's busy flag belongs to the chat on screen.
+      // When this turn's frames are no longer the ones S.turnId points at, the
+      // branch below never runs and the composer would stay busy for good.
+      if (sid && sid === S.sessionId && ![...RUNNING.values()].includes(sid)) S.busy = false;
       // The chat on screen is being read as it lands, so it is never unread.
       if (sid && sid === S.sessionId) { PREFS.seen[sid] = Date.now(); savePrefs(); }
+      // Review fix: openSession promises "the reply lands when it finishes"
+      // for a chat whose turn is running but whose stream is not in this log
+      // (the user left and came back). Nothing reloaded it, so the reply never
+      // arrived. It finished — load the stored transcript that now holds it.
+      if (sid && sid === S.sessionId && !S.log.some((m) => m.id === S.streamId)) openSession(sid);
       refreshSessions().then(() => {
         if (sid && sid === S.sessionId) {
           const row = SESSIONS.find((x) => x.id === sid);
@@ -2437,6 +2465,14 @@ function onChatEvent(ev) {
   }
   if (!ev || ev.turnId !== S.turnId) return;
   const item = S.log.find((m) => m.id === S.streamId);
+  /* Review fix: `item` is undefined when the user opened another chat while
+     this turn was still streaming — openSession replaced S.log, so the
+     streaming item is gone. Every branch that positions a card against it
+     would then run `S.log.splice(S.log.indexOf(undefined), 0, card)`, i.e.
+     `splice(-1, …)`, and drop chat A's tool card, reasoning block or "turn
+     failed" line second-to-last into chat B's transcript. The branches below
+     therefore write into the log only while the stream is on screen; the
+     end-of-turn bookkeeping (busy, queue, dot, reload) still runs. */
   // Any frame after a running tool card brackets that tool's wall time as
   // observed here. The trace's own measurement replaces it after the turn.
   for (let i = S.log.length - 1; i >= 0; i--) {
@@ -2455,7 +2491,7 @@ function onChatEvent(ev) {
   }
   if (ev.kind === 'reasoning_progress') {
     const text = pick(ev.payload, 'delta', 'text', 'content') || '';
-    if (!text) return;
+    if (!text || !item) return;   // review fix: no streaming item on screen, nothing to splice against
     let block = S.reasonId ? S.log.find((m) => m.id === S.reasonId) : null;
     if (!block) {
       block = {id:nid(), k:'reason', steps:1, open:false, text:''};
@@ -2469,7 +2505,7 @@ function onChatEvent(ev) {
   }
   if (ev.kind === 'tool_progress') {
     const name = pick(ev.payload, 'tool', 'name') || 'tool';
-    if (name === 'reply' || name === 'finish') return;
+    if (name === 'reply' || name === 'finish' || !item) return;   // review fix: see above
     // The stream carries the args as `label` (stringified, clipped to 120).
     const arg = pick(ev.payload, 'label') || '';
     const card = {id:nid(), k:'tool', name, arg, ok:null, open:false, args:arg, startedAt:Date.now(), turn:S.turnId};
@@ -2491,7 +2527,9 @@ function onChatEvent(ev) {
     // Cards stay pending until the session store describes them.
     if (item && item.text) S.history.push({role:'assistant', content:item.text});
     if (item && !item.text) item.text = ev.kind === 'aborted' ? '(stopped)' : '(no reply)';
-    if (ev.kind === 'error') S.log.push({id:nid(), k:'system', text:'turn failed: ' + esc(ev.error || '')});
+    // Review fix: only into the transcript this turn is actually streaming
+    // into — otherwise the failure of chat A is announced inside chat B.
+    if (ev.kind === 'error' && item) S.log.push({id:nid(), k:'system', text:'turn failed: ' + esc(ev.error || '')});
     if (S.queued.length) {
       const q = S.queued.shift();
       // Lane B — backend switch: the gate is judged at turn START, so a
@@ -2540,6 +2578,17 @@ function onApprovalEvent(payload) {
   S.apprFocused = false;
   S.busy = false;
   render();
+}
+
+/* Review fix: an approval that leaves the window without a verdict — an
+   abort, a new session, opening another chat — must also leave
+   PENDING_APPROVALS, which only answerLive used to clear. Otherwise the row
+   goes on claiming "waiting for your approval" although nothing here can
+   answer it any more, which is exactly the state the dot must never draw. */
+function dropPendingApproval() {
+  const req = S.pending;
+  S.pending = null;
+  if (req && req.sessionId) PENDING_APPROVALS.delete(req.sessionId);
 }
 
 function pick(obj, ...keys) {
@@ -3726,7 +3775,7 @@ async function openSession(id) {
   S.log = [{id:nid(), k:'system', text:'loading session…'}];
   // A live turn belonging to another session keeps its own state; only the
   // window's view of "busy" is reset when nothing of this session is running.
-  if (!live) { S.busy = false; S.pending = null; }
+  if (!live) { S.busy = false; dropPendingApproval(); }
   S.stick = true;
   render();
 
@@ -3766,6 +3815,9 @@ async function openSession(id) {
     }
   });
   S.log = log.length ? log : [{id:nid(), k:'system', text:'this session has no turns yet'}];
+  // Review fix: the streaming item of a turn that is still running elsewhere
+  // did not survive this reload, so no frame may position a card against it.
+  S.streamId = null;
   // item 6: a turn of this session is still running, but its stream is not in
   // this log any more (the user left and came back). The desktop cannot replay
   // a stream, so it shows the stored snapshot and says what is still happening
@@ -7799,6 +7851,20 @@ if (typeof window !== 'undefined') {
     const cs = getComputedStyle(el);
     return {cls:el.className, animation:cs.animationName, shadow:cs.boxShadow};
   };
+  /* Review fix: an approval that leaves the window without a verdict. Only the
+     map entry is planted (no approval card is fabricated in the transcript);
+     `session:new` is the real path that used to strand it, and the row went on
+     saying "waiting for your approval" for ever after. */
+  window.__approvalDrop = (id) => {
+    PENDING_APPROVALS.set(id, 'smoke');
+    S.pending = {id:'smoke', k:'approval', approvalId:'smoke', sessionId:id};
+    act('session:new');
+    return {pending: !!S.pending, mapped: PENDING_APPROVALS.has(id), dot: chatDot(SESSIONS.find((s) => s.id === id))[0]};
+  };
+  /* The shape of the transcript on screen. A frame belonging to a turn the
+     user navigated away from used to splice its tool card, reasoning block or
+     failure line into whatever chat was open — this is what says it does not. */
+  window.__transcript = () => S.log.map((m) => m.k);
   // ⌘3 / View › Skills / the palette rows still reach Skills — on this tree they
   // open Settings › Skills, and only the sidebar row is gone.
   window.__skillsReachable = () => { act('room:skills'); const h = document.querySelector('#settings .settab.on'); return h ? h.textContent.replace(/\s*\((\d+|up|down)\)$/, '').trim() : ''; };

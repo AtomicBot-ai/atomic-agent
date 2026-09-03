@@ -1308,6 +1308,7 @@ async function sidebarTest(
 ): Promise<void> {
   const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
   const prefsBefore = readPrefs();
+  let fixture: TaskFixture | null = null;
   try {
     let sb = await js<Sb>("window.__sidebar()");
     check(
@@ -1391,19 +1392,102 @@ async function sidebarTest(
       `waiting=${waitingDot} cleared=${clearedDot}`,
     );
 
+    // ... and stops filling it the moment that request leaves without a
+    // verdict. Only answering the approval used to clear the map, so an abort
+    // or a new session left the row claiming an approval was waiting for the
+    // rest of the window's life.
+    const dropped = await js<{ pending: boolean; mapped: boolean; dot: string }>(`window.__approvalDrop(${JSON.stringify(id)})`);
+    check(
+      "an approval dropped without a verdict stops filling its row",
+      !dropped.pending && !dropped.mapped && dropped.dot === "empty",
+      `pending=${dropped.pending} mapped=${dropped.mapped} dot=${dropped.dot}`,
+    );
+
+    // A turn the user walks away from: its frames must not be spliced into the
+    // transcript that is on screen now, and when it ends its own row must fill
+    // because nobody read it. The prompt is the tool-using one, so the turn
+    // really does emit tool_progress frames after the switch.
+    const other = sb.chats.find((c) => c.id !== id)?.id ?? "";
+    if (other) {
+      // Settle on what that chat's transcript looks like with nothing running,
+      // so anything extra afterwards can only have come from the other turn.
+      const settled = async (): Promise<string[]> => {
+        let shape = await js<string[]>("window.__transcript()");
+        for (let i = 0; i < 16; i++) {
+          await wait(500);
+          const again = await js<string[]>("window.__transcript()");
+          if (JSON.stringify(again) === JSON.stringify(shape)) return shape;
+          shape = again;
+        }
+        return shape;
+      };
+      await js<void>(`window.__openSession(${JSON.stringify(other)})`);
+      await wait(1000);
+      const shapeBefore = await settled();
+      await js<void>(`window.__openSession(${JSON.stringify(id)})`);
+      await wait(1200);
+      // The file-listing prompt the tool-card checks use: it needs no approval
+      // here, and the nonce stops the model answering from memory.
+      const walkNonce = Math.random().toString(36).slice(2, 8);
+      await js<void>(`window.__ask(${JSON.stringify(`Run ${walkNonce}: call your file-listing tool on the current directory right now (do not answer from memory), then say done.`)})`);
+      await wait(600);
+      await js<void>(`window.__openSession(${JSON.stringify(other)})`);
+      await wait(1500);
+      const runDeadline = Date.now() + 150_000;
+      let leftDot = "running";
+      while (Date.now() < runDeadline) {
+        sb = await js<Sb>("window.__sidebar()");
+        leftDot = sb.chats.find((c) => c.id === id)?.dot ?? "";
+        if (leftDot !== "running") break;
+        await wait(1000);
+      }
+      await wait(2000);
+      const shapeAfter = await js<string[]>("window.__transcript()");
+      sb = await js<Sb>("window.__sidebar()");
+      const finalDot = sb.chats.find((c) => c.id === id)?.dot ?? "";
+      check(
+        "a turn left behind stays out of the open chat and fills its own row",
+        JSON.stringify(shapeAfter) === JSON.stringify(shapeBefore) && finalDot === "filled",
+        `${shapeBefore.length} → ${shapeAfter.length} items in ${other} (added ${JSON.stringify(shapeAfter.slice(shapeBefore.length))}); ${id} dot=${finalDot}`,
+      );
+      // Read it again, so the run leaves the row as it found it.
+      await js<void>(`window.__openSession(${JSON.stringify(id)})`);
+      await wait(1500);
+    } else {
+      check("a turn left behind stays out of the open chat and fills its own row", true, "skipped — only one chat in this workspace");
+    }
+
     // The Tasks list is every task, not the TUI rail's running/queued
-    // projection — the user's dot rules are about tasks that have run.
+    // projection — the user's dot rules are about tasks that have run. Both of
+    // those rules need a task in a terminal state to say anything at all, and
+    // a fresh state dir holds only pending and cancelled rows (both drawn
+    // empty), so the fixture below runs one through the agent for real.
+    fixture = await executedTaskFixture(check);
+    await js<void>("window.__tasksRefresh()");
+    await wait(300);
     const apiTasks = await js<Array<{ id: string; status: string; userMessage: string; updatedAt: number }>>(
       "(async () => { const r = await window.atomic.tasks(); return ((r.data && r.data.tasks) || []).map((t) => ({id:t.id, status:t.status, userMessage:t.userMessage || '', updatedAt:t.updatedAt || 0})); })()",
     );
     sb = await js<Sb>("window.__sidebar()");
-    const executed = apiTasks.filter((t) => t.status === "completed" || t.status === "failed" || t.status === "blocked" || t.status === "cancelled");
+    // A cancelled task never executed — the TUI rail would have dropped a
+    // completed one, and that is the row this check is about.
+    const executed = apiTasks.filter((t) => t.status === "completed" || t.status === "failed" || t.status === "blocked");
+    // STATUS_RANK sorts completed last, so on a store carrying a page of
+    // cancelled fixtures the executed row lives behind Load more. Press it the
+    // way a user would until the row is on screen — which also proves the
+    // Tasks list pages.
+    let pages = 1;
+    while (sb.hiddenTasks > 0 && !sb.tasks.some((t) => executed.some((e) => e.id === t.id)) && pages < 25) {
+      const grew = await js<boolean>("(() => { const b = document.querySelector('[data-more=\"tasks\"]'); if (!b) return false; b.click(); return true; })()");
+      if (!grew) break;
+      pages += 1;
+      await wait(100);
+      sb = await js<Sb>("window.__sidebar()");
+    }
     check(
       "the tasks list carries executed tasks too",
-      executed.length === 0
-        ? sb.tasks.length === Math.min(apiTasks.length, sb.page)
-        : sb.tasks.some((t) => executed.some((e) => e.id === t.id)),
-      `${apiTasks.length} tasks from the agent (${executed.length} executed), ${sb.tasks.length} rows`,
+      executed.length > 0 && sb.tasks.some((t) => executed.some((e) => e.id === t.id)),
+      `${apiTasks.length} tasks from the agent (${executed.length} executed, ${apiTasks.filter((t) => t.status === "cancelled").length} cancelled), ${sb.tasks.length} rows over ${pages} page(s)`,
     );
     check(
       "the tasks header counts running tasks",
@@ -1423,23 +1507,25 @@ async function sidebarTest(
         `${JSON.stringify(first.name)} vs ${JSON.stringify(src?.userMessage.slice(0, 72))}`,
       );
     }
-    const doneTask = executed.find((t) => t.status !== "cancelled");
+    // Whichever executed row is actually on screen — the dot checks read the
+    // rendered page, and Load more above stops at the first one it finds.
+    const doneTask = executed.find((t) => sb.tasks.some((r) => r.id === t.id)) ?? executed[0];
     if (doneTask) {
       await js<string>(`window.__forgetTaskSeen(${JSON.stringify(doneTask.id)})`);
       sb = await js<Sb>("window.__sidebar()");
       const before = sb.tasks.find((t) => t.id === doneTask.id);
-      await js<number>(`window.__openTask(${JSON.stringify(doneTask.id)})`);
+      const stamp = await js<number>(`window.__openTask(${JSON.stringify(doneTask.id)})`);
       await wait(500);
       sb = await js<Sb>("window.__sidebar()");
       const afterOpen = sb.tasks.find((t) => t.id === doneTask.id);
       check(
         "an executed task fills until it is opened",
-        before?.dot === "filled" && afterOpen?.dot === "empty",
-        `${doneTask.id}: ${before?.dot} → ${afterOpen?.dot}`,
+        before?.dot === "filled" && afterOpen?.dot === "empty" && stamp > 0,
+        `${doneTask.id} (${doneTask.status}): ${before?.dot} → ${afterOpen?.dot}, stamp ${stamp}`,
       );
       await js<void>("window.__settingsClose && window.__settingsClose()");
     } else {
-      check("an executed task fills until it is opened", true, "skipped — this agent has no executed task");
+      check("an executed task fills until it is opened", false, "no task reached a terminal state — see the fixture check above");
     }
 
     // Deleting is a real DELETE now. The route is idempotent, so an id that
@@ -1456,8 +1542,86 @@ async function sidebarTest(
     check("Skills is still reachable outside the sidebar", skillsTab === "Skills", `settings tab ${JSON.stringify(skillsTab)}`);
     await js<void>("window.__settingsClose && window.__settingsClose()");
   } finally {
+    // The task record has to stay — 0.5.4 has no task delete, and a later run
+    // reuses it instead of spending another turn — but the session it ran in
+    // is this run's litter, and DELETE /api/sessions/{id} takes it back out.
+    if (fixture && fixture.created && fixture.sessionId && agent) {
+      await agent.deleteSession(fixture.sessionId).catch(() => undefined);
+    }
     writePrefs(prefsBefore);
     await js<void>("window.__reloadPrefs && window.__reloadPrefs()");
+  }
+}
+
+interface TaskFixture {
+  id: string;
+  status: string;
+  sessionId: string | null;
+  created: boolean;
+}
+
+/**
+ * A task the agent has actually executed, so the two task-dot checks assert
+ * something. A previous run's completed row is reused; otherwise one is
+ * created through `atag task create --at` and run to a terminal state. The
+ * CLI's one-shot path writes no `scheduled_for` and the claim query reads
+ * NULL as "due now", so the scheduler normally takes it within a second; if
+ * it has not, one attempt is forced through POST /api/tasks/{id}/run.
+ */
+async function executedTaskFixture(
+  check: (name: string, ok: boolean, detail?: string) => void,
+): Promise<TaskFixture | null> {
+  const name = "the tasks list has a task the agent has run";
+  if (!agent) {
+    check(name, false, "no agent client");
+    return null;
+  }
+  const terminal = (status: string) => status === "completed" || status === "failed" || status === "blocked";
+  const record = async (id: string) =>
+    (await agent!.task(id)) as { status?: unknown; sessionId?: unknown } | null;
+  try {
+    const listed = ((await agent.tasksList(500)) as { tasks?: Array<{ id?: unknown; status?: unknown; sessionId?: unknown }> }).tasks ?? [];
+    const already = listed.find((t) => typeof t.id === "string" && typeof t.status === "string" && terminal(t.status));
+    if (already) {
+      check(name, true, `reused ${String(already.id)} (${String(already.status)})`);
+      return { id: String(already.id), status: String(already.status), sessionId: null, created: false };
+    }
+    const created = await taskCreate(
+      { message: "desktop smoke sidebar task: reply with exactly the word done, use no tools", kind: "at", expression: String(Date.now() + 1000) },
+      agent.status.workingDir,
+    );
+    if (!created.ok || !created.id) {
+      check(name, false, created.error ?? "task create failed");
+      return null;
+    }
+    const id = created.id;
+    const deadline = Date.now() + 150_000;
+    let status = "pending";
+    let forced = false;
+    while (Date.now() < deadline) {
+      const rec = await record(id);
+      status = typeof rec?.status === "string" ? rec.status : "";
+      if (terminal(status)) {
+        const sid = typeof rec?.sessionId === "string" ? rec.sessionId : null;
+        check(name, true, `${id} ran to ${status}${forced ? " (forced)" : ""}`);
+        return { id, status, sessionId: sid, created: true };
+      }
+      if (status === "pending" && !forced) {
+        forced = true;
+        // Synchronous: one attempt, the agent's own turn. It throws when the
+        // scheduler claimed the row first — the poll then sees the result.
+        await agent.runTask(id).catch(() => undefined);
+        continue;
+      }
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+    check(name, false, `fixture ${id} was still ${status || "unknown"} after 150 s`);
+    await agent.cancelTask(id).catch(() => undefined);
+    const rec = await record(id);
+    return { id, status: typeof rec?.status === "string" ? rec.status : status, sessionId: typeof rec?.sessionId === "string" ? rec.sessionId : null, created: true };
+  } catch (err) {
+    check(name, false, err instanceof Error ? err.message : String(err));
+    return null;
   }
 }
 

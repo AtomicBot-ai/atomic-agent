@@ -130,7 +130,10 @@ Real, driven by the running agent:
   operator's file. On a machine that has never run this window every
   historical chat is therefore unread until it is opened; that is honest, not
   a bug. Skills left the sidebar (the user asked for it); ⌘3, the palette and
-  View › Skills still open it, on Settings › Skills.
+  View › Skills still open it, on Settings › Skills. Collapsed — Setup › Hide
+  or show the sidebar, or a window narrower than 1000px — the two lists stay
+  as a column of dots, each row's tooltip naming it, so the rail is still a
+  way back into a chat.
 - **What the sidebar cannot know on 0.5.4.** `GET /api/sessions` never
   reports `running`: the store is written only when a turn ends, and no route
   exposes the turn controller. So the pulsating dot means "a turn started in
