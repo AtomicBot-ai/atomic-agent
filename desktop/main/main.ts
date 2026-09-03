@@ -30,6 +30,9 @@ import {
   setActiveTextProvider,
   useManagedMode,
   type UserConfigShape,
+  // Lane B — context before the first message (item 3)
+  modelWindow,
+  traceBaseline,
 } from "./agent-cli.js";
 import { readFileSync } from "node:fs";
 import {
@@ -292,6 +295,30 @@ function wireIpc(client: AgentClient): void {
   ipcMain.handle("cli:useManagedMode", () => useManagedMode());
   ipcMain.handle("cli:providersReady", () => providersReady());
 
+  // --- Lane B — context before the first message (item 3) ---
+  ipcMain.handle("cli:traceBaseline", (_event, payload: unknown) => {
+    const { stateDir, model, workingDir } = (payload ?? {}) as { stateDir?: unknown; model?: unknown; workingDir?: unknown };
+    if (typeof stateDir !== "string") return { ok: false, error: "stateDir is required" };
+    return traceBaseline(stateDir, {
+      model: typeof model === "string" && model ? model : null,
+      workingDir: typeof workingDir === "string" && workingDir ? workingDir : null,
+    });
+  });
+  ipcMain.handle("cli:modelWindow", async (_event, payload: unknown) => {
+    const { providerId, kind, model } = (payload ?? {}) as { providerId?: unknown; kind?: unknown; model?: unknown };
+    if (typeof providerId !== "string" || typeof model !== "string") return { ok: false, window: null, error: "providerId and model are required" };
+    return { ok: true, window: await modelWindow(providerId, typeof kind === "string" ? kind : "", model) };
+  });
+  ipcMain.handle("agent:llamaProps", (_event, payload: unknown) => {
+    const { url, apiKey } = (payload ?? {}) as { url?: unknown; apiKey?: unknown };
+    if (typeof url !== "string") return { ok: false, n_ctx: null, error: "url is required" };
+    return client.llamaProps(url, typeof apiKey === "string" && apiKey ? apiKey : undefined);
+  });
+  ipcMain.handle("agent:contextPreview", (_event, payload: unknown) => {
+    const { sessionId, message } = (payload ?? {}) as { sessionId?: unknown; message?: unknown };
+    return client.contextPreview(typeof sessionId === "string" && sessionId ? sessionId : null, typeof message === "string" ? message : "");
+  });
+
   // Files the agent produced: open, reveal, copy, save elsewhere.
   const safePath = (p: unknown): string | null => {
     if (typeof p !== "string" || !p.startsWith("/") || p.includes("\0")) return null;
@@ -391,6 +418,71 @@ async function smokeTest(): Promise<void> {
     check("wizard opens", title.length > 0 && options === 2, `${JSON.stringify(title)} options=${options}`);
   }
 
+  // --- Lane B — context before the first message (item 3) ---
+  // Nothing has been sent yet, so this block has to run BEFORE the first
+  // __ask: the chip must already carry a labelled projection (or the TUI's
+  // "not measured yet" state) — never a zero, never a guessed window.
+  type PreCtx = {
+    tokens: number; source: string | null; window: number | null; windowLabel: string; stablePrefix: number;
+    draftTokens: number; previewSupported: boolean | null;
+    baseline: { sessionId: string; at: number; modelId: string | null; workspaceMatch: boolean; modelMatch: boolean } | null;
+  };
+  let pre: PreCtx | null = null;
+  if (state === "connected") {
+    await js<void>("window.__ctxRefresh()");
+    await new Promise((r) => setTimeout(r, 4000));
+    pre = await js<PreCtx>("window.__ctx()");
+    check(
+      "context has a basis before the first message",
+      pre.source === "projected" || pre.source === "built" || (pre.source === null && pre.tokens === 0),
+      JSON.stringify(pre),
+    );
+    if (pre.source === "projected") {
+      check(
+        "projection names its baseline",
+        !!pre.baseline && !!pre.baseline.sessionId && pre.baseline.at > 0 && pre.tokens >= pre.stablePrefix && pre.stablePrefix > 1000,
+        `${pre.tokens} from ${pre.baseline?.sessionId} (${pre.baseline?.modelId}, workspace=${pre.baseline?.workspaceMatch})`,
+      );
+      // 52 chars / 8 words → max(ceil(52/3.6)=15, ceil(8*1.4)=12) = 15 with the runtime's estimator.
+      const sentence = "hello there, please summarise this repository for me";
+      const withDraft = await js<number>(`window.__ctxDraft(${JSON.stringify(sentence)})`);
+      check("draft moves the projection by its estimate", withDraft === pre.stablePrefix + 15, `${pre.stablePrefix} + 15 → ${withDraft}`);
+      const chip = await js<{ label: string; proj: boolean } | null>("window.__ctxChip()");
+      check("projected chip is marked as such", !!chip && chip.proj && chip.label.startsWith("~"), JSON.stringify(chip));
+      const cleared = await js<number>("window.__ctxDraft('')");
+      check("empty draft returns to the scaffold", cleared === pre.stablePrefix, `${cleared} vs ${pre.stablePrefix}`);
+    }
+    // The bundled catalogues (openrouter, aimlapi) know their models' windows
+    // without the picker ever opening; any other kind may honestly not know.
+    const cfgForWindow = (await configGet()).config as UserConfigShape | undefined;
+    const activeForWindow = (cfgForWindow?.llm?.providers ?? []).find((p) => p.id === cfgForWindow?.llm?.activeTextProvider);
+    const bundledModel = !!activeForWindow && (activeForWindow.kind === "aimlapi" || activeForWindow.kind === "openrouter") && !!activeForWindow.defaultChatModel;
+    check(
+      "window resolved without opening the picker",
+      bundledModel ? pre.window! > 0 && pre.window !== 128000 : pre.window === null || pre.window > 0,
+      `window=${pre.window} (${pre.windowLabel || "unknown"}) provider=${activeForWindow?.kind ?? "none"}`,
+    );
+    const dial = await js<boolean>("window.__ctxOpen()");
+    check("panel opens with the dial before any turn", dial === true);
+    const title = await js<string>("window.__ctxTitle()");
+    check(
+      "panel title states its basis",
+      pre.source === null
+        ? title === "context · not measured yet"
+        : pre.source === "built" ? title.startsWith("context · ") : title.startsWith("context · ~") && /· projected$/.test(title),
+      title,
+    );
+    if (pre.source === "projected") {
+      const basis = await js<string>("window.__ctxBasis()");
+      check(
+        "panel basis line names the baseline",
+        basis.startsWith("projected from the last prompt this agent built ") && basis.endsWith("The real figure comes from the prompt the agent actually builds.") && !/, not /.test(basis),
+        basis,
+      );
+    }
+    await js<void>("window.__ctxClose()");
+  }
+
   if (state === "connected") {
     check("skills loaded", (await js<number>("window.__skills && window.__skills()")) > 0);
     await js<void>(
@@ -415,6 +507,25 @@ async function smokeTest(): Promise<void> {
       "context measured from the trace",
       ctx.tokens > 0 && !!ctx.source,
       `${ctx.tokens} tokens (${ctx.source}), scaffold ${ctx.stablePrefix}`,
+    );
+    // Lane B — item 3: after a reply the figure is a measurement, never the
+    // projection. tokens >= stablePrefix is deliberately NOT asserted: on
+    // llama the provider's promptTokens is the KV-cache miss count.
+    check(
+      "context after the reply is measured, not projected",
+      ctx.tokens > 0 && ["provider", "estimate", "built"].includes(ctx.source ?? ""),
+      `source=${ctx.source}`,
+    );
+    const chipAfter = await js<{ label: string; proj: boolean } | null>("window.__ctxChip()");
+    check("measured chip drops the projection mark", !!chipAfter && !chipAfter.proj && !chipAfter.label.startsWith("~"), JSON.stringify(chipAfter));
+    // A new thread flips back to the projection, with the same baseline.
+    const fresh = await js<PreCtx>("window.__ctxNew()");
+    check(
+      "session:new flips back to the projection",
+      pre?.source !== "projected"
+        ? fresh.source === pre?.source
+        : fresh.source === "projected" && fresh.baseline?.sessionId === pre.baseline?.sessionId && fresh.tokens === fresh.stablePrefix,
+      `source=${fresh.source} tokens=${fresh.tokens} scaffold=${fresh.stablePrefix} baseline=${fresh.baseline?.sessionId}`,
     );
 
     await js<void>("window.__selOpen('backend')");

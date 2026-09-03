@@ -159,6 +159,10 @@ import {
   createEmptySessionState,
   type SessionState,
 } from "../session/index.js";
+// Lane B — context before the first message (item 3): previewPrompt.
+import { buildPrompt } from "../prompt/build-prompt.js";
+import type { BuiltPrompt } from "../prompt/build-prompt-types.js";
+import { formatCurrentDate } from "../prompt/current-date.js";
 
 import { TaskRunner, TaskStore } from "../tasks/index.js";
 import { Scheduler } from "../scheduler/index.js";
@@ -298,6 +302,18 @@ export interface CreateAgentRuntimeOptions {
      */
     telegramBotFactory?: BotFactory;
   };
+}
+
+/**
+ * Thrown by `previewPrompt` for an id the store does not hold. Matched by
+ * name at the HTTP edge so the route module needs no value import of
+ * the runtime.
+ */
+export class SessionNotFoundError extends Error {
+  constructor(public readonly sessionId: string) {
+    super(`session not found: ${sessionId}`);
+    this.name = "SessionNotFoundError";
+  }
 }
 
 export interface AgentRuntime {
@@ -494,6 +510,17 @@ export interface AgentRuntime {
     userMessage: string,
     options?: { maxSteps?: number; signal?: AbortSignal },
   ): Promise<RunTurnResult>;
+  /**
+   * Build — never run, never persist — the prompt the next turn would
+   * open with, for a composer's context readout before any message is
+   * sent (the desktop's `POST /api/context-preview`). `sessionId` null
+   * means a fresh thread in this workspace: an unpersisted state with a
+   * throwaway id, so nothing lands in sessions.sqlite. An unknown id
+   * throws a `SessionNotFoundError`. Pure: no recall / memory-index
+   * prefetch runs, so those two sections are empty here and only appear
+   * once a real turn has built them.
+   */
+  previewPrompt(input: { sessionId: string | null; userMessage?: string }): BuiltPrompt;
   /** Refresh the skill registry after install/uninstall and rebuild the catalog. */
   refreshSkills(): Promise<void>;
   /**
@@ -2291,6 +2318,46 @@ export async function createAgentRuntime(
     return state;
   };
 
+  // Lane B — context before the first message (item 3). The same inputs
+  // the loop hands buildPrompt for a real step (agent-loop.ts step
+  // context + step-executor.ts promptInput), minus the per-step extras
+  // (transient notice, terminal-only tools) that only exist mid-turn.
+  const previewPrompt = (input: {
+    sessionId: string | null;
+    userMessage?: string;
+  }): BuiltPrompt => {
+    let session: SessionState;
+    if (input.sessionId) {
+      const loaded = sessionStore.load(input.sessionId);
+      if (!loaded) throw new SessionNotFoundError(input.sessionId);
+      session = loaded;
+    } else {
+      // createEmptySessionState, not createSession: the latter saves.
+      session = createEmptySessionState({
+        id: `preview-${randomUUID()}`,
+        workingDir,
+      });
+    }
+    const transport = resolveActiveLlmSlice().transport;
+    return buildPrompt({
+      session,
+      toolDescriptors: effectiveToolDescriptors,
+      capabilities,
+      skillCatalog,
+      currentDate: formatCurrentDate(new Date()),
+      profile: getLiveProfile(),
+      toolTransport: transport,
+      suppressReasoningPrefill: transport === "native_tools",
+      contextWindow: resolveCatalogContextWindow(),
+      ...(config.memory.profile.enabled
+        ? { profileFacts: profileStore.list() }
+        : {}),
+      ...(input.userMessage !== undefined
+        ? { userMessage: input.userMessage }
+        : {}),
+    });
+  };
+
   const executeTurn = async (
     session: SessionState,
     userMessage: string,
@@ -2720,6 +2787,7 @@ export async function createAgentRuntime(
     createSession,
     runTurn,
     executeTurn,
+    previewPrompt,
     refreshSkills,
     refreshMcp,
     reloadLlmProviders,

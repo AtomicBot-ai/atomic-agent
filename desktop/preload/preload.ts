@@ -78,4 +78,13 @@ contextBridge.exposeInMainWorld("atomic", {
   selectLocalModel: (id: string) => ipcRenderer.invoke("cli:selectLocalModel", id),
   useManagedMode: () => ipcRenderer.invoke("cli:useManagedMode"),
   providersReady: () => ipcRenderer.invoke("cli:providersReady"),
+
+  /** Lane B — context before the first message (item 3): the projection's sources. */
+  traceBaseline: (stateDir: string, model: string | null, workingDir: string | null) =>
+    ipcRenderer.invoke("cli:traceBaseline", { stateDir, model, workingDir }),
+  modelWindow: (providerId: string, kind: string, model: string) =>
+    ipcRenderer.invoke("cli:modelWindow", { providerId, kind, model }),
+  llamaProps: (url: string, apiKey?: string) => ipcRenderer.invoke("agent:llamaProps", { url, apiKey }),
+  contextPreview: (sessionId: string | null, message: string) =>
+    ipcRenderer.invoke("agent:contextPreview", { sessionId, message }),
 });

@@ -40,6 +40,7 @@ import {
   createGetCodingModeHandler,
   createSetCodingModeHandler,
 } from "./route-coding-mode.js";
+import { createContextPreviewHandler } from "./route-context-preview.js";
 
 /**
  * Build the full atomic-agent HTTP route table. All handlers are
@@ -87,6 +88,7 @@ export function buildRouteTable(): RouteDefinition[] {
     { method: "GET", path: "/api/events", handler: createApprovalEventsHandler() },
     { method: "GET", path: "/api/coding-mode", handler: createGetCodingModeHandler() },
     { method: "POST", path: "/api/coding-mode", handler: createSetCodingModeHandler() },
+    { method: "POST", path: "/api/context-preview", handler: createContextPreviewHandler() },
     { method: "POST", path: "/api/tasks", handler: createCreateTaskHandler() },
     { method: "GET", path: "/api/tasks", handler: createListTasksHandler() },
     { method: "GET", path: "/api/tasks/{id}", handler: createGetTaskHandler() },

@@ -32,7 +32,16 @@ const KIND_ROWS = [
   {id:'openai-compatible', kind:'openai-compatible', label:'OpenAI-compatible API (custom base URL)', custom:true, defaultModel:'gpt-5.4-mini'},
 ];
 const OPEN_GROUPS = new Set();
-const CTX = { tokens:0, source:null, stablePrefix:0, tail:0, cacheHitTokens:null, modelId:null, window:null, windowLabel:'' };
+/* Lane B — context before the first message (item 3). `source` is
+   'provider' | 'estimate' (the trace, after a turn), 'built' (the branch
+   route's own prompt), or 'projected' — the turn-0 scaffold of the last
+   prompt this agent built in this workspace plus the draft's estimate,
+   always drawn with a '~' and the word "projected" until something real
+   replaces it. `previewSupported` caches the route's 404 per connection
+   the way MODE.supported does; `seq` drops a refresh that lost the race. */
+const CTX = { tokens:0, source:null, stablePrefix:0, tail:0, draftTokens:0, cacheHitTokens:null, modelId:null,
+  window:null, windowLabel:'', baseline:null, sections:null, pairsCap:0, reserved:0,
+  previewSupported:null, seq:0, chipTimer:null };
 /* default / auto / bypass. `plan` is deliberately absent: plan mode is a
    closure variable in the runtime with no route, no config key and no
    request field, so a desktop chip could only paint a state the agent
@@ -798,21 +807,44 @@ function contextHTML() {
   const agent = (LIVE_CONFIG && LIVE_CONFIG.agent) || {};
   const pairs = agent.conversationMaxPairs || 20;
   const win = CTX.window;
+  // Lane B \u2014 context before the first message (item 3). Copy follows
+  // src/tui/components/context-panel.tsx: title(), buildRows() (the
+  // "reserved for reply" row is config.localModels.completionMaxTokens,
+  // tui-command.ts:232, and "free" is window \u2212 tokens \u2212 reserved, floored
+  // at 0), and the pre-measurement screen verbatim. The projected state
+  // is the desktop's own: the TUI has no figure before prompt_built.
+  const proj = CTX.source === 'projected';
+  const reserved = CTX.source === 'built' && CTX.reserved
+    ? CTX.reserved
+    : ((LIVE_CONFIG && LIVE_CONFIG.localModels && LIVE_CONFIG.localModels.completionMaxTokens) || 0);
+  const pct = win ? Math.min(100, Math.round(CTX.tokens / win * 100)) : 0;
   const title = CTX.tokens
-    ? 'context \u00b7 ' + tok(CTX.tokens) + (win ? ' of ' + tok(win) + ' \u00b7 ' + Math.min(100, Math.round(CTX.tokens / win * 100)) + '%' : ' \u00b7 window unknown')
+    ? 'context \u00b7 ' + (proj ? '~' : '') + fmtTokens(CTX.tokens)
+      + (win ? ' of ' + fmtTokens(win) + ' window \u00b7 ' + pct + '%' : ' \u00b7 window unknown')
+      + (proj ? ' \u00b7 projected' : '')
     : 'context \u00b7 not measured yet';
+  const row = (label, value, dim) => '<dt' + (dim ? ' class="ter"' : '') + '>' + esc(label) + '</dt>'
+    + '<dd class="mono tnum' + (dim ? ' ter' : '') + '">' + value + '</dd>';
+  let body = '';
+  if (CTX.tokens) {
+    if (CTX.source === 'built' && CTX.sections) body = CTX.sections.map((s) => row(s.label, fmtTokens(s.tokens))).join('');
+    else if (proj) {
+      body = row('prompt scaffold', fmtTokens(CTX.stablePrefix));
+      if (S.draft.trim()) body += row('your draft', '~' + fmtTokens(CTX.draftTokens));
+      body += row('conversation', '0');
+    } else body = row('prompt scaffold', fmtTokens(CTX.stablePrefix)) + row('conversation', fmtTokens(CTX.tail));
+    if (win) {
+      if (reserved > 0) body += row('reserved for reply', fmtTokens(reserved), true);
+      body += row('free', fmtTokens(Math.max(0, win - CTX.tokens - reserved)), true);
+    }
+  }
   const rows = CTX.tokens
-    ? '<dl class="kvgrid" style="grid-template-columns:1fr max-content;gap:4px 12px">'
-      + '<dt>prompt scaffold</dt><dd class="mono tnum">' + tok(CTX.stablePrefix) + '</dd>'
-      + '<dt>conversation</dt><dd class="mono tnum">' + tok(CTX.tail) + '</dd>'
-      + (win ? '<dt class="ter">free</dt><dd class="mono tnum ter">' + tok(Math.max(0, win - CTX.tokens)) + '</dd>' : '')
-      + '</dl>'
+    ? '<dl class="kvgrid" style="grid-template-columns:1fr max-content;gap:4px 12px">' + body + '</dl>'
     : '<p class="cap" style="margin:0">send a message \u2014 the breakdown comes from the prompt the agent actually builds</p>';
   return '<div class="scrim" data-close="1" style="background:transparent">'
     + '<div class="popover" style="width:360px;' + anchorStyle('.ctxbtn', 360) + '">'
     + '<div style="padding:12px 16px 8px"><div class="hd" style="margin-bottom:8px">' + esc(title) + '</div>' + rows
-    + (CTX.tokens ? '<p class="cap" style="margin:8px 0 0">' + (CTX.source === 'provider'
-        ? 'counted by ' + esc(CTX.modelId || 'the model') : 'estimated from the built prompt') + '</p>' : '')
+    + (CTX.tokens ? '<p class="cap ctxbasis" style="margin:8px 0 0">' + esc(ctxBasisLine()) + '</p>' : '')
     + '</div>'
     + '<div class="ctxdials"><div class="ctxdial"><span class="col"><span>tasks per turn</span>'
       + '<span class="cap">sent each turn (1-100)</span></span>'
@@ -1078,7 +1110,9 @@ function act(a) {
   if (a === 'sel:cancelPull') { BR.cancelPull(); SEL.pulling = null; render(); return; }
   if (a === 'runmode') { close(); S.dialShare = S.share; S.overlay = 'runmode'; render(); return; }
   if (a === 'applydial') { S.share = S.dialShare; if (S.mode !== 'fusion' && S.dialShare > 0) S.mode = 'fusion'; close(); render(); toast('Run type applied', S.mode + (S.mode === 'fusion' ? ' · cloud share ' + S.share : '')); return; }
-  if (a === 'session:new') { close(); S.log = []; S.history = []; S.agentSession = null; S.busy = false; S.pending = null; S.room = 'chat'; render(); toast('New session', 'The next turn starts fresh'); return; }
+  if (a === 'session:new') { close(); S.log = []; S.history = []; S.agentSession = null; S.busy = false; S.pending = null; S.room = 'chat'; render(); toast('New session', 'The next turn starts fresh');
+                             // Lane B — item 3: a new thread has a new window fill (the TUI resets contextUsage on session_created), so the chip goes back to the projection.
+                             refreshContext(); return; }
   if (a === 'session:switch') { close(); S.overlay = 'sessions'; render(); return; }
   if (a === 'task:new') { close(); S.overlay = 'newtask'; render(); return; }
   if (a === 'task:run') { close(); render(); toast('Task started', 'Back up the Teletubbies folder'); return; }
@@ -1161,8 +1195,9 @@ function submit() {
   const e = $('#entry');
   const text = (e ? e.value : S.draft).trim();
   if (!text) return;
-  if (text.startsWith('/')) { runSlash(text.slice(1).split(/\s+/)); S.draft = ''; if (e) { e.value = ''; autosize(e); } S.slash = false; render(); return; }
+  if (text.startsWith('/')) { runSlash(text.slice(1).split(/\s+/)); S.draft = ''; if (e) { e.value = ''; autosize(e); } S.slash = false; ctxDraftChanged(); render(); return; }
   S.draft = ''; if (e) { e.value = ''; autosize(e); }
+  ctxDraftChanged(); // Lane B — item 3: the sent draft leaves the projection
   S.slash = false;
   if (S.busy || S.pending) {
     S.queued.push(text);
@@ -1304,6 +1339,10 @@ document.addEventListener('click', (e) => {
 document.addEventListener('input', (e) => {
   if (e.target.id === 'entry') {
     S.draft = e.target.value; autosize(e.target);
+    // Lane B — item 3: the draft's estimate moves the projected chip only
+    // (a 150 ms chip-only repaint — a render() here would reset the
+    // textarea from S.draft in afterChat() and move the caret).
+    ctxDraftChanged();
     const wasSlash = S.slash;
     S.slash = S.draft.startsWith('/');
     if (S.slash) { S.slashCur = 0; refreshSlash(); }
@@ -1543,6 +1582,10 @@ async function loadResources() {
   }
   render();
   bswRefreshFacts();
+  // Lane B — item 3: caps + config are in, so the chip can carry a figure
+  // before any message. A fresh connection re-probes the preview route.
+  CTX.previewSupported = null;
+  refreshContext();
 }
 
 
@@ -2137,6 +2180,8 @@ async function mpSaveProvider() {
 /** Re-read config so every chip and row reflects what was just written. */
 async function refreshLiveConfig() {
   if (!BR) return;
+  // Lane B — item 3: a provider or model change moves the window and the baseline.
+  const ctxWas = selActiveProviderId() + ' ' + activeModel();
   const cfg = await BR.configGet();
   if (cfg && cfg.ok && cfg.config) LIVE_CONFIG = cfg.config;
   const provider = LIVE_CONFIG && LIVE_CONFIG.llm
@@ -2149,6 +2194,7 @@ async function refreshLiveConfig() {
   if (managed && managed.modelId) S.localModel = managed.modelId;
   render();
   bswRefreshFacts();
+  if (selActiveProviderId() + ' ' + activeModel() !== ctxWas) refreshContext();
 }
 
 if (BR) {
@@ -2475,41 +2521,201 @@ async function selSavePreset() {
    Context gauge — real numbers, measured on the last prompt
    ============================================================ */
 
-async function refreshContext() {
-  if (!BR || !S.agentSession) return;
-  const stateDir = LIVE_CAPS && LIVE_CAPS.paths && LIVE_CAPS.paths.stateDir;
-  if (!stateDir) return;
-  const res = await BR.traceUsage(stateDir, S.agentSession);
-  if (!res || !res.ok || !res.usage) return;
-  Object.assign(CTX, res.usage);
-  CTX.window = null; CTX.windowLabel = '';
-  const entry = selProviders().find((p) => p.id === selActiveProviderId());
-  if (entry && entry.defaultChatModel) {
-    const hit = SEL.models.find((m) => m.id === entry.defaultChatModel);
-    if (hit && hit.contextWindow) { CTX.window = hit.contextWindow; CTX.windowLabel = 'model window'; }
+/* ============================================================
+   Lane B — context before the first message (item 3)
+
+   The user's words: "I want to see the context before I am sending
+   a message, just to calculate the thing". The TUI shows nothing
+   before the first prompt_built (selectContextUsage returns null,
+   the panel says "not measured yet"), so there is no TUI logic to
+   copy for that state — the user's words override it, and the
+   figure shown is a labelled PROJECTION built only from data the
+   installed agent already produces:
+     scaffold  = turn-0 prompt_captured.tokens.stablePrefix of the
+                 newest trace built in this workspace (traceBaseline)
+     draft     = estimateTokens(S.draft), the runtime's own estimator
+     window    = /props n_ctx (local) or the provider catalogue
+     reserved  = localModels.completionMaxTokens, as the TUI panel
+   Precedence once something real exists: the branch route's built
+   prompt ('built') > the session's trace ('provider'|'estimate') >
+   the projection. The '~' and the word "projected" never come off
+   until one of the first two answers.
+   ============================================================ */
+
+/** Port of src/tui/components/format-tokens.ts formatTokens: 6.4k / 32k / 1.0M. */
+function fmtTokens(n) {
+  if (n < 1000) return String(n);
+  if (n < 1e6) { const k = n / 1000; return Number.isInteger(k) ? k + 'k' : k.toFixed(1) + 'k'; }
+  const m = n / 1e6; return Number.isInteger(m) ? m + 'M' : m.toFixed(1) + 'M';
+}
+/** Port of src/prompt/token-budget.ts estimateTokens (over-counts by ~10-15% on purpose). */
+function estimateTokens(text) {
+  if (!text || !text.length) return 0;
+  const words = text.trim().split(/\s+/).length;
+  return Math.max(Math.ceil(text.length / 3.6), Math.ceil(words * 1.4));
+}
+function relTime(at) {
+  const s = Math.max(0, Date.now() - at) / 1000;
+  if (s < 60) return 'just now';
+  const m = Math.floor(s / 60); if (m < 60) return m + (m === 1 ? ' minute ago' : ' minutes ago');
+  const h = Math.floor(m / 60); if (h < 24) return h + (h === 1 ? ' hour ago' : ' hours ago');
+  const d = Math.floor(h / 24); if (d === 1) return 'yesterday';
+  return d + ' days ago';
+}
+
+/** The panel's basis line: where the figure comes from, in one sentence. */
+function ctxBasisLine() {
+  if (CTX.source === 'provider') {
+    // On llama the provider count is the KV-cache MISS count (the cached
+    // prefix is not re-evaluated), so say how much was reused rather than
+    // let a 1.0k figure read as if the projection had been six times off.
+    return 'counted by ' + (CTX.modelId || 'the model')
+      + (CTX.cacheHitTokens > 0 ? ' (after ' + fmtTokens(CTX.cacheHitTokens) + ' reused from its cache)' : '');
   }
-  if (!CTX.window) {
+  if (CTX.source === 'estimate') return 'estimated from the built prompt';
+  if (CTX.source === 'built') return 'built now from this workspace’s tools, skills and memory — before recall';
+  const b = CTX.baseline;
+  if (!b) return '';
+  const place = b.workspaceMatch ? 'in this workspace' : 'in ' + (b.workingDir || 'another workspace');
+  // Never "(glm-5.2, not zhipu/glm-5.2)": the trace holds the provider's
+  // echoed id, so a basename match is the same model and a mismatch is
+  // stated as what the baseline was built for, not as a correction.
+  const built = b.modelMatch
+    ? 'for ' + b.modelId + ' ' + place
+    : place + (b.modelId ? ' (for ' + b.modelId + ')' : '');
+  return 'projected from the last prompt this agent built ' + built + ' — ' + b.sessionId + ', ' + relTime(b.at)
+    + '. The real figure comes from the prompt the agent actually builds.';
+}
+
+/**
+ * The window, in the TUI's order (src/tui/select-context-usage.ts
+ * resolveWindow): the prompt's own window → llama /props n_ctx →
+ * the provider catalogue → null. Nothing substitutes a default: the
+ * TUI's comment calls a gauge against a guessed scale a fabrication.
+ * Deliberate divergence from the TUI poller: it reads /props whichever
+ * provider is active; here /props is probed only when the active
+ * provider is llama-server, so a cloud gauge is never drawn against a
+ * local server's n_ctx. For the same reason the managed contextSize
+ * and catalogue "model max" fallbacks apply to the local route only.
+ */
+async function resolveWindow() {
+  const entry = activeProvider();
+  const local = !entry || entry.kind === 'llama-server';
+  if (local) {
+    const url = LIVE_CAPS && LIVE_CAPS.llama && LIVE_CAPS.llama.url;
+    if (url && BR.llamaProps) {
+      const key = (LIVE_CONFIG && LIVE_CONFIG.localModels && LIVE_CONFIG.localModels.apiKey) || undefined;
+      const p = await BR.llamaProps(url, key);
+      if (p && p.n_ctx > 0) return {window:p.n_ctx, label:'loaded window'};
+    }
     const managed = (LIVE_CONFIG && LIVE_CONFIG.localModels && LIVE_CONFIG.localModels.managed) || {};
-    if (managed.contextSize) { CTX.window = managed.contextSize; CTX.windowLabel = 'loaded window'; }
-    else {
-      const row = SEL.local.find((m) => m.id === managed.modelId);
-      if (row && row.context) {
-        const n = parseFloat(row.context);
-        const mult = /m/i.test(row.context) ? 1e6 : /k/i.test(row.context) ? 1000 : 1;
-        if (n) { CTX.window = Math.round(n * mult); CTX.windowLabel = 'model max'; }
-      }
+    if (managed.contextSize) return {window:managed.contextSize, label:'loaded window'};
+    const row = SEL.local.find((m) => m.id === managed.modelId);
+    if (row && row.context) {
+      const n = parseFloat(row.context);
+      const mult = /m/i.test(row.context) ? 1e6 : /k/i.test(row.context) ? 1000 : 1;
+      if (n) return {window:Math.round(n * mult), label:'model max'};
+    }
+    return {window:null, label:''};
+  }
+  const model = entry.defaultChatModel || entry.model;
+  if (model && BR.modelWindow) {
+    const r = await BR.modelWindow(entry.id, entry.kind, model);
+    if (r && r.ok && r.window > 0) return {window:r.window, label:'model window'};
+  }
+  return {window:null, label:''};
+}
+
+function ctxPairsCap() { return (LIVE_CONFIG && LIVE_CONFIG.agent && LIVE_CONFIG.agent.conversationMaxPairs) || 0; }
+
+async function refreshContext() {
+  if (!BR) return;
+  const seq = ++CTX.seq;
+  const stateDir = LIVE_CAPS && LIVE_CAPS.paths && LIVE_CAPS.paths.stateDir;
+  const windowP = resolveWindow().catch(() => ({window:null, label:''}));
+  let usage = null;
+  // (a) the branch route: the agent's own prompt, built now.
+  if (BR.contextPreview && CTX.previewSupported !== false) {
+    const r = await BR.contextPreview(S.agentSession, S.draft);
+    if (r && r.supported === false) CTX.previewSupported = false;
+    else if (r && r.ok && r.usage) {
+      CTX.previewSupported = true;
+      const sec = (label) => { const s = (r.usage.sections || []).find((x) => x.label === label); return s ? s.tokens : 0; };
+      usage = {tokens:r.usage.tokens, source:'built', stablePrefix:sec('prompt scaffold'), tail:sec('conversation'),
+        cacheHitTokens:null, modelId:null, baseline:null, sections:r.usage.sections || [],
+        pairsCap:r.pairsCap || r.usage.conversationPairsCap || 0, reserved:r.reservedForReply || 0,
+        builtWindow:r.contextWindow > 0 ? r.contextWindow : null};
     }
   }
+  // (b) this session's trace, once a turn has run.
+  if (!usage && S.agentSession && stateDir) {
+    const r = await BR.traceUsage(stateDir, S.agentSession);
+    if (r && r.ok && r.usage) usage = Object.assign({}, r.usage, {baseline:null, sections:null, pairsCap:ctxPairsCap(), reserved:0, builtWindow:null});
+  }
+  // (c) the projection: the last scaffold this agent built here + the draft.
+  if (!usage && stateDir && BR.traceBaseline) {
+    const model = activeModel();
+    const r = await BR.traceBaseline(stateDir, /^(no model chosen|not configured|download model|)$/.test(model) ? null : model,
+      (LIVE_CAPS && LIVE_CAPS.capabilities && LIVE_CAPS.capabilities.workingDir) || null);
+    if (r && r.ok && r.baseline) {
+      const b = r.baseline;
+      usage = {tokens:b.stablePrefix + CTX.draftTokens, source:'projected', stablePrefix:b.stablePrefix, tail:0,
+        cacheHitTokens:null, modelId:b.modelId, baseline:b, sections:null, pairsCap:ctxPairsCap(), reserved:0, builtWindow:null};
+    }
+  }
+  if (seq !== CTX.seq) return; // a newer refresh is on its way
+  if (!usage) {
+    // Nothing measured and no trace to project from: the TUI's own
+    // "not measured yet" state — chip hidden, never a zero.
+    Object.assign(CTX, {tokens:0, source:null, stablePrefix:0, tail:0, cacheHitTokens:null, modelId:null, baseline:null, sections:null, pairsCap:0, reserved:0});
+  } else {
+    const builtWindow = usage.builtWindow; delete usage.builtWindow;
+    Object.assign(CTX, usage);
+    if (builtWindow) { CTX.window = builtWindow; CTX.windowLabel = 'prompt window'; }
+  }
+  // The window resolves off the critical path: a cached catalogue answer
+  // is instant, a first --refresh is not, and the figure should not wait.
+  const w = await Promise.race([windowP, new Promise((r) => setTimeout(() => r(undefined), 2000))]);
+  if (seq !== CTX.seq) return;
+  if (CTX.windowLabel !== 'prompt window') {
+    if (w) { CTX.window = w.window; CTX.windowLabel = w.label; }
+    else { CTX.window = null; CTX.windowLabel = ''; }
+  }
   render();
+  if (w === undefined) {
+    const late = await windowP;
+    if (seq !== CTX.seq) return;
+    if (CTX.windowLabel !== 'prompt window') { CTX.window = late.window; CTX.windowLabel = late.label; render(); }
+  }
+}
+
+/** The draft's estimate: moves the projected figure only, never a measured one. */
+function ctxDraftChanged() {
+  CTX.draftTokens = estimateTokens(S.draft);
+  if (CTX.source === 'projected') { CTX.tokens = CTX.stablePrefix + CTX.draftTokens; scheduleChipRepaint(); }
+}
+function scheduleChipRepaint() {
+  clearTimeout(CTX.chipTimer);
+  CTX.chipTimer = setTimeout(repaintContextChip, 150);
+}
+function repaintContextChip() {
+  const el = document.querySelector('.cfoot .ctxbtn');
+  const html = contextChip();
+  if (el) { if (html) el.outerHTML = html; else el.remove(); return; }
+  if (!html) return;
+  const next = document.querySelector('.cfoot .cmodechip');
+  if (next) next.insertAdjacentHTML('beforebegin', html);
 }
 
 function contextChip() {
   if (!CTX.tokens) return '';
-  const label = CTX.window
-    ? tok(CTX.tokens) + '/' + tok(CTX.window)
-    : tok(CTX.tokens);
+  const proj = CTX.source === 'projected';
+  const label = (proj ? '~' : '') + (CTX.window
+    ? fmtTokens(CTX.tokens) + '/' + fmtTokens(CTX.window)
+    : fmtTokens(CTX.tokens));
   const pct = CTX.window ? Math.min(100, (CTX.tokens / CTX.window) * 100) : 0;
-  return '<button class="cchip ctxbtn" data-act="context" title="context">'
+  return '<button class="cchip ctxbtn' + (proj ? ' proj' : '') + '" data-act="context" title="'
+    + (proj ? 'projected — nothing measured in this session yet' : 'context') + '">'
     + (CTX.window ? '<span class="gauge"><i style="width:' + pct + '%"></i></span>' : '')
     + '<span class="tnum gaugelb">' + label + '</span></button>';
 }
@@ -2569,7 +2775,10 @@ if (typeof window !== 'undefined') {
   window.__sel = () => ({open:SEL.open, kind:SEL.kind, rows:SEL.rows.length, backend:selBackend(), err:SEL.err});
   window.__selOpen = (kind) => openSelector(kind);
   window.__selTab = (kind) => { SEL.kind = kind; SEL.cursor = 0; render(); selEnterModelPane(); };
-  window.__ctx = () => ({tokens:CTX.tokens, source:CTX.source, window:CTX.window, stablePrefix:CTX.stablePrefix});
+  window.__ctx = () => ({tokens:CTX.tokens, source:CTX.source, window:CTX.window, windowLabel:CTX.windowLabel, stablePrefix:CTX.stablePrefix,
+    draftTokens:CTX.draftTokens, previewSupported:CTX.previewSupported,
+    baseline: CTX.baseline ? {sessionId:CTX.baseline.sessionId, at:CTX.baseline.at, modelId:CTX.baseline.modelId,
+      workingDir:CTX.baseline.workingDir, workspaceMatch:CTX.baseline.workspaceMatch, modelMatch:CTX.baseline.modelMatch} : null});
   window.__ctxRefresh = () => refreshContext();
   window.__mode = () => currentMode();
 }
@@ -3005,4 +3214,15 @@ if (typeof window !== 'undefined') {
   window.__systemLines = () => S.log.filter((m) => m.k === 'system').map((m) => {
     const t = document.createElement('textarea'); t.innerHTML = m.text || ''; return t.value;
   });
+}
+
+/* Lane B — context before the first message (item 3): smoke hooks. */
+if (typeof window !== 'undefined') {
+  window.__ctxOpen = () => { S.overlay = 'context'; render(); return !!document.querySelector('.popover .ctxdial'); };
+  window.__ctxTitle = () => ((document.querySelector('.popover .hd') || {}).textContent || '');
+  window.__ctxBasis = () => ((document.querySelector('.popover .ctxbasis') || {}).textContent || '');
+  window.__ctxDraft = (t) => { S.draft = t; CTX.draftTokens = estimateTokens(t); if (CTX.source === 'projected') CTX.tokens = CTX.stablePrefix + CTX.draftTokens; render(); return CTX.tokens; };
+  window.__ctxClose = () => { act('close'); render(); };
+  window.__ctxChip = () => { const el = document.querySelector('.cfoot .ctxbtn'); return el ? {label:(el.querySelector('.gaugelb') || {}).textContent || '', proj:el.classList.contains('proj')} : null; };
+  window.__ctxNew = () => { act('session:new'); return refreshContext().then(() => window.__ctx()); };
 }

@@ -300,6 +300,80 @@ export class AgentClient extends EventEmitter {
     }
   }
 
+  // --- Lane B — context before the first message (item 3) ---
+
+  /**
+   * llama-server's `/props`, read for its physical context window
+   * (`default_generation_settings.n_ctx`, then `n_ctx`) exactly as the
+   * TUI's health poller does (src/tui/llm-health/llm-health-poller.ts
+   * extractContextWindow), with the same bearer auth. Runs here because
+   * the renderer's CSP is connect-src 'none'. Any failure is "no window
+   * from /props" — the caller falls through, as the poller swallows it.
+   */
+  async llamaProps(url: string, apiKey?: string): Promise<{ ok: boolean; n_ctx: number | null; error?: string }> {
+    if (!/^https?:\/\//.test(url)) return { ok: false, n_ctx: null, error: "not an http url" };
+    try {
+      const res = await fetch(`${url.replace(/\/$/, "")}/props`, {
+        headers: { accept: "application/json", ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}) },
+        signal: AbortSignal.timeout(3000),
+      });
+      if (!res.ok) return { ok: false, n_ctx: null, error: `HTTP ${res.status}` };
+      const json = (await res.json()) as Record<string, unknown>;
+      const settings = json["default_generation_settings"] as Record<string, unknown> | undefined;
+      for (const candidate of [settings?.["n_ctx"], json["n_ctx"]]) {
+        if (typeof candidate === "number" && Number.isFinite(candidate) && candidate > 0) return { ok: true, n_ctx: candidate };
+      }
+      return { ok: true, n_ctx: null };
+    } catch (err) {
+      return { ok: false, n_ctx: null, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  /**
+   * The branch-only `POST /api/context-preview`: the runtime builds —
+   * never runs, never persists — the prompt the next turn would open
+   * with, so the readout before the first message is the agent's own
+   * breakdown. The installed 0.5.4 has no such route and answers the
+   * server's unknown-route 404 (`No route for POST …`), reported as
+   * `supported:false` so the renderer keeps to the trace projection; the
+   * route's own 404 for an unknown session is a different answer and is
+   * passed through as an error with the route still supported.
+   */
+  async contextPreview(sessionId: string | null, message: string): Promise<{
+    ok: boolean; supported: boolean; basis?: "built";
+    usage?: { tokens: number; contextWindow: number | null; conversationTokens: number; conversationPairs: number;
+      droppedPairs: number; conversationPairsCap: number; sections: Array<{ label: string; tokens: number }> };
+    contextWindow?: number | null; reservedForReply?: number; pairsCap?: number; error?: string;
+  }> {
+    try {
+      const res = await fetch(`${this.base()}/api/context-preview`, {
+        method: "POST",
+        headers: this.headers(),
+        body: JSON.stringify({ ...(sessionId ? { session_id: sessionId } : {}), ...(message ? { message } : {}) }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (res.status === 404) {
+        let detail = "";
+        try {
+          const body = (await res.json()) as { error?: { message?: string } };
+          detail = body?.error?.message ?? "";
+        } catch {
+          /* no body */
+        }
+        if (/session not found/i.test(detail)) return { ok: false, supported: true, error: detail };
+        return { ok: false, supported: false, error: "this agent has no context-preview route" };
+      }
+      if (!res.ok) return { ok: false, supported: true, error: `HTTP ${res.status}` };
+      const body = (await res.json()) as {
+        basis: "built"; usage: NonNullable<Awaited<ReturnType<AgentClient["contextPreview"]>>["usage"]>;
+        contextWindow: number | null; reservedForReply: number; pairsCap: number;
+      };
+      return { ok: true, supported: true, ...body };
+    } catch (err) {
+      return { ok: false, supported: true, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
   /**
    * Run one turn. Deltas are emitted as `chat` events rather than
    * returned, so the renderer can paint tokens as they arrive.

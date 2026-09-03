@@ -554,3 +554,8 @@ body.electron .sb-head { -webkit-app-region: no-drag; }
 .filechip svg { color: var(--accent-text); }
 .msglink { color: var(--accent-text); border-bottom: 1px solid var(--accent-line); }
 .modelrow.dim { opacity: .5; }
+
+/* Lane B — context before the first message (item 3): a projection is visibly not a measurement */
+.ctxbtn.proj .gauge i { background: repeating-linear-gradient(90deg, var(--text-tertiary) 0 3px, transparent 3px 5px); }
+.ctxbtn.proj:hover .gauge i { background: repeating-linear-gradient(90deg, var(--accent) 0 3px, transparent 3px 5px); }
+.ctxbtn.proj .gaugelb { font-style: italic; }
