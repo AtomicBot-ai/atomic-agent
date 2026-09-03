@@ -379,6 +379,24 @@ export async function traceUsage(
 
 /* ---------------- Item 7 (settings surface): config unset + task create ---------------- */
 
+/**
+ * `atag config get <key>` — one leaf, as the CLI prints it: JSON for
+ * booleans/numbers/null, the raw line otherwise. Unlike GET /api/config
+ * (the user file verbatim) this is the EFFECTIVE value — the schema default
+ * when the user file has no such key — which is what the TUI's panels show.
+ */
+export async function configGetKey(key: string): Promise<{ ok: boolean; value?: unknown; error?: string }> {
+  if (!/^[a-zA-Z][\w.]{0,80}$/.test(key)) return { ok: false, error: `refusing to read a suspicious key: ${key}` };
+  const res = await cli(["config", "get", key]);
+  if (!res.ok) return { ok: false, error: res.error };
+  const raw = res.stdout.trim();
+  try {
+    return { ok: true, value: JSON.parse(raw) };
+  } catch {
+    return { ok: true, value: raw };
+  }
+}
+
 /** `atag config unset <key>` — restores one key to its schema default. */
 export async function configUnset(key: string): Promise<CliResult> {
   if (!/^[a-zA-Z][\w.]{0,80}$/.test(key)) {

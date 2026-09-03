@@ -177,18 +177,26 @@ const SET = { tools:null, toolsFor:null, toolsBusy:false, health:null, healthBus
 /* Installed skills incl. disabled ones, from `atag skill list` — the N in
    the Skills tab's ` (N)` suffix (debug-pane.tsx:162 counts every loaded
    row; GET /api/skills never carries disabled skills). */
-const SK = { rows:null, busy:false, err:null };
+const SK = { rows:null, busy:false, err:null, calls:0 };
 /* Tasks tab state — the TUI's TasksPanelState, minus the firings ring
    the HTTP API does not expose. */
 const TK = {
   rows:[], filter:'all', search:'', searchOpen:false, auto:true, lastRefreshedAt:null, loading:false,
   primed:false, mode:'list', cursor:0, detailId:null, cancel:null, msg:null, err:null, timer:null,
   form:null,
+  note:null, // muted line under `msg` — the one-shot `at` degradation on 0.5.4, repeated after submit
 };
 const TK_FILTER_ORDER = ['all','pending','running','completed','failed','blocked','cancelled','recurring'];
 const TK_MAX_ROWS = 14; // tasks-panel.tsx:24 — the Tasks list is a 14-row window around the cursor, as in the TUI
-/* Privacy tab state — the TUI's PrivacyPanelState (message / lastError / busy). */
-const PRIV = { busy:false, message:null, lastError:null };
+/* Privacy tab state — the TUI's PrivacyPanelState (message / lastError / busy).
+   `effective` is what the TUI shows (getConfig().analytics.enabled, the
+   schema default when the user file has no key): the user file from GET
+   /api/config when it carries the key, else `atag config get
+   analytics.enabled`; null until either has answered. */
+const PRIV = { busy:false, message:null, lastError:null, effective:null, effectiveBusy:false };
+/* The TUI's ctrl+g chord layer (menu-popup.tsx `ctrl+g <key>`): ctrl+g
+   arms a 1.5 s prefix, the next key runs the menu node with that chord. */
+const CHORD = { pending:false, timer:null };
 /* Renderer faults, counted for --smoke (`window.__errCount`). */
 let ERR_COUNT = 0;
 
@@ -724,7 +732,7 @@ function renderConsole() {
 /* ---------------- palette ---------------- */
 const SCOPES = {
   theme: {label:'Theme', ph:'Choose a theme…', rows:[['gear','System','follow macOS','','theme:system'],['gear','Light','','','theme:light'],['gear','Dark','','','theme:dark']]},
-  task:  {label:'Task', ph:'Choose an action…', rows:[['plus','New task…','cron | interval | at','','tasks:new'],['play','Run a task now','','','settings:tasks'],['x','Cancel a task','','','settings:tasks']]},
+  // Item 7: the prototype's Task scope is gone — nothing targeted scope:task, and the Tasks tab is the one surface.
 };
 
 function palRows() {
@@ -994,7 +1002,8 @@ function menuTreeHTML() {
   const cur = settingsPaneId(S.settingsPane);
   const row = (n, sub) => {
     const on = n.tab && n.tab === cur;
-    const chord = n.chord ? '<span class="ch">ctrl+g ' + esc(n.chord) + '</span>' : '';
+    // The chord is live in the desktop too: ctrl+g then the key (the keydown handler's CHORD layer).
+    const chord = n.chord ? '<span class="ch" title="press ctrl+g, then ' + esc(n.chord) + '">ctrl+g ' + esc(n.chord) + '</span>' : '';
     if (n.na) return '<div class="menurow na' + (sub ? ' sub' : '') + '" title="not available in the desktop"><span class="lb">' + esc(n.label) + '</span><span class="note">not available in the desktop</span></div>';
     return '<button class="menurow' + (sub ? ' sub' : '') + (on ? ' on' : '') + '" data-act="menu:' + esc(n.id) + '"><span class="lb">' + esc(n.label) + '</span>' + chord + '</button>';
   };
@@ -1022,10 +1031,15 @@ function diagLine() {
   return parts.join(' | ');
 }
 
-async function refreshDiag() {
+/* Refresh what the diagnostics line and the tab suffixes read. Each
+   fetch repaints only when its answer changed, so switching tabs does not
+   rebuild the window (and drop focus) for data that is still the same.
+   `atag skill list` is a subprocess: it runs once per window opening
+   (`skills:true`) and on the Skills tab's own refresh, never per click. */
+async function refreshDiag(opts) {
   if (!BR) return;
   refreshHealth();
-  refreshSkillList();
+  if (!SK.rows || (opts && opts.skills)) refreshSkillList();
   // Pin the session id before the await: the counts belong to the session
   // they were read from, never to whichever one is open when they arrive.
   const id = S.agentSession;
@@ -1039,8 +1053,9 @@ async function refreshDiag() {
   if (!turns) return;
   let ok = 0, err = 0;
   turns.forEach((t) => { if (t.kind === 'tool_result') { if (t.status === 'ok') ok++; else err++; } });
+  const changed = !SET.tools || SET.tools.ok !== ok || SET.tools.err !== err || SET.toolsFor !== id;
   SET.tools = {ok, err}; SET.toolsFor = id;
-  if (S.settings) tkRenderKeepCaret(); // a late /api/sessions/{id} answer must not drop the caret in the Tasks form
+  if (S.settings && changed) tkRenderKeepCaret(); // a late /api/sessions/{id} answer must not drop the caret in the Tasks form
 }
 /* GET /health: workingDir + llama.url for the diagnostics line's cwd/llama segments. */
 async function refreshHealth() {
@@ -1049,19 +1064,33 @@ async function refreshHealth() {
   const res = await BR.health();
   SET.healthBusy = false;
   if (!(res && res.ok && res.data)) return;
-  SET.health = {workingDir: typeof res.data.workingDir === 'string' ? res.data.workingDir : null,
+  const next = {workingDir: typeof res.data.workingDir === 'string' ? res.data.workingDir : null,
                 llamaUrl: res.data.llama && typeof res.data.llama.url === 'string' ? res.data.llama.url : null};
-  if (S.settings && !tkTyping()) render(); // a late /health answer must not drop the caret in the Tasks form
+  const changed = JSON.stringify(next) !== JSON.stringify(SET.health);
+  SET.health = next;
+  if (S.settings && changed && !tkTyping()) render(); // a late /health answer must not drop the caret in the Tasks form
 }
 /* `atag skill list` (cwd = workspace, so project skills count too). */
 async function refreshSkillList() {
   if (!BR || !BR.skillList || SK.busy) return;
-  SK.busy = true;
+  SK.busy = true; SK.calls++;
   const res = await BR.skillList();
   SK.busy = false;
+  const before = JSON.stringify([SK.rows, SK.err]);
   if (res && res.ok && Array.isArray(res.rows)) { SK.rows = res.rows; SK.err = null; }
   else SK.err = (res && res.error) || 'skill list failed';
-  if (S.settings && !tkTyping()) render(); // same guard as refreshHealth
+  if (S.settings && before !== JSON.stringify([SK.rows, SK.err]) && !tkTyping()) render(); // same guard as refreshHealth
+}
+/* Everything a Manage tab needs when it comes into view: the diagnostics
+   line, the Tasks list primed once (the TUI starts its tasks orchestrator
+   at mount, so `Tasks (N)` is right whichever tab opens first) and the
+   Privacy tab's effective analytics value. `opened` = the window was
+   closed a moment ago. */
+function settingsPaneEntered(opened) {
+  refreshDiag({skills: !!opened});
+  if (TK.lastRefreshedAt === null && !TK.loading) tasksRefresh(true);
+  // Privacy: fetch the effective value once; `r` re-reads on demand (no repaint for a value already known).
+  if (settingsPaneId(S.settingsPane) === 'privacy' && privacyEffective() === null && !PRIV.effectiveBusy) privacyRefresh();
 }
 
 function settingsPane() {
@@ -1175,13 +1204,14 @@ function cloudProvidersSection() {
    analytics.enabled`; the running agent keeps its boot-time client, so
    the note and the Restart button say so. */
 function privacyPane() {
-  const a = LIVE_CONFIG && LIVE_CONFIG.analytics;
-  const known = !!a && typeof a.enabled === 'boolean';
-  const on = known && a.enabled;
+  const eff = privacyEffective();
+  const known = typeof eff === 'boolean';
+  const on = known && eff;
   return '<div class="tui">'
     + '<b>Analytics</b>'
     + '<div>   <span class="ter">anonymous usage </span>' + (known ? '<span class="' + (on ? 'tuimsg' : 'ter') + '">' + (on ? 'on' : 'off') + '</span>'
-        : '<span class="ter">— (analytics.enabled is not set in config.json; the agent uses its default)</span>')
+        : PRIV.effectiveBusy || (BR && PRIV.effective === null && !PRIV.lastError) ? '<span class="ter">…</span>'
+        : '<span class="ter">— (analytics.enabled is not set in config.json and `atag config get analytics.enabled` did not answer)</span>')
       + (PRIV.busy ? '<span class="ter">  …</span>' : '') + '</div>'
     + '<div class="ter">   Product analytics + crash reports, fully anonymous. No message content, paths, args, or IP ever leave this machine — only an install id and coarse counters.</div>'
     + '<b style="margin-top:8px">Session grants</b>'
@@ -1190,15 +1220,41 @@ function privacyPane() {
         + ' <span class="ter">(the running agent picks it up after Restart Agent Runtime)</span> '
         + '<button class="btn btn-s" data-act="agent:restart" style="height:22px">Restart Agent Runtime</button></div>' : '')
     + (PRIV.lastError ? '<div class="tuierr" style="margin-top:8px">   ' + esc(PRIV.lastError) + '</div>' : '')
-    + '<div class="tuihint"><button data-act="privacy:analytics"' + (!LIVE_CONFIG || PRIV.busy ? ' disabled' : '') + '>a: analytics ' + (on ? 'off' : 'on') + '</button>'
+    + '<div class="tuihint"><button data-act="privacy:analytics"' + (!known || PRIV.busy ? ' disabled' : '') + '>a: analytics ' + (on ? 'off' : 'on') + '</button>'
       + '<span>·</span><button data-act="privacy:refresh">r: refresh</button></div>'
     + '</div>';
+}
+/* The value the TUI shows: the user file's key when set, else the
+   effective value `atag config get analytics.enabled` printed (the schema
+   default). null = not known yet / the CLI read failed. */
+function privacyEffective() {
+  const a = LIVE_CONFIG && LIVE_CONFIG.analytics;
+  if (a && typeof a.enabled === 'boolean') return a.enabled;
+  return typeof PRIV.effective === 'boolean' ? PRIV.effective : null;
+}
+/* Privacy `r` / tab entry: re-read the user file, then the effective value
+   when the user file has no analytics.enabled. */
+async function privacyRefresh() {
+  if (!BR) return;
+  await refreshLiveConfig();
+  const a = LIVE_CONFIG && LIVE_CONFIG.analytics;
+  if (a && typeof a.enabled === 'boolean') { PRIV.effective = a.enabled; return; }
+  if (!BR.configGetKey || PRIV.effectiveBusy) return;
+  PRIV.effectiveBusy = true;
+  const res = await BR.configGetKey('analytics.enabled');
+  PRIV.effectiveBusy = false;
+  const v = res && res.ok ? res.value : undefined;
+  const before = PRIV.effective;
+  PRIV.effective = typeof v === 'boolean' ? v : null;
+  if (PRIV.effective === null) PRIV.lastError = 'config get analytics.enabled failed: ' + ((res && res.error) || 'no boolean answer');
+  if (S.settings && settingsPaneId(S.settingsPane) === 'privacy' && (before !== PRIV.effective || PRIV.effective === null)) render();
 }
 
 async function privacyToggle() {
   if (!BR || !LIVE_CONFIG || PRIV.busy) return;
-  const a = LIVE_CONFIG.analytics;
-  const next = !(a && a.enabled);
+  const eff = privacyEffective();
+  if (typeof eff !== 'boolean') { privacyRefresh(); return; } // nothing to flip until the effective value is known
+  const next = !eff;
   PRIV.busy = true; PRIV.message = null; PRIV.lastError = null; render();
   const res = await BR.configSet('analytics.enabled', String(next));
   if (!res || res.ok === false) {
@@ -1206,7 +1262,7 @@ async function privacyToggle() {
   } else {
     PRIV.message = next ? 'analytics enabled' : 'analytics disabled';
   }
-  await refreshLiveConfig();
+  await privacyRefresh();
   PRIV.busy = false; render();
 }
 
@@ -1274,12 +1330,13 @@ function act(a) {
   if (a === 'palette:theme') { close(); S.settings = null; S.overlay = 'palette'; S.scope = 'theme'; render(); return; }
   if (a === 'settings:close') { close(); S.settings = null; render(); return; }
   if (k === 'menu') { menuActivate(a.slice(5)); return; }
-  if (k === 'tasks') { tasksAct(a.slice(6)); return; }
-  if (a === 'privacy:analytics') { privacyToggle(); return; }
-  if (a === 'privacy:refresh') { refreshLiveConfig(); return; }
+  // close() first like every other verb: `/task` and a palette row reach these with the palette still open.
+  if (k === 'tasks') { close(); tasksAct(a.slice(6)); return; }
+  if (a === 'privacy:analytics') { close(); privacyToggle(); return; }
+  if (a === 'privacy:refresh') { close(); privacyRefresh(); return; }
   if (a === 'copy:reply') { close(); render(); toast('Copied last reply'); return; }
   if (a === 'workspace') { close(); render(); toast('Workspace', '~/Teletubbies · rw'); return; }
-  if (a === 'analytics') { close(); S.settings = 1; S.settingsPane = 'privacy'; render(); return; }
+  if (a === 'analytics') { close(); const opened = !S.settings; S.settings = 1; S.settingsPane = 'privacy'; render(); settingsPaneEntered(opened); return; }
   if (a === 'jump:appr') { const c = $('#apprcard'); if (c) c.scrollIntoView({block:'center', behavior:'smooth'}); return; }
   if (a === 'skills:hub') { close(); S.room = 'skills'; S.skillsTab = 'hub'; render(); return; }
   if (a === 'na') return;
@@ -1290,10 +1347,7 @@ function act(a) {
   if (k === 'toggle')    { close(); if (v === 'sidebar') $('#sidebar').classList.toggle('rail');
                            else if (v === 'inspector') S.inspector = !S.inspector;
                            else S.consoleOpen = !S.consoleOpen; render(); return; }
-  if (k === 'settings')  { close(); S.settings = 1; S.settingsPane = settingsPaneId(v); render(); refreshDiag();
-    // The TUI starts its tasks orchestrator at mount, so `Tasks (N)` is right whichever tab opens first.
-    if (TK.lastRefreshedAt === null && !TK.loading) tasksRefresh(true);
-    return; }
+  if (k === 'settings')  { close(); const opened = !S.settings; S.settings = 1; S.settingsPane = settingsPaneId(v); render(); settingsPaneEntered(opened); return; }
   if (k === 'theme')     { close(); S.theme = v;
                            if (v === 'system') document.documentElement.removeAttribute('data-theme');
                            else document.documentElement.setAttribute('data-theme', v);
@@ -1553,6 +1607,8 @@ document.addEventListener('keydown', (e) => {
   if (e.isComposing) return;
   const k = e.key;
   const inText = e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT';
+  // Item 7: the TUI's ctrl+g menu chords, live everywhere as in the TUI.
+  if (chordKey(e, k)) return;
 
   // approval scope — only while a card is pending and focus is not in a text field
   if (S.pending && !inText && !S.settings && !(S.room === 'tasks' && TK.cancel)) { // Item 7: the settings window (and the Tasks room's cancel modal) own their keys
@@ -3031,7 +3087,8 @@ function menuActivate(id) {
     (n.sub || []).forEach((c) => { if (c.id === id) node = c; });
   }));
   if (!node || node.na) return;
-  if (node.tab) { S.settingsPane = node.tab; render(); refreshDiag(); return; }
+  // A Manage node from the ctrl+g chord layer opens the window; from the menu column it is already open.
+  if (node.tab) { const opened = !S.settings; S.settings = 1; S.settingsPane = node.tab; render(); settingsPaneEntered(opened); return; }
   const target = MENU_ACTS[id];
   if (!target) return;
   if (!target.startsWith('settings:')) S.settings = null;
@@ -3126,6 +3183,7 @@ async function tasksRefresh(quiet) {
   if (!BR || TK.loading) return;
   TK.loading = true; TK.err = null;
   if (!quiet) tkRenderKeepCaret();
+  const before = JSON.stringify([TK.rows, TK.err]);
   const res = await BR.tasks();
   TK.loading = false;
   if (res && res.ok && res.data && Array.isArray(res.data.tasks)) {
@@ -3140,9 +3198,40 @@ async function tasksRefresh(quiet) {
   } else {
     TK.err = 'tasks refresh failed: ' + ((res && res.error) || 'unknown error');
   }
-  // A poll must not steal the caret from the search box or the create form.
-  if (quiet && tkTyping()) return;
+  // A poll must not steal the caret from the search box or the create form,
+  // nor the focus from a hint/kind button: unchanged rows repaint only the
+  // filter bar's "refresh: auto (Ns ago)" text; changed rows repaint the
+  // tab in place and put the focus back on the same button.
+  if (quiet) {
+    if (tkTyping()) return;
+    if (before === JSON.stringify([TK.rows, TK.err])) { tkRefreshBar(); return; }
+    tkRepaintKeepFocus();
+    return;
+  }
   tkRenderKeepCaret();
+}
+/* The Tasks list's filter bar only (the `refresh: auto (Ns ago)` clock);
+   skipped while the `/` search input lives inside it. */
+function tkRefreshBar() {
+  if (TK.mode !== 'list' || TK.searchOpen) return;
+  const box = S.settings ? document.querySelector('#settings .setbody') : document.querySelector('#content .tuiwrap');
+  const bar = box && box.querySelector('.tuibar');
+  if (!bar) return;
+  const tmp = document.createElement('div');
+  tmp.innerHTML = tkFilterBar(tkVisibleRows().length);
+  bar.replaceWith(tmp.firstElementChild);
+}
+/* Repaint the Tasks tab in place and keep the focus on the button (by its
+   data-act) the user was on. With nothing focused inside the window a full
+   render() also refreshes the tab suffix and the sidebar count. */
+function tkRepaintKeepFocus() {
+  const el = document.activeElement;
+  const box = S.settings ? document.querySelector('#settings .setbody') : document.querySelector('#content .tuiwrap');
+  const focused = el && box && box.contains(el) && el.dataset ? el.dataset.act : null;
+  if (!focused) { render(); return; }
+  tkRepaint();
+  const again = box.querySelector('[data-act="' + focused.replace(/"/g, '\\"') + '"]');
+  if (again) again.focus();
 }
 
 function tasksTab() {
@@ -3172,6 +3261,7 @@ function tkFilterBar(visibleCount) {
 }
 function tkMessages() {
   return (TK.msg ? '<div class="tuimsg">' + esc(TK.msg) + '</div>' : '')
+    + (TK.msg && TK.note ? '<div class="ter">' + esc(TK.note) + '</div>' : '')
     + (TK.err ? '<div class="tuierr">! ' + esc(TK.err) + '</div>' : '');
 }
 function tkCancelModal() {
@@ -3281,7 +3371,12 @@ function tkPreviewHTML(f) {
     // treats as due now — the row will show next-run "-" and be picked up at the next tick. The TUI
     // creates in-process through TaskRunner.create and keeps the `at`; the desktop says so instead
     // of pretending.
-    + (f.kind === 'at' ? '<div class="ter" style="margin-top:8px">note: on agent 0.5.4 `atag task create --at` stores no next-run for a one-shot, so the scheduler picks it up at its next tick (the row shows next-run "-"), not at the time above.</div>' : '');
+    + (f.kind === 'at' ? '<div class="ter" style="margin-top:8px">' + esc(tkAtNote('the time above')) + '</div>' : '');
+}
+/* The same caveat, worded for the preview ("the time above") and for the
+   success line/toast after submit ("the `at` time"). */
+function tkAtNote(when) {
+  return 'note: on agent 0.5.4 `atag task create --at` stores no next-run for a one-shot, so the scheduler picks it up at its next tick (the row shows next-run "-"), not at ' + when + '.';
 }
 function tkFieldInput(name, value) {
   const f = TK.form || (TK.form = tkNewForm());
@@ -3315,7 +3410,9 @@ async function tkSubmit() {
   f.submitting = false;
   if (!res || !res.ok) { f.error = (res && res.error) || 'task create failed'; render(); return {ok:false, error:f.error}; }
   TK.msg = 'task ' + res.id + ' scheduled (' + sc.kind + ')';
-  toast('Task scheduled', TK.msg);
+  // The TUI's success line stays verbatim; a one-shot carries the 0.5.4 caveat under it and in the toast.
+  TK.note = sc.kind === 'at' ? tkAtNote('the `at` time') : null;
+  toast('Task scheduled', TK.msg + (TK.note ? ' — ' + TK.note : ''));
   TK.mode = 'list'; TK.form = null;
   await tasksRefresh();
   return {ok:true, id:res.id};
@@ -3324,6 +3421,7 @@ async function tkSubmit() {
 async function tkCancel(id) {
   if (!BR) return;
   const res = await BR.cancelTask(id);
+  TK.note = null;
   if (res && res.ok) {
     const after = res.data || {};
     TK.msg = after.status === 'cancelled' ? 'task ' + id + ' cancelled' : 'task ' + id + ' already ' + after.status + ' (cannot cancel)';
@@ -3337,7 +3435,7 @@ async function tkCancel(id) {
 /* Run-now: POST /api/tasks/{id}/run, one attempt, synchronous on the agent. */
 async function tkRunNow(id) {
   if (!BR) return;
-  TK.msg = 'task ' + id + ' running…'; tkRenderKeepCaret();
+  TK.msg = 'task ' + id + ' running…'; TK.note = null; tkRenderKeepCaret();
   const res = await BR.runTask(id);
   if (res && res.ok) {
     const t = res.data && res.data.task;
@@ -3424,17 +3522,47 @@ function settingsKey(e, k, inText) {
   if (k === 'Escape') { e.preventDefault(); S.settings = null; render(); return true; }
   if (inText) return false;
   if (e.metaKey || e.ctrlKey || e.altKey) return false;
+  // The open create form owns its keys even when focus sits on one of its
+  // buttons: no tab cycling behind a half-filled form (the TUI's Esc closes
+  // the form first, and so does this window's).
+  if (pane === 'tasks' && TK.mode === 'create') return false;
   // privacy-panel.tsx keys: `a` toggles analytics, `r` re-reads the config.
   if (pane === 'privacy') {
     if (k === 'a') { e.preventDefault(); privacyToggle(); return true; }
-    if (k === 'r') { e.preventDefault(); refreshLiveConfig(); return true; }
+    if (k === 'r') { e.preventDefault(); privacyRefresh(); return true; }
   }
   if (k === 'ArrowLeft' || k === 'ArrowRight' || k === '[' || k === ']') {
     e.preventDefault();
     const ids = SETTINGS_TABS.map((t) => t[0]);
     const dir = (k === 'ArrowRight' || k === ']') ? 1 : -1;
     S.settingsPane = ids[(ids.indexOf(pane) + dir + ids.length) % ids.length];
-    render(); return true;
+    render(); settingsPaneEntered(false); return true;
+  }
+  return false;
+}
+/* The ctrl+g chord layer, run before every other key: ctrl+g arms the
+   prefix, the next key (exact case — `L` is LLM logs, `l` is LLM) runs the
+   menu node carrying that chord, as menu-popup.tsx does. Returns true when
+   the event was consumed. */
+function chordKey(e, k) {
+  if (CHORD.pending) {
+    if (k === 'Control' || k === 'Shift' || k === 'Alt' || k === 'Meta') return true; // modifiers on the way to `M`
+    e.preventDefault();
+    clearTimeout(CHORD.timer); CHORD.pending = false; CHORD.timer = null;
+    let hit = null;
+    MENU_GROUPS.forEach(([, nodes]) => nodes.forEach((n) => {
+      if (n.chord === k) hit = n;
+      (n.sub || []).forEach((c) => { if (c.chord === k) hit = c; });
+    }));
+    if (hit) { if (hit.na) toast(hit.label, 'not available in the desktop'); else menuActivate(hit.id); }
+    return true;
+  }
+  if (e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && k.toLowerCase() === 'g') {
+    e.preventDefault();
+    CHORD.pending = true;
+    clearTimeout(CHORD.timer);
+    CHORD.timer = setTimeout(() => { CHORD.pending = false; CHORD.timer = null; }, 1500);
+    return true;
   }
   return false;
 }
@@ -3484,12 +3612,14 @@ if (typeof window !== 'undefined') {
   window.__tasksWindow = () => ({painted: document.querySelectorAll('#settings [data-task-row]').length, visible: tkVisibleRows().length, max: TK_MAX_ROWS,
     above: (document.querySelector('#settings [data-act="tasks:page:up"]') || {}).textContent || '', below: (document.querySelector('#settings [data-act="tasks:page:down"]') || {}).textContent || ''});
   window.__tasksSearch = (q) => { TK.search = q; TK.searchOpen = false; TK.cursor = 0; render(); return tkVisibleRows().map((r) => r.id); };
-  window.__sessionNew = () => { act('session:new'); return S.agentSession; };
   window.__tasksMsg = () => TK.msg || '';
   window.__tasksRefresh = () => tasksRefresh();
   window.__tasksAct = (what) => { tasksAct(what); return {cancel: TK.cancel ? Object.assign({}, TK.cancel) : null, mode: TK.mode, msg: TK.msg || ''}; };
   window.__taskCreate = (fields) => { TK.mode = 'create'; TK.form = Object.assign(tkNewForm(), fields); render(); return tkSubmit(); };
-  window.__privacy = () => ({analyticsEnabled: !!(LIVE_CONFIG && LIVE_CONFIG.analytics && LIVE_CONFIG.analytics.enabled)});
+  window.__privacy = () => ({analyticsEnabled: privacyEffective(), fromConfig: !!(LIVE_CONFIG && LIVE_CONFIG.analytics && typeof LIVE_CONFIG.analytics.enabled === 'boolean')}); // effective value, as the TUI shows it
+  window.__chordPending = () => CHORD.pending;
+  window.__tasksNote = () => TK.note || '';
+  window.__skillListCalls = () => SK.calls;
   window.__privacyToggle = () => privacyToggle();
   window.__menuNodes = () => {
     const out = [];

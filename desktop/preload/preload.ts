@@ -81,6 +81,7 @@ contextBridge.exposeInMainWorld("atomic", {
     ipcRenderer.invoke("app:taskPreview", { form, now }),
   quit: () => ipcRenderer.invoke("app:quit"),
   skillList: () => ipcRenderer.invoke("cli:skillList"),
+  configGetKey: (key: string) => ipcRenderer.invoke("cli:configGetKey", key),
 
   platform: process.platform,
 });

@@ -112,9 +112,13 @@ Honestly degraded, and labelled as such in the UI:
   menu tree from `src/tui/menu/menu-registry.ts` with the Manage tabs on the
   right. Menu verbs the desktop cannot do (new terminal window, mouse, debug
   bundle, queued messages, steer, uninstall) keep their TUI label with a
-  "not available in the desktop" note. The diagnostics line prints the TUI's
+  "not available in the desktop" note. The `ctrl+g <key>` chords in the menu
+  column are bound: ctrl+g arms the prefix for 1.5 s, the next key runs that
+  node. The diagnostics line prints the TUI's
   null form (`llm — · step —`, `kv —`) for the process metrics this window
   does not have; the tool counters come from the open session's store rows.
+  The Privacy tab shows the effective `analytics.enabled` (the schema default
+  when `config.json` has no key, read with `atag config get`), as the TUI does.
 - **Tasks** create through `atag task create` (POST /api/tasks on 0.5.4 takes
   no schedule), cancel through `DELETE /api/tasks/{id}` and run-now through
   `POST /api/tasks/{id}/run`; the next-firings preview is the agent's own

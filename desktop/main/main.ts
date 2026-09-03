@@ -22,6 +22,7 @@ import {
   modelsStart,
   traceUsage,
   configUnset,
+  configGetKey,
   taskCreate,
   skillList,
 } from "./agent-cli.js";
@@ -329,6 +330,9 @@ function wireIpc(client: AgentClient): void {
     );
   });
   ipcMain.handle("cli:skillList", () => skillList(client.status.workingDir));
+  ipcMain.handle("cli:configGetKey", (_event, key: unknown) =>
+    typeof key === "string" ? configGetKey(key) : { ok: false, error: "key must be a string" },
+  );
   // Pure: the TUI's form validator + cron-parser preview, no store access.
   ipcMain.handle("app:taskPreview", (_event, payload: unknown) => {
     const { form, now } = (payload ?? {}) as { form?: Record<string, unknown>; now?: unknown };
@@ -485,13 +489,6 @@ async function smokeTest(): Promise<void> {
     await js<void>("window.__closeAll && window.__closeAll()");
 
     // A tool-using turn: cards must carry the real args and a duration.
-    // Item 7 (settings surface) fix: the turn used to run inside the largest
-    // stored session, which every run grows by one more "List the files… /
-    // done" pair — once the model has listed the directory several times in
-    // its own context it answers a bare "done" with no tool call (seen in
-    // the lane store: session api-2931b30b63359b7d, 103 turns, 0 cards).
-    // A fresh session makes the check measure the cards, not the history.
-    await js<void>("window.__sessionNew()");
     await js<void>("window.__ask('List the files in the current directory, then say done.')");
     const toolDeadline = Date.now() + 150_000;
     let cards: Array<{ name: string; args: string; ms: number; ok: boolean | null; live: boolean }> = [];
@@ -654,6 +651,24 @@ async function settingsTest(
   );
   check("settings: ArrowRight wraps from Privacy to Tasks", cycled === "tasks", `pane=${cycled}`);
 
+  // The chord column is live: ctrl+g then `p` opens Go › Manage › Privacy
+  // from a closed window, exactly the chord the column prints.
+  const chord = await js<{ armed: boolean; pane: string | null; disarmed: boolean }>(
+    "(() => { window.__settingsClose();"
+    + " document.dispatchEvent(new KeyboardEvent('keydown', {key: 'g', ctrlKey: true, bubbles: true, cancelable: true}));"
+    + " const armed = window.__chordPending();"
+    + " document.dispatchEvent(new KeyboardEvent('keydown', {key: 'p', bubbles: true, cancelable: true}));"
+    + " return {armed, pane: window.__settingsPane(), disarmed: !window.__chordPending()}; })()",
+  );
+  check("settings: ctrl+g p runs the Privacy chord", chord.armed && chord.pane === "privacy" && chord.disarmed, JSON.stringify(chord));
+
+  // Switching tabs must not spawn `atag skill list` again or repaint for unchanged data.
+  const spawns = await js<{ before: number; after: number }>(
+    "(async () => { const before = window.__skillListCalls(); window.__settingsOpen('tasks'); window.__settingsOpen('privacy'); window.__settingsOpen('skills');"
+    + " await new Promise((r) => setTimeout(r, 600)); return {before, after: window.__skillListCalls()}; })()",
+  );
+  check("settings: tab clicks do not re-run `atag skill list`", spawns.after === spawns.before, `${spawns.before} → ${spawns.after}`);
+
   // Skills count suffix: N = every installed skill incl. disabled, from `atag skill list`.
   let skillCount: number | null = null;
   for (let i = 0; i < 20 && skillCount === null; i++) { await wait(500); skillCount = await js<number | null>("window.__skillCount()"); }
@@ -729,6 +744,9 @@ async function settingsTest(
     );
     createdId = created.id ?? "";
     check("tasks tab: create goes through atag task create", created.ok && !!createdId && created.line === `task ${createdId} scheduled (at)`, created.error ?? created.line);
+    // The one-shot caveat rides under the success line, not only in the form preview.
+    const note = await js<string>("window.__tasksNote()");
+    check("tasks tab: the `at` caveat follows the success line", note.includes("stores no next-run for a one-shot"), JSON.stringify(note));
     if (createdId) {
       // A one-shot with no scheduledFor sorts last, so it may sit outside the
       // 14-row window: find it the way the TUI does, through `/` search.
@@ -797,22 +815,31 @@ async function settingsTest(
   check("privacy tab: TUI copy, no approval ladder", privacyCopy && noLadder, privacyCopy ? (noLadder ? "" : "ladder text present") : "copy missing");
 
   // Analytics round trip through `atag config set analytics.enabled`, restored in finally.
+  // `before` is the user file (what the restore needs); the tab shows and
+  // flips the EFFECTIVE value (the schema default when the key is unset),
+  // read through `atag config get analytics.enabled` like the TUI's getConfig().
   const before = await js<boolean | undefined>(
     "(async () => { const r = await window.atomic.config(); const a = r.data && r.data.config && r.data.config.analytics; return a ? a.enabled : undefined; })()",
   );
+  let effective: boolean | null = null;
+  for (let i = 0; i < 16 && typeof effective !== "boolean"; i++) {
+    effective = (await js<{ analyticsEnabled: boolean | null }>("window.__privacy()")).analyticsEnabled;
+    if (typeof effective !== "boolean") await wait(500);
+  }
+  check("privacy tab: shows the effective analytics value", typeof effective === "boolean" && (typeof before !== "boolean" || before === effective), `file=${String(before)} effective=${String(effective)}`);
   try {
     await js<void>("window.__privacyToggle()");
     let flipped = false;
     const deadline = Date.now() + 8000;
     while (Date.now() < deadline) {
       await wait(500);
-      const now = await js<{ analyticsEnabled: boolean }>("window.__privacy()");
-      if (now.analyticsEnabled === !before) { flipped = true; break; }
+      const now = await js<{ analyticsEnabled: boolean | null }>("window.__privacy()");
+      if (now.analyticsEnabled === !effective) { flipped = true; break; }
     }
     const onDisk = await js<boolean | undefined>(
       "(async () => { const r = await window.atomic.config(); const a = r.data && r.data.config && r.data.config.analytics; return a ? a.enabled : undefined; })()",
     );
-    check("privacy tab: analytics toggle writes config", flipped && onDisk === !before, `${String(before)} → ${String(onDisk)}`);
+    check("privacy tab: analytics toggle writes config", flipped && onDisk === !effective, `${String(effective)} → ${String(onDisk)}`);
   } finally {
     // LIVE_CONFIG is the user file: an unset key reads as undefined and
     // must go back to unset, not to the string "undefined".
