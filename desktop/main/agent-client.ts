@@ -269,10 +269,52 @@ export class AgentClient extends EventEmitter {
   capabilities = () => this.json<unknown>("/api/capabilities");
   config = () => this.json<unknown>("/api/config");
   skills = () => this.json<unknown>("/api/skills");
-  tasks = () => this.json<unknown>("/api/tasks");
+  // Item 7 (settings surface): the TUI lists with DEFAULT_LIST_LIMIT = 200
+  // (tasks-orchestrator.ts:25); route-tasks.ts defaults to 50 and caps at 500,
+  // so the limit has to be on the URL or the tab falls behind the TUI.
+  tasks = () => this.tasksList(200);
+  tasksList = (limit: number) => this.json<unknown>(`/api/tasks?limit=${encodeURIComponent(String(limit))}`);
   sessions = () => this.json<unknown>("/api/sessions");
   models = () => this.json<unknown>("/v1/models");
   session = (id: string) => this.json<unknown>(`/api/sessions/${encodeURIComponent(id)}`);
+  /** `DELETE /api/sessions/{id}` — purge one session row (idempotent on 0.5.4). Harness-only today: the smoke removes the task fixtures' empty sessions. */
+  deleteSession = (id: string) => this.request<unknown>("DELETE", `/api/sessions/${encodeURIComponent(id)}`);
+
+  // Item 7 (settings surface): the task routes the Tasks tab acts on and
+  // /health for the diagnostics line. `request` is the writing sibling
+  // of `json`; a non-2xx answer carries the agent's own error text.
+  private async request<T>(method: string, path: string, body?: unknown, timeoutMs = 15_000): Promise<T> {
+    const res = await fetch(`${this.base()}${path}`, {
+      method,
+      headers: this.headers(),
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      let detail = "";
+      try {
+        const parsed = JSON.parse(text) as { error?: { message?: string } };
+        detail = parsed.error?.message ?? "";
+      } catch {
+        /* not JSON */
+      }
+      throw new Error(detail || `${path} → HTTP ${res.status}`);
+    }
+    return (text ? JSON.parse(text) : null) as T;
+  }
+  task = (id: string) => this.json<unknown>(`/api/tasks/${encodeURIComponent(id)}`);
+  cancelTask = (id: string) => this.request<unknown>("DELETE", `/api/tasks/${encodeURIComponent(id)}`);
+  /** Runs one attempt synchronously — an agent turn — so it waits longer than a read. */
+  runTask = (id: string) =>
+    this.request<unknown>("POST", `/api/tasks/${encodeURIComponent(id)}/run`, undefined, 180_000);
+  health = () => this.json<unknown>("/health");
+  // Item 7 part B (Skills tab): GET /api/skills/{name} (manifest + SKILL.md
+  // body; 404 for a disabled skill — the registry's filtered view) and
+  // POST /api/skills/uninstall, which also runs runtime.refreshSkills().
+  skill = (name: string) => this.json<unknown>(`/api/skills/${encodeURIComponent(name)}`);
+  uninstallSkill = (name: string, source: "global" | "project" = "global") =>
+    this.request<unknown>("POST", "/api/skills/uninstall", { name, source });
 
   /**
    * The composer's coding mode, applied live on the runtime by

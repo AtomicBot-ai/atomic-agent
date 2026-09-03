@@ -570,3 +570,102 @@ body.electron .sb-head { -webkit-app-region: no-drag; }
 .ctxbtn.proj .gauge i { background: repeating-linear-gradient(90deg, var(--text-tertiary) 0 3px, transparent 3px 5px); }
 .ctxbtn.proj:hover .gauge i { background: repeating-linear-gradient(90deg, var(--accent) 0 3px, transparent 3px 5px); }
 .ctxbtn.proj .gaugelb { font-style: italic; }
+
+
+/* ---------------- Item 7: settings surface (the TUI menu + Manage tabs) ---------------- */
+.sb-foot{width:100%;text-align:left}
+.sb-foot .kc{margin-left:auto}
+#sidebar.rail .sb-foot{justify-content:center;padding:0}
+#sidebar.rail .sb-foot .kc{display:none}
+.setwin{width:900px;height:640px}
+.settb .setttl{font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--text-secondary);margin-left:var(--s3)}
+.setcols{flex:1;min-height:0;display:flex}
+.setmenu{width:236px;flex:none;overflow-y:auto;border-right:1px solid var(--line);padding:var(--s2) 0 var(--s4);font-family:var(--font-mono);font-size:12px;background:var(--bg-window)}
+.menuhd{padding:10px 12px 2px;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-tertiary)}
+.menurow{display:flex;align-items:center;gap:6px;width:100%;height:24px;padding:0 12px;color:var(--text-primary);text-align:left;font-family:inherit;font-size:inherit}
+.menurow.sub{padding-left:26px}
+.menurow.parent{color:var(--text-secondary)}
+button.menurow:hover{background:var(--bg-hover)}
+.menurow.on{background:var(--accent-wash);color:var(--accent-text)}
+.menurow.na{color:var(--text-tertiary);cursor:default}
+.menurow .lb{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.menurow .ch{font-size:10px;color:var(--text-tertiary);white-space:nowrap}
+.menurow .note{font-size:10px;color:var(--text-tertiary);white-space:nowrap}
+.setmain{flex:1;min-width:0;display:flex;flex-direction:column}
+.setmain .settabs{margin:0;padding:8px 10px 0;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:thin;align-items:center;gap:0}
+.setmain .settab{flex:none;font-family:var(--font-mono);font-size:12px;padding:0 2px;height:24px;gap:0;white-space:pre}
+.setmain .settab::before{content:"  ";white-space:pre}
+.setmain .settab.on::before{content:"▸ "}
+.tabsep{flex:none;white-space:pre;color:var(--text-tertiary);font-family:var(--font-mono);font-size:12px}
+.setdiag{padding:4px 16px 8px;font-family:var(--font-mono);font-size:11px;color:var(--text-tertiary);white-space:pre-wrap;border-bottom:1px solid var(--line-soft)}
+.tui{font-family:var(--font-mono);font-size:12.5px;line-height:20px;white-space:pre-wrap;display:flex;flex-direction:column;gap:2px;color:var(--text-primary)}
+.tui b{color:var(--accent-text);font-weight:600}
+.tuibar{white-space:pre}
+.tuihead{color:var(--text-tertiary);white-space:pre;margin-top:6px}
+.tuirow{display:block;height:24px;line-height:24px;width:100%;text-align:left;white-space:pre;overflow:hidden;text-overflow:ellipsis;font-family:inherit;font-size:inherit;padding:0 4px;border-radius:4px;color:var(--text-primary)}
+.tuirow:hover{background:var(--bg-hover)}
+.tuirow.on{background:var(--accent-wash);color:var(--accent-text)}
+.tuihint{color:var(--text-tertiary);display:flex;flex-wrap:wrap;gap:0 4px;align-items:center;margin-top:8px;white-space:pre}
+.tuihint button,.tkkind{color:var(--text-secondary);font-family:inherit;font-size:inherit;padding:0 4px;border-radius:4px;height:22px}
+.tuihint button:hover,.tkkind:hover{background:var(--bg-hover);color:var(--text-primary)}
+.tuihint button:disabled{color:var(--text-tertiary);background:transparent}
+.tkkind.on{color:var(--accent-text);font-weight:600}
+.tuimodal{border:1px solid var(--accent);border-radius:8px;padding:8px 12px;margin:6px 0;display:flex;flex-direction:column;gap:2px}
+.tuimodal.warn{border-color:var(--warn)}
+.tkrow{display:flex;align-items:center;height:26px}
+.tkrow .mk{width:1ch;white-space:pre;color:var(--accent-text)}
+.tkrow .mk::before{content:" "}
+.tkrow:focus-within .mk::before{content:"▸"}
+.tkrow .lb{white-space:pre;color:var(--text-tertiary)}
+.tkrow input{flex:1;min-width:0;background:transparent;border:0;outline:none;font:inherit;color:var(--accent-text);border-bottom:1px solid var(--line-soft)}
+.tkrow input:focus{border-bottom-color:var(--accent)}
+.tkrow input::placeholder{font-style:italic;color:var(--text-tertiary)}
+#tk-search{background:transparent;border:0;border-bottom:1px solid var(--line-soft);outline:none;font:inherit;color:var(--accent-text);width:160px}
+.st-running{color:var(--accent-text)} .st-completed{color:var(--success)} .st-failed,.st-blocked{color:var(--danger)} .st-cancelled{color:var(--warn)} .st-pending{color:var(--text-tertiary)}
+.tuimsg{color:var(--accent-text)} .tuierr{color:var(--danger)}
+.sk-on{color:var(--success)} .sk-off{color:var(--warn)}
+.tuiwrap{padding:var(--s5)}
+/* Item 7 (settings surface): the TUI's `↑ N above` / `↓ N below` window lines, clickable here. */
+.tuimore{display:block;color:var(--text-tertiary);font-family:inherit;font-size:inherit;padding:0 4px;height:22px;line-height:22px;text-align:left;border-radius:4px;white-space:pre}
+.tuimore:hover{background:var(--bg-hover);color:var(--text-primary)}
+/* ---------------- Item 7 part B: the Skills, Memory and MCP tabs ---------------- */
+.tuirow.dim{color:var(--text-tertiary)}
+.tuirow2{height:auto;line-height:20px;padding:2px 4px;white-space:pre}
+.tuirow2 > span{display:block;white-space:pre;overflow:hidden;text-overflow:ellipsis}
+.tuibody{white-space:pre-wrap;word-break:break-word;color:var(--text-primary)}
+.tuibody > div{min-height:20px}
+.skpf,.memch{color:var(--text-secondary);font-family:inherit;font-size:inherit;padding:0 2px;border-radius:4px;height:22px;white-space:pre}
+.skpf:hover,.memch:hover{background:var(--bg-hover);color:var(--text-primary)}
+.skpf.on,.memch.on{color:var(--accent-text);font-weight:600}
+.skpaccent{color:var(--accent-text)}
+.skphub{display:block;width:100%;text-align:left;font-family:inherit;font-size:inherit;color:var(--text-primary);cursor:pointer}
+.skphub:hover{background:var(--bg-hover)}
+.tuimodal.danger{border-color:var(--danger)}
+#skp-hubq{background:transparent;border:0;border-bottom:1px solid var(--line-soft);outline:none;font:inherit;color:var(--accent-text);width:220px}
+.tuiarea{display:block;width:100%;box-sizing:border-box;margin-top:8px;background:var(--bg-sunken);border:1px solid var(--line);border-radius:6px;padding:6px 8px;font:inherit;color:var(--text-primary);resize:vertical;outline:none;white-space:pre}
+.tuiarea:focus{border-color:var(--accent)}
+.tuiarea::placeholder{color:var(--text-tertiary)}
+/* ---------------- Item 7 part C: the LLM, Telegram and Import tabs ---------------- */
+/* The add-provider wizard (the composer's selector popup) floats above the settings window while it is open. */
+#window:has(#settings) #overlays{z-index:29}
+.llm-route{display:flex;flex-direction:column;gap:2px;margin-bottom:8px}
+.llm-modehead{white-space:pre}
+.llmmode{color:var(--text-tertiary);font-family:inherit;font-size:inherit;font-weight:600;padding:0 2px;border-radius:4px;height:22px}
+.llmmode:hover{background:var(--bg-hover);color:var(--text-primary)}
+.llmmode.on{color:var(--accent-text)}
+.llm-section{display:flex;flex-direction:column;gap:2px;margin-bottom:8px}
+.llm-empty{font-weight:600;color:var(--text-primary);white-space:pre}
+#llm-filter,#llm-url{background:transparent;border:0;border-bottom:1px solid var(--line-soft);outline:none;font:inherit;color:var(--accent-text);width:260px}
+#llm-filter:focus,#llm-url:focus{border-bottom-color:var(--accent)}
+#llm-filter::placeholder{color:var(--text-tertiary);font-style:normal}
+#llm-url{width:360px}
+.llm-start{border-color:var(--success)}
+.tgcard{margin-top:6px}
+#tg-token{background:transparent;border:0;border-bottom:1px solid var(--line-soft);outline:none;font:inherit;color:var(--accent-text);width:320px;letter-spacing:2px}
+#tg-token:focus{border-bottom-color:var(--accent)}
+.impform{margin-top:8px}
+.impline{display:flex;align-items:center;min-height:24px;white-space:pre}
+.impinp{flex:0 1 420px;min-width:0;background:transparent;border:0;border-bottom:1px solid var(--line-soft);outline:none;font:inherit;color:var(--accent-text)}
+.impinp:focus{border-bottom-color:var(--accent)}
+.impinp::placeholder{font-style:italic;color:var(--text-tertiary)}
+.improw{white-space:pre}

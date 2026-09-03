@@ -68,5 +68,8 @@
         }
       ]
     }
+  },
+  "dependencies": {
+    "cron-parser": "^5.5.0"
   }
 }

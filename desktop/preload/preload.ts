@@ -72,6 +72,53 @@ contextBridge.exposeInMainWorld("atomic", {
   openExternal: (url: string) => ipcRenderer.invoke("app:openExternal", url),
   onMenu: (cb: (command: unknown) => void) => on("app:menu", cb),
 
+  /** Item 7 (settings surface): tasks, health, schedule preview. */
+  task: (id: string) => ipcRenderer.invoke("agent:task", id),
+  cancelTask: (id: string) => ipcRenderer.invoke("agent:cancelTask", id),
+  runTask: (id: string) => ipcRenderer.invoke("agent:runTask", id),
+  health: () => ipcRenderer.invoke("agent:health"),
+  taskCreate: (input: { message: string; kind: string; expression: string; tz?: string }) =>
+    ipcRenderer.invoke("cli:taskCreate", input),
+  taskPreview: (form: Record<string, string>, now?: number) =>
+    ipcRenderer.invoke("app:taskPreview", { form, now }),
+  quit: () => ipcRenderer.invoke("app:quit"),
+  skillList: () => ipcRenderer.invoke("cli:skillList"),
+  configGetKey: (key: string) => ipcRenderer.invoke("cli:configGetKey", key),
+
+  /** Item 7 part B: the Skills, Memory and MCP tabs. */
+  skill: (name: string) => ipcRenderer.invoke("agent:skill", name),
+  uninstallSkill: (name: string, source?: string) => ipcRenderer.invoke("agent:uninstallSkill", { name, source }),
+  configSetPath: (key: string, value: unknown) => ipcRenderer.invoke("cli:configSetPath", { key, value }),
+  skillShow: (name: string) => ipcRenderer.invoke("cli:skillShow", name),
+  skillSetDisabled: (name: string, disabled: boolean) => ipcRenderer.invoke("cli:skillSetDisabled", { name, disabled }),
+  skillBrowse: (query?: string) => ipcRenderer.invoke("cli:skillBrowse", query ?? ""),
+  skillInstall: (identifier: string, acknowledgeRisk?: boolean) =>
+    ipcRenderer.invoke("cli:skillInstall", { identifier, acknowledgeRisk: !!acknowledgeRisk }),
+  clawhubSkillDetail: (apiBase: string, slug: string, owner?: string | null) =>
+    ipcRenderer.invoke("app:clawhubSkillDetail", { apiBase, slug, owner: owner ?? null }),
+  memoryQuery: (stateDir: string, name: string, params?: unknown[]) =>
+    ipcRenderer.invoke("app:memoryQuery", { stateDir, name, params: params ?? [] }),
+
+  /** Item 7 part C: the LLM, Telegram and Import tabs. */
+  modelsStatus: () => ipcRenderer.invoke("cli:modelsStatus"),
+  modelsListEmbeddings: () => ipcRenderer.invoke("cli:modelsListEmbeddings"),
+  modelsStop: () => ipcRenderer.invoke("cli:modelsStop"),
+  modelsRemove: (id: string) => ipcRenderer.invoke("cli:modelsRemove", id),
+  modelsPullEmbedding: (id: string) => ipcRenderer.invoke("cli:modelsPullEmbedding", id),
+  modelsUseEmbedding: (idOrDisable: string) => ipcRenderer.invoke("cli:modelsUseEmbedding", idOrDisable),
+  modelsUpdate: () => ipcRenderer.invoke("cli:modelsUpdate"),
+  modelsDevices: () => ipcRenderer.invoke("cli:modelsDevices"),
+  modelsUseDevice: (id: string) => ipcRenderer.invoke("cli:modelsUseDevice", id),
+  configUnset: (key: string) => ipcRenderer.invoke("cli:configUnset", key),
+  importRun: (input: Record<string, unknown>) => ipcRenderer.invoke("cli:importRun", input),
+  importDefaults: () => ipcRenderer.invoke("app:importDefaults"),
+  llamaLogTail: (dataDir: string) => ipcRenderer.invoke("app:llamaLogTail", dataDir),
+  llamaProbe: (url: string) => ipcRenderer.invoke("app:llamaProbe", url),
+  dotenvKeys: (stateDir: string) => ipcRenderer.invoke("app:dotenvKeys", stateDir),
+  envPresent: (names: string[]) => ipcRenderer.invoke("app:envPresent", names),
+  dotenvSet: (stateDir: string, key: string, value: string | null) =>
+    ipcRenderer.invoke("app:dotenvSet", { stateDir, key, value }),
+
   platform: process.platform,
 
   /** Lane B — backend switch: whole-file config writes + agent restart, main-process side. */

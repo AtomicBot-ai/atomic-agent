@@ -167,8 +167,78 @@ Honestly degraded, and labelled as such in the UI:
   the card offers exactly those.
 - **Subscription-CLI providers** (`claude-cli`, `codex-cli`) are not in the
   desktop wizard: their config shape is not one this client writes.
-- **Memory** has no HTTP route; there is no Memory room.
-- **Tasks and skills are read-only.**
+- **Settings is the TUI menu.** The bottom-left gear (and ⌘ ,) opens the
+  menu tree from `src/tui/menu/menu-registry.ts` with the Manage tabs on the
+  right. Menu verbs the desktop cannot do (new terminal window, mouse, debug
+  bundle, queued messages, steer, uninstall) keep their TUI label with a
+  "not available in the desktop" note. The `ctrl+g <key>` chords in the menu
+  column are bound: ctrl+g arms the prefix for 1.5 s, the next key runs that
+  node. The diagnostics line prints the TUI's
+  null form (`llm — · step —`, `kv —`) for the process metrics this window
+  does not have; the tool counters come from the open session's store rows.
+  The Privacy tab shows the effective `analytics.enabled` (the schema default
+  when `config.json` has no key, read with `atag config get`), as the TUI does.
+- **Tasks** create through `atag task create` (POST /api/tasks on 0.5.4 takes
+  no schedule), cancel through `DELETE /api/tasks/{id}` and run-now through
+  `POST /api/tasks/{id}/run`; the next-firings preview is the agent's own
+  cron-parser. The firings feed is not exposed by the HTTP API and the tab
+  says so.
+- **Skills** list through `atag skill list` (the only surface that carries
+  disabled skills), toggle through `atag skill disable|enable` (the running
+  agent keeps its boot-time registry, so the tab offers a restart), remove
+  through `POST /api/skills/uninstall`, and read a detail body from
+  `GET /api/skills/{name}` — or `atag skill show` when the route answers 404
+  for a disabled skill. The Skills Hub browses through `atag skill browse` /
+  `skill search`, fetches a ClawHub card body from the registry's detail
+  endpoint, and installs through `atag skill install` (a `dangerous` scan
+  verdict shows the TUI's confirm with the CLI's line as its one finding).
+- **Memory** reads `<stateDir>/memory.sqlite` read-only (`sqlite3`, falling
+  back to `node:sqlite`) with the stores' own statements, named and
+  parameterised in the main process — the agent has no memory route.
+- **MCP** rows come from `mcp.servers` in `config.json` plus the
+  `mcp.<name>.*` tools registered with the agent; there is no MCP status
+  route, so an enabled server's state reads `—` (never an inferred up/down)
+  and resources/prompts say they are not exposed. Add and remove rewrite
+  `mcp.servers` through the whole-file `atag config set` and offer a restart.
+- **LLM** is the TUI's four panes. Local rows come from `atag models list`
+  and `models list-embeddings`, the route card's daemon line from
+  `atag models status` (the local route's model too — the desktop has no
+  `/props`); Enter downloads / selects / starts through `models pull`,
+  `models use`, `models start|stop`, `s`/`d`/`E`/`B`/`U`/`G` through the
+  matching `models` subcommands and `localModels.managed.autoUpdate`, `L`
+  tails `<dataDir>/llama-server.log`. `a add from hugging face` is disabled:
+  the HF import lives in the TUI's editor and `atag models pull` takes
+  catalogue ids only. Cloud rows read `llm.providers` and show `key ok` /
+  `missing key` from the key NAMES present in this process's env ∪
+  `<stateDir>/.env` (never values); the text-model list is the provider's
+  `atag models search --json` (no pricing in it, so the `price:` facet stays
+  at `all`). Enter on a provider row and picking a text model move the route
+  through the same `activateProvider` / `selectCloudModel` the composer chip
+  and the wizard use (`desktop/main/backend-switch.ts`: whole-file `llm`
+  write, key check, daemon stop on a cloud route, then the `atag serve`
+  restart), so the tab reports the switch and never asks for a restart;
+  a switch is refused while a turn is running. The embedding provider,
+  removing a provider and every Fallback edit are whole-file writes of
+  `llm.*` (0.5.4 has no `llm` leaf) and say the running agent needs a
+  restart — `atag serve` keeps its boot-time registry, the TUI hot-reloads
+  its own. The External pane probes the URL from the main process
+  (`/health`, `/props`, `/v1/models`, the TUI's verdict lines and its
+  Ollama/OpenAI-compatible steer) before it writes `localModels.url` +
+  `mode`; when that moves the route to `local-llama` the same
+  `activateProvider` restart applies. Fallover events are not on the HTTP
+  API, so the Fallback status line says so instead of "on primary".
+- **Telegram** shows config + `.env` facts only: `telegram.enabled`, the
+  owner, and whether `TELEGRAM_BOT_TOKEN` is set. The token prompt writes
+  the key through a port of `src/config/dotenv-writer.ts` (atomic rename,
+  0600, quoting for whitespace/shell characters); `T`/`O`/`e` clear the
+  token, unset the owner and flip `telegram.enabled`, each with the restart
+  note. The channel state, bot identity and pairing live inside the serve
+  process: the state reads `unknown`, and pairing says to use `atag tui`.
+- **Import** is the TUI's Hermes/OpenClaw form over `atag import <source>
+  … --dry-run` (preview) and `… --yes` (apply) — always exactly one of the
+  two, never a bare run (which exits 0 on a non-TTY having written nothing).
+  The CLI's report lines are parsed into the TUI's rows; "Nothing to import."
+  is its own state. Runs are refused while a turn is running.
 - Writing config goes through `atag config set`, never `PATCH /api/config`,
   which re-defaults every block it does not merge. Leaf keys use the dotted
   form; **`llm.*` has no dotted spelling in 0.5.4** (the CLI's key table is
@@ -184,11 +254,16 @@ Honestly degraded, and labelled as such in the UI:
   already names the chosen route but the agent booted on another one (the
   TUI or a hand edit moved the file while the window was open): main
   remembers the route each `atag serve` came up on and compares.
-- **The `custom` (external llama.cpp URL) backend** is not offered, neither
-  by the selector nor by the first-run setup (two choices, not the TUI's
-  three): the TUI probes the URL before writing mode `external` + the
-  provider url in one write, and the desktop has no probe yet — set a
-  custom endpoint up from the TUI.
+- **The `custom` (external llama.cpp URL) backend** is not offered by the
+  selector or by the first-run setup (two choices, not the TUI's three):
+  the TUI probes the URL before writing mode `external` + the provider url
+  in one write. The one place that does it in the desktop is Settings › LLM
+  › External, which runs the probe first (see the LLM bullet above).
+- **Tasks and Skills are the settings tabs.** The sidebar keeps its Tasks
+  and Skills rows (with counts), and those rows, ⌘2/⌘3, the palette hits
+  and View › Tasks/Skills all open the settings window on that tab — one
+  implementation, as the TUI's Manage tabs are. ⌘1 closes it and returns to
+  the transcript.
 
 ## Verification
 
