@@ -61,7 +61,12 @@ already parked it is handed back to the editor rather than eaten. A message
 the turn accepted and then never read comes back on `steer_undelivered`, is
 pushed to the front of the queue and acked with the DELETE, because `steer`
 already answered "yes" to it and dropping it would lose something the user
-watched being accepted.
+watched being accepted. That frame only reaches a window that was attached
+to the turn, so opening a session also runs the **GET** leg once — a
+reconnect, an agent restart or a session opened after the fact would
+otherwise leave those messages parked on the server forever. It is skipped
+for a turn this window is streaming, where the frame will carry them, so the
+two paths cannot both queue the same message.
 
 **The context gauge is the agent's own.** `GET /api/sessions/{id}` carries
 `contextUsage` — the last turn's whole window occupancy: every section, both
@@ -69,9 +74,12 @@ conversation caps, the per-pair costs and the physical window — so the panel
 reads it instead of scanning the trace, and can say which limit is trimming
 the transcript (`conversationBoundBy`) instead of guessing. The trace scan and
 the pre-message projection stay behind it for a session that has never
-finished a turn and for agents that persist no such field. A prompt-derived
-window is released when the active `<providerId> <chatModel>` changes, so the
-gauge never draws a new model against the old model's scale.
+finished a turn and for agents that persist no such field. The snapshot is
+committed only past the refresh's staleness guard, so a slow refresh for the
+session the user just left cannot draw its trimming verdict over the numbers
+of the session they are on. A prompt-derived window is released when the
+active `<providerId> <chatModel>` changes, so the gauge never draws a new
+model against the old model's scale.
 
 **The session's model stamp.** The same row carries `metadata.llm` — the
 provider and model that session last ran on. It is reported and never applied:
@@ -79,7 +87,11 @@ provider and model that session last ran on. It is reported and never applied:
 a child restart, and a restart aborts every turn this process is streaming,
 including ones in chats the user is not looking at. The offer is refused
 outright while anything is running. When the stamped provider is gone the
-window says so in the TUI's words and keeps the current model.
+window says so in the TUI's words and keeps the current model. The comparison
+is the agent's own: the FULL model id against the provider entry's
+`defaultChatModel ?? model`, the pair 0.5.5's `planModelRestore` tests — not
+the chip's display label and not the basename, which would read
+`openai/gpt-4.1` and `azure/gpt-4.1` as the same model.
 
 **Why not the NDJSON sidecar.** `dist/sidecar/main.js` exists only in a source
 checkout, and the shipped single-file binary has no `sidecar` subcommand. A
@@ -341,6 +353,9 @@ Honestly degraded, and labelled as such in the UI:
   with the TUI's `<name> (mmproj)` phase label, and auto-activation waits for
   it — `models start` appends `--mmproj` only when the file is already on
   disk, so starting the daemon first would give a silently text-only daemon.
+  If the projector download fails or is cancelled the model is **not**
+  activated at all: the weights are on disk and the pane says so, rather than
+  starting a daemon that would serve a vision model text-only.
   Removal needs nothing new: `atag models remove <custom-id>` deletes the
   files and drops the config entry, so the pane's `d` is the whole undo. The
   first-run wizard's step 2 carries the TUI's own pinned row,

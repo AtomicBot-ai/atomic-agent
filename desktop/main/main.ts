@@ -2,7 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { stat } from "node:fs/promises";   // item 5: the attachment strip stats what a turn wrote, nothing else
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -2749,11 +2749,52 @@ async function hfAndDeltaTest(
     "[...document.querySelectorAll('#settings button')].some((b) => b.textContent === 'a add from hugging face' && !b.disabled)",
   );
   check(
-    "llm tab: the Hugging Face row is live and the Ollama signpost names the path that works",
+    "llm tab: the Hugging Face row is live and the Local pane signposts Ollama",
     rowLive && localBody0.includes("a add from hugging face")
       && localBody0.includes("Ollama is not a download source on this agent")
       && localBody0.includes("Ollama (local)") && localBody0.includes("http://localhost:11434"),
     `row enabled=${rowLive}`,
+  );
+  /* Review fix: the check above only proved the signpost's own text
+     exists. The path it points at is a different object — the Cloud
+     wizard's preset array — so it is asserted separately, off the array
+     the wizard renders from. Renaming or deleting the preset now fails
+     here, which the copy check alone could never notice. */
+  const ollamaPreset = await js<{ id: string; label: string; baseUrl: string; kind: string; local: boolean } | null>(
+    "window.__preset('ollama')",
+  );
+  check(
+    "llm tab: the Ollama signpost points at a preset that is really there",
+    !!ollamaPreset && ollamaPreset.label === "Ollama (local)"
+      && ollamaPreset.baseUrl === "http://localhost:11434"
+      && ollamaPreset.kind === "openai-compatible" && ollamaPreset.local === true
+      && localBody0.includes(ollamaPreset.label) && localBody0.includes(ollamaPreset.baseUrl),
+    JSON.stringify(ollamaPreset),
+  );
+  /* And the other half of the promise: this window never reads Ollama's
+     own model store. Asserted over the BUILT bundle, anchored to a PATH
+     SEGMENT rather than the bare substring — `result.ollama` in
+     agent-cli.js is a property name, not a directory.
+
+     The needle is assembled at runtime on purpose: written as a literal
+     it would appear in this very file and the scan would flag itself. */
+  const outDir = join(__dirname, "..");
+  const storeSegment = new RegExp('["\'`/\\\\]\\.' + "ollama\\b", "g");
+  const bundleHits: string[] = [];
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const p = join(dir, entry.name);
+      if (entry.isDirectory()) { walk(p); continue; }
+      if (!/\.(js|html|css|json)$/.test(entry.name)) continue;
+      const m = readFileSync(p, "utf8").match(storeSegment);
+      if (m) bundleHits.push(`${entry.name}: ${m.length}`);
+    }
+  };
+  try { walk(outDir); } catch (err) { bundleHits.push(`could not read ${outDir}: ${String(err)}`); }
+  check(
+    "llm tab: the built bundle builds no path into Ollama's own store - it is a provider here, never a store",
+    bundleHits.length === 0,
+    bundleHits.length ? bundleHits.join("; ") : `scanned ${outDir}`,
   );
   const opened = await js<Hf>("window.__llmHfOpen()");
   const refBody = await js<string>("window.__settingsBody()");
@@ -2956,6 +2997,50 @@ async function hfAndDeltaTest(
     `daemonPhase=${afterKeys.daemonPhase} confirm=${afterKeys.confirm} pulling=${afterKeys.pulling ? afterKeys.pulling.id : null}`,
   );
   await js<Hf>("window.__llmHfClose()");
+
+  /* ---- a projector that did not land holds activation back ----
+     Review fix: llmAfterPull used to run llmPrimary() unconditionally, so
+     a failed or cancelled mmproj download still went pull -> use ->
+     start. `models start` appends --mmproj only when the file is on disk
+     (models-handlers.ts isMmprojDownloaded), so the operator got a
+     running daemon serving a vision model text-only, with nothing saying
+     why. The real cli:hfProjector call is driven into its own filename
+     guard, which refuses before any network or filesystem access - the
+     same {ok:false} the download-error and cancel arms produce. */
+  type AfterPull = { projector: string; activated: boolean; skipped: boolean; msg: string | null; body: string; pulling: unknown };
+  const mmFailed = await js<AfterPull>("window.__llmAfterPullProbe('bad/name.gguf')");
+  check(
+    "hf: a projector that did not land blocks auto-activation and says so on the pane",
+    mmFailed.projector === "failed" && mmFailed.activated === false && mmFailed.skipped === true
+      && mmFailed.pulling === null
+      && typeof mmFailed.msg === "string"
+      && mmFailed.msg.includes("unsafe projector filename")
+      && mmFailed.msg.includes("the model was not started: it would serve text only")
+      && mmFailed.body.includes("the model was not started: it would serve text only"),
+    `${JSON.stringify(mmFailed.msg)} activated=${mmFailed.activated} skipped=${mmFailed.skipped} painted=${mmFailed.body.includes("it would serve text only")}`,
+  );
+  await js<void>("window.__settingsClose()");
+
+  /* ---- the first-run row into the same branch ----
+     Review fix: obAction('hf') assigned S.settings/S.settingsPane by hand
+     and so skipped llmTabEntered(), which is what starts the 5 s `models
+     status` poll and issues the first llmRefresh(). Escaping out of the
+     branch then landed on a Local pane reading "no models listed" on a
+     machine that has them, with nothing to refresh it. */
+  const obLabel = await js<string>("window.__obHfRowLabel()");
+  type ObHf = {
+    pane: string; settings: boolean; branch: boolean; mode: string; polling: boolean;
+    refreshed: boolean; rows: number; body: string;
+  };
+  const obHf = await js<ObHf>("window.__obHfProbe()");
+  check(
+    "hf: the first-run row enters the LLM tab properly - the Local pane behind it is loaded, not empty",
+    obLabel === "Add a model from Hugging Face…"
+      && obHf.settings && obHf.pane === "llm" && obHf.mode === "local" && obHf.branch
+      && obHf.polling && obHf.refreshed && obHf.rows >= 0
+      && obHf.body.includes("a add from hugging face"),
+    `label=${JSON.stringify(obLabel)} pane=${obHf.pane} polling=${obHf.polling} refreshed=${obHf.refreshed} rows=${obHf.rows}`,
+  );
   await js<void>("window.__settingsClose()");
 
   /* ------------------------------------------------------------------
@@ -2969,9 +3054,35 @@ async function hfAndDeltaTest(
     JSON.stringify(steerRow),
   );
 
+  /* ---- the GET leg, and its wiring on openSession ----
+     Review fix: the route was plumbed end to end (agent-client ->
+     agent:undeliveredSteers -> atomic.undeliveredSteers) and never
+     called, so the only recovery for a steer the route already accepted
+     was the `steer_undelivered` SSE frame - which a window that missed
+     the turn never sees, leaving those messages parked forever. */
+  await js<void>(`window.__openSession(${JSON.stringify(sessionWithTurns)})`);
+  await wait(1500);
+  type Undel = { ok?: boolean; error?: string; data?: { sessionId?: string; undelivered?: unknown[]; discarded?: number } };
+  const undel = await js<Undel>(`window.__undelivered(${JSON.stringify(sessionWithTurns)})`);
+  const wiredRecovery = await js<{ id: string; parked: number; discarded: number } | null>("window.__steerRecovery()");
+  const queuedBefore = await js<string[]>("window.__queued()");
+  const recovered = await js<{ queued: string[]; ahead: number; lines: string[]; recovery: { parked: number } | null }>(
+    `window.__recoverSteers(${JSON.stringify(sessionWithTurns)})`,
+  );
+  check(
+    "steer: the GET leg answers and openSession runs it, so an accepted steer is never stranded",
+    undel.ok === true && !!undel.data && Array.isArray(undel.data.undelivered)
+      && !!wiredRecovery && wiredRecovery.id === sessionWithTurns
+      && !!recovered.recovery
+      && recovered.recovery.parked === (undel.data.undelivered as unknown[]).length
+      && (recovered.recovery.parked === 0
+        ? JSON.stringify(recovered.queued) === JSON.stringify(queuedBefore)
+        : recovered.queued.length === queuedBefore.length + recovered.recovery.parked),
+    `route=${JSON.stringify(undel.ok === true ? undel.data : undel.error)}; openSession recovery=${JSON.stringify(wiredRecovery)}`,
+  );
+
   // A message typed during a turn is offered to the running turn. The
   // ROUTE's answer is what is asserted - not the model's obedience.
-  await js<void>(`window.__openSession(${JSON.stringify(sessionWithTurns)})`);
   await wait(800);
   await js<void>("window.__ask('List the files in the current directory, then say done.')");
   type SteerAnswer = { ok?: boolean; steered?: boolean; error?: string };
@@ -3099,20 +3210,67 @@ async function hfAndDeltaTest(
     const basis = await js<string>("window.__ctxBasis()");
     const bound = await js<string>("window.__ctxBound()");
     await js<void>("window.__ctxClose()");
+    // Review fix: the full sentence, not a shared prefix. `startsWith`
+    // on "older turns are being dropped — " matched all three arms, so
+    // even when it fired it could not tell the configured-cap sentence
+    // from the window-is-the-limit one.
     const wantBound = !stored.conversationBoundBy
       ? ""
       : stored.conversationBoundBy === "pairs"
         ? `older turns are being dropped — ${stored.conversationPairs} of ${stored.conversationPairsCap} turns kept`
-        : "older turns are being dropped — ";
+        : null;   // a token verdict: pinned by __ctxBoundProbe below, which can drive both of its arms
     check(
       "gauge: the panel draws the agent's own sections, its window and its binding verdict",
       stored.sections.every((l) => panel.includes(l))
         && basis === "measured on this session’s last turn"
         && (stored.contextWindow > 0 ? gauge.window === stored.contextWindow && gauge.windowLabel === "prompt window" : true)
-        && (wantBound === "" ? bound === "" : bound.startsWith(wantBound)),
+        && (wantBound === null ? bound.startsWith("older turns are being dropped — ") : bound === wantBound),
       `window=${gauge.window} (${gauge.windowLabel}) boundBy=${stored.conversationBoundBy} line=${JSON.stringify(bound)} basis=${JSON.stringify(basis)}`,
     );
   }
+  /* Review fix: every arm of the binding line, driven off a synthetic
+     session row. On a live agent `conversationBoundBy` is usually null,
+     so the three sentences never rendered and the assertion above
+     collapsed to "" === "". The probe restores the real snapshot. */
+  type Bound = { html: string; text: string };
+  const storedBeforeProbe = await js<Stored>("window.__ctxStored()");
+  const boundArms = {
+    none: await js<Bound>("window.__ctxBoundProbe({tokens:1, conversationBoundBy:null})"),
+    pairs: await js<Bound>(
+      "window.__ctxBoundProbe({tokens:1, conversationBoundBy:'pairs', conversationPairs:12, conversationPairsCap:20, droppedPairs:0})",
+    ),
+    cap: await js<Bound>(
+      "window.__ctxBoundProbe({tokens:1, conversationBoundBy:'tokens', conversationCapAuto:false, conversationCap:48000, conversationCapConfigured:48000, droppedPairs:3})",
+    ),
+    window: await js<Bound>(
+      "window.__ctxBoundProbe({tokens:1, conversationBoundBy:'tokens', conversationCapAuto:true, conversationCap:31000, conversationCapConfigured:48000, droppedPairs:0})",
+    ),
+  };
+  const boundWant = {
+    none: "",
+    pairs: "older turns are being dropped — 12 of 20 turns kept",
+    cap: "older turns are being dropped — the 48k-token transcript cap (agent.conversationMaxTokens) is the limit · 3 dropped so far",
+    window: "older turns are being dropped — the window is the limit, not a configured cap",
+  };
+  const boundBad = (Object.keys(boundWant) as Array<keyof typeof boundWant>)
+    .filter((k) => boundArms[k].text !== boundWant[k]);
+  const storedAfterProbe = await js<Stored>("window.__ctxStored()");
+  check(
+    "gauge: each binding verdict renders its own full sentence, and the probe leaves the row alone",
+    boundBad.length === 0 && JSON.stringify(storedAfterProbe) === JSON.stringify(storedBeforeProbe),
+    boundBad.length
+      ? boundBad.map((k) => `${k}: ${JSON.stringify(boundArms[k].text)}`).join(" | ")
+      : `all four arms exact; snapshot ${JSON.stringify(storedAfterProbe) === JSON.stringify(storedBeforeProbe) ? "intact" : "CLOBBERED"}`,
+  );
+  /* Review fix: the 0.5.5 snapshot used to be written before the
+     staleness guard, so a refresh for the session the user just left
+     could draw its trimming verdict over the session they are on. */
+  const stale = await js<{ survived: boolean }>("window.__ctxStaleProbe()");
+  check(
+    "gauge: an overtaken refresh writes no session snapshot over the session that overtook it",
+    stale.survived,
+    stale.survived ? "the newer session's snapshot survived" : "a stale refresh clobbered CTX055.stored",
+  );
   const release = await js<{ released: boolean; window: number | null; label: string; releasedAgain: boolean; windowAgain: number | null }>(
     "window.__ctxReleaseProbe()",
   );
@@ -3149,6 +3307,41 @@ async function hfAndDeltaTest(
       : offered.stamp === null && providerAfter === liveProvider,
     hasOpenrouter ? JSON.stringify(offered.stamp) : "no `openrouter` provider in this config - the gone-provider arm covers the copy",
   );
+  /* Review fix: the stamp used to compare model BASENAMES, so on a
+     provider with vendor-prefixed ids a session stamped `openai/gpt-4.1`
+     opened while the provider is on `azure/gpt-4.1` read as "same model"
+     and no offer appeared. 0.5.5's planModelRestore compares the full id
+     against `provider.defaultChatModel ?? provider.model`, and so does
+     this window now. Both directions are pinned: the same id is silent,
+     an id sharing only its basename is not. */
+  const liveProviderModel = await js<string>("window.__activeProviderModel()");
+  if (liveProvider && liveProviderModel) {
+    const same = await js<Probe>(
+      `window.__sessStampProbe({llm:{providerId:${JSON.stringify(liveProvider)}, chatModel:${JSON.stringify(liveProviderModel)}}})`,
+    );
+    // Same basename, different vendor prefix - a different model to the agent.
+    const base = liveProviderModel.split("/").pop() ?? liveProviderModel;
+    const twin = `smoke-vendor/${base}`;
+    const differs = await js<Probe>(
+      `window.__sessStampProbe({llm:{providerId:${JSON.stringify(liveProvider)}, chatModel:${JSON.stringify(twin)}}})`,
+    );
+    check(
+      "stamp: the model comparison is the agent's full id, not a basename",
+      same.stamp === null && same.added.length === 0
+        && (twin === liveProviderModel
+          ? true
+          : !!differs.stamp && differs.stamp.chatModel === twin
+            && differs.added.some((t) => t.includes(twin) && t.includes("Switch to it"))),
+      `live ${liveProvider}/${liveProviderModel}; same-id silent=${same.stamp === null}; ${JSON.stringify(twin)} offered=${!!differs.stamp}`,
+    );
+  } else {
+    check(
+      "stamp: the model comparison is the agent's full id, not a basename",
+      true,
+      `skipped - the active provider (${JSON.stringify(liveProvider)}) carries no defaultChatModel/model to compare against`,
+    );
+  }
+
   // The offer is refused while anything is running: applying costs a config
   // write plus a serve restart, and a restart aborts turns in other chats.
   const turnC = await js<string>("window.__fakeTurn()");

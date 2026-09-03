@@ -379,7 +379,9 @@ const CTX055 = {stored:null, route:null, stamp:null};
    re-routed for the same turn, so typing order survives. `chain`
    sequences steers per submit — the path is async where the queue was
    synchronous and two Enters can otherwise interleave. */
-const STEER = {ahead:0, chain:Promise.resolve()};
+// `recovery` records the last GET /api/sessions/{id}/steer this window ran
+// (item 7C review fix) so the wiring on openSession is assertable.
+const STEER = {ahead:0, chain:Promise.resolve(), recovery:null};
 const MAX_QUEUED = 20; // chat-orchestrator.ts:66 MAX_QUEUED_MESSAGES
 
 /* ============================================================
@@ -3094,9 +3096,13 @@ function obAction(what) {
   if (what === 'hf') {
     // Same branch, same IPC, same config write as the `a` key in the
     // Local pane — there is one Hugging Face flow in this window.
+    // Review fix: enter the tab the way every other route into it does,
+    // through act('settings:llm') → settingsPaneEntered → llmTabEntered.
+    // Assigning S.settings/S.settingsPane by hand skipped llmTabEntered,
+    // so escaping out of the branch landed on a Local pane with no rows
+    // and no daemon state until the user pressed `r`.
     OB.open = false;
-    S.settings = 1; S.settingsPane = 'llm';
-    render();
+    act('settings:llm');
     llmAct('hf');
     return;
   }
@@ -3747,7 +3753,13 @@ async function refreshContext(stateDirOverride) {
      runs at the end of every turn. Absent on a session that has never
      finished a turn and on anything written before 0.5.5, which is why
      the ladder below it stays. */
-  CTX055.stored = null;
+  /* Staged in a local, committed to CTX055 only past the staleness guard
+     below. Everything else this ladder produces is funnelled through that
+     guard; writing the snapshot here directly would let a late-resolving
+     refresh for session A draw its trimming verdict (ctxBoundLine) over
+     session B's numbers, and a stale `= null` would blank a binding line
+     the current session legitimately has. */
+  let stored055 = null;
   // `stateDirOverride` means "run the ladder as if this agent held no
   // record of this session", so the session row is skipped with the trace
   // file — reading it back off the live agent would contradict the very
@@ -3756,7 +3768,7 @@ async function refreshContext(stateDirOverride) {
     const r = await BR.session(S.agentSession);
     const u = r && r.ok && r.data ? r.data.contextUsage : null;
     if (u && u.tokens > 0) {
-      CTX055.stored = u;
+      stored055 = u;
       const sec = (label) => { const x = (u.sections || []).find((y) => y.label === label); return x ? x.tokens : 0; };
       usage = {tokens:u.tokens, source:'measured', stablePrefix:sec('prompt scaffold'),
         tail: typeof u.conversationTokens === 'number' ? u.conversationTokens : sec('conversation'),
@@ -3782,6 +3794,7 @@ async function refreshContext(stateDirOverride) {
     }
   }
   if (seq !== CTX.seq) return; // a newer refresh is on its way
+  CTX055.stored = stored055; // committed only for the session this refresh still owns
   if (!usage) {
     // Nothing measured and no trace to project from: the TUI's own
     // "not measured yet" state — chip hidden, never a zero.
@@ -4045,12 +4058,52 @@ async function openSession(id) {
   noteSessionModelStamp(data);
   render();
   refreshContext();
+  // Item 7C review fix: the GET leg of the steer route. The
+  // `steer_undelivered` SSE frame only reaches a window that was attached
+  // to the turn; a reconnect, an agent restart or a session opened after
+  // the fact leaves messages the route already said yes to parked on the
+  // server forever. Skipped for a turn this window IS streaming — the
+  // frame will carry those, and both paths acking would double-queue.
+  if (!live) recoverParkedSteers(id);
   // item 4: durations come from the agent's trace; repaint only if this transcript is still up.
   const shown = S.log;
   applyTraceDurations().then((changed) => { if (changed && S.log === shown) render(); });
   // item 5: the session's own cwd resolves any relative path the write tools took.
   const sessionCwd = typeof data.workingDir === 'string' ? data.workingDir : null;
   refreshAttachments(sessionCwd).then((changed) => { if (changed && S.log === shown) render(); });
+}
+
+/**
+ * Item 7C — what a turn accepted and never read, recovered by the GET.
+ *
+ * `GET /api/sessions/{id}/steer` is the server's parked store; the DELETE
+ * is its mandatory partner, or the store accumulates. Same treatment as
+ * the `steer_undelivered` frame: to the FRONT of the queue, because
+ * `steer` already answered "yes" to whoever sent them and they are
+ * corrections aimed at the turn that just ran.
+ *
+ * Silent when there is nothing parked, and silent on any error — this is
+ * a recovery path, not something the operator asked for, and a 404 on an
+ * agent older than 0.5.5 must not print in the transcript.
+ */
+async function recoverParkedSteers(id) {
+  if (!BR || !BR.undeliveredSteers || !id) return;
+  const res = await BR.undeliveredSteers(id);
+  if (!res || !res.ok || !res.data) return;
+  if (S.agentSession !== id) return;   // the user moved on while this was in flight
+  const list = Array.isArray(res.data.undelivered) ? res.data.undelivered : [];
+  const discarded = Number(res.data.discarded) || 0;
+  STEER.recovery = {id, parked:list.length, discarded};
+  if (!list.length && !discarded) return;
+  if (list.length) {
+    S.queued.unshift.apply(S.queued, list.map((u) => String((u && u.text) || '')));
+    STEER.ahead += list.length;
+    S.log.push({id:nid(), k:'system', text: list.length + ' message' + (list.length === 1 ? '' : 's')
+      + ' arrived too late for the last turn here — sending ' + (list.length === 1 ? 'it' : 'them') + ' next'});
+  }
+  const seq = list.reduce((max, u) => Math.max(max, (u && Number(u.seq)) || 0), 0);
+  if (BR.ackSteers) await BR.ackSteers(id, seq, discarded);
+  render();
 }
 
 /**
@@ -4072,8 +4125,16 @@ function noteSessionModelStamp(data) {
   if (!stamp || typeof stamp.providerId !== 'string' || !stamp.providerId) return;
   const model = typeof stamp.chatModel === 'string' && stamp.chatModel ? stamp.chatModel : null;
   const liveProvider = selActiveProviderId() || '';
-  const liveModel = activeModel() || '';
-  if (stamp.providerId === liveProvider && (!model || sameModelLabel(model, liveModel))) return;
+  /* Review fix: compare what the AGENT compares. 0.5.5's planModelRestore
+     tests `turn.chatModel === (provider.defaultChatModel ?? provider.model)`
+     — the FULL id off the provider entry. The old comparison used
+     activeModel() (a display label, blank on an external route) and
+     matched on the basename only, so `openai/gpt-4.1` and `azure/gpt-4.1`
+     read as the same model and a real difference was suppressed. */
+  const liveEntry = llmProvider(liveProvider);
+  const liveModel = liveEntry ? (liveEntry.defaultChatModel || liveEntry.model || '') : '';
+  const shownModel = activeModel() || liveModel;   // the display label stays the chip's
+  if (stamp.providerId === liveProvider && (!model || sameModelId(model, liveModel))) return;
   const known = llmProviders().some((p) => p.id === stamp.providerId);
   const label = stamp.providerId + (model ? '/' + model : '');
   if (!known) {
@@ -4083,13 +4144,18 @@ function noteSessionModelStamp(data) {
     return;
   }
   CTX055.stamp = {providerId: stamp.providerId, chatModel: model};
-  S.log.push({id:nid(), k:'system', text: esc('this session ran on ' + label + ' — the window is on ' + (liveProvider || 'no provider') + (liveModel ? '/' + liveModel : ''))
+  S.log.push({id:nid(), k:'system', text: esc('this session ran on ' + label + ' — the window is on ' + (liveProvider || 'no provider') + (shownModel ? '/' + shownModel : ''))
     + ' <button class="btn btn-s" style="height:22px" data-act="sessmodel:apply">Switch to it</button>'
     + ' <span class="ter">(a switch restarts the agent, so it is refused while any turn is running)</span>'});
 }
-/** Basename comparison, as the desktop's own sameModel does in main. */
-function sameModelLabel(a, b) {
-  const norm = (x) => String(x || '').trim().toLowerCase().split('/').pop();
+/* Full-id comparison, matching 0.5.5's planModelRestore
+   (`turn.chatModel === (provider.defaultChatModel ?? provider.model)`).
+   Case and surrounding whitespace are normalised because config values
+   are typed by hand; the vendor prefix is NOT dropped — `openai/gpt-4.1`
+   and `azure/gpt-4.1` are different models to the agent, and collapsing
+   them hid a real difference. */
+function sameModelId(a, b) {
+  const norm = (x) => String(x || '').trim().toLowerCase();
   return !!a && !!b && norm(a) === norm(b);
 }
 async function applySessionModelStamp() {
@@ -4815,6 +4881,13 @@ function localTurnGate() {
 if (typeof window !== 'undefined') {
   window.__switchBackend = (kind) => selChooseBackend(kind);
   window.__activeProvider = () => selActiveProviderId() || null;
+  /* The model id the AGENT compares a session stamp against —
+     `provider.defaultChatModel ?? provider.model`, not the chip's display
+     label (item 7C review fix). */
+  window.__activeProviderModel = () => {
+    const p = llmProvider(selActiveProviderId());
+    return p ? (p.defaultChatModel || p.model || '') : '';
+  };
   window.__lastSystem = () => {
     for (let i = S.log.length - 1; i >= 0; i--) if (S.log[i].k === 'system') return S.log[i].text || '';
     return '';
@@ -7925,29 +7998,49 @@ function llmKey(e, k, inText) {
  * frame when `LLMP.pulling` is null, so the second phase claims the slot
  * before it starts and releases it in a `finally`.
  *
- * Auto-activation waits for the projector. `models start` appends
- * `--mmproj` only when the file is already on disk
- * (src/cli/models-handlers.ts gates on isMmprojDownloaded), so starting
- * the daemon first would give a silently text-only daemon for a model
- * this window just labelled vision-capable.
+ * Auto-activation waits for the projector, and is SKIPPED when the
+ * projector did not land. `models start` appends `--mmproj` only when
+ * the file is already on disk (src/cli/models-handlers.ts gates on
+ * isMmprojDownloaded), so starting the daemon after a failed or
+ * cancelled projector would give a silently text-only daemon for a model
+ * this window just labelled vision-capable — the same degradation the
+ * projector step exists to prevent. The failure is stated instead, and
+ * the row is left for the operator to start by hand.
  */
 async function llmAfterPull(p) {
   const mm = LLMHF.pendingMmproj;
+  let mmError = null;
+  let attempted = false;
   if (mm && mm.id === p.id && BR && BR.hfProjector) {
+    attempted = true;
     LLMHF.pendingMmproj = null;
     LLMP.pulling = {kind:'chat', id:p.id, phase:'mmproj'};
     LLMP.pullLog = [mm.name + ' (mmproj) 0%'];   // local-models-orchestrator.ts pullMmprojPhase's banner label
     llmRepaint();
     try {
       const res = await BR.hfProjector(mm.id, mm.url, mm.filename, mm.name);
-      if (!res || res.ok !== true) LLMP.statusErr = (res && res.error) || 'the projector download failed';
+      if (!res || res.ok !== true) mmError = (res && res.error) || 'the projector download failed';
+    } catch (e) {
+      mmError = 'the projector download failed: ' + ((e && e.message) || String(e));
     } finally {
       LLMP.pulling = null;
     }
   }
   await llmRefresh();
+  /* The verdict is returned so the suite can assert the decision itself
+     rather than its side effects: `skipped` is true only when a failed or
+     cancelled projector held activation back. The message goes in
+     LLMP.msg, not LLMP.statusErr — statusErr belongs to `models status`
+     and the 5 s poll (llmApplyStatus) overwrites it within a tick. */
+  if (mmError) {
+    LLMP.msg = {text:'! ' + mmError
+      + ' — the weights are on disk, but the model was not started: it would serve text only. Press s to start it anyway.'};
+    llmRepaint();
+    return {projector:'failed', activated:false, skipped:true};
+  }
   const row = llmRows('local').find((r) => r.model && r.model.id === p.id);
-  if (row && LLMP.mode === 'local') llmPrimary(row);
+  if (row && LLMP.mode === 'local') { llmPrimary(row); return {projector: attempted ? 'ok' : 'none', activated:true, skipped:false}; }
+  return {projector: attempted ? 'ok' : 'none', activated:false, skipped:false};
 }
 
 /* The pull stream for the LLM tab's downloads, guarded by its own owner flag like the SEL/MP subscribers. */
@@ -8534,6 +8627,52 @@ if (typeof window !== 'undefined') {
     return Object.assign(window.__llmHf(), {handled: handled === true});
   };
   window.__llmHfFakeRepo = (repo) => { LLMHF.open = true; LLMHF.step = 'pick'; LLMHF.repo = repo; LLMHF.cursor = 0; LLMHF.error = null; llmRepaint(); return window.__llmHf(); };
+  /* The post-pull decision on its own. The projector call is the REAL
+     one, driven into its own filename guard so it refuses before any
+     network or filesystem access — the same {ok:false} the error and the
+     cancel arms produce. Neither may go on to activate the model:
+     `models start` appends --mmproj only when the file is on disk, so
+     activating here would serve a vision model text-only. */
+  window.__llmAfterPullProbe = async (filename) => {
+    const msgBefore = LLMP.msg;
+    LLMHF.pendingMmproj = {id:'custom-smoke-probe', url:'https://huggingface.co/x/y/resolve/main/mmproj.gguf',
+      filename:String(filename), name:'smoke probe'};
+    try {
+      const verdict = await llmAfterPull({kind:'chat', id:'custom-smoke-probe'});
+      return Object.assign({}, verdict, {msg: LLMP.msg ? LLMP.msg.text : null,
+        body:(document.querySelector('#settings .setbody') || {}).innerText || '', pulling: LLMP.pulling});
+    } finally {
+      LLMHF.pendingMmproj = null; LLMP.msg = msgBefore; llmRepaint();
+    }
+  };
+
+  /* The first-run row into the same branch. It must enter the LLM tab the
+     way the menu does — through act('settings:llm') → llmTabEntered — or
+     escaping out of the branch lands on a Local pane with no rows and no
+     poll. Everything llmTabEntered owns is cleared first, so a pass means
+     the row started it and not some earlier visit. */
+  window.__obHfProbe = async () => {
+    S.settings = null;
+    if (LLMP.timer) { clearInterval(LLMP.timer); LLMP.timer = null; }
+    LLMP.lastRefreshedAt = null; LLMP.local = null;
+    OB.open = true;
+    obAction('hf');
+    const entered = {pane: settingsPaneId(S.settingsPane), settings: !!S.settings,
+      branch: LLMHF.open, mode: LLMP.mode, polling: LLMP.timer !== null};
+    llmHfClose();
+    for (let i = 0; i < 40 && LLMP.lastRefreshedAt === null; i++) await new Promise((r) => setTimeout(r, 250));
+    return Object.assign(entered, {refreshed: LLMP.lastRefreshedAt !== null,
+      rows: Array.isArray(LLMP.local) ? LLMP.local.length : -1,
+      body: (document.querySelector('#settings .setbody') || {}).innerText || ''});
+  };
+  window.__obHfRowLabel = () => HF_ROW_LABEL;
+  // The Cloud wizard's Ollama preset, read off the array the wizard
+  // renders from — so renaming or deleting it fails this check, which the
+  // Local pane's own signpost copy cannot.
+  window.__preset = (id) => {
+    const p = PRESETS.find((x) => x.id === String(id));
+    return p ? {id:p.id, label:p.label, baseUrl:p.baseUrl, kind:p.kind, local: p.local === true} : null;
+  };
 
   window.__steer = (text) => (BR && BR.steer && S.agentSession ? BR.steer(S.agentSession, String(text)) : Promise.resolve({ok:false, error:'no session'}));
   window.__steerOrQueue = (text) => steerOrQueue(String(text)).then(() => ({queued:S.queued.slice(), ahead:STEER.ahead, draft:S.draft}));
@@ -8544,11 +8683,50 @@ if (typeof window !== 'undefined') {
   window.__turnId = () => S.turnId;
   window.__chatEvent = (ev) => { onChatEvent(ev); return {busy:S.busy, turnId:S.turnId, lines:window.__systemLines()}; };
   window.__steerEntries = () => S.log.filter((m) => m.k === 'user' && m.steered).map((m) => m.text);
+  // The GET leg on its own: what the route answers, and what the renderer
+  // does with it (front of the queue, one system line, then the DELETE).
+  window.__undelivered = (id) => (BR && BR.undeliveredSteers
+    ? BR.undeliveredSteers(String(id || S.agentSession || '')) : Promise.resolve({ok:false, error:'no bridge'}));
+  window.__recoverSteers = async (id) => {
+    STEER.recovery = null;
+    await recoverParkedSteers(String(id || S.agentSession || ''));
+    return {queued:S.queued.slice(), ahead:STEER.ahead, lines:window.__systemLines().slice(-1),
+      recovery: STEER.recovery ? Object.assign({}, STEER.recovery) : null};
+  };
+  window.__steerRecovery = () => (STEER.recovery ? Object.assign({}, STEER.recovery) : null);
   window.__sendButton = () => { const b = document.querySelector('.sendbtn'); return b ? {act:b.dataset.act || '', title:b.title || ''} : null; };
 
   window.__ctxSections = () => (CTX.sections || []).map((x) => x.label);
   window.__ctxStored = () => (CTX055.stored ? Object.assign({}, CTX055.stored, {sections:(CTX055.stored.sections || []).map((x) => x.label)}) : null);
   window.__ctxBound = () => ((document.querySelector('.popover .ctxbound') || {}).textContent || '');
+  /* A refresh that has been overtaken must write NOTHING — including the
+     0.5.5 session snapshot, which used to be assigned before the seq
+     guard. Start a refresh, overtake it, and the sentinel below has to
+     survive: otherwise session A's trimming verdict lands under session
+     B's numbers. */
+  window.__ctxStaleProbe = async () => {
+    const before = CTX055.stored;
+    const sentinel = {tokens:1, sections:[{label:'sentinel', tokens:1}], conversationBoundBy:null};
+    const p = refreshContext();
+    CTX055.stored = sentinel;
+    CTX.seq++;                       // the in-flight refresh is now stale
+    await p;
+    const survived = CTX055.stored === sentinel;
+    CTX055.stored = before;
+    return {survived};
+  };
+  /* Every arm of the binding line against a synthetic session row. On a
+     real agent `conversationBoundBy` is usually null, so the three
+     sentences would otherwise never render and the live assertion would
+     collapse to "" === "". Nothing is written: the snapshot is restored. */
+  window.__ctxBoundProbe = (u) => {
+    const before = CTX055.stored;
+    CTX055.stored = u;
+    let html = '';
+    try { html = ctxBoundLine(); } finally { CTX055.stored = before; }
+    const el = document.createElement('div'); el.innerHTML = html;
+    return {html, text: el.textContent || ''};
+  };
   window.__ctxRoute = () => CTX055.route;
   window.__ctxWindowLabel = () => CTX.windowLabel;
   window.__sessStamp = () => (CTX055.stamp ? Object.assign({}, CTX055.stamp) : null);
