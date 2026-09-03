@@ -141,7 +141,7 @@ function ic(n, cls) {
 const MARK_COLOR = '<svg width="16" height="16" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="14" fill="#006AFF"/><path fill="#fff" d="M35.24 49.92a1.25 1.25 0 0 0 1.3-1.24 12.2 12.2 0 0 1 12.14-12.14 1.25 1.25 0 0 0 1.24-1.3v-6.47c0-.69-.56-1.24-1.24-1.24H37.72c-.69 0-1.24-.56-1.24-1.25V15.32c0-.69-.56-1.24-1.24-1.24h-6.47c-.69 0-1.24.56-1.3 1.24A12.2 12.2 0 0 1 15.32 27.46c-.68.06-1.24.61-1.24 1.3v6.47c0 .69.56 1.24 1.24 1.24h10.96c.69 0 1.24.56 1.24 1.25v10.95c0 .69.56 1.24 1.24 1.24z"/></svg>';
 const MARK_MONO = '<svg width="20" height="20" viewBox="0 0 64 64" fill="currentColor" aria-hidden="true"><path d="M35.24 49.92a1.25 1.25 0 0 0 1.3-1.24 12.2 12.2 0 0 1 12.14-12.14 1.25 1.25 0 0 0 1.24-1.3v-6.47c0-.69-.56-1.24-1.24-1.24H37.72c-.69 0-1.24-.56-1.24-1.25V15.32c0-.69-.56-1.24-1.24-1.24h-6.47c-.69 0-1.24.56-1.3 1.24A12.2 12.2 0 0 1 15.32 27.46c-.68.06-1.24.61-1.24 1.3v6.47c0 .69.56 1.24 1.24 1.24h10.96c.69 0 1.24.56 1.24 1.25v10.95c0 .69.56 1.24 1.24 1.24z"/></svg>';
 
-const dur = (ms) => ms == null ? '…' : ms < 1000 ? ms + 'ms' : (ms / 1000).toFixed(1) + 's';
+const dur = (ms) => ms == null ? '…' : ms + 'ms';   // item 4: as the TUI prints it (tool-card.tsx), never X.Xs
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const $ = (s) => document.querySelector(s);
 const keycaps = (str) => str ? str.split(' ').map((k) => '<span class="kc">' + esc(k) + '</span>').join('') : '';
@@ -419,8 +419,15 @@ function toolCard(m) {
   return '<div class="card' + (running ? ' running' : '') + (m.ok === false ? ' err' : '') + '" id="card-' + m.id + '">'
     + '<button class="cardhead" data-toggle="' + m.id + '" aria-expanded="' + (!!m.open) + '">'
       + glyph + '<span class="nm">' + esc(m.name) + '</span>'
-      + '<span class="du tnum" title="' + (m.ms ? 'measured by the agent' : 'wall time observed by this window, from the call frame to the next frame') + '">'
-      + (running ? '\u2026' : dur(m.ms || m.observedMs || 0) || '') + '</span>'
+      // item 4: the number is the agent's own (trace) once the turn is stored; while it runs, or
+      // until the store lands, the wall time this window observed. The TUI prints a fabricated
+      // 0ms for a store-rebuilt card (turns-to-messages.ts); the user rejected that zero, so a card
+      // with no trace row prints nothing and says so in the tooltip.
+      + '<span class="du tnum" title="' + (running ? 'running'
+          : m.msSource === 'trace' ? 'measured by the agent (trace): tool result minus the model completion of that step, including parse and any approval wait \u2014 the same interval the TUI shows'
+          : m.observedMs ? 'wall time observed by this window, from the call frame to the next frame'
+          : 'no trace for this call') + '">'
+      + (running ? '\u2026' : m.msSource === 'trace' ? dur(m.ms) : m.observedMs ? dur(m.observedMs) : '') + '</span>'
       + (m.truncated ? '<span class="cap" style="color:var(--warn)">truncated</span>' : '')
       + '<span class="ar">' + esc(previewArgs(m.args || m.arg)) + '</span>'
       + '<span class="ter" style="display:flex">' + ic(m.open ? 'chevD' : 'chevR') + '</span>'
@@ -654,7 +661,13 @@ function renderInspector() {
         + '<span class="ix">' + String(i + 1).padStart(2, '0') + '</span>'
         + '<span class="nm">' + esc(m.name) + '</span>'
         + '<span class="hstack">'
-        + '<span class="mono ter tnum">' + dur(m.ok === null ? null : m.ms) + '</span></span></button>').join('')
+        // item 4: the same cell as the tool card — running is '…'; a finished step prints the trace's
+        // number, or the wall time this window observed, or nothing (never '…' or 0ms for a call with no trace row).
+        + '<span class="mono ter tnum" title="' + (m.ok === null ? 'running'
+            : m.msSource === 'trace' ? 'measured by the agent (trace): tool result minus the model completion of that step, including parse and any approval wait \u2014 the same interval the TUI shows'
+            : m.observedMs ? 'wall time observed by this window, from the call frame to the next frame'
+            : 'no trace for this call') + '">'
+        + (m.ok === null ? '\u2026' : m.msSource === 'trace' ? dur(m.ms) : m.observedMs ? dur(m.observedMs) : '') + '</span></span></button>').join('')
       : '<p class="cap">No steps yet.</p>';
   } else if (S.inspTab === 'reasoning') {
     const r = S.log.filter((m) => m.k === 'reason');
@@ -2617,6 +2630,7 @@ async function openSession(id) {
       if (t.reasoning) log.push({id:nid(), k:'reason', steps:1, open:false, text:t.reasoning});
       log.push({id:nid(), k:'tool', name:t.tool || 'tool',
         arg: summariseArgs(t.args), args: JSON.stringify(t.args ?? {}, null, 2),
+        argsKey: JSON.stringify(t.args ?? {}), at: t.at,   // item 4: what the trace merge matches on
         where:'local', ok:null, open:false});
       return;
     }
@@ -2628,7 +2642,7 @@ async function openSession(id) {
         if (log[i].k === 'tool' && log[i].ok === null) {
           log[i].ok = t.status === 'ok';
           log[i].out = t.summary || '';
-          log[i].ms = 0;
+          log[i].ms = undefined; log[i].msSource = null;   // item 4: the store carries no duration; the trace does
           return;
         }
       }
@@ -2641,6 +2655,9 @@ async function openSession(id) {
   S.history = [];
   render();
   refreshContext();
+  // item 4: durations come from the agent's trace; repaint only if this transcript is still up.
+  const shown = S.log;
+  applyTraceDurations().then((changed) => { if (changed && S.log === shown) render(); });
 }
 
 async function ctxAdjust(spec) {
@@ -2761,9 +2778,18 @@ function renderItems() {
 }
 function groupCard(run) {
   const m = run[0];
-  const ms = run.reduce((n, c) => n + (c.ms || c.observedMs || 0), 0);
+  // item 4: the run's total counts only members with a number (trace, or observed while live);
+  // the tooltip says when some are unmeasured, and a fold with no measured member prints nothing, never 0ms.
+  const measured = run.filter((c) => c.msSource === 'trace' || c.observedMs);
+  const ms = measured.reduce((n, c) => n + (c.msSource === 'trace' ? c.ms : c.observedMs), 0);
   const bad = run.filter((c) => c.ok === false).length;
   const pending = run.some((c) => c.ok === null);
+  // The title says where the numbers come from: a fold of live cards is window-observed until the store lands.
+  const observed = measured.filter((c) => c.msSource !== 'trace').length;
+  const duTitle = pending ? 'running'
+    : measured.length === run.length ? (observed ? 'sum of the calls; ' + observed + ' observed by this window until the store lands' : 'sum of the calls, measured by the agent (trace)')
+    : measured.length ? measured.length + ' of ' + run.length + ' calls measured' + (observed ? ' (' + observed + ' observed by this window until the store lands)' : '') + '; the rest have no trace row'
+    : 'no trace for these calls';
   const glyph = pending ? '<span class="dot run"></span>'
     : bad ? '<span style="color:var(--danger);display:flex">' + ic('warn') + '</span>'
           : '<span style="color:var(--success);display:flex">' + ic('check') + '</span>';
@@ -2771,7 +2797,7 @@ function groupCard(run) {
   return '<div class="turn" id="group-' + m.id + '"><div></div><div><div class="card">'
     + '<button class="cardhead" data-group="' + m.id + '">' + glyph
     + '<span class="nm">' + run.length + ' \u00d7 ' + esc(m.name) + '</span>'
-    + '<span class="du tnum">' + (pending ? '\u2026' : dur(ms)) + '</span>'
+    + '<span class="du tnum" title="' + duTitle + '">' + (pending ? '\u2026' : measured.length ? dur(ms) : '') + '</span>'
     + (bad ? '<span class="cap" style="color:var(--danger)">' + bad + ' failed</span>' : '')
     + '<span class="ar">' + esc(previews.slice(0, 3).join(' \u00b7 ') + (previews.length > 3 ? ' \u2026' : '')) + '</span>'
     + '<span class="ter" style="display:flex">' + ic('chevR') + '</span></button>'
@@ -2815,16 +2841,69 @@ async function reconcileToolCards(attempt = 0) {
     const card = cards[c], {call, result} = calls[k];
     if (call.tool !== card.name) break;
     card.args = call.args || card.args;
+    card.at = call.at; card.argsKey = JSON.stringify(call.args ?? {});   // item 4: for the trace merge
     if (result) {
       card.ok = result.status === 'ok';
       card.out = result.summary || '';
       card.truncated = !!result.truncated;
-      if (call.at && result.at) card.ms = Math.max(0, result.at - call.at);
     }
   }
   // Whatever the store still does not describe is finished, just unmeasured.
   pendingCards.forEach((c) => { if (c.ok === null) { c.ok = true; c.out = c.out || ''; } });
+  await applyTraceDurations();   // item 4: live cards flip from observed wall time to the agent's number
   render();
+}
+
+/* item 4 — trace-measured tool durations.
+   The store stamps one `at` on a call and its result, so it carries no duration
+   (the TUI shows 0ms for a reopened session for the same reason). The trace does:
+   tool_invocation.ts − the llm_completion.ts of the same step is exactly the
+   interval the TUI's live card measures (tool_call_parsed → tool_call_executed). */
+async function applyTraceDurations() {
+  if (!BR || !S.agentSession || !BR.traceTools) return false;
+  const stateDir = LIVE_CAPS && LIVE_CAPS.paths && LIVE_CAPS.paths.stateDir;
+  if (!stateDir) return false;
+  const sid = S.agentSession, log = S.log;
+  const res = await BR.traceTools(stateDir, sid);
+  // A faster second click in the sidebar must not stamp this session's numbers on another transcript.
+  if (S.agentSession !== sid || S.log !== log) return false;
+  if (!res || !res.ok || !Array.isArray(res.rows)) return false;
+  // The store lists a batched step in batch-index order; the trace writes rows in
+  // completion order. Keep file order (turn indices restart when a later `serve`
+  // appends to the file) and stable-sort only each run of one (turn, step) by batchIndex.
+  const rows = []; let group = [];
+  const flush = () => { group.sort((a, b) => a.batchIndex - b.batchIndex); rows.push(...group); group = []; };
+  for (const r of res.rows) {
+    if (r.tool === 'reply' || r.tool === 'finish') continue;   // assistant_reply in the store, never a card
+    if (group.length && (group[0].turnIndex !== r.turnIndex || group[0].stepIndex !== r.stepIndex)) flush();
+    group.push(r);
+  }
+  flush();
+  const cards = log.filter((m) => m.k === 'tool');
+  let k = 0, hit = 0;
+  for (const card of cards) {
+    // A live card still running keeps observedMs and halts the walk; a store card whose
+    // result never landed (an interrupted turn) is skipped so the cards after it are still measured.
+    if (card.ok === null) { if (card.startedAt) break; continue; }
+    const at = card.at || 0;                         // = step finish, stamped after the whole batch returned
+    let found = -1;
+    for (let j = k; j < rows.length; j++) {
+      if (at && rows[j].ts > at + 5000) break;       // the trace has moved past this card
+      // No lower bound against `at`: a fast sibling of a slow batched call finishes long before the step's `at`.
+      // A card born on this window's stream has its own lower bound: startedAt is stamped on
+      // tool_call_parsed, always before the trace row is written. Without it a fresh window
+      // ("New session" + a first prompt whose derived id already exists) would take the earliest
+      // row of the reused session — a stale number shown as the agent's measurement.
+      if (card.startedAt && rows[j].ts < card.startedAt - 2000) continue;
+      if (rows[j].tool !== card.name) continue;
+      if (card.argsKey && rows[j].argsKey !== card.argsKey) continue;
+      found = j; break;
+    }
+    if (found < 0) continue;                         // leave unmeasured, never 0
+    k = found + 1;                                   // forward-only: a repeated identical call takes the next row
+    if (rows[found].ms != null) { card.ms = rows[found].ms; card.msSource = 'trace'; card.traceTs = rows[found].ts; hit++; }
+  }
+  return hit > 0;
 }
 
 /** Escaped prose with files as chips and URLs as links. */
@@ -2869,7 +2948,10 @@ if (typeof window !== 'undefined') {
   window.__cards = () => S.log.filter((m) => m.k === 'tool').map((m) => ({
     name:m.name,
     args: typeof (m.args || m.arg) === 'string' ? (m.args || m.arg) : JSON.stringify(m.args || m.arg || ''),
-    ms: m.ms || m.observedMs || 0, ok: m.ok,
+    ms: m.msSource === 'trace' ? m.ms : (m.observedMs || 0),   // item 4
+    source: m.msSource || (m.observedMs ? 'observed' : null), ok: m.ok,
+    traceTs: m.traceTs || null, startedAt: m.startedAt || null,   // item 4: the row a live card took must be its own
+    argsKey: m.argsKey || null,   // item 4: what the trace merge matches on
     live: !!m.startedAt,   // born on the stream this run, as opposed to loaded from the store
   }));
   window.__pushAssistant = (t) => { S.log.push({id:nid(), k:'assistant', text:t}); render(); return document.querySelectorAll('.filechip').length; };
@@ -2914,5 +2996,46 @@ if (typeof window !== 'undefined') {
     g.click();                        // [data-group] branch → expandGroupInPlace
     const h = document.querySelector('#turn-' + id + ' .cardhead');
     return {id, members:OPEN_GROUPS.has(id), headBefore:before, headAfter:h ? h.getBoundingClientRect().top : NaN, scrollBefore, scrollAfter:sc.scrollTop};
+  };
+}
+
+/* Hooks for --smoke: item 4 — cards stay inside the transcript column, durations
+   come from the trace. __pushTool pushes an ordinary finished card (no demo words),
+   __overflow measures what could widen the column. */
+if (typeof window !== 'undefined') {
+  window.__session = () => S.agentSession;
+  window.__newSession = () => { act('session:new'); return S.log.length; };   // exactly what the toolbar button does
+  window.__busy = () => S.busy;
+  window.__stateDir = () => (LIVE_CAPS && LIVE_CAPS.paths && LIVE_CAPS.paths.stateDir) || null;
+  // Deterministic stand-in for "a fresh window on a session whose trace already holds an identical
+  // row" (New session + a first prompt whose derived id already exists) — no model in the loop.
+  // Sets the session id as the stream would, pushes a live-shaped card (startedAt now, so the
+  // existing row predates it) and a store-shaped copy of the same call, then runs the real merge:
+  // the live card must stay unmeasured, the store copy takes the row.
+  window.__probeTrace = async (sid, name, argsKey) => {
+    S.agentSession = sid;
+    const mk = (live) => Object.assign({id:nid(), k:'tool', name, args: argsKey, argsKey, at: 0, ok:true, out:'', open:false, where:'local'}, live ? {startedAt: Date.now()} : {});
+    const liveCard = mk(true), storeCard = mk(false);
+    S.log.push(liveCard, storeCard);
+    const changed = await applyTraceDurations();
+    render();
+    const pick = (c) => ({source: c.msSource || null, traceTs: c.traceTs || null, ms: c.ms == null ? null : c.ms, startedAt: c.startedAt || null});
+    return {changed, live: pick(liveCard), stored: pick(storeCard)};
+  };
+  window.__pushTool = (name, args, summary, open = true) => {
+    S.log.push({id:nid(), k:'tool', name, args: JSON.stringify(args), argsKey: JSON.stringify(args), ok:true, out:summary, open, where:'local'});
+    render();
+    return document.querySelectorAll('.card').length;
+  };
+  window.__overflow = () => {
+    const sc = document.getElementById('scroller'); const col = document.querySelector('.col720');
+    const els = Array.from(document.querySelectorAll('.card,.prose,.cardbody pre,.appr'));
+    const turn = document.querySelector('.turn');
+    const track = turn ? parseFloat(getComputedStyle(turn).gridTemplateColumns.split(' ')[1]) : 0;
+    return {sw: sc ? sc.scrollWidth : 0, cw: sc ? sc.clientWidth : 0,
+            colRight: col ? Math.round(col.getBoundingClientRect().right) : 0, colWidth: col ? col.clientWidth : 0, track,
+            maxRight: Math.round(Math.max(0, ...els.map((c) => c.getBoundingClientRect().right))),
+            durations: Array.from(document.querySelectorAll('.card .du')).map((d) => d.textContent),
+            lastTitle: (() => { const d = document.querySelectorAll('.card .du'); return d.length ? d[d.length - 1].title : ''; })()};
   };
 }

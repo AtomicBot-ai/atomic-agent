@@ -59,6 +59,9 @@ contextBridge.exposeInMainWorld("atomic", {
   modelsStart: () => ipcRenderer.invoke("cli:modelsStart"),
   traceUsage: (stateDir: string, sessionId: string) =>
     ipcRenderer.invoke("cli:traceUsage", { stateDir, sessionId }),
+  // item 4: per-call tool durations from the trace
+  traceTools: (stateDir: string, sessionId: string) =>
+    ipcRenderer.invoke("cli:traceTools", { stateDir, sessionId }),
   hostRam: () => ipcRenderer.invoke("app:hostRam"),
   keyEnv: () => ipcRenderer.invoke("app:keyEnv"),
 

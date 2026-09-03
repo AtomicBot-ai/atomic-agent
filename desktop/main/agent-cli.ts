@@ -1,6 +1,7 @@
 import { execFile, spawn } from "node:child_process";
 import { totalmem } from "node:os";
 import { closeSync, openSync, readSync, statSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
@@ -371,4 +372,80 @@ export async function traceUsage(
       turnIndex: captured?.turnIndex ?? 0,
     },
   };
+}
+
+/* item 4 — per-call tool durations from the trace.
+   The store stamps one `at` on a call and its result, so it carries no duration.
+   The trace writes `llm_completion` when the raw completion arrives and
+   `tool_invocation` when that call finishes; their difference (same turn/step,
+   nearest preceding in file order) is exactly the interval the TUI's live card
+   shows (tool_call_parsed → tool_call_executed). The whole file is read: the
+   256 KB tail of traceUsage would lose the early turns of a long session, and a
+   readline stream over a missing file can hang instead of rejecting. */
+export interface TraceToolRow {
+  seq: number;
+  turnIndex: number;
+  stepIndex: number;
+  batchIndex: number;
+  tool: string;
+  argsKey: string;
+  status: string;
+  ts: number;
+  completionTs: number | null;
+  ms: number | null;
+}
+
+export async function traceTools(
+  stateDir: string,
+  sessionId: string,
+): Promise<{ ok: boolean; rows?: TraceToolRow[]; error?: string }> {
+  if (!/^[\w.-]{1,80}$/.test(sessionId)) return { ok: false, error: "bad session id" };
+  if (!stateDir) return { ok: false, error: "no state dir" };
+  const file = join(stateDir, "traces", `${sessionId}.ndjson`);
+  let text: string;
+  try {
+    text = await readFile(file, "utf8");
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : "no trace" };
+  }
+  const rows: TraceToolRow[] = [];
+  // Nearest preceding completion, keyed by turn/step. A parse retry writes a second
+  // llm_completion (attempt 2) before the tool row, so "last seen" is the right one.
+  // `seq` restarts when a later `serve` appends to the file, so pairing is by file order.
+  let lastCompletion: { turnIndex: number; stepIndex: number; ts: number } | null = null;
+  for (const raw of text.split("\n")) {
+    const line = raw.trim();
+    if (!line || line[0] !== "{") continue;
+    let row: Record<string, unknown>;
+    try {
+      row = JSON.parse(line) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    const kind = row["type"];
+    if (kind === "llm_completion") {
+      lastCompletion = { turnIndex: row["turnIndex"] as number, stepIndex: row["stepIndex"] as number, ts: row["ts"] as number };
+      continue;
+    }
+    if (kind !== "tool_invocation") continue;
+    const turnIndex = row["turnIndex"] as number;
+    const stepIndex = row["stepIndex"] as number;
+    const ts = row["ts"] as number;
+    const paired =
+      lastCompletion && lastCompletion.turnIndex === turnIndex && lastCompletion.stepIndex === stepIndex ? lastCompletion : null;
+    rows.push({
+      seq: row["seq"] as number,
+      turnIndex,
+      stepIndex,
+      batchIndex: (row["batchIndex"] as number | undefined) ?? 0,
+      tool: String(row["tool"] ?? ""),
+      argsKey: JSON.stringify(row["args"] ?? {}),
+      status: String(row["status"] ?? ""),
+      ts,
+      completionTs: paired ? paired.ts : null,
+      // Never coerce a missing pairing to 0: null means "no measurement".
+      ms: paired ? Math.max(0, ts - paired.ts) : null,
+    });
+  }
+  return { ok: true, rows };
 }
