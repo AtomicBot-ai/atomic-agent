@@ -137,10 +137,11 @@ Honestly degraded, and labelled as such in the UI:
 - **Switching backend/provider/model restarts `atag serve`** — the running
   agent pins its provider at boot and 0.5.4 has no reload route; a switch is
   refused while a turn is running.
-- **The `custom` (external llama.cpp URL) backend** is not offered by the
-  selector, and the onboarding's custom step is left as it was: the TUI
-  probes the URL before writing mode `external` + the provider url in one
-  write, and the desktop has no probe yet.
+- **The `custom` (external llama.cpp URL) backend** is not offered, neither
+  by the selector nor by the first-run setup (two choices, not the TUI's
+  three): the TUI probes the URL before writing mode `external` + the
+  provider url in one write, and the desktop has no probe yet — set a
+  custom endpoint up from the TUI.
 
 ## Verification
 

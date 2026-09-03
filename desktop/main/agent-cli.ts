@@ -555,38 +555,61 @@ export function stateDirPath(): string {
 }
 
 /**
- * Names of the variables with a non-empty value that the agent will see:
- * Electron's own environment (it is what `atag serve` and every `atag`
- * subprocess inherit) plus the NAMES declared in <stateDir>/.env, which
- * the CLI loads itself. Values are never kept, returned or logged.
+ * The NAMES of the variables the agent will see, and which of them carry
+ * a non-empty value: Electron's own environment (it is what `atag serve`
+ * and every `atag` subprocess inherit) plus the names declared in
+ * <stateDir>/.env, which the CLI's dotenv loader applies only when the
+ * process environment does not already set them (load-dotenv.ts
+ * `skipped`). Values are never kept, returned or logged.
  */
-function keyNamesAvailable(): Set<string> {
-  const names = new Set<string>();
-  for (const [k, v] of Object.entries(process.env)) if (v && v.length > 0) names.add(k);
+export interface KeyEnvNames {
+  /** Set at all, empty value included — what `??` sees. */
+  present: Set<string>;
+  /** Set to a non-empty value — what `key.length > 0` sees. */
+  nonEmpty: Set<string>;
+}
+
+function keyNamesAvailable(): KeyEnvNames {
+  const present = new Set<string>();
+  const nonEmpty = new Set<string>();
+  for (const [k, v] of Object.entries(process.env)) {
+    if (v === undefined) continue;
+    present.add(k);
+    if (v.length > 0) nonEmpty.add(k);
+  }
   try {
     const text = readFileSync(join(stateDirPath(), ".env"), "utf8");
     for (const line of text.split(/\r?\n/)) {
       const m = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)$/.exec(line);
       if (!m) continue;
-      // An empty right-hand side is "no key" to the agent, so it is here too.
-      if (m[2]!.trim().replace(/^["']|["']$/g, "").length > 0) names.add(m[1]!);
+      const name = m[1]!;
+      if (present.has(name)) continue; // the environment wins, as in load-dotenv.ts
+      present.add(name);
+      if (m[2]!.trim().replace(/^["']|["']$/g, "").length > 0) nonEmpty.add(name);
     }
   } catch {
     // no .env — the environment alone decides
   }
-  return names;
+  return { present, nonEmpty };
 }
 
-/** resolveLlmProviderApiKey, answered as a boolean; subscription-CLI kinds authenticate elsewhere. */
-export function providerHasKey(entry: ProviderEntry, names: Set<string> = keyNamesAvailable()): boolean {
+/**
+ * resolveLlmProviderApiKey, answered as a boolean; subscription-CLI kinds
+ * authenticate elsewhere. The openai-compatible chain is the agent's
+ * `A ?? B ?? C` then `length > 0`: the first variable that is SET decides,
+ * so `OPENAI_COMPAT_API_KEY=""` next to a real `OPENAI_API_KEY` is "no key"
+ * here exactly as it is for the agent.
+ */
+export function providerHasKey(entry: ProviderEntry, names: KeyEnvNames = keyNamesAvailable()): boolean {
   if (entry.apiKey && entry.apiKey.length > 0) return true;
   if (entry.kind === "subscription-cli" && entry.subscriptionCli?.cli) return true;
-  if (entry.apiKeyEnvVar && entry.apiKeyEnvVar.length > 0) return names.has(entry.apiKeyEnvVar);
-  if (entry.kind === "openrouter") return names.has("OPENROUTER_API_KEY");
-  if (entry.kind === "aimlapi") return names.has("AIMLAPI_API_KEY");
-  if (entry.kind === "gemini") return names.has("GEMINI_API_KEY");
+  if (entry.apiKeyEnvVar && entry.apiKeyEnvVar.length > 0) return names.nonEmpty.has(entry.apiKeyEnvVar);
+  if (entry.kind === "openrouter") return names.nonEmpty.has("OPENROUTER_API_KEY");
+  if (entry.kind === "aimlapi") return names.nonEmpty.has("AIMLAPI_API_KEY");
+  if (entry.kind === "gemini") return names.nonEmpty.has("GEMINI_API_KEY");
   if (entry.kind === "openai-compatible" || entry.kind === "qwen-openai-compatible") {
-    return names.has("OPENAI_COMPAT_API_KEY") || names.has("OPENAI_API_KEY") || names.has("ATOMIC_AGENT_OPENAI_API_KEY");
+    const first = ["OPENAI_COMPAT_API_KEY", "OPENAI_API_KEY", "ATOMIC_AGENT_OPENAI_API_KEY"].find((n) => names.present.has(n));
+    return first !== undefined && names.nonEmpty.has(first);
   }
   return false;
 }

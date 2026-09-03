@@ -85,14 +85,23 @@ const OB = {
 const OB_CHOICES = [
   {id:'local',  t:'Local models',    d:'llama.cpp on this machine. Private, free per token, one download of 2.7–22 GB.'},
   {id:'cloud',  t:'Cloud models',    d:'OpenRouter, Anthropic, Gemini, Groq and 20 more. Fastest to a working agent — needs an API key.'},
-  {id:'custom', t:'Custom endpoint', d:'An OpenAI-compatible or llama-server URL you already run. Nothing is downloaded, nothing else is asked.'},
+  // Lane B — backend switch: the TUI's third choice, a custom endpoint, is
+  // not offered here. The TUI probes the URL (checkLlamaServer, verifyAuth)
+  // and then writes mode external + url + the local-llama provider url in
+  // ONE whole-file write (persistUserRemoteLlmUrls); the desktop has no
+  // probe, and a leaf write of localModels.url would leave the provider
+  // entry pointing at the managed port. Rather than write an unverified
+  // URL, the option stays out until the probe exists — set it up from the
+  // TUI (`atag`).
 ];
 /* Lane B — backend switch. What the chips and rows read while a switch
    runs in main: `line` is the popup's status text, `readyIds` the cloud
    providers with a usable key (the TUI's hasApiKey), `localLoaded`
    whether the local catalogue snapshot has landed — the model chip only
-   says "download model" once it has, as the TUI's does. */
-const BSW = { line:'', readyIds:[], localLoaded:false };
+   says "download model" once it has, as the TUI's does — and `readyLoaded`
+   whether the key facts have landed at all: until they have, the rows say
+   "checking keys…" rather than a "no API key" that is not known yet. */
+const BSW = { line:'', readyIds:[], readyLoaded:false, localLoaded:false };
 
 /* ============================================================
    Atomic Agent Desktop — clickable prototype, no backend.
@@ -488,8 +497,13 @@ function composer() {
         + (selBackend() === 'cloud'
             ? '<button class="cchip" data-sel-open="provider">' + esc(selActiveProviderId() || 'no provider') + ic('chevD') + '</button>'
             : '')
-        + '<button class="cchip modelchip" data-sel-open="model"' + (activeModel() ? '' : ' title="no model chosen — pick one"') + '>'
-          + esc(shortModel(activeModel())) + ic('chevD') + '</button>'
+        // Lane B — backend switch: the TUI's ComposerMetaControls renders
+        // no model control when there is no model (cloud provider without
+        // a chatModel, or local before the snapshot lands); the pane stays
+        // reachable through the provider chip and the backend rows.
+        + (activeModel()
+            ? '<button class="cchip modelchip" data-sel-open="model">' + esc(shortModel(activeModel())) + ic('chevD') + '</button>'
+            : '')
         + '<span style="flex:1"></span>'
         + contextChip()
         + codingModeChip()
@@ -1777,7 +1791,7 @@ function needsOnboarding(cfg) {
   if (ob.completedAt || ob.skippedAt) return false;
   const lm = (cfg && cfg.localModels) || {};
   const managedReady = lm.mode === 'managed' && lm.managed && lm.managed.modelId;
-  const localConfigured = (lm.mode === 'external' || lm.mode === 'custom') && lm.url;
+  const localConfigured = lm.mode === 'external' && lm.url;
   const llm = (cfg && cfg.llm) || {};
   const active = (llm.providers || []).find((p) => p.id === llm.activeTextProvider);
   const cloudReady = !!active && active.kind !== 'llama-server';
@@ -1818,23 +1832,15 @@ async function obLoadModels() {
   render();
 }
 
-async function obFinish(kind, detail) {
+/** `restartedAlready`: the local path's selectLocalModel has restarted the agent itself. */
+async function obFinish(kind, detail, restartedAlready) {
   OB.busy = true; render();
   const stamp = new Date().toISOString();
   const writes = [];
   if (kind === 'local') writes.push(['tui.onboarding.localSetupSeenAt', stamp]);
-  if (kind === 'custom') {
-    // Lane B — backend switch: left as it was, on purpose. The TUI's
-    // custom-endpoint step probes the URL (checkLlamaServer, verifyAuth)
-    // and then writes mode external + url + the local-llama provider url
-    // in ONE whole-file write (persistUserRemoteLlmUrls). The desktop has
-    // no probe, and a leaf write of localModels.url would leave the
-    // provider entry pointing at the managed port, so this branch is not
-    // rewired here rather than shipped as a half-fix; the CLI rejects the
-    // mode value and the error is shown as is.
-    writes.push(['localModels.mode', 'custom']);
-    writes.push(['localModels.url', detail]);
-  }
+  // Lane B — backend switch: there is no 'custom' kind any more (see
+  // OB_CHOICES) — the CLI rejects the mode value and the desktop has no
+  // URL probe, so that branch is gone rather than half-fixed.
   writes.push(['tui.onboarding.introSeenAt', stamp]);
   writes.push([kind === 'skip' ? 'tui.onboarding.skippedAt' : 'tui.onboarding.completedAt', stamp]);
   for (const [key, value] of writes) {
@@ -1856,6 +1862,9 @@ async function obFinish(kind, detail) {
   if (kind === 'local') {
     const res = await BR.useManagedMode();
     if (res && res.ok === false) { OB.busy = false; OB.error = 'could not write localModels.mode: ' + (res.error || 'unknown error'); render(); return; }
+    // selectLocalModel already bounced `atag serve` for its own writes;
+    // only a mode write that actually changed the file needs another one.
+    restarted = !!restartedAlready && !(res && res.changed);
   }
   if (kind === 'cloud') {
     const res = await BR.activateProvider(detail);
@@ -1885,7 +1894,7 @@ function obUseModel(model) {
       OB.busy = false;
       if (!res || !res.ok) { OB.error = (res && res.error) || 'could not select the model'; render(); return; }
       bswReport(res);
-      obFinish('local', model.id);
+      obFinish('local', model.id, !!res.restart);
     });
     return;
   }
@@ -1906,7 +1915,7 @@ function obHTML() {
 
   if (OB.step === 'choose') {
     return '<div id="onboarding"><div class="ob">'
-      + head(1, 'Where should the model run?', 'atomic-agent can drive models three ways. Nothing here is permanent — you can add the others at any time from the menu.')
+      + head(1, 'Where should the model run?', 'atomic-agent can drive models three ways; a custom endpoint is set up from the TUI. Nothing here is permanent — you can change it at any time from the menu.')
       + '<div class="ob-list">' + OB_CHOICES.map((c, i) =>
           '<button class="ob-opt' + (i === OB.choice ? ' on' : '') + '" data-ob-choice="' + i + '">'
           + '<span class="radio"></span>'
@@ -1966,14 +1975,10 @@ function obHTML() {
       + '</div></div>';
   }
 
-  // custom
-  return '<div id="onboarding"><div class="ob">'
-    + head('custom endpoint · step 2 of 2', 'Point at your endpoint', 'An OpenAI-compatible or llama-server URL you already run.')
-    + '<input class="field-inp" id="ob-url" style="width:100%" placeholder="http://127.0.0.1:8080" value="' + esc(OB.url || '') + '">'
-    + err
-    + '<div class="ob-foot"><button class="btn btn-g" data-ob="back">Back</button><span class="grow"></span>'
-    + '<button class="btn btn-p" data-ob="useUrl">Use this endpoint</button></div>'
-    + '</div></div>';
+  // Lane B — backend switch: the custom-endpoint step went with its
+  // OB_CHOICES entry; an unknown step falls back to the choice list.
+  OB.step = 'choose';
+  return obHTML();
 }
 
 
@@ -1996,14 +2001,6 @@ function obAction(what) {
     if (p) obFinish('cloud', p.id);
     return;
   }
-  if (what === 'useUrl') {
-    const input = document.getElementById('ob-url');
-    const url = (input && input.value.trim()) || '';
-    if (!/^https?:\/\/\S+$/.test(url)) { OB.error = 'That does not look like a URL.'; render(); return; }
-    OB.url = url;
-    obFinish('custom', url);
-    return;
-  }
   if (what === 'cancel') { BR.cancelPull(); OB.step = 'local'; render(); return; }
 }
 
@@ -2016,7 +2013,7 @@ if (BR) {
         BR.selectLocalModel(OB.pulling.id).then((res) => {
           if (!res || !res.ok) { OB.error = (res && res.error) || 'could not select the model'; OB.step = 'local'; render(); return; }
           bswReport(res);
-          obFinish('local', OB.pulling.id);
+          obFinish('local', OB.pulling.id, !!res.restart);
         });
       } else {
         OB.error = ev.error || 'the download failed';
@@ -2258,7 +2255,7 @@ function selRows() {
     const ready = selProviders().filter((p) => BSW.readyIds.includes(p.id)).length;
     return [
       {type:'backend', id:'cloud', label:'cloud',
-       detail: ready > 0 ? ready + ' provider' + (ready === 1 ? '' : 's') + ' ready' : 'add a provider first',
+       detail: !BSW.readyLoaded ? 'checking keys…' : ready > 0 ? ready + ' provider' + (ready === 1 ? '' : 's') + ' ready' : 'add a provider first',
        active: selBackend() === 'cloud'},
       {type:'backend', id:'local', label:'local',
        detail: 'llama.cpp managed here',
@@ -2270,7 +2267,7 @@ function selRows() {
     // providerRows: hasApiKey ? (chatModel ?? 'default model') : 'no API key'.
     const rows = selProviders().map((p) => ({
       type:'provider', id:p.id, label:p.id,
-      detail: BSW.readyIds.includes(p.id) ? (p.defaultChatModel || p.model || 'default model') : 'no API key',
+      detail: !BSW.readyLoaded ? 'checking keys…' : BSW.readyIds.includes(p.id) ? (p.defaultChatModel || p.model || 'default model') : 'no API key',
       active: p.id === activeId,
     }));
     return rows;
@@ -2438,7 +2435,7 @@ function selectorHTML() {
 /** One popup shell: fixed height, its own scroll, anchored to the chip. */
 function selShell(title, body, foot) {
   return '<div class="scrim" data-close="1" style="background:transparent">'
-    + '<div class="popover selpop" style="' + anchorStyle('.modelchip', 460) + '">'
+    + '<div class="popover selpop" style="' + anchorStyle(document.querySelector('.modelchip') ? '.modelchip' : '.modechip', 460) + '">'
     + '<div class="selhead">' + esc(title)
     + (SEL.busy ? '<span class="cap" style="margin-left:auto">' + esc(BSW.line || 'saving…') + '</span>' : '') + '</div>'
     + body
@@ -2594,7 +2591,7 @@ async function selChooseBackend(id) {
   const res = await BR.switchBackend(id);
   SEL.busy = false; BSW.line = '';
   if (!res || !res.ok) {
-    if (res && res.needsProvider) { SEL.kind = 'provider'; render(); return res; }
+    if (res && res.needsProvider) { SEL.kind = 'provider'; SEL.addOpen = true; SEL.presetCur = 0; render(); return res; }
     if (res && res.needsKey) { bswOpenKey(res.providerId); return res; }
     SEL.err = (res && res.error) || 'could not switch to ' + id;
     toast('Could not switch to ' + id, SEL.err);
@@ -2743,7 +2740,13 @@ async function wizNext() {
   if (k.custom && !/^https?:\/\/\S+$/.test(WIZ.baseUrl)) { WIZ.error = 'That does not look like a URL.'; render(); return; }
   WIZ.phase = 'verifying'; WIZ.error = null; render();
 
-  const id = k.custom ? 'custom-' + WIZ.baseUrl.replace(/^https?:\/\//, '').replace(/[^\w.-]+/g, '-').slice(0, 32) : k.id;
+  // Lane B — backend switch: opened for an existing entry without a key
+  // (bswOpenKey), the write goes to that entry's own id, as the TUI's
+  // openProviderConfigFor does; a fresh pick keeps the preset id.
+  const existing = WIZ.forId ? selProviders().find((p) => p.id === WIZ.forId) : null;
+  WIZ.forId = null;
+  const id = existing && existing.kind === k.kind ? existing.id
+    : k.custom ? 'custom-' + WIZ.baseUrl.replace(/^https?:\/\//, '').replace(/[^\w.-]+/g, '-').slice(0, 32) : k.id;
   const entry = {id, kind:k.kind};
   if (k.baseUrl || k.custom) entry.baseUrl = k.custom ? WIZ.baseUrl : k.baseUrl;
   if (k.env) entry.apiKeyEnvVar = k.env;
@@ -2924,15 +2927,21 @@ function bswReport(res, extra) {
   if (extra) S.log.push({id:nid(), k:'system', text: esc(extra)});
   if (res.daemonLine) S.log.push({id:nid(), k:'system', text: esc(res.daemonLine)});
   if (res.daemon === 'start-failed' && res.error) S.log.push({id:nid(), k:'system', text: esc('local-llm: ' + res.error)});
-  if (res.restart) S.log.push({id:nid(), k:'system', text:'restarting the agent…'});
+  // No "restarting" line: main has already restarted `atag serve` by the
+  // time this runs, and applyStatus reports the reconnect itself.
   render();
 }
 
 /** The TUI's answer to a provider without a key: its configure step. */
 function bswOpenKey(id) {
-  const row = KIND_ROWS.find((k) => k.id === id);
-  SEL.err = 'no API key for ' + id + (row && row.env ? ' — enter one or export ' + row.env : '');
-  if (row) { WIZ.row = row; WIZ.phase = 'configure'; WIZ.apiKey = ''; WIZ.baseUrl = ''; WIZ.error = SEL.err; }
+  // The entry's kind decides which configure step opens (the TUI's
+  // openProviderConfigFor), so a hand-named entry gets one too; the id
+  // only matches a preset when the entry was created from it.
+  const entry = selProviders().find((p) => p.id === id);
+  const row = (entry && KIND_ROWS.find((k) => k.kind === entry.kind)) || KIND_ROWS.find((k) => k.id === id);
+  const env = (entry && entry.apiKeyEnvVar) || (row && row.env);
+  SEL.err = 'no API key for ' + id + (env ? ' — enter one or export ' + env : '');
+  if (row) { WIZ.row = row; WIZ.forId = id; WIZ.phase = 'configure'; WIZ.apiKey = ''; WIZ.baseUrl = (entry && entry.baseUrl) || ''; WIZ.error = SEL.err; }
   render();
 }
 
@@ -2940,7 +2949,8 @@ function bswOpenKey(id) {
 function bswRefreshFacts() {
   if (!BR) return;
   BR.providersReady().then((r) => {
-    if (r && r.ok && Array.isArray(r.ids)) { BSW.readyIds = r.ids; render(); }
+    // A failed read keeps the previous ids (and the previous "loaded" state).
+    if (r && r.ok && Array.isArray(r.ids)) { BSW.readyIds = r.ids; BSW.readyLoaded = true; render(); }
   });
   if (selBackend() === 'local' && !SEL.localBusy && !SEL.pulling) {
     BR.modelsList().then((res) => {
@@ -2990,5 +3000,9 @@ if (typeof window !== 'undefined') {
     for (let i = S.log.length - 1; i >= 0; i--) if (S.log[i].k === 'system') return S.log[i].text || '';
     return '';
   };
-  window.__bsw = () => ({line:BSW.line, readyIds:BSW.readyIds.slice(), localLoaded:BSW.localLoaded, turnBusy:S.busy, gate:localTurnGate()});
+  window.__bsw = () => ({line:BSW.line, readyIds:BSW.readyIds.slice(), readyLoaded:BSW.readyLoaded, localLoaded:BSW.localLoaded, turnBusy:S.busy, gate:localTurnGate()});
+  // Every system line, entities decoded, so the smoke can pin the TUI's runtime_info copy.
+  window.__systemLines = () => S.log.filter((m) => m.k === 'system').map((m) => {
+    const t = document.createElement('textarea'); t.innerHTML = m.text || ''; return t.value;
+  });
 }

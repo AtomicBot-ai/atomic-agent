@@ -387,7 +387,8 @@ async function smokeTest(): Promise<void> {
       "document.querySelector('#onboarding .ob-title')?.textContent ?? ''",
     );
     const options = await js<number>("document.querySelectorAll('#onboarding .ob-opt').length");
-    check("wizard opens", title.length > 0 && options === 3, `${JSON.stringify(title)} options=${options}`);
+    // Lane B — backend switch: two choices; the custom endpoint is not offered by the desktop.
+    check("wizard opens", title.length > 0 && options === 2, `${JSON.stringify(title)} options=${options}`);
   }
 
   if (state === "connected") {
@@ -630,7 +631,9 @@ async function backendSwitchTest(
     check(
       "backend: renderer follows the file",
       localChips.backend === "local" && /local/.test(localChips.mode)
-        && (managedId ? localChips.model.includes(managedId) : true),
+        // With a managed model the chip names it; with none, it reads the
+        // TUI's DOWNLOAD_MODEL_LABEL once the catalogue snapshot has landed.
+        && (managedId ? localChips.model.includes(managedId) : /download model/.test(localChips.model)),
       `backend=${localChips.backend} chip=${JSON.stringify(localChips.mode)} model=${JSON.stringify(localChips.model)}`,
     );
     check(
@@ -697,6 +700,22 @@ async function backendSwitchTest(
       "backend: daemon side effect mirrors the TUI (cloud)",
       !daemonAfterCloud || toCloud?.daemon === "stop-failed",
       `daemon=${toCloud?.daemon} running=${daemonAfterCloud}`,
+    );
+    // Write 2 of activateProvider: a successful stop is followed by
+    // memory.embeddings.enabled=false (the TUI's stopDaemon order).
+    check(
+      "backend: hybrid recall off after the daemon stop",
+      toCloud?.daemon !== "stopped" || afterCloud?.memory?.embeddings?.enabled === false,
+      `daemon=${toCloud?.daemon} memory.embeddings.enabled=${afterCloud?.memory?.embeddings?.enabled}`,
+    );
+    // The TUI's runtime_info lines, verbatim, in the transcript.
+    const lines = (await js<string[]>("window.__systemLines()")) ?? [];
+    const switchLine = `Switched active text provider to "${expected}". New messages use native_tools.`;
+    const stopLine = "local-llm: daemons stopped — hybrid recall off (embedding switch unchanged)";
+    check(
+      "backend: TUI runtime_info copy in the transcript",
+      lines.includes(switchLine) && (toCloud?.daemon !== "stopped" || lines.includes(stopLine)),
+      `switch=${lines.includes(switchLine)} stop=${lines.includes(stopLine)} daemon=${toCloud?.daemon}`,
     );
   } finally {
     if (beforeConfig) await configSetWhole(beforeConfig);
