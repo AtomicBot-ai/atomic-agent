@@ -213,6 +213,8 @@ const SKP = {
   hubRows:[], hubCursor:0, hubQuery:'', hubSearchEditing:false, hubLoading:false, hubError:null, hubSeq:0,
   installing:false, installError:null, installConfirm:null,
   hubCard:null, hubCardLoading:false, cardScroll:0, removeConfirm:null, timer:null,
+  detailSource:null, // 'route' (GET /api/skills/{name}) | 'skillShow' (`atag skill show`) — which source filled detailBody
+  routeOverride:null, // --smoke only: a substitute answer for the route, so the skill-show fallback can be driven on 0.5.4 (its registry never 404s a skill disabled after boot)
 };
 const SKP_FILTERS = ['all','enabled','disabled']; // skills-filter.ts FILTER_ORDER
 const SKP_MAX_ROWS = 14, SKP_HUB_ROWS = 12, SKP_DETAIL_LINES = 32, SKP_CARD_LINES = 24; // skills-panel.tsx / skills-hub-list.tsx / skills-detail.tsx / HUB_CARD_BODY_WINDOW
@@ -223,6 +225,7 @@ const MEM = {
   notesFilter:'active', lastRefreshedAt:null, loading:false, auto:true,
   detailRowKey:null, detail:null, lastError:null, channelHint:null, timer:null, seq:0,
   cfg:null, cfgBusy:false, // `atag config get memory` — the effective flags when the user file has no memory.* key
+  expandRuns:0, expandQueries:0, // g expand graph: completed walks and the links.outgoing/incoming statements they ran (the smoke tells a walk from the no-op)
 };
 const MEM_CHANNEL_ORDER = ['profile','notes','lessons','procedures','links','votes'];
 const MEM_NOTES_FILTERS = ['active','archived','all'];
@@ -1105,7 +1108,7 @@ async function refreshSkillList() {
   const before = JSON.stringify([SK.rows, SK.err]);
   if (res && res.ok && Array.isArray(res.rows)) { SK.rows = res.rows; SK.err = null; }
   else SK.err = (res && res.error) || 'skill list failed';
-  if (S.settings && before !== JSON.stringify([SK.rows, SK.err]) && !tkTyping() && !skpTyping()) render(); // same guard as refreshHealth (+ the hub search box, Item 7 part B)
+  if ((S.settings || skillsVisible()) && before !== JSON.stringify([SK.rows, SK.err]) && !tkTyping() && !skpTyping()) render(); // same guard as refreshHealth (+ the hub search box and the Skills room (⌘3), which paints the same rows — Item 7 part B)
 }
 /* Everything a Manage tab needs when it comes into view: the diagnostics
    line, the Tasks list primed once (the TUI starts its tasks orchestrator
@@ -3899,8 +3902,8 @@ function skpInstallConfirmHTML() {
   const c = SKP.installConfirm;
   return '<div class="tuimodal danger"><b style="color:var(--danger)">Security scan: ' + esc(String(c.verdict).toUpperCase()) + '</b>'
     + '<div class="ter">install ' + esc(c.identifier) + '?</div>'
-    // The TUI lists the scan findings (`[rule] file:line excerpt`); `atag skill install` prints only its blocked line, so that is the one finding here.
-    + '<div style="margin-top:8px"><span class="tuierr">[security scan]</span> ' + esc(c.message) + '</div>'
+    // The TUI lists the scan findings (`[rule] file:line excerpt`); `atag skill install` prints only its blocked line, shown plainly — no invented rule id in the finding slot.
+    + '<div style="margin-top:8px" class="tuierr">' + esc(c.message) + '</div>'
     + '<div class="ter">(findings are not printed by `atag skill install` — the verdict line above is all the CLI reports)</div>'
     + (SKP.installing ? '<div class="ter" style="margin-top:8px">installing…</div>'
         : '<div class="tuihint">' + tuiBtn('[y] install anyway (risk acknowledged)', 'skills:installAck') + '<span>  </span>' + tuiBtn('[n] cancel', 'skills:installCancel') + '</div>') + '</div>';
@@ -3987,17 +3990,17 @@ async function skpOpenDetail(name) {
   // GET /api/skills/{name} is the registry's filtered view: a disabled skill
   // answers 404, and the body then comes from `atag skill show` (the TUI's
   // openDetail reads the manifest path from listAll() for the same reason).
-  const res = await BR.skill(name);
-  let body = null, err = null;
-  if (res && res.ok && res.data && typeof res.data.body === 'string') body = res.data.body;
+  const res = SKP.routeOverride !== null ? SKP.routeOverride : await BR.skill(name);
+  let body = null, err = null, source = null;
+  if (res && res.ok && res.data && typeof res.data.body === 'string') { body = res.data.body; source = 'route'; }
   else {
     const shown = await BR.skillShow(name);
-    if (shown && shown.ok && typeof shown.body === 'string') body = shown.body;
+    if (shown && shown.ok && typeof shown.body === 'string') { body = shown.body; source = 'skillShow'; }
     else err = (shown && shown.error) || (res && res.error) || 'unknown error';
   }
   if (SKP.detailName !== name || SKP.mode !== 'detail') return;
-  if (err !== null) { SKP.msg = {text:'failed to open ' + name + ': ' + err}; SKP.mode = 'list'; render(); return; }
-  SKP.detailBody = body; render();
+  if (err !== null) { SKP.msg = {text:'failed to open ' + name + ': ' + err}; SKP.mode = 'list'; SKP.detailSource = null; render(); return; }
+  SKP.detailBody = body; SKP.detailSource = source; render();
 }
 async function skpToggle(name) {
   if (!BR || SKP.busy) return;
@@ -4169,7 +4172,7 @@ function skillsKey(e, k, inText) {
     return true;
   }
   if (SKP.hubCard) {
-    if (k === 'i' || k === 'y') { e.preventDefault(); if (SKP.hubCard.installId) skpInstall(false); return true; }
+    if (k === 'i' || k === 'y' || k === 'Enter') { e.preventDefault(); if (SKP.hubCard.installId) skpInstall(false); return true; } // handleHubCardKey: i / y / Enter
     if (k === 'n' || k === 'Escape') { e.preventDefault(); skillsAct('back'); return true; }
     if (k === 'j' || k === 'ArrowDown') { e.preventDefault(); SKP.cardScroll++; render(); return true; }
     if (k === 'k' || k === 'ArrowUp') { e.preventDefault(); SKP.cardScroll = Math.max(0, SKP.cardScroll - 1); render(); return true; }
@@ -4582,6 +4585,7 @@ async function memExpandLinks(seedIds, depth, maxExpanded) {
     for (const node of frontier) {
       const outgoing = (await memQ('links.outgoing', [node])).map(memLink);
       const incoming = (await memQ('links.incoming', [node])).map(memLink);
+      MEM.expandQueries += 2;
       for (const e of outgoing) { if (seen.has(e.toId)) continue; seen.add(e.toId); result.push(e.toId); next.push(e.toId); if (result.length >= maxExpanded) return result; }
       for (const e of incoming) { if (seen.has(e.fromId)) continue; seen.add(e.fromId); result.push(e.fromId); next.push(e.fromId); if (result.length >= maxExpanded) return result; }
     }
@@ -4598,7 +4602,7 @@ async function memExpandNeighbors() {
     const expanded = await memExpandLinks([d.id], 2, 24);
     const next = await memNoteDetail(d.id, expanded);
     if (MEM.detail !== d) return;
-    if (next) MEM.detail = next;
+    if (next) { next.expandedAt = Date.now(); MEM.expandRuns++; MEM.detail = next; }
   } catch (err) {
     MEM.lastError = err && err.message ? err.message : String(err);
   }
@@ -4982,15 +4986,19 @@ if (typeof window !== 'undefined') {
   window.__skillsWindow = () => ({painted: document.querySelectorAll('#settings [data-skill-row]').length, visible: skpVisibleRows().length, max: SKP_MAX_ROWS,
     above: (document.querySelector('#settings [data-act="skills:page:up"]') || {}).textContent || '', below: (document.querySelector('#settings [data-act="skills:page:down"]') || {}).textContent || ''});
   window.__skillsState = () => ({mode: SKP.mode, cursor: SKP.cursor, filter: SKP.filter, auto: SKP.auto, busy: SKP.busy, detailName: SKP.detailName,
-    detailBody: SKP.detailBody, lastError: SKP.lastError, msg: SKP.msg ? SKP.msg.text : '', restart: !!(SKP.msg && SKP.msg.restart),
+    detailBody: SKP.detailBody, detailSource: SKP.detailSource, lastError: SKP.lastError, msg: SKP.msg ? SKP.msg.text : '', restart: !!(SKP.msg && SKP.msg.restart),
     hubRows: SKP.hubRows.map((r) => ({identifier: r.identifier, source: r.source, downloads: r.downloads})), hubLoading: SKP.hubLoading, hubError: SKP.hubError,
     hubCard: SKP.hubCard ? {identifier: SKP.hubCard.identifier, name: SKP.hubCard.name, repo: SKP.hubCard.repo, version: SKP.hubCard.version,
       bodyLines: SKP.hubCard.body === null ? 0 : SKP.hubCard.body.split('\n').length, bodyError: SKP.hubCard.bodyError, installId: SKP.hubCard.installId} : null,
     hubCardLoading: SKP.hubCardLoading, installConfirm: SKP.installConfirm, removeConfirm: SKP.removeConfirm ? Object.assign({}, SKP.removeConfirm) : null, installError: SKP.installError});
   window.__skillsAct = (what) => { skillsAct(what); return window.__skillsState(); };
+  // --smoke: stand in for GET /api/skills/{name} (e.g. {ok:false, error:'404'}) so skpOpenDetail's `atag skill show` branch runs; null restores the route.
+  window.__skillsRouteOverride = (res) => { SKP.routeOverride = res === undefined ? null : res; return SKP.routeOverride; };
   window.__memory = () => ({channel: MEM.channel, channels: MEM.available.slice(), rows: MEM.rows.length, mode: MEM.mode, hint: MEM.channelHint, error: MEM.lastError,
-    refreshed: MEM.lastRefreshedAt, notesFilter: MEM.notesFilter, detail: MEM.detail ? {channel: MEM.detail.channel, id: MEM.detail.id, key: MEM.detail.key, body: MEM.detail.body,
-      expanded: MEM.detail.expandedNeighbors ? MEM.detail.expandedNeighbors.slice() : null} : null});
+    refreshed: MEM.lastRefreshedAt, notesFilter: MEM.notesFilter, linksOn: memFlag('links'), expandRuns: MEM.expandRuns, expandQueries: MEM.expandQueries,
+    stateDir: memStateDir(), detail: MEM.detail ? {channel: MEM.detail.channel, id: MEM.detail.id, key: MEM.detail.key, body: MEM.detail.body,
+      expanded: MEM.detail.expandedNeighbors ? MEM.detail.expandedNeighbors.slice() : null, expandedAt: MEM.detail.expandedAt || null,
+      outgoing: MEM.detail.outgoing ? MEM.detail.outgoing.map((n) => n.memoryId) : null} : null});
   window.__memoryOpen = async (channel) => { memSetChannel(channel); await memRefresh(); return window.__memory(); };
   window.__memoryRefresh = async () => { await memRefresh(); return window.__memory(); };
   window.__memoryDetail = async (i) => { const row = memVisibleRows()[i || 0]; if (!row) return null; await memOpenDetail(row); return window.__memory(); };

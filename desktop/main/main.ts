@@ -3,6 +3,8 @@ import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { writeFileSync } from "node:fs";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 
 import { AgentClient } from "./agent-client.js";
 import { buildMenu } from "./menu.js";
@@ -1017,7 +1019,7 @@ async function settingsTestPartB(
   const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
   const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
   type SkillsState = {
-    mode: string; busy: boolean; detailName: string | null; detailBody: string | null; msg: string; restart: boolean; lastError: string | null;
+    mode: string; busy: boolean; detailName: string | null; detailBody: string | null; detailSource: "route" | "skillShow" | null; msg: string; restart: boolean; lastError: string | null;
     hubRows: Array<{ identifier: string; source: string }>; hubLoading: boolean; hubError: string | null;
     hubCard: { identifier: string; name: string; bodyLines: number; bodyError: string | null; installId: string | null } | null; hubCardLoading: boolean;
   };
@@ -1044,10 +1046,9 @@ async function settingsTestPartB(
   const opened = await until(async () => { await js<void>("window.__skillsAct('detail')"); return skills(); }, (s) => s.mode === "detail", 2_000);
   const detail = await until(skills, (s) => s.detailBody !== null || s.mode !== "detail", 20_000);
   const detailBody = await js<string>("window.__settingsBody()");
-  const detailOk = opened.mode === "detail" && typeof detail.detailBody === "string" && detail.detailBody.length > 0 && !!detail.detailName
+  const detailOk = opened.mode === "detail" && typeof detail.detailBody === "string" && detail.detailBody.length > 0 && !!detail.detailName && detail.detailSource === "route"
     && detailBody.includes(detail.detailName) && detailBody.includes("Esc back") && detailBody.includes("e toggle") && detailBody.includes("r refresh");
-  check("skills tab: Enter opens the detail from GET /api/skills/{name}", detailOk, `${detail.detailName ?? "?"} body=${detail.detailBody ? detail.detailBody.length : "null"} mode=${detail.mode}`);
-  const enabledBody = detail.detailBody ?? "";
+  check("skills tab: Enter opens the detail from GET /api/skills/{name}", detailOk, `${detail.detailName ?? "?"} body=${detail.detailBody ? detail.detailBody.length : "null"} mode=${detail.mode} source=${detail.detailSource ?? "none"}`);
   await js<void>("window.__skillsAct('back')");
 
   // ---- Skills: e toggle → `atag skill disable`, detail via `atag skill show`, restored with `atag skill enable` ----
@@ -1068,15 +1069,36 @@ async function settingsTestPartB(
         toggled.msg === `skill disabled: ${target}` && toggled.restart && !!row && row.enabled === false && !settled.lastError,
         `msg=${JSON.stringify(toggled.msg)} listed=${row ? String(row.enabled) : "missing"} err=${settled.lastError ?? ""}`,
       );
-      // A disabled skill is outside the registry's filtered view (404) — the body comes from `atag skill show`.
-      const viaShow = await until(async () => {
-        const s = await skills();
-        if (s.mode !== "detail") await js<void>(`window.__skillsAct(${JSON.stringify("detail:" + target)})`);
-        return skills();
-      }, (s) => s.mode === "detail" && s.detailBody !== null, 20_000);
-      const shownBody = viaShow.detailBody ?? "";
-      const sameAsRoute = target === detail.detailName ? shownBody === enabledBody : shownBody.length > 0;
-      check("skills tab: a disabled skill's detail falls back to atag skill show", viaShow.detailName === target && shownBody.length > 0 && !shownBody.startsWith("---") && sameAsRoute, `${shownBody.length} chars${target === detail.detailName ? (sameAsRoute ? ", same body as the route" : ", differs from the route body") : ""}`);
+      // A disabled skill is outside the registry's filtered view (404) — the body comes from `atag skill show`. On 0.5.4 the
+      // route's view is boot-time, so a skill disabled now still answers 200 and the fallback cannot be provoked through
+      // the route; two proofs instead. (1) Parity against the installed binary: skillShow() (header lines stripped,
+      // frontmatter cut) equals the route body for the same skill. (2) The desktop's own branch: with the route answer
+      // overridden to a 404-shaped failure, skpOpenDetail reads from cli:skillShow and records detailSource.
+      const routeRes = await js<{ ok: boolean; data?: { body?: unknown }; error?: string }>(`window.atomic.skill(${JSON.stringify(target)})`);
+      const routeText = routeRes.ok && routeRes.data && typeof routeRes.data.body === "string" ? routeRes.data.body : null;
+      const shown = await js<{ ok: boolean; body?: string; error?: string }>(`window.atomic.skillShow(${JSON.stringify(target)})`);
+      const shownText = shown.ok && typeof shown.body === "string" ? shown.body : null;
+      check(
+        "skills tab: atag skill show stripped of its two header lines equals the route body",
+        shownText !== null && shownText.length > 0 && !shownText.startsWith("---") && routeText !== null && shownText === routeText,
+        `${target}: skill show ${shownText === null ? "failed: " + (shown.error ?? "?") : shownText.length + " chars"}, route ${routeText === null ? "failed: " + (routeRes.error ?? "?") : routeText.length + " chars"}${shownText !== null && routeText !== null && shownText !== routeText ? ", bodies differ" : ""}`,
+      );
+      await js<void>("window.__skillsRouteOverride({ok:false, error:'404 not found (smoke: route answer overridden)'})");
+      try {
+        const viaShow = await until(async () => {
+          const s = await skills();
+          if (s.mode !== "detail") await js<void>(`window.__skillsAct(${JSON.stringify("detail:" + target)})`);
+          return skills();
+        }, (s) => s.mode === "detail" && s.detailBody !== null, 20_000);
+        const shownBody = viaShow.detailBody ?? "";
+        check(
+          "skills tab: a disabled skill's detail falls back to atag skill show",
+          viaShow.detailName === target && viaShow.detailSource === "skillShow" && shownBody.length > 0 && !shownBody.startsWith("---") && shownText !== null && shownBody === shownText,
+          `${target}: source=${viaShow.detailSource ?? "none"} ${shownBody.length} chars${shownText !== null && shownBody === shownText ? ", same body as cli:skillShow" : ""}${viaShow.lastError ? " err=" + viaShow.lastError : ""}`,
+        );
+      } finally {
+        await js<void>("window.__skillsRouteOverride(null)");
+      }
     } finally {
       await skillSetDisabled(target, false);
       await js<void>("window.__skillsAct('back'); window.__skillsAct('refresh')");
@@ -1091,6 +1113,23 @@ async function settingsTestPartB(
   const hub = await until(skills, (s) => s.mode === "hub" && !s.hubLoading, 120_000);
   const hubBody = await js<string>("window.__settingsBody()");
   check("skills hub: `atag skill browse` rows", hub.hubRows.length > 0 && hubBody.includes("hub search: (all)") && hubBody.includes("Enter open card"), `${hub.hubRows.length} rows${hub.hubError ? " hubError=" + hub.hubError : ""}`);
+  // A `[gh]` row (skills.taps): the card carries the TUI's no-preview copy, no download count and installs by identifier.
+  const ghIdx = hub.hubRows.findIndex((r) => r.source === "github");
+  if (ghIdx >= 0) {
+    await js<void>(`window.__skillsAct(${JSON.stringify("card:" + ghIdx)})`);
+    const ghCard = await until(skills, (s) => !!s.hubCard && !s.hubCardLoading, 10_000);
+    const ghBody = await js<string>("window.__settingsBody()");
+    const gc = ghCard.hubCard;
+    check(
+      "skills hub: a GitHub-tap card says SKILL.md is pulled at install",
+      !!gc && gc.identifier === hub.hubRows[ghIdx]!.identifier && gc.bodyLines === 0 && gc.bodyError === "preview unavailable for GitHub taps (SKILL.md is pulled at install)" && gc.installId === gc.identifier
+        && ghBody.includes("[gh] ") && ghBody.includes("↓—") && ghBody.includes("preview unavailable for GitHub taps (SKILL.md is pulled at install)") && ghBody.includes("[i] install"),
+      gc ? `${gc.identifier}: ${gc.bodyError ?? gc.bodyLines + " lines"}` : "no card",
+    );
+    await js<void>("window.__skillsAct('back')");
+  } else {
+    check("skills hub: a GitHub-tap card says SKILL.md is pulled at install", false, `no [gh] row among ${hub.hubRows.length} browse rows (skills.taps empty or every tap warned)`);
+  }
   await js<void>("window.__skillsAct('search:pdf')");
   const found = await until(skills, (s) => !s.hubLoading, 120_000);
   const first = found.hubRows[0];
@@ -1122,7 +1161,16 @@ async function settingsTestPartB(
 
   // ---- Memory: channels from config, rows from the tab's own SQL ----
   await js<void>("window.__settingsOpen('memory')");
-  type MemState = { channel: string; channels: string[]; rows: number; mode: string; hint: string | null; error: string | null; refreshed: number | null; detail: { channel: string; id?: number; body: string; expanded: number[] | null } | null };
+  type MemState = {
+    channel: string; channels: string[]; rows: number; mode: string; hint: string | null; error: string | null; refreshed: number | null;
+    linksOn: boolean | null; expandRuns: number; expandQueries: number; stateDir: string | null;
+    detail: { channel: string; id?: number; body: string; expanded: number[] | null; expandedAt: number | null; outgoing: number[] | null } | null;
+  };
+  // The link fixture for `g expand graph` is written with the sqlite3 CLI into the lane's own memory.sqlite (WAL, beside
+  // the running serve) and deleted in finally; app:memoryQuery stays read-only.
+  const sqliteExec = async (stateDir: string, sql: string): Promise<void> => {
+    await promisify(execFile)("/usr/bin/sqlite3", [join(stateDir, "memory.sqlite"), sql], { timeout: 10_000 });
+  };
   const memory = () => js<MemState>("window.__memory()");
   const mem = await until(memory, (m) => m.refreshed !== null || !!m.error, 20_000);
   const memCfg = await configGetKey("memory");
@@ -1145,8 +1193,34 @@ async function settingsTestPartB(
     const d = await js<MemState>("window.__memoryDetail(0)");
     const dBody = await js<string>("window.__settingsBody()");
     check("memory tab: a note's detail is memory-detail-text.ts's body", d.mode === "detail" && !!d.detail && d.detail.channel === "notes" && d.detail.body.startsWith("#") && d.detail.body.includes("--- links ---") && dBody.includes(`note #${d.detail.id}`) && dBody.includes("g expand graph"), d.detail ? `note #${d.detail.id}` : `mode=${d.mode} err=${d.error ?? ""}`);
-    const g = await js<MemState>("window.__memoryExpand()");
-    check("memory tab: g expand graph runs the link-store walk", !!g.detail && Array.isArray(g.detail.expanded) && !g.error, g.detail ? `${(g.detail.expanded ?? []).length} expanded` : `err=${g.error ?? ""}`);
+    // g expand graph: seed one link from the open note to another active note, so the walk (links.outgoing/incoming, depth 2)
+    // has a neighbour to return; with memory.links.enabled false the walk is the TUI's no-op and must run no statement.
+    const noteIds = ((notesSql.rows ?? []) as Array<{ id?: unknown }>).map((r) => (typeof r.id === "number" ? r.id : null)).filter((x): x is number => x !== null);
+    const seedFrom = d.detail && typeof d.detail.id === "number" ? d.detail.id : null;
+    const seedTo = noteIds.find((id) => id !== seedFrom) ?? null;
+    const linksOn = d.linksOn === true;
+    let seeded = false;
+    try {
+      if (linksOn && seedFrom !== null && seedTo !== null && d.stateDir) {
+        await sqliteExec(d.stateDir, `INSERT OR IGNORE INTO memory_links(from_id, to_id, kind, weight, created_at) VALUES(${seedFrom}, ${seedTo}, 'desktop-smoke', 1.0, ${Date.now()})`);
+        seeded = true;
+      }
+      const g = await js<MemState>("window.__memoryExpand()");
+      const ex = g.detail?.expanded ?? null;
+      const walked = !!g.detail && g.detail.expandedAt !== null && g.expandRuns === 1 && g.expandQueries >= 2 && Array.isArray(ex) && !g.error;
+      const ok = linksOn
+        ? walked && (!seeded || (ex!.includes(seedTo!) && (g.detail!.outgoing ?? []).includes(seedTo!) && g.detail!.body.includes(`expanded (g): #${seedTo}`)))
+        : !!g.detail && g.expandRuns === 0 && g.expandQueries === 0 && !g.error;
+      check(
+        "memory tab: g expand graph runs the link-store walk",
+        ok,
+        linksOn
+          ? `${seeded ? `link #${seedFrom}→#${seedTo} seeded, ` : "no second note to link, "}${g.expandRuns} run · ${g.expandQueries} link statements · expanded=${JSON.stringify(ex)}${g.error ? " err=" + g.error : ""}`
+          : `memory.links.enabled=${String(g.linksOn)}: no-op as the TUI (${g.expandQueries} statements)${g.error ? " err=" + g.error : ""}`,
+      );
+    } finally {
+      if (seeded && d.stateDir) await sqliteExec(d.stateDir, "DELETE FROM memory_links WHERE kind = 'desktop-smoke'");
+    }
     await js<void>("window.__memoryAct('back')");
   }
   if (expectedChannels.includes("votes")) {
