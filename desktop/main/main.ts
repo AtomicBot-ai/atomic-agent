@@ -5488,20 +5488,23 @@ async function r4SeamTest(
   const busyBefore = await js<boolean>("window.__busy()");
   const draftBefore = await js<{ draft: string; entry: string | null }>("window.__draft()");
   try {
-    const armed = await js<{ state: string; users: number; queued: number; busy: boolean }>(
+    const armed = await js<{ state: string; users: number; queued: number; draft: string }>(
       "(async () => { window.__modeBusy(true); window.__voiceArm();"
+      // A take that really heard something, so the insertion is visible in the
+      // draft rather than the take ending on the "Nothing was heard" branch.
+      + " window.__voiceEvent({type:'final', text:'spoken into a running turn', locale:'en-US'});"
       + " const before = window.__draft().users, q = window.__queued().length;"
-      + " document.querySelector('#entry').value = 'typed before the microphone opened';"
-      + " document.querySelector('#entry').dispatchEvent(new KeyboardEvent('keydown',"
-      + " {key:'Enter', bubbles:true, cancelable:true}));"
+      + " const e = document.querySelector('#entry');"
+      + " e.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', bubbles:true, cancelable:true}));"
       + " await new Promise((r) => setTimeout(r, 300));"
       + " return {state: window.__voice().state, users: window.__draft().users - before,"
-      + " queued: window.__queued().length - q, busy: window.__busy()}; })()",
+      + " queued: window.__queued().length - q, draft: window.__draft().draft}; })()",
     );
     check(
-      "seam: Enter while the microphone is open neither sends nor steers",
+      "seam: Enter while the microphone is open inserts the take and neither sends nor steers",
       armed.users === 0 && armed.queued === 0
-        && armed.state !== "recording" && armed.state !== "starting",
+        && armed.state !== "recording" && armed.state !== "starting"
+        && armed.draft.includes("spoken into a running turn"),
       JSON.stringify(armed),
     );
   } finally {
