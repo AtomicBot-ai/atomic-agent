@@ -6,7 +6,8 @@
  * it into text, and nothing else in the app may spawn it. Transcription is
  * Apple's on-device SpeechAnalyzer inside native/atomic-speech.swift: no
  * network, no API key, no account. Measured, not assumed — see the header of
- * that file for the nettop run.
+ * that file for the nettop run, which was repeated on a two-analyzer
+ * Russian take and again found no network row for the helper.
  *
  * The audio is never written to disk and never leaves this process tree: a
  * chunk goes straight into the child's stdin and is dropped.
@@ -144,6 +145,12 @@ export class VoiceSession {
     this.kill();
     this.emit = emit;
     this.bytes = 0;
+    // Every handler below closes over THIS session's emit, not over
+    // `this.emit`. A child killed by the next start() still delivers its
+    // `close` afterwards, and reading `this.emit` at fire time would post a
+    // dead session's "stopped unexpectedly" into the live one — which the
+    // renderer would turn into an error toast for a take that was fine.
+    const emitFor = emit;
     let child: ChildProcessByStdio<Writable, Readable, Readable>;
     try {
       child = spawn(helperPath(), wanted, { stdio: ["pipe", "pipe", "pipe"] });
@@ -162,7 +169,7 @@ export class VoiceSession {
         const line = buf.slice(0, nl).trim();
         buf = buf.slice(nl + 1);
         if (line) {
-          try { this.emit(JSON.parse(line) as Record<string, unknown>); }
+          try { emitFor(JSON.parse(line) as Record<string, unknown>); }
           catch { /* a non-JSON line is the helper's own noise, not an event */ }
         }
         nl = buf.indexOf("\n");
@@ -171,12 +178,16 @@ export class VoiceSession {
     let stderr = "";
     child.stderr.on("data", (b: Buffer) => { stderr = (stderr + b.toString("utf8")).slice(-2000); });
     child.on("error", (err) => {
-      this.armed = false;
-      this.emit({ type: "error", code: "spawn", message: err.message });
+      if (this.child === child) this.armed = false;
+      emitFor({ type: "error", code: "spawn", message: err.message });
     });
     child.on("close", (code) => {
-      if (this.child === child) { this.child = null; this.armed = false; }
-      this.emit({ type: "closed", code, stderr: stderr.slice(-400) });
+      // A close from a child this session has already replaced is somebody
+      // else's news: it is neither an error here nor a reason to disarm.
+      if (this.child !== child) return;
+      this.child = null;
+      this.armed = false;
+      emitFor({ type: "closed", code, stderr: stderr.slice(-400) });
     });
     // A pipe write after the child is gone must not take the app down.
     child.stdin.on("error", () => {});

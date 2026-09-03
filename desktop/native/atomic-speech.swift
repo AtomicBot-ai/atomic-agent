@@ -9,10 +9,13 @@
 // SpeechTranscriber (or, for the locales SpeechTranscriber does not
 // cover, a DictationTranscriber) transcribes from an installed on-device
 // model; nothing is uploaded and SFSpeechRecognizer's server route is
-// never used. Measured, not assumed: a 9.4 s live transcription watched
-// with `nettop -P -L 10` showed no row at all for this process or for
-// corespeechd / com.apple.siri.embeddedspeech, in a capture window that
-// did record other processes' bytes.
+// never used. Measured, not assumed: a Russian dictation fed at real time
+// through two analyzers at once (en-US speech + ru-RU dictation) and watched
+// with `nettop -P -x -L 6 -p <pid>` produced no row at all for this process
+// — the per-process capture is headers and nothing else — while the
+// all-process capture taken in the same window holds 612 rows, none of them
+// corespeechd or com.apple.siri.embeddedspeech, and other processes moved
+// hundreds of megabytes in it.
 //
 // Modes:
 //   --probe                 print one {"type":"probe",...} line and exit
@@ -309,24 +312,36 @@ func transcribe(_ localeIds: [String]) async {
   }
   for t in tasks { _ = await t.value }
 
-  // Two languages at once: both analyzers heard the same audio, and the
-  // mean per-word confidence separates them cleanly — measured on this
-  // machine, English speech scores 0.913 through en-US and Russian speech
-  // scores 0.104 through the same en-US model. If a secondary leg beats
-  // the primary, its whole transcript replaces what the strip has been
-  // showing, and the renderer says which language won.
-  if legs.count > 1, let base = primary.score {
-    var best = primary
-    var bestScore = base
-    for leg in legs.dropFirst() {
-      if let s = leg.score, s > bestScore, !leg.text.trimmingCharacters(in: .whitespaces).isEmpty {
-        best = leg
-        bestScore = s
-      }
+  // Two languages at once: both analyzers heard the same audio, so the take
+  // is decided on the mean per-word confidence. Measured on this Mac with
+  // the two fixtures, not taken from documentation:
+  //   5.0 s of English → en-US 0.976 and correct; ru-RU 0.285 and nonsense
+  //   6.1 s of Russian → ru-RU 0.75-0.83 and correct; en-US emits NOTHING
+  //                      AT ALL: no partial, no final, therefore no score.
+  // That second row is why the ranking cannot be gated on the primary
+  // having produced a final. A leg with nothing to say ranks BELOW a leg
+  // that has words but no confidence attribute; otherwise the shipped
+  // default (en-US first, a second language added with +) throws the only
+  // transcript there was away and the composer receives an empty string.
+  if legs.count > 1 {
+    func rank(_ leg: Leg) -> Double {
+      if leg.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return -2 }
+      return leg.score ?? -1
     }
-    if best !== primary {
-      emit(["type": "replace", "text": best.text, "locale": best.localeId,
-            "confidence": bestScore, "runnerUp": primary.localeId, "runnerUpConfidence": base])
+    var best = primary
+    var bestRank = rank(primary)
+    for leg in legs.dropFirst() where rank(leg) > bestRank {
+      best = leg
+      bestRank = rank(leg)
+    }
+    if best !== primary, bestRank > -2 {
+      var ev: [String: Any] = [
+        "type": "replace", "text": best.text, "locale": best.localeId,
+        "runnerUp": primary.localeId, "runnerUpHeard": !primary.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+      ]
+      if let c = best.score { ev["confidence"] = c }
+      if let c = primary.score { ev["runnerUpConfidence"] = c }
+      emit(ev)
     }
   }
   emit(["type": "done"])

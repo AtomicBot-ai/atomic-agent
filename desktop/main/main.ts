@@ -272,17 +272,24 @@ function createWindow(): BrowserWindow {
  *  createWindow the check had to assert a textually parallel copy of it, and
  *  the two bodies could drift apart without anything going red.
  *
- *  `clipboard-sanitized-write` is allowed. Electron routes
- *  `navigator.clipboard.writeText` through these handlers under that name, and
- *  the composer's "copy session id" (act('copy:session')) is a plain
- *  writeText whose rejection is swallowed — denying it silently broke the
- *  copy while the toast still said it had worked. It hands out no device and
- *  no data, so it is not part of what this gate exists to stop. */
+ *  BOTH clipboard permissions are allowed, and the second one is not
+ *  cosmetic. The composer's "copy session id" (act('copy:session')) is a
+ *  plain `navigator.clipboard.writeText` whose rejection is swallowed, so a
+ *  denial breaks the copy silently while the toast still says it worked.
+ *  Which permission Chromium asks for depends on transient user activation,
+ *  measured here with a standalone Electron probe rather than reasoned about:
+ *    with a user gesture    → req:clipboard-sanitized-write
+ *    without a user gesture → req:clipboard-read   ← and this one was denied
+ *  A click or a keystroke carries activation; a copy driven from an IPC
+ *  message or a timer does not. Before this feature Electron's default
+ *  granted every permission, so allowing both is a restoration of what the
+ *  renderer already had, not a widening — the gate exists for the microphone
+ *  and the camera, and those are still refused unless a session is armed. */
 function voicePermissionVerdict(
   permission: string,
   details: { mediaTypes?: string[] } | undefined,
 ): boolean {
-  if (permission === "clipboard-sanitized-write") return true;
+  if (permission === "clipboard-sanitized-write" || permission === "clipboard-read") return true;
   if (permission !== "media" || !voice.armed) return false;
   const types = details?.mediaTypes ?? [];
   return types.length > 0 && types.every((t) => t === "audio");
@@ -1507,8 +1514,15 @@ async function voiceTest(
   } | null;
   type Mic = { present: boolean; disabled: boolean; title: string; order: string };
 
+  const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
   const before = await js<V>("window.__voice()");
   const draftBefore = await js<string>("window.__draft ? window.__draft().draft : ''");
+  // The menu checks below click real rows, and a real click writes
+  // userData/voice.json. Captured byte-for-byte and put back in `finally`,
+  // including the case where the operator has never chosen a language and
+  // the file does not exist at all.
+  const voiceJson = VOICE_PREFS_PATH();
+  const voiceJsonBefore = existsSync(voiceJson) ? readFileSync(voiceJson, "utf8") : null;
   // The acceptance line "nothing was written to the agent": this feature owns
   // no route, no config leaf and no restart, and the snapshot below proves it
   // rather than asserting it in prose. Compared at the end of the sub-suite.
@@ -1774,6 +1788,30 @@ async function voiceTest(
     );
     await js<unknown>("window.__ctxDraft('')");
 
+    // ...including the case the whole two-language feature exists for. On
+    // Russian speech the en-US leg emits NOTHING — no partial, no final, no
+    // score — so a take can arrive as a bare `replace` with no primary text
+    // before it. Measured with the fixed helper on the review's fixture:
+    //   $ cat rev-ru.raw | out/native/atomic-speech en-US ru-RU
+    //   {"type":"replace","text":"Открой панель настроек …","locale":"ru-RU",
+    //    "runnerUp":"en-US","runnerUpHeard":false,"confidence":0.826}
+    // Before the fix that take reached the composer as an empty string.
+    await js<V>("window.__voiceArm()");
+    const bare = await js<V>(
+      "window.__voiceEvent({type:'replace', text:'Открой панель настроек и переключи бэкенд на облако',"
+      + " locale:'ru-RU', confidence:0.826, runnerUp:'en-US', runnerUpHeard:false})",
+    );
+    const stripBare = await js<Strip>("window.__voiceStrip()");
+    const insBare = await js<{ draft: string }>("window.__voiceStop()");
+    check(
+      "a second language wins even when the first one heard nothing",
+      bare.final === "Открой панель настроек и переключи бэкенд на облако" && bare.winner === "ru-RU"
+        && !!stripBare && stripBare.text === bare.final
+        && insBare.draft === "Открой панель настроек и переключи бэкенд на облако",
+      `strip ${JSON.stringify(stripBare && stripBare.text)}, inserted ${JSON.stringify(insBare.draft)}`,
+    );
+    await js<unknown>("window.__ctxDraft('')");
+
     // --- the language menu says what is true ------------------------------
     // Opened the way an idle user opens it: the button's tooltip promises a
     // right-click, so the right-click is what the check performs.
@@ -1790,6 +1828,53 @@ async function voiceTest(
       menu ? `${menu.menuRows} rows, foot ${JSON.stringify(menu.menuFoot.slice(0, 60))}` : "no menu",
     );
     await js<V>("window.__voiceCancel()");
+    await js<V>("window.__voiceReprobe()");
+
+    // --- the + control, which is the only user route to a second language --
+    // Everything above drives the state directly; these clicks go through the
+    // menu the user actually sees, so voicePick() and the voice:setLocales
+    // write are exercised rather than assumed.
+    await js<V>(
+      "window.__voiceProbeSet({available:true, supported:['en-US','ru-RU','de-DE','fr-FR'],"
+      + " installed:['en-US','ru-RU','de-DE'], speech:['en-US','de-DE','fr-FR'], dictation:['ru-RU'],"
+      + " locales:['en-US']})",
+    );
+    const menuOpened = await js<{ menu: boolean; rows: number }>("window.__voiceMenu(true)");
+    type Pick = { clicked: boolean; locales: string[]; installing: string | null };
+    const added = await js<Pick>("window.__voiceMenuClick('voice:add:ru-RU')");
+    await wait(200);
+    const storedPair = readVoicePrefs().locales;
+    check(
+      "the + control adds a second language and the choice is remembered",
+      menuOpened.menu && menuOpened.rows === 4 && added.clicked
+        && JSON.stringify(added.locales) === '["en-US","ru-RU"]'
+        && JSON.stringify(storedPair) === '["en-US","ru-RU"]',
+      `${menuOpened.rows} rows, after + ${JSON.stringify(added.locales)}, voice.json ${JSON.stringify(storedPair)}`,
+    );
+    const swapped = await js<Pick>("window.__voiceMenuClick('voice:pick:de-DE')");
+    await wait(200);
+    const storedSwap = readVoicePrefs().locales;
+    check(
+      "choosing a new first language keeps the second one",
+      swapped.clicked && JSON.stringify(swapped.locales) === '["de-DE","ru-RU"]'
+        && JSON.stringify(storedSwap) === '["de-DE","ru-RU"]',
+      `after picking de-DE ${JSON.stringify(swapped.locales)}, voice.json ${JSON.stringify(storedSwap)}`,
+    );
+    // A language with no model on this Mac must route to the download, not
+    // to the selection. The call site is spied on rather than called: a real
+    // --install spends minutes downloading an Apple model onto the
+    // operator's machine, which a smoke run has no business doing.
+    await js<string[]>("window.__voiceInstallSpy(true)");
+    const uninstalled = await js<Pick>("window.__voiceMenuClick('voice:pick:fr-FR')");
+    const asked = await js<string[]>("window.__voiceInstallSpy(false)");
+    const afterInstall = await js<V>("window.__voice()");
+    check(
+      "an uninstalled language goes to the download, not to the selection",
+      uninstalled.clicked && JSON.stringify(asked) === '["fr-FR"]'
+        && JSON.stringify(afterInstall.locales) === '["de-DE","ru-RU"]',
+      `install asked for ${JSON.stringify(asked)}, languages still ${JSON.stringify(afterInstall.locales)}`,
+    );
+    await js<V>("window.__voiceMenu(false)");
     await js<V>("window.__voiceReprobe()");
 
     // --- the permission gate ----------------------------------------------
@@ -1813,21 +1898,71 @@ async function voiceTest(
     // permission state to "denied" and the composer's silent "copy session id"
     // stops copying. The operator's own clipboard is restored below.
     const { clipboard } = require("electron") as typeof import("electron");
-    const clipBefore = await clipboard.readText();   // Electron 44's clipboard is promise-based
+    // Focus first. Chromium refuses a writeText from an unfocused document
+    // before it ever consults the permission layer ("Document is not
+    // focused"), and on a machine running several of these windows at once
+    // that made this check pass without testing anything — which is how a
+    // real denial survived two green runs.
+    BrowserWindow.getAllWindows()[0]?.focus();
+    win?.webContents.focus();
+    await wait(300);
+    // Electron 44's clipboard module really is promise-based — see
+    // node_modules/electron/electron.d.ts:6996, `readText(): Promise<string>`,
+    // "modeled after the W3C navigator.clipboard.readText API", and
+    // writeText(): Promise<void> beside it. Dropping the awaits does not
+    // compile.
+    //
+    // The operator's pasteboard is theirs. This check writes to it, and the
+    // only content it can put back afterwards is plain text — so when the
+    // clipboard is holding anything else (a screenshot, a file, a bookmark)
+    // the live half is skipped entirely rather than destroying it. The
+    // verdict half below still runs and is the part that cannot go vacuous.
+    const clipBefore = await clipboard.readText();
+    const clipItems = await clipboard.read().catch(() => [] as Electron.ClipboardItem[]);
+    const clipTypes = clipItems.flatMap((i) => i.types);
+    // A plain-text copy on macOS reports `text/plain` plus a handful of
+    // `electron application/osclipboard;format="…"` mirrors of the same
+    // bytes (NSStringPboardType, the source URL, the find buffer) — those are
+    // metadata, not a second payload, so they must not count as "something I
+    // cannot put back" or this half of the check never runs at all. An
+    // image, a file, or a rich-text copy does carry a payload that writeText
+    // cannot restore, and for those the live write is skipped.
+    const clipUnrestorable = (t: string): boolean =>
+      /^image\//i.test(t) || t === "text/html" || t === "text/rtf" || t === "text/uri-list"
+      || /bookmark/i.test(t)
+      || /public\.(png|tiff|jpeg|file-url)|NSFilenamesPboardType/i.test(t);
+    const clipRestorable = clipTypes.length === 0
+      || (clipTypes.includes("text/plain") && !clipTypes.some(clipUnrestorable));
     const clip = await js<{ perm: string; write: string }>(
       "(async () => { let perm = 'n/a';"
       + " try { perm = (await navigator.permissions.query({name:'clipboard-write'})).state; }"
       + " catch (e) { perm = 'query-threw:' + e.name; }"
-      + " let write = 'OK';"
-      + " try { await navigator.clipboard.writeText('atomic-desktop-smoke'); }"
-      + " catch (e) { write = e.name + ': ' + e.message; }"
+      + " let write = " + (clipRestorable ? "'OK'" : "'skipped (the operator has non-text on the clipboard)'") + ";"
+      + (clipRestorable
+        ? " try { await navigator.clipboard.writeText('atomic-desktop-smoke'); }"
+          + " catch (e) { write = e.name + ': ' + e.message; }"
+        : "")
       + " return {perm, write}; })()",
     );
-    await clipboard.writeText(clipBefore ?? "");
+    // Restore only what we actually disturbed. The write has to have
+    // succeeded for there to be anything to put back; an empty pasteboard is
+    // returned to empty rather than left holding the probe string.
+    if (clip.write === "OK" && clipRestorable) {
+      if (clipBefore) await clipboard.writeText(clipBefore);
+      else clipboard.clear();
+    }
+    // The live write can still be blocked by focus on a busy machine, so the
+    // verdict itself is asserted directly as well — that half cannot go
+    // vacuous. `clipboard-read` is in it because that is the permission a
+    // writeText asks for with no user gesture behind it (see the predicate).
+    const clipVerdicts = voicePermissionVerdict("clipboard-sanitized-write", undefined)
+      && voicePermissionVerdict("clipboard-read", undefined);
     check(
       "the voice permission gate leaves the clipboard alone",
-      clip.perm === "granted" && !/permission denied/i.test(clip.write),
-      `permissions.query(clipboard-write) → ${clip.perm}; writeText → ${clip.write}`,
+      clipVerdicts && clip.perm === "granted" && !/permission denied/i.test(clip.write),
+      `verdicts sanitized-write+read=${clipVerdicts}; permissions.query(clipboard-write) → ${clip.perm};`
+      + ` writeText → ${clip.write}${/not focused/i.test(clip.write) ? " (the live write did not reach the gate)" : ""}`
+      + `; pasteboard held ${clipTypes.length ? clipTypes.join("+") : "nothing"}`,
     );
 
     // --- what actually ships ----------------------------------------------
@@ -1874,8 +2009,14 @@ async function voiceTest(
         : "the agent's config.json changed during the voice suite",
     );
   } finally {
+    await js<unknown>("window.__voiceInstallSpy(false)").catch(() => undefined);
+    await js<unknown>("window.__voiceMenu(false)").catch(() => undefined);
     await js<unknown>("window.__voiceCancel()").catch(() => undefined);
     await js<unknown>("window.__ctxDraft(" + JSON.stringify(draftBefore ?? "") + ")").catch(() => undefined);
+    try {
+      if (voiceJsonBefore === null) rmSync(voiceJson, { force: true });
+      else writeFileSync(voiceJson, voiceJsonBefore);
+    } catch { /* the language choice is a preference; a failed restore is not worth failing the suite */ }
     // Put the renderer's languages back exactly as they were, including the
     // case where the probe had not answered yet when this suite started.
     const restore = before && Array.isArray(before.locales) && before.locales.length

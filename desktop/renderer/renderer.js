@@ -380,11 +380,22 @@ const VOICE_REASONS = {
   'voice-no-mic':'No microphone was found',
   'voice-no-bridge':'Voice input needs the desktop app',
 };
-/* Measured before it shipped, not taken from documentation: a 9.4 s live
-   transcription watched with `nettop -P -L 10` produced no row for the
-   helper or for corespeechd / com.apple.siri.embeddedspeech, in a window
-   that did record other processes' bytes. */
+/* Measured before it shipped, not taken from documentation. A Russian
+   dictation fed at real time through two analyzers at once (en-US speech +
+   ru-RU dictation) was watched with `nettop -P -x -L 6 -p <helper pid>`:
+   the per-process capture is column headers and nothing else, and the
+   all-process capture taken in the same window holds 612 rows — none of
+   them corespeechd, com.apple.siri.embeddedspeech or any other speech
+   daemon — while recording other processes moving hundreds of megabytes. */
 const VOICE_ONDEVICE = 'On-device — the audio never leaves this Mac';
+/* Item 2 (voice input): the one call site for a model download. It is a
+   binding rather than a direct BR.voiceInstall() call so the smoke can watch
+   where an uninstalled language routes — to the download, never to the
+   selection — without spending a real multi-minute Apple model download on
+   the operator's machine. Nothing but the harness ever replaces it. */
+let voiceInstallBridge = (id) => (BR && BR.voiceInstall
+  ? BR.voiceInstall(id)
+  : Promise.resolve({ok:false, error:'voice-no-bridge'}));
 /* Item 2 (voice input): what the strip and the button last painted. The audio
    tap repaints ten times a second, and re-creating an element restarts its
    CSS animation — so these keys decide when a repaint is actually a new
@@ -1030,8 +1041,12 @@ function voiceStripHTML() {
   } else {
     h += '<div class="vsrow"><span class="vstext ter">Dictation language</span>' + voiceChipHTML() + '</div>';
   }
+  // The sentence has to be true in the state it is painted in: while the
+  // helper is finalizing, Enter no longer stops anything — submit() holds it
+  // until the insert lands (see the `finishing` guard there).
   h += '<div class="vsnote">' + VOICE_ONDEVICE
-    + (rec ? ' · Enter or Send stops the recording and inserts the text; it does not send' : '')
+    + (VOICE.state === 'finishing' ? ' · inserting what you said — Enter and Send wait for it'
+      : rec ? ' · Enter or Send stops the recording and inserts the text; it does not send' : '')
     + '</div>';
   if (VOICE.menu) h += voiceMenuHTML();
   return h + '</div>';
@@ -1955,6 +1970,12 @@ function submit() {
   // before the user spoke and throw the transcript away. The strip says so,
   // and a second Enter sends.
   if (VOICE.state === 'recording' || VOICE.state === 'starting') { voiceStop(); return; }
+  // `finishing` is the up-to-2.5 s window where the helper is still emitting
+  // the last segment and the strip is still on screen saying "it does not
+  // send". Falling through here would do exactly what that sentence
+  // promises it will not: post the pre-dictation draft and land the
+  // transcript in an empty composer afterwards. So Enter waits.
+  if (VOICE.state === 'finishing') return;
   const e = $('#entry');
   const text = (e ? e.value : S.draft).trim();
   if (!text) return;
@@ -2314,10 +2335,10 @@ function voicePick(id, second) {
 /** Download an on-device model. The strip shows the fraction; nothing here
     pretends the language works before the model has landed. */
 function voiceInstall(id) {
-  if (!BR || !BR.voiceInstall || VOICE.installing) return;
+  if (VOICE.installing) return;
   VOICE.installing = id; VOICE.installFraction = 0; VOICE.installErr = null;
   refreshVoice();
-  BR.voiceInstall(id).then((r) => {
+  voiceInstallBridge(id).then((r) => {
     VOICE.installing = null; VOICE.installFraction = 0;
     if (r && r.ok) {
       if (VOICE.installed.indexOf(id) < 0) VOICE.installed = VOICE.installed.concat([id]);
@@ -2408,7 +2429,13 @@ function voiceCapture(seq) {
           if (VOICE.state !== 'recording' || !ev.data) return;
           VOICE.level = ev.data.peak || 0;
           BR.voiceAudio(new Uint8Array(ev.data.pcm.buffer));
-          if (!VOICE.menu) refreshVoice();
+          // Repaint even with the language menu open. The chip that opens it
+          // is inside the recording strip, so the menu is openable mid-take,
+          // and skipping this froze the words and the level meter for as
+          // long as it stayed open — the one thing the user asked to see.
+          // refreshVoice()'s fast path only patches `.vstext` and the meter,
+          // neither of which is inside `.vsmenu`, so the menu survives it.
+          refreshVoice();
         };
         src.connect(node); node.connect(gain); gain.connect(ac.destination);
         VOICE.src = src; VOICE.node = node; VOICE.gain = gain;
@@ -2474,8 +2501,16 @@ function voiceSettle() {
     is never replaced and the message is never auto-sent. */
 function voiceInsert() {
   const text = (VOICE.final + VOICE.partial).trim();
+  const heard = VOICE.activeLocales.length ? VOICE.activeLocales : VOICE.locales;
   VOICE.final = ''; VOICE.partial = ''; VOICE.state = 'idle';
-  if (!text) { refreshVoice(); return ''; }
+  // A take that produced no words is not the same as a take that inserted
+  // nothing on purpose. Say so rather than leaving the composer unchanged
+  // with no explanation — that silence reads as a broken button.
+  if (!text) {
+    refreshVoice();
+    toast('Voice input', 'Nothing was heard' + (heard.length ? ' in ' + heard.map(voiceLangName).join(' or ') : ''));
+    return '';
+  }
   const e = $('#entry');
   const at = e && typeof e.selectionStart === 'number' ? e.selectionStart : S.draft.length;
   const before = S.draft.slice(0, at);
@@ -8545,11 +8580,16 @@ if (typeof window !== 'undefined') {
     e.preventDefault();
     voiceAct('voice:lang');
   });
-  // A window that loses focus while the microphone is open is a recording
-  // the user has walked away from. Synthetic sessions are exempt: the
+  // A window that loses focus while the microphone is OPEN is a recording
+  // the user has walked away from. `starting` is deliberately not in this
+  // list: on the first run of a freshly-signed build macOS raises its own
+  // microphone dialog while the getUserMedia is still pending, that dialog
+  // takes key status, and cancelling here would throw away the very session
+  // the user is being asked to allow — the mic button would appear to do
+  // nothing until the second click. Synthetic sessions are exempt too: the
   // harness runs with the window behind other windows.
   window.addEventListener('blur', () => {
-    if (!VOICE.synthetic && (VOICE.state === 'recording' || VOICE.state === 'starting')) voiceCancel();
+    if (!VOICE.synthetic && VOICE.state === 'recording') voiceCancel();
   });
   // Leaving the chat, opening another session or starting a new one all
   // abandon the take rather than carrying it into a different draft.
@@ -8685,5 +8725,43 @@ if (typeof window !== 'undefined') {
     const b = document.querySelector('.voicestrip .vsx');
     if (b) b.click();
     return { clicked: !!b, voice: window.__voice() };
+  };
+}
+
+/* Item 2 (voice input) — hooks for the second round of review fixes. Its own
+   block, appended, so the merge with the other lanes stays a pure append. */
+if (typeof window !== 'undefined') {
+  /* Open or close the language menu without a mouse. */
+  window.__voiceMenu = (open) => {
+    VOICE.menu = !!open; VOICE.installErr = null;
+    refreshVoice();
+    return { menu: VOICE.menu, rows: document.querySelectorAll('.voicestrip .vsmrow').length };
+  };
+  /* Click a row of that menu the way the user does — a real click, through
+     the real dispatcher, on the button the menu actually rendered. */
+  window.__voiceMenuClick = (action) => {
+    const b = document.querySelector('.voicestrip [data-act="' + action + '"]');
+    if (b) b.click();
+    return { clicked: !!b, locales: VOICE.locales.slice(), installing: VOICE.installing };
+  };
+  /* Watch where an uninstalled language routes without actually downloading
+     an Apple model onto this Mac. Returns the ids the download call site was
+     asked for; passing false puts the real bridge call back. */
+  window.__voiceInstallSpy = (on) => {
+    if (on === false) {
+      voiceInstallBridge = window.__voiceInstallReal || voiceInstallBridge;
+      const seen = window.__voiceInstallSeen || [];
+      window.__voiceInstallSeen = null;
+      return seen;
+    }
+    if (!window.__voiceInstallReal) window.__voiceInstallReal = voiceInstallBridge;
+    window.__voiceInstallSeen = [];
+    voiceInstallBridge = (id) => {
+      window.__voiceInstallSeen.push(id);
+      // Never resolves ok: the point is that the language is NOT selected
+      // until a model has landed, and the spy must not pretend one did.
+      return Promise.resolve({ok:false, error:'not-downloaded-in-the-harness'});
+    };
+    return [];
   };
 }

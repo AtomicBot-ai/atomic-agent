@@ -357,7 +357,12 @@ Honestly degraded, and labelled as such in the UI:
   the session — the error strip carries its own × instead.
   Enter and the Send button stop the recording and insert the text
   rather than sending: sending would post the draft as it stood before you
-  spoke and lose the transcript, so a second Enter is what sends.
+  spoke and lose the transcript, so a second Enter is what sends. That holds
+  through the finalize window too — for the up-to-2.5 s while the helper is
+  still emitting its last segment the strip says `inserting what you said —
+  Enter and Send wait for it`, and they do wait; falling through there would
+  have sent the pre-dictation draft and dropped the transcript into an empty
+  composer a moment later.
   The audio goes renderer → main → `out/native/atomic-speech`, a small
   Swift helper running `SpeechAnalyzer` with a `SpeechTranscriber` (or a
   `DictationTranscriber` for the languages the first one has no model for).
@@ -368,19 +373,28 @@ Honestly degraded, and labelled as such in the UI:
   languages live in Electron's `userData/voice.json`.
   Until this feature there was no `setPermissionRequestHandler` at all and
   Electron's default granted everything; both handlers now go in and deny
-  by default. Exactly two things get through: an audio-only `media` request
-  while a voice session you started is armed, and
-  `clipboard-sanitized-write`, which is how Electron sees
-  `navigator.clipboard.writeText` — the composer's "copy session id" is a
-  writeText whose rejection is swallowed, so a deny-all gate broke the copy
-  while the toast still claimed success. Both handlers call the one
-  `voicePermissionVerdict()`, and the smoke asserts that function rather
-  than a second copy of its body.
+  by default. What gets through is an audio-only `media` request while a
+  voice session you started is armed, plus both clipboard permissions. That
+  second exception is not cosmetic and it took a probe to get right: the
+  composer's "copy session id" is a `navigator.clipboard.writeText` whose
+  rejection is swallowed, so a denial breaks the copy while the toast still
+  claims success — and which permission Chromium asks for depends on
+  transient user activation. With a gesture behind it the request is
+  `clipboard-sanitized-write`; without one (an IPC-driven or timer-driven
+  copy) it is `clipboard-read`, and allowing only the first still denied the
+  write. Both handlers call the one `voicePermissionVerdict()`, and the
+  smoke asserts that function rather than a second copy of its body — and
+  asserts the verdicts directly as well as through a live write, because the
+  live write is refused before it ever reaches the gate when the window is
+  not focused, which let a real denial survive two green runs.
   The strip's `On-device — the audio never leaves this Mac` was measured
-  before it shipped, not taken from documentation: a 9.4 s live
-  transcription watched with `nettop -P -L 10` produced no row at all for
-  the helper or for `corespeechd` / `com.apple.siri.embeddedspeech`, in a
-  capture window that did record other processes' bytes.
+  before it shipped, not taken from documentation: a Russian dictation fed
+  at real time through both an `en-US` and a `ru-RU` analyzer, watched with
+  `nettop -P -x -L 6 -p <helper pid>`, produced no row at all for the helper
+  — the per-process capture is headers and nothing else — and the
+  all-process capture taken in the same window carries 612 rows, none of
+  them `corespeechd`, `com.apple.siri.embeddedspeech` or any other speech
+  daemon, while recording other processes moving hundreds of megabytes.
   The Web Speech API is not an option here and was not guessed at: in
   Electron 44 on-device reports `unavailable`, `install()` returns `false`
   (no component updater), and a real recognition attempt ends
@@ -411,10 +425,22 @@ Honestly degraded, and labelled as such in the UI:
   higher-scoring transcript wins the whole take and the chip says which
   language matched. The live text always follows the first language,
   because until you stop there is nothing to compare against. That the
-  score can decide was measured, not assumed — the same nine seconds of
-  English speech scores a mean per-word confidence of 0.913 through the
-  en-US model and Russian speech scores 0.104 through it. There is no
-  auto-detection beyond that, and no analyzer takes more than one locale.
+  score can decide was measured on two fixtures, not assumed:
+
+  | audio | `en-US` (SpeechTranscriber) | `ru-RU` (DictationTranscriber) |
+  | --- | --- | --- |
+  | 5.0 s of English | 0.976, correct, wins the take | 0.285, and the words are nonsense |
+  | 6.1 s of Russian | **no result at all** — no partial, no final, no score | 0.75–0.83 depending on pacing, correct, wins the take |
+
+  That second row is the one that matters, and it is why the winner is not
+  chosen by comparing against the first language's score: on Russian speech
+  the `en-US` leg says nothing whatsoever, so a leg with no words has to
+  rank *below* a leg with words, or the shipped default (English first,
+  Russian added with `+`) would throw away the only transcript there was and
+  hand the composer an empty string. A take that really did produce nothing
+  says `Nothing was heard` rather than leaving the composer silently
+  unchanged. There is no auto-detection beyond this, and no analyzer takes
+  more than one locale.
 
 - **Tasks and Skills are the settings tabs.** ⌘2/⌘3, the palette hits and
   View › Tasks/Skills all open the settings window on that tab — one
@@ -477,10 +503,14 @@ PASS an error strip keeps Escape and is dismissed by its own control — after E
 PASS the recording pulse survives the transcript repaints, and the strip still leaves on cancel — dot kept=true mic kept=true, text "refactor the login handler", dot after cancel=false
 PASS a second language can win the take — final "Открой панель настроек", winner ru-RU, chip "Russian (Russia) matched"
 PASS and the winning language is what gets inserted — "Открой панель настроек"
+PASS a second language wins even when the first one heard nothing — strip "Открой панель настроек и переключи бэкенд на облако", inserted "Открой панель настроек и переключи бэкенд на облако"
 PASS the language menu lists the on-device models and says one is active — 2 rows, foot "Transcribed on this Mac. One language is active at a time un"
+PASS the + control adds a second language and the choice is remembered — 4 rows, after + ["en-US","ru-RU"], voice.json ["en-US","ru-RU"]
+PASS choosing a new first language keeps the second one — after picking de-DE ["de-DE","ru-RU"], voice.json ["de-DE","ru-RU"]
+PASS an uninstalled language goes to the download, not to the selection — install asked for ["fr-FR"], languages still ["de-DE","ru-RU"]
 PASS the renderer cannot take the camera — getUserMedia({video:true}) → NotAllowedError
 PASS and cannot take the microphone outside a session the user started — armed=false; audio→false
-PASS the voice permission gate leaves the clipboard alone — permissions.query(clipboard-write) → granted; writeText → …
+PASS the voice permission gate leaves the clipboard alone — verdicts sanitized-write+read=true; permissions.query(clipboard-write) → granted; writeText → OK; pasteboard held text/plain+…
 PASS the worklet ships next to the renderer
 PASS the speech helper answers — exit 0, 43 supported, 14 installed
 PASS nothing was written to the agent — config.json byte-identical across 4096 bytes
