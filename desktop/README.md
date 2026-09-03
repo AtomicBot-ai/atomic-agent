@@ -98,7 +98,14 @@ Real, driven by the running agent:
   session store: the call's own args and the tool's own result line (`wrote N
   bytes to …`, the patch report's `✓ <file>` lines, `extracted … to <dir>`),
   each confirmed with `fs.stat` before it is drawn, so a chip is never shown
-  for a file that is not there. Nothing else feeds the strip: a path the reply
+  for a file that is not there. The strip is cached per turn by the set of
+  paths it collected, and a later `os.fs.trash` naming one of them expires that
+  cache — a file deleted after the chips were drawn stops being called saved
+  instead of keeping a line for something the filesystem no longer holds. A
+  card whose status reconciliation never learned (the store did not describe it
+  within ~6 s, so the window marked it finished-but-unknown) is never a source
+  for the strip: `fs.stat` only proves the file is there now, not that this
+  turn wrote it. Nothing else feeds the strip: a path the reply
   merely mentions is an inline chip, not a saved file, and shell redirects are
   not inferred — `os.shell.run` and `skill.run_script` name nothing they wrote,
   so guessing from a command string is out. (`os.fs.trash` deletes and never
@@ -129,7 +136,11 @@ Real, driven by the running agent:
   leaves this view, but the agent is still blocked on the gate; only a verdict
   or the turn's own end clears it. A queued task that has not run yet is drawn
   empty and its tooltip says so — it has not executed, so there is nothing to
-  have read. Chats can be pinned and unpinned from the row's hover button or
+  have read. An empty Chats list says `(no sessions yet)`, the TUI's own
+  string; an empty Tasks list says `(no tasks yet)` rather than the TUI's
+  `(no active tasks)`, because this list is every task the agent holds and not
+  the rail's running/pending/recurring projection — "no active tasks" would be
+  a claim about a different list. Chats can be pinned and unpinned from the row's hover button or
   its right-click menu (Pin/Unpin · Delete…), and **Delete really deletes**:
   `DELETE /api/sessions/{id}`, not a splice that the next load undoes.
   Pinning and the read stamps live in Electron's `userData/prefs.json` — per
@@ -261,7 +272,10 @@ Honestly degraded, and labelled as such in the UI:
   and resources/prompts say they are not exposed. Add and remove rewrite
   `mcp.servers` through the whole-file `atag config set` and offer a restart.
 - **LLM** is the TUI's four panes. Local rows come from `atag models list`
-  and `models list-embeddings`, the route card's daemon line from
+  minus the ids `models list-embeddings` lists (the chat route never picks an
+  embedding model, and which models those are is a fact the CLI publishes —
+  the desktop no longer guesses it from vendor words in the id) plus
+  `models list-embeddings` itself for the embedding block, the route card's daemon line from
   `atag models status` (the local route's model too — the desktop has no
   `/props`); Enter downloads / selects / starts through `models pull`,
   `models use`, `models start|stop`, `s`/`d`/`E`/`B`/`U`/`G` through the
@@ -314,11 +328,21 @@ Honestly degraded, and labelled as such in the UI:
   already names the chosen route but the agent booted on another one (the
   TUI or a hand edit moved the file while the window was open): main
   remembers the route each `atag serve` came up on and compares.
-- **The `custom` (external llama.cpp URL) backend** is not offered by the
-  selector or by the first-run setup (two choices, not the TUI's three):
-  the TUI probes the URL before writing mode `external` + the provider url
-  in one write. The one place that does it in the desktop is Settings › LLM
-  › External, which runs the probe first (see the LLM bullet above).
+- **The `custom` (external llama.cpp URL) backend** is a state the composer
+  can be in but not a switch it offers. `local` and `custom` are the same
+  provider entry (`local-llama`); `localModels.mode` tells them apart, so an
+  external route reads as `custom` on the chip and draws the third backend row
+  active — with no model control, because on that route the model is whatever
+  the operator's own server has loaded and this window has not probed
+  `/props`. Choosing that row opens Settings › LLM › External rather than
+  writing anything: pointing the route at somebody else's server means probing
+  the URL first, and the External pane is the desktop's editor for it (it
+  writes mode `external`, `localModels.url` and the `local-llama` provider url
+  in ONE whole-file write, the port of the TUI's `persistUserLocalLlmUrl` —
+  two leaf writes would leave the provider url, and so the address the runtime
+  actually calls, on the old server). The first-run setup still offers two
+  choices, not the TUI's three. Choosing `local` from an external route
+  converts it to managed, exactly as the TUI's own local row does.
 - **Tasks and Skills are the settings tabs.** ⌘2/⌘3, the palette hits and
   View › Tasks/Skills all open the settings window on that tab — one
   implementation, as the TUI's Manage tabs are. ⌘1 closes it and returns to
