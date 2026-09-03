@@ -112,28 +112,35 @@ Real, driven by the running agent:
   headers, no "N turns" second line. Tasks is every task the agent holds,
   ordered as the TUI's rail orders it (running, queued, blocked, failed,
   cancelled, completed, then newest first) with `N running` counted over the
-  whole list; Chats is every session in this workspace with at least one saved
-  turn, pinned first and newest first. Each list shows 15 rows and then a
-  **Load more** button. Each row is one line with a dot on the left:
-  *pulsating* = a turn is running there (driven by the turn stream's own
-  frames, so an approval or an abort cannot make a live turn look finished);
-  *filled* = it wants you — an approval is waiting, its last turn failed or
-  stalled, or it has changed since you last opened it; *empty* = executed and
-  read. Opening a row marks it read. A queued task that has not run yet is
-  drawn empty and its tooltip says so — it has not executed, so there is
-  nothing to have read. Chats can be pinned and unpinned from the row's hover
-  button or its right-click menu (Pin/Unpin · Delete…), and **Delete really
-  deletes**: `DELETE /api/sessions/{id}`, not a splice that the next load
-  undoes. Pinning and the read stamps live in Electron's
-  `userData/prefs.json` — per machine, per viewer — because the agent has no
-  route and no store field for either, and its `config.json` is the
-  operator's file. On a machine that has never run this window every
-  historical chat is therefore unread until it is opened; that is honest, not
-  a bug. Skills left the sidebar (the user asked for it); ⌘3, the palette and
-  View › Skills still open it, on Settings › Skills. Collapsed — Setup › Hide
-  or show the sidebar, or a window narrower than 1000px — the two lists stay
-  as a column of dots, each row's tooltip naming it, so the rail is still a
-  way back into a chat.
+  whole list; Chats is the sessions in this workspace with at least one saved
+  turn, pinned first and newest first. Both lists ask the agent for its whole
+  ceiling — `?limit=200` on sessions, `?limit=500` on tasks — so **Load more**
+  pages over the real list rather than over a page the server already cut
+  (without a limit `GET /api/sessions` serves 25). A workspace with more than
+  200 sessions is cut by the route, not by this window. Each list shows 15
+  rows and then a **Load more** button; the lists keep their scroll position
+  across renders, so paging does not scroll the new rows away. Each row is one
+  line with a dot on the left: *pulsating* = a turn is running there (driven
+  by the turn stream's own frames, so an approval or an abort cannot make a
+  live turn look finished); *filled* = it wants you — an approval is waiting,
+  its last turn failed or stalled, or it has changed since you last opened it;
+  *empty* = executed and read. Opening a row marks it read. A waiting approval
+  keeps filling its row across a chat switch or a new session — the card
+  leaves this view, but the agent is still blocked on the gate; only a verdict
+  or the turn's own end clears it. A queued task that has not run yet is drawn
+  empty and its tooltip says so — it has not executed, so there is nothing to
+  have read. Chats can be pinned and unpinned from the row's hover button or
+  its right-click menu (Pin/Unpin · Delete…), and **Delete really deletes**:
+  `DELETE /api/sessions/{id}`, not a splice that the next load undoes.
+  Pinning and the read stamps live in Electron's `userData/prefs.json` — per
+  machine, per viewer — because the agent has no route and no store field for
+  either, and its `config.json` is the operator's file. On a machine that has
+  never run this window every historical chat is therefore unread until it is
+  opened; that is honest, not a bug. Skills left the sidebar (the user asked
+  for it); ⌘3, the palette and View › Skills still open it, on Settings ›
+  Skills. Collapsed — Setup › Hide or show the sidebar, or a window narrower
+  than 1000px — the two lists stay as a column of dots, each row's tooltip
+  naming it, so the rail is still a way back into a chat.
 - **What the sidebar cannot know on 0.5.4.** `GET /api/sessions` never
   reports `running`: the store is written only when a turn ends, and no route
   exposes the turn controller. So the pulsating dot means "a turn started in
@@ -144,6 +151,7 @@ Real, driven by the running agent:
   a deliberate divergence from the TUI's bottom-anchored offset: the user
   asked for the scroll not to move when a card is folded or a re-render lands,
   so the desktop restores `scrollTop` instead of re-anchoring to the bottom.
+  The sidebar's two lists are restored the same way and for the same reason.
 - the model selector: backend, provider and model chips, each opening one
   pane, with the TUI's rows (cloud → local, `N providers ready` /
   `llama.cpp managed here`, provider rows `model` / `default model` /

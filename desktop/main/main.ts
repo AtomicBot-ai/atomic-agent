@@ -1357,6 +1357,28 @@ async function sidebarTest(
         sb.chats[0].id !== last && !after.data.pinned.includes(last),
         `first=${sb.chats[0].id} stored=${JSON.stringify(after.data.pinned)}`,
       );
+
+      // Review fix: the two checks above go through act() and read PREFS, so
+      // they would pass with no pin button rendered at all. This one clicks the
+      // affordance the user actually has — the row's [data-pin] — through the
+      // real document delegator, and proves the click does not also open the
+      // chat (the delegator stops at the pin branch).
+      type PinClick = { found: boolean; pinned?: boolean; opened?: boolean; titleBefore?: string; titleAfter?: string };
+      const clicked = await js<PinClick>(`window.__clickPin(${JSON.stringify(last)})`);
+      const unclicked = clicked.found ? await js<PinClick>(`window.__clickPin(${JSON.stringify(last)})`) : { found: false };
+      const menuIpc = await js<string>("typeof window.atomic.sessionMenu");
+      check(
+        "the row's pin button pins without opening the chat",
+        clicked.found === true &&
+          clicked.pinned === true &&
+          clicked.opened === false &&
+          clicked.titleBefore === "Pin" &&
+          clicked.titleAfter === "Unpin" &&
+          unclicked.pinned === false &&
+          unclicked.titleAfter === "Pin" &&
+          menuIpc === "function",
+        `pin ${JSON.stringify(clicked)} → unpin ${JSON.stringify(unclicked)}, sessionMenu ${menuIpc}`,
+      );
     } else {
       check("a pinned chat sorts first and is stored", true, "skipped — fewer than two chats in this workspace");
     }
@@ -1371,6 +1393,17 @@ async function sidebarTest(
       const grown = await js<number>("window.__loadMore()");
       check("load more grows the list", grown > sb.chats.length, `${sb.chats.length} → ${grown}`);
     }
+
+    // Review fix: the lists are the scroll container and every render rebuilds
+    // them, so paging used to scroll the rows it had just added off screen.
+    const scrolled = await js<{ scrollable: boolean; kept: boolean; before?: number; after?: number; max: number; reason?: string }>(
+      "window.__sidebarScroll()",
+    );
+    check(
+      "the sidebar keeps its scroll position across a render",
+      scrolled.kept,
+      scrolled.scrollable ? `${scrolled.before} → ${scrolled.after} of ${scrolled.max}` : (scrolled.reason ?? "not scrollable"),
+    );
 
     // The running dot is driven by the turn stream's own map, and it stays
     // distinguishable when the stylesheet turns the animation off.
@@ -1392,15 +1425,24 @@ async function sidebarTest(
       `waiting=${waitingDot} cleared=${clearedDot}`,
     );
 
-    // ... and stops filling it the moment that request leaves without a
-    // verdict. Only answering the approval used to clear the map, so an abort
-    // or a new session left the row claiming an approval was waiting for the
-    // rest of the window's life.
-    const dropped = await js<{ pending: boolean; mapped: boolean; dot: string }>(`window.__approvalDrop(${JSON.stringify(id)})`);
+    // ... and it keeps filling it across a chat switch. The card leaves this
+    // view with the old transcript, but the agent is still blocked on the gate,
+    // so forgetting the request here made the waiting row read "empty" while
+    // nothing had answered it.
+    const kept = await js<{ pending: boolean; mapped: boolean; dot: string }>(`window.__approvalKeep(${JSON.stringify(id)})`);
     check(
-      "an approval dropped without a verdict stops filling its row",
-      !dropped.pending && !dropped.mapped && dropped.dot === "empty",
-      `pending=${dropped.pending} mapped=${dropped.mapped} dot=${dropped.dot}`,
+      "a chat switch drops the approval card but keeps the row asking",
+      !kept.pending && kept.mapped && kept.dot === "filled",
+      `pending=${kept.pending} mapped=${kept.mapped} dot=${kept.dot}`,
+    );
+
+    // The turn's own terminal frame is what clears it: with the run over,
+    // nothing is waiting for a verdict any more.
+    const dropped = await js<{ mapped: boolean; running: boolean; dot: string }>(`window.__approvalDrop(${JSON.stringify(id)})`);
+    check(
+      "the turn's terminal frame clears the waiting approval",
+      !dropped.mapped && !dropped.running && dropped.dot === "empty",
+      `mapped=${dropped.mapped} running=${dropped.running} dot=${dropped.dot}`,
     );
 
     // A turn the user walks away from: its frames must not be spliced into the

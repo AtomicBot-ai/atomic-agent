@@ -600,6 +600,16 @@ function renderToolbar() {
    ============================================================ */
 function renderSidebar() {
   const tk = sidebarTasks(), ch = sidebarChats();
+  // Review fix: .sb-lists is the scroll container and this rebuilds it whole,
+  // so every render used to snap it back to the top — the "Load more" button
+  // scrolled itself off screen the moment it was clicked, and the list could
+  // not be scrolled at all while a turn streamed (a render per delta frame).
+  // Same capture-then-restore as renderContent/afterChat do for #scroller;
+  // the README calls holding the pixel position a deliberate divergence from
+  // the TUI's bottom-anchored offset, made because the user asked for the
+  // scroll not to move.
+  const prevLists = $('#sidebar').querySelector('.sb-lists');
+  const keepScroll = prevLists ? prevLists.scrollTop : 0;
   $('#sidebar').innerHTML =
     '<div class="sb-head">' + MARK_COLOR
       + '<button class="wschip" data-act="workspace"><span>' + esc(BR ? WORKSPACE : '~/Teletubbies') + '</span>' + ic('chevD') + '</button>'
@@ -624,6 +634,12 @@ function renderSidebar() {
     // Item 7: the bottom-left settings entry. Lands on Go › Manage › Tasks, the TUI's default Manage tab.
     + '<button class="sb-foot" data-act="settings:tasks" title="Settings (⌘ ,)">' + ic('gear') + '<span>Settings</span>' + keycaps('⌘ ,') + '</button>'
     ;
+  if (keepScroll) {
+    const lists = $('#sidebar').querySelector('.sb-lists');
+    // The rebuilt list can be shorter (a delete, a collapsed page); the browser
+    // clamps to scrollHeight on its own, so nothing here has to.
+    if (lists) lists.scrollTop = keepScroll;
+  }
 }
 
 /** Every task, ordered as the TUI orders its rail (STATUS_RANK, then newest). */
@@ -1674,7 +1690,9 @@ function act(a) {
   if (a === 'sel:cancelPull') { BR.cancelPull(); SEL.pulling = null; render(); return; }
   if (a === 'runmode') { close(); S.dialShare = S.share; S.overlay = 'runmode'; render(); return; }
   if (a === 'applydial') { S.share = S.dialShare; if (S.mode !== 'fusion' && S.dialShare > 0) S.mode = 'fusion'; close(); render(); toast('Run type applied', S.mode + (S.mode === 'fusion' ? ' · cloud share ' + S.share : '')); return; }
-  if (a === 'session:new') { close(); S.log = []; S.history = []; S.agentSession = null; S.busy = false; dropPendingApproval(); S.room = 'chat';
+  if (a === 'session:new') { close(); S.log = []; S.history = []; S.agentSession = null; S.busy = false;
+                             forgetApprovalCard();   // item 6 review fix: a fresh thread does not answer the open gate — the other chat's dot keeps saying it is waiting
+                             S.room = 'chat';
                              S.sessionId = '';   // item 6: a fresh thread has no row of its own yet, so no row is highlighted
                              render(); toast('New session', 'The next turn starts fresh');
                              // Lane B — item 3: a new thread has a new window fill (the TUI resets contextUsage on session_created), so the chip goes back to the projection.
@@ -2302,9 +2320,6 @@ function taskEntry(t) {
     updatedAt:t.updatedAt || 0,
     sessionId:t.sessionId || null,
     lastError:t.lastError || null,
-    // kept for the Tasks tab's own consumers
-    last:t.status || 'pending',
-    st:t.status === 'running' ? 'run' : t.status === 'failed' ? 'bad' : 'ok',
   };
 }
 function applyTasks(list) { TASKS.length = 0; list.forEach((t) => { if (t && t.id) TASKS.push(taskEntry(t)); }); }
@@ -2580,15 +2595,25 @@ function onApprovalEvent(payload) {
   render();
 }
 
-/* Review fix: an approval that leaves the window without a verdict — an
-   abort, a new session, opening another chat — must also leave
-   PENDING_APPROVALS, which only answerLive used to clear. Otherwise the row
-   goes on claiming "waiting for your approval" although nothing here can
-   answer it any more, which is exactly the state the dot must never draw. */
+/* Review fix: an approval that leaves the window without a verdict — an abort
+   — must also leave PENDING_APPROVALS, which only answerLive used to clear.
+   Otherwise the row goes on claiming "waiting for your approval" although
+   nothing here can answer it any more.
+   Second review fix: this is ONLY for the paths that actually end the turn
+   (abort(), which cancels it). Switching chat or starting a new session
+   changes nothing about whether the gate is open — the agent is still blocked
+   on it — so those paths call forgetApprovalCard() instead, which drops the
+   card from this view and leaves the map (and therefore the filled dot) alone.
+   The map's other exit is the turn's own done/aborted/error frame. */
 function dropPendingApproval() {
   const req = S.pending;
   S.pending = null;
   if (req && req.sessionId) PENDING_APPROVALS.delete(req.sessionId);
+}
+
+/** The approval card leaves this view; the request itself is untouched. */
+function forgetApprovalCard() {
+  S.pending = null;
 }
 
 function pick(obj, ...keys) {
@@ -3775,7 +3800,12 @@ async function openSession(id) {
   S.log = [{id:nid(), k:'system', text:'loading session…'}];
   // A live turn belonging to another session keeps its own state; only the
   // window's view of "busy" is reset when nothing of this session is running.
-  if (!live) { S.busy = false; dropPendingApproval(); }
+  // Review fix: the card leaves the view with the old transcript, but the
+  // request is still open at the agent — dropping it from PENDING_APPROVALS
+  // here made the waiting chat's dot go empty ("read") while the agent sat
+  // blocked on the gate. The map is cleared by a verdict or by the turn's own
+  // terminal frame, nowhere else.
+  if (!live) { S.busy = false; forgetApprovalCard(); }
   S.stick = true;
   render();
 
@@ -7844,6 +7874,22 @@ if (typeof window !== 'undefined') {
     return chatDot(SESSIONS.find((s) => s.id === id))[0];
   };
   window.__deleteSession = (id) => { act('del:' + id); return SESSIONS.length; };
+  /* Review fix: renderSidebar rebuilds .sb-lists whole, so a scrolled list used
+     to snap back to the top on every render — which sent the "Load more" button
+     the user had just clicked off screen. */
+  window.__sidebarScroll = () => {
+    const el = document.querySelector('.sb-lists');
+    if (!el) return {scrollable:false, kept:false, reason:'no list container'};
+    const max = el.scrollHeight - el.clientHeight;
+    if (max <= 0) return {scrollable:false, kept:true, max:0, reason:'the two lists fit without scrolling here'};
+    el.scrollTop = Math.min(24, max);
+    const before = el.scrollTop;
+    render();
+    const el2 = document.querySelector('.sb-lists');
+    const after = el2 ? el2.scrollTop : null;
+    if (el2) el2.scrollTop = 0;
+    return {scrollable:true, kept: after === before, before, after, max};
+  };
   window.__loadMore = () => { const b = document.querySelector('[data-more="chats"]'); if (b) b.click(); return sidebarChats().rows.length; };
   window.__dotStyle = (id) => {
     const el = document.querySelector('[data-ses="' + id + '"] .sdot');
@@ -7851,15 +7897,39 @@ if (typeof window !== 'undefined') {
     const cs = getComputedStyle(el);
     return {cls:el.className, animation:cs.animationName, shadow:cs.boxShadow};
   };
-  /* Review fix: an approval that leaves the window without a verdict. Only the
-     map entry is planted (no approval card is fabricated in the transcript);
-     `session:new` is the real path that used to strand it, and the row went on
-     saying "waiting for your approval" for ever after. */
-  window.__approvalDrop = (id) => {
+  /* Second review fix: switching away from an open approval must NOT forget
+     it. Only the map entry is planted (no approval card is fabricated in the
+     transcript); `session:new` is the real path, and the agent is still
+     blocked on the gate afterwards, so the waiting chat must keep its filled
+     dot even though the card has left this view. */
+  window.__approvalKeep = (id) => {
     PENDING_APPROVALS.set(id, 'smoke');
     S.pending = {id:'smoke', k:'approval', approvalId:'smoke', sessionId:id};
     act('session:new');
     return {pending: !!S.pending, mapped: PENDING_APPROVALS.has(id), dot: chatDot(SESSIONS.find((s) => s.id === id))[0]};
+  };
+  /* ... and the turn's own terminal frame is what does forget it: once the run
+     is over nothing is waiting for a verdict any more. The frame is fed
+     through the real onChatEvent bookkeeping, not by touching the map. */
+  window.__approvalDrop = (id) => {
+    PENDING_APPROVALS.set(id, 'smoke');
+    RUNNING.set('smoke-appr', id);
+    onChatEvent({turnId:'smoke-appr', kind:'aborted', payload:{}});
+    return {mapped: PENDING_APPROVALS.has(id), running: RUNNING.has('smoke-appr'),
+            dot: chatDot(SESSIONS.find((s) => s.id === id))[0]};
+  };
+  /* The pin affordance as the user meets it: the button rendered on the row,
+     clicked through the document delegator. Asserts the row did not also open
+     (the delegator stops there) and that the title flips. */
+  window.__clickPin = (id) => {
+    const btn = document.querySelector('[data-ses="' + id + '"] [data-pin]');
+    if (!btn) return {found:false};
+    const before = S.sessionId;
+    const titleBefore = btn.getAttribute('title');
+    btn.click();
+    const after = document.querySelector('[data-ses="' + id + '"] [data-pin]');
+    return {found:true, pinned: PREFS.pinned.includes(id), opened: S.sessionId === id && before !== id,
+            sessionId: S.sessionId, titleBefore, titleAfter: after ? after.getAttribute('title') : null};
   };
   /* The shape of the transcript on screen. A frame belonging to a turn the
      user navigated away from used to splice its tool card, reasoning block or

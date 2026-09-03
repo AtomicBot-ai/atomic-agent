@@ -270,11 +270,18 @@ export class AgentClient extends EventEmitter {
   config = () => this.json<unknown>("/api/config");
   skills = () => this.json<unknown>("/api/skills");
   // Item 7 (settings surface): the TUI lists with DEFAULT_LIST_LIMIT = 200
-  // (tasks-orchestrator.ts:25); route-tasks.ts defaults to 50 and caps at 500,
-  // so the limit has to be on the URL or the tab falls behind the TUI.
-  tasks = () => this.tasksList(200);
+  // (tasks-orchestrator.ts:25); route-tasks.ts defaults to 50 and caps at 500.
+  // Review fix (item 6): the sidebar's Tasks list is EVERY task, not the rail's
+  // running/pending/recurring projection, so it has to ask for the route's
+  // whole ceiling — at 200 the oldest executed tasks the user's dot rules are
+  // about were dropped by the server before "Load more" could ever reach them.
+  tasks = () => this.tasksList(500);
   tasksList = (limit: number) => this.json<unknown>(`/api/tasks?limit=${encodeURIComponent(String(limit))}`);
-  sessions = () => this.json<unknown>("/api/sessions");
+  // Review fix (item 6): without a limit route-sessions.ts serves 25 rows, so
+  // the Chats list was truncated by the server one "Load more" in and an older
+  // chat could not be reached — or pinned — at all. 200 is the route's cap and
+  // the TUI's own scan window (chat-orchestrator.ts RAIL_SCAN_LIMIT).
+  sessions = () => this.json<unknown>("/api/sessions?limit=200");
   models = () => this.json<unknown>("/v1/models");
   session = (id: string) => this.json<unknown>(`/api/sessions/${encodeURIComponent(id)}`);
   /** `DELETE /api/sessions/{id}` — purge one session row (idempotent on 0.5.4). Harness-only today: the smoke removes the task fixtures' empty sessions. */
