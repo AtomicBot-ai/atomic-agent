@@ -566,7 +566,7 @@ const WINDOW_MISS_TTL_MS = 5 * 60_000;
 
 export function modelWindow(providerId: string, kind: string, model: string): Promise<number | null> {
   if (!/^[\w.-]{1,48}$/.test(providerId) || !/^[\w.:\/-]{1,120}$/.test(model)) return Promise.resolve(null);
-  const key = `${providerId} ${model}`;
+  const key = `${providerId}\n${model}`;
   const hit = WINDOW_CACHE.get(key);
   if (hit) return hit.value;
   const bundled = kind === "openrouter" || kind === "aimlapi";

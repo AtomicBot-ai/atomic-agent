@@ -126,6 +126,19 @@ Real, driven by the running agent:
   saved, activated, and a default model picked
 - the context gauge, measured from the agent's trace after each turn, with
   the TUI's one control: tasks per turn (`agent.conversationMaxPairs`, 1–100)
+- the context BEFORE the first message. The TUI shows nothing until the loop
+  emits `prompt_built` (its panel says "context · not measured yet"); the
+  desktop instead draws a labelled projection from data the installed agent
+  already produces: the turn-0 `prompt_captured.tokens.stablePrefix` of the
+  newest trace built in this workspace, the draft counted with a port of the
+  runtime's own `estimateTokens`, the window from the provider catalogue
+  (`atag models search --json`) or llama-server `/props`, and
+  `localModels.completionMaxTokens` as the reply reservation. The chip keeps
+  a `~`, a hatched gauge and the word "projected", and the panel names the
+  baseline session and its age, until the first turn's trace (or the branch
+  route below) replaces it. No trace on the machine → the TUI's own
+  "not measured yet" copy, chip hidden; no catalogue answer → "window
+  unknown" — never 128k, never the 6000-token sanity constant.
 - coding modes default / plan / auto / bypass, applied live through
   `/api/coding-mode` exactly as the TUI's `onCodingModeChanged` does — the
   runtime's ladder and plan flag move, `config.json` is untouched. The Privacy
@@ -137,6 +150,12 @@ Honestly degraded, and labelled as such in the UI:
 - **Coding modes need an agent that has `/api/coding-mode`.** That route is
   added in this branch (`src/http/route-coding-mode.ts`); a binary without it
   answers 404 and the chip says so rather than pretending.
+- **The exact pre-message breakdown needs `POST /api/context-preview`,** a
+  route added in this branch (`src/http/route-context-preview.ts`): the
+  runtime builds — never runs, never persists — the prompt the next turn
+  would open with and reports it through the TUI's own
+  `contextUsageFromPrompt`. The installed 0.5.4 answers 404, which the
+  desktop caches per connection and falls back to the trace projection.
 - **Session grants.** The HTTP API implements `allow-once` and `deny` only, so
   the card offers exactly those.
 - **Subscription-CLI providers** (`claude-cli`, `codex-cli`) are not in the
@@ -173,6 +192,11 @@ PASS renderer painted
 PASS toolbar titled
 PASS bridge exposed
 PASS agent connected — state=connected
+PASS context has a basis before the first message — {"tokens":5910,"source":"projected",…}
+PASS draft moves the projection by its estimate — 5910 + 15 → 5925
+PASS window resolved without opening the picker — window=1048576 (model window) provider=aimlapi
+PASS panel basis line names the baseline — projected from the last prompt this agent built for … in this workspace — api-…, 4 minutes ago. …
+PASS no trace → not measured yet, chip hidden — source=null tokens=0 chip=false …
 PASS skills loaded
 PASS agent replied — "hello there friend"
 …

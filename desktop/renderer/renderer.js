@@ -2244,7 +2244,7 @@ async function mpSaveProvider() {
 async function refreshLiveConfig() {
   if (!BR) return;
   // Lane B — item 3: a provider or model change moves the window and the baseline.
-  const ctxWas = selActiveProviderId() + ' ' + activeModel();
+  const ctxWas = selActiveProviderId() + '\n' + activeModel();
   const cfg = await BR.configGet();
   if (cfg && cfg.ok && cfg.config) LIVE_CONFIG = cfg.config;
   const provider = LIVE_CONFIG && LIVE_CONFIG.llm
@@ -2257,7 +2257,7 @@ async function refreshLiveConfig() {
   if (managed && managed.modelId) S.localModel = managed.modelId;
   render();
   bswRefreshFacts();
-  if (selActiveProviderId() + ' ' + activeModel() !== ctxWas) refreshContext();
+  if (selActiveProviderId() + '\n' + activeModel() !== ctxWas) refreshContext();
 }
 
 if (BR) {
