@@ -662,8 +662,9 @@ button.menurow:hover{background:var(--bg-hover)}
 
 /* ---------------- Item 6: the sidebar is two lists (Tasks, then Chats) ---------------- */
 /* No nav rows and no group headers any more; one line per row with a dot on
-   the left. These rules come after the original sidebar block on purpose —
-   they override .sesrow's two-line 52px geometry rather than editing it. */
+   the left. The base .sesrow rule (line ~138) keeps only what both layouts
+   share — flex, centring, the selected-row border; the single-line height
+   (30px) and the row's padding live here, with the rest of this section. */
 .sb-lists{flex:1;min-height:0;overflow-y:auto;border-top:1px solid var(--line-soft);padding-bottom:var(--s3)}
 .sb-list{display:flex;flex-direction:column;padding:var(--s1) 0 var(--s2)}
 .sb-list + .sb-list{border-top:1px solid var(--line-soft)}

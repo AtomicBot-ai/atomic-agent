@@ -32,6 +32,16 @@ const KIND_ROWS = [
   {id:'openai-compatible', kind:'openai-compatible', label:'OpenAI-compatible API (custom base URL)', custom:true, defaultModel:'gpt-5.4-mini'},
 ];
 const OPEN_GROUPS = new Set();
+/* item 5 review fix (attachment strip): every file chip — the inline ones and
+   the strip's — opens through this one seam, so the smoke can assert that a
+   strip chip really is clickable (which path the click hands to BR.openPath)
+   without launching an application on the operator's Mac. */
+let LAST_OPEN_PATH = null, OPEN_PATH_DRYRUN = false;
+function openFilePath(p) {
+  LAST_OPEN_PATH = p;
+  if (OPEN_PATH_DRYRUN) return Promise.resolve({ok:true, dryRun:true});
+  return BR.openPath(p);
+}
 /* Lane B — context before the first message (item 3). `source` is
    'provider' | 'estimate' (the trace, after a turn), 'built' (the branch
    route's own prompt), or 'projected' — the turn-0 scaffold of the last
@@ -41,7 +51,7 @@ const OPEN_GROUPS = new Set();
    the way MODE.supported does; `seq` drops a refresh that lost the race. */
 const CTX = { tokens:0, source:null, stablePrefix:0, tail:0, draftTokens:0, cacheHitTokens:null, modelId:null,
   window:null, windowLabel:'', baseline:null, sections:null, pairsCap:0, reserved:0,
-  previewSupported:null, seq:0, chipTimer:null };
+  previewSupported:null, seq:0, chipTimer:null, draftTimer:null };
 /* default / auto / bypass. `plan` is deliberately absent: plan mode is a
    closure variable in the runtime with no route, no config key and no
    request field, so a desktop chip could only paint a state the agent
@@ -80,8 +90,11 @@ const PRESETS = [
 ];
 PRESETS.filter((p) => !['openrouter','aimlapi'].includes(p.id)).forEach((p) =>
   KIND_ROWS.splice(KIND_ROWS.length - 1, 0, {id:p.id, kind:'openai-compatible', label:p.label, env:p.env, baseUrl:p.baseUrl, apiKeyHeader:p.apiKeyHeader, headers:p.headers}));
+/* What is left of the prototype's Models pane after Settings › LLM replaced
+   it (review fix): no rows of its own any more — only the provider-add and
+   model-search writers, which the `--smoke --models` harness drives directly
+   and which write through the same main-process helpers the LLM tab uses. */
 const MP = {
-  local: [], localBusy: false, localErr: null, pulling: null, pullLog: [],
   addOpen: false, presetCur: 0, apiKey: '',
   pickFor: null, pickQuery: '', picks: [], pickBusy: false, pickErr: null,
   busy: false, err: null,
@@ -497,7 +510,7 @@ const S = {
   slash:false, slashCur:0,
   draft:'',
   mode:'fusion', share:40, dialShare:40,
-  localModel:'qwen3-8b-instruct', cloudModel:'claude-opus-5', modelTab:'local', modelQuery:'',
+  localModel:'qwen3-8b-instruct', cloudModel:'claude-opus-5', modelQuery:'',
   level:3, grants:[],
   busy:false, pending:null, queued:[], phase:'', elapsed:0,
   sessionId:'s1',
@@ -621,6 +634,11 @@ function renderSidebar() {
           + '<span class="ct tnum">' + tk.running + ' running</span></div>'
         + (TASKS_ERR ? '<div class="sb-empty">' + esc(TASKS_ERR) + '</div>'
            : tk.rows.length ? tk.rows.map(taskRow).join('')
+           // Not the TUI's "(no active tasks)" (sidebar.tsx:714), on purpose:
+           // that list is the rail's running/pending/recurring projection,
+           // while this one is EVERY task the agent holds (see the list-scope
+           // note above), so "no active tasks" would be the wrong claim about
+           // an empty one. The Chats list below keeps the TUI's string verbatim.
            : '<div class="sb-empty">(no tasks yet)</div>')
         + (tk.hidden > 0 ? '<button class="loadmore" data-more="tasks">Load more · ' + tk.hidden + ' more</button>' : '')
       + '</div>'
@@ -868,7 +886,7 @@ function composer() {
       + sendButton() + '</div>'
       + '<div class="cfoot">'
         + '<button class="cchip modechip" data-sel-open="backend">'
-          + ic(selBackend() === 'local' ? 'cpu' : 'cloud') + selBackend() + ic('chevD') + '</button>'
+          + ic(selBackend() === 'cloud' ? 'cloud' : 'cpu') + selBackend() + ic('chevD') + '</button>'
         + (selBackend() === 'cloud'
             ? '<button class="cchip" data-sel-open="provider">' + esc(selActiveProviderId() || 'no provider') + ic('chevD') + '</button>'
             : '')
@@ -1383,7 +1401,13 @@ function diagLine() {
   const llama = (SET.health && SET.health.llamaUrl) || (S.live.llama && S.live.llama.url) || (LIVE_CAPS && LIVE_CAPS.llama && LIVE_CAPS.llama.url) || '—';
   const parts = ['cwd ' + cwd, 'llama ' + llama, 'llm — · step —', 'kv —'];
   if (SET.tools && SET.toolsFor === S.agentSession) parts.push('tools ' + SET.tools.ok + 'ok/' + SET.tools.err + 'err');
-  parts.push('approval L' + (LIVE_CAPS && typeof S.level === 'number' ? S.level : '—'));
+  // Review fix: the guard reads the CAPABILITIES field, not S.level. S.level
+  // is seeded with the prototype's demo 3 and is only replaced when
+  // GET /api/capabilities carries agent.approvalLevel, so `typeof S.level ===
+  // 'number'` was always true and a capabilities payload without the field
+  // would have printed `approval L3` — a number this window never read.
+  const lvl = LIVE_CAPS && LIVE_CAPS.agent && typeof LIVE_CAPS.agent.approvalLevel === 'number' ? S.level : null;
+  parts.push('approval L' + (lvl === null ? '—' : lvl));
   parts.push('skills ' + SKILLS.length);
   return parts.join(' | ');
 }
@@ -1476,99 +1500,6 @@ function settingsPane() {
 function comingNote(label) {
   return '<div class="tui"><b>' + esc(label) + '</b><div class="ter">coming in the next step of this branch</div></div>';
 }
-function modelsPane() {
-  const tab = S.modelTab === 'cloud' ? 'cloud' : 'local';
-  return '<div class="stack">'
-    + '<div class="hstack">' + segControl([['local','Local'],['cloud','Cloud']], tab, 'modeltab:')
-      + '<span style="flex:1"></span>'
-      + (tab === 'local'
-          ? '<button class="btn btn-s" data-act="models:refresh">Refresh catalogue</button>'
-          : '<button class="btn btn-p" data-act="provider:add">' + ic('plus') + 'Add provider</button>')
-    + '</div>'
-    + (MP.err ? '<div class="cap" style="color:var(--danger)">' + esc(MP.err) + '</div>' : '')
-    + (tab === 'local' ? localModelsSection() : cloudProvidersSection())
-    + '</div>';
-}
-
-function localModelsSection() {
-  if (MP.pulling) {
-    return '<div class="card"><div class="card-h">downloading ' + esc(MP.pulling) + '</div>'
-      + '<div class="card-b"><div class="ob-prog" id="mp-prog">' + esc(MP.pullLog.slice(-8).join('\n')) + '</div>'
-      + '<button class="btn btn-s" style="align-self:flex-start" data-act="models:cancelPull">Cancel</button></div></div>';
-  }
-  if (MP.localBusy) return '<div class="card"><div class="card-b cap">reading the catalogue…</div></div>';
-  if (MP.localErr) return '<div class="card"><div class="card-b cap" style="color:var(--danger)">' + esc(MP.localErr) + '</div></div>';
-  if (!MP.local.length) {
-    return '<div class="card"><div class="card-b cap">No catalogue yet — Refresh catalogue reads it from the agent.</div></div>';
-  }
-  return '<div class="card"><div class="card-h">local models · ' + MP.local.length + '</div><div class="modellist">'
-    + MP.local.map((m) => {
-      const fit = fitFor(m.size, OB.ram || 16);
-      return '<div class="modelrow' + (m.active ? ' on' : '') + '">'
-        + '<span class="radio"' + (m.active ? ' style="border-color:var(--accent);border-width:4px"' : '') + '></span>'
-        + '<span class="col"><span class="mono nm">' + esc(m.id) + '</span>'
-        + '<span class="cap">' + esc(m.size) + ' · ' + esc(m.context) + ' context · ' + esc(fit.label)
-        + (m.downloaded ? ' · on disk' : '') + '</span></span>'
-        + (m.active
-            ? '<span class="cap">active</span>'
-            : m.downloaded
-              ? '<button class="btn btn-s" data-use-local="' + esc(m.id) + '">Use</button>'
-              : '<button class="btn btn-t" data-pull-local="' + esc(m.id) + '">Download</button>')
-        + '</div>';
-    }).join('') + '</div></div>';
-}
-
-function cloudProvidersSection() {
-  const providers = ((LIVE_CONFIG && LIVE_CONFIG.llm && LIVE_CONFIG.llm.providers) || [])
-    .filter((p) => p.kind !== 'llama-server');
-  const activeId = LIVE_CONFIG && LIVE_CONFIG.llm && LIVE_CONFIG.llm.activeTextProvider;
-  const rows = providers.length ? providers.map((p) =>
-    '<div class="modelrow' + (p.id === activeId ? ' on' : '') + '">'
-    + '<span class="radio"' + (p.id === activeId ? ' style="border-color:var(--accent);border-width:4px"' : '') + '></span>'
-    + '<span class="col"><span class="nm">' + esc(p.id) + '</span>'
-    + '<span class="cap">' + esc(p.kind) + (p.defaultChatModel ? ' · ' + esc(p.defaultChatModel) : ' · no model chosen')
-    + (p.apiKeyEnvVar ? ' · key from ' + esc(p.apiKeyEnvVar) : '') + '</span></span>'
-    + '<span class="hstack">'
-    + '<button class="btn btn-s" data-pick-models="' + esc(p.id) + '">Models…</button>'
-    + (p.id === activeId ? '<span class="cap">active</span>' : '<button class="btn btn-t" data-use-provider="' + esc(p.id) + '">Use</button>')
-    + '</span></div>').join('')
-    : '<div class="pad cap">No cloud provider configured yet.</div>';
-
-  const picker = MP.pickFor ? '<div class="card"><div class="card-h">models · ' + esc(MP.pickFor)
-    + '<span style="margin-left:auto"><button class="btn-g cap" data-act="provider:closePick">close</button></span></div>'
-    + '<div class="card-b">'
-    + '<input class="field-inp" id="mp-query" style="width:100%" placeholder="filter, e.g. claude, 70b, free" value="' + esc(MP.pickQuery) + '">'
-    + (MP.pickBusy ? '<div class="cap">searching…</div>' : '')
-    + (MP.pickErr ? '<div class="cap" style="color:var(--danger)">' + esc(MP.pickErr) + '</div>' : '')
-    + '<div class="modellist" style="max-height:38vh;overflow-y:auto">'
-    + (MP.picks.length ? MP.picks.map((m) =>
-        '<div class="modelrow"><span class="radio"></span>'
-        + '<span class="col"><span class="mono nm">' + esc(m.id) + '</span>'
-        + '<span class="cap">' + (m.contextWindow ? tok(m.contextWindow) + ' context' : '')
-        + (m.supportsTools && m.supportsTools !== 'none' ? ' · tools' : '')
-        + (m.supportsVision ? ' · vision' : '') + '</span></span>'
-        + '<button class="btn btn-t" data-set-model="' + esc(m.id) + '">Select</button></div>').join('')
-       : (MP.pickBusy ? '' : '<div class="pad cap">Type to search this provider\u2019s catalogue — try <span class="mono">claude</span>, <span class="mono">70b</span> or <span class="mono">free tools</span>.</div>'))
-    + '</div></div></div>' : '';
-
-  const add = MP.addOpen ? '<div class="card"><div class="card-h">add a provider'
-    + '<span style="margin-left:auto"><button class="btn-g cap" data-act="provider:closeAdd">close</button></span></div>'
-    + '<div class="card-b">'
-    + '<div class="modellist" style="max-height:34vh;overflow-y:auto">'
-    + PRESETS.map((p, i) => '<div class="modelrow' + (i === MP.presetCur ? ' on' : '') + '" data-preset="' + i + '">'
-        + '<span class="radio"></span><span class="col"><span class="nm">' + esc(p.label) + '</span>'
-        + '<span class="cap mono">' + esc(p.baseUrl) + '</span></span>'
-        + '<span class="cap">' + esc(p.env) + '</span></div>').join('')
-    + '</div>'
-    + '<input class="field-inp" id="mp-key" style="width:100%" type="password" placeholder="API key — optional, leave blank to use ' + esc(PRESETS[MP.presetCur].env) + '">'
-    + '<div class="hstack"><span class="cap">Saved to llm.providers. A blank key means the agent reads the environment variable instead.</span>'
-    + '<span style="flex:1"></span><button class="btn btn-p" data-act="provider:save"' + (MP.busy ? ' disabled' : '') + '>Add provider</button></div>'
-    + '</div></div>' : '';
-
-  return add + '<div class="card"><div class="card-h">cloud providers · ' + providers.length + '</div>'
-    + '<div class="modellist">' + rows + '</div></div>' + picker;
-}
-
 /* src/tui/privacy/components/privacy-panel.tsx after PR #303: analytics
    + session grants, no ladder. The desktop's approval path only offers
    allow-once/deny, so the runtime never accumulates grants and the TUI's
@@ -1795,13 +1726,6 @@ function act(a) {
                            close(); act('settings:tasks'); tkFocusTask(v); return; }
   if (k === 'scope')     { S.scope = v; S.q = ''; S.cur = 0; S.dialShare = S.share; render(); return; }
   if (k === 'taskfilter'){ S.taskFilter = v; render(); return; }
-  if (k === 'modeltab')  { S.modelTab = v; MP.err = null; render(); if (v === 'local' && !MP.local.length) mpLoadLocal(); return; }
-  if (a === 'models:refresh') { mpLoadLocal(); return; }
-  if (a === 'models:cancelPull') { BR.cancelPull(); MP.pulling = null; render(); return; }
-  if (a === 'provider:add') { MP.addOpen = true; MP.err = null; render(); return; }
-  if (a === 'provider:closeAdd') { MP.addOpen = false; render(); return; }
-  if (a === 'provider:closePick') { MP.pickFor = null; MP.picks = []; render(); return; }
-  if (a === 'provider:save') { mpSaveProvider(); return; }
   if (k === 'skillstab') { S.skillsTab = v; render(); return; }
   if (k === 'memtab')    { S.memTab = v; render(); return; }
   if (k === 'appr')      { answer(v); return; }
@@ -1967,7 +1891,6 @@ document.addEventListener('click', (e) => {
   if (t.closest('[data-close]') && !t.closest('.pal, .sheet, .popover, .alertbox')) { act('close'); return; }
   const ap = t.closest('[data-appr]'); if (ap) { answer(ap.dataset.appr); return; }
   const rm = t.closest('[data-room]'); if (rm) { act('room:' + rm.dataset.room); return; }
-  const dl = t.closest('[data-del]'); if (dl) { e.preventDefault(); e.stopPropagation(); act('delask:' + dl.dataset.del); return; }
   // item 6: the pin button sits inside the row, so it has to win over it
   const pn = t.closest('[data-pin]');
   if (pn) { e.preventDefault(); e.stopPropagation(); act((PREFS.pinned.includes(pn.dataset.pin) ? 'unpin:' : 'pin:') + pn.dataset.pin); return; }
@@ -1977,7 +1900,7 @@ document.addEventListener('click', (e) => {
   const grp = t.closest('[data-group]');
   if (grp) { OPEN_GROUPS.add(grp.dataset.group); expandGroupInPlace(grp.dataset.group); return; }  // scroll-stable cards: in place, no scrollTop write
   const fchip = t.closest('[data-file]');
-  if (fchip && BR) { BR.openPath(fchip.dataset.file.replace(/^~/, homeDir() || '~')).then((r) => { if (r && r.ok === false) toast('Could not open', r.error || ''); }); return; }
+  if (fchip && BR) { openFilePath(fchip.dataset.file.replace(/^~/, homeDir() || '~')).then((r) => { if (r && r.ok === false) toast('Could not open', r.error || ''); }); return; }
   const mlink = t.closest('[data-url]');
   if (mlink && BR) { e.preventDefault(); BR.openExternal(mlink.dataset.url); return; }
   const tg = t.closest('[data-toggle]');
@@ -2016,24 +1939,6 @@ document.addEventListener('click', (e) => {
   if (ctxStep) { ctxAdjust(ctxStep.dataset.ctxStep); return; }
   const modeRow = t.closest('[data-mode]');
   if (modeRow) { setCodingMode(modeRow.dataset.mode); return; }
-  const mpPreset = t.closest('[data-preset]');
-  if (mpPreset) { MP.presetCur = +mpPreset.dataset.preset; render(); return; }
-  const mpUseLocal = t.closest('[data-use-local]');
-  if (mpUseLocal) { mpUseLocalModel(mpUseLocal.dataset.useLocal); return; }
-  const mpPull = t.closest('[data-pull-local]');
-  if (mpPull) { mpPullModel(mpPull.dataset.pullLocal); return; }
-  const mpUseProv = t.closest('[data-use-provider]');
-  if (mpUseProv) { mpUseProvider(mpUseProv.dataset.useProvider); return; }
-  const mpPick = t.closest('[data-pick-models]');
-  if (mpPick) { MP.pickFor = mpPick.dataset.pickModels; MP.picks = []; MP.pickQuery = ''; MP.pickErr = null; render(); mpSearch(); return; }
-  const mpSet = t.closest('[data-set-model]');
-  if (mpSet) { mpSetModel(mpSet.dataset.setModel); return; }
-  const md = t.closest('[data-model]');
-  if (md) {
-    const id = md.dataset.model;
-    if (S.modelTab === 'local') S.localModel = id; else if (S.modelTab === 'cloud') S.cloudModel = id;
-    render(); toast('Model selected', shortModel(id) + ' · takes effect on the next turn'); return;
-  }
   const sk = t.closest('[data-skill]');
   if (sk) { const s = SKILLS.find((x) => x.t === sk.dataset.skill); if (s) { s.on = !s.on; render(); toast(s.t + (s.on ? ' enabled' : ' disabled')); } return; }
   if (t.closest('#composer') && !t.closest('button')) { const en = $('#entry'); if (en) en.focus(); }
@@ -2068,12 +1973,6 @@ document.addEventListener('input', (e) => {
     const n = $('#tk-search'); if (n) { n.focus(); n.setSelectionRange(at, at); } return; }
   if (e.target.id === 'sel-filter') { SEL.filter = e.target.value; const at = e.target.selectionStart; render();
     const n = document.getElementById('sel-filter'); if (n) { n.focus(); n.setSelectionRange(at, at); } return; }
-  if (e.target.id === 'mp-query') {
-    MP.pickQuery = e.target.value;
-    clearTimeout(MP.searchTimer);
-    MP.searchTimer = setTimeout(mpSearch, 350);
-    return;
-  }
   if (e.target.id === 'modelq') { S.modelQuery = e.target.value; const at = e.target.selectionStart; render();
     const n = $('#modelq'); if (n) { n.focus(); n.setSelectionRange(at, at); } return; }
   if (e.target.id === 'dial') { S.dialShare = +e.target.value; refreshDial(); return; }
@@ -2707,19 +2606,15 @@ if (typeof window !== 'undefined') {
 }
 
 
-/* ---- live projections: what the chips read when an agent is attached ---- */
-function tok(n) { return n >= 1000 ? Math.round(n / 1000) + 'k' : String(n); }
-function ctxTotal() {
-  const cap = LIVE_CONFIG && LIVE_CONFIG.agent && LIVE_CONFIG.agent.conversationMaxTokens;
-  return cap || 128000;
-}
-function ctxUsed() {
-  if (!BR || S.live.state !== 'connected') return 18000;
-  // No token accounting over the HTTP API yet: approximate from the
-  // transcript so the gauge moves honestly rather than sitting still.
-  const chars = S.history.reduce((n, m) => n + m.content.length, 0);
-  return Math.round(chars / 4);
-}
+/* ---- live projections: what the chips read when an agent is attached ----
+   Item 3 review fix: ctxTotal()/ctxUsed() are gone. They were the prototype's
+   fallbacks — a hardcoded 128k window and an 18k "used" figure — left
+   unreferenced when the context chip and panel moved to CTX. Nothing
+   fabricated ever reached the screen, but a live-looking helper carrying the
+   exact numbers the spec forbids is an invitation to a regression.
+   `tok()` went with them: model context windows are formatted by
+   fmtContextWindow (the TUI's own formatContextWindow), so the picker and the
+   chip no longer print two different numbers for one window. */
 function activeProvider() {
   if (!LIVE_CONFIG || !LIVE_CONFIG.llm) return null;
   const id = LIVE_CONFIG.llm.activeTextProvider;
@@ -2733,6 +2628,12 @@ function activeModel() {
     // desktop keeps the chip as the pane's anchor and leaves it unlabelled.
     const p = activeProvider();
     if (p && p.kind !== 'llama-server') return p.defaultChatModel || p.model || '';
+    // Review fix: selectPromptLlmMeta takes the catalogue id ONLY in managed
+    // mode; on an external route the model is whatever the operator's own
+    // server has loaded, which it reports through /props and this window has
+    // not probed. Naming localModels.managed.modelId there would be a label
+    // for a file the route does not use, so the chip goes unrendered instead.
+    if (selBackend() === 'custom') return '';
     // DOWNLOAD_MODEL_LABEL first: selectComposerNeedsModelDownload (local
     // route, snapshot loaded, no pull running, nothing on disk) is judged
     // regardless of managed.modelId, and ComposerMetaControls renders the
@@ -2794,11 +2695,14 @@ async function openOnboarding() {
 
 async function obLoadModels() {
   OB.busy = true; OB.error = null; render();
-  const res = await BR.modelsList();
+  // Embedding models are a separate daemon; the chat wizard does not offer
+  // them. chatModelsList subtracts `atag models list-embeddings` by id
+  // (review fix — the id-substring guess also hid chat models named after
+  // an embedding vendor).
+  const res = await BR.chatModelsList();
   OB.busy = false;
   if (!res || !res.ok) { OB.error = (res && res.error) || 'could not read the model catalogue'; render(); return; }
-  // Embedding models are a separate daemon; the chat wizard does not offer them.
-  OB.models = res.models.filter((m) => !/embed|bge|nomic|jina/i.test(m.id));
+  OB.models = res.models;
   OB.modelCur = Math.max(0, OB.models.findIndex((m) => m.active));
   render();
 }
@@ -3020,47 +2924,6 @@ if (BR) {
 
 /* ---- Models pane: everything below drives the real agent ---- */
 
-async function mpLoadLocal() {
-  if (!BR) return;
-  MP.localBusy = true; MP.localErr = null; render();
-  const res = await BR.modelsList();
-  MP.localBusy = false;
-  if (!res || !res.ok) { MP.localErr = (res && res.error) || 'could not read the catalogue'; render(); return; }
-  MP.local = res.models.filter((m) => !/embed|bge|nomic|jina/i.test(m.id));
-  if (!OB.ram) BR.hostRam().then((r) => { OB.ram = r || 16; render(); });
-  render();
-}
-
-async function mpUseLocalModel(id) {
-  MP.err = null; render();
-  const res = await BR.modelsUse(id);
-  if (res && res.ok === false) { MP.err = res.error || 'could not switch model'; render(); return; }
-  toast('Local model selected', id);
-  await mpLoadLocal();
-  refreshLiveConfig();
-}
-
-function mpPullModel(id) {
-  MP.pulling = id; MP.pullLog = ['starting ' + id + '…']; MP.err = null; render();
-  BR.modelsPull(id).then((res) => {
-    if (res && res.ok === false) { MP.pulling = null; MP.err = res.error || 'could not start the download'; render(); }
-  });
-}
-
-async function mpUseProvider(id) {
-  if (S.busy) { toast('Not while a turn is running'); return; }
-  MP.err = null; MP.busy = true; render();
-  const res = await BR.activateProvider(id);
-  MP.busy = false;
-  if (!res || !res.ok) {
-    MP.err = res && res.needsKey ? 'no API key for ' + id + ' — add one with the wizard or export its variable' : ((res && res.error) || 'could not switch provider');
-    render(); return;
-  }
-  bswReport(res);
-  toast('Provider selected', id + ' · restarting the agent');
-  await refreshLiveConfig();
-}
-
 async function mpSearch() {
   if (!MP.pickFor) return;
   if (!MP.pickQuery.trim()) { MP.picks = []; MP.pickBusy = false; MP.pickErr = null; render(); return; }
@@ -3132,40 +2995,33 @@ async function refreshLiveConfig() {
 }
 
 if (BR) {
+  // The composer's own pull (SEL.pulling). The LLM tab has its own listener
+  // for LLMP.pulling; the prototype Models pane's third branch went with it.
   BR.onPull((ev) => {
-    if (ev && SEL.pulling) {
-      if (ev.line) { SEL.pullLine = ev.line; const box = document.querySelector('.popover .cap'); if (box) box.textContent = ev.line; }
-      if (ev.done) {
-        const id = SEL.pulling; SEL.pulling = null;
-        if (ev.ok) selActivate({type:'localModel', id, downloaded:true});
-        else { SEL.err = ev.error || 'the download failed'; render(); }
-      }
-      return;
-    }
-    if (!ev || !MP.pulling) return;
-    if (ev.line) MP.pullLog.push(ev.line);
+    if (!ev || !SEL.pulling) return;
+    if (ev.line) { SEL.pullLine = ev.line; const box = document.querySelector('.popover .cap'); if (box) box.textContent = ev.line; }
     if (ev.done) {
-      const id = MP.pulling;
-      MP.pulling = null;
-      if (ev.ok) { toast('Downloaded', id); mpUseLocalModel(id); }
-      else { MP.err = ev.error || 'the download failed'; render(); }
-      return;
+      const id = SEL.pulling; SEL.pulling = null;
+      if (ev.ok) selActivate({type:'localModel', id, downloaded:true});
+      else { SEL.err = ev.error || 'the download failed'; render(); }
     }
-    const box = document.getElementById('mp-prog');
-    if (box) { box.textContent = MP.pullLog.slice(-8).join('\n'); box.scrollTop = box.scrollHeight; }
   });
 }
 
 /* Hooks for `electron . --smoke --models`. */
 if (typeof window !== 'undefined') {
+  // The prototype's Models pane is retired: its two rooms are Settings › LLM's
+  // Local and Cloud panes, so the harness looks where the operator does.
   window.__pane = (room, tab) => {
-    if (room === 'models') { S.settings = 1; S.settingsPane = 'models'; S.modelTab = tab; render(); if (tab === 'local') mpLoadLocal(); }
+    if (room !== 'models') return;
+    act('settings:llm');
+    llmSetMode(tab === 'cloud' ? 'cloud' : 'local');
   };
   window.__mp = () => ({
-    local: MP.local.length,
+    local: (LLMP.local || []).length,          // `atag models list` rows the LLM tab really draws
     picks: MP.picks.length,
     firstPick: MP.picks[0] ? MP.picks[0].id : '',
-    err: MP.err,
+    err: MP.err || LLMP.localErr,
   });
   window.__addProvider = (id) => {
     const i = PRESETS.findIndex((p) => p.id === id);
@@ -3183,9 +3039,17 @@ if (typeof window !== 'undefined') {
 
 function selBackend() {
   const p = activeProvider();
-  return p && p.kind === 'llama-server' ? 'local' : 'cloud';
+  if (!(p && p.kind === 'llama-server')) return 'cloud';
+  // Review fix: composer-switch-rows.ts selectComposerBackend — `local` and
+  // `custom` are the SAME provider entry (local-llama) and are told apart by
+  // localModels.mode. Reporting `local` for an external route drew the
+  // managed row as active and described a route the operator is not on.
+  const mode = LIVE_CONFIG && LIVE_CONFIG.localModels && LIVE_CONFIG.localModels.mode;
+  return mode === 'external' ? 'custom' : 'local';
 }
-function selKinds() { return selBackend() === 'local' ? ['backend','model'] : ['backend','provider','model']; }
+/** The managed catalogue is only the route's model list in managed mode. */
+function selLocalRoute() { return selBackend() === 'local'; }
+function selKinds() { return selBackend() === 'cloud' ? ['backend','provider','model'] : ['backend','model']; }
 function selProviders() {
   return ((LIVE_CONFIG && LIVE_CONFIG.llm && LIVE_CONFIG.llm.providers) || [])
     .filter((p) => p.kind !== 'llama-server');
@@ -3196,15 +3060,15 @@ function openSelector(kind) {
   SEL.open = true; SEL.kind = kind || 'backend'; SEL.cursor = 0; SEL.filter = ''; SEL.err = null;
   render();
   if (SEL.kind === 'model') selEnterModelPane();
-  if (SEL.kind === 'backend' && selBackend() === 'local' && !SEL.local.length) selLoadLocal();
+  if (SEL.kind === 'backend' && selLocalRoute() && !SEL.local.length) selLoadLocal();
 }
 function closeSelector() { SEL.open = false; SEL.addOpen = false; render(); }
 
 async function selLoadLocal() {
   SEL.localBusy = true; render();
-  const res = await BR.modelsList();
+  const res = await BR.chatModelsList();
   SEL.localBusy = false;
-  SEL.local = res && res.ok ? res.models.filter((m) => !/embed|bge|nomic|jina/i.test(m.id)) : [];
+  SEL.local = res && res.ok ? res.models : [];
   if (!OB.ram) OB.ram = (await BR.hostRam()) || 16;
   render();
 }
@@ -3220,7 +3084,7 @@ async function selLoadModels(providerId) {
 }
 
 function selEnterModelPane() {
-  if (selBackend() === 'local') { if (!SEL.local.length) selLoadLocal(); return; }
+  if (selLocalRoute()) { if (!SEL.local.length) selLoadLocal(); return; }
   const id = selActiveProviderId();
   if (id && SEL.modelsFor !== id) selLoadModels(id);
 }
@@ -3229,17 +3093,24 @@ function selEnterModelPane() {
 function selRows() {
   if (SEL.kind === 'backend') {
     // Lane B — backend switch: composer-switch-rows.ts backendRows, in
-    // its order (cloud, local) with its details. The TUI's third row,
-    // custom (llama.cpp you run), needs the external-URL editor and is
-    // not offered here.
+    // its order (cloud, local, custom) with its details. Review fix: the
+    // third row is back, because dropping it made an external route read as
+    // the managed one. It carries no editor — the desktop's editor for it is
+    // Settings › LLM › External, and the row deep-links there, the way the
+    // TUI's "Download more models…" row deep-links into its Local pane.
     const ready = selProviders().filter((p) => BSW.readyIds.includes(p.id)).length;
+    const here = selBackend();
+    const customUrl = (LIVE_CONFIG && LIVE_CONFIG.localModels && LIVE_CONFIG.localModels.url) || '';
     return [
       {type:'backend', id:'cloud', label:'cloud',
        detail: !BSW.readyLoaded ? 'checking keys…' : ready > 0 ? ready + ' provider' + (ready === 1 ? '' : 's') + ' ready' : 'add a provider first',
-       active: selBackend() === 'cloud'},
+       active: here === 'cloud'},
       {type:'backend', id:'local', label:'local',
-       detail: 'llama.cpp managed here',
-       active: selBackend() === 'local'},
+       detail: 'llama.cpp managed here' + (here === 'custom' ? ' · switches this route to managed' : ''),
+       active: here === 'local'},
+      {type:'backend', id:'custom', label:'custom',
+       detail: 'llama.cpp you run' + (customUrl ? ' · ' + customUrl : '') + ' · Settings › LLM › External',
+       active: here === 'custom'},
     ];
   }
   if (SEL.kind === 'provider') {
@@ -3256,7 +3127,7 @@ function selRows() {
     return rows;
   }
   // model pane
-  if (selBackend() === 'local') {
+  if (selLocalRoute()) {
     const rows = SEL.local
       .filter((m) => !SEL.filter || modelMatches(m.id, m.family, SEL.filter))
       .map((m) => {
@@ -3278,19 +3149,28 @@ function selRows() {
       return modelMatches(m.id, tags, f);
     })
     .map((m) => ({type:'cloudModel', id:m.id, label:m.id, active:m.id === chosen,
-      detail: (m.contextWindow ? tok(m.contextWindow) + ' context' : '')
+      detail: (m.contextWindow ? fmtContextWindow(m.contextWindow) + ' context' : '')
         + (m.supportsTools && m.supportsTools !== 'none' ? ' · tools' : '')
         + (m.supportsVision ? ' · vision' : '')}));
 }
 
 async function selActivate(row) {
   if (!row) return;
-  if (row.type === 'backend') { selChooseBackend(row.id); return; }
+  if (row.type === 'backend') {
+    // The custom row has no switch behind it: pointing the route at a server
+    // the operator runs needs the URL probed first, which is the External
+    // pane's job. Open it instead of writing anything here.
+    if (row.id === 'custom') { closeSelector(); act('settings:llm'); llmSetMode('external'); return; }
+    selChooseBackend(row.id); return;
+  }
   // The TUI's trailing rows: "Add a new provider" opens the wizard,
   // "Download more models…" the local models pane (Settings › Models).
   if (row.type === 'action') {
     if (row.id === 'add') { act('sel:add'); return; }
-    act('settings:models'); S.modelTab = 'local'; render(); mpLoadLocal();
+    // model:local:download-more → Manage › LLM › Local, the pane that
+    // downloads. (Review fix: it used to open the same tab but then set the
+    // retired Models pane's tab and spawn an `atag models list` nothing drew.)
+    closeSelector(); act('settings:llm'); llmSetMode('local');
     return;
   }
   // Lane B — backend switch: every branch below writes through main's
@@ -3484,6 +3364,15 @@ async function selSavePreset() {
    until one of the first two answers.
    ============================================================ */
 
+/** Port of src/llm/provider/format-model-details.ts formatContextWindow: the
+    string the TUI's model rows (and `models search`) print for a context
+    window — 33k / 1.0M — as opposed to formatTokens below, which is the
+    context chip's own format. */
+function fmtContextWindow(n) {
+  if (n >= 1e6) { const m = n / 1e6; return (Number.isInteger(m) ? String(m) : m.toFixed(1)) + 'M'; }
+  if (n >= 1000) return Math.round(n / 1000) + 'k';
+  return String(n);
+}
 /** Port of src/tui/components/format-tokens.ts formatTokens: 6.4k / 32k / 1.0M. */
 function fmtTokens(n) {
   if (n < 1000) return String(n);
@@ -3652,7 +3541,17 @@ function paintContext() {
 /** The draft's estimate: moves the projected figure only, never a measured one. */
 function ctxDraftChanged() {
   CTX.draftTokens = estimateTokens(S.draft);
-  if (CTX.source === 'projected') { CTX.tokens = CTX.stablePrefix + CTX.draftTokens; scheduleChipRepaint(); }
+  if (CTX.source === 'projected') { CTX.tokens = CTX.stablePrefix + CTX.draftTokens; scheduleChipRepaint(); return; }
+  // Review fix: on an agent that HAS /api/context-preview the figure is the
+  // agent's own build of a prompt that already includes this draft, so typing
+  // must re-ASK rather than add an estimate locally — never add the draft to a
+  // measured figure. Debounced, or every keystroke would be a request.
+  // Unreachable against installed 0.5.4, whose route 404s (previewSupported
+  // false) and whose figure is therefore 'projected' or from the trace.
+  if (CTX.source === 'built' && CTX.previewSupported) {
+    clearTimeout(CTX.draftTimer);
+    CTX.draftTimer = setTimeout(() => { CTX.draftTimer = null; refreshContext(); }, 600);
+  }
 }
 function scheduleChipRepaint() {
   clearTimeout(CTX.chipTimer);
@@ -4071,10 +3970,15 @@ async function reconcileToolCards(attempt = 0) {
       card.ok = result.status === 'ok';
       card.out = result.summary || '';
       card.truncated = !!result.truncated;
+      card.forced = false;   // the store answered after all: this card's status is known
     }
   }
   // Whatever the store still does not describe is finished, just unmeasured.
-  pendingCards.forEach((c) => { if (c.ok === null) { c.ok = true; c.out = c.out || ''; } });
+  // item 5 review fix: `forced` records that this card's status was never
+  // learned — reconciliation gave up. cardWrittenPaths refuses such a card, so
+  // a write whose outcome the store never confirmed cannot produce a
+  // "Saved to" line from a stat that only proves the file is there NOW.
+  pendingCards.forEach((c) => { if (c.ok === null) { c.ok = true; c.forced = true; c.out = c.out || ''; } });
   await applyTraceDurations();   // item 4: live cards flip from observed wall time to the agent's number
   // item 5: the store is the only place the write tools' args and result lines
   // come from after a live turn, so the attachment strip is built here.
@@ -4112,7 +4016,11 @@ async function applyTraceDurations() {
   for (const card of cards) {
     // A live card still running keeps observedMs and halts the walk; a store card whose
     // result never landed (an interrupted turn) is skipped so the cards after it are still measured.
-    if (card.ok === null) { if (card.startedAt) break; continue; }
+    // Review fix: the skip still WALKS the cursor past the row that card would have
+    // taken (below), because leaving `k` behind let a byte-identical retry after the
+    // interrupt take the interrupted call's row and print it as its own measurement.
+    const unresolved = card.ok === null;
+    if (unresolved && card.startedAt) break;
     const at = card.at || 0;                         // = step finish, stamped after the whole batch returned
     let found = -1;
     for (let j = k; j < rows.length; j++) {
@@ -4129,6 +4037,7 @@ async function applyTraceDurations() {
     }
     if (found < 0) continue;                         // leave unmeasured, never 0
     k = found + 1;                                   // forward-only: a repeated identical call takes the next row
+    if (unresolved) continue;                        // its row is consumed, but nothing is claimed for it
     if (rows[found].ms != null) { card.ms = rows[found].ms; card.msSource = 'trace'; card.traceTs = rows[found].ts; hit++; }
   }
   return hit > 0;
@@ -4213,7 +4122,7 @@ function resolveAgentPath(p, cwd) {
 /** Files a tool card wrote — the agent's own result line first, its args
     second. Only ok cards, only the four write tools. */
 function cardWrittenPaths(m, cwd) {
-  if (m.k !== 'tool' || m.ok !== true || !WRITE_TOOLS.has(m.name)) return [];
+  if (m.k !== 'tool' || m.ok !== true || m.forced || !WRITE_TOOLS.has(m.name)) return [];
   const a = cardArgs(m) || {};
   const out = String(m.out || '');
   if (m.name === 'os.fs.write') {
@@ -4238,6 +4147,16 @@ function cardWrittenPaths(m, cwd) {
   return [];
 }
 
+/** Paths an ok os.fs.trash card named (args.paths / args.path), resolved the
+    same way. Not a write tool — this is the delete side, read below only to
+    expire a strip whose file has since gone. */
+function cardTrashedPaths(m, cwd) {
+  if (m.k !== 'tool' || m.ok !== true || m.name !== 'os.fs.trash') return [];
+  const a = cardArgs(m) || {};
+  const raw = Array.isArray(a.paths) ? a.paths : (a.path ? [a.path] : []);
+  return raw.map((p) => resolveAgentPath(p, cwd)).filter(Boolean);
+}
+
 /** Every path the write tools of this assistant item's turn reported. The
     reply text is deliberately not read: a file the turn only mentioned is
     not a file the turn saved. */
@@ -4255,11 +4174,19 @@ function turnFilePaths(assistantItem, cwd) {
 async function refreshAttachments(cwd) {
   if (!BR || !BR.statPaths) return false;
   let changed = false;
+  const trashed = new Set();
+  for (const m of S.log) for (const p of cardTrashedPaths(m, cwd)) trashed.add(p);
   for (const m of S.log) {
     if (m.k !== 'assistant') continue;
     if (m.id === S.streamId && S.busy) continue;            // still streaming; its cards are not reconciled yet
     const paths = turnFilePaths(m, cwd);
-    const sig = paths.join('\n');
+    // item 5 review fix: the signature also carries the attached paths that a
+    // LATER os.fs.trash card has named. Without it the cache never re-stated
+    // them, and a strip kept saying "Saved to <path>" for a file the agent had
+    // since moved to the Trash — the one state the strip could hold that the
+    // filesystem no longer backs.
+    const gone = paths.filter((p) => trashed.has(p));
+    const sig = paths.join('\n') + (gone.length ? '\u0000trashed:' + gone.join('\n') : '');
     if (sig === m.attachSig) continue;
     m.attachSig = sig;
     if (!paths.length) { if ((m.attach || []).length) changed = true; m.attach = []; continue; }
@@ -4352,14 +4279,20 @@ if (typeof window !== 'undefined') {
     return {id:m.id, open:!!m.open, flipped:m.open !== openBefore, body:!!document.querySelector('#card-' + m.id + ' .cardbody'),
             headBefore, headAfter:h1 ? h1.getBoundingClientRect().top : NaN, scrollBefore, scrollAfter:sc.scrollTop};
   };
-  window.__unfoldGroup = () => {
-    const g = document.querySelector('[data-group]'); const sc = $('#scroller'); if (!g || !sc) return null;
+  // `which` names one group (review fix: the fixture's own run, not whichever
+  // group happens to be first in the DOM); omitted, it takes the first.
+  window.__unfoldGroup = (which) => {
+    const g = which ? document.querySelector('[data-group="' + which + '"]') : document.querySelector('[data-group]');
+    const sc = $('#scroller'); if (!g || !sc) return null;
     const id = g.dataset.group; sc.scrollTop += g.getBoundingClientRect().top - sc.getBoundingClientRect().top - 120;
     // the hook's own scrollTop write happens BEFORE `before` is measured, so the assertion isolates the click
     const before = g.getBoundingClientRect().top, scrollBefore = sc.scrollTop;
+    const cardsBefore = document.querySelectorAll('.card').length, groupsBefore = document.querySelectorAll('[data-group]').length;
     g.click();                        // [data-group] branch → expandGroupInPlace
     const h = document.querySelector('#turn-' + id + ' .cardhead');
-    return {id, members:OPEN_GROUPS.has(id), headBefore:before, headAfter:h ? h.getBoundingClientRect().top : NaN, scrollBefore, scrollAfter:sc.scrollTop};
+    return {id, members:OPEN_GROUPS.has(id), headBefore:before, headAfter:h ? h.getBoundingClientRect().top : NaN, scrollBefore, scrollAfter:sc.scrollTop,
+            cardsBefore, cardsAfter:document.querySelectorAll('.card').length,
+            groupsBefore, groupsAfter:document.querySelectorAll('[data-group]').length};
   };
 }
 
@@ -4393,12 +4326,15 @@ if (typeof window !== 'undefined') {
   };
   window.__overflow = () => {
     const sc = document.getElementById('scroller'); const col = document.querySelector('.col720');
-    const els = Array.from(document.querySelectorAll('.card,.prose,.cardbody pre,.appr'));
+    // .cardsum is the COLLAPSED card's summary line — measured here since it is
+    // one of the three min-content contributors the wrap rules had to defeat.
+    const els = Array.from(document.querySelectorAll('.card,.prose,.cardbody pre,.appr,.cardsum'));
     const turn = document.querySelector('.turn');
     const track = turn ? parseFloat(getComputedStyle(turn).gridTemplateColumns.split(' ')[1]) : 0;
     return {sw: sc ? sc.scrollWidth : 0, cw: sc ? sc.clientWidth : 0,
             colRight: col ? Math.round(col.getBoundingClientRect().right) : 0, colWidth: col ? col.clientWidth : 0, track,
             maxRight: Math.round(Math.max(0, ...els.map((c) => c.getBoundingClientRect().right))),
+            sums: Array.from(document.querySelectorAll('.cardsum')).map((n) => Math.round(n.getBoundingClientRect().right)),
             durations: Array.from(document.querySelectorAll('.card .du')).map((d) => d.textContent),
             lastTitle: (() => { const d = document.querySelectorAll('.card .du'); return d.length ? d[d.length - 1].title : ''; })()};
   };
@@ -4445,15 +4381,15 @@ function bswRefreshFacts() {
     BSW.readyIds = r.ids; BSW.readyLoaded = true;
     if (JSON.stringify([BSW.readyLoaded, BSW.readyIds]) !== was) bswRepaint();
   });
-  if (selBackend() === 'local' && !SEL.localBusy && !SEL.pulling) bswSnapshot();
+  if (selLocalRoute() && !SEL.localBusy && !SEL.pulling) bswSnapshot();
 }
 /** The catalogue snapshot (`atag models list`): what is on disk, which is active. Resolves either way. */
 function bswSnapshot() {
   if (!BR) return Promise.resolve();
-  return BR.modelsList().then((res) => {
+  return BR.chatModelsList().then((res) => {
     if (!(res && res.ok)) return;
     const was = JSON.stringify([BSW.localLoaded, SEL.local]);
-    SEL.local = res.models.filter((m) => !/embed|bge|nomic|jina/i.test(m.id)); BSW.localLoaded = true;
+    SEL.local = res.models; BSW.localLoaded = true;
     if (JSON.stringify([BSW.localLoaded, SEL.local]) !== was) bswRepaint();
   }).catch(() => {});
 }
@@ -4496,7 +4432,6 @@ function bswRepaint() {
 function bswDownloadProgress(modelId) {
   let line = null;
   if (SEL.pulling === modelId) line = SEL.pullLine || '';
-  else if (MP.pulling === modelId) line = MP.pullLog[MP.pullLog.length - 1] || '';
   else if (OB.pulling && OB.pulling.id === modelId) line = OB.log[OB.log.length - 1] || '';
   if (line === null) return null;
   const m = /(\d+)%\s+([\d.]+ [KMG]B)\s*\/\s*([\d.]+ [KMG]B)/.exec(line);
@@ -6544,13 +6479,13 @@ async function llmRefreshRun() {
   llmProviders().forEach((p) => llmKeyEnvNames(p).forEach((n) => names.add(n)));
   Object.keys(PROVIDER_KEY_ENV_FALLBACK).forEach((k) => names.add(PROVIDER_KEY_ENV_FALLBACK[k]));
   const [cfg, list, emb, status, health, env, dotenv] = await Promise.all([
-    BR.configGet(), BR.modelsList(), BR.modelsListEmbeddings(), BR.modelsStatus(), BR.health(),
+    BR.configGet(), BR.chatModelsList(), BR.modelsListEmbeddings(), BR.modelsStatus(), BR.health(),
     BR.envPresent([...names]), stateDir ? BR.dotenvKeys(stateDir) : Promise.resolve({ok:true, keys:[]}),
   ]);
   if (seq !== LLMP.seq) return;
   if (cfg && cfg.ok && cfg.config) LIVE_CONFIG = cfg.config;
   LLMP.localBusy = false; LLMP.busy = false; LLMP.lastRefreshedAt = Date.now();
-  if (list && list.ok) { LLMP.local = list.models.filter((m) => !/embed|bge|nomic|jina/i.test(m.id)); } // the chat catalog; embeddings come from list-embeddings
+  if (list && list.ok) { LLMP.local = list.models; } // the chat catalog (chatModelsList subtracts list-embeddings); embeddings come from list-embeddings
   else { LLMP.local = LLMP.local || []; LLMP.localErr = (list && list.error) || 'could not read the catalogue'; }
   if (emb && emb.ok) { LLMP.emb = emb.models; LLMP.embDaemon = emb.daemon || null; }
   else { LLMP.emb = LLMP.emb || []; if (!LLMP.localErr) LLMP.localErr = (emb && emb.error) || 'could not read the embedding catalogue'; }
@@ -7258,10 +7193,13 @@ async function llmExternalSave() {
     if (p.kind === 'openai-compat') LLMP.steerUrl = res.url;
     llmRepaint(); return;
   }
-  let w = await BR.configSet('localModels.url', res.url);
-  if (!w || w.ok === false) { llmReport(llmFail('localModels.url write failed', w), 'external'); llmRepaint(); return; }
-  w = await BR.configSet('localModels.mode', 'external');
-  if (!w || w.ok === false) { llmReport(llmFail('localModels.mode write failed', w), 'external'); llmRepaint(); return; }
+  // Review fix: one whole-file write (agent-cli setExternalLlamaUrl, the port
+  // of the TUI's persistUserLocalLlmUrl) — mode external, localModels.url AND
+  // llm.providers[local-llama].url together. The two leaf `config set` calls
+  // this replaces never re-synced the provider url, so the runtime (which
+  // takes the file's llm block verbatim) kept calling the old address.
+  const w = await BR.setExternalLlamaUrl(res.url);
+  if (!w || w.ok === false) { llmReport(llmFail('local-llm URL write failed', w), 'external'); llmRepaint(); return; }
   await refreshLiveConfig();
   // Integration seam: the route move goes through lane B's activateProvider (restarts `atag serve`, which also picks up the two leaf writes above).
   if (llmActiveTextId() !== 'local-llama') {
@@ -7938,4 +7876,67 @@ if (typeof window !== 'undefined') {
   // ⌘3 / View › Skills / the palette rows still reach Skills — on this tree they
   // open Settings › Skills, and only the sidebar row is gone.
   window.__skillsReachable = () => { act('room:skills'); const h = document.querySelector('#settings .settab.on'); return h ? h.textContent.replace(/\s*\((\d+|up|down)\)$/, '').trim() : ''; };
+}
+
+/* Hooks for --smoke: the review fixes.
+   item 2 (folded runs), item 5 (a strip chip is really clickable, and a strip
+   whose file was trashed afterwards), item 5/backend (the third backend row and
+   the read-only `custom` state an external route reads as). */
+if (typeof window !== 'undefined') {
+  /** The folded runs on screen, in DOM order. */
+  window.__groups = () => Array.from(document.querySelectorAll('[data-group]')).map((g) => ({
+    id: g.dataset.group,
+    head: (g.querySelector('.nm') || {}).textContent || '',
+  }));
+  /** Click the strip's first chip through the real delegator and report the
+      path it handed to the opener (nothing is actually opened). */
+  window.__clickAttachChip = () => {
+    const chip = document.querySelector('.attach .filechip');
+    if (!chip) return null;
+    LAST_OPEN_PATH = null; OPEN_PATH_DRYRUN = true;
+    try { chip.click(); } finally { OPEN_PATH_DRYRUN = false; }
+    return {file: chip.dataset.file, opened: LAST_OPEN_PATH, hasMenu: !!(BR && BR.fileMenu)};
+  };
+  /** Re-run the real collector over the current log (after a trash card). */
+  window.__reattach = async () => {
+    await refreshAttachments((S.live && S.live.workingDir) || null);
+    render();
+    let paths = [];
+    for (let i = S.log.length - 1; i >= 0; i--) if (S.log[i].k === 'assistant') { paths = (S.log[i].attach || []).map((f) => f.path); break; }
+    return {paths, chips: document.querySelectorAll('.attach .filechip').length, labels: document.querySelectorAll('.attach .attach-label').length};
+  };
+  /** The backend pane's rows, without opening the popup. */
+  window.__backendRows = () => {
+    const was = SEL.kind; SEL.kind = 'backend';
+    const rows = selRows(); SEL.kind = was;
+    return {backend: selBackend(),
+      chip: ((document.querySelector('.modechip') || {}).textContent || '').trim(),
+      modelChip: !!document.querySelector('.modelchip'),
+      rows: rows.map((r) => ({id:r.id, label:r.label, detail:r.detail, active:!!r.active}))};
+  };
+  /** The rendered geometry of the sidebar rows: one line, dot + name (+ pin).
+      The old check could only catch a reintroduced `.t2` class; this measures
+      what the user actually asked for. */
+  window.__rowShape = () => {
+    const rows = Array.from(document.querySelectorAll('#sidebar .sesrow'));
+    if (!rows.length) return null;
+    const h = rows.map((n) => Math.round(n.getBoundingClientRect().height));
+    const t1 = rows[0].querySelector('.t1');
+    const st = t1 ? getComputedStyle(t1) : null;
+    return {
+      rows: rows.length, minHeight: Math.min.apply(null, h), maxHeight: Math.max.apply(null, h),
+      children: Array.from(rows[0].children).map((c) => (c.className || '').split(' ')[0]),
+      titleHeight: t1 ? Math.round(t1.getBoundingClientRect().height) : 0,
+      titleLineHeight: st ? Math.round(parseFloat(st.lineHeight)) : 0,
+      nowrap: !!st && st.whiteSpace === 'nowrap' && st.textOverflow === 'ellipsis',
+    };
+  };
+  /** Activate one backend row exactly as a click on it would. */
+  window.__backendActivate = (id) => {
+    const was = SEL.kind; SEL.kind = 'backend';
+    const row = selRows().find((r) => r.id === id); SEL.kind = was;
+    return Promise.resolve(row ? selActivate(row) : null).then(() => ({
+      settings: !!S.settings, pane: settingsPaneId(S.settingsPane), llmMode: LLMP.mode, selOpen: SEL.open,
+    }));
+  };
 }
