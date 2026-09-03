@@ -58,7 +58,20 @@ export function createVoteAwareReflectionRunner(args: {
       } catch {
         // ReflectionRunner is already fire-safe — defence in depth.
       }
-      const candidates = hydrateCandidates(input, args, previewChars);
+      // Hydration reads four SQLite-backed stores. Those reads can
+      // throw — most often `TypeError: The database connection is not
+      // open`, because runtime shutdown settles the inner reflection
+      // via `abortPending()` and then closes every store while this
+      // fire-and-forget continuation is still pending. `reflect()` is
+      // contractually fire-safe (see `reflection-runner.ts`) and the
+      // agent loop calls it as a bare `void`, so a throw escaping here
+      // becomes an unhandled rejection rather than a swallowed miss.
+      let candidates: VoteCandidate[];
+      try {
+        candidates = hydrateCandidates(input, args, previewChars);
+      } catch {
+        return;
+      }
       if (candidates.length === 0) return;
       try {
         await args.voteRunner.run({

@@ -51,11 +51,20 @@ export function createLinkAwareReflectionRunner(args: {
       }
       const ids = input.recalledMemoryIds ?? [];
       if (ids.length < minCandidates) return;
+      // Same shutdown race as the vote-aware decorator: `notesStore`
+      // is a SQLite handle that runtime shutdown may close while this
+      // fire-and-forget continuation is pending, and a closed
+      // better-sqlite3 statement throws `TypeError`. `reflect()` must
+      // stay fire-safe for the agent loop's bare `void` call.
       const candidates: { id: number; body: string }[] = [];
-      for (const id of ids) {
-        const entry = args.notesStore.get(id);
-        if (!entry) continue;
-        candidates.push({ id: entry.id, body: entry.content });
+      try {
+        for (const id of ids) {
+          const entry = args.notesStore.get(id);
+          if (!entry) continue;
+          candidates.push({ id: entry.id, body: entry.content });
+        }
+      } catch {
+        return;
       }
       if (candidates.length < minCandidates) return;
       try {

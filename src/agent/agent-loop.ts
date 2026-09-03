@@ -651,7 +651,22 @@ export class AgentLoop {
         "This is the final allowed step. Do not call any non-terminal tool; " +
         "summarize the completed work with reply, or end the session with finish.";
       try {
-        const profileFacts = this.deps.profileFactsProvider?.();
+        // `profileFactsProvider` is a raw `profileStore.list()`. The
+        // facts are prompt decoration — the renderer already drops
+        // them when the contextual gate does not match — so a store
+        // failure must render the step without them rather than throw
+        // into the catch below, where a `TypeError` from a closed
+        // SQLite handle would be classified `tool` and fail the turn.
+        let profileFacts: readonly ProfileFact[] | undefined;
+        try {
+          profileFacts = this.deps.profileFactsProvider?.();
+        } catch (err) {
+          this.deps.logger?.warn("profile facts unavailable for this step", {
+            sessionId: state.id,
+            stepIndex: i,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
         const activeProfile =
           this.deps.profileManager?.getProfile() ??
           this.deps.profile ??
@@ -1147,8 +1162,22 @@ export class AgentLoop {
           // renderer already surfaces them whenever they pass the
           // contextual-keyword gate. Sourcing them here keeps the
           // decorator's hydration cheap.
-          const profileFacts =
-            this.deps.profileFactsProvider?.() ?? [];
+          // `profileFactsProvider` is a raw `profileStore.list()`.
+          // It is only ever an input to the fire-and-forget reflection
+          // below, so a store failure here must not fail the turn the
+          // user is waiting on — an empty allowlist just means the
+          // vote-runner sees no profile candidates this turn.
+          let profileFacts: readonly ProfileFact[] = [];
+          try {
+            profileFacts = this.deps.profileFactsProvider?.() ?? [];
+          } catch {
+            // best-effort: reflection candidates only
+          }
+          // `reflect()` is documented fire-safe, but it is composed at
+          // runtime from decorators that read SQLite stores. A bare
+          // `void` turns any escape into an unhandled rejection the
+          // loop can neither see nor recover from, so the trailing
+          // `.catch` pins the contract at the call site too.
           void this.deps.reflectionRunner.reflect({
             sessionId: state.id,
             userMessage,
@@ -1184,7 +1213,7 @@ export class AgentLoop {
             ...(segmentationActive && transcript.length > 0
               ? { transcript }
               : {}),
-          });
+          }).catch(() => {});
         }
       }
     }
