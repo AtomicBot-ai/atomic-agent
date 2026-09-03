@@ -48,6 +48,7 @@ contextBridge.exposeInMainWorld("atomic", {
   configGet: () => ipcRenderer.invoke("cli:configGet"),
   configSet: (key: string, value: string) => ipcRenderer.invoke("cli:configSet", { key, value }),
   modelsList: () => ipcRenderer.invoke("cli:modelsList"),
+  chatModelsList: () => ipcRenderer.invoke("cli:chatModelsList"),
   modelsUse: (id: string) => ipcRenderer.invoke("cli:modelsUse", id),
   modelsPull: (id: string) => ipcRenderer.invoke("cli:modelsPull", id),
   cancelPull: () => ipcRenderer.invoke("cli:cancelPull"),
@@ -136,6 +137,7 @@ contextBridge.exposeInMainWorld("atomic", {
   selectCloudModel: (id: string, model: string) => ipcRenderer.invoke("cli:selectCloudModel", { id, model }),
   selectLocalModel: (id: string) => ipcRenderer.invoke("cli:selectLocalModel", id),
   useManagedMode: () => ipcRenderer.invoke("cli:useManagedMode"),
+  setExternalLlamaUrl: (url: string) => ipcRenderer.invoke("cli:setExternalLlamaUrl", url),
   providersReady: () => ipcRenderer.invoke("cli:providersReady"),
 
   /** Lane B — context before the first message (item 3): the projection's sources. */

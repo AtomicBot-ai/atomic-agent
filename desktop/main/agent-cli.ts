@@ -728,6 +728,51 @@ export async function useManagedMode(): Promise<WriteResult> {
   return w.ok ? { ok: true, changed: true } : { ok: false, changed: false, error: w.error };
 }
 
+/**
+ * persistUserLocalLlmUrl (src/tui/persist-user-local-models-config.ts:110)
+ * = persistUserLocalModelsConfig({ url, mode: "external" }), which ends in
+ * `parseUserConfigFile(syncLocalLlamaProviderUrl(draft))` — mode, url and
+ * the local-llama provider's url move together in ONE file write.
+ *
+ * Review fix: the External pane used to write `localModels.url` and
+ * `localModels.mode` as two leaf `config set` calls and never touched
+ * `llm.providers[local-llama].url`, so resolveLlmConfig (which returns the
+ * file's llm block verbatim when present) kept routing chat at the old
+ * address — the managed port on a file that had been managed — while the
+ * pane reported the save as done.
+ *
+ * The route move itself stays where the TUI puts it (persistLlamaUrl calls
+ * `providers.setActiveText` separately, after the probe), so this helper
+ * writes exactly what the TUI's persist call writes and nothing more: it
+ * does not disable embeddings the way the onboarding wizard's
+ * persistUserRemoteLlmUrls does, because this pane never asked about them.
+ */
+export async function setExternalLlamaUrl(url: string): Promise<WriteResult> {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return { ok: false, changed: false, error: `not a URL: ${url}` };
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    return { ok: false, changed: false, error: `not an http(s) URL: ${url}` };
+  }
+  const read = await readWholeConfig();
+  if (!read.ok || !read.config) return { ok: false, changed: false, error: read.error };
+  const cfg = read.config;
+  const lm = (cfg.localModels ??= {});
+  const wasUrl = lm.url;
+  const wasMode = lm.mode;
+  lm.url = url;
+  lm.mode = "external";
+  const providerMoved = syncLocalLlamaProviderUrl(cfg);
+  if (wasUrl === url && wasMode === "external" && !providerMoved) {
+    return { ok: true, changed: false };
+  }
+  const w = await configSetWhole(cfg);
+  return w.ok ? { ok: true, changed: true } : { ok: false, changed: false, error: w.error };
+}
+
 /** persistMemoryEmbeddingsEnabled: a no-op when the flag already matches. */
 export async function setMemoryEmbeddingsEnabled(enabled: boolean): Promise<WriteResult> {
   const read = await readWholeConfig();
@@ -1294,6 +1339,44 @@ export async function modelsListEmbeddings(): Promise<{
   }
   if (!models.length) return { ok: false, error: "could not parse the embedding catalog" };
   return { ok: true, models, ...(daemon ? { daemon } : {}) };
+}
+
+/**
+ * The chat route's half of the catalogue.
+ *
+ * Review fix: `chatModels` used to drop any row whose id merely CONTAINED
+ * embed/bge/nomic/jina, which is a guess about names — a chat GGUF named
+ * `nomic-*` or `jina-*` would vanish from the local switch and an install
+ * holding only that model would report "download model" with a usable model
+ * on disk. Which models are embedding models is a fact the CLI publishes:
+ * `atag models list-embeddings` IS the embedding catalogue, so subtract it
+ * by id. The name test survives only as the fallback for a CLI that cannot
+ * answer (an old binary, a parse failure), where a guess beats offering an
+ * embedding model to the chat daemon.
+ */
+export const EMBEDDING_NAME_HINT = /embed|bge|nomic|jina/i;
+
+/** Memoised: one binary's embedding catalogue is static for this process. */
+let EMBEDDING_IDS: Promise<Set<string> | null> | null = null;
+export function embeddingModelIds(): Promise<Set<string> | null> {
+  if (!EMBEDDING_IDS) {
+    const p = modelsListEmbeddings()
+      .then((r) => (r.ok && r.models ? new Set(r.models.map((m) => m.id)) : null))
+      .catch(() => null);
+    EMBEDDING_IDS = p;
+    // A failed read is not cached: the next caller asks again.
+    void p.then((v) => { if (!v && EMBEDDING_IDS === p) EMBEDDING_IDS = null; });
+  }
+  return EMBEDDING_IDS;
+}
+
+export async function chatModelsList(): Promise<{ ok: boolean; models?: CatalogModel[]; error?: string; byCatalog?: boolean }> {
+  const list = await modelsList();
+  if (!list.ok || !list.models) return list;
+  const ids = await embeddingModelIds();
+  return ids
+    ? { ok: true, models: list.models.filter((m) => !ids.has(m.id)), byCatalog: true }
+    : { ok: true, models: list.models.filter((m) => !EMBEDDING_NAME_HINT.test(m.id)), byCatalog: false };
 }
 
 // modelsStop: lane C's copy folded into lane B's definition above (identical body).

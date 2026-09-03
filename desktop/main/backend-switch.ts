@@ -1,4 +1,5 @@
 import {
+  chatModelsList,
   localDaemonRunning,
   modelsList,
   modelsStart,
@@ -131,11 +132,6 @@ export async function activateProvider(id: string): Promise<SwitchResult> {
   };
 }
 
-function chatModels(models: Array<{ id: string; downloaded: boolean; active: boolean }>) {
-  // Embedding models are a separate daemon; the chat route never picks them.
-  return models.filter((m) => !/embed|bge|nomic|jina/i.test(m.id));
-}
-
 /**
  * The local half of a switch once a downloaded model is known:
  * localModels.mode/managed.modelId via `models use` (with the url sync)
@@ -207,9 +203,11 @@ export async function switchBackend(kind: "cloud" | "local"): Promise<SwitchResu
     return activateProvider(provider.id);
   }
 
-  const list = await modelsList();
+  // Embedding models are a separate daemon; the chat route never picks
+  // them. chatModelsList subtracts the CLI's own embedding catalogue.
+  const list = await chatModelsList();
   if (!list.ok || !list.models) return { ok: false, error: list.error };
-  const rows = chatModels(list.models);
+  const rows = list.models;
   const ready = rows.find((m) => m.active && m.downloaded) ?? rows.find((m) => m.downloaded);
   if (!ready) {
     // Nothing on disk: point the route at local-llama and make the mode
