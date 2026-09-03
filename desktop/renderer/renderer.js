@@ -87,6 +87,12 @@ const OB_CHOICES = [
   {id:'cloud',  t:'Cloud models',    d:'OpenRouter, Anthropic, Gemini, Groq and 20 more. Fastest to a working agent — needs an API key.'},
   {id:'custom', t:'Custom endpoint', d:'An OpenAI-compatible or llama-server URL you already run. Nothing is downloaded, nothing else is asked.'},
 ];
+/* Lane B — backend switch. What the chips and rows read while a switch
+   runs in main: `line` is the popup's status text, `readyIds` the cloud
+   providers with a usable key (the TUI's hasApiKey), `localLoaded`
+   whether the local catalogue snapshot has landed — the model chip only
+   says "download model" once it has, as the TUI's does. */
+const BSW = { line:'', readyIds:[], localLoaded:false };
 
 /* ============================================================
    Atomic Agent Desktop — clickable prototype, no backend.
@@ -482,7 +488,7 @@ function composer() {
         + (selBackend() === 'cloud'
             ? '<button class="cchip" data-sel-open="provider">' + esc(selActiveProviderId() || 'no provider') + ic('chevD') + '</button>'
             : '')
-        + '<button class="cchip modelchip" data-sel-open="model">'
+        + '<button class="cchip modelchip" data-sel-open="model"' + (activeModel() ? '' : ' title="no model chosen — pick one"') + '>'
           + esc(shortModel(activeModel())) + ic('chevD') + '</button>'
         + '<span style="flex:1"></span>'
         + contextChip()
@@ -1158,6 +1164,15 @@ function submit() {
     render();
     return;
   }
+  // Lane B — backend switch: the TUI's pre-turn gate for the managed local
+  // route (src/tui/local-turn-gate.ts). `atag serve` has no equivalent, so
+  // without this a turn against a model that is not on disk burns the
+  // transport retries and ends in a bare fetch error.
+  const gate = localTurnGate();
+  if (gate.kind !== 'run') {
+    S.log.push({id:nid(), k:'system', text: esc(gate.text)});
+    if (gate.kind === 'block') { render(); return; }
+  }
   startLiveTurn(text);
 }
 function answer(key) {
@@ -1513,6 +1528,7 @@ async function loadResources() {
     if (SESSIONS[0]) S.sessionId = SESSIONS[0].id;
   }
   render();
+  bswRefreshFacts();
 }
 
 
@@ -1730,10 +1746,17 @@ function activeProvider() {
 }
 function activeModel() {
   if (BR && S.live.state === 'connected') {
+    // Lane B — backend switch: the TUI's selectPromptLlmMeta. A cloud
+    // provider shows its chatModel (defaultChatModel ?? model) and,
+    // when it has none, the TUI renders NO model control at all — the
+    // desktop keeps the chip as the pane's anchor and leaves it unlabelled.
     const p = activeProvider();
-    if (p && p.kind !== 'llama-server') return p.defaultChatModel || 'no model chosen';
+    if (p && p.kind !== 'llama-server') return p.defaultChatModel || p.model || '';
     const managed = (LIVE_CONFIG && LIVE_CONFIG.localModels && LIVE_CONFIG.localModels.managed) || {};
-    return managed.modelId || 'not configured';
+    if (managed.modelId) return managed.modelId;
+    // DOWNLOAD_MODEL_LABEL: local route, snapshot loaded, no pull running, nothing on disk.
+    if (BSW.localLoaded && !SEL.pulling && !SEL.local.some((m) => m.downloaded)) return 'download model';
+    return '';
   }
   return S.mode === 'local' ? S.localModel : S.cloudModel;
 }
@@ -1799,12 +1822,16 @@ async function obFinish(kind, detail) {
   OB.busy = true; render();
   const stamp = new Date().toISOString();
   const writes = [];
-  if (kind === 'local') {
-    writes.push(['localModels.mode', 'managed']);
-    writes.push(['tui.onboarding.localSetupSeenAt', stamp]);
-  }
-  if (kind === 'cloud') writes.push(['llm.activeTextProvider', detail]);
+  if (kind === 'local') writes.push(['tui.onboarding.localSetupSeenAt', stamp]);
   if (kind === 'custom') {
+    // Lane B — backend switch: left as it was, on purpose. The TUI's
+    // custom-endpoint step probes the URL (checkLlamaServer, verifyAuth)
+    // and then writes mode external + url + the local-llama provider url
+    // in ONE whole-file write (persistUserRemoteLlmUrls). The desktop has
+    // no probe, and a leaf write of localModels.url would leave the
+    // provider entry pointing at the managed port, so this branch is not
+    // rewired here rather than shipped as a half-fix; the CLI rejects the
+    // mode value and the error is shown as is.
     writes.push(['localModels.mode', 'custom']);
     writes.push(['localModels.url', detail]);
   }
@@ -1819,18 +1846,45 @@ async function obFinish(kind, detail) {
       return;
     }
   }
+  // Lane B — backend switch. Local: the TUI's onboarding writes
+  // localModels.mode "managed" through persistUserLocalModelsConfig (url
+  // sync included) — the model pick itself already went through
+  // selectLocalModel, which is where the route moves and the daemon
+  // starts. Cloud: the chosen provider is activated exactly as the
+  // provider row does it; that IPC restarts the agent by itself.
+  let restarted = false;
+  if (kind === 'local') {
+    const res = await BR.useManagedMode();
+    if (res && res.ok === false) { OB.busy = false; OB.error = 'could not write localModels.mode: ' + (res.error || 'unknown error'); render(); return; }
+  }
+  if (kind === 'cloud') {
+    const res = await BR.activateProvider(detail);
+    if (!res || !res.ok) {
+      OB.busy = false;
+      OB.error = res && res.needsKey ? 'no API key for ' + detail + ' — set ' + (OB.keyEnv[detail] || 'its key') + ' in the environment first'
+        : 'could not activate ' + detail + ': ' + ((res && res.error) || 'unknown error');
+      render();
+      return;
+    }
+    bswReport(res);
+    restarted = !!res.restart;
+  }
   OB.busy = false; OB.open = false;
   toast('Setup complete', kind === 'skip' ? 'You can run it again from the menu' : 'Restarting the agent…');
   render();
+  if (restarted) { refreshLiveConfig(); return; }
   BR.restart().then(applyStatus);
 }
 
 function obUseModel(model) {
   if (model.downloaded) {
+    // Lane B — backend switch: the TUI's pull-completion path writes the
+    // model and starts the daemon; selectLocalModel is that sequence.
     OB.busy = true; render();
-    BR.modelsUse(model.id).then((res) => {
+    BR.selectLocalModel(model.id).then((res) => {
       OB.busy = false;
-      if (res && res.ok === false) { OB.error = res.error || 'could not select the model'; render(); return; }
+      if (!res || !res.ok) { OB.error = (res && res.error) || 'could not select the model'; render(); return; }
+      bswReport(res);
       obFinish('local', model.id);
     });
     return;
@@ -1959,7 +2013,11 @@ if (BR) {
     if (ev.line) OB.log.push(ev.line);
     if (ev.done) {
       if (ev.ok && OB.pulling) {
-        BR.modelsUse(OB.pulling.id).then(() => obFinish('local', OB.pulling.id));
+        BR.selectLocalModel(OB.pulling.id).then((res) => {
+          if (!res || !res.ok) { OB.error = (res && res.error) || 'could not select the model'; OB.step = 'local'; render(); return; }
+          bswReport(res);
+          obFinish('local', OB.pulling.id);
+        });
       } else {
         OB.error = ev.error || 'the download failed';
         OB.step = 'local';
@@ -2016,12 +2074,17 @@ function mpPullModel(id) {
 }
 
 async function mpUseProvider(id) {
+  if (S.busy) { toast('Not while a turn is running'); return; }
   MP.err = null; MP.busy = true; render();
-  const res = await BR.configSet('llm.activeTextProvider', id);
+  const res = await BR.activateProvider(id);
   MP.busy = false;
-  if (res && res.ok === false) { MP.err = res.error || 'could not switch provider'; render(); return; }
-  toast('Provider selected', id + ' · takes effect on the next turn');
-  refreshLiveConfig();
+  if (!res || !res.ok) {
+    MP.err = res && res.needsKey ? 'no API key for ' + id + ' — add one with the wizard or export its variable' : ((res && res.error) || 'could not switch provider');
+    render(); return;
+  }
+  bswReport(res);
+  toast('Provider selected', id + ' · restarting the agent');
+  await refreshLiveConfig();
 }
 
 async function mpSearch() {
@@ -2038,14 +2101,21 @@ async function mpSearch() {
 }
 
 async function mpSetModel(model) {
+  if (S.busy) { toast('Not while a turn is running'); return; }
   const id = MP.pickFor;
   MP.busy = true; MP.err = null; render();
-  const res = await BR.setProviderModel(id, model);
+  // The TUI's selectChatModel also activates the provider; here that
+  // means a restart of `atag serve` as well.
+  const res = await BR.selectCloudModel(id, model);
   MP.busy = false;
-  if (res && res.ok === false) { MP.err = res.error || 'could not set the model'; render(); return; }
+  if (!res || !res.ok) {
+    MP.err = res && res.needsKey ? 'no API key for ' + id + ' — add one with the wizard or export its variable' : ((res && res.error) || 'could not set the model');
+    render(); return;
+  }
   MP.pickFor = null; MP.picks = [];
-  toast('Model selected', id + ' → ' + model);
-  refreshLiveConfig();
+  bswReport(res, 'Selected chat model ' + id + '/' + model + '.');
+  toast('Model selected', id + ' → ' + model + ' · restarting the agent');
+  await refreshLiveConfig();
 }
 
 async function mpSaveProvider() {
@@ -2081,6 +2151,7 @@ async function refreshLiveConfig() {
   const managed = LIVE_CONFIG && LIVE_CONFIG.localModels && LIVE_CONFIG.localModels.managed;
   if (managed && managed.modelId) S.localModel = managed.modelId;
   render();
+  bswRefreshFacts();
 }
 
 if (BR) {
@@ -2180,23 +2251,26 @@ function selEnterModelPane() {
 /** Rows for the current pane, as objects the delegate can act on by index. */
 function selRows() {
   if (SEL.kind === 'backend') {
-    const managed = (LIVE_CONFIG && LIVE_CONFIG.localModels && LIVE_CONFIG.localModels.managed) || {};
-    const provs = selProviders();
+    // Lane B — backend switch: composer-switch-rows.ts backendRows, in
+    // its order (cloud, local) with its details. The TUI's third row,
+    // custom (llama.cpp you run), needs the external-URL editor and is
+    // not offered here.
+    const ready = selProviders().filter((p) => BSW.readyIds.includes(p.id)).length;
     return [
-      {type:'backend', id:'local', label:'local',
-       detail: managed.modelId ? 'llama.cpp on this machine · ' + managed.modelId : 'no model downloaded yet',
-       active: selBackend() === 'local'},
       {type:'backend', id:'cloud', label:'cloud',
-       detail: provs.length ? provs.length + (provs.length === 1 ? ' provider configured' : ' providers configured') : 'add a provider first',
+       detail: ready > 0 ? ready + ' provider' + (ready === 1 ? '' : 's') + ' ready' : 'add a provider first',
        active: selBackend() === 'cloud'},
+      {type:'backend', id:'local', label:'local',
+       detail: 'llama.cpp managed here',
+       active: selBackend() === 'local'},
     ];
   }
   if (SEL.kind === 'provider') {
     const activeId = selActiveProviderId();
+    // providerRows: hasApiKey ? (chatModel ?? 'default model') : 'no API key'.
     const rows = selProviders().map((p) => ({
       type:'provider', id:p.id, label:p.id,
-      detail: p.kind + ' · ' + (p.defaultChatModel || 'no model chosen')
-        + (p.apiKeyEnvVar ? ' · key from ' + p.apiKeyEnvVar : p.apiKey ? '' : ' · no API key'),
+      detail: BSW.readyIds.includes(p.id) ? (p.defaultChatModel || p.model || 'default model') : 'no API key',
       active: p.id === activeId,
     }));
     return rows;
@@ -2229,41 +2303,54 @@ function selRows() {
 async function selActivate(row) {
   if (!row) return;
   if (row.type === 'backend') { selChooseBackend(row.id); return; }
+  // Lane B — backend switch: every branch below writes through main's
+  // port of the TUI's persist helpers and ends in an agent restart, so
+  // none of them may run while a turn is in flight.
+  if (S.busy) { toast('Not while a turn is running'); return; }
   if (row.type === 'provider') {
-    SEL.busy = true; render();
-    const res = await BR.configSet('llm.activeTextProvider', row.id);
-    SEL.busy = false;
-    if (res && res.ok === false) { SEL.err = res.error || 'could not switch provider'; render(); return; }
+    SEL.busy = true; SEL.err = null; BSW.line = 'switching…'; render();
+    const res = await BR.activateProvider(row.id);
+    SEL.busy = false; BSW.line = '';
+    if (!res || !res.ok) {
+      if (res && res.needsKey) { bswOpenKey(row.id); return; }
+      SEL.err = (res && res.error) || 'could not switch provider'; render(); return;
+    }
+    bswReport(res);
     await refreshLiveConfig();
     SEL.kind = 'model'; SEL.cursor = 0; SEL.filter = ''; render();
     selLoadModels(row.id);
     return;
   }
   if (row.type === 'cloudModel') {
-    // Apply and close first; the config write confirms in the background.
+    // Apply and close first; the write and the restart confirm in the background.
     const pid = selActiveProviderId();
     const entry = selProviders().find((p) => p.id === pid);
     if (entry) entry.defaultChatModel = row.id;
     S.cloudModel = row.id;
     closeSelector();
-    BR.setProviderModel(pid, row.id).then((res) => {
-      if (res && res.ok === false) toast('Could not select the model', res.error || '');
+    BR.selectCloudModel(pid, row.id).then((res) => {
+      if (!res || !res.ok) toast('Could not select the model', res && res.needsKey ? 'no API key for ' + pid : ((res && res.error) || ''));
+      else bswReport(res, 'Selected chat model ' + pid + '/' + row.id + '.');
       refreshLiveConfig();
     });
     return;
   }
   if (row.type === 'localModel') {
     if (!row.downloaded) { selPull(row.id); return; }
+    // The popup stays open until main answers: a daemon that fails to
+    // start has to be shown, and `models start` can take a while.
+    SEL.busy = true; SEL.err = null; BSW.line = 'starting ' + row.id + '…'; render();
+    const res = await BR.selectLocalModel(row.id);
+    SEL.busy = false; BSW.line = '';
+    if (!res || !res.ok) {
+      if (res && res.needsDownload) { selPull(row.id); return; }
+      SEL.err = (res && res.error) || 'could not select the model'; render(); return;
+    }
     S.localModel = row.id;
-    if (LIVE_CONFIG && LIVE_CONFIG.localModels && LIVE_CONFIG.localModels.managed) LIVE_CONFIG.localModels.managed.modelId = row.id;
     closeSelector();
-    (async () => {
-      const used = await BR.modelsUse(row.id);
-      if (used && used.ok === false) { toast('Could not select the model', used.error || ''); refreshLiveConfig(); return; }
-      await BR.configSet('llm.activeTextProvider', 'local-llama');
-      BR.modelsStart();
-      refreshLiveConfig();
-    })();
+    bswReport(res);
+    if (res.daemon === 'start-failed') toast('Local daemon did not start', res.error || '');
+    await refreshLiveConfig();
   }
 }
 
@@ -2353,7 +2440,7 @@ function selShell(title, body, foot) {
   return '<div class="scrim" data-close="1" style="background:transparent">'
     + '<div class="popover selpop" style="' + anchorStyle('.modelchip', 460) + '">'
     + '<div class="selhead">' + esc(title)
-    + (SEL.busy ? '<span class="cap" style="margin-left:auto">saving…</span>' : '') + '</div>'
+    + (SEL.busy ? '<span class="cap" style="margin-left:auto">' + esc(BSW.line || 'saving…') + '</span>' : '') + '</div>'
     + body
     + (SEL.err ? '<div class="cap" style="padding:6px 16px;color:var(--danger)">' + esc(SEL.err) + '</div>' : '')
     + (foot ? '<div class="popfoot">' + foot + '</div>' : '')
@@ -2371,9 +2458,15 @@ async function selSavePreset() {
   if (preset.headers) entry.headers = preset.headers;
   let res = await BR.upsertProvider(entry);
   if (res && res.ok === false) { SEL.busy = false; SEL.err = res.error || 'could not save the provider'; render(); return; }
-  res = await BR.configSet('llm.activeTextProvider', preset.id);
-  SEL.busy = false;
-  if (res && res.ok === false) { SEL.err = res.error || 'saved, but could not activate it'; render(); return; }
+  if (S.busy) { SEL.busy = false; SEL.err = 'saved, but not activated while a turn is running'; render(); refreshLiveConfig(); return; }
+  BSW.line = 'switching…';
+  res = await BR.activateProvider(preset.id);
+  SEL.busy = false; BSW.line = '';
+  if (!res || !res.ok) {
+    SEL.err = res && res.needsKey ? 'saved, but could not activate it: no API key (' + preset.env + ')' : 'saved, but could not activate it' + (res && res.error ? ': ' + res.error : '');
+    render(); refreshLiveConfig(); return;
+  }
+  bswReport(res);
   SEL.addOpen = false;
   await refreshLiveConfig();
   SEL.kind = 'model'; SEL.cursor = 0; render();
@@ -2491,30 +2584,36 @@ if (typeof window !== 'undefined') {
  * the popup stay open, showing the one action that would fix that.
  */
 async function selChooseBackend(id) {
-  SEL.err = null;
-  const llm = LIVE_CONFIG && LIVE_CONFIG.llm;
-  if (id === 'cloud') {
-    const provs = selProviders();
-    if (!provs.length) { SEL.kind = 'provider'; render(); return; }
-    const pick = provs.find((p) => p.id === selActiveProviderId()) || provs[0];
-    if (llm) llm.activeTextProvider = pick.id;
-    closeSelector();
-    BR.configSet('llm.activeTextProvider', pick.id).then((res) => {
-      if (res && res.ok === false) toast('Could not switch to cloud', res.error || '');
-      refreshLiveConfig();
-    });
-    return;
+  // Lane B — backend switch. The decision (which provider, which model,
+  // what to do with the daemon) is the TUI's activateCloud/activateLocal,
+  // ported into main's switchBackend; the write is whole-file, and the
+  // agent is restarted by main because `atag serve` pins its provider at
+  // boot. A running turn would be aborted by that restart, so refuse.
+  if (S.busy) { toast('Not while a turn is running'); return {ok:false, error:'a turn is running'}; }
+  SEL.err = null; SEL.busy = true; BSW.line = id === 'local' ? 'switching to local…' : 'switching to cloud…'; render();
+  const res = await BR.switchBackend(id);
+  SEL.busy = false; BSW.line = '';
+  if (!res || !res.ok) {
+    if (res && res.needsProvider) { SEL.kind = 'provider'; render(); return res; }
+    if (res && res.needsKey) { bswOpenKey(res.providerId); return res; }
+    SEL.err = (res && res.error) || 'could not switch to ' + id;
+    toast('Could not switch to ' + id, SEL.err);
+    render();
+    await refreshLiveConfig();
+    return res;
   }
-  // Local switches at once. A missing model is the model chip's problem,
-  // and it reads "not configured" until one is picked.
-  if (llm) llm.activeTextProvider = 'local-llama';
+  bswReport(res);
+  if (res.daemon === 'start-failed') toast('Local daemon did not start', res.error || '');
+  await refreshLiveConfig();
+  if (res.needsModel) {
+    // activateLocal with nothing on disk: the route moved, the model
+    // switch opens (its "download" rows lead to the pull).
+    SEL.kind = 'model'; SEL.cursor = 0; SEL.filter = ''; render();
+    selLoadLocal();
+    return res;
+  }
   closeSelector();
-  const managed = (LIVE_CONFIG && LIVE_CONFIG.localModels && LIVE_CONFIG.localModels.managed) || {};
-  BR.configSet('llm.activeTextProvider', 'local-llama').then((res) => {
-    if (res && res.ok === false) { toast('Could not switch to local', res.error || ''); refreshLiveConfig(); return; }
-    if (managed.modelId) BR.modelsStart();
-    refreshLiveConfig();
-  });
+  return res;
 }
 
 /* ============================================================
@@ -2664,8 +2763,17 @@ async function wizNext() {
     return;
   }
   const model = k.defaultModel && listed.models.some((m) => m.id === k.defaultModel) ? k.defaultModel : listed.models[0].id;
-  await BR.setProviderModel(id, model);
-  await BR.configSet('llm.activeTextProvider', id);
+  // Lane B — backend switch: one write for the model + the activation, then
+  // the restart main does for it. Not while a turn runs.
+  if (S.busy) { WIZ.phase = 'configure'; WIZ.error = 'saved and verified, but not activated while a turn is running'; render(); refreshLiveConfig(); return; }
+  const sel = await BR.selectCloudModel(id, model);
+  if (!sel || !sel.ok) {
+    WIZ.phase = 'configure';
+    WIZ.error = sel && sel.needsKey ? 'saved, but the agent sees no key for it — enter one above or export ' + (k.env || 'its variable')
+      : 'saved, but could not activate it' + (sel && sel.error ? ': ' + sel.error : '');
+    render(); refreshLiveConfig(); return;
+  }
+  bswReport(sel, 'Selected chat model ' + id + '/' + model + '.');
   WIZ.phase = null;
   await refreshLiveConfig();
   closeSelector();
@@ -2801,4 +2909,86 @@ if (typeof window !== 'undefined') {
     live: !!m.startedAt,   // born on the stream this run, as opposed to loaded from the store
   }));
   window.__pushAssistant = (t) => { S.log.push({id:nid(), k:'assistant', text:t}); render(); return document.querySelectorAll('.filechip').length; };
+}
+
+/* ============================================================
+   Lane B — backend switch: helpers and smoke hooks
+   ============================================================ */
+
+/** The TUI's runtime_info lines for a switch result, as system rows. */
+function bswReport(res, extra) {
+  if (!res || !res.ok) return;
+  if (res.providerId && res.transport) {
+    S.log.push({id:nid(), k:'system', text: esc('Switched active text provider to "' + res.providerId + '". New messages use ' + res.transport + '.')});
+  }
+  if (extra) S.log.push({id:nid(), k:'system', text: esc(extra)});
+  if (res.daemonLine) S.log.push({id:nid(), k:'system', text: esc(res.daemonLine)});
+  if (res.daemon === 'start-failed' && res.error) S.log.push({id:nid(), k:'system', text: esc('local-llm: ' + res.error)});
+  if (res.restart) S.log.push({id:nid(), k:'system', text:'restarting the agent…'});
+  render();
+}
+
+/** The TUI's answer to a provider without a key: its configure step. */
+function bswOpenKey(id) {
+  const row = KIND_ROWS.find((k) => k.id === id);
+  SEL.err = 'no API key for ' + id + (row && row.env ? ' — enter one or export ' + row.env : '');
+  if (row) { WIZ.row = row; WIZ.phase = 'configure'; WIZ.apiKey = ''; WIZ.baseUrl = ''; WIZ.error = SEL.err; }
+  render();
+}
+
+/** Which providers have a key (the rows' `ready` copy) and, on the local route, the catalogue snapshot the chip and the gate read. */
+function bswRefreshFacts() {
+  if (!BR) return;
+  BR.providersReady().then((r) => {
+    if (r && r.ok && Array.isArray(r.ids)) { BSW.readyIds = r.ids; render(); }
+  });
+  if (selBackend() === 'local' && !SEL.localBusy && !SEL.pulling) {
+    BR.modelsList().then((res) => {
+      if (res && res.ok) { SEL.local = res.models.filter((m) => !/embed|bge|nomic|jina/i.test(m.id)); BSW.localLoaded = true; render(); }
+    });
+  }
+}
+
+/** evaluateLocalTurnGate over LIVE_CONFIG and the cached catalogue. */
+function localTurnGate() {
+  const cfg = LIVE_CONFIG;
+  if (!cfg) return {kind:'run'};
+  const llm = cfg.llm || {};
+  const providers = llm.providers || [];
+  const active = providers.find((p) => p.id === llm.activeTextProvider);
+  const activeIsLocal = active === undefined || active.kind === 'llama-server';
+  const lm = cfg.localModels || {};
+  if (!activeIsLocal || lm.mode !== 'managed') return {kind:'run'};
+  const modelId = (lm.managed && lm.managed.modelId) || null;
+  // Disk state comes from the catalogue snapshot; before it lands nothing is known and the turn runs.
+  let downloaded = true;
+  if (modelId !== null && BSW.localLoaded) {
+    const row = SEL.local.find((m) => m.id === modelId);
+    downloaded = !!(row && row.downloaded);
+  }
+  if (modelId !== null && downloaded) return {kind:'run'};
+  const pulling = SEL.pulling === modelId || MP.pulling === modelId || (OB.pulling && OB.pulling.id === modelId);
+  const status = modelId === null
+    ? 'no local model is selected — open Models (/local) to pick and download one'
+    : (pulling ? 'downloading now…' : 'not downloaded — open Models (/local) and press Enter on it to download');
+  const subject = modelId === null ? status : 'local model ' + modelId + ' is ' + status;
+  // resolveFallbackChain: the configured chain (or just the active id), with local-llama appended unless appendLocal is false.
+  const ids = new Set(providers.map((p) => p.id));
+  const fb = llm.fallback || {};
+  const requested = (fb.chain && fb.chain.length) ? fb.chain : [llm.activeTextProvider];
+  const chain = [llm.activeTextProvider].concat(requested.filter((id) => ids.has(id) && id !== llm.activeTextProvider));
+  if (fb.appendLocal !== false) { const local = providers.find((p) => p.kind === 'llama-server'); if (local && !chain.includes(local.id)) chain.push(local.id); }
+  const length = chain.filter((id, i) => ids.has(id) && chain.indexOf(id) === i).length;
+  if (length > 1) return {kind:'notice', text: subject + ' — running this turn through the fallback chain'};
+  return {kind:'block', text: subject};
+}
+
+if (typeof window !== 'undefined') {
+  window.__switchBackend = (kind) => selChooseBackend(kind);
+  window.__activeProvider = () => selActiveProviderId() || null;
+  window.__lastSystem = () => {
+    for (let i = S.log.length - 1; i >= 0; i--) if (S.log[i].k === 'system') return S.log[i].text || '';
+    return '';
+  };
+  window.__bsw = () => ({line:BSW.line, readyIds:BSW.readyIds.slice(), localLoaded:BSW.localLoaded, turnBusy:S.busy, gate:localTurnGate()});
 }

@@ -86,8 +86,23 @@ Real, driven by the running agent:
 - installed skills, durable tasks, and sessions — named by their first
   message and opened in full from the sidebar
 - the model selector: backend, provider and model chips, each opening one
-  pane; switching backend applies immediately; picking a model applies and
-  closes before the config write confirms
+  pane, with the TUI's rows (cloud → local, `N providers ready` /
+  `llama.cpp managed here`, provider rows `model` / `default model` /
+  `no API key`). Switching backend, provider or model is the TUI's own
+  decision logic (`activateCloud` / `activateLocal` / `selectChatModel` /
+  `triggerLocalChatModel`) ported into `desktop/main/backend-switch.ts`:
+  the same whole-file config writes as `src/tui/persist-llm-provider.ts`
+  and `persist-user-local-models-config.ts`, the same daemon side effects
+  (`atag models start|stop`, hybrid recall off after a stop), the same
+  `runtime_info` lines in the transcript — followed by an `atag serve`
+  restart, because the running agent pins its provider at boot and 0.5.4
+  has no reload route. A switch is refused while a turn is running (the
+  restart would abort it). Picking a cloud model applies and closes before
+  the write confirms; picking a local model keeps the popup open until the
+  daemon has answered.
+- the TUI's pre-turn gate for the managed local route: with no local model
+  selected, or one that is not on disk, the turn is refused with the TUI's
+  text (or runs with its notice when a fallback chain exists)
 - the add-provider wizard: the TUI's kind list (nothing preselected) → key /
   base URL → verification by listing the provider's models under that key →
   saved, activated, and a default model picked
@@ -111,7 +126,21 @@ Honestly degraded, and labelled as such in the UI:
 - **Memory** has no HTTP route; there is no Memory room.
 - **Tasks and skills are read-only.**
 - Writing config goes through `atag config set`, never `PATCH /api/config`,
-  which re-defaults every block it does not merge.
+  which re-defaults every block it does not merge. Leaf keys use the dotted
+  form; **`llm.*` has no dotted spelling in 0.5.4** (the CLI's key table is
+  derived from defaults that carry no `llm` block, so
+  `config set llm.activeTextProvider` fails with `unknown key`), so the
+  backend, provider and model switches are whole-file writes
+  (`atag config set '<json>'`) that mirror the TUI's persist helpers. The
+  desktop's `configSet` refuses `llm.*` outright so the dead path cannot
+  return.
+- **Switching backend/provider/model restarts `atag serve`** — the running
+  agent pins its provider at boot and 0.5.4 has no reload route; a switch is
+  refused while a turn is running.
+- **The `custom` (external llama.cpp URL) backend** is not offered by the
+  selector, and the onboarding's custom step is left as it was: the TUI
+  probes the URL before writing mode `external` + the provider url in one
+  write, and the desktop has no probe yet.
 
 ## Verification
 
@@ -124,6 +153,11 @@ PASS bridge exposed
 PASS agent connected — state=connected
 PASS skills loaded
 PASS agent replied — "hello there friend"
+…
+PASS backend: config round-trip to local — active=local-llama mode=managed …
+PASS backend: renderer follows the file — backend=local …
+PASS backend: agent restarted and alive — state=connected port …
+PASS backend: config round-trip back to cloud — provider=aimlapi …
 SMOKE screenshot=…/atomic-desktop-smoke.png failures=0
 ```
 
@@ -168,6 +202,8 @@ release candidate gets checked before it goes anywhere:
 ```
 desktop/
   main/agent-client.ts   spawn + supervise `atag serve`, HTTP + SSE client
+  main/agent-cli.ts      `atag` subprocesses: config reads/writes, models, traces
+  main/backend-switch.ts the TUI's backend/provider/model decisions, main-side
   main/main.ts           lifecycle, window, IPC, the smoke harness
   main/menu.ts           the native menu bar
   preload/preload.ts     the window.atomic bridge

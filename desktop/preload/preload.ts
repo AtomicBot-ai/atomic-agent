@@ -70,4 +70,12 @@ contextBridge.exposeInMainWorld("atomic", {
   onMenu: (cb: (command: unknown) => void) => on("app:menu", cb),
 
   platform: process.platform,
+
+  /** Lane B — backend switch: whole-file config writes + agent restart, main-process side. */
+  switchBackend: (kind: "cloud" | "local") => ipcRenderer.invoke("cli:switchBackend", kind),
+  activateProvider: (id: string) => ipcRenderer.invoke("cli:activateProvider", id),
+  selectCloudModel: (id: string, model: string) => ipcRenderer.invoke("cli:selectCloudModel", { id, model }),
+  selectLocalModel: (id: string) => ipcRenderer.invoke("cli:selectLocalModel", id),
+  useManagedMode: () => ipcRenderer.invoke("cli:useManagedMode"),
+  providersReady: () => ipcRenderer.invoke("cli:providersReady"),
 });

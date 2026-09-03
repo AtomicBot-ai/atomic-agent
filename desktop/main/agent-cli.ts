@@ -1,6 +1,6 @@
 import { execFile, spawn } from "node:child_process";
-import { totalmem } from "node:os";
-import { closeSync, openSync, readSync, statSync } from "node:fs";
+import { homedir, totalmem } from "node:os";
+import { closeSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
@@ -61,6 +61,16 @@ export async function configSet(key: string, value: string): Promise<CliResult> 
   if (!/^[a-zA-Z][\w.]{0,80}$/.test(key)) {
     return { ok: false, stdout: "", stderr: "", error: `refusing to write a suspicious key: ${key}` };
   }
+  // Lane B — backend switch. The CLI's dotted-key table is derived from
+  // USER_CONFIG_DEFAULTS, which has no `llm` block, so every `llm.*` key
+  // is "unknown key" on 0.5.4. Refuse here with a pointer at the
+  // whole-file helpers below rather than letting the dead path back in.
+  if (key === "llm" || key.startsWith("llm.")) {
+    return {
+      ok: false, stdout: "", stderr: "",
+      error: `${key} has no dotted spelling in this agent — use setActiveTextProvider / selectCloudModel`,
+    };
+  }
   return cli(["config", "set", key, value]);
 }
 
@@ -102,7 +112,16 @@ export async function modelsUse(id: string): Promise<CliResult> {
   if (!/^[\w.-]{1,64}$/.test(id)) {
     return { ok: false, stdout: "", stderr: "", error: `not a model id: ${id}` };
   }
-  return cli(["models", "use", id], 60_000);
+  const res = await cli(["models", "use", id], 60_000);
+  if (!res.ok) return res;
+  // Lane B — backend switch. `models use` writes localModels.mode +
+  // managed.modelId but does not re-sync llm.providers[local-llama].url
+  // (src/cli/models-handlers.ts runLocalModelsUse), while the runtime
+  // takes the file's url verbatim. The TUI's setActive goes through
+  // persistUserLocalModelsConfig, which syncs; do the same here.
+  const synced = await syncLocalLlamaProviderUrlInFile();
+  if (!synced.ok) return { ...res, ok: false, error: synced.error };
+  return res;
 }
 
 /**
@@ -181,14 +200,18 @@ export interface ProviderEntry {
   id: string;
   kind: string;
   baseUrl?: string;
+  /** llama-server entries: the chat daemon's URL. */
+  url?: string;
   apiKey?: string;
   apiKeyEnvVar?: string;
   apiKeyHeader?: string;
   headers?: Record<string, string>;
   defaultChatModel?: string;
+  model?: string;
+  subscriptionCli?: { cli?: string };
 }
 
-async function configSetWhole(config: unknown): Promise<CliResult> {
+export async function configSetWhole(config: unknown): Promise<CliResult> {
   return cli(["config", "set", JSON.stringify(config)], 30_000);
 }
 
@@ -371,4 +394,210 @@ export async function traceUsage(
       turnIndex: captured?.turnIndex ?? 0,
     },
   };
+}
+
+/* ---------------------------------------------------------------
+   Lane B — backend switch.
+
+   Ports of the TUI's persist helpers, main-process side:
+     setActiveTextProvider     ← src/tui/persist-llm-provider.ts setActiveTextProviderInConfig
+     useManagedMode            ← src/tui/persist-user-local-models-config.ts persistUserLocalModelsConfig({mode:"managed"})
+     syncLocalLlamaProviderUrl ← same file, syncLocalLlamaProviderUrl
+     setMemoryEmbeddingsEnabled← src/tui/persist-embedding-hybrid-recall.ts persistMemoryEmbeddingsEnabled
+     providerHasKey            ← src/config/resolve-llm-api-key.ts + provider-auth-mode.ts usesExternalCliAuth
+     localDaemonRunning/modelsStop ← `atag models status|stop`
+
+   Every write is the whole-file form (`atag config set '<json>'`) because
+   `llm.*` has no dotted spelling on 0.5.4. `atag config get` returns the
+   file verbatim — inline apiKey values included — so the object read
+   here stays in the main process and is never logged.
+   --------------------------------------------------------------- */
+
+export interface UserConfigShape {
+  localModels?: {
+    url?: string;
+    mode?: string;
+    managed?: { modelId?: string | null; port?: number };
+    embeddings?: { url?: string; enabled?: boolean };
+  };
+  memory?: { embeddings?: { enabled?: boolean } };
+  llm?: {
+    activeTextProvider?: string;
+    activeEmbeddingProvider?: string;
+    toolTransport?: string;
+    providers?: ProviderEntry[];
+    fallback?: { chain?: string[]; appendLocal?: boolean };
+  };
+}
+
+export interface WriteResult {
+  ok: boolean;
+  /** Whether the file content actually changed. */
+  changed: boolean;
+  error?: string;
+}
+
+export async function readWholeConfig(): Promise<{ ok: boolean; config?: UserConfigShape; error?: string }> {
+  const current = await configGet();
+  if (!current.ok || !current.config || typeof current.config !== "object") {
+    return { ok: false, error: current.error ?? "could not read the config" };
+  }
+  return { ok: true, config: current.config as UserConfigShape };
+}
+
+/** persist-llm-provider.ts localLlamaUrlFromFile. */
+function localLlamaUrlFromFile(cfg: UserConfigShape): string {
+  const lm = cfg.localModels ?? {};
+  if (lm.mode === "managed") return `http://127.0.0.1:${lm.managed?.port ?? 19091}`;
+  return lm.url ?? "http://127.0.0.1:8080";
+}
+
+/**
+ * persist-user-local-models-config.ts syncLocalLlamaProviderUrl: the
+ * local-llama entry's url follows localModels (managed → the managed
+ * port, external → localModels.url) and its baseUrl the embedding url.
+ * Mutates `cfg`; returns whether anything changed.
+ */
+export function syncLocalLlamaProviderUrl(cfg: UserConfigShape): boolean {
+  if (!cfg.llm || !Array.isArray(cfg.llm.providers)) return false;
+  const url = localLlamaUrlFromFile(cfg);
+  const embeddingUrl = cfg.localModels?.embeddings?.url;
+  let changed = false;
+  cfg.llm.providers = cfg.llm.providers.map((p) => {
+    if (p.id !== "local-llama") return p;
+    const next: ProviderEntry = { ...p, url };
+    if (embeddingUrl !== undefined) next.baseUrl = embeddingUrl;
+    if (JSON.stringify(next) !== JSON.stringify(p)) changed = true;
+    return next;
+  });
+  return changed;
+}
+
+async function syncLocalLlamaProviderUrlInFile(): Promise<WriteResult> {
+  const read = await readWholeConfig();
+  if (!read.ok || !read.config) return { ok: false, changed: false, error: read.error };
+  if (!syncLocalLlamaProviderUrl(read.config)) return { ok: true, changed: false };
+  const w = await configSetWhole(read.config);
+  return w.ok ? { ok: true, changed: true } : { ok: false, changed: false, error: w.error };
+}
+
+/**
+ * setActiveTextProviderInConfig: synthesizes the llm block exactly as
+ * the TUI does when it is absent (url only — no baseUrl), refuses an id
+ * that names no provider, writes ONLY llm.activeTextProvider.
+ */
+export async function setActiveTextProvider(id: string): Promise<WriteResult> {
+  if (!/^[\w.-]{1,48}$/.test(id)) return { ok: false, changed: false, error: `not a provider id: ${id}` };
+  const read = await readWholeConfig();
+  if (!read.ok || !read.config) return { ok: false, changed: false, error: read.error };
+  const cfg = read.config;
+  const llm = (cfg.llm ??= {
+    activeTextProvider: "local-llama",
+    activeEmbeddingProvider: "local-llama",
+    toolTransport: "auto",
+    providers: [{ id: "local-llama", kind: "llama-server", url: localLlamaUrlFromFile(cfg) }],
+  });
+  const providers = (llm.providers ??= []);
+  if (!providers.some((p) => p.id === id)) {
+    return { ok: false, changed: false, error: `provider "${id}" is not configured` };
+  }
+  if (llm.activeTextProvider === id) return { ok: true, changed: false };
+  llm.activeTextProvider = id;
+  const w = await configSetWhole(cfg);
+  return w.ok ? { ok: true, changed: true } : { ok: false, changed: false, error: w.error };
+}
+
+/** LocalModelsOrchestrator.useManagedMode: persistUserLocalModelsConfig({mode:"managed"}) + url sync. */
+export async function useManagedMode(): Promise<WriteResult> {
+  const read = await readWholeConfig();
+  if (!read.ok || !read.config) return { ok: false, changed: false, error: read.error };
+  const cfg = read.config;
+  const lm = (cfg.localModels ??= {});
+  if (lm.mode === "managed") return { ok: true, changed: false };
+  lm.mode = "managed";
+  syncLocalLlamaProviderUrl(cfg);
+  const w = await configSetWhole(cfg);
+  return w.ok ? { ok: true, changed: true } : { ok: false, changed: false, error: w.error };
+}
+
+/** persistMemoryEmbeddingsEnabled: a no-op when the flag already matches. */
+export async function setMemoryEmbeddingsEnabled(enabled: boolean): Promise<WriteResult> {
+  const read = await readWholeConfig();
+  if (!read.ok || !read.config) return { ok: false, changed: false, error: read.error };
+  const cfg = read.config;
+  const mem = (cfg.memory ??= {});
+  const emb = (mem.embeddings ??= {});
+  if (emb.enabled === enabled) return { ok: true, changed: false };
+  emb.enabled = enabled;
+  const w = await configSetWhole(cfg);
+  return w.ok ? { ok: true, changed: true } : { ok: false, changed: false, error: w.error };
+}
+
+/**
+ * `atag models status` prints `daemon:         running (pid N)  <url>` or
+ * `stopped` in managed mode, and only `mode: external` + `url:` in
+ * external mode (src/cli/models-handlers.ts runLocalModelsStatus).
+ */
+export async function localDaemonRunning(): Promise<boolean> {
+  const res = await cli(["models", "status"], 20_000);
+  if (!res.ok) return false;
+  return /^daemon:\s+running/m.test(res.stdout);
+}
+
+/** LocalModelsOrchestrator.stopDaemon's process half: stops chat + embedding daemons. */
+export async function modelsStop(): Promise<CliResult> {
+  return cli(["models", "stop"], 30_000);
+}
+
+/** The agent's own rule for the state dir (src/config/load-config.ts). */
+export function stateDirPath(): string {
+  return process.env.ATOMIC_AGENT_STATE_DIR ?? join(homedir(), ".atomic-agent");
+}
+
+/**
+ * Names of the variables with a non-empty value that the agent will see:
+ * Electron's own environment (it is what `atag serve` and every `atag`
+ * subprocess inherit) plus the NAMES declared in <stateDir>/.env, which
+ * the CLI loads itself. Values are never kept, returned or logged.
+ */
+function keyNamesAvailable(): Set<string> {
+  const names = new Set<string>();
+  for (const [k, v] of Object.entries(process.env)) if (v && v.length > 0) names.add(k);
+  try {
+    const text = readFileSync(join(stateDirPath(), ".env"), "utf8");
+    for (const line of text.split(/\r?\n/)) {
+      const m = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)$/.exec(line);
+      if (!m) continue;
+      // An empty right-hand side is "no key" to the agent, so it is here too.
+      if (m[2]!.trim().replace(/^["']|["']$/g, "").length > 0) names.add(m[1]!);
+    }
+  } catch {
+    // no .env — the environment alone decides
+  }
+  return names;
+}
+
+/** resolveLlmProviderApiKey, answered as a boolean; subscription-CLI kinds authenticate elsewhere. */
+export function providerHasKey(entry: ProviderEntry, names: Set<string> = keyNamesAvailable()): boolean {
+  if (entry.apiKey && entry.apiKey.length > 0) return true;
+  if (entry.kind === "subscription-cli" && entry.subscriptionCli?.cli) return true;
+  if (entry.apiKeyEnvVar && entry.apiKeyEnvVar.length > 0) return names.has(entry.apiKeyEnvVar);
+  if (entry.kind === "openrouter") return names.has("OPENROUTER_API_KEY");
+  if (entry.kind === "aimlapi") return names.has("AIMLAPI_API_KEY");
+  if (entry.kind === "gemini") return names.has("GEMINI_API_KEY");
+  if (entry.kind === "openai-compatible" || entry.kind === "qwen-openai-compatible") {
+    return names.has("OPENAI_COMPAT_API_KEY") || names.has("OPENAI_API_KEY") || names.has("ATOMIC_AGENT_OPENAI_API_KEY");
+  }
+  return false;
+}
+
+/** Ids of the configured cloud providers that have a usable key, for the selector's row copy. */
+export async function providersReady(): Promise<{ ok: boolean; ids?: string[]; error?: string }> {
+  const read = await readWholeConfig();
+  if (!read.ok || !read.config) return { ok: false, error: read.error };
+  const names = keyNamesAvailable();
+  const ids = (read.config.llm?.providers ?? [])
+    .filter((p) => p.kind !== "llama-server" && providerHasKey(p, names))
+    .map((p) => p.id);
+  return { ok: true, ids };
 }
