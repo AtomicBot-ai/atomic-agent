@@ -343,6 +343,60 @@ Honestly degraded, and labelled as such in the UI:
   actually calls, on the old server). The first-run setup still offers two
   choices, not the TUI's three. Choosing `local` from an external route
   converts it to managed, exactly as the TUI's own local row does.
+- **Voice input is Apple's on-device speech, and nothing else.** The
+  microphone button sits in the composer, left of Send. Press it and speak;
+  the words appear in a strip above the composer while you are still
+  talking, and land in the draft at your caret when you stop. Hold the
+  button and release to stop, or tap it once and click again to stop —
+  both work, because "unclick" reads either way. Escape throws the take
+  away. Enter and the Send button stop the recording and insert the text
+  rather than sending: sending would post the draft as it stood before you
+  spoke and lose the transcript, so a second Enter is what sends.
+  The audio goes renderer → main → `out/native/atomic-speech`, a small
+  Swift helper running `SpeechAnalyzer` with a `SpeechTranscriber` (or a
+  `DictationTranscriber` for the languages the first one has no model for).
+  It never touches the network, is never written to disk, and never reaches
+  the agent — 0.5.5 has no audio route, no transcription tool and no config
+  key, so this feature makes no HTTP call, writes nothing to
+  `~/.atomic-agent/config.json` and never restarts `atag serve`. The chosen
+  languages live in Electron's `userData/voice.json`.
+  The strip's `On-device — the audio never leaves this Mac` was measured
+  before it shipped, not taken from documentation: a 9.4 s live
+  transcription watched with `nettop -P -L 10` produced no row at all for
+  the helper or for `corespeechd` / `com.apple.siri.embeddedspeech`, in a
+  capture window that did record other processes' bytes.
+  The Web Speech API is not an option here and was not guessed at: in
+  Electron 44 on-device reports `unavailable`, `install()` returns `false`
+  (no component updater), and a real recognition attempt ends
+  `["start","audiostart","audioend","error code=network","end"]` because
+  Electron ships without the Google key the network engine needs. Cloud
+  transcription was refused on purpose — every AIMLAPI speech model is a
+  submit-and-poll job, so it could only ever produce text after you stop,
+  never while you speak, and it would send your voice to a third party.
+- **Voice input: what is and is not possible.** `SpeechAnalyzer` is macOS
+  26+, so on anything older the button is disabled and says
+  `Voice input needs macOS 26 or later`; the app itself still runs from
+  macOS 12. Off macOS it says `Voice input works only on macOS`, and a
+  build without the helper says so too. 43 languages are available
+  on-device: 30 through `SpeechTranscriber`, which punctuates and cases,
+  and 13 more — Russian, Arabic, Dutch, Turkish, Thai, Vietnamese, Hebrew,
+  Danish, Finnish, Norwegian, Swedish, Malay and Flemish — only through
+  macOS's dictation model, which is on-device too but writes without
+  punctuation. The language menu says which is which, and says when a
+  language still has to download its model. Apple's older
+  `SFSpeechRecognizer` lists 63 languages, and it is deliberately not used:
+  on this Mac only `en-US` reported `supportsOnDeviceRecognition`, so every
+  other language there would quietly upload your voice to Apple.
+  **Two languages at once** is offered and is real: add a second installed
+  language with `+` and both models hear the same audio, then the
+  higher-scoring transcript wins the whole take and the chip says which
+  language matched. The live text always follows the first language,
+  because until you stop there is nothing to compare against. That the
+  score can decide was measured, not assumed — the same nine seconds of
+  English speech scores a mean per-word confidence of 0.913 through the
+  en-US model and Russian speech scores 0.104 through it. There is no
+  auto-detection beyond that, and no analyzer takes more than one locale.
+
 - **Tasks and Skills are the settings tabs.** ⌘2/⌘3, the palette hits and
   View › Tasks/Skills all open the settings window on that tab — one
   implementation, as the TUI's Manage tabs are. ⌘1 closes it and returns to
@@ -385,6 +439,28 @@ PASS backend: agent restarted and alive — state=connected port …
 PASS backend: local turn gate blocks with the TUI's text — … draft="hi"
 PASS backend: config round-trip back to cloud — provider=aimlapi …
 PASS backend: serve behind the file still restarts — file moved first: true …
+PASS mic button sits next to send — field children "TEXTAREA|micbtn|sendbtn mute"
+PASS every disabled case has a sentence — 8 named cases
+PASS voice reports itself honestly — available=true code= reason="" disabled=false
+PASS a disabled button carries the true reason — voice-os-too-old→off, voice-helper-missing→off, voice-not-macos→off
+PASS an idle strip is a hidden placeholder, not a missing node — hidden=true empty=true
+PASS interim renders without touching the draft — strip "refactor the login", draft "fix "
+PASS the on-device sentence is the one that ships — note "On-device — the audio never leaves this Mac · Enter or Send stops the recording and inserts the text; it does not send", offMachine false
+PASS segments accumulate — "Open the settings pane. Then switch the backend. Finally"
+PASS a take that ends on a final is not doubled — strip text "a. b.", partial ""
+PASS and the doubled sentence is not inserted either — "a. b."
+PASS final text is inserted at the caret and nothing is sent — draft "fix Open the settings pane. …", user messages 1→1
+PASS a cancelled recording inserts nothing — draft "fix ", state idle, strip hidden=true empty=true
+PASS Escape cancels a recording before every other Escape branch — state idle, scrollTop 0→0
+PASS Escape still cancels with the slash popover open — popover open before Esc=true
+PASS Escape still cancels with an approval pending — pending before Esc=true
+PASS a second language can win the take — final "Открой панель настроек", winner ru-RU, chip "Russian (Russia) matched"
+PASS and the winning language is what gets inserted — "Открой панель настроек"
+PASS the language menu lists the on-device models and says one is active — 2 rows, foot "Transcribed on this Mac. One language is active at a time un"
+PASS the renderer cannot take the camera — getUserMedia({video:true}) → NotAllowedError
+PASS and cannot take the microphone outside a session the user started — armed=false; audio→false
+PASS the worklet ships next to the renderer
+PASS the speech helper answers — exit 0, 43 supported, 14 installed
 SMOKE screenshot=…/atomic-desktop-smoke.png failures=0
 ```
 
@@ -423,6 +499,18 @@ it; clear the flag or right-click → Open:
 xattr -dr com.apple.quarantine "/Applications/Atomic Agent.app"
 ```
 
+The voice helper is compiled into `out/native/atomic-speech` by
+`scripts/build-speech-helper.mjs` on every `npm run build` (about two
+seconds; the step prints `speech helper: skipped` and the build carries on
+if there is no `swiftc`). It ships through `extraResources`, NOT through
+`files` — `asar` is on, and a binary inside an asar archive cannot be
+executed, so `out/native/**` is excluded from the archive and the same file
+is copied to `Contents/Resources/native/atomic-speech`. `mac.extendInfo`
+carries `NSMicrophoneUsageDescription`; without it TCC kills the packaged
+app the first time the renderer opens the microphone. The .app is ad-hoc
+signed, so its signature changes on every rebuild and macOS re-asks for
+microphone access after each new build — expected, not a bug.
+
 The app does **not** bundle the agent. It looks for `atag` (or
 `atomic-agent`) in `~/.local/bin`, `/usr/local/bin` and `/opt/homebrew/bin`,
 or wherever `ATOMIC_AGENT_BIN` points. Without one the window still opens and
@@ -444,9 +532,12 @@ desktop/
   main/backend-switch.ts the TUI's backend/provider/model decisions, main-side
   main/main.ts           lifecycle, window, IPC, the smoke harness
   main/menu.ts           the native menu bar
+  main/speech.ts         the one voice-input child: probe, start/stop, audio, install
+  native/atomic-speech.swift  on-device transcription (SpeechAnalyzer), NDJSON on stdout
   preload/preload.ts     the window.atomic bridge
-  renderer/              index.html · styles.css · renderer.js
+  renderer/              index.html · styles.css · renderer.js · voice-worklet.js
   scripts/copy-renderer.mjs
+  scripts/build-speech-helper.mjs
 ```
 
 The renderer is the design prototype, unbundled and unminified. `renderer.js`

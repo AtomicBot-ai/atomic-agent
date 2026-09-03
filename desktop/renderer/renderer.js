@@ -344,6 +344,48 @@ const ATTACH_MAX_LINES = 8;
 /* app:statPaths stats at most 64 paths per call, so longer lists are chunked. */
 const ATTACH_STAT_CHUNK = 64;
 
+
+/* ---- Item 2: voice input ----
+   State the render path reads, hoisted for the same TDZ reason as
+   everything above it. Dictation is Apple's on-device SpeechAnalyzer behind
+   the main process's speech helper: the renderer opens the microphone, the
+   helper transcribes on this Mac, and nothing is uploaded.
+   `state` is idle | starting | recording | finishing | error.
+   `final` is every finished segment concatenated in order — the helper
+   emits one final per SEGMENT, not one per session — and `partial` is the
+   last volatile line, cleared the moment its final lands (otherwise the
+   closing sentence is inserted twice, because every segment ends
+   partial-then-final with the same words).
+   `available` is null until voice:probe answers; it is never guessed. */
+const VOICE = {
+  available:null, reason:'', code:'', detail:'',
+  supported:[], installed:[], speechLocales:[], dictationLocales:[],
+  locales:['en-US'], activeLocales:[],
+  state:'idle', final:'', partial:'', level:0, winner:null, err:null,
+  menu:false, installing:null, installFraction:0, installErr:null,
+  offMachine:false,           // this route is on-device; kept so a future one cannot ship undisclosed
+  pressAt:0, pressStarted:false, pointerCycle:0,
+  stream:null, ac:null, node:null, src:null, gain:null,
+  doneResolve:null, doneTimer:null, synthetic:false, seq:0,
+};
+/* One sentence per impossible case, and never an empty one. The main
+   process names the case; this table owns the words. */
+const VOICE_REASONS = {
+  'voice-not-macos':'Voice input works only on macOS',
+  'voice-os-too-old':'Voice input needs macOS 26 or later',
+  'voice-helper-missing':'Voice input needs the speech helper, which this build was packaged without',
+  'voice-helper-failed':'The speech helper did not answer, so voice input is off',
+  'voice-no-model':'macOS has no on-device model for this language yet',
+  'voice-mic-denied':'Microphone access was refused in System Settings › Privacy & Security',
+  'voice-no-mic':'No microphone was found',
+  'voice-no-bridge':'Voice input needs the desktop app',
+};
+/* Measured before it shipped, not taken from documentation: a 9.4 s live
+   transcription watched with `nettop -P -L 10` produced no row for the
+   helper or for corespeechd / com.apple.siri.embeddedspeech, in a window
+   that did record other processes' bytes. */
+const VOICE_ONDEVICE = 'On-device — the audio never leaves this Mac';
+
 /* ============================================================
    Atomic Agent Desktop — clickable prototype, no backend.
    Command/menu wording, the slash registry and its rank order,
@@ -391,6 +433,8 @@ const P = {
   trash:'<path d="M3 4.6h10M6.4 4.6V3.4a.9.9 0 0 1 .9-.9h1.4a.9.9 0 0 1 .9.9v1.2M4.4 4.6l.6 8a1 1 0 0 0 1 .9h4a1 1 0 0 0 1-.9l.6-8M6.8 7v4M9.2 7v4"/>',
   // item 6: pin / unpin a chat row
   pin:'<path d="M9.6 2.4 13.6 6.4l-2.1.7-2 2 .3 2.4-4.8-4.8 2.4.3 2-2z"/><path d="M5 11 2.6 13.4"/>',
+  // item 2: voice input — capsule + stand, on the same 1.5-stroke grid
+  mic:'<rect x="6" y="2" width="4" height="7.5" rx="2"/><path d="M3.8 7.6a4.2 4.2 0 0 0 8.4 0"/><path d="M8 11.8v2M5.8 13.8h4.4"/>',
 };
 function ic(n, cls) {
   return '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" '
@@ -880,10 +924,14 @@ function composer() {
       '<div class="qchip"><span class="ter">Queued</span><span style="flex:1;color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(t) + '</span>'
       + '<button class="iconbtn" style="width:20px;height:20px" data-unqueue="' + i + '">' + ic('x') + '</button></div>').join('') + '</div>' : '';
   return '<div class="composerwrap">' + status + q
+    // Item 2 (voice input): the strip is ALWAYS emitted, hidden and empty
+    // when there is nothing to say, so refreshVoice() can repaint it by
+    // outerHTML without a render() that would move the caret.
+    + voiceStripHTML()
     + '<div class="composer' + (running ? ' running' : '') + '" id="composer">'
       + (S.slash ? slashPopover() : '')
       + '<div class="field"><textarea id="entry" rows="1" placeholder="' + (running ? 'Send to steer this turn…' : 'Ask for an outcome, or / for a command') + '"></textarea>'
-      + sendButton() + '</div>'
+      + micButton() + sendButton() + '</div>'
       + '<div class="cfoot">'
         + '<button class="cchip modechip" data-sel-open="backend">'
           + ic(selBackend() === 'cloud' ? 'cloud' : 'cpu') + selBackend() + ic('chevD') + '</button>'
@@ -908,6 +956,127 @@ function sendButton() {
     return '<button class="sendbtn stop" data-act="stop" title="Stop (Ctrl+.)">' + ic('stop') + '</button>';
   }
   return '<button class="sendbtn' + (S.draft.trim() ? '' : ' mute') + '" data-act="send" title="Send">' + ic('up') + '</button>';
+}
+
+
+/* ---- Item 2: voice input — the composer's microphone ----
+   The user's word was "unclick", which reads as release-to-stop, but a
+   click/click toggle is what a short tap has to mean or the button would be
+   unusable from the keyboard and would die on a window blur. So both are
+   served, and the split is made on the press itself: mousedown arms,
+   mouseup after more than 400 ms stops (hold-to-talk, the literal reading
+   of "unclick"), and a shorter press promotes the session to a toggle that
+   the next click ends. Said out loud here because it is a deliberate
+   divergence from the composer's every other button, which is a plain
+   click. */
+const VOICE_HOLD_MS = 400;
+
+function micButton() {
+  const rec = VOICE.state === 'recording' || VOICE.state === 'starting' || VOICE.state === 'finishing';
+  const off = VOICE.available === false;
+  const title = off ? VOICE.reason
+    : VOICE.available === null ? 'Checking for the on-device speech model…'
+    : rec ? 'Stop and insert · Esc to discard'
+    : 'Dictate (click to start, click again to insert) · right-click to choose the language';
+  return '<button class="micbtn' + (rec ? ' rec' : '') + '" data-mic="1"'
+    + (off || VOICE.available === null ? ' disabled' : '')
+    + ' title="' + esc(title) + '" aria-label="' + esc(title) + '">' + ic('mic') + '</button>';
+}
+
+/** A locale's name in the reader's own language, never a bare tag. */
+function voiceLangName(id) {
+  try {
+    const n = new Intl.DisplayNames(undefined, {type:'language'}).of(id);
+    if (n && n !== id) return n;
+  } catch (e) { /* Intl.DisplayNames is present in this Chromium; the tag is the honest fallback */ }
+  return id;
+}
+
+/** Which on-device module serves a locale — they do not read the same.
+    SpeechTranscriber punctuates and cases; DictationTranscriber covers
+    thirteen more languages (Russian among them) in plainer text. */
+function voiceEngineOf(id) {
+  if (VOICE.speechLocales.indexOf(id) >= 0) return 'speech';
+  if (VOICE.dictationLocales.indexOf(id) >= 0) return 'dictation';
+  return '';
+}
+
+function voiceStripHTML() {
+  const rec = VOICE.state === 'recording' || VOICE.state === 'starting' || VOICE.state === 'finishing';
+  if (!rec && !VOICE.menu && VOICE.state !== 'error') return '<div class="voicestrip" hidden></div>';
+  let h = '<div class="voicestrip">';
+  if (rec) {
+    const lvl = Math.max(0, Math.min(100, Math.round(VOICE.level * 140)));
+    h += '<div class="vsrow">'
+      + '<span class="vsdot' + (VOICE.state === 'recording' ? ' live' : '') + '"></span>'
+      + '<span class="vslevel"><i style="width:' + lvl + '%"></i></span>'
+      + '<span class="vstext">' + esc(VOICE.final)
+      + (VOICE.partial ? '<span class="vspart">' + esc(VOICE.partial) + '</span>' : '')
+      + (!VOICE.final && !VOICE.partial ? '<span class="vswait">' + (VOICE.state === 'starting' ? 'opening the microphone…' : 'listening…') + '</span>' : '')
+      + '</span>'
+      + voiceChipHTML()
+      + '</div>';
+  } else if (VOICE.state === 'error' && VOICE.err) {
+    h += '<div class="vsrow"><span class="vserr">' + esc(VOICE.err) + '</span>' + voiceChipHTML() + '</div>';
+  } else {
+    h += '<div class="vsrow"><span class="vstext ter">Dictation language</span>' + voiceChipHTML() + '</div>';
+  }
+  h += '<div class="vsnote">' + VOICE_ONDEVICE
+    + (rec ? ' · Enter or Send stops the recording and inserts the text; it does not send' : '')
+    + '</div>';
+  if (VOICE.menu) h += voiceMenuHTML();
+  return h + '</div>';
+}
+
+function voiceChipHTML() {
+  const primary = VOICE.locales[0] || 'en-US';
+  const second = VOICE.locales[1];
+  const won = VOICE.winner && VOICE.winner !== primary;
+  const label = won
+    ? voiceLangName(VOICE.winner) + ' matched'
+    : voiceLangName(primary) + (second ? ' + ' + voiceLangName(second) : '');
+  return '<button class="vschip' + (won ? ' won' : '') + '" data-act="voice:lang" title="Choose the dictation language">'
+    + esc(label) + ic('chevD') + '</button>';
+}
+
+function voiceMenuHTML() {
+  if (!VOICE.supported.length) {
+    return '<div class="vsmenu"><div class="vsmempty">' + esc(VOICE.reason || 'No on-device languages were reported') + '</div></div>';
+  }
+  const installed = VOICE.supported.filter((id) => VOICE.installed.indexOf(id) >= 0);
+  const rest = VOICE.supported.filter((id) => VOICE.installed.indexOf(id) < 0);
+  const row = (id) => {
+    const on = VOICE.locales.indexOf(id) >= 0;
+    const primary = VOICE.locales[0] === id;
+    const here = VOICE.installed.indexOf(id) >= 0;
+    const eng = voiceEngineOf(id);
+    const note = here
+      ? (eng === 'dictation' ? 'on this Mac · plain text, no punctuation' : 'on this Mac')
+      : (VOICE.installing === id
+          ? 'downloading ' + Math.round(VOICE.installFraction * 100) + '%'
+          : (eng === 'dictation' ? 'downloads a model · plain text, no punctuation' : 'downloads a model'));
+    return '<div class="vsmrow' + (on ? ' on' : '') + '">'
+      + '<button class="vsmpick" data-act="voice:pick:' + esc(id) + '">'
+      + '<span class="vsmname">' + esc(voiceLangName(id)) + '</span>'
+      + '<span class="vsmtag mono ter">' + esc(id) + '</span>'
+      + '<span class="vsmnote ter">' + esc(note) + '</span>'
+      + (primary ? '<span class="vsmbadge">first</span>' : '')
+      + '</button>'
+      + (here && !primary
+          ? '<button class="vsmadd' + (on ? ' on' : '') + '" data-act="voice:add:' + esc(id) + '" title="Also listen for this language">'
+            + (on ? ic('check') : ic('plus')) + '</button>'
+          : '')
+      + '</div>';
+  };
+  return '<div class="vsmenu">'
+    + '<div class="vsmhead">On this Mac</div>' + installed.map(row).join('')
+    + (rest.length ? '<div class="vsmhead">Downloads a model the first time</div>' + rest.map(row).join('') : '')
+    + (VOICE.installErr ? '<div class="vsmerr">' + esc(VOICE.installErr) + '</div>' : '')
+    + '<div class="vsmfoot">Transcribed on this Mac. One language is active at a time unless you add a second with +: '
+    + 'then both models hear the same audio and the higher-scoring one wins the whole dictation. '
+    + 'The live text always follows the first language. Russian, Arabic, Dutch, Turkish and ten more come from '
+    + 'macOS’s dictation model, which is on-device too but writes without punctuation.</div>'
+    + '</div>';
 }
 
 function afterChat(keep) {
@@ -1605,6 +1774,8 @@ function act(a) {
   const [k, v] = a.split(':');
   const close = () => { S.overlay = null; S.menuOpen = null; S.scope = null; S.q = ''; S.cur = 0; S.alert = null; SEL.open = false; SEL.addOpen = false; WIZ.phase = null; };
 
+  // Item 2 (voice input): one seam for every voice verb.
+  if (a === 'voice' || a.indexOf('voice:') === 0) { voiceAct(a); return; }
   if (a === 'close') { close(); render(); return; }
   if (a === 'palette') { close(); S.overlay = 'palette'; render(); return; }
   if (a === 'palette:slash') { close(); S.overlay = 'palette'; S.q = ''; render(); toast('Slash commands', 'Type / in the composer for the in-context list'); return; }
@@ -1744,6 +1915,12 @@ function endTool(out, ms) {
 
 let timer = null, step = 0, ticker = null;
 function submit() {
+  // Item 2 (voice input): Enter, the Send button and Ctrl+Enter all land
+  // here. While the microphone is open they stop the recording and insert
+  // the text instead of sending — sending would post the draft as it stood
+  // before the user spoke and throw the transcript away. The strip says so,
+  // and a second Enter sends.
+  if (VOICE.state === 'recording' || VOICE.state === 'starting') { voiceStop(); return; }
   const e = $('#entry');
   const text = (e ? e.value : S.draft).trim();
   if (!text) return;
@@ -1886,6 +2063,19 @@ document.addEventListener('click', (e) => {
   if (mb) { S.menuOpen = S.menuOpen === +mb.dataset.menu ? null : +mb.dataset.menu; render(); return; }
   if (t.closest('[data-popscope]')) { S.scope = null; S.cur = 0; render(); return; }
 
+  // Item 2 (voice input): the mic button is driven by mousedown/mouseup
+  // (hold-to-talk) — a click that followed our own mousedown has already
+  // been decided there. A click with no press before it is a keyboard
+  // activation, and that one toggles.
+  const mic = t.closest('[data-mic]');
+  if (mic) {
+    e.preventDefault();
+    const fromOurPress = VOICE.pointerCycle && Date.now() - VOICE.pointerCycle < 1000;
+    VOICE.pointerCycle = 0;
+    if (fromOurPress) return;
+    voiceToggle();
+    return;
+  }
   // a real control always wins over the dismiss-on-scrim handler behind it
   const a = t.closest('[data-act]'); if (a) { e.preventDefault(); act(a.dataset.act); return; }
   if (t.closest('[data-close]') && !t.closest('.pal, .sheet, .popover, .alertbox')) { act('close'); return; }
@@ -1978,6 +2168,319 @@ document.addEventListener('input', (e) => {
   if (e.target.id === 'dial') { S.dialShare = +e.target.value; refreshDial(); return; }
 });
 
+
+/* ============================================================
+   Item 2: voice input — behaviour
+   Renderer captures, main supervises, the Swift helper transcribes on this
+   Mac with Apple's SpeechAnalyzer. Nothing here talks to the agent: 0.5.5
+   has no audio route, no transcription tool and no config key, so no HTTP
+   call is made, nothing is written to the agent's config.json, and no
+   `atag serve` restart is involved.
+   ============================================================ */
+
+/** Repaint just the strip and the button. A render() here would rebuild the
+    textarea from S.draft and move the caret mid-sentence — the trap the
+    comment on the composer's input handler already warns about. */
+function refreshVoice() {
+  const strip = document.querySelector('.voicestrip');
+  if (strip) strip.outerHTML = voiceStripHTML();
+  // The strip grows as the sentence does, so it is kept scrolled to the
+  // words being said right now rather than to the start of the take.
+  const t = document.querySelector('.voicestrip .vstext');
+  if (t) t.scrollTop = t.scrollHeight;
+  refreshMic();
+}
+function refreshMic() {
+  const b = document.querySelector('.micbtn');
+  if (b) b.outerHTML = micButton();
+}
+
+/** Ask main what is actually possible. Never guessed, never cached over a
+    language install. */
+function voiceProbe() {
+  if (!BR || !BR.voiceProbe) {
+    VOICE.available = false; VOICE.code = 'voice-no-bridge'; VOICE.reason = VOICE_REASONS['voice-no-bridge'];
+    refreshVoice(); return Promise.resolve();
+  }
+  return BR.voiceProbe().then((r) => {
+    const d = (r && r.data) || {};
+    VOICE.supported = d.supported || [];
+    VOICE.installed = d.installed || [];
+    VOICE.speechLocales = d.speech || [];
+    VOICE.dictationLocales = d.dictation || [];
+    VOICE.offMachine = !!d.offMachine;
+    if (d.ok) {
+      VOICE.available = true; VOICE.code = ''; VOICE.reason = ''; VOICE.detail = '';
+      const chosen = (d.chosen || []).filter((id) => VOICE.supported.indexOf(id) >= 0);
+      if (chosen.length) VOICE.locales = chosen.slice(0, 2);
+      else if (VOICE.supported.indexOf('en-US') < 0 && VOICE.supported.length) VOICE.locales = [VOICE.supported[0]];
+    } else {
+      VOICE.available = false;
+      VOICE.code = d.reason || 'voice-helper-failed';
+      VOICE.reason = VOICE_REASONS[VOICE.code] || VOICE_REASONS['voice-helper-failed'];
+      VOICE.detail = d.detail || '';
+    }
+    refreshVoice();
+  }).catch((e) => {
+    VOICE.available = false; VOICE.code = 'voice-helper-failed';
+    VOICE.reason = VOICE_REASONS['voice-helper-failed']; VOICE.detail = String(e && e.message || e);
+    refreshVoice();
+  });
+}
+
+/** Every voice verb the click dispatcher can raise. */
+function voiceAct(a) {
+  if (a === 'voice') { voiceToggle(); return; }
+  if (a === 'voice:lang') { VOICE.menu = !VOICE.menu; VOICE.installErr = null; refreshVoice(); return; }
+  if (a.indexOf('voice:pick:') === 0) { voicePick(a.slice(11), false); return; }
+  if (a.indexOf('voice:add:') === 0) { voicePick(a.slice(10), true); return; }
+}
+
+/** Choose the first language, or toggle a second one alongside it. */
+function voicePick(id, second) {
+  if (VOICE.supported.indexOf(id) < 0) return;
+  if (second) {
+    if (VOICE.installed.indexOf(id) < 0) { voiceInstall(id); return; }
+    if (VOICE.locales[1] === id) VOICE.locales = [VOICE.locales[0]];
+    else VOICE.locales = [VOICE.locales[0], id];
+  } else {
+    if (VOICE.installed.indexOf(id) < 0) { voiceInstall(id); return; }
+    VOICE.locales = VOICE.locales[1] && VOICE.locales[1] !== id ? [id, VOICE.locales[1]] : [id];
+  }
+  VOICE.winner = null;
+  if (BR && BR.voiceSetLocales) BR.voiceSetLocales(VOICE.locales.slice());
+  refreshVoice();
+}
+
+/** Download an on-device model. The strip shows the fraction; nothing here
+    pretends the language works before the model has landed. */
+function voiceInstall(id) {
+  if (!BR || !BR.voiceInstall || VOICE.installing) return;
+  VOICE.installing = id; VOICE.installFraction = 0; VOICE.installErr = null;
+  refreshVoice();
+  BR.voiceInstall(id).then((r) => {
+    VOICE.installing = null; VOICE.installFraction = 0;
+    if (r && r.ok) {
+      if (VOICE.installed.indexOf(id) < 0) VOICE.installed = VOICE.installed.concat([id]);
+      voicePick(id, false);
+    } else {
+      VOICE.installErr = 'That language did not install (' + ((r && r.error) || 'unknown') + ')';
+    }
+    refreshVoice();
+  });
+}
+
+/** Hold-to-talk and click/click, decided on the press. See VOICE_HOLD_MS. */
+function voiceMouseDown(e) {
+  const b = e.target.closest && e.target.closest('[data-mic]');
+  if (!b || e.button !== 0 || b.disabled) return;
+  e.preventDefault();                       // keep the caret in the textarea
+  VOICE.pointerCycle = Date.now();
+  VOICE.pressAt = VOICE.pointerCycle;
+  VOICE.pressStarted = VOICE.state === 'idle' || VOICE.state === 'error';
+  if (VOICE.pressStarted) voiceToggle();
+}
+function voiceMouseUp() {
+  if (!VOICE.pressAt) return;
+  const held = Date.now() - VOICE.pressAt;
+  VOICE.pressAt = 0;
+  // A release only ever STOPS. Never voiceToggle() here: if the press had
+  // failed to open the microphone the state is 'error', and a toggle would
+  // start a second session on the way up.
+  const live = VOICE.state === 'recording' || VOICE.state === 'starting';
+  if (!VOICE.pressStarted) { if (live) voiceStop(); return; }   // the second click of a toggle
+  if (held > VOICE_HOLD_MS && live) voiceStop();                // held down: release stops — the user's "unclick"
+  // a short tap leaves it recording; the next click ends it
+}
+
+function voiceToggle() {
+  if (VOICE.available === false) return;
+  if (VOICE.state === 'idle' || VOICE.state === 'error') voiceStart();
+  else if (VOICE.state === 'recording' || VOICE.state === 'starting') voiceStop();
+}
+
+function voiceStart() {
+  if (!BR || !BR.voiceStart) return Promise.resolve();
+  const seq = ++VOICE.seq;
+  VOICE.state = 'starting'; VOICE.final = ''; VOICE.partial = ''; VOICE.level = 0;
+  VOICE.winner = null; VOICE.err = null; VOICE.synthetic = false;
+  refreshVoice();
+  return BR.voiceStart(VOICE.locales.slice()).then((r) => {
+    if (seq !== VOICE.seq) return;
+    if (!r || !r.ok) {
+      // main answers with a case name; `unsupported-locale` is the one that
+      // means the model for this language is not on this Mac.
+      const code = r && r.error === 'unsupported-locale' ? 'voice-no-model' : (r && r.error);
+      voiceFail(VOICE_REASONS[code] || 'Voice input could not start');
+      return;
+    }
+    VOICE.activeLocales = r.locales || VOICE.locales.slice();
+    return voiceCapture(seq);
+  }).catch((e) => voiceFail(String((e && e.message) || e)));
+}
+
+/** getUserMedia → a 16 kHz AudioContext (Chromium resamples the device for
+    us) → the AudioWorklet tap → main → the helper's stdin. */
+function voiceCapture(seq) {
+  return navigator.mediaDevices.getUserMedia({audio:{channelCount:1, echoCancellation:true, noiseSuppression:true}})
+    .then((stream) => {
+      if (seq !== VOICE.seq) { stream.getTracks().forEach((t) => t.stop()); return; }
+      VOICE.stream = stream;
+      const ac = new AudioContext({sampleRate:16000});
+      VOICE.ac = ac;
+      return ac.audioWorklet.addModule('voice-worklet.js').then(() => {
+        // Cancelled while the module loaded: give the device back rather
+        // than leaving an open context holding the microphone indicator.
+        if (seq !== VOICE.seq) { voiceTeardownAudio(); return; }
+        const src = ac.createMediaStreamSource(stream);
+        const node = new AudioWorkletNode(ac, 'pcm-tap');
+        // A muted sink: the processor writes nothing, and a zero gain makes
+        // that explicit rather than trusting an empty output buffer.
+        const gain = ac.createGain(); gain.gain.value = 0;
+        node.port.onmessage = (ev) => {
+          if (VOICE.state !== 'recording' || !ev.data) return;
+          VOICE.level = ev.data.peak || 0;
+          BR.voiceAudio(new Uint8Array(ev.data.pcm.buffer));
+          if (!VOICE.menu) refreshVoice();
+        };
+        src.connect(node); node.connect(gain); gain.connect(ac.destination);
+        VOICE.src = src; VOICE.node = node; VOICE.gain = gain;
+        VOICE.state = 'recording';
+        refreshVoice();
+      });
+    })
+    .catch((err) => {
+      const name = (err && err.name) || '';
+      if (name === 'NotAllowedError' || name === 'SecurityError') {
+        VOICE.available = false; VOICE.code = 'voice-mic-denied'; VOICE.reason = VOICE_REASONS['voice-mic-denied'];
+        voiceFail(VOICE.reason);
+      } else if (name === 'NotFoundError' || name === 'OverconstrainedError') {
+        VOICE.available = false; VOICE.code = 'voice-no-mic'; VOICE.reason = VOICE_REASONS['voice-no-mic'];
+        voiceFail(VOICE.reason);
+      } else {
+        voiceFail('The microphone could not be opened (' + (name || String(err)) + ')');
+      }
+    });
+}
+
+function voiceFail(message) {
+  voiceTeardownAudio();
+  if (BR && BR.voiceCancel) BR.voiceCancel();
+  VOICE.state = 'error'; VOICE.err = message; VOICE.final = ''; VOICE.partial = ''; VOICE.level = 0;
+  refreshVoice();
+  toast('Voice input', message);
+}
+
+function voiceTeardownAudio() {
+  if (VOICE.node) { try { VOICE.node.port.onmessage = null; VOICE.node.disconnect(); } catch (e) {} }
+  if (VOICE.src) { try { VOICE.src.disconnect(); } catch (e) {} }
+  if (VOICE.gain) { try { VOICE.gain.disconnect(); } catch (e) {} }
+  if (VOICE.stream) { try { VOICE.stream.getTracks().forEach((t) => t.stop()); } catch (e) {} }
+  if (VOICE.ac) { try { VOICE.ac.close(); } catch (e) {} }
+  VOICE.node = null; VOICE.src = null; VOICE.gain = null; VOICE.stream = null; VOICE.ac = null;
+  VOICE.level = 0;
+}
+
+/** Stop and insert. The helper finalizes what it has, so the last segment
+    is waited for — bounded, because a wait that never ends is worse than a
+    sentence that never arrives. */
+function voiceStop() {
+  if (VOICE.state !== 'recording' && VOICE.state !== 'starting') return Promise.resolve();
+  VOICE.seq++;
+  VOICE.state = 'finishing';
+  refreshVoice();
+  voiceTeardownAudio();
+  if (VOICE.synthetic || !BR || !BR.voiceStop) { voiceInsert(); return Promise.resolve(); }
+  BR.voiceStop();
+  return new Promise((resolve) => {
+    VOICE.doneResolve = resolve;
+    VOICE.doneTimer = setTimeout(() => { VOICE.doneTimer = null; voiceSettle(); }, 2500);
+  }).then(() => voiceInsert());
+}
+function voiceSettle() {
+  if (VOICE.doneTimer) { clearTimeout(VOICE.doneTimer); VOICE.doneTimer = null; }
+  const r = VOICE.doneResolve; VOICE.doneResolve = null;
+  if (r) r();
+}
+
+/** Splice the transcript into the draft at the caret. Text the user typed
+    is never replaced and the message is never auto-sent. */
+function voiceInsert() {
+  const text = (VOICE.final + VOICE.partial).trim();
+  VOICE.final = ''; VOICE.partial = ''; VOICE.state = 'idle';
+  if (!text) { refreshVoice(); return ''; }
+  const e = $('#entry');
+  const at = e && typeof e.selectionStart === 'number' ? e.selectionStart : S.draft.length;
+  const before = S.draft.slice(0, at);
+  const after = S.draft.slice(at);
+  let piece = text;
+  if (before && !/\s$/.test(before)) piece = ' ' + piece;
+  if (after && !/^\s/.test(after)) piece = piece + ' ';
+  S.draft = before + piece + after;
+  if (e) {
+    e.value = S.draft;
+    const caret = (before + piece).length;
+    try { e.setSelectionRange(caret, caret); } catch (err) {}
+    autosize(e);
+    e.focus();
+  }
+  S.slash = S.draft.startsWith('/');
+  ctxDraftChanged();
+  refreshVoice();
+  refreshSend();
+  return text;
+}
+
+/** Throw the take away: kill the helper, close the microphone, insert
+    nothing. Also what Escape does. */
+function voiceCancel() {
+  VOICE.seq++;
+  if (VOICE.doneTimer) { clearTimeout(VOICE.doneTimer); VOICE.doneTimer = null; }
+  VOICE.doneResolve = null;
+  voiceTeardownAudio();
+  if (!VOICE.synthetic && BR && BR.voiceCancel) BR.voiceCancel();
+  VOICE.state = 'idle'; VOICE.final = ''; VOICE.partial = ''; VOICE.err = null;
+  VOICE.winner = null; VOICE.menu = false; VOICE.synthetic = false;
+  refreshVoice();
+}
+
+/** One helper event. The accumulation rule lives here and it is the one
+    thing a naive implementation gets wrong: the helper emits a final per
+    SEGMENT, and every segment ends partial-then-final with the same words,
+    so a final must both append to `final` AND clear `partial`. Without the
+    clear, the closing sentence is inserted twice. */
+function voiceEvent(o) {
+  if (!o || typeof o !== 'object') return;
+  const t = o.type;
+  if (t === 'ready') { VOICE.activeLocales = o.locales || VOICE.locales.slice(); }
+  else if (t === 'partial') { VOICE.partial = String(o.text == null ? '' : o.text); }
+  else if (t === 'final') { VOICE.final += String(o.text == null ? '' : o.text); VOICE.partial = ''; }
+  else if (t === 'replace') {
+    // Two languages heard the same audio and the second one scored higher.
+    VOICE.final = String(o.text == null ? '' : o.text); VOICE.partial = '';
+    VOICE.winner = o.locale || null;
+  }
+  else if (t === 'install') { VOICE.installFraction = +o.fraction || 0; }
+  else if (t === 'installed') { if (o.locale && VOICE.installed.indexOf(o.locale) < 0) VOICE.installed = VOICE.installed.concat([o.locale]); }
+  else if (t === 'error') {
+    if (o.code === 'install') { VOICE.installErr = String(o.message || 'install failed'); }
+    else if (VOICE.state === 'recording' || VOICE.state === 'starting') {
+      voiceFail(String(o.message || o.code || 'the speech helper failed'));
+      return;
+    }
+  }
+  else if (t === 'done') { voiceSettle(); }
+  else if (t === 'closed') {
+    if (o.cancelled) { VOICE.final = ''; VOICE.partial = ''; }
+    else if (VOICE.state === 'recording' || VOICE.state === 'starting') {
+      voiceFail('Voice input stopped unexpectedly');
+      return;
+    }
+    voiceSettle();
+  }
+  refreshVoice();
+}
+
 function refreshSend() {
   const b = document.querySelector('.sendbtn');
   if (b) b.outerHTML = sendButton();
@@ -2032,6 +2535,17 @@ document.addEventListener('keydown', (e) => {
   const inText = e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT';
   // Item 7: the TUI's ctrl+g menu chords, live everywhere as in the TUI.
   if (chordKey(e, k)) return;
+
+  // Item 2 (voice input): Escape cancels a live recording BEFORE anything
+  // else looks at it. Five later Escape branches return first — a pending
+  // approval, the palette, the settings/tasks/skills key layers, any open
+  // overlay or menu, and the slash popover — and every one of them is a
+  // perfectly normal state to be dictating in. A swallowed Escape would
+  // leave the microphone hot with no way to discard the take.
+  if (k === 'Escape' && (VOICE.state === 'recording' || VOICE.state === 'starting'
+      || VOICE.state === 'finishing' || VOICE.state === 'error' || VOICE.menu)) {
+    e.preventDefault(); voiceCancel(); return;
+  }
 
   // approval scope — only while a card is pending and focus is not in a text field
   if (S.pending && !inText && !S.settings && !(S.room === 'tasks' && TK.cancel)) { // Item 7: the settings window (and the Tasks room's cancel modal) own their keys
@@ -7939,4 +8453,128 @@ if (typeof window !== 'undefined') {
       settings: !!S.settings, pane: settingsPaneId(S.settingsPane), llmMode: LLMP.mode, selOpen: SEL.open,
     }));
   };
+}
+
+/* ============================================================
+   Item 2: voice input — boot wiring and test hooks
+   Every check below drives synthetic helper events, so the whole suite
+   runs without a microphone and without the speech helper ever being
+   spawned by the renderer.
+   ============================================================ */
+if (typeof window !== 'undefined') {
+  // The mic button's press semantics live here, not in the click
+  // dispatcher: mousedown starts, mouseup after VOICE_HOLD_MS stops.
+  document.addEventListener('mousedown', voiceMouseDown, true);
+  document.addEventListener('mouseup', voiceMouseUp, true);
+  // The idle way into the language menu — the strip's own chip is only on
+  // screen while a take is running, and the button's tooltip says this.
+  document.addEventListener('contextmenu', (e) => {
+    const b = e.target.closest && e.target.closest('[data-mic]');
+    if (!b || b.disabled) return;
+    e.preventDefault();
+    voiceAct('voice:lang');
+  });
+  // A window that loses focus while the microphone is open is a recording
+  // the user has walked away from. Synthetic sessions are exempt: the
+  // harness runs with the window behind other windows.
+  window.addEventListener('blur', () => {
+    if (!VOICE.synthetic && (VOICE.state === 'recording' || VOICE.state === 'starting')) voiceCancel();
+  });
+  // Leaving the chat, opening another session or starting a new one all
+  // abandon the take rather than carrying it into a different draft.
+  const actBeforeVoice = act;
+  act = function (a) {
+    if (typeof a === 'string'
+        && (a === 'session:new' || a === 'clear' || a.indexOf('ses:') === 0 || a.indexOf('room:') === 0)
+        && (VOICE.state === 'recording' || VOICE.state === 'starting')) voiceCancel();
+    return actBeforeVoice(a);
+  };
+
+  if (BR && BR.onVoice) BR.onVoice(voiceEvent);
+  voiceProbe();
+
+  /** What the button may claim, and what it is claiming. */
+  window.__voice = () => ({
+    available: VOICE.available, reason: VOICE.reason, code: VOICE.code, detail: VOICE.detail,
+    state: VOICE.state, locales: VOICE.locales.slice(), winner: VOICE.winner,
+    final: VOICE.final, partial: VOICE.partial, menu: VOICE.menu,
+    supported: VOICE.supported.length, installed: VOICE.installed.length,
+    // Forward-compatible: this route is on-device, so it is always false.
+    // A route that set it true would owe the strip a disclosure naming the
+    // vendor, and there is no such route here to assert against.
+    offMachine: VOICE.offMachine,
+  });
+  /** The rendered strip, exactly as the user sees it. */
+  window.__voiceStrip = () => {
+    const n = document.querySelector('.voicestrip');
+    if (!n) return null;
+    const note = n.querySelector('.vsnote');
+    const chip = n.querySelector('.vschip');
+    return {
+      present: true, hidden: n.hasAttribute('hidden'), empty: n.innerHTML === '',
+      text: (n.querySelector('.vstext') || {}).textContent || '',
+      partial: (n.querySelector('.vspart') || {}).textContent || '',
+      note: note ? note.textContent : '',
+      chip: chip ? chip.textContent.trim() : '',
+      menuRows: n.querySelectorAll('.vsmrow').length,
+      menuFoot: (n.querySelector('.vsmfoot') || {}).textContent || '',
+    };
+  };
+  /** The button and its neighbours inside `.field`. */
+  window.__voiceMic = () => {
+    const b = document.querySelector('.composer .field .micbtn');
+    const field = document.querySelector('.composer .field');
+    return {
+      present: !!b, disabled: !!(b && b.disabled), title: b ? b.getAttribute('title') : '',
+      order: field ? Array.prototype.map.call(field.children, (n) => n.className || n.tagName).join('|') : '',
+    };
+  };
+  /** Put the strip into a live recording without touching the microphone. */
+  window.__voiceArm = () => {
+    VOICE.seq++;
+    VOICE.synthetic = true; VOICE.state = 'recording';
+    VOICE.final = ''; VOICE.partial = ''; VOICE.winner = null; VOICE.err = null; VOICE.level = 0;
+    refreshVoice();
+    return window.__voice();
+  };
+  /** Feed one helper event through the real handler. */
+  window.__voiceEvent = (o) => { voiceEvent(o); return window.__voice(); };
+  /** Stop and insert, through the real insertion path. */
+  window.__voiceStop = () => Promise.resolve(voiceStop()).then(() => ({
+    voice: window.__voice(), draft: S.draft, entry: (($('#entry') || {}).value) || '',
+    users: S.log.filter((m) => m.k === 'user').length,
+  }));
+  window.__voiceCancel = () => { voiceCancel(); return window.__voice(); };
+  window.__voiceAct = (a) => { voiceAct(a); return window.__voice(); };
+  /** Substitute a probe answer, so every disabled reason can be rendered
+      without breaking the machine it runs on. */
+  window.__voiceProbeSet = (p) => {
+    const d = p || {};
+    if ('supported' in d) VOICE.supported = d.supported || [];
+    if ('installed' in d) VOICE.installed = d.installed || [];
+    if ('speech' in d) VOICE.speechLocales = d.speech || [];
+    if ('dictation' in d) VOICE.dictationLocales = d.dictation || [];
+    if ('offMachine' in d) VOICE.offMachine = !!d.offMachine;
+    if ('locales' in d) VOICE.locales = d.locales.slice();
+    if ('available' in d) {
+      VOICE.available = d.available;
+      VOICE.code = d.available ? '' : (d.reason || 'voice-helper-failed');
+      VOICE.reason = d.available ? '' : (VOICE_REASONS[VOICE.code] || VOICE_REASONS['voice-helper-failed']);
+    }
+    refreshVoice();
+    return window.__voice();
+  };
+  /** Plant (or clear, or read) a pending approval, so the harness can prove
+      Escape reaches the voice branch from the state whose own Escape handler
+      returns first. No approval card is fabricated in the transcript. */
+  window.__voicePending = (on) => {
+    if (on === undefined) return !!S.pending;
+    S.pending = on ? {id:'voice-smoke', k:'approval', approvalId:'voice-smoke'} : null;
+    render();
+    return !!S.pending;
+  };
+  /** Re-ask main, after a probe override or a language install. */
+  window.__voiceReprobe = () => voiceProbe().then(() => window.__voice());
+  /** The literal sentences, so the harness asserts the shipped copy. */
+  window.__voiceReasons = () => Object.assign({}, VOICE_REASONS, {ondevice: VOICE_ONDEVICE});
 }

@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { stat } from "node:fs/promises";   // item 5: the attachment strip stats what a turn wrote, nothing else
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";   // item 2 (voice input): the smoke spawns the speech helper with --probe
 import { promisify } from "node:util";
 
 import { AgentClient } from "./agent-client.js";
@@ -78,6 +78,8 @@ import {
   type ImportRunInput,
 } from "./agent-cli.js";
 import { validateCreateForm, type TaskCreateFormInput } from "./task-schedule.js";
+// Item 2 (voice input): the on-device speech helper's supervisor.
+import { VoiceSession, helperPath as speechHelperPath } from "./speech.js";
 // Item 7 part B (Skills / Memory / MCP tabs)
 import { clawhubSkillDetail } from "./clawhub.js";
 import { memoryQuery } from "./memory-db.js";
@@ -93,6 +95,40 @@ const MODELS_TEST = process.argv.includes("--models");
 let win: BrowserWindow | null = null;
 let agent: AgentClient | null = null;
 let pull: { done: Promise<unknown>; cancel: () => void } | null = null;
+/* Item 2 (voice input): at most one live speech helper, for the whole app.
+   Created here rather than inside wireIpc because createWindow's permission
+   handlers read `voice.armed`, and both quit paths have to be able to kill
+   it — a helper outliving the window holds the microphone indicator on. */
+const voice = new VoiceSession();
+
+/* Item 2 (voice input): the chosen dictation languages. This is a viewer
+   preference, not agent state — the agent has no voice surface at all — so
+   it lives beside prefs.json in Electron's userData and never touches
+   ~/.atomic-agent/config.json. Its own file, so the sidebar's whole-object
+   prefs write cannot drop it. */
+type VoicePrefs = { locales: string[] };
+const VOICE_PREFS_PATH = () => join(app.getPath("userData"), "voice.json");
+
+function readVoicePrefs(): VoicePrefs {
+  try {
+    const raw = JSON.parse(readFileSync(VOICE_PREFS_PATH(), "utf8")) as { locales?: unknown };
+    const locales = Array.isArray(raw.locales)
+      ? raw.locales.filter((l): l is string => typeof l === "string" && !!l).slice(0, 2)
+      : [];
+    return { locales };
+  } catch {
+    return { locales: [] };
+  }
+}
+
+function writeVoicePrefs(locales: string[]): { ok: boolean; error?: string } {
+  try {
+    writeFileSync(VOICE_PREFS_PATH(), JSON.stringify({ locales: locales.slice(0, 2) }));
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
 
 // Lane B — backend switch: the llm route `atag serve` booted with. serve
 // pins its provider at boot, so a switch whose write found the file already
@@ -206,8 +242,43 @@ function createWindow(): BrowserWindow {
   });
   window.webContents.on("will-navigate", (event) => event.preventDefault());
 
+  /* Item 2 (voice input): until this feature there was no permission handler
+     at all, and Electron's default grants everything — the renderer could
+     open the microphone, or the camera, without anyone asking. Both handlers
+     go in and both deny by default; the single exception is an audio-only
+     media request while a voice session the user started is armed.
+
+     The two callbacks have deliberately different shapes and neither is a
+     copy of the other: setPermissionRequestHandler is
+     (webContents, permission, callback, details) and answers through the
+     callback; setPermissionCheckHandler is
+     (webContents, permission, requestingOrigin, details) and RETURNS a
+     boolean — returning nothing from it denies everything, the armed
+     session included. */
+  const audioOnly = (details: { mediaTypes?: string[] } | undefined): boolean => {
+    const types = details?.mediaTypes ?? [];
+    return types.length > 0 && types.every((t) => t === "audio");
+  };
+  const allowVoice = (permission: string, details: { mediaTypes?: string[] } | undefined): boolean =>
+    permission === "media" && voice.armed && audioOnly(details);
+
+  window.webContents.session.setPermissionRequestHandler((_wc, permission, callback, details) => {
+    callback(allowVoice(permission, details as { mediaTypes?: string[] } | undefined));
+  });
+  window.webContents.session.setPermissionCheckHandler((_wc, permission, _origin, details) =>
+    allowVoice(permission, details as unknown as { mediaTypes?: string[] } | undefined),
+  );
+
   void window.loadFile(join(__dirname, "..", "renderer", "index.html"));
   return window;
+}
+
+/** Exposed for the smoke: the same predicate the handlers above run, so the
+ *  "the renderer cannot take the microphone unasked" case can be asserted
+ *  without a live getUserMedia that would open the real device. */
+function voicePermissionVerdict(permission: string, mediaTypes: string[]): boolean {
+  const types = mediaTypes ?? [];
+  return permission === "media" && voice.armed && types.length > 0 && types.every((t) => t === "audio");
 }
 
 function wireIpc(client: AgentClient): void {
@@ -711,6 +782,31 @@ function wireIpc(client: AgentClient): void {
     if (value !== null && typeof value !== "string") return { ok: false, error: "value must be a string or null" };
     return dotenvSet(stateDir, key, value);
   });
+
+  /* ---- Item 2 (voice input) --------------------------------------------
+     Nothing here touches the agent: 0.5.5 has no audio route, no
+     transcription tool and no config key, so no HTTP call is made, nothing
+     is written to config.json and no `atag serve` restart is involved. */
+  ipcMain.handle("voice:probe", async () => {
+    const probe = await voice.probe();
+    return { ok: true, data: { ...probe, chosen: readVoicePrefs().locales } };
+  });
+  ipcMain.handle("voice:start", (_event, locales: unknown) => {
+    const wanted = Array.isArray(locales) ? locales.filter((l): l is string => typeof l === "string") : [];
+    return voice.start(wanted, (payload) => send("app:voice", payload));
+  });
+  // `on`, not `handle`: this fires ten times a second and no answer is wanted.
+  ipcMain.on("voice:audio", (_event, chunk: unknown) => voice.audio(chunk));
+  ipcMain.handle("voice:stop", () => voice.stop());
+  ipcMain.handle("voice:cancel", () => voice.cancel());
+  ipcMain.handle("voice:install", (_event, locale: unknown) =>
+    typeof locale === "string" && locale
+      ? voice.install(locale, (payload) => send("app:voice", payload))
+      : Promise.resolve({ ok: false, error: "locale required" }),
+  );
+  ipcMain.handle("voice:setLocales", (_event, locales: unknown) =>
+    writeVoicePrefs(Array.isArray(locales) ? locales.filter((l): l is string => typeof l === "string") : []),
+  );
 
   client.on("status", (status) => send("agent:status", status));
   client.on("chat", (event) => send("agent:chat", event));
@@ -1353,6 +1449,9 @@ async function smokeTest(): Promise<void> {
     // --- Item 7 part C: the LLM, Telegram and Import tabs ---
     await settingsTestPartC(js, check);
 
+    // --- Item 2: voice input (no microphone is opened anywhere in it) ---
+    await voiceTest(js, check);
+
     // --- Item 6: the sidebar's two lists ---
     await sidebarTest(js, check);
 
@@ -1372,6 +1471,327 @@ async function smokeTest(): Promise<void> {
   writeFileSync(out, image.toPNG());
   process.stdout.write(`SMOKE screenshot=${out} failures=${fail.length}\n`);
   app.exit(fail.length === 0 ? 0 : 1);
+}
+
+
+/**
+ * Item 2 (voice input). Every check here runs WITHOUT a microphone: the
+ * renderer's state machine is driven through `window.__voice*` hooks with
+ * synthetic helper events, and the one live browser call asserts that the
+ * camera is DENIED — never that audio is granted, which would open the
+ * operator's real device.
+ *
+ * Nothing in this suite touches the agent: the feature owns no route, no
+ * config key and no restart. The renderer's chosen languages are captured
+ * and written back in `finally`.
+ */
+async function voiceTest(
+  js: <T>(code: string) => Promise<T>,
+  check: (name: string, ok: boolean, detail?: string) => void,
+): Promise<void> {
+  type V = {
+    available: boolean | null; reason: string; code: string; state: string; locales: string[];
+    winner: string | null; final: string; partial: string; menu: boolean;
+    supported: number; installed: number; offMachine: boolean;
+  };
+  type Strip = {
+    present: boolean; hidden: boolean; empty: boolean; text: string; partial: string;
+    note: string; chip: string; menuRows: number; menuFoot: string;
+  } | null;
+  type Mic = { present: boolean; disabled: boolean; title: string; order: string };
+
+  const before = await js<V>("window.__voice()");
+  const draftBefore = await js<string>("window.__draft ? window.__draft().draft : ''");
+  try {
+    // --- the button ------------------------------------------------------
+    const mic = await js<Mic>("window.__voiceMic()");
+    const order = mic.order.split("|");
+    const iMic = order.findIndex((c) => c.split(" ").includes("micbtn"));
+    const iSend = order.findIndex((c) => c.split(" ").includes("sendbtn"));
+    check(
+      "mic button sits next to send",
+      mic.present && iMic >= 0 && iSend === iMic + 1,
+      `field children ${JSON.stringify(mic.order)}`,
+    );
+
+    // --- honesty ---------------------------------------------------------
+    const reasons = await js<Record<string, string>>("window.__voiceReasons()");
+    const v0 = await js<V>("window.__voice()");
+    const named = Object.keys(reasons).filter((k) => k !== "ondevice");
+    const sentences = named.map((k) => reasons[k]);
+    check(
+      "every disabled case has a sentence",
+      named.length === 8 && sentences.every((s) => typeof s === "string" && s.length > 12)
+        && reasons["voice-os-too-old"] === "Voice input needs macOS 26 or later"
+        && reasons["voice-helper-missing"] === "Voice input needs the speech helper, which this build was packaged without"
+        && reasons["voice-not-macos"] === "Voice input works only on macOS",
+      `${named.length} named cases`,
+    );
+    check(
+      "voice reports itself honestly",
+      v0.available !== null
+        && (v0.available
+          ? v0.reason === "" && !mic.disabled && mic.title.includes("click again to insert")
+          : sentences.includes(v0.reason) && mic.disabled && mic.title === v0.reason),
+      `available=${v0.available} code=${v0.code} reason=${JSON.stringify(v0.reason)} disabled=${mic.disabled}`,
+    );
+    // Each disabled case must actually render its own sentence on the button.
+    let allRendered = true;
+    const rendered: string[] = [];
+    for (const code of ["voice-os-too-old", "voice-helper-missing", "voice-not-macos"]) {
+      await js<V>(`window.__voiceProbeSet({available:false, reason:'${code}'})`);
+      const m = await js<Mic>("window.__voiceMic()");
+      rendered.push(`${code}→${m.disabled ? "off" : "ON"}`);
+      if (!m.disabled || m.title !== reasons[code]) allRendered = false;
+    }
+    check("a disabled button carries the true reason", allRendered, rendered.join(", "));
+    await js<V>("window.__voiceReprobe()");
+
+    // --- the strip is only ever a placeholder when idle -------------------
+    const idle = await js<Strip>("window.__voiceStrip()");
+    check(
+      "an idle strip is a hidden placeholder, not a missing node",
+      !!idle && idle.present && idle.hidden && idle.empty,
+      idle ? `hidden=${idle.hidden} empty=${idle.empty}` : "no strip",
+    );
+
+    // --- interim text never touches the draft ----------------------------
+    await js<unknown>("window.__ctxDraft('fix ')");
+    await js<V>("window.__voiceArm()");
+    await js<V>("window.__voiceEvent({type:'ready', locales:['en-US']})");
+    await js<V>("window.__voiceEvent({type:'partial', text:'refactor the login'})");
+    const s1 = await js<Strip>("window.__voiceStrip()");
+    const d1 = await js<{ draft: string; entry: string }>("window.__draft()");
+    check(
+      "interim renders without touching the draft",
+      !!s1 && !s1.hidden && s1.text.includes("refactor the login") && d1.draft === "fix " && d1.entry === "fix ",
+      `strip ${JSON.stringify(s1 && s1.text)}, draft ${JSON.stringify(d1.draft)}, entry ${JSON.stringify(d1.entry)}`,
+    );
+    check(
+      "the on-device sentence is the one that ships",
+      !!s1 && s1.note.startsWith("On-device — the audio never leaves this Mac") && !before.offMachine,
+      `note ${JSON.stringify(s1 && s1.note)}, offMachine ${before.offMachine}`,
+    );
+
+    // --- segments accumulate ---------------------------------------------
+    await js<V>("window.__voiceEvent({type:'final', text:'Open the settings pane.'})");
+    await js<V>("window.__voiceEvent({type:'final', text:' Then switch the backend.'})");
+    const s2 = await js<V>("window.__voiceEvent({type:'partial', text:' Finally'})");
+    check(
+      "segments accumulate",
+      s2.final + s2.partial === "Open the settings pane. Then switch the backend. Finally",
+      JSON.stringify(s2.final + s2.partial),
+    );
+
+    // --- the ordering a naive implementation gets wrong -------------------
+    // Real speech ends every segment partial-then-final with the same words,
+    // and a stop always lands on a final. Without clearing `partial` when a
+    // final arrives, the closing sentence is inserted twice.
+    await js<V>("window.__voiceCancel()");
+    await js<unknown>("window.__ctxDraft('')");
+    await js<V>("window.__voiceArm()");
+    await js<V>("window.__voiceEvent({type:'final', text:'a.'})");
+    await js<V>("window.__voiceEvent({type:'partial', text:' b'})");
+    const s3 = await js<V>("window.__voiceEvent({type:'final', text:' b.'})");
+    check(
+      "a take that ends on a final is not doubled",
+      s3.final + s3.partial === "a. b." && s3.partial === "",
+      `strip text ${JSON.stringify(s3.final + s3.partial)}, partial ${JSON.stringify(s3.partial)}`,
+    );
+    const ins0 = await js<{ draft: string; users: number }>("window.__voiceStop()");
+    check(
+      "and the doubled sentence is not inserted either",
+      ins0.draft === "a. b.",
+      JSON.stringify(ins0.draft),
+    );
+
+    // --- insertion at the caret ------------------------------------------
+    // The transcript already holds the turns the suite ran above, so the
+    // assertion is that dictation added NO user message, not that there are
+    // none at all.
+    const usersBefore = await js<number>("window.__draft().users");
+    await js<unknown>("window.__ctxDraft('fix ')");
+    await js<V>("window.__voiceArm()");
+    await js<V>("window.__voiceEvent({type:'final', text:'Open the settings pane.'})");
+    await js<V>("window.__voiceEvent({type:'final', text:' Then switch the backend.'})");
+    await js<V>("window.__voiceEvent({type:'partial', text:' Finally'})");
+    const ins = await js<{ voice: V; draft: string; entry: string; users: number }>("window.__voiceStop()");
+    check(
+      "final text is inserted at the caret and nothing is sent",
+      ins.draft === "fix Open the settings pane. Then switch the backend. Finally"
+        && ins.entry === ins.draft && ins.voice.state === "idle" && ins.users === usersBefore,
+      `draft ${JSON.stringify(ins.draft)}, user messages ${usersBefore}→${ins.users}, state ${ins.voice.state}`,
+    );
+
+    // --- a cancelled take inserts nothing ---------------------------------
+    await js<unknown>("window.__ctxDraft('fix ')");
+    await js<V>("window.__voiceArm()");
+    await js<V>("window.__voiceEvent({type:'partial', text:'discard me'})");
+    const cancelled = await js<V>("window.__voiceCancel()");
+    const dc = await js<{ draft: string }>("window.__draft()");
+    const sc = await js<Strip>("window.__voiceStrip()");
+    check(
+      "a cancelled recording inserts nothing",
+      dc.draft === "fix " && cancelled.state === "idle" && !!sc && sc.hidden && sc.empty,
+      `draft ${JSON.stringify(dc.draft)}, state ${cancelled.state}, strip hidden=${sc && sc.hidden} empty=${sc && sc.empty}`,
+    );
+
+    // --- Escape, from the states that would otherwise swallow it ----------
+    const esc = async (setup: string, label: string) => {
+      if (label === "slash") {
+        // The real path: an input event, so S.slash is set and the popover
+        // is actually on screen — that branch returns before the general
+        // Escape case and would swallow the cancel.
+        await js<boolean>(
+          "(() => { const e = document.getElementById('entry'); e.focus(); e.value = '/he';"
+          + " e.dispatchEvent(new Event('input', {bubbles:true})); return !!document.querySelector('.slash'); })()",
+        );
+      } else {
+        await js<unknown>('window.__ctxDraft("fix ")');
+      }
+      await js<V>("window.__voiceArm()");
+      await js<V>("window.__voiceEvent({type:'partial', text:'discard me'})");
+      if (setup) await js<unknown>(setup);
+      const slashWasOpen = await js<boolean>("!!document.querySelector('.slash')");
+      const pendingWasSet = await js<boolean>("window.__voicePending()");
+      const scrollBefore = await js<number>(
+        "(() => { const s = document.getElementById('scroller'); if (!s) return -1; s.scrollTop = 0; return s.scrollTop; })()",
+      );
+      await js<unknown>(
+        "document.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true, cancelable:true}))",
+      );
+      const after = await js<V>("window.__voice()");
+      const d = await js<{ draft: string }>("window.__draft()");
+      const scrollAfter = await js<number>(
+        "(() => { const s = document.getElementById('scroller'); return s ? s.scrollTop : -1; })()",
+      );
+      return { after, draft: d.draft, scrollBefore, scrollAfter, slashWasOpen, pendingWasSet };
+    };
+    const e1 = await esc("", "clean");
+    check(
+      "Escape cancels a recording before every other Escape branch",
+      e1.after.state === "idle" && e1.draft === "fix " && e1.scrollAfter === e1.scrollBefore,
+      `state ${e1.after.state}, draft ${JSON.stringify(e1.draft)}, scrollTop ${e1.scrollBefore}→${e1.scrollAfter}`,
+    );
+    const slashOpen = await js<boolean>("!!document.querySelector('.slash')");
+    const e2 = await esc("", "slash");
+    check(
+      "Escape still cancels with the slash popover open",
+      slashOpen === false && e2.slashWasOpen === true && e2.after.state === "idle" && e2.draft === "/he",
+      `popover open before Esc=${e2.slashWasOpen}, state ${e2.after.state}, draft ${JSON.stringify(e2.draft)}`,
+    );
+    await js<unknown>('window.__ctxDraft("")');
+    const e3 = await esc("window.__voicePending(true)", "clean");
+    await js<unknown>("window.__voicePending(false)");
+    check(
+      "Escape still cancels with an approval pending",
+      e3.pendingWasSet === true && e3.after.state === "idle" && e3.draft === "fix ",
+      `pending before Esc=${e3.pendingWasSet}, state ${e3.after.state}, draft ${JSON.stringify(e3.draft)}`,
+    );
+    await js<unknown>('window.__ctxDraft("")');
+
+    // --- two languages at once -------------------------------------------
+    // The helper's `replace`: both models heard the same audio and the
+    // second scored higher, so its whole transcript wins the take.
+    await js<V>("window.__voiceProbeSet({available:true, supported:['en-US','ru-RU'], installed:['en-US','ru-RU'], speech:['en-US'], dictation:['ru-RU'], locales:['en-US','ru-RU']})");
+    await js<V>("window.__voiceArm()");
+    await js<V>("window.__voiceEvent({type:'final', text:'at croy panel nastroyek'})");
+    const rep = await js<V>("window.__voiceEvent({type:'replace', text:'Открой панель настроек', locale:'ru-RU', confidence:0.88})");
+    const stripRep = await js<Strip>("window.__voiceStrip()");
+    check(
+      "a second language can win the take",
+      rep.final === "Открой панель настроек" && rep.partial === "" && rep.winner === "ru-RU"
+        && !!stripRep && stripRep.chip.includes("matched"),
+      `final ${JSON.stringify(rep.final)}, winner ${rep.winner}, chip ${JSON.stringify(stripRep && stripRep.chip)}`,
+    );
+    const insRep = await js<{ draft: string }>("window.__voiceStop()");
+    check(
+      "and the winning language is what gets inserted",
+      insRep.draft === "Открой панель настроек",
+      JSON.stringify(insRep.draft),
+    );
+    await js<unknown>("window.__ctxDraft('')");
+
+    // --- the language menu says what is true ------------------------------
+    // Opened the way an idle user opens it: the button's tooltip promises a
+    // right-click, so the right-click is what the check performs.
+    await js<unknown>(
+      "document.querySelector('.composer .field .micbtn')"
+      + ".dispatchEvent(new MouseEvent('contextmenu', {bubbles:true, cancelable:true}))",
+    );
+    const menu = await js<Strip>("window.__voiceStrip()");
+    check(
+      "the language menu lists the on-device models and says one is active",
+      !!menu && !menu.hidden && menu.menuRows === 2
+        && menu.menuFoot.includes("One language is active at a time")
+        && menu.menuFoot.includes("Russian"),
+      menu ? `${menu.menuRows} rows, foot ${JSON.stringify(menu.menuFoot.slice(0, 60))}` : "no menu",
+    );
+    await js<V>("window.__voiceCancel()");
+    await js<V>("window.__voiceReprobe()");
+
+    // --- the permission gate ----------------------------------------------
+    // Live, in the renderer: video must be refused outright. The audio twin
+    // is asserted main-side below instead, because a granted audio request
+    // would open the operator's real microphone.
+    const cam = await js<string>(
+      "navigator.mediaDevices.getUserMedia({video:true}).then(() => 'GRANTED', (e) => e.name)",
+    );
+    check("the renderer cannot take the camera", cam === "NotAllowedError", `getUserMedia({video:true}) → ${cam}`);
+    check(
+      "and cannot take the microphone outside a session the user started",
+      voicePermissionVerdict("media", ["audio"]) === false
+        && voicePermissionVerdict("media", ["audio", "video"]) === false
+        && voicePermissionVerdict("geolocation", []) === false,
+      `armed=${voice.armed}; audio→${voicePermissionVerdict("media", ["audio"])}`,
+    );
+
+    // --- what actually ships ----------------------------------------------
+    check(
+      "the worklet ships next to the renderer",
+      existsSync(join(__dirname, "..", "renderer", "voice-worklet.js")),
+      join(__dirname, "..", "renderer", "voice-worklet.js"),
+    );
+    const helper = speechHelperPath();
+    if (!existsSync(helper)) {
+      process.stdout.write(`SKIP speech helper not built — ${helper}\n`);
+    } else {
+      const probe = await new Promise<{ code: number | null; out: string }>((resolve) => {
+        const child = spawn(helper, ["--probe"], { stdio: ["ignore", "pipe", "pipe"] });
+        let out = "";
+        const timer = setTimeout(() => { child.kill("SIGKILL"); resolve({ code: null, out }); }, 8000);
+        child.stdout.on("data", (b: Buffer) => { out += b.toString("utf8"); });
+        child.on("error", () => { clearTimeout(timer); resolve({ code: null, out }); });
+        child.on("close", (code: number | null) => { clearTimeout(timer); resolve({ code, out }); });
+      });
+      let supported: string[] = [];
+      let installed: string[] = [];
+      try {
+        const obj = JSON.parse(probe.out.split("\n").find((l) => l.trim().startsWith("{")) ?? "") as {
+          supported?: string[]; installed?: string[];
+        };
+        supported = obj.supported ?? [];
+        installed = obj.installed ?? [];
+      } catch { /* asserted below */ }
+      check(
+        "the speech helper answers",
+        probe.code === 0 && supported.includes("en-US") && installed.every((l) => supported.includes(l)),
+        `exit ${probe.code}, ${supported.length} supported, ${installed.length} installed`,
+      );
+    }
+  } finally {
+    await js<unknown>("window.__voiceCancel()").catch(() => undefined);
+    await js<unknown>("window.__ctxDraft(" + JSON.stringify(draftBefore ?? "") + ")").catch(() => undefined);
+    // Put the renderer's languages back exactly as they were, including the
+    // case where the probe had not answered yet when this suite started.
+    const restore = before && Array.isArray(before.locales) && before.locales.length
+      ? before.locales
+      : ["en-US"];
+    await js<unknown>(
+      `window.__voiceProbeSet({locales:${JSON.stringify(restore)}})`,
+    ).catch(() => undefined);
+    await js<unknown>("window.__voiceReprobe()").catch(() => undefined);
+  }
 }
 
 /**
@@ -3110,6 +3530,9 @@ void app.whenReady().then(async () => {
   const workspace = process.env.ATOMIC_AGENT_WORKSPACE ?? homedir();
   agent = new AgentClient(workspace);
   win = createWindow();
+  // Item 2 (voice input): the third teardown path — this window going away
+  // while the app stays alive on macOS.
+  win.on("closed", () => voice.kill());
   buildMenu((command) => send("app:menu", command));
   wireIpc(agent);
 
@@ -3121,16 +3544,28 @@ void app.whenReady().then(async () => {
   });
 
   app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) win = createWindow();
+    if (BrowserWindow.getAllWindows().length === 0) {
+      win = createWindow();
+      win.on("closed", () => voice.kill());
+    }
   });
 });
 
 app.on("window-all-closed", () => {
+  // Item 2 (voice input): a helper that outlives its window keeps the
+  // system microphone indicator lit, which is worse for trust than any bug
+  // in the transcript.
+  voice.kill();
   if (process.platform !== "darwin") app.quit();
 });
 
 // Never leave the agent running after the app is gone.
 app.on("before-quit", (event) => {
+  // Item 2 (voice input): BEFORE the guard below. `if (!agent) return` skips
+  // everything after it whenever the agent is not running, which is exactly
+  // the degraded state in which someone is most likely to be poking at the
+  // microphone button.
+  voice.kill();
   if (!agent) return;
   event.preventDefault();
   const client = agent;
