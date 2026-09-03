@@ -200,6 +200,44 @@ const CHORD = { pending:false, timer:null };
 /* Renderer faults, counted for --smoke (`window.__errCount`). */
 let ERR_COUNT = 0;
 
+/* ---- Item 7 part B: the Skills, Memory and MCP tabs ----
+   Render-visible state for the three panels, in the hoisted block for the
+   same TDZ reason as everything above it. */
+/* Skills panel — the TUI's SkillsPanelState minus `rows` (those live in
+   SK.rows, from `atag skill list`). `msg` is the orchestrator's runtime_info
+   line for the last action; `restart` marks the ones the running `atag
+   serve` only picks up after a restart (its registry is boot-time). */
+const SKP = {
+  mode:'list', cursor:0, filter:'all', auto:true, busy:false,
+  detailName:null, detailBody:null, lastError:null, msg:null,
+  hubRows:[], hubCursor:0, hubQuery:'', hubSearchEditing:false, hubLoading:false, hubError:null, hubSeq:0,
+  installing:false, installError:null, installConfirm:null,
+  hubCard:null, hubCardLoading:false, cardScroll:0, removeConfirm:null, timer:null,
+};
+const SKP_FILTERS = ['all','enabled','disabled']; // skills-filter.ts FILTER_ORDER
+const SKP_MAX_ROWS = 14, SKP_HUB_ROWS = 12, SKP_DETAIL_LINES = 32, SKP_CARD_LINES = 24; // skills-panel.tsx / skills-hub-list.tsx / skills-detail.tsx / HUB_CARD_BODY_WINDOW
+/* Memory panel — the TUI's MemoryPanelState. Rows come from read-only
+   sqlite over <stateDir>/memory.sqlite (app:memoryQuery, named statements). */
+const MEM = {
+  mode:'list', channel:'profile', available:['profile','notes'], rows:[], cursor:0, search:'',
+  notesFilter:'active', lastRefreshedAt:null, loading:false, auto:true,
+  detailRowKey:null, detail:null, lastError:null, channelHint:null, timer:null, seq:0,
+  cfg:null, cfgBusy:false, // `atag config get memory` — the effective flags when the user file has no memory.* key
+};
+const MEM_CHANNEL_ORDER = ['profile','notes','lessons','procedures','links','votes'];
+const MEM_NOTES_FILTERS = ['active','archived','all'];
+const MEM_MAX_ROWS = 14, MEM_DETAIL_LINES = 28, MEM_NOTES_LIMIT = 200, MEM_INDEX_LIMIT = 100, MEM_LINKS_LIMIT = 500, MEM_VOTES_LIMIT = 100; // memory-panel.tsx / memory-detail.tsx / memory-orchestrator.ts (lesson/procedure index max 100 in their stores)
+/* MCP panel — the TUI's McpPanelState. Rows come from config (mcp.servers)
+   and the `mcp.<name>.*` tools in /api/capabilities; there is no MCP status
+   route on this agent, so no state / resources / prompts. */
+const MCP = {
+  mode:'list', cursor:0, detailTab:'tools', detailCursor:0, detailName:null,
+  lastRefreshedAt:null, loading:false, auto:true, lastError:null, msg:null,
+  addModal:null, removeConfirm:null, timer:null, seq:0, inflight:null,
+};
+const MCP_TAB_ORDER = ['tools','resources','prompts'];
+const MCP_MAX_ROWS = 14;
+
 /* ============================================================
    Atomic Agent Desktop — clickable prototype, no backend.
    Command/menu wording, the slash registry and its rank order,
@@ -645,20 +683,8 @@ function tasksView() {
 }
 
 function skillsView() {
-  const installed = '<div class="rows">' + SKILLS.map((s) =>
-    '<div class="row"><span class="ic sec" style="display:flex">' + ic('skills') + '</span>'
-    + '<span class="main"><span class="t">' + esc(s.t) + '</span><span class="cap">' + esc(s.s) + '</span></span>'
-    + '<span class="meta">v' + s.v + ' · ' + s.src + '</span>'
-    + '<span class="cap">' + (s.on ? 'enabled' : 'disabled') + '</span></div>').join('') + '</div>';
-  const hub = '<div class="pad" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px">'
-    + HUB.map((h) => '<div class="panelcard"><div class="hstack"><span class="hd">' + esc(h.t) + '</span>'
-      + '<span class="cap" style="margin-left:auto">' + esc(h.d) + '</span></div>'
-      + '<div class="cap">' + esc(h.s) + '</div>'
-      + '<div class="mono ter">' + esc(h.repo) + '</div>'
-      + '<button class="btn btn-t" style="align-self:flex-start">Install…</button></div>').join('') + '</div>';
-  return '<div class="chead"><span class="hd">Skills</span>'
-    + '<span class="grow"></span></div>'
-    + '<div class="scroller">' + (S.skillsTab === 'installed' ? installed : hub) + '</div>';
+  // Item 7 part B: the Skills room is the settings window's Skills tab — one implementation.
+  return '<div class="scroller"><div class="tuiwrap">' + skillsTab() + '</div></div>';
 }
 
 function memoryView() {
@@ -993,7 +1019,7 @@ function tabSuffix(id) {
   let n = 0;
   if (id === 'tasks') n = TK.lastRefreshedAt === null ? TASKS.length : TK.rows.length; // until the tab's own fetch lands, GET /api/tasks from loadResources
   else if (id === 'skills') n = SK.rows ? SK.rows.length : 0; // no suffix until `atag skill list` has answered
-  else if (id === 'memory') n = 0; // the Memory tab lands in the next step of this branch; no channel is loaded yet
+  else if (id === 'memory') n = MEM.rows.length; // Item 7 part B: rows of the selected channel (debug-pane.tsx:160)
   else if (id === 'mcp') n = ((LIVE_CONFIG && LIVE_CONFIG.mcp && LIVE_CONFIG.mcp.servers) || []).length;
   return n === 0 ? '' : ' (' + n + ')';
 }
@@ -1079,7 +1105,7 @@ async function refreshSkillList() {
   const before = JSON.stringify([SK.rows, SK.err]);
   if (res && res.ok && Array.isArray(res.rows)) { SK.rows = res.rows; SK.err = null; }
   else SK.err = (res && res.error) || 'skill list failed';
-  if (S.settings && before !== JSON.stringify([SK.rows, SK.err]) && !tkTyping()) render(); // same guard as refreshHealth
+  if (S.settings && before !== JSON.stringify([SK.rows, SK.err]) && !tkTyping() && !skpTyping()) render(); // same guard as refreshHealth (+ the hub search box, Item 7 part B)
 }
 /* Everything a Manage tab needs when it comes into view: the diagnostics
    line, the Tasks list primed once (the TUI starts its tasks orchestrator
@@ -1091,42 +1117,27 @@ function settingsPaneEntered(opened) {
   if (TK.lastRefreshedAt === null && !TK.loading) tasksRefresh(true);
   // Privacy: fetch the effective value once; `r` re-reads on demand (no repaint for a value already known).
   if (settingsPaneId(S.settingsPane) === 'privacy' && privacyEffective() === null && !PRIV.effectiveBusy) privacyRefresh();
+  // Item 7 part B: the Skills / Memory / MCP tabs start their own 5 s poll and first load on entry.
+  const pane = settingsPaneId(S.settingsPane);
+  if (pane === 'skills') skillsTabEntered();
+  else if (pane === 'memory') memoryTabEntered();
+  else if (pane === 'mcp') mcpTabEntered();
 }
 
 function settingsPane() {
   const p = settingsPaneId(S.settingsPane);
   if (p === 'tasks') return tasksTab();
   if (p === 'privacy') return privacyPane();
-  if (p === 'skills') return skillsListPane();
+  // Item 7 part B: the Skills, Memory and MCP tabs.
+  if (p === 'skills') return skillsTab();
+  if (p === 'memory') return memoryTab();
+  if (p === 'mcp') return mcpTab();
   if (p === 'llm') return comingNote('LLM') + modelsPane();
   return comingNote(SETTINGS_TABS.find((t) => t[0] === p)[1]);
 }
 function comingNote(label) {
   return '<div class="tui"><b>' + esc(label) + '</b><div class="ter">coming in the next step of this branch</div></div>';
 }
-/* Skills tab, this step of the branch: the installed list as
-   skills-list.tsx draws it — header row, rows from `atag skill list` (the
-   only surface that lists disabled skills) sorted enabled-first then alpha,
-   the TUI column widths (state 9 · [source] 9 · vN 8 · name 24/26 ·
-   description 60). The palette's Skills rows and `/skills` land here, so
-   they open a real list; toggle / detail / remove / hub follow in the next
-   step of this branch. */
-function skillsListPane() {
-  if (!SK.rows) {
-    return '<div class="tui"><b>Skills</b>' + (SK.err ? '<div class="tuierr">! ' + esc(SK.err) + '</div>' : '<div class="ter">loading skill list…</div>') + '</div>';
-  }
-  const rows = SK.rows.slice().sort((a, b) => (a.enabled === b.enabled ? a.name.localeCompare(b.name) : a.enabled ? -1 : 1));
-  const cell = (s, max, w) => { const t = s.length > max ? s.slice(0, max - 1) + '…' : s; return t.padEnd(w); };
-  const body = rows.length ? rows.map((r) => '<div class="tuirow">  '
-      + '<span class="' + (r.enabled ? 'sk-on' : 'sk-off') + '">' + (r.enabled ? 'enabled' : 'disabled').padEnd(9) + '</span>'
-      + esc(('[' + r.source + ']').padEnd(9) + ('v' + r.version).padEnd(8) + cell(r.name, 24, 26) + cell(r.description, 60, 60)) + '</div>').join('')
-    : '<div class="ter">no skills match the current filter — install one with `atomic-agent skill install`, or press `f` to cycle filter / `r` to refresh.</div>';
-  return '<div class="tui"><b>Skills</b>'
-    + '<div class="tuihead">  state     source   version  name                       description</div>' + body
-    + '<div class="ter">' + rows.length + ' shown · ' + rows.filter((r) => r.enabled).length + ' enabled · ' + rows.filter((r) => !r.enabled).length + ' disabled'
-    + ' — e toggle · Enter detail · d remove · Skills Hub: coming in the next step of this branch</div></div>';
-}
-
 function modelsPane() {
   const tab = S.modelTab === 'cloud' ? 'cloud' : 'local';
   return '<div class="stack">'
@@ -1375,7 +1386,10 @@ function act(a) {
   if (a === 'workspace') { close(); render(); toast('Workspace', '~/Teletubbies · rw'); return; }
   if (a === 'analytics') { close(); const opened = !S.settings; S.settings = 1; S.settingsPane = 'privacy'; render(); settingsPaneEntered(opened); return; }
   if (a === 'jump:appr') { const c = $('#apprcard'); if (c) c.scrollIntoView({block:'center', behavior:'smooth'}); return; }
-  if (a === 'skills:hub') { close(); S.room = 'skills'; S.skillsTab = 'hub'; render(); return; }
+  // Item 7 part B: the Skills / Memory / MCP tabs' verbs.
+  if (k === 'skills') { close(); skillsAct(a.slice(7)); return; }
+  if (k === 'memory') { close(); memoryAct(a.slice(7)); return; }
+  if (k === 'mcp') { close(); mcpAct(a.slice(4)); return; }
   if (a === 'na') return;
 
   if (k === 'room')      { close(); S.room = v; render(); return; }
@@ -1594,6 +1608,9 @@ document.addEventListener('input', (e) => {
   if (e.target.id === 'palq') { S.q = e.target.value; S.cur = 0; refreshPalette(); return; }
   // Item 7: Tasks tab inputs edit state in place; only the preview block repaints.
   if (e.target.dataset && e.target.dataset.tkField) { tkFieldInput(e.target.dataset.tkField, e.target.value); return; }
+  // Item 7 part B: the hub search box and the MCP add-modal textarea edit state in place.
+  if (e.target.id === 'skp-hubq') { SKP.hubQuery = e.target.value; return; }
+  if (e.target.id === 'mcp-json') { if (MCP.addModal) { MCP.addModal.json = e.target.value; MCP.addModal.error = null; } return; }
   if (e.target.id === 'tk-search') { TK.search = e.target.value; TK.cursor = 0; const at = e.target.selectionStart; tkRepaint();
     const n = $('#tk-search'); if (n) { n.focus(); n.setSelectionRange(at, at); } return; }
   if (e.target.id === 'sel-filter') { SEL.filter = e.target.value; const at = e.target.selectionStart; render();
@@ -1707,6 +1724,10 @@ document.addEventListener('keydown', (e) => {
   // Item 7: the Tasks room is the same Tasks tab, so its j/k/n/c/R/r/a/f// keys work there too (no tab-cycling arrows).
   if (!S.settings && !S.overlay && S.menuOpen === null && S.room === 'tasks') {
     if (tasksKey(e, k, inText)) return;
+  }
+  // Item 7 part B: the Skills room is the same Skills tab, so its keys work there too.
+  if (!S.settings && !S.overlay && S.menuOpen === null && S.room === 'skills') {
+    if (skillsKey(e, k, inText)) return;
   }
   if (S.overlay || S.settings || S.menuOpen !== null) {
     if (k === 'Escape') { e.preventDefault(); if (S.settings) { S.settings = null; render(); } else act('close'); return; }
@@ -3573,6 +3594,10 @@ function tasksKey(e, k, inText) {
 function settingsKey(e, k, inText) {
   const pane = settingsPaneId(S.settingsPane);
   if (pane === 'tasks' && tasksKey(e, k, inText)) return true;
+  // Item 7 part B: the Skills / Memory / MCP tabs' own keys come first, as the Tasks tab's do.
+  if (pane === 'skills' && skillsKey(e, k, inText)) return true;
+  if (pane === 'memory' && memoryKey(e, k, inText)) return true;
+  if (pane === 'mcp' && mcpKey(e, k, inText)) return true;
   if (k === 'Escape') { e.preventDefault(); S.settings = null; render(); return true; }
   if (inText) return false;
   if (e.metaKey || e.ctrlKey || e.altKey) return false;
@@ -3580,6 +3605,7 @@ function settingsKey(e, k, inText) {
   // buttons: no tab cycling behind a half-filled form (the TUI's Esc closes
   // the form first, and so does this window's).
   if (pane === 'tasks' && TK.mode === 'create') return false;
+  if (pane === 'mcp' && MCP.addModal) return false; // Item 7 part B: the add-server modal owns its keys too
   // privacy-panel.tsx keys: `a` toggles analytics, `r` re-reads the config.
   if (pane === 'privacy') {
     if (k === 'a') { e.preventDefault(); privacyToggle(); return true; }
@@ -3701,4 +3727,1282 @@ if (typeof window !== 'undefined') {
    resolveSession). */
 if (typeof window !== 'undefined') {
   window.__sessionNew = () => { act('session:new'); S.agentSession = 'smoke-' + Date.now().toString(16) + '-' + Math.floor(Math.random() * 1e6).toString(16); return S.agentSession; };
+}
+
+/* ============================================================
+   Item 7 part B — the Skills, Memory and MCP tabs
+   ============================================================ */
+
+/* The settings body (or the room wrapper when the same tab is open as a
+   room). Repaint it in place and keep the focus on the button (by its
+   data-act) the user was on; with nothing focused a full render() also
+   refreshes the tab suffix and the sidebar counts. */
+function paneBox() {
+  return S.settings ? document.querySelector('#settings .setbody') : document.querySelector('#content .tuiwrap');
+}
+function paneRepaintKeepFocus(html) {
+  const box = paneBox();
+  if (!box) { render(); return; }
+  const el = document.activeElement;
+  const focused = el && box.contains(el) && el.dataset ? el.dataset.act : null;
+  if (!focused) { render(); return; }
+  box.innerHTML = html;
+  const again = box.querySelector('[data-act="' + focused.replace(/"/g, '\\"') + '"]');
+  if (again) again.focus();
+}
+function tuiTrunc(text, max) { text = String(text == null ? '' : text); return text.length <= max ? text : text.slice(0, max - 1) + '…'; }
+/* Body lines as the TUI's renderBody draws them (an empty line keeps its height). */
+function tuiBodyLines(lines) {
+  return '<div class="tuibody">' + lines.map((l) => '<div>' + (l.length ? esc(l) : ' ') + '</div>').join('') + '</div>';
+}
+function tuiBtn(label, act, opts) {
+  return '<button data-act="' + esc(act) + '"' + (opts && opts.disabled ? ' disabled' : '') + (opts && opts.cls ? ' class="' + opts.cls + '"' : '') + (opts && opts.title ? ' title="' + esc(opts.title) + '"' : '') + '>' + esc(label) + '</button>';
+}
+function tuiHints(parts) {
+  return '<div class="tuihint">' + parts.map((p, i) => (i ? '<span>·</span>' : '') + (typeof p === 'string' ? '<span>' + esc(p) + '</span>' : tuiBtn(p[0], p[1], p[2]))).join('') + '</div>';
+}
+function restartLine(text) {
+  return '<div class="tuimsg">' + esc(text) + ' <span class="ter">(applies to the running agent after Restart Agent Runtime)</span> '
+    + '<button class="btn btn-s" data-act="agent:restart" style="height:22px">Restart Agent Runtime</button></div>';
+}
+
+/* ---------------- Skills tab (skills-panel.tsx, skills-list.tsx, skills-detail.tsx,
+   skills-hub-list.tsx, skills-hub-card.tsx, skills-install-confirm.tsx,
+   skills-remove-confirm.tsx, skills-orchestrator.ts) ---------------- */
+
+function skpVisibleRows() {
+  const f = SKP.filter;
+  return (SK.rows || []).filter((r) => f === 'all' ? true : f === 'enabled' ? r.enabled : !r.enabled)
+    .slice().sort((a, b) => (a.enabled === b.enabled ? a.name.localeCompare(b.name) : a.enabled ? -1 : 1)); // skills-filter.ts compareSkillRows
+}
+function skpSelected() {
+  const rows = skpVisibleRows();
+  if (!rows.length) return null;
+  return rows[Math.max(0, Math.min(SKP.cursor, rows.length - 1))];
+}
+function skillsVisible() {
+  return (S.settings && settingsPaneId(S.settingsPane) === 'skills') || (!S.settings && S.room === 'skills');
+}
+function skpTyping() { const el = document.activeElement; return !!el && el.id === 'skp-hubq'; }
+/* skills-orchestrator.ts refreshes every 5 000 ms while the tab is open.
+   Here every refresh is an `atag skill list` subprocess, so the timer runs
+   only while the tab is visible, restarts on every entry (the first tick is
+   5 s after entering, never on the click) and stops while a detail, the
+   hub or a modal is open. `a auto` turns it off. */
+function ensureSkillsPoll() {
+  if (!BR || SKP.timer) return;
+  SKP.timer = setInterval(() => {
+    if (!skillsVisible()) { clearInterval(SKP.timer); SKP.timer = null; return; }
+    if (SKP.auto && SKP.mode === 'list' && !SKP.removeConfirm && !SKP.busy) refreshSkillList();
+  }, 5000);
+}
+function skillsTabEntered() {
+  if (SKP.timer) { clearInterval(SKP.timer); SKP.timer = null; }
+  ensureSkillsPoll();
+}
+function skpRender() { paneRepaintKeepFocus(skillsTab()); }
+/* `atag skill list` again after a mutation — behind any poll already in flight, never dropped by its SK.busy guard. */
+async function skpReloadRows() {
+  const deadline = Date.now() + 60000;
+  while (SK.busy && Date.now() < deadline) await new Promise((r) => setTimeout(r, 100));
+  await refreshSkillList();
+}
+
+function skillsTab() {
+  ensureSkillsPoll();
+  if (SKP.installConfirm) return '<div class="tui">' + skpInstallConfirmHTML() + '</div>';
+  if (SKP.removeConfirm) return '<div class="tui">' + skpRemoveConfirmHTML() + '</div>';
+  if (SKP.hubCard) return '<div class="tui">' + skpHubCardHTML() + '</div>';
+  if (SKP.mode === 'hub') {
+    if (SKP.hubCardLoading) return '<div class="tui"><div class="ter" style="padding:10px 0">loading skill card…</div></div>';
+    return '<div class="tui">' + skpHubListHTML() + '</div>';
+  }
+  const rows = SK.rows || [];
+  const visible = skpVisibleRows();
+  const enabledCount = rows.filter((r) => r.enabled).length;
+  // FilterBar: `filter: all · enabled · disabled   N shown · E enabled · D disabled · auto · …   built-in tools: /tools`
+  const bar = '<div class="tuibar"><span class="ter">filter: </span>'
+    + SKP_FILTERS.map((f, i) => (i ? '<span class="ter"> · </span>' : '') + '<button class="skpf' + (f === SKP.filter ? ' on' : '') + '" data-act="skills:filter:' + f + '">' + f + '</button>').join('')
+    + '<span class="ter">   ' + visible.length + ' shown · ' + enabledCount + ' enabled · ' + (rows.length - enabledCount) + ' disabled'
+    + (SKP.auto ? ' · auto' : '') + (SK.busy ? ' · …' : '') + '   built-in tools: </span><button class="skpf" data-act="menu:help.tools">/tools</button></div>';
+  return '<div class="tui">' + bar
+    + (SKP.lastError ? '<div class="tuierr">! ' + esc(SKP.lastError) + '</div>' : '')
+    + (SK.err ? '<div class="tuierr">! ' + esc(SK.err) + '</div>' : '')
+    + skpMessages()
+    + (SKP.mode === 'detail' ? skpDetailHTML() : skpListHTML(visible)) + '</div>';
+}
+function skpMessages() {
+  if (!SKP.msg) return '';
+  return SKP.msg.restart ? restartLine(SKP.msg.text) : '<div class="tuimsg">' + esc(SKP.msg.text) + '</div>';
+}
+function skpListHTML(visible) {
+  if (!SK.rows && !SK.err) return '<div class="ter" style="padding:10px 0">loading skill list…</div>';
+  if (!visible.length) {
+    return '<div class="ter" style="padding:10px 0">no skills match the current filter — install one with `atomic-agent skill install`, or press `f` to cycle filter / `r` to refresh.</div>'
+      + skpHintsHTML() + skpHubCtaHTML();
+  }
+  const cur = Math.max(0, Math.min(SKP.cursor, visible.length - 1));
+  const start = computeWindowStart(cur, visible.length, SKP_MAX_ROWS);
+  const page = visible.slice(start, start + SKP_MAX_ROWS);
+  const hiddenBefore = start;
+  const hiddenAfter = Math.max(0, visible.length - start - page.length);
+  return '<div class="tuihead">  state     source   version  name                       description</div>'
+    + (hiddenBefore > 0 ? '<button class="tuimore" data-act="skills:page:up">↑ ' + hiddenBefore + ' above</button>' : '')
+    + page.map((r, idx) => {
+      const i = idx + start, sel = i === cur;
+      // SkillRow: `{chevron} {state(9)}` `{[source](9)} {v(8)}` `{name(26)}` `{description(60)}`
+      return '<button class="tuirow' + (sel ? ' on' : '') + (r.enabled ? '' : ' dim') + '" data-skill-row="' + esc(r.name) + '" data-act="skills:detail:' + esc(r.name) + '">'
+        + (sel ? '▸' : ' ') + ' <span class="' + (r.enabled ? 'sk-on' : 'sk-off') + '">' + (r.enabled ? 'enabled' : 'disabled').padEnd(9) + '</span>'
+        + '<span class="ter">' + esc(('[' + r.source + ']').padEnd(9) + ' ' + ('v' + r.version).padEnd(8)) + '</span>'
+        + esc(tuiTrunc(r.name, 24).padEnd(26)) + '<span class="' + (r.enabled ? '' : 'ter') + '">' + esc(tuiTrunc(r.description, 60)) + '</span></button>';
+    }).join('')
+    + (hiddenAfter > 0 ? '<button class="tuimore" data-act="skills:page:down">↓ ' + hiddenAfter + ' below</button>' : '')
+    + skpHintsHTML() + skpHubCtaHTML();
+}
+function skpHintsHTML() {
+  return tuiHints(['j/k move', ['Enter detail', 'skills:detail'], ['e toggle', 'skills:toggle'], ['d remove', 'skills:remove'],
+    ['r refresh', 'skills:refresh'], ['a auto', 'skills:auto'], ['f filter', 'skills:filter']]);
+}
+function skpHubCtaHTML() {
+  return '<button class="tuimodal skphub" data-act="skills:hub"><b>i</b><span class="skpaccent"> · Skills Hub</span><span class="ter">  browse &amp; install skills from ClawHub</span></button>';
+}
+function skpDetailHTML() {
+  const name = SKP.detailName;
+  if (!name) return '<div class="ter" style="padding:10px 0">(no skill selected)</div>';
+  const row = (SK.rows || []).find((r) => r.name === name);
+  const enabled = row ? row.enabled : true;
+  let body;
+  if (SKP.detailBody === null) body = '<div class="ter">(loading…)</div>';
+  else {
+    const lines = SKP.detailBody.split('\n');
+    const hidden = lines.length - SKP_DETAIL_LINES;
+    body = tuiBodyLines(lines.slice(0, SKP_DETAIL_LINES))
+      + (hidden > 0 ? '<div class="ter">… (' + hidden + ' more line' + (hidden === 1 ? '' : 's') + ' hidden)</div>' : '');
+  }
+  return '<div style="margin-top:6px"><b>' + esc(name) + '</b><span class="ter">  </span><span class="' + (enabled ? 'sk-on' : 'sk-off') + '">' + (enabled ? 'enabled' : 'disabled') + '</span>'
+    + (row ? '<span class="ter">  [' + esc(row.source) + '] v' + esc(row.version) + '</span>' : '') + '</div>'
+    + (row && row.description ? '<div class="ter" style="margin-top:8px">' + esc(row.description) + '</div>' : '')
+    + '<div style="margin-top:8px">' + body + '</div>'
+    + tuiHints([['Esc back', 'skills:back'], ['e toggle', 'skills:toggle:' + name], ['r refresh', 'skills:refresh']]);
+}
+function skpRemoveConfirmHTML() {
+  const c = SKP.removeConfirm;
+  return '<div class="tuimodal danger"><b style="color:var(--danger)">Remove skill</b>'
+    + '<div class="ter">delete global skill ' + esc(c.name) + '?</div>'
+    // skills-remove-confirm.tsx warns when the skill is a bundled starter; listStarterSkillNames is not exposed by the agent, so the check cannot run here.
+    + '<div class="ter" style="margin-top:8px">(bundled-starter check unavailable)</div>'
+    + (c.error ? '<div class="tuierr" style="margin-top:8px">! ' + esc(c.error) + '</div>' : '')
+    + (c.submitting ? '<div class="ter" style="margin-top:8px">removing…</div>'
+        : tuiHints([['[y] delete', 'skills:removeConfirm'], ['[n] cancel', 'skills:removeCancel']])) + '</div>';
+}
+function skpInstallConfirmHTML() {
+  const c = SKP.installConfirm;
+  return '<div class="tuimodal danger"><b style="color:var(--danger)">Security scan: ' + esc(String(c.verdict).toUpperCase()) + '</b>'
+    + '<div class="ter">install ' + esc(c.identifier) + '?</div>'
+    // The TUI lists the scan findings (`[rule] file:line excerpt`); `atag skill install` prints only its blocked line, so that is the one finding here.
+    + '<div style="margin-top:8px"><span class="tuierr">[security scan]</span> ' + esc(c.message) + '</div>'
+    + '<div class="ter">(findings are not printed by `atag skill install` — the verdict line above is all the CLI reports)</div>'
+    + (SKP.installing ? '<div class="ter" style="margin-top:8px">installing…</div>'
+        : '<div class="tuihint">' + tuiBtn('[y] install anyway (risk acknowledged)', 'skills:installAck') + '<span>  </span>' + tuiBtn('[n] cancel', 'skills:installCancel') + '</div>') + '</div>';
+}
+function skpHubIdLabel(identifier) {
+  // skills-hub-list.tsx formatHubIdentifier: `owner/…/dir` for nested repo paths
+  const segments = identifier.split('/').filter((x) => x.length);
+  if (segments.length <= 2) return identifier;
+  return segments[0] + '/…/' + segments[segments.length - 1];
+}
+function formatDownloads(n) {
+  // skills/format-downloads.ts: 942 / 1.2k / 464k / 2.1M / — (GitHub taps expose no count)
+  if (n === null || n === undefined) return '—';
+  const trim = (v) => String(v < 10 ? Math.round(v * 10) / 10 : Math.round(v));
+  if (n < 1000) return String(n);
+  if (n < 1000000) return trim(n / 1000) + 'k';
+  return trim(n / 1000000) + 'M';
+}
+function skpHubListHTML() {
+  const q = SKP.hubQuery;
+  const search = SKP.hubSearchEditing
+    ? '<input id="skp-hubq" value="' + esc(q) + '" autocomplete="off" spellcheck="false">'
+    : '<span>' + esc(q.length ? q : '(all)') + '</span>';
+  const n = SKP.hubRows.length;
+  let body;
+  if (SKP.hubLoading && !n) body = '<div class="ter" style="padding:10px 0">browsing the skill hub…</div>';
+  else if (!n) body = '<div class="ter" style="padding:10px 0">no skills found — press `/` to search, `r` to re-browse, or `Esc` to go back.</div>';
+  else {
+    const cur = Math.max(0, Math.min(SKP.hubCursor, n - 1));
+    const start = computeWindowStart(cur, n, SKP_HUB_ROWS);
+    const page = SKP.hubRows.slice(start, start + SKP_HUB_ROWS);
+    const hiddenAfter = Math.max(0, n - start - page.length);
+    body = (start > 0 ? '<button class="tuimore" data-act="skills:hubPage:up">↑ ' + start + ' above</button>' : '')
+      + page.map((r, idx) => {
+        const i = idx + start, sel = i === cur;
+        // HubRow: `{chevron} {claw|gh  } {identifier(32)}{↓dl(9)}{description(48)}`
+        return '<button class="tuirow' + (sel ? ' on' : '') + '" data-hub-row="' + esc(r.identifier) + '" data-act="skills:card:' + i + '">'
+          + (sel ? '▸' : ' ') + ' <span class="' + (r.source === 'clawhub' ? 'skpaccent' : 'ter') + '">' + (r.source === 'clawhub' ? 'claw' : 'gh  ') + '</span> '
+          + esc(tuiTrunc(skpHubIdLabel(r.identifier), 30).padEnd(32)) + '<span class="ter">' + esc(('↓' + formatDownloads(r.downloads)).padEnd(9)) + '</span>'
+          + '<span class="' + (sel ? '' : 'ter') + '">' + esc(tuiTrunc(r.description, 48)) + '</span></button>';
+      }).join('')
+      + (hiddenAfter > 0 ? '<button class="tuimore" data-act="skills:hubPage:down">↓ ' + hiddenAfter + ' below</button>' : '');
+  }
+  return '<div class="tuibar"><span class="ter">hub search: </span>' + search + (SKP.hubSearchEditing ? '<span class="skpaccent">▌</span>' : '')
+    + '<span class="ter">   ' + n + ' result' + (n === 1 ? '' : 's') + (SKP.hubLoading ? ' · …' : '') + '</span></div>'
+    + (SKP.hubError ? '<div class="tuierr">! ' + esc(SKP.hubError) + '</div>' : '')
+    + (SKP.installError ? '<div class="tuierr">! install failed: ' + esc(SKP.installError) + '</div>' : '')
+    + skpMessages()
+    + body
+    + tuiHints(['j/k move', ['Enter open card', 'skills:card'], ['/ search', 'skills:hubSearch'], ['r re-browse', 'skills:rebrowse'], ['Esc back', 'skills:back']]);
+}
+function skpHubCardHTML() {
+  const c = SKP.hubCard;
+  const badge = c.source === 'clawhub' ? 'claw' : 'gh';
+  let body;
+  if (c.body === null) body = '<div class="ter">' + esc(c.bodyError || 'loading SKILL.md…') + '</div>';
+  else {
+    const lines = c.body.split('\n');
+    const start = Math.max(0, Math.min(SKP.cardScroll, Math.max(0, lines.length - SKP_CARD_LINES)));
+    const win = lines.slice(start, start + SKP_CARD_LINES);
+    const below = Math.max(0, lines.length - (start + win.length));
+    body = (start > 0 ? '<button class="tuimore" data-act="skills:cardScroll:up">↑ ' + start + ' more line' + (start === 1 ? '' : 's') + ' above</button>' : '')
+      + tuiBodyLines(win)
+      + (below > 0 ? '<button class="tuimore" data-act="skills:cardScroll:down">↓ ' + below + ' more line' + (below === 1 ? '' : 's') + ' below</button>' : '');
+  }
+  const canInstall = !!c.installId;
+  return '<div class="tuimodal"><div><span class="' + (c.source === 'clawhub' ? 'skpaccent' : 'ter') + '">[' + badge + '] </span><b>' + esc(c.name) + '</b><span class="ter">  ' + esc(c.identifier) + '</span></div>'
+    + '<div class="ter">owner ' + esc(c.repo) + ' · ↓' + esc(formatDownloads(c.downloads)) + ' · v' + esc(c.version === null ? '—' : c.version) + '</div>'
+    + (c.version === null ? '<div class="ter">(version is not printed by `atag skill browse`)</div>' : '')
+    + (c.description ? '<div class="ter" style="margin-top:8px">' + esc(c.description) + '</div>' : '')
+    + '<div style="margin-top:8px">' + body + '</div>'
+    + (SKP.installError ? '<div class="tuierr" style="margin-top:8px">! install failed: ' + esc(SKP.installError) + '</div>' : '')
+    + (SKP.installing ? '<div class="ter" style="margin-top:8px">installing…</div>'
+        : tuiHints([['[i] install', 'skills:install', {disabled: !canInstall}], ['[n] cancel', 'skills:back'], 'j/k scroll']))
+    // `atag skill install` takes `@owner/slug`; a catalog-browse row carries only the slug (ClawHub's browse API prints no owner) and the detail answer carries none either.
+    + (!canInstall && c.source === 'clawhub' ? '<div class="ter">(install needs `@owner/slug` — this browse row has no owner; `/` search lists owner-qualified rows)</div>' : '')
+    + '</div>';
+}
+
+/* Loaders and actions. */
+async function skpOpenDetail(name) {
+  if (!BR) return;
+  SKP.mode = 'detail'; SKP.detailName = name; SKP.detailBody = null; SKP.lastError = null; render();
+  // GET /api/skills/{name} is the registry's filtered view: a disabled skill
+  // answers 404, and the body then comes from `atag skill show` (the TUI's
+  // openDetail reads the manifest path from listAll() for the same reason).
+  const res = await BR.skill(name);
+  let body = null, err = null;
+  if (res && res.ok && res.data && typeof res.data.body === 'string') body = res.data.body;
+  else {
+    const shown = await BR.skillShow(name);
+    if (shown && shown.ok && typeof shown.body === 'string') body = shown.body;
+    else err = (shown && shown.error) || (res && res.error) || 'unknown error';
+  }
+  if (SKP.detailName !== name || SKP.mode !== 'detail') return;
+  if (err !== null) { SKP.msg = {text:'failed to open ' + name + ': ' + err}; SKP.mode = 'list'; render(); return; }
+  SKP.detailBody = body; render();
+}
+async function skpToggle(name) {
+  if (!BR || SKP.busy) return;
+  const row = (SK.rows || []).find((r) => r.name === name);
+  if (!row) { SKP.msg = {text:'skill ' + name + ' not found'}; render(); return; }
+  const disable = row.enabled;
+  SKP.busy = true; SKP.lastError = null; render();
+  const res = await BR.skillSetDisabled(name, disable);
+  SKP.busy = false;
+  if (!res || res.ok === false) SKP.lastError = 'toggle ' + name + ' failed: ' + ((res && res.error) || 'unknown error');
+  else SKP.msg = {text:(disable ? 'skill disabled: ' : 'skill enabled: ') + name, restart:true}; // skills-orchestrator.ts runtime_info; hot-apply needs the running agent's registry
+  await skpReloadRows();
+  render();
+}
+function skpRequestRemove(name) {
+  const row = (SK.rows || []).find((r) => r.name === name);
+  if (!row) { SKP.msg = {text:'skill ' + name + ' not found'}; render(); return; }
+  if (row.source === 'project') { SKP.msg = {text:name + ' is a project-local skill — remove it from .atomic-agent/skills instead'}; render(); return; }
+  if (row.source !== 'global') { SKP.msg = {text:'skill ' + name + ' not found'}; render(); return; } // a `[missing]` disable-list entry has no directory to delete
+  SKP.removeConfirm = {name, source:row.source, wasDisabled:!row.enabled, submitting:false, error:null};
+  render();
+}
+async function skpConfirmRemove() {
+  const c = SKP.removeConfirm;
+  if (!BR || !c || c.submitting) return;
+  c.submitting = true; c.error = null; render();
+  const res = await BR.uninstallSkill(c.name, 'global');
+  if (!res || !res.ok) { c.submitting = false; c.error = (res && res.error) || 'unknown error'; render(); return; }
+  if (!(res.data && res.data.removed)) { c.submitting = false; c.error = 'not installed globally: ' + c.name; render(); return; }
+  // pruneDisabledEntry: drop the stale skills.disabled entry (`atag skill enable` removes it).
+  if (c.wasDisabled) await BR.skillSetDisabled(c.name, false);
+  SKP.removeConfirm = null;
+  SKP.msg = {text:'skill removed: ' + c.name}; // POST /api/skills/uninstall runs runtime.refreshSkills() on the agent — no restart needed
+  if (SKP.mode === 'detail' && SKP.detailName === c.name) { SKP.mode = 'list'; SKP.detailName = null; }
+  await skpReloadRows();
+  render();
+}
+function skpToHubRow(r) {
+  const row = {identifier:r.identifier, source:r.source, downloads:r.downloads, description:String(r.description || '').replace(/\s+/g, ' ').trim(), owner:null, slug:null, name:'', repo:''};
+  if (r.source === 'clawhub') {
+    const m = /^@([^/]+)\/(.+)$/.exec(r.identifier);
+    row.owner = m ? m[1] : null; row.slug = m ? m[2] : r.identifier;
+    row.name = row.slug; row.repo = row.owner || 'clawhub';
+  } else {
+    const seg = r.identifier.split('/').filter((x) => x.length);
+    row.name = seg[seg.length - 1] || r.identifier; row.repo = seg.slice(0, 2).join('/');
+  }
+  return row;
+}
+async function skpBrowse(query) {
+  if (!BR) return;
+  SKP.mode = 'hub'; SKP.hubLoading = true; SKP.hubError = null; SKP.hubCard = null; SKP.installConfirm = null; SKP.hubSearchEditing = false;
+  SKP.hubQuery = query || '';
+  render();
+  const seq = ++SKP.hubSeq;
+  const res = await BR.skillBrowse(SKP.hubQuery);
+  if (seq !== SKP.hubSeq) return;
+  SKP.hubLoading = false;
+  if (!res || !res.ok) {
+    SKP.hubRows = []; SKP.hubError = (res && res.error) || 'skill hub failed';
+    SKP.msg = {text:'skill hub failed: ' + SKP.hubError};
+  } else {
+    SKP.hubRows = (res.rows || []).map(skpToHubRow); SKP.hubError = res.hubError || null; SKP.hubCursor = 0;
+  }
+  render();
+}
+async function skpClawhubApiBase() {
+  const c = LIVE_CONFIG && LIVE_CONFIG.skills && LIVE_CONFIG.skills.clawhub;
+  if (c && typeof c.apiBase === 'string' && c.apiBase) return c.apiBase;
+  // The user file has no skills.clawhub.apiBase: the effective value is the schema default the CLI prints.
+  const res = BR.configGetKey ? await BR.configGetKey('skills.clawhub.apiBase') : null;
+  return res && res.ok && typeof res.value === 'string' ? res.value : null;
+}
+async function skpOpenCard(i) {
+  const row = SKP.hubRows[i];
+  if (!BR || !row) return;
+  SKP.hubCursor = i; SKP.cardScroll = 0; SKP.installError = null;
+  if (row.source !== 'clawhub') {
+    SKP.hubCard = {identifier:row.identifier, source:'github', name:row.name, repo:row.repo, description:row.description, version:null, downloads:null,
+      body:null, bodyError:'preview unavailable for GitHub taps (SKILL.md is pulled at install)', installId:row.identifier};
+    render(); return;
+  }
+  SKP.hubCardLoading = true; render();
+  const apiBase = await skpClawhubApiBase();
+  const res = apiBase ? await BR.clawhubSkillDetail(apiBase, row.slug, row.owner) : {ok:false, error:'skills.clawhub.apiBase is not known'};
+  SKP.hubCardLoading = false;
+  let body = null, bodyError = null, name = row.name, version = null, downloads = row.downloads, repo = row.owner;
+  if (res && res.ok && res.detail) {
+    const d = res.detail;
+    body = d.skillMd && d.skillMd.length ? d.skillMd : null;
+    if (body === null) bodyError = 'no SKILL.md published for this skill';
+    name = d.displayName || row.slug; version = d.version; downloads = d.downloads; repo = d.ownerHandle || row.owner;
+  } else {
+    bodyError = (res && res.error) || 'skill detail failed';
+  }
+  SKP.hubCard = {identifier:row.identifier, source:'clawhub', name, repo:repo || 'clawhub', description:row.description, version, downloads,
+    body, bodyError, installId:row.owner ? row.identifier : null};
+  render();
+}
+async function skpInstall(ack) {
+  if (!BR || SKP.installing) return;
+  const id = (SKP.installConfirm && SKP.installConfirm.identifier) || (SKP.hubCard && SKP.hubCard.installId);
+  if (!id) return;
+  SKP.installing = true; SKP.installError = null; render();
+  const res = await BR.skillInstall(id, !!ack);
+  SKP.installing = false;
+  if (res && res.ok) {
+    SKP.installConfirm = null; SKP.hubCard = null; SKP.mode = 'list';
+    SKP.msg = {text:res.line || ('installed from ' + id), restart:true}; // the CLI's own `installed <name> (v…) from <id> — <scan>` line
+    await skpReloadRows(); render(); return;
+  }
+  if (res && res.blocked) { SKP.installConfirm = {identifier:id, verdict:'dangerous', message:res.message || ''}; render(); return; }
+  SKP.installConfirm = null;
+  SKP.installError = (res && res.error) || 'install failed';
+  SKP.msg = {text:'install ' + id + ' failed: ' + SKP.installError};
+  render();
+}
+function skillsAct(what) {
+  const [verb, ...rest] = what.split(':');
+  const arg = rest.join(':');
+  const sel = () => arg || (SKP.mode === 'detail' ? SKP.detailName : (skpSelected() || {}).name);
+  if (verb === 'detail') { const name = sel(); if (name) skpOpenDetail(name); return; }
+  if (verb === 'toggle') { const name = sel(); if (name) skpToggle(name); return; }
+  if (verb === 'remove') { const name = sel(); if (name) skpRequestRemove(name); return; }
+  if (verb === 'removeConfirm') { skpConfirmRemove(); return; }
+  if (verb === 'removeCancel') { SKP.removeConfirm = null; render(); return; }
+  if (verb === 'refresh') {
+    refreshSkillList();
+    if (SKP.mode === 'detail' && SKP.detailName) skpOpenDetail(SKP.detailName);
+    return;
+  }
+  if (verb === 'auto') { SKP.auto = !SKP.auto; render(); return; }
+  if (verb === 'filter') { SKP.filter = arg && SKP_FILTERS.includes(arg) ? arg : SKP_FILTERS[(SKP_FILTERS.indexOf(SKP.filter) + 1) % SKP_FILTERS.length]; SKP.cursor = 0; render(); return; }
+  if (verb === 'page') { const n = skpVisibleRows().length; SKP.cursor = Math.max(0, Math.min(SKP.cursor + (arg === 'up' ? -SKP_MAX_ROWS : SKP_MAX_ROWS), n - 1)); render(); return; }
+  if (verb === 'back') {
+    if (SKP.installConfirm) { SKP.installConfirm = null; render(); return; }
+    if (SKP.hubCard) { SKP.hubCard = null; render(); return; }
+    if (SKP.mode === 'hub' && SKP.hubSearchEditing) { SKP.hubSearchEditing = false; render(); return; }
+    SKP.mode = 'list'; SKP.detailName = null; SKP.detailBody = null; render(); return;
+  }
+  if (verb === 'hub') { skpBrowse(''); return; }
+  if (verb === 'search') { skpBrowse(arg); return; }
+  if (verb === 'hubSearch') { SKP.mode = 'hub'; SKP.hubSearchEditing = true; render(); const n = $('#skp-hubq'); if (n) { n.focus(); n.setSelectionRange(n.value.length, n.value.length); } return; }
+  if (verb === 'rebrowse') { skpBrowse(SKP.hubQuery); return; }
+  if (verb === 'hubPage') { const n = SKP.hubRows.length; SKP.hubCursor = Math.max(0, Math.min(SKP.hubCursor + (arg === 'up' ? -SKP_HUB_ROWS : SKP_HUB_ROWS), n - 1)); render(); return; }
+  if (verb === 'card') { const i = arg === '' ? SKP.hubCursor : +arg; skpOpenCard(i); return; }
+  if (verb === 'cardScroll') { SKP.cardScroll = Math.max(0, SKP.cardScroll + (arg === 'up' ? -SKP_CARD_LINES : SKP_CARD_LINES)); render(); return; }
+  if (verb === 'install') { skpInstall(false); return; }
+  if (verb === 'installAck') { skpInstall(true); return; }
+  if (verb === 'installCancel') { const id = SKP.installConfirm ? SKP.installConfirm.identifier : ''; SKP.installConfirm = null; SKP.msg = {text:'install cancelled: ' + id}; render(); return; }
+}
+/* skills-key-bindings.ts, shared by the settings window and the Skills room. */
+function skillsKey(e, k, inText) {
+  if (e.target.id === 'skp-hubq') {
+    if (k === 'Enter') { e.preventDefault(); SKP.hubQuery = e.target.value; skpBrowse(SKP.hubQuery); return true; }
+    if (k === 'Escape') { e.preventDefault(); SKP.hubSearchEditing = false; render(); return true; }
+    return false;
+  }
+  if (inText) return false;
+  if (e.metaKey || e.ctrlKey || e.altKey) return false;
+  if (SKP.installConfirm) {
+    if (k === 'y') { e.preventDefault(); skpInstall(true); return true; }
+    if (k === 'n' || k === 'Escape') { e.preventDefault(); skillsAct('installCancel'); return true; }
+    return true;
+  }
+  if (SKP.removeConfirm) {
+    if (k === 'y' || k === 'Enter') { e.preventDefault(); skpConfirmRemove(); return true; }
+    if (k === 'n' || k === 'Escape') { e.preventDefault(); SKP.removeConfirm = null; render(); return true; }
+    return true;
+  }
+  if (SKP.hubCard) {
+    if (k === 'i' || k === 'y') { e.preventDefault(); if (SKP.hubCard.installId) skpInstall(false); return true; }
+    if (k === 'n' || k === 'Escape') { e.preventDefault(); skillsAct('back'); return true; }
+    if (k === 'j' || k === 'ArrowDown') { e.preventDefault(); SKP.cardScroll++; render(); return true; }
+    if (k === 'k' || k === 'ArrowUp') { e.preventDefault(); SKP.cardScroll = Math.max(0, SKP.cardScroll - 1); render(); return true; }
+    return false;
+  }
+  if (SKP.mode === 'hub') {
+    const n = SKP.hubRows.length;
+    if (k === 'j' || k === 'ArrowDown') { e.preventDefault(); SKP.hubCursor = Math.min(SKP.hubCursor + 1, Math.max(0, n - 1)); render(); return true; }
+    if (k === 'k' || k === 'ArrowUp') { e.preventDefault(); SKP.hubCursor = Math.max(SKP.hubCursor - 1, 0); render(); return true; }
+    if (k === 'Enter') { e.preventDefault(); if (n) skpOpenCard(Math.min(SKP.hubCursor, n - 1)); return true; }
+    if (k === '/') { e.preventDefault(); skillsAct('hubSearch'); return true; }
+    if (k === 'r') { e.preventDefault(); skpBrowse(SKP.hubQuery); return true; }
+    if (k === 'Escape') { e.preventDefault(); skillsAct('back'); return true; }
+    return false;
+  }
+  if (SKP.mode === 'detail') {
+    if (k === 'Escape') { e.preventDefault(); skillsAct('back'); return true; }
+    if (k === 'e') { e.preventDefault(); skillsAct('toggle'); return true; }
+    if (k === 'r') { e.preventDefault(); skillsAct('refresh'); return true; }
+    return false;
+  }
+  const rows = skpVisibleRows();
+  if (k === 'j' || k === 'ArrowDown') { e.preventDefault(); SKP.cursor = Math.min(SKP.cursor + 1, Math.max(0, rows.length - 1)); render(); return true; }
+  if (k === 'k' || k === 'ArrowUp') { e.preventDefault(); SKP.cursor = Math.max(SKP.cursor - 1, 0); render(); return true; }
+  if (k === 'Enter') { e.preventDefault(); skillsAct('detail'); return true; }
+  const map = {e:'toggle', d:'remove', r:'refresh', a:'auto', f:'filter', i:'hub'};
+  if (map[k]) { e.preventDefault(); skillsAct(map[k]); return true; }
+  return false;
+}
+
+/* ---------------- Memory tab (memory-panel.tsx, memory-list.tsx, memory-detail.tsx,
+   memory-orchestrator.ts, memory-summary.ts, memory-detail-text.ts,
+   memory-filter.ts, memory-key-bindings.ts) ---------------- */
+
+function memStateDir() { return (LIVE_CAPS && LIVE_CAPS.paths && LIVE_CAPS.paths.stateDir) || null; }
+/* memory.<section>.enabled: the user file when it carries the key, else the
+   effective value `atag config get memory` printed; null until known. */
+function memFlag(section) {
+  const m = LIVE_CONFIG && LIVE_CONFIG.memory;
+  if (m && m[section] && typeof m[section].enabled === 'boolean') return m[section].enabled;
+  const c = MEM.cfg && MEM.cfg[section];
+  return c && typeof c.enabled === 'boolean' ? c.enabled : null;
+}
+/* memory-orchestrator.ts resolveAvailableChannels: profile, notes always;
+   lessons / procedures / links when memory.<x>.enabled; votes when the vote
+   store exists, i.e. memory.voting.enabled (bootstrap.ts). */
+function memAvailableChannels() {
+  const out = ['profile', 'notes'];
+  if (memFlag('lessons') === true) out.push('lessons');
+  if (memFlag('procedures') === true) out.push('procedures');
+  if (memFlag('links') === true) out.push('links');
+  if (memFlag('voting') === true) out.push('votes');
+  return out;
+}
+async function memEnsureCfg() {
+  if (MEM.cfg || MEM.cfgBusy || !BR || !BR.configGetKey) return;
+  const needed = ['profile','notes','lessons','procedures','links','voting'];
+  if (needed.every((s) => memFlag(s) !== null)) return;
+  MEM.cfgBusy = true;
+  const res = await BR.configGetKey('memory');
+  MEM.cfgBusy = false;
+  if (res && res.ok && res.value && typeof res.value === 'object') MEM.cfg = res.value;
+  const next = memAvailableChannels();
+  if (JSON.stringify(next) !== JSON.stringify(MEM.available)) { MEM.available = next; if (memoryVisible()) memRefresh(true); }
+}
+function memoryVisible() { return !!S.settings && settingsPaneId(S.settingsPane) === 'memory'; }
+function ensureMemoryPoll() {
+  if (!BR || MEM.timer) return;
+  MEM.timer = setInterval(() => {
+    if (!memoryVisible()) { clearInterval(MEM.timer); MEM.timer = null; return; }
+    if (MEM.auto && MEM.mode === 'list') memRefresh(true);
+  }, 5000);
+}
+function memoryTabEntered() {
+  if (MEM.timer) { clearInterval(MEM.timer); MEM.timer = null; }
+  ensureMemoryPoll();
+  memEnsureCfg();
+  if (MEM.lastRefreshedAt === null && !MEM.loading) memRefresh();
+}
+async function memQ(name, params) {
+  const dir = memStateDir();
+  if (!dir) throw new Error('no state dir from /api/capabilities');
+  const r = await BR.memoryQuery(dir, name, params || []);
+  if (!r || !r.ok) throw new Error((r && r.error) || 'memory query failed');
+  return r.rows || [];
+}
+function memParseJsonList(raw) {
+  if (!raw) return [];
+  try { const p = JSON.parse(raw); return Array.isArray(p) ? p : []; } catch (e) { return []; }
+}
+function memTrunc(text, max) {
+  // memory-summary.ts truncate: collapse whitespace first
+  const one = String(text == null ? '' : text).replace(/\s+/g, ' ').trim();
+  return one.length <= max ? one : one.slice(0, max - 1) + '…';
+}
+function memTagsMeta(tags) {
+  if (!tags.length) return '';
+  const head = tags.slice(0, 4).join(', ');
+  return tags.length > 4 ? head + '…' : head;
+}
+function memVote(score) { return score > 0 ? '+' + score : String(score); }
+function renderNotePreview(content, maxChars) {
+  // memory-store.ts renderNotePreview: the first non-empty line, clipped
+  const first = String(content || '').split(/\r?\n/).map((l) => l.trim()).find((l) => l.length) || '';
+  if (first.length <= maxChars) return first;
+  if (maxChars <= 1) return first.slice(0, maxChars);
+  return first.slice(0, maxChars - 1) + '…';
+}
+/* Row mappers: the stores' rowTo* + memory-summary.ts to*SummaryRows. */
+function memFact(r) {
+  return {id:r.id, key:r.key, value:r.value, validFrom:r.valid_from, updatedAt:r.updated_at, pinned:r.pinned !== 0,
+    keywords:memParseJsonList(r.keywords).filter((k) => typeof k === 'string'), supersedes:r.supersedes, supersededBy:r.superseded_by, voteScore:r.vote_score || 0};
+}
+function memNoteEntry(r) {
+  return {id:r.id, content:r.content, createdAt:r.created_at, updatedAt:r.updated_at, source:r.source === 'user' ? 'user' : 'agent',
+    sessionId:r.session_id, workingDir:r.working_dir, tags:memParseJsonList(r.tags).filter((t) => typeof t === 'string'),
+    consolidatedInto:typeof r.consolidated_into === 'number' ? r.consolidated_into : null};
+}
+function memLink(r) { return {fromId:r.from_id, toId:r.to_id, kind:r.kind, weight:r.weight, createdAt:r.created_at}; }
+function memRowsProfile(rows) {
+  return rows.map(memFact).map((f) => ({rowKey:'profile:' + f.key, channel:'profile', primary:f.key, secondary:memTrunc(f.value, 56),
+    meta:[f.pinned ? 'pinned' : 'contextual', f.voteScore !== 0 ? 'vote ' + memVote(f.voteScore) : null].filter(Boolean).join(' · '), profileKey:f.key}));
+}
+function memRowsNotes(rows) {
+  return rows.map(memNoteEntry).map((e) => ({rowKey:'note:' + e.id, channel:'notes', primary:'#' + e.id,
+    secondary:memTrunc(renderNotePreview(e.content, 80), 56), meta:memTagsMeta(e.tags), numericId:e.id}));
+}
+function memRowsLessons(rows) {
+  return rows.map((r) => ({rowKey:'lesson:' + r.id, channel:'lessons', primary:'>' + r.id, secondary:memTrunc(r.activation, 56),
+    meta:memTagsMeta(memParseJsonList(r.tags)), numericId:r.id}));
+}
+function memRowsProcedures(rows) {
+  return rows.map((r) => ({rowKey:'procedure:' + r.id, channel:'procedures', primary:'>' + r.id, secondary:memTrunc(r.activation, 56),
+    meta:memTagsMeta(memParseJsonList(r.tags)), numericId:r.id}));
+}
+function memRowsLinks(rows) {
+  return rows.map(memLink).map((l) => ({rowKey:'link:' + l.fromId + ':' + l.toId + ':' + l.kind, channel:'links', primary:l.fromId + ' → ' + l.toId,
+    secondary:l.kind, meta:'w=' + Number(l.weight).toFixed(2), linkFromId:l.fromId, linkToId:l.toId, numericId:l.fromId}));
+}
+function memRowsVotes(rows) {
+  return rows.map((e) => ({rowKey:'vote:' + e.id, channel:'votes', primary:(e.direction > 0 ? 'UP' : 'DOWN') + ' ' + e.kind + ':' + e.targetId,
+    secondary:e.sessionId || '(no session)', meta:'turn ' + (e.turnIndex === null || e.turnIndex === undefined ? '—' : e.turnIndex),
+    numericId:e.targetId, voteEventId:e.id, event:{id:e.id, kind:e.kind, targetId:e.targetId, direction:e.direction === -1 ? -1 : 1, sessionId:e.sessionId, turnIndex:e.turnIndex, createdAt:e.createdAt}}));
+}
+function buildFtsQuery(query) {
+  // memory-store.ts buildFtsQuery
+  const tokens = String(query).toLowerCase().split(/[^\p{L}\p{N}]+/u).map((t) => t.trim()).filter((t) => t.length);
+  if (!tokens.length) return '';
+  return tokens.map((t) => '"' + t + '"*').join(' OR ');
+}
+/* memory-orchestrator.ts loadChannelRows. */
+async function memLoadChannelRows(channel) {
+  if (channel === 'profile') {
+    if (memFlag('profile') === false) return {rows:[], hint:'memory.profile.enabled=false — enable in config to populate profile'};
+    return {rows:memRowsProfile(await memQ('profile.list', [])), hint:null};
+  }
+  if (channel === 'notes') {
+    if (memFlag('notes') === false) return {rows:[], hint:'memory.notes.enabled=false — enable in config to store notes'};
+    const q = MEM.search.trim();
+    if (q.length) {
+      const fts = buildFtsQuery(q);
+      return {rows:fts ? memRowsNotes(await memQ('notes.recall', [fts, 50])) : [], hint:null};
+    }
+    if (MEM.notesFilter === 'archived') {
+      const all = await memQ('notes.listAll', [MEM_NOTES_LIMIT]);
+      return {rows:memRowsNotes(all.filter((r) => typeof r.consolidated_into === 'number')), hint:null};
+    }
+    return {rows:memRowsNotes(await memQ(MEM.notesFilter === 'active' ? 'notes.listActive' : 'notes.listAll', [MEM_NOTES_LIMIT])), hint:null};
+  }
+  if (channel === 'lessons') {
+    if (memFlag('lessons') === false) return {rows:[], hint:'memory.lessons.enabled=false'};
+    return {rows:memRowsLessons(await memQ('lessons.listIndex', [MEM_INDEX_LIMIT])), hint:null};
+  }
+  if (channel === 'procedures') {
+    if (memFlag('procedures') === false) return {rows:[], hint:'memory.procedures.enabled=false'};
+    return {rows:memRowsProcedures(await memQ('procedures.listIndex', [MEM_INDEX_LIMIT])), hint:null};
+  }
+  if (channel === 'links') {
+    if (memFlag('links') === false) return {rows:[], hint:'memory.links.enabled=false'};
+    return {rows:memRowsLinks(await memQ('links.listAll', [MEM_LINKS_LIMIT])), hint:null};
+  }
+  if (memFlag('voting') === false) return {rows:[], hint:'memory.voting.enabled=false'};
+  return {rows:memRowsVotes(await memQ('votes.listEvents', [MEM_VOTES_LIMIT])), hint:null};
+}
+function memVisibleRows() {
+  const q = MEM.search.trim().toLowerCase();
+  if (!q) return MEM.rows;
+  return MEM.rows.filter((r) => r.primary.toLowerCase().includes(q) || r.secondary.toLowerCase().includes(q) || r.meta.toLowerCase().includes(q));
+}
+function memSelected() {
+  const rows = memVisibleRows();
+  if (!rows.length) return null;
+  return rows[Math.max(0, Math.min(MEM.cursor, rows.length - 1))];
+}
+async function memRefresh(quiet) {
+  if (!BR) return;
+  MEM.loading = true; MEM.lastError = null;
+  MEM.available = memAvailableChannels();
+  if (!MEM.available.includes(MEM.channel)) MEM.channel = MEM.available[0] || 'profile';
+  if (!quiet) render();
+  const seq = ++MEM.seq;
+  const channel = MEM.channel;
+  const before = JSON.stringify([MEM.rows, MEM.channelHint, MEM.lastError]);
+  try {
+    const {rows, hint} = await memLoadChannelRows(channel);
+    if (seq !== MEM.seq) return;
+    MEM.rows = rows; MEM.channelHint = hint; MEM.lastRefreshedAt = Date.now();
+    const n = memVisibleRows().length;
+    MEM.cursor = n ? Math.max(0, Math.min(n - 1, MEM.cursor)) : 0;
+  } catch (err) {
+    if (seq !== MEM.seq) return;
+    MEM.lastError = err && err.message ? err.message : String(err);
+  }
+  MEM.loading = false;
+  if (quiet && before === JSON.stringify([MEM.rows, MEM.channelHint, MEM.lastError])) {
+    const st = document.querySelector('#settings .memstatus');
+    if (st) st.textContent = memStatusLine();
+    return;
+  }
+  if (memoryVisible()) paneRepaintKeepFocus(memoryTab()); else if (!quiet) render();
+  if (S.settings) { const tab = document.querySelector('#settings .settab.on'); if (tab) tab.textContent = 'Memory' + tabSuffix('memory'); } // the strip's ` (N)` follows the selected channel's rows
+}
+function memStatusLine() {
+  return [MEM.loading ? 'loading' : null, MEM.auto ? 'auto' : 'manual',
+    MEM.lastRefreshedAt ? 'refreshed ' + new Date(MEM.lastRefreshedAt).toLocaleTimeString() : null,
+    MEM.channel === 'notes' ? 'notes: ' + MEM.notesFilter : null,
+    MEM.search.trim() ? 'search: "' + MEM.search.trim() + '"' : null,
+    memVisibleRows().length + ' shown'].filter(Boolean).join(' · ');
+}
+function memoryTab() {
+  ensureMemoryPoll();
+  const labels = MEM.available.map((ch, idx) => {
+    const label = (idx + 1) + ':' + ch;
+    return '<button class="memch' + (ch === MEM.channel ? ' on' : '') + '" data-act="memory:ch:' + ch + '">' + esc(ch === MEM.channel ? '[' + label + ']' : label) + '</button>';
+  }).join('<span class="ter">  </span>');
+  return '<div class="tui"><div class="tuibar">' + labels + '</div>'
+    + '<div class="ter memstatus">' + esc(memStatusLine()) + '</div>'
+    + (MEM.lastError ? '<div class="tuierr">! ' + esc(MEM.lastError) + '</div>' : '')
+    + (MEM.mode === 'list' ? memListHTML() : memDetailHTML()) + '</div>';
+}
+function memListHTML() {
+  if (MEM.channelHint) return '<div style="color:var(--warn);padding:10px 0">' + esc(MEM.channelHint) + '</div>';
+  const rows = memVisibleRows();
+  if (!rows.length) {
+    if (MEM.lastRefreshedAt === null) return '<div class="ter" style="padding:10px 0">(loading…)</div>';
+    return '<div class="ter" style="padding:10px 0">(empty) — press `r` to refresh' + (MEM.channel === 'notes' ? ' · `f` cycles active/archived/all' : '') + '</div>' + memHintsHTML();
+  }
+  const cur = Math.max(0, Math.min(MEM.cursor, rows.length - 1));
+  const start = computeWindowStart(cur, rows.length, MEM_MAX_ROWS);
+  const page = rows.slice(start, start + MEM_MAX_ROWS);
+  const hiddenAfter = Math.max(0, rows.length - start - page.length);
+  return '<div class="tuihead">  primary                    secondary / meta     [' + esc(MEM.channel) + ']</div>'
+    + (start > 0 ? '<button class="tuimore" data-act="memory:page:up">↑ ' + start + ' above</button>' : '')
+    + page.map((r, idx) => {
+      const i = idx + start, sel = i === cur;
+      // MemoryRow: `{chevron} {primary(30)}{secondary(36)} · {meta(28)}`
+      return '<button class="tuirow' + (sel ? ' on' : '') + '" data-mem-row="' + esc(r.rowKey) + '" data-act="memory:open:' + i + '">'
+        + (sel ? '▸' : ' ') + ' ' + esc(tuiTrunc(r.primary, 28).padEnd(30)) + '<span class="ter">' + esc(tuiTrunc(r.secondary, 36)) + (r.meta ? ' · ' + esc(tuiTrunc(r.meta, 28)) : '') + '</span></button>';
+    }).join('')
+    + (hiddenAfter > 0 ? '<button class="tuimore" data-act="memory:page:down">↓ ' + hiddenAfter + ' below</button>' : '')
+    + memHintsHTML();
+}
+function memHintsHTML() {
+  const parts = ['j/k', ['Enter detail', 'memory:open'], ['r refresh', 'memory:refresh'], ['a auto', 'memory:auto'], ['[/] channel', 'memory:cycle:1'], '1-6 jump'];
+  if (MEM.channel === 'notes') parts.push(['f archive filter', 'memory:filter']);
+  else if (MEM.channel === 'links') parts.push(['Enter opens from-note', 'memory:open']);
+  return tuiHints(parts);
+}
+function memDetailHTML() {
+  const d = MEM.detail;
+  if (!d) return '<div class="ter" style="padding:10px 0">(loading…)</div>';
+  const title = d.channel === 'profile' ? 'profile: ' + d.key : d.channel === 'notes' ? 'note #' + d.id : d.channel === 'lessons' ? 'lesson #' + d.id
+    : d.channel === 'procedures' ? 'procedure #' + d.id : d.channel;
+  const lines = d.body.split('\n');
+  const hidden = lines.length - MEM_DETAIL_LINES;
+  const hints = [['Esc back', 'memory:back'], ['r refresh', 'memory:refresh']];
+  if (d.channel === 'notes') { hints.push(['g expand graph', 'memory:expand']); hints.push(['Enter neighbor', 'memory:neighbor']); }
+  return '<div style="margin-top:6px"><b>' + esc(title) + '</b></div>'
+    + '<div style="margin-top:8px">' + tuiBodyLines(lines.slice(0, MEM_DETAIL_LINES))
+    + (hidden > 0 ? '<div class="ter">… (' + hidden + ' more lines hidden)</div>' : '') + '</div>'
+    + tuiHints(hints);
+}
+/* memory-detail-text.ts, verbatim. */
+const MEM_MAX_DETAIL_CHARS = 12000;
+function memTruncateDetail(text) { return text.length <= MEM_MAX_DETAIL_CHARS ? text : text.slice(0, MEM_MAX_DETAIL_CHARS) + '\n\n[truncated]'; }
+function formatProfileHistoryBody(key, chain) {
+  const lines = ['key: ' + key, 'chain (' + chain.length + ' row' + (chain.length === 1 ? '' : 's') + '):', ''];
+  chain.forEach((row) => {
+    const active = row.supersededBy === null ? ' (active)' : ' → #' + row.supersededBy;
+    lines.push('[#' + row.id + '] ' + new Date(row.validFrom).toISOString() + ': ' + row.value + active);
+    if (!row.pinned && row.keywords.length) lines.push('  keywords: ' + row.keywords.join(', '));
+    if (row.voteScore !== 0) lines.push('  vote_score: ' + row.voteScore);
+  });
+  return memTruncateDetail(lines.join('\n'));
+}
+function formatLinkSection(outgoing, incoming, expanded) {
+  const parts = ['--- links ---'];
+  if (!outgoing.length && !incoming.length && !expanded.length) { parts.push('(none)'); return parts.join('\n'); }
+  if (outgoing.length) { parts.push('outgoing:'); outgoing.forEach((e) => parts.push('  → #' + e.toId + ' ' + e.kind + ' (w=' + e.weight + ')')); }
+  if (incoming.length) { parts.push('incoming:'); incoming.forEach((e) => parts.push('  ← #' + e.fromId + ' ' + e.kind + ' (w=' + e.weight + ')')); }
+  if (expanded.length) parts.push('expanded (g): ' + expanded.map((id) => '#' + id).join(', '));
+  return parts.join('\n');
+}
+function formatNoteDetailBody(entry, consolidatedInto, outgoing, incoming, expanded) {
+  const lines = ['#' + entry.id, 'source: ' + entry.source, entry.sessionId ? 'session: ' + entry.sessionId : null,
+    entry.workingDir ? 'working_dir: ' + entry.workingDir : null,
+    'tags: ' + (entry.tags.length ? entry.tags.join(', ') : '(none)'),
+    consolidatedInto !== null ? 'archived → lesson #' + consolidatedInto : null,
+    'updated: ' + new Date(entry.updatedAt).toISOString(), '', entry.content].filter((l) => l !== null);
+  lines.push('', formatLinkSection(outgoing, incoming, expanded));
+  return memTruncateDetail(lines.join('\n'));
+}
+function formatLessonDetailBody(l) {
+  const lines = ['>' + l.id + ' [' + l.status + ']', 'activation: ' + l.activation, 'tags: ' + (l.tags.join(', ') || '(none)'),
+    'success: ' + l.successCount + ' · failure: ' + l.failureCount, l.voteScore !== 0 ? 'vote_score: ' + l.voteScore : null,
+    'parents: ' + (l.parentIds.map((id) => '#' + id).join(', ') || '(none)'), '', 'principle:', l.principle].filter((x) => x !== null);
+  return memTruncateDetail(lines.join('\n'));
+}
+function formatProcedureDetailBody(p) {
+  const lines = ['>' + p.id + ' [' + p.status + ']', 'activation: ' + p.activation, 'tags: ' + (p.tags.join(', ') || '(none)'),
+    'use: ' + p.useCount + ' · success: ' + p.successCount + ' · failure: ' + p.failureCount, p.voteScore !== 0 ? 'vote_score: ' + p.voteScore : null,
+    'parent lessons: ' + (p.parentLessonIds.join(', ') || '(none)'), 'parent memories: ' + (p.parentMemoryIds.map((id) => '#' + id).join(', ') || '(none)'),
+    '', 'steps:'].filter((x) => x !== null);
+  p.steps.forEach((step, idx) => lines.push((idx + 1) + '. ' + step.description + (step.toolHint ? ' @' + step.toolHint : '')));
+  return memTruncateDetail(lines.join('\n'));
+}
+function formatVoteDetailBody(event, targetPreview) {
+  const lines = ['event #' + event.id, (event.direction > 0 ? 'UPVOTE' : 'DOWNVOTE') + ' ' + event.kind + ':' + event.targetId,
+    'session: ' + (event.sessionId || '(none)'), 'turn: ' + (event.turnIndex === null || event.turnIndex === undefined ? '—' : event.turnIndex),
+    'at: ' + new Date(event.createdAt).toISOString(), '', targetPreview ? 'target preview:\n' + targetPreview : '(target not found)'];
+  return memTruncateDetail(lines.join('\n'));
+}
+function memLesson(r) {
+  return {id:r.id, activation:r.activation, principle:r.principle, tags:memParseJsonList(r.tags), status:r.status === 'deprecated' ? 'deprecated' : 'active',
+    successCount:r.success_count, failureCount:r.failure_count, parentIds:memParseJsonList(r.parent_ids).filter((x) => typeof x === 'number'), voteScore:r.vote_score || 0};
+}
+function memProcedure(r) {
+  const steps = memParseJsonList(r.steps).filter((s) => s && typeof s === 'object').map((s) => ({description:String(s.description || ''), toolHint:typeof s.toolHint === 'string' && s.toolHint ? s.toolHint : null}));
+  return {id:r.id, activation:r.activation, steps, tags:memParseJsonList(r.tags), status:r.status === 'deprecated' ? 'deprecated' : 'active',
+    successCount:r.success_count, failureCount:r.failure_count, useCount:r.use_count, voteScore:r.vote_score || 0,
+    parentLessonIds:memParseJsonList(r.parent_lesson_ids).filter((x) => typeof x === 'number'), parentMemoryIds:memParseJsonList(r.parent_memory_ids).filter((x) => typeof x === 'number')};
+}
+async function memNoteDetail(id, expanded) {
+  const rows = await memQ('notes.get', [id]);
+  if (!rows.length) return null;
+  const entry = memNoteEntry(rows[0]);
+  const linksOn = memFlag('links') === true;
+  const outgoing = linksOn ? (await memQ('links.outgoing', [id])).map(memLink) : [];
+  const incoming = linksOn ? (await memQ('links.incoming', [id])).map(memLink) : [];
+  return {channel:'notes', id, body:formatNoteDetailBody(entry, entry.consolidatedInto, outgoing, incoming, expanded), tags:entry.tags,
+    consolidatedInto:entry.consolidatedInto,
+    outgoing:outgoing.map((e) => ({memoryId:e.toId, kind:e.kind, direction:'out'})),
+    incoming:incoming.map((e) => ({memoryId:e.fromId, kind:e.kind, direction:'in'})), expandedNeighbors:expanded};
+}
+async function memVoteTargetPreview(event) {
+  const t = (s, max) => (s.length <= max ? s : s.slice(0, max - 1) + '…');
+  if (event.kind === 'memory') { const r = await memQ('notes.get', [event.targetId]); return r.length ? t(String(r[0].content), 400) : null; }
+  if (event.kind === 'lesson') { const r = await memQ('lessons.getById', [event.targetId]); return r.length ? t(String(r[0].principle), 400) : null; }
+  if (event.kind === 'procedure') { const r = await memQ('procedures.getById', [event.targetId]); return r.length ? t(String(r[0].activation), 400) : null; }
+  if (event.kind === 'profile') { const r = await memQ('profile.getById', [event.targetId]); return r.length ? r[0].key + '=' + r[0].value : null; }
+  return null;
+}
+/* memory-orchestrator.ts buildDetail. */
+async function memBuildDetail(row) {
+  if (row.channel === 'profile') {
+    if (!row.profileKey) return null;
+    const chain = (await memQ('profile.history', [row.profileKey])).map(memFact);
+    return {channel:'profile', key:row.profileKey, body:formatProfileHistoryBody(row.profileKey, chain)};
+  }
+  if (row.channel === 'notes') return row.numericId === undefined ? null : memNoteDetail(row.numericId, []);
+  if (row.channel === 'lessons') {
+    const r = await memQ('lessons.getById', [row.numericId]);
+    return r.length ? {channel:'lessons', id:row.numericId, body:formatLessonDetailBody(memLesson(r[0]))} : null;
+  }
+  if (row.channel === 'procedures') {
+    const r = await memQ('procedures.getById', [row.numericId]);
+    return r.length ? {channel:'procedures', id:row.numericId, body:formatProcedureDetailBody(memProcedure(r[0]))} : null;
+  }
+  if (row.channel === 'links') {
+    if (row.linkFromId === undefined || row.linkToId === undefined) return null;
+    return {channel:'links', body:'edge: #' + row.linkFromId + ' → #' + row.linkToId + '\n' + row.secondary + '\n\nPress Enter on from-id to open note #' + row.linkFromId + '.'};
+  }
+  if (!row.event) return {channel:'votes', body:row.primary};
+  return {channel:'votes', body:formatVoteDetailBody(row.event, await memVoteTargetPreview(row.event))};
+}
+async function memOpenDetail(row) {
+  if (!BR || !row) return;
+  MEM.mode = 'detail'; MEM.detailRowKey = row.rowKey; MEM.detail = null; render();
+  try {
+    const detail = await memBuildDetail(row);
+    if (MEM.detailRowKey !== row.rowKey || MEM.mode !== 'detail') return;
+    if (!detail) { MEM.mode = 'list'; MEM.lastError = 'memory detail unavailable for ' + row.rowKey; render(); return; }
+    MEM.detail = detail;
+  } catch (err) {
+    MEM.mode = 'list'; MEM.lastError = err && err.message ? err.message : String(err);
+  }
+  render();
+}
+function memOpenNoteById(id) {
+  memOpenDetail({rowKey:'note:' + id, channel:'notes', primary:'#' + id, secondary:'', meta:'', numericId:id});
+}
+/* link-store.ts expand(seedIds, {depth, maxExpanded}): BFS over outgoing +
+   incoming edges, deduplicated. The TUI calls it with depth 2, maxExpanded 24. */
+async function memExpandLinks(seedIds, depth, maxExpanded) {
+  const seen = new Set(seedIds);
+  const result = [];
+  let frontier = seedIds.slice();
+  for (let d = 0; d < depth; d++) {
+    const next = [];
+    for (const node of frontier) {
+      const outgoing = (await memQ('links.outgoing', [node])).map(memLink);
+      const incoming = (await memQ('links.incoming', [node])).map(memLink);
+      for (const e of outgoing) { if (seen.has(e.toId)) continue; seen.add(e.toId); result.push(e.toId); next.push(e.toId); if (result.length >= maxExpanded) return result; }
+      for (const e of incoming) { if (seen.has(e.fromId)) continue; seen.add(e.fromId); result.push(e.fromId); next.push(e.fromId); if (result.length >= maxExpanded) return result; }
+    }
+    frontier = next;
+    if (!frontier.length) break;
+  }
+  return result;
+}
+async function memExpandNeighbors() {
+  const d = MEM.detail;
+  if (!BR || !d || d.channel !== 'notes') return;
+  if (memFlag('links') !== true) return; // memory-orchestrator.ts expandNoteNeighbors: no-op unless links are enabled
+  try {
+    const expanded = await memExpandLinks([d.id], 2, 24);
+    const next = await memNoteDetail(d.id, expanded);
+    if (MEM.detail !== d) return;
+    if (next) MEM.detail = next;
+  } catch (err) {
+    MEM.lastError = err && err.message ? err.message : String(err);
+  }
+  render();
+}
+function memPickNeighbor() {
+  const d = MEM.detail;
+  if (!d || d.channel !== 'notes') return null;
+  const all = d.outgoing.map((n) => n.memoryId).concat(d.incoming.map((n) => n.memoryId), d.expandedNeighbors);
+  if (!all.length) return null;
+  return all[Math.max(0, Math.min(MEM.cursor, all.length - 1))];
+}
+function memSetChannel(ch) {
+  if (!MEM.available.includes(ch)) return;
+  MEM.channel = ch; MEM.cursor = 0; MEM.mode = 'list'; MEM.detailRowKey = null; MEM.detail = null;
+  memRefresh();
+}
+function memoryAct(what) {
+  const [verb, ...rest] = what.split(':');
+  const arg = rest.join(':');
+  if (verb === 'ch') { memSetChannel(arg); return; }
+  if (verb === 'cycle') {
+    const order = MEM.available.length ? MEM.available : MEM_CHANNEL_ORDER;
+    const idx = order.indexOf(MEM.channel);
+    memSetChannel(order[((idx === -1 ? 0 : idx) + (+arg || 1) + order.length) % order.length]); return;
+  }
+  if (verb === 'jump') { const ch = MEM.available[+arg - 1]; if (ch) memSetChannel(ch); return; }
+  if (verb === 'open') {
+    const rows = memVisibleRows();
+    const row = arg === '' ? memSelected() : rows[+arg];
+    if (!row) return;
+    if (arg !== '') MEM.cursor = +arg;
+    if (row.channel === 'links' && row.linkFromId !== undefined) { memOpenNoteById(row.linkFromId); return; }
+    memOpenDetail(row); return;
+  }
+  if (verb === 'refresh') { memRefresh(); return; }
+  if (verb === 'auto') { MEM.auto = !MEM.auto; render(); return; }
+  if (verb === 'filter') {
+    if (MEM.channel !== 'notes') return;
+    MEM.notesFilter = MEM_NOTES_FILTERS[(MEM_NOTES_FILTERS.indexOf(MEM.notesFilter) + 1) % MEM_NOTES_FILTERS.length]; MEM.cursor = 0;
+    memRefresh(); return;
+  }
+  if (verb === 'page') { const n = memVisibleRows().length; MEM.cursor = Math.max(0, Math.min(MEM.cursor + (arg === 'up' ? -MEM_MAX_ROWS : MEM_MAX_ROWS), n - 1)); render(); return; }
+  if (verb === 'back') { MEM.mode = 'list'; MEM.detailRowKey = null; MEM.detail = null; render(); return; }
+  if (verb === 'expand') { memExpandNeighbors(); return; }
+  if (verb === 'neighbor') { const id = memPickNeighbor(); if (id !== null) memOpenNoteById(id); return; }
+}
+/* memory-key-bindings.ts. */
+function memoryKey(e, k, inText) {
+  if (inText) return false;
+  if (e.metaKey || e.ctrlKey || e.altKey) return false;
+  if (MEM.mode === 'detail') {
+    if (k === 'Escape') { e.preventDefault(); memoryAct('back'); return true; }
+    if (k === 'g' && MEM.detail && MEM.detail.channel === 'notes') { e.preventDefault(); memExpandNeighbors(); return true; }
+    if (k === 'r') { e.preventDefault(); memRefresh(); return true; }
+    if (k === 'Enter' && MEM.detail && MEM.detail.channel === 'notes') { const id = memPickNeighbor(); if (id !== null) { e.preventDefault(); memOpenNoteById(id); return true; } }
+    return false;
+  }
+  const rows = memVisibleRows();
+  if (k === 'j' || k === 'ArrowDown') { e.preventDefault(); MEM.cursor = Math.min(MEM.cursor + 1, Math.max(0, rows.length - 1)); render(); return true; }
+  if (k === 'k' || k === 'ArrowUp') { e.preventDefault(); MEM.cursor = Math.max(MEM.cursor - 1, 0); render(); return true; }
+  if (k === 'Enter') { e.preventDefault(); memoryAct('open'); return true; }
+  if (k === 'r') { e.preventDefault(); memRefresh(); return true; }
+  if (k === 'a') { e.preventDefault(); memoryAct('auto'); return true; }
+  if (k === 'f' && MEM.channel === 'notes') { e.preventDefault(); memoryAct('filter'); return true; }
+  if (k === '[') { e.preventDefault(); memoryAct('cycle:-1'); return true; }
+  if (k === ']') { e.preventDefault(); memoryAct('cycle:1'); return true; }
+  if (k >= '1' && k <= '6' && k.length === 1) { if (!MEM.available[+k - 1]) return false; e.preventDefault(); memoryAct('jump:' + k); return true; }
+  return false;
+}
+
+/* ---------------- MCP tab (mcp-panel.tsx, mcp-list.tsx, mcp-detail.tsx,
+   mcp-add-modal.tsx, mcp-remove-modal.tsx, mcp-orchestrator.ts,
+   persist-mcp-server.ts) ---------------- */
+
+function mcpServers() { return (LIVE_CONFIG && LIVE_CONFIG.mcp && Array.isArray(LIVE_CONFIG.mcp.servers)) ? LIVE_CONFIG.mcp.servers : []; }
+function mcpToolsFor(name) {
+  const tools = (LIVE_CAPS && Array.isArray(LIVE_CAPS.tools)) ? LIVE_CAPS.tools : [];
+  const prefix = 'mcp.' + name + '.';
+  return tools.filter((t) => t && typeof t.name === 'string' && t.name.startsWith(prefix)).map((t) => ({rawName:t.name.slice(prefix.length), description:t.description || ''}));
+}
+/* mcp-orchestrator.ts buildRows, minus the live status: there is no MCP
+   status route on this agent, so an enabled server's state is `—`, never
+   an inferred up/down; resource and prompt counts are not exposed either. */
+function mcpRows() {
+  return mcpServers().map((cfg) => ({
+    name:String(cfg.name || ''), description:cfg.description || '', enabled:cfg.enabled !== false,
+    state:cfg.enabled === false ? 'disabled' : '—', trust:cfg.trust === 'pure_read' ? 'pure_read' : 'approval_gated',
+    transportKind:(cfg.transport && cfg.transport.kind) || '—', toolCount:mcpToolsFor(String(cfg.name || '')).length,
+  }));
+}
+function mcpVisible() { return !!S.settings && settingsPaneId(S.settingsPane) === 'mcp'; }
+function mcpTyping() { const el = document.activeElement; return !!el && el.id === 'mcp-json'; }
+function ensureMcpPoll() {
+  if (!BR || MCP.timer) return;
+  MCP.timer = setInterval(() => {
+    if (!mcpVisible()) { clearInterval(MCP.timer); MCP.timer = null; return; }
+    if (MCP.auto && !MCP.addModal && !MCP.removeConfirm) mcpRefresh(true);
+  }, 5000);
+}
+function mcpTabEntered() {
+  if (MCP.timer) { clearInterval(MCP.timer); MCP.timer = null; }
+  ensureMcpPoll();
+  if (MCP.lastRefreshedAt === null && !MCP.loading) mcpRefresh();
+}
+/* GET /api/config (the user file, the same source as loadResources) +
+   /api/capabilities for the registered `mcp.<name>.*` tools. */
+async function mcpRefresh(quiet) {
+  if (!BR) return;
+  if (MCP.inflight) { if (quiet) return; await MCP.inflight; } // a poll in flight: an explicit refresh waits for it, a poll is skipped
+  MCP.inflight = mcpRefreshRun(quiet);
+  try { await MCP.inflight; } finally { MCP.inflight = null; }
+}
+async function mcpRefreshRun(quiet) {
+  MCP.loading = true; MCP.lastError = null;
+  if (!quiet) render();
+  const before = JSON.stringify(mcpRows());
+  const [cfg, caps] = await Promise.all([BR.config(), BR.capabilities()]);
+  MCP.loading = false;
+  if (cfg && cfg.ok && cfg.data && cfg.data.config) LIVE_CONFIG = cfg.data.config;
+  else MCP.lastError = 'mcp refresh failed: ' + ((cfg && cfg.error) || 'config unavailable');
+  if (caps && caps.ok && caps.data) LIVE_CAPS = caps.data;
+  MCP.lastRefreshedAt = Date.now();
+  if (quiet && (mcpTyping() || before === JSON.stringify(mcpRows()))) {
+    const st = document.querySelector('#settings .mcpstatus');
+    if (st) st.textContent = mcpStatusLine();
+    return;
+  }
+  if (mcpVisible()) paneRepaintKeepFocus(mcpTab()); else if (!quiet) render();
+  if (S.settings) { const tab = document.querySelector('#settings .settab.on'); if (tab && mcpVisible()) tab.textContent = 'MCP' + tabSuffix('mcp'); }
+}
+function mcpStatusLine() {
+  return [MCP.loading ? 'loading' : null, MCP.auto ? 'auto' : 'manual',
+    MCP.lastRefreshedAt ? 'refreshed ' + new Date(MCP.lastRefreshedAt).toLocaleTimeString() : null,
+    mcpRows().length + ' servers'].filter(Boolean).join(' · ');
+}
+function mcpHint() {
+  if (MCP.addModal) return 'Enter submit · Esc cancel · paste JSON of one MCP server';
+  if (MCP.removeConfirm) return 'y / Enter confirm · n / Esc cancel';
+  if (MCP.mode === 'list') return tuiHints(['j/k move', ['Enter open', 'mcp:detail'], ['n add', 'mcp:add'], ['d remove', 'mcp:remove'], ['r refresh', 'mcp:refresh'], ['a auto', 'mcp:auto']]);
+  return tuiHints([['Esc back', 'mcp:back'], ['1/2/3 tools/res/prompts', 'mcp:dtab:cycle'], ['[ ] cycle', 'mcp:dtab:cycle'], ['d remove', 'mcp:remove'], ['r refresh', 'mcp:refresh']]);
+}
+function mcpTab() {
+  ensureMcpPoll();
+  const rows = mcpRows();
+  const hint = mcpHint();
+  return '<div class="tui"><div class="ter mcpstatus">' + esc(mcpStatusLine()) + '</div>'
+    + (hint.startsWith('<') ? hint : '<div class="ter">' + esc(hint) + '</div>')
+    + (MCP.lastError ? '<div class="tuierr">! ' + esc(MCP.lastError) + '</div>' : '')
+    + (MCP.msg ? (MCP.msg.restart ? '<div class="tuimsg" style="margin-top:6px">' + esc(MCP.msg.text) + ' <button class="btn btn-s" data-act="agent:restart" style="height:22px">Restart Agent Runtime</button></div>' : '<div class="tuimsg">' + esc(MCP.msg.text) + '</div>') : '')
+    + (!rows.length ? '<div class="ter" style="margin-top:6px">no MCP servers configured — add entries under `mcp.servers[]` in config.json</div>' : '')
+    + (MCP.addModal ? mcpAddModalHTML() : (MCP.mode === 'list' ? mcpListHTML(rows) : mcpDetailHTML()) + (MCP.removeConfirm ? mcpRemoveModalHTML() : ''))
+    + '</div>';
+}
+function mcpPad(text, width) { text = String(text); return text.length >= width ? text.slice(0, width - 1) + ' ' : text.padEnd(width); }
+function mcpListHTML(rows) {
+  if (!rows.length) return '<div class="ter" style="margin-top:6px">(no servers)</div>';
+  const cur = Math.max(0, Math.min(MCP.cursor, rows.length - 1));
+  const start = Math.max(0, Math.min(rows.length - MCP_MAX_ROWS, Math.max(0, cur - Math.floor(MCP_MAX_ROWS / 2))));
+  const slice = rows.slice(start, Math.min(rows.length, start + MCP_MAX_ROWS));
+  const note = rows.some((r) => r.enabled) ? '<div class="ter" style="margin-top:6px">state not exposed — no MCP status route in this agent</div>' : '';
+  return '<div style="margin-top:6px">' + slice.map((r, idx) => {
+    const i = idx + start, sel = i === cur;
+    // Row: `> name(18)[state](11)transport(18)trust(16)<t> tools · — res · — prompts`, then the description
+    return '<button class="tuirow tuirow2' + (sel ? ' on' : '') + '" data-mcp-row="' + esc(r.name) + '" data-act="mcp:detail:' + esc(r.name) + '">'
+      + '<span>' + (sel ? '&gt;' : ' ') + ' <b>' + esc(mcpPad(r.name, 18)) + '</b>'
+      + '<span class="' + (r.state === 'disabled' ? 'ter' : 'ter') + '" title="' + (r.state === 'disabled' ? 'disabled in config.json' : 'state not exposed — no MCP status route in this agent') + '">' + esc(mcpPad('[' + r.state + ']', 11)) + '</span>'
+      + '<span class="ter">' + esc(mcpPad(r.transportKind, 18) + mcpPad(r.trust, 16) + r.toolCount + ' tools · — res · — prompts') + '</span></span>'
+      + (r.description ? '<span class="ter">  ' + esc(r.description) + '</span>' : '') + '</button>';
+  }).join('') + '</div>' + note;
+}
+function mcpDescribeTransport(cfg) {
+  const t = cfg.transport || {};
+  if (t.kind === 'stdio') {
+    const args = Array.isArray(t.args) && t.args.length ? ' ' + t.args.join(' ') : '';
+    return 'stdio: ' + t.command + args + (t.cwd ? ' (cwd: ' + t.cwd + ')' : '');
+  }
+  if (t.kind === 'streamable_http') return 'streamable_http: ' + t.url;
+  if (t.kind === 'sse') return 'sse: ' + t.url;
+  return String(t.kind || '—');
+}
+function mcpDetailHTML() {
+  const cfg = mcpServers().find((s) => s.name === MCP.detailName);
+  if (!cfg) return '<div class="ter" style="margin-top:6px">(no server selected)</div>';
+  const row = mcpRows().find((r) => r.name === cfg.name);
+  const tools = mcpToolsFor(cfg.name);
+  const counts = {tools:String(tools.length), resources:'—', prompts:'—'};
+  const bar = MCP_TAB_ORDER.map((tab, idx) => {
+    const label = (idx + 1) + ':' + tab + '(' + counts[tab] + ')';
+    return '<button class="memch' + (tab === MCP.detailTab ? ' on' : '') + '" data-act="mcp:dtab:' + tab + '">' + esc(tab === MCP.detailTab ? '[' + label + ']' : label) + '</button>';
+  }).join('<span class="ter">  </span>');
+  let body;
+  if (MCP.detailTab !== 'tools') body = '<div class="ter">not exposed by the agent\'s HTTP API</div>';
+  else if (!tools.length) body = '<div class="ter">(empty)</div>';
+  else {
+    const cur = Math.max(0, Math.min(MCP.detailCursor, tools.length - 1));
+    const start = Math.max(0, Math.min(tools.length - MCP_MAX_ROWS, Math.max(0, cur - Math.floor(MCP_MAX_ROWS / 2))));
+    body = tools.slice(start, start + MCP_MAX_ROWS).map((t, idx) => {
+      const sel = idx + start === cur;
+      // mcp-detail.tsx formatTool prints `rawName (resourceClass)`; the resource class is not on /api/capabilities.
+      return '<div class="' + (sel ? 'tuimsg' : '') + '">' + (sel ? '&gt; ' : '  ') + esc(t.rawName) + '</div>' + (t.description ? '<div class="ter">  ' + esc(t.description) + '</div>' : '');
+    }).join('') + '<div class="ter">(resource class is not exposed by the agent\'s HTTP API)</div>';
+  }
+  return '<div style="margin-top:6px"><b>' + esc(cfg.name) + ' </b><span class="ter" title="' + (row && row.state === 'disabled' ? 'disabled in config.json' : 'state not exposed — no MCP status route in this agent') + '">[' + esc(row ? row.state : '—') + ']</span><span class="ter"> · trust: ' + esc(row ? row.trust : 'approval_gated') + '</span></div>'
+    + (cfg.description ? '<div class="ter">' + esc(cfg.description) + '</div>' : '')
+    + '<div class="ter">' + esc(mcpDescribeTransport(cfg)) + '</div>'
+    + (row && row.enabled ? '<div class="ter">state not exposed — no MCP status route in this agent</div>' : '')
+    + '<div class="tuibar" style="margin-top:8px">' + bar + '</div>'
+    + '<div style="margin-top:8px">' + body + '</div>';
+}
+function mcpAddModalHTML() {
+  const m = MCP.addModal;
+  return '<div class="tuimodal' + (m.error ? ' danger' : '') + '" style="margin-top:8px"><b>+ add MCP server</b>'
+    + '<div class="ter" style="margin-top:8px">Paste one MCP server config as JSON. Bare object, or the Claude Desktop / Cursor envelope `{ "mcpServers": { ... } }`.</div>'
+    + '<div class="ter">Top-level `command` + `args` (no `transport` wrapper) is also accepted and auto-promoted to stdio.</div>'
+    + '<textarea id="mcp-json" class="tuiarea" rows="6" spellcheck="false" placeholder=\'{"mcpServers":{"github":{"command":"npx","args":["-y","@github/mcp-server"]}}}\'' + (m.submitting ? ' disabled' : '') + '>' + esc(m.json) + '</textarea>'
+    + (m.error ? '<div class="tuierr" style="margin-top:8px">! ' + esc(m.error) + '</div>' : '')
+    + (m.submitting ? '<div class="ter" style="margin-top:8px">writing config…</div>' : '')
+    + '<div class="tuihint">' + tuiBtn('Enter: submit', 'mcp:addSubmit', {disabled: m.submitting}) + '<span>· Shift/Alt+Enter: newline ·</span>' + tuiBtn('Esc: cancel', 'mcp:addCancel') + '<span>· restart atomic-agent for the new server to connect</span></div>'
+    + '</div>';
+}
+function mcpRemoveModalHTML() {
+  const c = MCP.removeConfirm;
+  return '<div class="tuimodal' + (c.error ? ' danger' : ' warn') + '"><b style="color:var(--' + (c.error ? 'danger' : 'warn') + ')">remove MCP server?</b>'
+    + '<div><span class="ter">name:</span> ' + esc(c.name) + '</div>'
+    + '<div class="ter">rewrites config.json; restart atomic-agent to drop the live connection.</div>'
+    + (c.error ? '<div class="tuierr">! ' + esc(c.error) + '</div>' : '')
+    + (c.submitting ? '<div class="ter">working…</div>' : '<div class="tuihint">' + tuiBtn('y / Enter = confirm', 'mcp:removeConfirm') + '<span>·</span>' + tuiBtn('n / Esc = keep', 'mcp:removeCancel') + '</div>')
+    + '</div>';
+}
+/* persist-mcp-server.ts parseAddServerJson: the three accepted shapes —
+   a bare object, the `{ mcpServers: { name: {…} } }` envelope with exactly
+   one entry, and the `command`/`args` (or `url`/`serverUrl`) shortcut
+   promoted into `transport`. The schema itself (name regex, transport
+   shape, trust enum) is checked by the CLI on the write. */
+function mcpNormalizeShortcut(obj) {
+  if (obj.transport !== undefined) return obj;
+  if (typeof obj.command === 'string') {
+    const out = Object.assign({}, obj); delete out.command; delete out.args; delete out.cwd;
+    const transport = {kind:'stdio', command:obj.command};
+    if (obj.args !== undefined) transport.args = obj.args;
+    if (obj.cwd !== undefined) transport.cwd = obj.cwd;
+    out.transport = transport; return out;
+  }
+  const rawUrl = typeof obj.url === 'string' ? obj.url : typeof obj.serverUrl === 'string' ? obj.serverUrl : null;
+  if (rawUrl !== null) {
+    const out = Object.assign({}, obj); delete out.url; delete out.serverUrl; delete out.headers; delete out.type;
+    const transport = {kind:obj.type === 'sse' ? 'sse' : 'streamable_http', url:rawUrl};
+    if (obj.headers !== undefined) transport.headers = obj.headers;
+    out.transport = transport; return out;
+  }
+  return obj;
+}
+function mcpParseAddJson(raw) {
+  const trimmed = String(raw || '').trim();
+  if (!trimmed.length) return {ok:false, error:'JSON is empty'};
+  let parsed;
+  try { parsed = JSON.parse(trimmed); } catch (err) { return {ok:false, error:'invalid JSON: ' + (err && err.message ? err.message : String(err))}; }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return {ok:false, error:'expected a JSON object'};
+  let candidate;
+  const envelope = parsed.mcpServers;
+  if (envelope !== undefined) {
+    if (envelope === null || typeof envelope !== 'object' || Array.isArray(envelope)) return {ok:false, error:'`mcpServers` must be an object keyed by server name'};
+    const entries = Object.entries(envelope);
+    if (!entries.length) return {ok:false, error:'`mcpServers` is empty — paste exactly one server'};
+    if (entries.length > 1) return {ok:false, error:'paste exactly one server — got ' + entries.length + ' entries in `mcpServers`'};
+    const [keyName, value] = entries[0];
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) return {ok:false, error:'`mcpServers[' + JSON.stringify(keyName) + ']` must be an object'};
+    if (typeof value.name === 'string' && value.name !== keyName) return {ok:false, error:'name mismatch: envelope key ' + JSON.stringify(keyName) + ' vs inner ' + JSON.stringify(value.name)};
+    candidate = mcpNormalizeShortcut(Object.assign({name:keyName}, value));
+  } else {
+    candidate = mcpNormalizeShortcut(parsed);
+  }
+  if (Object.hasOwn(candidate, '__proto__') || Object.hasOwn(candidate, 'constructor') || Object.hasOwn(candidate, 'prototype')) return {ok:false, error:'refusing a prototype key'};
+  if (typeof candidate.name !== 'string' || !candidate.name.trim()) return {ok:false, error:'mcp.servers: name: expected a non-empty string'};
+  return {ok:true, server:candidate};
+}
+/* The write: read the user file right before, append, whole-file
+   `atag config set '<json>'` through cli:configSetPath (mcp.servers has no
+   leaf spelling). The CLI validates the file and answers with its own
+   error text on a bad entry. The running agent is not touched — the modal's
+   footer and the success line say to restart. */
+async function mcpAddSubmit(json) {
+  const m = MCP.addModal;
+  if (!BR || !m || m.submitting) return {ok:false, error:'no add modal'};
+  m.json = json; m.error = null;
+  const parsed = mcpParseAddJson(json);
+  if (!parsed.ok) { m.error = parsed.error; render(); return parsed; }
+  m.submitting = true; render();
+  const cfg = await BR.config();
+  const servers = cfg && cfg.ok && cfg.data && cfg.data.config && cfg.data.config.mcp && Array.isArray(cfg.data.config.mcp.servers) ? cfg.data.config.mcp.servers : mcpServers();
+  if (servers.some((s) => s && s.name === parsed.server.name)) {
+    m.submitting = false; m.error = 'server ' + JSON.stringify(parsed.server.name) + ' already exists in config.mcp.servers'; render(); return {ok:false, error:m.error};
+  }
+  const res = await BR.configSetPath('mcp.servers', servers.concat([parsed.server]));
+  m.submitting = false;
+  if (!res || res.ok === false) { m.error = (res && res.error) || 'config write failed'; render(); return {ok:false, error:m.error}; }
+  MCP.addModal = null;
+  MCP.msg = {text:'mcp: added ' + JSON.stringify(parsed.server.name) + ' (config.json updated, ' + (servers.length + 1) + ' total) — restart atomic-agent for the new server to connect', restart:true};
+  await mcpRefresh();
+  return {ok:true, name:parsed.server.name};
+}
+async function mcpRemoveConfirm() {
+  const c = MCP.removeConfirm;
+  if (!BR || !c || c.submitting) return;
+  c.submitting = true; c.error = null; render();
+  const cfg = await BR.config();
+  const servers = cfg && cfg.ok && cfg.data && cfg.data.config && cfg.data.config.mcp && Array.isArray(cfg.data.config.mcp.servers) ? cfg.data.config.mcp.servers : mcpServers();
+  const idx = servers.findIndex((s) => s && s.name === c.name);
+  if (idx === -1) { c.submitting = false; c.error = 'server ' + JSON.stringify(c.name) + ' not found in config.mcp.servers'; render(); return; }
+  const next = servers.slice(0, idx).concat(servers.slice(idx + 1));
+  const res = await BR.configSetPath('mcp.servers', next);
+  c.submitting = false;
+  if (!res || res.ok === false) { c.error = (res && res.error) || 'config write failed'; render(); return; }
+  MCP.removeConfirm = null;
+  if (MCP.mode === 'detail' && MCP.detailName === c.name) { MCP.mode = 'list'; MCP.detailName = null; }
+  MCP.msg = {text:'mcp: removed ' + JSON.stringify(c.name) + ' (config.json updated, ' + next.length + ' remaining) — restart atomic-agent to drop the live connection', restart:true};
+  await mcpRefresh();
+}
+function mcpAct(what) {
+  const [verb, ...rest] = what.split(':');
+  const arg = rest.join(':');
+  const rows = mcpRows();
+  const sel = () => arg || (MCP.mode === 'detail' ? MCP.detailName : (rows[Math.max(0, Math.min(MCP.cursor, rows.length - 1))] || {}).name);
+  if (verb === 'detail') { const name = sel(); if (!name) return; MCP.detailName = name; MCP.mode = 'detail'; MCP.detailTab = 'tools'; MCP.detailCursor = 0; const i = rows.findIndex((r) => r.name === name); if (i >= 0) MCP.cursor = i; render(); return; }
+  if (verb === 'back') { MCP.mode = 'list'; MCP.detailName = null; render(); return; }
+  if (verb === 'dtab') {
+    if (arg === 'cycle' || arg === 'cycle:-1') { const d = arg === 'cycle:-1' ? -1 : 1; MCP.detailTab = MCP_TAB_ORDER[(MCP_TAB_ORDER.indexOf(MCP.detailTab) + d + 3) % 3]; }
+    else if (MCP_TAB_ORDER.includes(arg)) MCP.detailTab = arg;
+    MCP.detailCursor = 0; render(); return;
+  }
+  if (verb === 'add') { MCP.addModal = {json:'', error:null, submitting:false}; MCP.removeConfirm = null; render(); const n = $('#mcp-json'); if (n) n.focus(); return; }
+  if (verb === 'addSubmit') { const n = $('#mcp-json'); mcpAddSubmit(n ? n.value : (MCP.addModal ? MCP.addModal.json : '')); return; }
+  if (verb === 'addCancel') { MCP.addModal = null; render(); return; }
+  if (verb === 'remove') { const name = sel(); if (!name) return; MCP.removeConfirm = {name, error:null, submitting:false}; render(); return; }
+  if (verb === 'removeConfirm') { mcpRemoveConfirm(); return; }
+  if (verb === 'removeCancel') { MCP.removeConfirm = null; render(); return; }
+  if (verb === 'refresh') { mcpRefresh(); return; }
+  if (verb === 'auto') { MCP.auto = !MCP.auto; render(); return; }
+}
+/* mcp-key-bindings.ts. The add modal's textarea keeps Enter for submit and
+   Shift/Alt+Enter for a newline, as the TUI's MultiLineEditor does. */
+function mcpKey(e, k, inText) {
+  if (e.target.id === 'mcp-json') {
+    if (k === 'Enter' && !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey) { e.preventDefault(); mcpAddSubmit(e.target.value); return true; }
+    if (k === 'Escape') { e.preventDefault(); MCP.addModal = null; render(); return true; }
+    return false;
+  }
+  if (inText) return false;
+  if (e.metaKey || e.ctrlKey || e.altKey) return false;
+  if (MCP.addModal) { if (k === 'Escape') { e.preventDefault(); MCP.addModal = null; render(); return true; } return false; }
+  if (MCP.removeConfirm) {
+    if (k === 'y' || k === 'Enter') { e.preventDefault(); mcpRemoveConfirm(); return true; }
+    if (k === 'n' || k === 'Escape') { e.preventDefault(); MCP.removeConfirm = null; render(); return true; }
+    return true;
+  }
+  if (MCP.mode === 'detail') {
+    if (k === 'Escape') { e.preventDefault(); mcpAct('back'); return true; }
+    if (k === '1' || k === '2' || k === '3') { e.preventDefault(); mcpAct('dtab:' + MCP_TAB_ORDER[+k - 1]); return true; }
+    if (k === '[') { e.preventDefault(); mcpAct('dtab:cycle:-1'); return true; }
+    if (k === ']') { e.preventDefault(); mcpAct('dtab:cycle'); return true; }
+    if (k === 'd') { e.preventDefault(); mcpAct('remove'); return true; }
+    if (k === 'r') { e.preventDefault(); mcpRefresh(); return true; }
+    const n = MCP.detailTab === 'tools' ? mcpToolsFor(MCP.detailName || '').length : 0;
+    if (k === 'j' || k === 'ArrowDown') { e.preventDefault(); MCP.detailCursor = Math.min(MCP.detailCursor + 1, Math.max(0, n - 1)); render(); return true; }
+    if (k === 'k' || k === 'ArrowUp') { e.preventDefault(); MCP.detailCursor = Math.max(MCP.detailCursor - 1, 0); render(); return true; }
+    return false;
+  }
+  const rows = mcpRows();
+  if (k === 'j' || k === 'ArrowDown') { e.preventDefault(); MCP.cursor = Math.min(MCP.cursor + 1, Math.max(0, rows.length - 1)); render(); return true; }
+  if (k === 'k' || k === 'ArrowUp') { e.preventDefault(); MCP.cursor = Math.max(MCP.cursor - 1, 0); render(); return true; }
+  if (k === 'Enter') { e.preventDefault(); mcpAct('detail'); return true; }
+  const map = {n:'add', d:'remove', r:'refresh', a:'auto'};
+  if (map[k]) { e.preventDefault(); mcpAct(map[k]); return true; }
+  return false;
+}
+
+/* Hooks for --smoke (Item 7 part B: the Skills, Memory and MCP tabs). */
+if (typeof window !== 'undefined') {
+  window.__skillsRows = () => (SK.rows ? SK.rows.length : 0); // every `atag skill list` row, as loaded (the list paints a 14-row window of them)
+  window.__skillsWindow = () => ({painted: document.querySelectorAll('#settings [data-skill-row]').length, visible: skpVisibleRows().length, max: SKP_MAX_ROWS,
+    above: (document.querySelector('#settings [data-act="skills:page:up"]') || {}).textContent || '', below: (document.querySelector('#settings [data-act="skills:page:down"]') || {}).textContent || ''});
+  window.__skillsState = () => ({mode: SKP.mode, cursor: SKP.cursor, filter: SKP.filter, auto: SKP.auto, busy: SKP.busy, detailName: SKP.detailName,
+    detailBody: SKP.detailBody, lastError: SKP.lastError, msg: SKP.msg ? SKP.msg.text : '', restart: !!(SKP.msg && SKP.msg.restart),
+    hubRows: SKP.hubRows.map((r) => ({identifier: r.identifier, source: r.source, downloads: r.downloads})), hubLoading: SKP.hubLoading, hubError: SKP.hubError,
+    hubCard: SKP.hubCard ? {identifier: SKP.hubCard.identifier, name: SKP.hubCard.name, repo: SKP.hubCard.repo, version: SKP.hubCard.version,
+      bodyLines: SKP.hubCard.body === null ? 0 : SKP.hubCard.body.split('\n').length, bodyError: SKP.hubCard.bodyError, installId: SKP.hubCard.installId} : null,
+    hubCardLoading: SKP.hubCardLoading, installConfirm: SKP.installConfirm, removeConfirm: SKP.removeConfirm ? Object.assign({}, SKP.removeConfirm) : null, installError: SKP.installError});
+  window.__skillsAct = (what) => { skillsAct(what); return window.__skillsState(); };
+  window.__memory = () => ({channel: MEM.channel, channels: MEM.available.slice(), rows: MEM.rows.length, mode: MEM.mode, hint: MEM.channelHint, error: MEM.lastError,
+    refreshed: MEM.lastRefreshedAt, notesFilter: MEM.notesFilter, detail: MEM.detail ? {channel: MEM.detail.channel, id: MEM.detail.id, key: MEM.detail.key, body: MEM.detail.body,
+      expanded: MEM.detail.expandedNeighbors ? MEM.detail.expandedNeighbors.slice() : null} : null});
+  window.__memoryOpen = async (channel) => { memSetChannel(channel); await memRefresh(); return window.__memory(); };
+  window.__memoryRefresh = async () => { await memRefresh(); return window.__memory(); };
+  window.__memoryDetail = async (i) => { const row = memVisibleRows()[i || 0]; if (!row) return null; await memOpenDetail(row); return window.__memory(); };
+  window.__memoryExpand = async () => { await memExpandNeighbors(); return window.__memory(); };
+  window.__memoryAct = (what) => { memoryAct(what); return window.__memory(); };
+  window.__memQuery = (name, params) => (BR && memStateDir() ? BR.memoryQuery(memStateDir(), name, params || []) : Promise.resolve({ok:false, error:'no bridge or state dir'}));
+  window.__mcp = () => ({mode: MCP.mode, rows: mcpRows().length, servers: mcpServers().map((s) => s && s.name), detailName: MCP.detailName, detailTab: MCP.detailTab,
+    addModal: MCP.addModal ? Object.assign({}, MCP.addModal) : null, removeConfirm: MCP.removeConfirm ? Object.assign({}, MCP.removeConfirm) : null,
+    msg: MCP.msg ? MCP.msg.text : '', lastError: MCP.lastError, refreshed: MCP.lastRefreshedAt});
+  window.__mcpParse = (json) => mcpParseAddJson(json);
+  window.__mcpAct = (what) => { mcpAct(what); return window.__mcp(); };
+  window.__mcpAddSubmit = async (json) => { if (!MCP.addModal) mcpAct('add'); const r = await mcpAddSubmit(json); return Object.assign({}, r, {state: window.__mcp()}); };
+  window.__mcpRemove = async (name) => { mcpAct('remove:' + name); await mcpRemoveConfirm(); return window.__mcp(); };
+  window.__mcpRefresh = async () => { await mcpRefresh(); return window.__mcp(); };
 }

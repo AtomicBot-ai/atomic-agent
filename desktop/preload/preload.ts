@@ -82,5 +82,19 @@ contextBridge.exposeInMainWorld("atomic", {
   skillList: () => ipcRenderer.invoke("cli:skillList"),
   configGetKey: (key: string) => ipcRenderer.invoke("cli:configGetKey", key),
 
+  /** Item 7 part B: the Skills, Memory and MCP tabs. */
+  skill: (name: string) => ipcRenderer.invoke("agent:skill", name),
+  uninstallSkill: (name: string, source?: string) => ipcRenderer.invoke("agent:uninstallSkill", { name, source }),
+  configSetPath: (key: string, value: unknown) => ipcRenderer.invoke("cli:configSetPath", { key, value }),
+  skillShow: (name: string) => ipcRenderer.invoke("cli:skillShow", name),
+  skillSetDisabled: (name: string, disabled: boolean) => ipcRenderer.invoke("cli:skillSetDisabled", { name, disabled }),
+  skillBrowse: (query?: string) => ipcRenderer.invoke("cli:skillBrowse", query ?? ""),
+  skillInstall: (identifier: string, acknowledgeRisk?: boolean) =>
+    ipcRenderer.invoke("cli:skillInstall", { identifier, acknowledgeRisk: !!acknowledgeRisk }),
+  clawhubSkillDetail: (apiBase: string, slug: string, owner?: string | null) =>
+    ipcRenderer.invoke("app:clawhubSkillDetail", { apiBase, slug, owner: owner ?? null }),
+  memoryQuery: (stateDir: string, name: string, params?: unknown[]) =>
+    ipcRenderer.invoke("app:memoryQuery", { stateDir, name, params: params ?? [] }),
+
   platform: process.platform,
 });

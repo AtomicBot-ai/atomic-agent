@@ -124,8 +124,24 @@ Honestly degraded, and labelled as such in the UI:
   `POST /api/tasks/{id}/run`; the next-firings preview is the agent's own
   cron-parser. The firings feed is not exposed by the HTTP API and the tab
   says so.
-- **Memory, skills, MCP, LLM, Telegram and Import tabs** land in the next
-  steps of this branch; skills are read-only until then.
+- **Skills** list through `atag skill list` (the only surface that carries
+  disabled skills), toggle through `atag skill disable|enable` (the running
+  agent keeps its boot-time registry, so the tab offers a restart), remove
+  through `POST /api/skills/uninstall`, and read a detail body from
+  `GET /api/skills/{name}` — or `atag skill show` when the route answers 404
+  for a disabled skill. The Skills Hub browses through `atag skill browse` /
+  `skill search`, fetches a ClawHub card body from the registry's detail
+  endpoint, and installs through `atag skill install` (a `dangerous` scan
+  verdict shows the TUI's confirm with the CLI's line as its one finding).
+- **Memory** reads `<stateDir>/memory.sqlite` read-only (`sqlite3`, falling
+  back to `node:sqlite`) with the stores' own statements, named and
+  parameterised in the main process — the agent has no memory route.
+- **MCP** rows come from `mcp.servers` in `config.json` plus the
+  `mcp.<name>.*` tools registered with the agent; there is no MCP status
+  route, so an enabled server's state reads `—` (never an inferred up/down)
+  and resources/prompts say they are not exposed. Add and remove rewrite
+  `mcp.servers` through the whole-file `atag config set` and offer a restart.
+- **LLM, Telegram and Import tabs** land in the next steps of this branch.
 - Writing config goes through `atag config set`, never `PATCH /api/config`,
   which re-defaults every block it does not merge.
 

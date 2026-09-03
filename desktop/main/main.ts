@@ -25,8 +25,16 @@ import {
   configGetKey,
   taskCreate,
   skillList,
+  configSetPath,
+  skillShow,
+  skillSetDisabled,
+  skillBrowse,
+  skillInstall,
 } from "./agent-cli.js";
 import { validateCreateForm, type TaskCreateFormInput } from "./task-schedule.js";
+// Item 7 part B (Skills / Memory / MCP tabs)
+import { clawhubSkillDetail } from "./clawhub.js";
+import { memoryQuery } from "./memory-db.js";
 
 const DEV = process.argv.includes("--dev");
 /** `--smoke` boots, waits for first paint, writes a screenshot, and exits. */
@@ -351,6 +359,56 @@ function wireIpc(client: AgentClient): void {
     }
   });
 
+  // --- Item 7 part B (Skills / Memory / MCP tabs) ---
+  const skillName = (v: unknown): string | null =>
+    typeof v === "string" && /^[\w.-]{1,64}$/.test(v) ? v : null;
+  ipcMain.handle("agent:skill", (_event, name: unknown) => {
+    const clean = skillName(name);
+    return clean ? wrap(() => client.skill(clean)) : { ok: false, error: "skill name required" };
+  });
+  ipcMain.handle("agent:uninstallSkill", (_event, payload: unknown) => {
+    const { name, source } = (payload ?? {}) as { name?: unknown; source?: unknown };
+    const clean = skillName(name);
+    if (!clean) return { ok: false, error: "skill name required" };
+    return wrap(() => client.uninstallSkill(clean, source === "project" ? "project" : "global"));
+  });
+  // Whole-file write of one dotted key (llm.* and mcp.servers have no leaf on 0.5.4).
+  ipcMain.handle("cli:configSetPath", (_event, payload: unknown) => {
+    const { key, value } = (payload ?? {}) as { key?: unknown; value?: unknown };
+    if (typeof key !== "string") return { ok: false, error: "key must be a string" };
+    if (value === undefined) return { ok: false, error: "value required" };
+    return configSetPath(key, value);
+  });
+  ipcMain.handle("cli:skillShow", (_event, name: unknown) => {
+    const clean = skillName(name);
+    return clean ? skillShow(clean, client.status.workingDir) : { ok: false, error: "skill name required" };
+  });
+  ipcMain.handle("cli:skillSetDisabled", (_event, payload: unknown) => {
+    const { name, disabled } = (payload ?? {}) as { name?: unknown; disabled?: unknown };
+    const clean = skillName(name);
+    if (!clean) return { ok: false, error: "skill name required" };
+    return skillSetDisabled(clean, disabled === true);
+  });
+  ipcMain.handle("cli:skillBrowse", (_event, query: unknown) =>
+    skillBrowse(typeof query === "string" ? query.slice(0, 200) : "", client.status.workingDir),
+  );
+  ipcMain.handle("cli:skillInstall", (_event, payload: unknown) => {
+    const { identifier, acknowledgeRisk } = (payload ?? {}) as { identifier?: unknown; acknowledgeRisk?: unknown };
+    if (typeof identifier !== "string" || !identifier.trim()) return { ok: false, error: "identifier required" };
+    return skillInstall(identifier, acknowledgeRisk === true, client.status.workingDir);
+  });
+  ipcMain.handle("app:clawhubSkillDetail", (_event, payload: unknown) => {
+    const { apiBase, slug, owner } = (payload ?? {}) as { apiBase?: unknown; slug?: unknown; owner?: unknown };
+    if (typeof apiBase !== "string" || typeof slug !== "string") return { ok: false, error: "apiBase and slug are required" };
+    return clawhubSkillDetail(apiBase, slug, typeof owner === "string" && owner ? owner : null);
+  });
+  // Read-only sqlite over <stateDir>/memory.sqlite; the statement is named, never free SQL.
+  ipcMain.handle("app:memoryQuery", (_event, payload: unknown) => {
+    const { stateDir, name, params } = (payload ?? {}) as { stateDir?: unknown; name?: unknown; params?: unknown };
+    if (typeof stateDir !== "string" || typeof name !== "string") return { ok: false, error: "stateDir and name are required" };
+    return memoryQuery(stateDir, name, Array.isArray(params) ? params : []);
+  });
+
   client.on("status", (status) => send("agent:status", status));
   client.on("chat", (event) => send("agent:chat", event));
   client.on("approval", (event) => send("agent:approval", event));
@@ -523,6 +581,8 @@ async function smokeTest(): Promise<void> {
 
     // --- Item 7 (settings surface): the TUI menu tree, the Manage tabs, Privacy and Tasks ---
     await settingsTest(js, check);
+    // --- Item 7 part B: the Skills, Memory and MCP tabs ---
+    await settingsTestPartB(js, check);
   }
 
   if (MODELS_TEST) await modelsTest(js, check);
@@ -632,7 +692,7 @@ async function settingsTest(
   const errBefore = await js<number>("window.__errCount()");
   let allRender = true;
   const details: string[] = [];
-  const PLACEHOLDER = ["memory", "mcp", "llm", "telegram", "import"]; // skills shows the installed list from `atag skill list` already (read-only until the next step)
+  const PLACEHOLDER = ["llm", "telegram", "import"]; // Item 7 part B: Skills, Memory and MCP are real tabs now (asserted below); the rest still say so
   for (const id of TABS) {
     const r = await js<{ pane: string; on: string; body: string }>(
       `(() => { const pane = window.__settingsOpen(${JSON.stringify(id)});`
@@ -690,11 +750,20 @@ async function settingsTest(
   // (After the count check, so `atag skill list` has answered.) Skills, this step: the installed list as skills-list.tsx draws it — the
   // header row and one row per `atag skill list` line — so the palette's
   // Skills rows and `/skills` land on a real list, not a placeholder.
-  const skl = await js<{ header: boolean; rows: number; cli: number | null }>(
+  // Item 7 part B: the list is the TUI's 14-row window (skills-panel.tsx
+  // maxRows) around the cursor, so the painted rows are min(loaded, 14)
+  // with the `↓ N below` line; the loaded rows are every CLI row.
+  const skl = await js<{ header: boolean; rows: number; loaded: number; cli: number | null; win: { painted: number; visible: number; max: number; above: string; below: string } }>(
     "(() => { window.__settingsOpen('skills'); const body = window.__settingsBody();"
-    + " return {header: body.includes('state     source   version  name'), rows: document.querySelectorAll('#settings .setbody .tuirow').length, cli: window.__skillCount()}; })()",
+    + " return {header: body.includes('state     source   version  name'), rows: document.querySelectorAll('#settings .setbody [data-skill-row]').length, loaded: window.__skillsRows(), cli: window.__skillCount(), win: window.__skillsWindow()}; })()",
   );
-  check("settings: Skills tab lists every `atag skill list` row", skl.header && typeof skl.cli === "number" && skl.rows === skl.cli, JSON.stringify(skl));
+  const sklHidden = typeof skl.cli === "number" ? Math.max(0, skl.cli - skl.win.max) : 0;
+  check(
+    "settings: Skills tab lists every `atag skill list` row",
+    skl.header && typeof skl.cli === "number" && skl.loaded === skl.cli && skl.rows === Math.min(skl.cli, skl.win.max)
+      && skl.win.above === "" && (sklHidden === 0 ? skl.win.below === "" : skl.win.below === `↓ ${sklHidden} below`),
+    JSON.stringify(skl),
+  );
 
   // Tasks tab: what GET /api/tasks holds is what the tab shows.
   await js<void>("window.__settingsOpen('tasks')");
@@ -927,6 +996,230 @@ async function settingsTest(
     if (typeof before === "boolean") await configSet("analytics.enabled", String(before));
     else await configUnset("analytics.enabled");
     await js<void>("window.__ctxRefreshCfg && window.__ctxRefreshCfg()");
+  }
+  await js<void>("window.__settingsClose()");
+}
+
+/**
+ * Item 7 part B: the Skills, Memory and MCP tabs. Skills rows and the
+ * detail body come from `atag skill list` / GET /api/skills/{name} /
+ * `atag skill show`; the toggle round trip goes through `atag skill
+ * disable` and is undone with `atag skill enable` in `finally`; the hub
+ * browses ClawHub through `atag skill browse|search` (network); Memory is
+ * compared against the tab's own named SQL run through app:memoryQuery;
+ * MCP adds and removes a server through the whole-file `mcp.servers`
+ * write and restores the list in `finally`.
+ */
+async function settingsTestPartB(
+  js: <T>(code: string) => Promise<T>,
+  check: (name: string, ok: boolean, detail?: string) => void,
+): Promise<void> {
+  const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+  type SkillsState = {
+    mode: string; busy: boolean; detailName: string | null; detailBody: string | null; msg: string; restart: boolean; lastError: string | null;
+    hubRows: Array<{ identifier: string; source: string }>; hubLoading: boolean; hubError: string | null;
+    hubCard: { identifier: string; name: string; bodyLines: number; bodyError: string | null; installId: string | null } | null; hubCardLoading: boolean;
+  };
+  const skills = () => js<SkillsState>("window.__skillsState()");
+  const until = async <T>(read: () => Promise<T>, ok: (v: T) => boolean, ms: number): Promise<T> => {
+    const deadline = Date.now() + ms;
+    let v = await read();
+    while (!ok(v) && Date.now() < deadline) { await wait(400); v = await read(); }
+    return v;
+  };
+
+  // ---- Skills: rows, copy, detail ----
+  await js<void>("window.__settingsOpen('skills')");
+  const loaded = await until(() => js<number>("window.__skillsRows()"), (n) => n > 0, 15_000);
+  const cli = await js<{ ok: boolean; rows?: Array<{ name: string; enabled: boolean; source: string }>; error?: string }>("window.atomic.skillList()");
+  const cliRows = cli.rows ?? [];
+  check("skills tab: loaded rows equal `atag skill list`", cli.ok && loaded === cliRows.length, `${loaded} vs ${cli.ok ? cliRows.length : cli.error}`);
+  const body = await js<string>("window.__settingsBody()");
+  const copy = ["filter: ", "built-in tools: ", "/tools", " shown · ", " enabled · ", " disabled", "j/k move", "Enter detail", "e toggle", "d remove", "r refresh", "a auto", "f filter", "Skills Hub", "browse & install skills from ClawHub"];
+  const missing = copy.filter((s) => !body.includes(s));
+  check("skills tab: filter bar, hints and the hub CTA carry the TUI copy", missing.length === 0, missing.length ? `missing ${JSON.stringify(missing)}` : "");
+
+  // Enter on the first row: GET /api/skills/{name} body, skills-detail.tsx header + hints.
+  const opened = await until(async () => { await js<void>("window.__skillsAct('detail')"); return skills(); }, (s) => s.mode === "detail", 2_000);
+  const detail = await until(skills, (s) => s.detailBody !== null || s.mode !== "detail", 20_000);
+  const detailBody = await js<string>("window.__settingsBody()");
+  const detailOk = opened.mode === "detail" && typeof detail.detailBody === "string" && detail.detailBody.length > 0 && !!detail.detailName
+    && detailBody.includes(detail.detailName) && detailBody.includes("Esc back") && detailBody.includes("e toggle") && detailBody.includes("r refresh");
+  check("skills tab: Enter opens the detail from GET /api/skills/{name}", detailOk, `${detail.detailName ?? "?"} body=${detail.detailBody ? detail.detailBody.length : "null"} mode=${detail.mode}`);
+  const enabledBody = detail.detailBody ?? "";
+  await js<void>("window.__skillsAct('back')");
+
+  // ---- Skills: e toggle → `atag skill disable`, detail via `atag skill show`, restored with `atag skill enable` ----
+  // Any enabled skill: the toggle is a `skills.disabled` write, whatever the source (with the workspace at $HOME the
+  // operator's ~/.atomic-agent/skills doubles as the project dir, so the CLI reports these rows as [project]).
+  const target = cliRows.filter((r) => r.enabled).map((r) => r.name).sort()[0] ?? "";
+  if (target) {
+    try {
+      const toggled = await until(async () => {
+        if ((await skills()).busy) return skills();
+        return js<SkillsState>(`window.__skillsAct(${JSON.stringify("toggle:" + target)})`);
+      }, (s) => s.msg === `skill disabled: ${target}` || !!s.lastError, 30_000);
+      const settled = await until(skills, (s) => !s.busy, 30_000);
+      const listed = await js<{ ok: boolean; rows?: Array<{ name: string; enabled: boolean }> }>("window.atomic.skillList()");
+      const row = (listed.rows ?? []).find((r) => r.name === target);
+      check(
+        "skills tab: e toggle goes through atag skill disable and offers the restart",
+        toggled.msg === `skill disabled: ${target}` && toggled.restart && !!row && row.enabled === false && !settled.lastError,
+        `msg=${JSON.stringify(toggled.msg)} listed=${row ? String(row.enabled) : "missing"} err=${settled.lastError ?? ""}`,
+      );
+      // A disabled skill is outside the registry's filtered view (404) — the body comes from `atag skill show`.
+      const viaShow = await until(async () => {
+        const s = await skills();
+        if (s.mode !== "detail") await js<void>(`window.__skillsAct(${JSON.stringify("detail:" + target)})`);
+        return skills();
+      }, (s) => s.mode === "detail" && s.detailBody !== null, 20_000);
+      const shownBody = viaShow.detailBody ?? "";
+      const sameAsRoute = target === detail.detailName ? shownBody === enabledBody : shownBody.length > 0;
+      check("skills tab: a disabled skill's detail falls back to atag skill show", viaShow.detailName === target && shownBody.length > 0 && !shownBody.startsWith("---") && sameAsRoute, `${shownBody.length} chars${target === detail.detailName ? (sameAsRoute ? ", same body as the route" : ", differs from the route body") : ""}`);
+    } finally {
+      await skillSetDisabled(target, false);
+      await js<void>("window.__skillsAct('back'); window.__skillsAct('refresh')");
+      await until(() => js<{ ok: boolean; rows?: Array<{ name: string; enabled: boolean }> }>("window.atomic.skillList()"), (r) => !!(r.rows ?? []).find((x) => x.name === target && x.enabled), 15_000);
+    }
+  } else {
+    check("skills tab: e toggle goes through atag skill disable and offers the restart", false, "no enabled skill to toggle");
+  }
+
+  // ---- Skills Hub: `atag skill browse` / `skill search`, the ClawHub card ----
+  await js<void>("window.__skillsAct('hub')");
+  const hub = await until(skills, (s) => s.mode === "hub" && !s.hubLoading, 120_000);
+  const hubBody = await js<string>("window.__settingsBody()");
+  check("skills hub: `atag skill browse` rows", hub.hubRows.length > 0 && hubBody.includes("hub search: (all)") && hubBody.includes("Enter open card"), `${hub.hubRows.length} rows${hub.hubError ? " hubError=" + hub.hubError : ""}`);
+  await js<void>("window.__skillsAct('search:pdf')");
+  const found = await until(skills, (s) => !s.hubLoading, 120_000);
+  const first = found.hubRows[0];
+  check("skills hub: `/` search runs `atag skill search` and lists owner-qualified rows", found.hubRows.length > 0 && !!first && first.source === "clawhub" && first.identifier.startsWith("@"), `${found.hubRows.length} rows, first=${first ? first.identifier : "none"}${found.hubError ? " hubError=" + found.hubError : ""}`);
+  if (first) {
+    // ClawHub's search can list an owner its detail endpoint does not resolve (seen: search says @anthropics/pdf, the
+    // detail answers 404) — the TUI then shows the client's own `not found: <url>`. Walk the first rows until one
+    // resolves, so the detail path is proven, and require the client's own texts on the ones that do not.
+    const clientTexts = (e: string | null) => !!e && (e.startsWith("not found: ") || e.startsWith("ambiguous skill slug") || e === "no SKILL.md published for this skill" || e.startsWith("ClawHub rate limit") || e.startsWith("network error fetching"));
+    const outcomes: string[] = [];
+    let resolved: SkillsState["hubCard"] = null;
+    let chromeOk = true;
+    for (let i = 0; i < Math.min(5, found.hubRows.length) && !resolved; i++) {
+      await js<void>(`window.__skillsAct(${JSON.stringify("card:" + i)})`);
+      const card = await until(skills, (s) => !!s.hubCard && !s.hubCardLoading, 40_000);
+      const cardBody = await js<string>("window.__settingsBody()");
+      const c = card.hubCard;
+      chromeOk = chromeOk && !!c && c.identifier === found.hubRows[i]!.identifier && !!c.installId
+        && cardBody.includes("[claw] ") && cardBody.includes("owner ") && cardBody.includes("[i] install") && cardBody.includes("[n] cancel");
+      outcomes.push(c ? `${c.identifier}: ${c.bodyLines > 0 ? c.bodyLines + " lines" : c.bodyError ?? "no body"}` : "no card");
+      if (c && c.bodyLines > 0) resolved = c;
+      else if (!c || !clientTexts(c.bodyError)) chromeOk = false;
+      await js<void>("window.__skillsAct('back')");
+    }
+    check("skills hub: the card body comes from ClawHub's detail endpoint", !!resolved && chromeOk, outcomes.join("; "));
+  }
+  const backToList = await until(async () => { await js<void>("window.__skillsAct('back')"); return skills(); }, (s) => s.mode === "list", 3_000);
+  check("skills hub: Esc returns to the list", backToList.mode === "list", `mode=${backToList.mode}`);
+
+  // ---- Memory: channels from config, rows from the tab's own SQL ----
+  await js<void>("window.__settingsOpen('memory')");
+  type MemState = { channel: string; channels: string[]; rows: number; mode: string; hint: string | null; error: string | null; refreshed: number | null; detail: { channel: string; id?: number; body: string; expanded: number[] | null } | null };
+  const memory = () => js<MemState>("window.__memory()");
+  const mem = await until(memory, (m) => m.refreshed !== null || !!m.error, 20_000);
+  const memCfg = await configGetKey("memory");
+  const mc = (memCfg.ok && memCfg.value && typeof memCfg.value === "object" ? memCfg.value : {}) as Record<string, { enabled?: boolean }>;
+  const expectedChannels = ["profile", "notes", ...(mc.lessons?.enabled ? ["lessons"] : []), ...(mc.procedures?.enabled ? ["procedures"] : []), ...(mc.links?.enabled ? ["links"] : []), ...(mc.voting?.enabled ? ["votes"] : [])];
+  const memChannelsOk = await until(memory, (m) => same(m.channels, expectedChannels), 10_000);
+  check("memory tab: channels follow memory.*.enabled as resolveAvailableChannels does", same(memChannelsOk.channels, expectedChannels), `${JSON.stringify(memChannelsOk.channels)} vs ${JSON.stringify(expectedChannels)}`);
+  const profileSql = await js<{ ok: boolean; rows?: unknown[]; via?: string; error?: string }>("window.__memQuery('profile.list', [])");
+  const memBody = await js<string>("window.__settingsBody()");
+  check(
+    "memory tab: profile rows equal the tab's own SQL over memory.sqlite",
+    mem.channel === "profile" && profileSql.ok && mem.rows === (profileSql.rows ?? []).length && !mem.error && memBody.includes("[1:profile]") && (mem.rows === 0 || memBody.includes("primary                    secondary / meta")),
+    `${mem.rows} rows vs sql ${profileSql.ok ? (profileSql.rows ?? []).length + " (" + profileSql.via + ")" : profileSql.error}${mem.error ? " err=" + mem.error : ""}`,
+  );
+  const notes = await js<MemState>("window.__memoryOpen('notes')");
+  const notesSql = await js<{ ok: boolean; rows?: unknown[]; error?: string }>(`window.__memQuery('notes.listActive', [200])`);
+  const notesBody = await js<string>("window.__settingsBody()");
+  check("memory tab: notes rows equal notes.listActive and the bar says notes: active", notes.channel === "notes" && notesSql.ok && notes.rows === (notesSql.rows ?? []).length && notesBody.includes("[2:notes]") && notesBody.includes("notes: active"), `${notes.rows} vs ${notesSql.ok ? (notesSql.rows ?? []).length : notesSql.error}`);
+  if (notes.rows > 0) {
+    const d = await js<MemState>("window.__memoryDetail(0)");
+    const dBody = await js<string>("window.__settingsBody()");
+    check("memory tab: a note's detail is memory-detail-text.ts's body", d.mode === "detail" && !!d.detail && d.detail.channel === "notes" && d.detail.body.startsWith("#") && d.detail.body.includes("--- links ---") && dBody.includes(`note #${d.detail.id}`) && dBody.includes("g expand graph"), d.detail ? `note #${d.detail.id}` : `mode=${d.mode} err=${d.error ?? ""}`);
+    const g = await js<MemState>("window.__memoryExpand()");
+    check("memory tab: g expand graph runs the link-store walk", !!g.detail && Array.isArray(g.detail.expanded) && !g.error, g.detail ? `${(g.detail.expanded ?? []).length} expanded` : `err=${g.error ?? ""}`);
+    await js<void>("window.__memoryAct('back')");
+  }
+  if (expectedChannels.includes("votes")) {
+    const votes = await js<MemState>("window.__memoryOpen('votes')");
+    const votesSql = await js<{ ok: boolean; rows?: unknown[]; error?: string }>("window.__memQuery('votes.listEvents', [100])");
+    check("memory tab: vote events equal votes.listEvents", votes.channel === "votes" && votesSql.ok && votes.rows === (votesSql.rows ?? []).length, `${votes.rows} vs ${votesSql.ok ? (votesSql.rows ?? []).length : votesSql.error}`);
+  }
+  await js<void>("window.__memoryOpen('profile')");
+
+  // ---- MCP: config rows, honest state cell, add/remove through the whole-file write ----
+  type McpState = { mode: string; rows: number; servers: string[]; detailTab: string; addModal: { error: string | null } | null; removeConfirm: unknown; msg: string; lastError: string | null; refreshed: number | null };
+  const mcp = () => js<McpState>("window.__mcp()");
+  const beforeServers = ((await configGet()).config as { mcp?: { servers?: unknown[] } } | undefined)?.mcp?.servers;
+  await js<void>("window.__settingsOpen('mcp')");
+  const m0 = await until(mcp, (m) => m.refreshed !== null, 20_000);
+  const mcpBody = await js<string>("window.__settingsBody()");
+  const mcpEmpty = !Array.isArray(beforeServers) || beforeServers.length === 0;
+  check(
+    "mcp tab: rows come from mcp.servers, the empty copy is the TUI's",
+    m0.rows === (Array.isArray(beforeServers) ? beforeServers.length : 0) && mcpBody.includes(`${m0.rows} servers`) && mcpBody.includes("n add") && mcpBody.includes("d remove")
+      && (!mcpEmpty || (mcpBody.includes("no MCP servers configured — add entries under `mcp.servers[]` in config.json") && mcpBody.includes("(no servers)"))),
+    `${m0.rows} rows, config holds ${Array.isArray(beforeServers) ? beforeServers.length : "unset"}`,
+  );
+  const parsed = await js<Array<{ ok: boolean; server?: { name: string; transport?: { kind: string; command?: string; url?: string } }; error?: string }>>(
+    "[window.__mcpParse('{\"name\":\"a\",\"transport\":{\"kind\":\"sse\",\"url\":\"http://x/mcp\"}}'),"
+    + " window.__mcpParse('{\"mcpServers\":{\"b\":{\"command\":\"npx\",\"args\":[\"-y\",\"pkg\"]}}}'),"
+    + " window.__mcpParse('{\"name\":\"c\",\"url\":\"https://x/mcp\"}'),"
+    + " window.__mcpParse('{\"mcpServers\":{\"d\":{},\"e\":{}}}')]",
+  );
+  const p = parsed;
+  check(
+    "mcp tab: the add modal accepts the three JSON shapes persist-mcp-server.ts accepts",
+    p.length === 4 && p[0]!.ok && p[0]!.server?.transport?.kind === "sse" && p[1]!.ok && p[1]!.server?.name === "b" && p[1]!.server?.transport?.kind === "stdio" && p[1]!.server?.transport?.command === "npx"
+      && p[2]!.ok && p[2]!.server?.transport?.kind === "streamable_http" && !p[3]!.ok && /exactly one server/.test(p[3]!.error ?? ""),
+    JSON.stringify(p.map((x) => (x.ok ? x.server?.transport?.kind : x.error))),
+  );
+  const fixture = "desktop-smoke";
+  try {
+    const added = await js<{ ok: boolean; error?: string; state: McpState }>(
+      `window.__mcpAddSubmit(${JSON.stringify(JSON.stringify({ mcpServers: { [fixture]: { command: "echo", args: ["hi"], description: "desktop smoke fixture" } } }))})`,
+    );
+    const onDisk = ((await configGet()).config as { mcp?: { servers?: Array<{ name: string }> } } | undefined)?.mcp?.servers ?? [];
+    const addBody = await js<string>("window.__settingsBody()");
+    check(
+      "mcp tab: n add writes mcp.servers through the whole-file config set",
+      added.ok && onDisk.some((s) => s.name === fixture) && added.state.rows === m0.rows + 1 && added.state.msg.includes(`added "${fixture}"`) && added.state.addModal === null
+        && addBody.includes(fixture) && addBody.includes("[—]") && addBody.includes("state not exposed — no MCP status route in this agent") && addBody.includes("0 tools · — res · — prompts") && addBody.includes("desktop smoke fixture"),
+      added.ok ? `rows=${added.state.rows} msg=${JSON.stringify(added.state.msg)}` : `error=${added.error ?? "?"}`,
+    );
+    const dup = await js<{ ok: boolean; error?: string }>(`window.__mcpAddSubmit(${JSON.stringify(JSON.stringify({ name: fixture, command: "echo" }))})`);
+    check("mcp tab: a duplicate name is refused before the write", !dup.ok && /already exists in config.mcp.servers/.test(dup.error ?? ""), dup.error ?? "accepted");
+    await js<void>("window.__mcpAct('addCancel')");
+    const det = await js<McpState>(`window.__mcpAct(${JSON.stringify("detail:" + fixture)})`);
+    const detBody = await js<string>("window.__settingsBody()");
+    const res = await js<McpState>("window.__mcpAct('dtab:resources')");
+    const resBody = await js<string>("window.__settingsBody()");
+    check(
+      "mcp tab: the detail shows the transport and says resources/prompts are not exposed",
+      det.mode === "detail" && detBody.includes("stdio: echo hi") && detBody.includes("trust: approval_gated") && detBody.includes("[1:tools(0)]") && detBody.includes("2:resources(—)") && detBody.includes("3:prompts(—)") && detBody.includes("(empty)")
+        && res.detailTab === "resources" && resBody.includes("[2:resources(—)]") && resBody.includes("not exposed by the agent's HTTP API"),
+      `mode=${det.mode} tab=${res.detailTab}`,
+    );
+    const removed = await js<McpState>(`window.__mcpRemove(${JSON.stringify(fixture)})`);
+    const afterDisk = ((await configGet()).config as { mcp?: { servers?: Array<{ name: string }> } } | undefined)?.mcp?.servers ?? [];
+    check(
+      "mcp tab: d remove rewrites mcp.servers without the server",
+      !afterDisk.some((s) => s.name === fixture) && removed.rows === m0.rows && removed.mode === "list" && removed.removeConfirm === null && removed.msg.includes(`removed "${fixture}"`),
+      `rows=${removed.rows} msg=${JSON.stringify(removed.msg)}${removed.lastError ? " err=" + removed.lastError : ""}`,
+    );
+  } finally {
+    // The fixture must never outlive the smoke: put the list back exactly as it was (unset reads as [] — the schema default).
+    await configSetPath("mcp.servers", Array.isArray(beforeServers) ? beforeServers : []);
+    await js<void>("window.__mcpRefresh && window.__mcpRefresh()");
   }
   await js<void>("window.__settingsClose()");
 }

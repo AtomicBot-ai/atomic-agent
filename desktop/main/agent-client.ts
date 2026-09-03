@@ -309,6 +309,12 @@ export class AgentClient extends EventEmitter {
   runTask = (id: string) =>
     this.request<unknown>("POST", `/api/tasks/${encodeURIComponent(id)}/run`, undefined, 180_000);
   health = () => this.json<unknown>("/health");
+  // Item 7 part B (Skills tab): GET /api/skills/{name} (manifest + SKILL.md
+  // body; 404 for a disabled skill — the registry's filtered view) and
+  // POST /api/skills/uninstall, which also runs runtime.refreshSkills().
+  skill = (name: string) => this.json<unknown>(`/api/skills/${encodeURIComponent(name)}`);
+  uninstallSkill = (name: string, source: "global" | "project" = "global") =>
+    this.request<unknown>("POST", "/api/skills/uninstall", { name, source });
 
   /**
    * The composer's coding mode, applied live on the runtime by

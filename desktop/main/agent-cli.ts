@@ -484,3 +484,178 @@ export async function skillList(cwd?: string): Promise<{ ok: boolean; rows?: Ski
   }
   return { ok: true, rows };
 }
+
+/* ---------------- Item 7 part B (Skills / Memory / MCP tabs): config paths + skill CLI ---------------- */
+
+const UNSAFE_PATH_SEGMENTS = new Set(["__proto__", "constructor", "prototype"]);
+
+/** src/config/config-paths.ts isSafeConfigPath, verbatim. */
+function isSafeConfigPath(key: string): boolean {
+  return key.split(".").every((s) => !UNSAFE_PATH_SEGMENTS.has(s));
+}
+
+/**
+ * src/config/config-paths.ts writeConfigPath, verbatim: set `value` at a
+ * dotted path in a raw config tree, creating intermediate objects, and
+ * refuse `__proto__` / `constructor` / `prototype` segments.
+ */
+function writeConfigPath(tree: Record<string, unknown>, key: string, value: unknown): void {
+  if (!isSafeConfigPath(key)) throw new Error(`config: refusing to write unsafe path ${key}`);
+  const segments = key.split(".");
+  let node = tree;
+  for (const segment of segments.slice(0, -1)) {
+    const child = node[segment];
+    if (child === null || typeof child !== "object" || Array.isArray(child) || !Object.hasOwn(node, segment)) {
+      node[segment] = {};
+    }
+    node = node[segment] as Record<string, unknown>;
+  }
+  node[segments[segments.length - 1]!] = value;
+}
+
+/**
+ * Whole-file write of one dotted key. For the keys the CLI's leaf table
+ * does not carry — every `llm.*` key and the list-valued `mcp.servers` on
+ * 0.5.4 — the only spelling is `atag config set '<whole json>'`: read the
+ * user file, set the path, write it back. The CLI validates the file
+ * before writing, so a bad entry comes back as its error text. Read
+ * immediately before the write; never from a cached copy.
+ */
+export async function configSetPath(key: string, value: unknown): Promise<CliResult> {
+  if (!/^[a-zA-Z][\w.]{0,80}$/.test(key) || !isSafeConfigPath(key)) {
+    return { ok: false, stdout: "", stderr: "", error: `refusing to write a suspicious key: ${key}` };
+  }
+  const current = await configGet();
+  if (!current.ok || !current.config || typeof current.config !== "object") {
+    return { ok: false, stdout: "", stderr: "", error: current.error ?? "could not read the config" };
+  }
+  const tree = current.config as Record<string, unknown>;
+  try {
+    writeConfigPath(tree, key, value);
+  } catch (err) {
+    return { ok: false, stdout: "", stderr: "", error: err instanceof Error ? err.message : String(err) };
+  }
+  return configSetWhole(tree);
+}
+
+const SKILL_NAME_RE = /^[\w.-]{1,64}$/;
+
+/**
+ * `atag skill show <name>`: the CLI prints `# path: …`, `# source: …`, a
+ * blank line, then the whole SKILL.md. The Skills detail for a DISABLED
+ * skill comes from here (GET /api/skills/{name} is the registry's
+ * filtered view and answers 404). The two header lines are stripped and
+ * the frontmatter is cut exactly as parseSkillFile does, so the body
+ * matches what the route returns for an enabled skill.
+ */
+export async function skillShow(
+  name: string,
+  cwd?: string,
+): Promise<{ ok: boolean; body?: string; path?: string; source?: string; error?: string }> {
+  if (!SKILL_NAME_RE.test(name)) return { ok: false, error: `not a skill name: ${name}` };
+  const res = await cli(["skill", "show", name], 30_000, cwd);
+  if (!res.ok) return { ok: false, error: res.error };
+  const lines = res.stdout.replace(/\r\n/g, "\n").split("\n");
+  let path = "";
+  let source = "";
+  let i = 0;
+  for (; i < lines.length && i < 2; i++) {
+    const line = lines[i] ?? "";
+    if (line.startsWith("# path: ")) path = line.slice("# path: ".length);
+    else if (line.startsWith("# source: ")) source = line.slice("# source: ".length);
+    else break;
+  }
+  let content = lines.slice(i).join("\n").replace(/^\n+/, "");
+  // parseSkillFile: `---\n` … `\n---`, then the body with leading newlines dropped.
+  if (content.startsWith("---\n")) {
+    const closing = content.indexOf("\n---", 4);
+    if (closing !== -1) content = content.slice(closing + "\n---".length).replace(/^\n+/, "");
+  }
+  return { ok: true, body: content, path, source };
+}
+
+/**
+ * `atag skill disable|enable <name>` — the TUI's toggle writes
+ * `skills.disabled` in config.json the same way (skills-orchestrator.ts
+ * setSkillDisabled). The running `atag serve` keeps its boot-time
+ * registry; the tab says so and offers a restart.
+ */
+export async function skillSetDisabled(name: string, disabled: boolean): Promise<CliResult> {
+  if (!SKILL_NAME_RE.test(name)) {
+    return { ok: false, stdout: "", stderr: "", error: `not a skill name: ${name}` };
+  }
+  return cli(["skill", disabled ? "disable" : "enable", name], 30_000);
+}
+
+export interface HubSkillRow {
+  identifier: string;
+  source: "clawhub" | "github";
+  downloads: number | null;
+  description: string;
+}
+
+/**
+ * `atag skill browse` / `atag skill search <q>`: one row per hub entry,
+ * `[claw]|[gh]\t<identifier>\t↓N|-\t<description>` (src/cli/skill.ts
+ * printHubEntries), "(no skills found)" when empty; every `WARN: <repo>:
+ * <err>` on stderr becomes the TUI's hubError note. A browse whose every
+ * source failed exits 1 with nothing found — reported, not swallowed.
+ */
+export async function skillBrowse(
+  query: string,
+  cwd?: string,
+): Promise<{ ok: boolean; rows?: HubSkillRow[]; hubError?: string | null; error?: string }> {
+  const q = query.trim();
+  const res = await cli(q ? ["skill", "search", q] : ["skill", "browse"], 120_000, cwd);
+  const warnings = res.stderr
+    .split("\n")
+    .filter((l) => l.startsWith("WARN: "))
+    .map((l) => l.slice("WARN: ".length).trim());
+  if (!res.ok && !res.stdout.trim()) {
+    return { ok: false, error: warnings.length ? warnings.join("; ") : res.error };
+  }
+  const rows: HubSkillRow[] = [];
+  for (const line of res.stdout.split("\n")) {
+    if (!line.trim() || line.startsWith("(no skills found)")) continue;
+    const cells = line.split("\t");
+    if (cells.length < 3 || (cells[0] !== "[claw]" && cells[0] !== "[gh]")) {
+      // A description is printed raw, newlines included (ClawHub summaries carry them): the line continues the previous row.
+      const prev = rows[rows.length - 1];
+      if (prev && cells.length === 1) { prev.description += "\n" + line; continue; }
+      return { ok: false, error: `could not parse skill browse line: ${line.slice(0, 120)}` };
+    }
+    const dl = cells[2] ?? "-";
+    rows.push({
+      identifier: cells[1]!,
+      source: cells[0] === "[claw]" ? "clawhub" : "github",
+      downloads: dl.startsWith("↓") && /^\d+$/.test(dl.slice(1)) ? Number(dl.slice(1)) : null,
+      description: cells.slice(3).join("\t"),
+    });
+  }
+  return { ok: true, rows, hubError: warnings.length ? warnings.join("; ") : null };
+}
+
+/**
+ * `atag skill install <identifier> [--acknowledge-risk]`. A `dangerous`
+ * scan verdict makes the CLI exit non-zero with
+ * `install blocked: <id> flagged dangerous by the security scan (use
+ * --acknowledge-risk to override)` (src/skills/hub/install-from-hub.ts);
+ * that comes back as `blocked` so the tab shows the TUI's confirm with
+ * the CLI's line as its one finding. Success is the CLI's own
+ * `installed <name> (v…) from <id> — <scan summary>` line.
+ */
+export async function skillInstall(
+  identifier: string,
+  acknowledgeRisk: boolean,
+  cwd?: string,
+): Promise<{ ok: boolean; line?: string; blocked?: boolean; message?: string; error?: string }> {
+  const id = identifier.trim();
+  if (!/^@?[\w.-]+(?:\/[\w.-]+){1,4}$/.test(id)) return { ok: false, error: `not a hub identifier: ${identifier}` };
+  const args = ["skill", "install", id];
+  if (acknowledgeRisk) args.push("--acknowledge-risk");
+  const res = await cli(args, 180_000, cwd);
+  if (res.ok) return { ok: true, line: res.stdout.trim().split("\n").pop() ?? "" };
+  const message = (res.stderr.trim() || res.error || "install failed").split("\n").pop() ?? "";
+  if (/flagged dangerous by the security scan/.test(res.stderr)) return { ok: false, blocked: true, message };
+  return { ok: false, error: message };
+}

@@ -611,3 +611,20 @@ button.menurow:hover{background:var(--bg-hover)}
 /* Item 7 (settings surface): the TUI's `↑ N above` / `↓ N below` window lines, clickable here. */
 .tuimore{display:block;color:var(--text-tertiary);font-family:inherit;font-size:inherit;padding:0 4px;height:22px;line-height:22px;text-align:left;border-radius:4px;white-space:pre}
 .tuimore:hover{background:var(--bg-hover);color:var(--text-primary)}
+/* ---------------- Item 7 part B: the Skills, Memory and MCP tabs ---------------- */
+.tuirow.dim{color:var(--text-tertiary)}
+.tuirow2{height:auto;line-height:20px;padding:2px 4px;white-space:pre}
+.tuirow2 > span{display:block;white-space:pre;overflow:hidden;text-overflow:ellipsis}
+.tuibody{white-space:pre-wrap;word-break:break-word;color:var(--text-primary)}
+.tuibody > div{min-height:20px}
+.skpf,.memch{color:var(--text-secondary);font-family:inherit;font-size:inherit;padding:0 2px;border-radius:4px;height:22px;white-space:pre}
+.skpf:hover,.memch:hover{background:var(--bg-hover);color:var(--text-primary)}
+.skpf.on,.memch.on{color:var(--accent-text);font-weight:600}
+.skpaccent{color:var(--accent-text)}
+.skphub{display:block;width:100%;text-align:left;font-family:inherit;font-size:inherit;color:var(--text-primary);cursor:pointer}
+.skphub:hover{background:var(--bg-hover)}
+.tuimodal.danger{border-color:var(--danger)}
+#skp-hubq{background:transparent;border:0;border-bottom:1px solid var(--line-soft);outline:none;font:inherit;color:var(--accent-text);width:220px}
+.tuiarea{display:block;width:100%;box-sizing:border-box;margin-top:8px;background:var(--bg-sunken);border:1px solid var(--line);border-radius:6px;padding:6px 8px;font:inherit;color:var(--text-primary);resize:vertical;outline:none;white-space:pre}
+.tuiarea:focus{border-color:var(--accent)}
+.tuiarea::placeholder{color:var(--text-tertiary)}
