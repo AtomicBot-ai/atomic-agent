@@ -176,6 +176,52 @@ describe("resolving the model's context window", () => {
     expect(view?.contextWindow).toBe(32_768);
   });
 
+  /**
+   * Issue #112. The poller's window is a llama-server `n_ctx`, and after
+   * a local→cloud switch the last local reading is still sitting in
+   * `llmHealth`: `agent-event-reducer` deliberately PRESERVES
+   * `contextWindow` when an `llm_model_updated` omits it (which is
+   * exactly the shape `notifyCatalogModel` emits), so the stale value is
+   * reachable by design, not only by a lost race.
+   *
+   * Without the `localActive &&` guard in `resolveWindow` this returns
+   * 4096 — a local server's slot size drawn as a cloud model's context
+   * gauge. The row's model is deliberately uncatalogued so the guard is
+   * the ONLY thing standing between the poller's number and the result.
+   */
+  it("ignores the local poller's n_ctx while a cloud provider is the active route", () => {
+    const base = createInitialTuiState(fakeSession());
+    const cloudRow = providerRow({
+      kind: "openai-compatible",
+      chatModel: "vendor/never-heard-of-it",
+    });
+    const view = selectContextUsage({
+      ...base,
+      contextUsage: usage({ contextWindow: null }),
+      llmHealth: { ...base.llmHealth, contextWindow: 4096 },
+      providersPanel: { ...base.providersPanel, rows: [cloudRow] },
+    });
+    expect(view?.contextWindow).toBeNull();
+    expect(view?.percent).toBeNull();
+  });
+
+  it("still uses the poller's n_ctx when the active row IS the local backend", () => {
+    // The control: the guard must not cost the local route its window.
+    const base = createInitialTuiState(fakeSession());
+    const localRow = providerRow({
+      id: "local-llama",
+      kind: "llama-server",
+      chatModel: null,
+    });
+    const view = selectContextUsage({
+      ...base,
+      contextUsage: usage({ contextWindow: null }),
+      llmHealth: { ...base.llmHealth, contextWindow: 4096 },
+      providersPanel: { ...base.providersPanel, rows: [localRow] },
+    });
+    expect(view?.contextWindow).toBe(4096);
+  });
+
   it("falls back to the active provider's catalogue on a cloud turn", () => {
     const view = selectContextUsage(withRow(usage(), providerRow()));
     // `openai/gpt-5.5-2026-04-23`, from the bundled aimlapi catalogue.
