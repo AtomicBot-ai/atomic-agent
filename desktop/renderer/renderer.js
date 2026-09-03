@@ -2170,16 +2170,7 @@ function applyStatus(st) {
 
 async function loadResources() {
   if (!BR) return;
-  BR.codingMode().then((res) => {
-    if (!res) return;
-    MODE.supported = res.supported;
-    if (res.ok) { MODE.current = res.mode; MODE.approvalLevel = res.approvalLevel; MODE.baseLevel = res.baseLevel; }
-    render();
-    // The stance is process state in the agent, and the desktop restarts
-    // the agent on a backend switch — so re-assert what this window last
-    // chose rather than showing the boot stance as if it were the choice.
-    if (res.ok && LAST_MODE && res.mode !== LAST_MODE) reassertCodingMode(LAST_MODE);
-  });
+  loadCodingMode();
   const [caps, cfg, skills, tasks, sessions] = await Promise.all([
     BR.capabilities(), BR.config(), BR.skills(), BR.tasks(), BR.sessions(),
   ]);
@@ -3697,6 +3688,36 @@ function cancelModeReassert() {
   if (!MODE_REASSERT) return;
   clearInterval(MODE_REASSERT.timer);
   MODE_REASSERT = null;
+}
+
+/*
+ * The connect-time read of the stance, lifted out of loadResources so the
+ * race below can be driven in a test.
+ *
+ * Review fix: this GET takes a seq ticket exactly as the two POST writers
+ * do. Without one a reconnect could silently undo a click. The operator
+ * presses `plan` while this GET is in flight; the GET's stale reply lands
+ * first, repaints the chip to the pre-click stance, sees
+ * `res.mode !== LAST_MODE` and re-asserts the OLD mode — which bumps
+ * MODE.seq, so the click's own reply is dropped by its own guard and a
+ * second POST puts the agent back where it was. The ticket makes the
+ * click win: it bumps seq past this one, and the stale reply is discarded
+ * whole, re-assert included.
+ */
+function loadCodingMode() {
+  if (!BR) return Promise.resolve();
+  const seq = ++MODE.seq;
+  return BR.codingMode().then((res) => {
+    if (!res) return;
+    if (seq !== MODE.seq) return;
+    MODE.supported = res.supported;
+    if (res.ok) { MODE.current = res.mode; MODE.approvalLevel = res.approvalLevel; MODE.baseLevel = res.baseLevel; }
+    render();
+    // The stance is process state in the agent, and the desktop restarts
+    // the agent on a backend switch — so re-assert what this window last
+    // chose rather than showing the boot stance as if it were the choice.
+    if (res.ok && LAST_MODE && res.mode !== LAST_MODE) reassertCodingMode(LAST_MODE);
+  });
 }
 
 function reassertCodingMode(id) {
@@ -8123,4 +8144,19 @@ if (typeof window !== 'undefined') {
   /* The click path itself, so the cancel-a-queued-re-assert branch can be
      exercised the way an operator reaches it. */
   window.__modeSet = (id) => setCodingMode(id);
+}
+
+/* ============================================================
+   Smoke hooks — coding mode, the reconnect GET's seq ticket
+   ============================================================ */
+if (typeof window !== 'undefined') {
+  /* loadResources' connect-time GET, on its own. The race it guards
+     against needs the GET issued and a click landing before its reply, so
+     the smoke has to be able to fire the GET without reconnecting the
+     whole window. Returns the promise so the test can await both legs. */
+  window.__modeLoad = () => loadCodingMode();
+  /* What the window last chose, which is what the reconnect re-asserts.
+     The bug this guards is precisely a re-assert of a stale LAST_MODE
+     overwriting a fresher click. */
+  window.__modeLast = () => LAST_MODE;
 }

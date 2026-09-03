@@ -98,6 +98,46 @@ describe("GET/POST /api/coding-mode", () => {
     }
   });
 
+  it("drops the remembered stance when the configured base moves under it", async () => {
+    // `snapshot` recomputes baseLevel from the config on every read, so a
+    // stance remembered against the old base would be reported against a
+    // base that no longer resolves to it. Held against base 5, `default`
+    // means level 5; re-read against base 1 it would claim mode `default`
+    // / baseLevel 1 / approvalLevel 5, which resolveCodingMode never
+    // produces. The stance is dropped and the seed answers instead.
+    harness = await startTestHarness({ approvalLevel: 5 });
+    const configFile = join(harness.stateDir, "config.json");
+    const writeBase = (approvalLevel: number) => {
+      writeFileSync(
+        configFile,
+        JSON.stringify(
+          { ...USER_CONFIG_DEFAULTS, agent: { ...USER_CONFIG_DEFAULTS.agent, approvalLevel } },
+          null,
+          2,
+        ),
+        "utf8",
+      );
+      resetConfigCache();
+    };
+
+    writeBase(5);
+    const posted = await setMode(harness.baseUrl, "default");
+    expect(posted.json.mode).toBe("default");
+    expect(posted.json.baseLevel).toBe(5);
+    expect(posted.json.approvalLevel).toBe(5);
+
+    writeBase(1);
+    const after = await getMode(harness.baseUrl);
+    expect(after.json.baseLevel).toBe(1);
+    // The live ladder is still at 5 — nothing moved it — so the seed says
+    // `bypass`, and resolveCodingMode("bypass", 1) really is level 5 with
+    // plan off. Reply and base agree again.
+    expect(after.json.mode).toBe("bypass");
+    const consistent = resolveCodingMode(after.json.mode, after.json.baseLevel);
+    expect(after.json.approvalLevel).toBe(consistent.approvalLevel);
+    expect(after.json.planMode).toBe(consistent.planMode);
+  });
+
   it("rejects an unknown mode with 400 and changes nothing", async () => {
     harness = await startTestHarness({ approvalLevel: 1 });
     const before = harness.runtime.getApprovalLevel();

@@ -49,7 +49,11 @@ describe("POST /api/context-preview", () => {
     // Not zero: an empty transcript still renders the conversation
     // section's "(no messages yet)" placeholder, so the section has a
     // small floor. The TUI's own panel shows the same figure on a fresh
-    // thread. What must be zero is the pair count.
+    // thread. The floor is the placeholder and nothing else, so it stays
+    // tiny — a fresh thread carrying real transcript tokens would break
+    // the upper bound. What must be exactly zero is the pair count.
+    expect(json.usage.conversationTokens).toBeGreaterThan(0);
+    expect(json.usage.conversationTokens).toBeLessThan(20);
     expect(json.usage.conversationPairs).toBe(0);
     expect(json.pairsCap).toBe(harness.runtime.config.agent.conversationMaxPairs);
     expect(json.usage.conversationPairsCap).toBe(json.pairsCap);

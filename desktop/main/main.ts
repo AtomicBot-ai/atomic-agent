@@ -1154,6 +1154,35 @@ async function smokeTest(): Promise<void> {
       );
     }
 
+    // Review fix: the connect-time GET needed a seq ticket of its own.
+    // Staged exactly as the failure runs — the window last chose `auto`,
+    // the agent is moved to `default` behind its back (what an agent
+    // restart does), then the reconnect's GET and an operator click race.
+    // Unguarded, the GET's stale reply repainted the chip and re-asserted
+    // `auto`, which outranked the click and silently threw the choice
+    // away. `plan` must survive, in the window AND on the agent.
+    if (modeSeed.supported) {
+      try {
+        await js<void>("window.__modeSet('auto')");
+        await agent!.codingMode("default");
+        const race = await js<{ last: string | null; current: string; queued: unknown }>(
+          "(async () => { const load = window.__modeLoad(); const click = window.__modeSet('plan');"
+          + " await Promise.all([load, click]);"
+          + " await new Promise((r) => setTimeout(r, 900));"
+          + " return {last: window.__modeLast(), current: window.__modeState().current, queued: window.__modeQueue()}; })()",
+        );
+        const live = await agent!.codingMode();
+        check(
+          "coding-mode reconnect GET yields to a click instead of undoing it",
+          race.current === "plan" && race.last === "plan" && race.queued === null && live.mode === "plan",
+          `chip=${race.current} last=${String(race.last)} queued=${JSON.stringify(race.queued)} agent=${String(live.mode)}`,
+        );
+      } finally {
+        await js<void>("window.__modeSet('default')").catch(() => undefined);
+        await agent!.codingMode("default").catch(() => undefined);
+      }
+    }
+
     // The unavailable presentation is real, not merely claimed: force the
     // renderer into the state a routeless agent produces and read the
     // chip's own markup back.
@@ -1171,6 +1200,16 @@ async function smokeTest(): Promise<void> {
         "coding mode chip says 'mode —' when the agent has no route",
         chipText === "mode —" && !/default|bypass|plan|auto/.test(chipText) && dimmed,
         `chip=${JSON.stringify(chipText)}, .poprow.dim rule ${dimmed ? "present" : "MISSING"}`,
+      );
+      // The other half of item 6: the binary is named in the UNSUPPORTED
+      // case too. That is the case the operator actually needs it in —
+      // "coding modes need an agent build that carries the route" is only
+      // actionable next to the path of the build that answered.
+      const diagOff = await js<{ line: string }>("window.__diag()");
+      check(
+        "diagnostics names the agent binary even when the route is missing",
+        / \| agent [^|]+ \| approval L/.test(diagOff.line),
+        diagOff.line,
       );
     } finally {
       await js<void>(`window.__modeOverride({supported:${JSON.stringify(wasSupported)}})`);
@@ -2017,11 +2056,19 @@ async function settingsTest(
     "window.atomic.capabilities().then((c) => (c && c.ok && c.data && c.data.agent && typeof c.data.agent.approvalLevel === 'number' ? c.data.agent.approvalLevel : null))",
   );
   const expectedLevel = capsLevel === null ? "—" : String(Math.max(1, Math.min(5, capsLevel)));
+  // Item 6: which agent answered must be on the line in BOTH the supported
+  // and the unsupported case. The head and the tail of the line are pinned
+  // above and below this segment, so nothing else notices if it disappears
+  // — assert the segment itself, and that it carries a value rather than
+  // an empty slot. `[^|]+` covers both a path and the `—` null form.
+  const agentSeg = / \| agent [^|]+ \| approval L/.test(diag.line);
   check(
     "settings: diagnostics line uses the TUI null forms and counts tools only for the open session",
     diag.line.startsWith("cwd ") && diag.line.includes(" | llama ") && diag.line.includes(" | llm — · step — | kv — |")
+      && agentSeg
       && new RegExp(` \\| approval L${expectedLevel} \\| skills \\d+$`).test(diag.line) && !!diag.health && toolsOk,
-    `${diag.line} (session=${diag.session ?? "none"}, capabilities says ${capsLevel === null ? "no approvalLevel" : capsLevel})`,
+    `${diag.line} (session=${diag.session ?? "none"}, capabilities says ${capsLevel === null ? "no approvalLevel" : capsLevel}`
+      + `, agent segment ${agentSeg ? "present" : "MISSING"})`,
   );
 
   const errBefore = await js<number>("window.__errCount()");

@@ -74,11 +74,29 @@ export interface CodingModeHandlers {
 export function createCodingModeHandlers(): CodingModeHandlers {
   /** What was last POSTed. `null` until then: fall back to the seed. */
   let chosen: CodingMode | null = null;
+  /**
+   * The base the stance was chosen against.
+   *
+   * `snapshot` recomputes `baseLevel` from `getConfig()` on every read, so
+   * an edit to `agent.approvalLevel` in config.json while `serve` is
+   * running moves the baseline out from under a stance that was resolved
+   * against the old one — e.g. `default` chosen at base 5, base then
+   * lowered to 1, would keep answering mode `default` / baseLevel 1 /
+   * approvalLevel 5, a triple `resolveCodingMode("default", 1)` can never
+   * produce. When the base moves, the remembered stance is no longer an
+   * answer to anything: drop it and fall back to the seed, which reads the
+   * live switches and is at least self-consistent.
+   */
+  let chosenBase: number | null = null;
 
   const snapshot = (ctx: {
     runtime: { getPlanMode(): boolean; getApprovalLevel(): number };
   }) => {
     const base = baseLevel();
+    if (chosenBase !== null && chosenBase !== base) {
+      chosen = null;
+      chosenBase = null;
+    }
     const planMode = ctx.runtime.getPlanMode();
     const approvalLevel = ctx.runtime.getApprovalLevel();
     const mode = chosen ?? inferMode(planMode, approvalLevel, base);
@@ -102,12 +120,16 @@ export function createCodingModeHandlers(): CodingModeHandlers {
       sendError(res, 400, openaiError(`mode must be one of ${CODING_MODES.join("|")}`));
       return;
     }
-    const resolved = resolveCodingMode(body.mode, baseLevel());
+    const base = baseLevel();
+    const resolved = resolveCodingMode(body.mode, base);
     ctx.runtime.setApprovalLevel(resolved.approvalLevel);
     ctx.runtime.setPlanMode(resolved.planMode);
     // Remember the stance itself, not just its projection onto the two
-    // switches — the projection is lossy (see `inferMode`).
+    // switches — the projection is lossy (see `inferMode`) — and the base
+    // it was resolved against, so a later edit to `agent.approvalLevel`
+    // invalidates it rather than being reported against the wrong base.
     chosen = body.mode;
+    chosenBase = base;
     sendJson(res, 200, snapshot(ctx));
   };
 
