@@ -29,6 +29,8 @@ contextBridge.exposeInMainWorld("atomic", {
   sessions: () => ipcRenderer.invoke("agent:sessions"),
   models: () => ipcRenderer.invoke("agent:models"),
   session: (id: string) => ipcRenderer.invoke("agent:session", id),
+  // item 6: DELETE /api/sessions/{id} — the sidebar's delete is a real one
+  deleteSession: (id: string) => ipcRenderer.invoke("agent:deleteSession", id),
   codingMode: (mode?: string) => ipcRenderer.invoke("agent:codingMode", mode),
 
   /** One turn of the agent loop, streamed back over `onChat`. */
@@ -72,6 +74,11 @@ contextBridge.exposeInMainWorld("atomic", {
   // item 5: existence check for the files a turn wrote (fs.stat only)
   statPaths: (paths: string[]) => ipcRenderer.invoke("app:statPaths", paths),
   openExternal: (url: string) => ipcRenderer.invoke("app:openExternal", url),
+  // item 6: the sidebar's own pin/read state (Electron userData/prefs.json) and the row menu
+  prefsGet: () => ipcRenderer.invoke("app:prefsGet"),
+  prefsSet: (prefs: { pinned: string[]; seen: Record<string, number> }) =>
+    ipcRenderer.invoke("app:prefsSet", prefs),
+  sessionMenu: (id: string, pinned: boolean) => ipcRenderer.invoke("app:sessionMenu", { id, pinned }),
   onMenu: (cb: (command: unknown) => void) => on("app:menu", cb),
 
   /** Item 7 (settings surface): tasks, health, schedule preview. */

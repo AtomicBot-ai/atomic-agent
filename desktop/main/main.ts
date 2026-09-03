@@ -2,7 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { stat } from "node:fs/promises";   // item 5: the attachment strip stats what a turn wrote, nothing else
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -115,6 +115,48 @@ function send(channel: string, payload?: unknown): void {
   if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
 }
 
+/* --- Item 6 (sidebar): the viewer's own sidebar state ---------------------
+   Pinning and "I have read this" exist nowhere in the agent: no route and no
+   store field records them, and the agent's config.json is the operator's
+   file, not a place for one window's view state. So they live in Electron's
+   userData as prefs.json, per machine and per viewer, and are honestly empty
+   on first run — every historical chat then draws unread until it is opened.
+   Never write this through `atag config set`. */
+type SidebarPrefs = { pinned: string[]; seen: Record<string, number> };
+const PREFS_PATH = () => join(app.getPath("userData"), "prefs.json");
+
+function coercePrefs(raw: unknown): SidebarPrefs {
+  const out: SidebarPrefs = { pinned: [], seen: {} };
+  if (!raw || typeof raw !== "object") return out;
+  const src = raw as { pinned?: unknown; seen?: unknown };
+  if (Array.isArray(src.pinned)) {
+    for (const id of src.pinned) if (typeof id === "string" && id) out.pinned.push(id);
+  }
+  if (src.seen && typeof src.seen === "object") {
+    for (const [id, at] of Object.entries(src.seen as Record<string, unknown>)) {
+      if (typeof at === "number" && Number.isFinite(at)) out.seen[id] = at;
+    }
+  }
+  return out;
+}
+
+function readPrefs(): SidebarPrefs {
+  try {
+    return coercePrefs(JSON.parse(readFileSync(PREFS_PATH(), "utf8")));
+  } catch {
+    return { pinned: [], seen: {} };
+  }
+}
+
+function writePrefs(raw: unknown): { ok: boolean; error?: string } {
+  try {
+    writeFileSync(PREFS_PATH(), JSON.stringify(coercePrefs(raw)));
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 function createWindow(): BrowserWindow {
   const window = new BrowserWindow({
     width: 1280,
@@ -191,6 +233,13 @@ function wireIpc(client: AgentClient): void {
   resource("models", () => client.models());
   ipcMain.handle("agent:session", (_event, id: unknown) =>
     typeof id === "string" ? client.session(id).then((data) => ({ ok: true, data })).catch((e) => ({ ok: false, error: String(e) })) : { ok: false, error: "id required" },
+  );
+  // Item 6 (sidebar): a real delete. Splicing the array only made the row come
+  // back on the next load — the route is idempotent, so an unknown id is a 200.
+  ipcMain.handle("agent:deleteSession", (_event, id: unknown) =>
+    typeof id === "string" && id
+      ? client.deleteSession(id).then((data) => ({ ok: true, data })).catch((e) => ({ ok: false, error: String(e) }))
+      : { ok: false, error: "id required" },
   );
   ipcMain.handle("agent:codingMode", (_event, mode: unknown) =>
     client.codingMode(typeof mode === "string" ? mode : undefined),
@@ -327,6 +376,24 @@ function wireIpc(client: AgentClient): void {
   });
   ipcMain.handle("app:hostRam", () => hostRamGb());
   ipcMain.handle("app:keyEnv", () => PROVIDER_KEY_ENV);
+
+  // Item 6 (sidebar): pin + read state, in userData — never in the agent config.
+  ipcMain.handle("app:prefsGet", () => ({ ok: true, data: readPrefs() }));
+  ipcMain.handle("app:prefsSet", (_event, prefs: unknown) => writePrefs(prefs));
+  // The row's right-click menu. `Menu` is not a top-level import here, so it is
+  // required inside the handler exactly as app:fileMenu does.
+  ipcMain.handle("app:sessionMenu", (event, payload: unknown) => {
+    const { id, pinned } = (payload ?? {}) as { id?: unknown; pinned?: unknown };
+    if (typeof id !== "string" || !id) return;
+    const { Menu } = require("electron") as typeof import("electron");
+    const menu = Menu.buildFromTemplate([
+      { label: pinned ? "Unpin" : "Pin", click: () => send("app:menu", (pinned ? "unpin:" : "pin:") + id) },
+      { type: "separator" },
+      { label: "Delete…", click: () => send("app:menu", "delask:" + id) },
+    ]);
+    const sender = BrowserWindow.fromWebContents(event.sender);
+    menu.popup(sender ? { window: sender } : {});
+  });
 
   // --- Lane B — backend switch ---
   // The write is only half of a switch: `atag serve` pins its provider at
@@ -647,6 +714,25 @@ function wireIpc(client: AgentClient): void {
   });
 }
 
+/** Item 6 (sidebar): what `window.__sidebar()` hands back. */
+type Sb = {
+  headers: string[];
+  navrows: number;
+  skillsRow: boolean;
+  subtitles: number;
+  onRows: number;
+  counter: string;
+  tasksEmpty: string;
+  chats: Array<{ id: string; dot: string; pinned: boolean; name: string; status: string; updatedAt: number }>;
+  hiddenChats: number;
+  tasks: Array<{ id: string; dot: string; status: string; name: string; seen: number }>;
+  hiddenTasks: number;
+  running: number;
+  loadMore: boolean;
+  page: number;
+  total: number;
+};
+
 async function smokeTest(): Promise<void> {
   if (!win) return;
   const js = <T,>(code: string) => win!.webContents.executeJavaScript(code) as Promise<T>;
@@ -657,7 +743,15 @@ async function smokeTest(): Promise<void> {
   };
 
   await new Promise((r) => setTimeout(r, 1500));
-  check("renderer painted", (await js<number>("document.querySelectorAll('.navrow').length")) === 3);
+  // Item 6: the sidebar is two headed lists, so there are no nav rows left to
+  // count. This is still the "render() finished without a TDZ ReferenceError"
+  // canary that the .navrow count used to be.
+  const sb0 = await js<Sb | null>("window.__sidebar ? window.__sidebar() : null");
+  check(
+    "renderer painted",
+    !!sb0 && sb0.navrows === 0 && JSON.stringify(sb0.headers) === '["Tasks","Chats"]' && sb0.subtitles === 0 && !sb0.skillsRow,
+    sb0 ? `headers ${JSON.stringify(sb0.headers)}, navrows ${sb0.navrows}, "N turns" lines ${sb0.subtitles}, skills row ${sb0.skillsRow}` : "no __sidebar hook",
+  );
   check("toolbar titled", (await js<string>("document.querySelector('.tb-title b').textContent")) === "Chat");
   check("bridge exposed", await js<boolean>("!!window.atomic"));
   check(
@@ -690,6 +784,19 @@ async function smokeTest(): Promise<void> {
     await new Promise((r) => setTimeout(r, 500));
   }
   check("agent connected", state === "connected", `state=${state}`);
+
+  if (state === "connected") {
+    // Item 6: boot state. Nothing has been opened, so no row may be drawn as
+    // the current one — the old code pointed at the newest session without
+    // opening it. Asserted here, before the first __openSession of the run.
+    const bootDeadline = Date.now() + 20_000;
+    let boot = await js<Sb>("window.__sidebar()");
+    while (Date.now() < bootDeadline && boot.total === 0) {
+      await new Promise((r) => setTimeout(r, 500));
+      boot = await js<Sb>("window.__sidebar()");
+    }
+    check("no chat is highlighted at boot", boot.onRows === 0, `${boot.total} chats loaded, ${boot.onRows} highlighted`);
+  }
 
   if (FORCE_ONBOARDING) {
     const title = await js<string>(
@@ -1168,6 +1275,9 @@ async function smokeTest(): Promise<void> {
     // --- Item 7 part C: the LLM, Telegram and Import tabs ---
     await settingsTestPartC(js, check);
 
+    // --- Item 6: the sidebar's two lists ---
+    await sidebarTest(js, check);
+
     // --- Lane B — backend switch (last: it restarts `atag serve` four times) ---
     // A round trip through the renderer's own switch path: to local and
     // back, with the file, the chips, the restarted agent and the daemon
@@ -1184,6 +1294,171 @@ async function smokeTest(): Promise<void> {
   writeFileSync(out, image.toPNG());
   process.stdout.write(`SMOKE screenshot=${out} failures=${fail.length}\n`);
   app.exit(fail.length === 0 ? 0 : 1);
+}
+
+/**
+ * Item 6 (the sidebar). Every list here comes from the live agent; the two
+ * things the desktop owns — the pin list and the read stamps in
+ * userData/prefs.json — are captured first and written back in `finally`, so
+ * a smoke run leaves the operator's sidebar exactly as it found it.
+ */
+async function sidebarTest(
+  js: <T>(code: string) => Promise<T>,
+  check: (name: string, ok: boolean, detail?: string) => void,
+): Promise<void> {
+  const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  const prefsBefore = readPrefs();
+  try {
+    let sb = await js<Sb>("window.__sidebar()");
+    check(
+      "sidebar is Tasks over Chats, with no nav rows",
+      JSON.stringify(sb.headers) === '["Tasks","Chats"]' && sb.navrows === 0 && !sb.skillsRow && sb.subtitles === 0,
+      `headers ${JSON.stringify(sb.headers)}, navrows ${sb.navrows}, skills row ${sb.skillsRow}, "N turns" lines ${sb.subtitles}`,
+    );
+    check("chats list carries the agent's sessions", sb.chats.length > 0, `${sb.chats.length} rows, ${sb.total} sessions with a turn`);
+    if (sb.chats.length === 0) return;
+
+    // Unread: forget the stamp and the dot fills; opening it empties the dot
+    // and writes the stamp to disk.
+    const id = sb.chats[0].id;
+    const updatedAt = sb.chats[0].updatedAt;
+    const unreadDot = await js<string>(`window.__forgetSeen(${JSON.stringify(id)})`);
+    check("an unread chat draws a filled dot", unreadDot === "filled", `dot=${unreadDot} for ${id}`);
+
+    await js<void>(`window.__openSession(${JSON.stringify(id)})`);
+    await wait(1500);
+    sb = await js<Sb>("window.__sidebar()");
+    const opened = sb.chats.find((c) => c.id === id);
+    const prefs = await js<{ ok: boolean; data: { pinned: string[]; seen: Record<string, number> } }>("window.__prefs()");
+    check("opening a chat empties its dot", !!opened && opened.dot === "empty", `dot=${opened?.dot}`);
+    check(
+      "the read stamp is written to prefs.json",
+      (prefs.data.seen[id] ?? 0) >= updatedAt && existsSync(PREFS_PATH()),
+      `seen=${prefs.data.seen[id]} updatedAt=${updatedAt} file=${existsSync(PREFS_PATH())}`,
+    );
+
+    // Pinning sorts the row first and survives a round trip through the file.
+    if (sb.chats.length >= 2) {
+      const last = sb.chats[sb.chats.length - 1].id;
+      const pinned = await js<string[]>(`window.__pin(${JSON.stringify(last)})`);
+      sb = await js<Sb>("window.__sidebar()");
+      const stored = await js<{ data: { pinned: string[] } }>("window.__prefs()");
+      check(
+        "a pinned chat sorts first and is stored",
+        sb.chats[0].id === last && sb.chats[0].pinned && stored.data.pinned.includes(last),
+        `first=${sb.chats[0].id} pinned=${JSON.stringify(pinned)} stored=${JSON.stringify(stored.data.pinned)}`,
+      );
+      await js<string[]>(`window.__unpin(${JSON.stringify(last)})`);
+      sb = await js<Sb>("window.__sidebar()");
+      const after = await js<{ data: { pinned: string[] } }>("window.__prefs()");
+      check(
+        "unpinning puts it back",
+        sb.chats[0].id !== last && !after.data.pinned.includes(last),
+        `first=${sb.chats[0].id} stored=${JSON.stringify(after.data.pinned)}`,
+      );
+    } else {
+      check("a pinned chat sorts first and is stored", true, "skipped — fewer than two chats in this workspace");
+    }
+
+    // "Load more" appears only when the page actually hides rows.
+    check(
+      "load more appears only past the page",
+      sb.loadMore === (sb.hiddenChats > 0) && sb.chats.length <= sb.page,
+      `${sb.chats.length} of ${sb.total} shown, ${sb.hiddenChats} hidden, button=${sb.loadMore}`,
+    );
+    if (sb.hiddenChats > 0) {
+      const grown = await js<number>("window.__loadMore()");
+      check("load more grows the list", grown > sb.chats.length, `${sb.chats.length} → ${grown}`);
+    }
+
+    // The running dot is driven by the turn stream's own map, and it stays
+    // distinguishable when the stylesheet turns the animation off.
+    const runCls = await js<string>(`window.__running('smoke-turn', ${JSON.stringify(id)}, true)`);
+    const style = await js<{ cls: string; animation: string; shadow: string } | null>(`window.__dotStyle(${JSON.stringify(id)})`);
+    const stillCls = await js<string>(`window.__running('smoke-turn', ${JSON.stringify(id)}, false)`);
+    check(
+      "a running chat pulses, and still reads as running without animation",
+      runCls.includes("running") && style?.animation === "sdot-pulse" && style.shadow !== "none" && !stillCls.includes("running"),
+      `class ${JSON.stringify(runCls)}, animation ${style?.animation}, ring ${style?.shadow}, after ${JSON.stringify(stillCls)}`,
+    );
+
+    // A waiting approval fills the dot even for a chat that was just read.
+    const waitingDot = await js<string>(`window.__pendingApproval(${JSON.stringify(id)}, true)`);
+    const clearedDot = await js<string>(`window.__pendingApproval(${JSON.stringify(id)}, false)`);
+    check(
+      "a waiting approval fills the dot of a read chat",
+      waitingDot === "filled" && clearedDot === "empty",
+      `waiting=${waitingDot} cleared=${clearedDot}`,
+    );
+
+    // The Tasks list is every task, not the TUI rail's running/queued
+    // projection — the user's dot rules are about tasks that have run.
+    const apiTasks = await js<Array<{ id: string; status: string; userMessage: string; updatedAt: number }>>(
+      "(async () => { const r = await window.atomic.tasks(); return ((r.data && r.data.tasks) || []).map((t) => ({id:t.id, status:t.status, userMessage:t.userMessage || '', updatedAt:t.updatedAt || 0})); })()",
+    );
+    sb = await js<Sb>("window.__sidebar()");
+    const executed = apiTasks.filter((t) => t.status === "completed" || t.status === "failed" || t.status === "blocked" || t.status === "cancelled");
+    check(
+      "the tasks list carries executed tasks too",
+      executed.length === 0
+        ? sb.tasks.length === Math.min(apiTasks.length, sb.page)
+        : sb.tasks.some((t) => executed.some((e) => e.id === t.id)),
+      `${apiTasks.length} tasks from the agent (${executed.length} executed), ${sb.tasks.length} rows`,
+    );
+    check(
+      "the tasks header counts running tasks",
+      sb.counter === `${apiTasks.filter((t) => t.status === "running").length} running`,
+      `counter ${JSON.stringify(sb.counter)}`,
+    );
+    if (apiTasks.length === 0) {
+      check("an empty tasks list says so", sb.tasksEmpty === "(no tasks yet)", JSON.stringify(sb.tasksEmpty));
+    } else {
+      const first = sb.tasks[0];
+      const src = apiTasks.find((t) => t.id === first.id);
+      // Regression: the old code read `t.message`, a field the payload has
+      // never carried, so every row was named by its id.
+      check(
+        "task rows are named by userMessage",
+        !!src && first.name === (src.userMessage.trim().replace(/\s+/g, " ").slice(0, 72) || "(empty)"),
+        `${JSON.stringify(first.name)} vs ${JSON.stringify(src?.userMessage.slice(0, 72))}`,
+      );
+    }
+    const doneTask = executed.find((t) => t.status !== "cancelled");
+    if (doneTask) {
+      await js<string>(`window.__forgetTaskSeen(${JSON.stringify(doneTask.id)})`);
+      sb = await js<Sb>("window.__sidebar()");
+      const before = sb.tasks.find((t) => t.id === doneTask.id);
+      await js<number>(`window.__openTask(${JSON.stringify(doneTask.id)})`);
+      await wait(500);
+      sb = await js<Sb>("window.__sidebar()");
+      const afterOpen = sb.tasks.find((t) => t.id === doneTask.id);
+      check(
+        "an executed task fills until it is opened",
+        before?.dot === "filled" && afterOpen?.dot === "empty",
+        `${doneTask.id}: ${before?.dot} → ${afterOpen?.dot}`,
+      );
+      await js<void>("window.__settingsClose && window.__settingsClose()");
+    } else {
+      check("an executed task fills until it is opened", true, "skipped — this agent has no executed task");
+    }
+
+    // Deleting is a real DELETE now. The route is idempotent, so an id that
+    // was never there answers 200 and the list is left alone.
+    check("the renderer can delete a session", await js<boolean>("typeof window.atomic.deleteSession === 'function'"));
+    const lenBefore = (await js<Sb>("window.__sidebar()")).total;
+    await js<number>("window.__deleteSession('smoke-no-such-session')");
+    await wait(1000);
+    const lenAfter = (await js<Sb>("window.__sidebar()")).total;
+    check("deleting an unknown session leaves the list alone", lenAfter === lenBefore, `${lenBefore} → ${lenAfter}`);
+
+    // Skills left the sidebar, not the app.
+    const skillsTab = await js<string>("window.__skillsReachable()");
+    check("Skills is still reachable outside the sidebar", skillsTab === "Skills", `settings tab ${JSON.stringify(skillsTab)}`);
+    await js<void>("window.__settingsClose && window.__settingsClose()");
+  } finally {
+    writePrefs(prefsBefore);
+    await js<void>("window.__reloadPrefs && window.__reloadPrefs()");
+  }
 }
 
 /**

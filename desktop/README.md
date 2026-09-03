@@ -34,6 +34,7 @@ generated per launch, so nothing outside this app can reach the agent.
 | Installed skills | `GET /api/skills` |
 | Durable tasks | `GET /api/tasks` |
 | Persisted sessions | `GET /api/sessions` |
+| Deleting one session | `DELETE /api/sessions/{id}` |
 | One turn of the agent loop | `POST /v1/chat/completions` (SSE) |
 | Approval requests | `GET /api/events` (SSE) |
 | Approval verdicts | `POST /api/approval/resolve` |
@@ -107,6 +108,39 @@ Real, driven by the running agent:
 - approval prompts, resolved over `/api/approval/resolve`
 - installed skills, durable tasks, and sessions — named by their first
   message and opened in full from the sidebar
+- **The sidebar is two lists: Tasks, then Chats.** No nav rows, no group
+  headers, no "N turns" second line. Tasks is every task the agent holds,
+  ordered as the TUI's rail orders it (running, queued, blocked, failed,
+  cancelled, completed, then newest first) with `N running` counted over the
+  whole list; Chats is every session in this workspace with at least one saved
+  turn, pinned first and newest first. Each list shows 15 rows and then a
+  **Load more** button. Each row is one line with a dot on the left:
+  *pulsating* = a turn is running there (driven by the turn stream's own
+  frames, so an approval or an abort cannot make a live turn look finished);
+  *filled* = it wants you — an approval is waiting, its last turn failed or
+  stalled, or it has changed since you last opened it; *empty* = executed and
+  read. Opening a row marks it read. A queued task that has not run yet is
+  drawn empty and its tooltip says so — it has not executed, so there is
+  nothing to have read. Chats can be pinned and unpinned from the row's hover
+  button or its right-click menu (Pin/Unpin · Delete…), and **Delete really
+  deletes**: `DELETE /api/sessions/{id}`, not a splice that the next load
+  undoes. Pinning and the read stamps live in Electron's
+  `userData/prefs.json` — per machine, per viewer — because the agent has no
+  route and no store field for either, and its `config.json` is the
+  operator's file. On a machine that has never run this window every
+  historical chat is therefore unread until it is opened; that is honest, not
+  a bug. Skills left the sidebar (the user asked for it); ⌘3, the palette and
+  View › Skills still open it, on Settings › Skills.
+- **What the sidebar cannot know on 0.5.4.** `GET /api/sessions` never
+  reports `running`: the store is written only when a turn ends, and no route
+  exposes the turn controller. So the pulsating dot means "a turn started in
+  *this window* is streaming", and a turn running for some other origin (a
+  scheduled task, Telegram, another HTTP client) shows only when it raises an
+  approval — which fills the row. Nothing is invented to cover the gap.
+- **The transcript holds its pixel scroll position across renders**, which is
+  a deliberate divergence from the TUI's bottom-anchored offset: the user
+  asked for the scroll not to move when a card is folded or a re-render lands,
+  so the desktop restores `scrollTop` instead of re-anchoring to the bottom.
 - the model selector: backend, provider and model chips, each opening one
   pane, with the TUI's rows (cloud → local, `N providers ready` /
   `llama.cpp managed here`, provider rows `model` / `default model` /
@@ -274,11 +308,11 @@ Honestly degraded, and labelled as such in the UI:
   the TUI probes the URL before writing mode `external` + the provider url
   in one write. The one place that does it in the desktop is Settings › LLM
   › External, which runs the probe first (see the LLM bullet above).
-- **Tasks and Skills are the settings tabs.** The sidebar keeps its Tasks
-  and Skills rows (with counts), and those rows, ⌘2/⌘3, the palette hits
-  and View › Tasks/Skills all open the settings window on that tab — one
+- **Tasks and Skills are the settings tabs.** ⌘2/⌘3, the palette hits and
+  View › Tasks/Skills all open the settings window on that tab — one
   implementation, as the TUI's Manage tabs are. ⌘1 closes it and returns to
-  the transcript.
+  the transcript. The sidebar's own Tasks list (above) is the summary; a row
+  clicked there opens that task in the Tasks tab.
 
 ## Verification
 

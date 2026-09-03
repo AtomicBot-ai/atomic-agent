@@ -376,6 +376,8 @@ const P = {
   doc:'<path d="M4 2.6h5l3 3v7.8a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V3.6a1 1 0 0 1 1-1Z"/><path d="M9 2.6v3h3"/>',
   play:'<path d="M5.5 3.6 12 8l-6.5 4.4z"/>',
   trash:'<path d="M3 4.6h10M6.4 4.6V3.4a.9.9 0 0 1 .9-.9h1.4a.9.9 0 0 1 .9.9v1.2M4.4 4.6l.6 8a1 1 0 0 0 1 .9h4a1 1 0 0 0 1-.9l.6-8M6.8 7v4M9.2 7v4"/>',
+  // item 6: pin / unpin a chat row
+  pin:'<path d="M9.6 2.4 13.6 6.4l-2.1.7-2 2 .3 2.4-4.8-4.8 2.4.3 2-2z"/><path d="M5 11 2.6 13.4"/>',
 };
 function ic(n, cls) {
   return '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" '
@@ -512,6 +514,19 @@ let SESSIONS = [];
 
 const TASKS = [];
 
+/* ---------------- item 6: the sidebar's two lists ----------------
+   Render-visible state, so it lives up here with the rest (the first render()
+   runs while this file is still being evaluated — anything below it is in its
+   temporal dead zone and would blank the window). */
+const SIDEBAR_PAGE = 15;                 // rows per list before "Load more"
+const PAGE = {chats:1, tasks:1};         // how many pages each list is showing
+const PREFS = {pinned:[], seen:{}, loaded:false};  // userData/prefs.json, never the agent config
+const PENDING_APPROVALS = new Map();     // sessionId → approvalId, from /api/events
+const ATTN = new Set();                  // sessions whose last desktop-run turn ended in error
+const RUNNING = new Map();               // turnId → sessionId, fed only by the turn stream's own frames
+let TASKS_ERR = null;                    // GET /api/tasks failed — the honest line, not an empty list
+const STATUS_RANK = {running:0, pending:1, blocked:2, failed:3, cancelled:4, completed:5}; // sidebar-tasks-selector.ts
+
 const MODELS = { local: [], cloud: [], external: [] };
 const shortModel = (id) => id.replace(/-instruct$/, '');
 
@@ -563,35 +578,126 @@ function renderToolbar() {
     + '</div>';
 }
 
+/* ============================================================
+   Item 6 — the side menu is two lists.
+
+   The user's words, which override the TUI here: "In the side menu there is
+   no real need for the current structure chats / tasks / skills. There should
+   be a Chats header and a list of recent chats; if there are more than ten or
+   twenty, a 'load more' button. You should be able to pin and unpin chats.
+   Remove the second line with 'one turn, thirty-six turns' — no one needs
+   that. Instead a small round dot on the left of the line […] Tasks go on top
+   of chats: two lists one after another, Tasks then Chats, both with the same
+   dot rules. Skills can be removed from the menu."
+
+   So: no nav rows, no group headers, no "N turns" second line; Tasks above
+   Chats (the TUI's rail is Sessions above Tasks and calls them "Sessions" —
+   the user wins); the Tasks list is EVERY task, not the rail's
+   pending/running/recurring projection, because the user's dot rules are
+   about tasks that have already executed. Skills leaves the sidebar only —
+   ⌘3, the palette rows and View › Skills still reach it (they open Settings ›
+   Skills on this tree).
+   ============================================================ */
 function renderSidebar() {
-  const live = BR && S.live.state === 'connected';
-  const nav = [['chat','Chat',''],
-               ['tasks','Tasks', String(TASKS.length)],
-               ['skills','Skills', String(SKILLS.length)],
-               ];
-  let groups = '', last = '';
-  SESSIONS.forEach((s) => {
-    if (s.g !== last) { groups += '<div class="sb-group micro">' + esc(s.g) + '</div>'; last = s.g; }
-    const waiting = s.id === S.sessionId && S.pending;
-    groups += '<button class="sesrow' + (s.id === S.sessionId ? ' on' : '') + '" data-ses="' + s.id + '">'
-      + '<span class="col"><span class="t1">' + esc(s.t) + '</span><span class="t2">' + esc(s.sub) + (s.origin ? ' ' + s.origin : '') + '</span></span>'
-      + '<span class="sesstat">' + (waiting ? '<span style="color:var(--warn);display:flex">' + ic('warn') + '</span>'
-                 : s.st ? '<span class="dot ' + s.st + '"></span>' : '') + '</span>'
-      + '<span class="sesacts"><span class="iconbtn" data-del="' + s.id + '" title="Delete session" role="button">' + ic('trash') + '</span></span>'
-      + '</button>';
-  });
+  const tk = sidebarTasks(), ch = sidebarChats();
   $('#sidebar').innerHTML =
     '<div class="sb-head">' + MARK_COLOR
       + '<button class="wschip" data-act="workspace"><span>' + esc(BR ? WORKSPACE : '~/Teletubbies') + '</span>' + ic('chevD') + '</button>'
       + '<button class="iconbtn" data-act="session:new" title="New session (Ctrl+N)" style="margin-left:auto">' + ic('plus') + '</button></div>'
-    + '<div class="sb-nav">' + nav.map(([id, label, count]) =>
-        '<button class="navrow' + ((S.settings ? settingsPaneId(S.settingsPane) === id : S.room === id) ? ' on' : '') + '" data-room="' + id + '">'   // integration: Tasks/Skills rows light up for their settings tab
-        + '<span class="ic">' + ic(id) + '</span><span class="lb">' + label + '</span>'
-        + '<span class="ct tnum">' + count + '</span></button>').join('') + '</div>'
-    + '<div class="seswrap">' + groups + '</div>'
+    + '<div class="sb-lists">'
+      + '<div class="sb-list" data-list="tasks">'
+        + '<div class="sb-list-head micro"><span>Tasks</span>'
+          // countRunningTasks (sidebar-tasks-selector.ts) counts the FULL snapshot, not the page.
+          + '<span class="ct tnum">' + tk.running + ' running</span></div>'
+        + (TASKS_ERR ? '<div class="sb-empty">' + esc(TASKS_ERR) + '</div>'
+           : tk.rows.length ? tk.rows.map(taskRow).join('')
+           : '<div class="sb-empty">(no tasks yet)</div>')
+        + (tk.hidden > 0 ? '<button class="loadmore" data-more="tasks">Load more · ' + tk.hidden + ' more</button>' : '')
+      + '</div>'
+      + '<div class="sb-list" data-list="chats">'
+        + '<div class="sb-list-head micro"><span>Chats</span></div>'
+        + (ch.rows.length ? ch.rows.map(chatRow).join('')
+           : '<div class="sb-empty">(no sessions yet)</div>')   // sidebar.tsx:502
+        + (ch.hidden > 0 ? '<button class="loadmore" data-more="chats">Load more · ' + ch.hidden + ' more</button>' : '')
+      + '</div>'
+    + '</div>'
     // Item 7: the bottom-left settings entry. Lands on Go › Manage › Tasks, the TUI's default Manage tab.
     + '<button class="sb-foot" data-act="settings:tasks" title="Settings (⌘ ,)">' + ic('gear') + '<span>Settings</span>' + keycaps('⌘ ,') + '</button>'
     ;
+}
+
+/** Every task, ordered as the TUI orders its rail (STATUS_RANK, then newest). */
+function sidebarTasks() {
+  const all = TASKS.slice().sort((a, b) => {
+    const ra = STATUS_RANK[a.status] ?? 9, rb = STATUS_RANK[b.status] ?? 9;
+    if (ra !== rb) return ra - rb;
+    return (b.updatedAt || 0) - (a.updatedAt || 0);
+  });
+  const rows = all.slice(0, SIDEBAR_PAGE * PAGE.tasks);
+  return {rows, hidden: all.length - rows.length, running: TASKS.filter((t) => t.status === 'running').length};
+}
+
+/** Chats: sessions with at least one saved turn, pinned first, newest first. */
+function sidebarChats() {
+  const pinnedSet = new Set(PREFS.pinned);
+  const all = SESSIONS.filter((s) => pinnedSet.has(s.id)).concat(SESSIONS.filter((s) => !pinnedSet.has(s.id)));
+  const rows = all.slice(0, SIDEBAR_PAGE * PAGE.chats);
+  return {rows, hidden: all.length - rows.length};
+}
+
+/* The dot, in the user's three states. "Running" is NOT S.busy: an approval
+   or an abort clears that while the agent is still working, which would draw
+   a still dot over a live turn. It is the RUNNING map, which only the turn
+   stream's own session_id/done/aborted/error frames write. */
+function chatDot(s) {
+  if (!s) return ['empty', ''];
+  const seen = PREFS.seen[s.id];
+  const unread = !(seen >= 0) || (s.updatedAt || 0) > seen;
+  for (const sid of RUNNING.values()) if (sid === s.id) return ['running', 'the agent is running here — wait'];
+  if (PENDING_APPROVALS.has(s.id)) return ['filled', 'waiting for your approval'];
+  if (unread && ATTN.has(s.id)) return ['filled', 'the last turn failed'];
+  if (unread && s.status === 'stalled') return ['filled', 'stopped: max steps reached without a reply'];
+  if (unread && s.status === 'failed') return ['filled', 'the last turn failed'];
+  if (unread) return ['filled', 'finished — not read yet'];
+  return ['empty', 'read'];
+}
+
+/* Same rules for tasks. A task that has not run yet has none of the user's
+   three states — it has not executed, so there is nothing to have read — and
+   is drawn empty with a tooltip that says which. */
+function taskDot(t) {
+  if (t.status === 'running') return ['running', 'running now — wait'];
+  if (t.status === 'pending') return ['empty', t.when === 'once' ? 'queued — not run yet' : 'scheduled · ' + t.when];
+  if (t.status === 'cancelled') return ['empty', 'cancelled'];
+  const seen = PREFS.seen['task:' + t.id];
+  const unread = !(seen >= 0) || (t.updatedAt || 0) > seen;
+  if (!unread) return ['empty', 'read'];
+  if (t.status === 'failed') return ['filled', 'failed: ' + (t.lastError || 'no error recorded')];
+  if (t.status === 'blocked') return ['filled', 'blocked: ' + (t.lastError || 'no error recorded')];
+  return ['filled', 'finished — not read yet'];
+}
+
+function taskRow(t) {
+  const [state, tip] = taskDot(t);
+  return '<button class="sesrow" data-task="' + esc(t.id) + '">'
+    + '<span class="sdot ' + state + '" title="' + esc(tip) + '"></span>'
+    + '<span class="t1">' + esc(t.t) + '</span></button>';
+}
+
+function chatRow(s) {
+  const [state, tip] = chatDot(s);
+  const pinned = PREFS.pinned.includes(s.id);
+  return '<button class="sesrow' + (s.id === S.sessionId ? ' on' : '') + (pinned ? ' pinned' : '') + '" data-ses="' + esc(s.id) + '">'
+    + '<span class="sdot ' + state + '" title="' + esc(tip) + '"></span>'
+    + '<span class="t1">' + esc(s.t) + '</span>'
+    + '<span class="pinbtn iconbtn" data-pin="' + esc(s.id) + '" title="' + (pinned ? 'Unpin' : 'Pin') + '" role="button">' + ic('pin') + '</span>'
+    + '</button>';
+}
+
+/** The row's one-word state, where the removed "N turns" line used to sit. */
+function chatStatusWord(s) {
+  const dot = chatDot(s)[0];
+  return dot === 'running' ? 'running' : dot === 'filled' ? 'needs attention' : 'read';
 }
 
 /* ---------------- content ---------------- */
@@ -959,7 +1065,7 @@ function palRows() {
   const hits = all.map((r) => ({r, s:score(r)})).filter((x) => x.s < 9).sort((a, b) => a.s - b.s).map((x) => x.r);
   // cross-entity
   SESSIONS.filter((s) => s.t.toLowerCase().includes(q)).slice(0, 3)
-    .forEach((s) => hits.push({ic:'chat', t:s.t, cx:'Session · ' + s.sub, sc:'', act:'ses:' + s.id, badge:'session'}));
+    .forEach((s) => hits.push({ic:'chat', t:s.t, cx:'Session · ' + chatStatusWord(s), sc:'', act:'ses:' + s.id, badge:'session'}));
   TASKS.filter((t) => t.t.toLowerCase().includes(q)).slice(0, 3)
     .forEach((t) => hits.push({ic:'tasks', t:t.t, cx:'Task · ' + t.when, sc:'', act:'room:tasks', badge:'task'}));
   SKILLS.filter((s) => s.t.toLowerCase().includes(q)).slice(0, 3)
@@ -1133,13 +1239,15 @@ function contextHTML() {
 }
 
 function sessionSheet() {
-  let last = '', rows = '';
+  let rows = '';
+  // item 6: the "N turns" subtitle is gone everywhere, so this sheet carries
+  // the same dot and the same one-word state the sidebar row carries.
   SESSIONS.forEach((s) => {
-    if (s.g !== last) { rows += '<div class="micro sec" style="padding:8px 0 4px">' + s.g + '</div>'; last = s.g; }
-    rows += '<button class="row" style="padding:0;height:40px" data-ses="' + s.id + '">'
-      + (s.st ? '<span class="dot ' + s.st + '"></span>' : '<span class="dot" style="background:transparent"></span>')
+    const [state] = chatDot(s);
+    rows += '<button class="row" style="padding:0;height:40px" data-ses="' + esc(s.id) + '">'
+      + '<span class="sdot ' + state + '"></span>'
       + '<span class="main"><span class="t" style="font-weight:400">' + esc(s.t) + '</span></span>'
-      + '<span class="meta">' + esc(s.sub) + '</span></button>';
+      + '<span class="meta">' + esc(chatStatusWord(s)) + '</span></button>';
   });
   return sheet('Switch session', '<input class="btn btn-s" style="width:100%;height:32px" placeholder="Filter sessions…">' + rows,
     '<button class="btn btn-s" data-act="close">Cancel</button><button class="btn btn-p" data-act="close">Open</button>');
@@ -1562,7 +1670,9 @@ function act(a) {
   if (a === 'sel:cancelPull') { BR.cancelPull(); SEL.pulling = null; render(); return; }
   if (a === 'runmode') { close(); S.dialShare = S.share; S.overlay = 'runmode'; render(); return; }
   if (a === 'applydial') { S.share = S.dialShare; if (S.mode !== 'fusion' && S.dialShare > 0) S.mode = 'fusion'; close(); render(); toast('Run type applied', S.mode + (S.mode === 'fusion' ? ' · cloud share ' + S.share : '')); return; }
-  if (a === 'session:new') { close(); S.log = []; S.history = []; S.agentSession = null; S.busy = false; S.pending = null; S.room = 'chat'; render(); toast('New session', 'The next turn starts fresh');
+  if (a === 'session:new') { close(); S.log = []; S.history = []; S.agentSession = null; S.busy = false; S.pending = null; S.room = 'chat';
+                             S.sessionId = '';   // item 6: a fresh thread has no row of its own yet, so no row is highlighted
+                             render(); toast('New session', 'The next turn starts fresh');
                              // Lane B — item 3: a new thread has a new window fill (the TUI resets contextUsage on session_created), so the chip goes back to the projection.
                              refreshContext(); return; }
   if (a === 'session:switch') { close(); S.overlay = 'sessions'; render(); return; }
@@ -1634,9 +1744,32 @@ function act(a) {
   if (k === 'delask')    { const ss = SESSIONS.find((x) => x.id === v); if (!ss) return;
                            S.alert = {title:'Delete “' + ss.t + '”?', msg:'The transcript, its tool calls and its work log are removed from this machine. This cannot be undone.', ok:'Delete', act:'del:' + v};
                            render(); return; }
-  if (k === 'del')       { const i = SESSIONS.findIndex((x) => x.id === v); if (i >= 0) { const gone = SESSIONS[i].t; SESSIONS.splice(i, 1);
-                             if (S.sessionId === v) { S.sessionId = SESSIONS[0] ? SESSIONS[0].id : ''; S.log = []; }
-                             close(); render(); toast('Session deleted', gone); } return; }
+  // item 6: a real delete. The old branch only spliced the array, so the row
+  // came back on the next load — DELETE /api/sessions/{id} removes it for good
+  // (idempotent, so an id that is already gone still answers 200).
+  if (k === 'del')       { if (!BR || !BR.deleteSession) return;
+                           BR.deleteSession(v).then((res) => {
+                             if (!res || !res.ok) { close(); render(); toast('Could not delete the session', (res && res.error) || ''); return; }
+                             const i = SESSIONS.findIndex((x) => x.id === v);
+                             const gone = i >= 0 ? SESSIONS[i].t : v;
+                             if (i >= 0) SESSIONS.splice(i, 1);
+                             PREFS.pinned = PREFS.pinned.filter((x) => x !== v);
+                             delete PREFS.seen[v];
+                             savePrefs();
+                             if (S.sessionId === v) { S.sessionId = ''; S.agentSession = null; S.log = []; }
+                             close(); render(); toast('Session deleted', gone);
+                           });
+                           return; }
+  // item 6: pin / unpin, and the two lists' pagination.
+  if (k === 'pin')       { if (!PREFS.pinned.includes(v)) PREFS.pinned.unshift(v); savePrefs(); render(); nameVisibleSessions(); return; }
+  if (k === 'unpin')     { PREFS.pinned = PREFS.pinned.filter((x) => x !== v); savePrefs(); render(); nameVisibleSessions(); return; }
+  if (k === 'more')      { if (PAGE[v] != null) PAGE[v]++; render(); nameVisibleSessions(); return; }
+  // Opening a task = reading it. The Tasks tab is the only place with a task
+  // detail on this tree, so the row lands there with that task selected.
+  if (k === 'task')      { const t = TASKS.find((x) => x.id === v);
+                           PREFS.seen['task:' + v] = Math.max(PREFS.seen['task:' + v] || 0, (t && t.updatedAt) || 0, Date.now());
+                           savePrefs();
+                           close(); act('settings:tasks'); tkFocusTask(v); return; }
   if (k === 'scope')     { S.scope = v; S.q = ''; S.cur = 0; S.dialShare = S.share; render(); return; }
   if (k === 'taskfilter'){ S.taskFilter = v; render(); return; }
   if (k === 'modeltab')  { S.modelTab = v; MP.err = null; render(); if (v === 'local' && !MP.local.length) mpLoadLocal(); return; }
@@ -1746,6 +1879,11 @@ function answer(key) {
 function abort() {
   clearTimeout(timer); clearInterval(ticker);
   if (!S.busy && !S.pending) return;
+  // item 6: stop the turn for real. Without this the agent kept running while
+  // the window said it had stopped, and the sidebar dot would have to lie one
+  // way or the other. The `aborted` frame clears the RUNNING entry, so the dot
+  // pulses until the agent has actually stopped.
+  if (S.turnId && BR) BR.cancel(S.turnId);
   S.busy = false; S.pending = null;
   S.log.push({id:nid(), k:'system', text:'turn aborted — everything produced so far is kept'});
   render();
@@ -1807,6 +1945,11 @@ document.addEventListener('click', (e) => {
   const ap = t.closest('[data-appr]'); if (ap) { answer(ap.dataset.appr); return; }
   const rm = t.closest('[data-room]'); if (rm) { act('room:' + rm.dataset.room); return; }
   const dl = t.closest('[data-del]'); if (dl) { e.preventDefault(); e.stopPropagation(); act('delask:' + dl.dataset.del); return; }
+  // item 6: the pin button sits inside the row, so it has to win over it
+  const pn = t.closest('[data-pin]');
+  if (pn) { e.preventDefault(); e.stopPropagation(); act((PREFS.pinned.includes(pn.dataset.pin) ? 'unpin:' : 'pin:') + pn.dataset.pin); return; }
+  const mo = t.closest('[data-more]'); if (mo) { act('more:' + mo.dataset.more); return; }
+  const tkr = t.closest('[data-task]'); if (tkr) { act('task:' + tkr.dataset.task); return; }
   const ss = t.closest('[data-ses]'); if (ss) { act('ses:' + ss.dataset.ses); return; }
   const grp = t.closest('[data-group]');
   if (grp) { OPEN_GROUPS.add(grp.dataset.group); expandGroupInPlace(grp.dataset.group); return; }  // scroll-stable cards: in place, no scrollTop write
@@ -2119,38 +2262,123 @@ async function loadResources() {
       v:k.version || '—', on:k.enabled !== false, src:k.source || 'local',
     }));
   }
+  // item 6: the sidebar's Tasks list is every task the agent holds.
   if (tasks && tasks.ok && tasks.data && Array.isArray(tasks.data.tasks)) {
-    TASKS.length = 0;
-    tasks.data.tasks.forEach((t) => TASKS.push({
-      id:t.id, t:t.message || t.id, when:t.schedule ? JSON.stringify(t.schedule) : 'once',
-      last:t.status || 'pending', st:t.status === 'running' ? 'run' : t.status === 'failed' ? 'bad' : 'ok',
-    }));
+    TASKS_ERR = null;
+    applyTasks(tasks.data.tasks);
+  } else if (tasks && tasks.ok === false) {
+    // route-tasks.ts answers 404 — and only 404 — when tasks are switched off.
+    // Any other failure is a failure and says so; claiming "disabled" would be
+    // a fact this window does not have.
+    TASKS_ERR = /HTTP 404/.test(tasks.error || '')
+      ? 'tasks are disabled in this agent'
+      : 'could not load tasks: ' + ((tasks.error || 'unknown error'));
   }
-  if (sessions && sessions.ok && sessions.data && Array.isArray(sessions.data.sessions)) {
-    SESSIONS.length = 0;
-    sessions.data.sessions.forEach((x, i) => SESSIONS.push({
-      id:x.id || ('s' + i), t:x.id, g:'RECENT',
-      sub:(x.turnCount ? x.turnCount + (x.turnCount === 1 ? ' turn' : ' turns') : 'session'), st:'',
-    }));
-    // A session id says nothing. Its first message says what it is about.
-    SESSIONS.slice(0, 20).forEach((row) => {
-      BR.session(row.id).then((res) => {
-        const turns = res && res.ok && res.data && res.data.turns;
-        if (!Array.isArray(turns)) return;
-        const first = turns.find((t) => t.kind === 'user' && t.text);
-        if (!first) return;
-        row.t = first.text.trim().replace(/\s+/g, ' ').slice(0, 72);
-        render();
-      });
-    });
-    if (SESSIONS[0]) S.sessionId = SESSIONS[0].id;
-  }
+  applySessions(sessions);
   render();
+  nameVisibleSessions();
   bswRefreshFacts();
   // Lane B — item 3: caps + config are in, so the chip can carry a figure
   // before any message. A fresh connection re-probes the preview route.
   CTX.previewSupported = null;
   refreshContext();
+}
+
+/* ---------------- item 6: the two lists' data ---------------- */
+
+/** One task row. `userMessage` is the payload's field — `message` never was. */
+function taskEntry(t) {
+  return {
+    id:t.id,
+    t:(t.userMessage || '').trim().replace(/\s+/g, ' ').slice(0, 72) || '(empty)',
+    when:t.schedule ? formatScheduleLabel(t.schedule) : 'once',
+    status:t.status || 'pending',
+    recurring:!!t.recurring,
+    updatedAt:t.updatedAt || 0,
+    sessionId:t.sessionId || null,
+    lastError:t.lastError || null,
+    // kept for the Tasks tab's own consumers
+    last:t.status || 'pending',
+    st:t.status === 'running' ? 'run' : t.status === 'failed' ? 'bad' : 'ok',
+  };
+}
+function applyTasks(list) { TASKS.length = 0; list.forEach((t) => { if (t && t.id) TASKS.push(taskEntry(t)); }); }
+
+/** GET /api/sessions → the Chats rows. turnCount > 0 is the desktop's
+    hasFirstPrompt: the store is written at turn end, so a row with no turn has
+    no first prompt to name it with (chat-orchestrator.ts:388-399). */
+function applySessions(res) {
+  if (!res || !res.ok || !res.data || !Array.isArray(res.data.sessions)) return false;
+  const before = new Map(SESSIONS.map((s) => [s.id, s]));
+  SESSIONS.length = 0;
+  res.data.sessions.forEach((x) => {
+    if (!x || !x.id || !((x.turnCount || 0) > 0)) return;
+    const was = before.get(x.id);
+    SESSIONS.push({
+      id:x.id,
+      t:was && was.named ? was.t : x.id,
+      named:!!(was && was.named),
+      updatedAt:x.updatedAt || 0,
+      status:x.status || '',
+      turnCount:x.turnCount || 0,
+    });
+  });
+  return true;
+}
+
+/** Re-read the list: after a turn ends, after a delete, after a page grows. */
+async function refreshSessions() {
+  if (!BR) return;
+  const res = await BR.sessions();
+  if (!applySessions(res)) return;
+  render();
+  nameVisibleSessions();
+}
+
+/* A session id says nothing; its first message says what it is about. That
+   costs one GET /api/sessions/{id} (the whole transcript) per row, so only the
+   rows actually on screen are named — with limit=200 naming everything would
+   fire 200 requests at boot. */
+function nameVisibleSessions() {
+  if (!BR) return;
+  sidebarChats().rows.filter((row) => !row.named).forEach((row) => {
+    row.named = true;
+    BR.session(row.id).then((res) => {
+      const turns = res && res.ok && res.data && res.data.turns;
+      if (!Array.isArray(turns)) { row.named = false; return; }
+      const first = turns.find((t) => t.kind === 'user' && t.text);
+      row.t = first ? first.text.trim().replace(/\s+/g, ' ').slice(0, 72) : '(empty)';
+      render();
+    });
+  });
+}
+
+/* Pin and read state: Electron userData/prefs.json, per machine and per
+   viewer. The agent has no route and no store field for either, so there is
+   nothing to read them from and nothing to pretend. */
+async function loadPrefs() {
+  if (!BR || !BR.prefsGet) { PREFS.loaded = true; return; }
+  const res = await BR.prefsGet();
+  if (res && res.ok && res.data) {
+    PREFS.pinned = Array.isArray(res.data.pinned) ? res.data.pinned.slice() : [];
+    PREFS.seen = res.data.seen && typeof res.data.seen === 'object' ? Object.assign({}, res.data.seen) : {};
+  }
+  PREFS.loaded = true;
+  render();
+}
+function savePrefs() {
+  if (!BR || !BR.prefsSet) return;
+  BR.prefsSet({pinned:PREFS.pinned.slice(), seen:Object.assign({}, PREFS.seen)}).then((res) => {
+    if (res && res.ok === false) toast('Could not save the sidebar state', res.error || '');
+  });
+}
+/** Opening a chat is reading it: the dot goes empty and stays empty. */
+function markSeen(id) {
+  if (!id) return;
+  const row = SESSIONS.find((s) => s.id === id);
+  PREFS.seen[id] = Math.max(PREFS.seen[id] || 0, (row && row.updatedAt) || 0, Date.now());
+  ATTN.delete(id);
+  savePrefs();
 }
 
 
@@ -2178,10 +2406,35 @@ function startLiveTurn(text) {
       return;
     }
     S.turnId = res.turnId;
+    // item 6: the sidebar's running dot follows the stream, not S.busy.
+    RUNNING.set(res.turnId, S.agentSession || null);
+    renderSidebar();
   });
 }
 
 function onChatEvent(ev) {
+  /* item 6 — the running dot, bookkept BEFORE the turnId guard below.
+     A turn keeps streaming after the user opens another chat, and its
+     done/aborted/error is the only truthful end-of-run signal there is:
+     S.busy is cleared by an approval and by abort() while the agent is still
+     working, so it cannot drive a "the agent is running here" dot. */
+  if (ev && RUNNING.has(ev.turnId)) {
+    if (ev.kind === 'session_id') { RUNNING.set(ev.turnId, pick(ev.payload, 'sessionId', 'session_id', 'id')); renderSidebar(); }
+    if (ev.kind === 'done' || ev.kind === 'aborted' || ev.kind === 'error') {
+      const sid = RUNNING.get(ev.turnId);
+      RUNNING.delete(ev.turnId);
+      if (ev.kind === 'error' && sid) ATTN.add(sid);
+      // The chat on screen is being read as it lands, so it is never unread.
+      if (sid && sid === S.sessionId) { PREFS.seen[sid] = Date.now(); savePrefs(); }
+      refreshSessions().then(() => {
+        if (sid && sid === S.sessionId) {
+          const row = SESSIONS.find((x) => x.id === sid);
+          if (row) { PREFS.seen[sid] = Math.max(PREFS.seen[sid] || 0, row.updatedAt); savePrefs(); }
+        }
+        render();
+      });
+    }
+  }
   if (!ev || ev.turnId !== S.turnId) return;
   const item = S.log.find((m) => m.id === S.streamId);
   // Any frame after a running tool card brackets that tool's wall time as
@@ -2192,7 +2445,14 @@ function onChatEvent(ev) {
     if (c.k === 'tool') break;
   }
 
-  if (ev.kind === 'session_id') { S.agentSession = pick(ev.payload, 'sessionId', 'session_id', 'id'); return; }
+  if (ev.kind === 'session_id') {
+    S.agentSession = pick(ev.payload, 'sessionId', 'session_id', 'id');
+    // item 6: the streaming item being in the visible log is the proof that
+    // this is the chat the user is looking at — so its row is the current one.
+    if (S.log.some((m) => m.id === S.streamId)) S.sessionId = S.agentSession;
+    renderSidebar();
+    return;
+  }
   if (ev.kind === 'reasoning_progress') {
     const text = pick(ev.payload, 'delta', 'text', 'content') || '';
     if (!text) return;
@@ -2269,7 +2529,12 @@ function onApprovalEvent(payload) {
     affectsBase: cut >= 0 ? String(first).slice(cut + 1) : String(first),
     affectsDir: cut >= 0 ? String(first).slice(0, cut + 1) : '',
     sessionGrants: false,
+    // item 6: which chat is waiting. The agent's ApprovalRequest carries it,
+    // and it is the one attention signal that works for a turn this window did
+    // not start (a scheduled task's, say).
+    sessionId: payload.sessionId || null,
   };
+  if (req.sessionId) PENDING_APPROVALS.set(req.sessionId, req.approvalId);
   S.pending = req;
   S.log.push(req);
   S.apprFocused = false;
@@ -2299,6 +2564,7 @@ const CATEGORY_LABEL = {
 function answerLive(req, key) {
   const approve = key === 'y' || key === 's' || key === 'a';
   S.pending = null;
+  if (req.sessionId) PENDING_APPROVALS.delete(req.sessionId);   // item 6: the row stops asking
   req.state = approve ? 'approved' : 'denied';
   req.at = new Date().toTimeString().slice(0, 8);
   if (key === 's' || key === 'a') {
@@ -2319,6 +2585,11 @@ if (BR) {
   // The mock transcript is demo furniture; a real agent starts clean.
   S.log = [];
   S.history = [];
+  // item 6: nothing is open at boot, so no row is highlighted. The old code
+  // pointed S.sessionId at the newest row without opening it — a row that read
+  // as "the thread you are in" over an empty transcript.
+  S.sessionId = '';
+  loadPrefs();
   BR.onStatus(applyStatus);
   BR.onChat(onChatEvent);
   BR.onApproval(onApprovalEvent);
@@ -3443,10 +3714,20 @@ async function selChooseBackend(id) {
 
 async function openSession(id) {
   if (!BR || !id) return;
+  // item 6: is a turn of this session streaming into this window right now?
+  const live = [...RUNNING.values()].includes(id);
+  // The TUI's switchSession is a no-op ("already on session <id>") for the
+  // session whose turn is running (chat-orchestrator.ts:505-515) — and here
+  // reloading would throw away the streaming item the deltas land in, so the
+  // reply would vanish mid-sentence.
+  if (live && S.sessionId === id) { S.room = 'chat'; markSeen(id); render(); return; }
   S.sessionId = id;
   S.room = 'chat';
   S.log = [{id:nid(), k:'system', text:'loading session…'}];
-  S.busy = false; S.pending = null; S.stick = true;
+  // A live turn belonging to another session keeps its own state; only the
+  // window's view of "busy" is reset when nothing of this session is running.
+  if (!live) { S.busy = false; S.pending = null; }
+  S.stick = true;
   render();
 
   const res = await BR.session(id);
@@ -3485,9 +3766,18 @@ async function openSession(id) {
     }
   });
   S.log = log.length ? log : [{id:nid(), k:'system', text:'this session has no turns yet'}];
+  // item 6: a turn of this session is still running, but its stream is not in
+  // this log any more (the user left and came back). The desktop cannot replay
+  // a stream, so it shows the stored snapshot and says what is still happening
+  // — the TUI's "a turn is still running here".
+  if (live) {
+    S.busy = true;
+    S.log.push({id:nid(), k:'system', text:'a turn is still running here — the reply lands when it finishes'});
+  }
   // Anything sent from here continues that session rather than starting a new one.
   S.agentSession = id;
   S.history = [];
+  markSeen(id);   // item 6: opening a chat is reading it
   render();
   refreshContext();
   // item 4: durations come from the agent's trace; repaint only if this transcript is still up.
@@ -3784,7 +4074,15 @@ function homeDir() {
   return wd.startsWith('/Users/') ? wd.split('/').slice(0, 3).join('/') : '';
 }
 document.addEventListener('contextmenu', (e) => {
-  const f = e.target.closest && e.target.closest('[data-file]');
+  if (!e.target.closest) return;
+  // item 6: Pin/Unpin · Delete… on a chat row, as a native menu.
+  const row = e.target.closest('[data-ses]');
+  if (row && BR && BR.sessionMenu) {
+    e.preventDefault();
+    BR.sessionMenu(row.dataset.ses, PREFS.pinned.includes(row.dataset.ses));
+    return;
+  }
+  const f = e.target.closest('[data-file]');
   if (!f || !BR) return;
   e.preventDefault();
   BR.fileMenu(f.dataset.file.replace(/^~/, homeDir() || '~'));
@@ -4308,12 +4606,10 @@ async function tasksRefresh(quiet) {
   if (res && res.ok && res.data && Array.isArray(res.data.tasks)) {
     TK.rows = res.data.tasks.slice(0, 200).map(tkRow);
     TK.lastRefreshedAt = Date.now();
-    // The sidebar count reads TASKS; keep it in step with what the tab shows.
-    TASKS.length = 0;
-    res.data.tasks.forEach((t) => TASKS.push({
-      id:t.id, t:t.userMessage || t.id, when:t.schedule ? formatScheduleLabel(t.schedule) : 'once',
-      last:t.status || 'pending', st:t.status === 'running' ? 'run' : t.status === 'failed' ? 'bad' : 'ok',
-    }));
+    // The sidebar's Tasks list reads TASKS; keep it in step with what the tab shows.
+    TASKS_ERR = null;
+    applyTasks(res.data.tasks);
+    renderSidebar();
   } else {
     TK.err = 'tasks refresh failed: ' + ((res && res.error) || 'unknown error');
   }
@@ -4563,6 +4859,12 @@ async function tkRunNow(id) {
     TK.msg = 'run-now ' + id + ' failed: ' + ((res && res.error) || 'unknown error');
   }
   await tasksRefresh();
+}
+/** item 6: a sidebar task row lands on that task in the Tasks tab. */
+function tkFocusTask(id) {
+  if (TK.rows.some((r) => r.id === id)) { tasksAct('detail:' + id); return; }
+  // The tab's own snapshot has not landed yet; take it, then open the row.
+  Promise.resolve(tasksRefresh(true)).then(() => { if (TK.rows.some((r) => r.id === id)) tasksAct('detail:' + id); });
 }
 function tasksAct(what) {
   const [verb, ...rest] = what.split(':');
@@ -7449,4 +7751,55 @@ if (typeof window !== 'undefined') {
     for (let i = S.log.length - 1; i >= 0; i--) if (S.log[i].k === 'assistant') return (S.log[i].attach || []).map((f) => f.path);
     return [];
   };
+}
+/* Item 6 — sidebar hooks for `electron . --smoke`. */
+if (typeof window !== 'undefined') {
+  window.__sidebar = () => ({
+    headers: [...document.querySelectorAll('.sb-list-head > span:first-child')].map((n) => n.textContent),
+    navrows: document.querySelectorAll('.navrow').length,
+    skillsRow: !!document.querySelector('#sidebar [data-room="skills"]'),
+    subtitles: document.querySelectorAll('#sidebar .sesrow .t2').length,
+    onRows: document.querySelectorAll('#sidebar .sesrow.on').length,
+    counter: (document.querySelector('[data-list="tasks"] .ct') || {}).textContent || '',
+    tasksEmpty: (document.querySelector('[data-list="tasks"] .sb-empty') || {}).textContent || '',
+    chats: sidebarChats().rows.map((s) => ({id:s.id, dot:chatDot(s)[0], pinned:PREFS.pinned.includes(s.id), name:s.t, status:s.status, updatedAt:s.updatedAt})),
+    hiddenChats: sidebarChats().hidden,
+    tasks: sidebarTasks().rows.map((t) => ({id:t.id, dot:taskDot(t)[0], status:t.status, name:t.t, seen:PREFS.seen['task:' + t.id] || 0})),
+    hiddenTasks: sidebarTasks().hidden,
+    running: sidebarTasks().running,
+    loadMore: !!document.querySelector('[data-more="chats"]'),
+    page: SIDEBAR_PAGE,
+    total: SESSIONS.length,
+  });
+  window.__pin = (id) => { act('pin:' + id); return PREFS.pinned.slice(); };
+  window.__unpin = (id) => { act('unpin:' + id); return PREFS.pinned.slice(); };
+  window.__prefs = () => BR.prefsGet();
+  window.__reloadPrefs = () => loadPrefs();
+  window.__forgetSeen = (id) => { delete PREFS.seen[id]; savePrefs(); render(); return chatDot(SESSIONS.find((s) => s.id === id))[0]; };
+  window.__forgetTaskSeen = (id) => { delete PREFS.seen['task:' + id]; savePrefs(); render(); return (sidebarTasks().rows.find((t) => t.id === id) || {}).id || ''; };
+  window.__openTask = (id) => { act('task:' + id); return PREFS.seen['task:' + id] || 0; };
+  // The RUNNING map is what the pulsing dot reads; these drive it directly so
+  // the rule can be asserted without a second live turn.
+  window.__running = (turnId, id, on) => {
+    if (on) RUNNING.set(turnId, id); else RUNNING.delete(turnId);
+    render();
+    const el = document.querySelector('[data-ses="' + id + '"] .sdot');
+    return el ? el.className : '';
+  };
+  window.__pendingApproval = (id, on) => {
+    if (on) PENDING_APPROVALS.set(id, 'smoke'); else PENDING_APPROVALS.delete(id);
+    render();
+    return chatDot(SESSIONS.find((s) => s.id === id))[0];
+  };
+  window.__deleteSession = (id) => { act('del:' + id); return SESSIONS.length; };
+  window.__loadMore = () => { const b = document.querySelector('[data-more="chats"]'); if (b) b.click(); return sidebarChats().rows.length; };
+  window.__dotStyle = (id) => {
+    const el = document.querySelector('[data-ses="' + id + '"] .sdot');
+    if (!el) return null;
+    const cs = getComputedStyle(el);
+    return {cls:el.className, animation:cs.animationName, shadow:cs.boxShadow};
+  };
+  // ⌘3 / View › Skills / the palette rows still reach Skills — on this tree they
+  // open Settings › Skills, and only the sidebar row is gone.
+  window.__skillsReachable = () => { act('room:skills'); const h = document.querySelector('#settings .settab.on'); return h ? h.textContent.replace(/\s*\((\d+|up|down)\)$/, '').trim() : ''; };
 }

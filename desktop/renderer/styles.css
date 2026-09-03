@@ -678,3 +678,33 @@ button.menurow:hover{background:var(--bg-hover)}
 .attach-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:2px;min-width:0}
 .attach .filechip{max-width:100%;padding:4px 10px 4px 7px;vertical-align:0;overflow:hidden}
 .attach .filechip span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* ---------------- Item 6: the sidebar is two lists (Tasks, then Chats) ---------------- */
+/* No nav rows and no group headers any more; one line per row with a dot on
+   the left. These rules come after the original sidebar block on purpose —
+   they override .sesrow's two-line 52px geometry rather than editing it. */
+.sb-lists{flex:1;min-height:0;overflow-y:auto;border-top:1px solid var(--line-soft);padding-bottom:var(--s3)}
+.sb-list{display:flex;flex-direction:column;padding:var(--s1) 0 var(--s2)}
+.sb-list + .sb-list{border-top:1px solid var(--line-soft)}
+.sb-list-head{height:26px;flex:none;display:flex;align-items:center;gap:var(--s2);padding:0 var(--s3) 0 14px;color:var(--text-secondary)}
+.sb-list-head > span:first-child{flex:1;min-width:0}
+.sb-list-head .ct{font-size:11px;color:var(--text-tertiary);font-weight:400;letter-spacing:0;text-transform:none}
+.sb-empty{padding:4px 14px 6px;font-size:12px;color:var(--text-tertiary)}
+.sesrow{height:30px;gap:var(--s2);padding:0 6px 0 12px;border-radius:0}
+.sesrow .t1{flex:1;min-width:0;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* The dot: empty ring = executed and read, filled = wants you, pulsing = running. */
+.sdot{width:8px;height:8px;border-radius:999px;flex:none;box-sizing:border-box;border:1.5px solid var(--text-tertiary);background:transparent}
+.sdot.filled{background:var(--accent);border-color:var(--accent)}
+/* The ring is not decoration: `prefers-reduced-motion` kills the animation
+   (line 429), so a running dot has to differ from a filled one without it. */
+.sdot.running{background:var(--accent);border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-wash);animation:sdot-pulse 1.2s var(--ease) infinite}
+@keyframes sdot-pulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.35);opacity:.45}}
+.pinbtn{width:22px;height:22px;flex:none;visibility:hidden;color:var(--text-tertiary);display:flex;align-items:center;justify-content:center;border-radius:5px}
+.sesrow:hover .pinbtn,.sesrow.pinned .pinbtn{visibility:visible}
+.pinbtn:hover{background:var(--bg-hover);color:var(--text-primary)}
+.sesrow.pinned .pinbtn{color:var(--accent-text)}
+.loadmore{height:26px;margin:2px 12px 0;border-radius:6px;font-size:12px;color:var(--accent-text);text-align:left;padding:0 6px}
+.loadmore:hover{background:var(--accent-wash-soft)}
+/* Rail and narrow window: the lists collapse with the rest of the sidebar. */
+#sidebar.rail .sb-lists{display:none}
+@media (max-width:1000px){#sidebar .sb-lists{display:none}}
