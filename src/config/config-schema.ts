@@ -809,6 +809,11 @@ export interface AtomicAgentConfig {
    */
   telegram: TelegramConfig;
   /**
+   * Composio integration. Mirrors `UserConfigFile.composio`. The API
+   * key is not stored here — see `ComposioConfig`.
+   */
+  composio: ComposioConfig;
+  /**
    * MCP (Model Context Protocol) client configuration. Mirrors
    * `UserConfigFile.mcp`. Each entry in `servers[]` becomes a
    * lifecycle-managed connection to an external MCP server. Tools
@@ -925,6 +930,42 @@ export type TelegramParseMode = "plain" | "html";
  * messages whose `from.id` matches `ownerUserId` are dispatched into
  * the agent loop. Group chats are dropped unconditionally.
  */
+/**
+ * Composio integration. Composio is a hosted catalogue of 1500+ SaaS
+ * toolkits (Gmail, Slack, Notion, Linear, …) that also brokers each
+ * app's OAuth. The agent reaches it as an ordinary MCP server: a
+ * tool-router session yields a Streamable-HTTP MCP endpoint carrying
+ * four meta-tools, and `src/mcp/` does the rest.
+ *
+ * As with `TelegramConfig`, the API key is **not** stored here — it
+ * lives in `<stateDir>/.env` under the name in `apiKeyEnv` and is
+ * loaded at bootstrap by `loadDotenvFromStateDir`. A missing key is
+ * the integration's real gate: no key, no MCP server, no Composio
+ * tool in the registry.
+ */
+export interface ComposioConfig {
+  /**
+   * Master kill switch. `false` keeps the integration dormant even
+   * when a key is present — the escape hatch for an operator who
+   * wants the key on disk but the toolkits off.
+   */
+  enabled: boolean;
+  /** Name of the env var holding the API key. */
+  apiKeyEnv: string;
+  /**
+   * Stable anonymous install id scoping Composio connected accounts.
+   * Minted once as a random UUID and never derived from the operator's
+   * email: Composio's docs advise against emails as user ids, and an
+   * email is PII the integration has no reason to disclose. Losing it
+   * means re-authorising every connected app, so it is persisted.
+   */
+  userId: string | null;
+  /** Cached tool-router session id (`trs_…`), so a boot costs no API call. */
+  sessionId: string | null;
+  /** Cached MCP endpoint for `sessionId`. */
+  mcpUrl: string | null;
+}
+
 export interface TelegramConfig {
   /** Master kill switch. When `false`, the channel is constructed but never started. */
   enabled: boolean;
@@ -1597,6 +1638,12 @@ export interface UserConfigFile {
    */
   telegram: TelegramConfig;
   /**
+   * Composio integration. Added in config v50. Older files are
+   * transparently upgraded with the defaults below, which leave the
+   * integration inert until a key is written to `<stateDir>/.env`.
+   */
+  composio: ComposioConfig;
+  /**
    * MCP client servers. Added in config v23. Each entry declares one
    * external MCP server the runtime will connect to at bootstrap and
    * whose tools / resources / prompts will be exposed through the
@@ -1698,7 +1745,12 @@ export interface UserConfigFile {
 // taken: a declined offer must not come back on a re-run after a reset.
 // Additive: an older file parses with it `null`, which reads as "never
 // offered", the same answer that file has always implied.
-export const USER_CONFIG_VERSION = 49;
+// v50: new `composio` block wiring the Composio toolkit catalogue in as
+// an MCP server. Additive and inert by default — the block carries a
+// switch, an env-var *name*, and cached session ids, never the key
+// itself, and an older file inherits defaults that mount nothing until
+// a key is written to `<stateDir>/.env`.
+export const USER_CONFIG_VERSION = 50;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -1836,6 +1888,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   46,
   47,
   48,
+  49,
   USER_CONFIG_VERSION,
 ];
 
@@ -2105,6 +2158,16 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
     ownerUserId: null,
     parseMode: "html",
     progressIndicator: true,
+  },
+  composio: {
+    // Added in v50. `enabled: true` is safe because the key, not this
+    // flag, is what actually mounts anything: with no key in the env
+    // the runtime opens no connection and registers no tool.
+    enabled: true,
+    apiKeyEnv: "COMPOSIO_API_KEY",
+    userId: null,
+    sessionId: null,
+    mcpUrl: null,
   },
   mcp: {
     // Added in v23. Empty by default — the operator declares MCP
@@ -2506,6 +2569,26 @@ export function parseNonEmptyString(raw: unknown, field: string): string {
   throw new ConfigValidationError(
     field,
     `expected non-empty string, got ${JSON.stringify(raw)}`,
+  );
+}
+
+/**
+ * Parse an optional string that is meaningfully absent. `undefined`
+ * (key missing) and `null` (explicitly cleared) both read as `null`,
+ * so a cleared cache entry and a never-written one behave alike.
+ */
+export function parseNullableString(
+  raw: unknown,
+  field: string,
+): string | null {
+  if (raw === undefined || raw === null) return null;
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+  throw new ConfigValidationError(
+    field,
+    `expected string or null, got ${JSON.stringify(raw)}`,
   );
 }
 
@@ -3234,6 +3317,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
   const vision = (obj.vision as Record<string, unknown> | undefined) ?? {};
   const skills = (obj.skills as Record<string, unknown> | undefined) ?? {};
   const telegram = (obj.telegram as Record<string, unknown> | undefined) ?? {};
+  const composio = (obj.composio as Record<string, unknown> | undefined) ?? {};
   const tui = (obj.tui as Record<string, unknown> | undefined) ?? {};
   const analytics =
     (obj.analytics as Record<string, unknown> | undefined) ?? {};
@@ -4020,6 +4104,19 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
           USER_CONFIG_DEFAULTS.telegram.progressIndicator,
         "telegram.progressIndicator",
       ),
+    },
+    composio: {
+      enabled: parseBool(
+        composio.enabled ?? USER_CONFIG_DEFAULTS.composio.enabled,
+        "composio.enabled",
+      ),
+      apiKeyEnv: parseNonEmptyString(
+        composio.apiKeyEnv ?? USER_CONFIG_DEFAULTS.composio.apiKeyEnv,
+        "composio.apiKeyEnv",
+      ),
+      userId: parseNullableString(composio.userId, "composio.userId"),
+      sessionId: parseNullableString(composio.sessionId, "composio.sessionId"),
+      mcpUrl: parseNullableString(composio.mcpUrl, "composio.mcpUrl"),
     },
     mcp: {
       servers: parseMcpServers(mcp.servers, "mcp.servers"),

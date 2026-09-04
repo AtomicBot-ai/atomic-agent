@@ -176,6 +176,7 @@ import { TaskRunner, TaskStore } from "../tasks/index.js";
 import { Scheduler } from "../scheduler/index.js";
 import { WebhookSessionStore } from "../http/webhook-session-store.js";
 
+import { resolveComposioServerConfig } from "../composio/index.js";
 import { StructuredLogger } from "../tracing/structured-logger.js";
 import type { LogSink } from "../tracing/structured-logger.js";
 import { MetricsCollector } from "../tracing/metrics-collector.js";
@@ -1543,7 +1544,21 @@ export async function createAgentRuntime(
   // blocks bootstrap. Catalog growth after this point (hot-add
   // server) requires a rebuild of the stable prefix / grammar
   // (currently a runtime restart — see AGENTS.md §"MCP client").
-  const mcpServerConfigs = config.mcp?.servers ?? [];
+  // Composio rides the same rails: when a key is configured we mint (or
+  // reuse) a tool-router session and mount its hosted endpoint as one
+  // more MCP server. With no key `resolveComposioServerConfig` returns
+  // `undefined` and this line is the only trace of the integration —
+  // no server, no tools, nothing for the model to reach for. Failure is
+  // soft: an unreachable Composio must not stop the agent from booting.
+  const composioServerConfig = await resolveComposioServerConfig({
+    composio: config.composio,
+    userConfigFile: config.paths.userConfigFile,
+    logger,
+  });
+  const mcpServerConfigs = [
+    ...(config.mcp?.servers ?? []),
+    ...(composioServerConfig ? [composioServerConfig] : []),
+  ];
   const mcpEnabled = mcpServerConfigs.length > 0;
   const mcpManager = new McpManager(mcpServerConfigs, {
     toolRegistry,
