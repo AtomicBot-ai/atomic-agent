@@ -882,7 +882,10 @@ export interface KeyEnvNames {
   nonEmpty: Set<string>;
 }
 
-function keyNamesAvailable(): KeyEnvNames {
+// r5 review fix — exported for tui-import.ts, which has to answer
+// "will this provider have a key HERE?" for names the import is about to
+// write into the desktop's own .env, not just the ones already resolvable.
+export function keyNamesAvailable(): KeyEnvNames {
   const present = new Set<string>();
   const nonEmpty = new Set<string>();
   for (const [k, v] of Object.entries(process.env)) {

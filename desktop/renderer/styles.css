@@ -1084,3 +1084,26 @@ button.menurow:hover{background:var(--bg-hover)}
 /* --danger and --danger-wash are declared in all three theme blocks. */
 .msgact.danger{color:var(--danger)}
 .msgact.danger:hover{background:var(--danger-wash);color:var(--danger)}
+
+/* ============================================================
+   r5 review fixes — chrome lane
+   ============================================================ */
+
+/* Item 2. Below 1000px `#sidebar{width:52px}` above wins over the 260px rule
+   whatever `.rail` says, so the toolbar toggle cannot do anything there and
+   renderToolbar now ships it `disabled`. It has to LOOK disabled too, or the
+   refusal is a surprise rather than an affordance. */
+#toolbar .iconbtn[disabled]{color:var(--text-disabled);cursor:default}
+#toolbar .iconbtn[disabled]:hover{background:transparent;color:var(--text-disabled)}
+
+/* Item 5. The settings backdrop covers the 52px toolbar band, and
+   `body.electron #toolbar` is a `-webkit-app-region: drag` region. Chromium
+   unions the rects of elements that DECLARE a value and subtracts only those
+   that declare `no-drag`; an element painted on top with the initial value
+   contributes nothing and does not mask the region beneath it. So a real
+   mousedown in the top band of the backdrop started a window drag and never
+   produced a click, and the dismiss-on-outside-click branch could not fire
+   there. (The synthetic MouseEvents the suite dispatches bypass drag-region
+   hit testing entirely, which is why the checks stayed green over a dead
+   band.) #onboarding already applies this same pattern deliberately. */
+body.electron #settings{-webkit-app-region:no-drag}

@@ -39,7 +39,7 @@ import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statS
 import { join } from "node:path";
 import { promisify } from "node:util";
 
-import { configGet, configSetWhole, dotenvSet } from "./agent-cli.js";
+import { configGet, configSetWhole, dotenvSet, keyNamesAvailable, providerHasKey, type ProviderEntry } from "./agent-cli.js";
 import { DESKTOP_STATE_DIR, TUI_STATE_DIR } from "./state-dir.js";
 
 const run = promisify(execFile);
@@ -163,6 +163,25 @@ function tuiKeyValues(): Array<[string, string]> {
   return [...tuiDotenv().entries()];
 }
 
+/**
+ * r5 review fix (major) — the key names that will be resolvable in THIS
+ * directory once the current import finishes. The providers arm runs before
+ * the keys arm, so a key this same call is about to copy is not in the
+ * desktop's .env yet; without this the route decision would read as "no key"
+ * on the one path where the operator did tick the keys row. NAMES only —
+ * `tuiDotenv` has already dropped every empty value, so every name added
+ * here is non-empty, which is what `providerHasKey` asks of it.
+ */
+function namesAfterImport(keysAreComing: boolean): ReturnType<typeof keyNamesAvailable> {
+  const names = keyNamesAvailable();
+  if (!keysAreComing) return names;
+  for (const name of tuiKeyNames()) {
+    names.present.add(name);
+    names.nonEmpty.add(name);
+  }
+  return names;
+}
+
 function dirNames(path: string): string[] {
   try {
     return readdirSync(path, { withFileTypes: true })
@@ -243,7 +262,12 @@ export async function tuiSetupPresent(): Promise<TuiSetupPresence> {
     present: true,
     path,
     has: {
-      providers: Array.isArray(llm.providers) ? llm.providers.length : 0,
+      // r5 review fix — count what the import will actually COPY. The merge
+      // below skips the source's `local-llama` entry on purpose (its managed
+      // port is the terminal agent's), so counting the raw array made the
+      // preview screen — the last honest word before the write — promise one
+      // provider more than the result reported.
+      providers: Array.isArray(llm.providers) ? llm.providers.filter((p) => (p as { id?: unknown })?.["id"] !== "local-llama").length : 0,
       keys: tuiKeyNames(),
       skills: importableSkills().length,
       sessions: await sqliteRowCount(join(path, "sessions.sqlite"), "sessions"),
@@ -305,8 +329,34 @@ export async function importFromTui(opts: TuiImportOptions, hooks?: TuiImportHoo
         copied.providers++;
       }
       dstLlm["providers"] = [...byId.values()];
-      if (typeof srcLlm["activeTextProvider"] === "string" && srcLlm["activeTextProvider"] !== "local-llama") {
-        dstLlm["activeTextProvider"] = srcLlm["activeTextProvider"];
+      /* r5 review fix (major) — the import must not RE-ROUTE the desktop.
+         This used to be an unconditional `dstLlm.activeTextProvider =
+         srcLlm.activeTextProvider`, which was wrong twice over:
+
+         (1) It overrode the choice the operator had just made. The import
+             step is the LAST wizard screen (obSettle), after the backend
+             choice and the second-backend offer, so an operator who picked
+             "Local models" and waited out a multi-GB download was silently
+             re-routed to the terminal agent's cloud provider by a tick-list
+             row whose copy never says it changes where the agent runs.
+         (2) Nothing checked the provider resolves a key HERE. Keys live in
+             each directory's own .env and the `keys` row is secret, so it
+             is OFF in the wizard's defaults — ticking "Atomic Agent in the
+             terminal" landed a keyless active provider, exactly the state
+             backend-switch.ts activateProvider refuses to create
+             (`needsKey: true`, "no API key").
+
+         So the route is only ever FILLED IN, never replaced, and only when
+         it will actually work: the destination has no route of its own, and
+         the provider resolves a key once this import finishes (the `keys`
+         arm runs below, so names this run is about to write count). */
+      const srcActive = typeof srcLlm["activeTextProvider"] === "string" ? (srcLlm["activeTextProvider"] as string) : "";
+      const dstActive = typeof dstLlm["activeTextProvider"] === "string" ? (dstLlm["activeTextProvider"] as string) : "";
+      if (srcActive && srcActive !== "local-llama" && dstActive.length === 0) {
+        const entry = byId.get(srcActive) as unknown as ProviderEntry | undefined;
+        if (entry && providerHasKey(entry, namesAfterImport(want.keys === true))) {
+          dstLlm["activeTextProvider"] = srcActive;
+        }
       }
       if (typeof srcLlm["toolTransport"] === "string") dstLlm["toolTransport"] = srcLlm["toolTransport"];
       if (srcLlm["fallback"] && typeof srcLlm["fallback"] === "object") dstLlm["fallback"] = srcLlm["fallback"];

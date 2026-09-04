@@ -5839,7 +5839,16 @@ async function isolationAndSwitchTest(
   const cliSrc = readFileSync(join(srcDir, "agent-cli.ts"), "utf8");
   const clientSrc = readFileSync(join(srcDir, "agent-client.ts"), "utf8");
   const codeOnly = (text: string) => text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
-  const literals = [cliSrc, clientSrc].map(codeOnly).join("\n").match(/"\.atomic-agent"/g) ?? [];
+  /* r5 review fix — the title says "no desktop subprocess", and the scan read
+     two files. main.ts spawns and configures children too (and carried a dead
+     `?? join(homedir(), ".atomic-agent")` until this round), and tui-import.ts
+     is the one module that deliberately touches the terminal tree — through
+     TUI_STATE_DIR, never a literal. state-dir.ts is deliberately NOT scanned:
+     it is where TUI_STATE_DIR is defined, so it is the single place the
+     literal is allowed to exist. */
+  const mainSrc = readFileSync(join(srcDir, "main.ts"), "utf8");
+  const importSrc = readFileSync(join(srcDir, "tui-import.ts"), "utf8");
+  const literals = [cliSrc, clientSrc, mainSrc, importSrc].map(codeOnly).join("\n").match(/"\.atomic-agent"/g) ?? [];
   const spawnSites = [...codeOnly(cliSrc).matchAll(/(?:spawn|run)\(binary,/g)];
   const spawnEnvOk = spawnSites.every((m) => {
     const tail = codeOnly(cliSrc).slice(m.index ?? 0, (m.index ?? 0) + 600);
@@ -5849,7 +5858,8 @@ async function isolationAndSwitchTest(
   check(
     "state dir: no desktop subprocess names ~/.atomic-agent",
     literals.length === 0 && spawnSites.length >= 3 && spawnEnvOk && clientEnvOk,
-    `${literals.length} \`.atomic-agent\` literals; ${spawnSites.length} agent spawn sites, all env-carrying=${spawnEnvOk}; serve child env-carrying=${clientEnvOk}`,
+    `${literals.length} \`.atomic-agent\` literals across agent-cli.ts, agent-client.ts, main.ts and tui-import.ts;`
+    + ` ${spawnSites.length} agent spawn sites, all env-carrying=${spawnEnvOk}; serve child env-carrying=${clientEnvOk}`,
   );
 
   // ---- item 9: first run is latched, not inferred ----
@@ -6147,6 +6157,41 @@ async function isolationAndSwitchTest(
           && sourceDrift.length === 0,
         `copied=${JSON.stringify(imported.copied)} providers=${JSON.stringify(gotIds)} inlineKeys=${!noKeys} port ${portBefore} → ${cfgAfter?.localModels?.managed?.port ?? null}; source drift: ${sourceDrift.join(",") || "none"}`,
       );
+
+      /* r5 review fix (major): the import may not RE-ROUTE this app.
+         The import step is the wizard's LAST screen, after the backend
+         choice, and it used to copy `llm.activeTextProvider` unconditionally
+         — re-routing an operator who had just picked Local models onto the
+         terminal agent's cloud provider, with no key on this side. Two legs,
+         both driven for real:
+           a) a desktop that HAS a route keeps it, whatever the source says;
+           b) a desktop with a BLANK route is filled in only when the
+              provider resolves a key here — and the keys row is off by
+              default, so the default tick-list must leave the route blank. */
+      const routeBefore = cfgBefore?.llm?.activeTextProvider ?? null;
+      const routeAfter = cfgAfter?.llm?.activeTextProvider ?? null;
+      const srcRoute = (JSON.parse(readFileSync(join(TUI_STATE_DIR, "config.json"), "utf8")) as UserConfigShape).llm?.activeTextProvider ?? null;
+      check(
+        "state dir: the import leaves the backend the wizard chose alone",
+        routeBefore !== null && routeAfter === routeBefore,
+        `route ${routeBefore} → ${routeAfter}; the terminal setup names ${srcRoute}`,
+      );
+      const blanked = JSON.parse(JSON.stringify(cfgAfter)) as UserConfigShape;
+      if (blanked.llm) {
+        blanked.llm.activeTextProvider = "";
+        blanked.llm.providers = (blanked.llm.providers ?? []).filter((p) => p.id === "local-llama");
+        await configSetWhole(blanked);
+        const refilled = await js<ImportResult>("window.__importFromTui({providers:true})");
+        const cfgBlank = (await configGet()).config as UserConfigShape | undefined;
+        const filled = cfgBlank?.llm?.activeTextProvider ?? null;
+        const srcEntry = (cfgBlank?.llm?.providers ?? []).find((p) => p.id === srcRoute);
+        const keyHere = srcEntry ? providerHasKey(srcEntry) : false;
+        check(
+          "state dir: a blank route is filled from the terminal setup only when the key resolves here",
+          refilled.ok === true && (keyHere ? filled === srcRoute : (filled ?? "") === ""),
+          `blanked route → ${JSON.stringify(filled)}; source names ${srcRoute}, which ${keyHere ? "does" : "does not"} resolve a key in this state dir (keys were not ticked)`,
+        );
+      }
     }
   } finally {
     if (cfgBefore) await configSetWhole(cfgBefore);
@@ -6245,11 +6290,22 @@ async function isolationAndSwitchTest(
   const modeSupported = await js<boolean | null>("window.__modeSupported()");
   const modeBefore = await js<string>("window.__mode()");
   const modeTarget = modeBefore === "plan" ? "default" : "plan";
-  const modeProbe = await js<{ samples: Array<{ disabled: boolean; spins: number; mode: string }>; ms: number }>(
+  const modeProbe = await js<{ samples: Array<{ disabled: boolean; spins: number; mode: string; chip: string; blank: boolean }>; ms: number }>(
+    /* r5 review fix — sample the RENDERED chip, not only window.__mode().
+       currentMode() returns SWX.want.mode the instant the mode is clicked, but
+       codingModeChip() returns the `mode —` blank AHEAD of any call to it
+       whenever !MODE.known (or the route is unsupported). That precedence is
+       right — painting a stance the agent has not confirmed would be a
+       fabrication — but it means the mode switch does not in fact look instant
+       in that state, and a check that read only __mode() would not notice.
+       So both are sampled and the blank is asserted as the blank. */
     `(async () => {
        const samples = [];
        const take = () => { const b = document.querySelector('.sendbtn');
-         samples.push({disabled: !!(b && b.disabled), spins: document.querySelectorAll('.sspin').length, mode: window.__mode()}); };
+         const c = document.querySelector('.cmodechip');
+         samples.push({disabled: !!(b && b.disabled), spins: document.querySelectorAll('.sspin').length, mode: window.__mode(),
+                       chip: c ? c.textContent.trim() : '',
+                       blank: !!(c && /^mode\\s+—$/.test(c.textContent.trim()))}); };
        const t0 = Date.now();
        const p = window.__setCodingMode(${JSON.stringify(modeTarget)});
        take();
@@ -6266,7 +6322,13 @@ async function isolationAndSwitchTest(
       // A build with no /api/coding-mode route has no stance to paint, and
       // the override is suppressed there by design — assert the blank, not a
       // mode the agent cannot hold.
-      && (modeSupported === false ? modeProbe.samples[0]!.mode === modeBefore : modeProbe.samples[0]!.mode === modeTarget),
+      && (modeSupported === false ? modeProbe.samples[0]!.mode === modeBefore : modeProbe.samples[0]!.mode === modeTarget)
+      // Review fix: and the painted chip agrees with what __mode() claims —
+      // either it carries the target's own label at the first sample, or it is
+      // the honest `mode —` blank because the agent has not confirmed a stance.
+      && (modeProbe.samples[0]!.blank
+        ? modeSupported === false || modeProbe.samples[0]!.chip === "mode —"
+        : modeProbe.samples[0]!.chip === modeTarget),
     `route supported=${modeSupported}; ${modeProbe.ms}ms; samples=${JSON.stringify(modeProbe.samples)}`,
   );
   await js<void>(`window.__setCodingMode(${JSON.stringify(modeBefore)})`);
@@ -6276,6 +6338,55 @@ async function isolationAndSwitchTest(
     "coding mode: the lock cannot outlive the switch",
     lockAfterMode.pending === 0 && lockAfterMode.want === null && lockAfterMode.timer === false,
     JSON.stringify(lockAfterMode),
+  );
+
+  /* ---- r5 review fix: the lock's `!S.busy && !S.pending` conjunct ----
+     sendButton() and submit() both gate the lock on `SWX.pending && !S.busy
+     && !S.pending`, and the second half is deliberate rather than redundant:
+     swxRun refuses to START while a turn runs, but S.busy is set
+     asynchronously for the whole 3-11 s a switch lasts (opening a chat whose
+     turn is live adopts it). A turn adopted mid-switch must keep its Stop and
+     its steer arrow, and Enter must reach steerOrQueue rather than the lock's
+     toast. That branch ordering was hand-verified only — it is exactly the
+     arrangement an earlier review flagged as a blocker. Driven here, with
+     steerOrQueue stood in front of so nothing is sent. */
+  const busyFace = await js<{
+    locked: { act: string; title: string; disabled: boolean };
+    steer: { act: string; title: string; disabled: boolean };
+    enter: { steers: number; toasts: Array<[string, string, string]> };
+    stop: { act: string; title: string };
+  }>("window.__swxBusyFace()");
+  check(
+    "send button: a turn adopted mid-switch keeps its steer and its stop",
+    busyFace.locked.disabled === true && busyFace.locked.act === "send"
+      && busyFace.steer.disabled === false && busyFace.steer.title === "Steer this turn"
+      && busyFace.enter.steers === 1 && busyFace.enter.toasts.length === 0
+      && busyFace.stop.act === "stop" && busyFace.stop.title === "Stop (Ctrl+.)",
+    JSON.stringify(busyFace),
+  );
+
+  /* ---- r5 review fix: two switches at once ----
+     SWX is ONE slot. The lock disables only the send button, so the
+     coding-mode chip and its popover stay clickable for the whole length of a
+     backend switch; a mode click used to re-enter swxRun and overwrite `want`
+     (snapping the composer chip back to the old route — the very paint this
+     item exists to provide), `label`, `since`, and the single `timer` field,
+     whose inner `finally` then left the outer switch with NO watchdog. It is
+     refused in words now. */
+  const nested = await js<{
+    inner: { ok: boolean; error?: string };
+    mid: { want: { backend?: string; mode?: string } | null; timer: boolean; pending: number; label: string; toasts: Array<[string, string, string]> };
+    after: { pending: number; want: unknown; timer: boolean };
+  }>("window.__swxNested()");
+  check(
+    "send button: a second switch started mid-switch is refused, and the first keeps its slot",
+    nested.inner.ok === false && nested.inner.error === "a switch is already running"
+      && !!nested.mid.want && nested.mid.want.backend === "local" && nested.mid.want.mode === undefined
+      && nested.mid.timer === true && nested.mid.pending === 1
+      && nested.mid.label === "switching backend…"
+      && nested.mid.toasts.length === 1 && nested.mid.toasts[0]![0] === "One switch at a time"
+      && nested.after.pending === 0 && nested.after.want === null && nested.after.timer === false,
+    JSON.stringify(nested),
   );
 
   /* ---- item 10: the lock's THIRD condition, proven ----
@@ -8082,7 +8193,13 @@ async function onboardingTest(
        the skill it promises is asserted absent from this lane's state dir
        until Enter on the PREVIEW puts it there. Everything is removed in
        the inner finally. */
-    const stateDir = process.env.ATOMIC_AGENT_STATE_DIR ?? join(homedir(), ".atomic-agent");
+    /* r5 review fix — DESKTOP_STATE_DIR, not a `?? ~/.atomic-agent` fallback.
+       The fallback arm was already unreachable (state-dir-boot.ts publishes the
+       variable before any body statement runs), but it was the one live
+       `.atomic-agent` literal left in a desktop source, and the scan that is
+       supposed to catch such literals did not read this file. Both halves are
+       fixed: the literal is gone, and main.ts is now scanned. */
+    const stateDir = DESKTOP_STATE_DIR;
     const fixtureHome = join(app.getPath("temp"), "atomic-desktop-smoke-claude");
     const fixtureSkill = join(fixtureHome, "skills", "desktop-import-probe");
     const importedSkill = join(stateDir, "skills", "desktop-import-probe");
@@ -8713,6 +8830,8 @@ async function chromeTest(
   type SbToggle = {
     on: boolean; pressed: string; title: string; state: string; rail: boolean;
     narrow: boolean; expanded: boolean; width: number; bg: string; fg: string; accentText: string;
+    /* review fix (item 2): the control is disabled on a narrow window. */
+    disabled: boolean;
   };
   type SetBtn = {
     text: string; act: string; title: string; aria: string | null;
@@ -8726,6 +8845,15 @@ async function chromeTest(
     dangerColor?: string | null; right?: number; btnRight?: number | null;
     anchorRight?: number | null; insideBubble?: number;
   };
+
+  /* r5 review fix — the two writes this lane makes to the WINDOW itself, put
+     back in `finally` like everything else it writes. The 940px resize and the
+     collapsed rail used to be undone inline: if any js<>() between a write and
+     its inline restore rejected, the try unwound and every later check in the
+     suite — the final `SMOKE screenshot=` capture included — would have run
+     against a 940px window with a collapsed sidebar, turning one failure into
+     a wall of unrelated geometry failures. */
+  const sizeBefore: [number, number] | null = win ? (win.getContentSize() as [number, number]) : null;
 
   try {
     // --- item 2: the sidebar toggle glows while the sidebar is open ----------
@@ -8772,18 +8900,53 @@ async function chromeTest(
     );
     // The 52px rail also happens with NO class below 1000px. The flag still
     // says open; the button must be honestly off.
-    const size = win ? win.getContentSize() : null;
-    if (size) {
-      win!.setContentSize(940, size[1]);
+    if (!sizeBefore) {
+      /* r5 review fix — a degraded leg says so. These two checks used to be
+         wrapped in `if (size)` with no else, so a null window dropped two
+         assertions out of the run with failures=0 and nothing in the log
+         saying why. Every other conditional in this lane states its reason. */
+      process.stdout.write("SKIP item 2: the responsive-rail checks need the BrowserWindow; `win` is null in this run\n");
+    } else {
+      win!.setContentSize(940, sizeBefore[1]);
       await wait(500);
       const narrow = await js<SbToggle>("window.__sbToggle()");
       check(
         "item 2: the glow tracks the responsive rail, not just the class",
         !narrow.on && narrow.narrow && !narrow.expanded && narrow.state === "open"
-          && !narrow.rail && narrow.width === 52 && narrow.title === "Show sidebar (⌘ 0)",
+          && !narrow.rail && narrow.width === 52
+          && narrow.disabled && narrow.title === "The sidebar is a rail on a narrow window",
         JSON.stringify(narrow),
       );
-      win!.setContentSize(size[0], size[1]);
+      /* r5 review fix — the control used to stay live and do nothing here: the
+         media query pins 52px whatever `.rail` says, so a click flipped the
+         flag with no visual change and aria-pressed read "false" either way.
+         The button is disabled (asserted above) and the chord, which does not
+         go through the button, refuses in words instead of flipping a dead
+         flag. Restores the toasts it reads. */
+      await js<unknown>("window.__clearToasts()");
+      const chord = await js<{ toasts: Array<[string, string, string]>; state: string }>(
+        "(function(){window.__rail();return {toasts:window.__toasts(),state:window.__sbToggle().state};})()",
+      );
+      check(
+        "item 2: the ⌘ 0 chord refuses on a narrow window instead of flipping a dead flag",
+        chord.state === "open" && chord.toasts.length === 1
+          && chord.toasts[0]![0] === "The sidebar is a rail on a narrow window",
+        JSON.stringify(chord),
+      );
+      await js<unknown>("window.__clearToasts()");
+      /* r5 review fix (item 8 coverage) — styles.css duplicates the four rail
+         rules for the settings button inside the same `@media (max-width:1000px)`
+         block, and nothing asserted that copy: every item-8 rail check drove
+         `window.__rail()`, which is the `.rail` CLASS path only. Read the button
+         here, while the window is genuinely narrow and no class is set. */
+      const narrowBtn = await js<SetBtn | null>("window.__settingsBtn()");
+      check(
+        "item 8: the responsive rail crushes the settings entry to the gear too",
+        !!narrowBtn && !narrowBtn.labelVisible && narrowBtn.iconVisible && narrowBtn.width === 32
+          && narrowBtn.title === "Settings (⌘ ,)",
+        JSON.stringify(narrowBtn),
+      );
+      win!.setContentSize(sizeBefore[0], sizeBefore[1]);
       await wait(500);
       const back = await js<SbToggle>("window.__sbToggle()");
       check(
@@ -8880,6 +9043,40 @@ async function chromeTest(
       dragout.settings,
       `${JSON.stringify(dragout)} (mousedown inside .setwin, click resolves to #settings)`,
     );
+    /* r5 review fix — SETDOWN.outside used to be cleared only when the dismiss
+       branch fired, so an abandoned press (the pointer leaves the window, or
+       Escape closes something between down and up) left it up for the NEXT
+       click. A keyboard activation carries no mousedown and reports detail 0;
+       it must not inherit that flag. Both halves asserted: the keyboard click
+       leaves the window open, and a pointer click right after it still
+       dismisses, so the guard has not turned the feature off. */
+    const keyClick = await js<{ armed: boolean; afterKeyboard: boolean; afterPointer: boolean; flag: boolean } | null>(
+      "window.__setClickKeyboard()",
+    );
+    check(
+      "item 5: an abandoned press cannot be spent by a later keyboard activation",
+      !!keyClick && keyClick.armed && keyClick.afterKeyboard === true && keyClick.afterPointer === false,
+      `${JSON.stringify(keyClick)} (detail 0 = a click synthesised by Enter/Space; detail 1 = a real pointer)`,
+    );
+    reopened = await js<{ settings: boolean; pane: string }>("window.__openSettings()");
+    check("item 5: the settings window is back for the checks below", reopened.settings, JSON.stringify(reopened));
+    /* The Electron drag region, which no synthetic MouseEvent can observe:
+       `body.electron #toolbar` is `-webkit-app-region: drag`, and #settings is
+       painted over that 52px band with `inset:0`. Chromium unions the rects of
+       elements that DECLARE a value and subtracts only `no-drag`, so an
+       element on top with the initial value does not mask the region beneath
+       it — a real mousedown in that band started a window drag and never
+       produced a click at all. Asserted as the rule, the way the hover rules
+       above are, because the fact it fixes is invisible to script. */
+    const liveDrag = await js<string | null>('window.__cssRule("body.electron #settings")');
+    const diskDrag = cssText.includes("body.electron #settings{-webkit-app-region:no-drag}");
+    check(
+      "item 5: the backdrop's top band is not a window-drag region",
+      liveDrag !== null ? /no-drag/.test(liveDrag) : diskDrag,
+      liveDrag !== null
+        ? `live rule ${JSON.stringify(liveDrag)}`
+        : `cssRules unreadable on a file:// sheet; stylesheet on disk carries the no-drag rule: ${diskDrag}`,
+    );
     // A popover stacked over the window keeps its clicks: #overlays is a
     // sibling subtree the stylesheet raises above #settings.
     await js<unknown>("window.__modeOpenPopover()");
@@ -8929,6 +9126,19 @@ async function chromeTest(
         "visibility: visible;",
       );
       check("item 3: the control is revealed by hover or keyboard focus", unreadHover, unreadDetail);
+      /* r5 review fix — the ':focus-within' half of that same declaration IS
+         drivable, and nothing drove it: the check above compares rule TEXT,
+         which is all :hover allows. Focus the row for real and read the
+         computed visibility on the way in and on the way out. */
+      const reveal = await js<{ rest: string; focused: string; blurred: string; inRow: boolean; hadFocus: boolean } | null>(
+        `window.__unreadFocusReveal(${JSON.stringify(target.id)})`,
+      );
+      check(
+        "item 3: keyboard focus on the row reveals the control for real",
+        !!reveal && reveal.inRow && reveal.hadFocus
+          && reveal.rest === "hidden" && reveal.focused === "visible" && reveal.blurred === "hidden",
+        `${JSON.stringify(reveal)} (:hover stays a rule-text assertion above; this is the twin declaration, driven)`,
+      );
       const marked = await js<{ clicked: boolean; dot: string; seen: number | null; opened: number; stayedPut: boolean }>(
         `window.__markUnread(${JSON.stringify(target.id)})`,
       );
@@ -9011,7 +9221,23 @@ async function chromeTest(
       "item 6: a new chat puts the keyboard focus in the prompt",
       fresh.id === "entry" && fresh.logLen === 0 && fresh.sessionId === "" && !fresh.settings
         && JSON.stringify(fresh.caret) === "[0,0]",
-      JSON.stringify(fresh),
+      `${JSON.stringify(fresh)} (caret [0,0] because the composer was empty — the surviving-draft rule is the check below)`,
+    );
+    /* r5 review fix — the [0,0] above holds only because the composer happened
+       to be empty at that point in the run. session:new deliberately does NOT
+       clear S.draft: the draft is the composer's contents, typed by the
+       operator and still on screen, and throwing typed text away on ⌘N would
+       be worse than carrying it. What the new focus leg owes is a stated
+       caret, so the rule is asserted rather than left to the fixture: focus in
+       the composer, caret at the END of whatever survived. */
+    const freshDraft = await js<{ focused: boolean; value: string | null; caret: number[] | null } | null>(
+      'window.__newChatWithDraft("half a sentence")',
+    );
+    check(
+      "item 6: a new chat over a half-typed message keeps it, with the caret at its end",
+      !!freshDraft && freshDraft.focused && freshDraft.value === "half a sentence"
+        && JSON.stringify(freshDraft.caret) === "[15,15]",
+      JSON.stringify(freshDraft),
     );
     check(
       "item 6: and the focus survives the full re-renders that follow",
@@ -9141,7 +9367,7 @@ async function chromeTest(
 
     // Copy really reaches the pasteboard, and copies the text — not the markup
     // and not the desktop's own "Saved to …" footer.
-    const { clipboard } = require("electron") as typeof import("electron");
+    const { clipboard, ClipboardItem } = require("electron") as typeof import("electron");
     // Focus first: Chromium refuses a writeText from an unfocused document
     // before it ever consults the permission layer, and on a machine running
     // several of these windows at once that makes this check vacuous.
@@ -9151,20 +9377,43 @@ async function chromeTest(
     const clipBefore = await clipboard.readText();
     const clipItems = await clipboard.read().catch(() => [] as Electron.ClipboardItem[]);
     const clipTypes = clipItems.flatMap((i) => i.types);
+    /* r5 review fix — `text/html` IS restorable, and treating it as if it were
+       not is why this round trip had never actually run. Chromium — this app's
+       own window included — puts text/html on the pasteboard whenever anyone
+       copies from a browser, so the guard was false on essentially every real
+       machine and the ONE check that would catch a genuine clipboard-permission
+       regression emitted zero times in both green runs. `clipboard.write({text,
+       html})` puts both flavours back. What is still lost on a restore is the
+       provenance metadata Chromium hangs off a copy (`org.chromium.source-url`
+       and the find buffer) — said plainly rather than quietly: it is metadata
+       about where the text came from, not a second payload, and the same
+       reasoning already governs the NSStringPboardType mirrors this predicate
+       has always ignored. An image, a file, RTF or a bookmark still skips the
+       round trip: those carry a payload nothing here can reconstruct. */
     const clipUnrestorable = (t: string): boolean =>
-      /^image\//i.test(t) || t === "text/html" || t === "text/rtf" || t === "text/uri-list"
+      /^image\//i.test(t) || t === "text/rtf" || t === "text/uri-list"
       || /bookmark/i.test(t)
       || /public\.(png|tiff|jpeg|file-url)|NSFilenamesPboardType/i.test(t);
+    const clipHtmlItem = clipItems.find((i) => i.types.includes("text/html"));
+    const clipHtmlBefore = clipHtmlItem
+      ? await (clipHtmlItem.getType("text/html") as Promise<Blob>).then((b) => b.text()).catch(() => "")
+      : "";
     const clipRestorable = clipTypes.length === 0
       || (clipTypes.includes("text/plain") && !clipTypes.some(clipUnrestorable));
     // No check is emitted when the round trip cannot run: a green line that
     // asserted nothing is worse than none. The reason is carried into the
-    // shadowed-clipboard check below, which is where the substance lives.
+    // shadowed-clipboard check below, which is where the substance lives —
+    // and, review fix, printed as a SKIP line of its own, so a run that lost
+    // an assertion says so where the assertion would have been.
     let clipNote = "";
     if (!clipRestorable) {
       clipNote = ` — NOTE the live-pasteboard round trip did NOT run this time:`
-        + ` the operator has non-text on the clipboard (${clipTypes.join("+")}) that writeText could not put back,`
+        + ` the operator has non-text on the clipboard (${clipTypes.join("+")}) that could not be put back,`
         + ` so this probe is the only coverage of copy in this run`;
+      process.stdout.write(
+        `SKIP item 4: the live-pasteboard round trip — the clipboard holds ${clipTypes.join("+") || "nothing"},`
+        + " which this suite will not overwrite\n",
+      );
     } else {
       const copiedUser = await js<{ id: string; text: string } | null>("window.__clickCopy('user')");
       await wait(400);
@@ -9194,8 +9443,15 @@ async function chromeTest(
         + ` it is the desktop's own footer and is not copied)`
         + (focusBlocked ? "; NOTE the write was blocked by focus, not by the feature" : ""),
       );
-      if (clipBefore) await clipboard.writeText(clipBefore);
-      else clipboard.clear();
+      /* Review fix: both flavours go back, not just the plain text — the
+         reason the round trip may now run at all. An atomic write of one item
+         carrying text/plain and text/html is what the operator had. */
+      if (clipBefore || clipHtmlBefore) {
+        const payload: Record<string, string> = {};
+        if (clipBefore) payload["text/plain"] = clipBefore;
+        if (clipHtmlBefore) payload["text/html"] = clipHtmlBefore;
+        await clipboard.write([new ClipboardItem(payload)]);
+      } else clipboard.clear();
     }
     // The same three cases again, this time through a shadowed
     // navigator.clipboard so the exact string handed to the write — and the
@@ -9241,6 +9497,42 @@ async function chromeTest(
       emptyCopy.length === 1 && emptyCopy[0][0] === "Nothing to copy"
         && emptyCopy[0][1] === "no reply in this transcript" && emptyCopy[0][2] === "bad",
       `${JSON.stringify(emptyCopy)} (and a failure now draws the warn glyph in --danger, not a green tick)`,
+    );
+    await js<void>("window.__clearToasts()");
+    /* r5 review fix — a turn that produced nothing. The desktop backfills
+       '(no reply)' / '(stopped)' so the bubble is not blank; those are ITS
+       words, and copy used to hand them to the clipboard as if the agent had
+       written them — the same provenance line this item draws to keep the
+       "Saved to …" attachment strip off the clipboard. */
+    const phCopy = await js<Array<[string, string, string]>>("window.__copyPlaceholder()");
+    check(
+      "item 4: copy refuses the desktop's own placeholder for a turn that said nothing",
+      phCopy.length === 1 && phCopy[0][0] === "Nothing to copy"
+        && phCopy[0][1] === "that turn produced no reply" && phCopy[0][2] === "bad",
+      `${JSON.stringify(phCopy)} (the row still renders, so there is no 24px jump at turn end)`,
+    );
+    await js<void>("window.__clearToasts()");
+    /* r5 review fix — the rewritten `retry` verb. It used to toast "Retrying
+       last turn" and retry nothing; it now walks the transcript backwards for
+       the last NON-EMPTY user message and resends it, and says so honestly
+       when there is none. It is an orphan verb (no palette row, menu node,
+       slash entry or markup reaches it), which is exactly why it shipped with
+       no check behind it. resendUser is stood in front of, so nothing is sent. */
+    const retryVerb = await js<{
+      empty: { resent: string | null; toasts: Array<[string, string, string]> };
+      last: { resent: string | null; toasts: Array<[string, string, string]> };
+    }>("window.__retryVerb()");
+    check(
+      "item 4: the retry verb resends the last real user message, or says there is none",
+      retryVerb.empty.resent === null
+        && retryVerb.empty.toasts.length === 1
+        && retryVerb.empty.toasts[0]![0] === "Nothing to send again"
+        && retryVerb.empty.toasts[0]![2] === "bad"
+        // 'r5-b' is whitespace only and 'r5-c' is not a user message, so the
+        // walk has to pass both and land on 'r5-a'.
+        && retryVerb.last.resent === "r5-a"
+        && retryVerb.last.toasts.length === 0,
+      JSON.stringify(retryVerb),
     );
     await js<void>("window.__clearToasts()");
 
@@ -9326,6 +9618,20 @@ async function chromeTest(
     await js<void>("window.__settingsClose && window.__settingsClose()");
     await js<void>("window.__clearToasts && window.__clearToasts()");
     await js<unknown>("window.__theme && window.__theme('system')");
+    /* r5 review fix — the window's own geometry and the sidebar, restored here
+       rather than inline, so a throw anywhere above cannot leave the rest of
+       the suite running against a 940px window with a collapsed sidebar. Both
+       are idempotent: the size is only re-set when it drifted, and the rail is
+       only toggled back when the sidebar is not already open. */
+    if (sizeBefore && win) {
+      const now = win.getContentSize();
+      if (now[0] !== sizeBefore[0] || now[1] !== sizeBefore[1]) {
+        win.setContentSize(sizeBefore[0], sizeBefore[1]);
+        await wait(300);
+      }
+    }
+    const sbNow = await js<{ state?: string } | null>("window.__sbToggle && window.__sbToggle()").catch(() => null);
+    if (sbNow && sbNow.state !== "open") await js<unknown>("window.__rail && window.__rail()").catch(() => undefined);
     if (litter && agent) await agent.deleteSession(litter).catch(() => undefined);
     // Electron userData, NOT the agent state dir: ATOMIC_AGENT_STATE_DIR does
     // not cover this file, so it is put back by hand.

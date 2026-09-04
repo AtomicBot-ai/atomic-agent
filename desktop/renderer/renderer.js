@@ -632,6 +632,25 @@ const MENUFOCUS = { want: false };
 const NARROW = typeof window !== 'undefined' && window.matchMedia
   ? window.matchMedia('(max-width:1000px)') : {matches:false, addEventListener(){}};
 function sidebarExpanded() { return S.sidebar !== 'rail' && !NARROW.matches; }
+/* r5 review fix (item 2) — below 1000px the toggle was a live control that did
+   nothing. styles.css pins `#sidebar{width:52px}` inside
+   `@media (max-width:1000px)` at the same specificity as `#sidebar{width:260px}`
+   and later in the file, so the `.rail` class cannot win there: clicking the
+   button flipped S.sidebar between 'open' and 'rail' with no visual change at
+   all, and because the glow is the conjunction, aria-pressed stayed "false" in
+   both positions — a screen-reader user got no feedback that the button had
+   done anything. The button is now honestly disabled on a narrow window, with
+   a tooltip that says why, and the ⌘ 0 chord (which does not go through the
+   button) answers with the same sentence instead of flipping a dead flag. */
+function sidebarToggleHTML() {
+  const narrow = NARROW.matches, open = sidebarExpanded();
+  const title = narrow ? 'The sidebar is a rail on a narrow window'
+    : open ? 'Hide sidebar (⌘ 0)' : 'Show sidebar (⌘ 0)';
+  return '<button class="iconbtn' + (open ? ' on' : '') + '" data-act="toggle:sidebar"'
+    + (narrow ? ' disabled' : '')
+    + ' aria-pressed="' + open + '"'
+    + ' title="' + title + '">' + ic('sidebar') + '</button>';
+}
 /* r5 item 6 — "clicking new chat puts keyboard focus straight in the prompt
    input" (the user's words). session:new raises the flag; afterChat consumes
    it after the render that rebuilds the composer. A focus() call in the verb
@@ -1143,9 +1162,9 @@ function renderToolbar() {
     // treatment (the Inspector and Console buttons below use it), so the
     // sidebar joins them rather than inventing a fourth look. The chord is
     // printed as ⌘ 0, which is what shortcutsSheet and the keydown map ship.
-    + '<button class="iconbtn' + (sidebarExpanded() ? ' on' : '') + '" data-act="toggle:sidebar"'
-      + ' aria-pressed="' + sidebarExpanded() + '"'
-      + ' title="' + (sidebarExpanded() ? 'Hide sidebar (⌘ 0)' : 'Show sidebar (⌘ 0)') + '">' + ic('sidebar') + '</button>'
+    // Review fix: on a narrow window the control is disabled rather than dead —
+    // see sidebarToggleHTML.
+    + sidebarToggleHTML()
     + '<div class="tb-title"><b>' + esc(t) + '</b><span>' + esc(sub) + '</span></div>'
     + '<div class="tb-right">'
       + '<button class="searchbtn" data-act="palette">' + ic('search') + '<span class="sec">Search</span>' + keycaps('⌘ K') + '</button>'
@@ -1503,6 +1522,10 @@ function msgActs(m) {
 function copyMessage(id) {
   const m = S.log.find((x) => x.id === id);
   if (!m) return;
+  // Review fix: '(no reply)' and '(stopped)' are the desktop's backfill for a
+  // turn that produced nothing (see the `done` frame). Copying them would hand
+  // over desktop prose as the agent's words.
+  if (m.placeholder) { toast('Nothing to copy', 'that turn produced no reply', 'bad'); return; }
   copyText(String(m.text || ''), 'Copied message');
 }
 
@@ -2877,6 +2900,12 @@ function act(a) {
   if (k === 'console')   { close(); S.consoleOpen = true; S.consoleTab = v; render(); return; }
   // r5 item 2: the collapse is state now, not a class poked in place — renderSidebar
   // derives the class from it, so the toolbar button can read it and glow.
+  // Review fix (item 2): ⌘ 0 does not go through the button, so the chord gets
+  // the same honest refusal the disabled button gives — below 1000px the
+  // sidebar is a rail whatever S.sidebar says (sidebarToggleHTML).
+  if (k === 'toggle' && v === 'sidebar' && NARROW.matches) {
+    close(); toast('The sidebar is a rail on a narrow window', 'widen the window past 1000px to open it', 'bad'); return;
+  }
   if (k === 'toggle')    { close(); if (v === 'sidebar') S.sidebar = S.sidebar === 'rail' ? 'open' : 'rail';
                            else if (v === 'inspector') S.inspector = !S.inspector;
                            else S.consoleOpen = !S.consoleOpen; render(); return; }
@@ -3249,6 +3278,22 @@ document.addEventListener('mousedown', (e) => {
 
 document.addEventListener('click', (e) => {
   const t = e.target;
+  /* r5 review fix (item 5) — SETDOWN.outside used to be cleared ONLY when the
+     dismiss branch fired, so it could go stale: a press that starts on the
+     backdrop and never yields a click (the pointer leaves the window before
+     mouseup, Escape closes the window between down and up) left it up, and the
+     next click inherited it. Two guards, both cheap:
+       · the flag is consumed here, at the top, so it can never outlive the one
+         click its mousedown belongs to;
+       · `e.detail > 0` says the click came from a pointer at all. A click
+         synthesised by Enter/Space on a focused control carries no mousedown
+         and reports detail 0, so it can never be read as an outside press.
+     Unreachable today — renderSettings gives #settings exactly one child, so
+     nothing focusable sits on the backdrop side — but the hazard was already
+     known: the harness hook __setClickBackdropControl resets the flag in its
+     own `finally` for precisely this reason. */
+  const pressWasOutside = SETDOWN.outside && e.detail > 0;
+  SETDOWN.outside = false;
   if (t.closest('[data-closemenu]')) { S.menuOpen = null; render(); return; }
   const mb = t.closest('[data-menu]');
   if (mb) { S.menuOpen = S.menuOpen === +mb.dataset.menu ? null : +mb.dataset.menu; render(); return; }
@@ -3285,9 +3330,9 @@ document.addEventListener('click', (e) => {
      stylesheet stacks ABOVE #settings, so closest('[data-setclose]') is
      already null for them; the clause below mirrors the scrim line as
      belt-and-braces. */
-  if (SETDOWN.outside && t.closest('[data-setclose]') && !t.closest('.setwin')
+  if (pressWasOutside && t.closest('[data-setclose]') && !t.closest('.setwin')
       && !t.closest('.pal, .sheet, .popover, .alertbox')) {
-    SETDOWN.outside = false; act('settings:close'); return;
+    act('settings:close'); return;
   }
   const ap = t.closest('[data-appr]'); if (ap) { answer(ap.dataset.appr); return; }
   const rm = t.closest('[data-room]'); if (rm) { act('room:' + rm.dataset.room); return; }
@@ -4400,7 +4445,14 @@ function onChatEvent(ev) {
     reconcileToolCards();
     // Cards stay pending until the session store describes them.
     if (item && item.text) S.history.push({role:'assistant', content:item.text});
-    if (item && !item.text) item.text = ev.kind === 'aborted' ? '(stopped)' : '(no reply)';
+    /* r5 review fix (item 4) — the backfilled words are the DESKTOP's, not the
+       agent's. `placeholder` marks them so copyMessage refuses rather than
+       handing '(no reply)' to the clipboard as if the agent had written it —
+       the same provenance line item 4 draws to keep the "Saved to …"
+       attachment strip off the clipboard. The row still renders (skipping it
+       would put a 24px jump back at turn end); the copy just says what
+       happened, exactly as copy:reply does on an empty transcript. */
+    if (item && !item.text) { item.text = ev.kind === 'aborted' ? '(stopped)' : '(no reply)'; item.placeholder = true; }
     // Review fix: only into the transcript this turn is actually streaming
     // into — otherwise the failure of chat A is announced inside chat B.
     // DRIFT FIX (D2 of the 0.5.5 review): the frame carries `{error, category}`
@@ -4894,6 +4946,9 @@ function obDispatch(action) {
   if (action.type === 'providers_wizard_closed') {
     action = Object.assign({}, action, {pullLandedCleanly: DL.job === null && DL.error === null});
   }
+  // Review fix: both legs can leave a cloud provider behind them, and the
+  // download step's cloud offer is gated on that fact. See obRefreshCloudReady.
+  if (action.type === 'providers_wizard_succeeded' || action.type === 'providers_wizard_closed') obRefreshCloudReady();
   const next = obReduce(obSnapshot(), action);
   if (next) Object.assign(OB, next);
   obAfterStep();
@@ -6403,6 +6458,18 @@ function obPullFinished(job, ev) {
     return;
   }
   renderDlbar();
+  /* r5 review fix (item 7) — drain the queue on THIS leg too. dlNext() used to
+     be called only on the runtime branch above, while dlOnPull's `done` handler
+     had already cleared DL.job — so a weights job finishing with anything
+     behind it would have hidden the strip with work still queued. Latent
+     today (dlStart's one caller, obStartLocalPull, always builds
+     [runtime?, weights] with weights last, so the queue is provably empty
+     here), but DL is written as a general FIFO — the `· N more queued` suffix,
+     DL.queue, dlNext — and the next entry must not be stranded. On an empty
+     queue this is exactly what the `done` handler already did: DL.job = null
+     and a repaint. The activation below is unaffected; it does not read
+     DL.job. */
+  dlNext();
   if (!ok) { render(); return; }
   if (DL.dry) { render(); return; }
   const pending = OB.pendingMmproj;
@@ -6806,6 +6873,28 @@ async function openOnboarding() {
   const ready = await BR.providersReady();
   OB.cloudReady = !!(ready && ready.ok && (ready.ids || []).length > 0);
   render();
+}
+
+/* r5 review fix (item 7) — OB.cloudReady used to be written exactly once, in
+   openOnboarding above, so the download step's `press c` block went on
+   offering "Don't want to wait? Set up a cloud model in the meantime" on a
+   machine that had acquired one DURING the flow. The TUI recomputes
+   `cloudAlreadyConfigured` live off state (onboarding-screen.tsx); this is the
+   equivalent, called on the two legs that can add a provider — the wizard
+   succeeding and the wizard closing. Reachable path the offer used to lie on:
+   propose_second → cloud → wizard closed (resumeAfterCloud null → choose) →
+   Local → local_download, with the new provider now in the config.
+   A failed round trip leaves the LAST KNOWN answer standing rather than
+   inventing one. */
+function obRefreshCloudReady() {
+  if (!BR || !BR.providersReady) return;
+  Promise.resolve(BR.providersReady()).then((ready) => {
+    if (!ready || !ready.ok) return;
+    const now = (ready.ids || []).length > 0;
+    if (now === OB.cloudReady) return;
+    OB.cloudReady = now;
+    if (OB.open) render();
+  }).catch(() => undefined);
 }
 
 /**
@@ -7286,6 +7375,27 @@ async function swxRun(label, want, run, refuse) {
   if (S.busy) {
     if (refuse) refuse(); else toast('Not while a turn is running');
     return {ok:false, error:'a turn is running'};
+  }
+  /* r5 review fix (item 10) — one SWX slot, so one switch at a time.
+     The lock only disables the SEND button; the coding-mode chip and its
+     popover stay clickable for the whole 3-11 s of a backend switch, and
+     setCodingMode had no guard of its own. A mode click mid-switch re-entered
+     here and overwrote the single shared slot: SWX.want became {mode}, so
+     selBackend() stopped returning the backend the operator had just clicked
+     and the composer chip visibly snapped back to the old route — the exact
+     paint this item exists to provide — while SWX.label and SWX.since were
+     overwritten under the running switch. Worse, SWX.timer is one field: the
+     inner call cleared and re-armed it, and the inner `finally` then cleared
+     it for good, leaving the still-running outer switch with no 45 s watchdog
+     at all. Refused in words rather than queued: a second route chosen while
+     the first is still landing is a decision the operator should re-make once
+     they can see where they are. `refuse` is NOT used — it is the call site's
+     idiom for a running TURN, and printing "Not while a turn is running" here
+     would name the wrong reason. */
+  if (SWX.pending > 0) {
+    toast('One switch at a time',
+      String(SWX.label || 'the switch').replace(/[…\.\s]+$/, '') + ' has not finished yet', 'bad');
+    return {ok:false, error:'a switch is already running'};
   }
   const t0 = Date.now();
   /* r5 review (blocker): the agent generation the switch STARTED on. A
@@ -14257,23 +14367,13 @@ if (typeof window !== 'undefined') {
     try { return {backend: selBackend(), providerId: selActiveProviderId() || null, model: activeModel()}; }
     finally { SWX.want = keep; }
   };
-  /* item 10 — samples the send button 300 ms into a switch and again after
-     it resolves, and reports the wall time so the check can tell a lock
-     that cleared because the agent came back from one that never armed. */
-  window.__swxProbe = async (fn) => {
-    const sample = () => {
-      const b = document.querySelector('.sendbtn');
-      return {disabled: !!(b && b.disabled), aria: b ? b.getAttribute('aria-busy') : null,
-              spins: document.querySelectorAll('.sspin').length};
-    };
-    const t0 = Date.now();
-    let mid = null;
-    const timer = setTimeout(() => { mid = sample(); }, 300);
-    let res = null, error = null;
-    try { res = await fn(); } catch (e) { error = String(e); }
-    clearTimeout(timer);
-    return {mid, after: sample(), ms: Date.now() - t0, res, error};
-  };
+  /* r5 review fix (item 10) — `window.__swxProbe` stood here and nothing ever
+     called it: the acceptance check it was written for (main.ts, "send button:
+     locks with a spinner, then unlocks because the agent came back") inlines a
+     richer sampler of its own, because it also has to move the chip at 50 ms
+     and press Enter mid-flight. A hook that looks like the thing being
+     exercised and is not is worse than no hook, so it is gone rather than
+     kept as dead weight. */
   // item 10 — Enter while locked: the last toast, so the check can name it.
   window.__lastToast = () => (S.toasts.length ? {t:S.toasts[S.toasts.length - 1].t, s:S.toasts[S.toasts.length - 1].s} : null);
   // item 10 — the composer's own status strip, where a failed switch says why.
@@ -14800,6 +14900,8 @@ if (typeof window !== 'undefined') {
     if (!b || !sb) return null;
     const cs = getComputedStyle(b);
     return {on: b.classList.contains('on'), pressed: b.getAttribute('aria-pressed'),
+            // Review fix (item 2): the narrow window disables the control.
+            disabled: !!b.disabled,
             title: b.getAttribute('title'), state: S.sidebar, rail: sb.classList.contains('rail'),
             narrow: NARROW.matches, expanded: sidebarExpanded(),
             width: Math.round(sb.getBoundingClientRect().width),
@@ -15094,7 +15196,11 @@ if (typeof window !== 'undefined') {
     const down = where === 'inside' || where === 'dragout' ? win : s;
     const up = where === 'inside' ? win : s;
     down.dispatchEvent(new MouseEvent('mousedown', {bubbles: true}));
-    up.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true}));
+    // Review fix: `detail: 1` is what a real pointer click carries. The click
+    // listener now refuses to read a press-origin flag on a detail-0 click (a
+    // keyboard-activated one), so a synthetic click that means to stand in for
+    // a mouse has to say so.
+    up.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true, detail: 1}));
     return {settings: !!S.settings, pane: S.settings ? settingsPaneId(S.settingsPane) : null, overlay: S.overlay};
   };
   window.__setClickTab = (tab) => {
@@ -15125,7 +15231,7 @@ if (typeof window !== 'undefined') {
     try {
       s.dispatchEvent(new MouseEvent('mousedown', {bubbles: true}));
       const down = SETDOWN.outside;
-      b.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true}));
+      b.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true, detail: 1}));
       return {settings: !!S.settings, pane: S.settings ? settingsPaneId(S.settingsPane) : null,
               onBackdrop: onBackdrop, pressWasOutside: down};
     } finally {
@@ -15137,7 +15243,7 @@ if (typeof window !== 'undefined') {
     const p = document.querySelector('#overlays .popover');
     if (!p) return null;
     p.dispatchEvent(new MouseEvent('mousedown', {bubbles: true}));
-    p.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true}));
+    p.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true, detail: 1}));
     return {settings: !!S.settings, overlay: S.overlay};
   };
 
@@ -15198,15 +15304,26 @@ if (typeof window !== 'undefined') {
   };
   /* The regression the focus-carry leg closes: a render mid-word used to drop
      the caret of a message being typed. */
+  /* Review fix: the write is restored in `finally`, like every other hook that
+     writes state. On the happy path only, a render() that threw between the
+     write and the restore would have left the literal 'typing mid-word' in
+     S.draft and in the composer for every later check in the run — the very
+     next block is the item-4 fixture turn. */
   window.__typeThenRender = () => {
     const e = $('#entry');
     if (!e) return null;
-    e.focus(); e.value = 'typing mid-word'; S.draft = e.value; e.setSelectionRange(6, 6);
-    render();
-    const n = $('#entry');
-    const out = {focused: document.activeElement === n, caret: [n.selectionStart, n.selectionEnd], value: n.value};
-    S.draft = ''; n.value = ''; render();
-    return out;
+    const keep = S.draft;
+    try {
+      e.focus(); e.value = 'typing mid-word'; S.draft = e.value; e.setSelectionRange(6, 6);
+      render();
+      const n = $('#entry');
+      return {focused: document.activeElement === n, caret: [n.selectionStart, n.selectionEnd], value: n.value};
+    } finally {
+      S.draft = keep;
+      const n = $('#entry');
+      if (n) n.value = keep;
+      render();
+    }
   };
 
   /* --- item 8 --- */
@@ -15269,5 +15386,194 @@ if (typeof window !== 'undefined') {
             spins: document.querySelectorAll('.sspin').length,
             dlVisible: !!(bar && !bar.hidden),
             dlText: bar ? bar.innerText.replace(/\s+/g, ' ').trim() : ''};
+  };
+}
+
+/* ==========================================================================
+   r5 review fixes — smoke hooks.
+
+   Appended as its own block, per the renderer convention. Every hook here
+   restores in `finally` whatever it writes. None of them is used by the
+   product; each is read by exactly one check in main.ts smokeTest.
+   ========================================================================== */
+if (typeof window !== 'undefined') {
+  /* Item 5 — the stale-press guard. Arms SETDOWN.outside with a real backdrop
+     mousedown that never yields a click (the pointer leaves the window), then
+     synthesises the click a keyboard activation would produce: detail 0, no
+     mousedown of its own. The settings window must survive it. */
+  window.__setClickKeyboard = () => {
+    const s = document.getElementById('settings');
+    if (!s) return null;
+    try {
+      s.dispatchEvent(new MouseEvent('mousedown', {bubbles: true}));
+      const armed = SETDOWN.outside;
+      // No mouseup, no click: the press is abandoned, exactly as it is when
+      // the pointer leaves the window or Escape closes something mid-press.
+      s.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true})); // detail 0
+      const afterKeyboard = !!S.settings;
+      // And the same click WITH a pointer behind it still dismisses, so the
+      // guard has not simply turned the feature off.
+      s.dispatchEvent(new MouseEvent('mousedown', {bubbles: true}));
+      s.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true, detail: 1}));
+      return {armed: !!armed, afterKeyboard, afterPointer: !!S.settings, flag: SETDOWN.outside};
+    } finally {
+      SETDOWN.outside = false;
+    }
+  };
+
+  /* Item 3 — the ':focus-within' half of the reveal contract, driven rather
+     than read off the rule text. `:hover` genuinely cannot be synthesised;
+     focus can, and the twin declaration is the same one. */
+  window.__unreadFocusReveal = (id) => {
+    const row = document.querySelector('.sesrow[data-ses="' + id + '"]');
+    const el = row ? row.querySelector('[data-unread]') : null;
+    if (!row || !el) return null;
+    const before = document.activeElement;
+    try {
+      const rest = getComputedStyle(el).visibility;
+      row.focus({preventScroll: true});
+      const focused = getComputedStyle(el).visibility;
+      const hadFocus = row.matches(':focus-within');   // read BEFORE the blur
+      row.blur();
+      return {rest, focused, blurred: getComputedStyle(el).visibility,
+              inRow: row.contains(el), hadFocus: hadFocus};
+    } finally {
+      if (before && before.focus) before.focus({preventScroll: true});
+    }
+  };
+
+  /* Item 4 — the rewritten `retry` verb. Orphan today (no palette row, menu
+     node, slash entry or markup reaches it), which is exactly why it had no
+     coverage; both of its legs are driven here without sending anything. */
+  window.__retryVerb = () => {
+    const keep = {log: S.log.slice(), draft: S.draft, toasts: S.toasts.slice()};
+    const e = $('#entry');
+    const keepVal = e ? e.value : '';
+    const realResend = resendUser;
+    let resent = null;
+    resendUser = function (id) { resent = id; };
+    try {
+      S.log = [];
+      S.toasts = [];
+      act('retry');
+      const empty = {resent, toasts: window.__toasts()};
+      resent = null;
+      // 'r5-b' is whitespace only and 'r5-c' is not a user message, so the walk
+      // has to pass both and land on 'r5-a'. `system` rather than an invented
+      // kind, so the render() inside act() draws a shape the item() switch knows.
+      S.log = [{id: 'r5-a', k: 'user', text: 'the first thing said'},
+               {id: 'r5-b', k: 'user', text: '   '},
+               {id: 'r5-c', k: 'system', text: 'a system line'}];
+      S.toasts = [];
+      act('retry');
+      return {empty, last: {resent, toasts: window.__toasts()}};
+    } finally {
+      resendUser = realResend;
+      S.log = keep.log; S.draft = keep.draft; S.toasts = keep.toasts;
+      if (e) e.value = keepVal;
+      render();
+    }
+  };
+
+  /* Item 4 — a turn that produced nothing. The desktop backfills '(no reply)'
+     / '(stopped)', which are ITS words: copy must refuse rather than hand them
+     over as the agent's. */
+  window.__copyPlaceholder = () => {
+    const keep = {log: S.log.slice(), toasts: S.toasts.slice()};
+    try {
+      S.log = [{id: 'r5-ph', k: 'assistant', text: '(no reply)', placeholder: true}];
+      S.toasts = [];
+      copyMessage('r5-ph');
+      return window.__toasts();
+    } finally {
+      S.log = keep.log; S.toasts = keep.toasts; render();
+    }
+  };
+
+  /* Item 6 — ⌘N focuses the composer. The shipped behaviour keeps a draft the
+     operator typed (destroying typed text on a new chat would be worse than
+     carrying it), so the contract is: focus in the composer, caret at the END
+     of whatever survived. The suite's other check reads [0,0] only because the
+     composer happened to be empty; this one states the rule. */
+  window.__newChatWithDraft = (text) => {
+    const keep = {draft: S.draft, log: S.log.slice(), sessionId: S.sessionId, toasts: S.toasts.slice()};
+    const e = $('#entry');
+    const keepVal = e ? e.value : '';
+    try {
+      S.draft = text; if (e) e.value = text;
+      act('session:new');
+      const n = $('#entry');
+      return {focused: document.activeElement === n, value: n ? n.value : null,
+              caret: n ? [n.selectionStart, n.selectionEnd] : null};
+    } finally {
+      S.draft = keep.draft; S.log = keep.log; S.sessionId = keep.sessionId; S.toasts = keep.toasts;
+      const n = $('#entry'); if (n) n.value = keepVal;
+      render();
+    }
+  };
+
+  /* Item 10 — the `!S.busy && !S.pending` conjunct in sendButton() and
+     submit(). swxRun refuses to START while a turn runs, but S.busy is set
+     asynchronously for the whole length of a switch (opening a chat whose turn
+     is live adopts it), so a turn adopted mid-switch must keep its Stop and
+     its steer. Hand-verified until now; driven here. */
+  window.__swxBusyFace = () => {
+    const keep = {pending: SWX.pending, since: SWX.since, label: SWX.label, want: SWX.want,
+                  busy: S.busy, draft: S.draft, toasts: S.toasts.slice()};
+    const e = $('#entry');
+    const keepVal = e ? e.value : '';
+    const realSteer = steerOrQueue;
+    let steers = 0;
+    steerOrQueue = function () { steers += 1; };
+    try {
+      SWX.pending = 1; SWX.since = Date.now() - SWX_SPINNER_DELAY_MS - 50;
+      SWX.label = 'switching…'; SWX.want = {backend: 'local'};
+      S.busy = false; S.draft = 'typed mid switch'; if (e) e.value = S.draft;
+      render();
+      const locked = Object.assign({}, window.__sendButton(),
+        {disabled: !!document.querySelector('.sendbtn[disabled]')});
+      // A turn is adopted while the switch is still landing.
+      S.busy = true; render();
+      const steer = Object.assign({}, window.__sendButton(),
+        {disabled: !!document.querySelector('.sendbtn[disabled]')});
+      S.toasts = [];
+      const n = $('#entry');
+      if (n) n.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', bubbles: true, cancelable: true}));
+      const enter = {steers: steers, toasts: window.__toasts()};
+      S.draft = ''; if ($('#entry')) $('#entry').value = ''; render();
+      const stop = window.__sendButton();
+      return {locked, steer, enter, stop};
+    } finally {
+      steerOrQueue = realSteer;
+      SWX.pending = keep.pending; SWX.since = keep.since; SWX.label = keep.label; SWX.want = keep.want;
+      S.busy = keep.busy; S.draft = keep.draft; S.toasts = keep.toasts;
+      const n = $('#entry'); if (n) n.value = keepVal;
+      render();
+    }
+  };
+
+  /* Item 10 — two switches at once. The inner one must be refused in words:
+     one SWX slot means a second swxRun would overwrite `want` (rolling the
+     optimistic chip back to the old route), `label`, `since`, and — worst —
+     the single `timer` field, leaving the outer switch with no watchdog. */
+  window.__swxNested = () => {
+    const keepToasts = S.toasts.slice();
+    let inner = null, mid = null;
+    const outer = swxRun('switching backend…', {backend: 'local'}, () => new Promise((resolve) => {
+      setTimeout(() => {
+        S.toasts = [];
+        Promise.resolve(swxRun('switching…', {mode: 'plan'}, () => Promise.resolve({ok: true}))).then((r) => {
+          inner = r;
+          mid = {want: SWX.want ? Object.assign({}, SWX.want) : null, timer: !!SWX.timer,
+                 pending: SWX.pending, label: SWX.label, toasts: window.__toasts()};
+          resolve({ok: true});
+        });
+      }, 60);
+    }));
+    return Promise.resolve(outer).then((res) => {
+      const after = {pending: SWX.pending, want: SWX.want, timer: !!SWX.timer};
+      S.toasts = keepToasts; renderToasts();
+      return {inner: inner, mid: mid, after: after, outer: res};
+    });
   };
 }

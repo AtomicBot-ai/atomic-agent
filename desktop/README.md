@@ -233,7 +233,18 @@ Real, driven by the running agent:
   than 1000px — the two lists stay as a column of dots, each row's tooltip
   naming it, so the rail is still a way back into a chat; the two list headers
   stay too, stripped to their **+**, because 52px does not hold a label or the
-  counter and the rail would otherwise have no way to start anything.
+  counter and the rail would otherwise have no way to start anything. The
+  toolbar's sidebar button glows in the accent (`.iconbtn.on`, the same
+  treatment the Inspector and Console buttons use) while the sidebar is
+  expanded, and *expanded* is the conjunction of both facts — the flag and the
+  breakpoint — so the glow cannot lie on a narrow window. Below 1000px the
+  media query pins 52px whatever the flag says, so the button is **disabled**
+  there rather than left as a live control that does nothing, its tooltip
+  reading `The sidebar is a rail on a narrow window`; ⌘ 0, which does not go
+  through the button, answers with the same sentence. The tooltips in that
+  corner are `Hide sidebar (⌘ 0)` and `Console (⇧ ⌘ Y)` — the spellings the
+  shortcuts sheet ships, because a toolbar where one chord reads *⌘ 0* and its
+  neighbour *Ctrl+Shift+Y* is worse than either spelling alone.
 - **What the sidebar cannot know on 0.5.4.** `GET /api/sessions` never
   reports `running`: the store is written only when a turn ends, and no route
   exposes the turn controller. So the pulsating dot means "a turn started in
@@ -823,10 +834,15 @@ during the testing phase."*
   listed once, a repeat is last-wins, and a placeholder line with no value is
   not a key) and
   `window.atomic.importFromTui({providers, keys, skills, sessions, memory})`
-  copies only what is ticked, every flag defaulting to false. **The wizard
-  step that draws the tick-list is a separate lane's work and is not in this
-  branch** — do not go looking for it in the window yet. The source is opened
-  read-only and never moved; `localModels` in its entirety — the managed
+  copies only what is ticked, every flag defaulting to false. The wizard step
+  that draws the tick-list IS in this branch now (`obDetectAgents` pushes the
+  *Atomic Agent in the terminal* row; the seam is asserted in the suite). The
+  offer counts the providers the import will actually copy — the source's own
+  `local-llama` entry is skipped, because its `managed.port` is the terminal
+  agent's — and the import never RE-ROUTES this app: `llm.activeTextProvider`
+  is only filled in when the desktop has no route of its own *and* the
+  provider resolves a key here, so an operator who chose Local models in the
+  wizard keeps it. The source is opened read-only and never moved; `localModels` in its entirety — the managed
   port and the dataDirOverride with it — `tui.onboarding`, `telegram`,
   `analytics`, `version` and `tasks.sqlite` are never copied, and the
   databases travel through `sqlite3 -readonly … ".backup"` rather than a
