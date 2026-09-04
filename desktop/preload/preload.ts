@@ -171,6 +171,13 @@ contextBridge.exposeInMainWorld("atomic", {
   hfProjector: (id: string, mmprojUrl: string, mmprojFilename: string, name?: string) =>
     ipcRenderer.invoke("cli:hfProjector", { id, mmprojUrl, mmprojFilename, name }),
 
+  /** r5 item 9 — the desktop's own state directory, and the TUI import offer.
+   *  `tuiSetupPresent` reports env var NAMES only; `importFromTui` copies only
+   *  the flags that are ticked and never touches the source. */
+  firstRun: () => ipcRenderer.invoke("app:firstRun"),
+  tuiSetupPresent: () => ipcRenderer.invoke("app:tuiSetupPresent"),
+  importFromTui: (opts: Record<string, boolean>) => ipcRenderer.invoke("app:importFromTui", opts),
+
   /** Item 7C — mid-turn steering (POST/GET/DELETE /api/sessions/{id}/steer). */
   steer: (sessionId: string, text: string) => ipcRenderer.invoke("agent:steer", { sessionId, text }),
   undeliveredSteers: (sessionId: string) => ipcRenderer.invoke("agent:undeliveredSteers", sessionId),

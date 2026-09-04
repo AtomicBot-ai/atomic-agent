@@ -866,3 +866,16 @@ button.menurow:hover{background:var(--bg-hover)}
    the four sub-lines beneath them were plain HTML and collapsed to one space.
    `pre-wrap`, not `pre`: a long error must still wrap inside the pane. */
 .llm-hf .ter,.llm-hf .sk-off,.llm-hf .tuierr{white-space:pre-wrap}
+
+/* ---- r5 item 10: the switch lock on the send button ------------------------
+   The user's words: "the send button is a bit locked and has a small loading
+   indicator on it." Muted like `.sendbtn.mute` — this is not an error state,
+   it is a wait — with one small ring spinning inside it. The button itself
+   carries `disabled`, so the pointer never turns into a hand. The markup only
+   appears after SWX_SPINNER_DELAY_MS, so a 2 ms coding-mode switch never
+   paints it at all. */
+.sendbtn.locked{background:var(--bg-active);color:var(--text-disabled);cursor:default}
+.sspin{width:13px;height:13px;border-radius:999px;border:1.5px solid var(--text-disabled);
+  border-top-color:transparent;animation:sspin .7s linear infinite}
+@keyframes sspin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.sspin{animation-duration:2.4s}}

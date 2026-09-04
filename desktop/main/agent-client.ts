@@ -5,6 +5,8 @@ import { createServer } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
+// r5 item 9 — the supervised `atag serve` child gets the desktop state dir.
+import { agentEnv } from "./state-dir.js";
 
 /**
  * Supervises one `atag serve` child process and speaks to it over the
@@ -169,7 +171,8 @@ export class AgentClient extends EventEmitter {
       ],
       {
         cwd: this.status.workingDir,
-        env: { ...process.env },
+        // r5 item 9: `atag serve` runs on the desktop's own state directory.
+        env: agentEnv(),
         stdio: ["ignore", "pipe", "pipe"],
       },
     );

@@ -154,6 +154,64 @@ const OB_CHOICES = [
    "checking keys…" rather than a "no API key" that is not known yet. */
 const BSW = { line:'', readyIds:[], readyLoaded:false, localLoaded:false, gating:false };
 
+/* ---- r5 item 9: the desktop's own state directory ----
+   What `app:firstRun` answered, latched in main BEFORE anything could
+   create config.json. `null` until the boot check resolves; the wizard
+   reads it, and the smoke asserts it. */
+let FIRSTRUN = null;
+/* src/config/config-schema.ts localModels.url default. The agent's own
+   isLocalBackendConfigured (src/tui/local-backend-readiness.ts) compares
+   against this exact string and does NOT count the default it never
+   chose — needsOnboarding() below may not count it either, or a genuinely
+   fresh state directory reaches the chat window with no backend and no
+   wizard. */
+const DEFAULT_LLAMA_URL = 'http://127.0.0.1:8080';
+
+/* ---- r5 item 10: optimistic switching ----
+   The user's words: "when he clicks to switch, it is already switched, but
+   he cannot send a message until the new configuration is live; the send
+   button is a bit locked and has a small loading indicator on it."
+
+   `want` is the operator's choice, painted by the four chip readers ahead
+   of LIVE_CONFIG until the switch settles; `pending` counts switches in
+   flight and is what locks the send button; `since` is when the current
+   one started, so the spinner can be withheld for the first 150 ms (a
+   coding-mode change is a 1-3 ms POST and must never flash one, while a
+   backend switch is 3-11 s and always must); `err` is the sentence the
+   composer prints where the lock was, so a failure says why next to the
+   button rather than in a toast that fades; `lastMs` is the measured wall
+   time of the last switch, which the smoke prints. */
+const SWX = { pending:0, since:0, label:'', want:null, err:null, timer:null, paint:null, lastMs:0 };
+/* Below this, a switch is over before the eye can see a spinner start. */
+const SWX_SPINNER_DELAY_MS = 150;
+/* The agent client's own health deadline is 30 s and always resolves
+   (agent-client.ts HEALTH_TIMEOUT_MS), and the CLI budget in front of it is
+   ~11 s at worst — so this watchdog is a belt for an IPC that vanishes
+   entirely, not for a slow switch. It never claims the switch failed. */
+const SWX_MAX_MS = 45000;
+/* How long the lock waits for the coding mode to come back after a restart
+   (see modeSettled). Past this the chip's own blank-until-confirmed state
+   is the honest answer, so the composer is released. */
+const SWX_MODE_SETTLE_MS = 3000;
+/* r5 item 10 — the switch funnel. These five are the ONLY places in this
+   file that name the switching IPCs, and every one of them is called from
+   inside a swxRun() callback. That is what makes the coverage checkable:
+   the smoke scans this file, asserts each `BR.<switch>(` appears exactly
+   once (here), and asserts every `SWXBR.` occurrence is lexically inside a
+   swxRun( ... ) argument list. A missed call site would paint a chip
+   optimistically without locking the composer, which is strictly worse
+   than the honest freeze it replaces.
+   BR.codingMode is exempt from the once-only half: loadCodingMode's GET and
+   reassertCodingMode's restart-time re-assert are not operator switches and
+   must not take the lock — the re-assert is what the lock WAITS for. */
+const SWXBR = {
+  switchBackend: (kind) => BR.switchBackend(kind),
+  activateProvider: (id) => BR.activateProvider(id),
+  selectCloudModel: (id, model) => BR.selectCloudModel(id, model),
+  selectLocalModel: (id) => BR.selectLocalModel(id),
+  codingMode: (id) => BR.codingMode(id),
+};
+
 /* ---- Item 7: settings surface — the TUI menu tree + the Manage tabs ----
    MENU_GROUPS mirrors src/tui/menu/menu-registry.ts (MENU_GROUP_ORDER,
    MENU_GROUP_LABELS, every node label and its ctrl+g chord, in registry
@@ -1059,6 +1117,10 @@ function composer() {
     ? '<div class="statusstrip"><span class="threedot"><i></i><i></i><i></i></span><span>' + S.phase + '</span>'
       + '<span class="mono ter tnum" style="margin-left:auto">' + (S.elapsed / 10).toFixed(1) + 's</span>'
       + '<button class="btn-g" data-act="stop">Stop</button></div>'
+    // r5 item 10: where the lock was, the reason it ended. A toast fades;
+    // the operator needs this next to the button that was disabled.
+    : SWX.err
+    ? '<div class="statusstrip gated">' + ic('warn') + esc(SWX.err) + '</div>'
     : '';
   const q = S.queued.length ? '<div class="qtray">' + S.queued.map((t, i) =>
       '<div class="qchip"><span class="ter">Queued</span><span style="flex:1;color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(t) + '</span>'
@@ -1091,6 +1153,23 @@ function composer() {
 }
 
 function sendButton() {
+  /* r5 item 10 — the switch lock. The chip has already painted the
+     operator's choice; the send button says, in the one place they are
+     about to click, that the choice is not live yet.
+
+     The `!S.busy && !S.pending` conjunct is deliberate and NOT redundant:
+     swxRun refuses to start while a turn runs, but S.busy is set
+     asynchronously elsewhere for the whole 3-11 s a switch lasts (opening
+     a chat whose turn is live adopts it). A turn adopted mid-switch must
+     keep its Stop and its steer arrow, so the two branches below win.
+
+     The spinner is withheld for the first SWX_SPINNER_DELAY_MS so the
+     1-3 ms coding-mode POST never flashes one. */
+  if (SWX.pending && !S.busy && !S.pending && Date.now() - SWX.since >= SWX_SPINNER_DELAY_MS) {
+    const say = SWX.label + ' — the send button unlocks when the new configuration is live';
+    return '<button class="sendbtn locked" data-act="send" disabled aria-busy="true" title="' + esc(say)
+      + '" aria-label="' + esc(say) + '"><span class="sspin"></span></button>';
+  }
   if (S.busy || S.pending) {
     // Item 7C: this sends a steer into the running turn. It is parked as
     // the next turn only when the agent refuses it, which is a fact the
@@ -1809,6 +1888,14 @@ function diagLine() {
   // in both cases. It sits before the approval segment deliberately: the
   // TUI's line ends `approval L<n> | skills <n>` and the smoke pins that
   // tail.
+  /* r5 item 9: which directory this app owns. The desktop runs on its own
+     state dir (~/.atomic-agent-desktop by default), and "why does the
+     desktop not see what the terminal agent sees" has to be answerable
+     from the window. Abbreviated against $HOME like the cwd above, and
+     placed BEFORE the agent segment so the tail this line's smoke pins —
+     `approval L<n> | skills <n>` — is unmoved. */
+  const sd = (LIVE_CAPS && LIVE_CAPS.paths && LIVE_CAPS.paths.stateDir) || (FIRSTRUN && FIRSTRUN.stateDir) || '';
+  parts.push('state ' + (sd ? (home && sd.startsWith(home) ? '~' + sd.slice(home.length) : sd) : '—'));
   const bin = S.live.binary || '';
   parts.push('agent ' + (bin ? (home && bin.startsWith(home) ? '~' + bin.slice(home.length) : bin) : '—'));
   parts.push('approval L' + (lvl === null ? '—' : lvl));
@@ -2287,6 +2374,16 @@ function submit() {
   // Lane B — backend switch: a turn is waiting on the local gate's disk
   // snapshot; the draft stays where it is until that one has been decided.
   if (BSW.gating) return;
+  /* r5 item 10 — Enter while a switch is landing. The draft STAYS in the
+     box: the two lines that clear it are below this guard, and steering or
+     queueing is not offered either, because the message would run against
+     the configuration the operator has just moved away from. Gated the same
+     way sendButton's lock branch is, so the button and this never disagree:
+     a turn adopted mid-switch keeps its steer. */
+  if (SWX.pending && !S.busy && !S.pending) {
+    toast(SWX.label, 'The message stays in the box until the new configuration is live');
+    return;
+  }
   if (text.startsWith('/')) { runSlash(text.slice(1).split(/\s+/)); S.draft = ''; if (e) { e.value = ''; autosize(e); } S.slash = false; ctxDraftChanged(); render(); return; }
   S.draft = ''; if (e) { e.value = ''; autosize(e); }
   ctxDraftChanged(); // Lane B — item 3: the sent draft leaves the projection
@@ -3656,6 +3753,11 @@ function activeProvider() {
   return (LIVE_CONFIG.llm.providers || []).find((p) => p.id === id) || null;
 }
 function activeModel() {
+  /* r5 item 10: the operator's choice paints first — but only a NON-EMPTY
+     one. An empty want means "this provider has no chat model", and the
+     honest states below (the external-route blank, the download-model
+     label) are what must show then, not a blank the override invented. */
+  if (SWX.want && typeof SWX.want.model === 'string' && SWX.want.model) return SWX.want.model;
   if (BR && S.live.state === 'connected') {
     // Lane B — backend switch: the TUI's selectPromptLlmMeta. A cloud
     // provider shows its chatModel (defaultChatModel ?? model) and,
@@ -3697,8 +3799,19 @@ function needsOnboarding(cfg) {
   const ob = (cfg && cfg.tui && cfg.tui.onboarding) || {};
   if (ob.completedAt || ob.skippedAt) return false;
   const lm = (cfg && cfg.localModels) || {};
-  const managedReady = lm.mode === 'managed' && lm.managed && lm.managed.modelId;
-  const localConfigured = lm.mode === 'external' && lm.url;
+  /* r5 item 9 — two divergences from the agent's own predicate, both of
+     which made a genuinely fresh state directory look configured and so
+     never reached the wizard.
+     (a) isLocalBackendConfigured (src/tui/local-backend-readiness.ts) tests
+         `managed.modelId !== null` UNCONDITIONALLY, not only in managed
+         mode. A config in external mode carrying a managed modelId is
+         configured to the agent, and must be here too.
+     (b) it compares localModels.url against the schema default and does
+         NOT count the default it never chose. A fresh `atag config get`
+         writes exactly that default, so without this the desktop's first
+         run lands in a chat window with no backend and no wizard. */
+  const managedReady = lm.managed && lm.managed.modelId;
+  const localConfigured = lm.mode === 'external' && lm.url && lm.url !== DEFAULT_LLAMA_URL;
   const llm = (cfg && cfg.llm) || {};
   const active = (llm.providers || []).find((p) => p.id === llm.activeTextProvider);
   const cloudReady = !!active && active.kind !== 'llama-server';
@@ -3781,7 +3894,13 @@ async function obFinish(kind, detail, restartedAlready) {
     restarted = !!restartedAlready && !(res && res.changed);
   }
   if (kind === 'cloud') {
-    const res = await BR.activateProvider(detail);
+    // r5 item 10: wrapped for uniformity. The wizard has no composer, so
+    // OB.busy stays the visible state — but the chips behind it move on the
+    // click like everywhere else, and the refusal keeps the wizard's own
+    // OB.error idiom rather than a toast nobody would see behind the sheet.
+    const res = await swxRun('switching…', {providerId: detail},
+      () => SWXBR.activateProvider(detail),
+      () => { OB.error = 'Not while a turn is running'; render(); });
     if (!res || !res.ok) {
       OB.busy = false;
       OB.error = res && res.needsKey ? 'no API key for ' + detail + ' — set ' + (OB.keyEnv[detail] || 'its key') + ' in the environment first'
@@ -3806,7 +3925,10 @@ function obUseModel(model) {
     // restarts `atag serve`, so not while a turn is running.
     if (S.busy) { OB.error = 'Not while a turn is running'; render(); return; }
     OB.busy = true; render();
-    BR.selectLocalModel(model.id).then((res) => {
+    // r5 item 10 — see obFinish above for why the wizard is wrapped too.
+    swxRun('starting ' + model.id + '…', {backend:'local', model:model.id},
+      () => SWXBR.selectLocalModel(model.id),
+      () => { OB.error = 'Not while a turn is running'; render(); }).then((res) => {
       OB.busy = false;
       if (!res || !res.ok) { OB.error = (res && res.error) || 'could not select the model'; render(); return; }
       bswReport(res);
@@ -3952,7 +4074,10 @@ if (BR) {
     if (ev.line) OB.log.push(ev.line);
     if (ev.done) {
       if (ev.ok && OB.pulling) {
-        BR.selectLocalModel(OB.pulling.id).then((res) => {
+        // r5 item 10: the download has finished; this is the switch.
+        swxRun('starting ' + OB.pulling.id + '…', {backend:'local', model:OB.pulling.id},
+          () => SWXBR.selectLocalModel(OB.pulling.id),
+          () => { OB.error = 'Not while a turn is running'; render(); }).then((res) => {
           if (!res || !res.ok) { OB.error = (res && res.error) || 'could not select the model'; OB.step = 'local'; render(); return; }
           bswReport(res);
           obFinish('local', OB.pulling.id, !!res.restart);
@@ -3970,9 +4095,14 @@ if (BR) {
     }
   });
 
-  // First run: the wizard opens itself, exactly as the TUI does.
-  BR.configGet().then((res) => {
-    if (res && res.ok && needsOnboarding(res.config)) openOnboarding();
+  /* First run: the wizard opens itself, exactly as the TUI does.
+     r5 item 9 — `fresh` is latched in the main process BEFORE anything can
+     create config.json, so it is the unmissable half; needsOnboarding()
+     stays as the inferred half for a directory that exists but was never
+     finished. Either one opens the wizard. */
+  Promise.all([BR.firstRun ? BR.firstRun() : Promise.resolve(null), BR.configGet()]).then(([fr, res]) => {
+    FIRSTRUN = fr;
+    if ((fr && fr.fresh) || (res && res.ok && needsOnboarding(res.config))) openOnboarding();
   });
 
   const prevAct = act;
@@ -4004,7 +4134,8 @@ async function mpSetModel(model) {
   MP.busy = true; MP.err = null; render();
   // The TUI's selectChatModel also activates the provider; here that
   // means a restart of `atag serve` as well.
-  const res = await BR.selectCloudModel(id, model);
+  const res = await swxRun('switching…', {providerId: id, model},
+    () => SWXBR.selectCloudModel(id, model));
   MP.busy = false;
   if (!res || !res.ok) {
     MP.err = res && res.needsKey ? 'no API key for ' + id + ' — add one with the wizard or export its variable' : ((res && res.error) || 'could not set the model');
@@ -4013,7 +4144,7 @@ async function mpSetModel(model) {
   MP.pickFor = null; MP.picks = [];
   bswReport(res, 'Selected chat model ' + id + '/' + model + '.');
   toast('Model selected', id + ' → ' + model + ' · restarting the agent');
-  await refreshLiveConfig();
+  // r5 item 10: swxRun re-read the live config before it resolved.
 }
 
 async function mpSaveProvider() {
@@ -4095,10 +4226,171 @@ if (typeof window !== 'undefined') {
 }
 
 /* ============================================================
+   r5 item 10 — optimistic switching
+
+   MEASURED, on this machine, against the source build the desktop
+   prefers: a coding-mode change is one POST at 1-3 ms and needs no lock
+   at all. Every other switch is seconds, and the cost is not the restart
+   — it is the `atag` CLI subprocesses, ~610 ms each, because there is no
+   config-write route and PATCH /api/config must never be used (it
+   re-defaults every block it does not merge). A cloud provider switch is
+   4 subprocesses + a 770 ms stop/start of `atag serve` ≈ 3.2 s; a local
+   model switch is ~10 subprocesses plus the llama load ≈ 9-11 s.
+
+   None of that can be made faster from here. What CAN change is the lie
+   the window told while it happened: the chips read LIVE_CONFIG, which
+   only moved after one MORE 610 ms `config get`, so the operator clicked
+   and nothing moved for seconds. So:
+
+     · the chip paints the choice on the click (SWX.want, read by
+       selBackend / selActiveProviderId / activeModel / currentMode);
+     · the send button locks, with a spinner that appears only after
+       150 ms so the 2 ms coding-mode path never flashes one;
+     · both clear in a `finally`, so a failure rolls the chip back in the
+       same frame and the composer says why;
+     · and the lock does NOT clear on the IPC reply — see swxSettle.
+   ============================================================ */
+
+/**
+ * The switch is only live when the coding mode is back.
+ *
+ * `atag serve` boots at the configured `agent.approvalLevel`, and the
+ * coding mode is per-process state in the agent (src/http/route-coding-mode.ts)
+ * whose boot GET is a non-injective inference — at approvalLevel 5 the seed
+ * reads back `bypass` whatever was chosen. A restart therefore puts the
+ * agent back on its BOOT stance, and the desktop re-asserts the operator's
+ * choice only afterwards, through applyStatus → loadResources →
+ * loadCodingMode → reassertCodingMode. A message sent in that gap would run
+ * at the wrong approval level. That is the reason this lock exists rather
+ * than being a nicety, so the lock waits for it.
+ *
+ * Capped at SWX_MODE_SETTLE_MS: past that the chip's own
+ * blank-until-confirmed state is the honest answer and the composer is
+ * released rather than held on a promise that may never resolve.
+ */
+function modeSettled() {
+  return new Promise((resolve) => {
+    if (!LAST_MODE || MODE.supported === false) { resolve(); return; }
+    const t0 = Date.now();
+    const tick = () => {
+      if (MODE.known && MODE.current === LAST_MODE) { resolve(); return; }
+      if (Date.now() - t0 >= SWX_MODE_SETTLE_MS) { resolve(); return; }
+      setTimeout(tick, 100);
+    };
+    tick();
+  });
+}
+
+/**
+ * The three things that must be true before the lock may clear — this is
+ * the whole reason the lock exists rather than ending at the IPC reply.
+ *
+ *   1. the IPC resolved (the caller has already awaited it);
+ *   2. the LIVE config was re-read, because every chip reads LIVE_CONFIG
+ *      once the optimistic override is dropped — releasing before this
+ *      would snap the chip back to the old route for the ~610 ms an
+ *      `atag config get` costs, which is exactly the flicker the optimism
+ *      was added to remove;
+ *   3. the coding mode is back (modeSettled).
+ *
+ * Skipped entirely for a result that carries no `restart` field: that is
+ * the coding-mode route, which writes no config at all and answers in
+ * 1-3 ms. Adding a 610 ms subprocess to it would be the one place this
+ * work could make a switch slower rather than faster.
+ *
+ * Skipped for a failure too — nothing was written, and each call site's
+ * own failure arm already refreshes the way it needs to.
+ */
+async function swxSettle(res) {
+  if (!res || res.ok === false) return;
+  if (!('restart' in res)) return;
+  await refreshLiveConfig();
+  if (res.restart) await modeSettled();
+}
+
+/** The sentence the composer prints where the lock was. Never invented: it
+ *  names the arm main answered with, or main's own error string. */
+function swxFailLine(label, res) {
+  const head = String(label || 'the switch').replace(/[…\.\s]+$/, '');
+  if (!res) return head + ' — the agent did not answer';
+  if (res.needsProvider) return head + ' — no cloud provider is configured yet';
+  if (res.needsKey) return head + ' — no API key for ' + (res.providerId || 'that provider');
+  if (res.needsModel) return head + ' — no local model is on disk yet';
+  if (res.needsDownload) return head + ' — that model is not downloaded yet';
+  return head + ' — ' + (res.error || 'the switch did not complete');
+}
+
+/**
+ * The one wrapper every operator-facing switch goes through.
+ *
+ * `label` is the words the popup already uses for this switch, reused so
+ * the chip, the popup and the button never disagree. `want` is what to
+ * paint immediately: any of {backend, providerId, model, mode}. `run` does
+ * the actual work and must return main's result. `refuse` is the call
+ * site's OWN refusal idiom for a running turn — the selector paths toast,
+ * the Settings tabs call llmReport, the wizard sets OB.error — because
+ * replacing three different existing refusals with one toast would be a
+ * copy change nobody asked for.
+ */
+async function swxRun(label, want, run, refuse) {
+  // Every switch below writes config and restarts `atag serve`, which
+  // would abort a running turn. Same guard, same words, as before.
+  if (S.busy) {
+    if (refuse) refuse(); else toast('Not while a turn is running');
+    return {ok:false, error:'a turn is running'};
+  }
+  const t0 = Date.now();
+  SWX.pending++;
+  SWX.since = t0;
+  SWX.label = label;
+  SWX.want = want || null;
+  SWX.err = null;
+  if (SWX.timer) clearTimeout(SWX.timer);
+  SWX.timer = setTimeout(() => {
+    // The IPC is still outstanding, so this never asserts a failure. It
+    // force-clears the visual lock and says what is actually known.
+    SWX.timer = null;
+    if (SWX.paint) { clearTimeout(SWX.paint); SWX.paint = null; }
+    SWX.pending = 0;
+    SWX.want = null;
+    SWX.err = label + ' has not finished — the agent may still be restarting';
+    render();
+  }, SWX_MAX_MS);
+  if (SWX.paint) clearTimeout(SWX.paint);
+  SWX.paint = setTimeout(() => { SWX.paint = null; refreshSend(); }, SWX_SPINNER_DELAY_MS);
+  render();
+  let res = null;
+  try {
+    res = await run();
+    // The IPC has resolved. That is one of three things, not the end.
+    await swxSettle(res);
+    if (res && res.ok === false) SWX.err = swxFailLine(label, res);
+    return res;
+  } catch (err) {
+    SWX.err = swxFailLine(label, {error: err && err.message ? err.message : String(err)});
+    throw err;
+  } finally {
+    SWX.lastMs = Date.now() - t0;
+    if (SWX.timer) { clearTimeout(SWX.timer); SWX.timer = null; }
+    if (SWX.paint) { clearTimeout(SWX.paint); SWX.paint = null; }
+    // The watchdog may already have zeroed this; never decrement past 0.
+    if (SWX.pending > 0) SWX.pending--;
+    // Clearing `want` makes every chip read LIVE_CONFIG again — which, on a
+    // failure, still names the old route, so the rollback is one frame and
+    // costs nothing. That is only true because no call site mutates
+    // LIVE_CONFIG in place any more (the cloud-model row used to).
+    if (SWX.pending === 0) SWX.want = null;
+    render();
+  }
+}
+
+/* ============================================================
    Model selector — backend → (provider) → model
    ============================================================ */
 
 function selBackend() {
+  // r5 item 10: the operator's choice paints first. See swxRun.
+  if (SWX.want && SWX.want.backend) return SWX.want.backend;
   const p = activeProvider();
   if (!(p && p.kind === 'llama-server')) return 'cloud';
   // Review fix: composer-switch-rows.ts selectComposerBackend — `local` and
@@ -4115,7 +4407,11 @@ function selProviders() {
   return ((LIVE_CONFIG && LIVE_CONFIG.llm && LIVE_CONFIG.llm.providers) || [])
     .filter((p) => p.kind !== 'llama-server');
 }
-function selActiveProviderId() { return LIVE_CONFIG && LIVE_CONFIG.llm && LIVE_CONFIG.llm.activeTextProvider; }
+function selActiveProviderId() {
+  // r5 item 10: the operator's choice paints first. See swxRun.
+  if (SWX.want && SWX.want.providerId) return SWX.want.providerId;
+  return LIVE_CONFIG && LIVE_CONFIG.llm && LIVE_CONFIG.llm.activeTextProvider;
+}
 
 function openSelector(kind) {
   SEL.open = true; SEL.kind = kind || 'backend'; SEL.cursor = 0; SEL.filter = ''; SEL.err = null;
@@ -4240,14 +4536,18 @@ async function selActivate(row) {
   if (S.busy) { toast('Not while a turn is running'); return; }
   if (row.type === 'provider') {
     SEL.busy = true; SEL.err = null; BSW.line = 'switching…'; render();
-    const res = await BR.activateProvider(row.id);
+    // r5 item 10: the provider chip names row.id from this frame on; the
+    // model comes with it, because activating a provider selects its own.
+    const res = await swxRun(BSW.line, {providerId: row.id, model: row.defaultChatModel || row.model || ''},
+      () => SWXBR.activateProvider(row.id));
     SEL.busy = false; BSW.line = '';
     if (!res || !res.ok) {
       if (res && res.needsKey) { bswOpenKey(row.id); return; }
       SEL.err = (res && res.error) || 'could not switch provider'; render(); return;
     }
     bswReport(res);
-    await refreshLiveConfig();
+    // r5 item 10: swxRun has already re-read the live config — it is one of
+    // the three things the composer lock waits for.
     SEL.kind = 'model'; SEL.cursor = 0; SEL.filter = ''; render();
     selLoadModels(row.id);
     return;
@@ -4255,14 +4555,20 @@ async function selActivate(row) {
   if (row.type === 'cloudModel') {
     // Apply and close first; the write and the restart confirm in the background.
     const pid = selActiveProviderId();
-    const entry = selProviders().find((p) => p.id === pid);
-    if (entry) entry.defaultChatModel = row.id;
+    /* r5 item 10. This row was ALREADY optimistic — and wrongly so: it
+       mutated the live provider entry in place (`entry.defaultChatModel =
+       row.id`) and never awaited, so the operator could send a message at
+       the old model, and a FAILED switch had nothing to roll back to
+       because the old value was already gone. The paint now goes through
+       SWX.want, which the `finally` clears; LIVE_CONFIG is left alone and
+       is what the chip falls back to. */
     S.cloudModel = row.id;
     closeSelector();
-    BR.selectCloudModel(pid, row.id).then((res) => {
+    await swxRun('switching…', {providerId: pid, model: row.id}, async () => {
+      const res = await SWXBR.selectCloudModel(pid, row.id);
       if (!res || !res.ok) toast('Could not select the model', res && res.needsKey ? 'no API key for ' + pid : ((res && res.error) || ''));
       else bswReport(res, 'Selected chat model ' + pid + '/' + row.id + '.');
-      refreshLiveConfig();
+      return res;
     });
     return;
   }
@@ -4271,7 +4577,8 @@ async function selActivate(row) {
     // The popup stays open until main answers: a daemon that fails to
     // start has to be shown, and `models start` can take a while.
     SEL.busy = true; SEL.err = null; BSW.line = 'starting ' + row.id + '…'; render();
-    const res = await BR.selectLocalModel(row.id);
+    const res = await swxRun(BSW.line, {backend:'local', model: row.id},
+      () => SWXBR.selectLocalModel(row.id));
     SEL.busy = false; BSW.line = '';
     if (!res || !res.ok) {
       if (res && res.needsDownload) { selPull(row.id); return; }
@@ -4281,7 +4588,7 @@ async function selActivate(row) {
     closeSelector();
     bswReport(res);
     if (res.daemon === 'start-failed') toast('Local daemon did not start', res.error || '');
-    await refreshLiveConfig();
+    // r5 item 10: the live config is already re-read inside swxRun.
   }
 }
 
@@ -4386,7 +4693,8 @@ async function selSavePreset() {
   if (res && res.ok === false) { SEL.busy = false; SEL.err = res.error || 'could not save the provider'; render(); return; }
   if (S.busy) { SEL.busy = false; SEL.err = 'saved, but not activated while a turn is running'; render(); refreshLiveConfig(); return; }
   BSW.line = 'switching…';
-  res = await BR.activateProvider(preset.id);
+  res = await swxRun(BSW.line, {providerId: preset.id},
+    () => SWXBR.activateProvider(preset.id));
   SEL.busy = false; BSW.line = '';
   if (!res || !res.ok) {
     SEL.err = res && res.needsKey ? 'saved, but could not activate it: no API key (' + preset.env + ')' : 'saved, but could not activate it' + (res && res.error ? ': ' + res.error : '');
@@ -4394,7 +4702,7 @@ async function selSavePreset() {
   }
   bswReport(res);
   SEL.addOpen = false;
-  await refreshLiveConfig();
+  // r5 item 10: swxRun re-read the live config before it resolved.
   SEL.kind = 'model'; SEL.cursor = 0; render();
   selLoadModels(preset.id);
   toast('Provider added', preset.label);
@@ -4737,7 +5045,13 @@ function contextChip() {
    Coding modes — a projection onto the approval ladder
    ============================================================ */
 
-function currentMode() { return MODE.current; }
+function currentMode() {
+  /* r5 item 10: the operator's choice paints first — never on an agent
+     build with no /api/coding-mode route, where the chip's blank is a
+     deliberate honesty state and a stance would be a fabrication. */
+  if (SWX.want && SWX.want.mode && MODE.supported !== false) return SWX.want.mode;
+  return MODE.current;
+}
 
 function codingModeChip() {
   // No route on this agent build: print the honest blank rather than a
@@ -4914,7 +5228,11 @@ async function setCodingMode(id) {
   cancelModeReassert();
   S.overlay = null; render();
   const seq = ++MODE.seq;
-  const res = await BR.codingMode(id);
+  /* r5 item 10: the chip now repaints on the CLICK rather than on the
+     reply. This route is 1-3 ms, so the send button's spinner (150 ms) is
+     never reached — the wrapper is here for the paint and for the single
+     coverage rule, not for a lock the operator would ever see. */
+  const res = await swxRun('switching…', {mode:id}, () => SWXBR.codingMode(id));
   // A later click (or a re-assert fired after this one) already owns the
   // stance: drop this reply rather than repainting the chip backwards.
   if (seq !== MODE.seq) return;
@@ -4973,7 +5291,13 @@ async function selChooseBackend(id) {
   // boot. A running turn would be aborted by that restart, so refuse.
   if (S.busy) { toast('Not while a turn is running'); return {ok:false, error:'a turn is running'}; }
   SEL.err = null; SEL.busy = true; BSW.line = id === 'local' ? 'switching to local…' : 'switching to cloud…'; render();
-  const res = await BR.switchBackend(id);
+  /* r5 item 10. `want:{backend:id}` is deliberately backend-only: selBackend
+     answers 'cloud' | 'custom' | 'local', and switchBackend('local') on an
+     external-mode config lands on 'local', so painting the id the operator
+     clicked is the truth. The provider and model are NOT painted here —
+     which one main will pick is its decision, not a value this window may
+     invent. */
+  const res = await swxRun(BSW.line, {backend:id}, () => SWXBR.switchBackend(id));
   SEL.busy = false; BSW.line = '';
   if (!res || !res.ok) {
     if (res && res.needsProvider) { SEL.kind = 'provider'; SEL.addOpen = true; SEL.presetCur = 0; render(); return res; }
@@ -4986,7 +5310,8 @@ async function selChooseBackend(id) {
   }
   bswReport(res);
   if (res.daemon === 'start-failed') toast('Local daemon did not start', res.error || '');
-  await refreshLiveConfig();
+  // r5 item 10: swxRun re-read the live config before it resolved, so the
+  // rows below are drawn from the file the switch just wrote.
   if (res.needsModel) {
     // activateLocal with nothing on disk: the route moved, the model
     // switch opens (its "download" rows lead to the pull).
@@ -5209,13 +5534,16 @@ async function applySessionModelStamp() {
   // defaultChatModel on the provider entry, which llama-server ignores.
   const entry = llmProvider(stamp.providerId);
   const cloud = !!entry && entry.kind !== 'llama-server';
-  const res = cloud && stamp.chatModel && BR.selectCloudModel
-    ? await BR.selectCloudModel(stamp.providerId, stamp.chatModel)
-    : await BR.activateProvider(stamp.providerId);
+  // r5 item 10: the same lock as every other switch — this one restarts
+  // the agent too.
+  const res = await swxRun('switching…', {providerId: stamp.providerId, model: cloud ? (stamp.chatModel || '') : ''},
+    () => (cloud && stamp.chatModel && BR.selectCloudModel
+      ? SWXBR.selectCloudModel(stamp.providerId, stamp.chatModel)
+      : SWXBR.activateProvider(stamp.providerId)));
   if (!res || res.ok === false) { toast('Could not switch', (res && res.error) || ''); return; }
   bswReport(res);
   CTX055.stamp = null;
-  await refreshLiveConfig();
+  // r5 item 10: swxRun re-read the live config before it resolved.
   refreshContext();
 }
 
@@ -5321,7 +5649,9 @@ async function wizNext() {
   // Lane B — backend switch: one write for the model + the activation, then
   // the restart main does for it. Not while a turn runs.
   if (S.busy) { WIZ.phase = 'configure'; WIZ.error = 'saved and verified, but not activated while a turn is running'; render(); refreshLiveConfig(); return; }
-  const sel = await BR.selectCloudModel(id, model);
+  const sel = await swxRun('switching…', {providerId: id, model},
+    () => SWXBR.selectCloudModel(id, model),
+    () => { WIZ.phase = 'configure'; WIZ.error = 'saved and verified, but not activated while a turn is running'; render(); });
   if (!sel || !sel.ok) {
     WIZ.phase = 'configure';
     WIZ.error = sel && sel.needsKey ? 'saved, but the agent sees no key for it — enter one above or export ' + (k.env || 'its variable')
@@ -5330,7 +5660,7 @@ async function wizNext() {
   }
   bswReport(sel, 'Selected chat model ' + id + '/' + model + '.');
   WIZ.phase = null;
-  await refreshLiveConfig();
+  // r5 item 10: swxRun re-read the live config before it resolved.
   closeSelector();
   toast('Provider added', k.label.split(' (')[0] + ' \u00b7 ' + model);
 }
@@ -8584,14 +8914,19 @@ function llmRestartMsg(text) { LLMP.msg = {text, restart:true}; }
 async function llmSwitchProvider(id) {
   if (S.busy) { llmReport('Not while a turn is running — the switch restarts the agent', 'cloud'); llmRepaint(); return false; }
   LLMP.busy = true; llmRepaint();
-  const res = await BR.activateProvider(id);
+  // r5 item 10: Settings is an in-window overlay, so this locks the same
+  // composer the selector does. The refusal keeps the tab's own llmReport
+  // wording rather than the selector's toast.
+  const res = await swxRun('switching…', {providerId: id},
+    () => SWXBR.activateProvider(id),
+    () => { llmReport('Not while a turn is running — the switch restarts the agent', 'cloud'); llmRepaint(); });
   LLMP.busy = false;
   if (!res || !res.ok) {
     llmReport(res && res.needsKey ? 'no API key for ' + id + ' — add one with n (the wizard) or export its variable' : llmFail('switch provider failed', res), 'cloud');
     llmRepaint(); return false;
   }
   bswReport(res);
-  await refreshLiveConfig();
+  // r5 item 10: swxRun re-read the live config before it resolved.
   const p = llmProvider(id);
   const model = p ? (p.defaultChatModel || p.model || '') : '';
   const transport = res.transport || (id === 'local-llama' ? 'grammar+llama-server' : 'native_tools');
@@ -8605,14 +8940,16 @@ async function llmSelectChatModel(pid, modelId) {
   if (S.busy) { llmReport('Not while a turn is running — the switch restarts the agent', 'cloud'); llmRepaint(); return; }
   LLMP.busy = true; llmRepaint();
   // providers-orchestrator.ts selectChatModel: the model, then setActiveText(providerId) — lane B's selectCloudModel is exactly that pair, plus the restart.
-  const res = await BR.selectCloudModel(pid, modelId);
+  const res = await swxRun('switching…', {providerId: pid, model: modelId},
+    () => SWXBR.selectCloudModel(pid, modelId),
+    () => { llmReport('Not while a turn is running — the switch restarts the agent', 'cloud'); llmRepaint(); });
   LLMP.busy = false;
   if (!res || !res.ok) {
     llmReport(res && res.needsKey ? 'no API key for ' + pid + ' — add one with n (the wizard) or export its variable' : llmFail('select model failed', res), 'cloud');
     llmRepaint(); return;
   }
   bswReport(res, 'Selected chat model ' + pid + '/' + modelId + '.');
-  await refreshLiveConfig();
+  // r5 item 10: swxRun re-read the live config before it resolved.
   const transport = res.transport || 'native_tools';
   llmReport('Active text: ' + pid + ' · ' + modelId + ' · ' + transport, 'cloud');
   LLMP.msg = {text:'Selected chat model ' + pid + '/' + modelId + '.' + (res.daemonLine ? ' ' + res.daemonLine : '') + ' The agent was restarted.'};
@@ -10682,4 +11019,82 @@ if (typeof window !== 'undefined') {
     render();
     return out;
   };
+}
+
+/* ---- r5 items 9 + 10: smoke hooks ----------------------------------------
+   Nothing below is used by the product; every one of them is read by a
+   check in main.ts smokeTest. */
+if (typeof window !== 'undefined') {
+  // item 9 — what the main process latched before anything could write.
+  window.__firstRun = () => FIRSTRUN;
+  // item 9 — the fresh-install predicate, drivable without an agent.
+  window.__needsOnboarding = (cfg) => needsOnboarding(cfg);
+  // item 9 — the cross-lane import contract, straight through the bridge.
+  window.__tuiSetupPresent = () => BR.tuiSetupPresent();
+  window.__importFromTui = (opts) => BR.importFromTui(opts || {});
+
+  // item 10 — the lock's own state, including the MEASURED wall time of the
+  // last switch, so a latency regression is visible in the suite's output.
+  window.__swxState = () => ({
+    pending:SWX.pending, label:SWX.label, want:SWX.want ? Object.assign({}, SWX.want) : null,
+    err:SWX.err, timer:!!SWX.timer, lastMs:SWX.lastMs,
+  });
+  /* item 10 — the LIVE route, read WITHOUT the optimistic override. This is
+     what proves the switch is genuinely optimistic rather than merely fast:
+     the chip and this disagree for the whole length of a switch. */
+  window.__bswLive = () => {
+    const keep = SWX.want;
+    SWX.want = null;
+    try { return {backend: selBackend(), providerId: selActiveProviderId() || null, model: activeModel()}; }
+    finally { SWX.want = keep; }
+  };
+  /* item 10 — samples the send button 300 ms into a switch and again after
+     it resolves, and reports the wall time so the check can tell a lock
+     that cleared because the agent came back from one that never armed. */
+  window.__swxProbe = async (fn) => {
+    const sample = () => {
+      const b = document.querySelector('.sendbtn');
+      return {disabled: !!(b && b.disabled), aria: b ? b.getAttribute('aria-busy') : null,
+              spins: document.querySelectorAll('.sspin').length};
+    };
+    const t0 = Date.now();
+    let mid = null;
+    const timer = setTimeout(() => { mid = sample(); }, 300);
+    let res = null, error = null;
+    try { res = await fn(); } catch (e) { error = String(e); }
+    clearTimeout(timer);
+    return {mid, after: sample(), ms: Date.now() - t0, res, error};
+  };
+  // item 10 — Enter while locked: the last toast, so the check can name it.
+  window.__lastToast = () => (S.toasts.length ? {t:S.toasts[S.toasts.length - 1].t, s:S.toasts[S.toasts.length - 1].s} : null);
+  // item 10 — the composer's own status strip, where a failed switch says why.
+  window.__composerStrip = () => {
+    const el = document.querySelector('.composerwrap .statusstrip');
+    return el ? el.textContent : '';
+  };
+}
+
+/* r5 item 10 — the coding-mode click, drivable from the suite. Separate from
+   the block above only because it is a WRITE: it belongs beside the switch
+   probes, not beside the read-only state hooks. */
+if (typeof window !== 'undefined') {
+  window.__setCodingMode = (id) => setCodingMode(id);
+  /* item 10 — whether this agent build carries /api/coding-mode at all. The
+     chip's blank on a routeless build is a deliberate honesty state, and the
+     optimistic override is suppressed there, so the check has to know. */
+  window.__modeSupported = () => MODE.supported;
+  /* item 10 — the draft, put in and taken out again by the Enter-while-locked
+     check. Goes through the same two places a keystroke would. */
+  window.__setDraft = (text) => {
+    S.draft = text;
+    const e = $('#entry');
+    if (e) { e.value = text; autosize(e); }
+    refreshSend();
+    return S.draft;
+  };
+  window.__logCounts = () => ({users: S.log.filter((m) => m.k === 'user').length, queued: S.queued.length});
+  /* item 10 — clears what a FAILED switch deliberately leaves on screen (the
+     composer's reason line, the selector's add panel), so the check that
+     drives one does not leak that state into whatever runs next. */
+  window.__swxReset = () => { SWX.err = null; SEL.addOpen = false; SEL.err = null; render(); };
 }

@@ -1,3 +1,10 @@
+/* r5 item 9 — FIRST, before anything else can run. This module publishes
+   ATOMIC_AGENT_STATE_DIR into the process environment and latches whether
+   the directory was fresh; tsc hoists every require above the file body, so
+   only an import placed first is guaranteed to run before the modules below
+   take their own side effects. */
+import { DESKTOP_STATE_WAS_FRESH } from "./state-dir-boot.js";
+
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
@@ -28,6 +35,7 @@ import {
   // Lane B — backend switch
   chatModelsList,
   configSetWhole,
+  readWholeConfig,
   localDaemonRunning,
   modelsStop,
   providerHasKey,
@@ -97,6 +105,9 @@ import { VoiceSession, helperPath as speechHelperPath } from "./speech.js";
 // Item 7 part B (Skills / Memory / MCP tabs)
 import { clawhubSkillDetail } from "./clawhub.js";
 import { memoryQuery } from "./memory-db.js";
+// r5 item 9 — the desktop's own state directory and the TUI import offer.
+import { DESKTOP_EMBEDDING_PORT, DESKTOP_MANAGED_PORT, DESKTOP_STATE_DIR, TUI_STATE_DIR, underDesktopState } from "./state-dir.js";
+import { importFromTui, tuiSetupPresent, type TuiImportOptions } from "./tui-import.js";
 
 const DEV = process.argv.includes("--dev");
 /** `--smoke` boots, waits for first paint, writes a screenshot, and exits. */
@@ -372,6 +383,15 @@ function hfGatedTokenHint(message: string, dir: string): string {
 }
 
 function wireIpc(client: AgentClient): void {
+  /* r5 item 9 — the state-dir argument guard.
+     Six handlers take a `stateDir` (or a data dir under it) from the
+     renderer, which reads it from /api/capabilities. That value can only
+     ever be the desktop's own directory now, but a stale renderer — or a
+     future one that computes a path instead of reading it — must not be
+     able to address the operator's tree through an IPC that reads .env or
+     a sqlite file. Anything outside DESKTOP_STATE_DIR is refused here. */
+  const ownDir = (p: unknown): p is string => typeof p === "string" && underDesktopState(p);
+
   ipcMain.handle("agent:status", () => client.status);
   ipcMain.handle("agent:start", () => client.start());
   ipcMain.handle("agent:restart", async () => {
@@ -686,7 +706,7 @@ function wireIpc(client: AgentClient): void {
   ipcMain.handle("cli:modelsStart", () => modelsStart());
   ipcMain.handle("cli:traceUsage", (_event, payload: unknown) => {
     const { stateDir, sessionId } = (payload ?? {}) as { stateDir?: unknown; sessionId?: unknown };
-    if (typeof stateDir !== "string" || typeof sessionId !== "string") {
+    if (!ownDir(stateDir) || typeof sessionId !== "string") {
       return { ok: false, error: "stateDir and sessionId are required" };
     }
     return traceUsage(stateDir, sessionId);
@@ -694,7 +714,7 @@ function wireIpc(client: AgentClient): void {
   // item 4: per-call tool durations from the trace
   ipcMain.handle("cli:traceTools", (_event, payload: unknown) => {
     const { stateDir, sessionId } = (payload ?? {}) as { stateDir?: unknown; sessionId?: unknown };
-    if (typeof stateDir !== "string" || typeof sessionId !== "string") {
+    if (!ownDir(stateDir) || typeof sessionId !== "string") {
       return { ok: false, error: "stateDir and sessionId are required" };
     }
     return traceTools(stateDir, sessionId);
@@ -768,7 +788,7 @@ function wireIpc(client: AgentClient): void {
   // --- Lane B — context before the first message (item 3) ---
   ipcMain.handle("cli:traceBaseline", (_event, payload: unknown) => {
     const { stateDir, model, workingDir } = (payload ?? {}) as { stateDir?: unknown; model?: unknown; workingDir?: unknown };
-    if (typeof stateDir !== "string") return { ok: false, error: "stateDir is required" };
+    if (!ownDir(stateDir)) return { ok: false, error: "stateDir is required" };
     return traceBaseline(stateDir, {
       model: typeof model === "string" && model ? model : null,
       workingDir: typeof workingDir === "string" && workingDir ? workingDir : null,
@@ -958,7 +978,7 @@ function wireIpc(client: AgentClient): void {
   // Read-only sqlite over <stateDir>/memory.sqlite; the statement is named, never free SQL.
   ipcMain.handle("app:memoryQuery", (_event, payload: unknown) => {
     const { stateDir, name, params } = (payload ?? {}) as { stateDir?: unknown; name?: unknown; params?: unknown };
-    if (typeof stateDir !== "string" || typeof name !== "string") return { ok: false, error: "stateDir and name are required" };
+    if (!ownDir(stateDir) || typeof name !== "string") return { ok: false, error: "stateDir and name are required" };
     return memoryQuery(stateDir, name, Array.isArray(params) ? params : []);
   });
 
@@ -1006,6 +1026,36 @@ function wireIpc(client: AgentClient): void {
     };
     return importRun(clean, client.status.workingDir);
   });
+  /* ---- r5 item 9: the desktop's own state directory ------------------
+     `app:firstRun` is what makes a first launch unmissable rather than
+     inferred: the renderer's needsOnboarding() mirror reads a config.json
+     that `atag config get` has already created by the time it looks, so a
+     genuinely fresh directory could otherwise reach the chat window with
+     no backend and no wizard. `fresh` is latched in state-dir-boot.ts
+     before anything can write. */
+  ipcMain.handle("app:firstRun", () => ({
+    fresh: DESKTOP_STATE_WAS_FRESH,
+    stateDir: DESKTOP_STATE_DIR,
+    tuiStateDir: TUI_STATE_DIR,
+    tuiSetupFound: existsSync(join(TUI_STATE_DIR, "config.json")) && DESKTOP_STATE_DIR !== TUI_STATE_DIR,
+  }));
+  /* The cross-lane import contract. `tuiSetupPresent` reports env var NAMES
+     only, never a value; `importFromTui` defaults every flag to false, never
+     mutates or moves the source, never copies the managed port, and copies
+     sqlite through `.backup` rather than cp-ing a live database. */
+  ipcMain.handle("app:tuiSetupPresent", () => tuiSetupPresent());
+  ipcMain.handle("app:importFromTui", (_event, opts: unknown) => {
+    const o = (opts ?? {}) as Record<string, unknown>;
+    const flags: TuiImportOptions = {
+      providers: o["providers"] === true,
+      keys: o["keys"] === true,
+      skills: o["skills"] === true,
+      sessions: o["sessions"] === true,
+      memory: o["memory"] === true,
+    };
+    return importFromTui(flags);
+  });
+
   // import-panel-state.ts defaultSourceDir: the env override or ~/.hermes / ~/.openclaw.
   ipcMain.handle("app:importDefaults", () => ({
     hermes: process.env["HERMES_STATE_DIR"] ?? join(homedir(), ".hermes"),
@@ -1018,7 +1068,7 @@ function wireIpc(client: AgentClient): void {
     typeof url === "string" ? llamaProbe(url) : { ok: false, error: "url required" },
   );
   ipcMain.handle("app:dotenvKeys", (_event, stateDir: unknown) =>
-    typeof stateDir === "string" && stateDir.startsWith("/") ? dotenvKeys(stateDir) : { ok: false, keys: [], exists: false, error: "state dir required" },
+    ownDir(stateDir) ? dotenvKeys(stateDir) : { ok: false, keys: [], exists: false, error: "state dir required" },
   );
   ipcMain.handle("app:envPresent", (_event, names: unknown) =>
     envPresent(Array.isArray(names) ? names.filter((n): n is string => typeof n === "string").slice(0, 64) : []),
@@ -1026,7 +1076,7 @@ function wireIpc(client: AgentClient): void {
   // The one key the desktop writes into .env: the Telegram bot token (the TUI's telegram-settings.ts setToken).
   ipcMain.handle("app:dotenvSet", (_event, payload: unknown) => {
     const { stateDir, key, value } = (payload ?? {}) as { stateDir?: unknown; key?: unknown; value?: unknown };
-    if (typeof stateDir !== "string" || !stateDir.startsWith("/")) return { ok: false, error: "state dir required" };
+    if (!ownDir(stateDir)) return { ok: false, error: "state dir required" };
     if (key !== "TELEGRAM_BOT_TOKEN") return { ok: false, error: "only TELEGRAM_BOT_TOKEN may be written from the desktop" };
     if (value !== null && typeof value !== "string") return { ok: false, error: "value must be a string or null" };
     return dotenvSet(stateDir, key, value);
@@ -1097,6 +1147,15 @@ async function smokeTest(): Promise<void> {
     process.stdout.write(`${ok ? "PASS" : "FAIL"} ${name}${detail ? " — " + detail : ""}\n`);
     if (!ok) fail.push(name);
   };
+
+  /* r5 item 9 — the check the operator asked for, framed as a before/after.
+     The failure this item exists to end is the desktop writing the
+     operator's own ~/.atomic-agent; it happened twice. So the whole tree's
+     observable state is snapshotted HERE, before a single subprocess has
+     been spawned, and re-asserted at the very end — after the backend
+     block, which is the one that writes config. A string scan cannot see a
+     write through the shared-weights symlink; this can. */
+  const tuiSnapshot = snapshotTuiState();
 
   await new Promise((r) => setTimeout(r, 1500));
   // Item 6: the sidebar is two headed lists, so there are no nav rows left to
@@ -1978,6 +2037,12 @@ async function smokeTest(): Promise<void> {
     // --- r4 integration: the seams between the four lanes ---
     await r4SeamTest(js, check);
 
+    // --- r5 items 9 + 10: isolation, and the optimistic switch ---
+    // Before the backend block: everything here is pure, read-only or
+    // self-restoring, and the two checks that need a real multi-second
+    // switch live inside that block, which already owns the file's restore.
+    await isolationAndSwitchTest(js, check);
+
     // --- Lane B — backend switch (last: it restarts `atag serve` four times) ---
     // A round trip through the renderer's own switch path: to local and
     // back, with the file, the chips, the restarted agent and the daemon
@@ -1985,6 +2050,20 @@ async function smokeTest(): Promise<void> {
     // the daemon state, and a fresh agent — so an assertion throw cannot
     // leave the route changed.
     await backendSwitchTest(js, check);
+
+    /* r5 item 9 — the whole point, asserted last. Everything the desktop
+       does has now happened, including four `atag serve` restarts and a
+       round trip of whole-file config writes. If any of it reached
+       ~/.atomic-agent, this is where it shows. */
+    const tuiAfter = snapshotTuiState();
+    const drift = Object.keys(tuiAfter).filter((k) => tuiAfter[k] !== tuiSnapshot[k]);
+    check(
+      "state dir: a whole smoke run leaves ~/.atomic-agent untouched",
+      drift.length === 0,
+      drift.length === 0
+        ? `${Object.keys(tuiSnapshot).length} paths unchanged under ${TUI_STATE_DIR}`
+        : drift.map((k) => `${k}: ${tuiSnapshot[k]} → ${tuiAfter[k]}`).join("; "),
+    );
   }
 
   if (MODELS_TEST) await modelsTest(js, check);
@@ -5401,6 +5480,249 @@ async function uiTest(
   await js<number>("window.__clearToasts()");
 }
 
+/**
+ * r5 item 9 — every observable byte of the operator's terminal-agent
+ * directory, as one flat map of `path → size:mtimeMs` (or `absent`).
+ * `models/models` is included because that subdirectory is SHARED with the
+ * desktop through a symlink, and a `models pull` from the desktop would land
+ * inside it — the one write path a source scan could never see.
+ */
+function snapshotTuiState(): Record<string, string> {
+  const out: Record<string, string> = {};
+  const stamp = (rel: string) => {
+    const path = rel ? join(TUI_STATE_DIR, rel) : TUI_STATE_DIR;
+    try {
+      const st = statSync(path);
+      out[rel || "."] = st.isDirectory()
+        ? `dir:${readdirSync(path).sort().join(",")}`
+        : `${st.size}:${st.mtimeMs}`;
+    } catch {
+      out[rel || "."] = "absent";
+    }
+  };
+  for (const rel of ["", "config.json", ".env", "sessions.sqlite", "memory.sqlite", "tasks.sqlite", "analytics.json", "skills", "models", "models/models", "traces"]) {
+    stamp(rel);
+  }
+  return out;
+}
+
+/**
+ * r5 items 9 and 10 — isolation, and the optimistic switch.
+ *
+ * Placed BEFORE backendSwitchTest deliberately: everything here is either
+ * pure, read-only, or restores itself in a `finally`, and the coding-mode
+ * path it drives writes nothing to config.json. The two checks that need a
+ * real 3-11 s backend switch live inside backendSwitchTest, which already
+ * owns the restore of the whole file.
+ */
+async function isolationAndSwitchTest(
+  js: <T>(code: string) => Promise<T>,
+  check: (name: string, ok: boolean, detail?: string) => void,
+): Promise<void> {
+  const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  // ---- item 9: the desktop is on its own directory, live ----
+  const caps = await js<{ ok: boolean; data?: { paths?: { stateDir?: string } } }>("window.atomic.capabilities()");
+  const live = caps?.data?.paths?.stateDir ?? "";
+  check(
+    "state dir: the desktop runs on its own directory",
+    live === DESKTOP_STATE_DIR
+      && process.env["ATOMIC_AGENT_STATE_DIR"] === DESKTOP_STATE_DIR
+      && live !== TUI_STATE_DIR
+      && live.startsWith("/"),
+    `agent reports ${JSON.stringify(live)}; main holds ${JSON.stringify(DESKTOP_STATE_DIR)}; env=${JSON.stringify(process.env["ATOMIC_AGENT_STATE_DIR"] ?? null)}`,
+  );
+
+  /* ---- item 9: no desktop subprocess can be pointed at ~/.atomic-agent ----
+     Scanned over the TypeScript SOURCES, not the CJS emit: tsc rewrites
+     `spawn(...)` to `(0, node_child_process_1.spawn)(...)`, so a scan of
+     out/main/*.js would match zero occurrences and pass while proving
+     nothing. */
+  const srcDir = join(__dirname, "..", "..", "main");
+  const cliSrc = readFileSync(join(srcDir, "agent-cli.ts"), "utf8");
+  const clientSrc = readFileSync(join(srcDir, "agent-client.ts"), "utf8");
+  const codeOnly = (text: string) => text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  const literals = [cliSrc, clientSrc].map(codeOnly).join("\n").match(/"\.atomic-agent"/g) ?? [];
+  const spawnSites = [...codeOnly(cliSrc).matchAll(/(?:spawn|run)\(binary,/g)];
+  const spawnEnvOk = spawnSites.every((m) => {
+    const tail = codeOnly(cliSrc).slice(m.index ?? 0, (m.index ?? 0) + 600);
+    return /env: agentEnv\(\)/.test(tail);
+  });
+  const clientEnvOk = /env: agentEnv\(\)/.test(codeOnly(clientSrc));
+  check(
+    "state dir: no desktop subprocess names ~/.atomic-agent",
+    literals.length === 0 && spawnSites.length >= 3 && spawnEnvOk && clientEnvOk,
+    `${literals.length} \`.atomic-agent\` literals; ${spawnSites.length} agent spawn sites, all env-carrying=${spawnEnvOk}; serve child env-carrying=${clientEnvOk}`,
+  );
+
+  // ---- item 9: first run is latched, not inferred ----
+  const fr = await js<{ fresh: boolean; stateDir: string; tuiStateDir: string; tuiSetupFound: boolean } | null>("window.__firstRun()");
+  check(
+    "state dir: first run is latched before anything can write",
+    !!fr && fr.stateDir === DESKTOP_STATE_DIR && fr.tuiStateDir === TUI_STATE_DIR
+      && fr.fresh === DESKTOP_STATE_WAS_FRESH
+      && fr.fresh === false,
+    fr ? `fresh=${fr.fresh} stateDir=${fr.stateDir} tuiSetupFound=${fr.tuiSetupFound}` : "no __firstRun hook",
+  );
+
+  /* ---- item 9: the fresh-install predicate matches the agent's ----
+     Pure, no agent involved. The exact file `atag config get` writes into an
+     empty directory: localModels.mode external at the schema's own default
+     url, no llm block, tui.onboarding all null. decideOnboarding
+     (src/tui/onboarding/needs-onboarding.ts) returns needed:true there. */
+  const freshCfg = JSON.stringify({ localModels: { mode: "external", url: "http://127.0.0.1:8080", managed: { modelId: null } }, llm: {}, tui: { onboarding: {} } });
+  const configuredCfg = JSON.stringify({ localModels: { mode: "external", url: "http://127.0.0.1:9999", managed: { modelId: null } }, llm: {}, tui: { onboarding: {} } });
+  const managedInExternal = JSON.stringify({ localModels: { mode: "external", url: "http://127.0.0.1:8080", managed: { modelId: "qwen-3.5-4b" } }, llm: {}, tui: { onboarding: {} } });
+  const needFresh = await js<boolean>(`window.__needsOnboarding(${freshCfg})`);
+  const needConfigured = await js<boolean>(`window.__needsOnboarding(${configuredCfg})`);
+  const needManaged = await js<boolean>(`window.__needsOnboarding(${managedInExternal})`);
+  check(
+    "state dir: a fresh directory would reach the wizard",
+    needFresh === true && needConfigured === false && needManaged === false,
+    `default url → ${needFresh}; a real url → ${needConfigured}; managed id in external mode → ${needManaged}`,
+  );
+
+  // ---- item 9: the import offer reports names, never values ----
+  type Presence = { ok: boolean; present: boolean; path: string; has: { providers: number; keys: string[]; skills: number; sessions: number; memory: boolean } };
+  const presence = await js<Presence>("window.__tuiSetupPresent()");
+  const realKeys = existsSync(join(TUI_STATE_DIR, ".env"))
+    ? readFileSync(join(TUI_STATE_DIR, ".env"), "utf8").split(/\r?\n/).map((l) => l.split("=")[0]?.trim() ?? "").filter((k) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(k))
+    : [];
+  const namesOnly = presence.has.keys.every((k) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(k) && realKeys.includes(k));
+  check(
+    "state dir: the import offer lists key NAMES, never values",
+    presence.ok === true && presence.path === TUI_STATE_DIR && namesOnly
+      && presence.has.keys.length === realKeys.length
+      && presence.present === existsSync(join(TUI_STATE_DIR, "config.json")),
+    `present=${presence.present} providers=${presence.has.providers} keys=${JSON.stringify(presence.has.keys)} skills=${presence.has.skills} sessions=${presence.has.sessions} memory=${presence.has.memory}`,
+  );
+
+  /* ---- item 9: nothing is pre-ticked, and the source is never moved ----
+     Two calls: the empty one must copy nothing at all, and the providers one
+     must land providers WITHOUT their keys and WITHOUT the terminal agent's
+     managed port. The desktop's own config is snapshotted and restored. */
+  const cfgBefore = (await configGet()).config as UserConfigShape | undefined;
+  /* UserConfigShape does not model `tui`, and it must not start to: the only
+     reason to read it here is to prove the import did NOT mark the wizard
+     done. */
+  const obStamp = (c: unknown): unknown =>
+    ((c as { tui?: { onboarding?: { completedAt?: unknown } } } | undefined)?.tui?.onboarding?.completedAt) ?? null;
+  const tuiBefore = snapshotTuiState();
+  try {
+    type ImportResult = { ok: boolean; copied: { providers: number; keys: number; skills: number; sessions: number; memory: boolean }; error?: string };
+    const none = await js<ImportResult>("window.__importFromTui({})");
+    check(
+      "state dir: an import with nothing ticked copies nothing",
+      none.ok === true && none.copied.providers === 0 && none.copied.keys === 0 && none.copied.skills === 0
+        && none.copied.sessions === 0 && none.copied.memory === false,
+      JSON.stringify(none),
+    );
+    if (presence.present) {
+      const portBefore = cfgBefore?.localModels?.managed?.port ?? null;
+      const imported = await js<ImportResult>("window.__importFromTui({providers:true})");
+      const cfgAfter = (await configGet()).config as UserConfigShape | undefined;
+      const tuiProviders = (JSON.parse(readFileSync(join(TUI_STATE_DIR, "config.json"), "utf8")) as UserConfigShape).llm?.providers ?? [];
+      const wanted = tuiProviders.filter((p) => p.id !== "local-llama").map((p) => p.id);
+      const gotIds = (cfgAfter?.llm?.providers ?? []).map((p) => p.id);
+      const noKeys = (cfgAfter?.llm?.providers ?? []).every((p) => !("apiKey" in (p as unknown as Record<string, unknown>)));
+      const tuiNow = snapshotTuiState();
+      const sourceDrift = Object.keys(tuiNow).filter((k) => tuiNow[k] !== tuiBefore[k]);
+      check(
+        "state dir: the import copies providers without keys and never moves the source",
+        imported.ok === true
+          && wanted.every((id) => gotIds.includes(id))
+          && noKeys
+          && imported.copied.keys === 0
+          && (cfgAfter?.localModels?.managed?.port ?? null) === portBefore
+          && obStamp(cfgAfter) === obStamp(cfgBefore)
+          && sourceDrift.length === 0,
+        `copied=${JSON.stringify(imported.copied)} providers=${JSON.stringify(gotIds)} inlineKeys=${!noKeys} port ${portBefore} → ${cfgAfter?.localModels?.managed?.port ?? null}; source drift: ${sourceDrift.join(",") || "none"}`,
+      );
+    }
+  } finally {
+    if (cfgBefore) await configSetWhole(cfgBefore);
+  }
+
+  /* ---- item 10: every switch goes through the wrapper ----
+     Two halves, both exact. (a) the five switching IPCs are named in exactly
+     one place each — the SWXBR funnel — except BR.codingMode, whose boot GET
+     and restart-time re-assert are not operator switches and must NOT take
+     the lock (the re-assert is what the lock waits for). (b) every SWXBR.
+     call site is lexically inside a swxRun( … ) argument list, matched by
+     balancing parentheses with the string literals skipped. */
+  const rendererSrc = readFileSync(join(__dirname, "..", "renderer", "renderer.js"), "utf8");
+  const swxRanges: Array<[number, number]> = [];
+  for (const m of rendererSrc.matchAll(/\bswxRun\(/g)) {
+    let i = (m.index ?? 0) + m[0].length;
+    let depth = 1;
+    let quote = "";
+    while (i < rendererSrc.length && depth > 0) {
+      const ch = rendererSrc[i]!;
+      if (quote) {
+        if (ch === "\\") i++;
+        else if (ch === quote) quote = "";
+      } else if (ch === "'" || ch === '"' || ch === "`") quote = ch;
+      else if (ch === "(") depth++;
+      else if (ch === ")") depth--;
+      i++;
+    }
+    swxRanges.push([m.index ?? 0, i]);
+  }
+  const inSwx = (at: number) => swxRanges.some(([a, b]) => at > a && at < b);
+  const stray = [...rendererSrc.matchAll(/SWXBR\.\w+\(/g)].filter((m) => !inSwx(m.index ?? 0)).map((m) => m[0]);
+  const onceOnly = ["switchBackend", "activateProvider", "selectCloudModel", "selectLocalModel"]
+    // The lookbehind matters: `SWXBR.switchBackend(` contains the substring
+    // `BR.switchBackend(`, so a naive count would find the funnel plus every
+    // call site and this check would never go green.
+    .map((n) => [n, (rendererSrc.match(new RegExp(`(?<![\\w$])BR\\.${n}\\(`, "g")) ?? []).length] as const)
+    .filter(([, n]) => n !== 1);
+  check(
+    "switch coverage: every switch goes through the wrapper",
+    stray.length === 0 && onceOnly.length === 0 && swxRanges.length >= 12,
+    `${swxRanges.length} swxRun call sites; strays: ${stray.join(",") || "none"}; not-once: ${onceOnly.map(([n, c]) => `${n}×${c}`).join(",") || "none"}`,
+  );
+
+  /* ---- item 10: a 2 ms route never flashes a spinner ----
+     The coding-mode POST is 1-3 ms measured, so the send button must stay
+     live throughout — while the CHIP has already moved at the first sample,
+     which is the whole claim: the paint is on the click, not on the reply. */
+  const modeSupported = await js<boolean | null>("window.__modeSupported()");
+  const modeBefore = await js<string>("window.__mode()");
+  const modeTarget = modeBefore === "plan" ? "default" : "plan";
+  const modeProbe = await js<{ samples: Array<{ disabled: boolean; spins: number; mode: string }>; ms: number }>(
+    `(async () => {
+       const samples = [];
+       const take = () => { const b = document.querySelector('.sendbtn');
+         samples.push({disabled: !!(b && b.disabled), spins: document.querySelectorAll('.sspin').length, mode: window.__mode()}); };
+       const t0 = Date.now();
+       const p = window.__setCodingMode(${JSON.stringify(modeTarget)});
+       take();
+       await new Promise((r) => setTimeout(r, 40)); take();
+       await new Promise((r) => setTimeout(r, 80)); take();
+       await p;
+       return {samples, ms: Date.now() - t0};
+     })()`,
+  );
+  check(
+    "coding mode: the chip moves on the click and no spinner ever appears",
+    modeProbe.samples.length === 3
+      && modeProbe.samples.every((x) => x.disabled === false && x.spins === 0)
+      // A build with no /api/coding-mode route has no stance to paint, and
+      // the override is suppressed there by design — assert the blank, not a
+      // mode the agent cannot hold.
+      && (modeSupported === false ? modeProbe.samples[0]!.mode === modeBefore : modeProbe.samples[0]!.mode === modeTarget),
+    `route supported=${modeSupported}; ${modeProbe.ms}ms; samples=${JSON.stringify(modeProbe.samples)}`,
+  );
+  await js<void>(`window.__setCodingMode(${JSON.stringify(modeBefore)})`);
+  await wait(200);
+  const lockAfterMode = await js<{ pending: number; want: unknown; timer: boolean }>("window.__swxState()");
+  check(
+    "coding mode: the lock cannot outlive the switch",
+    lockAfterMode.pending === 0 && lockAfterMode.want === null && lockAfterMode.timer === false,
+    JSON.stringify(lockAfterMode),
+  );
+}
+
 /** Lane B — backend switch. */
 async function backendSwitchTest(
   js: <T>(code: string) => Promise<T>,
@@ -5457,7 +5779,46 @@ async function backendSwitchTest(
     // from the route the file is actually on (cloud, on the lane's state
     // dir), so the write the user's click makes is the one asserted below.
     const wasCloud = (beforeConfig?.llm?.providers ?? []).find((p) => p.id === beforeConfig?.llm?.activeTextProvider)?.kind !== "llama-server";
-    const toLocal = await js<SwitchResult>("window.__switchBackend('local')");
+    /* r5 item 10 — the same switch the backend block already makes, driven
+       through one probe so the composer's behaviour DURING it is observable.
+       Everything sampled here happens inside the 3-11 s the switch takes:
+       the chip at 50 ms (before any IPC could have resolved), the send
+       button at 350 ms (past the 150 ms spinner delay), and an Enter in the
+       middle of it. The switch's own result is still what the checks below
+       assert, unchanged. */
+    const lock = await js<{
+      early: { sel: string; live: string; ms: number };
+      mid: { disabled: boolean; aria: string | null; spins: number };
+      afterEnter: { draft: string; users: number; queued: number; toast: { t: string; s: string } | null };
+      after: { disabled: boolean; spins: number };
+      state: { pending: number; want: unknown; timer: boolean; lastMs: number; label: string };
+      res: SwitchResult;
+      ms: number;
+    }>(`(async () => {
+      const users0 = window.__logCounts().users;
+      window.__setDraft('hello while switching');
+      const t0 = Date.now();
+      const p = window.__switchBackend('local');
+      await new Promise((r) => setTimeout(r, 50));
+      const early = {sel: window.__sel().backend, live: window.__bswLive().backend, ms: Date.now() - t0};
+      await new Promise((r) => setTimeout(r, 300));
+      const b = document.querySelector('.sendbtn');
+      const mid = {disabled: !!(b && b.disabled), aria: b ? b.getAttribute('aria-busy') : null,
+                   spins: document.querySelectorAll('.sspin').length};
+      const label = window.__swxState().label;
+      document.querySelector('#entry').dispatchEvent(
+        new KeyboardEvent('keydown', {key:'Enter', bubbles:true, cancelable:true}));
+      const counts = window.__logCounts();
+      const afterEnter = {draft: document.querySelector('#entry').value,
+                          users: counts.users - users0, queued: counts.queued,
+                          toast: window.__lastToast()};
+      const res = await p;
+      const b2 = document.querySelector('.sendbtn');
+      const after = {disabled: !!(b2 && b2.disabled), spins: document.querySelectorAll('.sspin').length};
+      window.__setDraft('');
+      return {early, mid, afterEnter, after, state: window.__swxState(), res, ms: Date.now() - t0, label};
+    })()`);
+    const toLocal = lock.res;
     // Read once before the harness refreshes anything: this is what the
     // renderer's own post-IPC refreshLiveConfig() produced.
     const rawLocal = await js<{ backend: string; mode: string }>(
@@ -5481,6 +5842,32 @@ async function backendSwitchTest(
         ? `from=${beforeConfig?.llm?.activeTextProvider} active=${afterLocal?.llm?.activeTextProvider} mode=${afterLocal?.localModels?.mode} url=${localEntry(afterLocal)?.url} daemon=${toLocal.daemon} restart=${toLocal.restart}`
         : `error=${toLocal?.error}`,
     );
+    /* ---- r5 item 10: the composer around that switch ---- */
+    check(
+      "send button: the chip moves before the agent does",
+      lock.early.sel === "local" && lock.early.live !== "local" && lock.early.ms < 200,
+      `at ${lock.early.ms}ms the chip said ${JSON.stringify(lock.early.sel)} while the live route was still ${JSON.stringify(lock.early.live)}`,
+    );
+    check(
+      "send button: locks with a spinner, then unlocks because the agent came back",
+      lock.mid.disabled === true && lock.mid.aria === "true" && lock.mid.spins === 1
+        && lock.after.disabled === false && lock.after.spins === 0
+        && stLocal === "connected",
+      `switch took ${lock.ms}ms (renderer measured ${lock.state.lastMs}ms); at 350ms disabled=${lock.mid.disabled} aria-busy=${lock.mid.aria} spinners=${lock.mid.spins}; afterwards disabled=${lock.after.disabled} spinners=${lock.after.spins}; agent ${stLocal}`,
+    );
+    check(
+      "send button: Enter while locked keeps the draft and sends nothing",
+      lock.afterEnter.users === 0 && lock.afterEnter.queued === 0
+        && lock.afterEnter.draft === "hello while switching"
+        && !!lock.afterEnter.toast && lock.afterEnter.toast.t === lock.state.label,
+      `user rows +${lock.afterEnter.users}, queued ${lock.afterEnter.queued}, draft ${JSON.stringify(lock.afterEnter.draft)}, toast ${JSON.stringify(lock.afterEnter.toast)}`,
+    );
+    check(
+      "send button: the lock cannot outlive the switch",
+      lock.state.pending === 0 && lock.state.want === null && lock.state.timer === false,
+      JSON.stringify(lock.state),
+    );
+
     const managedId = afterLocal?.localModels?.managed?.modelId ?? null;
     // The chip's precedence is the TUI's: `download model` whenever nothing
     // is on disk (selectComposerNeedsModelDownload ignores managed.modelId),
@@ -5648,6 +6035,49 @@ async function backendSwitchTest(
       `switch=${lines.includes(switchLine)} stop=${lines.includes(stopLine)} daemon=${toCloud?.daemon}`,
     );
 
+    /* ---- r5 item 10: a failed switch rolls the chip back and says why ----
+       Fabricated the way the gate test above fabricates its config: the
+       cloud providers are removed, so switchBackend('cloud') can only
+       answer needsProvider. Nothing is written by the switch itself, so the
+       rollback is one frame — SWX.want clears and the chips read LIVE_CONFIG
+       again, which still names the route the operator was on. Restored in a
+       finally of its own. */
+    const beforeFail = await cfgNow();
+    if (beforeFail) {
+      try {
+        const noCloud = JSON.parse(JSON.stringify(beforeFail)) as UserConfigShape;
+        noCloud.llm = noCloud.llm ?? {};
+        noCloud.llm.providers = (noCloud.llm.providers ?? []).filter((p) => p.kind === "llama-server");
+        noCloud.llm.activeTextProvider = "local-llama";
+        await configSetWhole(noCloud);
+        await js<void>("window.__ctxRefreshCfg()");
+        await wait(800);
+        const failed = await js<{
+          res: SwitchResult; sel: string; live: string; strip: string;
+          state: { pending: number; want: unknown; err: string | null }; disabled: boolean; spins: number;
+        }>(`(async () => {
+          const res = await window.__switchBackend('cloud');
+          const b = document.querySelector('.sendbtn');
+          return {res, sel: window.__sel().backend, live: window.__bswLive().backend,
+                  strip: window.__composerStrip(), state: window.__swxState(),
+                  disabled: !!(b && b.disabled), spins: document.querySelectorAll('.sspin').length};
+        })()`);
+        check(
+          "send button: a failed switch rolls the chip back and says why",
+          failed.res?.needsProvider === true
+            && failed.sel === failed.live
+            && failed.state.want === null && failed.state.pending === 0
+            && failed.disabled === false && failed.spins === 0
+            && /no cloud provider is configured yet/.test(failed.strip),
+          `needsProvider=${failed.res?.needsProvider} chip=${failed.sel} live=${failed.live} want=${JSON.stringify(failed.state.want)} strip=${JSON.stringify(failed.strip)}`,
+        );
+      } finally {
+        await configSetWhole(beforeFail);
+        await js<void>("window.__swxReset(); window.__ctxRefreshCfg();");
+        await wait(800);
+      }
+    }
+
     // Third leg: the file moves first, without a restart — what the TUI or
     // a hand edit does while this window is open. serve stays on the cloud
     // route it booted on; the switch finds nothing to write for the route
@@ -5678,6 +6108,31 @@ async function backendSwitchTest(
   }
 }
 
+/**
+ * r5 item 9 — the desktop's own managed llama ports, written once into a
+ * freshly created state directory. Whole-file, through `atag config set
+ * <json>`: there is no config-write route, and PATCH /api/config re-defaults
+ * every block it does not merge.
+ */
+async function claimDesktopPorts(): Promise<void> {
+  if (!DESKTOP_STATE_WAS_FRESH) return;
+  try {
+    const read = await readWholeConfig();
+    if (!read.ok || !read.config) return;
+    const cfg = read.config;
+    const lm = (cfg.localModels ??= {});
+    const managed = (lm.managed ??= {});
+    const embeddings = (lm.embeddings ??= {});
+    if (managed.port === DESKTOP_MANAGED_PORT) return;
+    managed.port = DESKTOP_MANAGED_PORT;
+    embeddings.url = `http://127.0.0.1:${DESKTOP_EMBEDDING_PORT}`;
+    await configSetWhole(cfg);
+  } catch {
+    // A port that could not be claimed shows up as a daemon that will not
+    // start, with the agent's own message — not as a window that never opens.
+  }
+}
+
 void app.whenReady().then(async () => {
   const workspace = process.env.ATOMIC_AGENT_WORKSPACE ?? homedir();
   agent = new AgentClient(workspace);
@@ -5691,8 +6146,15 @@ void app.whenReady().then(async () => {
   win.webContents.once("did-finish-load", () => {
     send("agent:status", agent?.status);
     if (FORCE_ONBOARDING) send("app:menu", "onboarding");
-    void agent?.start();
-    if (SMOKE) void smokeTest();
+    /* r5 item 9 — on a FIRST run only, claim the desktop's own managed
+       llama ports before `atag serve` boots and reads the file. The agent's
+       schema defaults to 19091/19092, which is what the operator's terminal
+       agent also holds; two daemons cannot share a port. On every later
+       launch this is skipped entirely, so it costs nothing. */
+    void claimDesktopPorts().then(() => {
+      void agent?.start();
+      if (SMOKE) void smokeTest();
+    });
   });
 
   app.on("activate", () => {
