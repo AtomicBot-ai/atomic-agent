@@ -49,8 +49,13 @@ let LAST_MODE = null;
    path must not drop the operator's choice just because a turn happened
    to be in flight when the agent came back. */
 let MODE_REASSERT = null;
-/* The add-provider wizard: pick_kind → configure → verifying. */
-const WIZ = { phase:null, row:null, apiKey:'', baseUrl:'', error:null, busy:false };
+/* The add-provider wizard: pick_kind → configure → verifying.
+   r5 item 7 review fix: `cur` and `q` exist because the onboarding cloud
+   step's footer is the TUI's `↑/↓ move   / search   enter select …` and a
+   hint strip must not advertise a chord the step does not accept. `q` is
+   null while the search box is closed; the Settings-side wizard ignores
+   both fields and renders exactly as it did. */
+const WIZ = { phase:null, row:null, apiKey:'', baseUrl:'', error:null, busy:false, cur:0, q:null };
 /* Kind rows in the TUI's KIND_ROW_ORDER, minus the two subscription-CLI
    kinds, whose config shape the desktop does not write. */
 const KIND_ROWS = [
@@ -181,6 +186,12 @@ const OB = {
   pendingMmproj: null,
   /** Whether an IPC on the way here already bounced `atag serve`. */
   restarted: false,
+  /** r5 item 7 review fix: the in-flight `useManagedMode()` write. Picking
+   *  local records managed mode NOW so a quit mid-download does not lose
+   *  the choice — but `models update` REFUSES outside managed mode
+   *  (models-handlers.ts:728-731), so the runtime phase has to wait for
+   *  that write to land rather than race it. */
+  managedWrite: null,
 };
 
 /* ONBOARDING_CHOICES (onboarding-state.ts:130-155), verbatim and in order
@@ -335,6 +346,12 @@ const OBSKY = {
   canvas:null, ctx:null, stars:[], raf:0, t0:0, frames:0, running:false,
   reduced:false, tick:0, w:0, h:0, dpr:1, cx:0, cy:0, colours:null, mq:null,
   typer:0, typed:0,
+  /* r5 item 7 review fix: ONE reduced-motion source. `reduced` is the
+     resolved answer every path reads (the canvas loop, the typewriter and
+     obIntroHTML's first paint alike); `override` is null in production and
+     is the only thing a test-only setter is allowed to move, so forcing
+     the flag drives the same code the media query drives. */
+  override:null,
 };
 
 /* ---- the persistent download strip (#dlbar) -------------------------
@@ -355,12 +372,41 @@ const DL = {
   rate: null,       // bytes/s, EMA over the real samples only
   last: null,       // {bytes, at} — the previous sample
   error: null,
-  /** The two rows the TUI's OnboardingDownloadProgress draws. */
-  runtime: {state:'done', percent:0, transferredBytes:0, totalBytes:0},
-  weights: {state:'waiting', percent:0, transferredBytes:0, totalBytes:0},
+  /** r5 item 7 review fix: a failed `models update` is NOT the model
+      download failing, and it must not be reported as one — nor may it
+      clear itself when the weights land. Kept apart from `error`, which
+      dlStatus() reads to decide the wait_or_jump screen's three states. */
+  runtimeError: null,
+  /** The two rows the TUI's OnboardingDownloadProgress draws.
+      `drove` records whether THIS window moved bytes for the phase —
+      `models update` exits 0 having downloaded nothing when the version
+      file already names the latest tag (models-handlers.ts:734-745). */
+  runtime: {state:'done', percent:0, transferredBytes:0, totalBytes:0, drove:false},
+  weights: {state:'waiting', percent:0, transferredBytes:0, totalBytes:0, drove:false},
   /** Smoke only: a seeded queue drives the bar without spawning a child. */
   dry: false,
 };
+/* r5 item 7 review fix (hoisting): every const the render path reads has
+   to be declared above the first top-level render(). These five sat next
+   to the functions that use them, several hundred lines below it — safe
+   only because OB.open starts false, and a TDZ ReferenceError inside the
+   first paint the moment anything opens the flow synchronously. */
+const OB_DEFAULT_LLAMA_URL = 'http://127.0.0.1:8080';   // USER_CONFIG_DEFAULTS.localModels.url
+/* Which leading tokens of a hint are the chord rather than the sentence.
+   The footer is one string in the TUI because a terminal has no chips;
+   this splits it back apart so the desktop can draw the keycaps it has. */
+const OB_KEY_TOKEN = /^(↑\/↓|enter|esc|ctrl\+[a-z]|space|any|key|empty|1–3|\/|c|s)$/;
+/* The tui.onboarding.* stamps already written in THIS window session. */
+const OB_STAMPED = {};
+/* Smoke only: every stamp write this session attempted, in order, so the
+   suite can assert the TUI's write-on-ARRIVAL timing rather than merely
+   that a stamp exists somewhere in a config file earlier runs also wrote. */
+const OB_STAMP_LOG = [];
+/* The step obAfterStep last ran its arrival effects for. */
+let OB_LAST_STEP = null;
+/* The import row for the operator's own terminal setup (see the note by
+   obImportRegistry): no `atag import` source can reach it. */
+const OB_TUI_AGENT_ID = 'atomic-tui';
 /* Lane B — backend switch. What the chips and rows read while a switch
    runs in main: `line` is the popup's status text, `readyIds` the cloud
    providers with a usable key (the TUI's hasApiKey), `localLoaded`
@@ -3969,7 +4015,6 @@ function activeModel() {
  * `isManagedModeReadyOnDisk`'s stat of the weights file stays out: the
  * renderer cannot see the data dir.
  */
-const OB_DEFAULT_LLAMA_URL = 'http://127.0.0.1:8080';   // USER_CONFIG_DEFAULTS.localModels.url
 function needsOnboarding(cfg, readyIds) {
   const ob = (cfg && cfg.tui && cfg.tui.onboarding) || {};
   if (ob.completedAt || ob.skippedAt) return false;
@@ -4122,7 +4167,6 @@ function obDispatch(action) {
  * Written in the same tick the step is entered: a run interrupted by a
  * crash must not re-pitch a screen the operator already saw.
  */
-let OB_LAST_STEP = null;
 function obAfterStep() {
   if (OB.step === OB_LAST_STEP) return;
   const was = OB_LAST_STEP;
@@ -4138,11 +4182,12 @@ function obAfterStep() {
 }
 
 /** Write a tui.onboarding.* stamp once, without blocking the repaint. */
-const OB_STAMPED = {};
 function obStampOnce(leaf) {
   if (OB_STAMPED[leaf] || !BR) return;
   OB_STAMPED[leaf] = true;
-  BR.configSet('tui.onboarding.' + leaf, new Date().toISOString());
+  const at = new Date().toISOString();
+  OB_STAMP_LOG.push({leaf, at, step: OB.step});
+  BR.configSet('tui.onboarding.' + leaf, at);
 }
 
 /* ---------------- chrome: subtitles and the hint strip ---------------- */
@@ -4178,10 +4223,7 @@ function obFooter() {
   }
 }
 
-/* Which leading tokens of a hint are the chord rather than the sentence.
-   The footer is one string in the TUI because a terminal has no chips;
-   this splits it back apart so the desktop can draw the keycaps it has. */
-const OB_KEY_TOKEN = /^(↑\/↓|enter|esc|ctrl\+[a-z]|space|any|key|empty|1–3|\/|c|s)$/;
+/** The hint strip, split back into chords and sentences by OB_KEY_TOKEN. */
 function obHintsHTML() {
   const footer = obFooter();
   if (!footer) return '';
@@ -4473,6 +4515,26 @@ function obSkyFrame(now) {
   OBSKY.raf = requestAnimationFrame(obSkyFrame);
 }
 
+/**
+ * The resolved reduced-motion answer.  Every path reads THIS, never a
+ * fresh matchMedia of its own — a second reader is a second source, and
+ * the two drift the moment either one is forced.
+ */
+function obReducedMotion() {
+  if (OBSKY.override !== null) return OBSKY.override;
+  if (!OBSKY.mq && window.matchMedia) {
+    OBSKY.mq = window.matchMedia('(prefers-reduced-motion: reduce)');
+    // Re-check on the media query's own change event, not once at load.
+    const relisten = () => {
+      OBSKY.reduced = obReducedMotion();
+      obSkyStop();
+      if (OB.open && OB.step === 'intro') render();
+    };
+    if (OBSKY.mq.addEventListener) OBSKY.mq.addEventListener('change', relisten);
+  }
+  return !!(OBSKY.mq && OBSKY.mq.matches);
+}
+
 function obSkyStart() {
   const canvas = document.getElementById('ob-sky');
   if (!canvas) return;
@@ -4482,13 +4544,7 @@ function obSkyStart() {
   OBSKY.tick = 0;
   OBSKY.t0 = performance.now();
   obSkyBuild();
-  if (!OBSKY.mq && window.matchMedia) {
-    OBSKY.mq = window.matchMedia('(prefers-reduced-motion: reduce)');
-    // Re-check on the media query's own change event, not once at load.
-    const relisten = () => { OBSKY.reduced = OBSKY.mq.matches; obSkyStop(); if (OB.open && OB.step === 'intro') { render(); } };
-    if (OBSKY.mq.addEventListener) OBSKY.mq.addEventListener('change', relisten);
-  }
-  OBSKY.reduced = !!(OBSKY.mq && OBSKY.mq.matches);
+  OBSKY.reduced = obReducedMotion();
   if (OBSKY.reduced) {
     // Exactly one frame at t=0, no rAF ever scheduled. The tagline is
     // rendered complete by obIntroHTML for the same reason.
@@ -4544,7 +4600,7 @@ function obPaintTagline() {
 /** TAGLINE_MS_PER_CHAR = 45 (onboarding-intro-step.tsx:12). */
 function obStartTyping() {
   if (OBSKY.typer) clearInterval(OBSKY.typer);
-  if (OBSKY.reduced || OB.introTyped) { OBSKY.typed = OB_COPY.tagline.length; obPaintTagline(); return; }
+  if (obReducedMotion() || OB.introTyped) { OBSKY.typed = OB_COPY.tagline.length; obPaintTagline(); return; }
   OBSKY.typed = 0;
   obPaintTagline();
   OBSKY.typer = setInterval(() => {
@@ -4556,8 +4612,9 @@ function obStartTyping() {
 
 /** The intro screen. No header — onboarding-step-body.tsx:62-64. */
 function obIntroHTML() {
-  const reduced = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
-  const done = reduced || OB.introTyped;
+  // The SAME source obSkyStart reads (review fix) — a second matchMedia
+  // read here is a second source, and a forced flag would move only one.
+  const done = obReducedMotion() || OB.introTyped;
   return '<div id="ob-intro">'
     + '<canvas id="ob-sky"></canvas>'
     + '<div class="ob-introc">'
@@ -4629,8 +4686,9 @@ function dlStatus() {
 function dlResetPhases(withRuntime) {
   // No runtime job in the queue means the backend is already installed,
   // which is exactly the state the TUI draws as a passed phase.
-  DL.runtime = {state: withRuntime ? 'waiting' : 'done', percent: 0, transferredBytes: 0, totalBytes: 0};
-  DL.weights = {state: 'waiting', percent: 0, transferredBytes: 0, totalBytes: 0};
+  DL.runtime = {state: withRuntime ? 'waiting' : 'done', percent: 0, transferredBytes: 0, totalBytes: 0, drove: false};
+  DL.weights = {state: 'waiting', percent: 0, transferredBytes: 0, totalBytes: 0, drove: false};
+  DL.runtimeError = null;
 }
 
 /**
@@ -4649,18 +4707,30 @@ function dlStart(jobs) {
 function dlNext() {
   const job = DL.queue.shift();
   if (!job) { DL.job = null; render(); return; }
-  DL.job = Object.assign({percent: 0, transferredBytes: 0, totalBytes: 0}, job);
+  DL.job = Object.assign({percent: 0, transferredBytes: 0, totalBytes: 0, sawProgress: false}, job);
   DL.rate = null; DL.last = null;
-  if (job.kind === 'runtime') DL.runtime.state = 'active';
-  else { DL.runtime.state = 'done'; DL.weights.state = 'active'; }
+  /* r5 item 7 review fix: a phase becomes `active` when its FIRST real
+     sample lands, not when the child is spawned. `models update` spends
+     its opening seconds deciding whether there is anything to fetch, and
+     often fetches nothing at all — a phase drawn `active` at 0% for that
+     whole stretch is a bar this window is not driving. `waiting` ("it has
+     not started") is the true trailing text until bytes move, so neither
+     phase state is touched here; dlResetPhases and dlOnPull own them. */
   render();
   if (!BR || DL.dry) return;
   const started = job.kind === 'runtime' ? BR.modelsUpdateStream() : BR.modelsPull(job.id);
   started.then((res) => {
     if (res && res.ok === false) {
       DL.job = null;
+      if (job.kind === 'runtime') {
+        // A runtime step that would not even start is still not the model
+        // download failing: say so, and run the weights job behind it.
+        DL.runtimeError = res.error || 'could not start the llama.cpp runtime download';
+        dlNext();
+        return;
+      }
       DL.error = res.error || 'could not start the download';
-      if (job.kind === 'runtime') DL.runtime.state = 'done'; else DL.weights.state = 'waiting';
+      DL.weights.state = 'waiting';
       render();
     }
   });
@@ -4677,10 +4747,22 @@ function dlOnPull(ev) {
     const finished = DL.job;
     DL.job = null;
     if (finished.kind === 'runtime') {
-      DL.runtime.state = 'done';
-      // `models update` exits 0 without downloading when the version
-      // file already names the latest tag: no bytes, so no claim.
-      if (ev.ok === false) DL.error = ev.error || 'the llama.cpp runtime download failed';
+      /* r5 item 7 review fix: `sawProgress` and `upToDate` are READ here,
+         which is what main computes them for. `models update` exits 0
+         without downloading a byte when the version file already names
+         the latest tag (models-handlers.ts:734-745); the phase passed,
+         so it is drawn as passed — but `drove` records that this window
+         never moved it, and nothing claims otherwise.
+         A FAILED update is not the model download failing: it is kept
+         apart from `error`, the queued weights job is not discarded, and
+         the phase stays `waiting`, which is the truth about the bytes. */
+      DL.runtime.drove = ev.sawProgress === true || DL.runtime.drove;
+      if (ev.ok === false) {
+        DL.runtimeError = ev.error || 'the llama.cpp runtime download failed';
+      } else {
+        DL.runtime.state = 'done';
+        if (ev.upToDate === true) DL.runtime.drove = false;
+      }
     } else {
       DL.weights.state = 'done';
       if (ev.ok) DL.error = null;
@@ -4707,8 +4789,10 @@ function dlOnPull(ev) {
     }
     DL.last = {bytes: job.transferredBytes, at: now};
   }
+  job.sawProgress = true;
   const phase = job.kind === 'runtime' ? DL.runtime : DL.weights;
   phase.state = 'active';
+  phase.drove = true;
   phase.percent = job.percent;
   phase.transferredBytes = job.transferredBytes;
   phase.totalBytes = job.totalBytes;
@@ -4741,11 +4825,19 @@ function renderDlbar() {
   }
   const percent = Math.min(100, Math.max(0, Math.round(job.percent || 0)));
   const eta = dlEtaSeconds();
+  /* r5 item 7 review fix: no bar and no percent before the first REAL
+     sample. The CLI emits one line per 5%, and `models update` can spend
+     its whole run deciding there is nothing to fetch — a 0% bar for that
+     stretch is a bar nothing is driving. The TUI's own word for the
+     no-pull-reporting-yet state is `starting…`. */
+  const measured = job.sawProgress === true;
   el.innerHTML = '<span class="dl-g">⇣</span>'
     + '<span class="dl-l">' + esc(dlJobLabel(job)) + '</span>'
-    + '<span class="dl-bar">' + dlBarHTML(percent, 10) + '</span>'
-    + '<span class="dl-pct">' + percent + '%</span>'
-    + '<span class="dl-eta">' + esc(dlEta(eta)) + '</span>'
+    + (measured
+        ? '<span class="dl-bar">' + dlBarHTML(percent, 10) + '</span>'
+          + '<span class="dl-pct">' + percent + '%</span>'
+          + '<span class="dl-eta">' + esc(dlEta(eta)) + '</span>'
+        : '<span class="dl-eta">' + esc(OB_COPY.starting) + '</span>')
     + (DL.queue.length ? '<span class="dl-q">· ' + DL.queue.length + ' more queued</span>' : '')
     + '<button class="dl-x" data-act="dl:cancel">Cancel</button>';
   el.hidden = false;
@@ -4772,10 +4864,14 @@ function obProgressHTML() {
       + '<span class="pb">' + dlBarHTML(percent, 36) + '</span>'
       + '<span class="pt">' + esc(trailing) + '</span></div>';
   };
-  const rate = DL.job
+  const rate = DL.job && DL.job.sawProgress
     ? (DL.rate ? dlBytes(DL.rate) + '/s · ' : '') + dlEta(dlEtaSeconds())
     : OB_COPY.starting;
-  return row(OB_COPY.phaseRuntime, DL.runtime) + row(OB_COPY.phaseWeights, DL.weights)
+  // The runtime step's own failure, said once and not folded into the
+  // weights bar: the model download below it is still running.
+  const runtimeErr = DL.runtimeError
+    ? '<div class="ob-err">✗  ' + esc(DL.runtimeError) + '</div>' : '';
+  return row(OB_COPY.phaseRuntime, DL.runtime) + runtimeErr + row(OB_COPY.phaseWeights, DL.weights)
     + '<div class="ob-rate">' + esc(rate) + '</div>';
 }
 
@@ -5038,12 +5134,27 @@ function obImportReportHTML(executed) {
  * anchored popover `selShell` builds, because there is no model chip on
  * screen during first run for a popover to hang off.
  */
+/** The rows the cloud step's list is showing — KIND_ROWS through `/`. */
+function obWizRows() {
+  const q = (WIZ.q || '').trim().toLowerCase();
+  if (!q) return KIND_ROWS.map((k, i) => ({k, i}));
+  return KIND_ROWS.map((k, i) => ({k, i})).filter(({k}) => k.label.toLowerCase().indexOf(q) >= 0);
+}
+
 function obWizardHTML() {
   if (WIZ.phase === 'pick_kind' || !WIZ.row) {
     const taken = {};
     selProviders().forEach((p) => { taken[p.id] = 1; });
-    return '<div class="ob-wiz"><div class="ob-wizlist">' + KIND_ROWS.map((k, i) =>
-      '<button class="modelrow' + (taken[k.id] ? ' dim' : '') + '" data-wiz-kind="' + i + '">'
+    const rows = obWizRows();
+    const cur = rows.length ? WIZ.cur % rows.length : 0;
+    return '<div class="ob-wiz">'
+      // providers-wizard.tsx:359 — the screen title the copy contract names.
+      + '<div class="ob-h">LLM provider — add provider</div>'
+      + (WIZ.q === null ? ''
+          : '<input class="ob-inp" id="wiz-q" placeholder="search" value="' + esc(WIZ.q) + '">')
+      + '<div class="ob-wizlist">' + rows.map(({k}, n) =>
+      '<button class="modelrow' + (taken[k.id] ? ' dim' : '') + (n === cur ? ' on' : '')
+      + '" data-obwiz="' + n + '">'
       + '<span class="col"><span class="nm">' + esc(k.label) + '</span>'
       + '<span class="cap">' + esc(k.custom ? 'you supply the URL' : k.baseUrl || k.kind)
       + (taken[k.id] ? ' · already configured' : '') + '</span></span></button>').join('')
@@ -5055,11 +5166,17 @@ function obWizardHTML() {
   }
   const k = WIZ.row;
   const verifying = WIZ.phase === 'verifying';
-  return '<div class="ob-wiz"><div class="ob-h">' + esc(k.label) + '</div>'
+  /* COPY, disclosed rather than silently dropped: providers-wizard.tsx
+     also has an `Embedding backend` (:445) and a `Chat model id` (:450)
+     screen. The desktop's add-provider wizard has neither phase — it
+     takes the kind's default chat model and never offers a cloud
+     embedding backend — so those two titles have nowhere honest to go
+     and are NOT rendered. `LLM provider — add provider`, `API key —
+     ${service}` and the .env sentence are all present, verbatim. */
+  return '<div class="ob-wiz"><div class="ob-h">' + esc('API key — ' + k.label.split(' (')[0]) + '</div>'
     + (k.custom ? '<label class="ob-explain">API base URL</label>'
         + '<input class="ob-inp" id="wiz-url" placeholder="https://host/v1" value="' + esc(WIZ.baseUrl) + '">' : '')
-    + '<label class="ob-explain">API key — ' + esc(k.label.split(' (')[0])
-      + (k.env ? ' · saved to .env as ' + esc(k.env) + ' (mode 0600)' : '') + '</label>'
+    + (k.env ? '<div class="ob-explain">' + esc('Saved to .env as ' + k.env + ' (mode 0600).') + '</div>' : '')
     + '<input class="ob-inp" id="wiz-key" type="password" value="' + esc(WIZ.apiKey) + '">'
     + (verifying ? '<div class="ob-explain">checking the key against the provider’s model list…</div>' : '')
     + (WIZ.error ? '<div class="ob-err">' + esc(WIZ.error) + '</div>' : '')
@@ -5121,6 +5238,10 @@ function obPress(spec) {
   if (obStepOwnsKeyboard(OB.step)) {
     if (s.key.escape) { obOwnEscape(); return true; }
     if (s.key.return) { obOwnEnter(); return true; }
+    /* The cloud list's own chords (review fix): `↑/↓ move` and `/ search`
+       are advertised by that step's footer, so a driven pass reaches them
+       through the SAME router the keyboard and the mouse use. */
+    if (OB.step === 'cloud' && (s.key.upArrow || s.key.downArrow || s.input === '/')) return obKey(s.input, s.key);
     return false;
   }
   return obKey(s.input, s.key);
@@ -5171,8 +5292,9 @@ function obPickBackend(choice) {
   if (choice === 'cloud') { obOpenCloudWizard(); obDispatch({type:'onboarding_step_set', step:'cloud'}); return; }
   if (choice === 'custom') { obDispatch({type:'onboarding_step_set', step:'custom_chat_url'}); return; }
   // Managed mode is recorded NOW so a quit mid-download does not lose
-  // the choice; the model id follows when the pull completes.
-  if (BR) BR.useManagedMode();
+  // the choice; the model id follows when the pull completes. The promise
+  // is kept because `models update` refuses outside managed mode.
+  if (BR) OB.managedWrite = BR.useManagedMode();
   obDispatch({type:'onboarding_step_set', step:'local_pick'});
 }
 
@@ -5250,7 +5372,7 @@ function obProposeKey(input, key) {
   if (key.return) {
     if (OB.cursor % 2 !== 0) { skip(); return true; }
     if (OB.offer === 'local') {
-      if (BR) BR.useManagedMode();
+      if (BR) OB.managedWrite = BR.useManagedMode();
       obDispatch({type:'onboarding_step_set', step:'local_pick'});
       return true;
     }
@@ -5318,16 +5440,41 @@ function obImportDoneKey(input, key) {
   return true;
 }
 
-/** The cloud step is the wizard; its own controls own its keys. */
+/**
+ * The cloud step is the wizard; its own controls own its keys.
+ *
+ * r5 item 7 review fix: the list phase now accepts every chord its footer
+ * advertises — `↑/↓ move   / search   enter select   esc back`. It used to
+ * accept only `esc`, so three of the four hints named nothing.
+ */
 function obCloudKey(input, key) {
+  const listing = WIZ.phase === 'pick_kind' || !WIZ.row;
   if (key.escape) {
+    if (listing && WIZ.q !== null) { WIZ.q = null; WIZ.cur = 0; render(); return true; }
     if (WIZ.phase === 'configure' || WIZ.phase === 'verifying') {
       if (WIZ.phase === 'verifying') return true;
       WIZ.phase = 'pick_kind'; WIZ.error = null; render(); return true;
     }
-    WIZ.phase = null;
+    WIZ.phase = null; WIZ.q = null; WIZ.cur = 0;
     obDispatch({type:'providers_wizard_closed'});
     return true;
+  }
+  if (listing) {
+    const rows = obWizRows();
+    if (key.upArrow || key.downArrow) {
+      WIZ.cur = moveOnboardingCursor(WIZ.cur, key.upArrow ? -1 : 1, rows.length);
+      render();
+      return true;
+    }
+    if (input === '/' && WIZ.q === null) { WIZ.q = ''; WIZ.cur = 0; render(); return true; }
+    if (key.return) {
+      const picked = rows[rows.length ? WIZ.cur % rows.length : 0];
+      if (!picked) return true;
+      WIZ.row = picked.k; WIZ.phase = 'configure'; WIZ.error = null;
+      render();
+      return true;
+    }
+    return false;
   }
   if (key.return && WIZ.phase === 'configure') { wizNext(); return true; }
   return false;
@@ -5337,6 +5484,7 @@ function obCloudKey(input, key) {
 
 function obOpenCloudWizard() {
   WIZ.phase = 'pick_kind'; WIZ.row = null; WIZ.apiKey = ''; WIZ.baseUrl = ''; WIZ.error = null; WIZ.forId = null;
+  WIZ.cur = 0; WIZ.q = null;
 }
 
 async function obLoadModels() {
@@ -5368,6 +5516,10 @@ async function obStartLocalPull(id, alreadyDownloaded) {
     await obActivateLocal(id);
     return;
   }
+  // The managed-mode write has to have landed before `models status` is
+  // read and `models update` is spawned — both answer differently while
+  // the file still says something else (review fix).
+  if (OB.managedWrite) { try { await OB.managedWrite; } catch (e) { /* the status read below is the real gate */ } OB.managedWrite = null; }
   let needsRuntime = false;
   try {
     const st = await BR.modelsStatus();
@@ -5397,10 +5549,14 @@ async function obActivateLocal(id) {
 function obPullFinished(job, ev) {
   const ok = ev.ok !== false;
   if (job.kind === 'runtime') {
-    if (!ok) { DL.queue.length = 0; renderDlbar(); render(); return; }
-    // `models update` can exit 0 having downloaded nothing (the version
-    // file already named the latest tag). The phase row is drawn as
-    // passed either way — never as a bar this window did not drive.
+    /* r5 item 7 review fix: the weights job is NOT discarded when the
+       runtime step fails. `runLocalModelsUpdate` exits 1 for reasons
+       that say nothing about the model download — it refuses outside
+       managed mode (models-handlers.ts:728-731) and fails on any network
+       hiccup — and dropping the queue left the download screen's `model
+       weights` row reading `waiting` for ever with no way back to it.
+       The failure is reported on its own line instead (DL.runtimeError),
+       and the model download the operator actually asked for runs. */
     dlNext();
     return;
   }
@@ -5477,13 +5633,16 @@ async function obUrlSubmit() {
   if (!BR) return;
   const value = obUrlInputValue();
   const chat = OB.step === 'custom_chat_url';
+  const from = OB.step;
   obDispatch({type:'onboarding_url_changed', field: chat ? 'chat' : 'embedding', value});
   // An empty Enter on the embedding step saves the chat URL alone.
   if (!chat && !value) { obWriteCustomEndpoint(OB.chatUrl, ''); return; }
   if (!value) { obDispatch({type:'onboarding_error_set', error:'Type the base URL of your llama-server.'}); return; }
   obDispatch({type:'onboarding_busy_set', busy:true});
   const res = await BR.llamaProbe(value);
-  if (!OB.open) return;
+  // The step is part of the guard, not just `open`: a probe that answers
+  // after the flow has moved on must not paint on the screen it reaches.
+  if (!OB.open || OB.step !== from) return;
   OB.busy = false;
   const probe = res && res.probe;
   if (!res || !res.ok || !probe || !probe.reachable) {
@@ -5498,8 +5657,12 @@ async function obUrlSubmit() {
 
 /** ONE whole-file write — persistUserRemoteLlmUrls, in main. */
 async function obWriteCustomEndpoint(chatUrl, embeddingUrl) {
+  const from = OB.step;
   obDispatch({type:'onboarding_busy_set', busy:true});
   const res = await BR.setExternalLlamaUrls(chatUrl, embeddingUrl || '');
+  // Same guard as the probe: the write is done either way, but its
+  // outcome belongs on the screen that asked for it.
+  if (!OB.open || OB.step !== from) return;
   OB.busy = false;
   if (!res || res.ok === false) {
     obDispatch({type:'onboarding_error_set', error: 'could not save the endpoint: ' + ((res && res.error) || 'unknown error')});
@@ -5521,7 +5684,6 @@ async function obWriteCustomEndpoint(chatUrl, embeddingUrl) {
    key ENV VAR NAMES rather than values.  Absent that bridge the row is
    simply not offered; nothing here throws when it is missing.
    ------------------------------------------------------------------ */
-const OB_TUI_AGENT_ID = 'atomic-tui';
 /** The four registries under src/import (import-options.ts), plus the bridge's. */
 function obImportRegistry(id) {
   if (id === 'hermes') return [
@@ -5726,18 +5888,22 @@ async function obSettle() {
     localSetupSeen: !!state.stamps.localSetupSeenAt,
   });
   if (offer) {
-    obStampOnce('proposedSecondBackendAt');
     OB.settling = false;
     obDispatch({type:'onboarding_second_backend_offered', offer});
+    // Written in the SAME tick the step is entered (use-onboarding-
+    // lifecycle.ts:107-110) — after the dispatch, not before, so a run
+    // that somehow failed to raise the screen has not spent the offer.
+    obStampOnce('proposedSecondBackendAt');
     return;
   }
   if (!state.stamps.importOfferedAt && !OB_STAMPED.importOfferedAt) {
     const agents = await obDetectAgents();
     if (!OB.open) { OB.settling = false; return; }
     if (agents.length > 0) {
-      obStampOnce('importOfferedAt');
       OB.settling = false;
       obDispatch({type:'onboarding_import_opened', agents});
+      // Same tick, same rule (use-onboarding-lifecycle.ts:127).
+      obStampOnce('importOfferedAt');
       return;
     }
   }
@@ -5748,9 +5914,14 @@ async function obSettle() {
      import scan, the stamps); only the closing write and the restart are
      skipped, because repeating them a dozen times mid-run would be the
      suite testing the harness rather than the flow. */
-  if (OB.testClose) { OB.open = false; OB.settling = false; obSkyStop(); render(); return; }
+  /* r5 item 7 review fix: the closing leaf is DECIDED here and recorded
+     either way — the harness skips only the write and the agent bounce,
+     so `esc` from `choose` can still be asserted to end as `skipped`. */
+  const closing = outcome === 'skipped' ? 'skippedAt' : 'completedAt';
   const stamp = new Date().toISOString();
-  const res = await BR.configSet(outcome === 'skipped' ? 'tui.onboarding.skippedAt' : 'tui.onboarding.completedAt', stamp);
+  OB_STAMP_LOG.push({leaf: closing, at: stamp, step: 'finished', written: !OB.testClose});
+  if (OB.testClose) { OB.open = false; OB.settling = false; obSkyStop(); render(); return; }
+  const res = await BR.configSet('tui.onboarding.' + closing, stamp);
   if (res && res.ok === false) {
     OB.settling = false;
     obDispatch({type:'onboarding_error_set', error: 'could not write the setup stamp: ' + (res.error || 'unknown error')});
@@ -5800,7 +5971,8 @@ async function openOnboarding() {
  */
 function obIntroMounted() {
   if (OB.open && !OB.busy) {
-    const field = document.getElementById('ob-url') || document.getElementById('ob-hf-ref');
+    const field = document.getElementById('ob-url') || document.getElementById('ob-hf-ref')
+      || document.getElementById('wiz-q');
     if (field && document.activeElement !== field) {
       field.focus();
       field.setSelectionRange(field.value.length, field.value.length);
@@ -5828,8 +6000,17 @@ function obOwnEscape() {
     obDispatch({type:'onboarding_step_set', step:'local_pick'});
     return;
   }
-  if (OB.step === 'custom_chat_url') { obDispatch({type:'onboarding_step_set', step:'choose'}); return; }
-  if (OB.step === 'custom_embedding_url') { obDispatch({type:'onboarding_step_set', step:'custom_chat_url'}); return; }
+  if (OB.step === 'custom_chat_url' || OB.step === 'custom_embedding_url') {
+    /* r5 item 7 review fix: OnboardingUrlStep passes `focus={!props.busy}`
+       to its editor (onboarding-url-step.tsx:74-75), so Escape cannot fire
+       while a /health probe is out. Without this the 8 s probe answers
+       onto whatever screen the operator moved to. `local_hf_ref` already
+       had its own busy branch (it cancels the lookup); this one has no
+       socket to drop — llamaProbe carries its own AbortSignal timeout. */
+    if (OB.busy) return;
+    obDispatch({type:'onboarding_step_set', step: OB.step === 'custom_chat_url' ? 'choose' : 'custom_chat_url'});
+    return;
+  }
 }
 /** Enter on a step that owns its keyboard. */
 function obOwnEnter() {
@@ -5867,6 +6048,19 @@ function obKeydown(e) {
       obDispatch({type:'onboarding_error_set', error:null});
       return;
     }
+    /* r5 item 7 review fix: the cloud step's footer promises `↑/↓ move`
+       and `/ search`, so the step accepts them. Arrows are handled even
+       inside the search box — searching and moving are one gesture. */
+    if (OB.step === 'cloud' && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+      e.preventDefault(); e.stopPropagation();
+      obKey('', {upArrow: e.key === 'ArrowUp', downArrow: e.key === 'ArrowDown'});
+      return;
+    }
+    if (OB.step === 'cloud' && e.key === '/' && !inField) {
+      e.preventDefault(); e.stopPropagation();
+      obKey('/', {});
+      return;
+    }
     if (inField) return;
     e.stopPropagation();
     return;
@@ -5887,6 +6081,13 @@ function obKeydown(e) {
  * sends the SAME Enter the keyboard sends, through the one key table, so
  * a click can never do something no key can.
  */
+/** A click on a cloud-list row. Same two-stage rule, same key router. */
+function obWizRowClick(n) {
+  const rows = obWizRows();
+  const cur = rows.length ? WIZ.cur % rows.length : 0;
+  if (cur !== n) { WIZ.cur = n; render(); return; }
+  obKey('', {return:true});
+}
 function obRowClick(index) {
   if (OB.cursor !== index) { obDispatch({type:'onboarding_cursor_set', cursor: index}); return; }
   obKey('', {return:true});
@@ -5953,13 +6154,31 @@ document.addEventListener('click', (e) => {
   if (row) { obRowClick(+row.dataset.obrow); return; }
   const ctl = e.target.closest && e.target.closest('[data-obact]');
   if (ctl) { obControlClick(ctl.dataset.obact); return; }
+  const wr = e.target.closest && e.target.closest('[data-obwiz]');
+  if (wr) { obWizRowClick(+wr.dataset.obwiz); return; }
 });
 document.addEventListener('input', (e) => {
   if (!OB.open) return;
-  if (e.target.id === 'ob-hf-ref') { OB.hfReference = e.target.value; if (OB.error) { OB.error = null; render(); } return; }
+  if (e.target.id === 'ob-hf-ref') {
+    /* r5 item 7 review fix: both the footer's `ctrl+l clear` chord and the
+       on-screen `[ clear ]` control are gated on there being something to
+       clear, and the TUI recomputes its footer on every keystroke. The
+       desktop has no ambient render loop while the wizard is up, so
+       without this the chord and the button stayed missing until some
+       unrelated repaint. Only the EMPTINESS transition repaints — a
+       render per keystroke would move the caret. */
+    const wasEmpty = OB.hfReference.length === 0;
+    OB.hfReference = e.target.value;
+    const nowEmpty = OB.hfReference.length === 0;
+    if (OB.error) { OB.error = null; render(); return; }
+    if (wasEmpty !== nowEmpty) render();
+    return;
+  }
   if (e.target.id === 'ob-url') {
     if (OB.step === 'custom_chat_url') OB.chatUrl = e.target.value; else OB.embeddingUrl = e.target.value;
+    return;
   }
+  if (e.target.id === 'wiz-q') { WIZ.q = e.target.value; WIZ.cur = 0; render(); }
 });
 
 
@@ -12728,15 +12947,19 @@ if (typeof window !== 'undefined') {
     present: !!document.getElementById('ob-sky'),
     stars: OBSKY.stars.length,
     running: OBSKY.running,
-    reduced: OBSKY.reduced,
+    reduced: obReducedMotion(),
     frames: OBSKY.frames,
   });
-  /** Force the reduced-motion contract without an emulated media query. */
+  /**
+   * Force the reduced-motion answer without an emulated media query, by
+   * moving the ONE source every path reads (review fix: this used to set
+   * `OBSKY.reduced` and then paint the tagline by hand, so the check's
+   * tagline half was satisfied by the hook rather than by the product).
+   * Everything after this line is the production paint and mount.
+   */
   window.__obReduce = (on) => {
-    OBSKY.reduced = !!on;
-    obSkyStop();
-    if (on) { OB.introTyped = true; obPaintTagline(); if (OBSKY.ctx) obSkyDraw(0); }
-    else obSkyResume();
+    OBSKY.override = (on === null || on === undefined) ? null : !!on;
+    render();
     return window.__obSky();
   };
   window.__dl = () => {
@@ -12753,7 +12976,10 @@ if (typeof window !== 'undefined') {
       queued: DL.queue.length,
       text: el ? el.innerText.replace(/\s+/g, ' ').trim() : '',
       phases: {runtime: DL.runtime.state, weights: DL.weights.state},
+      drove: {runtime: DL.runtime.drove, weights: DL.weights.drove},
       error: DL.error,
+      runtimeError: DL.runtimeError,
+      measured: !!(job && job.sawProgress),
     };
   };
   /** Feed the strip one real `cli:pull` frame, as main would send it. */
@@ -12765,29 +12991,43 @@ if (typeof window !== 'undefined') {
     DL.error = null; DL.rate = null; DL.last = null;
     dlResetPhases(jobs.some((j) => j.kind === 'runtime'));
     const head = jobs[0];
-    DL.job = Object.assign({percent: 0, transferredBytes: 0, totalBytes: 0}, head);
-    if (head.kind === 'runtime') DL.runtime.state = 'active';
-    else { DL.runtime.state = 'done'; DL.weights.state = 'active'; }
+    // The same shape dlNext builds — including `sawProgress:false`, so a
+    // seeded job claims no bar until a sample is fed to it.
+    DL.job = Object.assign({percent: 0, transferredBytes: 0, totalBytes: 0, sawProgress: false}, head);
     render();
     return window.__dl();
   };
-  window.__dlClear = () => { DL.dry = false; DL.job = null; DL.queue.length = 0; DL.error = null; dlResetPhases(false); render(); return window.__dl(); };
+  window.__dlClear = () => { DL.dry = false; DL.job = null; DL.queue.length = 0; DL.error = null; DL.runtimeError = null; dlResetPhases(false); render(); return window.__dl(); };
   window.__obImport = () => ({
     agents: OB.importAgents.map((a) => ({id: a.id, dir: a.dir, enabled: a.enabled})),
     rows: obImportRows().map((r) => r.kind),
     options: OB.importOptions.map((o) => ({agent: o.agent, option: o.option, secret: o.secret, enabled: o.enabled})),
     report: OB.importReport,
   });
-  /** Open the flow and land it on one step, without the agent round trips. */
-  window.__obOpen = (step) => {
+  /**
+   * Open the flow and land it on one step, without the agent round trips.
+   * `opts.stamped` names the stamps a jump into the MIDDLE of the machine
+   * should be treated as having already passed — a jump straight to
+   * `import_preview` never went through the screen that stamps
+   * `importOfferedAt`, and without saying so the finished effect would
+   * (correctly) offer the import step it thinks nobody has seen.
+   */
+  window.__obOpen = (step, opts) => {
     OB.open = true;
     Object.assign(OB, {offer: null, resumeAfterCloud: null, localModelId: null, outcome: null,
       skipSecondOffer: false, cursor: 0, busy: false, error: null, hfReference: '', hfRepo: null,
       importAgents: [], importOptions: [], importReport: null, introTyped: false,
-      settling: false, testClose: true, pendingMmproj: null, restarted: false});
-    // No stamps from a driven pass: the operator's config is not a fixture.
-    OB_STAMPED.introSeenAt = true; OB_STAMPED.localSetupSeenAt = true;
-    OB_STAMPED.proposedSecondBackendAt = true; OB_STAMPED.importOfferedAt = true;
+      settling: false, testClose: true, pendingMmproj: null, restarted: false, managedWrite: null});
+    /* r5 item 7 review fix: the stamps are NO LONGER pre-marked here. They
+       used to be, which short-circuited obStampOnce for the whole driven
+       pass — so the five acceptance lines about write-on-arrival had no
+       check and could not get one, and `importOfferedAt` being pre-set
+       routed the flow around the import step the TUI has no path around.
+       This lane has its own state dir; a `tui.onboarding.*` write in it is
+       exactly the write under test, and the suite restores the block. */
+    for (const leaf of Object.keys(OB_STAMPED)) delete OB_STAMPED[leaf];
+    OB_STAMP_LOG.length = 0;
+    for (const leaf of ((opts && opts.stamped) || [])) OB_STAMPED[leaf] = true;
     OB.step = step || 'intro';
     OB_LAST_STEP = null;
     render();
@@ -12798,6 +13038,15 @@ if (typeof window !== 'undefined') {
     return window.__ob();
   };
   window.__obClose = () => { OB.open = false; OB.settling = false; obSkyStop(); render(); return window.__ob(); };
+  /** Every tui.onboarding.* stamp this session decided on, in order. */
+  window.__obStamps = () => OB_STAMP_LOG.map((e) => ({leaf: e.leaf, at: e.at, step: e.step, written: e.written !== false}));
+  /** The cloud step's list, as the cursor and the `/` filter leave it. */
+  window.__wizList = () => ({
+    phase: WIZ.phase, q: WIZ.q, cur: WIZ.cur,
+    rows: obWizRows().map(({k}) => k.label),
+    marked: Array.from(document.querySelectorAll('#onboarding .ob-wiz .modelrow.on .nm')).map((e) => e.textContent),
+    row: WIZ.row ? WIZ.row.label : null,
+  });
   /** Everything the flow can seed for a check, in one call. */
   window.__obSeed = (patch) => { Object.assign(OB, patch || {}); render(); return window.__ob(); };
   /** decideSecondBackendOffer, driven as a table. */
@@ -12806,4 +13055,10 @@ if (typeof window !== 'undefined') {
   /** The cloud step's footer tracks the WIZARD phase, not the step. */
   window.__wizPhase = (phase) => { WIZ.phase = phase; WIZ.row = phase === 'configure' ? KIND_ROWS[0] : null; render(); return WIZ.phase; };
   window.__obBuildOptions = () => obBuildImportOptions(OB.importAgents);
+  /** How many import sources this machine actually has, through the real scan. */
+  window.__obSources = () => obDetectAgents().then((rows) => rows.map((r) => r.id));
+  /** The readiness the finished effect reads, unmodified — so a check can
+   *  derive what the offer table SHOULD say on this machine rather than
+   *  assume a config it does not own. */
+  window.__obReadiness = () => obReadiness();
 }

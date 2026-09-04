@@ -971,3 +971,12 @@ button.menurow:hover{background:var(--bg-hover)}
   background:var(--bg-raised);padding:var(--s3) var(--s4);display:flex}
 .ob-wiz .modelrow:hover{border-color:var(--line-strong)}
 .ob-wizlist{max-height:38vh;overflow-y:auto;display:flex;flex-direction:column;gap:6px}
+
+/* --------------------------------------------------------------------------
+   r5 item 7 review fix — the cloud step's list cursor and its `/` search box.
+   The step's footer is the TUI's `↑/↓ move   / search   enter select   esc
+   back`; the keys behind those hints are now real, so the row under the
+   cursor has to be visible without a mouse.
+   -------------------------------------------------------------------------- */
+.ob-wiz .modelrow.on{border-color:var(--accent);background:var(--accent-wash)}
+.ob-wiz .modelrow.on .nm{color:var(--accent-text)}

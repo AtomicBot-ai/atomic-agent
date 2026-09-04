@@ -5,6 +5,11 @@ import { join } from "node:path";
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { stat } from "node:fs/promises";   // item 5: the attachment strip stats what a turn wrote, nothing else
 import { execFile, execFileSync, spawn } from "node:child_process";   // item 2 (voice input): the smoke spawns the speech helper with --probe, and `say` writes its audio fixture
+// r5 item 7 review fix: the custom-endpoint SUCCESS path had no check at
+// all. Asserting it needs something that answers GET /health the way
+// llama.cpp does — a real server on an ephemeral loopback port, started
+// and stopped inside the one check that uses it.
+import { createServer } from "node:http";
 import { promisify } from "node:util";
 
 import { AgentClient } from "./agent-client.js";
@@ -5986,7 +5991,23 @@ type Dl = {
   visible: boolean; label: string | null; kind: string | null; percent: number | null;
   transferred: number | null; total: number | null; eta: string; queued: number; text: string;
   phases: { runtime: string; weights: string }; error: string | null;
+  /* r5 item 7 review fix: `drove` says whether THIS window moved bytes for
+     a phase, `runtimeError` keeps a failed `models update` apart from the
+     model download, and `measured` is false until the first real sample —
+     the strip draws no bar before one. */
+  drove: { runtime: boolean; weights: boolean }; runtimeError: string | null; measured: boolean;
 };
+
+type OnboardingStamps = {
+  completedAt?: string | null;
+  skippedAt?: string | null;
+  introSeenAt?: string | null;
+  proposedSecondBackendAt?: string | null;
+  localSetupSeenAt?: string | null;
+  importOfferedAt?: string | null;
+};
+type CfgWithTui = { tui?: { onboarding?: OnboardingStamps } };
+type ObStamp = { leaf: string; at: string; step: string; written: boolean };
 
 async function onboardingTest(
   js: <T>(code: string) => Promise<T>,
@@ -6003,6 +6024,36 @@ async function onboardingTest(
     }
     return state;
   };
+  /* r5 item 7 review fix — the stamps are asserted, so they are WRITTEN.
+     `__obOpen` used to pre-mark all four as already made, which
+     short-circuited obStampOnce for the whole driven pass: five
+     acceptance lines about write-on-arrival had no check and could not
+     get one, and a pre-set `importOfferedAt` routed the flow around the
+     one screen the TUI has no path around. This lane has its own state
+     dir, so the write under test is a real write into it; the block is
+     cleared first (a stamp left by an earlier run would suppress the
+     screens under test) and restored byte for byte in `finally`. */
+  const readCfg = async (): Promise<CfgWithTui | null> => {
+    const r = await configGet();
+    return r.ok && r.config ? (r.config as CfgWithTui) : null;
+  };
+  const stampsNow = async (): Promise<OnboardingStamps> => ((await readCfg())?.tui?.onboarding ?? {});
+  const writeStamps = async (values: OnboardingStamps): Promise<boolean> => {
+    const cfg = await readCfg();
+    if (!cfg) return false;
+    const next = JSON.parse(JSON.stringify(cfg)) as CfgWithTui;
+    next.tui = next.tui ?? {};
+    next.tui.onboarding = { ...(next.tui.onboarding ?? {}), ...values };
+    return (await configSetWhole(next)).ok;
+  };
+  const blank: OnboardingStamps = {
+    completedAt: null, skippedAt: null, introSeenAt: null,
+    proposedSecondBackendAt: null, localSetupSeenAt: null, importOfferedAt: null,
+  };
+  const stampsBefore = await stampsNow();
+  const cleanStart = await writeStamps(blank);
+  const runStart = Date.now();
+  const stampLog = () => js<ObStamp[]>("window.__obStamps()");
   try {
     /* ---- the intro ---- */
     let ob = await js<ObState>("window.__obOpen('intro')");
@@ -6032,20 +6083,23 @@ async function onboardingTest(
       `running=${sky.running} frames ${frames0} -> ${sky.frames}`,
     );
 
-    // Reduced motion: one frame, no loop, the tagline complete.
-    sky = await js<ObSky>("window.__obReduce(true)");
-    await new Promise((r) => setTimeout(r, 300));
+    /* Reduced motion: one frame, no loop, the tagline complete.
+       Review fix: `__obReduce` now moves ONLY the single reduced-motion
+       source and re-renders — the complete tagline and the refused rAF
+       loop below are both produced by the production path (obIntroHTML
+       and obSkyStart read that same source), not painted by the hook. */
+    await js<ObSky>("window.__obReduce(true)");
+    await new Promise((r) => setTimeout(r, 400));
     const stopped = await js<ObSky>("window.__obSky()");
     copy = await js<ObCopy>("window.__obCopy()");
     check(
       "wizard: prefers-reduced-motion stops the loop and finishes the tagline",
-      stopped.running === false &&
-        stopped.frames === sky.frames &&
+      stopped.running === false && stopped.reduced === true && stopped.frames === 1 &&
         copy.lines.some((l) => l.includes("Local AI-First Agent")) &&
         !copy.lines.some((l) => l.includes("▌")),
-      `running=${stopped.running} frames ${sky.frames} -> ${stopped.frames} lines=${JSON.stringify(copy.lines.slice(0, 5))}`,
+      `running=${stopped.running} reduced=${stopped.reduced} frames=${stopped.frames} lines=${JSON.stringify(copy.lines.slice(0, 5))}`,
     );
-    await js<ObSky>("window.__obReduce(false)");
+    await js<ObSky>("window.__obReduce(null)");
 
     // Two-stage advance: the first input finishes the reveal, the second moves on.
     ob = await js<ObState>("window.__obOpen('intro')");
@@ -6059,6 +6113,25 @@ async function onboardingTest(
         !typed.lines.some((l) => l.includes("▌")) &&
         afterSecond.step === "choose",
       `first=${afterFirst.step} second=${afterSecond.step}`,
+    );
+    /* The stamp the TUI writes AS THE SPLASH IS DISMISSED, not at the end
+       of the flow (onboarding-screen.tsx:109-115) — asserted both as the
+       decision (nothing before the second input) and as the write that
+       lands in this lane's own config file. */
+    let stamps = await stampLog();
+    // `atag config set` is a child process; the decision is synchronous
+    // with the key, the file is not, so the read waits for it.
+    let introInFile = (await stampsNow()).introSeenAt;
+    for (let i = 0; i < 20 && !introInFile; i += 1) {
+      await new Promise((r) => setTimeout(r, 250));
+      introInFile = (await stampsNow()).introSeenAt;
+    }
+    const introAt = introInFile ? Date.parse(introInFile) : NaN;
+    check(
+      "wizard: dismissing the intro writes tui.onboarding.introSeenAt, and only then",
+      cleanStart && stamps.length === 1 && stamps[0]!.leaf === "introSeenAt" && stamps[0]!.step === "intro" &&
+        Number.isFinite(introAt) && introAt >= runStart - 1000,
+      `clean=${cleanStart} log=${JSON.stringify(stamps)} config=${JSON.stringify(introInFile)}`,
     );
 
     /* ---- the choice list: three rows again ---- */
@@ -6077,6 +6150,49 @@ async function onboardingTest(
       "wizard: the choose step's subtitle is the TUI's",
       copy.subtitle === "setup · step 1 of 2",
       JSON.stringify(copy.subtitle),
+    );
+
+    /* Esc on `choose` is the TUI's skip and the ONLY route to the
+       `skipped` outcome — neither the transition nor the closing stamp it
+       chooses had a check. It also proves the import step's own rule:
+       nothing routes around it (import-step.ts:59-61 calls that stamp
+       "the ONLY gate"), so even a skipped run stops there first and it is
+       the import screen's own skip row that ends the flow. */
+    await js<ObState>("window.__obOpen('choose')");
+    const escaped = await js<ObState>("window.__obKey('esc')");
+    const afterEsc = await settled();
+    const sources = await js<string[]>("window.__obSources()");
+    const viaImport = afterEsc.open === true && afterEsc.step === "import_pick";
+    /* This one pass takes the CLOSING write for real — `testClose` is the
+       harness's one seam (repeating a config write and an agent bounce a
+       dozen times mid-run would be the suite testing itself), and
+       `restarted` is the flow's own "an IPC on the way here already
+       bounced serve" flag, so the write lands without a restart. */
+    if (viaImport) {
+      await js<ObState>("window.__obSeed({testClose:false, restarted:true})");
+      await js<ObState>("window.__obKey('esc')");
+    }
+    const closedAfterEsc = await settled();
+    stamps = await stampLog();
+    const closing = stamps.filter((e) => e.leaf === "skippedAt" || e.leaf === "completedAt");
+    let skippedInFile = (await stampsNow()).skippedAt;
+    for (let i = 0; i < 20 && viaImport && !skippedInFile; i += 1) {
+      await new Promise((r) => setTimeout(r, 250));
+      skippedInFile = (await stampsNow()).skippedAt;
+    }
+    check(
+      "wizard: esc on the choose step skips the flow, through the import step, and stamps skippedAt",
+      escaped.outcome === "skipped" && escaped.step === "finished" &&
+        (sources.length > 0 ? viaImport : afterEsc.open === false) &&
+        closedAfterEsc.open === false &&
+        closing.length >= 1 && closing.every((e) => e.leaf === "skippedAt") &&
+        (viaImport
+          ? closing[closing.length - 1]!.written === true &&
+            typeof skippedInFile === "string" && Date.parse(skippedInFile) >= runStart - 1000 &&
+            (await stampsNow()).completedAt == null
+          : true),
+      `outcome=${escaped.outcome} sources=${JSON.stringify(sources)} settled=${afterEsc.step}/open=${afterEsc.open}` +
+        ` closing=${JSON.stringify(closing)} file.skippedAt=${JSON.stringify(skippedInFile)}`,
     );
 
     /* ---- every footer the TUI produces, asserted verbatim ---- */
@@ -6138,18 +6254,56 @@ async function onboardingTest(
     );
 
     /* ---- the download strip ---- */
-    // The parse, against the CLI's own line. `formatGb` divides by 1024³,
-    // so 1.18 GB on the wire is 1.18 GiB — 1,267,015,352 bytes.
+    /* THE PARSER ITSELF, against the CLI's own line — the review found
+       this check feeding `__dlFeed` an already-parsed object and then
+       asserting arithmetic on its own input, so `parsePullProgress` (the
+       whole point of "a NEW structured progress event parsed in main")
+       had no coverage at all. It is module scope in this file, so it is
+       called directly. `formatGb` divides by 1024³, so `1.18 GB` on the
+       wire is 1.18 GiB — 1,267,015,352 bytes — and `4.70 GB` is
+       5,046,586,573. Both are exact, not within a percent. */
+    const cliLine = "[=====               ] 25%  1.18 GB / 4.70 GB  Qwen3.5-4B-Q4_K_M.gguf (4.7 GB)";
+    const parsed = parsePullProgress(cliLine, "weights");
+    check(
+      "wizard: the strip's parser reads the CLI's own progress line",
+      parsed.kind === "weights" && parsed.percent === 25 &&
+        parsed.transferredBytes === 1267015352 && parsed.totalBytes === 5046586573 &&
+        parsed.label === "Qwen3.5-4B-Q4_K_M.gguf (4.7 GB)",
+      `${cliLine} -> ${JSON.stringify(parsed)}`,
+    );
+    // The runtime leg rides the same shape under `backend zip`.
+    const parsedRuntime = parsePullProgress("[====================] 100%  0.06 GB / 0.06 GB  backend zip", "runtime");
+    // The projector's own line does NOT match the full shape; the loose
+    // fallback must give percent alone and never fabricate byte counts,
+    // and it must keep its own kind so nothing folds it into the weights.
+    const parsedLoose = parsePullProgress("vision projector 40% (12.0 / 30.0 MB)", "projector");
+    const parsedNone = parsePullProgress("done. model saved to /tmp/x.gguf", "weights");
+    check(
+      "wizard: the parser keeps the runtime and projector kinds apart, and invents no bytes",
+      parsedRuntime.kind === "runtime" && parsedRuntime.percent === 100 &&
+        parsedRuntime.label === "backend zip" &&
+        parsedLoose.kind === "projector" && parsedLoose.percent === 40 &&
+        parsedLoose.transferredBytes === undefined && parsedLoose.totalBytes === undefined &&
+        parsedNone.percent === undefined && parsedNone.kind === undefined,
+      `runtime=${JSON.stringify(parsedRuntime)} loose=${JSON.stringify(parsedLoose)} none=${JSON.stringify(parsedNone)}`,
+    );
+
+    // And the strip renders what that parse produced — the same object
+    // main puts on the wire, fed through the one `cli:pull` subscriber.
     await js<ObState>("window.__obOpen('local_download')");
     await js<Dl>("window.__dlSeed([{kind:'weights', id:'qwen3.5-4b'}])");
+    const beforeFeed = await js<Dl>("window.__dl()");
     const fed = await js<Dl>(
-      "window.__dlFeed({id:'qwen3.5-4b', kind:'weights', percent:25, transferredBytes:Math.round(1.18*1073741824), totalBytes:Math.round(4.70*1073741824), label:'x.gguf'})",
+      `window.__dlFeed(Object.assign({id:'qwen3.5-4b'}, ${JSON.stringify(parsed)}))`,
     );
     check(
       "wizard: the strip is fed parsed numbers, not a log line",
-      fed.visible && fed.percent === 25 && fed.total !== null && fed.total > 0 &&
-        Math.abs((fed.transferred ?? 0) - 1267015352) / 1267015352 < 0.01,
-      `visible=${fed.visible} percent=${fed.percent} transferred=${fed.transferred} total=${fed.total}`,
+      fed.visible && fed.percent === 25 && fed.total === 5046586573 &&
+        fed.transferred === 1267015352 && fed.measured === true &&
+        // ... and before the first real sample it draws no bar at all.
+        beforeFeed.measured === false && beforeFeed.text.includes("starting…") &&
+        !/%/.test(beforeFeed.text),
+      `visible=${fed.visible} percent=${fed.percent} transferred=${fed.transferred} total=${fed.total} pre=${JSON.stringify(beforeFeed.text)}`,
     );
     // The strip is chrome: it must sit ABOVE the overlay layer, or the
     // wizard covers the only surface reporting the download.
@@ -6163,25 +6317,74 @@ async function onboardingTest(
       `dlbar.top=${Math.round(layered.bar)} overlays.top=${Math.round(layered.overlays)}`,
     );
 
-    // Two phases, and the runtime one drawn only when it is being driven.
+    /* Two phases, and the runtime one drawn only when it is being driven.
+       Review fix: a job is `waiting` until its FIRST real sample —
+       `models update` spends its opening seconds deciding whether there
+       is anything to fetch, and often fetches nothing, so `active` at 0%
+       for that stretch was a bar this window was not driving. */
     const queued = await js<Dl>(
       "window.__dlSeed([{kind:'runtime', id:'llama.cpp'},{kind:'weights', id:'qwen3.5-4b'}])",
+    );
+    const moving = await js<Dl>(
+      "window.__dlFeed({id:'llama.cpp', kind:'runtime', percent:50, transferredBytes:30000000, totalBytes:60000000, label:'backend zip'})",
     );
     check(
       "wizard: a runtime phase queues in front of the weights and says so",
       queued.label === "llama.cpp" && queued.kind === "runtime" && queued.queued === 1 &&
         queued.text.includes("· 1 more queued") &&
-        queued.phases.runtime === "active" && queued.phases.weights === "waiting",
-      `label=${queued.label} queued=${queued.queued} phases=${JSON.stringify(queued.phases)} text=${JSON.stringify(queued.text)}`,
+        queued.phases.runtime === "waiting" && queued.phases.weights === "waiting" &&
+        queued.measured === false &&
+        moving.phases.runtime === "active" && moving.drove.runtime === true,
+      `label=${queued.label} queued=${queued.queued} phases=${JSON.stringify(queued.phases)} text=${JSON.stringify(queued.text)} moving=${JSON.stringify(moving.phases)}`,
     );
-    const drained = await js<Dl>("window.__dlFeed({id:'llama.cpp', kind:'runtime', done:true, ok:true})");
+    const drained = await js<Dl>(
+      "window.__dlFeed({id:'llama.cpp', kind:'runtime', done:true, ok:true, sawProgress:true, upToDate:false})",
+    );
     check(
       "wizard: when the runtime lands the queue drains onto the weights",
-      drained.phases.runtime === "done" && drained.queued === 0,
+      drained.phases.runtime === "done" && drained.queued === 0 && drained.label === "qwen3.5-4b",
       `phases=${JSON.stringify(drained.phases)} queued=${drained.queued} label=${drained.label}`,
     );
 
+    /* `sawProgress` / `upToDate` are the fields main computes for exactly
+       this case and the review found nothing reading them: `models
+       update` exits 0 having downloaded nothing when the version file
+       already names the latest tag. The phase reads `done` — it HAS
+       passed — but `drove` records that this window moved none of it, and
+       no bar was ever drawn for it. */
+    await js<Dl>("window.__dlSeed([{kind:'runtime', id:'llama.cpp'},{kind:'weights', id:'qwen3.5-4b'}])");
+    const upToDate = await js<Dl>(
+      "window.__dlFeed({id:'llama.cpp', kind:'runtime', done:true, ok:true, sawProgress:false, upToDate:true})",
+    );
+    check(
+      "wizard: a `models update` that downloaded nothing leaves no bar behind it",
+      upToDate.phases.runtime === "done" && upToDate.drove.runtime === false &&
+        upToDate.label === "qwen3.5-4b" && upToDate.queued === 0 && upToDate.runtimeError === null,
+      `phases=${JSON.stringify(upToDate.phases)} drove=${JSON.stringify(upToDate.drove)} label=${upToDate.label}`,
+    );
+
+    /* And a FAILED update does not take the model download with it — the
+       review found the queue being emptied, which left the weights row
+       reading `waiting` for ever with no way back to it. */
+    await js<Dl>("window.__dlSeed([{kind:'runtime', id:'llama.cpp'},{kind:'weights', id:'qwen3.5-4b'}])");
+    const runtimeFailed = await js<Dl>(
+      "window.__dlFeed({id:'llama.cpp', kind:'runtime', done:true, ok:false, error:'models update exited with code 1', sawProgress:false, upToDate:false})",
+    );
+    check(
+      "wizard: a failed runtime update keeps the model download the operator asked for",
+      runtimeFailed.label === "qwen3.5-4b" && runtimeFailed.kind === "weights" &&
+        runtimeFailed.queued === 0 && runtimeFailed.visible === true &&
+        runtimeFailed.runtimeError === "models update exited with code 1" &&
+        runtimeFailed.error === null && runtimeFailed.phases.runtime === "waiting",
+      `label=${runtimeFailed.label} queued=${runtimeFailed.queued} runtimeError=${JSON.stringify(runtimeFailed.runtimeError)} error=${JSON.stringify(runtimeFailed.error)}`,
+    );
+    await js<Dl>("window.__dlClear()");
+
     /* ---- the strip outlives the screen that started it ---- */
+    // The esc-from-choose pass above stamped `importOfferedAt` for real;
+    // the import step's own rule is asserted again below, so the gate is
+    // opened again first.
+    await writeStamps(blank);
     await js<ObState>("window.__obOpen('local_download')");
     // `press c` is hidden once a cloud provider is configured, so the
     // state under test is named rather than inherited.
@@ -6206,11 +6409,37 @@ async function onboardingTest(
     await js<ObState>("window.__obKey('s')");
     const skipped = await settled();
     const dlAfter = await js<Dl>("window.__dl()");
+    /* IMPORT IS UNSKIPPABLE. The review found this check asserting
+       `open === false` — the neutered outcome the pre-stamped hook
+       produced — where the acceptance says the opposite: the download
+       screen's `s` exit sets `skipSecondOffer`, and the flow STILL lands
+       on `import_pick` while `importOfferedAt` is null and a source
+       exists. Nothing routes around that screen; its own skip row does. */
+    const sourcesAtSkip = await js<string[]>("window.__obSources()");
     check(
       "wizard: `s` leaves setup with the download still running",
-      skipped.open === false && skipped.skipSecondOffer === true && dlAfter.visible,
-      `open=${skipped.open} skipSecondOffer=${skipped.skipSecondOffer} strip=${dlAfter.visible}`,
+      skipped.skipSecondOffer === true && dlAfter.visible &&
+        (sourcesAtSkip.length > 0
+          ? skipped.open === true && skipped.step === "import_pick"
+          : skipped.open === false),
+      `open=${skipped.open} step=${skipped.step} skipSecondOffer=${skipped.skipSecondOffer} strip=${dlAfter.visible} sources=${JSON.stringify(sourcesAtSkip)}`,
     );
+    const skipStamps = await stampLog();
+    const importStamp = skipStamps.find((e) => e.leaf === "importOfferedAt");
+    let importInFile = (await stampsNow()).importOfferedAt;
+    for (let i = 0; i < 20 && !!importStamp && !importInFile; i += 1) {
+      await new Promise((r) => setTimeout(r, 250));
+      importInFile = (await stampsNow()).importOfferedAt;
+    }
+    check(
+      "wizard: the import step is stamped the moment it appears, not when it is answered",
+      sourcesAtSkip.length > 0
+        ? !!importStamp && importStamp.step === "import_pick" && typeof importInFile === "string"
+        : importStamp === undefined,
+      `log=${JSON.stringify(skipStamps)} config=${JSON.stringify(importInFile)}`,
+    );
+    if (skipped.open) await js<ObState>("window.__obKey('esc')");
+    await settled();
     await js<Dl>("window.__dlClear()");
 
     /* ---- the branches the desktop used to be missing ---- */
@@ -6241,7 +6470,90 @@ async function onboardingTest(
       `step=${probed.step} error=${JSON.stringify(probed.error)}`,
     );
 
+    /* The SUCCESS half, which had no check — including the
+       `llm.activeTextProvider` write the critique named by name, because
+       without it the wizard "writes an address nothing uses"
+       (persist-user-local-models-config.ts:130-141). The /health answer
+       is a real HTTP server on an ephemeral loopback port speaking
+       llama.cpp's own health shape; the whole file is restored after. */
+    const health = createServer((req, res) => {
+      if ((req.url ?? "").startsWith("/health")) {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end('{"status":"ok"}');
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    await new Promise<void>((r) => health.listen(0, "127.0.0.1", () => r()));
+    const healthUrl = `http://127.0.0.1:${(health.address() as { port: number }).port}`;
+    const cfgBeforeCustom = await configGet();
+    const restoreCustomCfg = cfgBeforeCustom.ok && cfgBeforeCustom.config
+      ? (JSON.parse(JSON.stringify(cfgBeforeCustom.config)) as unknown)
+      : null;
+    try {
+      await js<ObState>("window.__obOpen('choose')");
+      await js<ObState>("window.__obKey('3')");
+      await js<void>(
+        `(function(){const i=document.getElementById('ob-url'); i.value=${JSON.stringify(healthUrl)};` +
+          " i.dispatchEvent(new Event('input',{bubbles:true}));})()",
+      );
+      await js<void>("window.__obKey('enter')");
+      let st = await js<ObState>("window.__ob()");
+      for (let i = 0; i < 40 && st.step === "custom_chat_url"; i += 1) {
+        await new Promise((r) => setTimeout(r, 250));
+        st = await js<ObState>("window.__ob()");
+      }
+      const onEmbedding = st.step;
+      // An empty Enter on the embedding step saves the chat URL alone.
+      await js<void>("window.__obKey('enter')");
+      let done = await js<ObState>("window.__ob()");
+      for (let i = 0; i < 60 && done.outcome !== "custom"; i += 1) {
+        await new Promise((r) => setTimeout(r, 250));
+        done = await js<ObState>("window.__ob()");
+      }
+      await settled();
+      type CustomCfg = {
+        localModels?: { mode?: string; url?: string; embeddings?: { enabled?: boolean } };
+        llm?: { activeTextProvider?: string };
+      };
+      const after = ((await configGet()).config ?? {}) as CustomCfg;
+      // The active-provider write is gated on the file already carrying an
+      // llm block, exactly as the TUI gates it.
+      const hadLlm = !!(restoreCustomCfg as CustomCfg | null)?.llm;
+      check(
+        "wizard: a reachable custom endpoint is written in one whole-file write, routing included",
+        onEmbedding === "custom_embedding_url" && done.outcome === "custom" &&
+          after.localModels?.mode === "external" && after.localModels?.url === healthUrl &&
+          after.localModels?.embeddings?.enabled === false &&
+          (hadLlm ? after.llm?.activeTextProvider === "local-llama" : true),
+        `step=${onEmbedding} outcome=${done.outcome} mode=${after.localModels?.mode} url=${after.localModels?.url}` +
+          ` embeddings=${after.localModels?.embeddings?.enabled} active=${after.llm?.activeTextProvider} llmBlock=${hadLlm}`,
+      );
+    } finally {
+      health.close();
+      if (restoreCustomCfg) await configSetWhole(restoreCustomCfg);
+      await js<unknown>("window.__ctxRefreshCfg ? window.__ctxRefreshCfg() : null");
+    }
+
+    /* Arriving on a local-setup screen stamps `localSetupSeenAt` — the
+       input that suppresses the local pitch later (propose-second-
+       backend.ts:49). It is written on ARRIVAL, and the review found that
+       no check could see it because the harness pre-marked every stamp. */
+    await writeStamps(blank);
     await js<ObState>("window.__obOpen('local_pick')");
+    let localSeen = (await stampsNow()).localSetupSeenAt;
+    for (let i = 0; i < 20 && !localSeen; i += 1) {
+      await new Promise((r) => setTimeout(r, 250));
+      localSeen = (await stampsNow()).localSetupSeenAt;
+    }
+    const localStamp = (await stampLog()).find((e) => e.leaf === "localSetupSeenAt");
+    check(
+      "wizard: arriving on the local list stamps tui.onboarding.localSetupSeenAt",
+      !!localStamp && localStamp.step === "local_pick" && typeof localSeen === "string" &&
+        Date.parse(localSeen) >= runStart - 1000,
+      `log=${JSON.stringify(localStamp)} file=${JSON.stringify(localSeen)}`,
+    );
     // The catalogue read is a real CLI call, and the row under test is the
     // one pinned PAST it — so wait for curated rows, not just for a row.
     let picks = 0;
@@ -6273,6 +6585,77 @@ async function onboardingTest(
       `step=${onHf.step} settingsPane=${JSON.stringify(settingsPane)}`,
     );
 
+    /* Both `ctrl+l clear` and the `[ clear ]` control are advertised only
+       while there is something to clear, and the TUI recomputes its footer
+       on every keystroke. The desktop has no ambient render loop while the
+       wizard is up, so the review found both missing until some unrelated
+       repaint happened. Asserted on the RENDERED strip — reading
+       obFooter() directly would pass without any repaint at all. */
+    const hintsEmpty = (await js<ObCopy>("window.__obCopy()")).hints;
+    const clearEmpty = await js<number>(
+      "document.querySelectorAll('#onboarding [data-obact=\"hf:clear\"]').length",
+    );
+    await js<void>(
+      "(function(){const i=document.getElementById('ob-hf-ref'); i.value='u'; " +
+        "i.dispatchEvent(new Event('input',{bubbles:true}));})()",
+    );
+    const hintsTyped = (await js<ObCopy>("window.__obCopy()")).hints;
+    const clearTyped = await js<number>(
+      "document.querySelectorAll('#onboarding [data-obact=\"hf:clear\"]').length",
+    );
+    check(
+      "wizard: the hugging face clear chord and control appear on the first keystroke",
+      !hintsEmpty.includes("ctrl+l") && clearEmpty === 0 &&
+        hintsTyped.includes("ctrl+l") && hintsTyped.includes("clear") && clearTyped === 1,
+      `empty=${JSON.stringify(hintsEmpty)}/${clearEmpty} typed=${JSON.stringify(hintsTyped)}/${clearTyped}`,
+    );
+    await js<ObState>("window.__obKey('esc')");
+
+    /* ---- the cloud step's own keyboard ---- */
+    /* Its footer is the TUI's `↑/↓ move   / search   enter select   esc
+       back`, and the review found three of those four chords doing
+       nothing: the list was mouse-only, so the hint strip was promising
+       keys the step did not accept. Driven here through the same router. */
+    type WizList = { phase: string | null; q: string | null; cur: number; rows: string[]; marked: string[]; row: string | null };
+    await js<ObState>("window.__obOpen('choose')");
+    await js<ObState>("window.__obKey('2')");
+    const wl0 = await js<WizList>("window.__wizList()");
+    const wl1 = await js<WizList>("(window.__obKey('down'), window.__wizList())");
+    await js<void>("window.__obKey('/')");
+    await js<void>(
+      "(function(){const i=document.getElementById('wiz-q'); i.value='gemini'; " +
+        "i.dispatchEvent(new Event('input',{bubbles:true}));})()",
+    );
+    const wl2 = await js<WizList>("window.__wizList()");
+    const wl3 = await js<WizList>("(window.__obKey('enter'), window.__wizList())");
+    check(
+      "wizard: the cloud step accepts every chord its footer advertises",
+      wl0.cur === 0 && wl0.rows.length > 3 && wl0.marked.length === 1 && wl0.marked[0] === wl0.rows[0] &&
+        wl1.cur === 1 && wl1.marked[0] === wl0.rows[1] &&
+        wl2.q === "gemini" && wl2.rows.length === 1 && wl2.rows[0] === "Gemini (Google AI)" &&
+        wl3.phase === "configure" && wl3.row === "Gemini (Google AI)",
+      `cur ${wl0.cur}->${wl1.cur} marked=${JSON.stringify(wl1.marked)} search=${JSON.stringify(wl2.rows)} picked=${JSON.stringify(wl3.row)}`,
+    );
+    // ... and the .env sentence the copy contract spells out, on the
+    // screen the pick lands on.
+    const wizCopy = await js<string[]>(
+      "Array.from(document.querySelectorAll('#onboarding .ob-wiz .ob-h, #onboarding .ob-wiz .ob-explain')).map((e) => e.textContent)",
+    );
+    await js<ObState>("window.__obKey('esc')");
+    const listCopy = await js<string[]>(
+      "Array.from(document.querySelectorAll('#onboarding .ob-wiz .ob-h')).map((e) => e.textContent)",
+    );
+    check(
+      "wizard: the cloud step carries the wizard titles and the .env sentence verbatim",
+      listCopy.includes("LLM provider — add provider") &&
+        wizCopy.includes("API key — Gemini") &&
+        wizCopy.includes("Saved to .env as GEMINI_API_KEY (mode 0600)."),
+      `list=${JSON.stringify(listCopy)} key=${JSON.stringify(wizCopy)}`,
+    );
+    await js<ObState>("window.__obKey('esc')");
+    await js<ObState>("window.__obKey('esc')");
+    await settled();
+
     /* ---- the second-provider offer, as a table ---- */
     const offers = await js<(string | null)[]>(
       "[window.__obOffer({outcome:'local', cloudReady:false, localReady:true, alreadyProposed:false, localSetupSeen:true})," +
@@ -6297,6 +6680,60 @@ async function onboardingTest(
         proposeRows[1] === "Skip — take me to the agent",
       JSON.stringify(proposeRows),
     );
+
+    /* The stamp the offer exists for is written when the screen APPEARS,
+       not when it is answered (use-onboarding-lifecycle.ts:107-110) — the
+       review found it untested because the harness pre-marked it. Driven
+       through the real finished effect, from a step that is NOT one of
+       the local-setup screens (those stamp `localSetupSeenAt`, which is
+       itself an input to the decision), with the expectation DERIVED from
+       this machine's readiness rather than assumed about its config. */
+    await writeStamps(blank);
+    const cfgForOffer = await configGet();
+    const restoreOffer = cfgForOffer.ok && cfgForOffer.config
+      ? (JSON.parse(JSON.stringify(cfgForOffer.config)) as unknown)
+      : null;
+    try {
+      /* The state the pitch exists for: a machine with one of the two
+         backends. Clearing the managed model id makes `localReady` false
+         the way `isLocalBackendConfigured` reads it, so the offer is
+         raised for real rather than asserted against whatever this lane's
+         config happened to hold. Restored immediately below. */
+      if (restoreOffer) {
+        const noLocal = JSON.parse(JSON.stringify(restoreOffer)) as {
+          localModels?: { managed?: { modelId?: string | null } };
+        };
+        if (noLocal.localModels?.managed) noLocal.localModels.managed.modelId = null;
+        await configSetWhole(noLocal);
+      }
+      const ready = await js<{ cloudReady: boolean; localReady: boolean }>("window.__obReadiness()");
+      const expectOffer = await js<string | null>(
+        "window.__obOffer({outcome:'cloud', cloudReady:" + String(ready.cloudReady) +
+          ", localReady:" + String(ready.localReady) + ", alreadyProposed:false, localSetupSeen:false})",
+      );
+      await js<ObState>("window.__obOpen('import_done')");
+      await js<ObState>("window.__obSeed({outcome:'cloud'})");
+      await js<ObState>("window.__obKey('enter')");
+      const landed = await settled();
+      const offerStamps = await stampLog();
+      const proposeStamp = offerStamps.find((e) => e.leaf === "proposedSecondBackendAt");
+      let proposeInFile = (await stampsNow()).proposedSecondBackendAt;
+      for (let i = 0; i < 20 && !!proposeStamp && !proposeInFile; i += 1) {
+        await new Promise((r) => setTimeout(r, 250));
+        proposeInFile = (await stampsNow()).proposedSecondBackendAt;
+      }
+      check(
+        "wizard: the second-backend offer is raised, and stamped, the moment its screen appears",
+        expectOffer === "local" && landed.step === "propose_second" && landed.offer === "local" &&
+          !!proposeStamp && proposeStamp.step === "propose_second" &&
+          typeof proposeInFile === "string" && Date.parse(proposeInFile) >= runStart - 1000,
+        `readiness=${JSON.stringify(ready)} expected=${JSON.stringify(expectOffer)} landed=${landed.step}/${landed.offer} log=${JSON.stringify(offerStamps)} file=${JSON.stringify(proposeInFile)}`,
+      );
+      await js<ObState>("window.__obClose()");
+    } finally {
+      if (restoreOffer) await configSetWhole(restoreOffer);
+      await js<unknown>("window.__ctxRefreshCfg ? window.__ctxRefreshCfg() : null");
+    }
 
     /* ---- the import step ---- */
     await js<ObState>("window.__obOpen('import_pick')");
@@ -6344,8 +6781,12 @@ async function onboardingTest(
     );
     // The preview's non-actionable branch ends the flow rather than
     // walking on to a "done" screen that has nothing to report.
+    /* The jump lands in the MIDDLE of the machine: it never passed the
+       screen that stamps `importOfferedAt`, so it says so — otherwise the
+       finished effect would (correctly) offer the import step it has no
+       record of anyone having seen. */
     await js<ObState>(
-      "(window.__obOpen('import_preview')," +
+      "(window.__obOpen('import_preview', {stamped:['importOfferedAt']})," +
         " window.__obSeed({importReport:{items:[], summary:{migrated:0, skipped:3, conflict:0, error:0}, executed:false}})," +
         " window.__obKey('enter'))",
     );
@@ -6357,7 +6798,7 @@ async function onboardingTest(
       `open=${nothing.open} lines=${JSON.stringify(nothingCopy.lines.slice(0, 3))}`,
     );
     const headline = await js<string[]>(
-      "(window.__obOpen('import_preview')," +
+      "(window.__obOpen('import_preview', {stamped:['importOfferedAt']})," +
         " window.__obSeed({importReport:{items:[], summary:{migrated:0, skipped:3, conflict:0, error:0}, executed:false}})," +
         " Array.from(document.querySelectorAll('#onboarding .ob-h')).map((e) => e.textContent))",
     );
@@ -6369,5 +6810,8 @@ async function onboardingTest(
   } finally {
     await js<unknown>("window.__obClose ? window.__obClose() : null");
     await js<unknown>("window.__dlClear ? window.__dlClear() : null");
+    // Put the operator's stamps back exactly as they were, including the
+    // nulls: this section is the only one that writes them.
+    if (cleanStart) await writeStamps({ ...blank, ...stampsBefore });
   }
 }
