@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { dispatchSlashCommand } from "./slash-command-handler.js";
+import { SLASH_COMMANDS } from "./slash-commands.js";
 
 describe("dispatchSlashCommand", () => {
   it("lists slash commands with descriptions for /help", () => {
@@ -11,6 +12,31 @@ describe("dispatchSlashCommand", () => {
     expect(result.systemMessage).toContain("clear chat transcript");
     expect(result.systemMessage).toContain("/quit");
     expect(result.systemMessage).toContain("aliases: /exit");
+  });
+
+  it("opens the Integrations tab for /integrations", () => {
+    // Registering a MenuPlaceNode with a `slash` only lists the command
+    // in the palette and binds its chord -- execution still needs a case
+    // here, and without one the command answers "not yet implemented".
+    const result = dispatchSlashCommand("/integrations");
+    expect(result.systemMessage).toBeUndefined();
+    expect(result.actions).toEqual([
+      { type: "ui_mode_set", mode: "debug" },
+      { type: "tab_changed", tab: "integrations" },
+      { type: "integrations_message_cleared" },
+    ]);
+  });
+
+  it("leaves no palette command without a dispatch case", () => {
+    // The generic guard for the bug above: every command the palette
+    // advertises must actually do something when typed.
+    for (const command of SLASH_COMMANDS) {
+      const result = dispatchSlashCommand(`/${command.name}`);
+      expect(
+        result.systemMessage ?? "",
+        `/${command.name} is listed but not dispatched`,
+      ).not.toContain("not yet implemented");
+    }
   });
 
   it("forwards non-slash input as a regular message", () => {
