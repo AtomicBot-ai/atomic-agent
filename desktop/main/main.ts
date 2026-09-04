@@ -708,10 +708,19 @@ function wireIpc(client: AgentClient): void {
   // The row's right-click menu. `Menu` is not a top-level import here, so it is
   // required inside the handler exactly as app:fileMenu does.
   ipcMain.handle("app:sessionMenu", (event, payload: unknown) => {
-    const { id, pinned } = (payload ?? {}) as { id?: unknown; pinned?: unknown };
+    const { id, pinned, unread } = (payload ?? {}) as { id?: unknown; pinned?: unknown; unread?: unknown };
     if (typeof id !== "string" || !id) return;
     const { Menu } = require("electron") as typeof import("electron");
     const menu = Menu.buildFromTemplate([
+      // r5 item 3: macOS title case, beside the Pin/Delete… the menu already
+      // offers. `enabled` is what keeps it honest on a row that is already
+      // unread — the item is shown, greyed, rather than offering a no-op.
+      {
+        label: "Mark as Unread",
+        enabled: unread !== true,
+        click: () => send("app:menu", "unread:" + id),
+      },
+      { type: "separator" },
       { label: pinned ? "Unpin" : "Pin", click: () => send("app:menu", (pinned ? "unpin:" : "pin:") + id) },
       { type: "separator" },
       { label: "Delete…", click: () => send("app:menu", "delask:" + id) },
@@ -1978,6 +1987,10 @@ async function smokeTest(): Promise<void> {
     // --- r4 integration: the seams between the four lanes ---
     await r4SeamTest(js, check);
 
+    // --- r5 Chrome lane: the sidebar toggle, unread, message actions,
+    //     the backdrop dismiss, new-chat focus and the settings button ---
+    await chromeTest(js, check);
+
     // --- Lane B — backend switch (last: it restarts `atag serve` four times) ---
     // A round trip through the renderer's own switch path: to local and
     // back, with the file, the chips, the restarted agent and the daemon
@@ -2687,14 +2700,19 @@ async function sidebarTest(
     );
     // Review fix: `subtitles === 0` above can only catch a reintroduced `.t2`
     // class. This measures the row the user asked for — 30 px, one text line,
-    // and dot + name (+ pin on a chat row) as its only children.
+    // and dot + name (+ its hover controls) as its only children.
+    // r5 item 3 added a second hover control to a chat row that reads read
+    // ("Mark as unread"), so the allowed tail is now pin and unread rather than
+    // pin alone. Both are 22px inside a 30px row, so the height is unchanged —
+    // which is the half of this check that would catch a row growing.
     type RowShape = { rows: number; minHeight: number; maxHeight: number; children: string[]; titleHeight: number; titleLineHeight: number; nowrap: boolean } | null;
     const shape = await js<RowShape>("window.__rowShape()");
+    const rowTail = shape ? shape.children.slice(2) : [];
     check(
-      "sidebar rows are one line: dot + name (+ pin)",
+      "sidebar rows are one line: dot + name (+ hover controls)",
       !!shape && shape.minHeight === 30 && shape.maxHeight === 30
-        && shape.children.length <= 3 && shape.children[0] === "sdot" && shape.children[1] === "t1"
-        && (shape.children.length === 2 || shape.children[2] === "pinbtn")
+        && shape.children[0] === "sdot" && shape.children[1] === "t1"
+        && rowTail.every((c) => c === "pinbtn" || c === "unreadbtn")
         && shape.nowrap && shape.titleHeight <= shape.titleLineHeight + 1,
       shape ? `${shape.rows} rows ${shape.minHeight}–${shape.maxHeight}px, children ${JSON.stringify(shape.children)}, title ${shape.titleHeight}px of line-height ${shape.titleLineHeight}, nowrap=${shape.nowrap}` : "no rows",
     );
@@ -2726,18 +2744,38 @@ async function sidebarTest(
       const pinned = await js<string[]>(`window.__pin(${JSON.stringify(last)})`);
       sb = await js<Sb>("window.__sidebar()");
       const stored = await js<{ data: { pinned: string[] } }>("window.__prefs()");
+      // r5 fix, found by this lane's runs going red at random: the assertion
+      // used to be `sb.chats[0].id === last`, which only holds when NO other
+      // chat is pinned. sidebarChats sorts pinned rows ahead of unpinned ones
+      // in SESSIONS order — it does not order the pinned block by pin recency,
+      // even though act('pin:') unshifts — so with an operator pin already in
+      // prefs.json the newly pinned row is first only by luck of the session
+      // list's own order. What the code guarantees, and what this check's name
+      // means, is that the pinned row sorts ahead of every unpinned one.
+      const pinIndex = sb.chats.findIndex((c) => c.id === last);
+      const firstUnpinned = sb.chats.findIndex((c) => !c.pinned);
       check(
-        "a pinned chat sorts first and is stored",
-        sb.chats[0].id === last && sb.chats[0].pinned && stored.data.pinned.includes(last),
-        `first=${sb.chats[0].id} pinned=${JSON.stringify(pinned)} stored=${JSON.stringify(stored.data.pinned)}`,
+        "a pinned chat sorts ahead of every unpinned one and is stored",
+        pinIndex >= 0 && sb.chats[pinIndex].pinned
+          && (firstUnpinned === -1 || pinIndex < firstUnpinned)
+          && stored.data.pinned.includes(last),
+        `${last} at index ${pinIndex}, first unpinned at ${firstUnpinned};`
+        + ` pinned=${JSON.stringify(pinned)} stored=${JSON.stringify(stored.data.pinned)}`,
       );
       await js<string[]>(`window.__unpin(${JSON.stringify(last)})`);
       sb = await js<Sb>("window.__sidebar()");
       const after = await js<{ data: { pinned: string[] } }>("window.__prefs()");
+      // Same correction: with another chat pinned, "not first" is not the test —
+      // "no longer inside the pinned block" is.
+      const backIndex = sb.chats.findIndex((c) => c.id === last);
+      const backFirstUnpinned = sb.chats.findIndex((c) => !c.pinned);
       check(
         "unpinning puts it back",
-        sb.chats[0].id !== last && !after.data.pinned.includes(last),
-        `first=${sb.chats[0].id} stored=${JSON.stringify(after.data.pinned)}`,
+        !after.data.pinned.includes(last)
+          && (backIndex === -1 || !sb.chats[backIndex].pinned)
+          && (backIndex === -1 || backFirstUnpinned === -1 || backIndex >= backFirstUnpinned),
+        `${last} at index ${backIndex}, first unpinned at ${backFirstUnpinned};`
+        + ` stored=${JSON.stringify(after.data.pinned)}`,
       );
 
       // Review fix: the two checks above go through act() and read PREFS, so
@@ -3095,9 +3133,11 @@ async function settingsTest(
   const manageTabs = nodes.filter((n) => n.tab).map((n) => n.tab);
   check("settings: Manage children are the eight tabs", same(manageTabs, TABS), JSON.stringify(manageTabs));
 
-  // The bottom-left entry lands on Go › Manage › Tasks.
+  // The bottom-left entry lands on Go › Manage › Tasks. r5 item 8 replaced the
+  // `.sb-foot` row (gear + label + keycap) with a plain accent button, so the
+  // selector follows it; the destination is unchanged and is what this asserts.
   const foot = await js<{ present: boolean; text: string; pane: string }>(
-    "(() => { const f = document.querySelector('#sidebar .sb-foot'); if (!f) return {present:false,text:'',pane:''};"
+    "(() => { const f = document.querySelector('#sidebar .sb-settings'); if (!f) return {present:false,text:'',pane:''};"
     + " f.click(); return {present:true, text:f.textContent, pane:window.__settingsPane()}; })()",
   );
   check("settings: bottom-left entry opens on Tasks", foot.present && /Settings/.test(foot.text) && foot.pane === "tasks", `pane=${foot.pane}`);
@@ -5836,4 +5876,565 @@ async function r4SeamTest(
       && steerNode.label === "Steer the running turn",
     JSON.stringify(steerNode),
   );
+}
+
+/**
+ * r5 — Chrome lane (items 2, 3, 4, 5, 6, 8).
+ *
+ * Item 3 writes Electron userData/prefs.json, which is NOT covered by
+ * ATOMIC_AGENT_STATE_DIR — that variable steers the agent's own state dir, and
+ * this file is a different store entirely. So the operator's pin list and read
+ * stamps are snapshotted here and written back in `finally`, exactly as
+ * sidebarTest does for its own block.
+ *
+ * Item 4 sends one short live turn (a resend of a two-word prompt) and waits
+ * for it to finish before returning, so nothing is left running for the lanes
+ * that follow. The session it opens is this run's litter and is deleted.
+ */
+async function chromeTest(
+  js: <T>(code: string) => Promise<T>,
+  check: (name: string, ok: boolean, detail?: string) => void,
+): Promise<void> {
+  const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  const prefsBefore = readPrefs();
+  // This file is Electron userData and is not covered by ATOMIC_AGENT_STATE_DIR,
+  // so what was taken and what is put back are both printed — a lost pin has to
+  // be attributable, not guessed at.
+  process.stdout.write(`DIAG chrome lane prefs snapshot: pinned=${JSON.stringify(prefsBefore.pinned)} seen=${Object.keys(prefsBefore.seen).length}\n`);
+  let litter: string | null = null;
+  /* `:hover` cannot be synthesised from script, so the hover half of the reveal
+     contract is asserted as the CSS rule's own text. The live reading is tried
+     first; a file:// document may refuse cssRules on a linked stylesheet as
+     cross-origin, and in that case the shipped stylesheet is read from disk —
+     the same file the window loaded. Its `:focus-within` / `:focus-visible`
+     twin is the same declaration and IS drivable; those checks are separate. */
+  const cssText = readFileSync(join(__dirname, "..", "renderer", "styles.css"), "utf8");
+  const hoverRuleHolds = async (spaced: string, onDisk: string, want: string): Promise<[boolean, string]> => {
+    const live = await js<string | null>(`window.__cssRule(${JSON.stringify(spaced)})`);
+    if (live !== null) return [live === want, `live rule ${JSON.stringify(live)} (want ${JSON.stringify(want)})`];
+    const found = cssText.includes(onDisk);
+    return [found, `cssRules unreadable on a file:// sheet; stylesheet on disk carries ${JSON.stringify(onDisk)}: ${found}`];
+  };
+
+  type SbToggle = {
+    on: boolean; pressed: string; title: string; state: string; rail: boolean;
+    narrow: boolean; expanded: boolean; width: number; bg: string; fg: string; accentText: string;
+  };
+  type SetBtn = {
+    text: string; act: string; title: string; classes: string; bg: string; fg: string;
+    height: number; width: number; keycaps: number; labelVisible: boolean; iconVisible: boolean;
+    belowLists: boolean; oldRow: number;
+  };
+  type Acts = {
+    present: boolean; vis?: string; opacity?: string; events?: string; height?: number;
+    order?: string[]; titles?: Array<string | null>;
+    dangerColor?: string | null; right?: number; anchorRight?: number | null; insideBubble?: number;
+  };
+
+  try {
+    // --- item 2: the sidebar toggle glows while the sidebar is open ----------
+    await js<void>("window.__settingsClose && window.__settingsClose()");
+    let sbt = await js<SbToggle>("window.__sbToggle()");
+    check(
+      "item 2: the sidebar button is on while the sidebar is open",
+      sbt.on && sbt.pressed === "true" && sbt.state === "open" && !sbt.rail
+        && sbt.title === "Hide sidebar (⌘ 0)" && sbt.width === 260,
+      JSON.stringify(sbt),
+    );
+    // __rail() drives the real act('toggle:sidebar'), the same verb the button
+    // and ⌘0 reach.
+    await js<unknown>("window.__rail()");
+    const railed = await js<SbToggle>("window.__sbToggle()");
+    check(
+      "item 2: collapsing the sidebar turns the button off",
+      !railed.on && railed.pressed === "false" && railed.state === "rail" && railed.rail
+        && railed.width === 52 && railed.title === "Show sidebar (⌘ 0)",
+      JSON.stringify(railed),
+    );
+    // --- item 3 and item 8 in the rail, while it is collapsed ---------------
+    const railBtn = await js<SetBtn | null>("window.__settingsBtn()");
+    check(
+      "item 8: the collapsed rail keeps the settings entry as the gear alone",
+      !!railBtn && !railBtn.labelVisible && railBtn.iconVisible && railBtn.width === 32
+        && railBtn.keycaps === 0 && railBtn.title === "Settings (⌘ ,)",
+      JSON.stringify(railBtn),
+    );
+    await js<unknown>("window.__rail()");
+    sbt = await js<SbToggle>("window.__sbToggle()");
+    check(
+      "item 2: expanding it again turns the button back on",
+      sbt.on && sbt.state === "open" && !sbt.rail && sbt.width === 260,
+      JSON.stringify(sbt),
+    );
+    // The glow must survive a full render — the class is re-applied from the
+    // state by renderSidebar, so it can never drift.
+    const rendered = await js<SbToggle>("window.__renderProbe()");
+    check(
+      "item 2: the glow survives a render",
+      rendered.on && rendered.rail === false && rendered.state === "open",
+      JSON.stringify(rendered),
+    );
+    // The 52px rail also happens with NO class below 1000px. The flag still
+    // says open; the button must be honestly off.
+    const size = win ? win.getContentSize() : null;
+    if (size) {
+      win!.setContentSize(940, size[1]);
+      await wait(500);
+      const narrow = await js<SbToggle>("window.__sbToggle()");
+      check(
+        "item 2: the glow tracks the responsive rail, not just the class",
+        !narrow.on && narrow.narrow && !narrow.expanded && narrow.state === "open"
+          && !narrow.rail && narrow.width === 52 && narrow.title === "Show sidebar (⌘ 0)",
+        JSON.stringify(narrow),
+      );
+      win!.setContentSize(size[0], size[1]);
+      await wait(500);
+      const back = await js<SbToggle>("window.__sbToggle()");
+      check(
+        "item 2: widening the window lights it again",
+        back.on && !back.narrow && back.width === 260,
+        JSON.stringify(back),
+      );
+    }
+    // The "on" treatment is the accent, in both themes, with no new token.
+    const dark = await js<SbToggle>("window.__theme('dark')");
+    const light = await js<SbToggle>("window.__theme('light')");
+    await js<unknown>("window.__theme('system')");
+    const alpha = (rgba: string): number => {
+      const m = /rgba?\(\s*0,\s*106,\s*255(?:,\s*([\d.]+))?\s*\)/.exec(rgba.replace(/\s+/g, " "));
+      return m ? (m[1] === undefined ? 1 : Number(m[1])) : -1;
+    };
+    check(
+      "item 2: the on state is the accent wash in both themes",
+      dark.on && light.on
+        && Math.abs(alpha(dark.bg) - 0.16) < 0.005 && Math.abs(alpha(light.bg) - 0.1) < 0.005
+        && dark.fg === "rgb(91, 157, 255)" && light.fg === "rgb(0, 87, 214)",
+      `dark bg=${dark.bg} fg=${dark.fg}; light bg=${light.bg} fg=${light.fg}`,
+    );
+
+    // --- item 8: the bottom-left entry is a plain blue button ----------------
+    const setBtn = await js<SetBtn | null>("window.__settingsBtn()");
+    check(
+      "item 8: the settings entry is a plain button with no keycap and no icon",
+      !!setBtn && setBtn.text === "Settings" && setBtn.act === "settings:tasks"
+        && setBtn.keycaps === 0 && setBtn.labelVisible && !setBtn.iconVisible
+        && setBtn.oldRow === 0 && /(^|\s)btn(\s|$)/.test(setBtn.classes) && /(^|\s)btn-p(\s|$)/.test(setBtn.classes),
+      JSON.stringify(setBtn),
+    );
+    // #sidebar is 260px with box-sizing:border-box and a 1px right border, so
+    // the content box is 259 and the button inside 2×12 of padding is 235.
+    check(
+      "item 8: it is 32px tall, full width, below the lists",
+      !!setBtn && setBtn.height === 32 && setBtn.width === 235 && setBtn.belowLists,
+      setBtn ? `${setBtn.width}×${setBtn.height}, belowLists=${setBtn.belowLists}` : "no button",
+    );
+    const setDark = await js<SetBtn>("(() => { window.__theme('dark'); return window.__settingsBtn(); })()");
+    const setLight = await js<SetBtn>("(() => { window.__theme('light'); return window.__settingsBtn(); })()");
+    await js<unknown>("window.__theme('system')");
+    check(
+      "item 8: it is the accent in both themes",
+      setDark.bg === "rgb(0, 106, 255)" && setDark.fg === "rgb(255, 255, 255)"
+        && setLight.bg === "rgb(0, 106, 255)" && setLight.fg === "rgb(255, 255, 255)",
+      `dark ${setDark.bg}/${setDark.fg}; light ${setLight.bg}/${setLight.fg}`,
+    );
+    const opened = await js<{ settings: boolean; pane: string | null }>("window.__settingsBtnClick()");
+    check(
+      "item 8: it still opens Manage › Tasks",
+      opened.settings && opened.pane === "tasks",
+      JSON.stringify(opened),
+    );
+
+    // --- item 5: clicking outside the menu closes it -------------------------
+    // The settings window is open from the check above.
+    const outside = await js<{ settings: boolean; pane: string | null; overlay: string | null }>(
+      "window.__setClick('outside')",
+    );
+    check("item 5: a click on the backdrop closes the menu", !outside.settings, JSON.stringify(outside));
+    let reopened = await js<{ settings: boolean; pane: string }>("window.__openSettings()");
+    const inside = await js<{ settings: boolean; pane: string | null }>("window.__setClick('inside')");
+    check(
+      "item 5: a click inside the window does not",
+      reopened.settings && inside.settings && inside.pane === "tasks",
+      JSON.stringify(inside),
+    );
+    const tabbed = await js<{ settings: boolean; pane: string | null }>("window.__setClickTab('skills')");
+    check(
+      "item 5: a control inside the window still wins over the backdrop",
+      !!tabbed && tabbed.settings && tabbed.pane === "skills",
+      JSON.stringify(tabbed),
+    );
+    const dragout = await js<{ settings: boolean; pane: string | null }>("window.__setClick('dragout')");
+    check(
+      "item 5: a selection dragged out of the window does not close it",
+      dragout.settings,
+      `${JSON.stringify(dragout)} (mousedown inside .setwin, click resolves to #settings)`,
+    );
+    // A popover stacked over the window keeps its clicks: #overlays is a
+    // sibling subtree the stylesheet raises above #settings.
+    await js<unknown>("window.__modeOpenPopover()");
+    const pop = await js<{ settings: boolean; overlay: string | null } | null>("window.__setClickPopover()");
+    check(
+      "item 5: a popover stacked over the window survives a click inside it",
+      !!pop && pop.settings && pop.overlay === "modes",
+      JSON.stringify(pop),
+    );
+    await js<void>("window.__settingsClose(); window.__clearToasts()");
+    // Escape is unchanged, and the MENUFOCUS hook cannot trip the new branch:
+    // it dispatches neither mousedown nor click.
+    reopened = await js<{ settings: boolean; pane: string }>("window.__openSettings()");
+    const blur = await js<{ stolen: boolean } | null>("window.__menuFocusBlur()");
+    check(
+      "item 5: the focus-blur hook still tests MENUFOCUS and not the new branch",
+      !!blur && blur.stolen === false && (await js<boolean>("!!window.__settingsPane()")),
+      JSON.stringify(blur),
+    );
+    const esc = await js<{ pane: string | null }>("window.__esc()");
+    check("item 5: Escape still closes the menu", esc.pane === null, JSON.stringify(esc));
+    await js<void>("window.__settingsClose(); window.__clearToasts()");
+
+    // --- item 3: mark a session as unread -----------------------------------
+    const chats = await js<Array<{ id: string; dot: string; name: string }>>(
+      "window.__sidebar().chats.map((c) => ({id:c.id, dot:c.dot, name:c.name}))",
+    );
+    const target = chats[0];
+    if (!target) {
+      check("item 3: mark as unread", false, "no chat rows in the sidebar to test against");
+    } else {
+      // Open it first — opening a chat is reading it, so the row reads read and
+      // the control is on offer.
+      await js<unknown>(`window.__openSession(${JSON.stringify(target.id)})`);
+      await wait(1200);
+      const readRow = await js<{ present: boolean; title: string; vis: string; dot: string }>(
+        `window.__unreadCtl(${JSON.stringify(target.id)})`,
+      );
+      check(
+        "item 3: a read row offers Mark as unread, hidden until hover",
+        readRow.present && readRow.title === "Mark as unread" && readRow.vis === "hidden" && readRow.dot === "empty",
+        `${JSON.stringify(readRow)} (:hover is not synthesisable from script — the rule text is asserted below)`,
+      );
+      const [unreadHover, unreadDetail] = await hoverRuleHolds(
+        ".sesrow:hover .unreadbtn, .sesrow:focus-within .unreadbtn",
+        ".sesrow:hover .unreadbtn,.sesrow:focus-within .unreadbtn{visibility:visible}",
+        "visibility: visible;",
+      );
+      check("item 3: the control is revealed by hover or keyboard focus", unreadHover, unreadDetail);
+      const marked = await js<{ clicked: boolean; dot: string; seen: number | null; stayedPut: boolean }>(
+        `window.__markUnread(${JSON.stringify(target.id)})`,
+      );
+      check(
+        "item 3: the control fills the dot without opening the chat",
+        marked.clicked && marked.dot === "filled" && marked.seen === null && marked.stayedPut,
+        `${JSON.stringify(marked)} (stayedPut proves the branch beat [data-ses])`,
+      );
+      const survived = await js<{ dot: string; seen: number | null }>(
+        `window.__unreadSurvives(${JSON.stringify(target.id)})`,
+      );
+      const stored = await js<{ ok: boolean; data: { pinned: string[]; seen: Record<string, number> } }>("window.__prefs()");
+      check(
+        "item 3: and it stays unread across a real refresh",
+        survived.dot === "filled" && survived.seen === null
+          && !Object.prototype.hasOwnProperty.call(stored.data.seen, target.id),
+        `${JSON.stringify(survived)}; prefs.seen has the id: ${Object.prototype.hasOwnProperty.call(stored.data.seen, target.id)}`,
+      );
+      const already = await js<{ present: boolean }>(`window.__unreadCtl(${JSON.stringify(target.id)})`);
+      check(
+        "item 3: an already-unread row offers nothing",
+        !already.present,
+        JSON.stringify(already),
+      );
+      const args = await js<{ id: string; pinned: boolean; unread: boolean }>(
+        `window.__sessionMenuArgs(${JSON.stringify(target.id)})`,
+      );
+      check(
+        "item 3: the right-click menu is told the row is unread",
+        args.unread === true && args.id === target.id,
+        `${JSON.stringify(args)} (Menu.popup opens a native window, so the payload the renderer sends is what is asserted;`
+        + ` the app:menu → act() round trip is driven directly below)`,
+      );
+      // The menu's verb, through the same act() the app:menu listener calls.
+      await js<unknown>(`window.__openSession(${JSON.stringify(target.id)})`);
+      await wait(1200);
+      const reread = await js<{ dot: string }>(`window.__unreadCtl(${JSON.stringify(target.id)})`);
+      const viaMenu = await js<{ dot: string }>(
+        `(() => { act('unread:' + ${JSON.stringify(target.id)}); return window.__unreadCtl(${JSON.stringify(target.id)}); })()`,
+      );
+      check(
+        "item 3: opening the chat reads it again, and the menu verb re-marks it",
+        reread.dot === "empty" && viaMenu.dot === "filled",
+        `after open ${reread.dot}, after act('unread:…') ${viaMenu.dot}`,
+      );
+      // Read it again first: the control is only emitted on a row that reads
+      // read, and the check above deliberately left this one unread.
+      await js<unknown>(`window.__openSession(${JSON.stringify(target.id)})`);
+      await wait(1200);
+      await js<unknown>("window.__rail()");
+      const inRail = await js<{ present: boolean; railDisplay: string }>(`window.__unreadCtl(${JSON.stringify(target.id)})`);
+      check(
+        "item 3: the collapsed rail keeps only the dot",
+        inRail.present && inRail.railDisplay === "none",
+        JSON.stringify(inRail),
+      );
+      await js<unknown>("window.__rail()");
+    }
+
+    // --- item 6: a new chat puts the caret in the prompt ---------------------
+    const fresh = await js<{ id: string; caret: number[] | null; logLen: number; sessionId: string; settings: boolean }>(
+      "window.__newChatFocus()",
+    );
+    check(
+      "item 6: a new chat puts the keyboard focus in the prompt",
+      fresh.id === "entry" && fresh.logLen === 0 && fresh.sessionId === "" && !fresh.settings
+        && JSON.stringify(fresh.caret) === "[0,0]",
+      JSON.stringify(fresh),
+    );
+    check(
+      "item 6: and the focus survives the full re-renders that follow",
+      (await js<string>("window.__newChatFocusSurvives()")) === "entry",
+      "two full render() passes after the verb",
+    );
+    check(
+      "item 6: every route into a new chat focuses it",
+      (await js<string>("window.__newChatFromSidebar()")) === "entry"
+        && (await js<string>("window.__cmdN()")) === "entry",
+      "the sidebar Chats plus and ⌘N",
+    );
+    const typed = await js<{ focused: boolean; caret: number[]; value: string }>("window.__typeThenRender()");
+    check(
+      "item 6: a render no longer interrupts a message being typed",
+      typed.focused && JSON.stringify(typed.caret) === "[6,6]" && typed.value === "typing mid-word",
+      JSON.stringify(typed),
+    );
+    await js<void>("window.__clearToasts()");
+
+    // --- item 4: hover actions on a message ---------------------------------
+    // A fresh transcript from the item-6 verb above, then one real turn so both
+    // a user message and a finished reply are on screen.
+    await js<unknown>("window.__ask('Reply with exactly: chrome lane ready')");
+    const deadline = Date.now() + 150_000;
+    let reply = "";
+    while (Date.now() < deadline) {
+      reply = (await js<string>("window.__lastReply()")) ?? "";
+      if (/chrome lane ready/i.test(reply)) break;
+      await wait(1000);
+    }
+    litter = await js<string | null>("window.__agentSession()");
+    check("item 4: the fixture turn answered", /chrome lane ready/i.test(reply), JSON.stringify(reply.slice(0, 80)));
+
+    const asstActs = await js<Acts | null>("window.__msgActs('assistant')");
+    const userActs = await js<Acts | null>("window.__msgActs('user')");
+    check(
+      "item 4: every message carries a copy control at its end, and only a user message carries retry",
+      !!asstActs && asstActs.present && JSON.stringify(asstActs.order) === '["copy"]'
+        && JSON.stringify(asstActs.titles) === '["Copy message"]'
+        && !!userActs && userActs.present && JSON.stringify(userActs.order) === '["resend","copy"]'
+        && JSON.stringify(userActs.titles) === '["Send this message again","Copy message"]',
+      `assistant ${JSON.stringify(asstActs)}; user ${JSON.stringify(userActs)}`,
+    );
+    check(
+      "item 4: the actions sit at the message's end and never inside the bubble",
+      !!userActs && !!asstActs
+        && Math.abs((userActs.right ?? 0) - (userActs.anchorRight ?? -1)) <= 1
+        && Math.abs((asstActs.right ?? 0) - (asstActs.anchorRight ?? -1)) <= 1
+        && userActs.insideBubble === 0,
+      `user right ${userActs?.right} vs bubble ${userActs?.anchorRight};`
+      + ` assistant right ${asstActs?.right} vs prose ${asstActs?.anchorRight};`
+      + ` .bubble .msgact count ${userActs?.insideBubble}`,
+    );
+    const [msgHover, msgHoverDetail] = await hoverRuleHolds(
+      ".turn:hover .msgacts, .msgacts:focus-within",
+      ".turn:hover .msgacts,.msgacts:focus-within{opacity:1;pointer-events:auto}",
+      "opacity: 1; pointer-events: auto;",
+    );
+    check(
+      "item 4: hidden at rest, revealed by hover or keyboard, and revealing shifts nothing",
+      !!userActs && userActs.opacity === "0" && userActs.events === "none" && userActs.height === 22 && msgHover,
+      `opacity=${userActs?.opacity} pointer-events=${userActs?.events} visibility=${userActs?.vis}`
+      + ` height=${userActs?.height}; ${msgHoverDetail};`
+      + " :hover is not synthesisable from script, so the rule's own text is asserted —"
+      + " its :focus-within twin is the same declaration and is driven below",
+    );
+    const focusUser = await js<{ opacity: string; same: boolean; heightSame: boolean } | null>("window.__msgActsFocus('user')");
+    const focusAsst = await js<{ opacity: string; same: boolean; heightSame: boolean } | null>("window.__msgActsFocus('assistant')");
+    check(
+      "item 4: keyboard focus reveals the row and moves no turn",
+      !!focusUser && focusUser.opacity === "1" && focusUser.same && focusUser.heightSame
+        && !!focusAsst && focusAsst.opacity === "1" && focusAsst.same && focusAsst.heightSame,
+      `user ${JSON.stringify(focusUser)}; assistant ${JSON.stringify(focusAsst)}`,
+    );
+    check(
+      "item 4: the retry control is red in both themes",
+      (await js<string>("(() => { window.__theme('dark'); return window.__msgActs('user').dangerColor; })()")) === "rgb(240, 112, 95)"
+        && (await js<string>("(() => { window.__theme('light'); return window.__msgActs('user').dangerColor; })()")) === "rgb(196, 52, 47)",
+      "the computed --danger in each theme",
+    );
+    await js<unknown>("window.__theme('system')");
+    const streamed = await js<{ streamingCount: number; finishedCount: number; offMessages: number } | null>(
+      "window.__streamActs()",
+    );
+    check(
+      "item 4: a streaming reply carries no actions, and a finished one does",
+      !!streamed && streamed.finishedCount === streamed.streamingCount + 1 && streamed.offMessages === 0,
+      `${JSON.stringify(streamed)} (offMessages is a guard, not coverage: msgActs is called from the two message branches of item() only)`,
+    );
+
+    // Copy really reaches the pasteboard, and copies the text — not the markup
+    // and not the desktop's own "Saved to …" footer.
+    const { clipboard } = require("electron") as typeof import("electron");
+    // Focus first: Chromium refuses a writeText from an unfocused document
+    // before it ever consults the permission layer, and on a machine running
+    // several of these windows at once that makes this check vacuous.
+    BrowserWindow.getAllWindows()[0]?.focus();
+    win?.webContents.focus();
+    await wait(300);
+    const clipBefore = await clipboard.readText();
+    const clipItems = await clipboard.read().catch(() => [] as Electron.ClipboardItem[]);
+    const clipTypes = clipItems.flatMap((i) => i.types);
+    const clipUnrestorable = (t: string): boolean =>
+      /^image\//i.test(t) || t === "text/html" || t === "text/rtf" || t === "text/uri-list"
+      || /bookmark/i.test(t)
+      || /public\.(png|tiff|jpeg|file-url)|NSFilenamesPboardType/i.test(t);
+    const clipRestorable = clipTypes.length === 0
+      || (clipTypes.includes("text/plain") && !clipTypes.some(clipUnrestorable));
+    if (!clipRestorable) {
+      check(
+        "item 4: copy puts the message text on the clipboard and nothing else",
+        true,
+        `skipped — the operator has non-text on the clipboard (${clipTypes.join("+")}) and writeText could not put it back`,
+      );
+    } else {
+      const copiedUser = await js<{ id: string; text: string } | null>("window.__clickCopy('user')");
+      await wait(400);
+      const clipUser = await clipboard.readText();
+      const copiedAsst = await js<{ id: string; text: string } | null>("window.__clickCopy('assistant')");
+      await wait(400);
+      const clipAsst = await clipboard.readText();
+      // A reply carrying the desktop's own attachment strip.
+      await js<boolean>("window.__pushAssistantAttached('the report is ready', '/tmp/report.md')");
+      await js<unknown>("window.__clickCopy('assistant')");
+      await wait(400);
+      const clipAttached = await clipboard.readText();
+      await js<number>("window.__popLog(1)");
+      const focusBlocked = /not focused/i.test(JSON.stringify(await js<string[]>("window.__toasts().map(String)")));
+      check(
+        "item 4: copy puts the message text on the clipboard and nothing else",
+        !!copiedUser && clipUser === copiedUser.text
+          && !!copiedAsst && clipAsst === copiedAsst.text
+          && clipAttached === "the report is ready"
+          && !/Saved to|\/tmp\/report\.md/.test(clipAttached),
+        `user ${JSON.stringify(clipUser.slice(0, 40))} === message ${clipUser === (copiedUser?.text ?? "")};`
+        + ` assistant match ${clipAsst === (copiedAsst?.text ?? "")};`
+        + ` attached reply → ${JSON.stringify(clipAttached)} (the "Saved to …" strip is the desktop's own footer and is not copied)`
+        + (focusBlocked ? "; NOTE the write was blocked by focus, not by the feature" : ""),
+      );
+      if (clipBefore) await clipboard.writeText(clipBefore);
+      else clipboard.clear();
+    }
+    // The same three cases again, this time through a shadowed
+    // navigator.clipboard so the exact string handed to the write — and the
+    // toast it produces — are asserted on a machine whose real pasteboard the
+    // run could not put back. Nothing here touches the system clipboard.
+    type Probe = { clicked: boolean; id: string | null; message: string | null; wrote: string[]; toasts: Array<[string, string, string]> };
+    const probeUser = await js<Probe>("window.__copyProbe('user','ok')");
+    const probeAsst = await js<Probe>("window.__copyProbe('assistant','ok')");
+    await js<boolean>("window.__pushAssistantAttached('the report is ready', '/tmp/report.md')");
+    const probeAttached = await js<Probe>("window.__copyProbe('assistant','ok')");
+    await js<number>("window.__popLog(1)");
+    check(
+      "item 4: copy hands the clipboard the message's text, not its markup or the desktop's footer",
+      probeUser.clicked && probeUser.wrote.length === 1 && probeUser.wrote[0] === probeUser.message
+        && probeAsst.clicked && probeAsst.wrote.length === 1 && probeAsst.wrote[0] === probeAsst.message
+        && probeAttached.wrote.length === 1 && probeAttached.wrote[0] === "the report is ready"
+        && !/Saved to|\/tmp\/report\.md/.test(probeAttached.wrote[0]),
+      `user wrote ${JSON.stringify(probeUser.wrote[0]?.slice(0, 40))}; assistant matched ${probeAsst.wrote[0] === probeAsst.message};`
+      + ` reply with an attachment strip wrote ${JSON.stringify(probeAttached.wrote[0])}`
+      + ` (the "Saved to …" lines are the desktop's own footer, derived from write-tool cards, and are not the agent's words)`,
+    );
+    check(
+      "item 4: a copy is announced only once it has happened",
+      JSON.stringify(probeUser.toasts) === '[["Copied message",null,"ok"]]',
+      JSON.stringify(probeUser.toasts),
+    );
+    const probeBad = await js<Probe>("window.__copyProbe('user','reject')");
+    check(
+      "item 4: a copy that fails is not announced as a success",
+      JSON.stringify(probeBad.toasts) === '[["Could not copy","probe refusal","bad"]]',
+      `${JSON.stringify(probeBad.toasts)} (kind "bad" is what swaps the green tick for the warn glyph in --danger)`,
+    );
+    await js<void>("window.__clearToasts()");
+    const emptyCopy = await js<Array<[string, string, string]>>(
+      "window.__copyReplyEmpty()",
+    );
+    check(
+      "item 4: the copy verbs no longer claim a copy they did not make",
+      emptyCopy.length === 1 && emptyCopy[0][0] === "Nothing to copy"
+        && emptyCopy[0][1] === "no reply in this transcript" && emptyCopy[0][2] === "bad",
+      `${JSON.stringify(emptyCopy)} (and a failure now draws the warn glyph in --danger, not a green tick)`,
+    );
+    await js<void>("window.__clearToasts()");
+
+    // Retry while a turn runs must not masquerade as a steer.
+    const busyRetry = await js<{ before: number; after: number; draft: string; entry: string; focused: boolean; toasts: Array<[string, string, string]> } | null>(
+      "window.__retryWhileBusy()",
+    );
+    check(
+      "item 4: retry refuses to masquerade as a steer while a turn runs",
+      !!busyRetry && busyRetry.after === busyRetry.before
+        && busyRetry.entry === "Reply with exactly: chrome lane ready"
+        && busyRetry.focused
+        && busyRetry.toasts.some((t) => t[0] === "A turn is already running"
+            && t[1] === "the message is in the composer — Enter folds it into this turn" && t[2] === "bad"),
+      JSON.stringify(busyRetry),
+    );
+    await js<void>("window.__clearToasts()");
+    // A draft in the composer is the operator's and is never destroyed.
+    const guarded = await js<{ before: number; after: number; entry: string; toasts: Array<[string, string, string]> } | null>(
+      "window.__retryWithDraft('half a sentence')",
+    );
+    check(
+      "item 4: retry never destroys a draft the operator is writing",
+      !!guarded && guarded.after === guarded.before && guarded.entry === "half a sentence"
+        && guarded.toasts.some((t) => t[0] === "Your draft is in the way" && t[2] === "bad"),
+      JSON.stringify(guarded),
+    );
+    await js<void>("window.__clearToasts()");
+    // And when idle it really sends, through submit() and every gate in it.
+    const sent = await js<{ before: number; after: number; tail: string; tailUser: string | null; draft: string } | null>("window.__clickRetry()");
+    check(
+      "item 4: retry re-sends the message as a new turn when idle",
+      !!sent && sent.after > sent.before && sent.tailUser === "Reply with exactly: chrome lane ready" && sent.draft === "",
+      `${JSON.stringify(sent)} (append-only: the agent has no rewind, so both copies stay in the transcript;`
+      + " the tail row is startLiveTurn's empty streaming item, so the sent message is the last user row)",
+    );
+    // Let the resent turn finish rather than leaving it running for the lanes
+    // that follow.
+    const settle = Date.now() + 150_000;
+    while (Date.now() < settle) {
+      if (!(await js<boolean>("window.__busy()"))) break;
+      await wait(1000);
+    }
+    check(
+      "item 4: the resent turn finished before this lane handed back",
+      !(await js<boolean>("window.__busy()")),
+      `busy=${await js<boolean>("window.__busy()")}`,
+    );
+
+    // The chord kept its homes now that the keycap is gone.
+    check(
+      "item 8: the ⌘ , chord is still discoverable without the keycap",
+      (await js<string | null>("window.__palShortcut('Tasks')")) === "⌘ ,"
+        && (await js<string | null>("window.__shortcutRow('Settings')")) === "⌘ ,",
+      "the ⌘K Tasks row, the ⌘/ shortcuts sheet and the button's own title;"
+      + " the fourth home is the macOS menu bar accelerator at desktop/main/menu.ts, drawn by the OS and not assertable from the renderer",
+    );
+  } finally {
+    await js<void>("window.__settingsClose && window.__settingsClose()");
+    await js<void>("window.__clearToasts && window.__clearToasts()");
+    await js<unknown>("window.__theme && window.__theme('system')");
+    if (litter && agent) await agent.deleteSession(litter).catch(() => undefined);
+    // Electron userData, NOT the agent state dir: ATOMIC_AGENT_STATE_DIR does
+    // not cover this file, so it is put back by hand.
+    writePrefs(prefsBefore);
+    await js<void>("window.__reloadPrefs && window.__reloadPrefs()");
+    process.stdout.write(`DIAG chrome lane prefs restored: pinned=${JSON.stringify(readPrefs().pinned)}\n`);
+  }
 }

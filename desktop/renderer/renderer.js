@@ -251,6 +251,26 @@ const SET = { tools:null, toolsFor:null, toolsBusy:false, health:null, healthBus
    moment the focus is no longer on that first row — moved to another control,
    or blurred to <body> by a click on dead space — or the window closes. */
 const MENUFOCUS = { want: false };
+/* r5 item 2 — the sidebar's open/collapsed state.
+   Until now the collapse was a DOM class toggled in place by act(), so the
+   toolbar button had nothing to read and could not glow. The state is
+   promoted here; renderSidebar re-applies the class from it on every render.
+   The rail also happens WITHOUT a class below 1000px (styles.css) — so
+   "expanded" is the conjunction of both facts, computed rather than mirrored,
+   or the glow would lie on a narrow window. */
+const NARROW = typeof window !== 'undefined' && window.matchMedia
+  ? window.matchMedia('(max-width:1000px)') : {matches:false, addEventListener(){}};
+function sidebarExpanded() { return S.sidebar !== 'rail' && !NARROW.matches; }
+/* r5 item 6 — "clicking new chat puts keyboard focus straight in the prompt
+   input" (the user's words). session:new raises the flag; afterChat consumes
+   it after the render that rebuilds the composer. A focus() call in the verb
+   itself would land on a textarea that render() is about to replace. */
+const FOCUS = { entry: false };
+/* r5 item 5 — where the press that produced the current click started. A
+   click whose mousedown was inside .setwin and whose mouseup was on the dim
+   backdrop resolves its target to #settings, so without this a text selection
+   dragged out of a panel would dismiss the window. */
+const SETDOWN = { outside: false };
 /* Installed skills incl. disabled ones, from `atag skill list` — the N in
    the Skills tab's ` (N)` suffix (debug-pane.tsx:162 counts every loaded
    row; GET /api/skills never carries disabled skills). */
@@ -543,6 +563,10 @@ const P = {
   trash:'<path d="M3 4.6h10M6.4 4.6V3.4a.9.9 0 0 1 .9-.9h1.4a.9.9 0 0 1 .9.9v1.2M4.4 4.6l.6 8a1 1 0 0 0 1 .9h4a1 1 0 0 0 1-.9l.6-8M6.8 7v4M9.2 7v4"/>',
   // item 6: pin / unpin a chat row
   pin:'<path d="M9.6 2.4 13.6 6.4l-2.1.7-2 2 .3 2.4-4.8-4.8 2.4.3 2-2z"/><path d="M5 11 2.6 13.4"/>',
+  /* r5 item 3: the filled dot the row is about to show. The inline fill/stroke
+     override ic()'s `fill="none" stroke="currentColor"` wrapper, so the glyph
+     reads as `.sdot.filled` rather than as an outline. */
+  unread:'<circle cx="8" cy="8" r="3.4" fill="currentColor" stroke="none"/>',
   // item 2: voice input — capsule + stand, on the same 1.5-stroke grid
   mic:'<rect x="6" y="2" width="4" height="7.5" rx="2"/><path d="M3.8 7.6a4.2 4.2 0 0 0 8.4 0"/><path d="M8 11.8v2M5.8 13.8h4.4"/>',
 };
@@ -620,7 +644,9 @@ const PAL = [
     ['atom','World','Observe','/world','insp:world'],
     ['bolt','Reasoning','Observe','/reasoning','insp:reasoning'],
     ['console','Logs','Console','/logs','console:agent'],
-    ['tasks','Tasks','Manage','','settings:tasks'],
+    // r5 item 8: the keycap left the bottom-left button, so the palette row
+    // that opens the same destination carries the chord instead.
+    ['tasks','Tasks','Manage','⌘ ,','settings:tasks'],
     ['skills','Skills','Manage','','settings:skills'],
     ['doc','Memory','Manage','⌘ 4','settings:memory'],
     ['link','MCP','Manage','/mcp','settings:mcp'],
@@ -657,6 +683,8 @@ const PAL = [
 const S = {
   room:'chat', theme:'system',
   inspector:true, inspTab:'steps',
+  sidebar:'open',   // r5 item 2: 'open' | 'rail' — the class on #sidebar is derived from this
+
   consoleOpen:false, consoleTab:'agent',
   settings:null, settingsPane:'tasks',
   overlay:null, menuOpen:null, alert:null,
@@ -736,12 +764,22 @@ function renderToolbar() {
   const [t, sub] = roomTitle();
   $('#toolbar').innerHTML =
     '<div class="lights"><span class="lg" style="background:#FF5F57"></span><span class="lg" style="background:#FEBC2E"></span><span class="lg" style="background:#28C840"></span></div>'
-    + '<button class="iconbtn" data-act="toggle:sidebar" title="Hide sidebar (Ctrl+0)">' + ic('sidebar') + '</button>'
+    // r5 item 2: "the sidebar toggle should glow blue while the sidebar is
+    // open" — the user's words. `.iconbtn.on` is the app's existing active
+    // treatment (the Inspector and Console buttons below use it), so the
+    // sidebar joins them rather than inventing a fourth look. The chord is
+    // printed as ⌘ 0, which is what shortcutsSheet and the keydown map ship.
+    + '<button class="iconbtn' + (sidebarExpanded() ? ' on' : '') + '" data-act="toggle:sidebar"'
+      + ' aria-pressed="' + sidebarExpanded() + '"'
+      + ' title="' + (sidebarExpanded() ? 'Hide sidebar (⌘ 0)' : 'Show sidebar (⌘ 0)') + '">' + ic('sidebar') + '</button>'
     + '<div class="tb-title"><b>' + esc(t) + '</b><span>' + esc(sub) + '</span></div>'
     + '<div class="tb-right">'
       + '<button class="searchbtn" data-act="palette">' + ic('search') + '<span class="sec">Search</span>' + keycaps('⌘ K') + '</button>'
       + '<button class="iconbtn' + (S.inspector ? ' on' : '') + '" data-act="toggle:inspector" title="Inspector">' + ic('inspector') + '</button>'
-      + '<button class="iconbtn' + (S.consoleOpen ? ' on' : '') + '" data-act="toggle:console" title="Console (Ctrl+Shift+Y)">' + ic('console') + '</button>'
+      // r5 item 2: converted with the sidebar's tooltip beside it — a toolbar
+      // where one chord reads "⌘ 0" and its neighbour "Ctrl+Shift+Y" is worse
+      // than either spelling alone. ⇧ ⌘ Y is what shortcutsSheet prints.
+      + '<button class="iconbtn' + (S.consoleOpen ? ' on' : '') + '" data-act="toggle:console" title="Console (⇧ ⌘ Y)">' + ic('console') + '</button>'
     + '</div>';
 }
 
@@ -777,6 +815,10 @@ function renderSidebar() {
   // scroll not to move.
   const prevLists = $('#sidebar').querySelector('.sb-lists');
   const keepScroll = prevLists ? prevLists.scrollTop : 0;
+  // r5 item 2: the class is derived from S.sidebar on every render, so it can
+  // never drift from the state the toolbar button reads. Applied BEFORE the
+  // innerHTML write — the geometry hooks measure in the same tick.
+  $('#sidebar').classList.toggle('rail', S.sidebar === 'rail');
   $('#sidebar').innerHTML =
     '<div class="sb-head">' + MARK_COLOR
       // r4-ui item 4: "On the line in the top left part with the user's workspace
@@ -821,7 +863,20 @@ function renderSidebar() {
       + '</div>'
     + '</div>'
     // Item 7: the bottom-left settings entry. Lands on Manage › Tasks, the TUI's default Manage tab.
-    + '<button class="sb-foot" data-act="settings:tasks" title="Settings (⌘ ,)">' + ic('gear') + '<span>Settings</span>' + keycaps('⌘ ,') + '</button>'
+    // r5 item 8, the user's words, which override the row this used to be:
+    // "the bottom-left settings entry becomes a plain blue button — no keycap
+    // hint, no second icon." So it is `.btn.btn-p` — the app's existing accent
+    // button, whose --accent/#fff pair is identical in all three theme states —
+    // full width, 32px, with the word and nothing else. Both children are
+    // always emitted and CSS picks one: a text node cannot be swapped for an
+    // SVG by CSS alone, and the 52px rail cannot hold the word. The chord keeps
+    // three homes (this title, ⌘K's Tasks row, the shortcuts sheet) plus the
+    // macOS menu bar's own accelerator, which the OS draws.
+    + '<div class="sb-footwrap">'
+      + '<button class="btn btn-p sb-settings" data-act="settings:tasks" title="Settings (⌘ ,)" aria-label="Settings">'
+        + '<span class="sb-settings-lb">Settings</span>'
+        + '<span class="sb-settings-ic">' + ic('gear') + '</span>'
+      + '</button></div>'
     ;
   if (keepScroll) {
     const lists = $('#sidebar').querySelector('.sb-lists');
@@ -899,6 +954,13 @@ function chatRow(s) {
     + ' title="' + esc(s.t + ' · ' + tip + (pinned ? ' · pinned' : '')) + '">'
     + '<span class="sdot ' + state + '"></span>'
     + '<span class="t1">' + esc(s.t) + '</span>'
+    /* r5 item 3: "a button to mark a session as unread." A span with
+       role="button", not a <button> — `.sesrow` is itself a button and the pin
+       beside it is a span for exactly that reason. Emitted only while the row
+       reads read, so the control never offers a no-op. */
+    + (state === 'empty'
+       ? '<span class="unreadbtn iconbtn" data-unread="' + esc(s.id) + '" title="Mark as unread" aria-label="Mark as unread" role="button">' + ic('unread') + '</span>'
+       : '')
     + '<span class="pinbtn iconbtn" data-pin="' + esc(s.id) + '" title="' + (pinned ? 'Unpin' : 'Pin') + '" role="button">' + ic('pin') + '</span>'
     + '</button>';
 }
@@ -919,7 +981,15 @@ function renderContent() {
     // bottom — afterChat snaps there anyway.
     const prev = $('#scroller');
     const keep = prev && !S.stick ? prev.scrollTop : null;
-    c.innerHTML = chatView(); afterChat(keep); return;
+    // r5 item 6: the composer is rebuilt by this write, so the focus and caret
+    // are captured first and handed to afterChat. This is what makes a focus
+    // set on a new chat survive the renders that follow (a stream frame, a
+    // poll) — and it closes the caret loss the code already complains about
+    // where a mid-word render would drop the caret of a first message.
+    const pe = document.getElementById('entry');
+    const hadFocus = !!(pe && document.activeElement === pe);
+    const caret = hadFocus ? [pe.selectionStart, pe.selectionEnd] : null;
+    c.innerHTML = chatView(); afterChat(keep, hadFocus, caret); return;
   }
   if (S.room === 'tasks')  { c.innerHTML = tasksView(); return; }
   c.innerHTML = skillsView();
@@ -954,10 +1024,18 @@ function item(m, end) {
   // The bubble text still goes through esc() only. A user message has never
   // been run through renderProse and must not start being, or a path someone
   // typed turns into a clickable chip inside their own message.
-  if (m.k === 'user') return '<div class="turn usr"><div class="prose usr bubble">' + esc(m.text) + '</div></div>';
+  // r5 item 4: the action row goes OUTSIDE the bubble, so the buttons are never
+  // drawn inside the accent-wash box.
+  if (m.k === 'user') return '<div class="turn usr"><div class="prose usr bubble">' + esc(m.text) + '</div>' + msgActs(m) + '</div>';
   // item 5: the reply, then the files this turn wrote, as an attachment footer.
+  /* r5 item 4: the action row goes after the attachment strip and BEFORE the
+     end mark. The mark is the turn's full stop and r4-ui's contract is that it
+     closes the column — the actions belong to this message, so they sit inside
+     it, above the mark. Nothing above them moves either way, so no
+     `#turn-<id>` anchor shifts and the fold/scroll-stability machinery is
+     untouched. */
   if (m.k === 'assistant') return '<div class="turn"><div></div>'
-    + '<div><div class="prose">' + renderProse(m.text) + '</div>' + attachStrip(m)
+    + '<div><div class="prose">' + renderProse(m.text) + '</div>' + attachStrip(m) + msgActs(m)
     + (end ? '<div class="endmark" title="turn complete">' + MARK_MONO + '</div>' : '') + '</div></div>';
   if (m.k === 'system') return '<div class="sysrow"><span></span><span>' + m.text + '</span></div>';
   if (m.k === 'reason') return '<div class="turn" id="turn-' + m.id + '"><div></div><div>'
@@ -966,6 +1044,108 @@ function item(m, end) {
   if (m.k === 'tool') return '<div class="turn" id="turn-' + m.id + '"><div></div><div>' + toolCard(m) + '</div></div>';
   if (m.k === 'approval') return '<div class="turn"><div></div><div>' + apprCard(m) + '</div></div>';
   return '';
+}
+
+/* ============================================================
+   r5 item 4 — hover actions on a message.
+
+   The user's words: "hovering any message shows a copy icon at its end; user
+   messages also get a red RETRY icon beside it", and on being asked what retry
+   means: resend that message as a new turn.
+
+   The row is ALWAYS in the flow and always occupies its 22px box; only
+   `visibility` flips, exactly as `.pinbtn` does on a sidebar row — so
+   revealing it cannot move one pixel of the transcript. A zero-height overlay
+   painted into the 20px inter-turn gap was rejected: the buttons would sit
+   outside their own `.turn`'s hover box and would vanish the moment the
+   pointer reached them.
+
+   "At its end" is taken literally on BOTH kinds: the row is right-aligned, so
+   copy sits at the user bubble's right edge and at the right edge of the
+   agent's content column, with retry immediately to its left on user rows.
+
+   Only user and assistant messages get a row. Tool cards, approvals and system
+   lines are not messages. Reasoning blocks are excluded too: what they hold is
+   the step trace the agent emitted while working, not the reply it wrote, and
+   they already fold open into selectable text. */
+function msgActs(m) {
+  const text = String(m.text || '');
+  if (!text.trim()) return '';
+  // Still streaming: there is nothing final to copy yet. The `&& S.busy` half
+  // is load-bearing — nothing clears S.streamId when a turn ENDS (only
+  // openSession does), so without it the copy button would be permanently
+  // missing from the last reply of every finished turn.
+  if (m.k === 'assistant' && m.id === S.streamId && S.busy) return '';
+  const copy = '<button class="msgact" data-copy="' + esc(m.id) + '" title="Copy message" aria-label="Copy message">' + ic('copy') + '</button>';
+  if (m.k !== 'user') return '<div class="msgacts">' + copy + '</div>';
+  return '<div class="msgacts usr">'
+    + '<button class="msgact danger" data-resend="' + esc(m.id) + '" title="Send this message again" aria-label="Send this message again">' + ic('refresh') + '</button>'
+    + copy + '</div>';
+}
+
+/* What is copied is `m.text` and only `m.text`. For a user message that is the
+   exact string submit() pushed; for an assistant one it is the reply as the
+   agent streamed it or the store returned it. renderProse rewrites bare paths
+   into `.filechip` buttons and URLs into `.msglink` anchors out of substrings
+   of m.text, so those round-trip as the plain path or URL — the clipboard gets
+   the text, not the markup. The "Saved to …" attachment strip is deliberately
+   NOT copied: those lines are the desktop's own footer, derived from write-tool
+   cards plus an fs.stat, and the agent never wrote them. The tooltip says
+   "Copy message", so nothing promises otherwise. */
+function copyMessage(id) {
+  const m = S.log.find((x) => x.id === id);
+  if (!m) return;
+  copyText(String(m.text || ''), 'Copied message');
+}
+
+/* Retry = send this message's text again as a new turn. It cannot mean
+   "regenerate": the agent's HTTP surface has no edit, truncate or rewind for a
+   session, so the transcript keeps both copies and the context window grows
+   accordingly. The tooltip therefore says "Send this message again".
+
+   While a turn runs the button does NOT send. Not because the agent refuses —
+   it does not; the TurnController is strictly FIFO, so a second POST
+   /v1/chat/completions would QUEUE behind the running turn (and the agent's own
+   409 on the steer route recommends chat/completions as the fallback). It is
+   because submit() routes anything typed during a turn to steerOrQueue, which
+   folds it INTO the running turn. A steer and a turn queued behind another are
+   both something other than "send this again now", so the text is parked in the
+   composer and the toast says exactly what happened. */
+function resendUser(id) {
+  const m = S.log.find((x) => x.id === id && x.k === 'user');
+  if (!m) return;
+  const text = String(m.text || '').trim();
+  if (!text) return;
+  const e = $('#entry');
+  // The microphone owns the composer while it is open: submit() stops the
+  // recording instead of sending, and overwriting the editor here would throw
+  // the dictation away and send nothing.
+  if (VOICE.state === 'recording' || VOICE.state === 'starting' || VOICE.state === 'finishing') {
+    toast('The microphone is open', 'finish or cancel the dictation, then retry', 'bad');
+    return;
+  }
+  // A half-written draft is the operator's, and nothing here may destroy it
+  // with no undo — the same rule that keeps Escape from clearing the composer.
+  const draft = String((e ? e.value : S.draft) || '').trim();
+  if (draft && draft !== text) {
+    toast('Your draft is in the way', 'send or clear the composer, then retry', 'bad');
+    if (e) e.focus();
+    return;
+  }
+  if (S.busy || S.pending) {
+    S.draft = text;
+    if (e) { e.value = text; autosize(e); e.focus(); e.setSelectionRange(e.value.length, e.value.length); }
+    toast('A turn is already running', 'the message is in the composer — Enter folds it into this turn', 'bad');
+    return;
+  }
+  // Both the editor and S.draft, because submit() reads `e.value` FIRST and
+  // only falls back to S.draft — setting the draft alone would send whatever
+  // stale text the textarea happens to hold. Going through submit() rather
+  // than startLiveTurn keeps every gate: slash commands, the disconnected
+  // agent line and the local-model turn gate.
+  S.draft = text;
+  if (e) { e.value = text; autosize(e); }
+  submit();
 }
 
 function previewArgs(args) {
@@ -1254,11 +1434,26 @@ function voiceMenuHTML() {
     + '</div>';
 }
 
-function afterChat(keep) {
+function afterChat(keep, hadFocus, caret) {
   const e = $('#entry');
   if (!e) return;
   e.value = S.draft;
   autosize(e);
+  /* r5 item 6: "clicking new chat puts keyboard focus straight in the prompt
+     input" — the user's words. The flag is raised by session:new and consumed
+     here, after the render that rebuilt this textarea. The carry leg below is
+     what makes it survive every render that follows: by then #entry is already
+     the active element, so the focus is re-established rather than dropped.
+     Both legs stay ABOVE the approval branch, or an arriving approval would
+     stop taking the focus to #denybtn and y/n would land in the textarea. */
+  if (FOCUS.entry) {
+    FOCUS.entry = false;
+    e.focus();
+    e.setSelectionRange(e.value.length, e.value.length);
+  } else if (hadFocus) {
+    e.focus();
+    if (caret) e.setSelectionRange(Math.min(caret[0], e.value.length), Math.min(caret[1], e.value.length));
+  }
   const sc = $('#scroller');
   if (sc) {
     sc.addEventListener('scroll', () => {
@@ -1724,6 +1919,13 @@ function renderSettings() {
   const cur = settingsPaneId(S.settingsPane);
   const el = document.createElement('div');
   el.id = 'settings';
+  /* r5 item 5: "clicking outside the menu closes it" — the user's words. The
+     desktop's only menu is this window (the README's contract: "Settings is
+     the TUI menu"; the prototype #menubar is never populated). The element is
+     a full-bleed dim backdrop with `.setwin` centred in it, and this attribute
+     is what the click handler's new branch tests. Deliberately NOT `data-close`:
+     that branch runs act('close'), which does not clear S.settings. */
+  el.dataset.setclose = '1';
   const strip = SETTINGS_TABS.map(([id, label], i) =>
       (i ? '<span class="tabsep">  |  </span>' : '')
       + '<button class="settab' + (cur === id ? ' on' : '') + '" data-act="settings:' + id + '">' + esc(label + tabSuffix(id)) + '</button>').join('');
@@ -1988,17 +2190,40 @@ async function privacySet(enabled) {
 }
 
 /* ---------------- toasts ---------------- */
+/* r5 item 4: every toast used to ship a green tick, so "Could not copy" and
+   "A turn is already running" announced themselves as successes. The point of
+   item 4 is that nothing may claim something it did not do, and a success glyph
+   on a failure is that same lie in a different place — so a toast now carries a
+   kind, and `bad` draws the warn glyph in --danger. */
 function renderToasts() {
-  $('#toasts').innerHTML = S.toasts.map((t) =>
-    '<div class="toast"><span style="color:var(--success);display:flex">' + ic('check') + '</span>'
-    + '<span><span style="font-weight:500">' + esc(t.t) + '</span>'
-    + (t.s ? '<span class="cap" style="display:block">' + esc(t.s) + '</span>' : '') + '</span></div>').join('');
+  $('#toasts').innerHTML = S.toasts.map((t) => {
+    const bad = t.kind === 'bad';
+    return '<div class="toast' + (bad ? ' bad' : '') + '">'
+      + '<span style="color:var(--' + (bad ? 'danger' : 'success') + ');display:flex">' + ic(bad ? 'warn' : 'check') + '</span>'
+      + '<span><span style="font-weight:500">' + esc(t.t) + '</span>'
+      + (t.s ? '<span class="cap" style="display:block">' + esc(t.s) + '</span>' : '') + '</span></div>';
+  }).join('');
 }
-function toast(t, s) {
+function toast(t, s, kind) {
   const id = ++S.toastId;
-  S.toasts.push({id, t, s});
+  S.toasts.push({id, t, s, kind});
   renderToasts();
   setTimeout(() => { S.toasts = S.toasts.filter((x) => x.id !== id); renderToasts(); }, 6000);
+}
+
+/* r5 item 4: the one honest clipboard seam. There is no clipboard IPC — the
+   renderer writes navigator.clipboard directly and the main process allows both
+   clipboard permissions. Two shipped verbs used to announce a copy before (or
+   without) making one; every copy now goes through here, so a rejected write is
+   reported as a failure and a missing API says so. */
+function copyText(text, okTitle, okSub) {
+  if (!navigator.clipboard || !navigator.clipboard.writeText) {
+    toast('Could not copy', 'the clipboard is not available in this window', 'bad');
+    return Promise.resolve(false);
+  }
+  return navigator.clipboard.writeText(String(text))
+    .then(() => { toast(okTitle || 'Copied', okSub); return true; })
+    .catch((err) => { toast('Could not copy', String((err && err.message) || err), 'bad'); return false; });
 }
 
 /* ============================================================
@@ -2042,6 +2267,12 @@ function act(a) {
                              forgetApprovalCard();   // item 6 review fix: a fresh thread does not answer the open gate — the other chat's dot keeps saying it is waiting
                              S.room = 'chat';
                              S.sessionId = '';   // item 6: a fresh thread has no row of its own yet, so no row is highlighted
+                             /* r5 item 6: the settings window is a full-bleed dim backdrop over the
+                                composer, so a new chat started from ⌘N or the palette with it open
+                                would put the caret behind it. `room:chat` already clears it for the
+                                same reason; a new chat is a chat. */
+                             S.settings = null;
+                             FOCUS.entry = true;   // r5 item 6: afterChat focuses #entry after this render
                              render(); toast('New session', 'The next turn starts fresh');
                              // Lane B — item 3: a new thread has a new window fill (the TUI resets contextUsage on session_created), so the chip goes back to the projection.
                              refreshContext(); return; }
@@ -2062,7 +2293,19 @@ function act(a) {
     return;
   }
   if (a === 'send') { close(); submit(); return; }
-  if (a === 'retry') { close(); render(); toast('Retrying last turn'); return; }
+  /* r5 item 4: this verb used to toast "Retrying last turn" and retry nothing.
+     It is an orphan — no palette row, menu node, slash entry or markup reaches
+     it — but shipping a real retry button beside a fake retry verb is not
+     defensible, so it now runs the same resend the button does, on the last
+     user message. */
+  if (a === 'retry') {
+    close(); render();
+    for (let i = S.log.length - 1; i >= 0; i--) {
+      if (S.log[i].k === 'user' && String(S.log[i].text || '').trim()) { resendUser(S.log[i].id); return; }
+    }
+    toast('Nothing to send again', 'no message in this transcript', 'bad');
+    return;
+  }
   if (a === 'dump') { close(); render(); toast('Write debug bundle', 'not available in the desktop'); return; } // Item 7: no bundle writer in the desktop
   if (a === 'tools') { close(); S.inspector = true; S.inspTab = 'world'; render(); return; }
   if (a === 'restart') { close(); render(); toast('Agent runtime restarted'); return; }
@@ -2073,9 +2316,11 @@ function act(a) {
     // The TUI's /session prints the real id; the desktop shows the one it is talking to.
     close(); render();
     const id = S.agentSession || '';
-    if (!id) { toast('No session yet', 'send a message to start one'); return; }
-    toast('Session id', id);
-    if (navigator.clipboard) navigator.clipboard.writeText(id).catch(() => {});
+    if (!id) { toast('No session yet', 'send a message to start one', 'bad'); return; }
+    // r5 item 4: this used to toast "Session id" and THEN fire a writeText
+    // whose rejection was swallowed — a failed copy announced as a success.
+    // The id is still shown, but only once the write has actually landed.
+    copyText(id, 'Session id copied', id);
     return;
   }
   // Item 7: menu verbs that need the settings window out of the way first.
@@ -2087,7 +2332,15 @@ function act(a) {
   if (k === 'tasks') { close(); tasksAct(a.slice(6)); return; }
   if (a === 'privacy:analytics') { close(); privacyToggle(); return; }
   if (a === 'privacy:refresh') { close(); privacyRefresh(); return; }
-  if (a === 'copy:reply') { close(); render(); toast('Copied last reply'); return; }
+  // r5 item 4: this verb toasted "Copied last reply" and made no clipboard call
+  // at all. It copies the reply now, and says so honestly when there is none.
+  if (a === 'copy:reply') {
+    close(); render();
+    const last = S.log.slice().reverse().find((m) => m.k === 'assistant' && String(m.text || '').trim());
+    if (!last) { toast('Nothing to copy', 'no reply in this transcript', 'bad'); return; }
+    copyText(last.text, 'Copied last reply');
+    return;
+  }
   if (a === 'workspace') { close(); render(); toast('Workspace', '~/Teletubbies · rw'); return; }
   if (a === 'analytics') { close(); const opened = !S.settings; S.settings = 1; S.settingsPane = 'privacy'; render(); settingsPaneEntered(opened); return; }
   if (a === 'jump:appr') { const c = $('#apprcard'); if (c) c.scrollIntoView({block:'center', behavior:'smooth'}); return; }
@@ -2114,7 +2367,9 @@ function act(a) {
   }
   if (k === 'insp')      { close(); S.inspector = true; S.inspTab = v; render(); return; }
   if (k === 'console')   { close(); S.consoleOpen = true; S.consoleTab = v; render(); return; }
-  if (k === 'toggle')    { close(); if (v === 'sidebar') $('#sidebar').classList.toggle('rail');
+  // r5 item 2: the collapse is state now, not a class poked in place — renderSidebar
+  // derives the class from it, so the toolbar button can read it and glow.
+  if (k === 'toggle')    { close(); if (v === 'sidebar') S.sidebar = S.sidebar === 'rail' ? 'open' : 'rail';
                            else if (v === 'inspector') S.inspector = !S.inspector;
                            else S.consoleOpen = !S.consoleOpen; render(); return; }
   if (k === 'settings')  { close(); const opened = !S.settings; S.settings = 1; S.settingsPane = settingsPaneId(v); render(); settingsPaneEntered(opened); return; }
@@ -2147,6 +2402,20 @@ function act(a) {
   // item 6: pin / unpin, and the two lists' pagination.
   if (k === 'pin')       { if (!PREFS.pinned.includes(v)) PREFS.pinned.unshift(v); savePrefs(); render(); nameVisibleSessions(); return; }
   if (k === 'unpin')     { PREFS.pinned = PREFS.pinned.filter((x) => x !== v); savePrefs(); render(); nameVisibleSessions(); return; }
+  /* r5 item 3: mark a chat unread. One mechanism only — drop the read stamp.
+     chatDot treats a MISSING stamp as unread (`!(seen >= 0)`), and the only
+     writers of PREFS.seen are markSeen — reached from openSession alone — and
+     the two turn-end stamps, both guarded on `sid === S.sessionId`. Neither
+     refreshSessions nor nameVisibleSessions writes it, so the row stays filled
+     across refreshes until the chat is opened again. A sentinel value or a
+     second store would only be a second thing to keep in sync.
+     ATTN is deliberately untouched: adding to it would draw "the last turn
+     failed" on a chat whose turn did not fail.
+     The one case this does not survive is the chat currently ON SCREEN when
+     its own turn ends — the terminal frame re-stamps S.sessionId so the chat
+     you are reading does not mark itself unread as replies land. Every other
+     chat is unaffected. */
+  if (k === 'unread')    { delete PREFS.seen[v]; savePrefs(); render(); return; }
   if (k === 'more')      { if (PAGE[v] != null) PAGE[v]++; render(); nameVisibleSessions(); return; }
   // Opening a task = reading it. The Tasks tab is the only place with a task
   // detail on this tree, so the row lands there with that task selected.
@@ -2412,6 +2681,18 @@ function runSlash(parts) {
 }
 
 /* ---------------- events ---------------- */
+/* r5 item 5: remember where the press that will produce the next click
+   started. Capture phase so nothing can stop it first. A click whose mousedown
+   landed inside `.setwin` and whose mouseup landed on the dim backdrop resolves
+   its target to the common ancestor #settings, so without this a text selection
+   dragged out of a panel would close the window. The reverse — a press that
+   starts on the backdrop and releases inside `.setwin` — still closes it; that
+   is the conventional behaviour and this guard does not claim to cover it. */
+document.addEventListener('mousedown', (e) => {
+  const t = e.target;
+  SETDOWN.outside = !!(t && t.closest && t.closest('[data-setclose]') && !t.closest('.setwin'));
+}, true);
+
 document.addEventListener('click', (e) => {
   const t = e.target;
   if (t.closest('[data-closemenu]')) { S.menuOpen = null; render(); return; }
@@ -2435,11 +2716,32 @@ document.addEventListener('click', (e) => {
   // a real control always wins over the dismiss-on-scrim handler behind it
   const a = t.closest('[data-act]'); if (a) { e.preventDefault(); act(a.dataset.act); return; }
   if (t.closest('[data-close]') && !t.closest('.pal, .sheet, .popover, .alertbox')) { act('close'); return; }
+  /* r5 item 5: an outside click dismisses the settings window. Placed AFTER
+     the [data-act] branch above, so every real control inside — and the two
+     close buttons drawn on the backdrop's own child — still wins. The press
+     must have started on the backdrop too. `settings:close` is the verb, never
+     `close`: the shared close() does not clear S.settings.
+     The popovers that deliberately keep clicks inside (.pal / .sheet /
+     .popover / .alertbox) render into #overlays, a sibling subtree the
+     stylesheet stacks ABOVE #settings, so closest('[data-setclose]') is
+     already null for them; the clause below mirrors the scrim line as
+     belt-and-braces. */
+  if (SETDOWN.outside && t.closest('[data-setclose]') && !t.closest('.setwin')
+      && !t.closest('.pal, .sheet, .popover, .alertbox')) {
+    SETDOWN.outside = false; act('settings:close'); return;
+  }
   const ap = t.closest('[data-appr]'); if (ap) { answer(ap.dataset.appr); return; }
   const rm = t.closest('[data-room]'); if (rm) { act('room:' + rm.dataset.room); return; }
   // item 6: the pin button sits inside the row, so it has to win over it
   const pn = t.closest('[data-pin]');
   if (pn) { e.preventDefault(); e.stopPropagation(); act((PREFS.pinned.includes(pn.dataset.pin) ? 'unpin:' : 'pin:') + pn.dataset.pin); return; }
+  /* r5 item 3: same shape as the pin beside it, and for the same reason — the
+     control sits INSIDE the row button, so it has to win over it. The ordering
+     (before [data-ses]) and the stopPropagation are load-bearing: without
+     either, the click opens the session, openSession runs markSeen, and the
+     mark is undone by the very gesture that made it. */
+  const ur = t.closest('[data-unread]');
+  if (ur) { e.preventDefault(); e.stopPropagation(); act('unread:' + ur.dataset.unread); return; }
   const mo = t.closest('[data-more]'); if (mo) { act('more:' + mo.dataset.more); return; }
   const tkr = t.closest('[data-task]'); if (tkr) { act('task:' + tkr.dataset.task); return; }
   const ss = t.closest('[data-ses]'); if (ss) { act('ses:' + ss.dataset.ses); return; }
@@ -2456,6 +2758,10 @@ document.addEventListener('click', (e) => {
   const go = t.closest('[data-goto]');
   if (go) { const el = document.getElementById('card-' + go.dataset.goto);
             if (el) { S.stick = false; el.scrollIntoView({block:'center', behavior:'smooth'}); el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 400); } return; }
+  // r5 item 4: real <button> elements inside a `.turn`, so no other selector in
+  // this handler competes for them.
+  const cp = t.closest('[data-copy]'); if (cp) { e.preventDefault(); copyMessage(cp.dataset.copy); return; }
+  const rs = t.closest('[data-resend]'); if (rs) { e.preventDefault(); resendUser(rs.dataset.resend); return; }
   const fill = t.closest('[data-fill]');
   if (fill) { S.draft = fill.dataset.fill; render(); const en = $('#entry'); if (en) { en.focus(); autosize(en); } return; }
   const pr = t.closest('[data-palrow]'); if (pr) { activatePal(+pr.dataset.palrow); return; }
@@ -3099,6 +3405,14 @@ document.addEventListener('keydown', (e) => {
 
 render();
 setTimeout(() => { const e = $('#entry'); if (e) e.focus(); }, 60);
+/* r5 item 2: below 1000px the sidebar collapses to the same 52px rail with no
+   class at all, so the button's glow has to track the breakpoint too or it
+   would claim the sidebar is open while it is a rail. matchMedia fires once per
+   crossing and this repaints the toolbar only — one innerHTML write that never
+   touches #content, so it cannot fight the composer's caret. Deliberately NOT a
+   resize listener: there is none in this file, and a per-frame render() would
+   rebuild the composer on every drag pixel. */
+if (NARROW.addEventListener) NARROW.addEventListener('change', () => renderToolbar());
 
 
 /* ============================================================
@@ -5564,7 +5878,11 @@ document.addEventListener('contextmenu', (e) => {
   const row = e.target.closest('[data-ses]');
   if (row && BR && BR.sessionMenu) {
     e.preventDefault();
-    BR.sessionMenu(row.dataset.ses, PREFS.pinned.includes(row.dataset.ses));
+    // r5 item 3: "Mark as Unread" joins Pin and Delete… in this menu. The third
+    // argument is the row's CURRENT unread state — main disables the item when
+    // the row already reads unread, so the menu never offers a no-op.
+    BR.sessionMenu(row.dataset.ses, PREFS.pinned.includes(row.dataset.ses),
+                   chatDot(SESSIONS.find((x) => x.id === row.dataset.ses))[0] !== 'empty');
     return;
   }
   const f = e.target.closest('[data-file]');
@@ -9969,9 +10287,12 @@ if (typeof window !== 'undefined') {
   window.__menuSubRows = () => document.querySelectorAll('#settings .menurow.sub, #settings .menurow.parent').length;
   /* Item 5: the focus ring is re-applied on every render while MENUFOCUS.want
      is up, so the flag has to drop the moment focus leaves the first menu row.
-     Clicking dead space is a blur to <body> and nothing else — no click handler
-     runs, because #settings carries no data-close — so that is what is done
-     here, followed by the full render that used to steal the focus back. */
+     Clicking dead space is a blur to <body> and nothing else, so that is what
+     is done here, followed by the full render that used to steal the focus
+     back. r5 item 5 gave #settings a `data-setclose` backdrop that DOES close
+     the window on an outside click — but that branch needs a real mousedown on
+     the backdrop followed by a real click, and this hook dispatches neither, so
+     MENUFOCUS is still the only thing under test here. */
   window.__menuFocusBlur = () => {
     const first = document.querySelector('#settings .setmenu button.menurow');
     if (!first) return null;
@@ -10680,6 +11001,320 @@ if (typeof window !== 'undefined') {
     S.log.length = keep.len;
     S.busy = keep.busy; S.settings = keep.settings;
     render();
+    return out;
+  };
+}
+
+/* ============================================================
+   r5 — Chrome lane hooks for `electron . --smoke` (items 2, 3, 4, 5, 6, 8).
+   Everything here returns plain JSON-serialisable values; nothing fabricates a
+   state the app is not really in.
+   ============================================================ */
+if (typeof window !== 'undefined') {
+  /* --- item 2 --- */
+  window.__sbToggle = () => {
+    const b = document.querySelector('#toolbar [data-act="toggle:sidebar"]');
+    const sb = document.querySelector('#sidebar');
+    if (!b || !sb) return null;
+    const cs = getComputedStyle(b);
+    return {on: b.classList.contains('on'), pressed: b.getAttribute('aria-pressed'),
+            title: b.getAttribute('title'), state: S.sidebar, rail: sb.classList.contains('rail'),
+            narrow: NARROW.matches, expanded: sidebarExpanded(),
+            width: Math.round(sb.getBoundingClientRect().width),
+            bg: cs.backgroundColor, fg: cs.color,
+            accentText: getComputedStyle(document.documentElement).getPropertyValue('--accent-text').trim()};
+  };
+  window.__theme = (t) => { act('theme:' + t); return window.__sbToggle(); };
+  window.__renderProbe = () => { render(); return window.__sbToggle(); };
+
+  /* --- item 3 --- */
+  window.__unreadCtl = (id) => {
+    const s = SESSIONS.find((x) => x.id === id);
+    const el = document.querySelector('.sesrow[data-ses="' + id + '"] [data-unread]');
+    return {present: !!el, title: el ? el.getAttribute('title') : '',
+            vis: el ? getComputedStyle(el).visibility : '',
+            railDisplay: el ? getComputedStyle(el).display : '',
+            dot: chatDot(s)[0]};
+  };
+  window.__markUnread = (id) => {
+    const el = document.querySelector('.sesrow[data-ses="' + id + '"] [data-unread]');
+    const before = S.sessionId;
+    if (el) el.click();
+    return {clicked: !!el, dot: chatDot(SESSIONS.find((s) => s.id === id))[0],
+            seen: PREFS.seen[id] === undefined ? null : PREFS.seen[id],
+            stayedPut: S.sessionId === before};
+  };
+  /* A real refresh from the agent plus a full render — the proof that nothing
+     re-stamps a chat that is not on screen. */
+  window.__unreadSurvives = async (id) => {
+    await refreshSessions();
+    render();
+    return {dot: chatDot(SESSIONS.find((s) => s.id === id))[0],
+            seen: PREFS.seen[id] === undefined ? null : PREFS.seen[id]};
+  };
+  /* Menu.popup opens a native window the harness cannot drive, so what is
+     asserted is the payload the renderer sends it. */
+  window.__sessionMenuArgs = (id) => ({id, pinned: PREFS.pinned.includes(id),
+                                       unread: chatDot(SESSIONS.find((x) => x.id === id))[0] !== 'empty'});
+
+  /* --- item 4 --- */
+  window.__msgActs = (which) => {
+    const rows = Array.from(document.querySelectorAll('.turn'));
+    const t = which === 'user'
+      ? rows.filter((r) => r.classList.contains('usr')).pop()
+      : rows.filter((r) => r.querySelector('.prose:not(.usr)')).pop();
+    if (!t) return null;
+    const box = t.querySelector('.msgacts');
+    if (!box) return {present: false};
+    const cs = getComputedStyle(box), br = box.getBoundingClientRect();
+    // Hidden with opacity, so that is what is reported; `vis` stays for the
+    // record because a visibility regression would show up there.
+
+    const btns = Array.from(box.querySelectorAll('button'));
+    const danger = btns.find((b) => b.classList.contains('danger'));
+    const anchor = t.querySelector('.bubble') || t.querySelector('.prose');
+    return {present: true, vis: cs.visibility, opacity: cs.opacity, events: cs.pointerEvents,
+            height: Math.round(br.height),
+            order: btns.map((b) => b.dataset.copy ? 'copy' : b.dataset.resend ? 'resend' : '?'),
+            titles: btns.map((b) => b.getAttribute('title')),
+            dangerColor: danger ? getComputedStyle(danger).color : null,
+            right: Math.round(br.right),
+            anchorRight: anchor ? Math.round(anchor.getBoundingClientRect().right) : null,
+            insideBubble: document.querySelectorAll('.bubble .msgact').length};
+  };
+  /* `:hover` cannot be synthesised from script, so the hover half of the
+     contract is asserted as the rule's own text; its `:focus-within` twin is
+     the same declaration and IS drivable, below. */
+  window.__cssRule = (sel) => {
+    for (const sh of document.styleSheets) {
+      let rs; try { rs = sh.cssRules; } catch (err) { continue; }
+      for (const r of rs) if (r.selectorText && r.selectorText.replace(/\s+/g, ' ') === sel) return r.style.cssText;
+    }
+    return null;
+  };
+  window.__msgActsFocus = (which) => {
+    const before = Array.from(document.querySelectorAll('.turn')).map((t) => Math.round(t.getBoundingClientRect().top));
+    const sc = $('#scroller');
+    const h0 = sc ? sc.scrollHeight : 0;
+    const list = document.querySelectorAll(which === 'user' ? '.turn.usr .msgact' : '.turn:not(.usr) .msgact');
+    const btn = list[list.length - 1];
+    if (!btn) return null;
+    // preventScroll: focusing a control that is below the fold would scroll the
+    // transcript, and "revealing shifts nothing" is exactly what is under test.
+    btn.focus({preventScroll: true});
+    const box = btn.closest('.msgacts');
+    const after = Array.from(document.querySelectorAll('.turn')).map((t) => Math.round(t.getBoundingClientRect().top));
+    return {vis: getComputedStyle(box).visibility, opacity: getComputedStyle(box).opacity,
+            same: JSON.stringify(before) === JSON.stringify(after),
+            heightSame: !sc || sc.scrollHeight === h0};
+  };
+  window.__clickCopy = (which) => {
+    const list = document.querySelectorAll(which === 'user' ? '.turn.usr [data-copy]' : '.turn:not(.usr) [data-copy]');
+    const b = list[list.length - 1];
+    if (!b) return null;
+    b.click();
+    return {id: b.dataset.copy, text: (S.log.find((m) => m.id === b.dataset.copy) || {}).text};
+  };
+  /* An assistant reply carrying the desktop's own "Saved to …" footer — the
+     strip must never reach the clipboard. */
+  window.__pushAssistantAttached = (text, path) => {
+    S.log.push({id: nid(), k: 'assistant', text,
+                attach: [{path, name: path.split('/').pop(), kind: 'file'}]});
+    render();
+    return !!document.querySelector('.attach');
+  };
+  window.__popLog = (n) => { S.log.length = Math.max(0, S.log.length - (n || 1)); render(); return S.log.length; };
+  /* What copy hands the clipboard, without touching the operator's pasteboard.
+     navigator.clipboard is shadowed by an own property for one click and the
+     shadow is deleted afterwards, so the exact string copyMessage passes — and
+     the toast it writes when the write resolves or rejects — can be asserted on
+     a machine whose real clipboard holds something this run could not put back.
+     The live pasteboard round trip is a separate check and skips in that case. */
+  window.__copyProbe = (which, mode) => new Promise((resolve) => {
+    const wrote = [];
+    Object.defineProperty(navigator, 'clipboard', {configurable: true, value: {
+      writeText: (t) => { wrote.push(String(t)); return mode === 'reject' ? Promise.reject(new Error('probe refusal')) : Promise.resolve(); },
+    }});
+    S.toasts = []; renderToasts();
+    const r = window.__clickCopy(which);
+    setTimeout(() => {
+      delete navigator.clipboard;
+      const out = {clicked: !!r, id: r ? r.id : null, message: r ? r.text : null,
+                   wrote, toasts: window.__toasts()};
+      S.toasts = []; renderToasts();
+      resolve(out);
+    }, 200);
+  });
+  window.__clickRetry = () => {
+    const list = document.querySelectorAll('.turn.usr [data-resend]');
+    const b = list[list.length - 1];
+    if (!b) return null;
+    const before = S.log.length;
+    b.click();
+    const e = $('#entry');
+    // The tail after a real send is startLiveTurn's EMPTY streaming assistant
+    // item, so the message that was sent is the last user row, not the last row.
+    const lastUser = S.log.slice().reverse().find((m) => m.k === 'user');
+    return {before, after: S.log.length, tail: (S.log[S.log.length - 1] || {}).text,
+            tailUser: lastUser ? lastUser.text : null,
+            draft: S.draft, entry: e ? e.value : null, focused: document.activeElement === e,
+            toasts: S.toasts.map((t) => [t.t, t.s, t.kind || 'ok'])};
+  };
+  window.__toasts = () => S.toasts.map((t) => [t.t, t.s, t.kind || 'ok']);
+  /* __busy and __session already exist above; __agentSession is the same
+     value under the name this lane's checks read. */
+  window.__agentSession = () => S.agentSession || null;
+  /* copy:reply on an empty transcript: the verb used to toast "Copied last
+     reply" unconditionally and copy nothing. The log is put back untouched. */
+  window.__copyReplyEmpty = () => {
+    const keep = S.log.slice();
+    S.log = [];
+    act('copy:reply');
+    const out = window.__toasts();
+    S.log = keep;
+    render();
+    return out;
+  };
+  /* Retry with a half-written draft in the composer. The draft is planted and
+     removed here; nothing is sent. */
+  window.__retryWithDraft = (text) => {
+    const e = $('#entry');
+    if (e) e.value = text;
+    S.draft = text;
+    const out = window.__clickRetry();
+    S.draft = '';
+    if (e) e.value = '';
+    render();
+    return out;
+  };
+  /* S.busy is poked and put back — the same synthetic-busy technique the
+     existing end-mark and Escape checks use. No turn is started. */
+  window.__retryWhileBusy = () => {
+    const keep = {busy: S.busy, draft: S.draft};
+    S.busy = true; render();
+    const out = window.__clickRetry();
+    S.busy = keep.busy; S.draft = keep.draft;
+    const e = $('#entry'); if (e) e.value = keep.draft;
+    render();
+    return out;
+  };
+  /* A finished assistant reply must carry a copy button even though S.streamId
+     still names it — nothing clears that when a turn ends. */
+  window.__streamActs = () => {
+    const keep = {busy: S.busy, streamId: S.streamId};
+    const last = S.log.slice().reverse().find((m) => m.k === 'assistant' && String(m.text || '').trim());
+    if (!last) return null;
+    S.streamId = last.id;
+    S.busy = true; render();
+    const streamingCount = document.querySelectorAll('.turn:not(.usr) .msgacts').length;
+    // The turn ends; S.streamId still names this message, which is exactly the
+    // state that used to hide the button forever.
+    S.busy = false; render();
+    const finishedCount = document.querySelectorAll('.turn:not(.usr) .msgacts').length;
+    S.busy = keep.busy; S.streamId = keep.streamId; render();
+    return {streamingCount, finishedCount,
+            // A guard, not coverage: msgActs is called from the two message
+            // branches of item() only, so these can never be non-zero.
+            offMessages: document.querySelectorAll('.card .msgacts, .sysrow .msgacts, .appr .msgacts, .discbody .msgacts').length};
+  };
+
+  /* --- item 5 --- */
+  window.__openSettings = () => { act('settings:tasks'); return {settings: !!S.settings, pane: settingsPaneId(S.settingsPane)}; };
+  /* 'outside'  — press and release on the dim backdrop.
+     'inside'   — press and release inside the window.
+     'dragout'  — press inside .setwin, release on the backdrop (a selection
+                  dragged out); the click's target resolves to #settings, which
+                  is exactly the case the mousedown guard exists for. */
+  window.__setClick = (where) => {
+    const s = document.getElementById('settings');
+    if (!s) return null;
+    const win = s.querySelector('.setwin');
+    const down = where === 'inside' || where === 'dragout' ? win : s;
+    const up = where === 'inside' ? win : s;
+    down.dispatchEvent(new MouseEvent('mousedown', {bubbles: true}));
+    up.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true}));
+    return {settings: !!S.settings, pane: S.settings ? settingsPaneId(S.settingsPane) : null, overlay: S.overlay};
+  };
+  window.__setClickTab = (tab) => {
+    const b = document.querySelector('#settings .settab[data-act="settings:' + tab + '"]');
+    if (!b) return null;
+    b.dispatchEvent(new MouseEvent('mousedown', {bubbles: true}));
+    b.click();
+    return {settings: !!S.settings, pane: S.settings ? settingsPaneId(S.settingsPane) : null};
+  };
+  window.__setClickPopover = () => {
+    const p = document.querySelector('#overlays .popover');
+    if (!p) return null;
+    p.dispatchEvent(new MouseEvent('mousedown', {bubbles: true}));
+    p.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true}));
+    return {settings: !!S.settings, overlay: S.overlay};
+  };
+
+  /* --- item 6 --- */
+  window.__newChatFocus = () => {
+    act('session:new');
+    const e = document.getElementById('entry');
+    return {id: document.activeElement ? document.activeElement.id : '',
+            caret: e ? [e.selectionStart, e.selectionEnd] : null,
+            logLen: S.log.length, sessionId: S.sessionId, settings: !!S.settings};
+  };
+  window.__newChatFocusSurvives = () => { act('session:new'); render(); render(); return document.activeElement ? document.activeElement.id : ''; };
+  window.__cmdN = () => {
+    document.dispatchEvent(new KeyboardEvent('keydown', {key: 'n', metaKey: true, bubbles: true, cancelable: true}));
+    return document.activeElement ? document.activeElement.id : '';
+  };
+  window.__newChatFromSidebar = () => {
+    const b = document.querySelector('[data-list="chats"] .sb-list-head button[data-act="session:new"]');
+    if (!b) return null;
+    b.click();
+    return document.activeElement ? document.activeElement.id : '';
+  };
+  /* The regression the focus-carry leg closes: a render mid-word used to drop
+     the caret of a message being typed. */
+  window.__typeThenRender = () => {
+    const e = $('#entry');
+    if (!e) return null;
+    e.focus(); e.value = 'typing mid-word'; S.draft = e.value; e.setSelectionRange(6, 6);
+    render();
+    const n = $('#entry');
+    const out = {focused: document.activeElement === n, caret: [n.selectionStart, n.selectionEnd], value: n.value};
+    S.draft = ''; n.value = ''; render();
+    return out;
+  };
+
+  /* --- item 8 --- */
+  window.__settingsBtn = () => {
+    const b = document.querySelector('#sidebar .sb-settings');
+    if (!b) return null;
+    const cs = getComputedStyle(b), r = b.getBoundingClientRect();
+    const lb = b.querySelector('.sb-settings-lb'), gi = b.querySelector('.sb-settings-ic');
+    const lists = document.querySelector('#sidebar .sb-lists');
+    return {text: lb ? lb.textContent : '', act: b.dataset.act, title: b.getAttribute('title'),
+            classes: b.className, bg: cs.backgroundColor, fg: cs.color,
+            height: Math.round(r.height), width: Math.round(r.width),
+            keycaps: b.querySelectorAll('.kc').length,
+            labelVisible: !!(lb && lb.offsetParent), iconVisible: !!(gi && gi.offsetParent),
+            belowLists: !!lists && Math.round(r.top) >= Math.round(lists.getBoundingClientRect().bottom) - 1,
+            oldRow: document.querySelectorAll('#sidebar .sb-foot').length};
+  };
+  window.__settingsBtnClick = () => {
+    const b = document.querySelector('#sidebar .sb-settings');
+    if (!b) return null;
+    b.click();
+    return {settings: !!S.settings, pane: S.settings ? settingsPaneId(S.settingsPane) : null};
+  };
+  /* The chord's three surviving renderer homes (the fourth, the macOS menu
+     bar's accelerator, is drawn by the OS and is not reachable from here). */
+  window.__palShortcut = (title) => {
+    for (const [, rows] of PAL) { const row = rows.find((r) => r[1] === title); if (row) return row[3]; }
+    return null;
+  };
+  window.__shortcutRow = (title) => {
+    act('shortcuts');
+    const rows = Array.from(document.querySelectorAll('#overlays .sheet .row'));
+    const r = rows.find((x) => (x.textContent || '').indexOf(title) === 0);
+    const out = r ? Array.from(r.querySelectorAll('.kc')).map((k) => k.textContent).join(' ') : null;
+    act('close');
     return out;
   };
 }

@@ -79,7 +79,10 @@ contextBridge.exposeInMainWorld("atomic", {
   prefsGet: () => ipcRenderer.invoke("app:prefsGet"),
   prefsSet: (prefs: { pinned: string[]; seen: Record<string, number> }) =>
     ipcRenderer.invoke("app:prefsSet", prefs),
-  sessionMenu: (id: string, pinned: boolean) => ipcRenderer.invoke("app:sessionMenu", { id, pinned }),
+  // r5 item 3: `unread` is the row's current state — main uses it to disable
+  // "Mark as Unread" on a row that already reads unread.
+  sessionMenu: (id: string, pinned: boolean, unread?: boolean) =>
+    ipcRenderer.invoke("app:sessionMenu", { id, pinned, unread }),
   onMenu: (cb: (command: unknown) => void) => on("app:menu", cb),
 
   /** Item 7 (settings surface): tasks, health, schedule preview. */

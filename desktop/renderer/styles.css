@@ -113,7 +113,15 @@ svg{display:block;flex:none}
 
 .iconbtn{width:28px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:6px;color:var(--text-secondary)}
 .iconbtn:hover{background:var(--bg-hover);color:var(--text-primary)}
-.iconbtn.on{background:var(--accent-wash-soft);color:var(--accent-text)}
+.iconbtn.on{background:var(--accent-wash);color:var(--accent-text)}
+/* r5 item 2: raised from --accent-wash-soft to --accent-wash. This was the
+   faintest "on" state in the file, while every other selected control
+   (.sesrow.on, .seg button.on, .palrow.on, .settab.on, .menurow.on) already
+   uses --accent-wash. The sidebar toggle had to read as "on" at a glance, so
+   the shared class was fixed rather than a fourth treatment invented — which
+   also lifts the Inspector and Console toggles beside it. That is the point,
+   not collateral: all three toolbar toggles now read like the rest of the app.
+   Both tokens are declared in all three theme blocks. */
 .searchbtn{height:28px;display:flex;align-items:center;gap:var(--s2);padding:0 8px;border-radius:6px;border:1px solid var(--line);color:var(--text-secondary)}
 .searchbtn:hover{border-color:var(--line-strong);color:var(--text-primary)}
 
@@ -133,14 +141,14 @@ svg{display:block;flex:none}
 /* Item 6 took the nav rows, the RECENT group header and the two-line session
    row out of the sidebar; their rules went with them. What a row needs now is
    in the "sidebar is two lists" section at the end of this file. */
-#sidebar.rail .wschip,#sidebar.rail .sb-foot span{display:none}
+#sidebar.rail .wschip{display:none}   /* r5 item 8: .sb-foot is gone; the rail's settings button is handled in the item-8 section */
 
 .sesrow{display:flex;align-items:center;width:100%;border-left:2px solid transparent}
 .sesrow:hover{background:var(--bg-hover)}
 .sesrow.on{background:var(--accent-wash);border-left-color:var(--accent)}
 .sesrow.on .t1{font-weight:500}
-.sb-foot{height:30px;flex:none;display:flex;align-items:center;gap:var(--s2);padding:0 var(--s4);border-top:1px solid var(--line-soft);color:var(--text-secondary);font-size:11px}
-.sb-foot:hover{color:var(--text-primary)}
+/* r5 item 8: the .sb-foot row (gear + label + keycap) is replaced by a plain
+   accent button; its rules live in the item-8 section at the end of this file. */
 
 .dot{width:7px;height:7px;border-radius:999px;flex:none;background:var(--text-tertiary)}
 .dot.ok{background:var(--success)} .dot.run{background:var(--accent)} .dot.warn{background:var(--warn)} .dot.bad{background:var(--danger)}
@@ -421,7 +429,7 @@ svg{display:block;flex:none}
 @media (max-width:1180px){#inspector{display:none!important}}
 @media (max-width:1120px){.cfoot .gauge,.cfoot .gaugelb{display:none}}
 @media (max-width:1000px){#sidebar{width:52px}
-  #sidebar .wschip,#sidebar .sb-foot span{display:none}
+  #sidebar .wschip{display:none}
   #stage{padding:8px}
 }
 @media (max-width:820px){
@@ -561,10 +569,6 @@ body.electron .sb-head { -webkit-app-region: no-drag; }
 
 
 /* ---------------- Item 7: settings surface (the TUI menu + Manage tabs) ---------------- */
-.sb-foot{width:100%;text-align:left}
-.sb-foot .kc{margin-left:auto}
-#sidebar.rail .sb-foot{justify-content:center;padding:0}
-#sidebar.rail .sb-foot .kc{display:none}
 .setwin{width:900px;height:640px}
 .settb .setttl{font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--text-secondary);margin-left:var(--s3)}
 .setcols{flex:1;min-height:0;display:flex}
@@ -719,14 +723,14 @@ button.menurow:hover{background:var(--bg-hover)}
    headers stay in the rail as well — stripped to their plus button, centred.
    52px does not hold the labels or the `N running` counter, and both are
    `span`s, so `> span` hides exactly those. */
-#sidebar.rail .sesrow .t1,#sidebar.rail .pinbtn,
+#sidebar.rail .sesrow .t1,#sidebar.rail .pinbtn,#sidebar.rail .unreadbtn,
 #sidebar.rail .loadmore,#sidebar.rail .sb-empty{display:none}
 #sidebar.rail .sb-list-head{justify-content:center;padding:0}
 #sidebar.rail .sb-list-head > span{display:none}
 #sidebar.rail .sesrow{justify-content:center;padding:0}
 #sidebar.rail .sb-list{padding:var(--s2) 0}
 @media (max-width:1000px){
-  #sidebar .sesrow .t1,#sidebar .pinbtn,
+  #sidebar .sesrow .t1,#sidebar .pinbtn,#sidebar .unreadbtn,
   #sidebar .loadmore,#sidebar .sb-empty{display:none}
   #sidebar .sb-list-head{justify-content:center;padding:0}
   #sidebar .sb-list-head > span{display:none}
@@ -866,3 +870,65 @@ button.menurow:hover{background:var(--bg-hover)}
    the four sub-lines beneath them were plain HTML and collapsed to one space.
    `pre-wrap`, not `pre`: a long error must still wrap inside the pane. */
 .llm-hf .ter,.llm-hf .sk-off,.llm-hf .tuierr{white-space:pre-wrap}
+
+/* ============================================================
+   r5 — Chrome lane (items 2, 3, 4, 8)
+   ============================================================ */
+
+/* --- item 8: the bottom-left settings entry is a plain blue button ---
+   "the bottom-left settings entry becomes a plain blue button — no keycap
+   hint, no second icon" — the user's words. `.btn.btn-p` is the app's existing
+   accent button; --accent is declared once (:root) and is NOT redefined in
+   either light block, so it is the same blue on white text in dark,
+   light-by-preference and light-by-choice, with no new token. The wrapper owns
+   the padding and the top rule the old row carried. */
+.sb-footwrap{flex:none;padding:var(--s3) var(--s4);border-top:1px solid var(--line-soft)}
+.sb-settings{width:100%;height:32px;justify-content:center}
+.sb-settings-ic{display:none}
+/* In the 52px rail the word does not fit, so the button becomes the gear —
+   the only glyph that does — and the tooltip keeps teaching the chord. Both
+   the class rail and the class-free responsive rail get the same treatment. */
+#sidebar.rail .sb-footwrap{padding:var(--s3) 0;display:flex;justify-content:center}
+#sidebar.rail .sb-settings{width:32px;padding:0}
+#sidebar.rail .sb-settings-lb{display:none}
+#sidebar.rail .sb-settings-ic{display:flex}
+@media (max-width:1000px){
+  #sidebar .sb-footwrap{padding:var(--s3) 0;display:flex;justify-content:center}
+  #sidebar .sb-settings{width:32px;padding:0}
+  #sidebar .sb-settings-lb{display:none}
+  #sidebar .sb-settings-ic{display:flex}
+}
+
+/* --- item 3: mark a chat unread ---
+   Same visibility contract as `.pinbtn` above: always in the flow, revealed on
+   row hover or keyboard focus, so nothing shifts. */
+.unreadbtn{width:22px;height:22px;flex:none;visibility:hidden;color:var(--text-tertiary);display:flex;align-items:center;justify-content:center;border-radius:5px}
+/* `.sesrow` is itself a <button> and this control is a span inside it, so it
+   cannot take the focus of its own — the row can, and revealing it when the row
+   is keyboard-focused is what makes the affordance visible to someone who is
+   not holding a mouse. Activating it without one is the native right-click
+   menu's "Mark as Unread". */
+.sesrow:hover .unreadbtn,.sesrow:focus-within .unreadbtn{visibility:visible}
+.unreadbtn:hover{background:var(--bg-hover);color:var(--accent-text)}
+
+/* --- item 4: hover actions on a message ---
+   The row always occupies its 22px box and only its paint changes, so revealing
+   it on hover cannot move a pixel of the transcript. Right-aligned on both
+   kinds — "a copy icon at its end" — which puts it at the user bubble's right
+   edge and at the right edge of the agent's content column, with the red retry
+   immediately to copy's left on a user message.
+   Hidden with `opacity`, NOT `visibility:hidden`: a visibility-hidden element
+   cannot take focus in Chromium, so `:focus-within` could never fire and the
+   buttons would be unreachable by keyboard — which is exactly what the suite
+   caught. `pointer-events` is what keeps an invisible row from swallowing a
+   click; the moment the turn is hovered both come back. No transition, so what
+   the row is at any instant is unambiguous. The hover-less media query pins
+   them open on a touch surface, where there is no hover to reveal them with. */
+.msgacts{display:flex;align-items:center;justify-content:flex-end;gap:2px;height:22px;margin-top:2px;opacity:0;pointer-events:none}
+.turn:hover .msgacts,.msgacts:focus-within{opacity:1;pointer-events:auto}
+@media (hover:none){.msgacts{opacity:1;pointer-events:auto}}
+.msgact{width:20px;height:20px;flex:none;display:flex;align-items:center;justify-content:center;border-radius:5px;color:var(--text-tertiary)}
+.msgact:hover{background:var(--bg-hover);color:var(--text-primary)}
+/* --danger and --danger-wash are declared in all three theme blocks. */
+.msgact.danger{color:var(--danger)}
+.msgact.danger:hover{background:var(--danger-wash);color:var(--danger)}
