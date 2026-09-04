@@ -913,7 +913,10 @@ button.menurow:hover{background:var(--bg-hover)}
 
 /* --- item 4: hover actions on a message ---
    The row always occupies its 22px box and only its paint changes, so revealing
-   it on hover cannot move a pixel of the transcript. Right-aligned on both
+   it on hover cannot move a pixel of the transcript. The box is reserved for
+   the whole turn, not from the moment it ends: msgActs emits an EMPTY .msgacts
+   while a reply is streaming, so the 22px + 2px never materialises mid-view.
+   Right-aligned on both
    kinds — "a copy icon at its end" — which puts it at the user bubble's right
    edge and at the right edge of the agent's content column, with the red retry
    immediately to copy's left on a user message.

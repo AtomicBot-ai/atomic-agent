@@ -1070,12 +1070,19 @@ function item(m, end) {
    they already fold open into selectable text. */
 function msgActs(m) {
   const text = String(m.text || '');
+  /* Still streaming: there is nothing final to copy yet, so the row is emitted
+     EMPTY rather than skipped. That empty row is the whole point — it holds the
+     same 22px box (plus its 2px margin) from the first frame of the reply, so
+     the buttons that appear when the turn ends appear INSIDE a box that was
+     already there and the transcript below does not jump 24px at turn end. It
+     is reserved before the empty-text guard below, because the streaming item
+     startLiveTurn pushes has no text at all for its first frames and a box that
+     arrived with the first delta would shift the view just as badly.
+     The `&& S.busy` half is load-bearing — nothing clears S.streamId when a
+     turn ENDS (only openSession does), so without it the copy button would be
+     permanently missing from the last reply of every finished turn. */
+  if (m.k === 'assistant' && m.id === S.streamId && S.busy) return '<div class="msgacts"></div>';
   if (!text.trim()) return '';
-  // Still streaming: there is nothing final to copy yet. The `&& S.busy` half
-  // is load-bearing — nothing clears S.streamId when a turn ENDS (only
-  // openSession does), so without it the copy button would be permanently
-  // missing from the last reply of every finished turn.
-  if (m.k === 'assistant' && m.id === S.streamId && S.busy) return '';
   const copy = '<button class="msgact" data-copy="' + esc(m.id) + '" title="Copy message" aria-label="Copy message">' + ic('copy') + '</button>';
   if (m.k !== 'user') return '<div class="msgacts">' + copy + '</div>';
   return '<div class="msgacts usr">'
@@ -1445,12 +1452,24 @@ function afterChat(keep, hadFocus, caret) {
      what makes it survive every render that follows: by then #entry is already
      the active element, so the focus is re-established rather than dropped.
      Both legs stay ABOVE the approval branch, or an arriving approval would
-     stop taking the focus to #denybtn and y/n would land in the textarea. */
+     stop taking the focus to #denybtn and y/n would land in the textarea.
+
+     r5 item 6 review fix: the carry leg is gated on there being no modal up.
+     render() runs renderContent() BEFORE renderSettings()/renderOverlays(), so
+     a chord that raises a modal while the composer has focus — ⌘, ⌘4 ⌘O, and
+     the app boots with the caret in #entry — would otherwise re-focus the
+     textarea hidden behind the dim backdrop. That is the state the keydown
+     handler reads as `inText`, which makes settingsKey bail (killing the
+     Manage tab arrows and the privacy keys) and lets printable keys reach the
+     composer's draft instead of the window. Without the gate the caret simply
+     dies with the node the innerHTML rewrite destroyed — which is exactly what
+     happened before this lane and what these modals expect. The guard is the
+     same conjunction the keydown handler uses to decide a modal owns the keys. */
   if (FOCUS.entry) {
     FOCUS.entry = false;
     e.focus();
     e.setSelectionRange(e.value.length, e.value.length);
-  } else if (hadFocus) {
+  } else if (hadFocus && !S.settings && !S.overlay && S.menuOpen === null) {
     e.focus();
     if (caret) e.setSelectionRange(Math.min(caret[0], e.value.length), Math.min(caret[1], e.value.length));
   }
@@ -5872,6 +5891,15 @@ function homeDir() {
   const wd = S.live.workingDir || '';
   return wd.startsWith('/Users/') ? wd.split('/').slice(0, 3).join('/') : '';
 }
+/* r5 item 3 review fix: the one line that hands the row menu to the bridge.
+   It is a named function purely so the suite can stand in front of it and
+   capture what the contextmenu listener really passed — the contextBridge
+   object is frozen in the main world, so BR.sessionMenu itself cannot be
+   shadowed, and Menu.popup opens a native window the harness cannot drive.
+   Everything the listener computes therefore stays under test; this forwards
+   it verbatim. */
+function sendSessionMenu(id, pinned, unread) { BR.sessionMenu(id, pinned, unread); }
+
 document.addEventListener('contextmenu', (e) => {
   if (!e.target.closest) return;
   // item 6: Pin/Unpin · Delete… on a chat row, as a native menu.
@@ -5881,8 +5909,8 @@ document.addEventListener('contextmenu', (e) => {
     // r5 item 3: "Mark as Unread" joins Pin and Delete… in this menu. The third
     // argument is the row's CURRENT unread state — main disables the item when
     // the row already reads unread, so the menu never offers a no-op.
-    BR.sessionMenu(row.dataset.ses, PREFS.pinned.includes(row.dataset.ses),
-                   chatDot(SESSIONS.find((x) => x.id === row.dataset.ses))[0] !== 'empty');
+    sendSessionMenu(row.dataset.ses, PREFS.pinned.includes(row.dataset.ses),
+                    chatDot(SESSIONS.find((x) => x.id === row.dataset.ses))[0] !== 'empty');
     return;
   }
   const f = e.target.closest('[data-file]');
@@ -11036,13 +11064,23 @@ if (typeof window !== 'undefined') {
             railDisplay: el ? getComputedStyle(el).display : '',
             dot: chatDot(s)[0]};
   };
+  /* `opened` is the ordering proof, not `stayedPut`: the harness has to open
+     the row first (the control is only offered on a row that reads read), so
+     S.sessionId already names it and stayedPut is true either way. openSession
+     is stood in front of for the length of the click instead — if the click
+     fell through to the [data-ses] branch behind the control, it would run and
+     markSeen would undo the mark. Zero calls is what proves the [data-unread]
+     branch (and its stopPropagation) beat the row. */
   window.__markUnread = (id) => {
     const el = document.querySelector('.sesrow[data-ses="' + id + '"] [data-unread]');
     const before = S.sessionId;
-    if (el) el.click();
+    const real = openSession;
+    let opened = 0;
+    openSession = function (...a) { opened += 1; return real.apply(null, a); };
+    try { if (el) el.click(); } finally { openSession = real; }
     return {clicked: !!el, dot: chatDot(SESSIONS.find((s) => s.id === id))[0],
             seen: PREFS.seen[id] === undefined ? null : PREFS.seen[id],
-            stayedPut: S.sessionId === before};
+            opened, stayedPut: S.sessionId === before};
   };
   /* A real refresh from the agent plus a full render — the proof that nothing
      re-stamps a chat that is not on screen. */
@@ -11053,9 +11091,21 @@ if (typeof window !== 'undefined') {
             seen: PREFS.seen[id] === undefined ? null : PREFS.seen[id]};
   };
   /* Menu.popup opens a native window the harness cannot drive, so what is
-     asserted is the payload the renderer sends it. */
-  window.__sessionMenuArgs = (id) => ({id, pinned: PREFS.pinned.includes(id),
-                                       unread: chatDot(SESSIONS.find((x) => x.id === id))[0] !== 'empty'});
+     asserted is the payload the renderer sends it — captured from the REAL
+     call, by standing in front of sendSessionMenu and firing a real
+     `contextmenu` at the row. Recomputing the same expression here would have
+     asserted the hook's own arithmetic and left the third argument free to be
+     deleted; this fails the moment the listener stops passing it. */
+  window.__sessionMenuArgs = (id) => {
+    const row = document.querySelector('.sesrow[data-ses="' + id + '"]');
+    if (!row) return null;
+    const real = sendSessionMenu;
+    let got = null;
+    sendSessionMenu = function (...a) { got = a; };
+    try { row.dispatchEvent(new MouseEvent('contextmenu', {bubbles: true, cancelable: true})); }
+    finally { sendSessionMenu = real; }
+    return got ? {argc: got.length, id: got[0], pinned: got[1], unread: got[2]} : {argc: 0};
+  };
 
   /* --- item 4 --- */
   window.__msgActs = (which) => {
@@ -11199,20 +11249,50 @@ if (typeof window !== 'undefined') {
     return out;
   };
   /* A finished assistant reply must carry a copy button even though S.streamId
-     still names it — nothing clears that when a turn ends. */
+     still names it — nothing clears that when a turn ends. And the box it
+     appears in must already be on screen while the reply streams, or the whole
+     transcript below would jump 24px at turn end. Both states are measured. */
   window.__streamActs = () => {
     const keep = {busy: S.busy, streamId: S.streamId};
     const last = S.log.slice().reverse().find((m) => m.k === 'assistant' && String(m.text || '').trim());
     if (!last) return null;
+    /* `boxBottom` is the measure that isolates this lane's row: the distance
+       from the top of the transcript column to the BOTTOM of the action row.
+       Equal in both states means nothing at or above the row moved when the
+       turn ended.
+       The column itself is not expected to be equal, and colHeight is here to
+       say why: r4-ui's end mark (`.endmark`, 12px + a 10px margin) is appended
+       BELOW the row when a turn finishes, and it did that long before this
+       lane. The check asserts the column's whole growth is that mark.
+       Not #scroller.scrollHeight — with a short transcript that collapses to
+       clientHeight, which moves when the composer grows its running strip. */
+    const shot = () => {
+      const list = document.querySelectorAll('.turn:not(.usr) .msgacts');
+      const box = list[list.length - 1];
+      const col = document.querySelector('#scroller .col720');
+      const colTop = col ? col.getBoundingClientRect().top : 0;
+      const colHeight = col ? Math.round(col.getBoundingClientRect().height) : -1;
+      const turn = box ? box.closest('.turn') : null;
+      const mark = turn ? turn.querySelector('.endmark') : null;
+      const endmark = mark
+        ? Math.round(mark.getBoundingClientRect().height + parseFloat(getComputedStyle(mark).marginTop))
+        : 0;
+      if (!box) return {count: list.length, buttons: -1, reserved: -1, boxBottom: -1, endmark, colHeight};
+      const r = box.getBoundingClientRect();
+      return {count: list.length, buttons: box.querySelectorAll('button').length,
+              reserved: Math.round(r.height + parseFloat(getComputedStyle(box).marginTop)),
+              boxBottom: Math.round(r.bottom - colTop),
+              endmark, colHeight};
+    };
     S.streamId = last.id;
     S.busy = true; render();
-    const streamingCount = document.querySelectorAll('.turn:not(.usr) .msgacts').length;
+    const streaming = shot();
     // The turn ends; S.streamId still names this message, which is exactly the
     // state that used to hide the button forever.
     S.busy = false; render();
-    const finishedCount = document.querySelectorAll('.turn:not(.usr) .msgacts').length;
+    const finished = shot();
     S.busy = keep.busy; S.streamId = keep.streamId; render();
-    return {streamingCount, finishedCount,
+    return {streaming, finished,
             // A guard, not coverage: msgActs is called from the two message
             // branches of item() only, so these can never be non-zero.
             offMessages: document.querySelectorAll('.card .msgacts, .sysrow .msgacts, .appr .msgacts, .discbody .msgacts').length};
@@ -11268,6 +11348,25 @@ if (typeof window !== 'undefined') {
     if (!b) return null;
     b.click();
     return document.activeElement ? document.activeElement.id : '';
+  };
+  /* The regression the carry leg's own gate closes: a modal opened from the
+     keyboard while the composer had focus must NOT keep the caret in the
+     textarea behind its backdrop, or the window's key layer reads `inText` and
+     stops answering. Driven through act() exactly as the ⌘, / ⌘4 / ⌘O chords
+     do, and the modal is closed again before returning. */
+  window.__focusWithModal = (verb) => {
+    const e = document.getElementById('entry');
+    if (e) e.focus();
+    const before = document.activeElement ? document.activeElement.id : '';
+    act(verb);
+    const el = document.activeElement;
+    const out = {before, during: el ? el.id : '', tag: el ? el.tagName : '',
+                 inText: !!el && (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT'),
+                 settings: !!S.settings, overlay: S.overlay};
+    if (S.settings) act('settings:close');
+    if (S.overlay) act('close');
+    render();
+    return out;
   };
   /* The regression the focus-carry leg closes: a render mid-word used to drop
      the caret of a message being typed. */

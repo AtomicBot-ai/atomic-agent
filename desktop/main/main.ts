@@ -371,6 +371,28 @@ function hfGatedTokenHint(message: string, dir: string): string {
     + " — start the app with it exported and the listing will see it too.)";
 }
 
+/* r5 item 3 review fix: the chat row's context menu, as a template. Factored
+   out of the app:sessionMenu handler so the suite can assert the "Mark as
+   Unread" entry and its `enabled` gate directly — Menu.popup opens a native
+   window the harness cannot drive, and nothing else in the run would notice
+   the entry being dropped. */
+function sessionMenuTemplate(
+  id: string,
+  pinned: boolean,
+  unread: boolean,
+): Electron.MenuItemConstructorOptions[] {
+  return [
+    // r5 item 3: macOS title case, beside the Pin/Delete… the menu already
+    // offers. `enabled` is what keeps it honest on a row that is already
+    // unread — the item is shown, greyed, rather than offering a no-op.
+    { label: "Mark as Unread", enabled: !unread, click: () => send("app:menu", "unread:" + id) },
+    { type: "separator" },
+    { label: pinned ? "Unpin" : "Pin", click: () => send("app:menu", (pinned ? "unpin:" : "pin:") + id) },
+    { type: "separator" },
+    { label: "Delete…", click: () => send("app:menu", "delask:" + id) },
+  ];
+}
+
 function wireIpc(client: AgentClient): void {
   ipcMain.handle("agent:status", () => client.status);
   ipcMain.handle("agent:start", () => client.start());
@@ -711,20 +733,7 @@ function wireIpc(client: AgentClient): void {
     const { id, pinned, unread } = (payload ?? {}) as { id?: unknown; pinned?: unknown; unread?: unknown };
     if (typeof id !== "string" || !id) return;
     const { Menu } = require("electron") as typeof import("electron");
-    const menu = Menu.buildFromTemplate([
-      // r5 item 3: macOS title case, beside the Pin/Delete… the menu already
-      // offers. `enabled` is what keeps it honest on a row that is already
-      // unread — the item is shown, greyed, rather than offering a no-op.
-      {
-        label: "Mark as Unread",
-        enabled: unread !== true,
-        click: () => send("app:menu", "unread:" + id),
-      },
-      { type: "separator" },
-      { label: pinned ? "Unpin" : "Pin", click: () => send("app:menu", (pinned ? "unpin:" : "pin:") + id) },
-      { type: "separator" },
-      { label: "Delete…", click: () => send("app:menu", "delask:" + id) },
-    ]);
+    const menu = Menu.buildFromTemplate(sessionMenuTemplate(id, !!pinned, unread === true));
     const sender = BrowserWindow.fromWebContents(event.sender);
     menu.popup(sender ? { window: sender } : {});
   });
@@ -6118,13 +6127,16 @@ async function chromeTest(
         "visibility: visible;",
       );
       check("item 3: the control is revealed by hover or keyboard focus", unreadHover, unreadDetail);
-      const marked = await js<{ clicked: boolean; dot: string; seen: number | null; stayedPut: boolean }>(
+      const marked = await js<{ clicked: boolean; dot: string; seen: number | null; opened: number; stayedPut: boolean }>(
         `window.__markUnread(${JSON.stringify(target.id)})`,
       );
       check(
         "item 3: the control fills the dot without opening the chat",
-        marked.clicked && marked.dot === "filled" && marked.seen === null && marked.stayedPut,
-        `${JSON.stringify(marked)} (stayedPut proves the branch beat [data-ses])`,
+        marked.clicked && marked.dot === "filled" && marked.seen === null
+          && marked.opened === 0 && marked.stayedPut,
+        `${JSON.stringify(marked)} (opened=0 is the ordering proof — the row had to be opened first for the`
+        + ` control to be offered, so stayedPut is true either way; a fall-through to [data-ses] would have run`
+        + ` openSession and markSeen would have undone the mark)`,
       );
       const survived = await js<{ dot: string; seen: number | null }>(
         `window.__unreadSurvives(${JSON.stringify(target.id)})`,
@@ -6142,14 +6154,26 @@ async function chromeTest(
         !already.present,
         JSON.stringify(already),
       );
-      const args = await js<{ id: string; pinned: boolean; unread: boolean }>(
+      const args = await js<{ argc: number; id: string; pinned: boolean; unread: boolean } | null>(
         `window.__sessionMenuArgs(${JSON.stringify(target.id)})`,
       );
       check(
         "item 3: the right-click menu is told the row is unread",
-        args.unread === true && args.id === target.id,
-        `${JSON.stringify(args)} (Menu.popup opens a native window, so the payload the renderer sends is what is asserted;`
-        + ` the app:menu → act() round trip is driven directly below)`,
+        !!args && args.argc === 3 && args.unread === true && args.id === target.id && args.pinned === false,
+        `${JSON.stringify(args)} (captured from a real contextmenu on the row, in front of the bridge call —`
+        + ` Menu.popup opens a native window the harness cannot drive, so the payload the renderer sends is what is asserted)`,
+      );
+      // The other end of the same wire: what main builds from that payload.
+      const menuUnread = sessionMenuTemplate(target.id, false, true);
+      const menuRead = sessionMenuTemplate(target.id, false, false);
+      check(
+        "item 3: main puts Mark as Unread in the menu, greyed on a row already unread",
+        menuUnread[0]?.label === "Mark as Unread" && menuUnread[0]?.enabled === false
+          && menuRead[0]?.enabled === true
+          && menuRead.some((i) => i.label === "Pin") && menuRead.some((i) => i.label === "Delete…"),
+        `${JSON.stringify(menuRead.map((i) => [i.label ?? i.type, i.enabled]))};`
+        + ` unread row enabled=${String(menuUnread[0]?.enabled)}`
+        + ` (the preload line between the two is a verbatim forward and is the one link not independently asserted)`,
       );
       // The menu's verb, through the same act() the app:menu listener calls.
       await js<unknown>(`window.__openSession(${JSON.stringify(target.id)})`);
@@ -6197,6 +6221,20 @@ async function chromeTest(
       (await js<string>("window.__newChatFromSidebar()")) === "entry"
         && (await js<string>("window.__cmdN()")) === "entry",
       "the sidebar Chats plus and ⌘N",
+    );
+    // The carry leg must not follow the composer behind a modal: the settings
+    // window and the sessions sheet read document.activeElement to decide
+    // whether a key belongs to a text field, and a caret left in the hidden
+    // textarea makes their whole key layer bail.
+    type ModalFocus = { before: string; during: string; tag: string; inText: boolean; settings: boolean; overlay: string | null };
+    const cmdComma = await js<ModalFocus>("window.__focusWithModal('settings:tasks')");
+    const cmdO = await js<ModalFocus>("window.__focusWithModal('session:switch')");
+    check(
+      "item 6: a modal opened from the composer takes the caret out of it",
+      cmdComma.before === "entry" && cmdComma.settings && cmdComma.during !== "entry" && !cmdComma.inText
+        && cmdO.before === "entry" && cmdO.overlay === "sessions" && cmdO.during !== "entry" && !cmdO.inText,
+      `⌘, ${JSON.stringify(cmdComma)}; ⌘O ${JSON.stringify(cmdO)}`
+      + " (inText true here is what killed the Manage tab arrows and the privacy keys)",
     );
     const typed = await js<{ focused: boolean; caret: number[]; value: string }>("window.__typeThenRender()");
     check(
@@ -6268,13 +6306,28 @@ async function chromeTest(
       "the computed --danger in each theme",
     );
     await js<unknown>("window.__theme('system')");
-    const streamed = await js<{ streamingCount: number; finishedCount: number; offMessages: number } | null>(
+    type ActShot = { count: number; buttons: number; reserved: number; boxBottom: number; endmark: number; colHeight: number };
+    const streamed = await js<{ streaming: ActShot; finished: ActShot; offMessages: number } | null>(
       "window.__streamActs()",
     );
     check(
       "item 4: a streaming reply carries no actions, and a finished one does",
-      !!streamed && streamed.finishedCount === streamed.streamingCount + 1 && streamed.offMessages === 0,
+      !!streamed && streamed.streaming.buttons === 0 && streamed.finished.buttons === 1
+        && streamed.offMessages === 0,
       `${JSON.stringify(streamed)} (offMessages is a guard, not coverage: msgActs is called from the two message branches of item() only)`,
+    );
+    check(
+      "item 4: the row's box is reserved while the reply streams, so nothing at or above it moves at turn end",
+      !!streamed && streamed.streaming.count === streamed.finished.count
+        && streamed.streaming.reserved === 24 && streamed.finished.reserved === 24
+        && streamed.streaming.boxBottom === streamed.finished.boxBottom
+        // The column's whole growth is r4-ui's end mark, appended BELOW the row
+        // when a turn finishes — it did that long before this lane.
+        && streamed.streaming.endmark === 0
+        && streamed.finished.colHeight - streamed.streaming.colHeight === streamed.finished.endmark,
+      `streaming ${JSON.stringify(streamed?.streaming)} vs finished ${JSON.stringify(streamed?.finished)}`
+      + " (22px row + 2px margin, present from the first frame of the reply, so the buttons appear inside a box"
+      + " that was already there; the column grows only by the end mark below it)",
     );
 
     // Copy really reaches the pasteboard, and copies the text — not the markup
@@ -6295,12 +6348,14 @@ async function chromeTest(
       || /public\.(png|tiff|jpeg|file-url)|NSFilenamesPboardType/i.test(t);
     const clipRestorable = clipTypes.length === 0
       || (clipTypes.includes("text/plain") && !clipTypes.some(clipUnrestorable));
+    // No check is emitted when the round trip cannot run: a green line that
+    // asserted nothing is worse than none. The reason is carried into the
+    // shadowed-clipboard check below, which is where the substance lives.
+    let clipNote = "";
     if (!clipRestorable) {
-      check(
-        "item 4: copy puts the message text on the clipboard and nothing else",
-        true,
-        `skipped — the operator has non-text on the clipboard (${clipTypes.join("+")}) and writeText could not put it back`,
-      );
+      clipNote = ` — NOTE the live-pasteboard round trip did NOT run this time:`
+        + ` the operator has non-text on the clipboard (${clipTypes.join("+")}) that writeText could not put back,`
+        + ` so this probe is the only coverage of copy in this run`;
     } else {
       const copiedUser = await js<{ id: string; text: string } | null>("window.__clickCopy('user')");
       await wait(400);
@@ -6347,7 +6402,8 @@ async function chromeTest(
         && !/Saved to|\/tmp\/report\.md/.test(probeAttached.wrote[0]),
       `user wrote ${JSON.stringify(probeUser.wrote[0]?.slice(0, 40))}; assistant matched ${probeAsst.wrote[0] === probeAsst.message};`
       + ` reply with an attachment strip wrote ${JSON.stringify(probeAttached.wrote[0])}`
-      + ` (the "Saved to …" lines are the desktop's own footer, derived from write-tool cards, and are not the agent's words)`,
+      + ` (the "Saved to …" lines are the desktop's own footer, derived from write-tool cards, and are not the agent's words)`
+      + clipNote,
     );
     check(
       "item 4: a copy is announced only once it has happened",
