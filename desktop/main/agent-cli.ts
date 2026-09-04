@@ -1527,18 +1527,16 @@ export interface ImportItem { kind: string; status: string; source: string | nul
 export interface ImportReportParsed { items: ImportItem[]; summary: { migrated: number; skipped: number; conflict: number; error: number } }
 
 /**
- * `atag import <hermes|openclaw> --source <dir> [--exclude a,b]
- * [--migrate-secrets] [--overwrite] [--limit N] (--dry-run | --yes)`.
- * Exactly one of the two flags is always passed: without either, a
- * non-TTY run prints "Non-interactive: …" and exits 0 having written
- * nothing (src/cli/import-command.ts). The report block
- * (`  [<kind>] <status> <src -> dst>( (<reason>))` … `  ----` …
- * `  migrated=… skipped=… conflict=… error=…`) is parsed into the TUI's
- * rows; `state` names what the run did.
+ * `atag import <hermes|openclaw|claude-code|codex> --source <dir>
+ * [--exclude a,b] [--migrate-secrets] [--overwrite] [--limit N]
+ * (--dry-run | --yes)`, built on its own so the source guard, the
+ * per-source `--exclude` whitelist and the `--migrate-secrets` gate can be
+ * asserted without a child process — the three things that decide whether
+ * a preview promises more than the operator ticked (review fix: they had
+ * no coverage, and no UI produces a non-default option set for the two
+ * newer sources, so a spawned run cannot reach them).
  */
-export async function importRun(input: ImportRunInput, cwd?: string): Promise<{
-  ok: boolean; state?: "preview" | "applied" | "nothing" | "non-interactive"; report?: ImportReportParsed; stdout?: string; stderr?: string; error?: string;
-}> {
+export function importArgs(input: ImportRunInput): { ok: true; args: string[] } | { ok: false; error: string } {
   const domains = IMPORT_DOMAINS[input.source as ImportSourceId];
   if (!domains) return { ok: false, error: "source must be hermes, openclaw, claude-code or codex" };
   const dir = input.dir.trim();
@@ -1554,6 +1552,23 @@ export async function importRun(input: ImportRunInput, cwd?: string): Promise<{
     args.push("--limit", limit);
   }
   args.push(input.execute ? "--yes" : "--dry-run");
+  return { ok: true, args };
+}
+
+/**
+ * Run it. Exactly one of `--dry-run` / `--yes` is always passed: without
+ * either, a non-TTY run prints "Non-interactive: …" and exits 0 having
+ * written nothing (src/cli/import-command.ts). The report block
+ * (`  [<kind>] <status> <src -> dst>( (<reason>))` … `  ----` …
+ * `  migrated=… skipped=… conflict=… error=…`) is parsed into the TUI's
+ * rows; `state` names what the run did.
+ */
+export async function importRun(input: ImportRunInput, cwd?: string): Promise<{
+  ok: boolean; state?: "preview" | "applied" | "nothing" | "non-interactive"; report?: ImportReportParsed; stdout?: string; stderr?: string; error?: string;
+}> {
+  const built = importArgs(input);
+  if (!built.ok) return { ok: false, error: built.error };
+  const args = built.args;
   const res = await cli(args, 300_000, cwd);
   if (!res.ok && !res.stdout.trim()) return { ok: false, error: res.error, stdout: res.stdout, stderr: res.stderr };
   const lines = res.stdout.replace(/\r\n/g, "\n").split("\n");

@@ -87,6 +87,9 @@ import {
   modelsDevices,
   modelsUseDevice,
   importRun,
+  // r5 item 7 review fix: the argv builder, asserted on its own — see
+  // the import checks in onboardingTest.
+  importArgs,
   llamaLogTail,
   llamaProbe,
   dotenvKeys,
@@ -1276,22 +1279,13 @@ async function smokeTest(): Promise<void> {
     check("no chat is highlighted at boot", boot.onRows === 0, `${boot.total} chats loaded, ${boot.onRows} highlighted`);
   }
 
-  if (FORCE_ONBOARDING) {
-    /* r5 item 7: the flow opens on the TUI's intro, not on the choice
-       list, and the choice list has three rows again — the custom
-       endpoint is back now that the probe and the whole-file write are
-       both wired. So the assertion moves from the old `.ob-title` /
-       `.ob-opt` pair to the ported machine's own state. */
-    const opened = await js<{ open: boolean; step: string }>("window.__ob()");
-    const options = await js<number>(
-      "(window.__obKey('down'), window.__obKey('down'), document.querySelectorAll('#onboarding .ob-row').length)",
-    );
-    check(
-      "wizard opens",
-      opened.open && opened.step === "intro" && options === 3,
-      `${JSON.stringify(opened)} options=${options}`,
-    );
-  }
+  /* r5 item 7 review fix: the `wizard opens` check used to live here,
+     inside `if (FORCE_ONBOARDING)` — and `npm run smoke` passes only
+     `--smoke`, so it never ran and the acceptance it stood for was not
+     held by the suite. It also measured by MUTATING (two `__obKey`
+     presses inside the expression that counted the rows). It now lives in
+     onboardingTest, driven through the same `act('onboarding')` command
+     `--onboarding` sends, and runs on every smoke pass. */
 
   // --- Lane B — context before the first message (item 3) ---
   // Nothing has been sent yet, so this block has to run BEFORE the first
@@ -4308,19 +4302,22 @@ async function hfAndDeltaTest(
      status` poll and issues the first llmRefresh(). Escaping out of the
      branch then landed on a Local pane reading "no models listed" on a
      machine that has them, with nothing to refresh it. */
-  const obLabel = await js<string>("window.__obHfRowLabel()");
+  /* Review fix: the NAME and the driver both moved. The first-run row
+     goes to `local_hf_ref` now and never touches Settings, so this check
+     drives the Settings route (act('settings:llm') -> llmAct('hf')) and
+     asserts only that. The row's own label is asserted where the row is —
+     off the rendered list, in `the Hugging Face row is pinned last`. */
   type ObHf = {
     pane: string; settings: boolean; branch: boolean; mode: string; polling: boolean;
     refreshed: boolean; rows: number; body: string;
   };
   const obHf = await js<ObHf>("window.__obHfProbe()");
   check(
-    "hf: the first-run row enters the LLM tab properly - the Local pane behind it is loaded, not empty",
-    obLabel === "Add a model from Hugging Face…"
-      && obHf.settings && obHf.pane === "llm" && obHf.mode === "local" && obHf.branch
+    "hf: the Settings route into the branch enters the LLM tab properly - the Local pane behind it is loaded, not empty",
+    obHf.settings && obHf.pane === "llm" && obHf.mode === "local" && obHf.branch
       && obHf.polling && obHf.refreshed && obHf.rows >= 0
       && obHf.body.includes("a add from hugging face"),
-    `label=${JSON.stringify(obLabel)} pane=${obHf.pane} polling=${obHf.polling} refreshed=${obHf.refreshed} rows=${obHf.rows}`,
+    `pane=${obHf.pane} polling=${obHf.polling} refreshed=${obHf.refreshed} rows=${obHf.rows}`,
   );
   await js<void>("window.__settingsClose()");
 
@@ -6055,6 +6052,43 @@ async function onboardingTest(
   const runStart = Date.now();
   const stampLog = () => js<ObStamp[]>("window.__obStamps()");
   try {
+    /* ---- the flow opens, through the production path ----
+       Review fix: the only check that counted the choice rows lived under
+       `if (FORCE_ONBOARDING)` and never ran under `npm run smoke`, so the
+       acceptance it stood for was not held by the suite. This one drives
+       the menu command the first-run gate and `--onboarding` both drive
+       (`act('onboarding')` -> openOnboarding), asserts the title the old
+       one dropped, and — because openOnboarding renders once immediately
+       and again after four awaited IPC round trips — proves the reveal
+       and the star field survive that second render instead of restarting
+       under the operator (the second review fix). */
+    await js<unknown>("window.__obMenuOpen()");
+    const openedNow = await js<ObState>("window.__ob()");
+    await new Promise((r) => setTimeout(r, 250));
+    type SkyProgress = { frames: number; typed: number; typing: boolean };
+    const reveal0 = await js<SkyProgress>("window.__obSkyProgress()");
+    // Force the repaint openOnboarding's own second render is: a full
+    // renderOverlays pass with the intro up.
+    await js<unknown>("window.__obSeed({})");
+    await new Promise((r) => setTimeout(r, 250));
+    const reveal1 = await js<SkyProgress>("window.__obSkyProgress()");
+    const openCopy = await js<ObCopy>("window.__obCopy()");
+    const openRows = await js<number>(
+      "(window.__obKey('down'), window.__obKey('down')," +
+        " document.querySelectorAll('#onboarding .ob-row').length)",
+    );
+    const openSubtitle = (await js<ObCopy>("window.__obCopy()")).subtitle;
+    check(
+      "wizard opens on the intro, and a repaint does not restart the reveal",
+      openedNow.open && openedNow.step === "intro" &&
+        openCopy.lines.some((l) => l.includes("Local AI-First Agent") || l.includes("ATOMIC")) &&
+        reveal1.frames >= reveal0.frames && reveal1.typed >= reveal0.typed &&
+        openRows === 3 && openSubtitle === "setup · step 1 of 2",
+      `open=${JSON.stringify(openedNow)} reveal ${JSON.stringify(reveal0)} -> ${JSON.stringify(reveal1)}` +
+        ` rows=${openRows} subtitle=${JSON.stringify(openSubtitle)}`,
+    );
+    await js<unknown>("window.__obClose()");
+
     /* ---- the intro ---- */
     let ob = await js<ObState>("window.__obOpen('intro')");
     await new Promise((r) => setTimeout(r, 400));
@@ -6100,6 +6134,31 @@ async function onboardingTest(
       `running=${stopped.running} reduced=${stopped.reduced} frames=${stopped.frames} lines=${JSON.stringify(copy.lines.slice(0, 5))}`,
     );
     await js<ObSky>("window.__obReduce(null)");
+
+    /* Hiding the window and bringing it back. `obSkyStop` clears the
+       TYPEWRITER as well as the rAF, and the handler only ever resumed
+       the loop, so the tagline used to stay frozen mid-word for ever
+       (review fix). Driven through the handler's own body — the page
+       cannot force `document.hidden`. */
+    await js<ObState>("window.__obOpen('intro')");
+    await new Promise((r) => setTimeout(r, 250));
+    const hidden = await js<SkyProgress>("window.__obVisibility(true)");
+    const shown = await js<SkyProgress>("window.__obVisibility(false)");
+    await new Promise((r) => setTimeout(r, 350));
+    const afterShow = await js<SkyProgress>("window.__obSkyProgress()");
+    /* Nothing is asserted about the interval BETWEEN the two calls: with
+       `document.hidden` still false, any ordinary repaint in that window
+       legitimately re-arms the reveal, and a check that forbade it would
+       be asserting the simulation rather than the product. What the fix
+       is about is the pair itself — stop clears the typewriter, resume
+       brings it back, and the reveal carries on from where it stopped
+       rather than from the first character. */
+    check(
+      "wizard: hiding the window stops the reveal, and un-hiding restarts it where it stopped",
+      hidden.typing === false && shown.typing === true &&
+        shown.typed >= hidden.typed && afterShow.typed > hidden.typed,
+      `hidden=${JSON.stringify(hidden)} shown=${JSON.stringify(shown)} after=${JSON.stringify(afterShow)}`,
+    );
 
     // Two-stage advance: the first input finishes the reveal, the second moves on.
     ob = await js<ObState>("window.__obOpen('intro')");
@@ -6337,6 +6396,25 @@ async function onboardingTest(
         moving.phases.runtime === "active" && moving.drove.runtime === true,
       `label=${queued.label} queued=${queued.queued} phases=${JSON.stringify(queued.phases)} text=${JSON.stringify(queued.text)} moving=${JSON.stringify(moving.phases)}`,
     );
+    /* The waiting phase's empty bar is DIMMED, as the TUI dims it
+       (PhaseLine draws a pending phase in theme.colors.border and the
+       active one in theme.colors.accent). The rule used to name a
+       `pending` class the renderer never emits, so both bars drew at the
+       same weight (review fix). */
+    const barInk = await js<{ waiting: string; active: string; line: string; strong: string }>(
+      "(function(){const cs=getComputedStyle(document.documentElement);" +
+        "const g=(s)=>{const e=document.querySelector(s); return e?getComputedStyle(e).color:'';};" +
+        "return {waiting: g('#onboarding .ob-phase.waiting .pb i')," +
+        " active: g('#onboarding .ob-phase.active .pb i')," +
+        " line: cs.getPropertyValue('--line').trim()," +
+        " strong: cs.getPropertyValue('--line-strong').trim()};})()",
+    );
+    check(
+      "wizard: the waiting phase's empty bar is drawn dimmer than a live one",
+      barInk.waiting !== "" && barInk.active !== "" && barInk.waiting !== barInk.active &&
+        barInk.line !== barInk.strong,
+      JSON.stringify(barInk),
+    );
     const drained = await js<Dl>(
       "window.__dlFeed({id:'llama.cpp', kind:'runtime', done:true, ok:true, sawProgress:true, upToDate:false})",
     );
@@ -6378,6 +6456,82 @@ async function onboardingTest(
         runtimeFailed.error === null && runtimeFailed.phases.runtime === "waiting",
       `label=${runtimeFailed.label} queued=${runtimeFailed.queued} runtimeError=${JSON.stringify(runtimeFailed.runtimeError)} error=${JSON.stringify(runtimeFailed.error)}`,
     );
+    /* THE DECISION THAT CREATES A RUNTIME PHASE.
+       Review fix: every strip check above seeds the queue by hand, so
+       `obStartLocalPull` — the only code that decides whether a runtime
+       phase exists at all — was never entered, and the `binary missing`
+       test, the already-downloaded short-circuit and the managed-mode
+       write it has to await could all have been deleted without a red
+       check. Driven here through the shipped function: renderer.js is a
+       classic script, so the probe swaps its two IPC-facing helpers for
+       recorders and puts them back, and the code under test is unchanged
+       and unaware of the probe. */
+    type PullProbe = {
+      order: string[];
+      head: { kind: string; id: string } | null;
+      queue: { kind: string; id: string }[];
+      phases: { runtime: string; weights: string };
+      deferred: string | null;
+    };
+    await js<ObState>("window.__obOpen('local_download')");
+    const missing = await js<PullProbe>("window.__obPullProbe({backend:'binary missing'})");
+    const present = await js<PullProbe>("window.__obPullProbe({backend:'binary ok'})");
+    const unreadable = await js<PullProbe>("window.__obPullProbe({backend:''})");
+    check(
+      "wizard: a runtime phase is queued only when `models status` says the binary is missing",
+      missing.head?.kind === "runtime" && missing.head?.id === "llama.cpp" &&
+        JSON.stringify(missing.queue) === JSON.stringify([{ kind: "weights", id: "qwen3.5-4b" }]) &&
+        missing.phases.runtime === "waiting" &&
+        present.head?.kind === "weights" && present.queue.length === 0 &&
+        present.phases.runtime === "done" &&
+        unreadable.head?.kind === "weights" && unreadable.queue.length === 0,
+      `missing=${JSON.stringify(missing.head)}+${JSON.stringify(missing.queue)}` +
+        ` present=${JSON.stringify(present.head)} phases=${JSON.stringify(present.phases)}` +
+        ` unreadable=${JSON.stringify(unreadable.head)}`,
+    );
+    const missingBranches = await js<boolean[]>(
+      "[window.__obBackendMissing('binary missing'), window.__obBackendMissing('binary  missing')," +
+        " window.__obBackendMissing('binary ok'), window.__obBackendMissing('')," +
+        " window.__obBackendMissing(null)]",
+    );
+    check(
+      "wizard: `binary ok|missing` is read, not guessed",
+      JSON.stringify(missingBranches) === JSON.stringify([true, true, false, false, false]),
+      JSON.stringify(missingBranches),
+    );
+    /* `models update` REFUSES outside managed mode (models-handlers.ts:
+       728-731), so the managed-mode write has to have landed before the
+       status is read and the update is spawned. The probe's recorder
+       resolves that write on a timer, so the order is the assertion. */
+    check(
+      "wizard: the managed-mode write lands before `models status` is read",
+      missing.order[0] === "managed" && missing.order[1] === "status",
+      JSON.stringify(missing.order),
+    );
+    /* An already-downloaded pick downloads nothing and goes straight to
+       the activation — which, mid-turn, is DEFERRED rather than bouncing
+       `atag serve` under the running turn (review fix: this path had no
+       guard, and it is reached by a pull that finished in the background
+       after `s` dropped the operator into the agent). */
+    // The strip is emptied first: the probes above left a (dry) job on
+    // it, and `head === null` here is a claim about what THIS call
+    // queued, not about what the previous one left behind.
+    await js<Dl>("window.__dlClear()");
+    const already = await js<PullProbe>(
+      "window.__obPullProbe({alreadyDownloaded:true, managedWrite:false})",
+    );
+    await js<Dl>("window.__dlClear()");
+    const busyActivate = await js<PullProbe>(
+      "window.__obPullProbe({alreadyDownloaded:true, managedWrite:false, busy:true})",
+    );
+    check(
+      "wizard: an already-downloaded pick skips the queue, and never restarts the agent mid-turn",
+      already.head === null && already.phases.weights === "done" &&
+        already.order.join(",") === "activate:qwen3.5-4b" &&
+        busyActivate.order.join(",") === "activate:qwen3.5-4b" &&
+        busyActivate.deferred === "qwen3.5-4b",
+      `idle=${JSON.stringify(already)} busy=${JSON.stringify(busyActivate)}`,
+    );
     await js<Dl>("window.__dlClear()");
 
     /* ---- the strip outlives the screen that started it ---- */
@@ -6386,18 +6540,25 @@ async function onboardingTest(
     // opened again first.
     await writeStamps(blank);
     await js<ObState>("window.__obOpen('local_download')");
-    // `press c` is hidden once a cloud provider is configured, so the
-    // state under test is named rather than inherited.
-    await js<ObState>("window.__obSeed({cloudReady:false})");
+    /* `cloudReady:true` on purpose (review fix): the TUI hides the
+       on-screen `press c` BLOCK once a cloud provider is configured
+       (offerCloudMeanwhile) but keeps the KEY live, and this step's
+       footer names the chord unconditionally. The desktop had gated the
+       key too, so the hint strip advertised a chord that did nothing. */
+    await js<ObState>("window.__obSeed({cloudReady:true})");
+    const blockHidden = await js<number>(
+      "document.querySelectorAll('#onboarding .ob-offer.cloud').length",
+    );
     await js<Dl>("window.__dlSeed([{kind:'weights', id:'qwen3.5-4b'}])");
     await js<Dl>("window.__dlFeed({id:'qwen3.5-4b', kind:'weights', percent:40, transferredBytes:100, totalBytes:250})");
     const toCloud = await js<ObState>("window.__obKey('c')");
     const dlOnCloud = await js<Dl>("window.__dl()");
     check(
-      "wizard: `c` opens the cloud wizard mid-download and the strip keeps ticking",
-      toCloud.step === "cloud" && toCloud.resumeAfterCloud === "local_download" &&
+      "wizard: `c` opens the cloud wizard mid-download even with the block hidden, and the strip keeps ticking",
+      blockHidden === 0 &&
+        toCloud.step === "cloud" && toCloud.resumeAfterCloud === "local_download" &&
         dlOnCloud.visible && dlOnCloud.label === "qwen3.5-4b",
-      `step=${toCloud.step} resume=${toCloud.resumeAfterCloud} strip=${dlOnCloud.visible}/${dlOnCloud.label}`,
+      `block=${blockHidden} step=${toCloud.step} resume=${toCloud.resumeAfterCloud} strip=${dlOnCloud.visible}/${dlOnCloud.label}`,
     );
     const back = await js<ObState>("window.__obKey('esc')");
     const dlBack = await js<Dl>("window.__dl()");
@@ -6569,6 +6730,32 @@ async function onboardingTest(
       picks > 1 && hfLabel === "Add a model from Hugging Face…",
       `rows=${picks} last=${JSON.stringify(hfLabel)}`,
     );
+    /* THE KEYBOARD ROUTE TO IT, which the mouse cannot stand in for.
+       Review fix: the acceptance says the pinned row "is reachable by
+       pressing `down` past the model rows (cursor wraps back to row 0
+       from it)", and only a click was asserted — but the curated rows are
+       windowed six at a time while the pinned row sits past ALL of them
+       in cursor space, so the off-by-one that a click cannot reach is
+       exactly the one a walk finds. Walked from row 0 with `down`,
+       one press per curated model. */
+    const curated = await js<number>("window.__obPickCounts().models");
+    await js<ObState>("window.__obSeed({cursor:0})");
+    for (let i = 0; i < curated; i += 1) await js<ObState>("window.__obKey('down')");
+    const onPinned = await js<{ cursor: number; label: string; on: boolean }>(
+      "(function(){const rows=document.querySelectorAll('#onboarding .ob-row');" +
+        "const last=rows[rows.length-1];" +
+        "return {cursor: window.__ob().cursor, label: last.querySelector('.t').textContent," +
+        " on: last.classList.contains('on')};})()",
+    );
+    const wrapped = await js<ObState>("window.__obKey('down')");
+    check(
+      "wizard: `down` past the model rows lands on the pinned row, and wraps from it",
+      curated > 0 && onPinned.cursor === curated && onPinned.on === true &&
+        onPinned.label === "Add a model from Hugging Face…" && wrapped.cursor === 0,
+      `curated=${curated} at=${JSON.stringify(onPinned)} wrapped=${wrapped.cursor}`,
+    );
+    await js<ObState>("window.__obSeed({cursor:0})");
+
     /* Driven with the MOUSE, on the last row the list draws — which is the
        pinned one. Two clicks, because MouseListRow selects on the first
        and activates on the second, and the second sends the same Enter
@@ -6807,6 +6994,142 @@ async function onboardingTest(
       headline.some((h) => h === "Nothing new to import — everything is already here or empty."),
       JSON.stringify(headline),
     );
+
+    /* ---- THE ARGV THE IMPORT ACTUALLY SPAWNS ----
+       Review fix: the widened source guard, the per-source `--exclude`
+       whitelist and the hermes/claude-code/codex gate on
+       `--migrate-secrets` had no coverage, and no surface in the product
+       produces a non-default option set for the two newer sources — so a
+       spawned run cannot reach them. The builder is asserted directly
+       instead, which is where getting them wrong makes a preview promise
+       more than the operator ticked. */
+    const argvOf = (
+      source: string, exclude: string[], secrets: boolean,
+    ): { ok: boolean; args?: string[]; error?: string } =>
+      importArgs({
+        source: source as Parameters<typeof importArgs>[0]["source"],
+        dir: "/tmp/src", exclude, secrets, overwrite: false, limit: "", execute: false,
+      }) as { ok: boolean; args?: string[]; error?: string };
+    const argvClaude = argvOf("claude-code", ["skills", "mcp", "cron"], false);
+    const argvCodex = argvOf("codex", ["memory", "mcp"], true);
+    const argvOpenclaw = argvOf("openclaw", ["sessions"], true);
+    const argvHermes = argvOf("hermes", ["cron"], true);
+    const argvUnknown = argvOf("atomic-agent", [], false);
+    check(
+      "wizard: the import argv excludes only domains the source understands, and gates the secrets flag",
+      // `cron` is not a Claude Code domain, so it is dropped rather than
+      // passed to a resolver that would reject the whole run.
+      argvClaude.args?.join(" ") === "import claude-code --source /tmp/src --exclude skills,mcp --dry-run" &&
+        argvCodex.args?.join(" ") === "import codex --source /tmp/src --exclude memory --migrate-secrets --dry-run" &&
+        // OpenClaw has no secrets domain and no --migrate-secrets leg.
+        argvOpenclaw.args?.join(" ") === "import openclaw --source /tmp/src --exclude sessions --dry-run" &&
+        argvHermes.args?.join(" ") === "import hermes --source /tmp/src --exclude cron --migrate-secrets --dry-run" &&
+        argvUnknown.ok === false &&
+        argvUnknown.error === "source must be hermes, openclaw, claude-code or codex",
+      `claude=${JSON.stringify(argvClaude)} codex=${JSON.stringify(argvCodex)}` +
+        ` openclaw=${JSON.stringify(argvOpenclaw)} hermes=${JSON.stringify(argvHermes)}` +
+        ` unknown=${JSON.stringify(argvUnknown)}`,
+    );
+
+    /* ---- THE LIVE IMPORT LEG, END TO END ----
+       Review fix: both preview checks above hand-seed `OB.importReport`,
+       so `obRunImport` was never called, `importRun` never spawned, and
+       the acceptance line "IMPORT PREVIEW GATES THE WRITE" had no check
+       at all. Here the rows come from the REAL scan (a fixture home the
+       detector finds through its own CLAUDE_CODE_STATE_DIR override, so
+       the row's dir is what `detectImportAgents` resolved, not a literal
+       the test wrote), Enter on the import row runs the real dry run, and
+       the skill it promises is asserted absent from this lane's state dir
+       until Enter on the PREVIEW puts it there. Everything is removed in
+       the inner finally. */
+    const stateDir = process.env.ATOMIC_AGENT_STATE_DIR ?? join(homedir(), ".atomic-agent");
+    const fixtureHome = join(app.getPath("temp"), "atomic-desktop-smoke-claude");
+    const fixtureSkill = join(fixtureHome, "skills", "desktop-import-probe");
+    const importedSkill = join(stateDir, "skills", "desktop-import-probe");
+    const prevClaudeDir = process.env["CLAUDE_CODE_STATE_DIR"];
+    rmSync(fixtureHome, { recursive: true, force: true });
+    rmSync(importedSkill, { recursive: true, force: true });
+    mkdirSync(fixtureSkill, { recursive: true });
+    writeFileSync(
+      join(fixtureSkill, "SKILL.md"),
+      "---\nname: desktop-import-probe\ndescription: a fixture skill the desktop smoke imports\n---\n\nBody.\n",
+    );
+    process.env["CLAUDE_CODE_STATE_DIR"] = fixtureHome;
+    try {
+      /* `proposedSecondBackendAt` already stamped: the second-backend
+         offer sits AHEAD of the import step in the finished effect, and
+         whether it fires depends on this machine's readiness. That offer
+         has its own check above; here it is settled — the ordinary state
+         of any machine that has run setup once — so the import step is
+         reached deterministically. */
+      await writeStamps({ ...blank, proposedSecondBackendAt: new Date().toISOString() });
+      /* Reached the way a real run reaches it: the finished effect scans
+         for sources and raises the screen. `__obOpen('import_pick')`
+         would land on the step with an EMPTY agent list — the scan is the
+         effect's, not the step's — which is exactly the seeding this
+         check exists to stop doing. */
+      await js<ObState>("window.__obOpen('import_done')");
+      await js<ObState>("window.__obSeed({outcome:'local'})");
+      await js<ObState>("window.__obKey('enter')");
+      let live = await js<ObImport>("window.__obImport()");
+      for (let i = 0; i < 60 && !live.agents.some((a) => a.id === "claude-code"); i += 1) {
+        await new Promise((r) => setTimeout(r, 250));
+        live = await js<ObImport>("window.__obImport()");
+      }
+      const arrivedOn = (await js<ObState>("window.__ob()")).step;
+      const detected = live.agents.find((a) => a.id === "claude-code");
+      await js<ObImport>("window.__obTickAgent('claude-code')");
+      const cursorAt = await js<number>("window.__obCursorTo('import')");
+      await js<ObState>("window.__obKey('enter')");
+      let preview = await js<ObState>("window.__ob()");
+      for (let i = 0; i < 80 && preview.step === "import_pick"; i += 1) {
+        await new Promise((r) => setTimeout(r, 250));
+        preview = await js<ObState>("window.__ob()");
+      }
+      type Report = { items: { kind: string; status: string }[]; summary: { migrated: number; conflict: number } };
+      const previewed = (await js<ObImport>("window.__obImport()")).report as Report | null;
+      const writtenEarly = existsSync(importedSkill);
+      check(
+        "wizard: Enter on the import row runs the real dry run and writes nothing",
+        arrivedOn === "import_pick" &&
+          !!detected && detected.dir === fixtureHome && cursorAt >= 0 &&
+          preview.step === "import_preview" && previewed !== null &&
+          previewed.summary.migrated === 1 &&
+          previewed.items.some((it) => it.kind === "skills" && it.status === "migrated") &&
+          writtenEarly === false,
+        `arrived=${arrivedOn} detected=${JSON.stringify(detected)} step=${preview.step} report=${JSON.stringify(previewed?.summary)}` +
+          ` items=${JSON.stringify(previewed?.items.map((it) => `${it.kind}/${it.status}`))} onDisk=${writtenEarly}`,
+      );
+      // The preview's Enter is the write, and the flow's last screen.
+      await js<ObState>("window.__obSeed({testClose:false, restarted:true})");
+      await js<ObState>("window.__obKey('enter')");
+      let done = await js<ObState>("window.__ob()");
+      for (let i = 0; i < 80 && done.step === "import_preview"; i += 1) {
+        await new Promise((r) => setTimeout(r, 250));
+        done = await js<ObState>("window.__ob()");
+      }
+      const writtenNow = existsSync(importedSkill);
+      // ... and any key from there closes the flow and stamps completedAt.
+      await js<ObState>("window.__obKey('down')");
+      const closed = await settled();
+      let completed = (await stampsNow()).completedAt;
+      for (let i = 0; i < 20 && !completed; i += 1) {
+        await new Promise((r) => setTimeout(r, 250));
+        completed = (await stampsNow()).completedAt;
+      }
+      check(
+        "wizard: Enter on the preview is the write, and any key from `import_done` finishes the flow",
+        done.step === "import_done" && writtenNow === true &&
+          closed.open === false &&
+          typeof completed === "string" && Date.parse(completed) >= runStart - 1000,
+        `step=${done.step} onDisk=${writtenNow} open=${closed.open} completedAt=${JSON.stringify(completed)}`,
+      );
+    } finally {
+      if (prevClaudeDir === undefined) delete process.env["CLAUDE_CODE_STATE_DIR"];
+      else process.env["CLAUDE_CODE_STATE_DIR"] = prevClaudeDir;
+      rmSync(fixtureHome, { recursive: true, force: true });
+      rmSync(importedSkill, { recursive: true, force: true });
+    }
   } finally {
     await js<unknown>("window.__obClose ? window.__obClose() : null");
     await js<unknown>("window.__dlClear ? window.__dlClear() : null");

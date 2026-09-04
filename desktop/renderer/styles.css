@@ -954,7 +954,11 @@ button.menurow:hover{background:var(--bg-hover)}
 .ob-phase .pl{color:var(--text-secondary);min-width:19ch}
 .ob-phase .pb b{color:var(--accent);font-weight:400}
 .ob-phase .pb i{color:var(--line-strong);font-style:normal}
-.ob-phase.pending .pb i{color:var(--line)}
+/* The phase states dlResetPhases/dlOnPull actually emit are waiting,
+   active and done — `pending` was never written, so the waiting phase's
+   empty bar drew at full weight instead of the TUI's dimmed border
+   (onboarding-download-progress.tsx PhaseLine). */
+.ob-phase.waiting .pb i{color:var(--line)}
 .ob-phase .pt{color:var(--text-secondary);font-variant-numeric:tabular-nums}
 .ob-rate{font-size:12px;color:var(--text-tertiary);margin-top:var(--s3)}
 .ob-offer{border-left:2px solid var(--line);padding:2px 0 2px 12px;margin-top:var(--s5);

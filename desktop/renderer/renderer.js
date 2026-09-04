@@ -385,6 +385,13 @@ const DL = {
   weights: {state:'waiting', percent:0, transferredBytes:0, totalBytes:0, drove:false},
   /** Smoke only: a seeded queue drives the bar without spawning a child. */
   dry: false,
+  /** r5 item 7 review fix: a finished pull whose activation had to wait
+      for a live turn to end. `s` on the download screen is a promise that
+      the pull keeps running while the operator uses the agent, so
+      completion regularly lands mid-turn — and activating restarts
+      `atag serve`, which would kill that turn. Held here until
+      obFlushDeferredActivate finds the turn over. */
+  deferred: null,
 };
 /* r5 item 7 review fix (hoisting): every const the render path reads has
    to be declared above the first top-level render(). These five sat next
@@ -3726,6 +3733,9 @@ function onChatEvent(ev) {
     if (ev.kind === 'finish') return;
     S.busy = false; S.turnId = null; clearInterval(ticker);
     S.reasonId = null;
+    // r5 item 7: a background download that finished mid-turn parked its
+    // activation rather than restarting `atag serve` under this turn.
+    obFlushDeferredActivate();
     refreshContext();
     reconcileToolCards();
     // Cards stay pending until the session store describes them.
@@ -4414,18 +4424,31 @@ function obSkyColours() {
   return out;
 }
 
-/** Build the field for the canvas's current size. */
-function obSkyBuild() {
+/**
+ * Size the canvas and take its context and the theme colours.  Split out
+ * of obSkyBuild (review fix) because renderOverlays rebuilds the whole
+ * layer, so the canvas NODE is new on every repaint of the intro while
+ * the field on it is the same seeded field at the same size: a remount
+ * has to re-bind, not re-build.
+ */
+function obSkyBind() {
   const canvas = OBSKY.canvas;
-  if (!canvas) return;
+  if (!canvas) return false;
   const w = canvas.clientWidth, h = canvas.clientHeight;
-  if (w <= 0 || h <= 0) return;
+  if (w <= 0 || h <= 0) return false;
   OBSKY.dpr = Math.min(2, window.devicePixelRatio || 1);
   OBSKY.w = w; OBSKY.h = h;
   canvas.width = Math.round(w * OBSKY.dpr);
   canvas.height = Math.round(h * OBSKY.dpr);
   OBSKY.ctx = canvas.getContext('2d');
   OBSKY.colours = obSkyColours();
+  return true;
+}
+
+/** Build the field for the canvas's current size. */
+function obSkyBuild() {
+  if (!obSkyBind()) return;
+  const w = OBSKY.w, h = OBSKY.h;
   const cell = OB_SKY.CELL_PX;
   const columns = Math.max(1, Math.floor(w / cell));
   const rows = Math.max(1, Math.floor(h / cell));
@@ -4539,15 +4562,27 @@ function obSkyStart() {
   const canvas = document.getElementById('ob-sky');
   if (!canvas) return;
   if (OBSKY.canvas === canvas && OBSKY.stars.length) { obSkyResume(); return; }
+  /* r5 item 7 review fix: a REMOUNT is not a fresh intro. renderOverlays
+     rebuilds the whole layer, so this runs with a new canvas node on
+     every repaint while the intro is up — and openOnboarding itself
+     renders twice, once before four awaited IPC round trips and once
+     after. Resetting the clock, the frame counter and the 220-star field
+     on each of those made the reveal jump back to zero mid-word with the
+     sky rebuilt under it. The field is seeded and size-derived, so it is
+     rebuilt only when the size actually changed; the clock and the frame
+     counter carry across. obSkyReset (openOnboarding, obClose) is the one
+     place a genuinely fresh intro starts from zero. */
+  const sameField = OBSKY.stars.length > 0 &&
+    OBSKY.w === canvas.clientWidth && OBSKY.h === canvas.clientHeight;
   OBSKY.canvas = canvas;
-  OBSKY.frames = 0;
   OBSKY.tick = 0;
-  OBSKY.t0 = performance.now();
-  obSkyBuild();
+  if (!OBSKY.t0) OBSKY.t0 = performance.now();
+  if (sameField) { if (!obSkyBind()) return; } else { OBSKY.frames = 0; obSkyBuild(); }
   OBSKY.reduced = obReducedMotion();
   if (OBSKY.reduced) {
-    // Exactly one frame at t=0, no rAF ever scheduled. The tagline is
-    // rendered complete by obIntroHTML for the same reason.
+    // Exactly one frame per mounted canvas at t=0, no rAF ever scheduled.
+    // The tagline is rendered complete by obIntroHTML for the same reason.
+    OBSKY.frames = 0;
     obSkyDraw(0);
     OBSKY.running = false;
     return;
@@ -4555,8 +4590,21 @@ function obSkyStart() {
   obSkyResume();
 }
 
+/** A genuinely fresh intro: the clock, the counter and the field all go. */
+function obSkyReset() {
+  obSkyStop();
+  OBSKY.canvas = null; OBSKY.ctx = null; OBSKY.stars = [];
+  OBSKY.frames = 0; OBSKY.tick = 0; OBSKY.t0 = 0; OBSKY.typed = 0;
+  OBSKY.w = 0; OBSKY.h = 0;
+}
+
 function obSkyResume() {
   if (OBSKY.reduced || OBSKY.running || document.hidden) return;
+  /* r5 item 7 review fix: obSkyStop clears the TYPEWRITER as well as the
+     rAF, so a hide/show left the tagline frozen mid-word for ever — the
+     visibilitychange handler only ever called this. Both are re-armed
+     here; obStartTyping is idempotent while its interval is live. */
+  if (OB.open && OB.step === 'intro') obStartTyping();
   OBSKY.running = true;
   OBSKY.raf = requestAnimationFrame(obSkyFrame);
 }
@@ -4599,10 +4647,16 @@ function obPaintTagline() {
 
 /** TAGLINE_MS_PER_CHAR = 45 (onboarding-intro-step.tsx:12). */
 function obStartTyping() {
-  if (OBSKY.typer) clearInterval(OBSKY.typer);
-  if (obReducedMotion() || OB.introTyped) { OBSKY.typed = OB_COPY.tagline.length; obPaintTagline(); return; }
-  OBSKY.typed = 0;
+  if (obReducedMotion() || OB.introTyped) {
+    if (OBSKY.typer) { clearInterval(OBSKY.typer); OBSKY.typer = 0; }
+    OBSKY.typed = OB_COPY.tagline.length; obPaintTagline(); return;
+  }
+  /* r5 item 7 review fix: paint what has already been revealed into the
+     new node, and RESUME — a repaint of the intro must not send the
+     reveal back to the first character. OBSKY.typed is zeroed by
+     obSkyReset, which is where a fresh intro begins. */
   obPaintTagline();
+  if (OBSKY.typer) return;
   OBSKY.typer = setInterval(() => {
     OBSKY.typed += 1;
     obPaintTagline();
@@ -5328,8 +5382,13 @@ function obHfPickKey(input, key) {
 /** handleDownloadKey (:160-196). */
 function obDownloadKey(input, key) {
   if (input === 'c' && !key.ctrl) {
-    // Hidden once a cloud provider is configured — nothing left to offer.
-    if (OB.cloudReady) return true;
+    /* r5 item 7 review fix: NO `cloudReady` gate here. The TUI's
+       `offerCloudMeanwhile` hides the on-screen BLOCK once a cloud
+       provider is configured (onboarding-download-step.tsx:110-118), but
+       the key stays live and the footer for this step is fixed — so a
+       gate here left the hint strip advertising `c set up cloud
+       meanwhile` on a chord that did nothing. Adding a second provider is
+       a perfectly good thing to want on a machine that already has one. */
     obOpenCloudWizard();
     obDispatch({type:'onboarding_cloud_meanwhile_opened'});
     return true;
@@ -5500,10 +5559,29 @@ async function obLoadModels() {
 }
 
 /**
+ * `models status`, as the wizard reads it, and the one decision that
+ * creates a runtime phase — kept apart from each other and from the
+ * queue so both can be driven on their own (review fix: nothing reached
+ * this decision, so a machine with a missing binary could have lost its
+ * runtime phase silently).
+ */
+function obBackendStatusText() {
+  if (!BR || !BR.modelsStatus) return Promise.resolve('');
+  return BR.modelsStatus().then(
+    (st) => (st && st.ok && st.status ? String(st.status.backend || '') : ''),
+    () => '',
+  );
+}
+
+/** `models status` prints `backend: binary ok|missing` (models-handlers.ts:202-204). */
+function obBackendMissing(backendText) {
+  return /binary\s+missing/.test(String(backendText || ''));
+}
+
+/**
  * Start the download for a picked model.  The runtime phase is probed
- * for, never assumed: `models status` prints `binary ok|missing`
- * (models-handlers.ts:202-204), and only a missing binary earns a
- * `models update` in front of the weights.
+ * for, never assumed: only a missing binary earns a `models update` in
+ * front of the weights.
  */
 async function obStartLocalPull(id, alreadyDownloaded) {
   if (!BR) return;
@@ -5520,11 +5598,7 @@ async function obStartLocalPull(id, alreadyDownloaded) {
   // read and `models update` is spawned — both answer differently while
   // the file still says something else (review fix).
   if (OB.managedWrite) { try { await OB.managedWrite; } catch (e) { /* the status read below is the real gate */ } OB.managedWrite = null; }
-  let needsRuntime = false;
-  try {
-    const st = await BR.modelsStatus();
-    if (st && st.ok && st.status && /binary\s+missing/.test(String(st.status.backend || ''))) needsRuntime = true;
-  } catch (e) { needsRuntime = false; }
+  const needsRuntime = obBackendMissing(await obBackendStatusText());
   const jobs = [];
   if (needsRuntime) jobs.push({kind:'runtime', id:'llama.cpp'});
   jobs.push({kind:'weights', id});
@@ -5534,6 +5608,22 @@ async function obStartLocalPull(id, alreadyDownloaded) {
 /** The TUI's pull-completion path: write the model and start the daemon. */
 async function obActivateLocal(id) {
   if (!BR) return;
+  /* r5 item 7 review fix: this is reached by a pull that finished in the
+     BACKGROUND. `s` on the download screen drops the operator into the
+     agent with the pull still in flight — that is the strip's whole
+     promise — so completion routinely lands in the middle of a turn, and
+     `selectLocalModel` makes main stop and restart `atag serve`
+     (applySwitch), which would kill it. Every other restarting path in
+     this file refuses while `S.busy`; this one DEFERS rather than
+     refusing, because nobody asked for the switch at this instant.
+     obFlushDeferredActivate runs it the moment the turn ends. */
+  if (S.busy) {
+    DL.deferred = id;
+    toast('Not while a turn is running', id + ' is downloaded — it starts when the turn ends');
+    render();
+    return;
+  }
+  DL.deferred = null;
   const res = await BR.selectLocalModel(id);
   if (!res || !res.ok) {
     DL.error = (res && res.error) || 'could not select the model';
@@ -5543,6 +5633,18 @@ async function obActivateLocal(id) {
   bswReport(res);
   OB.restarted = !!res.restart;
   obDispatch({type:'local_models_pull_finished', kind:'chat'});
+}
+
+/**
+ * The activation obActivateLocal deferred, run when the turn that blocked
+ * it ends. Called from the one place a turn actually finishes (the
+ * done/aborted/error frame), so there is a single flush point.
+ */
+function obFlushDeferredActivate() {
+  const id = DL.deferred;
+  if (!id || S.busy) return;
+  DL.deferred = null;
+  obActivateLocal(id);
 }
 
 /** A queue entry finished. Called from the one `cli:pull` subscriber. */
@@ -5947,6 +6049,9 @@ async function openOnboarding() {
   });
   // A re-run (the menu's `onboarding`, or --onboarding) stamps again.
   for (const leaf of Object.keys(OB_STAMPED)) delete OB_STAMPED[leaf];
+  // The one place a fresh intro starts from zero — obSkyStart itself
+  // treats a new canvas node as a remount (review fix).
+  obSkyReset();
   OB_LAST_STEP = 'intro';
   render();
   if (!BR) return;
@@ -5980,13 +6085,16 @@ function obIntroMounted() {
   }
   if (!OB.open || OB.step !== 'intro') { obSkyStop(); return; }
   if (!document.getElementById('ob-sky')) return;
-  obSkyStop();
-  OBSKY.canvas = null;
-  OBSKY.stars = [];
+  /* r5 item 7 review fix: no teardown here. This runs on EVERY repaint
+     while the intro is up — a toast, an agent status event, or
+     openOnboarding's own second render after its four IPC round trips —
+     and tearing the field and the typewriter down each time restarted
+     both in front of the operator. obSkyStart re-binds the new canvas
+     node and keeps the field, the clock and the reveal. */
   requestAnimationFrame(() => {
     if (!OB.open || OB.step !== 'intro') return;
     obSkyStart();
-    if (!OB.introTyped) obStartTyping(); else obPaintTagline();
+    obStartTyping();
   });
 }
 
@@ -6133,10 +6241,14 @@ if (BR) {
 }
 
 document.addEventListener('keydown', obKeydown, true);
-document.addEventListener('visibilitychange', () => {
-  if (document.hidden) obSkyStop();
+/** The window going away and coming back. Named rather than inline so
+ *  the pair is one thing: obSkyStop clears the typewriter as well as the
+ *  rAF, and obSkyResume has to re-arm both. */
+function obVisibilityChanged(hidden) {
+  if (hidden) obSkyStop();
   else if (OB.open && OB.step === 'intro') obSkyResume();
-});
+}
+document.addEventListener('visibilitychange', () => obVisibilityChanged(document.hidden));
 /* "press any key" answered on every channel the TUI answers it on —
    keys, a mouse press, a wheel notch and a non-empty paste
    (intro-input.ts:26-41). A release is not a press, and an empty paste
@@ -13028,6 +13140,7 @@ if (typeof window !== 'undefined') {
     for (const leaf of Object.keys(OB_STAMPED)) delete OB_STAMPED[leaf];
     OB_STAMP_LOG.length = 0;
     for (const leaf of ((opts && opts.stamped) || [])) OB_STAMPED[leaf] = true;
+    obSkyReset();
     OB.step = step || 'intro';
     OB_LAST_STEP = null;
     render();
@@ -13061,4 +13174,95 @@ if (typeof window !== 'undefined') {
    *  derive what the offer table SHOULD say on this machine rather than
    *  assume a config it does not own. */
   window.__obReadiness = () => obReadiness();
+}
+
+/* ==========================================================================
+   r5 item 7 — setup wizard: the second round of review fixes.
+   Three legs the first round shipped without coverage, plus the two
+   numbers a repaint used to reset.  Everything here reads or drives
+   production functions; nothing paints, and nothing reaches a transition
+   a key cannot.
+   ========================================================================== */
+if (typeof window !== 'undefined') {
+  /** The production open path — the same menu command the first-run gate
+   *  and `--onboarding` send, not the test jump. */
+  window.__obMenuOpen = () => { act('onboarding'); return window.__ob(); };
+  /** The reveal's own counters, so a check can prove a repaint did not
+   *  send them backwards. */
+  window.__obSkyProgress = () => ({frames: OBSKY.frames, typed: OBSKY.typed, typing: OBSKY.typer !== 0});
+  /** The hide/show pair the visibilitychange handler runs, driven
+   *  directly: `document.hidden` cannot be forced from the page. */
+  window.__obVisibility = (hidden) => { obVisibilityChanged(!!hidden); return window.__obSkyProgress(); };
+  /** The `binary ok|missing` decision on its own, both branches. */
+  window.__obBackendMissing = (text) => obBackendMissing(text);
+  /**
+   * Drive `obStartLocalPull` — the function that decides whether a
+   * runtime phase exists at all — without spawning a child or bouncing
+   * `atag serve`.  renderer.js is a classic script, so its top-level
+   * function declarations are writable globals: the two IPC-facing
+   * helpers are swapped for recorders and put back, and the code under
+   * test is the shipped code, unchanged and unaware.
+   */
+  window.__obPullProbe = async (opts) => {
+    const o = opts || {};
+    const realStatus = obBackendStatusText;
+    const realActivate = obActivateLocal;
+    const keepDry = DL.dry, keepBusy = S.busy, keepDeferred = DL.deferred;
+    const order = [];
+    DL.dry = true;
+    DL.deferred = null;
+    S.busy = !!o.busy;
+    window.obBackendStatusText = () => { order.push('status'); return Promise.resolve(o.backend || 'binary ok'); };
+    /* The activation is called through ONLY when the busy guard is what
+       is under test — it is the guard that makes that call harmless
+       (it defers instead of restarting `atag serve`). Otherwise the
+       recorder stops here: a probe must not bounce the agent. */
+    window.obActivateLocal = async (id) => {
+      order.push('activate:' + id);
+      if (o.busy) return realActivate(id);
+    };
+    OB.managedWrite = o.managedWrite === false ? null
+      : new Promise((r) => setTimeout(() => { order.push('managed'); r({ok: true}); }, 40));
+    try {
+      await obStartLocalPull(o.id || 'qwen3.5-4b', !!o.alreadyDownloaded);
+    } finally {
+      window.obBackendStatusText = realStatus;
+      window.obActivateLocal = realActivate;
+      S.busy = keepBusy;
+      DL.dry = keepDry;
+    }
+    const out = {
+      order,
+      head: DL.job ? {kind: DL.job.kind, id: DL.job.id} : null,
+      queue: DL.queue.map((j) => ({kind: j.kind, id: j.id})),
+      phases: {runtime: DL.runtime.state, weights: DL.weights.state},
+      deferred: DL.deferred,
+    };
+    DL.deferred = keepDeferred;
+    return out;
+  };
+  /** How many curated rows the pick step has, so a walk knows how many
+   *  `down`s reach the row pinned past all of them. */
+  window.__obPickCounts = () => {
+    const rows = obPickRows();
+    return {models: rows.filter((r) => r.kind === 'model').length, total: rows.length};
+  };
+  /** The import step's own rows, driven by index through the key router. */
+  window.__obTickAgent = (id) => {
+    const rows = obImportRows();
+    const at = rows.findIndex((r) => r.kind === 'agent' && r.agent && r.agent.id === id);
+    if (at < 0) return null;
+    OB.cursor = at;
+    obPress('space');
+    return window.__obImport();
+  };
+  /** Put the cursor on the one import row, the way `down` would. */
+  window.__obCursorTo = (kind) => {
+    const rows = obImportRows();
+    const at = rows.findIndex((r) => r.kind === kind);
+    if (at < 0) return -1;
+    OB.cursor = at;
+    render();
+    return at;
+  };
 }
