@@ -14,6 +14,10 @@
  *   2. NOTHING CROSSES UNLESS IT IS TICKED. Every flag defaults false.
  *      What crosses is a COPY, not a link, so revoking a key on one side
  *      does not revoke it on the other.
+ *   3. THE DESTINATION IS NOT LIVE WHILE A DATABASE IS REPLACED. The
+ *      desktop's own `atag serve` holds sessions.sqlite and memory.sqlite
+ *      open; that arm of the import stops it, drops the destination's stale
+ *      `-wal`/`-shm`, restores, and starts it again (TuiImportHooks).
  *
  * WHAT IS NEVER COPIED, and why — enforced as a whitelist (the merge below
  * names the fields it takes; everything else is simply not read):
@@ -31,7 +35,7 @@
  */
 
 import { execFile } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
@@ -62,6 +66,30 @@ export interface TuiImportResult {
   ok: boolean;
   copied: { providers: number; keys: number; skills: number; sessions: number; memory: boolean };
   error?: string;
+}
+
+/**
+ * r5 review fix (major) — the DESTINATION of a database import is a file the
+ * desktop's OWN agent already has open.
+ *
+ * `sqlite3 … ".backup"` was correct about the source (read-only, WAL-aware)
+ * and wrong about the target: main.ts starts `atag serve` from
+ * `did-finish-load`, and the wizard that calls this runs in that same window,
+ * so `<desktopStateDir>/sessions.sqlite` and `memory.sqlite` are open with a
+ * live WAL while `.backup` replaces the main database file underneath. Two
+ * ways that ends badly: the running connection's `-wal`/`-shm` still describe
+ * the PRE-import image and the next checkpoint writes those stale frames back
+ * over the restored file, and sqlite takes an exclusive lock on the
+ * destination, so an unlucky moment fails the whole import with a BUSY.
+ *
+ * So the caller hands in the agent's own stop/start. The database arm — and
+ * ONLY that arm — runs with the agent down and the destination's WAL siblings
+ * deleted, and the agent is brought back in a `finally` even if the copy
+ * throws. Everything else (providers, keys, skills) is safe with it running.
+ */
+export interface TuiImportHooks {
+  stopAgent: () => Promise<unknown>;
+  startAgent: () => Promise<unknown>;
 }
 
 const NOTHING = (): TuiImportResult["copied"] => ({ providers: 0, keys: 0, skills: 0, sessions: 0, memory: false });
@@ -133,7 +161,7 @@ function importableSkills(): string[] {
   return dirNames(join(TUI_STATE_DIR, "skills")).filter((n) => !mine.has(n));
 }
 
-async function sqliteRowCount(file: string, table: string): Promise<number> {
+export async function sqliteRowCount(file: string, table: string): Promise<number> {
   if (!existsSync(file) || !existsSync(SQLITE)) return 0;
   try {
     const { stdout } = await run(SQLITE, ["-readonly", file, `select count(*) from ${table}`], { timeout: 10_000 });
@@ -156,6 +184,19 @@ async function sqliteBackup(src: string, dst: string): Promise<boolean> {
     return existsSync(dst) && statSync(dst).size > 0;
   } catch {
     return false;
+  }
+}
+
+/**
+ * The `-wal` and `-shm` of a database that is about to be REPLACED. They
+ * describe the old image; left in place, the next connection replays them
+ * over the freshly restored file and the import silently undoes itself.
+ * Only ever called against a path inside the desktop's own state dir, with
+ * the agent stopped.
+ */
+function dropWalSiblings(dbPath: string): void {
+  for (const suffix of ["-wal", "-shm"]) {
+    try { rmSync(dbPath + suffix, { force: true }); } catch { /* nothing to drop */ }
   }
 }
 
@@ -192,7 +233,7 @@ export async function tuiSetupPresent(): Promise<TuiSetupPresence> {
  * Cross-lane contract: copies only what is ticked. Every flag defaults
  * FALSE, so `importFromTui({})` copies nothing and says so.
  */
-export async function importFromTui(opts: TuiImportOptions): Promise<TuiImportResult> {
+export async function importFromTui(opts: TuiImportOptions, hooks?: TuiImportHooks): Promise<TuiImportResult> {
   const copied = NOTHING();
   if (DESKTOP_STATE_DIR === TUI_STATE_DIR) {
     return { ok: false, copied, error: "this app is already running on the terminal agent's directory — there is nothing to import" };
@@ -274,15 +315,26 @@ export async function importFromTui(opts: TuiImportOptions): Promise<TuiImportRe
       }
     }
 
-    if (want.sessions) {
-      const dst = join(DESKTOP_STATE_DIR, "sessions.sqlite");
-      if (await sqliteBackup(join(TUI_STATE_DIR, "sessions.sqlite"), dst)) {
-        copied.sessions = await sqliteRowCount(dst, "sessions");
+    if (want.sessions || want.memory) {
+      // See TuiImportHooks: the destination databases belong to a running
+      // agent. Down for the copy, back up afterwards, whatever happens.
+      if (hooks) await hooks.stopAgent();
+      try {
+        if (want.sessions) {
+          const dst = join(DESKTOP_STATE_DIR, "sessions.sqlite");
+          dropWalSiblings(dst);
+          if (await sqliteBackup(join(TUI_STATE_DIR, "sessions.sqlite"), dst)) {
+            copied.sessions = await sqliteRowCount(dst, "sessions");
+          }
+        }
+        if (want.memory) {
+          const dst = join(DESKTOP_STATE_DIR, "memory.sqlite");
+          dropWalSiblings(dst);
+          copied.memory = await sqliteBackup(join(TUI_STATE_DIR, "memory.sqlite"), dst);
+        }
+      } finally {
+        if (hooks) await hooks.startAgent();
       }
-    }
-
-    if (want.memory) {
-      copied.memory = await sqliteBackup(join(TUI_STATE_DIR, "memory.sqlite"), join(DESKTOP_STATE_DIR, "memory.sqlite"));
     }
 
     return { ok: true, copied };

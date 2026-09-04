@@ -55,11 +55,33 @@ try {
   // that needs it; failing to boot the window would say less.
 }
 
-/** `<stateDir>/models` — paths.localModelsDataDir with no dataDirOverride. */
-const desktopDataDir = join(DESKTOP_STATE_DIR, "models");
-const tuiDataDir = join(TUI_STATE_DIR, "models");
-
-if (DESKTOP_STATE_WAS_FRESH && DESKTOP_STATE_DIR !== TUI_STATE_DIR && existsSync(tuiDataDir)) {
+/**
+ * Step 4, lifted out of the module body so the suite can drive it — r5 review
+ * fix (minor): everything gated on DESKTOP_STATE_WAS_FRESH had zero coverage,
+ * because a lane run is never fresh. Exported, parameterised, and with no
+ * reference to the two module constants, so a check can run it against a
+ * throwaway pair of directories and assert what it produced: 0700, a SYMLINK
+ * for the weights, a real COPY for the backend.
+ *
+ * `<dataDir>` is `<stateDir>/models` — paths.localModelsDataDir with no
+ * dataDirOverride.
+ */
+export function seedFreshStateDir(desktopStateDir: string, tuiStateDir: string): void {
+  try {
+    // 0700 because it will hold .env. The module body above creates the
+    // REAL directory unconditionally (a non-fresh launch must still have
+    // one); this repeat is what makes the function stand alone, so a check
+    // can run it against a throwaway path and read the mode back. mkdir
+    // with `recursive` leaves an existing directory's mode alone, so
+    // running it twice changes nothing.
+    mkdirSync(desktopStateDir, { recursive: true, mode: 0o700 });
+  } catch {
+    // A directory that cannot be created is reported by the first CLI call
+    // that needs it; failing to boot the window would say less.
+  }
+  const desktopDataDir = join(desktopStateDir, "models");
+  const tuiDataDir = join(tuiStateDir, "models");
+  if (desktopStateDir === tuiStateDir || !existsSync(tuiDataDir)) return;
   try {
     mkdirSync(desktopDataDir, { recursive: true });
     // The weights: shared, because they are gigabytes. `models/models` is
@@ -76,3 +98,5 @@ if (DESKTOP_STATE_WAS_FRESH && DESKTOP_STATE_DIR !== TUI_STATE_DIR && existsSync
     // wizard's download step is still there.
   }
 }
+
+if (DESKTOP_STATE_WAS_FRESH) seedFreshStateDir(DESKTOP_STATE_DIR, TUI_STATE_DIR);

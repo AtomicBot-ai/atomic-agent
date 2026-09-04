@@ -730,21 +730,41 @@ during the testing phase."*
   is *copied* rather than linked — `localModels.managed.autoUpdate` defaults
   to true and would otherwise rewrite the operator's llama.cpp binaries. The
   pid file, the daemon log and the session registry stay private, and the
-  desktop's managed port is **19191** so two daemons cannot collide.
+  desktop's managed port is **19191** and its embedding port **19192**
+  (both `localModels.embeddings.port` and `.url` move, because the daemon is
+  started on the port and the client reads the url) so two daemons cannot
+  collide.
   Consequence, stated plainly: a `models pull` from the desktop writes into
   the terminal agent's model folder, and `models remove` deletes from it.
   That is the one path by which anything here touches `~/.atomic-agent`;
   config, keys and the databases never do.
-- **The import offer.** The wizard's first step, shown only when
-  `~/.atomic-agent/config.json` exists, with nothing pre-ticked. It is
-  `main/tui-import.ts`: `tuiSetupPresent()` reports what is there (env var
-  NAMES only, never a value) and `importFromTui({providers, keys, skills,
-  sessions, memory})` copies only what is ticked. The source is opened
+- **The import offer — the IPC, not yet the screen.** What lives on this
+  branch is `main/tui-import.ts` and the two calls the wizard will make:
+  `window.atomic.tuiSetupPresent()` reports what `~/.atomic-agent` holds (env
+  var NAMES only, never a value) and
+  `window.atomic.importFromTui({providers, keys, skills, sessions, memory})`
+  copies only what is ticked, every flag defaulting to false. **The wizard
+  step that draws the tick-list is a separate lane's work and is not in this
+  branch** — do not go looking for it in the window yet. The source is opened
   read-only and never moved; `localModels` in its entirety — the managed
   port and the dataDirOverride with it — `tui.onboarding`, `telegram`,
   `analytics`, `version` and `tasks.sqlite` are never copied, and the
   databases travel through `sqlite3 -readonly … ".backup"` rather than a
-  `cp` of a live file with an open WAL.
+  `cp` of a live file with an open WAL. The *destination* databases belong
+  to the agent this window already started, so that arm of the import stops
+  `atag serve`, deletes the destination's stale `-wal`/`-shm`, restores, and
+  starts it again.
+- **The one thing this design cannot isolate, stated honestly.** Every agent
+  subprocess gets `{...process.env, ATOMIC_AGENT_STATE_DIR}`, so an
+  `AIMLAPI_API_KEY`, `OPENROUTER_API_KEY` or `HF_TOKEN` **exported in the
+  shell that launches Electron** reaches the desktop's agent, and
+  `keyNamesAvailable()` counts `process.env` before `<stateDir>/.env`. Against
+  the user's words — *"None of the keys should be shared"* — that is a leak,
+  and it is not closable from here: stripping the environment would break the
+  many operators who keep their keys only in a shell profile, and the agent
+  itself reads `process.env` first (`load-dotenv.ts`). The `.env` files are
+  fully separate; the *shell* is shared. Launch the desktop from a shell with
+  no provider keys exported if that matters for a test.
 - **Making it a first run again is one gesture:** `rm -rf
   ~/.atomic-agent-desktop`. The wizard opens on the next launch, because
   `app:firstRun` reports the latched flag rather than inferring one from a

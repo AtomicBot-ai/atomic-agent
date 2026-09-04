@@ -31,7 +31,14 @@ const PLAN = { on:false, supported:null };
    confirmed stance, and at the operator's approvalLevel 5 the live stance is
    really `bypass`. `known` goes true only when the route answers, and the chip
    prints the same blank it prints for a routeless agent until then. */
-const MODE = { current:'default', supported:null, baseLevel:null, approvalLevel:null, seq:0, known:false };
+/* `confirmedGen` is the r5 blocker fix: `known` and `current` SURVIVE an
+   `atag serve` restart untouched (nothing in this file ever sets known back
+   to false), so a predicate written over them alone is satisfied by state
+   the restart invalidated. This records WHICH agent connection last
+   confirmed the stance — see AGENT_GEN — so modeSettled can wait for a
+   reply from the agent that is running NOW rather than for values the old
+   one left behind. -1 = nothing has ever confirmed. */
+const MODE = { current:'default', supported:null, baseLevel:null, approvalLevel:null, seq:0, known:false, confirmedGen:-1 };
 /* src/approval/approval-level.ts MAX_APPROVAL_LEVEL. The two base-5
    disclosures below and clampLevel all read it rather than the literal, so a
    ladder that grows a rung moves the copy with it instead of leaving
@@ -44,6 +51,12 @@ const MAX_APPROVAL_LEVEL = 5;
    label. `null` until something is chosen, and nothing is re-asserted
    then. */
 let LAST_MODE = null;
+/* r5 item 10 (the switch lock) — which agent PROCESS the window is talking
+   to. Bumped by applyStatus on every transition INTO `connected`, so a
+   backend switch (stop + start) always advances it. Everything the agent
+   holds only in memory — the coding mode above all — is stale the moment
+   this moves, and modeSettled is the one place that must know it. */
+let AGENT_GEN = 0;
 /* Item 6 (coding mode): a re-assert waiting for a running turn to end.
    `{mode, timer}` while one is queued, `null` otherwise. The reconnect
    path must not drop the operator's choice just because a turn happened
@@ -181,7 +194,11 @@ const DEFAULT_LLAMA_URL = 'http://127.0.0.1:8080';
    composer prints where the lock was, so a failure says why next to the
    button rather than in a toast that fades; `lastMs` is the measured wall
    time of the last switch, which the smoke prints. */
-const SWX = { pending:0, since:0, label:'', want:null, err:null, timer:null, paint:null, lastMs:0 };
+const SWX = { pending:0, since:0, label:'', want:null, err:null, timer:null, paint:null, lastMs:0,
+  /* r5 review (minor): `route` is the funnel method the switch in flight is
+     using, and `times` keeps the last measured wall time PER route, so the
+     suite reports every switch rather than only the most recent one. */
+  route:null, times:{} };
 /* Below this, a switch is over before the eye can see a spinner start. */
 const SWX_SPINNER_DELAY_MS = 150;
 /* The agent client's own health deadline is 30 s and always resolves
@@ -205,11 +222,13 @@ const SWX_MODE_SETTLE_MS = 3000;
    reassertCodingMode's restart-time re-assert are not operator switches and
    must not take the lock — the re-assert is what the lock WAITS for. */
 const SWXBR = {
-  switchBackend: (kind) => BR.switchBackend(kind),
-  activateProvider: (id) => BR.activateProvider(id),
-  selectCloudModel: (id, model) => BR.selectCloudModel(id, model),
-  selectLocalModel: (id) => BR.selectLocalModel(id),
-  codingMode: (id) => BR.codingMode(id),
+  // Each stamps SWX.route so swxRun's `finally` can file the measurement
+  // under the route that was actually taken (r5 review, minor).
+  switchBackend: (kind) => { SWX.route = 'switchBackend'; return BR.switchBackend(kind); },
+  activateProvider: (id) => { SWX.route = 'activateProvider'; return BR.activateProvider(id); },
+  selectCloudModel: (id, model) => { SWX.route = 'selectCloudModel'; return BR.selectCloudModel(id, model); },
+  selectLocalModel: (id) => { SWX.route = 'selectLocalModel'; return BR.selectLocalModel(id); },
+  codingMode: (id) => { SWX.route = 'codingMode'; return BR.codingMode(id); },
 };
 
 /* ---- Item 7: settings surface — the TUI menu tree + the Manage tabs ----
@@ -2374,6 +2393,12 @@ function submit() {
   // Lane B — backend switch: a turn is waiting on the local gate's disk
   // snapshot; the draft stays where it is until that one has been decided.
   if (BSW.gating) return;
+  /* r5 review (minor): the slash branch comes FIRST. `/help`, `/clear`,
+     `/model` are not messages — nothing about them runs at the provider or
+     the model, so holding them for the 3-11 s of a switch (with a toast
+     whose words are about a message staying in the box) was wrong copy for
+     the wrong thing. They go through untouched. */
+  if (text.startsWith('/')) { runSlash(text.slice(1).split(/\s+/)); S.draft = ''; if (e) { e.value = ''; autosize(e); } S.slash = false; ctxDraftChanged(); render(); return; }
   /* r5 item 10 — Enter while a switch is landing. The draft STAYS in the
      box: the two lines that clear it are below this guard, and steering or
      queueing is not offered either, because the message would run against
@@ -2384,7 +2409,6 @@ function submit() {
     toast(SWX.label, 'The message stays in the box until the new configuration is live');
     return;
   }
-  if (text.startsWith('/')) { runSlash(text.slice(1).split(/\s+/)); S.draft = ''; if (e) { e.value = ''; autosize(e); } S.slash = false; ctxDraftChanged(); render(); return; }
   S.draft = ''; if (e) { e.value = ''; autosize(e); }
   ctxDraftChanged(); // Lane B — item 3: the sent draft leaves the projection
   S.slash = false;
@@ -3219,6 +3243,10 @@ function applyStatus(st) {
   S.live = Object.assign({}, S.live, st);
   if (S.live.workingDir) WORKSPACE = S.live.workingDir;
   if (S.live.state === 'connected' && was !== 'connected') {
+    /* r5 item 10 — a NEW agent process is on the wire. Everything the old one
+       held in memory (the coding mode) is gone with it, so the generation
+       moves here, before loadResources can confirm anything against it. */
+    AGENT_GEN++;
     S.log.push({id:nid(), k:'system', text:'connected to atomic-agent · ' + esc(S.live.workingDir)});
     loadResources();
   }
@@ -4268,14 +4296,26 @@ if (typeof window !== 'undefined') {
  * blank-until-confirmed state is the honest answer and the composer is
  * released rather than held on a promise that may never resolve.
  */
-function modeSettled() {
+function modeSettled(gen0) {
   return new Promise((resolve) => {
     if (!LAST_MODE || MODE.supported === false) { resolve(); return; }
     const t0 = Date.now();
     const tick = () => {
-      if (MODE.known && MODE.current === LAST_MODE) { resolve(); return; }
+      /* THE FIX (r5 review, blocker). The old predicate was
+         `MODE.known && MODE.current === LAST_MODE`, and BOTH of those
+         survive the restart untouched: nothing in this file ever sets
+         `known` back to false, and every confirmed write sets
+         `LAST_MODE = MODE.current`, so after any successful mode change the
+         predicate is permanently true and this resolved on its first tick —
+         releasing the composer while the freshly restarted agent was still
+         on its BOOT stance and the re-assert POST had not been sent. That is
+         precisely the gap the lock exists to close.
+         So the wait is now over a fact the restart CANNOT leave behind: a
+         confirmed reply from an agent connection NEWER than the one the
+         switch started on (`gen0`), naming the mode this window chose. */
+      if (AGENT_GEN > gen0 && MODE.confirmedGen === AGENT_GEN && MODE.known && MODE.current === LAST_MODE) { resolve(); return; }
       if (Date.now() - t0 >= SWX_MODE_SETTLE_MS) { resolve(); return; }
-      setTimeout(tick, 100);
+      setTimeout(tick, 50);
     };
     tick();
   });
@@ -4301,11 +4341,11 @@ function modeSettled() {
  * Skipped for a failure too — nothing was written, and each call site's
  * own failure arm already refreshes the way it needs to.
  */
-async function swxSettle(res) {
+async function swxSettle(res, gen0) {
   if (!res || res.ok === false) return;
   if (!('restart' in res)) return;
   await refreshLiveConfig();
-  if (res.restart) await modeSettled();
+  if (res.restart) await modeSettled(gen0);
 }
 
 /** The sentence the composer prints where the lock was. Never invented: it
@@ -4340,6 +4380,12 @@ async function swxRun(label, want, run, refuse) {
     return {ok:false, error:'a turn is running'};
   }
   const t0 = Date.now();
+  /* r5 review (blocker): the agent generation the switch STARTED on. A
+     restart advances AGENT_GEN, and swxSettle holds the lock until a mode
+     reply from a generation past this one lands. Captured before `run()`
+     so a confirm that happened before the click cannot satisfy it. */
+  const gen0 = AGENT_GEN;
+  SWX.route = null;
   SWX.pending++;
   SWX.since = t0;
   SWX.label = label;
@@ -4363,7 +4409,7 @@ async function swxRun(label, want, run, refuse) {
   try {
     res = await run();
     // The IPC has resolved. That is one of three things, not the end.
-    await swxSettle(res);
+    await swxSettle(res, gen0);
     if (res && res.ok === false) SWX.err = swxFailLine(label, res);
     return res;
   } catch (err) {
@@ -4371,6 +4417,12 @@ async function swxRun(label, want, run, refuse) {
     throw err;
   } finally {
     SWX.lastMs = Date.now() - t0;
+    /* r5 review (minor): "measure and report the real wall time of EACH
+       switch". SWX.lastMs only ever named the last one, so the suite could
+       print the backend switch and the coding-mode route and nothing else.
+       The funnel below stamps SWX.route, so every route keeps its own
+       measurement and one report check can print them all. */
+    if (SWX.route) SWX.times[SWX.route] = SWX.lastMs;
     if (SWX.timer) { clearTimeout(SWX.timer); SWX.timer = null; }
     if (SWX.paint) { clearTimeout(SWX.paint); SWX.paint = null; }
     // The watchdog may already have zeroed this; never decrement past 0.
@@ -4553,7 +4605,11 @@ async function selActivate(row) {
     return;
   }
   if (row.type === 'cloudModel') {
-    // Apply and close first; the write and the restart confirm in the background.
+    /* r5 review (minor): this comment used to say "apply and close first;
+       the write and the restart confirm in the background" — that stopped
+       being true when the row started awaiting swxRun. The popup still
+       closes first, but nothing confirms in the background: the composer
+       is locked until the switch is live. */
     const pid = selActiveProviderId();
     /* r5 item 10. This row was ALREADY optimistic — and wrongly so: it
        mutated the live provider entry in place (`entry.defaultChatModel =
@@ -5173,7 +5229,7 @@ function loadCodingMode() {
     // Only an `ok` answer moves the stance. A failed GET leaves `current`
     // where it was and `known` false, so the chip keeps the blank rather than
     // painting the seed as if the agent had confirmed it.
-    if (res.ok) { MODE.current = res.mode; MODE.approvalLevel = res.approvalLevel; MODE.baseLevel = res.baseLevel; MODE.known = true; }
+    if (res.ok) { MODE.current = res.mode; MODE.approvalLevel = res.approvalLevel; MODE.baseLevel = res.baseLevel; MODE.known = true; MODE.confirmedGen = AGENT_GEN; }
     render();
     // The stance is process state in the agent, and the desktop restarts
     // the agent on a backend switch — so re-assert what this window last
@@ -5208,7 +5264,7 @@ function reassertCodingMode(id) {
     // its reply is the one the chip and the diagnostics level must show.
     if (seq !== MODE.seq) return;
     if (!res || !res.ok) { if (res) MODE.supported = res.supported; render(); return; }
-    MODE.supported = true; MODE.current = res.mode; MODE.known = true;
+    MODE.supported = true; MODE.current = res.mode; MODE.known = true; MODE.confirmedGen = AGENT_GEN;
     MODE.approvalLevel = res.approvalLevel; MODE.baseLevel = res.baseLevel;
     LAST_MODE = res.mode;
     const lvl = clampLevel(res.approvalLevel);
@@ -5244,7 +5300,7 @@ async function setCodingMode(id) {
     render();
     return;
   }
-  MODE.supported = true; MODE.current = res.mode; MODE.known = true;
+  MODE.supported = true; MODE.current = res.mode; MODE.known = true; MODE.confirmedGen = AGENT_GEN;
   MODE.approvalLevel = res.approvalLevel; MODE.baseLevel = res.baseLevel;
   LAST_MODE = res.mode;
   // The diagnostics line reads the capabilities snapshot taken at connect,
@@ -11097,4 +11153,51 @@ if (typeof window !== 'undefined') {
      composer's reason line, the selector's add panel), so the check that
      drives one does not leak that state into whatever runs next. */
   window.__swxReset = () => { SWX.err = null; SEL.addOpen = false; SEL.err = null; render(); };
+}
+
+/* ============================================================
+   r5 review fixes — smoke hooks (item 9 / item 10)
+   ============================================================ */
+if (typeof window !== 'undefined') {
+  /* item 10 (minor fix): the measured wall time of EVERY switch route, not
+     just the last one. Keyed by the SWXBR funnel method, so the suite can
+     print `switchBackend`, `activateProvider`, `selectCloudModel`,
+     `selectLocalModel` and `codingMode` side by side and a regression on any
+     of them is visible. The session model stamp travels on selectCloudModel
+     / activateProvider, so it is measured under those. */
+  window.__swxTimes = () => Object.assign({}, SWX.times);
+  /* item 10 (minor fix): the selector's own row handler, so the suite drives
+     provider activation and the two model selects through the SAME function
+     an operator's click runs — no test-only copy of a switch. */
+  window.__selActivate = (row) => selActivate(row);
+  /* item 10 (minor fix): the selector's dismissal, so a measured switch
+     cannot leave the popup open over whatever the suite does next. */
+  window.__selClose = () => { closeSelector(); return SEL.open; };
+  /* item 10 (BLOCKER fix): proves the lock's third condition is real.
+     modeSettled() used to be satisfied by MODE.known / MODE.current, both of
+     which survive an `atag serve` restart untouched, so it resolved on its
+     first tick and the composer unlocked while the restarted agent was still
+     on its boot stance. The probe drives the gate exactly as swxSettle does —
+     capture the generation, then wait — and shows two things a passing
+     predicate must do: HOLD while nothing newer has confirmed, and release
+     once a reply from the new generation lands naming the chosen mode.
+     `AGENT_GEN++` here is what applyStatus does when the agent comes back;
+     loadCodingMode() is the GET that reconnect fires. Nothing is written. */
+  window.__modeGateProbe = () => new Promise((resolve) => {
+    const gen0 = AGENT_GEN;
+    const t0 = Date.now();
+    let released = null;
+    modeSettled(gen0).then(() => { released = Date.now() - t0; });
+    setTimeout(() => {
+      const heldWhileStale = released === null;
+      AGENT_GEN++;
+      loadCodingMode().then(() => {
+        setTimeout(() => {
+          resolve({heldWhileStale, released, cap:SWX_MODE_SETTLE_MS,
+            gen:AGENT_GEN, confirmedGen:MODE.confirmedGen,
+            mode:MODE.current, last:LAST_MODE, known:MODE.known, supported:MODE.supported});
+        }, 400);
+      });
+    }, 500);
+  });
 }

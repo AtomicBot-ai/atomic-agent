@@ -75,6 +75,36 @@ export const DESKTOP_MANAGED_PORT = 19191;
 export const DESKTOP_EMBEDDING_PORT = 19192;
 
 /**
+ * Move a freshly written config onto the desktop's own ports. Pure and
+ * exported so the suite can drive it: the caller (main.ts claimDesktopPorts)
+ * only runs on a genuinely fresh directory, which a lane run never is.
+ *
+ * BOTH embedding fields move, and that is the r5 review fix. The embedding
+ * daemon is started, stopped and statused on `localModels.embeddings.port`
+ * (src/cli/models-handlers.ts, local-models-orchestrator.ts) while the
+ * embedding CLIENT's baseUrl is `localModels.embeddings.url`
+ * (embedding-provider-registry.ts, and register-built-in-embedding-providers
+ * honours `baseUrl ?? port`). Writing only the url left the desktop's daemon
+ * spawning on the schema default 19092 — the operator's port, the exact
+ * collision this function exists to prevent — while the desktop's own client
+ * talked to 19192 where nothing listened. `atag config get` writes both
+ * fields into a fresh file, so both are always present to move.
+ *
+ * Returns true when anything changed, so the caller can skip the write.
+ */
+export function claimPortsIn(cfg: Record<string, unknown>): boolean {
+  const lm = (cfg["localModels"] ??= {}) as Record<string, unknown>;
+  const managed = (lm["managed"] ??= {}) as Record<string, unknown>;
+  const embeddings = (lm["embeddings"] ??= {}) as Record<string, unknown>;
+  const url = `http://127.0.0.1:${DESKTOP_EMBEDDING_PORT}`;
+  let changed = false;
+  if (managed["port"] !== DESKTOP_MANAGED_PORT) { managed["port"] = DESKTOP_MANAGED_PORT; changed = true; }
+  if (embeddings["port"] !== DESKTOP_EMBEDDING_PORT) { embeddings["port"] = DESKTOP_EMBEDDING_PORT; changed = true; }
+  if (embeddings["url"] !== url) { embeddings["url"] = url; changed = true; }
+  return changed;
+}
+
+/**
  * The environment every agent subprocess gets. Inheriting Electron's own
  * environment is already correct once state-dir-boot.ts has run, but
  * inheritance is one careless `env: {}` away from the failure this item
