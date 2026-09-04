@@ -6981,6 +6981,16 @@ if (BR) {
       obDispatch({type:'providers_wizard_closed'});
       return;
     }
+    /* r5 integration (seam d): the wizard is modal on the keyboard
+       (obKeydown captures) but the overlay layer no longer starts at
+       inset 0 — it starts below the download strip so the strip keeps
+       reporting (item 7). While a pull is in flight that leaves the
+       toolbar's own `data-act` buttons uncovered, and a click on
+       Settings or New chat would open the app's chrome UNDER a first-run
+       wizard nobody has finished. Nothing but the wizard's own verbs
+       (handled above) and the strip's Cancel gets through while it is
+       open. This is a guard, not a repaint: the toolbar still draws. */
+    if (OB.open) return;
     return prevAct(a);
   };
 }
@@ -15234,5 +15244,30 @@ if (typeof window !== 'undefined') {
     const out = r ? Array.from(r.querySelectorAll('.kc')).map((k) => k.textContent).join(' ') : null;
     act('close');
     return out;
+  };
+}
+
+/* ==========================================================================
+   r5 integration — smoke hooks for the cross-lane seams.
+   One seam, and it is the only way to drive item 10's lock without item 7's
+   strip being torn down by a real `atag serve` restart: swxRun with an
+   injected slow `run`. It names no switching IPC, so the funnel's coverage
+   rule (each BR.<switch>( once, every SWXBR. inside a swxRun call) is
+   untouched, and it paints exactly the lock the operator sees.
+   ========================================================================== */
+if (typeof window !== 'undefined') {
+  window.__seamLock = (ms, during) => swxRun('switching…', {mode: currentMode()},
+    () => new Promise((resolve) => setTimeout(() => {
+      if (typeof during === 'function') { try { during(); } catch (e) { /* the caller reports */ } }
+      resolve({ok:true});
+    }, ms)));
+  /** What the send button and the strip are BOTH doing, in one sample. */
+  window.__seamSample = () => {
+    const b = document.querySelector('.sendbtn');
+    const bar = document.getElementById('dlbar');
+    return {disabled: !!(b && b.disabled), aria: b ? b.getAttribute('aria-busy') : null,
+            spins: document.querySelectorAll('.sspin').length,
+            dlVisible: !!(bar && !bar.hidden),
+            dlText: bar ? bar.innerText.replace(/\s+/g, ' ').trim() : ''};
   };
 }

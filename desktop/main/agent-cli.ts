@@ -1922,7 +1922,12 @@ export function modelsUpdateStream(
       cancel: () => {},
     };
   }
-  const child = spawn(binary, ["models", "update"], { stdio: ["ignore", "pipe", "pipe"] });
+  /* r5 integration: `env: agentEnv()` like every other spawn in this file.
+     Without it the wizard's runtime download runs `models update` against the
+     OPERATOR's ~/.atomic-agent — it writes the llama.cpp backend into whatever
+     state dir the child resolves, which is exactly what item 9 exists to stop.
+     The isolation lane's source scan is what caught it. */
+  const child = spawn(binary, ["models", "update"], { env: agentEnv(), stdio: ["ignore", "pipe", "pipe"] });
   let stdout = "";
   let stderr = "";
   let sawProgress = false;

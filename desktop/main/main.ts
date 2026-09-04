@@ -2221,15 +2221,23 @@ async function smokeTest(): Promise<void> {
     // switch live inside that block, which already owns the file's restore.
     await isolationAndSwitchTest(js, check);
 
+    // --- r5 integration: the seams between the four lanes ---
+    // Pure and self-restoring, so it sits with the lane suites, before the
+    // backend block that restarts `atag serve`.
+    await r5SeamTest(js, check);
+
+    // --- r5 item 7: the ported setup wizard, the star field, the strip ---
+    // Still before the backend block: the flow's closing config write and
+    // agent bounce are the one thing the harness skips (OB.testClose), so
+    // nothing here restarts `atag serve`.
+    await onboardingTest(js, check);
+
     // --- Lane B — backend switch (last: it restarts `atag serve` four times) ---
     // A round trip through the renderer's own switch path: to local and
     // back, with the file, the chips, the restarted agent and the daemon
     // all asserted. Everything is restored in finally — the whole file,
     // the daemon state, and a fresh agent — so an assertion throw cannot
     // leave the route changed.
-    // --- r5 item 7: the ported setup wizard, the star field, the strip ---
-    await onboardingTest(js, check);
-
     await backendSwitchTest(js, check);
 
     /* r5 item 10 — "measure and report the real wall time of each switch".
@@ -5893,15 +5901,16 @@ async function isolationAndSwitchTest(
     );
     const line = probeOut.split(/\r?\n/).find((l) => l.startsWith("FIRSTRUNPROBE "));
     const probe = line
-      ? (JSON.parse(line.slice("FIRSTRUNPROBE ".length)) as { fresh: boolean | null; stateDir: string | null; title: string; seeded: boolean; weightsLink: boolean })
+      ? (JSON.parse(line.slice("FIRSTRUNPROBE ".length)) as { fresh: boolean | null; stateDir: string | null; open: boolean; title: string; seeded: boolean; weightsLink: boolean })
       : null;
     check(
       "state dir: a genuinely fresh launch opens the wizard by itself",
-      !!probe && probe.fresh === true && probe.stateDir === probeState && probe.title.trim().length > 0
+      !!probe && probe.fresh === true && probe.stateDir === probeState
+        && probe.open === true && probe.title.trim().length > 0
         // the seed gate, observed from inside the launch it protects
         && probe.seeded === false && probe.weightsLink === false,
       probe
-        ? `fresh=${probe.fresh} stateDir=${probe.stateDir} wizard title=${JSON.stringify(probe.title)} seeded=${probe.seeded} weights link planted=${probe.weightsLink}`
+        ? `fresh=${probe.fresh} stateDir=${probe.stateDir} wizard open=${probe.open} heading=${JSON.stringify(probe.title)} seeded=${probe.seeded} weights link planted=${probe.weightsLink}`
         : `no FIRSTRUNPROBE line in ${JSON.stringify(probeOut.slice(-400))}`,
     );
   } catch (err) {
@@ -6782,15 +6791,26 @@ async function firstRunProbe(): Promise<void> {
   type FirstRun = { fresh: boolean; stateDir: string; tuiStateDir: string; tuiSetupFound: boolean } | null;
   let fr: FirstRun = null;
   let title = "";
+  let open = false;
   const deadline = Date.now() + 45_000;
   while (Date.now() < deadline) {
     try {
       fr = await js<FirstRun>("window.__firstRun ? window.__firstRun() : null");
-      title = (await js<string>("document.querySelector('#onboarding .ob-title')?.textContent ?? ''")) || "";
+      /* r5 integration: `#onboarding .ob-title` was the pre-wizard markup and
+         no longer exists — item 7 opens on the intro (the wordmark and the
+         typewriter), and every later step carries the header subtitle. So the
+         probe asks the flow's own state whether it is open, and reads whichever
+         of the two headings the step on screen actually draws. */
+      open = (await js<boolean>("!!(window.__ob && window.__ob().open)")) === true;
+      title = (await js<string>(
+        "(document.querySelector('#onboarding .ob-word')" +
+          " || document.querySelector('#onboarding .ob-sub2')" +
+          " || {}).textContent || ''",
+      )) || "";
     } catch {
       // the window is still loading its script — try again
     }
-    if (fr && title) break;
+    if (fr && open && title) break;
     await new Promise((r) => setTimeout(r, 250));
   }
   /* Whether the seed ran is reported too: this probe is itself the case
@@ -6803,6 +6823,7 @@ async function firstRunProbe(): Promise<void> {
         fresh: fr?.fresh ?? null,
         stateDir: fr?.stateDir ?? null,
         tuiSetupFound: fr?.tuiSetupFound ?? null,
+        open,
         title,
         seeded: DESKTOP_STATE_SEEDED,
         weightsLink: existsSync(join(DESKTOP_STATE_DIR, "models", "models")),
@@ -9312,4 +9333,201 @@ async function chromeTest(
     await js<void>("window.__reloadPrefs && window.__reloadPrefs()");
     process.stdout.write(`DIAG chrome lane prefs restored: pinned=${JSON.stringify(readPrefs().pinned)}\n`);
   }
+}
+
+/**
+ * r5 integration — the seams between the four lanes.
+ *
+ * Nothing here is a lane's own feature; every check is about two lanes
+ * meeting. All of it is pure, self-restoring and starts no `atag serve`
+ * restart, so it runs before the backend block like the lane suites it
+ * follows.
+ */
+async function r5SeamTest(
+  js: <T>(code: string) => Promise<T>,
+  check: (name: string, ok: boolean, detail?: string) => void,
+): Promise<void> {
+  /* ---- seam (a): the wizard's import step consumes the isolation lane's
+     two-call bridge. The wizard lane's own import checks cover the four
+     `atag import` sources; what is cross-lane is the FIFTH row, which no
+     import source can reach — the operator's own terminal setup, offered
+     only because item 9's tuiSetupPresent answered. -------------------- */
+  type Presence = {
+    ok: boolean; present: boolean; path: string;
+    has: { providers: number; keys: string[]; skills: number; sessions: number; memory: boolean };
+  };
+  const presence = await js<Presence>("window.__tuiSetupPresent()");
+  const sources = await js<string[]>("window.__obSources()");
+  const offered = sources.includes("atomic-tui");
+  check(
+    "seam: the wizard's import step offers the terminal setup the isolation lane found",
+    presence.ok && presence.present === offered && offered,
+    `tuiSetupPresent.present=${presence.present} at ${presence.path} · wizard rows=${JSON.stringify(sources)}`,
+  );
+  /* The row's own line is built from `has`, so the two sides agreeing on the
+     SHAPE is what makes the step work end to end — a renamed field would
+     draw "undefined provider(s)" rather than throw. */
+  const row = await js<{ label: string; dir: string } | null>(
+    "window.__obSources && obDetectAgents().then((rows) => {" +
+      " const r = rows.find((x) => x.id === 'atomic-tui');" +
+      " return r ? {label: r.label, dir: r.dir} : null; })",
+  );
+  check(
+    "seam: the terminal-setup row's counts come from the bridge, not from a placeholder",
+    !!row && row.label === "Atomic Agent in the terminal"
+      && row.dir.startsWith(presence.path)
+      && row.dir.includes(`${presence.has.providers} provider`)
+      && row.dir.includes(`${presence.has.keys.length} key`)
+      && row.dir.includes(`${presence.has.sessions} session`)
+      && !/undefined|NaN/.test(row.dir),
+    JSON.stringify(row),
+  );
+  /* The domains the wizard offers for that row have to be exactly the flags
+     importFromTui accepts, and its `has` counts have to name the same five —
+     a domain on one side only is a tick that copies nothing, or a copy the
+     operator was never offered. Compared against the live bridge's own reply
+     rather than a transcribed list. */
+  const domains = await js<string[]>(
+    "obBuildImportOptions([{id:'atomic-tui', label:'x', enabled:true}]).map((o) => o.option).sort()",
+  );
+  const none = await js<{ ok: boolean; copied: Record<string, unknown> }>(
+    "window.__importFromTui({})",
+  );
+  const hasKeys = Object.keys(presence.has).sort();
+  check(
+    "seam: the wizard offers exactly the domains the bridge copies",
+    JSON.stringify(domains) === JSON.stringify(hasKeys)
+      && JSON.stringify(Object.keys(none.copied).sort()) === JSON.stringify(hasKeys)
+      && none.ok === true
+      && Object.values(none.copied).every((v) => v === 0 || v === false),
+    `wizard=${JSON.stringify(domains)} presence.has=${JSON.stringify(hasKeys)} copied=${JSON.stringify(none.copied)}`,
+  );
+  await js<unknown>("window.__obClose()");
+
+  /* ---- seam (b): the download strip (item 7) and the switch lock (item 10)
+     both live in the chrome around the composer. The strip is a flex child
+     above #main; the lock is inside the composer. Neither may hide the
+     other, and the strip's presence must not push the composer off. ---- */
+  type Box = { top: number; bottom: number; height: number };
+  type Coex = {
+    dl: { visible: boolean; text: string };
+    bar: Box; entry: Box; send: { act: string; title: string } | null;
+    overlaps: boolean;
+  };
+  const coex = await js<Coex>(
+    "(() => { window.__dlSeed([{kind:'weights', id:'qwen3.5-4b'}]);" +
+      " window.__dlFeed({id:'qwen3.5-4b', percent:40, transferredBytes:1, totalBytes:2, sawProgress:true});" +
+      " const dl = window.__dl();" +
+      " const b = document.querySelector('#dlbar').getBoundingClientRect();" +
+      " const e = document.querySelector('#entry').getBoundingClientRect();" +
+      " const box = (r) => ({top: Math.round(r.top), bottom: Math.round(r.bottom), height: Math.round(r.height)});" +
+      " return {dl: {visible: dl.visible, text: dl.text}, bar: box(b), entry: box(e)," +
+      " send: window.__sendButton()," +
+      " overlaps: b.bottom > e.top && b.top < e.bottom}; })()",
+  );
+  check(
+    "seam: the download strip and the composer are both on screen, neither over the other",
+    coex.dl.visible && coex.bar.height > 0 && coex.entry.height > 0
+      && coex.bar.bottom <= coex.entry.top && !coex.overlaps,
+    `dlbar=${JSON.stringify(coex.bar)} entry=${JSON.stringify(coex.entry)} strip="${coex.dl.text}"`,
+  );
+  /* Now the lock, with the strip still up: the send button has to reach its
+     locked face and come back, and the strip has to be untouched by it. */
+  type Sample = {
+    disabled: boolean; aria: string | null; spins: number;
+    dlVisible: boolean; dlText: string;
+  };
+  const locked = await js<{ mid: Sample; after: Sample; dl: { percent: number | null } }>(
+    "(async () => { let mid = null;" +
+      " const p = window.__seamLock(600, () => { mid = window.__seamSample(); });" +
+      " await p;" +
+      " return {mid, after: window.__seamSample(), dl: {percent: window.__dl().percent}}; })()",
+  );
+  check(
+    "seam: the switch lock paints on the send button while the strip keeps reporting",
+    !!locked.mid && locked.mid.disabled === true && locked.mid.aria === "true"
+      && locked.mid.spins === 1
+      && locked.mid.dlVisible === true && /40%/.test(locked.mid.dlText)
+      && locked.after.disabled === false && locked.after.spins === 0
+      && locked.after.dlVisible === true && locked.dl.percent === 40,
+    `mid=${JSON.stringify(locked.mid)} after=${JSON.stringify(locked.after)}`,
+  );
+  await js<unknown>("window.__dlClear()");
+
+  /* ---- seam (c): the plan hand-off bar renders inside the transcript, where
+     the chrome lane put a per-message hover action row. The bar must not
+     land inside that row, must not acquire copy/retry, and must still not
+     be a message. ---------------------------------------------------- */
+  type PlanChrome = {
+    bars: number; insideActs: number; barButtons: string[];
+    actsButtons: string[]; kinds: string[]; logLen: number;
+    barAfterMark: boolean; barInTurn: boolean;
+  };
+  const raised = await js<{ logLen: number }>("window.__planRaise({mode:'plan'})");
+  const pc = await js<PlanChrome>(
+    "(() => { const bar = document.querySelector('.planbar');" +
+      " const turn = bar ? bar.closest('.turn') : null;" +
+      " const acts = turn ? turn.querySelector('.msgacts') : null;" +
+      " const mark = turn ? turn.querySelector('.endmark') : null;" +
+      " const order = bar && mark ? (mark.compareDocumentPosition(bar) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0 : false;" +
+      " return {bars: document.querySelectorAll('.planbar').length," +
+      "  insideActs: document.querySelectorAll('.msgacts .planbar, .msgacts [data-plan]').length," +
+      "  barButtons: bar ? [...bar.querySelectorAll('button')].map((b) => b.dataset.plan || b.dataset.act || b.className) : []," +
+      "  actsButtons: acts ? [...acts.querySelectorAll('button')].map((b) => b.dataset.act || b.title) : []," +
+      "  kinds: window.__plan().entryKinds, logLen: window.__plan().logLen," +
+      "  barAfterMark: order, barInTurn: !!turn}; })()",
+  );
+  check(
+    "seam: the plan bar is under the message's action row, not inside it",
+    pc.bars === 1 && pc.insideActs === 0 && pc.barInTurn && pc.barAfterMark
+      && pc.barButtons.every((b) => ["auto", "bypass", "dismiss"].includes(b))
+      && pc.actsButtons.length > 0
+      && !pc.barButtons.some((b) => /copy|retry/i.test(b)),
+    `bar=${JSON.stringify(pc.barButtons)} acts=${JSON.stringify(pc.actsButtons)} insideActs=${pc.insideActs} afterMark=${pc.barAfterMark}`,
+  );
+  check(
+    "seam: the plan bar is still not a transcript row",
+    !pc.kinds.includes("plan") && pc.logLen === raised.logLen,
+    `kinds=${JSON.stringify(pc.kinds)} logLen=${pc.logLen}`,
+  );
+  await js<unknown>("window.__planRestore(0)");
+
+  /* ---- seam (d): the chrome lane's settings button and the sidebar lists
+     survive the wizard's first-run layer. The layer no longer starts at
+     inset 0 — it starts below the download strip — so the check is both
+     that the chrome is still THERE underneath and that nothing behind the
+     layer can be operated while it is up. --------------------------- */
+  type Under = {
+    btn: { act: string; aria: string | null; text: string } | null;
+    chats: number; headers: string[];
+    settingsOpened: boolean; pane: string | null;
+  };
+  const under = await js<Under>(
+    "(() => { window.__obOpen('local_pick');" +
+      " const before = window.__sidebar();" +
+      " act('settings');" +   // the toolbar's own verb, behind the layer
+      " const btn = window.__settingsBtn();" +
+      " return {btn: btn ? {act: btn.act, aria: btn.aria, text: btn.text} : null," +
+      "  chats: before.chats.length, headers: before.headers," +
+      "  settingsOpened: !!document.querySelector('#settings')," +
+      "  pane: window.__settingsPane ? window.__settingsPane() : null}; })()",
+  );
+  check(
+    "seam: the sidebar and its settings button survive the wizard layer, and cannot be operated behind it",
+    // item 8's button opens Settings ON a pane, so its verb is `settings:<pane>`.
+    !!under.btn && /^settings(:|$)/.test(under.btn.act) && under.btn.aria === "Settings (⌘ ,)"
+      && under.headers.length > 0 && under.settingsOpened === false,
+    `btn=${JSON.stringify(under.btn)} headers=${JSON.stringify(under.headers)} chats=${under.chats} settingsOpenedBehindWizard=${under.settingsOpened}`,
+  );
+  const after = await js<{ opened: boolean; open: boolean }>(
+    "(() => { window.__obClose(); act('settings');" +
+      " const opened = !!document.querySelector('#settings');" +
+      " window.__settingsClose();" +
+      " return {opened, open: window.__ob().open}; })()",
+  );
+  check(
+    "seam: the same button works the moment the wizard closes",
+    after.opened === true && after.open === false,
+    `openedAfterClose=${after.opened} wizardOpen=${after.open}`,
+  );
 }
