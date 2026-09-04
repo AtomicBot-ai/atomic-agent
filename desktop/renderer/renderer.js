@@ -1053,12 +1053,17 @@ function item(m, end) {
    messages also get a red RETRY icon beside it", and on being asked what retry
    means: resend that message as a new turn.
 
-   The row is ALWAYS in the flow and always occupies its 22px box; only
-   `visibility` flips, exactly as `.pinbtn` does on a sidebar row — so
-   revealing it cannot move one pixel of the transcript. A zero-height overlay
-   painted into the 20px inter-turn gap was rejected: the buttons would sit
-   outside their own `.turn`'s hover box and would vanish the moment the
-   pointer reached them.
+   The row is ALWAYS in the flow and always occupies its 22px box; only its
+   PAINT flips — `.msgacts` is hidden with `opacity:0;pointer-events:none` and
+   revealed by `.turn:hover` / `:focus-within` (styles.css, item-4 section). It
+   is deliberately NOT `visibility:hidden` the way `.pinbtn` is on a sidebar
+   row: a visibility-hidden button cannot take focus in Chromium, so
+   `:focus-within` would never fire and these controls would be unreachable
+   without a mouse — the suite caught exactly that. Do not "align" this with
+   `.pinbtn`. Either way revealing the row cannot move one pixel of the
+   transcript. A zero-height overlay painted into the 20px inter-turn gap was
+   rejected: the buttons would sit outside their own `.turn`'s hover box and
+   would vanish the moment the pointer reached them.
 
    "At its end" is taken literally on BOTH kinds: the row is right-aligned, so
    copy sits at the user bubble's right edge and at the right edge of the
@@ -11123,12 +11128,20 @@ if (typeof window !== 'undefined') {
     const btns = Array.from(box.querySelectorAll('button'));
     const danger = btns.find((b) => b.classList.contains('danger'));
     const anchor = t.querySelector('.bubble') || t.querySelector('.prose');
+    /* `right` is the CONTAINER's edge and proves nothing on its own: `.msgacts`
+       is a block-level flex box, so it always spans the turn's content column
+       and its right edge equals the anchor's by construction whichever way the
+       buttons are justified. `btnRight` is the LAST button's own edge — that is
+       the number that goes red if `justify-content:flex-end` is ever dropped
+       and the icons slide to the start of the message. */
+    const last = btns[btns.length - 1];
     return {present: true, vis: cs.visibility, opacity: cs.opacity, events: cs.pointerEvents,
             height: Math.round(br.height),
             order: btns.map((b) => b.dataset.copy ? 'copy' : b.dataset.resend ? 'resend' : '?'),
             titles: btns.map((b) => b.getAttribute('title')),
             dangerColor: danger ? getComputedStyle(danger).color : null,
             right: Math.round(br.right),
+            btnRight: last ? Math.round(last.getBoundingClientRect().right) : null,
             anchorRight: anchor ? Math.round(anchor.getBoundingClientRect().right) : null,
             insideBubble: document.querySelectorAll('.bubble .msgact').length};
   };
@@ -11168,10 +11181,18 @@ if (typeof window !== 'undefined') {
   /* An assistant reply carrying the desktop's own "Saved to …" footer — the
      strip must never reach the clipboard. */
   window.__pushAssistantAttached = (text, path) => {
-    S.log.push({id: nid(), k: 'assistant', text,
+    const id = nid();
+    S.log.push({id, k: 'assistant', text,
                 attach: [{path, name: path.split('/').pop(), kind: 'file'}]});
     render();
-    return !!document.querySelector('.attach');
+    /* Returns whether THIS message's strip really drew, with the "Saved to …"
+       line in it. The copy checks AND this in: without it, "and not the
+       desktop's footer" would report green on a reply that never grew a footer
+       to leave out. Scoped by data-attach so a strip left on screen by an
+       earlier fixture cannot stand in for this one. */
+    const strip = document.querySelector('.attach[data-attach="' + id + '"]');
+    return !!strip && strip.textContent.indexOf('Saved to') >= 0
+      && strip.textContent.indexOf(path) >= 0;
   };
   window.__popLog = (n) => { S.log.length = Math.max(0, S.log.length - (n || 1)); render(); return S.log.length; };
   /* What copy hands the clipboard, without touching the operator's pasteboard.
@@ -11339,13 +11360,22 @@ if (typeof window !== 'undefined') {
             logLen: S.log.length, sessionId: S.sessionId, settings: !!S.settings};
   };
   window.__newChatFocusSurvives = () => { act('session:new'); render(); render(); return document.activeElement ? document.activeElement.id : ''; };
+  /* Both route hooks BLUR first, and that is the whole point of them. The
+     render path carries an existing composer focus across a re-render on its
+     own, so a route driven with the caret already in #entry would come back
+     "entry" even if `session:new` set no focus flag at all — the check would be
+     vacuous. Starting from <body> is also the real case: the user reaches for
+     the sidebar plus or ⌘N with the pointer, from nowhere in particular, and
+     the new-chat flag is then the only thing that can put the caret anywhere. */
   window.__cmdN = () => {
+    if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
     document.dispatchEvent(new KeyboardEvent('keydown', {key: 'n', metaKey: true, bubbles: true, cancelable: true}));
     return document.activeElement ? document.activeElement.id : '';
   };
   window.__newChatFromSidebar = () => {
     const b = document.querySelector('[data-list="chats"] .sb-list-head button[data-act="session:new"]');
     if (!b) return null;
+    if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
     b.click();
     return document.activeElement ? document.activeElement.id : '';
   };

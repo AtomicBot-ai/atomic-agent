@@ -5937,7 +5937,8 @@ async function chromeTest(
   type Acts = {
     present: boolean; vis?: string; opacity?: string; events?: string; height?: number;
     order?: string[]; titles?: Array<string | null>;
-    dangerColor?: string | null; right?: number; anchorRight?: number | null; insideBubble?: number;
+    dangerColor?: string | null; right?: number; btnRight?: number | null;
+    anchorRight?: number | null; insideBubble?: number;
   };
 
   try {
@@ -6268,14 +6269,21 @@ async function chromeTest(
         && JSON.stringify(userActs.titles) === '["Send this message again","Copy message"]',
       `assistant ${JSON.stringify(asstActs)}; user ${JSON.stringify(userActs)}`,
     );
+    // The number under test is the LAST BUTTON's right edge, not the row's:
+    // `.msgacts` is a block-level flex container, so its own right edge equals
+    // the bubble's / the column's whichever way its children are justified, and
+    // asserting that would stay green with the icons parked at the start of the
+    // message. `btnRight` goes red the moment `justify-content:flex-end` is lost.
     check(
       "item 4: the actions sit at the message's end and never inside the bubble",
       !!userActs && !!asstActs
-        && Math.abs((userActs.right ?? 0) - (userActs.anchorRight ?? -1)) <= 1
-        && Math.abs((asstActs.right ?? 0) - (asstActs.anchorRight ?? -1)) <= 1
+        && typeof userActs.btnRight === "number" && typeof asstActs.btnRight === "number"
+        && Math.abs(userActs.btnRight - (userActs.anchorRight ?? -1)) <= 1
+        && Math.abs(asstActs.btnRight - (asstActs.anchorRight ?? -1)) <= 1
         && userActs.insideBubble === 0,
-      `user right ${userActs?.right} vs bubble ${userActs?.anchorRight};`
-      + ` assistant right ${asstActs?.right} vs prose ${asstActs?.anchorRight};`
+      `user last button right ${userActs?.btnRight} vs bubble ${userActs?.anchorRight};`
+      + ` assistant last button right ${asstActs?.btnRight} vs prose ${asstActs?.anchorRight};`
+      + ` (row boxes ${userActs?.right}/${asstActs?.right} span the whole column either way, so they are context only);`
       + ` .bubble .msgact count ${userActs?.insideBubble}`,
     );
     const [msgHover, msgHoverDetail] = await hoverRuleHolds(
@@ -6363,8 +6371,10 @@ async function chromeTest(
       const copiedAsst = await js<{ id: string; text: string } | null>("window.__clickCopy('assistant')");
       await wait(400);
       const clipAsst = await clipboard.readText();
-      // A reply carrying the desktop's own attachment strip.
-      await js<boolean>("window.__pushAssistantAttached('the report is ready', '/tmp/report.md')");
+      // A reply carrying the desktop's own attachment strip. The hook returns
+      // whether the strip actually RENDERED — without that the "and not the
+      // footer" half would pass on a message that never grew a footer.
+      const strewn = await js<boolean>("window.__pushAssistantAttached('the report is ready', '/tmp/report.md')");
       await js<unknown>("window.__clickCopy('assistant')");
       await wait(400);
       const clipAttached = await clipboard.readText();
@@ -6374,11 +6384,13 @@ async function chromeTest(
         "item 4: copy puts the message text on the clipboard and nothing else",
         !!copiedUser && clipUser === copiedUser.text
           && !!copiedAsst && clipAsst === copiedAsst.text
+          && strewn
           && clipAttached === "the report is ready"
           && !/Saved to|\/tmp\/report\.md/.test(clipAttached),
         `user ${JSON.stringify(clipUser.slice(0, 40))} === message ${clipUser === (copiedUser?.text ?? "")};`
         + ` assistant match ${clipAsst === (copiedAsst?.text ?? "")};`
-        + ` attached reply → ${JSON.stringify(clipAttached)} (the "Saved to …" strip is the desktop's own footer and is not copied)`
+        + ` attached reply → ${JSON.stringify(clipAttached)} (the "Saved to …" strip rendered: ${strewn};`
+        + ` it is the desktop's own footer and is not copied)`
         + (focusBlocked ? "; NOTE the write was blocked by focus, not by the feature" : ""),
       );
       if (clipBefore) await clipboard.writeText(clipBefore);
@@ -6391,17 +6403,20 @@ async function chromeTest(
     type Probe = { clicked: boolean; id: string | null; message: string | null; wrote: string[]; toasts: Array<[string, string, string]> };
     const probeUser = await js<Probe>("window.__copyProbe('user','ok')");
     const probeAsst = await js<Probe>("window.__copyProbe('assistant','ok')");
-    await js<boolean>("window.__pushAssistantAttached('the report is ready', '/tmp/report.md')");
+    // Again the hook's return value is the premise: it says the "Saved to …"
+    // strip is really on screen under the reply being copied.
+    const strewnProbe = await js<boolean>("window.__pushAssistantAttached('the report is ready', '/tmp/report.md')");
     const probeAttached = await js<Probe>("window.__copyProbe('assistant','ok')");
     await js<number>("window.__popLog(1)");
     check(
       "item 4: copy hands the clipboard the message's text, not its markup or the desktop's footer",
       probeUser.clicked && probeUser.wrote.length === 1 && probeUser.wrote[0] === probeUser.message
         && probeAsst.clicked && probeAsst.wrote.length === 1 && probeAsst.wrote[0] === probeAsst.message
+        && strewnProbe
         && probeAttached.wrote.length === 1 && probeAttached.wrote[0] === "the report is ready"
         && !/Saved to|\/tmp\/report\.md/.test(probeAttached.wrote[0]),
       `user wrote ${JSON.stringify(probeUser.wrote[0]?.slice(0, 40))}; assistant matched ${probeAsst.wrote[0] === probeAsst.message};`
-      + ` reply with an attachment strip wrote ${JSON.stringify(probeAttached.wrote[0])}`
+      + ` reply with an attachment strip (strip rendered: ${strewnProbe}) wrote ${JSON.stringify(probeAttached.wrote[0])}`
       + ` (the "Saved to …" lines are the desktop's own footer, derived from write-tool cards, and are not the agent's words)`
       + clipNote,
     );
