@@ -540,7 +540,7 @@ Honestly degraded, and labelled as such in the UI:
   It never touches the network, is never written to disk, and never reaches
   the agent — 0.5.5 has no audio route, no transcription tool and no config
   key, so this feature makes no HTTP call, writes nothing to
-  `~/.atomic-agent/config.json` and never restarts `atag serve`. The chosen
+  the state directory's `config.json` and never restarts `atag serve`. The chosen
   languages live in Electron's `userData/voice.json`.
   Until this feature there was no `setPermissionRequestHandler` at all and
   Electron's default granted everything; both handlers now go in and deny
@@ -701,6 +701,93 @@ one to two minutes. The whole config file, the daemon state and a fresh
 agent are put back in `finally`, so a failing assertion cannot leave the
 route changed. Run it against a private `ATOMIC_AGENT_STATE_DIR`, never
 `~/.atomic-agent`.
+
+## The state directory
+
+**This app has its own, and it is not the terminal agent's.** The user's
+words: *"Each time I'm running the agent for the first time I should go
+through the setup wizard so I understand how the setup process works. None
+of the keys should be shared between the TUI and the desktop app, at least
+during the testing phase."*
+
+- The desktop runs on **`~/.atomic-agent-desktop`**, created `0700`. Its own
+  `config.json`, its own `.env`, its own sessions/memory/tasks databases,
+  its own traces and skills. `~/.atomic-agent` is never written by any
+  process this app starts.
+- Precedence, resolved once in `main/state-dir.ts`: an explicitly set,
+  absolute `ATOMIC_AGENT_STATE_DIR` wins (the smoke suite and every parallel
+  lane depend on it), then `ATOMIC_AGENT_DESKTOP_STATE_DIR`, then the
+  default above. The desktop directory is the DEFAULT, not an override.
+- `main/state-dir-boot.ts` is the **first import in `main.ts`** and the only
+  place with a side effect: it publishes the value into `process.env`,
+  latches whether this is a first run (before `atag config get` can create a
+  `config.json` and make it look otherwise), and creates the directory.
+  Every spawn site names `agentEnv()` as well, so inheritance is never the
+  only guarantee.
+- **The model weights are shared; nothing else is.** On a fresh directory,
+  `~/.atomic-agent-desktop/models/models` is symlinked to the terminal
+  agent's, so the gigabytes are not downloaded twice, and `models/backend`
+  is *copied* rather than linked — `localModels.managed.autoUpdate` defaults
+  to true and would otherwise rewrite the operator's llama.cpp binaries. The
+  pid file, the daemon log and the session registry stay private, and the
+  desktop's managed port is **19191** and its embedding port **19192**
+  (both `localModels.embeddings.port` and `.url` move, because the daemon is
+  started on the port and the client reads the url) so two daemons cannot
+  collide.
+  Consequence, stated plainly: a `models pull` from the desktop writes into
+  the terminal agent's model folder, and `models remove` deletes from it.
+  That is the one path by which anything here touches `~/.atomic-agent`;
+  config, keys and the databases never do.
+  **That two-way door is opened only for the desktop's own default
+  directory** — `state-dir-boot.ts` gates the seed on `!STATE_DIR_FROM_ENV`
+  as well as on the directory being fresh. A directory you named through
+  `ATOMIC_AGENT_STATE_DIR` (or `ATOMIC_AGENT_DESKTOP_STATE_DIR`) you named
+  because it is disposable, and a throwaway install must not come up holding
+  a live write path into your real weight folder — so a fresh env-named
+  directory gets the `0700` mkdir and nothing else: no weights link, no
+  backend copy, and a first `models pull` that downloads its own. The env
+  var still *wins* the resolution; what it does not inherit is the link.
+- **The import offer — the IPC, not yet the screen.** What lives on this
+  branch is `main/tui-import.ts` and the two calls the wizard will make:
+  `window.atomic.tuiSetupPresent()` reports what `~/.atomic-agent` holds (env
+  var NAMES only, never a value; one parser counts them, so `has.keys.length`
+  from the offer and `copied.keys` from the import always agree — a name is
+  listed once, a repeat is last-wins, and a placeholder line with no value is
+  not a key) and
+  `window.atomic.importFromTui({providers, keys, skills, sessions, memory})`
+  copies only what is ticked, every flag defaulting to false. **The wizard
+  step that draws the tick-list is a separate lane's work and is not in this
+  branch** — do not go looking for it in the window yet. The source is opened
+  read-only and never moved; `localModels` in its entirety — the managed
+  port and the dataDirOverride with it — `tui.onboarding`, `telegram`,
+  `analytics`, `version` and `tasks.sqlite` are never copied, and the
+  databases travel through `sqlite3 -readonly … ".backup"` rather than a
+  `cp` of a live file with an open WAL. The *destination* databases belong
+  to the agent this window already started, so that arm of the import stops
+  `atag serve`, deletes the destination's stale `-wal`/`-shm`, restores, and
+  starts it again.
+- **The one thing this design cannot isolate, stated honestly.** Every agent
+  subprocess gets `{...process.env, ATOMIC_AGENT_STATE_DIR}`, so an
+  `AIMLAPI_API_KEY`, `OPENROUTER_API_KEY` or `HF_TOKEN` **exported in the
+  shell that launches Electron** reaches the desktop's agent, and
+  `keyNamesAvailable()` counts `process.env` before `<stateDir>/.env`. Against
+  the user's words — *"None of the keys should be shared"* — that is a leak,
+  and it is not closable from here: stripping the environment would break the
+  many operators who keep their keys only in a shell profile, and the agent
+  itself reads `process.env` first (`load-dotenv.ts`). The `.env` files are
+  fully separate; the *shell* is shared. Launch the desktop from a shell with
+  no provider keys exported if that matters for a test.
+- **Making it a first run again is one gesture:** `rm -rf
+  ~/.atomic-agent-desktop`. The wizard opens on the next launch, because
+  `app:firstRun` reports the latched flag rather than inferring one from a
+  file the agent has already written. The suite proves that end to end
+  rather than by inspection: `electron . --first-run-probe` boots a window
+  against whatever `ATOMIC_AGENT_STATE_DIR` names, starts no `atag serve`,
+  and prints one `FIRSTRUNPROBE {json}` line saying whether the latch said
+  fresh and whether the wizard put itself on screen. The smoke run makes an
+  empty directory and drives it.
+- The window says which directory it owns: the diagnostics line under
+  Settings carries a `state <dir>` segment beside `agent <bin>`.
 
 ## Building a testable .dmg
 

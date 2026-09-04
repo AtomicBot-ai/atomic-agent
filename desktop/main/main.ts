@@ -1,8 +1,15 @@
+/* r5 item 9 — FIRST, before anything else can run. This module publishes
+   ATOMIC_AGENT_STATE_DIR into the process environment and latches whether
+   the directory was fresh; tsc hoists every require above the file body, so
+   only an import placed first is guaranteed to run before the modules below
+   take their own side effects. */
+import { DESKTOP_STATE_SEEDED, DESKTOP_STATE_WAS_FRESH, seedFreshStateDir, shouldSeedFreshStateDir } from "./state-dir-boot.js";
+
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, statSync, writeFileSync } from "node:fs";
 import { stat } from "node:fs/promises";   // item 5: the attachment strip stats what a turn wrote, nothing else
 import { execFile, execFileSync, spawn } from "node:child_process";   // item 2 (voice input): the smoke spawns the speech helper with --probe, and `say` writes its audio fixture
 import { promisify } from "node:util";
@@ -28,6 +35,7 @@ import {
   // Lane B — backend switch
   chatModelsList,
   configSetWhole,
+  readWholeConfig,
   localDaemonRunning,
   modelsStop,
   providerHasKey,
@@ -97,6 +105,9 @@ import { VoiceSession, helperPath as speechHelperPath } from "./speech.js";
 // Item 7 part B (Skills / Memory / MCP tabs)
 import { clawhubSkillDetail } from "./clawhub.js";
 import { memoryQuery } from "./memory-db.js";
+// r5 item 9 — the desktop's own state directory and the TUI import offer.
+import { claimPortsIn, DESKTOP_EMBEDDING_PORT, DESKTOP_MANAGED_PORT, DESKTOP_STATE_DIR, STATE_DIR_FROM_ENV, TUI_STATE_DIR, underDesktopState } from "./state-dir.js";
+import { importFromTui, parseDotenv, sqliteRowCount, tuiSetupPresent, type TuiImportOptions } from "./tui-import.js";
 
 const DEV = process.argv.includes("--dev");
 /** `--smoke` boots, waits for first paint, writes a screenshot, and exits. */
@@ -105,6 +116,25 @@ const SMOKE = process.argv.includes("--smoke");
 const FORCE_ONBOARDING = process.argv.includes("--onboarding");
 /** `--models` drives the Models pane end to end and asserts config changed. */
 const MODELS_TEST = process.argv.includes("--models");
+/**
+ * r5 item 9, review fix (minor) — `--first-run-probe`.
+ *
+ * The acceptance is "a first launch always reaches the wizard", and nothing
+ * proved it end to end: the suite runs on a lane directory that is never
+ * fresh, so `app:firstRun` answering `fresh:true` and the renderer's
+ * `if ((fr && fr.fresh) || …) openOnboarding()` disjunct were both dead
+ * code as far as any check could see. Only a REAL launch against a REAL
+ * empty directory exercises them, and the suite cannot make its own launch
+ * fresh — so it makes a second one.
+ *
+ * This mode boots the window exactly as a first launch does, with one
+ * difference: it starts no `atag serve`. The wizard's own path never needs
+ * it — `firstRun` is main-process state and `configGet` / `hostRam` /
+ * `keyEnv` are one-shot `atag` subprocesses — so a probe that skipped the
+ * daemon proves the same thing in about six seconds instead of forty.
+ * It prints one `FIRSTRUNPROBE {json}` line and exits.
+ */
+const FIRST_RUN_PROBE = process.argv.includes("--first-run-probe");
 
 let win: BrowserWindow | null = null;
 let agent: AgentClient | null = null;
@@ -372,6 +402,15 @@ function hfGatedTokenHint(message: string, dir: string): string {
 }
 
 function wireIpc(client: AgentClient): void {
+  /* r5 item 9 — the state-dir argument guard.
+     Six handlers take a `stateDir` (or a data dir under it) from the
+     renderer, which reads it from /api/capabilities. That value can only
+     ever be the desktop's own directory now, but a stale renderer — or a
+     future one that computes a path instead of reading it — must not be
+     able to address the operator's tree through an IPC that reads .env or
+     a sqlite file. Anything outside DESKTOP_STATE_DIR is refused here. */
+  const ownDir = (p: unknown): p is string => typeof p === "string" && underDesktopState(p);
+
   ipcMain.handle("agent:status", () => client.status);
   ipcMain.handle("agent:start", () => client.start());
   ipcMain.handle("agent:restart", async () => {
@@ -686,7 +725,7 @@ function wireIpc(client: AgentClient): void {
   ipcMain.handle("cli:modelsStart", () => modelsStart());
   ipcMain.handle("cli:traceUsage", (_event, payload: unknown) => {
     const { stateDir, sessionId } = (payload ?? {}) as { stateDir?: unknown; sessionId?: unknown };
-    if (typeof stateDir !== "string" || typeof sessionId !== "string") {
+    if (!ownDir(stateDir) || typeof sessionId !== "string") {
       return { ok: false, error: "stateDir and sessionId are required" };
     }
     return traceUsage(stateDir, sessionId);
@@ -694,7 +733,7 @@ function wireIpc(client: AgentClient): void {
   // item 4: per-call tool durations from the trace
   ipcMain.handle("cli:traceTools", (_event, payload: unknown) => {
     const { stateDir, sessionId } = (payload ?? {}) as { stateDir?: unknown; sessionId?: unknown };
-    if (typeof stateDir !== "string" || typeof sessionId !== "string") {
+    if (!ownDir(stateDir) || typeof sessionId !== "string") {
       return { ok: false, error: "stateDir and sessionId are required" };
     }
     return traceTools(stateDir, sessionId);
@@ -768,7 +807,7 @@ function wireIpc(client: AgentClient): void {
   // --- Lane B — context before the first message (item 3) ---
   ipcMain.handle("cli:traceBaseline", (_event, payload: unknown) => {
     const { stateDir, model, workingDir } = (payload ?? {}) as { stateDir?: unknown; model?: unknown; workingDir?: unknown };
-    if (typeof stateDir !== "string") return { ok: false, error: "stateDir is required" };
+    if (!ownDir(stateDir)) return { ok: false, error: "stateDir is required" };
     return traceBaseline(stateDir, {
       model: typeof model === "string" && model ? model : null,
       workingDir: typeof workingDir === "string" && workingDir ? workingDir : null,
@@ -958,7 +997,7 @@ function wireIpc(client: AgentClient): void {
   // Read-only sqlite over <stateDir>/memory.sqlite; the statement is named, never free SQL.
   ipcMain.handle("app:memoryQuery", (_event, payload: unknown) => {
     const { stateDir, name, params } = (payload ?? {}) as { stateDir?: unknown; name?: unknown; params?: unknown };
-    if (typeof stateDir !== "string" || typeof name !== "string") return { ok: false, error: "stateDir and name are required" };
+    if (!ownDir(stateDir) || typeof name !== "string") return { ok: false, error: "stateDir and name are required" };
     return memoryQuery(stateDir, name, Array.isArray(params) ? params : []);
   });
 
@@ -1006,6 +1045,43 @@ function wireIpc(client: AgentClient): void {
     };
     return importRun(clean, client.status.workingDir);
   });
+  /* ---- r5 item 9: the desktop's own state directory ------------------
+     `app:firstRun` is what makes a first launch unmissable rather than
+     inferred: the renderer's needsOnboarding() mirror reads a config.json
+     that `atag config get` has already created by the time it looks, so a
+     genuinely fresh directory could otherwise reach the chat window with
+     no backend and no wizard. `fresh` is latched in state-dir-boot.ts
+     before anything can write. */
+  ipcMain.handle("app:firstRun", () => ({
+    fresh: DESKTOP_STATE_WAS_FRESH,
+    stateDir: DESKTOP_STATE_DIR,
+    tuiStateDir: TUI_STATE_DIR,
+    tuiSetupFound: existsSync(join(TUI_STATE_DIR, "config.json")) && DESKTOP_STATE_DIR !== TUI_STATE_DIR,
+  }));
+  /* The cross-lane import contract. `tuiSetupPresent` reports env var NAMES
+     only, never a value; `importFromTui` defaults every flag to false, never
+     mutates or moves the source, never copies the managed port, and copies
+     sqlite through `.backup` rather than cp-ing a live database.
+     r5 review fix: the DESTINATION databases belong to the agent this window
+     already started, so the import is handed the agent's own stop/start and
+     takes it down for the database arm alone (see TuiImportHooks). `client`
+     is wireIpc's own AgentClient — the same one every other handler uses. */
+  ipcMain.handle("app:tuiSetupPresent", () => tuiSetupPresent());
+  ipcMain.handle("app:importFromTui", (_event, opts: unknown) => {
+    const o = (opts ?? {}) as Record<string, unknown>;
+    const flags: TuiImportOptions = {
+      providers: o["providers"] === true,
+      keys: o["keys"] === true,
+      skills: o["skills"] === true,
+      sessions: o["sessions"] === true,
+      memory: o["memory"] === true,
+    };
+    return importFromTui(flags, {
+      stopAgent: () => client.stop(),
+      startAgent: () => client.start(),
+    });
+  });
+
   // import-panel-state.ts defaultSourceDir: the env override or ~/.hermes / ~/.openclaw.
   ipcMain.handle("app:importDefaults", () => ({
     hermes: process.env["HERMES_STATE_DIR"] ?? join(homedir(), ".hermes"),
@@ -1018,7 +1094,7 @@ function wireIpc(client: AgentClient): void {
     typeof url === "string" ? llamaProbe(url) : { ok: false, error: "url required" },
   );
   ipcMain.handle("app:dotenvKeys", (_event, stateDir: unknown) =>
-    typeof stateDir === "string" && stateDir.startsWith("/") ? dotenvKeys(stateDir) : { ok: false, keys: [], exists: false, error: "state dir required" },
+    ownDir(stateDir) ? dotenvKeys(stateDir) : { ok: false, keys: [], exists: false, error: "state dir required" },
   );
   ipcMain.handle("app:envPresent", (_event, names: unknown) =>
     envPresent(Array.isArray(names) ? names.filter((n): n is string => typeof n === "string").slice(0, 64) : []),
@@ -1026,7 +1102,7 @@ function wireIpc(client: AgentClient): void {
   // The one key the desktop writes into .env: the Telegram bot token (the TUI's telegram-settings.ts setToken).
   ipcMain.handle("app:dotenvSet", (_event, payload: unknown) => {
     const { stateDir, key, value } = (payload ?? {}) as { stateDir?: unknown; key?: unknown; value?: unknown };
-    if (typeof stateDir !== "string" || !stateDir.startsWith("/")) return { ok: false, error: "state dir required" };
+    if (!ownDir(stateDir)) return { ok: false, error: "state dir required" };
     if (key !== "TELEGRAM_BOT_TOKEN") return { ok: false, error: "only TELEGRAM_BOT_TOKEN may be written from the desktop" };
     if (value !== null && typeof value !== "string") return { ok: false, error: "value must be a string or null" };
     return dotenvSet(stateDir, key, value);
@@ -1097,6 +1173,17 @@ async function smokeTest(): Promise<void> {
     process.stdout.write(`${ok ? "PASS" : "FAIL"} ${name}${detail ? " — " + detail : ""}\n`);
     if (!ok) fail.push(name);
   };
+
+  /* r5 item 9 — the check the operator asked for, framed as a before/after.
+     The failure this item exists to end is the desktop writing the
+     operator's own ~/.atomic-agent; it happened twice. So the whole tree's
+     observable state is snapshotted before a single subprocess has been
+     spawned (TUI_BASELINE, taken in app.whenReady) and re-asserted at the
+     very end — after the backend block, which is the one that writes config.
+     A string scan cannot see a write through the shared-weights symlink;
+     this can. The `??` is a fallback that can only fire if this function is
+     ever called outside the app boot path. */
+  const tuiSnapshot = TUI_BASELINE ?? snapshotTuiState();
 
   await new Promise((r) => setTimeout(r, 1500));
   // Item 6: the sidebar is two headed lists, so there are no nav rows left to
@@ -1978,6 +2065,12 @@ async function smokeTest(): Promise<void> {
     // --- r4 integration: the seams between the four lanes ---
     await r4SeamTest(js, check);
 
+    // --- r5 items 9 + 10: isolation, and the optimistic switch ---
+    // Before the backend block: everything here is pure, read-only or
+    // self-restoring, and the two checks that need a real multi-second
+    // switch live inside that block, which already owns the file's restore.
+    await isolationAndSwitchTest(js, check);
+
     // --- Lane B — backend switch (last: it restarts `atag serve` four times) ---
     // A round trip through the renderer's own switch path: to local and
     // back, with the file, the chips, the restarted agent and the daemon
@@ -1985,6 +2078,37 @@ async function smokeTest(): Promise<void> {
     // the daemon state, and a fresh agent — so an assertion throw cannot
     // leave the route changed.
     await backendSwitchTest(js, check);
+
+    /* r5 item 10 — "measure and report the real wall time of each switch".
+       r5 review fix (minor): only the backend switch and the coding-mode
+       route were printed, so a latency regression on provider activation or
+       either model select was invisible. Every route the funnel offers now
+       keeps its own measurement (SWX.times, stamped in SWXBR) and all five
+       are printed here. The session model stamp is not a sixth route: it
+       travels on selectCloudModel / activateProvider and is measured under
+       whichever of the two it took. */
+    const swxTimes = await js<Record<string, number>>("window.__swxTimes()");
+    const SWITCH_ROUTES = ["switchBackend", "activateProvider", "selectCloudModel", "selectLocalModel", "codingMode"];
+    check(
+      "switch timings: every operator-facing switch is measured",
+      SWITCH_ROUTES.every((r) => Number.isFinite(swxTimes[r]) && (swxTimes[r] as number) >= 0),
+      SWITCH_ROUTES.map((r) => `${r}=${Number.isFinite(swxTimes[r]) ? swxTimes[r] + "ms" : "NOT EXERCISED"}`).join(" · ")
+        + " — the session model stamp travels on selectCloudModel/activateProvider",
+    );
+
+    /* r5 item 9 — the whole point, asserted last. Everything the desktop
+       does has now happened, including four `atag serve` restarts and a
+       round trip of whole-file config writes. If any of it reached
+       ~/.atomic-agent, this is where it shows. */
+    const tuiAfter = snapshotTuiState();
+    const drift = Object.keys(tuiAfter).filter((k) => tuiAfter[k] !== tuiSnapshot[k]);
+    check(
+      "state dir: a whole smoke run leaves ~/.atomic-agent untouched",
+      drift.length === 0,
+      drift.length === 0
+        ? `${Object.keys(tuiSnapshot).length} paths unchanged under ${TUI_STATE_DIR}`
+        : drift.map((k) => `${k}: ${tuiSnapshot[k]} → ${tuiAfter[k]}`).join("; "),
+    );
   }
 
   if (MODELS_TEST) await modelsTest(js, check);
@@ -3812,9 +3936,10 @@ async function settingsTestPartB(
  * both undo themselves through the product's own path (`atag models
  * remove <custom-id>` deletes the files AND drops the config entry for a
  * custom row), in a `finally`, against a snapshot taken first. Run the
- * suite with ATOMIC_AGENT_STATE_DIR pointed somewhere disposable: without
- * it, `agent-cli.ts` resolves `~/.atomic-agent` and these write the
- * operator's real file.
+ * suite with ATOMIC_AGENT_STATE_DIR pointed somewhere disposable — since
+ * r5 item 9 the fallback is `~/.atomic-agent-desktop` (state-dir.ts), not
+ * the operator's `~/.atomic-agent`, but these still write a REAL file and
+ * a lane run wants its own.
  *
  * NOTHING HERE DOWNLOADS A MODEL. The heaviest network call is one
  * ~2 KB repo listing; the add is asserted at the config, and the pull is
@@ -5401,6 +5526,593 @@ async function uiTest(
   await js<number>("window.__clearToasts()");
 }
 
+/**
+ * r5 item 9 — every observable byte of the operator's terminal-agent
+ * directory, as one flat map of `path → size:mtimeMs` (or `absent`).
+ *
+ * r5 review fix (minor): it used to stamp a HAND-PICKED list of paths, with
+ * only `models/models` walked file by file. Everything else was a directory
+ * NAME LIST, which is blind to a file being rewritten in place — and the one
+ * directory that blindness covered is `models/backend/`, the llama.cpp
+ * binaries that `localModels.managed.autoUpdate` (default true) replaces
+ * wholesale on `atag models start`, and the reason the fresh-dir seed COPIES
+ * the backend rather than linking it. A rewritten `llama-server` left the
+ * name list `backend,llama-server.log,models,sessions` unchanged and the
+ * check green. Same hole over `skills/*` file contents, `models/
+ * llama-server.log`, and `web-search-cache.json`, which was not stamped at
+ * all.
+ *
+ * So it now walks the WHOLE directory and stamps every entry. The tree is
+ * small (about sixty files here) and the check's name — "a whole smoke run
+ * leaves ~/.atomic-agent untouched" — now claims no more than it can see.
+ *
+ * `lstat`, not `stat`: a symlink is stamped as the link itself, so nothing
+ * here follows a link out of the tree or round a cycle.
+ */
+function snapshotTuiState(): Record<string, string> {
+  const out: Record<string, string> = {};
+  const stamp = (rel: string) => {
+    const path = rel ? join(TUI_STATE_DIR, rel) : TUI_STATE_DIR;
+    try {
+      const st = lstatSync(path);
+      out[rel || "."] = st.isDirectory()
+        ? `dir:${readdirSync(path).sort().join(",")}`
+        : `${st.size}:${st.mtimeMs}`;
+    } catch {
+      out[rel || "."] = "absent";
+    }
+  };
+  stamp("");
+  /* Depth-capped so a pathological tree cannot hang the boot; six is far
+     below anything the agent writes (`models/models/<id>/<file>` is four)
+     and the `dir:` listing at the cap still catches an addition or a
+     deletion below it. */
+  const walk = (rel: string, depth: number) => {
+    if (depth > 6) return;
+    let entries: string[];
+    try {
+      entries = readdirSync(join(TUI_STATE_DIR, rel)).sort();
+    } catch {
+      return; // nothing there — the `dir:` line above already says so
+    }
+    for (const name of entries) {
+      const child = rel ? join(rel, name) : name;
+      stamp(child);
+      if ((out[child] ?? "").startsWith("dir:")) walk(child, depth + 1);
+    }
+  };
+  walk("", 0);
+  return out;
+}
+
+/**
+ * r5 review fix (minor): the baseline for the check above, taken in
+ * `app.whenReady` BEFORE the AgentClient exists and before anything is
+ * spawned. It used to be taken at the top of smokeTest(), which
+ * `did-finish-load` chains AFTER `agent.start()` — so the serve child was
+ * already running and a write it made in that window would have been
+ * baselined in rather than caught.
+ */
+let TUI_BASELINE: Record<string, string> | null = null;
+
+/**
+ * r5 items 9 and 10 — isolation, and the optimistic switch.
+ *
+ * Placed BEFORE backendSwitchTest deliberately: everything here is either
+ * pure, read-only, or restores itself in a `finally`, and the coding-mode
+ * path it drives writes nothing to config.json. The two checks that need a
+ * real 3-11 s backend switch live inside backendSwitchTest, which already
+ * owns the restore of the whole file.
+ */
+async function isolationAndSwitchTest(
+  js: <T>(code: string) => Promise<T>,
+  check: (name: string, ok: boolean, detail?: string) => void,
+): Promise<void> {
+  const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  /* The same poll backendSwitchTest uses, needed here because the database
+     import stops and restarts `atag serve`. */
+  const waitForConnected = async (): Promise<string> => {
+    const deadline = Date.now() + 60_000;
+    let st = "";
+    while (Date.now() < deadline) {
+      st = (await js<string>("window.__live && window.__live()")) ?? "";
+      if (st === "connected") break;
+      await wait(500);
+    }
+    return st;
+  };
+
+  // ---- item 9: the desktop is on its own directory, live ----
+  const caps = await js<{ ok: boolean; data?: { paths?: { stateDir?: string } } }>("window.atomic.capabilities()");
+  const live = caps?.data?.paths?.stateDir ?? "";
+  check(
+    "state dir: the desktop runs on its own directory",
+    live === DESKTOP_STATE_DIR
+      && process.env["ATOMIC_AGENT_STATE_DIR"] === DESKTOP_STATE_DIR
+      && live !== TUI_STATE_DIR
+      && live.startsWith("/"),
+    `agent reports ${JSON.stringify(live)}; main holds ${JSON.stringify(DESKTOP_STATE_DIR)}; env=${JSON.stringify(process.env["ATOMIC_AGENT_STATE_DIR"] ?? null)}`,
+  );
+
+  /* ---- item 9: no desktop subprocess can be pointed at ~/.atomic-agent ----
+     Scanned over the TypeScript SOURCES, not the CJS emit: tsc rewrites
+     `spawn(...)` to `(0, node_child_process_1.spawn)(...)`, so a scan of
+     out/main/*.js would match zero occurrences and pass while proving
+     nothing. */
+  const srcDir = join(__dirname, "..", "..", "main");
+  const cliSrc = readFileSync(join(srcDir, "agent-cli.ts"), "utf8");
+  const clientSrc = readFileSync(join(srcDir, "agent-client.ts"), "utf8");
+  const codeOnly = (text: string) => text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  const literals = [cliSrc, clientSrc].map(codeOnly).join("\n").match(/"\.atomic-agent"/g) ?? [];
+  const spawnSites = [...codeOnly(cliSrc).matchAll(/(?:spawn|run)\(binary,/g)];
+  const spawnEnvOk = spawnSites.every((m) => {
+    const tail = codeOnly(cliSrc).slice(m.index ?? 0, (m.index ?? 0) + 600);
+    return /env: agentEnv\(\)/.test(tail);
+  });
+  const clientEnvOk = /env: agentEnv\(\)/.test(codeOnly(clientSrc));
+  check(
+    "state dir: no desktop subprocess names ~/.atomic-agent",
+    literals.length === 0 && spawnSites.length >= 3 && spawnEnvOk && clientEnvOk,
+    `${literals.length} \`.atomic-agent\` literals; ${spawnSites.length} agent spawn sites, all env-carrying=${spawnEnvOk}; serve child env-carrying=${clientEnvOk}`,
+  );
+
+  // ---- item 9: first run is latched, not inferred ----
+  const fr = await js<{ fresh: boolean; stateDir: string; tuiStateDir: string; tuiSetupFound: boolean } | null>("window.__firstRun()");
+  /* r5 review fix (minor): `fr.fresh === false` used to be a third conjunct.
+     That is an environment FACT, not a product invariant — point the suite at
+     a genuinely fresh directory and a correct build went red, and the
+     fresh===true side could never be exercised. What the IPC must guarantee
+     is that the renderer is told the same latched value main holds, and that
+     the two directories it names are the right ones. Which side of the latch
+     this particular run is on is reported, not asserted. */
+  check(
+    "state dir: first run is latched before anything can write",
+    !!fr && fr.stateDir === DESKTOP_STATE_DIR && fr.tuiStateDir === TUI_STATE_DIR
+      && fr.fresh === DESKTOP_STATE_WAS_FRESH
+      && fr.tuiSetupFound === (existsSync(join(TUI_STATE_DIR, "config.json")) && DESKTOP_STATE_DIR !== TUI_STATE_DIR),
+    fr ? `fresh=${fr.fresh} (this run started on ${fr.fresh ? "an empty" : "an existing"} directory) stateDir=${fr.stateDir} tuiSetupFound=${fr.tuiSetupFound}` : "no __firstRun hook",
+  );
+
+  /* ---- item 9: a GENUINELY fresh launch reaches the wizard ----
+     r5 review fix (minor). Everything above about first run is either a pure
+     predicate or a report; the acceptance sentence — "a first launch always
+     reaches the wizard" — was never executed, because this launch is not a
+     first one and never can be. So: make an empty directory, launch a second
+     window against it with NO `--onboarding` and no other help, and read
+     back what it did on its own. Two things have to be true at once, and
+     they are the two halves the renderer joins in
+     `if ((fr && fr.fresh) || needsOnboarding(cfg)) openOnboarding()`:
+     the latch said fresh, and the wizard is on screen with a real title.
+
+     It also proves the seed gate (state-dir-boot.ts) from the only angle
+     that can: this probe IS a fresh directory named by
+     ATOMIC_AGENT_STATE_DIR, so `seeded:false` and an absent `models/models`
+     are the seed declining to plant a symlink into ~/.atomic-agent in a
+     directory the operator called disposable.
+
+     `--user-data-dir` keeps the child off this run's Chromium profile; the
+     child starts no `atag serve`, so nothing here can collide with the
+     agent this window is talking to. */
+  const runFile = promisify(execFile);
+  const probeRoot = join(app.getPath("temp"), `atomic-desktop-firstrun-${process.pid}`);
+  try {
+    const probeState = join(probeRoot, "state");
+    mkdirSync(probeState, { recursive: true });
+    const { stdout: probeOut } = await runFile(
+      process.execPath,
+      [app.getAppPath(), "--first-run-probe", `--user-data-dir=${join(probeRoot, "chromium")}`],
+      { env: { ...process.env, ATOMIC_AGENT_STATE_DIR: probeState }, timeout: 120_000, maxBuffer: 4 * 1024 * 1024 },
+    );
+    const line = probeOut.split(/\r?\n/).find((l) => l.startsWith("FIRSTRUNPROBE "));
+    const probe = line
+      ? (JSON.parse(line.slice("FIRSTRUNPROBE ".length)) as { fresh: boolean | null; stateDir: string | null; title: string; seeded: boolean; weightsLink: boolean })
+      : null;
+    check(
+      "state dir: a genuinely fresh launch opens the wizard by itself",
+      !!probe && probe.fresh === true && probe.stateDir === probeState && probe.title.trim().length > 0
+        // the seed gate, observed from inside the launch it protects
+        && probe.seeded === false && probe.weightsLink === false,
+      probe
+        ? `fresh=${probe.fresh} stateDir=${probe.stateDir} wizard title=${JSON.stringify(probe.title)} seeded=${probe.seeded} weights link planted=${probe.weightsLink}`
+        : `no FIRSTRUNPROBE line in ${JSON.stringify(probeOut.slice(-400))}`,
+    );
+  } catch (err) {
+    check("state dir: a genuinely fresh launch opens the wizard by itself", false, err instanceof Error ? err.message : String(err));
+  } finally {
+    rmSync(probeRoot, { recursive: true, force: true });
+  }
+
+  /* ---- item 9: the weights link is planted in the desktop's OWN directory
+     and nowhere else ----
+     r5 review fix (major). The seed used to run on ANY fresh directory, so a
+     lane or CI run starting empty had the operator's real 3.2 GB weight
+     folder symlinked in as its own — and a `models remove` or a re-pull from
+     that throwaway install would then have written inside ~/.atomic-agent.
+     Two conjuncts: the latch is exactly the two-part gate, and — for this
+     run, which IS on an env-named directory — no link into the operator's
+     tree exists here to be followed. */
+  const liveWeights = join(DESKTOP_STATE_DIR, "models", "models");
+  let liveLinksIntoTui = false;
+  try {
+    liveLinksIntoTui = lstatSync(liveWeights).isSymbolicLink() && readlinkSync(liveWeights).startsWith(TUI_STATE_DIR);
+  } catch {
+    liveLinksIntoTui = false; // no such path — nothing links anywhere
+  }
+  /* The truth table, all four cells. `fresh && fromEnv → false` is the cell
+     the fix added and the only one a regression would flip back. */
+  const seedGate = ([[true, false], [true, true], [false, false], [false, true]] as Array<[boolean, boolean]>)
+    .map(([f, e]) => shouldSeedFreshStateDir(f, e));
+  check(
+    "state dir: an env-named directory is never linked to the operator's weights",
+    seedGate.join(",") === "true,false,false,false"
+      && DESKTOP_STATE_SEEDED === shouldSeedFreshStateDir(DESKTOP_STATE_WAS_FRESH, STATE_DIR_FROM_ENV)
+      && (!STATE_DIR_FROM_ENV || !liveLinksIntoTui),
+    `gate(fresh,fromEnv) = ${seedGate.join(",")}; this run fromEnv=${STATE_DIR_FROM_ENV} fresh=${DESKTOP_STATE_WAS_FRESH} seeded=${DESKTOP_STATE_SEEDED}; ${liveWeights} links into ${TUI_STATE_DIR}=${liveLinksIntoTui}`,
+  );
+
+  /* ---- item 9: the fresh-directory port claim, driven without a fresh
+     directory ----
+     r5 review fix (major + minor). claimDesktopPorts only ever runs when
+     DESKTOP_STATE_WAS_FRESH, which a lane run never is, so the whole
+     port-move had zero coverage — and it was wrong: it moved
+     `embeddings.url` but left `embeddings.port` on the schema default
+     19092, which is the port the operator's own embedding daemon uses.
+     The daemon is STARTED on `.port` and the client READS `.url`, so the
+     desktop would have spawned a llama-server on the operator's port and
+     then talked to an empty one. The mutation is now the pure
+     `claimPortsIn`, and this drives it over the exact block `atag config
+     get` writes into an empty directory. */
+  const freshPorts = { localModels: { mode: "managed", managed: { modelId: null, port: 19091 }, embeddings: { enabled: false, modelId: null, port: 19092, url: "http://127.0.0.1:19092" } }, llm: {} } as Record<string, unknown>;
+  // The agent's own schema defaults, read off the object before it is moved —
+  // the desktop's ports have to differ from BOTH of them or nothing is
+  // isolated. Read, not written as literals, so TypeScript cannot fold the
+  // comparison away.
+  const schemaManaged = (freshPorts["localModels"] as { managed: { port: number } }).managed.port;
+  const schemaEmbedding = (freshPorts["localModels"] as { embeddings: { port: number } }).embeddings.port;
+  const portsChanged = claimPortsIn(freshPorts);
+  const portsAgain = claimPortsIn(freshPorts);
+  const lmAfter = freshPorts["localModels"] as { managed: { port: number; modelId: unknown }; embeddings: { port: number; url: string; enabled: boolean } };
+  check(
+    "state dir: a fresh directory claims BOTH desktop llama ports",
+    portsChanged === true && portsAgain === false
+      && lmAfter.managed.port === DESKTOP_MANAGED_PORT
+      && lmAfter.embeddings.port === DESKTOP_EMBEDDING_PORT
+      && lmAfter.embeddings.url === `http://127.0.0.1:${DESKTOP_EMBEDDING_PORT}`
+      // Nothing else in the block may move: the port claim is not a place to
+      // turn features on.
+      && lmAfter.embeddings.enabled === false && lmAfter.managed.modelId === null
+      && lmAfter.managed.port !== schemaManaged && lmAfter.embeddings.port !== schemaEmbedding,
+    `managed ${schemaManaged} → ${lmAfter.managed.port}, embeddings port ${schemaEmbedding} → ${lmAfter.embeddings.port}, url → ${lmAfter.embeddings.url}; second call changed=${portsAgain}`,
+  );
+
+  /* ---- item 9: the fresh-directory seed, driven against throwaway dirs ----
+     r5 review fix (minor). The 0700 mkdir, the weights SYMLINK and the
+     backend COPY only ever run when DESKTOP_STATE_WAS_FRESH, which a lane
+     run is not — so they were verified by hand and by nothing else. The
+     step is now `seedFreshStateDir(desktopDir, tuiDir)`, taking both paths,
+     and this runs it over a fake pair under the OS temp dir: nothing here
+     touches ~/.atomic-agent or the desktop's real directory, and the whole
+     tree is removed in a finally. The distinction being asserted is the one
+     that matters: the weights are a LINK (gigabytes, shared) and the
+     backend is a COPY (an auto-update must not rewrite the operator's
+     llama.cpp binaries). */
+  const seedRoot = join(app.getPath("temp"), `atomic-desktop-seed-${process.pid}`);
+  try {
+    const fakeTui = join(seedRoot, "tui");
+    const fakeDesktop = join(seedRoot, "desktop");
+    mkdirSync(join(fakeTui, "models", "models", "some-model"), { recursive: true });
+    mkdirSync(join(fakeTui, "models", "backend"), { recursive: true });
+    writeFileSync(join(fakeTui, "models", "models", "some-model", "weights.gguf"), "not really a model");
+    writeFileSync(join(fakeTui, "models", "backend", "llama-server"), "not really a binary");
+    seedFreshStateDir(fakeDesktop, fakeTui);
+    const rootMode = statSync(fakeDesktop).mode & 0o777;
+    const weights = lstatSync(join(fakeDesktop, "models", "models"));
+    const backend = lstatSync(join(fakeDesktop, "models", "backend"));
+    const linkTarget = weights.isSymbolicLink() ? readlinkSync(join(fakeDesktop, "models", "models")) : "";
+    // Writing through the link must land in the source — that is what
+    // "shared" means, and it is the consequence the README states plainly.
+    const readThroughLink = existsSync(join(fakeDesktop, "models", "models", "some-model", "weights.gguf"));
+    // The backend copy must be a real file, and must NOT be the same inode:
+    // an auto-update writes over it.
+    const backendCopied = backend.isDirectory() && !backend.isSymbolicLink()
+      && statSync(join(fakeDesktop, "models", "backend", "llama-server")).ino
+        !== statSync(join(fakeTui, "models", "backend", "llama-server")).ino;
+    check(
+      "state dir: a fresh directory is 0700, links the weights and COPIES the backend",
+      rootMode === 0o700 && weights.isSymbolicLink() && linkTarget === join(fakeTui, "models", "models")
+        && readThroughLink && backendCopied,
+      `mode=0${rootMode.toString(8)} weights symlink=${weights.isSymbolicLink()} → ${linkTarget || "(not a link)"} readable=${readThroughLink}; backend copied (not linked, not the same inode)=${backendCopied}`,
+    );
+  } finally {
+    rmSync(seedRoot, { recursive: true, force: true });
+  }
+
+  /* ---- item 9: the fresh-install predicate matches the agent's ----
+     Pure, no agent involved. The exact file `atag config get` writes into an
+     empty directory: localModels.mode external at the schema's own default
+     url, no llm block, tui.onboarding all null. decideOnboarding
+     (src/tui/onboarding/needs-onboarding.ts) returns needed:true there. */
+  const freshCfg = JSON.stringify({ localModels: { mode: "external", url: "http://127.0.0.1:8080", managed: { modelId: null } }, llm: {}, tui: { onboarding: {} } });
+  const configuredCfg = JSON.stringify({ localModels: { mode: "external", url: "http://127.0.0.1:9999", managed: { modelId: null } }, llm: {}, tui: { onboarding: {} } });
+  const managedInExternal = JSON.stringify({ localModels: { mode: "external", url: "http://127.0.0.1:8080", managed: { modelId: "qwen-3.5-4b" } }, llm: {}, tui: { onboarding: {} } });
+  const needFresh = await js<boolean>(`window.__needsOnboarding(${freshCfg})`);
+  const needConfigured = await js<boolean>(`window.__needsOnboarding(${configuredCfg})`);
+  const needManaged = await js<boolean>(`window.__needsOnboarding(${managedInExternal})`);
+  check(
+    "state dir: a fresh directory would reach the wizard",
+    needFresh === true && needConfigured === false && needManaged === false,
+    `default url → ${needFresh}; a real url → ${needConfigured}; managed id in external mode → ${needManaged}`,
+  );
+
+  // ---- item 9: the import offer reports names, never values ----
+  type Presence = { ok: boolean; present: boolean; path: string; has: { providers: number; keys: string[]; skills: number; sessions: number; memory: boolean } };
+  const presence = await js<Presence>("window.__tuiSetupPresent()");
+  /* r5 review fix (minor): re-derived here with a Set rather than a raw
+     line-per-key list. The old derivation counted a duplicated name twice
+     and counted a placeholder line with no value, so it disagreed with the
+     contract's own rule for no product reason — and the disagreement was
+     the same one the two parsers inside tui-import.ts had with each other.
+     Written independently of parseDotenv (different shape, different
+     regex) so it is a second opinion rather than a restatement. */
+  const realKeys = existsSync(join(TUI_STATE_DIR, ".env"))
+    ? [...new Set(
+        readFileSync(join(TUI_STATE_DIR, ".env"), "utf8")
+          .split(/\r?\n/)
+          .map((l) => /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/.exec(l))
+          .filter((m): m is RegExpExecArray => !!m && m[2]!.replace(/^(['"])([\s\S]*)\1$/, "$2").length > 0)
+          .map((m) => m[1]!),
+      )]
+    : [];
+  const namesOnly = presence.has.keys.every((k) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(k) && realKeys.includes(k));
+  check(
+    "state dir: the import offer lists key NAMES, never values",
+    presence.ok === true && presence.path === TUI_STATE_DIR && namesOnly
+      && presence.has.keys.length === realKeys.length
+      && presence.present === existsSync(join(TUI_STATE_DIR, "config.json")),
+    `present=${presence.present} providers=${presence.has.providers} keys=${JSON.stringify(presence.has.keys)} skills=${presence.has.skills} sessions=${presence.has.sessions} memory=${presence.has.memory}`,
+  );
+
+  /* ---- item 9: the offer and the copy count the SAME set of keys ----
+     r5 review fix (minor). `has.keys` (the offer) and `copied.keys` (the
+     result) were produced by two readers that disagreed: one de-duplicated
+     and accepted an empty value, the other did neither. A `.env` carrying
+     the ordinary placeholder `HF_TOKEN=` made the wizard offer three keys
+     and the import report two, with no way for the Wizard lane to explain
+     the difference to the operator. Both now come off `parseDotenv`, and
+     this drives that one parser over a synthetic file holding every case:
+     a duplicate (last value wins, listed once), an empty placeholder (not a
+     key), a commented line, an `export` prefix, a quoted value, a name that
+     is not a legal env var name, and a name whose value is emptied by a
+     later line. Names and values must agree exactly — that agreement IS the
+     contract. Nothing here reads the operator's real .env. */
+  const synthetic = [
+    "# a comment",
+    "OPENAI_API_KEY=sk-first",
+    "OPENAI_API_KEY=sk-second",
+    "HF_TOKEN=",
+    "export ANTHROPIC_API_KEY='quoted value'",
+    "not a name=whatever",
+    "  SPACED_KEY = padded  ",
+    "WAS_SET=x",
+    "WAS_SET=",
+  ].join("\n");
+  const parsed = parseDotenv(synthetic);
+  const parsedNames = [...parsed.keys()];
+  check(
+    "state dir: the import offer and the import itself count the same keys",
+    parsedNames.length === parsed.size
+      && parsedNames.join(",") === "OPENAI_API_KEY,ANTHROPIC_API_KEY,SPACED_KEY"
+      && parsed.get("OPENAI_API_KEY") === "sk-second"
+      && parsed.get("ANTHROPIC_API_KEY") === "quoted value"
+      && parsed.get("SPACED_KEY") === "padded"
+      && !parsed.has("HF_TOKEN") && !parsed.has("WAS_SET"),
+    `names=${JSON.stringify(parsedNames)} values=${parsed.size} (duplicate collapsed to the last value, empty placeholder and emptied name dropped, illegal name ignored)`,
+  );
+
+  /* ---- item 9: nothing is pre-ticked, and the source is never moved ----
+     Two calls: the empty one must copy nothing at all, and the providers one
+     must land providers WITHOUT their keys and WITHOUT the terminal agent's
+     managed port. The desktop's own config is snapshotted and restored. */
+  const cfgBefore = (await configGet()).config as UserConfigShape | undefined;
+  /* UserConfigShape does not model `tui`, and it must not start to: the only
+     reason to read it here is to prove the import did NOT mark the wizard
+     done. */
+  const obStamp = (c: unknown): unknown =>
+    ((c as { tui?: { onboarding?: { completedAt?: unknown } } } | undefined)?.tui?.onboarding?.completedAt) ?? null;
+  const tuiBefore = snapshotTuiState();
+  try {
+    type ImportResult = { ok: boolean; copied: { providers: number; keys: number; skills: number; sessions: number; memory: boolean }; error?: string };
+    const none = await js<ImportResult>("window.__importFromTui({})");
+    check(
+      "state dir: an import with nothing ticked copies nothing",
+      none.ok === true && none.copied.providers === 0 && none.copied.keys === 0 && none.copied.skills === 0
+        && none.copied.sessions === 0 && none.copied.memory === false,
+      JSON.stringify(none),
+    );
+    if (presence.present) {
+      const portBefore = cfgBefore?.localModels?.managed?.port ?? null;
+      const imported = await js<ImportResult>("window.__importFromTui({providers:true})");
+      const cfgAfter = (await configGet()).config as UserConfigShape | undefined;
+      const tuiProviders = (JSON.parse(readFileSync(join(TUI_STATE_DIR, "config.json"), "utf8")) as UserConfigShape).llm?.providers ?? [];
+      const wanted = tuiProviders.filter((p) => p.id !== "local-llama").map((p) => p.id);
+      const gotIds = (cfgAfter?.llm?.providers ?? []).map((p) => p.id);
+      const noKeys = (cfgAfter?.llm?.providers ?? []).every((p) => !("apiKey" in (p as unknown as Record<string, unknown>)));
+      const tuiNow = snapshotTuiState();
+      const sourceDrift = Object.keys(tuiNow).filter((k) => tuiNow[k] !== tuiBefore[k]);
+      check(
+        "state dir: the import copies providers without keys and never moves the source",
+        imported.ok === true
+          && wanted.every((id) => gotIds.includes(id))
+          && noKeys
+          && imported.copied.keys === 0
+          && (cfgAfter?.localModels?.managed?.port ?? null) === portBefore
+          && obStamp(cfgAfter) === obStamp(cfgBefore)
+          && sourceDrift.length === 0,
+        `copied=${JSON.stringify(imported.copied)} providers=${JSON.stringify(gotIds)} inlineKeys=${!noKeys} port ${portBefore} → ${cfgAfter?.localModels?.managed?.port ?? null}; source drift: ${sourceDrift.join(",") || "none"}`,
+      );
+    }
+  } finally {
+    if (cfgBefore) await configSetWhole(cfgBefore);
+  }
+
+  /* ---- item 9: a database import happens with the agent DOWN ----
+     r5 review fix (major). The source side was always safe (`sqlite3
+     -readonly … .backup`), but the DESTINATION is a database this window's
+     own `atag serve` has open with a live WAL: `.backup` replaces the main
+     file underneath it, the running connection's stale `-wal` frames are
+     then replayed over the restored image, and sqlite's exclusive lock on
+     the destination can fail the import outright. The import now takes the
+     agent down for the database arm alone.
+     Driven for real — the desktop's own sessions.sqlite is replaced by the
+     terminal agent's and restored byte-for-byte afterwards, with the agent
+     stopped for the restore too. */
+  const sessDb = join(DESKTOP_STATE_DIR, "sessions.sqlite");
+  if (presence.present && presence.has.sessions > 0 && existsSync(sessDb) && agent) {
+    const keep = readFileSync(sessDb);
+    try {
+      // The serve child picks a fresh port on every start, so this is the
+      // observable proof that the agent really went down and came back.
+      const portBefore = agent.status.port ?? null;
+      const res = await js<{ ok: boolean; copied: { sessions: number }; error?: string }>(
+        "window.__importFromTui({sessions:true})",
+      );
+      const back = await waitForConnected();
+      /* Read AFTER the restart, deliberately. A stale `-wal` left beside the
+         destination would be replayed by the reopening agent and would put
+         the pre-import image back — so a row count that still matches here is
+         the proof that the copy was not silently undone. (A `-wal` exists
+         again by now: the restarted agent made a fresh one, which is the
+         normal state and not what the fix was about.) */
+      const rows = await sqliteRowCount(sessDb, "sessions");
+      check(
+        "state dir: a database import runs with the agent stopped, and it comes back",
+        res.ok === true && res.copied.sessions > 0 && rows === res.copied.sessions
+          && back === "connected" && agent.status.port !== null && agent.status.port !== portBefore,
+        `copied=${res.copied.sessions} rows after the restart=${rows} (terminal agent had ${presence.has.sessions}) agent port ${portBefore} → ${agent.status.port} state=${back}${res.error ? " error=" + res.error : ""}`,
+      );
+    } finally {
+      // Restore byte-for-byte, with the agent down so nothing is holding it.
+      await agent.stop();
+      for (const suffix of ["-wal", "-shm"]) rmSync(sessDb + suffix, { force: true });
+      writeFileSync(sessDb, keep);
+      await agent.start();
+      await waitForConnected();
+      await js<void>("window.__ctxRefreshCfg && window.__ctxRefreshCfg()");
+      await wait(800);
+    }
+  }
+
+  /* ---- item 10: every switch goes through the wrapper ----
+     Two halves, both exact. (a) the five switching IPCs are named in exactly
+     one place each — the SWXBR funnel — except BR.codingMode, whose boot GET
+     and restart-time re-assert are not operator switches and must NOT take
+     the lock (the re-assert is what the lock waits for). (b) every SWXBR.
+     call site is lexically inside a swxRun( … ) argument list, matched by
+     balancing parentheses with the string literals skipped. */
+  const rendererSrc = readFileSync(join(__dirname, "..", "renderer", "renderer.js"), "utf8");
+  const swxRanges: Array<[number, number]> = [];
+  for (const m of rendererSrc.matchAll(/\bswxRun\(/g)) {
+    let i = (m.index ?? 0) + m[0].length;
+    let depth = 1;
+    let quote = "";
+    while (i < rendererSrc.length && depth > 0) {
+      const ch = rendererSrc[i]!;
+      if (quote) {
+        if (ch === "\\") i++;
+        else if (ch === quote) quote = "";
+      } else if (ch === "'" || ch === '"' || ch === "`") quote = ch;
+      else if (ch === "(") depth++;
+      else if (ch === ")") depth--;
+      i++;
+    }
+    swxRanges.push([m.index ?? 0, i]);
+  }
+  const inSwx = (at: number) => swxRanges.some(([a, b]) => at > a && at < b);
+  const stray = [...rendererSrc.matchAll(/SWXBR\.\w+\(/g)].filter((m) => !inSwx(m.index ?? 0)).map((m) => m[0]);
+  const onceOnly = ["switchBackend", "activateProvider", "selectCloudModel", "selectLocalModel"]
+    // The lookbehind matters: `SWXBR.switchBackend(` contains the substring
+    // `BR.switchBackend(`, so a naive count would find the funnel plus every
+    // call site and this check would never go green.
+    .map((n) => [n, (rendererSrc.match(new RegExp(`(?<![\\w$])BR\\.${n}\\(`, "g")) ?? []).length] as const)
+    .filter(([, n]) => n !== 1);
+  check(
+    "switch coverage: every switch goes through the wrapper",
+    stray.length === 0 && onceOnly.length === 0 && swxRanges.length >= 12,
+    `${swxRanges.length} swxRun call sites; strays: ${stray.join(",") || "none"}; not-once: ${onceOnly.map(([n, c]) => `${n}×${c}`).join(",") || "none"}`,
+  );
+
+  /* ---- item 10: a 2 ms route never flashes a spinner ----
+     The coding-mode POST is 1-3 ms measured, so the send button must stay
+     live throughout — while the CHIP has already moved at the first sample,
+     which is the whole claim: the paint is on the click, not on the reply. */
+  const modeSupported = await js<boolean | null>("window.__modeSupported()");
+  const modeBefore = await js<string>("window.__mode()");
+  const modeTarget = modeBefore === "plan" ? "default" : "plan";
+  const modeProbe = await js<{ samples: Array<{ disabled: boolean; spins: number; mode: string }>; ms: number }>(
+    `(async () => {
+       const samples = [];
+       const take = () => { const b = document.querySelector('.sendbtn');
+         samples.push({disabled: !!(b && b.disabled), spins: document.querySelectorAll('.sspin').length, mode: window.__mode()}); };
+       const t0 = Date.now();
+       const p = window.__setCodingMode(${JSON.stringify(modeTarget)});
+       take();
+       await new Promise((r) => setTimeout(r, 40)); take();
+       await new Promise((r) => setTimeout(r, 80)); take();
+       await p;
+       return {samples, ms: Date.now() - t0};
+     })()`,
+  );
+  check(
+    "coding mode: the chip moves on the click and no spinner ever appears",
+    modeProbe.samples.length === 3
+      && modeProbe.samples.every((x) => x.disabled === false && x.spins === 0)
+      // A build with no /api/coding-mode route has no stance to paint, and
+      // the override is suppressed there by design — assert the blank, not a
+      // mode the agent cannot hold.
+      && (modeSupported === false ? modeProbe.samples[0]!.mode === modeBefore : modeProbe.samples[0]!.mode === modeTarget),
+    `route supported=${modeSupported}; ${modeProbe.ms}ms; samples=${JSON.stringify(modeProbe.samples)}`,
+  );
+  await js<void>(`window.__setCodingMode(${JSON.stringify(modeBefore)})`);
+  await wait(200);
+  const lockAfterMode = await js<{ pending: number; want: unknown; timer: boolean }>("window.__swxState()");
+  check(
+    "coding mode: the lock cannot outlive the switch",
+    lockAfterMode.pending === 0 && lockAfterMode.want === null && lockAfterMode.timer === false,
+    JSON.stringify(lockAfterMode),
+  );
+
+  /* ---- item 10: the lock's THIRD condition, proven ----
+     r5 review BLOCKER. `swxSettle` is documented as holding the composer
+     until the coding mode is back after the restart, and it did not: the old
+     predicate (`MODE.known && MODE.current === LAST_MODE`) is satisfied by
+     state an `atag serve` restart leaves untouched — nothing ever sets
+     `known` back to false, and every confirmed write sets `LAST_MODE =
+     MODE.current` — so the gate resolved on its first tick and the composer
+     unlocked while the restarted agent was still on its BOOT approval level.
+     A message sent in that gap runs at the wrong stance, which is the entire
+     reason the lock exists. The gate now waits for a confirmed reply from an
+     agent generation NEWER than the one the switch started on.
+     Both halves are asserted: it HOLDS while nothing newer has confirmed,
+     and it RELEASES once one does — a predicate that only ever holds would
+     be just as broken as one that never does. */
+  const gate = await js<{
+    heldWhileStale: boolean; released: number | null; cap: number; gen: number;
+    confirmedGen: number; mode: string; last: string | null; known: boolean; supported: boolean | null;
+  }>("window.__modeGateProbe()");
+  check(
+    "coding mode: the send lock waits for the mode the RESTARTED agent confirms",
+    gate.supported === false || !gate.last
+      // A build with no /api/coding-mode route, or a window that never chose
+      // a mode, has no stance to wait for — the gate resolves at once, by
+      // design, and asserting a hold there would assert a hang.
+      ? gate.heldWhileStale === false
+      : gate.heldWhileStale === true
+        && gate.released !== null && gate.released < gate.cap
+        && gate.confirmedGen === gate.gen && gate.known === true && gate.mode === gate.last,
+    `route supported=${gate.supported} chosen=${JSON.stringify(gate.last)}; held while nothing newer had confirmed=${gate.heldWhileStale}; released after ${gate.released}ms (cap ${gate.cap}ms); confirmedGen ${gate.confirmedGen} of generation ${gate.gen}; mode=${gate.mode}`,
+  );
+}
+
 /** Lane B — backend switch. */
 async function backendSwitchTest(
   js: <T>(code: string) => Promise<T>,
@@ -5457,7 +6169,46 @@ async function backendSwitchTest(
     // from the route the file is actually on (cloud, on the lane's state
     // dir), so the write the user's click makes is the one asserted below.
     const wasCloud = (beforeConfig?.llm?.providers ?? []).find((p) => p.id === beforeConfig?.llm?.activeTextProvider)?.kind !== "llama-server";
-    const toLocal = await js<SwitchResult>("window.__switchBackend('local')");
+    /* r5 item 10 — the same switch the backend block already makes, driven
+       through one probe so the composer's behaviour DURING it is observable.
+       Everything sampled here happens inside the 3-11 s the switch takes:
+       the chip at 50 ms (before any IPC could have resolved), the send
+       button at 350 ms (past the 150 ms spinner delay), and an Enter in the
+       middle of it. The switch's own result is still what the checks below
+       assert, unchanged. */
+    const lock = await js<{
+      early: { sel: string; live: string; ms: number };
+      mid: { disabled: boolean; aria: string | null; spins: number };
+      afterEnter: { draft: string; users: number; queued: number; toast: { t: string; s: string } | null };
+      after: { disabled: boolean; spins: number };
+      state: { pending: number; want: unknown; timer: boolean; lastMs: number; label: string };
+      res: SwitchResult;
+      ms: number;
+    }>(`(async () => {
+      const users0 = window.__logCounts().users;
+      window.__setDraft('hello while switching');
+      const t0 = Date.now();
+      const p = window.__switchBackend('local');
+      await new Promise((r) => setTimeout(r, 50));
+      const early = {sel: window.__sel().backend, live: window.__bswLive().backend, ms: Date.now() - t0};
+      await new Promise((r) => setTimeout(r, 300));
+      const b = document.querySelector('.sendbtn');
+      const mid = {disabled: !!(b && b.disabled), aria: b ? b.getAttribute('aria-busy') : null,
+                   spins: document.querySelectorAll('.sspin').length};
+      const label = window.__swxState().label;
+      document.querySelector('#entry').dispatchEvent(
+        new KeyboardEvent('keydown', {key:'Enter', bubbles:true, cancelable:true}));
+      const counts = window.__logCounts();
+      const afterEnter = {draft: document.querySelector('#entry').value,
+                          users: counts.users - users0, queued: counts.queued,
+                          toast: window.__lastToast()};
+      const res = await p;
+      const b2 = document.querySelector('.sendbtn');
+      const after = {disabled: !!(b2 && b2.disabled), spins: document.querySelectorAll('.sspin').length};
+      window.__setDraft('');
+      return {early, mid, afterEnter, after, state: window.__swxState(), res, ms: Date.now() - t0, label};
+    })()`);
+    const toLocal = lock.res;
     // Read once before the harness refreshes anything: this is what the
     // renderer's own post-IPC refreshLiveConfig() produced.
     const rawLocal = await js<{ backend: string; mode: string }>(
@@ -5481,6 +6232,32 @@ async function backendSwitchTest(
         ? `from=${beforeConfig?.llm?.activeTextProvider} active=${afterLocal?.llm?.activeTextProvider} mode=${afterLocal?.localModels?.mode} url=${localEntry(afterLocal)?.url} daemon=${toLocal.daemon} restart=${toLocal.restart}`
         : `error=${toLocal?.error}`,
     );
+    /* ---- r5 item 10: the composer around that switch ---- */
+    check(
+      "send button: the chip moves before the agent does",
+      lock.early.sel === "local" && lock.early.live !== "local" && lock.early.ms < 200,
+      `at ${lock.early.ms}ms the chip said ${JSON.stringify(lock.early.sel)} while the live route was still ${JSON.stringify(lock.early.live)}`,
+    );
+    check(
+      "send button: locks with a spinner, then unlocks because the agent came back",
+      lock.mid.disabled === true && lock.mid.aria === "true" && lock.mid.spins === 1
+        && lock.after.disabled === false && lock.after.spins === 0
+        && stLocal === "connected",
+      `switch took ${lock.ms}ms (renderer measured ${lock.state.lastMs}ms); at 350ms disabled=${lock.mid.disabled} aria-busy=${lock.mid.aria} spinners=${lock.mid.spins}; afterwards disabled=${lock.after.disabled} spinners=${lock.after.spins}; agent ${stLocal}`,
+    );
+    check(
+      "send button: Enter while locked keeps the draft and sends nothing",
+      lock.afterEnter.users === 0 && lock.afterEnter.queued === 0
+        && lock.afterEnter.draft === "hello while switching"
+        && !!lock.afterEnter.toast && lock.afterEnter.toast.t === lock.state.label,
+      `user rows +${lock.afterEnter.users}, queued ${lock.afterEnter.queued}, draft ${JSON.stringify(lock.afterEnter.draft)}, toast ${JSON.stringify(lock.afterEnter.toast)}`,
+    );
+    check(
+      "send button: the lock cannot outlive the switch",
+      lock.state.pending === 0 && lock.state.want === null && lock.state.timer === false,
+      JSON.stringify(lock.state),
+    );
+
     const managedId = afterLocal?.localModels?.managed?.modelId ?? null;
     // The chip's precedence is the TUI's: `download model` whenever nothing
     // is on disk (selectComposerNeedsModelDownload ignores managed.modelId),
@@ -5497,6 +6274,30 @@ async function backendSwitchTest(
         && (managedId && onDisk ? localChips.model.includes(managedId) : /download model/.test(localChips.model)),
       `own refresh: backend=${rawLocal.backend} chip=${JSON.stringify(rawLocal.mode)}; after harness refresh: backend=${localChips.backend} chip=${JSON.stringify(localChips.mode)} model=${JSON.stringify(localChips.model)} managed=${managedId} onDisk=${onDisk}`,
     );
+
+    /* ---- r5 item 10 (review, minor): the LOCAL model select, measured ----
+       Driven through selActivate — the same row handler a click runs — with
+       the model that is already selected and already on disk, so the route
+       does not move and only the cost is being observed. Guarded on
+       `downloaded`: selActivate's own `!row.downloaded` arm starts a
+       multi-gigabyte pull, which a suite must never do. */
+    const downloadedNow = ((await chatModelsList()).models ?? []).filter((m) => m.downloaded).map((m) => m.id);
+    if (managedId && downloadedNow.includes(managedId)) {
+      const localPick = await js<{ error: string | null; ms: number }>(
+        `(async () => { const t0 = Date.now();
+           await window.__selActivate({type:'localModel', id:${JSON.stringify(managedId)}, downloaded:true, label:${JSON.stringify(managedId)}});
+           return {error: window.__sel().err, ms: Date.now() - t0}; })()`,
+      );
+      await js<void>("window.__selClose(); window.__swxReset();");
+      await waitConnected();
+      const stillLocal = await cfgNow();
+      check(
+        "backend: selecting the local model already in use keeps the route",
+        stillLocal?.localModels?.managed?.modelId === managedId
+          && stillLocal?.llm?.activeTextProvider === "local-llama",
+        `${localPick.ms}ms; managed=${stillLocal?.localModels?.managed?.modelId} active=${stillLocal?.llm?.activeTextProvider}${localPick.error ? " selector said: " + localPick.error : ""}`,
+      );
+    }
     // Review fix: `custom` is a state the composer can be IN — the same
     // local-llama provider entry with localModels.mode external. It used to
     // read as `local`, which drew the managed row active and described a route
@@ -5648,6 +6449,84 @@ async function backendSwitchTest(
       `switch=${lines.includes(switchLine)} stop=${lines.includes(stopLine)} daemon=${toCloud?.daemon}`,
     );
 
+    /* ---- r5 item 10 (review, minor): provider activation and the CLOUD
+       model select, measured ----
+       Both driven through selActivate, the row handler a click runs, with
+       the provider and the model the file already names — the route does not
+       move, only its cost is observed. Skipped when the active provider has
+       no key, because activateProvider then answers needsKey and the row
+       opens the key panel rather than switching. */
+    const activeNow = (afterCloud?.llm?.providers ?? []).find((p) => p.id === afterCloud?.llm?.activeTextProvider);
+    if (activeNow && providerHasKey(activeNow)) {
+      const chatModel = activeNow.defaultChatModel ?? "";
+      await js<void>(
+        `window.__selActivate({type:'provider', id:${JSON.stringify(activeNow.id)}, defaultChatModel:${JSON.stringify(chatModel)}})`,
+      );
+      await js<void>("window.__selClose(); window.__swxReset();");
+      const stProv = await waitConnected();
+      const afterProv = await cfgNow();
+      check(
+        "backend: re-activating the live provider keeps the route",
+        afterProv?.llm?.activeTextProvider === activeNow.id && stProv === "connected",
+        `active=${afterProv?.llm?.activeTextProvider} state=${stProv}`,
+      );
+      if (chatModel) {
+        await js<void>(`window.__selActivate({type:'cloudModel', id:${JSON.stringify(chatModel)}})`);
+        await js<void>("window.__selClose(); window.__swxReset();");
+        const stModel = await waitConnected();
+        const afterModel = await cfgNow();
+        const entryNow = (afterModel?.llm?.providers ?? []).find((p) => p.id === activeNow.id);
+        check(
+          "backend: re-selecting the live chat model keeps the route",
+          entryNow?.defaultChatModel === chatModel && stModel === "connected",
+          `model=${entryNow?.defaultChatModel} expected=${chatModel} state=${stModel}`,
+        );
+      }
+    }
+
+    /* ---- r5 item 10: a failed switch rolls the chip back and says why ----
+       Fabricated the way the gate test above fabricates its config: the
+       cloud providers are removed, so switchBackend('cloud') can only
+       answer needsProvider. Nothing is written by the switch itself, so the
+       rollback is one frame — SWX.want clears and the chips read LIVE_CONFIG
+       again, which still names the route the operator was on. Restored in a
+       finally of its own. */
+    const beforeFail = await cfgNow();
+    if (beforeFail) {
+      try {
+        const noCloud = JSON.parse(JSON.stringify(beforeFail)) as UserConfigShape;
+        noCloud.llm = noCloud.llm ?? {};
+        noCloud.llm.providers = (noCloud.llm.providers ?? []).filter((p) => p.kind === "llama-server");
+        noCloud.llm.activeTextProvider = "local-llama";
+        await configSetWhole(noCloud);
+        await js<void>("window.__ctxRefreshCfg()");
+        await wait(800);
+        const failed = await js<{
+          res: SwitchResult; sel: string; live: string; strip: string;
+          state: { pending: number; want: unknown; err: string | null }; disabled: boolean; spins: number;
+        }>(`(async () => {
+          const res = await window.__switchBackend('cloud');
+          const b = document.querySelector('.sendbtn');
+          return {res, sel: window.__sel().backend, live: window.__bswLive().backend,
+                  strip: window.__composerStrip(), state: window.__swxState(),
+                  disabled: !!(b && b.disabled), spins: document.querySelectorAll('.sspin').length};
+        })()`);
+        check(
+          "send button: a failed switch rolls the chip back and says why",
+          failed.res?.needsProvider === true
+            && failed.sel === failed.live
+            && failed.state.want === null && failed.state.pending === 0
+            && failed.disabled === false && failed.spins === 0
+            && /no cloud provider is configured yet/.test(failed.strip),
+          `needsProvider=${failed.res?.needsProvider} chip=${failed.sel} live=${failed.live} want=${JSON.stringify(failed.state.want)} strip=${JSON.stringify(failed.strip)}`,
+        );
+      } finally {
+        await configSetWhole(beforeFail);
+        await js<void>("window.__swxReset(); window.__ctxRefreshCfg();");
+        await wait(800);
+      }
+    }
+
     // Third leg: the file moves first, without a restart — what the TUI or
     // a hand edit does while this window is open. serve stays on the cloud
     // route it booted on; the switch finds nothing to write for the route
@@ -5678,7 +6557,78 @@ async function backendSwitchTest(
   }
 }
 
+/**
+ * r5 item 9 — the desktop's own managed llama ports, written once into a
+ * freshly created state directory. Whole-file, through `atag config set
+ * <json>`: there is no config-write route, and PATCH /api/config re-defaults
+ * every block it does not merge.
+ */
+async function claimDesktopPorts(): Promise<void> {
+  if (!DESKTOP_STATE_WAS_FRESH) return;
+  try {
+    const read = await readWholeConfig();
+    if (!read.ok || !read.config) return;
+    const cfg = read.config;
+    // r5 review fix: the port move is one pure function (state-dir.ts
+    // claimPortsIn) so the suite can assert it without a fresh directory —
+    // it moves the embedding daemon's PORT as well as the client's url,
+    // which is what the first cut missed.
+    if (!claimPortsIn(cfg as unknown as Record<string, unknown>)) return;
+    await configSetWhole(cfg);
+  } catch {
+    // A port that could not be claimed shows up as a daemon that will not
+    // start, with the agent's own message — not as a window that never opens.
+  }
+}
+
+/**
+ * r5 item 9 — the body of `--first-run-probe`. Waits for the renderer to
+ * have latched `window.__firstRun()` and for the wizard to have opened
+ * ITSELF (no `--onboarding`, no menu command, no help of any kind), then
+ * says on stdout what it saw. The caller is the smoke suite, which runs this
+ * against a throwaway `ATOMIC_AGENT_STATE_DIR` that it created empty.
+ */
+async function firstRunProbe(): Promise<void> {
+  const js = <T,>(code: string): Promise<T> =>
+    (win?.webContents.executeJavaScript(code) as Promise<T>) ?? Promise.resolve(null as unknown as T);
+  type FirstRun = { fresh: boolean; stateDir: string; tuiStateDir: string; tuiSetupFound: boolean } | null;
+  let fr: FirstRun = null;
+  let title = "";
+  const deadline = Date.now() + 45_000;
+  while (Date.now() < deadline) {
+    try {
+      fr = await js<FirstRun>("window.__firstRun ? window.__firstRun() : null");
+      title = (await js<string>("document.querySelector('#onboarding .ob-title')?.textContent ?? ''")) || "";
+    } catch {
+      // the window is still loading its script — try again
+    }
+    if (fr && title) break;
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  /* Whether the seed ran is reported too: this probe is itself the case
+     finding 1 is about — a FRESH directory named by ATOMIC_AGENT_STATE_DIR —
+     so `seeded:false` here is the gate working, observed from inside the
+     very launch that would otherwise have planted the link. */
+  process.stdout.write(
+    "FIRSTRUNPROBE " +
+      JSON.stringify({
+        fresh: fr?.fresh ?? null,
+        stateDir: fr?.stateDir ?? null,
+        tuiSetupFound: fr?.tuiSetupFound ?? null,
+        title,
+        seeded: DESKTOP_STATE_SEEDED,
+        weightsLink: existsSync(join(DESKTOP_STATE_DIR, "models", "models")),
+      }) +
+      "\n",
+  );
+  app.exit(0);
+}
+
 void app.whenReady().then(async () => {
+  /* r5 item 9 — the ~/.atomic-agent baseline, taken HERE: no AgentClient
+     exists yet, no `atag` subprocess has been spawned, and nothing has been
+     written. Anything the app touches from this line on shows as drift. */
+  if (SMOKE) TUI_BASELINE = snapshotTuiState();
   const workspace = process.env.ATOMIC_AGENT_WORKSPACE ?? homedir();
   agent = new AgentClient(workspace);
   win = createWindow();
@@ -5690,9 +6640,20 @@ void app.whenReady().then(async () => {
 
   win.webContents.once("did-finish-load", () => {
     send("agent:status", agent?.status);
+    /* r5 item 9 — the fresh-launch probe answers before anything is started:
+       no `atag serve`, no port claim, nothing that would take forty seconds
+       to prove a wizard opened. */
+    if (FIRST_RUN_PROBE) { void firstRunProbe(); return; }
     if (FORCE_ONBOARDING) send("app:menu", "onboarding");
-    void agent?.start();
-    if (SMOKE) void smokeTest();
+    /* r5 item 9 — on a FIRST run only, claim the desktop's own managed
+       llama ports before `atag serve` boots and reads the file. The agent's
+       schema defaults to 19091/19092, which is what the operator's terminal
+       agent also holds; two daemons cannot share a port. On every later
+       launch this is skipped entirely, so it costs nothing. */
+    void claimDesktopPorts().then(() => {
+      void agent?.start();
+      if (SMOKE) void smokeTest();
+    });
   });
 
   app.on("activate", () => {

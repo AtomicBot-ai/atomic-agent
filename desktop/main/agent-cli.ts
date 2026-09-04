@@ -1,5 +1,5 @@
 import { execFile, spawn } from "node:child_process";
-import { homedir, totalmem } from "node:os";
+import { totalmem } from "node:os";
 import { closeSync, openSync, readdirSync, readFileSync, readSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -9,6 +9,8 @@ import { dirname } from "node:path";
 import { promisify } from "node:util";
 
 import { resolveBinary } from "./agent-client.js";
+// r5 item 9 — every `atag` subprocess runs on the DESKTOP's state directory.
+import { agentEnv, DESKTOP_STATE_DIR } from "./state-dir.js";
 
 const run = promisify(execFile);
 
@@ -40,6 +42,10 @@ async function cli(args: string[], timeout = 30_000, cwd?: string): Promise<CliR
     const { stdout, stderr } = await run(binary, args, {
       timeout,
       maxBuffer: 8 * 1024 * 1024,
+      // r5 item 9: named rather than inherited. Inheritance is already
+      // correct (state-dir-boot.ts), but one careless `env: {}` here would
+      // put every config write back on the operator's ~/.atomic-agent.
+      env: agentEnv(),
       ...(cwd ? { cwd } : {}),
     });
     return { ok: true, stdout, stderr };
@@ -153,7 +159,7 @@ export function modelsPull(
       cancel: () => {},
     };
   }
-  const child = spawn(binary, ["models", "pull", id], { stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(binary, ["models", "pull", id], { env: agentEnv(), stdio: ["ignore", "pipe", "pipe"] });
   let stdout = "";
   let stderr = "";
   const relay = (chunk: Buffer, sink: "out" | "err") => {
@@ -841,9 +847,19 @@ export async function modelsStop(): Promise<CliResult> {
   return cli(["models", "stop"], 30_000);
 }
 
-/** The agent's own rule for the state dir (src/config/load-config.ts). */
+/**
+ * r5 item 9 — the desktop's state dir, and only ever that.
+ *
+ * This used to fall back to `join(homedir(), ".atomic-agent")`, which was
+ * the single hardcoded leak in the whole app: its two readers are the HF
+ * 401 hint (main.ts, which names `<stateDir>/.env` on screen) and
+ * `keyNamesAvailable` below, which reads `<stateDir>/.env` to decide
+ * whether a provider has a key — pointing that at the operator's .env is
+ * exactly the key-sharing the user forbade. The resolution now lives in
+ * state-dir.ts, and the `~/.atomic-agent` literal is gone from the desktop.
+ */
 export function stateDirPath(): string {
-  return process.env.ATOMIC_AGENT_STATE_DIR ?? join(homedir(), ".atomic-agent");
+  return DESKTOP_STATE_DIR;
 }
 
 /**
@@ -1436,7 +1452,7 @@ export function modelsPullEmbedding(
   if (!binary || !MODEL_ID_RE.test(id)) {
     return { done: Promise.resolve({ ok: false, stdout: "", stderr: "", error: "cannot start the download" }), cancel: () => {} };
   }
-  const child = spawn(binary, ["models", "pull-embedding", id], { stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(binary, ["models", "pull-embedding", id], { env: agentEnv(), stdio: ["ignore", "pipe", "pipe"] });
   let stdout = "";
   let stderr = "";
   const relay = (chunk: Buffer, sink: "out" | "err") => {
