@@ -3,7 +3,7 @@
    the directory was fresh; tsc hoists every require above the file body, so
    only an import placed first is guaranteed to run before the modules below
    take their own side effects. */
-import { DESKTOP_STATE_WAS_FRESH, seedFreshStateDir } from "./state-dir-boot.js";
+import { DESKTOP_STATE_SEEDED, DESKTOP_STATE_WAS_FRESH, seedFreshStateDir, shouldSeedFreshStateDir } from "./state-dir-boot.js";
 
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import { randomUUID } from "node:crypto";
@@ -106,8 +106,8 @@ import { VoiceSession, helperPath as speechHelperPath } from "./speech.js";
 import { clawhubSkillDetail } from "./clawhub.js";
 import { memoryQuery } from "./memory-db.js";
 // r5 item 9 — the desktop's own state directory and the TUI import offer.
-import { claimPortsIn, DESKTOP_EMBEDDING_PORT, DESKTOP_MANAGED_PORT, DESKTOP_STATE_DIR, TUI_STATE_DIR, underDesktopState } from "./state-dir.js";
-import { importFromTui, sqliteRowCount, tuiSetupPresent, type TuiImportOptions } from "./tui-import.js";
+import { claimPortsIn, DESKTOP_EMBEDDING_PORT, DESKTOP_MANAGED_PORT, DESKTOP_STATE_DIR, STATE_DIR_FROM_ENV, TUI_STATE_DIR, underDesktopState } from "./state-dir.js";
+import { importFromTui, parseDotenv, sqliteRowCount, tuiSetupPresent, type TuiImportOptions } from "./tui-import.js";
 
 const DEV = process.argv.includes("--dev");
 /** `--smoke` boots, waits for first paint, writes a screenshot, and exits. */
@@ -116,6 +116,25 @@ const SMOKE = process.argv.includes("--smoke");
 const FORCE_ONBOARDING = process.argv.includes("--onboarding");
 /** `--models` drives the Models pane end to end and asserts config changed. */
 const MODELS_TEST = process.argv.includes("--models");
+/**
+ * r5 item 9, review fix (minor) — `--first-run-probe`.
+ *
+ * The acceptance is "a first launch always reaches the wizard", and nothing
+ * proved it end to end: the suite runs on a lane directory that is never
+ * fresh, so `app:firstRun` answering `fresh:true` and the renderer's
+ * `if ((fr && fr.fresh) || …) openOnboarding()` disjunct were both dead
+ * code as far as any check could see. Only a REAL launch against a REAL
+ * empty directory exercises them, and the suite cannot make its own launch
+ * fresh — so it makes a second one.
+ *
+ * This mode boots the window exactly as a first launch does, with one
+ * difference: it starts no `atag serve`. The wizard's own path never needs
+ * it — `firstRun` is main-process state and `configGet` / `hostRam` /
+ * `keyEnv` are one-shot `atag` subprocesses — so a probe that skipped the
+ * daemon proves the same thing in about six seconds instead of forty.
+ * It prints one `FIRSTRUNPROBE {json}` line and exits.
+ */
+const FIRST_RUN_PROBE = process.argv.includes("--first-run-probe");
 
 let win: BrowserWindow | null = null;
 let agent: AgentClient | null = null;
@@ -5510,26 +5529,32 @@ async function uiTest(
 /**
  * r5 item 9 — every observable byte of the operator's terminal-agent
  * directory, as one flat map of `path → size:mtimeMs` (or `absent`).
- * `models/models` is included because that subdirectory is SHARED with the
- * desktop through a symlink, and a `models pull` from the desktop would land
- * inside it — the one write path a source scan could never see.
  *
- * r5 review fix (minor), two holes closed:
- *   · `models/models` was recorded as a NAME LIST, so a pull that overwrote
- *     or repaired an existing weight file produced no drift at all. Every
- *     entry inside it is now stamped individually — it is the one directory
- *     genuinely shared with the operator, so it is the one that has to be
- *     watched byte-wise rather than by listing.
- *   · the sqlite `-wal`/`-shm` siblings were not watched. A write that only
- *     reached the WAL — which is where a sqlite write lands FIRST — left the
- *     main database's mtime alone and passed.
+ * r5 review fix (minor): it used to stamp a HAND-PICKED list of paths, with
+ * only `models/models` walked file by file. Everything else was a directory
+ * NAME LIST, which is blind to a file being rewritten in place — and the one
+ * directory that blindness covered is `models/backend/`, the llama.cpp
+ * binaries that `localModels.managed.autoUpdate` (default true) replaces
+ * wholesale on `atag models start`, and the reason the fresh-dir seed COPIES
+ * the backend rather than linking it. A rewritten `llama-server` left the
+ * name list `backend,llama-server.log,models,sessions` unchanged and the
+ * check green. Same hole over `skills/*` file contents, `models/
+ * llama-server.log`, and `web-search-cache.json`, which was not stamped at
+ * all.
+ *
+ * So it now walks the WHOLE directory and stamps every entry. The tree is
+ * small (about sixty files here) and the check's name — "a whole smoke run
+ * leaves ~/.atomic-agent untouched" — now claims no more than it can see.
+ *
+ * `lstat`, not `stat`: a symlink is stamped as the link itself, so nothing
+ * here follows a link out of the tree or round a cycle.
  */
 function snapshotTuiState(): Record<string, string> {
   const out: Record<string, string> = {};
   const stamp = (rel: string) => {
     const path = rel ? join(TUI_STATE_DIR, rel) : TUI_STATE_DIR;
     try {
-      const st = statSync(path);
+      const st = lstatSync(path);
       out[rel || "."] = st.isDirectory()
         ? `dir:${readdirSync(path).sort().join(",")}`
         : `${st.size}:${st.mtimeMs}`;
@@ -5537,18 +5562,13 @@ function snapshotTuiState(): Record<string, string> {
       out[rel || "."] = "absent";
     }
   };
-  for (const rel of ["", "config.json", ".env", "analytics.json", "skills", "models", "models/models", "traces"]) {
-    stamp(rel);
-  }
-  for (const db of ["sessions.sqlite", "memory.sqlite", "tasks.sqlite"]) {
-    for (const suffix of ["", "-wal", "-shm"]) stamp(db + suffix);
-  }
-  // The shared weights, file by file. Recursive because the weights sit one
-  // level down (`models/models/<model-id>/*.gguf`), so a leaf listing would
-  // still miss a file overwritten in place — which is exactly what a repair
-  // or a re-pull of an existing model does.
+  stamp("");
+  /* Depth-capped so a pathological tree cannot hang the boot; six is far
+     below anything the agent writes (`models/models/<id>/<file>` is four)
+     and the `dir:` listing at the cap still catches an addition or a
+     deletion below it. */
   const walk = (rel: string, depth: number) => {
-    if (depth > 3) return;
+    if (depth > 6) return;
     let entries: string[];
     try {
       entries = readdirSync(join(TUI_STATE_DIR, rel)).sort();
@@ -5556,12 +5576,12 @@ function snapshotTuiState(): Record<string, string> {
       return; // nothing there — the `dir:` line above already says so
     }
     for (const name of entries) {
-      const child = join(rel, name);
+      const child = rel ? join(rel, name) : name;
       stamp(child);
       if ((out[child] ?? "").startsWith("dir:")) walk(child, depth + 1);
     }
   };
-  walk(join("models", "models"), 0);
+  walk("", 0);
   return out;
 }
 
@@ -5651,6 +5671,83 @@ async function isolationAndSwitchTest(
       && fr.fresh === DESKTOP_STATE_WAS_FRESH
       && fr.tuiSetupFound === (existsSync(join(TUI_STATE_DIR, "config.json")) && DESKTOP_STATE_DIR !== TUI_STATE_DIR),
     fr ? `fresh=${fr.fresh} (this run started on ${fr.fresh ? "an empty" : "an existing"} directory) stateDir=${fr.stateDir} tuiSetupFound=${fr.tuiSetupFound}` : "no __firstRun hook",
+  );
+
+  /* ---- item 9: a GENUINELY fresh launch reaches the wizard ----
+     r5 review fix (minor). Everything above about first run is either a pure
+     predicate or a report; the acceptance sentence — "a first launch always
+     reaches the wizard" — was never executed, because this launch is not a
+     first one and never can be. So: make an empty directory, launch a second
+     window against it with NO `--onboarding` and no other help, and read
+     back what it did on its own. Two things have to be true at once, and
+     they are the two halves the renderer joins in
+     `if ((fr && fr.fresh) || needsOnboarding(cfg)) openOnboarding()`:
+     the latch said fresh, and the wizard is on screen with a real title.
+
+     It also proves the seed gate (state-dir-boot.ts) from the only angle
+     that can: this probe IS a fresh directory named by
+     ATOMIC_AGENT_STATE_DIR, so `seeded:false` and an absent `models/models`
+     are the seed declining to plant a symlink into ~/.atomic-agent in a
+     directory the operator called disposable.
+
+     `--user-data-dir` keeps the child off this run's Chromium profile; the
+     child starts no `atag serve`, so nothing here can collide with the
+     agent this window is talking to. */
+  const runFile = promisify(execFile);
+  const probeRoot = join(app.getPath("temp"), `atomic-desktop-firstrun-${process.pid}`);
+  try {
+    const probeState = join(probeRoot, "state");
+    mkdirSync(probeState, { recursive: true });
+    const { stdout: probeOut } = await runFile(
+      process.execPath,
+      [app.getAppPath(), "--first-run-probe", `--user-data-dir=${join(probeRoot, "chromium")}`],
+      { env: { ...process.env, ATOMIC_AGENT_STATE_DIR: probeState }, timeout: 120_000, maxBuffer: 4 * 1024 * 1024 },
+    );
+    const line = probeOut.split(/\r?\n/).find((l) => l.startsWith("FIRSTRUNPROBE "));
+    const probe = line
+      ? (JSON.parse(line.slice("FIRSTRUNPROBE ".length)) as { fresh: boolean | null; stateDir: string | null; title: string; seeded: boolean; weightsLink: boolean })
+      : null;
+    check(
+      "state dir: a genuinely fresh launch opens the wizard by itself",
+      !!probe && probe.fresh === true && probe.stateDir === probeState && probe.title.trim().length > 0
+        // the seed gate, observed from inside the launch it protects
+        && probe.seeded === false && probe.weightsLink === false,
+      probe
+        ? `fresh=${probe.fresh} stateDir=${probe.stateDir} wizard title=${JSON.stringify(probe.title)} seeded=${probe.seeded} weights link planted=${probe.weightsLink}`
+        : `no FIRSTRUNPROBE line in ${JSON.stringify(probeOut.slice(-400))}`,
+    );
+  } catch (err) {
+    check("state dir: a genuinely fresh launch opens the wizard by itself", false, err instanceof Error ? err.message : String(err));
+  } finally {
+    rmSync(probeRoot, { recursive: true, force: true });
+  }
+
+  /* ---- item 9: the weights link is planted in the desktop's OWN directory
+     and nowhere else ----
+     r5 review fix (major). The seed used to run on ANY fresh directory, so a
+     lane or CI run starting empty had the operator's real 3.2 GB weight
+     folder symlinked in as its own — and a `models remove` or a re-pull from
+     that throwaway install would then have written inside ~/.atomic-agent.
+     Two conjuncts: the latch is exactly the two-part gate, and — for this
+     run, which IS on an env-named directory — no link into the operator's
+     tree exists here to be followed. */
+  const liveWeights = join(DESKTOP_STATE_DIR, "models", "models");
+  let liveLinksIntoTui = false;
+  try {
+    liveLinksIntoTui = lstatSync(liveWeights).isSymbolicLink() && readlinkSync(liveWeights).startsWith(TUI_STATE_DIR);
+  } catch {
+    liveLinksIntoTui = false; // no such path — nothing links anywhere
+  }
+  /* The truth table, all four cells. `fresh && fromEnv → false` is the cell
+     the fix added and the only one a regression would flip back. */
+  const seedGate = ([[true, false], [true, true], [false, false], [false, true]] as Array<[boolean, boolean]>)
+    .map(([f, e]) => shouldSeedFreshStateDir(f, e));
+  check(
+    "state dir: an env-named directory is never linked to the operator's weights",
+    seedGate.join(",") === "true,false,false,false"
+      && DESKTOP_STATE_SEEDED === shouldSeedFreshStateDir(DESKTOP_STATE_WAS_FRESH, STATE_DIR_FROM_ENV)
+      && (!STATE_DIR_FROM_ENV || !liveLinksIntoTui),
+    `gate(fresh,fromEnv) = ${seedGate.join(",")}; this run fromEnv=${STATE_DIR_FROM_ENV} fresh=${DESKTOP_STATE_WAS_FRESH} seeded=${DESKTOP_STATE_SEEDED}; ${liveWeights} links into ${TUI_STATE_DIR}=${liveLinksIntoTui}`,
   );
 
   /* ---- item 9: the fresh-directory port claim, driven without a fresh
@@ -5750,8 +5847,21 @@ async function isolationAndSwitchTest(
   // ---- item 9: the import offer reports names, never values ----
   type Presence = { ok: boolean; present: boolean; path: string; has: { providers: number; keys: string[]; skills: number; sessions: number; memory: boolean } };
   const presence = await js<Presence>("window.__tuiSetupPresent()");
+  /* r5 review fix (minor): re-derived here with a Set rather than a raw
+     line-per-key list. The old derivation counted a duplicated name twice
+     and counted a placeholder line with no value, so it disagreed with the
+     contract's own rule for no product reason — and the disagreement was
+     the same one the two parsers inside tui-import.ts had with each other.
+     Written independently of parseDotenv (different shape, different
+     regex) so it is a second opinion rather than a restatement. */
   const realKeys = existsSync(join(TUI_STATE_DIR, ".env"))
-    ? readFileSync(join(TUI_STATE_DIR, ".env"), "utf8").split(/\r?\n/).map((l) => l.split("=")[0]?.trim() ?? "").filter((k) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(k))
+    ? [...new Set(
+        readFileSync(join(TUI_STATE_DIR, ".env"), "utf8")
+          .split(/\r?\n/)
+          .map((l) => /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/.exec(l))
+          .filter((m): m is RegExpExecArray => !!m && m[2]!.replace(/^(['"])([\s\S]*)\1$/, "$2").length > 0)
+          .map((m) => m[1]!),
+      )]
     : [];
   const namesOnly = presence.has.keys.every((k) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(k) && realKeys.includes(k));
   check(
@@ -5760,6 +5870,43 @@ async function isolationAndSwitchTest(
       && presence.has.keys.length === realKeys.length
       && presence.present === existsSync(join(TUI_STATE_DIR, "config.json")),
     `present=${presence.present} providers=${presence.has.providers} keys=${JSON.stringify(presence.has.keys)} skills=${presence.has.skills} sessions=${presence.has.sessions} memory=${presence.has.memory}`,
+  );
+
+  /* ---- item 9: the offer and the copy count the SAME set of keys ----
+     r5 review fix (minor). `has.keys` (the offer) and `copied.keys` (the
+     result) were produced by two readers that disagreed: one de-duplicated
+     and accepted an empty value, the other did neither. A `.env` carrying
+     the ordinary placeholder `HF_TOKEN=` made the wizard offer three keys
+     and the import report two, with no way for the Wizard lane to explain
+     the difference to the operator. Both now come off `parseDotenv`, and
+     this drives that one parser over a synthetic file holding every case:
+     a duplicate (last value wins, listed once), an empty placeholder (not a
+     key), a commented line, an `export` prefix, a quoted value, a name that
+     is not a legal env var name, and a name whose value is emptied by a
+     later line. Names and values must agree exactly — that agreement IS the
+     contract. Nothing here reads the operator's real .env. */
+  const synthetic = [
+    "# a comment",
+    "OPENAI_API_KEY=sk-first",
+    "OPENAI_API_KEY=sk-second",
+    "HF_TOKEN=",
+    "export ANTHROPIC_API_KEY='quoted value'",
+    "not a name=whatever",
+    "  SPACED_KEY = padded  ",
+    "WAS_SET=x",
+    "WAS_SET=",
+  ].join("\n");
+  const parsed = parseDotenv(synthetic);
+  const parsedNames = [...parsed.keys()];
+  check(
+    "state dir: the import offer and the import itself count the same keys",
+    parsedNames.length === parsed.size
+      && parsedNames.join(",") === "OPENAI_API_KEY,ANTHROPIC_API_KEY,SPACED_KEY"
+      && parsed.get("OPENAI_API_KEY") === "sk-second"
+      && parsed.get("ANTHROPIC_API_KEY") === "quoted value"
+      && parsed.get("SPACED_KEY") === "padded"
+      && !parsed.has("HF_TOKEN") && !parsed.has("WAS_SET"),
+    `names=${JSON.stringify(parsedNames)} values=${parsed.size} (duplicate collapsed to the last value, empty placeholder and emptied name dropped, illegal name ignored)`,
   );
 
   /* ---- item 9: nothing is pre-ticked, and the source is never moved ----
@@ -6434,6 +6581,49 @@ async function claimDesktopPorts(): Promise<void> {
   }
 }
 
+/**
+ * r5 item 9 — the body of `--first-run-probe`. Waits for the renderer to
+ * have latched `window.__firstRun()` and for the wizard to have opened
+ * ITSELF (no `--onboarding`, no menu command, no help of any kind), then
+ * says on stdout what it saw. The caller is the smoke suite, which runs this
+ * against a throwaway `ATOMIC_AGENT_STATE_DIR` that it created empty.
+ */
+async function firstRunProbe(): Promise<void> {
+  const js = <T,>(code: string): Promise<T> =>
+    (win?.webContents.executeJavaScript(code) as Promise<T>) ?? Promise.resolve(null as unknown as T);
+  type FirstRun = { fresh: boolean; stateDir: string; tuiStateDir: string; tuiSetupFound: boolean } | null;
+  let fr: FirstRun = null;
+  let title = "";
+  const deadline = Date.now() + 45_000;
+  while (Date.now() < deadline) {
+    try {
+      fr = await js<FirstRun>("window.__firstRun ? window.__firstRun() : null");
+      title = (await js<string>("document.querySelector('#onboarding .ob-title')?.textContent ?? ''")) || "";
+    } catch {
+      // the window is still loading its script — try again
+    }
+    if (fr && title) break;
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  /* Whether the seed ran is reported too: this probe is itself the case
+     finding 1 is about — a FRESH directory named by ATOMIC_AGENT_STATE_DIR —
+     so `seeded:false` here is the gate working, observed from inside the
+     very launch that would otherwise have planted the link. */
+  process.stdout.write(
+    "FIRSTRUNPROBE " +
+      JSON.stringify({
+        fresh: fr?.fresh ?? null,
+        stateDir: fr?.stateDir ?? null,
+        tuiSetupFound: fr?.tuiSetupFound ?? null,
+        title,
+        seeded: DESKTOP_STATE_SEEDED,
+        weightsLink: existsSync(join(DESKTOP_STATE_DIR, "models", "models")),
+      }) +
+      "\n",
+  );
+  app.exit(0);
+}
+
 void app.whenReady().then(async () => {
   /* r5 item 9 — the ~/.atomic-agent baseline, taken HERE: no AgentClient
      exists yet, no `atag` subprocess has been spawned, and nothing has been
@@ -6450,6 +6640,10 @@ void app.whenReady().then(async () => {
 
   win.webContents.once("did-finish-load", () => {
     send("agent:status", agent?.status);
+    /* r5 item 9 — the fresh-launch probe answers before anything is started:
+       no `atag serve`, no port claim, nothing that would take forty seconds
+       to prove a wizard opened. */
+    if (FIRST_RUN_PROBE) { void firstRunProbe(); return; }
     if (FORCE_ONBOARDING) send("app:menu", "onboarding");
     /* r5 item 9 — on a FIRST run only, claim the desktop's own managed
        llama ports before `atag serve` boots and reads the file. The agent's

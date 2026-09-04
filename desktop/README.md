@@ -738,10 +738,22 @@ during the testing phase."*
   the terminal agent's model folder, and `models remove` deletes from it.
   That is the one path by which anything here touches `~/.atomic-agent`;
   config, keys and the databases never do.
+  **That two-way door is opened only for the desktop's own default
+  directory** — `state-dir-boot.ts` gates the seed on `!STATE_DIR_FROM_ENV`
+  as well as on the directory being fresh. A directory you named through
+  `ATOMIC_AGENT_STATE_DIR` (or `ATOMIC_AGENT_DESKTOP_STATE_DIR`) you named
+  because it is disposable, and a throwaway install must not come up holding
+  a live write path into your real weight folder — so a fresh env-named
+  directory gets the `0700` mkdir and nothing else: no weights link, no
+  backend copy, and a first `models pull` that downloads its own. The env
+  var still *wins* the resolution; what it does not inherit is the link.
 - **The import offer — the IPC, not yet the screen.** What lives on this
   branch is `main/tui-import.ts` and the two calls the wizard will make:
   `window.atomic.tuiSetupPresent()` reports what `~/.atomic-agent` holds (env
-  var NAMES only, never a value) and
+  var NAMES only, never a value; one parser counts them, so `has.keys.length`
+  from the offer and `copied.keys` from the import always agree — a name is
+  listed once, a repeat is last-wins, and a placeholder line with no value is
+  not a key) and
   `window.atomic.importFromTui({providers, keys, skills, sessions, memory})`
   copies only what is ticked, every flag defaulting to false. **The wizard
   step that draws the tick-list is a separate lane's work and is not in this
@@ -768,7 +780,12 @@ during the testing phase."*
 - **Making it a first run again is one gesture:** `rm -rf
   ~/.atomic-agent-desktop`. The wizard opens on the next launch, because
   `app:firstRun` reports the latched flag rather than inferring one from a
-  file the agent has already written.
+  file the agent has already written. The suite proves that end to end
+  rather than by inspection: `electron . --first-run-probe` boots a window
+  against whatever `ATOMIC_AGENT_STATE_DIR` names, starts no `atag serve`,
+  and prints one `FIRSTRUNPROBE {json}` line saying whether the latch said
+  fresh and whether the wizard put itself on screen. The smoke run makes an
+  empty directory and drives it.
 - The window says which directory it owns: the diagnostics line under
   Settings carries a `state <dir>` segment beside `agent <bin>`.
 

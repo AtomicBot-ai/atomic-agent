@@ -61,7 +61,18 @@ export const DESKTOP_STATE_DIR =
   absoluteEnv("ATOMIC_AGENT_DESKTOP_STATE_DIR") ??
   join(homedir(), ".atomic-agent-desktop");
 
-/** True when the environment named the directory, rather than the default. */
+/**
+ * True when the environment NAMED the directory, rather than it being the
+ * desktop's own default.
+ *
+ * r5 review fix (major): this is the discrimination `state-dir-boot.ts`'s
+ * seed step needs. Sharing the operator's 3.2 GB of weights by symlink is a
+ * two-way door, and it is only a bargain for the directory the operator got
+ * by installing this app — never for one they pointed us at because it is
+ * disposable. `ATOMIC_AGENT_STATE_DIR` still WINS the resolution above (the
+ * smoke harness and every parallel lane run depend on that); what it does
+ * not do is inherit the default directory's link into ~/.atomic-agent.
+ */
 export const STATE_DIR_FROM_ENV =
   absoluteEnv("ATOMIC_AGENT_STATE_DIR") !== null || absoluteEnv("ATOMIC_AGENT_DESKTOP_STATE_DIR") !== null;
 

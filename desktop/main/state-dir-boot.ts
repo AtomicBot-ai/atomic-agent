@@ -20,8 +20,9 @@
  *      reads a directory that is no longer fresh — and the wizard would
  *      never open on a genuine first run.
  *   3. Creates it 0700 (it will hold .env).
- *   4. On a fresh directory only, shares the model WEIGHTS with the
- *      terminal agent by symlinking one subdirectory, and COPIES the
+ *   4. On a fresh directory that is the desktop's OWN (see the gate below),
+ *      shares the model WEIGHTS with the terminal agent by symlinking one
+ *      subdirectory, and COPIES the
  *      llama.cpp backend rather than linking it — `localModels.managed.
  *      autoUpdate` defaults to true and `atag models start` will replace
  *      `<dataDir>/backend`, which through a link would rewrite the
@@ -36,12 +37,28 @@
  * price of not downloading the same 3.2 GB twice, and it is the only path
  * by which anything the desktop runs touches ~/.atomic-agent. Config, keys
  * and the databases never do.
+ *
+ * WHICH IS WHY THE SEED IS GATED ON THE DIRECTORY BEING OURS — r5 review
+ * fix (major). Step 4 used to run on ANY fresh directory, including one the
+ * operator named through ATOMIC_AGENT_STATE_DIR precisely because it is
+ * disposable (this repo's own instruction: "Run the suite with
+ * ATOMIC_AGENT_STATE_DIR pointed somewhere disposable"). A lane or CI run
+ * starting on an empty directory therefore had the operator's real weight
+ * folder linked into it, and one `models remove` or re-pull from that
+ * throwaway install would have written or deleted inside ~/.atomic-agent —
+ * the exact tree this whole item exists to keep untouched, opened by the
+ * module whose stated rule is that an explicit env var wins. The two-way
+ * door is a bargain worth making for the desktop's OWN default directory,
+ * where the operator installed this app on this Mac; it is not a bargain
+ * anyone asked for on a directory they called disposable. So the seed runs
+ * only when `!STATE_DIR_FROM_ENV`. The 0700 mkdir is NOT gated: every
+ * directory needs it, because every one of them holds a .env.
  */
 
 import { cpSync, existsSync, mkdirSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 
-import { DESKTOP_STATE_DIR, TUI_STATE_DIR } from "./state-dir.js";
+import { DESKTOP_STATE_DIR, STATE_DIR_FROM_ENV, TUI_STATE_DIR } from "./state-dir.js";
 
 process.env.ATOMIC_AGENT_STATE_DIR = DESKTOP_STATE_DIR;
 
@@ -99,4 +116,18 @@ export function seedFreshStateDir(desktopStateDir: string, tuiStateDir: string):
   }
 }
 
-if (DESKTOP_STATE_WAS_FRESH) seedFreshStateDir(DESKTOP_STATE_DIR, TUI_STATE_DIR);
+/**
+ * The gate on step 4, as a pure function of its two inputs — written this way
+ * so the suite can assert the whole truth table rather than the single cell
+ * any one run happens to sit in. `fresh` says there was nothing here yet;
+ * `fromEnv` says the environment NAMED this directory rather than it being
+ * the desktop's own default. Only fresh-and-ours is seeded.
+ */
+export function shouldSeedFreshStateDir(fresh: boolean, fromEnv: boolean): boolean {
+  return fresh && !fromEnv;
+}
+
+/** Did step 4 actually run, for this process? */
+export const DESKTOP_STATE_SEEDED = shouldSeedFreshStateDir(DESKTOP_STATE_WAS_FRESH, STATE_DIR_FROM_ENV);
+
+if (DESKTOP_STATE_SEEDED) seedFreshStateDir(DESKTOP_STATE_DIR, TUI_STATE_DIR);

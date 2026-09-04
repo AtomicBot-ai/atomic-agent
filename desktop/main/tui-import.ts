@@ -103,41 +103,64 @@ function readTuiConfig(): Record<string, unknown> | null {
   }
 }
 
+/**
+ * ONE parser, for both halves of the contract — r5 review fix (minor).
+ *
+ * `tuiSetupPresent().has.keys` and `importFromTui().copied.keys` used to be
+ * produced by two different readers that disagreed in two ways: the names
+ * side de-duplicated and accepted a name whose value was empty, the values
+ * side did neither. So a `.env` holding the very ordinary placeholder line
+ * `HF_TOKEN=` made the wizard offer three keys and the import report two,
+ * and a duplicated name flipped it the other way — a difference the Wizard
+ * lane, coding to this contract, could not explain to anyone.
+ *
+ * The rule, now stated once and applied to both:
+ *   · a name must be a legal env var name (DOTENV_KEY);
+ *   · a name is listed at most ONCE, and a repeat overwrites the earlier
+ *     value — that is dotenv's own last-wins semantics;
+ *   · an EMPTY value is not a key. It is a placeholder line, and offering
+ *     to import it would promise the operator something that isn't there.
+ * A Map does both: insertion order for the first sighting, last value wins.
+ *
+ * Takes the text so the suite can drive it over a synthetic file rather than
+ * over whatever the operator's own `.env` happens to contain today.
+ * Exported for that reason ONLY; the values never leave this module except
+ * through `importFromTui({keys:true})`.
+ */
+export function parseDotenv(text: string): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const line of text.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const m = /^(?:export\s+)?([^=]+)=(.*)$/.exec(trimmed);
+    if (!m) continue;
+    const key = m[1]!.trim();
+    if (!DOTENV_KEY.test(key)) continue;
+    const value = m[2]!.trim().replace(/^(['"])([\s\S]*)\1$/, "$2");
+    // The two rules meeting: a later empty line for a name that already had
+    // a value un-sets it, so the offer and the copy still agree afterwards.
+    if (value.length === 0) { out.delete(key); continue; }
+    out.set(key, value);
+  }
+  return out;
+}
+
+function tuiDotenv(): Map<string, string> {
+  try {
+    return parseDotenv(readFileSync(join(TUI_STATE_DIR, ".env"), "utf8"));
+  } catch {
+    return new Map(); // no .env — nothing to offer
+  }
+}
+
 /** Env var NAMES only. A value is never returned, logged or counted. */
 function tuiKeyNames(): string[] {
-  const names: string[] = [];
-  try {
-    const text = readFileSync(join(TUI_STATE_DIR, ".env"), "utf8");
-    for (const line of text.split(/\r?\n/)) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith("#")) continue;
-      const eq = trimmed.indexOf("=");
-      if (eq === -1) continue;
-      const key = trimmed.slice(0, eq).replace(/^export\s+/, "").trim();
-      if (DOTENV_KEY.test(key) && !names.includes(key)) names.push(key);
-    }
-  } catch {
-    // no .env — nothing to offer
-  }
-  return names;
+  return [...tuiDotenv().keys()];
 }
 
 /** name → value, read once, held only for the length of one write. */
 function tuiKeyValues(): Array<[string, string]> {
-  const out: Array<[string, string]> = [];
-  try {
-    const text = readFileSync(join(TUI_STATE_DIR, ".env"), "utf8");
-    for (const line of text.split(/\r?\n/)) {
-      const m = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)$/.exec(line);
-      if (!m) continue;
-      const value = m[2]!.trim().replace(/^(['"])(.*)\1$/, "$2");
-      if (value.length === 0) continue;
-      out.push([m[1]!, value]);
-    }
-  } catch {
-    // no .env
-  }
-  return out;
+  return [...tuiDotenv().entries()];
 }
 
 function dirNames(path: string): string[] {
