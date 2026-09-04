@@ -90,6 +90,14 @@ import {
   // Item 7A — the HF_TOKEN asymmetry note on a gated listing (names only)
   stateDirPath,
   type ImportRunInput,
+  // r5 item 7 (setup wizard): the streamed runtime phase, the custom-endpoint
+  // whole-file write, and the four import sources the flow's last step offers.
+  modelsUpdateStream,
+  setExternalLlamaUrls,
+  detectImportAgents,
+  importAgentDir,
+  IMPORT_DOMAINS,
+  type ImportSourceId,
 } from "./agent-cli.js";
 import { validateCreateForm, type TaskCreateFormInput } from "./task-schedule.js";
 // Item 2 (voice input): the on-device speech helper's supervisor.
@@ -150,6 +158,46 @@ let hfLookup: AbortController | null = null;
    stream with `cli:modelsPull` so the renderer needs one subscriber, so
    it needs its own slot and both must refuse while the other runs. */
 let hfProjector: { controller: AbortController; id: string } | null = null;
+/* r5 item 7 (setup wizard): the backend-zip download, which is a second
+   long-running child in the same data dir. It takes the same single-flight
+   slot as `pull` — `models update` stops the daemon to install the zip. */
+let pullUpdate: { done: Promise<unknown>; cancel: () => void } | null = null;
+
+/**
+ * r5 item 7 (setup wizard) — the CLI's own progress line, as numbers.
+ *
+ * `renderPullProgress` (src/cli/models-handlers.ts:50-64) prints
+ * `[<20-char bar>] <percent>%  <X> GB / <Y> GB  <label>` and, in the
+ * non-TTY branch Electron always gets, one line per 5% (:107-109). That
+ * granularity is the whole truth available here, so the numbers are
+ * reported as they arrive and never interpolated.
+ *
+ * BYTES ARE BINARY. `formatGb` divides by 1024³, so `4.70 GB` on the
+ * wire is 4.70 GiB. Parsing it as decimal and re-rendering would print
+ * `5.0 GB` for a model the catalog calls 4.7 GB — a number nobody wrote.
+ * The renderer's formatter uses the same base, so the text round-trips.
+ *
+ * A line that carries a percent but does not match the full shape (the
+ * projector's own `<label> N% (x / y MB)`, or a cosmetic change upstream)
+ * yields percent alone — never a fabricated byte count.
+ */
+const GIB = 1024 * 1024 * 1024;
+const PULL_LINE_RE = /^\[[= ]{20}\]\s+(\d{1,3})%\s+([\d.]+) GB(?: \/ ([\d.]+) GB)?\s{2}(.*)$/;
+function parsePullProgress(
+  line: string,
+  kind: "weights" | "runtime" | "projector",
+): { kind?: string; percent?: number; transferredBytes?: number; totalBytes?: number; label?: string } {
+  const full = PULL_LINE_RE.exec(line);
+  if (full) {
+    const percent = Math.min(100, Math.max(0, Number(full[1])));
+    const transferredBytes = Math.round(Number(full[2]) * GIB);
+    const totalBytes = full[3] === undefined ? 0 : Math.round(Number(full[3]) * GIB);
+    return { kind, percent, transferredBytes, totalBytes, label: full[4]!.trim() };
+  }
+  const loose = /(\d{1,3})%/.exec(line);
+  if (!loose) return {};
+  return { kind, percent: Math.min(100, Math.max(0, Number(loose[1]))) };
+}
 
 // Lane B — backend switch: the llm route `atag serve` booted with. serve
 // pins its provider at boot, so a switch whose write found the file already
@@ -517,12 +565,44 @@ function wireIpc(client: AgentClient): void {
   );
   ipcMain.handle("cli:modelsPull", (_event, id: unknown) => {
     if (typeof id !== "string") return { ok: false, error: "model id required" };
-    if (pull || hfProjector) return { ok: false, error: "a download is already running" };
-    const started = modelsPull(id, (line) => send("cli:pull", { id, line }));
+    if (pull || pullUpdate || hfProjector) return { ok: false, error: "a download is already running" };
+    const started = modelsPull(id, (line) =>
+      send("cli:pull", { id, line, ...parsePullProgress(line, "weights") }),
+    );
     pull = started;
     void started.done.then((res) => {
       pull = null;
       send("cli:pull", { id, done: true, ok: res.ok, error: res.error ?? null });
+    });
+    return { ok: true, started: true };
+  });
+  /* r5 item 7 (setup wizard) — the llama.cpp runtime phase, streamed.
+     `atag models pull` never fetches the backend, so the TUI's first
+     phase row can only be driven by `models update`. It rides the same
+     `cli:pull` stream under `kind:'runtime'` and the same single-flight
+     slot, because the CLI stops the daemon to install the zip and two
+     concurrent downloads into one data dir is not a thing to allow. */
+  ipcMain.handle("cli:modelsUpdateStream", () => {
+    if (pull || pullUpdate || hfProjector) return { ok: false, error: "a download is already running" };
+    const id = "llama.cpp";
+    const started = modelsUpdateStream((line) =>
+      send("cli:pull", { id, line, ...parsePullProgress(line, "runtime") }),
+    );
+    pullUpdate = started;
+    void started.done.then((res) => {
+      pullUpdate = null;
+      send("cli:pull", {
+        id,
+        done: true,
+        ok: res.ok,
+        error: res.error ?? null,
+        kind: "runtime",
+        // Nothing was downloaded: the version file already named the
+        // latest tag. The renderer must not leave a bar standing that it
+        // never drove — it draws the phase as passed instead.
+        sawProgress: res.sawProgress,
+        upToDate: res.upToDate,
+      });
     });
     return { ok: true, started: true };
   });
@@ -531,6 +611,12 @@ function wireIpc(client: AgentClient): void {
     // banner it lives under covers both phases.
     if (hfProjector) {
       hfProjector.controller.abort();
+      return true;
+    }
+    // r5 item 7: and now the runtime phase, which is a third child on the
+    // same slot.
+    if (pullUpdate) {
+      pullUpdate.cancel();
       return true;
     }
     if (!pull) return false;
@@ -639,6 +725,14 @@ function wireIpc(client: AgentClient): void {
             line: total > 0
               ? `${label} ${percent}% (${(transferred / 1e6).toFixed(1)} / ${(total / 1e6).toFixed(1)} MB)`
               : `${label} ${(transferred / 1e6).toFixed(1)} MB`,
+            /* r5 item 7 (setup wizard): its own kind, so the download strip
+               cannot fold a projector's percent into the weights bar. The
+               byte counts here are real, not parsed off the line. */
+            kind: "projector",
+            percent,
+            transferredBytes: transferred,
+            totalBytes: total,
+            label,
           }),
       });
       send("cli:pull", { id, line: `${label} done` });
@@ -972,8 +1066,10 @@ function wireIpc(client: AgentClient): void {
   // Shares the one `pull` slot and the `cli:pull` stream with `cli:modelsPull`.
   ipcMain.handle("cli:modelsPullEmbedding", (_event, id: unknown) => {
     if (typeof id !== "string") return { ok: false, error: "model id required" };
-    if (pull) return { ok: false, error: "a download is already running" };
-    const started = modelsPullEmbedding(id, (line) => send("cli:pull", { id, line }));
+    if (pull || pullUpdate) return { ok: false, error: "a download is already running" };
+    const started = modelsPullEmbedding(id, (line) =>
+      send("cli:pull", { id, line, ...parsePullProgress(line, "weights") }),
+    );
     pull = started;
     void started.done.then((res) => {
       pull = null;
@@ -995,8 +1091,13 @@ function wireIpc(client: AgentClient): void {
   );
   ipcMain.handle("cli:importRun", (_event, input: unknown) => {
     const i = (input ?? {}) as Record<string, unknown>;
+    // r5 item 7: all four sources `atag import` accepts, not two.
+    const asked = String(i["source"] ?? "");
+    const source = (Object.keys(IMPORT_DOMAINS) as ImportSourceId[]).includes(asked as ImportSourceId)
+      ? (asked as ImportSourceId)
+      : "hermes";
     const clean: ImportRunInput = {
-      source: i["source"] === "openclaw" ? "openclaw" : "hermes",
+      source,
       dir: typeof i["dir"] === "string" ? i["dir"] : "",
       exclude: Array.isArray(i["exclude"]) ? (i["exclude"] as unknown[]).filter((x): x is string => typeof x === "string") : [],
       secrets: i["secrets"] === true,
@@ -1007,10 +1108,26 @@ function wireIpc(client: AgentClient): void {
     return importRun(clean, client.status.workingDir);
   });
   // import-panel-state.ts defaultSourceDir: the env override or ~/.hermes / ~/.openclaw.
+  // r5 item 7: widened to the four sources detect-import-agents.ts knows.
   ipcMain.handle("app:importDefaults", () => ({
-    hermes: process.env["HERMES_STATE_DIR"] ?? join(homedir(), ".hermes"),
-    openclaw: process.env["OPENCLAW_STATE_DIR"] ?? join(homedir(), ".openclaw"),
+    hermes: importAgentDir("hermes"),
+    openclaw: importAgentDir("openclaw"),
+    "claude-code": importAgentDir("claude-code"),
+    codex: importAgentDir("codex"),
   }));
+  /* r5 item 7 (setup wizard): the first-run import step's own scan —
+     src/import/detect-import-agents.ts, shallow existsSync checks only. */
+  ipcMain.handle("app:detectImportAgents", () => ({ ok: true, agents: detectImportAgents() }));
+  /* r5 item 7 (setup wizard): the custom-endpoint branch's ONE whole-file
+     write (persistUserRemoteLlmUrls), chat + embeddings + routing together. */
+  ipcMain.handle("cli:setExternalLlamaUrls", (_event, payload: unknown) => {
+    const p = (payload ?? {}) as { chatUrl?: unknown; embeddingUrl?: unknown };
+    if (typeof p.chatUrl !== "string" || !p.chatUrl) return { ok: false, changed: false, error: "chat url required" };
+    return setExternalLlamaUrls({
+      chatUrl: p.chatUrl,
+      ...(typeof p.embeddingUrl === "string" && p.embeddingUrl ? { embeddingUrl: p.embeddingUrl } : {}),
+    });
+  });
   ipcMain.handle("app:llamaLogTail", (_event, dataDir: unknown) =>
     typeof dataDir === "string" && dataDir.startsWith("/") ? llamaLogTail(dataDir) : { ok: false, error: "data dir required" },
   );
@@ -1155,12 +1272,20 @@ async function smokeTest(): Promise<void> {
   }
 
   if (FORCE_ONBOARDING) {
-    const title = await js<string>(
-      "document.querySelector('#onboarding .ob-title')?.textContent ?? ''",
+    /* r5 item 7: the flow opens on the TUI's intro, not on the choice
+       list, and the choice list has three rows again — the custom
+       endpoint is back now that the probe and the whole-file write are
+       both wired. So the assertion moves from the old `.ob-title` /
+       `.ob-opt` pair to the ported machine's own state. */
+    const opened = await js<{ open: boolean; step: string }>("window.__ob()");
+    const options = await js<number>(
+      "(window.__obKey('down'), window.__obKey('down'), document.querySelectorAll('#onboarding .ob-row').length)",
     );
-    const options = await js<number>("document.querySelectorAll('#onboarding .ob-opt').length");
-    // Lane B — backend switch: two choices; the custom endpoint is not offered by the desktop.
-    check("wizard opens", title.length > 0 && options === 2, `${JSON.stringify(title)} options=${options}`);
+    check(
+      "wizard opens",
+      opened.open && opened.step === "intro" && options === 3,
+      `${JSON.stringify(opened)} options=${options}`,
+    );
   }
 
   // --- Lane B — context before the first message (item 3) ---
@@ -1984,6 +2109,9 @@ async function smokeTest(): Promise<void> {
     // all asserted. Everything is restored in finally — the whole file,
     // the daemon state, and a fresh agent — so an assertion throw cannot
     // leave the route changed.
+    // --- r5 item 7: the ported setup wizard, the star field, the strip ---
+    await onboardingTest(js, check);
+
     await backendSwitchTest(js, check);
   }
 
@@ -5836,4 +5964,410 @@ async function r4SeamTest(
       && steerNode.label === "Steer the running turn",
     JSON.stringify(steerNode),
   );
+}
+
+/* ==========================================================================
+   r5 item 7 — the setup wizard, ported from the TUI.
+
+   Everything here is driven through the renderer's own key router, which
+   is the point of the port: a check that reached a transition no key can
+   reach would be asserting something the product does not have. The flow
+   is opened with `__obOpen`, which stamps nothing and skips the closing
+   config write, and `__obClose` puts the window back the way it was.
+   ========================================================================== */
+type ObState = {
+  open: boolean; step: string; cursor: number; outcome: string | null; offer: string | null;
+  resumeAfterCloud: string | null; busy: boolean; error: string | null;
+  localModelId: string | null; skipSecondOffer: boolean; rows: number;
+};
+type ObCopy = { subtitle: string; title: string; lines: string[]; footer: string; hints: string };
+type ObSky = { present: boolean; stars: number; running: boolean; reduced: boolean; frames: number };
+type Dl = {
+  visible: boolean; label: string | null; kind: string | null; percent: number | null;
+  transferred: number | null; total: number | null; eta: string; queued: number; text: string;
+  phases: { runtime: string; weights: string }; error: string | null;
+};
+
+async function onboardingTest(
+  js: <T>(code: string) => Promise<T>,
+  check: (name: string, ok: boolean, detail?: string) => void,
+): Promise<void> {
+  /* The finished effect reads readiness and scans for import sources
+     before it settles, so every check that ends the flow waits for it
+     rather than reading the key's own return value. */
+  const settled = async (): Promise<ObState> => {
+    let state = await js<ObState>("window.__ob()");
+    for (let i = 0; i < 40 && state.open && state.step === "finished"; i += 1) {
+      await new Promise((r) => setTimeout(r, 250));
+      state = await js<ObState>("window.__ob()");
+    }
+    return state;
+  };
+  try {
+    /* ---- the intro ---- */
+    let ob = await js<ObState>("window.__obOpen('intro')");
+    await new Promise((r) => setTimeout(r, 400));
+    let sky = await js<ObSky>("window.__obSky()");
+    let copy = await js<ObCopy>("window.__obCopy()");
+    const noHead = await js<boolean>("document.querySelector('#onboarding .ob-head') === null");
+    check(
+      "wizard: the intro is a real star field with no header",
+      ob.step === "intro" && sky.present && sky.stars >= 40 && sky.stars <= 220 && noHead,
+      `step=${ob.step} stars=${sky.stars} present=${sky.present} noHeader=${noHead}`,
+    );
+    check(
+      "wizard: the intro carries the TUI's own two lines and footer",
+      copy.lines.some((l) => l.includes("[ press any key to continue ]")) &&
+        copy.footer === "ctrl+c quit",
+      `${JSON.stringify(copy.lines.slice(0, 6))} footer=${JSON.stringify(copy.footer)}`,
+    );
+
+    // The sky moves, and two samples half a second apart differ.
+    const frames0 = (await js<ObSky>("window.__obSky()")).frames;
+    await new Promise((r) => setTimeout(r, 600));
+    sky = await js<ObSky>("window.__obSky()");
+    check(
+      "wizard: the star field is animating",
+      sky.running && sky.frames > frames0,
+      `running=${sky.running} frames ${frames0} -> ${sky.frames}`,
+    );
+
+    // Reduced motion: one frame, no loop, the tagline complete.
+    sky = await js<ObSky>("window.__obReduce(true)");
+    await new Promise((r) => setTimeout(r, 300));
+    const stopped = await js<ObSky>("window.__obSky()");
+    copy = await js<ObCopy>("window.__obCopy()");
+    check(
+      "wizard: prefers-reduced-motion stops the loop and finishes the tagline",
+      stopped.running === false &&
+        stopped.frames === sky.frames &&
+        copy.lines.some((l) => l.includes("Local AI-First Agent")) &&
+        !copy.lines.some((l) => l.includes("▌")),
+      `running=${stopped.running} frames ${sky.frames} -> ${stopped.frames} lines=${JSON.stringify(copy.lines.slice(0, 5))}`,
+    );
+    await js<ObSky>("window.__obReduce(false)");
+
+    // Two-stage advance: the first input finishes the reveal, the second moves on.
+    ob = await js<ObState>("window.__obOpen('intro')");
+    await new Promise((r) => setTimeout(r, 200));
+    const afterFirst = await js<ObState>("window.__obKey('down')");
+    const typed = await js<ObCopy>("window.__obCopy()");
+    const afterSecond = await js<ObState>("window.__obKey('down')");
+    check(
+      "wizard: the intro takes two inputs, not one",
+      afterFirst.step === "intro" &&
+        !typed.lines.some((l) => l.includes("▌")) &&
+        afterSecond.step === "choose",
+      `first=${afterFirst.step} second=${afterSecond.step}`,
+    );
+
+    /* ---- the choice list: three rows again ---- */
+    const labels = await js<string[]>(
+      "Array.from(document.querySelectorAll('#onboarding .ob-row .t')).map((e) => e.textContent)",
+    );
+    copy = await js<ObCopy>("window.__obCopy()");
+    check(
+      "wizard: the choose step offers all three backends, in the TUI's order",
+      labels.length === 3 &&
+        labels[0] === "Local models" && labels[1] === "Cloud models" && labels[2] === "Custom endpoint" &&
+        copy.footer === "↑/↓ move   enter select   1–3 jump   esc skip   ctrl+c quit",
+      `${JSON.stringify(labels)} footer=${JSON.stringify(copy.footer)}`,
+    );
+    check(
+      "wizard: the choose step's subtitle is the TUI's",
+      copy.subtitle === "setup · step 1 of 2",
+      JSON.stringify(copy.subtitle),
+    );
+
+    /* ---- every footer the TUI produces, asserted verbatim ---- */
+    const footers = await js<Record<string, string>>(
+      "JSON.stringify(0) && (function(){const o={};" +
+        "for (const s of ['intro','choose','local_pick','local_hf_pick','local_download','propose_second'," +
+        "'wait_or_jump','import_done','custom_chat_url','custom_embedding_url','finished'])" +
+        " o[s] = window.__obFooterFor(s); return o;})()",
+    );
+    const wantFooters: Record<string, string> = {
+      intro: "ctrl+c quit",
+      choose: "↑/↓ move   enter select   1–3 jump   esc skip   ctrl+c quit",
+      local_pick: "↑/↓ move   enter select   esc back   ctrl+c quit",
+      local_hf_pick: "↑/↓ move   enter download   esc back   ctrl+c quit",
+      local_download: "c set up cloud meanwhile   s skip to the agent   ctrl+c quit",
+      propose_second: "↑/↓ move   enter select   esc skip   ctrl+c quit",
+      wait_or_jump: "↑/↓ move   enter start or add a provider   ctrl+c quit",
+      import_done: "any key to start   ctrl+c quit",
+      custom_chat_url: "enter test & continue   esc back   ctrl+c quit",
+      custom_embedding_url: "enter test & save   empty enter skips embeddings   esc back   ctrl+c quit",
+      finished: "",
+    };
+    const wrongFooter = Object.keys(wantFooters).find((k) => footers[k] !== wantFooters[k]);
+    check(
+      "wizard: the eleven fixed footers are the TUI's, word for word",
+      wrongFooter === undefined,
+      wrongFooter ? `${wrongFooter}: ${JSON.stringify(footers[wrongFooter])}` : "",
+    );
+    // The eight variant footers: the two cloud phases, the three
+    // local_hf_ref states and the busy forms of the two import screens.
+    const variants = await js<string[]>(
+      "(function(){const out=[];" +
+        "window.__obSeed({step:'cloud'}); window.__wizPhase('pick_kind'); out.push(window.__obCopy().footer);" +
+        "window.__wizPhase('configure'); out.push(window.__obCopy().footer);" +
+        "window.__obSeed({step:'local_hf_ref', busy:true, hfReference:''}); out.push(window.__obCopy().footer);" +
+        "window.__obSeed({step:'local_hf_ref', busy:false, hfReference:'a/b'}); out.push(window.__obCopy().footer);" +
+        "window.__obSeed({step:'local_hf_ref', busy:false, hfReference:''}); out.push(window.__obCopy().footer);" +
+        "window.__obSeed({step:'import_pick', busy:true}); out.push(window.__obCopy().footer);" +
+        "window.__obSeed({step:'import_pick', busy:false}); out.push(window.__obCopy().footer);" +
+        "window.__obSeed({step:'import_preview', busy:true}); out.push(window.__obCopy().footer);" +
+        "window.__obSeed({step:'import_preview', busy:false}); out.push(window.__obCopy().footer);" +
+        "window.__wizPhase(null); return out;})()",
+    );
+    const wantVariants = [
+      "↑/↓ move   / search   enter select   esc back   ctrl+c quit",
+      "↑/↓ move   enter select   esc back   ctrl+c quit",
+      "esc cancel the lookup   ctrl+c quit",
+      "enter look it up   ctrl+l clear   esc back   ctrl+c quit",
+      "enter look it up   esc back   ctrl+c quit",
+      "scanning…   ctrl+c quit",
+      "↑/↓ move   space tick   enter select   esc skip   ctrl+c quit",
+      "importing…   ctrl+c quit",
+      "enter import   esc adjust   ctrl+c quit",
+    ];
+    check(
+      "wizard: the nine variant footers match too",
+      JSON.stringify(variants) === JSON.stringify(wantVariants),
+      JSON.stringify(variants),
+    );
+
+    /* ---- the download strip ---- */
+    // The parse, against the CLI's own line. `formatGb` divides by 1024³,
+    // so 1.18 GB on the wire is 1.18 GiB — 1,267,015,352 bytes.
+    await js<ObState>("window.__obOpen('local_download')");
+    await js<Dl>("window.__dlSeed([{kind:'weights', id:'qwen3.5-4b'}])");
+    const fed = await js<Dl>(
+      "window.__dlFeed({id:'qwen3.5-4b', kind:'weights', percent:25, transferredBytes:Math.round(1.18*1073741824), totalBytes:Math.round(4.70*1073741824), label:'x.gguf'})",
+    );
+    check(
+      "wizard: the strip is fed parsed numbers, not a log line",
+      fed.visible && fed.percent === 25 && fed.total !== null && fed.total > 0 &&
+        Math.abs((fed.transferred ?? 0) - 1267015352) / 1267015352 < 0.01,
+      `visible=${fed.visible} percent=${fed.percent} transferred=${fed.transferred} total=${fed.total}`,
+    );
+    // The strip is chrome: it must sit ABOVE the overlay layer, or the
+    // wizard covers the only surface reporting the download.
+    const layered = await js<{ bar: number; overlays: number }>(
+      "({bar: document.querySelector('#dlbar').getBoundingClientRect().top," +
+        " overlays: document.querySelector('#overlays').getBoundingClientRect().top})",
+    );
+    check(
+      "wizard: the download strip is never covered by the wizard layer",
+      layered.bar < layered.overlays,
+      `dlbar.top=${Math.round(layered.bar)} overlays.top=${Math.round(layered.overlays)}`,
+    );
+
+    // Two phases, and the runtime one drawn only when it is being driven.
+    const queued = await js<Dl>(
+      "window.__dlSeed([{kind:'runtime', id:'llama.cpp'},{kind:'weights', id:'qwen3.5-4b'}])",
+    );
+    check(
+      "wizard: a runtime phase queues in front of the weights and says so",
+      queued.label === "llama.cpp" && queued.kind === "runtime" && queued.queued === 1 &&
+        queued.text.includes("· 1 more queued") &&
+        queued.phases.runtime === "active" && queued.phases.weights === "waiting",
+      `label=${queued.label} queued=${queued.queued} phases=${JSON.stringify(queued.phases)} text=${JSON.stringify(queued.text)}`,
+    );
+    const drained = await js<Dl>("window.__dlFeed({id:'llama.cpp', kind:'runtime', done:true, ok:true})");
+    check(
+      "wizard: when the runtime lands the queue drains onto the weights",
+      drained.phases.runtime === "done" && drained.queued === 0,
+      `phases=${JSON.stringify(drained.phases)} queued=${drained.queued} label=${drained.label}`,
+    );
+
+    /* ---- the strip outlives the screen that started it ---- */
+    await js<ObState>("window.__obOpen('local_download')");
+    // `press c` is hidden once a cloud provider is configured, so the
+    // state under test is named rather than inherited.
+    await js<ObState>("window.__obSeed({cloudReady:false})");
+    await js<Dl>("window.__dlSeed([{kind:'weights', id:'qwen3.5-4b'}])");
+    await js<Dl>("window.__dlFeed({id:'qwen3.5-4b', kind:'weights', percent:40, transferredBytes:100, totalBytes:250})");
+    const toCloud = await js<ObState>("window.__obKey('c')");
+    const dlOnCloud = await js<Dl>("window.__dl()");
+    check(
+      "wizard: `c` opens the cloud wizard mid-download and the strip keeps ticking",
+      toCloud.step === "cloud" && toCloud.resumeAfterCloud === "local_download" &&
+        dlOnCloud.visible && dlOnCloud.label === "qwen3.5-4b",
+      `step=${toCloud.step} resume=${toCloud.resumeAfterCloud} strip=${dlOnCloud.visible}/${dlOnCloud.label}`,
+    );
+    const back = await js<ObState>("window.__obKey('esc')");
+    const dlBack = await js<Dl>("window.__dl()");
+    check(
+      "wizard: backing out of that wizard returns to the download it never left",
+      back.step === "local_download" && dlBack.visible && (dlBack.percent ?? 0) >= 40,
+      `step=${back.step} percent=${dlBack.percent}`,
+    );
+    await js<ObState>("window.__obKey('s')");
+    const skipped = await settled();
+    const dlAfter = await js<Dl>("window.__dl()");
+    check(
+      "wizard: `s` leaves setup with the download still running",
+      skipped.open === false && skipped.skipSecondOffer === true && dlAfter.visible,
+      `open=${skipped.open} skipSecondOffer=${skipped.skipSecondOffer} strip=${dlAfter.visible}`,
+    );
+    await js<Dl>("window.__dlClear()");
+
+    /* ---- the branches the desktop used to be missing ---- */
+    await js<ObState>("window.__obOpen('choose')");
+    const toCustom = await js<ObState>("window.__obKey('3')");
+    check(
+      "wizard: `3` opens the custom-endpoint branch the desktop had dropped",
+      toCustom.step === "custom_chat_url",
+      `step=${toCustom.step}`,
+    );
+    // An unreachable URL leaves the step where it is and says why; it
+    // must not write anything.
+    await js<void>(
+      "(function(){const i=document.getElementById('ob-url'); i.value='http://127.0.0.1:9'; " +
+        "i.dispatchEvent(new Event('input',{bubbles:true}));})()",
+    );
+    await js<void>("window.__obKey('enter')");
+    let waited = 0;
+    let probed = await js<ObState>("window.__ob()");
+    while (waited < 15000 && probed.busy) {
+      await new Promise((r) => setTimeout(r, 500));
+      waited += 500;
+      probed = await js<ObState>("window.__ob()");
+    }
+    check(
+      "wizard: a custom endpoint that does not answer /health is refused, not written",
+      probed.step === "custom_chat_url" && typeof probed.error === "string" && probed.error.length > 0,
+      `step=${probed.step} error=${JSON.stringify(probed.error)}`,
+    );
+
+    await js<ObState>("window.__obOpen('local_pick')");
+    // The catalogue read is a real CLI call, and the row under test is the
+    // one pinned PAST it — so wait for curated rows, not just for a row.
+    let picks = 0;
+    for (let i = 0; i < 60 && picks < 2; i += 1) {
+      await new Promise((r) => setTimeout(r, 250));
+      picks = await js<number>("document.querySelectorAll('#onboarding .ob-row').length");
+    }
+    const hfLabel = await js<string>(
+      "(document.querySelectorAll('#onboarding .ob-row .t')[document.querySelectorAll('#onboarding .ob-row').length - 1] || {}).textContent || ''",
+    );
+    check(
+      "wizard: the Hugging Face row is pinned last in the model list",
+      picks > 1 && hfLabel === "Add a model from Hugging Face…",
+      `rows=${picks} last=${JSON.stringify(hfLabel)}`,
+    );
+    /* Driven with the MOUSE, on the last row the list draws — which is the
+       pinned one. Two clicks, because MouseListRow selects on the first
+       and activates on the second, and the second sends the same Enter
+       the keyboard sends. Cursor arithmetic would be wrong here: the
+       curated rows are windowed six at a time while the pinned row sits
+       past ALL of them in cursor space. */
+    const lastRow = "document.querySelectorAll('#onboarding .ob-row').length - 1";
+    await js<ObState>(`window.__obClick(${lastRow})`);
+    const onHf = await js<ObState>(`window.__obClick(${lastRow})`);
+    const settingsPane = await js<string | null>("window.__settingsPane()");
+    check(
+      "wizard: it opens the branch as its own step, not a jump into Settings",
+      onHf.step === "local_hf_ref" && settingsPane === null,
+      `step=${onHf.step} settingsPane=${JSON.stringify(settingsPane)}`,
+    );
+
+    /* ---- the second-provider offer, as a table ---- */
+    const offers = await js<(string | null)[]>(
+      "[window.__obOffer({outcome:'local', cloudReady:false, localReady:true, alreadyProposed:false, localSetupSeen:true})," +
+        " window.__obOffer({outcome:'cloud', cloudReady:true, localReady:false, alreadyProposed:false, localSetupSeen:false})," +
+        " window.__obOffer({outcome:'custom', cloudReady:false, localReady:true, alreadyProposed:false, localSetupSeen:false})," +
+        " window.__obOffer({outcome:'skipped', cloudReady:false, localReady:false, alreadyProposed:false, localSetupSeen:false})," +
+        " window.__obOffer({outcome:'cloud', cloudReady:true, localReady:false, alreadyProposed:false, localSetupSeen:true})," +
+        " window.__obOffer({outcome:'local', cloudReady:false, localReady:true, alreadyProposed:true, localSetupSeen:true})]",
+    );
+    check(
+      "wizard: decideSecondBackendOffer is the TUI's, including its three suppressions",
+      JSON.stringify(offers) === JSON.stringify(["cloud", "local", null, null, null, null]),
+      JSON.stringify(offers),
+    );
+    const proposeRows = await js<string[]>(
+      "(window.__obOpen('propose_second'), window.__obSeed({offer:'cloud', outcome:'local'})," +
+        " Array.from(document.querySelectorAll('#onboarding .ob-row .t')).map((e) => e.textContent))",
+    );
+    check(
+      "wizard: the offer screen quotes the TUI's two rows",
+      proposeRows.length === 2 && proposeRows[0] === "Set up a cloud model too" &&
+        proposeRows[1] === "Skip — take me to the agent",
+      JSON.stringify(proposeRows),
+    );
+
+    /* ---- the import step ---- */
+    await js<ObState>("window.__obOpen('import_pick')");
+    await js<void>(
+      "window.__obSeed({importAgents:[{id:'claude-code', label:'Claude Code', dir:'/tmp/.claude', enabled:false}," +
+        "{id:'codex', label:'Codex', dir:'/tmp/.codex', enabled:false}]})",
+    );
+    type ObImport = {
+      agents: { id: string; dir: string; enabled: boolean }[];
+      rows: string[];
+      options: { agent: string; option: string; secret: boolean; enabled: boolean }[];
+      report: unknown;
+    };
+    let imp = await js<ObImport>("window.__obImport()");
+    const skipLabel = await js<string>(
+      "(document.querySelectorAll('#onboarding .ob-row .t')[document.querySelectorAll('#onboarding .ob-row').length - 1] || {}).textContent || ''",
+    );
+    check(
+      "wizard: the import step starts with nothing ticked and the skip row last",
+      imp.agents.every((a) => !a.enabled) &&
+        JSON.stringify(imp.rows) === '["agent","agent","skip"]' &&
+        skipLabel === "Skip adding data from other agents",
+      `${JSON.stringify(imp.rows)} skip=${JSON.stringify(skipLabel)}`,
+    );
+    imp = await js<ObImport>("(window.__obKey('space'), window.__obImport())");
+    const importLabel = await js<string>(
+      "Array.from(document.querySelectorAll('#onboarding .ob-row .t')).map((e) => e.textContent)[2] || ''",
+    );
+    check(
+      "wizard: ticking one agent raises the import row above the skip row",
+      JSON.stringify(imp.rows) === '["agent","agent","import","skip"]' &&
+        importLabel === "Import from 1 agent",
+      `${JSON.stringify(imp.rows)} label=${JSON.stringify(importLabel)}`,
+    );
+    // The domain defaults: everything but the credential rows.
+    const options = await js<ObImport["options"]>(
+      "window.__obSeed({importOptions: window.__obBuildOptions()}) && window.__obImport().options",
+    );
+    check(
+      "wizard: the import defaults carry every domain but the credentials",
+      options.length > 0 && options.filter((o) => o.secret).every((o) => !o.enabled) &&
+        options.filter((o) => !o.secret).every((o) => o.enabled) &&
+        options.some((o) => o.option === "skills") && options.some((o) => o.option === "mcp"),
+      JSON.stringify(options.map((o) => `${o.agent}/${o.option}=${o.enabled}`)),
+    );
+    // The preview's non-actionable branch ends the flow rather than
+    // walking on to a "done" screen that has nothing to report.
+    await js<ObState>(
+      "(window.__obOpen('import_preview')," +
+        " window.__obSeed({importReport:{items:[], summary:{migrated:0, skipped:3, conflict:0, error:0}, executed:false}})," +
+        " window.__obKey('enter'))",
+    );
+    const nothing = await settled();
+    const nothingCopy = await js<ObCopy>("window.__obCopy()");
+    check(
+      "wizard: a preview with nothing to do ends the flow, and says so",
+      nothing.open === false,
+      `open=${nothing.open} lines=${JSON.stringify(nothingCopy.lines.slice(0, 3))}`,
+    );
+    const headline = await js<string[]>(
+      "(window.__obOpen('import_preview')," +
+        " window.__obSeed({importReport:{items:[], summary:{migrated:0, skipped:3, conflict:0, error:0}, executed:false}})," +
+        " Array.from(document.querySelectorAll('#onboarding .ob-h')).map((e) => e.textContent))",
+    );
+    check(
+      "wizard: the nothing-to-import headline is the TUI's sentence",
+      headline.some((h) => h === "Nothing new to import — everything is already here or empty."),
+      JSON.stringify(headline),
+    );
+  } finally {
+    await js<unknown>("window.__obClose ? window.__obClose() : null");
+    await js<unknown>("window.__dlClear ? window.__dlClear() : null");
+  }
 }

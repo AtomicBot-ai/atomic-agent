@@ -171,6 +171,13 @@ contextBridge.exposeInMainWorld("atomic", {
   hfProjector: (id: string, mmprojUrl: string, mmprojFilename: string, name?: string) =>
     ipcRenderer.invoke("cli:hfProjector", { id, mmprojUrl, mmprojFilename, name }),
 
+  /** r5 item 7 — setup wizard: the streamed runtime phase, the custom-endpoint
+   *  whole-file write, and the first-run import scan. */
+  modelsUpdateStream: () => ipcRenderer.invoke("cli:modelsUpdateStream"),
+  setExternalLlamaUrls: (chatUrl: string, embeddingUrl?: string) =>
+    ipcRenderer.invoke("cli:setExternalLlamaUrls", { chatUrl, embeddingUrl: embeddingUrl ?? "" }),
+  detectImportAgents: () => ipcRenderer.invoke("app:detectImportAgents"),
+
   /** Item 7C — mid-turn steering (POST/GET/DELETE /api/sessions/{id}/steer). */
   steer: (sessionId: string, text: string) => ipcRenderer.invoke("agent:steer", { sessionId, text }),
   undeliveredSteers: (sessionId: string) => ipcRenderer.invoke("agent:undeliveredSteers", sessionId),

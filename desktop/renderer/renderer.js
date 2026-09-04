@@ -128,23 +128,239 @@ const MP = {
   pickFor: null, pickQuery: '', picks: [], pickBusy: false, pickErr: null,
   busy: false, err: null,
 };
+/* ============================================================
+   r5 item 7 — SETUP WIZARD: state, copy and constants.
+   Hoisted because the render path reads every name in here and the
+   prototype's first synchronous render() runs long before the wizard's
+   own code.  The flow itself (reducer, key router, screens, star field)
+   is a block of function declarations further down.
+
+   OB is `OnboardingUiState` (src/tui/onboarding/onboarding-state.ts:59-98)
+   verbatim: sixteen fields, same names, same nulls, same meanings.
+   `open` stands in for the TUI's `TuiState.onboarding === null` render
+   switch, and the desktop-side caches under it hold what the TUI reads
+   from hooks this window does not have.
+   ============================================================ */
 const OB = {
-  open: false, step: 'choose', choice: 0,
-  models: [], modelCur: 0, ram: 0, busy: false, log: [], error: null,
-  providers: [], keyEnv: {},
+  open: false,
+  // --- OnboardingUiState, verbatim ---
+  step: 'intro',
+  offer: null,
+  resumeAfterCloud: null,
+  localModelId: null,
+  outcome: null,
+  skipSecondOffer: false,
+  cursor: 0,
+  chatUrl: '',
+  embeddingUrl: '',
+  busy: false,
+  error: null,
+  hfReference: '',
+  hfRepo: null,
+  importAgents: [],
+  importOptions: [],
+  importReport: null,
+  // --- desktop-side caches the screens render from ---
+  /** `atag models list` (chat half), the only catalogue this window has. */
+  models: [],
+  ram: 0,
+  keyEnv: {},
+  /** providersReady() ids — the cloud offer is hidden once one exists. */
+  cloudReady: false,
+  /** Intro two-stage advance (use-intro-input.ts:57-67): first input
+   *  finishes the typewriter, the second dismisses. */
+  introTyped: false,
+  /** The operator's existing ~/.atomic-agent, from the isolation lane's
+   *  tuiSetupPresent(); null until scanned, {present:false} when absent. */
+  tuiSetup: null,
+  /** True while the flow is closing itself down (the finished effect). */
+  settling: false,
+  /** Smoke only — see the note in obSettle. Never set outside the harness. */
+  testClose: false,
+  /** A vision model's projector, fetched after its weights land. */
+  pendingMmproj: null,
+  /** Whether an IPC on the way here already bounced `atag serve`. */
+  restarted: false,
 };
+
+/* ONBOARDING_CHOICES (onboarding-state.ts:130-155), verbatim and in order
+   — the order is load-bearing, the 1–3 digits are positional. */
 const OB_CHOICES = [
-  {id:'local',  t:'Local models',    d:'llama.cpp on this machine. Private, free per token, one download of 2.7–22 GB.'},
-  {id:'cloud',  t:'Cloud models',    d:'OpenRouter, Anthropic, Gemini, Groq and 20 more. Fastest to a working agent — needs an API key.'},
-  // Lane B — backend switch: the TUI's third choice, a custom endpoint, is
-  // not offered here. The TUI probes the URL (checkLlamaServer, verifyAuth)
-  // and then writes mode external + url + the local-llama provider url in
-  // ONE whole-file write (persistUserRemoteLlmUrls); the desktop has no
-  // probe, and a leaf write of localModels.url would leave the provider
-  // entry pointing at the managed port. Rather than write an unverified
-  // URL, the option stays out until the probe exists — set it up from the
-  // TUI (`atag`).
+  {id:'local', label:'Local models', detail:[
+    'llama.cpp on this machine. Private, free per token,',
+    'one download of 2.7–22 GB.']},
+  {id:'cloud', label:'Cloud models', detail:[
+    'OpenRouter, Anthropic, Gemini, Groq and 20 more.',
+    'Fastest to a working agent — needs an API key.']},
+  {id:'custom', label:'Custom endpoint', detail:[
+    'An OpenAI-compatible or llama-server URL you already run.',
+    'Nothing is downloaded, nothing else is asked.']},
 ];
+
+/* ONBOARDING_SUBTITLES (onboarding-chrome.ts:13-29), verbatim. */
+const OB_SUBTITLES = {
+  intro: '',
+  choose: 'setup · step 1 of 2',
+  local_pick: 'local models · step 2 of 2',
+  local_hf_ref: 'local models · hugging face',
+  local_hf_pick: 'local models · choose a file',
+  local_download: 'local models · downloading',
+  propose_second: 'one more thing',
+  wait_or_jump: 'almost there',
+  import_pick: 'bring your data · one last step',
+  import_preview: 'bring your data · preview',
+  import_done: 'bring your data · done',
+  cloud: 'cloud model · step 2 of 2',
+  custom_chat_url: 'custom endpoint · step 2 of 2',
+  custom_embedding_url: 'custom endpoint · embeddings',
+  finished: 'setting up…',
+};
+
+/* Copy tables, each verbatim from the component named beside it. */
+const OB_COPY = {
+  // onboarding-choose-step.tsx:30-33
+  chooseExplainer: [
+    'atomic-agent can drive models three ways. Nothing here is permanent — you',
+    'can add the others at any time from the menu.'],
+  // onboarding-intro-step.tsx:53 / :12, logo.tsx TAGLINE
+  tagline: 'Local AI-First Agent',
+  taglineMsPerChar: 45,
+  pressAnyKey: '[ press any key to continue ]',
+  wordmark: 'ATOMIC',
+  // onboarding-header.tsx:9
+  headerWordmark: 'atomic',
+  // onboarding-local-pick-step.tsx:25-27, :108
+  localHeading: 'Recommended models',
+  // onboarding-url-step.tsx:8-19
+  urlHealthNote: '(must answer GET /health)',
+  urlChatTitle: 'Base URL of your chat llama-server ',
+  urlEmbeddingTitle: 'Base URL of your embedding llama-server ',
+  urlEmbeddingNote: 'Optional — leave it empty to continue without hybrid embedding recall.',
+  urlChatPlaceholder: 'http://127.0.0.1:8080',
+  urlEmbeddingPlaceholder: 'http://127.0.0.1:19092',
+  urlProbing: 'probing /health…',
+  // onboarding-download-step.tsx:18-38
+  cloudOffer: ['Don’t want to wait? Set up a cloud model in the meantime —',
+               'it takes about a minute, and the download keeps running.'],
+  cloudOfferFailed: 'Set up a cloud model instead — it takes about a minute.',
+  cloudOfferKey: 'press c',
+  skipOffer: ['Or skip the wait — start using the agent now. The download',
+              'keeps running; progress shows in the top bar.'],
+  skipOfferFailed: 'Or skip — start using the agent without a local model.',
+  skipOfferKey: 'press s',
+  // onboarding-download-progress.tsx:63-79
+  phaseRuntime: 'llama.cpp runtime',
+  phaseWeights: 'model weights',
+  starting: 'starting…',
+  // onboarding-wait-or-jump-step.tsx / onboarding-screen.tsx:63
+  cloudReadyLabel: 'Cloud model ready',
+  // onboarding-propose-step.tsx:11-33
+  proposeExplainer: [
+    'atomic-agent runs both side by side — local for private or offline work,',
+    'cloud for the heavy turns, switchable mid-session. You have one of the two.'],
+  proposeSkip: {label:'Skip — take me to the agent', detail:'you can add it later from the menu (esc)'},
+  // onboarding-import-step.tsx:25-34, :200-212; import-step.ts:80-85
+  importExplainer: [
+    'Other agents keep skills, memory, sessions and keys on this machine.',
+    'Tick which ones to bring into atomic-agent — nothing is written before',
+    'you see a preview, and nothing is ever removed from the source.'],
+  importSkipLabel: 'Skip adding data from other agents',
+  importSkipDetail: 'Go straight to your agent — /import works any time later.',
+  importScanning: 'scanning the sources…',
+  importRunning: 'importing…',
+  importPreviewActionable: 'Here is what an import would do:',
+  importPreviewNothing: 'Nothing new to import — everything is already here or empty.',
+};
+
+/* ---- the intro's star field ----------------------------------------
+   Ports src/tui/onboarding/star-field.ts, star-tiers.ts, orbit-field.ts
+   and mark-clear-space.ts.  Every tuned constant is carried over; TWO
+   are deliberately re-tuned for a pixel canvas, and this is the record
+   of that call rather than a claim that they carried over unchanged:
+
+   (1) CELL_ASPECT is 1, not orbit-field.ts's 2.2.  That constant exists
+       because a terminal cell is ~2.2× taller than it is wide; a square
+       pixel cell is 1, and with it the halo ellipse becomes the circle
+       the TUI was only ever approximating.
+   (2) The cell is 14 CSS px.  At the intro's real size (~1000×700) that
+       is a ~71×50 grid, so `columns × rows × 0.08` targets ~284 stars —
+       past the 220 the frame budget allows.  The CAP GOVERNS THE COUNT
+       there, not STARS_PER_CELL; the density constant still governs the
+       relative weight of clusters against open field, which is what it
+       is really for.  CLUSTER_SPACING 11 over that grid's geometric mean
+       side (~60) asks for 5 clusters against the TUI's 4, and
+       `columns / 8` lands at ~8.9 cells — inside the [5,16] clamp, and
+       the same fraction of the canvas width the TUI's 12-of-96 is, so
+       the clamp does not bind and a cluster reads at the size it was
+       tuned to read at.
+   ------------------------------------------------------------------ */
+const OB_SKY = {
+  CELL_ASPECT: 1,
+  CELL_PX: 14,
+  STARS_PER_CELL: 0.08,
+  CLUSTERED_SHARE: 0.62,
+  MIN_CLUSTERS: 2,
+  MAX_CLUSTERS: 6,
+  CLUSTER_SPACING: 11,
+  MIN_CLUSTER_RADIUS: 5,
+  MAX_CLUSTER_RADIUS: 16,
+  PLACEMENT_ATTEMPTS: 4,
+  CENTRE_ATTEMPTS: 24,
+  HALO_JITTER_COLUMNS: 2,
+  HALO_JITTER_ROWS: 1,
+  HALO_GAP_CHANCE: 0.25,
+  HALO_PHASE: Math.PI / 12,
+  DEFAULT_SEED: 82,
+  HALO_COUNT: 26,          // SKY_BY_TIER.full.halo (onboarding-intro-step.tsx)
+  CLEAR_GAP_ROWS: 2,       // intro-art.ts CLEAR_GAP_ROWS
+  CLEAR_GAP_COLUMNS: 4,    // intro-art.ts CLEAR_GAP_COLUMNS
+  MAX_STARS: 220,          // the desktop's frame budget; see (2) above
+  FPS: 30,
+  MARK_PX: 88,
+};
+/* star-tiers.ts CLUSTER_TIERS / FIELD_TIERS / HALO_TIERS, verbatim. */
+const OB_CLUSTER_TIERS = [['bright',0.06],['mid',0.18],['dim',0.3],['faint',0.46]];
+const OB_FIELD_TIERS   = [['bright',0.01],['mid',0.08],['dim',0.26],['faint',0.65]];
+const OB_HALO_TIERS    = [['bright',0.14],['mid',0.28],['dim',0.34],['faint',0.24]];
+/* The glyph ramp becomes radius, alpha and a theme token — the four
+   brightnesses the TUI encodes in `· ✧ ✦ ✛`, drawn instead of written. */
+const OB_TIER_LOOK = {
+  faint:  {r:0.6, a:0.35, token:'--text-tertiary', drift:0.35},
+  dim:    {r:0.9, a:0.55, token:'--accent-text',   drift:0.55},
+  mid:    {r:1.3, a:0.80, token:'--accent-text',   drift:0.80},
+  bright: {r:1.8, a:1.00, token:'--text-primary',  drift:1.00},
+};
+/** Live canvas state for the intro sky. Never read outside obSky*. */
+const OBSKY = {
+  canvas:null, ctx:null, stars:[], raf:0, t0:0, frames:0, running:false,
+  reduced:false, tick:0, w:0, h:0, dpr:1, cx:0, cy:0, colours:null, mq:null,
+  typer:0, typed:0,
+};
+
+/* ---- the persistent download strip (#dlbar) -------------------------
+   The TUI's DownloadChip (download-chip.tsx) lives in the status bar and
+   its doc says the download "survives the screen that started it"; the
+   onboarding copy promises the same thing twice in words.  So the
+   desktop's download lives here, in the window chrome, and BOTH the
+   strip and the wizard's own download screen render from this one slice.
+
+   `job` is the head of the queue; `queue` the rest.  Main single-flights
+   downloads, so a runtime phase and a weights phase are two jobs run in
+   order, not two bars.  Nothing here is interpolated: the CLI emits one
+   sample per 5% and these numbers move in those steps.
+   ------------------------------------------------------------------ */
+const DL = {
+  job: null,        // {kind, id, label, percent, transferredBytes, totalBytes, at}
+  queue: [],        // [{kind, id, label}]
+  rate: null,       // bytes/s, EMA over the real samples only
+  last: null,       // {bytes, at} — the previous sample
+  error: null,
+  /** The two rows the TUI's OnboardingDownloadProgress draws. */
+  runtime: {state:'done', percent:0, transferredBytes:0, totalBytes:0},
+  weights: {state:'waiting', percent:0, transferredBytes:0, totalBytes:0},
+  /** Smoke only: a seeded queue drives the bar without spawning a child. */
+  dry: false,
+};
 /* Lane B — backend switch. What the chips and rows read while a switch
    runs in main: `line` is the popup's status text, `readyIds` the cloud
    providers with a usable key (the TUI's hasApiKey), `localLoaded`
@@ -717,6 +933,9 @@ S.log = [
    ============================================================ */
 function render() {
   renderToolbar(); renderSidebar(); renderContent();
+  // r5 item 7: the download strip is chrome, painted before the overlay
+  // layer so renderOverlays can measure it and sit under it.
+  renderDlbar();
   renderInspector(); renderConsole(); renderOverlays(); renderSettings(); renderToasts();
 }
 
@@ -1552,11 +1771,21 @@ function renderOverlays() {
   if (OB.open) html = obHTML();
   o.innerHTML = html;
   o.style.pointerEvents = html ? 'auto' : 'none';
-  o.style.position = 'absolute'; o.style.inset = '0'; o.style.zIndex = '20';
+  /* r5 item 7: NOT `inset: 0` any more. An inline inset beats any
+     stylesheet rule, so the overlay layer covered the download strip —
+     and the strip is the surface the wizard's own copy promises the
+     download keeps reporting on. `--dlbar-h` is 0 while nothing is
+     downloading, so the wizard still covers the toolbar as it did. */
+  o.style.position = 'absolute';
+  o.style.top = 'var(--dlbar-h, 0px)';
+  o.style.left = '0'; o.style.right = '0'; o.style.bottom = '0';
+  o.style.zIndex = '20';
   const pq = $('#palq');
   if (pq) { pq.focus(); pq.setSelectionRange(pq.value.length, pq.value.length); }
   const cur = o.querySelector('.palrow.on');
   if (cur) cur.scrollIntoView({block:'nearest'});
+  // r5 item 7: the intro's canvas is destroyed by the rebuild above.
+  obIntroMounted();
 }
 
 
@@ -2463,14 +2692,6 @@ document.addEventListener('click', (e) => {
   const uq = t.closest('[data-unqueue]'); if (uq) { const at = +uq.dataset.unqueue; S.queued.splice(at, 1); if (at < STEER.ahead) STEER.ahead -= 1; render(); return; }
   const rv = t.closest('[data-revoke]'); if (rv) { S.grants.splice(+rv.dataset.revoke, 1); render(); toast('Grant revoked'); return; }
   const ask = t.closest('[data-ask]'); if (ask) { const q = S.q; act('close'); S.draft = q; render(); submit(); return; }
-  const obc = t.closest('[data-ob-choice]');
-  if (obc) { OB.choice = +obc.dataset.obChoice; render(); return; }
-  const obm = t.closest('[data-ob-model]');
-  if (obm) { OB.modelCur = +obm.dataset.obModel; render(); return; }
-  const obp = t.closest('[data-ob-provider]');
-  if (obp) { OB.modelCur = +obp.dataset.obProvider; render(); return; }
-  const ob = t.closest('[data-ob]');
-  if (ob) { obAction(ob.dataset.ob); return; }
   const selOpen = t.closest('[data-sel-open]');
   if (selOpen) { openSelector(selOpen.dataset.selOpen); return; }
   const selTab = t.closest('[data-sel-tab]');
@@ -3683,304 +3904,2063 @@ function activeModel() {
 }
 
 /* ============================================================
-   Setup wizard — the same two steps the TUI runs on a fresh
-   install (src/tui/onboarding), with the same copy and the same
-   effect on config. It writes through `atag config set`, one
-   dotted key at a time, because PATCH /api/config re-defaults
-   every block it does not merge.
+   r5 item 7 — SETUP WIZARD.
+
+   A one-to-one port of the TUI's first-run flow: the fifteen steps of
+   src/tui/onboarding/onboarding-state.ts, one pure reducer transcribing
+   onboarding-reducer.ts case for case, ONE key router transcribing
+   onboarding-step-keys.ts that every clickable row also goes through
+   (which is the invariant that file exists to hold), the TUI's copy
+   verbatim, and a real hint strip built from onboardingFooterFor.
+
+   Five things cannot be reproduced against the shipped agent, and each
+   is degraded here in the open rather than faked:
+
+   1. BYTE-EXACT PULL PROGRESS.  The TUI reads typed events with byte
+      counts on every chunk from an in-process orchestrator; the agent
+      publishes no local-models HTTP route, so the only channel is
+      `atag models pull`, which in non-TTY writes ONE line per 5%
+      (src/cli/models-handlers.ts:107-109).  Everything here moves in
+      those steps, the rate comes from the timestamps of those samples,
+      and nothing is smoothed into a continuous-looking number.
+
+   2. THE `llama.cpp runtime` PHASE.  `models pull` never fetches the
+      backend; only `models update` does, labelled `backend zip`.  The
+      flow probes `models status` for `binary missing` and runs
+      `models update` as a first queue entry when it is — but
+      runLocalModelsUpdate returns 0 WITHOUT downloading when the
+      version file already names the latest tag, so when no progress
+      sample arrives the row is drawn as PASSED (which is what the TUI
+      shows once the phase is over) and never as a bar nothing drives.
+
+   3. THE KEY VERIFICATION GATE.  `verifyWizardBeforeSave` and
+      `probeWizardContract` have no CLI or HTTP surface.  The cloud step
+      keeps the desktop's own check — upsert, then list the provider's
+      models under the key — and says only what that proves.
+
+   4. THE VISION PROJECTOR AS A THIRD PHASE.  `models pull` fetches the
+      GGUF alone, so a curated vision model shows two phases and says
+      nothing about a projector.  The Hugging Face branch keeps its own
+      projector fetch, which now rides the pull stream under its own
+      `kind` so its percent cannot be folded into the weights bar.
+
+   5. THE CURATED PICK METADATA.  `atag models list` prints only
+      id/family/size/context/downloaded/active, so `recommendLocalModel`,
+      `orderLocalModelPicks`, `fitFor(def, ram)` and the row `note()`
+      cannot be ported: there is no `recommendedRamGb`, no `minRamGb`, no
+      `description`, no catalogue `tag` and — the one with a safety edge
+      — no `uncensored` flag.  So NO ROW IS STARRED: `★ recommended`, the
+      ⚠ warning tag and the description are dropped from the row rather
+      than invented, and the uncensored-last pinning the TUI does is not
+      reproducible until the agent exposes the field.  The rows are
+      ordered by the desktop's existing size-vs-RAM heuristic and say so.
    ============================================================ */
 
-
-
-/** Mirrors decideOnboarding(): completed/skipped wins, then a configured backend. */
-function needsOnboarding(cfg) {
+/**
+ * decideOnboarding() (needs-onboarding.ts:24-32) with both readiness
+ * predicates this window can actually evaluate.
+ *
+ * Two divergences from the old desktop gate are closed here:
+ * `isCloudTextProviderReady` (local-backend-readiness.ts:25-38) wants a
+ * resolved KEY, not just an active non-llama entry — `readyIds` is
+ * providersReady(), which is that same key check in main; and
+ * `isLocalBackendConfigured` (:76-77) explicitly refuses the shipped
+ * default URL, which the old gate accepted as "configured".
+ * `isManagedModeReadyOnDisk`'s stat of the weights file stays out: the
+ * renderer cannot see the data dir.
+ */
+const OB_DEFAULT_LLAMA_URL = 'http://127.0.0.1:8080';   // USER_CONFIG_DEFAULTS.localModels.url
+function needsOnboarding(cfg, readyIds) {
   const ob = (cfg && cfg.tui && cfg.tui.onboarding) || {};
   if (ob.completedAt || ob.skippedAt) return false;
   const lm = (cfg && cfg.localModels) || {};
   const managedReady = lm.mode === 'managed' && lm.managed && lm.managed.modelId;
-  const localConfigured = lm.mode === 'external' && lm.url;
+  const localConfigured = lm.mode === 'external' && !!lm.url && lm.url !== OB_DEFAULT_LLAMA_URL;
   const llm = (cfg && cfg.llm) || {};
   const active = (llm.providers || []).find((p) => p.id === llm.activeTextProvider);
-  const cloudReady = !!active && active.kind !== 'llama-server';
+  const cloudReady = !!active && active.kind !== 'llama-server'
+    && (!Array.isArray(readyIds) || readyIds.indexOf(active.id) >= 0);
   return !(managedReady || localConfigured || cloudReady);
 }
 
+/** The desktop's size-vs-RAM heuristic — all the catalogue gives us. */
 function fitFor(sizeLabel, ram) {
   const gb = parseFloat(String(sizeLabel)) || 0;
   const needed = Math.ceil(gb * 1.6);
-  if (needed <= ram) return {v:'fits', label:'fits this Mac'};
-  if (needed <= ram * 1.4) return {v:'tight', label:'tight on ' + ram + ' GB'};
-  return {v:'over', label:'needs about ' + needed + ' GB'};
+  if (needed <= ram) return {v:'fits', rank:0, label:'fits this Mac'};
+  if (needed <= ram * 1.4) return {v:'tight', rank:1, label:'tight on ' + ram + ' GB'};
+  return {v:'over', rank:2, label:'needs about ' + needed + ' GB'};
 }
 
+/* ---------------- state: the pure reducer ---------------- */
+
+/** moveOnboardingCursor (onboarding-state.ts:179-186): wrapping, never clamping. */
+function moveOnboardingCursor(cursor, delta, length) {
+  const count = Math.max(1, length === undefined ? OB_CHOICES.length : length);
+  return (((cursor + delta) % count) + count) % count;
+}
+
+/** stepOwnsItsKeyboard (onboarding-state.ts:195-197). */
+function obStepOwnsKeyboard(step) {
+  return step === 'cloud' || step === 'local_hf_ref' || step.indexOf('custom_') === 0;
+}
+
+/** The sixteen fields, as a plain value the reducer can fold. */
+function obSnapshot() {
+  return {
+    step: OB.step, offer: OB.offer, resumeAfterCloud: OB.resumeAfterCloud,
+    localModelId: OB.localModelId, outcome: OB.outcome, skipSecondOffer: OB.skipSecondOffer,
+    cursor: OB.cursor, chatUrl: OB.chatUrl, embeddingUrl: OB.embeddingUrl,
+    busy: OB.busy, error: OB.error, hfReference: OB.hfReference, hfRepo: OB.hfRepo,
+    importAgents: OB.importAgents, importOptions: OB.importOptions, importReport: OB.importReport,
+  };
+}
+
+/**
+ * reduceOnboardingAction (onboarding-reducer.ts:19-335), case for case.
+ * Pure: `s` in, a new `s` out, `null` for an action that is not ours.
+ * The two guards that make it correct are kept — a late repo resolve is
+ * ignored off `local_hf_ref`, and a late import report off the two
+ * import screens — because both answers arrive seconds after they were
+ * asked for and must not yank a flow that moved on.
+ */
+function obReduce(s, action) {
+  switch (action.type) {
+    case 'onboarding_step_set':
+      // Each list owns its own cursor.
+      return Object.assign({}, s, {step: action.step, cursor: 0, error: null, busy: false});
+    case 'onboarding_cursor_moved':
+      return Object.assign({}, s, {cursor: moveOnboardingCursor(s.cursor, action.delta, action.length)});
+    case 'onboarding_cursor_set':
+      return Object.assign({}, s, {cursor: action.cursor});
+    case 'onboarding_url_changed':
+      return Object.assign({}, s, action.field === 'chat' ? {chatUrl: action.value} : {embeddingUrl: action.value});
+    case 'onboarding_busy_set':
+      return Object.assign({}, s, {busy: action.busy});
+    case 'onboarding_error_set':
+      return Object.assign({}, s, {error: action.error});
+    case 'onboarding_local_model_picked':
+      return Object.assign({}, s, {step: 'local_download', localModelId: action.modelId, error: null});
+    case 'onboarding_hf_reference_changed':
+      return Object.assign({}, s, {hfReference: action.value});
+    case 'onboarding_hf_repo_resolved':
+      if (s.step !== 'local_hf_ref') return s;
+      return Object.assign({}, s, {step:'local_hf_pick', hfRepo: action.repo, cursor:0, busy:false, error:null});
+    case 'onboarding_cloud_meanwhile_opened': {
+      const from = s.step === 'wait_or_jump' ? 'wait_or_jump' : 'local_download';
+      return Object.assign({}, s, {step:'cloud', resumeAfterCloud: from, cursor:0, error:null});
+    }
+    case 'onboarding_import_opened':
+      return Object.assign({}, s, {step:'import_pick', importAgents: action.agents,
+        importOptions: [], importReport: null, cursor: 0, error: null, busy: false});
+    case 'onboarding_import_agent_toggled':
+      return Object.assign({}, s, {importAgents: s.importAgents.map((row, index) =>
+        index === action.index ? Object.assign({}, row, {enabled: !row.enabled}) : row)});
+    case 'onboarding_import_run_started':
+      return Object.assign({}, s, {busy: true, error: null,
+        importOptions: action.options === undefined ? s.importOptions : action.options});
+    case 'onboarding_import_report':
+      if (s.step !== 'import_pick' && s.step !== 'import_preview') return s;
+      return Object.assign({}, s, {step: action.executed ? 'import_done' : 'import_preview',
+        importReport: action.report, cursor: 0, busy: false, error: null});
+    case 'onboarding_import_failed':
+      return Object.assign({}, s, {busy: false, error: action.error});
+    case 'onboarding_second_backend_offered':
+      return Object.assign({}, s, {step:'propose_second', offer: action.offer, cursor:0, error:null, busy:false});
+    case 'onboarding_finished':
+      // Only this action can request the bypass.
+      return Object.assign({}, s, {step:'finished', outcome: action.outcome,
+        skipSecondOffer: action.skipSecondOffer === true, busy:false, error:null});
+    case 'local_models_pull_finished': {
+      if (s.step !== 'local_download' && s.step !== 'wait_or_jump') return null;
+      if (action.kind !== 'chat') return null;
+      // A cloud model configured mid-download is the outcome that matters.
+      return Object.assign({}, s, {step:'finished', outcome: s.outcome === null ? 'local' : s.outcome});
+    }
+    case 'providers_wizard_succeeded': {
+      if (s.step !== 'cloud') return null;
+      const stillOpen = action.pullRunning || action.pullFailed;
+      const step = s.resumeAfterCloud !== null && stillOpen ? 'wait_or_jump' : 'finished';
+      return Object.assign({}, s, {step, outcome:'cloud', resumeAfterCloud:null, cursor:0});
+    }
+    case 'providers_wizard_closed': {
+      if (s.step !== 'cloud') return null;
+      const resume = s.resumeAfterCloud;
+      // A pull that landed cleanly while the wizard was up is exactly
+      // what local_models_pull_finished would have concluded: done.
+      const step = resume === null ? 'choose'
+        : (resume === 'local_download' && action.pullLandedCleanly) ? 'finished' : resume;
+      return Object.assign({}, s, {step,
+        outcome: step === 'finished' ? (s.outcome === null ? 'local' : s.outcome) : s.outcome,
+        resumeAfterCloud: null, cursor: 0, error: null, busy: false});
+    }
+    default:
+      return null;
+  }
+}
+
+/** Fold one action onto OB and repaint. Every screen and key goes here. */
+function obDispatch(action) {
+  if (!OB.open) return;
+  // The two wizard outcomes need the live pull state the TUI reads off
+  // its panel slice; supply it here so the reducer stays pure.
+  if (action.type === 'providers_wizard_succeeded') {
+    action = Object.assign({}, action, {pullRunning: DL.job !== null, pullFailed: DL.job === null && DL.error !== null});
+  }
+  if (action.type === 'providers_wizard_closed') {
+    action = Object.assign({}, action, {pullLandedCleanly: DL.job === null && DL.error === null});
+  }
+  const next = obReduce(obSnapshot(), action);
+  if (next) Object.assign(OB, next);
+  obAfterStep();
+  render();
+}
+
+/**
+ * The stamps useOnboardingLifecycle writes on ARRIVAL rather than on
+ * success (:77-81, :107-110, :127) and the effects a step change starts.
+ * Written in the same tick the step is entered: a run interrupted by a
+ * crash must not re-pitch a screen the operator already saw.
+ */
+let OB_LAST_STEP = null;
+function obAfterStep() {
+  if (OB.step === OB_LAST_STEP) return;
+  const was = OB_LAST_STEP;
+  OB_LAST_STEP = OB.step;
+  if (was === 'intro' && OB.step !== 'intro') obSkyStop();
+  // isLocalSetupStep (propose-second-backend.ts:57-59): the list itself
+  // and the two download screens. Walking in and back out is an answer.
+  if (OB.step === 'local_pick' || OB.step === 'local_download' || OB.step === 'wait_or_jump') {
+    obStampOnce('localSetupSeenAt');
+  }
+  if (OB.step === 'local_pick' && !OB.models.length && !OB.busy) obLoadModels();
+  if (OB.step === 'finished') obSettle();
+}
+
+/** Write a tui.onboarding.* stamp once, without blocking the repaint. */
+const OB_STAMPED = {};
+function obStampOnce(leaf) {
+  if (OB_STAMPED[leaf] || !BR) return;
+  OB_STAMPED[leaf] = true;
+  BR.configSet('tui.onboarding.' + leaf, new Date().toISOString());
+}
+
+/* ---------------- chrome: subtitles and the hint strip ---------------- */
+
+/** onboardingFooterFor (onboarding-chrome.ts:31-88), verbatim.
+ *  `ctrlCArmed` is always false here: the desktop has no Ctrl+C chord. */
+function obFooter() {
+  const quit = 'ctrl+c quit';
+  switch (OB.step) {
+    case 'choose': return '↑/↓ move   enter select   1–3 jump   esc skip   ' + quit;
+    case 'cloud': return WIZ.phase === 'pick_kind'
+      ? '↑/↓ move   / search   enter select   esc back   ' + quit
+      : '↑/↓ move   enter select   esc back   ' + quit;
+    case 'custom_chat_url': return 'enter test & continue   esc back   ' + quit;
+    case 'custom_embedding_url': return 'enter test & save   empty enter skips embeddings   esc back   ' + quit;
+    case 'local_pick': return '↑/↓ move   enter select   esc back   ' + quit;
+    case 'local_hf_ref': {
+      if (OB.busy) return 'esc cancel the lookup   ' + quit;
+      const clear = OB.hfReference.length > 0 ? 'ctrl+l clear   ' : '';
+      return 'enter look it up   ' + clear + 'esc back   ' + quit;
+    }
+    case 'local_hf_pick': return '↑/↓ move   enter download   esc back   ' + quit;
+    case 'local_download': return 'c set up cloud meanwhile   s skip to the agent   ' + quit;
+    case 'propose_second': return '↑/↓ move   enter select   esc skip   ' + quit;
+    case 'import_pick': return OB.busy ? 'scanning…   ' + quit
+      : '↑/↓ move   space tick   enter select   esc skip   ' + quit;
+    case 'import_preview': return OB.busy ? 'importing…   ' + quit : 'enter import   esc adjust   ' + quit;
+    case 'import_done': return 'any key to start   ' + quit;
+    case 'wait_or_jump': return '↑/↓ move   enter start or add a provider   ' + quit;
+    case 'finished': return '';
+    case 'intro': return quit;
+    default: return quit;
+  }
+}
+
+/* Which leading tokens of a hint are the chord rather than the sentence.
+   The footer is one string in the TUI because a terminal has no chips;
+   this splits it back apart so the desktop can draw the keycaps it has. */
+const OB_KEY_TOKEN = /^(↑\/↓|enter|esc|ctrl\+[a-z]|space|any|key|empty|1–3|\/|c|s)$/;
+function obHintsHTML() {
+  const footer = obFooter();
+  if (!footer) return '';
+  const hints = footer.split(/\s{3,}/).filter(Boolean).map((chunk) => {
+    const words = chunk.split(' ');
+    let n = 0;
+    while (n < words.length && OB_KEY_TOKEN.test(words[n])) n += 1;
+    const caps = words.slice(0, n).join(' ');
+    const rest = words.slice(n).join(' ');
+    return '<span class="hint">' + keycaps(caps) + (rest ? '<span>' + esc(rest) + '</span>' : '') + '</span>';
+  }).join('');
+  return '<div class="ob-hints">' + hints + '</div>';
+}
+
+/** The header lockup (onboarding-header.tsx:42-72). The intro draws none. */
+function obHeadHTML() {
+  return '<div class="ob-head"><div class="ob-lock">'
+    + '<span class="ob-mark">' + MARK_COLOR.replace('width="16" height="16"', 'width="34" height="34"') + '</span>'
+    + '<span><span class="ob-wm">' + esc(OB_COPY.headerWordmark) + '</span><br>'
+    + '<span class="ob-sub2">' + esc(OB_SUBTITLES[OB.step] || '') + '</span></span>'
+    + '</div></div>';
+}
+
+/* ============================================================
+   The intro's sky.  star-field.ts + orbit-field.ts + star-tiers.ts +
+   mark-clear-space.ts, ported onto a canvas, with the motion the TUI
+   cannot have: a per-star pulse, a whole-field parallax drift scaled by
+   tier so the depth the tiers encode is visible, and the halo turning
+   slowly about the mark — the static ellipse made literal.
+   ============================================================ */
+
+/** mulberry32 (star-field.ts:254-266), verbatim. `Math.random` is not an
+ *  option: the field must be the same on every render. */
+function obMulberry32(seed) {
+  let state = seed >>> 0;
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let mixed = state;
+    mixed = Math.imul(mixed ^ (mixed >>> 15), mixed | 1);
+    mixed ^= mixed + Math.imul(mixed ^ (mixed >>> 7), mixed | 61);
+    return ((mixed ^ (mixed >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** pickTier (star-tiers.ts:64-72), verbatim. */
+function obPickTier(weights, roll) {
+  let carried = 0;
+  for (const pair of weights) { carried += pair[1]; if (roll < carried) return pair[0]; }
+  return weights[weights.length - 1][0];
+}
+
+/** computeOrbitField (orbit-field.ts:39-72) with CELL_ASPECT 1. */
+function obOrbitField(o) {
+  const phase = o.phase || 0;
+  if (o.count <= 0 || o.radius <= 0) return [];
+  const verticalRadius = o.radius / OB_SKY.CELL_ASPECT;
+  const cells = [];
+  const seen = {};
+  for (let i = 0; i < o.count; i += 1) {
+    const angle = (2 * Math.PI * i) / o.count + phase;
+    const column = Math.round(o.center.column + Math.cos(angle) * o.radius);
+    const row = Math.round(o.center.row + Math.sin(angle) * verticalRadius);
+    if (column < 0 || column >= o.columns || row < 0 || row >= o.rows) continue;
+    const key = column + ',' + row;
+    if (seen[key]) continue;
+    seen[key] = 1;
+    cells.push({column, row});
+  }
+  return cells;
+}
+
+function obVisualDistance(a, b) {
+  return Math.hypot(a.column - b.column, (a.row - b.row) * OB_SKY.CELL_ASPECT);
+}
+function obJitter(roll, reach) { return Math.round((roll - 0.5) * 2 * reach); }
+function obClamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
+
+/**
+ * computeStarField (star-field.ts:104-143 and its four placement
+ * helpers), transcribed.  One addition, and it is the desktop's frame
+ * budget rather than a design change: `maxStars` caps the count the
+ * density asks for — see the note on OB_SKY.
+ */
+function obComputeStarField(options) {
+  const columns = options.columns, rows = options.rows;
+  if (columns <= 0 || rows <= 0) return [];
+  const density = Math.max(0, options.density === undefined ? 1 : options.density);
+  const random = obMulberry32(options.seed === undefined ? OB_SKY.DEFAULT_SEED : options.seed);
+  const occupied = {};
+  for (const span of (options.clearSpans || [])) {
+    if (span.row < 0 || span.row >= rows) continue;
+    for (let c = Math.max(0, span.from); c <= Math.min(columns - 1, span.to); c += 1) occupied[span.row * columns + c] = 1;
+  }
+  const stars = [];
+  const sky = {
+    columns, rows, random,
+    free: (column, row) => column >= 0 && column < columns && row >= 0 && row < rows
+      && !occupied[row * columns + column],
+    place: (column, row, tier) => { occupied[row * columns + column] = 1; stars.push({column, row, tier, halo: false}); },
+  };
+  // The arc first: it is the one part of the field with a shape to keep.
+  if (options.halo) {
+    const cells = obOrbitField({columns, rows, center: options.halo.center,
+      radius: options.halo.radius, count: options.halo.count, phase: OB_SKY.HALO_PHASE});
+    for (const cell of cells) {
+      if (sky.random() < OB_SKY.HALO_GAP_CHANCE) continue;
+      for (let attempt = 0; attempt < OB_SKY.PLACEMENT_ATTEMPTS; attempt += 1) {
+        const column = cell.column + obJitter(sky.random(), OB_SKY.HALO_JITTER_COLUMNS);
+        const row = cell.row + obJitter(sky.random(), OB_SKY.HALO_JITTER_ROWS);
+        if (!sky.free(column, row)) continue;
+        occupied[row * columns + column] = 1;
+        stars.push({column, row, tier: obPickTier(OB_HALO_TIERS, sky.random()), halo: true});
+        break;
+      }
+    }
+  }
+  const wanted = Math.round(columns * rows * OB_SKY.STARS_PER_CELL * density);
+  const target = Math.min(options.maxStars === undefined ? wanted : options.maxStars, wanted);
+  if (target <= 0) return stars;
+  // buildClusters (star-field.ts:172-196).
+  const side = Math.sqrt(columns * rows);
+  const wantedClusters = obClamp(Math.round(side / OB_SKY.CLUSTER_SPACING), OB_SKY.MIN_CLUSTERS, OB_SKY.MAX_CLUSTERS);
+  const radius = obClamp(columns / 8, OB_SKY.MIN_CLUSTER_RADIUS, OB_SKY.MAX_CLUSTER_RADIUS);
+  const clusters = [];
+  for (let i = 0; i < wantedClusters; i += 1) {
+    for (let attempt = 0; attempt < OB_SKY.CENTRE_ATTEMPTS; attempt += 1) {
+      const column = Math.floor(sky.random() * columns);
+      const row = Math.floor(sky.random() * rows);
+      if (!sky.free(column, row)) continue;
+      if (options.halo && obVisualDistance(options.halo.center, {column, row}) < options.halo.radius) continue;
+      if (clusters.some((other) => obVisualDistance(other, {column, row}) < radius)) continue;
+      clusters.push({column, row, radius});
+      break;
+    }
+  }
+  const clustered = clusters.length > 0 ? Math.round(target * OB_SKY.CLUSTERED_SHARE) : 0;
+  for (let i = 0; i < clustered; i += 1) {
+    // placeClusterStar: squaring the roll packs members toward the core.
+    const cluster = clusters[i % clusters.length];
+    for (let attempt = 0; attempt < OB_SKY.PLACEMENT_ATTEMPTS; attempt += 1) {
+      const angle = sky.random() * Math.PI * 2;
+      const reach = cluster.radius * Math.pow(sky.random(), 2);
+      const column = Math.round(cluster.column + Math.cos(angle) * reach);
+      const row = Math.round(cluster.row + (Math.sin(angle) * reach) / OB_SKY.CELL_ASPECT);
+      if (!sky.free(column, row)) continue;
+      sky.place(column, row, obPickTier(OB_CLUSTER_TIERS, sky.random()));
+      break;
+    }
+  }
+  for (let i = 0; i < target - clustered; i += 1) {
+    for (let attempt = 0; attempt < OB_SKY.PLACEMENT_ATTEMPTS; attempt += 1) {
+      const column = Math.floor(sky.random() * columns);
+      const row = Math.floor(sky.random() * rows);
+      if (!sky.free(column, row)) continue;
+      sky.place(column, row, obPickTier(OB_FIELD_TIERS, sky.random()));
+      break;
+    }
+  }
+  return stars;
+}
+
+/**
+ * computeMarkClearSpans (mark-clear-space.ts:38-59) over the mark's real
+ * box.  The TUI follows the cross's silhouette per row because at 96×20
+ * the bounding box is nearly the whole canvas; here the mark is 88 px in
+ * a canvas hundreds of pixels wide, so the box IS the silhouette's
+ * envelope and one rectangle — widened by the same 4 columns and 2 rows
+ * — is the same reservation.
+ */
+function obMarkClearSpans(box, columns, rows) {
+  const spans = [];
+  const from = box.col0 - OB_SKY.CLEAR_GAP_COLUMNS;
+  const to = box.col1 + OB_SKY.CLEAR_GAP_COLUMNS;
+  for (let row = box.row0 - OB_SKY.CLEAR_GAP_ROWS; row <= box.row1 + OB_SKY.CLEAR_GAP_ROWS; row += 1) {
+    if (row < 0 || row >= rows) continue;
+    spans.push({row, from, to});
+  }
+  return spans;
+}
+
+/** Resolve the four tier colours off the live theme once per build. */
+function obSkyColours() {
+  const cs = getComputedStyle(document.documentElement);
+  const out = {};
+  for (const tier of Object.keys(OB_TIER_LOOK)) {
+    out[tier] = (cs.getPropertyValue(OB_TIER_LOOK[tier].token) || '#8899aa').trim();
+  }
+  return out;
+}
+
+/** Build the field for the canvas's current size. */
+function obSkyBuild() {
+  const canvas = OBSKY.canvas;
+  if (!canvas) return;
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  if (w <= 0 || h <= 0) return;
+  OBSKY.dpr = Math.min(2, window.devicePixelRatio || 1);
+  OBSKY.w = w; OBSKY.h = h;
+  canvas.width = Math.round(w * OBSKY.dpr);
+  canvas.height = Math.round(h * OBSKY.dpr);
+  OBSKY.ctx = canvas.getContext('2d');
+  OBSKY.colours = obSkyColours();
+  const cell = OB_SKY.CELL_PX;
+  const columns = Math.max(1, Math.floor(w / cell));
+  const rows = Math.max(1, Math.floor(h / cell));
+  // The mark, centred, in cells — plus the wordmark and tagline block
+  // under it, which the sky must also keep clear.
+  const markCells = Math.ceil(OB_SKY.MARK_PX / cell);
+  const blockRows = markCells + 6;
+  const centreCol = Math.floor(columns / 2);
+  const centreRow = Math.floor(rows / 2) - Math.floor(blockRows / 2) + Math.floor(markCells / 2);
+  const box = {
+    col0: centreCol - Math.ceil(markCells / 2), col1: centreCol + Math.ceil(markCells / 2),
+    row0: centreRow - Math.ceil(markCells / 2), row1: centreRow + Math.ceil(markCells / 2) + 5,
+  };
+  const verticalRadius = Math.max(0, rows / 2 - 1);
+  const haloRadius = Math.min(verticalRadius * OB_SKY.CELL_ASPECT, Math.floor(columns / 2) - 2);
+  const halo = haloRadius >= (box.col1 - box.col0) / 2 + OB_SKY.CLEAR_GAP_COLUMNS
+    ? {center: {column: centreCol, row: centreRow}, radius: haloRadius, count: OB_SKY.HALO_COUNT}
+    : null;
+  const field = obComputeStarField({
+    columns, rows, clearSpans: obMarkClearSpans(box, columns, rows),
+    density: 1, seed: OB_SKY.DEFAULT_SEED, maxStars: OB_SKY.MAX_STARS,
+    halo: halo || undefined,
+  });
+  OBSKY.cx = (centreCol + 0.5) * cell;
+  OBSKY.cy = (centreRow + 0.5) * cell;
+  // One more mulberry32, seeded off the field seed, so the per-star
+  // motion is as reproducible as the placement is.
+  const rnd = obMulberry32(OB_SKY.DEFAULT_SEED + 1);
+  OBSKY.stars = field.slice(0, OB_SKY.MAX_STARS).map((star) => {
+    const look = OB_TIER_LOOK[star.tier];
+    const x = (star.column + 0.5) * cell;
+    const y = (star.row + 0.5) * cell;
+    return {
+      x, y, tier: star.tier, halo: star.halo,
+      r: look.r, a: look.a, drift: look.drift,
+      phase: rnd() * Math.PI * 2,
+      hz: 0.12 + rnd() * 0.2,                     // [0.12, 0.32)
+      angle: Math.atan2(y - OBSKY.cy, x - OBSKY.cx),
+      dist: Math.hypot(x - OBSKY.cx, y - OBSKY.cy),
+    };
+  });
+}
+
+/** One frame. At 220 stars this is a clearRect plus 220 arc fills. */
+function obSkyDraw(elapsed) {
+  const ctx = OBSKY.ctx;
+  if (!ctx) return;
+  const dpr = OBSKY.dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, OBSKY.w, OBSKY.h);
+  const t = elapsed / 1000;
+  // Whole-field parallax, scaled per tier: the bright stars are near, so
+  // they move; the faint dust barely does. That is the depth the four
+  // tiers already encode, made visible.
+  const dx = 6 * Math.sin(t / 23);
+  const dy = 4 * Math.sin(t / 31);
+  const spin = (0.6 * Math.PI / 180) * t;   // 0.6°/s about the mark
+  for (const star of OBSKY.stars) {
+    const wave = Math.sin(2 * Math.PI * star.hz * t + star.phase);
+    const alpha = star.a * (0.72 + 0.28 * wave);
+    const radius = star.r * (0.9 + 0.15 * wave);
+    let x, y;
+    if (star.halo) {
+      const angle = star.angle + spin;
+      x = OBSKY.cx + Math.cos(angle) * star.dist;
+      y = OBSKY.cy + Math.sin(angle) * star.dist;
+    } else {
+      x = star.x + dx * star.drift;
+      y = star.y + dy * star.drift;
+    }
+    ctx.globalAlpha = Math.max(0, Math.min(1, alpha));
+    ctx.fillStyle = OBSKY.colours[star.tier];
+    ctx.beginPath();
+    ctx.arc(x, y, Math.max(0.3, radius), 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  OBSKY.frames += 1;
+}
+
+function obSkyFrame(now) {
+  OBSKY.raf = 0;
+  if (!OBSKY.running) return;
+  // 30 fps by skipping alternate ticks — the budget, not a smoothing.
+  OBSKY.tick += 1;
+  if ((OBSKY.tick & 1) === 0) obSkyDraw(now - OBSKY.t0);
+  OBSKY.raf = requestAnimationFrame(obSkyFrame);
+}
+
+function obSkyStart() {
+  const canvas = document.getElementById('ob-sky');
+  if (!canvas) return;
+  if (OBSKY.canvas === canvas && OBSKY.stars.length) { obSkyResume(); return; }
+  OBSKY.canvas = canvas;
+  OBSKY.frames = 0;
+  OBSKY.tick = 0;
+  OBSKY.t0 = performance.now();
+  obSkyBuild();
+  if (!OBSKY.mq && window.matchMedia) {
+    OBSKY.mq = window.matchMedia('(prefers-reduced-motion: reduce)');
+    // Re-check on the media query's own change event, not once at load.
+    const relisten = () => { OBSKY.reduced = OBSKY.mq.matches; obSkyStop(); if (OB.open && OB.step === 'intro') { render(); } };
+    if (OBSKY.mq.addEventListener) OBSKY.mq.addEventListener('change', relisten);
+  }
+  OBSKY.reduced = !!(OBSKY.mq && OBSKY.mq.matches);
+  if (OBSKY.reduced) {
+    // Exactly one frame at t=0, no rAF ever scheduled. The tagline is
+    // rendered complete by obIntroHTML for the same reason.
+    obSkyDraw(0);
+    OBSKY.running = false;
+    return;
+  }
+  obSkyResume();
+}
+
+function obSkyResume() {
+  if (OBSKY.reduced || OBSKY.running || document.hidden) return;
+  OBSKY.running = true;
+  OBSKY.raf = requestAnimationFrame(obSkyFrame);
+}
+
+/** Stop on leaving the intro, on hide, and on close. A leaked rAF
+ *  closure would keep painting behind every later screen. */
+function obSkyStop() {
+  OBSKY.running = false;
+  if (OBSKY.raf) { cancelAnimationFrame(OBSKY.raf); OBSKY.raf = 0; }
+  if (OBSKY.typer) { clearInterval(OBSKY.typer); OBSKY.typer = 0; }
+}
+
+/** Two-stage advance (use-intro-input.ts:57-67): the first input finishes
+ *  the reveal, the second dismisses. A splash that cannot be hurried is a
+ *  wait; one that vanishes on the key meant to hurry it is never read. */
+function obIntroAdvance() {
+  if (!OB.open || OB.step !== 'intro') return;
+  if (!OB.introTyped) {
+    OB.introTyped = true;
+    if (OBSKY.typer) { clearInterval(OBSKY.typer); OBSKY.typer = 0; }
+    OBSKY.typed = OB_COPY.tagline.length;
+    obPaintTagline();
+    return;
+  }
+  // Recorded as it is dismissed, not at the end of the flow
+  // (onboarding-screen.tsx:109-115).
+  obStampOnce('introSeenAt');
+  obSkyStop();
+  obDispatch({type:'onboarding_step_set', step:'choose'});
+}
+
+function obPaintTagline() {
+  const el = document.getElementById('ob-tag');
+  if (!el) return;
+  const done = OB.introTyped || OBSKY.typed >= OB_COPY.tagline.length;
+  el.textContent = OB_COPY.tagline.slice(0, done ? OB_COPY.tagline.length : OBSKY.typed);
+  const cur = document.getElementById('ob-cur');
+  if (cur) cur.textContent = done ? '' : '▌';
+}
+
+/** TAGLINE_MS_PER_CHAR = 45 (onboarding-intro-step.tsx:12). */
+function obStartTyping() {
+  if (OBSKY.typer) clearInterval(OBSKY.typer);
+  if (OBSKY.reduced || OB.introTyped) { OBSKY.typed = OB_COPY.tagline.length; obPaintTagline(); return; }
+  OBSKY.typed = 0;
+  obPaintTagline();
+  OBSKY.typer = setInterval(() => {
+    OBSKY.typed += 1;
+    obPaintTagline();
+    if (OBSKY.typed >= OB_COPY.tagline.length) { clearInterval(OBSKY.typer); OBSKY.typer = 0; OB.introTyped = true; }
+  }, OB_COPY.taglineMsPerChar);
+}
+
+/** The intro screen. No header — onboarding-step-body.tsx:62-64. */
+function obIntroHTML() {
+  const reduced = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  const done = reduced || OB.introTyped;
+  return '<div id="ob-intro">'
+    + '<canvas id="ob-sky"></canvas>'
+    + '<div class="ob-introc">'
+      + '<span class="ob-markbig">' + MARK_COLOR.replace('width="16" height="16"', 'width="88" height="88"') + '</span>'
+      + '<span class="ob-word">' + esc(OB_COPY.wordmark) + '</span>'
+      + '<span class="ob-tag"><span id="ob-tag">' + esc(done ? OB_COPY.tagline : '') + '</span>'
+      + '<span class="ob-cur" id="ob-cur">' + (done ? '' : '▌') + '</span></span>'
+      + '<span class="ob-any">' + esc(OB_COPY.pressAnyKey) + '</span>'
+    + '</div></div>';
+}
+
+/* ============================================================
+   The download.  It does NOT live in the wizard: the strip under the
+   toolbar owns it, and the wizard's own download screen renders the same
+   slice.  That is the literal reading of the copy this screen already
+   carries — "the download keeps running; progress shows in the top bar".
+   ============================================================ */
+
+/**
+ * formatBytes (use-transfer-rate.ts:52-57) with BINARY divisors.
+ *
+ * The deliberate divergence, and the reason: the CLI's own `formatGb`
+ * (src/cli/models-handlers.ts:46-48) divides by 1024³, so the `4.70 GB`
+ * on the wire is 4.70 GiB.  Parsing that and re-rendering it through the
+ * TUI's decimal formatter prints `5.0 GB` for a model whose catalogue
+ * size label and whose source line both say 4.7 GB — a number nobody
+ * wrote.  Same base in and out, so the text round-trips.
+ */
+function dlBytes(bytes) {
+  if (bytes >= 1073741824) return (bytes / 1073741824).toFixed(1) + ' GB';
+  if (bytes >= 1048576) return (bytes / 1048576).toFixed(1) + ' MB';
+  if (bytes >= 1024) return Math.round(bytes / 1024) + ' kB';
+  return Math.round(bytes) + ' B';
+}
+
+/** formatEta (use-transfer-rate.ts:59-67), verbatim. */
+function dlEta(seconds) {
+  if (seconds === null || seconds === undefined) return 'estimating…';
+  if (seconds < 60) return 'less than a minute left';
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return 'about ' + minutes + ' minute' + (minutes === 1 ? '' : 's') + ' left';
+  const hours = Math.floor(minutes / 60);
+  return 'about ' + hours + 'h ' + (minutes % 60) + 'm left';
+}
+
+/** capLabel (download-chip.tsx:33-38): 30 columns, ellipsis included. */
+function dlCapLabel(label) {
+  const s = String(label);
+  return s.length <= 30 ? s : s.slice(0, 29) + '…';
+}
+function dlJobLabel(job) {
+  return dlCapLabel(job.kind === 'runtime' ? 'llama.cpp' : job.id);
+}
+
+/** A bar of `n` segments, filled to `percent`. */
+function dlBarHTML(percent, width) {
+  const p = Math.min(100, Math.max(0, percent || 0));
+  const filled = Math.round((p / 100) * width);
+  return '<b>' + '█'.repeat(filled) + '</b><i>' + '░'.repeat(width - filled) + '</i>';
+}
+
+/** waitOrJumpPullStatus (onboarding-wait-or-jump-step.tsx:25-31). */
+function dlStatus() {
+  if (DL.job !== null) return 'running';
+  return DL.error !== null ? 'failed' : 'ready';
+}
+
+/** Reset the two phase rows for a fresh run. */
+function dlResetPhases(withRuntime) {
+  // No runtime job in the queue means the backend is already installed,
+  // which is exactly the state the TUI draws as a passed phase.
+  DL.runtime = {state: withRuntime ? 'waiting' : 'done', percent: 0, transferredBytes: 0, totalBytes: 0};
+  DL.weights = {state: 'waiting', percent: 0, transferredBytes: 0, totalBytes: 0};
+}
+
+/**
+ * Queue one or more downloads. Main single-flights them (one child, one
+ * data dir), so a runtime phase and a weights phase are two jobs in
+ * order — the strip shows the head and says how many are behind it.
+ */
+function dlStart(jobs) {
+  DL.queue = jobs.slice();
+  DL.error = null;
+  DL.rate = null; DL.last = null;
+  dlResetPhases(jobs.some((j) => j.kind === 'runtime'));
+  dlNext();
+}
+
+function dlNext() {
+  const job = DL.queue.shift();
+  if (!job) { DL.job = null; render(); return; }
+  DL.job = Object.assign({percent: 0, transferredBytes: 0, totalBytes: 0}, job);
+  DL.rate = null; DL.last = null;
+  if (job.kind === 'runtime') DL.runtime.state = 'active';
+  else { DL.runtime.state = 'done'; DL.weights.state = 'active'; }
+  render();
+  if (!BR || DL.dry) return;
+  const started = job.kind === 'runtime' ? BR.modelsUpdateStream() : BR.modelsPull(job.id);
+  started.then((res) => {
+    if (res && res.ok === false) {
+      DL.job = null;
+      DL.error = res.error || 'could not start the download';
+      if (job.kind === 'runtime') DL.runtime.state = 'done'; else DL.weights.state = 'waiting';
+      render();
+    }
+  });
+}
+
+/** One structured `cli:pull` sample. Never interpolated between them. */
+function dlOnPull(ev) {
+  if (!ev || !DL.job) return false;
+  // The projector rides the same stream under its own kind and is not
+  // this bar: folding its percent into the weights bar would report a
+  // download the operator is not waiting on.
+  if (ev.kind === 'projector') return false;
+  if (ev.done) {
+    const finished = DL.job;
+    DL.job = null;
+    if (finished.kind === 'runtime') {
+      DL.runtime.state = 'done';
+      // `models update` exits 0 without downloading when the version
+      // file already names the latest tag: no bytes, so no claim.
+      if (ev.ok === false) DL.error = ev.error || 'the llama.cpp runtime download failed';
+    } else {
+      DL.weights.state = 'done';
+      if (ev.ok) DL.error = null;
+      else DL.error = ev.error || 'the download failed';
+    }
+    obPullFinished(finished, ev);
+    return true;
+  }
+  if (typeof ev.percent !== 'number') return false;
+  const job = DL.job;
+  job.percent = ev.percent;
+  if (typeof ev.totalBytes === 'number' && ev.totalBytes > 0) {
+    job.totalBytes = ev.totalBytes;
+    job.transferredBytes = ev.transferredBytes || 0;
+    // The rate is the slope between two REAL samples, smoothed the way
+    // useTransferRate smooths it (SMOOTHING 0.3) — nothing else.
+    const now = Date.now();
+    if (DL.last && job.transferredBytes >= DL.last.bytes) {
+      const seconds = (now - DL.last.at) / 1000;
+      if (seconds > 0) {
+        const sample = (job.transferredBytes - DL.last.bytes) / seconds;
+        DL.rate = DL.rate === null ? sample : DL.rate + 0.3 * (sample - DL.rate);
+      }
+    }
+    DL.last = {bytes: job.transferredBytes, at: now};
+  }
+  const phase = job.kind === 'runtime' ? DL.runtime : DL.weights;
+  phase.state = 'active';
+  phase.percent = job.percent;
+  phase.transferredBytes = job.transferredBytes;
+  phase.totalBytes = job.totalBytes;
+  renderDlbar();
+  if (OB.open && OB.step === 'local_download') renderOverlays();
+  if (OB.open && OB.step === 'wait_or_jump') renderOverlays();
+  return true;
+}
+
+function dlEtaSeconds() {
+  const job = DL.job;
+  if (!job || !DL.rate || DL.rate <= 0 || !job.totalBytes) return null;
+  return Math.round(Math.max(0, job.totalBytes - job.transferredBytes) / DL.rate);
+}
+
+/**
+ * The strip.  download-chip.tsx's own shape: `⇣`, the label, a
+ * ten-segment bar, the percent, the ETA — plus the queue depth, which
+ * the chip never needed because the TUI's orchestrator runs one pull.
+ */
+function renderDlbar() {
+  const el = document.getElementById('dlbar');
+  if (!el) return;
+  const job = DL.job;
+  if (!job) {
+    el.hidden = true;
+    el.innerHTML = '';
+    document.documentElement.style.setProperty('--dlbar-h', '0px');
+    return;
+  }
+  const percent = Math.min(100, Math.max(0, Math.round(job.percent || 0)));
+  const eta = dlEtaSeconds();
+  el.innerHTML = '<span class="dl-g">⇣</span>'
+    + '<span class="dl-l">' + esc(dlJobLabel(job)) + '</span>'
+    + '<span class="dl-bar">' + dlBarHTML(percent, 10) + '</span>'
+    + '<span class="dl-pct">' + percent + '%</span>'
+    + '<span class="dl-eta">' + esc(dlEta(eta)) + '</span>'
+    + (DL.queue.length ? '<span class="dl-q">· ' + DL.queue.length + ' more queued</span>' : '')
+    + '<button class="dl-x" data-act="dl:cancel">Cancel</button>';
+  el.hidden = false;
+  /* The overlay layer's top inset, so the wizard starts BELOW the strip.
+     Measured rather than assumed: it is the strip's bottom edge inside
+     #window, which is the toolbar's height plus the strip's own. */
+  const win = document.getElementById('window');
+  const inset = win ? Math.round(el.getBoundingClientRect().bottom - win.getBoundingClientRect().top) : 30;
+  document.documentElement.style.setProperty('--dlbar-h', Math.max(0, inset) + 'px');
+}
+
+/** OnboardingDownloadProgress (onboarding-download-progress.tsx:63-99). */
+function obProgressHTML() {
+  if (DL.job === null && DL.error !== null) {
+    return '<div class="ob-err">✗  ' + esc(DL.error) + '</div>';
+  }
+  const row = (label, phase) => {
+    const percent = phase.state === 'done' ? 100 : (phase.percent || 0);
+    const trailing = phase.state === 'done' ? 'done'
+      : phase.state === 'active' && phase.totalBytes > 0
+        ? Math.round(percent) + '%   ' + dlBytes(phase.transferredBytes) + ' / ' + dlBytes(phase.totalBytes)
+        : phase.state === 'active' ? Math.round(percent) + '%' : 'waiting';
+    return '<div class="ob-phase ' + phase.state + '"><span class="pl">' + esc(label) + '</span>'
+      + '<span class="pb">' + dlBarHTML(percent, 36) + '</span>'
+      + '<span class="pt">' + esc(trailing) + '</span></div>';
+  };
+  const rate = DL.job
+    ? (DL.rate ? dlBytes(DL.rate) + '/s · ' : '') + dlEta(dlEtaSeconds())
+    : OB_COPY.starting;
+  return row(OB_COPY.phaseRuntime, DL.runtime) + row(OB_COPY.phaseWeights, DL.weights)
+    + '<div class="ob-rate">' + esc(rate) + '</div>';
+}
+
+/* ---------------- rows and screens ---------------- */
+
+/** rowPrefix (onboarding-rows.ts): `›  ` selected, three spaces otherwise. */
+function obRow(index, selected, label, detail, extraClass) {
+  return '<button class="ob-row' + (selected ? ' on' : '') + (extraClass ? ' ' + extraClass : '')
+    + '" data-obrow="' + index + '">'
+    + '<span class="mk">' + (selected ? '›' : '') + '</span>'
+    + '<span><span class="t">' + label + '</span>'
+    + (detail ? '<span class="d">' + detail + '</span>' : '') + '</span></button>';
+}
+
+/** describeDownloadingModel (local-model-picks.ts:139-145). */
+function obModelLabel() {
+  if (!OB.localModelId) return 'the model';
+  const id = String(OB.localModelId);
+  return id.indexOf('custom-') === 0 ? id.replace(/^custom-/, '') : id;
+}
+
+/** configuredLabel (onboarding-screen.tsx:298-302). */
+function obConfiguredLabel() {
+  if (OB.outcome === 'local') return 'Local model ready';
+  if (OB.outcome === 'cloud') return OB_COPY.cloudReadyLabel;
+  return 'Backend ready';
+}
+
+/**
+ * The local pick rows.  buildLocalPickRows (local-model-picks.ts:124-131):
+ * the curated picks, then the Hugging Face row pinned OUTSIDE the window
+ * as the last cursor position.  Ordering is degraded — see the header
+ * note: fit rank, then size, and no row is starred.
+ */
+function obPickRows() {
+  const ram = OB.ram;
+  const models = OB.models.slice().sort((a, b) => {
+    const fa = fitFor(a.size, ram).rank, fb = fitFor(b.size, ram).rank;
+    if (fa !== fb) return fa - fb;
+    return (parseFloat(a.size) || 0) - (parseFloat(b.size) || 0);
+  });
+  const rows = models.map((model) => ({kind: 'model', model}));
+  rows.push({kind: 'hugging_face'});
+  return rows;
+}
+
+function obChooseHTML() {
+  const rows = OB_CHOICES.map((choice, i) =>
+    obRow(i, OB.cursor === i, esc(choice.label), esc(choice.detail[0]) + '<br>' + esc(choice.detail[1]))).join('');
+  return '<div class="ob-explain">' + esc(OB_COPY.chooseExplainer.join('\n')) + '</div>'
+    + '<div class="ob-list">' + rows + '</div>';
+}
+
+function obLocalPickHTML() {
+  const rows = obPickRows();
+  const models = rows.filter((r) => r.kind === 'model');
+  const onHf = OB.cursor >= models.length;
+  // windowLocalPicks: six rows, plus `↓ N more`.
+  const cursor = Math.min(OB.cursor, Math.max(0, models.length - 1));
+  const start = Math.max(0, Math.min(cursor - HF_PICK_WINDOW + 2, models.length - HF_PICK_WINDOW));
+  const visible = models.slice(start, start + HF_PICK_WINDOW);
+  const below = models.length - (start + visible.length);
+  const body = models.length
+    ? visible.map((row, i) => {
+        const at = start + i;
+        const model = row.model;
+        const fit = fitFor(model.size, OB.ram);
+        // The TUI's note() joins its parts with " · ". The parts the
+        // catalogue cannot give (★ recommended, the RAM figure, the
+        // warning tag, the description) are dropped, not invented.
+        const note = [model.size, model.context + ' context', fit.label]
+          .concat(model.downloaded ? ['already on disk'] : []).join(' · ');
+        return obRow(at, !onHf && at === OB.cursor,
+          '<span class="ob-mono">' + esc(model.id) + '</span>', esc(note));
+      }).join('')
+    : '<div class="ob-explain">' + (OB.busy ? 'reading the catalogue…' : 'no models listed') + '</div>';
+  const more = below > 0 ? '<div class="ob-explain">' + esc('   ↓ ' + below + ' more') + '</div>' : '';
+  const hf = obRow(models.length, onHf, esc(HF_ROW_LABEL),
+    esc('paste an owner/repo id or a huggingface.co URL'));
+  return '<div class="ob-explain">'
+      + esc('One download, then it runs offline. This machine reports ' + OB.ram + ' GB of RAM.') + '</div>'
+    + '<div class="ob-h">' + esc(OB_COPY.localHeading) + '</div>'
+    + '<div class="ob-list ob-models">' + body + '</div>' + more + hf;
+}
+
+/** hf-reference-editor.tsx, as its own step rather than a jump into Settings. */
+function obHfRefHTML() {
+  return '<div>' + esc('Which model? ') + '<span class="ob-explain">' + esc(HF_REF_TITLE_TAIL) + '</span></div>'
+    + '<div class="ob-explain">' + esc(HF_REF_EXAMPLES_LINE) + '</div>'
+    + '<div><input id="ob-hf-ref" class="ob-inp" autocomplete="off" spellcheck="false" placeholder="owner/repo" value="'
+      + esc(OB.hfReference) + '"' + (OB.busy ? ' disabled' : '') + '></div>'
+    + (!OB.busy && OB.hfReference.length > 0
+        ? '<div><button class="ob-offer" data-obact="hf:clear">[ clear ]</button></div>' : '')
+    + (OB.busy ? '<div class="ob-explain">asking huggingface.co…</div>' : '');
+}
+
+/** hf-pick-list.tsx, ported column for column. */
+function obHfPickHTML() {
+  const repo = OB.hfRepo;
+  const choices = (repo && repo.choices) || [];
+  const cursor = Math.min(OB.cursor, Math.max(0, choices.length - 1));
+  const start = Math.max(0, Math.min(cursor - HF_PICK_WINDOW + 2, choices.length - HF_PICK_WINDOW));
+  const visible = choices.slice(start, start + HF_PICK_WINDOW);
+  const below = choices.length - (start + visible.length);
+  const selected = choices[cursor];
+  const warning = selected ? llmHfRamWarning(selected.fileSizeGb, OB.ram) : null;
+  return '<div class="ob-h">' + esc(repo ? repo.repoId : '') + '</div>'
+    + visible.map((choice, i) => {
+        const at = start + i;
+        const line = (at === cursor ? '›  ' : '   ') + String(choice.filename).padEnd(44) + String(choice.sizeLabel).padStart(9);
+        return '<button class="ob-row' + (at === cursor ? ' on' : '') + '" data-obrow="' + at + '">'
+          + '<span class="mk"></span><span class="ob-mono">' + esc(line) + '</span></button>';
+      }).join('')
+    + (below > 0 ? '<div class="ob-explain">' + esc('   ↓ ' + below + ' more') + '</div>' : '')
+    + (repo && repo.hidden ? '<div class="ob-explain">' + esc('   ' + repo.hidden) + '</div>' : '')
+    + (repo && repo.mmproj ? '<div class="ob-explain">' + esc(HF_MMPROJ_LINE) + '</div>' : '')
+    + (warning ? '<div class="ob-warn ob-mono">' + esc('   ⚠ ' + warning) + '</div>' : '');
+}
+
+/** onboarding-url-step.tsx:8-19, both halves. */
+function obUrlHTML(kind) {
+  const chat = kind === 'chat';
+  return '<div>' + esc(chat ? OB_COPY.urlChatTitle : OB_COPY.urlEmbeddingTitle)
+      + '<span class="ob-explain">' + esc(OB_COPY.urlHealthNote) + '</span></div>'
+    + (chat ? '' : '<div class="ob-explain">' + esc(OB_COPY.urlEmbeddingNote) + '</div>')
+    + '<div><input id="ob-url" class="ob-inp" autocomplete="off" spellcheck="false" placeholder="'
+      + esc(chat ? OB_COPY.urlChatPlaceholder : OB_COPY.urlEmbeddingPlaceholder) + '" value="'
+      + esc(chat ? OB.chatUrl : OB.embeddingUrl) + '"' + (OB.busy ? ' disabled' : '') + '></div>'
+    + (OB.busy ? '<div class="ob-explain">' + esc(OB_COPY.urlProbing) + '</div>' : '');
+}
+
+/** onboarding-download-step.tsx:18-38 / :87-124. */
+function obDownloadHTML() {
+  const failed = dlStatus() === 'failed';
+  const label = obModelLabel();
+  // offerCloudMeanwhile: "hidden once a cloud provider is configured —
+  // nothing left to offer" (:110-111).
+  const offerCloud = !OB.cloudReady;
+  const cloud = offerCloud
+    ? '<button class="ob-offer cloud" data-obact="key:c">'
+      + (failed ? esc(OB_COPY.cloudOfferFailed) : esc(OB_COPY.cloudOffer[0]) + '<br>' + esc(OB_COPY.cloudOffer[1]))
+      + '<b>' + esc(OB_COPY.cloudOfferKey) + '</b></button>'
+    : '';
+  const skip = '<button class="ob-offer" data-obact="key:s">'
+    + (failed ? esc(OB_COPY.skipOfferFailed) : esc(OB_COPY.skipOffer[0]) + '<br>' + esc(OB_COPY.skipOffer[1]))
+    + '<b>' + esc(OB_COPY.skipOfferKey) + '</b></button>';
+  return '<div class="ob-explain">'
+      + esc(failed ? 'The ' + label + ' download failed.'
+                   : 'Downloading ' + label + '. You can leave this running.') + '</div>'
+    + obProgressHTML() + cloud + skip;
+}
+
+/** onboarding-wait-or-jump-step.tsx:38-55, :139-150. */
+function obWaitOrJumpHTML() {
+  const status = dlStatus();
+  const label = obModelLabel();
+  const rows = [
+    {label:'Start using the agent now', detail: status === 'running'
+      ? 'the download keeps running; progress shows in the top bar'
+      : status === 'ready' ? 'local and cloud are both set up' : 'the cloud model is ready to use'},
+    {label:'Add another cloud provider', detail:'one more key or endpoint, then straight back to this screen'},
+  ];
+  if (status === 'failed') rows.push({label:'Retry the download', detail:'starts the same download again'});
+  const cursor = OB.cursor % rows.length;
+  return '<div class="ob-h"><span class="ob-ok">✓</span>  ' + esc(OB_COPY.cloudReadyLabel) + '</div>'
+    + (status === 'running'
+        ? '<div class="ob-explain">' + esc('Still downloading ' + label + ' — it keeps running whichever row you pick.') + '</div>' : '')
+    + (status === 'ready'
+        ? '<div class="ob-h"><span class="ob-ok">✓</span>  ' + esc(label + ' downloaded — the local model is ready too') + '</div>' : '')
+    + (status === 'failed'
+        ? '<div class="ob-explain">' + esc('The ' + label + ' download failed — the cloud model still works.') + '</div>' : '')
+    + (status === 'ready' ? '' : obProgressHTML())
+    + '<div class="ob-list">' + rows.map((row, i) => obRow(i, cursor === i, esc(row.label), esc(row.detail))).join('') + '</div>';
+}
+
+/** onboarding-propose-step.tsx:11-33. */
+function obProposeHTML() {
+  const accept = OB.offer === 'local'
+    ? {label:'Set up local models too', detail:'one download, then it runs offline and costs nothing per token'}
+    : {label:'Set up a cloud model too', detail:'an API key and a model — about a minute, for the heavy turns'};
+  const rows = [accept, OB_COPY.proposeSkip];
+  return '<div class="ob-h"><span class="ob-ok">✓</span>  ' + esc(obConfiguredLabel()) + '</div>'
+    + '<div class="ob-explain">' + esc(OB_COPY.proposeExplainer.join('\n')) + '</div>'
+    + '<div class="ob-list">'
+    + rows.map((row, i) => obRow(i, (OB.cursor % 2) === i, esc(row.label), esc(row.detail))).join('') + '</div>';
+}
+
+/** buildImportPickRows (import-step.ts:101-113): agents, then the import
+ *  action once at least one is ticked, then the skip row LAST. */
+function obImportRows() {
+  const rows = OB.importAgents.map((agent, index) => ({kind:'agent', index, agent}));
+  const picked = OB.importAgents.filter((a) => a.enabled).length;
+  if (picked > 0) rows.push({kind:'import', picked});
+  rows.push({kind:'skip'});
+  return rows;
+}
+/** importActionLabel (import-step.ts:87-89). */
+function obImportActionLabel(picked) {
+  return picked === 1 ? 'Import from 1 agent' : 'Import from ' + picked + ' agents';
+}
+
+function obImportPickHTML() {
+  const rows = obImportRows();
+  const cursor = OB.cursor % rows.length;
+  return '<div class="ob-explain">' + esc(OB_COPY.importExplainer.join('\n')) + '</div>'
+    + '<div class="ob-list">' + rows.map((row, i) => {
+        if (row.kind === 'agent') {
+          return obRow(i, cursor === i,
+            '<span class="box">' + (row.agent.enabled ? '[x]' : '[ ]') + '</span>' + esc(row.agent.label),
+            esc(row.agent.dir));
+        }
+        if (row.kind === 'import') return obRow(i, cursor === i, esc(obImportActionLabel(row.picked)), '');
+        return obRow(i, cursor === i, esc(OB_COPY.importSkipLabel), esc(OB_COPY.importSkipDetail));
+      }).join('') + '</div>'
+    + (OB.busy ? '<div class="ob-explain">' + esc(OB_COPY.importScanning) + '</div>' : '');
+}
+
+/** summarizeImportReport (import-step.ts:167-189) + reportHeadline (:200-212). */
+function obImportSummary(report) {
+  const byKind = [];
+  const index = {};
+  for (const item of (report.items || [])) {
+    if (!index[item.kind]) { index[item.kind] = {migrated:0, skipped:0, conflict:0, error:0}; byKind.push(item.kind); }
+    if (index[item.kind][item.status] !== undefined) index[item.kind][item.status] += 1;
+  }
+  const migratedLabel = report.executed ? 'migrated' : 'to migrate';
+  const lines = [];
+  for (const kind of byKind) {
+    const counts = index[kind];
+    const parts = [];
+    if (counts.migrated > 0) parts.push(counts.migrated + ' ' + migratedLabel);
+    if (counts.skipped > 0) parts.push(counts.skipped + ' skipped');
+    if (counts.conflict > 0) parts.push(counts.conflict + ' in conflict');
+    if (counts.error > 0) parts.push(counts.error + ' failed');
+    if (!parts.length) continue;
+    lines.push(kind + ': ' + parts.join(', '));
+  }
+  return lines;
+}
+function obImportHeadline(report, executed) {
+  if (!report) return '';
+  const s = report.summary;
+  if (executed) {
+    return s.error > 0
+      ? '⚠  Imported with ' + s.error + ' failure' + (s.error === 1 ? '' : 's')
+      : '✓  Imported';
+  }
+  return (s.migrated + s.conflict) > 0 ? OB_COPY.importPreviewActionable : OB_COPY.importPreviewNothing;
+}
+function obImportReportHTML(executed) {
+  const report = OB.importReport;
+  return '<div class="ob-h">' + esc(obImportHeadline(report, executed)) + '</div>'
+    + (report ? '<div class="ob-explain">' + esc(obImportSummary(report).join('\n')) + '</div>' : '')
+    + (OB.busy ? '<div class="ob-explain">' + esc(OB_COPY.importRunning) + '</div>' : '');
+}
+
+/**
+ * The cloud step IS the add-provider wizard — same rows, same upsert,
+ * same verification — rendered on the wizard layer instead of inside the
+ * anchored popover `selShell` builds, because there is no model chip on
+ * screen during first run for a popover to hang off.
+ */
+function obWizardHTML() {
+  if (WIZ.phase === 'pick_kind' || !WIZ.row) {
+    const taken = {};
+    selProviders().forEach((p) => { taken[p.id] = 1; });
+    return '<div class="ob-wiz"><div class="ob-wizlist">' + KIND_ROWS.map((k, i) =>
+      '<button class="modelrow' + (taken[k.id] ? ' dim' : '') + '" data-wiz-kind="' + i + '">'
+      + '<span class="col"><span class="nm">' + esc(k.label) + '</span>'
+      + '<span class="cap">' + esc(k.custom ? 'you supply the URL' : k.baseUrl || k.kind)
+      + (taken[k.id] ? ' · already configured' : '') + '</span></span></button>').join('')
+      + '</div>'
+      // Esc is the TUI's way out of the list; the desktop needs a control
+      // for it too, and it routes through the same action.
+      + '<div class="ob-foot"><button class="btn btn-g" data-act="wiz:cancel">Back</button><span class="grow"></span></div>'
+      + '</div>';
+  }
+  const k = WIZ.row;
+  const verifying = WIZ.phase === 'verifying';
+  return '<div class="ob-wiz"><div class="ob-h">' + esc(k.label) + '</div>'
+    + (k.custom ? '<label class="ob-explain">API base URL</label>'
+        + '<input class="ob-inp" id="wiz-url" placeholder="https://host/v1" value="' + esc(WIZ.baseUrl) + '">' : '')
+    + '<label class="ob-explain">API key — ' + esc(k.label.split(' (')[0])
+      + (k.env ? ' · saved to .env as ' + esc(k.env) + ' (mode 0600)' : '') + '</label>'
+    + '<input class="ob-inp" id="wiz-key" type="password" value="' + esc(WIZ.apiKey) + '">'
+    + (verifying ? '<div class="ob-explain">checking the key against the provider’s model list…</div>' : '')
+    + (WIZ.error ? '<div class="ob-err">' + esc(WIZ.error) + '</div>' : '')
+    + '<div class="ob-foot"><button class="btn btn-g" data-act="wiz:back"' + (verifying ? ' disabled' : '') + '>Back</button>'
+    + '<span class="grow"></span>'
+    + '<button class="btn btn-p" data-act="wiz:next"' + (verifying ? ' disabled' : '') + '>'
+    + (verifying ? 'Verifying…' : 'Next') + '</button></div></div>';
+}
+
+/** The whole surface. The intro draws no header and no column. */
+function obHTML() {
+  if (OB.step === 'intro') {
+    return '<div id="onboarding" class="ob-intro-layer">' + obIntroHTML() + obHintsHTML() + '</div>';
+  }
+  let body = '';
+  if (OB.step === 'choose') body = obChooseHTML();
+  else if (OB.step === 'local_pick') body = obLocalPickHTML();
+  else if (OB.step === 'local_hf_ref') body = obHfRefHTML();
+  else if (OB.step === 'local_hf_pick') body = obHfPickHTML();
+  else if (OB.step === 'local_download') body = obDownloadHTML();
+  else if (OB.step === 'cloud') body = obWizardHTML();
+  else if (OB.step === 'custom_chat_url') body = obUrlHTML('chat');
+  else if (OB.step === 'custom_embedding_url') body = obUrlHTML('embedding');
+  else if (OB.step === 'propose_second') body = obProposeHTML();
+  else if (OB.step === 'wait_or_jump') body = obWaitOrJumpHTML();
+  else if (OB.step === 'import_pick') body = obImportPickHTML();
+  else if (OB.step === 'import_preview') body = obImportReportHTML(false);
+  else if (OB.step === 'import_done') body = obImportReportHTML(true);
+  else body = '<div class="ob-explain">' + esc(OB_SUBTITLES[OB.step] || '') + '</div>';
+  const err = OB.error ? '<div class="ob-err">' + esc(OB.error) + '</div>' : '';
+  return '<div id="onboarding"><div class="ob">' + obHeadHTML() + body + err + '</div>' + obHintsHTML() + '</div>';
+}
+
+/* ============================================================
+   The key router.  ONE table, transcribing onboarding-step-keys.ts
+   (:61-428) and onboarding-key-bindings.ts (:33-73).  Every clickable
+   row calls it with a synthesised key, which is the invariant those
+   files exist to hold: the mouse and the keyboard cannot drift because
+   there is only one implementation for them to drift between.
+   ============================================================ */
+
+/** A key object in the shape the transcription expects. */
+function obSynth(spec) {
+  const k = {upArrow:false, downArrow:false, return:false, escape:false, ctrl:false};
+  if (spec === 'up') k.upArrow = true;
+  else if (spec === 'down') k.downArrow = true;
+  else if (spec === 'enter') k.return = true;
+  else if (spec === 'esc') k.escape = true;
+  return {input: (spec === 'space') ? ' ' : (spec.length === 1 ? spec : ''), key: k};
+}
+/**
+ * Drive the flow from a spec string exactly as a key would — the intro's
+ * two-stage advance and the editors' own Enter/Escape included, so a
+ * driven pass cannot reach a transition the keyboard cannot.
+ */
+function obPress(spec) {
+  const s = obSynth(String(spec));
+  if (OB.step === 'intro') { obIntroAdvance(); return true; }
+  if (obStepOwnsKeyboard(OB.step)) {
+    if (s.key.escape) { obOwnEscape(); return true; }
+    if (s.key.return) { obOwnEnter(); return true; }
+    return false;
+  }
+  return obKey(s.input, s.key);
+}
+
+/** handleOnboardingStepKey (onboarding-step-keys.ts:61-89). */
+function obKey(input, key) {
+  if (!OB.open) return false;
+  switch (OB.step) {
+    case 'choose': return obChooseKey(input, key);
+    case 'local_pick': return obLocalPickKey(input, key);
+    case 'local_hf_pick': return obHfPickKey(input, key);
+    case 'local_download': return obDownloadKey(input, key);
+    case 'wait_or_jump': return obWaitOrJumpKey(input, key);
+    case 'propose_second': return obProposeKey(input, key);
+    case 'import_pick': return obImportPickKey(input, key);
+    case 'import_preview': return obImportPreviewKey(input, key);
+    case 'import_done': return obImportDoneKey(input, key);
+    case 'cloud': return obCloudKey(input, key);
+    default: return false;
+  }
+}
+
+/** handleOnboardingKey (onboarding-key-bindings.ts:33-73) + pickBackend. */
+function obChooseKey(input, key) {
+  // Ctrl+C is deliberately never claimed.
+  if (key.ctrl && input === 'c') return false;
+  if (key.escape) { obDispatch({type:'onboarding_finished', outcome:'skipped'}); return true; }
+  if (key.upArrow || input === 'k') { obDispatch({type:'onboarding_cursor_moved', delta:-1}); return true; }
+  if (key.downArrow || input === 'j') { obDispatch({type:'onboarding_cursor_moved', delta:1}); return true; }
+  if (key.return) {
+    const choice = OB_CHOICES[OB.cursor];
+    if (choice) obPickBackend(choice.id);
+    return true;
+  }
+  const digit = parseInt(input, 10);
+  if (Number.isInteger(digit) && digit >= 1 && digit <= OB_CHOICES.length) {
+    obDispatch({type:'onboarding_cursor_set', cursor: digit - 1});
+    obPickBackend(OB_CHOICES[digit - 1].id);
+    return true;
+  }
+  // Every other key is swallowed: nothing is behind this surface.
+  return true;
+}
+
+/** pickBackend (onboarding-step-keys.ts:95-115). */
+function obPickBackend(choice) {
+  if (choice === 'cloud') { obOpenCloudWizard(); obDispatch({type:'onboarding_step_set', step:'cloud'}); return; }
+  if (choice === 'custom') { obDispatch({type:'onboarding_step_set', step:'custom_chat_url'}); return; }
+  // Managed mode is recorded NOW so a quit mid-download does not lose
+  // the choice; the model id follows when the pull completes.
+  if (BR) BR.useManagedMode();
+  obDispatch({type:'onboarding_step_set', step:'local_pick'});
+}
+
+/** handleLocalPickKey (:129-158). */
+function obLocalPickKey(input, key) {
+  const rows = obPickRows();
+  if (key.escape) { obDispatch({type:'onboarding_step_set', step:'choose'}); return true; }
+  if (key.upArrow || input === 'k') { obDispatch({type:'onboarding_cursor_moved', delta:-1, length:rows.length}); return true; }
+  if (key.downArrow || input === 'j') { obDispatch({type:'onboarding_cursor_moved', delta:1, length:rows.length}); return true; }
+  if (key.return) {
+    const row = rows[OB.cursor % Math.max(1, rows.length)];
+    if (!row) return true;
+    if (row.kind === 'hugging_face') { obDispatch({type:'onboarding_step_set', step:'local_hf_ref'}); return true; }
+    obDispatch({type:'onboarding_local_model_picked', modelId: row.model.id});
+    obStartLocalPull(row.model.id, row.model.downloaded);
+    return true;
+  }
+  return false;
+}
+
+/** handleHfPickKey (onboarding-hf-keys.ts) — the file list. */
+function obHfPickKey(input, key) {
+  const choices = (OB.hfRepo && OB.hfRepo.choices) || [];
+  if (key.escape) { obDispatch({type:'onboarding_step_set', step:'local_hf_ref'}); return true; }
+  if (key.upArrow || input === 'k') { obDispatch({type:'onboarding_cursor_moved', delta:-1, length:choices.length}); return true; }
+  if (key.downArrow || input === 'j') { obDispatch({type:'onboarding_cursor_moved', delta:1, length:choices.length}); return true; }
+  if (key.return) { obHfAdd(); return true; }
+  return false;
+}
+
+/** handleDownloadKey (:160-196). */
+function obDownloadKey(input, key) {
+  if (input === 'c' && !key.ctrl) {
+    // Hidden once a cloud provider is configured — nothing left to offer.
+    if (OB.cloudReady) return true;
+    obOpenCloudWizard();
+    obDispatch({type:'onboarding_cloud_meanwhile_opened'});
+    return true;
+  }
+  if (input === 's' && !key.ctrl) {
+    // Outcome "local" because local is the backend they committed to;
+    // the pull survives this screen and reports in the top strip.
+    // skipSecondOffer because this screen already pitched cloud.
+    obDispatch({type:'onboarding_finished', outcome:'local', skipSecondOffer:true});
+    return true;
+  }
+  return false;
+}
+
+/** handleWaitOrJumpKey (:198-240). */
+function obWaitOrJumpKey(input, key) {
+  const rows = dlStatus() === 'failed' ? 3 : 2;
+  if (key.upArrow || key.downArrow || input === 'j' || input === 'k') {
+    obDispatch({type:'onboarding_cursor_moved', delta: (key.upArrow || input === 'k') ? -1 : 1, length: rows});
+    return true;
+  }
+  if (key.return) {
+    const row = OB.cursor % rows;
+    if (row === 0) { obDispatch({type:'onboarding_finished', outcome: OB.outcome || 'cloud'}); return true; }
+    if (row === 1) { obOpenCloudWizard(); obDispatch({type:'onboarding_cloud_meanwhile_opened'}); return true; }
+    if (OB.localModelId) obStartLocalPull(OB.localModelId, false);
+    return true;
+  }
+  return false;
+}
+
+/** handleProposeKey (:242-284). */
+function obProposeKey(input, key) {
+  const skip = () => obDispatch({type:'onboarding_finished', outcome: OB.outcome || 'skipped'});
+  if (key.escape) { skip(); return true; }
+  if (key.upArrow || key.downArrow || input === 'j' || input === 'k') {
+    obDispatch({type:'onboarding_cursor_moved', delta: (key.upArrow || input === 'k') ? -1 : 1, length: 2});
+    return true;
+  }
+  if (key.return) {
+    if (OB.cursor % 2 !== 0) { skip(); return true; }
+    if (OB.offer === 'local') {
+      if (BR) BR.useManagedMode();
+      obDispatch({type:'onboarding_step_set', step:'local_pick'});
+      return true;
+    }
+    obOpenCloudWizard();
+    obDispatch({type:'onboarding_step_set', step:'cloud'});
+    return true;
+  }
+  return false;
+}
+
+/** finishImport (:286-291). */
+function obFinishImport() {
+  obDispatch({type:'onboarding_finished', outcome: OB.outcome || 'skipped'});
+}
+
+/** handleImportPickKey (:305-366). */
+function obImportPickKey(input, key) {
+  if (OB.busy) return true;
+  if (key.escape) { obFinishImport(); return true; }
+  const rows = obImportRows();
+  if (key.upArrow || key.downArrow || input === 'j' || input === 'k') {
+    obDispatch({type:'onboarding_cursor_moved', delta: (key.upArrow || input === 'k') ? -1 : 1, length: rows.length});
+    return true;
+  }
+  const toggle = input === ' ' && !key.ctrl;
+  if (!toggle && !key.return) return false;
+  const row = rows[OB.cursor % rows.length];
+  if (!row) return true;
+  if (row.kind === 'agent') {
+    // Space and Enter both flip the tick — on a checkbox row there is
+    // nothing else Enter could honestly mean.
+    obDispatch({type:'onboarding_import_agent_toggled', index: row.index});
+    return true;
+  }
+  if (row.kind === 'skip') { if (!toggle) obFinishImport(); return true; }
+  if (toggle) return true;
+  // Straight to the dry run with the defaults — every non-secret domain
+  // of the ticked agents. The preview stays the gate before any write.
+  const options = obBuildImportOptions(OB.importAgents);
+  obDispatch({type:'onboarding_import_run_started', options});
+  obRunImport(options, false);
+  return true;
+}
+
+/** handleImportPreviewKey (:368-400). */
+function obImportPreviewKey(input, key) {
+  if (OB.busy) return true;
+  if (key.escape) { obDispatch({type:'onboarding_step_set', step:'import_pick'}); return true; }
+  if (key.return) {
+    const report = OB.importReport;
+    const actionable = report !== null && (report.summary.migrated + report.summary.conflict) > 0;
+    // Nothing to do is not a write to confirm: the flow ends here.
+    if (!actionable) { obFinishImport(); return true; }
+    obDispatch({type:'onboarding_import_run_started'});
+    obRunImport(OB.importOptions, true);
+    return true;
+  }
+  return false;
+}
+
+/** handleImportDoneKey (:402-413): any key hands over to the agent. */
+function obImportDoneKey(input, key) {
+  if (key.ctrl) return false;
+  obFinishImport();
+  return true;
+}
+
+/** The cloud step is the wizard; its own controls own its keys. */
+function obCloudKey(input, key) {
+  if (key.escape) {
+    if (WIZ.phase === 'configure' || WIZ.phase === 'verifying') {
+      if (WIZ.phase === 'verifying') return true;
+      WIZ.phase = 'pick_kind'; WIZ.error = null; render(); return true;
+    }
+    WIZ.phase = null;
+    obDispatch({type:'providers_wizard_closed'});
+    return true;
+  }
+  if (key.return && WIZ.phase === 'configure') { wizNext(); return true; }
+  return false;
+}
+
+/* ---------------- effects ---------------- */
+
+function obOpenCloudWizard() {
+  WIZ.phase = 'pick_kind'; WIZ.row = null; WIZ.apiKey = ''; WIZ.baseUrl = ''; WIZ.error = null; WIZ.forId = null;
+}
+
+async function obLoadModels() {
+  if (!BR) return;
+  OB.busy = true; OB.error = null; render();
+  // Embedding models are a separate daemon; the chat wizard does not
+  // offer them (chatModelsList subtracts the embedding catalogue by id).
+  const res = await BR.chatModelsList();
+  OB.busy = false;
+  if (!res || !res.ok) { OB.error = (res && res.error) || 'could not read the model catalogue'; render(); return; }
+  OB.models = res.models || [];
+  render();
+}
+
+/**
+ * Start the download for a picked model.  The runtime phase is probed
+ * for, never assumed: `models status` prints `binary ok|missing`
+ * (models-handlers.ts:202-204), and only a missing binary earns a
+ * `models update` in front of the weights.
+ */
+async function obStartLocalPull(id, alreadyDownloaded) {
+  if (!BR) return;
+  DL.error = null;
+  if (alreadyDownloaded) {
+    // Nothing to download: the TUI's pull-completion path straight away.
+    dlResetPhases(false);
+    DL.weights.state = 'done';
+    render();
+    await obActivateLocal(id);
+    return;
+  }
+  let needsRuntime = false;
+  try {
+    const st = await BR.modelsStatus();
+    if (st && st.ok && st.status && /binary\s+missing/.test(String(st.status.backend || ''))) needsRuntime = true;
+  } catch (e) { needsRuntime = false; }
+  const jobs = [];
+  if (needsRuntime) jobs.push({kind:'runtime', id:'llama.cpp'});
+  jobs.push({kind:'weights', id});
+  dlStart(jobs);
+}
+
+/** The TUI's pull-completion path: write the model and start the daemon. */
+async function obActivateLocal(id) {
+  if (!BR) return;
+  const res = await BR.selectLocalModel(id);
+  if (!res || !res.ok) {
+    DL.error = (res && res.error) || 'could not select the model';
+    if (OB.open) obDispatch({type:'onboarding_error_set', error: DL.error});
+    return;
+  }
+  bswReport(res);
+  OB.restarted = !!res.restart;
+  obDispatch({type:'local_models_pull_finished', kind:'chat'});
+}
+
+/** A queue entry finished. Called from the one `cli:pull` subscriber. */
+function obPullFinished(job, ev) {
+  const ok = ev.ok !== false;
+  if (job.kind === 'runtime') {
+    if (!ok) { DL.queue.length = 0; renderDlbar(); render(); return; }
+    // `models update` can exit 0 having downloaded nothing (the version
+    // file already named the latest tag). The phase row is drawn as
+    // passed either way — never as a bar this window did not drive.
+    dlNext();
+    return;
+  }
+  renderDlbar();
+  if (!ok) { render(); return; }
+  if (DL.dry) { render(); return; }
+  const pending = OB.pendingMmproj;
+  OB.pendingMmproj = null;
+  const after = () => obActivateLocal(job.id);
+  if (pending && BR && BR.hfProjector) {
+    BR.hfProjector(pending.id, pending.mmprojUrl, pending.mmprojFilename, pending.name)
+      .then((res) => {
+        if (!res || res.ok !== true) {
+          // The daemon would serve a vision model text-only; say so and
+          // do not activate behind the operator's back.
+          DL.error = ((res && res.error) || 'the vision projector did not download')
+            + ' — the model was not started: it would serve text only';
+          render();
+          return;
+        }
+        after();
+      });
+    return;
+  }
+  after();
+}
+
+/* ---- the Hugging Face branch, as its own two steps ---- */
+
+function obHfInputValue() {
+  const el = document.getElementById('ob-hf-ref');
+  return el ? el.value : OB.hfReference;
+}
+
+async function obHfLook() {
+  if (!BR || !BR.hfResolve) return;
+  const value = obHfInputValue();
+  OB.hfReference = value;
+  obDispatch({type:'onboarding_busy_set', busy:true});
+  const res = await BR.hfResolve(value);
+  if (!OB.open || OB.step !== 'local_hf_ref') return;
+  OB.busy = false;
+  if (!res || res.ok !== true) {
+    if (res && res.cancelled) { render(); return; }
+    obDispatch({type:'onboarding_error_set', error: (res && res.error) || 'the lookup failed'});
+    return;
+  }
+  obDispatch({type:'onboarding_hf_repo_resolved', repo: res.repo});
+}
+
+async function obHfAdd() {
+  if (!BR || !BR.hfAdd || !OB.hfRepo) return;
+  if (DL.job) { obDispatch({type:'onboarding_error_set', error:'a download is already running'}); return; }
+  const res = await BR.hfAdd(OB.hfRepo, OB.cursor);
+  if (!res || res.ok !== true) {
+    obDispatch({type:'onboarding_error_set', error: (res && res.error) || 'could not add the model'});
+    return;
+  }
+  const def = res.def || {};
+  OB.pendingMmproj = def.supportsVision && def.mmprojUrl && def.mmprojFilename
+    ? {id: res.id, mmprojUrl: def.mmprojUrl, mmprojFilename: def.mmprojFilename, name: def.name} : null;
+  obDispatch({type:'onboarding_local_model_picked', modelId: res.id});
+  obStartLocalPull(res.id, false);
+}
+
+/* ---- the custom-endpoint branch ---- */
+
+function obUrlInputValue() {
+  const el = document.getElementById('ob-url');
+  return el ? el.value.trim() : (OB.step === 'custom_chat_url' ? OB.chatUrl : OB.embeddingUrl);
+}
+
+async function obUrlSubmit() {
+  if (!BR) return;
+  const value = obUrlInputValue();
+  const chat = OB.step === 'custom_chat_url';
+  obDispatch({type:'onboarding_url_changed', field: chat ? 'chat' : 'embedding', value});
+  // An empty Enter on the embedding step saves the chat URL alone.
+  if (!chat && !value) { obWriteCustomEndpoint(OB.chatUrl, ''); return; }
+  if (!value) { obDispatch({type:'onboarding_error_set', error:'Type the base URL of your llama-server.'}); return; }
+  obDispatch({type:'onboarding_busy_set', busy:true});
+  const res = await BR.llamaProbe(value);
+  if (!OB.open) return;
+  OB.busy = false;
+  const probe = res && res.probe;
+  if (!res || !res.ok || !probe || !probe.reachable) {
+    // describeLlamaHealthFailure's own sentence, from main.
+    obDispatch({type:'onboarding_error_set',
+      error: (probe && probe.message) || (res && res.error) || 'that URL did not answer GET /health'});
+    return;
+  }
+  if (chat) { obDispatch({type:'onboarding_step_set', step:'custom_embedding_url'}); return; }
+  obWriteCustomEndpoint(OB.chatUrl, value);
+}
+
+/** ONE whole-file write — persistUserRemoteLlmUrls, in main. */
+async function obWriteCustomEndpoint(chatUrl, embeddingUrl) {
+  obDispatch({type:'onboarding_busy_set', busy:true});
+  const res = await BR.setExternalLlamaUrls(chatUrl, embeddingUrl || '');
+  OB.busy = false;
+  if (!res || res.ok === false) {
+    obDispatch({type:'onboarding_error_set', error: 'could not save the endpoint: ' + ((res && res.error) || 'unknown error')});
+    return;
+  }
+  OB.restarted = false;
+  obDispatch({type:'onboarding_finished', outcome:'custom'});
+}
+
+/* ---- the import step ------------------------------------------------
+   Four sources through `atag import` (src/cli/import-command.ts accepts
+   hermes, openclaw, claude-code and codex and nothing else), plus one
+   the import machinery cannot reach at any level: the operator's OWN
+   ~/.atomic-agent, the terminal setup this desktop keeps its own state
+   dir beside.  There is no `atomic-agent` import source to route that
+   through, so it is a row of its own backed by the isolation lane's
+   two-call contract — tuiSetupPresent() / importFromTui() — which never
+   mutates the source, never copies the managed daemon port, and reports
+   key ENV VAR NAMES rather than values.  Absent that bridge the row is
+   simply not offered; nothing here throws when it is missing.
+   ------------------------------------------------------------------ */
+const OB_TUI_AGENT_ID = 'atomic-tui';
+/** The four registries under src/import (import-options.ts), plus the bridge's. */
+function obImportRegistry(id) {
+  if (id === 'hermes') return [
+    {id:'sessions', label:'Sessions', description:'Conversation history (state.db) -> sessions.sqlite'},
+    {id:'cron', label:'Cron jobs', description:'Scheduled jobs (cron/jobs.json) -> tasks.sqlite'},
+    {id:'secrets', label:'Provider key', description:'OPENROUTER_API_KEY / AIMLAPI_API_KEY -> <stateDir>/.env'},
+  ];
+  if (id === 'openclaw') return [
+    {id:'sessions', label:'Sessions', description:'Transcript logs (agents/<agent>/sessions/*.jsonl) -> sessions.sqlite'},
+    {id:'cron', label:'Cron jobs', description:'Scheduled jobs (state/openclaw.sqlite cron_jobs) -> tasks.sqlite'},
+  ];
+  if (id === 'claude-code') return [
+    {id:'skills', label:'Skills', description:'Skill directories (skills/*/SKILL.md) -> global skills dir'},
+    {id:'memory', label:'Memory', description:'Auto-memory notes + CLAUDE.md -> memory.sqlite'},
+    {id:'mcp', label:'MCP servers', description:'mcpServers (~/.claude.json) -> config.mcp.servers'},
+    {id:'sessions', label:'Sessions', description:'Transcripts (projects/*/*.jsonl) -> sessions.sqlite'},
+    {id:'secrets', label:'Provider key', description:'ANTHROPIC_API_KEY (settings.json env) -> <stateDir>/.env'},
+  ];
+  if (id === 'codex') return [
+    {id:'skills', label:'Skills', description:'Skill directories (skills/*/SKILL.md) -> global skills dir'},
+    {id:'memory', label:'Instructions', description:'AGENTS.md -> memory.sqlite'},
+    {id:'sessions', label:'Sessions', description:'Rollouts (sessions/**/*.jsonl) -> sessions.sqlite'},
+    {id:'secrets', label:'Provider key', description:'OPENAI_API_KEY (auth.json) -> <stateDir>/.env'},
+  ];
+  // The bridge's own domains. `keys` is the secret row and starts off,
+  // exactly as `secrets` does everywhere else.
+  return [
+    {id:'providers', label:'LLM providers', description:'the providers block of your terminal config'},
+    {id:'skills', label:'Skills', description:'installed skills -> this window’s state dir'},
+    {id:'sessions', label:'Sessions', description:'chat history -> sessions.sqlite'},
+    {id:'memory', label:'Memory', description:'memory.sqlite'},
+    {id:'keys', label:'Provider keys', description:'the API key variables named in your terminal .env'},
+  ];
+}
+
+/** buildImportOptionRows (import-step.ts:121-141): secrets rows start off. */
+function obBuildImportOptions(agents) {
+  const rows = [];
+  for (const agent of agents) {
+    if (!agent.enabled) continue;
+    for (const meta of obImportRegistry(agent.id)) {
+      const secret = meta.id === 'secrets' || meta.id === 'keys';
+      rows.push({agent: agent.id, agentLabel: agent.label, option: meta.id,
+        label: meta.label, description: meta.description, secret, enabled: !secret});
+    }
+  }
+  return rows;
+}
+
+/** detectImportAgents + the terminal-setup row. All rows start unticked. */
+async function obDetectAgents() {
+  const rows = [];
+  if (BR && BR.detectImportAgents) {
+    try {
+      const res = await BR.detectImportAgents();
+      if (res && res.ok) for (const agent of (res.agents || [])) {
+        rows.push({id: agent.id, label: agent.label, dir: agent.dir, enabled: false});
+      }
+    } catch (e) { /* a scan that cannot run offers nothing */ }
+  }
+  if (BR && BR.tuiSetupPresent) {
+    try {
+      const t = await BR.tuiSetupPresent();
+      OB.tuiSetup = t || null;
+      if (t && t.ok && t.present) {
+        const has = t.has || {};
+        rows.push({id: OB_TUI_AGENT_ID, label: 'Atomic Agent in the terminal',
+          dir: t.path + '  ·  ' + [
+            has.providers + ' provider' + (has.providers === 1 ? '' : 's'),
+            (has.keys || []).length + ' key' + ((has.keys || []).length === 1 ? '' : 's'),
+            has.skills + ' skill' + (has.skills === 1 ? '' : 's'),
+            has.sessions + ' session' + (has.sessions === 1 ? '' : 's'),
+          ].join(' · '), enabled: false});
+      }
+    } catch (e) { /* absent is not an error — the row is just not offered */ }
+  }
+  return rows;
+}
+
+/**
+ * Run the dry run or the write. One report, concatenated over the ticked
+ * agents; the counts come from each source's own summary line and
+ * nothing is claimed that a summary did not give.
+ */
+async function obRunImport(options, execute) {
+  const items = [];
+  const summary = {migrated:0, skipped:0, conflict:0, error:0};
+  let failed = null;
+  for (const agent of OB.importAgents) {
+    if (!agent.enabled) continue;
+    const mine = options.filter((o) => o.agent === agent.id);
+    if (agent.id === OB_TUI_AGENT_ID) {
+      const part = await obRunTuiImport(mine, execute);
+      if (part.error) { failed = part.error; break; }
+      for (const item of part.items) items.push(item);
+      summary.migrated += part.summary.migrated;
+      summary.error += part.summary.error;
+      continue;
+    }
+    const exclude = mine.filter((o) => !o.enabled && !o.secret).map((o) => o.option);
+    const secrets = mine.some((o) => o.secret && o.enabled);
+    const res = await BR.importRun({source: agent.id, dir: agent.dir, exclude, secrets,
+      overwrite: false, limit: '', execute});
+    if (!res || !res.ok) { failed = (res && res.error) || 'the import failed'; break; }
+    for (const item of (res.report.items || [])) items.push(item);
+    summary.migrated += res.report.summary.migrated;
+    summary.skipped += res.report.summary.skipped;
+    summary.conflict += res.report.summary.conflict;
+    summary.error += res.report.summary.error;
+  }
+  if (!OB.open) return;
+  if (failed !== null) { obDispatch({type:'onboarding_import_failed', error: failed}); return; }
+  obDispatch({type:'onboarding_import_report', executed: execute, report: {items, summary, executed: execute}});
+}
+
+/**
+ * The terminal-setup row.  A preview here is the SCAN, not a dry run:
+ * the bridge reports what ~/.atomic-agent holds and this turns those
+ * counts into the same report shape the CLI's own preview produces, so
+ * the preview screen stays the gate before anything is written.
+ */
+async function obRunTuiImport(options, execute) {
+  const empty = {items: [], summary: {migrated:0, skipped:0, conflict:0, error:0}};
+  const on = {};
+  for (const o of options) on[o.option] = o.enabled;
+  if (!execute) {
+    const has = (OB.tuiSetup && OB.tuiSetup.has) || {};
+    const counts = {
+      providers: on.providers ? (has.providers || 0) : 0,
+      keys: on.keys ? ((has.keys || []).length) : 0,
+      skills: on.skills ? (has.skills || 0) : 0,
+      sessions: on.sessions ? (has.sessions || 0) : 0,
+      memory: on.memory && has.memory ? 1 : 0,
+    };
+    const items = [];
+    for (const kind of Object.keys(counts)) {
+      for (let i = 0; i < counts[kind]; i += 1) items.push({kind, status: 'migrated'});
+    }
+    return {items, summary: {migrated: items.length, skipped:0, conflict:0, error:0}};
+  }
+  if (!BR.importFromTui) return Object.assign({}, empty, {error: 'this build cannot read the terminal setup'});
+  const res = await BR.importFromTui({providers: !!on.providers, keys: !!on.keys,
+    skills: !!on.skills, sessions: !!on.sessions, memory: !!on.memory});
+  if (!res || !res.ok) return Object.assign({}, empty, {error: (res && res.error) || 'could not copy the terminal setup'});
+  const copied = res.copied || {};
+  const items = [];
+  const push = (kind, n) => { for (let i = 0; i < n; i += 1) items.push({kind, status:'migrated'}); };
+  push('providers', copied.providers || 0);
+  push('keys', copied.keys || 0);
+  push('skills', copied.skills || 0);
+  push('sessions', copied.sessions || 0);
+  push('memory', copied.memory ? 1 : 0);
+  return {items, summary: {migrated: items.length, skipped:0, conflict:0, error:0}};
+}
+
+/* ---- closing down: use-onboarding-lifecycle.ts:85-146 ---- */
+
+/** decideSecondBackendOffer (propose-second-backend.ts:44-51), verbatim. */
+function obDecideSecondBackend(i) {
+  if (i.alreadyProposed) return null;
+  if (i.outcome === 'custom' || i.outcome === 'skipped') return null;
+  if (i.cloudReady && i.localReady) return null;
+  if (i.outcome === 'local') return i.cloudReady ? null : 'cloud';
+  if (i.localSetupSeen) return null;
+  return i.localReady ? null : 'local';
+}
+
+/** isCloudTextProviderReady / isLocalBackendConfigured, as far as this
+ *  window can see them (see the note on needsOnboarding). */
+async function obReadiness() {
+  const out = {cloudReady: false, localReady: false, stamps: {}};
+  if (!BR) return out;
+  const ready = await BR.providersReady();
+  out.cloudReady = !!(ready && ready.ok && (ready.ids || []).length > 0);
+  const cfg = await BR.configGet();
+  const config = (cfg && cfg.ok && cfg.config) || {};
+  const lm = config.localModels || {};
+  out.localReady = !!((lm.mode === 'managed' && lm.managed && lm.managed.modelId)
+    || (lm.mode === 'external' && lm.url && lm.url !== OB_DEFAULT_LLAMA_URL));
+  out.stamps = (config.tui && config.tui.onboarding) || {};
+  return out;
+}
+
+/**
+ * The finished effect.  Second-backend offer first, import second, and
+ * only then the closing stamp — both offers stamped when SHOWN, not when
+ * answered, so a run interrupted by a crash cannot re-pitch a screen the
+ * operator already declined.  Nothing routes around the import screen:
+ * its own skip row is the only way past it.
+ */
+async function obSettle() {
+  if (OB.settling || !BR) return;
+  OB.settling = true;
+  const outcome = OB.outcome || 'skipped';
+  const state = await obReadiness();
+  if (!OB.open) { OB.settling = false; return; }
+  const offer = OB.skipSecondOffer ? null : obDecideSecondBackend({
+    outcome,
+    cloudReady: state.cloudReady,
+    localReady: state.localReady,
+    alreadyProposed: !!state.stamps.proposedSecondBackendAt,
+    localSetupSeen: !!state.stamps.localSetupSeenAt,
+  });
+  if (offer) {
+    obStampOnce('proposedSecondBackendAt');
+    OB.settling = false;
+    obDispatch({type:'onboarding_second_backend_offered', offer});
+    return;
+  }
+  if (!state.stamps.importOfferedAt && !OB_STAMPED.importOfferedAt) {
+    const agents = await obDetectAgents();
+    if (!OB.open) { OB.settling = false; return; }
+    if (agents.length > 0) {
+      obStampOnce('importOfferedAt');
+      OB.settling = false;
+      obDispatch({type:'onboarding_import_opened', agents});
+      return;
+    }
+  }
+  /* r5 item 7: the ONE smoke-only seam in this flow. The suite walks the
+     whole machine several times over, and each pass ends here — with a
+     config write and an agent bounce. Everything above this line runs for
+     real under the harness (the readiness reads, the offer decision, the
+     import scan, the stamps); only the closing write and the restart are
+     skipped, because repeating them a dozen times mid-run would be the
+     suite testing the harness rather than the flow. */
+  if (OB.testClose) { OB.open = false; OB.settling = false; obSkyStop(); render(); return; }
+  const stamp = new Date().toISOString();
+  const res = await BR.configSet(outcome === 'skipped' ? 'tui.onboarding.skippedAt' : 'tui.onboarding.completedAt', stamp);
+  if (res && res.ok === false) {
+    OB.settling = false;
+    obDispatch({type:'onboarding_error_set', error: 'could not write the setup stamp: ' + (res.error || 'unknown error')});
+    return;
+  }
+  OB.open = false;
+  OB.settling = false;
+  obSkyStop();
+  toast('Setup complete', outcome === 'skipped' ? 'You can run it again from the menu' : 'Restarting the agent…');
+  render();
+  if (OB.restarted) { refreshLiveConfig(); return; }
+  BR.restart().then(applyStatus);
+}
+
+/* ---- opening ---- */
+
 async function openOnboarding() {
-  OB.open = true; OB.step = 'choose'; OB.choice = 0; OB.error = null; OB.log = [];
+  Object.assign(OB, {
+    open: true, step: 'intro', offer: null, resumeAfterCloud: null, localModelId: null,
+    outcome: null, skipSecondOffer: false, cursor: 0, embeddingUrl: '', busy: false, error: null,
+    hfReference: '', hfRepo: null, importAgents: [], importOptions: [], importReport: null,
+    introTyped: false, settling: false, testClose: false, pendingMmproj: null, restarted: false,
+  });
+  // A re-run (the menu's `onboarding`, or --onboarding) stamps again.
+  for (const leaf of Object.keys(OB_STAMPED)) delete OB_STAMPED[leaf];
+  OB_LAST_STEP = 'intro';
   render();
   if (!BR) return;
   OB.ram = (await BR.hostRam()) || 0;
   OB.keyEnv = (await BR.keyEnv()) || {};
   const cfg = await BR.configGet();
-  if (cfg && cfg.ok && cfg.config && cfg.config.llm) {
-    OB.providers = (cfg.config.llm.providers || []).map((p) => ({
-      id: p.id, kind: p.kind, model: p.defaultChatModel || '', active: p.id === cfg.config.llm.activeTextProvider,
-    }));
+  if (cfg && cfg.ok && cfg.config) {
+    // createOnboardingState(chatUrl): the flow opens on the URL the file
+    // already carries, so a re-run does not blank it.
+    OB.chatUrl = (cfg.config.localModels && cfg.config.localModels.url) || '';
   }
+  const ready = await BR.providersReady();
+  OB.cloudReady = !!(ready && ready.ok && (ready.ids || []).length > 0);
   render();
 }
 
-async function obLoadModels() {
-  OB.busy = true; OB.error = null; render();
-  // Embedding models are a separate daemon; the chat wizard does not offer
-  // them. chatModelsList subtracts `atag models list-embeddings` by id
-  // (review fix — the id-substring guess also hid chat models named after
-  // an embedding vendor).
-  const res = await BR.chatModelsList();
-  OB.busy = false;
-  if (!res || !res.ok) { OB.error = (res && res.error) || 'could not read the model catalogue'; render(); return; }
-  OB.models = res.models;
-  OB.modelCur = Math.max(0, OB.models.findIndex((m) => m.active));
-  render();
-}
-
-/** `restartedAlready`: the local path's selectLocalModel has restarted the agent itself. */
-async function obFinish(kind, detail, restartedAlready) {
-  // Lane B — backend switch: the cloud branch activates a provider, which
-  // restarts `atag serve` and would abort a running turn — same guard as
-  // every other switch entry point.
-  if (kind === 'cloud' && S.busy) { OB.error = 'Not while a turn is running'; render(); return; }
-  OB.busy = true; render();
-  const stamp = new Date().toISOString();
-  const writes = [];
-  if (kind === 'local') writes.push(['tui.onboarding.localSetupSeenAt', stamp]);
-  // Lane B — backend switch: there is no 'custom' kind any more (see
-  // OB_CHOICES) — the CLI rejects the mode value and the desktop has no
-  // URL probe, so that branch is gone rather than half-fixed.
-  writes.push(['tui.onboarding.introSeenAt', stamp]);
-  writes.push([kind === 'skip' ? 'tui.onboarding.skippedAt' : 'tui.onboarding.completedAt', stamp]);
-  for (const [key, value] of writes) {
-    const res = await BR.configSet(key, value);
-    if (res && res.ok === false) {
-      OB.busy = false;
-      OB.error = 'could not write ' + key + ': ' + (res.error || 'unknown error');
-      render();
-      return;
+/**
+ * Called by renderOverlays once the flow's DOM is in place: arm the
+ * intro's canvas, and give the step's own editor the keyboard — the two
+ * URL steps and the Hugging Face reference are text fields, and a screen
+ * whose only control is a field nobody focused reads as broken.
+ */
+function obIntroMounted() {
+  if (OB.open && !OB.busy) {
+    const field = document.getElementById('ob-url') || document.getElementById('ob-hf-ref');
+    if (field && document.activeElement !== field) {
+      field.focus();
+      field.setSelectionRange(field.value.length, field.value.length);
     }
   }
-  // Lane B — backend switch. Local: the TUI's onboarding writes
-  // localModels.mode "managed" through persistUserLocalModelsConfig (url
-  // sync included) — the model pick itself already went through
-  // selectLocalModel, which is where the route moves and the daemon
-  // starts. Cloud: the chosen provider is activated exactly as the
-  // provider row does it; that IPC restarts the agent by itself.
-  let restarted = false;
-  if (kind === 'local') {
-    const res = await BR.useManagedMode();
-    if (res && res.ok === false) { OB.busy = false; OB.error = 'could not write localModels.mode: ' + (res.error || 'unknown error'); render(); return; }
-    // selectLocalModel already bounced `atag serve` for its own writes;
-    // only a mode write that actually changed the file needs another one.
-    restarted = !!restartedAlready && !(res && res.changed);
-  }
-  if (kind === 'cloud') {
-    const res = await BR.activateProvider(detail);
-    if (!res || !res.ok) {
-      OB.busy = false;
-      OB.error = res && res.needsKey ? 'no API key for ' + detail + ' — set ' + (OB.keyEnv[detail] || 'its key') + ' in the environment first'
-        : 'could not activate ' + detail + ': ' + ((res && res.error) || 'unknown error');
-      render();
-      return;
-    }
-    bswReport(res);
-    restarted = !!res.restart;
-  }
-  OB.busy = false; OB.open = false;
-  toast('Setup complete', kind === 'skip' ? 'You can run it again from the menu' : 'Restarting the agent…');
-  render();
-  if (restarted) { refreshLiveConfig(); return; }
-  BR.restart().then(applyStatus);
-}
-
-function obUseModel(model) {
-  if (model.downloaded) {
-    // Lane B — backend switch: the TUI's pull-completion path writes the
-    // model and starts the daemon; selectLocalModel is that sequence. It
-    // restarts `atag serve`, so not while a turn is running.
-    if (S.busy) { OB.error = 'Not while a turn is running'; render(); return; }
-    OB.busy = true; render();
-    BR.selectLocalModel(model.id).then((res) => {
-      OB.busy = false;
-      if (!res || !res.ok) { OB.error = (res && res.error) || 'could not select the model'; render(); return; }
-      bswReport(res);
-      obFinish('local', model.id, !!res.restart);
-    });
-    return;
-  }
-  OB.step = 'pulling'; OB.log = ['downloading ' + model.id + ' · ' + model.size]; OB.pulling = model; render();
-  BR.modelsPull(model.id).then((res) => {
-    if (res && res.ok === false) { OB.error = res.error || 'could not start the download'; OB.step = 'local'; render(); }
+  if (!OB.open || OB.step !== 'intro') { obSkyStop(); return; }
+  if (!document.getElementById('ob-sky')) return;
+  obSkyStop();
+  OBSKY.canvas = null;
+  OBSKY.stars = [];
+  requestAnimationFrame(() => {
+    if (!OB.open || OB.step !== 'intro') return;
+    obSkyStart();
+    if (!OB.introTyped) obStartTyping(); else obPaintTagline();
   });
 }
 
-function obHTML() {
-  const head = (step, title, sub) =>
-    '<div class="ob-head">'
-    + '<span class="ob-mark">' + MARK_COLOR.replace('width="16" height="16"', 'width="44" height="44"') + '</span>'
-    + '<span class="ob-step">' + esc(step === 1 ? 'setup · step 1 of 2' : step) + '</span>'
-    + '<span class="ob-title">' + esc(title) + '</span>'
-    + (sub ? '<span class="ob-sub">' + esc(sub) + '</span>' : '') + '</div>';
-  const err = OB.error ? '<div class="ob-note" style="color:var(--danger)">' + esc(OB.error) + '</div>' : '';
+/* ---- keyboard, mouse and the app wiring ---- */
 
-  if (OB.step === 'choose') {
-    return '<div id="onboarding"><div class="ob">'
-      + head(1, 'Where should the model run?', 'atomic-agent can drive models three ways; a custom endpoint is set up from the TUI. Nothing here is permanent — you can change it at any time from the menu.')
-      + '<div class="ob-list">' + OB_CHOICES.map((c, i) =>
-          '<button class="ob-opt' + (i === OB.choice ? ' on' : '') + '" data-ob-choice="' + i + '">'
-          + '<span class="radio"></span>'
-          + '<span><span class="t">' + esc(c.t) + '</span><br><span class="d">' + esc(c.d) + '</span></span>'
-          + '<span></span></button>').join('') + '</div>'
-      + err
-      + '<div class="ob-foot"><button class="btn btn-g" data-ob="skip">Skip for now</button>'
-      + '<span class="grow"></span>'
-      + '<button class="btn btn-p" data-ob="next">Continue</button></div>'
-      + '</div></div>';
+/** Escape on a step that owns its keyboard. */
+function obOwnEscape() {
+  if (OB.step === 'cloud') { obCloudKey('', {escape:true}); return; }
+  if (OB.step === 'local_hf_ref') {
+    if (OB.busy) { if (BR && BR.hfCancel) BR.hfCancel(); OB.busy = false; render(); return; }
+    obDispatch({type:'onboarding_step_set', step:'local_pick'});
+    return;
   }
-
-  if (OB.step === 'local') {
-    const rows = OB.models.length ? OB.models.map((m, i) => {
-      const fit = fitFor(m.size, OB.ram);
-      return '<button class="ob-opt' + (i === OB.modelCur ? ' on' : '') + '" data-ob-model="' + i + '">'
-        + '<span class="radio"></span>'
-        + '<span><span class="t mono" style="font-size:13px">' + esc(m.id) + '</span><br>'
-        + '<span class="d">' + esc(m.size) + ' · ' + esc(m.context) + ' context · ' + esc(fit.label)
-        + (m.downloaded ? ' · already on disk' : '') + '</span></span>'
-        + (m.active ? '<span class="tag">Active</span>' : fit.v === 'fits' && !m.downloaded ? '<span class="tag">Recommended</span>' : '<span></span>')
-        + '</button>';
-    }).join('') : '<div class="ob-note">' + (OB.busy ? 'reading the catalogue…' : 'no models listed') + '</div>';
-    /* Item 7A — the row the TUI pins into this same list
-       (src/tui/onboarding/local-model-picks.ts HUGGING_FACE_ROW_LABEL),
-       with its label verbatim. First run is where someone looks for this
-       before they have ever found Settings. It is a link rather than a
-       step of its own: the branch itself is one implementation, in
-       Settings › LLM › Local, and duplicating its two screens inside the
-       wizard would be a second one to keep in sync. Setup stays unfinished
-       until a model is actually chosen — the add's own pull → use → start
-       is what finishes it. */
-    const hfRow = '<button class="ob-opt" data-ob="hf"><span class="radio"></span>'
-      + '<span><span class="t">' + esc(HF_ROW_LABEL) + '</span><br>'
-      + '<span class="d">Paste a repo id or a huggingface.co link — it has to be a GGUF build. Opens Settings › LLM › Local.</span></span>'
-      + '<span></span></button>';
-    return '<div id="onboarding"><div class="ob">'
-      + head('local models · step 2 of 2', 'Pick a local model', 'One download, then it runs offline. This machine reports ' + OB.ram + ' GB of RAM.')
-      + '<div class="ob-models">' + rows + hfRow + '</div>' + err
-      + '<div class="ob-foot"><button class="btn btn-g" data-ob="back">Back</button>'
-      + '<span class="grow"></span>'
-      + '<button class="btn btn-p" data-ob="use"' + (OB.busy || !OB.models.length ? ' disabled' : '') + '>'
-      + (OB.models[OB.modelCur] && OB.models[OB.modelCur].downloaded ? 'Use this model' : 'Download and use') + '</button></div>'
-      + '</div></div>';
-  }
-
-  if (OB.step === 'pulling') {
-    return '<div id="onboarding"><div class="ob">'
-      + head('local models · step 2 of 2', 'Downloading', 'Hugging Face is sending the model. This runs in the background — you can leave it.')
-      + '<div class="ob-prog" id="ob-prog">' + esc(OB.log.slice(-8).join('\n')) + '</div>' + err
-      + '<div class="ob-foot"><button class="btn btn-s" data-ob="cancel">Cancel</button><span class="grow"></span></div>'
-      + '</div></div>';
-  }
-
-  if (OB.step === 'cloud') {
-    const rows = OB.providers.filter((p) => p.kind !== 'llama-server').map((p, i) =>
-      '<button class="ob-opt' + (i === OB.modelCur ? ' on' : '') + '" data-ob-provider="' + i + '">'
-      + '<span class="radio"></span>'
-      + '<span><span class="t">' + esc(p.id) + '</span><br><span class="d">'
-      + esc(p.model || 'configured provider') + ' · key from ' + esc(OB.keyEnv[p.kind] || 'the environment')
-      + '</span></span>' + (p.active ? '<span class="tag">Active</span>' : '<span></span>') + '</button>').join('');
-    return '<div id="onboarding"><div class="ob">'
-      + head('cloud models · step 2 of 2', 'Choose a cloud provider', 'These are the providers already in your config. Keys are read from the environment, not stored here.')
-      + '<div class="ob-list">' + (rows || '<div class="ob-note">No cloud provider is configured yet.</div>') + '</div>'
-      + '<div class="ob-note">To add one, set its key in your environment — for example '
-      + '<span class="mono">export ' + esc(OB.keyEnv.openrouter || 'OPENROUTER_API_KEY') + '=…</span> — then run setup again.</div>'
-      + err
-      + '<div class="ob-foot"><button class="btn btn-g" data-ob="back">Back</button><span class="grow"></span>'
-      + '<button class="btn btn-p" data-ob="useProvider"' + (rows ? '' : ' disabled') + '>Use this provider</button></div>'
-      + '</div></div>';
-  }
-
-  // Lane B — backend switch: the custom-endpoint step went with its
-  // OB_CHOICES entry; an unknown step falls back to the choice list.
-  OB.step = 'choose';
-  return obHTML();
+  if (OB.step === 'custom_chat_url') { obDispatch({type:'onboarding_step_set', step:'choose'}); return; }
+  if (OB.step === 'custom_embedding_url') { obDispatch({type:'onboarding_step_set', step:'custom_chat_url'}); return; }
+}
+/** Enter on a step that owns its keyboard. */
+function obOwnEnter() {
+  if (OB.step === 'cloud') { obCloudKey('', {return:true}); return; }
+  if (OB.step === 'local_hf_ref') { if (!OB.busy) obHfLook(); return; }
+  if (OB.step === 'custom_chat_url' || OB.step === 'custom_embedding_url') { if (!OB.busy) obUrlSubmit(); return; }
 }
 
+/**
+ * The wizard owns the keyboard while it is up — the desktop already
+ * guards every other binding with `if (OB.open) return`, so this listener
+ * runs in the CAPTURE phase and stops what it consumes rather than
+ * competing with them. Ctrl+C and the browser's own Cmd/Alt chords are
+ * never claimed, and a keystroke inside one of the flow's own editors
+ * reaches that editor.
+ */
+function obKeydown(e) {
+  if (!OB.open) return;
+  if (e.metaKey || e.altKey) return;
+  if (e.ctrlKey && (e.key === 'c' || e.key === 'C')) return;
+  const target = e.target || {};
+  const inField = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA';
+  if (OB.step === 'intro') {
+    // "press any key", taken literally (use-intro-input.ts).
+    e.preventDefault(); e.stopPropagation();
+    obIntroAdvance();
+    return;
+  }
+  if (obStepOwnsKeyboard(OB.step)) {
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); obOwnEscape(); return; }
+    if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); obOwnEnter(); return; }
+    if (e.ctrlKey && (e.key === 'l' || e.key === 'L') && OB.step === 'local_hf_ref') {
+      e.preventDefault(); e.stopPropagation();
+      obDispatch({type:'onboarding_hf_reference_changed', value:''});
+      obDispatch({type:'onboarding_error_set', error:null});
+      return;
+    }
+    if (inField) return;
+    e.stopPropagation();
+    return;
+  }
+  if (inField) return;
+  const key = {
+    upArrow: e.key === 'ArrowUp', downArrow: e.key === 'ArrowDown',
+    return: e.key === 'Enter', escape: e.key === 'Escape', ctrl: e.ctrlKey,
+  };
+  const input = e.key.length === 1 ? e.key : '';
+  e.preventDefault(); e.stopPropagation();
+  obKey(input, key);
+}
 
-function obAction(what) {
-  if (what === 'skip') { obFinish('skip', ''); return; }
-  if (what === 'back') { OB.step = 'choose'; OB.error = null; render(); return; }
-  if (what === 'next') {
-    const choice = OB_CHOICES[OB.choice];
-    OB.error = null;
-    OB.modelCur = 0;
-    OB.step = choice.id;
-    render();
-    if (choice.id === 'local') obLoadModels();
-    return;
-  }
-  if (what === 'use') { const m = OB.models[OB.modelCur]; if (m) obUseModel(m); return; }
-  if (what === 'useProvider') {
-    const list = OB.providers.filter((p) => p.kind !== 'llama-server');
-    const p = list[OB.modelCur];
-    if (p) obFinish('cloud', p.id);
-    return;
-  }
-  if (what === 'cancel') { BR.cancelPull(); OB.step = 'local'; render(); return; }
-  if (what === 'hf') {
-    // Same branch, same IPC, same config write as the `a` key in the
-    // Local pane — there is one Hugging Face flow in this window.
-    // Review fix: enter the tab the way every other route into it does,
-    // through act('settings:llm') → settingsPaneEntered → llmTabEntered.
-    // Assigning S.settings/S.settingsPane by hand skipped llmTabEntered,
-    // so escaping out of the branch landed on a Local pane with no rows
-    // and no daemon state until the user pressed `r`.
-    OB.open = false;
-    act('settings:llm');
-    llmAct('hf');
+/**
+ * A row click.  MouseListRow's own two-stage rule (mouse-list-row.tsx):
+ * the first click selects, the second activates — and the second click
+ * sends the SAME Enter the keyboard sends, through the one key table, so
+ * a click can never do something no key can.
+ */
+function obRowClick(index) {
+  if (OB.cursor !== index) { obDispatch({type:'onboarding_cursor_set', cursor: index}); return; }
+  obKey('', {return:true});
+}
+/** A click on one of the flow's own controls, routed the same way. */
+function obControlClick(spec) {
+  if (spec === 'key:c') { obKey('c', {}); return; }
+  if (spec === 'key:s') { obKey('s', {}); return; }
+  if (spec === 'hf:clear') {
+    obDispatch({type:'onboarding_hf_reference_changed', value:''});
+    obDispatch({type:'onboarding_error_set', error:null});
     return;
   }
 }
 
 if (BR) {
-  BR.onPull((ev) => {
-    if (!ev) return;
-    if (ev.line) OB.log.push(ev.line);
-    if (ev.done) {
-      if (ev.ok && OB.pulling) {
-        BR.selectLocalModel(OB.pulling.id).then((res) => {
-          if (!res || !res.ok) { OB.error = (res && res.error) || 'could not select the model'; OB.step = 'local'; render(); return; }
-          bswReport(res);
-          obFinish('local', OB.pulling.id, !!res.restart);
-        });
-      } else {
-        OB.error = ev.error || 'the download failed';
-        OB.step = 'local';
-        render();
-      }
-      return;
-    }
-    if (OB.open && OB.step === 'pulling') {
-      const box = document.getElementById('ob-prog');
-      if (box) { box.textContent = OB.log.slice(-8).join('\n'); box.scrollTop = box.scrollHeight; }
-    }
-  });
+  /* The one pull subscriber the flow needs. The LLM pane keeps its own —
+     `dlOnPull` is inert unless this flow started the download. */
+  BR.onPull((ev) => { if (ev) dlOnPull(ev); });
 
-  // First run: the wizard opens itself, exactly as the TUI does.
-  BR.configGet().then((res) => {
-    if (res && res.ok && needsOnboarding(res.config)) openOnboarding();
+  // First run: the wizard opens itself, exactly as the TUI does. The
+  // cloud half of the gate needs providersReady()'s key check, which is
+  // a second round trip, so the decision waits for it.
+  BR.configGet().then(async (res) => {
+    if (!res || !res.ok) return;
+    let ids = null;
+    try { const ready = await BR.providersReady(); if (ready && ready.ok) ids = ready.ids || []; } catch (e) { ids = null; }
+    if (needsOnboarding(res.config, ids)) openOnboarding();
   });
 
   const prevAct = act;
   act = function (a) {
     if (a === 'onboarding') { openOnboarding(); return; }
+    if (a === 'dl:cancel') { if (BR.cancelPull) BR.cancelPull(); DL.queue.length = 0; return; }
+    if (OB.open && OB.step === 'cloud' && (a === 'wiz:cancel' || a === 'wiz:back')) {
+      if (a === 'wiz:back' && WIZ.phase === 'configure') { WIZ.phase = 'pick_kind'; WIZ.error = null; render(); return; }
+      WIZ.phase = null;
+      obDispatch({type:'providers_wizard_closed'});
+      return;
+    }
     return prevAct(a);
   };
 }
+
+document.addEventListener('keydown', obKeydown, true);
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) obSkyStop();
+  else if (OB.open && OB.step === 'intro') obSkyResume();
+});
+/* "press any key" answered on every channel the TUI answers it on —
+   keys, a mouse press, a wheel notch and a non-empty paste
+   (intro-input.ts:26-41). A release is not a press, and an empty paste
+   is not a keystroke. */
+document.addEventListener('pointerdown', () => { if (OB.open && OB.step === 'intro') obIntroAdvance(); });
+document.addEventListener('wheel', () => { if (OB.open && OB.step === 'intro') obIntroAdvance(); }, {passive:true});
+document.addEventListener('paste', (e) => {
+  if (!OB.open || OB.step !== 'intro') return;
+  const text = e.clipboardData ? e.clipboardData.getData('text') : '';
+  if (text && text.length > 0) obIntroAdvance();
+});
+document.addEventListener('click', (e) => {
+  if (!OB.open) return;
+  const row = e.target.closest && e.target.closest('[data-obrow]');
+  if (row) { obRowClick(+row.dataset.obrow); return; }
+  const ctl = e.target.closest && e.target.closest('[data-obact]');
+  if (ctl) { obControlClick(ctl.dataset.obact); return; }
+});
+document.addEventListener('input', (e) => {
+  if (!OB.open) return;
+  if (e.target.id === 'ob-hf-ref') { OB.hfReference = e.target.value; if (OB.error) { OB.error = null; render(); } return; }
+  if (e.target.id === 'ob-url') {
+    if (OB.step === 'custom_chat_url') OB.chatUrl = e.target.value; else OB.embeddingUrl = e.target.value;
+  }
+});
 
 
 /* ---- Models pane: everything below drives the real agent ---- */
@@ -5331,6 +7311,16 @@ async function wizNext() {
   bswReport(sel, 'Selected chat model ' + id + '/' + model + '.');
   WIZ.phase = null;
   await refreshLiveConfig();
+  /* r5 item 7: the setup wizard mounts this same wizard inside its cloud
+     step, where `closeSelector()` would close a popup that is not open
+     and drop the flow on a blank screen. The reducer's own
+     `providers_wizard_succeeded` branch decides where it goes next. */
+  if (OB.open && OB.step === 'cloud') {
+    OB.restarted = !!(sel && sel.restart);
+    toast('Provider added', k.label.split(' (')[0] + ' \u00b7 ' + model);
+    obDispatch({type:'providers_wizard_succeeded'});
+    return;
+  }
   closeSelector();
   toast('Provider added', k.label.split(' (')[0] + ' \u00b7 ' + model);
 }
@@ -5930,8 +7920,20 @@ function bswRepaint() {
 function bswDownloadProgress(modelId) {
   let line = null;
   if (SEL.pulling === modelId) line = SEL.pullLine || '';
-  else if (OB.pulling && OB.pulling.id === modelId) line = OB.log[OB.log.length - 1] || '';
-  if (line === null) return null;
+  if (line === null) {
+    /* r5 item 7: the setup wizard's download is no longer a log tail on a
+       wizard screen — it is the #dlbar strip, driven by parsed samples. So
+       the figures come off that slice rather than off a line, and they are
+       the same numbers for the same reason. */
+    const job = DL.job;
+    if (job && job.kind !== 'runtime' && job.id === modelId) {
+      return job.totalBytes > 0
+        ? 'downloading now — ' + Math.round(job.percent || 0) + '% · '
+          + dlBytes(job.transferredBytes) + ' / ' + dlBytes(job.totalBytes)
+        : 'downloading now…';
+    }
+    return null;
+  }
   const m = /(\d+)%\s+([\d.]+ [KMG]B)\s*\/\s*([\d.]+ [KMG]B)/.exec(line);
   return m ? 'downloading now — ' + m[1] + '% · ' + m[2] + ' / ' + m[3] : 'downloading now…';
 }
@@ -10299,8 +12301,15 @@ if (typeof window !== 'undefined') {
     S.settings = null;
     if (LLMP.timer) { clearInterval(LLMP.timer); LLMP.timer = null; }
     LLMP.lastRefreshedAt = null; LLMP.local = null;
-    OB.open = true;
-    obAction('hf');
+    /* r5 item 7: the first-run row no longer jumps into Settings — the
+       Hugging Face branch is two real steps inside the wizard now (the
+       TUI's `local_hf_ref` / `local_hf_pick`). What this check is for is
+       still live and still worth holding: the Settings route into the
+       SAME branch must enter the LLM tab properly, or escaping out of it
+       lands on a Local pane with no rows and no poll. So the probe drives
+       that route directly, the way the menu does. */
+    act('settings:llm');
+    llmAct('hf');
     const entered = {pane: settingsPaneId(S.settingsPane), settings: !!S.settings,
       branch: LLMHF.open, mode: LLMP.mode, polling: LLMP.timer !== null};
     llmHfClose();
@@ -10682,4 +12691,119 @@ if (typeof window !== 'undefined') {
     render();
     return out;
   };
+}
+
+/* ==========================================================================
+   r5 item 7 — setup wizard: smoke hooks.
+   Read-only but for the two drivers, which go through the SAME key router
+   the keyboard and the mouse use — a hook that could reach a transition no
+   key can would be asserting something the product does not have.
+   ========================================================================== */
+if (typeof window !== 'undefined') {
+  window.__ob = () => ({
+    open: OB.open, step: OB.step, cursor: OB.cursor, outcome: OB.outcome, offer: OB.offer,
+    resumeAfterCloud: OB.resumeAfterCloud, busy: OB.busy, error: OB.error,
+    localModelId: OB.localModelId, skipSecondOffer: OB.skipSecondOffer,
+    rows: document.querySelectorAll('#onboarding .ob-row').length,
+  });
+  window.__obKey = (spec) => { obPress(spec); return window.__ob(); };
+  window.__obClick = (n) => {
+    const rows = document.querySelectorAll('#onboarding .ob-row');
+    if (rows[n]) rows[n].click();
+    return window.__ob();
+  };
+  window.__obCopy = () => {
+    const root = document.getElementById('onboarding');
+    const head = root && root.querySelector('.ob-sub2');
+    const body = root ? root.querySelector('.ob') || root.querySelector('#ob-intro') : null;
+    return {
+      subtitle: head ? head.textContent : '',
+      title: OB_SUBTITLES[OB.step] || '',
+      lines: body ? body.innerText.split('\n').map((l) => l.trim()).filter(Boolean) : [],
+      footer: obFooter(),
+      hints: root && root.querySelector('.ob-hints') ? root.querySelector('.ob-hints').innerText.replace(/\s+/g, ' ').trim() : '',
+    };
+  };
+  window.__obSky = () => ({
+    present: !!document.getElementById('ob-sky'),
+    stars: OBSKY.stars.length,
+    running: OBSKY.running,
+    reduced: OBSKY.reduced,
+    frames: OBSKY.frames,
+  });
+  /** Force the reduced-motion contract without an emulated media query. */
+  window.__obReduce = (on) => {
+    OBSKY.reduced = !!on;
+    obSkyStop();
+    if (on) { OB.introTyped = true; obPaintTagline(); if (OBSKY.ctx) obSkyDraw(0); }
+    else obSkyResume();
+    return window.__obSky();
+  };
+  window.__dl = () => {
+    const el = document.getElementById('dlbar');
+    const job = DL.job;
+    return {
+      visible: !!(el && !el.hidden),
+      label: job ? dlJobLabel(job) : null,
+      kind: job ? job.kind : null,
+      percent: job ? Math.round(job.percent || 0) : null,
+      transferred: job ? job.transferredBytes : null,
+      total: job ? job.totalBytes : null,
+      eta: dlEta(dlEtaSeconds()),
+      queued: DL.queue.length,
+      text: el ? el.innerText.replace(/\s+/g, ' ').trim() : '',
+      phases: {runtime: DL.runtime.state, weights: DL.weights.state},
+      error: DL.error,
+    };
+  };
+  /** Feed the strip one real `cli:pull` frame, as main would send it. */
+  window.__dlFeed = (ev) => { dlOnPull(ev); return window.__dl(); };
+  /** Seed a queue without spawning anything, to assert the queue text. */
+  window.__dlSeed = (jobs) => {
+    DL.dry = true;
+    DL.queue = jobs.slice(1);
+    DL.error = null; DL.rate = null; DL.last = null;
+    dlResetPhases(jobs.some((j) => j.kind === 'runtime'));
+    const head = jobs[0];
+    DL.job = Object.assign({percent: 0, transferredBytes: 0, totalBytes: 0}, head);
+    if (head.kind === 'runtime') DL.runtime.state = 'active';
+    else { DL.runtime.state = 'done'; DL.weights.state = 'active'; }
+    render();
+    return window.__dl();
+  };
+  window.__dlClear = () => { DL.dry = false; DL.job = null; DL.queue.length = 0; DL.error = null; dlResetPhases(false); render(); return window.__dl(); };
+  window.__obImport = () => ({
+    agents: OB.importAgents.map((a) => ({id: a.id, dir: a.dir, enabled: a.enabled})),
+    rows: obImportRows().map((r) => r.kind),
+    options: OB.importOptions.map((o) => ({agent: o.agent, option: o.option, secret: o.secret, enabled: o.enabled})),
+    report: OB.importReport,
+  });
+  /** Open the flow and land it on one step, without the agent round trips. */
+  window.__obOpen = (step) => {
+    OB.open = true;
+    Object.assign(OB, {offer: null, resumeAfterCloud: null, localModelId: null, outcome: null,
+      skipSecondOffer: false, cursor: 0, busy: false, error: null, hfReference: '', hfRepo: null,
+      importAgents: [], importOptions: [], importReport: null, introTyped: false,
+      settling: false, testClose: true, pendingMmproj: null, restarted: false});
+    // No stamps from a driven pass: the operator's config is not a fixture.
+    OB_STAMPED.introSeenAt = true; OB_STAMPED.localSetupSeenAt = true;
+    OB_STAMPED.proposedSecondBackendAt = true; OB_STAMPED.importOfferedAt = true;
+    OB.step = step || 'intro';
+    OB_LAST_STEP = null;
+    render();
+    // The arrival effects a real step change runs (the catalogue read on
+    // local_pick, the stamps that were just neutralised).
+    obAfterStep();
+    if (OB.step === 'intro') obIntroMounted();
+    return window.__ob();
+  };
+  window.__obClose = () => { OB.open = false; OB.settling = false; obSkyStop(); render(); return window.__ob(); };
+  /** Everything the flow can seed for a check, in one call. */
+  window.__obSeed = (patch) => { Object.assign(OB, patch || {}); render(); return window.__ob(); };
+  /** decideSecondBackendOffer, driven as a table. */
+  window.__obOffer = (inputs) => obDecideSecondBackend(inputs);
+  window.__obFooterFor = (step) => { const was = OB.step; OB.step = step; const f = obFooter(); OB.step = was; return f; };
+  /** The cloud step's footer tracks the WIZARD phase, not the step. */
+  window.__wizPhase = (phase) => { WIZ.phase = phase; WIZ.row = phase === 'configure' ? KIND_ROWS[0] : null; render(); return WIZ.phase; };
+  window.__obBuildOptions = () => obBuildImportOptions(OB.importAgents);
 }
