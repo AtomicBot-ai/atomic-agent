@@ -313,6 +313,31 @@ Real, driven by the running agent:
   also behaviourally identical (the ladder is already at maximum and only
   `plan` changes anything), which the popover says in as many words; lower
   `agent.approvalLevel` to make the modes differ.
+- **the plan hand-off bar**, a port of `src/tui/components/plan-handoff.tsx`.
+  A plan-mode turn that finishes with a reply ends in three controls under that
+  reply — `▶ run it · auto`, `▶ run it · bypass permissions`, and a quiet
+  `✕ dismiss plan` — plus the TUI's own sentence saying the third option is
+  still to type. Enforcement itself is the agent's and needed nothing here:
+  `runPlanModeGate` refuses every mutating tool before dispatch, which is why a
+  plan turn ends in a proposal rather than a run of commands. The two run
+  buttons **await** the mode change and send only once the agent has confirmed
+  it — stricter than the TUI, which dispatches both in one tick — and the
+  message then goes through the ordinary submit path, so the bubble, the
+  history, the busy gate and steering all behave. Dismiss deliberately stays in
+  plan mode: rejecting a plan rejects that plan, not the act of planning, and
+  dropping out of plan mode there would hand the agent its tools back at the
+  moment you said no. The offer is retired by the next turn, by any mode change
+  away from `plan`, by dismiss — and, unlike the TUI (whose `session_switched`
+  reducer forgets to, so its bar re-attaches to another thread's transcript),
+  by a session switch — including a switch made *while* a run button's mode
+  POST is still in flight, which cancels the send and says which stance the
+  ladder ended on. At `agent.approvalLevel: 5` the two run buttons resolve to
+  the same stance, and the bar says so where the choice is made.
+- **typed prose under an open approval is the verdict**, as in the TUI
+  (`src/tui/submit-handler.ts`): the call is denied with your words as the
+  model-visible reason, and the same text then goes into the running turn — in
+  that order, awaited, because a steer that arrived first would be pushed at a
+  turn still parked on the gate. The card's footer says so on screen.
 
 Honestly degraded, and labelled as such in the UI:
 
@@ -324,7 +349,50 @@ Honestly degraded, and labelled as such in the UI:
   on, not an answer, and at `agent.approvalLevel: 5` the live stance is
   really `bypass` — so the chip names a mode only once the route has
   confirmed one. The desktop prefers `~/atag-agent/bin/atag` for
-  exactly this reason (see *Packaging* below).
+  exactly this reason (see *Packaging* below). The plan hand-off rides on the
+  same route, so a binary without it draws no bar at all: with no plan mode
+  there is nothing to hand off from.
+- **No session-wide approval grants, and no target-path retargeting.** The TUI
+  offers both (`[s]` allow-category, `[a]` allow-shape, `edit target path…`)
+  because it reaches the gate in process. On the wire, `ResolveBody` in
+  `src/http/route-approval.ts` is `{approvalId, decision, reason}` and
+  `parseDecision` maps the decision to a bare boolean — nothing can carry a
+  grant scope or a `pathOverride`. So the card draws Approve / Deny / Abort and
+  says why, rather than a button it cannot honour; the `s` and `a` keys that
+  used to fire a grant-shaped verdict were removed for the same reason. Loosen
+  the standing stance with the mode control in the composer instead.
+- **Where the approval surface still diverges from the TUI's, field by field.**
+  Three differences remain after the parity work above, none of them accidental:
+  (a) the desktop's `kind` row adds `— auto-approves from level N`, which the
+  TUI's modal has no counterpart for. It is kept because the desktop has no
+  always-visible ladder next to the card, and the number is the agent's own.
+  (b) the TUI closes its modal with a muted `esc abort run · ctrl+c stop
+  everything` line; the desktop draws an **Abort run** button with an `⎋` keycap
+  instead, and has no ctrl+c equivalent — there is no run to interrupt from a
+  window that is not a terminal. (c) deny is `n` here and `ctrl+d` in the TUI.
+  Both are guarded (the desktop's letter keys are dead inside any text field),
+  and `n` is what the card's own keycap prints, so the key and the label agree.
+- **A verdict the agent does not take is reported, not assumed.** `POST
+  /api/approval/resolve` answers 404 with an `{error:…}` body for an
+  `approvalId` the gate is no longer holding, and the IPC layer hands that back
+  as a perfectly successful call. So the reply is read: only the route's own
+  `{resolved:true, …}` counts as delivery, and anything else prints *could not
+  deny that call with your message: …* and marks the card **Not denied — the
+  agent never took the verdict**. The typed text is still sent into the turn
+  either way.
+- **The plan chords are dead inside the composer.** `ctrl+y` / `ctrl+b` /
+  `ctrl+d` fire the bar's three verbs everywhere else, as in the TUI, but not in
+  a text field: macOS binds all three inside a Chromium textarea (back a
+  character, yank, delete forward), and a run in bypass-permissions mode is not
+  something an ordinary editing keystroke may start. This is a deliberate
+  divergence from the TUI, where Ink has no such bindings.
+- **The plan hand-off is live-turn only.** It is raised off the turn's own
+  terminal frame, so a plan-mode turn that finished in another chat, or under a
+  scheduled task, leaves nothing to hang it on: the store records no "this turn
+  ran in plan mode" fact (plan mode is process state, deliberately not
+  persisted), and inferring one from the reply text would be fabrication. It
+  therefore disappears on reload; the mode chip and a typed instruction are the
+  fallback, exactly as before.
 - **The exact pre-message breakdown needs `POST /api/context-preview`,** a
   route added in this branch (`src/http/route-context-preview.ts`): the
   runtime builds — never runs, never persists — the prompt the next turn

@@ -15,8 +15,33 @@ const SEL = {
   local:[], localBusy:false, addOpen:false, presetCur:0,
   pulling:null, pullLine:'', busy:false, err:null,
 };
-/* Real token usage, read from the agent's trace after each turn. */
-const PLAN = { on:false, supported:null };
+/* Item 1 (plan hand-off). The offer that follows a finished plan-mode turn,
+   ported from src/tui/components/plan-handoff.tsx. `on` is the offer itself;
+   `itemId` is the assistant entry it hangs under (it is never a log entry of
+   its own — endMarkIds walks the tail of a segment and a `k:'plan'` row there
+   would eat the turn's full stop); `sessionId` scopes it to the thread it was
+   raised in; `startedMode` is the stance the turn OPENED with, so a stance
+   that moved between start and end cannot put the bar over a turn that ran
+   unfettered; `busy` disables the buttons while the mode POST is in flight,
+   because submit() has no re-entrancy guard and a double click would send the
+   execute message twice; `failMode` is the smoke seam for the "the POST came
+   back !ok" branch, and `hold` the smoke seam that parks executePlan between
+   the confirmed mode change and the send, so the ordering can be observed from
+   the agent's side rather than inferred. The object replaces a vestigial
+   `{on, supported}` that had no reader anywhere in the file. */
+const PLAN = { on:false, itemId:null, sessionId:null, startedMode:null, busy:false, failMode:false, hold:null };
+/* Review fix (Item 1): the deny-with-reason round trip, injectable the same
+   way setCodingMode's `post` is. Null in every real window — the smoke sets it
+   to watch the verdict leave, and to drive both answers the route can give
+   (`{resolved:true,…}` and the 404 body for an id no gate is holding). */
+const APPR_SEAM = { post:null };
+/* The ordering proof for the acceptance check: executePlan pushes 'mode:<m>'
+   only once the agent has CONFIRMED the new stance, and submit() pushes 'send'
+   when it accepts the execute message — so ["mode:auto","send"] is the whole
+   record that the mode change went first. */
+const PLAN_TRACE = [];
+/* src/tui/components/plan-handoff.tsx EXECUTE_PLAN_MESSAGE, verbatim. */
+const EXECUTE_PLAN_MESSAGE = 'Carry out the plan you just described. Plan mode is off now, so your tools work again — go ahead and make the changes.';
 /* The composer's stance. Read from and written to /api/coding-mode, which
    moves the runtime's live ladder and plan flag exactly as the TUI's
    onCodingModeChanged does — config.json is never touched. */
@@ -1307,7 +1332,14 @@ function item(m, end) {
   // item 5: the reply, then the files this turn wrote, as an attachment footer.
   if (m.k === 'assistant') return '<div class="turn"><div></div>'
     + '<div><div class="prose">' + renderProse(m.text) + '</div>' + attachStrip(m)
-    + (end ? '<div class="endmark" title="turn complete">' + MARK_MONO + '</div>' : '') + '</div></div>';
+    + (end ? '<div class="endmark" title="turn complete">' + MARK_MONO + '</div>' : '')
+    // Item 1 (plan hand-off): INSIDE the content column, before its two closing
+    // divs — appended after them the bar would leave `.turn` and lose the
+    // two-column grid alignment this branch exists to keep. It hangs off the
+    // last finalised assistant message of the plan turn (src/tui/components/
+    // chat-log.tsx:170-181 does the same), carries no id, and is not in S.log.
+    + (PLAN.on && m.id === PLAN.itemId ? planHandoffHTML() : '')
+    + '</div></div>';
   if (m.k === 'system') return '<div class="sysrow"><span></span><span>' + m.text + '</span></div>';
   if (m.k === 'reason') return '<div class="turn" id="turn-' + m.id + '"><div></div><div>'
     + '<button class="disc" data-toggle="' + m.id + '">' + ic(m.open ? 'chevD' : 'chevR') + 'Reasoning · ' + m.steps + ' steps</button>'
@@ -1368,8 +1400,17 @@ function toolCard(m) {
 function apprCard(m) {
   if (m.state) {
     const ok = m.state === 'approved';
+    /* Review fix (Item 1): two states the deny-with-reason path can be in that
+       are not "Denied". `denying` is the round trip still in flight, and
+       `undelivered` is the route answering that it is not holding that
+       approvalId (404) — printing "Denied" for either would state as fact
+       something the agent was never told. Everything else keeps its label. */
+    const label = ok ? 'Approved'
+      : m.state === 'denying' ? 'Denying…'
+      : m.state === 'undelivered' ? 'Not denied — the agent never took the verdict'
+      : 'Denied';
     return '<div class="appr done' + (ok ? ' ok' : '') + '">'
-      + '<div class="hstack" style="gap:8px"><span class="sec">' + (ok ? 'Approved' : 'Denied') + ' · ' + m.at + '</span>'
+      + '<div class="hstack" style="gap:8px"><span class="sec">' + label + ' · ' + m.at + '</span>'
       + '<span class="badge" style="background:transparent;border-color:var(--line);color:var(--text-secondary)">' + esc(m.kind) + '</span></div></div>';
   }
   const isTrust = m.cat === 'trust_config';
@@ -1391,11 +1432,33 @@ function apprCard(m) {
       + '<button class="btn btn-s" data-appr="n" id="denybtn">Deny' + keycaps('N') + '</button></div>'
       + '<button class="btn btn-g" data-appr="esc">Abort run' + keycaps('⎋') + '</button>'
     + '</div>'
+    /* Item 1 (approval parity). Two repairs, both about not promising what the
+       card cannot do or omitting what it now does:
+       (a) the pointer. It sent the operator to the Privacy tab, whose ladder is
+           read-only here and which the TUI deleted in PR #303; the one approval
+           surface is the coding-mode control in the composer
+           (src/tui/approval-modal.tsx footerHint says exactly that).
+       (b) the typing clause, verbatim from the same footerHint, now that it is
+           true: typing prose under this prompt denies the call with your words
+           and sends them on. It was not documented on screen before because it
+           did not happen.
+       What is deliberately still missing is the TUI's session grants and its
+       `edit target path\u2026`: `ResolveBody` on the wire is {approvalId, decision,
+       reason} and parseDecision maps decision to a bare boolean, so neither a
+       grant scope nor a pathOverride can be carried. The card says so rather
+       than drawing a button it cannot honour. */
     + '<div class="apprfoot">' + (isTrust
         ? 'trust-config writes are never granted for the session; y approves this call only'
         : (m.approvalId
-        ? 'y approves this call once, n refuses it. Session-wide grants are not offered here because the agent\u2019s HTTP API implements allow-once and deny only \u2014 raise the standing level on the <button class="btn-g" style="text-decoration:underline" data-act="settings:privacy">Privacy</button> tab.'
-        : 'y approves this call once; s / a grant for this session only (never persisted); raise the standing level on the <button class="btn-g" style="text-decoration:underline" data-act="settings:privacy">Privacy</button> tab'))
+        ? 'y approves this call once, n refuses it. Session-wide grants are not offered here because the agent\u2019s HTTP API implements allow-once and deny only \u2014 loosen the standing stance with the <button class="btn-g" style="text-decoration:underline" data-act="modes">mode</button> control in the composer.'
+        : 'y approves this call once; s / a grant for this session only (never persisted); loosen the standing stance with the <button class="btn-g" style="text-decoration:underline" data-act="modes">mode</button> control in the composer'))
+      // Only on a card that typing can actually answer: the deny-with-reason
+      // path needs a live approvalId AND this chat's own request, so a
+      // background thread's question (or a prototype card) does not carry a
+      // promise that would not be kept for it.
+      + (m.approvalId && m.sessionId && m.sessionId === S.agentSession
+          ? ' \u00b7 the composer stays live \u2014 type to answer the agent instead (enter cancels this call and sends it)'
+          : '')
     + '</div></div>';
 }
 
@@ -1423,7 +1486,13 @@ function composer() {
     + voiceStripHTML()
     + '<div class="composer' + (running ? ' running' : '') + '" id="composer">'
       + (S.slash ? slashPopover() : '')
-      + '<div class="field"><textarea id="entry" rows="1" placeholder="' + (running ? 'Send to steer this turn…' : 'Ask for an outcome, or / for a command') + '"></textarea>'
+      // Item 1 (plan hand-off): src/tui/tui-app.tsx:2011 verbatim while the
+      // offer stands. It is the user's third clause — "texting in the input
+      // field would reconfigure the plan" — said where they are about to type.
+      + '<div class="field"><textarea id="entry" rows="1" placeholder="'
+        + (running ? 'Send to steer this turn…'
+           : PLAN.on ? 'Type to change the plan — it stays in plan mode…'
+           : 'Ask for an outcome, or / for a command') + '"></textarea>'
       + micButton() + sendButton() + '</div>'
       + '<div class="cfoot">'
         + '<button class="cchip modechip" data-sel-open="backend">'
@@ -2428,6 +2497,7 @@ function act(a) {
   if (a === 'applydial') { S.share = S.dialShare; if (S.mode !== 'fusion' && S.dialShare > 0) S.mode = 'fusion'; close(); render(); toast('Run type applied', S.mode + (S.mode === 'fusion' ? ' · cloud share ' + S.share : '')); return; }
   if (a === 'session:new') { close(); S.log = []; S.history = []; S.agentSession = null; S.busy = false;
                              forgetApprovalCard();   // item 6 review fix: a fresh thread does not answer the open gate — the other chat's dot keeps saying it is waiting
+                             clearPlanOffer();   // Item 1: the plan belonged to the thread being left (see openSession)
                              S.room = 'chat';
                              S.sessionId = '';   // item 6: a fresh thread has no row of its own yet, so no row is highlighted
                              render(); toast('New session', 'The next turn starts fresh');
@@ -2694,7 +2764,38 @@ function submit() {
   S.draft = ''; if (e) { e.value = ''; autosize(e); }
   ctxDraftChanged(); // Lane B — item 3: the sent draft leaves the projection
   S.slash = false;
+  /* Item 1 (approval parity): a prompt is open and the operator typed prose
+     instead of a verdict. That IS the verdict — src/tui/submit-handler.ts:
+     this one call is denied with THEIR words as the model-visible reason ("put
+     it in ~/Documents" rather than a bare refusal) and the same text is folded
+     into the running turn, which keeps going. The desktop used to only steer,
+     leaving the gate open and the turn parked.
+
+     Scoped to the visible session's own request, exactly as the TUI scopes it,
+     so typed prose can never become the deny reason for a question some
+     background thread asked; a foreign request falls through to the ordinary
+     steer/queue path below. A card with no approvalId is prototype furniture
+     and has nothing to resolve, so it falls through too.
+
+     The deny is AWAITED before the steer, which is the ordering the TUI's own
+     comment gives ("resolve first so the blocked tool call fails fast with the
+     operator's words … steering before the resolve would push the note at a
+     turn still parked on `await approvals.request(...)`"). In-process the TUI
+     gets that ordering for free; over HTTP it costs one round trip. */
+  if (S.pending && S.pending.approvalId && S.pending.sessionId
+      && S.pending.sessionId === S.agentSession) {
+    denyByProse(S.pending, text);
+    return;
+  }
   if (S.busy || S.pending) { steerOrQueue(text); return; }
+  // Item 1 (plan hand-off): the second half of the ordering proof. executePlan
+  // records 'mode:<m>' only after the agent has confirmed the new stance, and
+  // this records the moment the execute message is actually accepted as a new
+  // turn — so the trace can only ever read ["mode:auto","send"], never the
+  // reverse. Review fix: it sits HERE, below every early return above it (the
+  // backend-switch gate, the slash branch, the steer/queue branch), because a
+  // trace entry for a send that did not happen is not evidence of anything.
+  if (text === EXECUTE_PLAN_MESSAGE) PLAN_TRACE.push('send');
   S.log.push({id:nid(), k:'user', text});
   if (S.live.state !== 'connected') {
     // Nothing may be fabricated. If the agent is not answering, say so.
@@ -2837,6 +2938,11 @@ document.addEventListener('click', (e) => {
   }
   // a real control always wins over the dismiss-on-scrim handler behind it
   const a = t.closest('[data-act]'); if (a) { e.preventDefault(); act(a.dataset.act); return; }
+  // Item 1 (plan hand-off): checked BEFORE the dismiss-on-scrim line below, so
+  // the bar keeps working if it ever renders inside something that carries
+  // [data-close]. It is not in a scrim today; the ordering is one line.
+  const pl = t.closest('[data-plan]');
+  if (pl && !pl.disabled) { e.preventDefault(); if (pl.dataset.plan === 'dismiss') dismissPlan(); else executePlan(pl.dataset.plan); return; }
   if (t.closest('[data-close]') && !t.closest('.pal, .sheet, .popover, .alertbox')) { act('close'); return; }
   const ap = t.closest('[data-appr]'); if (ap) { answer(ap.dataset.appr); return; }
   const rm = t.closest('[data-room]'); if (rm) { act('room:' + rm.dataset.room); return; }
@@ -3387,8 +3493,49 @@ document.addEventListener('keydown', (e) => {
   // approval scope — only while a card is pending and focus is not in a text field
   if (S.pending && !inText && !S.settings && !(S.room === 'tasks' && TK.cancel)) { // Item 7: the settings window (and the Tasks room's cancel modal) own their keys
     const kk = k.toLowerCase();
-    if (['y','s','a','n'].includes(kk)) { e.preventDefault(); answer(kk); return; }
+    // Item 1 (approval parity): `s` and `a` are gone. They fired answer() for
+    // the two session-grant buttons, which a LIVE request never draws (the
+    // agent's HTTP API carries no grant scope — src/http/route-approval.ts's
+    // ResolveBody is {approvalId, decision, reason} and parseDecision maps it
+    // to a bare boolean), and answerLive then printed a line apologising for a
+    // grant the operator never asked for. A key that cannot do what it says
+    // must not be offered.
+    if (['y','n'].includes(kk)) { e.preventDefault(); answer(kk); return; }
     if (k === 'Escape') { e.preventDefault(); answer('esc'); return; }
+  }
+
+  /* Item 1 (plan hand-off): the TUI's PLAN_CHORDS — auto `y`, bypass `b`,
+     dismiss `d` (src/tui/app-key-bindings.ts) — with the ctrl the TUI requires
+     on all of them (`if (state.planHandoff && key.ctrl && !key.meta)`). The
+     brief asked for the TUI's behaviour, and the chord IS the behaviour: the
+     approval modal's own footer explains why the TUI moved off bare letters
+     ("every one of them is a chord, so typing a message that happens to start
+     with 'yes' cannot approve the call the way a bare `y` did"), and the same
+     hazard is worse here, where `y` and `b` start a run.
+
+     Review fix — the one place the port must NOT follow the TUI: the chord is
+     dead inside a text field (`!inText`). Ink has no editing bindings on those
+     keys, but a Chromium textarea on macOS does: ctrl+b moves back a
+     character, ctrl+d deletes forward and ctrl+y yanks, and operators use
+     them. Live inside the composer these chords would fire the app's most
+     destructive control out of an ordinary editing keystroke, while the
+     operator is typing the very revision this bar invites them to type — and
+     the render() they trigger would rebuild #content and drop the caret. The
+     chord survives everywhere else, so a typed message beginning "yes" still
+     cannot run a plan; only the editor is exempt. The approval branch above
+     already carries the same guard.
+
+     Ordering: the TUI checks its plan branch BEFORE approvals (its own comment
+     and docstring saying otherwise are stale). The desktop deliberately
+     inverts that by guarding on `!S.pending`, so a live approval always wins —
+     the ladder is the more urgent question and it is the one holding the agent
+     blocked. */
+  if (PLAN.on && !inText && !S.pending && !S.settings && !S.overlay && !S.menuOpen
+      && e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+    const pk = k.toLowerCase();
+    if (pk === 'y') { e.preventDefault(); executePlan('auto'); return; }
+    if (pk === 'b') { e.preventDefault(); executePlan('bypass'); return; }
+    if (pk === 'd') { e.preventDefault(); dismissPlan(); return; }
   }
 
   const mod = e.metaKey || e.ctrlKey;
@@ -3694,6 +3841,16 @@ function markSeen(id) {
 
 
 function startLiveTurn(text) {
+  // Item 1 (plan hand-off): a new turn retires the offer — the TUI's
+  // startNewRun does the same on `message_submitted`. This is also the path
+  // the user's third clause takes: typing while idle lands here, so a revision
+  // puts the old plan's bar away before the new plan turn starts. The steer
+  // path deliberately does NOT clear it — a steer is not a new turn.
+  clearPlanOffer();
+  // The stance this turn OPENS with. The bar is raised against this, not
+  // against what the chip says when the turn ends, so a stance that moved
+  // mid-flight cannot put a plan bar over a turn that ran unfettered.
+  PLAN.startedMode = MODE.known ? currentMode() : null;
   S.history.push({role:'user', content:text});
   S.reasonId = null;
   S.busy = true; S.stick = true; S.elapsed = 0; S.phase = 'Thinking';
@@ -3858,6 +4015,20 @@ function onChatEvent(ev) {
     if (ev.kind === 'finish') return;
     S.busy = false; S.turnId = null; clearInterval(ticker);
     S.reasonId = null;
+    /* Item 1 (plan hand-off): finishTurn's rule, restated —
+       src/tui/reducer-helpers.ts: "if (state.codingMode !== 'plan' || outcome
+       !== 'completed') return next; return { ...next, planHandoff: true }".
+       `done` is the completed outcome; `aborted` and `error` are not, because a
+       cancelled or failed plan turn leaves nothing to carry out and offering to
+       run it would be offering to run whatever half of it survived. The
+       non-empty text guard must run HERE, above the '(no reply)' backfill three
+       lines down, or a turn that said nothing raises a bar over the words
+       '(no reply)'. `item` is only defined for the turn streaming into the
+       chat on screen (the turnId guard above), which is the only transcript
+       the bar could honestly attach to. */
+    if (ev.kind === 'done' && PLAN.startedMode === 'plan' && item && String(item.text || '').trim()) {
+      PLAN.on = true; PLAN.itemId = item.id; PLAN.sessionId = S.agentSession;
+    }
     // r5 item 7: a background download that finished mid-turn parked its
     // activation rather than restarting `atag serve` under this turn.
     obFlushDeferredActivate();
@@ -3987,6 +4158,59 @@ function answerLive(req, key) {
   });
   if (key === 'esc') { S.busy = false; if (S.turnId) BR.cancel(S.turnId); }
   render();
+}
+
+/**
+ * Item 1 (approval parity): the operator answered the agent in words.
+ *
+ * Ported from src/tui/tui-command.ts onApprovalReply, ordering included: the
+ * verdict is resolved FIRST, so the blocked tool call fails fast carrying the
+ * operator's words as its reason, and only then does the same text go into the
+ * turn. `POST /api/approval/resolve` already forwards `reason` to the gate, and
+ * the desktop's approve() already carries it through preload → main →
+ * agent-client, so this is the whole of what the wire needs.
+ *
+ * The sentence the spec wrote as one line is split in two, because only the
+ * first half is known when it is printed: this function knows the call was
+ * denied with the typed reason, and steerOrQueue knows — a round trip later —
+ * whether the running turn actually took the text or whether it had to be
+ * parked as the next turn. Printing "and the same text was sent into the
+ * running turn" before asking would be inventing the second half.
+ */
+async function denyByProse(req, text, post) {
+  S.pending = null;
+  if (req.sessionId) PENDING_APPROVALS.delete(req.sessionId);   // the row stops asking
+  req.at = new Date().toTimeString().slice(0, 8);
+  req.state = 'denying';   // in flight — not yet a fact, and the card says so
+  render();
+  // `post` is the same injected-round-trip seam setCodingMode takes: the smoke
+  // needs to watch the verdict leave without answering a real gate.
+  const send = post || APPR_SEAM.post || ((id, decision, reason) => BR.approve(id, decision, reason));
+  const res = await send(req.approvalId, 'deny', text);
+  /* Review fix (Item 1): the reply must be READ, not merely received. The IPC
+     wrapper answers `{ok:true, data:<whatever the route returned>}` for every
+     reply the HTTP call produced, and agent-client's resolveApproval returns
+     `res.json()` with no status check — so a 404 for an approvalId the gate is
+     no longer holding arrives as ok:true carrying an `{error:{message}}` body.
+     Announcing "denied with your message as the reason" on that reply would
+     state as fact that the agent was told, when it was not: the one path that
+     carries the operator's own words to the model is the last place to guess.
+     `{resolved:true}` is the route's success body (src/http/route-approval.ts)
+     and nothing else counts as delivery. */
+  const data = res && res.ok === false ? null : (res ? res.data : null);
+  const landed = !!(data && data.resolved === true);
+  const why = res && res.ok === false ? String(res.error || '')
+    : (data && data.error && data.error.message) ? String(data.error.message)
+    : (data && typeof data.error === 'string') ? data.error
+    : 'the agent did not confirm it';
+  req.state = landed ? 'denied' : 'undelivered';
+  S.log.push({id:nid(), k:'system', text: landed
+    ? 'that call was denied with your message as the reason'
+    : 'could not deny that call with your message: ' + esc(why)});
+  render();
+  // Then the text itself. steerOrQueue prints its own honest line about where
+  // it landed — folded into the running turn, or parked as the next one.
+  await steerOrQueue(text);
 }
 
 if (BR) {
@@ -7586,7 +7810,12 @@ function reassertCodingMode(id) {
   });
 }
 
-async function setCodingMode(id) {
+/* Item 1 (plan hand-off): `post` is an injected round trip, defaulting to the
+   real route — the same seam `steerOrQueueRun(text, post)` already uses one
+   surface over. The plan bar's failure check drives THIS function's own
+   "came back !ok" branch through it, rather than patching window.atomic,
+   which the contextBridge freezes. Nothing else passes it. */
+async function setCodingMode(id, post) {
   if (S.busy) { toast('Not while a turn is running'); return; }
   // An explicit click outranks anything the reconnect path is still waiting
   // to re-assert: without this a queued re-assert would land after the turn
@@ -7597,8 +7826,11 @@ async function setCodingMode(id) {
   /* r5 item 10: the chip now repaints on the CLICK rather than on the
      reply. This route is 1-3 ms, so the send button's spinner (150 ms) is
      never reached — the wrapper is here for the paint and for the single
-     coverage rule, not for a lock the operator would ever see. */
-  const res = await swxRun('switching…', {mode:id}, () => SWXBR.codingMode(id));
+     coverage rule, not for a lock the operator would ever see.
+     r5 integration: item 1's `post` seam rides INSIDE the wrapper, so the
+     plan hand-off's injected mode POST is measured and locked exactly like
+     the operator's own click. */
+  const res = await swxRun('switching…', {mode:id}, () => (post ? post(id) : SWXBR.codingMode(id)));
   // A later click (or a re-assert fired after this one) already owns the
   // stance: drop this reply rather than repainting the chip backwards.
   if (seq !== MODE.seq) return;
@@ -7613,6 +7845,11 @@ async function setCodingMode(id) {
   MODE.supported = true; MODE.current = res.mode; MODE.known = true; MODE.confirmedGen = AGENT_GEN;
   MODE.approvalLevel = res.approvalLevel; MODE.baseLevel = res.baseLevel;
   LAST_MODE = res.mode;
+  // Item 1 (plan hand-off): any stance that is no longer `plan` retires the
+  // offer — src/tui/reduce-ui-actions.ts:226 (`planHandoff: next === "plan" ?
+  // state.planHandoff : false`). This is also the line the two run buttons
+  // trip on their way past, so by the time executePlan sends, the bar is gone.
+  if (res.mode !== 'plan') clearPlanOffer();
   // The diagnostics line reads the capabilities snapshot taken at connect,
   // and the mode moves the LIVE ladder — so without this the line keeps
   // printing the boot level while the chip says otherwise.
@@ -7626,6 +7863,177 @@ async function setCodingMode(id) {
   const look = CODING_MODES.find((m) => m.id === res.mode);
   const summary = (res.look && res.look.summary) || (look ? look.summary : res.mode);
   S.log.push({id:nid(), k:'system', text: esc(summary)});
+  render();
+}
+
+/* ============================================================
+   Item 1 — the plan hand-off bar
+   A port of src/tui/components/plan-handoff.tsx.
+
+   Plan-mode ENFORCEMENT is the agent's and is already correct through this
+   window's own path: POST /api/coding-mode {"mode":"plan"} raises the runtime
+   plan flag, and runPlanModeGate refuses every mutating tool BEFORE dispatch
+   (src/agent/batch-executor.ts, src/agent/plan-mode.ts) — 24 of the 60
+   registered tools, `os.shell.run` and `os.fs.write` among them. Nothing here
+   touches that gate. What was missing is the second half: the TUI ends a plan
+   turn with a three-control bar, and the desktop ended it with nothing, so
+   carrying a plan out meant finding the mode chip, changing it, and retyping
+   the instruction.
+
+   The user's words: "There should be a proposal of what we're planning to do
+   and then several buttons. One is reject the plan; texting in the input field
+   would reconfigure the plan; and two more buttons — one of them is run the
+   plan in bypass permissions mode, and one run the plan in auto."
+
+   The four options, in the order the user listed them, and where each lives:
+   - the proposal      — the assistant message itself; the bar hangs under it
+   - reject the plan   — `✕ dismiss plan`. Read as rejecting THIS plan, not the
+                         act of planning, so it stays in plan mode exactly as
+                         the TUI's dismiss does (src/tui/reduce-ui-actions.ts
+                         `plan_handoff_dismissed`, which deliberately does not
+                         touch the mode). Dropping out of plan mode on a reject
+                         would hand the agent its tools back at the moment the
+                         operator said no. The button says so in its tooltip and
+                         the system line it leaves says so again.
+   - typing revises it — the composer stays live and its placeholder says so.
+                         A typed message while idle goes submit() →
+                         startLiveTurn() → clearPlanOffer(), so the offer is
+                         retired by the new plan turn. The steer path
+                         deliberately keeps it: a steer is not a new turn.
+   - the two run buttons — auto and bypass, in the TUI's own order and copy.
+   ============================================================ */
+
+/** Retire the offer. Never touches the mode: leaving plan mode is a separate act. */
+function clearPlanOffer() {
+  PLAN.on = false; PLAN.itemId = null; PLAN.sessionId = null;
+}
+
+function planHandoffHTML() {
+  const off = PLAN.busy ? ' disabled' : '';
+  // Labels verbatim from src/tui/components/plan-handoff.tsx:65, :72, :135 —
+  // the leading/trailing spaces there are terminal button padding, the glyphs
+  // are part of the label. Order is the TUI's: auto, bypass, then dismiss last
+  // and quiet, because it is the one control here that does nothing
+  // irreversible and putting it first would give the least consequential
+  // choice the position the eye lands on.
+  return '<div class="planbar">'
+    + '<button class="btn planrun warn" data-plan="auto"' + off
+      + ' title="run the plan with file writes inside this workspace no longer asking">▶ run it · auto</button>'
+    + '<button class="btn planrun bad" data-plan="bypass"' + off
+      + ' title="run the plan with nothing asking, for the rest of this session">▶ run it · bypass permissions</button>'
+    + '<button class="btn btn-s" data-plan="dismiss"' + off
+      + ' title="stays in plan mode — type to propose a different one">✕ dismiss plan</button>'
+    // src/tui/tui-app.tsx:2011, without the ellipsis: here it is prose under
+    // the bar rather than a placeholder. It carries the third option, and an
+    // operator looking at two "execute" buttons needs telling that typing is
+    // still allowed.
+    + '<p class="cap planhint">Type to change the plan — it stays in plan mode.</p>'
+    // The honest half of "two run buttons": at the configured ceiling the two
+    // stances resolve to the same thing, so the choice between them is
+    // cosmetic. The popover already discloses this collision for the modes;
+    // the same fact belongs where the choice is actually being made. The
+    // buttons stay — suppressing one the user asked for by name is worse than
+    // labelling it.
+    + (MODE.baseLevel === MAX_APPROVAL_LEVEL
+        ? '<p class="cap planhint">Your configured approval level is ' + MAX_APPROVAL_LEVEL + ' of '
+          + MAX_APPROVAL_LEVEL + ', so auto and bypass are the same stance here — lower agent.approvalLevel to make them differ.</p>'
+        : '')
+    + '</div>';
+}
+
+/**
+ * Run the plan.
+ *
+ * The desktop's stricter twin of src/tui/tui-app.tsx executePlan. The TUI
+ * dispatches the mode change and calls the submit handler in the same tick,
+ * relying on React's effect landing before the new turn's first tool call;
+ * here the POST is AWAITED, so the agent has confirmed `planMode:false` before
+ * a single byte of the message is posted. The TUI's own comment gives the
+ * reason: "the runtime reads plan mode per tool call and a message that
+ * arrived first would hit a turn whose first few calls were still being
+ * refused".
+ *
+ * The message then goes through submit() — the one path a typed message takes
+ * — so the user bubble, S.history, the busy gate, the local-turn gate, the
+ * context projection and steering all behave exactly as they do for anything
+ * else the operator types.
+ */
+async function executePlan(mode) {
+  if (!PLAN.on || PLAN.busy) return;
+  if (S.busy || S.pending) { toast('Not while a turn is running'); return; }
+  PLAN_TRACE.length = 0;
+  PLAN.busy = true; render();
+  /* Review fix (Item 1): the thread this plan belongs to, captured BEFORE the
+     round trip. PLAN.busy only disables the three buttons — the sidebar stays
+     live, and the event loop is free while the mode POST is in flight, so the
+     operator can open another chat (or start a new one) mid-flight. Resuming
+     into that chat would submit the execute message, with the ladder already
+     lowered, into a thread that never had a plan — the exact cross-session
+     leak the divergence from the TUI's session_switched exists to prevent,
+     re-entered through the execute path. PLAN.on cannot be the guard, because
+     setCodingMode clears the offer itself on its way past. */
+  const thread = PLAN.sessionId;   // the agent session the offer was raised in
+  const row = S.sessionId;         // and the sidebar row that was on screen
+  // The transcript identity, which holds even where the two ids do not: a chat
+  // that has not been named by the agent yet has `agentSession === null` and no
+  // row, and `session:new` leaves it at null and '' again. The anchor is the
+  // assistant message the bar hangs under, and both ways out of a thread
+  // destroy it — `session:new` empties S.log, openSession rebuilds it with
+  // fresh ids. If it is gone, the plan it belonged to is not on screen.
+  const anchor = PLAN.itemId;
+  // setCodingMode takes the next ticket off MODE.seq and drops its own reply
+  // if a later choice has taken one since. Remember which ticket is ours so a
+  // concurrent chip click (or a reconnect re-assert) is reported as what it is
+  // rather than blamed on the POST.
+  const mine = MODE.seq + 1;
+  await setCodingMode(mode, PLAN.failMode
+    ? () => Promise.resolve({ok:false, supported:true, error:'forced by __planFailMode'})
+    : undefined);
+  PLAN.busy = false;
+  if (MODE.seq !== mine) {
+    S.log.push({id:nid(), k:'system', note:true,
+      text:'another mode change landed first, so the plan was not sent — choose again'});
+    render(); return;
+  }
+  if (!MODE.known || currentMode() !== mode) {
+    // The offer stays up: nothing was sent, and the agent is where it was.
+    S.log.push({id:nid(), k:'system', note:true,
+      text:'the mode did not change, so the plan was not sent — the agent is still in plan mode'});
+    render(); return;
+  }
+  // The chat moved while the stance was moving. Nothing is sent: the plan
+  // belongs to the thread it was proposed in, and this window is looking at a
+  // different one. The stance DID change — that POST landed and is the
+  // operator's own instruction — so the line names where the ladder now is
+  // rather than pretending nothing happened.
+  if (S.agentSession !== thread || S.sessionId !== row
+      || (anchor && !S.log.some((m) => m.id === anchor))) {
+    S.log.push({id:nid(), k:'system', note:true,
+      text:'the chat changed while the mode was moving, so the plan was not sent — the stance is now ' + mode});
+    render(); return;
+  }
+  PLAN_TRACE.push('mode:' + mode);
+  clearPlanOffer();
+  /* Smoke seam, null in every real window: it parks the send here, after the
+     agent has confirmed the new stance and before a byte of the message goes,
+     so the ordering can be proved by asking the AGENT what stance it is in
+     while the transcript still has no user bubble — rather than inferred from
+     a trace this window wrote about itself. */
+  if (PLAN.hold) { try { await PLAN.hold; } finally { PLAN.hold = null; } }
+  S.draft = EXECUTE_PLAN_MESSAGE;
+  const e = $('#entry');
+  if (e) { e.value = EXECUTE_PLAN_MESSAGE; autosize(e); }
+  submit();
+}
+
+/** Put the plan away. Stays in plan mode — src/tui/reduce-ui-actions.ts. */
+function dismissPlan() {
+  if (!PLAN.on) return;
+  clearPlanOffer();
+  // `note:true`: endMarkIds walks back over trailing note rows, so the turn
+  // keeps its completion mark instead of losing it to this line.
+  S.log.push({id:nid(), k:'system', note:true,
+    text:'plan dismissed — still in plan mode; type to propose a different one'});
   render();
 }
 
@@ -7702,6 +8110,17 @@ async function openSession(id) {
   // reloading would throw away the streaming item the deltas land in, so the
   // reply would vanish mid-sentence.
   if (live && S.sessionId === id) { S.room = 'chat'; markSeen(id); render(); return; }
+  /* Item 1 (plan hand-off): a DELIBERATE divergence from the TUI. Its
+     `session_switched` reducer resets messages, feed, pendingApproval,
+     runHistory, queuedMessages and contextUsage but not `planHandoff`, so its
+     bar re-attaches to whatever the new transcript's last assistant message is
+     and offers to run a plan from another thread. That is a defect, not a
+     contract, so it is not copied: switching chats retires the offer here and
+     in `session:new`. The bar is live-turn-only in any case — the store
+     records no "this turn ran in plan mode" fact (plan mode is process state,
+     deliberately not persisted), and inferring one from the reply text would
+     be fabrication — so a reopened session never gets one back. */
+  clearPlanOffer();
   S.sessionId = id;
   S.room = 'chat';
   S.log = [{id:nid(), k:'system', text:'loading session…'}];
@@ -8443,6 +8862,11 @@ if (typeof window !== 'undefined') {
     traceTs: m.traceTs || null, startedAt: m.startedAt || null,   // item 4: the row a live card took must be its own
     argsKey: m.argsKey || null,   // item 4: what the trace merge matches on
     live: !!m.startedAt,   // born on the stream this run, as opposed to loaded from the store
+    // Item 1: the refused call's own text, so a check can assert the store's
+    // plan-mode refusal verbatim rather than trusting a boolean; `forced` says
+    // whether reconcileToolCards gave up waiting for the store and marked the
+    // card ok itself, which would make `ok` meaningless for that assertion.
+    out: m.out || '', forced: !!m.forced,
   }));
   // item 5: counts the chips renderProse made, not the attachment strip's — the
   // strip is a separate surface and must not skew this check.
@@ -13781,5 +14205,194 @@ if (typeof window !== 'undefined') {
     OB.cursor = at;
     render();
     return at;
+  };
+}
+
+/* ---- Item 1 (plan hand-off + approval parity): --smoke hooks --------------
+   Everything here is read-only or a fixture that runs the REAL code path —
+   __planRaise feeds onChatEvent its own `done` frame rather than reimplementing
+   the raise, and __approvalProse calls submit()'s own denyByProse. */
+if (typeof window !== 'undefined') {
+  window.__plan = () => ({
+    on: PLAN.on, itemId: PLAN.itemId, sessionId: PLAN.sessionId,
+    startedMode: PLAN.startedMode, busy: PLAN.busy, failMode: PLAN.failMode,
+    buttons: [...document.querySelectorAll('[data-plan]')].map((b) => b.dataset.plan + '|' + b.textContent),
+    bars: document.querySelectorAll('.planbar').length,
+    hint: (document.getElementById('entry') || {}).placeholder || '',
+    // the offer is state, never a transcript row
+    entryKinds: [...new Set(S.log.map((m) => m.k))],
+    endmarks: document.querySelectorAll('.endmark').length,
+    logLen: S.log.length,
+    // Review fix: the prose the bar prints, so the base-level disclosure — the
+    // sentence that says auto and bypass are one stance at the configured
+    // ceiling — is asserted rather than merely written.
+    notes: [...document.querySelectorAll('.planbar .planhint')].map((n) => n.textContent),
+    baseLevel: MODE.baseLevel, maxLevel: MAX_APPROVAL_LEVEL,
+  });
+  window.__planClick = (what) => {
+    const b = document.querySelector('[data-plan="' + what + '"]');
+    if (!b) return null;
+    b.click();
+    return window.__plan();
+  };
+  window.__planTrace = () => PLAN_TRACE.slice();
+  window.__planFailMode = (on) => { PLAN.failMode = !!on; return PLAN.failMode; };
+  /* A chord as the operator presses it. `where === 'composer'` focuses #entry
+     and dispatches there, which must do NOTHING: ctrl+b / ctrl+d / ctrl+y are
+     macOS text-editing bindings inside a Chromium textarea, so the chord is
+     deliberately dead in the editor. Anywhere else it fires. `ctrl` false
+     dispatches the bare letter, which must never run a plan. */
+  window.__planKey = (key, ctrl, where) => {
+    const e = document.getElementById('entry');
+    let target = document.body;
+    if (where === 'composer' && e) { e.focus(); target = e; }
+    else if (e) e.blur();
+    target.dispatchEvent(new KeyboardEvent('keydown',
+      {key, ctrlKey: ctrl !== false, metaKey:false, altKey:false, shiftKey:false, bubbles:true, cancelable:true}));
+    return window.__plan();
+  };
+  /* Park executePlan between the confirmed mode change and the send, so the
+     ordering can be checked against the AGENT ("what stance are you in?")
+     while this window's transcript still has no user bubble. */
+  let planRelease = null;
+  window.__planHold = () => { PLAN.hold = new Promise((r) => { planRelease = r; }); return true; };
+  window.__planRelease = () => { if (planRelease) planRelease(); planRelease = null; return true; };
+  window.__users = () => S.log.filter((m) => m.k === 'user').length;
+  /* The cross-session leak, driven deterministically: executePlan runs
+     synchronously up to its first await (the mode POST), so control comes back
+     here with the request still in flight. Switching chats right there is
+     exactly the operator clicking another thread while the round trip is out.
+     `act('session:new')` is the real handler, not a stand-in. */
+  window.__planSwitchDuringExecute = async (mode) => {
+    const from = {session:S.agentSession, row:S.sessionId, users:window.__users()};
+    const running = executePlan(mode || 'auto');
+    act('session:new');   // the sidebar is live while PLAN.busy only greys the bar
+    await running;
+    return {from, session:S.agentSession, users:window.__users(), trace:PLAN_TRACE.slice(),
+      last: window.__lastSystem(), busy:S.busy, mode: currentMode(), on:PLAN.on};
+  };
+  /* Raise the offer without spending a model turn on it, through the real
+     branch: the stance capture startLiveTurn makes, then onChatEvent's own
+     terminal frame. `mode` is the stance the turn OPENED with and `kind` the
+     frame it ends on, so the negatives (a non-plan turn, an aborted turn, a
+     turn with no reply) are checked on the same code the stream reaches. */
+  window.__planRaise = (opts) => {
+    const o = opts || {};
+    const at = S.log.length;
+    clearPlanOffer();   // a new turn retires the old offer, as startLiveTurn does
+    PLAN.startedMode = o.mode === undefined ? currentMode() : o.mode;
+    const streaming = {id:nid(), k:'assistant', text: o.text === undefined ? 'a plan, in three lines' : String(o.text)};
+    S.streamId = streaming.id; S.log.push(streaming);
+    S.turnId = 'smoke-plan'; S.busy = true;
+    onChatEvent({turnId:'smoke-plan', kind: o.kind || 'done', payload:{}});
+    return Object.assign(window.__plan(), {planted: streaming.id, at, hangsOnPlanted: PLAN.itemId === streaming.id});
+  };
+  window.__planRestore = (at) => {
+    clearPlanOffer(); PLAN.failMode = false; PLAN_TRACE.length = 0;
+    PLAN.startedMode = null; PLAN.busy = false;
+    if (planRelease) { planRelease(); planRelease = null; }
+    PLAN.hold = null; APPR_SEAM.post = null;
+    S.busy = false; S.turnId = null; S.streamId = null;
+    if (typeof at === 'number' && at >= 0 && at <= S.log.length) S.log.length = at;
+    render();
+    return S.log.length;
+  };
+  window.__planStop = () => { abort(); return {busy:S.busy, queued:S.queued.length}; };
+  window.__lastUser = () => {
+    for (let i = S.log.length - 1; i >= 0; i--) if (S.log[i].k === 'user') return S.log[i].text || '';
+    return '';
+  };
+  window.__queued = () => S.queued.slice();
+  /* Approval parity: plant this chat's own open request, type prose at it, and
+     record what left the window and in what order.
+
+     `reply` chooses the round trip. 'confirmed' and 'unknown' inject the two
+     answers the route can actually give — `{resolved:true,…}` and the 404 body
+     for an approvalId no gate is holding — so BOTH the success sentence and
+     the honest failure sentence are exercised against the code that reads
+     them. Anything else (the default) leaves APPR_SEAM.post null and lets the
+     real POST go to the live agent, where this fabricated id draws that 404
+     for real. The steer that follows is always the real one. */
+  window.__approvalProse = async (text, reply) => {
+    const at = S.log.length;
+    const rec = {};
+    const req = {id:nid(), k:'approval', approvalId:'smoke-plan-appr', tool:'os.fs.write',
+      cat:'fs_write_workspace', kind:CATEGORY_LABEL.fs_write_workspace, lvl:2,
+      reason:'smoke fixture', preview:'(no preview)', shape:'', affectsBase:'x', affectsDir:'',
+      sessionGrants:false, sessionId:S.agentSession};
+    APPR_SEAM.post = reply === 'confirmed'
+      ? (id) => Promise.resolve({ok:true, data:{resolved:true, approvalId:id, approved:false}})
+      : reply === 'unknown'
+      ? (id) => Promise.resolve({ok:true, data:{error:{message:'approvalId not pending: ' + id}}})
+      : null;
+    S.pending = req; S.log.push(req); S.apprFocused = true; render();
+    const queuedBefore = S.queued.length;
+    // Sampled while the request is still LIVE — the card is finished by the
+    // time submit() returns, and a finished card draws no buttons at all, so
+    // counting them afterwards would pass however apprCard drew the live one.
+    rec.verbs = [...document.querySelectorAll('#apprcard [data-appr]')].map((n) => n.dataset.appr);
+    rec.grantS = document.querySelectorAll('#apprcard [data-appr="s"]').length;
+    rec.grantA = document.querySelectorAll('#apprcard [data-appr="a"]').length;
+    rec.foot = (document.querySelector('.apprfoot') || {}).textContent || '';
+    // The two keys the card no longer offers, pressed with the card up and the
+    // composer blurred: neither may resolve anything.
+    const entry = document.getElementById('entry');
+    if (entry) entry.blur();
+    for (const kk of ['s', 'a']) {
+      document.body.dispatchEvent(new KeyboardEvent('keydown',
+        {key:kk, bubbles:true, cancelable:true}));
+    }
+    rec.afterGrantKeys = {pending: !!S.pending, state: req.state || null};
+    if (entry) entry.value = String(text);
+    S.draft = String(text);
+    // The real Enter path: submit() decides this is a verdict, not a steer.
+    submit();
+    // submit() calls denyByProse without awaiting it; drain the chain here.
+    await new Promise((r) => setTimeout(r, 1500));
+    APPR_SEAM.post = null;
+    rec.state = req.state || null;
+    rec.pending = !!S.pending;
+    rec.doneCards = document.querySelectorAll('.appr.done').length;
+    rec.okCards = document.querySelectorAll('.appr.done.ok').length;
+    rec.queuedBefore = queuedBefore;
+    rec.queued = S.queued.slice();
+    rec.systems = S.log.filter((m) => m.k === 'system').slice(-3).map((m) => m.text);
+    rec.at = at;
+    return rec;
+  };
+  /* The same thing with the verdict's round trip injected, so the ORDER is
+     observable: what the deny carried, and that nothing had been steered or
+     queued while it was still in flight. */
+  window.__approvalProseOrder = async (text) => {
+    const at = S.log.length;
+    const rec = {};
+    const req = {id:nid(), k:'approval', approvalId:'smoke-plan-appr2', tool:'os.fs.write',
+      cat:'fs_write_workspace', kind:CATEGORY_LABEL.fs_write_workspace, lvl:2,
+      reason:'smoke fixture', preview:'(no preview)', shape:'', affectsBase:'x', affectsDir:'',
+      sessionGrants:false, sessionId:S.agentSession};
+    S.pending = req; S.log.push(req); render();
+    const queuedBefore = S.queued.length;
+    await denyByProse(req, String(text), (id, decision, reason) => {
+      rec.sent = {id, decision, reason};
+      rec.queuedWhileDenying = S.queued.length;
+      // The route's own success body — `{resolved:true, approvalId, approved}`
+      // — wrapped as the IPC layer wraps it. A bare `{ok:true}` would not be
+      // accepted as delivery any more, which is the point of the fix.
+      return new Promise((r) => setTimeout(() => r({ok:true, data:{resolved:true, approvalId:id, approved:false}}), 50));
+    });
+    rec.queuedBefore = queuedBefore;
+    rec.queuedAfter = S.queued.length;
+    rec.state = req.state || null;
+    rec.at = at;
+    return rec;
+  };
+  window.__approvalRestore = (at) => {
+    S.pending = null; APPR_SEAM.post = null;
+    PENDING_APPROVALS.delete(S.agentSession);
+    S.queued.length = 0; STEER.ahead = 0;
+    if (typeof at === 'number' && at >= 0 && at <= S.log.length) S.log.length = at;
+    S.draft = ''; const e = document.getElementById('entry'); if (e) e.value = '';
+    render();
+    return {logLen:S.log.length, pending: !!S.pending, queued:S.queued.length};
   };
 }
