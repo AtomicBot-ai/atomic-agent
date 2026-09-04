@@ -59,6 +59,10 @@ import {
   type PrivacyPanelState,
 } from "./privacy/privacy-panel-state.js";
 import {
+  createInitialIntegrationsPanelState,
+  type IntegrationsPanelState,
+} from "./integrations/integrations-panel-state.js";
+import {
   createInitialProvidersPanelState,
   type ProvidersPanelState,
 } from "./providers/providers-panel-state.js";
@@ -118,7 +122,8 @@ export type TuiTab =
   | "mcp"
   | "providers"
   | "import"
-  | "privacy";
+  | "privacy"
+  | "integrations";
 
 /**
  * Top-level UI mode: `chat` is the default single-scroll openclaw-style
@@ -510,6 +515,8 @@ export interface TuiState {
   importPanel: ImportPanelState;
   /** State slice driving the Privacy tab (data-egress preferences). */
   privacyPanel: PrivacyPanelState;
+  /** State slice driving the Integrations tab (third-party credentials). */
+  integrationsPanel: IntegrationsPanelState;
   /** Cloud / local LLM provider registry (hot-swap active text provider). */
   providersPanel: ProvidersPanelState;
   /** Unified operator LLM panel combining provider routing and local daemon state. */
@@ -762,6 +769,7 @@ export function createInitialTuiState(
     mcpPanel: createInitialMcpPanelState(),
     importPanel: createInitialImportPanelState(),
     privacyPanel: createInitialPrivacyPanelState(),
+    integrationsPanel: createInitialIntegrationsPanelState(),
     providersPanel: createInitialProvidersPanelState(),
     llmPanel,
     fallbackPanel: createInitialFallbackPanelState(),

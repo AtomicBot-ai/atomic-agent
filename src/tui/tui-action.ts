@@ -13,6 +13,7 @@ import type { McpAction } from "./mcp/mcp-actions.js";
 import type { ImportAction } from "./import/import-actions.js";
 import type { TelegramAction } from "./telegram/telegram-actions.js";
 import type { PrivacyAction } from "./privacy/privacy-actions.js";
+import type { IntegrationsAction } from "./integrations/integrations-actions.js";
 import type { ProvidersAction } from "./providers/providers-actions.js";
 import type { LlmPanelAction } from "./llm-panel/llm-panel-actions.js";
 import type { OnboardingAction } from "./onboarding/onboarding-actions.js";
@@ -311,6 +312,7 @@ export type TuiAction =
   | McpAction
   | TelegramAction
   | PrivacyAction
+  | IntegrationsAction
   | ProvidersAction
   | OnboardingAction
   | UninstallAction
