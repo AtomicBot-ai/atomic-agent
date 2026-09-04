@@ -1766,6 +1766,21 @@ Locked invariants (pinned by [src/tui/mcp/mcp-reducer.test.ts](src/tui/mcp/mcp-r
 4. **The editor is disabled on the MCP tab while a modal is open.** `mcpTabBusy` in `app-key-bindings.ts` covers both `addModal !== null` (lets the `MultiLineEditor` capture every keystroke) and `removeConfirm !== null` (claims the `y`/`n` confirmation keys against the global nav cycler).
 5. **Variant γ surface is opt-in but on by default.** Restarting the runtime is no longer required after add/remove — the prompt's `### tools` catalog and GBNF grammar are rebuilt on the next step. KV-cache for in-flight sessions is invalidated once per add/remove (the persona stays byte-stable; only the rendered tools block changes).
 
+## Integrations hub
+
+The `Integrations` tab ([src/tui/integrations/](src/tui/integrations/)) is the single place an operator puts third-party credentials. Before it, every integration grew its own surface — Telegram had a tab, LLM providers had a wizard, Composio had nothing — so "where do I put my key" required already knowing which kind of thing a given service was.
+
+An integration declares itself as a **descriptor** ([src/integrations/integration-descriptor.ts](src/integrations/integration-descriptor.ts)): id, label, summary, docs URL, a list of credential fields, and a `status()` projection. The hub renders any descriptor without a bespoke pane, so adding an integration is a descriptor file plus one line in [integration-registry.ts](src/integrations/integration-registry.ts) — not a new TUI slice.
+
+Locked invariants (pinned by [src/integrations/integration-secrets.test.ts](src/integrations/integration-secrets.test.ts), [src/integrations/integration-registry.test.ts](src/integrations/integration-registry.test.ts), [src/tui/integrations/integrations-panel-reducer.test.ts](src/tui/integrations/integrations-panel-reducer.test.ts), [src/tui/integrations/integrations-key-bindings.test.ts](src/tui/integrations/integrations-key-bindings.test.ts)):
+
+1. **Credentials live in `<stateDir>/.env`, never in `config.json`.** `writeFieldValue` goes through `setDotenvKey` (0600, atomic) and updates `process.env` in the same breath, so the running process sees a new key without a restart. Field env vars must match `/^[A-Z_][A-Z0-9_]*$/` — the registry test pins this, because `setDotenvKey` would otherwise throw in front of the operator at save time.
+2. **`IntegrationsOrchestrator` is the only module that touches credential storage or the live `McpManager` for this tab.** The reducer and component are pure; the key bindings only dispatch and call callbacks.
+3. **A secret is never rendered in the clear except in the edit buffer being typed.** `displayFieldValue` masks and caps; starting an edit opens an *empty* buffer rather than seeding the stored value; `integrations_action_settled` clears the buffer so a key never lingers in UI state.
+4. **Edit mode swallows the whole keyboard.** `d`, `e` and `r` are bindings on this tab; inside the editor they are key material. A paste that silently triggered "clear field" halfway through would be both baffling and destructive.
+5. **A re-sync never yanks the cursor.** Rows are re-read on every refresh; the reducer clamps the selection instead of resetting it, so a background refresh cannot move the operator's place mid-edit.
+6. **Changing a Composio key drops the cached tool-router session.** A session belongs to the key that created it; reusing it across a key swap would keep talking to the old account. The orchestrator unmounts, clears the cache, re-resolves, and remounts live.
+
 ## Composio (hosted toolkits)
 
 [Composio](https://composio.dev) is a hosted catalogue of ~1500 SaaS toolkits (Gmail, Slack, Notion, Linear, Jira, …) that also brokers each app's OAuth. atomic-agent consumes it as **one more MCP server** rather than as a bespoke integration: a tool-router session yields a Streamable-HTTP MCP endpoint authenticated by a static `x-api-key` header, which is exactly the transport [src/mcp/](src/mcp/) already speaks. Code lives in [src/composio/](src/composio/); the cold-path wiring is a single `await resolveComposioServerConfig(...)` in [src/runtime/bootstrap.ts](src/runtime/bootstrap.ts) that appends at most one entry to the server list before `McpManager` is constructed.

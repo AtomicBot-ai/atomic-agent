@@ -227,7 +227,7 @@ export const MENU: readonly MenuNode[] = [
       name: "tasks",
       description:
         "jump to the Tasks tab (Option 4 cron + ingress UI)",
-      rank: 27,
+      rank: 28,
     },
     section: "manage",
     tab: "tasks",
@@ -283,6 +283,24 @@ export const MENU: readonly MenuNode[] = [
   },
   {
     kind: "place",
+    id: "go.manage.integrations",
+    label: "Integrations",
+    group: "go",
+    // `i` belongs to Import; `y` is the free letter closest to a
+    // mnemonic for "integrations" that no other node claims.
+    chord: "y",
+    slash: {
+      name: "integrations",
+      description:
+        "open Integrations tab — one place for third-party credentials (Composio API key, …). Nothing is loaded until a key is set",
+      rank: 26,
+    },
+    section: "manage",
+    tab: "integrations",
+    parent: "go.manage",
+  },
+  {
+    kind: "place",
     id: "go.manage.llm",
     label: "LLM",
     group: "go",
@@ -307,7 +325,7 @@ export const MENU: readonly MenuNode[] = [
       name: "telegram",
       description:
         "telegram tab · subcommands: enable | disable | start | stop | restart | pair | token",
-      rank: 29,
+      rank: 30,
     },
     section: "manage",
     tab: "telegram",
@@ -323,7 +341,7 @@ export const MENU: readonly MenuNode[] = [
       name: "import",
       description:
         "open the Import tab (one-shot Hermes -> atomic-agent migration)",
-      rank: 30,
+      rank: 31,
     },
     section: "manage",
     tab: "import",
@@ -339,7 +357,7 @@ export const MENU: readonly MenuNode[] = [
       name: "privacy",
       description:
         "open the Privacy tab (analytics opt-out + session grants) · subcommands: `/privacy analytics on|off`",
-      rank: 31,
+      rank: 32,
     },
     section: "manage",
     tab: "privacy",
@@ -409,7 +427,7 @@ export const MENU: readonly MenuNode[] = [
       name: "context",
       description:
         "show where this session's context window went",
-      rank: 37,
+      rank: 38,
     },
   },
   {
@@ -435,7 +453,7 @@ export const MENU: readonly MenuNode[] = [
       description:
         "open chat model picker · subcommands: pull <id> | use <id> | status | <base-url>",
       aliases: ["models", "local"],
-      rank: 26,
+      rank: 27,
     },
   },
   {
@@ -477,7 +495,7 @@ export const MENU: readonly MenuNode[] = [
       name: "queue",
       description:
         "parked messages: `/queue` list | `/queue <msg>` park one | `/queue clear` | `/queue mode` make Enter queue",
-      rank: 33,
+      rank: 34,
     },
   },
   {
@@ -490,7 +508,7 @@ export const MENU: readonly MenuNode[] = [
       description:
         "open a new terminal window running atomic-agent (ctrl+n)",
       aliases: ["newwindow"],
-      rank: 35,
+      rank: 36,
     },
   },
   {
@@ -502,7 +520,7 @@ export const MENU: readonly MenuNode[] = [
       name: "steer",
       description:
         "steer the running turn: `/steer <msg>` one-shot | bare `/steer` makes Enter steer",
-      rank: 34,
+      rank: 35,
     },
   },
   {
@@ -551,7 +569,7 @@ export const MENU: readonly MenuNode[] = [
       name: "mouse",
       description:
         "mouse support on/off/status (off restores the terminal's drag-to-select)",
-      rank: 36,
+      rank: 37,
     },
   },
   {
@@ -563,7 +581,7 @@ export const MENU: readonly MenuNode[] = [
       name: "sidebar",
       description:
         "hide or show the session rail (the rail's « does the same)",
-      rank: 38,
+      rank: 39,
     },
   },
   {
@@ -575,7 +593,7 @@ export const MENU: readonly MenuNode[] = [
       name: "analytics",
       description:
         "toggle anonymous analytics: `/analytics on|off|status`",
-      rank: 32,
+      rank: 33,
     },
   },
   {
@@ -599,7 +617,7 @@ export const MENU: readonly MenuNode[] = [
       name: "task",
       description:
         "task subcommand: `/task new` | `/task cancel <id>` | `/task run <id>`",
-      rank: 28,
+      rank: 29,
     },
   },
   {
@@ -669,7 +687,7 @@ export const MENU: readonly MenuNode[] = [
       // Last in the palette too: an empty `/` lists the registry in
       // rank order, and this is the entry that belongs at the bottom
       // of that list rather than fuzzy-matching next to `/update`.
-      rank: 99,
+      rank: 100,
     },
   },
 ];

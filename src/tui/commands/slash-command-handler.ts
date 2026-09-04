@@ -276,6 +276,12 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
       return dispatchMemorySub(parsed.args);
     case "mcp":
       return dispatchMcpSub(parsed.args);
+    case "integrations":
+      return pureActions([
+        { type: "ui_mode_set", mode: "debug" },
+        { type: "tab_changed", tab: "integrations" },
+        { type: "integrations_message_cleared" },
+      ]);
     case "llm":
       return dispatchLlmSub(parsed.args);
     case "model":
