@@ -872,8 +872,14 @@ function renderSidebar() {
     // SVG by CSS alone, and the 52px rail cannot hold the word. The chord keeps
     // three homes (this title, ⌘K's Tasks row, the shortcuts sheet) plus the
     // macOS menu bar's own accelerator, which the OS draws.
+    // Review fix: the aria-label carries the chord too. In the 52px rail the
+    // word is display:none, so the aria-label IS the accessible name — leaving
+    // it as bare "Settings" was the one surface where losing the keycap also
+    // lost the chord, and a screen-reader user on the rail would hear less than
+    // the sighted user hovering the same pixel. The spec's copy section asks
+    // for "Settings (⌘ ,)" on both the tooltip and the label.
     + '<div class="sb-footwrap">'
-      + '<button class="btn btn-p sb-settings" data-act="settings:tasks" title="Settings (⌘ ,)" aria-label="Settings">'
+      + '<button class="btn btn-p sb-settings" data-act="settings:tasks" title="Settings (⌘ ,)" aria-label="Settings (⌘ ,)">'
         + '<span class="sb-settings-lb">Settings</span>'
         + '<span class="sb-settings-ic">' + ic('gear') + '</span>'
       + '</button></div>'
@@ -1090,7 +1096,12 @@ function msgActs(m) {
   if (!text.trim()) return '';
   const copy = '<button class="msgact" data-copy="' + esc(m.id) + '" title="Copy message" aria-label="Copy message">' + ic('copy') + '</button>';
   if (m.k !== 'user') return '<div class="msgacts">' + copy + '</div>';
-  return '<div class="msgacts usr">'
+  // Review fix: no `usr` modifier class here. The right-alignment the user
+  // asked for ("a copy icon at its end") is on the base `.msgacts` rule for
+  // BOTH kinds, so a `.msgacts.usr` element would have matched nothing in
+  // styles.css and would have told the next reader the user row's alignment
+  // was unstyled.
+  return '<div class="msgacts">'
     + '<button class="msgact danger" data-resend="' + esc(m.id) + '" title="Send this message again" aria-label="Send this message again">' + ic('refresh') + '</button>'
     + copy + '</div>';
 }
@@ -1147,6 +1158,17 @@ function resendUser(id) {
   if (S.busy || S.pending) {
     S.draft = text;
     if (e) { e.value = text; autosize(e); e.focus(); e.setSelectionRange(e.value.length, e.value.length); }
+    // Review fix: the composer has to be repainted, not just filled. While a
+    // turn runs sendButton() draws the ■ Stop control for an EMPTY draft and
+    // the ↑ steer control for a non-empty one, and nothing else renders during
+    // a silent turn (only delta/tool_progress frames do) — so without this the
+    // button beside the freshly parked text would still say Stop and the click
+    // the toast invites would abort the turn instead of steering it. The chip
+    // must count the parked text too, or the projection under-reports the
+    // draft until the operator types a character. render() would do both, but
+    // these two are the narrow repaints the rest of the file uses.
+    refreshSend();
+    ctxDraftChanged();
     toast('A turn is already running', 'the message is in the composer — Enter folds it into this turn', 'bad');
     return;
   }
@@ -11226,9 +11248,19 @@ if (typeof window !== 'undefined') {
     // The tail after a real send is startLiveTurn's EMPTY streaming assistant
     // item, so the message that was sent is the last user row, not the last row.
     const lastUser = S.log.slice().reverse().find((m) => m.k === 'user');
+    /* Review fix: `send` and `draftTokens` are read here, in the same tick as
+       the click and before any later render can paper over it. Parking the text
+       while a turn runs has to repaint the composer: sendButton() draws ■ Stop
+       for an EMPTY draft and ↑ steer for a non-empty one, so without the
+       repaint the control beside the freshly parked text would still be Stop
+       and the click the toast invites would abort the turn. */
+    const sb = document.querySelector('.sendbtn');
     return {before, after: S.log.length, tail: (S.log[S.log.length - 1] || {}).text,
             tailUser: lastUser ? lastUser.text : null,
             draft: S.draft, entry: e ? e.value : null, focused: document.activeElement === e,
+            send: sb ? (sb.dataset.act || null) : null,
+            sendTitle: sb ? sb.getAttribute('title') : null,
+            draftTokens: CTX.draftTokens,
             toasts: S.toasts.map((t) => [t.t, t.s, t.kind || 'ok'])};
   };
   window.__toasts = () => S.toasts.map((t) => [t.t, t.s, t.kind || 'ok']);
@@ -11261,10 +11293,12 @@ if (typeof window !== 'undefined') {
   /* S.busy is poked and put back — the same synthetic-busy technique the
      existing end-mark and Escape checks use. No turn is started. */
   window.__retryWhileBusy = () => {
-    const keep = {busy: S.busy, draft: S.draft};
+    // The park now also repaints the send button and re-estimates the chip's
+    // draft, so CTX.draftTokens is put back with everything else.
+    const keep = {busy: S.busy, draft: S.draft, draftTokens: CTX.draftTokens};
     S.busy = true; render();
     const out = window.__clickRetry();
-    S.busy = keep.busy; S.draft = keep.draft;
+    S.busy = keep.busy; S.draft = keep.draft; CTX.draftTokens = keep.draftTokens;
     const e = $('#entry'); if (e) e.value = keep.draft;
     render();
     return out;
@@ -11343,6 +11377,35 @@ if (typeof window !== 'undefined') {
     b.click();
     return {settings: !!S.settings, pane: S.settings ? settingsPaneId(S.settingsPane) : null};
   };
+  /* Review fix: __setClickTab above cannot fail for the reason its name gave.
+     Its own mousedown lands on the tab, which is inside .setwin, so the capture
+     listener sets SETDOWN.outside = false and the backdrop branch is unreachable
+     for that click wherever it sits in the delegate. The ordering the spec calls
+     load-bearing ("placed earlier it would swallow clicks on any control that
+     ever renders directly on the backdrop") is only exercised by a control on
+     the backdrop side of the tree with the press starting there too, so this
+     hook synthesises exactly that: a real [data-act] button appended as a direct
+     child of #settings, pressed on the backdrop and released on the button. With
+     the branches in the shipped order the verb runs and the window stays open;
+     move the backdrop branch above the [data-act] branch and this goes red. */
+  window.__setClickBackdropControl = (tab) => {
+    const s = document.getElementById('settings');
+    if (!s) return null;
+    const b = document.createElement('button');
+    b.dataset.act = 'settings:' + tab;
+    s.appendChild(b);
+    const onBackdrop = !b.closest('.setwin') && !!b.closest('[data-setclose]');
+    try {
+      s.dispatchEvent(new MouseEvent('mousedown', {bubbles: true}));
+      const down = SETDOWN.outside;
+      b.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true}));
+      return {settings: !!S.settings, pane: S.settings ? settingsPaneId(S.settingsPane) : null,
+              onBackdrop: onBackdrop, pressWasOutside: down};
+    } finally {
+      if (b.parentNode) b.parentNode.removeChild(b);
+      SETDOWN.outside = false;   // leave no press state for the next hook
+    }
+  };
   window.__setClickPopover = () => {
     const p = document.querySelector('#overlays .popover');
     if (!p) return null;
@@ -11352,7 +11415,15 @@ if (typeof window !== 'undefined') {
   };
 
   /* --- item 6 --- */
+  /* Review fix: this blurs first too, for the same reason the two route hooks
+     below do. renderContent carries an existing composer focus across the DOM
+     swap, so a new chat driven with the caret already in #entry would come back
+     "entry" on the carry leg alone and this — the check that names the user's
+     words most directly — would go vacuous the moment anything upstream leaves
+     the caret in the composer. Starting from <body> makes FOCUS.entry the only
+     thing that can produce id:'entry'. */
   window.__newChatFocus = () => {
+    if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
     act('session:new');
     const e = document.getElementById('entry');
     return {id: document.activeElement ? document.activeElement.id : '',
@@ -11419,6 +11490,7 @@ if (typeof window !== 'undefined') {
     const lb = b.querySelector('.sb-settings-lb'), gi = b.querySelector('.sb-settings-ic');
     const lists = document.querySelector('#sidebar .sb-lists');
     return {text: lb ? lb.textContent : '', act: b.dataset.act, title: b.getAttribute('title'),
+            aria: b.getAttribute('aria-label'),
             classes: b.className, bg: cs.backgroundColor, fg: cs.color,
             height: Math.round(r.height), width: Math.round(r.width),
             keycaps: b.querySelectorAll('.kc').length,

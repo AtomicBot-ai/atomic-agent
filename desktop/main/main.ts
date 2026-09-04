@@ -2714,6 +2714,10 @@ async function sidebarTest(
     // ("Mark as unread"), so the allowed tail is now pin and unread rather than
     // pin alone. Both are 22px inside a 30px row, so the height is unchanged —
     // which is the half of this check that would catch a row growing.
+    // The cap on the tail's LENGTH is kept (the pre-existing check had
+    // `children.length <= 3`): `every` is vacuously true on an empty tail and
+    // says nothing about a third or fourth control, which a 30px flex row full
+    // of 22px buttons would swallow without moving the height.
     type RowShape = { rows: number; minHeight: number; maxHeight: number; children: string[]; titleHeight: number; titleLineHeight: number; nowrap: boolean } | null;
     const shape = await js<RowShape>("window.__rowShape()");
     const rowTail = shape ? shape.children.slice(2) : [];
@@ -2721,6 +2725,7 @@ async function sidebarTest(
       "sidebar rows are one line: dot + name (+ hover controls)",
       !!shape && shape.minHeight === 30 && shape.maxHeight === 30
         && shape.children[0] === "sdot" && shape.children[1] === "t1"
+        && rowTail.length <= 2
         && rowTail.every((c) => c === "pinbtn" || c === "unreadbtn")
         && shape.nowrap && shape.titleHeight <= shape.titleLineHeight + 1,
       shape ? `${shape.rows} rows ${shape.minHeight}–${shape.maxHeight}px, children ${JSON.stringify(shape.children)}, title ${shape.titleHeight}px of line-height ${shape.titleLineHeight}, nowrap=${shape.nowrap}` : "no rows",
@@ -5930,7 +5935,8 @@ async function chromeTest(
     narrow: boolean; expanded: boolean; width: number; bg: string; fg: string; accentText: string;
   };
   type SetBtn = {
-    text: string; act: string; title: string; classes: string; bg: string; fg: string;
+    text: string; act: string; title: string; aria: string | null;
+    classes: string; bg: string; fg: string;
     height: number; width: number; keycaps: number; labelVisible: boolean; iconVisible: boolean;
     belowLists: boolean; oldRow: number;
   };
@@ -6069,9 +6075,24 @@ async function chromeTest(
     );
     const tabbed = await js<{ settings: boolean; pane: string | null }>("window.__setClickTab('skills')");
     check(
-      "item 5: a control inside the window still wins over the backdrop",
+      "item 5: a control inside the window still switches pane and keeps it open",
       !!tabbed && tabbed.settings && tabbed.pane === "skills",
-      JSON.stringify(tabbed),
+      JSON.stringify(tabbed) + " (its own press lands inside .setwin, so this cannot"
+      + " exercise the branch ordering — the check below does that)",
+    );
+    // Review fix: the ordering itself, which the check above cannot reach. A
+    // real [data-act] control on the BACKDROP side of the tree, pressed and
+    // released there, is the only thing the [data-act]-before-backdrop order
+    // protects; with the branches swapped the window would close and the verb
+    // would never run.
+    const backCtl = await js<
+      { settings: boolean; pane: string | null; onBackdrop: boolean; pressWasOutside: boolean } | null
+    >("window.__setClickBackdropControl('tasks')");
+    check(
+      "item 5: the [data-act] branch beats the backdrop branch, not the other way round",
+      !!backCtl && backCtl.onBackdrop && backCtl.pressWasOutside
+        && backCtl.settings && backCtl.pane === "tasks",
+      JSON.stringify(backCtl),
     );
     const dragout = await js<{ settings: boolean; pane: string | null }>("window.__setClick('dragout')");
     check(
@@ -6444,7 +6465,11 @@ async function chromeTest(
     await js<void>("window.__clearToasts()");
 
     // Retry while a turn runs must not masquerade as a steer.
-    const busyRetry = await js<{ before: number; after: number; draft: string; entry: string; focused: boolean; toasts: Array<[string, string, string]> } | null>(
+    const busyRetry = await js<{
+      before: number; after: number; draft: string; entry: string; focused: boolean;
+      send: string | null; sendTitle: string | null; draftTokens: number;
+      toasts: Array<[string, string, string]>;
+    } | null>(
       "window.__retryWhileBusy()",
     );
     check(
@@ -6455,6 +6480,19 @@ async function chromeTest(
         && busyRetry.toasts.some((t) => t[0] === "A turn is already running"
             && t[1] === "the message is in the composer — Enter folds it into this turn" && t[2] === "bad"),
       JSON.stringify(busyRetry),
+    );
+    // Review fix: the toast promises "Enter folds it into this turn", and the
+    // button beside the parked text has to say the same thing. Before the fix
+    // nothing repainted the composer after the park, so the control stayed the
+    // ■ Stop button sendButton() draws for an empty draft while busy — one
+    // click and the operator aborts the turn instead of steering it. The chip's
+    // draft estimate has to count the parked text for the same reason.
+    check(
+      "item 4: the parked text repaints the composer — steer, not stop",
+      !!busyRetry && busyRetry.send === "send" && busyRetry.sendTitle === "Steer this turn"
+        && busyRetry.draftTokens > 0,
+      `${JSON.stringify(busyRetry && { send: busyRetry.send, title: busyRetry.sendTitle, draftTokens: busyRetry.draftTokens })}`
+      + ' (data-act="stop" here would mean the next click aborts the running turn)',
     );
     await js<void>("window.__clearToasts()");
     // A draft in the composer is the operator's and is never destroyed.
@@ -6490,11 +6528,18 @@ async function chromeTest(
     );
 
     // The chord kept its homes now that the keycap is gone.
+    // Review fix: the accessible name carries the chord too. In the 52px rail
+    // the word is display:none, so aria-label is the ONLY name a screen reader
+    // gets — with a bare "Settings" the chord stopped being discoverable there
+    // while the sighted tooltip still taught it.
+    const chordBtn = await js<SetBtn | null>("window.__settingsBtn()");
     check(
       "item 8: the ⌘ , chord is still discoverable without the keycap",
       (await js<string | null>("window.__palShortcut('Tasks')")) === "⌘ ,"
-        && (await js<string | null>("window.__shortcutRow('Settings')")) === "⌘ ,",
-      "the ⌘K Tasks row, the ⌘/ shortcuts sheet and the button's own title;"
+        && (await js<string | null>("window.__shortcutRow('Settings')")) === "⌘ ,"
+        && !!chordBtn && chordBtn.title === "Settings (⌘ ,)" && chordBtn.aria === "Settings (⌘ ,)",
+      "the ⌘K Tasks row, the ⌘/ shortcuts sheet and the button's own title AND aria-label"
+      + ` (title=${JSON.stringify(chordBtn && chordBtn.title)} aria=${JSON.stringify(chordBtn && chordBtn.aria)});`
       + " the fourth home is the macOS menu bar accelerator at desktop/main/menu.ts, drawn by the OS and not assertable from the renderer",
     );
   } finally {
