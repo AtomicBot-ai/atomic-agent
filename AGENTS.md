@@ -1780,6 +1780,7 @@ Locked invariants (pinned by [src/integrations/integration-secrets.test.ts](src/
 4. **Edit mode swallows the whole keyboard.** `d`, `e` and `r` are bindings on this tab; inside the editor they are key material. A paste that silently triggered "clear field" halfway through would be both baffling and destructive.
 5. **A re-sync never yanks the cursor.** Rows are re-read on every refresh; the reducer clamps the selection instead of resetting it, so a background refresh cannot move the operator's place mid-edit.
 6. **Changing a Composio key drops the cached tool-router session.** A session belongs to the key that created it; reusing it across a key swap would keep talking to the old account. The orchestrator unmounts, clears the cache, re-resolves, and remounts live.
+7. **The hub owns credentials; feature tabs keep operations.** Telegram's bot token lives here, but pairing, the owner id, start/stop and the live chat view stay on the Telegram tab — those act on a running channel rather than configuring one, and a pairing countdown inside a credential list would make both surfaces worse. An integration whose credential is read at construction sets `appliesLive: false` and the pane says a restart is needed instead of leaving the operator to guess.
 
 ## Composio (hosted toolkits)
 
