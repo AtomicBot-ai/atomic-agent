@@ -25,9 +25,16 @@ const SEL = {
    unfettered; `busy` disables the buttons while the mode POST is in flight,
    because submit() has no re-entrancy guard and a double click would send the
    execute message twice; `failMode` is the smoke seam for the "the POST came
-   back !ok" branch. The object replaces a vestigial `{on, supported}` that had
-   no reader anywhere in the file. */
-const PLAN = { on:false, itemId:null, sessionId:null, startedMode:null, busy:false, failMode:false };
+   back !ok" branch, and `hold` the smoke seam that parks executePlan between
+   the confirmed mode change and the send, so the ordering can be observed from
+   the agent's side rather than inferred. The object replaces a vestigial
+   `{on, supported}` that had no reader anywhere in the file. */
+const PLAN = { on:false, itemId:null, sessionId:null, startedMode:null, busy:false, failMode:false, hold:null };
+/* Review fix (Item 1): the deny-with-reason round trip, injectable the same
+   way setCodingMode's `post` is. Null in every real window — the smoke sets it
+   to watch the verdict leave, and to drive both answers the route can give
+   (`{resolved:true,…}` and the 404 body for an id no gate is holding). */
+const APPR_SEAM = { post:null };
 /* The ordering proof for the acceptance check: executePlan pushes 'mode:<m>'
    only once the agent has CONFIRMED the new stance, and submit() pushes 'send'
    when it accepts the execute message — so ["mode:auto","send"] is the whole
@@ -1044,8 +1051,17 @@ function toolCard(m) {
 function apprCard(m) {
   if (m.state) {
     const ok = m.state === 'approved';
+    /* Review fix (Item 1): two states the deny-with-reason path can be in that
+       are not "Denied". `denying` is the round trip still in flight, and
+       `undelivered` is the route answering that it is not holding that
+       approvalId (404) — printing "Denied" for either would state as fact
+       something the agent was never told. Everything else keeps its label. */
+    const label = ok ? 'Approved'
+      : m.state === 'denying' ? 'Denying…'
+      : m.state === 'undelivered' ? 'Not denied — the agent never took the verdict'
+      : 'Denied';
     return '<div class="appr done' + (ok ? ' ok' : '') + '">'
-      + '<div class="hstack" style="gap:8px"><span class="sec">' + (ok ? 'Approved' : 'Denied') + ' · ' + m.at + '</span>'
+      + '<div class="hstack" style="gap:8px"><span class="sec">' + label + ' · ' + m.at + '</span>'
       + '<span class="badge" style="background:transparent;border-color:var(--line);color:var(--text-secondary)">' + esc(m.kind) + '</span></div></div>';
   }
   const isTrust = m.cat === 'trust_config';
@@ -2338,11 +2354,6 @@ function submit() {
   const e = $('#entry');
   const text = (e ? e.value : S.draft).trim();
   if (!text) return;
-  // Item 1 (plan hand-off): the second half of the ordering proof. executePlan
-  // records 'mode:<m>' only after the agent has confirmed the new stance, and
-  // this records the moment the execute message is accepted for sending — so
-  // the trace can only ever read ["mode:auto","send"], never the reverse.
-  if (text === EXECUTE_PLAN_MESSAGE) PLAN_TRACE.push('send');
   // Lane B — backend switch: a turn is waiting on the local gate's disk
   // snapshot; the draft stays where it is until that one has been decided.
   if (BSW.gating) return;
@@ -2374,6 +2385,14 @@ function submit() {
     return;
   }
   if (S.busy || S.pending) { steerOrQueue(text); return; }
+  // Item 1 (plan hand-off): the second half of the ordering proof. executePlan
+  // records 'mode:<m>' only after the agent has confirmed the new stance, and
+  // this records the moment the execute message is actually accepted as a new
+  // turn — so the trace can only ever read ["mode:auto","send"], never the
+  // reverse. Review fix: it sits HERE, below every early return above it (the
+  // backend-switch gate, the slash branch, the steer/queue branch), because a
+  // trace entry for a send that did not happen is not evidence of anything.
+  if (text === EXECUTE_PLAN_MESSAGE) PLAN_TRACE.push('send');
   S.log.push({id:nid(), k:'user', text});
   if (S.live.state !== 'connected') {
     // Nothing may be fabricated. If the agent is not answering, say so.
@@ -3097,15 +3116,26 @@ document.addEventListener('keydown', (e) => {
      approval modal's own footer explains why the TUI moved off bare letters
      ("every one of them is a chord, so typing a message that happens to start
      with 'yes' cannot approve the call the way a bare `y` did"), and the same
-     hazard is worse here, where `y` and `b` start a run. Being a chord, it
-     also fires while the composer has focus, exactly as in the TUI.
+     hazard is worse here, where `y` and `b` start a run.
+
+     Review fix — the one place the port must NOT follow the TUI: the chord is
+     dead inside a text field (`!inText`). Ink has no editing bindings on those
+     keys, but a Chromium textarea on macOS does: ctrl+b moves back a
+     character, ctrl+d deletes forward and ctrl+y yanks, and operators use
+     them. Live inside the composer these chords would fire the app's most
+     destructive control out of an ordinary editing keystroke, while the
+     operator is typing the very revision this bar invites them to type — and
+     the render() they trigger would rebuild #content and drop the caret. The
+     chord survives everywhere else, so a typed message beginning "yes" still
+     cannot run a plan; only the editor is exempt. The approval branch above
+     already carries the same guard.
 
      Ordering: the TUI checks its plan branch BEFORE approvals (its own comment
      and docstring saying otherwise are stale). The desktop deliberately
      inverts that by guarding on `!S.pending`, so a live approval always wins —
      the ladder is the more urgent question and it is the one holding the agent
      blocked. */
-  if (PLAN.on && !S.pending && !S.settings && !S.overlay && !S.menuOpen
+  if (PLAN.on && !inText && !S.pending && !S.settings && !S.overlay && !S.menuOpen
       && e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
     const pk = k.toLowerCase();
     if (pk === 'y') { e.preventDefault(); executePlan('auto'); return; }
@@ -3748,15 +3778,33 @@ function answerLive(req, key) {
 async function denyByProse(req, text, post) {
   S.pending = null;
   if (req.sessionId) PENDING_APPROVALS.delete(req.sessionId);   // the row stops asking
-  req.state = 'denied';
   req.at = new Date().toTimeString().slice(0, 8);
-  render();   // the card flips to Denied now, not a round trip later
+  req.state = 'denying';   // in flight — not yet a fact, and the card says so
+  render();
   // `post` is the same injected-round-trip seam setCodingMode takes: the smoke
   // needs to watch the verdict leave without answering a real gate.
-  const res = await (post ? post(req.approvalId, 'deny', text) : BR.approve(req.approvalId, 'deny', text));
-  S.log.push({id:nid(), k:'system', text: res && res.ok === false
-    ? 'could not deny that call with your message: ' + esc(res.error || '')
-    : 'that call was denied with your message as the reason'});
+  const send = post || APPR_SEAM.post || ((id, decision, reason) => BR.approve(id, decision, reason));
+  const res = await send(req.approvalId, 'deny', text);
+  /* Review fix (Item 1): the reply must be READ, not merely received. The IPC
+     wrapper answers `{ok:true, data:<whatever the route returned>}` for every
+     reply the HTTP call produced, and agent-client's resolveApproval returns
+     `res.json()` with no status check — so a 404 for an approvalId the gate is
+     no longer holding arrives as ok:true carrying an `{error:{message}}` body.
+     Announcing "denied with your message as the reason" on that reply would
+     state as fact that the agent was told, when it was not: the one path that
+     carries the operator's own words to the model is the last place to guess.
+     `{resolved:true}` is the route's success body (src/http/route-approval.ts)
+     and nothing else counts as delivery. */
+  const data = res && res.ok === false ? null : (res ? res.data : null);
+  const landed = !!(data && data.resolved === true);
+  const why = res && res.ok === false ? String(res.error || '')
+    : (data && data.error && data.error.message) ? String(data.error.message)
+    : (data && typeof data.error === 'string') ? data.error
+    : 'the agent did not confirm it';
+  req.state = landed ? 'denied' : 'undelivered';
+  S.log.push({id:nid(), k:'system', text: landed
+    ? 'that call was denied with your message as the reason'
+    : 'could not deny that call with your message: ' + esc(why)});
   render();
   // Then the text itself. steerOrQueue prints its own honest line about where
   // it landed — folded into the running turn, or parked as the next one.
@@ -5228,6 +5276,24 @@ async function executePlan(mode) {
   if (S.busy || S.pending) { toast('Not while a turn is running'); return; }
   PLAN_TRACE.length = 0;
   PLAN.busy = true; render();
+  /* Review fix (Item 1): the thread this plan belongs to, captured BEFORE the
+     round trip. PLAN.busy only disables the three buttons — the sidebar stays
+     live, and the event loop is free while the mode POST is in flight, so the
+     operator can open another chat (or start a new one) mid-flight. Resuming
+     into that chat would submit the execute message, with the ladder already
+     lowered, into a thread that never had a plan — the exact cross-session
+     leak the divergence from the TUI's session_switched exists to prevent,
+     re-entered through the execute path. PLAN.on cannot be the guard, because
+     setCodingMode clears the offer itself on its way past. */
+  const thread = PLAN.sessionId;   // the agent session the offer was raised in
+  const row = S.sessionId;         // and the sidebar row that was on screen
+  // The transcript identity, which holds even where the two ids do not: a chat
+  // that has not been named by the agent yet has `agentSession === null` and no
+  // row, and `session:new` leaves it at null and '' again. The anchor is the
+  // assistant message the bar hangs under, and both ways out of a thread
+  // destroy it — `session:new` empties S.log, openSession rebuilds it with
+  // fresh ids. If it is gone, the plan it belonged to is not on screen.
+  const anchor = PLAN.itemId;
   // setCodingMode takes the next ticket off MODE.seq and drops its own reply
   // if a later choice has taken one since. Remember which ticket is ours so a
   // concurrent chip click (or a reconnect re-assert) is reported as what it is
@@ -5248,8 +5314,25 @@ async function executePlan(mode) {
       text:'the mode did not change, so the plan was not sent — the agent is still in plan mode'});
     render(); return;
   }
+  // The chat moved while the stance was moving. Nothing is sent: the plan
+  // belongs to the thread it was proposed in, and this window is looking at a
+  // different one. The stance DID change — that POST landed and is the
+  // operator's own instruction — so the line names where the ladder now is
+  // rather than pretending nothing happened.
+  if (S.agentSession !== thread || S.sessionId !== row
+      || (anchor && !S.log.some((m) => m.id === anchor))) {
+    S.log.push({id:nid(), k:'system', note:true,
+      text:'the chat changed while the mode was moving, so the plan was not sent — the stance is now ' + mode});
+    render(); return;
+  }
   PLAN_TRACE.push('mode:' + mode);
   clearPlanOffer();
+  /* Smoke seam, null in every real window: it parks the send here, after the
+     agent has confirmed the new stance and before a byte of the message goes,
+     so the ordering can be proved by asking the AGENT what stance it is in
+     while the transcript still has no user bubble — rather than inferred from
+     a trace this window wrote about itself. */
+  if (PLAN.hold) { try { await PLAN.hold; } finally { PLAN.hold = null; } }
   S.draft = EXECUTE_PLAN_MESSAGE;
   const e = $('#entry');
   if (e) { e.value = EXECUTE_PLAN_MESSAGE; autosize(e); }
@@ -11037,6 +11120,11 @@ if (typeof window !== 'undefined') {
     entryKinds: [...new Set(S.log.map((m) => m.k))],
     endmarks: document.querySelectorAll('.endmark').length,
     logLen: S.log.length,
+    // Review fix: the prose the bar prints, so the base-level disclosure — the
+    // sentence that says auto and bypass are one stance at the configured
+    // ceiling — is asserted rather than merely written.
+    notes: [...document.querySelectorAll('.planbar .planhint')].map((n) => n.textContent),
+    baseLevel: MODE.baseLevel, maxLevel: MAX_APPROVAL_LEVEL,
   });
   window.__planClick = (what) => {
     const b = document.querySelector('[data-plan="' + what + '"]');
@@ -11046,16 +11134,39 @@ if (typeof window !== 'undefined') {
   };
   window.__planTrace = () => PLAN_TRACE.slice();
   window.__planFailMode = (on) => { PLAN.failMode = !!on; return PLAN.failMode; };
-  /* A chord as the operator presses it: dispatched on the composer, so the
-     check also proves a chord fires while the editor has focus (the TUI's
-     whole reason for using chords rather than bare letters). `ctrl` false
-     dispatches the bare letter, which must do nothing. */
-  window.__planKey = (key, ctrl) => {
+  /* A chord as the operator presses it. `where === 'composer'` focuses #entry
+     and dispatches there, which must do NOTHING: ctrl+b / ctrl+d / ctrl+y are
+     macOS text-editing bindings inside a Chromium textarea, so the chord is
+     deliberately dead in the editor. Anywhere else it fires. `ctrl` false
+     dispatches the bare letter, which must never run a plan. */
+  window.__planKey = (key, ctrl, where) => {
     const e = document.getElementById('entry');
-    if (e) e.focus();
-    (e || document).dispatchEvent(new KeyboardEvent('keydown',
+    let target = document.body;
+    if (where === 'composer' && e) { e.focus(); target = e; }
+    else if (e) e.blur();
+    target.dispatchEvent(new KeyboardEvent('keydown',
       {key, ctrlKey: ctrl !== false, metaKey:false, altKey:false, shiftKey:false, bubbles:true, cancelable:true}));
     return window.__plan();
+  };
+  /* Park executePlan between the confirmed mode change and the send, so the
+     ordering can be checked against the AGENT ("what stance are you in?")
+     while this window's transcript still has no user bubble. */
+  let planRelease = null;
+  window.__planHold = () => { PLAN.hold = new Promise((r) => { planRelease = r; }); return true; };
+  window.__planRelease = () => { if (planRelease) planRelease(); planRelease = null; return true; };
+  window.__users = () => S.log.filter((m) => m.k === 'user').length;
+  /* The cross-session leak, driven deterministically: executePlan runs
+     synchronously up to its first await (the mode POST), so control comes back
+     here with the request still in flight. Switching chats right there is
+     exactly the operator clicking another thread while the round trip is out.
+     `act('session:new')` is the real handler, not a stand-in. */
+  window.__planSwitchDuringExecute = async (mode) => {
+    const from = {session:S.agentSession, row:S.sessionId, users:window.__users()};
+    const running = executePlan(mode || 'auto');
+    act('session:new');   // the sidebar is live while PLAN.busy only greys the bar
+    await running;
+    return {from, session:S.agentSession, users:window.__users(), trace:PLAN_TRACE.slice(),
+      last: window.__lastSystem(), busy:S.busy, mode: currentMode(), on:PLAN.on};
   };
   /* Raise the offer without spending a model turn on it, through the real
      branch: the stance capture startLiveTurn makes, then onChatEvent's own
@@ -11076,6 +11187,8 @@ if (typeof window !== 'undefined') {
   window.__planRestore = (at) => {
     clearPlanOffer(); PLAN.failMode = false; PLAN_TRACE.length = 0;
     PLAN.startedMode = null; PLAN.busy = false;
+    if (planRelease) { planRelease(); planRelease = null; }
+    PLAN.hold = null; APPR_SEAM.post = null;
     S.busy = false; S.turnId = null; S.streamId = null;
     if (typeof at === 'number' && at >= 0 && at <= S.log.length) S.log.length = at;
     render();
@@ -11088,27 +11201,52 @@ if (typeof window !== 'undefined') {
   };
   window.__queued = () => S.queued.slice();
   /* Approval parity: plant this chat's own open request, type prose at it, and
-     record what left the window and in what order. The verdict's round trip is
-     injected (nothing answers a real gate here); the steer that follows is the
-     real one, so where the text landed is the route's answer, not a guess. */
-  window.__approvalProse = async (text) => {
+     record what left the window and in what order.
+
+     `reply` chooses the round trip. 'confirmed' and 'unknown' inject the two
+     answers the route can actually give — `{resolved:true,…}` and the 404 body
+     for an approvalId no gate is holding — so BOTH the success sentence and
+     the honest failure sentence are exercised against the code that reads
+     them. Anything else (the default) leaves APPR_SEAM.post null and lets the
+     real POST go to the live agent, where this fabricated id draws that 404
+     for real. The steer that follows is always the real one. */
+  window.__approvalProse = async (text, reply) => {
     const at = S.log.length;
     const rec = {};
     const req = {id:nid(), k:'approval', approvalId:'smoke-plan-appr', tool:'os.fs.write',
       cat:'fs_write_workspace', kind:CATEGORY_LABEL.fs_write_workspace, lvl:2,
       reason:'smoke fixture', preview:'(no preview)', shape:'', affectsBase:'x', affectsDir:'',
       sessionGrants:false, sessionId:S.agentSession};
+    APPR_SEAM.post = reply === 'confirmed'
+      ? (id) => Promise.resolve({ok:true, data:{resolved:true, approvalId:id, approved:false}})
+      : reply === 'unknown'
+      ? (id) => Promise.resolve({ok:true, data:{error:{message:'approvalId not pending: ' + id}}})
+      : null;
     S.pending = req; S.log.push(req); S.apprFocused = true; render();
     const queuedBefore = S.queued.length;
-    const e = document.getElementById('entry');
-    if (e) e.value = String(text);
+    // Sampled while the request is still LIVE — the card is finished by the
+    // time submit() returns, and a finished card draws no buttons at all, so
+    // counting them afterwards would pass however apprCard drew the live one.
+    rec.verbs = [...document.querySelectorAll('#apprcard [data-appr]')].map((n) => n.dataset.appr);
+    rec.grantS = document.querySelectorAll('#apprcard [data-appr="s"]').length;
+    rec.grantA = document.querySelectorAll('#apprcard [data-appr="a"]').length;
+    rec.foot = (document.querySelector('.apprfoot') || {}).textContent || '';
+    // The two keys the card no longer offers, pressed with the card up and the
+    // composer blurred: neither may resolve anything.
+    const entry = document.getElementById('entry');
+    if (entry) entry.blur();
+    for (const kk of ['s', 'a']) {
+      document.body.dispatchEvent(new KeyboardEvent('keydown',
+        {key:kk, bubbles:true, cancelable:true}));
+    }
+    rec.afterGrantKeys = {pending: !!S.pending, state: req.state || null};
+    if (entry) entry.value = String(text);
     S.draft = String(text);
     // The real Enter path: submit() decides this is a verdict, not a steer.
-    const foot = (document.querySelector('.apprfoot') || {}).textContent || '';
     submit();
     // submit() calls denyByProse without awaiting it; drain the chain here.
-    await new Promise((r) => setTimeout(r, 1200));
-    rec.foot = foot;
+    await new Promise((r) => setTimeout(r, 1500));
+    APPR_SEAM.post = null;
     rec.state = req.state || null;
     rec.pending = !!S.pending;
     rec.doneCards = document.querySelectorAll('.appr.done').length;
@@ -11134,7 +11272,10 @@ if (typeof window !== 'undefined') {
     await denyByProse(req, String(text), (id, decision, reason) => {
       rec.sent = {id, decision, reason};
       rec.queuedWhileDenying = S.queued.length;
-      return new Promise((r) => setTimeout(() => r({ok:true}), 50));
+      // The route's own success body — `{resolved:true, approvalId, approved}`
+      // — wrapped as the IPC layer wraps it. A bare `{ok:true}` would not be
+      // accepted as delivery any more, which is the point of the fix.
+      return new Promise((r) => setTimeout(() => r({ok:true, data:{resolved:true, approvalId:id, approved:false}}), 50));
     });
     rec.queuedBefore = queuedBefore;
     rec.queuedAfter = S.queued.length;
@@ -11143,7 +11284,7 @@ if (typeof window !== 'undefined') {
     return rec;
   };
   window.__approvalRestore = (at) => {
-    S.pending = null;
+    S.pending = null; APPR_SEAM.post = null;
     PENDING_APPROVALS.delete(S.agentSession);
     S.queued.length = 0; STEER.ahead = 0;
     if (typeof at === 'number' && at >= 0 && at <= S.log.length) S.log.length = at;

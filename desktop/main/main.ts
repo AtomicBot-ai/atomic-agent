@@ -2,7 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { existsSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { stat } from "node:fs/promises";   // item 5: the attachment strip stats what a turn wrote, nothing else
 import { execFile, execFileSync, spawn } from "node:child_process";   // item 2 (voice input): the smoke spawns the speech helper with --probe, and `say` writes its audio fixture
 import { promisify } from "node:util";
@@ -5871,6 +5871,7 @@ async function planHandoffTest(
     on: boolean; itemId: string | null; sessionId: string | null; startedMode: string | null;
     busy: boolean; failMode: boolean; buttons: string[]; bars: number; hint: string;
     entryKinds: string[]; endmarks: number; logLen: number;
+    notes: string[]; baseLevel: number | null; maxLevel: number;
     planted?: string; at?: number; hangsOnPlanted?: boolean;
   };
   type Card = { name: string; ok: boolean | null; out: string; forced: boolean; live: boolean };
@@ -5900,7 +5901,16 @@ async function planHandoffTest(
 
   const caps = (await agent!.capabilities()) as { paths: { userConfigFile: string } };
   const cfgBefore = readFileSync(caps.paths.userConfigFile);
-  const probe = join(agent!.status.workingDir ?? process.cwd(), "PLANPROBE.txt");
+  /* Review fix: the probe file lives in a scratch directory of its own, not in
+     the agent's working directory — which on this machine is the operator's
+     home. A check whose entire premise is that the gate MIGHT not hold must
+     not aim the write somewhere that matters. Plan mode is the FIRST gate in
+     the batch executor (runPlanModeGate runs before the loop gate and before
+     any approval), so naming an absolute path outside the workspace still
+     produces the plan-mode refusal rather than parking the turn on a prompt. */
+  const probeDir = join(app.getPath("temp"), `atag-smoke-plan-${process.pid}`);
+  mkdirSync(probeDir, { recursive: true });
+  const probe = join(probeDir, "PLANPROBE.txt");
   let raisedAt = 0;
 
   try {
@@ -5915,15 +5925,42 @@ async function planHandoffTest(
       JSON.stringify(modeState),
     );
 
-    await js<unknown>(
-      "window.__ask('Create a file called PLANPROBE.txt in the current folder containing the word ok, then tell me you are done.')",
-    );
-    const turnDeadline = Date.now() + 180_000;
-    while (Date.now() < turnDeadline) {
-      if (!(await js<boolean>("window.__busy()"))) break;
-      await new Promise((r) => setTimeout(r, 1000));
+    /* Two asks, the second blunter than the first. The flagship assertion here
+       — the store's own refusal reaching the card, un-forced — can only run if
+       the model actually reaches for a mutating tool, and on one earlier run it
+       answered the first prompt with a plan and no tool at all, which left the
+       assertion silently unrun. Naming the tool makes that rare; the degraded
+       branch below then still asserts something real rather than restating its
+       own condition. */
+    const ASKS = [
+      `Create a file at ${probe} containing the word ok, then tell me you are done.`,
+      `Use the os.fs.write tool right now to write the word ok to ${probe}. Call the tool; do not ask first.`,
+    ];
+    let plan = await js<Plan>("window.__plan()");
+    let cards: Card[] = [];
+    let live: Card[] = [];
+    let attempts = 0;
+    for (const ask of ASKS) {
+      attempts += 1;
+      await js<unknown>(`window.__ask(${JSON.stringify(ask)})`);
+      const turnDeadline = Date.now() + 180_000;
+      while (Date.now() < turnDeadline) {
+        if (!(await js<boolean>("window.__busy()"))) break;
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+      plan = await js<Plan>("window.__plan()");
+      // `out` and `ok` only land when reconcileToolCards has read the store
+      // back, which is asynchronous and gives up after ~6s by marking a card ok
+      // itself — so poll, and assert `forced` is false when it arrives.
+      cards = await js<Card[]>("window.__cards()");
+      const cardDeadline = Date.now() + 12_000;
+      while (Date.now() < cardDeadline && !cards.some((c) => c.live && c.ok === false)) {
+        await new Promise((r) => setTimeout(r, 500));
+        cards = await js<Card[]>("window.__cards()");
+      }
+      live = cards.filter((c) => c.live);
+      if (live.length > 0) break;
     }
-    const plan = await js<Plan>("window.__plan()");
     raisedAt = plan.logLen;
     check(
       "plan bar appears after a completed plan-mode turn",
@@ -5939,6 +5976,22 @@ async function planHandoffTest(
       "plan bar carries the TUI's composer hint",
       plan.hint === HINT,
       JSON.stringify(plan.hint),
+    );
+    /* Review fix: the base-level collision is disclosed, and now asserted. At
+       the configured ceiling `auto` and `bypass` resolve to the same stance, so
+       the choice the user asked for is cosmetic in that configuration — the bar
+       says so rather than letting two differently-coloured buttons imply a
+       difference that is not there. Below the ceiling the sentence must be
+       absent, or it would be the opposite lie. */
+    const COLLISION = `Your configured approval level is ${plan.maxLevel} of ${plan.maxLevel},`
+      + " so auto and bypass are the same stance here — lower agent.approvalLevel to make them differ.";
+    check(
+      "plan bar discloses that auto and bypass are one stance at the configured ceiling",
+      plan.notes[0] === "Type to change the plan — it stays in plan mode."
+        && (plan.baseLevel === plan.maxLevel
+          ? plan.notes.length === 2 && plan.notes[1] === COLLISION
+          : plan.notes.length === 1),
+      `baseLevel=${plan.baseLevel}/${plan.maxLevel} notes=${JSON.stringify(plan.notes)}`,
     );
     check(
       "plan bar is not a transcript entry",
@@ -5958,30 +6011,27 @@ async function planHandoffTest(
       JSON.stringify(anchored),
     );
 
-    // The refusal itself. `out` and `ok` only land when reconcileToolCards has
-    // read the store back, which is asynchronous and gives up after ~6s by
-    // marking a card ok itself — so poll, and assert `forced` is false.
-    let cards = await js<Card[]>("window.__cards()");
-    const cardDeadline = Date.now() + 12_000;
-    while (Date.now() < cardDeadline && !cards.some((c) => c.live && c.ok === false)) {
-      await new Promise((r) => setTimeout(r, 500));
-      cards = await js<Card[]>("window.__cards()");
-    }
-    const live = cards.filter((c) => c.live);
     const refused = live.filter((c) => c.ok === false && c.out.startsWith("plan mode is on, so `"));
     if (live.length > 0) {
       check(
         "plan mode's refusal reaches the tool card verbatim from the store",
         refused.length > 0 && refused.every((c) => !c.forced),
-        `live cards ${live.map((c) => `${c.name}/ok=${c.ok}/forced=${c.forced}`).join(", ")}`
+        `${attempts} ask(s); live cards ${live.map((c) => `${c.name}/ok=${c.ok}/forced=${c.forced}`).join(", ")}`
           + `; out ${JSON.stringify(refused[0] ? refused[0].out.slice(0, 90) : "")}`,
       );
     } else {
-      // Not a pass disguised as a skip: the file assertion below still runs.
+      /* The model answered with a plan and never reached for a tool, twice, so
+         the card assertion had nothing to run against. The name says so. What
+         this branch asserts is NOT its own condition: the gate really was in
+         force for those turns (the agent says so), nothing was written, and the
+         hand-off was still raised — so the run stays honest about which of the
+         two facts it established. */
+      const stance = await agent!.codingMode();
       check(
-        "plan-mode refusal card not asserted: the plan turn called no tool",
-        live.length === 0,
-        `${cards.length} cards, none born on this stream`,
+        `plan-mode refusal card not asserted: the plan turn called no tool in ${attempts} asks`,
+        stance.mode === "plan" && stance.planMode === true && !existsSync(probe) && plan.on === true,
+        `agent=${stance.mode}/plan=${stance.planMode} file=${existsSync(probe)} bar=${plan.on}`
+          + `; ${cards.length} cards, none born on this stream`,
       );
     }
     check("plan mode wrote no file", !existsSync(probe), probe);
@@ -6036,10 +6086,13 @@ async function planHandoffTest(
       );
       await js<unknown>(`window.__approvalRestore(${order.at})`);
 
-      const prose = await js<{ foot: string; state: string | null; pending: boolean; doneCards: number; okCards: number;
-        queuedBefore: number; queued: string[]; systems: string[]; at: number }>(
-        "window.__approvalProse('use the other folder')",
-      );
+      type Prose = { foot: string; verbs: string[]; grantS: number; grantA: number;
+        afterGrantKeys: { pending: boolean; state: string | null };
+        state: string | null; pending: boolean; doneCards: number; okCards: number;
+        queuedBefore: number; queued: string[]; systems: string[]; at: number };
+      // The route confirmed the verdict: `{resolved:true, …}` is its success
+      // body and the only thing that counts as delivery.
+      const prose = await js<Prose>("window.__approvalProse('use the other folder', 'confirmed')");
       check(
         "Enter under an open approval flips the card to Denied and lands the text",
         prose.state === "denied" && prose.pending === false && prose.doneCards > prose.okCards
@@ -6054,15 +6107,50 @@ async function planHandoffTest(
           && !prose.foot.includes("Privacy"),
         JSON.stringify(prose.foot),
       );
-      const grants = await js<{ s: number; a: number }>(
-        "(() => ({s: document.querySelectorAll('[data-appr=\"s\"]').length, a: document.querySelectorAll('[data-appr=\"a\"]').length}))()",
-      );
+      /* Review fix: sampled while the request is LIVE, from inside the fixture,
+         and against the card's own three verbs — the previous form counted
+         `[data-appr]` nodes after the request had been resolved, and a finished
+         card draws no buttons at all, so it would have passed however apprCard
+         drew the live one. The two retired keys are pressed with the card up
+         as well: a key that cannot do what it says must do nothing. */
       check(
         "the approval card offers no grant the wire cannot carry",
-        grants.s === 0 && grants.a === 0,
-        `data-appr s=${grants.s} a=${grants.a}`,
+        JSON.stringify(prose.verbs) === JSON.stringify(["y", "n", "esc"])
+          && prose.grantS === 0 && prose.grantA === 0
+          && prose.afterGrantKeys.pending === true && prose.afterGrantKeys.state === null,
+        `verbs=${JSON.stringify(prose.verbs)} s=${prose.grantS} a=${prose.grantA}`
+          + ` afterSA=${JSON.stringify(prose.afterGrantKeys)}`,
       );
       await js<unknown>(`window.__approvalRestore(${prose.at})`);
+
+      /* The route answering that it is NOT holding that approvalId — a 404,
+         which the IPC layer still hands over as ok:true with an `{error:…}`
+         body. Nothing was told to the agent, and the window must say exactly
+         that rather than announcing a deny that never happened. */
+      const unknownId = await js<Prose>("window.__approvalProse('use the other folder', 'unknown')");
+      check(
+        "a verdict the agent never took is reported as not taken, not as a deny",
+        unknownId.state === "undelivered"
+          && unknownId.systems.some((t) => t.startsWith("could not deny that call with your message: approvalId not pending:"))
+          && !unknownId.systems.some((t) => t === "that call was denied with your message as the reason")
+          && unknownId.queued.includes("use the other folder"),
+        JSON.stringify({ state: unknownId.state, systems: unknownId.systems, queued: unknownId.queued }),
+      );
+      await js<unknown>(`window.__approvalRestore(${unknownId.at})`);
+
+      /* And the same thing against the LIVE route, with an approvalId no gate
+         ever issued: the real 404 body, read through the real preload → main →
+         agent-client seam. This is the check that would have caught the
+         fabricated success line, because nothing here is injected. */
+      const liveDeny = await js<Prose>("window.__approvalProse('use the other folder')");
+      check(
+        "the live route's 404 for an unheld approvalId is read, not assumed to be a success",
+        liveDeny.state === "undelivered"
+          && liveDeny.systems.some((t) => t.startsWith("could not deny that call with your message:"))
+          && !liveDeny.systems.some((t) => t === "that call was denied with your message as the reason"),
+        JSON.stringify({ state: liveDeny.state, systems: liveDeny.systems }),
+      );
+      await js<unknown>(`window.__approvalRestore(${liveDeny.at})`);
     } else {
       check("plan bar session-switch check skipped: the agent has no other session", !other, "sessions=0");
     }
@@ -6087,10 +6175,28 @@ async function planHandoffTest(
       + " return Object.assign(window.__plan(), {last: window.__lastSystem(), trace: window.__planTrace(), users: window.__draft().users}); })()",
     );
     check(
-      "ctrl+y and ctrl+b both reach a run verb, from inside the composer",
+      "ctrl+y and ctrl+b both reach a run verb from outside the composer",
       ctrlY.on && ctrlB.on && ctrlB.users === 0
         && ctrlB.last === "the mode did not change, so the plan was not sent — the agent is still in plan mode",
       `ctrl+y last=${JSON.stringify(ctrlY.last)}; ctrl+b last=${JSON.stringify(ctrlB.last)}`,
+    );
+    /* Review fix: and the one place the chord must NOT fire. macOS binds
+       ctrl+b, ctrl+d and ctrl+y inside a Chromium textarea to move-back,
+       delete-forward and yank; live there, an ordinary editing keystroke would
+       start a bypass-permissions run while the operator is typing the revision
+       this bar invites. Nothing may happen — not even a system line, which is
+       what logLen watches (the failed-mode seam is still armed, so a fire
+       would leave one). */
+    const beforeComposerKey = await js<Plan>("window.__plan()");
+    const inComposer = await js<Keyed>(
+      "(async () => { window.__planKey('b', true, 'composer'); await new Promise((r) => setTimeout(r, 900));"
+      + " return Object.assign(window.__plan(), {last: window.__lastSystem(), trace: window.__planTrace(), users: window.__draft().users}); })()",
+    );
+    check(
+      "the plan chord is dead inside the composer, where macOS binds ctrl+b to text editing",
+      inComposer.on === true && inComposer.users === 0 && inComposer.trace.length === 0
+        && inComposer.logLen === beforeComposerKey.logLen,
+      `on=${inComposer.on} logLen=${beforeComposerKey.logLen}→${inComposer.logLen} users=${inComposer.users}`,
     );
     const bare = await js<Keyed>(
       "(async () => { window.__planKey('y', false); await new Promise((r) => setTimeout(r, 400));"
@@ -6125,24 +6231,85 @@ async function planHandoffTest(
       JSON.stringify(clickedDismiss && { on: clickedDismiss.on, bars: clickedDismiss.bars }),
     );
 
-    // ---- the ordering proof ----
-    await js<unknown>("window.__newSession()");
-    await js<unknown>("window.__planRaise({})");
-    const run = await js<Keyed & { busy: boolean; lastUser: string }>(
-      "(async () => { window.__planClick('auto'); await new Promise((r) => setTimeout(r, 2000));"
-      + " return Object.assign(window.__plan(), {last: window.__lastSystem(), trace: window.__planTrace(),"
-      + " users: window.__draft().users, busy: window.__busy(), lastUser: window.__lastUser()}); })()",
+    /* ---- the cross-session guard ----
+       executePlan runs synchronously up to its first await, so the fixture gets
+       control back with the mode POST still in flight and switches chats right
+       there — the sidebar is live throughout, since PLAN.busy only greys the
+       three buttons. Nothing may be sent: the plan belongs to the thread it was
+       proposed in, and the ladder has just been lowered. This is the same leak
+       the divergence from the TUI's session_switched closes, arriving through
+       the execute path instead of the render path. */
+    await js<unknown>("window.__modeSet('plan')");
+    // __sessionNew, not __newSession: it gives the fresh chat an agent session
+    // id, which is what a real thread has by the time a turn has finished in
+    // it. `session:new` then takes it back to null, so the switch is visible on
+    // both identities the guard reads.
+    await js<unknown>("window.__sessionNew()");
+    const armed = await js<Plan>("window.__planRaise({})");
+    const switched = await js<{ from: { session: string | null; users: number }; session: string | null;
+      users: number; trace: string[]; last: string; busy: boolean; mode: string; on: boolean }>(
+      "window.__planSwitchDuringExecute('auto')",
     );
-    const liveAfter = await agent!.codingMode();
+    check(
+      "a chat switch while the mode POST is in flight cancels the send",
+      armed.on === true && switched.users === 0 && switched.trace.length === 0 && switched.busy === false
+        && switched.session !== switched.from.session
+        && switched.last === "the chat changed while the mode was moving, so the plan was not sent — the stance is now auto",
+      `armed=${armed.on} users=${switched.users} trace=${JSON.stringify(switched.trace)} busy=${switched.busy}`
+        + ` session=${switched.from.session}→${switched.session} last=${JSON.stringify(switched.last)}`,
+    );
+
+    /* ---- the ordering proof, watched from the agent's side ----
+       PLAN.hold parks executePlan between the CONFIRMED mode change and the
+       send, so the ordering is established by asking the agent what stance it
+       is in while this window's transcript still has no user bubble at all —
+       rather than by reading a trace this window wrote about itself, or by a
+       snapshot taken seconds after both halves already happened. */
+    await js<unknown>("window.__planStop()");
+    await js<unknown>("window.__modeSet('plan')");
+    await js<unknown>("window.__sessionNew()");
+    const rearmed = await js<Plan>("window.__planRaise({})");
+    await js<unknown>("window.__planHold()");
+    // Returns at once — the click handler does not await executePlan, which
+    // parks at the hold. `null` would mean the bar was not on screen and the
+    // trace read below would be a leftover, so it is asserted rather than
+    // assumed.
+    const clicked = await js<Plan | null>("window.__planClick('auto')");
+    let held: string[] = [];
+    const holdDeadline = Date.now() + 30_000;
+    while (Date.now() < holdDeadline) {
+      held = await js<string[]>("window.__planTrace()");
+      if (held.includes("mode:auto")) break;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    const midAgent = await agent!.codingMode();
+    const midUsers = await js<number>("window.__users()");
+    const midTrace = await js<string[]>("window.__planTrace()");
     check(
       "execute sends the mode change BEFORE the message",
+      rearmed.on === true && clicked !== null
+        && midAgent.mode === "auto" && midAgent.planMode === false
+        && midUsers === 0 && JSON.stringify(midTrace) === '["mode:auto"]',
+      `armed=${rearmed.on} clicked=${clicked !== null} agent=${midAgent.mode}/plan=${midAgent.planMode}`
+        + ` users=${midUsers} trace=${JSON.stringify(midTrace)}`,
+    );
+    await js<unknown>("window.__planRelease()");
+    let run = await js<Keyed & { busy: boolean; lastUser: string }>(
+      "Object.assign(window.__plan(), {last: window.__lastSystem(), trace: window.__planTrace(),"
+      + " users: window.__draft().users, busy: window.__busy(), lastUser: window.__lastUser()})",
+    );
+    const sendDeadline = Date.now() + 15_000;
+    while (Date.now() < sendDeadline && run.trace.length < 2) {
+      await new Promise((r) => setTimeout(r, 250));
+      run = await js<Keyed & { busy: boolean; lastUser: string }>(
+        "Object.assign(window.__plan(), {last: window.__lastSystem(), trace: window.__planTrace(),"
+        + " users: window.__draft().users, busy: window.__busy(), lastUser: window.__lastUser()})",
+      );
+    }
+    check(
+      "the trace records the confirmed mode change and then the send, in that order",
       JSON.stringify(run.trace) === '["mode:auto","send"]',
       `trace=${JSON.stringify(run.trace)}`,
-    );
-    check(
-      "the agent was already out of plan mode when the message went",
-      liveAfter.mode === "auto" && liveAfter.planMode === false,
-      JSON.stringify({ mode: liveAfter.mode, planMode: liveAfter.planMode }),
     );
     check(
       "execute sends the TUI's message through the ordinary submit path",
@@ -6158,7 +6325,7 @@ async function planHandoffTest(
     await js<unknown>("window.__planStop()").catch(() => undefined);
     await js<unknown>(`window.__planRestore(${raisedAt})`).catch(() => undefined);
     await agent!.codingMode("default").catch(() => undefined);
-    if (existsSync(probe)) { try { unlinkSync(probe); } catch { /* reported below */ } }
+    rmSync(probeDir, { recursive: true, force: true });
     const cfgAfter = readFileSync(caps.paths.userConfigFile);
     check(
       "the plan hand-off writes nothing to config.json",

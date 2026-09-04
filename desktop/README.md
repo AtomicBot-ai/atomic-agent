@@ -329,8 +329,10 @@ Real, driven by the running agent:
   moment you said no. The offer is retired by the next turn, by any mode change
   away from `plan`, by dismiss — and, unlike the TUI (whose `session_switched`
   reducer forgets to, so its bar re-attaches to another thread's transcript),
-  by a session switch. At `agent.approvalLevel: 5` the two run buttons resolve
-  to the same stance, and the bar says so where the choice is made.
+  by a session switch — including a switch made *while* a run button's mode
+  POST is still in flight, which cancels the send and says which stance the
+  ladder ended on. At `agent.approvalLevel: 5` the two run buttons resolve to
+  the same stance, and the bar says so where the choice is made.
 - **typed prose under an open approval is the verdict**, as in the TUI
   (`src/tui/submit-handler.ts`): the call is denied with your words as the
   model-visible reason, and the same text then goes into the running turn — in
@@ -359,6 +361,31 @@ Honestly degraded, and labelled as such in the UI:
   says why, rather than a button it cannot honour; the `s` and `a` keys that
   used to fire a grant-shaped verdict were removed for the same reason. Loosen
   the standing stance with the mode control in the composer instead.
+- **Where the approval surface still diverges from the TUI's, field by field.**
+  Three differences remain after the parity work above, none of them accidental:
+  (a) the desktop's `kind` row adds `— auto-approves from level N`, which the
+  TUI's modal has no counterpart for. It is kept because the desktop has no
+  always-visible ladder next to the card, and the number is the agent's own.
+  (b) the TUI closes its modal with a muted `esc abort run · ctrl+c stop
+  everything` line; the desktop draws an **Abort run** button with an `⎋` keycap
+  instead, and has no ctrl+c equivalent — there is no run to interrupt from a
+  window that is not a terminal. (c) deny is `n` here and `ctrl+d` in the TUI.
+  Both are guarded (the desktop's letter keys are dead inside any text field),
+  and `n` is what the card's own keycap prints, so the key and the label agree.
+- **A verdict the agent does not take is reported, not assumed.** `POST
+  /api/approval/resolve` answers 404 with an `{error:…}` body for an
+  `approvalId` the gate is no longer holding, and the IPC layer hands that back
+  as a perfectly successful call. So the reply is read: only the route's own
+  `{resolved:true, …}` counts as delivery, and anything else prints *could not
+  deny that call with your message: …* and marks the card **Not denied — the
+  agent never took the verdict**. The typed text is still sent into the turn
+  either way.
+- **The plan chords are dead inside the composer.** `ctrl+y` / `ctrl+b` /
+  `ctrl+d` fire the bar's three verbs everywhere else, as in the TUI, but not in
+  a text field: macOS binds all three inside a Chromium textarea (back a
+  character, yank, delete forward), and a run in bypass-permissions mode is not
+  something an ordinary editing keystroke may start. This is a deliberate
+  divergence from the TUI, where Ink has no such bindings.
 - **The plan hand-off is live-turn only.** It is raised off the turn's own
   terminal frame, so a plan-mode turn that finished in another chat, or under a
   scheduled task, leaves nothing to hang it on: the store records no "this turn
