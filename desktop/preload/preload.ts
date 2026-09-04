@@ -177,6 +177,12 @@ contextBridge.exposeInMainWorld("atomic", {
   firstRun: () => ipcRenderer.invoke("app:firstRun"),
   tuiSetupPresent: () => ipcRenderer.invoke("app:tuiSetupPresent"),
   importFromTui: (opts: Record<string, boolean>) => ipcRenderer.invoke("app:importFromTui", opts),
+  /** r5 item 7 — setup wizard: the streamed runtime phase, the custom-endpoint
+   *  whole-file write, and the first-run import scan. */
+  modelsUpdateStream: () => ipcRenderer.invoke("cli:modelsUpdateStream"),
+  setExternalLlamaUrls: (chatUrl: string, embeddingUrl?: string) =>
+    ipcRenderer.invoke("cli:setExternalLlamaUrls", { chatUrl, embeddingUrl: embeddingUrl ?? "" }),
+  detectImportAgents: () => ipcRenderer.invoke("app:detectImportAgents"),
 
   /** Item 7C — mid-turn steering (POST/GET/DELETE /api/sessions/{id}/steer). */
   steer: (sessionId: string, text: string) => ipcRenderer.invoke("agent:steer", { sessionId, text }),

@@ -879,3 +879,120 @@ button.menurow:hover{background:var(--bg-hover)}
   border-top-color:transparent;animation:sspin .7s linear infinite}
 @keyframes sspin{to{transform:rotate(360deg)}}
 @media (prefers-reduced-motion:reduce){.sspin{animation-duration:2.4s}}
+/* ==========================================================================
+   r5 item 7 — setup wizard, ported one-to-one from the TUI's first-run flow,
+   plus the download strip that outlives it.
+   ========================================================================== */
+
+/* The strip. A flex child of #window between #toolbar and #main, so it is
+   chrome and not an overlay: the TUI's copy promises twice that "progress
+   shows in the top bar", and the wizard layer covers everything under it. */
+#dlbar{
+  flex:none;height:30px;display:flex;align-items:center;gap:var(--s3);
+  padding:0 16px;font-size:12px;color:var(--text-secondary);
+  background:var(--bg-window);border-bottom:1px solid var(--line-soft);
+  -webkit-app-region:no-drag;
+}
+#dlbar[hidden]{display:none}
+#dlbar .dl-g{color:var(--accent-text)}
+#dlbar .dl-l{font-family:var(--font-mono);font-size:11px;color:var(--text-primary);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:32ch}
+#dlbar .dl-bar{font-family:var(--font-mono);letter-spacing:-.5px;white-space:pre}
+#dlbar .dl-bar b{color:var(--accent);font-weight:400}
+#dlbar .dl-bar i{color:var(--line-strong);font-style:normal}
+#dlbar .dl-pct{font-variant-numeric:tabular-nums;min-width:4ch}
+#dlbar .dl-eta,#dlbar .dl-q{color:var(--text-tertiary)}
+#dlbar .dl-x{margin-left:auto;color:var(--text-tertiary);background:none;border:0;
+  font-size:11px;padding:2px 6px;border-radius:4px}
+#dlbar .dl-x:hover{background:var(--bg-hover);color:var(--text-primary)}
+
+/* The wizard shell. The intro draws no header and fills the layer edge to
+   edge (the sky is the screen); every other step keeps the centred column. */
+#onboarding.ob-intro-layer{padding:0;background:var(--bg-sunken)}
+.ob-hints{
+  position:absolute;left:0;right:0;bottom:0;height:34px;display:flex;align-items:center;
+  justify-content:center;gap:6px;font-size:11px;color:var(--text-tertiary);
+  border-top:1px solid var(--line-soft);background:var(--bg-content);
+  -webkit-app-region:no-drag;
+}
+#onboarding.ob-intro-layer .ob-hints{background:transparent;border-top-color:transparent}
+.ob-hints .kc{margin-right:2px}
+.ob-hints .hint{display:inline-flex;align-items:center;gap:4px;margin:0 6px}
+.ob{max-height:calc(100% - 44px);overflow-y:auto;padding-bottom:var(--s4)}
+
+/* Header lockup: the mark, `atomic`, and where in the flow we are — the
+   TUI's onboarding-header.tsx, laid out as a row rather than a column. */
+.ob-lock{display:flex;flex-direction:row;align-items:center;gap:10px;justify-content:center}
+.ob-lock .ob-wm{font-size:15px;font-weight:600;color:var(--accent-text);line-height:1.1}
+.ob-lock .ob-sub2{font-size:12px;color:var(--text-tertiary);line-height:1.2}
+
+/* Intro: the canvas sky, the mark hanging in it, the wordmark and tagline. */
+#ob-intro{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
+#ob-sky{position:absolute;inset:0;width:100%;height:100%;display:block}
+.ob-introc{position:relative;display:flex;flex-direction:column;align-items:center;gap:var(--s5);
+  padding-bottom:34px;pointer-events:none}
+.ob-introc .ob-markbig{width:88px;height:88px;display:block}
+.ob-introc .ob-word{font-size:34px;font-weight:600;letter-spacing:.28em;text-indent:.28em;
+  color:var(--text-primary);line-height:1}
+.ob-introc .ob-tag{font-size:13px;color:var(--text-secondary);min-height:18px;letter-spacing:.02em}
+.ob-introc .ob-cur{color:var(--accent-text)}
+.ob-introc .ob-any{font-size:12px;color:var(--text-tertiary);margin-top:var(--s4)}
+
+/* Rows. The TUI marks the selected row with `›  `; here the marker is a real
+   gutter so mouse and keyboard land on the same box. */
+.ob-row{display:grid;grid-template-columns:18px 1fr;gap:var(--s3);align-items:start;
+  width:100%;text-align:left;padding:var(--s3) var(--s4);border:1px solid transparent;
+  border-radius:8px;background:transparent;color:var(--text-primary)}
+.ob-row:hover{background:var(--bg-hover)}
+.ob-row.on{border-color:var(--accent-line);background:var(--accent-wash)}
+.ob-row .mk{color:var(--accent-text);font-family:var(--font-mono)}
+.ob-row .t{font-size:14px;font-weight:500}
+.ob-row.on .t{color:var(--accent-text)}
+.ob-row .d{font-size:12px;color:var(--text-secondary);display:block;line-height:1.5}
+.ob-row .box{font-family:var(--font-mono);color:var(--text-secondary);margin-right:6px}
+.ob-explain{font-size:13px;color:var(--text-secondary);line-height:1.6;white-space:pre-line}
+.ob-h{font-size:14px;font-weight:600}
+.ob-ok{color:var(--ok,#3FB950)}
+.ob-warn{color:var(--warn)}
+.ob-err{color:var(--danger);white-space:pre-wrap;max-width:72ch;font-size:12px}
+.ob-mono{font-family:var(--font-mono);font-size:12px;white-space:pre}
+.ob-inp{width:100%;height:30px;padding:0 8px;border:1px solid var(--line);border-radius:6px;
+  background:var(--bg-sunken);color:var(--text-primary);font-family:var(--font-mono);font-size:12px}
+.ob-inp:disabled{color:var(--text-tertiary)}
+
+/* Download screen: the two phase rows, and the two offer blocks the TUI
+   draws with a `┃  ` terminal rule — a real left border here. */
+.ob-phase{display:flex;align-items:center;gap:10px;font-family:var(--font-mono);font-size:11px}
+.ob-phase .pl{color:var(--text-secondary);min-width:19ch}
+.ob-phase .pb b{color:var(--accent);font-weight:400}
+.ob-phase .pb i{color:var(--line-strong);font-style:normal}
+/* The phase states dlResetPhases/dlOnPull actually emit are waiting,
+   active and done — `pending` was never written, so the waiting phase's
+   empty bar drew at full weight instead of the TUI's dimmed border
+   (onboarding-download-progress.tsx PhaseLine). */
+.ob-phase.waiting .pb i{color:var(--line)}
+.ob-phase .pt{color:var(--text-secondary);font-variant-numeric:tabular-nums}
+.ob-rate{font-size:12px;color:var(--text-tertiary);margin-top:var(--s3)}
+.ob-offer{border-left:2px solid var(--line);padding:2px 0 2px 12px;margin-top:var(--s5);
+  font-size:13px;color:var(--text-secondary);line-height:1.6;text-align:left;width:100%;background:none}
+.ob-offer.cloud{border-left-color:var(--accent-line)}
+.ob-offer b{display:block;font-weight:600;color:var(--text-primary);margin-top:2px}
+.ob-offer:hover{background:var(--bg-hover)}
+
+/* The cloud step hosts the add-provider wizard inline: same rows, same
+   verification, but on the wizard layer rather than in the anchored popover
+   the model chip opens (there is no chip on screen during first run). */
+.ob-wiz{display:flex;flex-direction:column;gap:var(--s3);width:100%}
+.ob-wiz .modelrow{width:100%;text-align:left;border:1px solid var(--line);border-radius:8px;
+  background:var(--bg-raised);padding:var(--s3) var(--s4);display:flex}
+.ob-wiz .modelrow:hover{border-color:var(--line-strong)}
+.ob-wizlist{max-height:38vh;overflow-y:auto;display:flex;flex-direction:column;gap:6px}
+
+/* --------------------------------------------------------------------------
+   r5 item 7 review fix — the cloud step's list cursor and its `/` search box.
+   The step's footer is the TUI's `↑/↓ move   / search   enter select   esc
+   back`; the keys behind those hints are now real, so the row under the
+   cursor has to be visible without a mouse.
+   -------------------------------------------------------------------------- */
+.ob-wiz .modelrow.on{border-color:var(--accent);background:var(--accent-wash)}
+.ob-wiz .modelrow.on .nm{color:var(--accent-text)}

@@ -1,5 +1,8 @@
 import { execFile, spawn } from "node:child_process";
-import { totalmem } from "node:os";
+// r5 integration: `homedir` is back for the wizard's import scan only — it
+// locates the OTHER agents' state dirs (~/.claude, ~/.codex …), never this
+// desktop's own, which is DESKTOP_STATE_DIR (item 9).
+import { homedir, totalmem } from "node:os";
 import { closeSync, openSync, readdirSync, readFileSync, readSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -667,7 +670,9 @@ export interface UserConfigShape {
     url?: string;
     mode?: string;
     managed?: { modelId?: string | null; port?: number };
-    embeddings?: { url?: string; enabled?: boolean };
+    // r5 item 7 (setup wizard): the custom-endpoint branch writes modelId
+    // as persistUserRemoteLlmUrls does, so the field has to exist here.
+    embeddings?: { url?: string; enabled?: boolean; modelId?: string | null };
   };
   memory?: { embeddings?: { enabled?: boolean } };
   llm?: {
@@ -1510,8 +1515,26 @@ export async function modelsUseDevice(id: string): Promise<CliResult> {
   return cli(["models", "use-device", id], 30_000);
 }
 
+/* r5 item 7 (setup wizard): the first-run import step offers all four
+   sources the agent's own `atag import` accepts (src/cli/import-command.ts
+   importCommand), not the two the Import tab was written for. The domain
+   whitelist below is per source, from the four registries in
+   the import-options.ts files under src/import — with one whitelist for all four an
+   unticked `skills` on Claude Code was dropped from --exclude and the dry
+   run previewed more than the operator ticked. */
+export type ImportSourceId = "hermes" | "openclaw" | "claude-code" | "codex";
+/** Domain ids each source's resolver understands, from its import-options.ts. */
+export const IMPORT_DOMAINS: Record<ImportSourceId, readonly string[]> = {
+  hermes: ["sessions", "cron", "secrets"],
+  openclaw: ["sessions", "cron"],
+  "claude-code": ["skills", "memory", "mcp", "sessions", "secrets"],
+  codex: ["skills", "memory", "sessions", "secrets"],
+};
+/** Sources whose CLI leg accepts `--migrate-secrets` (import-command.ts:128, :332, :446). */
+const IMPORT_SECRET_SOURCES: readonly ImportSourceId[] = ["hermes", "claude-code", "codex"];
+
 export interface ImportRunInput {
-  source: "hermes" | "openclaw";
+  source: ImportSourceId;
   dir: string;
   exclude: string[];
   secrets: boolean;
@@ -1523,25 +1546,24 @@ export interface ImportItem { kind: string; status: string; source: string | nul
 export interface ImportReportParsed { items: ImportItem[]; summary: { migrated: number; skipped: number; conflict: number; error: number } }
 
 /**
- * `atag import <hermes|openclaw> --source <dir> [--exclude a,b]
- * [--migrate-secrets] [--overwrite] [--limit N] (--dry-run | --yes)`.
- * Exactly one of the two flags is always passed: without either, a
- * non-TTY run prints "Non-interactive: …" and exits 0 having written
- * nothing (src/cli/import-command.ts). The report block
- * (`  [<kind>] <status> <src -> dst>( (<reason>))` … `  ----` …
- * `  migrated=… skipped=… conflict=… error=…`) is parsed into the TUI's
- * rows; `state` names what the run did.
+ * `atag import <hermes|openclaw|claude-code|codex> --source <dir>
+ * [--exclude a,b] [--migrate-secrets] [--overwrite] [--limit N]
+ * (--dry-run | --yes)`, built on its own so the source guard, the
+ * per-source `--exclude` whitelist and the `--migrate-secrets` gate can be
+ * asserted without a child process — the three things that decide whether
+ * a preview promises more than the operator ticked (review fix: they had
+ * no coverage, and no UI produces a non-default option set for the two
+ * newer sources, so a spawned run cannot reach them).
  */
-export async function importRun(input: ImportRunInput, cwd?: string): Promise<{
-  ok: boolean; state?: "preview" | "applied" | "nothing" | "non-interactive"; report?: ImportReportParsed; stdout?: string; stderr?: string; error?: string;
-}> {
-  if (input.source !== "hermes" && input.source !== "openclaw") return { ok: false, error: "source must be hermes or openclaw" };
+export function importArgs(input: ImportRunInput): { ok: true; args: string[] } | { ok: false; error: string } {
+  const domains = IMPORT_DOMAINS[input.source as ImportSourceId];
+  if (!domains) return { ok: false, error: "source must be hermes, openclaw, claude-code or codex" };
   const dir = input.dir.trim();
   if (!dir) return { ok: false, error: "source dir is empty" };
   const args = ["import", input.source, "--source", dir];
-  const exclude = input.exclude.filter((x) => x === "sessions" || x === "cron");
+  const exclude = input.exclude.filter((x) => domains.includes(x));
   if (exclude.length) args.push("--exclude", exclude.join(","));
-  if (input.secrets && input.source === "hermes") args.push("--migrate-secrets");
+  if (input.secrets && IMPORT_SECRET_SOURCES.includes(input.source)) args.push("--migrate-secrets");
   if (input.overwrite) args.push("--overwrite");
   const limit = input.limit.trim();
   if (limit) {
@@ -1549,6 +1571,23 @@ export async function importRun(input: ImportRunInput, cwd?: string): Promise<{
     args.push("--limit", limit);
   }
   args.push(input.execute ? "--yes" : "--dry-run");
+  return { ok: true, args };
+}
+
+/**
+ * Run it. Exactly one of `--dry-run` / `--yes` is always passed: without
+ * either, a non-TTY run prints "Non-interactive: …" and exits 0 having
+ * written nothing (src/cli/import-command.ts). The report block
+ * (`  [<kind>] <status> <src -> dst>( (<reason>))` … `  ----` …
+ * `  migrated=… skipped=… conflict=… error=…`) is parsed into the TUI's
+ * rows; `state` names what the run did.
+ */
+export async function importRun(input: ImportRunInput, cwd?: string): Promise<{
+  ok: boolean; state?: "preview" | "applied" | "nothing" | "non-interactive"; report?: ImportReportParsed; stdout?: string; stderr?: string; error?: string;
+}> {
+  const built = importArgs(input);
+  if (!built.ok) return { ok: false, error: built.error };
+  const args = built.args;
   const res = await cli(args, 300_000, cwd);
   if (!res.ok && !res.stdout.trim()) return { ok: false, error: res.error, stdout: res.stdout, stderr: res.stderr };
   const lines = res.stdout.replace(/\r\n/g, "\n").split("\n");
@@ -1849,4 +1888,197 @@ export async function llamaProbe(rawUrl: string, timeoutMs = 8000): Promise<{ ok
   result.ollama = looksLikeOllamaUrl(url);
   if (!result.reachable) result.message = describeLlamaHealthFailure(result.kind, result.error, url);
   return { ok: true, url, probe: result };
+}
+
+
+/* ================================================================
+   r5 item 7 — setup wizard: the three main-process legs the ported
+   first-run flow needs and the desktop did not have.
+   ================================================================ */
+
+/**
+ * `atag models update`, STREAMED — the runtime phase of the download.
+ *
+ * The buffered `modelsUpdate()` above resolves only at the end, so a
+ * bar driven from it would sit at 0% for the whole backend zip. This is
+ * the same spawn/relay shape `modelsPull` uses, and the two feed one
+ * `cli:pull` stream so the strip has one parser.
+ *
+ * Honest limit, carried through to the screen: `runLocalModelsUpdate`
+ * (src/cli/models-handlers.ts:734-745) returns 0 WITHOUT downloading
+ * anything when `checkForBackendUpdate` says the tag on disk is current
+ * — it prints `backend up to date (<tag>)` or `backend unchanged …`.
+ * A machine whose binary is missing but whose version file matches gets
+ * no bytes, so the caller must not draw a runtime bar it is not driving;
+ * `sawProgress` on the result says whether any were.
+ */
+export function modelsUpdateStream(
+  onLine: (line: string) => void,
+): { done: Promise<CliResult & { sawProgress: boolean; upToDate: boolean }>; cancel: () => void } {
+  const binary = resolveBinary();
+  if (!binary) {
+    return {
+      done: Promise.resolve({ ok: false, stdout: "", stderr: "", error: "no atomic-agent binary found", sawProgress: false, upToDate: false }),
+      cancel: () => {},
+    };
+  }
+  const child = spawn(binary, ["models", "update"], { stdio: ["ignore", "pipe", "pipe"] });
+  let stdout = "";
+  let stderr = "";
+  let sawProgress = false;
+  const relay = (chunk: Buffer, sink: "out" | "err") => {
+    const text = chunk.toString("utf8");
+    if (sink === "out") stdout += text;
+    else stderr += text;
+    for (const line of text.split(/[\r\n]/)) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      if (/^\[[= ]{20}\]\s+\d{1,3}%/.test(trimmed)) sawProgress = true;
+      onLine(trimmed);
+    }
+  };
+  child.stdout.on("data", (c: Buffer) => relay(c, "out"));
+  child.stderr.on("data", (c: Buffer) => relay(c, "err"));
+  const done = new Promise<CliResult & { sawProgress: boolean; upToDate: boolean }>((resolve) => {
+    const finish = (base: CliResult) =>
+      resolve({
+        ...base,
+        sawProgress,
+        upToDate: /backend up to date|backend unchanged/.test(stdout),
+      });
+    child.on("exit", (code) =>
+      finish(
+        code === 0
+          ? { ok: true, stdout, stderr }
+          : { ok: false, stdout, stderr, error: `models update exited with code ${code ?? "null"}` },
+      ),
+    );
+    child.on("error", (err) => finish({ ok: false, stdout, stderr, error: err.message }));
+  });
+  return { done, cancel: () => child.kill("SIGTERM") };
+}
+
+/**
+ * persistUserRemoteLlmUrls (src/tui/persist-user-local-models-config.ts:113-169)
+ * as ONE whole-file write.
+ *
+ * Not `setExternalLlamaUrl` above: that one writes the chat half only,
+ * which is right for the External pane (it never asked about embeddings)
+ * and wrong here — the first-run custom-endpoint branch answers both
+ * questions, and leaving `localModels.embeddings` pointed at the managed
+ * port would keep the embedding daemon addressed at a port nothing is
+ * serving. The routing half (`llm.activeTextProvider`) is written too,
+ * with the TUI's own reason: without it a file whose `llm` block names
+ * some other provider keeps it, and the wizard has written an address
+ * nothing uses.
+ */
+export async function setExternalLlamaUrls(input: {
+  chatUrl: string;
+  embeddingUrl?: string;
+}): Promise<WriteResult> {
+  const check = (raw: string): string | null => {
+    let parsed: URL;
+    try {
+      parsed = new URL(raw);
+    } catch {
+      return `not a URL: ${raw}`;
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return `not an http(s) URL: ${raw}`;
+    return null;
+  };
+  const chatBad = check(input.chatUrl);
+  if (chatBad) return { ok: false, changed: false, error: chatBad };
+  const hasEmbedding = typeof input.embeddingUrl === "string" && input.embeddingUrl.length > 0;
+  if (hasEmbedding) {
+    const embBad = check(input.embeddingUrl!);
+    if (embBad) return { ok: false, changed: false, error: embBad };
+  }
+  const read = await readWholeConfig();
+  if (!read.ok || !read.config) return { ok: false, changed: false, error: read.error };
+  const cfg = read.config;
+  const lm = (cfg.localModels ??= {});
+  lm.mode = "external";
+  lm.url = input.chatUrl;
+  const emb = (lm.embeddings ??= {});
+  emb.enabled = hasEmbedding;
+  // The TUI's own default: an embedding URL with no model id named yet
+  // gets the catalog default (models-catalog.ts DEFAULT_EMBEDDING_MODEL_ID).
+  emb.modelId = hasEmbedding ? (emb.modelId ?? "nomic-embed-text-v1.5") : null;
+  if (hasEmbedding) emb.url = input.embeddingUrl!;
+  const mem = (cfg.memory ??= {});
+  const memEmb = (mem.embeddings ??= {});
+  memEmb.enabled = hasEmbedding;
+  // Only when the file already carries an llm block, exactly as the TUI
+  // gates it: a file without one already routes at local-llama through
+  // the synthesized default entry.
+  if (cfg.llm) {
+    cfg.llm.activeTextProvider = "local-llama";
+    const providers = (cfg.llm.providers ??= []);
+    if (!providers.some((p) => p.id === "local-llama")) {
+      providers.push({ id: "local-llama", kind: "llama-server", url: input.chatUrl } as ProviderEntry);
+    }
+  }
+  syncLocalLlamaProviderUrl(cfg);
+  const w = await configSetWhole(cfg);
+  return w.ok ? { ok: true, changed: true } : { ok: false, changed: false, error: w.error };
+}
+
+/**
+ * src/import/detect-import-agents.ts, transcribed: the four sources, the
+ * `*_STATE_DIR` env overrides, and the same shallow existsSync artefact
+ * checks — "does the state dir hold at least one thing this importer
+ * reads", never opening a database.
+ */
+export interface DetectedImportAgentRow { id: ImportSourceId; label: string; dir: string }
+
+const IMPORT_AGENT_LABELS: Record<ImportSourceId, string> = {
+  hermes: "Hermes",
+  openclaw: "OpenClaw",
+  "claude-code": "Claude Code",
+  codex: "Codex",
+};
+
+export function importAgentDir(id: ImportSourceId, home = homedir(), env = process.env): string {
+  switch (id) {
+    case "hermes":
+      return env["HERMES_STATE_DIR"] ?? join(home, ".hermes");
+    case "openclaw":
+      return env["OPENCLAW_STATE_DIR"] ?? join(home, ".openclaw");
+    case "claude-code":
+      return env["CLAUDE_CODE_STATE_DIR"] ?? join(home, ".claude");
+    case "codex":
+      return env["CODEX_STATE_DIR"] ?? join(home, ".codex");
+  }
+}
+
+function hasImportableState(id: ImportSourceId, dir: string): boolean {
+  switch (id) {
+    case "hermes":
+      return existsSync(join(dir, "state.db")) || existsSync(join(dir, "cron", "jobs.json"));
+    case "openclaw":
+      return existsSync(join(dir, "agents")) || existsSync(join(dir, "state", "openclaw.sqlite"));
+    case "claude-code":
+      return (
+        existsSync(join(dir, "projects")) ||
+        existsSync(join(dir, "skills")) ||
+        existsSync(join(dir, "settings.json"))
+      );
+    case "codex":
+      return (
+        existsSync(join(dir, "sessions")) ||
+        existsSync(join(dir, "skills")) ||
+        existsSync(join(dir, "auth.json")) ||
+        existsSync(join(dir, "AGENTS.md"))
+      );
+  }
+}
+
+export function detectImportAgents(): DetectedImportAgentRow[] {
+  const rows: DetectedImportAgentRow[] = [];
+  for (const id of Object.keys(IMPORT_AGENT_LABELS) as ImportSourceId[]) {
+    const dir = importAgentDir(id);
+    if (!hasImportableState(id, dir)) continue;
+    rows.push({ id, label: IMPORT_AGENT_LABELS[id], dir });
+  }
+  return rows;
 }
