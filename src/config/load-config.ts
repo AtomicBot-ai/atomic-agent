@@ -520,6 +520,13 @@ export function loadConfig(): AtomicAgentConfig {
       parseMode: user.telegram.parseMode,
       progressIndicator: user.telegram.progressIndicator,
     },
+    composio: {
+      enabled: user.composio.enabled,
+      apiKeyEnv: user.composio.apiKeyEnv,
+      userId: user.composio.userId,
+      sessionId: user.composio.sessionId,
+      mcpUrl: user.composio.mcpUrl,
+    },
     mcp: {
       // Servers are owned by the user-config file. Deep clone the
       // array so downstream mutations (e.g. TUI enable/disable

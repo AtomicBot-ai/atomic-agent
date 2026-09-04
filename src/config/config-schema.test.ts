@@ -996,6 +996,55 @@ describe("parseUserConfigFile", () => {
     ).toThrow(/skills.taps/);
   });
 
+  it("applies composio defaults when the section is absent", () => {
+    const parsed = parseUserConfigFile({ version: USER_CONFIG_VERSION });
+    expect(parsed.composio).toEqual(USER_CONFIG_DEFAULTS.composio);
+  });
+
+  it("accepts a v49 file and fills in composio.* defaults transparently", () => {
+    const parsed = parseUserConfigFile({ version: 49 });
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(parsed.composio).toEqual(USER_CONFIG_DEFAULTS.composio);
+    // Defaults must leave the integration inert: no cached session and
+    // no key means bootstrap mounts nothing.
+    expect(parsed.composio.sessionId).toBeNull();
+    expect(parsed.composio.mcpUrl).toBeNull();
+    expect(parsed.composio.userId).toBeNull();
+  });
+
+  it("round-trips a populated composio block", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      composio: {
+        enabled: true,
+        apiKeyEnv: "MY_COMPOSIO_KEY",
+        userId: "11111111-2222-3333-4444-555555555555",
+        sessionId: "trs_abc",
+        mcpUrl: "https://backend.composio.dev/tool_router/trs_abc/mcp",
+      },
+    });
+    expect(parsed.composio.apiKeyEnv).toBe("MY_COMPOSIO_KEY");
+    expect(parsed.composio.sessionId).toBe("trs_abc");
+  });
+
+  it("normalises blank composio cache entries back to null", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      composio: { sessionId: "   ", mcpUrl: "" },
+    });
+    expect(parsed.composio.sessionId).toBeNull();
+    expect(parsed.composio.mcpUrl).toBeNull();
+  });
+
+  it("rejects a non-string composio.sessionId", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        composio: { sessionId: 42 },
+      }),
+    ).toThrow(/composio.sessionId/);
+  });
+
   it("applies telegram defaults when the section is absent", () => {
     const parsed = parseUserConfigFile({ version: USER_CONFIG_VERSION });
     expect(parsed.telegram).toEqual(USER_CONFIG_DEFAULTS.telegram);
