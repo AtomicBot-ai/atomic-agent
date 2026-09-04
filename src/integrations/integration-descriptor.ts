@@ -62,6 +62,12 @@ export interface IntegrationStatusContext {
    * one. Absent when the runtime is not available (e.g. in tests).
    */
   mcpServerStates?: ReadonlyMap<string, string>;
+  /**
+   * Live channel states by channel name (`ChannelState` values), for
+   * integrations that run one — Telegram today. Absent when the
+   * runtime is not available (e.g. in tests).
+   */
+  channelStates?: ReadonlyMap<string, string>;
 }
 
 export interface IntegrationDescriptor {

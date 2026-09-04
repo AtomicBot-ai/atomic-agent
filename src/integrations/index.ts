@@ -20,3 +20,4 @@ export {
 } from "./integration-secrets.js";
 export { findIntegration, listIntegrations } from "./integration-registry.js";
 export { composioIntegration } from "./composio-integration.js";
+export { telegramIntegration } from "./telegram-integration.js";

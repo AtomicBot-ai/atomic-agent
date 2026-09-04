@@ -43,6 +43,12 @@ export class IntegrationsOrchestrator {
     for (const status of this.runtime.mcpManager.listStatuses()) {
       mcpServerStates.set(status.name, status.state);
     }
+    // Channel-backed integrations (Telegram) report liveness the same
+    // way, so a token that is saved but not running reads differently
+    // from one that is.
+    const channelStates = new Map<string, string>();
+    const telegram = this.runtime.telegramChannel;
+    if (telegram) channelStates.set("telegram", telegram.state());
     return listIntegrations().map((descriptor) => {
       const present = presentFieldKeys(descriptor);
       const status = descriptor.status({
@@ -51,6 +57,7 @@ export class IntegrationsOrchestrator {
           .filter((f) => f.required)
           .every((f) => present.has(f.key)),
         mcpServerStates,
+        channelStates,
       });
       const fields: IntegrationFieldRow[] = descriptor.fields.map((field) => ({
         key: field.key,
