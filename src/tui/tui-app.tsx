@@ -252,6 +252,8 @@ export interface TuiAppCallbacks {
    * handler owns the escape sequences and the config write.
    */
   onMouseSupportRequested?(enabled: boolean | null): void;
+  /** `/max_steps [number]` — `null` reports the active value. */
+  onMaxStepsRequested?(maxSteps: number | null): void;
   /**
    * A drag began on a cell no mouse target claims — message text, panel
    * prose, empty rail space. Dragging across inert content is
@@ -2099,4 +2101,3 @@ export function TuiApp({
     </MouseProvider>
   );
 }
-

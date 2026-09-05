@@ -3,6 +3,8 @@ import {
   codingModeLook,
   type CodingMode,
 } from "../coding-mode.js";
+import { ConfigValidationError } from "../../config/config-validation-error.js";
+import { parsePositiveInt } from "../../config/config-schema.js";
 import type { WhileBusySubmitMode } from "../../config/index.js";
 import type { TuiAction } from "../tui-action.js";
 import { normalizeLocalLlmBaseUrl } from "../persist-user-local-models-config.js";
@@ -119,6 +121,10 @@ export interface SlashDispatchResult {
    * React (see `tui-command.ts`).
    */
   readonly mouseVerb?: "on" | "off" | "status";
+  /** `/max_steps [number]` — report or replace the active per-turn step budget. */
+  readonly maxStepsRequest?:
+    | { readonly kind: "status" }
+    | { readonly kind: "set"; readonly value: number };
   /**
    * `/uninstall`: measure the install and feed the result back as
    * `uninstall_plan_loaded`. Nothing is removed on this path — the
@@ -280,6 +286,8 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
       return dispatchLlmSub(parsed.args);
     case "model":
       return dispatchModelsSub(parsed.args, parsed.name);
+    case "max_steps":
+      return dispatchMaxStepsSub(parsed.args);
     case "tasks":
       return pureActions([
         { type: "ui_mode_set", mode: "debug" },
@@ -884,5 +892,35 @@ function dispatchAnalyticsSub(rawArgs: string): SlashDispatchResult {
   }
   return pureActions([], {
     systemMessage: "usage: /analytics on | off | status",
+  });
+}
+
+/**
+ * Sub-dispatcher for `/max_steps [number]`. Bare `/max_steps` shows the
+ * current value. `/max_steps <number>` sets a new positive integer value.
+ */
+function dispatchMaxStepsSub(rawArgs: string): SlashDispatchResult {
+  const args = rawArgs.trim();
+  if (args.length === 0) {
+    return pureActions([], {
+      maxStepsRequest: { kind: "status" },
+    });
+  }
+
+  let newValue: number;
+  try {
+    newValue = parsePositiveInt(args, "max_steps");
+  } catch (err) {
+    if (err instanceof ConfigValidationError) {
+      return pureActions([], {
+        systemMessage: err.message,
+      });
+    }
+    return pureActions([], {
+      systemMessage: `invalid max_steps value: ${args}`,
+    });
+  }
+  return pureActions([], {
+    maxStepsRequest: { kind: "set", value: newValue },
   });
 }

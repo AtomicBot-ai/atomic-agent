@@ -43,14 +43,21 @@ function deferred(id: string): Deferred {
  * subscribes to the bus, so nothing here needs to do I/O.
  */
 function stubRuntime(
-  runTurn: (text: string, opts: { signal: AbortSignal }) => Promise<unknown>,
+  runTurn: (
+    text: string,
+    opts: { signal: AbortSignal; maxSteps: number },
+  ) => Promise<unknown>,
 ): AgentRuntime {
   return {
     createSession: () => session(),
     // The queue tests exercise the fallback path: a steer that is always
     // refused parks every mid-run submission in the orchestrator queue.
     steer: () => false,
-    runTurn: (_s: unknown, text: string, opts: { signal: AbortSignal }) =>
+    runTurn: (
+      _s: unknown,
+      text: string,
+      opts: { signal: AbortSignal; maxSteps: number },
+    ) =>
       runTurn(text, opts),
     sessionStore: { listRecent: () => [], load: () => null },
     approvals: { clearSessionGrants: () => undefined },
@@ -59,6 +66,37 @@ function stubRuntime(
     skillCatalog: [],
   } as unknown as AgentRuntime;
 }
+
+describe("ChatOrchestrator max steps", () => {
+  it("uses an updated step budget on the next turn", async () => {
+    const turn = deferred("s1");
+    const runTurn = vi.fn(
+      (_text: string, _opts: { signal: AbortSignal; maxSteps: number }) =>
+        turn.promise,
+    );
+    const orchestrator = new ChatOrchestrator(
+      stubRuntime(runTurn),
+      makeTuiEventBus(),
+      {
+        maxSteps: 5,
+        llamaUrl: "http://127.0.0.1:8080",
+        readGateFacts: cloudGateFacts,
+      },
+    );
+
+    expect(orchestrator.getMaxSteps()).toBe(5);
+    orchestrator.setMaxSteps(41);
+    expect(orchestrator.getMaxSteps()).toBe(41);
+    orchestrator.sendMessage("next turn");
+
+    expect(runTurn).toHaveBeenCalledWith(
+      "next turn",
+      expect.objectContaining({ maxSteps: 41 }),
+    );
+    turn.resolve();
+    await turn.promise;
+  });
+});
 
 describe("ChatOrchestrator message queue", () => {
   it("runs the first message and parks the second until the first settles", async () => {

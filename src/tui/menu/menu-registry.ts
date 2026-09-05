@@ -531,6 +531,18 @@ export const MENU: readonly MenuNode[] = [
   },
   {
     kind: "action",
+    id: "run.max_steps",
+    label: "Max steps…",
+    group: "run",
+    slash: {
+      name: "max_steps",
+      description:
+        "get or set the agent's max_steps configuration: `/max_steps` | `/max_steps <number>`",
+      rank: 39,
+    },
+  },
+  {
+    kind: "action",
     id: "setup.theme",
     label: "Theme…",
     group: "setup",
