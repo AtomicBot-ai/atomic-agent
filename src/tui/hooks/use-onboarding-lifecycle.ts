@@ -1,9 +1,17 @@
 import { useEffect, useRef } from "react";
 import { getConfig } from "../../config/index.js";
 import {
+  detectImportAgents,
+  type DetectedImportAgent,
+} from "../../import/index.js";
+import {
   isCloudTextProviderReady,
   isLocalBackendConfigured,
 } from "../local-backend-readiness.js";
+import {
+  buildImportAgentRows,
+  shouldOfferImport,
+} from "../onboarding/import-step.js";
 import type {
   OnboardingOutcome,
   OnboardingUiState,
@@ -26,8 +34,11 @@ export function useOnboardingLifecycle(input: {
   dispatch(action: TuiAction): void;
   onFinished?(outcome: OnboardingOutcome): void;
   onStep?(step: string, outcome?: string): void;
+  /** Injectable source scan, so tests never read the real home dir. */
+  detectAgents?(): DetectedImportAgent[];
 }): void {
   const { onboarding, dispatch, onFinished, onStep } = input;
+  const detectAgents = input.detectAgents ?? detectImportAgents;
   const settling = useRef(false);
   // Steps already reported, so a re-render — or a second visit to the
   // same screen — does not double-count it. `finished` in particular is
@@ -98,6 +109,28 @@ export function useOnboardingLifecycle(input: {
       persistOnboardingState({ proposedSecondBackendAt: new Date().toISOString() });
       dispatch({ type: "onboarding_second_backend_offered", offer });
       return;
+    }
+    // The import step is the flow's actual last screen: it runs after
+    // the second-backend offer settles (in either direction), and only
+    // when a known agent's state dir exists on this machine. Same
+    // once-only contract as the offer above — stamped when shown. No
+    // path routes around it — not the download screen's skip exit, not
+    // an esc-skipped setup: every first run passes this screen once,
+    // and the screen's own skip row is the only way past it.
+    if (
+      shouldOfferImport({
+        alreadyOffered: config.tui.onboarding.importOfferedAt !== null,
+      })
+    ) {
+      const detected = detectAgents();
+      if (detected.length > 0) {
+        persistOnboardingState({ importOfferedAt: new Date().toISOString() });
+        dispatch({
+          type: "onboarding_import_opened",
+          agents: buildImportAgentRows(detected),
+        });
+        return;
+      }
     }
     settling.current = true;
     const now = new Date().toISOString();

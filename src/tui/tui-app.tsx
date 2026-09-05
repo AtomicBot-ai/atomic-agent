@@ -15,7 +15,10 @@ import { CodingModePopup } from "./components/coding-mode-popup.js";
 import { OnboardingScreen } from "./components/onboarding-screen.js";
 import { TerminalTooSmall } from "./components/terminal-too-small.js";
 import { ContextPanel } from "./components/context-panel.js";
-import { selectContextUsage } from "./select-context-usage.js";
+import {
+  selectComposerContextUsage,
+  selectContextUsage,
+} from "./select-context-usage.js";
 import { Box, Text, useApp, useInput, type DOMElement, type Key } from "ink";
 import type { HuggingFaceRepoChoices } from "../local-llm/index.js";
 import {
@@ -74,7 +77,10 @@ import {
   THEMES,
 } from "./theme/theme.js";
 import { Sidebar } from "./components/sidebar.js";
-import { selectSidebarTasks } from "./sidebar-tasks-selector.js";
+import {
+  countRunningTasks,
+  selectSidebarTasks,
+} from "./sidebar-tasks-selector.js";
 import { SlashPalette } from "./components/slash-palette.js";
 import { StatusBar } from "./components/status-bar.js";
 import { TasksCancelModal } from "./components/tasks-cancel-modal.js";
@@ -118,6 +124,7 @@ import { handleProvidersTabKey } from "./providers/providers-key-bindings.js";
 import { handleTelegramTabKey } from "./telegram/telegram-key-bindings.js";
 import { handlePrivacyTabKey } from "./privacy/privacy-key-bindings.js";
 import { ContextMenuPopup, ContextMenuProvider } from "./context-menu/index.js";
+import { createDragIntentTracker } from "./mouse/drag-intent.js";
 import { MouseProvider } from "./mouse/mouse-context.js";
 import { isPrimaryPress } from "./mouse/mouse-event.js";
 import {
@@ -247,6 +254,20 @@ export interface TuiAppCallbacks {
   onMouseSupportRequested?(enabled: boolean | null): void;
   /** `/max_steps [number]` — `null` reports the active value. */
   onMaxStepsRequested?(maxSteps: number | null): void;
+  /**
+   * A drag began on a cell no mouse target claims — message text, panel
+   * prose, empty rail space. Dragging across inert content is
+   * selecting, so the host opens the same pause window the modifier
+   * trigger uses (`selection-passthrough.beginWindow("drag")`) and the
+   * operator drags again with the terminal's own selection live.
+   */
+  onSelectionDragIntent?(): void;
+  /**
+   * The hint strip's `[drag] select text` chip was clicked: open the
+   * selection pause window right away, so the operator's next drag
+   * selects natively instead of arming the drag-intent detector first.
+   */
+  onSelectionPauseRequested?(): void;
   /** Start the Tasks-tab auto-refresh loop (first entry only). */
   onTasksAutoRefreshStart?(): void;
   /** Perform a one-shot refresh of the tasks list. */
@@ -259,6 +280,12 @@ export interface TuiAppCallbacks {
    * detail view, mirroring what the operator would do manually.
    */
   onSidebarTaskActivated?(taskId: string): void;
+  /**
+   * Sidebar Tasks header: `+ new` clicked. The handler is expected to
+   * surface the Tasks debug tab with its create form open, mirroring
+   * the in-panel `n` key.
+   */
+  onTaskNewRequested?(): void;
   /** Switch the chat transcript to the task's session. */
   onTaskOpenSessionRequested?(taskId: string): void;
   /** Proceed with a task cancellation — the caller owns any confirm modal. */
@@ -414,6 +441,13 @@ export interface TuiAppCallbacks {
    * above: only the callback layer reaches the orchestrator's bus.
    */
   onProvidersInlineModelsEnsureRequested?(providerId: string | null): void;
+  /**
+   * `/llm check`: run the provider contract probe against `providerId`
+   * (`null` = active text provider). Callback for the same reason as
+   * the two above. Explicit request only — the probe spends real
+   * requests and never runs on a turn path.
+   */
+  onProvidersContractProbeRequested?(providerId: string | null): void;
   /** Providers tab / LLM panel: switch the active embedding provider. */
   onProvidersSetActiveEmbedding?(id: string): void;
   /** Providers tab / LLM panel: select an exact embedding model. */
@@ -471,6 +505,16 @@ export interface TuiAppCallbacks {
    * funnel so a drop-off can be attributed to a screen.
    */
   onOnboardingStep?(step: string, outcome?: string): void;
+  /**
+   * The first-run import step asked for a run. `execute: false` is the
+   * dry-run behind the preview screen, `true` the confirmed write. The
+   * answer comes back on the bus as `onboarding_import_report` /
+   * `onboarding_import_failed`.
+   */
+  onOnboardingImportRequested?(
+    plan: import("./onboarding/import-step.js").OnboardingImportPlan,
+    execute: boolean,
+  ): void;
   /** Providers tab: remove a provider by id from config + registry. */
   onProvidersRemove?(id: string): void;
   /** Slash-command surface: enable a skill explicitly (`/skill enable <name>`). */
@@ -524,13 +568,6 @@ export interface TuiAppCallbacks {
   onAnalyticsToggleRequested?(): void | Promise<void>;
   /** Privacy tab: set analytics to an explicit value (slash-command path). */
   onAnalyticsSetEnabledRequested?(enabled: boolean): void | Promise<void>;
-  /**
-   * Privacy tab: move the approval ladder to an explicit level (digit
-   * hotkeys, arrow steps, `/privacy level 1..5`, and the `/privacy
-   * approve on|off` aliases which map to 5 and 1). Persists
-   * `agent.approvalLevel` and hot-applies it to the live gate.
-   */
-  onApprovalLevelSetRequested?(level: number): void | Promise<void>;
   /** Privacy tab: re-read the persisted `analytics.enabled` snapshot. */
   onPrivacyRefreshRequested?(): void;
   /** Import tab: run a dry-run preview of the Hermes import. */
@@ -546,6 +583,14 @@ export interface TuiAppCallbacks {
    * `atomic-agent tui` in the same working directory.
    */
   onNewWindowRequested?(): void;
+  /**
+   * An `[open <host>]` chip under a chat message: open `url` — always a
+   * normalised http(s) URL by the time it gets here — in the OS default
+   * browser. A callback rather than an in-component spawn so the chip
+   * stays presentational and the failure report can travel the bus as a
+   * system message.
+   */
+  onOpenUrlRequested?(url: string): void;
 }
 
 export interface TuiAppProps {
@@ -644,10 +689,18 @@ export function TuiApp({
 
   useEffect(() => {
     if (!mouse) return;
-    return mouse.subscribe((event) => {
-      registry.dispatch(event);
+    // The registry is the only place that knows whether a press landed
+    // on anything, so the selection-intent detector sits right behind
+    // it: an unclaimed press followed by held motion is a drag over
+    // dead content, and the host answers by pausing mouse reporting so
+    // the terminal's own selection takes over (`drag-intent.ts`).
+    const dragIntent = createDragIntentTracker(() => {
+      callbacks.onSelectionDragIntent?.();
     });
-  }, [mouse, registry]);
+    return mouse.subscribe((event) => {
+      dragIntent.observe(event, registry.dispatch(event));
+    });
+  }, [mouse, registry, callbacks]);
 
   useEffect(() => {
     callbacks.onProvidersTabRefresh?.();
@@ -786,6 +839,14 @@ export function TuiApp({
   const terminalSize = useTerminalSize();
   const sidebarVisible =
     state.uiMode === "chat" &&
+    !state.sidebarCollapsed &&
+    isSidebarVisible(terminalSize.columns, terminalSize.rows);
+  // The `»` restore control is offered only while the fold is the
+  // operator's own choice AND the terminal could seat the rail: when
+  // the size gate is what hid it, a click could restore nothing.
+  const sidebarRestorable =
+    state.uiMode === "chat" &&
+    state.sidebarCollapsed &&
     isSidebarVisible(terminalSize.columns, terminalSize.rows);
   // The rail takes a share of the terminal rather than a flat 30
   // columns, and its two panes get a row budget cut from the terminal
@@ -899,9 +960,12 @@ export function TuiApp({
             state.localModelsPanel.removeConfirmId !== null)
         )));
 
-  // When the sidebar collapses below the width or height threshold
+  // When the sidebar drops below the width or height threshold
   // (terminal resized smaller), focus must follow back to the editor so
-  // Tab does not strand the operator on an invisible surface.
+  // Tab does not strand the operator on an invisible surface. The
+  // dependency is the derived `sidebarVisible`, so every flip is
+  // covered — the operator's own fold (`sidebarCollapsed`) included,
+  // though the reducer already reclaims focus on that path itself.
   useEffect(() => {
     if (!sidebarVisible && state.chatFocus === "sidebar") {
       dispatch({ type: "chat_focus_set", focus: "editor" });
@@ -1048,7 +1112,7 @@ export function TuiApp({
     // A modal's own targets register in an effect that flushes a frame
     // after it first paints. In that window the backdrop is the only
     // eligible target, so a second click arriving fast — a double-click
-    // on the rail's `[x]`, or an impatient one on `ctrl+p` — would be
+    // on the rail's `[x]`, or an impatient one on `☰ Menu` — would be
     // read as "clicked outside" and dismiss the surface that just
     // opened. Ignore presses until the modal has had that frame.
     if (Date.now() - modalOpenedAtRef.current < MODAL_CLICK_GRACE_MS) {
@@ -1220,6 +1284,17 @@ export function TuiApp({
     [state, callbacks],
   );
 
+  /**
+   * The composer's stop chip. Exactly the pair of calls the Esc branch
+   * in `handleAppKey` makes — one abort path, whichever way it was
+   * asked for. The chip only renders while `status === "running"`, so
+   * unlike Esc there is no precedence ladder to walk first.
+   */
+  const onStopRun = useCallback(() => {
+    callbacks.onAbort();
+    dispatch({ type: "abort_requested" });
+  }, [callbacks]);
+
   const onEditorChange = useCallback(
     (next: string) => {
       // An editor that is unmounting keeps its `useInput` subscription
@@ -1311,8 +1386,8 @@ export function TuiApp({
     // Nothing left to cancel: Esc opens the menu. It is the LAST branch
     // on purpose — abort, close, back and clear-draft all outrank it, so
     // the key keeps every meaning it already had and gains one only when
-    // it would otherwise have done nothing. `ctrl+p` still opens the
-    // menu from anywhere, including mid-turn.
+    // it would otherwise have done nothing. The breadcrumb and the
+    // rail's menu chip still open it from anywhere, including mid-turn.
     dispatch({ type: "menu_path_set", path: null });
     dispatch({ type: "menu_cursor_set", cursor: 0 });
     dispatch({ type: "menu_opened" });
@@ -1585,8 +1660,13 @@ export function TuiApp({
     dispatch({ type: "context_pairs_selected", pairs: next });
   }, []);
 
-  const promptContextSlot = contextUsage ? (
-    <ContextChip usage={contextUsage} layer={MOUSE_LAYER_PANEL} />
+  // The chip follows the operator's draft task count the instant the
+  // selector moves; the panel keeps the measured view and projects the
+  // draft itself, so the two stay in step. See
+  // `selectComposerContextUsage`.
+  const composerContextUsage = selectComposerContextUsage(state);
+  const promptContextSlot = composerContextUsage ? (
+    <ContextChip usage={composerContextUsage} layer={MOUSE_LAYER_PANEL} />
   ) : null;
   // Always drawn, including in `default`. A control that appears only
   // once you are in an unusual mode is a control nobody discovers, and
@@ -1681,7 +1761,12 @@ export function TuiApp({
         bug rather than as chrome.
       */}
       <Box flexShrink={0}>
-        <StatusBar state={state} brand={!sidebarVisible} />
+        <StatusBar
+          state={state}
+          width={terminalSize.columns - ROOT_PADDING_COLUMNS}
+          brand={!sidebarVisible}
+          railRestore={sidebarRestorable}
+        />
       </Box>
       {/*
         The design separates the top bar and the hint strip from the
@@ -1700,6 +1785,7 @@ export function TuiApp({
             sessionsCursor={state.sidebarCursor}
             currentSessionId={state.session.sessionId}
             tasks={selectSidebarTasks(state.tasksPanel.rows)}
+            runningTaskCount={countRunningTasks(state.tasksPanel.rows)}
             tasksCursor={state.sidebarTasksCursor}
             activeSection={state.sidebarSection}
             focused={sidebarFocused}
@@ -1944,6 +2030,8 @@ export function TuiApp({
             rightSlot={promptRightSlot}
             contextSlot={promptContextSlot}
             modeSlot={promptModeSlot}
+            running={state.status === "running"}
+            onStop={onStopRun}
             focus={editorFocus}
             disabled={!canTypeMessage(state)}
             claimKey={composerClaimKey}

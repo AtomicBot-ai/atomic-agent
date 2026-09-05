@@ -12,6 +12,8 @@ import {
 import { checkLlamaServer } from "../llm/llama-server-health.js";
 import { describeLlamaHealthFailure } from "../llm/describe-llama-health-failure.js";
 import { createAgentRuntime, type AgentRuntime } from "../runtime/bootstrap.js";
+import { getAppVersion } from "../version.js";
+import type { TuiAction } from "./tui-action.js";
 import type { LogRecord, LogSink } from "../tracing/structured-logger.js";
 import type { MetricSample, MetricSink } from "../tracing/metrics-collector.js";
 import { isKnownLocalModelId } from "../local-llm/index.js";
@@ -19,6 +21,7 @@ import { registerSession } from "../local-llm/session-registry.js";
 import { enterAltScreen } from "./alt-screen.js";
 import { applyMaxStepsRequest } from "./apply-max-steps-request.js";
 import { enableSynchronizedOutput } from "./synchronized-output.js";
+import { legacyConhostStartupHint } from "./legacy-conhost.js";
 import { ChatOrchestrator } from "./chat-orchestrator.js";
 import { parseTuiArgs,
   nonInteractiveStdinError,
@@ -39,13 +42,17 @@ import {
   enableMouseTracking,
   type MouseTrackingController,
 } from "./mouse/mouse-tracking.js";
+import { createSelectionPassthrough } from "./mouse/selection-passthrough.js";
 import { isLocalBackendConfigured } from "./local-backend-readiness.js";
+import { makeEscalatingSignalHandler } from "./signal-escalation.js";
+import { restoreTerminalNow } from "./terminal-restore.js";
 import { needsOnboarding } from "./onboarding/needs-onboarding.js";
 import { createOnboardingState } from "./onboarding/onboarding-state.js";
 import {
   currentTerminalLaunchInput,
   openAgentTerminalWindow,
 } from "./open-terminal-window.js";
+import { openUrlInBrowser } from "./open-url.js";
 import { detectKittyKeyboard } from "./detect-kitty-keyboard.js";
 import { setShiftEnterNewline } from "./shift-enter-support.js";
 import { makeTuiEventBus, TuiApp } from "./tui-app.js";
@@ -238,14 +245,23 @@ export async function tuiCommand(args: string[]): Promise<number> {
   });
   orchestratorForChannelStatus = orchestrator;
 
-  const onSignal = (): void => orchestrator.quit();
-  process.once("SIGINT", onSignal);
-  process.once("SIGTERM", onSignal);
+  // First signal quits gracefully; a repeat (a wedged shutdown being
+  // Ctrl-C'd again, a `kill` after a hang) restores the terminal —
+  // mouse reporting off, alt screen left — and exits hard, instead of
+  // Node's default kill that skips `exit` hooks and leaves the shell
+  // printing `[<0;64;21M` on every click. See `signal-escalation.ts`.
+  const onSignal = makeEscalatingSignalHandler({
+    quit: () => orchestrator.quit(),
+    restoreTerminal: restoreTerminalNow,
+    exit: (code) => process.exit(code),
+  });
+  process.on("SIGINT", onSignal);
+  process.on("SIGTERM", onSignal);
   // SIGHUP fires when the terminal window is closed. Without a handler
   // the default action kills the process before `orchestrator.shutdown()`
   // runs, orphaning the managed llama-server with the model still in
   // RAM/VRAM — the exact complaint in #52.
-  process.once("SIGHUP", onSignal);
+  process.on("SIGHUP", onSignal);
 
   // Mark this process as a live TUI session so `stopOnExit` teardown can
   // tell "last session exits, stop the daemon" from "another window is
@@ -259,16 +275,20 @@ export async function tuiCommand(args: string[]): Promise<number> {
   // half of the old one and half of the new.
   const synchronizedOutput = enableSynchronizedOutput({ stdout: process.stdout });
 
-  // Mouse support. Enabling SGR tracking (1000 + 1006) is what makes
+  // Mouse support. Enabling SGR tracking (1002 + 1006) is what makes
   // clicking panels, rows, tabs and the prompt work at all — the app
   // cannot see a click the terminal never reports. The cost is real and
   // was the reason this was previously left off: while reporting is on,
-  // the terminal stops doing its own drag-to-select (Apple Terminal has
-  // no Shift-bypass at all). So it is a toggle, not a fact of life —
-  // `tui.mouse` in the config, `--mouse` / `--no-mouse` per run, and
-  // `/mouse on|off` live. With reporting off, behaviour is exactly what
-  // it was before: alternate-scroll (`\x1b[?1007h` from
-  // `enterAltScreen`) turns the wheel into cursor keys, which
+  // the terminal stops doing its own drag-to-select. The escape hatch is
+  // `selectionPassthrough` below: a plain drag that starts on dead
+  // content — or a shift-/alt-modified press on a terminal without a
+  // native bypass (Apple Terminal) — suspends reporting for a short
+  // window so the terminal's own selection takes over.
+  // Reporting also stays a toggle — `tui.mouse` in the config,
+  // `--mouse` / `--no-mouse` per run, and `/mouse on|off` live. With
+  // reporting off, behaviour is exactly what it was before:
+  // alternate-scroll (`\x1b[?1007h` from `enterAltScreen`) turns the
+  // wheel into cursor keys, which
   // `handleAppKey.shouldTreatArrowAsChatScroll` routes into
   // `chat_scrolled`.
   //
@@ -280,6 +300,19 @@ export async function tuiCommand(args: string[]): Promise<number> {
   let mouseTracking: MouseTrackingController | null = mouseEnabled
     ? enableMouseTracking({ stdout: process.stdout })
     : null;
+  // Text-selection passthrough: a shift- or alt-modified press means
+  // the operator is reaching for the terminal's own drag-to-select, not
+  // a click — see `selection-passthrough.ts` for why that report only
+  // ever arrives on a terminal without a native bypass. The same window
+  // also opens on a plain drag over dead content, via
+  // `onSelectionDragIntent` below. The `tracking` getter
+  // reads the live `mouseTracking` binding because `/mouse on|off`
+  // replaces the controller underneath the window; a captured one would
+  // resume a controller nobody is using any more.
+  const selectionPassthrough = createSelectionPassthrough({
+    tracking: () => mouseTracking,
+    notify: (text) => bus.emit({ type: "system_message", text }),
+  });
   // `mouseTracking` is the single source of truth for "is the mouse on",
   // and it is read here on every report rather than captured, so
   // `setMouseEnabled` reassigning it takes effect immediately. Normally
@@ -287,9 +320,38 @@ export async function tuiCommand(args: string[]): Promise<number> {
   // this keeps `/mouse off` honest for the cases where it still does:
   // a multiplexer that swallowed the disable, or a bracketed paste whose
   // payload happens to contain an SGR report.
-  const mouseStdin = createMouseStdin(process.stdin, (event) => {
-    if (mouseTracking) mouseSource.emit(event);
-  });
+  const mouseStdin = createMouseStdin(
+    process.stdin,
+    (event) => {
+      if (!mouseTracking) return;
+      // The passthrough sees every event before the app does: a consumed
+      // shift-press must never reach the hit test, and while the window
+      // is open a report that was already in flight when reporting
+      // stopped is swallowed too — the operator is selecting, not
+      // clicking.
+      if (selectionPassthrough.observe(event)) return;
+      if (mouseTracking.isSuspended()) return;
+      mouseSource.emit(event);
+    },
+    {
+      mouseActive: () => mouseTracking !== null,
+      // The leak breaker: the terminal answered our tracking request
+      // with reports the decoder could not consume (seen over ssh with
+      // encoding-confused hops), and coordinates were about to be typed
+      // into the composer. Stop asking for reports — for this session
+      // only, so the persisted preference still serves terminals where
+      // the mouse works.
+      onMouseTextLeak: () => {
+        mouseTracking?.disable();
+        mouseTracking = null;
+        bus.emit({
+          type: "system_message",
+          variant: "warn",
+          text: "this terminal is sending garbled mouse reports — mouse support disabled for this session (/mouse on to retry, or launch with --no-mouse)",
+        });
+      },
+    },
+  );
   const setMouseEnabled = (next: boolean | null): void => {
     if (next === null) {
       bus.emit({
@@ -377,10 +439,10 @@ export async function tuiCommand(args: string[]): Promise<number> {
         },
         // The mode is a stance for this session, so it moves the live
         // ladder and the live plan flag and writes neither to
-        // `config.json`. The Privacy tab remains the only surface that
-        // persists an approval level — otherwise a session that passed
-        // through `bypass` would leave the machine trusting everything
-        // on the next boot.
+        // `config.json`. The persisted baseline stays whatever
+        // `agent.approvalLevel` in config.json says — otherwise a
+        // session that passed through `bypass` would leave the machine
+        // trusting everything on the next boot.
         onCodingModeChanged: (_mode, resolved) => {
           runtime.setApprovalLevel(resolved.approvalLevel);
           runtime.setPlanMode(resolved.planMode);
@@ -397,6 +459,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
           orchestrator.quit();
         },
         onNewWindowRequested: () => openNewAgentWindow(parsed.workingDir, bus),
+        onOpenUrlRequested: (url) => openUrlFromChat(url, bus),
         onMemoryDumpRequested: () => orchestrator.dumpProfile(),
         onSkillCatalogRequested: () => orchestrator.dumpSkillCatalog(),
         onPersistLlamaUrl: (nextUrl) => persistLlamaUrl(nextUrl, bus, orchestrator, runtime),
@@ -413,6 +476,16 @@ export async function tuiCommand(args: string[]): Promise<number> {
           bus.emit({ type: "ui_mode_set", mode: "debug" });
           bus.emit({ type: "tab_changed", tab: "tasks" });
           orchestrator.tasks.openDetail(taskId);
+        },
+        onTaskNewRequested: () => {
+          // Sidebar `+ new` on the Tasks header: land on the Tasks debug
+          // tab with the create form already open — the destination the
+          // in-panel `n` key reaches, minus the walk. The form-open
+          // action is the same one `n` dispatches, emitted on the bus
+          // for the reason the sibling above spells out.
+          bus.emit({ type: "ui_mode_set", mode: "debug" });
+          bus.emit({ type: "tab_changed", tab: "tasks" });
+          bus.emit({ type: "tasks_create_form_opened" });
         },
         onTaskOpenSessionRequested: (taskId) =>
           orchestrator.tasks.openSession(taskId),
@@ -479,6 +552,8 @@ export async function tuiCommand(args: string[]): Promise<number> {
           void orchestrator.providers.openChatModelPicker(providerId),
         onProvidersInlineModelsEnsureRequested: (providerId) =>
           void orchestrator.providers.ensureInlineModels(providerId),
+        onProvidersContractProbeRequested: (providerId) =>
+          void orchestrator.providers.runContractProbe(providerId),
         onProvidersSetActiveEmbedding: (id) =>
           void orchestrator.providers.setActiveEmbedding(id),
         onProvidersSelectEmbeddingModel: (providerId, modelId) =>
@@ -512,6 +587,8 @@ export async function tuiCommand(args: string[]): Promise<number> {
           void orchestrator.providers.removeProviderById(id),
         onImportPreview: (form) => orchestrator.import.preview(form),
         onImportExecute: (form) => orchestrator.import.execute(form),
+        onOnboardingImportRequested: (plan, execute) =>
+          void orchestrator.import.runOnboarding(plan, execute),
         onMcpDetailRequested: (serverName) =>
           orchestrator.mcp.openDetail(serverName),
         onMcpAddServerSubmit: (json) => orchestrator.mcp.addServerFromJson(json),
@@ -596,14 +673,31 @@ export async function tuiCommand(args: string[]): Promise<number> {
           orchestrator.privacy.toggleAnalytics(),
         onAnalyticsSetEnabledRequested: (enabled) =>
           orchestrator.privacy.setAnalyticsEnabled(enabled),
-        onApprovalLevelSetRequested: (level) =>
-          orchestrator.privacy.setApprovalLevel(level),
         onPrivacyRefreshRequested: () => orchestrator.privacy.refresh(),
-        onUpdateConfirmed: () => orchestrator.runUpdate(),
+        onUpdateConfirmed: () =>
+          parsed.fakeUpdateVersion
+            ? // The testing ground must never reach install.sh: the
+              // point of `--fake-update` is to look at the surfaces, and
+              // "accept" on a dev build would install the real latest
+              // release over whatever is being worked on. Instead, walk
+              // the same events the real installer emits so the whole
+              // lifecycle — "do not close" strip, feed lines, restart
+              // prompt — is on show. The restart re-execs this same dev
+              // command, which is a no-op by construction.
+              simulateFakeUpdate(bus, parsed.fakeUpdateVersion)
+            : orchestrator.runUpdate(),
         onUpdateRestart: () => {
           restartRequested = true;
         },
         onMouseSupportRequested: setMouseEnabled,
+        // A drag that started on dead content (no target claimed the
+        // press) — the terminal-agnostic selection trigger. Same
+        // window, same timer, same auto-resume as the modifier path;
+        // only the notice differs, because THIS gesture is already
+        // lost to reporting and the operator has to drag again.
+        onSelectionDragIntent: () => selectionPassthrough.beginWindow("drag"),
+        onSelectionPauseRequested: () =>
+          selectionPassthrough.beginWindow("chip"),
       },
       // Unconditional on purpose. `mouseEnabled` is a startup-time
       // value, but `/mouse on` flips reporting *later* and cannot
@@ -663,6 +757,16 @@ export async function tuiCommand(args: string[]): Promise<number> {
     });
   }
 
+  // The frozen Win10 conhost scrolls under full-height frames — the
+  // layout already reserves its bottom row (see `legacy-conhost.ts`);
+  // this is where the operator learns why, and that Windows Terminal
+  // does not need the workaround. Once per session, in the transcript,
+  // because anything printed before the alt screen is never seen.
+  const conhostHint = legacyConhostStartupHint();
+  if (conhostHint) {
+    bus.emit({ type: "system_message", text: conhostHint });
+  }
+
   // If the user is in managed mode and the backend + model are ready
   // on disk, start the daemon immediately so there is no extra
   // "run this command in another terminal" step. No-op in external
@@ -672,7 +776,18 @@ export async function tuiCommand(args: string[]): Promise<number> {
   // Fire-and-forget startup version check. Surfaces an in-app update
   // offer when a newer release is published; silently no-ops when
   // disabled, offline, rate-limited, or running a dev build.
-  void orchestrator.checkForUpdate();
+  // `--fake-update` bypasses the check (a dev build fails
+  // `canSelfUpdate` anyway) and emits the offer directly, so the modal
+  // and the status-bar banner can be exercised on demand.
+  if (parsed.fakeUpdateVersion) {
+    bus.emit({
+      type: "update_available",
+      current: getAppVersion(),
+      latest: parsed.fakeUpdateVersion,
+    });
+  } else {
+    void orchestrator.checkForUpdate();
+  }
 
   try {
     await ink.waitUntilExit();
@@ -683,6 +798,9 @@ export async function tuiCommand(args: string[]): Promise<number> {
     try {
       // Diagnostics go back to stderr for whatever runs after the TUI.
       setConfigNoticeSink(null);
+      // The passthrough first: its pending resume must not fire into a
+      // controller that `disable()` below has already retired.
+      selectionPassthrough.dispose();
       mouseTracking?.disable();
       mouseStdin.dispose();
       altScreen.restore();
@@ -731,6 +849,31 @@ export async function tuiCommand(args: string[]): Promise<number> {
 }
 
 /**
+ * `--fake-update` accept path: emit the exact event sequence
+ * `runUpdate` emits, on a human-watchable timeline, without ever
+ * touching the installer. Ends in `update_finished ok`, so the "press
+ * any key to restart" prompt is exercised too — the restart re-execs
+ * the same `tui --fake-update` command, landing back at the offer.
+ */
+function simulateFakeUpdate(
+  bus: ReturnType<typeof makeTuiEventBus>,
+  version: string,
+): void {
+  bus.emit({ type: "update_started" });
+  const script: readonly [number, TuiAction][] = [
+    [400, { type: "runtime_info", line: `[update] (fake) downloading atomic-agent v${version}…` }],
+    [1500, { type: "runtime_info", line: "[update] (fake) verifying checksum…" }],
+    [2200, { type: "runtime_info", line: "[update] (fake) installing — nothing on this machine is being replaced" }],
+    [3000, { type: "update_finished", ok: true, version }],
+  ];
+  for (const [delay, action] of script) {
+    // Unref'd so a Ctrl+C mid-"install" never has the process lingering
+    // on demo timers.
+    setTimeout(() => bus.emit(action), delay).unref();
+  }
+}
+
+/**
  * Ctrl+N / `/window`: launch a second agent in a new OS terminal window.
  * Fire-and-forget — the result is reported into the chat log either way,
  * because a silently ignored keystroke is the worst possible outcome
@@ -756,6 +899,28 @@ function openNewAgentWindow(
       type: "system_message",
       variant: "warn",
       text: `could not open a new terminal window: ${result.reason}`,
+    });
+  })();
+}
+
+/**
+ * `[open <host>]` chip: hand `url` to the OS default browser. Success
+ * stays silent — the browser fronting itself *is* the feedback, and a
+ * chat-log line per opened link would be noise — but a failure is
+ * reported, because a chip that silently does nothing reads as a dead
+ * button (the same reasoning as `openNewAgentWindow` above).
+ */
+function openUrlFromChat(
+  url: string,
+  bus: ReturnType<typeof makeTuiEventBus>,
+): void {
+  void (async () => {
+    const result = await openUrlInBrowser(url);
+    if (result.ok) return;
+    bus.emit({
+      type: "system_message",
+      variant: "warn",
+      text: `could not open ${url}: ${result.reason}`,
     });
   })();
 }
@@ -825,6 +990,14 @@ function persistLlamaUrl(
       });
       if (!health.reachable) {
         report(describeLlamaHealthFailure(health, nextUrl));
+        // An openai-compat verdict has a real path forward — the same
+        // server saved as a cloud provider — so beyond naming it, open
+        // the steer prompt: `y` there deep-links into the provider
+        // wizard prefilled with this URL (Ollama URLs land on the
+        // Ollama preset) instead of leaving a dead-end refusal.
+        if (health.kind === "openai-compat") {
+          bus.emit({ type: "llm_external_compat_steer_opened", url: nextUrl });
+        }
         return;
       }
       persistUserLocalLlmUrl(nextUrl);

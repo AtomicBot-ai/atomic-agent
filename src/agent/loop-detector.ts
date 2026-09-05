@@ -1,5 +1,12 @@
 import { createHash } from "node:crypto";
 import type { CompressedToolResult } from "../compressor/result-compressor.js";
+import {
+  describeCoverage,
+  mergeRange,
+  newlyCoveredCount,
+  type LineRange,
+  type ReadObservation,
+} from "./read-coverage.js";
 
 /**
  * Synthetic tool name used for batched-step diagnostics. A multi-call
@@ -26,6 +33,67 @@ export const LOOP_VETO_DENIED_REASON = "tool-loop";
 export const LOOP_WARNING_BUCKET_SIZE = 10;
 
 export type LoopCheckLevel = "ok" | "warn" | "critical";
+
+/**
+ * Equivalent-run count at which the test-repeat detector (issue #118)
+ * warns: the 2nd recognized test command against an unchanged workspace
+ * fingerprint is already conclusive (the suite cannot produce new
+ * evidence), unlike the generic byte-repeat where a rerun may be an
+ * intentional retry. Warn-only — never routed into the veto/breaker.
+ */
+export const TEST_REPEAT_WARNING_THRESHOLD = 2;
+
+/**
+ * No-progress read count at which the read-coverage detector (issue #114)
+ * warns. A single redundant re-read is ordinary behaviour — the model
+ * re-opens a file to re-orient itself, or widens a window it half
+ * remembers — so the floor is the SECOND consecutive read of one
+ * unchanged file that returned nothing new. Warn-only, like the
+ * test-repeat detector: nothing is ever vetoed on this signal.
+ */
+export const READ_REPEAT_WARNING_THRESHOLD = 2;
+
+/**
+ * Cap on files tracked for read coverage in one turn. A wide scan (a
+ * grep-driven sweep over hundreds of files) must not grow the tracker
+ * without bound, and the interesting file is always a recently read one,
+ * so the least-recently-read entry is evicted first. Eviction can only
+ * cost a detection, never cause a false one.
+ */
+const MAX_TRACKED_READ_FILES = 200;
+
+/**
+ * Verdict of `ToolLoopTracker.checkReadRepeat`: did this read show the
+ * model any line it had not already seen this turn?
+ */
+export interface ReadRepeatCheck {
+  /** True when the read returned no line the turn had not already seen. */
+  repeat: boolean;
+  /** Consecutive no-progress reads of this file version; ≥1 when `repeat`. */
+  count: number;
+  /** Compact list of lines already read, e.g. `"1-40, 88-120"`. */
+  covered: string;
+  /**
+   * Fingerprint of the version this file was last read at, when it was
+   * read before. Equal to the observation's own hash for a `repeat` —
+   * that equality IS the "unchanged content" half of the verdict, so the
+   * event carries both sides and a trace reader can check it.
+   */
+  previousFingerprint?: string;
+}
+
+/**
+ * Verdict of `ToolLoopTracker.checkTestRepeat`: is this recognized test
+ * command an equivalent re-run against an unchanged workspace?
+ */
+export interface TestRepeatCheck {
+  /** True when the key repeats against an identical fingerprint. */
+  repeat: boolean;
+  /** 1 for a fresh/changed-workspace run; N for the Nth equivalent run. */
+  count: number;
+  /** Compressed summary of the previous equivalent run, when recorded. */
+  previousSummary?: string;
+}
 
 export interface ToolLoopTrackerOptions {
   /** Args-only repeat count that fires a `warn`. Min 2. Default 3. */
@@ -57,7 +125,12 @@ export interface LoopCheckVerdict {
    * distinct-args spread (wandering).
    */
   count: number;
-  detector: "generic_repeat" | "no_progress" | "wandering";
+  detector:
+    | "generic_repeat"
+    | "no_progress"
+    | "wandering"
+    | "test_repeat"
+    | "read_repeat";
   /** Stable key for warn de-duplication and breaker signalling. */
   warningKey: string;
   tool: string;
@@ -125,6 +198,38 @@ export class ToolLoopTracker {
   private readonly warningBuckets = new Map<string, number>();
   private consecutiveVetoSignature: string | null = null;
   private consecutiveVetoCount = 0;
+  /**
+   * Test-repeat detector state (issue #118): semantic test-command key →
+   * the workspace fingerprint captured before its latest run, how many
+   * equivalent runs in a row that fingerprint has seen, and the summary
+   * of the previous run's result (patched in by `recordOutcome`).
+   */
+  private readonly testRuns = new Map<
+    string,
+    { fingerprint: string; count: number; lastSummary?: string }
+  >();
+  /**
+   * Call-signature → semantic test key for runs dispatched but not yet
+   * completed, so `recordOutcome` can attach the result summary to the
+   * right `testRuns` entry without re-classifying the command.
+   */
+  private readonly pendingTestKeys = new Map<string, string>();
+  /**
+   * Read-coverage detector state (issue #114): canonical file path → the
+   * content fingerprint and rendering that path was last read at, the
+   * merged set of lines read at THAT version, and how many reads in a
+   * row have returned nothing outside it. Insertion order doubles as a
+   * least-recently-read order for eviction (see `MAX_TRACKED_READ_FILES`).
+   */
+  private readonly readCoverage = new Map<
+    string,
+    {
+      contentHash: string;
+      numbered: boolean;
+      covered: LineRange[];
+      noProgress: number;
+    }
+  >();
 
   constructor(options: ToolLoopTrackerOptions = {}) {
     this.warningThreshold = Math.max(2, options.warningThreshold ?? 3);
@@ -253,6 +358,7 @@ export class ToolLoopTracker {
    * signature differs from the one currently being vetoed.
    */
   recordOutcome(tool: string, args: unknown, result: CompressedToolResult): void {
+    this.noteTestOutcome(tool, args, result);
     if (isLoopVetoResult(result)) {
       this.patchLatestPending(tool, args, { vetoed: true });
       this.noteVeto(tool, args);
@@ -268,6 +374,149 @@ export class ToolLoopTracker {
         this.consecutiveVetoCount = 0;
       }
     }
+  }
+
+  /**
+   * Classify a recognized test command's prospective run against the
+   * stored `(key → fingerprint)` state (issue #118). Pure map lookup —
+   * the fingerprint walk happens at the call site, and only for
+   * recognized test commands. Call BEFORE `recordTestRun`.
+   */
+  checkTestRepeat(key: string, fingerprint: string): TestRepeatCheck {
+    const prev = this.testRuns.get(key);
+    if (prev === undefined || prev.fingerprint !== fingerprint) {
+      return { repeat: false, count: 1 };
+    }
+    return {
+      repeat: true,
+      count: prev.count + 1,
+      ...(prev.lastSummary !== undefined
+        ? { previousSummary: prev.lastSummary }
+        : {}),
+    };
+  }
+
+  /**
+   * Record a recognized test command being dispatched: store the
+   * fingerprint captured before this run and remember the call
+   * signature so `recordOutcome` can patch in the result summary. A
+   * changed fingerprint resets the equivalent-run count AND drops the
+   * stored summary — a later warning must cite a result produced
+   * against the current workspace state, never a pre-change one.
+   */
+  recordTestRun(
+    key: string,
+    fingerprint: string,
+    tool: string,
+    args: unknown,
+  ): void {
+    const prev = this.testRuns.get(key);
+    const unchanged = prev !== undefined && prev.fingerprint === fingerprint;
+    this.testRuns.set(key, {
+      fingerprint,
+      count: unchanged ? prev.count + 1 : 1,
+      ...(unchanged && prev.lastSummary !== undefined
+        ? { lastSummary: prev.lastSummary }
+        : {}),
+    });
+    this.pendingTestKeys.set(hashToolCall(tool, args), key);
+  }
+
+  /**
+   * Classify a completed read against the coverage recorded for its file
+   * (issue #114). Pure — call BEFORE `recordRead`.
+   *
+   * Unlike the other detectors this one is post-hoc by necessity: which
+   * lines a read returns, and which version of the file it saw, are facts
+   * about the RESULT. There is nothing to gate at dispatch time, which is
+   * also why the signal is warn-only — the read has already happened, so
+   * blocking it would cost the model information without saving anything.
+   *
+   * No progress means: the file's content is byte-identical to what it
+   * was when this turn last read it, it was rendered the same way, and
+   * every line this read returned was already returned earlier in the
+   * turn. A read that returned no lines at all (an offset past the end)
+   * also counts — it cannot have shown anything new — but only once the
+   * file has been seen at this version, so the first such read is never
+   * flagged.
+   *
+   * The rendering half of "version" is what keeps a plain read followed
+   * by a `lineNumbers: true` re-read of the same lines — the normal
+   * preparation for a precise edit — off this detector: that re-read
+   * does return text the model did not have.
+   */
+  checkReadRepeat(observation: ReadObservation): ReadRepeatCheck {
+    const prev = this.readCoverage.get(observation.path);
+    if (prev === undefined) return { repeat: false, count: 0, covered: "" };
+    const previousFingerprint = prev.contentHash;
+    if (!sameReadVersion(prev, observation)) {
+      return { repeat: false, count: 0, covered: "", previousFingerprint };
+    }
+    const fresh =
+      observation.span === null
+        ? 0
+        : newlyCoveredCount(prev.covered, observation.span);
+    if (fresh > 0) {
+      return { repeat: false, count: 0, covered: "", previousFingerprint };
+    }
+    return {
+      repeat: true,
+      count: prev.noProgress + 1,
+      covered: describeCoverage(prev.covered),
+      previousFingerprint,
+    };
+  }
+
+  /**
+   * Fold a completed read into its file's coverage. Call AFTER
+   * `checkReadRepeat`.
+   *
+   * A different content fingerprint — or a different rendering — discards
+   * the previous coverage outright: the lines the turn read before belong
+   * to a version of the file that no longer exists, or were rendered
+   * without the line numbers this read added, so counting them again
+   * would mark a genuinely new read as no progress. That reset is also
+   * what makes an edit-then-re-read cycle free of false warnings.
+   */
+  recordRead(observation: ReadObservation): void {
+    const prev = this.readCoverage.get(observation.path);
+    const sameVersion = prev !== undefined && sameReadVersion(prev, observation);
+    const covered = sameVersion ? prev.covered : [];
+    const fresh =
+      observation.span === null ? 0 : newlyCoveredCount(covered, observation.span);
+    // Re-insert rather than mutate in place so the map's iteration order
+    // stays "least recently read first" for eviction.
+    this.readCoverage.delete(observation.path);
+    this.readCoverage.set(observation.path, {
+      contentHash: observation.contentHash,
+      numbered: observation.numbered,
+      covered:
+        observation.span === null ? covered : mergeRange(covered, observation.span),
+      noProgress: sameVersion && fresh === 0 ? prev.noProgress + 1 : 0,
+    });
+    if (this.readCoverage.size > MAX_TRACKED_READ_FILES) {
+      const oldest = this.readCoverage.keys().next();
+      if (!oldest.done) this.readCoverage.delete(oldest.value);
+    }
+  }
+
+  /**
+   * Attach a completed run's summary to its pending test-key entry so
+   * the next equivalent-run warning can quote the previous result.
+   */
+  private noteTestOutcome(
+    tool: string,
+    args: unknown,
+    result: CompressedToolResult,
+  ): void {
+    const signature = hashToolCall(tool, args);
+    const key = this.pendingTestKeys.get(signature);
+    if (key === undefined) return;
+    this.pendingTestKeys.delete(signature);
+    if (isLoopVetoResult(result)) return;
+    const record = this.testRuns.get(key);
+    if (record === undefined) return;
+    this.testRuns.set(key, { ...record, lastSummary: result.summary });
   }
 
   /** Bump the consecutive-veto counter for this call's signature. */
@@ -297,13 +546,19 @@ export class ToolLoopTracker {
   /**
    * Emit a warn at most once per bucket of `warningBucketSize` repeats so
    * the `### notice` is not re-injected every step. Returns true when the
-   * caller should surface this warning.
+   * caller should surface this warning. `minCount` overrides the generic
+   * warning threshold for detectors with their own floor (the test-repeat
+   * detector warns from the 2nd equivalent run, see
+   * `TEST_REPEAT_WARNING_THRESHOLD`).
    */
-  shouldEmitWarning(warningKey: string, count: number): boolean {
-    if (count < this.warningThreshold) return false;
-    const bucket = Math.floor(
-      (count - this.warningThreshold) / this.warningBucketSize,
-    );
+  shouldEmitWarning(
+    warningKey: string,
+    count: number,
+    minCount = this.warningThreshold,
+  ): boolean {
+    const threshold = Math.max(1, minCount);
+    if (count < threshold) return false;
+    const bucket = Math.floor((count - threshold) / this.warningBucketSize);
     const prev = this.warningBuckets.get(warningKey) ?? -1;
     if (bucket <= prev) return false;
     this.warningBuckets.set(warningKey, bucket);
@@ -603,6 +858,144 @@ export function formatVetoInstruction(verdict: {
   detector?: LoopCheckVerdict["detector"];
 }): string {
   return formatLoopGuidance(verdict.tool, verdict.count, "veto", verdict);
+}
+
+/**
+ * Notice injected when a recognized test command was re-run against an
+ * unchanged workspace (issue #118, warn-only). The run has already
+ * executed when the model reads this — the wording is therefore an
+ * after-the-fact nudge, not a block, and explicitly leaves the
+ * intentional-repeat path open (nothing is vetoed; the generic loop
+ * protection stays fully active either way).
+ */
+export function formatTestRepeatNotice(verdict: {
+  count: number;
+  target?: string;
+  previousSummary?: string;
+}): string {
+  const target = sanitizeLoopTarget(verdict.target);
+  const label = target ? `\`${target}\`` : "the same test command";
+  const lines = [
+    `You ran ${label} ${verdict.count} times with no workspace change in between. No project file changed since the previous run, so this run could not produce new evidence.`,
+  ];
+  if (verdict.previousSummary !== undefined) {
+    const summary = sanitizeTestSummary(verdict.previousSummary);
+    if (summary !== undefined) {
+      lines.push(`Previous result: ${summary}`);
+    }
+  }
+  lines.push(
+    "Change the code or the test selection before re-running. If the repeat was intentional (e.g. probing for flakiness), continue — this is a warning, nothing was blocked.",
+  );
+  return lines.join("\n");
+}
+
+/**
+ * Is this read looking at the same version of the file, rendered the
+ * same way, as the coverage already banked for it? Both halves have to
+ * hold: different bytes are different text, and so are the same bytes
+ * with `LINE_NUMBER|` prefixes the previous read did not have.
+ */
+function sameReadVersion(
+  entry: { contentHash: string; numbered: boolean },
+  observation: ReadObservation,
+): boolean {
+  return (
+    entry.contentHash === observation.contentHash &&
+    entry.numbered === observation.numbered
+  );
+}
+
+/**
+ * Notice injected when the same unchanged file was read again without
+ * reaching a new line (issue #114, warn-only).
+ *
+ * Deliberately concrete about WHAT was already read — the last returned
+ * range and the covered line set — because the failure mode this catches
+ * is the model not realising its shifted `offset`/`limit` landed inside
+ * text it already has. Line numbers and the path only: no file content
+ * appears here, in the event, or in the log line.
+ *
+ * The remediation sentence is chosen from three cases, because the same
+ * advice is not true of all of them. A read that returned nothing did
+ * NOT re-read a covered range — it asked for a range that does not
+ * exist, either past the end of the file or (when `truncated`) behind
+ * the read's byte budget — and telling that model to "read a range you
+ * have not covered" points it straight back at the request that just
+ * failed. Naming the reachable window, and the byte cap when there is
+ * one, is the only advice that can actually unstick it.
+ */
+export function formatReadRepeatNotice(verdict: {
+  count: number;
+  path: string;
+  startLine: number;
+  endLine: number;
+  totalLines: number;
+  covered: string;
+  truncated?: boolean;
+}): string {
+  const label = sanitizeReadPath(verdict.path);
+  const empty = verdict.startLine === 0;
+  const reach =
+    verdict.totalLines > 0
+      ? `lines 1-${verdict.totalLines}`
+      : "no lines at all";
+  const lines: string[] = [];
+  if (empty) {
+    lines.push(
+      `You read ${label} ${verdict.count} times in a row without reaching a line you had not already read this turn. The last read returned no lines at all: the range you asked for is outside the part of the file this read can reach, which is ${reach}.`,
+    );
+  } else {
+    lines.push(
+      `You read ${label} ${verdict.count} times in a row without reaching a line you had not already read this turn. The last read returned lines ${verdict.startLine}-${verdict.endLine}, and the file's content has not changed since the previous read.`,
+    );
+  }
+  if (verdict.covered.length > 0) {
+    lines.push(
+      `Already read this turn: lines ${verdict.covered}${verdict.totalLines > 0 ? ` (of ${verdict.totalLines} readable lines)` : ""}.`,
+    );
+  }
+  if (empty && verdict.truncated === true) {
+    lines.push(
+      `The file is larger than this read's \`maxBytes\` budget, so everything past line ${verdict.totalLines} is invisible to it no matter which \`offset\` you pass. Raise \`maxBytes\` to reach further into the file, or work with the part you can already see.`,
+    );
+  } else if (empty) {
+    lines.push(
+      `Asking for an \`offset\` past the end returns nothing. Stay inside ${reach}, open a different file, or act on what you already have.`,
+    );
+  } else {
+    lines.push(
+      "Re-reading a covered range returns the same text. Read a range you have not covered, open a different file, or act on what you already have.",
+    );
+  }
+  lines.push(
+    "If the repeat was intentional, continue — this is a warning, nothing was blocked.",
+  );
+  return lines.join("\n");
+}
+
+/**
+ * Path label for the read-repeat notice. `sanitizeLoopTarget` keeps the
+ * HEAD of an over-long label, which is exactly wrong for a path — the
+ * identifying part of `/very/long/prefix/src/agent/loop-detector.ts` is
+ * its tail — so a long path is elided from the left instead.
+ */
+function sanitizeReadPath(raw: string): string {
+  const cleaned = raw.replace(/[`\r\n]+/g, " ").trim();
+  if (cleaned.length === 0) return "that file";
+  const label = cleaned.length > 80 ? `…${cleaned.slice(-77)}` : cleaned;
+  return `\`${label}\``;
+}
+
+/**
+ * Compact a previous-result summary for inline quoting in a notice:
+ * whitespace collapsed to one line, length-capped. Returns `undefined`
+ * for an empty summary so the caller omits the line entirely.
+ */
+function sanitizeTestSummary(raw: string): string | undefined {
+  const cleaned = raw.replace(/\s+/g, " ").trim();
+  if (cleaned.length === 0) return undefined;
+  return cleaned.length > 300 ? `${cleaned.slice(0, 297)}...` : cleaned;
 }
 
 /**

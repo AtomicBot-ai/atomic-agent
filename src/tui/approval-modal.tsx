@@ -218,7 +218,7 @@ function footerHint(grantable: boolean): string {
   if (!grantable) {
     return `trust-config writes are never granted for the session; approve covers this call only · ${typing}`;
   }
-  return `approve covers this call once; the session grants last until the app exits (never persisted); raise the standing level on the Privacy tab (/privacy) · ${typing}`;
+  return `approve covers this call once; the session grants last until the app exits (never persisted); loosen the standing stance with the coding-mode control in the composer · ${typing}`;
 }
 
 function clip(value: string, limit: number): string {

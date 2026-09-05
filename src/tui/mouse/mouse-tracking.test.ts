@@ -111,4 +111,104 @@ describe("enableMouseTracking", () => {
     restoreTerminalNow();
     expect(stdout.writes).toHaveLength(afterDisable);
   });
+
+  it("suspend hands selection back without retiring the controller", () => {
+    const stdout = makeStdout(true);
+    const controller = enableMouseTracking({
+      stdout: stdout as unknown as NodeJS.WriteStream,
+    });
+    expect(controller.isSuspended()).toBe(false);
+    controller.suspend();
+    expect(controller.isSuspended()).toBe(true);
+    expect(stdout.writes).toEqual([
+      ENABLE_TRACKING,
+      ENABLE_SGR,
+      DISABLE_SGR,
+      DISABLE_TRACKING,
+    ]);
+  });
+
+  it("resume turns reporting back on in enable order", () => {
+    const stdout = makeStdout(true);
+    const controller = enableMouseTracking({
+      stdout: stdout as unknown as NodeJS.WriteStream,
+    });
+    controller.suspend();
+    controller.resume();
+    expect(controller.isSuspended()).toBe(false);
+    expect(stdout.writes.slice(4)).toEqual([ENABLE_TRACKING, ENABLE_SGR]);
+  });
+
+  it("suspend and resume are idempotent", () => {
+    const stdout = makeStdout(true);
+    const controller = enableMouseTracking({
+      stdout: stdout as unknown as NodeJS.WriteStream,
+    });
+    controller.resume();
+    expect(stdout.writes).toHaveLength(2);
+    controller.suspend();
+    controller.suspend();
+    expect(stdout.writes).toHaveLength(4);
+    controller.resume();
+    controller.resume();
+    expect(stdout.writes).toHaveLength(6);
+  });
+
+  it("disable while suspended writes nothing more — the terminal is already clean", () => {
+    const stdout = makeStdout(true);
+    const controller = enableMouseTracking({
+      stdout: stdout as unknown as NodeJS.WriteStream,
+    });
+    controller.suspend();
+    controller.disable();
+    // The suspend already sent the disable pair; the sequence the
+    // terminal saw last is a clean disable either way.
+    expect(stdout.writes).toEqual([
+      ENABLE_TRACKING,
+      ENABLE_SGR,
+      DISABLE_SGR,
+      DISABLE_TRACKING,
+    ]);
+    expect(controller.isSuspended()).toBe(false);
+  });
+
+  it("suspend and resume are no-ops after disable", () => {
+    const stdout = makeStdout(true);
+    const controller = enableMouseTracking({
+      stdout: stdout as unknown as NodeJS.WriteStream,
+    });
+    controller.disable();
+    const afterDisable = stdout.writes.length;
+    controller.suspend();
+    controller.resume();
+    expect(controller.isSuspended()).toBe(false);
+    expect(stdout.writes).toHaveLength(afterDisable);
+  });
+
+  it("crash restore during a suspension adds no extra writes", () => {
+    resetTerminalRestoreForTests();
+    const stdout = makeStdout(true);
+    const controller = enableMouseTracking({
+      stdout: stdout as unknown as NodeJS.WriteStream,
+    });
+    controller.suspend();
+    restoreTerminalNow();
+    expect(stdout.writes).toEqual([
+      ENABLE_TRACKING,
+      ENABLE_SGR,
+      DISABLE_SGR,
+      DISABLE_TRACKING,
+    ]);
+  });
+
+  it("non-TTY controller never reports suspended", () => {
+    const stdout = makeStdout(false);
+    const controller = enableMouseTracking({
+      stdout: stdout as unknown as NodeJS.WriteStream,
+    });
+    controller.suspend();
+    expect(controller.isSuspended()).toBe(false);
+    controller.resume();
+    expect(stdout.writes).toEqual([]);
+  });
 });

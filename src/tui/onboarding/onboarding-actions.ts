@@ -1,3 +1,8 @@
+import type { ImportReport } from "../../import/index.js";
+import type {
+  OnboardingImportAgentRow,
+  OnboardingImportOptionRow,
+} from "./import-step.js";
 import type {
   OnboardingHuggingFaceRepo,
   OnboardingOutcome,
@@ -31,6 +36,25 @@ export type OnboardingAction =
   | { type: "onboarding_hf_repo_resolved"; repo: OnboardingHuggingFaceRepo }
   /** `c` on the download screen: set up cloud while the pull runs. */
   | { type: "onboarding_cloud_meanwhile_opened" }
+  /**
+   * The closing flow found other agents' state on disk and raises the
+   * import step instead of settling. Carries the detected rows so the
+   * pick screen renders in the same commit that opened it.
+   */
+  | { type: "onboarding_import_opened"; agents: OnboardingImportAgentRow[] }
+  /** Space on an agent row of the pick screen. */
+  | { type: "onboarding_import_agent_toggled"; index: number }
+  /**
+   * A preview or execute run left for the importers; keys freeze. The
+   * pick screen's import row sends the default option rows it built for
+   * the ticked agents (everything but secrets); the preview's confirm
+   * re-runs whatever is already stored and sends none.
+   */
+  | { type: "onboarding_import_run_started"; options?: OnboardingImportOptionRow[] }
+  /** The importers answered. Preview lands on `import_preview`, an executed run on `import_done`. */
+  | { type: "onboarding_import_report"; report: ImportReport; executed: boolean }
+  /** A run failed outright (option resolution, source access, …). */
+  | { type: "onboarding_import_failed"; error: string }
   /** Offer the other backend once the first one works. */
   | { type: "onboarding_second_backend_offered"; offer: "local" | "cloud" }
   /** The flow reached its end; the host persists and closes it. */

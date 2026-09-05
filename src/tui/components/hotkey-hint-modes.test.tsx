@@ -44,10 +44,10 @@ afterEach(() => {
 });
 
 describe("newline chip vs terminal protocol", () => {
-  it("promises alt+enter when the terminal has no kitty protocol", () => {
+  it("promises alt/option+enter when the terminal has no kitty protocol", () => {
     setShiftEnterNewline(false);
     const out = renderHint(chatState());
-    expect(out).toContain("[alt+enter] newline");
+    expect(out).toContain("[alt/option+enter] newline");
     expect(out).not.toContain("shift+enter");
   });
 
@@ -55,7 +55,7 @@ describe("newline chip vs terminal protocol", () => {
     setShiftEnterNewline(true);
     const out = renderHint(chatState());
     expect(out).toContain("[shift+enter] newline");
-    expect(out).not.toContain("alt+enter");
+    expect(out).not.toContain("alt/option+enter");
   });
 });
 

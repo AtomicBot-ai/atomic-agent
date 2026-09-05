@@ -183,15 +183,26 @@ export async function listVulkanDevices(binPath: string): Promise<GpuDevice[]> {
  *   - `"auto"` / unset   → enumerate + `pickBestDevice`; `undefined`
  *                          when no usable GPU (llama.cpp defaults / CPU).
  *
+ * `opts.multiGpu` (a configured `localModels.managed.tensorSplit`)
+ * changes only the `"auto"` / unset branch: instead of pinning the one
+ * best device — which would defeat `--tensor-split` — it resolves to
+ * `undefined` without enumerating, so llama.cpp keeps every GPU visible
+ * and splits across them. `"cpu"` still wins outright, and an explicit
+ * id (including a comma-separated list like `"Vulkan0,Vulkan1"`) still
+ * passes through so the operator can restrict which devices join the
+ * split.
+ *
  * Best-effort and never throws — enumeration failures fall through to
  * `undefined`.
  */
 export async function resolveManagedDevice(
   binPath: string,
   configured: string | undefined,
+  opts?: { multiGpu?: boolean },
 ): Promise<string | undefined> {
   if (configured === "cpu") return "cpu";
   if (configured && configured !== "auto") return configured;
+  if (opts?.multiGpu) return undefined;
   const devices = await listVulkanDevices(binPath);
   return pickBestDevice(devices) ?? undefined;
 }

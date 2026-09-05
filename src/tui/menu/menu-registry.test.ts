@@ -145,10 +145,12 @@ const V0_2_2_SLASH_COMMANDS = [
   },
   {
     name: "llm",
-    // Updated when the Fallback pane got its deep link: the palette must
-    // advertise all four panes, not the three that predate it.
+    // Updated when the Fallback pane got its deep link, and again for
+    // `/llm check`: every subcommand the handler answers has to be
+    // reachable from here, or it exists only for whoever types an
+    // invalid one and reads the usage line.
     description:
-      "open LLM Local/Cloud/External/Fallback panel · `/llm provider <id>` switch text provider · `/llm fallback` edit the fallover chain",
+      "open LLM Local/Cloud/External/Fallback panel · `/llm provider <id>` switch text provider · `/llm check` test the active route's streaming tool contract · `/llm fallback` edit the fallover chain",
   },
   {
     name: "mcp",
@@ -184,7 +186,7 @@ const V0_2_2_SLASH_COMMANDS = [
   {
     name: "privacy",
     description:
-      "open the Privacy tab (analytics opt-out + approval level) · subcommands: `/privacy analytics on|off` | `/privacy level 1..5` | `/privacy approve on|off`",
+      "open the Privacy tab (analytics opt-out + session grants) · subcommands: `/privacy analytics on|off`",
   },
   {
     name: "analytics",
@@ -216,6 +218,13 @@ const V0_2_2_SLASH_COMMANDS = [
   {
     name: "context",
     description: "show where this session's context window went",
+  },
+  // The rail's fold toggle: the mouse has the « control, this is the
+  // keyboard's route to the same flip.
+  {
+    name: "sidebar",
+    description:
+      "hide or show the session rail (the rail's « does the same)",
   },
   {
     name: "max_steps",

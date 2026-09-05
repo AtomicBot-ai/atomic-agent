@@ -62,12 +62,25 @@ describe("createSelectionPassthrough", () => {
     expect(messages[0]).toContain("drag to select");
   });
 
+  it("opens the same window on an alt-modified press", () => {
+    // iTerm2 reserves Option for its native bypass; a terminal that
+    // reports the alt-press instead is one that needs the window.
+    const tracking = makeTracking();
+    const messages: string[] = [];
+    const passthrough = createSelectionPassthrough({
+      tracking: () => tracking,
+      notify: (m) => messages.push(m),
+    });
+    expect(passthrough.observe(press({ alt: true }))).toBe(true);
+    expect(tracking.isSuspended()).toBe(true);
+    expect(messages[0]).toContain("drag to select");
+  });
+
   it("leaves ordinary clicks alone so existing targets keep working", () => {
     const tracking = makeTracking();
     const passthrough = createSelectionPassthrough({ tracking: () => tracking });
     expect(passthrough.observe(press())).toBe(false);
     expect(passthrough.observe(press({ ctrl: true }))).toBe(false);
-    expect(passthrough.observe(press({ alt: true }))).toBe(false);
     expect(
       passthrough.observe({ ...press({ shift: true }), kind: "release" }),
     ).toBe(false);
@@ -147,5 +160,62 @@ describe("createSelectionPassthrough", () => {
     passthrough.dispose();
     vi.advanceTimersByTime(DEFAULT_SELECTION_WINDOW_MS);
     expect(tracking.resumes).toBe(0);
+  });
+
+  it("beginWindow('drag') opens the window and tells the operator to drag again", () => {
+    const tracking = makeTracking();
+    const messages: string[] = [];
+    const passthrough = createSelectionPassthrough({
+      tracking: () => tracking,
+      notify: (m) => messages.push(m),
+    });
+    passthrough.beginWindow("drag");
+    expect(tracking.isSuspended()).toBe(true);
+    // The triggering drag is already lost to reporting — the notice has
+    // to say what to do NOW, not describe the gesture that happened.
+    expect(messages[0]).toContain("drag again to select");
+    // Same timer, same auto-resume as the modifier path.
+    vi.advanceTimersByTime(DEFAULT_SELECTION_WINDOW_MS);
+    expect(tracking.isSuspended()).toBe(false);
+    expect(messages[1]).toContain("mouse back on");
+  });
+
+  it("beginWindow('chip') opens the window with the next-drag phrasing", () => {
+    const tracking = makeTracking();
+    const messages: string[] = [];
+    const passthrough = createSelectionPassthrough({
+      tracking: () => tracking,
+      notify: (m) => messages.push(m),
+    });
+    passthrough.beginWindow("chip");
+    expect(tracking.isSuspended()).toBe(true);
+    // A chip click loses no drag, so the notice describes the gesture
+    // to come — the modifier phrasing, not "again".
+    expect(messages[0]).toContain("drag to select");
+    expect(messages[0]).not.toContain("drag again");
+  });
+
+  it("beginWindow neither restarts nor extends a window already open", () => {
+    const tracking = makeTracking();
+    const passthrough = createSelectionPassthrough({
+      tracking: () => tracking,
+      windowMs: 1_000,
+    });
+    passthrough.observe(press({ shift: true }));
+    vi.advanceTimersByTime(900);
+    passthrough.beginWindow("drag");
+    expect(tracking.suspends).toBe(1);
+    vi.advanceTimersByTime(100);
+    expect(tracking.isSuspended()).toBe(false);
+  });
+
+  it("beginWindow does nothing while mouse support is off entirely", () => {
+    const messages: string[] = [];
+    const passthrough = createSelectionPassthrough({
+      tracking: () => null,
+      notify: (m) => messages.push(m),
+    });
+    passthrough.beginWindow("drag");
+    expect(messages).toEqual([]);
   });
 });

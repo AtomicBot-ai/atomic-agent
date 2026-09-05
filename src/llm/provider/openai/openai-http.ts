@@ -30,7 +30,9 @@ export type OpenAiHttpDeps = {
  *    surface as aborts, but a timeout is "the provider is slower than
  *    the budget" — replaying it just burns another full timeout.
  *  - `retryAfterMs` is populated from a `retry-after` header when the
- *    provider sent one (429/503), so the retry loop can honor it.
+ *    provider sent one (429/503), falling back to structured
+ *    `RetryInfo` metadata in the error body, so the retry loop can
+ *    honor the provider's cooldown either way.
  */
 export class OpenAiHttpError extends Error {
   constructor(
@@ -108,8 +110,40 @@ const OPENAI_ERROR_DETAIL_MAX_LEN = 300;
  * client's defaults (`localModels.completionRetries` = 3, 150ms base).
  * Deliberately not config-driven yet: the knob can follow once the
  * fallback work settles where such settings live for cloud providers.
+ *
+ * Exported because it is the budget for *one* streaming completion, not
+ * just for one HTTP call: `OpenAiProvider.completeStream` reopens a
+ * stream that died before its first chunk, and that reopen comes out of
+ * this same budget — see `OpenAiAttemptBudget`, which is what actually
+ * makes the sharing true rather than merely intended.
  */
-const OPENAI_MAX_ATTEMPTS = 3;
+export const OPENAI_MAX_ATTEMPTS = 3;
+
+/**
+ * The remaining attempts of ONE logical completion, carried across the
+ * calls that make it up.
+ *
+ * Without this, "shared budget" is a sentence in a comment and nothing
+ * else: every `openAiStartStream` call opens a fresh `runOpenAiWithRetry`
+ * loop with a fresh count, so a `completeStream` that reopens a dead
+ * stream three times, each reopen paying for two 500s first, issues
+ * 3 x 3 = 9 requests for one turn. That is nine billable prompt
+ * submissions and, on a reasoning model that thinks for a minute before
+ * dropping, minutes of frozen UI.
+ *
+ * The budget is a mutable counter rather than a number passed down and
+ * returned because the spending happens inside the retry loop and has to
+ * stay visible to the caller even when that loop throws.
+ */
+export interface OpenAiAttemptBudget {
+  /** Attempts still available. Decremented once per HTTP request made. */
+  remaining: number;
+}
+
+/** A budget for one logical completion: the full `OPENAI_MAX_ATTEMPTS`. */
+export function createOpenAiAttemptBudget(): OpenAiAttemptBudget {
+  return { remaining: OPENAI_MAX_ATTEMPTS };
+}
 const OPENAI_BACKOFF_BASE_MS = 150;
 /**
  * Ceiling on how long a provider's `retry-after` can stall one attempt.
@@ -170,13 +204,21 @@ export async function openAiPostJson(
  * connection errors, 429s, 5xxs — happen entirely inside the retry
  * loop, before the caller has consumed a single chunk, so retrying here
  * can never duplicate output. Once this resolves, the stream is live
- * and failures downstream are not retryable at this layer.
+ * and failures downstream are not retryable at this layer — the caller
+ * owns that window. `OpenAiProvider.completeStream` extends the same
+ * "nothing emitted yet, so a replay is free" argument a little further
+ * by reopening when the body dies before its first chunk.
+ *
+ * Pass `budget` to make those reopens share one completion's attempts
+ * with the opens: without it each call starts a fresh count and the two
+ * layers multiply instead of adding.
  */
 export async function openAiStartStream(
   deps: OpenAiHttpDeps,
   path: string,
   body: Record<string, unknown>,
   request: { signal?: AbortSignal },
+  budget?: OpenAiAttemptBudget,
 ): Promise<Response & { body: NonNullable<Response["body"]> }> {
   return runOpenAiWithRetry(deps, path, request.signal, async () => {
     const res = await openAiFetch(deps, path, body, request, true, "POST");
@@ -184,7 +226,26 @@ export async function openAiStartStream(
       throw await httpErrorFromResponse(deps, path, res);
     }
     return res as Response & { body: NonNullable<Response["body"]> };
-  });
+  }, budget);
+}
+
+/**
+ * Wait exactly as long as `runOpenAiWithRetry` would wait before its
+ * next try — same exponential base, same ±20% jitter, same abort-aware
+ * sleep. Exported so the one retry that lives *outside* this file
+ * (`OpenAiProvider.completeStream` reopening a stream that died before
+ * its first chunk) reuses this client's pacing instead of inventing a
+ * second set of magic numbers. `attemptNumber` is the 1-based count of
+ * requests this completion has already made, so the delay keeps growing
+ * across the open/reopen seam instead of restarting at the base.
+ */
+export async function openAiRetryBackoff(
+  attemptNumber: number,
+  signal?: AbortSignal,
+): Promise<void> {
+  // `null` as the error: a body-read death carries no `retry-after`, so
+  // only the plain backoff applies.
+  await sleep(resolveWaitMs(null, attemptNumber), signal);
 }
 
 export async function openAiFetch(
@@ -280,12 +341,21 @@ async function httpErrorFromResponse(
   res: Response,
 ): Promise<OpenAiHttpError> {
   const text = await res.text().catch(() => "");
+  // The standard `retry-after` header wins; some providers advertise
+  // their cooldown only inside the error JSON (Gemini's OpenAI-compat
+  // endpoint sends `google.rpc.RetryInfo` and no header), so fall back
+  // to that for the throttling statuses the retry loop honors.
+  const retryAfterMs =
+    parseRetryAfterMs(res.headers.get("retry-after")) ??
+    (res.status === 429 || res.status === 503
+      ? parseRetryInfoDelayMs(text)
+      : null);
   return new OpenAiHttpError(
     `openai provider ${res.status}: ${text.slice(0, OPENAI_ERROR_DETAIL_MAX_LEN)}`,
     res.status,
     `${deps.baseUrl}${path}`,
     false,
-    parseRetryAfterMs(res.headers.get("retry-after")),
+    retryAfterMs,
     deps.label,
   );
 }
@@ -304,14 +374,35 @@ function isRetryableOpenAiError(err: unknown): boolean {
   return err.status >= 500 || err.status === 429 || err.status === 408;
 }
 
+/**
+ * Run `attempt` under the bounded retry policy, spending `budget`.
+ *
+ * A caller that does not pass a budget gets a private full one, which is
+ * the historical behaviour and stays right for every one-shot call. The
+ * streaming path passes the completion's budget so its opens and its
+ * reopens draw from one pot.
+ */
 async function runOpenAiWithRetry<T>(
   deps: OpenAiHttpDeps,
   path: string,
   signal: AbortSignal | undefined,
   attempt: () => Promise<T>,
+  budget: OpenAiAttemptBudget = createOpenAiAttemptBudget(),
 ): Promise<T> {
+  if (budget.remaining <= 0) {
+    // Only reachable if a caller keeps using an exhausted budget. Fail
+    // typed rather than falling through to a bare `Error("undefined")`.
+    throw new OpenAiHttpError(
+      `openai provider retry budget exhausted: ${deps.baseUrl}${path}`,
+      null,
+      `${deps.baseUrl}${path}`,
+      false,
+      null,
+      deps.label,
+    );
+  }
   let lastError: unknown;
-  for (let i = 1; i <= OPENAI_MAX_ATTEMPTS; i += 1) {
+  while (budget.remaining > 0) {
     if (signal?.aborted) {
       throw new OpenAiHttpError(
         "completion aborted by caller",
@@ -319,6 +410,11 @@ async function runOpenAiWithRetry<T>(
         `${deps.baseUrl}${path}`,
       );
     }
+    budget.remaining -= 1;
+    // 1-based index of the request about to be made *within this
+    // completion*, so the backoff keeps growing across a reopen instead
+    // of resetting to the base delay every time the stream is retried.
+    const attemptNumber = OPENAI_MAX_ATTEMPTS - budget.remaining;
     try {
       return await attempt();
     } catch (err) {
@@ -326,8 +422,8 @@ async function runOpenAiWithRetry<T>(
       // A caller-triggered abort is never retryable, whatever shape it
       // surfaced as.
       if (signal?.aborted) throw err;
-      if (!isRetryableOpenAiError(err) || i >= OPENAI_MAX_ATTEMPTS) throw err;
-      await sleep(resolveWaitMs(err, i), signal);
+      if (!isRetryableOpenAiError(err) || budget.remaining <= 0) throw err;
+      await sleep(resolveWaitMs(err, attemptNumber), signal);
     }
   }
   // Unreachable: the loop either returns or throws.
@@ -349,6 +445,41 @@ function resolveWaitMs(err: unknown, attemptNumber: number): number {
       ? Math.min(err.retryAfterMs, OPENAI_RETRY_AFTER_CAP_MS)
       : 0;
   return Math.max(backoff, retryAfter);
+}
+
+/**
+ * Cooldown from structured error JSON, for providers that never send a
+ * `retry-after` header. Gemini answers 429/503 with an
+ * `error.details[]` entry of `@type google.rpc.RetryInfo` whose
+ * `retryDelay` is a protobuf Duration string ("39s", "1.5s"). The
+ * duration grammar admits only non-negative seconds, so anything else —
+ * malformed, negative, non-string — is ignored and the caller keeps the
+ * plain exponential backoff. The result flows through the same
+ * `retryAfterMs` field as the header, so `resolveWaitMs` caps it at
+ * `OPENAI_RETRY_AFTER_CAP_MS` exactly like a header-declared wait.
+ */
+function parseRetryInfoDelayMs(body: string): number | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body) as unknown;
+  } catch {
+    return null;
+  }
+  if (!isRecord(parsed) || !isRecord(parsed.error)) return null;
+  const details = parsed.error.details;
+  if (!Array.isArray(details)) return null;
+  for (const detail of details) {
+    if (!isRecord(detail) || typeof detail.retryDelay !== "string") continue;
+    const match = /^(\d+(?:\.\d+)?)s$/.exec(detail.retryDelay);
+    if (!match) continue;
+    const ms = Math.round(Number(match[1]) * 1000);
+    if (Number.isFinite(ms)) return ms;
+  }
+  return null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function parseRetryAfterMs(header: string | null): number | null {

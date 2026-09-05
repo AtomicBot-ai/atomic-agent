@@ -18,6 +18,9 @@ import {
   type LoopCheckVerdict,
   type ToolLoopTracker,
 } from "./loop-detector.js";
+import { classifyTestCommand } from "./test-command-key.js";
+import { classifyReadResult } from "./read-coverage.js";
+import { fingerprintWorkspace } from "./workspace-fingerprint.js";
 
 /**
  * Loop-detection signal surfaced upward from a batch execution. The
@@ -34,6 +37,45 @@ export interface BatchLoopSignal {
   count: number;
   detector: LoopCheckVerdict["detector"];
   warningKey: string;
+  /**
+   * `test_repeat` only: human-readable command label (`pytest -k auth`)
+   * for the notice text.
+   */
+  target?: string;
+  /**
+   * `test_repeat` only: compressed summary of the previous equivalent
+   * run, quoted in the notice so the model sees what re-running
+   * reproduced.
+   */
+  previousSummary?: string;
+  /**
+   * `read_repeat` only: what the redundant read landed on. Feeds both
+   * the notice (path, ranges) and the `loop_detected` event (path,
+   * range, fingerprint transition). Line numbers and a path — never any
+   * file content.
+   */
+  read?: {
+    /** Canonical (symlink-resolved) path of the file read. */
+    path: string;
+    /** Range this read returned; `0`/`0` when it returned nothing. */
+    startLine: number;
+    endLine: number;
+    /** Lines visible in the read window. */
+    totalLines: number;
+    /**
+     * Whether the file has content past `totalLines` that the read's
+     * byte budget hid. The notice needs it to tell "you asked for a line
+     * past the end of the file" apart from "you asked for a line the
+     * byte cap hid", which have opposite fixes.
+     */
+    truncated: boolean;
+    /** Compact list of lines already read this turn, e.g. `"1-40, 88-120"`. */
+    covered: string;
+    /** Content fingerprint this read saw. */
+    fingerprint: string;
+    /** Fingerprint of the previous read; equal ⇒ the content is unchanged. */
+    previousFingerprint: string;
+  };
 }
 
 /**
@@ -343,6 +385,7 @@ export async function executeBatch(
     // (args + result) entry. Terminal verbs are not tracked.
     if (ctx.tracker && input.resourceClass !== "terminal") {
       ctx.tracker.recordOutcome(input.call.tool, input.call.args, compressed);
+      observeReadCoverage(input, compressed, ctx.tracker, loopSignals);
     }
     ctx.onCallFinished?.({
       batchIndex: input.batchIndex,
@@ -567,7 +610,89 @@ function runSyncLoopGate(
       warningKey: verdict.warningKey,
     });
   }
+
+  // Test-repeat gate (issue #118, companion of #114): a recognized test
+  // command re-run against an unchanged workspace fingerprint is a
+  // stronger no-progress signal than the generic byte-identical repeat —
+  // it survives timeout-only argument variation and timing noise in the
+  // output. Warn-only by design (the issue's acceptance criteria): the
+  // call always proceeds, which is also the intentional-repeat path, and
+  // the generic detectors above stay fully active. The fingerprint walk
+  // runs only here — recognized test commands only — never on ordinary
+  // shell calls. A `null` fingerprint (missing / oversized cwd) disables
+  // detection for this call rather than risking a false warning.
+  const testCommand = classifyTestCommand(tool, args, ctx.workingDir);
+  if (testCommand !== null) {
+    const fingerprint = fingerprintWorkspace(testCommand.cwd);
+    if (fingerprint !== null) {
+      const repeat = ctx.tracker.checkTestRepeat(testCommand.key, fingerprint);
+      ctx.tracker.recordTestRun(testCommand.key, fingerprint, tool, args);
+      if (repeat.repeat) {
+        loopSignals.push({
+          kind: "warn",
+          tool,
+          count: repeat.count,
+          detector: "test_repeat",
+          warningKey: `test_repeat:${testCommand.key}`,
+          target: testCommand.label,
+          ...(repeat.previousSummary !== undefined
+            ? { previousSummary: repeat.previousSummary }
+            : {}),
+        });
+      }
+    }
+  }
   return { proceed: true };
+}
+
+/**
+ * Read-coverage gate (issue #114, companion of #118). Runs AFTER the call
+ * completed, because the facts it needs — which file the read resolved
+ * to, which version of it was read, and which lines came back — are
+ * properties of the result, not of the arguments. Requested
+ * `offset`/`limit` are clamped and can be negative, so they cannot
+ * answer any of the three.
+ *
+ * Warn-only, like the test-repeat detector: the read has already
+ * happened, so there is nothing to block, and a scan over many distinct
+ * files never produces a signal at all (each file's coverage grows, and
+ * only a read that returns nothing new counts). Non-read tools and
+ * failed reads return `null` from `classifyReadResult` and leave no
+ * trace here.
+ */
+function observeReadCoverage(
+  input: BatchCallInput,
+  result: CompressedToolResult,
+  tracker: ToolLoopTracker,
+  loopSignals: BatchLoopSignal[],
+): void {
+  const observation = classifyReadResult(input.call.tool, result);
+  if (observation === null) return;
+  const repeat = tracker.checkReadRepeat(observation);
+  tracker.recordRead(observation);
+  if (!repeat.repeat) return;
+  loopSignals.push({
+    kind: "warn",
+    tool: input.call.tool,
+    count: repeat.count,
+    detector: "read_repeat",
+    // Keyed by file VERSION: editing the file starts a fresh warn bucket,
+    // so a nudge about the old content is never suppressed for the new.
+    warningKey: `read_repeat:${observation.path}:${observation.contentHash}`,
+    read: {
+      path: observation.path,
+      startLine: observation.span?.start ?? 0,
+      endLine: observation.span?.end ?? 0,
+      totalLines: observation.totalLines,
+      truncated: observation.truncated,
+      covered: repeat.covered,
+      fingerprint: observation.contentHash,
+      // `checkReadRepeat` only reports a repeat when it has seen this
+      // file before, so the previous fingerprint is always present here;
+      // the fallback keeps the type honest without a non-null assertion.
+      previousFingerprint: repeat.previousFingerprint ?? observation.contentHash,
+    },
+  });
 }
 
 /**

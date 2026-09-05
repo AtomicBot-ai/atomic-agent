@@ -113,8 +113,12 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     worldSnapshot: worldSnapshotMaxTokens,
   });
 
+  // Chat-transport prompts drop every llama-server template artifact:
+  // no turn framing, no reasoning system token, no trailing prefill
+  // (see `BuildPromptInput.suppressReasoningPrefill`).
+  const suppressPrefill = input.suppressReasoningPrefill === true;
   const turnFraming =
-    input.profile !== undefined
+    input.profile !== undefined && !suppressPrefill
       ? getReasoningTurnFraming(input.profile)
       : undefined;
 
@@ -122,13 +126,18 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     toolDescriptors: input.toolDescriptors,
     capabilities: input.capabilities,
     skillCatalog: input.skillCatalog,
-    reasoningSystemToken: input.profile?.reasoningSystemToken,
+    reasoningSystemToken: suppressPrefill
+      ? undefined
+      : input.profile?.reasoningSystemToken,
     maxParallelToolCalls: config.agent.maxParallelToolCalls,
     ...(turnFraming !== undefined
       ? { turnSystemOpen: turnFraming.systemOpen }
       : {}),
     ...(input.systemPersona !== undefined
       ? { systemPersona: input.systemPersona }
+      : {}),
+    ...(input.toolTransport !== undefined
+      ? { toolTransport: input.toolTransport }
       : {}),
   });
 
@@ -336,6 +345,7 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
       ``,
     );
   } else if (
+    !suppressPrefill &&
     input.profile?.requiresPromptThinkPrefix &&
     input.profile.reasoningStyle !== "none"
   ) {

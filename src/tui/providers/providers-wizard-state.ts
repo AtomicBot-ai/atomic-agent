@@ -1,4 +1,5 @@
 import type { SubscriptionCliName } from "../../config/llm-config.js";
+import type { ModelPricingFilter } from "../../llm/provider/model-pricing-filter.js";
 import { presetForEntryId } from "./provider-presets.js";
 
 export type ProvidersWizardKind =
@@ -74,6 +75,13 @@ export interface ProvidersWizardState {
    * screen, and `advanceWizardPhase` clears it on the way out.
    */
   search: string | null;
+  /**
+   * Price facet of the curated chat-model screen, cycled with `p` while
+   * the search box is closed. Reset by `advanceWizardPhase` alongside
+   * `search`, so a facet picked to find one row cannot silently narrow
+   * the next screen's list.
+   */
+  pricingFilter: ModelPricingFilter;
   apiKeyBuffer: string;
   baseUrlLine: string;
   chatModelLine: string;
@@ -133,6 +141,7 @@ export function createProvidersWizardState(
     presetId,
     cursor: 0,
     search: null,
+    pricingFilter: "all",
     apiKeyBuffer: "",
     baseUrlLine: opts?.baseUrl ?? "",
     chatModelLine: cliBacked ? (opts?.chatModel ?? "") : "",

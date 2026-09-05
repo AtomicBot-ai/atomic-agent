@@ -10,6 +10,10 @@ import { describeDownloadingModel } from "../onboarding/local-model-picks.js";
 import { OnboardingChooseStep } from "./onboarding-choose-step.js";
 import { OnboardingDownloadStep } from "./onboarding-download-step.js";
 import { OnboardingHuggingFaceFlow } from "./onboarding-hf-flow.js";
+import {
+  OnboardingImportPickStep,
+  OnboardingImportReportStep,
+} from "./onboarding-import-step.js";
 import { OnboardingHeader } from "./onboarding-header.js";
 import { OnboardingIntroStep } from "./onboarding-intro-step.js";
 import { OnboardingLocalPickStep } from "./onboarding-local-pick-step.js";
@@ -96,6 +100,22 @@ export function OnboardingStepBody(props: {
           dispatch={dispatch}
           ramGb={props.ramGb}
         />
+        {onboarding.step === "import_pick" ? (
+          <OnboardingImportPickStep
+            agents={onboarding.importAgents}
+            cursor={onboarding.cursor}
+            busy={onboarding.busy}
+            error={onboarding.error}
+          />
+        ) : null}
+        {onboarding.step === "import_preview" || onboarding.step === "import_done" ? (
+          <OnboardingImportReportStep
+            report={onboarding.importReport}
+            executed={onboarding.step === "import_done"}
+            busy={onboarding.busy}
+            error={onboarding.error}
+          />
+        ) : null}
         {onboarding.step === "propose_second" && onboarding.offer ? (
           <OnboardingProposeStep
             offer={onboarding.offer}

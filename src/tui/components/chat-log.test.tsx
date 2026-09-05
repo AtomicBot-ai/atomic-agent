@@ -228,4 +228,31 @@ describe("ChatLog", () => {
     expect(text).toContain("Hi");
     expect(text).toMatch(/reasoning/);
   });
+
+  it("hangs a [try again] under the stopped-by-user notice, and only there", () => {
+    const state: TuiState = {
+      ...createInitialTuiState(BASE_SESSION),
+      messages: [
+        {
+          id: "m1",
+          role: "system",
+          text: "Agent stopped by user.",
+          retryText: "count the stars",
+          timestamp: 1,
+        },
+        {
+          id: "m2",
+          role: "system",
+          text: "queue cleared",
+          timestamp: 2,
+        },
+      ],
+    };
+    const { lastFrame } = render(<ChatLog state={state} />);
+    const text = strip(lastFrame() ?? "");
+    expect(text).toContain("Agent stopped by user.");
+    // Exactly one button: the notice with `retryText` earns it, the
+    // plain runtime notice under it does not.
+    expect(text.match(/\[try again\]/g)).toHaveLength(1);
+  });
 });

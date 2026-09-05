@@ -1,4 +1,3 @@
-import type { ApprovalLevel } from "../../approval/approval-level.js";
 import type { SessionGrantsSnapshot } from "../../approval/approval-gate.js";
 
 /**
@@ -11,7 +10,6 @@ export type PrivacyAction =
   | {
       type: "privacy_synced";
       analyticsEnabled: boolean;
-      approvalLevel: ApprovalLevel;
       sessionGrants: SessionGrantsSnapshot;
     }
   | { type: "privacy_action_started" }

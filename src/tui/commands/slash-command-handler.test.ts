@@ -103,6 +103,15 @@ describe("dispatchSlashCommand", () => {
     expect(dispatchSlashCommand("/new").triggerNewWindow).toBe(false);
   });
 
+  it("dispatches the rail fold toggle for /sidebar", () => {
+    // Pure state, so the toggle rides `actions` like /expand does —
+    // no trigger flag, no callback.
+    const result = dispatchSlashCommand("/sidebar");
+    expect(result.actions).toEqual([{ type: "sidebar_collapse_toggled" }]);
+    expect(result.forwardAsMessage).toBe(false);
+    expect(result.clearBuffer).toBe(true);
+  });
+
   it("opens the Memory tab for bare /memory", () => {
     const result = dispatchSlashCommand("/memory");
     expect(result.triggerMemoryDump).toBe(false);
@@ -254,6 +263,21 @@ describe("dispatchSlashCommand", () => {
     ]);
   });
 
+  it("asks for a contract probe of the active provider on /llm check", () => {
+    const result = dispatchSlashCommand("/llm check");
+    expect(result.actions).toEqual([
+      { type: "providers_contract_probe_requested", providerId: null },
+    ]);
+    // The operator is told a request is about to be spent on their key.
+    expect(result.systemMessage).toContain("one request");
+  });
+
+  it("names /llm check in the usage line so it is discoverable", () => {
+    const result = dispatchSlashCommand("/llm nonsense");
+    expect(result.actions).toEqual([]);
+    expect(result.systemMessage).toContain("/llm check");
+  });
+
   it("signals triggerLocalModelsStatus for /models status", () => {
     const result = dispatchSlashCommand("/models status");
     expect(result.triggerLocalModelsStatus).toBe(true);
@@ -341,66 +365,27 @@ describe("dispatchSlashCommand", () => {
       { type: "ui_mode_set", mode: "debug" },
       { type: "tab_changed", tab: "privacy" },
     ]);
-    expect(result.approvalLevelSet).toBeUndefined();
   });
 
-  it("emits approvalLevelSet and opens the tab for /privacy level 1..5", () => {
-    for (const level of [1, 2, 3, 4, 5]) {
-      const result = dispatchSlashCommand(`/privacy level ${level}`);
-      expect(result.approvalLevelSet).toBe(level);
-      expect(result.actions).toEqual([
-        { type: "ui_mode_set", mode: "debug" },
-        { type: "tab_changed", tab: "privacy" },
-      ]);
-    }
-  });
-
-  it("rejects out-of-range or non-numeric /privacy level arguments", () => {
+  it("rejects the removed /privacy level and /privacy approve forms", () => {
+    // The approval stance moved to the coding-mode control in the
+    // composer; the old subcommands print usage instead of acting.
     for (const raw of [
-      "/privacy level",
-      "/privacy level 0",
-      "/privacy level 6",
-      "/privacy level 2.5",
-      "/privacy level max",
+      "/privacy level 3",
+      "/privacy approve on",
+      "/privacy approve off",
     ]) {
       const result = dispatchSlashCommand(raw);
-      expect(result.approvalLevelSet).toBeUndefined();
       expect(result.actions).toEqual([]);
-      expect(result.systemMessage).toContain("/privacy level 1 | 2 | 3 | 4 | 5");
-    }
-  });
-
-  it("keeps /privacy approve on|off as aliases for levels 5 and 1", () => {
-    const on = dispatchSlashCommand("/privacy approve on");
-    expect(on.approvalLevelSet).toBe(5);
-    expect(on.actions).toEqual([
-      { type: "ui_mode_set", mode: "debug" },
-      { type: "tab_changed", tab: "privacy" },
-    ]);
-
-    const off = dispatchSlashCommand("/privacy approve off");
-    expect(off.approvalLevelSet).toBe(1);
-    expect(off.actions).toEqual([
-      { type: "ui_mode_set", mode: "debug" },
-      { type: "tab_changed", tab: "privacy" },
-    ]);
-  });
-
-  it("prints usage for /privacy approve without an explicit on|off", () => {
-    // No bare form on purpose: `on` means "run everything without
-    // asking", so the target state must be named.
-    for (const raw of ["/privacy approve", "/privacy approve maybe"]) {
-      const result = dispatchSlashCommand(raw);
-      expect(result.approvalLevelSet).toBeUndefined();
-      expect(result.actions).toEqual([]);
-      expect(result.systemMessage).toContain("/privacy approve on | off");
+      expect(result.systemMessage).toContain(
+        "usage: /privacy | /privacy analytics on|off|status",
+      );
     }
   });
 
   it("still routes /privacy analytics <verb> to the analytics side-effect", () => {
     const result = dispatchSlashCommand("/privacy analytics off");
     expect(result.analyticsVerb).toBe("disable");
-    expect(result.approvalLevelSet).toBeUndefined();
   });
 
   it("asks for the new default to be persisted on bare /steer and /queue", () => {

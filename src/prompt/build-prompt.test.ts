@@ -5,6 +5,7 @@ import {
   QWEN_THINK_PROFILE,
 } from "../llm/model-profile.js";
 import { buildPrompt } from "./build-prompt.js";
+import { DEFAULT_TOOL_DESCRIPTORS } from "./tool-descriptors.js";
 import { createEmptySessionState } from "../session/session-state.js";
 import type { SessionState } from "../session/session-state.js";
 import type {
@@ -232,6 +233,36 @@ describe("buildPrompt", () => {
     expect(prompt.stablePrefix).toContain("os.fs.read_document");
   });
 
+  it("frequent-tool summaries send source files to os.fs.read, not read_document", () => {
+    // Issue #113: the stable prefix is where a model decides between the
+    // two readers, and it ships on every turn. Pinning the wording here
+    // (against the real descriptors, not the stub TOOLS above) keeps a
+    // future summary edit from quietly dropping the routing hint that
+    // stops models bouncing off read_document's unsupported-extension
+    // error on `.py` / `.ts` files.
+    const prompt = buildPrompt({
+      session: mkSession(),
+      toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    expect(prompt.stablePrefix).toContain(
+      "the default for source code and text files",
+    );
+    expect(prompt.stablePrefix).toContain(
+      "NOT for source code: use os.fs.read",
+    );
+    // The summary must not claim read_document rejects text files — it
+    // extracts .txt/.md/.csv as `plain`, and a summary that contradicts the
+    // tool re-creates the very ambiguity this change removes.
+    expect(prompt.stablePrefix).not.toContain("NOT for source code or text files");
+    // The bad guess in issue #113 was `format: "text"`. The stable prefix
+    // carries the closed set so the guess is never reachable.
+    expect(prompt.stablePrefix).toContain(
+      "format?: 'pdf' | 'docx' | 'doc' | 'xlsx' | 'rtf' | 'odt' | 'pptx' | 'plain'",
+    );
+  });
+
   it("stable prefix changes deterministically when a skill is removed from the catalog (skills.disabled)", () => {
     // Pins the contract for the `skills.disabled` denylist: the
     // `SkillRegistry` filters disabled skills out of `list()`, the
@@ -436,6 +467,38 @@ describe("buildPrompt", () => {
     // (a prefilled `<|channel>thought\n` reads as thinking-disabled on Gemma).
     expect(prompt.tail.endsWith("<turn|>\n<|turn>model\n")).toBe(true);
     expect(prompt.tail).not.toContain("<|channel>thought");
+  });
+
+  it("suppressReasoningPrefill drops the qwen think prefill (chat transports, issue #283)", () => {
+    const prompt = buildPrompt({
+      session: mkSession(),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      profile: QWEN_THINK_PROFILE,
+      suppressReasoningPrefill: true,
+    });
+    // The prompt must NOT ship a literal `<think>` to a chat endpoint —
+    // Ollama Cloud corrupts the string server-side (ollama/ollama#17248).
+    expect(prompt.tail.endsWith("<think>\n")).toBe(false);
+    expect(prompt.tail).not.toContain("<think>");
+    // The emit anchor stays the last directive before generation.
+    expect(prompt.tail.trimEnd().endsWith("Respond now.")).toBe(true);
+  });
+
+  it("suppressReasoningPrefill drops the gemma turn framing and system token (issue #283)", () => {
+    const prompt = buildPrompt({
+      session: mkSession(),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      profile: GEMMA4_THINK_PROFILE,
+      suppressReasoningPrefill: true,
+    });
+    expect(prompt.tail.endsWith("<turn|>\n<|turn>model\n")).toBe(false);
+    expect(prompt.tail).not.toContain("<|turn>");
+    expect(prompt.stablePrefix).not.toContain("<|turn>system");
+    expect(prompt.stablePrefix).not.toContain("<|think|>");
   });
 
   it("does not append a think prelude for plain profiles", () => {
@@ -1267,5 +1330,84 @@ describe("token-budget helpers", () => {
 
   it("truncateToTokens with max=0 returns empty", () => {
     expect(truncateToTokens("abc", 0)).toBe("");
+  });
+});
+
+describe("buildPrompt tool transport (issue #285)", () => {
+  const base = () => ({
+    session: mkSession(),
+    toolDescriptors: TOOLS,
+    capabilities: CAPS,
+    skillCatalog: SKILLS,
+  });
+
+  it("native_tools prefix drops the text-JSON emission mandate but keeps the ### tools catalog", () => {
+    const native = buildPrompt({ ...base(), toolTransport: "native_tools" });
+    // The dual mandate: with an OpenAI `tools` payload on the request,
+    // the prompt must not also order text-JSON emission.
+    expect(native.stablePrefix).not.toContain("Emit a JSON ARRAY of tool calls now");
+    expect(native.stablePrefix).not.toContain(
+      "Each step emits exactly one JSON array matching the tool grammar",
+    );
+    // ...including the `### rules` opener — every text-array mandate
+    // must go, not just the persona and `### instructions` ones.
+    expect(native.stablePrefix).not.toContain("One tool-call array per step");
+    expect(native.stablePrefix).not.toContain(
+      "a solo action is a length-1 array",
+    );
+    // ...and the persona's reply-discipline line ("emit that tool JSON").
+    expect(native.stablePrefix).not.toContain("emit that tool JSON");
+    expect(native.stablePrefix).toContain("call that tool, not `reply`");
+    expect(native.stablePrefix).toContain("### rules");
+    expect(native.stablePrefix).toContain("One batch of tool calls per step");
+    expect(native.stablePrefix).toContain("native function-calling interface");
+    // The catalog stays: a fallback chain can hand this session to a
+    // grammar-only link, and the catalog carries tier/tool.view docs.
+    expect(native.stablePrefix).toContain("### tools");
+    expect(native.stablePrefix).toContain("# common (full)");
+    expect(native.stablePrefix).toContain("browser.navigate");
+    expect(native.stablePrefix).toContain("### instructions");
+  });
+
+  it("grammar prefix is byte-identical whether the transport is omitted or explicit", () => {
+    const implicit = buildPrompt(base());
+    const explicit = buildPrompt({ ...base(), toolTransport: "grammar" });
+    expect(explicit.stablePrefix).toBe(implicit.stablePrefix);
+    // And it still carries the legacy text-JSON mandate untouched.
+    expect(explicit.stablePrefix).toContain("Emit a JSON ARRAY of tool calls now");
+    expect(explicit.stablePrefix).toContain(
+      "Each step emits exactly one JSON array matching the tool grammar",
+    );
+    expect(explicit.stablePrefix).toContain(
+      "One tool-call array per step (including `skill.view`); a solo action is a length-1 array. Destructive or privileged tools may require user approval.",
+    );
+  });
+
+  it("stable prefix stays byte-stable across turns for a fixed transport", () => {
+    const turn1 = buildPrompt({ ...base(), toolTransport: "native_tools" });
+    const turn2 = buildPrompt({
+      ...base(),
+      session: mkSession({
+        turns: [
+          { kind: "user", text: "Check inbox", at: 1 },
+          { kind: "assistant_reply", text: "Done", at: 2 },
+          { kind: "user", text: "Now archive it", at: 3 },
+        ],
+      }),
+      toolTransport: "native_tools",
+    });
+    expect(turn2.stablePrefix).toBe(turn1.stablePrefix);
+  });
+
+  it("an explicit systemPersona override wins on both transports", () => {
+    const persona = "You are a test persona.";
+    const native = buildPrompt({
+      ...base(),
+      systemPersona: persona,
+      toolTransport: "native_tools",
+    });
+    const grammar = buildPrompt({ ...base(), systemPersona: persona });
+    expect(native.stablePrefix).toContain(persona);
+    expect(grammar.stablePrefix).toContain(persona);
   });
 });

@@ -73,13 +73,13 @@ describe("ApprovalModal", () => {
     expect(frame).toContain("file write · home");
   });
 
-  it("points at the Privacy-tab toggle so the off switch is discoverable", () => {
+  it("points at the composer coding-mode control so the off switch is discoverable", () => {
     // The footer hint is the discoverability answer to issue #79:
-    // approving covers one call, the standing switch lives on the
-    // Privacy tab.
+    // approving covers one call, the standing stance lives in the
+    // composer's coding-mode control.
     const frame = frameOf(request());
     expect(frame).toContain("approve covers this call once");
-    expect(frame).toContain("(/privacy)");
+    expect(frame).toContain("coding-mode control");
   });
 
   it("offers both session grants for a shell request with a shape", () => {
@@ -144,8 +144,10 @@ describe("ApprovalModal", () => {
   it("says the composer is live rather than that the keys stand down", () => {
     // The old hint had to explain that typing disarmed the verdicts.
     // Nothing disarms now, so the hint says the one thing still worth
-    // knowing: you may answer in words instead.
-    const frame = frameOf(request());
+    // knowing: you may answer in words instead. Ink wraps the footer at
+    // the terminal width, so strip the box chrome and collapse
+    // whitespace before matching.
+    const frame = frameOf(request()).replace(/[\u2550-\u256c]/g, " ").replace(/\s+/g, " ");
     expect(frame).toContain("the composer stays live");
     expect(frame).not.toContain("keys work while the input is empty");
   });

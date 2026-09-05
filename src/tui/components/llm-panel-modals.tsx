@@ -1,5 +1,6 @@
 import { Box, Text } from "ink";
 import type { ReactElement, ReactNode } from "react";
+import { looksLikeOllamaUrl } from "../../llm/describe-llama-health-failure.js";
 import { PasteFieldTarget } from "../context-menu/paste-field-target.js";
 import { pasteIntoLlmModalField } from "../llm-panel/llm-panel-paste.js";
 import { theme } from "../theme/theme.js";
@@ -58,6 +59,7 @@ export function hasLlmModal(state: TuiState): boolean {
     state.localModelsPanel.embeddingRemoveConfirmId !== null ||
     state.providersPanel.chatModelPicker !== null ||
     state.llmPanel.externalUrlDraft !== null ||
+    state.llmPanel.externalCompatSteerUrl !== null ||
     state.llmPanel.stopLocalDaemonsPrompt !== null
   );
 }
@@ -221,6 +223,28 @@ export function LlmPanelModals({
         {valid ? null : <Text color={theme.colors.error}>invalid URL</Text>}
         <Text color={theme.colors.muted}>
           Saved after a /health probe succeeds. Enter save · Esc cancel
+        </Text>
+      </PromptBox>
+    );
+  }
+  if (state.llmPanel.externalCompatSteerUrl !== null) {
+    const url = state.llmPanel.externalCompatSteerUrl;
+    const ollama = looksLikeOllamaUrl(url);
+    return (
+      <PromptBox
+        tone="accent"
+        title={
+          ollama
+            ? "Ollama detected — add it as a cloud provider?"
+            : "OpenAI-compatible server — add it as a cloud provider?"
+        }
+      >
+        <Text wrap="truncate-end">
+          {url} answers like {ollama ? "Ollama" : "an OpenAI-compatible server"},
+          which the External llama.cpp route cannot drive.
+        </Text>
+        <Text color={theme.colors.muted}>
+          y open the provider wizard with this URL · n/Esc dismiss
         </Text>
       </PromptBox>
     );

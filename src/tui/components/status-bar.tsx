@@ -12,21 +12,40 @@ import type { TuiState } from "../tui-state.js";
 import { getAppVersion } from "../../version.js";
 import { Chip, tracked } from "./chip.js";
 import { sessionTitleLine } from "./session-title.js";
+import {
+  planUpdateBanner,
+  UpdateBanner,
+  type UpdateBannerPhase,
+} from "./update-banner.js";
 
 interface StatusBarProps {
   state: TuiState;
+  /**
+   * Row width in cells. When set, the bar claims the full row and pins
+   * the update banner to its right edge; without it (unit tests, odd
+   * hosts) the bar stays content-sized and the banner trails the text.
+   */
+  width?: number;
   /**
    * Draw the `atomic-agent vX.Y.Z` lockup. False when the rail is on
    * screen: the rail already carries the brand and the version, and two
    * copies of them read as a rendering bug rather than as chrome.
    */
   brand?: boolean;
+  /**
+   * Draw the `»` that reopens a rail the operator folded away. True only
+   * while the fold is the operator's own (`sidebarCollapsed`) AND the
+   * terminal could seat the rail — when the size gate is what hid it,
+   * there is nothing a click could restore, so no control is offered.
+   * `TuiApp` computes the condition; the bar stays presentational.
+   */
+  railRestore?: boolean;
 }
 
 /**
  * One-row operator status bar. Shows **where you are**, not where you could
  * go: the three-section pill row was a menu, and the menu now lives behind
- * `ctrl+p` where it can hold every destination instead of only the top three.
+ * Esc, where it can hold every destination instead of only the top three.
  * What is left is a breadcrumb — `Manage › Tasks` — which is the one thing
  * the popup cannot tell you, because you have to open it to read it.
  *
@@ -45,13 +64,40 @@ interface StatusBarProps {
  */
 export function StatusBar({
   state,
+  width,
   brand = true,
+  railRestore = false,
 }: StatusBarProps): ReactElement {
   const section = getCurrentSection(state);
   const title = currentSessionTitle(state);
   const { columns } = useTerminalSize();
+  // The banner outlives the modal (`updateBanner` survives
+  // `update_dismissed`) and then narrates the whole lifecycle: the
+  // offer while nothing runs, "do not close" while the installer works,
+  // the restart hint once it lands. `failed` renders as a fresh offer,
+  // because the button is then the one remaining way to retry.
+  const banner = state.updateBanner;
+  const bannerPhase: UpdateBannerPhase =
+    state.updateStatus === "running"
+      ? "running"
+      : state.updateStatus === "done"
+        ? "done"
+        : "offer";
+  // `chipBudget` reserves cells for a session tag whether or not one is
+  // drawn — safe slack for the download chip, but it starves the banner
+  // out of a fresh 70-column session where the corner is visibly empty.
+  // Reclaim the reservation when no tag renders.
+  const bannerBudget = Math.max(
+    0,
+    rawBudget(columns, brand, title) +
+      (state.session.sessionId ? 0 : SESSION_TAG),
+  );
+  const bannerPlan = banner
+    ? planUpdateBanner(banner.latest, bannerBudget, bannerPhase)
+    : null;
   return (
-    <Box>
+    <Box {...(width ? { width } : {})}>
+      {railRestore ? <RailRestoreButton /> : null}
       {brand ? (
         <>
           <Text color={theme.colors.accentSoft} bold>
@@ -66,7 +112,13 @@ export function StatusBar({
       {state.localModelsPanel.pull ? (
         <DownloadChip
           pull={state.localModelsPanel.pull}
-          budget={chipBudget(columns, brand, title)}
+          budget={
+            // The banner has already taken its cells from the same
+            // leftover; hand the chip what genuinely remains or the two
+            // meet in the middle and wrap the row.
+            chipBudget(columns, brand, title) -
+            (bannerPlan ? bannerPlan.width + 2 : 0)
+          }
         />
       ) : null}
       {title ? (
@@ -77,6 +129,19 @@ export function StatusBar({
             {title}
           </Text>
         </Text>
+      ) : null}
+      {banner && bannerPlan ? (
+        <>
+          {/* flexGrow pushes the banner into the top-right corner when
+              the bar knows its row width; content-sized bars (no
+              `width`) collapse the spacer to two plain cells. */}
+          <Box flexGrow={1} minWidth={2} />
+          <UpdateBanner
+            latest={banner.latest}
+            phase={bannerPhase}
+            budget={bannerBudget}
+          />
+        </>
       ) : null}
     </Box>
   );
@@ -95,13 +160,23 @@ export function StatusBar({
  * the header into a paragraph and push the whole app down the screen.
  */
 function chipBudget(columns: number, brand: boolean, title: string | null): number {
+  return Math.max(0, rawBudget(columns, brand, title));
+}
+
+/**
+ * The same leftover before clamping. The banner's session-tag reclaim
+ * must be added to THIS number — adding it after the clamp turned a
+ * 42-column deficit into 18 phantom cells and wrapped the bar.
+ */
+function rawBudget(columns: number, brand: boolean, title: string | null): number {
   const BRAND = 22;
   const BREADCRUMB = 14;
-  const SESSION_TAG = 18;
   const used =
     (brand ? BRAND : 0) + BREADCRUMB + SESSION_TAG + (title ? title.length + 4 : 0);
-  return Math.max(0, columns - used - 2);
+  return columns - used - 2;
 }
+
+const SESSION_TAG = 18;
 
 function currentSessionTitle(state: TuiState): string | null {
   const id = state.session.sessionId;
@@ -134,9 +209,9 @@ const SECTION_LABELS: Record<TuiSection, string> = {
  * #170 replaced that strip with this breadcrumb — the menu is now the one
  * navigation surface, and re-adding pills would give the same job two
  * competing controls. So the breadcrumb itself takes the click and opens
- * the menu, which is exactly what `ctrl+p` does. Clicking where you
- * already are is still meaningful here: the menu is a destination list,
- * not a reset.
+ * the menu, which is exactly what Esc does on an idle prompt. Clicking
+ * where you already are is still meaningful here: the menu is a
+ * destination list, not a reset.
  */
 function Breadcrumb({
   state,
@@ -166,12 +241,40 @@ function Breadcrumb({
     <MouseTarget
       onMouse={(hit) => {
         if (!isPrimaryPress(hit.event)) return false;
-        // Open at the top of the list, the same state `ctrl+p` produces,
-        // so the keyboard and the mouse land on one menu rather than two
-        // subtly different ones.
+        // Open at the top of the list, the same state the Esc route
+        // produces, so the keyboard and the mouse land on one menu
+        // rather than two subtly different ones.
         mouse.dispatch({ type: "menu_path_set", path: null });
         mouse.dispatch({ type: "menu_cursor_set", cursor: 0 });
         mouse.dispatch({ type: "menu_opened" });
+        return true;
+      }}
+    >
+      {label}
+    </MouseTarget>
+  );
+}
+
+/**
+ * The way back after the rail's `«` folded it away. It sits at the head
+ * of the bar — the cell nearest the corner the rail vacated — so the
+ * fold and the unfold read as two positions of the same hinge. One
+ * click brings the rail back; without mouse support the glyph stays as
+ * a signpost to `/sidebar`, inert like every other chip.
+ */
+function RailRestoreButton(): ReactElement {
+  const mouse = useMouseCommands();
+  const label = (
+    <Text>
+      <Chip label={theme.glyphs.railRestore} />{" "}
+    </Text>
+  );
+  if (!mouse) return label;
+  return (
+    <MouseTarget
+      onMouse={(hit) => {
+        if (!isPrimaryPress(hit.event)) return false;
+        mouse.dispatch({ type: "sidebar_collapse_toggled" });
         return true;
       }}
     >

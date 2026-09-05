@@ -20,6 +20,7 @@ import type { UninstallAction } from "./uninstall/uninstall-actions.js";
 import type { FallbackPanelAction } from "./llm-panel/fallback/fallback-panel-actions.js";
 import type { WhileBusySubmitMode } from "../config/index.js";
 import type { ChatMessage, SessionPickerEntry, TuiTab, TuiUiMode } from "./tui-state.js";
+import type { ContextUsageState } from "../session/context-usage.js";
 
 /**
  * Every action the reducer knows how to fold into `TuiState`. All side
@@ -66,7 +67,7 @@ export type TuiAction =
   | { type: "skill_count_changed"; count: number }
   /**
    * Mirror the live approval-gate state into `state.session` so the
-   * diagnostics line ("approval on/off") tracks the Privacy-tab toggle.
+   * diagnostics line ("approval on/off") tracks the live gate level.
    */
   | { type: "approval_level_changed"; approvalLevel: number }
   | { type: "session_created"; sessionId: string }
@@ -228,6 +229,14 @@ export type TuiAction =
        * pretending the session is idle. Absent means idle.
        */
       running?: boolean;
+      /**
+       * The target session's persisted window-occupancy snapshot, when
+       * it has one. The reducer restores the context chip from it;
+       * absent resets the gauge (a fresh session, or one that predates
+       * the persisted field) instead of leaving the previous thread's
+       * numbers on screen.
+       */
+      contextUsage?: ContextUsageState;
     }
   /** Header/runtime: user saved a new llama-server base URL (e.g. via /llama). */
   | { type: "llama_url_changed"; url: string }
@@ -270,6 +279,8 @@ export type TuiAction =
   | { type: "chat_focus_toggled" }
   /** Set keyboard focus explicitly (used when the sidebar collapses below the width threshold). */
   | { type: "chat_focus_set"; focus: "editor" | "sidebar" }
+  /** Fold the rail away or bring it back (the rail's `«`, the bar's `»`, `/sidebar`). */
+  | { type: "sidebar_collapse_toggled" }
   /** Pick which sidebar pane (Sessions / Tasks) is the current Tab-cycle stop. */
   | { type: "sidebar_section_focused"; section: "sessions" | "tasks" }
   /** Move the sidebar's session-list cursor by N rows (clamped). */

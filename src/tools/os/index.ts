@@ -94,6 +94,13 @@ export interface RegisterOsToolsOptions extends DangerousToolOptions {
    * surface lives. Omitted / empty disables the `trust_config` guard.
    */
   trustConfigPaths?: readonly string[];
+  /**
+   * Absolute state directory (`config.paths.stateDir`), resolved by the
+   * bootstrap and threaded into `os.web.search` so its result cache and
+   * provider cooldown can survive the process (#256). Omitted keeps both
+   * in-memory, which is what existing embedders and tests get.
+   */
+  stateDir?: string;
 }
 
 export function registerOsTools(
@@ -131,7 +138,9 @@ export function registerOsTools(
       config: options.config,
     }),
   );
-  registry.register(buildOsWebSearchTool({ config: options.config }));
+  registry.register(
+    buildOsWebSearchTool({ config: options.config, stateDir: options.stateDir }),
+  );
   registry.register(buildOsWebFetchTool({ config: options.config }));
   registry.register(osClipboardReadTool);
   registry.register(osClipboardWriteTool);

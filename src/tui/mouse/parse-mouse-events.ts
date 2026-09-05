@@ -3,7 +3,7 @@ import type { MouseButton, TuiMouseEvent } from "./mouse-event.js";
 /**
  * Incremental decoder for xterm mouse reports.
  *
- * Two encodings are understood:
+ * Three encodings are understood:
  *
  *   - **SGR / 1006** — `ESC [ < b ; col ; row (M|m)`. What we ask for
  *     (`\u001B[?1006h`) and what every modern terminal answers with.
@@ -13,7 +13,18 @@ import type { MouseButton, TuiMouseEvent } from "./mouse-event.js";
  *   - **X10 / legacy** — `ESC [ M b col row` with each field a single
  *     byte offset by 32. Terminals that ignore the 1006 request fall
  *     back to this; decoding it costs ten lines and stops the raw bytes
- *     from being typed into the chat buffer as mojibake.
+ *     from being typed into the chat buffer as mojibake. The 1005
+ *     (UTF-8 extended) variant shares the prefix and the +32 offset —
+ *     stdin is decoded from UTF-8 before it reaches here, so its
+ *     multi-byte coordinates arrive as single characters and land in
+ *     the same branch.
+ *   - **urxvt / 1015** — `ESC [ b ; col ; row M` with a decimal
+ *     button-plus-32 and 1-based decimal coordinates. Nothing we
+ *     request should elicit it, but a terminal (or ssh hop) confused
+ *     enough to answer 1002 with it used to spray `32;45;12M` into the
+ *     composer as text. Consuming it is cheap, and the shape — three
+ *     decimal params, a `+32` button code, final uppercase `M` —
+ *     collides with no keyboard sequence a terminal sends.
  *
  * The decoder is a pure function so the interesting part — a chunk
  * boundary splitting a report in half — is unit-testable without a
@@ -38,8 +49,19 @@ const MOTION_BIT = 32;
 const WHEEL_BIT = 64;
 
 const SGR_MOUSE = /^\u001B\[<(\d{1,6});(\d{1,6});(\d{1,6})([Mm])/;
+const URXVT_MOUSE = /^\u001B\[(\d{1,3});(\d{1,4});(\d{1,4})M/;
 const TRUNCATED_SGR = /^\u001B\[<\d{0,6}(;\d{0,6}){0,2}$/;
 const TRUNCATED_X10 = /^\u001B\[M[\s\S]{0,2}$/;
+/**
+ * A CSI head that could still become a 1015 report. Deliberately also
+ * covers truncated keyboard CSIs (`ESC [ 1 ; 5` waiting for its `C`):
+ * buffering those until the final byte arrives hands Ink a whole
+ * sequence instead of a split it would mis-parse, and a real terminal
+ * always sends the rest of the sequence in the next read.
+ */
+const TRUNCATED_URXVT = /^\u001B\[\d{0,3}(;\d{0,4}){0,2}$/;
+/** 1015 button codes are the X10 button byte as a decimal — 32 is the floor. */
+const URXVT_CODE_OFFSET = 32;
 
 export interface DecodedMouseChunk {
   /** Mouse reports found in this chunk, in arrival order. */
@@ -93,10 +115,20 @@ export function decodeMouseEvents(buffer: string): DecodedMouseChunk {
       index = esc + 6;
       continue;
     }
+    const urxvt = URXVT_MOUSE.exec(tail);
+    // The button-code floor keeps this branch honest: a three-param CSI
+    // ending in `M` whose first parameter could not be a 1015 button
+    // code is not a mouse report and belongs to Ink.
+    if (urxvt && Number.parseInt(urxvt[1] ?? "0", 10) >= URXVT_CODE_OFFSET) {
+      events.push(decodeUrxvt(urxvt));
+      index = esc + urxvt[0].length;
+      continue;
+    }
     if (
       tail === `${ESC}[` ||
       TRUNCATED_SGR.test(tail) ||
-      TRUNCATED_X10.test(tail)
+      TRUNCATED_X10.test(tail) ||
+      TRUNCATED_URXVT.test(tail)
     ) {
       return { events, text, rest: tail };
     }
@@ -122,6 +154,15 @@ function decodeX10(tail: string): TuiMouseEvent {
   const row = (tail.codePointAt(5) ?? 33) - 32;
   // The legacy encoding has no dedicated release code: low bits `3`
   // mean "some button came up" and never say which one.
+  return buildEvent(code, column, row, (code & 3) === 3);
+}
+
+function decodeUrxvt(match: RegExpExecArray): TuiMouseEvent {
+  // Same button byte as X10, transported as a decimal; coordinates are
+  // plain 1-based decimals with no offset.
+  const code = Number.parseInt(match[1] ?? "32", 10) - URXVT_CODE_OFFSET;
+  const column = Number.parseInt(match[2] ?? "1", 10);
+  const row = Number.parseInt(match[3] ?? "1", 10);
   return buildEvent(code, column, row, (code & 3) === 3);
 }
 

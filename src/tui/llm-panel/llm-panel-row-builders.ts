@@ -5,6 +5,7 @@ import type {
 import { getCachedOpenAiCompatModelsForBaseUrl } from "../../llm/provider/openai/fetch-openai-compat-models.js";
 import { getCachedGeminiModelsForPanel } from "../../llm/provider/gemini/fetch-gemini-models.js";
 import { GEMINI_DEFAULT_CHAT_MODEL } from "../../llm/provider/gemini/gemini-provider.js";
+import { filterIdsByPricing } from "../../llm/provider/model-pricing-filter.js";
 import { filterModelIds, type ProviderRow } from "../providers/providers-panel-state.js";
 import {
   catalogEntryLookupForKind,
@@ -101,10 +102,14 @@ export function selectCloudModelSection(state: TuiState): CloudModelSection {
     };
   }
   const catalog = inlineModelsForProvider(state, provider);
+  const lookup = catalogEntryLookupForKind(provider.kind);
+  // The price facet narrows first, the typed filter second — same result
+  // either way, but this keeps the facet from paying the ranked-search
+  // cost on the rows it is about to drop.
   const filtered = filterModelIds(
-    catalog.models,
+    filterIdsByPricing(catalog.models, state.llmPanel.cloudModelPricing, lookup),
     state.llmPanel.cloudModelFilter,
-    catalogEntryLookupForKind(provider.kind),
+    lookup,
   );
   return { provider, ...catalog, filtered, sectionStart };
 }

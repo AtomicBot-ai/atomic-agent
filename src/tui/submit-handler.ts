@@ -201,6 +201,13 @@ export function runSlashCommand(
       callbacks.onProvidersChatModelPickerRequested?.(action.providerId);
       continue;
     }
+    if (action.type === "providers_contract_probe_requested") {
+      // Same wiring rule again for `/llm check`: the probe lives on
+      // `ProvidersOrchestrator.runContractProbe`, which only the
+      // callback layer can reach.
+      callbacks.onProvidersContractProbeRequested?.(action.providerId);
+      continue;
+    }
     if (action.type === "providers_inline_models_ensure_requested") {
       // Same wiring rule for the inline Cloud-pane model list (`/model`):
       // the catalog ensure must reach
@@ -296,9 +303,6 @@ export function runSlashCommand(
         ? null
         : result.maxStepsRequest.value,
     );
-  }
-  if (result.approvalLevelSet !== undefined) {
-    void callbacks.onApprovalLevelSetRequested?.(result.approvalLevelSet);
   }
 }
 

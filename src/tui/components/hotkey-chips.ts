@@ -30,7 +30,7 @@ export interface HotkeyChip {
 
   /**
    * What a click on this chip does. Only chips with one unambiguous
-   * meaning get one — "alt+enter newline" or "↑↓ select" describe a
+   * meaning get one — "alt/option+enter newline" or "↑↓ select" describe a
    * gesture, not a command, so they stay plain text rather than
    * pretending to be buttons.
    */
@@ -113,7 +113,6 @@ export function resolveChips(
   if (menuLeaderArmed) {
     return [
       { key: MENU_LEADER_LABEL, label: "waiting for a chord" },
-      { key: "ctrl+p", label: "full menu" },
       { key: "esc", label: "cancel" },
     ];
   }
@@ -194,7 +193,6 @@ export function resolveChips(
         label: "back to Run",
         onClick: (mouse) => mouse.dispatch({ type: "ui_mode_set", mode: "chat" }),
       },
-      { key: "ctrl+p", label: "menu", shed: 2 },
       {
         key: "ctrl+c",
         label: ctrlCArmed ? "press again to quit" : "quit",
@@ -213,17 +211,19 @@ export function resolveChips(
       },
     ];
   }
-  // The strip fits one row by shedding, not by a fixed cap. `ctrl+p`
-  // holds the slot `/` used to: the menu contains every slash command
-  // as well as every destination, and `/` keeps working for anyone who
-  // already reaches for it. Shedding order: scroll (the wheel already
-  // does it), then the sidebar (narrow terminals collapse it anyway —
-  // see `SIDEBAR_MIN_COLUMNS`), then the route chip (the route line
-  // itself is clickable, so the keyboard hint is the first luxury),
-  // then the newline key, then the menu chip. A draft adds an
-  // `esc / clear draft` chip so the affordance is on screen exactly
-  // when it applies — `/` no longer opens the palette with a non-empty
-  // buffer, so nothing usable is displaced.
+  // The strip fits one row by shedding, not by a fixed cap. The menu
+  // chip holds the slot `/` used to: the menu contains every slash
+  // command as well as every destination, and `/` keeps working for
+  // anyone who already reaches for it. Shedding order: scroll (the
+  // wheel already does it), then the sidebar (narrow terminals collapse
+  // it anyway — see `SIDEBAR_MIN_COLUMNS`), then the route chip (the
+  // route line itself is clickable, so the keyboard hint is the first
+  // luxury), then the new-window chip (a convenience the menu also
+  // carries as `/window`), then the drag/select hint (the gesture works
+  // without ever reading it), then the newline key, then the menu chip.
+  // A draft flips the Esc chip to `clear draft` so the affordance on
+  // screen is the one the next press performs — the menu is then a
+  // second Esc (or the breadcrumb) away.
   return [
     { key: "enter", label: "send" },
     // Shift+Enter only exists as a keystroke where the terminal speaks
@@ -231,9 +231,9 @@ export function resolveChips(
     // to Enter and would submit. Alt+Enter works in both worlds, so it
     // is what the strip promises when the protocol is absent.
     {
-      key: hasShiftEnterNewline() ? "shift+enter" : "alt+enter",
+      key: hasShiftEnterNewline() ? "shift+enter" : "alt/option+enter",
       label: "newline",
-      shed: 4,
+      shed: 6,
     },
     {
       key: "tab",
@@ -253,13 +253,34 @@ export function resolveChips(
       onClick: (mouse) =>
         mouse.dispatch({ type: "composer_switch_opened", kind: "backend" }),
     },
+    // A fresh OS terminal window running another atomic-agent in the
+    // same working dir (`/window` is the slash spelling). This strip is
+    // the only place the key is written down, but it is still a luxury
+    // next to the editor basics — it sheds right after the chips whose
+    // function survives on screen without them, and before newline.
+    {
+      key: "ctrl+n",
+      label: "new window",
+      shed: 4,
+      onClick: (mouse) => mouse.callbacks.onNewWindowRequested?.(),
+    },
+    // Text selection: the gesture is drag-twice (the first drag pauses
+    // mouse reporting, the second selects), and nothing on screen said
+    // so. The chip writes it down, and a click skips the first drag —
+    // it opens the same pause window directly, so the very next drag
+    // selects. Sheds early: the gesture works without the hint.
+    {
+      key: "drag",
+      label: "select text",
+      shed: 5,
+      onClick: (mouse) => mouse.callbacks.onSelectionPauseRequested?.(),
+    },
     // Esc opens the menu only on an empty buffer — with a draft it
     // clears the draft — so the strip advertises whichever one the next
     // press will actually do.
     ...(hasDraft
       ? [{ key: "esc", label: "clear draft" }]
-      : [{ key: "esc", label: "menu", shed: 6 }]),
-    { key: "ctrl+p", label: "menu", shed: 5 },
+      : [{ key: "esc", label: "menu", shed: 7 }]),
     // A selection can only exist over a non-empty buffer, so the
     // clear-draft Esc chip is always alongside these two.
     ...(composerSelectionActive(state)

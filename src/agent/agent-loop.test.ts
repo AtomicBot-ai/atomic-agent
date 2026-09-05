@@ -1,9 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AgentLoop } from "./agent-loop.js";
+import type { AgentLoopEvent } from "./agent-loop.js";
 import { buildDefaultToolRegistry } from "../tools/index.js";
+import { osFsReadTool } from "../tools/os/fs-read.js";
 import { SlotManager } from "../llm/slot-manager.js";
 import { createEmptySessionState } from "../session/session-state.js";
 import type {
@@ -338,6 +340,219 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     expect(result.session.lastError).toMatch(/max_steps_reached: 2 steps/);
   });
 
+  it("reserves the final step for a terminal reply", async () => {
+    const registry = buildDefaultToolRegistry();
+    registry.register({
+      name: "noop",
+      description: "no-op",
+      readonly: true,
+      async run() {
+        return {
+          tool: "noop",
+          status: "ok",
+          summary: "verified",
+          details: {},
+          truncated: false,
+        };
+      },
+    });
+    let calls = 0;
+    const prompts: string[] = [];
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async (params) => {
+        calls += 1;
+        prompts.push(params.prompt);
+        return makeCompletion(
+          calls === 1
+            ? JSON.stringify({ tool: "noop", args: {} })
+            : JSON.stringify({ tool: "reply", args: { text: "verified" } }),
+        );
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "chat-finalize", workingDir }),
+      { userMessage: "verify", maxSteps: 2, signal: new AbortController().signal },
+    );
+
+    expect(calls).toBe(2);
+    expect(prompts[1]).toContain("final allowed step");
+    expect(result.reason).toBe("reply");
+    expect(result.stepCount).toBe(2);
+    expect(result.session.status).toBe("pending");
+    expect(result.session.turns.at(-1)).toMatchObject({
+      kind: "assistant_reply",
+      text: "verified",
+    });
+  });
+
+  it("keeps the cancelled outcome when the user aborts during the finalization step", async () => {
+    const registry = buildDefaultToolRegistry();
+    registry.register({
+      name: "noop",
+      description: "no-op",
+      readonly: true,
+      async run() {
+        return {
+          tool: "noop",
+          status: "ok",
+          summary: "noop",
+          details: {},
+          truncated: false,
+        };
+      },
+    });
+    let calls = 0;
+    const controller = new AbortController();
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () => {
+        calls += 1;
+        if (calls === 1) {
+          return makeCompletion(JSON.stringify({ tool: "noop", args: {} }));
+        }
+        // The user presses Esc while the reserved final inference is in
+        // flight — the provider surfaces it as an abort.
+        controller.abort();
+        const err = new Error("The operation was aborted");
+        err.name = "AbortError";
+        throw err;
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "chat-finalize-cancel", workingDir }),
+      { userMessage: "verify", maxSteps: 2, signal: controller.signal },
+    );
+
+    expect(calls).toBe(2);
+    expect(result.reason).toBe("cancelled");
+    expect(result.session.status).toBe("cancelled");
+    expect(result.session.lastError ?? "").not.toMatch(/max_steps/);
+  });
+
+  it("gives the finalization step one repair attempt, then preserves the stalled outcome", async () => {
+    const registry = buildDefaultToolRegistry();
+    let noopRuns = 0;
+    registry.register({
+      name: "noop",
+      description: "no-op",
+      readonly: true,
+      async run() {
+        noopRuns += 1;
+        return {
+          tool: "noop",
+          status: "ok",
+          summary: "noop",
+          details: {},
+          truncated: false,
+        };
+      },
+    });
+    let calls = 0;
+    const stepEventTypes: string[] = [];
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      // The model insists on a non-terminal tool even on the reserved
+      // final step and its repair attempt.
+      llmComplete: async () => {
+        calls += 1;
+        return makeCompletion(JSON.stringify({ tool: "noop", args: {} }));
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (event.type === "llm_event") stepEventTypes.push(event.event.type);
+      },
+    });
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "chat-finalize-stubborn", workingDir }),
+      { userMessage: "verify", maxSteps: 2, signal: new AbortController().signal },
+    );
+
+    // Step 0 executes the tool; the finalization step burns its first
+    // completion plus exactly one repair round-trip, and neither may
+    // execute the non-terminal call.
+    expect(calls).toBe(3);
+    expect(noopRuns).toBe(1);
+    expect(stepEventTypes.filter((t) => t === "parse_retry")).toHaveLength(1);
+    expect(result.reason).toBe("max_steps");
+    expect(result.session.status).toBe("stalled");
+    expect(result.session.lastError).toMatch(/max_steps_reached: 2 steps/);
+    expect(result.session.turns.at(-1)).toMatchObject({
+      kind: "assistant_reply",
+      text: expect.stringContaining("max_steps"),
+    });
+  });
+
+  it("treats the only step of a maxSteps=1 turn as terminal — no tool can ever run", async () => {
+    const registry = buildDefaultToolRegistry();
+    let noopRuns = 0;
+    registry.register({
+      name: "noop",
+      description: "no-op",
+      readonly: true,
+      async run() {
+        noopRuns += 1;
+        return {
+          tool: "noop",
+          status: "ok",
+          summary: "noop",
+          details: {},
+          truncated: false,
+        };
+      },
+    });
+    let calls = 0;
+    const prompts: string[] = [];
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async (params) => {
+        calls += 1;
+        prompts.push(params.prompt);
+        return makeCompletion(
+          calls === 1
+            ? JSON.stringify({ tool: "noop", args: {} })
+            : JSON.stringify({ tool: "reply", args: { text: "summary only" } }),
+        );
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "chat-one-step", workingDir }),
+      { userMessage: "hi", maxSteps: 1, signal: new AbortController().signal },
+    );
+
+    // With a budget of one, the single step IS the finalization step:
+    // the tool call is rejected before execution and the repair pass
+    // must produce the terminal reply.
+    expect(prompts[0]).toContain("final allowed step");
+    expect(calls).toBe(2);
+    expect(noopRuns).toBe(0);
+    expect(result.reason).toBe("reply");
+    expect(result.session.status).toBe("pending");
+    expect(result.session.turns.at(-1)).toMatchObject({
+      kind: "assistant_reply",
+      text: "summary only",
+    });
+  });
+
   it("injects a transient notice into the next prompt when a no-progress loop is detected", async () => {
     const registry = buildDefaultToolRegistry();
     registry.register({
@@ -397,6 +612,84 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     expect(events.length).toBeGreaterThanOrEqual(1);
     expect(events[0]?.tool).toBe("noop");
     expect(events[0]?.count).toBeGreaterThanOrEqual(3);
+  });
+
+  it("warns on the second no-progress re-read of one unchanged file", async () => {
+    // The read-coverage detector (issue #114) end to end, through the
+    // production path: the real `os.fs.read`, the real batch gate, the
+    // agent-loop's own threshold branch and notice formatting. Every one
+    // of the three reads below hashes to a different argument signature,
+    // so nothing but the coverage detector can see that the second and
+    // third returned only lines the first already showed.
+    const registry = buildDefaultToolRegistry();
+    registry.register(osFsReadTool);
+    const body = Array.from({ length: 200 }, (_, i) => `line ${i + 1}`).join("\n");
+    writeFileSync(join(workingDir, "src.ts"), `${body}\n`, "utf8");
+    const script = [
+      { tool: "os.fs.read", args: { path: "src.ts" } },
+      { tool: "os.fs.read", args: { path: "src.ts", offset: 40, limit: 30 } },
+      { tool: "os.fs.read", args: { path: "src.ts", offset: 90, limit: 30 } },
+      { tool: "finish", args: { summary: "done" } },
+    ];
+    const prompts: string[] = [];
+    const detected: Extract<AgentLoopEvent, { type: "loop_detected" }>[] = [];
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async ({ prompt }) => {
+        const step = prompts.length;
+        prompts.push(prompt);
+        return makeCompletion(
+          JSON.stringify(script[Math.min(step, script.length - 1)]),
+        );
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (event.type === "loop_detected") detected.push(event);
+        if (process.env.DBG && event.type === "loop_failed") console.log("ERRMSG", (event as any).error?.message);
+      },
+    });
+    const session = createEmptySessionState({ id: "s-read-loop", workingDir });
+    await loop.runTurn(session, {
+      userMessage: "look at src.ts",
+      maxSteps: 6,
+      signal: new AbortController().signal,
+    });
+
+    // Exactly one warning, and it lands on the SECOND no-progress read —
+    // the detector's own floor of 2, not the generic warning threshold of
+    // 3, which would never have been reached inside this turn.
+    expect(detected).toHaveLength(1);
+    const event = detected[0]!;
+    expect(event.detector).toBe("read_repeat");
+    expect(event.level).toBe("warn");
+    expect(event.count).toBe(2);
+    expect(event.tool).toBe("os.fs.read");
+    // The payload acceptance criterion 8 asks for: which file, which
+    // range came back, and the fingerprints on either side. Equal
+    // fingerprints are the evidence that the content did not move.
+    expect(event.read?.path).toContain("src.ts");
+    expect(event.read?.startLine).toBe(90);
+    expect(event.read?.endLine).toBe(119);
+    expect(event.read?.fingerprint).toBeTruthy();
+    expect(event.read?.previousFingerprint).toBe(event.read?.fingerprint);
+    // Line numbers and a path only — no line of the file in the event.
+    expect(JSON.stringify(event)).not.toContain("line 90");
+
+    // The read-specific notice — not the generic repeat one — reaches the
+    // next prompt. The generic notice talks about repeated ARGUMENTS,
+    // which is precisely the thing that was never true here.
+    const after = prompts.slice(3).join("\n");
+    expect(after).toContain("without reaching a line you had not already read");
+    expect(after).toContain("Already read this turn: lines 1-200");
+    expect(after).not.toMatch(/same arguments \d+ times/);
+    // No notice before the detector fired.
+    expect(prompts.slice(0, 3).join("\n")).not.toContain(
+      "without reaching a line you had not already read",
+    );
   });
 
   it("ends the turn with a graceful reply (not loop_failed) when the breaker trips", async () => {

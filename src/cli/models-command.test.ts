@@ -88,7 +88,7 @@ describe("modelsCommand", () => {
             l.includes("nemotron-") ||
             l.includes("muse-"),
         ),
-    ).toHaveLength(12);
+    ).toHaveLength(13);
   });
 
   describe("models the operator added from Hugging Face", () => {
@@ -214,5 +214,21 @@ describe("modelsCommand", () => {
     expect(code).toBe(0);
     resetConfigCache();
     expect(getConfig().localModels.managed.device).toBe("cpu");
+  });
+
+  it("use-device accepts a comma-separated device list (multi-GPU)", async () => {
+    const path = getUserConfigPath(stateDir);
+    writeUserConfigFileSync(path, USER_CONFIG_DEFAULTS);
+    resetConfigCache();
+    const code = await modelsCommand(["use-device", "Vulkan0,Vulkan1"]);
+    expect(code).toBe(0);
+    resetConfigCache();
+    expect(getConfig().localModels.managed.device).toBe("Vulkan0,Vulkan1");
+  });
+
+  it("use-device rejects a malformed device list", async () => {
+    const code = await modelsCommand(["use-device", "Vulkan0,,Vulkan1"]);
+    expect(code).toBe(1);
+    expect(stderrChunks.join("")).toMatch(/invalid device/);
   });
 });

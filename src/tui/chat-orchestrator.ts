@@ -8,6 +8,17 @@ import {
   isFailedSessionStatus,
   type SessionState,
 } from "../session/session-state.js";
+import { getConfig } from "../config/index.js";
+import { resolveLlmConfig } from "../llm/provider/registry/index.js";
+import {
+  readSessionLlmStamp,
+  SESSION_LLM_METADATA_KEY,
+  type SessionLlmStamp,
+} from "../session/session-llm.js";
+import {
+  describeModelRestore,
+  planModelRestore,
+} from "./session-model-restore.js";
 import { checkForAppUpdate, runAppUpdate, canSelfUpdate } from "../update/index.js";
 import { clearTtyScreen } from "./clear-tty-screen.js";
 import {
@@ -235,6 +246,27 @@ export class ChatOrchestrator {
         return;
       }
       this.turnEvents.record(action.sessionId, action.event);
+    });
+    // A model picked while a thread is open belongs to that thread:
+    // stamp it immediately so switching away before the next turn runs
+    // does not lose the choice. `providers_select_chat_model` carries
+    // both ids; `providers_set_active_text` names only the provider,
+    // whose current default model the config still knows (setActiveText
+    // does not change it, so reading here is not racing the write).
+    bus.subscribe((action) => {
+      if (action.type === "providers_select_chat_model") {
+        this.stampSessionModel({
+          providerId: action.providerId,
+          chatModel: action.modelId,
+        });
+      } else if (action.type === "providers_set_active_text") {
+        const resolved = resolveLlmConfig(getConfig());
+        const entry = resolved.providers.find((p) => p.id === action.id);
+        this.stampSessionModel({
+          providerId: action.id,
+          chatModel: entry?.defaultChatModel ?? entry?.model ?? null,
+        });
+      }
     });
     this.chatPull.attach(bus);
   }
@@ -554,6 +586,10 @@ export class ChatOrchestrator {
       workingDir: loaded.workingDir,
       messages: turnsToMessages(loaded.turns),
       running,
+      // Restore the context gauge this session persisted with its last
+      // turn (absent on threads that never ran one — the reducer then
+      // resets the chip rather than keeping the old thread's figure).
+      ...(loaded.contextUsage ? { contextUsage: loaded.contextUsage } : {}),
     });
     // The stored snapshot above misses everything the still-running
     // turn has said (a turn saves only when it finishes — for a thread
@@ -567,6 +603,9 @@ export class ChatOrchestrator {
         running ? " — a turn is still running here" : ""
       }`,
     });
+    // Each thread keeps the model it ran on: entering one whose stamp
+    // differs from the active provider/model re-applies it.
+    this.restoreSessionModel(loaded);
     // After `session_switched`, so they land in the new transcript
     // rather than the one that was just replaced.
     for (const notice of notices) this.notify(notice);
@@ -580,6 +619,50 @@ export class ChatOrchestrator {
     if (parkedApproval) {
       this.bus.emit({ type: "approval_requested", request: parkedApproval });
     }
+  }
+
+  /**
+   * Re-apply the model the target session last ran on, when it differs
+   * from the active one (`planModelRestore` decides). Goes through the
+   * LLM panel's own bus actions so config persistence, provider reload
+   * and panel refresh all happen in the one place that already owns
+   * them. A stamped provider that has since been removed changes
+   * nothing and says so.
+   */
+  private restoreSessionModel(loaded: SessionState): void {
+    const plan = planModelRestore(
+      readSessionLlmStamp(loaded.metadata),
+      resolveLlmConfig(getConfig()),
+    );
+    const line = describeModelRestore(plan);
+    if (line) this.bus.emit({ type: "runtime_info", line });
+    if (plan.kind === "select") {
+      this.bus.emit({
+        type: "providers_select_chat_model",
+        providerId: plan.providerId,
+        modelId: plan.modelId,
+      });
+    } else if (plan.kind === "activate") {
+      this.bus.emit({
+        type: "providers_set_active_text",
+        id: plan.providerId,
+      });
+    }
+  }
+
+  /**
+   * Write the provider/model stamp onto the open session and persist
+   * it. No-op without a live session — the choice then simply stays the
+   * global default the next session inherits.
+   */
+  private stampSessionModel(stamp: SessionLlmStamp): void {
+    const session = this.session;
+    if (!session) return;
+    this.session = {
+      ...session,
+      metadata: { ...session.metadata, [SESSION_LLM_METADATA_KEY]: stamp },
+    };
+    this.runtime.sessionStore.save(this.session);
   }
 
   /**
@@ -1071,6 +1154,9 @@ export class ChatOrchestrator {
         sessionId: turnSessionId,
         workingDir: this.session.workingDir,
         messages: turnsToMessages(this.session.turns),
+        ...(this.session.contextUsage
+          ? { contextUsage: this.session.contextUsage }
+          : {}),
       });
     }
     const next = this.queue.shift();

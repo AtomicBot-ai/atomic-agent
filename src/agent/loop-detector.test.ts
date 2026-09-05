@@ -7,6 +7,7 @@ import {
   extractLoopTarget,
   formatForcedLoopReply,
   formatRepeatNotice,
+  formatTestRepeatNotice,
   formatVetoInstruction,
   formatWanderingRedirect,
   hashToolOutcome,
@@ -569,5 +570,110 @@ describe("hashToolOutcome volatile stripping", () => {
       details: { items: [{ id: 2, name: "x" }], meta: { requestId: "zzz" } },
     });
     expect(hashToolOutcome("t", {}, a)).toBe(hashToolOutcome("t", {}, b));
+  });
+});
+
+describe("test-repeat detector state (issue #118)", () => {
+  const KEY = "/work/project pytest -k auth";
+
+  it("does not flag the first run of a key", () => {
+    const tracker = new ToolLoopTracker();
+    expect(tracker.checkTestRepeat(KEY, "fp-1")).toEqual({
+      repeat: false,
+      count: 1,
+    });
+  });
+
+  it("flags the second equivalent run and quotes the previous summary", () => {
+    const tracker = new ToolLoopTracker();
+    const args = { cmd: "pytest", args: ["-k", "auth"] };
+    tracker.recordTestRun(KEY, "fp-1", "os.shell.run", args);
+    tracker.recordOutcome(
+      "os.shell.run",
+      args,
+      mkResult({ tool: "os.shell.run", summary: "3 passed in 1.2s" }),
+    );
+    const verdict = tracker.checkTestRepeat(KEY, "fp-1");
+    expect(verdict.repeat).toBe(true);
+    expect(verdict.count).toBe(2);
+    expect(verdict.previousSummary).toBe("3 passed in 1.2s");
+  });
+
+  it("clears the repeat and drops the stored summary when the fingerprint changes", () => {
+    const tracker = new ToolLoopTracker();
+    const args = { cmd: "pytest", args: ["-k", "auth"] };
+    tracker.recordTestRun(KEY, "fp-1", "os.shell.run", args);
+    tracker.recordOutcome(
+      "os.shell.run",
+      args,
+      mkResult({ tool: "os.shell.run", summary: "1 failed" }),
+    );
+    // Workspace changed: the rerun is permitted (no repeat) and the
+    // pre-change summary must never be quoted against the new state.
+    const changed = tracker.checkTestRepeat(KEY, "fp-2");
+    expect(changed).toEqual({ repeat: false, count: 1 });
+    tracker.recordTestRun(KEY, "fp-2", "os.shell.run", args);
+    const next = tracker.checkTestRepeat(KEY, "fp-2");
+    expect(next.repeat).toBe(true);
+    expect(next.previousSummary).toBeUndefined();
+  });
+
+  it("keeps counting consecutive equivalent runs", () => {
+    const tracker = new ToolLoopTracker();
+    const args = { cmd: "pytest", args: [] };
+    tracker.recordTestRun(KEY, "fp-1", "os.shell.run", args);
+    tracker.recordTestRun(KEY, "fp-1", "os.shell.run", args);
+    expect(tracker.checkTestRepeat(KEY, "fp-1").count).toBe(3);
+  });
+
+  it("keys are independent: another suite does not inherit the repeat", () => {
+    const tracker = new ToolLoopTracker();
+    const args = { cmd: "pytest", args: [] };
+    tracker.recordTestRun(KEY, "fp-1", "os.shell.run", args);
+    expect(tracker.checkTestRepeat("other-key", "fp-1").repeat).toBe(false);
+  });
+
+  it("shouldEmitWarning honours a per-detector minCount floor", () => {
+    const tracker = new ToolLoopTracker();
+    // Default floor (warningThreshold = 3) suppresses a count of 2 while
+    // the test-repeat floor emits from the 2nd equivalent run.
+    expect(tracker.shouldEmitWarning("warn:generic", 2)).toBe(false);
+    expect(tracker.shouldEmitWarning("test_repeat:k", 2, 2)).toBe(true);
+    // De-dup bucket: the same key stays silent within the bucket.
+    expect(tracker.shouldEmitWarning("test_repeat:k", 3, 2)).toBe(false);
+  });
+});
+
+describe("formatTestRepeatNotice", () => {
+  it("names the command, quotes the previous result, and stays warn-only", () => {
+    const text = formatTestRepeatNotice({
+      count: 2,
+      target: "pytest -k auth",
+      previousSummary: "3 passed in 1.2s",
+    });
+    expect(text).toContain("`pytest -k auth`");
+    expect(text).toContain("2 times");
+    expect(text).toContain("Previous result: 3 passed in 1.2s");
+    expect(text).toContain("nothing was blocked");
+  });
+
+  it("collapses and caps a long multi-line summary", () => {
+    const text = formatTestRepeatNotice({
+      count: 2,
+      previousSummary: `line one\nline two\n${"x".repeat(500)}`,
+    });
+    expect(text).toContain("line one line two");
+    expect(text).not.toContain("\nline two");
+    const resultLine = text
+      .split("\n")
+      .find((l) => l.startsWith("Previous result:"))!;
+    expect(resultLine.length).toBeLessThanOrEqual(320);
+    expect(resultLine.endsWith("...")).toBe(true);
+  });
+
+  it("omits the previous-result line when no summary is known", () => {
+    const text = formatTestRepeatNotice({ count: 2 });
+    expect(text).toContain("the same test command");
+    expect(text).not.toContain("Previous result:");
   });
 });

@@ -29,32 +29,15 @@ describe("reducePrivacyAction", () => {
     const next = reducePrivacyAction(state, {
       type: "privacy_synced",
       analyticsEnabled: false,
-      approvalLevel: 1,
+      sessionGrants: { categories: [], shapes: [] },
     });
     expect(next?.privacyPanel.analyticsEnabled).toBe(false);
-    expect(next?.privacyPanel.approvalLevel).toBe(1);
-  });
-
-  it("folds approval level changes from privacy_synced in both directions", () => {
-    const up = reducePrivacyAction(baseState(), {
-      type: "privacy_synced",
-      analyticsEnabled: true,
-      approvalLevel: 5,
-    });
-    expect(up?.privacyPanel.approvalLevel).toBe(5);
-    const down = reducePrivacyAction(up!, {
-      type: "privacy_synced",
-      analyticsEnabled: true,
-      approvalLevel: 2,
-    });
-    expect(down?.privacyPanel.approvalLevel).toBe(2);
   });
 
   it("folds session grants from privacy_synced", () => {
     const next = reducePrivacyAction(baseState(), {
       type: "privacy_synced",
       analyticsEnabled: true,
-      approvalLevel: 3,
       sessionGrants: { categories: ["shell"], shapes: ["git"] },
     });
     expect(next?.privacyPanel.sessionGrants).toEqual({

@@ -35,6 +35,8 @@ export type TerminalSpawn = (
     detached: boolean;
     stdio: readonly ["ignore", "ignore", "pipe"];
     cwd?: string;
+    /** Only present when the launch pre-quoted its own cmd.exe line. */
+    windowsVerbatimArguments?: boolean;
   },
 ) => SpawnedTerminal;
 
@@ -68,6 +70,9 @@ export async function openTerminalWindow(
       // reading reported "opened" for every one of those.
       stdio: ["ignore", "ignore", "pipe"] as const,
       ...(options.cwd ? { cwd: options.cwd } : {}),
+      ...(launch.windowsVerbatimArguments
+        ? { windowsVerbatimArguments: true }
+        : {}),
     });
   } catch (err) {
     return { ok: false, reason: `${launch.cmd}: ${errorMessage(err)}` };

@@ -96,4 +96,37 @@ describe("checkProfilePromptAligned", () => {
       ),
     ).toEqual([]);
   });
+
+  describe("prefill-suppressed shape (native-tools chat transport, issue #283)", () => {
+    const options = { promptCarriesPrefill: false };
+
+    it("flags a suppressed qwen prompt that still leaks the reasoning prelude", () => {
+      const prompt = "### response\nEmit one JSON tool call now.\n<think>\n";
+      expect(
+        checkProfilePromptAligned(QWEN_THINK_PROFILE, prompt, options),
+      ).toContain(
+        "prefill-suppressed prompt must not end with a reasoning prelude",
+      );
+    });
+
+    it("flags a suppressed gemma prompt that still leaks the turn-framing tail", () => {
+      const prompt =
+        "### response\nEmit one JSON tool call now.\n<turn|>\n<|turn>model\n";
+      expect(
+        checkProfilePromptAligned(GEMMA4_THINK_PROFILE, prompt, options),
+      ).toContain(
+        "prefill-suppressed prompt must not end with a model-turn opener",
+      );
+    });
+
+    it("accepts clean suppressed prompts for both reasoning profiles", () => {
+      const prompt = "### response\nEmit one JSON tool call now.\n";
+      expect(
+        checkProfilePromptAligned(QWEN_THINK_PROFILE, prompt, options),
+      ).toEqual([]);
+      expect(
+        checkProfilePromptAligned(GEMMA4_THINK_PROFILE, prompt, options),
+      ).toEqual([]);
+    });
+  });
 });

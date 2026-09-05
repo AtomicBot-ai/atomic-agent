@@ -1,4 +1,8 @@
 #!/usr/bin/env node
+// Must stay first: it defaults NODE_ENV to production before `ink`
+// pulls in react-reconciler, which picks its build at require time.
+// See src/cli/node-env-bootstrap.ts.
+import "./node-env-bootstrap.js";
 import { isSea } from "node:sea";
 import { argv, exit } from "node:process";
 import { runAgentCommand } from "./run-agent.js";
@@ -8,6 +12,7 @@ import { configCommand } from "./config-command.js";
 import { serveCommand } from "./serve-command.js";
 import { traceCommand } from "./trace-command.js";
 import { taskCommand } from "./task-command.js";
+import { memoryCommand } from "./memory-command.js";
 import { modelsCommand } from "./models-command.js";
 import { importCommand } from "./import-command.js";
 import { uninstallCommand } from "./uninstall-command.js";
@@ -28,9 +33,9 @@ interface CommandDescriptor {
    *   2  usage error — unknown command or subcommand, missing required
    *      argument, argument of the wrong kind. Nothing was attempted.
    *
-   * `run`, `skill` and the dispatcher below implement this split. The
-   * rest of the table does not, and a caller must not read their codes
-   * through it:
+   * `run`, `skill`, `memory` and the dispatcher below implement this
+   * split. The rest of the table does not, and a caller must not read
+   * their codes through it:
    *
    *   - `config`, `serve`, `trace`, `task`, `models`, `import` predate
    *     the split and return `1` for usage errors too, so their `1` does
@@ -95,6 +100,11 @@ const COMMANDS: CommandDescriptor[] = [
     name: "task",
     summary: "Manage durable tasks (list|show|create|cancel|run)",
     run: taskCommand,
+  },
+  {
+    name: "memory",
+    summary: "Inspect + export the cross-session memory store (export)",
+    run: memoryCommand,
   },
   {
     name: "models",

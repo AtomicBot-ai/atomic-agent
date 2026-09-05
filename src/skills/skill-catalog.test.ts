@@ -1,6 +1,12 @@
 import { describe, it, expect } from "vitest";
 
-import { buildSkillCatalog, formatSkillCatalogLine } from "./skill-catalog.js";
+import {
+  buildSkillCatalog,
+  formatSkillCatalogLine,
+  DEFAULT_CATALOG_MAX_CHARS,
+  SKILL_CATALOG_CHARS_PER_TOKEN,
+} from "./skill-catalog.js";
+import { ENV_DEFAULTS } from "../config/config-schema.js";
 import type { SkillRecord } from "./skill-loader.js";
 
 function record(
@@ -69,5 +75,56 @@ describe("buildSkillCatalog", () => {
     });
     expect(tight).toHaveLength(1);
     expect(tight[0]?.name).toBe("first");
+  });
+
+  it("honors tokenBudget: a raised budget keeps entries the default cap drops", () => {
+    // Ten records of ~600 rendered chars each (~6000 chars total):
+    // overflowing the default 4096-char cap but fitting in 1024 tokens
+    // (8192 chars).
+    const records = Array.from({ length: 10 }, (_, i) =>
+      record(`skill-${i}`, "d".repeat(580)),
+    );
+    const byDefault = buildSkillCatalog(records);
+    expect(byDefault.length).toBeLessThan(records.length);
+
+    const raised = buildSkillCatalog(records, { tokenBudget: 1024 });
+    expect(raised.length).toBeGreaterThan(byDefault.length);
+    expect(raised.length).toBe(records.length);
+  });
+
+  it("shipped default budget maps to the historical 4096-char cap", () => {
+    // Import the real shipped default so a drive-by change to either the
+    // default or the chars/token factor trips this guard.
+    expect(
+      ENV_DEFAULTS.SKILLS_CATALOG_BUDGET * SKILL_CATALOG_CHARS_PER_TOKEN,
+    ).toBe(DEFAULT_CATALOG_MAX_CHARS);
+
+    // A record set sized to straddle the 4096-char boundary must be cut
+    // at the same entry whether the caller passes nothing (legacy
+    // hardcoded cap) or the shipped config default.
+    const records = Array.from({ length: 12 }, (_, i) =>
+      record(`skill-${i}`, "d".repeat(390)),
+    );
+    const legacy = buildSkillCatalog(records);
+    const configured = buildSkillCatalog(records, {
+      tokenBudget: ENV_DEFAULTS.SKILLS_CATALOG_BUDGET,
+    });
+    expect(configured).toEqual(legacy);
+    expect(legacy.length).toBeLessThan(records.length);
+  });
+
+  it("explicit maxChars wins over tokenBudget", () => {
+    const records = [record("first", "one"), record("second", "two")];
+    const firstLine = formatSkillCatalogLine({
+      name: "first",
+      description: "one",
+      source: "global",
+    });
+    const catalog = buildSkillCatalog(records, {
+      maxChars: firstLine.length + 1,
+      tokenBudget: 1024,
+    });
+    expect(catalog).toHaveLength(1);
+    expect(catalog[0]?.name).toBe("first");
   });
 });

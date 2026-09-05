@@ -16,10 +16,10 @@ import {
 } from "./models-catalog.js";
 
 describe("models-catalog", () => {
-  it("has exactly 12 Qwen+Gemma+Nemotron+Muse models with unique ids", () => {
-    expect(LOCAL_MODELS_CATALOG.length).toBe(12);
+  it("has exactly 13 Qwen+Gemma+Nemotron+Muse models with unique ids", () => {
+    expect(LOCAL_MODELS_CATALOG.length).toBe(13);
     const ids = new Set(LOCAL_MODELS_CATALOG.map((m) => m.id));
-    expect(ids.size).toBe(12);
+    expect(ids.size).toBe(13);
   });
 
   it("defaults to qwen-3.5-4b", () => {
@@ -83,6 +83,34 @@ describe("models-catalog", () => {
     expect(muse.supportsVision).toBe(true);
     expect(muse.description).not.toMatch(/atem|harmony/i);
     expect(muse.description).toMatch(/generic tool calling/i);
+  });
+
+  // The reduced-refusal entry is deliberately last: the Manage panel
+  // draws the catalog in array order and the onboarding picker pins
+  // uncensored entries to the bottom, so the safe defaults always come
+  // first. The tag is what both surfaces show next to it.
+  it("keeps the uncensored entry last, tagged, and marked uncensored", () => {
+    const last = LOCAL_MODELS_CATALOG.at(-1);
+    expect(last?.id).toBe("qwen-3.8-27b-uncensored");
+    expect(last?.uncensored).toBe(true);
+    expect(last?.tag).toBe("Use at your own risk");
+    // noMTP on purpose: the fused quants carry an inline MTP head the
+    // daemon has no --model-draft wiring for; noMTP is plain GGUF.
+    expect(last?.filename).toBe("Qwen3.8-27B-Uncensored-noMTP-Q4_K_M.gguf");
+    // The projector is not named "mmproj" in this repo — the installer
+    // keys on these fields, not on filename patterns, so that is fine.
+    expect(last?.supportsVision).toBe(true);
+    expect(last?.mmprojFilename).toBe("Qwen3.8-27B-Uncensored-vision-f16.gguf");
+  });
+
+  // Every uncensored entry must carry a warning tag — the onboarding row
+  // surfaces exactly that string, and a tagless uncensored entry would
+  // reach the first-run screen with no caution at all.
+  it("ships a warning tag on every uncensored entry", () => {
+    for (const def of LOCAL_MODELS_CATALOG) {
+      if (def.uncensored !== true) continue;
+      expect(def.tag, `${def.id} must warn the operator`).toBeTruthy();
+    }
   });
 
   it("ensures mmproj URL points at the same HF repo as the GGUF weights", () => {

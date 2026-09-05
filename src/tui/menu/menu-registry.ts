@@ -290,7 +290,7 @@ export const MENU: readonly MenuNode[] = [
     slash: {
       name: "llm",
       description:
-        "open LLM Local/Cloud/External/Fallback panel · `/llm provider <id>` switch text provider · `/llm fallback` edit the fallover chain",
+        "open LLM Local/Cloud/External/Fallback panel · `/llm provider <id>` switch text provider · `/llm check` test the active route's streaming tool contract · `/llm fallback` edit the fallover chain",
       rank: 24,
     },
     section: "manage",
@@ -338,7 +338,7 @@ export const MENU: readonly MenuNode[] = [
     slash: {
       name: "privacy",
       description:
-        "open the Privacy tab (analytics opt-out + approval level) · subcommands: `/privacy analytics on|off` | `/privacy level 1..5` | `/privacy approve on|off`",
+        "open the Privacy tab (analytics opt-out + session grants) · subcommands: `/privacy analytics on|off`",
       rank: 31,
     },
     section: "manage",
@@ -538,7 +538,7 @@ export const MENU: readonly MenuNode[] = [
       name: "max_steps",
       description:
         "get or set the agent's max_steps configuration: `/max_steps` | `/max_steps <number>`",
-      rank: 38,
+      rank: 39,
     },
   },
   {
@@ -564,6 +564,18 @@ export const MENU: readonly MenuNode[] = [
       description:
         "mouse support on/off/status (off restores the terminal's drag-to-select)",
       rank: 36,
+    },
+  },
+  {
+    kind: "action",
+    id: "setup.sidebar",
+    label: "Hide or show the sidebar",
+    group: "setup",
+    slash: {
+      name: "sidebar",
+      description:
+        "hide or show the session rail (the rail's « does the same)",
+      rank: 38,
     },
   },
   {

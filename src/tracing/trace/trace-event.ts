@@ -176,7 +176,26 @@ export interface TraceLoopDetected extends TraceEventBase {
    */
   level?: "warn" | "critical" | "breaker";
   /** Which sub-detector fired. Optional for back-compat. */
-  detector?: "generic_repeat" | "no_progress" | "wandering";
+  detector?:
+    | "generic_repeat"
+    | "no_progress"
+    | "wandering"
+    | "test_repeat"
+    | "read_repeat";
+  /**
+   * `read_repeat` only (issue #114): the canonical file the reads landed
+   * on, the line range the triggering read returned, and the content
+   * fingerprint before and after it — equal fingerprints are what make
+   * the re-read redundant, so both are recorded and a trace reader can
+   * check the claim. Never carries file content.
+   */
+  read?: {
+    path: string;
+    startLine: number;
+    endLine: number;
+    previousFingerprint: string;
+    fingerprint: string;
+  };
 }
 
 /**

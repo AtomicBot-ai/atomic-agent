@@ -47,7 +47,8 @@ interface MenuPopupProps {
 }
 
 /**
- * The operator menu: one key (`ctrl+p`) to every destination and every verb.
+ * The operator menu: one key (Esc, on an idle prompt) to every destination
+ * and every verb.
  *
  * Rendered as a true overlay — `position="absolute"` inside the content pane,
  * so it floats **on top of** the chat log or the active panel instead of

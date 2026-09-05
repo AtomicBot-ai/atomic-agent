@@ -1,4 +1,8 @@
-import { describe, expect, it, vi } from "vitest";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AtomicAgentConfig } from "../../../../config/index.js";
 import type { runCommand as RunCommandType } from "../../../../sandbox/command-runner.js";
@@ -20,6 +24,7 @@ function makeConfig(
         maxResults: 8,
         timeoutMs: 15_000,
         cacheTtlMinutes: 15,
+        persistCache: true,
         fallback: [],
         searxng: { instanceUrl: null },
         exa: {
@@ -188,6 +193,87 @@ describe("os.web.search", () => {
 
     expect(result.status).toBe("error");
     expect(result.details.provider).toBe("duckduckgo");
+  });
+});
+
+describe("os.web.search persistent cache (#256)", () => {
+  let stateDir: string;
+
+  beforeEach(() => {
+    stateDir = mkdtempSync(join(tmpdir(), "web-search-state-"));
+  });
+
+  afterEach(() => {
+    rmSync(stateDir, { recursive: true, force: true });
+  });
+
+  it("a second tool instance (fresh process, same stateDir) serves the cached result", async () => {
+    const firstRun = vi.fn(makeRunCommand(RESULT_HTML));
+    const first = buildOsWebSearchTool({
+      config: makeConfig(),
+      stateDir,
+      runCommand: firstRun,
+      lookup: publicLookup,
+    });
+    const miss = await first.run({ query: "same query" }, makeCtx());
+    expect(miss.status).toBe("ok");
+    expect(miss.details.fromCache).toBe(false);
+    expect(existsSync(join(stateDir, "web-search-cache.json"))).toBe(true);
+
+    // A new builder call is what a new per-task process looks like from
+    // the cache's point of view: nothing shared but the stateDir.
+    const secondRun = vi.fn(makeRunCommand(RESULT_HTML));
+    const second = buildOsWebSearchTool({
+      config: makeConfig(),
+      stateDir,
+      runCommand: secondRun,
+      lookup: publicLookup,
+    });
+    const hit = await second.run({ query: "same query" }, makeCtx());
+    expect(hit.status).toBe("ok");
+    expect(hit.details.fromCache).toBe(true);
+    expect(secondRun).not.toHaveBeenCalled();
+  });
+
+  it("web.search.persistCache: false keeps the cache in-memory", async () => {
+    const first = buildOsWebSearchTool({
+      config: makeConfig({ persistCache: false }),
+      stateDir,
+      runCommand: makeRunCommand(RESULT_HTML),
+      lookup: publicLookup,
+    });
+    await first.run({ query: "same query" }, makeCtx());
+    expect(existsSync(join(stateDir, "web-search-cache.json"))).toBe(false);
+
+    const secondRun = vi.fn(makeRunCommand(RESULT_HTML));
+    const second = buildOsWebSearchTool({
+      config: makeConfig({ persistCache: false }),
+      stateDir,
+      runCommand: secondRun,
+      lookup: publicLookup,
+    });
+    const result = await second.run({ query: "same query" }, makeCtx());
+    expect(result.details.fromCache).toBe(false);
+    expect(secondRun).toHaveBeenCalled();
+  });
+
+  it("without a stateDir the cache stays in-memory (embedders and tests)", async () => {
+    const first = buildOsWebSearchTool({
+      config: makeConfig(),
+      runCommand: makeRunCommand(RESULT_HTML),
+      lookup: publicLookup,
+    });
+    await first.run({ query: "same query" }, makeCtx());
+
+    const secondRun = vi.fn(makeRunCommand(RESULT_HTML));
+    const second = buildOsWebSearchTool({
+      config: makeConfig(),
+      runCommand: secondRun,
+      lookup: publicLookup,
+    });
+    const result = await second.run({ query: "same query" }, makeCtx());
+    expect(result.details.fromCache).toBe(false);
+    expect(secondRun).toHaveBeenCalled();
   });
 });
 

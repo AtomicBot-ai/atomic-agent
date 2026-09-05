@@ -5,10 +5,12 @@ vi.mock("node:child_process", () => ({ execSync: execSyncMock }));
 
 import {
   WINDOWS_BACKEND_ASSETS,
+  isWindowsGpuBackendAsset,
   parseDriverCudaVersion,
   resetWindowsBackendAssetCache,
   resolveDownloadAsset,
   selectWindowsBackendAsset,
+  setConfiguredBackendVariant,
 } from "./windows-backend-variant.js";
 
 const NVIDIA_SMI_HEADER = `
@@ -91,14 +93,34 @@ describe("selectWindowsBackendAsset", () => {
   });
 });
 
+describe("isWindowsGpuBackendAsset", () => {
+  it("recognises the three GPU builds", () => {
+    expect(isWindowsGpuBackendAsset(WINDOWS_BACKEND_ASSETS.vulkan)).toBe(true);
+    expect(isWindowsGpuBackendAsset(WINDOWS_BACKEND_ASSETS.cuda124)).toBe(true);
+    expect(isWindowsGpuBackendAsset(WINDOWS_BACKEND_ASSETS.cuda133)).toBe(true);
+  });
+
+  it("rejects the CPU build", () => {
+    expect(isWindowsGpuBackendAsset(WINDOWS_BACKEND_ASSETS.cpu)).toBe(false);
+  });
+
+  it("treats a pre-`asset`-field install as a GPU build", () => {
+    // The CPU zip was not downloadable before the field existed, so an
+    // undefined asset on win32 can only be one of the GPU builds.
+    expect(isWindowsGpuBackendAsset(undefined)).toBe(true);
+  });
+});
+
 describe("resolveDownloadAsset", () => {
   beforeEach(() => {
     resetWindowsBackendAssetCache();
+    setConfiguredBackendVariant("auto");
     execSyncMock.mockReset();
   });
 
   afterEach(() => {
     resetWindowsBackendAssetCache();
+    setConfiguredBackendVariant("auto");
   });
 
   it("leaves macOS/Linux assets untouched (no nvidia-smi probe)", () => {
@@ -133,5 +155,57 @@ describe("resolveDownloadAsset", () => {
     resolveDownloadAsset("win32", "x64");
     resolveDownloadAsset("win32", "x64");
     expect(execSyncMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("a configured 'cpu' variant pins the CPU zip without probing nvidia-smi", () => {
+    setConfiguredBackendVariant("cpu");
+    expect(resolveDownloadAsset("win32", "x64").assetName).toBe(
+      WINDOWS_BACKEND_ASSETS.cpu,
+    );
+    expect(execSyncMock).not.toHaveBeenCalled();
+  });
+
+  it("a configured 'vulkan' variant beats a CUDA-capable driver", () => {
+    execSyncMock.mockReturnValue(Buffer.from(NVIDIA_SMI_HEADER));
+    setConfiguredBackendVariant("vulkan");
+    expect(resolveDownloadAsset("win32", "x64").assetName).toBe(
+      WINDOWS_BACKEND_ASSETS.vulkan,
+    );
+    expect(execSyncMock).not.toHaveBeenCalled();
+  });
+
+  it("a variant configured after detection is not shadowed by the cache", () => {
+    // The CPU fallback flips the preference mid-process, after the
+    // auto-update path already detected (and cached) a GPU asset.
+    execSyncMock.mockReturnValue(Buffer.from(NVIDIA_SMI_HEADER));
+    expect(resolveDownloadAsset("win32", "x64").assetName).toBe(
+      WINDOWS_BACKEND_ASSETS.cuda124,
+    );
+    setConfiguredBackendVariant("cpu");
+    expect(resolveDownloadAsset("win32", "x64").assetName).toBe(
+      WINDOWS_BACKEND_ASSETS.cpu,
+    );
+  });
+
+  it("returning to 'auto' restores detection", () => {
+    execSyncMock.mockReturnValue(Buffer.from(NVIDIA_SMI_HEADER));
+    setConfiguredBackendVariant("cpu");
+    expect(resolveDownloadAsset("win32", "x64").assetName).toBe(
+      WINDOWS_BACKEND_ASSETS.cpu,
+    );
+    setConfiguredBackendVariant("auto");
+    expect(resolveDownloadAsset("win32", "x64").assetName).toBe(
+      WINDOWS_BACKEND_ASSETS.cuda124,
+    );
+  });
+
+  it("ignores the variant preference off Windows (single-asset platforms)", () => {
+    setConfiguredBackendVariant("cpu");
+    expect(resolveDownloadAsset("darwin", "arm64").assetName).toBe(
+      "llama-turboquant-macos-arm64.zip",
+    );
+    expect(resolveDownloadAsset("linux", "x64").assetName).toBe(
+      "llama-turboquant-linux-x64-vulkan.zip",
+    );
   });
 });
