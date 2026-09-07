@@ -9514,19 +9514,38 @@ async function chromeTest(
       const clipAttached = await clipboard.readText();
       await js<number>("window.__popLog(1)");
       const focusBlocked = /not focused/i.test(JSON.stringify(await js<string[]>("window.__toasts().map(String)")));
-      check(
-        "item 4: copy puts the message text on the clipboard and nothing else",
-        !!copiedUser && clipUser === copiedUser.text
-          && !!copiedAsst && clipAsst === copiedAsst.text
-          && strewn
-          && clipAttached === "the report is ready"
-          && !/Saved to|\/tmp\/report\.md/.test(clipAttached),
-        `user ${JSON.stringify(clipUser.slice(0, 40))} === message ${clipUser === (copiedUser?.text ?? "")};`
-        + ` assistant match ${clipAsst === (copiedAsst?.text ?? "")};`
-        + ` attached reply → ${JSON.stringify(clipAttached)} (the "Saved to …" strip rendered: ${strewn};`
-        + ` it is the desktop's own footer and is not copied)`
-        + (focusBlocked ? "; NOTE the write was blocked by focus, not by the feature" : ""),
-      );
+      /* NEVER print what came off the pasteboard. When the write is blocked
+         — a headless run is not the focused app — a read returns whatever
+         the OPERATOR had copied, and this line goes to stdout, to a log
+         file and into whatever is reading the run. It printed a live API
+         token that way once. Booleans and lengths say everything the check
+         needs; the bytes say nothing it needs and carry everything it must
+         not repeat. */
+      const userMatch = !!copiedUser && clipUser === copiedUser.text;
+      const asstMatch = !!copiedAsst && clipAsst === copiedAsst.text;
+      const attachedMatch = clipAttached === "the report is ready";
+      const footerKept = /Saved to|\/tmp\/report\.md/.test(clipAttached);
+      const detail =
+        `user match ${userMatch}; assistant match ${asstMatch};`
+        + ` attached reply match ${attachedMatch} (${clipAttached.length} chars on the pasteboard,`
+        + ` strip rendered: ${strewn}; the "Saved to …" footer is the desktop's own and is not copied:`
+        + ` present in clipboard ${footerKept})`;
+      if (focusBlocked) {
+        /* Same reasoning as the non-empty-pasteboard branch above: the
+           feature was driven, the OS refused the write because this run is
+           not the focused app, and a red line here would blame the product
+           for the harness's own environment. */
+        process.stdout.write(
+          `SKIP item 4: the live-pasteboard round trip — macOS refused the write to an unfocused app,`
+          + ` so the read returned the operator's own clipboard, not ours\n`,
+        );
+      } else {
+        check(
+          "item 4: copy puts the message text on the clipboard and nothing else",
+          userMatch && asstMatch && strewn && attachedMatch && !footerKept,
+          detail,
+        );
+      }
       /* Review fix: both flavours go back, not just the plain text — the
          reason the round trip may now run at all. An atomic write of one item
          carrying text/plain and text/html is what the operator had. */
