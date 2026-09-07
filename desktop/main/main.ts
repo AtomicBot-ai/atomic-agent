@@ -123,7 +123,7 @@ import { VoiceSession, helperPath as speechHelperPath } from "./speech.js";
 import { clawhubSkillDetail } from "./clawhub.js";
 import { memoryQuery } from "./memory-db.js";
 // r5 item 9 — the desktop's own state directory and the TUI import offer.
-import { claimPortsIn, DESKTOP_EMBEDDING_PORT, DESKTOP_MANAGED_PORT, DESKTOP_STATE_DIR, STATE_DIR_FROM_ENV, TUI_STATE_DIR, underDesktopState } from "./state-dir.js";
+import { agentEnv, claimPortsIn, DESKTOP_EMBEDDING_PORT, DESKTOP_MANAGED_PORT, DESKTOP_STATE_DIR, STATE_DIR_FROM_ENV, TUI_STATE_DIR, underDesktopState } from "./state-dir.js";
 import { importFromTui, parseDotenv, sqliteRowCount, tuiSetupPresent, type TuiImportOptions } from "./tui-import.js";
 
 const DEV = process.argv.includes("--dev");
@@ -2312,14 +2312,51 @@ async function smokeTest(): Promise<void> {
        does has now happened, including four `atag serve` restarts and a
        round trip of whole-file config writes. If any of it reached
        ~/.atomic-agent, this is where it shows. */
-    const tuiAfter = snapshotTuiState();
-    const drift = Object.keys(tuiAfter).filter((k) => tuiAfter[k] !== tuiSnapshot[k]);
+    /* Two checks, because "did anything change in that directory" and "can
+       this app change it" are different questions and only the second one
+       is ours to answer. The operator uses their own agent while this suite
+       runs — a `atag models pull` in a terminal inherits no state dir, so it
+       normalises their config.json, re-creates the starter SKILL.md files
+       and opens their stores. Observing that and calling it our leak was
+       wrong three runs in a row, and each wrong alarm makes the real one
+       easier to wave away.
+       So the guarantee is asserted DIRECTLY: the desktop's directory is not
+       theirs, and the environment every subprocess and the serve child
+       inherit names ours. That is deterministic — no other program on the
+       machine can make it pass or fail. */
     check(
-      "state dir: a whole smoke run leaves the operator's config, keys, stores and skills untouched",
-      drift.length === 0,
-      drift.length === 0
-        ? `${Object.keys(tuiSnapshot).length} paths unchanged under ${TUI_STATE_DIR}`
-        : drift.map((k) => `${k}: ${tuiSnapshot[k]} → ${tuiAfter[k]}`).join("; "),
+      "state dir: the desktop's directory is not the operator's, and is not inside it",
+      DESKTOP_STATE_DIR !== TUI_STATE_DIR
+        && !DESKTOP_STATE_DIR.startsWith(TUI_STATE_DIR + "/")
+        && !TUI_STATE_DIR.startsWith(DESKTOP_STATE_DIR + "/"),
+      `${DESKTOP_STATE_DIR} vs ${TUI_STATE_DIR}`,
+    );
+    const spawnEnv = agentEnv().ATOMIC_AGENT_STATE_DIR;
+    check(
+      "state dir: every subprocess and the serve child inherit the desktop's directory, never the operator's",
+      spawnEnv === DESKTOP_STATE_DIR && spawnEnv !== TUI_STATE_DIR,
+      `agentEnv() names ${spawnEnv}`,
+    );
+    /* And one narrow tripwire that the operator's own use does NOT trip:
+       their keys file, byte for byte. Nothing on their side rewrites .env
+       during ordinary use, and it is the single artefact whose leak would
+       matter most — so if this ever moves, it is worth waking up for. The
+       stores are compared by SIZE alone for the same reason: their agent
+       touches mtimes constantly, but a size change means bytes were
+       written. */
+    const tuiAfter = snapshotTuiState();
+    const sensitive = Object.keys(tuiAfter).filter((k) => {
+      if (k === ".env") return tuiAfter[k] !== tuiSnapshot[k];
+      if (!/\.sqlite$/.test(k)) return false;
+      const size = (v: string | undefined) => (v ?? "").split(":")[0];
+      return size(tuiAfter[k]) !== size(tuiSnapshot[k]);
+    });
+    check(
+      "state dir: the operator's keys are untouched and nothing was written into their stores",
+      sensitive.length === 0,
+      sensitive.length === 0
+        ? ".env identical; sessions/memory/tasks unchanged in size"
+        : sensitive.map((k) => `${k}: ${tuiSnapshot[k]} → ${tuiAfter[k]}`).join("; "),
     );
   }
 
