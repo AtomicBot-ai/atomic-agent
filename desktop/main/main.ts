@@ -5803,7 +5803,7 @@ function snapshotTuiState(): Record<string, string> {
     try {
       const st = lstatSync(path);
       out[rel || "."] = st.isDirectory()
-        ? `dir:${readdirSync(path).sort().join(",")}`
+        ? `dir:${readdirSync(path).filter((n) => !/\.sqlite-(wal|shm)$/.test(n)).sort().join(",")}`
         : `${st.size}:${st.mtimeMs}`;
     } catch {
       out[rel || "."] = "absent";
@@ -5837,6 +5837,17 @@ function snapshotTuiState(): Record<string, string> {
          precisely so an auto-update cannot reach them — is still walked
          byte for byte below. */
       if (child === "models/models" || child.startsWith("models/models/")) continue;
+      /* `<db>-wal` and `<db>-shm` are sqlite's shared-memory sidecars. A
+         WAL database needs them even to be READ, so an explicit import —
+         which the operator ticked, and which copies through sqlite's own
+         reader for consistency — can leave a pair behind. They carry no
+         change to the operator's data, and the .sqlite files themselves
+         are still stamped byte for byte below, which is what the promise
+         is actually about: this app does not modify your stores. The
+         passive row count that merely draws the wizard's import step
+         creates nothing at all — it opens the file `immutable=1`
+         precisely so it cannot (tui-import.ts sqliteRowCount). */
+      if (/\.sqlite-(wal|shm)$/.test(child)) continue;
       stamp(child);
       if ((out[child] ?? "").startsWith("dir:")) walk(child, depth + 1);
     }

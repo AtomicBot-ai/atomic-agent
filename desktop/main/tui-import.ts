@@ -203,10 +203,32 @@ function importableSkills(): string[] {
   return dirNames(join(TUI_STATE_DIR, "skills")).filter((n) => !mine.has(n));
 }
 
+/**
+ * Counting rows is the PASSIVE half of this module: it runs merely because
+ * the wizard's import step drew itself, before the operator has agreed to
+ * anything. So it must leave no trace at all in the terminal agent's
+ * directory — and `-readonly` alone does not, because a WAL database needs
+ * its shared-memory index even to be read, so sqlite CREATES `<db>-shm`
+ * and `<db>-wal` beside the operator's file. The state-dir check caught
+ * exactly that: three sidecar pairs appearing in a directory this app
+ * promises not to touch.
+ *
+ * `immutable=1` tells sqlite the file cannot change under it, so it skips
+ * the WAL machinery entirely and opens nothing but the database itself.
+ * The cost is that a count taken while the operator's own agent is
+ * mid-write may be a little stale — which is the right trade for a preview
+ * number, and far better than writing into their directory to make a
+ * number one row fresher.
+ *
+ * The `.backup` path below deliberately does NOT use this: a copy the
+ * operator explicitly asked for must be consistent, and there sqlite's
+ * real reader is the correct tool.
+ */
 export async function sqliteRowCount(file: string, table: string): Promise<number> {
   if (!existsSync(file) || !existsSync(SQLITE)) return 0;
   try {
-    const { stdout } = await run(SQLITE, ["-readonly", file, `select count(*) from ${table}`], { timeout: 10_000 });
+    const uri = `file:${encodeURI(file)}?immutable=1`;
+    const { stdout } = await run(SQLITE, ["-readonly", uri, `select count(*) from ${table}`], { timeout: 10_000 });
     const n = Number(stdout.trim());
     return Number.isFinite(n) ? n : 0;
   } catch {
