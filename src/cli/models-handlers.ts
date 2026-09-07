@@ -7,6 +7,8 @@ import {
   checkForBackendUpdate,
   downloadBackend,
   downloadEmbeddingModel,
+  downloadJobId,
+  downloadMmproj,
   downloadModel,
   EMBEDDING_MODELS_CATALOG,
   fallBackToCpuBackend,
@@ -17,6 +19,7 @@ import {
   getEmbeddingModelDef,
   getLocalModelDef,
   isBackendDownloaded,
+  isDownloadJobLive,
   isEmbeddingModelDownloaded,
   isKnownEmbeddingModelId,
   isKnownLocalModelId,
@@ -26,6 +29,7 @@ import {
   listVulkanDevices,
   maybeAutoUpdateBackend,
   readBackendVersion,
+  readDownloadJob,
   readPartialDownload,
   removeModel,
   resolveChatTemplatePath,
@@ -38,6 +42,8 @@ import {
   shouldFallBackToCpuBackend,
   startChatAndEmbeddingDaemons,
   stopChatAndEmbeddingDaemons,
+  type DownloadJobKind,
+  type DownloadJobMode,
 } from "../local-llm/index.js";
 
 export function readCliOption(args: string[], name: string): string | undefined {
@@ -46,39 +52,12 @@ export function readCliOption(args: string[], name: string): string | undefined 
   return args[i + 1];
 }
 
-function formatGb(bytes: number): string {
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-}
-
-/**
- * One line per retry so a flaky link reads as "retrying", not "hung".
- * Goes to stderr on its own row: the progress line is `\r`-rewritten
- * in place, and the note must survive the next rewrite.
- */
-export function renderPullRetry(info: {
-  attempt: number;
-  maxRetries: number;
-  delayMs: number;
-  error: Error;
-}): string {
-  return `download interrupted (${info.error.message}) — retry ${info.attempt}/${info.maxRetries} in ${Math.round(info.delayMs / 1000)}s, resuming from the partial file`;
-}
-
-export function renderPullProgress(
-  label: string,
-  percent: number,
-  transferred: number,
-  total: number,
-): string {
-  const barW = 20;
-  const filled = Math.min(barW, Math.round((percent / 100) * barW));
-  const bar = `${"=".repeat(filled)}${" ".repeat(barW - filled)}`;
-  const tail =
-    total > 0
-      ? `${formatGb(transferred)} / ${formatGb(total)}`
-      : `${formatGb(transferred)}`;
-  return `[${bar}] ${percent}%  ${tail}  ${label}`;
-}
+export { formatGb, renderPullProgress, renderPullRetry } from "./pull-progress.js";
+import { renderPullProgress, renderPullRetry } from "./pull-progress.js";
+import {
+  followDownloadJob,
+  spawnDownloadWorker,
+} from "./models-downloads.js";
 
 export async function runLocalModelsList(): Promise<number> {
   const cfg = getConfig();
@@ -100,7 +79,15 @@ export async function runLocalModelsList(): Promise<number> {
   return 0;
 }
 
-export async function runLocalModelsPull(idArg: string | undefined): Promise<number> {
+/**
+ * `models pull <id> [--background] [--mmproj]`. A live background
+ * worker for the same model is followed rather than raced; an
+ * interrupted one is resumed in the foreground (or re-spawned with
+ * `--background`) from its partial file.
+ */
+export async function runLocalModelsPull(args: string[]): Promise<number> {
+  const flags = new Set(args.filter((a) => a.startsWith("--")));
+  const idArg = args.find((a) => !a.startsWith("--"));
   if (!idArg || !isKnownLocalModelId(idArg)) {
     process.stderr.write(
       `unknown model id. Valid: ${listLocalModels().map((m) => m.id).join(", ")}\n`,
@@ -109,23 +96,36 @@ export async function runLocalModelsPull(idArg: string | undefined): Promise<num
   }
   const m = getLocalModelDef(idArg);
   const dataDir = getConfig().paths.localModelsDataDir;
+  const mode: DownloadJobMode = flags.has("--mmproj") && m.supportsVision ? "with-mmproj" : "gguf-only";
+  if (flags.has("--mmproj") && !m.supportsVision) {
+    process.stderr.write(`note: ${m.id} is not vision-capable — no mmproj to fetch\n`);
+  }
+
+  const live = readDownloadJob(dataDir, downloadJobId("chat", m.id));
+  if (isDownloadJobLive(live)) {
+    process.stderr.write(
+      `${m.id} is already downloading in the background (pid ${live.pid}) — following it; Ctrl+C detaches\n`,
+    );
+    return followDownloadJob(dataDir, live.id);
+  }
+  if (flags.has("--background")) {
+    return startBackgroundPull({ kind: "chat", modelId: m.id, mode });
+  }
+
   const estTotal = Math.round(m.fileSizeGb * (1024 * 1024 * 1024));
   const tty = process.stderr.isTTY;
   let lastLine = "";
-  const onProgress = (percent: number, transferred: number, total: number): void => {
-    const line = renderPullProgress(
-      `${m.filename} (${m.sizeLabel})`,
-      percent,
-      transferred,
-      total > 0 ? total : estTotal,
-    );
-    if (tty) {
-      process.stderr.write(`\r${line.padEnd(79)}`);
-    } else if (percent % 5 === 0 || percent === 100) {
-      process.stderr.write(`${line}\n`);
-    }
-    lastLine = line;
-  };
+  const progressFor =
+    (label: string, est: number) =>
+    (percent: number, transferred: number, total: number): void => {
+      const line = renderPullProgress(label, percent, transferred, total > 0 ? total : est);
+      if (tty) {
+        process.stderr.write(`\r${line.padEnd(79)}`);
+      } else if (percent % 5 === 0 || percent === 100) {
+        process.stderr.write(`${line}\n`);
+      }
+      lastLine = line;
+    };
   const onRetry = (info: Parameters<typeof renderPullRetry>[0]): void => {
     process.stderr.write(`${tty ? "\n" : ""}${renderPullRetry(info)}\n`);
   };
@@ -138,17 +138,62 @@ export async function runLocalModelsPull(idArg: string | undefined): Promise<num
         ? `resuming ${m.id} (${m.filename}, ${m.sizeLabel}) — ${formatGgufSize(partial.transferred)} already on disk\n`
         : `downloading ${m.id} (${m.filename}, ${m.sizeLabel})\n`,
     );
-    await downloadModel(dataDir, m, { onProgress, onRetry });
+    await downloadModel(dataDir, m, {
+      onProgress: progressFor(`${m.filename} (${m.sizeLabel})`, estTotal),
+      onRetry,
+    });
     if (tty) process.stderr.write(`\n`);
     else if (lastLine) process.stderr.write(`done: ${lastLine}\n`);
     const savedPath = join(dataDir, "models", m.id, m.filename);
     process.stdout.write(`done. model saved to ${savedPath}\n`);
+    if (mode === "with-mmproj" && m.mmprojFilename && !isMmprojDownloaded(dataDir, m)) {
+      process.stderr.write(`downloading mmproj ${m.mmprojFilename}\n`);
+      await downloadMmproj(dataDir, m, {
+        onProgress: progressFor(
+          m.mmprojFilename,
+          Math.round((m.mmprojFileSizeGb ?? 1) * (1024 * 1024 * 1024)),
+        ),
+        onRetry,
+      });
+      if (tty) process.stderr.write(`\n`);
+      process.stdout.write(
+        `done. mmproj saved to ${resolveMmprojFilePath(dataDir, m.id, m.mmprojFilename)}\n`,
+      );
+    }
     return 0;
   } catch (e) {
     if (tty) process.stderr.write(`\n`);
     process.stderr.write(`${e instanceof Error ? e.message : String(e)}\n`);
     return 1;
   }
+}
+
+/**
+ * Launch the detached worker and hand the terminal back. The record it
+ * seeds is what `models downloads` shows a moment later.
+ */
+function startBackgroundPull(input: {
+  kind: DownloadJobKind;
+  modelId: string;
+  mode: DownloadJobMode;
+}): number {
+  const result = spawnDownloadWorker(input);
+  if (result.outcome === "already-running") {
+    process.stdout.write(
+      `${input.modelId} is already downloading in the background (pid ${result.job.pid})\n`,
+    );
+    return 0;
+  }
+  const { job, logPath } = result;
+  process.stdout.write(
+    `${job.transferredBytes > 0 ? "resuming" : "downloading"} ${job.label} in the background (pid ${job.pid})\n` +
+      `  progress: atomic-agent models downloads\n` +
+      `  follow:   atomic-agent models pull${input.kind === "embedding" ? "-embedding" : ""} ${input.modelId}\n` +
+      `  stop:     atomic-agent models downloads cancel ${input.modelId}\n` +
+      `  log:      ${logPath}\n` +
+      `the download keeps running after this terminal closes.\n`,
+  );
+  return 0;
 }
 
 export async function runLocalModelsUse(idArg: string | undefined): Promise<number> {
@@ -605,9 +650,9 @@ export async function runLocalModelsUseDevice(
  * to the typed `EmbeddingModelId` union so the wrong catalog can't
  * be hit by accident.
  */
-export async function runLocalModelsPullEmbedding(
-  idArg: string | undefined,
-): Promise<number> {
+export async function runLocalModelsPullEmbedding(args: string[]): Promise<number> {
+  const flags = new Set(args.filter((a) => a.startsWith("--")));
+  const idArg = args.find((a) => !a.startsWith("--"));
   if (!idArg || !isKnownEmbeddingModelId(idArg)) {
     process.stderr.write(
       `unknown embedding model id. Valid: ${EMBEDDING_MODELS_CATALOG.map((m) => m.id).join(", ")}\n`,
@@ -616,6 +661,18 @@ export async function runLocalModelsPullEmbedding(
   }
   const m = getEmbeddingModelDef(idArg);
   const dataDir = getConfig().paths.localModelsDataDir;
+
+  const live = readDownloadJob(dataDir, downloadJobId("embedding", m.id));
+  if (isDownloadJobLive(live)) {
+    process.stderr.write(
+      `${m.id} is already downloading in the background (pid ${live.pid}) — following it; Ctrl+C detaches\n`,
+    );
+    return followDownloadJob(dataDir, live.id);
+  }
+  if (flags.has("--background")) {
+    return startBackgroundPull({ kind: "embedding", modelId: m.id, mode: "gguf-only" });
+  }
+
   const estTotal = Math.round(m.fileSizeGb * (1024 * 1024 * 1024));
   const tty = process.stderr.isTTY;
   let lastLine = "";

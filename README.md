@@ -311,6 +311,17 @@ atomic-agent tui --cwd /path/to/work
 
 Managed mode downloads the backend, pulls GGUF models, selects the active model, and starts detached chat / embedding daemons when configured.
 
+Big models can download in the background, detached from the terminal that started them:
+
+```bash
+atomic-agent models pull --background qwen-3.5-35b   # returns at once; keeps running after the terminal closes
+atomic-agent models downloads                        # list background downloads, progress, interrupted ones
+atomic-agent models pull qwen-3.5-35b                # follow a running download in the foreground (Ctrl+C detaches)
+atomic-agent models downloads cancel qwen-3.5-35b    # stop it; what was fetched stays on disk
+```
+
+The worker is a detached copy of the CLI writing its progress to `<stateDir>/models/downloads/<job>.json` and its log next to it, the same arrangement as the managed `llama-server` daemon. A worker that dies mid-way (a reboot, a `kill -9`) shows as `interrupted` in `models downloads`, and running the same `pull` again, with or without `--background`, resumes from the partial file. `pull --mmproj` also fetches a vision model's projector; `pull-embedding --background` works the same way for embedding models.
+
 Model downloads resume. An interrupted pull (a dropped connection, Ctrl+C, a closed terminal) keeps what it has fetched next to the destination as `<file>.part`, and the next `models pull` of the same model continues from that point with a `Range` request rather than starting over. The downloader validates the partial against the server's `ETag` before appending, so a file re-uploaded under the same name is fetched afresh; within one pull, transport errors and stalls retry from the partial with backoff before giving up.
 
 The managed chat daemon stops when the last session exits, freeing the RAM and VRAM the model was holding; set `localModels.managed.stopOnExit: false` in `config.json` to keep the model warm between sessions. Daemons started standalone with `models start` are never touched.

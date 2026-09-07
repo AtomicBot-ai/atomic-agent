@@ -63,6 +63,29 @@ export {
   type PartialDownloadMeta,
 } from "./download-file.js";
 export {
+  DOWNLOAD_JOB_VERSION,
+  downloadJobId,
+  isDownloadJobLive,
+  listDownloadJobs,
+  readDownloadJob,
+  reconcileDownloadJob,
+  removeDownloadJob,
+  resolveDownloadJobPath,
+  resolveDownloadLogPath,
+  resolveDownloadsDir,
+  writeDownloadJob,
+  type DownloadJob,
+  type DownloadJobKind,
+  type DownloadJobMode,
+  type DownloadJobStatus,
+} from "./download-jobs.js";
+export {
+  initialDownloadJob,
+  runDownloadWorker,
+  type DownloadWorkerInput,
+  type DownloadWorkerOutcome,
+} from "./download-worker.js";
+export {
   readBackendVersion,
   writeBackendVersion,
   type BackendVersionInfo,
