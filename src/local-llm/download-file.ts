@@ -459,6 +459,11 @@ async function downloadAttempt(
         let next: Awaited<ReturnType<typeof reader.read>>;
         try {
           next = await Promise.race([reader.read(), aborted]);
+          // A chunk that was already queued can win the race against an
+          // abort that fired during the previous write. Nothing is
+          // written past a cancel: the partial ends exactly where the
+          // caller stopped it.
+          if (attemptAbort.signal.aborted) throw createAbortError();
         } catch (err) {
           reader.cancel().catch(() => undefined);
           throw translateAttemptFailure(err, opts?.signal, stalled, stallTimeoutMs);
