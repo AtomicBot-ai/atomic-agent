@@ -54,6 +54,7 @@ import {
   traceBaseline,
   // Item 7A — add a model from Hugging Face
   addCustomModelEntry,
+  normaliseLlmBlock,
 } from "./agent-cli.js";
 // Item 7A — the vendored port of the agent's huggingface-* modules; the
 // renderer's CSP forbids it from reaching huggingface.co itself.
@@ -1964,6 +1965,56 @@ async function smokeTest(): Promise<void> {
     const chips = await js<number>("window.__pushAssistant('Saved the report to /Users/valerii/Desktop/report.pdf and the notes to ~/notes/summary.md.')");
     check("file paths render as chips", chips === 2, `${chips} chips`);
 
+    // --- first run: a config that has no `llm` block at all. -------------
+    // The wizard's first cloud provider is written into a file whose `llm`
+    // key is absent, so the schema fills activeTextProvider with its default
+    // "local-llama" — and the write was rejected because no provider carried
+    // that id. Every state dir this suite has ever used was a COPY of a
+    // configured one, which already had the entry, so 484 checks never saw
+    // it and the operator hit it on his first launch. Pinned as a truth
+    // table on the pure repair, because agentEnv() fixes the state dir at
+    // boot and a live write here could not reach a fresh directory.
+    const freshWrite: Record<string, unknown> = {
+      localModels: { mode: "external", url: "http://127.0.0.1:8080", managed: { port: 19091 } },
+      llm: { providers: [{ id: "openrouter", kind: "openrouter" }] },
+    };
+    normaliseLlmBlock(freshWrite);
+    const freshIds = ((freshWrite.llm as { providers: Array<{ id: string }> }).providers).map((p) => p.id);
+    check(
+      "first run: an llm block written without local-llama gains the entry the runtime implies",
+      freshIds[0] === "local-llama" && freshIds.includes("openrouter") && freshIds.length === 2,
+      freshIds.join(","),
+    );
+    const freshLocal = ((freshWrite.llm as { providers: Array<Record<string, unknown>> }).providers)[0]!;
+    check(
+      "first run: the synthesized entry is a usable llama-server route",
+      freshLocal.kind === "llama-server" && freshLocal.url === "http://127.0.0.1:8080",
+      JSON.stringify(freshLocal),
+    );
+    const already: Record<string, unknown> = {
+      localModels: { mode: "managed", managed: { port: 19091 } },
+      llm: { activeTextProvider: "aimlapi", providers: [{ id: "local-llama" }, { id: "aimlapi" }] },
+    };
+    const beforeCoherent = JSON.stringify(already);
+    normaliseLlmBlock(already);
+    check("a coherent llm block is left exactly as it was", JSON.stringify(already) === beforeCoherent, JSON.stringify(already).slice(0, 90));
+    const bogus: Record<string, unknown> = {
+      localModels: { mode: "managed", managed: { port: 19091 } },
+      llm: { activeTextProvider: "typo-provider", providers: [{ id: "aimlapi" }] },
+    };
+    normaliseLlmBlock(bogus);
+    // The repair may still add local-llama here — activeEmbeddingProvider is
+    // absent, so it too defaults to local-llama and genuinely needs the entry.
+    // What must NOT happen is the typo being repointed at some other provider:
+    // that would turn a caller's mistake into a silent, wrong route, and the
+    // CLI's own "unknown provider id" error is the honest outcome.
+    const bogusLlm = bogus.llm as { activeTextProvider: string; providers: Array<{ id: string }> };
+    check(
+      "an unknown provider id is left to fail loudly, never silently repointed",
+      bogusLlm.activeTextProvider === "typo-provider" && !bogusLlm.providers.some((p) => p.id === "typo-provider"),
+      JSON.stringify(bogus.llm),
+    );
+
     // --- item 5: the attachment strip. Real files, real fs.stat, real collector. ---
     // The harness writes its own temp file (as it does for the screenshot); the
     // missing sibling is never created, so a chip for it would be a fabricated one.
@@ -2264,7 +2315,7 @@ async function smokeTest(): Promise<void> {
     const tuiAfter = snapshotTuiState();
     const drift = Object.keys(tuiAfter).filter((k) => tuiAfter[k] !== tuiSnapshot[k]);
     check(
-      "state dir: a whole smoke run leaves ~/.atomic-agent untouched",
+      "state dir: a whole smoke run leaves the operator's config, keys, stores and skills untouched",
       drift.length === 0,
       drift.length === 0
         ? `${Object.keys(tuiSnapshot).length} paths unchanged under ${TUI_STATE_DIR}`
@@ -5773,6 +5824,19 @@ function snapshotTuiState(): Record<string, string> {
     }
     for (const name of entries) {
       const child = rel ? join(rel, name) : name;
+      /* The GGUF weights are the one thing the desktop shares on purpose:
+         the fresh-dir seed symlinks `models/models` at the operator's copy
+         so a first run does not re-download gigabytes, which the wizard
+         says out loud before the operator agrees to it. Bytes changing
+         under there is therefore the DESIGN, not contamination — and the
+         operator pulling a model in their own terminal while this suite
+         runs would otherwise fail a check about the desktop's behaviour,
+         which is a false alarm about someone else's work. Everything the
+         separation actually promises — config.json, .env, the sqlite
+         stores, skills, traces, and the backend binaries the seed COPIES
+         precisely so an auto-update cannot reach them — is still walked
+         byte for byte below. */
+      if (child === "models/models" || child.startsWith("models/models/")) continue;
       stamp(child);
       if ((out[child] ?? "").startsWith("dir:")) walk(child, depth + 1);
     }
@@ -6176,20 +6240,40 @@ async function isolationAndSwitchTest(
         routeBefore !== null && routeAfter === routeBefore,
         `route ${routeBefore} → ${routeAfter}; the terminal setup names ${srcRoute}`,
       );
+      /* A route-less destination is the FRESH-INSTALL shape — the whole
+         `llm` key absent — not an empty string. This check used to blank it
+         with `activeTextProvider = ""`, which `atag config set` rejects
+         outright ("expected kebab-case id matching ^[a-z][a-z0-9-]{0,31}$"):
+         the setup write silently failed, the config kept the route it
+         already had, and the assertion then read that pre-existing route
+         back and called it the import's doing. It asserted against a state
+         it had never created. So: drop the key, and refuse to assert at all
+         unless the setup write actually landed. */
       const blanked = JSON.parse(JSON.stringify(cfgAfter)) as UserConfigShape;
-      if (blanked.llm) {
-        blanked.llm.activeTextProvider = "";
-        blanked.llm.providers = (blanked.llm.providers ?? []).filter((p) => p.id === "local-llama");
-        await configSetWhole(blanked);
+      delete (blanked as { llm?: unknown }).llm;
+      const blankWrite = await configSetWhole(blanked);
+      const cfgIsBlank = (await configGet()).config as UserConfigShape | undefined;
+      const routeIsBlank = (cfgIsBlank?.llm?.providers ?? []).every((p) => p.id === "local-llama");
+      check(
+        "state dir: the route-less fixture really is route-less before the import runs",
+        blankWrite.ok === true && routeIsBlank,
+        `write ok=${blankWrite.ok}${blankWrite.ok ? "" : ` (${blankWrite.error ?? blankWrite.stderr})`}; providers now ${(cfgIsBlank?.llm?.providers ?? []).map((p) => p.id).join(",") || "none"}`,
+      );
+      if (blankWrite.ok && routeIsBlank) {
         const refilled = await js<ImportResult>("window.__importFromTui({providers:true})");
         const cfgBlank = (await configGet()).config as UserConfigShape | undefined;
         const filled = cfgBlank?.llm?.activeTextProvider ?? null;
         const srcEntry = (cfgBlank?.llm?.providers ?? []).find((p) => p.id === srcRoute);
         const keyHere = srcEntry ? providerHasKey(srcEntry) : false;
+        /* A local source is deliberately never adopted: the destination
+           keeps its OWN local-llama entry on its OWN port, and an absent
+           route already resolves to local-llama by default, so copying the
+           name across would change nothing while looking like it did. */
+        const wantFilled = srcRoute && srcRoute !== "local-llama" && keyHere ? srcRoute : "local-llama";
         check(
-          "state dir: a blank route is filled from the terminal setup only when the key resolves here",
-          refilled.ok === true && (keyHere ? filled === srcRoute : (filled ?? "") === ""),
-          `blanked route → ${JSON.stringify(filled)}; source names ${srcRoute}, which ${keyHere ? "does" : "does not"} resolve a key in this state dir (keys were not ticked)`,
+          "state dir: a route-less desktop takes the terminal route only when its key resolves here",
+          refilled.ok === true && filled === wantFilled,
+          `route → ${JSON.stringify(filled)}, expected ${JSON.stringify(wantFilled)}; source names ${srcRoute}, which ${keyHere ? "does" : "does not"} resolve a key here (keys were not ticked)`,
         );
       }
     }

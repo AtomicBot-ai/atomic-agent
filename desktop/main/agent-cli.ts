@@ -234,7 +234,83 @@ export interface ProviderEntry {
   subscriptionCli?: { cli?: string };
 }
 
+/**
+ * The `local-llama` entry the runtime implies but the file need not carry.
+ *
+ * A fresh state directory's config.json has NO `llm` key: the runtime
+ * synthesizes the whole block at load time (`resolveLlmConfig`), so the
+ * file stays silent about a route the operator never chose. The moment
+ * anything writes an `llm` block — the wizard adding its first cloud
+ * provider, for instance — the schema fills the missing
+ * `activeTextProvider` with its default, `"local-llama"`, and validation
+ * then rejects the file because no provider in it carries that id:
+ *
+ *   config set failed: invalid config: llm.activeTextProvider:
+ *   unknown provider id "local-llama"
+ *
+ * which is what the first-run wizard hit. The TUI never sees it because
+ * its own persist helper synthesizes this same entry whenever it writes
+ * a block that was absent (src/tui/persist-llm-provider.ts).
+ */
+function localLlamaEntry(config: Record<string, unknown>): Record<string, unknown> {
+  const local = (config.localModels ?? {}) as {
+    url?: unknown;
+    mode?: unknown;
+    managed?: { port?: unknown };
+    embeddings?: { url?: unknown };
+  };
+  const port = typeof local.managed?.port === "number" ? local.managed.port : 19091;
+  const url =
+    local.mode === "managed"
+      ? `http://127.0.0.1:${port}`
+      : typeof local.url === "string" && local.url
+        ? local.url
+        : `http://127.0.0.1:${port}`;
+  const entry: Record<string, unknown> = { id: "local-llama", kind: "llama-server", url };
+  if (typeof local.embeddings?.url === "string" && local.embeddings.url) {
+    entry.baseUrl = local.embeddings.url;
+  }
+  return entry;
+}
+
+/**
+ * Make an `llm` block name only providers it carries, before it is written.
+ *
+ * Deliberately narrow: it adds the `local-llama` entry the runtime would
+ * have synthesized anyway, and nothing else. A block naming some OTHER
+ * absent id is a real mistake by the caller and still fails loudly here
+ * rather than being quietly repointed at whatever happens to be first —
+ * repairing that would hide the bug instead of reporting it.
+ */
+export function normaliseLlmBlock(config: unknown): void {
+  if (!config || typeof config !== "object") return;
+  const root = config as Record<string, unknown>;
+  const llm = root.llm as
+    | { activeTextProvider?: unknown; activeEmbeddingProvider?: unknown; providers?: unknown }
+    | undefined;
+  if (!llm || typeof llm !== "object") return;
+  if (!Array.isArray(llm.providers)) return;
+  const providers = llm.providers as Array<{ id?: unknown }>;
+  const has = (id: string): boolean => providers.some((p) => p && p.id === id);
+  // An absent active id defaults to "local-llama" in the schema, so the
+  // undefined case needs the entry exactly as much as the explicit one.
+  const names = [llm.activeTextProvider, llm.activeEmbeddingProvider].map((v) =>
+    typeof v === "string" && v ? v : "local-llama",
+  );
+  if (names.includes("local-llama") && !has("local-llama")) {
+    providers.unshift(localLlamaEntry(root));
+  }
+}
+
+/**
+ * Every whole-file config write goes through here, which is why the
+ * coherence repair lives here rather than in any one caller: there are a
+ * dozen of them (provider upsert, custom models, fallback chain, MCP
+ * servers, the external llama URL, the TUI import), and each one would
+ * otherwise have to remember the rule.
+ */
 export async function configSetWhole(config: unknown): Promise<CliResult> {
+  normaliseLlmBlock(config);
   return cli(["config", "set", JSON.stringify(config)], 30_000);
 }
 

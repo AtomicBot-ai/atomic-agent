@@ -1,12 +1,12 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 // r5 item 9 — the supervised `atag serve` child gets the desktop state dir.
-import { agentEnv } from "./state-dir.js";
+import { agentEnv, DESKTOP_STATE_DIR } from "./state-dir.js";
 
 /**
  * Supervises one `atag serve` child process and speaks to it over the
@@ -50,7 +50,25 @@ export interface AgentStatus {
   error: string | null;
 }
 
+/**
+ * How long a freshly spawned `atag serve` gets to answer /health.
+ *
+ * Two very different boots hide behind one spawn. On a cloud route the
+ * agent is up in a second or two. On the LOCAL route it also probes the
+ * llama backend, and the managed daemon beside it is loading a
+ * multi-gigabyte GGUF off disk — measured here at 3 s on an idle Mac, but
+ * far longer whenever the disk is busy (a model download running in
+ * another window is enough). Thirty seconds was fine for the cloud case
+ * and too tight for the local one: the agent came back a few seconds
+ * later, healthy, having already told the operator it had failed.
+ *
+ * So the local route gets a longer rope. This is patience, not a
+ * pretence: the window still says the agent is starting the whole time,
+ * and if the deadline really passes it still reports the failure with the
+ * limit it actually waited.
+ */
 const HEALTH_TIMEOUT_MS = 30_000;
+const HEALTH_TIMEOUT_LOCAL_MS = 120_000;
 const HEALTH_POLL_MS = 300;
 
 /**
@@ -201,11 +219,12 @@ export class AgentClient extends EventEmitter {
       });
     });
 
-    const ok = await this.waitForHealth();
+    const budget = this.healthBudgetMs();
+    const ok = await this.waitForHealth(budget);
     if (!ok) {
       this.setStatus({
         state: "error",
-        error: `The agent did not become healthy within ${HEALTH_TIMEOUT_MS / 1000}s.`,
+        error: `The agent did not become healthy within ${Math.round(budget / 1000)}s.`,
       });
       return this.status;
     }
@@ -214,8 +233,28 @@ export class AgentClient extends EventEmitter {
     return this.status;
   }
 
-  private async waitForHealth(): Promise<boolean> {
-    const deadline = Date.now() + HEALTH_TIMEOUT_MS;
+  /**
+   * The local route boots the agent AND loads a model; give it the longer
+   * budget. Read from the config file rather than from any in-memory
+   * state, because this runs before the first /health answer — the file is
+   * the only thing that knows the route at this moment.
+   */
+  private healthBudgetMs(): number {
+    try {
+      const raw = readFileSync(join(DESKTOP_STATE_DIR, "config.json"), "utf8");
+      const cfg = JSON.parse(raw) as { llm?: { activeTextProvider?: unknown } };
+      const active = cfg.llm?.activeTextProvider;
+      // An absent block means the runtime synthesizes local-llama, so the
+      // undefined case is a local boot too.
+      if (active === undefined || active === "local-llama") return HEALTH_TIMEOUT_LOCAL_MS;
+    } catch {
+      /* unreadable or not written yet — the cloud budget is the safe floor */
+    }
+    return HEALTH_TIMEOUT_MS;
+  }
+
+  private async waitForHealth(budgetMs: number = HEALTH_TIMEOUT_MS): Promise<boolean> {
+    const deadline = Date.now() + budgetMs;
     while (Date.now() < deadline) {
       if (!this.child) return false;
       try {
