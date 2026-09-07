@@ -2257,7 +2257,31 @@ function renderOverlays() {
   if (S.overlay === 'shortcuts') html += shortcutsSheet();
   if (S.alert) html += alertHTML();
   if (OB.open) html = obHTML();
+  /* r6 (human-scenario round) — the overlay's caret.
+     `o.innerHTML = html` destroys every field on this layer, and the
+     first-run wizard's API-key box lives here. Any repaint that lands
+     while somebody is typing their key (obRefreshCloudReady's round trip
+     is one, and it arrives about a second after the step paints) put the
+     focus back on <body>: the rest of the key went to the wizard's key
+     router instead of into the field, with nothing on screen to say why.
+     Driving it found this in one pass; no hook-driven check could, because
+     a hook sets `WIZ.apiKey` and never has a caret to lose.
+     The composer already does exactly this dance (renderContent), and the
+     LLM settings pane already skips its poll while `#wiz-key` has focus
+     (llmTyping) — this is the same contract for the overlay layer. */
+  const af = document.activeElement;
+  const keep = af && af.id && o.contains(af) && (af.tagName === 'INPUT' || af.tagName === 'TEXTAREA')
+    ? {id: af.id, start: af.selectionStart, end: af.selectionEnd} : null;
   o.innerHTML = html;
+  if (keep) {
+    const again = o.querySelector('#' + CSS.escape(keep.id));
+    if (again) {
+      again.focus();
+      // A password input still supports a selection range; a caret past the
+      // end of a value the repaint shortened is clamped by the DOM.
+      try { again.setSelectionRange(keep.start, keep.end); } catch (e) { /* type without a range */ }
+    }
+  }
   o.style.pointerEvents = html ? 'auto' : 'none';
   /* r5 item 7: NOT `inset: 0` any more. An inline inset beats any
      stylesheet rule, so the overlay layer covered the download strip —
@@ -4568,6 +4592,27 @@ function answerLive(req, key) {
     S.log.push({id:nid(), k:'system',
       text:'granted once — session-wide grants are not exposed by the agent\u2019s HTTP API yet, so this behaved as “allow once”.'});
   }
+  /* r6 (human-scenario round): the window has to go back to LOOKING busy.
+     onApprovalEvent clears S.busy so the strip can say "Waiting for your
+     approval" instead of "Thinking" — and nothing ever set it again, so the
+     instant the verdict went out the whole app fell idle: no status strip, no
+     elapsed clock, and a plain send arrow where the Stop button belongs.
+     Driven, that is a seven-second stretch (measured, on a two-approval turn)
+     in which the agent is writing the user's file and the app is telling them
+     nothing is happening and offering them no way to stop it; the reply then
+     arrives out of a window that had gone quiet. A hook-driven check could not
+     see it — `S.busy` is exactly the internal the hooks set by hand.
+     A verdict does not end the turn: approve releases the call, deny fails it
+     and the agent carries on with the refusal. The one verdict that really
+     does leave this window idle is the abort below, so it is excluded.
+     Guarded on this window owning the turn — an approval raised by another
+     session (a scheduled task's) must not make THIS chat look busy. */
+  if (key !== 'esc' && S.turnId && (!req.sessionId || req.sessionId === S.agentSession)) {
+    S.busy = true;
+    // The tool is running now, so the strip names it — the same word the
+    // tool_progress frame would have put there had the call not been gated.
+    S.phase = approve ? (req.tool || 'Working') : 'Thinking';
+  }
   BR.approve(req.approvalId, approve ? 'allow-once' : 'deny').then((res) => {
     if (res && !res.ok) S.log.push({id:nid(), k:'system', text:'could not resolve the approval: ' + esc(res.error || '')});
     render();
@@ -4620,6 +4665,15 @@ async function denyByProse(req, text, post) {
     : (data && typeof data.error === 'string') ? data.error
     : 'the agent did not confirm it';
   req.state = landed ? 'denied' : 'undelivered';
+  /* r6: same contract as answerLive — a delivered refusal does not end the
+     turn, it fails one call and the agent goes back to the model with the
+     operator's words. The window must therefore go back to saying so. Only
+     on `landed`: if the verdict never reached the gate there is nothing
+     running to report on. */
+  if (landed && S.turnId && (!req.sessionId || req.sessionId === S.agentSession)) {
+    S.busy = true;
+    S.phase = 'Thinking';
+  }
   S.log.push({id:nid(), k:'system', text: landed
     ? 'that call was denied with your message as the reason'
     : 'could not deny that call with your message: ' + esc(why)});
@@ -7064,7 +7118,18 @@ if (BR) {
   act = function (a) {
     if (a === 'onboarding') { openOnboarding(); return; }
     if (a === 'dl:cancel') { if (BR.cancelPull) BR.cancelPull(); DL.queue.length = 0; return; }
-    if (OB.open && OB.step === 'cloud' && (a === 'wiz:cancel' || a === 'wiz:back')) {
+    /* r6 (human-scenario round): `wiz:next` belongs in this list. The guard
+       below returns for every verb the wizard does not name, and Next was
+       not named — so on first run a person could type their API key and
+       click the one blue button on screen and NOTHING happened, with no
+       error and no spinner. The keyboard was fine (obKeyCloud routes Enter
+       straight to wizNext), which is exactly why a suite that presses keys
+       and calls internals never saw it; a driven click did, first try.
+       Routing the button to the same wizNext() the Enter key calls is the
+       invariant this file already states: the mouse and the keyboard cannot
+       be allowed to drift. */
+    if (OB.open && OB.step === 'cloud' && (a === 'wiz:cancel' || a === 'wiz:back' || a === 'wiz:next')) {
+      if (a === 'wiz:next') { wizNext(); return; }
       if (a === 'wiz:back' && WIZ.phase === 'configure') { WIZ.phase = 'pick_kind'; WIZ.error = null; render(); return; }
       WIZ.phase = null;
       obDispatch({type:'providers_wizard_closed'});

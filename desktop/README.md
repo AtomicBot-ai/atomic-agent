@@ -781,6 +781,125 @@ agent are put back in `finally`, so a failing assertion cannot leave the
 route changed. Run it against a private `ATOMIC_AGENT_STATE_DIR`, never
 `~/.atomic-agent`.
 
+## Human scenarios (`npm run scenarios`)
+
+`npm run smoke` proves things about *functions*. It drives the renderer through
+`window.__*` hooks that call internal functions directly, so a control whose
+click handler is wired to the wrong element passes every one of its ~490
+checks — which is exactly what happened: the first-run wizard's **Next** button
+did nothing at all for a person while the suite was green, because the hook
+called `wizNext()` and never pressed the button.
+
+`npm run scenarios` is the answer to that. It drives the **real app with real
+input events** over the Chrome DevTools Protocol — `Input.dispatchMouseEvent`
+and `Input.dispatchKeyEvent`, the trusted-event path a hand takes — through
+the jobs a person actually opens this app to do, and it asserts a **human
+result**: a file on disk with the right words in it, a reply that answers the
+question. No scenario may call into the app to make something happen. If a
+step cannot be done by clicking or typing, that is a defect to fix, not a
+reason to reach for an internal.
+
+```
+cd desktop
+npm run scenarios                      # all of them, in order
+npm run scenarios -- 04                # just the ones whose filename matches
+node test/scenarios/05-the-approval-path.mjs   # or run one directly
+```
+
+**These are slow and they spend real money.** Each scenario opens a brand-new
+state directory, clicks all the way through first-run onboarding, and then
+talks to a real cloud model — roughly a minute each, plus tokens. They are not
+part of `npm run smoke` and they are not a pre-commit gate; run them when you
+have changed something a person touches.
+
+### What they need
+
+| Variable | Default | What it is |
+| --- | --- | --- |
+| `ATAG_TEST_ENV` | `$ATOMIC_AGENT_STATE_DIR/.env` | a `.env` holding `AIMLAPI_API_KEY` / `OPENROUTER_API_KEY`. The key is typed into the wizard like a person types it, and is never logged — the transcript says only how many characters went in. |
+| `ATAG_TEST_PROVIDER` | `aimlapi` | `aimlapi` or `openrouter`. AI/ML API is the default because its wizard default is one *named* model, so a failure can be attributed. OpenRouter's default is `openrouter/auto`, which routes to whatever is cheapest that minute. |
+| `ATAG_TEST_DIR` | `$TMPDIR/atag-desktop-scenarios` | where the throwaway state dirs and workspaces go. Each scenario gets a fresh pair and a fresh Chromium profile inside it. |
+| `ATAG_TEST_PORT` | `9404` | the remote-debugging port. One per concurrent run. |
+
+Nothing here ever touches `~/.atomic-agent` or `~/.atomic-agent-desktop`;
+`launch()` refuses both by name.
+
+### The scenarios
+
+| File | The person | The human result asserted |
+| --- | --- | --- |
+| `01-build-a-website.mjs` | "build me a one-page site in a `site` folder" | `index.html` and `style.css` exist, the HTML carries the exact heading, a browser engine parses it and finds that heading, and the stylesheet it links to is really on disk |
+| `02-write-a-document.mjs` | "write a kayaking briefing and save it at `notes/kayak-safety.md`" | the file is at that path, is a real document (≥120 words, a title, two sections) and covers tides, wind and fog |
+| `03-arrange-files.mjs` | seven loose files, "sort these into subfolders by type" | every file is still there, byte-identical, in the folder that was named, and nothing new was invented |
+| `04-a-conversation.mjs` | a question, then a follow-up that says only "it" | the second reply is about the city the first reply chose, and both questions are still on screen |
+| `05-the-approval-path.mjs` | ask for something gated, **Deny** it, ask again, **Approve** it | the file does not exist while the card is up, still does not after Deny, does after Approve, holds exactly the right line, and both verdicts are recorded in the chat |
+
+### What driving has already caught
+
+Three defects that ~490 green hook-driven checks did not see, all found on the
+first passes of a driven run:
+
+- **The wizard's Next button did nothing.** `act()` returned for every verb the
+  cloud step did not name, and `wiz:next` was not named. The keyboard was fine
+  (Enter went straight to `wizNext`), so nothing that presses keys could tell.
+- **The API-key field lost the caret mid-typing.** The overlay layer repaints by
+  `innerHTML`, and the wizard's own readiness poll lands about a second after
+  the step paints — so half a pasted-in-by-hand key went to the key router
+  instead of into the box, silently. The overlay now restores focus and
+  selection across its repaint, and `firstRun` counts the characters back.
+- **The app went idle while it was working.** Answering an approval left
+  `S.busy` false: no status strip, no elapsed clock, and a send arrow where the
+  Stop button belongs, for as long as the released tool and the next model call
+  took — measured at seven seconds on a two-approval turn, with the reply then
+  arriving out of a window that had said nothing was happening.
+
+### Model faults are reported separately
+
+A scenario that fails because the model did not do what was asked exits with
+`~ MODEL`, not `✘ FAIL`, and `run-all.mjs` counts the two separately. The app
+is not blamed for a model's bad day, and a model's bad day never hides an app
+defect.
+
+### The driver
+
+`test/drive.mjs` is the whole of it, and it is usable on its own — from a
+script, or interactively while chasing something down:
+
+```js
+import { launch } from './desktop/test/drive.mjs';
+const app = await launch({ port: 9404, stateDir, workspace });
+try {
+  await app.waitFor(`!!document.querySelector('#onboarding')`, 'the wizard');
+  await app.clickText('Cloud models');   // clicks the pixel, not the handler
+  await app.clickSel('#wiz-key');
+  await app.typeSecret(key, 'the API key');
+  await app.press('Enter');
+  await app.screenshot('/tmp/where-we-got-to.png');
+  console.log(await app.snap());
+} finally {
+  await app.close();                     // always: it kills the process group
+}
+```
+
+- `clickText` / `clickSel` scroll the target into view **with the wheel**, hit-test
+  what is actually on top at that point, refuse a disabled control, and
+  dispatch a real press/release pair.
+- `type` refuses to type when nothing editable has focus — typing into the void
+  is the commonest way a fake test passes. `typeSecret` types identically and
+  narrates only the length.
+- `snap`, `lastReply`, `replies`, `eval` and `screenshot` **observe only**.
+- `close()` kills the whole process group (Electron plus its `atag serve`
+  child) and waits for the debugging port to be free, so the next scenario can
+  launch.
+
+`test/harness.mjs` holds what every scenario repeats: throwaway directories,
+clicking through the first-run wizard, `ask()`, and `waitTurn()`.
+
+> `waitTurn()` insists that quiet **holds** for five seconds before it calls a
+> turn finished. Between a tool result and the next model call the app is
+> legitimately silent, and returning on the first quiet sample makes a scenario
+> "pass" against work that had not started.
+
 ## The state directory
 
 **This app has its own, and it is not the terminal agent's.** The user's
@@ -984,6 +1103,9 @@ desktop/
   renderer/              index.html · styles.css · renderer.js · voice-worklet.js
   scripts/copy-renderer.mjs
   scripts/build-speech-helper.mjs
+  test/drive.mjs         CDP driver: real clicks and keystrokes, observation only
+  test/harness.mjs       throwaway dirs, the first-run click-through, ask/waitTurn
+  test/scenarios/        the human end-to-end scenarios + run-all.mjs
 ```
 
 The renderer is the design prototype, unbundled and unminified. `renderer.js`
