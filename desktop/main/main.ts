@@ -5129,6 +5129,20 @@ async function settingsTestPartC(
   // ---- LLM: Local pane, no config write on open ----
   const cfgBefore = JSON.stringify((await configGet()).config);
   await js<void>("window.__settingsOpen('llm')");
+  /* Selector lane: the tab no longer always opens on Local. It opens on the
+     pane the chat ROUTE is on — llm-panel-reducer.ts resolveModeFromActiveRoute,
+     armed by llmTabEntered — so a person on a cloud provider is not shown a
+     download catalogue. Check that, then say which pane the section below is
+     about instead of assuming. (The pane a person sees is DRIVEN, with real
+     clicks, in desktop/test/drive-selector.mjs.) */
+  const routeCfg = await readCfg();
+  const routeEntry = (routeCfg.llm?.providers ?? []).find((p) => p.id === (routeCfg.llm?.activeTextProvider ?? "local-llama"));
+  const routePane = !routeEntry || routeEntry.kind === "llama-server"
+    ? (routeCfg.localModels?.mode === "external" ? "external" : "local")
+    : "cloud";
+  const opened = await until(pane, (p) => p.refreshed !== null, 10_000);
+  check("llm tab: opens on the pane the chat route is on", opened.mode === routePane, `opened on ${opened.mode}, route is ${routePane}`);
+  await js<void>("window.__llmOpen('local')");
   const local = await until(pane, (p) => p.rows > 0 && p.refreshed !== null, 10_000);
   const localBody = await js<string>("window.__settingsBody()");
   const listCli = await modelsList();

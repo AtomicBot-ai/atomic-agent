@@ -455,22 +455,23 @@ export class AgentClient extends EventEmitter {
    * the renderer's CSP is connect-src 'none'. Any failure is "no window
    * from /props" — the caller falls through, as the poller swallows it.
    */
-  async llamaProps(url: string, apiKey?: string): Promise<{ ok: boolean; n_ctx: number | null; error?: string }> {
-    if (!/^https?:\/\//.test(url)) return { ok: false, n_ctx: null, error: "not an http url" };
+  async llamaProps(url: string, apiKey?: string): Promise<{ ok: boolean; n_ctx: number | null; model?: string | null; error?: string }> {
+    if (!/^https?:\/\//.test(url)) return { ok: false, n_ctx: null, model: null, error: "not an http url" };
     try {
       const res = await fetch(`${url.replace(/\/$/, "")}/props`, {
         headers: { accept: "application/json", ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}) },
         signal: AbortSignal.timeout(3000),
       });
-      if (!res.ok) return { ok: false, n_ctx: null, error: `HTTP ${res.status}` };
+      if (!res.ok) return { ok: false, n_ctx: null, model: null, error: `HTTP ${res.status}` };
       const json = (await res.json()) as Record<string, unknown>;
       const settings = json["default_generation_settings"] as Record<string, unknown> | undefined;
+      const model = extractLlamaModelLabel(json, settings);
       for (const candidate of [settings?.["n_ctx"], json["n_ctx"]]) {
-        if (typeof candidate === "number" && Number.isFinite(candidate) && candidate > 0) return { ok: true, n_ctx: candidate };
+        if (typeof candidate === "number" && Number.isFinite(candidate) && candidate > 0) return { ok: true, n_ctx: candidate, model };
       }
-      return { ok: true, n_ctx: null };
+      return { ok: true, n_ctx: null, model };
     } catch (err) {
-      return { ok: false, n_ctx: null, error: err instanceof Error ? err.message : String(err) };
+      return { ok: false, n_ctx: null, model: null, error: err instanceof Error ? err.message : String(err) };
     }
   }
 
@@ -698,4 +699,34 @@ async function* sseFrames(
   } finally {
     reader.cancel().catch(() => {});
   }
+}
+
+/**
+ * The model label a llama-server reports, in the TUI's own order and with
+ * its basename trim — `extractModelLabel` in
+ * src/tui/llm-health/llm-health-poller.ts. This is what the TUI's
+ * `llmHealth.model` holds, and therefore what `selectPromptLlmMeta` puts
+ * in the composer's model control on the custom (external) route: the
+ * operator's own server is the only thing that knows what it has loaded,
+ * and the managed catalogue id would name a file that route never touches.
+ */
+export function extractLlamaModelLabel(
+  props: Record<string, unknown>,
+  settings: Record<string, unknown> | undefined,
+): string | null {
+  const candidates: Array<unknown> = [
+    props["model_alias"],
+    settings?.["model"],
+    settings?.["model_alias"],
+    props["model"],
+    props["model_path"],
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate !== "string") continue;
+    const trimmed = candidate.trim();
+    if (trimmed.length === 0) continue;
+    const parts = trimmed.split(/[\\/]/);
+    return parts[parts.length - 1] || trimmed;
+  }
+  return null;
 }
