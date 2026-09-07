@@ -1115,7 +1115,20 @@ export async function skillList(cwd?: string): Promise<{ ok: boolean; rows?: Ski
   for (const line of res.stdout.split("\n")) {
     if (!line.trim() || line.startsWith("(no skills installed)")) continue;
     const cells = line.split("\t");
-    if (cells.length < 4) return { ok: false, error: `could not parse skill list line: ${line.slice(0, 120)}` };
+    // A description is free text out of the skill's own SKILL.md, so it can
+    // carry a newline and arrive here as its own line. That is a continuation
+    // of the row above, not a malformed row: fold it back into the
+    // description rather than failing the whole tab. Only a leading line that
+    // is not a row at all is an error — and even then only when nothing has
+    // parsed yet, so one odd line can never blank a list that did read.
+    if (cells.length < 4) {
+      const prev = rows[rows.length - 1];
+      if (prev) {
+        prev.description = `${prev.description} ${line.trim()}`.trim();
+        continue;
+      }
+      return { ok: false, error: `could not parse skill list line: ${line.slice(0, 120)}` };
+    }
     rows.push({
       name: cells[0]!,
       version: (cells[1] ?? "").replace(/^v/, ""),
