@@ -111,6 +111,25 @@ try {
     const rows = (await app.snap()).wizRows;
     check('the provider list has a Back control, not only an esc hint',
       (await foot()).some((b) => b.startsWith('Back')), JSON.stringify(await foot()));
+
+    /* ...and it has to LOOK like one while nobody is pointing at it.
+       Both wizard secondaries rested on a `transparent` border and drew
+       an edge only on :hover, which is a control that reads as a label
+       until the pointer is already on it — the one thing the brief names
+       outright. Read with the mouse parked in the corner, so what is
+       measured is the resting state and not a hover. */
+    say(await app.moveAway());
+    {
+      const rest = await app.js(`(() => {
+        const b = document.querySelector('#onboarding .ob-foot .btn-g');
+        if (!b) return null;
+        const cs = getComputedStyle(b);
+        return { w: cs.borderTopWidth, color: cs.borderTopColor, bg: cs.backgroundColor };
+      })()`);
+      const invisible = !rest || parseFloat(rest.w) === 0 || /rgba\(\s*0,\s*0,\s*0,\s*0\s*\)|transparent/.test(rest.color);
+      check('the secondary button draws an edge at rest, not only under the pointer',
+        !invisible, JSON.stringify(rest));
+    }
     say(await app.clickText('Back', { selector: '#onboarding .ob-foot button' }));
     check('Back returns to the choice', (await step()) === 'choose', await step());
     check('the choice list still has three rows', (await app.snap()).rows.length === 3);
@@ -205,6 +224,14 @@ try {
     for (let i = 0; i < 60 && !err; i += 1) { await sleep(500); err = await app.boxOf('#onboarding .ob-err-field'); }
     check('a lookup that fails says so under the field',
       !!err && err.y > (await app.boxOf('#ob-hf-ref')).y, err ? `"${err.label}"` : 'no inline error');
+    /* The only undo on this screen, and it was 46x23px — under every
+       desktop platform's minimum, on the control a mouse user reaches
+       for after a typo. Measured before it is pressed. */
+    {
+      const clear = await app.boxOf('#onboarding [data-obact="hf:clear"]');
+      check('the clear control is a real pointer target, not a 23px sliver',
+        !!clear && clear.h >= 26, clear ? `${clear.w}x${clear.h}px` : 'no clear control');
+    }
     say(await app.clickText('Clear', { selector: '#onboarding [data-obact="hf:clear"]' }));
     const value = await app.js("document.getElementById('ob-hf-ref').value");
     check('the clear control empties the field and disables the action again',
@@ -315,11 +342,16 @@ try {
     let ringless = null;
     for (let i = 0; i < roving.total + 3; i += 1) {
       await app.press('Tab', { settle: 120 });
+      /* Double backslash in the whitespace class below: this expression is a
+         template literal, so a lone backslash is eaten and the regex becomes
+         /s+/ — which replaces the letter s. It did: the walk reported the
+         Skip button as "Skip  etup for now", and the transcript lied about
+         what was on screen. */
       const f = await app.js(`(() => {
         const a = document.activeElement;
         const cs = a ? getComputedStyle(a) : null;
         return { inside: !!(a && a.closest && a.closest('#onboarding')),
-                 label: (a && (a.innerText || a.value) || '').replace(/\s+/g,' ').trim().slice(0, 28),
+                 label: (a && (a.innerText || a.value) || '').replace(/\\s+/g,' ').trim().slice(0, 28),
                  ring: !!cs && cs.outlineStyle !== 'none' && parseFloat(cs.outlineWidth) > 0 };
       })()`);
       seen.push(f.label);

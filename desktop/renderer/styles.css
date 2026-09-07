@@ -1242,3 +1242,32 @@ body.electron #settings{-webkit-app-region:no-drag}
 #onboarding .ob-scroll::-webkit-scrollbar-thumb:hover,#onboarding .ob-wizlist::-webkit-scrollbar-thumb:hover{
   background:var(--text-disabled);background-clip:content-box;
 }
+
+/* ==========================================================================
+   r6 UX — the secondary control has to look like a control
+   ==========================================================================
+
+   Driving the wizard screen by screen turned up the brief's own rule
+   ("no control that looks like a label") broken in the two places a
+   pointer needs most. Both drew their border as `transparent` at rest
+   and revealed it only on hover — which is a discoverability trick that
+   only works for a pointer that is ALREADY on the control. Until then
+   `Back`, `Skip setup for now` and `Clear` are grey text on the surface,
+   sitting next to real prose, with nothing to say they can be pressed.
+
+   The app already owns the answer: `.btn-s` — its standard secondary
+   button — rests at `1px solid var(--line)` and strengthens on hover.
+   Using that here is the app's existing idiom, not a new look: the same
+   token, the same weight, the same hover. Nothing else moves.  */
+.ob-foot .btn-g{border-color:var(--line)}
+.ob-foot .btn-g:hover{border-color:var(--line-strong)}
+
+/* `Clear` was 46x23px. The wizard's own floor is 32px for a row and 34
+   for a field, and 23px is under every desktop platform's minimum for a
+   pointer target — on the one screen where a mouse user has to undo a
+   typo. It keeps its quiet inline shape and its 12px type; it just
+   becomes big enough to hit and outlined enough to find. */
+.ob-offer.ob-offer-inline{
+  border:1px solid var(--line);min-height:26px;padding:3px 10px;align-items:center;
+}
+.ob-offer.ob-offer-inline:hover{border-color:var(--line-strong)}

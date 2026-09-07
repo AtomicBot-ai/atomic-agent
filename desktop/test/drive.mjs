@@ -193,6 +193,20 @@ export async function attach(port, { child = null } = {}) {
     return `hovered ${selector}`;
   }
 
+  /**
+   * Take the pointer off whatever it is sitting on.
+   *
+   * Anything asserted about a control's RESTING look has to be read with
+   * the mouse elsewhere — a click leaves the pointer on the button it
+   * pressed, so `:hover` is still applying and a border that only exists
+   * on hover reads as a border that is always there.
+   */
+  async function moveAway() {
+    await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 2, y: 2, button: 'none', buttons: 0 });
+    await sleep(120);
+    return 'moved the pointer off the controls';
+  }
+
   /** Type into whatever has focus, one trusted char event at a time. */
   async function type(str) {
     for (const ch of str) {
@@ -282,7 +296,7 @@ export async function attach(port, { child = null } = {}) {
 
   return {
     send, js, boxOf, text, snap, waitFor, waitStep,
-    clickAt, clickSel, clickText, hover, wheel, type, press, clearField, focusInfo, screenshot, close,
+    clickAt, clickSel, clickText, hover, moveAway, wheel, type, press, clearField, focusInfo, screenshot, close,
     child,
   };
 }
