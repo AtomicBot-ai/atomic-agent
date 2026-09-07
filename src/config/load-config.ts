@@ -520,6 +520,10 @@ export function loadConfig(): AtomicAgentConfig {
       parseMode: user.telegram.parseMode,
       progressIndicator: user.telegram.progressIndicator,
     },
+    discord: {
+      enabled: user.discord.enabled,
+      ownerUserId: user.discord.ownerUserId,
+    },
     composio: {
       enabled: user.composio.enabled,
       apiKeyEnv: user.composio.apiKeyEnv,

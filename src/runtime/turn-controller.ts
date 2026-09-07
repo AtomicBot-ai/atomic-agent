@@ -12,7 +12,8 @@ export type TurnOrigin =
   | "http"
   | "sidecar"
   | "scheduler"
-  | "telegram";
+  | "telegram"
+  | "discord";
 
 /**
  * Per-turn event sink. Installed atomically when a submission starts

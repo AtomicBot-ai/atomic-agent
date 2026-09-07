@@ -21,11 +21,28 @@ export interface IntegrationField {
   /** Human label, e.g. "API key". */
   label: string;
   /**
+   * Where the value lives.
+   *
+   * `"env"` (the default) means `<stateDir>/.env` — the right home for
+   * anything secret. `"config"` means a dotted path in `config.json`,
+   * for the non-secret settings an integration still needs before it
+   * can run (an owner id, an endpoint). Without this the hub could
+   * only ever be half a setup surface: the operator would paste a
+   * token here and then hand-edit JSON for the rest.
+   */
+  store?: "env" | "config";
+  /**
    * Env var this field is stored under in `<stateDir>/.env`. Secrets
    * never enter `config.json`; this is the same split Telegram's bot
-   * token and the LLM provider keys already use.
+   * token and the LLM provider keys already use. Required for
+   * `store: "env"` (the default) and absent for `store: "config"`.
    */
-  envVar: string;
+  envVar?: string;
+  /**
+   * Dotted `config.json` path, e.g. `discord.ownerUserId`. Required
+   * when `store === "config"`. A `null` clears it.
+   */
+  configPath?: string;
   /** Mask the value in the UI and never log it. */
   secret: boolean;
   /** A field the integration cannot work without. */

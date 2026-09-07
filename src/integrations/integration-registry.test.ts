@@ -27,7 +27,23 @@ describe("integration registry", () => {
     // throws at save time -- i.e. in front of the operator.
     for (const integration of listIntegrations()) {
       for (const field of integration.fields) {
+        if (field.store === "config") continue;
         expect(field.envVar).toMatch(/^[A-Z_][A-Z0-9_]*$/);
+      }
+    }
+  });
+
+  it("gives every config-backed field a config path and no env var", () => {
+    // A config field with an env var (or an env field with a path) would
+    // read from one store and write to the other.
+    for (const integration of listIntegrations()) {
+      for (const field of integration.fields) {
+        if (field.store !== "config") {
+          expect(field.configPath).toBeUndefined();
+          continue;
+        }
+        expect(field.configPath).toMatch(/^[a-zA-Z]+(\.[a-zA-Z]+)+$/);
+        expect(field.envVar).toBeUndefined();
       }
     }
   });

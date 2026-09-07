@@ -9,30 +9,66 @@
  */
 
 import { setDotenvKey } from "../config/dotenv-writer.js";
+import {
+  ensureUserConfigFileSync,
+  parseUserConfigFile,
+  resetConfigCache,
+  writeUserConfigFileSync,
+} from "../config/index.js";
 import type {
   IntegrationDescriptor,
   IntegrationField,
 } from "./integration-descriptor.js";
 
-/** Read one field's current value, or `undefined` when unset/blank. */
+/**
+ * Read one field's current value, or `undefined` when unset/blank.
+ *
+ * Config-backed fields are read from an already-loaded config object;
+ * the caller supplies it so this stays a pure function and tests do
+ * not need a state dir.
+ */
 export function readFieldValue(
   field: IntegrationField,
   env: NodeJS.ProcessEnv = process.env,
+  config?: Record<string, unknown>,
 ): string | undefined {
-  const raw = env[field.envVar];
+  const raw =
+    field.store === "config"
+      ? readConfigPath(config, field.configPath)
+      : field.envVar === undefined
+        ? undefined
+        : env[field.envVar];
+  if (typeof raw === "number") return String(raw);
   if (typeof raw !== "string") return undefined;
   const trimmed = raw.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+/** Walk a dotted path, returning `undefined` at the first gap. */
+export function readConfigPath(
+  config: Record<string, unknown> | undefined,
+  path: string | undefined,
+): unknown {
+  if (!config || !path) return undefined;
+  let node: unknown = config;
+  for (const segment of path.split(".")) {
+    if (typeof node !== "object" || node === null) return undefined;
+    node = (node as Record<string, unknown>)[segment];
+  }
+  return node;
 }
 
 /** Field keys of `descriptor` that currently hold a value. */
 export function presentFieldKeys(
   descriptor: IntegrationDescriptor,
   env: NodeJS.ProcessEnv = process.env,
+  config?: Record<string, unknown>,
 ): Set<string> {
   const present = new Set<string>();
   for (const field of descriptor.fields) {
-    if (readFieldValue(field, env) !== undefined) present.add(field.key);
+    if (readFieldValue(field, env, config) !== undefined) {
+      present.add(field.key);
+    }
   }
   return present;
 }
@@ -71,20 +107,68 @@ export function writeFieldValue(
   field: IntegrationField,
   value: string | null,
   env: NodeJS.ProcessEnv = process.env,
+  userConfigFile?: string,
 ): void {
-  if (value === null) {
-    setDotenvKey(stateDir, field.envVar, null);
-    delete env[field.envVar];
+  let trimmed: string | null = null;
+  if (value !== null) {
+    trimmed = value.trim();
+    if (trimmed.length === 0) {
+      throw new IntegrationSecretError(`${field.label} is empty`);
+    }
+    const invalid = field.validate?.(trimmed);
+    if (invalid !== undefined) throw new IntegrationSecretError(invalid);
+  }
+
+  if (field.store === "config") {
+    if (!userConfigFile || !field.configPath) {
+      throw new IntegrationSecretError(
+        `${field.label} is config-backed but no config path was supplied`,
+      );
+    }
+    writeConfigPath(userConfigFile, field.configPath, trimmed);
     return;
   }
-  const trimmed = value.trim();
-  if (trimmed.length === 0) {
-    throw new IntegrationSecretError(`${field.label} is empty`);
+
+  const envVar = field.envVar;
+  if (envVar === undefined) {
+    throw new IntegrationSecretError(
+      `${field.label} has no env var to store it in`,
+    );
   }
-  const invalid = field.validate?.(trimmed);
-  if (invalid !== undefined) {
-    throw new IntegrationSecretError(invalid);
+  if (trimmed === null) {
+    setDotenvKey(stateDir, envVar, null);
+    delete env[envVar];
+    return;
   }
-  setDotenvKey(stateDir, field.envVar, trimmed);
-  env[field.envVar] = trimmed;
+  setDotenvKey(stateDir, envVar, trimmed);
+  env[envVar] = trimmed;
+}
+
+/**
+ * Set a dotted path in `config.json`, re-validating the whole file
+ * first so a stale on-disk schema cannot ride in on this edit, then
+ * dropping the config cache so the next `getConfig()` sees it.
+ */
+function writeConfigPath(
+  userConfigFile: string,
+  path: string,
+  value: string | null,
+): void {
+  const prev = ensureUserConfigFileSync(userConfigFile) as unknown as Record<
+    string,
+    unknown
+  >;
+  const segments = path.split(".");
+  const draft = structuredClone(prev);
+  let node = draft as Record<string, unknown>;
+  for (const segment of segments.slice(0, -1)) {
+    const next = node[segment];
+    if (typeof next !== "object" || next === null) {
+      throw new IntegrationSecretError(`config path ${path} does not exist`);
+    }
+    node = next as Record<string, unknown>;
+  }
+  node[segments[segments.length - 1]!] = value;
+  writeUserConfigFileSync(userConfigFile, parseUserConfigFile(draft));
+  resetConfigCache();
 }

@@ -21,3 +21,4 @@ export {
 export { findIntegration, listIntegrations } from "./integration-registry.js";
 export { composioIntegration } from "./composio-integration.js";
 export { telegramIntegration } from "./telegram-integration.js";
+export { discordIntegration } from "./discord-integration.js";

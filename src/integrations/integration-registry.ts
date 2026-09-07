@@ -8,12 +8,13 @@
  */
 
 import { composioIntegration } from "./composio-integration.js";
+import { discordIntegration } from "./discord-integration.js";
 import { telegramIntegration } from "./telegram-integration.js";
 import type { IntegrationDescriptor } from "./integration-descriptor.js";
 
 /** Every known integration, in display order. */
 export function listIntegrations(): readonly IntegrationDescriptor[] {
-  return [composioIntegration, telegramIntegration];
+  return [composioIntegration, telegramIntegration, discordIntegration];
 }
 
 /** Look one up by id. `undefined` when nothing matches. */

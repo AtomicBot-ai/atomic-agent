@@ -7,6 +7,7 @@ import {
   IntegrationSecretError,
   displayFieldValue,
   presentFieldKeys,
+  readConfigPath,
   readFieldValue,
   writeFieldValue,
 } from "./integration-secrets.js";
@@ -141,5 +142,77 @@ describe("writeFieldValue", () => {
     const onDisk = readFileSync(join(stateDir, ".env"), "utf8");
     expect(onDisk).toContain("TEST_INTEGRATION_ENDPOINT=https://x.test");
     expect(onDisk).not.toContain("ok_live");
+  });
+});
+
+describe("config-backed fields", () => {
+  const OWNER_FIELD: IntegrationField = {
+    key: "ownerUserId",
+    label: "Owner user ID",
+    store: "config",
+    configPath: "discord.ownerUserId",
+    envVar: "",
+    secret: false,
+    required: true,
+  };
+
+  it("reads from the config object, not the env", () => {
+    expect(
+      readFieldValue(OWNER_FIELD, {}, { discord: { ownerUserId: "123" } }),
+    ).toBe("123");
+  });
+
+  it("reads a numeric config value as a string", () => {
+    // A hand-edited config may hold a number; the UI is string-shaped.
+    expect(readFieldValue(OWNER_FIELD, {}, { discord: { ownerUserId: 7 } })).toBe(
+      "7",
+    );
+  });
+
+  it("reads an unset or null config value as absent", () => {
+    expect(
+      readFieldValue(OWNER_FIELD, {}, { discord: { ownerUserId: null } }),
+    ).toBeUndefined();
+    expect(readFieldValue(OWNER_FIELD, {}, {})).toBeUndefined();
+  });
+
+  it("counts a config-backed field as present", () => {
+    const descriptor: IntegrationDescriptor = {
+      ...DESCRIPTOR,
+      fields: [OWNER_FIELD],
+    };
+    const present = presentFieldKeys(descriptor, {}, {
+      discord: { ownerUserId: "123" },
+    });
+    expect([...present]).toEqual(["ownerUserId"]);
+  });
+
+  it("refuses to write without a config path", () => {
+    // Failing loudly beats silently writing the value nowhere.
+    expect(() =>
+      writeFieldValue(stateDir, OWNER_FIELD, "123", {}, undefined),
+    ).toThrow(/config path/);
+  });
+
+  it("still runs the field's validator before writing", () => {
+    const guarded: IntegrationField = {
+      ...OWNER_FIELD,
+      validate: () => "nope",
+    };
+    expect(() =>
+      writeFieldValue(stateDir, guarded, "123", {}, "/tmp/x.json"),
+    ).toThrow(/nope/);
+  });
+});
+
+describe("readConfigPath", () => {
+  it("walks a dotted path", () => {
+    expect(readConfigPath({ a: { b: { c: 1 } } }, "a.b.c")).toBe(1);
+  });
+
+  it("returns undefined at the first gap instead of throwing", () => {
+    expect(readConfigPath({ a: {} }, "a.b.c")).toBeUndefined();
+    expect(readConfigPath(undefined, "a")).toBeUndefined();
+    expect(readConfigPath({ a: 1 }, "a.b")).toBeUndefined();
   });
 });

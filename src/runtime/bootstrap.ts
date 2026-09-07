@@ -16,6 +16,10 @@ import type { TurnEventHook, TurnOrigin } from "./turn-controller.js";
 import type { ChannelStatus } from "./channel-status.js";
 
 import { TelegramChannel } from "../channels/telegram/index.js";
+import {
+  DiscordChannel,
+  DiscordLockfile,
+} from "../channels/discord/index.js";
 import type { BotFactory } from "../channels/telegram/index.js";
 
 import {
@@ -435,6 +439,11 @@ export interface AgentRuntime {
    * defensively check before calling.
    */
   readonly telegramChannel: TelegramChannel | null;
+  /**
+   * Discord remote-control channel, or `null` when the build never
+   * constructed one. Same contract as `telegramChannel`.
+   */
+  readonly discordChannel: DiscordChannel | null;
   /**
    * MCP client manager. **Always non-null** — constructed even when
    * `config.mcp.servers[]` is empty so the live-control surface stays
@@ -2223,6 +2232,7 @@ export async function createAgentRuntime(
   // store. The variable is bound in the `let` slot below; the closure
   // resolves it lazily so the order-of-construction concern is local.
   let telegramChannelForShutdown: TelegramChannel | null = null;
+  let discordChannelForShutdown: DiscordChannel | null = null;
   let shutdownCalled = false;
   const shutdown = async (): Promise<void> => {
     if (shutdownCalled) return;
@@ -2243,6 +2253,18 @@ export async function createAgentRuntime(
         await telegramChannelForShutdown.stop();
       } catch (err) {
         logger.warn("telegram: shutdown failed", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+    if (discordChannelForShutdown) {
+      try {
+        // Stops the gateway, aborts in-flight turns and releases the
+        // single-instance lock. Runs alongside the Telegram teardown,
+        // before the LLM client goes away.
+        await discordChannelForShutdown.stop();
+      } catch (err) {
+        logger.warn("discord: shutdown failed", {
           error: err instanceof Error ? err.message : String(err),
         });
       }
@@ -2887,6 +2909,7 @@ export async function createAgentRuntime(
     scheduler,
     webhookSessionStore,
     telegramChannel: null,
+    discordChannel: null,
     mcpManager,
     providerRegistry,
     capabilities,
@@ -2913,7 +2936,10 @@ export async function createAgentRuntime(
       planMode = on;
     },
     shutdown,
-  } as AgentRuntime & { telegramChannel: TelegramChannel | null };
+  } as AgentRuntime & {
+    telegramChannel: TelegramChannel | null;
+    discordChannel: DiscordChannel | null;
+  };
   Object.defineProperty(runtime, "skillCatalog", {
     enumerable: true,
     get: () => skillCatalog,
@@ -2946,6 +2972,33 @@ export async function createAgentRuntime(
   if (config.telegram.enabled) {
     void telegramChannel.start().catch((err) => {
       logger.error("telegram: start() rejected unexpectedly", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+  }
+
+  // Discord: same shape as Telegram — constructed unconditionally so
+  // the Integrations hub can report its state, started only when the
+  // operator enabled it. `start()` is fire-and-forget so a slow
+  // `/users/@me` probe never delays the first turn, and a missing
+  // token settles as `disabled` rather than `down` (an unconfigured
+  // integration is a resting state, not a failure).
+  const discordChannel = new DiscordChannel({
+    runtime,
+    logger,
+    approvals,
+    approvalRouter,
+    enabled: config.discord.enabled,
+    ownerUserId: config.discord.ownerUserId,
+    sessionPointerPath: resolve(config.paths.stateDir, "discord-session.json"),
+    lock: new DiscordLockfile(resolve(config.paths.stateDir, "discord.lock")),
+    onStatus: (status) => options.handlers?.onChannelStatus?.(status),
+  });
+  runtime.discordChannel = discordChannel;
+  discordChannelForShutdown = discordChannel;
+  if (config.discord.enabled) {
+    void discordChannel.start().catch((err) => {
+      logger.error("discord: start() rejected unexpectedly", {
         error: err instanceof Error ? err.message : String(err),
       });
     });

@@ -809,6 +809,11 @@ export interface AtomicAgentConfig {
    */
   telegram: TelegramConfig;
   /**
+   * Discord remote-control channel. Mirrors `UserConfigFile.discord`.
+   * The bot token is not stored here — see `DiscordConfig`.
+   */
+  discord: DiscordConfig;
+  /**
    * Composio integration. Mirrors `UserConfigFile.composio`. The API
    * key is not stored here — see `ComposioConfig`.
    */
@@ -930,6 +935,28 @@ export type TelegramParseMode = "plain" | "html";
  * messages whose `from.id` matches `ownerUserId` are dispatched into
  * the agent loop. Group chats are dropped unconditionally.
  */
+/**
+ * Discord remote-control channel. The bot relays DMs and @mentions to
+ * the agent and posts replies back, the same shape as the Telegram
+ * channel.
+ *
+ * As with `TelegramConfig`, the bot token is **not** stored here — it
+ * lives in `<stateDir>/.env` as `DISCORD_BOT_TOKEN`. This block only
+ * carries the kill switch and the single-operator owner id.
+ */
+export interface DiscordConfig {
+  /** Master kill switch. `false` constructs the channel but never starts it. */
+  enabled: boolean;
+  /**
+   * Discord snowflake of the sole permitted operator. A **string**,
+   * not a number: snowflakes exceed `Number.MAX_SAFE_INTEGER`, so
+   * parsing one as a number silently corrupts the last digits and
+   * would let the wrong account drive the agent. `null` means
+   * unpaired — the channel refuses every message until it is set.
+   */
+  ownerUserId: string | null;
+}
+
 /**
  * Composio integration. Composio is a hosted catalogue of 1500+ SaaS
  * toolkits (Gmail, Slack, Notion, Linear, …) that also brokers each
@@ -1638,6 +1665,12 @@ export interface UserConfigFile {
    */
   telegram: TelegramConfig;
   /**
+   * Discord remote-control channel. Added in config v51. Older files
+   * are transparently upgraded with `{ enabled: false, ownerUserId:
+   * null }`, which starts nothing.
+   */
+  discord: DiscordConfig;
+  /**
    * Composio integration. Added in config v50. Older files are
    * transparently upgraded with the defaults below, which leave the
    * integration inert until a key is written to `<stateDir>/.env`.
@@ -1750,7 +1783,10 @@ export interface UserConfigFile {
 // switch, an env-var *name*, and cached session ids, never the key
 // itself, and an older file inherits defaults that mount nothing until
 // a key is written to `<stateDir>/.env`.
-export const USER_CONFIG_VERSION = 50;
+// v51: new `discord` block for the Discord remote-control channel.
+// Additive and inert by default — the channel is off, unpaired, and the
+// bot token lives in `<stateDir>/.env`, never here.
+export const USER_CONFIG_VERSION = 51;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -1889,6 +1925,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   47,
   48,
   49,
+  50,
   USER_CONFIG_VERSION,
 ];
 
@@ -2158,6 +2195,12 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
     ownerUserId: null,
     parseMode: "html",
     progressIndicator: true,
+  },
+  discord: {
+    // Added in v51. Off by default: an unpaired channel with a token
+    // would connect and then refuse every message, which looks broken.
+    enabled: false,
+    ownerUserId: null,
   },
   composio: {
     // Added in v50. `enabled: true` is safe because the key, not this
@@ -3318,6 +3361,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
   const skills = (obj.skills as Record<string, unknown> | undefined) ?? {};
   const telegram = (obj.telegram as Record<string, unknown> | undefined) ?? {};
   const composio = (obj.composio as Record<string, unknown> | undefined) ?? {};
+  const discord = (obj.discord as Record<string, unknown> | undefined) ?? {};
   const tui = (obj.tui as Record<string, unknown> | undefined) ?? {};
   const analytics =
     (obj.analytics as Record<string, unknown> | undefined) ?? {};
@@ -4103,6 +4147,16 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         telegram.progressIndicator ??
           USER_CONFIG_DEFAULTS.telegram.progressIndicator,
         "telegram.progressIndicator",
+      ),
+    },
+    discord: {
+      enabled: parseBool(
+        discord.enabled ?? USER_CONFIG_DEFAULTS.discord.enabled,
+        "discord.enabled",
+      ),
+      ownerUserId: parseNullableString(
+        discord.ownerUserId,
+        "discord.ownerUserId",
       ),
     },
     composio: {

@@ -996,6 +996,32 @@ describe("parseUserConfigFile", () => {
     ).toThrow(/skills.taps/);
   });
 
+  it("applies discord defaults when the section is absent", () => {
+    const parsed = parseUserConfigFile({ version: USER_CONFIG_VERSION });
+    expect(parsed.discord).toEqual(USER_CONFIG_DEFAULTS.discord);
+    // Off and unpaired: a token alone must not start a channel that
+    // would then refuse every message.
+    expect(parsed.discord.enabled).toBe(false);
+    expect(parsed.discord.ownerUserId).toBeNull();
+  });
+
+  it("accepts a v50 file and fills in discord.* defaults transparently", () => {
+    const parsed = parseUserConfigFile({ version: 50 });
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(parsed.discord).toEqual(USER_CONFIG_DEFAULTS.discord);
+  });
+
+  it("keeps discord.ownerUserId a string", () => {
+    // Discord snowflakes exceed Number.MAX_SAFE_INTEGER: parsing one as
+    // a number silently corrupts the last digits, which would let the
+    // wrong account drive the agent.
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      discord: { enabled: true, ownerUserId: "123456789012345678" },
+    });
+    expect(parsed.discord.ownerUserId).toBe("123456789012345678");
+  });
+
   it("applies composio defaults when the section is absent", () => {
     const parsed = parseUserConfigFile({ version: USER_CONFIG_VERSION });
     expect(parsed.composio).toEqual(USER_CONFIG_DEFAULTS.composio);

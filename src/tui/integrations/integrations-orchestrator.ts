@@ -39,6 +39,7 @@ export class IntegrationsOrchestrator {
   }
 
   private buildRows(): IntegrationRow[] {
+    const config = getConfig();
     const mcpServerStates = new Map<string, string>();
     for (const status of this.runtime.mcpManager.listStatuses()) {
       mcpServerStates.set(status.name, status.state);
@@ -49,8 +50,14 @@ export class IntegrationsOrchestrator {
     const channelStates = new Map<string, string>();
     const telegram = this.runtime.telegramChannel;
     if (telegram) channelStates.set("telegram", telegram.state());
+    const discord = this.runtime.discordChannel;
+    if (discord) channelStates.set("discord", discord.state());
     return listIntegrations().map((descriptor) => {
-      const present = presentFieldKeys(descriptor);
+      const present = presentFieldKeys(
+        descriptor,
+        process.env,
+        config as unknown as Record<string, unknown>,
+      );
       const status = descriptor.status({
         presentFields: present,
         configured: descriptor.fields
@@ -62,7 +69,14 @@ export class IntegrationsOrchestrator {
       const fields: IntegrationFieldRow[] = descriptor.fields.map((field) => ({
         key: field.key,
         label: field.label,
-        display: displayFieldValue(field, readFieldValue(field)),
+        display: displayFieldValue(
+          field,
+          readFieldValue(
+            field,
+            process.env,
+            config as unknown as Record<string, unknown>,
+          ),
+        ),
         present: present.has(field.key),
         ...(field.help === undefined ? {} : { help: field.help }),
       }));
@@ -111,7 +125,14 @@ export class IntegrationsOrchestrator {
       if (!field) {
         throw new IntegrationSecretError(`unknown field ${fieldKey}`);
       }
-      writeFieldValue(getConfig().paths.stateDir, field, value);
+      const cfg = getConfig();
+      writeFieldValue(
+        cfg.paths.stateDir,
+        field,
+        value,
+        process.env,
+        cfg.paths.userConfigFile,
+      );
       if (integrationId === "composio") {
         await this.applyComposio(value !== null);
       }
