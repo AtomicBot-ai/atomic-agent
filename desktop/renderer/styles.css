@@ -1271,3 +1271,16 @@ body.electron #settings{-webkit-app-region:no-drag}
   border:1px solid var(--line);min-height:26px;padding:3px 10px;align-items:center;
 }
 .ob-offer.ob-offer-inline:hover{border-color:var(--line-strong)}
+
+/* ============================================================
+   r6 cloud item 1 — the onboarding hint strip's `esc` chord is a real
+   control now, not decoration. It must keep the strip's exact metrics
+   (a <button> brings its own font, padding and background), and it has
+   to read as clickable on hover the way the flow's other offers do.
+   ============================================================ */
+.ob-hints .hint-live{
+  font:inherit;color:inherit;background:none;border:0;padding:0;
+  display:inline-flex;align-items:center;gap:4px;margin:0 6px;cursor:pointer;
+}
+.ob-hints .hint-live:hover{color:var(--text-secondary)}
+.ob-hints .hint-live:hover .kc{border-color:var(--line-strong)}

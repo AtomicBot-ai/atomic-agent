@@ -1787,6 +1787,25 @@ function composer() {
     + '</div></div>';
 }
 
+/**
+ * r6 cloud item 4 — does a switch in flight have to hold the operator's
+ * message?  ONE answer, read by the send button and by `submit()`, so the
+ * control and the behaviour cannot drift apart.
+ *
+ * A coding-mode change is deliberately NOT one of these, and says so at
+ * its own call site with `route:false`. It is a 1-5 ms POST that moves
+ * neither the provider nor the model, so there is nothing for a message
+ * to be sent "at the wrong configuration" of, and locking the composer
+ * for it would only flicker the button. Every other switch — backend,
+ * provider, model — moves the route the message would run on, and every
+ * one of those holds it, which is why the exemption is opt-in at the one
+ * place that qualifies rather than inferred from the want's shape.
+ */
+function swxHoldsComposer() {
+  if (!SWX.pending || S.busy || S.pending) return false;
+  return !(SWX.want && SWX.want.route === false);
+}
+
 function sendButton() {
   /* r5 item 10 — the switch lock. The chip has already painted the
      operator's choice; the send button says, in the one place they are
@@ -1798,12 +1817,24 @@ function sendButton() {
      a chat whose turn is live adopts it). A turn adopted mid-switch must
      keep its Stop and its steer arrow, so the two branches below win.
 
-     The spinner is withheld for the first SWX_SPINNER_DELAY_MS so the
-     1-3 ms coding-mode POST never flashes one. */
-  if (SWX.pending && !S.busy && !S.pending && Date.now() - SWX.since >= SWX_SPINNER_DELAY_MS) {
+     The spinner is withheld for the first SWX_SPINNER_DELAY_MS so a
+     coding-mode POST never flashes one.
+
+     r6 cloud item 4 — the lock and `submit()` now read the SAME
+     predicate, `swxHoldsComposer()`. The delay used to gate this whole
+     branch, so for the first 150 ms of a switch the button was the
+     ordinary enabled Send while submit() was already refusing on
+     `SWX.pending` and keeping the draft in the box. The comment above
+     promises the two "never disagree"; they disagreed exactly where an
+     operator lands, because the provider chip repaints to the new
+     provider the instant the switch starts: add a provider from the
+     composer chip, type at once, press Enter, and the message just sits
+     there under a button that says it is ready. */
+  if (swxHoldsComposer()) {
+    const spin = Date.now() - SWX.since >= SWX_SPINNER_DELAY_MS;
     const say = SWX.label + ' — the send button unlocks when the new configuration is live';
     return '<button class="sendbtn locked" data-act="send" disabled aria-busy="true" title="' + esc(say)
-      + '" aria-label="' + esc(say) + '"><span class="sspin"></span></button>';
+      + '" aria-label="' + esc(say) + '">' + (spin ? '<span class="sspin"></span>' : ic('up')) + '</button>';
   }
   if (S.busy || S.pending) {
     // Item 7C: this sends a steer into the running turn. It is parked as
@@ -2302,7 +2333,14 @@ function renderOverlays() {
      a hook sets `WIZ.apiKey` and never has a caret to lose.
      The composer already does exactly this dance (renderContent), and the
      LLM settings pane already skips its poll while `#wiz-key` has focus
-     (llmTyping) — this is the same contract for the overlay layer. */
+     (llmTyping) — this is the same contract for the overlay layer.
+     r6 cloud found the same loss from the other end: after a provider
+     REFUSED a key, the error repaint restored the refused value and took
+     the caret with it, so the key could not be corrected at all. Both
+     halves are kept — one capture, restored twice: straight after the
+     rebuild (below), and again at the end of this function for the case
+     where something in between deliberately claimed the focus and then
+     did not keep it. */
   const af = document.activeElement;
   const keep = af && af.id && o.contains(af) && (af.tagName === 'INPUT' || af.tagName === 'TEXTAREA')
     ? {id: af.id, start: af.selectionStart, end: af.selectionEnd} : null;
@@ -2330,6 +2368,25 @@ function renderOverlays() {
   if (pq) { pq.focus(); pq.setSelectionRange(pq.value.length, pq.value.length); }
   const cur = o.querySelector('.palrow.on');
   if (cur) cur.scrollIntoView({block:'nearest'});
+  // r6 cloud item 3: the caret goes back where the operator left it,
+  // unless something above (the palette) deliberately claimed the focus.
+  if (keep && !(document.activeElement && o.contains(document.activeElement))) {
+    const again = o.querySelector('#' + CSS.escape(keep.id));
+    if (again && (again.tagName === 'INPUT' || again.tagName === 'TEXTAREA')) {
+      again.focus();
+      try { again.setSelectionRange(keep.start, keep.end); } catch (err) { /* type has no caret */ }
+    }
+  }
+  /* r6 cloud item 3: the add-provider wizard's key screen is a screen
+     whose only control is a text field — the same reason obIntroMounted
+     focuses the URL and Hugging Face fields. It applies to BOTH mounts of
+     this wizard (first-run setup and the popover from the composer chip
+     or Settings › LLM), so it lives here rather than in the onboarding
+     half. A custom endpoint asks for the URL first. */
+  if (!(document.activeElement && o.contains(document.activeElement))) {
+    const first = o.querySelector('#wiz-url') || o.querySelector('#wiz-key');
+    if (first) { first.focus(); first.setSelectionRange(first.value.length, first.value.length); }
+  }
   // r5 item 7: the intro's canvas is destroyed by the rebuild above.
   obIntroMounted();
 }
@@ -2483,6 +2540,8 @@ function sheet(title, body, foot) {
    (buildManageTabs, src/tui/components/debug-pane.tsx), the diagnostics
    line (debug-diagnostics-line.tsx) and the active panel. The popup
    title is the TUI's "Menu › Manage" (menu-selectors.ts). */
+/* r6 cloud item 5: which pane the remembered scroll offset belongs to. */
+const SETTINGS_SCROLL = { pane: null };
 function renderSettings() {
   const old = $('#settings');
   // r4-ui item 5: stop re-applying the Escape focus as soon as the focus is off
@@ -2494,6 +2553,16 @@ function renderSettings() {
   // stream frame, the tasks poll, the diagnostics poll — would drag focus back
   // onto the Tasks row seconds after an ordinary click on dead space.
   if (MENUFOCUS.want && old && document.activeElement !== old.querySelector('.setmenu button.menurow')) MENUFOCUS.want = false;
+  /* r6 cloud item 5 — how far down the pane the operator had scrolled.
+     This function REMOVES the whole window and builds a new one, and it
+     runs on every poll that repaints (agent status, tasks, diagnostics),
+     so `.setbody` went back to the top a second or so after any scroll.
+     On Settings › LLM › Cloud that is not cosmetic: the provider's model
+     list is long, and a row below the fold could not be reached with a
+     mouse at all — scroll to it, and it is gone again before it can be
+     clicked. Kept per pane, so switching tabs still starts at the top. */
+  const keepScroll = old && SETTINGS_SCROLL.pane === settingsPaneId(S.settingsPane)
+    ? ((old.querySelector('.setbody') || {}).scrollTop || 0) : 0;
   if (old) old.remove();
   if (!S.settings) { MENUFOCUS.want = false; return; }
   const cur = settingsPaneId(S.settingsPane);
@@ -2522,6 +2591,9 @@ function renderSettings() {
     + '</div></div>';
   el.querySelector('.lights').style.marginRight = '0';
   $('#window').appendChild(el);
+  // r6 cloud item 5: put the operator back where they were reading.
+  SETTINGS_SCROLL.pane = cur;
+  if (keepScroll) { const body = el.querySelector('.setbody'); if (body) body.scrollTop = keepScroll; }
   if (MENUFOCUS.want) { const first = el.querySelector('.setmenu button.menurow'); if (first) first.focus(); }
 }
 
@@ -3163,7 +3235,9 @@ function submit() {
      the configuration the operator has just moved away from. Gated the same
      way sendButton's lock branch is, so the button and this never disagree:
      a turn adopted mid-switch keeps its steer. */
-  if (SWX.pending && !S.busy && !S.pending) {
+  /* r6 cloud item 4: the same predicate the send button draws itself
+     from, so the button can never say "ready" while this refuses. */
+  if (swxHoldsComposer()) {
     toast(SWX.label, 'The message stays in the box until the new configuration is live');
     return;
   }
@@ -3488,6 +3562,18 @@ document.addEventListener('input', (e) => {
     const n = document.getElementById('sel-filter'); if (n) { n.focus(); n.setSelectionRange(at, at); } return; }
   if (e.target.id === 'modelq') { S.modelQuery = e.target.value; const at = e.target.selectionStart; render();
     const n = $('#modelq'); if (n) { n.focus(); n.setSelectionRange(at, at); } return; }
+  /* r6 cloud item 3 — the add-provider wizard's own two fields.
+     `wizardHTML`/`obWizardHTML` re-emit them with `value="WIZ.apiKey"`
+     every repaint, and nothing was keeping WIZ.apiKey up to date, so any
+     repaint that landed while the operator was typing silently threw the
+     typing away and restored the previous contents. That is the state a
+     REJECTED key leaves you in: the error arrives, a repaint follows, and
+     the field snaps back to the key that was refused — delete a
+     character, watch it come back, and the provider is now impossible to
+     correct without closing the wizard. Held here, the way `sel-filter`
+     and `modelq` above are. */
+  if (e.target.id === 'wiz-key') { WIZ.apiKey = e.target.value; return; }
+  if (e.target.id === 'wiz-url') { WIZ.baseUrl = e.target.value; return; }
   if (e.target.id === 'dial') { S.dialShare = +e.target.value; refreshDial(); return; }
 });
 
@@ -5125,7 +5211,16 @@ function obHintsHTML() {
     while (n < words.length && OB_KEY_TOKEN.test(words[n])) n += 1;
     const caps = words.slice(0, n).join(' ');
     const rest = words.slice(n).join(' ');
-    return '<span class="hint">' + keycaps(caps) + (rest ? '<span>' + esc(rest) + '</span>' : '') + '</span>';
+    const body = keycaps(caps) + (rest ? '<span>' + esc(rest) + '</span>' : '');
+    /* r6 cloud item 1 — `esc back` is the ONLY way off the local-model
+       list, and the strip drew it as dead text. A mouse-only operator who
+       opened `Local models` to look at the picks could not get back to
+       `Cloud models` at all: no Back control on that screen, no clickable
+       hint, and the choose screen unreachable. The chord is unambiguous
+       on every step that advertises it, so the hint becomes a real
+       button routed through the same key router the keyboard uses. */
+    if (caps === 'esc') return '<button class="hint hint-live" data-obact="key:esc">' + body + '</button>';
+    return '<span class="hint">' + body + '</span>';
   }).join('');
   return '<div class="ob-hints">' + hints + '</div>';
 }
@@ -6157,7 +6252,14 @@ function obWizardHTML() {
     + ' placeholder="' + esc(k.env ? 'paste it here, or leave blank to use ' + k.env : 'paste it here') + '"'
     + ' value="' + esc(WIZ.apiKey) + '">'
     + (k.env ? '<div class="ob-explain">' + esc('Saved to .env as ' + k.env + ' (mode 0600).') + '</div>' : '')
-    + (verifying ? '<div class="ob-explain">checking the key against the provider’s model list…</div>' : '')
+    /* r6 cloud: the sentence, not the check, is what changed here. The old
+       copy described checking the key against the provider's model list —
+       which for openrouter and aimlapi came out of a catalogue bundled in
+       the binary and so could not fail for any string at all. Verification
+       is now a real one-token completion, and the line says so. The field
+       above is r6 UX's labelled one; the cloud lane's duplicate bare input
+       is dropped, not lost — it carried no attribute this one lacks. */
+    + (verifying ? '<div class="ob-explain">asking the provider to answer once with this key…</div>' : '')
     + (WIZ.error ? '<div class="ob-err">' + esc(WIZ.error) + '</div>' : '')
     + '<div class="ob-foot"><button class="btn btn-g" data-act="wiz:back"' + (verifying ? ' disabled' : '') + '>Back</button>'
     + '<span class="grow"></span>'
@@ -7375,6 +7477,11 @@ function obRowClick(index) {
 function obControlClick(spec) {
   if (spec === 'key:c') { obKey('c', {}); return; }
   if (spec === 'key:s') { obKey('s', {}); return; }
+  /* r6 cloud item 1: the hint strip's `esc` chord, clickable. The split is
+     obKeydown's own — a step that owns its keyboard answers Escape through
+     obOwnEscape, everything else through the key table — so the button and
+     the key cannot mean two different things. */
+  if (spec === 'key:esc') { if (obStepOwnsKeyboard(OB.step)) obOwnEscape(); else obKey('', {escape:true}); return; }
   if (spec === 'hf:clear') {
     const field = document.getElementById('ob-hf-ref');
     if (field) field.value = '';
@@ -7420,23 +7527,28 @@ if (BR) {
   act = function (a) {
     if (a === 'onboarding') { openOnboarding(); return; }
     if (a === 'dl:cancel') { if (BR.cancelPull) BR.cancelPull(); DL.queue.length = 0; return; }
-    /* r6 (human-scenario round): `wiz:next` belongs in this list. The guard
-       below returns for every verb the wizard does not name, and Next was
-       not named — so on first run a person could type their API key and
-       click the one blue button on screen and NOTHING happened, with no
-       error and no spinner. The keyboard was fine (obKeyCloud routes Enter
-       straight to wizNext), which is exactly why a suite that presses keys
-       and calls internals never saw it; a driven click did, first try.
-       Routing the button to the same wizNext() the Enter key calls is the
-       invariant this file already states: the mouse and the keyboard cannot
-       be allowed to drift.
-       r6 UX found the same defect from the operator's own report — "when I
-       click on next, nothing happens. But when I click on enter, it works"
-       — and added the phase guard: while a key is being verified the button
-       reads "Verifying…" and a second click must not start a second probe.
-       Both halves are kept: the verb is routed, and it is routed once. */
-    if (OB.open && OB.step === 'cloud' && (a === 'wiz:cancel' || a === 'wiz:back' || a === 'wiz:next')) {
-      if (a === 'wiz:next') { if (WIZ.phase !== 'verifying') wizNext(); return; }
+    /* r6 — three lanes found this one independently, and the operator
+       named it himself: "when I click on next, nothing happens. But when I
+       click on enter, it works."  `wiz:next` was not in the pair below, so
+       it fell through to the blanket `if (OB.open) return` guard and the
+       primary button of the whole first-run flow was inert: no error, no
+       `Verifying…`, no provider, nothing. The keyboard was fine the whole
+       time (obCloudKey routes Enter to wizNext), which is exactly why a
+       suite that presses keys and calls internals never saw it; a driven
+       click saw it on the first pass.
+
+       INTEGRATION (r6): of the two fixes, the routed one is kept. The
+       human and UX lanes called `wizNext()` here behind a
+       `WIZ.phase !== 'verifying'` guard; the cloud lane sent the verb
+       through obKey, the SAME router the keyboard uses. obCloudKey already
+       does everything the guard did — on the provider list an Enter picks
+       the highlighted row, on the key screen it calls wizNext, and while a
+       key is being verified it answers nothing, so a second click cannot
+       start a second probe. Routing rather than re-implementing is what
+       keeps the mouse and the keyboard from drifting apart again, which is
+       the invariant all three lanes were arguing for. */
+    if (OB.open && OB.step === 'cloud' && a === 'wiz:next') { obKey('', {return:true}); return; }
+    if (OB.open && OB.step === 'cloud' && (a === 'wiz:cancel' || a === 'wiz:back')) {
       if (a === 'wiz:back' && WIZ.phase === 'configure') { WIZ.phase = 'pick_kind'; WIZ.error = null; render(); return; }
       WIZ.phase = null;
       obDispatch({type:'providers_wizard_closed'});
@@ -8759,7 +8871,9 @@ async function setCodingMode(id, post) {
      r5 integration: item 1's `post` seam rides INSIDE the wrapper, so the
      plan hand-off's injected mode POST is measured and locked exactly like
      the operator's own click. */
-  const res = await swxRun('switching…', {mode:id}, () => (post ? post(id) : SWXBR.codingMode(id)));
+  // `route:false` — see swxHoldsComposer: a mode change moves no route, so
+  // it must not lock the composer for the 1-5 ms it takes.
+  const res = await swxRun('switching…', {mode:id, route:false}, () => (post ? post(id) : SWXBR.codingMode(id)));
   // A later click (or a re-assert fired after this one) already owns the
   // stance: drop this reply rather than repainting the chip backwards.
   if (seq !== MODE.seq) return;
@@ -9320,7 +9434,7 @@ function wizardHTML() {
   const verifying = WIZ.phase === 'verifying';
   return selShell(k.label,
     '<div class="selbody" style="padding:12px 16px;display:flex;flex-direction:column;gap:8px">' + fields
-    + (verifying ? '<p class="cap">checking the key against the provider\u2019s model list\u2026</p>' : '')
+    + (verifying ? '<p class="cap">asking the provider to answer once with this key\u2026</p>' : '')
     + (WIZ.error ? '<p class="cap" style="color:var(--danger)">' + esc(WIZ.error) + '</p>' : '')
     + '</div>',
     '<button class="btn btn-g" data-act="wiz:back"' + (verifying ? ' disabled' : '') + '>Back</button>'
@@ -9348,12 +9462,16 @@ async function wizNext() {
   if (k.apiKeyHeader) entry.apiKeyHeader = k.apiKeyHeader;
   if (k.headers) entry.headers = k.headers;
 
+  const existedBefore = !!selProviders().find((p) => p.id === id);
   let res = await BR.upsertProvider(entry);
   if (res && res.ok === false) { WIZ.phase = 'configure'; WIZ.error = res.error || 'could not save the provider'; render(); return; }
 
-  // Verification: the provider answers with its model list under this key.
+  // The catalogue, to pick a model with. This is a LOOKUP, not a check:
+  // openrouter and aimlapi answer it from a list bundled in the binary,
+  // so it says nothing whatever about the key (see verifyProviderKey).
   const listed = await BR.providerModels(id, k.kind);
   if (!listed || !listed.ok || !(listed.models || []).length) {
+    if (!existedBefore && BR.removeProvider) await BR.removeProvider(id);
     WIZ.phase = 'configure';
     /* r6 UX: the provider's own words are the detail, not the whole
        message. A rejected key used to report `no searchable cloud
@@ -9367,6 +9485,26 @@ async function wizNext() {
     return;
   }
   const model = k.defaultModel && listed.models.some((m) => m.id === k.defaultModel) ? k.defaultModel : listed.models[0].id;
+
+  /* r6 cloud item 2 — the verification that can actually fail. The screen
+     used to say "checking the key against the provider's model list", and
+     that list was a bundled catalogue, so a 64-zero string reached
+     "Cloud model ready" and the operator only found out at the first
+     message — which is exactly the "cloud is broken" they reported. One
+     real one-token completion, on the URL, key and model the next turn
+     will use. A key that fails is rolled back out of the config rather
+     than left behind pretending to be configured. */
+  const proof = BR.verifyProviderKey ? await BR.verifyProviderKey(entry, model) : {ok:true, checked:false};
+  if (proof && proof.checked && !proof.ok) {
+    if (!existedBefore && BR.removeProvider) await BR.removeProvider(id);
+    WIZ.phase = 'configure';
+    WIZ.error = proof.error || 'the provider would not accept this key';
+    render(); refreshLiveConfig();
+    return;
+  }
+  // Not verified is not the same as verified: the provider is saved and
+  // activated, and the toast says the check could not be made.
+  const unverified = proof && !proof.checked ? (proof.error || 'the key could not be checked') : null;
   // Lane B — backend switch: one write for the model + the activation, then
   // the restart main does for it. Not while a turn runs.
   if (S.busy) { WIZ.phase = 'configure'; WIZ.error = 'saved and verified, but not activated while a turn is running'; render(); refreshLiveConfig(); return; }
@@ -9386,14 +9524,15 @@ async function wizNext() {
      step, where `closeSelector()` would close a popup that is not open
      and drop the flow on a blank screen. The reducer's own
      `providers_wizard_succeeded` branch decides where it goes next. */
+  const added = k.label.split(' (')[0] + ' \u00b7 ' + model + (unverified ? ' \u00b7 not verified: ' + unverified : '');
   if (OB.open && OB.step === 'cloud') {
     OB.restarted = !!(sel && sel.restart);
-    toast('Provider added', k.label.split(' (')[0] + ' \u00b7 ' + model);
+    toast(unverified ? 'Provider added, key not checked' : 'Provider added', added);
     obDispatch({type:'providers_wizard_succeeded'});
     return;
   }
   closeSelector();
-  toast('Provider added', k.label.split(' (')[0] + ' \u00b7 ' + model);
+  toast(unverified ? 'Provider added, key not checked' : 'Provider added', added);
 }
 
 
