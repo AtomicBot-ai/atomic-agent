@@ -3,6 +3,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -137,7 +138,10 @@ describe("download-file", () => {
       signal: controller.signal,
     });
 
-    await waitFor(() => releaseSecondChunk !== null);
+    // The stream may pull chunk two (and park on it) before the first
+    // chunk has been written, so wait for the byte on disk, not for the
+    // source's second pull, before cancelling.
+    await waitFor(() => releaseSecondChunk !== null && partialBytes(dest) === 1);
     controller.abort();
     releaseSecondChunk?.();
 
@@ -537,6 +541,14 @@ function seedPartial(
     resolvePartialMetaPath(dest),
     JSON.stringify({ url, total: meta.total, etag: meta.etag, lastModified: null }),
   );
+}
+
+function partialBytes(dest: string): number {
+  try {
+    return statSync(resolvePartialPath(dest)).size;
+  } catch {
+    return -1;
+  }
 }
 
 async function waitFor(predicate: () => boolean): Promise<void> {
