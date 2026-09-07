@@ -5964,6 +5964,21 @@ async function isolationAndSwitchTest(
      out/main/*.js would match zero occurrences and pass while proving
      nothing. */
   const srcDir = join(__dirname, "..", "..", "main");
+  /* The packaged .app carries only the CJS emit inside app.asar, so these
+     reads throw there — and they used to throw INSIDE an async check, which
+     Electron reports as an unhandled rejection and nothing else: the check
+     did not fail, it silently stopped existing, in exactly the build a
+     release is cut from. A source-only check is legitimate (see the note
+     above about tsc rewriting `spawn`), but it has to say so out loud when
+     it cannot run rather than evaporate. */
+  const sourcesPresent = ["agent-cli.ts", "agent-client.ts", "main.ts", "tui-import.ts"]
+    .every((f) => existsSync(join(srcDir, f)));
+  if (!sourcesPresent) {
+    process.stdout.write(
+      "SKIP state dir: no desktop subprocess names ~/.atomic-agent — a source scan,"
+      + " and the packaged app ships only the compiled emit\n",
+    );
+  } else {
   const cliSrc = readFileSync(join(srcDir, "agent-cli.ts"), "utf8");
   const clientSrc = readFileSync(join(srcDir, "agent-client.ts"), "utf8");
   const codeOnly = (text: string) => text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
@@ -5989,6 +6004,7 @@ async function isolationAndSwitchTest(
     `${literals.length} \`.atomic-agent\` literals across agent-cli.ts, agent-client.ts, main.ts and tui-import.ts;`
     + ` ${spawnSites.length} agent spawn sites, all env-carrying=${spawnEnvOk}; serve child env-carrying=${clientEnvOk}`,
   );
+  }
 
   // ---- item 9: first run is latched, not inferred ----
   const fr = await js<{ fresh: boolean; stateDir: string; tuiStateDir: string; tuiSetupFound: boolean } | null>("window.__firstRun()");
