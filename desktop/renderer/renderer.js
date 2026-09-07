@@ -442,6 +442,16 @@ const OB_DEFAULT_LLAMA_URL = 'http://127.0.0.1:8080';   // USER_CONFIG_DEFAULTS.
    this splits it back apart so the desktop can draw the keycaps it has. */
 const OB_KEY_TOKEN = /^(↑\/↓|enter|esc|ctrl\+[a-z]|space|any|key|empty|1–3|\/|c|s)$/;
 /* The tui.onboarding.* stamps already written in THIS window session. */
+/* r6 UX: where the keyboard ring was when the last repaint tore the DOM
+   down, so it can be put back. Every keystroke in this flow rebuilds the
+   whole surface, and a ring that lands on <body> after an arrow press
+   leaves a keyboard user with no idea where they are. One of:
+     null            nothing of ours had focus
+     'row'           the row under the cursor, in whichever list is up
+     'act:<spec>'    a control the flow draws (data-obact)
+     'wact:<spec>'   a control the wizard draws (data-act)
+   Render-path state, so it lives in the hoisted block. */
+let OB_FOCUS = null;
 const OB_STAMPED = {};
 /* Smoke only: every stamp write this session attempted, in order, so the
    suite can assert the TUI's write-on-ARRIVAL timing rather than merely
@@ -5770,9 +5780,15 @@ function obProgressHTML() {
 /* ---------------- rows and screens ---------------- */
 
 /** rowPrefix (onboarding-rows.ts): `›  ` selected, three spaces otherwise. */
-function obRow(index, selected, label, detail, extraClass) {
+function obRow(index, selected, label, detail, extraClass, attrs) {
+  /* r6 UX: roving tabindex, the desktop list convention. Only the row
+     under the cursor is in the Tab order, so Tab enters the list at the
+     current row and one more Tab leaves it; the arrows move within.
+     `attrs` is for a row that is something more specific than a row —
+     the import step's tick boxes, which are checkboxes and say so. */
   return '<button class="ob-row' + (selected ? ' on' : '') + (extraClass ? ' ' + extraClass : '')
-    + '" data-obrow="' + index + '">'
+    + '" data-obrow="' + index + '" tabindex="' + (selected ? '0' : '-1')
+    + '" aria-selected="' + (selected ? 'true' : 'false') + '"' + (attrs || '') + '>'
     + '<span class="mk">' + (selected ? '›' : '') + '</span>'
     + '<span><span class="t">' + label + '</span>'
     + (detail ? '<span class="d">' + detail + '</span>' : '') + '</span></button>';
@@ -5821,14 +5837,15 @@ function obLocalPickHTML() {
   const rows = obPickRows();
   const models = rows.filter((r) => r.kind === 'model');
   const onHf = OB.cursor >= models.length;
-  // windowLocalPicks: six rows, plus `↓ N more`.
-  const cursor = Math.min(OB.cursor, Math.max(0, models.length - 1));
-  const start = Math.max(0, Math.min(cursor - HF_PICK_WINDOW + 2, models.length - HF_PICK_WINDOW));
-  const visible = models.slice(start, start + HF_PICK_WINDOW);
-  const below = models.length - (start + visible.length);
+  /* r6 UX: windowLocalPicks paints six rows and says `↓ 7 more`, because
+     a terminal cannot scroll a region. This one can — and while the
+     window was a mouse DEAD END (there is no gesture that reaches the
+     seventh model; only an arrow key moves the window), a scroller is
+     the desktop's own list. Every row is drawn, the box scrolls, and the
+     cursor is kept in view for the keyboard — which behaves exactly as
+     it did, six rows at a time or not. */
   const body = models.length
-    ? visible.map((row, i) => {
-        const at = start + i;
+    ? models.map((row, at) => {
         const model = row.model;
         const fit = fitFor(model.size, OB.ram);
         // The TUI's note() joins its parts with " · ". The parts the
@@ -5840,23 +5857,37 @@ function obLocalPickHTML() {
           '<span class="ob-mono">' + esc(model.id) + '</span>', esc(note));
       }).join('')
     : '<div class="ob-explain">' + (OB.busy ? 'reading the catalogue…' : 'no models listed') + '</div>';
-  const more = below > 0 ? '<div class="ob-explain">' + esc('   ↓ ' + below + ' more') + '</div>' : '';
   const hf = obRow(models.length, onHf, esc(HF_ROW_LABEL),
     esc('paste an owner/repo id or a huggingface.co URL'));
   return '<div class="ob-explain">'
       + esc('One download, then it runs offline. This machine reports ' + OB.ram + ' GB of RAM.') + '</div>'
     + '<div class="ob-h">' + esc(OB_COPY.localHeading) + '</div>'
-    + '<div class="ob-list ob-models">' + body + '</div>' + more + hf;
+    + '<div class="ob-list ob-models ob-scroll">' + body + '</div>' + hf;
+}
+
+/** r6 UX: the steps that draw the step error under their own field. */
+function obErrorIsInline() {
+  return OB.step === 'local_hf_ref' || OB.step === 'custom_chat_url' || OB.step === 'custom_embedding_url';
+}
+/** The step error, rendered where the step wants it. */
+function obInlineErrHTML() {
+  return OB.error ? '<div class="ob-err ob-err-field">' + esc(OB.error) + '</div>' : '';
 }
 
 /** hf-reference-editor.tsx, as its own step rather than a jump into Settings. */
 function obHfRefHTML() {
-  return '<div>' + esc('Which model? ') + '<span class="ob-explain">' + esc(HF_REF_TITLE_TAIL) + '</span></div>'
+  /* r6 UX: a `<label for>` rather than a paragraph that happens to sit
+     above a box — so clicking the words puts the caret in the field. */
+  return '<label for="ob-hf-ref">' + esc('Which model? ') + '<span class="ob-explain">' + esc(HF_REF_TITLE_TAIL) + '</span></label>'
     + '<div class="ob-explain">' + esc(HF_REF_EXAMPLES_LINE) + '</div>'
     + '<div><input id="ob-hf-ref" class="ob-inp" autocomplete="off" spellcheck="false" placeholder="owner/repo" value="'
       + esc(OB.hfReference) + '"' + (OB.busy ? ' disabled' : '') + '></div>'
+    + obInlineErrHTML()
     + (!OB.busy && OB.hfReference.length > 0
-        ? '<div><button class="ob-offer" data-obact="hf:clear">[ clear ]</button></div>' : '')
+        /* r6 UX: `[ clear ]` is a terminal writing a button with the
+           punctuation it has. The control, the chord behind it and the
+           footer hint are unchanged; only the brackets are gone. */
+        ? '<div><button class="ob-offer ob-offer-inline" data-obact="hf:clear">Clear</button></div>' : '')
     + (OB.busy ? '<div class="ob-explain">asking huggingface.co…</div>' : '');
 }
 
@@ -5865,19 +5896,21 @@ function obHfPickHTML() {
   const repo = OB.hfRepo;
   const choices = (repo && repo.choices) || [];
   const cursor = Math.min(OB.cursor, Math.max(0, choices.length - 1));
-  const start = Math.max(0, Math.min(cursor - HF_PICK_WINDOW + 2, choices.length - HF_PICK_WINDOW));
-  const visible = choices.slice(start, start + HF_PICK_WINDOW);
-  const below = choices.length - (start + visible.length);
   const selected = choices[cursor];
   const warning = selected ? llmHfRamWarning(selected.fileSizeGb, OB.ram) : null;
+  /* r6 UX: a scroller for the same reason the model list has one — a
+     repo with nine quants offered six of them to the mouse and no way at
+     all to reach the rest. */
   return '<div class="ob-h">' + esc(repo ? repo.repoId : '') + '</div>'
-    + visible.map((choice, i) => {
-        const at = start + i;
+    + '<div class="ob-list ob-scroll">'
+    + choices.map((choice, at) => {
         const line = (at === cursor ? '›  ' : '   ') + String(choice.filename).padEnd(44) + String(choice.sizeLabel).padStart(9);
-        return '<button class="ob-row' + (at === cursor ? ' on' : '') + '" data-obrow="' + at + '">'
+        return '<button class="ob-row' + (at === cursor ? ' on' : '') + '" data-obrow="' + at
+          + '" tabindex="' + (at === cursor ? '0' : '-1')
+          + '" aria-selected="' + (at === cursor ? 'true' : 'false') + '">'
           + '<span class="mk"></span><span class="ob-mono">' + esc(line) + '</span></button>';
       }).join('')
-    + (below > 0 ? '<div class="ob-explain">' + esc('   ↓ ' + below + ' more') + '</div>' : '')
+    + '</div>'
     + (repo && repo.hidden ? '<div class="ob-explain">' + esc('   ' + repo.hidden) + '</div>' : '')
     + (repo && repo.mmproj ? '<div class="ob-explain">' + esc(HF_MMPROJ_LINE) + '</div>' : '')
     + (warning ? '<div class="ob-warn ob-mono">' + esc('   ⚠ ' + warning) + '</div>' : '');
@@ -5886,12 +5919,13 @@ function obHfPickHTML() {
 /** onboarding-url-step.tsx:8-19, both halves. */
 function obUrlHTML(kind) {
   const chat = kind === 'chat';
-  return '<div>' + esc(chat ? OB_COPY.urlChatTitle : OB_COPY.urlEmbeddingTitle)
-      + '<span class="ob-explain">' + esc(OB_COPY.urlHealthNote) + '</span></div>'
+  return '<label for="ob-url">' + esc(chat ? OB_COPY.urlChatTitle : OB_COPY.urlEmbeddingTitle)
+      + '<span class="ob-explain">' + esc(OB_COPY.urlHealthNote) + '</span></label>'
     + (chat ? '' : '<div class="ob-explain">' + esc(OB_COPY.urlEmbeddingNote) + '</div>')
     + '<div><input id="ob-url" class="ob-inp" autocomplete="off" spellcheck="false" placeholder="'
       + esc(chat ? OB_COPY.urlChatPlaceholder : OB_COPY.urlEmbeddingPlaceholder) + '" value="'
       + esc(chat ? OB.chatUrl : OB.embeddingUrl) + '"' + (OB.busy ? ' disabled' : '') + '></div>'
+    + obInlineErrHTML()
     + (OB.busy ? '<div class="ob-explain">' + esc(OB_COPY.urlProbing) + '</div>' : '');
 }
 
@@ -5907,6 +5941,10 @@ function obDownloadHTML() {
       + (failed ? esc(OB_COPY.cloudOfferFailed) : esc(OB_COPY.cloudOffer[0]) + '<br>' + esc(OB_COPY.cloudOffer[1]))
       + '<b>' + esc(OB_COPY.cloudOfferKey) + '</b></button>'
     : '';
+  /* r6 UX: these two ARE this screen's buttons — the only way off it
+     short of waiting — so they are drawn as cards a mouse can see, not as
+     the terminal's `┃` rule around a paragraph. The copy and the `press
+     c` / `press s` chords are the TUI's, unchanged. */
   const skip = '<button class="ob-offer" data-obact="key:s">'
     + (failed ? esc(OB_COPY.skipOfferFailed) : esc(OB_COPY.skipOffer[0]) + '<br>' + esc(OB_COPY.skipOffer[1]))
     + '<b>' + esc(OB_COPY.skipOfferKey) + '</b></button>';
@@ -5971,9 +6009,15 @@ function obImportPickHTML() {
   return '<div class="ob-explain">' + esc(OB_COPY.importExplainer.join('\n')) + '</div>'
     + '<div class="ob-list">' + rows.map((row, i) => {
         if (row.kind === 'agent') {
+          /* r6 UX: `[x]` and `[ ]` are a terminal's checkbox. This row IS
+             a checkbox — it toggles, it does not navigate — so it is
+             drawn as one and announced as one. The tick is the same
+             state, in the shape a desktop reader already knows. */
           return obRow(i, cursor === i,
-            '<span class="box">' + (row.agent.enabled ? '[x]' : '[ ]') + '</span>' + esc(row.agent.label),
-            esc(row.agent.dir));
+            '<span class="box' + (row.agent.enabled ? ' on' : '') + '" aria-hidden="true">'
+              + (row.agent.enabled ? '✓' : '') + '</span>' + esc(row.agent.label),
+            esc(row.agent.dir), 'ob-check',
+            ' role="checkbox" aria-checked="' + (row.agent.enabled ? 'true' : 'false') + '"');
         }
         if (row.kind === 'import') return obRow(i, cursor === i, esc(obImportActionLabel(row.picked)), '');
         return obRow(i, cursor === i, esc(OB_COPY.importSkipLabel), esc(OB_COPY.importSkipDetail));
@@ -6046,7 +6090,8 @@ function obWizardHTML() {
           : '<input class="ob-inp" id="wiz-q" placeholder="search" value="' + esc(WIZ.q) + '">')
       + '<div class="ob-wizlist">' + rows.map(({k}, n) =>
       '<button class="modelrow' + (taken[k.id] ? ' dim' : '') + (n === cur ? ' on' : '')
-      + '" data-obwiz="' + n + '">'
+      + '" data-obwiz="' + n + '" tabindex="' + (n === cur ? '0' : '-1')
+      + '" aria-selected="' + (n === cur ? 'true' : 'false') + '">'
       + '<span class="col"><span class="nm">' + esc(k.label) + '</span>'
       + '<span class="cap">' + esc(k.custom ? 'you supply the URL' : k.baseUrl || k.kind)
       + (taken[k.id] ? ' · already configured' : '') + '</span></span></button>').join('')
@@ -6065,11 +6110,19 @@ function obWizardHTML() {
      embedding backend — so those two titles have nowhere honest to go
      and are NOT rendered. `LLM provider — add provider`, `API key —
      ${service}` and the .env sentence are all present, verbatim. */
+  /* r6 UX: the key box had no label at all — a bare dark rectangle under
+     a sentence about .env, which is a footnote and not a name. It is
+     labelled, it says what goes in it, and the .env sentence has moved
+     BELOW the field, where help text belongs. The sentence itself is the
+     copy contract's, verbatim. */
   return '<div class="ob-wiz"><div class="ob-h">' + esc('API key — ' + k.label.split(' (')[0]) + '</div>'
-    + (k.custom ? '<label class="ob-explain">API base URL</label>'
+    + (k.custom ? '<label class="ob-explain" for="wiz-url">API base URL</label>'
         + '<input class="ob-inp" id="wiz-url" placeholder="https://host/v1" value="' + esc(WIZ.baseUrl) + '">' : '')
+    + '<label class="ob-explain" for="wiz-key">' + esc('API key') + '</label>'
+    + '<input class="ob-inp" id="wiz-key" type="password" autocomplete="off" spellcheck="false"'
+    + ' placeholder="' + esc(k.env ? 'paste it here, or leave blank to use ' + k.env : 'paste it here') + '"'
+    + ' value="' + esc(WIZ.apiKey) + '">'
     + (k.env ? '<div class="ob-explain">' + esc('Saved to .env as ' + k.env + ' (mode 0600).') + '</div>' : '')
-    + '<input class="ob-inp" id="wiz-key" type="password" value="' + esc(WIZ.apiKey) + '">'
     + (verifying ? '<div class="ob-explain">checking the key against the provider’s model list…</div>' : '')
     + (WIZ.error ? '<div class="ob-err">' + esc(WIZ.error) + '</div>' : '')
     + '<div class="ob-foot"><button class="btn btn-g" data-act="wiz:back"' + (verifying ? ' disabled' : '') + '>Back</button>'
@@ -6078,10 +6131,78 @@ function obWizardHTML() {
     + (verifying ? 'Verifying…' : 'Next') + '</button></div></div>';
 }
 
+/* --------------------------------------------------------------------------
+   r6 UX — the action bar.
+
+   The TUI tells you what a step's verbs are in a strip of key hints at the
+   bottom of the screen; a desktop app puts them on buttons. Several steps
+   had NO on-screen control at all — the two custom-endpoint URL screens,
+   the Hugging Face reference, the import preview and the import result —
+   so the flow could be walked with the keyboard and simply could not be
+   finished with the mouse. This draws the same verbs the step's own footer
+   advertises, in the one place every step puts them: secondary on the
+   left, primary on the right.
+
+   Every button here presses the key its label stands for, through obPress
+   — the same router the keyboard uses. A control cannot drift from a
+   chord because there is nothing for it to drift to.
+   -------------------------------------------------------------------------- */
+function obBtn(spec, label, cls, disabled) {
+  return '<button class="btn ' + cls + '" data-obact="' + spec + '"'
+    + (disabled ? ' disabled' : '') + '>' + esc(label) + '</button>';
+}
+
+/** The verbs of one step, or '' for a step whose rows already carry them. */
+function obFootHTML() {
+  const busy = OB.busy;
+  let left = '';
+  let right = '';
+  switch (OB.step) {
+    case 'choose':
+      left = obBtn('nav:back', 'Skip setup for now', 'btn-g');
+      break;
+    case 'local_pick':
+      left = obBtn('nav:back', 'Back', 'btn-g');
+      break;
+    case 'local_hf_ref':
+      left = obBtn('nav:back', busy ? 'Cancel' : 'Back', 'btn-g');
+      right = obBtn('nav:go', busy ? 'Looking it up…' : 'Look it up', 'btn-p',
+        busy || OB.hfReference.length === 0);
+      break;
+    case 'local_hf_pick':
+      left = obBtn('nav:back', 'Back', 'btn-g');
+      right = obBtn('nav:go', 'Download this file', 'btn-p', false);
+      break;
+    case 'custom_chat_url':
+      left = obBtn('nav:back', 'Back', 'btn-g', busy);
+      right = obBtn('nav:go', busy ? 'Testing…' : 'Test and continue', 'btn-p', busy);
+      break;
+    case 'custom_embedding_url':
+      left = obBtn('nav:back', 'Back', 'btn-g', busy)
+        + obBtn('url:skip', 'Continue without embeddings', 'btn-g', busy);
+      right = obBtn('nav:go', busy ? 'Testing…' : 'Test and save', 'btn-p', busy);
+      break;
+    case 'import_preview': {
+      const report = OB.importReport;
+      const actionable = report !== null && (report.summary.migrated + report.summary.conflict) > 0;
+      left = obBtn('nav:back', 'Back to the list', 'btn-g', busy);
+      right = obBtn('nav:go', busy ? 'Importing…' : actionable ? 'Import' : 'Continue', 'btn-p', busy);
+      break;
+    }
+    case 'import_done':
+      right = obBtn('nav:go', 'Start using the agent', 'btn-p', false);
+      break;
+    default:
+      return '';
+  }
+  return '<div class="ob-foot ob-actions">' + left + '<span class="grow"></span>' + right + '</div>';
+}
+
 /** The whole surface. The intro draws no header and no column. */
 function obHTML() {
   if (OB.step === 'intro') {
-    return '<div id="onboarding" class="ob-intro-layer">' + obIntroHTML() + obHintsHTML() + '</div>';
+    return '<div id="onboarding" class="ob-intro-layer" role="dialog" aria-modal="true" aria-label="Set up Atomic Agent">'
+      + obIntroHTML() + obHintsHTML() + '</div>';
   }
   let body = '';
   if (OB.step === 'choose') body = obChooseHTML();
@@ -6098,8 +6219,17 @@ function obHTML() {
   else if (OB.step === 'import_preview') body = obImportReportHTML(false);
   else if (OB.step === 'import_done') body = obImportReportHTML(true);
   else body = '<div class="ob-explain">' + esc(OB_SUBTITLES[OB.step] || '') + '</div>';
-  const err = OB.error ? '<div class="ob-err">' + esc(OB.error) + '</div>' : '';
-  return '<div id="onboarding"><div class="ob">' + obHeadHTML() + body + err + '</div>' + obHintsHTML() + '</div>';
+  /* r6 UX: an error belongs beside the control that produced it. The two
+     URL steps and the Hugging Face reference draw their own, directly
+     under the field that was rejected; for every other step the surface
+     error is the only place it can go, and it sits above the action bar
+     rather than under it. */
+  const err = OB.error && !obErrorIsInline() ? '<div class="ob-err">' + esc(OB.error) + '</div>' : '';
+  /* r6 UX: it IS a modal — the app's chrome is behind it and cannot be
+     operated — so it says so, and Tab is trapped inside it to match. */
+  return '<div id="onboarding" role="dialog" aria-modal="true" aria-label="Set up Atomic Agent">'
+    + '<div class="ob">' + obHeadHTML() + body + err + obFootHTML() + '</div>'
+    + obHintsHTML() + '</div>';
 }
 
 /* ============================================================
@@ -6959,13 +7089,31 @@ function obRefreshCloudReady() {
  */
 function obIntroMounted() {
   if (OB.open && !OB.busy) {
+    /* r6 UX: the key screen is in this list too. It is a form with one
+       field and a primary button; arriving on it with nothing focused
+       makes a person click the box before they can paste, which no
+       desktop dialog asks of them. The URL box comes first when the
+       provider is a custom one, because it is the first field. */
     const field = document.getElementById('ob-url') || document.getElementById('ob-hf-ref')
-      || document.getElementById('wiz-q');
+      || document.getElementById('wiz-q') || document.getElementById('wiz-url')
+      || document.getElementById('wiz-key');
     if (field && document.activeElement !== field) {
       field.focus();
       field.setSelectionRange(field.value.length, field.value.length);
     }
   }
+  /* r6 UX: the ring, put back where it was. Every keystroke rebuilds
+     this surface, so without this an arrow press drops focus onto <body>
+     and a keyboard user loses their place; a control that went disabled
+     mid-flight (Next → "Verifying…") hands the ring to the row under the
+     cursor rather than to nothing. Nothing is ever stolen from a text
+     field, and this only runs for someone whose focus was ours already. */
+  if (OB.open && OB_FOCUS) obRestoreFocus();
+  /* r6 UX: the lists scroll now instead of paging six rows at a time, so
+     an arrow that moves the cursor off the bottom has to bring it back
+     into view — the scroller's own job, which a terminal did by
+     repainting a window. */
+  if (OB.open) obScrollCursorIntoView();
   if (!OB.open || OB.step !== 'intro') { obSkyStop(); return; }
   if (!document.getElementById('ob-sky')) return;
   /* r5 item 7 review fix: no teardown here. This runs on EVERY repaint
@@ -7022,12 +7170,31 @@ function obKeydown(e) {
   if (!OB.open) return;
   if (e.metaKey || e.altKey) return;
   if (e.ctrlKey && (e.key === 'c' || e.key === 'C')) return;
+  /* r6 UX: Tab used to be swallowed by the catch-all at the bottom of
+     this function, so a keyboard user could watch the cursor move and
+     never reach the action bar's buttons. It is handled here rather than
+     simply let through because the flow is MODAL — the app's own chrome
+     is behind it and unreachable by mouse — and an un-trapped Tab walked
+     straight out of the wizard into a toolbar nobody can click. */
+  if (e.key === 'Tab') { obTabbed(e); return; }
   const target = e.target || {};
   const inField = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA';
   if (OB.step === 'intro') {
     // "press any key", taken literally (use-intro-input.ts).
     e.preventDefault(); e.stopPropagation();
     obIntroAdvance();
+    return;
+  }
+  /* r6 UX: Enter and Space on a FOCUSED control press that control, the
+     way they do in every dialog. Without this the flow's ambient chord
+     won: a keyboard user who tabbed to `Back` and pressed Enter got the
+     step's primary action instead — the opposite of the button under the
+     ring. The browser's own activation fires a click, which lands in the
+     same handler a mouse click lands in, so there is still exactly one
+     path from a control to its verb. */
+  if ((e.key === 'Enter' || e.key === ' ') && target.tagName === 'BUTTON'
+      && target.closest && target.closest('#onboarding')) {
+    e.stopPropagation();
     return;
   }
   if (obStepOwnsKeyboard(OB.step)) {
@@ -7044,6 +7211,7 @@ function obKeydown(e) {
        inside the search box — searching and moving are one gesture. */
     if (OB.step === 'cloud' && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
       e.preventDefault(); e.stopPropagation();
+      if (OB_FOCUS && !inField) OB_FOCUS = 'row';   // r6 UX: the ring follows the cursor
       obKey('', {upArrow: e.key === 'ArrowUp', downArrow: e.key === 'ArrowDown'});
       return;
     }
@@ -7062,25 +7230,111 @@ function obKeydown(e) {
     return: e.key === 'Enter', escape: e.key === 'Escape', ctrl: e.ctrlKey,
   };
   const input = e.key.length === 1 ? e.key : '';
+  /* r6 UX: an arrow moves the list, so the ring goes with it — a keyboard
+     user who pressed Down while the ring sat on the action bar watched
+     the cursor move away from it and, once the repaint dropped the ring
+     onto <body>, could not see where they were at all. The ring is only
+     ever carried, never conjured: someone who has not put focus in the
+     flow keeps none. */
+  if (OB_FOCUS && (key.upArrow || key.downArrow || input === 'j' || input === 'k')) OB_FOCUS = 'row';
   e.preventDefault(); e.stopPropagation();
   obKey(input, key);
 }
 
 /**
- * A row click.  MouseListRow's own two-stage rule (mouse-list-row.tsx):
- * the first click selects, the second activates — and the second click
+ * Keep the row under the cursor inside its scroller. Deliberately not
+ * `scrollIntoView`: that would also scroll the surface behind the modal,
+ * and the flow's own header would walk off the top of the window.
+ */
+function obScrollCursorIntoView() {
+  const boxes = document.querySelectorAll('#onboarding .ob-scroll, #onboarding .ob-wizlist');
+  for (let i = 0; i < boxes.length; i += 1) {
+    const box = boxes[i];
+    const row = box.querySelector('.ob-row.on, .modelrow.on');
+    if (!row) continue;
+    const b = box.getBoundingClientRect();
+    const r = row.getBoundingClientRect();
+    if (r.top < b.top) box.scrollTop -= (b.top - r.top);
+    else if (r.bottom > b.bottom) box.scrollTop += (r.bottom - b.bottom);
+  }
+}
+
+/** How the ring on `node` should be remembered across a repaint. */
+function obFocusKey(node) {
+  if (!node || !node.closest || !node.closest('#onboarding')) return null;
+  if (node.closest('#onboarding .ob-row, #onboarding .modelrow')) return 'row';
+  const act = node.closest('#onboarding [data-obact]');
+  if (act) return 'act:' + act.dataset.obact;
+  const wact = node.closest('#onboarding [data-act]');
+  if (wact) return 'wact:' + wact.dataset.act;
+  return null;
+}
+
+/**
+ * Put the ring back after a repaint. The remembered control first; the
+ * row under the cursor when that control is gone or has gone disabled —
+ * which is where the operator's attention already is, because the arrow
+ * that caused the repaint just moved it.
+ */
+function obRestoreFocus() {
+  const active = document.activeElement;
+  if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
+  const row = document.querySelector('#onboarding .ob-row.on, #onboarding .modelrow.on');
+  let want = null;
+  if (OB_FOCUS === 'row') want = row;
+  else if (OB_FOCUS && OB_FOCUS.indexOf('act:') === 0) {
+    want = document.querySelector('#onboarding [data-obact="' + OB_FOCUS.slice(4) + '"]');
+  } else if (OB_FOCUS && OB_FOCUS.indexOf('wact:') === 0) {
+    want = document.querySelector('#onboarding [data-act="' + OB_FOCUS.slice(5) + '"]');
+  }
+  if (!want || want.disabled) want = row;
+  if (want && !want.disabled && active !== want) want.focus();
+}
+
+/**
+ * Tab and Shift+Tab, kept inside the modal surface. The row under the
+ * cursor is the list's single tab stop (the roving tabindex obRow
+ * writes), so the ring walks list → action bar → back to the list.
+ */
+function obTabbed(e) {
+  const root = document.getElementById('onboarding');
+  if (!root) return;
+  const stops = Array.prototype.filter.call(
+    root.querySelectorAll('button, input, [tabindex]'),
+    (n) => !n.disabled && n.tabIndex >= 0 && n.offsetParent !== null,
+  );
+  if (!stops.length) return;
+  e.preventDefault(); e.stopPropagation();
+  const at = stops.indexOf(document.activeElement);
+  const step = e.shiftKey ? -1 : 1;
+  const next = at < 0 ? (e.shiftKey ? stops.length - 1 : 0)
+    : (at + step + stops.length) % stops.length;
+  stops[next].focus();
+}
+
+/**
+ * A row click.
+ *
+ * r6 UX — THE ROOT DEFECT of this round. This used to be MouseListRow's
+ * two-stage rule (mouse-list-row.tsx): the first click only moved the
+ * cursor, and it took a SECOND click to activate. That is a terminal's
+ * keyboard model wearing a mouse's clothes, and it is why the operator
+ * reported that clicking a row "does nothing". No desktop list behaves
+ * that way. One click now selects AND activates, first time.
+ *
+ * The keyboard is untouched: the click still moves the cursor and then
  * sends the SAME Enter the keyboard sends, through the one key table, so
  * a click can never do something no key can.
  */
-/** A click on a cloud-list row. Same two-stage rule, same key router. */
+/** A click on a cloud-list row. Same rule, same key router. */
 function obWizRowClick(n) {
   const rows = obWizRows();
-  const cur = rows.length ? WIZ.cur % rows.length : 0;
-  if (cur !== n) { WIZ.cur = n; render(); return; }
+  if (!rows.length) return;
+  WIZ.cur = n;
   obKey('', {return:true});
 }
 function obRowClick(index) {
-  if (OB.cursor !== index) { obDispatch({type:'onboarding_cursor_set', cursor: index}); return; }
+  if (OB.cursor !== index) obDispatch({type:'onboarding_cursor_set', cursor: index});
   obKey('', {return:true});
 }
 /** A click on one of the flow's own controls, routed the same way. */
@@ -7088,8 +7342,22 @@ function obControlClick(spec) {
   if (spec === 'key:c') { obKey('c', {}); return; }
   if (spec === 'key:s') { obKey('s', {}); return; }
   if (spec === 'hf:clear') {
+    const field = document.getElementById('ob-hf-ref');
+    if (field) field.value = '';
     obDispatch({type:'onboarding_hf_reference_changed', value:''});
     obDispatch({type:'onboarding_error_set', error:null});
+    return;
+  }
+  /* r6 UX — the action bar. Each of these presses the chord its label
+     stands for, through obPress: the button and the key are one path. */
+  if (spec === 'nav:back') { obPress('esc'); return; }
+  if (spec === 'nav:go') { obPress('enter'); return; }
+  if (spec === 'url:skip') {
+    // "empty enter skips embeddings" (obFooter), as a control that says so.
+    const field = document.getElementById('ob-url');
+    if (field) field.value = '';
+    OB.embeddingUrl = '';
+    obPress('enter');
     return;
   }
 }
@@ -7127,9 +7395,14 @@ if (BR) {
        and calls internals never saw it; a driven click did, first try.
        Routing the button to the same wizNext() the Enter key calls is the
        invariant this file already states: the mouse and the keyboard cannot
-       be allowed to drift. */
+       be allowed to drift.
+       r6 UX found the same defect from the operator's own report — "when I
+       click on next, nothing happens. But when I click on enter, it works"
+       — and added the phase guard: while a key is being verified the button
+       reads "Verifying…" and a second click must not start a second probe.
+       Both halves are kept: the verb is routed, and it is routed once. */
     if (OB.open && OB.step === 'cloud' && (a === 'wiz:cancel' || a === 'wiz:back' || a === 'wiz:next')) {
-      if (a === 'wiz:next') { wizNext(); return; }
+      if (a === 'wiz:next') { if (WIZ.phase !== 'verifying') wizNext(); return; }
       if (a === 'wiz:back' && WIZ.phase === 'configure') { WIZ.phase = 'pick_kind'; WIZ.error = null; render(); return; }
       WIZ.phase = null;
       obDispatch({type:'providers_wizard_closed'});
@@ -7150,6 +7423,14 @@ if (BR) {
 }
 
 document.addEventListener('keydown', obKeydown, true);
+/* r6 UX: where the ring is right now, recorded for the repaint that the
+   very next keystroke will cause. A focus that is not ours — the app's
+   own chrome behind the flow, or one of the flow's text fields, which
+   restore themselves — is remembered as nothing. */
+document.addEventListener('focusin', (e) => {
+  if (!OB.open) { OB_FOCUS = null; return; }
+  OB_FOCUS = obFocusKey(e.target);
+});
 /** The window going away and coming back. Named rather than inline so
  *  the pair is one thing: obSkyStop clears the typewriter as well as the
  *  rAF, and obSkyResume has to re-arm both. */
@@ -8975,7 +9256,14 @@ async function wizNext() {
   const listed = await BR.providerModels(id, k.kind);
   if (!listed || !listed.ok || !(listed.models || []).length) {
     WIZ.phase = 'configure';
-    WIZ.error = (listed && listed.error) || 'the provider returned no models for this key';
+    /* r6 UX: the provider's own words are the detail, not the whole
+       message. A rejected key used to report `no searchable cloud
+       models: the configured providers ship no catalog.` — true of the
+       agent's model index, and no help at all to someone who has just
+       mistyped a key. Say what failed first, then quote the backend. */
+    WIZ.error = listed && listed.error
+      ? 'Could not verify this key with ' + k.label.split(' (')[0] + ' — ' + listed.error
+      : k.label.split(' (')[0] + ' returned no models for this key.';
     render();
     return;
   }

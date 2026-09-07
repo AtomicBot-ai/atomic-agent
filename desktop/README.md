@@ -770,6 +770,42 @@ SMOKE screenshot=…/atomic-desktop-smoke.png failures=0
 It exits non-zero on any failure and always writes a screenshot, so it works as
 a CI gate. Renderer console errors are forwarded to stderr.
 
+### Driving it like a person — `npm run drive`
+
+The smoke suite reaches the renderer through the `window.__*` hooks, and those
+hooks **call the internal function**. That is the right tool for asserting what
+a reducer computes and the wrong one for asserting that a control works: the
+first-run wizard shipped for a while with rows that needed TWO clicks to do
+anything, and 490 green checks never saw it, because no check ever pressed a
+mouse button.
+
+`npm run drive` opens the real app with the DevTools protocol listening and
+drives it with **trusted input events** — `Input.dispatchMouseEvent` at a
+control's own centre, `Input.dispatchKeyEvent` for a keystroke, the wheel for a
+scroll. `Runtime.evaluate` is used only to LOOK: text, classes, geometry,
+screenshots. If a screen cannot be finished with the pointer and the keyboard
+alone, that is a defect in the app, not a reason to reach for a hook.
+
+```
+ATOMIC_AGENT_STATE_DIR=/some/empty/dir npm run drive
+```
+
+- `desktop/test/drive.mjs` is the harness — `launch`, `clickText`, `clickSel`,
+  `type`, `press`, `clearField`, `wheel`, `hover`, `waitFor`, `snap`,
+  `screenshot`, `focusInfo`. Any future scenario should import it.
+- `desktop/test/onboarding-mouse.mjs` is the first-run wizard, start to finish,
+  on a fresh state directory: every row, every button, every field, the whole
+  flow completed with the mouse. Pass `--shots=DIR` for a PNG per screen,
+  `--port=N` to move the debugging port, `--keep` to leave the app up.
+- Five screens sit behind a multi-gigabyte download or a write to another
+  agent's data (`local_download`, `wait_or_jump`, `propose_second`,
+  `import_preview`, `import_done`). Those are STAGED with `__obOpen`/`__obSeed`
+  the way a fixture stages a database row — and then every control on them is
+  clicked for real. The staging is never the thing under test.
+- It needs a state directory whose `.env` carries a working provider key: the
+  last leg of the pass verifies a provider with an EMPTY key box, which is the
+  case the key field's placeholder promises.
+
 The `backend:` checks run on every plain `npm run smoke`, not only under
 `--models`: they switch the route cloud → local → cloud → local (the last
 leg with the file moved by hand first, the way the TUI or an editor would),

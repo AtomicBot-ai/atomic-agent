@@ -1107,3 +1107,167 @@ button.menurow:hover{background:var(--bg-hover)}
    hit testing entirely, which is why the checks stayed green over a dead
    band.) #onboarding already applies this same pattern deliberately. */
 body.electron #settings{-webkit-app-region:no-drag}
+
+/* ==========================================================================
+   r6 UX — the setup wizard as a desktop surface.
+
+   The style is the one the flow already had; what changes is the
+   interaction. A control now looks like a control and behaves like one:
+   a target big enough to hit, a hover that answers the pointer, a press
+   state, a focus ring for the keyboard, a disabled state that looks
+   disabled, and the primary action always in the same place — bottom
+   right, with the way back bottom left.
+   ========================================================================== */
+
+/* The action bar every step now shares. Secondary left, primary right,
+   pinned under the body with a rule so the eye finds it in one place on
+   every screen instead of hunting for the key hint that meant it. */
+.ob-foot.ob-actions{
+  padding-top:var(--s4);
+  border-top:1px solid var(--line-soft);
+  display:flex;align-items:center;gap:var(--s3);
+}
+.ob-foot.ob-actions .grow{flex:1}
+.ob-foot .btn{height:32px;padding:0 14px;border-radius:7px}
+.ob-foot .btn-p{min-width:112px;justify-content:center}
+.ob-foot .btn-g{border:1px solid transparent}
+.ob-foot .btn-g:hover{background:var(--bg-hover);border-color:var(--line)}
+.ob-foot .btn-g:active,.ob-foot .btn-p:active,.ob-wiz .ob-foot .btn:active{transform:translateY(1px)}
+/* A disabled control must read as unavailable before it is clicked, not
+   after nothing happens. `.btn[disabled]` already greys the fill; the
+   pointer has to say so too. */
+.ob-foot .btn[disabled]{opacity:.55;pointer-events:none;border-color:transparent}
+
+/* Rows are the primary choice on six of the screens, so they get the
+   press state and the ring a button gets. One click activates them —
+   the pointer says so. */
+.ob-row{cursor:pointer;transition:background .1s ease,border-color .1s ease}
+.ob-row:active{background:var(--accent-wash-soft,var(--bg-active))}
+.ob-row:focus-visible,.ob-wiz .modelrow:focus-visible,.ob-offer:focus-visible{
+  outline:2px solid var(--accent);outline-offset:2px;
+}
+.ob-wiz .modelrow{cursor:pointer;transition:background .1s ease,border-color .1s ease}
+.ob-wiz .modelrow:active{background:var(--bg-active)}
+/* An already-configured provider is dimmed; dimmed must not read as
+   dead, because the row still works — it re-opens the same key screen. */
+.ob-wiz .modelrow.dim:hover{opacity:.8}
+
+/* The two download offers are this screen's only controls. They were
+   drawn as the terminal's `┃ ` rule around a paragraph, which is a label,
+   not a button. Same copy, same chord, now a card. */
+.ob-offer{
+  border:1px solid var(--line);border-left-width:2px;border-radius:8px;
+  padding:var(--s3) var(--s4);cursor:pointer;
+  transition:background .1s ease,border-color .1s ease;
+}
+.ob-offer:hover{background:var(--bg-hover);border-color:var(--line-strong)}
+.ob-offer:active{background:var(--bg-active)}
+.ob-offer.cloud{border-left-color:var(--accent)}
+.ob-offer.cloud:hover{background:var(--accent-wash)}
+/* `press c` is the chord, so it is drawn as a key, not as bold prose. */
+.ob-offer b{
+  display:inline-flex;align-items:center;height:20px;padding:0 7px;margin-top:6px;
+  border:1px solid var(--line);border-radius:5px;background:var(--bg-sunken);
+  font-family:var(--font-mono);font-size:11px;font-weight:400;color:var(--text-secondary);
+}
+.ob-offer.cloud b{border-color:var(--accent-line);color:var(--accent-text)}
+/* The Hugging Face `[ clear ]` sits beside a field, not on the download
+   screen, so it keeps its quiet inline shape rather than the card. */
+.ob-offer.ob-offer-inline{
+  border:0;border-radius:6px;padding:2px 8px;margin-top:var(--s2);
+  width:auto;display:inline-flex;font-size:12px;
+}
+.ob-offer.ob-offer-inline:hover{background:var(--bg-hover)}
+
+/* Fields: a 30px box is a terminal's idea of a text input. 34 is a
+   comfortable target, and the focus border says which one is live. */
+.ob-inp{height:34px;transition:border-color .1s ease}
+.ob-inp:hover{border-color:var(--line-strong)}
+.ob-inp:focus{border-color:var(--accent);outline:none}
+.ob-inp:disabled{background:var(--bg-active);cursor:not-allowed}
+
+/* An error belongs under the control that caused it, at the size of a
+   hint rather than a headline. */
+.ob-err-field{margin-top:6px;display:flex;gap:6px;align-items:flex-start}
+.ob-err-field::before{content:"✗";color:var(--danger)}
+
+/* `.ob` is already a flex column with a gap, so the offers' own
+   `margin-top` was doubling the space above them and pushing the second
+   card off a short window. The gap owns the rhythm; the cards sit in it. */
+#onboarding .ob-offer{margin-top:0}
+
+/* A list that is longer than its box scrolls, the way a desktop list
+   does. The TUI painted six rows and a `↓ 7 more` line because a
+   terminal cannot scroll a region — which left the seventh model
+   unreachable by any mouse gesture at all. Same height, same rhythm;
+   the rows below it are now simply there. */
+#onboarding .ob-scroll{max-height:46vh;overflow-y:auto;overscroll-behavior:contain}
+
+/* The import step's tick boxes. `[x]` in a monospace span is a terminal
+   drawing a checkbox with the characters it has; this window has real
+   ones. Same two states, same row, same accent. */
+#onboarding .ob-row .box{
+  display:inline-flex;align-items:center;justify-content:center;
+  width:15px;height:15px;margin-right:8px;vertical-align:-2px;
+  border:1px solid var(--line-strong);border-radius:4px;
+  background:var(--bg-sunken);font-family:var(--font-ui);font-size:10px;line-height:1;
+  color:transparent;transition:background .1s ease,border-color .1s ease;
+}
+#onboarding .ob-row .box.on{background:var(--accent);border-color:var(--accent);color:#fff}
+#onboarding .ob-row.ob-check:hover .box{border-color:var(--accent-line)}
+
+/* The offer cards read as one sentence with a keycap wedged into the
+   middle of it. A card is a control: the sentence on the left, the chord
+   that fires it on the right, both on one baseline. */
+#onboarding .ob-offer:not(.ob-offer-inline){
+  display:flex;align-items:center;justify-content:space-between;gap:var(--s5);
+  width:100%;text-align:left;
+}
+#onboarding .ob-offer:not(.ob-offer-inline) b{margin-top:0;flex:0 0 auto}
+
+/* A list that scrolls must say so. macOS hides its overlay scrollbar
+   until something moves, so the wizard's long lists — 18 providers, a
+   whole model catalogue — ended in a row sliced in half with no hint
+   that there was more under it. A thin permanent bar, in the app's own
+   line colour. */
+/* Deliberately the -webkit- pseudo-elements and NOT `scrollbar-width` /
+   `scrollbar-color`: setting either of the standard properties makes
+   Chromium ignore these rules and fall back to the platform's OVERLAY
+   scrollbar, which on macOS is invisible until something moves — the
+   very thing this is here to fix. */
+#onboarding .ob-scroll::-webkit-scrollbar,#onboarding .ob-wizlist::-webkit-scrollbar{width:10px}
+#onboarding .ob-scroll::-webkit-scrollbar-thumb,#onboarding .ob-wizlist::-webkit-scrollbar-thumb{
+  background:var(--line-strong);border:3px solid transparent;background-clip:content-box;border-radius:6px;
+}
+#onboarding .ob-scroll::-webkit-scrollbar-thumb:hover,#onboarding .ob-wizlist::-webkit-scrollbar-thumb:hover{
+  background:var(--text-disabled);background-clip:content-box;
+}
+
+/* ==========================================================================
+   r6 UX — the secondary control has to look like a control
+   ==========================================================================
+
+   Driving the wizard screen by screen turned up the brief's own rule
+   ("no control that looks like a label") broken in the two places a
+   pointer needs most. Both drew their border as `transparent` at rest
+   and revealed it only on hover — which is a discoverability trick that
+   only works for a pointer that is ALREADY on the control. Until then
+   `Back`, `Skip setup for now` and `Clear` are grey text on the surface,
+   sitting next to real prose, with nothing to say they can be pressed.
+
+   The app already owns the answer: `.btn-s` — its standard secondary
+   button — rests at `1px solid var(--line)` and strengthens on hover.
+   Using that here is the app's existing idiom, not a new look: the same
+   token, the same weight, the same hover. Nothing else moves.  */
+.ob-foot .btn-g{border-color:var(--line)}
+.ob-foot .btn-g:hover{border-color:var(--line-strong)}
+
+/* `Clear` was 46x23px. The wizard's own floor is 32px for a row and 34
+   for a field, and 23px is under every desktop platform's minimum for a
+   pointer target — on the one screen where a mouse user has to undo a
+   typo. It keeps its quiet inline shape and its 12px type; it just
+   becomes big enough to hit and outlined enough to find. */
+.ob-offer.ob-offer-inline{
+  border:1px solid var(--line);min-height:26px;padding:3px 10px;align-items:center;
+}
+.ob-offer.ob-offer-inline:hover{border-color:var(--line-strong)}
