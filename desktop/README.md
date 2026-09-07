@@ -779,7 +779,7 @@ first-run wizard shipped for a while with rows that needed TWO clicks to do
 anything, and 490 green checks never saw it, because no check ever pressed a
 mouse button.
 
-`npm run drive` opens the real app with the DevTools protocol listening and
+`npm run drive:onboarding` opens the real app with the DevTools protocol listening and
 drives it with **trusted input events** — `Input.dispatchMouseEvent` at a
 control's own centre, `Input.dispatchKeyEvent` for a keystroke, the wheel for a
 scroll. `Runtime.evaluate` is used only to LOOK: text, classes, geometry,
@@ -787,12 +787,18 @@ screenshots. If a screen cannot be finished with the pointer and the keyboard
 alone, that is a defect in the app, not a reason to reach for a hook.
 
 ```
-ATOMIC_AGENT_STATE_DIR=/some/empty/dir npm run drive
+ATOMIC_AGENT_STATE_DIR=/some/empty/dir npm run drive:onboarding
 ```
 
-- `desktop/test/drive.mjs` is the harness — `launch`, `clickText`, `clickSel`,
-  `type`, `press`, `clearField`, `wheel`, `hover`, `waitFor`, `snap`,
-  `screenshot`, `focusInfo`. Any future scenario should import it.
+- `desktop/test/drive-ux.mjs` is the driver this scenario was written and
+  driven against — `launch`, `clickText`, `clickSel`, `type`, `press`,
+  `clearField`, `wheel`, `hover`, `moveAway`, `waitFor`, `waitStep`, `snap`,
+  `screenshot`, `focusInfo`. Four lanes wrote four drivers in the same week
+  and their shapes disagree (`waitFor` takes a selector here and an expression
+  in `drive.mjs`; `press` takes options here and an array of modifiers there),
+  so all four are kept and each scenario imports the one it was proved
+  against. **New scenarios should import `desktop/test/drive.mjs`**, the
+  canonical driver; `desktop/test/README.md` is the map.
 - `desktop/test/onboarding-mouse.mjs` is the first-run wizard, start to finish,
   on a fresh state directory: every row, every button, every field, the whole
   flow completed with the mouse. Pass `--shots=DIR` for a PNG per screen,
@@ -1140,8 +1146,15 @@ desktop/
   scripts/copy-renderer.mjs
   scripts/build-speech-helper.mjs
   test/drive.mjs         CDP driver: real clicks and keystrokes, observation only
+  test/drive-ux.mjs      the r6-ux lane's driver (onboarding-mouse.mjs)
+  test/drive-selector-lib.mjs  the r6-sel lane's driver (drive-selector.mjs)
+  test/drive-cloud-lib.mjs     the r6-cloud lane's driver (cloud-setup.drive.mjs)
   test/harness.mjs       throwaway dirs, the first-run click-through, ask/waitTurn
   test/scenarios/        the human end-to-end scenarios + run-all.mjs
+  test/onboarding-mouse.mjs    the first-run wizard, mouse only
+  test/drive-selector.mjs      the composer's parameter controls per route
+  test/cloud-setup.drive.mjs   cloud providers end to end, live keys
+  test/README.md         which driver is which, and every trap they cost
 ```
 
 The renderer is the design prototype, unbundled and unminified. `renderer.js`
