@@ -14874,6 +14874,16 @@ if (typeof window !== 'undefined') {
     rec.queuedAfter = S.queued.length;
     rec.state = req.state || null;
     rec.at = at;
+    /* How the text reached the agent. With no turn running it joins the
+       queue; with one running it is STEERED into it (r4 item 7), and both
+       are correct deliveries. The ordering guarantee — verdict first — is
+       what this fixture exists to prove, so the route must be reported
+       rather than assumed, or the check reads a steered delivery as a
+       lost message. */
+    rec.systems = S.log.slice(at)
+      .filter((m) => m && m.k === 'system')
+      .map((m) => String(m.text || m.html || '').replace(/<[^>]*>/g, '').slice(0, 120));
+    rec.steered = rec.systems.some((t) => /steering the running turn/i.test(t));
     return rec;
   };
   window.__approvalRestore = (at) => {

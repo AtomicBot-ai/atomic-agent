@@ -244,9 +244,25 @@ export async function sqliteRowCount(file: string, table: string): Promise<numbe
 async function sqliteBackup(src: string, dst: string): Promise<boolean> {
   if (!existsSync(src) || !existsSync(SQLITE)) return false;
   try {
-    await run(SQLITE, ["-readonly", src, `.backup '${dst.replace(/'/g, "''")}'`], { timeout: 120_000 });
+    /* `.timeout` before the backup, because the operator's own agent is
+       very likely holding this database: importing IS the moment they are
+       running both. Without it sqlite returns SQLITE_BUSY the instant a
+       writer holds the lock, `.backup` copies nothing, and the import
+       reported "0 sessions" as though there had been none to copy —
+       which is how it failed here while a terminal agent was mid-turn.
+       Five seconds is far longer than any single write it contends with. */
+    await run(
+      SQLITE,
+      ["-readonly", "-cmd", ".timeout 5000", src, `.backup '${dst.replace(/'/g, "''")}'`],
+      { timeout: 120_000 },
+    );
     return existsSync(dst) && statSync(dst).size > 0;
-  } catch {
+  } catch (err) {
+    /* Never silently. A failed copy used to be indistinguishable from an
+       empty source, so the wizard could say it had imported nothing when
+       what really happened was a locked file. */
+    const msg = err instanceof Error ? err.message : String(err);
+    process.stderr.write(`[import] sqlite backup failed for ${src}: ${msg}\n`);
     return false;
   }
 }

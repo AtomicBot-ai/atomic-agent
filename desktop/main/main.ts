@@ -8555,8 +8555,21 @@ async function planHandoffTest(
       // back, which is asynchronous and gives up after ~6s by marking a card ok
       // itself — so poll, and assert `forced` is false when it arrives.
       cards = await js<Card[]>("window.__cards()");
-      const cardDeadline = Date.now() + 12_000;
-      while (Date.now() < cardDeadline && !cards.some((c) => c.live && c.ok === false)) {
+      /* Wait for the cards to RESOLVE, not merely for a refusal to appear.
+         reconcileToolCards only starts once the turn's done frame lands,
+         then backs off before giving up and forcing a card itself, so a
+         busy machine can leave every card at ok=null well past twelve
+         seconds — which is how this cluster went red twice while the
+         operator was downloading a model, reporting a plan-mode defect
+         that was really the harness running out of patience. The condition
+         is now the one the assertions actually need, and the deadline is
+         long enough to survive a loaded machine. */
+      const cardDeadline = Date.now() + 45_000;
+      const settled = (cs: Card[]): boolean => {
+        const mine = cs.filter((c) => c.live);
+        return mine.length > 0 && mine.every((c) => c.ok !== null);
+      };
+      while (Date.now() < cardDeadline && !settled(cards)) {
         await new Promise((r) => setTimeout(r, 500));
         cards = await js<Card[]>("window.__cards()");
       }
@@ -8672,7 +8685,8 @@ async function planHandoffTest(
       // A session is open here, which the scope guard needs: prose may never
       // become the deny reason for a question another thread asked.
       const order = await js<{ sent?: { id: string; decision: string; reason: string }; queuedWhileDenying?: number;
-        queuedBefore: number; queuedAfter: number; state: string | null; at: number }>(
+        queuedBefore: number; queuedAfter: number; state: string | null; at: number;
+        steered?: boolean; systems?: string[] }>(
         "window.__approvalProseOrder('put it in ~/Documents instead')",
       );
       check(
@@ -8681,10 +8695,19 @@ async function planHandoffTest(
           && order.state === "denied",
         JSON.stringify(order),
       );
+      /* Two separate claims, and only the first is this check's subject: the
+         verdict must be sent BEFORE the text is delivered (nothing may have
+         joined the queue while the deny was in flight), and the text must
+         then actually reach the agent. Delivery has two correct routes — the
+         queue when nothing is running, a steer into the live turn when
+         something is — and asserting only the queue read a steered delivery
+         as a lost message whenever a turn happened to still be running. */
+      const delivered = order.steered === true || order.queuedAfter === order.queuedBefore + 1;
       check(
         "the verdict goes out BEFORE the same text is sent into the turn",
-        order.queuedWhileDenying === order.queuedBefore && order.queuedAfter === order.queuedBefore + 1,
-        `queued before=${order.queuedBefore} while denying=${order.queuedWhileDenying} after=${order.queuedAfter}`,
+        order.queuedWhileDenying === order.queuedBefore && delivered,
+        `queued before=${order.queuedBefore} while denying=${order.queuedWhileDenying} after=${order.queuedAfter};`
+        + ` delivered by ${order.steered ? "steering the running turn" : order.queuedAfter > order.queuedBefore ? "the queue" : "NOTHING"}`,
       );
       await js<unknown>(`window.__approvalRestore(${order.at})`);
 
@@ -8698,7 +8721,9 @@ async function planHandoffTest(
       check(
         "Enter under an open approval flips the card to Denied and lands the text",
         prose.state === "denied" && prose.pending === false && prose.doneCards > prose.okCards
-          && prose.queued.includes("use the other folder")
+          && (prose.queued.includes("use the other folder")
+            /* or steered into a live turn — both are real deliveries (r4 item 7) */
+            || prose.systems.some((t) => /steering the running turn/i.test(t)))
           && prose.systems.some((t) => t === "that call was denied with your message as the reason"),
         JSON.stringify({ state: prose.state, pending: prose.pending, done: prose.doneCards, ok: prose.okCards, queued: prose.queued, systems: prose.systems }),
       );
@@ -8735,7 +8760,8 @@ async function planHandoffTest(
         unknownId.state === "undelivered"
           && unknownId.systems.some((t) => t.startsWith("could not deny that call with your message: approvalId not pending:"))
           && !unknownId.systems.some((t) => t === "that call was denied with your message as the reason")
-          && unknownId.queued.includes("use the other folder"),
+          && (unknownId.queued.includes("use the other folder")
+            || unknownId.systems.some((t) => /steering the running turn/i.test(t))),
         JSON.stringify({ state: unknownId.state, systems: unknownId.systems, queued: unknownId.queued }),
       );
       await js<unknown>(`window.__approvalRestore(${unknownId.at})`);
