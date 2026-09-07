@@ -10,6 +10,7 @@ import {
   downloadModel,
   EMBEDDING_MODELS_CATALOG,
   fallBackToCpuBackend,
+  formatGgufSize,
   getConfiguredBackendVariant,
   getDaemonStatus,
   getEmbeddingDaemonStatus,
@@ -25,11 +26,13 @@ import {
   listVulkanDevices,
   maybeAutoUpdateBackend,
   readBackendVersion,
+  readPartialDownload,
   removeModel,
   resolveChatTemplatePath,
   resolveDownloadAsset,
   resolveManagedDevice,
   resolveMmprojFilePath,
+  resolveModelFilePath,
   resolvePlatformAsset,
   resolveServerBinPath,
   shouldFallBackToCpuBackend,
@@ -45,6 +48,20 @@ export function readCliOption(args: string[], name: string): string | undefined 
 
 function formatGb(bytes: number): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
+/**
+ * One line per retry so a flaky link reads as "retrying", not "hung".
+ * Goes to stderr on its own row: the progress line is `\r`-rewritten
+ * in place, and the note must survive the next rewrite.
+ */
+export function renderPullRetry(info: {
+  attempt: number;
+  maxRetries: number;
+  delayMs: number;
+  error: Error;
+}): string {
+  return `download interrupted (${info.error.message}) — retry ${info.attempt}/${info.maxRetries} in ${Math.round(info.delayMs / 1000)}s, resuming from the partial file`;
 }
 
 export function renderPullProgress(
@@ -109,9 +126,19 @@ export async function runLocalModelsPull(idArg: string | undefined): Promise<num
     }
     lastLine = line;
   };
+  const onRetry = (info: Parameters<typeof renderPullRetry>[0]): void => {
+    process.stderr.write(`${tty ? "\n" : ""}${renderPullRetry(info)}\n`);
+  };
   try {
-    process.stderr.write(`downloading ${m.id} (${m.filename}, ${m.sizeLabel})\n`);
-    await downloadModel(dataDir, m, { onProgress });
+    const partial = readPartialDownload(
+      resolveModelFilePath(dataDir, m.id, m.filename),
+    );
+    process.stderr.write(
+      partial
+        ? `resuming ${m.id} (${m.filename}, ${m.sizeLabel}) — ${formatGgufSize(partial.transferred)} already on disk\n`
+        : `downloading ${m.id} (${m.filename}, ${m.sizeLabel})\n`,
+    );
+    await downloadModel(dataDir, m, { onProgress, onRetry });
     if (tty) process.stderr.write(`\n`);
     else if (lastLine) process.stderr.write(`done: ${lastLine}\n`);
     const savedPath = join(dataDir, "models", m.id, m.filename);
@@ -608,11 +635,19 @@ export async function runLocalModelsPullEmbedding(
       process.stderr.write(`${line}\n`);
     lastLine = line;
   };
+  const onRetry = (info: Parameters<typeof renderPullRetry>[0]): void => {
+    process.stderr.write(`${tty ? "\n" : ""}${renderPullRetry(info)}\n`);
+  };
   try {
-    process.stderr.write(
-      `downloading embedding model ${m.id} (${m.filename}, ${m.sizeLabel})\n`,
+    const partial = readPartialDownload(
+      resolveModelFilePath(dataDir, m.id, m.filename),
     );
-    await downloadEmbeddingModel(dataDir, m, { onProgress });
+    process.stderr.write(
+      partial
+        ? `resuming embedding model ${m.id} (${m.filename}, ${m.sizeLabel}) — ${formatGgufSize(partial.transferred)} already on disk\n`
+        : `downloading embedding model ${m.id} (${m.filename}, ${m.sizeLabel})\n`,
+    );
+    await downloadEmbeddingModel(dataDir, m, { onProgress, onRetry });
     if (tty) process.stderr.write(`\n`);
     else if (lastLine) process.stderr.write(`done: ${lastLine}\n`);
     const savedPath = join(dataDir, "models", m.id, m.filename);

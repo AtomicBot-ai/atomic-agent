@@ -50,7 +50,18 @@ export {
   resolveEmbeddingLogFilePath,
 } from "./backend-paths.js";
 
-export { downloadFile, type DownloadProgressFn } from "./download-file.js";
+export {
+  downloadFile,
+  discardPartialDownload,
+  isRetryableDownloadError,
+  readPartialDownload,
+  resolvePartialMetaPath,
+  resolvePartialPath,
+  type DownloadFileOptions,
+  type DownloadProgressFn,
+  type DownloadRetryFn,
+  type PartialDownloadMeta,
+} from "./download-file.js";
 export {
   readBackendVersion,
   writeBackendVersion,
@@ -78,6 +89,7 @@ export {
   isEmbeddingModelDownloaded,
   downloadEmbeddingModel,
   removeEmbeddingModel,
+  type ModelDownloadOptions,
 } from "./model-installer.js";
 export { resolveChatTemplatePath } from "./chat-templates.js";
 export {

@@ -70,6 +70,7 @@ import {
 } from "../persist-embedding-hybrid-recall.js";
 import { persistUserLocalModelsConfig } from "../persist-user-local-models-config.js";
 import { ChatPullMirror, downloadProgressFor } from "../local-turn-gate.js";
+import type { DownloadRetryFn } from "../../local-llm/index.js";
 import type { TuiEventBus } from "../tui-app.js";
 
 /**
@@ -244,6 +245,22 @@ export class LocalModelsOrchestrator {
         await this.stopDaemonSilent();
       }
     }
+  }
+
+  /**
+   * A retrying download must say so: between attempts the bar stands
+   * still, and a still bar with no explanation reads as a hang. The
+   * partial stays on disk, so every retry resumes rather than restarts.
+   */
+  private downloadRetryNotice(label: string): DownloadRetryFn {
+    return (info) => {
+      this.bus.emit({
+        type: "runtime_info",
+        line:
+          `local-llm: ${label} download interrupted (${info.error.message}) — ` +
+          `retry ${info.attempt}/${info.maxRetries} in ${Math.round(info.delayMs / 1000)}s, resuming`,
+      });
+    };
   }
 
   async refresh(): Promise<void> {
@@ -573,6 +590,7 @@ export class LocalModelsOrchestrator {
     });
     await downloadModel(dataDir, def, {
       signal,
+      onRetry: this.downloadRetryNotice(`${def.name} (gguf)`),
       onProgress: (percent, transferred, total) => {
         this.bus.emit({
           type: "local_models_pull_progress",
@@ -612,6 +630,7 @@ export class LocalModelsOrchestrator {
     });
     await downloadMmproj(dataDir, def, {
       signal,
+      onRetry: this.downloadRetryNotice(`${def.name} (mmproj)`),
       onProgress: (percent, transferred, total) => {
         this.bus.emit({
           type: "local_models_pull_progress",
@@ -1572,6 +1591,7 @@ export class LocalModelsOrchestrator {
     try {
       await downloadEmbeddingModel(dataDir, def, {
         signal: controller.signal,
+        onRetry: this.downloadRetryNotice(def.name),
         onProgress: (percent, transferred, total) => {
           this.bus.emit({
             type: "local_models_pull_progress",

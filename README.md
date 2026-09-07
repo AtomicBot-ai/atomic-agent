@@ -311,6 +311,8 @@ atomic-agent tui --cwd /path/to/work
 
 Managed mode downloads the backend, pulls GGUF models, selects the active model, and starts detached chat / embedding daemons when configured.
 
+Model downloads resume. An interrupted pull (a dropped connection, Ctrl+C, a closed terminal) keeps what it has fetched next to the destination as `<file>.part`, and the next `models pull` of the same model continues from that point with a `Range` request rather than starting over. The downloader validates the partial against the server's `ETag` before appending, so a file re-uploaded under the same name is fetched afresh; within one pull, transport errors and stalls retry from the partial with backoff before giving up.
+
 The managed chat daemon stops when the last session exits, freeing the RAM and VRAM the model was holding; set `localModels.managed.stopOnExit: false` in `config.json` to keep the model warm between sessions. Daemons started standalone with `models start` are never touched.
 
 On Windows the backend zip is picked per machine (CUDA when a capable NVIDIA driver is present, Vulkan otherwise). If the GPU build cannot serve a model on your hardware — typical for iGPU-only boxes — the start falls back to the CPU build automatically and records `localModels.managed.backendVariant: "cpu"` in `config.json`; set it to `"auto"`, `"vulkan"`, `"cuda-12.4"` or `"cuda-13.3"` to pick a build yourself (e.g. after a driver update).
