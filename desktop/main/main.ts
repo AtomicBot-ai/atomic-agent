@@ -2803,7 +2803,26 @@ async function voiceTest(
     const cam = await js<string>(
       "navigator.mediaDevices.getUserMedia({video:true}).then(() => 'GRANTED', (e) => e.name)",
     );
-    check("the renderer cannot take the camera", cam === "NotAllowedError", `getUserMedia({video:true}) → ${cam}`);
+    /* The property is that the renderer gets no video, and two different
+       things can deliver it: our permission handler refusing
+       (NotAllowedError), or macOS never offering a device in the first
+       place (NotFoundError — an unsigned packaged bundle carries no camera
+       usage string, so the dev run and the .dmg genuinely differ here).
+       Both satisfy the property, but only the first exercises the guard, so
+       the detail says which actually refused rather than letting a machine
+       with no camera read as proof that our handler works. GRANTED is the
+       only real failure. */
+    const camDenied = cam === "NotAllowedError";
+    const camAbsent = cam === "NotFoundError" || cam === "NotReadableError";
+    check(
+      "the renderer cannot take the camera",
+      camDenied || camAbsent,
+      `getUserMedia({video:true}) → ${cam}`
+      + (camDenied
+        ? " (refused by the permission handler)"
+        : ` (the OS offered no device, so the handler was not exercised — the`
+          + ` verdict function itself is asserted below)`),
+    );
     // The very function both handlers call — not a copy of it.
     check(
       "and cannot take the microphone outside a session the user started",
