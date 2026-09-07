@@ -10,9 +10,17 @@ import type { IntegrationStatusLevel } from "../../integrations/index.js";
  */
 
 /** One field as rendered in the detail view. */
+export interface IntegrationActionRow {
+  key: string;
+  id: string;
+  label: string;
+}
+
 export interface IntegrationFieldRow {
   key: string;
   label: string;
+  /** `"boolean"` rows toggle with enter instead of opening an editor. */
+  kind: "text" | "boolean";
   /** Already masked when the field is a secret — never the raw value. */
   display: string;
   present: boolean;
@@ -29,6 +37,7 @@ export interface IntegrationRow {
   docsUrl?: string;
   appliesLive: boolean;
   fields: readonly IntegrationFieldRow[];
+  actions: readonly IntegrationActionRow[];
 }
 
 export type IntegrationsPanelMode = "list" | "detail" | "edit";

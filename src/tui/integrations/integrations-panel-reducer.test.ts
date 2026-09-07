@@ -15,9 +15,11 @@ function rowOf(id: string, fields = 1): IntegrationRow {
     summary: "",
     level: "not_configured",
     appliesLive: true,
+    actions: [],
     fields: Array.from({ length: fields }, (_, i) => ({
       key: `f${i}`,
       label: `Field ${i}`,
+      kind: "text" as const,
       display: "—",
       present: false,
     })),

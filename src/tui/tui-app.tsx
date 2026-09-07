@@ -121,7 +121,6 @@ import { handleMcpTabKey } from "./mcp/mcp-key-bindings.js";
 import { handleImportTabKey } from "./import/import-key-bindings.js";
 import type { ImportFormState } from "./import/import-panel-state.js";
 import { handleProvidersTabKey } from "./providers/providers-key-bindings.js";
-import { handleTelegramTabKey } from "./telegram/telegram-key-bindings.js";
 import { handlePrivacyTabKey } from "./privacy/privacy-key-bindings.js";
 import { handleIntegrationsTabKey } from "./integrations/integrations-key-bindings.js";
 import { ContextMenuPopup, ContextMenuProvider } from "./context-menu/index.js";
@@ -582,6 +581,16 @@ export interface TuiAppCallbacks {
     integrationId: string,
     fieldKey: string,
   ): void | Promise<void>;
+  /** Integrations tab: flip a boolean field (a channel's kill switch). */
+  onIntegrationFieldToggleRequested?(
+    integrationId: string,
+    fieldKey: string,
+  ): void | Promise<void>;
+  /** Integrations tab: run a descriptor action (pair, restart). */
+  onIntegrationActionRequested?(
+    integrationId: string,
+    actionId: string,
+  ): void | Promise<void>;
   /** Import tab: run a dry-run preview of the Hermes import. */
   onImportPreview?(form: ImportFormState): void;
   /** Import tab: execute the import (write sessions / tasks / secrets). */
@@ -848,8 +857,6 @@ export function TuiApp({
   const localModelsTabActive =
     state.uiMode === "debug" && state.activeTab === "models";
   const llmTabActive = state.uiMode === "debug" && state.activeTab === "llm";
-  const telegramTabActive =
-    state.uiMode === "debug" && state.activeTab === "telegram";
   const importTabActive =
     state.uiMode === "debug" && state.activeTab === "import";
   const privacyTabActive =
@@ -964,7 +971,6 @@ export function TuiApp({
         !mcpTabActive &&
         !providersTabActive &&
         !llmTabActive &&
-        !telegramTabActive &&
         !importTabActive &&
         !privacyTabActive &&
         !integrationsTabActive &&
@@ -1035,7 +1041,6 @@ export function TuiApp({
     if (providersTabActive) return handleProvidersTabKey(input, key, ctx);
     if (llmTabActive) return handleLlmPanelKey(input, key, ctx);
     if (localModelsTabActive) return handleLocalModelsTabKey(input, key, ctx);
-    if (telegramTabActive) return handleTelegramTabKey(input, key, ctx);
     if (importTabActive) return handleImportTabKey(input, key, ctx);
     if (privacyTabActive) return handlePrivacyTabKey(input, key, ctx);
     if (integrationsTabActive) {

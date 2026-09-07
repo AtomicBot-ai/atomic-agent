@@ -158,9 +158,13 @@ function DetailView({
                 ) : (
                   <Text
                     color={
-                      field.present
-                        ? theme.colors.accentSoft
-                        : theme.colors.muted
+                      field.kind === "boolean"
+                        ? field.display === "on"
+                          ? theme.colors.accentSoft
+                          : theme.colors.muted
+                        : field.present
+                          ? theme.colors.accentSoft
+                          : theme.colors.muted
                     }
                   >
                     {field.display}
@@ -176,6 +180,14 @@ function DetailView({
           );
         })}
       </Box>
+      {(row.actions ?? []).length > 0 ? (
+        <Box marginTop={1}>
+          <Text color={theme.colors.muted}>
+            {"  "}
+            {(row.actions ?? []).map((a) => `${a.key} ${a.label}`).join("  ·  ")}
+          </Text>
+        </Box>
+      ) : null}
       {!row.appliesLive ? (
         <Box marginTop={1}>
           <Text color={theme.colors.muted}>
@@ -217,7 +229,10 @@ function badgeColor(level: IntegrationStatusLevel): string {
 function hint(panel: IntegrationsPanelState): string {
   if (panel.mode === "edit") return "enter save · esc cancel";
   if (panel.mode === "detail") {
-    return "↑/↓ field · e edit · d clear · esc back";
+    const row = panel.rows[panel.selected];
+    const field = row?.fields[panel.selectedField];
+    const verb = field?.kind === "boolean" ? "enter toggle" : "e edit · d clear";
+    return `↑/↓ field · ${verb} · esc back`;
   }
   return "↑/↓ move · enter open · r refresh";
 }

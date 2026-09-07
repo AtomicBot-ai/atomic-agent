@@ -181,7 +181,7 @@ const V0_2_2_SLASH_COMMANDS = [
   {
     name: "telegram",
     description:
-      "telegram tab · subcommands: enable | disable | start | stop | restart | pair | token",
+      "Telegram controls in the Integrations tab · subcommands: enable | disable | start | stop | restart | pair",
   },
   {
     name: "import",

@@ -16,7 +16,9 @@ describe("integration registry", () => {
   it("gives every field a unique key and env var within its integration", () => {
     for (const integration of listIntegrations()) {
       const keys = integration.fields.map((f) => f.key);
-      const envVars = integration.fields.map((f) => f.envVar);
+      const envVars = integration.fields
+        .filter((f) => f.store !== "config")
+        .map((f) => f.envVar);
       expect(new Set(keys).size).toBe(keys.length);
       expect(new Set(envVars).size).toBe(envVars.length);
     }

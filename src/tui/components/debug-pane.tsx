@@ -25,7 +25,6 @@ import { SkillsPanel } from "./skills-panel.js";
 import { McpPanel } from "./mcp-panel.js";
 import { MemoryPanel } from "./memory-panel.js";
 import { ImportPanel } from "./import-panel.js";
-import { TelegramPanel } from "../telegram/components/telegram-panel.js";
 import { PrivacyPanel } from "../privacy/components/privacy-panel.js";
 import { IntegrationsPanel } from "../integrations/components/integrations-panel.js";
 import { ProvidersPanel } from "./providers-panel.js";
@@ -165,7 +164,6 @@ function buildManageTabs(state: TuiState): SubTab[] {
     { id: "mcp", label: `MCP${suffix(state.mcpPanel.rows.length)}` },
     { id: "integrations", label: integrationsTabLabel(state) },
     { id: "llm", label: "LLM" },
-    { id: "telegram", label: telegramTabLabel(state) },
     { id: "import", label: "Import" },
     { id: "privacy", label: "Privacy" },
   ];
@@ -349,8 +347,6 @@ function ActiveDebugTab({
       );
     case "llm-logs":
       return <LocalLlmLogsPanel logs={state.localLlmLogs} maxLines={maxVisible} />;
-    case "telegram":
-      return <TelegramPanel panel={state.telegramPanel} />;
     case "import":
       return <ImportPanel panel={state.importPanel} />;
     case "privacy":
@@ -389,12 +385,6 @@ function integrationsTabLabel(state: TuiState): string {
   return ready > 0 ? `Integrations (${ready})` : "Integrations";
 }
 
-function telegramTabLabel(state: TuiState): string {
-  const channelState = state.telegramPanel.channelState;
-  if (channelState === "up") return "Telegram (up)";
-  if (channelState === "down") return "Telegram (down)";
-  return "Telegram";
-}
 
 /**
  * Re-export of the section-aware sub-tab cycler. Kept here so existing

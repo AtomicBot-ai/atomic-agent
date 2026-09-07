@@ -38,6 +38,11 @@ export function readFieldValue(
       : field.envVar === undefined
         ? undefined
         : env[field.envVar];
+  if (field.kind === "boolean") {
+    // A toggle is always "present": off is a deliberate value, not an
+    // empty field waiting to be filled in.
+    return raw === true ? "on" : "off";
+  }
   if (typeof raw === "number") return String(raw);
   if (typeof raw !== "string") return undefined;
   const trimmed = raw.trim();
@@ -119,6 +124,16 @@ export function writeFieldValue(
     if (invalid !== undefined) throw new IntegrationSecretError(invalid);
   }
 
+  if (field.kind === "boolean") {
+    if (!userConfigFile || !field.configPath) {
+      throw new IntegrationSecretError(
+        `${field.label} is a toggle but no config path was supplied`,
+      );
+    }
+    writeConfigPath(userConfigFile, field.configPath, trimmed === "on");
+    return;
+  }
+
   if (field.store === "config") {
     if (!userConfigFile || !field.configPath) {
       throw new IntegrationSecretError(
@@ -152,7 +167,7 @@ export function writeFieldValue(
 function writeConfigPath(
   userConfigFile: string,
   path: string,
-  value: string | null,
+  value: string | boolean | null,
 ): void {
   const prev = ensureUserConfigFileSync(userConfigFile) as unknown as Record<
     string,

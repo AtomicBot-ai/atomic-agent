@@ -140,7 +140,7 @@ describe("TuiApp (smoke)", () => {
     expect(text).toContain("Logs");
     // Manage-only tabs should not be in the Observe sub-tab strip.
     expect(text).not.toContain("Tasks");
-    expect(text).not.toContain("Telegram");
+    expect(text).not.toContain("Integrations");
     unmount();
   });
 
@@ -157,7 +157,7 @@ describe("TuiApp (smoke)", () => {
     expect(text).toContain("MANAGE");
     expect(text).toContain("Tasks");
     expect(text).toContain("Skills");
-    expect(text).toContain("Telegram");
+    expect(text).toContain("Integrations");
     // Observe-only tabs should be hidden from the Manage sub-tab strip.
     expect(text).not.toContain("Feed");
     expect(text).not.toContain("Reasoning");

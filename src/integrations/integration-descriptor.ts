@@ -43,6 +43,14 @@ export interface IntegrationField {
    * when `store === "config"`. A `null` clears it.
    */
   configPath?: string;
+  /**
+   * `"text"` (default) is a typed value; `"boolean"` renders as an
+   * on/off toggle and stores `true` / `false` rather than a string.
+   * Toggles are how a channel's kill switch reaches the hub — without
+   * one an operator would set a token here and still need the CLI to
+   * turn the thing on.
+   */
+  kind?: "text" | "boolean";
   /** Mask the value in the UI and never log it. */
   secret: boolean;
   /** A field the integration cannot work without. */
@@ -87,6 +95,30 @@ export interface IntegrationStatusContext {
   channelStates?: ReadonlyMap<string, string>;
 }
 
+/**
+ * A verb the detail view offers, beyond editing fields.
+ *
+ * Credentials alone are not a setup surface for a live channel:
+ * pairing an owner, restarting after a token change and toggling the
+ * channel are all things the operator must be able to do in the same
+ * place, or the hub is half the story and they go hunting for a tab
+ * that no longer exists.
+ */
+export interface IntegrationAction {
+  /** Single keypress in the detail view. Must not collide with e/d/esc. */
+  key: string;
+  /** Stable id the orchestrator dispatches on. */
+  id: string;
+  /** Short imperative label, e.g. "pair", "restart". */
+  label: string;
+  /**
+   * Hidden when this returns false — "pair" makes no sense before a
+   * token exists, and offering it would only produce a confusing
+   * failure.
+   */
+  available?: (ctx: IntegrationStatusContext) => boolean;
+}
+
 export interface IntegrationDescriptor {
   /** Stable id, also the `/integrations <id>` selector. */
   id: string;
@@ -97,6 +129,8 @@ export interface IntegrationDescriptor {
   /** Where to get the credentials. */
   docsUrl?: string;
   fields: readonly IntegrationField[];
+  /** Verbs offered alongside the fields. */
+  actions?: readonly IntegrationAction[];
   /**
    * Whether a restart is needed for changes to take effect. The hub
    * says so explicitly rather than leaving the operator to guess why

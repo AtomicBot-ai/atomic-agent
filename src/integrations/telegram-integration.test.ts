@@ -4,12 +4,14 @@ import { telegramIntegration } from "./telegram-integration.js";
 import { TELEGRAM_BOT_TOKEN_KEY } from "../channels/telegram/index.js";
 
 const TOKEN = "botToken";
+const OWNER = "ownerUserId";
+const BOTH = [TOKEN, OWNER];
 const VALID = `123456789:${"A".repeat(35)}`;
 
 function ctx(present: string[], channel?: string) {
   return {
     presentFields: new Set(present),
-    configured: present.includes(TOKEN),
+    configured: BOTH.every((f) => present.includes(f)),
     ...(channel === undefined
       ? {}
       : { channelStates: new Map([["telegram", channel]]) }),
@@ -17,47 +19,60 @@ function ctx(present: string[], channel?: string) {
 }
 
 describe("telegramIntegration", () => {
-  it("owns only the credential, and says where the rest lives", () => {
-    // Pairing, owner id and start/stop stay on the Telegram tab; folding
-    // a pairing countdown into a credential list would make both worse.
-    expect(telegramIntegration.fields).toHaveLength(1);
+  it("is the whole setup surface: token, owner and kill switch", () => {
+    // The Telegram tab is gone, so anything it used to own has to be
+    // reachable here or the operator has nowhere to go.
+    const keys = telegramIntegration.fields.map((f) => f.key);
+    expect(keys).toEqual([TOKEN, OWNER, "enabled"]);
     expect(telegramIntegration.fields[0]?.envVar).toBe(TELEGRAM_BOT_TOKEN_KEY);
-    expect(telegramIntegration.summary).toMatch(/Telegram tab/);
+    expect(telegramIntegration.fields[2]?.kind).toBe("boolean");
   });
 
-  it("reads an absent token as not configured", () => {
+  it("offers pairing and restart as actions", () => {
+    const ids = (telegramIntegration.actions ?? []).map((a) => a.id);
+    expect(ids).toEqual(["pair", "restart"]);
+  });
+
+  it("hides pairing and restart until a token exists", () => {
+    // Pairing opens a window that claims the next DM; with no token
+    // there is no bot to DM, so it could only ever time out.
+    for (const action of telegramIntegration.actions ?? []) {
+      expect(action.available?.(ctx([]))).toBe(false);
+      expect(action.available?.(ctx([TOKEN]))).toBe(true);
+    }
+  });
+
+  it("does not let an action key shadow edit or clear", () => {
+    for (const action of telegramIntegration.actions ?? []) {
+      expect(["e", "d", "j", "k"]).not.toContain(action.key);
+    }
+  });
+
+  it("walks the operator through the setup states in order", () => {
     expect(telegramIntegration.status(ctx([])).level).toBe("not_configured");
-  });
-
-  it("distinguishes a saved token from a running channel", () => {
-    const saved = telegramIntegration.status(ctx([TOKEN]));
-    expect(saved.level).toBe("configured");
-    expect(saved.detail).toMatch(/pair and enable/);
-    expect(telegramIntegration.status(ctx([TOKEN], "up"))).toEqual({
+    expect(telegramIntegration.status(ctx([TOKEN])).detail).toMatch(/press p to pair/);
+    expect(telegramIntegration.status(ctx(BOTH)).detail).toMatch(/set Channel to on/);
+    expect(telegramIntegration.status(ctx(BOTH, "up"))).toEqual({
       level: "connected",
       detail: "channel up",
     });
   });
 
   it("does not badge a disabled channel as an error", () => {
-    // A token saved with the channel off is a normal resting state.
-    expect(telegramIntegration.status(ctx([TOKEN], "disabled")).level).toBe(
+    expect(telegramIntegration.status(ctx(BOTH, "disabled")).level).toBe(
       "configured",
     );
-    expect(telegramIntegration.status(ctx([TOKEN], "down")).level).toBe("error");
+    expect(telegramIntegration.status(ctx(BOTH, "down")).level).toBe("error");
   });
 
   it("rejects a token that is not BotFather-shaped", () => {
     const validate = telegramIntegration.fields[0]?.validate;
     expect(validate?.(VALID)).toBeUndefined();
     expect(validate?.("not-a-token")).toMatch(/bot token/);
-    // Right shape, secret too short -- the common truncated-paste case.
     expect(validate?.("123456789:short")).toMatch(/bot token/);
   });
 
-  it("says changes need a restart", () => {
-    // The channel resolves its token at construction, so a new token
-    // does not take effect until the next boot -- the pane must say so.
-    expect(telegramIntegration.appliesLive).toBe(false);
+  it("applies live, because the hub can restart the channel itself", () => {
+    expect(telegramIntegration.appliesLive).toBe(true);
   });
 });

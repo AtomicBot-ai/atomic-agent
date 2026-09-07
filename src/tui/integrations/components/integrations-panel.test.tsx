@@ -16,10 +16,12 @@ const COMPOSIO: IntegrationRow = {
   detail: "no key — Composio tools are not loaded",
   docsUrl: "https://composio.dev",
   appliesLive: true,
+  actions: [],
   fields: [
     {
       key: "apiKey",
       label: "API key",
+      kind: "text",
       display: "—",
       present: false,
       help: "Free tier: 100K tool calls/month.",

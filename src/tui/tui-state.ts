@@ -118,7 +118,6 @@ export type TuiTab =
   | "llm"
   | "models"
   | "llm-logs"
-  | "telegram"
   | "mcp"
   | "providers"
   | "import"

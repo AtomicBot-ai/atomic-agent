@@ -34,7 +34,6 @@ export const MANAGE_TABS: readonly TuiTab[] = [
   "mcp",
   "integrations",
   "llm",
-  "telegram",
   "import",
   "privacy",
 ];

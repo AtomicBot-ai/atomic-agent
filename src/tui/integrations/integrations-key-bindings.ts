@@ -85,8 +85,31 @@ export function handleIntegrationsTabKey(
       dispatch({ type: "integrations_field_moved", delta: 1 });
       return true;
     }
+    const field = selectedField(panel);
+    // Enter on a toggle flips it; on a text field it opens the editor,
+    // so the obvious key does the obvious thing for both kinds.
+    if (key.return || (input === "e" && field?.kind === "boolean")) {
+      const row = selectedRow(panel);
+      if (row && field?.kind === "boolean") {
+        void callbacks.onIntegrationFieldToggleRequested?.(row.id, field.key);
+        return true;
+      }
+    }
     if (input === "e") {
+      if (field?.kind === "boolean") return true;
       dispatch({ type: "integrations_edit_started" });
+      return true;
+    }
+    // Descriptor-declared verbs (pair, restart). Checked after the
+    // built-in keys so an integration cannot shadow edit/clear.
+    // `?? []` because a row can legitimately declare no verbs, and a
+    // crash here would take the whole tab down over a missing array.
+    const action = (selectedRow(panel)?.actions ?? []).find(
+      (a) => a.key === input,
+    );
+    if (action) {
+      const row = selectedRow(panel);
+      if (row) void callbacks.onIntegrationActionRequested?.(row.id, action.id);
       return true;
     }
     if (input === "d") {

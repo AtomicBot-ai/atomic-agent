@@ -236,7 +236,9 @@ export class ChatOrchestrator {
     });
     this.telegram = new TuiTelegramOrchestrator(runtime, bus);
     this.privacy = new PrivacyOrchestrator(runtime, bus);
-    this.integrations = new IntegrationsOrchestrator(runtime, bus);
+    // The hub drives Telegram through its existing orchestrator rather
+    // than reimplementing pairing / restart / enable.
+    this.integrations = new IntegrationsOrchestrator(runtime, bus, this.telegram);
     // Tap the bus rather than the runtime handler: what the reducer was
     // offered is exactly what a switch-back may need to replay, session
     // tags included. `record` no-ops for sessions without a running

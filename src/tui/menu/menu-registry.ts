@@ -324,11 +324,11 @@ export const MENU: readonly MenuNode[] = [
     slash: {
       name: "telegram",
       description:
-        "telegram tab · subcommands: enable | disable | start | stop | restart | pair | token",
+        "Telegram controls in the Integrations tab · subcommands: enable | disable | start | stop | restart | pair",
       rank: 30,
     },
     section: "manage",
-    tab: "telegram",
+    tab: "integrations",
     parent: "go.manage",
   },
   {

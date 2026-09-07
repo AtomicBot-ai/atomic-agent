@@ -50,9 +50,10 @@ const ROW: IntegrationRow = {
   summary: "",
   level: "not_configured",
   appliesLive: true,
+  actions: [{ key: "s", id: "restart", label: "restart" }],
   fields: [
-    { key: "apiKey", label: "API key", display: "—", present: false },
-    { key: "other", label: "Other", display: "x", present: true },
+    { key: "apiKey", label: "API key", kind: "text", display: "—", present: false },
+    { key: "other", label: "Other", kind: "text", display: "x", present: true },
   ],
 };
 

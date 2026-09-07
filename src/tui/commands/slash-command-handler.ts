@@ -815,7 +815,7 @@ function dispatchTelegramSub(rawArgs: string): SlashDispatchResult {
   if (argPart.length === 0) {
     return pureActions([
       { type: "ui_mode_set", mode: "debug" },
-      { type: "tab_changed", tab: "telegram" },
+      { type: "tab_changed", tab: "integrations" },
     ]);
   }
   const verb = argPart.split(/\s+/)[0]?.toLowerCase() ?? "";
@@ -826,13 +826,12 @@ function dispatchTelegramSub(rawArgs: string): SlashDispatchResult {
     case "stop":
     case "restart":
     case "pair":
-    case "token":
     case "clear-token":
     case "clear-owner":
       return {
         ...pureActions([
           { type: "ui_mode_set", mode: "debug" },
-          { type: "tab_changed", tab: "telegram" },
+          { type: "tab_changed", tab: "integrations" },
         ]),
         telegramVerb: verb,
       };

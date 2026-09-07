@@ -58,6 +58,24 @@ export const discordIntegration: IntegrationDescriptor = {
           ? undefined
           : "A Discord user ID is 15-25 digits. Enable Developer Mode, then right-click your name → Copy User ID.",
     },
+    {
+      key: "enabled",
+      label: "Channel",
+      kind: "boolean",
+      store: "config",
+      configPath: "discord.enabled",
+      secret: false,
+      required: false,
+      help: "on connects the gateway; off disconnects without forgetting the token.",
+    },
+  ],
+  actions: [
+    {
+      key: "s",
+      id: "restart",
+      label: "restart",
+      available: (ctx) => ctx.presentFields.has("botToken"),
+    },
   ],
   status(ctx: IntegrationStatusContext): IntegrationStatus {
     if (!isConfigured(discordIntegration, ctx.presentFields)) {
@@ -77,10 +95,8 @@ export const discordIntegration: IntegrationDescriptor = {
         // Everything is configured but the channel is switched off.
         // Say exactly how to turn it on rather than pointing at a tab
         // that does not exist.
-        return {
-          level: "configured",
-          detail: "ready — enable with: atag config set '{\"discord\":{\"enabled\":true}}'",
-        };
+        // Paired but switched off -- a normal resting state.
+        return { level: "configured", detail: "ready — set Channel to on" };
     }
   },
 };
