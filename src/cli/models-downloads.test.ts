@@ -1,7 +1,7 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ChildProcess, spawn as nodeSpawn } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -18,16 +18,11 @@ import { getConfig, resetConfigCache } from "../config/index.js";
 import {
   downloadJobId,
   readDownloadJob,
-  resolveDownloadLogPath,
   writeDownloadJob,
   type DownloadJob,
 } from "../local-llm/index.js";
 import { modelsCommand } from "./models-command.js";
-import {
-  downloadWorkerArgs,
-  followDownloadJob,
-  spawnDownloadWorker,
-} from "./models-downloads.js";
+import { followDownloadJob } from "./models-downloads.js";
 
 const DEAD_PID = 2_000_000_000;
 
@@ -83,55 +78,7 @@ describe("background model downloads (CLI)", () => {
     resetConfigCache();
   });
 
-  it("spawns a detached copy of this program with the worker argv, logging to the job log", () => {
-    const spawn = vi.fn(() => ({ pid: 777, unref: vi.fn() }) as unknown as ChildProcess);
 
-    const result = spawnDownloadWorker({
-      kind: "chat",
-      modelId: "qwen-3.5-4b",
-      mode: "gguf-only",
-      spawn: spawn as unknown as typeof nodeSpawn,
-      execPath: "/opt/node/bin/node",
-      argv: ["/opt/node/bin/node", "/repo/dist/cli/index.js", "models", "pull"],
-      execArgv: [],
-      sea: false,
-      env: { ATOMIC_AGENT_STATE_DIR: stateDir },
-    });
-
-    expect(result.outcome).toBe("spawned");
-    const [cmd, args, opts] = spawn.mock.calls[0] as unknown as [
-      string,
-      string[],
-      { detached: boolean; stdio: unknown[]; env: NodeJS.ProcessEnv },
-    ];
-    expect(cmd).toBe("/opt/node/bin/node");
-    expect(args).toEqual([
-      "/repo/dist/cli/index.js",
-      ...downloadWorkerArgs({ kind: "chat", modelId: "qwen-3.5-4b", mode: "gguf-only" }),
-    ]);
-    expect(opts.detached).toBe(true);
-    expect(opts.stdio[0]).toBe("ignore");
-    expect(opts.env.ATOMIC_AGENT_STATE_DIR).toBe(stateDir);
-    // The record exists before the worker has written a byte.
-    const seeded = readDownloadJob(dataDir, downloadJobId("chat", "qwen-3.5-4b"));
-    expect(seeded).toMatchObject({ pid: 777, status: "interrupted" });
-    expect(existsSync(resolveDownloadLogPath(dataDir, "chat-qwen-3.5-4b"))).toBe(true);
-  });
-
-  it("does not start a second worker for a model whose worker is alive", () => {
-    writeDownloadJob(dataDir, job({ pid: process.pid }));
-    const spawn = vi.fn();
-    const result = spawnDownloadWorker({
-      kind: "chat",
-      modelId: "qwen-3.5-4b",
-      mode: "gguf-only",
-      spawn: spawn as unknown as typeof nodeSpawn,
-      sea: true,
-      execPath: "/bin/atag",
-    });
-    expect(result.outcome).toBe("already-running");
-    expect(spawn).not.toHaveBeenCalled();
-  });
 
   it("models pull --background reports how to watch, follow and stop the worker", async () => {
     vi.spyOn(process, "execPath", "get").mockReturnValue("/opt/node/bin/node");
@@ -236,19 +183,4 @@ describe("background model downloads (CLI)", () => {
     expect(stderrChunks.join("")).not.toMatch(/already downloading/);
   });
 
-  it("the worker log path is created next to the record", () => {
-    const spawn = vi.fn(() => ({ pid: 1, unref: vi.fn() }) as unknown as ChildProcess);
-    const result = spawnDownloadWorker({
-      kind: "embedding",
-      modelId: "nomic-embed-text-v1.5",
-      mode: "gguf-only",
-      spawn: spawn as unknown as typeof nodeSpawn,
-      sea: true,
-      execPath: "/bin/atag",
-    });
-    expect(result.outcome).toBe("spawned");
-    if (result.outcome !== "spawned") return;
-    expect(result.logPath).toBe(join(dataDir, "downloads", "embedding-nomic-embed-text-v1.5.log"));
-    expect(readFileSync(result.logPath, "utf-8")).toBe("");
-  });
 });

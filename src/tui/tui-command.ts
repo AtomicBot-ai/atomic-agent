@@ -588,6 +588,8 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onLocalModelsAutoRefreshStart: () => orchestrator.localModels.startAutoRefresh(),
         onLocalModelsPullRequested: (id, mode) =>
           void orchestrator.localModels.pullModel(id, mode),
+        onLocalModelsPullCancelRequested: (kind) =>
+          void orchestrator.localModels.cancelPull(kind),
         onLocalModelsSetActiveRequested: (id) =>
           void orchestrator.localModels.setActive(id),
         onLocalModelsUseManagedRequested: () =>
@@ -761,6 +763,10 @@ export async function tuiCommand(args: string[]): Promise<number> {
   // on disk, start the daemon immediately so there is no extra
   // "run this command in another terminal" step. No-op in external
   // mode or when the prerequisites are missing.
+  // Downloads outlive the process: a worker a previous session started,
+  // one that died mid-way, or one that finished while nobody watched is
+  // picked up before the auto-start decides whether anything is missing.
+  orchestrator.localModels.adoptBackgroundDownloads();
   void orchestrator.localModels.autoStartIfReady();
 
   // Fire-and-forget startup version check. Surfaces an in-app update

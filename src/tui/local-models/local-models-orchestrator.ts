@@ -8,9 +8,18 @@ import {
   DEFAULT_EMBEDDING_MODEL_ID,
   DEFAULT_LLAMACPP_MODEL_ID,
   downloadBackend,
-  downloadEmbeddingModel,
-  downloadMmproj,
-  downloadModel,
+  downloadJobId,
+  listDownloadJobs,
+  readDownloadJob,
+  removeDownloadJob,
+  spawnDownloadWorker,
+  stopDownloadWorker,
+  type DownloadJob,
+  type DownloadJobKind,
+  type DownloadJobMode,
+  type SpawnDownloadWorkerInput,
+  type SpawnDownloadWorkerResult,
+  type StopDownloadWorkerResult,
   EMBEDDING_MODELS_CATALOG,
   fallBackToCpuBackend,
   getConfiguredBackendVariant,
@@ -70,7 +79,6 @@ import {
 } from "../persist-embedding-hybrid-recall.js";
 import { persistUserLocalModelsConfig } from "../persist-user-local-models-config.js";
 import { ChatPullMirror, downloadProgressFor } from "../local-turn-gate.js";
-import type { DownloadRetryFn } from "../../local-llm/index.js";
 import type { TuiEventBus } from "../tui-app.js";
 
 /**
@@ -129,6 +137,15 @@ export interface LocalModelsOrchestratorHooks {
    * `autoStartIfReady` adoption of a model configured long ago.
    */
   onManagedModelActivated?: () => void;
+  /**
+   * Test seams for the download worker. The defaults launch a detached
+   * copy of this program; a test substitutes an in-process runner so
+   * no child is spawned from under vitest.
+   */
+  spawnDownload?: (input: SpawnDownloadWorkerInput) => SpawnDownloadWorkerResult;
+  stopDownload?: (dataDir: string, job: DownloadJob) => Promise<StopDownloadWorkerResult>;
+  /** How often the worker's record is re-read. Default 300ms. */
+  downloadPollMs?: number;
 }
 
 export class LocalModelsOrchestrator {
@@ -138,11 +155,14 @@ export class LocalModelsOrchestrator {
   /** True while a daemon the TUI owns is running; used by `shutdown()`. */
   private daemonSupervised = false;
   /**
-   * Chat and embedding pulls are independent channels: a new pull only
-   * aborts another pull of the same kind.
+   * Chat and embedding pulls are independent channels, one watched
+   * worker each. A new pull of a kind detaches the watch on the previous
+   * one; the previous worker itself keeps running.
    */
-  private activeModelPullAbort: AbortController | null = null;
-  private activeEmbeddingPullAbort: AbortController | null = null;
+  private readonly watchedDownloads = new Map<
+    DownloadJobKind,
+    { jobId: string; detach: () => void }
+  >();
   /**
    * Single-flight guard for the backend download. Both `pullModel` and
    * `pullEmbeddingModel` `await this.pullBackend()` when the backend is
@@ -219,6 +239,10 @@ export class LocalModelsOrchestrator {
   async shutdown(): Promise<void> {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+    // The workers are on their own: quitting must not stop a download.
+    // Only the watches end here; the next launch re-adopts the jobs.
+    for (const watch of this.watchedDownloads.values()) watch.detach();
+    this.watchedDownloads.clear();
     if (this.activeTimer) clearInterval(this.activeTimer);
     this.activeTimer = null;
     this.stopLogsAutoRefresh();
@@ -247,24 +271,11 @@ export class LocalModelsOrchestrator {
     }
   }
 
-  /**
-   * A retrying download must say so: between attempts the bar stands
-   * still, and a still bar with no explanation reads as a hang. The
-   * partial stays on disk, so every retry resumes rather than restarts.
-   */
-  private downloadRetryNotice(label: string): DownloadRetryFn {
-    return (info) => {
-      this.bus.emit({
-        type: "runtime_info",
-        line:
-          `local-llm: ${label} download interrupted (${info.error.message}) — ` +
-          `retry ${info.attempt}/${info.maxRetries} in ${Math.round(info.delayMs / 1000)}s, resuming`,
-      });
-    };
-  }
-
   async refresh(): Promise<void> {
     this.bus.emit({ type: "local_models_refresh_started" });
+    // A `models pull --background` started in another terminal shows
+    // up here as a live job nobody in this process is watching.
+    this.adoptBackgroundDownloads({ onlyRunning: true });
     try {
       const cfg = getConfig();
       const dataDir = cfg.paths.localModelsDataDir;
@@ -351,6 +362,12 @@ export class LocalModelsOrchestrator {
    * model and the daemon is (re)started so the user lands in a
    * ready-to-chat state.
    *
+   * The bytes are fetched by a detached worker process (see
+   * `local-llm/download-spawn.ts`), not by this process: quitting the
+   * TUI leaves the download running, and the next launch picks it up
+   * again (`adoptBackgroundDownloads`). This method only watches the
+   * worker's job record and turns it into the panel's pull events.
+   *
    * Modes:
    * - `"with-mmproj"` (default for vision-capable rows): pull GGUF then
    *   mmproj sequentially under one download banner. The banner label
@@ -388,77 +405,269 @@ export class LocalModelsOrchestrator {
       if (!isBackendDownloaded(dataDir)) return;
     }
 
-    if (this.activeModelPullAbort) {
-      this.activeModelPullAbort.abort();
-    }
-    const controller = new AbortController();
-    this.activeModelPullAbort = controller;
-
     try {
       const wantGguf = mode !== "mmproj-only";
       const wantMmproj =
         def.supportsVision && (mode === "with-mmproj" || mode === "mmproj-only");
+      const needGguf = wantGguf && !isModelDownloaded(dataDir, def);
+      const needMmproj = wantMmproj && !isMmprojDownloaded(dataDir, def);
 
-      if (wantGguf && !isModelDownloaded(dataDir, def)) {
-        await this.pullGgufPhase(def, controller.signal);
-        if (controller.signal.aborted) return;
-      }
-      if (wantMmproj && !isMmprojDownloaded(dataDir, def)) {
-        await this.pullMmprojPhase(def, controller.signal);
-        if (controller.signal.aborted) return;
+      if (needGguf || needMmproj) {
+        const workerMode: DownloadJobMode = needGguf
+          ? needMmproj
+            ? "with-mmproj"
+            : "gguf-only"
+          : "mmproj-only";
+        const watched = await this.runDownloadJob("chat", id, workerMode);
+        if (watched.outcome === "detached") return;
+        if (watched.outcome === "cancelled") {
+          this.bus.emit({
+            type: "local_models_pull_failed",
+            kind: "chat",
+            error: describeCancelledPull(watched.job),
+          });
+          return;
+        }
       }
 
-      this.activeModelPullAbort = null;
       this.bus.emit({ type: "local_models_pull_finished", kind: "chat" });
-
-      if (mode === "mmproj-only") {
-        await this.refresh();
-        this.bus.emit({
-          type: "runtime_info",
-          line: `local-llm: ${def.name} mmproj installed — restart the daemon to enable vision`,
-        });
-        return;
-      }
-
-      persistUserLocalModelsConfig({ mode: "managed", managed: { modelId: id } });
-      resetConfigCache();
-      await this.refresh();
-
-      // Memory-v2 phase 1B onboarding: if the operator has just
-      // pulled their first chat model and there is no embedding on
-      // disk yet, show a y/n prompt offering to download the default
-      // embedding model in the same flow. The chat daemon still starts
-      // immediately so the downloaded model is usable right away.
-      if (this.shouldOfferEmbeddingOnboarding()) {
-        const embDef = getEmbeddingModelDef(DEFAULT_EMBEDDING_MODEL_ID);
-        this.bus.emit({
-          type: "local_models_embedding_onboarding_opened",
-          modelId: embDef.id,
-          name: embDef.name,
-          sizeLabel: embDef.sizeLabel,
-        });
-        this.bus.emit({
-          type: "runtime_info",
-          line: `local-llm: ${def.name} installed → offering embedding model for hybrid recall`,
-        });
-        await this.startChatDaemonAfterPull(def);
-        return;
-      }
-
-      this.bus.emit({
-        type: "runtime_info",
-        line: `local-llm: ${def.name} installed → starting daemon…`,
-      });
-      if (await this.startChatDaemonAfterPull(def)) {
-        this.bus.emit({ type: "ui_mode_set", mode: "chat" });
-      }
+      await this.finishChatPull(def, mode);
+      // The record has served its purpose: the files are on disk and
+      // the follow-up ran. Leaving it would make the next launch run
+      // the follow-up again.
+      removeDownloadJob(dataDir, downloadJobId("chat", id));
     } catch (e) {
       if (isAbortError(e)) return;
       const msg = e instanceof Error ? e.message : String(e);
-      if (this.activeModelPullAbort === controller) {
-        this.activeModelPullAbort = null;
-      }
       this.bus.emit({ type: "local_models_pull_failed", kind: "chat", error: msg });
+    }
+  }
+
+  /**
+   * What happens once a chat model's files are on disk: activate it,
+   * offer the embedding model on a first install, start the daemon.
+   * Split from `pullModel` so a download that finished while no TUI was
+   * watching (the operator quit and came back) gets the same landing.
+   */
+  private async finishChatPull(
+    def: LocalModelDef,
+    mode: "with-mmproj" | "gguf-only" | "mmproj-only",
+  ): Promise<void> {
+    if (mode === "mmproj-only") {
+      await this.refresh();
+      this.bus.emit({
+        type: "runtime_info",
+        line: `local-llm: ${def.name} mmproj installed — restart the daemon to enable vision`,
+      });
+      return;
+    }
+
+    persistUserLocalModelsConfig({ mode: "managed", managed: { modelId: def.id } });
+    resetConfigCache();
+    await this.refresh();
+
+    // Memory-v2 phase 1B onboarding: if the operator has just
+    // pulled their first chat model and there is no embedding on
+    // disk yet, show a y/n prompt offering to download the default
+    // embedding model in the same flow. The chat daemon still starts
+    // immediately so the downloaded model is usable right away.
+    if (this.shouldOfferEmbeddingOnboarding()) {
+      const embDef = getEmbeddingModelDef(DEFAULT_EMBEDDING_MODEL_ID);
+      this.bus.emit({
+        type: "local_models_embedding_onboarding_opened",
+        modelId: embDef.id,
+        name: embDef.name,
+        sizeLabel: embDef.sizeLabel,
+      });
+      this.bus.emit({
+        type: "runtime_info",
+        line: `local-llm: ${def.name} installed → offering embedding model for hybrid recall`,
+      });
+      await this.startChatDaemonAfterPull(def);
+      return;
+    }
+
+    this.bus.emit({
+      type: "runtime_info",
+      line: `local-llm: ${def.name} installed → starting daemon…`,
+    });
+    if (await this.startChatDaemonAfterPull(def)) {
+      this.bus.emit({ type: "ui_mode_set", mode: "chat" });
+    }
+  }
+
+  /**
+   * Launch (or adopt) the detached worker for one job and mirror its
+   * record onto the bus until it ends. One watch per kind: a new pull
+   * of the same kind detaches the previous watch — the previous worker
+   * keeps downloading in the background, nothing is thrown away. The
+   * first `pull_started` carries whatever the partial already holds, so
+   * a resumed download opens the bar where it left off; a change of
+   * label (GGUF → mmproj) re-emits `pull_started` so the banner is
+   * honest about which file it draws.
+   *
+   * Resolves for `done` / `cancelled` / `detached`; rejects when the
+   * worker failed or died, with its own message.
+   */
+  private async runDownloadJob(
+    kind: DownloadJobKind,
+    modelId: string,
+    mode: DownloadJobMode,
+  ): Promise<{ outcome: "done" | "cancelled" | "detached"; job: DownloadJob }> {
+    const dataDir = getConfig().paths.localModelsDataDir;
+    const spawn = this.hooks?.spawnDownload ?? spawnDownloadWorker;
+    const launched = spawn({ dataDir, kind, modelId, mode });
+    const jobId = launched.job.id;
+
+    this.watchedDownloads.get(kind)?.detach();
+    let detached = false;
+    const watch = {
+      jobId,
+      detach: () => {
+        detached = true;
+      },
+    };
+    this.watchedDownloads.set(kind, watch);
+
+    const emitStarted = (job: DownloadJob): void => {
+      this.bus.emit({
+        type: "local_models_pull_started",
+        pull: {
+          kind,
+          modelId: job.modelId as LocalModelId,
+          label: job.label,
+          percent: job.percent,
+          transferredBytes: job.transferredBytes,
+          totalBytes: job.totalBytes,
+          error: null,
+        },
+      });
+    };
+    let last = launched.job;
+    emitStarted(last);
+    const pollMs = this.hooks?.downloadPollMs ?? DOWNLOAD_POLL_MS;
+    try {
+      for (;;) {
+        await new Promise((r) => setTimeout(r, pollMs));
+        if (detached) return { outcome: "detached", job: last };
+        const job = readDownloadJob(dataDir, jobId);
+        if (!job) throw new Error("download record disappeared");
+        if (job.label !== last.label) {
+          emitStarted(job);
+        } else if (
+          job.transferredBytes !== last.transferredBytes ||
+          job.percent !== last.percent
+        ) {
+          this.bus.emit({
+            type: "local_models_pull_progress",
+            kind,
+            percent: job.percent,
+            transferredBytes: job.transferredBytes,
+            totalBytes: job.totalBytes,
+          });
+        }
+        last = job;
+        if (job.status === "running") continue;
+        if (job.status === "done") return { outcome: "done", job };
+        if (job.status === "cancelled") return { outcome: "cancelled", job };
+        throw new Error(
+          job.status === "interrupted"
+            ? `download worker died (${job.error ?? "no reason recorded"}) — press Enter to resume`
+            : (job.error ?? "download failed"),
+        );
+      }
+    } finally {
+      if (this.watchedDownloads.get(kind) === watch) {
+        this.watchedDownloads.delete(kind);
+      }
+    }
+  }
+
+  /**
+   * `x` in the Models tab: stop the download being watched, keeping
+   * its partial file. The watcher sees the worker's `cancelled` record
+   * and reports it with the resume hint.
+   */
+  async cancelPull(kind: DownloadJobKind): Promise<void> {
+    const dataDir = getConfig().paths.localModelsDataDir;
+    const watch = this.watchedDownloads.get(kind);
+    const job = watch ? readDownloadJob(dataDir, watch.jobId) : null;
+    if (!job || job.status !== "running") {
+      this.bus.emit({
+        type: "runtime_info",
+        line: `local-llm: no ${kind} download in flight`,
+      });
+      return;
+    }
+    const stop = this.hooks?.stopDownload ?? stopDownloadWorker;
+    const result = await stop(dataDir, job);
+    if (result.outcome === "still-running" || result.outcome === "foreign") {
+      this.bus.emit({
+        type: "runtime_info",
+        line: `local-llm: could not stop download worker pid ${job.pid} (${result.outcome})`,
+      });
+    }
+  }
+
+  /**
+   * Pick up downloads this process did not start — or started in an
+   * earlier life. Called once at launch and on every snapshot refresh:
+   *
+   * - `running`: a worker is alive (a previous TUI's, or a `models pull
+   *   --background` in another terminal). Watch it; when it lands, run
+   *   the same follow-up a pull started here would.
+   * - `interrupted`: the worker died with the operator still wanting
+   *   the model (nobody cancelled). Relaunch it — it resumes from the
+   *   partial — and watch.
+   * - `done`: finished while no TUI was watching. Run the follow-up
+   *   (activate, start the daemon) so the operator lands where they
+   *   would have.
+   *
+   * `cancelled` and `failed` are the operator's to act on and are left
+   * alone; `models downloads` still lists them.
+   */
+  adoptBackgroundDownloads(opts?: { onlyRunning?: boolean }): void {
+    const dataDir = getConfig().paths.localModelsDataDir;
+    for (const job of listDownloadJobs(dataDir)) {
+      if (this.watchedDownloads.get(job.kind)?.jobId === job.id) continue;
+      const adoptable = opts?.onlyRunning
+        ? job.status === "running"
+        : job.status === "running" ||
+          job.status === "interrupted" ||
+          job.status === "done";
+      if (!adoptable) continue;
+      if (job.kind === "chat") {
+        if (!isKnownLocalModelId(job.modelId)) {
+          removeDownloadJob(dataDir, job.id);
+          continue;
+        }
+        const def = getLocalModelDef(job.modelId);
+        if (job.status === "done" && !isModelDownloaded(dataDir, def)) {
+          // Finished, then removed by the operator: nothing to land.
+          removeDownloadJob(dataDir, job.id);
+          continue;
+        }
+        this.bus.emit({
+          type: "runtime_info",
+          line: describeAdoptedJob(job, def.name),
+        });
+        void this.pullModel(job.modelId, job.mode);
+      } else {
+        if (!isKnownEmbeddingModelId(job.modelId)) {
+          removeDownloadJob(dataDir, job.id);
+          continue;
+        }
+        const def = getEmbeddingModelDef(job.modelId);
+        if (job.status === "done" && !isEmbeddingModelDownloaded(dataDir, def)) {
+          removeDownloadJob(dataDir, job.id);
+          continue;
+        }
+        this.bus.emit({
+          type: "runtime_info",
+          line: describeAdoptedJob(job, def.name),
+        });
+        void this.pullEmbeddingModel(job.modelId);
+      }
     }
   }
 
@@ -562,85 +771,6 @@ export class LocalModelsOrchestrator {
     if (await this.startDaemon()) {
       this.bus.emit({ type: "ui_mode_set", mode: "chat" });
     }
-  }
-
-  /**
-   * Phase 1 of a download: pull the GGUF weights. Emits a fresh
-   * `pull_started` so the banner shows the GGUF label, then progress
-   * events for the GGUF body. The estimated size comes from the
-   * catalog so the bar moves even before HTTP `content-length` arrives.
-   */
-  private async pullGgufPhase(
-    def: LocalModelDef,
-    signal: AbortSignal,
-  ): Promise<void> {
-    const dataDir = getConfig().paths.localModelsDataDir;
-    const est = Math.round(def.fileSizeGb * (1024 * 1024 * 1024));
-    this.bus.emit({
-      type: "local_models_pull_started",
-      pull: {
-        kind: "chat",
-        modelId: def.id,
-        label: `${def.name} (gguf)`,
-        percent: 0,
-        transferredBytes: 0,
-        totalBytes: est,
-        error: null,
-      },
-    });
-    await downloadModel(dataDir, def, {
-      signal,
-      onRetry: this.downloadRetryNotice(`${def.name} (gguf)`),
-      onProgress: (percent, transferred, total) => {
-        this.bus.emit({
-          type: "local_models_pull_progress",
-          kind: "chat",
-          percent,
-          transferredBytes: transferred,
-          totalBytes: total > 0 ? total : est,
-        });
-      },
-    });
-  }
-
-  /**
-   * Phase 2 of a download: pull the mmproj projector. Re-emits
-   * `pull_started` so the banner label/progress reset to the mmproj
-   * file — keeps the UI honest about which file the bar represents.
-   */
-  private async pullMmprojPhase(
-    def: LocalModelDef,
-    signal: AbortSignal,
-  ): Promise<void> {
-    const dataDir = getConfig().paths.localModelsDataDir;
-    const est = Math.round(
-      (def.mmprojFileSizeGb ?? 1) * (1024 * 1024 * 1024),
-    );
-    this.bus.emit({
-      type: "local_models_pull_started",
-      pull: {
-        kind: "chat",
-        modelId: def.id,
-        label: `${def.name} (mmproj)`,
-        percent: 0,
-        transferredBytes: 0,
-        totalBytes: est,
-        error: null,
-      },
-    });
-    await downloadMmproj(dataDir, def, {
-      signal,
-      onRetry: this.downloadRetryNotice(`${def.name} (mmproj)`),
-      onProgress: (percent, transferred, total) => {
-        this.bus.emit({
-          type: "local_models_pull_progress",
-          kind: "chat",
-          percent,
-          transferredBytes: transferred,
-          totalBytes: total > 0 ? total : est,
-        });
-      },
-    });
   }
 
 /* ------------------------------------------------------------------ *
@@ -1547,13 +1677,9 @@ export class LocalModelsOrchestrator {
   }
 
   /**
-   * Memory-v2 phase 1B. Pull an embedding model GGUF. On success,
-   * marks the model as active (`localModels.embeddings.modelId`) and
-   * flips `localModels.embeddings.enabled = true` so the operator's
-   * intent ("I want this for hybrid recall") is captured in one
-   * keystroke. If the chat daemon is already running, the embedding
-   * daemon is auto-paired (started or hot-swapped) so the operator
-   * does not need a manual restart — pairing is the invariant.
+   * Memory-v2 phase 1B. Pull an embedding GGUF through the detached
+   * worker (see `pullModel`), mark it active for hybrid recall and, when
+   * the chat daemon is up, bring the embedding daemon up beside it.
    */
   async pullEmbeddingModel(id: EmbeddingModelId): Promise<void> {
     const cfg = getConfig();
@@ -1569,40 +1695,19 @@ export class LocalModelsOrchestrator {
       if (!isBackendDownloaded(dataDir)) return;
     }
 
-    if (this.activeEmbeddingPullAbort) {
-      this.activeEmbeddingPullAbort.abort();
-    }
-    const controller = new AbortController();
-    this.activeEmbeddingPullAbort = controller;
-
-    const est = Math.round(def.fileSizeGb * (1024 * 1024 * 1024));
-    this.bus.emit({
-      type: "local_models_pull_started",
-      pull: {
-        kind: "embedding",
-        modelId: def.id,
-        label: `${def.name} (embedding)`,
-        percent: 0,
-        transferredBytes: 0,
-        totalBytes: est,
-        error: null,
-      },
-    });
     try {
-      await downloadEmbeddingModel(dataDir, def, {
-        signal: controller.signal,
-        onRetry: this.downloadRetryNotice(def.name),
-        onProgress: (percent, transferred, total) => {
+      if (!isEmbeddingModelDownloaded(dataDir, def)) {
+        const watched = await this.runDownloadJob("embedding", id, "gguf-only");
+        if (watched.outcome === "detached") return;
+        if (watched.outcome === "cancelled") {
           this.bus.emit({
-            type: "local_models_pull_progress",
+            type: "local_models_pull_failed",
             kind: "embedding",
-            percent,
-            transferredBytes: transferred,
-            totalBytes: total > 0 ? total : est,
+            error: describeCancelledPull(watched.job),
           });
-        },
-      });
-      this.activeEmbeddingPullAbort = null;
+          return;
+        }
+      }
       this.bus.emit({ type: "local_models_pull_finished", kind: "embedding" });
       persistEmbeddingHybridRecall({ enabled: true, modelId: id });
       await this.refresh();
@@ -1611,12 +1716,10 @@ export class LocalModelsOrchestrator {
         line: `local-llm: embedding model ${def.name} ready`,
       });
       await this.startEmbeddingDaemonAfterPull(def);
+      removeDownloadJob(dataDir, downloadJobId("embedding", id));
     } catch (e) {
       if (isAbortError(e)) return;
       const msg = e instanceof Error ? e.message : String(e);
-      if (this.activeEmbeddingPullAbort === controller) {
-        this.activeEmbeddingPullAbort = null;
-      }
       this.bus.emit({
         type: "local_models_pull_failed",
         kind: "embedding",
@@ -2130,6 +2233,29 @@ function resolveMmprojStatus(
 ): MmprojStatus {
   if (!def.supportsVision) return "n/a";
   return isMmprojDownloaded(dataDir, def) ? "downloaded" : "missing";
+}
+
+/** How often a watched worker's record is re-read. */
+const DOWNLOAD_POLL_MS = 300;
+
+function formatJobBytes(bytes: number): string {
+  const gb = bytes / (1024 * 1024 * 1024);
+  return gb >= 1 ? `${gb.toFixed(1)} GB` : `${Math.round(bytes / (1024 * 1024))} MB`;
+}
+
+function describeCancelledPull(job: DownloadJob): string {
+  return `download cancelled at ${job.percent}% — ${formatJobBytes(job.transferredBytes)} kept on disk; Enter resumes it`;
+}
+
+function describeAdoptedJob(job: DownloadJob, name: string): string {
+  switch (job.status) {
+    case "running":
+      return `local-llm: ${name} is downloading in the background (${job.percent}%) — picking it up`;
+    case "interrupted":
+      return `local-llm: ${name} download was interrupted at ${job.percent}% — resuming`;
+    default:
+      return `local-llm: ${name} finished downloading while the app was closed`;
+  }
 }
 
 function isAbortError(e: unknown): boolean {

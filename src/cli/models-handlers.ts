@@ -32,6 +32,7 @@ import {
   readDownloadJob,
   readPartialDownload,
   removeModel,
+  spawnDownloadWorker,
   resolveChatTemplatePath,
   resolveDownloadAsset,
   resolveManagedDevice,
@@ -54,10 +55,7 @@ export function readCliOption(args: string[], name: string): string | undefined 
 
 export { formatGb, renderPullProgress, renderPullRetry } from "./pull-progress.js";
 import { renderPullProgress, renderPullRetry } from "./pull-progress.js";
-import {
-  followDownloadJob,
-  spawnDownloadWorker,
-} from "./models-downloads.js";
+import { followDownloadJob } from "./models-downloads.js";
 
 export async function runLocalModelsList(): Promise<number> {
   const cfg = getConfig();
@@ -177,7 +175,10 @@ function startBackgroundPull(input: {
   modelId: string;
   mode: DownloadJobMode;
 }): number {
-  const result = spawnDownloadWorker(input);
+  const result = spawnDownloadWorker({
+    ...input,
+    dataDir: getConfig().paths.localModelsDataDir,
+  });
   if (result.outcome === "already-running") {
     process.stdout.write(
       `${input.modelId} is already downloading in the background (pid ${result.job.pid})\n`,

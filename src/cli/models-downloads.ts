@@ -1,123 +1,29 @@
-import { execSync, spawn as nodeSpawn } from "node:child_process";
-import { closeSync, mkdirSync, openSync } from "node:fs";
-
 import { getConfig } from "../config/index.js";
 import {
-  classifyPidLiveness,
   downloadJobId,
-  initialDownloadJob,
-  isDownloadJobLive,
   listDownloadJobs,
   readDownloadJob,
   removeDownloadJob,
-  resolveDownloadLogPath,
   resolveDownloadsDir,
   runDownloadWorker,
-  writeDownloadJob,
+  stopDownloadWorker,
   type DownloadJob,
-  type DownloadJobKind,
   type DownloadJobMode,
 } from "../local-llm/index.js";
 import { renderPullProgress } from "./pull-progress.js";
-import { isSeaBuild, selfInvocation } from "./self-invocation.js";
 
 /**
  * Background model downloads on the CLI.
  *
- * `models pull --background <id>` launches a detached copy of this
- * program running `models pull-worker`, wires its output to
- * `<dataDir>/downloads/<job>.log`, seeds the job record and returns at
- * once. The worker survives the terminal that started it: it is in its
- * own process group (`detached`), holds no tty, and its stdio is a
- * file, so a closed window's SIGHUP never reaches it — the exact
- * arrangement `startDaemon` uses for llama-server.
+ * `models pull --background <id>` launches the detached worker (see
+ * `local-llm/download-spawn.ts`), which survives the terminal that
+ * started it, and returns at once.
  *
  * `models downloads` lists jobs; `models downloads cancel <id>` stops
  * one, keeping its partial file for a later resume. A foreground
  * `models pull` of a model whose worker is alive follows that worker's
  * progress instead of racing it for the same bytes.
  */
-
-export interface SpawnDownloadWorkerInput {
-  kind: DownloadJobKind;
-  modelId: string;
-  mode: DownloadJobMode;
-  /** Test seams. */
-  spawn?: typeof nodeSpawn;
-  execPath?: string;
-  argv?: readonly string[];
-  execArgv?: readonly string[];
-  sea?: boolean;
-  env?: NodeJS.ProcessEnv;
-}
-
-export type SpawnDownloadWorkerResult =
-  | { outcome: "spawned"; job: DownloadJob; logPath: string }
-  | { outcome: "already-running"; job: DownloadJob };
-
-/**
- * The argv tail that reaches `modelsCommand` in the child. Exported so
- * the test can pin the exact shape the dispatcher parses.
- */
-export function downloadWorkerArgs(input: {
-  kind: DownloadJobKind;
-  modelId: string;
-  mode: DownloadJobMode;
-}): string[] {
-  return ["models", "pull-worker", input.kind, input.modelId, input.mode];
-}
-
-export function spawnDownloadWorker(
-  input: SpawnDownloadWorkerInput,
-): SpawnDownloadWorkerResult {
-  const dataDir = getConfig().paths.localModelsDataDir;
-  const jobId = downloadJobId(input.kind, input.modelId);
-  const existing = readDownloadJob(dataDir, jobId);
-  if (isDownloadJobLive(existing)) {
-    return { outcome: "already-running", job: existing };
-  }
-
-  const self = selfInvocation({
-    execPath: input.execPath ?? process.execPath,
-    argv: input.argv ?? process.argv,
-    execArgv: input.execArgv ?? process.execArgv,
-    isSea: input.sea ?? isSeaBuild(),
-  });
-  const args = [...self.args, ...downloadWorkerArgs(input)];
-
-  mkdirSync(resolveDownloadsDir(dataDir), { recursive: true });
-  const logPath = resolveDownloadLogPath(dataDir, jobId);
-  const logFd = openSync(logPath, "a");
-  try {
-    const child = (input.spawn ?? nodeSpawn)(self.cmd, args, {
-      stdio: ["ignore", logFd, logFd],
-      detached: true,
-      ...(process.platform === "win32" ? { windowsHide: true } : {}),
-      // The state dir and every other ATOMIC_AGENT_* knob travel by
-      // environment; a worker reading a different `~/.atomic-agent`
-      // would download into the wrong place.
-      env: { ...(input.env ?? process.env) },
-    });
-    child.unref();
-    if (child.pid == null) {
-      throw new Error("spawn failed: no pid");
-    }
-    // Seed the record with the child's pid so `models downloads` lists
-    // the job before the worker has written anything. The worker's own
-    // first write replaces this with the same pid and live numbers.
-    const job = initialDownloadJob({
-      dataDir,
-      kind: input.kind,
-      modelId: input.modelId,
-      mode: input.mode,
-      pid: child.pid,
-    });
-    writeDownloadJob(dataDir, job);
-    return { outcome: "spawned", job, logPath };
-  } finally {
-    closeSync(logFd);
-  }
-}
 
 /**
  * The detached worker's entry point: `models pull-worker <kind> <id>
@@ -242,43 +148,24 @@ async function cancelDownload(dataDir: string, ref: string | undefined): Promise
     process.stdout.write(`${job.id} is not running (${job.status})\n`);
     return 0;
   }
-  if (classifyPidLiveness(job.pid) === "foreign") {
-    process.stderr.write(
-      `download worker pid ${job.pid} belongs to another user; cannot stop it\n`,
-    );
-    return 1;
-  }
-  if (process.platform === "win32") {
-    // No signal handlers on Windows: the worker is killed outright and
-    // its record reconciles to `interrupted` on the next read, which is
-    // equally resumable.
-    try {
-      execSync(`taskkill /PID ${job.pid} /T /F`, { timeout: 5000, stdio: "ignore" });
-    } catch {
-      /* ignore */
-    }
-  } else {
-    try {
-      process.kill(job.pid, "SIGTERM");
-    } catch {
-      /* already gone */
-    }
-  }
-  const deadline = Date.now() + 5000;
-  while (Date.now() < deadline) {
-    const now = readDownloadJob(dataDir, job.id);
-    if (!now || now.status !== "running") {
+  const result = await stopDownloadWorker(dataDir, job);
+  switch (result.outcome) {
+    case "foreign":
+      process.stderr.write(
+        `download worker pid ${job.pid} belongs to another user; cannot stop it\n`,
+      );
+      return 1;
+    case "still-running":
+      process.stderr.write(`sent stop to pid ${job.pid}, but it is still running\n`);
+      return 1;
+    default:
       process.stdout.write(
-        `${job.id} stopped (${now?.status ?? "gone"}); ${formatBytes(
-          now?.transferredBytes ?? job.transferredBytes,
+        `${job.id} stopped (${result.job.status}); ${formatBytes(
+          result.job.transferredBytes,
         )} kept on disk — 'models pull ${job.modelId}' resumes it\n`,
       );
       return 0;
-    }
-    await new Promise((r) => setTimeout(r, 200));
   }
-  process.stderr.write(`sent stop to pid ${job.pid}, but it is still running\n`);
-  return 1;
 }
 
 /**

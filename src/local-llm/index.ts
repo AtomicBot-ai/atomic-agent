@@ -80,6 +80,14 @@ export {
   type DownloadJobStatus,
 } from "./download-jobs.js";
 export {
+  downloadWorkerArgs,
+  spawnDownloadWorker,
+  stopDownloadWorker,
+  type SpawnDownloadWorkerInput,
+  type SpawnDownloadWorkerResult,
+  type StopDownloadWorkerResult,
+} from "./download-spawn.js";
+export {
   initialDownloadJob,
   runDownloadWorker,
   type DownloadWorkerInput,

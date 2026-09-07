@@ -320,6 +320,8 @@ atomic-agent models pull qwen-3.5-35b                # follow a running download
 atomic-agent models downloads cancel qwen-3.5-35b    # stop it; what was fetched stays on disk
 ```
 
+The TUI runs every model download through the same worker. Quit mid-download (Ctrl+C, closing the window) and the download continues; open the TUI again and the chip picks it up where it is, and when the file lands the model is activated and the daemon started as if you had waited. A worker that died mid-way is resumed automatically on the next launch; one you cancelled is not. In the Models tab, `x` stops the download in flight and keeps what it fetched, and Enter on the row resumes it.
+
 The worker is a detached copy of the CLI writing its progress to `<stateDir>/models/downloads/<job>.json` and its log next to it, the same arrangement as the managed `llama-server` daemon. A worker that dies mid-way (a reboot, a `kill -9`) shows as `interrupted` in `models downloads`, and running the same `pull` again, with or without `--background`, resumes from the partial file. `pull --mmproj` also fetches a vision model's projector; `pull-embedding --background` works the same way for embedding models.
 
 Model downloads resume. An interrupted pull (a dropped connection, Ctrl+C, a closed terminal) keeps what it has fetched next to the destination as `<file>.part`, and the next `models pull` of the same model continues from that point with a `Range` request rather than starting over. The downloader validates the partial against the server's `ETag` before appending, so a file re-uploaded under the same name is fetched afresh; within one pull, transport errors and stalls retry from the partial with backoff before giving up.

@@ -260,8 +260,8 @@ export function LocalModelsPanel({
         : null;
     const enterHint = rowPull
       ? rowPull.totalBytes > 0
-        ? `downloading… ${rowPull.percent}%`
-        : "downloading…"
+        ? `downloading… ${rowPull.percent}% · x cancel`
+        : "downloading… · x cancel"
       : !row.downloaded
       ? row.def.supportsVision
         ? "Enter — download (gguf + mmproj)"
@@ -445,7 +445,7 @@ export function LocalModelsPanel({
             </Text>
           ) : null}
           <Text color={theme.colors.muted}>
-            j/k move · Enter pull/activate (embedding: *row + Enter starts server) · a add from hugging face · g gguf · i info · d remove · s chat+embedding · E embeddings on/off · G gpu · U auto-update · B · r · L
+            j/k move · Enter pull/activate (embedding: *row + Enter starts server) · a add from hugging face · g gguf · x cancel download · i info · d remove · s chat+embedding · E embeddings on/off · G gpu · U auto-update · B · r · L
           </Text>
         </Box>
       ) : (
