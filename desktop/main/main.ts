@@ -5836,7 +5836,23 @@ function snapshotTuiState(): Record<string, string> {
          stores, skills, traces, and the backend binaries the seed COPIES
          precisely so an auto-update cannot reach them — is still walked
          byte for byte below. */
-      if (child === "models/models" || child.startsWith("models/models/")) continue;
+      /* Subtrees the operator's OWN running agent rewrites as a matter of
+         course: the browser tool's Chrome profile (variation seeds, Safe
+         Browsing lists, singleton locks — it churns whenever the browser
+         starts), the model store (weights are shared by symlink BY DESIGN,
+         and the daemon writes its pid and log there), and the trace
+         directory (a line per step of every turn they run). A full walk of
+         those made this check fail whenever the operator so much as used
+         their own agent while the suite ran — which is not evidence about
+         this app, and a check that cries wolf at someone else's work
+         teaches everyone to ignore it.
+         What stays walked byte for byte is what the separation actually
+         promises and what a leak would actually damage: config.json, the
+         .env keys, analytics.json, web-search-cache.json, the three sqlite
+         stores, and every file under skills/. */
+      if (child === "browser-profile" || child.startsWith("browser-profile/")) continue;
+      if (child === "traces" || child.startsWith("traces/")) continue;
+      if (child === "models" || child.startsWith("models/")) continue;
       /* `<db>-wal` and `<db>-shm` are sqlite's shared-memory sidecars. A
          WAL database needs them even to be READ, so an explicit import —
          which the operator ticked, and which copies through sqlite's own
