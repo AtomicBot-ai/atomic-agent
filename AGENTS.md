@@ -1766,6 +1766,10 @@ Locked invariants (pinned by [src/tui/mcp/mcp-reducer.test.ts](src/tui/mcp/mcp-r
 4. **The editor is disabled on the MCP tab while a modal is open.** `mcpTabBusy` in `app-key-bindings.ts` covers both `addModal !== null` (lets the `MultiLineEditor` capture every keystroke) and `removeConfirm !== null` (claims the `y`/`n` confirmation keys against the global nav cycler).
 5. **Variant γ surface is opt-in but on by default.** Restarting the runtime is no longer required after add/remove — the prompt's `### tools` catalog and GBNF grammar are rebuilt on the next step. KV-cache for in-flight sessions is invalidated once per add/remove (the persona stays byte-stable; only the rendered tools block changes).
 
+### Poller liveness
+
+`bot.start()` is fire-and-forget, so for a long time the channel could report `up` while its polling loop was dead — a second process on the same token gets a 409 from Telegram, the loop ends, and every message afterwards went unanswered with the status still green. The `BotInstance.start` contract now takes an `onStopped(error?)` callback; the grammy adapter wires it to that promise's settlement instead of swallowing it with `.catch(() => undefined)`, and the channel transitions to `down` (releasing the lock, scrubbing the reason) unless it asked to stop. Pinned by the four "polling loop dies" cases in [telegram-channel.test.ts](src/channels/telegram/telegram-channel.test.ts) — verified to fail without the fix.
+
 ## Discord channel
 
 A Discord bot that relays DMs and @mentions to the agent and posts replies back — the same shape as the Telegram channel, sharing its `ChannelStatus` contract so the runtime, the TUI and the Integrations hub treat both alike. Code lives in [src/channels/discord/](src/channels/discord/); bootstrap constructs it unconditionally (so the hub can report state) and starts it only when `config.discord.enabled`.
