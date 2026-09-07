@@ -471,6 +471,18 @@ const OB_TUI_AGENT_ID = 'atomic-tui';
    "checking keys…" rather than a "no API key" that is not known yet. */
 const BSW = { line:'', readyIds:[], readyLoaded:false, localLoaded:false, gating:false };
 
+/* ---- SELECTOR LANE — the custom route's model label ----
+   selectPromptLlmMeta's external branch is
+     `{model: llmHealth.model ?? active?.chatModel ?? null, provider: "llama.cpp"}`
+   and `llmHealth.model` is the label llm-health-poller.ts reads ONCE PER URL
+   from the operator's own `/props` (extractModelLabel: model_alias →
+   default_generation_settings.model / model_alias → model → model_path, then
+   basename). The desktop had no such reader, so its composer showed no model
+   at all on that route. `url` is the address the cached answer belongs to, so
+   a hot-swap of the base URL re-discovers the model the way the poller's
+   `modelFetchedForUrl` reset does. */
+const EXT = { url:null, model:null, busy:false };
+
 /* ---- r5 item 9: the desktop's own state directory ----
    What `app:firstRun` answered, latched in main BEFORE anything could
    create config.json. `null` until the boot check resolves; the wizard
@@ -748,6 +760,14 @@ const MCP_MAX_ROWS = 14;
    and the key names present in the Electron env ∪ <stateDir>/.env. */
 const LLMP = {
   mode:'local', cursor:{local:0, cloud:0, external:0, fallback:0}, view:'panel', // view: 'panel' | 'logs' (the `L` LLM-logs screen)
+  /* SELECTOR LANE — llm-panel-state.ts `syncModeToActiveRoute`. Armed when the
+     LLM tab is asked for (tui-state.ts:686) and settled by
+     llm-panel-reducer.ts resolveModeFromActiveRoute; it stays armed while no
+     provider snapshot has arrived, which is why it is a flag and not a
+     one-line assignment at the call site. `routeSyncSpent` is the TUI's
+     "nothing arms it a second time": once the route has opened a pane, or the
+     operator has picked one, later visits keep whatever pane is showing. */
+  syncModeToRoute:false, routeSyncSpent:false, routeSeen:null,
   status:null, statusBusy:false, statusErr:null, // `atag models status`
   local:null, localBusy:false, localErr:null, lastRefreshedAt:null, // `atag models list` rows
   emb:null, embDaemon:null, // `atag models list-embeddings` rows + its trailer
@@ -1748,8 +1768,12 @@ function composer() {
       + '<div class="cfoot">'
         + '<button class="cchip modechip" data-sel-open="backend">'
           + ic(selBackend() === 'cloud' ? 'cloud' : 'cpu') + selBackend() + ic('chevD') + '</button>'
-        + (selBackend() === 'cloud'
-            ? '<button class="cchip" data-sel-open="provider">' + esc(selActiveProviderId() || 'no provider') + ic('chevD') + '</button>'
+        // SELECTOR LANE: the visible control set follows composerSwitchKindsFor,
+        // not a hard-coded `cloud` test — see selKinds(). Cloud and custom draw
+        // the provider control; the managed-local route draws none, because on
+        // that route the second control IS the model.
+        + (selHasKind('provider')
+            ? '<button class="cchip providerchip" data-sel-open="provider">' + esc(selProviderLabel()) + ic('chevD') + '</button>'
             : '')
         // Lane B — backend switch: the TUI's ComposerMetaControls renders
         // no model control when there is no model (cloud provider without
@@ -4173,6 +4197,12 @@ async function loadResources() {
   render();
   nameVisibleSessions();
   bswRefreshFacts();
+  // SELECTOR LANE: boot loads the config through THIS function, not
+  // refreshLiveConfig, so the custom route's model label has to be asked for
+  // here too — otherwise the model control was missing until the operator
+  // happened to cause a config re-read.
+  extRefreshModel();
+  llmNoteRoute();
   // Lane B — item 3: caps + config are in, so the chip can carry a figure
   // before any message. A fresh connection re-probes the preview route.
   CTX.previewSupported = null;
@@ -4774,12 +4804,16 @@ function activeModel() {
     // desktop keeps the chip as the pane's anchor and leaves it unlabelled.
     const p = activeProvider();
     if (p && p.kind !== 'llama-server') return p.defaultChatModel || p.model || '';
-    // Review fix: selectPromptLlmMeta takes the catalogue id ONLY in managed
-    // mode; on an external route the model is whatever the operator's own
-    // server has loaded, which it reports through /props and this window has
-    // not probed. Naming localModels.managed.modelId there would be a label
-    // for a file the route does not use, so the chip goes unrendered instead.
-    if (selBackend() === 'custom') return '';
+    // selectPromptLlmMeta takes the catalogue id ONLY in managed mode; on an
+    // external route the model is whatever the operator's own server has
+    // loaded. Naming localModels.managed.modelId there would be a label for a
+    // file the route does not use.
+    // SELECTOR LANE: the TUI does not give up there — it shows
+    // `llmHealth.model`, the label its health poller reads once per URL from
+    // that server's own /props. EXT.model is that answer; until it lands (or
+    // when the server names nothing) this stays empty and no model control is
+    // drawn, which is what the TUI renders for a null model too.
+    if (selBackend() === 'custom') return EXT.model || '';
     // DOWNLOAD_MODEL_LABEL first: selectComposerNeedsModelDownload (local
     // route, snapshot loaded, no pull running, nothing on disk) is judged
     // regardless of managed.modelId, and ComposerMetaControls renders the
@@ -7554,7 +7588,36 @@ async function refreshLiveConfig() {
   if (managed && managed.modelId) S.localModel = managed.modelId;
   render();
   bswRefreshFacts();
+  extRefreshModel();
+  llmNoteRoute();
   if (selActiveProviderId() + '\n' + activeModel() !== ctxWas) refreshContext();
+}
+
+/**
+ * SELECTOR LANE — the health poller's one-shot `/props` read, for the one
+ * label the desktop needs from it. Only on the custom route: on cloud the
+ * provider's own chatModel is the answer, and on managed-local the catalogue
+ * id is (see activeModel). Leaving the route clears the cache so coming back
+ * to a different URL cannot show the old server's model.
+ */
+async function extRefreshModel() {
+  if (!BR || !BR.llamaProps) return;
+  if (selBackend() !== 'custom') {
+    if (EXT.url !== null || EXT.model !== null) { EXT.url = null; EXT.model = null; }
+    return;
+  }
+  const url = (LIVE_CONFIG && LIVE_CONFIG.localModels && LIVE_CONFIG.localModels.url) || '';
+  if (!url || EXT.busy || EXT.url === url) return;
+  EXT.busy = true;
+  const key = (LIVE_CONFIG && LIVE_CONFIG.localModels && LIVE_CONFIG.localModels.apiKey) || undefined;
+  let res = null;
+  try { res = await BR.llamaProps(url, key); } finally { EXT.busy = false; }
+  // The route may have moved while /props was outstanding; a late answer must
+  // not paint a model onto a cloud chip.
+  if (selBackend() !== 'custom') return;
+  EXT.url = url;
+  EXT.model = res && res.ok && res.model ? res.model : null;
+  bswRepaint();
 }
 
 if (BR) {
@@ -7818,7 +7881,31 @@ function selBackend() {
 }
 /** The managed catalogue is only the route's model list in managed mode. */
 function selLocalRoute() { return selBackend() === 'local'; }
-function selKinds() { return selBackend() === 'cloud' ? ['backend','provider','model'] : ['backend','model']; }
+/* SELECTOR LANE — which controls the composer offers on this route.
+   composer-switch-state.ts composerSwitchKindsFor is one line:
+     `backend === "local" ? ["backend","model"] : COMPOSER_SWITCH_KINDS`
+   so the MANAGED-LOCAL route is the only one without a provider control, and
+   cloud AND custom both carry all three (backend, provider, model). The
+   desktop used to gate on `=== 'cloud'`, which silently dropped the provider
+   control on the custom route — and, because the composer's own chip row was
+   gated the same way, an operator pointed at their own llama-server saw ONE
+   control where the TUI draws three. */
+function selKinds() { return selBackend() === 'local' ? ['backend','model'] : ['backend','provider','model']; }
+/** True when the route offers `kind` — the chips and the switch read the same rule. */
+function selHasKind(kind) { return selKinds().indexOf(kind) >= 0; }
+/**
+ * `selectPromptLlmMeta`'s `provider` word (llm-panel-selectors.ts:183):
+ * the active cloud provider's id on a cloud route, `null` on the
+ * managed-local one, and the literal `llama.cpp` on the custom one — the
+ * external server is a provider the operator runs, and the TUI names it
+ * rather than leaving the control blank.
+ */
+function selProviderLabel() {
+  const backend = selBackend();
+  if (backend === 'local') return null;
+  if (backend === 'custom') return 'llama.cpp';
+  return selActiveProviderId() || 'no provider';
+}
 function selProviders() {
   return ((LIVE_CONFIG && LIVE_CONFIG.llm && LIVE_CONFIG.llm.providers) || [])
     .filter((p) => p.kind !== 'llama-server');
@@ -7833,7 +7920,7 @@ function openSelector(kind) {
   SEL.open = true; SEL.kind = kind || 'backend'; SEL.cursor = 0; SEL.filter = ''; SEL.err = null;
   render();
   if (SEL.kind === 'model') selEnterModelPane();
-  if (SEL.kind === 'backend' && selLocalRoute() && !SEL.local.length) selLoadLocal();
+  if (SEL.kind === 'backend' && selBackend() !== 'cloud' && !SEL.local.length) selLoadLocal();
 }
 function closeSelector() { SEL.open = false; SEL.addOpen = false; render(); }
 
@@ -7857,7 +7944,8 @@ async function selLoadModels(providerId) {
 }
 
 function selEnterModelPane() {
-  if (selLocalRoute()) { if (!SEL.local.length) selLoadLocal(); return; }
+  // SELECTOR LANE: custom reads the same list as local (see selRows).
+  if (selBackend() !== 'cloud') { if (!SEL.local.length) selLoadLocal(); return; }
   const id = selActiveProviderId();
   if (id && SEL.modelsFor !== id) selLoadModels(id);
 }
@@ -7900,16 +7988,27 @@ function selRows() {
     return rows;
   }
   // model pane
-  if (selLocalRoute()) {
+  /* SELECTOR LANE — composer-switch-rows.ts modelRows has THREE branches, and
+     the desktop only had two. Cloud lists the active provider's catalogue;
+     `local` lists only what is on disk plus the deep-link row (a catalog row
+     there would put a multi-gigabyte download one Enter away from "switch
+     model"); the third branch — the custom route — lists EVERY local row with
+     `not downloaded` spelled out on the ones that are not, and NO deep link.
+     Sending the custom route down the cloud branch, as this did, offered an
+     operator running their own llama-server the cloud provider's catalogue. */
+  if (selBackend() !== 'cloud') {
+    const custom = selBackend() === 'custom';
     const rows = SEL.local
       .filter((m) => !SEL.filter || modelMatches(m.id, m.family, SEL.filter))
       .map((m) => {
         const fit = fitFor(m.size, OB.ram || 16);
         return {type:'localModel', id:m.id, label:m.id, downloaded:m.downloaded, active:m.active,
-          detail: m.size + ' · ' + m.context + ' context · ' + fit.label + (m.downloaded ? ' · on disk' : '')};
+          detail: m.size + ' · ' + m.context + ' context · ' + fit.label
+            + (m.downloaded ? ' · on disk' : custom ? ' · not downloaded' : '')};
       });
-    // The TUI's deep-link row (model:local:download-more), outside the filter.
-    rows.push({type:'action', id:'downloadMore', label:'Download more models…', detail:'opens the local models pane', active:false});
+    // The TUI's deep-link row (model:local:download-more), outside the filter —
+    // the `local` branch only, exactly as modelRows has it.
+    if (!custom) rows.push({type:'action', id:'downloadMore', label:'Download more models…', detail:'opens the local models pane', active:false});
     return rows;
   }
   const entry = selProviders().find((p) => p.id === selActiveProviderId());
@@ -11948,6 +12047,23 @@ function llmEmbDaemonHealthy() { const d = LLMP.embDaemon; return !!(d && d.runn
 /* --- data --- */
 function llmTabEntered() {
   if (LLMP.timer) { clearInterval(LLMP.timer); LLMP.timer = null; }
+  /* SELECTOR LANE — the same rule as the composer, one pane up. tui-state.ts
+     arms `syncModeToActiveRoute` when the LLM tab is asked for, and the
+     reducer opens the pane the ROUTE is on. The desktop always opened on
+     Local, so a person on a cloud provider was shown a download catalogue and
+     had to find their own provider by hand.
+
+     ARMED ONCE PER RUN, not once per visit, because that is what the TUI
+     does: createInitialTuiState arms the flag at startup and nothing arms it
+     again, so a pane the operator picked by hand survives leaving the tab and
+     coming back. `routeSyncSpent` is the "and nothing arms it again" half.
+     Deep links that name a pane (the backend switch's `custom` row →
+     External, `Download more models…` → Local) still win either way: they
+     call llmSetMode after this, which retires the sync. */
+  if (!LLMP.routeSyncSpent) {
+    LLMP.syncModeToRoute = true;
+    llmSyncModeToRoute();
+  }
   llmEnsurePoll();
   if (LLMP.lastRefreshedAt === null && !LLMP.inflight) llmRefresh();
   else if (!LLMP.inflight) llmRefreshStatus();
@@ -11981,6 +12097,8 @@ async function llmRefreshRun() {
   ]);
   if (seq !== LLMP.seq) return;
   if (cfg && cfg.ok && cfg.config) LIVE_CONFIG = cfg.config;
+  // The snapshot the arming in llmTabEntered was waiting for.
+  llmSyncModeToRoute();
   LLMP.localBusy = false; LLMP.busy = false; LLMP.lastRefreshedAt = Date.now();
   if (list && list.ok) { LLMP.local = list.models; } // the chat catalog (chatModelsList subtracts list-embeddings); embeddings come from list-embeddings
   else { LLMP.local = LLMP.local || []; LLMP.localErr = (list && list.error) || 'could not read the catalogue'; }
@@ -12882,8 +13000,60 @@ async function llmLogsRefresh() {
   LLMP.logs = res && res.ok ? res : {path:(res && res.path) || null, size:null, truncated:false, text:'', lastReadAt:Date.now(), error:(res && res.error) || 'log read failed'};
   if (before !== JSON.stringify([LLMP.logs.size, LLMP.logs.text.length, LLMP.logs.error])) llmRepaint();
 }
+/**
+ * llm-panel-reducer.ts resolveModeFromActiveRoute: `cloud` for a cloud
+ * provider, `local` for llama-server, and nothing at all until a provider is
+ * known (the flag stays armed and the next config refresh retries).
+ *
+ * ONE DELIBERATE DIVERGENCE, for the same reason selBackend() has it: the TUI
+ * resolves every llama-server route to `local`, which on an external route is
+ * the managed download catalogue — a pane about a daemon that route does not
+ * use. localModels.mode tells the two apart here, so an external route opens
+ * on External.
+ */
+function llmSyncModeToRoute() {
+  if (!LLMP.syncModeToRoute) return;
+  const mode = llmRouteMode();
+  if (mode === null) return; // no snapshot yet — stay armed, as the reducer does
+  LLMP.syncModeToRoute = false; LLMP.routeSyncSpent = true;
+  if (LLMP.mode !== mode) llmSetMode(mode);
+}
+/**
+ * SELECTOR LANE — the pane the CURRENT chat route lives in, or null while no
+ * provider snapshot has arrived. `resolveModeFromActiveRoute` with the same
+ * external/managed split selBackend() makes.
+ */
+function llmRouteMode() {
+  const p = activeProvider();
+  if (!p) return null;
+  if (p.kind !== 'llama-server') return 'cloud';
+  return (LIVE_CONFIG && LIVE_CONFIG.localModels && LIVE_CONFIG.localModels.mode) === 'external'
+    ? 'external' : 'local';
+}
+/**
+ * SELECTOR LANE — a route CHANGE re-arms the one-shot pane sync.
+ *
+ * The TUI arms it once, at startup, because its LLM tab is asked for once, at
+ * startup. The desktop's is a window an operator opens and closes all day, and
+ * the rule the user asked for — "the panes a person sees must match the route
+ * they are on" — is only true across a route change if switching the backend
+ * makes the NEXT visit land on the new route's pane. So: re-arm here, and let
+ * the arming be spent by the next `llmTabEntered`. Nothing is moved under
+ * anyone's cursor — the pane on screen, if the tab is open, stays put until
+ * the operator leaves and comes back.
+ */
+function llmNoteRoute() {
+  const mode = llmRouteMode();
+  if (mode === null) return;
+  if (LLMP.routeSeen === null) { LLMP.routeSeen = mode; return; }
+  if (LLMP.routeSeen === mode) return;
+  LLMP.routeSeen = mode;
+  LLMP.routeSyncSpent = false;
+}
 function llmSetMode(mode) {
   if (!LLM_PANEL_MODES.includes(mode)) return;
+  // An explicit pane choice retires the one-shot route sync, for good.
+  LLMP.syncModeToRoute = false; LLMP.routeSyncSpent = true;
   LLMP.mode = mode; LLMP.filterFocused = false; LLMP.fallbackPicker = null;
   llmRepaint();
   if (mode === 'cloud') llmEnsureModels();

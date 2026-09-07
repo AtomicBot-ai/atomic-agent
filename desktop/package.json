@@ -15,6 +15,7 @@
     "smoke": "npm run build && electron . --smoke",
     "scenarios": "npm run build && node test/scenarios/run-all.mjs",
     "drive:onboarding": "npm run build && node test/onboarding-mouse.mjs",
+    "drive:selector": "npm run build && node test/drive-selector.mjs",
     "dist": "npm run build && node -e \"require('node:fs').rmSync('release',{recursive:true,force:true})\" && electron-builder --mac --arm64 --publish never",
     "postinstall": "node scripts/ensure-electron.mjs"
   },
