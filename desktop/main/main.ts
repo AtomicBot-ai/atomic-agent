@@ -34,6 +34,8 @@ import {
   setProviderModel,
   type ProviderEntry,
   providerModels,
+  verifyProviderKey,
+  removeProvider,
   modelsStart,
   traceUsage,
   traceTools,
@@ -846,6 +848,24 @@ function wireIpc(client: AgentClient): void {
     const { id, kind } = (payload ?? {}) as { id?: unknown; kind?: unknown };
     if (typeof id !== "string") return { ok: false, error: "provider id required" };
     return providerModels(id, typeof kind === "string" ? kind : "");
+  });
+  /* r6 cloud item 2: the wizard's key check, done honestly — one real
+     one-token completion against the provider, instead of a catalogue
+     lookup that answered for any string at all. */
+  ipcMain.handle("cli:verifyProviderKey", (_event, payload: unknown) => {
+    const { entry, model } = (payload ?? {}) as { entry?: unknown; model?: unknown };
+    const e = entry as Partial<ProviderEntry>;
+    if (!e || typeof e.id !== "string" || typeof e.kind !== "string") {
+      return { ok: false, checked: false, error: "id and kind are required" };
+    }
+    if (typeof model !== "string" || !model) {
+      return { ok: false, checked: false, error: "model is required" };
+    }
+    return verifyProviderKey(e as ProviderEntry, model);
+  });
+  ipcMain.handle("cli:removeProvider", (_event, id: unknown) => {
+    if (typeof id !== "string") return { ok: false, error: "provider id required" };
+    return removeProvider(id);
   });
   ipcMain.handle("cli:modelsStart", () => modelsStart());
   ipcMain.handle("cli:traceUsage", (_event, payload: unknown) => {

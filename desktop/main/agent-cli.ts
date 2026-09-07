@@ -438,6 +438,175 @@ export async function providerModels(
 }
 
 /* ---------------------------------------------------------------
+   Verifying that a cloud key actually works.
+
+   The add-provider wizard used to call the `providerModels` lookup above
+   a "verification", and said so on screen: "checking the key against the
+   provider's model list". It is not one. `models search` answers
+   `openrouter` and `aimlapi` from a catalogue BUNDLED IN THE BINARY and
+   never leaves the machine, and even `--refresh` fetches a PUBLIC list
+   that needs no credentials: a 64-zero string passes, the wizard says
+   "Cloud model ready", the setup closes, and the operator finds out at
+   the first message. A check that cannot fail is worse than no check,
+   because it converts "I typed my key wrong" into "the cloud providers
+   are broken".
+
+   So ask the provider something only a valid key can answer: the
+   one-token chat completion the app is about to make for real. It costs
+   a token, it is the same URL, key and model the turn will use, and it
+   catches the whole family at once — wrong key, revoked key, no credit,
+   a model this key cannot reach, an unreachable custom base URL.
+
+   `checked: false` is the honest third answer. If this build has no
+   endpoint for the kind, or the network is down, say the key was SAVED
+   but NOT verified rather than claiming either verdict.
+   --------------------------------------------------------------- */
+
+/** Where a kind's OpenAI-compatible chat endpoint lives. */
+function chatCompletionsUrl(kind: string, baseUrl?: string): string | null {
+  // The agent's own normalizeOpenAiBaseUrl rule: strip a trailing `/v1`
+  // so the path is never doubled.
+  const root = (u: string) => u.replace(/\/+$/, "").replace(/\/v1$/, "");
+  if (kind === "openrouter") return `${root(baseUrl || "https://openrouter.ai/api")}/v1/chat/completions`;
+  if (kind === "aimlapi") return `${root(baseUrl || "https://api.aimlapi.com")}/v1/chat/completions`;
+  // Google's OpenAI-compatible shim, the surface the agent's gemini provider uses.
+  if (kind === "gemini") return "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
+  if (kind === "openai-compatible" || kind === "qwen-openai-compatible") {
+    return baseUrl ? `${root(baseUrl)}/v1/chat/completions` : null;
+  }
+  return null;
+}
+
+/**
+ * The VALUE of the key the agent would use, by the agent's own
+ * precedence: an explicit `apiKey` on the entry, else the environment,
+ * else <stateDir>/.env (which load-dotenv.ts applies only where the
+ * environment is silent). Never logged, never returned to the renderer —
+ * it leaves this function only inside an Authorization header.
+ */
+function resolveKeyValue(entry: ProviderEntry): string | null {
+  if (entry.apiKey && entry.apiKey.length > 0) return entry.apiKey;
+  const names: string[] = [];
+  if (entry.apiKeyEnvVar) names.push(entry.apiKeyEnvVar);
+  if (entry.kind === "openrouter") names.push("OPENROUTER_API_KEY");
+  if (entry.kind === "aimlapi") names.push("AIMLAPI_API_KEY");
+  if (entry.kind === "gemini") names.push("GEMINI_API_KEY");
+  if (entry.kind === "openai-compatible" || entry.kind === "qwen-openai-compatible") {
+    names.push("OPENAI_COMPAT_API_KEY", "OPENAI_API_KEY", "ATOMIC_AGENT_OPENAI_API_KEY");
+  }
+  for (const name of names) {
+    const v = process.env[name];
+    if (v !== undefined) return v.length > 0 ? v : null; // set-but-empty wins, as for the agent
+  }
+  let text: string;
+  try {
+    text = readFileSync(join(stateDirPath(), ".env"), "utf8");
+  } catch {
+    return null;
+  }
+  for (const line of text.split(/\r?\n/)) {
+    const m = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)$/.exec(line);
+    if (!m || !names.includes(m[1]!)) continue;
+    const v = m[2]!.trim().replace(/^["']|["']$/g, "");
+    return v.length > 0 ? v : null;
+  }
+  return null;
+}
+
+export interface ProviderVerification {
+  /** The provider answered as this key's owner, for this model. */
+  ok: boolean;
+  /** False when nothing could be asked — no endpoint for the kind, or the network failed. */
+  checked: boolean;
+  status?: number;
+  error?: string;
+}
+
+/** Ask the provider to complete one token, and report what it said. */
+export async function verifyProviderKey(
+  entry: ProviderEntry,
+  model: string,
+  timeoutMs = 30_000,
+): Promise<ProviderVerification> {
+  const url = chatCompletionsUrl(entry.kind, entry.baseUrl);
+  if (!url) return { ok: false, checked: false, error: `this build cannot check a ${entry.kind || "provider"} key` };
+  if (!model) return { ok: false, checked: false, error: "no model to check the key against" };
+  const key = resolveKeyValue(entry);
+  if (!key) {
+    return {
+      ok: false,
+      checked: true,
+      error: entry.apiKeyEnvVar
+        ? `no API key — type one above, or set ${entry.apiKeyEnvVar}`
+        : "no API key — type one above",
+    };
+  }
+  const headers: Record<string, string> = { "content-type": "application/json", ...(entry.headers ?? {}) };
+  if (entry.apiKeyHeader) headers[entry.apiKeyHeader] = key;
+  else headers.authorization = `Bearer ${key}`;
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers,
+      // 16, not 1: AI/ML API answers `max_tokens: 1` on a reasoning model
+      // with HTTP 400 "model output limit was reached", which would have
+      // failed a perfectly good key.
+      body: JSON.stringify({ model, messages: [{ role: "user", content: "ping" }], max_tokens: 16, stream: false }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (err) {
+    // Unreachable is not "your key is wrong": do not pretend to a verdict.
+    return { ok: false, checked: false, error: `could not reach ${new URL(url).host}: ${(err as Error).message}` };
+  }
+  if (res.ok) return { ok: true, checked: true, status: res.status };
+  // 429 means the service knew who we were and throttled us. That is an
+  // ACCEPTED key: an unknown one gets 401 long before a rate limit.
+  if (res.status === 429) return { ok: true, checked: true, status: res.status };
+  // The provider's own sentence is the useful one — "User not found",
+  // "Insufficient credits", "model not available" — so pass it through
+  // rather than replacing it with a status code.
+  let detail = "";
+  try {
+    const text = (await res.text()).slice(0, 2000);
+    const parsed = JSON.parse(text) as { error?: { message?: string } | string; message?: string };
+    const e = parsed.error;
+    detail = (typeof e === "string" ? e : e?.message) || parsed.message || text;
+  } catch {
+    detail = "";
+  }
+  const say = (why: string) => (detail ? `${why}: ${detail.slice(0, 300)}` : why);
+  if (res.status === 401 || res.status === 403) {
+    return { ok: false, checked: true, status: res.status, error: say("the provider rejected this key") };
+  }
+  if (res.status === 402) {
+    return { ok: false, checked: true, status: res.status, error: say("the key works but the account cannot pay for a request") };
+  }
+  /* Everything else — a 400 about the request shape, a 404 about the
+     model, a 5xx — says nothing about the key, and guessing would be the
+     same sin in the other direction: a wrong NO is worse than the old
+     wrong YES, because it locks the operator out of a provider that
+     works. Report it as unchecked, with the provider's own words. */
+  return { ok: false, checked: false, status: res.status, error: say(`the provider answered HTTP ${res.status}`) };
+}
+
+/** Drop a provider entry by id — the rollback for a key that did not verify. */
+export async function removeProvider(id: string): Promise<CliResult> {
+  if (!/^[\w.-]{1,48}$/.test(id)) return { ok: false, stdout: "", stderr: "", error: `not a provider id: ${id}` };
+  const current = await configGet();
+  if (!current.ok || !current.config) {
+    return { ok: false, stdout: "", stderr: "", error: current.error ?? "could not read the config" };
+  }
+  const config = current.config as { llm?: { providers?: ProviderEntry[] } };
+  const providers = config.llm?.providers;
+  if (!providers) return { ok: true, stdout: "", stderr: "" };
+  const kept = providers.filter((p) => p.id !== id);
+  if (kept.length === providers.length) return { ok: true, stdout: "", stderr: "" };
+  config.llm!.providers = kept;
+  return configSetWhole(config);
+}
+
+/* ---------------------------------------------------------------
    Context usage.
 
    The SSE `usage` frame is hardcoded zeros — `buildUsagePayload` in

@@ -13,6 +13,7 @@
     "start": "npm run build && electron .",
     "dev": "npm run build && electron . --dev",
     "smoke": "npm run build && electron . --smoke",
+    "drive:cloud": "npm run build && node test/cloud-setup.drive.mjs",
     "dist": "npm run build && node -e \"require('node:fs').rmSync('release',{recursive:true,force:true})\" && electron-builder --mac --arm64 --publish never",
     "postinstall": "node scripts/ensure-electron.mjs"
   },
