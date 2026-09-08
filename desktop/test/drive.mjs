@@ -268,18 +268,34 @@ class App {
   }
 
   /** Click the visible thing whose text contains `text`. Waits for it. */
-  async clickText(text, { scope, timeout = 8000 } = {}) {
+  async clickText(text, { scope, timeout = 8000, scroll = true } = {}) {
     const box = await this._await(() => this._boxOfText(text, scope), timeout,
       `something clickable saying "${text}"`);
-    const placed = await this._wheelInto(() => this._boxOfText(text, scope)) || box;
+    const placed = (scroll ? await this._wheelInto(() => this._boxOfText(text, scope)) : null) || box;
     await this._clickBox(placed, placed.label);
     return placed.label;
   }
 
-  /** Click a CSS selector. Waits for it. */
-  async clickSel(sel, { nth = 0, timeout = 8000 } = {}) {
+  /**
+   * Click a CSS selector. Waits for it.
+   *
+   * `scroll: false` suppresses the scroll-into-view wheel, and there is one
+   * screen in this app that needs it. `_wheelInto` sends a real
+   * `mouseWheel` before the press, and the first-run splash answers a wheel
+   * notch the same way it answers a key or a press — "press any key" is
+   * kept on four channels (renderer.js:7634-7640, intro-input.ts:26-41).
+   * So `clickSel('#ob-sky')` was not one click on the splash, it was two
+   * inputs, and the intro is two-stage: the wheel finished the typewriter,
+   * the press dismissed the splash, and the caller's next check found a
+   * screen one further on than the one it clicked for. Nothing about the
+   * app is wrong there — it is the driver spending an input the operator
+   * never made. Use `scroll: false` for anything that counts inputs; the
+   * box is already on screen in that case, which is why skipping the wheel
+   * costs nothing.
+   */
+  async clickSel(sel, { nth = 0, timeout = 8000, scroll = true } = {}) {
     const box = await this._await(() => this._boxOf(sel, nth), timeout, sel);
-    const placed = await this._wheelInto(() => this._boxOf(sel, nth)) || box;
+    const placed = (scroll ? await this._wheelInto(() => this._boxOf(sel, nth)) : null) || box;
     await this._clickBox(placed, `${sel}${nth ? `[${nth}]` : ''} — ${placed.label}`);
     return placed.label;
   }

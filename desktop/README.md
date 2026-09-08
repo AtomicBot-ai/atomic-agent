@@ -846,7 +846,16 @@ cd desktop
 npm run scenarios                      # all of them, in order
 npm run scenarios -- 04                # just the ones whose filename matches
 node test/scenarios/05-the-approval-path.mjs   # or run one directly
+npm run drive:integration              # the whole arc, once, in one window
 ```
+
+`npm run drive:integration` (`test/integration.drive.mjs`) is the pass that
+crosses every seam the four r6 lanes left, in the order a first afternoon
+crosses them: first run with the mouse only, a cloud provider with a real
+key, a message and a reply, switch to local, switch back to cloud, add a
+second provider from the composer's own chip, switch model, and a reply from
+the model chosen last. `--shots DIR` writes a PNG per stage, `--keep` leaves
+the app up. It takes the same environment as the scenarios below.
 
 **These are slow and they spend real money.** Each scenario opens a brand-new
 state directory, clicks all the way through first-run onboarding, and then
@@ -938,6 +947,21 @@ And the three from the first driven round:
   Stop button belongs, for as long as the released tool and the next model call
   took — measured at seven seconds on a two-approval turn, with the reply then
   arriving out of a window that had said nothing was happening.
+
+The r6 integration pass (`npm run drive:integration`) added nothing to that
+list, and the one thing it looked hardest at is worth writing down as a
+NON-defect, because the two lanes that met there could plausibly have made it
+one. The UX lane made a wizard row activate on one click; the splash is
+dismissed by a `pointerdown` on the document. So the press that dismisses the
+splash is followed, milliseconds later, by a release over a row that was not
+there when the press landed — and if that release became a click on the row,
+a person would choose a backend they never saw. It does not: Chromium
+dispatches `click` on the common ancestor of the press and release targets,
+and the press target is destroyed by the repaint, so no `[data-obrow]` ever
+receives it. Driven at 24 ms and at 120 ms with the pointer parked exactly on
+"Cloud models", the flow stops on the choose screen both times. The
+integration pass asserts the three backend choices really are on screen after
+the splash, which is the tripwire if that ever changes.
 
 ### Model faults are reported separately
 

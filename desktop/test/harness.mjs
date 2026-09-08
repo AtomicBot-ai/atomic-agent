@@ -113,9 +113,13 @@ export function activeModel(stateDir) {
  * dismiss the intro, choose Cloud models, choose the provider, type the key,
  * click Next, decline the local model, decline importing other agents' data.
  *
- * The row lists are two-stage on purpose (mouse-list-row.tsx: the first
- * click selects, the second activates), so `pick` clicks until the screen
- * actually changes — which is what a hand does too.
+ * r6 INTEGRATION: the row lists used to be two-stage — the first click only
+ * moved the cursor and the second activated — which is the operator's own
+ * complaint ("I click on the row and nothing happens"). The UX lane fixed it:
+ * obRowClick now sets the cursor AND activates, so one click is one action.
+ * `pick` still clicks until the screen actually changes, because that is also
+ * what a hand does when a click lands during a repaint, and because it is the
+ * check that would catch the two-stage behaviour coming back.
  */
 export async function firstRun(app, { provider = PROVIDER, key } = {}) {
   const P = PROVIDERS[provider];
@@ -123,10 +127,48 @@ export async function firstRun(app, { provider = PROVIDER, key } = {}) {
   const wizText = `((document.querySelector('#onboarding')||{innerText:''}).innerText)`;
 
   await app.waitFor(`!!document.querySelector('#onboarding')`, 'the first-run wizard', { timeout: 90000 });
-  // The intro answers any key; the first one only finishes the typewriter.
+  /* r6 INTEGRATION: the intro is CLICKED, not typed at.
+     It used to press Enter here, which made the very first screen of the
+     app the one screen the whole scenario suite never proved with a
+     pointer — and "press any key" is a promise the desktop keeps on four
+     channels, not one (renderer.js:7591-7597 answers keydown, pointerdown,
+     a wheel notch and a non-empty paste, mirroring intro-input.ts). If the
+     pointerdown listener were dropped tomorrow, a mouse-only user would be
+     stuck on the splash forever and every scenario would still have passed.
+
+     The click lands on #ob-sky, the intro's star-field canvas, and the loop
+     is GATED on that canvas being there — not on the next screen's text.
+     Both halves matter. Clicking `#onboarding` (the whole overlay) puts the
+     pointer at its centre, which is where the backend rows are; #ob-sky is
+     drawn only on the intro step (renderOverlays → obIntroMounted) and
+     never carries a control, so a click on it can only ever mean "dismiss
+     the splash". The document-level pointerdown listener answers it,
+     guarded by `OB.step === 'intro'` (renderer.js:7634), which is the same
+     guard the loop reads.
+
+     `scroll: false` is not a detail either. The driver scrolls a target
+     into view with a real wheel notch before pressing, and the intro
+     answers a wheel notch as an input in its own right — so an ordinary
+     `clickSel` was TWO inputs on a two-stage screen, and one call walked
+     the wizard from the splash to the provider list. The app is right on
+     both counts; the driver was spending a scroll the operator never made.
+
+     The intro is two-stage on purpose (obIntroAdvance: the first input
+     finishes the typewriter, the second dismisses), so two clicks are
+     expected here and the loop looks at the screen between them, which is
+     what a hand does. It is worth saying what was checked and is NOT a
+     defect: on the dismissing click, the row that lands under the cursor
+     is not activated by the release. Chromium dispatches `click` on the
+     common ancestor of the press and release targets, and the press target
+     — the splash — is gone by then, so no `[data-obrow]` ever sees it.
+     Driven at 24 ms and at 120 ms with the cursor parked exactly on "Cloud
+     models": the flow stops on the choose screen both times. If that ever
+     changes, the UX lane's one-click rows would start choosing a backend
+     nobody looked at, so the check below — that the three choices are
+     really on screen after the splash — is the tripwire for it. */
   for (let i = 0; i < 8; i++) {
-    if (await app.eval(`/Cloud models/.test(${wizText})`)) break;
-    await app.press('Enter');
+    if (!(await app.eval(`!!document.querySelector('#ob-sky')`))) break;
+    await app.clickSel('#ob-sky', { scroll: false });
     await sleep(500);
   }
   await app.waitFor(`/Cloud models/.test(${wizText})`, 'the three backend choices');

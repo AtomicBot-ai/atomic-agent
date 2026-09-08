@@ -49,10 +49,18 @@ run falls back to the installed agent as before.
 
 | file | what it drives | command |
 | --- | --- | --- |
-| `scenarios/01`…`05` + `run-all.mjs` | five end-to-end human errands: build a website, write a document, arrange files, hold a conversation, answer an approval | `npm run scenarios` |
+| `scenarios/01`…`07` + `run-all.mjs` | seven end-to-end human errands: build a website, write a document, arrange files, hold a conversation, answer an approval, survive a Force Quit, and be told what went wrong when the agent will not answer | `npm run scenarios` |
 | `onboarding-mouse.mjs` | the whole first-run wizard with the mouse, plus a resting-state design review of every screen | `npm run drive:onboarding` |
 | `drive-selector.mjs` | the composer's parameter controls across the three backends (`composerSwitchKindsFor`), and the pane Settings › LLM opens on | `npm run drive:selector` |
 | `cloud-setup.drive.mjs` | the cloud providers end to end against the real OpenRouter and AI/ML API | `npm run drive:cloud` |
+| `integration.drive.mjs` | **the four lanes in one window**: first run with the mouse, a cloud provider with a real key, a message and a reply, local, back to cloud, a second provider added from the composer chip, a model switch, and a reply from the model chosen last | `npm run drive:integration` |
+
+`integration.drive.mjs` is the pass that has to hold once the lanes are
+merged, and it is deliberately the ordinary arc rather than a corner: it
+crosses every seam in one session, in the order a first afternoon crosses
+them. It calls nothing — no `window.__*`, no config write, no seeded state
+beyond the `.env` a person would already have — so a step that cannot be
+reached with the pointer is reported as the finding it is.
 
 ## Running one
 
@@ -121,6 +129,28 @@ Give every concurrent run its own debugging port.
   route it clicked (`onRoute`) and then for three identical reads of the strip,
   because two was not enough — the model slot changes once more when the
   local-models snapshot lands.
+
+- **The scroll-into-view wheel is an input.** `clickSel`/`clickText` send a
+  real `mouseWheel` to bring a target into view before pressing it, and the
+  first-run splash answers a wheel notch exactly as it answers a key or a
+  press — "press any key" is kept on four channels. So `clickSel('#ob-sky')`
+  was two inputs on a two-stage screen, and one call walked the wizard from
+  the splash past the backend choice and into the provider list, where the
+  caller then waited twenty seconds for a screen it had already gone by.
+  Pass `scroll: false` for anything on a screen that counts inputs.
+- **A pane that is still fetching is not an empty pane.** The model pane
+  draws `reading the catalogue…` over an empty list while `selLoadModels`
+  is in flight. Read it the instant the popover appears and you will report
+  "0 rows" about a pane that fills correctly a second later —
+  `integration.drive.mjs` waits for that line to go, and prints the pane's
+  own `.cap` text when the list really is empty.
+- **A model your key cannot pay for is not a broken app.** Picking the first
+  row that is not the active one landed on `anthropic/claude-opus-5-fast`,
+  and OpenRouter answered `402 … you can only afford 18` tokens. That is a
+  true statement about the account and a useless one about the window, so
+  the integration pass prefers a small model by name and then holds the
+  contract that matters: the turn answers, or it names the provider and the
+  reason. Never a bare transport error.
 
 ## The red that was not ours
 
