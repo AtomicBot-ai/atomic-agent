@@ -501,7 +501,46 @@ describe("reduceTuiState", () => {
     const errMsg = next.messages.find(
       (m) => m.role === "system" && m.variant === "warn",
     );
+    // Exactly the base line and nothing else. `fetch failed` is undici's
+    // catch-all for a connection that never opened as much as for one
+    // that died (verified on Node 22.22.2: `ENOTFOUND` and `ECONNREFUSED`
+    // both surface as this bare string), so neither hint may fire — the
+    // llama one names the wrong server on a cloud route, and the drop one
+    // would assert a reply was cut off on a turn that may have completed
+    // zero steps.
     expect(errMsg?.text).toBe("Turn failed [transport]: fetch failed");
+  });
+
+  it("explains a cloud route's mid-stream drop through the whole reducer", () => {
+    // The reported shape: a cloud provider's stream dies mid-body and
+    // undici's message is the single word `terminated`.
+    // Source: Discord #feedback-and-bugs, 2026-09-03.
+    const initial = createInitialTuiState(fakeSession());
+    const next = apply(initial, [
+      {
+        type: "providers_refresh",
+        rows: [providerRow({ id: "openrouter", kind: "openrouter", isActiveText: true })],
+      },
+      { type: "message_submitted" },
+      {
+        type: "agent_event",
+        event: {
+          type: "loop_failed",
+          error: new Error("terminated"),
+          category: "transport",
+        },
+      },
+    ]);
+    const errMsg = next.messages.find(
+      (m) => m.role === "system" && m.variant === "warn",
+    );
+    expect(errMsg?.text).toContain("Turn failed [transport]: terminated");
+    expect(errMsg?.text).toContain(
+      "the connection to the model dropped before the reply finished",
+    );
+    expect(errMsg?.text).toContain(
+      "the steps that already finished are kept in this session",
+    );
   });
 
   it("maps loop_completed reason failed to failed outcome", () => {
