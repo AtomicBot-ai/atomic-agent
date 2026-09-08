@@ -2724,3 +2724,100 @@ describe("executeStep ModelError failure-stage tag", () => {
     expect(calls()).toBe(2);
   });
 });
+
+describe("executeStep repair parse transport", () => {
+  const grammarsDir = join(process.cwd(), "grammars");
+
+  it("parses the REPAIR completion under the served transport, not the configured one", async () => {
+    // Guards the `retryParseDeps` hoist at the repair-path parse: passing
+    // the configured `deps` there instead makes the retry parse lose
+    // served-transport awareness, which no other test notices.
+    //
+    // Configured grammar, served by a native link. The repair answers the
+    // way a native link does — empty `content`, the call in `tool_calls`
+    // — so a grammar-shaped parse sees an empty body and the step dies
+    // with a GrammarError instead of replying.
+    const registry = new ToolRegistry();
+    registry.register(replyTool);
+    const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE, grammarsDir);
+    let calls = 0;
+    const outcome = await executeStep(
+      {
+        session: createEmptySessionState({
+          id: "s-repair-served-transport",
+          workingDir: "/w",
+        }),
+        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        stepIndex: 0,
+        signal: new AbortController().signal,
+        userMessage: "hi",
+      },
+      {
+        registry,
+        slotManager: new SlotManager(2),
+        llmComplete: async (): Promise<CompletionResult> => {
+          calls += 1;
+          if (calls === 1) {
+            // Reasoning-only: survives the first-attempt ModelError check
+            // (native rules), fails the parse, routes into the repair.
+            return {
+              content: "",
+              reasoningContent: "I should answer, but I forgot the call.",
+              stop: true,
+              truncated: false,
+              timing: {
+                promptMs: 1,
+                predictedMs: 1,
+                promptTokens: 20,
+                predictedTokens: 5,
+              },
+              cacheHitTokens: 0,
+              slotId: 0,
+              modelId: "mock",
+              servedTransport: "native_tools",
+            };
+          }
+          return {
+            content: "",
+            reasoningContent: "",
+            stop: true,
+            truncated: false,
+            timing: {
+              promptMs: 1,
+              predictedMs: 1,
+              promptTokens: 20,
+              predictedTokens: 5,
+            },
+            cacheHitTokens: 0,
+            slotId: 0,
+            modelId: "mock",
+            servedTransport: "native_tools",
+            toolCalls: [
+              {
+                id: "call-repair",
+                type: "function",
+                function: {
+                  name: "reply",
+                  arguments: JSON.stringify({ text: "served-native" }),
+                },
+              },
+            ],
+          };
+        },
+        grammar,
+        profile: PLAIN_INSTRUCT_PROFILE,
+        toolTransport: "grammar",
+        toolCallAdapter: null,
+        supportsSlotAffinity: false,
+      },
+    );
+
+    expect(calls).toBe(2);
+    expect(outcome.toolCalls).toHaveLength(1);
+    expect(outcome.toolCalls[0]!.tool).toBe("reply");
+    expect(outcome.toolCalls[0]!.args).toEqual({ text: "served-native" });
+    expect(outcome.toolResults[0]!.status).toBe("ok");
+  });
+});
