@@ -1,3 +1,4 @@
+import type { ToolCallTransport } from "../provider/completion-types.js";
 import type {
   LlmFailureCategory,
   ModelFailureReason,
@@ -5,6 +6,16 @@ import type {
 
 export interface LlmFailureOptions {
   cause?: unknown;
+}
+
+/**
+ * `ModelError` extras. `transport` is the *effective* tool-call transport
+ * that the defective completion was parsed under — the transport of the
+ * link that actually served it, not necessarily the configured one (see
+ * `parseDepsFor` in `src/agent/step-executor.ts`).
+ */
+export interface ModelErrorOptions extends LlmFailureOptions {
+  transport?: ToolCallTransport;
 }
 
 /**
@@ -71,17 +82,33 @@ export class GrammarError extends LlmFailure {
  * missing stop token). These are never retried in-place because the
  * model already consumed its budget on this prompt — a second pass over
  * the same prefix would almost certainly hit the same wall.
+ *
+ * `transport` records which tool-call transport the completion was
+ * parsed under, because `reason` alone is ambiguous for the largest of
+ * these buckets: an `empty` body routes through `ModelError` **by
+ * design** on `native_tools` (nothing in any channel — see
+ * `isNativeToolsEmptyCompletionHandledByParser`), whereas on the grammar
+ * transports the same `reason` means the one-shot repair
+ * (`isGrammarEmptyCompletionWorthRepairing`) also came back empty, which
+ * is a different and more suspicious story. Diagnostic only — nothing
+ * branches on it.
  */
 export class ModelError extends LlmFailure {
   readonly category = "model" as const;
 
+  /** Effective transport the defective completion was parsed under. */
+  readonly transport?: ToolCallTransport;
+
   constructor(
     readonly reason: ModelFailureReason,
     message: string,
-    options?: LlmFailureOptions,
+    options?: ModelErrorOptions,
   ) {
     super(message, options);
     this.name = "ModelError";
+    if (options?.transport !== undefined) {
+      this.transport = options.transport;
+    }
   }
 }
 

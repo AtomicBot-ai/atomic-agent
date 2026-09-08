@@ -4,6 +4,7 @@ import {
   extractSafeCode,
   extractSafeReason,
   extractSafeTool,
+  extractSafeToolTransport,
   extractSafeTransportHost,
   sanitizeStack,
   scrubError,
@@ -112,6 +113,25 @@ describe("extractSafeReason", () => {
   });
 });
 
+describe("extractSafeToolTransport", () => {
+  it("allows the known ToolCallTransport enum values", () => {
+    expect(extractSafeToolTransport({ transport: "grammar" })).toBe("grammar");
+    expect(extractSafeToolTransport({ transport: "native_tools" })).toBe(
+      "native_tools",
+    );
+  });
+
+  it("drops an unrecognised transport (could be freeform text)", () => {
+    expect(
+      extractSafeToolTransport({ transport: "grammar for /Users/alex/x.txt" }),
+    ).toBeUndefined();
+    expect(extractSafeToolTransport({ transport: "" })).toBeUndefined();
+    expect(extractSafeToolTransport({ transport: 7 })).toBeUndefined();
+    expect(extractSafeToolTransport({})).toBeUndefined();
+    expect(extractSafeToolTransport(null)).toBeUndefined();
+  });
+});
+
 describe("extractSafeTool", () => {
   it("allows a bounded registry-style tool identifier", () => {
     expect(extractSafeTool({ tool: "os.fs.read" })).toBe("os.fs.read");
@@ -173,6 +193,30 @@ describe("scrubError", () => {
     });
     const ev = scrubError(err, { source: "llm_failure" });
     expect(ev.reason).toBe("truncated");
+  });
+
+  it("carries ModelError.transport through when it is a known enum value", () => {
+    const err = Object.assign(new Error("empty completion"), {
+      name: "ModelError",
+      category: "model",
+      reason: "empty",
+      transport: "native_tools",
+    });
+    const ev = scrubError(err, { source: "llm_failure" });
+    expect(ev.reason).toBe("empty");
+    expect(ev.toolTransport).toBe("native_tools");
+  });
+
+  it("drops a bogus ModelError.transport rather than reporting it", () => {
+    const err = Object.assign(new Error("empty completion"), {
+      name: "ModelError",
+      category: "model",
+      reason: "empty",
+      transport: "totally made up /Users/alex",
+    });
+    const ev = scrubError(err, { source: "llm_failure" });
+    expect(ev.reason).toBe("empty");
+    expect(ev.toolTransport).toBeUndefined();
   });
 
   it("carries ToolExecutionError.tool through when it is a bounded identifier", () => {

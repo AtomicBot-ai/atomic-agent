@@ -10,7 +10,10 @@ export {
   ToolExecutionError,
   TransportError,
 } from "./llm-failures.js";
-export type { LlmFailureOptions } from "./llm-failures.js";
+export type {
+  LlmFailureOptions,
+  ModelErrorOptions,
+} from "./llm-failures.js";
 export { classifyFailure } from "./classify-failure.js";
 export {
   isNetworkError,

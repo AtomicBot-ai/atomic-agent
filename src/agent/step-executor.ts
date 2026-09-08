@@ -529,6 +529,10 @@ async function executeStepInner(
       throw new ModelError(
         initialModelFailure.reason,
         initialModelFailure.message,
+        // Effective transport, not `deps.toolTransport`: on a
+        // cross-transport fallover the served link is the one whose
+        // rules decided this completion is terminal.
+        { transport: initialParseDeps.toolTransport },
       );
     }
     if (repairable) {
@@ -827,10 +831,11 @@ async function executeStepInner(
     // failure, not a grammar one — no point emitting `GrammarError` for
     // an empty body.
     const retryModelFailure = detectModelFailure(completion);
+    const retryParseDeps = parseDepsFor(completion, deps);
     if (
       retryModelFailure !== null &&
       !isNativeToolsEmptyCompletionHandledByParser(
-        parseDepsFor(completion, deps),
+        retryParseDeps,
         retryModelFailure.reason,
         completion,
       )
@@ -843,14 +848,13 @@ async function executeStepInner(
       throw new ModelError(
         retryModelFailure.reason,
         retryModelFailure.message,
+        // Same rule as the first-attempt throw: report the transport that
+        // served this completion, not the configured one.
+        { transport: retryParseDeps.toolTransport },
       );
     }
 
-    parsed = tryParseToolCalls(
-      completion,
-      deps.profile,
-      parseDepsFor(completion, deps),
-    );
+    parsed = tryParseToolCalls(completion, deps.profile, retryParseDeps);
     if (ctx.terminalOnly && parsed.ok) {
       const nonTerminal = parsed.batch.calls.find(
         ({ tool }) => tool !== "reply" && tool !== "finish",

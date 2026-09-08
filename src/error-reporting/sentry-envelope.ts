@@ -53,6 +53,7 @@ export function buildEnvelope(
   if (ev.code) tags.code = ev.code;
   if (ev.httpStatus !== undefined) tags.http_status = String(ev.httpStatus);
   if (ev.reason) tags.reason = ev.reason;
+  if (ev.toolTransport) tags.tool_transport = ev.toolTransport;
   if (ev.tool) tags.tool = ev.tool;
   if (ev.transportHost) tags.transport_host = ev.transportHost;
 

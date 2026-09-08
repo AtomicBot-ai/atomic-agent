@@ -39,6 +39,40 @@ describe("buildEnvelope", () => {
     expect(payload.tags.cause_type).toBe("RangeError");
   });
 
+  it("stamps a tool_transport tag that splits ModelError reason=empty by transport", () => {
+    const base = {
+      errorType: "ModelError",
+      source: "llm_failure",
+      category: "model",
+      reason: "empty",
+      frames: [],
+    } as const;
+    const nativePayload = parseEventPayload(
+      buildEnvelope(DSN, { ...base, toolTransport: "native_tools" }, META).body,
+    );
+    const grammarPayload = parseEventPayload(
+      buildEnvelope(DSN, { ...base, toolTransport: "grammar" }, META).body,
+    );
+    expect(nativePayload.tags.tool_transport).toBe("native_tools");
+    expect(grammarPayload.tags.tool_transport).toBe("grammar");
+    expect(nativePayload.tags.reason).toBe(grammarPayload.tags.reason);
+    expect(nativePayload.tags.tool_transport).not.toBe(
+      grammarPayload.tags.tool_transport,
+    );
+  });
+
+  it("omits tool_transport when the scrubbed event has none", () => {
+    const ev: ScrubbedErrorEvent = {
+      errorType: "ModelError",
+      source: "llm_failure",
+      category: "model",
+      reason: "empty",
+      frames: [],
+    };
+    const { body } = buildEnvelope(DSN, ev, META);
+    expect(parseEventPayload(body).tags.tool_transport).toBeUndefined();
+  });
+
   it("omits cause_type when the scrubbed event has none", () => {
     const ev: ScrubbedErrorEvent = {
       errorType: "TransportError",

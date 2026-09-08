@@ -36,6 +36,17 @@ export interface ScrubbedErrorEvent {
    */
   reason?: string;
   /**
+   * `ModelError.transport` when present — the effective tool-call
+   * transport the defective completion was parsed under. Restricted to
+   * the fixed 2-value `ToolCallTransport` enum
+   * (`grammar | native_tools`) — an internal build-time constant, never
+   * freeform and never user-originated. Without it `reason: "empty"` is
+   * undiagnosable: on `native_tools` it is the by-design route for a
+   * completion with nothing in any channel, while on grammar it means
+   * the one-shot repair came back empty too.
+   */
+  toolTransport?: string;
+  /**
    * `ToolExecutionError.tool` when present. Restricted to a bounded
    * identifier shape (registry tool names such as `os.fs.read`) — never
    * freeform text, since a hallucinated tool name could in theory echo
@@ -79,6 +90,9 @@ export const STATIC_MESSAGE_ERRORS = new Set<string>([]);
 
 /** Mirror of `ModelFailureReason` in `src/llm/reliability/failure-category.ts` — a fixed 3-value enum, safe to allowlist verbatim. */
 const KNOWN_MODEL_FAILURE_REASONS = new Set(["truncated", "empty", "no_stop"]);
+
+/** Mirror of `ToolCallTransport` in `src/llm/provider/completion-types.ts` — a fixed 2-value enum, safe to allowlist verbatim. */
+const KNOWN_TOOL_CALL_TRANSPORTS = new Set(["grammar", "native_tools"]);
 
 /**
  * Bounded identifier pattern for tool names (mirrors `MCP_TOOL_NAME_RE` in
@@ -201,6 +215,19 @@ export function extractSafeReason(err: unknown): string | undefined {
 }
 
 /**
+ * Read `ModelError.transport` off an error, restricted to the known
+ * `ToolCallTransport` enum. Anything else is dropped rather than sent.
+ */
+export function extractSafeToolTransport(err: unknown): string | undefined {
+  if (typeof err !== "object" || err === null) return undefined;
+  const transport = (err as { transport?: unknown }).transport;
+  return typeof transport === "string" &&
+    KNOWN_TOOL_CALL_TRANSPORTS.has(transport)
+    ? transport
+    : undefined;
+}
+
+/**
  * Read `ToolExecutionError.tool` off an error, restricted to a bounded
  * identifier shape so freeform / hallucinated text is never sent.
  */
@@ -287,6 +314,7 @@ export function scrubError(
       : undefined) ?? readKnownCategory(err);
   const { httpStatus, code } = extractSafeCode(err);
   const reason = extractSafeReason(err);
+  const toolTransport = extractSafeToolTransport(err);
   const tool = extractSafeTool(err);
   const transportHost = extractSafeTransportHost(err);
   const causeError = readCauseError(err);
@@ -306,6 +334,7 @@ export function scrubError(
   if (httpStatus !== undefined) event.httpStatus = httpStatus;
   if (code !== undefined) event.code = code;
   if (reason !== undefined) event.reason = reason;
+  if (toolTransport !== undefined) event.toolTransport = toolTransport;
   if (tool !== undefined) event.tool = tool;
   if (transportHost !== undefined) event.transportHost = transportHost;
   return event;
