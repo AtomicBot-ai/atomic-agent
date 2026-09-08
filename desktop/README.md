@@ -875,11 +875,55 @@ Nothing here ever touches `~/.atomic-agent` or `~/.atomic-agent-desktop`;
 | `03-arrange-files.mjs` | seven loose files, "sort these into subfolders by type" | every file is still there, byte-identical, in the folder that was named, and nothing new was invented |
 | `04-a-conversation.mjs` | a question, then a follow-up that says only "it" | the second reply is about the city the first reply chose, and both questions are still on screen |
 | `05-the-approval-path.mjs` | ask for something gated, **Deny** it, ask again, **Approve** it | the file does not exist while the card is up, still does not after Deny, does after Approve, holds exactly the right line, and both verdicts are recorded in the chat |
+| `06-nothing-left-running.mjs` | use the app, Force Quit it, open it again | the agent the killed app stranded is gone after the relaunch, there is one agent for this app rather than two, and the reopened window still answers |
+| `07-when-the-agent-is-busy.mjs` | first run on a Mac too loaded for the agent's CLI to answer | the words under the key box say what happened and what to do, instead of echoing a command line, and the step is not a dead end. Spends no tokens |
 
 ### What driving has already caught
 
-Three defects that ~490 green hook-driven checks did not see, all found on the
-first passes of a driven run:
+Six defects that ~490 green hook-driven checks did not see, all found on driven
+runs. The last three came out of one bad morning and are worth reading in
+order, because the first of them caused the other two:
+
+- **The app left an agent running every time it did not quit cleanly.**
+  `before-quit` stops the `atag serve` child, and nothing else ever did — so
+  Force Quit, a crash, an out-of-memory kill or a harness `SIGKILL` each left
+  one alive, reparented to launchd, holding its port and a few hundred
+  megabytes, for ever. This Mac was carrying **108 of them**, the oldest four
+  days old, about **3.4 GB** between them. `AgentClient` now writes a
+  `serve.json` in its own state directory naming the child it started, and the
+  next launch reaps whatever that file still names — a live app always holds
+  its own child, so anything named at start time is by definition an orphan.
+  Scoped by state directory, so concurrent lanes reap only their own.
+  `npm run smoke` structurally cannot see this: it asserts on one live app, and
+  the damage is what is left behind after that app is gone. Scenario 06 drives
+  it — Force Quit, reopen, look in `ps`.
+- **"Command failed: /Users/…/atag config get".** With the machine that far
+  into swap, the wizard's own `atag config get` blew its 30-second timeout, and
+  what a person got under the API-key box was `execFile`'s echo of the command
+  line: a path they never typed, a subcommand they never ran, no reason and no
+  next step. A first run died there. `cli()` now says *"the agent did not answer
+  `atag config get` within 30s — it may be busy or starting up. Try again."*
+  Scenario 07 arranges exactly that machine and reads the sentence back.
+- **Typing your API key and clicking Next did nothing, and the key vanished.**
+  Two halves of the same repaint. `WIZ.apiKey` was written in exactly one
+  place — `wizNext`, at the end — and the step is drawn as
+  `value="…esc(WIZ.apiKey)…"`, so any overlay repaint re-drew the box EMPTY and
+  threw away what had been typed. Carrying the caret across the repaint (the
+  first round's fix) was not enough: clicking **Next** moves focus to the
+  button, so a repaint landing on that mousedown has no focused field to carry
+  — and because `innerHTML` replaced the button between press and release, the
+  browser never fired a click either. Empty box, blue button pressed, nothing
+  happened, no error. Fixed at both ends: the key field now writes straight
+  into `WIZ` as it is typed, and `renderOverlays` skips the DOM write entirely
+  when the HTML it just built is identical to the one already on screen — which
+  is what the readiness poll produces every time.
+- **That echo could have printed an API key.** The same `e.message` path was
+  reachable from `setWholeConfig`, which passes the entire config document —
+  `llm.providers[].apiKey` included — as one argv entry. Any failure there
+  would have put a provider key on screen and into the log. Only the verb is
+  ever quoted back now.
+
+And the three from the first driven round:
 
 - **The wizard's Next button did nothing.** `act()` returned for every verb the
   cloud step did not name, and `wiz:next` was not named. The keyboard was fine
@@ -901,6 +945,14 @@ A scenario that fails because the model did not do what was asked exits with
 `~ MODEL`, not `✘ FAIL`, and `run-all.mjs` counts the two separately. The app
 is not blamed for a model's bad day, and a model's bad day never hides an app
 defect.
+
+A failure has a third possible author: **the machine**. Every failure prints
+the load average beside it, and says so plainly when the box is saturated.
+This is not hypothetical — 03, 04 and 05 all timed out at 90 s waiting for the
+wizard to verify a key on a Mac carrying a load average of 290 (four other
+checkouts running their own suites at once), and all three passed in about
+fifty seconds on the same build when it was quiet. **Run these on an idle
+machine**, and re-run before you file anything.
 
 ### The driver
 
@@ -935,7 +987,11 @@ try {
   launch.
 
 `test/harness.mjs` holds what every scenario repeats: throwaway directories,
-clicking through the first-run wizard, `ask()`, and `waitTurn()`.
+clicking through the first-run wizard, `ask()`, and `waitTurn()`. A scenario
+that is about a particular *machine* rather than a particular click passes
+`setup(dirs)` to `scenario()`: it runs before the window opens, may return
+environment for the launch (07 points `ATOMIC_AGENT_BIN` at a deliberately slow
+wrapper), and never reaches inside the running app.
 
 > `waitTurn()` insists that quiet **holds** for five seconds before it calls a
 > turn finished. Between a tool result and the next model call the app is

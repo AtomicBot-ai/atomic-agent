@@ -1,6 +1,6 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -118,6 +118,127 @@ async function freePort(): Promise<number> {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/* ------------------------------------------------------- orphan reaping ---
+   r6 (human-scenario round). `before-quit` stops the child, and that is the
+   only thing that ever did. Every OTHER way this app ends — Force Quit, a
+   crash in the main process, a SIGKILL from a test harness, the machine
+   running out of memory and the kernel picking Electron — leaves `atag serve`
+   alive, reparented to launchd, holding its port and a few hundred megabytes,
+   for ever. Nothing ever came back for it.
+
+   Driving found this the expensive way: 108 orphaned `atag serve` processes on
+   this Mac, the oldest four days old, together holding about 3.4 GB. The
+   machine was so far into swap that the wizard's own `atag config get` blew
+   its 30-second timeout and first-run died on "Command failed" — an app defect
+   presenting as a model-shaped failure two removes away. `npm run smoke` could
+   never see this: it asserts on one live app, and the damage is what is left
+   behind after that app is gone.
+
+   The fix that works without touching the agent: this app is the only writer
+   of its own state directory, so a `serve.json` in there names the child it
+   last started. The next launch reads it and, if that process is still alive
+   AND is still an `atag serve` on the port we recorded, kills it before
+   spawning its replacement. A live desktop app always has its own child, so
+   anything the file names at start time is by definition an orphan.
+
+   Scoped by state directory, which is what makes it safe with several lanes
+   (and the operator's own window) running at once: each has its own
+   directory, its own file, and reaps only what it itself left behind. */
+
+/** What this app last spawned, so the next launch can come back for it. */
+interface ServeRecord {
+  pid: number;
+  port: number;
+  startedAt: number;
+}
+
+function serveRecordPath(): string {
+  return join(DESKTOP_STATE_DIR, "serve.json");
+}
+
+/** The command line of a live pid, or null if it is not running. */
+function commandOf(pid: number): string | null {
+  try {
+    // `ps -o command= -p` is the one thing that answers "is this the same
+    // process, or a pid that got reused since we wrote it down".
+    return execFileSync("/bin/ps", ["-o", "command=", "-p", String(pid)], {
+      encoding: "utf8",
+      timeout: 4000,
+    }).trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+/** True when `pid` really is the `atag serve` we recorded on `port`. */
+function looksLikeOurServe(pid: number, port: number): boolean {
+  const cmd = commandOf(pid);
+  if (!cmd) return false;
+  return /(^|[/\s])(atag|atomic-agent|index\.js)\b/.test(cmd)
+    && /\bserve\b/.test(cmd)
+    && cmd.includes(`--port ${port}`);
+}
+
+/**
+ * Kill whatever the last run of this app left behind in this state dir.
+ * Returns what it reaped, so the caller can say so in the log.
+ */
+export function reapOrphanedServe(): { pid: number; killed: boolean } | null {
+  let rec: ServeRecord;
+  try {
+    rec = JSON.parse(readFileSync(serveRecordPath(), "utf8")) as ServeRecord;
+  } catch {
+    return null; // no record, unreadable, or not JSON — nothing to reap
+  }
+  if (!rec || typeof rec.pid !== "number" || typeof rec.port !== "number") {
+    forgetServeRecord();
+    return null;
+  }
+  if (!looksLikeOurServe(rec.pid, rec.port)) {
+    // Gone already, or the pid belongs to something else now. Either way the
+    // record is stale, and killing a stranger's pid is the one thing this
+    // must never do.
+    forgetServeRecord();
+    return null;
+  }
+  let killed = false;
+  try {
+    process.kill(rec.pid, "SIGTERM");
+    // Give it a moment to close its sqlite handles, then insist. This is a
+    // blocking wait on purpose: it runs before the replacement is spawned,
+    // and two agents on one state directory is worse than a slow launch.
+    const until = Date.now() + 3000;
+    while (Date.now() < until && looksLikeOurServe(rec.pid, rec.port)) {
+      execFileSync("/bin/sleep", ["0.1"]);
+    }
+    if (looksLikeOurServe(rec.pid, rec.port)) process.kill(rec.pid, "SIGKILL");
+    killed = true;
+  } catch {
+    /* it exited between the check and the signal — the good outcome */
+  }
+  forgetServeRecord();
+  return { pid: rec.pid, killed };
+}
+
+function rememberServeRecord(pid: number, port: number): void {
+  try {
+    mkdirSync(DESKTOP_STATE_DIR, { recursive: true });
+    const rec: ServeRecord = { pid, port, startedAt: Date.now() };
+    writeFileSync(serveRecordPath(), JSON.stringify(rec), { mode: 0o600 });
+  } catch {
+    /* an unwritable state dir is already reported elsewhere; never block a
+       launch on the bookkeeping file */
+  }
+}
+
+function forgetServeRecord(): void {
+  try {
+    unlinkSync(serveRecordPath());
+  } catch {
+    /* already gone */
+  }
+}
+
 export class AgentClient extends EventEmitter {
   private child: ChildProcess | null = null;
   private port: number | null = null;
@@ -172,6 +293,18 @@ export class AgentClient extends EventEmitter {
     }
 
     this.stopping = false;
+    /* r6: before anything else, come back for the child the LAST run left
+       behind. A live desktop app always holds its own child, so whatever
+       serve.json still names at this moment outlived its parent — Force Quit,
+       a crash, a SIGKILL — and would otherwise sit there for ever. */
+    const orphan = reapOrphanedServe();
+    if (orphan) {
+      const said = `[desktop] reaped an orphaned agent left by a previous run (pid ${orphan.pid})`;
+      // Both places a person might look: the Diagnostics pane, and the
+      // terminal when the app was started from one.
+      this.emit("log", { stream: "stderr", line: said });
+      console.error(said);
+    }
     this.token = randomBytes(24).toString("hex");
     this.port = await freePort();
     this.setStatus({ state: "starting", binary, port: this.port, error: null });
@@ -202,9 +335,13 @@ export class AgentClient extends EventEmitter {
     };
     this.child.stdout?.on("data", relay("stdout"));
     this.child.stderr?.on("data", relay("stderr"));
+    /* r6: write down who we just started, so the next launch can clean up
+       after this one however this one ends. */
+    if (this.child.pid) rememberServeRecord(this.child.pid, this.port);
 
     this.child.on("exit", (code, signal) => {
       this.child = null;
+      forgetServeRecord();
       this.events?.abort();
       this.events = null;
       if (this.stopping) {
@@ -667,6 +804,8 @@ export class AgentClient extends EventEmitter {
     if (this.child) this.child.kill("SIGKILL");
     this.child = null;
     this.port = null;
+    // r6: a clean stop leaves nothing for the next launch to reap.
+    forgetServeRecord();
   }
 }
 

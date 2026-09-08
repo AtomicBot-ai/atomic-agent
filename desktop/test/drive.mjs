@@ -44,6 +44,25 @@ export const DESKTOP_DIR = resolve(HERE, '..');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * Where the agent binary is, resolved the way the app resolves it
+ * (main/agent-client.ts `candidateBinaries`). A scenario needs this to
+ * arrange the machine — wrapping the binary in a slow shim, say — before
+ * the window opens.
+ */
+export function resolveBinary() {
+  const home = process.env.HOME || '';
+  const candidates = [
+    ...(process.env.ATOMIC_AGENT_BIN ? [process.env.ATOMIC_AGENT_BIN] : []),
+    join(home, 'atag-agent', 'bin', 'atag'),
+    join(home, '.local', 'bin', 'atag'),
+    join(home, '.local', 'bin', 'atomic-agent'),
+    '/usr/local/bin/atag',
+    '/opt/homebrew/bin/atag',
+  ];
+  return candidates.find((p) => existsSync(p)) || null;
+}
+
 /* Every app this process launched, so an unhandled throw still tears the
    Electron process down instead of leaving a window on the operator's
    screen and a port bound. */
