@@ -168,7 +168,7 @@ describe("formatAgentErrorForChat", () => {
     [
       "a bulky markup fragment with no document marker",
       `socket hang up <center>502 Bad Gateway</center>${"x".repeat(900)}`,
-      "upstream HTTP 502 (wrong API URL or provider config)",
+      "upstream returned HTML instead of JSON (check API URL and provider)",
     ],
   ])("drops the hint when the body was replaced: %s", (_name, message, body) => {
     expect(
@@ -179,52 +179,230 @@ describe("formatAgentErrorForChat", () => {
     ).toBe(`Turn failed [transport]: ${body}`);
   });
 
-  // The regression this replaces. `mapCliFailure` in the subscription-CLI
-  // provider quotes a subprocess's stderr verbatim (up to 2048 chars), so
-  // a `claude`/`codex` run that dies on a Node `socket hang up` arrives
-  // here as an ~840-char crash dump — over the old length-only wall
-  // threshold, with no markup anywhere in it. The wall fired, scraped
-  // `/\b(\d{3})\b/`, and reported "upstream HTTP 720" — the line number
-  // out of `node:internal/errors:720:14`, for a local subprocess with no
-  // upstream URL at all — while the guard suppressed the true
-  // explanation. This is a behaviour change against `main`, which prints
-  // the same bogus status (just without the hint).
-  it("does not invent an HTTP status for a long message with no markup", () => {
-    const message = [
-      '"claude" exited with code 1: node:internal/errors:720',
-      "  const err = new Error(message);",
-      "              ^",
-      "",
-      "Error: socket hang up",
-      "    at connResetException (node:internal/errors:720:14)",
-      "    at Socket.socketOnEnd (node:_http_client:519:23)",
-      "    at Socket.emit (node:events:531:35)",
-      "    at endReadableNT (node:internal/streams/readable:1698:12)",
-      "    at process.processTicksAndRejections (node:internal/process/task_queues:82:21)",
-      "    at async Object.request (file:///opt/homebrew/lib/node_modules/@anthropic-ai/claude-code/cli.js:284:19)",
-      "    at async Stream.fromSSEResponse (file:///opt/homebrew/lib/node_modules/@anthropic-ai/claude-code/cli.js:1902:24)",
-      "    at async streamQuery (file:///opt/homebrew/lib/node_modules/@anthropic-ai/claude-code/cli.js:9931:11)",
-      "    at async main (file:///opt/homebrew/lib/node_modules/@anthropic-ai/claude-code/cli.js:20233:7) {",
-      "  code: 'ECONNRESET'",
-      "}",
-      "",
-      "Node.js v22.22.2",
-    ].join("\n");
-    // Long enough to have tripped the old length-only wall.
-    expect(message.trim().replace(/\s+/g, " ").length).toBeGreaterThan(800);
-    const text = formatAgentErrorForChat("transport", message, {
+  // The regression this PR exists for. `mapCliFailure` in the
+  // subscription-CLI provider quotes a subprocess's stderr verbatim (up
+  // to 2048 chars), so a `claude`/`codex` run that dies on a Node
+  // `socket hang up` arrives here as a ~970-char crash dump — over the
+  // wall's length threshold. The wall fired, scraped `/\b(\d{3})\b/`,
+  // and reported an HTTP status made out of a source line number, for a
+  // local subprocess with no upstream URL at all, while the
+  // `!diagnosedAsWall` guard suppressed the true explanation.
+  //
+  // Captured verbatim from Node v22.22.2 by making a bundled CJS entry
+  // point throw at top level; only the install prefix is rewritten to
+  // `/opt/homebrew`. The `at Object.<anonymous>` frame is the part that
+  // matters: an earlier attempt at this fix demanded "real markup" and
+  // then accepted `<anonymous>` as a tag, so this exact payload was
+  // still walled — and *worse* than on `main`, because the hint went
+  // with it. Every callback-bearing Node stack carries one of these
+  // (`Object.`, `Socket.`, `Timeout.`, `new Promise (<anonymous>)`).
+  const NODE_CJS_DUMP = [
+    '"claude" exited with code 1: /opt/homebrew/lib/node_modules/@anthropic-ai/claude-code/cli.js:8',
+    '  throw connResetException("socket hang up");',
+    "  ^",
+    "",
+    "Error: socket hang up",
+    "    at connResetException (/opt/homebrew/lib/node_modules/@anthropic-ai/claude-code/cli.js:3:15)",
+    "    at socketOnEnd (/opt/homebrew/lib/node_modules/@anthropic-ai/claude-code/cli.js:8:9)",
+    "    at fromSSEResponse (/opt/homebrew/lib/node_modules/@anthropic-ai/claude-code/cli.js:10:30)",
+    "    at streamQuery (/opt/homebrew/lib/node_modules/@anthropic-ai/claude-code/cli.js:11:26)",
+    "    at main (/opt/homebrew/lib/node_modules/@anthropic-ai/claude-code/cli.js:12:19)",
+    "    at Object.<anonymous> (/opt/homebrew/lib/node_modules/@anthropic-ai/claude-code/cli.js:13:1)",
+    "    at Module._compile (node:internal/modules/cjs/loader:1705:14)",
+    "    at Object..js (node:internal/modules/cjs/loader:1838:10)",
+    "    at Module.load (node:internal/modules/cjs/loader:1441:32)",
+    "    at Function._load (node:internal/modules/cjs/loader:1263:12) {",
+    "  code: 'ECONNRESET'",
+    "}",
+    "",
+    "Node.js v22.22.2",
+  ].join("\n");
+
+  it("keeps a real Node crash dump with an <anonymous> frame off the wall", () => {
+    // Long enough to reach the wall's length arm on its own — no padding.
+    expect(NODE_CJS_DUMP.trim().replace(/\s+/g, " ").length).toBeGreaterThan(
+      800,
+    );
+    expect(NODE_CJS_DUMP).toContain("at Object.<anonymous>");
+    const text = formatAgentErrorForChat("transport", NODE_CJS_DUMP, {
       activeProviderIsLocal: false,
       llamaUrl: "http://127.0.0.1:19091",
     });
     const [head, ...hint] = text.split("\n");
     expect(head).not.toContain("upstream HTTP");
+    expect(head).not.toContain("upstream returned HTML");
     expect(head).toContain('"claude" exited with code 1');
+    expect(head).toContain("socket hang up");
     expect(head!.endsWith("…")).toBe(true);
     expect(hint.join("\n")).toBe(
       [
         "the connection to the model dropped before the reply finished",
         "  the steps that already finished are kept in this session — ask to continue from there; re-sending the whole task starts it over",
       ].join("\n"),
+    );
+  });
+
+  it("keeps a Socket.<anonymous> dump off the wall, line numbers and all", () => {
+    // The other shape a bundled CLI prints, and the one that produced
+    // "upstream HTTP 519" — 519 being the column-bearing line number in
+    // `node:events:519:28`. The frames are verbatim Node v22.22.2; the
+    // trailing filler stands in for the rest of a real CLI's stderr,
+    // because this stack alone is ~310 chars and the length arm only
+    // looks at payloads over 800.
+    const message = [
+      '"codex" exited with code 1: /opt/homebrew/lib/node_modules/@openai/codex/cli.js:9',
+      "    throw e;",
+      "    ^",
+      "",
+      "Error: socket hang up",
+      "    at Socket.<anonymous> (/opt/homebrew/lib/node_modules/@openai/codex/cli.js:7:15)",
+      "    at Socket.emit (node:events:519:28)",
+      "    at TCP.<anonymous> (node:net:346:12) {",
+      "  code: 'ECONNRESET'",
+      "}",
+      "",
+      "Node.js v22.22.2",
+      "-".repeat(600),
+    ].join("\n");
+    expect(message.trim().replace(/\s+/g, " ").length).toBeGreaterThan(800);
+    const text = formatAgentErrorForChat("transport", message, {
+      activeProviderIsLocal: false,
+      llamaUrl: "http://127.0.0.1:19091",
+    });
+    expect(text).not.toContain("upstream HTTP 519");
+    expect(text).not.toContain("upstream returned HTML");
+    expect(text.split("\n")[0]).toContain("socket hang up");
+    expect(text).toContain(
+      "the connection to the model dropped before the reply finished",
+    );
+  });
+
+  it.each([
+    [
+      "a JVM trace with a generic type argument and an <init> frame",
+      `boom: java.lang.IllegalStateException at com.example.Repo.load(List<String> ids)(Repo.java:100) at com.example.Svc.<init>(Svc.java:42)${"-".repeat(800)}`,
+    ],
+    [
+      "a TypeScript trace with Promise<void> in it",
+      `boom: TypeError at run (src/a.ts:200:3) returning Promise<void>${"-".repeat(800)}`,
+    ],
+    [
+      "a Java trace whose generic has a comma in it",
+      `boom at com.example.Cache.get(Map<String,Object> m)(Cache.java:100)${"-".repeat(800)}`,
+    ],
+    [
+      "a Python traceback with a <module> frame",
+      `boom Traceback (most recent call last): File "run.py", line 100, in <module>${"-".repeat(800)}`,
+    ],
+    [
+      "a bare generic parameter",
+      `boom: expected <T> but got <U> at Foo.run(Foo.java:100)${"-".repeat(800)}`,
+    ],
+    [
+      "a generic argument that happens to be spelled like an element",
+      `boom at com.example.Repo.find(Repo.java:100) returning List<Table>${"-".repeat(800)}`,
+    ],
+    [
+      "a TypeScript generic spelled like an element",
+      `boom at fetchJson (src/http.ts:100:9) returning Promise<Body>${"-".repeat(800)}`,
+    ],
+  ])("does not mistake a stack trace for a page: %s", (_name, message) => {
+    // `<anonymous>`, `<init>`, `<module>` and `<T>` all have the shape of
+    // a bare open tag, and `/i` made `[a-z]` accept `List<String>` and
+    // `Promise<void>` too. The last two cases are why the name allowlist
+    // is not enough on its own and the `(?<!\w)` guard has to be there:
+    // `Table` and `Body` really are element names, and only their
+    // position — glued to the end of a word — says they are not tags.
+    // Every one of these carries a three-digit run (a line number) that
+    // the wall used to report as an HTTP status.
+    expect(message.trim().replace(/\s+/g, " ").length).toBeGreaterThan(800);
+    const head = formatAgentErrorForChat("transport", message, {
+      activeProviderIsLocal: false,
+      llamaUrl: "http://127.0.0.1:19091",
+    }).split("\n")[0]!;
+    expect(head).not.toContain("upstream HTTP");
+    expect(head).not.toContain("upstream returned HTML");
+    expect(head).toContain("boom");
+  });
+
+  it("never scrapes a status out of a bulky fragment, only out of a document", () => {
+    // Part of the same repair, and the half that holds even when the tag
+    // test is wrong: `/\b(\d{3})\b/` has no idea what it is reading, so
+    // it only gets to speak when a document marker proved this really is
+    // a page. Here the fragment is genuine markup and the `502` is
+    // genuinely the status — and we still decline to claim it, because
+    // the identical shape is a line number in a crash dump.
+    expect(
+      formatAgentErrorForChat(
+        "transport",
+        `<center>502 Bad Gateway</center><hr/>${"x".repeat(900)}`,
+        { activeProviderIsLocal: false, llamaUrl: "http://127.0.0.1:19091" },
+      ),
+    ).toBe(
+      "Turn failed [transport]: upstream returned HTML instead of JSON (check API URL and provider)",
+    );
+  });
+
+  it("walls an uppercase document with no lowercase markup in it", () => {
+    // The document arm used to be `body.includes("<!DOCTYPE") ||
+    // body.includes("<html")` — case-SENSITIVE — so an all-caps page got
+    // in through the tag arm instead, and only because `HTML_TAG` was
+    // `/i`. Nothing pinned that, and appliances really do emit this.
+    // Short enough that the length arm cannot fire.
+    const page =
+      "<HTML><HEAD><TITLE>504 Gateway Time-out</TITLE></HEAD><BODY><H1>504 Gateway Time-out</H1></BODY></HTML>";
+    expect(page.length).toBeLessThan(800);
+    expect(
+      formatAgentErrorForChat("transport", page, {
+        activeProviderIsLocal: false,
+        llamaUrl: "http://127.0.0.1:19091",
+      }),
+    ).toBe(
+      "Turn failed [transport]: upstream HTTP 504 (wrong API URL or provider config)",
+    );
+  });
+
+  it.each([
+    [
+      "self-closing XHTML tags",
+      `502 Bad Gateway<br/><hr/>${"x".repeat(900)}`,
+    ],
+    [
+      "self-closing tags with a space before the slash",
+      `502 Bad Gateway<br /><hr />${"x".repeat(900)}`,
+    ],
+    [
+      "a namespaced SOAP body",
+      `<soapenv:Body><soapenv:Fault>502</soapenv:Fault></soapenv:Body>${"x".repeat(900)}`,
+    ],
+    [
+      "a hyphenated custom element",
+      `<my-widget>gateway down</my-widget>${"x".repeat(900)}`,
+    ],
+    [
+      "tags that only ever appear adjacent to each other",
+      `${"x".repeat(900)}</td><td>y`,
+    ],
+    [
+      "a page truncated so hard that only a closing tag survives",
+      `500 Internal Server Error ${"x".repeat(900)} </h1>`,
+    ],
+    [
+      "a fragment whose only tag is recognisable by its attributes",
+      `Error 1020 ${"x".repeat(900)} <section data-translate="error">`,
+    ],
+  ])("still walls markup shapes the tag test used to miss: %s", (_n, body) => {
+    // These are the appliance and middleware bodies the length arm was
+    // kept for. `<br/>` fails a `(?:\s[^<>]*)?>` tail because `/` is
+    // neither whitespace nor `>`; `<soapenv:Body>` and `<my-widget>` fail
+    // `[a-z][a-z0-9]*` on the `:` and the `-`.
+    expect(
+      formatAgentErrorForChat("transport", body, {
+        activeProviderIsLocal: false,
+        llamaUrl: "http://127.0.0.1:19091",
+      }),
+    ).toBe(
+      "Turn failed [transport]: upstream returned HTML instead of JSON (check API URL and provider)",
     );
   });
 
