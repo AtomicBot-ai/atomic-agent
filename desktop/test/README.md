@@ -30,6 +30,17 @@ directory of your choosing and attaches; the returned object carries:
 | `snapshot()` / `screenshot(path)` | what is on screen |
 | `check` / `step` / `report` | the tiny assertion vocabulary the scenarios print |
 
+`launch` also decides WHICH agent the window talks to. `resolveBinary`
+prefers `~/atag-agent/bin/atag` and then the released install, so a driven
+run would otherwise exercise whatever agent happens to be on the machine —
+useless for proving a change to `src/`, where most of a cloud turn lives.
+When `dist/cli/index.js` exists at the repo root (`npm run build` there),
+the harness writes a shim into the run's state directory and names it in
+`ATOMIC_AGENT_BIN`, so the app runs the agent from THIS checkout. Nothing
+on the machine is repointed; a terminal `atag` still runs what was
+installed. An explicit `ATOMIC_AGENT_BIN` wins, and with no local build the
+run falls back to the installed agent as before.
+
 Two rules the harness enforces for you, both learned the hard way:
 
 * it refuses a debugging port that already has a CDP endpoint on it — a
@@ -66,14 +77,19 @@ no check prints a field's value, only its length.
 This costs a handful of tokens on both services every run, so it is a
 deliberate command rather than part of `npm run smoke`.
 
-### One known red
+Steps 14–16 are the switch-after-setup half: a different cloud model is
+picked from Settings and has to answer for real, and then a model the key
+cannot pay for is picked on purpose, to pin down what the operator is told
+when a provider refuses.
 
-Step 15 — the first turn after switching to a different cloud model —
-fails in most runs with `turn failed [transport]: fetch failed`, which the
-app reports honestly on screen and the session trace confirms (two `error`
-frames, `turn_finished reason:failed`, no `llm_completion`). The same key
-and model answer a plain curl, and the two turns before it succeed on the
-same agent, so the fault is in the agent's own request on the first turn
-after the switch (`src/agent/step-executor.ts`), outside this desktop
-tree. The check stays red on purpose: it names a turn the operator cannot
-run.
+That last step is the one that earned its keep. Step 15 used to be a known
+red — `turn failed [transport]: fetch failed`, with the note that the fault
+was somewhere in the agent. It was: `resolveFallbackChain` appends the
+configured llama-server to the tail of every chain, whether or not a local
+model was ever downloaded, and `runWithFallback` rethrew the LAST failure.
+So OpenRouter's `402 … requires more credits, or fewer max_tokens` — an
+instruction the operator could have acted on in a minute — was replaced by
+a socket error from a daemon they never started. Both halves are fixed in
+`src/llm/`, and step 16 is what keeps them fixed: it accepts an answer or a
+refusal, but never a bare transport error that names neither provider nor
+reason.

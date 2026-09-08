@@ -27,11 +27,14 @@
  *   await app.close();
  */
 import { spawn } from 'node:child_process';
+import { chmodSync, existsSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const DESKTOP_DIR = join(HERE, '..');
+/** The agent repo this desktop lives in. */
+export const REPO_DIR = join(DESKTOP_DIR, '..');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 export { sleep };
@@ -410,6 +413,35 @@ export async function attach(port, opts = {}) {
  * Launch the built app against `stateDir` with CDP on `port`, then attach.
  * The returned object is the driver API plus `proc`, `stdout`, and `quit()`.
  */
+/**
+ * Point the app at the agent built FROM THIS CHECKOUT when there is one.
+ *
+ * `resolveBinary` otherwise prefers `~/atag-agent/bin/atag` and then the
+ * released install, so a driven run silently exercises whatever agent
+ * happens to be installed on the machine — which makes it useless for
+ * proving a change to `src/`. A cloud turn is mostly agent code: the
+ * provider client, the fallback chain and the message the operator reads
+ * when a provider refuses all live there, so a scenario that drives the
+ * window but talks to a stranger's agent proves only half of itself.
+ *
+ * `npm run build` at the repo root produces `dist/cli/index.js`; when it
+ * is there this writes a one-line shim beside the run's state directory
+ * and names it in `ATOMIC_AGENT_BIN`, which `candidateBinaries()` honours
+ * above everything else. Nothing on the machine is repointed — a terminal
+ * `atag` keeps running whatever was installed. An explicit
+ * `ATOMIC_AGENT_BIN` from the caller always wins, and with no local build
+ * the run falls back to the installed agent exactly as before.
+ */
+function agentBinEnv(stateDir) {
+  if (process.env.ATOMIC_AGENT_BIN) return {};
+  const entry = join(REPO_DIR, 'dist', 'cli', 'index.js');
+  if (!existsSync(entry)) return {};
+  const shim = join(stateDir, 'atag-from-this-checkout.sh');
+  writeFileSync(shim, `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} --enable-source-maps ${JSON.stringify(entry)} "$@"\n`);
+  chmodSync(shim, 0o755);
+  return { ATOMIC_AGENT_BIN: shim };
+}
+
 export async function launch({ stateDir, port, args = [], env = {}, timeoutMs = 90000, cwd = DESKTOP_DIR } = {}) {
   if (!stateDir) throw new Error('launch: stateDir is required — never drive the operator’s real state dir');
   /* A leftover app from an earlier run keeps the debugging port bound, and
@@ -425,7 +457,12 @@ export async function launch({ stateDir, port, args = [], env = {}, timeoutMs = 
   const out = [];
   const proc = spawn('npx', ['electron', '.', `--remote-debugging-port=${port}`, ...args], {
     cwd,
-    env: { ...process.env, ATOMIC_AGENT_STATE_DIR: stateDir, ...env },
+    env: {
+      ...process.env,
+      ATOMIC_AGENT_STATE_DIR: stateDir,
+      ...agentBinEnv(stateDir),
+      ...env,
+    },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   proc.stdout.on('data', (b) => out.push(String(b)));

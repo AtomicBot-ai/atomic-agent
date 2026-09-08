@@ -4,7 +4,7 @@ import { ProviderFallbackChain } from "./provider-fallback-chain.js";
 import type { ProviderSwitchNotice } from "./provider-fallback-chain.js";
 import { DEFAULT_FALLBACK_TIMING } from "./fallback-config.js";
 import { OpenAiHttpError } from "../provider/openai/openai-http.js";
-import { GrammarError } from "../reliability/llm-failures.js";
+import { GrammarError, TransportError } from "../reliability/llm-failures.js";
 
 function makeChain(
   ids: string[],
@@ -66,7 +66,7 @@ describe("runWithFallback", () => {
     expect(seen).toEqual(["backup"]);
   });
 
-  it("rethrows the last error when the whole chain is down", async () => {
+  it("rethrows when the whole chain is down, having tried every link", async () => {
     const chain = makeChain(["a", "b"]);
     const lastErr = http(500);
     let attempts = 0;
@@ -77,6 +77,37 @@ describe("runWithFallback", () => {
       }),
     ).rejects.toBe(lastErr);
     expect(attempts).toBe(2); // tried both links this turn
+  });
+
+  /* The chain always ends in the configured llama-server provider, which
+     on a cloud-only install is a daemon that has never run. Reporting the
+     LAST failure therefore answered "why did my message fail?" with a
+     socket error from a backend the operator never picked, and threw away
+     the cloud provider's own sentence — the 402 that said, in words, to
+     add credits or ask for fewer tokens. The head of the chain is the
+     provider named in the composer chip; its failure is the answer. */
+  it("reports the provider the operator is on, not the dead tail of the chain", async () => {
+    const chain = makeChain(["openrouter", "local-llama"]);
+    const refused = http(402);
+    const localDown = new TransportError("fetch failed", null, "");
+    const seen: string[] = [];
+    await expect(
+      runWithFallback(chain, async (id) => {
+        seen.push(id);
+        throw id === "openrouter" ? refused : localDown;
+      }),
+    ).rejects.toBe(refused);
+    expect(seen).toEqual(["openrouter", "local-llama"]);
+  });
+
+  it("still reports the only failure when nothing falls over", async () => {
+    const chain = makeChain(["solo"]);
+    const only = http(402);
+    await expect(
+      runWithFallback(chain, async () => {
+        throw only;
+      }),
+    ).rejects.toBe(only);
   });
 
   it("rethrows immediately without switching on a non-fallover error", async () => {
