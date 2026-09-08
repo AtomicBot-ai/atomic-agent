@@ -54,6 +54,17 @@ const NETWORK_MESSAGES = [
   /network socket disconnected/i,
 ];
 
+/**
+ * True when `message` is one of the stock "the connection is gone"
+ * strings above. Shared with `isNetworkError`'s message arm rather than
+ * copied, so the two can never drift apart: the classifier and any
+ * message-only consumer recognise exactly the same vocabulary.
+ */
+export function looksLikeDroppedConnection(message: string): boolean {
+  const trimmed = message.trim();
+  return NETWORK_MESSAGES.some((re) => re.test(trimmed));
+}
+
 /** Depth cap on the `cause` walk — a chain longer than this is a cycle. */
 const MAX_CAUSE_DEPTH = 5;
 
@@ -88,7 +99,7 @@ export function isNetworkError(err: unknown): boolean {
   for (const link of causeChain(err)) {
     const message = (link as { message?: unknown }).message;
     if (typeof message !== "string") continue;
-    if (NETWORK_MESSAGES.some((re) => re.test(message.trim()))) return true;
+    if (looksLikeDroppedConnection(message)) return true;
   }
   return false;
 }

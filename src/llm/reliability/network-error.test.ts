@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { isNetworkError, readNetworkErrorCode } from "./network-error.js";
+import {
+  isNetworkError,
+  looksLikeDroppedConnection,
+  readNetworkErrorCode,
+} from "./network-error.js";
 
 /** The shape undici throws from `fetch` when the connection fails. */
 function fetchFailed(cause: unknown): TypeError {
@@ -74,5 +78,44 @@ describe("isNetworkError", () => {
     expect(isNetworkError(new TypeError("x.map is not a function"))).toBe(false);
     expect(isNetworkError(new Error("tool crashed"))).toBe(false);
     expect(isNetworkError(undefined)).toBe(false);
+  });
+});
+
+describe("looksLikeDroppedConnection", () => {
+  // The message-only door into the same vocabulary `isNetworkError`
+  // uses, for consumers that only ever see the flattened text — the TUI
+  // chat formatter is the one in tree.
+  it.each([
+    "fetch failed",
+    "terminated",
+    "  terminated\n",
+    "TERMINATED",
+    "socket hang up",
+    "read ECONNRESET: socket hang up",
+    "other side closed",
+    "Client network socket disconnected before secure TLS connection was established",
+  ])("recognises %j", (message) => {
+    expect(looksLikeDroppedConnection(message)).toBe(true);
+  });
+
+  it.each([
+    "",
+    "connection reset",
+    "terminated the request early",
+    "the fetch failed because the grammar was rejected",
+    "upstream HTTP 502",
+    "x.map is not a function",
+  ])("does not claim %j", (message) => {
+    expect(looksLikeDroppedConnection(message)).toBe(false);
+  });
+
+  it("agrees with isNetworkError on a bare message-only error", () => {
+    // Same list, one definition: if these ever disagree the predicate
+    // has grown a second copy of the vocabulary.
+    for (const message of ["terminated", "socket hang up", "tool crashed"]) {
+      expect(looksLikeDroppedConnection(message)).toBe(
+        isNetworkError(new Error(message)),
+      );
+    }
   });
 });

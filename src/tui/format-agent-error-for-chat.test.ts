@@ -42,13 +42,125 @@ describe("formatAgentErrorForChat", () => {
     expect(text).toContain("atomic-agent models start");
   });
 
-  it("keeps the hint away from cloud providers — advice about the wrong server", () => {
+  it("keeps the llama hint away from cloud providers — advice about the wrong server", () => {
+    const text = formatAgentErrorForChat("transport", "fetch failed", {
+      activeProviderIsLocal: false,
+      llamaUrl: "http://127.0.0.1:19091",
+    });
+    expect(text).toContain("Turn failed [transport]: fetch failed");
+    expect(text).not.toContain("llama-server is not reachable");
+    expect(text).not.toContain("atomic-agent models start");
+  });
+
+  it("keeps every hint away from a cloud transport failure that is not a drop", () => {
     expect(
-      formatAgentErrorForChat("transport", "fetch failed", {
+      formatAgentErrorForChat("transport", "upstream HTTP 503", {
         activeProviderIsLocal: false,
         llamaUrl: "http://127.0.0.1:19091",
       }),
-    ).toBe("Turn failed [transport]: fetch failed");
+    ).toBe("Turn failed [transport]: upstream HTTP 503");
+  });
+
+  // The reported failure: a multi-step research turn whose LLM call died
+  // mid-body on a cloud provider. undici's bare word for it is
+  // `terminated`, and that single word was the entire message the
+  // operator got — nothing about the connection, nothing about the six
+  // steps that had already succeeded.
+  // Source: Discord #feedback-and-bugs, 2026-09-03.
+  it("explains a mid-stream drop and where the finished steps went", () => {
+    const text = formatAgentErrorForChat("transport", "terminated", {
+      activeProviderIsLocal: false,
+      llamaUrl: "http://127.0.0.1:19091",
+    });
+    expect(text).toContain("Turn failed [transport]: terminated");
+    expect(text).toContain(
+      "the connection to the model dropped before the reply finished",
+    );
+    expect(text).toContain("kept in this session");
+    expect(text).toContain("ask to continue from there");
+    expect(text).toContain("re-sending the whole task starts it over");
+  });
+
+  it("carries the drop hint with no provider context at all", () => {
+    // `chat-orchestrator.ts` calls the formatter without the local
+    // context for its own catch arm; a drop must still explain itself.
+    expect(formatAgentErrorForChat("transport", "socket hang up")).toContain(
+      "the connection to the model dropped before the reply finished",
+    );
+  });
+
+  it.each([
+    "fetch failed",
+    "terminated",
+    "Client network socket disconnected before secure TLS connection was established",
+    "read ECONNRESET: socket hang up",
+    "other side closed",
+  ])("recognises the drop family: %s", (message) => {
+    expect(
+      formatAgentErrorForChat("transport", message, {
+        activeProviderIsLocal: false,
+        llamaUrl: "http://127.0.0.1:19091",
+      }),
+    ).toContain("the steps that already finished are kept in this session");
+  });
+
+  it.each([
+    "connection reset",
+    "upstream HTTP 502 (bad gateway)",
+    "request timed out after 120s",
+    "terminated the request early",
+  ])("leaves unrelated transport failures bare: %s", (message) => {
+    expect(
+      formatAgentErrorForChat("transport", message, {
+        activeProviderIsLocal: false,
+        llamaUrl: "http://127.0.0.1:19091",
+      }),
+    ).toBe(`Turn failed [transport]: ${message}`);
+  });
+
+  it("keeps the drop hint out of non-transport categories", () => {
+    expect(formatAgentErrorForChat("tool", "terminated")).toBe(
+      "Turn failed [tool]: terminated",
+    );
+  });
+
+  it("prefers the llama hint when a local provider drops mid-stream", () => {
+    // Both arms match. The local one wins: "start llama-server" is a fix,
+    // the drop hint is only an explanation.
+    const text = formatAgentErrorForChat("transport", "terminated", {
+      activeProviderIsLocal: true,
+      llamaUrl: "http://127.0.0.1:19091",
+    });
+    expect(text).toBe(
+      [
+        "Turn failed [transport]: terminated",
+        "llama-server is not reachable at http://127.0.0.1:19091",
+        "  start it with:       atomic-agent models start",
+        "  or point elsewhere:  atomic-agent config set localModels.url <url>",
+      ].join("\n"),
+    );
+  });
+
+  it("truncates the body, never the hint", () => {
+    // Under the 800-char HTML-wall threshold, over the 480-char body cap.
+    const long = `socket hang up ${"x".repeat(600)}`;
+    const text = formatAgentErrorForChat("transport", long, {
+      activeProviderIsLocal: false,
+      llamaUrl: "http://127.0.0.1:19091",
+    });
+    const [head, ...hint] = text.split("\n");
+    expect(head!.startsWith("Turn failed [transport]: socket hang up")).toBe(
+      true,
+    );
+    expect(head!.endsWith("…")).toBe(true);
+    // 480-char body cap + the "Turn failed [transport]: " prefix + "…".
+    expect(head!.length).toBe("Turn failed [transport]: ".length + 480 + 1);
+    expect(hint.join("\n")).toBe(
+      [
+        "the connection to the model dropped before the reply finished",
+        "  the steps that already finished are kept in this session — ask to continue from there; re-sending the whole task starts it over",
+      ].join("\n"),
+    );
   });
 
   it("keeps the hint away from non-transport failures", () => {

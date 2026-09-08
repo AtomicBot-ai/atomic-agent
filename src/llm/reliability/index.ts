@@ -14,6 +14,7 @@ export type { LlmFailureOptions } from "./llm-failures.js";
 export { classifyFailure } from "./classify-failure.js";
 export {
   isNetworkError,
+  looksLikeDroppedConnection,
   readNetworkErrorCode,
 } from "./network-error.js";
 export { detectModelFailure } from "./detect-model-failure.js";
