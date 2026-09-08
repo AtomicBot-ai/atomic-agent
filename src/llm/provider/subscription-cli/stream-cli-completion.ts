@@ -3,9 +3,12 @@ import { isBrokenPipe } from "../../../sandbox/index.js";
 import type { CliRunOptions } from "./run-cli-completion.js";
 import {
   isEnoent,
+  isSpawnEinval,
   mapCliFailure,
   SubscriptionCliNotInstalledError,
+  SubscriptionCliSpawnError,
 } from "./subscription-cli-errors.js";
+import { resolveWindowsCliInvocation } from "./windows-cli-shim.js";
 
 /** Grace period between asking a child to stop and killing it. */
 const SIGKILL_DELAY_MS = 2_000;
@@ -25,13 +28,39 @@ export type CliStreamRunner = (
  * that abandons the iterator cannot leak a process.
  */
 export const streamCliCommand: CliStreamRunner = async function* (options) {
-  const child = spawn(options.binary, [...options.args], {
-    cwd: options.cwd,
-    env: process.env,
-    shell: false,
-    stdio: ["pipe", "pipe", "pipe"],
-    ...(process.platform === "win32" ? { windowsHide: true } : {}),
+  // On Windows the vendor CLIs are `.cmd` shims, which spawn refuses to
+  // start without a shell; elsewhere this hands the pair straight back.
+  const invocation = resolveWindowsCliInvocation({
+    binary: options.binary,
+    args: options.args,
   });
+  let child;
+  try {
+    child = spawn(invocation.command, invocation.args, {
+      cwd: options.cwd,
+      env: process.env,
+      shell: false,
+      stdio: ["pipe", "pipe", "pipe"],
+      ...(process.platform === "win32" ? { windowsHide: true } : {}),
+      ...(invocation.windowsVerbatimArguments
+        ? { windowsVerbatimArguments: true }
+        : {}),
+    });
+  } catch (err) {
+    // Only ENOENT-class errnos reach the `error` event below; everything
+    // else — EINVAL for a batch shim among them — is thrown right here,
+    // out of `ChildProcess.prototype.spawn`, before any handler exists.
+    if (isSpawnEinval(err)) {
+      throw new SubscriptionCliSpawnError(options.binary, options.installHint);
+    }
+    if (isEnoent(err)) {
+      throw new SubscriptionCliNotInstalledError(
+        options.binary,
+        options.installHint,
+      );
+    }
+    throw err;
+  }
 
   let stderr = "";
   let timedOut = false;

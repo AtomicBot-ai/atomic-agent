@@ -38,4 +38,9 @@ export {
   SubscriptionCliAuthError,
   SubscriptionCliInvocationError,
   SubscriptionCliNotInstalledError,
+  SubscriptionCliSpawnError,
 } from "./subscription-cli-errors.js";
+export {
+  resolveWindowsCliInvocation,
+  type CliInvocation,
+} from "./windows-cli-shim.js";

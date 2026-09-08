@@ -2,11 +2,13 @@ import { describe, expect, it } from "vitest";
 
 import {
   isEnoent,
+  isSpawnEinval,
   looksLikeAuthFailure,
   mapCliFailure,
   SubscriptionCliAuthError,
   SubscriptionCliInvocationError,
   SubscriptionCliNotInstalledError,
+  SubscriptionCliSpawnError,
 } from "./subscription-cli-errors.js";
 
 const base = {
@@ -27,6 +29,42 @@ describe("isEnoent", () => {
     expect(isEnoent(Object.assign(new Error("x"), { code: "ENOENT" }))).toBe(true);
     expect(isEnoent(new Error("x"))).toBe(false);
     expect(isEnoent(null)).toBe(false);
+  });
+});
+
+describe("isSpawnEinval", () => {
+  it("detects the thrown spawn error for a batch shim", () => {
+    const err = Object.assign(new Error("spawn EINVAL"), {
+      code: "EINVAL",
+      errno: -22,
+      syscall: "spawn",
+    });
+    expect(isSpawnEinval(err)).toBe(true);
+    expect(isSpawnEinval(Object.assign(new Error("x"), { code: "EINVAL" }))).toBe(
+      true,
+    );
+  });
+
+  it("ignores anything else", () => {
+    expect(isSpawnEinval(Object.assign(new Error("x"), { code: "ENOENT" }))).toBe(
+      false,
+    );
+    expect(
+      isSpawnEinval(
+        Object.assign(new Error("x"), { code: "EINVAL", syscall: "read" }),
+      ),
+    ).toBe(false);
+    expect(isSpawnEinval(new Error("x"))).toBe(false);
+    expect(isSpawnEinval(null)).toBe(false);
+  });
+});
+
+describe("SubscriptionCliSpawnError", () => {
+  it("keeps the install hint and stays apart from not-installed", () => {
+    const err = new SubscriptionCliSpawnError("claude", "Install Claude Code.");
+    expect(err.message).toContain("Install Claude Code.");
+    expect(err.message).toContain("EINVAL");
+    expect(err).not.toBeInstanceOf(SubscriptionCliNotInstalledError);
   });
 });
 

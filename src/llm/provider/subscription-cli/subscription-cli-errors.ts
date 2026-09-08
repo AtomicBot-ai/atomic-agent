@@ -11,6 +11,20 @@ export class SubscriptionCliNotInstalledError extends Error {
   }
 }
 
+/**
+ * The binary exists but the OS refused to start it. In practice that is
+ * Windows declining a `.cmd`/`.bat` shim spawned without a shell; kept
+ * apart from "not installed" because reinstalling would not help.
+ */
+export class SubscriptionCliSpawnError extends Error {
+  constructor(binary: string, installHint: string) {
+    super(
+      `"${binary}" could not be started (spawn EINVAL) — on Windows a .cmd/.bat shim cannot be spawned directly. ${installHint}`,
+    );
+    this.name = "SubscriptionCliSpawnError";
+  }
+}
+
 export class SubscriptionCliAuthError extends Error {
   constructor(binary: string, authHint: string, detail?: string) {
     super(
@@ -55,6 +69,20 @@ export function isEnoent(err: unknown): boolean {
     err !== null &&
     (err as { code?: unknown }).code === "ENOENT"
   );
+}
+
+/**
+ * A spawn that failed with EINVAL. Node hands EACCES/EAGAIN/EMFILE/
+ * ENFILE/ENOENT to the async `error` event and *throws* every other
+ * errno straight out of `ChildProcess.prototype.spawn`, so unlike an
+ * ENOENT this one arrives synchronously and has to be caught at the
+ * call site rather than on the child.
+ */
+export function isSpawnEinval(err: unknown): boolean {
+  if (typeof err !== "object" || err === null) return false;
+  const { code, syscall } = err as { code?: unknown; syscall?: unknown };
+  if (code !== "EINVAL") return false;
+  return syscall === undefined || syscall === "spawn";
 }
 
 export interface CliFailureInput {

@@ -29,6 +29,13 @@ export interface CommandOptions {
   input?: string;
   signal?: AbortSignal;
   maxOutputBytes?: number;
+  /**
+   * Windows only, ignored elsewhere: hand argv to the child verbatim
+   * instead of letting Node quote it. Only for callers that have already
+   * built a `cmd.exe /c "…"` command line with cmd's own escaping.
+   * Omitted by default, which keeps Node's normal quoting.
+   */
+  windowsVerbatimArguments?: boolean;
 }
 
 export interface CommandResult {
@@ -79,6 +86,9 @@ export async function runCommand(
       // Prevent a console window flashing when the runtime is launched
       // from a GUI/TUI host on Windows.
       ...(IS_WINDOWS ? { windowsHide: true } : {}),
+      ...(options.windowsVerbatimArguments === undefined
+        ? {}
+        : { windowsVerbatimArguments: options.windowsVerbatimArguments }),
     });
     const chunks = { stdout: [] as Buffer[], stderr: [] as Buffer[] };
     let stdoutBytes = 0;
