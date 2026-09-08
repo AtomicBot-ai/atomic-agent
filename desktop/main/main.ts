@@ -8614,9 +8614,16 @@ async function planHandoffTest(
     for (const ask of ASKS) {
       attempts += 1;
       await js<unknown>(`window.__ask(${JSON.stringify(ask)})`);
+      /* Wait on the TURN, not on the busy flag. S.busy is a display state
+         and goes false while the agent is still working (an open approval,
+         and r6's fix for the window looking idle mid-turn), so waiting on it
+         read the transcript mid-turn: the composer still showed the steering
+         hint, `done` had not fired, and six bar assertions failed against a
+         turn that had not ended. S.turnId is cleared only by the terminal
+         frame. */
       const turnDeadline = Date.now() + 180_000;
       while (Date.now() < turnDeadline) {
-        if (!(await js<boolean>("window.__busy()"))) break;
+        if (!(await js<boolean>("window.__turnActive()"))) break;
         await new Promise((r) => setTimeout(r, 1000));
       }
       plan = await js<Plan>("window.__plan()");

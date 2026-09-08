@@ -10080,6 +10080,12 @@ if (typeof window !== 'undefined') {
   window.__session = () => S.agentSession;
   window.__newSession = () => { act('session:new'); return S.log.length; };   // exactly what the toolbar button does
   window.__busy = () => S.busy;
+  /* S.busy is a DISPLAY state — it goes false while the agent is still
+     working (an open approval, and r6's fix for the window looking idle
+     mid-turn), so a fixture that waits on it can read the transcript in the
+     middle of a turn. S.turnId is the lifecycle: it is set when a turn opens
+     and cleared only by the terminal frame. Wait on this. */
+  window.__turnActive = () => S.turnId !== null;
   window.__stateDir = () => (LIVE_CAPS && LIVE_CAPS.paths && LIVE_CAPS.paths.stateDir) || null;
   // Deterministic stand-in for "a fresh window on a session whose trace already holds an identical
   // row" (New session + a first prompt whose derived id already exists) — no model in the loop.
