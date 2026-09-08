@@ -147,7 +147,7 @@ function printHelp(): void {
     ),
     "",
     "User config (edit via `atomic-agent config`):",
-    "  <stateDir>/config.json         localModels.url, localModels.mode, log.level, agent.{tokenBudget,maxSteps,toolTimeoutMs,approvalLevel}",
+    "  <stateDir>/config.json         localModels.url, localModels.mode, log.level, agent.{tokenBudget,maxSteps,task.*,toolTimeoutMs,approvalLevel}",
     "",
     "Bootstrap env:",
     "  ATOMIC_AGENT_STATE_DIR         Directory for persistent state + config.json (default ~/.atomic-agent)",

@@ -247,7 +247,38 @@ export interface AtomicAgentConfig {
   };
   agent: {
     tokenBudget: number;
+    /**
+     * Steps in one *leg* of a task — a checkpoint interval, not the end
+     * of the work.
+     *
+     * It used to be the end of the work, and that was the wrong unit: a
+     * step is one model turn plus its tool calls, while what the user
+     * asked for ("register on these ten sites") is a task made of
+     * hundreds of them. Ending the task on a step count meant a long job
+     * stopped mid-way with `(stopped: max_steps reached without a
+     * reply)` and no way to continue. Now the loop reaches this number,
+     * checks that the leg actually made progress, says so, and carries
+     * on — up to {@link UserConfigFile.agent.task}.
+     */
     maxSteps: number;
+    /**
+     * Ceilings for one task. These, not `maxSteps`, are what actually
+     * end a run that is still making progress.
+     */
+    task: {
+      /**
+       * Hard ceiling on steps for one task. Reached, the loop spends its
+       * last step summarising instead of being cut off mid-edit.
+       */
+      maxSteps: number;
+      /** Wall-clock ceiling for one task. Same graceful ending. */
+      maxDurationMs: number;
+      /**
+       * Carry on past a leg boundary while the work is progressing.
+       * Off means the historical behaviour: stop at `agent.maxSteps`.
+       */
+      autoContinue: boolean;
+    };
     toolTimeoutMs: number;
     /**
      * Boot value for the five-step approval ladder (1 = ask for
@@ -1180,7 +1211,14 @@ export interface UserConfigFile {
   log: { level: LogLevel };
   agent: {
     tokenBudget: number;
+    /** Steps in one leg of a task — a checkpoint, not the end of it. */
     maxSteps: number;
+    /** Ceilings that actually end a task. See the runtime type above. */
+    task: {
+      maxSteps: number;
+      maxDurationMs: number;
+      autoContinue: boolean;
+    };
     toolTimeoutMs: number;
     /**
      * Five-step approval ladder (config v37). Replaces the binary
@@ -1958,6 +1996,15 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
   agent: {
     tokenBudget: 3000,
     maxSteps: 25,
+    task: {
+      // ~40 legs of 25. Large enough for the multi-hour browser jobs
+      // people actually ask for, small enough that a runaway is bounded
+      // and visible: every leg boundary reports steps, elapsed time and
+      // the ceiling it is counting towards.
+      maxSteps: 1000,
+      maxDurationMs: 7_200_000,
+      autoContinue: true,
+    },
     toolTimeoutMs: 60_000,
     approvalLevel: 1,
     conversationMaxTokens: 32_000,
@@ -2439,6 +2486,41 @@ function coerceFloatLike(raw: unknown): number {
   return /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(text)
     ? Number(text)
     : NaN;
+}
+
+/**
+ * Parse `agent.task` — the ceilings that end a task that is still
+ * making progress. Absent block means the defaults, so an older config
+ * file simply gains the behaviour.
+ *
+ * The floor on `maxSteps` is deliberate: a ceiling below one leg would
+ * make `agent.maxSteps` the terminator again through the back door, and
+ * silently, which is the exact confusion this block exists to remove.
+ */
+function parseAgentTask(raw: unknown): UserConfigFile["agent"]["task"] {
+  const defaults = USER_CONFIG_DEFAULTS.agent.task;
+  if (raw === undefined || raw === null) return defaults;
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw new ConfigValidationError(
+      "agent.task",
+      `expected object, got ${JSON.stringify(raw)}`,
+    );
+  }
+  const task = raw as Record<string, unknown>;
+  return {
+    maxSteps: parsePositiveInt(
+      task.maxSteps ?? defaults.maxSteps,
+      "agent.task.maxSteps",
+    ),
+    maxDurationMs: parsePositiveInt(
+      task.maxDurationMs ?? defaults.maxDurationMs,
+      "agent.task.maxDurationMs",
+    ),
+    autoContinue: parseBool(
+      task.autoContinue ?? defaults.autoContinue,
+      "agent.task.autoContinue",
+    ),
+  };
 }
 
 export function parsePositiveInt(raw: unknown, field: string): number {
@@ -3499,6 +3581,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         agent.maxSteps ?? USER_CONFIG_DEFAULTS.agent.maxSteps,
         "agent.maxSteps",
       ),
+      task: parseAgentTask(agent.task),
       toolTimeoutMs: parsePositiveInt(
         agent.toolTimeoutMs ?? USER_CONFIG_DEFAULTS.agent.toolTimeoutMs,
         "agent.toolTimeoutMs",

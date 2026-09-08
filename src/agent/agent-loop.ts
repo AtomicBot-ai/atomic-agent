@@ -311,8 +311,58 @@ export interface SteeringChannel {
   closeAndDrain(sessionId: string): readonly string[];
 }
 
+/**
+ * What the user reads when the step loop ran out before the model
+ * finished the task.
+ *
+ * The old text was `(stopped: max_steps reached without a reply)` — a
+ * parenthetical naming an internal counter, offering nothing. Someone
+ * watching a browser job stop after three minutes had no way to tell a
+ * crash from a budget, and nothing to do about it but retype the task,
+ * which starts it over. This says which ceiling was hit, how far the
+ * work got, and that "continue" resumes from here rather than restarts.
+ */
+export function formatTaskStoppedReply(input: {
+  cause: "step_ceiling" | "time_ceiling" | "no_progress";
+  stepsTaken: number;
+  stepCeiling: number;
+  elapsedMs: number;
+}): string {
+  const minutes = Math.max(1, Math.round(input.elapsedMs / 60_000));
+  const spent = `${input.stepsTaken} steps over ~${minutes} min`;
+  const head =
+    input.cause === "time_ceiling"
+      ? `(paused: this task hit its time limit after ${spent}.)`
+      : input.cause === "no_progress"
+        ? `(paused: nothing came back from my last ${spent} of tool calls — something in the environment is failing.)`
+        : `(paused: this task hit its step ceiling of ${input.stepCeiling} after ${spent}.)`;
+  const tail =
+    input.cause === "no_progress"
+      ? "Here is where I got to. Check the failing tool or connection, then say `continue`."
+      : "Here is where I got to — the work so far is kept in this session. Say `continue` to pick up from here, or raise `agent.task.maxSteps` for longer runs.";
+  return `${head} ${tail}`;
+}
+
 export interface RunTurnOptions {
+  /**
+   * Steps in one leg — the checkpoint interval, not the end of the work.
+   * The loop reports progress here and carries on; what ends a task is
+   * `taskMaxSteps` / `taskMaxDurationMs` (or the model finishing).
+   */
   maxSteps: number;
+  /**
+   * Hard ceiling on steps for this task. Defaults to
+   * `config.agent.task.maxSteps`; a durable task record passes its own.
+   */
+  taskMaxSteps?: number;
+  /** Wall-clock ceiling. Defaults to `config.agent.task.maxDurationMs`. */
+  taskMaxDurationMs?: number;
+  /**
+   * Carry on past a leg boundary while the work progresses. Defaults to
+   * `config.agent.task.autoContinue`; `false` restores the historical
+   * "stop at `maxSteps`" behaviour for a caller that wants one leg only.
+   */
+  autoContinue?: boolean;
   signal: AbortSignal;
   /** Optional new user message to append before stepping. */
   userMessage?: string;
@@ -342,6 +392,17 @@ export type AgentLoopEvent =
       reason: AgentLoopReason;
       stepCount: number;
       durationMs: number;
+    }
+  | {
+      /**
+       * A leg of the task finished and the work is continuing. Fired at
+       * every `maxSteps` boundary that does not end the task, so a long
+       * job reports itself instead of going quiet for an hour.
+       */
+      type: "task_continued";
+      stepsTaken: number;
+      elapsedMs: number;
+      stepCeiling: number;
     }
   | { type: "step_started"; stepIndex: number }
   | {
@@ -552,6 +613,31 @@ export class AgentLoop {
     let reason: AgentLoopReason = "max_steps";
     let stepsTaken = 0;
     let runError: Error | null = null;
+    // What the user asked for is a *task*: "register on these ten sites"
+    // is one goal made of hundreds of steps. A step count is the wrong
+    // thing to end it with, so `maxSteps` is only the length of a leg —
+    // the loop checks in at each boundary, says where it is, and keeps
+    // going while the work progresses. These are the ceilings that
+    // actually stop it.
+    const taskCfg = getConfig().agent.task;
+    const legSteps = Math.max(1, options.maxSteps);
+    const autoContinue = options.autoContinue ?? taskCfg.autoContinue;
+    // Without auto-continue the ceiling IS the leg: one leg, then stop,
+    // exactly as before this existed.
+    const stepCeiling = autoContinue
+      ? Math.max(legSteps, options.taskMaxSteps ?? taskCfg.maxSteps)
+      : legSteps;
+    const durationCeilingMs = options.taskMaxDurationMs ?? taskCfg.maxDurationMs;
+    const taskStartedAt = Date.now();
+    /**
+     * Why the task stopped, when the step loop ran out rather than the
+     * model finishing. Drives the closing message: "ran out of steps"
+     * and "made no progress for a whole leg" are different things to
+     * tell someone, and the old single `max_steps` string said neither.
+     */
+    let stopCause: "step_ceiling" | "time_ceiling" | "no_progress" = "step_ceiling";
+    /** Set by any step in the current leg that produced a usable result. */
+    let legMadeProgress = false;
     // Per-turn no-progress loop tracker (OpenClaw-style). Threaded into
     // `executeStep` so the synchronous batch gate can veto looping calls
     // before they are dispatched; the agent loop consumes the resulting
@@ -601,10 +687,35 @@ export class AgentLoop {
     // editing, running commands through the approval gate — or a terminal
     // `reply`/`finish`. Tool results are appended to the conversation, so
     // the next step's prompt carries everything the previous step learned.
-    for (let i = 0; i < options.maxSteps; i += 1) {
+    for (let i = 0; i < stepCeiling; i += 1) {
       if (options.signal.aborted) {
         reason = "cancelled";
         break;
+      }
+      // Leg boundary. Everything the task needs to keep running is
+      // decided here, once per `legSteps` steps, and never mid-leg.
+      if (i > 0 && i % legSteps === 0) {
+        if (!legMadeProgress) {
+          // A whole leg with nothing usable coming back is the honest
+          // place to stop: the loop detector's breaker catches a model
+          // repeating itself, but not a model whose every call fails.
+          stopCause = "no_progress";
+          reason = "max_steps";
+          break;
+        }
+        legMadeProgress = false;
+        this.deps.onEvent?.({
+          type: "task_continued",
+          stepsTaken,
+          elapsedMs: Date.now() - taskStartedAt,
+          stepCeiling,
+        });
+        this.deps.logger?.info("task leg finished; continuing", {
+          sessionId: state.id,
+          stepsTaken,
+          stepCeiling,
+          elapsedMs: Date.now() - taskStartedAt,
+        });
       }
       // Reactive refresh between steps: if the previous completion
       // observed a foreign `modelId`, rebuild profile + grammar so the
@@ -649,7 +760,12 @@ export class AgentLoop {
       // On the final allowed step the tool catalog collapses to the two
       // terminal tools, so a long coding session ends with a summary of
       // what was changed instead of being cut off mid-edit.
-      const finalizationStep = i === options.maxSteps - 1;
+      // One step is always reserved for a summary, whichever ceiling is
+      // about to bite — being cut off mid-edit is what made the old
+      // stop unreadable.
+      const outOfTime = Date.now() - taskStartedAt >= durationCeilingMs;
+      if (outOfTime) stopCause = "time_ceiling";
+      const finalizationStep = i === stepCeiling - 1 || outOfTime;
       const finalizationNotice =
         "This is the final allowed step. Do not call any non-terminal tool; " +
         "summarize the completed work with reply, or end the session with finish.";
@@ -752,6 +868,14 @@ export class AgentLoop {
         )
           ? "error"
           : "ok";
+        // Progress for the leg check is "something usable came back",
+        // not "the step was clean": a batch where three calls of four
+        // succeeded moved the task forward. What it excludes is a leg
+        // whose every call failed — a dead tool, a dead network, a
+        // rejected approval loop — which is the case worth stopping on.
+        if (outcome.toolResults.some((r) => r.status === "ok")) {
+          legMadeProgress = true;
+        }
         // Feed summary mirrors the legacy single-call shape for solo
         // steps; for a batch we render `N tools: t1, t2, …` so the TUI
         // and trace consumer see at a glance that this was a batch.
@@ -1065,7 +1189,12 @@ export class AgentLoop {
       state = { ...state, status: "cancelled" };
       this.deps.onEvent?.({ type: "loop_completed", reason });
     } else if (reason === "max_steps") {
-      const synthetic = "(stopped: max_steps reached without a reply)";
+      const synthetic = formatTaskStoppedReply({
+        cause: stopCause,
+        stepsTaken,
+        stepCeiling,
+        elapsedMs: Date.now() - taskStartedAt,
+      });
       state = recordTurn(state, assistantReplyTurn(synthetic));
       this.deps.onEvent?.({ type: "llm_event", event: { type: "assistant_reply", text: synthetic } });
       this.deps.onEvent?.({ type: "loop_completed", reason });
@@ -1077,7 +1206,7 @@ export class AgentLoop {
         state = {
           ...state,
           status: "stalled",
-          lastError: `max_steps_reached: ${stepsTaken} steps without reply`,
+          lastError: `task_stopped:${stopCause}: ${stepsTaken} steps without reply`,
         };
       }
     } else if (reason === "reply") {

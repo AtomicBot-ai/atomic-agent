@@ -110,6 +110,37 @@ Pinned by [src/agent/batch-executor.test.ts](src/agent/batch-executor.test.ts), 
 
 All are env-only; not user-config-file material.
 
+### A turn is a task, not a step budget
+
+`agent.maxSteps` (default 25) is the length of a **leg** — a checkpoint interval — not the end of the
+work. What ends a task is `agent.task.maxSteps` (default 1000), `agent.task.maxDurationMs` (default
+2 h), the model finishing, the loop breaker, or the user.
+
+This used to be the other way round, and the unit was wrong. A step is one model turn plus its tool
+calls; what a person asks for ("register on these ten sites", "port this module") is a task made of
+hundreds of them. Ending the task on the step count meant a three-minute browser job stopped in the
+middle with `(stopped: max_steps reached without a reply)` — a parenthetical naming an internal
+counter — and the only way onward was to retype the task, which started it over.
+
+Locked invariants (pinned by [src/agent/agent-loop.test.ts](src/agent/agent-loop.test.ts)):
+
+1. **The leg boundary is the only place continuation is decided**, once every `maxSteps` steps,
+   never mid-leg. It emits `task_continued` (steps, elapsed, ceiling) — a long task reports itself
+   rather than going quiet for an hour.
+2. **A leg that produced nothing usable ends the task.** Progress is "at least one tool result came
+   back `ok` in this leg" — a partially failed batch still moved the work forward; a leg where every
+   call failed is a dead tool or a dead network, and continuing into the ceiling would only burn
+   tokens on it. This is the guard the loop detector cannot give: the breaker catches a model
+   repeating itself, not an environment that stopped answering.
+3. **A step is always reserved for the summary**, at whichever ceiling bites first, so a task is
+   never cut off mid-edit.
+4. **An explicit caller budget is a ceiling, not a leg.** `runtime.runTurn({ maxSteps })` — a durable
+   task pinning its own budget, `run --max-steps` — passes `taskMaxSteps`; the config value stays the
+   leg. A caller that asked for at most 50 steps gets at most 50.
+5. **`autoContinue: false` restores the historical behaviour** exactly: one leg, then stop.
+6. **The closing message names the ceiling, the work done and the way onward** (`formatTaskStoppedReply`),
+   and `lastError` carries `task_stopped:<cause>` for post-mortem tooling.
+
 ### No-progress loop detection
 
 The runtime guards against "stuck" turns where the model re-emits the same tool call (same args, same result) without making progress. The detector is [src/agent/loop-detector.ts](src/agent/loop-detector.ts) `ToolLoopTracker` — **one instance per turn**, owned by `AgentLoop.runTurn`, threaded into `executeStep` → `executeBatch` via `BatchExecutionContext.tracker`. Ported from OpenClaw 2026.6.5; the design goal is **graceful termination, never a hard failure**.

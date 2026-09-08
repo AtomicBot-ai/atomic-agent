@@ -526,6 +526,18 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
         { outcome: "failed", reason: event.error.message, lastRunStatus },
       );
     }
+    case "task_continued": {
+      // A long task must not go quiet. One line per leg, carrying the
+      // two numbers someone deciding whether to wait actually wants:
+      // how far it has got, and how far it may go.
+      const minutes = Math.max(1, Math.round(event.elapsedMs / 60_000));
+      return appendFeed(state, {
+        kind: "runtime_info",
+        stepIndex: null,
+        line: `» still working — ${event.stepsTaken} steps, ${minutes} min (ceiling ${event.stepCeiling})`,
+        color: "gray",
+      });
+    }
     case "loop_detected":
       // Deliberately not rendered: the loop detector's own `### notice`
       // changes what the model does, and the operator sees the effect
