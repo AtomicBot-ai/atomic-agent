@@ -12,6 +12,7 @@ import {
   initialDownloadJob,
   readDownloadJob,
   resolveBackendDir,
+  resolveMmprojFilePath,
   resolveModelFilePath,
   resolvePartialMetaPath,
   resolvePartialPath,
@@ -207,7 +208,7 @@ describe("LocalModelsOrchestrator — pulls through the download worker", () => 
     expect(readDownloadJob(dataDir, "chat-qwen-3.5-4b")).toBeNull();
   });
 
-  it("re-emits pull_started when the worker moves from the GGUF to the mmproj phase", async () => {
+  it("pulls a vision model's GGUF and mmproj as one job with a summed record", async () => {
     globalThis.fetch = vi.fn(async () =>
       new Response(bodyOf(["zz"]), { status: 200, headers: { "content-length": "2" } }),
     ) as typeof fetch;
@@ -215,16 +216,20 @@ describe("LocalModelsOrchestrator — pulls through the download worker", () => 
     // qwen-3.5-9b is vision-capable in the current catalog.
     await orchestrator.pullModel("qwen-3.5-9b");
 
-    const labels = actions
-      .filter(
-        (a): a is Extract<EmittedAction, { type: "local_models_pull_started" }> =>
-          a.type === "local_models_pull_started",
-      )
-      .map((a) => a.pull.label);
-    expect(labels).toHaveLength(2);
-    expect(labels[0]).toMatch(/gguf/);
-    expect(labels[1]).toMatch(/mmproj/);
+    const started = actions.filter(
+      (a): a is Extract<EmittedAction, { type: "local_models_pull_started" }> =>
+        a.type === "local_models_pull_started",
+    );
+    // Both files download together under one label; the bar is drawn
+    // from their summed bytes rather than restarting for the projector.
+    expect(started.map((a) => a.pull.label)).toEqual(["Qwen 3.5 9B GGUF (gguf + mmproj)"]);
     expect(actions.filter((a) => a.type === "local_models_pull_finished")).toHaveLength(1);
+    const dataDir = getConfig().paths.localModelsDataDir;
+    const def = getLocalModelDef("qwen-3.5-9b");
+    expect(existsSync(resolveModelFilePath(dataDir, def.id, def.filename))).toBe(true);
+    expect(
+      existsSync(resolveMmprojFilePath(dataDir, def.id, def.mmprojFilename ?? "")),
+    ).toBe(true);
   });
 
   it("a second pull detaches the watch; the first worker keeps going and its file still lands", async () => {

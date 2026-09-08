@@ -369,10 +369,9 @@ export class LocalModelsOrchestrator {
    * worker's job record and turns it into the panel's pull events.
    *
    * Modes:
-   * - `"with-mmproj"` (default for vision-capable rows): pull GGUF then
-   *   mmproj sequentially under one download banner. The banner label
-   *   updates between phases. If the GGUF is already on disk we skip
-   *   straight to the projector phase.
+   * - `"with-mmproj"` (default for vision-capable rows): pull GGUF and
+   *   mmproj together under one download banner whose bytes are their
+   *   sum. If the GGUF is already on disk only the projector is fetched.
    * - `"gguf-only"` (`g` hotkey): pull the GGUF only, even for
    *   vision-capable models — used when the operator wants a fast
    *   text-only smoke test.
