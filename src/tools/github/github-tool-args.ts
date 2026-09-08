@@ -35,7 +35,9 @@ export async function resolveRepo(
   try {
     const res = await runGit({
       workingDir: ctx.workingDir,
-      args: ["remote", "get-url", "origin"],
+      // The push URL: a PR points at where the branch went, and a
+      // `pushInsteadOf` rewrite can send pushes somewhere fetches do not go.
+      args: ["remote", "get-url", "--push", "origin"],
       signal: ctx.signal,
       timeoutMs: 5_000,
     });

@@ -12,12 +12,17 @@ export {
 } from "./github-token.js";
 export {
   formatRepoSlug,
+  isGithubHttpsRemote,
   isGithubRemote,
   parseGithubRemote,
   parseRepoSlug,
 } from "./parse-github-remote.js";
 export type { GithubRepoRef } from "./parse-github-remote.js";
-export { githubAuthGitArgs } from "./git-auth-header.js";
+export {
+  GITHUB_EXTRAHEADER_KEY,
+  githubAuthGitEnv,
+  githubAuthHeaderValue,
+} from "./git-auth-header.js";
 export {
   GITHUB_API_BASE,
   GITHUB_BODY_LIMIT,

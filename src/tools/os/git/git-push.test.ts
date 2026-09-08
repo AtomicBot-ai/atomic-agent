@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ApprovalGate } from "../../../approval/approval-gate.js";
-import { buildOsGitPushTool } from "./git-push.js";
+import { buildOsGitPushTool, buildPushInvocation } from "./git-push.js";
 import { makeCtx, makeGitRepo, runGitRaw, writeRepoFile } from "./test-helpers.js";
 
 function approveAll(): ApprovalGate {
@@ -26,7 +26,7 @@ describe("os.git.push", () => {
     await writeRepoFile(repo, "a.txt", "one\n");
     await runGitRaw(repo, ["add", "."]);
     await runGitRaw(repo, ["commit", "-m", "init"]);
-  });
+  }, 30_000);
   afterEach(async () => {
     await rm(repo, { recursive: true, force: true });
     await rm(bare, { recursive: true, force: true });
@@ -113,7 +113,7 @@ describe("os.git.push", () => {
     await expect(tool.run({}, makeCtx(repo))).rejects.toThrow(/detached/);
   });
 
-  it("surfaces a rejected push as the tool's error, scrubbed", async () => {
+  it("surfaces a rejected push as the tool's error", async () => {
     // Make the remote ahead so a non-force push is rejected.
     const other = await makeGitRepo();
     try {
@@ -129,5 +129,54 @@ describe("os.git.push", () => {
     } finally {
       await rm(other, { recursive: true, force: true });
     }
+  });
+});
+
+describe("buildPushInvocation", () => {
+  it("attaches the token through the env for an https github.com remote, never argv", () => {
+    const inv = buildPushInvocation({
+      remote: "origin",
+      branch: "feat/x",
+      setUpstream: true,
+      remoteUrl: "https://github.com/acme/widgets.git",
+      token: TOKEN,
+    });
+    expect(inv.authenticated).toBe(true);
+    expect(inv.args).toEqual(["push", "-u", "origin", "feat/x:feat/x"]);
+    expect(inv.args.join(" ")).not.toContain(TOKEN);
+    expect(inv.env.GIT_CONFIG_KEY_0).toBe("http.https://github.com/.extraheader");
+    expect(inv.env.GIT_CONFIG_VALUE_0).toContain("AUTHORIZATION: basic ");
+  });
+
+  it("leaves an SSH or non-GitHub remote to the operator's own git auth", () => {
+    for (const remoteUrl of [
+      "git@github.com:acme/widgets.git",
+      "ssh://git@github.com/acme/widgets.git",
+      "https://gitlab.com/acme/widgets.git",
+      "/tmp/bare.git",
+    ]) {
+      const inv = buildPushInvocation({
+        remote: "origin",
+        branch: "main",
+        setUpstream: false,
+        remoteUrl,
+        token: TOKEN,
+      });
+      expect(inv.authenticated).toBe(false);
+      expect(inv.env).toEqual({});
+      expect(inv.args).toEqual(["push", "origin", "main:main"]);
+    }
+  });
+
+  it("does nothing special without a token", () => {
+    const inv = buildPushInvocation({
+      remote: "origin",
+      branch: "main",
+      setUpstream: true,
+      remoteUrl: "https://github.com/acme/widgets.git",
+      token: null,
+    });
+    expect(inv.authenticated).toBe(false);
+    expect(inv.env).toEqual({});
   });
 });

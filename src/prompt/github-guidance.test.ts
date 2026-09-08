@@ -34,7 +34,7 @@ describe("isGithubActive", () => {
 });
 
 describe("the ### integrations prefix section", () => {
-  it("is byte-identical to before when GitHub is not connected", () => {
+  it("is absent when GitHub is not connected", () => {
     const prefix = prefixWith([descriptor("os.fs.read"), descriptor("os.git.push")]);
     expect(prefix).not.toContain("### integrations");
     expect(prefix).not.toContain("GitHub is connected");

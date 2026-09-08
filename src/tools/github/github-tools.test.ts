@@ -98,10 +98,10 @@ describe("github.* tools", () => {
     await runGitRaw(repo, ["add", "."]);
     await runGitRaw(repo, ["commit", "-m", "init"]);
     await runGitRaw(repo, ["checkout", "-q", "-b", "feat/x"]);
-  });
+  }, 30_000);
   afterEach(async () => {
     await rm(repo, { recursive: true, force: true });
-  });
+  }, 30_000);
 
   it("registers the six tools with the read/write split", () => {
     const tools = toolsWith(fakeApi());
@@ -187,7 +187,19 @@ describe("github.* tools", () => {
     expect(api.calls.filter((c) => !c.startsWith("getRepo"))).toEqual([]);
   });
 
-  it("asks under the http category with the body as preview", async () => {
+  it("pr.create asks before creating even though it reads the repo first", async () => {
+    const api = fakeApi();
+    const gate = new ApprovalGate({
+      emit: (req) => gate.reject(req.approvalId, "denied"),
+    });
+    const tools = toolsWith(api, { gate });
+    await expect(
+      tools.get("github.pr.create")!.run({ title: "t" }, makeCtx(repo)),
+    ).rejects.toThrow(/approval denied/);
+    expect(api.calls).toEqual(["getRepo"]);
+  });
+
+  it("asks under the publish category with the body as preview", async () => {
     const seen: Array<{ category: string; preview?: string; tool: string }> = [];
     const gate = new ApprovalGate({
       emit: (req) => {
@@ -200,7 +212,7 @@ describe("github.* tools", () => {
       .get("github.issue.create")!
       .run({ title: "t", body: "the body", labels: ["bug"] }, makeCtx(repo));
     expect(seen).toEqual([
-      { category: "http", preview: "the body", tool: "github.issue.create" },
+      { category: "publish", preview: "the body", tool: "github.issue.create" },
     ]);
   });
 

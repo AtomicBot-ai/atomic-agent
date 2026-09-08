@@ -166,6 +166,7 @@ describe("filterToolDescriptorsByConfig", () => {
       },
       tasks: { agentToolsEnabled: false },
       mcp: { enabled: false },
+      github: { connected: false },
     });
     const names = nameSet(filtered);
     const allGated = [

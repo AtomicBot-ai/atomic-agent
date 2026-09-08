@@ -30,7 +30,7 @@ export function buildOsGitCheckoutTool(
       const create = rawArgs.create === true;
       const startPoint =
         typeof rawArgs.startPoint === "string" && rawArgs.startPoint.trim()
-          ? rawArgs.startPoint.trim()
+          ? requireRevision(rawArgs.startPoint, "os.git.checkout", "startPoint")
           : undefined;
       if (startPoint && !create) {
         throw new Error(
@@ -51,7 +51,6 @@ export function buildOsGitCheckoutTool(
             ? `create branch ${branch}${startPoint ? ` from ${startPoint}` : ""} and switch to it`
             : `switch to branch ${branch}`,
           preview: `git ${args.join(" ")}`,
-          commandShape: "git",
         },
         ctx.signal,
       );
@@ -87,15 +86,30 @@ export function buildOsGitCheckoutTool(
  * screen.
  */
 export function requireBranchName(raw: unknown, tool: string): string {
+  return requireRevision(raw, tool, "branch");
+}
+
+/**
+ * Same rule for any commit-ish the model hands git as a positional:
+ * git permutes options after positionals, so a `startPoint` of
+ * `--force` would turn `checkout -b x --force` into a working-tree
+ * reset. Rejected here, by name, before git sees it.
+ */
+export function requireRevision(raw: unknown, tool: string, field: string): string {
+  const branch = checkRef(raw, tool, field);
+  return branch;
+}
+
+function checkRef(raw: unknown, tool: string, field: string): string {
   if (typeof raw !== "string" || raw.trim().length === 0) {
-    throw new Error(`${tool}: \`branch\` must be a non-empty string`);
+    throw new Error(`${tool}: \`${field}\` must be a non-empty string`);
   }
   const branch = raw.trim();
   if (branch.startsWith("-")) {
-    throw new Error(`${tool}: \`branch\` must not start with '-'`);
+    throw new Error(`${tool}: \`${field}\` must not start with '-'`);
   }
   if (/\s/.test(branch)) {
-    throw new Error(`${tool}: \`branch\` must not contain whitespace`);
+    throw new Error(`${tool}: \`${field}\` must not contain whitespace`);
   }
   return branch;
 }

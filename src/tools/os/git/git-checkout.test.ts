@@ -25,10 +25,10 @@ describe("os.git.checkout", () => {
     await writeRepoFile(repo, "a.txt", "one\n");
     await runGitRaw(repo, ["add", "."]);
     await runGitRaw(repo, ["commit", "-m", "init"]);
-  });
+  }, 30_000);
   afterEach(async () => {
     await rm(repo, { recursive: true, force: true });
-  });
+  }, 30_000);
 
   it("creates and switches to a branch", async () => {
     const tool = buildOsGitCheckoutTool({ approvals: approveAll(), approvalRequired: true });
@@ -54,6 +54,20 @@ describe("os.git.checkout", () => {
     ).rejects.toThrow(/approval denied/);
     const head = await runGitRaw(repo, ["symbolic-ref", "--short", "HEAD"]);
     expect(head.stdout.trim()).toBe("main");
+    const branches = await runGitRaw(repo, ["branch", "--list", "feat/x"]);
+    expect(branches.stdout.trim()).toBe("");
+  });
+
+  it("refuses a flag-shaped startPoint that would reset the working tree", async () => {
+    // `git checkout -b x --force` permutes the option and discards
+    // local changes; the tool promises never to.
+    await writeRepoFile(repo, "a.txt", "dirty\n");
+    const tool = buildOsGitCheckoutTool({ approvals: approveAll(), approvalRequired: false });
+    await expect(
+      tool.run({ branch: "x", create: true, startPoint: "--force" }, makeCtx(repo)),
+    ).rejects.toThrow(/`startPoint` must not start with '-'/);
+    const status = await runGitRaw(repo, ["status", "--porcelain"]);
+    expect(status.stdout).toContain(" M a.txt");
   });
 
   it("asks for approval with the git command as the preview", async () => {

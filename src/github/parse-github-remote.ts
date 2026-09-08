@@ -13,8 +13,12 @@ export interface GithubRepoRef {
   repo: string;
 }
 
-const HTTPS_OR_SSH = /^(?:https?|ssh|git):\/\/(?:[^@/]+@)?github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/i;
-const SCP_LIKE = /^(?:[^@]+@)?github\.com:([^/]+)\/([^/]+?)(?:\.git)?\/?$/i;
+// `ssh.github.com:443` is GitHub's documented SSH-over-HTTPS-port host.
+const HTTPS_OR_SSH =
+  /^(?:https?|ssh|git):\/\/(?:[^@/:]+@)?(?:ssh\.)?github\.com(?::\d{1,5})?\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/i;
+// The userinfo class excludes `/` and `:` so a URL of another host that
+// merely *contains* `@github.com:` cannot masquerade as GitHub.
+const SCP_LIKE = /^(?:[^@/:]+@)?github\.com:([^/]+)\/([^/]+?)(?:\.git)?\/?$/i;
 
 export function parseGithubRemote(url: string): GithubRepoRef | null {
   const trimmed = url.trim();
@@ -50,4 +54,14 @@ export function formatRepoSlug(ref: GithubRepoRef): string {
  */
 export function isGithubRemote(url: string): boolean {
   return parseGithubRemote(url) !== null;
+}
+
+/**
+ * True only for an `https://github.com/…` remote — the one transport the
+ * token header applies to. An SSH remote authenticates with the
+ * operator's key; handing it the token as well buys nothing and would
+ * report a push as token-authenticated when it was not.
+ */
+export function isGithubHttpsRemote(url: string): boolean {
+  return /^https?:\/\//i.test(url.trim()) && parseGithubRemote(url) !== null;
 }

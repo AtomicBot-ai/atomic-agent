@@ -45,7 +45,6 @@ export function buildOsGitCommitTool(
           category: "shell",
           reason: `commit "${firstLine(message)}"`,
           preview,
-          commandShape: "git",
         },
         ctx.signal,
       );

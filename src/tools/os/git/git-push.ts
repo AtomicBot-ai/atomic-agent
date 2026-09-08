@@ -5,8 +5,8 @@ import {
   type DangerousToolOptions,
 } from "../../../approval/dangerous-tool.js";
 import {
-  githubAuthGitArgs,
-  isGithubRemote,
+  githubAuthGitEnv,
+  isGithubHttpsRemote,
   resolveGithubToken,
   scrubGithubToken,
 } from "../../../github/index.js";
@@ -52,14 +52,13 @@ export function buildOsGitPushTool(options: OsGitPushOptions): ToolDefinition {
       const setUpstream = rawArgs.setUpstream !== false;
 
       const remoteUrl = await readRemoteUrl(repo, ctx, remote);
-      const token = isGithubRemote(remoteUrl) ? resolveToken() : null;
-
-      const pushArgs = [
-        "push",
-        ...(setUpstream ? ["-u"] : []),
+      const invocation = buildPushInvocation({
         remote,
-        `${branch}:${branch}`,
-      ];
+        branch,
+        setUpstream,
+        remoteUrl,
+        token: resolveToken(),
+      });
       await requireApproval(
         options,
         {
@@ -67,8 +66,7 @@ export function buildOsGitPushTool(options: OsGitPushOptions): ToolDefinition {
           tool: "os.git.push",
           category: "shell",
           reason: `push ${branch} to ${remote}`,
-          preview: `git ${pushArgs.join(" ")}\nremote: ${remoteUrl}${token ? "\nauth: GitHub token from the Integrations tab" : ""}`,
-          commandShape: "git",
+          preview: `git ${invocation.args.join(" ")}\nremote: ${remoteUrl}${invocation.authenticated ? "\nauth: GitHub token from the Integrations tab" : ""}`,
         },
         ctx.signal,
       );
@@ -76,8 +74,8 @@ export function buildOsGitPushTool(options: OsGitPushOptions): ToolDefinition {
       const result = await runGit({
         repo,
         workingDir: ctx.workingDir,
-        // `-c` options go before the subcommand.
-        args: [...(token ? githubAuthGitArgs(token) : []), ...pushArgs],
+        args: invocation.args,
+        env: invocation.env,
         signal: ctx.signal,
         timeoutMs: 120_000,
       });
@@ -106,12 +104,46 @@ export function buildOsGitPushTool(options: OsGitPushOptions): ToolDefinition {
           remote,
           branch,
           setUpstream,
-          authenticated: token !== null,
+          authenticated: invocation.authenticated,
           remoteUrl,
           repoRoot: result.repoRoot,
         },
       });
     },
+  };
+}
+
+export interface PushInvocation {
+  /** `push [-u] <remote> <branch>:<branch>` — never carries the token. */
+  args: string[];
+  /** Extra env for the git process; the token rides here, if at all. */
+  env: NodeJS.ProcessEnv;
+  authenticated: boolean;
+}
+
+/**
+ * The exact git invocation a push runs, as data. The token is attached
+ * only for an `https://github.com/` remote, and only through the env
+ * (`GIT_CONFIG_*`), never through argv — pinned by the tests.
+ */
+export function buildPushInvocation(input: {
+  remote: string;
+  branch: string;
+  setUpstream: boolean;
+  remoteUrl: string;
+  token: string | null;
+}): PushInvocation {
+  const args = [
+    "push",
+    ...(input.setUpstream ? ["-u"] : []),
+    input.remote,
+    `${input.branch}:${input.branch}`,
+  ];
+  const useToken = input.token !== null && isGithubHttpsRemote(input.remoteUrl);
+  return {
+    args,
+    env: useToken ? githubAuthGitEnv(input.token!) : {},
+    authenticated: useToken,
   };
 }
 

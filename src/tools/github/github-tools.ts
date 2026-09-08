@@ -34,11 +34,10 @@ export interface GithubToolsOptions extends DangerousToolOptions {
  *
  * Reads (`whoami`, `pr.list`, `issue.list`) are free. Writes
  * (`pr.create`, `issue.create`, `issue.comment`) go through the
- * approval gate under the `http` category — they are HTTP POSTs to
- * api.github.com, the same thing `os.http.request` would be gated as,
- * and they publish text under the operator's name, which is not
- * something a model should do unobserved below the level that
- * silences HTTP.
+ * approval gate under `publish` — level 4, the same rung as the shell
+ * command that pushes the branch, and a category of its own so an
+ * `http` grant answered on an unrelated `os.http.request` prompt cannot
+ * silence text going out under the operator's name.
  *
  * `repo` is an `owner/name` slug (or a GitHub URL). When omitted the
  * tool reads it from the `origin` remote of the working directory, so
@@ -154,7 +153,7 @@ export function buildGithubTools(
         {
           sessionId: ctx.sessionId,
           tool: "github.pr.create",
-          category: "http",
+          category: "publish",
           reason: `open ${draft ? "draft " : ""}pull request "${title}" in ${formatRepoSlug(ref)}`,
           preview: `${head} → ${base}\n\n${body ?? "(no body)"}`.slice(0, 2000),
           affectedResources: [`github:${formatRepoSlug(ref)}`],
@@ -195,7 +194,7 @@ export function buildGithubTools(
         {
           sessionId: ctx.sessionId,
           tool: "github.issue.create",
-          category: "http",
+          category: "publish",
           reason: `file issue "${title}" in ${formatRepoSlug(ref)}`,
           preview: (body ?? "(no body)").slice(0, 2000),
           affectedResources: [`github:${formatRepoSlug(ref)}`],
@@ -233,7 +232,7 @@ export function buildGithubTools(
         {
           sessionId: ctx.sessionId,
           tool: "github.issue.comment",
-          category: "http",
+          category: "publish",
           reason: `comment on ${formatRepoSlug(ref)}#${number}`,
           preview: body.slice(0, 2000),
           affectedResources: [`github:${formatRepoSlug(ref)}#${number}`],

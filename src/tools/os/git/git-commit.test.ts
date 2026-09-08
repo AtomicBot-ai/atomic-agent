@@ -23,10 +23,10 @@ describe("os.git.commit", () => {
     await writeRepoFile(repo, "a.txt", "one\n");
     await runGitRaw(repo, ["add", "."]);
     await runGitRaw(repo, ["commit", "-m", "init"]);
-  });
+  }, 30_000);
   afterEach(async () => {
     await rm(repo, { recursive: true, force: true });
-  });
+  }, 30_000);
 
   it("stages the given paths and commits", async () => {
     await writeRepoFile(repo, "a.txt", "two\n");

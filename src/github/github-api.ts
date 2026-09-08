@@ -226,7 +226,10 @@ export class GithubApi {
     if (res.status === 403 || res.status === 429) {
       const remaining = res.headers.get("x-ratelimit-remaining");
       const detail = await readErrorMessage(res);
-      const rateLimited = remaining === "0" || res.status === 429;
+      // Primary limits zero the remaining counter; secondary (abuse)
+      // limits arrive as 403 with a Retry-After and a healthy counter.
+      const rateLimited =
+        remaining === "0" || res.status === 429 || res.headers.has("retry-after");
       throw new GithubApiError(
         rateLimited
           ? `GitHub rate limit reached (HTTP ${res.status}). ${detail}`.trim()

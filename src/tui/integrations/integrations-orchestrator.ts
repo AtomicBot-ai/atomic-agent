@@ -5,12 +5,6 @@ import {
 } from "../../composio/index.js";
 import { getConfig } from "../../config/index.js";
 import {
-  GithubApi,
-  looksLikeGithubToken,
-  resolveGithubToken,
-  scrubGithubToken,
-} from "../../github/index.js";
-import {
   GITHUB_INTEGRATION_ID,
   GITHUB_TOKEN_FIELD,
   IntegrationSecretError,
@@ -21,7 +15,6 @@ import {
   readFieldValue,
   writeFieldValue,
 } from "../../integrations/index.js";
-import { runCommand } from "../../sandbox/command-runner.js";
 import type { AgentRuntime } from "../../runtime/bootstrap.js";
 import type { TuiEventBus } from "../tui-app.js";
 import type {
@@ -40,16 +33,13 @@ export interface TelegramActions {
   ensureUpForPairing(): Promise<void>;
 }
 
-/** Seams for the GitHub verbs, so tests never reach the network or `gh`. */
-export interface GithubHubDeps {
-  /** Build the client the `verify` action asks "who am I". */
-  apiFactory?: (token: string) => Pick<GithubApi, "whoami">;
-  /**
-   * Read the token `gh auth login` stored, or `null` when `gh` is
-   * missing or logged out. Production runs `gh auth token`.
-   */
-  readGhCliToken?: () => Promise<string | null>;
-}
+import {
+  importGithubTokenFromGh,
+  verifyGithubToken,
+  type GithubHubDeps,
+} from "./integrations-orchestrator-github.js";
+
+export type { GithubHubDeps } from "./integrations-orchestrator-github.js";
 
 /**
  * The only TUI module that touches credential storage and the live MCP
@@ -228,47 +218,16 @@ export class IntegrationsOrchestrator {
     throw new Error(`unknown action ${actionId} for ${integrationId}`);
   }
 
-  /**
-   * Ask GitHub who the token belongs to. The answer (or the refusal)
-   * becomes the row's status until the token changes.
-   */
   private async verifyGithub(): Promise<string> {
-    const token = resolveGithubToken();
-    if (!token) throw new Error("no GitHub token saved");
-    const factory =
-      this.github.apiFactory ?? ((t: string) => new GithubApi({ token: t }));
-    try {
-      const me = await factory(token).whoami();
-      const scopes = me.scopes.length > 0 ? ` · ${me.scopes.join(", ")}` : "";
-      this.githubIdentity = `@${me.login}${scopes}`;
-      this.githubVerifyError = null;
-      return `GitHub token works — connected as @${me.login}`;
-    } catch (err) {
-      const message = scrubGithubToken(
-        err instanceof Error ? err.message : String(err),
-      );
-      this.githubIdentity = null;
-      this.githubVerifyError = message;
-      throw new Error(message);
-    }
+    const outcome = await verifyGithubToken(this.github);
+    this.githubIdentity = outcome.identity;
+    this.githubVerifyError = outcome.error;
+    if (outcome.error !== null) throw new Error(outcome.error);
+    return outcome.message;
   }
 
-  /**
-   * Copy the token `gh auth login` stored into the hub. Goes through
-   * `mutate` so the write, the live-env update and the catalog refresh
-   * are the same code path as a pasted token.
-   */
   private async importGithubTokenFromGh(): Promise<string> {
-    const read = this.github.readGhCliToken ?? readGhCliToken;
-    const token = await read();
-    if (!token) {
-      throw new Error(
-        "gh has no token to import — run `gh auth login` in a terminal first, or paste a token with e",
-      );
-    }
-    if (!looksLikeGithubToken(token)) {
-      throw new Error("gh returned something that is not a GitHub token");
-    }
+    const token = await importGithubTokenFromGh(this.github);
     const descriptor = findIntegration(GITHUB_INTEGRATION_ID);
     const field = descriptor?.fields.find((f) => f.key === GITHUB_TOKEN_FIELD);
     if (!descriptor || !field) throw new Error("GitHub integration unavailable");
@@ -426,24 +385,5 @@ export class IntegrationsOrchestrator {
       if (server) await this.runtime.mcpManager.addServerLive(server);
     }
     await this.runtime.refreshMcp?.();
-  }
-}
-
-/**
- * `gh auth token` prints the stored token for the active account and
- * exits non-zero when nobody is logged in. A missing `gh` binary is the
- * same outcome for the operator — nothing to import.
- */
-async function readGhCliToken(): Promise<string | null> {
-  try {
-    const res = await runCommand("gh", ["auth", "token"], {
-      cwd: process.cwd(),
-      timeoutMs: 10_000,
-    });
-    if (res.exitCode !== 0) return null;
-    const token = res.stdout.trim();
-    return token.length > 0 ? token : null;
-  } catch {
-    return null;
   }
 }
