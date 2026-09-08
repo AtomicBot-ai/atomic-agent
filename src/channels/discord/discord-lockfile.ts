@@ -14,6 +14,8 @@
 
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 
+import { formatChannelLockHeld } from "../channel-lock-error.js";
+
 export class DiscordLockfile {
   constructor(private readonly path: string) {}
 
@@ -26,9 +28,7 @@ export class DiscordLockfile {
     }
     const holder = this.readPid();
     if (holder !== null && holder !== process.pid && isAlive(holder)) {
-      throw new Error(
-        `another atomic-agent (pid ${holder}) is already running the Discord channel — stop it first`,
-      );
+      throw new Error(formatChannelLockHeld(holder));
     }
     // Stale (or ours): reclaim it.
     writeFileSync(this.path, String(process.pid), "utf8");

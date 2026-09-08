@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { formatChannelLockHeld } from "../channels/channel-lock-error.js";
+
 import { telegramIntegration } from "./telegram-integration.js";
 import { TELEGRAM_BOT_TOKEN_KEY } from "../channels/telegram/index.js";
 
@@ -78,7 +80,6 @@ describe("telegramIntegration", () => {
   it("applies live, because the hub can restart the channel itself", () => {
     expect(telegramIntegration.appliesLive).toBe(true);
   });
-});
 
   it("shows the channel's own failure reason", () => {
     // "channel failed to start" told the operator nothing the badge did
@@ -95,3 +96,23 @@ describe("telegramIntegration", () => {
       "channel failed to start",
     );
   });
+
+  it("does not badge another running instance as an error", () => {
+    // Running the bots in one terminal and the TUI in another is normal.
+    // The channel here genuinely cannot start, but nothing is broken and
+    // the bot is working -- red on a healthy system is red people learn
+    // to ignore.
+    const status = telegramIntegration.status(
+      ctx(BOTH, "down", formatChannelLockHeld(4242)),
+    );
+    expect(status.level).toBe("configured");
+    expect(status.detail).toBe("already running in another atomic-agent (pid 4242)");
+    expect(status.detail).not.toContain("channel-locked:");
+  });
+
+  it("still badges a genuine failure as an error", () => {
+    const status = telegramIntegration.status(ctx(BOTH, "down", "token rejected (HTTP 401)"));
+    expect(status.level).toBe("error");
+    expect(status.detail).toMatch(/401/);
+  });
+});

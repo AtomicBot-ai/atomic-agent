@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { formatChannelLockHeld } from "../channels/channel-lock-error.js";
+
 import { discordIntegration } from "./discord-integration.js";
 import { DISCORD_BOT_TOKEN_KEY } from "../channels/discord/index.js";
 
@@ -59,7 +61,6 @@ describe("discordIntegration", () => {
     );
     expect(validate?.("a".repeat(64))).toMatch(/client secret/);
   });
-});
 
   it("is not configured until the owner is paired too", () => {
     // A token with no owner would connect and then refuse every
@@ -99,3 +100,23 @@ describe("discordIntegration", () => {
       "gateway failed",
     );
   });
+
+  it("does not badge another running instance as an error", () => {
+    // Running the bots in one terminal and the TUI in another is normal.
+    // The channel here genuinely cannot start, but nothing is broken and
+    // the bot is working -- red on a healthy system is red people learn
+    // to ignore.
+    const status = discordIntegration.status(
+      ctx(BOTH, "down", formatChannelLockHeld(4242)),
+    );
+    expect(status.level).toBe("configured");
+    expect(status.detail).toBe("already running in another atomic-agent (pid 4242)");
+    expect(status.detail).not.toContain("channel-locked:");
+  });
+
+  it("still badges a genuine failure as an error", () => {
+    const status = discordIntegration.status(ctx(BOTH, "down", "token rejected (HTTP 401)"));
+    expect(status.level).toBe("error");
+    expect(status.detail).toMatch(/401/);
+  });
+});

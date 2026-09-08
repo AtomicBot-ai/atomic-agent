@@ -7,6 +7,10 @@
  */
 
 import { DISCORD_BOT_TOKEN_KEY } from "../channels/discord/index.js";
+import {
+  describeChannelLockConflict,
+  isChannelLockConflict,
+} from "../channels/channel-lock-error.js";
 import type {
   IntegrationDescriptor,
   IntegrationStatus,
@@ -85,12 +89,20 @@ export const discordIntegration: IntegrationDescriptor = {
       case "up":
         return { level: "connected", detail: "gateway connected" };
       case "down":
-        return {
-          level: "error",
-          // The channel's own reason, not a generic line pointing at a
-          // tab that does not exist.
-          detail: ctx.channelErrors?.get("discord") ?? "gateway failed",
-        };
+      {
+        const reason = ctx.channelErrors?.get("discord");
+        // Another process already running the channel is not a
+        // failure -- the bot is up, just not served from here.
+        if (isChannelLockConflict(reason)) {
+          return {
+            level: "configured",
+            detail: describeChannelLockConflict(reason!),
+          };
+        }
+        // The channel's own reason, never a pointer to a tab that does
+        // not exist.
+        return { level: "error", detail: reason ?? "gateway failed" };
+      }
       case "starting":
         return { level: "configured", detail: "connecting" };
       default:

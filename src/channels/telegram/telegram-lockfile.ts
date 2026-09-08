@@ -1,3 +1,4 @@
+import { formatChannelLockHeld } from "../channel-lock-error.js";
 import {
   existsSync,
   readFileSync,
@@ -47,9 +48,7 @@ export class TelegramLockfile implements ChannelLock {
       // Names the cause and the fix: this surfaces verbatim in the
       // Integrations pane, where "lockfile held by live pid 123" reads
       // as a crash rather than as "you already have one running".
-      throw new Error(
-        `another atomic-agent (pid ${pid}) is already running the Telegram channel — stop it first`,
-      );
+      throw new Error(formatChannelLockHeld(pid));
     }
     writeFileSync(this.path, String(process.pid), { flag: "w" });
   }

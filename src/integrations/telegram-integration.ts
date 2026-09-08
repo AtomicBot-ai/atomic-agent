@@ -9,6 +9,10 @@
  */
 
 import { TELEGRAM_BOT_TOKEN_KEY } from "../channels/telegram/index.js";
+import {
+  describeChannelLockConflict,
+  isChannelLockConflict,
+} from "../channels/channel-lock-error.js";
 import type {
   IntegrationDescriptor,
   IntegrationStatus,
@@ -97,12 +101,18 @@ export const telegramIntegration: IntegrationDescriptor = {
     switch (ctx.channelStates?.get("telegram")) {
       case "up":
         return { level: "connected", detail: "channel up" };
-      case "down":
-        return {
-          level: "error",
-          detail:
-            ctx.channelErrors?.get("telegram") ?? "channel failed to start",
-        };
+      case "down": {
+        const reason = ctx.channelErrors?.get("telegram");
+        // Another process already running the channel is not a
+        // failure -- the bot is up, just not served from here.
+        if (isChannelLockConflict(reason)) {
+          return {
+            level: "configured",
+            detail: describeChannelLockConflict(reason!),
+          };
+        }
+        return { level: "error", detail: reason ?? "channel failed to start" };
+      }
       case "starting":
         return { level: "configured", detail: "starting" };
       default:
