@@ -2,6 +2,7 @@ import type { ToolCallTransport } from "../provider/completion-types.js";
 import type {
   LlmFailureCategory,
   ModelFailureReason,
+  ModelFailureStage,
 } from "./failure-category.js";
 
 export interface LlmFailureOptions {
@@ -9,13 +10,21 @@ export interface LlmFailureOptions {
 }
 
 /**
- * `ModelError` extras. `transport` is the *effective* tool-call transport
- * that the defective completion was parsed under — the transport of the
- * link that actually served it, not necessarily the configured one (see
- * `parseDepsFor` in `src/agent/step-executor.ts`).
+ * `ModelError` extras.
+ *
+ * `transport` is the *effective* tool-call transport that the defective
+ * completion was parsed under — the transport of the link that actually
+ * served it, not necessarily the configured one (see `parseDepsFor` in
+ * `src/agent/step-executor.ts`).
+ *
+ * `stage` says which attempt inside the step raised the defect, which is
+ * the axis `transport` does **not** cover: within one transport the
+ * first-attempt throw and the repair-also-came-back-empty throw are
+ * otherwise indistinguishable.
  */
 export interface ModelErrorOptions extends LlmFailureOptions {
   transport?: ToolCallTransport;
+  stage?: ModelFailureStage;
 }
 
 /**
@@ -83,21 +92,32 @@ export class GrammarError extends LlmFailure {
  * model already consumed its budget on this prompt — a second pass over
  * the same prefix would almost certainly hit the same wall.
  *
- * `transport` records which tool-call transport the completion was
- * parsed under, because `reason` alone is ambiguous for the largest of
- * these buckets: an `empty` body routes through `ModelError` **by
- * design** on `native_tools` (nothing in any channel — see
- * `isNativeToolsEmptyCompletionHandledByParser`), whereas on the grammar
- * transports the same `reason` means the one-shot repair
- * (`isGrammarEmptyCompletionWorthRepairing`) also came back empty, which
- * is a different and more suspicious story. Diagnostic only — nothing
- * branches on it.
+ * `reason` alone is ambiguous for the largest of these buckets, and two
+ * orthogonal facts are needed to disambiguate it:
+ *
+ *  - `transport` — which tool-call transport the completion was parsed
+ *    under. `empty` on `native_tools` and `empty` on a grammar link are
+ *    produced by different rule sets
+ *    (`isNativeToolsEmptyCompletionHandledByParser` vs
+ *    `isGrammarEmptyCompletionWorthRepairing`).
+ *  - `stage` — which attempt raised it. On `native_tools` an `empty`
+ *    completion with nothing in any channel ends the step at `initial`
+ *    by design, while a `content`-empty completion that still carries
+ *    `reasoning_content` survives that check, fails the parse, goes
+ *    through the one-shot repair, and raises the *same*
+ *    `reason=empty` + `transport=native_tools` pair at `repair` when the
+ *    repair is empty too. Without `stage` those two are one bucket.
+ *
+ * Both are diagnostic only — nothing branches on either.
  */
 export class ModelError extends LlmFailure {
   readonly category = "model" as const;
 
   /** Effective transport the defective completion was parsed under. */
   readonly transport?: ToolCallTransport;
+
+  /** Which attempt inside the step raised this defect. */
+  readonly stage?: ModelFailureStage;
 
   constructor(
     readonly reason: ModelFailureReason,
@@ -108,6 +128,9 @@ export class ModelError extends LlmFailure {
     this.name = "ModelError";
     if (options?.transport !== undefined) {
       this.transport = options.transport;
+    }
+    if (options?.stage !== undefined) {
+      this.stage = options.stage;
     }
   }
 }

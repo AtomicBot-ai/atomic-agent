@@ -73,6 +73,45 @@ describe("buildEnvelope", () => {
     expect(parseEventPayload(body).tags.tool_transport).toBeUndefined();
   });
 
+  it("stamps a failure_stage tag that splits an otherwise identical native_tools reason=empty", () => {
+    // The pair the transport tag alone cannot split: same errorType,
+    // same category, same reason, same transport — only the stage
+    // differs, and the Sentry fingerprint (a frame basename, in a
+    // single-file bundle) groups both into one issue.
+    const base = {
+      errorType: "ModelError",
+      source: "llm_failure",
+      category: "model",
+      reason: "empty",
+      toolTransport: "native_tools",
+      frames: [],
+    } as const;
+    const initialPayload = parseEventPayload(
+      buildEnvelope(DSN, { ...base, failureStage: "initial" }, META).body,
+    );
+    const repairPayload = parseEventPayload(
+      buildEnvelope(DSN, { ...base, failureStage: "repair" }, META).body,
+    );
+    expect(initialPayload.tags.failure_stage).toBe("initial");
+    expect(repairPayload.tags.failure_stage).toBe("repair");
+    expect(initialPayload.tags.reason).toBe(repairPayload.tags.reason);
+    expect(initialPayload.tags.tool_transport).toBe(
+      repairPayload.tags.tool_transport,
+    );
+  });
+
+  it("omits failure_stage when the scrubbed event has none", () => {
+    const ev: ScrubbedErrorEvent = {
+      errorType: "ModelError",
+      source: "llm_failure",
+      category: "model",
+      reason: "empty",
+      frames: [],
+    };
+    const { body } = buildEnvelope(DSN, ev, META);
+    expect(parseEventPayload(body).tags.failure_stage).toBeUndefined();
+  });
+
   it("omits cause_type when the scrubbed event has none", () => {
     const ev: ScrubbedErrorEvent = {
       errorType: "TransportError",

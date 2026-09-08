@@ -1,6 +1,7 @@
 export type {
   LlmFailureCategory,
   ModelFailureReason,
+  ModelFailureStage,
 } from "./failure-category.js";
 export {
   CancelledError,

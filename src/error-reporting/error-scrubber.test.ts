@@ -4,6 +4,7 @@ import {
   extractSafeCode,
   extractSafeReason,
   extractSafeTool,
+  extractSafeFailureStage,
   extractSafeToolTransport,
   extractSafeTransportHost,
   sanitizeStack,
@@ -132,6 +133,23 @@ describe("extractSafeToolTransport", () => {
   });
 });
 
+describe("extractSafeFailureStage", () => {
+  it("allows the known ModelFailureStage enum values", () => {
+    expect(extractSafeFailureStage({ stage: "initial" })).toBe("initial");
+    expect(extractSafeFailureStage({ stage: "repair" })).toBe("repair");
+  });
+
+  it("drops an unrecognised stage (could be freeform text)", () => {
+    expect(
+      extractSafeFailureStage({ stage: "repair of /Users/alex/x.txt" }),
+    ).toBeUndefined();
+    expect(extractSafeFailureStage({ stage: "" })).toBeUndefined();
+    expect(extractSafeFailureStage({ stage: 2 })).toBeUndefined();
+    expect(extractSafeFailureStage({})).toBeUndefined();
+    expect(extractSafeFailureStage(null)).toBeUndefined();
+  });
+});
+
 describe("extractSafeTool", () => {
   it("allows a bounded registry-style tool identifier", () => {
     expect(extractSafeTool({ tool: "os.fs.read" })).toBe("os.fs.read");
@@ -217,6 +235,34 @@ describe("scrubError", () => {
     const ev = scrubError(err, { source: "llm_failure" });
     expect(ev.reason).toBe("empty");
     expect(ev.toolTransport).toBeUndefined();
+  });
+
+  it("carries ModelError.stage through when it is a known enum value", () => {
+    // The axis `transport` does not cover: the same reason=empty +
+    // transport=native_tools pair is raised both by the by-design
+    // first-attempt route and after a repair that came back empty.
+    const err = Object.assign(new Error("empty completion"), {
+      name: "ModelError",
+      category: "model",
+      reason: "empty",
+      transport: "native_tools",
+      stage: "repair",
+    });
+    const ev = scrubError(err, { source: "llm_failure" });
+    expect(ev.toolTransport).toBe("native_tools");
+    expect(ev.failureStage).toBe("repair");
+  });
+
+  it("drops a bogus ModelError.stage rather than reporting it", () => {
+    const err = Object.assign(new Error("empty completion"), {
+      name: "ModelError",
+      category: "model",
+      reason: "empty",
+      stage: "stage 3 of /Users/alex/session.json",
+    });
+    const ev = scrubError(err, { source: "llm_failure" });
+    expect(ev.reason).toBe("empty");
+    expect(ev.failureStage).toBeUndefined();
   });
 
   it("carries ToolExecutionError.tool through when it is a bounded identifier", () => {

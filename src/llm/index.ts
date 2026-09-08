@@ -51,7 +51,9 @@ export type {
   DetectedModelFailure,
   LlmFailureCategory,
   LlmFailureOptions,
+  ModelErrorOptions,
   ModelFailureReason,
+  ModelFailureStage,
 } from "./reliability/index.js";
 export {
   LlamaServerProvider,
