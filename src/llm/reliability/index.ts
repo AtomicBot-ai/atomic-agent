@@ -15,6 +15,7 @@ export { classifyFailure } from "./classify-failure.js";
 export {
   isNetworkError,
   looksLikeDroppedConnection,
+  looksLikeMidStreamDrop,
   readNetworkErrorCode,
 } from "./network-error.js";
 export { detectModelFailure } from "./detect-model-failure.js";
