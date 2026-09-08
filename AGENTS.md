@@ -141,6 +141,36 @@ Locked invariants (pinned by [src/agent/agent-loop.test.ts](src/agent/agent-loop
 6. **The closing message names the ceiling, the work done and the way onward** (`formatTaskStoppedReply`),
    and `lastError` carries `task_stopped:<cause>` for post-mortem tooling.
 
+### Waiting out a provider outage
+
+A `transport` failure used to end the turn after the HTTP client's three fast retries (~1s). A field
+trace shows what that costs: the provider went unreachable mid-task, the turn died at step 14 after
+107 seconds of browser work, and the next **nine** messages each failed in about a second — across
+two app restarts and a fresh session — with nothing on screen to say the link was down.
+
+`agent.providerWait` (`enabled` true, `maxWaitMs` 300 000) parks the turn instead. Locked invariants
+(pinned by [src/agent/agent-loop.test.ts](src/agent/agent-loop.test.ts) and
+[src/tui/agent-event-reducer.test.ts](src/tui/agent-event-reducer.test.ts)):
+
+1. **The same step is retried, never a new one.** A completion failure throws before any tool is
+   dispatched — tool failures come back as results, not throws — so replaying the step replays no
+   side effect. `stepsTaken` does not move while parked, so a parked turn cannot eat the task budget.
+2. **Only failures that plausibly recover are waited on.** No HTTP response at all (DNS, refused,
+   TLS, reset), 5xx, 408, 429. A 404 from a wrong `localModels.url` and a 401 from a dead key are
+   `transport` too — they classify that way so fallover works — and they fail **immediately**:
+   parking a turn for five minutes in front of a typo is worse than the failure it replaces.
+3. **Backoff is 2s doubling to 30s, clipped so the last wait ends exactly at `maxWaitMs`.** The
+   budget the operator configured is the budget they get.
+4. **Esc during a wait ends the turn at once** — the sleep is abort-aware, and the turn settles
+   `cancelled`, not `failed`.
+5. **The budget resets after a recovery**, so a second outage later in a long task gets its own; the
+   task's wall-clock ceiling is what bounds the total.
+6. **The UI says it once, then keeps it live.** One feed line per outage (not per retry — the
+   backoff fires every few seconds at first), the composer meta-row carries `waiting for provider
+   14s/300s — <reason>`, and when the wait runs out the row stays as `provider unreachable —
+   <reason>` until a turn actually succeeds. The context readout is not touched: it is driven by
+   `prompt_built` / `llm_completed`, and a parked turn produces neither.
+
 ### No-progress loop detection
 
 The runtime guards against "stuck" turns where the model re-emits the same tool call (same args, same result) without making progress. The detector is [src/agent/loop-detector.ts](src/agent/loop-detector.ts) `ToolLoopTracker` — **one instance per turn**, owned by `AgentLoop.runTurn`, threaded into `executeStep` → `executeBatch` via `BatchExecutionContext.tracker`. Ported from OpenClaw 2026.6.5; the design goal is **graceful termination, never a hard failure**.

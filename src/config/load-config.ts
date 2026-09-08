@@ -206,6 +206,7 @@ export function loadConfig(): AtomicAgentConfig {
     agent: {
       tokenBudget: user.agent.tokenBudget,
       maxSteps: user.agent.maxSteps,
+      providerWait: user.agent.providerWait,
       task: user.agent.task,
       toolTimeoutMs: user.agent.toolTimeoutMs,
       approvalLevel: user.agent.approvalLevel,
