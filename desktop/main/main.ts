@@ -8682,6 +8682,19 @@ async function planHandoffTest(
          hint, `done` had not fired, and six bar assertions failed against a
          turn that had not ended. S.turnId is cleared only by the terminal
          frame. */
+      /* Wait for the turn to START before waiting for it to END. `__ask`
+         calls submit(), but S.turnId is only set when the chat IPC
+         resolves — so polling for "not active" immediately exits on the
+         gap before the turn is registered, and everything after reads a
+         transcript belonging to the PREVIOUS attempt while this turn is
+         still streaming. That is the whole of this cluster's flakiness:
+         it fails whenever the machine is slow enough to widen that gap,
+         which is why it showed up packaged and under load and never in a
+         quiet source run. */
+      const startDeadline = Date.now() + 20_000;
+      while (Date.now() < startDeadline && !(await js<boolean>("window.__turnActive()"))) {
+        await new Promise((r) => setTimeout(r, 200));
+      }
       const turnDeadline = Date.now() + 180_000;
       while (Date.now() < turnDeadline) {
         if (!(await js<boolean>("window.__turnActive()"))) break;
