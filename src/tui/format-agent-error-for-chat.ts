@@ -4,6 +4,20 @@ import { looksLikeMidStreamDrop } from "../llm/reliability/index.js";
 const MAX_CHARS = 480;
 
 /**
+ * Length past which a payload that *also* carries markup is treated as a
+ * page rather than a sentence. Only ever consulted together with
+ * `HTML_TAG` — see `looksLikeHtmlWall`.
+ */
+const WALL_CHARS = 800;
+
+/**
+ * A real tag: `<`, a name, optional attributes, `>`. Deliberately not a
+ * bare `<`, which shows up in ordinary prose ("expected <=4 tools") and
+ * in stack frames.
+ */
+const HTML_TAG = /<\/?[a-z][a-z0-9]*(?:\s[^<>]*)?>/i;
+
+/**
  * Where the failed turn was pointed, so a transport failure can say what
  * to actually do about it. The CLI has printed
  * `formatLlamaUnreachableHint` for years; the TUI dropped the same
@@ -48,6 +62,37 @@ const DROPPED_CONNECTION_HINT = [
 ].join("\n");
 
 /**
+ * True when `body` is an error *page* rather than an error *sentence* —
+ * the case the substitution below was written for: a misconfigured
+ * `baseUrl` pointed at a web server, which answers a JSON POST with a
+ * whole HTML document whose only useful content is its status code.
+ *
+ * Two ways in, both of which require actual markup:
+ *
+ * - the document markers, which every real error page carries near its
+ *   front (`<!DOCTYPE html>`, `<html lang=…>`);
+ * - failing those, sheer bulk *plus* at least one tag, for the
+ *   fragments that arrive without a preamble (an nginx body that starts
+ *   at `<center>`, a proxy that emits `<body>…` alone).
+ *
+ * Length alone used to be enough, and that was the bug: a long message
+ * with no markup in it is not a wall, and scraping `/\b(\d{3})\b/` out
+ * of one invents an HTTP status that never existed. The case in tree is
+ * the subscription-CLI provider, whose failures carry a subprocess's
+ * verbatim stderr: a Node crash dump for `socket hang up` is ~840 chars
+ * and its first three-digit run is the line number in
+ * `node:internal/errors:720:14`, which was reported to the operator as
+ * "upstream HTTP 720 (wrong API URL or provider config)" — for a local
+ * subprocess with no upstream URL at all. Such a message now truncates
+ * at `MAX_CHARS` like any other long message, which is both honest and
+ * enough: the transport's own words are what the operator needs.
+ */
+function looksLikeHtmlWall(body: string): boolean {
+  if (body.includes("<!DOCTYPE") || body.includes("<html")) return true;
+  return body.length > WALL_CHARS && HTML_TAG.test(body);
+}
+
+/**
  * Compact, chat-safe agent failure text (strips HTML walls from bad URLs).
  */
 export function formatAgentErrorForChat(
@@ -55,15 +100,20 @@ export function formatAgentErrorForChat(
   message: string,
   local?: LocalProviderErrorContext,
 ): string {
-  let body = message.trim().replace(/\s+/g, " ");
+  // One normalisation, used for both the body and the drop predicate, so
+  // the two can never disagree about what the transport said. Before,
+  // the predicate read the raw `message` while the body read this
+  // collapsed form, which meant `"socket\nhang\nup"` printed the drop
+  // phrase and withheld its explanation. Collapsing cannot widen the
+  // anchored pattern (`/^terminated$/i` already sees a trimmed string)
+  // and can only help the unanchored ones find a phrase a line break
+  // had split.
+  const collapsed = message.trim().replace(/\s+/g, " ");
+  let body = collapsed;
   // Set when the wall below throws the transport's own words away and
   // substitutes a diagnosis of its own.
   let diagnosedAsWall = false;
-  if (
-    body.includes("<!DOCTYPE") ||
-    body.includes("<html") ||
-    body.length > 800
-  ) {
+  if (looksLikeHtmlWall(body)) {
     const statusMatch = /\b(\d{3})\b/.exec(body);
     const status = statusMatch?.[1];
     body =
@@ -87,21 +137,23 @@ export function formatAgentErrorForChat(
     if (local?.activeProviderIsLocal) {
       return `${base}\n${formatLlamaUnreachableHint(local.llamaUrl)}`;
     }
-    // Matched on the raw `message`, never on `body`: `body` has been
-    // capped at MAX_CHARS, so a drop phrase that sits past that cap
-    // survives in one and not the other, and the hint must key off what
-    // the transport actually said. Pinned by a test that fails if this
-    // is switched to `body`.
+    // Matched on `collapsed`, never on `body`: `body` has been capped at
+    // MAX_CHARS, so a drop phrase that sits past that cap survives in
+    // one and not the other, and the hint must key off what the
+    // transport actually said. Pinned by a test that fails if this is
+    // switched to `body`.
     //
     // Except when the wall above fired: then `body` is not a truncation
     // of the transport's words but a *rival diagnosis* of the same
     // failure ("upstream returned HTML instead of JSON", "upstream HTTP
     // 502"), and the two explanations are mutually exclusive — a page of
-    // HTML or a status line is a reply that arrived, not a reply that was
-    // cut off. Printing both told the operator two incompatible stories
-    // at once. The wall wins: it is the arm that looked at the whole
-    // payload, where this one only pattern-matches a phrase inside it.
-    if (!diagnosedAsWall && looksLikeMidStreamDrop(message)) {
+    // HTML is a reply that arrived, not a reply that was cut off.
+    // Printing both told the operator two incompatible stories at once.
+    // The wall wins: it is the arm that looked at the whole payload,
+    // where this one only pattern-matches a phrase inside it. Since
+    // `looksLikeHtmlWall` now demands real markup, the only bodies this
+    // suppresses are ones that genuinely carry a page.
+    if (!diagnosedAsWall && looksLikeMidStreamDrop(collapsed)) {
       return `${base}\n${DROPPED_CONNECTION_HINT}`;
     }
   }

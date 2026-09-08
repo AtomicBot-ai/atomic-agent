@@ -144,25 +144,31 @@ describe("formatAgentErrorForChat", () => {
 
   // When the wall substitution fires, `body` stops being the transport's
   // words and becomes a rival diagnosis of the same failure. The two
-  // explanations are mutually exclusive — a page of HTML or a status line
-  // is a reply that ARRIVED, not one that was cut off — and emitting both
-  // told the operator two incompatible stories in three lines. The wall
-  // wins: it read the whole payload, the drop arm only matches a phrase.
+  // explanations are mutually exclusive — a page of HTML is a reply that
+  // ARRIVED, not one that was cut off — and emitting both told the
+  // operator two incompatible stories in three lines. The wall wins: it
+  // read the whole payload, the drop arm only matches a phrase.
+  //
+  // Every case here uses an unanchored drop phrase (`socket hang up`),
+  // so the drop arm genuinely matches and the `!diagnosedAsWall` guard is
+  // the only thing suppressing the hint. A `terminated …` case would be
+  // vacuous: `/^terminated$/i` is anchored and never matches a string
+  // with a page glued to it, so it passed with the guard mutated away.
   it.each([
     [
-      "over the 800-char wall with no status in it",
-      `socket hang up ${"x".repeat(900)}`,
+      "a document-marker wall with a status in it",
+      "socket hang up <!DOCTYPE html><html><body>404 not found</body></html>",
+      "upstream HTTP 404 (wrong API URL or provider config)",
+    ],
+    [
+      "a document-marker wall with no status in it",
+      "socket hang up <html><body>gateway unavailable</body></html>",
       "upstream returned HTML instead of JSON (check API URL and provider)",
     ],
     [
-      "over the 800-char wall with a status in it",
-      `socket hang up 502 ${"x".repeat(900)}`,
+      "a bulky markup fragment with no document marker",
+      `socket hang up <center>502 Bad Gateway</center>${"x".repeat(900)}`,
       "upstream HTTP 502 (wrong API URL or provider config)",
-    ],
-    [
-      "an actual HTML wall that happens to contain a drop word",
-      "terminated <!DOCTYPE html><html><body>404 not found</body></html>",
-      "upstream HTTP 404 (wrong API URL or provider config)",
     ],
   ])("drops the hint when the body was replaced: %s", (_name, message, body) => {
     expect(
@@ -171,6 +177,107 @@ describe("formatAgentErrorForChat", () => {
         llamaUrl: "http://127.0.0.1:19091",
       }),
     ).toBe(`Turn failed [transport]: ${body}`);
+  });
+
+  // The regression this replaces. `mapCliFailure` in the subscription-CLI
+  // provider quotes a subprocess's stderr verbatim (up to 2048 chars), so
+  // a `claude`/`codex` run that dies on a Node `socket hang up` arrives
+  // here as an ~840-char crash dump — over the old length-only wall
+  // threshold, with no markup anywhere in it. The wall fired, scraped
+  // `/\b(\d{3})\b/`, and reported "upstream HTTP 720" — the line number
+  // out of `node:internal/errors:720:14`, for a local subprocess with no
+  // upstream URL at all — while the guard suppressed the true
+  // explanation. This is a behaviour change against `main`, which prints
+  // the same bogus status (just without the hint).
+  it("does not invent an HTTP status for a long message with no markup", () => {
+    const message = [
+      '"claude" exited with code 1: node:internal/errors:720',
+      "  const err = new Error(message);",
+      "              ^",
+      "",
+      "Error: socket hang up",
+      "    at connResetException (node:internal/errors:720:14)",
+      "    at Socket.socketOnEnd (node:_http_client:519:23)",
+      "    at Socket.emit (node:events:531:35)",
+      "    at endReadableNT (node:internal/streams/readable:1698:12)",
+      "    at process.processTicksAndRejections (node:internal/process/task_queues:82:21)",
+      "    at async Object.request (file:///opt/homebrew/lib/node_modules/@anthropic-ai/claude-code/cli.js:284:19)",
+      "    at async Stream.fromSSEResponse (file:///opt/homebrew/lib/node_modules/@anthropic-ai/claude-code/cli.js:1902:24)",
+      "    at async streamQuery (file:///opt/homebrew/lib/node_modules/@anthropic-ai/claude-code/cli.js:9931:11)",
+      "    at async main (file:///opt/homebrew/lib/node_modules/@anthropic-ai/claude-code/cli.js:20233:7) {",
+      "  code: 'ECONNRESET'",
+      "}",
+      "",
+      "Node.js v22.22.2",
+    ].join("\n");
+    // Long enough to have tripped the old length-only wall.
+    expect(message.trim().replace(/\s+/g, " ").length).toBeGreaterThan(800);
+    const text = formatAgentErrorForChat("transport", message, {
+      activeProviderIsLocal: false,
+      llamaUrl: "http://127.0.0.1:19091",
+    });
+    const [head, ...hint] = text.split("\n");
+    expect(head).not.toContain("upstream HTTP");
+    expect(head).toContain('"claude" exited with code 1');
+    expect(head!.endsWith("…")).toBe(true);
+    expect(hint.join("\n")).toBe(
+      [
+        "the connection to the model dropped before the reply finished",
+        "  the steps that already finished are kept in this session — ask to continue from there; re-sending the whole task starts it over",
+      ].join("\n"),
+    );
+  });
+
+  // The wall's second entrance — bulk plus a tag — is a threshold, and a
+  // threshold nobody tests drifts. Both sides pinned: `800 → 799` kills
+  // the first of these, `800 → 801` kills the second.
+  const WALL_EDGE = `socket hang up <div>${"x".repeat(780)}`;
+
+  it("leaves a markup fragment of exactly 800 chars to the drop arm", () => {
+    expect(WALL_EDGE).toHaveLength(800);
+    const text = formatAgentErrorForChat("transport", WALL_EDGE, {
+      activeProviderIsLocal: false,
+      llamaUrl: "http://127.0.0.1:19091",
+    });
+    expect(text.split("\n")[0]).toBe(
+      `Turn failed [transport]: ${WALL_EDGE.slice(0, 480)}…`,
+    );
+    expect(text).toContain(
+      "the connection to the model dropped before the reply finished",
+    );
+  });
+
+  it("treats a markup fragment of 801 chars as a wall", () => {
+    const overEdge = `${WALL_EDGE}x`;
+    expect(overEdge).toHaveLength(801);
+    expect(
+      formatAgentErrorForChat("transport", overEdge, {
+        activeProviderIsLocal: false,
+        llamaUrl: "http://127.0.0.1:19091",
+      }),
+    ).toBe(
+      "Turn failed [transport]: upstream returned HTML instead of JSON (check API URL and provider)",
+    );
+  });
+
+  it("reads the drop phrase through whitespace, exactly as the body does", () => {
+    // `body` is whitespace-collapsed; the predicate used to read the raw
+    // `message`, so a phrase broken across lines printed in the body and
+    // had its explanation withheld. One normalisation now feeds both.
+    // Not reachable from undici's own strings, but a subprocess's stderr
+    // reaches this formatter verbatim, newlines and all.
+    expect(
+      formatAgentErrorForChat("transport", "socket\nhang\nup", {
+        activeProviderIsLocal: false,
+        llamaUrl: "http://127.0.0.1:19091",
+      }),
+    ).toBe(
+      [
+        "Turn failed [transport]: socket hang up",
+        "the connection to the model dropped before the reply finished",
+        "  the steps that already finished are kept in this session — ask to continue from there; re-sending the whole task starts it over",
+      ].join("\n"),
+    );
   });
 
   it.each(["tool", "runtime"])(
