@@ -1,5 +1,7 @@
 import { spawn } from "node:child_process";
 
+import { killProcessTree } from "./kill-process-tree.js";
+
 const IS_WINDOWS = process.platform === "win32";
 
 /**
@@ -29,6 +31,13 @@ export interface CommandOptions {
   input?: string;
   signal?: AbortSignal;
   maxOutputBytes?: number;
+  /**
+   * Windows only, ignored elsewhere: hand argv to the child verbatim
+   * instead of letting Node quote it. Only for callers that have already
+   * built a `cmd.exe /c "…"` command line with cmd's own escaping.
+   * Omitted by default, which keeps Node's normal quoting.
+   */
+  windowsVerbatimArguments?: boolean;
 }
 
 export interface CommandResult {
@@ -79,6 +88,9 @@ export async function runCommand(
       // Prevent a console window flashing when the runtime is launched
       // from a GUI/TUI host on Windows.
       ...(IS_WINDOWS ? { windowsHide: true } : {}),
+      ...(options.windowsVerbatimArguments === undefined
+        ? {}
+        : { windowsVerbatimArguments: options.windowsVerbatimArguments }),
     });
     const chunks = { stdout: [] as Buffer[], stderr: [] as Buffer[] };
     let stdoutBytes = 0;
@@ -92,31 +104,10 @@ export async function runCommand(
       if (settled) return;
       timedOut = reason === "timeout";
       // On Windows `child.kill` only targets the direct child, leaving a
-      // subshell's descendants (cmd.exe -> foo.exe) running. `taskkill /T`
-      // walks the whole process tree; fall back to SIGKILL if the pid is
-      // gone or taskkill itself cannot be spawned.
-      if (IS_WINDOWS && typeof child.pid === "number") {
-        try {
-          spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], {
-            stdio: "ignore",
-            windowsHide: true,
-          }).on("error", () => {
-            try {
-              child.kill("SIGKILL");
-            } catch {
-              // process already exited
-            }
-          });
-          return;
-        } catch {
-          // fall through to the POSIX-style kill below
-        }
-      }
-      try {
-        child.kill("SIGKILL");
-      } catch {
-        // process already exited
-      }
+      // subshell's descendants (cmd.exe -> foo.exe) running, so this goes
+      // through `taskkill /T`. Same treatment, same fallback — the shared
+      // helper exists because the streaming CLI runner needs it too.
+      killProcessTree(child, { force: true });
     };
 
     const timer =

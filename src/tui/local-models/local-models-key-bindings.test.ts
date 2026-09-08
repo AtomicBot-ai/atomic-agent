@@ -621,3 +621,73 @@ describe("the Hugging Face branch is shared with the LLM pane", () => {
     }
   });
 });
+
+describe("handleLocalModelsTabKey — x cancels the download in flight", () => {
+  function callbacksWith(onCancel: ReturnType<typeof vi.fn>): TuiAppCallbacks {
+    return {
+      onApprovalDecision: vi.fn(),
+      onAbort: vi.fn(),
+      onQuit: vi.fn(),
+      onMessageSubmitted: vi.fn(),
+      onLocalModelsPullCancelRequested: onCancel,
+    };
+  }
+  const pull = {
+    kind: "chat" as const,
+    modelId: "qwen-3.5-4b" as const,
+    label: "Qwen 3.5 4B (gguf)",
+    percent: 40,
+    transferredBytes: 4,
+    totalBytes: 10,
+    error: null,
+  };
+
+  it("cancels the chat pull when one is in flight", () => {
+    const onCancel = vi.fn();
+    const base = stateWithRow(
+      makeRow("qwen-3.5-4b", { supportsVision: false, downloaded: false, mmprojStatus: "n/a" }),
+    );
+    const state = { ...base, localModelsPanel: { ...base.localModelsPanel, pull } };
+    const handled = handleLocalModelsTabKey("x", emptyKey(), {
+      state,
+      dispatch: vi.fn(),
+      callbacks: callbacksWith(onCancel),
+    });
+    expect(handled).toBe(true);
+    expect(onCancel).toHaveBeenCalledWith("chat");
+  });
+
+  it("falls through to the embedding pull when only that one is in flight", () => {
+    const onCancel = vi.fn();
+    const base = stateWithRow(
+      makeRow("qwen-3.5-4b", { supportsVision: false, downloaded: false, mmprojStatus: "n/a" }),
+    );
+    const state = {
+      ...base,
+      localModelsPanel: {
+        ...base.localModelsPanel,
+        embeddingPull: { ...pull, kind: "embedding" as const, modelId: "nomic-embed-text-v1.5" as const },
+      },
+    };
+    handleLocalModelsTabKey("x", emptyKey(), {
+      state,
+      dispatch: vi.fn(),
+      callbacks: callbacksWith(onCancel),
+    });
+    expect(onCancel).toHaveBeenCalledWith("embedding");
+  });
+
+  it("is not handled when nothing is downloading", () => {
+    const onCancel = vi.fn();
+    const state = stateWithRow(
+      makeRow("qwen-3.5-4b", { supportsVision: false, downloaded: false, mmprojStatus: "n/a" }),
+    );
+    const handled = handleLocalModelsTabKey("x", emptyKey(), {
+      state,
+      dispatch: vi.fn(),
+      callbacks: callbacksWith(onCancel),
+    });
+    expect(handled).toBe(false);
+    expect(onCancel).not.toHaveBeenCalled();
+  });
+});

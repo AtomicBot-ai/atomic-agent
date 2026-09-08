@@ -110,6 +110,67 @@ Pinned by [src/agent/batch-executor.test.ts](src/agent/batch-executor.test.ts), 
 
 All are env-only; not user-config-file material.
 
+### A turn is a task, not a step budget
+
+`agent.maxSteps` (default 25) is the length of a **leg** — a checkpoint interval — not the end of the
+work. What ends a task is `agent.task.maxSteps` (default 1000), `agent.task.maxDurationMs` (default
+2 h), the model finishing, the loop breaker, or the user.
+
+This used to be the other way round, and the unit was wrong. A step is one model turn plus its tool
+calls; what a person asks for ("register on these ten sites", "port this module") is a task made of
+hundreds of them. Ending the task on the step count meant a three-minute browser job stopped in the
+middle with `(stopped: max_steps reached without a reply)` — a parenthetical naming an internal
+counter — and the only way onward was to retype the task, which started it over.
+
+Locked invariants (pinned by [src/agent/agent-loop.test.ts](src/agent/agent-loop.test.ts)):
+
+1. **The leg boundary is the only place continuation is decided**, once every `maxSteps` steps,
+   never mid-leg. It emits `task_continued` (steps, elapsed, ceiling) — a long task reports itself
+   rather than going quiet for an hour.
+2. **A leg that produced nothing usable ends the task.** Progress is "at least one tool result came
+   back `ok` in this leg" — a partially failed batch still moved the work forward; a leg where every
+   call failed is a dead tool or a dead network, and continuing into the ceiling would only burn
+   tokens on it. This is the guard the loop detector cannot give: the breaker catches a model
+   repeating itself, not an environment that stopped answering.
+3. **A step is always reserved for the summary**, at whichever ceiling bites first, so a task is
+   never cut off mid-edit.
+4. **An explicit caller budget is a ceiling, not a leg.** `runtime.runTurn({ maxSteps })` — a durable
+   task pinning its own budget, `run --max-steps` — passes `taskMaxSteps`; the config value stays the
+   leg. A caller that asked for at most 50 steps gets at most 50.
+5. **`autoContinue: false` restores the historical behaviour** exactly: one leg, then stop.
+6. **The closing message names the ceiling, the work done and the way onward** (`formatTaskStoppedReply`),
+   and `lastError` carries `task_stopped:<cause>` for post-mortem tooling.
+
+### Waiting out a provider outage
+
+A `transport` failure used to end the turn after the HTTP client's three fast retries (~1s). A field
+trace shows what that costs: the provider went unreachable mid-task, the turn died at step 14 after
+107 seconds of browser work, and the next **nine** messages each failed in about a second — across
+two app restarts and a fresh session — with nothing on screen to say the link was down.
+
+`agent.providerWait` (`enabled` true, `maxWaitMs` 300 000) parks the turn instead. Locked invariants
+(pinned by [src/agent/agent-loop.test.ts](src/agent/agent-loop.test.ts) and
+[src/tui/agent-event-reducer.test.ts](src/tui/agent-event-reducer.test.ts)):
+
+1. **The same step is retried, never a new one.** A completion failure throws before any tool is
+   dispatched — tool failures come back as results, not throws — so replaying the step replays no
+   side effect. `stepsTaken` does not move while parked, so a parked turn cannot eat the task budget.
+2. **Only failures that plausibly recover are waited on.** No HTTP response at all (DNS, refused,
+   TLS, reset), 5xx, 408, 429. A 404 from a wrong `localModels.url` and a 401 from a dead key are
+   `transport` too — they classify that way so fallover works — and they fail **immediately**:
+   parking a turn for five minutes in front of a typo is worse than the failure it replaces.
+3. **Backoff is 2s doubling to 30s, clipped so the last wait ends exactly at `maxWaitMs`.** The
+   budget the operator configured is the budget they get.
+4. **Esc during a wait ends the turn at once** — the sleep is abort-aware, and the turn settles
+   `cancelled`, not `failed`.
+5. **The budget resets after a recovery**, so a second outage later in a long task gets its own; the
+   task's wall-clock ceiling is what bounds the total.
+6. **The UI says it once, then keeps it live.** One feed line per outage (not per retry — the
+   backoff fires every few seconds at first), the composer meta-row carries `waiting for provider
+   14s/300s — <reason>`, and when the wait runs out the row stays as `provider unreachable —
+   <reason>` until a turn actually succeeds. The context readout is not touched: it is driven by
+   `prompt_built` / `llm_completed`, and a parked turn produces neither.
+
 ### No-progress loop detection
 
 The runtime guards against "stuck" turns where the model re-emits the same tool call (same args, same result) without making progress. The detector is [src/agent/loop-detector.ts](src/agent/loop-detector.ts) `ToolLoopTracker` — **one instance per turn**, owned by `AgentLoop.runTurn`, threaded into `executeStep` → `executeBatch` via `BatchExecutionContext.tracker`. Ported from OpenClaw 2026.6.5; the design goal is **graceful termination, never a hard failure**.
@@ -1765,6 +1826,68 @@ Locked invariants (pinned by [src/tui/mcp/mcp-reducer.test.ts](src/tui/mcp/mcp-r
 3. **Persist before live mutation.** `addServerFromJson` writes `config.json` first, then calls `mcpManager.addServerLive` + `runtime.refreshMcp`. Live-connect failures degrade gracefully: the server stays in config and shows as `down`, the operator gets a `runtime_info` hint, and a restart will retry the connect. `removeServerFromJson` mirrors the symmetry — persist first, then `removeServerLive` + `refreshMcp`.
 4. **The editor is disabled on the MCP tab while a modal is open.** `mcpTabBusy` in `app-key-bindings.ts` covers both `addModal !== null` (lets the `MultiLineEditor` capture every keystroke) and `removeConfirm !== null` (claims the `y`/`n` confirmation keys against the global nav cycler).
 5. **Variant γ surface is opt-in but on by default.** Restarting the runtime is no longer required after add/remove — the prompt's `### tools` catalog and GBNF grammar are rebuilt on the next step. KV-cache for in-flight sessions is invalidated once per add/remove (the persona stays byte-stable; only the rendered tools block changes).
+
+### Poller liveness
+
+`bot.start()` is fire-and-forget, so for a long time the channel could report `up` while its polling loop was dead — a second process on the same token gets a 409 from Telegram, the loop ends, and every message afterwards went unanswered with the status still green. The `BotInstance.start` contract now takes an `onStopped(error?)` callback; the grammy adapter wires it to that promise's settlement instead of swallowing it with `.catch(() => undefined)`, and the channel transitions to `down` (releasing the lock, scrubbing the reason) unless it asked to stop. Pinned by the four "polling loop dies" cases in [telegram-channel.test.ts](src/channels/telegram/telegram-channel.test.ts) — verified to fail without the fix.
+
+## Discord channel
+
+A Discord bot that relays DMs and @mentions to the agent and posts replies back — the same shape as the Telegram channel, sharing its `ChannelStatus` contract so the runtime, the TUI and the Integrations hub treat both alike. Code lives in [src/channels/discord/](src/channels/discord/); bootstrap constructs it unconditionally (so the hub can report state) and starts it only when `config.discord.enabled`.
+
+### Why no client library
+
+The channel talks to Discord over the raw HTTP + Gateway APIs using Node's built-in `fetch` and `WebSocket`. It needs six REST calls and one WebSocket state machine; `discord.js` would add a large transitive tree to a project that ships a single-file SEA binary, for code we would still have to wrap. Same reasoning as declining `@composio/core`.
+
+Locked invariants (pinned by [src/channels/discord/discord-inbound-handler.test.ts](src/channels/discord/discord-inbound-handler.test.ts), [discord-gateway.test.ts](src/channels/discord/discord-gateway.test.ts), [discord-approval-bridge.test.ts](src/channels/discord/discord-approval-bridge.test.ts), [discord-channel.test.ts](src/channels/discord/discord-channel.test.ts), [discord-lockfile.test.ts](src/channels/discord/discord-lockfile.test.ts)):
+
+1. **Addressed messages only.** In a guild the bot acts only when @mentioned; in a DM, always. Anything from itself or another bot is dropped outright — two agents in one guild would otherwise talk to each other forever.
+2. **`MESSAGE_CONTENT` is never requested.** Intents are `GUILD_MESSAGES | DIRECT_MESSAGES`. Discord delivers full content for DMs and for messages that mention the bot without the privileged intent, so the operator never has to enable one (or pass verification at 100+ guilds) — and the bot is structurally unable to read guild chatter it was not addressed in.
+3. **One owner, checked after pairing.** `config.discord.ownerUserId` is the only account that may drive the agent; unpaired means every message is refused. Pairing deliberately runs *before* the owner check, because claiming the first eligible message is what a pairing window is for.
+4. **`ownerUserId` is a string.** Discord snowflakes exceed `Number.MAX_SAFE_INTEGER`; parsing one as a number silently corrupts the last digits and would let the wrong account through.
+5. **Approvals prompt where the turn came from.** `DiscordApprovalBridge` registers per session with `ApprovalRouter`, so a destructive tool asks in the Discord channel rather than falling through to a TUI dialog the remote operator cannot see. It never approves on its own, and a button press from anyone but the owner is ignored.
+6. **The bot token never enters `config.json`** — `<stateDir>/.env` as `DISCORD_BOT_TOKEN`, same split as Telegram. Every path that can surface an error runs it through `scrubDiscordError` first.
+7. **A missing token is `disabled`, not `down`.** An unconfigured integration is a resting state; reporting it as a failure trains the operator to ignore the badge.
+8. **Reconnect, but not forever.** Drops retry with full-jitter exponential backoff and RESUME where Discord allows it; the codes Discord will never accept a retry for (4004 bad token, 4014 disallowed intents) stop the loop and surface instead of burning the per-day session-start budget.
+9. **One process per token.** `DiscordLockfile` guards it: two gateways on one token receive every event twice and would run every turn twice, side effects included. Discord does not prevent this the way Telegram's 409 does.
+
+## Integrations hub
+
+The `Integrations` tab ([src/tui/integrations/](src/tui/integrations/)) is the single place an operator puts third-party credentials. Before it, every integration grew its own surface — Telegram had a tab, LLM providers had a wizard, Composio had nothing — so "where do I put my key" required already knowing which kind of thing a given service was.
+
+An integration declares itself as a **descriptor** ([src/integrations/integration-descriptor.ts](src/integrations/integration-descriptor.ts)): id, label, summary, docs URL, a list of credential fields, and a `status()` projection. The hub renders any descriptor without a bespoke pane, so adding an integration is a descriptor file plus one line in [integration-registry.ts](src/integrations/integration-registry.ts) — not a new TUI slice.
+
+Locked invariants (pinned by [src/integrations/integration-secrets.test.ts](src/integrations/integration-secrets.test.ts), [src/integrations/integration-registry.test.ts](src/integrations/integration-registry.test.ts), [src/tui/integrations/integrations-panel-reducer.test.ts](src/tui/integrations/integrations-panel-reducer.test.ts), [src/tui/integrations/integrations-key-bindings.test.ts](src/tui/integrations/integrations-key-bindings.test.ts)):
+
+1. **Secrets live in `<stateDir>/.env`, never in `config.json`.** `writeFieldValue` goes through `setDotenvKey` (0600, atomic) and updates `process.env` in the same breath, so the running process sees a new key without a restart. Field env vars must match `/^[A-Z_][A-Z0-9_]*$/` — the registry test pins this, because `setDotenvKey` would otherwise throw in front of the operator at save time.
+2. **`IntegrationsOrchestrator` is the only module that touches credential storage or the live `McpManager` for this tab.** The reducer and component are pure; the key bindings only dispatch and call callbacks.
+3. **Fields choose their store.** `store: "env"` (the default) writes `<stateDir>/.env`; `store: "config"` writes a dotted `config.json` path. Without the second the hub could only ever be half a setup surface — the operator would paste a token here and then hand-edit JSON for the non-secret settings an integration still needs (Discord's owner id). A config field carries `configPath` and no `envVar`, an env field the reverse; the registry test pins that, because a field reading one store and writing the other fails silently.
+4. **A secret is never rendered in the clear except in the edit buffer being typed.** `displayFieldValue` masks and caps; starting an edit opens an *empty* buffer rather than seeding the stored value; `integrations_action_settled` clears the buffer so a key never lingers in UI state.
+5. **Edit mode swallows the whole keyboard.** `d`, `e` and `r` are bindings on this tab; inside the editor they are key material. A paste that silently triggered "clear field" halfway through would be both baffling and destructive.
+6. **A re-sync never yanks the cursor.** Rows are re-read on every refresh; the reducer clamps the selection instead of resetting it, so a background refresh cannot move the operator's place mid-edit.
+7. **Changing a Composio key drops the cached tool-router session.** A session belongs to the key that created it; reusing it across a key swap would keep talking to the old account. The orchestrator unmounts, clears the cache, re-resolves, and remounts live.
+8. **The hub is the whole setup surface — there is no Telegram tab.** It was removed: keeping a tab *and* a hub entry meant two places to configure one thing and an operator having to know which. Everything the tab did is here — token, owner, kill switch (`kind: "boolean"`), pairing and restart (`actions`). The hub does not reimplement any of it: `IntegrationsOrchestrator` delegates to `TuiTelegramOrchestrator`, which still owns pairing windows, token writes and restarts, so there is one implementation and it cannot drift. `/telegram` and its verbs still work and now land on the Integrations tab.
+9. **A saved value has to reach the *running* channel, not just the disk.** The hub owns its own credential writes, so a channel that resolves state at construction (`TelegramChannel`'s token, `DiscordChannel`'s kill switch) has to be told separately — `adoptTokenFromEnv()` / `setEnabled()`, never a blanket `restart()`, which only re-starts a channel that was already `up`. Pinned by [src/tui/integrations/integrations-orchestrator.test.ts](src/tui/integrations/integrations-orchestrator.test.ts), which drives a real `TelegramChannel` behind a fake bot factory: a mocked orchestrator cannot answer "did it actually come up". For the same reason `pair` starts the channel first and reports the channel's own `lastError()` when it cannot — announcing a pairing window in front of a channel with no poller sends the operator to DM a bot nothing is listening to.
+10. **A descriptor carries its own walkthrough.** `setupSteps` renders in the detail view until the integration reports `connected`, and the registry test requires one from every integration with a required secret. Every credential in this hub comes from somewhere else — a @BotFather chat, a developer portal, a dashboard — and the operator is standing *here* when they need to know that; a README they do not know exists is not a setup surface. Steps are one line each (≤100 chars) so the pane reads as steps rather than as a wall.
+11. **An action that cannot work is not offered.** `available()` hides `pair`/`restart` until a token exists — pairing opens a window that claims the next DM, so with no bot to DM it could only ever time out. Action keys must not collide with `e`/`d`/`j`/`k`, which the descriptor tests pin.
+
+## Composio (hosted toolkits)
+
+[Composio](https://composio.dev) is a hosted catalogue of ~1500 SaaS toolkits (Gmail, Slack, Notion, Linear, Jira, …) that also brokers each app's OAuth. atomic-agent consumes it as **one more MCP server** rather than as a bespoke integration: a tool-router session yields a Streamable-HTTP MCP endpoint authenticated by a static `x-api-key` header, which is exactly the transport [src/mcp/](src/mcp/) already speaks. Code lives in [src/composio/](src/composio/); the cold-path wiring is a single `await resolveComposioServerConfig(...)` in [src/runtime/bootstrap.ts](src/runtime/bootstrap.ts) that appends at most one entry to the server list before `McpManager` is constructed.
+
+### Why an MCP server and not an SDK
+
+`@composio/core` would drag a transitive dependency tree into a project that ships a single-file SEA binary, and would duplicate lifecycle, retry, approval and status machinery `src/mcp/` already owns. The whole integration needs exactly one HTTP call. Composio's session model does the rest: instead of loading ~1500 toolkits' worth of schemas, the session exposes four **meta-tools** — `COMPOSIO_SEARCH_TOOLS` (find a tool by use-case), `COMPOSIO_GET_TOOL_SCHEMAS`, `COMPOSIO_MANAGE_CONNECTIONS` (returns an OAuth Connect Link mid-conversation), `COMPOSIO_MULTI_EXECUTE_TOOL` — so the stable-prefix cost is four tools, flat, regardless of catalogue size.
+
+Locked invariants (pinned by [src/composio/resolve-composio-server.test.ts](src/composio/resolve-composio-server.test.ts), [src/composio/ensure-composio-session.test.ts](src/composio/ensure-composio-session.test.ts), [src/composio/build-composio-server-config.test.ts](src/composio/build-composio-server-config.test.ts)):
+
+1. **The API key is the only gate.** With no key resolvable (or `composio.enabled: false`), `resolveComposioServerConfig` returns `undefined`, no server is appended, no tool is registered, and the model cannot see or call anything Composio-related. There is no second switch and no partial state.
+2. **The key never enters `config.json`.** It lives in `<stateDir>/.env` under the name in `composio.apiKeyEnv` (default `COMPOSIO_API_KEY`), written 0600 through `setDotenvKey` — the same split as `TELEGRAM_BOT_TOKEN` and the `web.search.*.apiKeyEnv` precedent. `config.composio` carries only the switch, the env-var *name*, and cached session ids.
+3. **Failure is soft.** Composio unreachable, rate-limiting, or rejecting a stale key logs a warning and boots without it. A third-party SaaS broker must never stand between the operator and their own shell, files and browser.
+4. **`userId` is a minted UUID, persisted, and never an email.** Composio scopes connected accounts to it, so regenerating it silently orphans every app the operator has already authorised. An email would also hand PII to a third party for no benefit.
+5. **The workbench stays disabled.** `createComposioSession` always posts `workbench: { enable: false }`, dropping `COMPOSIO_REMOTE_WORKBENCH` / `COMPOSIO_REMOTE_BASH_TOOL`. They duplicate `os.shell.run` and would quietly route the operator's shell work through a third-party sandbox.
+6. **The `### integrations` prefix section is derived, not flagged.** [src/prompt/composio-guidance.ts](src/prompt/composio-guidance.ts) keys off `mcp.composio.COMPOSIO_SEARCH_TOOLS` being in the descriptor list, so the guidance cannot drift out of sync with what actually mounted. It renders between `### capabilities` and `### instructions`, leaving persona / rules / skills / the tools catalog byte-identical whether or not Composio is configured, and is absent entirely with no key. The text is **ours**, not Composio's `experimental.assistive_prompt`: piping a remote-controlled string into the system prompt would let a third party re-steer the agent, and any edit on their side would invalidate the KV-cached prefix for every user at once. The list of connected apps is deliberately left out — it changes mid-session, and the stable prefix must not move.
+7. **Trust stays `approval_gated`.** Discovery is still unprompted, because `mcp-tool-adapter.ts` exempts tools annotated `readOnlyHint === true` and Composio tags `COMPOSIO_SEARCH_TOOLS` / `COMPOSIO_GET_TOOL_SCHEMAS` exactly that way, while tagging `COMPOSIO_MULTI_EXECUTE_TOOL` / `COMPOSIO_MANAGE_CONNECTIONS` destructive. Every write to a real SaaS account therefore hits the approval gate, and the seamlessness costs nothing in consent. Loosening the server's trust to `pure_read` would un-gate the writes too — do not.
 
 ## Project path resolution (`os.fs.locate_project`)
 

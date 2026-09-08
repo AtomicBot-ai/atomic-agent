@@ -60,7 +60,8 @@ describe("menu rows", () => {
     expect(selectMenuTitle(state)).toContain("Manage");
     const labels = selectMenuItems(state).map((r) => r.node.label);
     expect(labels).toEqual([
-      "Tasks", "Skills", "Memory", "MCP", "LLM", "Telegram", "Import", "Privacy",
+      "Tasks", "Skills", "Memory", "MCP", "Integrations", "LLM", "Telegram",
+      "Import", "Privacy",
     ]);
   });
 

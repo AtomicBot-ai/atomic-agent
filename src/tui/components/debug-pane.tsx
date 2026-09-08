@@ -25,8 +25,8 @@ import { SkillsPanel } from "./skills-panel.js";
 import { McpPanel } from "./mcp-panel.js";
 import { MemoryPanel } from "./memory-panel.js";
 import { ImportPanel } from "./import-panel.js";
-import { TelegramPanel } from "../telegram/components/telegram-panel.js";
 import { PrivacyPanel } from "../privacy/components/privacy-panel.js";
+import { IntegrationsPanel } from "../integrations/components/integrations-panel.js";
 import { ProvidersPanel } from "./providers-panel.js";
 
 interface DebugPaneProps {
@@ -162,8 +162,8 @@ function buildManageTabs(state: TuiState): SubTab[] {
     { id: "skills", label: `Skills${suffix(state.skillsPanel.rows.length)}` },
     { id: "memory", label: `Memory${suffix(state.memoryPanel.rows.length)}` },
     { id: "mcp", label: `MCP${suffix(state.mcpPanel.rows.length)}` },
+    { id: "integrations", label: integrationsTabLabel(state) },
     { id: "llm", label: "LLM" },
-    { id: "telegram", label: telegramTabLabel(state) },
     { id: "import", label: "Import" },
     { id: "privacy", label: "Privacy" },
   ];
@@ -347,12 +347,17 @@ function ActiveDebugTab({
       );
     case "llm-logs":
       return <LocalLlmLogsPanel logs={state.localLlmLogs} maxLines={maxVisible} />;
-    case "telegram":
-      return <TelegramPanel panel={state.telegramPanel} />;
     case "import":
       return <ImportPanel panel={state.importPanel} />;
     case "privacy":
       return <PrivacyPanel panel={state.privacyPanel} />;
+    case "integrations":
+      return (
+        <IntegrationsPanel
+          panel={state.integrationsPanel}
+          maxRows={compactRows}
+        />
+      );
     default:
       return <EventFeed state={state} maxVisible={maxVisible} />;
   }
@@ -368,12 +373,18 @@ function suffix(count: number): string {
  * operator scanning the Manage strip sees `Telegram (down)` without
  * entering the panel.
  */
-function telegramTabLabel(state: TuiState): string {
-  const channelState = state.telegramPanel.channelState;
-  if (channelState === "up") return "Telegram (up)";
-  if (channelState === "down") return "Telegram (down)";
-  return "Telegram";
+/**
+ * Integrations tab label with a configured-count suffix, so an operator
+ * can see at a glance whether anything is wired up without opening it.
+ */
+function integrationsTabLabel(state: TuiState): string {
+  const rows = state.integrationsPanel.rows;
+  const ready = rows.filter(
+    (r) => r.level === "configured" || r.level === "connected",
+  ).length;
+  return ready > 0 ? `Integrations (${ready})` : "Integrations";
 }
+
 
 /**
  * Re-export of the section-aware sub-tab cycler. Kept here so existing

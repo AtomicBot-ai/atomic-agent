@@ -1,4 +1,8 @@
 import type { ToolCallTransport } from "../llm/provider/completion-types.js";
+import {
+  COMPOSIO_GUIDANCE,
+  isComposioActive,
+} from "./composio-guidance.js";
 import { formatSkillCatalogLine } from "../skills/skill-catalog.js";
 
 /**
@@ -183,6 +187,10 @@ export const WINDOWS_PLATFORM_HINT = [
 ].join("\n");
 
 export function buildStablePrefix(input: StablePrefixInput): string {
+  // Present only while a Composio session is mounted, so an install
+  // with no key pays nothing for it and its prefix is byte-identical
+  // to before the integration existed.
+  const composioActive = isComposioActive(input.toolDescriptors);
   const nativeTools = input.toolTransport === "native_tools";
   const persona =
     input.systemPersona ??
@@ -242,6 +250,7 @@ export function buildStablePrefix(input: StablePrefixInput): string {
     `### capabilities`,
     caps,
     ``,
+    ...(composioActive ? [`### integrations`, COMPOSIO_GUIDANCE, ``] : []),
     `### instructions`,
     // The emission instructions are the one transport-dependent block.
     // Grammar links parse text-JSON (GBNF-constrained locally), so they

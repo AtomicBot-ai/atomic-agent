@@ -206,6 +206,8 @@ export function loadConfig(): AtomicAgentConfig {
     agent: {
       tokenBudget: user.agent.tokenBudget,
       maxSteps: user.agent.maxSteps,
+      providerWait: user.agent.providerWait,
+      task: user.agent.task,
       toolTimeoutMs: user.agent.toolTimeoutMs,
       approvalLevel: user.agent.approvalLevel,
       stablePrefixHashSalt:
@@ -519,6 +521,17 @@ export function loadConfig(): AtomicAgentConfig {
       ownerUserId: user.telegram.ownerUserId,
       parseMode: user.telegram.parseMode,
       progressIndicator: user.telegram.progressIndicator,
+    },
+    discord: {
+      enabled: user.discord.enabled,
+      ownerUserId: user.discord.ownerUserId,
+    },
+    composio: {
+      enabled: user.composio.enabled,
+      apiKeyEnv: user.composio.apiKeyEnv,
+      userId: user.composio.userId,
+      sessionId: user.composio.sessionId,
+      mcpUrl: user.composio.mcpUrl,
     },
     mcp: {
       // Servers are owned by the user-config file. Deep clone the

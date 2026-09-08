@@ -36,3 +36,26 @@ export type LlmFailureCategory =
  * response.
  */
 export type ModelFailureReason = "truncated" | "empty" | "no_stop";
+
+/**
+ * Which attempt inside a single step raised the model-side defect. A
+ * fixed 2-value enum, mirrored verbatim by the error scrubber's
+ * allowlist.
+ *
+ *  - `initial`: the first completion of the step was defective and no
+ *               salvage path applied, so the step ended there.
+ *  - `repair`:  the first completion was salvageable-looking (or merely
+ *               unparseable), the one-shot repair ran, and the repair
+ *               completion was defective too.
+ *
+ * `reason` and `transport` alone cannot recover this split: on
+ * `native_tools` an `empty` body with nothing in any channel ends the
+ * step at `initial` by design, but a `content`-empty completion that
+ * still carries `reasoning_content` is handed to the parser, fails it,
+ * routes through the repair, and — when the repair comes back fully
+ * empty — raises the identical `reason=empty` + `transport=native_tools`
+ * pair at `repair`. Two different stories, one bucket, and the Sentry
+ * fingerprint cannot separate them either (it discriminates on a frame
+ * *basename*, and the shipped build is a single bundled file).
+ */
+export type ModelFailureStage = "initial" | "repair";

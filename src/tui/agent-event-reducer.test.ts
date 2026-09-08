@@ -501,7 +501,46 @@ describe("reduceTuiState", () => {
     const errMsg = next.messages.find(
       (m) => m.role === "system" && m.variant === "warn",
     );
+    // Exactly the base line and nothing else. `fetch failed` is undici's
+    // catch-all for a connection that never opened as much as for one
+    // that died (verified on Node 22.22.2: `ENOTFOUND` and `ECONNREFUSED`
+    // both surface as this bare string), so neither hint may fire — the
+    // llama one names the wrong server on a cloud route, and the drop one
+    // would assert a reply was cut off on a turn that may have completed
+    // zero steps.
     expect(errMsg?.text).toBe("Turn failed [transport]: fetch failed");
+  });
+
+  it("explains a cloud route's mid-stream drop through the whole reducer", () => {
+    // The reported shape: a cloud provider's stream dies mid-body and
+    // undici's message is the single word `terminated`.
+    // Source: Discord #feedback-and-bugs, 2026-09-03.
+    const initial = createInitialTuiState(fakeSession());
+    const next = apply(initial, [
+      {
+        type: "providers_refresh",
+        rows: [providerRow({ id: "openrouter", kind: "openrouter", isActiveText: true })],
+      },
+      { type: "message_submitted" },
+      {
+        type: "agent_event",
+        event: {
+          type: "loop_failed",
+          error: new Error("terminated"),
+          category: "transport",
+        },
+      },
+    ]);
+    const errMsg = next.messages.find(
+      (m) => m.role === "system" && m.variant === "warn",
+    );
+    expect(errMsg?.text).toContain("Turn failed [transport]: terminated");
+    expect(errMsg?.text).toContain(
+      "the connection to the model dropped before the reply finished",
+    );
+    expect(errMsg?.text).toContain(
+      "the steps that already finished are kept in this session",
+    );
   });
 
   it("maps loop_completed reason failed to failed outcome", () => {
@@ -814,6 +853,114 @@ describe("reduceTuiState", () => {
     expect(line).toContain("14 reads");
     expect(line).toContain("2 waves");
     expect(line).toContain("nothing dropped");
+  });
+});
+
+describe("provider outage", () => {
+  const waiting = (over: Record<string, unknown> = {}): TuiAction => ({
+    type: "agent_event",
+    event: {
+      type: "provider_waiting",
+      attempt: 1,
+      waitedMs: 0,
+      maxWaitMs: 300_000,
+      nextRetryMs: 2_000,
+      reason: "fetch failed",
+      ...over,
+    } as never,
+  });
+
+  it("shows the outage and says how long it will keep trying", () => {
+    const next = reduceTuiState(createInitialTuiState(fakeSession()), waiting());
+    expect(next.providerOutage).toMatchObject({
+      reason: "fetch failed",
+      attempt: 1,
+      givenUp: false,
+    });
+    expect(next.feed.at(-1)?.line).toContain("provider not answering");
+    expect(next.feed.at(-1)?.line).toContain("retrying in 2s");
+  });
+
+  it("does not repeat the feed line on every retry", () => {
+    // The backoff fires every few seconds at first; the meta-row carries
+    // the live numbers, so a wall of identical lines would only bury the
+    // work above it.
+    const next = apply(createInitialTuiState(fakeSession()), [
+      waiting(),
+      waiting({ attempt: 2, waitedMs: 2_000, nextRetryMs: 4_000 }),
+      waiting({ attempt: 3, waitedMs: 6_000, nextRetryMs: 8_000 }),
+    ]);
+    expect(next.feed.filter((f) => f.line.includes("provider not answering"))).toHaveLength(1);
+    expect(next.providerOutage).toMatchObject({ attempt: 3, waitedMs: 6_000 });
+  });
+
+  it("clears on recovery and says how long it waited", () => {
+    const next = apply(createInitialTuiState(fakeSession()), [
+      waiting(),
+      {
+        type: "agent_event",
+        event: { type: "provider_recovered", waitedMs: 6_000 } as never,
+      },
+    ]);
+    expect(next.providerOutage).toBeNull();
+    expect(next.feed.at(-1)?.line).toContain("provider answered again after 6s");
+  });
+
+  it("stays on screen when the wait ran out and the turn failed", () => {
+    // The sticky half: the next message will fail the same way, and a
+    // state that cleared between attempts is how eight identical
+    // failures read as eight separate surprises.
+    const next = apply(createInitialTuiState(fakeSession()), [
+      waiting(),
+      {
+        type: "agent_event",
+        event: {
+          type: "loop_failed",
+          error: new Error("fetch failed"),
+          category: "transport",
+        },
+      },
+    ]);
+    expect(next.providerOutage).toMatchObject({ givenUp: true });
+  });
+
+  it("clears when a turn actually completes", () => {
+    const next = apply(createInitialTuiState(fakeSession()), [
+      waiting(),
+      {
+        type: "agent_event",
+        event: {
+          type: "turn_finished",
+          turnIndex: 0,
+          reason: "reply",
+          stepCount: 3,
+          durationMs: 10,
+        },
+      },
+    ]);
+    expect(next.providerOutage).toBeNull();
+  });
+
+  it("leaves the context gauge alone", () => {
+    // The readout at the bottom of the screen is driven by
+    // `prompt_built` / `llm_completed` only. A parked turn builds no new
+    // prompt and gets no completion, so the gauge must hold the last
+    // measured value rather than resetting, moving or disappearing.
+    const built = createInitialTuiState(fakeSession());
+    const withUsage: TuiState = {
+      ...built,
+      contextUsage: { ...built.contextUsage, tokens: 12_345, window: 32_768 },
+    };
+    const next = apply(withUsage, [
+      waiting(),
+      waiting({ attempt: 2, waitedMs: 2_000 }),
+      {
+        type: "agent_event",
+        event: { type: "provider_recovered", waitedMs: 6_000 } as never,
+      },
+    ]);
+    expect(next.contextUsage.tokens).toBe(12_345);
+    expect(next.contextUsage.window).toBe(32_768);
   });
 });
 

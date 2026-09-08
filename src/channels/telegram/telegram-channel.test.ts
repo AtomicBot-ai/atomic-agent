@@ -33,6 +33,8 @@ interface FakeBotState {
   callbackHandler: ((u: unknown) => void | Promise<void>) | null;
   /** Aggregated `sendMessage` invocations across every bot the factory has created. */
   sendMessageCalls: Array<{ chatId: number; text: string }>;
+  /** Simulate the polling loop ending. Set once `start()` has run. */
+  killPolling: ((error?: unknown) => void) | null;
 }
 
 interface FakeBotOptions {
@@ -53,6 +55,7 @@ function makeBotFactory(opts: FakeBotOptions = {}): {
     textHandler: null,
     callbackHandler: null,
     sendMessageCalls: [],
+    killPolling: null,
   };
   const factory: BotFactory = () => {
     const bot: BotInstance = {
@@ -80,8 +83,11 @@ function makeBotFactory(opts: FakeBotOptions = {}): {
       setCallbackHandler(handler) {
         state.callbackHandler = handler;
       },
-      start(_onStart) {
+      start(_onStart, onStopped) {
         state.startCalls += 1;
+        // Captured so a test can simulate the polling loop dying the
+        // way grammy reports it (409 conflict, revoked token, …).
+        state.killPolling = (err?: unknown) => onStopped?.(err);
       },
       async stop() {
         state.stopCalls += 1;
@@ -141,6 +147,143 @@ describe("TelegramChannel", () => {
 
   afterEach(() => {
     rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("goes down when the polling loop dies underneath it", async () => {
+    // The bug this pins: `bot.start()` is fire-and-forget, so when
+    // Telegram killed the poller (a second process on the same token
+    // gets a 409) the channel stayed at `up` and silently received
+    // nothing. A dead poller must read as `down`, with the reason.
+    const { factory, state } = makeBotFactory();
+    const { lock } = fakeLock();
+    const statuses: ChannelStatus[] = [];
+    const channel = new TelegramChannel({
+      runtime: fakeRuntime(),
+      config: makeConfig(dir),
+      token: "1234:abcdef",
+      logger,
+      botFactory: factory,
+      lock,
+      emitStatus: (s) => statuses.push(s),
+    });
+    await channel.start();
+    expect(channel.state()).toBe("up");
+
+    state.killPolling?.(new Error("409: Conflict: terminated by other getUpdates"));
+
+    expect(channel.state()).toBe("down");
+    expect(channel.lastError()).toMatch(/Conflict/);
+    expect(statuses.map((s) => s.state)).toEqual(["starting", "up", "down"]);
+  });
+
+  it("adopts a token written to the env after construction", async () => {
+    // The bug this pins: the token is resolved once, in the
+    // constructor. A credential writer that persists the token itself
+    // -- the Integrations hub does -- left a running channel stuck on
+    // the boot-time value, so every start() landed in `down` with
+    // "missing TELEGRAM_BOT_TOKEN" until the operator relaunched.
+    const { factory } = makeBotFactory();
+    const { lock } = fakeLock();
+    delete process.env.TELEGRAM_BOT_TOKEN;
+    const channel = new TelegramChannel({
+      runtime: fakeRuntime(),
+      config: makeConfig(dir),
+      logger,
+      botFactory: factory,
+      lock,
+    });
+
+    await channel.start();
+    expect(channel.state()).toBe("down");
+    expect(channel.lastError()).toBe("missing TELEGRAM_BOT_TOKEN");
+
+    process.env.TELEGRAM_BOT_TOKEN = "1234:abcdef";
+    try {
+      channel.adoptTokenFromEnv();
+      await channel.start();
+      expect(channel.state()).toBe("up");
+    } finally {
+      delete process.env.TELEGRAM_BOT_TOKEN;
+    }
+  });
+
+  it("releases the lock when the poller dies, so a restart can re-acquire", async () => {
+    // Holding the lock after the poller is gone would make the channel
+    // permanently unstartable in this process.
+    const { factory, state } = makeBotFactory();
+    const lockState = fakeLock();
+    const channel = new TelegramChannel({
+      runtime: fakeRuntime(),
+      config: makeConfig(dir),
+      token: "1234:abcdef",
+      logger,
+      botFactory: factory,
+      lock: lockState.lock,
+    });
+    await channel.start();
+    expect(lockState.acquired).toBe(1);
+    state.killPolling?.(new Error("boom"));
+    expect(lockState.released).toBe(1);
+    await channel.start();
+    expect(channel.state()).toBe("up");
+    expect(lockState.acquired).toBe(2);
+  });
+
+  it("reports a reason even when the poller ends without an error", async () => {
+    const { factory, state } = makeBotFactory();
+    const { lock } = fakeLock();
+    const channel = new TelegramChannel({
+      runtime: fakeRuntime(),
+      config: makeConfig(dir),
+      token: "1234:abcdef",
+      logger,
+      botFactory: factory,
+      lock,
+    });
+    await channel.start();
+    state.killPolling?.();
+    expect(channel.state()).toBe("down");
+    expect(channel.lastError()).toBe("polling stopped unexpectedly");
+  });
+
+  it("does not report a deliberate stop as a failure", async () => {
+    // stop() ends the poller too; that must settle as `disabled`.
+    const { factory, state } = makeBotFactory();
+    const { lock } = fakeLock();
+    const statuses: ChannelStatus[] = [];
+    const channel = new TelegramChannel({
+      runtime: fakeRuntime(),
+      config: makeConfig(dir),
+      token: "1234:abcdef",
+      logger,
+      botFactory: factory,
+      lock,
+      emitStatus: (s) => statuses.push(s),
+    });
+    await channel.start();
+    await channel.stop();
+    state.killPolling?.();
+    expect(channel.state()).toBe("disabled");
+    expect(statuses.map((s) => s.state)).not.toContain("down");
+  });
+
+  it("scrubs the token out of a polling-death reason", async () => {
+    const { factory, state } = makeBotFactory();
+    const { lock } = fakeLock();
+    const channel = new TelegramChannel({
+      runtime: fakeRuntime(),
+      config: makeConfig(dir),
+      token: "1234:abcdef",
+      logger,
+      botFactory: factory,
+      lock,
+    });
+    await channel.start();
+    state.killPolling?.(
+      new Error(`polling https://api.telegram.org/bot123456789:${"A".repeat(35)}/getUpdates failed`),
+    );
+    expect(channel.lastError()).toContain("<token>");
+    expect(channel.lastError()).not.toContain("A".repeat(35));
   });
 
   it("starts up with valid token and emits starting then up", async () => {

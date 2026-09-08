@@ -59,6 +59,10 @@ import {
   type PrivacyPanelState,
 } from "./privacy/privacy-panel-state.js";
 import {
+  createInitialIntegrationsPanelState,
+  type IntegrationsPanelState,
+} from "./integrations/integrations-panel-state.js";
+import {
   createInitialProvidersPanelState,
   type ProvidersPanelState,
 } from "./providers/providers-panel-state.js";
@@ -114,11 +118,11 @@ export type TuiTab =
   | "llm"
   | "models"
   | "llm-logs"
-  | "telegram"
   | "mcp"
   | "providers"
   | "import"
-  | "privacy";
+  | "privacy"
+  | "integrations";
 
 /**
  * Top-level UI mode: `chat` is the default single-scroll openclaw-style
@@ -355,6 +359,26 @@ export interface TuiState {
    */
   composerNotice: string | null;
   /**
+   * Live provider outage, or `null` when the link is answering.
+   *
+   * Sticky on purpose: it survives the failed turn that ended the wait
+   * and stays on screen until a turn actually succeeds. Nine identical
+   * one-second failures with nothing on screen between them is what a
+   * dead provider used to look like from the operator's chair.
+   */
+  providerOutage: {
+    /** Scrubbed reason from the transport failure. */
+    reason: string;
+    /** Wall-clock ms already spent waiting in this outage. */
+    waitedMs: number;
+    /** Ceiling from `agent.providerWait.maxWaitMs`. */
+    maxWaitMs: number;
+    /** Retry attempts made so far. */
+    attempt: number;
+    /** `true` once the wait budget ran out and the turn failed. */
+    givenUp: boolean;
+  } | null;
+  /**
    * Open "delete the session?" confirmation, or `null`. Carries the
    * preview so the dialog can name what is about to go, and the focused
    * button so Enter has an unambiguous meaning.
@@ -510,6 +534,8 @@ export interface TuiState {
   importPanel: ImportPanelState;
   /** State slice driving the Privacy tab (data-egress preferences). */
   privacyPanel: PrivacyPanelState;
+  /** State slice driving the Integrations tab (third-party credentials). */
+  integrationsPanel: IntegrationsPanelState;
   /** Cloud / local LLM provider registry (hot-swap active text provider). */
   providersPanel: ProvidersPanelState;
   /** Unified operator LLM panel combining provider routing and local daemon state. */
@@ -702,6 +728,7 @@ export function createInitialTuiState(
     approvalPathDraft: null,
     composerHasSelection: false,
     composerNotice: null,
+    providerOutage: null,
     sessionDelete: null,
     uninstall: null,
     loadedSkills: [],
@@ -762,6 +789,7 @@ export function createInitialTuiState(
     mcpPanel: createInitialMcpPanelState(),
     importPanel: createInitialImportPanelState(),
     privacyPanel: createInitialPrivacyPanelState(),
+    integrationsPanel: createInitialIntegrationsPanelState(),
     providersPanel: createInitialProvidersPanelState(),
     llmPanel,
     fallbackPanel: createInitialFallbackPanelState(),

@@ -39,7 +39,7 @@ describe("section nav model", () => {
     expect(getCurrentSection(debugState("feed"))).toBe("observe");
     expect(getCurrentSection(debugState("logs"))).toBe("observe");
     expect(getCurrentSection(debugState("tasks"))).toBe("manage");
-    expect(getCurrentSection(debugState("telegram"))).toBe("manage");
+    expect(getCurrentSection(debugState("integrations"))).toBe("manage");
   });
 
   it("returns null sub-tab cycle from the run section", () => {

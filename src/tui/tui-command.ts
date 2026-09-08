@@ -588,6 +588,8 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onLocalModelsAutoRefreshStart: () => orchestrator.localModels.startAutoRefresh(),
         onLocalModelsPullRequested: (id, mode) =>
           void orchestrator.localModels.pullModel(id, mode),
+        onLocalModelsPullCancelRequested: (kind) =>
+          void orchestrator.localModels.cancelPull(kind),
         onLocalModelsSetActiveRequested: (id) =>
           void orchestrator.localModels.setActive(id),
         onLocalModelsUseManagedRequested: () =>
@@ -664,6 +666,16 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onAnalyticsSetEnabledRequested: (enabled) =>
           orchestrator.privacy.setAnalyticsEnabled(enabled),
         onPrivacyRefreshRequested: () => orchestrator.privacy.refresh(),
+        onIntegrationsRefreshRequested: () =>
+          orchestrator.integrations.refresh(),
+        onIntegrationFieldSaveRequested: (integrationId, fieldKey, value) =>
+          orchestrator.integrations.saveField(integrationId, fieldKey, value),
+        onIntegrationFieldClearRequested: (integrationId, fieldKey) =>
+          orchestrator.integrations.clearField(integrationId, fieldKey),
+        onIntegrationFieldToggleRequested: (integrationId, fieldKey) =>
+          orchestrator.integrations.toggleField(integrationId, fieldKey),
+        onIntegrationActionRequested: (integrationId, actionId) =>
+          orchestrator.integrations.runAction(integrationId, actionId),
         onUpdateConfirmed: () =>
           parsed.fakeUpdateVersion
             ? // The testing ground must never reach install.sh: the
@@ -761,6 +773,10 @@ export async function tuiCommand(args: string[]): Promise<number> {
   // on disk, start the daemon immediately so there is no extra
   // "run this command in another terminal" step. No-op in external
   // mode or when the prerequisites are missing.
+  // Downloads outlive the process: a worker a previous session started,
+  // one that died mid-way, or one that finished while nobody watched is
+  // picked up before the auto-start decides whether anything is missing.
+  orchestrator.localModels.adoptBackgroundDownloads();
   void orchestrator.localModels.autoStartIfReady();
 
   // Fire-and-forget startup version check. Surfaces an in-app update

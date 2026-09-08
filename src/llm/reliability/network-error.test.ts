@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { isNetworkError, readNetworkErrorCode } from "./network-error.js";
+import {
+  isNetworkError,
+  looksLikeDroppedConnection,
+  looksLikeMidStreamDrop,
+  readNetworkErrorCode,
+} from "./network-error.js";
 
 /** The shape undici throws from `fetch` when the connection fails. */
 function fetchFailed(cause: unknown): TypeError {
@@ -74,5 +79,102 @@ describe("isNetworkError", () => {
     expect(isNetworkError(new TypeError("x.map is not a function"))).toBe(false);
     expect(isNetworkError(new Error("tool crashed"))).toBe(false);
     expect(isNetworkError(undefined)).toBe(false);
+  });
+});
+
+describe("looksLikeDroppedConnection", () => {
+  // The message-only door into the same vocabulary `isNetworkError`
+  // uses, for consumers that only ever see the flattened text — the TUI
+  // chat formatter is the one in tree.
+  it.each([
+    "fetch failed",
+    "terminated",
+    "  terminated\n",
+    "TERMINATED",
+    "socket hang up",
+    "read ECONNRESET: socket hang up",
+    "other side closed",
+    "Client network socket disconnected before secure TLS connection was established",
+  ])("recognises %j", (message) => {
+    expect(looksLikeDroppedConnection(message)).toBe(true);
+  });
+
+  it.each([
+    "",
+    "connection reset",
+    "terminated the request early",
+    "the fetch failed because the grammar was rejected",
+    "upstream HTTP 502",
+    "x.map is not a function",
+  ])("does not claim %j", (message) => {
+    expect(looksLikeDroppedConnection(message)).toBe(false);
+  });
+
+  it("agrees with isNetworkError on a bare message-only error", () => {
+    // Same list, one definition: if these ever disagree the predicate
+    // has grown a second copy of the vocabulary.
+    for (const message of ["terminated", "socket hang up", "tool crashed"]) {
+      expect(looksLikeDroppedConnection(message)).toBe(
+        isNetworkError(new Error(message)),
+      );
+    }
+  });
+});
+
+describe("looksLikeMidStreamDrop", () => {
+  // The narrow key: only the messages that can ONLY come from a socket
+  // that was already carrying a request. This is what may be quoted back
+  // to a user as "your reply was cut off"; the broad predicate above is
+  // what drives classification and fallover.
+  it.each([
+    "terminated",
+    "  TERMINATED\n",
+    "socket hang up",
+    "read ECONNRESET: socket hang up",
+    "other side closed",
+  ])("recognises %j as a reply cut off", (message) => {
+    expect(looksLikeMidStreamDrop(message)).toBe(true);
+  });
+
+  it.each([
+    // undici's outer catch-all. Verified on Node 22.22.2: an
+    // unresolvable host (`ENOTFOUND`) and a closed port (`ECONNREFUSED`)
+    // BOTH throw `TypeError: fetch failed`, errno only on `cause`. So
+    // this message cannot support a claim that a reply was in flight,
+    // and `network-error.ts` / `classify-failure.ts` both document that
+    // MCP, embedding and vendor-SDK sockets arrive here bare.
+    "fetch failed",
+    // The TLS variant names a handshake that never completed — no
+    // request was ever sent.
+    "Client network socket disconnected before secure TLS connection was established",
+    "connection reset",
+    "terminated the request early",
+    "",
+  ])("does not claim %j", (message) => {
+    expect(looksLikeMidStreamDrop(message)).toBe(false);
+  });
+
+  it("is a strict subset of looksLikeDroppedConnection", () => {
+    // The classifier's list must stay the wider one: `isNetworkError`
+    // drives `shouldAdvance`/fallover, and narrowing IT would change
+    // which failures fall over to the next provider.
+    const family = [
+      "fetch failed",
+      "terminated",
+      "socket hang up",
+      "other side closed",
+      "Client network socket disconnected before secure TLS connection was established",
+      "network socket disconnected",
+      "x.map is not a function",
+    ];
+    for (const message of family) {
+      if (looksLikeMidStreamDrop(message)) {
+        expect(looksLikeDroppedConnection(message)).toBe(true);
+      }
+    }
+    // …and strictly smaller: at least one member of the broad family is
+    // deliberately not in the narrow one.
+    expect(looksLikeDroppedConnection("fetch failed")).toBe(true);
+    expect(looksLikeMidStreamDrop("fetch failed")).toBe(false);
   });
 });

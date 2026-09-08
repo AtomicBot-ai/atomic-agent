@@ -32,13 +32,18 @@ export interface BotInstance {
     handler: (u: InboundCallbackUpdate) => void | Promise<void>,
   ): void;
   /**
-   * Begin long-polling. Implementations are fire-and-forget — the
-   * polling loop runs in the background until `stop()` is called and
-   * any internal promise from grammy's `bot.start()` is left unawaited.
+   * Begin long-polling. Still fire-and-forget from the caller's point
+   * of view — the loop runs in the background — but the loop's *death*
+   * is now reported.
+   *
    * `onStart` fires once the first `getUpdates` request has been
-   * dispatched.
+   * dispatched. `onStopped` fires when the polling loop ends for any
+   * reason: a clean `stop()`, or a fatal error such as Telegram's 409
+   * when a second process starts polling the same token. Without it the
+   * channel had no way to learn its poller had died and went on
+   * reporting `up` while silently receiving nothing.
    */
-  start(onStart: () => void): void;
+  start(onStart: () => void, onStopped?: (error?: unknown) => void): void;
   /** Stop polling. Resolves when the in-flight update settles. */
   stop(): Promise<void>;
 }

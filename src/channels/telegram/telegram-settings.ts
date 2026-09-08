@@ -1,5 +1,6 @@
 import {
   readUserConfigFileSync,
+  resetConfigCache,
   USER_CONFIG_DEFAULTS,
   writeUserConfigFileSync,
   type TelegramParseMode,
@@ -75,6 +76,11 @@ export function writeTelegramSettings(
     },
   };
   writeUserConfigFileSync(paths.userConfigPath, next);
+  // Every reader of `telegram.*` goes through the process-wide config
+  // cache. Leaving it stale is how the Integrations hub ended up
+  // showing `Channel: off` next to a channel that was up -- and acting
+  // on that stale value the next time the operator pressed the toggle.
+  resetConfigCache();
   return {
     enabled: next.telegram.enabled,
     ownerUserId: next.telegram.ownerUserId,

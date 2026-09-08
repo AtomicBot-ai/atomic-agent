@@ -143,6 +143,11 @@ export class TelegramChannel {
   private currentState: ChannelStatus["state"] = "disabled";
   private currentError: string | null = null;
   private startInFlight = false;
+  /**
+   * True between `stop()` being called and the poller actually ending,
+   * so a deliberate shutdown is not misread as the poller dying.
+   */
+  private stopRequested = false;
 
   constructor(deps: TelegramChannelDeps) {
     this.deps = deps;
@@ -259,9 +264,13 @@ export class TelegramChannel {
           error: err instanceof Error ? err.message : String(err),
         });
       }
-      bot.start(() => {
-        this.deps.logger.info("telegram: polling started");
-      });
+      this.stopRequested = false;
+      bot.start(
+        () => {
+          this.deps.logger.info("telegram: polling started");
+        },
+        (err) => this.handlePollingStopped(bot, err),
+      );
       this.bot = bot;
       this.transition("up", null);
     } catch (err) {
@@ -276,6 +285,33 @@ export class TelegramChannel {
     }
   }
 
+  /**
+   * The polling loop ended. Anything other than a `stop()` we asked for
+   * is a failure: the channel is no longer receiving updates, so it
+   * must say so rather than sit at `up` looking healthy while every
+   * message goes unanswered.
+   *
+   * Guarded on the bot identity so a late callback from a previous
+   * generation (restart, token change) cannot knock down the live one.
+   */
+  private handlePollingStopped(bot: BotInstance, err?: unknown): void {
+    if (this.stopRequested) return;
+    if (this.bot !== bot) return;
+    const reason =
+      err === undefined
+        ? "polling stopped unexpectedly"
+        : scrubErrorMessage(err);
+    this.deps.logger.warn("telegram: polling loop ended", { reason });
+    this.bot = null;
+    this.currentBotIdentity = null;
+    try {
+      this.lock.release();
+    } catch {
+      // best effort — a stale lock is reclaimed on the next acquire
+    }
+    this.transition("down", reason);
+  }
+
   /** Stop polling, abort in-flight turns, cancel pairing, release the lock. Idempotent. */
   async stop(): Promise<void> {
     if (this.currentState === "disabled" && !this.bot) {
@@ -284,6 +320,7 @@ export class TelegramChannel {
       this.pairing.cancel();
       return;
     }
+    this.stopRequested = true;
     this.transition("stopping", null);
     this.pairing.cancel();
     for (const controller of this.inflight.values()) {
@@ -374,6 +411,22 @@ export class TelegramChannel {
     if (this.currentState === "up") {
       await this.restart();
     }
+  }
+
+  /**
+   * Re-read the token from the environment into the live channel.
+   *
+   * The channel resolves its token **once, at construction**, so a
+   * token written to `<stateDir>/.env` afterwards by someone else --
+   * the Integrations hub owns its own credential writes -- would never
+   * reach a running process: `start()` would keep landing in `down`
+   * with "missing TELEGRAM_BOT_TOKEN" until a restart. This is the
+   * seam for a writer that has already persisted the value and only
+   * needs the running channel to catch up; `setToken` stays the path
+   * for a writer that wants the persistence too.
+   */
+  adoptTokenFromEnv(): void {
+    this.currentToken = resolveTokenFromDeps(this.deps);
   }
 
   /**

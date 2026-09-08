@@ -146,6 +146,57 @@ export class TuiTelegramOrchestrator {
     );
   }
 
+  /**
+   * Hub seam: a credential writer has already persisted the token to
+   * `<stateDir>/.env`; push it into the live channel and bring the
+   * channel up, the way `submitToken` does for the token it writes
+   * itself.
+   *
+   * Without this the hub's save was inert in the running process --
+   * the channel resolved its token at construction, and its `restart()`
+   * only re-starts a channel that was already `up`, so a token pasted
+   * into a fresh install left the channel `disabled` with no poller
+   * and no way to pair until the next launch.
+   */
+  async adoptToken(): Promise<void> {
+    const channel = this.runtime.telegramChannel;
+    if (!channel) throw new Error("telegram channel unavailable");
+    channel.adoptTokenFromEnv();
+    this.refreshSettings();
+    if (!hasEnvToken()) {
+      // Token cleared: stop the channel rather than leaving a poller
+      // running on a credential the operator has just removed.
+      await this.setEnabled(false);
+      return;
+    }
+    // Start the channel, but deliberately NOT the connect chain: that
+    // chain ends in a 60-second pairing window, and the hub offers
+    // pairing as its own `p` action. Saving a token means "run this
+    // bot", not "claim an owner right now".
+    await this.setEnabled(true);
+  }
+
+  /**
+   * Bring the channel up so a pairing window can actually claim a DM.
+   * Throws with the channel's own reason when it cannot -- the caller
+   * shows that to the operator instead of an optimistic "DM your bot
+   * now" that nothing is listening for.
+   */
+  async ensureUpForPairing(): Promise<void> {
+    const channel = this.runtime.telegramChannel;
+    if (!channel) throw new Error("telegram channel unavailable");
+    if (channel.state() === "up") return;
+    channel.adoptTokenFromEnv();
+    await this.setEnabled(true);
+    if (this.runtime.telegramChannel?.state() === "up") return;
+    const reason = this.runtime.telegramChannel?.lastError();
+    throw new Error(
+      reason
+        ? `channel is not running: ${reason}`
+        : "channel is not running — set Channel to on first",
+    );
+  }
+
   /** Submit a token from the modal buffer. Empty / whitespace fails locally. */
   async submitToken(buffer: string): Promise<void> {
     if (this.advancing) return;

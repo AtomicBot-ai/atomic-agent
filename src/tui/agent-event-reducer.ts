@@ -38,6 +38,7 @@ import { reduceLlmPanelAction } from "./llm-panel/llm-panel-reducer.js";
 import { reduceFallbackPanelAction } from "./llm-panel/fallback/fallback-panel-reducer.js";
 import { reduceTelegramAction } from "./telegram/telegram-panel-reducer.js";
 import { reducePrivacyAction } from "./privacy/privacy-panel-reducer.js";
+import { reduceIntegrationsAction } from "./integrations/integrations-panel-reducer.js";
 import type { TuiAction } from "./tui-action.js";
 import type { RunOutcome, StreamingToolCall, TuiState } from "./tui-state.js";
 
@@ -76,6 +77,8 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
   if (telegramHandled !== null) return telegramHandled;
   const privacyHandled = reducePrivacyAction(state, action);
   if (privacyHandled !== null) return privacyHandled;
+  const integrationsHandled = reduceIntegrationsAction(state, action);
+  if (integrationsHandled !== null) return integrationsHandled;
   const composerSwitchHandled = reduceComposerSwitchAction(state, action);
   if (composerSwitchHandled !== null) return composerSwitchHandled;
   const uiHandled = reduceUiAction(state, action);
@@ -370,7 +373,15 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
         runStartedAt: Date.now(),
       };
     case "turn_finished":
-      return finishTurn(state, event.reason, event.stepCount);
+      // A turn that reached the model clears the outage: the link is
+      // demonstrably answering again. A failed one leaves it standing.
+      return finishTurn(
+        event.reason === "reply" || event.reason === "finish"
+          ? { ...state, providerOutage: null }
+          : state,
+        event.reason,
+        event.stepCount,
+      );
     case "step_started":
       return {
         ...appendFeed(state, {
@@ -510,9 +521,19 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
           llamaUrl: state.session.llamaUrl,
         },
       );
+      // The wait ran out and the turn died with it. Keep the outage on
+      // screen: the next message the operator sends will fail the same
+      // way, and a state that clears itself between attempts is how
+      // eight identical failures read as eight separate surprises.
+      const outageState: TuiState = state.providerOutage
+        ? {
+            ...state,
+            providerOutage: { ...state.providerOutage, givenUp: true },
+          }
+        : state;
       return finishRun(
         appendChatMessage(
-          appendFeed(state, {
+          appendFeed(outageState, {
             kind: "loop_failed",
             stepIndex: null,
             line: `» ${lastRunStatus}`,
@@ -522,6 +543,58 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
         ),
         { outcome: "failed", reason: event.error.message, lastRunStatus },
       );
+    }
+    case "provider_waiting": {
+      const line = `» provider not answering (${event.reason}) — retrying in ${Math.round(
+        event.nextRetryMs / 1000,
+      )}s, waited ${Math.round(event.waitedMs / 1000)}s of ${Math.round(
+        event.maxWaitMs / 1000,
+      )}s · Esc stops`;
+      const next: TuiState = {
+        ...state,
+        providerOutage: {
+          reason: event.reason,
+          waitedMs: event.waitedMs,
+          maxWaitMs: event.maxWaitMs,
+          attempt: event.attempt,
+          givenUp: false,
+        },
+      };
+      // One feed line per outage, not per retry: the backoff fires every
+      // few seconds at the start and the meta-row carries the live
+      // numbers. A wall of identical lines would bury the work above it.
+      return event.attempt === 1
+        ? appendFeed(next, {
+            kind: "runtime_info",
+            stepIndex: null,
+            line,
+            color: "yellow",
+          })
+        : next;
+    }
+    case "provider_recovered":
+      return appendFeed(
+        { ...state, providerOutage: null },
+        {
+          kind: "runtime_info",
+          stepIndex: null,
+          line: `» provider answered again after ${Math.round(
+            event.waitedMs / 1000,
+          )}s — continuing`,
+          color: "green",
+        },
+      );
+    case "task_continued": {
+      // A long task must not go quiet. One line per leg, carrying the
+      // two numbers someone deciding whether to wait actually wants:
+      // how far it has got, and how far it may go.
+      const minutes = Math.max(1, Math.round(event.elapsedMs / 60_000));
+      return appendFeed(state, {
+        kind: "runtime_info",
+        stepIndex: null,
+        line: `» still working — ${event.stepsTaken} steps, ${minutes} min (ceiling ${event.stepCeiling})`,
+        color: "gray",
+      });
     }
     case "loop_detected":
       // Deliberately not rendered: the loop detector's own `### notice`
