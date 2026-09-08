@@ -526,6 +526,9 @@ export function loadConfig(): AtomicAgentConfig {
       enabled: user.discord.enabled,
       ownerUserId: user.discord.ownerUserId,
     },
+    swarm: {
+      units: user.swarm.units.map((u) => ({ ...u })),
+    },
     composio: {
       enabled: user.composio.enabled,
       apiKeyEnv: user.composio.apiKeyEnv,

@@ -33,6 +33,7 @@ export const MANAGE_TABS: readonly TuiTab[] = [
   "memory",
   "mcp",
   "integrations",
+  "swarm",
   "llm",
   "import",
   "privacy",

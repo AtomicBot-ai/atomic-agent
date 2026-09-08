@@ -20,8 +20,8 @@ import {
   type PairingMode,
 } from "./pairing-mode.js";
 import {
-  writeTelegramSettings,
-  writeTelegramToken,
+  type TelegramSettingsSink,
+  defaultTelegramSettingsSink,
 } from "./telegram-settings.js";
 import { sendOutbound, type TelegramParseMode } from "./outbound-sender.js";
 import { formatTaskReportMessage } from "./task-report-message.js";
@@ -97,6 +97,8 @@ export class TelegramChannel {
   private readonly deps: TelegramChannelDeps;
   private readonly sessionPointer: TelegramSessionPointer;
   private readonly lock: ChannelLock;
+  /** Persistence target for the live-control setters (see `TelegramSettingsSink`). */
+  private readonly settings: TelegramSettingsSink;
   /** `chatKey -> AbortController` for the turn running in that chat/topic. */
   private readonly inflight = new Map<string, AbortController>();
   private readonly userConfigPath: string;
@@ -160,7 +162,10 @@ export class TelegramChannel {
   constructor(deps: TelegramChannelDeps) {
     this.deps = deps;
     this.currentToken = resolveTokenFromDeps(deps);
-    this.currentOwnerUserId = deps.config.telegram.ownerUserId;
+    this.currentOwnerUserId =
+      deps.ownerUserId !== undefined
+        ? deps.ownerUserId
+        : deps.config.telegram.ownerUserId;
     this.currentParseMode = deps.config.telegram.parseMode;
     this.stateDir = deps.config.paths.stateDir;
     this.userConfigPath =
@@ -170,6 +175,12 @@ export class TelegramChannel {
     );
     this.lock =
       deps.lock ?? new TelegramLockfile(resolve(this.stateDir, "telegram.lock"));
+    this.settings =
+      deps.settings ??
+      defaultTelegramSettingsSink({
+        userConfigPath: this.userConfigPath,
+        stateDir: this.stateDir,
+      });
     this.pairing = new DefaultPairingMode();
   }
 
@@ -192,6 +203,11 @@ export class TelegramChannel {
   }
 
   /** Live bot identity from the last successful `getMe`. */
+  /** Whether a bot token is currently resolved (env or explicit). */
+  hasToken(): boolean {
+    return this.currentToken !== null;
+  }
+
   getBotIdentity(): { id: number; username: string | null } | null {
     return this.currentBotIdentity;
   }
@@ -396,10 +412,7 @@ export class TelegramChannel {
    * outcome via `state()` + `lastError()`.
    */
   async setEnabled(enabled: boolean): Promise<void> {
-    writeTelegramSettings(
-      { userConfigPath: this.userConfigPath, stateDir: this.stateDir },
-      { enabled },
-    );
+    this.settings.writeSettings({ enabled });
     if (enabled) {
       await this.start();
     } else {
@@ -412,10 +425,7 @@ export class TelegramChannel {
    * inbound handler + approval bridge re-capture the new value.
    */
   async setOwnerUserId(ownerUserId: number | null): Promise<void> {
-    writeTelegramSettings(
-      { userConfigPath: this.userConfigPath, stateDir: this.stateDir },
-      { ownerUserId },
-    );
+    this.settings.writeSettings({ ownerUserId });
     this.currentOwnerUserId = ownerUserId;
     if (this.currentState === "up") {
       await this.restart();
@@ -429,10 +439,7 @@ export class TelegramChannel {
    * mirror so the next `start()` reads the fresh value.
    */
   async setParseMode(parseMode: TelegramParseMode): Promise<void> {
-    writeTelegramSettings(
-      { userConfigPath: this.userConfigPath, stateDir: this.stateDir },
-      { parseMode },
-    );
+    this.settings.writeSettings({ parseMode });
     this.currentParseMode = parseMode;
     if (this.currentState === "up") {
       await this.restart();
@@ -461,10 +468,7 @@ export class TelegramChannel {
    * lands in `down`. Never logs the value.
    */
   async setToken(token: string | null): Promise<void> {
-    writeTelegramToken(
-      { userConfigPath: this.userConfigPath, stateDir: this.stateDir },
-      token,
-    );
+    this.settings.writeToken(token);
     this.currentToken = token;
     if (this.currentState === "up") {
       await this.restart();

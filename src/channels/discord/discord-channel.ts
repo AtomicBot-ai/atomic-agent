@@ -93,6 +93,11 @@ export class DiscordChannel {
     return this.ownerId;
   }
 
+  /** Whether a bot token resolves right now (explicit dep or env). */
+  hasToken(): boolean {
+    return resolveDiscordToken(this.deps.token) !== null;
+  }
+
   getBotIdentity(): { id: string; username: string | null } | null {
     return this.botUserId
       ? { id: this.botUserId, username: this.botUsername }

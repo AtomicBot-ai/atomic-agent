@@ -1860,6 +1860,33 @@ Locked invariants (pinned by [src/channels/discord/discord-inbound-handler.test.
 8. **Reconnect, but not forever.** Drops retry with full-jitter exponential backoff and RESUME where Discord allows it; the codes Discord will never accept a retry for (4004 bad token, 4014 disallowed intents) stop the loop and surface instead of burning the per-day session-start budget.
 9. **One process per token.** `DiscordLockfile` guards it: two gateways on one token receive every event twice and would run every turn twice, side effects included. Discord does not prevent this the way Telegram's 409 does.
 
+## Swarm (extra bots)
+
+One runtime, several bots. Beside the primary `config.telegram` / `config.discord` channels, `config.swarm.units[]` (config v52, default `[]`) lists extra Telegram or Discord bots — each with its own token, owner, label and a free-text `role` — so an operator can put one bot in the ops group, another in a research server, a third as a DM-only assistant, and orchestrate them from one TUI. Runtime code lives in [src/channels/swarm/](src/channels/swarm/); the TUI tab in [src/tui/swarm/](src/tui/swarm/). The name is a light nod to the RTS the critters come from; nothing else about it is a joke.
+
+### Registry
+
+`SwarmRegistry` ([swarm-registry.ts](src/channels/swarm/swarm-registry.ts)) is constructed unconditionally in bootstrap and exposed as `runtime.swarm`. It owns one channel object per unit — a real `TelegramChannel` or `DiscordChannel`, the same classes the primaries use — and every mutation (`add`, `update`, `setToken`, `remove`, `restart`, `startPairing`) persists first, then reconciles the live channel, so config and TUI never disagree. Each unit gets its own **lockfile** (`<stateDir>/telegram-<id>.lock`), its own **session map** (`<stateDir>/<kind>-session-<id>.json`, see §Telegram "Sessions") and its own **`.env` key** (`tokenEnv`, e.g. `TELEGRAM_BOT_TOKEN_OPS`); the token never enters `config.json`.
+
+Two seams made a second Telegram instance possible without forking the class: `TelegramChannelDeps.ownerUserId` overrides the `config.telegram.ownerUserId` read, and `TelegramChannelDeps.settings` (a `TelegramSettingsSink`) is where `setEnabled` / `setOwnerUserId` / `setToken` persist. The primary channel gets the default sink (`config.telegram` + `TELEGRAM_BOT_TOKEN`); a unit gets a sink that writes its own `swarm.units[]` entry and its own `.env` key — which is also how a **pairing claim** on a unit's bot lands on the unit and never on the primary. Discord fixes its token at construction, so `setToken` on a Discord unit rebuilds the channel object.
+
+### TUI tab
+
+`/swarm` (Manage › Swarm, chord `b`). Rows: the two primaries first (read-only here — the Integrations hub owns them, a second writer would drift), then every unit with kind, `@username`, live state, owner and role. `a` opens a five-step wizard (kind → name → role → token → owner id); `e` edits a unit's name / role / owner / token; `enter` toggles; `p` opens a Telegram pairing window (with a live countdown); `s` restarts; `d` removes (`y` to confirm: stops the bot, forgets its token, drops the entry and its session map — sessions stay in `sessions.sqlite`). Typing modes swallow the keyboard, tokens are masked everywhere but the buffer being typed. Same slice shape as the other tabs: [swarm-panel-state.ts](src/tui/swarm/swarm-panel-state.ts), [swarm-actions.ts](src/tui/swarm/swarm-actions.ts), pure [swarm-panel-reducer.ts](src/tui/swarm/swarm-panel-reducer.ts), [swarm-key-bindings.ts](src/tui/swarm/swarm-key-bindings.ts), and [swarm-orchestrator.ts](src/tui/swarm/swarm-orchestrator.ts) as the only module touching `runtime.swarm`.
+
+### The hatchery
+
+The bottom three rows of the pane are [zergling-strip.tsx](src/tui/swarm/zergling-strip.tsx): eggs along the bottom and one small critter per bot that is switched on and holds a token, scurrying left and right. Adding such a bot cracks an egg and a hatchling climbs out; removing one sends the youngest back underground. Rendering is two pixels per cell with `▀`/`▄` half-blocks (six pixel rows), the scene logic is the pure module [swarm-critters.ts](src/tui/swarm/swarm-critters.ts) so it is pinned without a terminal. The interval (~5 fps) lives in the component and dies with the tab — nothing ticks while another tab is shown — and the strip is skipped when the pane is under nine rows or 24 columns. The sprites are original pixel work in the spirit of the classic RTS critter, not a copy of any game's art.
+
+Locked invariants (pinned by [src/channels/swarm/swarm-registry.test.ts](src/channels/swarm/swarm-registry.test.ts), [src/config/config-schema.test.ts](src/config/config-schema.test.ts), [src/tui/swarm/swarm-panel-reducer.test.ts](src/tui/swarm/swarm-panel-reducer.test.ts), [swarm-key-bindings.test.ts](src/tui/swarm/swarm-key-bindings.test.ts), [swarm-orchestrator.test.ts](src/tui/swarm/swarm-orchestrator.test.ts), [components/swarm-panel.test.tsx](src/tui/swarm/components/swarm-panel.test.tsx), [swarm-critters.test.ts](src/tui/swarm/swarm-critters.test.ts)):
+
+1. **A unit never touches the primary's settings.** `setOwnerUserId` / `setEnabled` / `setToken` on a unit's channel go through the unit's sink; `config.telegram` and `TELEGRAM_BOT_TOKEN` stay untouched.
+2. **No token, no start.** A unit without a resolvable token is constructed but stays `disabled`; `startEnabled` only starts enabled units that have one.
+3. **Ids and env keys are unique and validated** (`[a-z0-9][a-z0-9-]{0,31}`, `[A-Z_][A-Z0-9_]*`); a malformed unit fails config parsing with the field named rather than constructing a channel that can never start.
+4. **Remove is complete.** Channel stopped, `.env` key deleted, config entry dropped, session map deleted; sessions in the store are left alone.
+5. **Primaries are read-only in the Swarm tab.** Every action on a `primary:*` row answers with a pointer to `/integrations`.
+6. **The hatchery is decoration.** It never blocks input, is skipped when the pane is small, freezes under `animate={false}`, and its count tracks `enabled && hasToken`, never the raw row count.
+
 ## Integrations hub
 
 The `Integrations` tab ([src/tui/integrations/](src/tui/integrations/)) is the single place an operator puts third-party credentials. Before it, every integration grew its own surface — Telegram had a tab, LLM providers had a wizard, Composio had nothing — so "where do I put my key" required already knowing which kind of thing a given service was.

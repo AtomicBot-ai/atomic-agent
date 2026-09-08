@@ -1538,3 +1538,45 @@ describe("numeric coercion of string config values", () => {
     ).toThrow(/tokenBudget/);
   });
 });
+
+describe("swarm units (config v52)", () => {
+  const base = { version: USER_CONFIG_VERSION };
+  const unit = {
+    id: "ops",
+    kind: "telegram",
+    label: "Ops",
+    role: "deploys",
+    enabled: true,
+    tokenEnv: "TELEGRAM_BOT_TOKEN_OPS",
+    ownerUserId: "42",
+  };
+
+  it("defaults to no units, including for a v51 file that predates the block", () => {
+    expect(parseUserConfigFile(base).swarm).toEqual({ units: [] });
+    expect(parseUserConfigFile({ version: 51 }).swarm).toEqual({ units: [] });
+  });
+
+  it("accepts a well-formed unit list and fills optional fields", () => {
+    const parsed = parseUserConfigFile({ ...base, swarm: { units: [unit, { ...unit, id: "g", kind: "discord", tokenEnv: "DISCORD_BOT_TOKEN_G", role: undefined, ownerUserId: null, enabled: undefined }] } });
+    expect(parsed.swarm.units).toEqual([
+      unit,
+      { id: "g", kind: "discord", label: "Ops", role: "", enabled: false, tokenEnv: "DISCORD_BOT_TOKEN_G", ownerUserId: null },
+    ]);
+  });
+
+  it("rejects malformed units with the field named", () => {
+    const bad = (patch: Record<string, unknown>) => () =>
+      parseUserConfigFile({ ...base, swarm: { units: [{ ...unit, ...patch }] } });
+    expect(bad({ id: "Ops Bot" })).toThrow(/swarm\.units\[0\]\.id/);
+    expect(bad({ kind: "slack" })).toThrow(/swarm\.units\[0\]\.kind/);
+    expect(bad({ label: "" })).toThrow(/swarm\.units\[0\]\.label/);
+    expect(bad({ tokenEnv: "lower-case" })).toThrow(/swarm\.units\[0\]\.tokenEnv/);
+    expect(bad({ ownerUserId: "not-a-number" })).toThrow(/swarm\.units\[0\]\.ownerUserId/);
+    expect(() => parseUserConfigFile({ ...base, swarm: { units: "nope" } })).toThrow(/swarm\.units/);
+  });
+
+  it("rejects duplicate ids and duplicate token env names", () => {
+    expect(() => parseUserConfigFile({ ...base, swarm: { units: [unit, { ...unit, tokenEnv: "TELEGRAM_BOT_TOKEN_X" }] } })).toThrow(/duplicate id/);
+    expect(() => parseUserConfigFile({ ...base, swarm: { units: [unit, { ...unit, id: "two" }] } })).toThrow(/duplicate token env/);
+  });
+});

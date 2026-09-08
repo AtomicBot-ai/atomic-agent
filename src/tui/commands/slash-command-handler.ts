@@ -282,6 +282,12 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
         { type: "tab_changed", tab: "integrations" },
         { type: "integrations_message_cleared" },
       ]);
+    case "swarm":
+      return pureActions([
+        { type: "ui_mode_set", mode: "debug" },
+        { type: "tab_changed", tab: "swarm" },
+        { type: "swarm_message_cleared" },
+      ]);
     case "llm":
       return dispatchLlmSub(parsed.args);
     case "model":

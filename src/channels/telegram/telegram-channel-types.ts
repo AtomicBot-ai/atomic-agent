@@ -4,6 +4,7 @@ import type { AtomicAgentConfig } from "../../config/index.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 import type { AgentMetrics } from "../../tracing/agent-metrics.js";
 
+import type { TelegramSettingsSink } from "./telegram-settings.js";
 import type { InboundCallbackUpdate } from "./approval-bridge.js";
 import type { InboundTextUpdate } from "./inbound-handler.js";
 import type { TelegramApi } from "./outbound-sender.js";
@@ -85,6 +86,17 @@ export interface TelegramChannelDeps {
    * `config.paths.stateDir`. Tests point this at a tmp file.
    */
   userConfigPath?: string;
+  /**
+   * Owner override for a swarm unit. `undefined` (the primary channel)
+   * reads `config.telegram.ownerUserId`; a unit passes its own.
+   */
+  ownerUserId?: number | null;
+  /**
+   * Where `setEnabled` / `setOwnerUserId` / `setToken` persist. Defaults
+   * to `config.telegram` + `TELEGRAM_BOT_TOKEN`; a swarm unit supplies a
+   * sink that writes its own config entry and `.env` key.
+   */
+  settings?: TelegramSettingsSink;
 }
 
 /**

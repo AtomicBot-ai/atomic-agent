@@ -27,6 +27,7 @@ import { MemoryPanel } from "./memory-panel.js";
 import { ImportPanel } from "./import-panel.js";
 import { PrivacyPanel } from "../privacy/components/privacy-panel.js";
 import { IntegrationsPanel } from "../integrations/components/integrations-panel.js";
+import { SwarmPanel } from "../swarm/components/swarm-panel.js";
 import { ProvidersPanel } from "./providers-panel.js";
 
 interface DebugPaneProps {
@@ -163,6 +164,7 @@ function buildManageTabs(state: TuiState): SubTab[] {
     { id: "memory", label: `Memory${suffix(state.memoryPanel.rows.length)}` },
     { id: "mcp", label: `MCP${suffix(state.mcpPanel.rows.length)}` },
     { id: "integrations", label: integrationsTabLabel(state) },
+    { id: "swarm", label: swarmTabLabel(state) },
     { id: "llm", label: "LLM" },
     { id: "import", label: "Import" },
     { id: "privacy", label: "Privacy" },
@@ -358,6 +360,8 @@ function ActiveDebugTab({
           maxRows={compactRows}
         />
       );
+    case "swarm":
+      return <SwarmPanel panel={state.swarmPanel} maxRows={compactRows} />;
     default:
       return <EventFeed state={state} maxVisible={maxVisible} />;
   }
@@ -377,6 +381,12 @@ function suffix(count: number): string {
  * Integrations tab label with a configured-count suffix, so an operator
  * can see at a glance whether anything is wired up without opening it.
  */
+/** Swarm tab label with a bot count, so the strip shows the fleet size. */
+function swarmTabLabel(state: TuiState): string {
+  const n = state.swarmPanel.rows.length;
+  return n > 0 ? `Swarm (${n})` : "Swarm";
+}
+
 function integrationsTabLabel(state: TuiState): string {
   const rows = state.integrationsPanel.rows;
   const ready = rows.filter(

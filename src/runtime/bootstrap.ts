@@ -7,6 +7,7 @@ import {
   getConfig,
   getTrustConfigPaths,
   resetConfigCache,
+  getUserConfigPath,
 } from "../config/index.js";
 
 import type { LlmStreamParams } from "../agent/step-executor.js";
@@ -20,6 +21,7 @@ import {
   DiscordChannel,
   DiscordLockfile,
 } from "../channels/discord/index.js";
+import { SwarmRegistry } from "../channels/swarm/index.js";
 import type { BotFactory } from "../channels/telegram/index.js";
 
 import {
@@ -444,6 +446,13 @@ export interface AgentRuntime {
    * constructed one. Same contract as `telegramChannel`.
    */
   readonly discordChannel: DiscordChannel | null;
+  /**
+   * Extra Telegram / Discord bots (`config.swarm.units`), or `null` when
+   * the build never constructed the registry. Same contract as the
+   * primary channels: constructed unconditionally, units started only
+   * when enabled with a token.
+   */
+  readonly swarm: SwarmRegistry | null;
   /**
    * MCP client manager. **Always non-null** — constructed even when
    * `config.mcp.servers[]` is empty so the live-control surface stays
@@ -2235,6 +2244,7 @@ export async function createAgentRuntime(
   // resolves it lazily so the order-of-construction concern is local.
   let telegramChannelForShutdown: TelegramChannel | null = null;
   let discordChannelForShutdown: DiscordChannel | null = null;
+  let swarmForShutdown: SwarmRegistry | null = null;
   let shutdownCalled = false;
   const shutdown = async (): Promise<void> => {
     if (shutdownCalled) return;
@@ -2267,6 +2277,15 @@ export async function createAgentRuntime(
         await discordChannelForShutdown.stop();
       } catch (err) {
         logger.warn("discord: shutdown failed", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+    if (swarmForShutdown) {
+      try {
+        await swarmForShutdown.stopAll();
+      } catch (err) {
+        logger.warn("swarm: shutdown failed", {
           error: err instanceof Error ? err.message : String(err),
         });
       }
@@ -2924,6 +2943,7 @@ export async function createAgentRuntime(
     webhookSessionStore,
     telegramChannel: null,
     discordChannel: null,
+    swarm: null,
     mcpManager,
     providerRegistry,
     capabilities,
@@ -2953,6 +2973,7 @@ export async function createAgentRuntime(
   } as AgentRuntime & {
     telegramChannel: TelegramChannel | null;
     discordChannel: DiscordChannel | null;
+    swarm: SwarmRegistry | null;
   };
   Object.defineProperty(runtime, "skillCatalog", {
     enumerable: true,
@@ -3017,6 +3038,25 @@ export async function createAgentRuntime(
       });
     });
   }
+
+  // Swarm: extra bots beside the two primaries. Constructed
+  // unconditionally so the Swarm tab can list them; each enabled unit
+  // with a token is started fire-and-forget, like the primaries.
+  const swarm = new SwarmRegistry({
+    runtime,
+    config,
+    logger,
+    approvals,
+    approvalRouter,
+    stateDir: config.paths.stateDir,
+    userConfigFile: getUserConfigPath(config.paths.stateDir),
+    ...(options.overrides?.telegramBotFactory
+      ? { telegramBotFactory: options.overrides.telegramBotFactory }
+      : {}),
+  });
+  runtime.swarm = swarm;
+  swarmForShutdown = swarm;
+  void swarm.startEnabled();
 
   // Deferred from the Scheduler construction site above: the first
   // due tick must not race the Telegram channel construction, so task

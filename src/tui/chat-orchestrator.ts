@@ -46,6 +46,7 @@ import { FallbackOrchestrator } from "./llm-panel/fallback/fallback-orchestrator
 import { TuiTelegramOrchestrator } from "./telegram/tui-telegram-orchestrator.js";
 import { PrivacyOrchestrator } from "./privacy/privacy-orchestrator.js";
 import { IntegrationsOrchestrator } from "./integrations/integrations-orchestrator.js";
+import { SwarmOrchestrator } from "./swarm/swarm-orchestrator.js";
 import type { TuiEventBus } from "./tui-app.js";
 import { formatAgentErrorForChat } from "./format-agent-error-for-chat.js";
 import {
@@ -197,6 +198,7 @@ export class ChatOrchestrator {
   public readonly telegram: TuiTelegramOrchestrator;
   public readonly privacy: PrivacyOrchestrator;
   public readonly integrations: IntegrationsOrchestrator;
+  public readonly swarm: SwarmOrchestrator;
 
   constructor(
     private readonly runtime: AgentRuntime,
@@ -239,6 +241,7 @@ export class ChatOrchestrator {
     // The hub drives Telegram through its existing orchestrator rather
     // than reimplementing pairing / restart / enable.
     this.integrations = new IntegrationsOrchestrator(runtime, bus, this.telegram);
+    this.swarm = new SwarmOrchestrator(runtime, bus);
     // Tap the bus rather than the runtime handler: what the reducer was
     // offered is exactly what a switch-back may need to replay, session
     // tags included. `record` no-ops for sessions without a running
@@ -1276,6 +1279,7 @@ export class ChatOrchestrator {
     this.memory.shutdown();
     this.mcp.shutdown();
     this.import.shutdown();
+    this.swarm.dispose();
     await this.localModels.shutdown();
     this.llmHealth.stop();
     this.telegram.shutdown();
