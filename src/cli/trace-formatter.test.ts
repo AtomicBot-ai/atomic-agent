@@ -30,6 +30,29 @@ function render(events: readonly TraceEvent[]): string {
   return formatTraceChronology(events);
 }
 
+describe("formatTraceChronology completion_truncated", () => {
+  it("prints the cause, the counts and the retry on one line", () => {
+    const out = render([
+      {
+        type: "completion_truncated",
+        seq: 3,
+        sessionId: "s-1",
+        ts: Date.parse("2026-09-01T10:00:00.000Z"),
+        turnIndex: 0,
+        stepIndex: 2,
+        cause: "reply_cap",
+        completionTokens: 8_192,
+        promptTokens: 6_000,
+        requestedMaxTokens: 8_192,
+        retry: "raise_cap",
+        retryValue: 32_768,
+      },
+    ]);
+    expect(out).toContain("completion_truncated");
+    expect(out).toContain("step=2 cause=reply_cap reply=8192 prompt=6000 cap=8192 retry=raise_cap:32768");
+  });
+});
+
 describe("formatTraceChronology loop_detected", () => {
   it("renders the bare line for a trace that predates the detector fields", () => {
     const line = render([loopDetected({ tool: "noop", count: 3 })]);

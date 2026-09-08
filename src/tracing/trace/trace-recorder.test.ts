@@ -270,6 +270,50 @@ describe("createTraceRecorder", () => {
     });
   });
 
+  it("records a truncation retry with its cause, counts and the retry taken", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-trunc", emit, now });
+    rec.onAgentEvent({ type: "turn_started", turnIndex: 2 });
+    rec.onAgentEvent({
+      type: "completion_truncated",
+      stepIndex: 5,
+      cause: "reply_cap",
+      completionTokens: 8_192,
+      promptTokens: 6_000,
+      requestedMaxTokens: 8_192,
+      retry: { kind: "raise_cap", maxTokens: 32_768 },
+    });
+    rec.onAgentEvent({
+      type: "completion_truncated",
+      stepIndex: 6,
+      cause: "context_window",
+      completionTokens: 2_768,
+      promptTokens: 30_000,
+      requestedMaxTokens: 8_192,
+      retry: { kind: "fit_window", contextWindow: 32_768 },
+    });
+    const recorded = events.filter((e) => e.type === "completion_truncated");
+    expect(recorded).toEqual([
+      expect.objectContaining({
+        type: "completion_truncated",
+        turnIndex: 2,
+        stepIndex: 5,
+        cause: "reply_cap",
+        completionTokens: 8_192,
+        promptTokens: 6_000,
+        requestedMaxTokens: 8_192,
+        retry: "raise_cap",
+        retryValue: 32_768,
+      }),
+      expect.objectContaining({
+        stepIndex: 6,
+        cause: "context_window",
+        retry: "fit_window",
+        retryValue: 32_768,
+      }),
+    ]);
+  });
+
   it("carries the read-repeat detector payload into the recorded event", () => {
     // A `read_repeat` trace line is unreadable without the file, the
     // range and the fingerprint pair: those three are the whole evidence

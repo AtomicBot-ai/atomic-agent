@@ -9,6 +9,7 @@ import {
   QWEN_THINK_PROFILE,
 } from "../llm/model-profile.js";
 import { REPAIR_MAX_TOKENS } from "./step-executor.js";
+import { OpenAiHttpError } from "../llm/provider/openai/openai-http.js";
 import { buildGrammar } from "../llm/grammar/build-grammar.js";
 import { createEmptySessionState } from "../session/session-state.js";
 import { DEFAULT_TOOL_DESCRIPTORS } from "../prompt/tool-descriptors.js";
@@ -2820,4 +2821,291 @@ describe("executeStep repair parse transport", () => {
     expect(outcome.toolCalls[0]!.args).toEqual({ text: "served-native" });
     expect(outcome.toolResults[0]!.status).toBe("ok");
   });
+});
+
+describe("truncated completions", () => {
+  function makeNativeRegistry() {
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "reply",
+      description: "reply",
+      readonly: true,
+      async run(args: Record<string, unknown>) {
+        return compressToolResult({
+          tool: "reply",
+          status: "ok",
+          output: String(args.text ?? ""),
+        });
+      },
+    });
+    return registry;
+  }
+
+  function nativeCompletion(overrides: Partial<CompletionResult>): CompletionResult {
+    return {
+      content: "",
+      reasoningContent: "",
+      stop: true,
+      truncated: false,
+      timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5 },
+      cacheHitTokens: 0,
+      slotId: -1,
+      modelId: "ornith-1.0-35b",
+      ...overrides,
+    };
+  }
+
+  function ctxFor(session: ReturnType<typeof createEmptySessionState>, maxTokens?: number) {
+    return {
+      session,
+      toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      stepIndex: 0,
+      signal: new AbortController().signal,
+      userMessage: "x",
+      ...(maxTokens !== undefined ? { maxTokens } : {}),
+    };
+  }
+
+  it("native_tools: a reply the server marked `length` fails closed even when its tool calls parse", async () => {
+    // Pinned in full by native-tool-call-execution-integrity.test.ts
+    // ("explicit finish_reason: length: executions = 0"): a cut reply
+    // dispatches nothing — the agent loop re-asks with a different
+    // request instead. Kept here so the truncation detail travels too.
+    const session = createEmptySessionState({ id: "s-trunc-closed", workingDir: "/w" });
+    await expect(
+      executeStep(ctxFor(session), {
+        registry: makeNativeRegistry(),
+        slotManager: new SlotManager(2),
+        async llmComplete() {
+          return nativeCompletion({
+            stop: false,
+            truncated: true,
+            finishReason: "length",
+            usage: { promptTokens: 6_000, completionTokens: 8_192, totalTokens: 14_192 },
+            toolCalls: [
+              {
+                id: "call-1",
+                type: "function",
+                function: { name: "reply", arguments: JSON.stringify({ text: "done" }) },
+              },
+            ],
+          });
+        },
+        grammar: "",
+        profile: PLAIN_INSTRUCT_PROFILE,
+        toolTransport: "native_tools",
+        toolCallAdapter: null,
+        supportsSlotAffinity: false,
+      }),
+    ).rejects.toMatchObject({
+      name: "ModelError",
+      reason: "truncated",
+      truncation: { cause: "reply_cap" },
+    });
+  });
+
+  it("native_tools: a cut short of the cap inside a known window is the provider's output limit", async () => {
+    const session = createEmptySessionState({ id: "s-trunc-limit", workingDir: "/w" });
+    await expect(
+      executeStep(ctxFor(session), {
+        registry: makeNativeRegistry(),
+        slotManager: new SlotManager(2),
+        contextWindow: 131_072,
+        async llmComplete() {
+          return nativeCompletion({
+            reasoningContent: "thinking…",
+            stop: false,
+            truncated: true,
+            finishReason: "length",
+            usage: { promptTokens: 6_000, completionTokens: 4_096, totalTokens: 10_096 },
+          });
+        },
+        grammar: "",
+        profile: PLAIN_INSTRUCT_PROFILE,
+        toolTransport: "native_tools",
+        toolCallAdapter: null,
+        supportsSlotAffinity: false,
+      }),
+    ).rejects.toMatchObject({
+      name: "ModelError",
+      truncation: { cause: "output_limit", completionTokens: 4_096 },
+    });
+  });
+
+  it("keeps the provider's own wording on a 400 that refuses the request's size", async () => {
+    const session = createEmptySessionState({ id: "s-size-400", workingDir: "/w" });
+    await expect(
+      executeStep(ctxFor(session), {
+        registry: makeNativeRegistry(),
+        slotManager: new SlotManager(2),
+        async llmComplete() {
+          throw new OpenAiHttpError(
+            "openai provider 400: max_tokens is too large: 32768. This model supports at most 16384 completion tokens",
+            400,
+            "https://x/v1/chat/completions",
+            false,
+            null,
+            "vendor",
+          );
+        },
+        grammar: "",
+        profile: PLAIN_INSTRUCT_PROFILE,
+        toolTransport: "native_tools",
+        toolCallAdapter: null,
+        supportsSlotAffinity: false,
+      }),
+    ).rejects.toMatchObject({
+      name: "TransportError",
+      status: 400,
+      message: expect.stringContaining("at most 16384 completion tokens"),
+    });
+  });
+
+  it("native_tools: a call whose arguments were cut mid-JSON is a truncation, with the cause attached", async () => {
+    const session = createEmptySessionState({ id: "s-trunc-cut", workingDir: "/w" });
+    await expect(
+      executeStep(ctxFor(session), {
+        registry: makeNativeRegistry(),
+        slotManager: new SlotManager(2),
+        async llmComplete() {
+          return nativeCompletion({
+            stop: false,
+            truncated: true,
+            finishReason: "length",
+            usage: { promptTokens: 6_000, completionTokens: 8_192, totalTokens: 14_192 },
+            toolCalls: [
+              {
+                id: "call-1",
+                type: "function",
+                function: { name: "reply", arguments: '{"text":"the reply was going to be very lo' },
+              },
+            ],
+          });
+        },
+        grammar: "",
+        profile: PLAIN_INSTRUCT_PROFILE,
+        toolTransport: "native_tools",
+        toolCallAdapter: null,
+        supportsSlotAffinity: false,
+      }),
+    ).rejects.toMatchObject({
+      name: "ModelError",
+      reason: "truncated",
+      stage: "initial",
+      truncation: {
+        cause: "reply_cap",
+        completionTokens: 8_192,
+        promptTokens: 6_000,
+        requestedMaxTokens: 8_192,
+      },
+    });
+  });
+
+  it("native_tools: a reply cut inside its reasoning is a truncation against the step's own cap", async () => {
+    // The agent loop's retry hands the step a raised cap; the request
+    // must carry it, and the failure detector must judge against it.
+    const session = createEmptySessionState({ id: "s-trunc-cap", workingDir: "/w" });
+    const capsSeen: Array<number | undefined> = [];
+    await expect(
+      executeStep(ctxFor(session, 32_768), {
+        registry: makeNativeRegistry(),
+        slotManager: new SlotManager(2),
+        async llmComplete({ maxTokens }) {
+          capsSeen.push(maxTokens);
+          return nativeCompletion({
+            reasoningContent: "Let me think about this very carefully…",
+            stop: false,
+            truncated: true,
+            finishReason: "length",
+            usage: { promptTokens: 6_000, completionTokens: 32_768, totalTokens: 38_768 },
+          });
+        },
+        grammar: "",
+        profile: PLAIN_INSTRUCT_PROFILE,
+        toolTransport: "native_tools",
+        toolCallAdapter: null,
+        supportsSlotAffinity: false,
+      }),
+    ).rejects.toMatchObject({
+      name: "ModelError",
+      truncation: { cause: "reply_cap", requestedMaxTokens: 32_768 },
+    });
+    expect(capsSeen).toEqual([32_768]);
+  });
+
+  it("native_tools: the one-shot repair runs under the step's cap, never the 1024 grammar cap", async () => {
+    // A reasoning model on the chat transport thinks server-side; 1024
+    // tokens is a guaranteed truncation there, which turned every repair
+    // into `Turn failed [model]: model response truncated`.
+    const session = createEmptySessionState({ id: "s-trunc-repair", workingDir: "/w" });
+    const capsSeen: Array<number | undefined> = [];
+    let calls = 0;
+    const outcome = await executeStep(ctxFor(session, 20_000), {
+      registry: makeNativeRegistry(),
+      slotManager: new SlotManager(2),
+      async llmComplete({ maxTokens }) {
+        capsSeen.push(maxTokens);
+        calls += 1;
+        if (calls === 1) {
+          // Reasoning-only: survives the first check, fails the parse,
+          // routes into the repair.
+          return nativeCompletion({ reasoningContent: "I should reply now." });
+        }
+        return nativeCompletion({
+          toolCalls: [
+            {
+              id: "call-repair",
+              type: "function",
+              function: { name: "reply", arguments: JSON.stringify({ text: "ok" }) },
+            },
+          ],
+        });
+      },
+      grammar: "",
+      profile: PLAIN_INSTRUCT_PROFILE,
+      toolTransport: "native_tools",
+      toolCallAdapter: null,
+      supportsSlotAffinity: false,
+    });
+    expect(outcome.terminal).toBe("turn");
+    expect(capsSeen).toEqual([20_000, 20_000]);
+    expect(capsSeen[1]).toBeGreaterThan(REPAIR_MAX_TOKENS);
+  });
+
+  it("native_tools: a repair that comes back cut off names the repair stage and its cap", async () => {
+    const session = createEmptySessionState({ id: "s-trunc-repair-cut", workingDir: "/w" });
+    let calls = 0;
+    await expect(
+      executeStep(ctxFor(session), {
+        registry: makeNativeRegistry(),
+        slotManager: new SlotManager(2),
+        async llmComplete() {
+          calls += 1;
+          if (calls === 1) {
+            return nativeCompletion({ reasoningContent: "I should reply now." });
+          }
+          return nativeCompletion({
+            reasoningContent: "Let me reconsider…",
+            stop: false,
+            truncated: true,
+            finishReason: "length",
+            usage: { promptTokens: 6_100, completionTokens: 8_192, totalTokens: 14_292 },
+          });
+        },
+        grammar: "",
+        profile: PLAIN_INSTRUCT_PROFILE,
+        toolTransport: "native_tools",
+        toolCallAdapter: null,
+        supportsSlotAffinity: false,
+      }),
+    ).rejects.toMatchObject({
+      name: "ModelError",
+      reason: "truncated",
+      stage: "repair",
+      truncation: { cause: "reply_cap", requestedMaxTokens: 8_192 },
+    });
+  });
+
 });

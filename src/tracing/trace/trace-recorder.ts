@@ -408,6 +408,25 @@ export function createTraceRecorder(
             waitedMs: event.waitedMs,
           });
           return;
+        case "completion_truncated":
+          push({
+            type: "completion_truncated",
+            seq: nextSeq(),
+            sessionId,
+            ts: now(),
+            turnIndex: currentTurnIndex,
+            stepIndex: event.stepIndex,
+            cause: event.cause,
+            completionTokens: event.completionTokens,
+            promptTokens: event.promptTokens,
+            requestedMaxTokens: event.requestedMaxTokens,
+            retry: event.retry.kind,
+            retryValue:
+              event.retry.kind === "raise_cap"
+                ? event.retry.maxTokens
+                : event.retry.contextWindow,
+          });
+          return;
         case "loop_detected":
           push({
             type: "loop_detected",

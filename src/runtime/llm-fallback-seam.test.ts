@@ -174,6 +174,27 @@ describe("createFallbackStreamer (real bootstrap seam)", () => {
     expect(result.servedTransport).not.toBe("native_tools");
   });
 
+  it("forwards the per-request reply cap to the served link, like the unary seam", async () => {
+    // The agent loop's truncation retry raises `maxTokens` per step, and
+    // every turn streams. A cap that reached only the unary path was a
+    // retry that changed nothing on the wire.
+    const seen: Array<number | undefined> = [];
+    const providers = new Map<string, LlmProvider>([
+      [
+        "cloud",
+        fakeProvider("cloud", "native_tools", async (request) => {
+          seen.push(request.maxTokens);
+          return answer("cloud");
+        }),
+      ],
+      ["local", fakeProvider("local", "grammar", async () => answer("local"))],
+    ]);
+    const streamer = createFallbackStreamer(seamDeps(providers));
+    await drain(streamer({ ...baseParams, maxTokens: 32_768 }));
+    await drain(streamer(baseParams));
+    expect(seen).toEqual([32_768, undefined]);
+  });
+
   it("stamps the primary's transport when the stream opens on the primary", async () => {
     const providers = new Map<string, LlmProvider>([
       ["cloud", fakeProvider("cloud", "native_tools", async () => answer("cloud"))],

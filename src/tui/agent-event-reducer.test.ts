@@ -856,6 +856,46 @@ describe("reduceTuiState", () => {
   });
 });
 
+describe("truncated completion", () => {
+  it("says what was cut and what the retry changes", () => {
+    const next = reduceTuiState(createInitialTuiState(fakeSession()), {
+      type: "agent_event",
+      event: {
+        type: "completion_truncated",
+        stepIndex: 3,
+        cause: "reply_cap",
+        completionTokens: 8_192,
+        promptTokens: 6_000,
+        requestedMaxTokens: 8_192,
+        retry: { kind: "raise_cap", maxTokens: 32_768 },
+      } as never,
+    });
+    const line = next.feed.at(-1)?.line ?? "";
+    expect(line).toContain("reply cut off at 8192 tokens");
+    expect(line).toContain("step 4");
+    expect(line).toContain("32768-token cap");
+    expect(next.feed.at(-1)?.color).toBe("yellow");
+  });
+
+  it("explains a window retry in the operator's terms", () => {
+    const next = reduceTuiState(createInitialTuiState(fakeSession()), {
+      type: "agent_event",
+      event: {
+        type: "completion_truncated",
+        stepIndex: 0,
+        cause: "context_window",
+        completionTokens: 2_768,
+        promptTokens: 30_000,
+        requestedMaxTokens: 8_192,
+        retry: { kind: "fit_window", contextWindow: 32_768 },
+      } as never,
+    });
+    const line = next.feed.at(-1)?.line ?? "";
+    expect(line).toContain("ran out of context at ~32768 tokens");
+    expect(line).toContain("trimming the conversation");
+  });
+});
+
 describe("provider outage", () => {
   const waiting = (over: Record<string, unknown> = {}): TuiAction => ({
     type: "agent_event",
