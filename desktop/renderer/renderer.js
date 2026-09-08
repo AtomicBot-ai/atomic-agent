@@ -2268,14 +2268,40 @@ function renderOverlays() {
      a hook sets `WIZ.apiKey` and never has a caret to lose.
      The composer already does exactly this dance (renderContent), and the
      LLM settings pane already skips its poll while `#wiz-key` has focus
-     (llmTyping) — this is the same contract for the overlay layer. */
+     (llmTyping) — this is the same contract for the overlay layer.
+
+     r6 second pass — the VALUE, not only the caret. Carrying the focus
+     across the repaint was half the fix: the wizard's key box is drawn as
+     `value="' + esc(WIZ.apiKey) + '"`, and nothing writes WIZ.apiKey while
+     somebody types — wizNext reads the DOM once, at the end. So a repaint
+     landing mid-typing re-drew the field EMPTY and threw away every
+     character already in it, focus intact, in silence. A full-suite run
+     caught it on a fast start (the poll landing a beat after the last
+     keystroke); on a slow one the person loses the first half of their key
+     and is told only that the provider returned no models.
+     Only what the person is actually typing into is carried, and only into
+     a field the fresh HTML left empty, so a step that legitimately cleared
+     the box (picking a different provider) still clears it.
+
+     r6 second pass — do not repaint what has not changed.
+     The wizard polls (obRefreshCloudReady, the readiness check) and each poll
+     called render() whether or not anything on screen was different. An
+     innerHTML write replaces every node, and a node replaced BETWEEN a
+     mousedown and the mouseup does not produce a click at all — so a poll
+     landing on the press of the wizard's Next button ate the press, and the
+     person's only feedback was that nothing happened. Skipping an identical
+     repaint costs one string compare and removes the whole class of it.
+     The cache lives on the node so it cannot go stale behind a reload. */
+  if (o.__lastHTML === html) { o.style.pointerEvents = html ? 'auto' : 'none'; return; }
+  o.__lastHTML = html;
   const af = document.activeElement;
   const keep = af && af.id && o.contains(af) && (af.tagName === 'INPUT' || af.tagName === 'TEXTAREA')
-    ? {id: af.id, start: af.selectionStart, end: af.selectionEnd} : null;
+    ? {id: af.id, start: af.selectionStart, end: af.selectionEnd, value: af.value} : null;
   o.innerHTML = html;
   if (keep) {
     const again = o.querySelector('#' + CSS.escape(keep.id));
     if (again) {
+      if (keep.value && !again.value) again.value = keep.value;
       again.focus();
       // A password input still supports a selection range; a caret past the
       // end of a value the repaint shortened is clamped by the DOM.
@@ -3861,6 +3887,10 @@ function refreshPalette() {
   const sel = host.querySelector('#palq').selectionStart;
   const scroll = host.querySelector('.pallist').scrollTop;
   $('#overlays').innerHTML = paletteHTML();
+  /* r6: this writes the overlay layer behind renderOverlays' back, so its
+     "nothing changed, do not repaint" cache has to be told, or the next
+     render can decide the DOM already matches when it does not. */
+  $('#overlays').__lastHTML = null;
   const q = $('#palq'); if (q) { q.focus(); q.setSelectionRange(sel, sel); }
   const l = $('#pallist'); if (l && !S.q) l.scrollTop = scroll;
   const cur = $('#overlays').querySelector('.palrow.on'); if (cur) cur.scrollIntoView({block:'nearest'});
@@ -7200,6 +7230,21 @@ document.addEventListener('input', (e) => {
     return;
   }
   if (e.target.id === 'wiz-q') { WIZ.q = e.target.value; WIZ.cur = 0; render(); }
+  /* r6 second pass — the key box follows the keystrokes into state.
+     `wizNext` used to be the ONLY reader of this field, so between the first
+     keystroke and the click WIZ.apiKey stayed '' — and the step is drawn as
+     `value="' + esc(WIZ.apiKey) + '"`. Every repaint of the overlay therefore
+     wiped what had been typed. Carrying the caret across the repaint was not
+     enough on its own: a click on Next moves focus to the BUTTON first, so a
+     repaint landing on that mousedown finds no focused field to carry, blanks
+     the box, and (because innerHTML replaced the button between press and
+     release) swallows the click as well — the person is left looking at an
+     empty box, having clicked the only blue button, with nothing having
+     happened and no error. Keeping state in step with the field fixes the
+     value for every repaint, whatever has focus. No render() here: a repaint
+     per keystroke is what moves a caret. */
+  if (e.target.id === 'wiz-key') { WIZ.apiKey = e.target.value; return; }
+  if (e.target.id === 'wiz-url') { WIZ.baseUrl = e.target.value; return; }
 });
 
 

@@ -16,7 +16,7 @@
  */
 
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
+import { cpus, homedir, loadavg, tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { launch, sleep } from './drive.mjs';
 
@@ -166,7 +166,7 @@ export async function firstRun(app, { provider = PROVIDER, key } = {}) {
 }
 
 /** Click a two-stage list row until the screen moves on. */
-async function pick(app, text, doneExpr, doneLabel, { tries = 4 } = {}) {
+export async function pick(app, text, doneExpr, doneLabel, { tries = 4 } = {}) {
   const done = () => app.eval(`(() => (${doneExpr}))()`);
   for (let i = 0; i < tries; i++) {
     if (await done()) break;
@@ -194,6 +194,10 @@ async function pick(app, text, doneExpr, doneLabel, { tries = 4 } = {}) {
 /** Type a message into the composer and click the send button. */
 export async function ask(app, text) {
   const before = await app.eval(`document.querySelectorAll('#content .turn').length`);
+  /* How many answers were on screen before this question. `waitTurn` needs it
+     to tell "the turn is over" apart from "the turn has not started yet" —
+     see the start-grace note there. */
+  app.repliesBefore = (await app.replies()).length;
   await app.clickSel('#entry');
   await app.type(text, { perChar: 1 });
   const sent = await app.eval(`(document.querySelector('#entry')||{}).value`);
@@ -219,10 +223,13 @@ export async function ask(app, text) {
  * `approve: 'none'` leaves the request standing so a scenario can assert on
  * the card itself before answering it.
  */
-export async function waitTurn(app, { timeout = 300000, approve = 'auto', quiet = 5000 } = {}) {
-  const until = Date.now() + timeout;
+export async function waitTurn(app, { timeout = 300000, approve = 'auto', quiet = 5000, startGrace = 90000 } = {}) {
+  const t0 = Date.now();
+  const until = t0 + timeout;
+  const before = typeof app.repliesBefore === 'number' ? app.repliesBefore : -1;
   let approvals = 0;
   let idleSince = 0;
+  let sawBusy = false;
   for (;;) {
     if (Date.now() > until) throw new Failure(`the turn was still running after ${Math.round(timeout / 1000)}s`);
     const st = await app.eval(`(() => ({
@@ -242,7 +249,20 @@ export async function waitTurn(app, { timeout = 300000, approve = 'auto', quiet 
     }
     if (st.pending && approve === 'none') return { pending: true, approvals, reply: await app.lastReply() };
     const busy = st.strip || st.stop || st.locked;
-    if (busy) { idleSince = 0; await sleep(700); continue; }
+    if (busy) { sawBusy = true; idleSince = 0; await sleep(700); continue; }
+    /* The gap between the send click and the app looking busy. `ask` returns
+       as soon as the composer empties, which happens instantly; the strip only
+       appears once the request is away, and on a loaded Mac that took longer
+       than the five seconds of quiet below — so the turn "finished" before it
+       began and the scenario read an empty reply. Found in scenario 06 in a
+       full-suite run (it passed on its own, which is what a start-up race
+       looks like). So: until this window has been seen busy once, quiet means
+       "not started", not "done", and the only things that end the wait are a
+       new answer on screen or the grace running out. */
+    if (!sawBusy && Date.now() - t0 < startGrace) {
+      const now = (await app.replies()).length;
+      if (before < 0 || now <= before) { idleSince = 0; await sleep(400); continue; }
+    }
     /* Quiet is not the same as finished. Between a tool result coming back
        and the next model call going out the strip is gone and the send
        button is a plain arrow — the app looks exactly as idle as it does at
@@ -263,7 +283,7 @@ export async function waitTurn(app, { timeout = 300000, approve = 'auto', quiet 
  *
  * Every scenario is independently runnable: `node desktop/test/scenarios/<f>.mjs`.
  */
-export async function scenario(name, body, { firstRunFirst = true } = {}) {
+export async function scenario(name, body, { firstRunFirst = true, setup } = {}) {
   const t0 = Date.now();
   console.log(`\n▶ ${name}`);
   const dirs = freshDirs(name);
@@ -272,7 +292,16 @@ export async function scenario(name, body, { firstRunFirst = true } = {}) {
   console.log(`   provider ${PROVIDER} (set up by clicking through the wizard)`);
   let app = null;
   try {
-    app = await launch({ port: CDP_PORT, stateDir: dirs.stateDir, workspace: dirs.workspace });
+    /* `setup(dirs)` is how a scenario arranges the MACHINE it is about — a
+       Mac so busy the agent's CLI cannot answer, say. It runs BEFORE the
+       window opens, like everything else a person does in Finder first, may
+       return environment for the launch, and never reaches inside the
+       running app. */
+    const extra = setup ? await setup(dirs) : null;
+    app = await launch({
+      port: CDP_PORT, stateDir: dirs.stateDir, workspace: dirs.workspace,
+      ...(extra ? { env: extra } : {}),
+    });
     if (firstRunFirst) {
       await firstRun(app);
       console.log(`   model in use: ${activeModel(dirs.stateDir) ?? 'unknown'}`);
@@ -286,6 +315,16 @@ export async function scenario(name, body, { firstRunFirst = true } = {}) {
     const model_s_fault = e instanceof ModelShortfall;
     console.log(`✘ ${name} — ${model_s_fault ? 'THE MODEL FELL SHORT' : 'FAILED'} after ${secs}s`);
     console.log(`   ${e.message}`);
+    /* Say what the MACHINE was doing, because a failure has three possible
+       authors and only two of them are worth a bug. Several of these
+       scenarios failed at 90 seconds on a Mac carrying a load average of 290
+       (four other checkouts running their own suites); the same scenarios
+       passed in fifty seconds on an idle one. Printing the load turns
+       "the app is broken" into a question a reader can answer. */
+    const [l1, l5] = loadavg();
+    const cores = cpus().length || 1;
+    console.log(`   the machine, meanwhile: load ${l1.toFixed(1)} (5 min ${l5.toFixed(1)}) across ${cores} cores`
+      + `${l1 > cores * 2 ? ' — SATURATED. Re-run this on a quiet machine before calling it an app defect.' : ''}`);
     if (app) {
       try {
         const shot = join(dirs.base, 'failure.png');

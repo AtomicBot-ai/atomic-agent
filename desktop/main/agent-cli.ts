@@ -53,12 +53,41 @@ async function cli(args: string[], timeout = 30_000, cwd?: string): Promise<CliR
     });
     return { ok: true, stdout, stderr };
   } catch (err) {
-    const e = err as { stdout?: string; stderr?: string; message?: string };
+    const e = err as { stdout?: string; stderr?: string; message?: string; killed?: boolean; code?: string | number };
+    /* r6 (human-scenario round): say what went wrong, in words.
+       When `execFile` kills a child on `timeout`, its message is the whole
+       command line — the wizard printed
+       "Command failed: /Users/valerii/atag-agent/bin/atag config get"
+       in red under the API-key box and stopped there. That is not a sentence
+       a person can act on: it names a path they did not type and a subcommand
+       they did not run, and it says nothing about the one thing that actually
+       happened, which is that the agent did not answer in time. A driven
+       first-run hit exactly this on a loaded machine and had nowhere to go.
+       So: name the deadline when we killed it, and otherwise prefer the
+       agent's own stderr over execFile's echo of the command line. */
+    /* Only the verb is ever quoted back. `config set` is handed a whole
+       config document as one argument (setWholeConfig below) and that
+       document carries provider API keys — echoing the argv into an error
+       string that ends up on screen and in the log would spill one. */
+    const verb = `atag ${args.slice(0, 2).join(" ")}`.trim();
+    if (e.killed || e.code === "ETIMEDOUT") {
+      const detail = e.stderr?.trim();
+      return {
+        ok: false, stdout: e.stdout ?? "", stderr: e.stderr ?? "",
+        error: `the agent did not answer \`${verb}\` within ${Math.round(timeout / 1000)}s`
+          + ` — it may be busy or starting up. Try again.${detail ? ` (${detail.slice(0, 200)})` : ""}`,
+      };
+    }
+    const said = e.stderr?.trim();
     return {
       ok: false,
       stdout: e.stdout ?? "",
       stderr: e.stderr ?? "",
-      error: e.stderr?.trim() || e.message || "command failed",
+      error: said
+        || (e.message?.startsWith("Command failed")
+          ? `\`${verb}\` failed without saying why${typeof e.code === "number" ? ` (exit ${e.code})` : ""}`
+          : e.message)
+        || "command failed",
     };
   }
 }
