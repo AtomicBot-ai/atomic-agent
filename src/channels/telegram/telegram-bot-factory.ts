@@ -89,8 +89,22 @@ export const defaultGrammyBotFactory: BotFactory = async (token) => {
         );
       });
   });
+  // Outbound files go through grammy's `InputFile` so the adapter
+  // streams the file from disk; the rest of the channel only ever
+  // handles paths.
+  const sendFile = async (
+    chatId: number,
+    file: { path: string; kind: "photo" | "document" },
+  ): Promise<unknown> => {
+    const input = new grammy.InputFile(file.path);
+    return file.kind === "photo"
+      ? bot.api.sendPhoto(chatId, input)
+      : bot.api.sendDocument(chatId, input);
+  };
+  const api = bot.api as unknown as BotInstance["api"];
+  Object.assign(api, { sendFile });
   const instance: BotInstance = {
-    api: bot.api as unknown as BotInstance["api"],
+    api,
     setTextHandler(handler) {
       textHandler = handler;
     },

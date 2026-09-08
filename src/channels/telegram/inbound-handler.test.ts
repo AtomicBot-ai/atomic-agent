@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -16,6 +16,7 @@ import {
   type InboundContext,
   type InboundTextUpdate,
 } from "./inbound-handler.js";
+import type { OutboundFile } from "./outbound-attachments.js";
 import type { TelegramApi } from "./outbound-sender.js";
 import { TelegramSessionPointer } from "./telegram-session-pointer.js";
 
@@ -617,5 +618,98 @@ describe("handleInboundText", () => {
     };
     await handleInboundText(makeUpdate("hi", NON_OWNER), ctx);
     expect(callOrder).toEqual(["pairing"]);
+  });
+});
+
+describe("reply attachments delivery", () => {
+  let dir: string;
+  let pointer: TelegramSessionPointer;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "atomic-tg-reply-files-"));
+    pointer = new TelegramSessionPointer(join(dir, "telegram-session.json"));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  function replyWith(text: string, attachments?: string[]) {
+    return {
+      scripts: [
+        {
+          events: [
+            {
+              type: "llm_event" as const,
+              event: {
+                type: "assistant_reply" as const,
+                text,
+                ...(attachments ? { attachments } : {}),
+              },
+            },
+          ],
+        },
+      ],
+    };
+  }
+
+  it("posts the reply text first, then each file as its own message", async () => {
+    writeFileSync(join(dir, "report.pdf"), "pdf");
+    writeFileSync(join(dir, "shot.png"), "png");
+    const { runtime } = makeFakeRuntime(
+      replyWith("here is the report", [join(dir, "report.pdf"), join(dir, "shot.png")]),
+    );
+    const api = makeFakeApi();
+    const files: Array<{ chatId: number; file: OutboundFile; afterTexts: number }> = [];
+    api.sendFile = vi.fn(async (chatId: number, file: OutboundFile) => {
+      files.push({ chatId, file, afterTexts: api.sent.length });
+      return { message_id: 99 };
+    });
+    const ctx = makeContext(runtime, api, pointer, OWNER);
+    ctx.progressIndicator = false;
+
+    await handleInboundText(makeUpdate("send me the report"), ctx);
+
+    expect(api.sent.map((m) => m.text)).toEqual(["here is the report"]);
+    expect(files).toEqual([
+      { chatId: CHAT, file: { path: join(dir, "report.pdf"), kind: "document" }, afterTexts: 1 },
+      { chatId: CHAT, file: { path: join(dir, "shot.png"), kind: "photo" }, afterTexts: 1 },
+    ]);
+  });
+
+  it("announces a file it could not deliver in plain text after the reply", async () => {
+    writeFileSync(join(dir, "ok.pdf"), "pdf");
+    const { runtime } = makeFakeRuntime(
+      replyWith("here is the report", [join(dir, "ok.pdf"), join(dir, "gone.pdf")]),
+    );
+    const api = makeFakeApi();
+    api.sendFile = vi.fn(async () => ({ message_id: 1 }));
+    const ctx = makeContext(runtime, api, pointer, OWNER);
+    ctx.progressIndicator = false;
+    ctx.agentReplyParseMode = "html";
+
+    await handleInboundText(makeUpdate("send both"), ctx);
+
+    expect(api.sent.map((m) => m.text)).toEqual([
+      "here is the report",
+      "Could not send gone.pdf: file not found",
+    ]);
+    // The notice is channel infrastructure: plain, never HTML-formatted.
+    expect(api.sent[0]!.opts).toMatchObject({ parse_mode: "HTML" });
+    expect(api.sent[1]!.opts).toBeUndefined();
+    expect(api.sendFile).toHaveBeenCalledTimes(1);
+  });
+
+  it("a reply without attachments never touches sendFile", async () => {
+    const { runtime } = makeFakeRuntime(replyWith("got it"));
+    const api = makeFakeApi();
+    api.sendFile = vi.fn(async () => ({ message_id: 1 }));
+    const ctx = makeContext(runtime, api, pointer, OWNER);
+    ctx.progressIndicator = false;
+
+    await handleInboundText(makeUpdate("hi"), ctx);
+
+    expect(api.sendFile).not.toHaveBeenCalled();
+    expect(api.sent.map((m) => m.text)).toEqual(["got it"]);
   });
 });

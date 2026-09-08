@@ -49,6 +49,17 @@ export interface TelegramApi {
     callbackQueryId: string,
     opts?: Record<string, unknown>,
   ): Promise<unknown>;
+  /**
+   * Upload a local file to a chat — `sendPhoto` for `kind: "photo"`,
+   * `sendDocument` otherwise. Optional because only the grammy adapter
+   * can build an `InputFile`, and a fake that never sends files need
+   * not implement it. When absent, `sendAttachments` reports every
+   * file as unsupported rather than dropping it.
+   */
+  sendFile?(
+    chatId: number,
+    file: { path: string; kind: "photo" | "document" },
+  ): Promise<unknown>;
 }
 
 export interface TelegramLogger {

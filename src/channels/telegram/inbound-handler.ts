@@ -5,6 +5,10 @@ import type { SessionState } from "../../session/index.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 
 import {
+  formatAttachmentFailure,
+  sendAttachments,
+} from "./outbound-attachments.js";
+import {
   sendOutbound,
   type TelegramApi,
   type TelegramLogger,
@@ -229,6 +233,7 @@ async function dispatchToRuntime(
   ctx.inflight.set(chatId, controller);
 
   let reply: string | null = null;
+  let replyAttachments: ReadonlyArray<string> = [];
   let failure: { error: Error; category: LlmFailureCategory } | null = null;
   // Live progress indicator: a single editable message that mirrors the
   // turn's activity ("Thinking…" → "🔧 <tool>" → "✅ <summary>") so the
@@ -243,7 +248,10 @@ async function dispatchToRuntime(
       : null;
   const eventHook = (event: AgentLoopEvent): void => {
     if (event.type === "llm_event") {
-      if (event.event.type === "assistant_reply") reply = event.event.text;
+      if (event.event.type === "assistant_reply") {
+        reply = event.event.text;
+        replyAttachments = event.event.attachments ?? [];
+      }
     }
     if (event.type === "loop_failed") {
       failure = { error: event.error, category: event.category };
@@ -301,6 +309,20 @@ async function dispatchToRuntime(
     await sendText(ctx, chatId, "Turn cancelled.");
   } else if (reply !== null) {
     await sendText(ctx, chatId, reply, ctx.agentReplyParseMode ?? "plain");
+    // Files follow the text, one message each. A file that could not
+    // be delivered is announced in plain text — the operator asked for
+    // the file, not for the sentence saying it was sent.
+    if (replyAttachments.length > 0) {
+      const delivery = await sendAttachments({
+        api: ctx.api,
+        chatId,
+        paths: replyAttachments,
+        logger: toTelegramLogger(ctx.logger),
+      });
+      for (const failed of delivery.failed) {
+        await sendText(ctx, chatId, formatAttachmentFailure(failed));
+      }
+    }
   } else if (failure) {
     await sendText(ctx, chatId, formatFailure(failure));
   } else {
