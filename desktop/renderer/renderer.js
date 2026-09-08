@@ -870,6 +870,7 @@ const VOICE_REASONS = {
   'voice-helper-failed':'The speech helper did not answer, so voice input is off',
   'voice-no-model':'macOS has no on-device model for this language yet',
   'voice-mic-denied':'Microphone access is turned off for Atomic Agent',
+  'voice-mic-stale':'macOS is holding a microphone permission for an older build of this app, so it will not start the device. Resetting it makes macOS ask again.',
   'voice-no-mic':'No microphone was found',
   'voice-no-bridge':'Voice input needs the desktop app',
 };
@@ -1918,6 +1919,7 @@ function voiceStripHTML() {
        Privacy & Security › Microphone directly. */
     h += '<div class="vsrow"><span class="vserr">' + esc(VOICE.err) + '</span>'
       + (VOICE.canOpenSettings ? '<button class="btn btn-g vsopen" data-act="voice:settings">Open Settings</button>' : '')
+      + (VOICE.canResetPermission ? '<button class="btn btn-g vsopen" data-act="voice:reset">Reset and ask again</button>' : '')
       + voiceChipHTML()
       + '<button class="vsx" data-act="voice:dismiss" title="Dismiss">' + ic('x') + '</button></div>';
   } else {
@@ -3706,6 +3708,18 @@ function voiceAct(a) {
   if (a === 'voice') { voiceToggle(); return; }
   if (a === 'voice:lang') { VOICE.menu = !VOICE.menu; VOICE.installErr = null; refreshVoice(); return; }
   // The error strip's own ×. Escape does not clear this state on purpose.
+  if (a === 'voice:reset') {
+    if (BR && BR.resetMicPermission) {
+      BR.resetMicPermission().then((res) => {
+        if (res && res.ok) {
+          VOICE.canResetPermission = false; VOICE.available = true; VOICE.code = null; VOICE.reason = null;
+          VOICE.state = 'idle'; VOICE.err = null; refreshVoice();
+          voiceStart();   // the next request is the one macOS prompts for
+        } else { voiceFail('Could not reset the permission: ' + ((res && res.error) || 'unknown')); }
+      });
+    }
+    return;
+  }
   if (a === 'voice:settings') { if (BR && BR.openMicSettings) BR.openMicSettings(); return; }
   if (a === 'voice:dismiss') {
     if (VOICE.state === 'error') { VOICE.state = 'idle'; VOICE.err = null; }
@@ -3871,6 +3885,21 @@ function voiceCapture(seq) {
         voiceFail(VOICE.reason);
       } else if (name === 'NotFoundError' || name === 'OverconstrainedError') {
         VOICE.available = false; VOICE.code = 'voice-no-mic'; VOICE.reason = VOICE_REASONS['voice-no-mic'];
+        voiceFail(VOICE.reason);
+      } else if (name === 'AbortError' || name === 'NotReadableError') {
+        /* The OS refused to START the device, which is different from
+           refusing permission — and on an unsigned build it usually means
+           exactly one thing: System Settings lists Atomic Agent with the
+           switch ON, but that row belongs to a PREVIOUS build. macOS keys
+           the grant to the code-signature identity and an unsigned app's
+           identity changes every rebuild, so the row the operator is
+           looking at is not the app that is asking. Saying "could not be
+           opened (AbortError)" left them to guess; say what it is, and
+           offer the one action that fixes it. */
+        VOICE.available = false;
+        VOICE.code = 'voice-mic-stale';
+        VOICE.reason = VOICE_REASONS['voice-mic-stale'];
+        VOICE.canResetPermission = true;
         voiceFail(VOICE.reason);
       } else {
         voiceFail('The microphone could not be opened (' + (name || String(err)) + ')');

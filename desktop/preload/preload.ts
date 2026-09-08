@@ -80,6 +80,7 @@ contextBridge.exposeInMainWorld("atomic", {
   statPaths: (paths: string[]) => ipcRenderer.invoke("app:statPaths", paths),
   micStatus: () => ipcRenderer.invoke("app:micStatus"),
   micRequest: () => ipcRenderer.invoke("app:micRequest"),
+  resetMicPermission: () => ipcRenderer.invoke("app:resetMicPermission"),
   openMicSettings: () => ipcRenderer.invoke("app:openMicSettings"),
   openExternal: (url: string) => ipcRenderer.invoke("app:openExternal", url),
   // item 6: the sidebar's own pin/read state (Electron userData/prefs.json) and the row menu

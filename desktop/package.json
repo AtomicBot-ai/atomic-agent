@@ -81,7 +81,8 @@
           "path": "/Applications"
         }
       ]
-    }
+    },
+    "afterPack": "scripts/sign-adhoc.mjs"
   },
   "dependencies": {
     "cron-parser": "^5.5.0"

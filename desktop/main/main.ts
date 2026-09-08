@@ -1052,6 +1052,29 @@ function wireIpc(client: AgentClient): void {
     // honest next step is to take them to the switch.
     return { ok: true, granted: false, status: before };
   });
+  /* The recovery for the case the operator is actually in: System Settings
+     lists Atomic Agent with the switch ON, and getUserMedia still fails.
+     That happens because macOS records the grant against the CODE SIGNATURE
+     identity, and an unsigned build's identity changes every time it is
+     rebuilt — so the row they are looking at belongs to a previous build.
+     `tccutil reset` drops the stale row for this bundle id (no sudo: it is
+     the user's own TCC store), after which the next request prompts fresh
+     and the grant attaches to the build they are running. */
+  ipcMain.handle("app:resetMicPermission", async () => {
+    if (process.platform !== "darwin") return { ok: false, error: "macOS only" };
+    /* The bundle id, which is what tccutil keys on — and, after the ad-hoc
+       signing hook, also the app's code-signature identifier. */
+    const bundleId = "ai.atomicbot.desktop";
+    try {
+      const { execFile } = await import("node:child_process");
+      await new Promise<void>((res, rej) =>
+        execFile("tccutil", ["reset", "Microphone", bundleId], (err) => (err ? rej(err) : res())),
+      );
+      return { ok: true, status: systemPreferences.getMediaAccessStatus("microphone") };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
   ipcMain.handle("app:openMicSettings", () => {
     if (process.platform !== "darwin") return { ok: false, error: "macOS only" };
     void shell.openExternal("x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone");
@@ -2479,10 +2502,17 @@ async function voiceTest(
     const sentences = named.map((k) => reasons[k]);
     check(
       "every disabled case has a sentence",
-      named.length === 8 && sentences.every((s) => typeof s === "string" && s.length > 12)
+      /* Nine since the AbortError case was named. The exact count is the
+         tripwire: a new disabled state must be added here deliberately,
+         with a sentence a person can act on, rather than inheriting the
+         generic "could not be opened" that sent the operator hunting
+         through System Settings for a permission that was already on. */
+      named.length === 9 && sentences.every((s) => typeof s === "string" && s.length > 12)
         && reasons["voice-os-too-old"] === "Voice input needs macOS 26 or later"
         && reasons["voice-helper-missing"] === "Voice input needs the speech helper, which this build was packaged without"
-        && reasons["voice-not-macos"] === "Voice input works only on macOS",
+        && reasons["voice-not-macos"] === "Voice input works only on macOS"
+        && /older build/.test(reasons["voice-mic-stale"] ?? "")
+        && /ask again/.test(reasons["voice-mic-stale"] ?? ""),
       `${named.length} named cases`,
     );
     check(
