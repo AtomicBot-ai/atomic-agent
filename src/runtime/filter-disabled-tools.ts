@@ -46,6 +46,13 @@ export interface ToolGateConfig {
    * stable prefix so the agent does not see tools it cannot exercise.
    */
   mcp: { enabled: boolean };
+  /**
+   * GitHub gate. `connected=false` (no `GITHUB_TOKEN` in the hub)
+   * drops the `github.*` descriptors — the tools stay registered and
+   * would answer with "GitHub is not connected", but a catalog entry
+   * for them only invites the model to try.
+   */
+  github: { connected: boolean };
 }
 
 /**
@@ -93,6 +100,14 @@ const GATED_TOOLS = {
     "mcp.prompt.list",
     "mcp.prompt.get",
   ],
+  github: [
+    "github.whoami",
+    "github.pr.list",
+    "github.pr.create",
+    "github.issue.list",
+    "github.issue.create",
+    "github.issue.comment",
+  ],
 } as const;
 
 /**
@@ -131,6 +146,9 @@ export function filterToolDescriptorsByConfig(
   }
   if (!gates.mcp.enabled) {
     for (const name of GATED_TOOLS.mcp) disabled.add(name);
+  }
+  if (!gates.github.connected) {
+    for (const name of GATED_TOOLS.github) disabled.add(name);
   }
 
   if (disabled.size === 0) return descriptors;

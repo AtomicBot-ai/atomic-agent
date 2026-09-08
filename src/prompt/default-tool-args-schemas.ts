@@ -411,6 +411,96 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
       pattern: stringSchema,
     }),
   ],
+  [
+    "os.git.checkout",
+    obj(
+      {
+        branch: stringSchema,
+        create: booleanSchema,
+        startPoint: stringSchema,
+        repo: stringSchema,
+      },
+      ["branch"],
+    ),
+  ],
+  [
+    "os.git.commit",
+    obj(
+      {
+        message: stringSchema,
+        paths: stringArraySchema,
+        all: booleanSchema,
+        repo: stringSchema,
+      },
+      ["message"],
+    ),
+  ],
+  [
+    "os.git.push",
+    obj({
+      remote: stringSchema,
+      branch: stringSchema,
+      setUpstream: booleanSchema,
+      repo: stringSchema,
+    }),
+  ],
+
+  // ── github ───────────────────────────────────────────────────────────────
+  ["github.whoami", obj({})],
+  [
+    "github.pr.list",
+    obj({
+      repo: stringSchema,
+      state: { type: "string", enum: ["open", "closed", "all"] },
+      limit: numberSchema,
+    }),
+  ],
+  [
+    "github.pr.create",
+    obj(
+      {
+        title: stringSchema,
+        body: stringSchema,
+        head: stringSchema,
+        base: stringSchema,
+        draft: booleanSchema,
+        repo: stringSchema,
+      },
+      ["title"],
+    ),
+  ],
+  [
+    "github.issue.list",
+    obj({
+      repo: stringSchema,
+      state: { type: "string", enum: ["open", "closed", "all"] },
+      labels: stringArraySchema,
+      limit: numberSchema,
+    }),
+  ],
+  [
+    "github.issue.create",
+    obj(
+      {
+        title: stringSchema,
+        body: stringSchema,
+        labels: stringArraySchema,
+        repo: stringSchema,
+      },
+      ["title"],
+    ),
+  ],
+  [
+    "github.issue.comment",
+    obj(
+      {
+        number: numberSchema,
+        body: stringSchema,
+        repo: stringSchema,
+      },
+      ["number", "body"],
+    ),
+  ],
 
   // ── os.proc ──────────────────────────────────────────────────────────────
   ["os.proc.list", obj({ filter: stringSchema, limit: numberSchema })],

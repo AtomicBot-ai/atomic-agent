@@ -19,6 +19,7 @@ const ALL_OPEN: ToolGateConfig = {
   },
   tasks: { agentToolsEnabled: true },
   mcp: { enabled: true },
+  github: { connected: true },
 };
 
 function nameSet(
@@ -112,6 +113,22 @@ describe("filterToolDescriptorsByConfig", () => {
       memory: { ...ALL_OPEN.memory, procedures: { enabled: false } },
     });
     expect(nameSet(filtered).has("memory.procedures.recall")).toBe(false);
+  });
+
+  it("drops every github.* descriptor when no token is in the hub", () => {
+    // The tools stay registered and would answer "GitHub is not
+    // connected"; a catalog entry for them only invites the model to try.
+    const filtered = filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, {
+      ...ALL_OPEN,
+      github: { connected: false },
+    });
+    const names = nameSet(filtered);
+    for (const name of GATED_TOOL_NAMES.github) {
+      expect(names.has(name)).toBe(false);
+    }
+    // The git write tools are not GitHub-specific and stay.
+    expect(names.has("os.git.push")).toBe(true);
+    expect(names.has("os.git.commit")).toBe(true);
   });
 
   it("drops every tasks.* descriptor when agent tools are disabled", () => {

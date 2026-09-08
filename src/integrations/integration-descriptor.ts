@@ -102,6 +102,17 @@ export interface IntegrationStatusContext {
    * intents — and that is the only part worth screen space.
    */
   channelErrors?: ReadonlyMap<string, string>;
+  /**
+   * Result of an explicit `verify` action per integration id — the
+   * one line that proves the credential works ("@login · repo,
+   * workflow"). For an integration with no live channel or server
+   * (GitHub), this is the only signal that separates "token saved"
+   * from "token works", so the hub keeps the last answer for the life
+   * of the process and drops it when the field changes.
+   */
+  verifiedIdentities?: ReadonlyMap<string, string>;
+  /** Why the last `verify` failed, per integration id. */
+  verifyErrors?: ReadonlyMap<string, string>;
 }
 
 /**
