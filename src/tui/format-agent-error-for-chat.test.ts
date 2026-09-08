@@ -42,14 +42,20 @@ describe("formatAgentErrorForChat", () => {
     expect(text).toContain("atomic-agent models start");
   });
 
-  it("keeps the llama hint away from cloud providers — advice about the wrong server", () => {
-    const text = formatAgentErrorForChat("transport", "fetch failed", {
-      activeProviderIsLocal: false,
-      llamaUrl: "http://127.0.0.1:19091",
-    });
-    expect(text).toContain("Turn failed [transport]: fetch failed");
-    expect(text).not.toContain("llama-server is not reachable");
-    expect(text).not.toContain("atomic-agent models start");
+  it("keeps every hint away from a cloud `fetch failed` — nothing was in flight", () => {
+    // `fetch failed` is undici's outer catch-all and is ALSO what it
+    // throws when the connection never opened at all: verified on Node
+    // 22.22.2, both `ENOTFOUND` (unresolvable host) and `ECONNREFUSED`
+    // (closed port) produce exactly this message, with the errno only on
+    // `cause`. So neither hint may fire on it — not the llama one (wrong
+    // server on a cloud route) and not the drop one, whose first line
+    // claims a reply was cut off.
+    expect(
+      formatAgentErrorForChat("transport", "fetch failed", {
+        activeProviderIsLocal: false,
+        llamaUrl: "http://127.0.0.1:19091",
+      }),
+    ).toBe("Turn failed [transport]: fetch failed");
   });
 
   it("keeps every hint away from a cloud transport failure that is not a drop", () => {
@@ -81,18 +87,8 @@ describe("formatAgentErrorForChat", () => {
     expect(text).toContain("re-sending the whole task starts it over");
   });
 
-  it("carries the drop hint with no provider context at all", () => {
-    // `chat-orchestrator.ts` calls the formatter without the local
-    // context for its own catch arm; a drop must still explain itself.
-    expect(formatAgentErrorForChat("transport", "socket hang up")).toContain(
-      "the connection to the model dropped before the reply finished",
-    );
-  });
-
   it.each([
-    "fetch failed",
     "terminated",
-    "Client network socket disconnected before secure TLS connection was established",
     "read ECONNRESET: socket hang up",
     "other side closed",
   ])("recognises the drop family: %s", (message) => {
@@ -109,6 +105,12 @@ describe("formatAgentErrorForChat", () => {
     "upstream HTTP 502 (bad gateway)",
     "request timed out after 120s",
     "terminated the request early",
+    // A network failure the classifier still files as `transport` (both
+    // are in `NETWORK_MESSAGES`), but where no reply was ever in flight:
+    // undici's catch-all for a connection that never opened, and a TLS
+    // handshake that never completed. The hint would be false.
+    "fetch failed",
+    "Client network socket disconnected before secure TLS connection was established",
   ])("leaves unrelated transport failures bare: %s", (message) => {
     expect(
       formatAgentErrorForChat("transport", message, {
@@ -118,11 +120,71 @@ describe("formatAgentErrorForChat", () => {
     ).toBe(`Turn failed [transport]: ${message}`);
   });
 
-  it("keeps the drop hint out of non-transport categories", () => {
-    expect(formatAgentErrorForChat("tool", "terminated")).toBe(
-      "Turn failed [tool]: terminated",
+  it("keys the hint off the raw message, not the truncated body", () => {
+    // The one behaviour that separates `looksLikeMidStreamDrop(message)`
+    // from `looksLikeMidStreamDrop(body)`: a drop phrase sitting past the
+    // 480-char body cap. Under 800 chars, so the wall does not fire and
+    // the only transformation is the truncation. Switch the predicate's
+    // argument to `body` and this test fails — that mutation used to
+    // survive the whole suite.
+    const long = `${"x".repeat(600)} socket hang up`;
+    const text = formatAgentErrorForChat("transport", long, {
+      activeProviderIsLocal: false,
+      llamaUrl: "http://127.0.0.1:19091",
+    });
+    const [head, ...hint] = text.split("\n");
+    expect(head).not.toContain("socket hang up");
+    expect(hint.join("\n")).toBe(
+      [
+        "the connection to the model dropped before the reply finished",
+        "  the steps that already finished are kept in this session — ask to continue from there; re-sending the whole task starts it over",
+      ].join("\n"),
     );
   });
+
+  // When the wall substitution fires, `body` stops being the transport's
+  // words and becomes a rival diagnosis of the same failure. The two
+  // explanations are mutually exclusive — a page of HTML or a status line
+  // is a reply that ARRIVED, not one that was cut off — and emitting both
+  // told the operator two incompatible stories in three lines. The wall
+  // wins: it read the whole payload, the drop arm only matches a phrase.
+  it.each([
+    [
+      "over the 800-char wall with no status in it",
+      `socket hang up ${"x".repeat(900)}`,
+      "upstream returned HTML instead of JSON (check API URL and provider)",
+    ],
+    [
+      "over the 800-char wall with a status in it",
+      `socket hang up 502 ${"x".repeat(900)}`,
+      "upstream HTTP 502 (wrong API URL or provider config)",
+    ],
+    [
+      "an actual HTML wall that happens to contain a drop word",
+      "terminated <!DOCTYPE html><html><body>404 not found</body></html>",
+      "upstream HTTP 404 (wrong API URL or provider config)",
+    ],
+  ])("drops the hint when the body was replaced: %s", (_name, message, body) => {
+    expect(
+      formatAgentErrorForChat("transport", message, {
+        activeProviderIsLocal: false,
+        llamaUrl: "http://127.0.0.1:19091",
+      }),
+    ).toBe(`Turn failed [transport]: ${body}`);
+  });
+
+  it.each(["tool", "runtime"])(
+    "keeps the drop hint out of the %s category",
+    (category) => {
+      // `runtime` is the only other shape production produces: the
+      // orchestrator's catch arm (`chat-orchestrator.ts`) calls
+      // `formatAgentErrorForChat("runtime", msg)` with no provider
+      // context, so it can never reach the transport branch at all.
+      expect(formatAgentErrorForChat(category, "terminated")).toBe(
+        `Turn failed [${category}]: terminated`,
+      );
+    },
+  );
 
   it("prefers the llama hint when a local provider drops mid-stream", () => {
     // Both arms match. The local one wins: "start llama-server" is a fix,
