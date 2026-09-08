@@ -362,6 +362,36 @@ describe("formatAgentErrorForChat", () => {
     );
   });
 
+  it("walls an uppercase markup fragment with no document marker", () => {
+    // Pins the `/i` on `HTML_TAG` itself, which the test above no longer
+    // does now that the document arm is case-insensitive on its own.
+    expect(
+      formatAgentErrorForChat(
+        "transport",
+        `socket hang up <CENTER>Bad Gateway</CENTER>${"x".repeat(900)}`,
+        { activeProviderIsLocal: false, llamaUrl: "http://127.0.0.1:19091" },
+      ),
+    ).toBe(
+      "Turn failed [transport]: upstream returned HTML instead of JSON (check API URL and provider)",
+    );
+  });
+
+  it("walls a document marker that carries no tag at all", () => {
+    // The document arm has to stand on its own. Every other page fixture
+    // also carries a tag, so "require BOTH a marker and a tag" used to
+    // survive the whole suite. Under 800 chars, so the length arm is out.
+    const message = "socket hang up <!DOCTYPE html> 502 and nothing else";
+    expect(message.length).toBeLessThan(800);
+    expect(
+      formatAgentErrorForChat("transport", message, {
+        activeProviderIsLocal: false,
+        llamaUrl: "http://127.0.0.1:19091",
+      }),
+    ).toBe(
+      "Turn failed [transport]: upstream HTTP 502 (wrong API URL or provider config)",
+    );
+  });
+
   it.each([
     [
       "self-closing XHTML tags",
