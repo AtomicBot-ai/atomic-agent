@@ -764,6 +764,9 @@ function reduceStepEvent(
         toolSteps: state.currentTurnToolSteps,
         ...(toolCardsForTurn.length > 0 ? { toolCards: toolCardsForTurn } : {}),
         ...(reasoningForTurn.length > 0 ? { reasoningBlocks: reasoningForTurn } : {}),
+        ...(event.attachments !== undefined && event.attachments.length > 0
+          ? { attachments: event.attachments }
+          : {}),
       });
       // Clear live reasoning along with the other streaming state so the
       // StreamingTail does not re-expand reasoning the instant the turn

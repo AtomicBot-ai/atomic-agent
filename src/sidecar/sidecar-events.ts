@@ -217,6 +217,8 @@ export interface SteerUndeliveredPayload {
 export interface AssistantReplyPayload {
   sessionId: string;
   text: string;
+  /** Absolute paths of files the reply delivered (`reply.attachments`); absent when none. */
+  attachments?: readonly string[];
 }
 
 /**

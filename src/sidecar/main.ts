@@ -120,6 +120,9 @@ export async function bootstrapSidecar(): Promise<{
             protocol.emitEvent("assistant_reply", {
               sessionId,
               text: inner.text,
+              ...(inner.attachments !== undefined && inner.attachments.length > 0
+                ? { attachments: inner.attachments }
+                : {}),
             });
           } else if (inner.type === "assistant_delta") {
             protocol.emitEvent("assistant_delta", {

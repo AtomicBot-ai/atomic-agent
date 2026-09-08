@@ -29,6 +29,8 @@ export type ConversationTurn =
       text: string;
       /** Content of `<think>` blocks that preceded the final reply, if any. */
       reasoning?: string;
+      /** Absolute paths of files delivered with the reply, if any. */
+      attachments?: readonly string[];
       at: number;
     };
 
@@ -80,7 +82,9 @@ export function toolResultTurn(params: {
  */
 export function assistantReplyTurn(
   text: string,
-  atOrOptions: number | { at?: number; reasoning?: string } = {},
+  atOrOptions:
+    | number
+    | { at?: number; reasoning?: string; attachments?: readonly string[] } = {},
 ): ConversationTurn {
   const options =
     typeof atOrOptions === "number" ? { at: atOrOptions } : atOrOptions;
@@ -88,6 +92,9 @@ export function assistantReplyTurn(
   let turn: ConversationTurn = { kind: "assistant_reply", text, at };
   if (options.reasoning !== undefined && options.reasoning.length > 0) {
     turn = { ...turn, reasoning: options.reasoning };
+  }
+  if (options.attachments !== undefined && options.attachments.length > 0) {
+    turn = { ...turn, attachments: [...options.attachments] };
   }
   return turn;
 }
@@ -162,7 +169,11 @@ export function renderTurnForPrompt(
       return `${prefix}: ${body}${turn.truncated ? " (truncated)" : ""}`;
     }
     case "assistant_reply":
-      return `assistant: ${turn.text}`;
+      // The model should remember what it shipped, on the same single
+      // line every other turn kind renders to.
+      return turn.attachments !== undefined && turn.attachments.length > 0
+        ? `assistant: ${turn.text} (attached: ${turn.attachments.join(", ")})`
+        : `assistant: ${turn.text}`;
   }
 }
 

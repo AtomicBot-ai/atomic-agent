@@ -7,6 +7,23 @@ describe("turnsToMessages", () => {
     expect(turnsToMessages([])).toEqual([]);
   });
 
+  it("carries reply attachments from the persisted turn onto the message", () => {
+    const messages = turnsToMessages([
+      { kind: "user", text: "send me the report", at: 1 },
+      {
+        kind: "assistant_reply",
+        text: "attached",
+        attachments: ["/tmp/report.pdf"],
+        at: 2,
+      },
+    ]);
+    expect(messages[1]).toMatchObject({
+      role: "assistant",
+      text: "attached",
+      attachments: ["/tmp/report.pdf"],
+    });
+  });
+
   it("folds a user -> tool -> reply turn into user + assistant messages", () => {
     const turns: ConversationTurn[] = [
       { kind: "user", text: "run lint", at: 100 },

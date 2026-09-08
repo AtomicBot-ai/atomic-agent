@@ -154,6 +154,8 @@ export interface ChatMessage {
   toolCards?: readonly ToolCardEntry[];
   /** Reasoning blocks captured during this assistant turn. */
   reasoningBlocks?: readonly string[];
+  /** Absolute paths of files the reply delivered (`reply.attachments`). */
+  attachments?: readonly string[];
   timestamp: number;
 }
 

@@ -58,6 +58,28 @@ describe("conversation-turn helpers", () => {
     expect(reply).toEqual({ kind: "assistant_reply", text: "done", at: 5 });
   });
 
+  it("carries reply attachments on the turn and in the prompt line", () => {
+    const reply = assistantReplyTurn("sent", {
+      at: 6,
+      attachments: ["/tmp/a.pdf", "/tmp/b.png"],
+    });
+    expect(reply).toEqual({
+      kind: "assistant_reply",
+      text: "sent",
+      at: 6,
+      attachments: ["/tmp/a.pdf", "/tmp/b.png"],
+    });
+    expect(renderTurnForPrompt(reply)).toBe(
+      "assistant: sent (attached: /tmp/a.pdf, /tmp/b.png)",
+    );
+    // An empty list is the same as none — no stray field, no suffix.
+    expect(assistantReplyTurn("x", { at: 7, attachments: [] })).toEqual({
+      kind: "assistant_reply",
+      text: "x",
+      at: 7,
+    });
+  });
+
   it("renders each turn kind as a single line", () => {
     expect(renderTurnForPrompt(userTurn("hello", 1))).toBe("user: hello");
     expect(
