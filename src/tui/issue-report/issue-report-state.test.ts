@@ -53,10 +53,12 @@ describe("reduceIssueReport", () => {
     expect(s?.preview).toEqual(PREVIEW);
   });
 
-  it("does not reopen over a send in flight", () => {
-    let s = reduceIssueReport(null, { type: "issue_report_opened" }, 3);
-    s = reduceIssueReport(s, { type: "issue_report_sending" }, 3);
-    expect(reduceIssueReport(s, { type: "issue_report_opened" }, 3)).toBe(s);
+  it("does not reopen over a leg in flight", () => {
+    for (const step of ["issue_report_sending", "issue_report_building"] as const) {
+      let s = reduceIssueReport(null, { type: "issue_report_opened" }, 3);
+      s = reduceIssueReport(s, { type: step }, 3);
+      expect(reduceIssueReport(s, { type: "issue_report_opened" }, 3)).toBe(s);
+    }
   });
 
   it("ignores progress actions when closed", () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { mapStrings, maskSecrets, redactPersonal, scrubText } from "./redact.js";
+import { mapStrings, maskSecrets, redactPaths, redactPersonal, scrubText } from "./redact.js";
 
 const CTX = { homeDir: "/Users/valerii", workingDir: "/Users/valerii/work/proj" };
 
@@ -17,12 +17,15 @@ describe("maskSecrets", () => {
       `Authorization: Bearer ${"z".repeat(30)}`,
       `api_key=${"k".repeat(20)}`,
       `"token": "${"t".repeat(20)}"`,
+      "https://user:hunter2@host.io/x",
     ].join("\n");
     const out = maskSecrets(text);
     expect(out).not.toMatch(/ghp_A|github_pat_B|sk-x|sk-ant-y|xoxb-1|AKIAABC|zzzzzz|kkkkkk|tttttt/);
     expect(out).toContain("Authorization: Bearer <redacted>");
     expect(out).toContain("api_key=<redacted>");
     expect(out).toContain('"token": "<redacted>');
+    expect(out).toContain("https://<redacted>@host.io/x");
+    expect(out).not.toContain("hunter2");
   });
 
   it("leaves ordinary prose and short words alone", () => {
@@ -38,6 +41,16 @@ describe("redactPersonal", () => {
       CTX,
     );
     expect(out).toBe("at <cwd>/src/a.ts and ~/.config and ~/x and ~\\y");
+  });
+
+  it("does not let the cwd prefix eat a sibling directory", () => {
+    expect(redactPersonal("/Users/valerii/work/proj-2/x and /Users/valerii/work/proj", CTX)).toBe(
+      "<cwd>-2/x and <cwd>".replace("<cwd>-2/x", "~/work/proj-2/x"),
+    );
+  });
+
+  it("masks the JSON-escaped Windows home too", () => {
+    expect(redactPersonal(String.raw`{"p":"C:\\Users\\Ann\\y"}`, CTX)).toBe(String.raw`{"p":"~\\y"}`);
   });
 
   it("masks emails and non-loopback IPs, keeps loopback", () => {
@@ -68,5 +81,16 @@ describe("scrubText and mapStrings", () => {
       n: 1,
       b: true,
     });
+  });
+});
+
+describe("redactPaths", () => {
+  it("masks absolute paths the home and cwd rules cannot know about", () => {
+    const out = redactPaths(
+      scrubText("boom /opt/x/y at <cwd>/src/a.ts and ~/.cfg/x and https://x.io/a/b and /Volumes/Client/x.txt and /z", CTX),
+    );
+    expect(out).toBe(
+      "boom <path> at <cwd>/src/a.ts and ~/.cfg/x and https://x.io/a/b and <path> and /z",
+    );
   });
 });

@@ -11,7 +11,13 @@
  */
 
 import type { IssueReportLevel } from "./report-levels.js";
-import { mapStrings, maskSecrets, scrubText, type RedactionContext } from "./redact.js";
+import {
+  mapStrings,
+  maskSecrets,
+  redactPaths,
+  scrubText,
+  type RedactionContext,
+} from "./redact.js";
 
 /** Fields that carry operator content, per event type. */
 const CONTENT_FIELDS: Readonly<Record<string, readonly string[]>> = {
@@ -19,6 +25,13 @@ const CONTENT_FIELDS: Readonly<Record<string, readonly string[]>> = {
   llm_completion: ["content", "reasoningContent"],
   tool_invocation: ["args", "summary", "details"],
   session_started: ["workingDir", "metadata"],
+  // The user's message opens a turn; the first tool result's summary
+  // closes a step. Both are the operator's session, not its shape.
+  turn_started: ["userMessage"],
+  step_finished: ["summary"],
+  // A repair reason quotes what the model emitted.
+  parse_retry: ["reason"],
+  loop_detected: ["read"],
 };
 
 /** Event types that are content through and through (memory fabric). */
@@ -59,7 +72,11 @@ export function redactTraceNdjson(
 ): { text: string; stats: TraceRedactionStats } {
   const stats: TraceRedactionStats = { kept: 0, dropped: 0, stripped: 0 };
   const scrub = (s: string): string =>
-    level === "full" ? maskSecrets(s) : scrubText(s, ctx);
+    level === "full"
+      ? maskSecrets(s)
+      : level === "errors"
+        ? redactPaths(scrubText(s, ctx))
+        : scrubText(s, ctx);
   const out: string[] = [];
   for (const line of ndjson.split(/\r?\n/)) {
     if (line.trim().length === 0) continue;
@@ -82,6 +99,9 @@ export function redactTraceNdjson(
       continue;
     }
     if (level !== "full") {
+      // A session id is a join key to the operator's other files;
+      // the zip names traces by ordinal instead.
+      delete event.sessionId;
       if (CONTENT_ONLY_EVENTS.has(type)) {
         stats.dropped += 1;
         continue;

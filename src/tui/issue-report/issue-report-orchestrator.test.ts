@@ -97,7 +97,9 @@ describe("IssueReportOrchestrator", () => {
       {
         resolveToken: () => TOKEN,
         apiFactory: () => api,
-        homeDir: dir,
+        // A home that is NOT the temp root, so a temp path that leaks
+        // cannot hide behind the `~` substitution.
+        homeDir: join(dir, "home"),
         outDir,
         now: () => new Date("2026-09-09T00:00:00Z"),
         ...deps,
@@ -122,8 +124,15 @@ describe("IssueReportOrchestrator", () => {
 
     const zip = await JSZip.loadAsync(readFileSync(preview.zipPath));
     const names = Object.keys(zip.files).sort();
-    expect(names).toEqual(["report.md", "snapshot.json", "traces/", "traces/sess-1.ndjson"]);
-    const trace = await zip.file("traces/sess-1.ndjson")!.async("string");
+    // Traces are named by ordinal: a session id is a join key.
+    expect(names).toEqual(["report.md", "snapshot.json", "traces/", "traces/1.ndjson"]);
+    const trace = await zip.file("traces/1.ndjson")!.async("string");
+    expect(trace).not.toContain("sess-1");
+    const snapshot = await zip.file("snapshot.json")!.async("string");
+    expect(snapshot).not.toContain(dir);
+    expect(snapshot).not.toContain("sess-");
+    // The second requested trace does not exist; only its errno is recorded.
+    expect(snapshot).toContain('"reason": "ENOENT"');
     // errors level: the prompt row is gone, the error row stays.
     expect(trace).not.toContain("private prompt");
     expect(trace).toContain('"type":"error"');
@@ -193,14 +202,27 @@ describe("IssueReportOrchestrator", () => {
     expect(failed.error).not.toContain(TOKEN);
   });
 
+  it("a close during the build drops the late result", async () => {
+    const { orchestrator, bus, api } = make();
+    orchestrator.open();
+    const building = orchestrator.pick("errors", state);
+    orchestrator.close();
+    await building;
+    expect(bus.last("issue_report_previewed")).toBeUndefined();
+    expect(bus.last("issue_report_failed")).toBeUndefined();
+    await orchestrator.send();
+    expect(api.calls).toEqual([]);
+  });
+
   it("full level keeps the prompt in the zipped trace", async () => {
     const { orchestrator, bus } = make();
     orchestrator.open();
     await orchestrator.pick("full", state);
     const preview = (bus.last("issue_report_previewed") as { preview: { zipPath: string } }).preview;
     const zip = await JSZip.loadAsync(readFileSync(preview.zipPath));
-    const trace = await zip.file("traces/sess-1.ndjson")!.async("string");
+    const trace = await zip.file("traces/1.ndjson")!.async("string");
     expect(trace).toContain("private prompt");
+    expect(trace).toContain("sess-1");
   });
 });
 

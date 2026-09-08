@@ -60,6 +60,11 @@ describe("IssueReportPopup", () => {
     expect(frame).toContain("enter/y send");
   });
 
+  it("shows the two waiting screens", () => {
+    expect(popup({ ...BASE, step: "building" })).toContain("Collecting logs and traces");
+    expect(popup({ ...BASE, step: "sending" })).toContain("Filing the issue");
+  });
+
   it("shows the link once filed and the error when refused", () => {
     expect(popup({ ...BASE, step: "sent", url: "https://github.com/x/y/issues/1" })).toContain(
       "https://github.com/x/y/issues/1",

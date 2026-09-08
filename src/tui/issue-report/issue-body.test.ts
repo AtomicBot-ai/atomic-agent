@@ -60,10 +60,35 @@ describe("packIssue", () => {
     expect(packed.comments[0]).toContain("C, D");
   });
 
-  it("never cuts the header", () => {
+  it("never cuts the header, even when it fills the page alone", () => {
     const header = "h".repeat(50);
     const packed = packIssue(header, [{ title: "A", body: "x".repeat(100) }], { limit: 60 });
     expect(packed.body).toBe(header);
     expect(packed.comments[0]).toContain("[cut");
+    for (const page of [packed.body, ...packed.comments]) {
+      expect(page.length).toBeLessThanOrEqual(60);
+    }
+  });
+
+  it("puts the start of the first section on the body page when there is room", () => {
+    const packed = packIssue("head", [{ title: "A", body: "x".repeat(5000) }], { limit: 1000 });
+    expect(packed.body.startsWith("head\n\n### A")).toBe(true);
+    expect(packed.body).toContain("[cut");
+    expect(packed.body.length).toBeLessThanOrEqual(1000);
+  });
+
+  it("still names the overflow when the last page is a cut section", () => {
+    const body = Array.from({ length: 300 }, (_, i) => `row ${i}`).join("\n");
+    const packed = packIssue("h", [
+      { title: "Log", body, fenced: true },
+      { title: "More", body: "m".repeat(200) },
+    ], { limit: 600, maxComments: 0 });
+    expect(packed.comments).toEqual([]);
+    expect(packed.overflow).toEqual(["More"]);
+    expect(packed.body).toContain("[cut");
+    expect(packed.body).toMatch(/Not included inline|More sections in the attached zip/);
+    expect(packed.body.length).toBeLessThanOrEqual(600);
+    // The cut starts on a whole row.
+    expect(packed.body).toMatch(/\[cut[^\n]*\n\nrow \d+\n|\[cut[^\n]*\nrow \d+\n/);
   });
 });

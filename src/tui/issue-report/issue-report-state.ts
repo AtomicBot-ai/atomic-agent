@@ -68,9 +68,9 @@ export function reduceIssueReport(
 ): IssueReportState | null {
   switch (action.type) {
     case "issue_report_opened":
-      // Re-opening while a send is in flight would lose its outcome;
+      // Re-opening while a leg is in flight would lose its outcome;
       // every other step starts over.
-      if (state && state.step === "sending") return state;
+      if (state && (state.step === "sending" || state.step === "building")) return state;
       return createIssueReportState();
     case "issue_report_closed":
       return null;

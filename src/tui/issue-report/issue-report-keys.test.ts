@@ -103,15 +103,49 @@ describe("issue-report popup keys", () => {
     expect(dispatch).toHaveBeenCalledWith({ type: "issue_report_closed" });
   });
 
-  it("ignores keys while building or sending so a leg cannot be abandoned", () => {
-    for (const step of ["building", "sending"] as const) {
-      const { c, dispatch, callbacks } = ctx(withReport(report(step)));
-      handleAppKey("", { ...KEY, escape: true }, c);
-      handleAppKey("", { ...KEY, return: true }, c);
-      expect(dispatch).not.toHaveBeenCalled();
-      expect(callbacks.onIssueReportCloseRequested).not.toHaveBeenCalled();
-      expect(callbacks.onIssueReportSendRequested).not.toHaveBeenCalled();
-    }
+  it("ignores every key while sending: the issue may already exist", () => {
+    const { c, dispatch, callbacks } = ctx(withReport(report("sending")));
+    handleAppKey("", { ...KEY, escape: true }, c);
+    handleAppKey("", { ...KEY, return: true }, c);
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(callbacks.onIssueReportCloseRequested).not.toHaveBeenCalled();
+    expect(callbacks.onIssueReportSendRequested).not.toHaveBeenCalled();
+  });
+
+  it("lets esc, and only esc, abandon a build", () => {
+    const { c, dispatch, callbacks } = ctx(withReport(report("building")));
+    handleAppKey("", { ...KEY, return: true }, c);
+    handleAppKey("1", KEY, c);
+    expect(dispatch).not.toHaveBeenCalled();
+    handleAppKey("", { ...KEY, escape: true }, c);
+    expect(callbacks.onIssueReportCloseRequested).toHaveBeenCalledTimes(1);
+    expect(dispatch).toHaveBeenCalledWith({ type: "issue_report_closed" });
+  });
+
+  it("sits above a pending approval so y / n / digits never answer it", () => {
+    const state = withReport(report("pick"));
+    const armed: TuiState = {
+      ...state,
+      pendingApproval: {
+        approvalId: "a1",
+        sessionId: state.session.sessionId ?? "",
+        tool: "os.shell.run",
+        category: "shell",
+        reason: "run",
+      } as unknown as TuiState["pendingApproval"],
+    };
+    const { c, callbacks } = ctx(armed);
+    handleAppKey("1", KEY, c);
+    handleAppKey("y", KEY, c);
+    expect(callbacks.onApprovalDecision).not.toHaveBeenCalled();
+    expect(callbacks.onIssueReportPickRequested).toHaveBeenCalledWith("errors", armed);
+  });
+
+  it("lets ctrl+c through so the quit path stays reachable", () => {
+    const { c, dispatch, callbacks } = ctx(withReport(report("pick")));
+    handleAppKey("c", { ...KEY, ctrl: true }, c);
+    expect(callbacks.onIssueReportCloseRequested).not.toHaveBeenCalled();
+    expect(dispatch).not.toHaveBeenCalledWith({ type: "issue_report_closed" });
   });
 
   it("any key closes the sent and error screens", () => {

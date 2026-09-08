@@ -11,7 +11,13 @@
 import type { DebugBundleSnapshot } from "../debug-bundle/build-snapshot.js";
 import type { LogRecord } from "../../tracing/structured-logger.js";
 import type { ReportSection } from "./issue-body.js";
-import { mapStrings, maskSecrets, scrubText, type RedactionContext } from "./redact.js";
+import {
+  mapStrings,
+  maskSecrets,
+  redactPaths,
+  scrubText,
+  type RedactionContext,
+} from "./redact.js";
 import { issueReportLevelInfo, type IssueReportLevel } from "./report-levels.js";
 
 /** Environment facts the orchestrator reads at report time. */
@@ -52,8 +58,14 @@ export function buildIssueReport(
 ): IssueReport {
   const { snapshot, facts, level, redaction } = input;
   const scrub = (s: string): string =>
-    level === "full" ? maskSecrets(s) : scrubText(s, redaction);
+    level === "full"
+      ? maskSecrets(s)
+      : level === "errors"
+        ? redactPaths(scrubText(s, redaction))
+        : scrubText(s, redaction);
   const deep = (v: unknown): unknown => mapStrings(v, scrub);
+  // A model name can be a GGUF path on a local backend.
+  const safeFacts = deep(facts) as IssueReportFacts;
 
   const lastRunStatus =
     snapshot.lastRunStatus === null ? null : scrub(snapshot.lastRunStatus);
@@ -78,8 +90,8 @@ export function buildIssueReport(
       ...(l.context === undefined ? {} : { context: deep(l.context) }),
     }));
 
-  const title = buildTitle(lastRunStatus, facts);
-  const header = buildHeader(title, facts, level, snapshot);
+  const title = buildTitle(lastRunStatus, safeFacts);
+  const header = buildHeader(title, safeFacts, level, snapshot);
   const sections: ReportSection[] = [];
 
   if (runs.length > 0) {
@@ -107,7 +119,7 @@ export function buildIssueReport(
   const filtered: Record<string, unknown> = {
     level,
     capturedAt: facts.capturedAt,
-    facts,
+    facts: safeFacts,
     session: sessionFacts(snapshot, level, scrub),
     lastRunStatus,
     runHistory: runs,
@@ -120,7 +132,7 @@ export function buildIssueReport(
       timestamp: f.timestamp,
       kind: f.kind,
       stepIndex: f.stepIndex,
-      line: scrub(f.line),
+      line: scrub(level === "full" ? f.line : stripToolPayload(f.kind, f.line)),
     }));
     filtered.feed = feed;
     sections.push({
@@ -224,10 +236,28 @@ function sessionFacts(
   if (level === "errors") return base;
   return {
     ...base,
-    sessionId: s.sessionId,
+    // The session id is a join key; only the full level carries it.
+    ...(level === "full" ? { sessionId: s.sessionId } : {}),
     workingDir: scrub(s.workingDir),
     llamaUrl: scrub(s.llamaUrl),
   };
+}
+
+/**
+ * A feed row for a tool call carries the call's arguments and its
+ * result preview (`→ tool({…})`, `← tool ok: …`). Below `full` only the
+ * tool name and status survive.
+ */
+export function stripToolPayload(kind: string, line: string): string {
+  if (kind === "tool_call_parsed") {
+    const open = line.indexOf("(");
+    return open === -1 ? line : `${line.slice(0, open)}(…)`;
+  }
+  if (kind === "tool_call_executed") {
+    const colon = line.indexOf(":");
+    return colon === -1 ? line : `${line.slice(0, colon)}: …`;
+  }
+  return line;
 }
 
 function formatLog(l: {

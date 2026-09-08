@@ -28,9 +28,9 @@ export const ISSUE_REPORT_LEVELS: readonly IssueReportLevelInfo[] = [
     level: "errors",
     label: "Errors only",
     detail:
-      "version, platform, model, the failures and warn/error log lines. No chat, no file paths.",
+      "version, platform, model, the failures and warn/error log lines. No chat, no tool arguments; paths removed.",
     disclosure:
-      "errors only — no conversation, no paths, no tool arguments",
+      "errors only — no conversation, no tool arguments, absolute paths removed",
   },
   {
     level: "scrubbed",

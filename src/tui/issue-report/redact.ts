@@ -42,6 +42,8 @@ const SECRET_PATTERNS: readonly [RegExp, string][] = [
   [/((?:api[_-]?key|secret|token|password|passwd)["']?\s*[:=]\s*["']?)[^\s"',}]{6,}/gi, "$1<redacted>"],
   // AWS
   [/\bAKIA[0-9A-Z]{16}\b/g, "<key>"],
+  // Credentials embedded in a URL
+  [/(https?:\/\/)[^\s/@:]+:[^\s/@]+@/gi, "$1<redacted>@"],
 ];
 
 export function maskSecrets(text: string): string {
@@ -57,17 +59,25 @@ const IPV4 = /\b(?:\d{1,3}\.){3}\d{1,3}\b/g;
 const URL_QUERY = /(https?:\/\/[^\s?#"'<>]+)\?[^\s"'<>]*/g;
 // Any user's home under the common roots, not just the operator's own.
 const OTHER_HOMES = /(?:\/Users|\/home)\/[^/\s"'`]+/g;
-const WINDOWS_HOMES = /[A-Za-z]:\\Users\\[^\\\s"'`]+/g;
+// Both the literal form and the JSON-escaped form a log line carries.
+const WINDOWS_HOMES = /[A-Za-z]:(?:\\\\|\\)Users(?:\\\\|\\)[^\\\s"'`]+/g;
+/**
+ * Any absolute path of two or more segments that is not already under
+ * `<cwd>` / `~` / a URL. The `errors` level uses this so a path under
+ * `/Volumes/ClientName/…` or `/opt/…` — which the home and cwd rules
+ * cannot know about — does not leave the machine either.
+ */
+const ABSOLUTE_PATH = /(?<![\w<~>/.:])(?:[A-Za-z]:)?(?:[\\/][^\s\\/"'`:)\]>]+){2,}/g;
 
 export function redactPersonal(text: string, ctx: RedactionContext): string {
   let out = text;
   if (ctx.workingDir && ctx.workingDir.length > 1) {
-    out = out.split(ctx.workingDir).join("<cwd>");
-    out = out.split(toForwardSlashes(ctx.workingDir)).join("<cwd>");
+    out = replacePathPrefix(out, ctx.workingDir, "<cwd>");
+    out = replacePathPrefix(out, toForwardSlashes(ctx.workingDir), "<cwd>");
   }
   if (ctx.homeDir.length > 1) {
-    out = out.split(ctx.homeDir).join("~");
-    out = out.split(toForwardSlashes(ctx.homeDir)).join("~");
+    out = replacePathPrefix(out, ctx.homeDir, "~");
+    out = replacePathPrefix(out, toForwardSlashes(ctx.homeDir), "~");
   }
   out = out.replace(OTHER_HOMES, "~");
   out = out.replace(WINDOWS_HOMES, "~");
@@ -75,6 +85,21 @@ export function redactPersonal(text: string, ctx: RedactionContext): string {
   out = out.replace(IPV4, (ip) => (isLoopback(ip) ? ip : "<ip>"));
   out = out.replace(URL_QUERY, "$1?<query>");
   return out;
+}
+
+/** Replace every absolute path that survived the home / cwd rules. */
+export function redactPaths(text: string): string {
+  return text.replace(ABSOLUTE_PATH, "<path>");
+}
+
+/**
+ * Replace `prefix` only where it ends a path segment, so `/Users/v/proj`
+ * does not eat the front of `/Users/v/proj-2/x`.
+ */
+function replacePathPrefix(text: string, prefix: string, replacement: string): string {
+  if (!text.includes(prefix)) return text;
+  const escaped = prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return text.replace(new RegExp(`${escaped}(?=[\\/\\\\\\s"'\`:)\\]>,]|$)`, "g"), replacement);
 }
 
 /** `maskSecrets` then `redactPersonal` — the `scrubbed` level's pass. */

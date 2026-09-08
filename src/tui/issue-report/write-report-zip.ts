@@ -33,7 +33,8 @@ export interface WriteReportZipResult {
   bytes: number;
   /** Trace sections to append to the issue, one per session that had rows. */
   traceSections: ReportSection[];
-  traces: Array<{ sessionId: string; included: boolean; stats?: TraceRedactionStats; reason?: string }>;
+  /** One row per requested trace, in the order they were read. */
+  traces: Array<{ index: number; sessionId?: string; included: boolean; stats?: TraceRedactionStats; reason?: string }>;
 }
 
 export function reportZipFileName(level: string, now: Date = new Date()): string {
@@ -51,28 +52,32 @@ export async function writeReportZip(
   const traceSections: ReportSection[] = [];
   const traces: WriteReportZipResult["traces"] = [];
 
-  for (const sessionId of options.sessionIds) {
+  // Traces are named by ordinal, not session id: an id is a join key to
+  // the operator's other files, and only the full level carries it.
+  const full = report.level === "full";
+  for (const [i, sessionId] of options.sessionIds.entries()) {
+    const index = i + 1;
     const path = traceFilePath(options.traceDir, sessionId);
     let raw: string;
     try {
       raw = await readFile(path, "utf8");
     } catch (err) {
       traces.push({
-        sessionId,
+        index,
+        ...(full ? { sessionId } : {}),
         included: false,
-        reason: err instanceof Error ? err.message : String(err),
+        // The errno alone: the message would name the trace directory.
+        reason: (err as NodeJS.ErrnoException)?.code ?? "unreadable",
       });
       continue;
     }
     const { text, stats } = redactTraceNdjson(raw, report.level, options.redaction);
-    traces.push({ sessionId, included: true, stats });
+    traces.push({ index, ...(full ? { sessionId } : {}), included: true, stats });
     if (text.length === 0) continue;
-    zip.file(`traces/${sessionId}.ndjson`, text);
+    zip.file(`traces/${index}.ndjson`, text);
     traceSections.push({
-      title: `Trace ${sessionId} (${stats.kept} rows kept, ${stats.dropped} dropped, ${stats.stripped} fields removed)`,
-      body: text.length > MAX_INLINE_TRACE_CHARS
-        ? text.slice(text.length - MAX_INLINE_TRACE_CHARS)
-        : text,
+      title: `Trace ${index} of ${options.sessionIds.length} (${stats.kept} rows kept, ${stats.dropped} dropped, ${stats.stripped} fields removed)`,
+      body: tailOnLineBoundary(text, MAX_INLINE_TRACE_CHARS),
       fenced: true,
       lang: "json",
       collapsed: true,
@@ -99,4 +104,12 @@ export async function writeReportZip(
   const path = join(options.outDir, reportZipFileName(report.level, options.now));
   await writeFile(path, payload);
   return { path, bytes: payload.byteLength, traceSections, traces };
+}
+
+/** The last `max` characters, starting on a whole line. */
+function tailOnLineBoundary(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const tail = text.slice(text.length - max);
+  const nl = tail.indexOf("\n");
+  return nl === -1 ? tail : tail.slice(nl + 1);
 }

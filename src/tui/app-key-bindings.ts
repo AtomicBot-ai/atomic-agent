@@ -321,6 +321,14 @@ export function handleAppKey(
       return true;
     }
   }
+  // The issue-report popup is modal: it owns every key while it is up.
+  // Above the approval keys, or `y` / `n` / a digit typed at the popup
+  // would answer a pending approval instead. Ctrl+C alone falls
+  // through, so the app's quit path stays reachable under it.
+  if (state.issueReport && !(key.ctrl && input === "c")) {
+    handleIssueReportKey(input, key, state.issueReport, ctx);
+    return true;
+  }
   // Only the visible thread's question is answerable from the
   // keyboard. The reducer never arms `pendingApproval` for another
   // session (a background request surfaces as a notice instead), but
@@ -345,13 +353,6 @@ export function handleAppKey(
   // The update offer claims only y / n / Esc; anything else (Ctrl+C in
   // particular) falls through to the normal handlers below.
   if (state.updatePrompt && handleUpdateKey(input, key, ctx)) {
-    return true;
-  }
-  // The issue-report popup is modal: it owns every key while it is up,
-  // including during its two async legs, where Esc would otherwise
-  // leave a zip or an API call mid-flight with nothing on screen.
-  if (state.issueReport) {
-    handleIssueReportKey(input, key, state.issueReport, ctx);
     return true;
   }
   // The mode menu is a dropdown on the composer's toolbar, so it takes
@@ -1165,7 +1166,14 @@ function handleIssueReportKey(
     callbacks.onIssueReportCloseRequested?.();
     dispatch({ type: "issue_report_closed" });
   };
-  if (report.step === "building" || report.step === "sending") return;
+  // A send in flight cannot be abandoned: the issue may already exist
+  // and the link is the only thing left to show. A build can — the
+  // orchestrator drops a result that arrives after the close.
+  if (report.step === "sending") return;
+  if (report.step === "building") {
+    if (key.escape) close();
+    return;
+  }
   if (key.escape || report.step === "sent" || report.step === "error") {
     close();
     return;

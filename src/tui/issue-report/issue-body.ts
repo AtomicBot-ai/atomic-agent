@@ -40,6 +40,7 @@ export interface PackOptions {
 }
 
 const CUT_MARKER = "\n… [cut — the rest is in the attached zip]\n";
+const NOTE_RESERVE = 400;
 
 export function renderSection(section: ReportSection): string {
   const content = section.fenced
@@ -62,6 +63,10 @@ export function packIssue(
 ): PackedIssue {
   const limit = options.limit ?? GITHUB_BODY_LIMIT;
   const maxComments = options.maxComments ?? 3;
+  // Room kept on every page for the overflow note, so it always fits
+  // on the last one — including a page that is a cut section.
+  const reserve = Math.min(NOTE_RESERVE, Math.floor(limit / 10));
+  const pageLimit = limit - reserve;
   const pages: string[] = [];
   const overflow: string[] = [];
   let current = header.trimEnd();
@@ -75,9 +80,22 @@ export function packIssue(
     }
     let rendered = renderSection(section);
     const separator = current.length > 0 ? "\n\n" : "";
-    if (current.length + separator.length + rendered.length <= limit) {
+    if (current.length + separator.length + rendered.length <= pageLimit) {
       current = `${current}${separator}${rendered}`;
       continue;
+    }
+    // The body page holds the header and at least the start of the
+    // first section: a body that is only a header, with the first
+    // section pushed to a comment or the zip, reads as an empty report.
+    if (pages.length === 0 && current === header.trimEnd()) {
+      const room = pageLimit - current.length - separator.length;
+      // Only when a cut fragment has something to show; a header that
+      // fills the page on its own keeps the section for the next one.
+      const minRoom = renderSection({ ...section, body: CUT_MARKER }).length + 16;
+      if (room >= minRoom) {
+        current = `${current}${separator}${cutSection(section, room)}`;
+        continue;
+      }
     }
     // Start a new page for it, if the budget allows one.
     if (current.length > 0) {
@@ -88,8 +106,8 @@ export function packIssue(
       overflow.push(section.title);
       continue;
     }
-    if (rendered.length > limit) {
-      rendered = cutSection(section, limit);
+    if (rendered.length > pageLimit) {
+      rendered = cutSection(section, pageLimit);
     }
     current = rendered;
   }
@@ -103,7 +121,11 @@ export function packIssue(
       `_Not included inline (over GitHub's size limit): ${overflow.join(", ")} — see the attached zip._`;
     const last = pages.length - 1;
     const withNote = `${pages[last]}\n\n${note}`;
-    pages[last] = withNote.length <= limit ? withNote : pages[last]!;
+    // The reserve covers the note at GitHub's limit; at a tiny limit the
+    // titles alone can exceed it, so fall back to a note without them.
+    const short = `${pages[last]}\n\n_More sections in the attached zip._`;
+    pages[last] =
+      withNote.length <= limit ? withNote : short.length <= limit ? short : pages[last]!;
   }
   const [body = header, ...comments] = pages;
   return { body, comments, overflow };
@@ -119,8 +141,9 @@ function cutSection(section: ReportSection, limit: number): string {
   const room = Math.max(0, limit - envelope - CUT_MARKER.length - 8);
   const body = section.body;
   const tail = body.slice(body.length - room);
-  // Start on a line boundary so a half JSON row is not the first thing seen.
+  // Start on a line boundary so a half JSON row is not the first thing
+  // seen; trace rows run long, so no cap on how far the first break is.
   const nl = tail.indexOf("\n");
-  const clean = nl >= 0 && nl < 200 ? tail.slice(nl + 1) : tail;
+  const clean = nl >= 0 ? tail.slice(nl + 1) : tail;
   return renderSection({ ...section, body: `${CUT_MARKER}${clean}` });
 }

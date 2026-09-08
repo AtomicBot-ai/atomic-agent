@@ -70,6 +70,12 @@ interface PreparedReport {
 export class IssueReportOrchestrator {
   private prepared: PreparedReport | null = null;
   private busy = false;
+  /**
+   * Bumped on every open / close. A leg that finishes after the popup
+   * it belonged to was closed drops its result instead of reviving a
+   * screen the operator left.
+   */
+  private generation = 0;
 
   constructor(
     private readonly runtime: IssueReportRuntime,
@@ -78,12 +84,15 @@ export class IssueReportOrchestrator {
   ) {}
 
   open(): void {
+    // Not while a leg runs: the reducer refuses to reopen over it too.
+    if (this.busy) return;
+    this.generation += 1;
     this.prepared = null;
     this.bus.emit({ type: "issue_report_opened" });
   }
 
   close(): void {
-    if (this.busy) return;
+    this.generation += 1;
     this.prepared = null;
     this.bus.emit({ type: "issue_report_closed" });
   }
@@ -92,6 +101,7 @@ export class IssueReportOrchestrator {
   async pick(level: IssueReportLevel, state: TuiState): Promise<void> {
     if (this.busy) return;
     this.busy = true;
+    const generation = this.generation;
     this.bus.emit({ type: "issue_report_building" });
     try {
       const snapshot = buildDebugBundleSnapshot(state);
@@ -127,6 +137,7 @@ export class IssueReportOrchestrator {
         now,
       });
       const packed = packIssue(report.header, [...report.sections, ...zip.traceSections]);
+      if (generation !== this.generation) return;
       this.prepared = { report, packed, zipPath: zip.path };
       this.bus.emit({
         type: "issue_report_previewed",
@@ -141,7 +152,9 @@ export class IssueReportOrchestrator {
         },
       });
     } catch (err) {
-      this.bus.emit({ type: "issue_report_failed", error: describe(err) });
+      if (generation === this.generation) {
+        this.bus.emit({ type: "issue_report_failed", error: describe(err) });
+      }
     } finally {
       this.busy = false;
     }
