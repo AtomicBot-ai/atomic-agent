@@ -1,9 +1,12 @@
 import { runCommand } from "../../../sandbox/command-runner.js";
 import {
   isEnoent,
+  isSpawnEinval,
   mapCliFailure,
   SubscriptionCliNotInstalledError,
+  SubscriptionCliSpawnError,
 } from "./subscription-cli-errors.js";
+import { resolveWindowsCliInvocation } from "./windows-cli-shim.js";
 
 export interface CliRunOptions {
   binary: string;
@@ -39,9 +42,16 @@ export type CliRunner = (options: CliRunOptions) => Promise<CliRunOutcome>;
  * `git-runner.ts` wraps it for git.
  */
 export const runCliCommand: CliRunner = async (options) => {
+  // On Windows the vendor CLIs are `.cmd` shims, which spawn refuses to
+  // start without a shell; elsewhere this hands the pair straight back.
+  const invocation = resolveWindowsCliInvocation({
+    binary: options.binary,
+    args: options.args,
+    installHint: options.installHint,
+  });
   let result;
   try {
-    result = await runCommand(options.binary, [...options.args], {
+    result = await runCommand(invocation.command, invocation.args, {
       cwd: options.cwd,
       timeoutMs: options.timeoutMs,
       maxOutputBytes: options.maxOutputBytes,
@@ -52,8 +62,16 @@ export const runCliCommand: CliRunner = async (options) => {
       // exactly that.
       ...(options.input === undefined ? {} : { input: options.input }),
       ...(options.signal ? { signal: options.signal } : {}),
+      ...(invocation.windowsVerbatimArguments
+        ? { windowsVerbatimArguments: true }
+        : {}),
     });
   } catch (err) {
+    // EINVAL is thrown, not emitted, so it reaches us through the
+    // promise rejection rather than the child's `error` event.
+    if (isSpawnEinval(err)) {
+      throw new SubscriptionCliSpawnError(options.binary, options.installHint);
+    }
     if (isEnoent(err)) {
       throw new SubscriptionCliNotInstalledError(
         options.binary,
