@@ -1,5 +1,7 @@
 import { spawn } from "node:child_process";
 import { isBrokenPipe } from "../../../sandbox/index.js";
+import { killProcessTree } from "../../../sandbox/kill-process-tree.js";
+import { hostPlatform } from "./host-environment.js";
 import type { CliRunOptions } from "./run-cli-completion.js";
 import {
   isEnoent,
@@ -24,8 +26,9 @@ export type CliStreamRunner = (
  *
  * Separate from `runCliCommand` because the buffered runner resolves
  * only once the process exits, which is exactly what streaming must
- * avoid. The generator's `finally` always kills the child, so a consumer
- * that abandons the iterator cannot leak a process.
+ * avoid. The generator's `finally` always kills the child — the whole
+ * process tree on Windows, where the child is a `cmd.exe` wrapper — so a
+ * consumer that abandons the iterator cannot leak a process.
  */
 export const streamCliCommand: CliStreamRunner = async function* (options) {
   // On Windows the vendor CLIs are `.cmd` shims, which spawn refuses to
@@ -72,21 +75,19 @@ export const streamCliCommand: CliStreamRunner = async function* (options) {
   const stop = (reason: "timeout" | "abort" | "done") => {
     if (settled) return;
     if (reason === "timeout") timedOut = true;
-    try {
-      child.kill("SIGTERM");
-    } catch {
-      // already gone
-    }
+    // Not `child.kill`: on Windows the direct child is `cmd.exe` and the
+    // real CLI is a grandchild, so `TerminateProcess` on this pid alone
+    // would leave it running — one orphan for every aborted turn, and
+    // Ctrl+C is the most routine thing in the TUI. `killProcessTree`
+    // walks the tree with `taskkill /T` there and is a plain
+    // `child.kill` everywhere else.
+    killProcessTree(child, { platform: hostPlatform() });
     // Escalate only if SIGTERM was not enough. A second `stop` (abort
     // followed by the generator's own cleanup) must not re-arm it, or
     // the first timer is orphaned and fires at a pid we no longer track.
     if (killTimer) return;
     killTimer = setTimeout(() => {
-      try {
-        child.kill("SIGKILL");
-      } catch {
-        // already gone
-      }
+      killProcessTree(child, { force: true, platform: hostPlatform() });
     }, SIGKILL_DELAY_MS);
     killTimer.unref?.();
   };

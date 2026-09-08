@@ -1,5 +1,7 @@
 import { spawn } from "node:child_process";
 
+import { killProcessTree } from "./kill-process-tree.js";
+
 const IS_WINDOWS = process.platform === "win32";
 
 /**
@@ -102,31 +104,10 @@ export async function runCommand(
       if (settled) return;
       timedOut = reason === "timeout";
       // On Windows `child.kill` only targets the direct child, leaving a
-      // subshell's descendants (cmd.exe -> foo.exe) running. `taskkill /T`
-      // walks the whole process tree; fall back to SIGKILL if the pid is
-      // gone or taskkill itself cannot be spawned.
-      if (IS_WINDOWS && typeof child.pid === "number") {
-        try {
-          spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], {
-            stdio: "ignore",
-            windowsHide: true,
-          }).on("error", () => {
-            try {
-              child.kill("SIGKILL");
-            } catch {
-              // process already exited
-            }
-          });
-          return;
-        } catch {
-          // fall through to the POSIX-style kill below
-        }
-      }
-      try {
-        child.kill("SIGKILL");
-      } catch {
-        // process already exited
-      }
+      // subshell's descendants (cmd.exe -> foo.exe) running, so this goes
+      // through `taskkill /T`. Same treatment, same fallback — the shared
+      // helper exists because the streaming CLI runner needs it too.
+      killProcessTree(child, { force: true });
     };
 
     const timer =
