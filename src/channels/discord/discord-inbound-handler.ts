@@ -14,6 +14,10 @@ import type { SessionState } from "../../session/index.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 import type { DiscordApi } from "./discord-api.js";
 import { scrubDiscordError } from "./discord-channel-types.js";
+import {
+  formatDiscordAttachmentFailure,
+  sendDiscordAttachments,
+} from "./discord-outbound-attachments.js";
 import type { DiscordSessionPointer } from "./discord-session-pointer.js";
 
 /**
@@ -191,10 +195,12 @@ async function dispatchToRuntime(
   ctx.inflight.set(channelId, controller);
 
   let reply: string | null = null;
+  let replyAttachments: ReadonlyArray<string> = [];
   let failure: { error: Error; category: LlmFailureCategory } | null = null;
   const eventHook = (event: AgentLoopEvent): void => {
     if (event.type === "llm_event" && event.event.type === "assistant_reply") {
       reply = event.event.text;
+      replyAttachments = event.event.attachments ?? [];
     }
     if (event.type === "loop_failed") {
       failure = { error: event.error, category: event.category };
@@ -222,6 +228,20 @@ async function dispatchToRuntime(
     await send(ctx, channelId, "Turn cancelled.");
   } else if (reply !== null) {
     await send(ctx, channelId, reply);
+    // Files follow the text, one message each. A file that could not
+    // be delivered is announced in the channel — the operator asked
+    // for the file, not for the sentence saying it was sent.
+    if (replyAttachments.length > 0) {
+      const delivery = await sendDiscordAttachments({
+        api: ctx.api,
+        channelId,
+        paths: replyAttachments,
+        logger: ctx.logger,
+      });
+      for (const failed of delivery.failed) {
+        await send(ctx, channelId, formatDiscordAttachmentFailure(failed));
+      }
+    }
   } else if (failure) {
     await send(ctx, channelId, formatFailure(failure));
   } else {

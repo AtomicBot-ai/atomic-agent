@@ -1850,6 +1850,10 @@ A Discord bot that relays DMs and @mentions to the agent and posts replies back 
 
 The channel talks to Discord over the raw HTTP + Gateway APIs using Node's built-in `fetch` and `WebSocket`. It needs six REST calls and one WebSocket state machine; `discord.js` would add a large transitive tree to a project that ships a single-file SEA binary, for code we would still have to wrap. Same reasoning as declining `@composio/core`.
 
+### Attachments (outbound)
+
+`reply.attachments` (see §"Reply attachments") is delivered by [discord-outbound-attachments.ts](src/channels/discord/discord-outbound-attachments.ts): the reply text goes first through `sendMessage`, then each file as its own message through `DiscordApi.sendFile` — a multipart POST on the same messages endpoint (`payload_json` names the attachment slot, `files[0]` carries the bytes; `request()` leaves `Content-Type` to `fetch` for a `FormData` body so the boundary is right). Discord renders images inline on its own, so there is no photo / document split. The channel does not pretend to know the server's upload limit (10 MB unboosted, up to 100 MB at boost level 3): anything up to 100 MB is attempted and a 413 is reported as "over this server's upload limit". **Never silent:** `dispatchToRuntime` posts one `Could not send <basename>: <reason>` per failure after the reply. `sendDiscordAttachments` never throws; errors are scrubbed.
+
 Locked invariants (pinned by [src/channels/discord/discord-inbound-handler.test.ts](src/channels/discord/discord-inbound-handler.test.ts), [discord-gateway.test.ts](src/channels/discord/discord-gateway.test.ts), [discord-approval-bridge.test.ts](src/channels/discord/discord-approval-bridge.test.ts), [discord-channel.test.ts](src/channels/discord/discord-channel.test.ts), [discord-lockfile.test.ts](src/channels/discord/discord-lockfile.test.ts)):
 
 1. **Addressed messages only.** In a guild the bot acts only when @mentioned; in a DM, always. Anything from itself or another bot is dropped outright — two agents in one guild would otherwise talk to each other forever.
@@ -1861,6 +1865,7 @@ Locked invariants (pinned by [src/channels/discord/discord-inbound-handler.test.
 7. **A missing token is `disabled`, not `down`.** An unconfigured integration is a resting state; reporting it as a failure trains the operator to ignore the badge.
 8. **Reconnect, but not forever.** Drops retry with full-jitter exponential backoff and RESUME where Discord allows it; the codes Discord will never accept a retry for (4004 bad token, 4014 disallowed intents) stop the loop and surface instead of burning the per-day session-start budget.
 9. **One process per token.** `DiscordLockfile` guards it: two gateways on one token receive every event twice and would run every turn twice, side effects included. Discord does not prevent this the way Telegram's 409 does.
+10. **Reply attachments are delivered after the text, one upload each, and an undeliverable file is announced in the channel (`Could not send …`).** Pinned by [src/channels/discord/discord-outbound-attachments.test.ts](src/channels/discord/discord-outbound-attachments.test.ts), [discord-api.test.ts](src/channels/discord/discord-api.test.ts) and the reply-delivery cases in [discord-inbound-handler.test.ts](src/channels/discord/discord-inbound-handler.test.ts).
 
 ## Integrations hub
 

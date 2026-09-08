@@ -1,4 +1,7 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import {
   handleDiscordMessage,
@@ -196,5 +199,63 @@ describe("handleDiscordMessage", () => {
     const ctx = makeCtx();
     await handleDiscordMessage(msg(), ctx);
     expect(ctx.inflight.size).toBe(0);
+  });
+});
+
+describe("reply attachments delivery", () => {
+  let dir: string;
+
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), "atomic-discord-reply-files-"));
+    writeFileSync(join(dir, "report.pdf"), "pdf");
+  });
+
+  afterAll(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  function ctxReplying(text: string, attachments?: string[]) {
+    const ctx = makeCtx();
+    ctx.runTurn.mockImplementationOnce(
+      async (_s: unknown, _t: string, opts: { eventHook?: (e: unknown) => void }) => {
+        opts.eventHook?.({
+          type: "llm_event",
+          event: {
+            type: "assistant_reply",
+            text,
+            ...(attachments ? { attachments } : {}),
+          },
+        });
+        return {};
+      },
+    );
+    const files: Array<{ channelId: string; filename: string; afterTexts: number }> = [];
+    const sendFile = vi.fn(async (channelId: string, file: { path: string; filename: string }) => {
+      files.push({ channelId, filename: file.filename, afterTexts: ctx.sent.length });
+      return "m2";
+    });
+    (ctx.api as unknown as { sendFile: unknown }).sendFile = sendFile;
+    return Object.assign(ctx, { files, sendFile });
+  }
+
+  it("posts the reply text first, then each file as its own message", async () => {
+    const ctx = ctxReplying("here it is", [join(dir, "report.pdf")]);
+    await handleDiscordMessage(msg({ content: "send the report" }), ctx);
+    expect(ctx.sent).toEqual(["here it is"]);
+    expect(ctx.files).toEqual([{ channelId: "c1", filename: "report.pdf", afterTexts: 1 }]);
+  });
+
+  it("announces a file it could not deliver after the reply", async () => {
+    const ctx = ctxReplying("here it is", [join(dir, "report.pdf"), join(dir, "gone.pdf")]);
+    await handleDiscordMessage(msg({ content: "send both" }), ctx);
+    expect(ctx.sent).toEqual(["here it is", "Could not send gone.pdf: file not found"]);
+    expect(ctx.sendFile).toHaveBeenCalledTimes(1);
+  });
+
+  it("a reply without attachments never uploads anything", async () => {
+    const ctx = ctxReplying("plain");
+    await handleDiscordMessage(msg(), ctx);
+    expect(ctx.sendFile).not.toHaveBeenCalled();
+    expect(ctx.sent).toEqual(["plain"]);
   });
 });
