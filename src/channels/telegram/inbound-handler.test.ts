@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -11,12 +11,16 @@ import {
 } from "../../session/index.js";
 import { StructuredLogger } from "../../tracing/structured-logger.js";
 
+import { createAttachmentInbox } from "../attachments/inbox.js";
 import {
+  handleInboundFile,
   handleInboundText,
+  TELEGRAM_BOT_DOWNLOAD_LIMIT_BYTES,
   type InboundContext,
   type InboundTextUpdate,
 } from "./inbound-handler.js";
 import type { TelegramApi } from "./outbound-sender.js";
+import type { InboundFileUpdate } from "./telegram-file-update.js";
 import { TelegramSessionPointer } from "./telegram-session-pointer.js";
 
 interface RunTurnCall {
@@ -156,6 +160,7 @@ function makeContext(
   api: TelegramApi,
   pointer: TelegramSessionPointer,
   ownerUserId: number | null,
+  inboxDir: string,
 ): InboundContext & { inflight: Map<number, AbortController> } {
   return {
     runtime,
@@ -164,6 +169,8 @@ function makeContext(
     logger: new StructuredLogger({ level: "warn", sinks: [] }),
     ownerUserId,
     inflight: new Map(),
+    inbox: createAttachmentInbox({ dir: inboxDir }),
+    mediaGroups: new Map(),
     scheduleKeepalive: () => () => undefined,
   };
 }
@@ -201,7 +208,7 @@ describe("handleInboundText", () => {
   it("drops group-chat messages silently", async () => {
     const { runtime, calls } = makeFakeRuntime();
     const api = makeFakeApi();
-    const ctx = makeContext(runtime, api, pointer, OWNER);
+    const ctx = makeContext(runtime, api, pointer, OWNER, join(dir, "inbox"));
     await handleInboundText(makeUpdate("hello", OWNER, "group"), ctx);
     expect(calls).toHaveLength(0);
     expect(api.sent).toHaveLength(0);
@@ -210,7 +217,7 @@ describe("handleInboundText", () => {
   it("drops messages from non-owner DMs silently", async () => {
     const { runtime, calls } = makeFakeRuntime();
     const api = makeFakeApi();
-    const ctx = makeContext(runtime, api, pointer, OWNER);
+    const ctx = makeContext(runtime, api, pointer, OWNER, join(dir, "inbox"));
     await handleInboundText(makeUpdate("hello", NON_OWNER), ctx);
     expect(calls).toHaveLength(0);
     expect(api.sent).toHaveLength(0);
@@ -219,7 +226,7 @@ describe("handleInboundText", () => {
   it("drops messages when ownerUserId is null", async () => {
     const { runtime, calls } = makeFakeRuntime();
     const api = makeFakeApi();
-    const ctx = makeContext(runtime, api, pointer, null);
+    const ctx = makeContext(runtime, api, pointer, null, join(dir, "inbox"));
     await handleInboundText(makeUpdate("hello", OWNER), ctx);
     expect(calls).toHaveLength(0);
     expect(api.sent).toHaveLength(0);
@@ -228,7 +235,7 @@ describe("handleInboundText", () => {
   it("/start sends help text and never reaches the runtime", async () => {
     const { runtime, calls } = makeFakeRuntime();
     const api = makeFakeApi();
-    const ctx = makeContext(runtime, api, pointer, OWNER);
+    const ctx = makeContext(runtime, api, pointer, OWNER, join(dir, "inbox"));
     await handleInboundText(makeUpdate("/start"), ctx);
     expect(calls).toHaveLength(0);
     expect(api.sent).toHaveLength(1);
@@ -239,7 +246,7 @@ describe("handleInboundText", () => {
   it("/help sends help text", async () => {
     const { runtime, calls } = makeFakeRuntime();
     const api = makeFakeApi();
-    const ctx = makeContext(runtime, api, pointer, OWNER);
+    const ctx = makeContext(runtime, api, pointer, OWNER, join(dir, "inbox"));
     await handleInboundText(makeUpdate("/help"), ctx);
     expect(calls).toHaveLength(0);
     expect(api.sent[0]!.text).toContain("/cancel");
@@ -248,7 +255,7 @@ describe("handleInboundText", () => {
   it("/status reports no active session when pointer is empty", async () => {
     const { runtime } = makeFakeRuntime();
     const api = makeFakeApi();
-    const ctx = makeContext(runtime, api, pointer, OWNER);
+    const ctx = makeContext(runtime, api, pointer, OWNER, join(dir, "inbox"));
     await handleInboundText(makeUpdate("/status"), ctx);
     expect(api.sent[0]!.text).toContain("No active session");
   });
@@ -257,7 +264,7 @@ describe("handleInboundText", () => {
     pointer.setCurrent("s-old");
     const { runtime } = makeFakeRuntime();
     const api = makeFakeApi();
-    const ctx = makeContext(runtime, api, pointer, OWNER);
+    const ctx = makeContext(runtime, api, pointer, OWNER, join(dir, "inbox"));
     await handleInboundText(makeUpdate("/new"), ctx);
     expect(pointer.read().current).toBeNull();
     expect(pointer.read().history).toEqual(["s-old"]);
@@ -267,7 +274,7 @@ describe("handleInboundText", () => {
   it("/cancel reports no in-flight when nothing is running", async () => {
     const { runtime } = makeFakeRuntime();
     const api = makeFakeApi();
-    const ctx = makeContext(runtime, api, pointer, OWNER);
+    const ctx = makeContext(runtime, api, pointer, OWNER, join(dir, "inbox"));
     await handleInboundText(makeUpdate("/cancel"), ctx);
     expect(api.sent[0]!.text).toBe("No turn in progress.");
   });
@@ -275,7 +282,7 @@ describe("handleInboundText", () => {
   it("/cancel aborts the in-flight controller", async () => {
     const { runtime } = makeFakeRuntime();
     const api = makeFakeApi();
-    const ctx = makeContext(runtime, api, pointer, OWNER);
+    const ctx = makeContext(runtime, api, pointer, OWNER, join(dir, "inbox"));
     const ctrl = new AbortController();
     ctx.inflight.set(CHAT, ctrl);
     await handleInboundText(makeUpdate("/cancel"), ctx);
@@ -297,7 +304,7 @@ describe("handleInboundText", () => {
       ],
     });
     const api = makeFakeApi();
-    const ctx = makeContext(runtime, api, pointer, OWNER);
+    const ctx = makeContext(runtime, api, pointer, OWNER, join(dir, "inbox"));
     await handleInboundText(makeUpdate("why is the sky blue?"), ctx);
     expect(calls).toHaveLength(1);
     expect(calls[0]!.userMessage).toBe("why is the sky blue?");
@@ -321,7 +328,7 @@ describe("handleInboundText", () => {
       ],
     });
     const api = makeFakeApi();
-    const ctx = makeContext(runtime, api, pointer, OWNER);
+    const ctx = makeContext(runtime, api, pointer, OWNER, join(dir, "inbox"));
     await handleInboundText(makeUpdate("do the thing"), ctx);
 
     // First send is the bubble (silent), second is the reply (audible).
@@ -347,7 +354,7 @@ describe("handleInboundText", () => {
       ],
     });
     const api = makeFakeApi();
-    const ctx = makeContext(runtime, api, pointer, OWNER);
+    const ctx = makeContext(runtime, api, pointer, OWNER, join(dir, "inbox"));
     ctx.progressIndicator = false;
     await handleInboundText(makeUpdate("do the thing"), ctx);
 
@@ -372,7 +379,7 @@ describe("handleInboundText", () => {
       ],
     });
     const api = makeFakeApi();
-    const ctx = makeContext(runtime, api, pointer, OWNER);
+    const ctx = makeContext(runtime, api, pointer, OWNER, join(dir, "inbox"));
     await handleInboundText(makeUpdate("do it"), ctx);
     const failureMsg = api.sent.find((m) => m.text.startsWith("Turn failed"));
     expect(failureMsg).toBeDefined();
@@ -394,7 +401,7 @@ describe("handleInboundText", () => {
       ],
     });
     const api = makeFakeApi();
-    const ctx = makeContext(runtime, api, pointer, OWNER);
+    const ctx = makeContext(runtime, api, pointer, OWNER, join(dir, "inbox"));
     expect(pointer.read().current).toBeNull();
     await handleInboundText(makeUpdate("hello"), ctx);
     expect(sessions.length).toBe(1);
@@ -421,7 +428,7 @@ describe("handleInboundText", () => {
       ],
     });
     const api = makeFakeApi();
-    const ctx = makeContext(runtime, api, pointer, OWNER);
+    const ctx = makeContext(runtime, api, pointer, OWNER, join(dir, "inbox"));
     await handleInboundText(makeUpdate("hello"), ctx);
     expect(calls[0]!.sessionId).toBe("s-existing");
   });
@@ -442,7 +449,7 @@ describe("handleInboundText", () => {
     const api = makeFakeApi();
     const ensureApprovalSession = vi.fn();
     const ctx = {
-      ...makeContext(runtime, api, pointer, OWNER),
+      ...makeContext(runtime, api, pointer, OWNER, join(dir, "inbox")),
       ensureApprovalSession,
     };
     await handleInboundText(makeUpdate("hello"), ctx);
@@ -455,7 +462,7 @@ describe("handleInboundText", () => {
     const api = makeFakeApi();
     const ensureApprovalSession = vi.fn();
     const ctx = {
-      ...makeContext(runtime, api, pointer, OWNER),
+      ...makeContext(runtime, api, pointer, OWNER, join(dir, "inbox")),
       ensureApprovalSession,
     };
     await handleInboundText(makeUpdate("/help"), ctx);
@@ -467,7 +474,7 @@ describe("handleInboundText", () => {
     const api = makeFakeApi();
     const tryClaimForPairing = vi.fn().mockReturnValue(true);
     const ctx = {
-      ...makeContext(runtime, api, pointer, null),
+      ...makeContext(runtime, api, pointer, null, join(dir, "inbox")),
       tryClaimForPairing,
     };
     await handleInboundText(makeUpdate("/pair", NON_OWNER), ctx);
@@ -481,7 +488,7 @@ describe("handleInboundText", () => {
     const api = makeFakeApi();
     const tryClaimForPairing = vi.fn().mockReturnValue(true);
     const ctx = {
-      ...makeContext(runtime, api, pointer, OWNER),
+      ...makeContext(runtime, api, pointer, OWNER, join(dir, "inbox")),
       tryClaimForPairing,
     };
     await handleInboundText(makeUpdate("/pair", NON_OWNER), ctx);
@@ -494,7 +501,7 @@ describe("handleInboundText", () => {
     const api = makeFakeApi();
     const tryClaimForPairing = vi.fn().mockReturnValue(false);
     const ctx = {
-      ...makeContext(runtime, api, pointer, OWNER),
+      ...makeContext(runtime, api, pointer, OWNER, join(dir, "inbox")),
       tryClaimForPairing,
     };
     await handleInboundText(makeUpdate("hello", NON_OWNER), ctx);
@@ -522,7 +529,7 @@ describe("handleInboundText", () => {
       });
       const api = makeFakeApi();
       const ctx = {
-        ...makeContext(runtime, api, pointer, OWNER),
+        ...makeContext(runtime, api, pointer, OWNER, join(dir, "inbox")),
         agentReplyParseMode: "html" as const,
       };
       await handleInboundText(makeUpdate("hello"), ctx);
@@ -541,7 +548,7 @@ describe("handleInboundText", () => {
       const { runtime } = makeFakeRuntime();
       const api = makeFakeApi();
       const ctx = {
-        ...makeContext(runtime, api, pointer, OWNER),
+        ...makeContext(runtime, api, pointer, OWNER, join(dir, "inbox")),
         agentReplyParseMode: "html" as const,
       };
       await handleInboundText(makeUpdate("/help"), ctx);
@@ -565,7 +572,7 @@ describe("handleInboundText", () => {
       });
       const api = makeFakeApi();
       const ctx = {
-        ...makeContext(runtime, api, pointer, OWNER),
+        ...makeContext(runtime, api, pointer, OWNER, join(dir, "inbox")),
         agentReplyParseMode: "html" as const,
       };
       await handleInboundText(makeUpdate("do it"), ctx);
@@ -594,7 +601,7 @@ describe("handleInboundText", () => {
         ],
       });
       const api = makeFakeApi();
-      const ctx = makeContext(runtime, api, pointer, OWNER);
+      const ctx = makeContext(runtime, api, pointer, OWNER, join(dir, "inbox"));
       await handleInboundText(makeUpdate("hi"), ctx);
       const reply = api.sent.find((m) => m.text.includes("**bold**"));
       expect(reply).toBeDefined();
@@ -612,10 +619,266 @@ describe("handleInboundText", () => {
       return true;
     });
     const ctx = {
-      ...makeContext(runtime, api, pointer, OWNER),
+      ...makeContext(runtime, api, pointer, OWNER, join(dir, "inbox")),
       tryClaimForPairing,
     };
     await handleInboundText(makeUpdate("hi", NON_OWNER), ctx);
     expect(callOrder).toEqual(["pairing"]);
+  });
+});
+
+const JPEG_BYTES = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]);
+
+function makeFileUpdate(
+  over: Partial<InboundFileUpdate> = {},
+  file: Partial<InboundFileUpdate["file"]> = {},
+): InboundFileUpdate {
+  return {
+    from: { id: OWNER },
+    chat: { id: CHAT, type: "private" },
+    message_id: 7,
+    file: { kind: "photo", file_id: "photo-1", file_size: 6, ...file },
+    ...over,
+  };
+}
+
+function withDownload(
+  api: FakeApi,
+  impl: (fileId: string) => Promise<Uint8Array> = async () => JPEG_BYTES,
+): FakeApi & { downloadFile: ReturnType<typeof vi.fn> } {
+  const downloadFile = vi.fn(impl);
+  return Object.assign(api, { downloadFile });
+}
+
+const replyScript = {
+  scripts: [
+    {
+      events: [
+        {
+          type: "llm_event" as const,
+          event: { type: "assistant_reply" as const, text: "got it" },
+        },
+      ],
+    },
+  ],
+};
+
+describe("handleInboundFile", () => {
+  let dir: string;
+  let pointer: TelegramSessionPointer;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "atomic-tg-file-handler-"));
+    pointer = new TelegramSessionPointer(join(dir, "telegram-session.json"));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("downloads the owner's photo into the inbox and dispatches caption + path", async () => {
+    const { runtime, calls } = makeFakeRuntime(replyScript);
+    const api = withDownload(makeFakeApi());
+    const ctx = makeContext(runtime, api, pointer, OWNER, join(dir, "inbox"));
+
+    await handleInboundFile(makeFileUpdate({ caption: "what is this?" }), ctx);
+
+    expect(api.downloadFile).toHaveBeenCalledWith("photo-1");
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.origin).toBe("telegram");
+    const message = calls[0]!.userMessage;
+    expect(message.startsWith("what is this?\n\n[attachments]\n- ")).toBe(true);
+    const path = /^- (\S+) \(image\/jpeg, 6 B\)$/m.exec(message)?.[1];
+    expect(path).toBeDefined();
+    expect(path!.startsWith(join(dir, "inbox"))).toBe(true);
+    expect(path!.endsWith("-photo.jpg")).toBe(true);
+    expect(readFileSync(path!)).toEqual(Buffer.from(JPEG_BYTES));
+    expect(message).toContain("vision.describe");
+    expect(api.sent.some((m) => m.text === "got it")).toBe(true);
+  });
+
+  it("keeps a document's own name and MIME type", async () => {
+    const { runtime, calls } = makeFakeRuntime(replyScript);
+    const api = withDownload(makeFakeApi(), async () => new Uint8Array([1, 2]));
+    const ctx = makeContext(runtime, api, pointer, OWNER, join(dir, "inbox"));
+
+    await handleInboundFile(
+      makeFileUpdate(
+        {},
+        {
+          kind: "document",
+          file_id: "doc-1",
+          file_name: "Q3 report.pdf",
+          mime_type: "application/pdf",
+          file_size: 2,
+        },
+      ),
+      ctx,
+    );
+
+    expect(calls[0]!.userMessage).toMatch(/-Q3_report\.pdf \(application\/pdf, 2 B\)/);
+    expect(calls[0]!.userMessage).toMatch(/^The user sent a file without a message\./);
+  });
+
+  it("drops files from non-owners without touching Telegram", async () => {
+    const { runtime, calls } = makeFakeRuntime();
+    const api = withDownload(makeFakeApi());
+    const ctx = makeContext(runtime, api, pointer, OWNER, join(dir, "inbox"));
+
+    await handleInboundFile(makeFileUpdate({ from: { id: NON_OWNER } }), ctx);
+    await handleInboundFile(
+      makeFileUpdate({ chat: { id: CHAT, type: "group" } }),
+      ctx,
+    );
+
+    expect(api.downloadFile).not.toHaveBeenCalled();
+    expect(calls).toHaveLength(0);
+    expect(api.sent).toHaveLength(0);
+  });
+
+  it("refuses a file over the 20 MB bot limit before calling Telegram", async () => {
+    const { runtime, calls } = makeFakeRuntime();
+    const api = withDownload(makeFakeApi());
+    const ctx = makeContext(runtime, api, pointer, OWNER, join(dir, "inbox"));
+
+    await handleInboundFile(
+      makeFileUpdate(
+        {},
+        {
+          kind: "document",
+          file_id: "big",
+          file_name: "big.zip",
+          file_size: TELEGRAM_BOT_DOWNLOAD_LIMIT_BYTES + 1,
+        },
+      ),
+      ctx,
+    );
+
+    expect(api.downloadFile).not.toHaveBeenCalled();
+    expect(calls).toHaveLength(0);
+    expect(api.sent).toHaveLength(1);
+    expect(api.sent[0]!.text).toBe(
+      "Could not receive big.zip: Telegram bots cannot download files over 20.0 MB",
+    );
+    expect(api.sent[0]!.opts).toBeUndefined();
+  });
+
+  it("reports a failed download to the operator and still dispatches the caption", async () => {
+    const { runtime, calls } = makeFakeRuntime(replyScript);
+    const api = withDownload(makeFakeApi(), async () => {
+      throw new Error("Bad Request: file is too big");
+    });
+    const ctx = makeContext(runtime, api, pointer, OWNER, join(dir, "inbox"));
+
+    await handleInboundFile(makeFileUpdate({ caption: "summarise this" }), ctx);
+
+    expect(api.sent[0]!.text).toBe(
+      "Could not receive photo: Bad Request: file is too big",
+    );
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.userMessage).toContain("summarise this");
+    expect(calls[0]!.userMessage).toContain(
+      "- photo: not saved (Bad Request: file is too big)",
+    );
+    expect(calls[0]!.userMessage).not.toContain("vision.describe");
+  });
+
+  it("a failed download with no caption never reaches the agent", async () => {
+    const { runtime, calls } = makeFakeRuntime();
+    const api = withDownload(makeFakeApi(), async () => {
+      throw new Error("boom");
+    });
+    const ctx = makeContext(runtime, api, pointer, OWNER, join(dir, "inbox"));
+
+    await handleInboundFile(makeFileUpdate(), ctx);
+
+    expect(calls).toHaveLength(0);
+    expect(api.sent.map((m) => m.text)).toEqual(["Could not receive photo: boom"]);
+  });
+
+  it("scrubs a bot token out of download errors", async () => {
+    const { runtime } = makeFakeRuntime();
+    const token = "123456789:AAbbCCddEEffGGhhIIjjKKllMMnnOOppQQrr";
+    const api = withDownload(makeFakeApi(), async () => {
+      throw new Error(`fetch failed for https://api.telegram.org/file/bot${token}/x`);
+    });
+    const ctx = makeContext(runtime, api, pointer, OWNER, join(dir, "inbox"));
+
+    await handleInboundFile(makeFileUpdate(), ctx);
+
+    expect(api.sent[0]!.text).toContain("<token>");
+    expect(api.sent[0]!.text).not.toContain(token);
+  });
+
+  it("reports an adapter without downloadFile as unsupported instead of dropping", async () => {
+    const { runtime, calls } = makeFakeRuntime();
+    const api = makeFakeApi();
+    const ctx = makeContext(runtime, api, pointer, OWNER, join(dir, "inbox"));
+
+    await handleInboundFile(makeFileUpdate(), ctx);
+
+    expect(calls).toHaveLength(0);
+    expect(api.sent[0]!.text).toMatch(/not supported/);
+  });
+
+  it("coalesces an album into a single turn listing every member", async () => {
+    const { runtime, calls } = makeFakeRuntime(replyScript);
+    const api = withDownload(makeFakeApi(), async (id) =>
+      id === "p1" ? JPEG_BYTES : new Uint8Array([9, 9]),
+    );
+    const flushes: Array<() => void> = [];
+    let cancelled = 0;
+    const ctx = makeContext(runtime, api, pointer, OWNER, join(dir, "inbox"));
+    ctx.scheduleMediaGroupFlush = (cb) => {
+      flushes.push(cb);
+      return () => {
+        cancelled += 1;
+      };
+    };
+
+    await handleInboundFile(
+      makeFileUpdate({ media_group_id: "album-1" }, { file_id: "p1", file_size: 6 }),
+      ctx,
+    );
+    await handleInboundFile(
+      makeFileUpdate(
+        { media_group_id: "album-1", caption: "two shots" },
+        { file_id: "p2", file_size: 2 },
+      ),
+      ctx,
+    );
+
+    // Nothing dispatched while the window is open; the second member
+    // restarted the timer.
+    expect(calls).toHaveLength(0);
+    expect(flushes).toHaveLength(2);
+    expect(cancelled).toBe(1);
+    expect(ctx.mediaGroups.size).toBe(1);
+
+    flushes[1]!();
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+
+    const message = calls[0]!.userMessage;
+    expect(message.startsWith("two shots\n\n[attachments]\n")).toBe(true);
+    expect(message.match(/^- .*-photo(-2)?\.jpg \(image\/jpeg, /gm)).toHaveLength(2);
+    expect(ctx.mediaGroups.size).toBe(0);
+  });
+
+  it("lets a file DM claim an open pairing window before the owner check", async () => {
+    const { runtime, calls } = makeFakeRuntime();
+    const api = withDownload(makeFakeApi());
+    const ctx = makeContext(runtime, api, pointer, null, join(dir, "inbox"));
+    const claims: InboundTextUpdate[] = [];
+    ctx.tryClaimForPairing = (u) => {
+      claims.push(u);
+      return true;
+    };
+
+    await handleInboundFile(makeFileUpdate({ from: { id: 777 } }), ctx);
+
+    expect(claims).toHaveLength(1);
+    expect(claims[0]).toMatchObject({ from: { id: 777 }, text: "[photo]" });
+    expect(api.downloadFile).not.toHaveBeenCalled();
+    expect(calls).toHaveLength(0);
   });
 });

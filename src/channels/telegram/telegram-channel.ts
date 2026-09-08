@@ -4,9 +4,13 @@ import type { ChannelStatus } from "../../runtime/channel-status.js";
 import { getUserConfigPath } from "../../config/index.js";
 import type { TaskReport, TaskReportSink } from "../../tasks/index.js";
 
+import { createAttachmentInbox } from "../attachments/inbox.js";
 import {
+  handleInboundFile,
   handleInboundText,
+  type InboundContext,
   type InboundTextUpdate,
+  type PendingMediaGroup,
 } from "./inbound-handler.js";
 import { ApprovalBridge } from "./approval-bridge.js";
 import { TelegramSessionPointer } from "./telegram-session-pointer.js";
@@ -96,6 +100,8 @@ export class TelegramChannel {
   private readonly sessionPointer: TelegramSessionPointer;
   private readonly lock: ChannelLock;
   private readonly inflight = new Map<number, AbortController>();
+  /** Albums still arriving — see `InboundContext.mediaGroups`. */
+  private readonly mediaGroups = new Map<string, PendingMediaGroup>();
   private readonly userConfigPath: string;
   private readonly stateDir: string;
   private readonly pairing: PairingMode;
@@ -228,28 +234,35 @@ export class TelegramChannel {
         logger: this.deps.logger,
       });
       this.approvalBridge = bridge;
-      bot.setTextHandler((update) =>
-        handleInboundText(update, {
-          runtime: this.deps.runtime,
-          api: bot.api,
-          sessionPointer: this.sessionPointer,
-          logger: this.deps.logger,
-          ownerUserId: this.currentOwnerUserId,
-          // Captured by value at registration time. `setParseMode`
-          // restarts the channel when up so the new mode reaches
-          // the freshly-registered text handler — same pattern as
-          // `setOwnerUserId`.
-          agentReplyParseMode: this.currentParseMode,
-          // Captured by value at registration time, same as parseMode:
-          // flipping `telegram.progressIndicator` takes effect on the
-          // next channel (re)start.
-          progressIndicator: this.deps.config.telegram.progressIndicator,
-          inflight: this.inflight,
-          ensureApprovalSession: (sessionId, chatId) =>
-            this.ensureApprovalSession(sessionId, chatId),
-          tryClaimForPairing: (u) => this.handlePairingClaim(u),
+      // One context for both handlers: the text and file paths share
+      // the owner check, the session pointer, the in-flight map and
+      // the approval binding, and must never drift apart.
+      const inboundCtx: InboundContext = {
+        runtime: this.deps.runtime,
+        api: bot.api,
+        sessionPointer: this.sessionPointer,
+        logger: this.deps.logger,
+        ownerUserId: this.currentOwnerUserId,
+        // Captured by value at registration time. `setParseMode`
+        // restarts the channel when up so the new mode reaches
+        // the freshly-registered text handler — same pattern as
+        // `setOwnerUserId`.
+        agentReplyParseMode: this.currentParseMode,
+        // Captured by value at registration time, same as parseMode:
+        // flipping `telegram.progressIndicator` takes effect on the
+        // next channel (re)start.
+        progressIndicator: this.deps.config.telegram.progressIndicator,
+        inflight: this.inflight,
+        inbox: createAttachmentInbox({
+          dir: resolve(this.stateDir, "inbox", "telegram"),
         }),
-      );
+        mediaGroups: this.mediaGroups,
+        ensureApprovalSession: (sessionId, chatId) =>
+          this.ensureApprovalSession(sessionId, chatId),
+        tryClaimForPairing: (u) => this.handlePairingClaim(u),
+      };
+      bot.setTextHandler((update) => handleInboundText(update, inboundCtx));
+      bot.setFileHandler?.((update) => handleInboundFile(update, inboundCtx));
       bot.setCallbackHandler?.((update) => bridge.handleCallback(update));
       try {
         await bot.api.setMyCommands?.([
@@ -331,6 +344,14 @@ export class TelegramChannel {
       }
     }
     this.inflight.clear();
+    for (const group of this.mediaGroups.values()) {
+      try {
+        group.cancel();
+      } catch {
+        // a timer that will not cancel must not fail the shutdown
+      }
+    }
+    this.mediaGroups.clear();
     this.approvalSubscription?.unsubscribe();
     this.approvalSubscription = null;
     this.approvalBridge?.cancelAll();
