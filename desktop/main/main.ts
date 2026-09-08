@@ -123,6 +123,8 @@ import { validateCreateForm, type TaskCreateFormInput } from "./task-schedule.js
 import { VoiceSession, helperPath as speechHelperPath } from "./speech.js";
 // Item 7 part B (Skills / Memory / MCP tabs)
 import { clawhubSkillDetail } from "./clawhub.js";
+// r7 models — the vendored catalogue metadata, for the smoke's drift check.
+import { curatedMetaIds } from "./model-catalog.js";
 import { memoryQuery } from "./memory-db.js";
 // r5 item 9 — the desktop's own state directory and the TUI import offer.
 import { agentEnv, claimPortsIn, DESKTOP_EMBEDDING_PORT, DESKTOP_MANAGED_PORT, DESKTOP_STATE_DIR, STATE_DIR_FROM_ENV, TUI_STATE_DIR, underDesktopState } from "./state-dir.js";
@@ -154,6 +156,27 @@ const MODELS_TEST = process.argv.includes("--models");
  * It prints one `FIRSTRUNPROBE {json}` line and exits.
  */
 const FIRST_RUN_PROBE = process.argv.includes("--first-run-probe");
+/**
+ * TEST ONLY — `--fake-ram=<gb>` makes `app:hostRam` answer that figure
+ * instead of `os.totalmem()`.
+ *
+ * The local-model recommendation is computed from the host's RAM, and the
+ * only machine here has 68 GB: every curated model fits it comfortably, so
+ * the interesting half of the behaviour — the tight fit, the small-model
+ * caution, the models that will not run at all — cannot be driven on this
+ * hardware without lying to the window about one number.
+ *
+ * It is a command-line flag and not a setting or an env var so that it
+ * cannot be reached by accident: `desktop/test/drive.mjs` passes it with
+ * `args`, and nothing in a shipped launch ever does. With the flag absent
+ * (and with a value that is not a positive number) production reads the
+ * real figure, unchanged.
+ */
+const FAKE_RAM_GB = (() => {
+  const hit = process.argv.find((a) => a.startsWith("--fake-ram="));
+  const n = hit ? Number(hit.slice("--fake-ram=".length)) : NaN;
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
+})();
 
 let win: BrowserWindow | null = null;
 let agent: AgentClient | null = null;
@@ -883,7 +906,9 @@ function wireIpc(client: AgentClient): void {
     }
     return traceTools(stateDir, sessionId);
   });
-  ipcMain.handle("app:hostRam", () => hostRamGb());
+  // `--fake-ram=N` (test only, see FAKE_RAM_GB) is the one thing that can
+  // stand between this window and os.totalmem().
+  ipcMain.handle("app:hostRam", () => FAKE_RAM_GB ?? hostRamGb());
   ipcMain.handle("app:keyEnv", () => PROVIDER_KEY_ENV);
 
   // Item 6 (sidebar): pin + read state, in userData — never in the agent config.
@@ -5234,6 +5259,34 @@ async function settingsTestPartC(
     local.mode === "local" && local.rows > 0 && local.rows === expectedLocal && local.localRows + local.embRows === expectedLocal && !local.localErr,
     `${local.rows} rows painted, ${local.localRows}+${local.embRows} loaded, cli ${expectedLocal}${local.localErr ? " err=" + local.localErr : ""}`,
   );
+  /* ---- r7 models: the vendored catalogue metadata cannot rot in silence.
+
+     desktop/main/model-catalog.ts is a COPY of the description + RAM
+     figures out of src/local-llm/models-catalog.ts, because `atag models
+     list` prints neither and the desktop has to work against a released
+     binary that ships no source tree. A copy is only honest while it
+     still describes the same catalogue, so: every curated id the agent
+     lists must have an entry here, and every entry here must be an id
+     the agent lists. A `custom-…` model (added from Hugging Face) is not
+     curated and is expected to have no entry — it renders without a
+     blurb, which is the designed behaviour.
+
+     When this goes red, diff the two files and copy the rows across.
+     Never add a row to this table that the catalogue does not have. ---- */
+  {
+    const cliIds = (listCli.models ?? []).map((m) => m.id).filter((id) => !id.startsWith("custom-"));
+    const vendored = curatedMetaIds();
+    const noMeta = cliIds.filter((id) => !vendored.includes(id));
+    const stale = vendored.filter((id) => !cliIds.includes(id));
+    const enriched = (listCli.models ?? []).filter((m) => m.description && m.minRamGb && m.recommendedRamGb);
+    check(
+      "llm tab: the vendored catalogue metadata still matches `atag models list`",
+      noMeta.length === 0 && stale.length === 0 && enriched.length === vendored.length,
+      noMeta.length || stale.length
+        ? `no metadata for ${JSON.stringify(noMeta)}; metadata for ids the agent does not list: ${JSON.stringify(stale)}`
+        : `${vendored.length} curated ids, all with a description and both RAM figures`,
+    );
+  }
   const localCopy = ["Active chat route", "current: ", "tools ", "provider embeddings: ", "local daemon: ", "Mode: Local | Cloud | External llama.cpp | Fallback", "Press ←/→ to switch mode",
     "Local text models", "Local embeddings", "j/k move", "Enter selected action", "a add from hugging face", "s start/stop", "r refresh", "[downloaded]", "[remote]", "Enter: download"];
   const localMissing = localCopy.filter((c) => !localBody.includes(c));

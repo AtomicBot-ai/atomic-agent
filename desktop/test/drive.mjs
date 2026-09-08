@@ -489,6 +489,7 @@ function agentBinEnv(stateDir) {
  * @param {number} o.port            remote debugging port (one per lane!)
  * @param {string} o.stateDir        ATOMIC_AGENT_STATE_DIR — NEVER the operator's
  * @param {string} [o.workspace]     ATOMIC_AGENT_WORKSPACE — the agent's cwd
+ * @param {string[]} [o.args]        extra Electron argv (test-only app flags)
  * @param {object} [o.env]           extra environment
  * @param {boolean} [o.verbose=true] narrate every click to stdout
  * @param {number} [o.settle=260]    ms to let the renderer repaint after input
@@ -527,6 +528,10 @@ export async function launch(o) {
     '.',
     `--remote-debugging-port=${o.port}`,
     `--user-data-dir=${join(o.stateDir, '.chromium-profile')}`,
+    /* Extra Electron flags for the scenario — the app's own test-only
+       switches, e.g. `--fake-ram=8` to make the local-model
+       recommendation face a machine this Mac is not. */
+    ...(o.args || []),
   ], {
     cwd: DESKTOP_DIR,
     detached: true,
