@@ -856,6 +856,114 @@ describe("reduceTuiState", () => {
   });
 });
 
+describe("provider outage", () => {
+  const waiting = (over: Record<string, unknown> = {}): TuiAction => ({
+    type: "agent_event",
+    event: {
+      type: "provider_waiting",
+      attempt: 1,
+      waitedMs: 0,
+      maxWaitMs: 300_000,
+      nextRetryMs: 2_000,
+      reason: "fetch failed",
+      ...over,
+    } as never,
+  });
+
+  it("shows the outage and says how long it will keep trying", () => {
+    const next = reduceTuiState(createInitialTuiState(fakeSession()), waiting());
+    expect(next.providerOutage).toMatchObject({
+      reason: "fetch failed",
+      attempt: 1,
+      givenUp: false,
+    });
+    expect(next.feed.at(-1)?.line).toContain("provider not answering");
+    expect(next.feed.at(-1)?.line).toContain("retrying in 2s");
+  });
+
+  it("does not repeat the feed line on every retry", () => {
+    // The backoff fires every few seconds at first; the meta-row carries
+    // the live numbers, so a wall of identical lines would only bury the
+    // work above it.
+    const next = apply(createInitialTuiState(fakeSession()), [
+      waiting(),
+      waiting({ attempt: 2, waitedMs: 2_000, nextRetryMs: 4_000 }),
+      waiting({ attempt: 3, waitedMs: 6_000, nextRetryMs: 8_000 }),
+    ]);
+    expect(next.feed.filter((f) => f.line.includes("provider not answering"))).toHaveLength(1);
+    expect(next.providerOutage).toMatchObject({ attempt: 3, waitedMs: 6_000 });
+  });
+
+  it("clears on recovery and says how long it waited", () => {
+    const next = apply(createInitialTuiState(fakeSession()), [
+      waiting(),
+      {
+        type: "agent_event",
+        event: { type: "provider_recovered", waitedMs: 6_000 } as never,
+      },
+    ]);
+    expect(next.providerOutage).toBeNull();
+    expect(next.feed.at(-1)?.line).toContain("provider answered again after 6s");
+  });
+
+  it("stays on screen when the wait ran out and the turn failed", () => {
+    // The sticky half: the next message will fail the same way, and a
+    // state that cleared between attempts is how eight identical
+    // failures read as eight separate surprises.
+    const next = apply(createInitialTuiState(fakeSession()), [
+      waiting(),
+      {
+        type: "agent_event",
+        event: {
+          type: "loop_failed",
+          error: new Error("fetch failed"),
+          category: "transport",
+        },
+      },
+    ]);
+    expect(next.providerOutage).toMatchObject({ givenUp: true });
+  });
+
+  it("clears when a turn actually completes", () => {
+    const next = apply(createInitialTuiState(fakeSession()), [
+      waiting(),
+      {
+        type: "agent_event",
+        event: {
+          type: "turn_finished",
+          turnIndex: 0,
+          reason: "reply",
+          stepCount: 3,
+          durationMs: 10,
+        },
+      },
+    ]);
+    expect(next.providerOutage).toBeNull();
+  });
+
+  it("leaves the context gauge alone", () => {
+    // The readout at the bottom of the screen is driven by
+    // `prompt_built` / `llm_completed` only. A parked turn builds no new
+    // prompt and gets no completion, so the gauge must hold the last
+    // measured value rather than resetting, moving or disappearing.
+    const built = createInitialTuiState(fakeSession());
+    const withUsage: TuiState = {
+      ...built,
+      contextUsage: { ...built.contextUsage, tokens: 12_345, window: 32_768 },
+    };
+    const next = apply(withUsage, [
+      waiting(),
+      waiting({ attempt: 2, waitedMs: 2_000 }),
+      {
+        type: "agent_event",
+        event: { type: "provider_recovered", waitedMs: 6_000 } as never,
+      },
+    ]);
+    expect(next.contextUsage.tokens).toBe(12_345);
+    expect(next.contextUsage.window).toBe(32_768);
+  });
+});
+
 describe("llm health visibility", () => {
   it("does not mark local as configured just because a probe failed", () => {
     const state = apply(createInitialTuiState(fakeSession()), [

@@ -15,6 +15,7 @@ import type { ToolRegistry } from "../tools/tool-registry.js";
 import {
   CancelledError,
   LlmFailure,
+  TransportError,
   classifyFailure,
 } from "../llm/index.js";
 import type { LlmFailureCategory } from "../llm/index.js";
@@ -322,6 +323,55 @@ export interface SteeringChannel {
  * which starts it over. This says which ceiling was hit, how far the
  * work got, and that "continue" resumes from here rather than restarts.
  */
+/**
+ * Is this failure the kind that fixes itself?
+ *
+ * `transport` is a broad category — it is also what a wrong
+ * `localModels.url` answering 404, a dead API key (401) and a
+ * not-installed CLI provider classify as, because all of them mean
+ * "this link is unusable, fall over". None of those become usable by
+ * waiting, and parking a turn for five minutes in front of a typo is
+ * worse than the failure it replaces: the operator gets no message at
+ * all until the budget runs out.
+ *
+ * So the wait is for the failures that plausibly recover on their own —
+ * no HTTP response at all (DNS, refused connection, TLS, socket reset),
+ * a server error, or the server saying "busy, later" (408 / 429).
+ */
+function isWaitableOutage(err: unknown): boolean {
+  if (!(err instanceof TransportError)) {
+    // An untyped socket failure that reached the classifier through
+    // `isNetworkError` — no status to inspect, and by construction it is
+    // a connection problem rather than a rejection.
+    return true;
+  }
+  if (err.status === null) return true;
+  return err.status >= 500 || err.status === 408 || err.status === 429;
+}
+
+/** First backoff after the provider stops answering. */
+const PROVIDER_WAIT_BASE_MS = 2_000;
+/**
+ * Ceiling on one backoff. An outage lasting minutes should be probed
+ * every half-minute, not once an hour — the point is to notice the
+ * moment it comes back.
+ */
+const PROVIDER_WAIT_MAX_BACKOFF_MS = 30_000;
+
+/** Sleep that returns early when the operator aborts the turn. */
+async function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
+  if (ms <= 0 || signal.aborted) return;
+  await new Promise<void>((resolve) => {
+    const timer = setTimeout(done, ms);
+    function done(): void {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", done);
+      resolve();
+    }
+    signal.addEventListener("abort", done, { once: true });
+  });
+}
+
 export function formatTaskStoppedReply(input: {
   cause: "step_ceiling" | "time_ceiling" | "no_progress";
   stepsTaken: number;
@@ -363,6 +413,13 @@ export interface RunTurnOptions {
    * "stop at `maxSteps`" behaviour for a caller that wants one leg only.
    */
   autoContinue?: boolean;
+  /**
+   * Wait out a provider outage instead of failing the turn. Defaults to
+   * `config.agent.providerWait.enabled`; `false` is the old behaviour.
+   */
+  providerWaitEnabled?: boolean;
+  /** Wait budget for one outage. Defaults to `config.agent.providerWait.maxWaitMs`. */
+  providerWaitMaxMs?: number;
   signal: AbortSignal;
   /** Optional new user message to append before stepping. */
   userMessage?: string;
@@ -392,6 +449,25 @@ export type AgentLoopEvent =
       reason: AgentLoopReason;
       stepCount: number;
       durationMs: number;
+    }
+  | {
+      /**
+       * The provider stopped answering and the turn is parked rather
+       * than failed: the same step will be retried after `nextRetryMs`.
+       * Fired once per wait, so a UI can show a live "waiting" state
+       * instead of nine mystery failures in a row.
+       */
+      type: "provider_waiting";
+      attempt: number;
+      waitedMs: number;
+      maxWaitMs: number;
+      nextRetryMs: number;
+      reason: string;
+    }
+  | {
+      /** The provider answered again; the parked turn is running on. */
+      type: "provider_recovered";
+      waitedMs: number;
     }
   | {
       /**
@@ -638,6 +714,21 @@ export class AgentLoop {
     let stopCause: "step_ceiling" | "time_ceiling" | "no_progress" = "step_ceiling";
     /** Set by any step in the current leg that produced a usable result. */
     let legMadeProgress = false;
+    // Provider-outage parking. A transport failure means "this link is
+    // not answering", which is a state of the world, not a verdict on
+    // the turn — so the turn waits for it rather than dying and taking
+    // the work in flight with it. Reset after a recovery so a second
+    // outage later in a long task gets its own budget; the task's
+    // wall-clock ceiling is what bounds the total.
+    const providerWaitDefaults = getConfig().agent.providerWait;
+    const providerWaitCfg = {
+      enabled: options.providerWaitEnabled ?? providerWaitDefaults.enabled,
+      maxWaitMs: options.providerWaitMaxMs ?? providerWaitDefaults.maxWaitMs,
+    };
+    let outageWaitedMs = 0;
+    let outageAttempts = 0;
+    /** Retried a step after an outage and have not yet seen it succeed. */
+    let awaitingRecovery = false;
     // Per-turn no-progress loop tracker (OpenClaw-style). Threaded into
     // `executeStep` so the synchronous batch gate can veto looping calls
     // before they are dispatched; the agent loop consumes the resulting
@@ -856,6 +947,22 @@ export class AgentLoop {
           },
         );
         const durationMs = Date.now() - started;
+        if (awaitingRecovery) {
+          // The step that came back after the wait. Say so once, then
+          // hand the next outage a fresh budget.
+          this.deps.onEvent?.({
+            type: "provider_recovered",
+            waitedMs: outageWaitedMs,
+          });
+          this.deps.logger?.info("provider answered again; turn resumed", {
+            sessionId: state.id,
+            stepIndex: i,
+            waitedMs: outageWaitedMs,
+          });
+          awaitingRecovery = false;
+          outageWaitedMs = 0;
+          outageAttempts = 0;
+        }
         state = outcome.nextSession;
         stepsTaken += 1;
         const tokensUsed =
@@ -1112,6 +1219,58 @@ export class AgentLoop {
           stepsTaken += 1;
           reason = "max_steps";
           break;
+        }
+        // The provider is not answering. Park the turn instead of
+        // killing it: nothing of this step has been committed (a
+        // completion failure throws before any tool is dispatched —
+        // tool failures come back as results, not throws), so retrying
+        // the same index replays nothing and duplicates no side effect.
+        if (
+          category === "transport" &&
+          !cancelled &&
+          providerWaitCfg.enabled &&
+          isWaitableOutage(err) &&
+          outageWaitedMs < providerWaitCfg.maxWaitMs
+        ) {
+          const nextRetryMs = Math.min(
+            PROVIDER_WAIT_MAX_BACKOFF_MS,
+            PROVIDER_WAIT_BASE_MS * 2 ** outageAttempts,
+            // Never sleep past the budget: the last wait ends exactly at
+            // it, so the operator's configured ceiling is the truth.
+            Math.max(1, providerWaitCfg.maxWaitMs - outageWaitedMs),
+          );
+          outageAttempts += 1;
+          awaitingRecovery = true;
+          this.deps.onEvent?.({
+            type: "provider_waiting",
+            attempt: outageAttempts,
+            waitedMs: outageWaitedMs,
+            maxWaitMs: providerWaitCfg.maxWaitMs,
+            nextRetryMs,
+            reason: runError.message,
+          });
+          this.deps.logger?.warn("provider unreachable; parking the turn", {
+            sessionId: state.id,
+            stepIndex: i,
+            attempt: outageAttempts,
+            waitedMs: outageWaitedMs,
+            nextRetryMs,
+            error: runError.message,
+          });
+          await abortableSleep(nextRetryMs, options.signal);
+          outageWaitedMs += nextRetryMs;
+          runError = null;
+          if (options.signal.aborted) {
+            reason = "cancelled";
+            state = { ...state, status: "cancelled" };
+            this.deps.onEvent?.({ type: "loop_completed", reason: "cancelled" });
+            state = incrementTurnCount(state);
+            break;
+          }
+          // Retry the very same step index: `i += 1` runs on `continue`,
+          // so step back one to land on it again.
+          i -= 1;
+          continue;
         }
         this.deps.logger?.error("agent loop failed", {
           sessionId: state.id,

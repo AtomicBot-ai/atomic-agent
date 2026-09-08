@@ -7,6 +7,7 @@ import type { AgentLoopEvent } from "./agent-loop.js";
 import { buildDefaultToolRegistry } from "../tools/index.js";
 import { osFsReadTool } from "../tools/os/fs-read.js";
 import { SlotManager } from "../llm/slot-manager.js";
+import { TransportError } from "../llm/reliability/llm-failures.js";
 import { createEmptySessionState } from "../session/session-state.js";
 import type {
   CompletionResult,
@@ -285,6 +286,253 @@ describe("AgentLoop end-to-end with mock LLM", () => {
       kind: "assistant_reply",
       text: expect.stringContaining("nothing came back"),
     });
+  });
+
+  it("parks the turn on a transport failure and resumes when the provider answers", async () => {
+    // The field case: the provider stops answering mid-task. Killing
+    // the turn throws away the work already done and makes every later
+    // message fail in one second; waiting keeps the task alive.
+    const registry = buildDefaultToolRegistry();
+    let noopRuns = 0;
+    registry.register({
+      name: "noop",
+      description: "no-op",
+      readonly: true,
+      async run() {
+        noopRuns += 1;
+        return {
+          tool: "noop",
+          status: "ok" as const,
+          summary: `noop ${noopRuns}`,
+          details: {},
+          truncated: false,
+        };
+      },
+    });
+    const events: Array<{ type: string } & Record<string, unknown>> = [];
+    let calls = 0;
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () => {
+        calls += 1;
+        // Step 0 works, the provider dies for two attempts, then it is
+        // back and the task finishes.
+        if (calls === 1) {
+          return makeCompletion(JSON.stringify({ tool: "noop", args: {} }));
+        }
+        if (calls <= 3) {
+          throw new TransportError("fetch failed", null, "");
+        }
+        return makeCompletion(
+          JSON.stringify({ tool: "reply", args: { text: "back online" } }),
+        );
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (event.type === "provider_waiting" || event.type === "provider_recovered") {
+          events.push(event as { type: string } & Record<string, unknown>);
+        }
+      },
+    });
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "s-park", workingDir }),
+      {
+        userMessage: "keep going",
+        maxSteps: 10,
+        taskMaxSteps: 10,
+        signal: new AbortController().signal,
+      },
+    );
+
+    expect(result.reason).toBe("reply");
+    // Two outages waited out, then one recovery notice.
+    expect(events.map((e) => e.type)).toEqual([
+      "provider_waiting",
+      "provider_waiting",
+      "provider_recovered",
+    ]);
+    // Backoff grows, and the budget is reported so a UI can show it.
+    expect(events[0]!.nextRetryMs).toBe(2_000);
+    expect(events[1]!.nextRetryMs).toBe(4_000);
+    expect(events[0]!.reason).toBe("fetch failed");
+    // The parked attempts are not steps and replay nothing: one tool
+    // step plus the reply, not four steps and two noops.
+    expect(noopRuns).toBe(1);
+    expect(result.session.stepCount).toBe(2);
+    // Four completions were requested (one good, two dead, one good) —
+    // the same step was retried, not a new one started.
+    expect(calls).toBe(4);
+  });
+
+  it("does not wait out a failure that will never fix itself", async () => {
+    // `transport` also covers a wrong URL answering 404 and a dead key
+    // answering 401. Parking a turn for five minutes in front of a typo
+    // is worse than the failure it replaces — the operator would get no
+    // message at all until the budget ran out.
+    const registry = buildDefaultToolRegistry();
+    const waits: unknown[] = [];
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () => {
+        throw new TransportError("not found", 404, "http://127.0.0.1:8080/v1");
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (event.type === "provider_waiting") waits.push(event);
+      },
+    });
+    const started = Date.now();
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "s-park-404", workingDir }),
+      {
+        userMessage: "wrong url",
+        maxSteps: 5,
+        taskMaxSteps: 5,
+        signal: new AbortController().signal,
+      },
+    );
+    expect(result.reason).toBe("failed");
+    expect(waits).toEqual([]);
+    expect(Date.now() - started).toBeLessThan(1_000);
+  });
+
+  it("waits out a 503, which is exactly the kind that fixes itself", async () => {
+    const registry = buildDefaultToolRegistry();
+    const waits: unknown[] = [];
+    let calls = 0;
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () => {
+        calls += 1;
+        if (calls === 1) {
+          throw new TransportError("service unavailable", 503, "https://x/v1");
+        }
+        return makeCompletion(
+          JSON.stringify({ tool: "reply", args: { text: "recovered" } }),
+        );
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (event.type === "provider_waiting") waits.push(event);
+      },
+    });
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "s-park-503", workingDir }),
+      {
+        userMessage: "busy provider",
+        maxSteps: 5,
+        taskMaxSteps: 5,
+        signal: new AbortController().signal,
+      },
+    );
+    expect(result.reason).toBe("reply");
+    expect(waits).toHaveLength(1);
+  });
+
+  it("gives up after the wait budget and fails the turn once", async () => {
+    const registry = buildDefaultToolRegistry();
+    const waits: number[] = [];
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () => {
+        throw new TransportError("fetch failed", null, "");
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (event.type === "provider_waiting") waits.push(event.nextRetryMs);
+      },
+    });
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "s-park-out", workingDir }),
+      {
+        userMessage: "hopeless",
+        maxSteps: 5,
+        taskMaxSteps: 5,
+        // Two waits: 2s, then 1s clipped to the remaining budget.
+        providerWaitMaxMs: 3_000,
+        signal: new AbortController().signal,
+      },
+    );
+    expect(result.reason).toBe("failed");
+    expect(waits).toEqual([2_000, 1_000]);
+  });
+
+  it("an abort during the wait stops the turn immediately", async () => {
+    const registry = buildDefaultToolRegistry();
+    const controller = new AbortController();
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () => {
+        // The operator presses Esc while the turn is parked.
+        setTimeout(() => controller.abort(), 5);
+        throw new TransportError("fetch failed", null, "");
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    const started = Date.now();
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "s-park-abort", workingDir }),
+      {
+        userMessage: "stop me",
+        maxSteps: 5,
+        taskMaxSteps: 5,
+        signal: controller.signal,
+      },
+    );
+    expect(result.reason).toBe("cancelled");
+    // Returned on the abort, not after the full 2s backoff.
+    expect(Date.now() - started).toBeLessThan(1_500);
+  });
+
+  it("providerWaitEnabled: false fails the turn as it used to", async () => {
+    const registry = buildDefaultToolRegistry();
+    const waits: unknown[] = [];
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () => {
+        throw new TransportError("fetch failed", null, "");
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (event.type === "provider_waiting") waits.push(event);
+      },
+    });
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "s-park-off", workingDir }),
+      {
+        userMessage: "fail fast",
+        maxSteps: 5,
+        taskMaxSteps: 5,
+        providerWaitEnabled: false,
+        signal: new AbortController().signal,
+      },
+    );
+    expect(result.reason).toBe("failed");
+    expect(waits).toEqual([]);
   });
 
   it("stops on the wall clock and says so", async () => {

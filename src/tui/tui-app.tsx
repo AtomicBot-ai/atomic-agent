@@ -1,4 +1,5 @@
 import { ContextChip } from "./components/context-chip.js";
+import { formatProviderOutage } from "./format-provider-outage.js";
 import type { ApprovalLevel } from "../approval/approval-level.js";
 import {
   codingModeLook,
@@ -1596,7 +1597,17 @@ export function TuiApp({
   // Rail tokens, not page ones: both slots are handed to `PromptMetaBar`,
   // which paints them on the rail ground. `success` / `accentSoft` /
   // `muted` are all picked to be read on the terminal's own page.
-  const promptLeftSlot = state.composerNotice ? (
+  // An unreachable provider outranks the transient composer notice: it
+  // is the reason nothing is happening, and it is the one thing the
+  // operator needs on screen for as long as it is true. It shares this
+  // slot rather than taking a row of its own so the meta-bar keeps its
+  // shape — `contextSlot` and `modeSlot` are separate props at the far
+  // end and are not touched by it.
+  const promptLeftSlot = state.providerOutage ? (
+    <Text color={theme.colors.railError}>
+      {formatProviderOutage(state.providerOutage)}
+    </Text>
+  ) : state.composerNotice ? (
     <Text color={theme.colors.railSuccess}>{state.composerNotice}</Text>
   ) : null;
   // While a turn is running the meta-row gains a second job: the operator

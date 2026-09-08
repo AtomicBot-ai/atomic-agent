@@ -359,6 +359,26 @@ export interface TuiState {
    */
   composerNotice: string | null;
   /**
+   * Live provider outage, or `null` when the link is answering.
+   *
+   * Sticky on purpose: it survives the failed turn that ended the wait
+   * and stays on screen until a turn actually succeeds. Nine identical
+   * one-second failures with nothing on screen between them is what a
+   * dead provider used to look like from the operator's chair.
+   */
+  providerOutage: {
+    /** Scrubbed reason from the transport failure. */
+    reason: string;
+    /** Wall-clock ms already spent waiting in this outage. */
+    waitedMs: number;
+    /** Ceiling from `agent.providerWait.maxWaitMs`. */
+    maxWaitMs: number;
+    /** Retry attempts made so far. */
+    attempt: number;
+    /** `true` once the wait budget ran out and the turn failed. */
+    givenUp: boolean;
+  } | null;
+  /**
    * Open "delete the session?" confirmation, or `null`. Carries the
    * preview so the dialog can name what is about to go, and the focused
    * button so Enter has an unambiguous meaning.
@@ -708,6 +728,7 @@ export function createInitialTuiState(
     approvalPathDraft: null,
     composerHasSelection: false,
     composerNotice: null,
+    providerOutage: null,
     sessionDelete: null,
     uninstall: null,
     loadedSkills: [],

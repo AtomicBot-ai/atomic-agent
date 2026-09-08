@@ -262,6 +262,22 @@ export interface AtomicAgentConfig {
      */
     maxSteps: number;
     /**
+     * What to do when the model provider stops answering.
+     *
+     * A dead endpoint used to end the turn after three fast retries
+     * (~1s), so an outage of minutes turned every message the operator
+     * sent into a one-second failure and the work in flight was
+     * abandoned. Waiting is the honest response: the turn is parked,
+     * the same step is retried on a backoff, and the run continues the
+     * moment the provider answers.
+     */
+    providerWait: {
+      /** `false` restores the old behaviour: fail the turn immediately. */
+      enabled: boolean;
+      /** Give up (and fail the turn) after waiting this long in one outage. */
+      maxWaitMs: number;
+    };
+    /**
      * Ceilings for one task. These, not `maxSteps`, are what actually
      * end a run that is still making progress.
      */
@@ -1213,6 +1229,11 @@ export interface UserConfigFile {
     tokenBudget: number;
     /** Steps in one leg of a task — a checkpoint, not the end of it. */
     maxSteps: number;
+    /** Wait out a provider outage instead of failing the turn. */
+    providerWait: {
+      enabled: boolean;
+      maxWaitMs: number;
+    };
     /** Ceilings that actually end a task. See the runtime type above. */
     task: {
       maxSteps: number;
@@ -1996,6 +2017,14 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
   agent: {
     tokenBudget: 3000,
     maxSteps: 25,
+    providerWait: {
+      enabled: true,
+      // Five minutes covers the outages people actually hit — a laptop
+      // waking, a VPN reconnecting, a provider's gateway restarting —
+      // without leaving a turn parked all afternoon. The task's own
+      // wall-clock ceiling still applies on top.
+      maxWaitMs: 300_000,
+    },
     task: {
       // ~40 legs of 25. Large enough for the multi-hour browser jobs
       // people actually ask for, small enough that a runaway is bounded
@@ -2497,6 +2526,30 @@ function coerceFloatLike(raw: unknown): number {
  * make `agent.maxSteps` the terminator again through the back door, and
  * silently, which is the exact confusion this block exists to remove.
  */
+function parseProviderWait(
+  raw: unknown,
+): UserConfigFile["agent"]["providerWait"] {
+  const defaults = USER_CONFIG_DEFAULTS.agent.providerWait;
+  if (raw === undefined || raw === null) return defaults;
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw new ConfigValidationError(
+      "agent.providerWait",
+      `expected object, got ${JSON.stringify(raw)}`,
+    );
+  }
+  const wait = raw as Record<string, unknown>;
+  return {
+    enabled: parseBool(
+      wait.enabled ?? defaults.enabled,
+      "agent.providerWait.enabled",
+    ),
+    maxWaitMs: parsePositiveInt(
+      wait.maxWaitMs ?? defaults.maxWaitMs,
+      "agent.providerWait.maxWaitMs",
+    ),
+  };
+}
+
 function parseAgentTask(raw: unknown): UserConfigFile["agent"]["task"] {
   const defaults = USER_CONFIG_DEFAULTS.agent.task;
   if (raw === undefined || raw === null) return defaults;
@@ -3581,6 +3634,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         agent.maxSteps ?? USER_CONFIG_DEFAULTS.agent.maxSteps,
         "agent.maxSteps",
       ),
+      providerWait: parseProviderWait(agent.providerWait),
       task: parseAgentTask(agent.task),
       toolTimeoutMs: parsePositiveInt(
         agent.toolTimeoutMs ?? USER_CONFIG_DEFAULTS.agent.toolTimeoutMs,
