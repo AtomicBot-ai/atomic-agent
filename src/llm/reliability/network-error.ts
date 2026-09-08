@@ -102,6 +102,11 @@ const NETWORK_MESSAGES = [
  * died mid-body are the same verdict. Do not use it to say anything to a
  * user about what happened to their reply; use
  * `looksLikeMidStreamDrop` for that.
+ *
+ * Exported for this module's own test only, and kept out of
+ * `reliability/index.ts` for that reason: every consumer outside this
+ * directory wants the narrow predicate, and offering both at the barrel
+ * makes picking the wrong one a one-character mistake.
  */
 export function looksLikeDroppedConnection(message: string): boolean {
   const trimmed = message.trim();

@@ -1,5 +1,5 @@
 import { formatLlamaUnreachableHint } from "../llm/llama-server-health.js";
-import { looksLikeMidStreamDrop } from "../llm/reliability/network-error.js";
+import { looksLikeMidStreamDrop } from "../llm/reliability/index.js";
 
 const MAX_CHARS = 480;
 
