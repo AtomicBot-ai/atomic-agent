@@ -3,6 +3,7 @@ import type {
   LlmFailureCategory,
   ModelFailureReason,
   ModelFailureStage,
+  TruncationDetail,
 } from "./failure-category.js";
 
 export interface LlmFailureOptions {
@@ -25,6 +26,12 @@ export interface LlmFailureOptions {
 export interface ModelErrorOptions extends LlmFailureOptions {
   transport?: ToolCallTransport;
   stage?: ModelFailureStage;
+  /**
+   * For `reason === "truncated"`: which wall the reply hit and the token
+   * counts that decided it. The agent loop reads this to choose between
+   * retrying with a larger cap and retrying with a smaller prompt.
+   */
+  truncation?: TruncationDetail;
 }
 
 /**
@@ -119,6 +126,9 @@ export class ModelError extends LlmFailure {
   /** Which attempt inside the step raised this defect. */
   readonly stage?: ModelFailureStage;
 
+  /** Present for `truncated`: the wall the reply hit and the counts behind it. */
+  readonly truncation?: TruncationDetail;
+
   constructor(
     readonly reason: ModelFailureReason,
     message: string,
@@ -131,6 +141,9 @@ export class ModelError extends LlmFailure {
     }
     if (options?.stage !== undefined) {
       this.stage = options.stage;
+    }
+    if (options?.truncation !== undefined) {
+      this.truncation = options.truncation;
     }
   }
 }
