@@ -5253,12 +5253,30 @@ async function settingsTestPartC(
   const localBody = await js<string>("window.__settingsBody()");
   const listCli = await modelsList();
   const embCli = await modelsListEmbeddings();
+  /* Both wrappers report `ok`, and this check used to ignore it: a CLI call
+     that failed came back with no models, the expectation was then computed
+     from an empty list, and the check failed naming the PANE — reporting a
+     defect in the app for a subprocess that did not run. It happened once
+     here (`cli 13` against 18 correctly painted rows, because the
+     embeddings call came back empty while the pane's own call had got all
+     five). An expectation is only worth asserting when the thing it is
+     derived from actually answered. */
+  if (!listCli.ok || !embCli.ok) {
+    check(
+      "llm tab: the catalogue calls this check compares against actually ran",
+      false,
+      `models list ok=${listCli.ok}${listCli.error ? ` (${listCli.error})` : ""};`
+      + ` list-embeddings ok=${embCli.ok}${embCli.error ? ` (${embCli.error})` : ""}`
+      + " — the pane is not what failed here",
+    );
+  } else {
   const expectedLocal = (listCli.models ?? []).filter((m) => !/embed|bge|nomic|jina/i.test(m.id)).length + (embCli.models ?? []).length;
   check(
     "llm tab: Local pane rows come from atag models list + list-embeddings within 10 s",
     local.mode === "local" && local.rows > 0 && local.rows === expectedLocal && local.localRows + local.embRows === expectedLocal && !local.localErr,
     `${local.rows} rows painted, ${local.localRows}+${local.embRows} loaded, cli ${expectedLocal}${local.localErr ? " err=" + local.localErr : ""}`,
   );
+  }
   /* ---- r7 models: the vendored catalogue metadata cannot rot in silence.
 
      desktop/main/model-catalog.ts is a COPY of the description + RAM
