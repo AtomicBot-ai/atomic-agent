@@ -6240,8 +6240,15 @@ function obLocalPickHTML() {
       + esc('One download, then it runs offline. This machine reports ' + OB.ram + ' GB of RAM, '
         + 'and the list below is ordered for it — the best fit first.') + '</div>'
     + '<div class="ob-h">' + esc(OB_COPY.localHeading) + '</div>'
-    + '<div class="ob-list ob-models ob-scroll">' + body + '</div>' + hf
-    + obOutOfReachHTML();
+    /* The out-of-reach block lives INSIDE the scroller, not beside it.
+       Beside it, it collapsed the list to nothing: `.ob-models` carries
+       `overflow-y:auto`, which sets its `min-height` to 0, so as a flex
+       item next to a sibling that cannot shrink it absorbed every pixel of
+       shrinkage and rendered 0px tall — three model rows present in the
+       DOM, readable by script, and INVISIBLE on screen. Caught in a
+       screenshot of the 8 GB pass; the 68 GB pass has no such sibling and
+       looked perfect. `min-height` below is the second belt. */
+    + '<div class="ob-list ob-models ob-scroll">' + body + obOutOfReachHTML() + '</div>' + hf;
 }
 
 /**
@@ -12949,13 +12956,17 @@ function llmRowHTML(row, index, cursor) {
   const selected = index === cursor;
   const mark = row.active ? '*' : selected ? '>' : ' ';
   const extra = row.kind === 'localTextModel' && !row.model.downloaded ? ' data-pull-local="' + esc(row.model.id) + '"' : '';
-  return '<button class="tuirow' + (selected ? ' on' : '') + '" data-llm-row="' + esc(row.id) + '"' + extra + ' data-act="llm:row:' + index + '">'
+  /* A row that carries the model's blurb and its fit is four lines tall,
+     and `.tuirow` is a 24px single-line row with `overflow:hidden` — which
+     clipped every added line to nothing ON SCREEN while `innerText` went on
+     returning all four. `llm-model` unfixes the height. */
+  return '<button class="tuirow' + (row.sub ? ' llm-model' : '') + (selected ? ' on' : '') + '" data-llm-row="' + esc(row.id) + '"' + extra + ' data-act="llm:row:' + index + '">'
     + esc(mark + ' ' + row.text) + '<span class="ter"> · ' + esc(row.enterEffect) + '</span>'
     // r7 models: what the model is, how it fits this machine, and the one
     // caution it earns. Absent on a row that has no catalogue entry.
-    + (row.sub ? '<span class="llm-sub">' + esc('  ' + row.sub) + '</span>' : '')
-    + (row.fitNote ? '<span class="llm-sub llm-fit-' + esc(row.fitClass || '') + '">' + esc('  ' + row.fitNote) + '</span>' : '')
-    + (row.caution ? '<span class="llm-sub llm-caution">' + esc('  ' + row.caution) + '</span>' : '')
+    + (row.sub ? '<span class="llm-sub">' + esc(row.sub) + '</span>' : '')
+    + (row.fitNote ? '<span class="llm-sub llm-fit-' + esc(row.fitClass || '') + '">' + esc(row.fitNote) + '</span>' : '')
+    + (row.caution ? '<span class="llm-sub llm-caution">' + esc(row.caution) + '</span>' : '')
     + '</button>';
 }
 function llmSectionHTML(title, rows, offset, cursor, empty, emphasise) {

@@ -88,6 +88,20 @@ async function pickListAt(ram, label) {
       lastRow: await app.eval(`(() => { const r = document.querySelectorAll('#onboarding .ob-row');
         return r.length ? (r[r.length - 1].querySelector('.t').innerText || '').trim() : ''; })()`),
       outAreButtons: await app.eval("[...document.querySelectorAll('#onboarding .ob-out')].some((n) => n.tagName === 'BUTTON' || n.querySelector('button'))"),
+      /* Present in the DOM is not the same as ON THE SCREEN, and the
+         difference is not academic: an `overflow-y:auto` flex item beside
+         a sibling that cannot shrink collapses to 0px, and every row in it
+         still answers `innerText` (an unrendered element falls back to
+         textContent). The 8 GB list shipped that way for one build and
+         read perfectly to script. Measure the box and the first row. */
+      geometry: await app.eval(`(() => {
+        const box = document.querySelector('#onboarding .ob-models');
+        const row = document.querySelector('#onboarding .ob-models .ob-row');
+        const b = box && box.getBoundingClientRect();
+        const r = row && row.getBoundingClientRect();
+        return {boxH: b ? Math.round(b.height) : 0, rowH: r ? Math.round(r.height) : 0,
+          rowInBox: !!(b && r && r.top >= b.top - 1 && r.top < b.bottom)};
+      })()`),
     };
     if (SHOTS) await app.screenshot(join(SHOTS, `picks-${label}.png`));
     return shown;
@@ -142,6 +156,8 @@ try {
     big.picks.filter((p) => p.lines.some((l) => /A small model:/.test(l))).map((p) => p.name).join(', '));
   check('the Hugging Face row is still pinned last',
     big.lastRow === 'Add a model from Hugging Face…', JSON.stringify(big.lastRow));
+  check('the list is on the screen, not just in the DOM',
+    big.geometry.boxH > 100 && big.geometry.rowH > 40 && big.geometry.rowInBox, JSON.stringify(big.geometry));
 
   /* ================================================================
      2 — A SMALL MACHINE. 8 GB: two models run comfortably, one is a
@@ -166,6 +182,8 @@ try {
     small.outAreButtons === false, small.outAreButtons ? 'it renders as a button' : 'plain rows');
   check('the out-of-reach block says what it is',
     /Needs a bigger machine/.test(small.outHeading), JSON.stringify(small.outHeading));
+  check('the list is on the screen next to the out-of-reach block, not collapsed by it',
+    small.geometry.boxH > 100 && small.geometry.rowH > 40 && small.geometry.rowInBox, JSON.stringify(small.geometry));
 
   /* ================================================================
      3 — A MACHINE NOTHING RUNS ON. 4 GB is under every minimum; the
@@ -219,6 +237,17 @@ try {
     const rows = await app.eval(`[...document.querySelectorAll('#settings [data-llm-row^="local-text:"]')]
       .map((n) => (n.innerText || '').trim().split('\\n').map((s) => s.trim()).filter(Boolean))`);
     const ramLine = await app.eval("(document.querySelector('#settings .llm-ram') || {}).innerText || ''");
+    /* Measured, not read: `.tuirow` is a 24px line with overflow hidden,
+       and the added lines were clipped to nothing on screen while every
+       one of them still came back from innerText. */
+    const rowGeom = await app.eval(`(() => {
+      const n = document.querySelector('#settings [data-llm-row^="local-text:"]');
+      const sub = n && n.querySelector('.llm-sub');
+      const b = n && n.getBoundingClientRect();
+      const s = sub && sub.getBoundingClientRect();
+      return {rowH: b ? Math.round(b.height) : 0, subH: s ? Math.round(s.height) : 0,
+        subInRow: !!(b && s && s.bottom <= b.bottom + 1 && s.top >= b.top - 1)};
+    })()`);
     if (SHOTS) await app.screenshot(join(SHOTS, 'settings-local-8gb.png'));
     say('--- Settings › LLM › Local on the same simulated 8 GB machine ---');
     say(`  ${ramLine.trim()}`);
@@ -234,6 +263,8 @@ try {
       `${rows.filter((r) => r.some((l) => /needs \d+ GB of RAM at minimum/.test(l))).length} rows say a model will not run here`);
     check('the small-model caution is on the recommended row here too',
       rows.length > 0 && rows[0].some((l) => /small model/i.test(l)), JSON.stringify(rows[0] || 'no rows'));
+    check('the Local pane’s added lines are on the screen, not clipped by the 24px row',
+      rowGeom.rowH > 60 && rowGeom.subH > 10 && rowGeom.subInRow, JSON.stringify(rowGeom));
     check('a model that fits is not warned about here either',
       !rows.some((r) => /qwen-3\.5-9b/.test(r[0]) && r.some((l) => /small model/i.test(l))),
       JSON.stringify((rows.find((r) => /qwen-3\.5-9b/.test(r[0])) || [])[0] || 'no such row'));

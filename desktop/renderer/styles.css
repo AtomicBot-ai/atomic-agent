@@ -1348,6 +1348,10 @@ body.electron #settings{-webkit-app-region:no-drag}
 /* Out of reach: shown, explained, and not a control. Deliberately NOT a
    button — there is no cursor position and no tab stop on a model this
    machine cannot run. */
+/* An `overflow-y:auto` flex item has min-height 0 and will shrink to
+   nothing rather than force its siblings to give way. Both halves of the
+   list live inside this box now, and it may not collapse. */
+.ob-models{min-height:140px}
 .ob-out-h{margin-top:14px;color:var(--text-secondary)}
 .ob-out-list{display:flex;flex-direction:column;gap:4px;margin-top:6px;opacity:.72}
 .ob-out{display:block;padding:6px 10px 6px 28px;border:1px dashed var(--line);border-radius:8px}
@@ -1357,8 +1361,14 @@ body.electron #settings{-webkit-app-region:no-drag}
 
 /* --- Settings › LLM › Local --- */
 .llm-ram{margin-bottom:6px}
+/* `.tuirow` is a fixed 24px line that hides its overflow — right for a
+   one-line TUI row, fatal for a model row that now carries a description,
+   a fit verdict and sometimes a caution. */
+.tuirow.llm-model{height:auto;line-height:20px;padding:3px 4px;margin-bottom:2px;white-space:pre-wrap}
+/* Indented with padding rather than two leading spaces, so a caution that
+   wraps keeps its hanging indent instead of returning to column 0. */
 .tuirow .llm-sub{display:block;font-size:11.5px;color:var(--text-secondary);
-  font-family:var(--font-mono);line-height:1.5;white-space:pre-wrap}
+  font-family:var(--font-mono);line-height:1.5;white-space:pre-wrap;padding-left:2ch}
 .tuirow .llm-fit-comfortable{color:var(--success)}
 .tuirow .llm-fit-tight{color:var(--warn)}
 .tuirow .llm-fit-over{color:var(--text-tertiary)}
