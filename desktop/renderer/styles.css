@@ -1284,3 +1284,15 @@ body.electron #settings{-webkit-app-region:no-drag}
 }
 .ob-hints .hint-live:hover{color:var(--text-secondary)}
 .ob-hints .hint-live:hover .kc{border-color:var(--line-strong)}
+
+/* ============================================================
+   Selector lane — the composer's model slot as a call to action
+   ============================================================ */
+
+/* composer-meta-controls.tsx draws `download model` in the rail's own warn,
+   bold, rather than the route's foreground: "this slot is the one thing on
+   the bar the operator has to act on, and in the route's own tone it reads as
+   just another label". `--warn` is the desktop's counterpart, and it is
+   declared in all three theme blocks. */
+.cchip.dlchip{color:var(--warn);font-weight:600}
+.cchip.dlchip:hover{background:var(--warn-wash);color:var(--warn)}

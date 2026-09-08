@@ -483,6 +483,11 @@ const BSW = { line:'', readyIds:[], readyLoaded:false, localLoaded:false, gating
    `modelFetchedForUrl` reset does. */
 const EXT = { url:null, model:null, busy:false };
 
+/* SELECTOR LANE — composer-meta-controls.tsx DOWNLOAD_MODEL_LABEL. The word
+   the model slot carries when the managed-local route has no weights on disk,
+   and the flag that turns that slot from a switch into a deep link. */
+const DOWNLOAD_MODEL_LABEL = 'download model';
+
 /* ---- r5 item 9: the desktop's own state directory ----
    What `app:firstRun` answered, latched in main BEFORE anything could
    create config.json. `null` until the boot check resolves; the wizard
@@ -3532,7 +3537,14 @@ document.addEventListener('click', (e) => {
   const rv = t.closest('[data-revoke]'); if (rv) { S.grants.splice(+rv.dataset.revoke, 1); render(); toast('Grant revoked'); return; }
   const ask = t.closest('[data-ask]'); if (ask) { const q = S.q; act('close'); S.draft = q; render(); submit(); return; }
   const selOpen = t.closest('[data-sel-open]');
-  if (selOpen) { openSelector(selOpen.dataset.selOpen); return; }
+  if (selOpen) {
+    /* SELECTOR LANE — DownloadModelControl, not Control: the CTA slot opens
+       the pane the download happens in (openLocalModelsPane), because the
+       model switch behind it would only list the empty catalogue and its own
+       deep link to that same pane. See modelChipHtml. */
+    if (selOpen.dataset.selDl) { closeSelector(); act('settings:llm'); llmSetMode('local'); return; }
+    openSelector(selOpen.dataset.selOpen); return;
+  }
   const selTab = t.closest('[data-sel-tab]');
   if (selTab) { SEL.kind = selTab.dataset.selTab; SEL.cursor = 0; SEL.filter = ''; SEL.addOpen = false; render(); selEnterModelPane(); return; }
   const selRow = t.closest('[data-sel-row]');
@@ -4935,7 +4947,7 @@ function activeModel() {
     // regardless of managed.modelId, and ComposerMetaControls renders the
     // DownloadModelControl in preference to the model label — an id that
     // names a file which is not there is not a model to show.
-    if (BSW.localLoaded && !SEL.pulling && !SEL.local.some((m) => m.downloaded)) return 'download model';
+    if (BSW.localLoaded && !SEL.pulling && !SEL.local.some((m) => m.downloaded)) return DOWNLOAD_MODEL_LABEL;
     const managed = (LIVE_CONFIG && LIVE_CONFIG.localModels && LIVE_CONFIG.localModels.managed) || {};
     if (managed.modelId) return managed.modelId;
     return '';
@@ -8074,7 +8086,14 @@ function selActiveProviderId() {
 }
 
 function openSelector(kind) {
-  SEL.open = true; SEL.kind = kind || 'backend'; SEL.cursor = 0; SEL.filter = ''; SEL.err = null;
+  /* SELECTOR LANE — `neighbourSwitchKind`'s guard, in the one place this
+     window can reach it: "a kind outside the walk (a provider switch somehow
+     open on the local route) steps back onto the strip rather than nowhere".
+     No click can ask for a control the route does not draw — the chip is not
+     rendered — but a deep link or a stale call can, and the provider pane on
+     a managed-local route is a switch over a list that route has no use for. */
+  const want = kind || 'backend';
+  SEL.open = true; SEL.kind = selHasKind(want) ? want : 'backend'; SEL.cursor = 0; SEL.filter = ''; SEL.err = null;
   render();
   if (SEL.kind === 'model') selEnterModelPane();
   if (SEL.kind === 'backend' && selBackend() !== 'cloud' && !SEL.local.length) selLoadLocal();
@@ -10157,7 +10176,22 @@ function bswSnapshot() {
 /** The model chip, as the composer draws it: nothing when there is no model (the TUI renders no control then). */
 function modelChipHtml() {
   const label = activeModel();
-  return label ? '<button class="cchip modelchip" data-sel-open="model">' + esc(shortModel(label)) + ic('chevD') + '</button>' : '';
+  if (!label) return '';
+  /* SELECTOR LANE — the model slot's TWO components, as
+     composer-meta-controls.tsx has them. A model label is a `Control`, and
+     clicking it opens the model switch. `download model` is a
+     `DownloadModelControl`, and clicking it goes where the download actually
+     happens (openLocalModelsPane) — "the model switch popup would only list
+     the empty catalog and its own deep link to the same pane". The desktop
+     drew both as the same button, so the one control on the bar an operator
+     HAS to act on cost them two clicks and an empty list on the way.
+
+     `data-sel-open` stays on both: it is what marks this button as the
+     route's model control, for the composer strip and for anything reading
+     it. `data-sel-dl` is the component split. */
+  const cta = label === DOWNLOAD_MODEL_LABEL;
+  return '<button class="cchip modelchip' + (cta ? ' dlchip' : '') + '" data-sel-open="model"'
+    + (cta ? ' data-sel-dl="1"' : '') + '>' + esc(shortModel(label)) + ic('chevD') + '</button>';
 }
 /**
  * What the two facts change on screen, repainted in place. These land

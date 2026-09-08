@@ -102,6 +102,14 @@ Give every concurrent run its own debugging port.
   written as `` `…replace(/\s+/g,' ')…` `` loses the backslash and becomes
   `/s+/`, which replaces the letter s: the transcript then reports
   `"Skip  etup for now"` and lies to you about what is on screen.
+- **A backend switch is not instant — wait for the word, not a clock.** Leaving
+  the custom route for cloud took ~30 s on this machine: the strip paints the
+  route the operator clicked (`SWX.want`) while the provider and model beside
+  it are still the old route's, and the send button stays locked the whole
+  time. `drive-selector.mjs` waits for the backend control to actually read the
+  route it clicked (`onRoute`) and then for three identical reads of the strip,
+  because two was not enough — the model slot changes once more when the
+  local-models snapshot lands.
 
 ## One known red
 
