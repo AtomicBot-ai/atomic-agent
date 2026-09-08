@@ -823,6 +823,18 @@ agent are put back in `finally`, so a failing assertion cannot leave the
 route changed. Run it against a private `ATOMIC_AGENT_STATE_DIR`, never
 `~/.atomic-agent`.
 
+> **The smoke needs a state directory that has been SET UP, and this is the
+> one thing about it worth knowing before you read a red run.** It wants a
+> configured cloud provider, a downloaded managed local model, and a `.env`
+> with a working key. Point it at an empty directory and it does not fail
+> gracefully: it reports around **108 failures** across `settings:`, `llm:`,
+> `hf:`, `skills:`, `plan:` and `backend:` — the Settings window opens on
+> whatever pane it can, the model pane has nothing to list, and the route
+> switch answers `add a provider first`. None of that means anything is
+> broken. Copy a prepared directory (`cp -Rc` clones it for free on APFS)
+> rather than starting from nothing. On a set-up directory this suite is
+> **491 checks and about twenty minutes**.
+
 ## Human scenarios (`npm run scenarios`)
 
 `npm run smoke` proves things about *functions*. It drives the renderer through
