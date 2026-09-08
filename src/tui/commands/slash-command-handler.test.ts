@@ -189,6 +189,13 @@ describe("dispatchSlashCommand", () => {
     expect(result.systemMessage).toMatch(/usage: \/skill enable/);
   });
 
+  it("signals triggerIssueReport for /report without a chat line", () => {
+    const result = dispatchSlashCommand("/report");
+    expect(result.triggerIssueReport).toBe(true);
+    expect(result.clearBuffer).toBe(true);
+    expect(result.systemMessage).toBeUndefined();
+  });
+
   it("signals triggerDebugBundleDump for /dump", () => {
     const result = dispatchSlashCommand("/dump");
     expect(result.triggerDebugBundleDump).toBe(true);

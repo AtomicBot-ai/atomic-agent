@@ -232,6 +232,11 @@ const V0_2_2_SLASH_COMMANDS = [
       "hide or show the session rail (the rail's « does the same)",
   },
   {
+    name: "report",
+    description:
+      "file a GitHub issue with your logs attached — you choose how much leaves this machine",
+  },
+  {
     name: "uninstall",
     description:
       "remove atomic-agent and all of its data from this machine — permanent, no undo",

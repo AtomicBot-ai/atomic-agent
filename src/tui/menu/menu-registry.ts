@@ -659,6 +659,20 @@ export const MENU: readonly MenuNode[] = [
   },
   {
     kind: "action",
+    id: "help.report",
+    label: "Report an issue on GitHub…",
+    group: "help",
+    // `r` is Run; `b` (bug) is free.
+    chord: "b",
+    slash: {
+      name: "report",
+      description:
+        "file a GitHub issue with your logs attached — you choose how much leaves this machine",
+      rank: 40,
+    },
+  },
+  {
+    kind: "action",
     id: "help.quit",
     label: "Quit",
     group: "help",

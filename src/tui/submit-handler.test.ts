@@ -195,6 +195,13 @@ describe("handleEditorSubmit", () => {
     );
   });
 
+  it("invokes onIssueReportRequested for /report", () => {
+    const state = createInitialTuiState(fakeSession());
+    const onIssueReportRequested = vi.fn();
+    handleEditorSubmit("/report", state, vi.fn(), stubCallbacks({ onIssueReportRequested }));
+    expect(onIssueReportRequested).toHaveBeenCalledTimes(1);
+  });
+
   it("invokes onDebugBundleExportRequested for /dump", () => {
     const state = createInitialTuiState(fakeSession());
     const onDebugBundleExportRequested = vi.fn();

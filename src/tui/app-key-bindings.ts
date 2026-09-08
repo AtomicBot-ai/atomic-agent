@@ -1,4 +1,6 @@
 import { CODING_MODES, type CodingMode } from "./coding-mode.js";
+import { ISSUE_REPORT_LEVELS, type IssueReportLevel } from "./issue-report/report-levels.js";
+import type { IssueReportState } from "./issue-report/issue-report-state.js";
 import { handleComposerSwitchKey } from "./composer-switch/composer-switch-key-bindings.js";
 import type { ComposerSwitchRow } from "./composer-switch/composer-switch-rows.js";
 import { handleContextPanelKey } from "./context-panel-keys.js";
@@ -57,6 +59,12 @@ export interface AppKeyCallbacks {
   onSessionDeleteConfirmed?(sessionId: string): void;
   /** The word was typed and Enter pressed — take the app down and remove it. */
   onUninstallConfirmed?(): void;
+  /** Issue-report popup: a level was chosen (enter or 1-3). */
+  onIssueReportPickRequested?(level: IssueReportLevel, state: TuiState): void;
+  /** Issue-report popup: the operator confirmed sending. */
+  onIssueReportSendRequested?(): void;
+  /** Issue-report popup: dismissed on any step. */
+  onIssueReportCloseRequested?(): void;
   onApprovalDecision(
     approvalId: string,
     approved: boolean,
@@ -337,6 +345,13 @@ export function handleAppKey(
   // The update offer claims only y / n / Esc; anything else (Ctrl+C in
   // particular) falls through to the normal handlers below.
   if (state.updatePrompt && handleUpdateKey(input, key, ctx)) {
+    return true;
+  }
+  // The issue-report popup is modal: it owns every key while it is up,
+  // including during its two async legs, where Esc would otherwise
+  // leave a zip or an API call mid-flight with nothing on screen.
+  if (state.issueReport) {
+    handleIssueReportKey(input, key, state.issueReport, ctx);
     return true;
   }
   // The mode menu is a dropdown on the composer's toolbar, so it takes
@@ -1134,5 +1149,50 @@ function handleApprovalKey(
       return true;
     default:
       return false;
+  }
+}
+
+function handleIssueReportKey(
+  input: string,
+  key: Key,
+  report: IssueReportState,
+  ctx: AppKeyContext,
+): void {
+  const { state, dispatch, callbacks } = ctx;
+  const close = (): void => {
+    // The orchestrator forgets its prepared report; the reducer closes
+    // the popup. Both, so a stub without the callback still closes.
+    callbacks.onIssueReportCloseRequested?.();
+    dispatch({ type: "issue_report_closed" });
+  };
+  if (report.step === "building" || report.step === "sending") return;
+  if (key.escape || report.step === "sent" || report.step === "error") {
+    close();
+    return;
+  }
+  if (report.step === "pick") {
+    if (key.upArrow || key.downArrow || input === "j" || input === "k") {
+      dispatch({
+        type: "issue_report_cursor_moved",
+        delta: key.downArrow || input === "j" ? 1 : -1,
+      });
+      return;
+    }
+    const digit = /^[1-9]$/.test(input) ? Number(input) - 1 : -1;
+    const picked =
+      digit >= 0
+        ? ISSUE_REPORT_LEVELS[digit]
+        : key.return
+          ? ISSUE_REPORT_LEVELS[report.cursor]
+          : undefined;
+    if (picked) callbacks.onIssueReportPickRequested?.(picked.level, state);
+    return;
+  }
+  if (report.step === "confirm") {
+    if (input === "n") {
+      close();
+      return;
+    }
+    if (key.return || input === "y") callbacks.onIssueReportSendRequested?.();
   }
 }

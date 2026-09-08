@@ -13,6 +13,8 @@ import {
 import { persistConversationMaxPairs } from "./persist-conversation-max-pairs.js";
 import { CodingModeChip } from "./components/coding-mode-chip.js";
 import { CodingModePopup } from "./components/coding-mode-popup.js";
+import { IssueReportPopup } from "./components/issue-report-popup.js";
+import type { IssueReportLevel } from "./issue-report/report-levels.js";
 import { OnboardingScreen } from "./components/onboarding-screen.js";
 import { TerminalTooSmall } from "./components/terminal-too-small.js";
 import { ContextPanel } from "./components/context-panel.js";
@@ -532,6 +534,14 @@ export interface TuiAppCallbacks {
    * event bus.
    */
   onDebugBundleExportRequested?(state: TuiState): void;
+  /** `/report` or the help menu: open the issue-report popup. */
+  onIssueReportRequested?(): void;
+  /** A level was chosen: build the report from `state` and write the zip. */
+  onIssueReportPickRequested?(level: IssueReportLevel, state: TuiState): void;
+  /** The operator confirmed: file the prepared report on GitHub. */
+  onIssueReportSendRequested?(): void;
+  /** The popup was dismissed; the orchestrator drops its prepared report. */
+  onIssueReportCloseRequested?(): void;
   /** Telegram tab: refresh state mirror (token presence, owner, etc.). */
   onTelegramRefreshRequested?(): void;
   /**
@@ -954,6 +964,8 @@ export function TuiApp({
     // there would swallow the letter that closed it.
     !state.uninstall &&
     !state.sessionDelete &&
+    // The issue-report popup is modal in the same sense as the ladders.
+    !state.issueReport &&
     !menuLeaderArmed &&
     // An approval prompt no longer takes the keyboard away: the
     // operator answers the agent in the same field they always type in,
@@ -1064,6 +1076,7 @@ export function TuiApp({
     state.composerSwitch !== null ||
     Boolean(state.uninstall) ||
     Boolean(state.sessionDelete) ||
+    state.issueReport !== null ||
     state.codingModeMenu !== null ||
     Boolean(state.pendingApproval) ||
     Boolean(state.updatePrompt) ||
@@ -1136,6 +1149,7 @@ export function TuiApp({
       state.contextPanelOpen ||
       state.composerSwitch !== null ||
       state.codingModeMenu !== null ||
+      state.issueReport !== null ||
       Boolean(state.uninstall) ||
       Boolean(state.sessionDelete) ||
       state.themePickerOpen ||
@@ -1182,6 +1196,7 @@ export function TuiApp({
     state.contextPanelOpen ||
     state.composerSwitch !== null ||
     state.codingModeMenu !== null ||
+    state.issueReport !== null ||
     Boolean(state.uninstall) ||
     Boolean(state.sessionDelete) ||
     state.themePickerOpen ||
@@ -1954,6 +1969,15 @@ export function TuiApp({
                 }
                 onActivate={(mode) =>
                   dispatch({ type: "coding_mode_cycled", mode })
+                }
+              />
+            ) : null}
+            {state.issueReport ? (
+              <IssueReportPopup
+                report={state.issueReport}
+                availableRows={switchPaneRows}
+                availableColumns={
+                  terminalSize.columns - 4 - (sidebarVisible ? sidebarWidth : 0)
                 }
               />
             ) : null}

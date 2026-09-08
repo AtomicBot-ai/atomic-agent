@@ -62,6 +62,7 @@ import {
   createInitialIntegrationsPanelState,
   type IntegrationsPanelState,
 } from "./integrations/integrations-panel-state.js";
+import type { IssueReportState } from "./issue-report/issue-report-state.js";
 import {
   createInitialProvidersPanelState,
   type ProvidersPanelState,
@@ -536,6 +537,8 @@ export interface TuiState {
   privacyPanel: PrivacyPanelState;
   /** State slice driving the Integrations tab (third-party credentials). */
   integrationsPanel: IntegrationsPanelState;
+  /** The "Report an issue on GitHub" popup, or `null` when closed. */
+  issueReport: IssueReportState | null;
   /** Cloud / local LLM provider registry (hot-swap active text provider). */
   providersPanel: ProvidersPanelState;
   /** Unified operator LLM panel combining provider routing and local daemon state. */
@@ -790,6 +793,7 @@ export function createInitialTuiState(
     importPanel: createInitialImportPanelState(),
     privacyPanel: createInitialPrivacyPanelState(),
     integrationsPanel: createInitialIntegrationsPanelState(),
+    issueReport: null,
     providersPanel: createInitialProvidersPanelState(),
     llmPanel,
     fallbackPanel: createInitialFallbackPanelState(),

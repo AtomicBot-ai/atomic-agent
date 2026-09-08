@@ -585,6 +585,11 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onMcpRemoveServer: (name) => orchestrator.mcp.removeServer(name),
         onDebugBundleExportRequested: (state) =>
           orchestrator.exportDebugBundle(state),
+        onIssueReportRequested: () => orchestrator.issueReport.open(),
+        onIssueReportPickRequested: (level, state) =>
+          void orchestrator.issueReport.pick(level, state),
+        onIssueReportSendRequested: () => void orchestrator.issueReport.send(),
+        onIssueReportCloseRequested: () => orchestrator.issueReport.close(),
         onLocalModelsAutoRefreshStart: () => orchestrator.localModels.startAutoRefresh(),
         onLocalModelsPullRequested: (id, mode) =>
           void orchestrator.localModels.pullModel(id, mode),

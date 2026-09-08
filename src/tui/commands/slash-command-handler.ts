@@ -42,6 +42,8 @@ export interface SlashDispatchResult {
   readonly triggerSkillCatalogDump: boolean;
   /** When true the caller should write the TUI debug zip (`/dump`). */
   readonly triggerDebugBundleDump: boolean;
+  /** When true the caller should open the issue-report popup (`/report`). */
+  readonly triggerIssueReport: boolean;
   /** When true the caller should forward the raw buffer as a normal message. */
   readonly forwardAsMessage: boolean;
   /** When set, caller should probe this URL, persist on success, then refresh UI. */
@@ -147,6 +149,7 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
       triggerMemoryDump: false,
       triggerSkillCatalogDump: false,
       triggerDebugBundleDump: false,
+      triggerIssueReport: false,
       forwardAsMessage: true,
       persistLlamaUrl: undefined,
     };
@@ -165,11 +168,16 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
       triggerMemoryDump: false,
       triggerSkillCatalogDump: false,
       triggerDebugBundleDump: false,
+      triggerIssueReport: false,
       forwardAsMessage: false,
       persistLlamaUrl: undefined,
     };
   }
   switch (resolved.name) {
+    case "report":
+      // The popup is the feedback; a system line here would be noise
+      // behind a modal.
+      return pureActions([], { triggerIssueReport: true });
     case "dump":
       return pureActions([], {
         triggerDebugBundleDump: true,
@@ -432,6 +440,7 @@ function pureActions(
     triggerMemoryDump: false,
     triggerSkillCatalogDump: false,
     triggerDebugBundleDump: false,
+    triggerIssueReport: false,
     forwardAsMessage: false,
     persistLlamaUrl: undefined,
     taskCancelId: undefined,

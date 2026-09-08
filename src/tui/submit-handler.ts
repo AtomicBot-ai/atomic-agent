@@ -173,6 +173,9 @@ export function runSlashCommand(
   if (result.triggerDebugBundleDump) {
     callbacks.onDebugBundleExportRequested?.(state);
   }
+  if (result.triggerIssueReport) {
+    callbacks.onIssueReportRequested?.();
+  }
   if (result.triggerUninstallPlan) {
     callbacks.onUninstallPlanRequested?.();
   }

@@ -1,3 +1,4 @@
+import { withReportHint } from "./format-agent-error-for-chat.js";
 import { describe, expect, it } from "vitest";
 import type { BuiltPrompt } from "../prompt/build-prompt-types.js";
 import { reduceTuiState, type TuiAction } from "./agent-event-reducer.js";
@@ -350,7 +351,7 @@ describe("reduceTuiState", () => {
     const errMsg = next.messages.find(
       (m) => m.role === "system" && m.variant === "warn",
     );
-    expect(errMsg?.text).toBe("Turn failed [tool]: boom");
+    expect(errMsg?.text).toBe(withReportHint("Turn failed [tool]: boom"));
   });
 
   it("renders a calm stopped-by-user notice with a retry prompt on a cancelled loop_failed", () => {
@@ -424,7 +425,7 @@ describe("reduceTuiState", () => {
     const warn = next.messages.find(
       (m) => m.role === "system" && m.variant === "warn",
     );
-    expect(warn?.text).toBe("Turn failed [model]: model returned empty content");
+    expect(warn?.text).toBe(withReportHint("Turn failed [model]: model returned empty content"));
   });
 
   it("leaves retryText off the stopped notice when no user message exists to re-run", () => {
@@ -508,7 +509,7 @@ describe("reduceTuiState", () => {
     // llama one names the wrong server on a cloud route, and the drop one
     // would assert a reply was cut off on a turn that may have completed
     // zero steps.
-    expect(errMsg?.text).toBe("Turn failed [transport]: fetch failed");
+    expect(errMsg?.text).toBe(withReportHint("Turn failed [transport]: fetch failed"));
   });
 
   it("explains a cloud route's mid-stream drop through the whole reducer", () => {
