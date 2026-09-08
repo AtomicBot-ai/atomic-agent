@@ -35,6 +35,20 @@ if (!SEED || !existsSync(join(SEED, '.env'))) {
   process.exit(2);
 }
 
+/**
+ * The model step 14 switches TO, to prove that a cloud model chosen
+ * after setup really answers. It has to be one the operator's key can
+ * pay for at the agent's `completionMaxTokens` (8192), which is a real
+ * constraint and not a detail: see step 16.
+ */
+const SWITCH_MODEL = 'google/gemini-3.5-flash-lite';
+/**
+ * The model step 16 switches to on purpose because this key CANNOT
+ * afford it — OpenRouter answers 402 and names the remedy. Step 16 is
+ * about what the operator is then told.
+ */
+const REFUSING_MODEL = 'anthropic/claude-haiku-4.5';
+
 const stateDir = mkdtempSync(join(tmpdir(), 'atag-drive-'));
 copyFileSync(join(SEED, '.env'), join(stateDir, '.env'));
 console.log(`fresh state dir: ${stateDir}`);
@@ -160,8 +174,32 @@ const SEND_UNLOCKED = `!document.querySelector('.sendbtn.locked')`;
 const systemRows = () => app.js(`[...document.querySelectorAll('#scroller .col720 .sysrow')]
   .map((n) => (n.textContent||'').replace(/\\s+/g,' ').trim()).filter(Boolean).slice(-4).join(' | ')`);
 
-async function askAndWait(text, { timeoutMs = 180000 } = {}) {
+/**
+ * Pick a cloud model in Settings › LLM › Cloud by clicking its row, and
+ * wait for the composer's model chip to follow. The pane's rows arrive
+ * from the provider list, which is fetched, so the row is waited for
+ * rather than assumed.
+ */
+async function pickCloudModel(modelId) {
+  await app.waitFor(
+    `[...document.querySelectorAll('[data-llm-row]')].some((n) => (n.dataset.llmRow || '').includes(${JSON.stringify(modelId)}))`,
+    { timeoutMs: 60000, label: `the row for ${modelId} arrives` });
+  await app.clickText(`use openrouter/${modelId}`, { settleMs: 2500 });
+  await app.waitFor(
+    `[...document.querySelectorAll('.cfoot .cchip')].some((n) => (n.textContent||'').trim() === ${JSON.stringify(modelId)})`,
+    { timeoutMs: 90000, label: `the model chip follows the pick of ${modelId}` });
+}
+
+/**
+ * `expectReply: false` means the turn is ALLOWED to fail — step 16 drives
+ * a model the key cannot pay for, and the interesting evidence is what
+ * the app says, not whether an answer arrives. The message is still
+ * really sent and the turn really run; only the wait gives up quietly,
+ * returning null so the caller can read the system rows instead.
+ */
+async function askAndWait(text, { timeoutMs = 180000, expectReply = true } = {}) {
   await app.waitFor(SEND_UNLOCKED, { timeoutMs: 120000, label: 'the composer unlocks after a switch' });
+  const sysBefore = await app.js(`document.querySelectorAll('#scroller .col720 .sysrow').length`);
   await app.type('#entry', text, { settleMs: 400 });
   for (let tries = 0; tries < 4; tries += 1) {
     await app.press('Enter', { settleMs: 1500 });
@@ -178,6 +216,18 @@ async function askAndWait(text, { timeoutMs = 180000 } = {}) {
       active: (document.activeElement||{}).id || (document.activeElement||{}).tagName,
       toasts: window.__toasts ? window.__toasts() : null })`);
     throw new Error(`the composer would not send ${JSON.stringify(text)} — the draft is still in the box: ${why}`);
+  }
+  if (!expectReply) {
+    // A failed turn clears the busy state and prints a system row; give
+    // it a bounded wait for either outcome rather than the full one.
+    // Read the screen, not a hook: a turn that fails prints a system row
+    // of its own, so waiting for either the answer or a NEW system row
+    // catches both endings without asking the app how it feels.
+    await app.waitFor(
+      `!!(${AFTER_USER(text)}) || document.querySelectorAll('#scroller .col720 .sysrow').length > ${sysBefore}`,
+      { timeoutMs: 120000, label: 'the turn finishes, either way' }).catch(() => false);
+    await sleep(1200);
+    return app.js(AFTER_USER(text));
   }
   await app.waitFor(AFTER_USER(text), { timeoutMs, label: `reply to ${JSON.stringify(text)}` });
   return app.js(AFTER_USER(text));
@@ -333,29 +383,11 @@ try {
     await app.js(`(document.body.textContent.match(/openrouter \\[openrouter\\][^\\n]{0,60}/) || [''])[0]`));
 
   step(14, 'switch to a different OpenRouter model by clicking its row');
-  await app.waitFor(`[...document.querySelectorAll('[data-llm-row]')].some((n) => /claude-haiku/.test(n.dataset.llmRow || ''))`,
-    { timeoutMs: 60000, label: 'the provider model list arrives' });
-  await app.clickText('use openrouter/anthropic/claude-haiku-4.5', { settleMs: 2500 });
-  await app.waitFor(`[...document.querySelectorAll('.cfoot .cchip')].some((n) => (n.textContent||'').trim() === 'anthropic/claude-haiku-4.5')`,
-    { timeoutMs: 90000, label: 'the model chip follows the pick' });
+  await pickCloudModel(SWITCH_MODEL);
   c = await chips();
   check('the composer chips and Settings agree on the new model',
-    c[1] === 'openrouter' && c[2] === 'anthropic/claude-haiku-4.5', JSON.stringify(c));
+    c[1] === 'openrouter' && c[2] === SWITCH_MODEL, JSON.stringify(c));
 
-  /* KNOWN RED, and deliberately left red — it names a defect, it is not a
-     broken check. In 4 of 5 runs the FIRST turn after `selectCloudModel`
-     fails, and the app says so honestly: "turn failed [transport]: fetch
-     failed". The trace agrees — two `error` frames 14 ms apart and
-     `turn_finished reason:failed` 816 ms after `turn_started`, with no
-     `llm_completion` — while the two turns before it, on the same
-     OpenRouter key and the same agent, completed normally. The same key
-     and the same model id answer "mango" from a plain curl to
-     https://openrouter.ai/api/v1/chat/completions, so the provider is
-     reachable and the credentials are good: what fails is the agent's own
-     request on the first turn after the model switch, inside
-     src/agent/step-executor.ts (`toLlmFailure`), which is outside this
-     desktop tree. Deleting the check would hide a turn the operator
-     cannot run. */
   step(15, 'the newly picked model answers for real');
   await app.press('Escape', { settleMs: 1500 });
   const reply3 = await askAndWait('Reply with exactly the word mango and nothing else.');
@@ -365,6 +397,51 @@ try {
   const tail = await transcript();
   check('the three answers are in the transcript, in the models\' own words',
     /pineapple/i.test(tail) && /banana/i.test(tail) && /mango/i.test(tail), tail.slice(0, 200));
+
+  /* ============================================================
+     5. What the operator is told when a cloud provider REFUSES.
+
+     This step is where the round's headline complaint actually lived.
+     Choosing a model the key cannot afford used to end in
+
+         turn failed [transport]: fetch failed
+
+     which names no provider, no reason and no remedy — and is not even
+     about the provider that refused. `resolveFallbackChain` appends the
+     configured llama-server to the tail of every chain, so after
+     OpenRouter answered `402 … requires more credits, or fewer
+     max_tokens` the agent fell over to a local daemon that had never
+     been started, and `runWithFallback` rethrew the LAST error. The
+     operator was shown a socket failure from a backend they never
+     picked, while the provider's own instructions were dropped.
+
+     `anthropic/claude-haiku-4.5` is the model that exposed it: on this
+     key the balance covers fewer tokens than the agent's 8192-token
+     request, so OpenRouter refuses it while cheaper models answer. Both
+     endings are legitimate — a topped-up key simply replies — so this
+     accepts either. What it does NOT accept is the old answer: a bare
+     transport error that names neither the provider nor a reason.
+     ============================================================ */
+  step(16, 'a provider refusal is reported in the provider\'s own words');
+  if (!(await app.js(`!!document.querySelector('#settings')`))) {
+    await app.clickText('Settings', { tags: 'button', settleMs: 1500 });
+    await app.clickText('LLM', { within: '#settings .setmenu', tags: 'button', settleMs: 2500 });
+    await app.clickSel('[data-act="llm:mode:cloud"]', { settleMs: 2500 });
+  }
+  await pickCloudModel(REFUSING_MODEL);
+  await app.press('Escape', { settleMs: 1500 });
+  const answered = await askAndWait('Reply with exactly the word lychee and nothing else.', { expectReply: false });
+  const said = await systemRows();
+  const refused = /rejected the request|rate-limiting|rejected the API key|server trouble|Can't reach/.test(said);
+  check('the turn either answers or is refused in words the operator can act on',
+    /lychee/i.test(answered || '') || refused,
+    `reply=${JSON.stringify(answered).slice(0, 120)} · system rows: ${said}`);
+  check('a cloud refusal never surfaces as the dead local backend\'s socket error',
+    !/turn failed \[transport\]: fetch failed/.test(said), said);
+  if (refused) {
+    check('the refusal names the provider that refused',
+      /"openrouter"/.test(said), said);
+  }
 } catch (err) {
   console.log(`\nDRIVER ERROR: ${err.message}`);
   try { await app.screenshot(join(tmpdir(), 'atag-cloud-drive-failure.png')); } catch { /* best effort */ }

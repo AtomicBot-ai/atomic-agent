@@ -41,11 +41,14 @@
  *   await app.close();
  */
 import { spawn } from 'node:child_process';
+import { chmodSync, existsSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const DESKTOP_DIR = join(HERE, '..');
+/** The agent repo this desktop lives in. */
+export const REPO_DIR = join(DESKTOP_DIR, '..');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 export { sleep };
@@ -424,6 +427,26 @@ export async function attach(port, opts = {}) {
  * Launch the built app against `stateDir` with CDP on `port`, then attach.
  * The returned object is the driver API plus `proc`, `stdout`, and `quit()`.
  */
+/**
+ * CLOUD LANE — point the app at the agent built FROM THIS CHECKOUT.
+ *
+ * This lane's own launcher needs it as much as `drive.mjs` does: the
+ * cloud scenario is the one that proves `src/llm/`, and `resolveBinary`
+ * otherwise prefers `~/atag-agent/bin/atag` or the released install, so
+ * the run would talk to whatever agent the machine already has. Kept
+ * byte-identical in behaviour to `drive.mjs:agentBinEnv` — if one is
+ * changed, change both.
+ */
+function agentBinEnv(stateDir) {
+  if (process.env.ATOMIC_AGENT_BIN) return {};
+  const entry = join(REPO_DIR, 'dist', 'cli', 'index.js');
+  if (!existsSync(entry)) return {};
+  const shim = join(stateDir, 'atag-from-this-checkout.sh');
+  writeFileSync(shim, `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} --enable-source-maps ${JSON.stringify(entry)} "$@"\n`);
+  chmodSync(shim, 0o755);
+  return { ATOMIC_AGENT_BIN: shim };
+}
+
 export async function launch({ stateDir, port, args = [], env = {}, timeoutMs = 90000, cwd = DESKTOP_DIR } = {}) {
   if (!stateDir) throw new Error('launch: stateDir is required — never drive the operator’s real state dir');
   /* A leftover app from an earlier run keeps the debugging port bound, and
@@ -439,7 +462,7 @@ export async function launch({ stateDir, port, args = [], env = {}, timeoutMs = 
   const out = [];
   const proc = spawn('npx', ['electron', '.', `--remote-debugging-port=${port}`, ...args], {
     cwd,
-    env: { ...process.env, ATOMIC_AGENT_STATE_DIR: stateDir, ...env },
+    env: { ...process.env, ATOMIC_AGENT_STATE_DIR: stateDir, ...agentBinEnv(stateDir), ...env },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   proc.stdout.on('data', (b) => out.push(String(b)));

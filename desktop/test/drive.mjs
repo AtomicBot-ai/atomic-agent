@@ -35,12 +35,14 @@
  */
 
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const DESKTOP_DIR = resolve(HERE, '..');
+/** The agent repo this desktop lives in. */
+export const REPO_DIR = resolve(DESKTOP_DIR, '..');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -435,6 +437,36 @@ async function portBusy(port) {
 }
 
 /**
+ * CLOUD LANE — point the app at the agent built FROM THIS CHECKOUT when
+ * there is one.
+ *
+ * `resolveBinary` otherwise prefers `~/atag-agent/bin/atag` and then the
+ * released install, so a driven run silently exercises whatever agent
+ * happens to be installed on the machine — which makes it useless for
+ * proving a change to `src/`. A cloud turn is mostly agent code: the
+ * provider client, the fallback chain and the message the operator reads
+ * when a provider refuses all live there, so a scenario that drives the
+ * window but talks to a stranger's agent proves only half of itself.
+ *
+ * `npm run build` at the repo root produces `dist/cli/index.js`; when it
+ * is there this writes a one-line shim inside the run's own state
+ * directory and names it in `ATOMIC_AGENT_BIN`, which `candidateBinaries()`
+ * honours above everything else. Nothing on the machine is repointed — a
+ * terminal `atag` keeps running whatever was installed. An explicit
+ * `ATOMIC_AGENT_BIN` from the caller always wins, and with no local build
+ * the run falls back to the installed agent exactly as before.
+ */
+function agentBinEnv(stateDir) {
+  if (process.env.ATOMIC_AGENT_BIN) return {};
+  const entry = join(REPO_DIR, 'dist', 'cli', 'index.js');
+  if (!existsSync(entry)) return {};
+  const shim = join(stateDir, 'atag-from-this-checkout.sh');
+  writeFileSync(shim, `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} --enable-source-maps ${JSON.stringify(entry)} "$@"\n`);
+  chmodSync(shim, 0o755);
+  return { ATOMIC_AGENT_BIN: shim };
+}
+
+/**
  * Launch the app against a throwaway state dir with remote debugging on.
  *
  * @param {object} o
@@ -486,6 +518,7 @@ export async function launch(o) {
       ...process.env,
       ATOMIC_AGENT_STATE_DIR: o.stateDir,
       ...(o.workspace ? { ATOMIC_AGENT_WORKSPACE: o.workspace } : {}),
+      ...agentBinEnv(o.stateDir),
       ...(o.env || {}),
     },
     stdio: ['ignore', 'pipe', 'pipe'],
