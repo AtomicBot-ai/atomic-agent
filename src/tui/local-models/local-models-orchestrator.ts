@@ -10,8 +10,11 @@ import {
   downloadBackend,
   downloadJobId,
   listDownloadJobs,
+  isDownloadJobStale,
+  looksLikeDownloadWorker,
   readDownloadJob,
   removeDownloadJob,
+  writeDownloadJob,
   spawnDownloadWorker,
   stopDownloadWorker,
   type DownloadJob,
@@ -146,6 +149,10 @@ export interface LocalModelsOrchestratorHooks {
   stopDownload?: (dataDir: string, job: DownloadJob) => Promise<StopDownloadWorkerResult>;
   /** How often the worker's record is re-read. Default 300ms. */
   downloadPollMs?: number;
+  /** Grace before a silent `running` record is declared dead. Default 60s. */
+  staleGraceMs?: number;
+  /** Whether a pid is one of our workers. Test seam. */
+  isDownloadWorkerPid?: (pid: number) => boolean;
 }
 
 export class LocalModelsOrchestrator {
@@ -516,7 +523,7 @@ export class LocalModelsOrchestrator {
   ): Promise<{ outcome: "done" | "cancelled" | "detached"; job: DownloadJob }> {
     const dataDir = getConfig().paths.localModelsDataDir;
     const spawn = this.hooks?.spawnDownload ?? spawnDownloadWorker;
-    const launched = spawn({ dataDir, kind, modelId, mode });
+    let launched = spawn({ dataDir, kind, modelId, mode });
     const jobId = launched.job.id;
 
     this.watchedDownloads.get(kind)?.detach();
@@ -546,17 +553,52 @@ export class LocalModelsOrchestrator {
     let last = launched.job;
     emitStarted(last);
     const pollMs = this.hooks?.downloadPollMs ?? DOWNLOAD_POLL_MS;
+    const staleGraceMs = this.hooks?.staleGraceMs ?? STALE_GRACE_MS;
+    // A `running` record the worker has stopped writing. The pid may
+    // still answer — after a reboot it can be anyone's — so the record
+    // is watched for a grace period first: a laptop back from sleep
+    // shows a stale record until the worker's next heartbeat, and
+    // spawning a second worker onto the same partial would be far worse
+    // than a minute of patience.
+    let staleSince: number | null = null;
+    let respawned = false;
     try {
       for (;;) {
         await new Promise((r) => setTimeout(r, pollMs));
         if (detached) return { outcome: "detached", job: last };
-        const job = readDownloadJob(dataDir, jobId);
+        let job = readDownloadJob(dataDir, jobId);
         if (!job) throw new Error("download record disappeared");
+        if (job.status === "running" && isDownloadJobStale(job)) {
+          staleSince ??= Date.now();
+          if (Date.now() - staleSince >= staleGraceMs) {
+            // A worker that is alive but silent (stopped, starved, stuck
+            // on a hung disk) must not get a sibling on the same partial:
+            // stop it first, and only then declare the job interrupted.
+            // A pid that is not ours — recycled after a reboot — is left
+            // alone; the record is simply wrong about it.
+            const isOurs = this.hooks?.isDownloadWorkerPid ?? looksLikeDownloadWorker;
+            if (isOurs(job.pid)) {
+              const stop = this.hooks?.stopDownload ?? stopDownloadWorker;
+              await stop(dataDir, job);
+            }
+            job = {
+              ...job,
+              status: "interrupted",
+              error: "worker stopped reporting",
+              finishedAt: job.updatedAt,
+            };
+            writeDownloadJob(dataDir, job);
+            staleSince = null;
+          }
+        } else {
+          staleSince = null;
+        }
         if (job.label !== last.label) {
           emitStarted(job);
         } else if (
           job.transferredBytes !== last.transferredBytes ||
-          job.percent !== last.percent
+          job.percent !== last.percent ||
+          job.waiting?.nextRetryAt !== last.waiting?.nextRetryAt
         ) {
           this.bus.emit({
             type: "local_models_pull_progress",
@@ -564,10 +606,30 @@ export class LocalModelsOrchestrator {
             percent: job.percent,
             transferredBytes: job.transferredBytes,
             totalBytes: job.totalBytes,
+            waiting: job.waiting
+              ? {
+                  reason: job.waiting.reason,
+                  attempt: job.waiting.attempt,
+                  nextRetryAt: job.waiting.nextRetryAt,
+                }
+              : null,
           });
         }
         last = job;
         if (job.status === "running") continue;
+        if (job.status === "interrupted" && !respawned) {
+          // Once: the worker died (or went silent) under a watcher that
+          // still wants the model. Relaunch it onto the partial rather
+          // than hand the operator an error to press Enter on.
+          respawned = true;
+          this.bus.emit({
+            type: "runtime_info",
+            line: `local-llm: download worker ${job.error ?? "died"} at ${job.percent}% — relaunching it`,
+          });
+          launched = spawn({ dataDir, kind, modelId, mode });
+          last = launched.job;
+          continue;
+        }
         if (job.status === "done") return { outcome: "done", job };
         if (job.status === "cancelled") return { outcome: "cancelled", job };
         throw new Error(
@@ -623,8 +685,13 @@ export class LocalModelsOrchestrator {
    *   (activate, start the daemon) so the operator lands where they
    *   would have.
    *
-   * `cancelled` and `failed` are the operator's to act on and are left
-   * alone; `models downloads` still lists them.
+   * - `failed` + `resumable`: the worker gave up on an outage (offline
+   *   for a week, or it hit its own lifetime cap) or a 0.5.6 worker ran
+   *   out of retries — the file was never the problem. Relaunch it.
+   *
+   * `cancelled` and a non-resumable `failed` (a 404, a full disk) are the
+   * operator's to act on and are left alone; `models downloads` still
+   * lists them.
    */
   adoptBackgroundDownloads(opts?: { onlyRunning?: boolean }): void {
     const dataDir = getConfig().paths.localModelsDataDir;
@@ -634,7 +701,8 @@ export class LocalModelsOrchestrator {
         ? job.status === "running"
         : job.status === "running" ||
           job.status === "interrupted" ||
-          job.status === "done";
+          job.status === "done" ||
+          (job.status === "failed" && job.resumable);
       if (!adoptable) continue;
       if (job.kind === "chat") {
         if (!isKnownLocalModelId(job.modelId)) {
@@ -880,14 +948,33 @@ export class LocalModelsOrchestrator {
       },
     });
     try {
+      let lastProgress = { percent: 0, transferred: 0, total: 0 };
       await downloadBackend(dataDir, {
         onProgress: (percent, transferred, total) => {
+          lastProgress = { percent, transferred, total };
           this.bus.emit({
             type: "local_models_pull_progress",
             kind: "backend",
             percent,
             transferredBytes: transferred,
             totalBytes: total,
+            waiting: null,
+          });
+        },
+        // The zip is fetched in-process, so the banner must be told about
+        // an outage here; nothing else will.
+        onRetry: (info) => {
+          this.bus.emit({
+            type: "local_models_pull_progress",
+            kind: "backend",
+            percent: lastProgress.percent,
+            transferredBytes: lastProgress.transferred,
+            totalBytes: lastProgress.total,
+            waiting: {
+              reason: info.error.message,
+              attempt: info.attempt,
+              nextRetryAt: new Date(Date.now() + info.delayMs).toISOString(),
+            },
           });
         },
       });
@@ -2237,6 +2324,8 @@ function resolveMmprojStatus(
 
 /** How often a watched worker's record is re-read. */
 const DOWNLOAD_POLL_MS = 300;
+/** How long a stale `running` record is tolerated before it is declared dead. */
+const STALE_GRACE_MS = 60_000;
 
 function formatJobBytes(bytes: number): string {
   const gb = bytes / (1024 * 1024 * 1024);
@@ -2253,6 +2342,8 @@ function describeAdoptedJob(job: DownloadJob, name: string): string {
       return `local-llm: ${name} is downloading in the background (${job.percent}%) — picking it up`;
     case "interrupted":
       return `local-llm: ${name} download was interrupted at ${job.percent}% — resuming`;
+    case "failed":
+      return `local-llm: ${name} download gave up at ${job.percent}% (${job.error ?? "no reason recorded"}) — resuming`;
     default:
       return `local-llm: ${name} finished downloading while the app was closed`;
   }

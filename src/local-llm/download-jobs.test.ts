@@ -1,5 +1,6 @@
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
@@ -13,7 +14,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   downloadJobId,
+  downloadJobSilenceMs,
   isDownloadJobLive,
+  isDownloadJobStale,
   listDownloadJobs,
   readDownloadJob,
   reconcileDownloadJob,
@@ -43,11 +46,19 @@ function job(patch: Partial<DownloadJob> = {}): DownloadJob {
     transferredBytes: 1200,
     totalBytes: 10_000,
     error: null,
+    waiting: null,
+    resumable: false,
     startedAt: "2026-09-07T10:00:00.000Z",
     updatedAt: "2026-09-07T10:00:05.000Z",
     finishedAt: null,
     ...patch,
   };
+}
+
+/** A 0.5.6 record: same version, no `waiting`, no `resumable`. */
+function legacyJob(patch: Partial<DownloadJob> = {}): Record<string, unknown> {
+  const { waiting: _w, resumable: _r, ...rest } = job(patch);
+  return rest;
 }
 
 describe("download-jobs", () => {
@@ -92,6 +103,47 @@ describe("download-jobs", () => {
     expect(readDownloadJob(dataDir, "bad")).toBeNull();
     expect(readDownloadJob(dataDir, "v9")).toBeNull();
     expect(listDownloadJobs(dataDir).map((j) => j.id)).toEqual(["ok"]);
+  });
+
+  it("fills the additive fields of a 0.5.6 record: an offline failure is resumable, a 404 is not", () => {
+    mkdirSync(resolveDownloadsDir(dataDir), { recursive: true });
+    const write = (id: string, patch: Partial<DownloadJob>): void =>
+      writeFileSync(resolveDownloadJobPath(dataDir, id), JSON.stringify(legacyJob({ id, ...patch })));
+    write("offline", { status: "failed", error: "Download stalled: no data for 60s" });
+    write("gone", { status: "failed", error: "Download failed: HTTP 404 Not Found" });
+    write("throttled", { status: "failed", error: "Download failed: HTTP 429 Too Many Requests" });
+    write("live", { updatedAt: new Date().toISOString() });
+    expect(readDownloadJob(dataDir, "offline")).toMatchObject({
+      version: 1,
+      status: "failed",
+      resumable: true,
+      waiting: null,
+    });
+    expect(readDownloadJob(dataDir, "gone")).toMatchObject({ resumable: false });
+    expect(readDownloadJob(dataDir, "throttled")).toMatchObject({ resumable: true });
+    expect(readDownloadJob(dataDir, "live")).toMatchObject({
+      status: "running",
+      resumable: false,
+      waiting: null,
+    });
+    // An explicit `resumable` is never second-guessed by the heuristic.
+    writeFileSync(
+      resolveDownloadJobPath(dataDir, "explicit"),
+      JSON.stringify({ ...legacyJob({ id: "explicit", status: "failed", error: "Download stalled" }), resumable: false }),
+    );
+    expect(readDownloadJob(dataDir, "explicit")).toMatchObject({ resumable: false });
+  });
+
+  it("calls a running record stale once the worker has been silent for five minutes", () => {
+    const now = Date.parse("2026-09-07T10:10:00.000Z");
+    // updatedAt 10:00:05 → 9m55s of silence.
+    expect(isDownloadJobStale(job(), now)).toBe(true);
+    expect(downloadJobSilenceMs(job(), now)).toBe(595_000);
+    expect(isDownloadJobStale(job({ updatedAt: "2026-09-07T10:06:00.000Z" }), now)).toBe(false);
+    expect(isDownloadJobStale(job({ status: "done" }), now)).toBe(false);
+    expect(isDownloadJobStale(job({ updatedAt: "not a date" }), now)).toBe(true);
+    // The pid probe is untouched by silence: reconcile still says running.
+    expect(reconcileDownloadJob(job(), () => true).status).toBe("running");
   });
 
   it("reports a running job whose worker died as interrupted, and persists that", () => {

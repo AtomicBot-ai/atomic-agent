@@ -52,6 +52,23 @@ describe("DownloadChip", () => {
     expect(tight).not.toContain("█");
   });
 
+  it("swaps the bar for a paused form while the worker waits for the network", () => {
+    const waiting = pull({
+      waiting: { reason: "fetch failed", attempt: 3, nextRetryAt: new Date(Date.now() + 30_000).toISOString() },
+    });
+    const wide = strip(render(<DownloadChip pull={waiting} budget={60} />).lastFrame() ?? "");
+    expect(wide).toContain("⏸");
+    expect(wide).toContain("gemma-4-e4b");
+    expect(wide).toContain("61%");
+    expect(wide).toContain("offline");
+    expect(wide).not.toContain("█");
+    expect(wide).not.toMatch(/minute|second/);
+
+    const tight = strip(render(<DownloadChip pull={waiting} budget={16} />).lastFrame() ?? "");
+    expect(tight).toContain("61%");
+    expect(tight).not.toContain("gemma");
+  });
+
   it("disappears rather than wrapping the one-row bar", () => {
     const view = render(<DownloadChip pull={pull()} budget={6} />);
     expect(strip(view.lastFrame() ?? "").trim()).toBe("");

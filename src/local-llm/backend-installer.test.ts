@@ -248,10 +248,11 @@ describe("backend-installer", () => {
     }) as typeof fetch;
 
     try {
-      // One quick retry: the failure has to survive the downloader's own
-      // resume-and-retry loop before the staging cleanup is exercised.
+      // No patience: a dropped connection is retried for days by default,
+      // and the staging cleanup is only exercised once the downloader has
+      // given up. A zero no-progress window makes that the first failure.
       await expect(
-        downloadBackend(dir, { maxRetries: 1, retryDelayMs: 1 }),
+        downloadBackend(dir, { maxRetries: 1, retryDelayMs: 1, giveUpAfterMs: 0 }),
       ).rejects.toThrow(/socket hang up/);
 
       const binPath = resolveServerBinPath(dir, "llama-server");

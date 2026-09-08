@@ -1,7 +1,8 @@
 import { resolveModelFilePath, resolveMmprojFilePath } from "./backend-paths.js";
-import { readPartialDownload } from "./download-file.js";
+import { isResumableDownloadError } from "./download-errors.js";
+import { readPartialDownload, type DownloadRetryInfo } from "./download-file.js";
+import { initialDownloadJob } from "./download-job-seed.js";
 import {
-  downloadJobId,
   writeDownloadJob,
   type DownloadJob,
   type DownloadJobKind,
@@ -21,6 +22,8 @@ import {
   type LocalModelId,
 } from "./models-catalog.js";
 
+export { initialDownloadJob } from "./download-job-seed.js";
+
 /**
  * The body of a background download: fetch the files for one job while
  * keeping its record on disk current. Runs inside the detached worker
@@ -38,6 +41,23 @@ export interface DownloadWorkerInput {
   log?: (line: string) => void;
   /** Progress writes are throttled to this. Default 500ms. */
   writeIntervalMs?: number;
+  /**
+   * The record is rewritten at least this often even when nothing
+   * changes, so a reader can tell "alive, waiting for the network" from
+   * "dead". Default 30s; `0` disables (tests).
+   */
+  heartbeatMs?: number;
+  /** See `DownloadFileOptions.giveUpAfterMs`. Default 7 days. */
+  giveUpAfterMs?: number;
+  /** See `DownloadFileOptions.retryDelayMs`. Test seam. */
+  retryDelayMs?: number;
+  /**
+   * The longest this worker may live, from its start. Default 30 days:
+   * a download nobody has come back for in a month is not going to be
+   * finished by a process that has been waiting all along. The partial
+   * stays; the next launch resumes it.
+   */
+  maxLifetimeMs?: number;
   /** Test seam. */
   now?: () => Date;
 }
@@ -45,82 +65,18 @@ export interface DownloadWorkerInput {
 export type DownloadWorkerOutcome = "done" | "failed" | "cancelled";
 
 const DEFAULT_WRITE_INTERVAL_MS = 500;
+const DEFAULT_HEARTBEAT_MS = 30_000;
+/**
+ * 7 days without a byte before the worker gives up on an outage. Nobody
+ * is watching a detached worker, so it can afford to wait out a weekend
+ * — or a week — away from the network; the partial on disk is what the
+ * operator paid for and the relaunch resumes it either way.
+ */
+export const WORKER_GIVE_UP_AFTER_MS = 7 * 24 * 60 * 60 * 1_000;
+export const DEFAULT_WORKER_LIFETIME_MS = 30 * 24 * 60 * 60 * 1_000;
 
 function isAbortError(err: unknown): boolean {
   return err instanceof Error && err.name === "AbortError";
-}
-
-/**
- * Seed the record a spawner writes the instant the worker is launched,
- * so `models downloads` lists the job before the worker has opened its
- * first socket. The worker overwrites it with real numbers as soon as
- * they exist. The partial already on disk (if any) is reported from
- * the start, so a resumed job never shows 0% even for a moment.
- */
-export function initialDownloadJob(input: {
-  dataDir: string;
-  kind: DownloadJobKind;
-  modelId: string;
-  mode: DownloadJobMode;
-  pid: number;
-  now?: Date;
-}): DownloadJob {
-  const now = (input.now ?? new Date()).toISOString();
-  const { label, dest, estTotal } = describeFirstPhase(input);
-  const partial = readPartialDownload(dest);
-  const transferred = partial?.transferred ?? 0;
-  const total = partial?.total || estTotal;
-  return {
-    version: 1,
-    id: downloadJobId(input.kind, input.modelId),
-    kind: input.kind,
-    modelId: input.modelId,
-    mode: input.mode,
-    pid: input.pid,
-    status: "running",
-    phase: input.kind === "chat" && input.mode === "mmproj-only" ? "mmproj" : "gguf",
-    label,
-    percent: total > 0 ? Math.round((transferred / total) * 100) : 0,
-    transferredBytes: transferred,
-    totalBytes: total,
-    error: null,
-    startedAt: now,
-    updatedAt: now,
-    finishedAt: null,
-  };
-}
-
-function describeFirstPhase(input: {
-  dataDir: string;
-  kind: DownloadJobKind;
-  modelId: string;
-  mode: DownloadJobMode;
-}): { label: string; dest: string; estTotal: number } {
-  const gb = (n: number | undefined): number => Math.round((n ?? 0) * 1024 * 1024 * 1024);
-  if (input.kind === "embedding") {
-    const def = getEmbeddingModelDef(input.modelId as EmbeddingModelId);
-    return {
-      label: def.name,
-      dest: resolveModelFilePath(input.dataDir, def.id, def.filename),
-      estTotal: gb(def.fileSizeGb),
-    };
-  }
-  const def = getLocalModelDef(input.modelId as LocalModelId);
-  const ggufDone = isModelDownloaded(input.dataDir, def);
-  const mmprojPhase =
-    input.mode === "mmproj-only" || (input.mode === "with-mmproj" && ggufDone);
-  if (mmprojPhase && def.mmprojFilename) {
-    return {
-      label: `${def.name} (mmproj)`,
-      dest: resolveMmprojFilePath(input.dataDir, def.id, def.mmprojFilename),
-      estTotal: gb(def.mmprojFileSizeGb ?? 1),
-    };
-  }
-  return {
-    label: `${def.name} (gguf)`,
-    dest: resolveModelFilePath(input.dataDir, def.id, def.filename),
-    estTotal: gb(def.fileSizeGb),
-  };
 }
 
 /**
@@ -135,7 +91,9 @@ export async function runDownloadWorker(
   const log = input.log ?? ((line: string) => process.stdout.write(`${line}\n`));
   const now = input.now ?? (() => new Date());
   const writeIntervalMs = input.writeIntervalMs ?? DEFAULT_WRITE_INTERVAL_MS;
+  const heartbeatMs = input.heartbeatMs ?? DEFAULT_HEARTBEAT_MS;
   const stamp = (): string => now().toISOString();
+  const deadlineAt = now().getTime() + (input.maxLifetimeMs ?? DEFAULT_WORKER_LIFETIME_MS);
 
   let job = initialDownloadJob({
     dataDir: input.dataDir,
@@ -157,6 +115,28 @@ export async function runDownloadWorker(
   log(
     `[${stamp()}] start ${job.id} (${job.label}), ${job.transferredBytes} bytes already on disk`,
   );
+  // Between attempts nothing moves the record; the beat is what keeps
+  // it distinguishable from one a dead worker left behind.
+  let heartbeatFailed = false;
+  const heartbeat =
+    heartbeatMs > 0
+      ? setInterval(() => {
+          if (Date.now() - lastWriteAt < heartbeatMs) return;
+          try {
+            persist({}, true);
+          } catch (err) {
+            // A downloads dir that stopped taking writes is not worth
+            // dying over — the transfer is still fine — but it must not
+            // be silent either, or the reader's "stale" verdict looks
+            // like a mystery.
+            if (!heartbeatFailed) {
+              heartbeatFailed = true;
+              log(`[${stamp()}] heartbeat write failed: ${err instanceof Error ? err.message : String(err)}`);
+            }
+          }
+        }, heartbeatMs)
+      : null;
+  heartbeat?.unref();
 
   const phaseOpts = (
     label: string,
@@ -183,20 +163,44 @@ export async function runDownloadWorker(
     let first = true;
     return {
       signal: input.signal,
+      giveUpAfterMs: input.giveUpAfterMs ?? WORKER_GIVE_UP_AFTER_MS,
+      ...(input.retryDelayMs !== undefined ? { retryDelayMs: input.retryDelayMs } : {}),
+      deadlineAt,
       onProgress: (percent: number, transferred: number, total: number) => {
+        // The first byte after an outage closes the waiting state at
+        // once — a forced write, so the UI does not show "offline" over
+        // a moving counter for the throttle interval.
+        const wasWaiting = job.waiting !== null;
         persist(
           {
             percent,
             transferredBytes: transferred,
             totalBytes: total > 0 ? total : estTotal,
+            waiting: null,
           },
-          first,
+          first || wasWaiting,
         );
         first = false;
       },
-      onRetry: (info: { attempt: number; maxRetries: number; delayMs: number; error: Error }) => {
+      onRetry: (info: DownloadRetryInfo) => {
+        const nextRetryAt = new Date(now().getTime() + info.delayMs).toISOString();
+        persist(
+          {
+            waiting: {
+              reason: info.error.message,
+              attempt: info.attempt,
+              nextRetryAt,
+              since: new Date(info.since).toISOString(),
+            },
+          },
+          true,
+        );
+        const budget =
+          info.kind === "server"
+            ? `retry ${info.attempt}/${info.maxRetries}`
+            : `waiting for the network, attempt ${info.attempt}`;
         log(
-          `[${stamp()}] interrupted (${info.error.message}) — retry ${info.attempt}/${info.maxRetries} in ${Math.round(info.delayMs / 1000)}s`,
+          `[${stamp()}] interrupted (${info.error.message}) — ${budget}, next try in ${Math.round(info.delayMs / 1000)}s`,
         );
       },
     };
@@ -249,20 +253,28 @@ export async function runDownloadWorker(
       }
     }
     persist(
-      { status: "done", percent: 100, error: null, finishedAt: stamp() },
+      { status: "done", percent: 100, error: null, waiting: null, finishedAt: stamp() },
       true,
     );
     log(`[${stamp()}] done`);
     return "done";
   } catch (err) {
     if (isAbortError(err) || input.signal?.aborted) {
-      persist({ status: "cancelled", finishedAt: stamp() }, true);
+      persist({ status: "cancelled", waiting: null, finishedAt: stamp() }, true);
       log(`[${stamp()}] cancelled — partial kept for resume`);
       return "cancelled";
     }
     const message = err instanceof Error ? err.message : String(err);
-    persist({ status: "failed", error: message, finishedAt: stamp() }, true);
-    log(`[${stamp()}] failed: ${message}`);
+    const resumable = isResumableDownloadError(err);
+    persist(
+      { status: "failed", error: message, waiting: null, resumable, finishedAt: stamp() },
+      true,
+    );
+    log(
+      `[${stamp()}] failed: ${message}${resumable ? " — partial kept; the next launch resumes it" : ""}`,
+    );
     return "failed";
+  } finally {
+    if (heartbeat) clearInterval(heartbeat);
   }
 }

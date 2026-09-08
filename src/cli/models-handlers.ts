@@ -9,6 +9,7 @@ import {
   downloadEmbeddingModel,
   downloadJobId,
   downloadMmproj,
+  DownloadGaveUpError,
   downloadModel,
   EMBEDDING_MODELS_CATALOG,
   fallBackToCpuBackend,
@@ -162,6 +163,11 @@ export async function runLocalModelsPull(args: string[]): Promise<number> {
   } catch (e) {
     if (tty) process.stderr.write(`\n`);
     process.stderr.write(`${e instanceof Error ? e.message : String(e)}\n`);
+    if (e instanceof DownloadGaveUpError) {
+      process.stderr.write(
+        `the partial file is kept — 'models pull --background ${m.id}' waits out an outage for days and resumes by itself\n`,
+      );
+    }
     return 1;
   }
 }

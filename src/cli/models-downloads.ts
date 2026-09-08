@@ -1,6 +1,8 @@
 import { getConfig } from "../config/index.js";
 import {
   downloadJobId,
+  downloadJobSilenceMs,
+  isDownloadJobStale,
   listDownloadJobs,
   readDownloadJob,
   removeDownloadJob,
@@ -72,17 +74,35 @@ function formatBytes(bytes: number): string {
   return `${Math.round(bytes / (1024 * 1024))} MB`;
 }
 
-export function describeDownloadJob(job: DownloadJob): string {
+/** `waiting for network (attempt 4, retry in 32s)` — or `null` while bytes flow. */
+export function describeDownloadWait(
+  job: Pick<DownloadJob, "waiting">,
+  now: number = Date.now(),
+): string | null {
+  if (!job.waiting) return null;
+  const inMs = Date.parse(job.waiting.nextRetryAt) - now;
+  const when = Number.isFinite(inMs) && inMs > 0 ? `retry in ${Math.ceil(inMs / 1000)}s` : "retrying";
+  return `waiting for network (attempt ${job.waiting.attempt}, ${when})`;
+}
+
+export function describeDownloadJob(job: DownloadJob, now: number = Date.now()): string {
   const size =
     job.totalBytes > 0
       ? `${formatBytes(job.transferredBytes)} / ${formatBytes(job.totalBytes)}`
       : formatBytes(job.transferredBytes);
-  const state =
-    job.status === "running"
-      ? `running (pid ${job.pid}) ${job.percent}%`
-      : job.status === "failed"
-        ? `failed: ${job.error ?? "unknown error"}`
-        : job.status;
+  let state: string;
+  if (job.status === "running") {
+    const wait = describeDownloadWait(job, now);
+    state = `running (pid ${job.pid}) ${job.percent}%`;
+    if (wait) state += ` · ${wait}`;
+    else if (isDownloadJobStale(job, now)) {
+      state += ` · not reporting for ${Math.round(downloadJobSilenceMs(job, now) / 60_000)} min`;
+    }
+  } else if (job.status === "failed") {
+    state = `failed: ${job.error ?? "unknown error"}${job.resumable ? " (resumes on next launch)" : ""}`;
+  } else {
+    state = job.status;
+  }
   return `${job.id.padEnd(40)} ${state.padEnd(28)} ${size}  ${job.label}`;
 }
 
@@ -187,6 +207,7 @@ export async function followDownloadJob(
   };
   if (opts?.sigint !== false) process.once("SIGINT", onSigint);
   let lastPercent = -1;
+  let lastWait: string | null = null;
   try {
     for (;;) {
       const job = readDownloadJob(dataDir, jobId);
@@ -205,12 +226,17 @@ export async function followDownloadJob(
         process.stderr.write(`${line}\n`);
       }
       lastPercent = job.percent;
+      const wait = describeDownloadWait(job);
+      if (wait !== lastWait) {
+        if (wait) process.stderr.write(`${tty ? "\n" : ""}${wait} — the partial file is kept\n`);
+        lastWait = wait;
+      }
       if (job.status !== "running") {
         if (tty) process.stderr.write("\n");
         if (job.status === "done") return 0;
         process.stderr.write(
           job.status === "failed"
-            ? `background download failed: ${job.error ?? "unknown error"}\n`
+            ? `background download failed: ${job.error ?? "unknown error"}${job.resumable ? ` — partial kept; run 'models pull ${job.modelId}' or relaunch the app to resume` : ""}\n`
             : `background download ${job.status}; partial kept — run 'models pull ${job.modelId}' to resume\n`,
         );
         return 1;

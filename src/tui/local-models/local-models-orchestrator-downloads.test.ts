@@ -41,6 +41,10 @@ type EmittedAction =
       pull: { modelId: string; label: string; percent: number };
     }
   | { type: "local_models_pull_failed"; kind: string; error: string }
+  | {
+      type: "local_models_pull_progress";
+      waiting?: { attempt: number; reason: string } | null;
+    }
   | { type: "runtime_info"; line: string };
 
 function stubBackendInstalled(dataDir: string): void {
@@ -125,6 +129,8 @@ function inProcessWorker(): {
         mode: input.mode,
         signal: controller.signal,
         writeIntervalMs: 0,
+        heartbeatMs: 0,
+        retryDelayMs: 20,
         log: () => undefined,
       });
       return { outcome: "spawned", job, logPath: "" };
@@ -169,6 +175,7 @@ describe("LocalModelsOrchestrator — pulls through the download worker", () => 
         spawnDownload: worker.spawnDownload,
         stopDownload: worker.stopDownload,
         downloadPollMs: 5,
+        staleGraceMs: 10,
       },
     );
     vi.spyOn(orchestrator, "refresh").mockResolvedValue();
@@ -414,7 +421,7 @@ describe("LocalModelsOrchestrator — pulls through the download worker", () => 
       expect(getConfig().localModels.embeddings.modelId).toBe("nomic-embed-text-v1.5");
     });
 
-    it("leaves cancelled and failed jobs alone", () => {
+    it("leaves cancelled and non-resumable failed jobs alone", () => {
       const dataDir = getConfig().paths.localModelsDataDir;
       for (const status of ["cancelled", "failed"] as const) {
         writeDownloadJob(dataDir, {
@@ -426,12 +433,150 @@ describe("LocalModelsOrchestrator — pulls through the download worker", () => 
             pid: 1,
           }),
           status,
-          error: status === "failed" ? "boom" : null,
+          error: status === "failed" ? "Download failed: HTTP 404 Not Found" : null,
+          resumable: false,
         });
       }
       orchestrator.adoptBackgroundDownloads();
       expect(worker.spawned).toEqual([]);
       expect(startedPulls(actions)).toEqual([]);
+    });
+
+    it("resumes a job that gave up on an outage, from its partial", async () => {
+      // What a laptop that was offline for a week — or a 0.5.6 worker
+      // that ran out of retries — leaves behind: `failed`, partial intact.
+      const dataDir = getConfig().paths.localModelsDataDir;
+      const def = getLocalModelDef("qwen-3.5-4b");
+      const dest = resolveModelFilePath(dataDir, def.id, def.filename);
+      mkdirSync(join(dest, ".."), { recursive: true });
+      writeFileSync(resolvePartialPath(dest), "gg");
+      writeFileSync(
+        resolvePartialMetaPath(dest),
+        JSON.stringify({ url: def.huggingFaceUrl, total: 4, etag: '"v1"', lastModified: null }),
+      );
+      writeDownloadJob(dataDir, {
+        ...initialDownloadJob({ dataDir, kind: "chat", modelId: def.id, mode: "gguf-only", pid: 2_000_000_000 }),
+        status: "failed",
+        error: "Download gave up: no progress for 7 days (last error: fetch failed)",
+        resumable: true,
+        finishedAt: "2026-09-07T12:00:00.000Z",
+      });
+      globalThis.fetch = vi.fn(async (_url: unknown, init?: RequestInit) => {
+        expect(new Headers(init?.headers).get("range")).toBe("bytes=2-");
+        return new Response(bodyOf(["uf"]), {
+          status: 206,
+          headers: { "content-range": "bytes 2-3/4", etag: '"v1"' },
+        });
+      }) as typeof fetch;
+
+      orchestrator.adoptBackgroundDownloads();
+      await waitFor(() => startDaemon.mock.calls.length === 1);
+
+      expect(worker.spawned).toEqual(["chat-qwen-3.5-4b"]);
+      expect(infoLines(actions).some((l) => /gave up at 50%.*— resuming/.test(l))).toBe(true);
+      expect(existsSync(dest)).toBe(true);
+    });
+
+    it("declares a silent worker dead after the grace period and relaunches it", async () => {
+      // A `running` record whose pid answers (it is ours) but that
+      // nobody has written for ten minutes — a recycled pid after a
+      // reboot looks exactly like this.
+      const dataDir = getConfig().paths.localModelsDataDir;
+      const def = getLocalModelDef("qwen-3.5-4b");
+      const dest = resolveModelFilePath(dataDir, def.id, def.filename);
+      const stale = new Date(Date.now() - 10 * 60_000).toISOString();
+      writeDownloadJob(dataDir, {
+        ...initialDownloadJob({ dataDir, kind: "chat", modelId: def.id, mode: "gguf-only", pid: process.pid }),
+        percent: 30,
+        transferredBytes: 3,
+        totalBytes: 10,
+        startedAt: stale,
+        updatedAt: stale,
+      });
+      globalThis.fetch = vi.fn(
+        async () => new Response(bodyOf(["gguf"]), { status: 200, headers: { "content-length": "4" } }),
+      ) as typeof fetch;
+
+      orchestrator.adoptBackgroundDownloads();
+      await waitFor(() => startDaemon.mock.calls.length === 1);
+
+      expect(worker.spawned).toEqual(["chat-qwen-3.5-4b"]);
+      expect(infoLines(actions).some((l) => /stopped reporting at 30% — relaunching/.test(l))).toBe(true);
+      expect(existsSync(dest)).toBe(true);
+    });
+
+    it("stops a silent worker that is still ours before relaunching onto its partial", async () => {
+      const dataDir = getConfig().paths.localModelsDataDir;
+      const def = getLocalModelDef("qwen-3.5-4b");
+      const dest = resolveModelFilePath(dataDir, def.id, def.filename);
+      const stale = new Date(Date.now() - 10 * 60_000).toISOString();
+      writeDownloadJob(dataDir, {
+        ...initialDownloadJob({ dataDir, kind: "chat", modelId: def.id, mode: "gguf-only", pid: process.pid }),
+        startedAt: stale,
+        updatedAt: stale,
+      });
+      globalThis.fetch = vi.fn(
+        async () => new Response(bodyOf(["gguf"]), { status: 200, headers: { "content-length": "4" } }),
+      ) as typeof fetch;
+      const stops: number[] = [];
+      const ours = new LocalModelsOrchestrator(
+        { emit: (a: unknown) => actions.push(a as EmittedAction), subscribe: () => () => {} },
+        {
+          spawnDownload: worker.spawnDownload,
+          stopDownload: async (d, job) => {
+            stops.push(job.pid);
+            return worker.stopDownload(d, job);
+          },
+          downloadPollMs: 5,
+          staleGraceMs: 10,
+          isDownloadWorkerPid: () => true,
+        },
+      );
+      vi.spyOn(ours, "refresh").mockResolvedValue();
+      const start = vi.spyOn(ours, "startDaemon").mockResolvedValue(true);
+      vi.spyOn(ours, "startEmbeddingPairing").mockResolvedValue();
+
+      ours.adoptBackgroundDownloads();
+      await waitFor(() => start.mock.calls.length === 1);
+
+      // The old pid was asked to stop before the record was rewritten.
+      expect(stops).toEqual([process.pid]);
+      expect(worker.spawned).toEqual(["chat-qwen-3.5-4b"]);
+      expect(existsSync(dest)).toBe(true);
+      await ours.shutdown();
+    });
+
+    it("mirrors the worker's wait for the network onto the pull state", async () => {
+      const dataDir = getConfig().paths.localModelsDataDir;
+      const def = getLocalModelDef("qwen-3.5-4b");
+      let calls = 0;
+      globalThis.fetch = vi.fn(async () => {
+        calls += 1;
+        if (calls === 1) {
+          throw Object.assign(new TypeError("fetch failed"), {
+            cause: Object.assign(new Error("ENETDOWN"), { code: "ENETDOWN" }),
+          });
+        }
+        return new Response(bodyOf(["gguf"]), { status: 200, headers: { "content-length": "4" } });
+      }) as typeof fetch;
+
+      void orchestrator.pullModel(def.id, "gguf-only");
+      await waitFor(() => startDaemon.mock.calls.length === 1);
+
+      const waits = actions.filter(
+        (a): a is Extract<EmittedAction, { type: "local_models_pull_progress" }> =>
+          a.type === "local_models_pull_progress" && !!a.waiting,
+      );
+      expect(waits.length).toBeGreaterThan(0);
+      expect(waits[0].waiting).toMatchObject({ attempt: 1, reason: "fetch failed" });
+      // The last progress report before landing has the wait cleared.
+      const last = actions
+        .filter(
+          (a): a is Extract<EmittedAction, { type: "local_models_pull_progress" }> =>
+            a.type === "local_models_pull_progress",
+        )
+        .at(-1);
+      expect(last?.waiting).toBeNull();
     });
   });
 });

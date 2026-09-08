@@ -1,7 +1,24 @@
 import * as fs from "node:fs";
 import { dirname } from "node:path";
 
+import {
+  DownloadGaveUpError,
+  DownloadHttpError,
+  InterceptedError,
+  StalledError,
+  classifyDownloadError,
+  createAbortError,
+  type DownloadErrorKind,
+} from "./download-errors.js";
 import { huggingFaceToken } from "./huggingface-api.js";
+
+export {
+  DownloadGaveUpError,
+  classifyDownloadError,
+  isResumableDownloadError,
+  isRetryableDownloadError,
+  type DownloadErrorKind,
+} from "./download-errors.js";
 
 export type DownloadProgressFn = (
   percent: number,
@@ -9,34 +26,64 @@ export type DownloadProgressFn = (
   total: number,
 ) => void;
 
+
 /**
- * Called before each retry. `attempt` is the retry about to run (1-based),
- * `delayMs` how long the downloader is about to wait, `error` why the
- * previous attempt died. Surfaces a stalled link to the operator instead
- * of leaving the progress bar frozen while the backoff runs.
+ * Called before each retry. `attempt` counts consecutive attempts that
+ * made no progress (1-based) — a retry after new bytes landed starts at
+ * 1 again. `delayMs` is how long the downloader is about to wait; `error`
+ * why the previous attempt died; `since` when the no-progress streak
+ * began; `giveUpAt` when a transport streak turns into a failure. Lets a
+ * UI say "offline — retrying" instead of freezing the bar.
  */
-export type DownloadRetryFn = (info: {
+export interface DownloadRetryInfo {
   attempt: number;
+  kind: Exclude<DownloadErrorKind, "fatal" | "aborted">;
+  /** The bound on `server` retries. Transport retries have none. */
   maxRetries: number;
   delayMs: number;
   error: Error;
-}) => void;
+  /** Epoch ms. */
+  since: number;
+  /** Epoch ms. */
+  giveUpAt: number;
+}
+
+export type DownloadRetryFn = (info: DownloadRetryInfo) => void;
 
 export interface DownloadFileOptions {
   onProgress?: DownloadProgressFn;
   onRetry?: DownloadRetryFn;
   userAgent?: string;
   signal?: AbortSignal;
-  /** Retries after a network failure before giving up. Default 5. */
+  /**
+   * Retries after a server-side error (5xx, 408, 429) before giving up.
+   * Default 5. Transport errors are not counted against this — see
+   * `giveUpAfterMs`.
+   */
   maxRetries?: number;
   /** Base of the exponential backoff between retries. Default 1s. */
   retryDelayMs?: number;
+  /** Ceiling of the backoff. Default 60s. */
+  maxRetryDelayMs?: number;
+  /**
+   * How long a transport outage may go on without a single new byte
+   * before the download gives up. Default 10 minutes; the background
+   * worker passes days. Any progress restarts the clock.
+   */
+  giveUpAfterMs?: number;
+  /**
+   * Epoch ms after which no further retry is scheduled, whatever the
+   * progress. A detached worker uses it as a hard cap on its own life.
+   */
+  deadlineAt?: number;
   /**
    * How long the body may go without a single byte before the attempt is
    * declared dead and retried from the partial. Default 60s. `0` disables
    * the watchdog.
    */
   stallTimeoutMs?: number;
+  /** Test seam. */
+  now?: () => number;
 }
 
 /** Sidecar next to the `.part` file: what the partial bytes belong to. */
@@ -50,7 +97,14 @@ export interface PartialDownloadMeta {
 
 const DEFAULT_MAX_RETRIES = 5;
 const DEFAULT_RETRY_DELAY_MS = 1_000;
-const MAX_RETRY_DELAY_MS = 30_000;
+const DEFAULT_MAX_RETRY_DELAY_MS = 60_000;
+/**
+ * 10 minutes without a byte before an outage becomes a failure — for a
+ * download somebody is sitting in front of (`models pull`, the TUI's
+ * backend zip). The detached worker asks for days; see
+ * `WORKER_GIVE_UP_AFTER_MS`.
+ */
+export const DEFAULT_GIVE_UP_AFTER_MS = 10 * 60 * 1_000;
 const DEFAULT_STALL_TIMEOUT_MS = 60_000;
 
 export function resolvePartialPath(destPath: string): string {
@@ -82,52 +136,10 @@ export function discardPartialDownload(destPath: string): void {
   rmQuiet(resolvePartialMetaPath(destPath));
 }
 
-class DownloadHttpError extends Error {
-  constructor(
-    readonly status: number,
-    statusText: string,
-  ) {
-    super(`Download failed: HTTP ${status} ${statusText}`);
-    this.name = "DownloadHttpError";
-  }
-}
-
-class StalledError extends Error {
-  constructor(ms: number) {
-    super(`Download stalled: no data for ${Math.round(ms / 1000)}s`);
-    this.name = "StalledError";
-  }
-}
-
-function createAbortError(): Error {
-  const err = new Error("Download aborted");
-  err.name = "AbortError";
-  return err;
-}
-
 function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) {
     throw createAbortError();
   }
-}
-
-function isAbortError(err: unknown): boolean {
-  return err instanceof Error && err.name === "AbortError";
-}
-
-/**
- * Whether another attempt can reasonably succeed. Transport-level
- * failures (reset, timeout, DNS blip, a socket the CDN dropped mid-body)
- * and server-side throttling are; a 404 or a 401 is not — the retries
- * would only delay the same answer.
- */
-export function isRetryableDownloadError(err: unknown): boolean {
-  if (isAbortError(err)) return false;
-  if (err instanceof StalledError) return true;
-  if (err instanceof DownloadHttpError) {
-    return err.status === 408 || err.status === 429 || err.status >= 500;
-  }
-  return true;
 }
 
 function partialSize(destPath: string): number {
@@ -204,6 +216,14 @@ function validatorsMatch(
   return true;
 }
 
+/** The response carries a validator and it is the one the partial was recorded under. */
+function sameValidator(stored: PartialDownloadMeta, res: Response): boolean {
+  const etag = res.headers.get("etag");
+  if (stored.etag) return etag === stored.etag;
+  const lastModified = res.headers.get("last-modified");
+  return stored.lastModified !== null && lastModified === stored.lastModified;
+}
+
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
@@ -234,9 +254,12 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
  * Only a completed transfer is renamed onto `destPath`.
  *
  * Within one call, transport failures and stalls retry from the partial
- * with exponential backoff (`maxRetries`, default 5). The caller's
- * `signal` cancels everything, including a backoff wait, and is never
- * retried.
+ * with exponential backoff for as long as the outage lasts — up to
+ * `giveUpAfterMs` without a single new byte (10 minutes by default; the
+ * detached worker asks for days, so a machine that goes offline for the
+ * night resumes by itself in the morning). Server-side errors are
+ * bounded by `maxRetries` (default 5) instead. The caller's `signal`
+ * cancels everything, including a backoff wait, and is never retried.
  *
  * Progress counts from the resumed offset, so a UI picking up a 12 GB
  * partial of a 20 GB file starts its bar at 60%, not 0%.
@@ -249,35 +272,83 @@ export async function downloadFile(
   throwIfAborted(opts?.signal);
   const maxRetries = opts?.maxRetries ?? DEFAULT_MAX_RETRIES;
   const baseDelay = opts?.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS;
+  const maxDelay = opts?.maxRetryDelayMs ?? DEFAULT_MAX_RETRY_DELAY_MS;
+  const giveUpAfterMs = opts?.giveUpAfterMs ?? DEFAULT_GIVE_UP_AFTER_MS;
+  const now = opts?.now ?? Date.now;
 
   // Pre-resume `.tmp` files are unusable: nothing records what they hold.
   rmQuiet(`${destPath}.tmp`);
 
-  for (let attempt = 0; ; attempt += 1) {
+  // The budget is a no-progress *window*, not a count: `attempt` and
+  // `since` restart whenever an attempt carries the partial past its
+  // previous high-water mark, so six blips spread over a three-hour
+  // transfer never add up to a failure, while an outage that outlives
+  // `giveUpAfterMs` does. Progress is measured against the best partial
+  // so far, not per attempt: a proxy that ignores `Range` and cuts every
+  // body at the same point makes each attempt "write bytes" without the
+  // download ever getting anywhere.
+  //
+  // Server errors keep their own counter. Sharing one would let the first
+  // 503 after a long outage — the common case when a CDN comes back —
+  // inherit the outage's attempts and fail the download for good.
+  let attempt = 0;
+  let serverFailures = 0;
+  let since = now();
+  let highWater = partialSize(destPath);
+  for (;;) {
+    const stats = { offset: 0, written: 0 };
     try {
-      await downloadAttempt(url, destPath, opts);
+      await downloadAttempt(url, destPath, opts, stats);
       return;
     } catch (err) {
       throwIfAborted(opts?.signal);
-      if (attempt >= maxRetries || !isRetryableDownloadError(err)) {
-        throw err;
+      const kind = classifyDownloadError(err);
+      if (kind === "fatal" || kind === "aborted") throw err;
+      const error = err instanceof Error ? err : new Error(String(err));
+      const reached = stats.offset + stats.written;
+      if (reached > highWater) {
+        highWater = reached;
+        attempt = 0;
+        serverFailures = 0;
+        since = now();
       }
-      const delayMs = Math.min(baseDelay * 2 ** attempt, MAX_RETRY_DELAY_MS);
-      opts?.onRetry?.({
-        attempt: attempt + 1,
-        maxRetries,
-        delayMs,
-        error: err instanceof Error ? err : new Error(String(err)),
-      });
+      attempt += 1;
+      if (kind === "server") {
+        serverFailures += 1;
+        if (serverFailures > maxRetries) throw err;
+      }
+      const delayMs = Math.min(baseDelay * 2 ** (attempt - 1), maxDelay);
+      const giveUpAt = since + giveUpAfterMs;
+      const t = now();
+      if (opts?.deadlineAt !== undefined && t + delayMs >= opts.deadlineAt) {
+        throw new DownloadGaveUpError("deadline", "the download's time limit was reached", error);
+      }
+      if (kind === "transport" && t + delayMs >= giveUpAt) {
+        throw new DownloadGaveUpError(
+          "no-progress",
+          `no progress for ${formatDuration(giveUpAfterMs)}`,
+          error,
+        );
+      }
+      opts?.onRetry?.({ attempt, kind, maxRetries, delayMs, error, since, giveUpAt });
       await sleep(delayMs, opts?.signal);
     }
   }
 }
 
+function formatDuration(ms: number): string {
+  const minutes = Math.round(ms / 60_000);
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `${hours} h`;
+  return `${Math.round(hours / 24)} days`;
+}
+
 async function downloadAttempt(
   url: string,
   destPath: string,
-  opts?: DownloadFileOptions,
+  opts: DownloadFileOptions | undefined,
+  stats: { offset: number; written: number },
 ): Promise<void> {
   const partPath = resolvePartialPath(destPath);
   const stallTimeoutMs = opts?.stallTimeoutMs ?? DEFAULT_STALL_TIMEOUT_MS;
@@ -374,6 +445,15 @@ async function downloadAttempt(
       throw new DownloadHttpError(res.status, res.statusText);
     }
 
+    // A page where a file should be is a captive portal or a proxy's
+    // block page, never the model. Writing it over the partial — or
+    // publishing it as a GGUF — would be worse than waiting.
+    const contentType = res.headers.get("content-type") ?? "";
+    if (/^text\/html\b/i.test(contentType.trim())) {
+      await res.body.cancel().catch(() => undefined);
+      throw new InterceptedError(`the server answered with a web page (${contentType.trim()})`);
+    }
+
     let resumed = false;
     let total = 0;
     if (res.status === 206 && offset > 0 && stored) {
@@ -394,11 +474,24 @@ async function downloadAttempt(
       // A full body (200) — either a fresh download or the server would
       // not (or could not, validators changed) honour the range. Whatever
       // is on disk is not this file's prefix.
-      discardPartialDownload(destPath);
-      offset = 0;
       const totalRaw = res.headers.get("content-length");
       total = totalRaw ? parseInt(totalRaw, 10) : 0;
       if (!Number.isFinite(total) || total < 0) total = 0;
+      if (offset > 0 && stored && stored.total > 0 && total > 0 && total !== stored.total) {
+        // The server says this is the very file we have half of, yet
+        // sends a different length: not a new upload but something
+        // standing in for it. Keep the partial. A server that names no
+        // validator gets no such benefit of the doubt — its 200 is a
+        // restart, as it always was.
+        if (sameValidator(stored, res)) {
+          await res.body.cancel().catch(() => undefined);
+          throw new InterceptedError(
+            `full body of ${total} bytes for a ${stored.total}-byte file`,
+          );
+        }
+      }
+      discardPartialDownload(destPath);
+      offset = 0;
     }
 
     fs.mkdirSync(dirname(destPath), { recursive: true });
@@ -409,6 +502,7 @@ async function downloadAttempt(
       lastModified: res.headers.get("last-modified"),
     });
 
+    stats.offset = offset;
     let transferred = offset;
     let lastEmitAt = 0;
     let lastEmittedBytes = -1;
@@ -472,6 +566,7 @@ async function downloadAttempt(
         armStallTimer();
         await handle.write(next.value);
         transferred += next.value.byteLength;
+        stats.written += next.value.byteLength;
         const now = Date.now();
         if (now - lastEmitAt >= PROGRESS_INTERVAL_MS) {
           emitProgress(now);

@@ -30,7 +30,22 @@ import { classifyPidLiveness } from "./daemon-lifecycle.js";
  * again resumes rather than restarts.
  */
 
+/**
+ * Still 1: `waiting` and `resumable` (0.5.7) are additive, and a reader
+ * that does not know them — an older binary sharing the state dir, or
+ * a downgrade — must keep seeing the record, or it would spawn a second
+ * worker onto a partial that is being written.
+ */
 export const DOWNLOAD_JOB_VERSION = 1;
+
+/**
+ * A `running` record older than this has a worker that stopped writing:
+ * the worker heartbeats every 30s even while it waits for the network,
+ * so ten missed beats is not a slow disk. Readers treat such a job as
+ * interrupted after a grace period of their own — a laptop waking from
+ * sleep shows a stale record for a moment before the worker's next beat.
+ */
+export const STALE_RUNNING_MS = 5 * 60 * 1_000;
 
 export type DownloadJobKind = "chat" | "embedding";
 
@@ -44,6 +59,21 @@ export type DownloadJobStatus =
   | "cancelled"
   /** Recorded `running`, but the worker pid is gone. Resumable. */
   | "interrupted";
+
+/**
+ * The worker is between attempts, waiting out a transport failure. The
+ * bytes on disk are not moving and that is expected; a UI shows this
+ * instead of a frozen counter.
+ */
+export interface DownloadJobWaiting {
+  /** The last attempt's error, e.g. `fetch failed`. */
+  reason: string;
+  /** Consecutive attempts without progress. */
+  attempt: number;
+  nextRetryAt: string;
+  /** When the no-progress streak began. */
+  since: string;
+}
 
 export interface DownloadJob {
   version: typeof DOWNLOAD_JOB_VERSION;
@@ -60,6 +90,14 @@ export interface DownloadJob {
   transferredBytes: number;
   totalBytes: number;
   error: string | null;
+  /** Set while the worker waits between attempts; `null` while bytes flow. */
+  waiting: DownloadJobWaiting | null;
+  /**
+   * For a `failed` job: the outage, not the file, was the problem, so
+   * starting the same job again resumes it. A relaunch does that by
+   * itself. `false` for a 404, a full disk, a changed file.
+   */
+  resumable: boolean;
   startedAt: string;
   updatedAt: string;
   finishedAt: string | null;
@@ -114,7 +152,27 @@ function parseDownloadJob(raw: string): DownloadJob | null {
   if (typeof j.id !== "string" || typeof j.modelId !== "string") return null;
   if (j.kind !== "chat" && j.kind !== "embedding") return null;
   if (typeof j.pid !== "number" || typeof j.status !== "string") return null;
-  return j as unknown as DownloadJob;
+  return fillAdditiveFields(j);
+}
+
+/**
+ * 0.5.6 wrote neither `waiting` nor `resumable`, and its worker recorded
+ * an exhausted network budget as a plain `failed`, indistinguishable
+ * from a 404 — that is the record a 0.5.6 user has on disk after going
+ * offline. Read such a failure as resumable unless the error names an
+ * HTTP status a retry cannot change, so the relaunch picks it back up.
+ */
+function fillAdditiveFields(j: Record<string, unknown>): DownloadJob {
+  const error = typeof j.error === "string" ? j.error : null;
+  const resumable =
+    typeof j.resumable === "boolean"
+      ? j.resumable
+      : j.status === "failed" && !/HTTP 4(?!08|29)\d\d/.test(error ?? "");
+  return {
+    ...(j as unknown as DownloadJob),
+    waiting: j.waiting && typeof j.waiting === "object" ? (j.waiting as DownloadJob["waiting"]) : null,
+    resumable,
+  };
 }
 
 /**
@@ -201,4 +259,26 @@ export function removeDownloadJob(dataDir: string, jobId: string): void {
 /** A job the worker may still be driving — or one that died mid-way. */
 export function isDownloadJobLive(job: DownloadJob | null): job is DownloadJob {
   return job !== null && job.status === "running";
+}
+
+/**
+ * A `running` record nobody has written for `STALE_RUNNING_MS`. The pid
+ * may still answer — after a reboot the number can belong to anything —
+ * but the worker that owned this job is not reporting.
+ */
+export function isDownloadJobStale(
+  job: DownloadJob,
+  now: number = Date.now(),
+  thresholdMs: number = STALE_RUNNING_MS,
+): boolean {
+  if (job.status !== "running") return false;
+  const updated = Date.parse(job.updatedAt);
+  if (!Number.isFinite(updated)) return true;
+  return now - updated > thresholdMs;
+}
+
+/** Milliseconds since the record was last written; `0` when unparsable. */
+export function downloadJobSilenceMs(job: DownloadJob, now: number = Date.now()): number {
+  const updated = Date.parse(job.updatedAt);
+  return Number.isFinite(updated) ? Math.max(0, now - updated) : 0;
 }

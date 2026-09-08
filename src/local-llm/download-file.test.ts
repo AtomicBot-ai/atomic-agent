@@ -295,7 +295,7 @@ describe("download-file", () => {
     expect(readFileSync(dest, "utf-8")).toBe("abcd");
   });
 
-  it("gives up after maxRetries and keeps the partial for the next call", async () => {
+  it("gives up once a transport outage outlives giveUpAfterMs, keeping the partial", async () => {
     const dest = join(dir, "out.bin");
     globalThis.fetch = mockFetch([
       () =>
@@ -303,17 +303,291 @@ describe("download-file", () => {
           status: 200,
           headers: { "content-length": "5", etag: '"v1"' },
         }),
+    ]).fn;
+
+    // A zero budget: the first transport failure without progress since
+    // the streak began is the last. The partial is not touched.
+    await expect(
+      downloadFile("https://example.com/x", dest, { ...FAST, giveUpAfterMs: 0 }),
+    ).rejects.toThrow(/gave up.*ECONNRESET/);
+    expect(existsSync(dest)).toBe(false);
+    expect(readPartialDownload(dest)).toEqual({ transferred: 2, total: 5 });
+  });
+
+  it("waits out an offline stretch and resumes from the partial when the link is back", async () => {
+    const dest = join(dir, "out.bin");
+    const offline = (): never => {
+      throw Object.assign(new TypeError("fetch failed"), {
+        cause: Object.assign(new Error("getaddrinfo ENOTFOUND huggingface.co"), {
+          code: "ENOTFOUND",
+        }),
+      });
+    };
+    const { calls, fn } = mockFetch([
       () =>
-        new Response(dyingBodyOf([], new Error("read ECONNRESET")), {
+        new Response(dyingBodyOf(["ab"], new Error("read ECONNRESET")), {
+          status: 200,
+          headers: { "content-length": "5", etag: '"v1"' },
+        }),
+      offline,
+      offline,
+      offline,
+      offline,
+      offline,
+      offline,
+      () =>
+        new Response(bodyOf(["cde"]), {
           status: 206,
           headers: { "content-range": "bytes 2-4/5", etag: '"v1"' },
+        }),
+    ]);
+    globalThis.fetch = fn;
+
+    const retries: Array<{ attempt: number; kind: string }> = [];
+    await downloadFile("https://example.com/x", dest, {
+      ...FAST,
+      // Seven attempts without progress in 0.5.6 would have been fatal
+      // twice over; here the only budget is the no-progress window.
+      maxRetries: 0,
+      onRetry: (info) => retries.push({ attempt: info.attempt, kind: info.kind }),
+    });
+
+    expect(calls).toHaveLength(8);
+    expect(calls.at(-1)?.get("range")).toBe("bytes=2-");
+    expect(retries.map((r) => r.attempt)).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    expect(retries.every((r) => r.kind === "transport")).toBe(true);
+    expect(readFileSync(dest, "utf-8")).toBe("abcde");
+  });
+
+  it("restarts the no-progress window whenever an attempt lands bytes", async () => {
+    // A clock that advances 40ms per reading and a 100ms budget. Every
+    // attempt here is a transport failure; the ones that wrote bytes
+    // first reset the window, so the download survives more of them.
+    const runWith = async (
+      responders: readonly ((headers: Headers) => Response)[],
+    ): Promise<number> => {
+      const dest = join(dir, `out-${responders.length}.bin`);
+      let t = 0;
+      const { calls, fn } = mockFetch(responders);
+      globalThis.fetch = fn;
+      await expect(
+        downloadFile("https://example.com/x", dest, {
+          ...FAST,
+          giveUpAfterMs: 100,
+          now: () => (t += 40),
+        }),
+      ).rejects.toThrow(/gave up/);
+      return calls.length;
+    };
+    const dying = (chunks: readonly string[], status: number, headers: Record<string, string>) => () =>
+      new Response(dyingBodyOf(chunks, new Error("read ECONNRESET")), { status, headers });
+    const first = dying(["ab"], 200, { "content-length": "9", etag: '"v1"' });
+    const progress = dying(["c"], 206, { "content-range": "bytes 2-8/9", etag: '"v1"' });
+    const nothing = dying([], 206, { "content-range": "bytes 2-8/9", etag: '"v1"' });
+
+    // Without progress the window closes after the third attempt …
+    expect(await runWith([first, nothing, nothing, nothing, nothing, nothing])).toBe(3);
+    // … with a byte landing on the third, it stays open two attempts longer.
+    const more = dying([], 206, { "content-range": "bytes 3-8/9", etag: '"v1"' });
+    expect(await runWith([first, nothing, progress, more, more, more, more])).toBe(5);
+  });
+
+  it("does not let a long outage use up the server-error budget", async () => {
+    // Six attempts offline, then the CDN comes back with a 503 before it
+    // serves — the usual order of events. One shared counter would have
+    // read that 503 as attempt seven and failed the download for good.
+    const dest = join(dir, "out.bin");
+    const offline = (): never => {
+      throw Object.assign(new TypeError("fetch failed"), {
+        cause: Object.assign(new Error("ENETDOWN"), { code: "ENETDOWN" }),
+      });
+    };
+    const { calls, fn } = mockFetch([
+      offline,
+      offline,
+      offline,
+      offline,
+      offline,
+      offline,
+      () => new Response(null, { status: 503, statusText: "Unavailable" }),
+      () => new Response(bodyOf(["ok"]), { status: 200, headers: { "content-length": "2" } }),
+    ]);
+    globalThis.fetch = fn;
+
+    await downloadFile("https://example.com/x", dest, { ...FAST, maxRetries: 1 });
+    expect(calls).toHaveLength(8);
+    expect(readFileSync(dest, "utf-8")).toBe("ok");
+  });
+
+  it("counts progress against the best partial so far, not per attempt", async () => {
+    // A proxy that ignores `Range` and cuts every body at two bytes:
+    // each attempt writes bytes, none gets further than the last. That
+    // is not progress, and the window must close on it.
+    const dest = join(dir, "out.bin");
+    const truncating = () =>
+      new Response(dyingBodyOf(["ab"], new Error("read ECONNRESET")), {
+        status: 200,
+        headers: { "content-length": "5", etag: '"v1"' },
+      });
+    let t = 0;
+    const { calls, fn } = mockFetch([truncating, truncating, truncating, truncating, truncating]);
+    globalThis.fetch = fn;
+
+    await expect(
+      downloadFile("https://example.com/x", dest, {
+        ...FAST,
+        giveUpAfterMs: 100,
+        now: () => (t += 40),
+      }),
+    ).rejects.toThrow(/gave up/);
+    // First attempt reaches 2 bytes (progress: window opens at t=40);
+    // the next two reach 2 again (no progress) and the window closes.
+    expect(calls).toHaveLength(3);
+  });
+
+  it("still bounds server-side errors by maxRetries", async () => {
+    const dest = join(dir, "out.bin");
+    const { calls, fn } = mockFetch([
+      () => new Response(null, { status: 503, statusText: "Unavailable" }),
+      () => new Response(null, { status: 503, statusText: "Unavailable" }),
+      () => new Response(null, { status: 503, statusText: "Unavailable" }),
+    ]);
+    globalThis.fetch = fn;
+
+    const kinds: string[] = [];
+    await expect(
+      downloadFile("https://example.com/x", dest, {
+        ...FAST,
+        maxRetries: 1,
+        onRetry: (info) => kinds.push(info.kind),
+      }),
+    ).rejects.toThrow(/HTTP 503/);
+    expect(calls).toHaveLength(2);
+    expect(kinds).toEqual(["server"]);
+  });
+
+  it("stops at once on a local error the link cannot fix", async () => {
+    const dest = join(dir, "out.bin");
+    const { calls, fn } = mockFetch([
+      () =>
+        new Response(
+          dyingBodyOf(
+            ["ab"],
+            Object.assign(new Error("ENOSPC: no space left on device, write"), {
+              code: "ENOSPC",
+            }),
+          ),
+          { status: 200, headers: { "content-length": "5" } },
+        ),
+    ]);
+    globalThis.fetch = fn;
+
+    await expect(downloadFile("https://example.com/x", dest, FAST)).rejects.toThrow(/ENOSPC/);
+    expect(calls).toHaveLength(1);
+  });
+
+  it("stops at once on a setup error no retry can change", async () => {
+    const dest = join(dir, "out.bin");
+    const cases: Array<() => never> = [
+      () => {
+        throw Object.assign(new TypeError("fetch failed"), {
+          cause: Object.assign(new Error("certificate has expired"), { code: "CERT_HAS_EXPIRED" }),
+        });
+      },
+      () => {
+        throw Object.assign(new TypeError("Invalid URL"), { code: "ERR_INVALID_URL" });
+      },
+      () => {
+        throw new TypeError("Cannot read properties of undefined (reading 'x')");
+      },
+    ];
+    for (const failing of cases) {
+      const { calls, fn } = mockFetch([failing]);
+      globalThis.fetch = fn;
+      await expect(downloadFile("https://example.com/x", dest, FAST)).rejects.toThrow();
+      expect(calls).toHaveLength(1);
+    }
+  });
+
+  it("does not schedule a retry past deadlineAt", async () => {
+    const dest = join(dir, "out.bin");
+    globalThis.fetch = mockFetch([
+      () =>
+        new Response(dyingBodyOf(["ab"], new Error("read ECONNRESET")), {
+          status: 200,
+          headers: { "content-length": "5", etag: '"v1"' },
         }),
     ]).fn;
 
     await expect(
-      downloadFile("https://example.com/x", dest, { ...FAST, maxRetries: 1 }),
-    ).rejects.toThrow(/ECONNRESET/);
-    expect(existsSync(dest)).toBe(false);
+      downloadFile("https://example.com/x", dest, { ...FAST, deadlineAt: Date.now() - 1 }),
+    ).rejects.toThrow(/time limit/);
+    expect(readPartialDownload(dest)).toEqual({ transferred: 2, total: 5 });
+  });
+
+  it("treats a web page where the file should be as an outage, not as the file", async () => {
+    // A captive portal answers every URL with its splash page. The
+    // partial must survive it: once the operator clicks through, the
+    // next attempt gets the real bytes.
+    const dest = join(dir, "out.bin");
+    seedPartial(dest, "https://example.com/x", "ab", { total: 5, etag: '"v1"' });
+    const { calls, fn } = mockFetch([
+      () =>
+        new Response(bodyOf(["<html>please log in</html>"]), {
+          status: 200,
+          headers: { "content-type": "text/html; charset=utf-8" },
+        }),
+      () =>
+        new Response(bodyOf(["cde"]), {
+          status: 206,
+          headers: { "content-range": "bytes 2-4/5", etag: '"v1"' },
+        }),
+    ]);
+    globalThis.fetch = fn;
+
+    const retries: string[] = [];
+    await downloadFile("https://example.com/x", dest, {
+      ...FAST,
+      onRetry: (info) => retries.push(info.error.message),
+    });
+    expect(calls).toHaveLength(2);
+    expect(retries[0]).toMatch(/intercepted.*web page/);
+    expect(readFileSync(dest, "utf-8")).toBe("abcde");
+  });
+
+  it("restarts on a full body of a new length when the server names no validator", async () => {
+    // Without an ETag the server cannot vouch for the partial, so a 200
+    // is what it always was: the file changed, start over.
+    const dest = join(dir, "out.bin");
+    seedPartial(dest, "https://example.com/x", "ab", { total: 5, etag: null });
+    const { calls, fn } = mockFetch([
+      () =>
+        new Response(bodyOf(["xyz"]), {
+          status: 200,
+          headers: { "content-length": "3" },
+        }),
+    ]);
+    globalThis.fetch = fn;
+
+    await downloadFile("https://example.com/x", dest, FAST);
+    expect(calls).toHaveLength(1);
+    expect(readFileSync(dest, "utf-8")).toBe("xyz");
+  });
+
+  it("keeps the partial when a full body of the wrong length arrives under the same validator", async () => {
+    const dest = join(dir, "out.bin");
+    seedPartial(dest, "https://example.com/x", "ab", { total: 5, etag: '"v1"' });
+    globalThis.fetch = mockFetch([
+      () =>
+        new Response(bodyOf(["x"]), {
+          status: 200,
+          headers: { "content-length": "999", etag: '"v1"' },
+        }),
+    ]).fn;
+
+    await expect(
+      downloadFile("https://example.com/x", dest, { ...FAST, giveUpAfterMs: 0 }),
+    ).rejects.toThrow(/intercepted/);
     expect(readPartialDownload(dest)).toEqual({ transferred: 2, total: 5 });
   });
 
@@ -480,7 +754,7 @@ describe("download-file", () => {
     await expect(
       downloadFile("https://example.invalid/big.bin", join(dir, "big.bin"), {
         ...FAST,
-        maxRetries: 0,
+        giveUpAfterMs: 0,
         onProgress: (percent, transferred) => {
           seen.push({ percent, transferred });
         },

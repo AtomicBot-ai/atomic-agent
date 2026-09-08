@@ -110,6 +110,35 @@ export function spawnDownloadWorker(
   }
 }
 
+/**
+ * Whether `pid` is one of our download workers, as far as the process
+ * table can say. A `running` record whose pid answers `kill(pid, 0)`
+ * after a reboot may belong to anything — a terminal, a browser — and a
+ * SIGTERM sent on the strength of a stale record would land on it.
+ * Best-effort: an unreadable process table reads as "not ours", which
+ * errs toward leaving the pid alone.
+ */
+export function looksLikeDownloadWorker(pid: number): boolean {
+  try {
+    if (process.platform === "win32") {
+      const out = execSync(`tasklist /FI "PID eq ${pid}" /FO CSV /NH`, {
+        timeout: 5000,
+        stdio: ["ignore", "pipe", "ignore"],
+      }).toString();
+      const image = out.split(",")[0]?.replace(/"/g, "").toLowerCase() ?? "";
+      const self = process.execPath.split(/[\\/]/).pop()?.toLowerCase() ?? "";
+      return image.length > 0 && image === self;
+    }
+    const out = execSync(`ps -o args= -p ${pid}`, {
+      timeout: 5000,
+      stdio: ["ignore", "pipe", "ignore"],
+    }).toString();
+    return out.includes("pull-worker");
+  } catch {
+    return false;
+  }
+}
+
 export type StopDownloadWorkerResult =
   | { outcome: "stopped"; job: DownloadJob }
   | { outcome: "not-running"; job: DownloadJob }

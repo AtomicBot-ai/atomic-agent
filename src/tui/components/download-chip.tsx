@@ -32,6 +32,10 @@ const DEFAULT_BUDGET = 46;
  */
 const MAX_LABEL_COLUMNS = 30;
 
+function pct(percent: number): string {
+  return `${percent}%`;
+}
+
 function capLabel(label: string): string {
   if (label.length <= MAX_LABEL_COLUMNS) return label;
   return `${label.slice(0, MAX_LABEL_COLUMNS - 1)}…`;
@@ -59,6 +63,20 @@ export function DownloadChip({
   const filled = Math.round((percent / 100) * BAR_WIDTH);
   const label = capLabel(pull.kind === "backend" ? "llama.cpp" : String(pull.modelId));
   if (budget < MINIMAL_COLUMNS) return null;
+  const waiting = pull.waiting ?? null;
+  if (waiting) {
+    // No rate, no ETA, no bar: the worker is waiting for the network and
+    // an ETA computed from zero throughput would say "never".
+    const text = `${label} ${pct(percent)} · offline`;
+    const short = `${pct(percent)} · offline`;
+    const body = budget >= PREFIX_COLUMNS + text.length ? text : short;
+    return (
+      <Text wrap="truncate">
+        <Text color={theme.colors.warn}>{"  ⏸ "}</Text>
+        <Text color={theme.colors.muted}>{body}</Text>
+      </Text>
+    );
+  }
   const percentText = `${percent}%`;
   // prefix + label + space + bar + space + percent — what the BAR form
   // costs with THIS label, so a long-but-capped name sheds to the

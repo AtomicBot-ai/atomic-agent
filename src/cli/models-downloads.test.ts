@@ -41,8 +41,10 @@ function job(patch: Partial<DownloadJob> = {}): DownloadJob {
     transferredBytes: 4_000_000,
     totalBytes: 10_000_000,
     error: null,
+    waiting: null,
+    resumable: false,
     startedAt: "2026-09-07T10:00:00.000Z",
-    updatedAt: "2026-09-07T10:00:05.000Z",
+    updatedAt: new Date().toISOString(),
     finishedAt: null,
     ...patch,
   };

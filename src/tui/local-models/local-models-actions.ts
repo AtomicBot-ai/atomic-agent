@@ -55,6 +55,8 @@ export type LocalModelsAction =
       percent: number;
       transferredBytes: number;
       totalBytes: number;
+      /** Omitted = unchanged; `null` = bytes are flowing again. */
+      waiting?: LocalModelsPullState["waiting"];
     }
   | { type: "local_models_pull_finished"; kind?: LocalModelsPullState["kind"] }
   | {

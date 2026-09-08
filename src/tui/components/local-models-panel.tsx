@@ -16,6 +16,7 @@ import {
   type LocalModelsPanelState,
   type RamFit,
 } from "../local-models/local-models-panel-state.js";
+import { describePullWaiting } from "../local-models/describe-pull-waiting.js";
 import type { LocalModelDef } from "../../local-llm/index.js";
 import { renderProgressBar } from "./render-progress-bar.js";
 
@@ -205,10 +206,12 @@ function DownloadBanner({
     total !== null ? ` / ${formatDownloadBytes(total)}` : "";
   const isModel = pull.modelId !== "_backend";
   const modelLine = isModel ? `model: ${pull.modelId}` : "target: backend zip";
+  const waiting = pull.waiting ?? null;
   return (
     <Box flexDirection="column">
-      <Text bold color={theme.colors.accentSoft}>
-        downloading — {pull.label}
+      <Text bold color={waiting ? theme.colors.warn : theme.colors.accentSoft}>
+        {waiting ? "download paused — " : "downloading — "}
+        {pull.label}
       </Text>
       <Text color={theme.colors.muted}>{modelLine}</Text>
       <Text>
@@ -222,9 +225,13 @@ function DownloadBanner({
           {totalPart}
         </Text>
       </Text>
+      {waiting ? (
+        <Text color={theme.colors.warn}>{describePullWaiting(waiting)}</Text>
+      ) : null}
     </Box>
   );
 }
+
 
 export function LocalModelsPanel({
   panel,

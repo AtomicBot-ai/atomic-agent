@@ -227,6 +227,7 @@ export function reduceLocalModelsAction(state: TuiState, action: TuiAction): Tui
               percent: action.percent,
               transferredBytes: action.transferredBytes,
               totalBytes: action.totalBytes,
+              ...(action.waiting !== undefined ? { waiting: action.waiting } : {}),
             },
           },
         };
@@ -241,6 +242,7 @@ export function reduceLocalModelsAction(state: TuiState, action: TuiAction): Tui
             percent: action.percent,
             transferredBytes: action.transferredBytes,
             totalBytes: action.totalBytes,
+            ...(action.waiting !== undefined ? { waiting: action.waiting } : {}),
           },
         },
       };

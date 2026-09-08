@@ -35,6 +35,20 @@ function bodyOf(chunks: readonly string[]): ReadableStream {
   });
 }
 
+function dyingBodyOf(chunks: readonly string[], error: Error): ReadableStream {
+  const queue = [...chunks];
+  return new ReadableStream({
+    pull(controller) {
+      const next = queue.shift();
+      if (next === undefined) {
+        controller.error(error);
+        return;
+      }
+      controller.enqueue(Buffer.from(next));
+    },
+  });
+}
+
 describe("download-worker", () => {
   let dataDir: string;
   let prevFetch: typeof fetch;
@@ -106,7 +120,125 @@ describe("download-worker", () => {
     const job = readDownloadJob(dataDir, downloadJobId("chat", CHAT.id));
     expect(job?.status).toBe("failed");
     expect(job?.error).toMatch(/HTTP 404/);
+    // A 404 is the file's fault: relaunching would only ask again.
+    expect(job?.resumable).toBe(false);
     expect(log.at(-1)).toMatch(/failed: .*404/);
+  });
+
+  it("records an outage as resumable so a relaunch picks the job back up", async () => {
+    globalThis.fetch = vi.fn(async () => {
+      throw Object.assign(new TypeError("fetch failed"), {
+        cause: Object.assign(new Error("getaddrinfo ENOTFOUND"), { code: "ENOTFOUND" }),
+      });
+    }) as typeof fetch;
+
+    const outcome = await runDownloadWorker({
+      dataDir,
+      kind: "chat",
+      modelId: CHAT.id,
+      mode: "gguf-only",
+      log: (l) => log.push(l),
+      writeIntervalMs: 0,
+      giveUpAfterMs: 0,
+      heartbeatMs: 0,
+    });
+
+    expect(outcome).toBe("failed");
+    const job = readDownloadJob(dataDir, downloadJobId("chat", CHAT.id));
+    expect(job).toMatchObject({ status: "failed", resumable: true, waiting: null });
+    expect(job?.error).toMatch(/gave up.*fetch failed/);
+    expect(log.at(-1)).toMatch(/next launch resumes it/);
+  });
+
+  it("shows the wait between attempts in the record and clears it when bytes flow", async () => {
+    let calls = 0;
+    globalThis.fetch = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      calls += 1;
+      if (calls === 1) {
+        return new Response(dyingBodyOf(["ab"], new Error("read ECONNRESET")), {
+          status: 200,
+          headers: { "content-length": "4", etag: '"v1"' },
+        });
+      }
+      if (calls === 2) {
+        throw Object.assign(new TypeError("fetch failed"), {
+          cause: Object.assign(new Error("ENETDOWN"), { code: "ENETDOWN" }),
+        });
+      }
+      expect(new Headers(init?.headers).get("range")).toBe("bytes=2-");
+      return new Response(bodyOf(["cd"]), {
+        status: 206,
+        headers: { "content-range": "bytes 2-3/4", etag: '"v1"' },
+      });
+    }) as typeof fetch;
+
+    const pending = runDownloadWorker({
+      dataDir,
+      kind: "chat",
+      modelId: CHAT.id,
+      mode: "gguf-only",
+      log: (l) => log.push(l),
+      writeIntervalMs: 0,
+      heartbeatMs: 0,
+      retryDelayMs: 40,
+    });
+    const id = downloadJobId("chat", CHAT.id);
+    await waitFor(() => readDownloadJob(dataDir, id)?.waiting?.attempt === 2);
+    const waiting = readDownloadJob(dataDir, id);
+    expect(waiting).toMatchObject({
+      status: "running",
+      transferredBytes: 2,
+      waiting: { attempt: 2, reason: "fetch failed" },
+    });
+    expect(Date.parse(waiting!.waiting!.nextRetryAt)).toBeGreaterThan(
+      Date.parse(waiting!.waiting!.since),
+    );
+
+    expect(await pending).toBe("done");
+    expect(readDownloadJob(dataDir, id)).toMatchObject({ status: "done", waiting: null });
+    expect(log.some((l) => /waiting for the network, attempt 1/.test(l))).toBe(true);
+  });
+
+  it("heartbeats the record while no bytes arrive", async () => {
+    let release: (() => void) | null = null;
+    const body = new ReadableStream({
+      async pull(controller) {
+        if (release === null) {
+          controller.enqueue(Buffer.from("ab"));
+          await new Promise<void>((resolve) => {
+            release = resolve;
+          });
+          controller.enqueue(Buffer.from("cd"));
+          return;
+        }
+        controller.close();
+      },
+    });
+    globalThis.fetch = vi.fn(
+      async () => new Response(body, { status: 200, headers: { "content-length": "4" } }),
+    ) as typeof fetch;
+
+    const pending = runDownloadWorker({
+      dataDir,
+      kind: "chat",
+      modelId: CHAT.id,
+      mode: "gguf-only",
+      log: (l) => log.push(l),
+      writeIntervalMs: 0,
+      heartbeatMs: 15,
+    });
+    const id = downloadJobId("chat", CHAT.id);
+    await waitFor(() => release !== null);
+    // The first chunk's progress write lands on its own schedule; wait
+    // for it so the beat is measured against a settled record.
+    await waitFor(() => readDownloadJob(dataDir, id)?.transferredBytes === 2);
+    const first = readDownloadJob(dataDir, id);
+    await waitFor(() => readDownloadJob(dataDir, id)?.updatedAt !== first?.updatedAt);
+    const later = readDownloadJob(dataDir, id);
+    expect(later?.transferredBytes).toBe(first?.transferredBytes);
+    expect(later?.status).toBe("running");
+    release?.();
+    expect(await pending).toBe("done");
   });
 
   it("ends cancelled when the signal fires, with the partial kept for resume", async () => {

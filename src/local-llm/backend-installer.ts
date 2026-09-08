@@ -243,7 +243,7 @@ export async function downloadBackend(
   dataDir: string,
   opts?: Pick<
     DownloadFileOptions,
-    "onProgress" | "onRetry" | "signal" | "maxRetries" | "retryDelayMs"
+    "onProgress" | "onRetry" | "signal" | "maxRetries" | "retryDelayMs" | "giveUpAfterMs"
   >,
 ): Promise<{ ok: true; tag: string }> {
   const { assetName, binaryName } = resolveDownloadAsset();

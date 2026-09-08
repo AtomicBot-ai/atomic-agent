@@ -51,21 +51,30 @@ export {
 } from "./backend-paths.js";
 
 export {
+  DEFAULT_GIVE_UP_AFTER_MS,
+  DownloadGaveUpError,
+  classifyDownloadError,
   downloadFile,
   discardPartialDownload,
+  isResumableDownloadError,
   isRetryableDownloadError,
   readPartialDownload,
   resolvePartialMetaPath,
   resolvePartialPath,
+  type DownloadErrorKind,
   type DownloadFileOptions,
   type DownloadProgressFn,
   type DownloadRetryFn,
+  type DownloadRetryInfo,
   type PartialDownloadMeta,
 } from "./download-file.js";
 export {
   DOWNLOAD_JOB_VERSION,
+  STALE_RUNNING_MS,
   downloadJobId,
+  downloadJobSilenceMs,
   isDownloadJobLive,
+  isDownloadJobStale,
   listDownloadJobs,
   readDownloadJob,
   reconcileDownloadJob,
@@ -78,9 +87,11 @@ export {
   type DownloadJobKind,
   type DownloadJobMode,
   type DownloadJobStatus,
+  type DownloadJobWaiting,
 } from "./download-jobs.js";
 export {
   downloadWorkerArgs,
+  looksLikeDownloadWorker,
   spawnDownloadWorker,
   stopDownloadWorker,
   type SpawnDownloadWorkerInput,
@@ -88,6 +99,8 @@ export {
   type StopDownloadWorkerResult,
 } from "./download-spawn.js";
 export {
+  DEFAULT_WORKER_LIFETIME_MS,
+  WORKER_GIVE_UP_AFTER_MS,
   initialDownloadJob,
   runDownloadWorker,
   type DownloadWorkerInput,

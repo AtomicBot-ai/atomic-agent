@@ -74,6 +74,20 @@ export interface LocalModelRow {
   mmprojStatus: MmprojStatus;
 }
 
+/**
+ * The worker is between attempts, waiting for the network to come
+ * back. The counter is not moving and that is expected — the banner
+ * says so instead of looking hung.
+ */
+export interface LocalModelsPullWaiting {
+  /** The last attempt's error, e.g. `fetch failed`. */
+  reason: string;
+  /** Consecutive attempts without progress. */
+  attempt: number;
+  /** ISO timestamp of the next attempt. */
+  nextRetryAt: string;
+}
+
 export interface LocalModelsPullState {
   kind: "chat" | "embedding" | "backend";
   modelId: LocalModelId | EmbeddingModelId | "_backend";
@@ -82,6 +96,8 @@ export interface LocalModelsPullState {
   transferredBytes: number;
   totalBytes: number;
   error: string | null;
+  /** Set while the worker waits out an outage; absent or `null` while bytes flow. */
+  waiting?: LocalModelsPullWaiting | null;
 }
 
 /**
