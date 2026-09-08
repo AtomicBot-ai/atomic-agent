@@ -2,6 +2,7 @@ import { classifyFailure } from "../reliability/classify-failure.js";
 import { OpenAiHttpError } from "../provider/openai/openai-http.js";
 import { LlamaServerError } from "../llama-server-client.js";
 import { TransportError } from "../reliability/llm-failures.js";
+import { isRequestSizeRejection } from "../reliability/request-size-rejection.js";
 
 /**
  * Fallover decision for a single thrown error.
@@ -58,6 +59,13 @@ const NO: AdvanceDecision = { advance: false, immediate: false };
  * only counts toward the threshold).
  */
 export function shouldAdvance(err: unknown): AdvanceDecision {
+  // A 400/413 that names the reply cap or the context length is the
+  // request being too big for the model, not the link being down. It is
+  // deterministic on every link (the local fallback usually has the
+  // smaller window), and falling over on it once sent a cloud turn to a
+  // llama-server that was not running — and from there into the outage
+  // wait. Same standing as the local 400/413/422 band below.
+  if (isRequestSizeRejection(err)) return NO;
   const category = classifyFailure(err);
   if (category !== "transport" && category !== "model") {
     return NO;

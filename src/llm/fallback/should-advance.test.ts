@@ -63,6 +63,33 @@ describe("shouldAdvance", () => {
     });
   });
 
+  it("does NOT advance on a cloud 400 that names the reply cap or the context length", () => {
+    // The request is too big for the model; the next link would refuse
+    // it too, and the local fallback usually has the smaller window.
+    expect(
+      shouldAdvance(
+        new OpenAiHttpError(
+          "openai provider 400: max_tokens is too large: 32768. This model supports at most 16384 completion tokens",
+          400,
+          "u",
+        ),
+      ),
+    ).toEqual({ advance: false, immediate: false });
+    expect(
+      shouldAdvance(
+        new TransportError('"vendor" rejected the request (400).', 400, "u", {
+          cause: new OpenAiHttpError("openai provider 400: This model's maximum context length is 8192 tokens", 400, "u"),
+        }),
+      ),
+    ).toEqual({ advance: false, immediate: false });
+  });
+
+  it("still advances on any other cloud 400 — the body may be wrong for this vendor only", () => {
+    expect(
+      shouldAdvance(new OpenAiHttpError("openai provider 400: unsupported parameter: tools", 400, "u")),
+    ).toEqual({ advance: true, immediate: false });
+  });
+
   it("advances (transport) on a cloud 401 — a dead key should try the fallback", () => {
     // OpenAiHttpError is always transport-category; 401 is not an
     // immediate provider-down signal, so it advances via the threshold.
