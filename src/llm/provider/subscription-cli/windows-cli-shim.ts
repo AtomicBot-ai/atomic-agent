@@ -110,21 +110,42 @@ export const MAX_CMD_COMMAND_LINE = 8191;
  * `"%_prog%" "%dp0%\…\cli.js" <our arguments>`. That line can be the
  * longer of the two — the arguments arrive one `^` layer lighter, but
  * the shim's prefix replaces the (shorter) `cmd.exe /d /s /c "` we
- * measured. For the real global `claude.cmd` the crossover leaves a
- * window ~76 characters wide in which the outer line passes this check
- * and cmd then refuses the inner one with the opaque message the check
- * exists to replace.
+ * measured. For a global `claude.cmd` the crossover leaves a window
+ * (~76 characters wide on the layout it was first measured on) in
+ * which the outer line passes this check and cmd then refuses the
+ * inner one with the opaque message the check exists to replace.
  *
  * A margin rather than a computed length, deliberately: at the point we
  * read the shim its line is `%_prog%` and `%dp0%`, and both expand at
  * run time to paths we do not have (`%_prog%` is chosen by a branch
  * *inside* the file). Measuring the literal text would be false
- * precision. 512 covers npm's ~170-character line with a deeply nested
- * install path and still leaves 94% of the budget — and the budget is
- * only ever contested by a large inline JSON schema, a case that
- * already ends in this error, just with an actionable message instead
- * of cmd's. Charged only when the shim actually re-substitutes: a batch
- * file that ignores its arguments builds no second line.
+ * precision.
+ *
+ * 512 is enough — but not by much, and not for the reason it looks
+ * like. Expanding the template's last line (`%COMSPEC%`, `%_prog%`,
+ * `%dp0%`, `%PATHEXT:;.JS;=;%`) over 6 install directories × 3 targets
+ * × 2 `_prog` branches × 2 PATHEXT values × 2 argument shapes puts the
+ * prefix anywhere between **157 and 813** characters — **229** for the
+ * plain global `%APPDATA%\npm` layout, not the ~170 an earlier version
+ * of this comment claimed. Across that sweep the worst margin actually
+ * *needed* is **468**, so 512 leaves 44 characters of headroom rather
+ * than the 94% of the budget it looks like it leaves.
+ *
+ * The binding case is a **metachar-free argument** under a
+ * 283-character `dp0` with `node.exe` sitting next to the shim — not
+ * the large inline JSON schema. A schema goes the other way: double
+ * escaping inflates the *outer* line by roughly 27%, so the outer runs
+ * ~1500–2000 characters longer than the inner one and the margin it
+ * needs is −1968. At the gate boundary a global-npm layout measures
+ * 7675 outer against 5707 inner — ~2484 characters of slack handed
+ * away, about 400 characters of schema the user could have had. A
+ * margin conditional on whether the argument carries metacharacters
+ * would reclaim them; that is deliberately not done. One flat number
+ * is one thing to be right about, and the cost of being generous is a
+ * refusal that names what to shorten, not a corrupted command line.
+ *
+ * Charged only when the shim actually re-substitutes: a batch file
+ * that ignores its arguments builds no second line.
  */
 export const SHIM_SUBSTITUTION_MARGIN = 512;
 

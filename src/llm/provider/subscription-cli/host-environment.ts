@@ -27,12 +27,20 @@ export function hostEnv(): NodeJS.ProcessEnv {
  * `existsSync` collapses "this path is not there" and "I was not allowed
  * to look" into the same `false`, and the second happens for real: a
  * `binPath` under a directory the user may traverse but not stat
- * (EACCES/EPERM), or on a UNC share that is momentarily unavailable
- * (ENETUNREACH, ETIMEDOUT, EBUSY). Reporting those as "not installed"
- * turns a working install into "was not found on PATH". Only ENOENT and
- * ENOTDIR — the path, or a directory along it, genuinely is not there —
- * are `absent`; everything else is `unknown` and the caller hands the
- * target to cmd.exe, which can answer for itself.
+ * (EACCES/EPERM), or on a UNC path whose host does not answer — which
+ * arrives as the code `UNKNOWN`, not one of the network errnos: libuv
+ * has no mapping for `ERROR_BAD_NETPATH` / `ERROR_BAD_NET_NAME`, so
+ * `err.code` is the literal string `"UNKNOWN"` with the Win32 status in
+ * `err.errno`. Reporting those as "not installed" turns a working
+ * install into "was not found on PATH". Only ENOENT and ENOTDIR — the
+ * path, or a directory along it, genuinely is not there — are `absent`;
+ * everything else is `unknown` and the caller hands the target to
+ * cmd.exe, which can answer for itself.
+ *
+ * One network case this does *not* rescue: a mapped drive whose
+ * connection has dropped stats as ENOENT, so `Z:\tools\claude.cmd` is
+ * `absent` and still reports as not installed. It is indistinguishable
+ * here from a path that really is gone.
  */
 export type FileStatus = "present" | "absent" | "unknown";
 

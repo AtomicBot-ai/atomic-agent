@@ -14,6 +14,18 @@ import { spawn } from "node:child_process";
  *
  * `platform` and `spawnImpl` are parameters so the win32 branch is
  * exercised from a macOS/Linux test run.
+ *
+ * CONTRACT, for callers other than the two this was written for. On
+ * Windows a taskkill exit of 128 is reported to `onTreeKilled` as
+ * `true`, but 128 means taskkill found no such pid and therefore walked
+ * *nothing* — it says the root is gone, not that its descendants are.
+ * That is sound only where the root's death implies the rest of the
+ * tree's, which is true of the `cmd /c <shim>` topology here (the
+ * wrapper exists solely to host the CLI) and is *not* true in general:
+ * a root that spawns detached or re-parented children can exit while
+ * they keep running, and this helper will call that a successful tree
+ * kill. A caller with a different topology should not read `true` as
+ * "the descendants are gone".
  */
 export interface KillProcessTreeOptions {
   /** `taskkill /F` / `SIGKILL` rather than a polite stop. */
@@ -47,6 +59,21 @@ export interface KillableChild {
  * so it counts as success — and, importantly, must not be escalated:
  * re-running taskkill against a pid that has already exited is the one
  * way this can reach an unrelated process, since Windows recycles pids.
+ *
+ * Folklore-grade, and treated as such. Microsoft documents no exit codes
+ * for taskkill at all; 128 is corroborated only by secondary sources
+ * (PDQ's taskkill reference, buildbot issue #6140,
+ * dotnet/vscode-csharp #8393) and has never been observed by anyone who
+ * worked on this file. Getting it wrong is not dangerous in either
+ * direction — a 128 mistaken for a refusal only costs one extra `/F`
+ * pass; the risk is the reverse reading, which is why nothing escalates
+ * on it.
+ *
+ * The wider caveat is what 128 *means*: taskkill walked nothing. For the
+ * `cmd /c` topology this was written for that is harmless, because the
+ * wrapper's death implies the CLI's — see `killProcessTree`, where that
+ * assumption is now part of the contract rather than an accident of the
+ * only caller.
  */
 const TASKKILL_NOT_FOUND = 128;
 
@@ -99,8 +126,10 @@ interface TaskkillRun {
  * escalated. So a refusal is retried once with `/F`.
  *
  * Untested on a real Windows host — see the PR's own note. The exit
- * codes are the documented ones (0 success, 128 no such process); any
- * other non-zero is treated as a refusal.
+ * codes are *not* documented by Microsoft: 0 for success and 128 for
+ * "no such process" are the convention secondary sources agree on (see
+ * `TASKKILL_NOT_FOUND`), not a published contract. Any other non-zero
+ * is treated as a refusal.
  */
 function runTaskkill(
   child: KillableChild,

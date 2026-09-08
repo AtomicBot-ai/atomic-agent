@@ -481,6 +481,14 @@ describe("the escaping rewrite is a rewrite, not a change", () => {
     // 32k backslashes with no quote to end the run: 1.47 s of
     // synchronous work under the regex form, before the length check
     // that refuses the argument anyway.
+    //
+    // LOAD-BEARING, and the only guard on the ReDoS fix: the
+    // differential test above passes for both forms by design, so
+    // nothing else here notices if the quadratic `replace` comes back.
+    // A wall-clock assertion, which is normally a smell — it survives
+    // because the headroom is ~2000x (0.2 ms observed against a 400 ms
+    // budget), not because the number was tuned. If it ever flakes,
+    // raise the budget; do not delete it.
     const started = performance.now();
     expect(() => onWindows(target, ["\\".repeat(32_000)], [target])).toThrow(
       SubscriptionCliCommandLineError,
