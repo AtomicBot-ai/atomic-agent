@@ -18,6 +18,10 @@ import type {
   CapabilitiesSummary,
   SkillCatalogEntry,
 } from "../prompt/stable-prefix.js";
+import type {
+  CompletionResult,
+  ToolCallTransport,
+} from "../llm/provider/completion-types.js";
 
 const CAPS: CapabilitiesSummary = {
   platform: "darwin",
@@ -2485,5 +2489,335 @@ describe("executeStep empty-completion repair", () => {
       name: "ModelError",
       reason: "empty",
     });
+  });
+});
+
+describe("executeStep ModelError transport tag", () => {
+  const grammarsDir = join(process.cwd(), "grammars");
+
+  /**
+   * Runs one step whose completions are ALL empty, so the model-failure
+   * path is the only exit, and returns the rejection for inspection.
+   *
+   * `servedTransport` stamps the completion the way the fallback chain
+   * wrapper does on a cross-transport fallover, so the configured
+   * transport and the effective one disagree.
+   */
+  async function runEmptyStep(opts: {
+    toolTransport: "grammar" | "native_tools";
+    servedTransport?: "grammar" | "native_tools";
+  }) {
+    const registry = new ToolRegistry();
+    registry.register(replyTool);
+    const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE, grammarsDir);
+    return executeStep(
+      {
+        session: createEmptySessionState({
+          id: "s-transport-tag",
+          workingDir: "/w",
+        }),
+        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        stepIndex: 0,
+        signal: new AbortController().signal,
+        userMessage: "hi",
+      },
+      {
+        registry,
+        slotManager: new SlotManager(2),
+        llmComplete: async () => ({
+          content: "",
+          reasoningContent: "",
+          stop: true,
+          truncated: false,
+          timing: {
+            promptMs: 1,
+            predictedMs: 1,
+            promptTokens: 20,
+            predictedTokens: 0,
+          },
+          cacheHitTokens: 0,
+          slotId: 0,
+          modelId: "mock",
+          ...(opts.servedTransport === undefined
+            ? {}
+            : { servedTransport: opts.servedTransport }),
+        }),
+        grammar,
+        profile: PLAIN_INSTRUCT_PROFILE,
+        toolTransport: opts.toolTransport,
+        toolCallAdapter: null,
+        supportsSlotAffinity: false,
+      },
+    );
+  }
+
+  it("tags a native_tools empty completion with transport=native_tools", async () => {
+    // Sentry CLI-BA: `reason=empty` on native_tools is the by-design
+    // route (nothing in any channel), so the tag has to say so.
+    await expect(
+      runEmptyStep({ toolTransport: "native_tools" }),
+    ).rejects.toMatchObject({
+      name: "ModelError",
+      reason: "empty",
+      transport: "native_tools",
+    });
+  });
+
+  it("tags a twice-empty grammar completion with transport=grammar", async () => {
+    // Same `reason=empty`, materially different story: the one-shot
+    // repair ran and came back empty too.
+    await expect(
+      runEmptyStep({ toolTransport: "grammar" }),
+    ).rejects.toMatchObject({
+      name: "ModelError",
+      reason: "empty",
+      transport: "grammar",
+    });
+  });
+
+  it("reports the SERVED transport, not the configured one, on a cross-transport fallover", async () => {
+    // Configured native_tools, served by a grammar link: the response is
+    // parsed as grammar, so the tag must read grammar.
+    await expect(
+      runEmptyStep({
+        toolTransport: "native_tools",
+        servedTransport: "grammar",
+      }),
+    ).rejects.toMatchObject({
+      name: "ModelError",
+      reason: "empty",
+      transport: "grammar",
+    });
+
+    // And the mirror image: configured grammar, served by a native link.
+    await expect(
+      runEmptyStep({
+        toolTransport: "grammar",
+        servedTransport: "native_tools",
+      }),
+    ).rejects.toMatchObject({
+      name: "ModelError",
+      reason: "empty",
+      transport: "native_tools",
+    });
+  });
+});
+
+describe("executeStep ModelError failure-stage tag", () => {
+  const grammarsDir = join(process.cwd(), "grammars");
+
+  /**
+   * Runs one step over a scripted list of completions (index 0 is the
+   * initial call, index 1 the one-shot repair) and reports how many LLM
+   * calls actually happened, so a test can prove *which* throw site
+   * fired rather than only what it threw.
+   */
+  async function runScriptedStep(opts: {
+    toolTransport: ToolCallTransport;
+    completions: Array<Partial<CompletionResult>>;
+  }) {
+    const registry = new ToolRegistry();
+    registry.register(replyTool);
+    const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE, grammarsDir);
+    let calls = 0;
+    const run = executeStep(
+      {
+        session: createEmptySessionState({
+          id: "s-failure-stage",
+          workingDir: "/w",
+        }),
+        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        stepIndex: 0,
+        signal: new AbortController().signal,
+        userMessage: "hi",
+      },
+      {
+        registry,
+        slotManager: new SlotManager(2),
+        llmComplete: async (): Promise<CompletionResult> => {
+          const scripted = opts.completions[calls] ?? { content: "" };
+          calls += 1;
+          return {
+            content: "",
+            reasoningContent: "",
+            stop: true,
+            truncated: false,
+            timing: {
+              promptMs: 1,
+              predictedMs: 1,
+              promptTokens: 20,
+              predictedTokens: 1,
+            },
+            cacheHitTokens: 0,
+            slotId: 0,
+            modelId: "mock",
+            ...scripted,
+          };
+        },
+        grammar,
+        profile: PLAIN_INSTRUCT_PROFILE,
+        toolTransport: opts.toolTransport,
+        toolCallAdapter: null,
+        supportsSlotAffinity: false,
+      },
+    );
+    return { run, calls: () => calls };
+  }
+
+  it("tags the first-attempt throw with stage=initial", async () => {
+    // native_tools, nothing in any channel: the by-design route, and the
+    // step ends on the first completion (no repair round-trip).
+    const { run, calls } = await runScriptedStep({
+      toolTransport: "native_tools",
+      completions: [{ content: "", reasoningContent: "" }],
+    });
+    await expect(run).rejects.toMatchObject({
+      name: "ModelError",
+      reason: "empty",
+      transport: "native_tools",
+      stage: "initial",
+    });
+    expect(calls()).toBe(1);
+  });
+
+  it("tags the post-repair throw with stage=repair on the SAME reason+transport pair", async () => {
+    // The counterexample to "native_tools + reason=empty means the
+    // by-design route": `content` empty but `reasoning_content` present
+    // satisfies `isNativeToolsEmptyCompletionHandledByParser`, so the
+    // first throw site does NOT fire. The parse then fails, the one-shot
+    // repair runs, the repair comes back with nothing in any channel,
+    // and the SECOND site throws the identical
+    // reason=empty + transport=native_tools pair. `stage` is the only
+    // field that separates them — the Sentry fingerprint cannot, because
+    // it keys off a frame basename and the shipped build is one file.
+    const { run, calls } = await runScriptedStep({
+      toolTransport: "native_tools",
+      completions: [
+        { content: "", reasoningContent: "Hmm, let me consider the options." },
+        { content: "", reasoningContent: "" },
+      ],
+    });
+    await expect(run).rejects.toMatchObject({
+      name: "ModelError",
+      reason: "empty",
+      transport: "native_tools",
+      stage: "repair",
+    });
+    expect(calls()).toBe(2);
+  });
+
+  it("tags a twice-empty grammar step with stage=repair", async () => {
+    const { run, calls } = await runScriptedStep({
+      toolTransport: "grammar",
+      completions: [{ content: "" }, { content: "" }],
+    });
+    await expect(run).rejects.toMatchObject({
+      name: "ModelError",
+      reason: "empty",
+      transport: "grammar",
+      stage: "repair",
+    });
+    expect(calls()).toBe(2);
+  });
+});
+
+describe("executeStep repair parse transport", () => {
+  const grammarsDir = join(process.cwd(), "grammars");
+
+  it("parses the REPAIR completion under the served transport, not the configured one", async () => {
+    // Guards the `retryParseDeps` hoist at the repair-path parse: passing
+    // the configured `deps` there instead makes the retry parse lose
+    // served-transport awareness, which no other test notices.
+    //
+    // Configured grammar, served by a native link. The repair answers the
+    // way a native link does — empty `content`, the call in `tool_calls`
+    // — so a grammar-shaped parse sees an empty body and the step dies
+    // with a GrammarError instead of replying.
+    const registry = new ToolRegistry();
+    registry.register(replyTool);
+    const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE, grammarsDir);
+    let calls = 0;
+    const outcome = await executeStep(
+      {
+        session: createEmptySessionState({
+          id: "s-repair-served-transport",
+          workingDir: "/w",
+        }),
+        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        stepIndex: 0,
+        signal: new AbortController().signal,
+        userMessage: "hi",
+      },
+      {
+        registry,
+        slotManager: new SlotManager(2),
+        llmComplete: async (): Promise<CompletionResult> => {
+          calls += 1;
+          if (calls === 1) {
+            // Reasoning-only: survives the first-attempt ModelError check
+            // (native rules), fails the parse, routes into the repair.
+            return {
+              content: "",
+              reasoningContent: "I should answer, but I forgot the call.",
+              stop: true,
+              truncated: false,
+              timing: {
+                promptMs: 1,
+                predictedMs: 1,
+                promptTokens: 20,
+                predictedTokens: 5,
+              },
+              cacheHitTokens: 0,
+              slotId: 0,
+              modelId: "mock",
+              servedTransport: "native_tools",
+            };
+          }
+          return {
+            content: "",
+            reasoningContent: "",
+            stop: true,
+            truncated: false,
+            timing: {
+              promptMs: 1,
+              predictedMs: 1,
+              promptTokens: 20,
+              predictedTokens: 5,
+            },
+            cacheHitTokens: 0,
+            slotId: 0,
+            modelId: "mock",
+            servedTransport: "native_tools",
+            toolCalls: [
+              {
+                id: "call-repair",
+                type: "function",
+                function: {
+                  name: "reply",
+                  arguments: JSON.stringify({ text: "served-native" }),
+                },
+              },
+            ],
+          };
+        },
+        grammar,
+        profile: PLAIN_INSTRUCT_PROFILE,
+        toolTransport: "grammar",
+        toolCallAdapter: null,
+        supportsSlotAffinity: false,
+      },
+    );
+
+    expect(calls).toBe(2);
+    expect(outcome.toolCalls).toHaveLength(1);
+    expect(outcome.toolCalls[0]!.tool).toBe("reply");
+    expect(outcome.toolCalls[0]!.args).toEqual({ text: "served-native" });
+    expect(outcome.toolResults[0]!.status).toBe("ok");
   });
 });

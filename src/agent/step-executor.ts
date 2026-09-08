@@ -529,6 +529,14 @@ async function executeStepInner(
       throw new ModelError(
         initialModelFailure.reason,
         initialModelFailure.message,
+        // Effective transport, not `deps.toolTransport`: on a
+        // cross-transport fallover the served link is the one whose
+        // rules decided this completion is terminal.
+        //
+        // `stage: "initial"` is the other half of the split: the same
+        // `reason` + `transport` pair is also raised after the one-shot
+        // repair below, and only this field tells the two apart.
+        { transport: initialParseDeps.toolTransport, stage: "initial" },
       );
     }
     if (repairable) {
@@ -827,10 +835,11 @@ async function executeStepInner(
     // failure, not a grammar one — no point emitting `GrammarError` for
     // an empty body.
     const retryModelFailure = detectModelFailure(completion);
+    const retryParseDeps = parseDepsFor(completion, deps);
     if (
       retryModelFailure !== null &&
       !isNativeToolsEmptyCompletionHandledByParser(
-        parseDepsFor(completion, deps),
+        retryParseDeps,
         retryModelFailure.reason,
         completion,
       )
@@ -843,14 +852,20 @@ async function executeStepInner(
       throw new ModelError(
         retryModelFailure.reason,
         retryModelFailure.message,
+        // Same rule as the first-attempt throw: report the transport that
+        // served this completion, not the configured one.
+        //
+        // `stage: "repair"` — reached only after the one-shot repair ran,
+        // including the `native_tools` case where the first attempt was
+        // `content`-empty but carried `reasoning_content` (so the
+        // first-attempt throw was skipped) and the repair came back with
+        // nothing in any channel. Same `reason=empty`, same
+        // `transport=native_tools`, different story.
+        { transport: retryParseDeps.toolTransport, stage: "repair" },
       );
     }
 
-    parsed = tryParseToolCalls(
-      completion,
-      deps.profile,
-      parseDepsFor(completion, deps),
-    );
+    parsed = tryParseToolCalls(completion, deps.profile, retryParseDeps);
     if (ctx.terminalOnly && parsed.ok) {
       const nonTerminal = parsed.batch.calls.find(
         ({ tool }) => tool !== "reply" && tool !== "finish",

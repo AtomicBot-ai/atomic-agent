@@ -1,6 +1,7 @@
 export type {
   LlmFailureCategory,
   ModelFailureReason,
+  ModelFailureStage,
 } from "./failure-category.js";
 export {
   CancelledError,
@@ -10,7 +11,10 @@ export {
   ToolExecutionError,
   TransportError,
 } from "./llm-failures.js";
-export type { LlmFailureOptions } from "./llm-failures.js";
+export type {
+  LlmFailureOptions,
+  ModelErrorOptions,
+} from "./llm-failures.js";
 export { classifyFailure } from "./classify-failure.js";
 // `looksLikeDroppedConnection` is deliberately NOT re-exported: it is the
 // classifier's own key, used inside `network-error.ts` by `isNetworkError`
