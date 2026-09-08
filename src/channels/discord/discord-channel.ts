@@ -160,6 +160,17 @@ export class DiscordChannel {
       return;
     }
     if (type !== "MESSAGE_CREATE" || this.botUserId === null) return;
+    // Logged before any drop decision: when a bot "does not answer",
+    // the first thing to establish is whether the message reached us at
+    // all (gateway/intents) or was deliberately ignored (not addressed,
+    // not the owner). Without this the two are indistinguishable.
+    const msg = data as DiscordMessageEvent;
+    this.deps.logger.info("discord: message received", {
+      channelId: msg.channel_id,
+      authorId: msg.author?.id,
+      isDm: msg.guild_id === undefined,
+      mentionsBot: msg.mentions?.some((m) => m.id === this.botUserId) === true,
+    });
     await handleDiscordMessage(data as DiscordMessageEvent, {
       runtime: this.deps.runtime,
       api,

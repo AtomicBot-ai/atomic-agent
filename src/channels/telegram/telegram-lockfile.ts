@@ -44,8 +44,11 @@ export class TelegramLockfile implements ChannelLock {
       pid !== process.pid &&
       isAlive(pid)
     ) {
+      // Names the cause and the fix: this surfaces verbatim in the
+      // Integrations pane, where "lockfile held by live pid 123" reads
+      // as a crash rather than as "you already have one running".
       throw new Error(
-        `telegram lockfile held by live pid ${pid} at ${this.path}`,
+        `another atomic-agent (pid ${pid}) is already running the Telegram channel — stop it first`,
       );
     }
     writeFileSync(this.path, String(process.pid), { flag: "w" });

@@ -27,7 +27,7 @@ export class DiscordLockfile {
     const holder = this.readPid();
     if (holder !== null && holder !== process.pid && isAlive(holder)) {
       throw new Error(
-        `another atomic-agent process (pid ${holder}) is already running the Discord channel`,
+        `another atomic-agent (pid ${holder}) is already running the Discord channel — stop it first`,
       );
     }
     // Stale (or ours): reclaim it.

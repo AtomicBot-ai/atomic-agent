@@ -8,13 +8,16 @@ const OWNER = "ownerUserId";
 const BOTH = [TOKEN, OWNER];
 const VALID = `123456789:${"A".repeat(35)}`;
 
-function ctx(present: string[], channel?: string) {
+function ctx(present: string[], channel?: string, error?: string) {
   return {
     presentFields: new Set(present),
     configured: BOTH.every((f) => present.includes(f)),
     ...(channel === undefined
       ? {}
       : { channelStates: new Map([["telegram", channel]]) }),
+    ...(error === undefined
+      ? {}
+      : { channelErrors: new Map([["telegram", error]]) }),
   };
 }
 
@@ -76,3 +79,19 @@ describe("telegramIntegration", () => {
     expect(telegramIntegration.appliesLive).toBe(true);
   });
 });
+
+  it("shows the channel's own failure reason", () => {
+    // "channel failed to start" told the operator nothing the badge did
+    // not already say. The channel knows why -- a held lock, a rejected
+    // token -- and that is the only part worth the screen space.
+    const status = telegramIntegration.status(
+      ctx(BOTH, "down", "another atomic-agent (pid 42) is already running the Telegram channel — stop it first"),
+    );
+    expect(status.detail).toMatch(/already running/);
+  });
+
+  it("falls back to a plain reason when the channel has none", () => {
+    expect(telegramIntegration.status(ctx(BOTH, "down")).detail).toBe(
+      "channel failed to start",
+    );
+  });

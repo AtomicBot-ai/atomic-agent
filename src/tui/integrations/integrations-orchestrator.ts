@@ -61,10 +61,19 @@ export class IntegrationsOrchestrator {
     // way, so a token that is saved but not running reads differently
     // from one that is.
     const channelStates = new Map<string, string>();
+    const channelErrors = new Map<string, string>();
     const telegram = this.runtime.telegramChannel;
-    if (telegram) channelStates.set("telegram", telegram.state());
+    if (telegram) {
+      channelStates.set("telegram", telegram.state());
+      const err = telegram.lastError();
+      if (err) channelErrors.set("telegram", err);
+    }
     const discord = this.runtime.discordChannel;
-    if (discord) channelStates.set("discord", discord.state());
+    if (discord) {
+      channelStates.set("discord", discord.state());
+      const err = discord.lastError();
+      if (err) channelErrors.set("discord", err);
+    }
     return listIntegrations().map((descriptor) => {
       const present = presentFieldKeys(
         descriptor,
@@ -78,6 +87,7 @@ export class IntegrationsOrchestrator {
           .every((f) => present.has(f.key)),
         mcpServerStates,
         channelStates,
+        channelErrors,
       };
       const status = descriptor.status(statusCtx);
       const fields: IntegrationFieldRow[] = descriptor.fields.map((field) => ({

@@ -87,7 +87,9 @@ export const discordIntegration: IntegrationDescriptor = {
       case "down":
         return {
           level: "error",
-          detail: "gateway failed — see the Discord tab",
+          // The channel's own reason, not a generic line pointing at a
+          // tab that does not exist.
+          detail: ctx.channelErrors?.get("discord") ?? "gateway failed",
         };
       case "starting":
         return { level: "configured", detail: "connecting" };

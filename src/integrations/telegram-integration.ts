@@ -98,7 +98,11 @@ export const telegramIntegration: IntegrationDescriptor = {
       case "up":
         return { level: "connected", detail: "channel up" };
       case "down":
-        return { level: "error", detail: "channel failed to start" };
+        return {
+          level: "error",
+          detail:
+            ctx.channelErrors?.get("telegram") ?? "channel failed to start",
+        };
       case "starting":
         return { level: "configured", detail: "starting" };
       default:

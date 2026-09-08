@@ -9,13 +9,16 @@ const OWNER = "ownerUserId";
 const BOTH = [TOKEN, OWNER];
 const VALID = `${"M".repeat(24)}.GaBcDe.${"z".repeat(30)}`;
 
-function ctx(present: string[], channel?: string) {
+function ctx(present: string[], channel?: string, error?: string) {
   return {
     presentFields: new Set(present),
     configured: BOTH.every((f) => present.includes(f)),
     ...(channel === undefined
       ? {}
       : { channelStates: new Map([["discord", channel]]) }),
+    ...(error === undefined
+      ? {}
+      : { channelErrors: new Map([["discord", error]]) }),
   };
 }
 
@@ -70,4 +73,29 @@ describe("discordIntegration", () => {
     const validate = discordIntegration.fields[1]?.validate;
     expect(validate?.("123456789012345678")).toBeUndefined();
     expect(validate?.("nope")).toMatch(/Developer Mode/);
+  });
+
+  it("shows the channel's own failure reason, not a generic line", () => {
+    // This used to read "gateway failed — see the Discord tab", which
+    // was useless twice over: it told the operator nothing actionable,
+    // and it pointed at a tab that does not exist.
+    const status = discordIntegration.status(
+      ctx(BOTH, "down", "another atomic-agent (pid 42) is already running the Discord channel — stop it first"),
+    );
+    expect(status.level).toBe("error");
+    expect(status.detail).toMatch(/already running/);
+    expect(status.detail).not.toMatch(/Discord tab/);
+  });
+
+  it("never points at a tab that does not exist", () => {
+    for (const state of [undefined, "up", "down", "starting", "disabled"]) {
+      const d = discordIntegration.status(ctx(BOTH, state)).detail ?? "";
+      expect(d).not.toMatch(/Discord tab/);
+    }
+  });
+
+  it("falls back to a plain reason when the channel has none", () => {
+    expect(discordIntegration.status(ctx(BOTH, "down")).detail).toBe(
+      "gateway failed",
+    );
   });

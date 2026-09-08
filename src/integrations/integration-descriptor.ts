@@ -93,6 +93,15 @@ export interface IntegrationStatusContext {
    * runtime is not available (e.g. in tests).
    */
   channelStates?: ReadonlyMap<string, string>;
+  /**
+   * Last error per channel, straight from `channel.lastError()`.
+   *
+   * A status line that says "channel failed to start" tells the
+   * operator nothing they cannot already see from the badge. The
+   * channel knows *why* — a held lock, a rejected token, disallowed
+   * intents — and that is the only part worth screen space.
+   */
+  channelErrors?: ReadonlyMap<string, string>;
 }
 
 /**
