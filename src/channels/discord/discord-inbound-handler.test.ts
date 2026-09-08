@@ -1,11 +1,27 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
+import { createAttachmentInbox } from "../attachments/inbox.js";
 import {
+  DISCORD_ATTACHMENT_DOWNLOAD_LIMIT_BYTES,
   handleDiscordMessage,
   stripMention,
+  type DiscordAttachment,
   type DiscordInboundContext,
   type DiscordMessageEvent,
 } from "./discord-inbound-handler.js";
+
+let inboxDir: string;
+
+beforeEach(() => {
+  inboxDir = mkdtempSync(join(tmpdir(), "atomic-discord-inbox-"));
+});
+
+afterEach(() => {
+  rmSync(inboxDir, { recursive: true, force: true });
+});
 
 const BOT = "999";
 const OWNER = "111";
@@ -47,6 +63,7 @@ function makeCtx(
     ownerUserId: OWNER,
     botUserId: BOT,
     inflight: new Map(),
+    inbox: createAttachmentInbox({ dir: inboxDir }),
     ...overrides,
   } as unknown as DiscordInboundContext;
   return Object.assign(ctx, { sent, runTurn });
@@ -196,5 +213,141 @@ describe("handleDiscordMessage", () => {
     const ctx = makeCtx();
     await handleDiscordMessage(msg(), ctx);
     expect(ctx.inflight.size).toBe(0);
+  });
+});
+
+const PNG_BYTES = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+
+function attachment(over: Partial<DiscordAttachment> = {}): DiscordAttachment {
+  return {
+    id: "a1",
+    filename: "shot.png",
+    size: PNG_BYTES.byteLength,
+    url: "https://cdn.discordapp.com/attachments/1/2/shot.png?ex=1&is=2&hm=3",
+    content_type: "image/png",
+    ...over,
+  };
+}
+
+describe("handleDiscordMessage with attachments", () => {
+  it("saves an attachment-only DM into the inbox and tells the agent where it is", async () => {
+    const downloadAttachment = vi.fn(async () => PNG_BYTES);
+    const ctx = makeCtx({ downloadAttachment });
+    await handleDiscordMessage(
+      msg({ content: "", attachments: [attachment()] }),
+      ctx,
+    );
+
+    expect(downloadAttachment).toHaveBeenCalledWith(attachment().url);
+    expect(ctx.runTurn).toHaveBeenCalledOnce();
+    const message = ctx.runTurn.mock.calls[0]![1];
+    expect(message).toMatch(/^The user sent a file without a message\.\n\n\[attachments\]\n- /);
+    const path = /^- (\S+) \(image\/png, 4 B\)$/m.exec(message)?.[1];
+    expect(path).toBeDefined();
+    expect(path!.startsWith(inboxDir)).toBe(true);
+    expect(path!.endsWith("-shot.png")).toBe(true);
+    expect(readFileSync(path!)).toEqual(Buffer.from(PNG_BYTES));
+    expect(ctx.sent).toEqual(["done"]);
+  });
+
+  it("leads with the message text when there is one", async () => {
+    const ctx = makeCtx({ downloadAttachment: async () => PNG_BYTES });
+    await handleDiscordMessage(
+      msg({ content: "what is on this screenshot?", attachments: [attachment()] }),
+      ctx,
+    );
+    const message = ctx.runTurn.mock.calls[0]![1];
+    expect(message.startsWith("what is on this screenshot?\n\n[attachments]\n")).toBe(true);
+    expect(message).toContain("vision.describe");
+  });
+
+  it("handles a guild @mention carrying a file", async () => {
+    const ctx = makeCtx({ downloadAttachment: async () => PNG_BYTES });
+    await handleDiscordMessage(
+      msg({
+        guild_id: "g1",
+        content: `<@${BOT}> review this`,
+        mentions: [{ id: BOT }],
+        attachments: [attachment({ filename: "notes.txt", content_type: "text/plain" })],
+      }),
+      ctx,
+    );
+    const message = ctx.runTurn.mock.calls[0]![1];
+    expect(message.startsWith("review this\n\n")).toBe(true);
+    expect(message).toMatch(/-notes\.txt \(text\/plain, 4 B\)/);
+  });
+
+  it("saves every file of a multi-attachment message into one turn", async () => {
+    const ctx = makeCtx({ downloadAttachment: async () => PNG_BYTES });
+    await handleDiscordMessage(
+      msg({
+        content: "",
+        attachments: [attachment({ id: "1", filename: "a.png" }), attachment({ id: "2", filename: "b.png" })],
+      }),
+      ctx,
+    );
+    expect(ctx.runTurn).toHaveBeenCalledOnce();
+    const message = ctx.runTurn.mock.calls[0]![1];
+    expect(message).toMatch(/^The user sent 2 files without a message\./);
+    expect(message.match(/^- .*-(a|b)\.png \(image\/png, 4 B\)$/gm)).toHaveLength(2);
+  });
+
+  it("reports a failed download and still dispatches the text", async () => {
+    const ctx = makeCtx({
+      downloadAttachment: async () => {
+        throw new Error("Discord CDN returned HTTP 404");
+      },
+    });
+    await handleDiscordMessage(
+      msg({ content: "summarise", attachments: [attachment()] }),
+      ctx,
+    );
+    expect(ctx.sent[0]).toBe("Could not receive shot.png: Discord CDN returned HTTP 404");
+    expect(ctx.runTurn).toHaveBeenCalledOnce();
+    const message = ctx.runTurn.mock.calls[0]![1];
+    expect(message).toContain("summarise");
+    expect(message).toContain("- shot.png: not saved (Discord CDN returned HTTP 404)");
+  });
+
+  it("a failed download with no text ends at the notice", async () => {
+    const ctx = makeCtx({
+      downloadAttachment: async () => {
+        throw new Error("boom");
+      },
+    });
+    await handleDiscordMessage(msg({ content: "", attachments: [attachment()] }), ctx);
+    expect(ctx.runTurn).not.toHaveBeenCalled();
+    expect(ctx.sent).toEqual(["Could not receive shot.png: boom"]);
+  });
+
+  it("refuses a file over the inbound limit without downloading it", async () => {
+    const downloadAttachment = vi.fn(async () => PNG_BYTES);
+    const ctx = makeCtx({ downloadAttachment });
+    await handleDiscordMessage(
+      msg({
+        content: "",
+        attachments: [
+          attachment({ filename: "huge.iso", size: DISCORD_ATTACHMENT_DOWNLOAD_LIMIT_BYTES + 1 }),
+        ],
+      }),
+      ctx,
+    );
+    expect(downloadAttachment).not.toHaveBeenCalled();
+    expect(ctx.runTurn).not.toHaveBeenCalled();
+    expect(ctx.sent).toEqual([
+      "Could not receive huge.iso: over the 50.0 MB inbound limit",
+    ]);
+  });
+
+  it("drops attachments from anyone but the owner without touching the CDN", async () => {
+    const downloadAttachment = vi.fn(async () => PNG_BYTES);
+    const ctx = makeCtx({ downloadAttachment });
+    await handleDiscordMessage(
+      msg({ author: { id: "impostor" }, content: "", attachments: [attachment()] }),
+      ctx,
+    );
+    expect(downloadAttachment).not.toHaveBeenCalled();
+    expect(ctx.runTurn).not.toHaveBeenCalled();
+    expect(ctx.sent).toEqual([]);
   });
 });

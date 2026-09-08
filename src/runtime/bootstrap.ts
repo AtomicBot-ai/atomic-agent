@@ -3005,6 +3005,7 @@ export async function createAgentRuntime(
     enabled: config.discord.enabled,
     ownerUserId: config.discord.ownerUserId,
     sessionPointerPath: resolve(config.paths.stateDir, "discord-session.json"),
+    inboxDir: resolve(config.paths.stateDir, "inbox", "discord"),
     lock: new DiscordLockfile(resolve(config.paths.stateDir, "discord.lock")),
     onStatus: (status) => options.handlers?.onChannelStatus?.(status),
   });

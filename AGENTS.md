@@ -1850,6 +1850,10 @@ A Discord bot that relays DMs and @mentions to the agent and posts replies back 
 
 The channel talks to Discord over the raw HTTP + Gateway APIs using Node's built-in `fetch` and `WebSocket`. It needs six REST calls and one WebSocket state machine; `discord.js` would add a large transitive tree to a project that ships a single-file SEA binary, for code we would still have to wrap. Same reasoning as declining `@composio/core`.
 
+### Attachments (inbound)
+
+Files on a DM or an @mention are **downloaded and saved before the turn starts**, and the agent gets the path — the same contract as the Telegram channel, through the same channel-agnostic inbox ([src/channels/attachments/inbox.ts](src/channels/attachments/inbox.ts)): `<stateDir>/inbox/discord/<yyyy-mm-dd>/<HHMMSS>-<name>`, sanitised names, `wx` writes, never the session working directory. Discord delivers `attachments[]` without the privileged intent in exactly the two cases the channel acts on, so nothing new is requested from the gateway. The CDN URLs are signed and expire, so `handleDiscordMessage` fetches them immediately (in parallel, 60 s timeout) via `ctx.downloadAttachment` — a seam the tests replace. A message with files is always a request about those files: the text (empty or not, even command-shaped) becomes the caption of one turn whose `[attachments]` block names every saved path. A file the channel cannot fetch, or one over `DISCORD_ATTACHMENT_DOWNLOAD_LIMIT_BYTES` (50 MB — a sanity cap, not a Discord limit), is reported in the chat as `Could not receive <name>: <reason>`; with text present the turn still runs with a `not saved` line, without text it ends at the notice.
+
 Locked invariants (pinned by [src/channels/discord/discord-inbound-handler.test.ts](src/channels/discord/discord-inbound-handler.test.ts), [discord-gateway.test.ts](src/channels/discord/discord-gateway.test.ts), [discord-approval-bridge.test.ts](src/channels/discord/discord-approval-bridge.test.ts), [discord-channel.test.ts](src/channels/discord/discord-channel.test.ts), [discord-lockfile.test.ts](src/channels/discord/discord-lockfile.test.ts)):
 
 1. **Addressed messages only.** In a guild the bot acts only when @mentioned; in a DM, always. Anything from itself or another bot is dropped outright — two agents in one guild would otherwise talk to each other forever.
@@ -1861,6 +1865,7 @@ Locked invariants (pinned by [src/channels/discord/discord-inbound-handler.test.
 7. **A missing token is `disabled`, not `down`.** An unconfigured integration is a resting state; reporting it as a failure trains the operator to ignore the badge.
 8. **Reconnect, but not forever.** Drops retry with full-jitter exponential backoff and RESUME where Discord allows it; the codes Discord will never accept a retry for (4004 bad token, 4014 disallowed intents) stop the loop and surface instead of burning the per-day session-start budget.
 9. **One process per token.** `DiscordLockfile` guards it: two gateways on one token receive every event twice and would run every turn twice, side effects included. Discord does not prevent this the way Telegram's 409 does.
+10. **Inbound files land in `<stateDir>/inbox/discord/`, never in the working directory, and a file the channel cannot fetch is reported in the chat, never dropped silently.** The agent is told every saved path in an `[attachments]` block; all files on one message share one turn.
 
 ## Integrations hub
 
