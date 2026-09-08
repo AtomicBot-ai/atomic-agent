@@ -8,6 +8,7 @@ import {
 import {
   MAX_CMD_COMMAND_LINE,
   resolveWindowsCliInvocation,
+  SHIM_SUBSTITUTION_MARGIN,
 } from "./windows-cli-shim.js";
 
 const WIN_ENV = {
@@ -46,15 +47,22 @@ function onWindows(
   present: readonly string[] = [],
   env: NodeJS.ProcessEnv = WIN_ENV,
   readTarget: (path: string) => string | null = () => NPM_CMD_SHIM,
+  undeterminable: readonly string[] = [],
 ) {
   const set = new Set(present.map((p) => p.toLowerCase()));
+  const unknown = new Set(undeterminable.map((p) => p.toLowerCase()));
   return resolveWindowsCliInvocation({
     binary,
     args,
     platform: "win32",
     env,
     installHint: "Install Claude Code.",
-    fileExists: (p) => set.has(p.toLowerCase()),
+    fileStatus: (p) =>
+      set.has(p.toLowerCase())
+        ? "present"
+        : unknown.has(p.toLowerCase())
+          ? "unknown"
+          : "absent",
     readTarget,
   });
 }
@@ -68,7 +76,7 @@ describe("resolveWindowsCliInvocation on posix", () => {
           args: ["--print", "--json-schema", '{"a":1}'],
           platform,
           env: {},
-          fileExists: () => true,
+          fileStatus: () => "present",
         }),
       ).toEqual({
         command: "claude",
@@ -280,9 +288,66 @@ describe("command lines cmd.exe cannot carry", () => {
     );
   });
 
+  /** The whole command line, as Node hands it to CreateProcess. */
+  function lineLength(
+    xs: number,
+    readTarget: (path: string) => string | null = () => NPM_CMD_SHIM,
+  ): number {
+    const out = onWindows(
+      target,
+      ["x".repeat(xs)],
+      [target],
+      WIN_ENV,
+      readTarget,
+    );
+    return [out.command, ...out.args].join(" ").length;
+  }
+
   it("stays under cmd's limit for an argument that only just fits", () => {
-    const out = onWindows(target, ["x".repeat(8_000)], [target]);
+    const out = onWindows(target, ["x".repeat(7_000)], [target]);
     expect([out.command, ...out.args].join(" ").length).toBeLessThanOrEqual(
+      MAX_CMD_COMMAND_LINE,
+    );
+  });
+
+  /**
+   * The boundary itself, not "somewhere around there": with 8000 and
+   * 9000 on either side, `length <= MAX` and `length <= MAX + 1` are
+   * indistinguishable.
+   */
+  it("pins the last command line cmd.exe accepts, character for character", () => {
+    const argless = () => ARGLESS_BAT;
+    expect(lineLength(8_129, argless)).toBe(MAX_CMD_COMMAND_LINE - 1);
+    expect(lineLength(8_130, argless)).toBe(MAX_CMD_COMMAND_LINE);
+    expect(() =>
+      onWindows(target, ["x".repeat(8_131)], [target], WIN_ENV, argless),
+    ).toThrow(/is 8192 characters and only 8191 are usable/);
+  });
+
+  /**
+   * The outer line is not the only one with a limit. A shim that
+   * substitutes `%*` builds a second command line —
+   * `"%_prog%" "%dp0%\…\cli.js" <args>` — which cmd parses under the
+   * same 8191, and whose ~170-character prefix outweighs what the
+   * arguments lose when one `^` layer is stripped off them. Measured
+   * against the real global `claude.cmd`, the outer line passed at 8116
+   * while the inner one was already 8192: a ~76-character window in
+   * which this check said yes and cmd then answered "The input line is
+   * too long." So the substituting case is charged a margin.
+   */
+  it("holds a margin back for the line the shim itself builds", () => {
+    const budget = MAX_CMD_COMMAND_LINE - SHIM_SUBSTITUTION_MARGIN;
+    expect(lineLength(7_614)).toBe(budget);
+    expect(() => onWindows(target, ["x".repeat(7_615)], [target])).toThrow(
+      new RegExp(`only ${budget} are usable`),
+    );
+    // The reviewed hole: accepted before, rejected now.
+    expect(() => onWindows(target, ["x".repeat(8_019)], [target])).toThrow(
+      SubscriptionCliCommandLineError,
+    );
+    // A batch file that never re-substitutes builds no second line and
+    // pays no margin: the very same argument goes through.
+    expect(lineLength(8_019, () => ARGLESS_BAT)).toBeLessThanOrEqual(
       MAX_CMD_COMMAND_LINE,
     );
   });
@@ -327,6 +392,140 @@ describe("command lines cmd.exe cannot carry", () => {
     // Well under the adapter's 32 KB argv budget, well over cmd's 8191.
     expect(() => onWindows(target, schemaArgs(100), [target])).toThrow(
       SubscriptionCliCommandLineError,
+    );
+  });
+});
+
+/**
+ * The CRT escaping was two regex passes and is now one scan, because the
+ * quote rule — `arg.replace(/(\\*)"/g, …)` — is quadratic on a run of
+ * backslashes that never reaches a quote, and this runs synchronously on
+ * the TUI's event loop in the spawn path. The rules themselves must not
+ * have moved a character: cross-spawn's own 7.0.5 "fix" for the same
+ * ReDoS changed the trailing-backslash semantics and under-doubles, so
+ * "it matches cross-spawn" is not the check. This is.
+ */
+describe("the escaping rewrite is a rewrite, not a change", () => {
+  const target = "C:\\npm\\claude.cmd";
+  const META = /([()\][%!^"`<>&|;, *?])/g;
+
+  /** The previous implementation, verbatim. */
+  function referenceEscape(arg: string, doubleEscape: boolean): string {
+    let escaped = arg.replace(/(\\*)"/g, '$1$1\\"');
+    escaped = escaped.replace(/(\\*)$/, "$1$1");
+    escaped = `"${escaped}"`;
+    escaped = escaped.replace(META, "^$1");
+    if (doubleEscape) escaped = escaped.replace(META, "^$1");
+    return escaped;
+  }
+
+  function escapeThrough(arg: string, doubleEscape: boolean): string {
+    const out = onWindows(target, [arg], [target], WIN_ENV, () =>
+      doubleEscape ? NPM_CMD_SHIM : ARGLESS_BAT,
+    );
+    return (out.args[3] ?? "").slice(1, -1).replace(`${target} `, "");
+  }
+
+  /** Deterministic corpus; no seed drift between runs or machines. */
+  function* corpus(): Generator<string> {
+    const alphabet = [
+      "\\", '"', "a", " ", "&", "^", "%", "|", "<", ">", "(", ")", "!", ",",
+      "*", "?", "`", ";", "[", "]", "{", "}", ":", "$", "~", "/",
+    ];
+    let seed = 0x2f6e2b1;
+    const next = () => {
+      seed ^= seed << 13;
+      seed ^= seed >>> 17;
+      seed ^= seed << 5;
+      return (seed >>> 0) / 0x100000000;
+    };
+    // Every string of length <= 2 over the alphabet, then random ones.
+    for (const a of alphabet) {
+      yield a;
+      for (const b of alphabet) yield a + b;
+    }
+    for (let i = 0; i < 20_000; i += 1) {
+      const length = 1 + Math.floor(next() * 12);
+      let value = "";
+      for (let j = 0; j < length; j += 1) {
+        value += alphabet[Math.floor(next() * alphabet.length)];
+      }
+      yield value;
+    }
+    yield "";
+    for (let run = 1; run <= 8; run += 1) {
+      yield "\\".repeat(run);
+      yield `a${"\\".repeat(run)}`;
+      yield `${"\\".repeat(run)}"b`;
+      yield `a${"\\".repeat(run)}"${"\\".repeat(run)}`;
+    }
+  }
+
+  it("agrees with the regex form on every input in a 21k corpus", () => {
+    let compared = 0;
+    for (const arg of corpus()) {
+      for (const doubleEscape of [false, true]) {
+        const expected = referenceEscape(arg, doubleEscape);
+        if (escapeThrough(arg, doubleEscape) !== expected) {
+          // Reported through `expect` so the failure names the input.
+          expect({ arg, doubleEscape, got: escapeThrough(arg, doubleEscape) })
+            .toEqual({ arg, doubleEscape, got: expected });
+        }
+        compared += 1;
+      }
+    }
+    expect(compared).toBeGreaterThan(40_000);
+  });
+
+  it("does not spend a second escaping an argument it then rejects", () => {
+    // 32k backslashes with no quote to end the run: 1.47 s of
+    // synchronous work under the regex form, before the length check
+    // that refuses the argument anyway.
+    const started = performance.now();
+    expect(() => onWindows(target, ["\\".repeat(32_000)], [target])).toThrow(
+      SubscriptionCliCommandLineError,
+    );
+    expect(performance.now() - started).toBeLessThan(400);
+  });
+});
+
+describe("targets that are there, missing, or unanswerable", () => {
+  it("hands a drive-relative target to cmd instead of walking PATH", () => {
+    // `C:claude.cmd` names the current directory *of drive C:*. It has
+    // no separator, so the PATH x PATHEXT walk used to swallow it,
+    // resolve nothing, and pass the raw `.cmd` to spawn — EINVAL, the
+    // very failure this shim exists to prevent.
+    const out = onWindows("C:claude.cmd", ["--print"], []);
+    expect(out.windowsVerbatimArguments).toBe(true);
+    expect(out.args[3]).toBe('"C:claude.cmd ^^^"--print^^^""');
+  });
+
+  it("does not call a binPath it was not allowed to stat 'not installed'", () => {
+    // `existsSync` answers `false` for EACCES/EPERM and for a UNC share
+    // that did not respond, so a working install under a restricted or
+    // network path came back as "was not found on PATH". Only a genuine
+    // ENOENT is absent; anything else goes to cmd, which can answer for
+    // itself.
+    const binPath = "\\\\fileserver\\tools\\claude.cmd";
+    const out = onWindows(binPath, ["--print"], [], WIN_ENV, () => null, [
+      binPath,
+    ]);
+    expect(out.command).toBe("C:\\Windows\\System32\\cmd.exe");
+    expect(out.args[3]).toBe(`"${binPath} ^^^"--print^^^""`);
+  });
+
+  it("still refuses one that is genuinely absent", () => {
+    expect(() => onWindows("C:\\gone\\claude.cmd", [], [])).toThrow(
+      SubscriptionCliNotInstalledError,
+    );
+  });
+
+  it("says where the unescapable character is when it is in the path", () => {
+    // "cannot be run through cmd.exe with this argument" sent the reader
+    // hunting through argv for something that is in the target's path.
+    const bad = "C:\\npm\\clau\u0000de.cmd";
+    expect(() => onWindows(bad, ["--print"], [bad])).toThrow(
+      /cannot be run through cmd\.exe at all: its resolved path contains a raw NUL/,
     );
   });
 });

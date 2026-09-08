@@ -45,7 +45,10 @@ export const streamCliCommand: CliStreamRunner = async function* (options) {
       env: process.env,
       shell: false,
       stdio: ["pipe", "pipe", "pipe"],
-      ...(process.platform === "win32" ? { windowsHide: true } : {}),
+      // `hostPlatform()`, not `process.platform`: the same seam the shim
+      // reads, so a faked win32 host produces the spawn options
+      // production would and a change to this line is visible to a test.
+      ...(hostPlatform() === "win32" ? { windowsHide: true } : {}),
       ...(invocation.windowsVerbatimArguments
         ? { windowsVerbatimArguments: true }
         : {}),
@@ -72,6 +75,10 @@ export const streamCliCommand: CliStreamRunner = async function* (options) {
   let stdinError: Error | null = null;
   let killTimer: NodeJS.Timeout | null = null;
   let settled = false;
+  // Set only when the tree-kill reports that the stop reached the
+  // descendants too. On Windows the direct child is `cmd.exe`, so its
+  // `close` says nothing about the CLI underneath it — this does.
+  let treeKilled = false;
 
   const stop = (reason: "timeout" | "abort" | "done") => {
     if (settled) return;
@@ -82,12 +89,23 @@ export const streamCliCommand: CliStreamRunner = async function* (options) {
     // Ctrl+C is the most routine thing in the TUI. `killProcessTree`
     // walks the tree with `taskkill /T` there and is a plain
     // `child.kill` everywhere else.
-    killProcessTree(child, { platform: hostPlatform() });
+    killProcessTree(child, {
+      platform: hostPlatform(),
+      onTreeKilled: (killed) => {
+        treeKilled = killed;
+      },
+    });
     // Escalate only if SIGTERM was not enough. A second `stop` (abort
     // followed by the generator's own cleanup) must not re-arm it, or
     // the first timer is orphaned and fires at a pid we no longer track.
     if (killTimer) return;
     killTimer = setTimeout(() => {
+      // Nothing left to force if the child is gone *and* the stop
+      // reached its descendants — the polite pass can report that late,
+      // since taskkill is a process of its own, and firing anyway would
+      // aim `/F` at a pid Windows may already have handed to somebody
+      // else. A child that merely ignored SIGTERM is still `!settled`.
+      if (settled && treeKilled) return;
       killProcessTree(child, { force: true, platform: hostPlatform() });
     }, SIGKILL_DELAY_MS);
     killTimer.unref?.();
@@ -198,7 +216,14 @@ export const streamCliCommand: CliStreamRunner = async function* (options) {
     // exit instead.
     if (killTimer) {
       const armed = killTimer;
-      const disarm = () => clearTimeout(armed);
+      // …and only once it is gone *with its descendants*. On Windows a
+      // polite pass that fell back to `child.kill` terminated the
+      // `cmd.exe` wrapper alone: `close` fires immediately, the CLI
+      // underneath is orphaned, and disarming here would be the last
+      // chance to reap it thrown away. `treeKilled` is the difference.
+      const disarm = () => {
+        if (treeKilled) clearTimeout(armed);
+      };
       // `.then(f, f)` rather than `.finally`: the latter returns a
       // promise that re-throws, and nobody is left to await it here.
       if (settled) disarm();
