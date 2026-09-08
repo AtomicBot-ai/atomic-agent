@@ -526,6 +526,11 @@ export function loadConfig(): AtomicAgentConfig {
       enabled: user.discord.enabled,
       ownerUserId: user.discord.ownerUserId,
     },
+    notifications: {
+      downloads: {
+        channel: user.notifications.downloads.channel,
+      },
+    },
     composio: {
       enabled: user.composio.enabled,
       apiKeyEnv: user.composio.apiKeyEnv,

@@ -47,6 +47,11 @@ function reducePanel(
       if (selected === panel.selected) return panel;
       return { ...panel, selected, selectedField: 0 };
     }
+    case "integrations_selected": {
+      const selected = panel.rows.findIndex((row) => row.id === action.id);
+      if (selected < 0) return panel;
+      return { ...panel, mode: "list", selected, selectedField: 0, editBuffer: "" };
+    }
     case "integrations_field_moved": {
       if (panel.mode !== "detail") return panel;
       const count = panel.rows[panel.selected]?.fields.length ?? 0;

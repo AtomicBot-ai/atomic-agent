@@ -12,6 +12,7 @@ import type {
   LocalModelRow,
   LocalModelsPanelMode,
   LocalModelsPullState,
+  LocalModelsNotifyPrompt,
 } from "./local-models-panel-state.js";
 
 export type LocalModelsAction =
@@ -48,6 +49,15 @@ export type LocalModelsAction =
       sizeLabel: string;
     }
   | { type: "local_models_embedding_onboarding_dismissed" }
+  | {
+      /**
+       * "Tell me when it lands?" — asked once, the first time a pull
+       * starts with no remembered answer, or on demand with `N`.
+       */
+      type: "local_models_notify_prompt_opened";
+      prompt: LocalModelsNotifyPrompt;
+    }
+  | { type: "local_models_notify_prompt_closed" }
   | { type: "local_models_pull_started"; pull: LocalModelsPullState }
   | {
       type: "local_models_pull_progress";

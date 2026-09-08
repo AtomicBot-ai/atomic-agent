@@ -376,6 +376,15 @@ export interface TuiAppCallbacks {
    * chat daemon.
    */
   onLocalModelsEmbeddingOnboardingResolved?(accept: boolean): void;
+  /**
+   * The "tell me when it lands?" prompt: `telegram` / `discord` arm the
+   * ping (or hop to that integration's setup when it has no credentials
+   * yet), `off` remembers "no". Dismissed = Esc, nothing remembered.
+   */
+  onLocalModelsNotifyChoice?(choice: "telegram" | "discord" | "off"): void;
+  onLocalModelsNotifyDismissed?(): void;
+  /** `N` in the Models tab: reopen the prompt. */
+  onLocalModelsNotifyPromptRequested?(): void;
   /** Begin 1s tail polling of the llama-server log while the LLM logs tab is open. */
   onLocalLlmLogsAutoRefreshStart?(): void;
   /** Stop log-tail polling when the user navigates away from the logs tab. */

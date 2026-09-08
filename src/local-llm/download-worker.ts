@@ -52,6 +52,15 @@ export interface DownloadWorkerInput {
   /** See `DownloadFileOptions.retryDelayMs`. Test seam. */
   retryDelayMs?: number;
   /**
+   * Runs after the files landed (or the download failed for good) and
+   * *before* the terminal record is written, with the record as it is
+   * about to be written. Whatever it returns is merged into that write.
+   * The place for the end-of-job ping: a watcher that sees `done` may
+   * remove the record at once, so anything that must survive the job
+   * has to be in the same write that ends it.
+   */
+  beforeFinish?: (job: DownloadJob) => Promise<Partial<DownloadJob> | void>;
+  /**
    * The longest this worker may live, from its start. Default 30 days:
    * a download nobody has come back for in a month is not going to be
    * finished by a process that has been waiting all along. The partial
@@ -137,6 +146,17 @@ export async function runDownloadWorker(
         }, heartbeatMs)
       : null;
   heartbeat?.unref();
+  // The hook's own failure must not turn a landed download into a
+  // failed one: it is reported and the terminal write goes ahead.
+  const finishHook = async (final: DownloadJob): Promise<Partial<DownloadJob>> => {
+    if (!input.beforeFinish) return {};
+    try {
+      return (await input.beforeFinish(final)) ?? {};
+    } catch (err) {
+      log(`[${stamp()}] finish hook failed: ${err instanceof Error ? err.message : String(err)}`);
+      return {};
+    }
+  };
 
   const phaseOpts = (
     label: string,
@@ -252,10 +272,14 @@ export async function runDownloadWorker(
         log(`[${stamp()}] mmproj complete`);
       }
     }
-    persist(
-      { status: "done", percent: 100, error: null, waiting: null, finishedAt: stamp() },
-      true,
-    );
+    const done: Partial<DownloadJob> = {
+      status: "done",
+      percent: 100,
+      error: null,
+      waiting: null,
+      finishedAt: stamp(),
+    };
+    persist({ ...done, ...(await finishHook({ ...job, ...done })) }, true);
     log(`[${stamp()}] done`);
     return "done";
   } catch (err) {
@@ -266,10 +290,14 @@ export async function runDownloadWorker(
     }
     const message = err instanceof Error ? err.message : String(err);
     const resumable = isResumableDownloadError(err);
-    persist(
-      { status: "failed", error: message, waiting: null, resumable, finishedAt: stamp() },
-      true,
-    );
+    const failed: Partial<DownloadJob> = {
+      status: "failed",
+      error: message,
+      waiting: null,
+      resumable,
+      finishedAt: stamp(),
+    };
+    persist({ ...failed, ...(await finishHook({ ...job, ...failed })) }, true);
     log(
       `[${stamp()}] failed: ${message}${resumable ? " — partial kept; the next launch resumes it" : ""}`,
     );

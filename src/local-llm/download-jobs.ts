@@ -9,6 +9,7 @@ import {
 import { join } from "node:path";
 
 import { classifyPidLiveness } from "./daemon-lifecycle.js";
+import type { DownloadNotifyChannel } from "./download-notify-file.js";
 
 /**
  * Background model downloads: the on-disk contract between the worker
@@ -38,15 +39,6 @@ import { classifyPidLiveness } from "./daemon-lifecycle.js";
  */
 export const DOWNLOAD_JOB_VERSION = 1;
 
-/**
- * A `running` record older than this has a worker that stopped writing:
- * the worker heartbeats every 30s even while it waits for the network,
- * so ten missed beats is not a slow disk. Readers treat such a job as
- * interrupted after a grace period of their own — a laptop waking from
- * sleep shows a stale record for a moment before the worker's next beat.
- */
-export const STALE_RUNNING_MS = 5 * 60 * 1_000;
-
 export type DownloadJobKind = "chat" | "embedding";
 
 /** Which files of a chat model the job fetches; embedding jobs ignore it. */
@@ -75,6 +67,14 @@ export interface DownloadJobWaiting {
   since: string;
 }
 
+/** What became of the end-of-job ping. Written with the terminal status. */
+export interface DownloadJobNotified {
+  channel: DownloadNotifyChannel;
+  outcome: "sent" | "not_configured" | "failed";
+  reason: string | null;
+  at: string;
+}
+
 export interface DownloadJob {
   version: typeof DOWNLOAD_JOB_VERSION;
   id: string;
@@ -98,6 +98,14 @@ export interface DownloadJob {
    * itself. `false` for a 404, a full disk, a changed file.
    */
   resumable: boolean;
+  /**
+   * The ping the operator asked for, once the job ended: sent, or why
+   * not. Absent while running and when nothing was armed. Lives in the
+   * record — not only in the log — because the TUI removes both the
+   * moment it lands the job, and the operator still deserves to hear
+   * "Telegram ping failed: Unauthorized".
+   */
+  notified?: DownloadJobNotified | null;
   startedAt: string;
   updatedAt: string;
   finishedAt: string | null;
@@ -122,6 +130,11 @@ export function resolveDownloadJobPath(dataDir: string, jobId: string): string {
 
 export function resolveDownloadLogPath(dataDir: string, jobId: string): string {
   return join(resolveDownloadsDir(dataDir), `${jobId}.log`);
+}
+
+/** `<jobId>.notify` — see `download-notify-file.ts`. */
+export function resolveDownloadNotifyPath(dataDir: string, jobId: string): string {
+  return join(resolveDownloadsDir(dataDir), `${jobId}.notify`);
 }
 
 /**
@@ -242,11 +255,12 @@ export function listDownloadJobs(dataDir: string): DownloadJob[] {
   return jobs.sort((a, b) => (a.startedAt < b.startedAt ? 1 : -1));
 }
 
-/** Forget a job: its record and its log. The partial file is not touched. */
+/** Forget a job: its record, its log and its notify request. The partial file is not touched. */
 export function removeDownloadJob(dataDir: string, jobId: string): void {
   for (const path of [
     resolveDownloadJobPath(dataDir, jobId),
     resolveDownloadLogPath(dataDir, jobId),
+    resolveDownloadNotifyPath(dataDir, jobId),
   ]) {
     try {
       rmSync(path, { force: true });
@@ -261,24 +275,3 @@ export function isDownloadJobLive(job: DownloadJob | null): job is DownloadJob {
   return job !== null && job.status === "running";
 }
 
-/**
- * A `running` record nobody has written for `STALE_RUNNING_MS`. The pid
- * may still answer — after a reboot the number can belong to anything —
- * but the worker that owned this job is not reporting.
- */
-export function isDownloadJobStale(
-  job: DownloadJob,
-  now: number = Date.now(),
-  thresholdMs: number = STALE_RUNNING_MS,
-): boolean {
-  if (job.status !== "running") return false;
-  const updated = Date.parse(job.updatedAt);
-  if (!Number.isFinite(updated)) return true;
-  return now - updated > thresholdMs;
-}
-
-/** Milliseconds since the record was last written; `0` when unparsable. */
-export function downloadJobSilenceMs(job: DownloadJob, now: number = Date.now()): number {
-  const updated = Date.parse(job.updatedAt);
-  return Number.isFinite(updated) ? Math.max(0, now - updated) : 0;
-}

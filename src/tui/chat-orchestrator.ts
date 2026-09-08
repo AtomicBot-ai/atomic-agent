@@ -233,6 +233,16 @@ export class ChatOrchestrator {
         // operator string.
         runtime.reportModelConfigured("llama.cpp", "local");
       },
+      // "Set up Telegram to get pinged": the hub is synced first so the
+      // row exists to land on, then the tab is opened on that row.
+      openIntegration: (id, message) => {
+        this.integrations.refresh();
+        bus.emit({ type: "ui_mode_set", mode: "debug" });
+        bus.emit({ type: "tab_changed", tab: "integrations" });
+        bus.emit({ type: "integrations_selected", id });
+        bus.emit({ type: "integrations_opened" });
+        bus.emit({ type: "integrations_action_settled", message });
+      },
     });
     this.telegram = new TuiTelegramOrchestrator(runtime, bus);
     this.privacy = new PrivacyOrchestrator(runtime, bus);

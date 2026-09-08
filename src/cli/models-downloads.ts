@@ -5,6 +5,7 @@ import {
   isDownloadJobStale,
   listDownloadJobs,
   readDownloadJob,
+  readDownloadNotify,
   removeDownloadJob,
   resolveDownloadsDir,
   runDownloadWorker,
@@ -12,6 +13,7 @@ import {
   type DownloadJob,
   type DownloadJobMode,
 } from "../local-llm/index.js";
+import { notifyDownloadOutcome } from "../notifications/index.js";
 import { renderPullProgress } from "./pull-progress.js";
 
 /**
@@ -53,12 +55,17 @@ export async function runLocalModelsPullWorker(args: string[]): Promise<number> 
   const onHangup = (): void => undefined;
   process.on("SIGHUP", onHangup);
   try {
+    const dataDir = getConfig().paths.localModelsDataDir;
     const outcome = await runDownloadWorker({
-      dataDir: getConfig().paths.localModelsDataDir,
+      dataDir,
       kind: kindArg,
       modelId,
       mode,
       signal: controller.signal,
+      // The ping is read now, not at launch: the operator may have armed
+      // it from the TUI while the bytes were flowing. A cancel is the
+      // operator's own doing and gets no message.
+      beforeFinish: (job) => reportDownloadOutcome(dataDir, job),
     });
     return outcome === "done" ? 0 : 1;
   } finally {
@@ -66,6 +73,22 @@ export async function runLocalModelsPullWorker(args: string[]): Promise<number> 
     process.off("SIGINT", onSignal);
     process.off("SIGHUP", onHangup);
   }
+}
+
+/** Send the armed ping, and hand back what to record about it. */
+async function reportDownloadOutcome(
+  dataDir: string,
+  job: DownloadJob,
+): Promise<Partial<DownloadJob>> {
+  const channel = readDownloadNotify(dataDir, job.id);
+  if (!channel) return {};
+  const at = new Date().toISOString();
+  // `getConfig()` already merged `<stateDir>/.env` into the environment,
+  // so the bot tokens are where the notifier looks for them.
+  const result = await notifyDownloadOutcome({ channel, job, config: getConfig() });
+  const reason = result.outcome === "sent" ? null : result.reason;
+  process.stdout.write(`[${at}] notify ${channel} ${result.outcome}${reason ? `: ${reason}` : ""}\n`);
+  return { notified: { channel, outcome: result.outcome, reason, at } };
 }
 
 function formatBytes(bytes: number): string {
@@ -85,7 +108,11 @@ export function describeDownloadWait(
   return `waiting for network (attempt ${job.waiting.attempt}, ${when})`;
 }
 
-export function describeDownloadJob(job: DownloadJob, now: number = Date.now()): string {
+export function describeDownloadJob(
+  job: DownloadJob,
+  now: number = Date.now(),
+  notify: string | null = null,
+): string {
   const size =
     job.totalBytes > 0
       ? `${formatBytes(job.transferredBytes)} / ${formatBytes(job.totalBytes)}`
@@ -103,7 +130,12 @@ export function describeDownloadJob(job: DownloadJob, now: number = Date.now()):
   } else {
     state = job.status;
   }
-  return `${job.id.padEnd(40)} ${state.padEnd(28)} ${size}  ${job.label}`;
+  const ping = job.notified
+    ? `  → ${job.notified.channel} ${job.notified.outcome === "sent" ? "✓" : `✗ ${job.notified.reason ?? job.notified.outcome}`}`
+    : notify
+      ? `  → ${notify}`
+      : "";
+  return `${job.id.padEnd(40)} ${state.padEnd(28)} ${size}  ${job.label}${ping}`;
 }
 
 /**
@@ -138,7 +170,9 @@ export async function runLocalModelsDownloads(args: string[]): Promise<number> {
     `${"JOB".padEnd(40)} ${"STATE".padEnd(28)} PROGRESS\n`,
   );
   for (const job of jobs) {
-    process.stdout.write(`${describeDownloadJob(job)}\n`);
+    process.stdout.write(
+      `${describeDownloadJob(job, Date.now(), readDownloadNotify(dataDir, job.id))}\n`,
+    );
   }
   process.stdout.write(
     `\nlogs: ${resolveDownloadsDir(dataDir)}/<job>.log · resume an interrupted one with 'models pull [--background] <id>'\n`,

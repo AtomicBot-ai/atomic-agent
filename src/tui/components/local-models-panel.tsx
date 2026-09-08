@@ -17,6 +17,7 @@ import {
   type RamFit,
 } from "../local-models/local-models-panel-state.js";
 import { describePullWaiting } from "../local-models/describe-pull-waiting.js";
+import { NotifyPromptBox } from "./notify-prompt-box.js";
 import type { LocalModelDef } from "../../local-llm/index.js";
 import { renderProgressBar } from "./render-progress-bar.js";
 
@@ -333,12 +334,16 @@ export function LocalModelsPanel({
   const useFullFooter = maxRows >= FULL_FOOTER_ROWS + FULL_FOOTER_MIN_LIST;
   const footerRows = useFullFooter ? FULL_FOOTER_ROWS : COMPACT_FOOTER_ROWS;
   const modalRows =
+    (panel.notifyPrompt ? 7 : 0) +
     (panel.embeddingOnboardingPrompt ? 6 : 0) +
     (panel.removeConfirmId ? 5 : 0) +
     (panel.embeddingRemoveConfirmId ? 5 : 0);
   const listBudget = Math.max(3, maxRows - footerRows - modalRows);
   return (
     <Box flexDirection="column">
+      {panel.notifyPrompt ? (
+        <NotifyPromptBox prompt={panel.notifyPrompt} pull={panel.pull ?? panel.embeddingPull} />
+      ) : null}
       {panel.embeddingOnboardingPrompt ? (
         <Box
           flexDirection="column"

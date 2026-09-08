@@ -1011,6 +1011,40 @@ describe("parseUserConfigFile", () => {
     expect(parsed.discord).toEqual(USER_CONFIG_DEFAULTS.discord);
   });
 
+  it("applies notifications defaults when the section is absent", () => {
+    const parsed = parseUserConfigFile({ version: USER_CONFIG_VERSION });
+    expect(parsed.notifications).toEqual(USER_CONFIG_DEFAULTS.notifications);
+    // `null` = not asked yet: the Models tab asks on the next pull.
+    expect(parsed.notifications.downloads.channel).toBeNull();
+  });
+
+  it("accepts a v51 file and fills in notifications.* defaults transparently", () => {
+    const parsed = parseUserConfigFile({ version: 51 });
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(parsed.notifications).toEqual(USER_CONFIG_DEFAULTS.notifications);
+  });
+
+  it("keeps a remembered download-notify channel and rejects an unknown one", () => {
+    expect(
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        notifications: { downloads: { channel: "telegram" } },
+      }).notifications.downloads.channel,
+    ).toBe("telegram");
+    expect(
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        notifications: { downloads: { channel: "off" } },
+      }).notifications.downloads.channel,
+    ).toBe("off");
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        notifications: { downloads: { channel: "pager" } },
+      }),
+    ).toThrow(/notifications\.downloads\.channel/);
+  });
+
   it("keeps discord.ownerUserId a string", () => {
     // Discord snowflakes exceed Number.MAX_SAFE_INTEGER: parsing one as
     // a number silently corrupts the last digits, which would let the

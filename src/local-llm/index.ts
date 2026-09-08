@@ -70,25 +70,35 @@ export {
 } from "./download-file.js";
 export {
   DOWNLOAD_JOB_VERSION,
-  STALE_RUNNING_MS,
   downloadJobId,
-  downloadJobSilenceMs,
   isDownloadJobLive,
-  isDownloadJobStale,
   listDownloadJobs,
   readDownloadJob,
   reconcileDownloadJob,
   removeDownloadJob,
   resolveDownloadJobPath,
   resolveDownloadLogPath,
+  resolveDownloadNotifyPath,
   resolveDownloadsDir,
   writeDownloadJob,
   type DownloadJob,
   type DownloadJobKind,
   type DownloadJobMode,
   type DownloadJobStatus,
+  type DownloadJobNotified,
   type DownloadJobWaiting,
 } from "./download-jobs.js";
+export {
+  STALE_RUNNING_MS,
+  downloadJobSilenceMs,
+  isDownloadJobStale,
+} from "./download-job-staleness.js";
+export {
+  isDownloadNotifyChannel,
+  readDownloadNotify,
+  writeDownloadNotify,
+  type DownloadNotifyChannel,
+} from "./download-notify-file.js";
 export {
   downloadWorkerArgs,
   looksLikeDownloadWorker,

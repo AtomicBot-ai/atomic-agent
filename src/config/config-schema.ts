@@ -860,6 +860,8 @@ export interface AtomicAgentConfig {
    * The bot token is not stored here — see `DiscordConfig`.
    */
   discord: DiscordConfig;
+  /** Out-of-band pings. Mirrors `UserConfigFile.notifications`. */
+  notifications: NotificationsConfig;
   /**
    * Composio integration. Mirrors `UserConfigFile.composio`. The API
    * key is not stored here — see `ComposioConfig`.
@@ -1067,6 +1069,20 @@ export interface TelegramConfig {
    * `true` via the defaults-fallback in `parseUserConfigFile`.
    */
   progressIndicator: boolean;
+}
+
+/** Where a finished (or failed) background model download is reported. */
+export type DownloadNotifyChannelSetting = "telegram" | "discord" | "email" | "off";
+
+export interface NotificationsConfig {
+  downloads: {
+    /**
+     * `null` means the operator has not been asked yet: the Models tab
+     * asks once, the first time a pull starts, and remembers the answer
+     * here. `"off"` is a remembered "no". Added in config v52.
+     */
+    channel: DownloadNotifyChannelSetting | null;
+  };
 }
 
 /**
@@ -1730,6 +1746,13 @@ export interface UserConfigFile {
    */
   discord: DiscordConfig;
   /**
+   * Out-of-band pings — today, where a background model download
+   * reports when it lands. Added in config v52. Older files are
+   * transparently upgraded with `{ downloads: { channel: null } }`,
+   * which means "ask on the next pull".
+   */
+  notifications: NotificationsConfig;
+  /**
    * Composio integration. Added in config v50. Older files are
    * transparently upgraded with the defaults below, which leave the
    * integration inert until a key is written to `<stateDir>/.env`.
@@ -1845,7 +1868,10 @@ export interface UserConfigFile {
 // v51: new `discord` block for the Discord remote-control channel.
 // Additive and inert by default — the channel is off, unpaired, and the
 // bot token lives in `<stateDir>/.env`, never here.
-export const USER_CONFIG_VERSION = 51;
+// v52: new `notifications` block — where a background model download
+// reports when it lands. Additive: `channel: null` means "not asked yet",
+// which is what every older file has always implied.
+export const USER_CONFIG_VERSION = 52;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -1985,6 +2011,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   48,
   49,
   50,
+  51,
   USER_CONFIG_VERSION,
 ];
 
@@ -2277,6 +2304,12 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
     // would connect and then refuse every message, which looks broken.
     enabled: false,
     ownerUserId: null,
+  },
+  notifications: {
+    // Added in v52. `null` = not asked yet; the Models tab asks once.
+    downloads: {
+      channel: null,
+    },
   },
   composio: {
     // Added in v50. `enabled: true` is safe because the key, not this
@@ -3497,6 +3530,10 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
   const telegram = (obj.telegram as Record<string, unknown> | undefined) ?? {};
   const composio = (obj.composio as Record<string, unknown> | undefined) ?? {};
   const discord = (obj.discord as Record<string, unknown> | undefined) ?? {};
+  const notifications =
+    (obj.notifications as Record<string, unknown> | undefined) ?? {};
+  const notificationsDownloads =
+    (notifications.downloads as Record<string, unknown> | undefined) ?? {};
   const tui = (obj.tui as Record<string, unknown> | undefined) ?? {};
   const analytics =
     (obj.analytics as Record<string, unknown> | undefined) ?? {};
@@ -4296,6 +4333,15 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         "discord.ownerUserId",
       ),
     },
+    notifications: {
+      downloads: {
+        channel: parseDownloadNotifyChannel(
+          notificationsDownloads.channel ??
+            USER_CONFIG_DEFAULTS.notifications.downloads.channel,
+          "notifications.downloads.channel",
+        ),
+      },
+    },
     composio: {
       enabled: parseBool(
         composio.enabled ?? USER_CONFIG_DEFAULTS.composio.enabled,
@@ -4449,7 +4495,21 @@ export function parseThemeName(raw: unknown, field: string): string {
  * Accepts `"plain"` and `"html"` only — `markdownV2` is intentionally
  * excluded (see `TelegramParseMode` doc-comment for rationale).
  */
-export function parseTelegramParseMode(
+export function parseDownloadNotifyChannel(
+  raw: unknown,
+  field: string,
+): DownloadNotifyChannelSetting | null {
+  if (raw === null || raw === undefined) return null;
+  if (raw === "telegram" || raw === "discord" || raw === "email" || raw === "off") {
+    return raw;
+  }
+  throw new ConfigValidationError(
+    field,
+    `expected "telegram", "discord", "email", "off" or null, got ${JSON.stringify(raw)}`,
+  );
+}
+
+function parseTelegramParseMode(
   raw: unknown,
   field: string,
 ): TelegramParseMode {

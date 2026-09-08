@@ -6,6 +6,8 @@ export type {
   LogLevel,
   OnboardingState,
   TelegramConfig,
+  NotificationsConfig,
+  DownloadNotifyChannelSetting,
   TelegramParseMode,
   UserConfigFile,
   UserManagedLocalLlmConfig,

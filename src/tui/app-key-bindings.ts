@@ -186,7 +186,8 @@ export function isPanelModalOpen(state: TuiState): boolean {
     state.uiMode === "debug" &&
     state.activeTab === "models" &&
     (state.localModelsPanel.mode === "backendUpdate" ||
-      state.localModelsPanel.removeConfirmId !== null);
+      state.localModelsPanel.removeConfirmId !== null ||
+      state.localModelsPanel.notifyPrompt !== null);
   // Telegram tab disables the editor outright (the panel owns letter
   // hotkeys), so on entry Tab/Shift+Tab still cycle. The "busy" flag
   // applies only when a modal is open and Tab/letters need to be
@@ -217,6 +218,7 @@ export function isPanelModalOpen(state: TuiState): boolean {
       state.localModelsPanel.removeConfirmId !== null ||
       state.localModelsPanel.embeddingRemoveConfirmId !== null ||
       state.localModelsPanel.embeddingOnboardingPrompt !== null ||
+      state.localModelsPanel.notifyPrompt !== null ||
       state.providersPanel.chatModelPicker !== null ||
       state.llmPanel.externalUrlDraft !== null ||
       state.llmPanel.externalCompatSteerUrl !== null ||

@@ -14,19 +14,20 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   downloadJobId,
-  downloadJobSilenceMs,
   isDownloadJobLive,
-  isDownloadJobStale,
   listDownloadJobs,
   readDownloadJob,
   reconcileDownloadJob,
   removeDownloadJob,
   resolveDownloadJobPath,
   resolveDownloadLogPath,
+  resolveDownloadNotifyPath,
   resolveDownloadsDir,
   writeDownloadJob,
   type DownloadJob,
 } from "./download-jobs.js";
+import { downloadJobSilenceMs, isDownloadJobStale } from "./download-job-staleness.js";
+import { readDownloadNotify, writeDownloadNotify } from "./download-notify-file.js";
 
 /** A pid no process on any supported OS is handed out. */
 const DEAD_PID = 2_000_000_000;
@@ -178,6 +179,27 @@ describe("download-jobs", () => {
     expect(interrupted.status).toBe("interrupted");
     // The original error, when there is one, is not overwritten.
     expect(reconcileDownloadJob(job({ error: "kept" }), dead).error).toBe("kept");
+  });
+
+  it("arms, reads and disarms the notify request beside the record", () => {
+    expect(readDownloadNotify(dataDir, "chat-x")).toBeNull();
+    writeDownloadNotify(dataDir, "chat-x", "telegram");
+    expect(readFileSync(resolveDownloadNotifyPath(dataDir, "chat-x"), "utf-8")).toBe("telegram\n");
+    expect(readDownloadNotify(dataDir, "chat-x")).toBe("telegram");
+    writeDownloadNotify(dataDir, "chat-x", "discord");
+    expect(readDownloadNotify(dataDir, "chat-x")).toBe("discord");
+    writeDownloadNotify(dataDir, "chat-x", null);
+    expect(existsSync(resolveDownloadNotifyPath(dataDir, "chat-x"))).toBe(false);
+    // Garbage in the file is "not armed", not a crash.
+    writeFileSync(resolveDownloadNotifyPath(dataDir, "chat-x"), "carrier pigeon");
+    expect(readDownloadNotify(dataDir, "chat-x")).toBeNull();
+  });
+
+  it("removeDownloadJob forgets the notify request with the record", () => {
+    writeDownloadJob(dataDir, job({ id: "chat-y" }));
+    writeDownloadNotify(dataDir, "chat-y", "telegram");
+    removeDownloadJob(dataDir, "chat-y");
+    expect(existsSync(resolveDownloadNotifyPath(dataDir, "chat-y"))).toBe(false);
   });
 
   it("lists newest start first and removeDownloadJob drops record + log", () => {

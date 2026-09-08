@@ -14,6 +14,7 @@ import {
   type DownloadJobKind,
   type DownloadJobMode,
 } from "./download-jobs.js";
+import { writeDownloadNotify, type DownloadNotifyChannel } from "./download-notify-file.js";
 import { initialDownloadJob } from "./download-worker.js";
 
 /**
@@ -33,6 +34,12 @@ export interface SpawnDownloadWorkerInput {
   kind: DownloadJobKind;
   modelId: string;
   mode: DownloadJobMode;
+  /**
+   * Where the worker should report when the job ends. Omitted leaves
+   * whatever request is already armed for this job (a relaunch onto a
+   * partial keeps the ping the operator asked for); `null` disarms.
+   */
+  notify?: DownloadNotifyChannel | null;
   /** Test seams. */
   spawn?: typeof nodeSpawn;
   execPath?: string;
@@ -64,6 +71,7 @@ export function spawnDownloadWorker(
   const { dataDir } = input;
   const jobId = downloadJobId(input.kind, input.modelId);
   const existing = readDownloadJob(dataDir, jobId);
+  if (input.notify !== undefined) writeDownloadNotify(dataDir, jobId, input.notify);
   if (isDownloadJobLive(existing)) {
     return { outcome: "already-running", job: existing };
   }

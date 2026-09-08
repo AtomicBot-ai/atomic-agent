@@ -11,6 +11,7 @@ import {
   downloadMmproj,
   DownloadGaveUpError,
   downloadModel,
+  writeDownloadNotify,
   EMBEDDING_MODELS_CATALOG,
   fallBackToCpuBackend,
   formatGgufSize,
@@ -46,6 +47,7 @@ import {
   stopChatAndEmbeddingDaemons,
   type DownloadJobKind,
   type DownloadJobMode,
+  type DownloadNotifyChannel,
 } from "../local-llm/index.js";
 
 export function readCliOption(args: string[], name: string): string | undefined {
@@ -86,7 +88,7 @@ export async function runLocalModelsList(): Promise<number> {
  */
 export async function runLocalModelsPull(args: string[]): Promise<number> {
   const flags = new Set(args.filter((a) => a.startsWith("--")));
-  const idArg = args.find((a) => !a.startsWith("--"));
+  const idArg = positionalArgs(args)[0];
   if (!idArg || !isKnownLocalModelId(idArg)) {
     process.stderr.write(
       `unknown model id. Valid: ${listLocalModels().map((m) => m.id).join(", ")}\n`,
@@ -100,15 +102,21 @@ export async function runLocalModelsPull(args: string[]): Promise<number> {
     process.stderr.write(`note: ${m.id} is not vision-capable — no mmproj to fetch\n`);
   }
 
+  const notify = parseNotifyFlag(args);
+  if (notify !== undefined && !flags.has("--background")) {
+    process.stderr.write("--notify only applies to a background pull (add --background)\n");
+    return 2;
+  }
   const live = readDownloadJob(dataDir, downloadJobId("chat", m.id));
   if (isDownloadJobLive(live)) {
+    if (notify !== undefined) armLiveJob(dataDir, live.id, notify);
     process.stderr.write(
       `${m.id} is already downloading in the background (pid ${live.pid}) — following it; Ctrl+C detaches\n`,
     );
     return followDownloadJob(dataDir, live.id);
   }
   if (flags.has("--background")) {
-    return startBackgroundPull({ kind: "chat", modelId: m.id, mode });
+    return startBackgroundPull({ kind: "chat", modelId: m.id, mode, notify });
   }
 
   const estTotal = Math.round(m.fileSizeGb * (1024 * 1024 * 1024));
@@ -176,10 +184,49 @@ export async function runLocalModelsPull(args: string[]): Promise<number> {
  * Launch the detached worker and hand the terminal back. The record it
  * seeds is what `models downloads` shows a moment later.
  */
+/** The arguments that are not flags — nor the value of a flag that takes one. */
+function positionalArgs(args: readonly string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < args.length; i += 1) {
+    const a = args[i]!;
+    if (a === "--notify") {
+      i += 1;
+      continue;
+    }
+    if (!a.startsWith("--")) out.push(a);
+  }
+  return out;
+}
+
+/**
+ * `--notify telegram|discord|email` (or `--notify=…`): where the worker
+ * reports when the job ends. Absent leaves whatever is already armed.
+ */
+function parseNotifyFlag(args: readonly string[]): DownloadNotifyChannel | null | undefined {
+  const joined = args.find((a) => a.startsWith("--notify="));
+  const i = args.indexOf("--notify");
+  if (!joined && i < 0) return undefined;
+  const raw = joined ? joined.slice("--notify=".length) : args[i + 1];
+  if (raw === "off" || raw === "none") return null;
+  // E-mail arrives with the Atomic Mail integration; until then an
+  // accepted `email` would be a ping that can never be delivered.
+  if (raw === "telegram" || raw === "discord") return raw;
+  throw new Error(
+    `--notify expects telegram, discord or off; got ${raw === undefined ? "nothing" : JSON.stringify(raw)}`,
+  );
+}
+
+/** `--notify` on a pull that is already running: re-arm the live job. */
+function armLiveJob(dataDir: string, jobId: string, notify: DownloadNotifyChannel | null): void {
+  writeDownloadNotify(dataDir, jobId, notify);
+  process.stderr.write(notify ? `ping: ${notify} when it lands\n` : "ping disarmed\n");
+}
+
 function startBackgroundPull(input: {
   kind: DownloadJobKind;
   modelId: string;
   mode: DownloadJobMode;
+  notify?: DownloadNotifyChannel | null;
 }): number {
   const result = spawnDownloadWorker({
     ...input,
@@ -192,8 +239,10 @@ function startBackgroundPull(input: {
     return 0;
   }
   const { job, logPath } = result;
+  const ping = input.notify ? `  ping:     ${input.notify} when it lands\n` : "";
   process.stdout.write(
     `${job.transferredBytes > 0 ? "resuming" : "downloading"} ${job.label} in the background (pid ${job.pid})\n` +
+      ping +
       `  progress: atomic-agent models downloads\n` +
       `  follow:   atomic-agent models pull${input.kind === "embedding" ? "-embedding" : ""} ${input.modelId}\n` +
       `  stop:     atomic-agent models downloads cancel ${input.modelId}\n` +
@@ -659,7 +708,7 @@ export async function runLocalModelsUseDevice(
  */
 export async function runLocalModelsPullEmbedding(args: string[]): Promise<number> {
   const flags = new Set(args.filter((a) => a.startsWith("--")));
-  const idArg = args.find((a) => !a.startsWith("--"));
+  const idArg = positionalArgs(args)[0];
   if (!idArg || !isKnownEmbeddingModelId(idArg)) {
     process.stderr.write(
       `unknown embedding model id. Valid: ${EMBEDDING_MODELS_CATALOG.map((m) => m.id).join(", ")}\n`,
@@ -676,8 +725,13 @@ export async function runLocalModelsPullEmbedding(args: string[]): Promise<numbe
     );
     return followDownloadJob(dataDir, live.id);
   }
+  const notify = parseNotifyFlag(args);
+  if (notify !== undefined && !flags.has("--background")) {
+    process.stderr.write("--notify only applies to a background pull (add --background)\n");
+    return 2;
+  }
   if (flags.has("--background")) {
-    return startBackgroundPull({ kind: "embedding", modelId: m.id, mode: "gguf-only" });
+    return startBackgroundPull({ kind: "embedding", modelId: m.id, mode: "gguf-only", notify });
   }
 
   const estTotal = Math.round(m.fileSizeGb * (1024 * 1024 * 1024));

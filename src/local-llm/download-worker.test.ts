@@ -125,6 +125,57 @@ describe("download-worker", () => {
     expect(log.at(-1)).toMatch(/failed: .*404/);
   });
 
+  it("runs beforeFinish before the terminal write and merges what it returns", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(bodyOf(["abc"]), { status: 200, headers: { "content-length": "3" } }),
+    ) as typeof fetch;
+    const id = downloadJobId("embedding", EMB.id);
+    let statusSeenByHook: string | null = null;
+    let statusOnDiskDuringHook: string | null = null;
+    const outcome = await runDownloadWorker({
+      dataDir,
+      kind: "embedding",
+      modelId: EMB.id,
+      mode: "gguf-only",
+      log: (l) => log.push(l),
+      writeIntervalMs: 0,
+      heartbeatMs: 0,
+      beforeFinish: async (job) => {
+        statusSeenByHook = job.status;
+        statusOnDiskDuringHook = readDownloadJob(dataDir, id)?.status ?? null;
+        return {
+          notified: { channel: "telegram", outcome: "sent", reason: null, at: "2026-09-08T12:00:00.000Z" },
+        };
+      },
+    });
+    expect(outcome).toBe("done");
+    expect(statusSeenByHook).toBe("done");
+    // Nothing watching could have landed the job yet.
+    expect(statusOnDiskDuringHook).toBe("running");
+    expect(readDownloadJob(dataDir, id)?.notified).toMatchObject({ channel: "telegram", outcome: "sent" });
+  });
+
+  it("a failing beforeFinish is logged and does not fail the download", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(bodyOf(["abc"]), { status: 200, headers: { "content-length": "3" } }),
+    ) as typeof fetch;
+    const outcome = await runDownloadWorker({
+      dataDir,
+      kind: "embedding",
+      modelId: EMB.id,
+      mode: "gguf-only",
+      log: (l) => log.push(l),
+      writeIntervalMs: 0,
+      heartbeatMs: 0,
+      beforeFinish: async () => {
+        throw new Error("no network for the ping");
+      },
+    });
+    expect(outcome).toBe("done");
+    expect(readDownloadJob(dataDir, downloadJobId("embedding", EMB.id))?.status).toBe("done");
+    expect(log.some((l) => /finish hook failed: no network for the ping/.test(l))).toBe(true);
+  });
+
   it("records an outage as resumable so a relaunch picks the job back up", async () => {
     globalThis.fetch = vi.fn(async () => {
       throw Object.assign(new TypeError("fetch failed"), {

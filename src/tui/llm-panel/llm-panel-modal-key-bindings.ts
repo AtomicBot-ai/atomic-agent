@@ -1,4 +1,5 @@
 import type { Key } from "ink";
+import { handleNotifyPromptKey } from "../local-models/local-models-notify-keys.js";
 import type { TuiAction } from "../tui-action.js";
 import type { TuiAppCallbacks } from "../tui-app.js";
 import type { TuiState } from "../tui-state.js";
@@ -51,6 +52,10 @@ export function handleLlmModalKey(
       return true;
     }
     return true;
+  }
+
+  if (state.localModelsPanel.notifyPrompt) {
+    return handleNotifyPromptKey(input, key, callbacks);
   }
 
   if (state.localModelsPanel.embeddingOnboardingPrompt) {

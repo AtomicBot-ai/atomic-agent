@@ -12,6 +12,7 @@ import {
   writeDownloadJob,
   type DownloadJob,
 } from "./download-jobs.js";
+import { readDownloadNotify } from "./download-notify-file.js";
 import {
   downloadWorkerArgs,
   spawnDownloadWorker,
@@ -51,6 +52,34 @@ describe("download-spawn", () => {
 
   afterEach(() => {
     rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  it("arms, keeps or disarms the end-of-job ping beside the record", () => {
+    const spawn = vi.fn(() => ({ pid: 777, unref: vi.fn() }) as unknown as ChildProcess);
+    const base = {
+      dataDir,
+      kind: "chat" as const,
+      modelId: "qwen-3.5-4b",
+      mode: "gguf-only" as const,
+      spawn: spawn as unknown as typeof nodeSpawn,
+      execPath: "/opt/node/bin/node",
+      argv: ["/opt/node/bin/node", "/repo/dist/cli/index.js"],
+      execArgv: [],
+      sea: false,
+      env: {},
+    };
+    const jobId = downloadJobId("chat", "qwen-3.5-4b");
+    spawnDownloadWorker({ ...base, notify: "telegram" });
+    expect(readDownloadNotify(dataDir, jobId)).toBe("telegram");
+    // A relaunch onto the partial that says nothing keeps the ping.
+    writeDownloadJob(dataDir, job({ pid: DEAD_PID }));
+    spawnDownloadWorker(base);
+    expect(readDownloadNotify(dataDir, jobId)).toBe("telegram");
+    // An explicit null disarms it — even when the worker is already
+    // running and nothing is spawned.
+    writeDownloadJob(dataDir, job({ pid: process.pid }));
+    expect(spawnDownloadWorker({ ...base, notify: null }).outcome).toBe("already-running");
+    expect(readDownloadNotify(dataDir, jobId)).toBeNull();
   });
 
   it("spawns a detached copy of this program with the worker argv, logging to the job log", () => {

@@ -13,11 +13,14 @@ import {
   isDownloadJobStale,
   looksLikeDownloadWorker,
   readDownloadJob,
+  readDownloadNotify,
   removeDownloadJob,
   writeDownloadJob,
+  writeDownloadNotify,
   spawnDownloadWorker,
   stopDownloadWorker,
   type DownloadJob,
+  type DownloadNotifyChannel,
   type DownloadJobKind,
   type DownloadJobMode,
   type SpawnDownloadWorkerInput,
@@ -81,6 +84,9 @@ import {
   persistMemoryEmbeddingsEnabled,
 } from "../persist-embedding-hybrid-recall.js";
 import { persistUserLocalModelsConfig } from "../persist-user-local-models-config.js";
+import { isDownloadNotifyChannelReady } from "../../notifications/index.js";
+import { persistDownloadNotifyChannel } from "./persist-download-notify.js";
+import type { LocalModelsNotifyChoice } from "./local-models-panel-state.js";
 import { ChatPullMirror, downloadProgressFor } from "../local-turn-gate.js";
 import type { TuiEventBus } from "../tui-app.js";
 
@@ -153,6 +159,12 @@ export interface LocalModelsOrchestratorHooks {
   staleGraceMs?: number;
   /** Whether a pid is one of our workers. Test seam. */
   isDownloadWorkerPid?: (pid: number) => boolean;
+  /**
+   * Send the operator to one integration's setup screen with a note
+   * saying why. The hub lives in another slice; the composition root
+   * knows how to get there.
+   */
+  openIntegration?: (id: string, message: string) => void;
 }
 
 export class LocalModelsOrchestrator {
@@ -170,6 +182,13 @@ export class LocalModelsOrchestrator {
     DownloadJobKind,
     { jobId: string; detach: () => void }
   >();
+  /**
+   * A ping the operator asked for on a channel that had no credentials
+   * yet. Armed the moment the Integrations hub has them — the watch
+   * loop checks on every tick — so setting up Telegram mid-download
+   * ends with the message they wanted, not with a second trip here.
+   */
+  private pendingNotify: { channel: DownloadNotifyChannel; label: string } | null = null;
   /**
    * Single-flight guard for the backend download. Both `pullModel` and
    * `pullEmbeddingModel` `await this.pullBackend()` when the backend is
@@ -390,6 +409,7 @@ export class LocalModelsOrchestrator {
   async pullModel(
     id: LocalModelId,
     mode: "with-mmproj" | "gguf-only" | "mmproj-only" = "with-mmproj",
+    opts?: PullOptions,
   ): Promise<void> {
     const cfg = getConfig();
     const dataDir = cfg.paths.localModelsDataDir;
@@ -425,7 +445,7 @@ export class LocalModelsOrchestrator {
             ? "with-mmproj"
             : "gguf-only"
           : "mmproj-only";
-        const watched = await this.runDownloadJob("chat", id, workerMode);
+        const watched = await this.runDownloadJob("chat", id, workerMode, opts);
         if (watched.outcome === "detached") return;
         if (watched.outcome === "cancelled") {
           this.bus.emit({
@@ -520,6 +540,7 @@ export class LocalModelsOrchestrator {
     kind: DownloadJobKind,
     modelId: string,
     mode: DownloadJobMode,
+    opts?: PullOptions,
   ): Promise<{ outcome: "done" | "cancelled" | "detached"; job: DownloadJob }> {
     const dataDir = getConfig().paths.localModelsDataDir;
     const spawn = this.hooks?.spawnDownload ?? spawnDownloadWorker;
@@ -552,6 +573,7 @@ export class LocalModelsOrchestrator {
     };
     let last = launched.job;
     emitStarted(last);
+    this.offerNotify(jobId, last.label, opts);
     const pollMs = this.hooks?.downloadPollMs ?? DOWNLOAD_POLL_MS;
     const staleGraceMs = this.hooks?.staleGraceMs ?? STALE_GRACE_MS;
     // A `running` record the worker has stopped writing. The pid may
@@ -566,6 +588,7 @@ export class LocalModelsOrchestrator {
       for (;;) {
         await new Promise((r) => setTimeout(r, pollMs));
         if (detached) return { outcome: "detached", job: last };
+        this.armPendingNotify();
         let job = readDownloadJob(dataDir, jobId);
         if (!job) throw new Error("download record disappeared");
         if (job.status === "running" && isDownloadJobStale(job)) {
@@ -617,6 +640,7 @@ export class LocalModelsOrchestrator {
         }
         last = job;
         if (job.status === "running") continue;
+        this.reportNotified(job);
         if (job.status === "interrupted" && !respawned) {
           // Once: the worker died (or went silent) under a watcher that
           // still wants the model. Relaunch it onto the partial rather
@@ -642,7 +666,157 @@ export class LocalModelsOrchestrator {
       if (this.watchedDownloads.get(kind) === watch) {
         this.watchedDownloads.delete(kind);
       }
+      // A ping that never got its credentials was about *these*
+      // downloads; it must not fire, months later, for some other one.
+      if (this.watchedDownloads.size === 0) this.pendingNotify = null;
     }
+  }
+
+  /**
+   * When a pull starts: ask "tell me when it lands?" if nobody has
+   * answered yet, or arm the remembered channel. A remembered channel
+   * whose credentials have since gone (token cleared) is reported, not
+   * silently skipped — the operator believes they will be pinged.
+   */
+  private offerNotify(jobId: string, label: string, opts?: PullOptions): void {
+    if (opts?.askNotify === false) return;
+    const cfg = getConfig();
+    // A ping already armed on this job — `models pull --notify`, or a
+    // relaunch onto a partial — is the operator's word; keep it.
+    const armed = readDownloadNotify(cfg.paths.localModelsDataDir, jobId);
+    if (armed) {
+      this.bus.emit({
+        type: "runtime_info",
+        line: `local-llm: ${channelName(armed)} ping armed for ${cleanLabel(label)} · N to change`,
+      });
+      return;
+    }
+    const remembered = cfg.notifications.downloads.channel;
+    if (remembered === null) {
+      this.bus.emit({
+        type: "local_models_notify_prompt_opened",
+        prompt: { label: cleanLabel(label), current: null },
+      });
+      return;
+    }
+    if (remembered === "off" || remembered === "email") return;
+    if (isDownloadNotifyChannelReady(remembered, cfg)) {
+      writeDownloadNotify(cfg.paths.localModelsDataDir, jobId, remembered);
+      this.bus.emit({
+        type: "runtime_info",
+        line: `local-llm: ${channelName(remembered)} ping armed for ${cleanLabel(label)} · N to change`,
+      });
+    } else {
+      this.bus.emit({
+        type: "runtime_info",
+        line: `local-llm: ${channelName(remembered)} ping is set but ${channelName(remembered)} is not configured — press N to change, or set it up in Integrations`,
+      });
+    }
+  }
+
+  /** The answer to the prompt: `t`, `d` or `n`. */
+  chooseDownloadNotify(choice: LocalModelsNotifyChoice): void {
+    this.bus.emit({ type: "local_models_notify_prompt_closed" });
+    const cfg = getConfig();
+    const dataDir = cfg.paths.localModelsDataDir;
+    const watched = [...this.watchedDownloads.values()];
+    const label = describeWatched(
+      watched.map((w) => readDownloadJob(dataDir, w.jobId)?.label ?? "").filter(Boolean),
+    );
+    if (choice === "off") {
+      persistDownloadNotifyChannel("off");
+      for (const w of watched) writeDownloadNotify(dataDir, w.jobId, null);
+      this.pendingNotify = null;
+      this.bus.emit({
+        type: "runtime_info",
+        line: "local-llm: no ping when downloads land · N to change",
+      });
+      return;
+    }
+    persistDownloadNotifyChannel(choice);
+    if (isDownloadNotifyChannelReady(choice, cfg)) {
+      for (const w of watched) writeDownloadNotify(dataDir, w.jobId, choice);
+      this.pendingNotify = null;
+      this.bus.emit({
+        type: "runtime_info",
+        line: watched.length > 0
+          ? `local-llm: ${channelName(choice)} ping armed for ${label}`
+          : `local-llm: ${channelName(choice)} ping armed for the next download`,
+      });
+      return;
+    }
+    // No credentials yet: send them to the hub, and finish the job the
+    // moment the hub reports the channel configured.
+    this.pendingNotify = { channel: choice, label };
+    const why = label
+      ? `Set up ${channelName(choice)} to get pinged when ${label} lands — the download keeps going meanwhile.`
+      : `Set up ${channelName(choice)} to get pinged when downloads land.`;
+    if (this.hooks?.openIntegration) {
+      this.hooks.openIntegration(choice, why);
+    } else {
+      this.bus.emit({ type: "runtime_info", line: `local-llm: ${why}` });
+    }
+  }
+
+  /** Esc on the prompt: nothing remembered, asked again next time. */
+  dismissDownloadNotify(): void {
+    this.bus.emit({ type: "local_models_notify_prompt_closed" });
+  }
+
+  /** `N`: reopen the prompt for the download in flight, or for the next ones. */
+  openDownloadNotifyPrompt(): void {
+    const cfg = getConfig();
+    const dataDir = cfg.paths.localModelsDataDir;
+    const watched = [...this.watchedDownloads.values()];
+    const job = watched[0] ? readDownloadJob(dataDir, watched[0].jobId) : null;
+    const remembered = cfg.notifications.downloads.channel;
+    this.bus.emit({
+      type: "local_models_notify_prompt_opened",
+      prompt: {
+        label: job ? cleanLabel(job.label) : "future downloads",
+        current: remembered === "telegram" || remembered === "discord" || remembered === "off"
+          ? remembered
+          : null,
+      },
+    });
+  }
+
+  /** One line about the ping once the job ended: sent, or why not. */
+  private reportNotified(job: DownloadJob): void {
+    const n = job.notified;
+    if (!n) return;
+    const name = channelName(n.channel);
+    this.bus.emit({
+      type: "runtime_info",
+      line:
+        n.outcome === "sent"
+          ? `local-llm: ${name} ping sent for ${cleanLabel(job.label)}`
+          : `local-llm: ${name} ping not sent for ${cleanLabel(job.label)} — ${n.reason ?? n.outcome}`,
+    });
+  }
+
+  /** Called on every watch tick: arm a ping that was waiting for credentials. */
+  private armPendingNotify(): void {
+    const pending = this.pendingNotify;
+    if (!pending) return;
+    const cfg = getConfig();
+    if (!isDownloadNotifyChannelReady(pending.channel, cfg)) return;
+    this.pendingNotify = null;
+    const dataDir = cfg.paths.localModelsDataDir;
+    for (const w of this.watchedDownloads.values()) {
+      writeDownloadNotify(dataDir, w.jobId, pending.channel);
+    }
+    this.bus.emit({
+      type: "runtime_info",
+      line: `local-llm: ${channelName(pending.channel)} is set up — ping armed for ${pending.label || "the download"}`,
+    });
+  }
+
+  /** What the operator will be told about, for tests and the hub hop. */
+  notifyArmedFor(kind: DownloadJobKind): DownloadNotifyChannel | null {
+    const watch = this.watchedDownloads.get(kind);
+    if (!watch) return null;
+    return readDownloadNotify(getConfig().paths.localModelsDataDir, watch.jobId);
   }
 
   /**
@@ -719,7 +893,10 @@ export class LocalModelsOrchestrator {
           type: "runtime_info",
           line: describeAdoptedJob(job, def.name),
         });
-        void this.pullModel(job.modelId, job.mode);
+        // The job's own ping (a CLI `--notify`, or whatever was armed in
+        // an earlier life) stands; a job nobody just started is not a
+        // moment to ask.
+        void this.pullModel(job.modelId, job.mode, { askNotify: false });
       } else {
         if (!isKnownEmbeddingModelId(job.modelId)) {
           removeDownloadJob(dataDir, job.id);
@@ -734,7 +911,7 @@ export class LocalModelsOrchestrator {
           type: "runtime_info",
           line: describeAdoptedJob(job, def.name),
         });
-        void this.pullEmbeddingModel(job.modelId);
+        void this.pullEmbeddingModel(job.modelId, { askNotify: false });
       }
     }
   }
@@ -777,7 +954,7 @@ export class LocalModelsOrchestrator {
         type: "runtime_info",
         line: `local-llm: pulling default embedding model (${DEFAULT_EMBEDDING_MODEL_ID})…`,
       });
-      await this.pullEmbeddingModel(DEFAULT_EMBEDDING_MODEL_ID);
+      await this.pullEmbeddingModel(DEFAULT_EMBEDDING_MODEL_ID, { askNotify: false });
       return;
     } else {
       persistEmbeddingHybridRecall({ enabled: false });
@@ -1768,7 +1945,7 @@ export class LocalModelsOrchestrator {
    * worker (see `pullModel`), mark it active for hybrid recall and, when
    * the chat daemon is up, bring the embedding daemon up beside it.
    */
-  async pullEmbeddingModel(id: EmbeddingModelId): Promise<void> {
+  async pullEmbeddingModel(id: EmbeddingModelId, opts?: PullOptions): Promise<void> {
     const cfg = getConfig();
     const dataDir = cfg.paths.localModelsDataDir;
     const def = getEmbeddingModelDef(id);
@@ -1784,7 +1961,7 @@ export class LocalModelsOrchestrator {
 
     try {
       if (!isEmbeddingModelDownloaded(dataDir, def)) {
-        const watched = await this.runDownloadJob("embedding", id, "gguf-only");
+        const watched = await this.runDownloadJob("embedding", id, "gguf-only", opts);
         if (watched.outcome === "detached") return;
         if (watched.outcome === "cancelled") {
           this.bus.emit({
@@ -2209,7 +2386,7 @@ export class LocalModelsOrchestrator {
         type: "runtime_info",
         line: `local-llm: downloading model ${def.name} (${def.sizeLabel})…`,
       });
-      await this.pullModel(targetId);
+      await this.pullModel(targetId, "with-mmproj", { askNotify: false });
     }
     persistUserLocalModelsConfig({
       mode: "managed",
@@ -2320,6 +2497,29 @@ function resolveMmprojStatus(
 ): MmprojStatus {
   if (!def.supportsVision) return "n/a";
   return isMmprojDownloaded(dataDir, def) ? "downloaded" : "missing";
+}
+
+/** Per-pull switches threaded from the caller down to the watch. */
+export interface PullOptions {
+  /** `false` skips the "tell me when it lands?" prompt (onboarding has its own flow). */
+  askNotify?: boolean;
+}
+
+/** `"Qwen 3.5 4B (gguf)"` → `"Qwen 3.5 4B"`: the phase is worker detail. */
+function cleanLabel(label: string): string {
+  return label.replace(/\s*\((gguf|mmproj)\)\s*$/i, "");
+}
+
+/** `Qwen 3.5 4B`, or `Qwen 3.5 4B and Nomic Embed` when two pulls are in flight. */
+function describeWatched(labels: readonly string[]): string {
+  const names = labels.map(cleanLabel);
+  if (names.length === 0) return "";
+  if (names.length === 1) return names[0]!;
+  return `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+}
+
+function channelName(channel: DownloadNotifyChannel): string {
+  return channel === "telegram" ? "Telegram" : channel === "discord" ? "Discord" : "E-mail";
 }
 
 /** How often a watched worker's record is re-read. */

@@ -691,3 +691,53 @@ describe("handleLocalModelsTabKey — x cancels the download in flight", () => {
     expect(onCancel).not.toHaveBeenCalled();
   });
 });
+
+describe("handleLocalModelsTabKey — tell me when it lands", () => {
+  function callbacksWith(over: Partial<TuiAppCallbacks>): TuiAppCallbacks {
+    return {
+      onApprovalDecision: vi.fn(),
+      onAbort: vi.fn(),
+      onQuit: vi.fn(),
+      onMessageSubmitted: vi.fn(),
+      ...over,
+    };
+  }
+  const row = makeRow("gemma-4-e4b", { supportsVision: false, downloaded: false, mmprojStatus: "n/a" });
+
+  it("answers the open prompt with t / d / n and closes it with Esc, swallowing the rest", () => {
+    const onChoice = vi.fn();
+    const onDismiss = vi.fn();
+    const onPull = vi.fn();
+    const base = stateWithRow(row);
+    const state = {
+      ...base,
+      localModelsPanel: { ...base.localModelsPanel, notifyPrompt: { label: "Gemma", current: null } },
+    };
+    const callbacks = callbacksWith({
+      onLocalModelsNotifyChoice: onChoice,
+      onLocalModelsNotifyDismissed: onDismiss,
+      onLocalModelsPullRequested: onPull,
+    });
+    const ctx = { state, dispatch: vi.fn(), callbacks };
+    expect(handleLocalModelsTabKey("t", emptyKey(), ctx)).toBe(true);
+    expect(handleLocalModelsTabKey("D", emptyKey(), ctx)).toBe(true);
+    expect(handleLocalModelsTabKey("n", emptyKey(), ctx)).toBe(true);
+    expect(onChoice.mock.calls.map((c) => c[0])).toEqual(["telegram", "discord", "off"]);
+    expect(handleLocalModelsTabKey("", emptyKey({ escape: true }), ctx)).toBe(true);
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+    // Enter on the row underneath does not start a pull while the prompt is up.
+    expect(handleLocalModelsTabKey("", emptyKey({ return: true }), ctx)).toBe(true);
+    expect(onPull).not.toHaveBeenCalled();
+  });
+
+  it("'N' asks for the prompt regardless of the cursor row", () => {
+    const onRequest = vi.fn();
+    const handled = handleLocalModelsTabKey("N", emptyKey({ shift: true }), {
+      state: stateWithRow(row),
+      dispatch: vi.fn(),
+      callbacks: callbacksWith({ onLocalModelsNotifyPromptRequested: onRequest }),
+    });
+    expect(handled).toBe(true);
+    expect(onRequest).toHaveBeenCalledTimes(1);
+  });
+});

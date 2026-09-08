@@ -417,6 +417,23 @@ describe("user config file IO", () => {
     warn.mockRestore();
   });
 
+  it("ensureUserConfigFileSync migrates v51 → v52 by filling notifications defaults", () => {
+    const path = getUserConfigPath(dir);
+    const v51 = { version: 51, telegram: { ...USER_CONFIG_DEFAULTS.telegram, ownerUserId: 7 } };
+    writeFileSync(path, JSON.stringify(v51, null, 2) + "\n", "utf8");
+
+    const warn = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const migrated = ensureUserConfigFileSync(path);
+
+    expect(migrated.version).toBe(USER_CONFIG_VERSION);
+    expect(migrated.notifications).toEqual(USER_CONFIG_DEFAULTS.notifications);
+    expect(migrated.telegram.ownerUserId).toBe(7);
+    const onDisk = JSON.parse(readFileSync(path, "utf8"));
+    expect(onDisk.version).toBe(USER_CONFIG_VERSION);
+    expect(onDisk.notifications).toEqual({ downloads: { channel: null } });
+    warn.mockRestore();
+  });
+
   it("ensureUserConfigFileSync migrates v8 → v9 by filling telegram defaults", () => {
     const path = getUserConfigPath(dir);
     const v8 = {

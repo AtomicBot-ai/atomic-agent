@@ -5,6 +5,7 @@ import { PasteFieldTarget } from "../context-menu/paste-field-target.js";
 import { pasteIntoLlmModalField } from "../llm-panel/llm-panel-paste.js";
 import { theme } from "../theme/theme.js";
 import type { TuiState } from "../tui-state.js";
+import { NotifyPromptBox } from "./notify-prompt-box.js";
 import { ProvidersWizard } from "./providers-wizard.js";
 import { parseExternalUrl } from "../llm-panel/llm-panel-modal-key-bindings.js";
 import { filteredPickerModels } from "../providers/providers-panel-state.js";
@@ -55,6 +56,7 @@ export function hasLlmModal(state: TuiState): boolean {
     state.providersPanel.wizard !== null ||
     state.providersPanel.removeConfirm !== null ||
     state.localModelsPanel.embeddingOnboardingPrompt !== null ||
+    state.localModelsPanel.notifyPrompt !== null ||
     state.localModelsPanel.removeConfirmId !== null ||
     state.localModelsPanel.embeddingRemoveConfirmId !== null ||
     state.providersPanel.chatModelPicker !== null ||
@@ -84,6 +86,14 @@ export function LlmPanelModals({
       <PromptBox tone="danger" title={`Remove provider ${state.providersPanel.removeConfirm.id}?`}>
         <Text color={theme.colors.muted}>y confirm · n/Esc cancel</Text>
       </PromptBox>
+    );
+  }
+  if (state.localModelsPanel.notifyPrompt) {
+    return (
+      <NotifyPromptBox
+        prompt={state.localModelsPanel.notifyPrompt}
+        pull={state.localModelsPanel.pull ?? state.localModelsPanel.embeddingPull}
+      />
     );
   }
   if (state.localModelsPanel.embeddingOnboardingPrompt) {
