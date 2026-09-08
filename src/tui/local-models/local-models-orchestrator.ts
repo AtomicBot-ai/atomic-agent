@@ -699,7 +699,7 @@ export class LocalModelsOrchestrator {
       });
       return;
     }
-    if (remembered === "off" || remembered === "email") return;
+    if (remembered === "off") return;
     if (isDownloadNotifyChannelReady(remembered, cfg)) {
       writeDownloadNotify(cfg.paths.localModelsDataDir, jobId, remembered);
       this.bus.emit({
@@ -752,7 +752,7 @@ export class LocalModelsOrchestrator {
       ? `Set up ${channelName(choice)} to get pinged when ${label} lands — the download keeps going meanwhile.`
       : `Set up ${channelName(choice)} to get pinged when downloads land.`;
     if (this.hooks?.openIntegration) {
-      this.hooks.openIntegration(choice, why);
+      this.hooks.openIntegration(integrationIdFor(choice), why);
     } else {
       this.bus.emit({ type: "runtime_info", line: `local-llm: ${why}` });
     }
@@ -774,9 +774,7 @@ export class LocalModelsOrchestrator {
       type: "local_models_notify_prompt_opened",
       prompt: {
         label: job ? cleanLabel(job.label) : "future downloads",
-        current: remembered === "telegram" || remembered === "discord" || remembered === "off"
-          ? remembered
-          : null,
+        current: remembered,
       },
     });
   }
@@ -2520,6 +2518,11 @@ function describeWatched(labels: readonly string[]): string {
 
 function channelName(channel: DownloadNotifyChannel): string {
   return channel === "telegram" ? "Telegram" : channel === "discord" ? "Discord" : "E-mail";
+}
+
+/** The hub row a channel's credentials live on. */
+function integrationIdFor(channel: DownloadNotifyChannel): string {
+  return channel === "email" ? "atomic-mail" : channel;
 }
 
 /** How often a watched worker's record is re-read. */

@@ -29,7 +29,7 @@ describe("integration registry", () => {
     // throws at save time -- i.e. in front of the operator.
     for (const integration of listIntegrations()) {
       for (const field of integration.fields) {
-        if (field.store === "config") continue;
+        if (field.store === "config" || field.store === "transient") continue;
         expect(field.envVar).toMatch(/^[A-Z_][A-Z0-9_]*$/);
       }
     }

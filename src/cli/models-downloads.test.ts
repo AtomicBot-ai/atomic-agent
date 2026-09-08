@@ -164,8 +164,8 @@ describe("background model downloads (CLI)", () => {
     expect(await modelsCommand(["pull", "--notify", "telegram", "qwen-3.5-4b"])).toBe(2);
     expect(stderrChunks.join("")).toMatch(/only applies to a background pull/);
     await expect(modelsCommand(["pull", "--background", "qwen-3.5-4b", "--notify"])).rejects.toThrow(/got nothing/);
-    await expect(modelsCommand(["pull", "--background", "--notify=email", "qwen-3.5-4b"])).rejects.toThrow(
-      /telegram, discord or off/,
+    await expect(modelsCommand(["pull", "--background", "--notify=pager", "qwen-3.5-4b"])).rejects.toThrow(
+      /telegram, discord, email or off/,
     );
     expect(spawnMock).not.toHaveBeenCalled();
   });

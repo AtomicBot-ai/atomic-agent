@@ -1045,6 +1045,24 @@ describe("parseUserConfigFile", () => {
     ).toThrow(/notifications\.downloads\.channel/);
   });
 
+  it("applies atomicMail defaults when the section is absent, and accepts a v52 file", () => {
+    expect(parseUserConfigFile({ version: USER_CONFIG_VERSION }).atomicMail).toEqual(USER_CONFIG_DEFAULTS.atomicMail);
+    const parsed = parseUserConfigFile({ version: 52 });
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(parsed.atomicMail.address).toBeNull();
+  });
+
+  it("keeps a pending verification only when it is whole", () => {
+    const whole = { email: "a@b.co", codeHash: "ab".repeat(32), expiresAt: "2026-09-09T00:00:00.000Z" };
+    expect(
+      parseUserConfigFile({ version: USER_CONFIG_VERSION, atomicMail: { pendingVerification: whole } }).atomicMail
+        .pendingVerification,
+    ).toEqual({ ...whole, attempts: 0 });
+    expect(() =>
+      parseUserConfigFile({ version: USER_CONFIG_VERSION, atomicMail: { pendingVerification: { email: "a@b.co" } } }),
+    ).toThrow(/atomicMail\.pendingVerification/);
+  });
+
   it("keeps discord.ownerUserId a string", () => {
     // Discord snowflakes exceed Number.MAX_SAFE_INTEGER: parsing one as
     // a number silently corrupts the last digits, which would let the

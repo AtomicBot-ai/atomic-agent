@@ -34,6 +34,8 @@ function job(patch: Partial<DownloadJob> = {}): DownloadJob {
 const config = {
   telegram: { enabled: true, ownerUserId: 42, parseMode: "html" as const, progressIndicator: true },
   discord: { enabled: true, ownerUserId: "123456789012345678" },
+  atomicMail: { address: null, accountId: null, ownerEmail: null, ownerVerifiedAt: null, pendingVerification: null },
+  paths: { stateDir: "/nowhere" } as never,
 };
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -86,6 +88,7 @@ describe("notifyDownloadOutcome", () => {
     });
     expect(await notifyDownloadOutcome({ channel: "email", job: job(), config, env })).toMatchObject({
       outcome: "not_configured",
+      reason: "no Atomic Mail inbox",
     });
   });
 
@@ -146,6 +149,20 @@ describe("notifyDownloadOutcome", () => {
     expect(result.outcome).toBe("failed");
   });
 
+  it("mails the verified owner through the Atomic Mail service", async () => {
+    const sendDownloadMail = vi.fn(async () => undefined);
+    const atomicMail = { readiness: () => ({ level: "ready" as const, address: "a@atomicmail.ai", ownerEmail: "v@x.io" }), sendDownloadMail };
+    const result = await notifyDownloadOutcome({ channel: "email", job: job(), config, env: {}, atomicMail });
+    expect(result).toEqual({ outcome: "sent", channel: "email" });
+    expect(sendDownloadMail).toHaveBeenCalledTimes(1);
+
+    const unverified = { readiness: () => ({ level: "unverified" as const, address: "a", ownerEmail: "v", pendingUntil: null }), sendDownloadMail };
+    expect(await notifyDownloadOutcome({ channel: "email", job: job(), config, env: {}, atomicMail: unverified })).toMatchObject({
+      outcome: "not_configured",
+      reason: "owner e-mail not verified",
+    });
+  });
+
   it("knows which channels could deliver right now", () => {
     expect(isDownloadNotifyChannelReady("telegram", config, { TELEGRAM_BOT_TOKEN: "t" })).toBe(true);
     expect(isDownloadNotifyChannelReady("telegram", config, {})).toBe(false);
@@ -154,5 +171,11 @@ describe("notifyDownloadOutcome", () => {
       isDownloadNotifyChannelReady("discord", { ...config, discord: { enabled: true, ownerUserId: null } }, { DISCORD_BOT_TOKEN: "d" }),
     ).toBe(false);
     expect(isDownloadNotifyChannelReady("email", config, {})).toBe(false);
+    const verified = {
+      ...config,
+      atomicMail: { ...config.atomicMail, address: "a@atomicmail.ai", ownerEmail: "v@x.io", ownerVerifiedAt: "2026-09-09T00:00:00.000Z" },
+    };
+    expect(isDownloadNotifyChannelReady("email", verified, { ATOMIC_MAIL_API_KEY: "k" })).toBe(true);
+    expect(isDownloadNotifyChannelReady("email", verified, {})).toBe(false);
   });
 });

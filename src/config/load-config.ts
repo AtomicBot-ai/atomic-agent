@@ -531,6 +531,13 @@ export function loadConfig(): AtomicAgentConfig {
         channel: user.notifications.downloads.channel,
       },
     },
+    atomicMail: {
+      address: user.atomicMail.address,
+      accountId: user.atomicMail.accountId,
+      ownerEmail: user.atomicMail.ownerEmail,
+      ownerVerifiedAt: user.atomicMail.ownerVerifiedAt,
+      pendingVerification: user.atomicMail.pendingVerification,
+    },
     composio: {
       enabled: user.composio.enabled,
       apiKeyEnv: user.composio.apiKeyEnv,

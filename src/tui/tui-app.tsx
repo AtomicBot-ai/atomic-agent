@@ -381,7 +381,7 @@ export interface TuiAppCallbacks {
    * ping (or hop to that integration's setup when it has no credentials
    * yet), `off` remembers "no". Dismissed = Esc, nothing remembered.
    */
-  onLocalModelsNotifyChoice?(choice: "telegram" | "discord" | "off"): void;
+  onLocalModelsNotifyChoice?(choice: "telegram" | "discord" | "email" | "off"): void;
   onLocalModelsNotifyDismissed?(): void;
   /** `N` in the Models tab: reopen the prompt. */
   onLocalModelsNotifyPromptRequested?(): void;

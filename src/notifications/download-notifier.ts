@@ -1,3 +1,4 @@
+import { ATOMIC_MAIL_API_KEY_KEY, AtomicMailService } from "../atomic-mail/index.js";
 import { DiscordApi, resolveDiscordToken } from "../channels/discord/index.js";
 import {
   TELEGRAM_BOT_TOKEN_KEY,
@@ -26,7 +27,9 @@ export type DownloadNotifyResult =
 export interface DownloadNotifyInput {
   channel: DownloadNotifyChannel;
   job: DownloadJob;
-  config: Pick<AtomicAgentConfig, "telegram" | "discord">;
+  config: Pick<AtomicAgentConfig, "telegram" | "discord" | "atomicMail" | "paths">;
+  /** Test seam for the e-mail leg. */
+  atomicMail?: Pick<AtomicMailService, "readiness" | "sendDownloadMail">;
   /** Defaults to `process.env` — where `loadConfig` puts `<stateDir>/.env`. */
   env?: NodeJS.ProcessEnv;
   /** Test seam. */
@@ -125,8 +128,22 @@ export async function notifyDownloadOutcome(
       await api.sendMessage(await api.createDmChannel(userId), text);
       return { outcome: "sent", channel };
     }
-    // E-mail arrives with the Atomic Mail integration.
-    return { outcome: "not_configured", channel, reason: "e-mail notifications are not set up" };
+    const mail = input.atomicMail ?? new AtomicMailService({ env, config: () => input.config });
+    const ready = mail.readiness();
+    if (ready.level !== "ready") {
+      return {
+        outcome: "not_configured",
+        channel,
+        reason:
+          ready.level === "no_inbox"
+            ? "no Atomic Mail inbox"
+            : ready.level === "no_owner"
+              ? "no owner e-mail"
+              : "owner e-mail not verified",
+      };
+    }
+    await mail.sendDownloadMail(input.job);
+    return { outcome: "sent", channel };
   } catch (err) {
     // Never let a token-bearing URL from an HTTP error reach the job log.
     return { outcome: "failed", channel, reason: scrubErrorMessage(err) };
@@ -136,9 +153,17 @@ export async function notifyDownloadOutcome(
 /** True when a ping on `channel` could be delivered right now. */
 export function isDownloadNotifyChannelReady(
   channel: DownloadNotifyChannel,
-  config: Pick<AtomicAgentConfig, "telegram" | "discord">,
+  config: Pick<AtomicAgentConfig, "telegram" | "discord" | "atomicMail">,
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
+  if (channel === "email") {
+    return (
+      (env[ATOMIC_MAIL_API_KEY_KEY] ?? "").trim().length > 0 &&
+      config.atomicMail.address !== null &&
+      config.atomicMail.ownerEmail !== null &&
+      config.atomicMail.ownerVerifiedAt !== null
+    );
+  }
   if (channel === "telegram") {
     return (env[TELEGRAM_BOT_TOKEN_KEY] ?? "").trim().length > 0 && config.telegram.ownerUserId !== null;
   }

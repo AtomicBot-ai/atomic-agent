@@ -721,8 +721,9 @@ describe("handleLocalModelsTabKey — tell me when it lands", () => {
     const ctx = { state, dispatch: vi.fn(), callbacks };
     expect(handleLocalModelsTabKey("t", emptyKey(), ctx)).toBe(true);
     expect(handleLocalModelsTabKey("D", emptyKey(), ctx)).toBe(true);
+    expect(handleLocalModelsTabKey("e", emptyKey(), ctx)).toBe(true);
     expect(handleLocalModelsTabKey("n", emptyKey(), ctx)).toBe(true);
-    expect(onChoice.mock.calls.map((c) => c[0])).toEqual(["telegram", "discord", "off"]);
+    expect(onChoice.mock.calls.map((c) => c[0])).toEqual(["telegram", "discord", "email", "off"]);
     expect(handleLocalModelsTabKey("", emptyKey({ escape: true }), ctx)).toBe(true);
     expect(onDismiss).toHaveBeenCalledTimes(1);
     // Enter on the row underneath does not start a pull while the prompt is up.

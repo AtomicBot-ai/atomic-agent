@@ -8,6 +8,7 @@ export type {
   TelegramConfig,
   NotificationsConfig,
   DownloadNotifyChannelSetting,
+  AtomicMailConfig,
   TelegramParseMode,
   UserConfigFile,
   UserManagedLocalLlmConfig,

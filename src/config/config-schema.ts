@@ -862,6 +862,8 @@ export interface AtomicAgentConfig {
   discord: DiscordConfig;
   /** Out-of-band pings. Mirrors `UserConfigFile.notifications`. */
   notifications: NotificationsConfig;
+  /** The agent's own inbox. Mirrors `UserConfigFile.atomicMail`. */
+  atomicMail: AtomicMailConfig;
   /**
    * Composio integration. Mirrors `UserConfigFile.composio`. The API
    * key is not stored here — see `ComposioConfig`.
@@ -1083,6 +1085,32 @@ export interface NotificationsConfig {
      */
     channel: DownloadNotifyChannelSetting | null;
   };
+}
+
+/**
+ * Atomic Mail — the agent's own `@atomicmail.ai` inbox. The API key
+ * lives in `<stateDir>/.env` as `ATOMIC_MAIL_API_KEY`; this block holds
+ * what is not secret: the address, and the owner's verified e-mail.
+ * Added in config v53.
+ */
+export interface AtomicMailConfig {
+  /** `name@atomicmail.ai`, once registered. */
+  address: string | null;
+  /** The JMAP account id that goes with it. */
+  accountId: string | null;
+  /** Where the operator wants to be reached. */
+  ownerEmail: string | null;
+  /** ISO time the operator typed the code back; `null` = not yet. */
+  ownerVerifiedAt: string | null;
+  /** A code has been sent and not yet typed back. Never the code itself. */
+  pendingVerification: {
+    email: string;
+    /** sha256 of the six digits. */
+    codeHash: string;
+    expiresAt: string;
+    /** Wrong guesses so far; the code is dropped after a few. */
+    attempts: number;
+  } | null;
 }
 
 /**
@@ -1753,6 +1781,11 @@ export interface UserConfigFile {
    */
   notifications: NotificationsConfig;
   /**
+   * Atomic Mail. Added in config v53. Older files are transparently
+   * upgraded with every field `null`: no inbox, no owner, nothing sent.
+   */
+  atomicMail: AtomicMailConfig;
+  /**
    * Composio integration. Added in config v50. Older files are
    * transparently upgraded with the defaults below, which leave the
    * integration inert until a key is written to `<stateDir>/.env`.
@@ -1871,7 +1904,10 @@ export interface UserConfigFile {
 // v52: new `notifications` block — where a background model download
 // reports when it lands. Additive: `channel: null` means "not asked yet",
 // which is what every older file has always implied.
-export const USER_CONFIG_VERSION = 52;
+// v53: new `atomicMail` block — the agent's own inbox and the owner's
+// verified e-mail. Additive and inert: every field starts `null`; the API
+// key lives in `<stateDir>/.env`, never here.
+export const USER_CONFIG_VERSION = 53;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -2012,6 +2048,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   49,
   50,
   51,
+  52,
   USER_CONFIG_VERSION,
 ];
 
@@ -2310,6 +2347,14 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
     downloads: {
       channel: null,
     },
+  },
+  atomicMail: {
+    // Added in v53. Nothing until the operator registers an inbox.
+    address: null,
+    accountId: null,
+    ownerEmail: null,
+    ownerVerifiedAt: null,
+    pendingVerification: null,
   },
   composio: {
     // Added in v50. `enabled: true` is safe because the key, not this
@@ -3534,6 +3579,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
     (obj.notifications as Record<string, unknown> | undefined) ?? {};
   const notificationsDownloads =
     (notifications.downloads as Record<string, unknown> | undefined) ?? {};
+  const atomicMail = (obj.atomicMail as Record<string, unknown> | undefined) ?? {};
   const tui = (obj.tui as Record<string, unknown> | undefined) ?? {};
   const analytics =
     (obj.analytics as Record<string, unknown> | undefined) ?? {};
@@ -4342,6 +4388,16 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         ),
       },
     },
+    atomicMail: {
+      address: parseNullableString(atomicMail.address, "atomicMail.address"),
+      accountId: parseNullableString(atomicMail.accountId, "atomicMail.accountId"),
+      ownerEmail: parseNullableString(atomicMail.ownerEmail, "atomicMail.ownerEmail"),
+      ownerVerifiedAt: parseNullableString(atomicMail.ownerVerifiedAt, "atomicMail.ownerVerifiedAt"),
+      pendingVerification: parsePendingVerification(
+        atomicMail.pendingVerification,
+        "atomicMail.pendingVerification",
+      ),
+    },
     composio: {
       enabled: parseBool(
         composio.enabled ?? USER_CONFIG_DEFAULTS.composio.enabled,
@@ -4488,6 +4544,25 @@ export function parseThemeName(raw: unknown, field: string): string {
   }
   const trimmed = raw.trim();
   return trimmed.length === 0 ? "auto" : trimmed;
+}
+
+function parsePendingVerification(
+  raw: unknown,
+  field: string,
+): AtomicMailConfig["pendingVerification"] {
+  if (raw === null || raw === undefined) return null;
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw new ConfigValidationError(field, "expected an object or null");
+  }
+  const o = raw as Record<string, unknown>;
+  const email = parseNullableString(o.email, `${field}.email`);
+  const codeHash = parseNullableString(o.codeHash, `${field}.codeHash`);
+  const expiresAt = parseNullableString(o.expiresAt, `${field}.expiresAt`);
+  if (!email || !codeHash || !expiresAt) {
+    throw new ConfigValidationError(field, "expected email, codeHash and expiresAt");
+  }
+  const attempts = typeof o.attempts === "number" && o.attempts >= 0 ? Math.floor(o.attempts) : 0;
+  return { email, codeHash, expiresAt, attempts };
 }
 
 /**

@@ -35,7 +35,7 @@ export function readFieldValue(
   const raw =
     field.store === "config"
       ? readConfigPath(config, field.configPath)
-      : field.envVar === undefined
+      : field.store === "transient" || field.envVar === undefined
         ? undefined
         : env[field.envVar];
   if (field.kind === "boolean") {
@@ -133,6 +133,9 @@ export function writeFieldValue(
     writeConfigPath(userConfigFile, field.configPath, trimmed === "on");
     return;
   }
+
+  // Acted on by the orchestrator, never written anywhere.
+  if (field.store === "transient") return;
 
   if (field.store === "config") {
     if (!userConfigFile || !field.configPath) {

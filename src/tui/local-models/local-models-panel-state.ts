@@ -156,7 +156,7 @@ export interface LocalModelsDaemonInfo {
 export type DaemonPhase = "idle" | "starting" | "stopping";
 
 /** Where a download's end-of-job ping may go, as offered by the prompt. */
-export type LocalModelsNotifyChoice = "telegram" | "discord" | "off";
+export type LocalModelsNotifyChoice = "telegram" | "discord" | "email" | "off";
 
 /**
  * The "tell me when it lands?" modal. `label` names the download it is

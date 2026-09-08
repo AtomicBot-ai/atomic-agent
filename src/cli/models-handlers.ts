@@ -208,11 +208,9 @@ function parseNotifyFlag(args: readonly string[]): DownloadNotifyChannel | null 
   if (!joined && i < 0) return undefined;
   const raw = joined ? joined.slice("--notify=".length) : args[i + 1];
   if (raw === "off" || raw === "none") return null;
-  // E-mail arrives with the Atomic Mail integration; until then an
-  // accepted `email` would be a ping that can never be delivered.
-  if (raw === "telegram" || raw === "discord") return raw;
+  if (raw === "telegram" || raw === "discord" || raw === "email") return raw;
   throw new Error(
-    `--notify expects telegram, discord or off; got ${raw === undefined ? "nothing" : JSON.stringify(raw)}`,
+    `--notify expects telegram, discord, email or off; got ${raw === undefined ? "nothing" : JSON.stringify(raw)}`,
   );
 }
 
