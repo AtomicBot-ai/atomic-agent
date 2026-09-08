@@ -27,6 +27,9 @@ export type TraceEvent =
   | TraceToolInvocation
   | TraceParseRetry
   | TraceLoopDetected
+  | TraceTaskContinued
+  | TraceProviderWaiting
+  | TraceProviderRecovered
   | TraceLessonDeprecated
   | TraceVoteApplied
   | TraceVoteRejected
@@ -159,6 +162,38 @@ export interface TraceParseRetry extends TraceEventBase {
   stepIndex: number;
   attempt: number;
   reason: string;
+}
+
+/**
+ * A leg of the task finished and the work carried on. The trace is
+ * where "did it stop, or is it still going?" gets answered after the
+ * fact, so the two numbers that decide it are both here.
+ */
+export interface TraceTaskContinued extends TraceEventBase {
+  type: "task_continued";
+  turnIndex: number;
+  stepsTaken: number;
+  elapsedMs: number;
+  stepCeiling: number;
+}
+
+/** The turn was parked because the provider stopped answering. */
+export interface TraceProviderWaiting extends TraceEventBase {
+  type: "provider_waiting";
+  turnIndex: number;
+  stepIndex?: number;
+  attempt: number;
+  waitedMs: number;
+  maxWaitMs: number;
+  nextRetryMs: number;
+  reason: string;
+}
+
+/** The provider answered again and the parked turn resumed. */
+export interface TraceProviderRecovered extends TraceEventBase {
+  type: "provider_recovered";
+  turnIndex: number;
+  waitedMs: number;
 }
 
 export interface TraceLoopDetected extends TraceEventBase {
