@@ -1863,6 +1863,7 @@ export async function createAgentRuntime(
       linkGenerator,
       notesStore,
       minCandidates: config.memory.links.minCandidates,
+      logger,
     });
   }
 
@@ -1949,6 +1950,7 @@ export async function createAgentRuntime(
       lessonStore,
       profileStore,
       procedureStore: config.memory.procedures.enabled ? procedureStore : null,
+      logger,
     });
   }
 

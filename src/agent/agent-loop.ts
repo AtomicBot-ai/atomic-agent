@@ -505,8 +505,11 @@ export class AgentLoop {
     // strictly larger memory set.
     //
     // Shutdown path still calls `abortPending()` with no sessionId
-    // to drain every in-flight reflection before the runtime tears
-    // down SQLite handles.
+    // before the runtime tears down SQLite handles. Note that it
+    // *signals* — nothing is awaited, so a reflection can still be
+    // resuming when the stores close. That is why the decorators and
+    // this call site guard their store reads rather than relying on
+    // the abort to have finished.
 
     if (options.userMessage !== undefined) {
       const text = options.userMessage;
@@ -651,7 +654,23 @@ export class AgentLoop {
         "This is the final allowed step. Do not call any non-terminal tool; " +
         "summarize the completed work with reply, or end the session with finish.";
       try {
-        const profileFacts = this.deps.profileFactsProvider?.();
+        // `profileFactsProvider` is a raw `profileStore.list()`.
+        // Dropping the facts is a real loss — `profile-renderer` emits
+        // pinned facts regardless of the contextual gate, so this step
+        // renders with no `### profile` section at all — but it is the
+        // lesser one: a throw here lands in the
+        // catch below, where a `TypeError` from a closed SQLite handle
+        // classifies `tool` and fails the turn outright.
+        let profileFacts: readonly ProfileFact[] | undefined;
+        try {
+          profileFacts = this.deps.profileFactsProvider?.();
+        } catch (err) {
+          this.deps.logger?.warn("profile facts unavailable for this step", {
+            sessionId: state.id,
+            stepIndex: i,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
         const activeProfile =
           this.deps.profileManager?.getProfile() ??
           this.deps.profile ??
@@ -1144,11 +1163,31 @@ export class AgentLoop {
           // recalled across all steps of this turn) ∪ (profile
           // facts currently active). Profile facts are not gated
           // by recall — they're always candidates because the
-          // renderer already surfaces them whenever they pass the
-          // contextual-keyword gate. Sourcing them here keeps the
+          // renderer surfaces them whenever they are pinned or pass
+          // the contextual-keyword gate. Sourcing them here keeps the
           // decorator's hydration cheap.
-          const profileFacts =
-            this.deps.profileFactsProvider?.() ?? [];
+          // `profileFactsProvider` is a raw `profileStore.list()`.
+          // It is only ever an input to the fire-and-forget reflection
+          // below, so a store failure here must not fail the turn the
+          // user is waiting on — an empty allowlist just means the
+          // vote-runner sees no profile candidates this turn.
+          let profileFacts: readonly ProfileFact[] = [];
+          try {
+            profileFacts = this.deps.profileFactsProvider?.() ?? [];
+          } catch (err) {
+            // Usually the step guard above has already warned for this
+            // turn — same provider, same store. Not always: the store
+            // can close between the last step and this block.
+            this.deps.logger?.warn("profile facts unavailable for reflection", {
+              sessionId: state.id,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+          // `reflect()` is documented fire-safe, but it is composed at
+          // runtime from decorators that read SQLite stores. A bare
+          // `void` turns any escape into an unhandled rejection the
+          // loop can neither see nor recover from, so the trailing
+          // `.catch` pins the contract at the call site too.
           void this.deps.reflectionRunner.reflect({
             sessionId: state.id,
             userMessage,
@@ -1184,6 +1223,11 @@ export class AgentLoop {
             ...(segmentationActive && transcript.length > 0
               ? { transcript }
               : {}),
+          }).catch((err: unknown) => {
+            this.deps.logger?.warn("reflection failed after dispatch", {
+              sessionId: state.id,
+              error: err instanceof Error ? err.message : String(err),
+            });
           });
         }
       }
