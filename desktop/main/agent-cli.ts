@@ -14,6 +14,8 @@ import { promisify } from "node:util";
 import { resolveBinary } from "./agent-client.js";
 // r5 item 9 — every `atag` subprocess runs on the DESKTOP's state directory.
 import { agentEnv, DESKTOP_STATE_DIR } from "./state-dir.js";
+// r7 models — the description + RAM figures `atag models list` cannot print.
+import { curatedMeta } from "./model-catalog.js";
 
 const run = promisify(execFile);
 
@@ -127,12 +129,31 @@ export interface CatalogModel {
   context: string;
   downloaded: boolean;
   active: boolean;
+  /* ---- the vendored catalogue metadata, when this id is one the table
+     knows (desktop/main/model-catalog.ts). All optional on purpose: a
+     model added from Hugging Face is a `custom-…` id no catalogue
+     describes, and it must render WITHOUT a blurb rather than with an
+     invented one. ---- */
+  name?: string;
+  description?: string;
+  /** Below this the model will not run on the host at all. */
+  minRamGb?: number;
+  /** At or above this it runs comfortably. */
+  recommendedRamGb?: number;
+  sizeGb?: number;
+  vision?: boolean;
+  tag?: string;
+  uncensored?: boolean;
 }
 
 /**
  * `models list` prints a table, not JSON. Parsing it is the price of
  * showing the operator the real catalog with real disk state rather
  * than a list this app invented.
+ *
+ * The table carries no description and no RAM figures, so each row is
+ * joined by id against the vendored catalogue metadata — see
+ * `model-catalog.ts` for why that copy exists and how it is kept honest.
  */
 export async function modelsList(): Promise<{ ok: boolean; models?: CatalogModel[]; error?: string }> {
   const res = await cli(["models", "list"], 45_000);
@@ -142,13 +163,27 @@ export async function modelsList(): Promise<{ ok: boolean; models?: CatalogModel
     if (!line.includes("|")) continue;
     const cells = line.split("|").map((c) => c.trim());
     if (cells.length < 5 || cells[0] === "ID" || !cells[0]) continue;
+    const id = cells[0]!;
+    const meta = curatedMeta(id);
     models.push({
-      id: cells[0]!,
+      id,
       family: cells[1] ?? "",
       size: cells[2] ?? "",
       context: cells[3] ?? "",
       downloaded: (cells[4] ?? "").toLowerCase() === "yes",
       active: (cells[5] ?? "").includes("*"),
+      ...(meta
+        ? {
+            name: meta.name,
+            description: meta.description,
+            minRamGb: meta.minRamGb,
+            recommendedRamGb: meta.recommendedRamGb,
+            sizeGb: meta.sizeGb,
+            vision: meta.vision,
+            ...(meta.tag ? { tag: meta.tag } : {}),
+            ...(meta.uncensored ? { uncensored: true } : {}),
+          }
+        : {}),
     });
   }
   return models.length ? { ok: true, models } : { ok: false, error: "could not parse the model catalog" };

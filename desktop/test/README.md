@@ -34,6 +34,15 @@ and each scenario imports the driver it was proved against.
 | `drive-selector-lib.mjs` | `drive-selector.mjs` — adds `tape()`, and the port-quiet / kill-the-group discipline that lane learned the hard way |
 | `drive-cloud-lib.mjs` | `cloud-setup.drive.mjs` — adds `check` / `step` / `report`, a transcript reader that knows rows are `#scroller .col720 > .turn` (there is no `#log`), and a reply matcher that waits for assistant PROSE so a `Reasoning · 1 steps` card is not mistaken for the answer |
 
+`launch` (in `drive.mjs`) also takes `args` — extra Electron argv for the
+app's own TEST-ONLY switches. There is one: `--fake-ram=<gb>` makes
+`app:hostRam` answer that figure instead of `os.totalmem()`, because the
+local-model recommendation is computed from the host's RAM and this machine
+has 68 GB — every curated model fits it comfortably, so the tight fit, the
+small-model caution and the models that do not run at all are unreachable on
+this hardware. Production never passes it, and `model-picks.drive.mjs` proves
+the real 68 GB pass without it.
+
 `launch` also decides WHICH agent the window talks to. `resolveBinary`
 prefers `~/atag-agent/bin/atag` and then the released install, so a driven
 run would otherwise exercise whatever agent happens to be on the machine —
@@ -52,6 +61,7 @@ run falls back to the installed agent as before.
 | `scenarios/01`…`07` + `run-all.mjs` | seven end-to-end human errands: build a website, write a document, arrange files, hold a conversation, answer an approval, survive a Force Quit, and be told what went wrong when the agent will not answer | `npm run scenarios` |
 | `onboarding-mouse.mjs` | the whole first-run wizard with the mouse, plus a resting-state design review of every screen | `npm run drive:onboarding` |
 | `drive-selector.mjs` | the composer's parameter controls across the three backends (`composerSwitchKindsFor`), and the pane Settings › LLM opens on | `npm run drive:selector` |
+| `model-picks.drive.mjs` | the local-model recommendation on three machine sizes: the picker and Settings › LLM › Local ordered for the host's RAM, each model's own blurb, one best fit, the small-model and tight-fit cautions, and the models held back as out of reach | `npm run drive:models` |
 | `cloud-setup.drive.mjs` | the cloud providers end to end against the real OpenRouter and AI/ML API | `npm run drive:cloud` |
 | `integration.drive.mjs` | **the four lanes in one window**: first run with the mouse, a cloud provider with a real key, a message and a reply, local, back to cloud, a second provider added from the composer chip, a model switch, and a reply from the model chosen last | `npm run drive:integration` |
 
@@ -102,6 +112,12 @@ Give every concurrent run its own debugging port.
   debugger session, so attaching a second socket to peek at a run in flight
   silently detaches the first and the scenario hangs where it stood. Watch a
   run through its log, never by attaching.
+- **A Settings window opened during boot is repainted away.** The sidebar and
+  its Settings button paint before `atag serve` has finished coming up, and a
+  Settings window opened in that gap is gone a few seconds later — the pane
+  reads empty and every check about it fails while the app is fine.
+  `model-picks.drive.mjs` opens it in a loop and reopens it if it went, which
+  is what a person does too.
 - **Never press Escape to close a popup.** Escape in this app opens the Manage
   menu — the user asked for that — and the settings window it raises then
   covers the composer, so the next click lands on the overlay and reports

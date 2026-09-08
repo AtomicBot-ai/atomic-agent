@@ -1316,3 +1316,50 @@ body.electron #settings{-webkit-app-region:no-drag}
    Wider (not taller — the toolbar row height is fixed), with the icon
    centred, so it carries its own weight in that corner. */
 .iconbtn.sidebtn{width:36px}
+
+/* ==========================================================================
+   r7 models — the local-model recommendation.
+
+   Two surfaces draw the same thing: the first-run picker (`.ob-*`) and
+   Settings › LLM › Local (`.llm-*`). The colour vocabulary is shared so a
+   verdict means the same thing in both — accent for the recommended row,
+   `--warn` for a compromise, `--text-tertiary` for a model this machine
+   cannot run.
+   ========================================================================== */
+
+/* --- the first-run picker --- */
+/* The detail block is a stack of lines, not a paragraph: description,
+   facts, fit, caution. */
+.ob-row .d > span{display:block}
+.ob-row .d .ob-desc{color:var(--text-primary);font-size:12.5px;margin-bottom:1px}
+.ob-row .d .ob-fit{margin-top:1px}
+.ob-row .d .ob-fit-comfortable{color:var(--success)}
+.ob-row .d .ob-fit-tight{color:var(--warn)}
+.ob-row .d .ob-fit-over{color:var(--text-tertiary)}
+.ob-row .d .ob-caution{margin-top:4px;color:var(--warn);line-height:1.45;
+  border-left:2px solid var(--warn-border);padding-left:8px}
+/* Badges ride on the name line. `Best fit` is the accent one — one row
+   per list carries it — and a catalogue tag is quieter beside it. */
+.ob-badge{display:inline-block;margin-left:8px;padding:1px 7px;border-radius:999px;
+  font-size:11px;font-weight:600;vertical-align:1px;
+  background:var(--bg-hover);color:var(--text-secondary);border:1px solid var(--line)}
+.ob-badge-best{background:var(--accent-wash);color:var(--accent-text);border-color:var(--accent-line)}
+.ob-badge-warn{background:var(--warn-wash);color:var(--warn);border-color:var(--warn-border)}
+/* Out of reach: shown, explained, and not a control. Deliberately NOT a
+   button — there is no cursor position and no tab stop on a model this
+   machine cannot run. */
+.ob-out-h{margin-top:14px;color:var(--text-secondary)}
+.ob-out-list{display:flex;flex-direction:column;gap:4px;margin-top:6px;opacity:.72}
+.ob-out{display:block;padding:6px 10px 6px 28px;border:1px dashed var(--line);border-radius:8px}
+.ob-out .t{font-size:14px;font-weight:500;display:block}
+.ob-out .ob-desc,.ob-out .ob-fit{display:block;font-size:12px;color:var(--text-secondary);line-height:1.5}
+.ob-out .ob-fit-over{color:var(--text-tertiary)}
+
+/* --- Settings › LLM › Local --- */
+.llm-ram{margin-bottom:6px}
+.tuirow .llm-sub{display:block;font-size:11.5px;color:var(--text-secondary);
+  font-family:var(--font-mono);line-height:1.5;white-space:pre-wrap}
+.tuirow .llm-fit-comfortable{color:var(--success)}
+.tuirow .llm-fit-tight{color:var(--warn)}
+.tuirow .llm-fit-over{color:var(--text-tertiary)}
+.tuirow .llm-caution{color:var(--warn)}

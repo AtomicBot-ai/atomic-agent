@@ -232,6 +232,13 @@ const OB = {
   managedWrite: null,
 };
 
+/* r7 models — the host's RAM in whole GB, as `app:hostRam` reports it
+   (main/agent-cli.ts hostRamGb → os.totalmem()). ONE value for every
+   surface that ranks models, so the wizard and Settings › LLM › Local
+   cannot end up disagreeing about what this machine can run. 0 means
+   "not asked yet"; `hostRamGb()` is what render paths read. */
+let HOST_RAM_GB = 0;
+
 /* ONBOARDING_CHOICES (onboarding-state.ts:130-155), verbatim and in order
    — the order is load-bearing, the 1–3 digits are positional. */
 const OB_CHOICES = [
@@ -5054,16 +5061,22 @@ function activeModel() {
       projector fetch, which now rides the pull stream under its own
       `kind` so its percent cannot be folded into the weights bar.
 
-   5. THE CURATED PICK METADATA.  `atag models list` prints only
-      id/family/size/context/downloaded/active, so `recommendLocalModel`,
-      `orderLocalModelPicks`, `fitFor(def, ram)` and the row `note()`
-      cannot be ported: there is no `recommendedRamGb`, no `minRamGb`, no
-      `description`, no catalogue `tag` and — the one with a safety edge
-      — no `uncensored` flag.  So NO ROW IS STARRED: `★ recommended`, the
-      ⚠ warning tag and the description are dropped from the row rather
-      than invented, and the uncensored-last pinning the TUI does is not
-      reproducible until the agent exposes the field.  The rows are
-      ordered by the desktop's existing size-vs-RAM heuristic and say so.
+   5. THE CURATED PICK METADATA — closed in r7.  `atag models list`
+      still prints only id/family/size/context/downloaded/active, and
+      the subcommand still has no `--json`.  What changed is where the
+      rest comes from: desktop/main/model-catalog.ts VENDORS the
+      catalogue's `description`, `minRamGb`, `recommendedRamGb`,
+      `fileSizeGb`, `supportsVision`, `tag` and `uncensored` from
+      src/local-llm/models-catalog.ts and joins them onto each row by id
+      in `modelsList()`.  So `recommendLocalModel` (→ `bestModelFor`),
+      `orderLocalModelPicks` (→ `orderModelsByFit`), `fitFor(def, ram)`
+      and the row note ARE ported, off real catalogue numbers rather
+      than a size heuristic — and the uncensored-last pinning with them.
+      An id the vendored table does not know (every `custom-…` model
+      added from Hugging Face) still renders WITHOUT a blurb and with its
+      RAM figure labelled an estimate; nothing is invented for it.  The
+      smoke asserts the two id lists agree, so the copy cannot rot in
+      silence.
    ============================================================ */
 
 /**
@@ -5103,13 +5116,144 @@ function needsOnboarding(cfg, readyIds) {
   return !(managedReady || localConfigured || cloudReady);
 }
 
-/** The desktop's size-vs-RAM heuristic — all the catalogue gives us. */
-function fitFor(sizeLabel, ram) {
-  const gb = parseFloat(String(sizeLabel)) || 0;
+/* ============================================================
+   r7 models — how a curated model fits THIS machine.
+
+   Everything below is computed from two numbers per model that the
+   catalogue states outright (`minRamGb`, `recommendedRamGb`, joined onto
+   each `models list` row by desktop/main/model-catalog.ts) and one number
+   the machine states outright (`app:hostRam` → os.totalmem()). Nothing is
+   estimated while those are present.
+
+   This REPLACES the old `fitFor(sizeLabel, ram)`, which multiplied the
+   file size by 1.6 and called the product a RAM requirement. That guess
+   said "fits this Mac" for a 22 GB model on a 36 GB machine the
+   catalogue itself rates at 36 GB recommended, and it had no way at all
+   to say that a model does not run here. The 1.6× heuristic survives in
+   one place only — a `custom-…` model added from Hugging Face, which no
+   catalogue describes — and it is labelled as an estimate there.
+   ============================================================ */
+
+/** The catalogue's 4B class, by its own recommendedRamGb. */
+const SMALL_MODEL_RAM_GB = 8;
+
+/** The host's RAM, for a render path. 0 until `loadHostRamGb` has run. */
+function hostRamGb() { return HOST_RAM_GB || OB.ram || 0; }
+
+/** Ask main once, and keep the answer for every surface. */
+async function loadHostRamGb() {
+  if (HOST_RAM_GB) return HOST_RAM_GB;
+  if (!BR || !BR.hostRam) return 0;
+  HOST_RAM_GB = Number(await BR.hostRam()) || 0;
+  return HOST_RAM_GB;
+}
+
+/** Said of any model that runs here but wants more than it has got. */
+const TIGHT_FIT_CAUTION =
+  'Expect it to be slow, and to slow the rest of the machine down while it answers.';
+
+/**
+ * @param model a `models list` row (enriched with the vendored metadata)
+ * @param ram   whole GB of host RAM
+ * @returns {{v: 'comfortable'|'tight'|'over', rank: number, known: boolean,
+ *            label: string, short: string, caution: string|null}}
+ *          `label` is the sentence a picker row shows; `short` is the same
+ *          verdict for a one-line row (the model switcher, the Settings
+ *          rows); `known` is false when the figures are estimated from the
+ *          file size because the id is not in the catalogue.
+ */
+function fitFor(model, ram) {
+  const rec = Number(model && model.recommendedRamGb) || 0;
+  const min = Number(model && model.minRamGb) || 0;
+  const have = Number(ram) || 0;
+  if (rec > 0 && min > 0 && have > 0) {
+    if (have >= rec) {
+      return {v:'comfortable', rank:0, known:true, caution:null,
+        label:'runs comfortably — wants ' + rec + ' GB, this machine has ' + have + ' GB',
+        short:'runs comfortably'};
+    }
+    if (have >= min) {
+      return {v:'tight', rank:1, known:true, caution:TIGHT_FIT_CAUTION,
+        label:'a tight fit — runs in ' + min + ' GB, but wants ' + rec + ' GB and this machine has ' + have + ' GB',
+        short:'tight on ' + have + ' GB'};
+    }
+    return {v:'over', rank:2, known:true, caution:null,
+      label:'needs ' + min + ' GB of RAM at minimum — this machine has ' + have + ' GB',
+      short:'will not run — needs ' + min + ' GB'};
+  }
+  // No catalogue entry (a model added from Hugging Face). Say so, and say
+  // that the figure is an estimate rather than dressing it as a fact.
+  const gb = parseFloat(String((model && model.size) || '')) || 0;
   const needed = Math.ceil(gb * 1.6);
-  if (needed <= ram) return {v:'fits', rank:0, label:'fits this Mac'};
-  if (needed <= ram * 1.4) return {v:'tight', rank:1, label:'tight on ' + ram + ' GB'};
-  return {v:'over', rank:2, label:'needs about ' + needed + ' GB'};
+  if (!needed || !have) {
+    return {v:'comfortable', rank:0, known:false, caution:null,
+      label:'not in the catalogue — no RAM guidance', short:'no RAM guidance'};
+  }
+  if (needed <= have) {
+    return {v:'comfortable', rank:0, known:false, caution:null,
+      label:'about ' + needed + ' GB to run (estimated from its size)', short:'about ' + needed + ' GB (estimated)'};
+  }
+  if (needed <= have * 1.4) {
+    return {v:'tight', rank:1, known:false, caution:TIGHT_FIT_CAUTION,
+      label:'tight on ' + have + ' GB (about ' + needed + ' GB estimated)', short:'tight on ' + have + ' GB (estimated)'};
+  }
+  return {v:'over', rank:2, known:false, caution:null,
+    label:'needs about ' + needed + ' GB (estimated from its size)', short:'needs about ' + needed + ' GB (estimated)'};
+}
+
+/**
+ * A model small enough that a person should be told what they are giving
+ * up. Derived, not hand-flagged: `recommendedRamGb <= 8` is the
+ * catalogue's own 4B class (gemma-4-e4b, qwen-3.5-4b) and nothing else.
+ */
+function isSmallModel(model) {
+  const rec = Number(model && model.recommendedRamGb) || 0;
+  return rec > 0 && rec <= SMALL_MODEL_RAM_GB;
+}
+/* Said of a small model, and only of a small model. It has to be true
+   without being discouraging: this is the model the person is about to
+   spend twenty minutes downloading because it is the one their machine
+   can run, and telling them it is bad would be both unkind and wrong. */
+const SMALL_MODEL_CAUTION =
+  'A small model: quick, and fine for everyday questions, editing and short tasks. '
+  + 'It reasons less well than the larger ones and is shakier at long multi-step tool work, '
+  + 'so expect to correct it more often.';
+
+/**
+ * The catalogue ordered for THIS machine: best fit first, and within a
+ * fit band the largest model first — the best thing that actually runs.
+ * Reduced-refusal weights sink to the bottom of their band, the way the
+ * TUI's own picker pins them (models-catalog.ts `uncensored`).
+ */
+function orderModelsByFit(models, ram) {
+  return models.slice().sort((a, b) => {
+    const fa = fitFor(a, ram), fb = fitFor(b, ram);
+    if (fa.rank !== fb.rank) return fa.rank - fb.rank;
+    const ua = a.uncensored ? 1 : 0, ub = b.uncensored ? 1 : 0;
+    if (ua !== ub) return ua - ub;
+    const ra = Number(a.recommendedRamGb) || 0, rb = Number(b.recommendedRamGb) || 0;
+    if (ra !== rb) return rb - ra;
+    return (parseFloat(String(b.size)) || 0) - (parseFloat(String(a.size)) || 0);
+  });
+}
+
+/**
+ * The one model to point at: the best that actually runs here. Never an
+ * uncensored one — downloading those must stay a deliberate act — and
+ * never one whose minimum this machine is under.
+ */
+function bestModelFor(models, ram) {
+  const ordered = orderModelsByFit(models, ram)
+    .filter((m) => !m.uncensored && fitFor(m, ram).v !== 'over');
+  return ordered.length ? ordered[0] : null;
+}
+
+/** The facts line under a model's name: size, context, vision, disk state. */
+function modelFactsLine(model) {
+  const parts = [model.size, model.context + ' context'];
+  if (model.vision) parts.push('reads images');
+  if (model.downloaded) parts.push('already on disk');
+  return parts.join(' · ');
 }
 
 /* ---------------- state: the pure reducer ---------------- */
@@ -6040,19 +6184,27 @@ function obConfiguredLabel() {
 /**
  * The local pick rows.  buildLocalPickRows (local-model-picks.ts:124-131):
  * the curated picks, then the Hugging Face row pinned OUTSIDE the window
- * as the last cursor position.  Ordering is degraded — see the header
- * note: fit rank, then size, and no row is starred.
+ * as the last cursor position.
+ *
+ * r7 models: ordered by `orderModelsByFit` — best fit first, biggest
+ * first within a band — and a model this machine cannot run is NOT a row
+ * here at all.  It is still shown (obOutOfReachHTML, below the list, with
+ * the RAM it wants) but it is not a choice, not focusable and not
+ * reachable with the arrows, because offering a download that ends in a
+ * model that will not start is not an offer.
  */
 function obPickRows() {
   const ram = OB.ram;
-  const models = OB.models.slice().sort((a, b) => {
-    const fa = fitFor(a.size, ram).rank, fb = fitFor(b.size, ram).rank;
-    if (fa !== fb) return fa - fb;
-    return (parseFloat(a.size) || 0) - (parseFloat(b.size) || 0);
-  });
+  const models = orderModelsByFit(OB.models, ram).filter((m) => fitFor(m, ram).v !== 'over');
   const rows = models.map((model) => ({kind: 'model', model}));
   rows.push({kind: 'hugging_face'});
   return rows;
+}
+
+/** The catalogue entries this machine is under the minimum for. */
+function obOutOfReach() {
+  const ram = OB.ram;
+  return orderModelsByFit(OB.models, ram).filter((m) => fitFor(m, ram).v === 'over');
 }
 
 function obChooseHTML() {
@@ -6073,25 +6225,84 @@ function obLocalPickHTML() {
      the desktop's own list. Every row is drawn, the box scrolls, and the
      cursor is kept in view for the keyboard — which behaves exactly as
      it did, six rows at a time or not. */
+  const best = bestModelFor(OB.models, OB.ram);
   const body = models.length
     ? models.map((row, at) => {
         const model = row.model;
-        const fit = fitFor(model.size, OB.ram);
-        // The TUI's note() joins its parts with " · ". The parts the
-        // catalogue cannot give (★ recommended, the RAM figure, the
-        // warning tag, the description) are dropped, not invented.
-        const note = [model.size, model.context + ' context', fit.label]
-          .concat(model.downloaded ? ['already on disk'] : []).join(' · ');
         return obRow(at, !onHf && at === OB.cursor,
-          '<span class="ob-mono">' + esc(model.id) + '</span>', esc(note));
+          obModelRowLabel(model, best && model.id === best.id),
+          obModelRowDetail(model));
       }).join('')
-    : '<div class="ob-explain">' + (OB.busy ? 'reading the catalogue…' : 'no models listed') + '</div>';
+    : '<div class="ob-explain">' + (OB.busy ? 'reading the catalogue…' : obNothingFitsLine()) + '</div>';
   const hf = obRow(models.length, onHf, esc(HF_ROW_LABEL),
     esc('paste an owner/repo id or a huggingface.co URL'));
   return '<div class="ob-explain">'
-      + esc('One download, then it runs offline. This machine reports ' + OB.ram + ' GB of RAM.') + '</div>'
+      + esc('One download, then it runs offline. This machine reports ' + OB.ram + ' GB of RAM, '
+        + 'and the list below is ordered for it — the best fit first.') + '</div>'
     + '<div class="ob-h">' + esc(OB_COPY.localHeading) + '</div>'
-    + '<div class="ob-list ob-models ob-scroll">' + body + '</div>' + hf;
+    + '<div class="ob-list ob-models ob-scroll">' + body + '</div>' + hf
+    + obOutOfReachHTML();
+}
+
+/**
+ * One pick row's name line: the id, plus the badges a person chooses on.
+ * `★ Best fit for this machine` is the whole point of the ordering — the
+ * single obvious choice — and it is drawn on exactly one row.
+ */
+function obModelRowLabel(model, isBest) {
+  return '<span class="ob-mono">' + esc(model.id) + '</span>'
+    + (isBest ? '<span class="ob-badge ob-badge-best">★ Best fit for this machine</span>' : '')
+    + (model.tag ? '<span class="ob-badge' + (model.uncensored ? ' ob-badge-warn' : '') + '">' + esc(model.tag) + '</span>' : '');
+}
+
+/**
+ * The three lines under the name: what the model IS (the catalogue's own
+ * description — the operator's ask, so a person can tell what they are
+ * choosing), what it costs, and where it is a compromise.
+ *
+ * A model with no catalogue entry gets no description line at all rather
+ * than a sentence this window made up about it.
+ */
+function obModelRowDetail(model) {
+  const fit = fitFor(model, OB.ram);
+  const cautions = [];
+  if (fit.caution) cautions.push(fit.caution);
+  // The small-model warning belongs to the MODEL, not to the machine: a
+  // 4B is no cleverer on 68 GB than it is on 8. It matters most where a
+  // weak machine has left it as the recommendation, which is exactly
+  // where it appears without any extra wiring.
+  if (isSmallModel(model)) cautions.push(SMALL_MODEL_CAUTION);
+  return (model.description ? '<span class="ob-desc">' + esc(model.description) + '</span>' : '')
+    + '<span>' + esc(modelFactsLine(model)) + '</span>'
+    + '<span class="ob-fit ob-fit-' + fit.v + '">' + esc(fit.label) + '</span>'
+    + (cautions.length ? '<span class="ob-caution">' + esc(cautions.join(' ')) + '</span>' : '');
+}
+
+/** Said when the catalogue has nothing this machine can run. */
+function obNothingFitsLine() {
+  if (!OB.models.length) return 'no models listed';
+  return 'Nothing in this list runs in ' + OB.ram + ' GB of RAM. Add a smaller model from '
+    + 'Hugging Face below, or go back and set up a cloud model instead.';
+}
+
+/**
+ * The models this machine is under the minimum for.
+ *
+ * Shown — hiding them would leave a person wondering where the big names
+ * went — but as plain rows, not buttons: no cursor position, no tab stop,
+ * nothing to click. Each one says how much RAM it wants, so the answer to
+ * "why can't I have that one" is on the screen next to it.
+ */
+function obOutOfReachHTML() {
+  const out = obOutOfReach();
+  if (!out.length) return '';
+  return '<div class="ob-h ob-out-h">' + esc('Needs a bigger machine than this one') + '</div>'
+    + '<div class="ob-out-list">' + out.map((model) =>
+      '<div class="ob-out">'
+      + '<span class="t"><span class="ob-mono">' + esc(model.id) + '</span></span>'
+      + (model.description ? '<span class="ob-desc">' + esc(model.description) + '</span>' : '')
+      + '<span class="ob-fit ob-fit-over">' + esc(fitFor(model, OB.ram).label) + '</span></div>').join('')
+    + '</div>';
 }
 
 /** r6 UX: the steps that draw the step error under their own field. */
@@ -7282,7 +7493,7 @@ async function openOnboarding() {
   OB_LAST_STEP = 'intro';
   render();
   if (!BR) return;
-  OB.ram = (await BR.hostRam()) || 0;
+  OB.ram = await loadHostRamGb();
   OB.keyEnv = (await BR.keyEnv()) || {};
   const cfg = await BR.configGet();
   if (cfg && cfg.ok && cfg.config) {
@@ -8163,7 +8374,7 @@ async function selLoadLocal() {
   const res = await BR.chatModelsList();
   SEL.localBusy = false;
   SEL.local = res && res.ok ? res.models : [];
-  if (!OB.ram) OB.ram = (await BR.hostRam()) || 16;
+  if (!OB.ram) OB.ram = await loadHostRamGb();
   render();
 }
 
@@ -8235,9 +8446,14 @@ function selRows() {
     const rows = SEL.local
       .filter((m) => !SEL.filter || modelMatches(m.id, m.family, SEL.filter))
       .map((m) => {
-        const fit = fitFor(m.size, OB.ram || 16);
+        /* r7 models: the same verdict the wizard and Settings show, in its
+           one-line form, and the catalogue's own description when there is
+           one — a switcher that only says "22 GB" tells nobody what they
+           are switching to. */
+        const fit = fitFor(m, hostRamGb());
         return {type:'localModel', id:m.id, label:m.id, downloaded:m.downloaded, active:m.active,
-          detail: m.size + ' · ' + m.context + ' context · ' + fit.label
+          detail: m.size + ' · ' + m.context + ' context · ' + fit.short
+            + (m.description ? ' · ' + m.description : '')
             + (m.downloaded ? ' · on disk' : custom ? ' · not downloaded' : '')};
       });
     // The TUI's deep-link row (model:local:download-more), outside the filter —
@@ -12398,6 +12614,9 @@ async function llmRefreshRun() {
   const [cfg, list, emb, status, health, env, dotenv] = await Promise.all([
     BR.configGet(), BR.chatModelsList(), BR.modelsListEmbeddings(), BR.modelsStatus(), BR.health(),
     BR.envPresent([...names]), stateDir ? BR.dotenvKeys(stateDir) : Promise.resolve({ok:true, keys:[]}),
+    // r7 models: the Local pane ranks the catalogue against this machine,
+    // exactly as the wizard does, so it needs the same one number.
+    loadHostRamGb(),
   ]);
   if (seq !== LLMP.seq) return;
   if (cfg && cfg.ok && cfg.config) LIVE_CONFIG = cfg.config;
@@ -12462,7 +12681,15 @@ function llmLocalRows() {
   const rows = [];
   const localActive = llmLocalActive();
   const daemonWorks = llmDaemonHealthy();
-  (LLMP.local || []).forEach((m) => {
+  /* r7 models: the same order and the same verdicts as the first-run
+     picker — best fit for THIS machine first — so the two surfaces cannot
+     tell an operator different things about the same model. This pane is
+     the manage surface, so a model that will not run here is still listed
+     and still downloadable (an operator may be provisioning for a machine
+     that is not this one); what it may not do is pretend it will run. */
+  const ram = hostRamGb();
+  const best = bestModelFor(LLMP.local || [], ram);
+  orderModelsByFit(LLMP.local || [], ram).forEach((m) => {
     const active = localActive && m.active && daemonWorks;
     const pull = LLMP.pulling && LLMP.pulling.kind === 'chat' && LLMP.pulling.id === m.id;
     let primary, effect;
@@ -12470,9 +12697,19 @@ function llmLocalRows() {
     else if (!m.downloaded) { primary = 'download'; effect = 'Enter: download'; }
     else if (!localActive || !m.active) { primary = 'use'; effect = 'Enter: select model'; }
     else { const running = llmDaemonUp(); primary = running ? 'current' : 'start'; effect = running ? 'Current: local-llama/' + m.id : 'Enter: start local daemon for ' + m.id; }
+    const fit = fitFor(m, ram);
+    const cautions = [];
+    if (fit.caution) cautions.push(fit.caution);
+    if (isSmallModel(m)) cautions.push(SMALL_MODEL_CAUTION);
     // `models list` prints DL yes/no, not the mmproj state, so a downloaded row reads [downloaded] (never the TUI's gguf+mmproj variants).
     rows.push({kind:'localTextModel', id:'local-text:' + m.id, model:m, active, primaryAction:primary, enterEffect:effect,
-      text:m.id + ' ' + m.size + ' [' + (m.downloaded ? 'downloaded' : 'remote') + ']'});
+      text:m.id + ' ' + m.size + ' [' + (m.downloaded ? 'downloaded' : 'remote') + ']'
+        + (best && m.id === best.id ? '  ★ best fit for this machine' : ''),
+      // The blurb line and the fit verdict, drawn under the row.
+      sub: [m.description || null, m.vision ? 'reads images' : null, m.context + ' context'].filter(Boolean).join(' · '),
+      fitClass: fit.v,
+      fitNote: fit.label,
+      caution: cautions.length ? cautions.join(' ') : null});
   });
   const embActive = llmLocalEmbActive();
   const embWorks = llmEmbDaemonHealthy();
@@ -12713,7 +12950,13 @@ function llmRowHTML(row, index, cursor) {
   const mark = row.active ? '*' : selected ? '>' : ' ';
   const extra = row.kind === 'localTextModel' && !row.model.downloaded ? ' data-pull-local="' + esc(row.model.id) + '"' : '';
   return '<button class="tuirow' + (selected ? ' on' : '') + '" data-llm-row="' + esc(row.id) + '"' + extra + ' data-act="llm:row:' + index + '">'
-    + esc(mark + ' ' + row.text) + '<span class="ter"> · ' + esc(row.enterEffect) + '</span></button>';
+    + esc(mark + ' ' + row.text) + '<span class="ter"> · ' + esc(row.enterEffect) + '</span>'
+    // r7 models: what the model is, how it fits this machine, and the one
+    // caution it earns. Absent on a row that has no catalogue entry.
+    + (row.sub ? '<span class="llm-sub">' + esc('  ' + row.sub) + '</span>' : '')
+    + (row.fitNote ? '<span class="llm-sub llm-fit-' + esc(row.fitClass || '') + '">' + esc('  ' + row.fitNote) + '</span>' : '')
+    + (row.caution ? '<span class="llm-sub llm-caution">' + esc('  ' + row.caution) + '</span>' : '')
+    + '</button>';
 }
 function llmSectionHTML(title, rows, offset, cursor, empty, emphasise) {
   return '<div class="llm-section"><b>' + esc(title) + '</b>'
@@ -12725,7 +12968,13 @@ function llmLocalHTML() {
   const cursor = LLMP.cursor.local;
   const text = rows.filter((r) => r.kind === 'localTextModel');
   const emb = rows.filter((r) => r.kind === 'localEmbeddingModel');
-  return llmSectionHTML('Local text models', text, 0, cursor) + llmSectionHTML('Local embeddings', emb, text.length, cursor)
+  const ram = hostRamGb();
+  // r7 models: the basis for the order and for every fit line below it.
+  return '<div class="ter llm-ram">' + esc(ram
+      ? 'Ordered for this machine — it reports ' + ram + ' GB of RAM. Every fit line under a model is measured against that.'
+      : 'Reading this machine’s RAM…') + '</div>'
+    + llmSectionHTML('Local text models', text, 0, cursor)
+    + llmSectionHTML('Local embeddings', emb, text.length, cursor)
     // Item 7B — the Ollama signpost. atomic-agent has no Ollama download
     // path of any kind: `grep -rni ollama src/` finds provider presets, a
     // health-failure hint and a steer modal, and ZERO hits under

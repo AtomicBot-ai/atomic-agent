@@ -16,6 +16,7 @@
     "scenarios": "npm run build && node test/scenarios/run-all.mjs",
     "drive:onboarding": "npm run build && node test/onboarding-mouse.mjs",
     "drive:selector": "npm run build && node test/drive-selector.mjs",
+    "drive:models": "npm run build && node test/model-picks.drive.mjs",
     "drive:cloud": "npm run build && node test/cloud-setup.drive.mjs",
     "drive:integration": "npm run build && node test/integration.drive.mjs",
     "dist": "npm run build && node -e \"require('node:fs').rmSync('release',{recursive:true,force:true})\" && electron-builder --mac --arm64 --publish never",

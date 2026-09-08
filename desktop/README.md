@@ -474,6 +474,28 @@ Honestly degraded, and labelled as such in the UI:
   `models use`, `models start|stop`, `s`/`d`/`E`/`B`/`U`/`G` through the
   matching `models` subcommands and `localModels.managed.autoUpdate`, `L`
   tails `<dataDir>/llama-server.log`.
+- **The local-model recommendation** ranks that catalogue against the machine
+  it is running on, in the first-run picker and in Settings › LLM › Local, off
+  the same two functions (`fitFor` / `orderModelsByFit` in `renderer.js`) so
+  the two surfaces cannot disagree. `atag models list` prints no description
+  and no RAM figures and has no `--json`, so `desktop/main/model-catalog.ts`
+  vendors `description` / `minRamGb` / `recommendedRamGb` / `fileSizeGb` /
+  `supportsVision` / `tag` / `uncensored` from `src/local-llm/models-catalog.ts`
+  and `modelsList()` joins them on by id. `app:hostRam` (`os.totalmem()`) is
+  the other input. A model whose `recommendedRamGb` the machine meets runs
+  comfortably; between `minRamGb` and `recommendedRamGb` it is a tight fit and
+  says so; under `minRamGb` it is shown as out of reach with the RAM it wants
+  and is NOT offered as a choice in the wizard — no cursor position, no tab
+  stop, nothing to click. The best fit — the largest model that runs
+  comfortably, never a reduced-refusal one — carries `★ best fit for this
+  machine`. A model in the catalogue's 4B class (`recommendedRamGb ≤ 8`) says
+  plainly that it is small and will get more wrong, which on a weak machine is
+  exactly the model being recommended. An id the vendored table does not know
+  — every `custom-…` model added from Hugging Face — renders with no blurb and
+  with its RAM figure labelled an estimate; nothing is invented for it, and
+  the smoke asserts the two id lists agree so the copy cannot rot in silence.
+  Driven on three machine sizes by `npm run drive:models` (68 GB real, 8 GB
+  and 4 GB simulated with the test-only `--fake-ram`).
 - **`a add from hugging face`** is live. The installed agent exposes no way
   to add one — `atag models --help` has no `add`, there is no HTTP route,
   and the agent's own `resolveHuggingFaceGgufChoices` has callers only
