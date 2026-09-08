@@ -78,6 +78,9 @@ contextBridge.exposeInMainWorld("atomic", {
   fileMenu: (path: string) => ipcRenderer.invoke("app:fileMenu", path),
   // item 5: existence check for the files a turn wrote (fs.stat only)
   statPaths: (paths: string[]) => ipcRenderer.invoke("app:statPaths", paths),
+  micStatus: () => ipcRenderer.invoke("app:micStatus"),
+  micRequest: () => ipcRenderer.invoke("app:micRequest"),
+  openMicSettings: () => ipcRenderer.invoke("app:openMicSettings"),
   openExternal: (url: string) => ipcRenderer.invoke("app:openExternal", url),
   // item 6: the sidebar's own pin/read state (Electron userData/prefs.json) and the row menu
   prefsGet: () => ipcRenderer.invoke("app:prefsGet"),

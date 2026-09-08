@@ -673,7 +673,7 @@ function sidebarToggleHTML() {
   const narrow = NARROW.matches, open = sidebarExpanded();
   const title = narrow ? 'The sidebar is a rail on a narrow window'
     : open ? 'Hide sidebar (⌘ 0)' : 'Show sidebar (⌘ 0)';
-  return '<button class="iconbtn' + (open ? ' on' : '') + '" data-act="toggle:sidebar"'
+  return '<button class="iconbtn sidebtn' + (open ? ' on' : '') + '" data-act="toggle:sidebar"'
     + (narrow ? ' disabled' : '')
     + ' aria-pressed="' + open + '"'
     + ' title="' + title + '">' + ic('sidebar') + '</button>';
@@ -869,7 +869,7 @@ const VOICE_REASONS = {
   'voice-helper-missing':'Voice input needs the speech helper, which this build was packaged without',
   'voice-helper-failed':'The speech helper did not answer, so voice input is off',
   'voice-no-model':'macOS has no on-device model for this language yet',
-  'voice-mic-denied':'Microphone access was refused in System Settings › Privacy & Security',
+  'voice-mic-denied':'Microphone access is turned off for Atomic Agent',
   'voice-no-mic':'No microphone was found',
   'voice-no-bridge':'Voice input needs the desktop app',
 };
@@ -1912,7 +1912,13 @@ function voiceStripHTML() {
   } else if (VOICE.state === 'error' && VOICE.err) {
     // Its own dismiss, because Escape no longer clears this state — see the
     // note on the Escape handler.
-    h += '<div class="vsrow"><span class="vserr">' + esc(VOICE.err) + '</span>' + voiceChipHTML()
+    /* When macOS has genuinely refused the microphone it will never prompt
+       again, so a sentence naming the Settings pane leaves the operator to
+       find it themselves. Give them the switch instead — the button opens
+       Privacy & Security › Microphone directly. */
+    h += '<div class="vsrow"><span class="vserr">' + esc(VOICE.err) + '</span>'
+      + (VOICE.canOpenSettings ? '<button class="btn btn-g vsopen" data-act="voice:settings">Open Settings</button>' : '')
+      + voiceChipHTML()
       + '<button class="vsx" data-act="voice:dismiss" title="Dismiss">' + ic('x') + '</button></div>';
   } else {
     h += '<div class="vsrow"><span class="vstext ter">Dictation language</span>' + voiceChipHTML() + '</div>';
@@ -3700,6 +3706,7 @@ function voiceAct(a) {
   if (a === 'voice') { voiceToggle(); return; }
   if (a === 'voice:lang') { VOICE.menu = !VOICE.menu; VOICE.installErr = null; refreshVoice(); return; }
   // The error strip's own ×. Escape does not clear this state on purpose.
+  if (a === 'voice:settings') { if (BR && BR.openMicSettings) BR.openMicSettings(); return; }
   if (a === 'voice:dismiss') {
     if (VOICE.state === 'error') { VOICE.state = 'idle'; VOICE.err = null; }
     VOICE.menu = false; refreshVoice(); return;
@@ -3838,7 +3845,29 @@ function voiceCapture(seq) {
     .catch((err) => {
       const name = (err && err.name) || '';
       if (name === 'NotAllowedError' || name === 'SecurityError') {
+        /* Do not tell the operator to go and change a setting nobody has
+           asked them about. Ask the OS what the real state is: if macOS has
+           never prompted, raise the prompt now (only the main process can)
+           and, if they allow it, carry straight on into the recording they
+           already asked for. Only when the OS says it is genuinely denied —
+           when it will never prompt again — do we mention System Settings,
+           and then with a button that opens that exact pane. */
+        if (BR && BR.micRequest) {
+          BR.micRequest().then((res) => {
+            if (res && res.granted) { VOICE.available = true; VOICE.code = null; VOICE.reason = null; VOICE.canOpenSettings = false; refreshVoice(); voiceStart(); return; }
+            VOICE.available = false;
+            VOICE.code = 'voice-mic-denied';
+            VOICE.reason = VOICE_REASONS['voice-mic-denied'];
+            VOICE.canOpenSettings = true;
+            voiceFail(VOICE.reason);
+          }).catch(() => {
+            VOICE.available = false; VOICE.code = 'voice-mic-denied'; VOICE.reason = VOICE_REASONS['voice-mic-denied'];
+            VOICE.canOpenSettings = true; voiceFail(VOICE.reason);
+          });
+          return;
+        }
         VOICE.available = false; VOICE.code = 'voice-mic-denied'; VOICE.reason = VOICE_REASONS['voice-mic-denied'];
+        VOICE.canOpenSettings = true;
         voiceFail(VOICE.reason);
       } else if (name === 'NotFoundError' || name === 'OverconstrainedError') {
         VOICE.available = false; VOICE.code = 'voice-no-mic'; VOICE.reason = VOICE_REASONS['voice-no-mic'];
@@ -10182,7 +10211,21 @@ function bswSnapshot() {
 /** The model chip, as the composer draws it: nothing when there is no model (the TUI renders no control then). */
 function modelChipHtml() {
   const label = activeModel();
-  if (!label) return '';
+  /* The operator's words: "There should be three selectors. Cloud, after
+     that the provider. And after that the model. So that I would be able to
+     choose the model from the cloud provider."
+     The TUI omits the model slot when the provider names no chat model
+     (composer-meta-controls renders nothing for a null model) — and it can
+     afford to, because /model and the LLM pane both reach the picker. In
+     this window the chip IS the route, so omitting it left a cloud provider
+     with no way to pick a model at all: `cloud ▾  aimlapi ▾` and a dead end.
+     A route that composerSwitchKindsFor says HAS a model control must draw
+     one; when nothing is chosen yet it says so and opens the picker. */
+  if (!label) {
+    if (!selHasKind('model')) return '';
+    return '<button class="cchip modelchip needsmodel" data-sel-open="model"'
+      + ' title="No model chosen for this provider — pick one">choose a model' + ic('chevD') + '</button>';
+  }
   /* SELECTOR LANE — the model slot's TWO components, as
      composer-meta-controls.tsx has them. A model label is a `Control`, and
      clicking it opens the model switch. `download model` is a

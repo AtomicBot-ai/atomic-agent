@@ -471,7 +471,12 @@ body.electron #window {
 /* titleBarStyle:hiddenInset puts the real traffic lights at 20,20 —
    the toolbar keeps that gutter clear and drags the window. */
 body.electron #toolbar {
-  padding-left: 78px;
+  /* The traffic lights sit at x=20 and end at x≈70 with hiddenInset. 78px
+     cleared them by 8px, which put the sidebar toggle hard against the
+     close/minimise/zoom cluster — they read as one row of controls. macOS
+     apps leave a clear gap there, so the gutter is 96px: the lights, then
+     ~26px of air, then our own first control. */
+  padding-left: 96px;
   -webkit-app-region: drag;
 }
 body.electron #toolbar button,
@@ -1296,3 +1301,18 @@ body.electron #settings{-webkit-app-region:no-drag}
    declared in all three theme blocks. */
 .cchip.dlchip{color:var(--warn);font-weight:600}
 .cchip.dlchip:hover{background:var(--warn-wash);color:var(--warn)}
+
+/* --- the microphone refusal offers the switch, not directions --- */
+.voicestrip .vsopen{height:24px;padding:0 10px;font-size:12px;margin-left:8px;white-space:nowrap}
+
+/* A model control with nothing chosen is a call to action, not a label:
+   same warn treatment the `download model` CTA already uses, so the one
+   control the operator has to touch reads as one. */
+.cchip.modelchip.needsmodel{color:var(--warn);border-color:var(--warn-wash)}
+.cchip.modelchip.needsmodel:hover{background:var(--warn-wash)}
+
+/* The sidebar toggle is the one control that sits next to the traffic
+   lights, and at 28px square it read as small and cramped beside them.
+   Wider (not taller — the toolbar row height is fixed), with the icon
+   centred, so it carries its own weight in that corner. */
+.iconbtn.sidebtn{width:36px}

@@ -5,7 +5,7 @@
    take their own side effects. */
 import { DESKTOP_STATE_SEEDED, DESKTOP_STATE_WAS_FRESH, seedFreshStateDir, shouldSeedFreshStateDir } from "./state-dir-boot.js";
 
-import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, shell, systemPreferences} from "electron";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -1026,6 +1026,37 @@ function wireIpc(client: AgentClient): void {
     menu.popup(sender ? { window: sender } : {});
   });
 
+  /* The microphone, the way macOS actually works.
+     Electron's renderer getUserMedia does NOT raise the system prompt on its
+     own for a packaged app: if TCC has never been asked, the request fails
+     and the window told the operator to go and fix it in System Settings —
+     for a permission nobody had ever offered them. `askForMediaAccess` is
+     the call that raises the real prompt, and it can only be made from the
+     main process. So: report the status, ask when it has never been asked,
+     and when it truly is denied hand back a deep link that opens the exact
+     pane rather than describing where to click. */
+  ipcMain.handle("app:micStatus", () => {
+    if (process.platform !== "darwin") return { ok: true, status: "granted" };
+    return { ok: true, status: systemPreferences.getMediaAccessStatus("microphone") };
+  });
+  ipcMain.handle("app:micRequest", async () => {
+    if (process.platform !== "darwin") return { ok: true, granted: true, status: "granted" };
+    const before = systemPreferences.getMediaAccessStatus("microphone");
+    if (before === "granted") return { ok: true, granted: true, status: before };
+    if (before === "not-determined") {
+      // Raises the real macOS prompt. Resolves when the operator answers it.
+      const granted = await systemPreferences.askForMediaAccess("microphone");
+      return { ok: true, granted, status: systemPreferences.getMediaAccessStatus("microphone") };
+    }
+    // 'denied' or 'restricted': the OS will never prompt again, so the only
+    // honest next step is to take them to the switch.
+    return { ok: true, granted: false, status: before };
+  });
+  ipcMain.handle("app:openMicSettings", () => {
+    if (process.platform !== "darwin") return { ok: false, error: "macOS only" };
+    void shell.openExternal("x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone");
+    return { ok: true };
+  });
   ipcMain.handle("app:openExternal", (_event, url: unknown) => {
     if (typeof url === "string" && /^https?:\/\//.test(url)) void shell.openExternal(url);
   });
