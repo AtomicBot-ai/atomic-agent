@@ -47,6 +47,7 @@ export const runCliCommand: CliRunner = async (options) => {
   const invocation = resolveWindowsCliInvocation({
     binary: options.binary,
     args: options.args,
+    installHint: options.installHint,
   });
   let result;
   try {

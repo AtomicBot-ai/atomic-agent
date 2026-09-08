@@ -5,8 +5,10 @@
  */
 
 export class SubscriptionCliNotInstalledError extends Error {
-  constructor(binary: string, installHint: string) {
-    super(`"${binary}" was not found on PATH. ${installHint}`);
+  constructor(binary: string, installHint = "") {
+    // Trimmed: the Windows shim raises this for a configured `binPath`
+    // that is not on disk and has no hint of its own to add.
+    super(`"${binary}" was not found on PATH. ${installHint}`.trim());
     this.name = "SubscriptionCliNotInstalledError";
   }
 }
@@ -22,6 +24,29 @@ export class SubscriptionCliSpawnError extends Error {
       `"${binary}" could not be started (spawn EINVAL) — on Windows a .cmd/.bat shim cannot be spawned directly. ${installHint}`,
     );
     this.name = "SubscriptionCliSpawnError";
+  }
+}
+
+/**
+ * The invocation cannot be expressed as a `cmd.exe` command line at all,
+ * so it is refused before anything is spawned.
+ *
+ * Both reasons are silent corruption if they are let through: past
+ * cmd's 8191-character limit cmd answers "The input line is too long."
+ * and the CLI never runs, and a raw newline inside an argument ends the
+ * command line where it stands — cmd would run the tail as a second
+ * command. Neither has an escape, so the only honest answer is to say
+ * what happened rather than send a command line that means something
+ * else than the caller asked for.
+ */
+export type CliCommandLineRejection = "too-long" | "control-character";
+
+export class SubscriptionCliCommandLineError extends Error {
+  readonly reason: CliCommandLineRejection;
+  constructor(message: string, reason: CliCommandLineRejection) {
+    super(message);
+    this.name = "SubscriptionCliCommandLineError";
+    this.reason = reason;
   }
 }
 

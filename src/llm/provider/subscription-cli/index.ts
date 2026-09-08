@@ -36,11 +36,13 @@ export {
 } from "./subscription-cli-provider.js";
 export {
   SubscriptionCliAuthError,
+  SubscriptionCliCommandLineError,
   SubscriptionCliInvocationError,
   SubscriptionCliNotInstalledError,
   SubscriptionCliSpawnError,
 } from "./subscription-cli-errors.js";
 export {
+  MAX_CMD_COMMAND_LINE,
   resolveWindowsCliInvocation,
   type CliInvocation,
 } from "./windows-cli-shim.js";

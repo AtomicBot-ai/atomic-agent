@@ -36,6 +36,7 @@ export const streamCliCommand: CliStreamRunner = async function* (options) {
   const invocation = resolveWindowsCliInvocation({
     binary: options.binary,
     args: options.args,
+    installHint: options.installHint,
   });
   let child;
   try {
