@@ -303,6 +303,11 @@ export interface TuiAppCallbacks {
     modelId: import("../local-llm/index.js").LocalModelId,
     mode?: "with-mmproj" | "gguf-only" | "mmproj-only",
   ): void;
+  /**
+   * `x` in the Models tab: stop the download in flight for `kind`. The
+   * worker keeps its partial file, so Enter on the row resumes it.
+   */
+  onLocalModelsPullCancelRequested?(kind: "chat" | "embedding"): void;
   onLocalModelsSetActiveRequested?(modelId: import("../local-llm/index.js").LocalModelId): void;
   /**
    * Persist `localModels.mode: "managed"` without picking a model — the

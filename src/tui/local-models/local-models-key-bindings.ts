@@ -98,6 +98,16 @@ export function handleLocalModelsTabKey(
 
   if (key.escape) return false;
 
+  // `x` stops the download in flight — chat first, then embedding —
+  // and keeps what it fetched: the row's Enter resumes it. Cursor-
+  // independent, like the other panel-wide keys.
+  if (input === "x") {
+    const kind = panel.pull ? "chat" : panel.embeddingPull ? "embedding" : null;
+    if (!kind) return false;
+    callbacks.onLocalModelsPullCancelRequested?.(kind);
+    return true;
+  }
+
   if (key.downArrow || input === "j") {
     dispatch({ type: "local_models_cursor_down" });
     return true;

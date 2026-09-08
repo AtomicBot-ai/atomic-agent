@@ -50,7 +50,49 @@ export {
   resolveEmbeddingLogFilePath,
 } from "./backend-paths.js";
 
-export { downloadFile, type DownloadProgressFn } from "./download-file.js";
+export {
+  downloadFile,
+  discardPartialDownload,
+  isRetryableDownloadError,
+  readPartialDownload,
+  resolvePartialMetaPath,
+  resolvePartialPath,
+  type DownloadFileOptions,
+  type DownloadProgressFn,
+  type DownloadRetryFn,
+  type PartialDownloadMeta,
+} from "./download-file.js";
+export {
+  DOWNLOAD_JOB_VERSION,
+  downloadJobId,
+  isDownloadJobLive,
+  listDownloadJobs,
+  readDownloadJob,
+  reconcileDownloadJob,
+  removeDownloadJob,
+  resolveDownloadJobPath,
+  resolveDownloadLogPath,
+  resolveDownloadsDir,
+  writeDownloadJob,
+  type DownloadJob,
+  type DownloadJobKind,
+  type DownloadJobMode,
+  type DownloadJobStatus,
+} from "./download-jobs.js";
+export {
+  downloadWorkerArgs,
+  spawnDownloadWorker,
+  stopDownloadWorker,
+  type SpawnDownloadWorkerInput,
+  type SpawnDownloadWorkerResult,
+  type StopDownloadWorkerResult,
+} from "./download-spawn.js";
+export {
+  initialDownloadJob,
+  runDownloadWorker,
+  type DownloadWorkerInput,
+  type DownloadWorkerOutcome,
+} from "./download-worker.js";
 export {
   readBackendVersion,
   writeBackendVersion,
@@ -78,6 +120,7 @@ export {
   isEmbeddingModelDownloaded,
   downloadEmbeddingModel,
   removeEmbeddingModel,
+  type ModelDownloadOptions,
 } from "./model-installer.js";
 export { resolveChatTemplatePath } from "./chat-templates.js";
 export {

@@ -248,7 +248,11 @@ describe("backend-installer", () => {
     }) as typeof fetch;
 
     try {
-      await expect(downloadBackend(dir)).rejects.toThrow(/socket hang up/);
+      // One quick retry: the failure has to survive the downloader's own
+      // resume-and-retry loop before the staging cleanup is exercised.
+      await expect(
+        downloadBackend(dir, { maxRetries: 1, retryDelayMs: 1 }),
+      ).rejects.toThrow(/socket hang up/);
 
       const binPath = resolveServerBinPath(dir, "llama-server");
       expect(existsSync(binPath)).toBe(true);

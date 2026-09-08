@@ -7,7 +7,7 @@ import {
   rmDirQuiet,
   swapInStagedBackend,
 } from "./backend-staging.js";
-import { downloadFile } from "./download-file.js";
+import { downloadFile, type DownloadFileOptions } from "./download-file.js";
 import { readBackendVersion, writeBackendVersionAt } from "./backend-version.js";
 import { resolvePlatformAsset, UnsupportedPlatformError } from "./platform-assets.js";
 import { resolveDownloadAsset } from "./windows-backend-variant.js";
@@ -241,10 +241,10 @@ export function isBackendDownloaded(dataDir: string): boolean {
 
 export async function downloadBackend(
   dataDir: string,
-  opts?: {
-    onProgress?: (percent: number, transferred: number, total: number) => void;
-    signal?: AbortSignal;
-  },
+  opts?: Pick<
+    DownloadFileOptions,
+    "onProgress" | "onRetry" | "signal" | "maxRetries" | "retryDelayMs"
+  >,
 ): Promise<{ ok: true; tag: string }> {
   const { assetName, binaryName } = resolveDownloadAsset();
   // Always hit GitHub for an actual install so we don't grab a stale
@@ -283,9 +283,8 @@ export async function downloadBackend(
   try {
     const archivePath = join(stagingDir, assetName);
     await downloadFile(asset.browser_download_url, archivePath, {
-      onProgress: opts?.onProgress,
+      ...opts,
       userAgent: "atomic-agent/local-llm-backend-download",
-      signal: opts?.signal,
     });
 
     await extractBackendArchive(archivePath, stagingDir, binaryName);
