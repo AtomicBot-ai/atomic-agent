@@ -131,6 +131,252 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     expect(llmRawCompletions).toEqual([{ attempt: 1, stepIndex: 0 }]);
   });
 
+  it("keeps working past the leg length while the task is progressing", async () => {
+    // The point of the change: `maxSteps` is a checkpoint, not the end
+    // of the work. A task that is still getting usable results out of
+    // its tools must not stop because a counter says 2.
+    const registry = buildDefaultToolRegistry();
+    let noopRuns = 0;
+    registry.register({
+      name: "noop",
+      description: "no-op",
+      readonly: true,
+      async run() {
+        noopRuns += 1;
+        return {
+          tool: "noop",
+          status: "ok",
+          summary: `noop ${noopRuns}`,
+          details: { run: noopRuns },
+          truncated: false,
+        };
+      },
+    });
+    const continued: Array<{ stepsTaken: number; stepCeiling: number }> = [];
+    let calls = 0;
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () => {
+        calls += 1;
+        // Seven working steps, then the model finishes on its own.
+        return makeCompletion(
+          calls <= 7
+            ? JSON.stringify({ tool: "noop", args: { n: calls } })
+            : JSON.stringify({ tool: "reply", args: { text: "all done" } }),
+        );
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (event.type === "task_continued") {
+          continued.push({
+            stepsTaken: event.stepsTaken,
+            stepCeiling: event.stepCeiling,
+          });
+        }
+      },
+    });
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "s-legs", workingDir }),
+      {
+        userMessage: "long job",
+        maxSteps: 2,
+        taskMaxSteps: 20,
+        signal: new AbortController().signal,
+      },
+    );
+    expect(result.reason).toBe("reply");
+    expect(noopRuns).toBe(7);
+    // Three leg boundaries crossed (steps 2, 4, 6), each reported.
+    expect(continued.map((c) => c.stepsTaken)).toEqual([2, 4, 6]);
+    expect(continued.every((c) => c.stepCeiling === 20)).toBe(true);
+  });
+
+  it("stops at the ceiling, not at the leg, and says which", async () => {
+    const registry = buildDefaultToolRegistry();
+    registry.register({
+      name: "noop",
+      description: "no-op",
+      readonly: true,
+      async run() {
+        return {
+          tool: "noop",
+          status: "ok" as const,
+          summary: "noop",
+          details: {},
+          truncated: false,
+        };
+      },
+    });
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () =>
+        makeCompletion(JSON.stringify({ tool: "noop", args: {} })),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "s-ceiling", workingDir }),
+      {
+        userMessage: "endless",
+        maxSteps: 2,
+        taskMaxSteps: 6,
+        signal: new AbortController().signal,
+      },
+    );
+    expect(result.reason).toBe("max_steps");
+    // Six steps spent, of which the last is the reserved summary the
+    // model refused to write — so five tool steps landed in the session.
+    expect(result.session.lastError).toMatch(
+      /task_stopped:step_ceiling: 6 steps/,
+    );
+    expect(result.session.stepCount).toBe(5);
+  });
+
+  it("stops when a whole leg produced nothing usable", async () => {
+    // The environment-is-broken case from the field: every call fails,
+    // so there is nothing to continue towards. Stop after one leg
+    // rather than burning the ceiling on a dead tool.
+    const registry = buildDefaultToolRegistry();
+    registry.register({
+      name: "noop",
+      description: "no-op",
+      readonly: true,
+      async run() {
+        return {
+          tool: "noop",
+          status: "error" as const,
+          summary: "tool exploded",
+          details: {},
+          truncated: false,
+        };
+      },
+    });
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () =>
+        makeCompletion(JSON.stringify({ tool: "noop", args: {} })),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "s-noprogress", workingDir }),
+      {
+        userMessage: "doomed",
+        maxSteps: 2,
+        taskMaxSteps: 50,
+        signal: new AbortController().signal,
+      },
+    );
+    expect(result.reason).toBe("max_steps");
+    // One leg, and the leg check at the boundary — not 50 steps of it.
+    expect(result.session.stepCount).toBe(2);
+    expect(result.session.lastError).toMatch(/task_stopped:no_progress/);
+    expect(result.session.turns.at(-1)).toMatchObject({
+      kind: "assistant_reply",
+      text: expect.stringContaining("nothing came back"),
+    });
+  });
+
+  it("stops on the wall clock and says so", async () => {
+    // A task that never finishes must be bounded by time as well as by
+    // steps: 1000 fast steps and 1000 slow ones are very different asks.
+    const registry = buildDefaultToolRegistry();
+    registry.register({
+      name: "noop",
+      description: "no-op",
+      readonly: true,
+      async run() {
+        return {
+          tool: "noop",
+          status: "ok" as const,
+          summary: "noop",
+          details: {},
+          truncated: false,
+        };
+      },
+    });
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () =>
+        makeCompletion(JSON.stringify({ tool: "noop", args: {} })),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "s-clock", workingDir }),
+      {
+        userMessage: "slow job",
+        maxSteps: 5,
+        taskMaxSteps: 500,
+        // Already expired when the first step checks.
+        taskMaxDurationMs: 1,
+        signal: new AbortController().signal,
+      },
+    );
+    expect(result.reason).toBe("max_steps");
+    expect(result.session.lastError).toMatch(/task_stopped:time_ceiling/);
+    expect(result.session.turns.at(-1)).toMatchObject({
+      kind: "assistant_reply",
+      text: expect.stringContaining("time limit"),
+    });
+  });
+
+  it("autoContinue: false keeps the historical one-leg behaviour", async () => {
+    const registry = buildDefaultToolRegistry();
+    registry.register({
+      name: "noop",
+      description: "no-op",
+      readonly: true,
+      async run() {
+        return {
+          tool: "noop",
+          status: "ok" as const,
+          summary: "noop",
+          details: {},
+          truncated: false,
+        };
+      },
+    });
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () =>
+        makeCompletion(JSON.stringify({ tool: "noop", args: {} })),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "s-noauto", workingDir }),
+      {
+        userMessage: "one leg only",
+        maxSteps: 3,
+        autoContinue: false,
+        signal: new AbortController().signal,
+      },
+    );
+    expect(result.reason).toBe("max_steps");
+    // Three steps, the third reserved for the summary: one leg, exactly
+    // as before this existed.
+    expect(result.session.lastError).toMatch(
+      /task_stopped:step_ceiling: 3 steps/,
+    );
+  });
+
   it("finishes session immediately when the LLM emits a finish tool call", async () => {
     const registry = buildDefaultToolRegistry();
     const loop = new AgentLoop({
@@ -329,15 +575,23 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     const result = await loopNoop.runTurn(session, {
       userMessage: "do stuff",
       maxSteps: 2,
+      // The ceiling, stated: `maxSteps` is only the leg length now, so a
+      // test about running out has to say what it is running out of.
+      taskMaxSteps: 2,
       signal: new AbortController().signal,
     });
     expect(result.reason).toBe("max_steps");
     expect(result.session.turns.at(-1)).toMatchObject({
       kind: "assistant_reply",
-      text: expect.stringContaining("max_steps"),
+      // Names the ceiling and what to do next, instead of an internal
+      // counter nobody outside this repo has heard of.
+      text: expect.stringContaining("step ceiling"),
+    });
+    expect(result.session.turns.at(-1)).toMatchObject({
+      text: expect.stringContaining("continue"),
     });
     expect(result.session.status).toBe("stalled");
-    expect(result.session.lastError).toMatch(/max_steps_reached: 2 steps/);
+    expect(result.session.lastError).toMatch(/task_stopped:step_ceiling: 2 steps/);
   });
 
   it("reserves the final step for a terminal reply", async () => {
@@ -377,7 +631,13 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     });
     const result = await loop.runTurn(
       createEmptySessionState({ id: "chat-finalize", workingDir }),
-      { userMessage: "verify", maxSteps: 2, signal: new AbortController().signal },
+      {
+        userMessage: "verify",
+        maxSteps: 2,
+        // The reserved final step now sits at the task ceiling.
+        taskMaxSteps: 2,
+        signal: new AbortController().signal,
+      },
     );
 
     expect(calls).toBe(2);
@@ -431,7 +691,12 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     });
     const result = await loop.runTurn(
       createEmptySessionState({ id: "chat-finalize-cancel", workingDir }),
-      { userMessage: "verify", maxSteps: 2, signal: controller.signal },
+      {
+        userMessage: "verify",
+        maxSteps: 2,
+        taskMaxSteps: 2,
+        signal: controller.signal,
+      },
     );
 
     expect(calls).toBe(2);
@@ -479,7 +744,13 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     });
     const result = await loop.runTurn(
       createEmptySessionState({ id: "chat-finalize-stubborn", workingDir }),
-      { userMessage: "verify", maxSteps: 2, signal: new AbortController().signal },
+      {
+        userMessage: "verify",
+        maxSteps: 2,
+        // The reserved final step now sits at the task ceiling.
+        taskMaxSteps: 2,
+        signal: new AbortController().signal,
+      },
     );
 
     // Step 0 executes the tool; the finalization step burns its first
@@ -490,10 +761,12 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     expect(stepEventTypes.filter((t) => t === "parse_retry")).toHaveLength(1);
     expect(result.reason).toBe("max_steps");
     expect(result.session.status).toBe("stalled");
-    expect(result.session.lastError).toMatch(/max_steps_reached: 2 steps/);
+    expect(result.session.lastError).toMatch(
+      /task_stopped:step_ceiling: 2 steps/,
+    );
     expect(result.session.turns.at(-1)).toMatchObject({
       kind: "assistant_reply",
-      text: expect.stringContaining("max_steps"),
+      text: expect.stringContaining("step ceiling"),
     });
   });
 
@@ -536,7 +809,12 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     });
     const result = await loop.runTurn(
       createEmptySessionState({ id: "chat-one-step", workingDir }),
-      { userMessage: "hi", maxSteps: 1, signal: new AbortController().signal },
+      {
+        userMessage: "hi",
+        maxSteps: 1,
+        taskMaxSteps: 1,
+        signal: new AbortController().signal,
+      },
     );
 
     // With a budget of one, the single step IS the finalization step:

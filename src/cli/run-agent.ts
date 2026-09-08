@@ -43,7 +43,7 @@ const HELP =
     "Options:",
     "  --cwd <dir>          Working directory for OS tools (default: current directory)",
     "  --working-dir <dir>  Alias for --cwd",
-    "  --max-steps <n>      Step budget for one turn (default: agent.maxSteps from config)",
+    "  --max-steps <n>      Hard step ceiling for one task (default: agent.task.maxSteps)",
     "  --no-approval        Force approval level 5: auto-approve every dangerous tool call",
     "",
     "In-session:  /quit exits · /abort cancels the current turn",

@@ -2451,9 +2451,21 @@ export async function createAgentRuntime(
     };
     return turnContext.run({ sessionId: session.id }, async () => {
       try {
+        // An explicit `maxSteps` from a caller (a durable task that pins
+        // its own budget, `run --max-steps`) is a *ceiling* that caller
+        // chose — honour it as one. Absent that, the config value is the
+        // leg length and `agent.task.*` supplies the ceiling, so an
+        // ordinary turn runs the task to completion instead of stopping
+        // at the first checkpoint.
         const result = await loop.runTurn(session, {
           userMessage,
-          maxSteps: runOptions.maxSteps ?? config.agent.maxSteps,
+          maxSteps: Math.min(
+            config.agent.maxSteps,
+            runOptions.maxSteps ?? config.agent.maxSteps,
+          ),
+          ...(runOptions.maxSteps === undefined
+            ? {}
+            : { taskMaxSteps: runOptions.maxSteps }),
           signal: runOptions.signal ?? new AbortController().signal,
         });
         // Stamp the turn's window occupancy so the stored session can
