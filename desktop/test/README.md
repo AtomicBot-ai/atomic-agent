@@ -49,3 +49,11 @@ directory is the operator's live app data.
   `drive-selector.mjs` waits for the transcript's `connected to atomic-agent`
   line, then for two identical reads of the strip with no lock and no
   `switching…`.
+- **A backend switch is not instant — wait for the word, not a clock.** Leaving
+  the custom route for cloud took ~30 s on this machine: the strip paints the
+  route the operator clicked (`SWX.want`) while the provider and model beside
+  it are still the old route's, and the send button stays locked the whole
+  time. `drive-selector.mjs` waits for the backend control to actually read the
+  route it clicked (`onRoute`) and then for three identical reads of the strip,
+  because two was not enough — the model slot changes once more when the
+  local-models snapshot lands.

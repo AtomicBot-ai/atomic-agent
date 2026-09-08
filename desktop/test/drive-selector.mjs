@@ -121,24 +121,51 @@ async function open(app) {
  * `/api/config` answer arrives — which is how a run can read `cloud ·
  * no provider · claude-opus-5` off an app whose config says something else.
  * So: no lock, no `switching…` in an open switch, and the strip unchanged
- * across two reads.
+ * across THREE reads — two was not enough on a machine where switching to
+ * the local route starts a daemon: the strip holds still for a second while
+ * the local-models snapshot is still in flight, and the model slot changes
+ * again when it lands (before it, `selectPromptLlmMeta` shows the catalogue
+ * id; after it, `download model` if there is nothing on disk — both are the
+ * TUI's own answers, at different moments).
  */
-async function settled(app, { timeoutMs = 45000 } = {}) {
+async function settled(app, { timeoutMs = 120000 } = {}) {
   const READ = `JSON.stringify({
     chips: ${CHIPS},
     locked: !!document.querySelector('.sendbtn.locked'),
     busy: /switching|saving|starting/.test((document.querySelector('.selhead')||{textContent:''}).textContent),
   })`;
   const deadline = Date.now() + timeoutMs;
-  let last = null;
+  const seen = [];
   while (Date.now() < deadline) {
     const now = await app.snap(READ);
     const state = JSON.parse(now);
-    if (!state.locked && !state.busy && now === last) return true;
-    last = now;
-    await app.sleep(700);
+    seen.push(now);
+    if (seen.length > 3) seen.shift();
+    if (!state.locked && !state.busy && seen.length === 3 && seen[0] === seen[1] && seen[1] === seen[2]) return true;
+    await app.sleep(900);
   }
   return false;
+}
+
+/**
+ * A person clicks the route they want and then WAITS for the window to say it
+ * is on it. Switching to the local route restarts the agent against a
+ * llama-server, which on a cold machine is tens of seconds; reading the strip
+ * before the word changes reads the route the operator just left.
+ */
+async function onRoute(app, word, { timeoutMs = 180000 } = {}) {
+  const ok = await app.waitFor(
+    `/${word}/.test((document.querySelector('#composer .cfoot [data-sel-open="backend"]')||{textContent:''}).textContent||'')`,
+    { timeoutMs },
+  );
+  if (!ok) return false;
+  return settled(app);
+}
+
+/** Wait for a freshly opened switch to have listed something. */
+async function popupRows(app, { timeoutMs = 30000 } = {}) {
+  await app.waitFor(`document.querySelectorAll('.selpop .modelrow').length > 0`, { timeoutMs });
+  return app.snap(POPUP);
 }
 
 /** A person's way out of a switch: its own Done button. NOT Escape. */
@@ -169,14 +196,14 @@ async function main() {
     t.say('\n--- clicking the backend control, then the "local" row ---');
     let r = await app.clickSel('#composer .cfoot [data-sel-open="backend"]', { settle: 700 });
     t.check('the backend control opens its switch', r.ok, r.why || `clicked "${r.clicked}"`);
-    let pop = await app.snap(POPUP);
+    let pop = await popupRows(app);
     t.check('the switch is titled "Where it runs"', !!pop && pop.title.startsWith('Where it runs'), JSON.stringify(pop && pop.title));
     t.say(`  rows: ${JSON.stringify((pop ? pop.rows : []).map((x) => x.label))}`);
     await shot('01-backend-switch');
 
     r = await app.clickText('.selpop .modelrow', 'local', { settle: 4000 });
     t.check('clicking the "local" row switches the route', r.ok, r.why || `clicked "${r.clicked}"`);
-    t.check('the switch settles', await settled(app));
+    t.check('the window arrives on the local route and stops moving', await onRoute(app, 'local'));
     t.say(`  the app says: ${JSON.stringify(await app.snap(TROUBLE))}`);
     // activateLocal with nothing on disk leaves the model switch open; close it
     // the way a person does.
@@ -208,7 +235,7 @@ async function main() {
     t.check('the backend control opens again', r.ok, r.why || '');
     r = await app.clickText('.selpop .modelrow', 'cloud', { settle: 6000 });
     t.check('clicking the "cloud" row switches the route', r.ok, r.why || `clicked "${r.clicked}"`);
-    t.check('the switch settles', await settled(app));
+    t.check('the window arrives on the cloud route and stops moving', await onRoute(app, 'cloud'));
     t.say(`  the app says: ${JSON.stringify(await app.snap(TROUBLE))}`);
     if (await app.snap(`!!document.querySelector('.selpop')`)) await done(app);
     const cloudBackend = await app.snap(BACKEND);
@@ -224,7 +251,7 @@ async function main() {
     t.say('\n--- each control opens its own switch ---');
     r = await app.clickSel('#composer .cfoot [data-sel-open="provider"]', { settle: 900 });
     t.check('the provider control takes a real click', r.ok, r.why || `clicked "${r.clicked}"`);
-    pop = await app.snap(POPUP);
+    pop = await popupRows(app);
     t.check('the provider control opens the Provider switch', !!pop && pop.title.startsWith('Provider'), JSON.stringify(pop && pop.title));
     t.say(`  provider rows: ${JSON.stringify((pop ? pop.rows : []).map((x) => x.label))}`);
     await shot('05-provider-switch');
@@ -232,7 +259,7 @@ async function main() {
 
     r = await app.clickSel('#composer .cfoot [data-sel-open="model"]', { settle: 1500 });
     t.check('the model control takes a real click', r.ok, r.why || `clicked "${r.clicked}"`);
-    pop = await app.snap(POPUP);
+    pop = await popupRows(app);
     t.check('the model control opens the Model switch', !!pop && pop.title.startsWith('Model'), JSON.stringify(pop && pop.title));
     t.say(`  model rows (first 5): ${JSON.stringify((pop ? pop.rows : []).slice(0, 5).map((x) => x.label))}`);
     await shot('06-model-switch');
@@ -260,7 +287,7 @@ async function main() {
     t.check('the backend control opens from the cloud route', r.ok, r.why || '');
     r = await app.clickText('.selpop .modelrow', 'local', { settle: 5000 });
     t.check('clicking "local" switches back', r.ok, r.why || `clicked "${r.clicked}"`);
-    t.check('the switch settles', await settled(app));
+    t.check('the window arrives back on the local route', await onRoute(app, 'local'));
     if (await app.snap(`!!document.querySelector('.selpop')`)) await done(app);
     const backChips = await app.snap(CHIPS);
     t.say(`  controls after switching back: ${JSON.stringify(backChips)}`);
@@ -268,6 +295,36 @@ async function main() {
     t.check('the provider control is gone again',
       JSON.stringify(kinds(backChips)) === JSON.stringify(expectedKinds('local')),
       `saw ${JSON.stringify(kinds(backChips))}`);
+
+    /* ---- the model slot with nothing on disk is a deep link, not a switch ----
+       composer-meta-controls.tsx renders a DownloadModelControl there, and its
+       click calls openLocalModelsPane: "the model switch popup would only list
+       the empty catalog and its own deep link to the same pane". */
+    t.say('\n--- the local route’s model control ---');
+    const modelChip = backChips.find((c) => c.kind === 'model');
+    const isCta = !!modelChip && /download model/.test(modelChip.text);
+    t.say(`  the model control reads: ${JSON.stringify(modelChip && modelChip.text)}`
+      + (isCta ? ' — the download call to action' : ' — a model label'));
+    r = await app.clickSel('#composer .cfoot [data-sel-open="model"]', { settle: 2500 });
+    t.check('the model control takes a real click on the local route', r.ok, r.why || `clicked "${r.clicked}"`);
+    const popped = await app.snap(`!!document.querySelector('.selpop')`);
+    await shot('08b-local-model-control');
+    if (isCta) {
+      // DownloadModelControl: no popup, straight to the pane that downloads.
+      t.check('the download call to action opens no switch popup', !popped);
+      const dlPane = await app.snap(LLM_MODE);
+      t.say(`  it landed on: ${JSON.stringify(dlPane)}`);
+      t.check('it opens Settings › LLM › Local, where the download happens',
+        /local/i.test(dlPane || ''), JSON.stringify(dlPane));
+      await closeSettings(app);
+    } else {
+      // A labelled model slot is an ordinary Control: it opens the switch.
+      const mpop = popped ? await popupRows(app) : null;
+      t.check('a labelled model slot opens the Model switch',
+        !!mpop && mpop.title.startsWith('Model'), JSON.stringify(mpop && mpop.title));
+      t.say(`  local model rows (first 5): ${JSON.stringify((mpop ? mpop.rows : []).slice(0, 5).map((x) => x.label))}`);
+      await done(app);
+    }
   } finally {
     await app.close();
   }
@@ -302,14 +359,14 @@ async function main() {
 
     const r2 = await app.clickSel('#composer .cfoot [data-sel-open="provider"]', { settle: 900 });
     t.check('the custom provider control takes a real click', r2.ok, r2.why || `clicked "${r2.clicked}"`);
-    const pop2 = await app.snap(POPUP);
+    const pop2 = await popupRows(app);
     t.check('it opens the Provider switch', !!pop2 && pop2.title.startsWith('Provider'), JSON.stringify(pop2 && pop2.title));
     await shot('10-custom-provider-switch');
     await done(app);
 
     const r3 = await app.clickSel('#composer .cfoot [data-sel-open="model"]', { settle: 1500 });
     t.check('the custom model control takes a real click', r3.ok, r3.why || `clicked "${r3.clicked}"`);
-    const pop3 = await app.snap(POPUP);
+    const pop3 = await popupRows(app);
     t.check('it opens the Model switch', !!pop3 && pop3.title.startsWith('Model'), JSON.stringify(pop3 && pop3.title));
     t.say(`  custom model rows (first 5): ${JSON.stringify((pop3 ? pop3.rows : []).slice(0, 5).map((x) => x.label))}`);
     await shot('11-custom-model-switch');
