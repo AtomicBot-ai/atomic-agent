@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -106,6 +106,7 @@ interface FakeApi extends TelegramApi {
     opts?: Record<string, unknown> | undefined;
   }>;
   typingChats: number[];
+  typing: Array<{ chatId: number; opts?: Record<string, unknown> | undefined }>;
   edits: Array<{ chatId: number; messageId: number; text: string }>;
   deletes: Array<{ chatId: number; messageId: number }>;
 }
@@ -117,11 +118,13 @@ function makeFakeApi(): FakeApi {
     opts?: Record<string, unknown> | undefined;
   }> = [];
   const typingChats: number[] = [];
+  const typing: Array<{ chatId: number; opts?: Record<string, unknown> | undefined }> = [];
   const edits: Array<{ chatId: number; messageId: number; text: string }> = [];
   const deletes: Array<{ chatId: number; messageId: number }> = [];
   return {
     sent,
     typingChats,
+    typing,
     edits,
     deletes,
     sendMessage: vi.fn(
@@ -134,10 +137,13 @@ function makeFakeApi(): FakeApi {
         return { message_id: sent.length };
       },
     ),
-    sendChatAction: vi.fn(async (chatId: number) => {
-      typingChats.push(chatId);
-      return undefined;
-    }),
+    sendChatAction: vi.fn(
+      async (chatId: number, _action: "typing", opts?: Record<string, unknown>) => {
+        typingChats.push(chatId);
+        typing.push({ chatId, opts });
+        return undefined;
+      },
+    ),
     editMessageText: vi.fn(
       async (chatId: number, messageId: number, text: string) => {
         edits.push({ chatId, messageId, text });
@@ -156,7 +162,7 @@ function makeContext(
   api: TelegramApi,
   pointer: TelegramSessionPointer,
   ownerUserId: number | null,
-): InboundContext & { inflight: Map<number, AbortController> } {
+): InboundContext & { inflight: Map<string, AbortController> } {
   return {
     runtime,
     api,
@@ -170,7 +176,10 @@ function makeContext(
 
 const OWNER = 42;
 const CHAT = 100;
+const CHAT_KEY = String(CHAT);
 const NON_OWNER = 99;
+const BOT = { id: 7, username: "atomic_bot" };
+const GROUP = -1001;
 
 function makeUpdate(
   text: string,
@@ -198,13 +207,23 @@ describe("handleInboundText", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it("drops group-chat messages silently", async () => {
+  it("drops group-chat messages when the bot identity is unknown", async () => {
+    // Without `getMe` there is no way to tell whether a group message
+    // was addressed to us, so the safe answer is to stay quiet.
     const { runtime, calls } = makeFakeRuntime();
     const api = makeFakeApi();
     const ctx = makeContext(runtime, api, pointer, OWNER);
     await handleInboundText(makeUpdate("hello", OWNER, "group"), ctx);
     expect(calls).toHaveLength(0);
     expect(api.sent).toHaveLength(0);
+  });
+
+  it("drops broadcast-channel posts", async () => {
+    const { runtime, calls } = makeFakeRuntime();
+    const api = makeFakeApi();
+    const ctx = { ...makeContext(runtime, api, pointer, OWNER), botIdentity: BOT };
+    await handleInboundText(makeUpdate("@atomic_bot hello", OWNER, "channel"), ctx);
+    expect(calls).toHaveLength(0);
   });
 
   it("drops messages from non-owner DMs silently", async () => {
@@ -253,14 +272,22 @@ describe("handleInboundText", () => {
     expect(api.sent[0]!.text).toContain("No active session");
   });
 
-  it("/new rotates the pointer and acks", async () => {
-    pointer.setCurrent("s-old");
+  it("/new rotates this chat's pointer, releases its approvals and acks", async () => {
+    pointer.setCurrent(CHAT_KEY, "s-old");
+    pointer.setCurrent("200", "s-other");
     const { runtime } = makeFakeRuntime();
     const api = makeFakeApi();
-    const ctx = makeContext(runtime, api, pointer, OWNER);
+    const releaseApprovalSession = vi.fn();
+    const ctx = {
+      ...makeContext(runtime, api, pointer, OWNER),
+      releaseApprovalSession,
+    };
     await handleInboundText(makeUpdate("/new"), ctx);
-    expect(pointer.read().current).toBeNull();
-    expect(pointer.read().history).toEqual(["s-old"]);
+    expect(pointer.get(CHAT_KEY).current).toBeNull();
+    expect(pointer.get(CHAT_KEY).history).toEqual(["s-old"]);
+    // Another chat's session is untouched.
+    expect(pointer.get("200").current).toBe("s-other");
+    expect(releaseApprovalSession).toHaveBeenCalledWith("s-old");
     expect(api.sent[0]!.text).toContain("s-old");
   });
 
@@ -269,7 +296,7 @@ describe("handleInboundText", () => {
     const api = makeFakeApi();
     const ctx = makeContext(runtime, api, pointer, OWNER);
     await handleInboundText(makeUpdate("/cancel"), ctx);
-    expect(api.sent[0]!.text).toBe("No turn in progress.");
+    expect(api.sent[0]!.text).toBe("No turn in progress in this chat.");
   });
 
   it("/cancel aborts the in-flight controller", async () => {
@@ -277,7 +304,7 @@ describe("handleInboundText", () => {
     const api = makeFakeApi();
     const ctx = makeContext(runtime, api, pointer, OWNER);
     const ctrl = new AbortController();
-    ctx.inflight.set(CHAT, ctrl);
+    ctx.inflight.set(CHAT_KEY, ctrl);
     await handleInboundText(makeUpdate("/cancel"), ctx);
     expect(ctrl.signal.aborted).toBe(true);
     expect(api.sent[0]!.text).toContain("Cancelling");
@@ -395,10 +422,14 @@ describe("handleInboundText", () => {
     });
     const api = makeFakeApi();
     const ctx = makeContext(runtime, api, pointer, OWNER);
-    expect(pointer.read().current).toBeNull();
+    expect(pointer.get(CHAT_KEY).current).toBeNull();
     await handleInboundText(makeUpdate("hello"), ctx);
     expect(sessions.length).toBe(1);
-    expect(pointer.read().current).toBe(sessions[0]!.id);
+    expect(pointer.get(CHAT_KEY).current).toBe(sessions[0]!.id);
+    expect(sessions[0]!.metadata).toMatchObject({
+      telegramChannel: true,
+      telegramChat: { id: CHAT, type: "private", label: "DM" },
+    });
   });
 
   it("reuses the existing session on subsequent messages", async () => {
@@ -406,7 +437,7 @@ describe("handleInboundText", () => {
       id: "s-existing",
       workingDir: "/tmp/test",
     });
-    pointer.setCurrent(seeded.id);
+    pointer.setCurrent(CHAT_KEY, seeded.id);
     const { runtime, calls } = makeFakeRuntime({
       initialSessions: [seeded],
       scripts: [
@@ -447,7 +478,9 @@ describe("handleInboundText", () => {
     };
     await handleInboundText(makeUpdate("hello"), ctx);
     expect(ensureApprovalSession).toHaveBeenCalledTimes(1);
-    expect(ensureApprovalSession).toHaveBeenCalledWith(sessions[0]!.id, CHAT);
+    expect(ensureApprovalSession).toHaveBeenCalledWith(sessions[0]!.id, {
+      chatId: CHAT,
+    });
   });
 
   it("does not call ensureApprovalSession for slash commands", async () => {
@@ -617,5 +650,499 @@ describe("handleInboundText", () => {
     };
     await handleInboundText(makeUpdate("hi", NON_OWNER), ctx);
     expect(callOrder).toEqual(["pairing"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Per-chat sessions: groups, forum topics, /sessions, /switch, v1 migration.
+// ---------------------------------------------------------------------------
+
+const REPLY_SCRIPT = {
+  events: [
+    {
+      type: "llm_event" as const,
+      event: { type: "assistant_reply" as const, text: "ok" },
+    },
+  ],
+};
+
+function groupUpdate(
+  text: string,
+  over: Partial<InboundTextUpdate> = {},
+): InboundTextUpdate {
+  return {
+    from: { id: OWNER },
+    chat: { id: GROUP, type: "supergroup", title: "Ops" },
+    text,
+    message_id: 1,
+    ...over,
+  };
+}
+
+describe("handleInboundText — per-chat sessions", () => {
+  let dir: string;
+  let pointer: TelegramSessionPointer;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "atomic-tg-perchat-"));
+    pointer = new TelegramSessionPointer(join(dir, "telegram-session.json"));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  function ctxWithBot(
+    runtime: AgentRuntime,
+    api: TelegramApi,
+    extra: Partial<InboundContext> = {},
+  ): InboundContext {
+    return { ...makeContext(runtime, api, pointer, OWNER), botIdentity: BOT, ...extra };
+  }
+
+  it("ignores a group message that does not address the bot", async () => {
+    const { runtime, calls } = makeFakeRuntime();
+    const api = makeFakeApi();
+    await handleInboundText(groupUpdate("just chatting"), ctxWithBot(runtime, api));
+    expect(calls).toHaveLength(0);
+    expect(api.sent).toHaveLength(0);
+  });
+
+  it("acts on an @mention in a group and strips the addressing", async () => {
+    const { runtime, calls } = makeFakeRuntime({ scripts: [REPLY_SCRIPT] });
+    const api = makeFakeApi();
+    await handleInboundText(
+      groupUpdate("@Atomic_Bot, deploy staging"),
+      ctxWithBot(runtime, api),
+    );
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.userMessage).toBe("deploy staging");
+    // The group gets its own session, keyed by chat id.
+    expect(pointer.get(String(GROUP)).current).toBe(calls[0]!.sessionId);
+    expect(pointer.get(String(GROUP)).label).toBe("Ops");
+    expect(api.sent.at(-1)!.chatId).toBe(GROUP);
+  });
+
+  it("does not match a longer username that merely starts with ours", async () => {
+    const { runtime, calls } = makeFakeRuntime();
+    const api = makeFakeApi();
+    await handleInboundText(
+      groupUpdate("@atomic_bot_v2 deploy"),
+      ctxWithBot(runtime, api),
+    );
+    expect(calls).toHaveLength(0);
+  });
+
+  it("acts on a reply to one of the bot's own messages", async () => {
+    const { runtime, calls } = makeFakeRuntime({ scripts: [REPLY_SCRIPT] });
+    const api = makeFakeApi();
+    await handleInboundText(
+      groupUpdate("yes do it", { reply_to_message: { from: { id: BOT.id, is_bot: true } } }),
+      ctxWithBot(runtime, api),
+    );
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.userMessage).toBe("yes do it");
+  });
+
+  it("ignores a reply to somebody else", async () => {
+    const { runtime, calls } = makeFakeRuntime();
+    const api = makeFakeApi();
+    await handleInboundText(
+      groupUpdate("yes do it", { reply_to_message: { from: { id: 555 } } }),
+      ctxWithBot(runtime, api),
+    );
+    expect(calls).toHaveLength(0);
+  });
+
+  it("drops a non-owner in a group even when they mention the bot", async () => {
+    const { runtime, calls } = makeFakeRuntime();
+    const api = makeFakeApi();
+    await handleInboundText(
+      groupUpdate("@atomic_bot hi", { from: { id: NON_OWNER } }),
+      ctxWithBot(runtime, api),
+    );
+    expect(calls).toHaveLength(0);
+    expect(api.sent).toHaveLength(0);
+  });
+
+  it("never lets a group message claim pairing", async () => {
+    const { runtime } = makeFakeRuntime();
+    const api = makeFakeApi();
+    const tryClaimForPairing = vi.fn().mockReturnValue(true);
+    await handleInboundText(
+      groupUpdate("@atomic_bot hi", { from: { id: NON_OWNER } }),
+      ctxWithBot(runtime, api, { tryClaimForPairing }),
+    );
+    expect(tryClaimForPairing).not.toHaveBeenCalled();
+  });
+
+  it("handles a slash command addressed as /cmd@bot in a group", async () => {
+    const { runtime, calls } = makeFakeRuntime();
+    const api = makeFakeApi();
+    await handleInboundText(groupUpdate("/status@atomic_bot"), ctxWithBot(runtime, api));
+    expect(calls).toHaveLength(0);
+    expect(api.sent[0]!.text).toContain("No active session for this chat");
+    // A bare /status in a group is for whichever bot it was meant for.
+    await handleInboundText(groupUpdate("/status"), ctxWithBot(runtime, api));
+    expect(api.sent).toHaveLength(1);
+  });
+
+  it("gives the DM and a group different sessions and different reply targets", async () => {
+    const { runtime, calls, sessions } = makeFakeRuntime({
+      scripts: [REPLY_SCRIPT, REPLY_SCRIPT, REPLY_SCRIPT],
+    });
+    const api = makeFakeApi();
+    const ctx = ctxWithBot(runtime, api);
+    await handleInboundText(makeUpdate("project A"), ctx);
+    await handleInboundText(groupUpdate("@atomic_bot project B"), ctx);
+    await handleInboundText(makeUpdate("more A"), ctx);
+    expect(sessions).toHaveLength(2);
+    expect(calls.map((c) => c.sessionId)).toEqual([
+      sessions[0]!.id,
+      sessions[1]!.id,
+      sessions[0]!.id,
+    ]);
+    // Replies (not the transient progress bubbles) go back where asked.
+    expect(api.sent.filter((m) => m.text === "ok").map((m) => m.chatId)).toEqual([
+      CHAT,
+      GROUP,
+      CHAT,
+    ]);
+  });
+
+  it("keys a forum topic separately and routes every send into the topic", async () => {
+    const { runtime, calls, sessions } = makeFakeRuntime({
+      scripts: [REPLY_SCRIPT, REPLY_SCRIPT],
+    });
+    const api = makeFakeApi();
+    const ensureApprovalSession = vi.fn();
+    const ctx = ctxWithBot(runtime, api, { ensureApprovalSession });
+    const inTopic = groupUpdate("@atomic_bot topic work", {
+      message_thread_id: 77,
+      is_topic_message: true,
+    });
+    await handleInboundText(inTopic, ctx);
+    await handleInboundText(groupUpdate("@atomic_bot general work"), ctx);
+    expect(sessions).toHaveLength(2);
+    expect(pointer.get(`${GROUP}:77`).current).toBe(calls[0]!.sessionId);
+    expect(pointer.get(`${GROUP}:77`).label).toBe("Ops › topic 77");
+    expect(pointer.get(String(GROUP)).current).toBe(calls[1]!.sessionId);
+    // Progress bubble + reply for the topic carry message_thread_id;
+    // the General-topic turn carries none.
+    const topicSends = api.sent.filter((m) => m.opts?.message_thread_id === 77);
+    expect(topicSends.length).toBeGreaterThanOrEqual(2);
+    expect(topicSends.map((m) => m.text)).toContain("ok");
+    expect(api.sent.some((m) => m.text === "ok" && m.opts?.message_thread_id === undefined)).toBe(true);
+    expect(ensureApprovalSession).toHaveBeenNthCalledWith(1, calls[0]!.sessionId, {
+      chatId: GROUP,
+      threadId: 77,
+    });
+    // The typing action follows the topic too; the General turn sends none.
+    expect(api.typing[0]).toEqual({ chatId: GROUP, opts: { message_thread_id: 77 } });
+    expect(api.typing.at(-1)).toEqual({ chatId: GROUP, opts: undefined });
+    expect(ensureApprovalSession).toHaveBeenNthCalledWith(2, calls[1]!.sessionId, {
+      chatId: GROUP,
+    });
+    expect(sessions[0]!.metadata).toMatchObject({
+      telegramChat: { id: GROUP, type: "supergroup", threadId: 77 },
+    });
+  });
+
+  it("a plain reply in a non-forum group is not treated as a topic", async () => {
+    const { runtime, calls } = makeFakeRuntime({ scripts: [REPLY_SCRIPT] });
+    const api = makeFakeApi();
+    await handleInboundText(
+      groupUpdate("@atomic_bot hi", { message_thread_id: 12 }),
+      ctxWithBot(runtime, api),
+    );
+    expect(pointer.get(String(GROUP)).current).toBe(calls[0]!.sessionId);
+    expect(api.sent.every((m) => m.opts?.message_thread_id === undefined)).toBe(true);
+  });
+
+  it("/cancel only aborts this chat's turn", async () => {
+    const { runtime } = makeFakeRuntime();
+    const api = makeFakeApi();
+    const ctx = ctxWithBot(runtime, api);
+    const dm = new AbortController();
+    const group = new AbortController();
+    ctx.inflight.set(CHAT_KEY, dm);
+    ctx.inflight.set(String(GROUP), group);
+    await handleInboundText(groupUpdate("/cancel@atomic_bot"), ctx);
+    expect(group.signal.aborted).toBe(true);
+    expect(dm.signal.aborted).toBe(false);
+  });
+
+  it("adopts the pre-per-chat pointer for the owner's DM but not for a group", async () => {
+    const seeded = createEmptySessionState({ id: "s-legacy", workingDir: "/tmp/test" });
+    writeFileSync(
+      join(dir, "telegram-session.json"),
+      JSON.stringify({ current: "s-legacy", history: ["s-1"] }),
+    );
+    const { runtime, calls } = makeFakeRuntime({
+      initialSessions: [seeded],
+      scripts: [REPLY_SCRIPT, REPLY_SCRIPT],
+    });
+    const api = makeFakeApi();
+    const ctx = ctxWithBot(runtime, api);
+    await handleInboundText(groupUpdate("@atomic_bot hi"), ctx);
+    expect(calls[0]!.sessionId).not.toBe("s-legacy");
+    await handleInboundText(makeUpdate("hello"), ctx);
+    expect(calls[1]!.sessionId).toBe("s-legacy");
+    expect(pointer.get(CHAT_KEY)).toMatchObject({ current: "s-legacy", history: ["s-1"] });
+    expect(pointer.hasLegacy()).toBe(false);
+  });
+
+  it("/sessions lists every chat and marks this one", async () => {
+    pointer.setCurrent(CHAT_KEY, "s-dm", "DM");
+    pointer.setCurrent(String(GROUP), "s-ops", "Ops");
+    pointer.rotate(String(GROUP));
+    pointer.setCurrent(String(GROUP), "s-ops-2", "Ops");
+    const { runtime } = makeFakeRuntime();
+    const api = makeFakeApi();
+    await handleInboundText(makeUpdate("/sessions"), ctxWithBot(runtime, api));
+    const text = api.sent[0]!.text;
+    expect(text).toContain("• DM (this chat): s-dm");
+    expect(text).toContain("• Ops: s-ops-2, 1 archived");
+    expect(text).toContain("/switch");
+  });
+
+  it("/sessions with nothing recorded says so", async () => {
+    const { runtime } = makeFakeRuntime();
+    const api = makeFakeApi();
+    await handleInboundText(makeUpdate("/sessions"), ctxWithBot(runtime, api));
+    expect(api.sent[0]!.text).toContain("No sessions yet");
+  });
+
+  it("/switch continues an archived session in this chat", async () => {
+    const archived = createEmptySessionState({
+      id: "s-archived",
+      workingDir: "/tmp/test",
+      metadata: { telegramChannel: true },
+    });
+    pointer.setCurrent(CHAT_KEY, "s-archived");
+    pointer.rotate(CHAT_KEY);
+    pointer.setCurrent(CHAT_KEY, "s-now");
+    const { runtime, calls } = makeFakeRuntime({
+      initialSessions: [archived],
+      scripts: [REPLY_SCRIPT],
+    });
+    const api = makeFakeApi();
+    const releaseApprovalSession = vi.fn();
+    const ctx = ctxWithBot(runtime, api, { releaseApprovalSession });
+    await handleInboundText(makeUpdate("/switch s-archived"), ctx);
+    expect(api.sent[0]!.text).toContain("now continues session s-archived");
+    expect(pointer.get(CHAT_KEY)).toMatchObject({
+      current: "s-archived",
+      history: ["s-now"],
+    });
+    expect(releaseApprovalSession).toHaveBeenCalledWith("s-now");
+    await handleInboundText(makeUpdate("go on"), ctx);
+    expect(calls[0]!.sessionId).toBe("s-archived");
+  });
+
+  it("/switch rejects unknown ids, missing ids and sessions held by another chat", async () => {
+    const held = createEmptySessionState({
+      id: "s-held",
+      workingDir: "/tmp/test",
+      metadata: { telegramChannel: true },
+    });
+    pointer.setCurrent(String(GROUP), "s-held", "Ops");
+    const { runtime } = makeFakeRuntime({ initialSessions: [held] });
+    const api = makeFakeApi();
+    const ctx = ctxWithBot(runtime, api);
+    await handleInboundText(makeUpdate("/switch"), ctx);
+    expect(api.sent[0]!.text).toContain("Usage: /switch");
+    await handleInboundText(makeUpdate("/switch s-nope"), ctx);
+    expect(api.sent[1]!.text).toBe("Unknown session s-nope.");
+    await handleInboundText(makeUpdate("/switch s-held"), ctx);
+    expect(api.sent[2]!.text).toContain("active in another chat (Ops)");
+    expect(pointer.get(CHAT_KEY).current).toBeNull();
+  });
+});
+
+describe("handleInboundText — review follow-ups", () => {
+  let dir: string;
+  let pointer: TelegramSessionPointer;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "atomic-tg-followups-"));
+    pointer = new TelegramSessionPointer(join(dir, "telegram-session.json"));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  function ctxWithBot(
+    runtime: AgentRuntime,
+    api: TelegramApi,
+    extra: Partial<InboundContext> = {},
+  ): InboundContext {
+    return { ...makeContext(runtime, api, pointer, OWNER), botIdentity: BOT, ...extra };
+  }
+
+  it("resolves the v1 pointer before a DM slash command, so /new really archives it", async () => {
+    const legacy = createEmptySessionState({
+      id: "s-legacy",
+      workingDir: "/tmp/test",
+      metadata: { telegramChannel: true },
+    });
+    writeFileSync(
+      join(dir, "telegram-session.json"),
+      JSON.stringify({ current: "s-legacy", history: ["s-1"] }),
+    );
+    const { runtime, calls } = makeFakeRuntime({
+      initialSessions: [legacy],
+      scripts: [REPLY_SCRIPT],
+    });
+    const api = makeFakeApi();
+    const releaseApprovalSession = vi.fn();
+    const ctx = ctxWithBot(runtime, api, { releaseApprovalSession });
+    await handleInboundText(makeUpdate("/status"), ctx);
+    expect(api.sent[0]!.text).toContain("Session: s-legacy");
+    await handleInboundText(makeUpdate("/new"), ctx);
+    expect(api.sent[1]!.text).toContain("Previous session s-legacy archived");
+    expect(releaseApprovalSession).toHaveBeenCalledWith("s-legacy");
+    expect(pointer.get(CHAT_KEY)).toMatchObject({ current: null, history: ["s-legacy", "s-1"] });
+    expect(pointer.hasLegacy()).toBe(false);
+    await handleInboundText(makeUpdate("hello"), ctx);
+    expect(calls[0]!.sessionId).not.toBe("s-legacy");
+  });
+
+  it("/switch first after the upgrade still keeps the legacy session reachable", async () => {
+    const legacy = createEmptySessionState({
+      id: "s-legacy",
+      workingDir: "/tmp/test",
+      metadata: { telegramChannel: true },
+    });
+    const other = createEmptySessionState({
+      id: "s-x",
+      workingDir: "/tmp/test",
+      metadata: { telegramChannel: true },
+    });
+    writeFileSync(join(dir, "telegram-session.json"), JSON.stringify({ current: "s-legacy" }));
+    const { runtime } = makeFakeRuntime({ initialSessions: [legacy, other] });
+    const api = makeFakeApi();
+    const ctx = ctxWithBot(runtime, api);
+    await handleInboundText(makeUpdate("/switch s-x"), ctx);
+    expect(pointer.hasLegacy()).toBe(false);
+    expect(pointer.get(CHAT_KEY)).toMatchObject({ current: "s-x", history: ["s-legacy"] });
+    await handleInboundText(makeUpdate("/sessions"), ctx);
+    expect(api.sent[1]!.text).toContain("DM (this chat): s-x, 1 archived");
+  });
+
+  it("/switch refuses a session that belongs to the TUI or another channel, or is mid-turn", async () => {
+    const tui = createEmptySessionState({ id: "s-tui", workingDir: "/tmp/test" });
+    const discord = createEmptySessionState({
+      id: "s-discord",
+      workingDir: "/tmp/test",
+      metadata: { discordChannel: true },
+    });
+    const busy = createEmptySessionState({
+      id: "s-busy",
+      workingDir: "/tmp/test",
+      metadata: { telegramChannel: true },
+    });
+    const { runtime } = makeFakeRuntime({ initialSessions: [tui, discord, busy] });
+    (runtime.turnController as { isBusy: (id: string) => boolean }).isBusy = (id) => id === "s-busy";
+    const api = makeFakeApi();
+    const ctx = ctxWithBot(runtime, api);
+    await handleInboundText(makeUpdate("/switch s-tui"), ctx);
+    expect(api.sent[0]!.text).toContain("belongs to another surface");
+    await handleInboundText(makeUpdate("/switch s-discord"), ctx);
+    expect(api.sent[1]!.text).toContain("belongs to another surface");
+    await handleInboundText(makeUpdate("/switch s-busy"), ctx);
+    expect(api.sent[2]!.text).toContain("turn in progress");
+    expect(pointer.get(CHAT_KEY).current).toBeNull();
+  });
+
+  it("/new during a running turn keeps the approval binding until the turn settles", async () => {
+    let finish: (() => void) | null = null;
+    const runtime = {
+      ...makeFakeRuntime().runtime,
+      runTurn: async (
+        _s: unknown,
+        _t: string,
+        opts: { eventHook?: (e: AgentLoopEvent) => void },
+      ) => {
+        await new Promise<void>((resolve) => {
+          finish = resolve;
+        });
+        opts.eventHook?.({
+          type: "llm_event",
+          event: { type: "assistant_reply", text: "ok" },
+        } as AgentLoopEvent);
+        return {};
+      },
+    } as unknown as AgentRuntime;
+    const api = makeFakeApi();
+    const releaseApprovalSession = vi.fn();
+    const ctx = ctxWithBot(runtime, api, { releaseApprovalSession });
+    const turn = handleInboundText(makeUpdate("long task"), ctx);
+    // Let dispatch reach runTurn.
+    await new Promise((r) => setTimeout(r, 0));
+    const sessionId = pointer.get(CHAT_KEY).current!;
+    expect(ctx.inflight.has(CHAT_KEY)).toBe(true);
+    await handleInboundText(makeUpdate("/new"), ctx);
+    // Rotated, but the keyboard for the running turn is still wired.
+    expect(pointer.get(CHAT_KEY).current).toBeNull();
+    expect(releaseApprovalSession).not.toHaveBeenCalled();
+    finish!();
+    await turn;
+    expect(releaseApprovalSession).toHaveBeenCalledWith(sessionId);
+    expect(ctx.inflight.has(CHAT_KEY)).toBe(false);
+  });
+
+  it("recreating over a pointer to a pruned session releases the stale binding", async () => {
+    pointer.setCurrent(CHAT_KEY, "s-gone");
+    const { runtime, calls } = makeFakeRuntime({ scripts: [REPLY_SCRIPT] });
+    const api = makeFakeApi();
+    const releaseApprovalSession = vi.fn();
+    await handleInboundText(makeUpdate("hi"), ctxWithBot(runtime, api, { releaseApprovalSession }));
+    expect(releaseApprovalSession).toHaveBeenCalledWith("s-gone");
+    expect(calls[0]!.sessionId).not.toBe("s-gone");
+  });
+
+  it("does not warn about unaddressed group chatter from non-owners", async () => {
+    const { runtime } = makeFakeRuntime();
+    const api = makeFakeApi();
+    const warn = vi.fn();
+    const ctx = ctxWithBot(runtime, api);
+    ctx.logger.warn = warn as unknown as typeof ctx.logger.warn;
+    await handleInboundText(groupUpdate("random chatter", { from: { id: NON_OWNER } }), ctx);
+    expect(warn).not.toHaveBeenCalled();
+    // …but a non-owner who actually addresses the bot is worth a line.
+    await handleInboundText(groupUpdate("@atomic_bot hi", { from: { id: NON_OWNER } }), ctx);
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it("matches mentions on Telegram's word boundaries, not whitespace", async () => {
+    const { runtime, calls } = makeFakeRuntime({ scripts: [REPLY_SCRIPT, REPLY_SCRIPT] });
+    const api = makeFakeApi();
+    const ctx = ctxWithBot(runtime, api);
+    await handleInboundText(groupUpdate("(@atomic_bot) run tests"), ctx);
+    expect(calls[0]!.userMessage).toBe("run tests");
+    await handleInboundText(groupUpdate("hi,@atomic_bot status?"), ctx);
+    expect(calls[1]!.userMessage).toBe("hi,@atomic_bot status?");
+    await handleInboundText(groupUpdate("mail me at x@atomic_bot.example"), ctx);
+    await handleInboundText(groupUpdate("привет@atomic_bot"), ctx);
+    expect(calls).toHaveLength(2);
+  });
+
+  it("help text says how to reach the bot in a group depending on privacy mode", async () => {
+    const { runtime } = makeFakeRuntime();
+    const api = makeFakeApi();
+    await handleInboundText(
+      makeUpdate("/help"),
+      ctxWithBot(runtime, api, { botIdentity: { ...BOT, canReadAllGroupMessages: false } }),
+    );
+    expect(api.sent[0]!.text).toContain("privacy mode is on");
+    expect(api.sent[0]!.text).toContain("/cmd@atomic_bot");
+    await handleInboundText(
+      makeUpdate("/help"),
+      ctxWithBot(runtime, api, { botIdentity: { ...BOT, canReadAllGroupMessages: true } }),
+    );
+    expect(api.sent[1]!.text).toContain("@mention me");
+    expect(api.sent[1]!.text).not.toContain("privacy mode");
   });
 });

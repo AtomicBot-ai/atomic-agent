@@ -1203,3 +1203,95 @@ describe("scrubErrorMessage", () => {
     expect(msg).toContain("<token>");
   });
 });
+
+describe("TelegramChannel per-chat approval bindings", () => {
+  let dir: string;
+  let logger: StructuredLogger;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "atomic-tg-perchat-approvals-"));
+    logger = new StructuredLogger({ level: "warn", sinks: [] });
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  /** A runtime real enough for the inbound handler to run a turn. */
+  function turnRuntime(setHandler: ReturnType<typeof vi.fn>): AgentRuntime {
+    const sessions = new Map<string, { id: string; status: string; turnCount: number; stepCount: number; lastError: null }>();
+    let n = 0;
+    return {
+      approvals: { resolve: vi.fn(() => true) },
+      setApprovalHandlerForSession: setHandler,
+      createSession: () => {
+        const s = { id: `s-${++n}`, status: "pending", turnCount: 0, stepCount: 0, lastError: null };
+        sessions.set(s.id, s);
+        return s;
+      },
+      sessionStore: { load: (id: string) => sessions.get(id) ?? null },
+      turnController: { isBusy: () => false },
+      runTurn: async (
+        _s: unknown,
+        _t: string,
+        opts: { eventHook?: (e: unknown) => void },
+      ) => {
+        opts.eventHook?.({
+          type: "llm_event",
+          event: { type: "assistant_reply", text: "ok" },
+        });
+        return {};
+      },
+    } as unknown as AgentRuntime;
+  }
+
+  it("keeps one binding per chat, drops it on /new, and drops all on stop()", async () => {
+    const { factory, state } = makeBotFactory();
+    const { lock } = fakeLock();
+    const unsubscribes: Array<ReturnType<typeof vi.fn>> = [];
+    const setHandler = vi.fn(() => {
+      const u = vi.fn();
+      unsubscribes.push(u);
+      return u;
+    });
+    const channel = new TelegramChannel({
+      runtime: turnRuntime(setHandler),
+      config: makeConfig(dir),
+      token: "1234:abcdef",
+      logger,
+      botFactory: factory,
+      lock,
+      emitStatus: () => undefined,
+    });
+    await channel.start();
+    const dm = { from: { id: 42 }, chat: { id: 42, type: "private" }, text: "hi", message_id: 1 };
+    const group = {
+      from: { id: 42 },
+      chat: { id: -100, type: "supergroup", title: "Ops" },
+      text: "@test_bot hi",
+      message_id: 2,
+    };
+    await state.textHandler!(dm);
+    await state.textHandler!(group);
+    // Two chats, two sessions, two live bindings — neither evicted the other.
+    expect(setHandler).toHaveBeenCalledTimes(2);
+    expect(setHandler.mock.calls.map((c) => c[0])).toEqual(["s-1", "s-2"]);
+    expect(unsubscribes.every((u) => !u.mock.calls.length)).toBe(true);
+    // A second DM turn re-uses the same session and binding.
+    await state.textHandler!({ ...dm, message_id: 3 });
+    expect(setHandler).toHaveBeenCalledTimes(2);
+    // /new in the DM releases only the DM's binding.
+    await state.textHandler!({ ...dm, text: "/new", message_id: 4 });
+    expect(unsubscribes[0]!).toHaveBeenCalledTimes(1);
+    expect(unsubscribes[1]!).not.toHaveBeenCalled();
+    // stop() drops whatever is left.
+    await channel.stop();
+    expect(unsubscribes[1]!).toHaveBeenCalledTimes(1);
+    // Replies went to the chats that asked.
+    expect(state.sendMessageCalls.filter((m) => m.text === "ok").map((m) => m.chatId)).toEqual([
+      42,
+      -100,
+      42,
+    ]);
+  });
+});

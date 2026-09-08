@@ -7,6 +7,8 @@ import type { TaskReport, TaskReportSink } from "../../tasks/index.js";
 import {
   handleInboundText,
   type InboundTextUpdate,
+  type TelegramBotIdentity,
+  type TelegramTarget,
 } from "./inbound-handler.js";
 import { ApprovalBridge } from "./approval-bridge.js";
 import { TelegramSessionPointer } from "./telegram-session-pointer.js";
@@ -95,7 +97,8 @@ export class TelegramChannel {
   private readonly deps: TelegramChannelDeps;
   private readonly sessionPointer: TelegramSessionPointer;
   private readonly lock: ChannelLock;
-  private readonly inflight = new Map<number, AbortController>();
+  /** `chatKey -> AbortController` for the turn running in that chat/topic. */
+  private readonly inflight = new Map<string, AbortController>();
   private readonly userConfigPath: string;
   private readonly stateDir: string;
   private readonly pairing: PairingMode;
@@ -119,7 +122,7 @@ export class TelegramChannel {
    * `null` until the channel reaches `up` for the first time. Cleared
    * on stop so `down` panels never show a stale `@username`.
    */
-  private currentBotIdentity: { id: number; username: string | null } | null =
+  private currentBotIdentity: TelegramBotIdentity | null =
     null;
   private bot: BotInstance | null = null;
   /**
@@ -135,11 +138,16 @@ export class TelegramChannel {
    */
   private readonly pendingTaskReports: TaskReport[] = [];
   private approvalBridge: ApprovalBridge | null = null;
-  private approvalSubscription: {
-    sessionId: string;
-    chatId: number;
-    unsubscribe: () => void;
-  } | null = null;
+  /**
+   * `sessionId -> approval binding`. One entry per chat that is (or
+   * recently was) talking to the bot: with per-chat sessions two chats
+   * can run turns at once, and each needs its approval keyboard in its
+   * own chat/topic. Dropped on `/new`, `/switch`, and `stop()`.
+   */
+  private readonly approvalSubscriptions = new Map<
+    string,
+    { target: TelegramTarget; unsubscribe: () => void }
+  >();
   private currentState: ChannelStatus["state"] = "disabled";
   private currentError: string | null = null;
   private startInFlight = false;
@@ -216,11 +224,24 @@ export class TelegramChannel {
       this.currentBotIdentity = {
         id: me.id,
         username: me.username ?? null,
+        ...(typeof me.can_read_all_group_messages === "boolean"
+          ? { canReadAllGroupMessages: me.can_read_all_group_messages }
+          : {}),
       };
       this.deps.logger.info("telegram: getMe ok", {
         botId: me.id,
         botUsername: me.username,
+        canReadAllGroupMessages: me.can_read_all_group_messages,
       });
+      if (me.can_read_all_group_messages === false) {
+        // BotFather's default. Replies to the bot and `/cmd@bot` still
+        // arrive; a plain @mention in a group does not, so an operator
+        // who tries one gets silence. Say so once, where it can be read.
+        this.deps.logger.warn(
+          "telegram: privacy mode is on — plain @mentions in groups are not delivered; reply to the bot or use /cmd@<username>, or disable privacy mode in @BotFather (/setprivacy → Disable) and re-add the bot to the group",
+          { botUsername: me.username },
+        );
+      }
       const bridge = new ApprovalBridge({
         api: bot.api,
         approvals: this.deps.runtime.approvals,
@@ -245,8 +266,11 @@ export class TelegramChannel {
           // next channel (re)start.
           progressIndicator: this.deps.config.telegram.progressIndicator,
           inflight: this.inflight,
-          ensureApprovalSession: (sessionId, chatId) =>
-            this.ensureApprovalSession(sessionId, chatId),
+          botIdentity: this.currentBotIdentity,
+          ensureApprovalSession: (sessionId, target) =>
+            this.ensureApprovalSession(sessionId, target),
+          releaseApprovalSession: (sessionId) =>
+            this.releaseApprovalSession(sessionId),
           tryClaimForPairing: (u) => this.handlePairingClaim(u),
         }),
       );
@@ -255,9 +279,11 @@ export class TelegramChannel {
         await bot.api.setMyCommands?.([
           { command: "start", description: "Show help" },
           { command: "help", description: "Show help" },
-          { command: "status", description: "Show active session" },
-          { command: "new", description: "Start a fresh session" },
-          { command: "cancel", description: "Cancel the current turn" },
+          { command: "status", description: "Show this chat's session" },
+          { command: "sessions", description: "List sessions by chat" },
+          { command: "switch", description: "Continue an existing session here" },
+          { command: "new", description: "Start a fresh session for this chat" },
+          { command: "cancel", description: "Cancel this chat's current turn" },
         ]);
       } catch (err) {
         this.deps.logger.warn("telegram: setMyCommands failed (non-fatal)", {
@@ -331,8 +357,8 @@ export class TelegramChannel {
       }
     }
     this.inflight.clear();
-    this.approvalSubscription?.unsubscribe();
-    this.approvalSubscription = null;
+    for (const sub of this.approvalSubscriptions.values()) sub.unsubscribe();
+    this.approvalSubscriptions.clear();
     this.approvalBridge?.cancelAll();
     this.approvalBridge = null;
     if (this.bot) {
@@ -630,29 +656,54 @@ export class TelegramChannel {
   }
 
   /**
-   * Bind/re-bind the approval router so requests for the active
-   * Telegram session land on the inline-keyboard bridge with the
-   * right `chatId`. No-op when binding is already current.
+   * Bind/re-bind the approval router so requests for `sessionId` land
+   * on the inline-keyboard bridge in `target` (chat + optional forum
+   * topic). No-op when the binding is already current; a session that
+   * moved to another chat via `/switch` is re-pointed.
    */
-  private ensureApprovalSession(sessionId: string, chatId: number): void {
+  private ensureApprovalSession(
+    sessionId: string,
+    target: TelegramTarget,
+  ): void {
+    const existing = this.approvalSubscriptions.get(sessionId);
     if (
-      this.approvalSubscription &&
-      this.approvalSubscription.sessionId === sessionId &&
-      this.approvalSubscription.chatId === chatId
+      existing &&
+      existing.target.chatId === target.chatId &&
+      existing.target.threadId === target.threadId
     ) {
       return;
     }
-    this.approvalSubscription?.unsubscribe();
-    this.approvalSubscription = null;
+    existing?.unsubscribe();
+    this.approvalSubscriptions.delete(sessionId);
+    // A chat has exactly one current session, so any other session still
+    // bound to this same chat/topic is stale (hand-edited pointer, a
+    // pointer to a pruned session) and would leak.
+    for (const [otherId, sub] of this.approvalSubscriptions) {
+      if (
+        sub.target.chatId === target.chatId &&
+        sub.target.threadId === target.threadId
+      ) {
+        sub.unsubscribe();
+        this.approvalSubscriptions.delete(otherId);
+      }
+    }
     const bridge = this.approvalBridge;
     if (!bridge) return;
     const unsubscribe = this.deps.runtime.setApprovalHandlerForSession(
       sessionId,
       (request) => {
-        void bridge.dispatch(request, chatId);
+        void bridge.dispatch(request, target.chatId, target.threadId);
       },
     );
-    this.approvalSubscription = { sessionId, chatId, unsubscribe };
+    this.approvalSubscriptions.set(sessionId, { target, unsubscribe });
+  }
+
+  /** Drop the approval binding for a session no chat talks to anymore. */
+  private releaseApprovalSession(sessionId: string): void {
+    const existing = this.approvalSubscriptions.get(sessionId);
+    if (!existing) return;
+    existing.unsubscribe();
+    this.approvalSubscriptions.delete(sessionId);
   }
 
   private transition(

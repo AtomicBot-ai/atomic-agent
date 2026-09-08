@@ -17,7 +17,12 @@ import type { ChannelLock } from "./telegram-lockfile.js";
  */
 export interface BotInstance {
   readonly api: TelegramApi & {
-    getMe(): Promise<{ id: number; username?: string }>;
+    getMe(): Promise<{
+      id: number;
+      username?: string;
+      /** `false` = privacy mode on: plain @mentions in groups are withheld. */
+      can_read_all_group_messages?: boolean;
+    }>;
     setMyCommands?(
       cmds: ReadonlyArray<{ command: string; description: string }>,
     ): Promise<unknown>;
