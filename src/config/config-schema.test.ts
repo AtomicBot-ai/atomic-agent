@@ -1005,6 +1005,31 @@ describe("parseUserConfigFile", () => {
     expect(parsed.discord.ownerUserId).toBeNull();
   });
 
+  it("accepts a v51 file and fills in localModels.download defaults (parallel downloads)", () => {
+    const parsed = parseUserConfigFile({ version: 51 });
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(parsed.localModels.download).toEqual({ connections: 16 });
+  });
+
+  it("honours an explicit localModels.download.connections", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      localModels: { download: { connections: 1 } },
+    });
+    expect(parsed.localModels.download.connections).toBe(1);
+  });
+
+  it("rejects localModels.download.connections outside 1..64 or non-integer", () => {
+    for (const connections of [0, 65, -3, 2.5, "many"]) {
+      expect(() =>
+        parseUserConfigFile({
+          version: USER_CONFIG_VERSION,
+          localModels: { download: { connections } },
+        }),
+      ).toThrow(/localModels.download.connections/);
+    }
+  });
+
   it("accepts a v50 file and fills in discord.* defaults transparently", () => {
     const parsed = parseUserConfigFile({ version: 50 });
     expect(parsed.version).toBe(USER_CONFIG_VERSION);

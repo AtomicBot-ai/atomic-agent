@@ -14,6 +14,7 @@ import {
   getUserConfigPath,
 } from "./config-file.js";
 import { setCustomLocalModels } from "../local-llm/models-catalog.js";
+import { setDefaultDownloadConnections } from "../local-llm/download-settings.js";
 import { setConfiguredBackendVariant } from "../local-llm/windows-backend-variant.js";
 import { loadDotenvFromStateDir } from "./load-dotenv.js";
 import { resolveLlmProviderApiKey } from "./resolve-llm-api-key.js";
@@ -123,6 +124,10 @@ export function loadConfig(): AtomicAgentConfig {
   // visible to `resolveDownloadAsset`, which runs deep inside the
   // config-free local-llm layer.
   setConfiguredBackendVariant(user.localModels.managed.backendVariant);
+  // And the download fan-out: `downloadFile` is reached from the CLI, the
+  // TUI and the detached pull worker, none of which should have to
+  // thread a config value down to it.
+  setDefaultDownloadConnections(user.localModels.download.connections);
   const grammarsDir = resolveAssetDir("ATOMIC_AGENT_GRAMMARS_DIR", "grammars");
 
   const browserChannel: BrowserChannel = readBrowserChannel(
@@ -189,6 +194,7 @@ export function loadConfig(): AtomicAgentConfig {
       mode: user.localModels.mode,
       managed: { ...user.localModels.managed },
       embeddings: { ...user.localModels.embeddings },
+      download: { ...user.localModels.download },
     },
     paths: {
       stateDir,

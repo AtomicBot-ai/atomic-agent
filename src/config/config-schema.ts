@@ -16,6 +16,10 @@ import {
   isBackendVariantPreference,
   type BackendVariantPreference,
 } from "../local-llm/windows-backend-variant.js";
+import {
+  DEFAULT_DOWNLOAD_CONNECTIONS,
+  MAX_DOWNLOAD_CONNECTIONS,
+} from "../local-llm/download-settings.js";
 import { parseCustomLocalModels } from "./custom-models-schema.js";
 import {
   MCP_SERVER_NAME_MAX_LENGTH,
@@ -215,6 +219,8 @@ export interface AtomicAgentConfig {
      * healthy. Disabled / unreachable ⇒ FTS5-only recall path.
      */
     embeddings: UserManagedEmbeddingLlmConfig;
+    /** Parallel-connection download settings (config v52). */
+    download: LocalModelDownloadConfig;
   };
   /**
    * Outcome of the startup `<stateDir>/.env` load performed by
@@ -1171,6 +1177,18 @@ export interface UserManagedLocalLlmConfig {
  * `enabled=false` (default) ⇒ no second daemon, no embedding writes,
  * no hybrid recall — observably identical to phase 1A.
  */
+/**
+ * How model and backend files are fetched. Added in config v52.
+ * `connections` is the number of parallel HTTP range requests one file
+ * is split across (1–64). Hugging Face's CDN caps each connection, so
+ * one stream is slow regardless of the link; `1` restores the old
+ * single-stream behaviour. The `ATOMIC_AGENT_DOWNLOAD_CONNECTIONS` env
+ * var, when set, wins over this file value (operator override).
+ */
+export interface LocalModelDownloadConfig {
+  connections: number;
+}
+
 export interface UserManagedEmbeddingLlmConfig {
   enabled: boolean;
   /** `EmbeddingModelId` from the catalog, or `null` when not chosen. */
@@ -1215,6 +1233,8 @@ export interface UserConfigFile {
      * `{ enabled: false, modelId: null, port: 19092 }`.
      */
     embeddings: UserManagedEmbeddingLlmConfig;
+    /** Parallel-connection download settings (config v52). */
+    download: LocalModelDownloadConfig;
     /**
      * GGUF models the operator added from an arbitrary Hugging Face repo
      * (config v44). Each entry is a whole `LocalModelDef` with a
@@ -1845,7 +1865,10 @@ export interface UserConfigFile {
 // v51: new `discord` block for the Discord remote-control channel.
 // Additive and inert by default — the channel is off, unpaired, and the
 // bot token lives in `<stateDir>/.env`, never here.
-export const USER_CONFIG_VERSION = 51;
+// v52: localModels gains `download.connections` — how many parallel range
+// requests one model/backend file is split across (default 16). Older
+// files inherit the default; `1` is the previous single-stream behaviour.
+export const USER_CONFIG_VERSION = 52;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -1985,6 +2008,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   48,
   49,
   50,
+  51,
   USER_CONFIG_VERSION,
 ];
 
@@ -2011,6 +2035,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       port: 19092,
       url: "http://127.0.0.1:19092",
     },
+    download: { connections: DEFAULT_DOWNLOAD_CONNECTIONS },
     customModels: [],
   },
   log: { level: "info" },
@@ -3574,6 +3599,17 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
     ),
   };
 
+  const rawDownload =
+    (localModels.download as Record<string, unknown> | undefined) ?? {};
+  const download: LocalModelDownloadConfig = {
+    connections: parseBoundedPositiveInt(
+      rawDownload.connections ?? USER_CONFIG_DEFAULTS.localModels.download.connections,
+      "localModels.download.connections",
+      1,
+      MAX_DOWNLOAD_CONNECTIONS,
+    ),
+  };
+
   const localModelsMode = parseLocalLlmMode(
     localModels.mode ?? USER_CONFIG_DEFAULTS.localModels.mode,
     "localModels.mode",
@@ -3620,6 +3656,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
       ),
       managed,
       embeddings: embeddingsDaemon,
+      download,
       customModels,
     },
     log: {

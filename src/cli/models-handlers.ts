@@ -31,6 +31,7 @@ import {
   readBackendVersion,
   readDownloadJob,
   readPartialDownload,
+  resolveDownloadConnections,
   removeModel,
   spawnDownloadWorker,
   resolveChatTemplatePath,
@@ -131,10 +132,12 @@ export async function runLocalModelsPull(args: string[]): Promise<number> {
     const partial = readPartialDownload(
       resolveModelFilePath(dataDir, m.id, m.filename),
     );
+    const streams = resolveDownloadConnections();
+    const via = streams > 1 ? `, ${streams} connections` : "";
     process.stderr.write(
       partial
-        ? `resuming ${m.id} (${m.filename}, ${m.sizeLabel}) — ${formatGgufSize(partial.transferred)} already on disk\n`
-        : `downloading ${m.id} (${m.filename}, ${m.sizeLabel})\n`,
+        ? `resuming ${m.id} (${m.filename}, ${m.sizeLabel}${via}) — ${formatGgufSize(partial.transferred)} already on disk\n`
+        : `downloading ${m.id} (${m.filename}, ${m.sizeLabel}${via})\n`,
     );
     await downloadModel(dataDir, m, {
       onProgress: progressFor(`${m.filename} (${m.sizeLabel})`, estTotal),
