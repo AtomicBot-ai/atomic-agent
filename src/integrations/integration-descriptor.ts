@@ -137,6 +137,21 @@ export interface IntegrationDescriptor {
   summary: string;
   /** Where to get the credentials. */
   docsUrl?: string;
+  /**
+   * The walkthrough shown in the detail view until the integration is
+   * connected: what to click on the other side, in order, in the words
+   * the other side uses.
+   *
+   * A credential field labelled "Bot token" is only self-explanatory to
+   * someone who has already made a bot. Everyone else needs to be told
+   * that the token comes from @BotFather, that Discord's "client
+   * secret" is not it, and that a Discord bot has to be invited to a
+   * server before it can be messaged at all -- and needs to be told it
+   * *here*, not in a README they do not know exists. Steps disappear
+   * once the integration reports `connected`, so a working setup is not
+   * nagged at.
+   */
+  setupSteps?: readonly string[];
   fields: readonly IntegrationField[];
   /** Verbs offered alongside the fields. */
   actions?: readonly IntegrationAction[];

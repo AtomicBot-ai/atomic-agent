@@ -35,6 +35,8 @@ export interface IntegrationRow {
   level: IntegrationStatusLevel;
   detail?: string;
   docsUrl?: string;
+  /** Walkthrough for an integration that is not connected yet. */
+  setupSteps?: readonly string[];
   appliesLive: boolean;
   fields: readonly IntegrationFieldRow[];
   actions: readonly IntegrationActionRow[];

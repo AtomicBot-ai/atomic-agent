@@ -34,7 +34,21 @@ export const discordIntegration: IntegrationDescriptor = {
   label: "Discord",
   summary: "Drive the agent from Discord — DM the bot or @mention it in a channel",
   docsUrl: "https://discord.com/developers/applications",
-  appliesLive: false,
+  // Live since the hub stopped relying on `restart()`: the token is
+  // resolved at start(), the kill switch and the owner have their own
+  // live mutators. See AGENTS.md §"Integrations hub".
+  appliesLive: true,
+  setupSteps: [
+    "Open discord.com/developers/applications → New Application, give it a name.",
+    "Left menu → Bot → Reset Token → copy it. The client secret and public key are NOT it.",
+    "Leave all three Privileged Gateway Intents OFF — the bot never needs them.",
+    "Left menu → OAuth2 → URL Generator: tick the `bot` scope.",
+    "Below that tick Send Messages, Read Message History and View Channels.",
+    "Open the generated URL, pick your server, authorise. You can only DM a bot you share a server with.",
+    "Discord → Settings → Advanced → Developer Mode on, right-click yourself → Copy User ID.",
+    "Paste both below (e edits, enter saves), then set Channel to on.",
+    "DM the bot, or @mention it in a server channel. It answers only you.",
+  ],
   fields: [
     {
       key: TOKEN_FIELD,
@@ -42,7 +56,7 @@ export const discordIntegration: IntegrationDescriptor = {
       envVar: DISCORD_BOT_TOKEN_KEY,
       secret: true,
       required: true,
-      help: "Bot → Reset Token in the Developer Portal, then invite the bot to a server (or just DM it).",
+      help: "Developer Portal → your app → Bot → Reset Token. Three chunks split by dots.",
       validate: (raw) =>
         TOKEN_SHAPE.test(raw)
           ? undefined
@@ -56,7 +70,7 @@ export const discordIntegration: IntegrationDescriptor = {
       configPath: "discord.ownerUserId",
       secret: false,
       required: true,
-      help: "Your Discord user ID (Settings → Advanced → Developer Mode, then right-click yourself → Copy User ID). Only this account can drive the agent.",
+      help: "Yours: Settings → Advanced → Developer Mode, right-click your name → Copy User ID. Only this account may drive the agent.",
       validate: (raw) =>
         /^\d{15,25}$/.test(raw)
           ? undefined
@@ -70,7 +84,7 @@ export const discordIntegration: IntegrationDescriptor = {
       configPath: "discord.enabled",
       secret: false,
       required: false,
-      help: "on connects the gateway; off disconnects without forgetting the token.",
+      help: "on connects the bot; off disconnects without forgetting the token. Enter toggles.",
     },
   ],
   actions: [

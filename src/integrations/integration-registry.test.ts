@@ -50,6 +50,22 @@ describe("integration registry", () => {
     }
   });
 
+  it("gives every integration that needs a secret a setup walkthrough", () => {
+    // Every credential here comes from somewhere else -- a BotFather
+    // chat, a developer portal, a dashboard -- and the hub is where the
+    // operator is standing when they need to know that.
+    for (const integration of listIntegrations()) {
+      if (!integration.fields.some((f) => f.secret && f.required)) continue;
+      expect(integration.setupSteps?.length ?? 0).toBeGreaterThan(0);
+      for (const step of integration.setupSteps ?? []) {
+        expect(step.length).toBeGreaterThan(0);
+        // One line each: the detail view wraps, and a paragraph there
+        // reads as a wall rather than as steps.
+        expect(step.length).toBeLessThanOrEqual(100);
+      }
+    }
+  });
+
   it("finds by id and returns undefined for an unknown one", () => {
     expect(findIntegration("composio")?.label).toBe("Composio");
     expect(findIntegration("nope")).toBeUndefined();

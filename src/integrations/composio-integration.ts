@@ -25,6 +25,12 @@ export const composioIntegration: IntegrationDescriptor = {
     "~1500 SaaS toolkits (Gmail, Slack, Notion, Linear, Jira…) with OAuth handled for you",
   docsUrl: "https://composio.dev",
   appliesLive: true,
+  setupSteps: [
+    "Sign up at composio.dev and copy an API key from the dashboard.",
+    "Press e on API key below, paste it, press enter — the tools mount straight away.",
+    "Ask the agent to do something in an app (\"email this to …\"); it searches Composio for the tool.",
+    "First use of an app returns a sign-in link in the chat — open it to connect that account.",
+  ],
   fields: [
     {
       key: COMPOSIO_KEY_FIELD,

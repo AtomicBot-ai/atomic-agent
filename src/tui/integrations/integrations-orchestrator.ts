@@ -118,6 +118,11 @@ export class IntegrationsOrchestrator {
         ...(descriptor.docsUrl === undefined
           ? {}
           : { docsUrl: descriptor.docsUrl }),
+        // Only while it is not working yet: a connected integration
+        // does not need to be told how to connect.
+        ...(descriptor.setupSteps === undefined || status.level === "connected"
+          ? {}
+          : { setupSteps: descriptor.setupSteps }),
         appliesLive: descriptor.appliesLive,
         fields,
         actions: (descriptor.actions ?? [])

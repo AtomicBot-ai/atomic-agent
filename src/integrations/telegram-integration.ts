@@ -36,6 +36,13 @@ export const telegramIntegration: IntegrationDescriptor = {
   summary: "Drive the agent from Telegram — DM your bot and it acts on it",
   docsUrl: "https://core.telegram.org/bots#botfather",
   appliesLive: true,
+  setupSteps: [
+    "In Telegram, search for @BotFather and open the chat with it.",
+    "Send /newbot, then a display name, then a username ending in `bot`.",
+    "BotFather replies with a token like 1234567:AA… — copy the whole line.",
+    "Press e on Bot token below, paste it, press enter. The channel starts by itself.",
+    "Press p, then send your bot any message within 60s — that claims you as the owner.",
+  ],
   fields: [
     {
       key: TOKEN_FIELD,
@@ -43,7 +50,7 @@ export const telegramIntegration: IntegrationDescriptor = {
       envVar: TELEGRAM_BOT_TOKEN_KEY,
       secret: true,
       required: true,
-      help: "From @BotFather. Then press p to pair your account.",
+      help: "The 1234567:AA… line @BotFather sends you. Saving it starts the channel.",
       validate: (raw) =>
         TOKEN_SHAPE.test(raw)
           ? undefined
@@ -58,7 +65,7 @@ export const telegramIntegration: IntegrationDescriptor = {
       configPath: "telegram.ownerUserId",
       secret: false,
       required: true,
-      help: "Press p to pair — the next account to DM the bot becomes the owner.",
+      help: "Who may drive the agent. Press p and message the bot instead of typing this.",
       validate: (raw) =>
         /^\d{1,15}$/.test(raw)
           ? undefined
@@ -72,7 +79,7 @@ export const telegramIntegration: IntegrationDescriptor = {
       configPath: "telegram.enabled",
       secret: false,
       required: false,
-      help: "on starts the channel; off stops it without forgetting the token.",
+      help: "on starts the bot; off stops it without forgetting the token. Enter toggles.",
     },
   ],
   actions: [
