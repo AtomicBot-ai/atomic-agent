@@ -10222,7 +10222,15 @@ function modelChipHtml() {
      A route that composerSwitchKindsFor says HAS a model control must draw
      one; when nothing is chosen yet it says so and opens the picker. */
   if (!label) {
-    if (!selHasKind('model')) return '';
+    /* Only where a model can actually be CHOSEN. The custom/external route
+       carries a model kind too, but the model there is whatever the
+       operator's own llama-server has loaded — there is no catalogue to pick
+       from, and the TUI leaves that slot blank until /props names it. A
+       `choose a model` button there would offer a choice that does not
+       exist, which the external-route check catches by name. So: the cloud
+       route (a provider with a catalogue behind it) gets the call to action;
+       everything else keeps the honest blank. */
+    if (!selHasKind('model') || selBackend() !== 'cloud') return '';
     return '<button class="cchip modelchip needsmodel" data-sel-open="model"'
       + ' title="No model chosen for this provider — pick one">choose a model' + ic('chevD') + '</button>';
   }
