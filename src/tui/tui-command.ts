@@ -666,6 +666,16 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onAnalyticsSetEnabledRequested: (enabled) =>
           orchestrator.privacy.setAnalyticsEnabled(enabled),
         onPrivacyRefreshRequested: () => orchestrator.privacy.refresh(),
+        onIntegrationsRefreshRequested: () =>
+          orchestrator.integrations.refresh(),
+        onIntegrationFieldSaveRequested: (integrationId, fieldKey, value) =>
+          orchestrator.integrations.saveField(integrationId, fieldKey, value),
+        onIntegrationFieldClearRequested: (integrationId, fieldKey) =>
+          orchestrator.integrations.clearField(integrationId, fieldKey),
+        onIntegrationFieldToggleRequested: (integrationId, fieldKey) =>
+          orchestrator.integrations.toggleField(integrationId, fieldKey),
+        onIntegrationActionRequested: (integrationId, actionId) =>
+          orchestrator.integrations.runAction(integrationId, actionId),
         onUpdateConfirmed: () =>
           parsed.fakeUpdateVersion
             ? // The testing ground must never reach install.sh: the

@@ -1,3 +1,4 @@
+import { formatChannelLockHeld } from "../channel-lock-error.js";
 import {
   existsSync,
   readFileSync,
@@ -44,9 +45,10 @@ export class TelegramLockfile implements ChannelLock {
       pid !== process.pid &&
       isAlive(pid)
     ) {
-      throw new Error(
-        `telegram lockfile held by live pid ${pid} at ${this.path}`,
-      );
+      // Names the cause and the fix: this surfaces verbatim in the
+      // Integrations pane, where "lockfile held by live pid 123" reads
+      // as a crash rather than as "you already have one running".
+      throw new Error(formatChannelLockHeld(pid));
     }
     writeFileSync(this.path, String(process.pid), { flag: "w" });
   }

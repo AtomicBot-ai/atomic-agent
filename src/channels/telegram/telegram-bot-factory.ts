@@ -97,8 +97,15 @@ export const defaultGrammyBotFactory: BotFactory = async (token) => {
     setCallbackHandler(handler) {
       callbackHandler = handler;
     },
-    start(onStart) {
-      void bot.start({ onStart }).catch(() => undefined);
+    start(onStart, onStopped) {
+      // grammy's `bot.start()` promise settles when polling ends —
+      // resolving on a clean stop, rejecting on a fatal error (409
+      // conflict, revoked token). Swallowing it, as this did, made a
+      // dead poller indistinguishable from a healthy one.
+      void bot
+        .start({ onStart })
+        .then(() => onStopped?.())
+        .catch((err: unknown) => onStopped?.(err));
     },
     async stop() {
       await bot.stop();

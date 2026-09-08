@@ -193,7 +193,6 @@ export function isPanelModalOpen(state: TuiState): boolean {
   // captured by the modal layer instead of cycling away from it.
   const telegramTabBusy =
     state.uiMode === "debug" &&
-    state.activeTab === "telegram" &&
     state.telegramPanel.mode !== "list";
   // MCP tab is "busy" while a modal is open: the add-server modal
   // owns its own MultiLineEditor and the panel must keep capturing

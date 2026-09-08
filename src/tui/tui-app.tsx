@@ -121,8 +121,8 @@ import { handleMcpTabKey } from "./mcp/mcp-key-bindings.js";
 import { handleImportTabKey } from "./import/import-key-bindings.js";
 import type { ImportFormState } from "./import/import-panel-state.js";
 import { handleProvidersTabKey } from "./providers/providers-key-bindings.js";
-import { handleTelegramTabKey } from "./telegram/telegram-key-bindings.js";
 import { handlePrivacyTabKey } from "./privacy/privacy-key-bindings.js";
+import { handleIntegrationsTabKey } from "./integrations/integrations-key-bindings.js";
 import { ContextMenuPopup, ContextMenuProvider } from "./context-menu/index.js";
 import { createDragIntentTracker } from "./mouse/drag-intent.js";
 import { MouseProvider } from "./mouse/mouse-context.js";
@@ -573,6 +573,29 @@ export interface TuiAppCallbacks {
   onAnalyticsSetEnabledRequested?(enabled: boolean): void | Promise<void>;
   /** Privacy tab: re-read the persisted `analytics.enabled` snapshot. */
   onPrivacyRefreshRequested?(): void;
+  /** Integrations tab: re-read credential presence + live server state. */
+  onIntegrationsRefreshRequested?(): void;
+  /** Integrations tab: persist one credential field to `<stateDir>/.env`. */
+  onIntegrationFieldSaveRequested?(
+    integrationId: string,
+    fieldKey: string,
+    value: string,
+  ): void | Promise<void>;
+  /** Integrations tab: clear one credential field. */
+  onIntegrationFieldClearRequested?(
+    integrationId: string,
+    fieldKey: string,
+  ): void | Promise<void>;
+  /** Integrations tab: flip a boolean field (a channel's kill switch). */
+  onIntegrationFieldToggleRequested?(
+    integrationId: string,
+    fieldKey: string,
+  ): void | Promise<void>;
+  /** Integrations tab: run a descriptor action (pair, restart). */
+  onIntegrationActionRequested?(
+    integrationId: string,
+    actionId: string,
+  ): void | Promise<void>;
   /** Import tab: run a dry-run preview of the Hermes import. */
   onImportPreview?(form: ImportFormState): void;
   /** Import tab: execute the import (write sessions / tasks / secrets). */
@@ -747,6 +770,12 @@ export function TuiApp({
   }, [state.uiMode, state.activeTab, callbacks]);
 
   useEffect(() => {
+    if (state.uiMode === "debug" && state.activeTab === "integrations") {
+      callbacks.onIntegrationsRefreshRequested?.();
+    }
+  }, [state.uiMode, state.activeTab, callbacks]);
+
+  useEffect(() => {
     if (
       state.uiMode === "debug" &&
       (state.activeTab === "providers" || state.activeTab === "llm")
@@ -833,12 +862,12 @@ export function TuiApp({
   const localModelsTabActive =
     state.uiMode === "debug" && state.activeTab === "models";
   const llmTabActive = state.uiMode === "debug" && state.activeTab === "llm";
-  const telegramTabActive =
-    state.uiMode === "debug" && state.activeTab === "telegram";
   const importTabActive =
     state.uiMode === "debug" && state.activeTab === "import";
   const privacyTabActive =
     state.uiMode === "debug" && state.activeTab === "privacy";
+  const integrationsTabActive =
+    state.uiMode === "debug" && state.activeTab === "integrations";
   const terminalSize = useTerminalSize();
   const sidebarVisible =
     state.uiMode === "chat" &&
@@ -947,9 +976,9 @@ export function TuiApp({
         !mcpTabActive &&
         !providersTabActive &&
         !llmTabActive &&
-        !telegramTabActive &&
         !importTabActive &&
         !privacyTabActive &&
+        !integrationsTabActive &&
         !sidebarFocused &&
         !(
           localModelsTabActive &&
@@ -1017,9 +1046,11 @@ export function TuiApp({
     if (providersTabActive) return handleProvidersTabKey(input, key, ctx);
     if (llmTabActive) return handleLlmPanelKey(input, key, ctx);
     if (localModelsTabActive) return handleLocalModelsTabKey(input, key, ctx);
-    if (telegramTabActive) return handleTelegramTabKey(input, key, ctx);
     if (importTabActive) return handleImportTabKey(input, key, ctx);
     if (privacyTabActive) return handlePrivacyTabKey(input, key, ctx);
+    if (integrationsTabActive) {
+      return handleIntegrationsTabKey(input, key, ctx);
+    }
     return null;
   };
 

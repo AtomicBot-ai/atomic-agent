@@ -158,6 +158,11 @@ const V0_2_2_SLASH_COMMANDS = [
       "open MCP tab (configured servers + discovered tools / resources / prompts) · subcommands: `/mcp add` opens JSON-paste modal, `/mcp remove <name>` opens delete-confirm",
   },
   {
+    name: "integrations",
+    description:
+      "open Integrations tab \u2014 one place for third-party credentials (Composio API key, \u2026). Nothing is loaded until a key is set",
+  },
+  {
     name: "model",
     description:
       "open chat model picker · subcommands: pull <id> | use <id> | status | <base-url>",
@@ -176,7 +181,7 @@ const V0_2_2_SLASH_COMMANDS = [
   {
     name: "telegram",
     description:
-      "telegram tab · subcommands: enable | disable | start | stop | restart | pair | token",
+      "Telegram controls in the Integrations tab · subcommands: enable | disable | start | stop | restart | pair",
   },
   {
     name: "import",
@@ -307,6 +312,7 @@ describe("menu registry", () => {
       "Skills",
       "Memory",
       "MCP",
+      "Integrations",
       "LLM",
       "Telegram",
       "Import",
