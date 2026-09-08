@@ -25,6 +25,10 @@ export interface TelegramActions {
   startPairing(timeoutMs?: number): Promise<void>;
   restart(): Promise<void>;
   setEnabled(enabled: boolean): Promise<void>;
+  /** Push a token the hub has just written into the live channel. */
+  adoptToken(): Promise<void>;
+  /** Bring the channel up, or throw the channel's own reason. */
+  ensureUpForPairing(): Promise<void>;
 }
 
 /**
@@ -148,9 +152,16 @@ export class IntegrationsOrchestrator {
     if (integrationId === "telegram") {
       if (!this.telegram) throw new Error("Telegram controls unavailable");
       if (actionId === "pair") {
-        // Fire-and-forget: the window runs for its full timeout and the
-        // outcome lands through the channel's own status stream, so
-        // awaiting it here would freeze the pane for a minute.
+        // A pairing window only claims a DM while the poller is
+        // running, so start the channel first and let a failure
+        // surface as this action's error. Announcing "DM your bot now"
+        // in front of a channel that never came up is how an operator
+        // ends up messaging a bot nothing is listening to.
+        await this.telegram.ensureUpForPairing();
+        // Fire-and-forget from here: the window runs for its full
+        // timeout and the outcome lands through the channel's own
+        // status stream, so awaiting it would freeze the pane for a
+        // minute.
         void this.telegram.startPairing();
         return "Pairing — DM your bot now; the next sender becomes the owner.";
       }
@@ -228,21 +239,40 @@ export class IntegrationsOrchestrator {
       if (integrationId === "composio") {
         await this.applyComposio(value !== null);
       }
-      // A channel resolves its token and switches at start(), so a
-      // saved value that never reaches a running channel would look
-      // like the setting did nothing.
+      // A channel resolves its token and its kill switch when it is
+      // constructed, so a saved value that never reaches the running
+      // channel looks to the operator like the setting did nothing.
+      // Each field goes to the mutator that actually owns it;
+      // `restart()` is not one of them -- it only re-starts a channel
+      // that was already `up`.
       if (integrationId === "telegram" && this.telegram) {
         if (field.key === "enabled") {
           await this.telegram.setEnabled(value === "on");
+        } else if (field.key === "botToken") {
+          await this.telegram.adoptToken();
         } else {
-          await this.telegram.restart();
+          const channel = this.runtime.telegramChannel;
+          if (field.key === "ownerUserId" && channel) {
+            await channel.setOwnerUserId(value === null ? null : Number(value));
+          } else {
+            await this.telegram.restart();
+          }
         }
       }
       if (integrationId === "discord") {
         const channel = this.runtime.discordChannel;
         if (channel) {
-          await channel.stop();
-          if (getConfig().discord.enabled) await channel.start();
+          if (field.key === "ownerUserId") {
+            channel.setOwnerUserId(value);
+          }
+          if (field.key === "enabled") {
+            await channel.setEnabled(value === "on");
+          } else {
+            // Token or owner change: the gateway captured the old one,
+            // so rebuild it -- but only if the operator wants it up.
+            await channel.stop();
+            if (getConfig().discord.enabled) await channel.setEnabled(true);
+          }
         }
       }
       this.bus.emit({

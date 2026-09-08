@@ -91,6 +91,57 @@ describe("DiscordChannel", () => {
     vi.unstubAllGlobals();
   });
 
+  it("setEnabled(true) starts a channel that booted switched off", async () => {
+    // The bug this pins: `enabled` was read from the construction-time
+    // deps on every start(), so an operator who switched the channel on
+    // from the Integrations hub got a silent `disabled` until the next
+    // launch -- the config write was real, the running channel never
+    // heard about it.
+    const { channel, lock } = makeChannel({ enabled: false });
+    await channel.start();
+    expect(channel.state()).toBe("disabled");
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ id: "9", username: "b" }), { status: 200 })),
+    );
+    await channel.setEnabled(true);
+
+    expect(channel.state()).not.toBe("disabled");
+    expect(lock.acquire).toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it("setEnabled(false) stops a running channel and releases the lock", async () => {
+    const { channel, lock } = makeChannel();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ id: "9", username: "b" }), { status: 200 })),
+    );
+    await channel.start();
+    await channel.setEnabled(false);
+
+    expect(channel.state()).toBe("disabled");
+    expect(lock.release).toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it("setEnabled(true) on an already-running channel does not build a second gateway", async () => {
+    // Two gateways on one token receive every event twice, so every
+    // turn would run twice, side effects included.
+    const { channel, lock } = makeChannel();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ id: "9", username: "b" }), { status: 200 })),
+    );
+    await channel.start();
+    const acquiredOnce = lock.acquire.mock.calls.length;
+    await channel.setEnabled(true);
+
+    expect(lock.acquire.mock.calls.length).toBe(acquiredOnce);
+    vi.unstubAllGlobals();
+  });
+
   it("stopping a disabled channel is a no-op", async () => {
     const { channel, lock } = makeChannel({ enabled: false });
     await channel.start();
