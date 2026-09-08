@@ -29,6 +29,7 @@ import {
 } from "./download-segments.js";
 import { resolveDownloadConnections } from "./download-settings.js";
 import { huggingFaceToken } from "./huggingface-api.js";
+import { isHuggingFaceUrl, rewriteHuggingFaceUrl } from "./huggingface-endpoint.js";
 
 export interface AttemptOptions {
   onProgress?: (percent: number, transferred: number, total: number) => void;
@@ -57,7 +58,7 @@ function baseHeaders(url: string, userAgent?: string): Record<string, string> {
   if (isGitHub) {
     const token = (process.env.GITHUB_TOKEN || process.env.GH_TOKEN || "").trim();
     if (token) headers.Authorization = `Bearer ${token}`;
-  } else if (url.includes("huggingface.co")) {
+  } else if (isHuggingFaceUrl(url)) {
     // Gated repos answer 401 without this; public ones ignore it, so it
     // costs nothing to send whenever the operator has a token exported.
     const token = huggingFaceToken();
@@ -80,6 +81,10 @@ export async function downloadAttempt(
 ): Promise<void> {
   const partPath = resolvePartialPath(destPath);
   const headers = baseHeaders(url, opts.userAgent);
+  // The sidecar, and every comparison against it, uses the canonical
+  // URL; only the wire request goes to the configured endpoint, so a
+  // partial survives switching mirrors.
+  const requestUrl = rewriteHuggingFaceUrl(url);
 
   const resume = describeResume(url, destPath, headers);
   const { stored, offset, sentRange, leadHeaders } = resume;
@@ -104,7 +109,11 @@ export async function downloadAttempt(
   try {
     let res: Response;
     try {
-      res = await fetch(url, { headers: leadHeaders, redirect: "follow", signal: leadAbort.signal });
+      res = await fetch(requestUrl, {
+        headers: leadHeaders,
+        redirect: "follow",
+        signal: leadAbort.signal,
+      });
     } catch (err) {
       throwIfAborted(opts.signal);
       if (leadStalled) throw new StalledError(opts.stallTimeoutMs);
@@ -224,7 +233,7 @@ export async function downloadAttempt(
     if (resumed) emitProgress(Date.now());
 
     const ctx: SegmentContext = {
-      url,
+      url: requestUrl,
       headers,
       validators,
       total,

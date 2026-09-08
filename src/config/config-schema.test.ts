@@ -1005,10 +1005,38 @@ describe("parseUserConfigFile", () => {
     expect(parsed.discord.ownerUserId).toBeNull();
   });
 
+  it("accepts a v52 file and fills in localModels.download.hfEndpoint (mirror support)", () => {
+    const parsed = parseUserConfigFile({ version: 52, localModels: { download: { connections: 4 } } });
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(parsed.localModels.download).toEqual({ connections: 4, hfEndpoint: "https://huggingface.co" });
+  });
+
+  it("normalizes an explicit hfEndpoint to an origin", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      localModels: { download: { hfEndpoint: "https://hf-mirror.com/" } },
+    });
+    expect(parsed.localModels.download.hfEndpoint).toBe("https://hf-mirror.com");
+  });
+
+  it("rejects an hfEndpoint that is not an http(s) origin", () => {
+    for (const hfEndpoint of ["hf-mirror.com", "ftp://x", "", 42]) {
+      expect(() =>
+        parseUserConfigFile({
+          version: USER_CONFIG_VERSION,
+          localModels: { download: { hfEndpoint } },
+        }),
+      ).toThrow(/localModels.download.hfEndpoint/);
+    }
+  });
+
   it("accepts a v51 file and fills in localModels.download defaults (parallel downloads)", () => {
     const parsed = parseUserConfigFile({ version: 51 });
     expect(parsed.version).toBe(USER_CONFIG_VERSION);
-    expect(parsed.localModels.download).toEqual({ connections: 16 });
+    expect(parsed.localModels.download).toEqual({
+      connections: 16,
+      hfEndpoint: "https://huggingface.co",
+    });
   });
 
   it("honours an explicit localModels.download.connections", () => {

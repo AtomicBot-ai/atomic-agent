@@ -15,6 +15,7 @@ import {
 } from "./config-file.js";
 import { setCustomLocalModels } from "../local-llm/models-catalog.js";
 import { setDefaultDownloadConnections } from "../local-llm/download-settings.js";
+import { setDefaultHuggingFaceEndpoint } from "../local-llm/huggingface-endpoint.js";
 import { setConfiguredBackendVariant } from "../local-llm/windows-backend-variant.js";
 import { loadDotenvFromStateDir } from "./load-dotenv.js";
 import { resolveLlmProviderApiKey } from "./resolve-llm-api-key.js";
@@ -128,6 +129,7 @@ export function loadConfig(): AtomicAgentConfig {
   // TUI and the detached pull worker, none of which should have to
   // thread a config value down to it.
   setDefaultDownloadConnections(user.localModels.download.connections);
+  setDefaultHuggingFaceEndpoint(user.localModels.download.hfEndpoint);
   const grammarsDir = resolveAssetDir("ATOMIC_AGENT_GRAMMARS_DIR", "grammars");
 
   const browserChannel: BrowserChannel = readBrowserChannel(

@@ -20,6 +20,10 @@ import {
   DEFAULT_DOWNLOAD_CONNECTIONS,
   MAX_DOWNLOAD_CONNECTIONS,
 } from "../local-llm/download-settings.js";
+import {
+  DEFAULT_HF_ENDPOINT,
+  normalizeHuggingFaceEndpoint,
+} from "../local-llm/huggingface-endpoint.js";
 import { parseCustomLocalModels } from "./custom-models-schema.js";
 import {
   MCP_SERVER_NAME_MAX_LENGTH,
@@ -1187,6 +1191,15 @@ export interface UserManagedLocalLlmConfig {
  */
 export interface LocalModelDownloadConfig {
   connections: number;
+  /**
+   * Origin that serves Hugging Face for this install (config v53), e.g.
+   * a regional mirror. Catalogue and custom-model URLs stay canonical
+   * `https://huggingface.co/...`; the endpoint is applied at request
+   * time, so switching it never invalidates a partial download. The
+   * `HF_ENDPOINT` env var (what `huggingface_hub` honours) wins over
+   * this value when set.
+   */
+  hfEndpoint: string;
 }
 
 export interface UserManagedEmbeddingLlmConfig {
@@ -1868,7 +1881,10 @@ export interface UserConfigFile {
 // v52: localModels gains `download.connections` — how many parallel range
 // requests one model/backend file is split across (default 16). Older
 // files inherit the default; `1` is the previous single-stream behaviour.
-export const USER_CONFIG_VERSION = 52;
+// v53: `download.hfEndpoint` — the origin that serves Hugging Face (a
+// mirror for regions where huggingface.co is slow or blocked). Default is
+// the canonical host; `HF_ENDPOINT` in the environment overrides it.
+export const USER_CONFIG_VERSION = 53;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -2009,6 +2025,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   49,
   50,
   51,
+  52,
   USER_CONFIG_VERSION,
 ];
 
@@ -2035,7 +2052,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       port: 19092,
       url: "http://127.0.0.1:19092",
     },
-    download: { connections: DEFAULT_DOWNLOAD_CONNECTIONS },
+    download: { connections: DEFAULT_DOWNLOAD_CONNECTIONS, hfEndpoint: DEFAULT_HF_ENDPOINT },
     customModels: [],
   },
   log: { level: "info" },
@@ -3416,6 +3433,17 @@ function unknownTopLevelKeys(
  * keys are carried through verbatim (forward compat); unknown keys
  * *inside* a known block are still dropped.
  */
+function parseHfEndpoint(value: unknown, path: string): string {
+  const normalized = typeof value === "string" ? normalizeHuggingFaceEndpoint(value) : null;
+  if (!normalized) {
+    throw new ConfigValidationError(
+      path,
+      `must be an http(s) origin such as "https://hf-mirror.com", got ${JSON.stringify(value)}`,
+    );
+  }
+  return normalized;
+}
+
 export function parseUserConfigFile(raw: unknown): UserConfigFile {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
     throw new ConfigValidationError("<root>", "expected JSON object");
@@ -3607,6 +3635,10 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
       "localModels.download.connections",
       1,
       MAX_DOWNLOAD_CONNECTIONS,
+    ),
+    hfEndpoint: parseHfEndpoint(
+      rawDownload.hfEndpoint ?? USER_CONFIG_DEFAULTS.localModels.download.hfEndpoint,
+      "localModels.download.hfEndpoint",
     ),
   };
 

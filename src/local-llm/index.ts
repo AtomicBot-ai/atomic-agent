@@ -69,6 +69,15 @@ export {
   setDefaultDownloadConnections,
 } from "./download-settings.js";
 export {
+  DEFAULT_HF_ENDPOINT,
+  huggingFaceEndpointHost,
+  isHuggingFaceUrl,
+  normalizeHuggingFaceEndpoint,
+  resolveHuggingFaceEndpoint,
+  rewriteHuggingFaceUrl,
+  setDefaultHuggingFaceEndpoint,
+} from "./huggingface-endpoint.js";
+export {
   DOWNLOAD_JOB_VERSION,
   downloadJobId,
   isDownloadJobLive,
