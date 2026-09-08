@@ -102,6 +102,13 @@ function ListView({
           <Box>
             <Text color={theme.colors.muted}>{"    "}{row.summary}</Text>
           </Box>
+          {i === panel.selected && row.level === "not_configured" ? (
+            <Box>
+              <Text color={theme.colors.muted}>
+                {"    "}press enter for step-by-step setup
+              </Text>
+            </Box>
+          ) : null}
         </Box>
       ))}
     </Box>
@@ -134,6 +141,21 @@ function DetailView({
       {row.docsUrl ? (
         <Box>
           <Text color={theme.colors.muted}>{"  "}{row.docsUrl}</Text>
+        </Box>
+      ) : null}
+      {(row.setupSteps ?? []).length > 0 ? (
+        <Box marginTop={1} flexDirection="column">
+          <Box>
+            <Text color={theme.colors.accentSoft}>{"  "}Setup</Text>
+          </Box>
+          {(row.setupSteps ?? []).map((step, i) => (
+            <Box key={step}>
+              <Text color={theme.colors.muted}>
+                {"   "}
+                {i + 1}. {step}
+              </Text>
+            </Box>
+          ))}
         </Box>
       ) : null}
       <Box marginTop={1} flexDirection="column">

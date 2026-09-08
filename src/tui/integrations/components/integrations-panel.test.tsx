@@ -90,6 +90,36 @@ describe("IntegrationsPanel", () => {
     expect(out).toContain("enter save");
   });
 
+  it("walks the operator through setup while the integration is not connected", () => {
+    // A field labelled "Bot token" is self-explanatory only to someone
+    // who has already made a bot. The steps are the difference between
+    // a hub and a form.
+    const row: IntegrationRow = {
+      ...COMPOSIO,
+      setupSteps: ["Sign up at composio.dev", "Paste the key below"],
+    };
+    const { lastFrame } = render(
+      <IntegrationsPanel panel={panelOf({ rows: [row], mode: "detail" })} />,
+    );
+    const out = flat(lastFrame());
+    expect(out).toContain("Setup");
+    expect(out).toContain("1. Sign up at composio.dev");
+    expect(out).toContain("2. Paste the key below");
+  });
+
+  it("points an untouched row at its walkthrough", () => {
+    const { lastFrame } = render(<IntegrationsPanel panel={panelOf()} />);
+    expect(flat(lastFrame())).toContain("press enter for step-by-step setup");
+  });
+
+  it("drops the nudge once the integration is configured", () => {
+    const row: IntegrationRow = { ...COMPOSIO, level: "connected" };
+    const { lastFrame } = render(
+      <IntegrationsPanel panel={panelOf({ rows: [row] })} />,
+    );
+    expect(flat(lastFrame())).not.toContain("step-by-step setup");
+  });
+
   it("surfaces an error line", () => {
     const { lastFrame } = render(
       <IntegrationsPanel panel={panelOf({ lastError: "key rejected" })} />,
