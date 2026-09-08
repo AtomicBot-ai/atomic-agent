@@ -414,6 +414,22 @@ export class TelegramChannel {
   }
 
   /**
+   * Re-read the token from the environment into the live channel.
+   *
+   * The channel resolves its token **once, at construction**, so a
+   * token written to `<stateDir>/.env` afterwards by someone else --
+   * the Integrations hub owns its own credential writes -- would never
+   * reach a running process: `start()` would keep landing in `down`
+   * with "missing TELEGRAM_BOT_TOKEN" until a restart. This is the
+   * seam for a writer that has already persisted the value and only
+   * needs the running channel to catch up; `setToken` stays the path
+   * for a writer that wants the persistence too.
+   */
+  adoptTokenFromEnv(): void {
+    this.currentToken = resolveTokenFromDeps(this.deps);
+  }
+
+  /**
    * Persist a new bot token to `<stateDir>/.env` (mode 0600) and
    * restart when up. `null` clears the token; the next `start()`
    * lands in `down`. Never logs the value.

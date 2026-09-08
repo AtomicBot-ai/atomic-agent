@@ -176,6 +176,37 @@ describe("TelegramChannel", () => {
     expect(statuses.map((s) => s.state)).toEqual(["starting", "up", "down"]);
   });
 
+  it("adopts a token written to the env after construction", async () => {
+    // The bug this pins: the token is resolved once, in the
+    // constructor. A credential writer that persists the token itself
+    // -- the Integrations hub does -- left a running channel stuck on
+    // the boot-time value, so every start() landed in `down` with
+    // "missing TELEGRAM_BOT_TOKEN" until the operator relaunched.
+    const { factory } = makeBotFactory();
+    const { lock } = fakeLock();
+    delete process.env.TELEGRAM_BOT_TOKEN;
+    const channel = new TelegramChannel({
+      runtime: fakeRuntime(),
+      config: makeConfig(dir),
+      logger,
+      botFactory: factory,
+      lock,
+    });
+
+    await channel.start();
+    expect(channel.state()).toBe("down");
+    expect(channel.lastError()).toBe("missing TELEGRAM_BOT_TOKEN");
+
+    process.env.TELEGRAM_BOT_TOKEN = "1234:abcdef";
+    try {
+      channel.adoptTokenFromEnv();
+      await channel.start();
+      expect(channel.state()).toBe("up");
+    } finally {
+      delete process.env.TELEGRAM_BOT_TOKEN;
+    }
+  });
+
   it("releases the lock when the poller dies, so a restart can re-acquire", async () => {
     // Holding the lock after the poller is gone would make the channel
     // permanently unstartable in this process.

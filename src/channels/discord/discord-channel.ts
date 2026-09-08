@@ -53,6 +53,13 @@ export class DiscordChannel {
   private botUserId: string | null = null;
   private botUsername: string | null = null;
   private ownerId: string | null;
+  /**
+   * Live kill switch. `deps.enabled` is only the value at construction:
+   * reading it in `start()` meant an operator who switched the channel
+   * on from the Integrations hub got a silent `disabled` until the next
+   * launch, because the boot-time `false` outlived the config write.
+   */
+  private enabled: boolean;
   private lockHeld = false;
   private readonly inflight = new Map<string, AbortController>();
   private readonly pointer: DiscordSessionPointer;
@@ -61,6 +68,7 @@ export class DiscordChannel {
 
   constructor(private readonly deps: DiscordChannelDeps) {
     this.ownerId = deps.ownerUserId;
+    this.enabled = deps.enabled;
     this.pointer = new DiscordSessionPointer(deps.sessionPointerPath);
   }
 
@@ -92,7 +100,7 @@ export class DiscordChannel {
    */
   async start(): Promise<void> {
     const token = resolveDiscordToken(this.deps.token);
-    if (!this.deps.enabled || token === null) {
+    if (!this.enabled || token === null) {
       this.setState("disabled");
       return;
     }
@@ -222,6 +230,28 @@ export class DiscordChannel {
   /** Persist a new owner and re-evaluate. */
   setOwnerUserId(ownerUserId: string | null): void {
     this.ownerId = ownerUserId;
+  }
+
+  /**
+   * Flip the kill switch and reconcile the lifecycle, the way
+   * `TelegramChannel.setEnabled` does. Persisting `discord.enabled`
+   * is the caller's job -- the hub already writes config -- but the
+   * running channel has to be told, or the switch does nothing until
+   * the next launch.
+   */
+  async setEnabled(enabled: boolean): Promise<void> {
+    this.enabled = enabled;
+    if (!enabled) {
+      await this.stop();
+      return;
+    }
+    // `start()` has no already-running guard of its own, and a second
+    // gateway on one token would receive every event twice.
+    if (this.currentState === "up" || this.currentState === "starting") return;
+    // A `down` channel still holds a half-built gateway and possibly
+    // the lock; tear it down before rebuilding.
+    if (this.currentState !== "disabled") await this.stop();
+    await this.start();
   }
 
   private releaseLock(): void {
