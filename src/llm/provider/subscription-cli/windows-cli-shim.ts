@@ -273,6 +273,31 @@ function assertFitsCommandLine(
  * its own error if it is not there. Anything with neither a separator
  * nor a drive letter is walked over PATH × PATHEXT, the search `spawn`
  * will not do with `shell:false`.
+ *
+ * The walk owes "cannot tell" the same answer the absolute branch gives
+ * it, for the same reason: a PATH directory the user may traverse but
+ * not stat makes *every* candidate under it `unknown`, and treating that
+ * as `absent` resolves nothing, passes the bare name through, and —
+ * because `spawn` with `shell:false` does no PATHEXT search — reports a
+ * working install as "not installed". So:
+ *
+ *   - a definite `present` hit wins outright, wherever in the walk it
+ *     is: a real answer beats an unanswerable one even from a later
+ *     PATH entry;
+ *   - failing that, the first candidate we could not tell apart from
+ *     missing is handed to cmd, which repeats the search itself;
+ *   - `null` only when every candidate was definitively absent.
+ *
+ * The fallback is narrowed to `.cmd`/`.bat` candidates because they are
+ * the only ones whose treatment differs from doing nothing: a `.exe` or
+ * an extensionless target is handed back untouched anyway, so choosing
+ * one on a guess would change nothing, while a batch target is the case
+ * that cannot survive the passthrough at all. PATHEXT order decides
+ * between `.bat` and `.cmd`, since that is the order cmd itself tries
+ * them; if the install is really under the other suffix, cmd answers
+ * with its own message about the path — which is a worse message than
+ * "not installed", but a true one, and it is not reached unless the
+ * directory is genuinely unreadable.
  */
 function resolveTarget(
   binary: string,
@@ -292,14 +317,18 @@ function resolveTarget(
       .filter((ext) => ext.length > 0),
     "",
   ];
+  let unanswered: string | null = null;
   for (const dir of (lookupEnv(env, "PATH") ?? "").split(";")) {
     if (dir.length === 0) continue;
     for (const suffix of suffixes) {
       const candidate = win32.join(dir, `${binary}${suffix}`);
-      if (fileStatus(candidate) === "present") return candidate;
+      const status = fileStatus(candidate);
+      if (status === "present") return candidate;
+      if (status === "unknown" && unanswered === null && isBatchFile(candidate))
+        unanswered = candidate;
     }
   }
-  return null;
+  return unanswered;
 }
 
 /** Windows environment names are case-insensitive; injected ones may not be. */

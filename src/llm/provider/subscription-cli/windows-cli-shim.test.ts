@@ -514,6 +514,41 @@ describe("targets that are there, missing, or unanswerable", () => {
     expect(out.args[3]).toBe(`"${binPath} ^^^"--print^^^""`);
   });
 
+  it("does not call a PATH directory it may not stat 'not installed' either", () => {
+    // The same asymmetry one level out. A PATH entry the user may
+    // traverse but not stat makes every candidate under it `unknown`;
+    // resolving nothing hands the bare name to `spawn`, which does no
+    // PATHEXT search with `shell:false` — so a working `claude.cmd`
+    // came back as "was not found on PATH". The batch candidate is
+    // handed to cmd instead, which repeats the search itself.
+    const out = onWindows("claude", ["--print"], [], WIN_ENV, () => null, [
+      "C:\\npm\\claude.COM",
+      "C:\\npm\\claude.EXE",
+      "C:\\npm\\claude.BAT",
+      "C:\\npm\\claude.CMD",
+      "C:\\npm\\claude",
+    ]);
+    expect(out.command).toBe("C:\\Windows\\System32\\cmd.exe");
+    // PATHEXT order, which is the order cmd itself would try them.
+    expect(out.args[3]).toBe('"C:\\npm\\claude.BAT ^^^"--print^^^""');
+  });
+
+  it("prefers a definite hit further along PATH over an unanswerable one", () => {
+    // "Cannot tell" is a fallback, not a match: it must not shadow a
+    // candidate we can actually see, even one a PATH entry later.
+    const out = onWindows(
+      "claude",
+      ["--print"],
+      ["C:\\Windows\\System32\\claude.cmd"],
+      WIN_ENV,
+      () => NPM_CMD_SHIM,
+      ["C:\\npm\\claude.COM"],
+    );
+    expect(out.args[3]).toBe(
+      '"C:\\Windows\\System32\\claude.CMD ^^^"--print^^^""',
+    );
+  });
+
   it("still refuses one that is genuinely absent", () => {
     expect(() => onWindows("C:\\gone\\claude.cmd", [], [])).toThrow(
       SubscriptionCliNotInstalledError,
