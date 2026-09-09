@@ -1,16 +1,17 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { ProviderFallbackChain } from "../llm/fallback/index.js";
 import { DEFAULT_FALLBACK_TIMING } from "../llm/fallback/fallback-config.js";
 import type {
-  CompletionRequest,
   CompletionResult,
   StreamChunk,
-  ToolCallTransport,
 } from "../llm/provider/completion-types.js";
 import type { LlmProvider } from "../llm/provider/llm-provider.js";
 import { OpenAiHttpError } from "../llm/provider/openai/openai-http.js";
-import { openAiToolCallAdapter } from "../llm/provider/openai/openai-tool-call-adapter.js";
+import {
+  fakeAnswer as answer,
+  fakeProvider,
+} from "../llm/provider/fake-provider.fixture.js";
 import {
   createFallbackCompleter,
   createFallbackStreamer,
@@ -24,55 +25,6 @@ import {
  * lines under `createFallbackCompleter` / `createFallbackStreamer`, was
  * previously only re-implemented in the e2e test and thus uncovered).
  */
-
-function fakeProvider(
-  id: string,
-  transport: ToolCallTransport,
-  serve: (request: CompletionRequest) => Promise<CompletionResult>,
-): LlmProvider {
-  return {
-    id,
-    name: id,
-    capabilities: {
-      vision: false,
-      visionSource: "absent",
-      toolTransport: transport,
-      contextWindow: 128_000,
-      supportsParallelTools: transport === "native_tools",
-      supportsSlotAffinity: transport === "grammar",
-      supportsPromptCache: false,
-      reasoningFormat: "none",
-    },
-    toolCallAdapter: transport === "native_tools" ? openAiToolCallAdapter : null,
-    streamConsumer: null,
-    complete: serve,
-    async *completeStream(request) {
-      const result = await serve(request);
-      yield { delta: result.content, reasoningDelta: "", done: true } as StreamChunk;
-      return result;
-    },
-    async describeImage() {
-      throw new Error("no vision");
-    },
-    async health() {
-      return { reachable: true, status: 200, error: null, latencyMs: 1 };
-    },
-    async close() {},
-  };
-}
-
-function answer(id: string): CompletionResult {
-  return {
-    content: "ok",
-    reasoningContent: "",
-    stop: true,
-    truncated: false,
-    timing: { promptMs: 1, predictedMs: 1, promptTokens: 1, predictedTokens: 1 },
-    cacheHitTokens: 0,
-    slotId: 0,
-    modelId: `${id}-model`,
-  };
-}
 
 function seamDeps(providers: Map<string, LlmProvider>): FallbackSeamDeps {
   const chain = new ProviderFallbackChain({
@@ -409,5 +361,137 @@ describe("prepareLink — warming a link before it serves (issue #112)", () => {
     ]);
     const result = await createFallbackCompleter(seamDeps(providers))(baseParams);
     expect(result.modelId).toBe("cloud-model");
+  });
+});
+
+/**
+ * A pinned request (`params.providerId`) is a fusion worker spending
+ * local tokens on purpose. It must reach exactly that provider — never
+ * the chain's pick, never a fallover — and a failure is the
+ * orchestrator's to handle, not the breaker's.
+ */
+describe("providerId pin — bypasses the chain", () => {
+  async function drain(
+    gen: AsyncGenerator<StreamChunk, CompletionResult, void>,
+  ): Promise<CompletionResult> {
+    let next = await gen.next();
+    while (!next.done) next = await gen.next();
+    return next.value;
+  }
+
+  function pinnedFixture() {
+    const served: string[] = [];
+    const providers = new Map<string, LlmProvider>([
+      [
+        "cloud",
+        fakeProvider("cloud", "native_tools", async () => {
+          served.push("cloud");
+          return answer("cloud");
+        }),
+      ],
+      [
+        "local",
+        fakeProvider("local", "grammar", async () => {
+          served.push("local");
+          return answer("local");
+        }),
+      ],
+    ]);
+    const deps = seamDeps(providers);
+    const pick = vi.spyOn(deps.fallbackChain, "pickProvider");
+    const prepared: string[] = [];
+    deps.prepareLink = async (id) => {
+      prepared.push(id);
+    };
+    return { deps, served, pick, prepared };
+  }
+
+  it("unary: serves the pinned link without consulting the chain, still warming it", async () => {
+    const { deps, served, pick, prepared } = pinnedFixture();
+    const usage: string[] = [];
+    deps.recordUnaryUsage = (_p, _r, providerId) => usage.push(providerId);
+    const result = await createFallbackCompleter(deps)({
+      ...baseParams,
+      providerId: "local",
+    });
+    // The chain's primary is "cloud"; the pin wins and the chain is never
+    // even asked.
+    expect(result.modelId).toBe("local-model");
+    expect(result.servedTransport).toBe("grammar");
+    expect(served).toEqual(["local"]);
+    expect(pick).not.toHaveBeenCalled();
+    expect(prepared).toEqual(["local"]);
+    expect(usage).toEqual(["local"]);
+  });
+
+  it("streaming: opens the stream on the pinned link, chain untouched, usage attributed to it", async () => {
+    const { deps, served, pick, prepared } = pinnedFixture();
+    const usage: string[] = [];
+    deps.recordStreamUsage = (_s, _r, providerId) => usage.push(providerId);
+    const result = await drain(
+      createFallbackStreamer(deps)({ ...baseParams, providerId: "local" }),
+    );
+    expect(result.modelId).toBe("local-model");
+    expect(result.servedTransport).toBe("grammar");
+    expect(served).toEqual(["local"]);
+    expect(pick).not.toHaveBeenCalled();
+    expect(prepared).toEqual(["local"]);
+    expect(usage).toEqual(["local"]);
+  });
+
+  it("a pinned failure is rethrown as-is and never falls over", async () => {
+    const served: string[] = [];
+    const providers = new Map<string, LlmProvider>([
+      [
+        "cloud",
+        fakeProvider("cloud", "native_tools", async () => {
+          served.push("cloud");
+          return answer("cloud");
+        }),
+      ],
+      [
+        "local",
+        fakeProvider("local", "grammar", async () => {
+          served.push("local");
+          throw new OpenAiHttpError("down", 503, "http://local", false, null, "local");
+        }),
+      ],
+    ]);
+    const deps = seamDeps(providers);
+    const pick = vi.spyOn(deps.fallbackChain, "pickProvider");
+    const advance = vi.spyOn(deps.fallbackChain, "advanceFrom");
+    await expect(
+      createFallbackCompleter(deps)({ ...baseParams, providerId: "local" }),
+    ).rejects.toBeInstanceOf(OpenAiHttpError);
+    await expect(
+      drain(createFallbackStreamer(deps)({ ...baseParams, providerId: "local" })),
+    ).rejects.toBeInstanceOf(OpenAiHttpError);
+    // A 503 would have switched the chain on the first failure. The
+    // healthy cloud link was never tried, and the breaker never moved.
+    expect(served).toEqual(["local", "local"]);
+    expect(pick).not.toHaveBeenCalled();
+    expect(advance).not.toHaveBeenCalled();
+  });
+
+  it("the chain-picked path reports the SERVED link's id to the usage recorders", async () => {
+    const providers = new Map<string, LlmProvider>([
+      [
+        "cloud",
+        fakeProvider("cloud", "native_tools", async () => {
+          throw new OpenAiHttpError("rate limited", 429, "http://cloud", false, null, "cloud");
+        }),
+      ],
+      ["local", fakeProvider("local", "grammar", async () => answer("local"))],
+    ]);
+    const deps = seamDeps(providers);
+    const unary: string[] = [];
+    const stream: string[] = [];
+    deps.recordUnaryUsage = (_p, _r, providerId) => unary.push(providerId);
+    deps.recordStreamUsage = (_s, _r, providerId) => stream.push(providerId);
+    await createFallbackCompleter(deps)(baseParams);
+    await drain(createFallbackStreamer(deps)(baseParams));
+    // Not "cloud" — the active/primary id — but the link that answered.
+    expect(unary).toEqual(["local"]);
+    expect(stream).toEqual(["local"]);
   });
 });

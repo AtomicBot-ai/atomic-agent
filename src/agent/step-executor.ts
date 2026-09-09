@@ -138,6 +138,15 @@ export interface LlmStreamParams {
    * instead of waiting for the current step to finish on its own.
    */
   signal?: AbortSignal;
+  /**
+   * Pins this completion to one configured provider id, bypassing the
+   * provider fallback chain entirely. A fusion worker turn runs on the
+   * local leg on purpose — it exists to spend local tokens — so the
+   * request must reach exactly that provider or fail; it must never be
+   * quietly re-routed to the cloud primary. Absent (the normal case)
+   * the chain picks the link as before.
+   */
+  providerId?: string;
 }
 
 export type LlmCompleteStream = (
@@ -189,6 +198,12 @@ export interface StepDependencies {
    * grammar-only wiring.
    */
   supportsParallelTools?: boolean;
+  /**
+   * Provider pin for every completion this step issues (initial call
+   * and repair retry alike). Forwarded verbatim as
+   * `LlmStreamParams.providerId`; see that field for the contract.
+   */
+  providerId?: string;
   /**
    * Invoked after every LLM completion (initial call and one-shot parse
    * retry alike). Used by the agent loop to feed the served `modelId`
@@ -1547,7 +1562,11 @@ function buildLlmStreamParams(args: {
   promptText: string;
   deps: Pick<
     StepDependencies,
-    "grammar" | "toolTransport" | "toolCallAdapter" | "supportsParallelTools"
+    | "grammar"
+    | "toolTransport"
+    | "toolCallAdapter"
+    | "supportsParallelTools"
+    | "providerId"
   >;
   slotId: number;
   sessionId: string;
@@ -1560,6 +1579,9 @@ function buildLlmStreamParams(args: {
     slotId: args.slotId,
     sessionId: args.sessionId,
     ...(args.signal ? { signal: args.signal } : {}),
+    // The pin rides on every completion of the step: the repair retry
+    // spreads `llmParams`, so it inherits without a second wiring point.
+    ...(args.deps.providerId ? { providerId: args.deps.providerId } : {}),
   };
   if (args.deps.toolTransport !== "native_tools") {
     return base;
