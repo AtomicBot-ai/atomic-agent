@@ -76,6 +76,18 @@ export interface IntegrationStatus {
   detail?: string;
 }
 
+/**
+ * Outcome of an integration's own connection probe (the `test` action
+ * on GitHub, for instance). Kept in the hub orchestrator's memory for
+ * the life of the process and dropped when the credential changes, so
+ * a badge can never claim a connection the current token has not made.
+ */
+export interface IntegrationProbeResult {
+  ok: boolean;
+  /** One line: who the credential authenticates as, or why it failed. */
+  detail: string;
+}
+
 /** What the hub knows at render time, passed to `status()`. */
 export interface IntegrationStatusContext {
   /** Field keys that currently resolve to a non-empty value. */
@@ -102,6 +114,12 @@ export interface IntegrationStatusContext {
    * intents — and that is the only part worth screen space.
    */
   channelErrors?: ReadonlyMap<string, string>;
+  /**
+   * Latest probe result per integration id, for integrations that have
+   * no live server or channel to report on and instead verify their
+   * credential on demand. Absent when nothing has been probed yet.
+   */
+  probes?: ReadonlyMap<string, IntegrationProbeResult>;
 }
 
 /**

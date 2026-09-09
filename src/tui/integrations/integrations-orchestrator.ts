@@ -5,6 +5,7 @@ import {
 } from "../../composio/index.js";
 import { getConfig } from "../../config/index.js";
 import {
+  GITHUB_INTEGRATION_ID,
   IntegrationSecretError,
   displayFieldValue,
   findIntegration,
@@ -12,24 +13,18 @@ import {
   presentFieldKeys,
   readFieldValue,
   writeFieldValue,
+  type IntegrationProbeResult,
 } from "../../integrations/index.js";
 import type { AgentRuntime } from "../../runtime/bootstrap.js";
 import type { TuiEventBus } from "../tui-app.js";
+import {
+  dispatchIntegrationAction,
+  type TelegramActions,
+} from "./integrations-action-dispatch.js";
 import type {
   IntegrationRow,
   IntegrationFieldRow,
 } from "./integrations-panel-state.js";
-
-/** The slice of `TuiTelegramOrchestrator` the hub drives. */
-export interface TelegramActions {
-  startPairing(timeoutMs?: number): Promise<void>;
-  restart(): Promise<void>;
-  setEnabled(enabled: boolean): Promise<void>;
-  /** Push a token the hub has just written into the live channel. */
-  adoptToken(): Promise<void>;
-  /** Bring the channel up, or throw the channel's own reason. */
-  ensureUpForPairing(): Promise<void>;
-}
 
 /**
  * The only TUI module that touches credential storage and the live MCP
@@ -39,6 +34,13 @@ export interface TelegramActions {
  * other TUI orchestrators.
  */
 export class IntegrationsOrchestrator {
+  /**
+   * Latest connection-probe outcome per integration (GitHub's `test`).
+   * Process-lifetime memory, dropped when the credential it verified
+   * changes, so a badge never vouches for a token it has not seen.
+   */
+  private readonly probes = new Map<string, IntegrationProbeResult>();
+
   constructor(
     private readonly runtime: AgentRuntime,
     private readonly bus: TuiEventBus & { emit(action: unknown): void },
@@ -92,6 +94,7 @@ export class IntegrationsOrchestrator {
         mcpServerStates,
         channelStates,
         channelErrors,
+        probes: this.probes,
       };
       const status = descriptor.status(statusCtx);
       const fields: IntegrationFieldRow[] = descriptor.fields.map((field) => ({
@@ -139,7 +142,15 @@ export class IntegrationsOrchestrator {
   async runAction(integrationId: string, actionId: string): Promise<void> {
     this.bus.emit({ type: "integrations_action_started" });
     try {
-      const message = await this.dispatchAction(integrationId, actionId);
+      const message = await dispatchIntegrationAction(
+        {
+          runtime: this.runtime,
+          ...(this.telegram === undefined ? {} : { telegram: this.telegram }),
+          probes: this.probes,
+        },
+        integrationId,
+        actionId,
+      );
       this.bus.emit({ type: "integrations_action_settled", message });
     } catch (err) {
       this.bus.emit({
@@ -148,41 +159,6 @@ export class IntegrationsOrchestrator {
       });
     }
     this.refresh();
-  }
-
-  private async dispatchAction(
-    integrationId: string,
-    actionId: string,
-  ): Promise<string> {
-    if (integrationId === "telegram") {
-      if (!this.telegram) throw new Error("Telegram controls unavailable");
-      if (actionId === "pair") {
-        // A pairing window only claims a DM while the poller is
-        // running, so start the channel first and let a failure
-        // surface as this action's error. Announcing "DM your bot now"
-        // in front of a channel that never came up is how an operator
-        // ends up messaging a bot nothing is listening to.
-        await this.telegram.ensureUpForPairing();
-        // Fire-and-forget from here: the window runs for its full
-        // timeout and the outcome lands through the channel's own
-        // status stream, so awaiting it would freeze the pane for a
-        // minute.
-        void this.telegram.startPairing();
-        return "Pairing — DM your bot now; the next sender becomes the owner.";
-      }
-      if (actionId === "restart") {
-        await this.telegram.restart();
-        return "Telegram channel restarted";
-      }
-    }
-    if (integrationId === "discord" && actionId === "restart") {
-      const channel = this.runtime.discordChannel;
-      if (!channel) throw new Error("Discord channel unavailable");
-      await channel.stop();
-      await channel.start();
-      return "Discord channel restarted";
-    }
-    throw new Error(`unknown action ${actionId} for ${integrationId}`);
   }
 
   /** Flip a boolean field to the opposite of its current value. */
@@ -243,6 +219,11 @@ export class IntegrationsOrchestrator {
       );
       if (integrationId === "composio") {
         await this.applyComposio(value !== null);
+      }
+      // A probe vouches for the token it ran against; a new or cleared
+      // token starts from "untested" rather than inheriting the badge.
+      if (integrationId === GITHUB_INTEGRATION_ID && field.key === "token") {
+        this.probes.delete(GITHUB_INTEGRATION_ID);
       }
       // A channel resolves its token and its kill switch when it is
       // constructed, so a saved value that never reaches the running

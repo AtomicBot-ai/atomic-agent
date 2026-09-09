@@ -18,3 +18,8 @@ export type { IntegrationsAction } from "./integrations-actions.js";
 export { reduceIntegrationsAction } from "./integrations-panel-reducer.js";
 export { handleIntegrationsTabKey } from "./integrations-key-bindings.js";
 export { IntegrationsOrchestrator } from "./integrations-orchestrator.js";
+export { dispatchIntegrationAction } from "./integrations-action-dispatch.js";
+export type {
+  ActionDispatchDeps,
+  TelegramActions,
+} from "./integrations-action-dispatch.js";
