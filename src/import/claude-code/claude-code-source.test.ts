@@ -161,6 +161,34 @@ describe("ClaudeCodeSource", () => {
     ]);
   });
 
+  it("stamps rows without a timestamp with the file mtime, keeping the id", () => {
+    const projectDir = join(stateDir, "projects", "p");
+    mkdirSync(projectDir, { recursive: true });
+    const file = join(projectDir, "no-clock.jsonl");
+    writeFileSync(
+      file,
+      [
+        line({ type: "user", message: { role: "user", content: "hi" } }),
+        line({
+          type: "assistant",
+          timestamp: "not a date",
+          message: { role: "assistant", content: [{ type: "text", text: "yo" }] },
+        }),
+      ].join(""),
+    );
+    const mtime = new Date("2026-08-03T12:00:00Z");
+    utimesSync(file, mtime, mtime);
+
+    const source = new ClaudeCodeSource(stateDir);
+    const meta = source.listSessions()[0]!;
+    const session = source.readSession(meta);
+    expect(session.id).toBe("no-clock");
+    expect(session.messages.map((m) => m.atMs)).toEqual([
+      mtime.getTime(),
+      mtime.getTime(),
+    ]);
+  });
+
   it("prefers a custom title over the ai title", () => {
     const projectDir = join(stateDir, "projects", "p");
     mkdirSync(projectDir, { recursive: true });

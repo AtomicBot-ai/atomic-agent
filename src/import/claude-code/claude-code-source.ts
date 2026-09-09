@@ -266,7 +266,10 @@ export class ClaudeCodeSource {
    * Read one transcript into a neutral session. Meta rows (`system`,
    * `queue-operation`, attachments, …) are skipped; sidechain rows
    * (subagent transcripts interleaved into the same file) are skipped;
-   * `custom-title` wins over `ai-title` for the session title.
+   * `custom-title` wins over `ai-title` for the session title. A row
+   * without a parseable timestamp takes the file's mtime, so a session
+   * never lands with `at: 0` and sinks to the bottom of every recency
+   * list.
    */
   readSession(meta: ClaudeCodeSessionMeta): ClaudeCodeSessionData {
     let text: string;
@@ -279,6 +282,7 @@ export class ClaudeCodeSource {
     let cwd: string | null = null;
     let customTitle: string | null = null;
     let aiTitle: string | null = null;
+    const fallbackAtMs = Math.round(meta.mtimeMs);
     const messages: ClaudeCodeMessage[] = [];
     for (const line of text.split(/\r?\n/)) {
       const trimmed = line.trim();
@@ -303,7 +307,7 @@ export class ClaudeCodeSource {
       if (type !== "user" && type !== "assistant") continue;
       if (event.isSidechain === true) continue;
       if (cwd === null && typeof event.cwd === "string") cwd = event.cwd;
-      const projected = projectMessage(type, event);
+      const projected = projectMessage(type, event, fallbackAtMs);
       if (projected) messages.push(projected);
     }
     return {
@@ -328,6 +332,7 @@ function sortedEntries(dir: string): string[] {
 function projectMessage(
   role: "user" | "assistant",
   event: Record<string, unknown>,
+  fallbackAtMs: number,
 ): ClaudeCodeMessage | null {
   const message = event.message;
   if (!message || typeof message !== "object") return null;
@@ -335,7 +340,9 @@ function projectMessage(
   const blocks = projectBlocks(content);
   if (blocks.length === 0) return null;
   const atMs =
-    typeof event.timestamp === "string" ? isoToMs(event.timestamp) ?? 0 : 0;
+    typeof event.timestamp === "string"
+      ? isoToMs(event.timestamp) ?? fallbackAtMs
+      : fallbackAtMs;
   return { role, blocks, atMs };
 }
 
