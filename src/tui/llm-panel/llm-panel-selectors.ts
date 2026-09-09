@@ -183,14 +183,25 @@ export function selectLlmActiveRouteSummary(
 export function selectPromptLlmMeta(state: TuiState): PromptLlmMeta {
   const active = state.providersPanel.rows.find((row) => row.isActiveText) ?? null;
   const runMode = state.providersPanel.runMode;
-  if (runMode?.effective === "fusion" && active) {
-    // Both legs, joined by the pair separator `prompt-meta-bar.tsx`
-    // already splits its width budget on: the orchestrator's model,
-    // then the model the workers run.
-    const orchestrator = runMode.orchestratorModel ?? active.chatModel ?? active.id;
+  if (runMode?.effective === "fusion") {
+    // Each leg is labelled from ITS OWN provider row, never from
+    // whichever row happens to be active: the rows are a mirror that
+    // lands one refresh behind the config write, so right after the
+    // switch `active` can still be the local entry the operator just
+    // left — which is how both slots came to show a local model.
+    const orchestratorRow =
+      state.providersPanel.rows.find((row) => row.id === runMode.orchestratorProviderId) ?? null;
+    const orchestrator =
+      runMode.orchestratorModel ??
+      orchestratorRow?.chatModel ??
+      runMode.orchestratorProviderId ??
+      "cloud";
     const worker =
       runMode.workerModel ?? state.localModelsPanel.activeModelId ?? state.llmHealth.model ?? "local";
-    return { model: `${orchestrator} ⇄ ${worker}`, provider: active.id };
+    return {
+      model: `${orchestrator} ⇄ ${worker}`,
+      provider: runMode.orchestratorProviderId ?? active?.id ?? null,
+    };
   }
   if (active && active.kind !== "llama-server") {
     return { model: active.chatModel, provider: active.id };

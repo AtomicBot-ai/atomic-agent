@@ -90,7 +90,9 @@ function FusionLabel({
   width: number;
   selected: boolean;
 }): ReactElement {
-  const chip = fusionChipColors();
+  // `chromeTheme`: the popup dims the page behind it, and the chip is
+  // the row the operator is looking at — see `fusionChipColors`.
+  const chip = fusionChipColors(chromeTheme);
   const chipText = ` ${word} `;
   const pad = Math.max(0, width - prefix.length - chipText.length);
   return (
