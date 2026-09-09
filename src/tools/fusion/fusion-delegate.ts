@@ -60,12 +60,20 @@ function error(output: string, details: Record<string, unknown> = {}): Compresse
  * `details.tasks` — an orchestrator that gets a bare error learns
  * nothing about which parts survived, and partial results are the whole
  * value of a fan-out.
+ *
+ * **Width is the model's call.** `args.maxWorkers` is honoured as asked;
+ * `llm.runMode.fusion.workers` only fills in for a call that named
+ * nothing. The orchestrator is the one that knows how divisible this
+ * particular job is, and the `### fusion` guidance block tells it what
+ * the machine can serve, so an operator-set number in a config file is
+ * the wrong place to decide. The bounds that remain are physical: the
+ * task count, and the server's request slots on a slot-affine leg.
  */
 export function buildFusionDelegateTool(deps: FusionDelegateDeps): ToolDefinition {
   return {
     name: FUSION_DELEGATE_TOOL,
     description:
-      "Delegate independent parts of the work to local worker agents that run concurrently. Args: { tasks: [{ id, title, instructions, deliverable?, files? }], maxWorkers? }.",
+      "Delegate independent parts of the work to local worker agents that run concurrently. You choose how many run at once with `maxWorkers`. Args: { tasks: [{ id, title, instructions, deliverable?, files? }], maxWorkers? }.",
     readonly: false,
     async run(rawArgs, ctx): Promise<CompressedToolResult> {
       if (isFusionWorkerSessionId(ctx.sessionId)) {
@@ -105,14 +113,19 @@ export function buildFusionDelegateTool(deps: FusionDelegateDeps): ToolDefinitio
       const poolSize = deps.workerSupportsSlotAffinity(workerProviderId)
         ? Math.max(1, deps.slotManager.poolSize())
         : Number.POSITIVE_INFINITY;
-      const maxWorkers = Math.max(
-        1,
-        Math.min(
-          parsed.maxWorkers ?? mode.workers,
-          parsed.tasks.length,
-          poolSize,
-        ),
-      );
+      // The ORCHESTRATOR decides the width. It is the party that knows
+      // what this fan-out is made of, and the `### fusion` block tells
+      // it what the machine can serve, so `runMode.workers` is only the
+      // default for a call that named nothing — never a ceiling on a
+      // larger number the model asked for. What is left bounding it is
+      // physical: you cannot run more workers than there are tasks, and
+      // on a slot-affine leg you cannot run more than the server has
+      // request slots (the rest would queue and evict each other's KV
+      // cache rather than run).
+      const requested = parsed.maxWorkers ?? mode.workers;
+      const wanted = Math.max(1, Math.min(requested, parsed.tasks.length));
+      const maxWorkers = Math.max(1, Math.min(wanted, poolSize));
+      const poolIsBinding = maxWorkers < wanted;
 
       // Labels, never guesses: the resolver's pin when it has one, the
       // provider id when it does not. Both legs are read from the same
@@ -175,16 +188,25 @@ export function buildFusionDelegateTool(deps: FusionDelegateDeps): ToolDefinitio
         summary: `${okCount}/${results.length} ok — merging`,
       });
 
-      const hint =
-        poolSize === 1 && parsed.tasks.length > 1
-          ? `\n\nNote: the local server has one slot, so these ran one at a time — raise \`localModels.managed.parallel\` for real concurrency.`
-          : "";
+      // When the pool is what held the fan-out down, the orchestrator is
+      // the party that can adapt — by splitting differently next time,
+      // or by telling the operator which knob to turn. So the note names
+      // all three things it needs: what was wanted, what actually ran
+      // concurrently, and the config key that changes the second number.
+      const hint = poolIsBinding
+        ? `\n\nNote: ${wanted} workers were wanted for this fan-out but the local server has ${poolSize} request slot${poolSize === 1 ? "" : "s"}, so only ${maxWorkers} ran at a time and the rest queued — raise \`localModels.managed.parallel\` (llama-server \`--parallel\`) to widen it.`
+        : "";
       return compressToolResult(
         {
           tool: FUSION_DELEGATE_TOOL,
           status: "ok",
           output: `${formatDelegateOutput(results, deps.outputCharCap)}${hint}`,
-          details: { tasks: results, maxWorkers },
+          details: {
+            tasks: results,
+            maxWorkers,
+            requestedWorkers: requested,
+            ...(Number.isFinite(poolSize) ? { slotPoolSize: poolSize } : {}),
+          },
         },
         { maxSummaryLength: deps.outputCharCap + 400, maxTailLines: 2000 },
       );

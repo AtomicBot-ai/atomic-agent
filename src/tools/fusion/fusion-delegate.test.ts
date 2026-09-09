@@ -80,6 +80,15 @@ const TASKS = [
   { id: "t2", title: "Two", instructions: "Do two" },
 ];
 
+/** Six independent tasks — more than the fixture's configured `workers` (3). */
+function sixTasks(): Array<{ id: string; title: string; instructions: string }> {
+  return Array.from({ length: 6 }, (_, i) => ({
+    id: `t${i + 1}`,
+    title: `Task ${i + 1}`,
+    instructions: `Do ${i + 1}`,
+  }));
+}
+
 describe("fusion.delegate", () => {
   it("is not readonly and carries its own name", () => {
     const tool = buildFusionDelegateTool(deps());
@@ -223,23 +232,61 @@ describe("fusion.delegate", () => {
     expect(result.details.maxWorkers).toBe(2);
   });
 
-  it("caps concurrency by the smallest of maxWorkers, task count and pool", async () => {
-    const four = [
-      ...TASKS,
-      { id: "t3", title: "Three", instructions: "Do three" },
-      { id: "t4", title: "Four", instructions: "Do four" },
-    ];
-    const byArgs = buildFusionDelegateTool(deps());
-    expect((await byArgs.run({ tasks: four, maxWorkers: 2 }, ctx())).details.maxWorkers).toBe(2);
-    // Run mode's `workers` (3) when the call names none.
-    expect((await byArgs.run({ tasks: four }, ctx())).details.maxWorkers).toBe(3);
-    // Task count.
-    expect((await byArgs.run({ tasks: TASKS }, ctx())).details.maxWorkers).toBe(2);
-    // Slot pool.
-    const smallPool = buildFusionDelegateTool(
-      deps({ slotManager: { poolSize: () => 1 } }),
+  it("honours a maxWorkers ABOVE the configured `workers`", async () => {
+    // `llm.runMode.fusion.workers` is 3 in this fixture and the
+    // orchestrator asks for 6: it gets 6, and six turns really do run at
+    // once. The model is the party that knows how divisible this job is
+    // and what the machine can serve (the `### fusion` block tells it),
+    // so an operator-set number in a config file must not veto it — the
+    // config value is a default for a call that named nothing.
+    let live = 0;
+    let peak = 0;
+    const tool = buildFusionDelegateTool(
+      deps({
+        slotManager: { poolSize: () => 8 },
+        runTurn: async () => {
+          live += 1;
+          peak = Math.max(peak, live);
+          await new Promise((resolve) => setTimeout(resolve, 1));
+          live -= 1;
+          return turnResult();
+        },
+      }),
     );
-    expect((await smallPool.run({ tasks: four }, ctx())).details.maxWorkers).toBe(1);
+    const result = await tool.run({ tasks: sixTasks(), maxWorkers: 6 }, ctx());
+    expect(result.details.maxWorkers).toBe(6);
+    expect(result.details.requestedWorkers).toBe(6);
+    expect(peak).toBe(6);
+    expect(result.summary).not.toContain("localModels.managed.parallel");
+  });
+
+  it("falls back to the configured `workers` when the call names none", async () => {
+    const tool = buildFusionDelegateTool(
+      deps({ slotManager: { poolSize: () => 8 } }),
+    );
+    const result = await tool.run({ tasks: sixTasks() }, ctx());
+    expect(result.details.maxWorkers).toBe(3);
+    expect(result.details.requestedWorkers).toBe(3);
+  });
+
+  it("never runs more workers than there are tasks", async () => {
+    const tool = buildFusionDelegateTool(
+      deps({ slotManager: { poolSize: () => 8 } }),
+    );
+    expect(
+      (await tool.run({ tasks: TASKS, maxWorkers: 8 }, ctx())).details.maxWorkers,
+    ).toBe(2);
+  });
+
+  it("still bounds the model's width by the slot pool on a slot-affine leg", async () => {
+    // The one bound that survives: more workers than slots do not run,
+    // they queue on the server and evict each other's KV cache.
+    const tool = buildFusionDelegateTool(
+      deps({ slotManager: { poolSize: () => 2 } }),
+    );
+    const result = await tool.run({ tasks: sixTasks(), maxWorkers: 6 }, ctx());
+    expect(result.details.maxWorkers).toBe(2);
+    expect(result.details.slotPoolSize).toBe(2);
   });
 
   it("ignores the slot pool for a worker leg without slot affinity", async () => {
@@ -249,20 +296,38 @@ describe("fusion.delegate", () => {
         workerSupportsSlotAffinity: () => false,
       }),
     );
-    const result = await tool.run({ tasks: TASKS }, ctx());
-    expect(result.details.maxWorkers).toBe(2);
+    const result = await tool.run({ tasks: sixTasks(), maxWorkers: 6 }, ctx());
+    expect(result.details.maxWorkers).toBe(6);
+    expect(result.details.slotPoolSize).toBeUndefined();
     expect(result.summary).not.toContain("localModels.managed.parallel");
   });
 
-  it("names the parallel knob when a one-slot server serialised the fan-out", async () => {
+  it("names both numbers and the knob when the pool is the binding constraint", async () => {
+    // The orchestrator is the party that can adapt, so the note has to
+    // reach its tool result and carry all three facts: what was wanted,
+    // what actually ran at once, and the key that moves the second one.
+    const tool = buildFusionDelegateTool(
+      deps({ slotManager: { poolSize: () => 2 } }),
+    );
+    const result = await tool.run({ tasks: sixTasks(), maxWorkers: 6 }, ctx());
+    expect(result.summary).toContain("6 workers were wanted");
+    expect(result.summary).toContain("2 request slots");
+    expect(result.summary).toContain("only 2 ran at a time");
+    expect(result.summary).toContain("localModels.managed.parallel");
+  });
+
+  it("says nothing about the pool when it was not what held the fan-out down", async () => {
     const tool = buildFusionDelegateTool(
       deps({ slotManager: { poolSize: () => 1 } }),
     );
-    const result = await tool.run({ tasks: TASKS }, ctx());
-    expect(result.summary).toContain("localModels.managed.parallel");
-    // Not a note when there was nothing to parallelise in the first place.
+    // One task on a one-slot server: the task count is the constraint,
+    // and naming `parallel` would send the operator after the wrong knob.
     const solo = await tool.run({ tasks: [TASKS[0]!] }, ctx());
     expect(solo.summary).not.toContain("localModels.managed.parallel");
+    // Two tasks on the same server: the pool really did serialise them.
+    const pair = await tool.run({ tasks: TASKS }, ctx());
+    expect(pair.summary).toContain("localModels.managed.parallel");
+    expect(pair.summary).toContain("1 request slot,");
   });
 
   it("stays status:ok with partial results when workers fail", async () => {
