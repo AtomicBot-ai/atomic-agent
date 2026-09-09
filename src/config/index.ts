@@ -55,6 +55,21 @@ export {
   SUBSCRIPTION_CLI_KIND,
   usesExternalCliAuth,
 } from "./provider-auth-mode.js";
+export {
+  DEFAULT_FUSION_WORKERS,
+  DEFAULT_FUSION_WORKER_MAX_STEPS,
+  DEFAULT_FUSION_WORKER_TIMEOUT_MS,
+  FUSION_WORKERS_MAX,
+  FUSION_WORKERS_MIN,
+  LOCAL_PROVIDER_KIND,
+  RUN_MODE_NAMES,
+  parseLlmRunModeConfig,
+  scrubRunModeProviderPins,
+  type RunModeName,
+  type RunModeProviderRef,
+  type UserLlmFusionConfig,
+  type UserLlmRunModeConfig,
+} from "./llm-run-mode-config.js";
 export type {
   DotenvLoadResult,
   DotenvReadFailure,

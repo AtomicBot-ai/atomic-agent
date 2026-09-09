@@ -203,6 +203,37 @@ describe("llm-config", () => {
     expect(parsed.llm?.fallback).toBeUndefined();
   });
 
+  it("round-trips llm.runMode and validates its pins against llm.providers", () => {
+    const parsed = parseUserConfigFile({
+      ...baseLlm(undefined),
+      llm: {
+        ...baseLlm(undefined).llm,
+        runMode: {
+          mode: "fusion",
+          fusion: { orchestratorProvider: "openrouter", workerProvider: "local-llama", workers: 3 },
+        },
+      },
+    });
+    expect(parsed.llm?.runMode).toEqual({
+      mode: "fusion",
+      fusion: { orchestratorProvider: "openrouter", workerProvider: "local-llama", workers: 3 },
+    });
+    expect(() =>
+      parseUserConfigFile({
+        ...baseLlm(undefined),
+        llm: {
+          ...baseLlm(undefined).llm,
+          runMode: { fusion: { orchestratorProvider: "local-llama" } },
+        },
+      }),
+    ).toThrow(/llm\.runMode\.fusion\.orchestratorProvider/);
+  });
+
+  it("omits runMode entirely when not configured", () => {
+    expect(parseUserConfigFile(baseLlm(undefined)).llm?.runMode).toBeUndefined();
+    expect("runMode" in (parseUserConfigFile(baseLlm(undefined)).llm ?? {})).toBe(false);
+  });
+
   it("parses extraBody on an openai-compatible provider entry", () => {
     const parsed = parseUserConfigFile({
       version: USER_CONFIG_VERSION,

@@ -397,6 +397,7 @@ export async function runLocalModelsStart(): Promise<number> {
         modelId: mid,
         port: cfg.localModels.managed.port,
         contextSize: cfg.localModels.managed.contextSize,
+        parallel: cfg.localModels.managed.parallel,
         ...(tpl ? { chatTemplateFile: tpl } : {}),
         ...(mmprojFile ? { mmprojFile } : {}),
         ...(dev ? { device: dev } : {}),

@@ -259,6 +259,7 @@ The TUI is clickable. Ink has no mouse layer, so this is built in `src/tui/mouse
 | `src/http/route-webhooks.ts` + `webhook-template.ts` + `webhook-session-store.ts` | Generic `POST /api/webhooks/:name` ingress. Always materialises into a `TaskRecord`, never calls `runTurn` directly. See §"Background autonomy". |
 | `src/tools/tasks/` | Agent-facing self-scheduling tools (`tasks.schedule`, `tasks.cron`, `tasks.list`, `tasks.cancel`, `tasks.show`), gated by `tasks.agentToolsEnabled`. |
 | `src/llm/provider/` | Provider abstraction layer (`LlmProvider` interface) + `LlamaServerProvider` adapter. Text completion stays on `LlamaServerClient.complete` / `completeStream` (legacy `/completion` extension with GBNF + slot ids); vision routes through `LlamaServerProvider.describeImage` against `/v1/chat/completions` with OpenAI-shape `image_url` content blocks. See §"Vision (multimodal input)". |
+| `src/llm/run-mode/` | Run-mode resolver (`resolveRunMode`): projects `llm.runMode` (local / cloud / fusion) onto the configured providers with `llm.activeTextProvider` authoritative; plus the operator-facing degradation and status sentences. See §"Run modes (Local / Cloud / Fusion)". |
 | `src/llm/fallback/` | Cross-provider circuit breaker (`ProviderFallbackChain`) that wraps the `llmComplete` / `llmCompleteStream` seams and fails over between configured provider ids when the active one is unavailable. Timer-free lazy probe. See §"Provider fallback chain". |
 | `src/tools/vision/` | `vision.describe` tool + `loadImageFile` helper. Registered whenever `config.vision.enabled` is true and a provider is constructed; the actual capability gate (`capabilities.vision`) is a dynamic getter that re-reads `ModelProfile` on every check, so vision availability tracks `ModelProfileManager` hot-swaps without a restart. See §"Vision (multimodal input)". |
 | `src/channels/telegram/` | `TelegramChannel` (lifecycle + live-control), `inbound-handler` (slash commands + dispatch into `runTurn`), `outbound-sender` (chunked replies + 429 retry), `approval-bridge` (inline-keyboard approvals with 8-min auto-deny), `pairing-mode` (60s window for first-DM owner claim), `telegram-settings` (`config.json` + `.env` persistence), `telegram-bot-factory` (grammy adapter). The **only** module that imports `grammy`. See §"Telegram remote-control channel". |
@@ -2036,6 +2037,45 @@ The LLM tab gains a fourth pane, `fallback`, reached with `←`/`→` after Loca
 4. **Keys route to the right intent** and the add-link picker owns the keyboard while open. Pinned by [src/tui/llm-panel/fallback/fallback-key-bindings.test.ts](src/tui/llm-panel/fallback/fallback-key-bindings.test.ts).
 5. **`provider_switched` is mirrored into `fallbackPanel.lastSwitch`; the pane never invents a live countdown.** Pinned by [src/tui/llm-panel/fallback/fallback-panel-reducer.test.ts](src/tui/llm-panel/fallback/fallback-panel-reducer.test.ts), [src/tui/components/llm-fallback-rows.test.tsx](src/tui/components/llm-fallback-rows.test.tsx).
 6. **Empty chain / nothing-addable shows a hint, not a broken list.** Pinned by [src/tui/components/llm-fallback-rows.test.tsx](src/tui/components/llm-fallback-rows.test.tsx), [src/tui/llm-panel/fallback/fallback-panel-reducer.test.ts](src/tui/llm-panel/fallback/fallback-panel-reducer.test.ts).
+
+## Run modes (Local / Cloud / Fusion)
+
+A run mode names *how* a chat runs, not a single model. `local` and `cloud` are what the product always had — the active provider is a llama-server one, or a cloud one. **Fusion** is the third: a cloud model is the session's orchestrator and several local-model workers run in-process as its subtasks (the orchestrator plans, writes per-worker instructions, fans independent parts out, then reviews and merges). Config lives under `llm.runMode` ([src/config/llm-run-mode-config.ts](src/config/llm-run-mode-config.ts)):
+
+```json
+"llm": {
+  "activeTextProvider": "openrouter",
+  "runMode": {
+    "mode": "fusion",
+    "fusion": { "orchestratorProvider": "openrouter", "workerProvider": "local-llama", "workers": 3 }
+  }
+}
+```
+
+`fusion.orchestratorProvider` must name a configured non-`llama-server` provider (a `subscription-cli` entry counts as cloud); `fusion.workerProvider` must name a `llama-server` one; both default to the first such entry. `workers` (1..8, default 2) caps concurrent workers; `workerMaxSteps` / `workerTimeoutMs` bound one worker turn. `orchestratorModel` / `workerModel` are informational pins only — a `CompletionRequest` carries no model field, so the orchestrator model is the provider entry's `defaultChatModel` and the worker model is whatever the managed daemon serves (`localModels.managed.modelId`). Removing a provider scrubs any pin that named it (`scrubRunModeProviderPins`), because the parser refuses a pin to an unknown id.
+
+`localModels.managed.parallel` (1..8, default 2 — the value that was hard-coded before config v52) is the llama-server `--parallel` slot count; workers run one per slot, so raising it is what lets them run concurrently rather than queue on the server. Applied on the next daemon start.
+
+### The resolver rule
+
+[src/llm/run-mode/resolve-run-mode.ts](src/llm/run-mode/resolve-run-mode.ts) is a pure projection with one load-bearing rule: **`llm.activeTextProvider` stays authoritative, `runMode.mode` is additive.**
+
+```
+derived   = kindOf(activeTextProvider) === "llama-server" ? "local" : "cloud"
+effective = stored === "fusion" && orchestratorLeg && workerLeg && active === orchestratorId
+            ? "fusion" : derived
+```
+
+An operator who switches provider by hand in Manage → LLM simply drops out of fusion on the next read — no reconciliation step, no state that lies about what is running. Fusion therefore pins the cloud provider as the fallback chain's primary and `resolveFallbackChain` needs no changes. A stored `fusion` with a missing leg reports a `degraded` reason (`no-cloud-provider` / `no-local-provider`) that `describeRunModeDegradation` turns into the one sentence every surface shows; `describeRunMode` is the `/runmode status` line. An unresolvable active id derives `local`, so a broken file can never silently start spending cloud tokens.
+
+Any TUI write that changes the mode must move `llm.runMode.mode` **and** `llm.activeTextProvider` in the same `writeUserConfigFileSync` call — split writes leave a window where the file says fusion and the runtime says local.
+
+### Locked invariants (pinned by tests)
+
+1. **Pins are validated against `llm.providers` and by kind.** An orchestrator pin to a `llama-server` entry, a worker pin to a cloud entry, or a pin to an unknown id is a `ConfigValidationError`. Pinned by [src/config/llm-run-mode-config.test.ts](src/config/llm-run-mode-config.test.ts) and [src/config/llm-config.test.ts](src/config/llm-config.test.ts).
+2. **`activeTextProvider` decides.** A stored `fusion` is effective only while the orchestrator is the active provider; a hand-switch yields the derived mode with `degraded: null`. Pinned by [src/llm/run-mode/resolve-run-mode.test.ts](src/llm/run-mode/resolve-run-mode.test.ts).
+3. **`primaryProviderId` is never empty**, and an unresolvable active provider derives `local`. Same test file.
+4. **The default launch is byte-identical**: `parallel` undefined ⇒ `--parallel 2`. Pinned by [src/local-llm/daemon-lifecycle.test.ts](src/local-llm/daemon-lifecycle.test.ts) and the v51 migration case in [src/config/config-schema.test.ts](src/config/config-schema.test.ts).
 
 ## Traceability and replay
 

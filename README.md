@@ -290,6 +290,26 @@ A cloud key is checked before it is saved. The key screen refuses an empty key, 
 </details>
 
 <details>
+<summary><b>Run modes: Local · Cloud · Fusion</b></summary>
+
+`local` and `cloud` are the two routes the composer always offered. **Fusion** adds a third: a cloud model orchestrates and several local llama-server workers execute the parts it delegates, so cloud tokens pay only for the heavy thinking. The block is additive and `llm.activeTextProvider` stays authoritative:
+
+```json
+"llm": {
+  "activeTextProvider": "openrouter",
+  "runMode": {
+    "mode": "fusion",
+    "fusion": { "orchestratorProvider": "openrouter", "workerProvider": "local-llama", "workers": 3 }
+  }
+},
+"localModels": { "managed": { "parallel": 3 } }
+```
+
+`workers` (1..8) caps how many workers run at once; `localModels.managed.parallel` is the llama-server `--parallel` slot count that lets them actually run concurrently (default 2, applied on the next daemon start). The orchestrator model is the provider's `defaultChatModel`; the worker model is the one the managed daemon serves.
+
+</details>
+
+<details>
 <summary><b>Managed local models</b></summary>
 
 The CLI can manage a paired `llama.cpp` setup for chat and embeddings:

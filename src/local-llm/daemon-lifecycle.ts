@@ -72,6 +72,11 @@ export interface DaemonStartOptions {
    * byte-identical.
    */
   tensorSplit?: readonly number[];
+  /**
+   * Request slots (`localModels.managed.parallel`). Undefined keeps the
+   * historical `--parallel 2` so existing launches stay byte-identical.
+   */
+  parallel?: number;
 }
 
 /**
@@ -105,7 +110,7 @@ export function buildLlamaServerArgs(
     "--cache-type-v",
     "turbo3",
     "--parallel",
-    "2",
+    String(opts.parallel ?? 2),
     "-kvu",
     "-a",
     modelAlias,

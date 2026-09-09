@@ -75,6 +75,23 @@ describe("buildLlamaServerArgs", () => {
     expect(args).not.toContain("--ctx-size");
   });
 
+  it("threads localModels.managed.parallel into --parallel, default 2", () => {
+    const args = buildLlamaServerArgs(
+      { ...baseOpts, parallel: 4 },
+      "/tmp/data/models/qwen-3.5-4b/Qwen3.5-4B-Q4_K_M.gguf",
+      "qwen-3.5-4b",
+    );
+    const at = args.indexOf("--parallel");
+    expect(at).toBeGreaterThan(0);
+    expect(args[at + 1]).toBe("4");
+    const defaults = buildLlamaServerArgs(
+      baseOpts,
+      "/tmp/data/models/qwen-3.5-4b/Qwen3.5-4B-Q4_K_M.gguf",
+      "qwen-3.5-4b",
+    );
+    expect(defaults[defaults.indexOf("--parallel") + 1]).toBe("2");
+  });
+
   it("appends --ctx-size when an effective context size is provided", () => {
     const args = buildLlamaServerArgs(
       baseOpts,
