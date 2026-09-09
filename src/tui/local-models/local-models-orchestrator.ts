@@ -412,6 +412,7 @@ export class LocalModelsOrchestrator {
       const needGguf = wantGguf && !isModelDownloaded(dataDir, def);
       const needMmproj = wantMmproj && !isMmprojDownloaded(dataDir, def);
 
+      let projectorError: string | null = null;
       if (needGguf || needMmproj) {
         const workerMode: DownloadJobMode = needGguf
           ? needMmproj
@@ -428,10 +429,25 @@ export class LocalModelsOrchestrator {
           });
           return;
         }
+        projectorError = watched.job.mmprojError ?? null;
+      }
+
+      if (projectorError && mode === "mmproj-only") {
+        // Only the projector was asked for and it did not come. The
+        // model is untouched — the key layer already made it live —
+        // so this reports where a failed pull reports, and the record
+        // goes: Enter on the row is the retry.
+        this.bus.emit({
+          type: "local_models_pull_failed",
+          kind: "chat",
+          error: describeProjectorFailure(def, projectorError),
+        });
+        removeDownloadJob(dataDir, downloadJobId("chat", id));
+        return;
       }
 
       this.bus.emit({ type: "local_models_pull_finished", kind: "chat" });
-      await this.finishChatPull(def, mode);
+      await this.finishChatPull(def, mode, projectorError);
       // The record has served its purpose: the files are on disk and
       // the follow-up ran. Leaving it would make the next launch run
       // the follow-up again.
@@ -448,10 +464,14 @@ export class LocalModelsOrchestrator {
    * offer the embedding model on a first install, start the daemon.
    * Split from `pullModel` so a download that finished while no TUI was
    * watching (the operator quit and came back) gets the same landing.
+   * `projectorError` is the worker's `mmprojError`: the weights landed
+   * but the projector did not, so the landing says why vision is off
+   * and the daemon comes up text-only. Never set for `mmproj-only`.
    */
   private async finishChatPull(
     def: LocalModelDef,
     mode: "with-mmproj" | "gguf-only" | "mmproj-only",
+    projectorError: string | null = null,
   ): Promise<void> {
     if (mode === "mmproj-only") {
       await this.refresh();
@@ -460,6 +480,16 @@ export class LocalModelsOrchestrator {
         line: `local-llm: ${def.name} mmproj installed — restart the daemon to enable vision`,
       });
       return;
+    }
+    if (projectorError) {
+      // The weights are on disk and work without the projector: say
+      // why vision is off, then land the model as any finished pull
+      // (the daemon comes up text-only by itself — it keys on the
+      // projector file, not on the catalog).
+      this.bus.emit({
+        type: "runtime_info",
+        line: `local-llm: ${describeProjectorFailure(def, projectorError)}`,
+      });
     }
 
     persistUserLocalModelsConfig({ mode: "managed", managed: { modelId: def.id } });
@@ -629,6 +659,12 @@ export class LocalModelsOrchestrator {
   adoptBackgroundDownloads(opts?: { onlyRunning?: boolean }): void {
     const dataDir = getConfig().paths.localModelsDataDir;
     for (const job of listDownloadJobs(dataDir)) {
+      // One watch per kind. A running job of a kind that is already
+      // being watched is left to the next adoption after that watch
+      // ends — re-adopting it here would detach the current watch
+      // (`runDownloadJob`), and the two would then keep detaching each
+      // other on every refresh, the first to land switching the model.
+      if (job.status === "running" && this.watchedDownloads.has(job.kind)) continue;
       if (this.watchedDownloads.get(job.kind)?.jobId === job.id) continue;
       const adoptable = opts?.onlyRunning
         ? job.status === "running"
@@ -651,6 +687,10 @@ export class LocalModelsOrchestrator {
           type: "runtime_info",
           line: describeAdoptedJob(job, def.name),
         });
+        if (job.status === "done") {
+          void this.landAdoptedChatJob(def, job);
+          continue;
+        }
         void this.pullModel(job.modelId, job.mode);
       } else {
         if (!isKnownEmbeddingModelId(job.modelId)) {
@@ -668,6 +708,32 @@ export class LocalModelsOrchestrator {
         });
         void this.pullEmbeddingModel(job.modelId);
       }
+    }
+  }
+
+  /**
+   * A chat job that finished while no TUI was watching: land it the way
+   * the watching pull would have, without spawning anything — the files
+   * it fetched are on disk, and a projector it could not fetch is
+   * reported, not retried, at every launch (Enter on the row retries).
+   */
+  private async landAdoptedChatJob(def: LocalModelDef, job: DownloadJob): Promise<void> {
+    const dataDir = getConfig().paths.localModelsDataDir;
+    const projectorError = job.mmprojError ?? null;
+    try {
+      if (projectorError && job.mode === "mmproj-only") {
+        this.bus.emit({
+          type: "runtime_info",
+          line: `local-llm: ${describeProjectorFailure(def, projectorError)}`,
+        });
+        return;
+      }
+      await this.finishChatPull(def, job.mode, projectorError);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.bus.emit({ type: "local_models_pull_failed", kind: "chat", error: msg });
+    } finally {
+      removeDownloadJob(dataDir, job.id);
     }
   }
 
@@ -2247,6 +2313,10 @@ function describeCancelledPull(job: DownloadJob): string {
   return `download cancelled at ${job.percent}% — ${formatJobBytes(job.transferredBytes)} kept on disk; Enter resumes it`;
 }
 
+function describeProjectorFailure(def: LocalModelDef, error: string): string {
+  return `${def.name}: projector not downloaded (${error}) — the model works text-only; Enter on the row retries the projector`;
+}
+
 function describeAdoptedJob(job: DownloadJob, name: string): string {
   switch (job.status) {
     case "running":
@@ -2254,7 +2324,9 @@ function describeAdoptedJob(job: DownloadJob, name: string): string {
     case "interrupted":
       return `local-llm: ${name} download was interrupted at ${job.percent}% — resuming`;
     default:
-      return `local-llm: ${name} finished downloading while the app was closed`;
+      return job.mmprojError
+        ? `local-llm: ${name} finished downloading while the app was closed (without its projector)`
+        : `local-llm: ${name} finished downloading while the app was closed`;
   }
 }
 

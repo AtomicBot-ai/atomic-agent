@@ -202,6 +202,7 @@ export async function runDownloadWorker(
     };
   };
   const gb = (n: number | undefined): number => Math.round((n ?? 0) * 1024 * 1024 * 1024);
+  let mmprojError: string | null = null;
 
   try {
     if (input.kind === "embedding") {
@@ -235,24 +236,45 @@ export async function runDownloadWorker(
         log(`[${stamp()}] gguf complete`);
       }
       if (wantMmproj && !isMmprojDownloaded(input.dataDir, def)) {
-        await downloadMmproj(
-          input.dataDir,
-          def,
-          phaseOpts(
-            `${def.name} (mmproj)`,
-            "mmproj",
-            resolveMmprojFilePath(input.dataDir, def.id, def.mmprojFilename ?? ""),
-            gb(def.mmprojFileSizeGb ?? 1),
-          ),
-        );
-        log(`[${stamp()}] mmproj complete`);
+        try {
+          await downloadMmproj(
+            input.dataDir,
+            def,
+            phaseOpts(
+              `${def.name} (mmproj)`,
+              "mmproj",
+              resolveMmprojFilePath(input.dataDir, def.id, def.mmprojFilename ?? ""),
+              gb(def.mmprojFileSizeGb ?? 1),
+            ),
+          );
+          log(`[${stamp()}] mmproj complete`);
+        } catch (err) {
+          // The projector is an extra on top of weights that already
+          // work: a file the repo no longer serves (renamed, 404) must
+          // not turn a finished multi-GB download into a failed job.
+          // Land the model text-only, keep any projector partial for a
+          // retry, and record why. A cancel is still a cancel, and with
+          // no weights on disk there is nothing to land.
+          if (isAbortError(err) || input.signal?.aborted) throw err;
+          if (!isModelDownloaded(input.dataDir, def)) throw err;
+          mmprojError = err instanceof Error ? err.message : String(err);
+          log(`[${stamp()}] projector failed: ${mmprojError} — landing text-only`);
+        }
       }
     }
+    // A text-only landing keeps the projector phase's real numbers —
+    // the bar that follows it must not claim 100% of a file that never came.
     persist(
-      { status: "done", percent: 100, error: null, finishedAt: stamp() },
+      mmprojError
+        ? { status: "done", error: null, mmprojError, finishedAt: stamp() }
+        : { status: "done", percent: 100, error: null, finishedAt: stamp() },
       true,
     );
-    log(`[${stamp()}] done`);
+    log(
+      mmprojError
+        ? `[${stamp()}] done — text-only (projector: ${mmprojError})`
+        : `[${stamp()}] done`,
+    );
     return "done";
   } catch (err) {
     if (isAbortError(err) || input.signal?.aborted) {

@@ -81,6 +81,19 @@ describe("download-jobs", () => {
     expect(readdirSync(resolveDownloadsDir(dataDir))).toEqual([`${j.id}.json`]);
   });
 
+  it("keeps the text-only landing note on a done record", () => {
+    const j = job({
+      status: "done",
+      percent: 100,
+      finishedAt: "2026-09-07T10:01:00.000Z",
+      mmprojError: "Download failed: HTTP 404 Not Found",
+    });
+    writeDownloadJob(dataDir, j);
+    expect(readDownloadJob(dataDir, j.id)?.mmprojError).toBe(
+      "Download failed: HTTP 404 Not Found",
+    );
+  });
+
   it("returns null for a missing, malformed or foreign-version record", () => {
     expect(readDownloadJob(dataDir, "nope")).toBeNull();
     writeDownloadJob(dataDir, job({ id: "ok" }));

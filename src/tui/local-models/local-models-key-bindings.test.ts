@@ -185,14 +185,16 @@ describe("handleLocalModelsTabKey — vision-aware Enter / g hotkey", () => {
     expect(onToggle).not.toHaveBeenCalled();
   });
 
-  it("Enter on a downloaded GGUF + missing mmproj row triggers mmproj-only pull", () => {
+  it("Enter on a downloaded GGUF + missing mmproj row makes it live and pulls the projector", () => {
     const onPull = vi.fn();
+    const onSetActive = vi.fn();
     const callbacks: TuiAppCallbacks = {
       onApprovalDecision: vi.fn(),
       onAbort: vi.fn(),
       onQuit: vi.fn(),
       onMessageSubmitted: vi.fn(),
       onLocalModelsPullRequested: onPull,
+      onLocalModelsSetActiveRequested: onSetActive,
     };
     const state = stateWithRow(
       makeRow("gemma-4-e4b", {
@@ -207,6 +209,47 @@ describe("handleLocalModelsTabKey — vision-aware Enter / g hotkey", () => {
       callbacks,
     });
     expect(handled).toBe(true);
+    // The weights work on their own: the model does not wait on a
+    // projector the repo may have stopped serving.
+    expect(onSetActive).toHaveBeenCalledWith("gemma-4-e4b");
+    expect(onPull).toHaveBeenCalledWith("gemma-4-e4b", "mmproj-only");
+  });
+
+  it("Enter on the live row with a missing mmproj only retries the projector", () => {
+    const onPull = vi.fn();
+    const onSetActive = vi.fn();
+    const onStart = vi.fn();
+    const callbacks: TuiAppCallbacks = {
+      onApprovalDecision: vi.fn(),
+      onAbort: vi.fn(),
+      onQuit: vi.fn(),
+      onMessageSubmitted: vi.fn(),
+      onLocalModelsPullRequested: onPull,
+      onLocalModelsSetActiveRequested: onSetActive,
+      onLocalModelsDaemonStartRequested: onStart,
+    };
+    const base = stateWithRow(
+      makeRow("gemma-4-e4b", {
+        supportsVision: true,
+        downloaded: true,
+        mmprojStatus: "missing",
+        active: true,
+      }),
+    );
+    const state = {
+      ...base,
+      localModelsPanel: {
+        ...base.localModelsPanel,
+        daemon: { ...base.localModelsPanel.daemon, running: true },
+      },
+    };
+    handleLocalModelsTabKey("", emptyKey({ return: true }), {
+      state,
+      dispatch: vi.fn(),
+      callbacks,
+    });
+    expect(onSetActive).not.toHaveBeenCalled();
+    expect(onStart).not.toHaveBeenCalled();
     expect(onPull).toHaveBeenCalledWith("gemma-4-e4b", "mmproj-only");
   });
 

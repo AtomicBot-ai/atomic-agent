@@ -82,8 +82,21 @@ export function describeDownloadJob(job: DownloadJob): string {
       ? `running (pid ${job.pid}) ${job.percent}%`
       : job.status === "failed"
         ? `failed: ${job.error ?? "unknown error"}`
-        : job.status;
-  return `${job.id.padEnd(40)} ${state.padEnd(28)} ${size}  ${job.label}`;
+        : job.status === "done" && job.mmprojError
+          ? "done, text-only"
+          : job.status;
+  const label = job.mmprojError
+    ? `${job.label} — projector: ${job.mmprojError}`
+    : job.label;
+  return `${job.id.padEnd(40)} ${state.padEnd(28)} ${size}  ${label}`;
+}
+
+/** The weights landed but the projector did not: usable text-only, retryable. */
+export function describeProjectorSkipped(modelId: string, error: string): string {
+  return (
+    `note: projector download failed (${error}) — ${modelId} is usable text-only; ` +
+    `'models pull --mmproj ${modelId}' retries the projector\n`
+  );
 }
 
 /**
@@ -207,7 +220,12 @@ export async function followDownloadJob(
       lastPercent = job.percent;
       if (job.status !== "running") {
         if (tty) process.stderr.write("\n");
-        if (job.status === "done") return 0;
+        if (job.status === "done") {
+          if (job.mmprojError) {
+            process.stderr.write(describeProjectorSkipped(job.modelId, job.mmprojError));
+          }
+          return 0;
+        }
         process.stderr.write(
           job.status === "failed"
             ? `background download failed: ${job.error ?? "unknown error"}\n`

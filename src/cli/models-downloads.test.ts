@@ -132,6 +132,17 @@ describe("background model downloads (CLI)", () => {
     expect(lines.indexOf(embLine!)).toBeLessThan(lines.indexOf(chatLine!));
   });
 
+  it("models downloads lists a text-only landing as done with the projector error", async () => {
+    writeDownloadJob(
+      dataDir,
+      job({ status: "done", percent: 100, mmprojError: "Download failed: HTTP 404 Not Found" }),
+    );
+    expect(await modelsCommand(["downloads"])).toBe(0);
+    expect(stdoutChunks.join("")).toMatch(
+      /^chat-qwen-3\.5-4b\s+done, text-only\s+.*projector: Download failed: HTTP 404 Not Found/m,
+    );
+  });
+
   it("models downloads cancel on a job that is not running says so and succeeds", async () => {
     writeDownloadJob(dataDir, job({ status: "failed", error: "boom" }));
     const code = await modelsCommand(["downloads", "cancel", "qwen-3.5-4b"]);
@@ -155,6 +166,22 @@ describe("background model downloads (CLI)", () => {
     writeDownloadJob(dataDir, job({ status: "failed", error: "disk full" }));
     expect(await followDownloadJob(dataDir, "chat-qwen-3.5-4b", { pollMs: 1, sigint: false })).toBe(1);
     expect(stderrChunks.join("")).toMatch(/background download failed: disk full/);
+  });
+
+  it("followDownloadJob returns 0 for a text-only landing and says how to retry the projector", async () => {
+    writeDownloadJob(
+      dataDir,
+      job({
+        status: "done",
+        percent: 100,
+        mode: "with-mmproj",
+        mmprojError: "Download failed: HTTP 404 Not Found",
+      }),
+    );
+    expect(await followDownloadJob(dataDir, "chat-qwen-3.5-4b", { pollMs: 1, sigint: false })).toBe(0);
+    expect(stderrChunks.join("")).toMatch(
+      /projector download failed \(Download failed: HTTP 404 Not Found\) — qwen-3.5-4b is usable text-only; 'models pull --mmproj qwen-3.5-4b'/,
+    );
   });
 
   it("followDownloadJob returns 1 when the worker died mid-way and names the resume command", async () => {

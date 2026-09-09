@@ -24,6 +24,7 @@ import {
   type StopDownloadWorkerResult,
 } from "../../local-llm/index.js";
 import { resolvePlatformAsset } from "../../local-llm/platform-assets.js";
+import { persistUserLocalModelsConfig } from "../persist-user-local-models-config.js";
 import { LocalModelsOrchestrator } from "./local-models-orchestrator.js";
 
 /**
@@ -95,6 +96,20 @@ function gatedBody(): { body: ReadableStream; release: () => void } {
       tick();
     },
   };
+}
+
+/** Serves the weights, answers 404 for the projector — a repo that renamed its mmproj. */
+function fetchWithMissingProjector(): typeof fetch {
+  return vi.fn(async (input: string | URL | Request) => {
+    const url =
+      typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    return url.includes("mmproj")
+      ? new Response(null, { status: 404, statusText: "Not Found" })
+      : new Response(bodyOf(["gg", "uf"]), {
+          status: 200,
+          headers: { "content-length": "4" },
+        });
+  }) as typeof fetch;
 }
 
 /** Records written by the fake worker, plus a way to abort one. */
@@ -323,6 +338,54 @@ describe("LocalModelsOrchestrator — pulls through the download worker", () => 
     expect(failed?.error).toMatch(/HTTP 404/);
   });
 
+  it("lands a vision model text-only when its projector fails after the GGUF", async () => {
+    globalThis.fetch = fetchWithMissingProjector();
+
+    await orchestrator.pullModel("qwen-3.5-4b", "with-mmproj");
+
+    expect(actions.filter((a) => a.type === "local_models_pull_failed")).toHaveLength(0);
+    expect(actions.some((a) => a.type === "local_models_pull_finished")).toBe(true);
+    expect(startDaemon).toHaveBeenCalledOnce();
+    expect(getConfig().localModels.managed.modelId).toBe("qwen-3.5-4b");
+    expect(
+      infoLines(actions).some((l) =>
+        /projector not downloaded \(.*HTTP 404.*\).*text-only/.test(l),
+      ),
+    ).toBe(true);
+    const dataDir = getConfig().paths.localModelsDataDir;
+    const def = getLocalModelDef("qwen-3.5-4b");
+    expect(existsSync(resolveModelFilePath(dataDir, def.id, def.filename))).toBe(true);
+    expect(readDownloadJob(dataDir, "chat-qwen-3.5-4b")).toBeNull();
+  });
+
+  it("a failed projector-only pull reports where a failed pull reports and touches nothing else", async () => {
+    const dataDir = getConfig().paths.localModelsDataDir;
+    const def = getLocalModelDef("qwen-3.5-4b");
+    const dest = resolveModelFilePath(dataDir, def.id, def.filename);
+    mkdirSync(join(dest, ".."), { recursive: true });
+    writeFileSync(dest, "gguf");
+    persistUserLocalModelsConfig({ mode: "managed", managed: { modelId: "qwen-3.5-9b" } });
+    resetConfigCache();
+    globalThis.fetch = fetchWithMissingProjector();
+
+    await orchestrator.pullModel("qwen-3.5-4b", "mmproj-only");
+
+    // The pane's failure line is where the operator looked before; the
+    // wording now says the model is fine and how to retry.
+    const failed = actions.find(
+      (a): a is Extract<EmittedAction, { type: "local_models_pull_failed" }> =>
+        a.type === "local_models_pull_failed",
+    );
+    expect(failed?.error).toMatch(
+      /projector not downloaded \(.*HTTP 404.*\).*works text-only.*retries the projector/,
+    );
+    // A projector-only pull never picks the active model or starts a
+    // daemon — success does not, so failure must not either.
+    expect(startDaemon).not.toHaveBeenCalled();
+    expect(getConfig().localModels.managed.modelId).toBe("qwen-3.5-9b");
+    expect(readDownloadJob(dataDir, "chat-qwen-3.5-4b")).toBeNull();
+  });
+
   describe("adoptBackgroundDownloads", () => {
     it("lands a job that finished while no TUI was watching, without spawning", async () => {
       const dataDir = getConfig().paths.localModelsDataDir;
@@ -344,6 +407,90 @@ describe("LocalModelsOrchestrator — pulls through the download worker", () => 
       expect(getConfig().localModels.managed.modelId).toBe("qwen-3.5-4b");
       expect(infoLines(actions).some((l) => /finished downloading while the app was closed/.test(l))).toBe(true);
       await waitFor(() => readDownloadJob(dataDir, "chat-qwen-3.5-4b") === null);
+    });
+
+    it("lands a text-only job that finished while the app was closed, without re-fetching the projector", async () => {
+      const dataDir = getConfig().paths.localModelsDataDir;
+      const def = getLocalModelDef("qwen-3.5-4b");
+      const dest = resolveModelFilePath(dataDir, def.id, def.filename);
+      mkdirSync(join(dest, ".."), { recursive: true });
+      writeFileSync(dest, "gguf");
+      writeDownloadJob(dataDir, {
+        ...initialDownloadJob({ dataDir, kind: "chat", modelId: def.id, mode: "with-mmproj", pid: 1 }),
+        status: "done",
+        finishedAt: "2026-09-07T12:00:00.000Z",
+        mmprojError: "Download failed: HTTP 404 Not Found",
+      });
+      globalThis.fetch = vi.fn(async () => {
+        throw new Error("no network call expected at launch");
+      }) as typeof fetch;
+
+      orchestrator.adoptBackgroundDownloads();
+      await waitFor(() => startDaemon.mock.calls.length === 1);
+
+      expect(worker.spawned).toEqual([]);
+      expect(getConfig().localModels.managed.modelId).toBe("qwen-3.5-4b");
+      expect(infoLines(actions).some((l) => /projector not downloaded \(.*HTTP 404/.test(l))).toBe(true);
+      await waitFor(() => readDownloadJob(dataDir, "chat-qwen-3.5-4b") === null);
+    });
+
+    it("a projector-only job that failed while the app was closed is reported, not re-run, and never switches the model", async () => {
+      const dataDir = getConfig().paths.localModelsDataDir;
+      const def = getLocalModelDef("qwen-3.5-4b");
+      const dest = resolveModelFilePath(dataDir, def.id, def.filename);
+      mkdirSync(join(dest, ".."), { recursive: true });
+      writeFileSync(dest, "gguf");
+      persistUserLocalModelsConfig({ mode: "managed", managed: { modelId: "qwen-3.5-9b" } });
+      resetConfigCache();
+      writeDownloadJob(dataDir, {
+        ...initialDownloadJob({ dataDir, kind: "chat", modelId: def.id, mode: "mmproj-only", pid: 1 }),
+        status: "done",
+        finishedAt: "2026-09-07T12:00:00.000Z",
+        mmprojError: "Download failed: HTTP 404 Not Found",
+      });
+      globalThis.fetch = vi.fn(async () => {
+        throw new Error("no network call expected at launch");
+      }) as typeof fetch;
+
+      orchestrator.adoptBackgroundDownloads();
+      await waitFor(() => readDownloadJob(dataDir, "chat-qwen-3.5-4b") === null);
+
+      expect(worker.spawned).toEqual([]);
+      expect(startDaemon).not.toHaveBeenCalled();
+      expect(getConfig().localModels.managed.modelId).toBe("qwen-3.5-9b");
+      expect(infoLines(actions).some((l) => /projector not downloaded \(.*HTTP 404/.test(l))).toBe(true);
+    });
+
+    it("leaves another running chat job alone while a chat pull is being watched", async () => {
+      // Enter on a vision row makes it live AND fetches its projector; the
+      // activation's refresh must not re-adopt an unrelated running
+      // download and detach the projector watch (the two would then
+      // detach each other on every refresh, and whichever landed first
+      // would switch the model).
+      const dataDir = getConfig().paths.localModelsDataDir;
+      const def = getLocalModelDef("qwen-3.5-4b");
+      const dest = resolveModelFilePath(dataDir, def.id, def.filename);
+      mkdirSync(join(dest, ".."), { recursive: true });
+      writeFileSync(dest, "gguf");
+      const gate = gatedBody();
+      globalThis.fetch = vi.fn(
+        async () =>
+          new Response(gate.body, { status: 200, headers: { "content-length": "2" } }),
+      ) as typeof fetch;
+      const pull = orchestrator.pullModel("qwen-3.5-4b", "mmproj-only");
+      await waitFor(() => startedPulls(actions).includes("qwen-3.5-4b"));
+      // Another chat model is downloading in a live worker of its own.
+      writeDownloadJob(dataDir, {
+        ...initialDownloadJob({ dataDir, kind: "chat", modelId: "qwen-3.5-9b", mode: "gguf-only", pid: process.pid }),
+      });
+
+      orchestrator.adoptBackgroundDownloads({ onlyRunning: true });
+      gate.release();
+      await pull;
+
+      expect(worker.spawned).toEqual(["chat-qwen-3.5-4b"]);
+      expect(actions.some((a) => a.type === "local_models_pull_finished")).toBe(true);
+      expect(infoLines(actions).some((l) => /mmproj installed/.test(l))).toBe(true);
     });
 
     it("resumes an interrupted job from its partial", async () => {

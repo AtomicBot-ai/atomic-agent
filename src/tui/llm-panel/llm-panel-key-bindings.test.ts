@@ -6,6 +6,7 @@ import type { TuiAppCallbacks } from "../tui-app.js";
 import { createInitialTuiState } from "../tui-state.js";
 import { fakeSession } from "../test-fixtures.js";
 import { handleLlmPanelKey } from "./llm-panel-key-bindings.js";
+import { selectLocalRows } from "./llm-panel-row-builders.js";
 
 function emptyKey(overrides: Partial<Key> = {}): Key {
   return {
@@ -279,6 +280,102 @@ describe("handleLlmPanelKey", () => {
     expect(onSetActive).toHaveBeenCalledWith("qwen-3.5-4b");
     expect(onSetActiveText).toHaveBeenCalledWith("local-llama");
     expect(dispatched).not.toContainEqual({ type: "llm_dashboard_opened" });
+  });
+
+  it("Enter on a downloaded vision row with a missing projector goes live and fetches the projector", () => {
+    const onSetActive = vi.fn();
+    const onSetActiveText = vi.fn();
+    const onPull = vi.fn();
+    const seeded = seededState();
+    const state = {
+      ...seeded,
+      providersPanel: {
+        ...seeded.providersPanel,
+        rows: seeded.providersPanel.rows.map((row) => ({
+          ...row,
+          isActiveText: row.id === "openrouter",
+        })),
+      },
+      localModelsPanel: {
+        ...seeded.localModelsPanel,
+        rows: seeded.localModelsPanel.rows.map((row) => ({
+          ...row,
+          def: { ...row.def, supportsVision: true },
+          mmprojStatus: "missing" as const,
+        })),
+      },
+      llmPanel: { ...seeded.llmPanel, mode: "local" as const, localCursor: 0 },
+    };
+    handleLlmPanelKey("", emptyKey({ return: true }), {
+      state,
+      dispatch: vi.fn(),
+      callbacks: callbacks({
+        onLocalModelsSetActiveRequested: onSetActive,
+        onProvidersSetActiveText: onSetActiveText,
+        onLocalModelsPullRequested: onPull,
+      }),
+    });
+    // The weights work on their own — the model must not wait on a
+    // projector the repo may have stopped serving.
+    expect(onSetActive).toHaveBeenCalledWith("qwen-3.5-4b");
+    expect(onSetActiveText).toHaveBeenCalledWith("local-llama");
+    expect(onPull).toHaveBeenCalledWith("qwen-3.5-4b", "mmproj-only");
+  });
+
+  it("Enter on the live vision row with a missing projector only retries the projector", () => {
+    const onSetActive = vi.fn();
+    const onStart = vi.fn();
+    const onPull = vi.fn();
+    const seeded = seededState();
+    const state = {
+      ...seeded,
+      localModelsPanel: {
+        ...seeded.localModelsPanel,
+        rows: seeded.localModelsPanel.rows.map((row) => ({
+          ...row,
+          active: true,
+          def: { ...row.def, supportsVision: true },
+          mmprojStatus: "missing" as const,
+        })),
+      },
+      llmPanel: { ...seeded.llmPanel, mode: "local" as const, localCursor: 0 },
+    };
+    handleLlmPanelKey("", emptyKey({ return: true }), {
+      state,
+      dispatch: vi.fn(),
+      callbacks: callbacks({
+        onLocalModelsSetActiveRequested: onSetActive,
+        onLocalModelsDaemonStartRequested: onStart,
+        onLocalModelsPullRequested: onPull,
+      }),
+    });
+    expect(onSetActive).not.toHaveBeenCalled();
+    expect(onStart).not.toHaveBeenCalled();
+    expect(onPull).toHaveBeenCalledWith("qwen-3.5-4b", "mmproj-only");
+  });
+
+  it("says what Enter does on a vision row whose projector is missing", () => {
+    const seeded = seededState();
+    const withMissing = (active: boolean) => ({
+      ...seeded,
+      localModelsPanel: {
+        ...seeded.localModelsPanel,
+        rows: seeded.localModelsPanel.rows.map((row) => ({
+          ...row,
+          active,
+          def: { ...row.def, supportsVision: true },
+          mmprojStatus: "missing" as const,
+        })),
+      },
+    });
+    const hint = (state: ReturnType<typeof withMissing>) =>
+      selectLocalRows(state).find((row) => row.kind === "localTextModel")?.enterEffect;
+    expect(hint(withMissing(false))).toBe(
+      "Enter: select model, download projector for qwen-3.5-4b",
+    );
+    expect(hint(withMissing(true))).toBe(
+      "Enter: download projector for qwen-3.5-4b (text chat works without it)",
+    );
   });
 
   it("opens the slash-command palette when `/` is pressed", () => {

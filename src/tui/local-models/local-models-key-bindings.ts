@@ -208,12 +208,14 @@ export function handleLocalModelsTabKey(
  * Enter picks the next obvious action for the row, taking mmproj
  * status into account so vision-capable models land in a usable state:
  * - GGUF missing → pull GGUF (+ mmproj for vision-capable rows).
- * - GGUF present, mmproj missing on a vision-capable row → pull
- *   mmproj only. The operator must restart the daemon with `--mmproj`
- *   afterwards; the orchestrator emits a hint.
- * - GGUF present (text-only OR mmproj also present) but row not active
- *   → set the row as the active managed model.
+ * - GGUF present but row not active → set the row as the active
+ *   managed model (the daemon restarts on it).
  * - Already downloaded + active but daemon down → start chat daemon (`s`).
+ * - On top of either, a vision-capable row whose mmproj is missing →
+ *   also pull the projector. The model never waits on it: a projector
+ *   the repo stopped serving costs vision, not the model. Once it
+ *   lands the operator restarts the daemon to enable vision; the
+ *   orchestrator emits the hint.
  */
 function triggerPrimaryAction(
   row: LocalModelRow,
@@ -224,18 +226,14 @@ function triggerPrimaryAction(
     callbacks.onLocalModelsPullRequested?.(row.id, "with-mmproj");
     return;
   }
-  if (row.mmprojStatus === "missing") {
-    callbacks.onLocalModelsPullRequested?.(row.id, "mmproj-only");
-    return;
-  }
   if (!row.active) {
     callbacks.onLocalModelsSetActiveRequested?.(row.id);
-    return;
+  } else {
+    const chatUp = panel.daemon.running || panel.daemonPhase === "starting";
+    if (!chatUp) callbacks.onLocalModelsDaemonStartRequested?.();
   }
-  const chatUp =
-    panel.daemon.running || panel.daemonPhase === "starting";
-  if (!chatUp) {
-    callbacks.onLocalModelsDaemonStartRequested?.();
+  if (row.mmprojStatus === "missing") {
+    callbacks.onLocalModelsPullRequested?.(row.id, "mmproj-only");
   }
 }
 

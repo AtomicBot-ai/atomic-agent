@@ -55,7 +55,7 @@ export function readCliOption(args: string[], name: string): string | undefined 
 
 export { formatGb, renderPullProgress, renderPullRetry } from "./pull-progress.js";
 import { renderPullProgress, renderPullRetry } from "./pull-progress.js";
-import { followDownloadJob } from "./models-downloads.js";
+import { describeProjectorSkipped, followDownloadJob } from "./models-downloads.js";
 
 export async function runLocalModelsList(): Promise<number> {
   const cfg = getConfig();
@@ -146,17 +146,26 @@ export async function runLocalModelsPull(args: string[]): Promise<number> {
     process.stdout.write(`done. model saved to ${savedPath}\n`);
     if (mode === "with-mmproj" && m.mmprojFilename && !isMmprojDownloaded(dataDir, m)) {
       process.stderr.write(`downloading mmproj ${m.mmprojFilename}\n`);
-      await downloadMmproj(dataDir, m, {
-        onProgress: progressFor(
-          m.mmprojFilename,
-          Math.round((m.mmprojFileSizeGb ?? 1) * (1024 * 1024 * 1024)),
-        ),
-        onRetry,
-      });
-      if (tty) process.stderr.write(`\n`);
-      process.stdout.write(
-        `done. mmproj saved to ${resolveMmprojFilePath(dataDir, m.id, m.mmprojFilename)}\n`,
-      );
+      try {
+        await downloadMmproj(dataDir, m, {
+          onProgress: progressFor(
+            m.mmprojFilename,
+            Math.round((m.mmprojFileSizeGb ?? 1) * (1024 * 1024 * 1024)),
+          ),
+          onRetry,
+        });
+        if (tty) process.stderr.write(`\n`);
+        process.stdout.write(
+          `done. mmproj saved to ${resolveMmprojFilePath(dataDir, m.id, m.mmprojFilename)}\n`,
+        );
+      } catch (e) {
+        // The weights are already saved; a projector the repo stopped
+        // serving must not read as a failed pull (same rule as the worker).
+        if (tty) process.stderr.write(`\n`);
+        process.stderr.write(
+          describeProjectorSkipped(m.id, e instanceof Error ? e.message : String(e)),
+        );
+      }
     }
     return 0;
   } catch (e) {

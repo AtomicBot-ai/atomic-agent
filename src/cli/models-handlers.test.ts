@@ -29,7 +29,7 @@ import {
   WINDOWS_BACKEND_ASSETS,
   setConfiguredBackendVariant,
 } from "../local-llm/windows-backend-variant.js";
-import { runLocalModelsStart } from "./models-handlers.js";
+import { runLocalModelsPull, runLocalModelsStart } from "./models-handlers.js";
 
 const healthError = () =>
   new DaemonHealthError(
@@ -164,4 +164,69 @@ describe("runLocalModelsStart CPU-backend fallback", () => {
     });
     return dataDir;
   }
+});
+
+/**
+ * The foreground `models pull --mmproj` mirrors the background worker:
+ * a projector the repo stopped serving must not read as a failed pull
+ * once the weights are saved.
+ */
+describe("runLocalModelsPull — projector failure after the weights", () => {
+  let stateDir: string;
+  let stdoutChunks: string[];
+  let stderrChunks: string[];
+  let previousFetch: typeof fetch;
+
+  beforeEach(() => {
+    stateDir = mkdtempSync(join(tmpdir(), "atomic-models-pull-"));
+    process.env.ATOMIC_AGENT_STATE_DIR = stateDir;
+    resetConfigCache();
+    stdoutChunks = [];
+    stderrChunks = [];
+    previousFetch = globalThis.fetch;
+    vi.spyOn(process.stdout, "write").mockImplementation((chunk: unknown) => {
+      stdoutChunks.push(typeof chunk === "string" ? chunk : String(chunk));
+      return true;
+    });
+    vi.spyOn(process.stderr, "write").mockImplementation((chunk: unknown) => {
+      stderrChunks.push(typeof chunk === "string" ? chunk : String(chunk));
+      return true;
+    });
+  });
+
+  afterEach(() => {
+    globalThis.fetch = previousFetch;
+    vi.restoreAllMocks();
+    rmSync(stateDir, { recursive: true, force: true });
+    delete process.env.ATOMIC_AGENT_STATE_DIR;
+    resetConfigCache();
+  });
+
+  it("saves the weights, notes the projector failure and exits 0", async () => {
+    globalThis.fetch = vi.fn(async (input: string | URL | Request) => {
+      const url =
+        typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (url.includes("mmproj")) {
+        return new Response(null, { status: 404, statusText: "Not Found" });
+      }
+      return new Response(
+        new ReadableStream({
+          pull(controller) {
+            controller.enqueue(Buffer.from("gguf"));
+            controller.close();
+          },
+        }),
+        { status: 200, headers: { "content-length": "4" } },
+      );
+    }) as typeof fetch;
+
+    const code = await runLocalModelsPull(["qwen-3.5-4b", "--mmproj"]);
+
+    expect(code).toBe(0);
+    expect(stdoutChunks.join("")).toMatch(/done\. model saved to /);
+    expect(stdoutChunks.join("")).not.toMatch(/mmproj saved/);
+    expect(stderrChunks.join("")).toMatch(
+      /note: projector download failed \(Download failed: HTTP 404 Not Found\) — qwen-3.5-4b is usable text-only; 'models pull --mmproj qwen-3.5-4b'/,
+    );
+  });
 });
