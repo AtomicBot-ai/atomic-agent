@@ -44,7 +44,7 @@ export function applySessionRailOrder<T extends RailRow>(
 }
 
 /** What the rail needs of a row to arrange it: an identity and a date. */
-interface RailRow {
+export interface RailRow {
   sessionId: string;
   updatedAt: number;
 }

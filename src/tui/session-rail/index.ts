@@ -5,6 +5,7 @@ export {
   computeMovedOrder,
   moveSessionInOrder,
   pruneSessionRailOrder,
+  type RailRow,
 } from "./session-rail-order.js";
 export {
   persistSessionRailOrder,
