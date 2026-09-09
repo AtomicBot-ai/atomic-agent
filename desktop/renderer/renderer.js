@@ -5078,6 +5078,13 @@ function activeModel() {
      honest states below (the external-route blank, the download-model
      label) are what must show then, not a blank the override invented. */
   if (SWX.want && typeof SWX.want.model === 'string' && SWX.want.model) return SWX.want.model;
+  /* r9: a backend switch is in flight and this window could not predict the
+     model it will land on (see bswPredictedModel). Falling through would read
+     LIVE_CONFIG, which still describes the backend being LEFT — so the chip
+     would name the outgoing backend's model beside the incoming backend's
+     word for ~10s. Paint nothing instead; the config replaces it the moment
+     the switch lands. */
+  if (SWX.want && SWX.want.backend && SWX.want.backend !== liveBackend()) return '';
   if (BR && S.live.state === 'connected') {
     // Lane B — backend switch: the TUI's selectPromptLlmMeta. A cloud
     // provider shows its chatModel (defaultChatModel ?? model) and,
@@ -8501,6 +8508,14 @@ async function swxRun(label, want, run, refuse) {
    Model selector — backend → (provider) → model
    ============================================================ */
 
+/** The backend the live config describes, with no optimistic override —
+    selBackend() answers what the operator CHOSE, this answers what is. */
+function liveBackend() {
+  const p = activeProvider();
+  if (!(p && p.kind === 'llama-server')) return 'cloud';
+  return ((LIVE_CONFIG && LIVE_CONFIG.localModels && LIVE_CONFIG.localModels.mode) === 'external') ? 'custom' : 'local';
+}
+
 function selBackend() {
   // r5 item 10: the operator's choice paints first. See swxRun.
   if (SWX.want && SWX.want.backend) return SWX.want.backend;
@@ -9634,6 +9649,26 @@ if (typeof window !== 'undefined') {
  * on that side and applies it. Only when there is nothing to pick does
  * the popup stay open, showing the one action that would fix that.
  */
+/** What `switchBackend(id)` will land on, by main's own rule — or '' when
+    this window cannot say. Never a value from the backend being left. */
+function bswPredictedModel(id) {
+  const cfg = LIVE_CONFIG || {};
+  if (id === 'local') {
+    const lm = cfg.localModels || {};
+    /* backend-switch.ts: `rows.find(m => m.active && m.downloaded)` — the
+       active managed model is exactly this id, and it is the "last used
+       local one" the operator expects to come back to. */
+    return (lm.mode === 'external') ? '' : ((lm.managed && lm.managed.modelId) || '');
+  }
+  if (id === 'cloud') {
+    const llm = cfg.llm || {};
+    const rows = (llm.providers || []).filter((p) => p && p.kind !== 'llama-server');
+    const p = rows.find((x) => x.id === llm.activeTextProvider) || rows.find((x) => x.defaultChatModel) || rows[0];
+    return (p && (p.defaultChatModel || p.model)) || '';
+  }
+  return '';
+}
+
 async function selChooseBackend(id) {
   // Lane B — backend switch. The decision (which provider, which model,
   // what to do with the daemon) is the TUI's activateCloud/activateLocal,
@@ -9642,13 +9677,26 @@ async function selChooseBackend(id) {
   // boot. A running turn would be aborted by that restart, so refuse.
   if (S.busy) { toast('Not while a turn is running'); return {ok:false, error:'a turn is running'}; }
   SEL.err = null; SEL.busy = true; BSW.line = id === 'local' ? 'switching to local…' : 'switching to cloud…'; render();
-  /* r5 item 10. `want:{backend:id}` is deliberately backend-only: selBackend
-     answers 'cloud' | 'custom' | 'local', and switchBackend('local') on an
-     external-mode config lands on 'local', so painting the id the operator
-     clicked is the truth. The provider and model are NOT painted here —
-     which one main will pick is its decision, not a value this window may
-     invent. */
-  const res = await swxRun(BSW.line, {backend:id}, () => SWXBR.switchBackend(id));
+  /* r5 item 10. `want:{backend:id}` paints the id the operator clicked:
+     selBackend answers 'cloud' | 'custom' | 'local', and switchBackend('local')
+     on an external-mode config lands on 'local'.
+     r9: the MODEL is painted too, when this window can say what it will be
+     without inventing it. Leaving it out did not mean "say nothing" — the
+     chip fell through to LIVE_CONFIG, which still describes the backend
+     being left, so for the ~10s the switch takes it showed the CLOUD model
+     beside the word `local`. That is not neutrality, it is a wrong value,
+     and it is what the operator reported: "when I switch to local the model
+     is still [the cloud one] — it should change to the last used local
+     one."
+     The prediction is main's own documented rule, not a guess: for local it
+     picks the active downloaded model, which is `localModels.managed.modelId`;
+     for cloud it takes the active provider's chat model. Where that cannot
+     be known the want carries NO model, and activeModel() then paints
+     nothing rather than the outgoing backend's. Either way the real config
+     replaces it the moment the switch lands. */
+  const predicted = bswPredictedModel(id);
+  const want = predicted ? {backend:id, model:predicted} : {backend:id};
+  const res = await swxRun(BSW.line, want, () => SWXBR.switchBackend(id));
   SEL.busy = false; BSW.line = '';
   if (!res || !res.ok) {
     if (res && res.needsProvider) { SEL.kind = 'provider'; SEL.addOpen = true; SEL.presetCur = 0; render(); return res; }
