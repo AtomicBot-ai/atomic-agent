@@ -1684,3 +1684,48 @@ body{font-family:var(--font-ui);font-size:var(--fs-cap);letter-spacing:0}
 .radio{width:12px;height:12px;border-radius:0;border:1px solid var(--ink-3);flex:none;margin-top:3px}
 .radio.on{background:var(--ink);border-color:var(--ink)}
 .modelrow .ann{margin-left:auto}
+
+/* An action offered inline on a system row (F2). Quiet rank: the row is
+   already the loudest thing in the transcript. */
+.sysrow .sysact{height:22px;padding:0 var(--s2);margin-left:var(--s2);border:1px solid var(--line);
+  border-radius:var(--r);background:var(--paper);color:var(--ink);cursor:pointer;
+  font:500 var(--fs-label)/1 var(--font-ui);letter-spacing:var(--tr-label);text-transform:uppercase}
+.sysrow .sysact:hover{background:var(--panel)}
+
+/* The app's own report on itself (F10): an annunciator and a readout, on the
+   line above the composer — not rows in the conversation. */
+.statusstrip.appstatus{display:flex;align-items:center;gap:var(--s3);min-height:24px;
+  padding:0 var(--s2)}
+.statusstrip.appstatus .readout{background:transparent;color:var(--ink-3);text-align:left;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--fs-label)}
+
+/* ---------------- markdown (F12) ----------------
+   A model writes markdown and this window used to print it. Machine text —
+   code spans and fences — is mono; prose is not. */
+.prose .mdh{margin:var(--s4) 0 var(--s2);font-weight:600;letter-spacing:var(--tr-sub);line-height:1.25}
+.prose h1.mdh{font-size:var(--fs-sub)}
+.prose h2.mdh{font-size:var(--fs-body)}
+.prose h3.mdh{font-size:var(--fs-body);color:var(--ink-2)}
+.prose .mdlist{margin:var(--s2) 0;padding-left:var(--s6)}
+.prose .mdlist li{margin:2px 0}
+.prose .mdquote{margin:var(--s2) 0;padding-left:var(--s4);
+  border-left:var(--rule) solid var(--line);color:var(--ink-2)}
+.prose .mdhr{border:0;border-top:1px solid var(--line-hair);margin:var(--s4) 0}
+.prose .mdcode{font-family:var(--font-mono);font-size:.92em;background:var(--panel-2);
+  padding:1px 4px;border-radius:var(--r)}
+.prose .mdpre{margin:var(--s2) 0;padding:var(--s3) var(--s4);background:var(--panel-2);
+  border:1px solid var(--line-hair);border-radius:0;overflow-x:auto}
+.prose .mdpre code{font-family:var(--font-mono);font-size:var(--fs-cap);white-space:pre}
+.prose strong{font-weight:600}
+
+/* F11 — the last message keeps its actions, and they carry their names. The
+   hover-only unlabelled glyph read as a stray mark, which is a fair reading
+   of an icon with no name that only exists while the pointer is over it. */
+.msgacts.shown{opacity:1;pointer-events:auto}
+.msgacts.shown .msgact{width:auto;height:24px;padding:0 var(--s2);gap:var(--s1);
+  border:1px solid var(--line);border-radius:var(--r);color:var(--ink-2);background:var(--paper)}
+.msgacts.shown .msgact:hover{background:var(--panel);color:var(--ink)}
+.msgacts.shown .msgact.danger{color:var(--red-deep);border-color:var(--line)}
+.msgacts.shown .msgact.danger:hover{background:var(--panel);color:var(--red-deep)}
+.msgactlb{font:500 var(--fs-label)/1 var(--font-ui);letter-spacing:var(--tr-label);
+  text-transform:uppercase}

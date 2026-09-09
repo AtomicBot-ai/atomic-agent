@@ -557,6 +557,10 @@ let FIRSTRUN = null;
    must NAME it rather than leave the user guessing: the title card, the
    transcript's opening plate, and the diagnostics plate. Declared here, above
    the first render(), because the render path reads it. */
+/* F4 — coding modes need a route the released agent does not have. The
+   version, not the route name: `/api/coding-mode` is our word for it and
+   means nothing to the person reading it. */
+const MODE_NEEDS_NEWER = 'Coding modes need Atomic Agent 0.5.7 or newer.';
 let BUILD = null;
 /* F1 — provider ids whose key was saved without ever being checked. Read from
    main at boot; a provider stays on this list until a turn actually succeeds
@@ -1552,7 +1556,13 @@ function item(m, end) {
        turn that just finished. */
     + (PLAN.on && m.id === PLAN.itemId ? planHandoffHTML() : '')
     + '</div></div>';
-  if (m.k === 'system') return '<div class="sysrow"><span></span><span>' + m.text + '</span></div>';
+  if (m.k === 'system') return '<div class="sysrow"><span></span><span>' + m.text
+    /* F2 — the one action that helps, on the row that reports the problem.
+       A person told their provider is not answering has exactly one useful
+       next move, and hunting for the composer chip is not it. */
+    + (m.act === 'switch-provider'
+        ? ' <button class="sysact" data-sel-open="provider">Switch provider</button>' : '')
+    + '</span></div>';
   if (m.k === 'reason') return '<div class="turn" id="turn-' + m.id + '"><div></div><div>'
     + '<button class="disc" data-toggle="' + m.id + '">' + ic(m.open ? 'chevD' : 'chevR') + 'Reasoning · ' + m.steps + ' steps</button>'
     + (m.open ? '<div class="discbody">' + esc(m.text) + '</div>' : '') + '</div></div>';
@@ -1603,15 +1613,25 @@ function msgActs(m) {
      permanently missing from the last reply of every finished turn. */
   if (m.k === 'assistant' && m.id === S.streamId && S.busy) return '<div class="msgacts"></div>';
   if (!text.trim()) return '';
-  const copy = '<button class="msgact" data-copy="' + esc(m.id) + '" title="Copy message" aria-label="Copy message">' + ic('copy') + '</button>';
-  if (m.k !== 'user') return '<div class="msgacts">' + copy + '</div>';
+  /* F11 — on the LAST message the actions stay put and carry their names.
+     Everywhere else they appear on hover, as before. The tester read the
+     hover-only glyph at the bottom edge of a bubble as a stray logo, which is
+     a fair reading of an unlabelled icon that only exists while the pointer
+     is over it — and the two things anyone wants at the end of a reply are
+     copy and send-again. */
+  const last = S.log.length && S.log[S.log.length - 1].id === m.id;
+  const cls = 'msgacts' + (last ? ' shown' : '');
+  const label = (t) => last ? '<span class="msgactlb">' + t + '</span>' : '';
+  const copy = '<button class="msgact" data-copy="' + esc(m.id) + '" title="Copy message" aria-label="Copy message">'
+    + ic('copy') + label('Copy') + '</button>';
+  if (m.k !== 'user') return '<div class="' + cls + '">' + copy + '</div>';
   // Review fix: no `usr` modifier class here. The right-alignment the user
   // asked for ("a copy icon at its end") is on the base `.msgacts` rule for
   // BOTH kinds, so a `.msgacts.usr` element would have matched nothing in
   // styles.css and would have told the next reader the user row's alignment
   // was unstyled.
-  return '<div class="msgacts">'
-    + '<button class="msgact danger" data-resend="' + esc(m.id) + '" title="Send this message again" aria-label="Send this message again">' + ic('refresh') + '</button>'
+  return '<div class="' + cls + '">'
+    + '<button class="msgact danger" data-resend="' + esc(m.id) + '" title="Send this message again" aria-label="Send this message again">' + ic('refresh') + label('Send again') + '</button>'
     + copy + '</div>';
 }
 
@@ -1821,6 +1841,14 @@ function composer() {
     // the operator needs this next to the button that was disabled.
     : SWX.err
     ? '<div class="statusstrip gated">' + ic('warn') + esc(SWX.err) + '</div>'
+    /* F10 — where the app reports on itself. Lowest priority: a running turn,
+       a pending approval or a failed switch all matter more than the last
+       thing that changed. */
+    : APPSTATUS.text
+    ? '<div class="statusstrip appstatus">'
+      + '<span class="ann' + (APPSTATUS.tone === 'caution' ? ' caution' : ' lit') + '">'
+      + (APPSTATUS.tone === 'caution' ? 'Caution' : 'Ready') + '</span>'
+      + '<span class="readout">' + esc(APPSTATUS.text) + '</span></div>'
     : '';
   const q = S.queued.length ? '<div class="qtray">' + S.queued.map((t, i) =>
       '<div class="qchip"><span class="ter">Queued</span><span style="flex:1;color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(t) + '</span>'
@@ -2266,6 +2294,24 @@ function renderInspector() {
 }
 
 /* ---------------- console ---------------- */
+/* F10 — what the APP did, as opposed to what the conversation contains.
+   "Switched active text provider…", "Selected chat model…", "Connected · /Users/…"
+   were pushed into the transcript, so the tester's chat filled up with a
+   running commentary on her own clicks: "все действия отображаются у меня в
+   чате, что я делаю. Ну я такого не ожидаю." They belong on the status strip
+   above the composer, where the app reports on itself, and in the console
+   drawer, which is the record. The transcript holds the conversation and the
+   approval cards. Nothing else. */
+const APPSTATUS = { text:'', tone:'nominal' };
+function appSay(text, tone) {
+  const line = String(text || '').trim();
+  if (!line) return;
+  APPSTATUS.text = line;
+  APPSTATUS.tone = tone || 'nominal';
+  LOGS.push([new Date().toTimeString().slice(0, 8), tone === 'caution' ? 'warn' : 'info', line]);
+  if (LOGS.length > 300) LOGS.shift();
+}
+
 const LOGS = [];
 const LLMLOGS = [];
 function renderConsole() {
@@ -3101,6 +3147,14 @@ function act(a) {
      about how the provider is saved and activated differs; only whether we
      were allowed to claim the key works. */
   if (a === 'wiz:saveUnchecked') { WIZ.acceptUnchecked = true; wizNext(); return; }
+  /* F4 — the one action a person can take about an agent that is too old to
+     have coding modes. Shipping the matching agent inside the DMG is the real
+     fix and is not this window's to make; until then, take them to where the
+     newer one is. */
+  if (a === 'agent:update') {
+    if (BR && BR.openExternal) BR.openExternal('https://github.com/AtomicBot-ai/atomic-agent/releases');
+    return;
+  }
   if (a === 'wiz:cancel') { WIZ.phase = null; render(); return; }
   if (a === 'sel:browseLocal') { SEL.kind = 'model'; SEL.filter = ''; render(); selLoadLocal(); return; }
   if (a === 'sel:closeAdd') { SEL.addOpen = false; render(); return; }
@@ -4475,7 +4529,7 @@ function applyStatus(st) {
        held in memory (the coding mode) is gone with it, so the generation
        moves here, before loadResources can confirm anything against it. */
     AGENT_GEN++;
-    S.log.push({id:nid(), k:'system', text:'Connected · ' + esc(S.live.workingDir)});
+    appSay('Connected · ' + S.live.workingDir);
     loadResources();
   }
   if (S.live.state === 'missing-binary' || S.live.state === 'error') {
@@ -4687,10 +4741,71 @@ function startLiveTurn(text) {
       return;
     }
     S.turnId = res.turnId;
+    /* F2 — when the turn started, so a failure can say how long it waited
+       rather than only that it gave up. The tester's turn spent 95 seconds
+       retrying and the transcript said nothing about any of it. */
+    S.turnStartedAt = Date.now();
     // item 6: the sidebar's running dot follows the stream, not S.busy.
     RUNNING.set(res.turnId, S.agentSession || null);
     renderSidebar();
   });
+}
+
+/* ---------------------------------------------------------------
+   F2 — a failure a person can act on.
+
+   What reached the tester was `turn failed [transport]: fetch failed`.
+   Neither half of that is hers: `transport` is the agent's category enum and
+   `fetch failed` is undici's string, and between them they name no provider,
+   no host, and nothing she could do next. The window knows all three — which
+   provider is active, which host that kind talks to, and how long the turn
+   had been running — so it says them, and offers the one action that helps.
+   --------------------------------------------------------------- */
+
+/** The host a provider entry actually talks to, for naming it out loud. */
+function providerHost(entry) {
+  if (!entry) return '';
+  const KIND_HOST = {
+    openrouter: 'openrouter.ai',
+    aimlapi: 'api.aimlapi.com',
+    gemini: 'generativelanguage.googleapis.com',
+  };
+  if (entry.baseUrl) {
+    try { return new URL(entry.baseUrl).host; } catch (e) { return entry.baseUrl; }
+  }
+  return KIND_HOST[entry.kind] || '';
+}
+
+/** The endpoint not answering, as opposed to the turn itself going wrong. */
+function providerFailure(ev) {
+  const cat = String((ev && ev.category) || '');
+  const msg = String((ev && ev.error) || '');
+  return cat === 'transport'
+    || /fetch failed|ECONN|ETIMEDOUT|ENOTFOUND|socket hang up|network|timed out/i.test(msg);
+}
+
+/** How long this turn had been going, in words. */
+function turnWaited() {
+  if (!S.turnStartedAt) return '';
+  const s2 = Math.round((Date.now() - S.turnStartedAt) / 1000);
+  if (s2 < 1) return '';
+  return s2 >= 60 ? ' after ' + Math.floor(s2 / 60) + ' min ' + (s2 % 60) + ' s' : ' after ' + s2 + ' s';
+}
+
+function turnFailureLine(ev) {
+  const id = selActiveProviderId();
+  const entry = (selProviders() || []).find((p) => p.id === id);
+  const waited = turnWaited();
+  if (providerFailure(ev)) {
+    const host = providerHost(entry);
+    return esc((id || 'The provider') + ' is not answering'
+      + (host ? ' — ' + host : '') + '.' + (waited ? ' The turn gave up' + waited + '.' : ''));
+  }
+  /* Anything else is the turn going wrong rather than the endpoint, and the
+     agent's own sentence is the best thing available. The category is dropped
+     either way: it is an enum name, not a word for a person. */
+  return esc('The turn could not be completed' + waited + ': '
+    + (ev.error || 'the agent gave no reason'));
 }
 
 function onChatEvent(ev) {
@@ -4864,7 +4979,8 @@ function onChatEvent(ev) {
     // so a failed turn printed the bare sentence `turn failed: `. The
     // bracketed category mirrors the TUI's `failed [${category}]: …`.
     if (ev.kind === 'error' && item) S.log.push({id:nid(), k:'system',
-      text:'turn failed' + (ev.category ? ' [' + esc(ev.category) + ']' : '') + ': ' + esc(ev.error || 'the agent gave no message')});
+      text: turnFailureLine(ev),
+      act: providerFailure(ev) ? 'switch-provider' : null});
     // A turn ended: the steer watermark belongs to the turn that is over
     // (chat-orchestrator.ts resets steeredAhead with the queue). The
     // sent-and-not-yet-echoed list goes with it — a `steer_applied` for this
@@ -7242,8 +7358,15 @@ function obImportPreviewKey(input, key) {
 /** handleImportDoneKey (:402-413): any key hands over to the agent. */
 function obImportDoneKey(input, key) {
   if (key.ctrl) return false;
-  obFinishImport();
-  return true;
+  /* F8 — Enter and Space commit; nothing else does.
+     This step took ANY key and finished the flow, because the TUI's footer
+     said "any key to start" and this was a literal port of it. In a window
+     with a focus ring and a Tab order that is not a shortcut, it is a trap:
+     the tester pressed a key to see what would happen and was thrown out of
+     the step. The strip now says "enter start", and this is what makes that
+     true. */
+  if (key.return || input === ' ') { obFinishImport(); return true; }
+  return false;
 }
 
 /**
@@ -9397,7 +9520,7 @@ function codingModeChip() {
   // mode. Painting 'default' would name a stance the agent does not have.
   if (MODE.supported === false) {
     return '<button class="cchip cmodechip" data-act="modes" '
-      + 'title="this agent build has no /api/coding-mode route" '
+      + 'title="' + esc(MODE_NEEDS_NEWER) + '" '
       + 'style="color:var(--text-disabled)">' + ic('key') + 'mode —' + ic('chevD') + '</button>';
   }
   // The same blank, for the same reason, one state earlier: the route has not
@@ -9438,16 +9561,20 @@ function modesHTML() {
         const on = !off && MODE.known && m.id === currentMode();
         return '<button class="poprow' + (on ? ' on' : '') + (off ? ' dim' : '') + '"'
           + (off ? ' disabled' : ' data-mode="' + m.id + '"') + '>'
-          + '<span class="radio"' + (on ? ' style="border-color:var(--accent);border-width:4px"' : '') + '></span>'
+          + '<span class="radio' + (on ? ' on' : '') + '"></span>'
           + '<span><span style="font-weight:500">' + esc(m.label) + '</span>'
-          + '<span class="cap" style="display:block">' + esc(off ? 'needs an agent with the coding-mode route' : m.detail) + '</span></span>'
+          + '<span class="cap" style="display:block">' + esc(off ? MODE_NEEDS_NEWER : m.detail) + '</span></span>'
           + (on ? '<span class="cap" style="margin-left:auto">current</span>' : '') + '</button>';
       }).join('')
     + '<div style="padding:10px 16px">'
     + (MODE.supported === false
-        ? '<p class="cap" style="margin:0">'
-          + 'This agent build has no /api/coding-mode route, so the stance cannot be changed. Running '
-          + esc(S.live.binary || 'no binary') + '</p>'
+        /* F4 — this is our packaging problem, and it used to be presented to
+           the user as their broken feature: four greyed stances, an internal
+           route name, and the path of the binary we happened to spawn. None
+           of that is actionable by a person. Say which version is needed and
+           offer the one thing that helps. */
+        ? '<p class="ob-help" style="margin:0">' + esc(MODE_NEEDS_NEWER)
+          + ' <button class="sysact" data-act="agent:update">Update agent</button></p>'
         : '<p class="cap" style="margin:0">'
           + 'A stance for this session. It moves the live approval ladder and plan flag and writes nothing to config.'
           + '</p>'
@@ -10426,6 +10553,8 @@ function renderItems() {
     they interpolate), so it is emitted as the single row would emit it. */
 function systemRun(m, times) {
   return '<div class="sysrow"><span></span><span>' + m.text
+    + (m.act === 'switch-provider'
+        ? ' <button class="sysact" data-sel-open="provider">Switch provider</button>' : '')
     + ' <span class="sysrep" title="' + times + ' times in a row">\u00d7' + times + '</span></span></div>';
 }
 
@@ -10573,10 +10702,60 @@ async function applyTraceDurations() {
 }
 
 /** Escaped prose with files as chips and URLs as links. */
+/* ---------------------------------------------------------------
+   F12 — markdown, rendered.
+
+   A model writes markdown; this window printed it. `**asterisks**` reached
+   the tester's screen as asterisks, and so did every heading, list and code
+   fence in a long reply. There is one renderer and every place a model's
+   prose can land goes through it — the reply body, the tool-card summary and
+   the plan hand-off — so they cannot drift apart again.
+
+   It runs on ALREADY-ESCAPED text and only ever inserts tags of its own, so
+   nothing a model writes can become markup. Code spans and fences are lifted
+   out first and put back last: markdown inside code is not markdown.
+   --------------------------------------------------------------- */
+function mdInline(t) {
+  return t
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/(^|[\s(])\*([^*\n]+)\*(?=$|[\s.,;:!?)])/g, '$1<em>$2</em>')
+    .replace(/(^|[\s(])_([^_\n]+)_(?=$|[\s.,;:!?)])/g, '$1<em>$2</em>')
+    .replace(/~~([^~]+)~~/g, '<s>$1</s>');
+}
+
+function renderMarkdown(escaped) {
+  const held = [];
+  let t = escaped
+    .replace(/```([\s\S]*?)```/g, (m, code) =>
+      '\u0000' + (held.push('<pre class="mdpre"><code>' + code.replace(/^\n/, '') + '</code></pre>') - 1) + '\u0000')
+    .replace(/`([^`\n]+)`/g, (m, code) =>
+      '\u0000' + (held.push('<code class="mdcode">' + code + '</code>') - 1) + '\u0000');
+
+  const out = [];
+  let list = null;                       // 'ul' | 'ol' | null
+  const closeList = () => { if (list) { out.push('</' + list + '>'); list = null; } };
+  for (const raw of t.split('\n')) {
+    const line = raw.replace(/\s+$/, '');
+    const heading = /^(#{1,3})\s+(.*)$/.exec(line);
+    const bullet = /^\s*[-*+]\s+(.*)$/.exec(line);
+    const numbered = /^\s*\d+[.)]\s+(.*)$/.exec(line);
+    const quote = /^&gt;\s?(.*)$/.exec(line);
+    if (heading) { closeList(); out.push('<h' + heading[1].length + ' class="mdh">' + mdInline(heading[2]) + '</h' + heading[1].length + '>'); continue; }
+    if (/^\s*([-*_])\1{2,}\s*$/.test(line)) { closeList(); out.push('<hr class="mdhr">'); continue; }
+    if (bullet) { if (list !== 'ul') { closeList(); out.push('<ul class="mdlist">'); list = 'ul'; } out.push('<li>' + mdInline(bullet[1]) + '</li>'); continue; }
+    if (numbered) { if (list !== 'ol') { closeList(); out.push('<ol class="mdlist">'); list = 'ol'; } out.push('<li>' + mdInline(numbered[1]) + '</li>'); continue; }
+    if (quote) { closeList(); out.push('<blockquote class="mdquote">' + mdInline(quote[1]) + '</blockquote>'); continue; }
+    closeList();
+    out.push(line ? mdInline(line) : '');
+  }
+  closeList();
+  return out.join('\n').replace(/\u0000(\d+)\u0000/g, (m, i) => held[+i]);
+}
+
 function renderProse(text) {
   const URL_RE = /(?<![\w.])(?:https?:\/\/|www\.)[^\s<>"']+/g;
   const FILE_RE = /(?<![\w\/])((?:~|\/)(?:[\w.@+-]+\/)*[\w.@+-]+\.[A-Za-z0-9]{1,6})(?![\w\/])/g;
-  let html = esc(text);
+  let html = renderMarkdown(esc(text));
   html = html.replace(URL_RE, (u) => {
     const trail = (u.match(/[.,;:!?)\]}>"'\u00bb]+$/) || [''])[0];
     const core = u.slice(0, u.length - trail.length);
@@ -10905,11 +11084,16 @@ if (typeof window !== 'undefined') {
 function bswReport(res, extra) {
   if (!res || !res.ok) return;
   if (res.providerId && res.transport) {
-    S.log.push({id:nid(), k:'system', text: esc('Switched active text provider to "' + res.providerId + '". New messages use ' + res.transport + '.')});
+    appSay('Provider ' + res.providerId + ' · ' + res.transport);
   }
-  if (extra) S.log.push({id:nid(), k:'system', text: esc(extra)});
-  if (res.daemonLine) S.log.push({id:nid(), k:'system', text: esc(res.daemonLine)});
-  if (res.daemon === 'start-failed' && res.error) S.log.push({id:nid(), k:'system', text: esc('local-llm: ' + res.error)});
+  if (extra) appSay(extra);
+  if (res.daemonLine) appSay(res.daemonLine);
+  /* A daemon that would not start is the one thing here a person must act on,
+     so it keeps its place in the transcript as well as the strip. */
+  if (res.daemon === 'start-failed' && res.error) {
+    appSay('Local model daemon did not start', 'caution');
+    S.log.push({id:nid(), k:'system', text: esc('The local model daemon did not start: ' + res.error)});
+  }
   // No "restarting" line: main has already restarted `atag serve` by the
   // time this runs, and applyStatus reports the reconnect itself.
   render();
