@@ -2,6 +2,7 @@ import { Box, Text } from "ink";
 import type { ReactElement } from "react";
 import { LinkifiedText } from "../render/linkify-text.js";
 import { MarkdownRenderer } from "../render/markdown-renderer.js";
+import { fusionInk } from "../theme/fusion-tint.js";
 import { theme } from "../theme/theme.js";
 
 interface AssistantBubbleProps {
@@ -10,6 +11,12 @@ interface AssistantBubbleProps {
   streaming?: boolean;
   /** Counts non-reply tool steps run during the turn. */
   toolSteps?: number;
+  /**
+   * The Fusion run mode is on: the label, the border and the footer
+   * glyph take the palette's orange, because this reply is the cloud
+   * orchestrator's and the tint is what says so.
+   */
+  fusion?: boolean;
 }
 
 /**
@@ -33,11 +40,13 @@ export function AssistantBubble({
   text,
   streaming = false,
   toolSteps,
+  fusion = false,
 }: AssistantBubbleProps): ReactElement {
   const showFooter = !streaming && toolSteps !== undefined && toolSteps > 0;
+  const tone = fusion ? fusionInk() : theme.colors.assistant;
   return (
     <Box flexDirection="column" marginTop={1}>
-      <Text color={theme.colors.assistant} bold>
+      <Text color={tone} bold>
         {"  AGENT"}
       </Text>
       <Box
@@ -46,7 +55,7 @@ export function AssistantBubble({
         borderRight={false}
         borderBottom={false}
         borderLeft
-        borderColor={theme.colors.assistant}
+        borderColor={tone}
         paddingBottom={1}
         paddingLeft={2}
         paddingRight={1}
@@ -62,7 +71,7 @@ export function AssistantBubble({
       </Box>
       {showFooter ? (
         <Box marginLeft={3}>
-          <Text color={theme.colors.assistant}>●</Text>
+          <Text color={tone}>●</Text>
           <Text color={theme.colors.muted}>
             {" "}
             {toolSteps} tool step{toolSteps === 1 ? "" : "s"}

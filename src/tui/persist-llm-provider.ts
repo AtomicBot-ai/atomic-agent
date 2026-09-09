@@ -74,7 +74,7 @@ function localLlamaUrlFromFile(file: UserConfigFile): string {
   return file.localModels.url;
 }
 
-function readLlmBlockOrDefault(file: UserConfigFile): UserLlmFileConfig {
+export function readLlmBlockOrDefault(file: UserConfigFile): UserLlmFileConfig {
   return (
     file.llm ?? {
       activeTextProvider: "local-llama",

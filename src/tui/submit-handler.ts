@@ -2,6 +2,7 @@ import {
   dispatchSlashCommand,
   type SlashDispatchResult,
 } from "./commands/slash-command-handler.js";
+import { runRunModeVerb } from "./commands/run-mode-verb.js";
 import { parseSlashCommand, slashPrefix } from "./commands/slash-command-parser.js";
 import {
   filterSlashCommands,
@@ -241,6 +242,7 @@ export function runSlashCommand(
     }
   }
   if (result.queueVerb) runQueueVerb(result.queueVerb, state, dispatch, callbacks);
+  if (result.runModeVerb) runRunModeVerb(result.runModeVerb, state, dispatch, callbacks);
   if (result.triggerNewWindow) callbacks.onNewWindowRequested?.();
   if (result.triggerAbort) callbacks.onAbort();
   if (result.triggerQuit) {
@@ -388,3 +390,4 @@ function runTelegramVerb(
       return;
   }
 }
+

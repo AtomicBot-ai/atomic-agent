@@ -3,17 +3,14 @@ import type { ReactElement, ReactNode } from "react";
 
 import { fitToWidth } from "../components/fit-to-width.js";
 import { PasteFieldTarget } from "../context-menu/paste-field-target.js";
-import {
-  MouseTarget,
-  useMouseCommands,
-  useMouseTarget,
-} from "../mouse/mouse-context.js";
+import { useMouseTarget } from "../mouse/mouse-context.js";
 import { isPrimaryPress } from "../mouse/mouse-event.js";
 import { MOUSE_LAYER_MODAL } from "../mouse/mouse-registry.js";
 import { plainKey } from "../mouse/synthetic-key.js";
 import { chromeTheme } from "../theme/theme.js";
 import type { TuiState } from "../tui-state.js";
 import { handleComposerSwitchKey } from "./composer-switch-key-bindings.js";
+import { SwitchRow } from "./composer-switch-popup-row.js";
 import {
   clampComposerSwitchCursor,
   selectComposerSwitchRows,
@@ -25,8 +22,6 @@ import {
 const PREFERRED_WIDTH = 52;
 /** Rows of list body at most, before the window starts scrolling. */
 const MAX_BODY_ROWS = 10;
-/** Column reserved for the entry label when a detail column follows it. */
-const LABEL_WIDTH = 24;
 
 export interface ComposerSwitchPopupProps {
   state: TuiState;
@@ -232,60 +227,6 @@ function PopupFrame({
     >
       {children}
     </Box>
-  );
-}
-
-function SwitchRow({
-  row,
-  inner,
-  selected,
-  rowIndex,
-  onActivate,
-}: {
-  row: ComposerSwitchRow;
-  inner: number;
-  selected: boolean;
-  rowIndex: number;
-  onActivate: (row: ComposerSwitchRow) => void;
-}): ReactElement {
-  const mouse = useMouseCommands();
-  const marker = selected ? chromeTheme.glyphs.menuCursor : " ";
-  const check = row.active ? `${chromeTheme.glyphs.check} ` : "";
-  // The label column is reserved only when there is a detail column to
-  // align: catalog ids differ past column 24, and truncating them
-  // against an empty right half made neighbouring rows read identical.
-  const labelBudget =
-    row.detail.length > 0 ? Math.min(LABEL_WIDTH, inner) : inner;
-  const label = fitToWidth(` ${marker} ${check}${row.label}`, labelBudget);
-  const detail = fitToWidth(` ${row.detail}`, Math.max(0, inner - label.length));
-  const body = (
-    <>
-      {/*
-        Selection is weight plus the marker, not a second colour: on a
-        painted panel a colour swap either fights the ground or is too
-        faint to see, and the marker is the part that survives NO_COLOR.
-      */}
-      <Text color={chromeTheme.colors.railForeground} bold={selected}>
-        {label}
-      </Text>
-      <Text color={chromeTheme.colors.railMuted}>{detail}</Text>
-    </>
-  );
-  if (!mouse) return <Box>{body}</Box>;
-  return (
-    <MouseTarget
-      layer={MOUSE_LAYER_MODAL}
-      onMouse={(hit) => {
-        if (!isPrimaryPress(hit.event)) return false;
-        // One click acts, the way the operator menu's rows do: this list
-        // was opened to pick something from it.
-        mouse.dispatch({ type: "composer_switch_cursor_set", cursor: rowIndex });
-        onActivate(row);
-        return true;
-      }}
-    >
-      {body}
-    </MouseTarget>
   );
 }
 

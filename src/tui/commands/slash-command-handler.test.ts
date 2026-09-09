@@ -90,6 +90,25 @@ describe("dispatchSlashCommand", () => {
     expect(result.actions).toEqual([{ type: "ui_mode_set", mode: "chat" }]);
   });
 
+  it("bare /runmode opens the composer's backend switch", () => {
+    const result = dispatchSlashCommand("/runmode");
+    expect(result.actions).toEqual([{ type: "composer_switch_opened", kind: "backend" }]);
+    expect(result.runModeVerb).toBeUndefined();
+  });
+
+  it("/runmode <mode> and /runmode status hand a verb to the caller", () => {
+    expect(dispatchSlashCommand("/runmode fusion").runModeVerb).toBe("fusion");
+    expect(dispatchSlashCommand("/runmode fusion").actions).toEqual([]);
+    expect(dispatchSlashCommand("/runmode status").runModeVerb).toBe("status");
+  });
+
+  it("/runmode with an unknown mode prints usage and does nothing", () => {
+    const result = dispatchSlashCommand("/runmode hybrid");
+    expect(result.actions).toEqual([]);
+    expect(result.runModeVerb).toBeUndefined();
+    expect(result.systemMessage).toMatch(/unknown run mode "hybrid"/);
+  });
+
   it("switches to debug mode and tab for /logs", () => {
     const result = dispatchSlashCommand("/logs");
     expect(result.actions).toEqual([

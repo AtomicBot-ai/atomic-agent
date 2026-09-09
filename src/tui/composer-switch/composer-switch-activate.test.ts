@@ -4,13 +4,14 @@ import type { TuiAction } from "../tui-action.js";
 import type { TuiAppCallbacks } from "../tui-app.js";
 import type { TuiState } from "../tui-state.js";
 import { runComposerSwitchRow } from "./composer-switch-activate.js";
-import { cloudState, localState } from "./composer-switch-fixtures.js";
+import { cloudState, fusionState, localState } from "./composer-switch-fixtures.js";
 import { selectComposerSwitchRows } from "./composer-switch-rows.js";
 import type { ComposerSwitchKind } from "./composer-switch-state.js";
 
 function harness(state: TuiState) {
   const actions: TuiAction[] = [];
   const callbacks = {
+    onRunModeChangeRequested: vi.fn(),
     onProvidersSetActiveText: vi.fn(),
     onProvidersSelectChatModel: vi.fn(),
     onLocalModelsSetActiveRequested: vi.fn(),
@@ -18,6 +19,7 @@ function harness(state: TuiState) {
     onLocalModelsDaemonStartRequested: vi.fn(),
     onLocalModelsDaemonStopRequested: vi.fn(),
   } as unknown as TuiAppCallbacks & {
+    onRunModeChangeRequested: ReturnType<typeof vi.fn>;
     onProvidersSetActiveText: ReturnType<typeof vi.fn>;
     onProvidersSelectChatModel: ReturnType<typeof vi.fn>;
     onLocalModelsSetActiveRequested: ReturnType<typeof vi.fn>;
@@ -180,5 +182,66 @@ describe("the download deep link", () => {
       "llm_mode_set",
     ]);
     expect(app.actions.at(-1)).toEqual({ type: "llm_mode_set", mode: "local" });
+  });
+});
+
+describe("picking fusion", () => {
+  it("refuses with the pre-flight line when no cloud provider has a key", () => {
+    const app = harness(localState());
+    app.pick("backend", "fusion");
+    expect(app.callbacks.onRunModeChangeRequested).not.toHaveBeenCalled();
+    expect(app.actions).toContainEqual({
+      type: "composer_notice",
+      text: expect.stringMatching(/needs a cloud provider with a key/),
+    });
+  });
+
+  it("refuses when nothing is downloaded for the workers", () => {
+    const base = cloudState();
+    const state = {
+      ...base,
+      localModelsPanel: { ...base.localModelsPanel, rows: [], lastRefreshedAt: 1 },
+    };
+    const app = harness(state);
+    app.pick("backend", "fusion");
+    expect(app.callbacks.onRunModeChangeRequested).not.toHaveBeenCalled();
+    expect(app.actions).toContainEqual({
+      type: "composer_notice",
+      text: expect.stringMatching(/needs a downloaded local model/),
+    });
+  });
+
+  it("hands a ready state to the run-mode orchestrator and nothing else", () => {
+    const app = harness(fusionState({ stored: null, effective: "cloud" }));
+    app.pick("backend", "fusion");
+    expect(app.callbacks.onRunModeChangeRequested).toHaveBeenCalledWith("fusion");
+    expect(app.callbacks.onProvidersSetActiveText).not.toHaveBeenCalled();
+    expect(app.actions.map((action) => action.type)).toEqual(["composer_switch_closed"]);
+  });
+});
+
+describe("leaving fusion", () => {
+  it("cloud clears the stored mode through the run-mode write, not set-active", () => {
+    const app = harness(fusionState());
+    app.pick("backend", "cloud");
+    expect(app.callbacks.onRunModeChangeRequested).toHaveBeenCalledWith("cloud");
+    expect(app.callbacks.onProvidersSetActiveText).not.toHaveBeenCalled();
+  });
+
+  it("local clears the stored mode the same way, then picks the model as before", () => {
+    const app = harness(fusionState());
+    app.pick("backend", "local");
+    expect(app.callbacks.onRunModeChangeRequested).toHaveBeenCalledWith("local");
+    // The model pick still goes through `triggerLlmPrimary`, whose own
+    // set-active call is a redundant write of the same provider — not a
+    // second mode. What must not happen is the mode write being skipped.
+    expect(app.callbacks.onRunModeChangeRequested).toHaveBeenCalledTimes(1);
+  });
+
+  it("off fusion, cloud and local keep going through set-active", () => {
+    const app = harness(cloudState({ isActiveText: false }));
+    app.pick("backend", "cloud");
+    expect(app.callbacks.onRunModeChangeRequested).not.toHaveBeenCalled();
+    expect(app.callbacks.onProvidersSetActiveText).toHaveBeenCalledWith("openrouter");
   });
 });

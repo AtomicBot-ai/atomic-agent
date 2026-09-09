@@ -232,6 +232,11 @@ const V0_2_2_SLASH_COMMANDS = [
       "hide or show the session rail (the rail's « does the same)",
   },
   {
+    name: "runmode",
+    description:
+      "where the chat runs: `/runmode` opens the switch · `/runmode local|cloud|fusion` sets one · `/runmode status`",
+  },
+  {
     name: "uninstall",
     description:
       "remove atomic-agent and all of its data from this machine — permanent, no undo",
@@ -259,6 +264,27 @@ describe("menu registry", () => {
       node.slash ? [node.slash.name, ...(node.slash.aliases ?? [])] : [],
     );
     expect(new Set(names).size).toBe(names.length);
+  });
+
+  it("routes every `command` through a registered slash verb", () => {
+    for (const node of MENU) {
+      if (!node.command) continue;
+      expect(node.command.startsWith("/")).toBe(true);
+      const verb = node.command.slice(1).split(/\s+/)[0] ?? "";
+      expect(SLASH_COMMANDS.some((cmd) => cmd.name === verb || cmd.aliases?.includes(verb))).toBe(true);
+      // An activation channel, not a listing: a `command` node never
+      // duplicates its verb in the palette.
+      expect(node.slash).toBeUndefined();
+    }
+  });
+
+  it("fans Local, Cloud and Fusion out under Where it runs with the digit chords", () => {
+    const children = MENU.filter((node) => node.parent === "run.type");
+    expect(children.map((node) => [node.label, node.chord, node.command])).toEqual([
+      ["Local", "1", "/runmode local"],
+      ["Cloud", "2", "/runmode cloud"],
+      ["Fusion", "3", "/runmode fusion"],
+    ]);
   });
 
   it("gives every slash command a distinct palette rank", () => {

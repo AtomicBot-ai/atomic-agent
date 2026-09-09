@@ -28,6 +28,8 @@ export const COMPOSER_SWITCH_KINDS: readonly ComposerSwitchKind[] = [
 export function composerSwitchKindsFor(
   backend: ComposerBackendKind,
 ): readonly ComposerSwitchKind[] {
+  // Fusion's provider and model controls address the orchestrator leg,
+  // so it walks the same three controls the cloud route does.
   return backend === "local" ? ["backend", "model"] : COMPOSER_SWITCH_KINDS;
 }
 
@@ -40,8 +42,14 @@ export function composerSwitchKindsFor(
  * `external` for one the operator runs themselves at their own base URL.
  * There is no third provider kind behind `custom`: the config models it
  * as a mode of the local backend, and the switch says the same thing.
+ *
+ * `fusion` is a mode over two of them: the active provider is a cloud
+ * orchestrator and the managed llama.cpp hosts its workers. It is
+ * effective only while the orchestrator is the active provider — see
+ * `resolveRunMode` — so the switch reads it from the resolver's answer
+ * rather than from the provider rows.
  */
-export type ComposerBackendKind = "cloud" | "local" | "custom";
+export type ComposerBackendKind = "cloud" | "local" | "custom" | "fusion";
 
 export interface ComposerSwitchState {
   readonly kind: ComposerSwitchKind;

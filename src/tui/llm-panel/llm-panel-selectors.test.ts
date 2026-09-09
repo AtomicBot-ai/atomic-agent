@@ -130,6 +130,51 @@ describe("llm-panel selectors", () => {
     });
   });
 
+  it("names both legs, orchestrator first, on an effective fusion", () => {
+    const base = createInitialTuiState(fakeSession());
+    const state = {
+      ...base,
+      localModelsPanel: {
+        ...base.localModelsPanel,
+        configMode: "managed" as const,
+        activeModelId: "qwen-3.5-4b" as LocalModelDef["id"],
+      },
+      providersPanel: {
+        ...base.providersPanel,
+        runMode: {
+          stored: "fusion" as const,
+          effective: "fusion" as const,
+          orchestratorProviderId: "openrouter",
+          orchestratorModel: null,
+          workerProviderId: "local-llama",
+          workerModel: null,
+          workers: 2,
+          workerMaxSteps: 40,
+          workerTimeoutMs: 600_000,
+          primaryProviderId: "openrouter",
+          degraded: null,
+        },
+        rows: [
+          {
+            id: "openrouter",
+            kind: "openrouter",
+            isActiveText: true,
+            isActiveEmbedding: false,
+            hasApiKey: true,
+            baseUrl: null,
+            subscriptionCli: null,
+            chatModel: "openai/gpt-4o-mini",
+            embeddingModel: null,
+          },
+        ],
+      },
+    };
+    expect(selectPromptLlmMeta(state)).toEqual({
+      model: "openai/gpt-4o-mini ⇄ qwen-3.5-4b",
+      provider: "openrouter",
+    });
+  });
+
   it("shows the picked catalog id, not the GGUF name, on managed local", () => {
     const base = createInitialTuiState(fakeSession());
     const state = {

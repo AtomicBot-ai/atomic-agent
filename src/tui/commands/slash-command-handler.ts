@@ -7,6 +7,7 @@ import type { WhileBusySubmitMode } from "../../config/index.js";
 import type { TuiAction } from "../tui-action.js";
 import { normalizeLocalLlmBaseUrl } from "../persist-user-local-models-config.js";
 import { isThemeName, THEME_NAMES } from "../theme/theme.js";
+import { parseRunModeCommand } from "./dispatch-run-mode.js";
 import { parseSlashCommand } from "./slash-command-parser.js";
 import { resolveSlashCommand, SLASH_COMMANDS } from "./slash-commands.js";
 import { renderToolsOverview, renderToolsSearch } from "./tools-listing.js";
@@ -125,6 +126,12 @@ export interface SlashDispatchResult {
    * dialog it opens is what eventually asks for that.
    */
   readonly triggerUninstallPlan?: boolean;
+  /**
+   * `/runmode <mode>` picks a run mode, `/runmode status` prints what it
+   * resolves to. Both need the live state / orchestrator, which only the
+   * caller (`submit-handler.ts`) can reach.
+   */
+  readonly runModeVerb?: import("../../config/index.js").RunModeName | "status";
 }
 
 /**
@@ -304,6 +311,16 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
       return dispatchPrivacySub(parsed.args);
     case "analytics":
       return dispatchAnalyticsSub(parsed.args);
+    case "runmode": {
+      const cmd = parseRunModeCommand(parsed.args);
+      if (cmd.error) return pureActions([], { systemMessage: cmd.error });
+      if (cmd.openSwitch) {
+        // The composer's own popup, on its backend control: no second
+        // list of the same three modes to keep in step.
+        return pureActions([{ type: "composer_switch_opened", kind: "backend" }]);
+      }
+      return pureActions([], { runModeVerb: cmd.status ? "status" : cmd.mode });
+    }
     default:
       return pureActions([], {
         systemMessage: `command /${resolved.name} not yet implemented`,
@@ -447,6 +464,7 @@ function pureActions(
     queueVerb: undefined,
     submitWhileBusy: undefined,
     setWhileBusyMode: undefined,
+    runModeVerb: undefined,
     ...overrides,
   };
 }

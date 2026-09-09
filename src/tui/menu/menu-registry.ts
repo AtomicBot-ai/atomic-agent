@@ -76,6 +76,15 @@ interface MenuNodeBase {
   readonly slash?: MenuSlash;
   /** Parent submenu id, for nodes one level down. */
   readonly parent?: string;
+  /**
+   * Slash line run when this node is activated, for entries that take
+   * an argument (`/runmode fusion`). Defaults to `/${slash.name}`. An
+   * activation channel, not a listing: a node with `command` and no
+   * `slash` never appears in the palette, so the palette stays one
+   * entry per verb while a submenu can still fan a verb's arguments out
+   * as rows with chords.
+   */
+  readonly command?: string;
 }
 
 /** A destination: a section, or a tab inside one. */
@@ -455,6 +464,45 @@ export const MENU: readonly MenuNode[] = [
       aliases: ["models", "local"],
       rank: 27,
     },
+  },
+  {
+    kind: "submenu",
+    id: "run.type",
+    label: "Where it runs…",
+    group: "run",
+    slash: {
+      name: "runmode",
+      description:
+        "where the chat runs: `/runmode` opens the switch · `/runmode local|cloud|fusion` sets one · `/runmode status`",
+      rank: 40,
+    },
+  },
+  {
+    kind: "action",
+    id: "run.type.local",
+    label: "Local",
+    group: "run",
+    parent: "run.type",
+    chord: "1",
+    command: "/runmode local",
+  },
+  {
+    kind: "action",
+    id: "run.type.cloud",
+    label: "Cloud",
+    group: "run",
+    parent: "run.type",
+    chord: "2",
+    command: "/runmode cloud",
+  },
+  {
+    kind: "action",
+    id: "run.type.fusion",
+    label: "Fusion",
+    group: "run",
+    parent: "run.type",
+    chord: "3",
+    command: "/runmode fusion",
   },
   {
     kind: "action",

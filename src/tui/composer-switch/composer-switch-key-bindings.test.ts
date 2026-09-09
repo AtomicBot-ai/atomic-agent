@@ -87,7 +87,9 @@ describe("driving an open strip", () => {
     app.press("", { downArrow: true });
     app.press("", { downArrow: true });
     app.press("", { downArrow: true });
-    expect(app.at().composerSwitch?.cursor).toBe(2);
+    app.press("", { downArrow: true });
+    // Four backend rows (cloud, local, custom, fusion): clamps on the last.
+    expect(app.at().composerSwitch?.cursor).toBe(3);
   });
 
   it("←→ walk the three controls without closing", () => {

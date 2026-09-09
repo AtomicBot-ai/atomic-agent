@@ -182,6 +182,16 @@ export function selectLlmActiveRouteSummary(
 
 export function selectPromptLlmMeta(state: TuiState): PromptLlmMeta {
   const active = state.providersPanel.rows.find((row) => row.isActiveText) ?? null;
+  const runMode = state.providersPanel.runMode;
+  if (runMode?.effective === "fusion" && active) {
+    // Both legs, joined by the pair separator `prompt-meta-bar.tsx`
+    // already splits its width budget on: the orchestrator's model,
+    // then the model the workers run.
+    const orchestrator = runMode.orchestratorModel ?? active.chatModel ?? active.id;
+    const worker =
+      runMode.workerModel ?? state.localModelsPanel.activeModelId ?? state.llmHealth.model ?? "local";
+    return { model: `${orchestrator} ⇄ ${worker}`, provider: active.id };
+  }
   if (active && active.kind !== "llama-server") {
     return { model: active.chatModel, provider: active.id };
   }

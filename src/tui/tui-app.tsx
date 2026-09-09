@@ -426,6 +426,16 @@ export interface TuiAppCallbacks {
   onProvidersTabRefresh?(): void;
   /** Providers tab / LLM panel: switch the active text provider. */
   onProvidersSetActiveText?(id: string): void;
+  /**
+   * Composer switch / `/runmode` / `ctrl+g 1-3`: change the run mode.
+   * A callback because the write moves `llm.runMode` and
+   * `llm.activeTextProvider` together and hot-applies the provider —
+   * `RunModeOrchestrator` is the only module that does that.
+   */
+  onRunModeChangeRequested?(
+    mode: import("../config/index.js").RunModeName,
+    opts?: import("./persist-run-mode.js").RunModeChangeOptions,
+  ): void;
   /** Providers tab / LLM panel: select an exact chat model for a provider. */
   onProvidersSelectChatModel?(providerId: string, modelId: string): void;
   /**
@@ -814,7 +824,10 @@ export function TuiApp({
   // without them shows it as soon as the first refresh lands.
   const localRouteWithoutSnapshot =
     state.localModelsPanel.lastRefreshedAt === null &&
-    selectComposerBackend(state) === "local";
+    (selectComposerBackend(state) === "local" ||
+      // Fusion's workers are the local route's models: the switch row
+      // and the pre-flight need the same snapshot.
+      selectComposerBackend(state) === "fusion");
   useEffect(() => {
     if (localRouteWithoutSnapshot) callbacks.onLocalModelsRefreshRequested?.();
   }, [localRouteWithoutSnapshot, callbacks]);
@@ -1009,8 +1022,10 @@ export function TuiApp({
     (node: MenuNode) => {
       // A node that carries a slash name is *run as that command*, so the
       // menu never grows a second dispatch path beside the slash handler.
-      if (node.slash) {
-        runSlashCommand(`/${node.slash.name}`, state, dispatch, callbacks);
+      // `command` is the same door with an argument on it.
+      const line = node.command ?? (node.slash ? `/${node.slash.name}` : null);
+      if (line !== null) {
+        runSlashCommand(line, state, dispatch, callbacks);
         return;
       }
       if (node.kind === "place") {
@@ -2047,6 +2062,7 @@ export function TuiApp({
               <ComposerSlot />
               <ComposerOverlay>
                 <PromptShell
+            fusion={promptBackend.kind === "fusion"}
             value={state.inputValue}
             placeholder={
               // While a plan is on offer the field says what typing into

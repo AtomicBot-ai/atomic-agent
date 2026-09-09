@@ -4,9 +4,10 @@ import {
   selectCloudModelSection,
   selectLocalRows,
 } from "../llm-panel/llm-panel-row-builders.js";
-import type { LlmHealthStatus } from "../llm-health/llm-health-state.js";
 import type { LlmPanelRow } from "../llm-panel/llm-panel-selectors.js";
 import type { TuiState } from "../tui-state.js";
+import { describeFusionBlocker } from "../run-mode/fusion-preflight.js";
+import { selectComposerBackend } from "./composer-backend-selectors.js";
 import { filterSwitchRows } from "./composer-switch-filter.js";
 import {
   COMPOSER_SWITCH_TITLES,
@@ -39,78 +40,12 @@ export interface ComposerSwitchRow {
   readonly detail: string;
   readonly active: boolean;
   readonly intent: ComposerSwitchIntent;
-}
-
-/**
- * Which of the three backends the chat route is on right now.
- *
- * `local` and `custom` are the same provider entry (`local-llama`); the
- * config tells them apart by `localModels.mode`, mirrored onto the panel
- * as `configMode`. A route with no active provider at all reads as the
- * local one, matching `selectPromptLlmMeta`.
- */
-export function selectComposerBackend(state: TuiState): ComposerBackendKind {
-  const active =
-    state.providersPanel.rows.find((row) => row.isActiveText) ?? null;
-  if (active && active.kind !== "llama-server") return "cloud";
-  return state.localModelsPanel.configMode === "external" ? "custom" : "local";
-}
-
-export interface ComposerBackendMeta {
-  readonly kind: ComposerBackendKind;
   /**
-   * The dot drawn in front of the backend word, in the vocabulary
-   * `llm-health-badge.tsx` owns.
+   * Rows drawn as something other than rail text. `fusion` paints the
+   * label as the orange chip the meta bar shows for that route, so the
+   * row and the control it opens from read as the same thing.
    */
-  readonly status: LlmHealthStatus;
-}
-
-/**
- * What the backend control renders.
- *
- * Cloud reports `healthy` because there is no probe behind it — the
- * composer has always drawn a green dot for a cloud route, and inventing
- * an `unknown` here would read as a fault where none was observed. Local
- * and custom carry the real llama-server probe, and stay `unknown` until
- * a local backend is actually the route (`localConfigured`), so a fresh
- * install does not announce that a server nobody configured is down.
- */
-export function selectComposerBackendMeta(state: TuiState): ComposerBackendMeta {
-  const kind = selectComposerBackend(state);
-  if (kind === "cloud") return { kind, status: "healthy" };
-  return {
-    kind,
-    status: state.llmHealth.localConfigured ? state.llmHealth.status : "unknown",
-  };
-}
-
-/**
- * True when the route is the managed-local one and there is nothing on
- * disk to run — the state a first launch lands in after picking "local"
- * without pulling weights. The composer's model control turns into a
- * `download model` call to action in that case, because the alternative
- * it used to show was a blank slot or a catalog id for a file that does
- * not exist, and neither told the operator what to do next.
- *
- * Three deliberate abstentions:
- *
- *  - **Off the local route** — cloud has nothing to download, and
- *    `custom` points at a server somebody else runs.
- *  - **Before the first snapshot lands** (`lastRefreshedAt === null`) —
- *    `rows` is empty until the local-models slice is refreshed, and an
- *    empty list is indistinguishable from "nothing downloaded". Saying
- *    `download model` there would flash the call to action on every
- *    boot of an install that has weights sitting on disk.
- *  - **While a pull is running** — the download the CTA asks for is
- *    already happening, and the pull's own progress is the honest
- *    readout.
- */
-export function selectComposerNeedsModelDownload(state: TuiState): boolean {
-  if (selectComposerBackend(state) !== "local") return false;
-  const panel = state.localModelsPanel;
-  if (panel.lastRefreshedAt === null) return false;
-  if (panel.pull !== null) return false;
-  return !panel.rows.some((row) => row.downloaded);
+  readonly emphasis?: "fusion";
 }
 
 /** Cloud providers the operator has actually added, in config order. */
@@ -147,7 +82,38 @@ function backendRows(state: TuiState): readonly ComposerSwitchRow[] {
       active: current === "custom",
       intent: { kind: "backend", backend: "custom" },
     },
+    // Last on purpose: the three above are routes, this one is a mode
+    // built on two of them, and a reader scanning down meets the parts
+    // before the composition.
+    {
+      id: "backend:fusion",
+      label: "fusion",
+      detail: describeFusionBlocker(state) ?? fusionDetail(state),
+      active: current === "fusion",
+      intent: { kind: "backend", backend: "fusion" },
+      emphasis: "fusion",
+    },
   ];
+}
+
+function fusionDetail(state: TuiState): string {
+  const workers = state.providersPanel.runMode?.workers ?? 2;
+  return `cloud plans · ${workers} local worker${workers === 1 ? "" : "s"}`;
+}
+
+/**
+ * The backend row for `kind`, as the popup would list it. `/runmode
+ * <mode>` and the `ctrl+g 1/2/3` chords activate exactly this row, so
+ * every route to a run mode shares one activation path and one
+ * pre-flight.
+ */
+export function backendSwitchRow(
+  state: TuiState,
+  backend: ComposerBackendKind,
+): ComposerSwitchRow {
+  const row = backendRows(state).find((candidate) => candidate.intent.kind === "backend" && candidate.intent.backend === backend);
+  if (!row) throw new Error(`no backend row for ${backend}`);
+  return row;
 }
 
 function providerRows(state: TuiState): readonly ComposerSwitchRow[] {
@@ -180,7 +146,9 @@ function providerRows(state: TuiState): readonly ComposerSwitchRow[] {
  */
 function modelRows(state: TuiState): readonly ComposerSwitchRow[] {
   const backend = selectComposerBackend(state);
-  if (backend === "cloud") {
+  // Under fusion the model control addresses the orchestrator leg — the
+  // active cloud provider — so its rows are the cloud rows.
+  if (backend === "cloud" || backend === "fusion") {
     const section = selectCloudModelSection(state);
     const provider = section.provider;
     if (!provider) return [];

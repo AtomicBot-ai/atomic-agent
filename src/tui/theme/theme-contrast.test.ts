@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { contrastRatio } from "./color-contrast.js";
 import { mixColor } from "./mix-color.js";
 import { parseHexColor } from "./parse-hex-color.js";
+import { FUSION_GROUND_FADE } from "./fusion-tint.js";
 import { CANONICAL_PAGE } from "./theme-palettes.js";
 import { THEMES, THEME_NAMES, type ThemeName, type TuiColors } from "./theme.js";
 
@@ -166,6 +167,19 @@ describe("theme contrast", () => {
         expectContrast(c.chipForeground, c.chipBackground, AA);
         expectContrast(c.accent, c.badgeBackground, AA);
         expectContrast(c.muted, c.badgeBackground, AA);
+      });
+
+      it("the fusion chip and the fusion composer ground keep their ink", () => {
+        // `fusion-tint.ts`: the chip is `warnStrong` as a ground, the
+        // composer's panel is `warnStrong` mixed toward `badgeBackground`.
+        // Both are grounds this app paints, so both are pairs this gate
+        // owns — and the tint has to be visibly different from the
+        // plain panel, or the mode would be invisible.
+        const composer = mixColor(c.warnStrong, c.badgeBackground, FUSION_GROUND_FADE);
+        for (const ground of [c.warnStrong, composer]) {
+          expectContrast(inkFor(c, ground), ground, AA);
+        }
+        expectContrast(composer, c.badgeBackground, 1.3);
       });
 
       it("every step of the context chip's ramp keeps its ink", () => {

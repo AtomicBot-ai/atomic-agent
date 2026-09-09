@@ -1,7 +1,7 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
 import { ComposerMetaControls } from "../composer-switch/composer-meta-controls.js";
-import type { ComposerBackendMeta } from "../composer-switch/composer-switch-rows.js";
+import type { ComposerBackendMeta } from "../composer-switch/composer-backend-selectors.js";
 import { theme } from "../theme/theme.js";
 
 /**

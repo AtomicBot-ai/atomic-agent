@@ -1,12 +1,12 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
 
-import { llmHealthLook } from "../components/llm-health-badge.js";
 import { useMouseCommands, useMouseTarget } from "../mouse/mouse-context.js";
 import { isPrimaryPress } from "../mouse/mouse-event.js";
 import { theme } from "../theme/theme.js";
 import { openLocalModelsPane } from "./composer-switch-activate.js";
-import type { ComposerBackendMeta } from "./composer-switch-rows.js";
+import { BackendControl } from "./composer-backend-control.js";
+import type { ComposerBackendMeta } from "./composer-backend-selectors.js";
 import type { ComposerSwitchKind } from "./composer-switch-state.js";
 
 /** What the model slot says when the local route has no weights on disk. */
@@ -150,69 +150,6 @@ function DownloadModelControl({
         </Text>
       </Text>
     </Box>
-  );
-}
-
-export interface ComposerBackendLook {
-  readonly glyph: string;
-  readonly color: string;
-  /**
-   * Retained for callers that render the probe in full — the Models
-   * pane does. The composer row deliberately shows the dot alone.
-   */
-  readonly word: string | null;
-}
-
-/**
- * What the backend control shows for its status — or `null` for silence.
- *
- * `unknown` draws nothing at all: the shared glyph table's `·` is the
- * very character the row uses as a separator, and the old health pill
- * never appeared in this state either (`localConfigured` gated it), so
- * silence *is* the pill's information content. Cloud keeps its
- * historical green dot but no word — there is no probe behind it, and
- * printing "healthy" would claim an observation nobody made. Local and
- * custom carry the probe's word (healthy / probing / down / error) the
- * way the pill did.
- *
- * The look is asked for on the `"rail"` ground: this control sits on the
- * meta bar, and every dot the table hands back for the page — green,
- * amber, red — was picked to be read against the terminal's own
- * background. Only `unreachable` used to be corrected for that, one
- * token at a time; the ground is now a parameter, so all five come back
- * right.
- */
-export function composerBackendLook(
-  backend: ComposerBackendMeta,
-): ComposerBackendLook | null {
-  if (backend.status === "unknown") return null;
-  const look = llmHealthLook(backend.status, "rail");
-  return {
-    glyph: look.glyph,
-    color: look.color,
-    word: backend.kind === "cloud" ? null : look.label,
-  };
-}
-
-function BackendControl({
-  backend,
-  mouseLayer,
-}: {
-  backend: ComposerBackendMeta;
-  mouseLayer?: number;
-}): ReactElement {
-  const look = composerBackendLook(backend);
-  return (
-    <Control
-      kind="backend"
-      label={backend.kind}
-      glyph={
-        look ? (
-          <Text color={look.color} bold>{`${look.glyph} `}</Text>
-        ) : undefined
-      }
-      mouseLayer={mouseLayer}
-    />
   );
 }
 

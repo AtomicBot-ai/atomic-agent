@@ -1,4 +1,5 @@
 import type { LocalModelDef } from "../../local-llm/index.js";
+import type { ResolvedRunMode } from "../../llm/run-mode/index.js";
 import type { ProviderRow } from "../providers/providers-panel-state.js";
 import { fakeSession } from "../test-fixtures.js";
 import { createInitialTuiState, type TuiState } from "../tui-state.js";
@@ -91,5 +92,41 @@ export function localState(configMode: "managed" | "external" = "managed"): TuiS
         },
       ],
     },
+  };
+}
+
+/**
+ * A resolver answer for an effective fusion: openrouter orchestrates,
+ * the managed llama.cpp hosts the workers.
+ */
+export function resolvedFusion(overrides: Partial<ResolvedRunMode> = {}): ResolvedRunMode {
+  return {
+    stored: "fusion",
+    effective: "fusion",
+    orchestratorProviderId: "openrouter",
+    orchestratorModel: "qwen/qwen3.7-max",
+    workerProviderId: "local-llama",
+    workerModel: "qwen-3.5-4b",
+    workers: 2,
+    workerMaxSteps: 40,
+    workerTimeoutMs: 600_000,
+    primaryProviderId: "openrouter",
+    degraded: null,
+    ...overrides,
+  };
+}
+
+/**
+ * The fusion route: the cloud fixture's keyed, active provider as the
+ * orchestrator plus the local fixture's downloaded model and live
+ * daemon for the workers, with the resolver saying fusion is effective.
+ */
+export function fusionState(overrides: Partial<ResolvedRunMode> = {}): TuiState {
+  const cloud = cloudState();
+  const local = localState("managed");
+  return {
+    ...cloud,
+    providersPanel: { ...cloud.providersPanel, runMode: resolvedFusion(overrides) },
+    localModelsPanel: { ...local.localModelsPanel, lastRefreshedAt: 1 },
   };
 }

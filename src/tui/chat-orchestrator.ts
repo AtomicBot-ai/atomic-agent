@@ -43,6 +43,7 @@ import { McpOrchestrator } from "./mcp/mcp-orchestrator.js";
 import { ImportOrchestrator } from "./import/import-orchestrator.js";
 import { ProvidersOrchestrator } from "./providers/providers-orchestrator.js";
 import { FallbackOrchestrator } from "./llm-panel/fallback/fallback-orchestrator.js";
+import { RunModeOrchestrator } from "./run-mode/run-mode-orchestrator.js";
 import { TuiTelegramOrchestrator } from "./telegram/tui-telegram-orchestrator.js";
 import { PrivacyOrchestrator } from "./privacy/privacy-orchestrator.js";
 import { IntegrationsOrchestrator } from "./integrations/integrations-orchestrator.js";
@@ -192,6 +193,7 @@ export class ChatOrchestrator {
   public readonly import: ImportOrchestrator;
   public readonly providers: ProvidersOrchestrator;
   public readonly fallback: FallbackOrchestrator;
+  public readonly runMode: RunModeOrchestrator;
   public readonly localModels: LocalModelsOrchestrator;
   public readonly llmHealth: LlmHealthPoller;
   public readonly telegram: TuiTelegramOrchestrator;
@@ -233,6 +235,12 @@ export class ChatOrchestrator {
         // operator string.
         runtime.reportModelConfigured("llama.cpp", "local");
       },
+    });
+    this.runMode = new RunModeOrchestrator({
+      runtime,
+      bus,
+      providers: this.providers,
+      localModels: this.localModels,
     });
     this.telegram = new TuiTelegramOrchestrator(runtime, bus);
     this.privacy = new PrivacyOrchestrator(runtime, bus);

@@ -6,6 +6,7 @@ import {
 } from "../../config/provider-auth-mode.js";
 import { resolveLlmProviderApiKey } from "../../config/resolve-llm-api-key.js";
 import { resolveLlmConfig } from "../../llm/provider/registry/index.js";
+import { resolveRunMode } from "../../llm/run-mode/index.js";
 import type { AgentRuntime } from "../../runtime/bootstrap.js";
 import type { TuiEventBus } from "../tui-app.js";
 import {
@@ -246,7 +247,13 @@ export class ProvidersOrchestrator {
         embeddingModel: fileEntry?.defaultEmbeddingModel ?? null,
       };
     });
-    this.bus.emit({ type: "providers_refresh", rows });
+    this.bus.emit({
+      type: "providers_refresh",
+      rows,
+      runMode: resolveRunMode(resolved, {
+        managedModelId: config.localModels?.managed?.modelId ?? null,
+      }),
+    });
   }
 
   async setActiveText(id: string): Promise<void> {

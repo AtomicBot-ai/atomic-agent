@@ -13,19 +13,26 @@ export {
   isComposerSwitchOpenKey,
   type ComposerSwitchKeyContext,
 } from "./composer-switch-key-bindings.js";
+export {
+  composerBackendLook,
+  type ComposerBackendLook,
+} from "./composer-backend-control.js";
+export {
+  selectComposerBackend,
+  selectComposerBackendMeta,
+  selectComposerNeedsModelDownload,
+  type ComposerBackendMeta,
+} from "./composer-backend-selectors.js";
 export { ComposerMetaControls } from "./composer-meta-controls.js";
 export { ComposerSwitchPopup } from "./composer-switch-popup.js";
 export { reduceComposerSwitchAction } from "./composer-switch-reducer.js";
 export {
+  backendSwitchRow,
   clampComposerSwitchCursor,
   initialComposerSwitchCursor,
-  selectComposerBackend,
-  selectComposerBackendMeta,
-  selectComposerNeedsModelDownload,
   selectComposerSwitchRow,
   selectComposerSwitchRows,
   selectComposerSwitchTitle,
-  type ComposerBackendMeta,
   type ComposerSwitchIntent,
   type ComposerSwitchRow,
 } from "./composer-switch-rows.js";
