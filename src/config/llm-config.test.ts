@@ -506,3 +506,38 @@ describe("llm-config", () => {
     ).toThrow(/extraArgs\[1\]/);
   });
 });
+
+describe("provider maxOutputTokens", () => {
+  const withEntry = (maxOutputTokens: unknown) => ({
+    version: USER_CONFIG_VERSION,
+    llm: {
+      activeTextProvider: "openrouter",
+      activeEmbeddingProvider: "local-llama",
+      toolTransport: "auto" as const,
+      providers: [
+        { id: "local-llama", kind: "llama-server", url: "http://127.0.0.1:19091" },
+        { id: "openrouter", kind: "openrouter", defaultChatModel: "gpt", maxOutputTokens },
+      ],
+    },
+  });
+
+  it("round-trips a per-provider ceiling", () => {
+    const parsed = parseUserConfigFile(withEntry(64_000));
+    expect(
+      parsed.llm?.providers.find((p) => p.id === "openrouter")?.maxOutputTokens,
+    ).toBe(64_000);
+  });
+
+  it("is absent by default — the model's own maximum applies", () => {
+    const parsed = parseUserConfigFile(withEntry(undefined));
+    expect(
+      parsed.llm?.providers.find((p) => p.id === "openrouter")?.maxOutputTokens,
+    ).toBeUndefined();
+  });
+
+  it("rejects a non-positive or fractional ceiling", () => {
+    for (const bad of [0, -1, 1.5, "lots"]) {
+      expect(() => parseUserConfigFile(withEntry(bad))).toThrow(/maxOutputTokens/);
+    }
+  });
+});

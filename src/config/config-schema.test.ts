@@ -1538,3 +1538,34 @@ describe("numeric coercion of string config values", () => {
     ).toThrow(/tokenBudget/);
   });
 });
+
+describe("localModels.completionMaxTokens (config v52)", () => {
+  it("accepts 0 as \"no client-side cap\"", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      localModels: { completionMaxTokens: 0 },
+    });
+    expect(parsed.localModels.completionMaxTokens).toBe(0);
+  });
+
+  it("keeps the ordinary window and its bounds", () => {
+    expect(
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        localModels: { completionMaxTokens: 32_000 },
+      }).localModels.completionMaxTokens,
+    ).toBe(32_000);
+    for (const bad of [63, 131_073, -1]) {
+      expect(() =>
+        parseUserConfigFile({
+          version: USER_CONFIG_VERSION,
+          localModels: { completionMaxTokens: bad },
+        }),
+      ).toThrow(/completionMaxTokens/);
+    }
+  });
+
+  it("leaves an older file on its positive default", () => {
+    expect(parseUserConfigFile({ version: 51 }).localModels.completionMaxTokens).toBe(8192);
+  });
+});

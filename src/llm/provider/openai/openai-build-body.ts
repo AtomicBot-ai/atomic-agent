@@ -14,6 +14,7 @@ export function buildOpenAiChatBody(
   defaultChatModel: string,
   stream: boolean,
   extraBody?: Record<string, unknown>,
+  maxOutputTokens?: number,
 ): Record<string, unknown> {
   const filtered = filterCloudCompletionRequest(request);
   const body: Record<string, unknown> = {
@@ -39,7 +40,10 @@ export function buildOpenAiChatBody(
   // the field, or a deployment that wants a hard ceiling, sets it
   // through the entry's `extraBody` — `max_tokens` is deliberately not
   // in `RESERVED_BODY_KEYS`, so that passthrough wins.
-  if (typeof filtered.maxTokens === "number") body.max_tokens = filtered.maxTokens;
+  // Order: what this call asked for, else the provider's configured
+  // ceiling, else nothing at all.
+  const cap = filtered.maxTokens ?? maxOutputTokens;
+  if (typeof cap === "number") body.max_tokens = cap;
   if (filtered.stop) body.stop = filtered.stop;
   if (typeof filtered.seed === "number") body.seed = filtered.seed;
   if (filtered.tools && filtered.tools.length > 0) {

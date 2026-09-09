@@ -210,3 +210,27 @@ describe("buildOpenAiChatBody — the output bound", () => {
     expect(body.stream).toBe(true);
   });
 });
+
+describe("buildOpenAiChatBody — the provider's own ceiling", () => {
+  const request = { prompt: "hi" };
+
+  it("applies a configured ceiling when the call names none", () => {
+    const body = buildOpenAiChatBody(request, "gpt-test", false, undefined, 64_000);
+    expect(body.max_tokens).toBe(64_000);
+  });
+
+  it("lets the call's own cap win over the provider's", () => {
+    const body = buildOpenAiChatBody(
+      { ...request, maxTokens: 512 },
+      "gpt-test",
+      false,
+      undefined,
+      64_000,
+    );
+    expect(body.max_tokens).toBe(512);
+  });
+
+  it("sends nothing when neither names one", () => {
+    expect("max_tokens" in buildOpenAiChatBody(request, "gpt-test", false)).toBe(false);
+  });
+});

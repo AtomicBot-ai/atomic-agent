@@ -425,6 +425,18 @@ Pinned by [src/llm/provider/verify/classify-verify-response.test.ts](src/llm/pro
 
 Symmetric **`EmbeddingProviderRegistry`** ([src/memory/embeddings/embedding-provider-registry.ts](src/memory/embeddings/embedding-provider-registry.ts)) with `OpenAiEmbeddingProvider` / `OpenRouterEmbeddingProvider` for `POST /v1/embeddings`. Hybrid recall degradation contract unchanged.
 
+## Output ceilings
+
+How many tokens one reply may run to. Two different questions, and they used to share one answer — the llama-server decode budget — which is why a cloud turn died at 8192 tokens on a limit nobody chose.
+
+**Cloud: none by default.** `buildOpenAiChatBody` sends `max_tokens` only when something asked for a bound: the call's own value, then the provider entry's `maxOutputTokens`, else nothing at all, letting the service apply the model's own maximum. This is what makes a single long answer — a whole file, a whole page — possible. Set `maxOutputTokens` on the entry to bound spend, or for a service that requires the field; `extraBody.max_tokens` still wins over both, since `max_tokens` is deliberately not a reserved key.
+
+Note reasoning models spend the same budget on thinking: a cap of N is a cap on reasoning **plus** output, so a low one can be exhausted before the model emits a single byte of content. That is exactly what a truncated completion with empty `content` and a long `reasoningContent` means in a trace.
+
+**Local: a runaway guard, not a memory guard.** `localModels.completionMaxTokens` becomes llama.cpp's `n_predict`. `0` means no client-side cap — generate until a stop token or until the context window fills, which is the real ceiling on a local run. What a positive cap actually buys is a bound on *time* and on a degenerate loop; the machine's memory exposure is committed at daemon start by the model and `--ctx-size`, and does not grow with the length of one reply. Config v52 accepts `0`; the default stays 8192.
+
+Pinned by [src/llm/resolve-n-predict.test.ts](src/llm/resolve-n-predict.test.ts), [src/llm/provider/openai/openai-build-body.test.ts](src/llm/provider/openai/openai-build-body.test.ts), [src/config/config-schema.test.ts](src/config/config-schema.test.ts) and [src/config/llm-config.test.ts](src/config/llm-config.test.ts).
+
 ## llama-server modes
 
 `atomic-agent` supports two modes for the llama-server backend (`config.llama.mode`):

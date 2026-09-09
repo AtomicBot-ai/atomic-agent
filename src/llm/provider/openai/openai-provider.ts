@@ -63,6 +63,8 @@ export interface OpenAiProviderOptions {
    * this passthrough cannot override.
    */
   extraBody?: Record<string, unknown>;
+  /** Output ceiling for this provider; absent means the model's maximum. */
+  maxOutputTokens?: number;
 }
 
 export class OpenAiProvider implements LlmProvider {
@@ -77,6 +79,7 @@ export class OpenAiProvider implements LlmProvider {
   private readonly apiPathPrefix: string;
   private readonly taggedToolCompatibility: "qwen" | undefined;
   private readonly extraBody: Record<string, unknown> | undefined;
+  private readonly maxOutputTokens: number | undefined;
 
   constructor(options: OpenAiProviderOptions) {
     this.id = options.id;
@@ -98,6 +101,7 @@ export class OpenAiProvider implements LlmProvider {
     this.apiPathPrefix = normalizeApiPathPrefix(options.apiPathPrefix ?? "/v1");
     this.taggedToolCompatibility = options.taggedToolCompatibility;
     this.extraBody = options.extraBody;
+    this.maxOutputTokens = options.maxOutputTokens;
     this.http = {
       baseUrl: normalizeOpenAiBaseUrl(options.baseUrl),
       apiKey: options.apiKey,
@@ -110,7 +114,7 @@ export class OpenAiProvider implements LlmProvider {
   }
 
   async complete(request: CompletionRequest): Promise<CompletionResult> {
-    const body = buildOpenAiChatBody(request, this.defaultChatModel, false, this.extraBody);
+    const body = buildOpenAiChatBody(request, this.defaultChatModel, false, this.extraBody, this.maxOutputTokens);
     const json = await openAiPostJson(
       this.http,
       `${this.apiPathPrefix}/chat/completions`,
@@ -127,7 +131,7 @@ export class OpenAiProvider implements LlmProvider {
   async *completeStream(
     request: CompletionRequest,
   ): AsyncGenerator<StreamChunk, CompletionResult, void> {
-    const body = buildOpenAiChatBody(request, this.defaultChatModel, true, this.extraBody);
+    const body = buildOpenAiChatBody(request, this.defaultChatModel, true, this.extraBody, this.maxOutputTokens);
     const path = `${this.apiPathPrefix}/chat/completions`;
     let accumulated = "";
     let accumulatedReasoning = "";

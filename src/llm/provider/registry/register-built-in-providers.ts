@@ -65,6 +65,7 @@ export function registerBuiltInProviderKinds(): void {
       supportsParallelTools: entry.supportsTools ?? true,
       requestTimeoutMs: entry.requestTimeoutMs,
       extraBody: entry.extraBody,
+      maxOutputTokens: entry.maxOutputTokens,
     });
   });
 
@@ -87,6 +88,7 @@ export function registerBuiltInProviderKinds(): void {
       requestTimeoutMs: entry.requestTimeoutMs,
       taggedToolCompatibility: "qwen",
       extraBody: entry.extraBody,
+      maxOutputTokens: entry.maxOutputTokens,
     });
   });
 

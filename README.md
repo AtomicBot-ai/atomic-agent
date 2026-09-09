@@ -542,6 +542,21 @@ The promise is not magic secrecy. The promise is that the agent control plane do
 </details>
 
 <details>
+<summary><b>How long a reply may run</b> (output ceilings)</summary>
+
+Cloud models are **uncapped by default** — the service applies the model's own maximum, so one turn can write a whole file. To bound it (spend, or a service that requires the field) set `maxOutputTokens` on the provider entry:
+
+```json
+"llm": { "providers": [{ "id": "openrouter", "kind": "openrouter", "maxOutputTokens": 64000 }] }
+```
+
+Reasoning models spend that same budget on thinking, so a low ceiling can be used up before any answer appears.
+
+Local models use `localModels.completionMaxTokens` (llama.cpp's `n_predict`, default `8192`). Set it to `0` for no cap — generation then stops at a stop token or when the context window fills. That knob bounds time and runaway loops, not memory: what your machine commits is decided at daemon start by the model and `--ctx-size`, and does not grow with the length of one reply.
+
+</details>
+
+<details>
 <summary><b>Configuration and secrets</b> (state dir, env vars, .env)</summary>
 
 User-facing configuration lives in `<stateDir>/config.json`.
