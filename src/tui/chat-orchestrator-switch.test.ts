@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { ApprovalGate } from "../approval/approval-gate.js";
 import { createEmptySessionState } from "../session/session-state.js";
+import { summarizeSessionState } from "../session/session-summary.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
 import { ChatOrchestrator } from "./chat-orchestrator.js";
 import { SWITCHED_AWAY_APPROVAL_REASON } from "./detached-turns.js";
@@ -81,6 +82,8 @@ function makeHarness(
         });
       }),
     sessionStore: {
+      listSummaries: () => stored.map(summarizeSessionState),
+      countUnreadable: () => 0,
       listRecent: () => stored,
       load: (id: string) => stored.find((s) => s.id === id) ?? null,
       delete: () => undefined,

@@ -52,7 +52,12 @@ function stubRuntime(
     steer: () => false,
     runTurn: (_s: unknown, text: string, opts: { signal: AbortSignal }) =>
       runTurn(text, opts),
-    sessionStore: { listRecent: () => [], load: () => null },
+    sessionStore: {
+      listSummaries: () => [],
+      countUnreadable: () => 0,
+      listRecent: () => [],
+      load: () => null,
+    },
     approvals: { clearSessionGrants: () => undefined },
     config: { update: { checkOnStartup: false, repo: "x/y" }, tracing: { trace: { dir: "/tmp", enabled: false } } },
     profileStore: { list: () => [] },

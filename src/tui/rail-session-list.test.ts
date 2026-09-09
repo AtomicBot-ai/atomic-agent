@@ -1,107 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { createEmptySessionState, recordTurn } from "../session/session-state.js";
+import { recordTurn } from "../session/session-state.js";
 import { userTurn } from "../session/conversation-turn.js";
-import type { AgentRuntime } from "../runtime/bootstrap.js";
-import { ChatOrchestrator } from "./chat-orchestrator.js";
-import { makeTuiEventBus } from "./make-event-bus.js";
-import type { LocalTurnGateFacts } from "./local-turn-gate.js";
-import type { TuiAction } from "./tui-action.js";
-import type { SessionPickerEntry } from "./tui-state.js";
-
-/** Hermetic gate facts: never read the developer's real config/disk. */
-const cloudGateFacts = (): LocalTurnGateFacts => ({
-  activeProviderIsLocal: false,
-  managedMode: false,
-  modelId: null,
-  modelDownloaded: true,
-  fallbackChainLength: 1,
-});
-
-/**
- * The rail lists threads that have been spoken to. `+ new` mints a
- * session immediately — the store row has to exist for scheduled tasks
- * and webhooks that hold only an id — but an unnamed row says nothing,
- * so it stays off the list until its first prompt names it.
- */
-function blank(id: string) {
-  return createEmptySessionState({ id, workingDir: "/tmp" });
-}
-
-function spokenTo(id: string, text: string) {
-  return recordTurn(blank(id), userTurn(text));
-}
-
-function stubRuntime(
-  stored: ReturnType<typeof blank>[],
-  settleTurns = false,
-): AgentRuntime {
-  let created = 0;
-  return {
-    createSession: () => {
-      created += 1;
-      const fresh = blank(`s-new-${created}`);
-      stored.unshift(fresh);
-      return fresh;
-    },
-    steer: () => false,
-    // By default the turn never settles, so the tests observe the rail
-    // at the moment the prompt is sent. `settleTurns` is for the cases
-    // that need the orchestrator idle afterwards — deleting a session is
-    // refused while a turn holds it.
-    runTurn: (session: unknown) =>
-      settleTurns
-        ? Promise.resolve({ session, reason: "reply", stepCount: 1 })
-        : new Promise(() => {}),
-    sessionStore: {
-      // Honour the limit like SQL does — a stub that ignores it cannot
-      // see a filter running on the wrong side of the window.
-      listRecent: (limit: number) => stored.slice(0, limit),
-      load: (id: string) => stored.find((s) => s.id === id) ?? null,
-      delete: (id: string) => {
-        const at = stored.findIndex((s) => s.id === id);
-        if (at >= 0) stored.splice(at, 1);
-      },
-    },
-    approvals: {
-      clearSessionGrants: () => undefined,
-      denyPendingForSession: () => 0,
-    },
-    // Deleting checks every origin's turns, not just the TUI's.
-    turnController: { isBusy: () => false },
-    config: {
-      update: { checkOnStartup: false, repo: "x/y" },
-      tracing: { trace: { dir: "/tmp", enabled: false } },
-    },
-    profileStore: { list: () => [] },
-    skillCatalog: [],
-  } as unknown as AgentRuntime;
-}
-
-function harness(stored: ReturnType<typeof blank>[], settleTurns = false) {
-  const bus = makeTuiEventBus();
-  const actions: TuiAction[] = [];
-  bus.subscribe((a) => actions.push(a));
-  const orchestrator = new ChatOrchestrator(stubRuntime(stored, settleTurns), bus, {
-    maxSteps: 5,
-    llamaUrl: "http://127.0.0.1:8080", readGateFacts: cloudGateFacts,
-  });
-  const rail = (): readonly SessionPickerEntry[] => {
-    for (let i = actions.length - 1; i >= 0; i -= 1) {
-      const action = actions[i];
-      if (action?.type === "recent_sessions_updated") return action.sessions;
-    }
-    return [];
-  };
-  const picker = (): readonly SessionPickerEntry[] => {
-    for (let i = actions.length - 1; i >= 0; i -= 1) {
-      const action = actions[i];
-      if (action?.type === "session_picker_opened") return action.sessions;
-    }
-    return [];
-  };
-  return { orchestrator, rail, picker, actions };
-}
+import { blank, harness, spokenTo } from "./rail-session-harness.js";
 
 describe("rail session list", () => {
   it("hides sessions nobody has spoken to", () => {
@@ -148,11 +49,29 @@ describe("rail session list", () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
+  it("lists every spoken-to session, newest first, with no cap", () => {
+    // The rail used to stop at 25 rows and scan 200: the 26th thread
+    // was unreachable, and past 200 stored sessions even the scan ran
+    // out. The rail and the picker window their own rows, so the list
+    // itself carries everything.
+    const stored = Array.from({ length: 300 }, (_, i) => ({
+      ...spokenTo(`s-${i}`, `thread ${i}`),
+      updatedAt: 1_000_000 + i,
+    }));
+    const { orchestrator, rail } = harness(stored);
+    orchestrator.refreshRecentSessions();
+    const rows = rail();
+    expect(rows).toHaveLength(300);
+    expect(rows[0]?.sessionId).toBe("s-299");
+    expect(rows[299]?.sessionId).toBe("s-0");
+    const updatedAts = rows.map((entry) => entry.updatedAt);
+    expect(updatedAts).toEqual([...updatedAts].sort((a, b) => b - a));
+  });
+
   it("does not let unnamed sessions push real threads out of the list", () => {
     // Every `+ new` persists an unnamed session, and scheduled tasks
-    // mint one each. Filtering after the store's limit would let those
-    // invisible rows squat the window — and a thread pushed out can
-    // never come back, because it only re-enters by being spoken to.
+    // mint one each. With no window to squat there is nothing for them
+    // to push out — every real thread is listed, every blank one hidden.
     const stored = [
       ...Array.from({ length: 60 }, (_, i) => blank(`s-blank-${i}`)),
       ...Array.from({ length: 30 }, (_, i) => spokenTo(`s-real-${i}`, `thread ${i}`)),
@@ -160,8 +79,15 @@ describe("rail session list", () => {
     const { orchestrator, rail } = harness(stored);
     orchestrator.refreshRecentSessions();
     const rows = rail();
-    expect(rows).toHaveLength(25);
+    expect(rows).toHaveLength(30);
     expect(rows.every((entry) => entry.sessionId.startsWith("s-real-"))).toBe(true);
+  });
+
+  it("shows '(empty)' for a session whose first prompt is an empty string", () => {
+    const stored = [spokenTo("s-empty", "")];
+    const { orchestrator, rail } = harness(stored);
+    orchestrator.refreshRecentSessions();
+    expect(rail().map((entry) => entry.preview)).toEqual(["(empty)"]);
   });
 
   it("opens the picker on the same list the rail shows", () => {
@@ -180,7 +106,7 @@ describe("rail session list", () => {
     // stub does not write one back), so only the stand-in is keeping
     // the row on screen.
     const stored = [spokenTo("s-old", "older")];
-    const { orchestrator, rail } = harness(stored, true);
+    const { orchestrator, rail } = harness(stored, { settleTurns: true });
     orchestrator.newSession();
     orchestrator.sendMessage("about to be deleted");
     expect(rail().map((e) => e.sessionId)).toContain("s-new-1");
