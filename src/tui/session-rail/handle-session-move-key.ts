@@ -22,7 +22,10 @@ export interface SessionMoveKeyContext {
  * so the caller's own ↑/↓ handling runs instead. A move that would
  * leave the list (Shift+↑ on the top row) is consumed and does nothing:
  * the operator was clearly talking to the rail, and letting the chord
- * fall through to a cursor move would be a surprise.
+ * fall through to a cursor move would be a surprise. The same goes for
+ * a move that would cross the pinned block's edge: a keyboard move
+ * never pins or unpins — that is what `p` is for — so the chord stops
+ * at the boundary.
  *
  * Ink reports the chord as `upArrow: true, shift: true` — `\x1b[1;2A`
  * carries the xterm modifier 2, which `parse-keypress` maps to `shift`.
@@ -40,7 +43,8 @@ export function handleSessionMoveKey(
   const entry = state.recentSessions[from];
   if (!entry) return true;
   const to = from + (key.upArrow ? -1 : 1);
-  if (to < 0 || to >= state.recentSessions.length) return true;
+  const target = state.recentSessions[to];
+  if (!target || target.pinned !== entry.pinned) return true;
   ctx.callbacks.onSessionMoveRequested?.(entry.sessionId, to);
   // After the callback: the orchestrator's refresh re-emits the list,
   // and the cursor must end on the moved row, not on where it was.

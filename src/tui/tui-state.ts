@@ -294,6 +294,12 @@ export interface SessionPickerEntry {
   updatedAt: number;
   /** First user message snippet (trimmed) or "(empty)" for blank sessions. */
   preview: string;
+  /**
+   * Pinned to the top of the rail (`tui.sessionRail.pinned`). Stamped by
+   * the rail orchestrator when it arranges the list; `false` everywhere
+   * an entry is built.
+   */
+  pinned: boolean;
 }
 
 /**

@@ -2,12 +2,13 @@ import type { SessionPickerEntry } from "../tui-state.js";
 import {
   persistSessionRailLayout,
   readSessionRailLayout,
-  type SessionRailLayout,
 } from "./persist-session-rail.js";
 import {
-  applySessionRailOrder,
-  computeMovedOrder,
-} from "./session-rail-order.js";
+  arrangeSessionRail,
+  computeDroppedLayout,
+  togglePinned,
+  type SessionRailLayout,
+} from "./session-rail-pin.js";
 
 /**
  * Where the layout (manual order + pinned ids) lives. Injectable so
@@ -25,15 +26,28 @@ export const configSessionRailLayoutStore: SessionRailLayoutStore = {
 };
 
 /**
- * The rail's order, owned by the chat orchestrator.
+ * Build the row for a session the incoming list does not carry, or
+ * `null` when it no longer exists. Injected so tests never touch a
+ * session store.
+ */
+export type SessionRailEntryLoader = (sessionId: string) => SessionPickerEntry | null;
+
+/**
+ * The rail's layout, owned by the chat orchestrator.
  *
  * `arrange` is the one hook in `railSessions()`: it applies the stored
- * order and remembers what was emitted, so a later `moveSession` can
- * compute the new order against exactly the list the operator saw —
- * the row indices the keyboard and the mouse hand over are indices
- * into THAT list, pending stand-ins included. The first move persists
- * the whole displayed list, which is the "snapshot on first touch"
- * that turns a recency-sorted rail into a manual one.
+ * layout and remembers what was emitted, so a later `moveSession` or
+ * `togglePinned` can compute the new layout against exactly the list
+ * the operator saw — the row indices the keyboard and the mouse hand
+ * over are indices into THAT list, pending stand-ins included. The
+ * first move or pin persists the whole displayed list, which is the
+ * "snapshot on first touch" that turns a recency-sorted rail into a
+ * manual one.
+ *
+ * A pinned id the incoming list lacks — a thread older than the
+ * recency window — is fetched through `loadEntry` before arranging, so
+ * a pin is never lost to age. A pin on a deleted session loads nothing
+ * and is pruned on the next write.
  */
 export class SessionRailOrchestrator {
   private lastRail: readonly SessionPickerEntry[] = [];
@@ -41,21 +55,54 @@ export class SessionRailOrchestrator {
   constructor(
     private readonly store: SessionRailLayoutStore,
     private readonly refresh: () => void,
+    private readonly loadEntry: SessionRailEntryLoader = () => null,
   ) {}
 
-  /** Apply the remembered order to the list about to be emitted. */
+  /** Apply the remembered layout to the list about to be emitted. */
   arrange(entries: readonly SessionPickerEntry[]): SessionPickerEntry[] {
-    const arranged = applySessionRailOrder(entries, this.store.read().order);
+    const layout = this.store.read();
+    const pinned = new Set(layout.pinned);
+    const present = new Set(entries.map((entry) => entry.sessionId));
+    const missing: SessionPickerEntry[] = [];
+    for (const id of layout.pinned) {
+      if (present.has(id)) continue;
+      const loaded = this.loadEntry(id);
+      if (loaded) missing.push(loaded);
+    }
+    const arranged = arrangeSessionRail([...entries, ...missing], layout).map(
+      (entry) => ({ ...entry, pinned: pinned.has(entry.sessionId) }),
+    );
     this.lastRail = arranged;
     return arranged;
   }
 
-  /** Drop `sessionId` on slot `toIndex` of the displayed list, persist, re-emit. */
+  /**
+   * Drop `sessionId` on slot `toIndex` of the displayed list, persist,
+   * re-emit. The slot decides the pin: inside the pinned block pins,
+   * below it unpins — the keyboard never asks for a crossing move, so
+   * this is the drag's rule.
+   */
   moveSession(sessionId: string, toIndex: number): void {
-    const displayed = this.lastRail.map((entry) => entry.sessionId);
-    const next = computeMovedOrder(displayed, sessionId, toIndex);
+    const next = computeDroppedLayout(
+      this.store.read(),
+      this.displayedIds(),
+      sessionId,
+      toIndex,
+    );
     if (!next) return;
-    this.store.write({ order: next, pinned: this.store.read().pinned });
+    this.store.write(next);
     this.refresh();
+  }
+
+  /** Pin `sessionId` to the end of the block, or release it to the top of the rest. */
+  togglePinned(sessionId: string): void {
+    const next = togglePinned(this.store.read(), this.displayedIds(), sessionId);
+    if (!next) return;
+    this.store.write(next);
+    this.refresh();
+  }
+
+  private displayedIds(): string[] {
+    return this.lastRail.map((entry) => entry.sessionId);
   }
 }

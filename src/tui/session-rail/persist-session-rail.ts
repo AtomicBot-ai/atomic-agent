@@ -5,16 +5,7 @@ import {
   resetConfigCache,
   writeUserConfigFileSync,
 } from "../../config/index.js";
-
-/**
- * What the rail remembers between runs: the manual order and the
- * pinned ids. One value, because a pin rewrites both — pinning moves
- * the row into the block, and the block is ordered by `order`.
- */
-export interface SessionRailLayout {
-  readonly order: readonly string[];
-  readonly pinned: readonly string[];
-}
+import type { SessionRailLayout } from "./session-rail-pin.js";
 
 /**
  * Persist the rail's layout into `tui.sessionRail`, then invalidate the

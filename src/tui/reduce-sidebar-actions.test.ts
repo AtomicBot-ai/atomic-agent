@@ -21,6 +21,7 @@ function entry(overrides: Partial<SessionPickerEntry>): SessionPickerEntry {
     stepCount: 0,
     updatedAt: 0,
     preview: "",
+    pinned: false,
     ...overrides,
   };
 }

@@ -48,7 +48,7 @@ function session(): TuiSessionInfo {
   };
 }
 
-function entry(sessionId: string): SessionPickerEntry {
+function entry(sessionId: string, pinned = false): SessionPickerEntry {
   return {
     sessionId,
     workingDir: "/tmp/w",
@@ -56,17 +56,22 @@ function entry(sessionId: string): SessionPickerEntry {
     stepCount: 1,
     updatedAt: 0,
     preview: sessionId,
+    pinned,
   };
 }
 
 /** Rail focused on Sessions with three rows and the cursor on `cursor`. */
-function railState(cursor: number, section: "sessions" | "tasks" = "sessions"): TuiState {
+function railState(
+  cursor: number,
+  section: "sessions" | "tasks" = "sessions",
+  rows: SessionPickerEntry[] = [entry("s-1"), entry("s-2"), entry("s-3")],
+): TuiState {
   return {
     ...createInitialTuiState(session()),
     chatFocus: "sidebar",
     sidebarSection: section,
     sidebarCursor: cursor,
-    recentSessions: [entry("s-1"), entry("s-2"), entry("s-3")],
+    recentSessions: rows,
   };
 }
 
@@ -122,6 +127,24 @@ describe("rail session move keys", () => {
     expect(handleAppKey("", key({ downArrow: true, shift: true }), bottom)).toBe(true);
     expect(bottom.callbacks.onSessionMoveRequested).not.toHaveBeenCalled();
     expect(bottom.dispatch).not.toHaveBeenCalled();
+  });
+
+  it("stops at the edge of the pinned block instead of crossing it", () => {
+    // s-1 is pinned, s-2 and s-3 are not. Shift+↓ on the last pinned row
+    // and Shift+↑ on the first unpinned row would both cross the edge —
+    // that is a pin change, which only `p` may make.
+    const rows = [entry("s-1", true), entry("s-2"), entry("s-3")];
+    const lastPinned = ctx(railState(0, "sessions", rows));
+    expect(handleAppKey("", key({ downArrow: true, shift: true }), lastPinned)).toBe(true);
+    expect(lastPinned.callbacks.onSessionMoveRequested).not.toHaveBeenCalled();
+    expect(lastPinned.dispatch).not.toHaveBeenCalled();
+    const firstUnpinned = ctx(railState(1, "sessions", rows));
+    expect(handleAppKey("", key({ upArrow: true, shift: true }), firstUnpinned)).toBe(true);
+    expect(firstUnpinned.callbacks.onSessionMoveRequested).not.toHaveBeenCalled();
+    // Inside the unpinned half the move still works.
+    const inside = ctx(railState(1, "sessions", rows));
+    expect(handleAppKey("", key({ downArrow: true, shift: true }), inside)).toBe(true);
+    expect(inside.callbacks.onSessionMoveRequested).toHaveBeenCalledWith("s-2", 2);
   });
 
   it("leaves a plain ↑ alone", () => {

@@ -22,6 +22,7 @@ const SESSIONS: readonly SessionPickerEntry[] = [
     stepCount: 5,
     updatedAt: Date.now() - 60_000,
     preview: "first ever message in the session",
+    pinned: false,
   },
   {
     sessionId: "ghijkl5678",
@@ -30,6 +31,7 @@ const SESSIONS: readonly SessionPickerEntry[] = [
     stepCount: 2,
     updatedAt: Date.now() - 600_000,
     preview: "another conversation",
+    pinned: false,
   },
 ];
 
@@ -272,6 +274,7 @@ describe("Sidebar", () => {
       ...SESSIONS[0]!,
       sessionId: `s-${idx}`,
       preview: `session number ${idx}`,
+      pinned: false,
     }));
     const manyTasks = Array.from({ length: 8 }, (_, idx) =>
       taskRow({ id: `t-${idx}`, userMessage: `task number ${idx}` }),

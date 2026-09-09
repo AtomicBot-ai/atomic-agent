@@ -255,6 +255,13 @@ export class ChatOrchestrator {
     this.sessionRail = new SessionRailOrchestrator(
       options.sessionRailLayout ?? configSessionRailLayoutStore,
       () => this.refreshRecentSessions(),
+      // A pinned thread must show whatever its age: when it has fallen
+      // out of the recency window `railSessions` reads, the rail fetches
+      // it by id and builds the same row the window would have.
+      (sessionId) => {
+        const state = this.runtime.sessionStore.load(sessionId);
+        return state ? toPickerEntry(state) : null;
+      },
     );
     // Tap the bus rather than the runtime handler: what the reducer was
     // offered is exactly what a switch-back may need to replay, session
@@ -479,6 +486,15 @@ export class ChatOrchestrator {
   }
 
   /**
+   * `p` or the row's `↑` in the rail: pin `sessionId` to the top block,
+   * or release it. A config write only — the session row is untouched,
+   * so a pin never bumps `updatedAt`.
+   */
+  togglePinned(sessionId: string): void {
+    this.sessionRail.togglePinned(sessionId);
+  }
+
+  /**
    * Put the current session on the rail the instant its first prompt is
    * sent, named by that prompt. Called from `runOneTurn`, which is the
    * one funnel every first turn passes through — `sendMessage` and
@@ -497,6 +513,7 @@ export class ChatOrchestrator {
       stepCount: 0,
       updatedAt: Date.now(),
       preview: text,
+      pinned: false,
     });
     this.refreshRecentSessions();
   }
@@ -1345,5 +1362,6 @@ function toPickerEntry(state: SessionState): SessionPickerEntry {
     stepCount: state.stepCount,
     updatedAt: state.updatedAt,
     preview: preview.length > 0 ? preview : "(empty)",
+    pinned: false,
   };
 }

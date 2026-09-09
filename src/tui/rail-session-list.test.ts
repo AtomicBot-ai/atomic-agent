@@ -303,3 +303,98 @@ describe("rail session list — manual order", () => {
     expect(actions.length).toBe(emitted);
   });
 });
+
+describe("rail session list — pinned block", () => {
+  it("keeps pinned threads on top whatever their recency, in the manual order", () => {
+    const stored = [
+      spokenTo("s-4", "newest"),
+      spokenTo("s-3", "third"),
+      spokenTo("s-2", "second"),
+      spokenTo("s-1", "oldest"),
+    ];
+    const { orchestrator, rail } = harness(stored, false, ["s-1", "s-3"], ["s-3", "s-1"]);
+    orchestrator.refreshRecentSessions();
+    const rows = rail();
+    expect(rows.map((e) => e.sessionId)).toEqual(["s-1", "s-3", "s-4", "s-2"]);
+    expect(rows.map((e) => e.pinned)).toEqual([true, true, false, false]);
+  });
+
+  it("loads a pinned thread that has fallen out of the recency window", () => {
+    // 30 real threads, the rail shows 25 — the oldest one is pinned and
+    // must still be on the list, built from its first prompt.
+    const stored = Array.from({ length: 30 }, (_, i) =>
+      spokenTo(`s-real-${i}`, `thread ${i}`),
+    );
+    const { orchestrator, rail } = harness(stored, false, [], ["s-real-29"]);
+    orchestrator.refreshRecentSessions();
+    const rows = rail();
+    expect(rows).toHaveLength(26);
+    expect(rows[0]).toMatchObject({
+      sessionId: "s-real-29",
+      preview: "thread 29",
+      pinned: true,
+    });
+  });
+
+  it("shows nothing for a pinned id that no longer exists, and prunes it on the next write", () => {
+    const stored = [spokenTo("s-2", "second"), spokenTo("s-1", "first")];
+    const { orchestrator, rail, pins } = harness(stored, false, [], ["s-gone"]);
+    orchestrator.refreshRecentSessions();
+    expect(rail().map((e) => e.sessionId)).toEqual(["s-2", "s-1"]);
+    orchestrator.togglePinned("s-1");
+    expect(pins.at(-1)).toEqual(["s-1"]);
+  });
+
+  it("togglePinned appends to the block, then releases to the top of the rest", () => {
+    const stored = [
+      spokenTo("s-3", "third"),
+      spokenTo("s-2", "second"),
+      spokenTo("s-1", "first"),
+    ];
+    const { orchestrator, rail, written, pins } = harness(stored, false, [], ["s-2"]);
+    orchestrator.refreshRecentSessions();
+    expect(rail().map((e) => e.sessionId)).toEqual(["s-2", "s-3", "s-1"]);
+    orchestrator.togglePinned("s-1");
+    expect(pins.at(-1)).toEqual(["s-2", "s-1"]);
+    expect(written.at(-1)).toEqual(["s-2", "s-1", "s-3"]);
+    expect(rail().map((e) => [e.sessionId, e.pinned])).toEqual([
+      ["s-2", true],
+      ["s-1", true],
+      ["s-3", false],
+    ]);
+    orchestrator.togglePinned("s-2");
+    expect(pins.at(-1)).toEqual(["s-1"]);
+    expect(rail().map((e) => e.sessionId)).toEqual(["s-1", "s-2", "s-3"]);
+    expect(rail()[1]?.pinned).toBe(false);
+  });
+
+  it("a drop inside the block pins, a drop below it unpins", () => {
+    const stored = [
+      spokenTo("s-3", "third"),
+      spokenTo("s-2", "second"),
+      spokenTo("s-1", "first"),
+    ];
+    const { orchestrator, rail, pins } = harness(stored, false, [], ["s-1"]);
+    orchestrator.refreshRecentSessions();
+    expect(rail().map((e) => e.sessionId)).toEqual(["s-1", "s-3", "s-2"]);
+    // Drag s-2 onto the pinned row: it joins the block.
+    orchestrator.moveSession("s-2", 0);
+    expect(pins.at(-1)).toEqual(["s-2", "s-1"]);
+    expect(rail().map((e) => e.pinned)).toEqual([true, true, false]);
+    // Drag s-1 below the block: it leaves it.
+    orchestrator.moveSession("s-1", 2);
+    expect(pins.at(-1)).toEqual(["s-2"]);
+    expect(rail().map((e) => e.sessionId)).toEqual(["s-2", "s-3", "s-1"]);
+  });
+
+  it("pinning writes the config only — the session store is not touched", () => {
+    const stored = [spokenTo("s-2", "second"), spokenTo("s-1", "first")];
+    const before = stored.map((s) => ({ ...s }));
+    const { orchestrator, rail } = harness(stored);
+    orchestrator.refreshRecentSessions();
+    const updatedAt = rail().map((e) => e.updatedAt);
+    orchestrator.togglePinned("s-1");
+    expect(stored).toEqual(before);
+    expect(rail().map((e) => e.updatedAt)).toEqual([updatedAt[1], updatedAt[0]]);
+  });
+});

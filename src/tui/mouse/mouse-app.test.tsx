@@ -215,6 +215,7 @@ function mountApp(): {
             stepCount: 1,
             updatedAt: 2,
             preview: "first thread",
+            pinned: false,
           },
           {
             sessionId: "s-2",
@@ -223,6 +224,7 @@ function mountApp(): {
             stepCount: 1,
             updatedAt: 1,
             preview: "second thread",
+            pinned: false,
           },
         ],
       });

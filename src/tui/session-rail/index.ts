@@ -7,9 +7,15 @@ export {
   pruneSessionRailOrder,
 } from "./session-rail-order.js";
 export {
+  arrangeSessionRail,
+  computeDroppedLayout,
+  pinnedBlockLength,
+  togglePinned,
+  type SessionRailLayout,
+} from "./session-rail-pin.js";
+export {
   persistSessionRailLayout,
   readSessionRailLayout,
-  type SessionRailLayout,
 } from "./persist-session-rail.js";
 export {
   SessionRailOrchestrator,
