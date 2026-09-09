@@ -88,7 +88,7 @@ export const osGitStatusTool: ToolDefinition = {
  * The very first record may be `## <branch>...` pseudo-header when
  * `--branch` is passed — we extract that into branchInfo.
  */
-function parsePorcelain(stdout: string): {
+export function parsePorcelain(stdout: string): {
   entries: GitStatusEntry[];
   branchInfo: string | null;
 } {
