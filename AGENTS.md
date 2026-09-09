@@ -165,11 +165,26 @@ two app restarts and a fresh session — with nothing on screen to say the link 
    `cancelled`, not `failed`.
 5. **The budget resets after a recovery**, so a second outage later in a long task gets its own; the
    task's wall-clock ceiling is what bounds the total.
-6. **The UI says it once, then keeps it live.** One feed line per outage (not per retry — the
-   backoff fires every few seconds at first), the composer meta-row carries `waiting for provider
-   14s/300s — <reason>`, and when the wait runs out the row stays as `provider unreachable —
-   <reason>` until a turn actually succeeds. The context readout is not touched: it is driven by
-   `prompt_built` / `llm_completed`, and a parked turn produces neither.
+6. **The UI says it once, then keeps it live — and *live* means moving.** One feed line per outage
+   (not per retry — the backoff fires every few seconds at first), and the composer meta-row carries
+   the state in three wordings:
+   - parked in the backoff — `waiting for provider 14s/300s — <reason>`, counted off the clock
+     (`sinceTs`) on a one-second tick and clipped at the budget, not off the last event: the loop
+     emits nothing for up to 30s at a time and a row that only repainted on an event stood frozen.
+   - retrying — `retrying provider (attempt 2) — 8s`. A `step_started` while an outage is live *is*
+     the parked step going back on the wire; `provider_recovered` only lands once that step has
+     finished, so a step that streams for minutes has no other event to say it is alive. The same
+     transition drops what the dead attempt left streaming for that step index (trailing reasoning
+     entry, assistant text, half-parsed tool calls) — otherwise the retry's reasoning is spliced
+     onto the tail of the attempt whose socket died.
+   - given up — the row stays `provider unreachable — <reason>` until a turn actually succeeds.
+   The reason is humanised in the TUI only (`terminated` / `socket hang up` / `other side closed` →
+   `connection dropped mid-reply`, `fetch failed` → `no connection`); the runtime classifier keeps
+   the raw wording, which is what the logs and the trace are matched on. The readout shrinks before
+   anything in the route statement and opens Manage › LLM when clicked, so a narrow terminal
+   degrades to the whole route plus a truncated warning rather than to a warning alone. The context
+   readout is not touched: it is driven by `prompt_built` / `llm_completed`, and a parked turn
+   produces neither.
 
 ### No-progress loop detection
 

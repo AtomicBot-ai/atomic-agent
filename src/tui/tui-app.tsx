@@ -88,6 +88,8 @@ import { TasksCancelModal } from "./components/tasks-cancel-modal.js";
 import { UpdateModal } from "./components/update-modal.js";
 import { UpdateIndicator } from "./components/update-indicator.js";
 import { UpdateRestartPrompt } from "./components/update-restart-prompt.js";
+import { ProviderOutageReadout } from "./components/provider-outage-readout.js";
+import { useElapsed } from "./hooks/use-elapsed.js";
 import { useTerminalSize } from "./hooks/use-terminal-size.js";
 import {
   computeSidebarRowBudget,
@@ -1603,12 +1605,32 @@ export function TuiApp({
   // slot rather than taking a row of its own so the meta-bar keeps its
   // shape — `contextSlot` and `modeSlot` are separate props at the far
   // end and are not touched by it.
-  const promptLeftSlot = state.providerOutage ? (
-    <Text color={theme.colors.railError}>
-      {formatProviderOutage(state.providerOutage)}
-    </Text>
+  //
+  // The counter has to move on its own: between the backoff's
+  // `provider_waiting` and the retry's `provider_recovered` the loop
+  // emits nothing for as long as the replayed step streams, and a row
+  // that only repainted on an event stood frozen through it. One tick a
+  // second, armed only while an outage is actually live and still
+  // waiting — a `givenUp` badge is past tense and has nothing to count.
+  const outage = state.providerOutage;
+  const outageTickFrom = outage && !outage.givenUp ? outage.sinceTs : null;
+  const outageElapsedMs = useElapsed(outageTickFrom, 1000);
+  const promptLeftSlot = outage ? (
+    <ProviderOutageReadout
+      text={formatProviderOutage(
+        outage,
+        outageTickFrom === null
+          ? undefined
+          : outageTickFrom + (outageElapsedMs ?? 0),
+      )}
+      givenUp={outage.givenUp}
+      mouseLayer={MOUSE_LAYER_PANEL}
+    />
   ) : state.composerNotice ? (
-    <Text color={theme.colors.railSuccess}>{state.composerNotice}</Text>
+    // Truncates itself: `MetaLeft` hands its slot straight to the row.
+    <Text color={theme.colors.railSuccess} wrap="truncate">
+      {state.composerNotice}
+    </Text>
   ) : null;
   // While a turn is running the meta-row gains a second job: the operator
   // needs to know what Enter will do to the message they are typing.

@@ -77,6 +77,25 @@ export interface PromptMetaBarProps {
 const MODEL_LABEL_MAX_LEN = 32;
 
 /**
+ * How eagerly the chat-surface slot gives up columns, against the route
+ * controls' own factors (model 3, provider 1, backend 0).
+ *
+ * It used to be `0` — the slot never shrank, so a provider-outage
+ * readout took the left end of the bar outright and pushed the entire
+ * route statement off it. At 110 columns the row said nothing at all:
+ * the readout itself was cut away and the provider, the one thing an
+ * operator looks left for when the link is down, had gone with it.
+ *
+ * An order of magnitude above the route's factors rather than a
+ * hairline above them, because Yoga shrinks *proportionally*: at 4 the
+ * model would still give up a quarter of every lost column. The
+ * intended degradation is the whole route plus a truncated readout, and
+ * a factor this size is what expresses "this one goes first" in a
+ * layout engine that has no such notion.
+ */
+const SLOT_SHRINK = 40;
+
+/**
  * Separator `runModeModelSummary` puts between the two fusion legs.
  * Matched here rather than imported as a run-mode concept: this file
  * only needs to know that a label can be a pair, so that it can spend
@@ -155,10 +174,15 @@ interface MetaLeftProps {
  *
  * That costs the free truncation the single `<Text wrap="truncate">`
  * used to give the whole group, so the row has to fit by shrinking: the
- * notice and its separator never give a column, and the route labels
- * truncate in the order `ComposerMetaControls` sets. Every `<Text>` in
- * here is `truncate` for the same reason — one that wrapped would take
- * the composer's bottom border down a line with it.
+ * slot and its separator go first (`SLOT_SHRINK`), then the route labels
+ * in the order `ComposerMetaControls` sets. Every `<Text>` in here is
+ * `truncate` for the same reason — one that wrapped would take the
+ * composer's bottom border down a line with it.
+ *
+ * The slot is rendered as it arrives, not wrapped in a `<Text>` of this
+ * file's own: it can be a click target, and a click target is a Box,
+ * which Ink cannot nest inside a `<Text>`. Callers hand over an element
+ * that truncates itself.
  */
 function MetaLeft({
   leftSlot,
@@ -176,16 +200,34 @@ function MetaLeft({
   return (
     <Box flexDirection="row" flexShrink={1} minWidth={0}>
       {leftSlot ? (
-        <Box flexShrink={0}>
-          <Text wrap="truncate">{leftSlot}</Text>
-        </Box>
-      ) : null}
-      {leftSlot && hasRoute ? (
-        <Box flexShrink={0}>
-          <Text color={theme.colors.railMuted} wrap="truncate">
-            {" "}
-            {theme.glyphs.dotSeparator}{" "}
-          </Text>
+        <Box
+          flexDirection="row"
+          flexShrink={SLOT_SHRINK}
+          minWidth={0}
+          // The belt to the caller's braces. The slot is rendered as it
+          // arrives — it can be a click target, and a click target is a
+          // Box, which Ink cannot nest inside a `<Text>` — so this file
+          // can no longer impose `wrap="truncate"` on it. A slot that
+          // forgot to truncate itself would wrap, and a wrapped meta bar
+          // takes the composer's bottom border down a line with it. One
+          // row, clipped.
+          height={1}
+          overflow="hidden"
+        >
+          {leftSlot}
+          {hasRoute ? (
+            // Inside the shrinking group but not shrinking itself: the
+            // three cells it costs are what keep a truncated readout
+            // from running into the route, and a separator that gave up
+            // columns of its own turned into a second ellipsis sitting
+            // next to the readout's.
+            <Box flexShrink={0}>
+              <Text color={theme.colors.railMuted} wrap="truncate">
+                {" "}
+                {theme.glyphs.dotSeparator}{" "}
+              </Text>
+            </Box>
+          ) : null}
         </Box>
       ) : null}
       <ComposerMetaControls
