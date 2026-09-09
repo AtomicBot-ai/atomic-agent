@@ -36,27 +36,51 @@ export function buildInkRenderOptions(
     // Repaint only the lines that changed.
     //
     // Ink's default rewrites the entire frame on every state change:
-    // erase every line, print every line, for a screenful of rows. While
-    // a turn is running the spinner alone asks for that eight to ten
-    // times a second — measured over a PTY at 110x34, a median 5.5 KB
-    // and a full-screen erase per frame, ~3.4 MB a minute. With this on,
-    // the median frame is 237 bytes. On a terminal that
-    // implements DEC 2026 synchronized output the erase is hidden; on one
-    // that does not (Apple Terminal among them) it is painted, and the UI
-    // visibly blinks. With incremental rendering an unchanged line is
-    // skipped instead of rewritten, so a spinner tick costs the spinner's
-    // line.
+    // erase every line, print every line, for a screenful of rows. A
+    // running turn asks for that about ten times a second whether or not
+    // the model is saying anything — the spinner and the elapsed label
+    // are enough on their own.
+    //
+    // Measured over a PTY against a build of current main, 30 s of a turn
+    // streaming text into the transcript:
+    //
+    //           110x34                      80x24
+    //           before      after           before      after
+    //   bytes   1,578,957   402,572         1,592,102   161,860
+    //   CSI K       9,724     1,825             9,648     1,074
+    //   cur-up      9,438       391             9,246       396
+    //   updates       286       391               402       396
+    //   frame       5,497       237             3,971       154   (median)
+    //
+    // The repaint *rate* is what it always was — this changes what a
+    // repaint costs, not how often one happens. The median frame drops
+    // 23x; the total drops less (4x at 110x34, 10x at 80x24) because
+    // arriving text genuinely dirties many lines at once, and a frame
+    // where everything changed costs what it always did.
+    //
+    // On a terminal that implements DEC 2026 synchronized output the
+    // erase is hidden; on one that does not (Apple Terminal among them)
+    // it is painted, and the UI visibly blinks. With incremental
+    // rendering an unchanged line is skipped instead of rewritten, so a
+    // spinner tick costs the spinner's line.
     //
     // Ink marks the mode experimental, so the frame it produces was
     // checked rather than assumed: driven over a PTY into a pyte grid and
     // compared character for character against the default renderer, at
-    // 110x34, 80x24 and 40x16, across startup, the composer, a turn in
-    // flight, the Esc menu and its submenus, every Manage tab, the
-    // session and model pickers, the update modal, a mouse drag and
-    // wheel, a chat log scrolled past the viewport, resizes that grow and
-    // shrink in each dimension separately, and teardown — where the last
-    // bytes on the wire (ESU, cursor, mouse, alt screen) are identical
-    // byte for byte.
+    // 110x34, 80x24 and 40x16, across startup, the composer, a turn
+    // streaming text into the transcript, the Esc menu and its submenus,
+    // every Manage tab, the session and model pickers, the update modal,
+    // a mouse drag and wheel, a transcript scrolled past the viewport,
+    // resizes that grow and shrink in each dimension separately, and
+    // teardown — where the last bytes on the wire (ESU, cursor, mouse,
+    // alt screen) are identical byte for byte.
+    //
+    // The transcript is the surface with the most to lose here, since it
+    // is the one that grows and scrolls while deltas arrive, so it was
+    // driven against a stub that emits a fixed number of deltas and then
+    // holds the socket open: the screen settles on the same final state
+    // in both runs, and the two grids match exactly — mid-stream, after a
+    // scroll up, after a scroll back, and after an abort.
     //
     // The two ways an incremental renderer can desynchronise from the
     // screen are both covered — Ink re-syncs its line cache through
@@ -66,10 +90,9 @@ export function buildInkRenderOptions(
     // escape sequences (alt screen, mouse tracking) only outside a
     // rendered block.
     //
-    // Not covered, because the harness cannot reach a provider: assistant
-    // text streaming into the transcript, and the approval modal. The
-    // closest reachable stand-ins — slash-command output overflowing the
-    // viewport, and the update modal — were driven and matched.
+    // Not covered: the approval modal, which needs a model that asks for
+    // a tool. The update modal, which is the same overlay machinery, was
+    // driven and matched.
     incrementalRendering: true,
     // `disambiguateEscapeCodes` alone: it is what makes Shift+Enter a
     // distinct keystroke (`ESC [ 13 ; 2 u`). `reportAllKeysAsEscapeCodes`
