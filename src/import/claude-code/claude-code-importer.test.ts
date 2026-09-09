@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  appendFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -193,6 +194,30 @@ describe("ClaudeCodeImporter", () => {
       status: "migrated",
       reason: "overwritten",
     });
+  });
+
+  it("picks up turns a session gained since the last import", async () => {
+    seedSession();
+    const options = resolveClaudeCodeOptions({ exclude: ["skills", "memory", "mcp"] });
+    await buildImporter().run({ options, execute: true, overwrite: false });
+    expect(sessionStore.load("claude-code:s1")?.turns).toHaveLength(2);
+
+    // The operator kept talking to Claude Code: the transcript grew.
+    appendFileSync(
+      join(sourceDir, "projects", "-work", "s1.jsonl"),
+      line({
+        type: "user",
+        timestamp: "2026-08-02T10:05:00Z",
+        message: { role: "user", content: "and one more thing" },
+      }),
+    );
+    const second = await buildImporter().run({ options, execute: true, overwrite: false });
+    expect(second.items[0]).toMatchObject({
+      kind: "sessions",
+      status: "migrated",
+      reason: "updated (+1 turns)",
+    });
+    expect(sessionStore.load("claude-code:s1")?.turns).toHaveLength(3);
   });
 
   it("skips an mcp server whose name is already configured", async () => {

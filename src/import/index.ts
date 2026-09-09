@@ -5,6 +5,11 @@ export type {
   ImportItemStatus,
   ImportReport,
 } from "./import-report.js";
+export { reconcileImportedSession } from "./reconcile-session.js";
+export type {
+  ReconcileImportedSessionArgs,
+  ReconcileImportedSessionResult,
+} from "./reconcile-session.js";
 
 // Hermes source.
 export {

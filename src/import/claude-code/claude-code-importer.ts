@@ -21,6 +21,7 @@ import {
   type ImportItemResult,
   type ImportReport,
 } from "../import-report.js";
+import { reconcileImportedSession } from "../reconcile-session.js";
 import { splitMemoryNote } from "../split-note.js";
 import type { ClaudeCodeSource } from "./claude-code-source.js";
 import type { ClaudeCodeOptionId } from "./import-options.js";
@@ -372,23 +373,18 @@ export class ClaudeCodeImporter {
       destination: mapped.id,
       status: "migrated",
     };
-    const existing = this.deps.sessionStore.load(mapped.id);
-    if (!existing) {
-      if (options.execute) this.deps.sessionStore.save(mapped);
-      return base;
-    }
-    if (sessionsMatch(existing, mapped)) {
-      return { ...base, status: "skipped", reason: "already matches" };
-    }
-    if (!options.overwrite) {
-      return {
-        ...base,
-        status: "conflict",
-        reason: "destination differs; use --overwrite",
-      };
-    }
-    if (options.execute) this.deps.sessionStore.save(mapped);
-    return { ...base, status: "migrated", reason: "overwritten" };
+    const outcome = reconcileImportedSession({
+      existing: this.deps.sessionStore.load(mapped.id),
+      mapped,
+      execute: options.execute,
+      overwrite: options.overwrite,
+      save: (state) => this.deps.sessionStore.save(state),
+    });
+    return {
+      ...base,
+      status: outcome.status,
+      ...(outcome.reason !== undefined ? { reason: outcome.reason } : {}),
+    };
   }
 
   private importSecrets(
@@ -448,12 +444,6 @@ function manifestsMatch(sourceDir: string, targetDir: string): boolean {
   } catch {
     return false;
   }
-}
-
-/** Structural equality of two sessions' transcripts. */
-function sessionsMatch(a: SessionState, b: SessionState): boolean {
-  if (a.turns.length !== b.turns.length) return false;
-  return JSON.stringify(a.turns) === JSON.stringify(b.turns);
 }
 
 function errorMessage(err: unknown): string {

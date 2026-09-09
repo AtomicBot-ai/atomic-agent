@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { Database as DatabaseCtor } from "../../native/load-better-sqlite3.js";
+import { assistantReplyTurn } from "../../session/conversation-turn.js";
 import { SessionStore } from "../../session/index.js";
 import { TaskStore } from "../../tasks/index.js";
 import { HermesImporter } from "./hermes-importer.js";
@@ -215,6 +216,75 @@ describe("HermesImporter", () => {
     expect(overwriteRun.summary.migrated).toBe(1);
     expect(sessionStore.load("hermes:s-1")?.turns[0]).toMatchObject({
       text: "changed",
+    });
+  });
+
+  it("picks up messages a session gained since the last import", () => {
+    seedStateDb(
+      sourceDir,
+      [{ id: "s-1" }],
+      [{ sessionId: "s-1", role: "user", content: "first", timestamp: 1_700_000_001 }],
+    );
+    const opts = { options: ["sessions" as const], execute: true, overwrite: false };
+    buildImporter().run(opts);
+    // A model stamp the runtime adds locally must survive the update.
+    const imported = sessionStore.load("hermes:s-1")!;
+    sessionStore.save({
+      ...imported,
+      metadata: { ...imported.metadata, llm: { providerId: "p", chatModel: "m" } },
+    });
+
+    for (const source of sources) source.close();
+    rmSync(join(sourceDir, "state.db"), { maxRetries: 5, retryDelay: 100 });
+    seedStateDb(
+      sourceDir,
+      [{ id: "s-1" }],
+      [
+        { sessionId: "s-1", role: "user", content: "first", timestamp: 1_700_000_001 },
+        { sessionId: "s-1", role: "assistant", content: "reply", timestamp: 1_700_000_002 },
+      ],
+    );
+
+    const second = buildImporter().run(opts);
+    expect(second.items[0]).toMatchObject({
+      status: "migrated",
+      reason: "updated (+1 turns)",
+    });
+    const updated = sessionStore.load("hermes:s-1");
+    expect(updated?.turns).toHaveLength(2);
+    expect(updated?.metadata.llm).toEqual({ providerId: "p", chatModel: "m" });
+    expect(updated?.metadata.importedFrom).toBe("hermes");
+  });
+
+  it("never replaces a session the operator continued locally", () => {
+    seedStateDb(
+      sourceDir,
+      [{ id: "s-1" }],
+      [{ sessionId: "s-1", role: "user", content: "first", timestamp: 1_700_000_001 }],
+    );
+    const opts = { options: ["sessions" as const], execute: true, overwrite: false };
+    buildImporter().run(opts);
+    const imported = sessionStore.load("hermes:s-1")!;
+    sessionStore.save({
+      ...imported,
+      turns: [...imported.turns, assistantReplyTurn("continued in atomic-agent", 5)],
+    });
+
+    // The source grew too — but the local continuation is not its prefix.
+    for (const source of sources) source.close();
+    rmSync(join(sourceDir, "state.db"), { maxRetries: 5, retryDelay: 100 });
+    seedStateDb(
+      sourceDir,
+      [{ id: "s-1" }],
+      [
+        { sessionId: "s-1", role: "user", content: "first", timestamp: 1_700_000_001 },
+        { sessionId: "s-1", role: "assistant", content: "reply", timestamp: 1_700_000_002 },
+      ],
+    );
+    const second = buildImporter().run(opts);
+    expect(second.items[0]).toMatchObject({ status: "conflict" });
+    expect(sessionStore.load("hermes:s-1")?.turns[1]).toMatchObject({
+      text: "continued in atomic-agent",
     });
   });
 
