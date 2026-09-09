@@ -198,23 +198,27 @@ not yet.
 
 ## One operational trap worth knowing about
 
-`npm run smoke` and the `drive:*` scripts were running against **different
-agent binaries**. The drivers set `ATOMIC_AGENT_BIN` to a shim over this
-checkout's own `dist/cli/index.js`; the smoke, launched as `electron .
---smoke`, gets whatever `candidateBinaries()` finds — here the installed
-`~/atag-agent/bin/atag`.
+The shared smoke fixture's `config.json` carried `version: 51`. Every agent
+on this machine — this checkout's `dist/cli/index.js` and the installed
+`~/atag-agent/bin/atag` alike — is `USER_CONFIG_VERSION = 49`, and the write
+path refuses anything higher outright:
 
-Both call themselves 0.5.5. They do not understand the same config: the
-checkout's agent writes `version: 51`, and the installed one refuses it with
-`config set failed: version 51 is newer than this build understands (49)`.
+    config set failed: version 51 is newer than this build understands (49)
 
-So running a driver against a shared fixture directory silently upgrades it
-and the suite then fails 33 checks on that directory — none of them about the
-app. It cost a full run to work out. Either give each lane its own state
-directory, or run both against the same agent (`ATOMIC_AGENT_BIN=<shim>`),
-which is what the green run below does and is the more honest pairing anyway:
-the desktop on this branch is meant to be shipped with the agent from this
-branch.
+Reads still work, which is why it stayed invisible: the app boots, the
+transcript fills, and only the checks that WRITE config fail — the MCP tab,
+the LLM tab's External save, the Hugging Face add. Thirty-three of them, none
+about the app.
+
+Something newer than either agent here touched that directory at some point.
+The repair is to pin `version` back to 49 in the file and let the agent
+migrate forward from there; a backup of the v51 file is beside it. Worth
+knowing because it will happen again the moment a newer agent opens a shared
+fixture, and the failure it produces points at the UI rather than at the
+config.
+
+I also spent a run on the wrong theory here — that the drivers' agent shim
+had upgraded the file — before checking that the shim's own agent is 49 too.
 
 ## How this was verified
 
@@ -241,9 +245,13 @@ branch.
   `file://` page a CSP of `font-src 'self'` can be an opaque origin, which
   would drop the faces silently and fall back to Helvetica. `document.fonts`
   says both are loaded.
+- `npm run smoke` — **498 checks, 0 failures**, on the repaired fixture.
 - `drive:onboarding` 60/60 (one honest skip: that run has no
   `OPENROUTER_API_KEY` for the empty-box case). `drive:wizard` 16/16.
-  `drive:hover` 22/22.
+  `drive:hover` 22/22. `drive:models` 29/29.
+- F8 is asserted on four screens: an arrow moves the selection and commits
+  nothing on `choose`, `local_pick` and `import_pick`, and on `import_done`
+  — the one that broke — an arrow does not finish the flow.
 - Five drivers were themselves out of date with the app and were updated
   rather than worked around — most importantly `passIntro`, shared by three
   of them, which dismissed the splash by clicking the star field's canvas.
