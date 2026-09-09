@@ -531,6 +531,27 @@ export type AgentLoopEvent =
       elapsedMs: number;
       stepCeiling: number;
     }
+  | {
+      /**
+       * One fusion worker turn started, ended, or was cut short. Emitted
+       * by `fusion.delegate` in the PARENT session's frame, never the
+       * worker's: the worker session has no recorder, no event hook and
+       * no UI, so an event tagged with its id would reach nobody. This is
+       * the only window the operator has into a fan-out that can occupy
+       * the orchestrator's turn for minutes.
+       *
+       * Not produced by `AgentLoop` itself — it rides this union because
+       * the runtime's event fan-out and every UI reducer are typed on it.
+       */
+      type: "fusion_worker";
+      taskId: string;
+      title: string;
+      phase: "started" | "finished" | "failed" | "cancelled";
+      stepCount?: number;
+      durationMs?: number;
+      /** One line about the outcome; the worker's reply, clipped. */
+      summary?: string;
+    }
   | { type: "step_started"; stepIndex: number }
   | {
       type: "step_finished";

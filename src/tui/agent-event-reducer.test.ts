@@ -30,6 +30,81 @@ function apply(state: TuiState, actions: TuiAction[]): TuiState {
   return actions.reduce(reduceTuiState, state);
 }
 
+describe("reduceTuiState fusion worker progress", () => {
+  const feedLines = (events: Parameters<typeof reduceTuiState>[1][]): string[] =>
+    apply(createInitialTuiState(fakeSession()), events).feed.map((f) => f.line);
+
+  it("shows one line when a worker starts and one when it finishes", () => {
+    // A fan-out can hold the orchestrator's turn for minutes with no
+    // steps of its own to show; without these lines the TUI goes quiet.
+    const lines = feedLines([
+      {
+        type: "agent_event",
+        event: {
+          type: "fusion_worker",
+          taskId: "t1",
+          title: "Map the routes",
+          phase: "started",
+        },
+      },
+      {
+        type: "agent_event",
+        event: {
+          type: "fusion_worker",
+          taskId: "t1",
+          title: "Map the routes",
+          phase: "finished",
+          stepCount: 5,
+          durationMs: 9000,
+          summary: "12 routes, 3 unauthenticated",
+        },
+      },
+    ]);
+    expect(lines).toEqual([
+      "» worker Map the routes: started",
+      "» worker Map the routes: done — 5 steps, 12 routes, 3 unauthenticated",
+    ]);
+  });
+
+  it("renders the failed and cancelled phases distinctly", () => {
+    const lines = feedLines([
+      {
+        type: "agent_event",
+        event: {
+          type: "fusion_worker",
+          taskId: "t1",
+          title: "A",
+          phase: "failed",
+          summary: "provider exploded",
+        },
+      },
+      {
+        type: "agent_event",
+        event: { type: "fusion_worker", taskId: "t2", title: "B", phase: "cancelled" },
+      },
+    ]);
+    expect(lines).toEqual([
+      "» worker A: failed — provider exploded",
+      "» worker B: cancelled",
+    ]);
+  });
+
+  it("does not disturb the turn's own status or step counter", () => {
+    // These events belong to the parent turn as a whole, not to any one
+    // of its steps — they must not read as a step boundary.
+    const running = apply(createInitialTuiState(fakeSession()), [
+      { type: "agent_event", event: { type: "step_started", stepIndex: 3 } },
+    ]);
+    const after = reduceTuiState(running, {
+      type: "agent_event",
+      event: { type: "fusion_worker", taskId: "t1", title: "A", phase: "started" },
+    });
+    expect(after.status).toBe(running.status);
+    expect(after.currentStep).toBe(3);
+    expect(after.feed.at(-1)?.stepIndex).toBeNull();
+  });
+});
+
 describe("reduceTuiState", () => {
   it("should transition to running when step_started arrives", () => {
     const initial = createInitialTuiState(fakeSession());

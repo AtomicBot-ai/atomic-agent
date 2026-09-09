@@ -596,6 +596,37 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
         color: "gray",
       });
     }
+    case "fusion_worker": {
+      // A fan-out can hold the orchestrator's turn for minutes with no
+      // steps of its own to show, so each worker gets a start line and
+      // an end line. `stepIndex: null` because these belong to the
+      // parent turn as a whole, not to any one of its steps — the
+      // events are emitted in the parent's frame from inside a worker
+      // session that has no step counter the operator can see.
+      const line =
+        event.phase === "started"
+          ? `» worker ${event.title}: started`
+          : event.phase === "cancelled"
+            ? `» worker ${event.title}: cancelled`
+            : event.phase === "failed"
+              ? `» worker ${event.title}: failed — ${event.summary ?? "no detail"}`
+              : `» worker ${event.title}: done — ${event.stepCount ?? 0} steps${
+                  event.summary ? `, ${event.summary}` : ""
+                }`;
+      return appendFeed(state, {
+        kind: "runtime_info",
+        stepIndex: null,
+        line,
+        color:
+          event.phase === "failed"
+            ? "red"
+            : event.phase === "cancelled"
+              ? "yellow"
+              : event.phase === "finished"
+                ? "green"
+                : "gray",
+      });
+    }
     case "loop_detected":
       // Deliberately not rendered: the loop detector's own `### notice`
       // changes what the model does, and the operator sees the effect
