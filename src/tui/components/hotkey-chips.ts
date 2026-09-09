@@ -204,6 +204,7 @@ export function resolveChips(
       { key: "↑↓", label: "select", shed: 3 },
       { key: "enter", label: "open" },
       { key: "shift+↑↓", label: "move", shed: 2 },
+      { key: "p", label: "pin", shed: 3 },
       { key: "tab", label: "next pane", shed: 1 },
       { key: "esc", label: "back to editor" },
       {

@@ -439,6 +439,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
         },
         onSessionPickerRequested: () => orchestrator.openSessionPicker(),
         onSessionSwitchRequested: (id) => orchestrator.switchSession(id),
+        onSessionPinToggled: (id) => orchestrator.togglePinned(id),
         onSessionMoveRequested: (id, toIndex) =>
           orchestrator.moveSession(id, toIndex),
         onSessionNewRequested: () => orchestrator.newSession(),

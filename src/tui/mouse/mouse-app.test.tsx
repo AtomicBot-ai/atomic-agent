@@ -155,6 +155,7 @@ function mountApp(): {
   switched: string[];
   /** `[sessionId, toIndex]` pairs the app asked the host to reorder. */
   moves: Array<[string, number]>;
+  pins: string[];
   /** Clicks the Tasks header's `+ new` chip delivered to the host. */
   taskNews: number[];
   /** Provider ids `/model` asked the orchestrator to ensure a catalog for. */
@@ -166,6 +167,7 @@ function mountApp(): {
   const deleted: string[] = [];
   const switched: string[] = [];
   const moves: Array<[string, number]> = [];
+  const pins: string[] = [];
   const copied: string[] = [];
   const taskNews: number[] = [];
   const modelEnsures: Array<string | null> = [];
@@ -184,6 +186,7 @@ function mountApp(): {
         ...noopCallbacks(),
         onSessionDeleteConfirmed: (sessionId) => deleted.push(sessionId),
         onSessionSwitchRequested: (sessionId) => switched.push(sessionId),
+        onSessionPinToggled: (sessionId) => pins.push(sessionId),
         onSessionMoveRequested: (sessionId, toIndex) =>
           moves.push([sessionId, toIndex]),
         onTaskNewRequested: () => taskNews.push(taskNews.length),
@@ -201,6 +204,7 @@ function mountApp(): {
     deleted,
     switched,
     moves,
+    pins,
     taskNews,
     modelEnsures,
     copied,
@@ -464,7 +468,9 @@ describe("TuiApp mouse", () => {
     ): Promise<void> => {
       await waitUntil(() => app.frame().includes("R U N"), "the Run screen");
       app.seedSessions();
-      await waitUntil(() => app.frame().includes("first thread"), "the rail rows");
+      // A prefix, not the whole preview: the rail truncates previews to
+      // its width, and the pin mark takes two of those columns.
+      await waitUntil(() => app.frame().includes("first th"), "the rail rows");
       app.stdin.write("\t");
       await waitUntil(() => app.frame().includes("[x]"), "the selected row");
       await clickUntil(
@@ -712,6 +718,29 @@ describe("TuiApp mouse", () => {
       // Dropping is not opening.
       expect(app.switched).toEqual([]);
       await waitUntil(() => !app.frame().includes("↕"), "the drag feedback to clear");
+      app.unmount();
+    });
+
+    it("pins a row when its ↑ is clicked, without opening it", async () => {
+      const app = mountApp();
+      await seedRail(app);
+      // The arrow sits at the right edge of every row, so it is
+      // reachable without selecting the row first.
+      for (let attempt = 0; attempt < 40; attempt += 1) {
+        const line = rowLine(app, "second th");
+        const at = locate(app.frame(), "second th");
+        const arrow = line.lastIndexOf("↑");
+        expect(arrow).toBeGreaterThan(-1);
+        app.mouse.emit(click(arrow, at.y));
+        await delay(30);
+        app.mouse.emit(release(arrow, at.y));
+        await delay(50);
+        if (app.pins.length > 0) break;
+      }
+      expect(app.pins).toEqual(["s-2"]);
+      // A pin is not an open and not a move.
+      expect(app.switched).toEqual([]);
+      expect(app.moves).toEqual([]);
       app.unmount();
     });
 

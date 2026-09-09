@@ -104,10 +104,13 @@ function PickerRow({
   const preview = truncate(entry.preview, 48);
   const marker = current ? theme.glyphs.assistantMarker : " ";
   const chevron = selected ? theme.glyphs.chevronRight : " ";
+  // The picker lists the rail's list, pinned block first — the same
+  // `↑` says why those rows are on top.
+  const pin = entry.pinned ? theme.glyphs.pinned : " ";
   return (
     <Box>
       <Text color={selected ? theme.colors.accentSoft : theme.colors.muted} bold={selected}>
-        {chevron} {marker} {idShort}
+        {chevron} {marker} {pin} {idShort}
       </Text>
       <Text color={theme.colors.muted}>
         {"  "}

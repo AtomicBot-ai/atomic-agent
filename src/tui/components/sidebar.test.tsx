@@ -369,8 +369,57 @@ describe("Sidebar session drag feedback", () => {
       />,
     );
     const text = strip(lastFrame() ?? "");
-    expect(text).toMatch(/↕ [^\n]*another conversa/);
-    expect(text).toMatch(/▸ [^\n]*first ever messa/);
+    // The previews are two columns shorter than they were before the
+    // pin mark took its cells, so match a prefix the rail still fits.
+    expect(text).toMatch(/↕ [^\n]*another conver/);
+    expect(text).toMatch(/▸ [^\n]*first ever mes/);
+  });
+
+  it("paints the pin mark on every session row", () => {
+    const { lastFrame } = render(
+      <Sidebar
+        width={30}
+        sessions={[SESSIONS[0]!, { ...SESSIONS[1]!, pinned: true }]}
+        sessionsCursor={0}
+        currentSessionId={null}
+        tasks={[]}
+        tasksCursor={0}
+        activeSection="sessions"
+        focused={true}
+      />,
+    );
+    const lines = strip(lastFrame() ?? "").split("\n");
+    const first = lines.find((line) => line.includes("first ever")) ?? "";
+    const second = lines.find((line) => line.includes("another conv")) ?? "";
+    // Both rows carry it — the mark says "pinned / not pinned", which a
+    // mark that only appeared on the selected row could not.
+    expect(first).toContain("↑");
+    expect(second).toContain("↑");
+    // …at the right edge of the row, past the preview.
+    expect(first.lastIndexOf("↑")).toBeGreaterThan(first.indexOf("first ever"));
+  });
+
+  it("puts pinned rows above the rest exactly as it is handed them", () => {
+    // Ordering is the rail orchestrator's job; the component draws the
+    // list in the order it receives, pins included.
+    const pinned = { ...SESSIONS[1]!, pinned: true };
+    const { lastFrame } = render(
+      <Sidebar
+        width={30}
+        sessions={[pinned, SESSIONS[0]!]}
+        sessionsCursor={0}
+        currentSessionId={null}
+        tasks={[]}
+        tasksCursor={0}
+        activeSection="sessions"
+        focused={true}
+      />,
+    );
+    const lines = strip(lastFrame() ?? "").split("\n");
+    const pinnedRow = lines.findIndex((line) => line.includes("another conv"));
+    const plainRow = lines.findIndex((line) => line.includes("first ever"));
+    expect(pinnedRow).toBeGreaterThan(-1);
+    expect(pinnedRow).toBeLessThan(plainRow);
   });
 
   it("paints no drag marks when nothing is dragged", () => {

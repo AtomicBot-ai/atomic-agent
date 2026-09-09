@@ -26,4 +26,13 @@ export {
   handleSessionMoveKey,
   type SessionMoveKeyContext,
 } from "./handle-session-move-key.js";
+export {
+  handleSessionPinKey,
+  type SessionPinKeyContext,
+} from "./handle-session-pin-key.js";
+export {
+  PinSessionButton,
+  PIN_COLUMNS,
+  type PinSessionButtonProps,
+} from "./pin-session-button.js";
 export { SessionRailRow, type SessionRailRowProps } from "./session-rail-row.js";

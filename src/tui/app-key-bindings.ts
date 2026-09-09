@@ -19,7 +19,10 @@ import {
 import type { MenuNode } from "./menu/menu-registry.js";
 import { cycleNavSlot, type NavSlot } from "./section.js";
 import { selectSidebarTasks } from "./sidebar-tasks-selector.js";
-import { handleSessionMoveKey } from "./session-rail/index.js";
+import {
+  handleSessionMoveKey,
+  handleSessionPinKey,
+} from "./session-rail/index.js";
 import type { TuiAction } from "./tui-action.js";
 import type { TuiState } from "./tui-state.js";
 import { isUninstallConfirmed } from "./uninstall/uninstall-state.js";
@@ -73,6 +76,8 @@ export interface AppKeyCallbacks {
   onSessionSwitchRequested?(sessionId: string): void;
   /** Shift+↑/↓ in the rail: put the selected session on slot `toIndex`. */
   onSessionMoveRequested?(sessionId: string, toIndex: number): void;
+  /** `p` in the rail, or a row's `↑`: pin the selected session, or release it. */
+  onSessionPinToggled?(sessionId: string): void;
   /**
    * Optional — called when Enter is pressed on a sidebar Tasks row.
    * The handler is expected to switch to the Tasks debug tab and open
@@ -725,6 +730,10 @@ function handleSidebarKey(
     }
     return true;
   }
+  // `p` is the keyboard twin of the row's `↑`, for the same reason `x`
+  // is the twin of `[x]`: the mark is painted whether or not mouse
+  // reporting is on.
+  if (handleSessionPinKey(input, key, ctx)) return true;
   if (key.return) {
     if (state.sidebarSection === "tasks") {
       const visible = selectSidebarTasks(state.tasksPanel.rows);

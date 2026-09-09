@@ -8,7 +8,12 @@ import {
 import { isPrimaryPress } from "../mouse/mouse-event.js";
 import { MOUSE_LAYER_BASE } from "../mouse/mouse-registry.js";
 import { computeRowWindow } from "../row-window.js";
-import { SessionRailRow, type SidebarDragState } from "../session-rail/index.js";
+import {
+  PinSessionButton,
+  PIN_COLUMNS,
+  SessionRailRow,
+  type SidebarDragState,
+} from "../session-rail/index.js";
 import type { TaskSummaryRow } from "../tasks/tasks-panel-state.js";
 import { theme } from "../theme/theme.js";
 import type { SessionPickerEntry } from "../tui-state.js";
@@ -592,21 +597,24 @@ function SessionRow({
   // selected made the mark materialise on top of text the operator was
   // already pointing at: the second click of the ordinary
   // select-then-open gesture landed on `[x]` and asked to delete the
-  // thread instead of opening it.
+  // thread instead of opening it. The pin columns are reserved the same
+  // way, and painted on every row — a pin mark that appeared only under
+  // the pointer could not show which threads are already pinned.
+  const marks = CLOSE_COLUMNS + PIN_COLUMNS;
   const preview = truncate(
     entry.preview,
-    Math.max(1, Math.min(previewWidth, groundWidth - 5 - CLOSE_COLUMNS)),
+    Math.max(1, Math.min(previewWidth, groundWidth - 5 - marks)),
   );
   const label = `${chevron} ${marker} ${preview}`;
   // Every cell width is computed here, so nothing may flex. Yoga
   // shrinks text children by default and Ink re-wraps a squeezed
   // `<Text>` rather than clipping it — the trap
   // `MouseTargetProps.flexShrink` warns about, one row away from here.
-  const ground = ` ${label}`.padEnd(Math.max(0, groundWidth - CLOSE_COLUMNS));
+  const ground = ` ${label}`.padEnd(Math.max(0, groundWidth - marks));
   return (
     <Box width={inner} flexShrink={0}>
       <Text>{" ".repeat(ROW_MARGIN_COLUMNS)}</Text>
-      <Box flexShrink={0} width={Math.max(0, groundWidth - CLOSE_COLUMNS)}>
+      <Box flexShrink={0} width={Math.max(0, groundWidth - marks)}>
         <Text
           color={drag === "target" ? theme.colors.railAccent : theme.colors.railForeground}
           bold={selected || current || drag !== null}
@@ -622,6 +630,11 @@ function SessionRow({
       ) : (
         <Text>{" ".repeat(CLOSE_COLUMNS)}</Text>
       )}
+      <PinSessionButton
+        sessionId={entry.sessionId}
+        pinned={entry.pinned}
+        inverse={selected || drag === "source"}
+      />
       <Text>{" ".repeat(ROW_MARGIN_COLUMNS)}</Text>
     </Box>
   );

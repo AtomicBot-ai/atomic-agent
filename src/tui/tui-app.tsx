@@ -243,6 +243,11 @@ export interface TuiAppCallbacks {
    * resulting order and re-emits `recent_sessions_updated`.
    */
   onSessionMoveRequested?(sessionId: string, toIndex: number): void;
+  /**
+   * `p` on the focused rail row, or a click on a row's `↑`: pin that
+   * session to the top block of the rail, or release it.
+   */
+  onSessionPinToggled?(sessionId: string): void;
   /** Ask the orchestrator to start a fresh session. */
   onSessionNewRequested?(): void;
   /** Ask the orchestrator to dump the current user profile into the chat log. */
