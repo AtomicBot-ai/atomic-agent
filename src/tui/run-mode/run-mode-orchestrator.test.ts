@@ -67,7 +67,7 @@ describe("RunModeOrchestrator.setMode", () => {
     expect(getConfig().llm?.activeTextProvider).toBe("openrouter");
     expect(getConfig().llm?.runMode).toEqual({
       mode: "fusion",
-      fusion: { orchestratorProvider: "openrouter" },
+      fusion: { orchestratorProvider: "openrouter", workerProvider: "local-llama" },
     });
     expect(app.setActive).toHaveBeenCalledWith("openrouter");
     expect(app.deps.providers.refresh).toHaveBeenCalled();
@@ -170,5 +170,50 @@ describe("RunModeOrchestrator.setMode", () => {
     expect(app.actions.find((a) => a.type === "composer_notice")).toMatchObject({
       text: expect.stringMatching(/workers must be an integer 1-8/),
     });
+  });
+
+  it("pins BOTH legs so the pair cannot drift with the provider order", async () => {
+    seed(BOTH_LEGS);
+    const app = harness();
+    await app.orchestrator.setMode("fusion");
+    expect(getConfig().llm?.runMode?.fusion).toEqual({
+      orchestratorProvider: "openrouter",
+      workerProvider: "local-llama",
+    });
+  });
+
+  it("prefers a cloud provider that has credentials over the first one listed", async () => {
+    seed({
+      ...BOTH_LEGS,
+      providers: [
+        BOTH_LEGS!.providers[0]!,
+        { id: "keyless", kind: "openai-compatible", baseUrl: "https://a.invalid" },
+        { id: "openrouter", kind: "openrouter", defaultChatModel: "gpt", apiKey: "sk-test" },
+      ],
+    });
+    const app = harness();
+    await app.orchestrator.setMode("fusion");
+    expect(getConfig().llm?.runMode?.fusion?.orchestratorProvider).toBe("openrouter");
+    expect(getConfig().llm?.activeTextProvider).toBe("openrouter");
+  });
+
+  it("introduces the mode in chat on the way in, once", async () => {
+    seed(BOTH_LEGS);
+    const app = harness();
+    await app.orchestrator.setMode("fusion");
+    const intro = app.actions.filter((a) => a.type === "system_message");
+    expect(intro).toHaveLength(1);
+    expect((intro[0] as { text: string }).text).toMatch(/^Fusion is on\./);
+    // Re-applying fusion (e.g. re-pinning the orchestrator) says nothing.
+    app.actions.length = 0;
+    await app.orchestrator.setMode("fusion");
+    expect(app.actions.filter((a) => a.type === "system_message")).toHaveLength(0);
+  });
+
+  it("says nothing in chat when the switch was refused", async () => {
+    seed({ ...BOTH_LEGS, providers: [BOTH_LEGS!.providers[0]!] });
+    const app = harness();
+    await app.orchestrator.setMode("fusion");
+    expect(app.actions.filter((a) => a.type === "system_message")).toHaveLength(0);
   });
 });

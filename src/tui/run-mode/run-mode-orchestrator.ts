@@ -1,6 +1,9 @@
 import { getConfig, type RunModeName } from "../../config/index.js";
+import { usesExternalCliAuth } from "../../config/provider-auth-mode.js";
+import { resolveLlmProviderApiKey } from "../../config/resolve-llm-api-key.js";
 import { LOCAL_PROVIDER_KIND } from "../../config/llm-run-mode-config.js";
 import { resolveLlmConfig } from "../../llm/provider/registry/index.js";
+import type { ResolvedLlmConfig } from "../../llm/provider/registry/provider-types.js";
 import {
   describeRunMode,
   describeRunModeDegradation,
@@ -17,6 +20,7 @@ import {
 } from "../persist-run-mode.js";
 import type { ProvidersOrchestrator } from "../providers/providers-orchestrator.js";
 import type { TuiAction } from "../tui-action.js";
+import { describeFusionIntro } from "./fusion-intro.js";
 
 export interface RunModeOrchestratorDeps {
   /** Fires `providerRegistry.setActive` — the hot-apply half. */
@@ -66,9 +70,10 @@ export class RunModeOrchestrator {
     if (mode === "fusion") {
       leg =
         opts.fusion?.orchestratorProvider ??
-        rm.orchestratorProviderId ??
-        (activeIsCloud ? resolved.activeTextProvider : null);
-      if (leg === null) {
+        (activeIsCloud ? resolved.activeTextProvider : null) ??
+        this.firstUsableCloudProvider(resolved) ??
+        rm.orchestratorProviderId;
+      if (leg === null || leg === undefined) {
         this.refuse(describeRunModeDegradation({ reason: "no-cloud-provider", requested: mode }));
         return;
       }
@@ -76,9 +81,16 @@ export class RunModeOrchestrator {
         this.refuse(describeRunModeDegradation({ reason: "no-local-provider", requested: mode }));
         return;
       }
-      // Pin the orchestrator so the resolver's answer cannot drift with
-      // the provider list's order.
-      fusion = { ...fusion, orchestratorProvider: leg };
+      // Pin BOTH legs. Leaving either to the resolver's "first entry of
+      // that kind" default lets the pair drift with the order of
+      // `llm.providers` — and picked the wrong half outright when a
+      // cloud-kind entry points at a local server, which is how both
+      // slots once came to name a local model.
+      fusion = {
+        ...fusion,
+        orchestratorProvider: leg,
+        workerProvider: opts.fusion?.workerProvider ?? rm.workerProviderId,
+      };
     } else if (mode === "cloud") {
       leg = activeIsCloud ? resolved.activeTextProvider : rm.orchestratorProviderId;
       if (leg === null) {
@@ -116,6 +128,11 @@ export class RunModeOrchestrator {
     if (mode !== "local") void this.deps.providers.ensureInlineModels(leg);
     const now = this.current();
     this.deps.bus.emit({ type: "runtime_info", line: `run mode: ${describeRunMode(now)}` });
+    // Only on the way IN. Re-applying fusion to change the orchestrator
+    // is not a moment that needs the mode explained again.
+    if (now.effective === "fusion" && rm.effective !== "fusion") {
+      this.deps.bus.emit({ type: "system_message", text: describeFusionIntro(now) });
+    }
     if (now.effective === "fusion") {
       const local = getConfig().localModels;
       if (local.mode === "managed" && local.managed.modelId) {
@@ -150,6 +167,18 @@ export class RunModeOrchestrator {
       type: "runtime_info",
       line: `fusion: ${workers} worker${workers === 1 ? "" : "s"}${applyHint}`,
     });
+  }
+
+  /**
+   * A cloud provider that could actually answer: credentials first, so
+   * switching to fusion does not pin an entry whose key was never added
+   * and then fail on the first turn. Falls back to any cloud entry —
+   * the pre-flight has already said whether one is usable.
+   */
+  private firstUsableCloudProvider(resolved: ResolvedLlmConfig): string | null {
+    const cloud = resolved.providers.filter((p) => p.kind !== LOCAL_PROVIDER_KIND);
+    const keyed = cloud.find((p) => Boolean(resolveLlmProviderApiKey(p)) || usesExternalCliAuth(p));
+    return (keyed ?? cloud[0])?.id ?? null;
   }
 
   private refuse(line: string): void {

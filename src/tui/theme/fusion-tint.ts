@@ -1,6 +1,6 @@
 import { mixColor } from "./mix-color.js";
 import { readableOn } from "./readable-foreground.js";
-import { theme } from "./theme.js";
+import { theme, type TuiTheme } from "./theme.js";
 
 /**
  * The orange the Fusion run mode is painted in.
@@ -26,9 +26,22 @@ import { theme } from "./theme.js";
  */
 export const FUSION_GROUND_FADE = 0.65;
 
-/** The fusion chip: `warnStrong` as a ground with measured ink on top. */
-export function fusionChipColors(): { background: string; ink: string } {
-  const background = theme.colors.warnStrong;
+/**
+ * The fusion chip: `warnStrong` as a ground with measured ink on top.
+ *
+ * `palette` is the theme to read it from, and inside a popup it MUST be
+ * `chromeTheme`. The page proxy collapses every non-ground role to
+ * `muted` while a backdrop is dimmed (`setBackdropDimmed`), and the
+ * chip's orange is a foreground role — so read through the page proxy
+ * the one control the mode exists to advertise turns grey exactly when
+ * the operator has the switch open and is looking straight at it.
+ * `chromeTheme` ignores dimming, which is why every other pixel of the
+ * popup already reads from it.
+ */
+export function fusionChipColors(
+  palette: TuiTheme = theme,
+): { background: string; ink: string } {
+  const background = palette.colors.warnStrong;
   return { background, ink: readableOn(background) };
 }
 
