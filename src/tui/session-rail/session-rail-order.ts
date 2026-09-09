@@ -39,7 +39,11 @@ export function applySessionRailOrder<T extends RailRow>(
   // Newest first, so a run of new rows keeps its own recency order as
   // each one is placed.
   unknown.sort((a, b) => b.updatedAt - a.updatedAt);
-  for (const row of unknown) insertByDate(arranged, row);
+  const placed = new Set<T>();
+  for (const row of unknown) {
+    insertByDate(arranged, row, placed);
+    placed.add(row);
+  }
   return arranged;
 }
 
@@ -61,11 +65,29 @@ export interface RailRow {
  * holds the one property that matters either way: nothing newer ever
  * ends up below it. A thread created now has nothing newer above it,
  * so it still lands on top.
+ *
+ * A row of exactly the same age counts as above it only when this pass
+ * placed it. Both readings of a tie are wanted and they point opposite
+ * ways: against the rows the operator arranged, "as new as the newest"
+ * takes the top slot, because a session minted this second shares a
+ * millisecond with the one before it; against the other newcomers of
+ * this pass — a batch of imports written in one go, all stamped alike —
+ * the arrival order has to survive, or the batch comes out reversed.
+ * Knowing which rows this pass placed is what separates the two.
  */
-function insertByDate<T extends RailRow>(rows: T[], row: T): void {
+function insertByDate<T extends RailRow>(
+  rows: T[],
+  row: T,
+  placed: ReadonlySet<T>,
+): void {
   let at = 0;
   for (let i = rows.length - 1; i >= 0; i -= 1) {
-    if ((rows[i]?.updatedAt ?? 0) > row.updatedAt) {
+    const other = rows[i];
+    if (!other) continue;
+    const above =
+      other.updatedAt > row.updatedAt ||
+      (other.updatedAt === row.updatedAt && placed.has(other));
+    if (above) {
       at = i + 1;
       break;
     }
