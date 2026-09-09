@@ -2061,7 +2061,7 @@ async function smokeTest(): Promise<void> {
     ]);
     check("missing trace file rejects, never hangs", missing.ok === false && typeof missing.error === "string" && missing.error.length > 0, JSON.stringify(missing));
 
-    const chips = await js<number>("window.__pushAssistant('Saved the report to /Users/valerii/Desktop/report.pdf and the notes to ~/notes/summary.md.')");
+    const chips = await js<number>("window.__pushAssistant('Saved the report to /Users/example/Desktop/report.pdf and the notes to ~/notes/summary.md.')");
     check("file paths render as chips", chips === 2, `${chips} chips`);
 
     // --- first run: a config that has no `llm` block at all. -------------
@@ -2285,7 +2285,7 @@ async function smokeTest(): Promise<void> {
 
     // item 4: nothing widens the transcript column — a card with a 300-char
     // argument and a 260-char path summary, a reply with a 300-char URL.
-    await js<number>("window.__pushTool('os.shell.run', {cmd:'python3', args:['-c', 'x'.repeat(300)]}, '/Users/valerii/' + 'a'.repeat(260) + '.tsx')");
+    await js<number>("window.__pushTool('os.shell.run', {cmd:'python3', args:['-c', 'x'.repeat(300)]}, '/Users/example/' + 'a'.repeat(260) + '.tsx')");
     type Ov = { sw: number; cw: number; colRight: number; colWidth: number; track: number; maxRight: number; durations: string[]; lastTitle: string };
     const ov = await js<Ov>("window.__overflow()");
     // item 4: that card is store-shaped (finished, no trace row) — it must print
@@ -2304,7 +2304,7 @@ async function smokeTest(): Promise<void> {
     // covers `.cardsum` — the summary line whose nowrap/ellipsis rules had to
     // go for the column to stop widening. __pushTool defaults to open, so the
     // card above only ever exercised `.ar` and `.cardbody pre`.
-    await js<number>("window.__pushTool('os.shell.run', {cmd:'python3', args:['-c', 'x'.repeat(300)]}, '/Users/valerii/' + 'b'.repeat(260) + '.tsx', false)");
+    await js<number>("window.__pushTool('os.shell.run', {cmd:'python3', args:['-c', 'x'.repeat(300)]}, '/Users/example/' + 'b'.repeat(260) + '.tsx', false)");
     const ov3 = await js<Ov & { sums: number[] }>("window.__overflow()");
     check(
       "a collapsed card's summary keeps inside the panel",

@@ -3,7 +3,10 @@
     "target": "ES2022",
     "module": "CommonJS",
     "moduleResolution": "node",
-    "lib": ["ES2023", "DOM"],
+    "lib": [
+      "ES2023",
+      "DOM"
+    ],
     "outDir": "out",
     "rootDir": ".",
     "strict": true,
@@ -11,7 +14,10 @@
     "noImplicitOverride": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "sourceMap": true
+    "sourceMap": false
   },
-  "include": ["main/**/*.ts", "preload/**/*.ts"]
+  "include": [
+    "main/**/*.ts",
+    "preload/**/*.ts"
+  ]
 }

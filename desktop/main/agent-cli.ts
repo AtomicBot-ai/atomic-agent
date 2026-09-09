@@ -59,7 +59,7 @@ async function cli(args: string[], timeout = 30_000, cwd?: string): Promise<CliR
     /* r6 (human-scenario round): say what went wrong, in words.
        When `execFile` kills a child on `timeout`, its message is the whole
        command line — the wizard printed
-       "Command failed: /Users/valerii/atag-agent/bin/atag config get"
+       "Command failed: /Users/<you>/atag-agent/bin/atag config get"
        in red under the API-key box and stopped there. That is not a sentence
        a person can act on: it names a path they did not type and a subcommand
        they did not run, and it says nothing about the one thing that actually

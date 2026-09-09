@@ -1,0 +1,33 @@
+Copyright (c) 2026 AtomicBot. All rights reserved.
+
+PROPRIETARY AND CONFIDENTIAL — EVALUATION USE ONLY
+
+This software, including the application bundle and any source code
+contained within or accompanying it, is the confidential and proprietary
+property of AtomicBot. It is provided to a named recipient solely for the
+purpose of evaluation and testing.
+
+You MAY:
+  · run this build for the purpose of evaluating it, and
+  · report defects and feedback to the copyright holder.
+
+You MAY NOT, without prior written permission of the copyright holder:
+  · copy, publish, redistribute or share this software or any part of it,
+    including with anyone who did not receive it directly from the
+    copyright holder;
+  · copy, reuse, adapt or incorporate any of its source code into any
+    other work;
+  · reverse engineer, decompile or disassemble it, except to the extent
+    that applicable law expressly permits despite this restriction;
+  · remove or alter this notice.
+
+Source code is present in this build only as an artefact of packaging.
+Its presence is not a grant of any licence to it.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES
+OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+OTHER DEALINGS IN THE SOFTWARE.

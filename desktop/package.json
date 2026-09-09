@@ -3,7 +3,7 @@
   "productName": "Atomic Agent",
   "version": "0.5.5",
   "description": "Desktop client for atomic-agent. Supervises a local `atag serve` process and drives it over the loopback HTTP API.",
-  "license": "MIT",
+  "license": "UNLICENSED",
   "private": true,
   "type": "commonjs",
   "main": "out/main/main.js",
@@ -32,17 +32,22 @@
   "build": {
     "appId": "ai.atomicbot.desktop",
     "productName": "Atomic Agent",
-    "copyright": "MIT \u2014 AtomicBot",
+    "copyright": "Copyright (c) 2026 AtomicBot. All rights reserved. Evaluation use only.",
     "asar": true,
     "files": [
       "out/**",
       "!out/native/**",
-      "package.json"
+      "package.json",
+      "LICENSE"
     ],
     "extraResources": [
       {
         "from": "out/native/atomic-speech",
         "to": "native/atomic-speech"
+      },
+      {
+        "from": "LICENSE",
+        "to": "LICENSE.txt"
       }
     ],
     "directories": {

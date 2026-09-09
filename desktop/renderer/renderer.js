@@ -6081,7 +6081,7 @@ function dlResetPhases(withRuntime) {
 function dlStart(jobs) {
   DL.queue = jobs.slice();
   DL.error = null;
-  DL.rate = null; DL.last = null;
+  DL.rate = null; DL.last = null; DL.samples = 0;
   dlResetPhases(jobs.some((j) => j.kind === 'runtime'));
   dlNext();
 }
@@ -6090,7 +6090,7 @@ function dlNext() {
   const job = DL.queue.shift();
   if (!job) { DL.job = null; render(); return; }
   DL.job = Object.assign({percent: 0, transferredBytes: 0, totalBytes: 0, sawProgress: false}, job);
-  DL.rate = null; DL.last = null;
+  DL.rate = null; DL.last = null; DL.samples = 0;
   /* r5 item 7 review fix: a phase becomes `active` when its FIRST real
      sample lands, not when the child is spawned. `models update` spends
      its opening seconds deciding whether there is anything to fetch, and
@@ -6167,6 +6167,7 @@ function dlOnPull(ev) {
       if (seconds > 0) {
         const sample = (job.transferredBytes - DL.last.bytes) / seconds;
         DL.rate = DL.rate === null ? sample : DL.rate + 0.3 * (sample - DL.rate);
+        DL.samples = (DL.samples || 0) + 1;   // how many rate samples are behind the estimate
       }
     }
     DL.last = {bytes: job.transferredBytes, at: now};
@@ -6190,6 +6191,18 @@ function dlOnPull(ev) {
 function dlEtaSeconds() {
   const job = DL.job;
   if (!job || !DL.rate || DL.rate <= 0 || !job.totalBytes) return null;
+  /* Do not guess from a cold start. The CLI reports one sample per 5% of a
+     multi-gigabyte file, so the FIRST sample's rate is whatever the opening
+     seconds of the connection happened to be — the operator watched the
+     strip say `about 17100053h 3m left`, which is nineteen centuries, and
+     capping that at "more than two days" only made the nonsense shorter.
+     An estimate is worth showing once the transfer has actually revealed
+     its rate: two samples in, and 2% of the way down. Until then the strip
+     says it is estimating, which is true and is what every download UI a
+     person has ever trusted does. */
+  if ((DL.samples || 0) < 2) return null;
+  const done = job.transferredBytes / job.totalBytes;
+  if (done < 0.02) return null;
   return Math.round(Math.max(0, job.totalBytes - job.transferredBytes) / DL.rate);
 }
 
@@ -15799,7 +15812,7 @@ if (typeof window !== 'undefined') {
   window.__dlSeed = (jobs) => {
     DL.dry = true;
     DL.queue = jobs.slice(1);
-    DL.error = null; DL.rate = null; DL.last = null;
+    DL.error = null; DL.rate = null; DL.last = null; DL.samples = 0;
     dlResetPhases(jobs.some((j) => j.kind === 'runtime'));
     const head = jobs[0];
     // The same shape dlNext builds — including `sawProgress:false`, so a
