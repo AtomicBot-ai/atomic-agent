@@ -193,6 +193,22 @@ const OB = {
   localModelId: null,
   outcome: null,
   skipSecondOffer: false,
+  /* r8: the operator asked, in so many words, to be put in the agent NOW.
+     Two rows say exactly that, and only those two: the wait-or-jump
+     screen's "Start using the agent now — the download keeps running;
+     progress shows in the top bar", and the download screen's "Or skip the
+     wait — start using the agent now. The download keeps running; progress
+     shows in the top bar." Both were answered with another setup screen
+     (the second-backend pitch, then the import offer), which is the
+     operator's own report: "when I have chosen to proceed to the agent, I
+     should have proceeded to the agent, not to the setup again." A flow
+     that ends this way stamps itself complete and closes; nothing is
+     stamped as OFFERED that the operator never saw, so `/import` and the
+     menu's `onboarding` still have those steps to give later.
+     Nothing else sets it: `esc`, the propose screen's skip and the import
+     screen's own skip row all end the flow without being asked for the
+     agent by name, and they keep the closing screens they always had. */
+  handOver: false,
   cursor: 0,
   chatUrl: '',
   embeddingUrl: '',
@@ -2331,8 +2347,17 @@ function slashPopover() {
 }
 
 /* ---------------- overlays ---------------- */
-function renderOverlays() {
-  const o = $('#overlays');
+/**
+ * Everything the overlay layer would draw right now, as one string.
+ *
+ * r8: split out of renderOverlays so a PARTIAL repaint can be honest. A
+ * refresher that patches one box of this layer has to be able to prove that
+ * one box is the only thing that changed — otherwise it leaves the rest of
+ * the layer stale and the `__lastHTML` cache lying about it. Every such
+ * refresher compares what it is about to patch against this, and falls back
+ * to the whole-layer rebuild the moment anything else has moved.
+ */
+function overlaysHTML() {
   let html = '';
   if (S.overlay === 'palette') html += paletteHTML();
   if (S.overlay === 'context') html += contextHTML();
@@ -2342,6 +2367,12 @@ function renderOverlays() {
   if (S.overlay === 'shortcuts') html += shortcutsSheet();
   if (S.alert) html += alertHTML();
   if (OB.open) html = obHTML();
+  return html;
+}
+
+function renderOverlays() {
+  const o = $('#overlays');
+  const html = overlaysHTML();
   /* r6 (human-scenario round) — the overlay's caret.
      `o.innerHTML = html` destroys every field on this layer, and the
      first-run wizard's API-key box lives here. Any repaint that lands
@@ -2435,6 +2466,63 @@ function renderOverlays() {
   }
   // r5 item 7: the intro's canvas is destroyed by the rebuild above.
   obIntroMounted();
+}
+
+/* ---- r8: the download's repaint, and why it is not renderOverlays ------
+   The operator, on the setup screens while a model downloaded: "some of the
+   patterns when I hovered them with my mouse, they are just lighting up and
+   down, up and down. It looks awful. They are not stable."
+
+   The identical-repaint guard above cannot help here, and that is the whole
+   mechanism. A download's percentage, transferred bytes and ETA change on
+   EVERY sample the CLI emits, so the html this layer would draw is genuinely
+   different each time — the guard lets it through and `o.innerHTML = html`
+   replaces every node on the layer, three or four times a second. The row or
+   the offer card under the pointer is destroyed and rebuilt with it, and
+   `:hover` cannot survive its own element being replaced: it drops on the
+   rebuild and comes back on the next mouse-move or frame. That is the
+   flicker, exactly as described, and it is nobody's CSS.
+
+   So the two download screens draw their progress inside one container and
+   only its contents are rewritten, which is the pattern this file already
+   uses for the send button (refreshSend) and the palette (refreshPalette).
+   Everything outside that container — the rows, the offer cards, the buttons
+   a hand rests on — is never touched, so hover holds for the whole download.
+
+   The safety is in the comparison, not in the guess: this recomputes what
+   the WHOLE layer would draw and patches in place only when the progress
+   block is provably the only difference. Anything else — the status flipping
+   to failed, a row appearing, the step changing — falls straight through to
+   renderOverlays. And `__lastHTML` is advanced to the string that is now on
+   screen, so the guard above never has to be told a lie about the DOM. */
+const OB_DLPROG_OPEN = '<div class="ob-dlprog">';
+/** The progress block, in the container the partial repaint targets. */
+function obProgressBlockHTML() { return OB_DLPROG_OPEN + obProgressHTML() + '</div>'; }
+
+function refreshDlProgress() {
+  if (!OB.open) return;
+  const o = $('#overlays');
+  if (!o) return;
+  const host = o.querySelector('.ob-dlprog');
+  const prev = o.__lastHTML;
+  const html = overlaysHTML();
+  if (prev === html) return;                                  // nothing moved at all
+  if (!host || typeof prev !== 'string') { renderOverlays(); return; }
+  const inner = obProgressHTML();
+  const at = html.indexOf(OB_DLPROG_OPEN);
+  if (at < 0) { renderOverlays(); return; }
+  const start = at + OB_DLPROG_OPEN.length;
+  if (html.slice(start, start + inner.length) !== inner) { renderOverlays(); return; }
+  const head = html.slice(0, start);
+  const tail = html.slice(start + inner.length);
+  if (prev.length < head.length + tail.length
+      || prev.slice(0, head.length) !== head
+      || (tail.length > 0 && prev.slice(-tail.length) !== tail)) {
+    renderOverlays();
+    return;
+  }
+  host.innerHTML = inner;
+  o.__lastHTML = html;
 }
 
 
@@ -5274,6 +5362,7 @@ function obSnapshot() {
   return {
     step: OB.step, offer: OB.offer, resumeAfterCloud: OB.resumeAfterCloud,
     localModelId: OB.localModelId, outcome: OB.outcome, skipSecondOffer: OB.skipSecondOffer,
+    handOver: OB.handOver,
     cursor: OB.cursor, chatUrl: OB.chatUrl, embeddingUrl: OB.embeddingUrl,
     busy: OB.busy, error: OB.error, hfReference: OB.hfReference, hfRepo: OB.hfRepo,
     importAgents: OB.importAgents, importOptions: OB.importOptions, importReport: OB.importReport,
@@ -5332,9 +5421,10 @@ function obReduce(s, action) {
     case 'onboarding_second_backend_offered':
       return Object.assign({}, s, {step:'propose_second', offer: action.offer, cursor:0, error:null, busy:false});
     case 'onboarding_finished':
-      // Only this action can request the bypass.
+      // Only this action can request the bypasses.
       return Object.assign({}, s, {step:'finished', outcome: action.outcome,
-        skipSecondOffer: action.skipSecondOffer === true, busy:false, error:null});
+        skipSecondOffer: action.skipSecondOffer === true,
+        handOver: action.handOver === true, busy:false, error:null});
     case 'local_models_pull_finished': {
       if (s.step !== 'local_download' && s.step !== 'wait_or_jump') return null;
       if (action.kind !== 'chat') return null;
@@ -5925,9 +6015,26 @@ function dlBytes(bytes) {
   return Math.round(bytes) + ' B';
 }
 
-/** formatEta (use-transfer-rate.ts:59-67), verbatim. */
+/** How long an estimate is worth printing. Beyond this it is noise. */
+const DL_ETA_CAP_SECONDS = 48 * 3600;
+
+/**
+ * formatEta (use-transfer-rate.ts:59-67), with ONE addition: a cap.
+ *
+ * r8 (review): the estimate is `remaining / DL.rate`, and the rate is an
+ * exponentially smoothed sample that starts at whatever the first sample
+ * says. On a cold first sample of a 2.7 GB pull that is a few bytes a
+ * second, and the strip read `⇣ qwen-3.5-4b ░░░░░░░░░░ 0% about 258467h
+ * 14m left` — twenty-nine years, in the window chrome, while the operator
+ * watched the download crawl. The TUI's own formatter has no cap and
+ * would print the same string; the desktop puts one on because this strip
+ * lives in the chrome for the whole download rather than on a screen that
+ * is about to be replaced. Anything past two days is reported as what it
+ * really is — not yet knowable — instead of as a number.
+ */
 function dlEta(seconds) {
   if (seconds === null || seconds === undefined) return 'estimating…';
+  if (seconds > DL_ETA_CAP_SECONDS) return 'more than two days left';
   if (seconds < 60) return 'less than a minute left';
   const minutes = Math.round(seconds / 60);
   if (minutes < 60) return 'about ' + minutes + ' minute' + (minutes === 1 ? '' : 's') + ' left';
@@ -6072,8 +6179,11 @@ function dlOnPull(ev) {
   phase.transferredBytes = job.transferredBytes;
   phase.totalBytes = job.totalBytes;
   renderDlbar();
-  if (OB.open && OB.step === 'local_download') renderOverlays();
-  if (OB.open && OB.step === 'wait_or_jump') renderOverlays();
+  /* r8: the two download screens repaint their PROGRESS BLOCK and nothing
+     else. This used to be `renderOverlays()`, which rebuilt the whole layer
+     three or four times a second and took the hovered row or offer card
+     with it — see the note on refreshDlProgress. */
+  if (OB.open && (OB.step === 'local_download' || OB.step === 'wait_or_jump')) refreshDlProgress();
   return true;
 }
 
@@ -6095,6 +6205,7 @@ function renderDlbar() {
   if (!job) {
     el.hidden = true;
     el.innerHTML = '';
+    el.__dlShape = null;
     document.documentElement.style.setProperty('--dlbar-h', '0px');
     return;
   }
@@ -6106,6 +6217,30 @@ function renderDlbar() {
      stretch is a bar nothing is driving. The TUI's own word for the
      no-pull-reporting-yet state is `starting…`. */
   const measured = job.sawProgress === true;
+  /* r8: the strip is in the window chrome, so it is on screen for the WHOLE
+     download wherever the operator is — and rewriting its innerHTML on every
+     sample destroyed and rebuilt its Cancel button three or four times a
+     second. A pointer resting there watched `#dlbar .dl-x:hover` blink out
+     and back on each one; that is the same flicker the wizard's rows had,
+     and this one follows the operator into the agent window.
+     Nothing about the strip's SHAPE changes between samples — same label,
+     same queue depth, same three cells once bytes are moving — so the shape
+     is built once and only the bar, the percent and the ETA are written
+     after that. `refreshSend` and `refreshSlash` are the same idea. */
+  const shape = [job.kind, job.id, dlJobLabel(job), measured ? 'bar' : 'starting', DL.queue.length].join(' ');
+  if (el.__dlShape === shape) {
+    if (measured) {
+      const bar = el.querySelector('.dl-bar');
+      const bars = dlBarHTML(percent, 10);
+      if (bar && bar.innerHTML !== bars) bar.innerHTML = bars;
+      const pct = el.querySelector('.dl-pct');
+      if (pct) pct.textContent = percent + '%';
+      const left = el.querySelector('.dl-eta');
+      if (left) left.textContent = dlEta(eta);
+    }
+    return;
+  }
+  el.__dlShape = shape;
   el.innerHTML = '<span class="dl-g">⇣</span>'
     + '<span class="dl-l">' + esc(dlJobLabel(job)) + '</span>'
     + (measured
@@ -6398,7 +6533,7 @@ function obDownloadHTML() {
   return '<div class="ob-explain">'
       + esc(failed ? 'The ' + label + ' download failed.'
                    : 'Downloading ' + label + '. You can leave this running.') + '</div>'
-    + obProgressHTML() + cloud + skip;
+    + obProgressBlockHTML() + cloud + skip;
 }
 
 /** onboarding-wait-or-jump-step.tsx:38-55, :139-150. */
@@ -6420,7 +6555,7 @@ function obWaitOrJumpHTML() {
         ? '<div class="ob-h"><span class="ob-ok">✓</span>  ' + esc(label + ' downloaded — the local model is ready too') + '</div>' : '')
     + (status === 'failed'
         ? '<div class="ob-explain">' + esc('The ' + label + ' download failed — the cloud model still works.') + '</div>' : '')
-    + (status === 'ready' ? '' : obProgressHTML())
+    + (status === 'ready' ? '' : obProgressBlockHTML())
     + '<div class="ob-list">' + rows.map((row, i) => obRow(i, cursor === i, esc(row.label), esc(row.detail))).join('') + '</div>';
 }
 
@@ -6818,8 +6953,30 @@ function obDownloadKey(input, key) {
   if (input === 's' && !key.ctrl) {
     // Outcome "local" because local is the backend they committed to;
     // the pull survives this screen and reports in the top strip.
-    // skipSecondOffer because this screen already pitched cloud.
-    obDispatch({type:'onboarding_finished', outcome:'local', skipSecondOffer:true});
+    /* skipSecondOffer because this screen already pitched cloud, and
+       `handOver` because this row makes the same promise as the
+       wait-or-jump row above, in nearly the same words: "Or skip the wait
+       — start using the agent now. The download keeps running; progress
+       shows in the top bar."
+
+       r8 review: for one commit only the wait-or-jump row honoured that
+       and this one still landed on `import_pick`, so two cards with one
+       promise behaved differently — an inconsistency this diff would have
+       introduced where there was none. Both are the operator's rule, so
+       both keep it: "when I have chosen to proceed to the agent, I should
+       have proceeded to the agent, not to the setup again."
+
+       This DOES overturn a standing acceptance — main.ts's `wizard: \`s\`
+       leaves setup with the download still running` asserted the landing
+       on `import_pick`, mirroring the TUI's shouldOfferImport ("no
+       outcome, shortcut or skip flag may route around this screen"). It is
+       overturned deliberately, in the same commit as the check that
+       asserts the new behaviour, and TESTING.md's own R3.1b — "`s` … lands
+       on the home screen with the download chip in the top bar" — is what
+       it now does. Nothing is stamped on the way out, so the import step
+       is still owed and still offered by `/import` and a later
+       `onboarding` run. */
+    obDispatch({type:'onboarding_finished', outcome:'local', skipSecondOffer:true, handOver:true});
     return true;
   }
   return false;
@@ -6834,7 +6991,12 @@ function obWaitOrJumpKey(input, key) {
   }
   if (key.return) {
     const row = OB.cursor % rows;
-    if (row === 0) { obDispatch({type:'onboarding_finished', outcome: OB.outcome || 'cloud'}); return true; }
+    /* r8 handOver: "Start using the agent now — the download keeps running;
+       progress shows in the top bar". Driven on 02053695 this landed on the
+       import step with the wizard still up, which is the operator's report
+       word for word. The pull is untouched by the close: it lives in DL and
+       reports from #dlbar, which is the promise the row makes. */
+    if (row === 0) { obDispatch({type:'onboarding_finished', outcome: OB.outcome || 'cloud', handOver:true}); return true; }
     if (row === 1) { obOpenCloudWizard(); obDispatch({type:'onboarding_cloud_meanwhile_opened'}); return true; }
     if (OB.localModelId) obStartLocalPull(OB.localModelId, false);
     return true;
@@ -7427,7 +7589,21 @@ async function obSettle() {
   const outcome = OB.outcome || 'skipped';
   const state = await obReadiness();
   if (!OB.open) { OB.settling = false; return; }
-  const offer = OB.skipSecondOffer ? null : obDecideSecondBackend({
+  /* r8: `handOver` is the operator saying "put me in the agent now", from
+     one of the two rows that promised exactly that. Neither remaining offer
+     is raised on it — not the second backend (both rows sit under a cloud
+     pitch this screen already made) and not the import step, whose own skip
+     row is worded "Go straight to your agent — /import works any time
+     later", which is the thing they already asked for. Nothing is stamped
+     as offered, so both steps are still there for a later `onboarding` run
+     and for `/import`.
+
+     This is where the desktop parts company with the TUI's
+     shouldOfferImport ("no outcome, shortcut or skip flag may route around
+     this screen"), and it is on purpose: those two rows name the agent, and
+     the operator filed the bug that they did not deliver it. Every other
+     way out of the flow still goes through the import step exactly once. */
+  const offer = OB.skipSecondOffer || OB.handOver ? null : obDecideSecondBackend({
     outcome,
     cloudReady: state.cloudReady,
     localReady: state.localReady,
@@ -7443,7 +7619,7 @@ async function obSettle() {
     obStampOnce('proposedSecondBackendAt');
     return;
   }
-  if (!state.stamps.importOfferedAt && !OB_STAMPED.importOfferedAt) {
+  if (!OB.handOver && !state.stamps.importOfferedAt && !OB_STAMPED.importOfferedAt) {
     const agents = await obDetectAgents();
     if (!OB.open) { OB.settling = false; return; }
     if (agents.length > 0) {
@@ -7488,7 +7664,7 @@ async function obSettle() {
 async function openOnboarding() {
   Object.assign(OB, {
     open: true, step: 'intro', offer: null, resumeAfterCloud: null, localModelId: null,
-    outcome: null, skipSecondOffer: false, cursor: 0, embeddingUrl: '', busy: false, error: null,
+    outcome: null, skipSecondOffer: false, handOver: false, cursor: 0, embeddingUrl: '', busy: false, error: null,
     hfReference: '', hfRepo: null, importAgents: [], importOptions: [], importReport: null,
     introTyped: false, settling: false, testClose: false, pendingMmproj: null, restarted: false,
   });
@@ -15553,6 +15729,11 @@ if (typeof window !== 'undefined') {
     open: OB.open, step: OB.step, cursor: OB.cursor, outcome: OB.outcome, offer: OB.offer,
     resumeAfterCloud: OB.resumeAfterCloud, busy: OB.busy, error: OB.error,
     localModelId: OB.localModelId, skipSecondOffer: OB.skipSecondOffer,
+    /* r8: the two "start using the agent now" rows are the only things
+       that set this, and what it suppresses (the second-backend pitch and
+       the import step) is asserted from outside — so it has to be visible
+       from outside. */
+    handOver: OB.handOver,
     rows: document.querySelectorAll('#onboarding .ob-row').length,
   });
   window.__obKey = (spec) => { obPress(spec); return window.__ob(); };
@@ -15645,7 +15826,7 @@ if (typeof window !== 'undefined') {
   window.__obOpen = (step, opts) => {
     OB.open = true;
     Object.assign(OB, {offer: null, resumeAfterCloud: null, localModelId: null, outcome: null,
-      skipSecondOffer: false, cursor: 0, busy: false, error: null, hfReference: '', hfRepo: null,
+      skipSecondOffer: false, handOver: false, cursor: 0, busy: false, error: null, hfReference: '', hfRepo: null,
       importAgents: [], importOptions: [], importReport: null, introTyped: false,
       settling: false, testClose: true, pendingMmproj: null, restarted: false, managedWrite: null});
     /* r5 item 7 review fix: the stamps are NO LONGER pre-marked here. They

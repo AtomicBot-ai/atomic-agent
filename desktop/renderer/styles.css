@@ -982,6 +982,14 @@ button.menurow:hover{background:var(--bg-hover)}
 .ob-phase.waiting .pb i{color:var(--line)}
 .ob-phase .pt{color:var(--text-secondary);font-variant-numeric:tabular-nums}
 .ob-rate{font-size:12px;color:var(--text-tertiary);margin-top:var(--s3)}
+/* r8: the two phase rows and the rate line are wrapped in one container so
+   a progress sample can repaint THEM and nothing else (refreshDlProgress) —
+   rebuilding the whole layer four times a second was destroying the row or
+   the offer card under the pointer, which is what "lighting up and down"
+   was. `display:contents` means the wrapper draws no box at all: the rows
+   stay direct flex items of `.ob`'s column and keep its gap, so the screen
+   is pixel-for-pixel what it was before the container existed. */
+.ob-dlprog{display:contents}
 .ob-offer{border-left:2px solid var(--line);padding:2px 0 2px 12px;margin-top:var(--s5);
   font-size:13px;color:var(--text-secondary);line-height:1.6;text-align:left;width:100%;background:none}
 .ob-offer.cloud{border-left-color:var(--accent-line)}

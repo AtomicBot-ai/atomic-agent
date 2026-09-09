@@ -19,6 +19,8 @@
     "drive:models": "npm run build && node test/model-picks.drive.mjs",
     "drive:cloud": "npm run build && node test/cloud-setup.drive.mjs",
     "drive:integration": "npm run build && node test/integration.drive.mjs",
+    "drive:hover": "npm run build && node test/download-hover.drive.mjs",
+    "drive:wizard": "npm run build && node test/wizard-resume.drive.mjs",
     "dist": "npm run build && node -e \"require('node:fs').rmSync('release',{recursive:true,force:true})\" && electron-builder --mac --arm64 --publish never",
     "postinstall": "node scripts/ensure-electron.mjs"
   },
