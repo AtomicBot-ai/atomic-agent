@@ -5,6 +5,7 @@ import { useMouseCommands, useMouseTarget } from "../mouse/mouse-context.js";
 import { isPrimaryPress } from "../mouse/mouse-event.js";
 import { theme } from "../theme/theme.js";
 import { openLocalModelsPane } from "./composer-switch-activate.js";
+import { fusionSurfaceInk, fusionSurfaceMuted } from "../theme/fusion-tint.js";
 import { BackendControl } from "./composer-backend-control.js";
 import type { ComposerBackendMeta } from "./composer-backend-selectors.js";
 import type { ComposerSwitchKind } from "./composer-switch-state.js";
@@ -22,6 +23,8 @@ export interface ComposerMetaControlsProps {
    * on disk — see `selectComposerNeedsModelDownload`.
    */
   needsModelDownload?: boolean;
+  /** Paint on the Fusion surface: white ink, orange-warmed separators. */
+  fusion?: boolean;
   /**
    * Fusion's fourth control, `2 workers`: the local half of the route.
    * `null` off the fusion route, where the strip has three controls.
@@ -78,18 +81,20 @@ export function ComposerMetaControls({
   model,
   needsModelDownload = false,
   workers = null,
+  fusion = false,
   mouseLayer,
 }: ComposerMetaControlsProps): ReactElement | null {
   if (!backend && !provider && !model && !needsModelDownload) return null;
   return (
     <>
-      {backend ? <BackendControl backend={backend} mouseLayer={mouseLayer} /> : null}
+      {backend ? <BackendControl backend={backend} fusion={fusion} mouseLayer={mouseLayer} /> : null}
       {provider ? (
         <Control
           kind="provider"
           label={provider}
           lead={Boolean(backend)}
           shrink={1}
+          fusion={fusion}
           mouseLayer={mouseLayer}
         />
       ) : null}
@@ -104,6 +109,7 @@ export function ComposerMetaControls({
           label={model}
           lead={Boolean(backend || provider)}
           shrink={3}
+          fusion={fusion}
           mouseLayer={mouseLayer}
         />
       ) : null}
@@ -113,6 +119,7 @@ export function ComposerMetaControls({
           label={workers}
           lead={Boolean(backend || provider || model)}
           shrink={2}
+          fusion={fusion}
           mouseLayer={mouseLayer}
         />
       ) : null}
@@ -174,6 +181,7 @@ function Control({
   glyph,
   lead = false,
   shrink = 0,
+  fusion = false,
   mouseLayer,
 }: {
   kind: ComposerSwitchKind;
@@ -192,6 +200,8 @@ function Control({
    * that name the whole route, and losing it costs more than either.
    */
   shrink?: number;
+  /** Paint on the Fusion surface instead of the rail. */
+  fusion?: boolean;
   /** See `ComposerMetaControlsProps.mouseLayer`. */
   mouseLayer?: number;
 }): ReactElement {
@@ -212,13 +222,13 @@ function Control({
     <Box ref={ref} flexShrink={shrink} minWidth={0}>
       <Text wrap="truncate">
         {lead ? (
-          <Text color={theme.colors.railMuted}>
+          <Text color={fusion ? fusionSurfaceMuted() : theme.colors.railMuted}>
             {" "}
             {theme.glyphs.dotSeparator}{" "}
           </Text>
         ) : null}
         {glyph ?? null}
-        <Text color={theme.colors.railForeground} bold>
+        <Text color={fusion ? fusionSurfaceInk() : theme.colors.railForeground} bold>
           {label}
         </Text>
       </Text>

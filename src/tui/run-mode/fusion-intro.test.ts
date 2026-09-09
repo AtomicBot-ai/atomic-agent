@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ResolvedRunMode } from "../../llm/run-mode/index.js";
-import { describeFusionIntro } from "./fusion-intro.js";
+import { FUSION_MARK, describeFusionIntro } from "./fusion-intro.js";
 
 const rm: ResolvedRunMode = {
   stored: "fusion",
@@ -18,6 +18,24 @@ const rm: ResolvedRunMode = {
 };
 
 describe("describeFusionIntro", () => {
+  it("opens with the mark, then the sentence", () => {
+    const text = describeFusionIntro(rm);
+    expect(text.startsWith(FUSION_MARK)).toBe(true);
+    expect(text).toContain("Fusion is on.");
+  });
+
+  it("keeps the mark small and rectangular so a short pane still fits it", () => {
+    const lines = FUSION_MARK.split("\n");
+    expect(lines).toHaveLength(4);
+    for (const line of lines) expect(line.length).toBeLessThanOrEqual(30);
+  });
+
+  it("draws the mark from glyphs the rest of the chrome already uses", () => {
+    // Anything outside this set risks a double-width cell, which would
+    // shear the mark on the terminals the TUI supports.
+    expect(FUSION_MARK).toMatch(/^[\s●○⇄╭╮╰╯─┤├a-z]+$/);
+  });
+
   it("names both legs it actually resolved, not the abstraction", () => {
     const text = describeFusionIntro(rm);
     expect(text).toContain("anthropic/claude-sonnet-4.5");

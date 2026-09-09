@@ -1735,13 +1735,21 @@ export function TuiApp({
   // `selectComposerContextUsage`.
   const composerContextUsage = selectComposerContextUsage(state);
   const promptContextSlot = composerContextUsage ? (
-    <ContextChip usage={composerContextUsage} layer={MOUSE_LAYER_PANEL} />
+    <ContextChip
+      usage={composerContextUsage}
+      layer={MOUSE_LAYER_PANEL}
+      fusion={promptBackend.kind === "fusion"}
+    />
   ) : null;
   // Always drawn, including in `default`. A control that appears only
   // once you are in an unusual mode is a control nobody discovers, and
   // the chip is the only place the app says which rules are in force.
   const promptModeSlot = (
-    <CodingModeChip mode={state.codingMode} layer={MOUSE_LAYER_PANEL} />
+    <CodingModeChip
+      mode={state.codingMode}
+      layer={MOUSE_LAYER_PANEL}
+      fusion={promptBackend.kind === "fusion"}
+    />
   );
 
   // Below the floor the app cannot be drawn at all — Ink 7 overlaps a

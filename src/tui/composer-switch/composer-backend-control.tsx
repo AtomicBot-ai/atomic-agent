@@ -4,7 +4,7 @@ import type { ReactElement } from "react";
 import { llmHealthLook } from "../components/llm-health-badge.js";
 import { useMouseCommands, useMouseTarget } from "../mouse/mouse-context.js";
 import { isPrimaryPress } from "../mouse/mouse-event.js";
-import { fusionChipColors } from "../theme/fusion-tint.js";
+import { fusionChipColors, fusionSurfaceInk } from "../theme/fusion-tint.js";
 import { theme } from "../theme/theme.js";
 import type { ComposerBackendMeta } from "./composer-backend-selectors.js";
 
@@ -61,9 +61,12 @@ export function composerBackendLook(
  */
 export function BackendControl({
   backend,
+  fusion = false,
   mouseLayer,
 }: {
   backend: ComposerBackendMeta;
+  /** Paint the neighbouring ink on the Fusion surface. */
+  fusion?: boolean;
   mouseLayer?: number;
 }): ReactElement {
   const look = composerBackendLook(backend);
@@ -86,7 +89,7 @@ export function BackendControl({
             {` ${backend.kind} `}
           </Text>
         ) : (
-          <Text color={theme.colors.railForeground} bold>
+          <Text color={fusion ? fusionSurfaceInk() : theme.colors.railForeground} bold>
             {backend.kind}
           </Text>
         )}

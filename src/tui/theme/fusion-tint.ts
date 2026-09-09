@@ -27,6 +27,45 @@ import { theme, type TuiTheme } from "./theme.js";
 export const FUSION_GROUND_FADE = 0.65;
 
 /**
+ * How far the fusion surfaces are pulled toward black.
+ *
+ * Fusion does not merely tint the composer, it re-skins it: black
+ * ground, white text, orange accents. The blue the rest of the app runs
+ * on is the *ordinary* state, and leaving it under an orange chip made
+ * the mode look like a badge stuck on the normal composer rather than a
+ * different mode. Two steps rather than one so the toolbar still reads
+ * as a strip against the field above it — the same two-tone relationship
+ * `railBackground` and `badgeBackground` have, rebuilt in black.
+ *
+ * A trace of the palette's orange is left in both (they are mixed from
+ * `warnStrong`, not from a literal black) so the surface is warm rather
+ * than dead, and so a palette with a different orange gets a surface
+ * that belongs to it.
+ */
+export const FUSION_BAR_MIX = 0.78;
+export const FUSION_PANEL_MIX = 0.94;
+
+/** Ground of the composer's toolbar strip while fusion is the route. */
+export function fusionBarGround(palette: TuiTheme = theme): string {
+  return mixColor(palette.colors.warnStrong, "#000000", FUSION_BAR_MIX);
+}
+
+/** Ground of the composer's input panel while fusion is the route. */
+export function fusionPanelGround(palette: TuiTheme = theme): string {
+  return mixColor(palette.colors.warnStrong, "#000000", FUSION_PANEL_MIX);
+}
+
+/** Text on a fusion surface: measured, so it is the white end of the pair. */
+export function fusionSurfaceInk(palette: TuiTheme = theme): string {
+  return readableOn(fusionBarGround(palette));
+}
+
+/** The quiet ink on a fusion surface — separators, second-column detail. */
+export function fusionSurfaceMuted(palette: TuiTheme = theme): string {
+  return mixColor(fusionSurfaceInk(palette), fusionBarGround(palette), 0.45);
+}
+
+/**
  * The fusion chip: `warnStrong` as a ground with measured ink on top.
  *
  * `palette` is the theme to read it from, and inside a popup it MUST be
@@ -46,11 +85,15 @@ export function fusionChipColors(
 }
 
 /**
- * The composer's panel ground while fusion is the route — the plain
- * `badgeBackground` pulled toward the palette's orange.
+ * The composer's panel ground while fusion is the route.
+ *
+ * Kept as the name every consumer already imports; the recipe moved from
+ * "badge ground tinted orange" to the black surface above, because half
+ * the block turning warm-navy while the other half went black read as a
+ * rendering fault rather than a theme.
  */
 export function fusionComposerGround(): string {
-  return mixColor(theme.colors.warnStrong, theme.colors.badgeBackground, FUSION_GROUND_FADE);
+  return fusionPanelGround();
 }
 
 /**
