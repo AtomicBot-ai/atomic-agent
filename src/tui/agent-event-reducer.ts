@@ -596,6 +596,22 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
         color: "gray",
       });
     }
+    case "parse_failure_recovered": {
+      // Rendered, unlike `loop_detected`: this step produced no tool
+      // call and no text, so without a line the feed shows a gap the
+      // operator has no way to read. One line per recovery — there are
+      // at most `budget` of them.
+      const reason =
+        event.reason.length > 120
+          ? `${event.reason.slice(0, 120)}…`
+          : event.reason;
+      return appendFeed(state, {
+        kind: "runtime_info",
+        stepIndex: event.stepIndex,
+        line: `» the model's output could not be read as a tool call (${reason}) — trying again (${event.attempt}/${event.budget})`,
+        color: "yellow",
+      });
+    }
     case "loop_detected":
       // Deliberately not rendered: the loop detector's own `### notice`
       // changes what the model does, and the operator sees the effect

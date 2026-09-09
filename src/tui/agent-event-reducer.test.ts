@@ -856,6 +856,47 @@ describe("reduceTuiState", () => {
   });
 });
 
+describe("parse-failure recovery", () => {
+  const recovered = (over: Record<string, unknown> = {}): TuiAction => ({
+    type: "agent_event",
+    event: {
+      type: "parse_failure_recovered",
+      stepIndex: 3,
+      attempt: 1,
+      budget: 2,
+      reason: 'tool call "os.fs.write" arguments are not a valid JSON object',
+      ...over,
+    } as never,
+  });
+
+  it("says the output was rejected and that the turn is trying again", () => {
+    const next = reduceTuiState(createInitialTuiState(fakeSession()), recovered());
+    const line = next.feed.at(-1)?.line ?? "";
+    expect(line).toContain("could not be read as a tool call");
+    expect(line).toContain("os.fs.write");
+    expect(line).toContain("(1/2)");
+  });
+
+  it("clips a reason that quotes the model's own output", () => {
+    const next = reduceTuiState(
+      createInitialTuiState(fakeSession()),
+      recovered({ reason: "x".repeat(500) }),
+    );
+    expect((next.feed.at(-1)?.line ?? "").length).toBeLessThan(250);
+  });
+
+  it("leaves one line per recovery, not one per step", () => {
+    const next = apply(createInitialTuiState(fakeSession()), [
+      recovered(),
+      recovered({ attempt: 2, stepIndex: 4 }),
+    ]);
+    const lines = next.feed.filter((row) =>
+      row.line.includes("could not be read as a tool call"),
+    );
+    expect(lines).toHaveLength(2);
+  });
+});
+
 describe("provider outage", () => {
   const waiting = (over: Record<string, unknown> = {}): TuiAction => ({
     type: "agent_event",

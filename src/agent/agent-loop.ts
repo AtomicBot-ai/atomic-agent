@@ -55,6 +55,12 @@ import {
 } from "./loop-detector.js";
 import type { BatchLoopSignal } from "./batch-executor.js";
 import { composeSteerNotice } from "./steer-notice.js";
+import {
+  PARSE_RECOVERY_BUDGET,
+  composeParseFailureNotice,
+  formatTurnFailedRecord,
+  isRecoverableParseFailure,
+} from "./parse-failure-recovery.js";
 import { getConfig } from "../config/index.js";
 import type { AgentMetrics } from "../tracing/agent-metrics.js";
 import type { StructuredLogger } from "../tracing/structured-logger.js";
@@ -471,6 +477,20 @@ export type AgentLoopEvent =
     }
   | {
       /**
+       * The completion for step `stepIndex` could not be parsed into
+       * tool calls, and the turn is spending another step on it instead
+       * of ending: the next prompt carries a `### notice` naming the
+       * rejection. Fired once per recovery; `attempt` counts them within
+       * the turn, `budget` is the ceiling after which the turn fails.
+       */
+      type: "parse_failure_recovered";
+      stepIndex: number;
+      attempt: number;
+      budget: number;
+      reason: string;
+    }
+  | {
+      /**
        * A leg of the task finished and the work is continuing. Fired at
        * every `maxSteps` boundary that does not end the task, so a long
        * job reports itself instead of going quiet for an hour.
@@ -729,6 +749,13 @@ export class AgentLoop {
     let outageAttempts = 0;
     /** Retried a step after an outage and have not yet seen it succeed. */
     let awaitingRecovery = false;
+    /**
+     * Completions this turn that came back unparseable and were spent
+     * another step on. Bounded by `PARSE_RECOVERY_BUDGET`: a model that
+     * cannot emit a valid tool call twice in a row will not manage it on
+     * the third try either, and the operator is owed the failure.
+     */
+    let parseRecoveries = 0;
     // Per-turn no-progress loop tracker (OpenClaw-style). Threaded into
     // `executeStep` so the synchronous batch gate can veto looping calls
     // before they are dispatched; the agent loop consumes the resulting
@@ -1220,6 +1247,51 @@ export class AgentLoop {
           reason = "max_steps";
           break;
         }
+        // The completion came back but could not be read as tool calls,
+        // and the step executor's in-step repair did not rescue it
+        // either. Spend an ordinary step on it rather than ending the
+        // turn: the next prompt is built fresh at the full completion
+        // budget — which the capped repair is not — and carries a
+        // `### notice` naming what was rejected, so the model has
+        // something to correct against. Same replay argument as the
+        // outage park below: a parse failure throws before any tool is
+        // dispatched, so nothing is repeated and no side effect is
+        // duplicated.
+        //
+        // The step is counted. It consumed an inference, and leaving
+        // `legMadeProgress` false means a leg made entirely of rejected
+        // completions still stops at the boundary as `no_progress`.
+        if (
+          !cancelled &&
+          parseRecoveries < PARSE_RECOVERY_BUDGET &&
+          isRecoverableParseFailure(err)
+        ) {
+          parseRecoveries += 1;
+          stepsTaken += 1;
+          // The notice this step was carrying (loop detector, steering,
+          // a trimmed batch) is still owed to the next one.
+          pendingNotice = composeParseFailureNotice(
+            noticeForThisStep,
+            runError.message,
+          );
+          this.deps.onEvent?.({
+            type: "parse_failure_recovered",
+            stepIndex: i,
+            attempt: parseRecoveries,
+            budget: PARSE_RECOVERY_BUDGET,
+            reason: runError.message,
+          });
+          this.deps.logger?.warn("completion could not be parsed; retrying the turn", {
+            sessionId: state.id,
+            stepIndex: i,
+            attempt: parseRecoveries,
+            budget: PARSE_RECOVERY_BUDGET,
+            error: runError.message,
+            category,
+          });
+          runError = null;
+          continue;
+        }
         // The provider is not answering. Park the turn instead of
         // killing it: nothing of this step has been committed (a
         // completion failure throws before any tool is dispatched —
@@ -1319,6 +1391,18 @@ export class AgentLoop {
         // fixing here. `cancelled` and `failed` are both classified
         // terminations; only programming bugs or unclassified errors
         // should ever bubble past this point.
+        //
+        // Leave the failure in the transcript. Without it the next turn
+        // — usually the operator typing "try again" — is built from a
+        // history in which the attempt never happened, and the model
+        // reproduces the same rejected output. Recorded only: every
+        // surface already renders its own line from `loop_failed`, so
+        // emitting an `assistant_reply` event here would post the text
+        // twice.
+        state = recordTurn(
+          state,
+          assistantReplyTurn(formatTurnFailedRecord(category, runError.message)),
+        );
         state = { ...state, status: "failed", lastError: runError.message };
         this.deps.onEvent?.({ type: "loop_completed", reason: "failed" });
         state = incrementTurnCount(state);

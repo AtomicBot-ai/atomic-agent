@@ -44,6 +44,13 @@ export {
   newlyCoveredCount,
 } from "./read-coverage.js";
 export type { LineRange, ReadObservation } from "./read-coverage.js";
+export {
+  PARSE_RECOVERY_BUDGET,
+  composeParseFailureNotice,
+  formatParseFailureNotice,
+  formatTurnFailedRecord,
+  isRecoverableParseFailure,
+} from "./parse-failure-recovery.js";
 export { classifyTestCommand } from "./test-command-key.js";
 export type { RecognizedTestCommand } from "./test-command-key.js";
 export {
