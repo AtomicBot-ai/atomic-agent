@@ -19,6 +19,7 @@ import type { MetricSample, MetricSink } from "../tracing/metrics-collector.js";
 import { isKnownLocalModelId } from "../local-llm/index.js";
 import { registerSession } from "../local-llm/session-registry.js";
 import { enterAltScreen } from "./alt-screen.js";
+import { buildInkRenderOptions } from "./ink-render-options.js";
 import { enableSynchronizedOutput } from "./synchronized-output.js";
 import { legacyConhostStartupHint } from "./legacy-conhost.js";
 import { ChatOrchestrator } from "./chat-orchestrator.js";
@@ -712,29 +713,12 @@ export async function tuiCommand(args: string[]): Promise<number> {
       // above is what decides whether anything is ever emitted.
       mouse: mouseSource,
     }),
-    {
+    buildInkRenderOptions({
       stdin: mouseStdin.stdin,
       stdout: process.stdout,
       stderr: process.stderr,
-      exitOnCtrlC: false,
-      // `disambiguateEscapeCodes` alone: it is what makes Shift+Enter a
-      // distinct keystroke (`ESC [ 13 ; 2 u`). `reportAllKeysAsEscapeCodes`
-      // would reroute ordinary typing through CSI u as well, putting the
-      // paste and text-insert paths at risk for nothing.
-      //
-      // `mode: "enabled"` rather than `"auto"`: Ink's own probe and the
-      // App's reader both see the terminal's reply, so auto can type
-      // `[?1u` into the composer before the first render. We already
-      // asked, above, on a stdin nobody else was reading.
-      ...(kittyKeyboard
-        ? {
-            kittyKeyboard: {
-              mode: "enabled" as const,
-              flags: ["disambiguateEscapeCodes" as const],
-            },
-          }
-        : {}),
-    },
+      kittyKeyboard,
+    }),
   );
 
   orchestrator.start();

@@ -1,5 +1,5 @@
 import { render } from "ink-testing-library";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createInitialTuiState,
   type TuiSessionInfo,
@@ -32,6 +32,10 @@ function makeState(overrides: Partial<TuiState>): TuiState {
     ...overrides,
   };
 }
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe("ThinkingIndicator", () => {
   it("renders nothing when the agent is idle", () => {
@@ -95,6 +99,18 @@ describe("ThinkingIndicator", () => {
     const text = strip(lastFrame() ?? "");
     expect(text).toMatch(/thinking · \d+s/);
     expect(text).not.toContain("reply");
+  });
+
+  it("re-reads the clock once a second, not four times", () => {
+    // The label is whole seconds, so a 250 ms tick spent three of every
+    // four wake-ups re-rendering the whole app to produce the identical
+    // string. Every one of those was a repaint the operator could see.
+    const spy = vi.spyOn(globalThis, "setInterval");
+    render(<ThinkingIndicator state={makeState({})} />);
+    const delays = spy.mock.calls.map(([, delay]) => delay);
+
+    expect(delays).toContain(1000);
+    expect(delays).not.toContain(250);
   });
 
   it("formats minutes for elapsed durations over 60s", () => {

@@ -113,6 +113,12 @@ function formatPhase(phase: Phase, elapsed: string): string {
   }
 }
 
+/**
+ * How often the elapsed-time label re-reads the clock. Matches the
+ * resolution of what it renders: whole seconds.
+ */
+const ELAPSED_TICK_MS = 1000;
+
 function useElapsedSinceStart(
   startedAt: number | null,
   active: boolean,
@@ -120,7 +126,12 @@ function useElapsedSinceStart(
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (!active || startedAt === null) return;
-    const handle = setInterval(() => setNow(Date.now()), 250);
+    // One tick per second, because `formatElapsed` renders whole
+    // seconds and nothing finer. The old 250 ms interval re-rendered
+    // the whole app four times a second to produce the same string
+    // three times out of four — free repaints on a surface whose
+    // repaints the operator can see.
+    const handle = setInterval(() => setNow(Date.now()), ELAPSED_TICK_MS);
     return () => clearInterval(handle);
   }, [active, startedAt]);
   if (startedAt === null) return 0;

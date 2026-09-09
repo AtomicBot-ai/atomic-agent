@@ -48,16 +48,38 @@ export interface SynchronizedOutputOptions {
 }
 
 /**
+ * Erase-in-line: `CSI K`, `CSI 0 K`, `CSI 1 K`, `CSI 2 K`.
+ *
+ * The one sequence that only ever appears when something is repainting
+ * text. Ink terminates every line it rewrites with `CSI K`, and its
+ * whole-block clears use `CSI 2 K`; no mode toggle, cursor nudge or
+ * mouse/kitty setup sequence contains either.
+ */
+const ERASE_IN_LINE = /\u001B\[[0-2]?K/;
+
+/**
  * True when `chunk` is worth bracketing.
  *
  * Wrapping a lone escape sequence in a synchronized update is not wrong,
  * but it is two extra sequences spent rendering nothing — and this
  * `write` sees every cursor nudge and mode toggle the app makes, not
- * only Ink's frames. A frame is many bytes and contains a newline; a
- * mode toggle is neither.
+ * only Ink's frames. A full frame is many bytes and contains a newline;
+ * a mode toggle is neither.
+ *
+ * Incremental rendering makes a third clause worth having. A repaint
+ * that rewrites one line of a fullscreen frame carries no newline —
+ * cursor moves, the line, `CSI K` — and its size is dominated by one
+ * cursor-move per skipped row. On a normal terminal that still clears
+ * 64 bytes (measured: at 110x34 and 80x24 no bracketed update came out
+ * under 64 bytes), but on a short one — a dozen rows, a one-word label
+ * — it does not, and a repaint that slips through unbracketed is
+ * exactly the tearing this module exists to stop. So: anything that
+ * erases a line is repainting, whatever its length.
  */
 export function looksLikeFrame(chunk: string): boolean {
-  return chunk.length > 64 || chunk.includes("\n");
+  return (
+    chunk.length > 64 || chunk.includes("\n") || ERASE_IN_LINE.test(chunk)
+  );
 }
 
 /**
