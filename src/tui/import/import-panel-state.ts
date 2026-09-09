@@ -99,6 +99,8 @@ export interface ImportPanelState {
   reportExecuted: boolean;
   /** Inline status / error line surfaced under the form. */
   notice: string | null;
+  /** Trouble with the destination store, shown under the report. */
+  storeWarning: string | null;
 }
 
 export function createInitialImportFormState(): ImportFormState {
@@ -124,5 +126,6 @@ export function createInitialImportPanelState(): ImportPanelState {
     report: null,
     reportExecuted: false,
     notice: null,
+    storeWarning: null,
   };
 }

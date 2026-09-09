@@ -120,7 +120,7 @@ export const SPLASH_TIPS: readonly SplashTip[] = [
   },
   {
     label: "/import",
-    description: "open the Import tab (Hermes migration)",
+    description: "bring sessions and skills over from another agent",
     short: "Hermes import",
     command: "/import",
   },

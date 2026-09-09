@@ -530,7 +530,7 @@ export interface TuiState {
   memoryPanel: MemoryPanelState;
   /** State slice driving the MCP tab (read-only MCP server / catalog inspection). */
   mcpPanel: McpPanelState;
-  /** State slice driving the Import tab (one-shot Hermes -> atomic-agent migration). */
+  /** State slice driving the Import tab (bring your data over from another agent). */
   importPanel: ImportPanelState;
   /** State slice driving the Privacy tab (data-egress preferences). */
   privacyPanel: PrivacyPanelState;

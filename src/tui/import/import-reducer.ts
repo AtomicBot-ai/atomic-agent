@@ -68,6 +68,7 @@ function reducePanel(
         report: action.report,
         reportExecuted: false,
         notice: null,
+        storeWarning: action.storeWarning ?? null,
       };
     case "import_execute_done":
       return {
@@ -76,6 +77,7 @@ function reducePanel(
         report: action.report,
         reportExecuted: true,
         notice: null,
+        storeWarning: action.storeWarning ?? null,
       };
     case "import_failed":
       return {

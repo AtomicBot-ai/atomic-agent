@@ -340,7 +340,7 @@ export const MENU: readonly MenuNode[] = [
     slash: {
       name: "import",
       description:
-        "open the Import tab (one-shot Hermes -> atomic-agent migration)",
+        "open the Import tab (Hermes, OpenClaw, Claude Code or Codex)",
       rank: 31,
     },
     section: "manage",

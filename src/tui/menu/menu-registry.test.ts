@@ -186,7 +186,7 @@ const V0_2_2_SLASH_COMMANDS = [
   {
     name: "import",
     description:
-      "open the Import tab (one-shot Hermes -> atomic-agent migration)",
+      "open the Import tab (Hermes, OpenClaw, Claude Code or Codex)",
   },
   {
     name: "privacy",

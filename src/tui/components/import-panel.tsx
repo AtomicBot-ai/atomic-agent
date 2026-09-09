@@ -10,6 +10,7 @@ import type {
   ImportFormState,
   ImportPanelState,
 } from "../import/import-panel-state.js";
+import { ImportClick, importRowClick } from "../import/import-mouse.js";
 import {
   IMPORT_SOURCE_IDS,
   importSourceLabel,
@@ -48,11 +49,23 @@ export function ImportPanel(props: ImportPanelProps): ReactElement {
           <Text color={theme.colors.muted}>importing… please wait</Text>
         </Box>
       ) : null}
+      {panel.storeWarning && panel.mode !== "configure" ? (
+        <Box marginTop={1}>
+          <Text color={theme.colors.warn}>
+            {theme.glyphs.warn} {panel.storeWarning}
+          </Text>
+        </Box>
+      ) : null}
       {panel.mode === "preview" && panel.report ? (
-        <ReportView report={panel.report} executed={false} maxRows={maxRows} />
+        <ReportView
+          report={panel.report}
+          executed={false}
+          maxRows={maxRows}
+          form={panel.form}
+        />
       ) : null}
       {panel.mode === "done" && panel.report ? (
-        <ReportView report={panel.report} executed maxRows={maxRows} />
+        <ReportView report={panel.report} executed maxRows={maxRows} form={panel.form} />
       ) : null}
     </Box>
   );
@@ -67,34 +80,56 @@ function ConfigureForm({ form }: { form: ImportFormState }): ReactElement {
       paddingX={1}
     >
       <SourceRow source={form.source} focused={form.focus === "sourceType"} />
-      <TextRow
-        label="source"
-        value={form.sourceDir}
-        placeholder={importSourcePlaceholder(form.source)}
-        focused={form.focus === "source"}
-      />
-      {importSourceToggles(form.source).map((meta) => (
-        <ToggleRow
-          key={meta.id}
-          label={meta.id}
-          on={form[meta.id]}
-          focused={form.focus === meta.id}
-          {...(meta.hint !== undefined ? { hint: meta.hint } : {})}
+      <ImportClick onClick={importRowClick("source")}>
+        <TextRow
+          label="source"
+          value={form.sourceDir}
+          placeholder={importSourcePlaceholder(form.source)}
+          focused={form.focus === "source"}
         />
+      </ImportClick>
+      {importSourceToggles(form.source).map((meta) => (
+        <ImportClick
+          key={meta.id}
+          onClick={importRowClick(meta.id, (ctx) =>
+            ctx.dispatch({ type: "import_toggled", field: meta.id }),
+          )}
+        >
+          <ToggleRow
+            label={meta.id}
+            on={form[meta.id]}
+            focused={form.focus === meta.id}
+            {...(meta.hint !== undefined ? { hint: meta.hint } : {})}
+          />
+        </ImportClick>
       ))}
-      <ToggleRow
-        label="overwrite"
-        on={form.overwrite}
-        focused={form.focus === "overwrite"}
-        hint="replace differing destinations"
-      />
-      <TextRow
-        label="limit"
-        value={form.limit}
-        placeholder="(no limit)"
-        focused={form.focus === "limit"}
-      />
-      <RunRow focused={form.focus === "run"} />
+      <ImportClick
+        onClick={importRowClick("overwrite", (ctx) =>
+          ctx.dispatch({ type: "import_toggled", field: "overwrite" }),
+        )}
+      >
+        <ToggleRow
+          label="overwrite"
+          on={form.overwrite}
+          focused={form.focus === "overwrite"}
+          hint="replace differing destinations"
+        />
+      </ImportClick>
+      <ImportClick onClick={importRowClick("limit")}>
+        <TextRow
+          label="limit"
+          value={form.limit}
+          placeholder="(no limit)"
+          focused={form.focus === "limit"}
+        />
+      </ImportClick>
+      <ImportClick
+        onClick={importRowClick("run", (ctx) =>
+          ctx.callbacks.onImportPreview?.(form),
+        )}
+      >
+        <RunRow focused={form.focus === "run"} />
+      </ImportClick>
       <Box marginTop={1}>
         <Text color={theme.colors.muted}>
           ↑↓ move · ←/→ switch source · space toggle · type to edit · Enter on
@@ -118,7 +153,16 @@ function SourceRow({
       {IMPORT_SOURCE_IDS.map((id, index) => (
         <Box key={id}>
           {index > 0 ? <Text color={theme.colors.muted}> / </Text> : null}
-          <SourceChoice label={id} active={source === id} />
+          {/* Each name is its own target: the row reads as four choices,
+              so clicking one picks it outright rather than stepping the
+              cycle the arrows walk. */}
+          <ImportClick
+            onClick={importRowClick("sourceType", (ctx) =>
+              ctx.dispatch({ type: "import_source_set", source: id }),
+            )}
+          >
+            <SourceChoice label={id} active={source === id} />
+          </ImportClick>
         </Box>
       ))}
     </Box>
@@ -204,10 +248,12 @@ function ReportView({
   report,
   executed,
   maxRows,
+  form,
 }: {
   report: ImportReport;
   executed: boolean;
   maxRows: number;
+  form: ImportFormState;
 }): ReactElement {
   const items = report.items.slice(0, maxRows);
   const hidden = report.items.length - items.length;
@@ -226,11 +272,22 @@ function ReportView({
       <SummaryRow report={report} />
       <Box marginTop={1}>
         {executed ? (
-          <Text color={theme.colors.muted}>Enter / Esc back to form</Text>
+          <ImportClick onClick={(ctx) => ctx.dispatch({ type: "import_reset" })}>
+            <Text color={theme.colors.muted}>Enter / Esc back to form</Text>
+          </ImportClick>
         ) : (
-          <Text color={theme.colors.muted}>
-            y / Enter apply · e edit · Esc cancel
-          </Text>
+          <Box>
+            <ImportClick
+              onClick={(ctx) => ctx.callbacks.onImportExecute?.(form)}
+            >
+              <Text color={theme.colors.success} bold>
+                y / Enter apply
+              </Text>
+            </ImportClick>
+            <ImportClick onClick={(ctx) => ctx.dispatch({ type: "import_reset" })}>
+              <Text color={theme.colors.muted}> · e edit · Esc cancel</Text>
+            </ImportClick>
+          </Box>
         )}
       </Box>
     </Box>

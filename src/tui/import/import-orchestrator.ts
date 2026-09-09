@@ -96,8 +96,13 @@ export class ImportOrchestrator {
     execute: boolean,
     options: readonly string[],
   ): void {
+    const storeWarning = this.describeUnreadableRows();
     if (execute) {
-      this.bus.emit({ type: "import_execute_done", report });
+      this.bus.emit({
+        type: "import_execute_done",
+        report,
+        ...(storeWarning ? { storeWarning } : {}),
+      });
       this.bus.emit({
         type: "runtime_info",
         line: `import done: ${formatSummary(report)}`,
@@ -105,8 +110,42 @@ export class ImportOrchestrator {
       // Cron import may have created scheduled tasks — refresh the tab.
       if (options.includes("cron")) this.deps.refreshTasks?.();
     } else {
-      this.bus.emit({ type: "import_preview_ready", report });
+      this.bus.emit({
+        type: "import_preview_ready",
+        report,
+        ...(storeWarning ? { storeWarning } : {}),
+      });
     }
+  }
+
+  /**
+   * Rows in the destination store whose payload will not parse, phrased
+   * for the report screen — or `null` when there are none.
+   *
+   * The count is discovered at boot, where it has nowhere to go: the
+   * chat is on the start page and the list simply leaves those rows
+   * out, so a truncated write looks like sessions that quietly went
+   * missing. The import screen is where the operator is already asking
+   * "did everything arrive?", which makes it the right place to answer.
+   *
+   * Read through an optional call because counting unreadable rows is a
+   * capability of the newer store; against an older one this is silent
+   * rather than a crash.
+   */
+  private describeUnreadableRows(): string | null {
+    const store = this.runtime.sessionStore as {
+      countUnreadable?: () => number;
+    };
+    let unreadable = 0;
+    try {
+      unreadable = store.countUnreadable?.() ?? 0;
+    } catch {
+      return null;
+    }
+    if (unreadable <= 0) return null;
+    return unreadable === 1
+      ? "1 session already in the store cannot be read and is not listed"
+      : `${unreadable} sessions already in the store cannot be read and are not listed`;
   }
 
   /**
