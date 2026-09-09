@@ -1,9 +1,12 @@
 import type { Key } from "ink";
 
+import type { TuiAction } from "../tui-action.js";
 import type { TuiState } from "../tui-state.js";
+import { pinnedBlockLength } from "./session-rail-pin.js";
 
 export interface SessionPinKeyContext {
   state: TuiState;
+  dispatch: (action: TuiAction) => void;
   callbacks: {
     onSessionPinToggled?: (sessionId: string) => void;
   };
@@ -19,6 +22,12 @@ export interface SessionPinKeyContext {
  * operators in front of a control they can see and cannot reach — the
  * same reason `x` exists beside the close mark.
  *
+ * The cursor follows the row, as it does for a move: pinning lifts the
+ * thread to the end of the top block and unpinning drops it at the head
+ * of the rest, and a cursor left on the old slot would put the next `p`
+ * on a different thread — pressing it twice would pin two rows instead
+ * of undoing the first.
+ *
  * Returns `true` when the key was consumed. A `p` on the Tasks pane is
  * not consumed here; the caller's own letter-swallow deals with it.
  */
@@ -32,6 +41,18 @@ export function handleSessionPinKey(
   const { state } = ctx;
   if (state.sidebarSection !== "sessions") return false;
   const entry = state.recentSessions[state.sidebarCursor];
-  if (entry) ctx.callbacks.onSessionPinToggled?.(entry.sessionId);
+  if (!entry) return true;
+  ctx.callbacks.onSessionPinToggled?.(entry.sessionId);
+  // Where the row lands: the block grows by one and takes it last when
+  // pinning, and the row leaves the block and heads the rest when it is
+  // released — the two slots `togglePinned` moves it to.
+  const block = pinnedBlockLength(
+    state.recentSessions.map((row) => row.sessionId),
+    state.recentSessions.filter((row) => row.pinned).map((row) => row.sessionId),
+  );
+  ctx.dispatch({
+    type: "sidebar_cursor_set",
+    row: entry.pinned ? Math.max(0, block - 1) : block,
+  });
   return true;
 }

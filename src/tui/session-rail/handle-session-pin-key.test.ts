@@ -99,6 +99,25 @@ describe("rail session pin key", () => {
     expect(c.callbacks.onSessionPinToggled).toHaveBeenCalledWith("s-1");
   });
 
+  it("takes the cursor to the row's new slot so a second `p` undoes the first", () => {
+    // s-2 is pinned, so the block is one row long and an unpinned s-1
+    // pinned now lands right after it, at index 1.
+    const rows = [entry("s-2", true), entry("s-1")];
+    const c = ctx(railState(1, "sessions", rows));
+    expect(handleAppKey("p", key(), c)).toBe(true);
+    expect(c.callbacks.onSessionPinToggled).toHaveBeenCalledWith("s-1");
+    expect(c.dispatch).toHaveBeenCalledWith({ type: "sidebar_cursor_set", row: 1 });
+  });
+
+  it("follows a released row to the head of the unpinned half", () => {
+    // Two pinned rows; releasing the first leaves a one-row block, so
+    // the row it is released to is index 1.
+    const rows = [entry("s-1", true), entry("s-2", true), entry("s-3")];
+    const c = ctx(railState(0, "sessions", rows));
+    expect(handleAppKey("p", key(), c)).toBe(true);
+    expect(c.dispatch).toHaveBeenCalledWith({ type: "sidebar_cursor_set", row: 1 });
+  });
+
   it("works on an already-pinned row — the same key releases it", () => {
     const c = ctx(railState(1));
     expect(handleAppKey("p", key(), c)).toBe(true);
