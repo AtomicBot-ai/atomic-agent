@@ -96,7 +96,11 @@ let MODE_REASSERT = null;
 /* `uncheckedFor` / `acceptUnchecked` are F1's two halves: what could not be
    checked, and whether the user has said to save it anyway. */
 const WIZ = { phase:null, row:null, apiKey:'', baseUrl:'', error:null, busy:false, cur:0, q:null,
-  uncheckedFor:null, acceptUnchecked:false };
+  uncheckedFor:null, acceptUnchecked:false,
+  /* F6 — the model step. `modelChosen` is what lets wizNext run twice: once
+     to verify and offer the catalogue, once to save the choice. */
+  models:[], modelPick:null, defaultModel:null, modelChosen:false, savedId:null,
+  savedLabel:'', modelFilter:'', unverifiedNote:null };
 /* Kind rows in the TUI's KIND_ROW_ORDER, minus the two subscription-CLI
    kinds, whose config shape the desktop does not write. */
 const KIND_ROWS = [
@@ -1509,9 +1513,24 @@ function chatView() {
 }
 
 function emptyChat() {
-  return '<div class="emptychat"><span style="opacity:.25;color:var(--text-primary)">'
-    + '<svg width="48" height="48" viewBox="0 0 64 64" fill="currentColor"><path d="M35.24 49.92a1.25 1.25 0 0 0 1.3-1.24 12.2 12.2 0 0 1 12.14-12.14 1.25 1.25 0 0 0 1.24-1.3v-6.47c0-.69-.56-1.24-1.24-1.24H37.72c-.69 0-1.24-.56-1.24-1.25V15.32c0-.69-.56-1.24-1.24-1.24h-6.47c-.69 0-1.24.56-1.3 1.24A12.2 12.2 0 0 1 15.32 27.46c-.68.06-1.24.61-1.24 1.3v6.47c0 .69.56 1.24 1.24 1.24h10.96c.69 0 1.24.56 1.24 1.25v10.95c0 .69.56 1.24 1.24 1.24z"/></svg></span>'
-    + '<div style="font-size:22px;line-height:28px;font-weight:600;letter-spacing:-.02em">Ask it to do something on this machine</div>'
+  /* B.6 — a data plate, not a greeting. A window that has just opened knows
+     four things the person about to type needs: where it will work, which
+     provider and model will answer, and which build is running. The old
+     empty state showed a large faded mark and a sentence that told them none
+     of it. The suggestions stay: they are the cheapest way into a first turn. */
+  const id = selActiveProviderId();
+  const entry = (selProviders() || []).find((p) => p.id === id);
+  const model = activeModel();
+  const rows = [
+    ['Workspace', S.live.workingDir || 'not set'],
+    ['Provider', id ? (id + (providerHost(entry) ? ' · ' + providerHost(entry) : '')) : 'none configured'],
+    ['Model', model || 'none chosen'],
+    ['Build', BUILD ? BUILD.version + ' · ' + BUILD.platform + ' ' + BUILD.arch : '—'],
+  ];
+  return '<div class="emptychat">'
+    + '<div class="plate emptyplate"><dl>'
+    + rows.map(([k, v]) => '<dt>' + esc(k) + '</dt><dd>' + esc(v) + '</dd>').join('')
+    + '</dl></div>'
     + '<div class="ghost">'
       + ['what can you do?','summarise the files in this folder','check the disk space on this Mac']
           .map((g) => '<button class="ghostchip" data-fill="' + esc(g) + '">' + esc(g) + '</button>').join('')
@@ -1868,24 +1887,32 @@ function composer() {
            : PLAN.on ? 'Type to change the plan — it stays in plan mode…'
            : 'Ask for an outcome, or / for a command') + '"></textarea>'
       + micButton() + sendButton() + '</div>'
+      /* B.7 — the control row is a legend plate: each control is named above
+         it in the 11px label style, and its value is machine text. It used to
+         read as five unlabelled dropdowns, and on the cloud route three of
+         them are the route itself — backend, then provider, then model — with
+         no way to tell which was which without opening one. */
       + '<div class="cfoot">'
+        + '<span class="cgrp"><span class="clabel">Backend</span>'
         + '<button class="cchip modechip" data-sel-open="backend">'
-          + ic(selBackend() === 'cloud' ? 'cloud' : 'cpu') + selBackend() + ic('chevD') + '</button>'
+          + ic(selBackend() === 'cloud' ? 'cloud' : 'cpu') + selBackend() + ic('chevD') + '</button></span>'
         // SELECTOR LANE: the visible control set follows composerSwitchKindsFor,
         // not a hard-coded `cloud` test — see selKinds(). Cloud and custom draw
         // the provider control; the managed-local route draws none, because on
         // that route the second control IS the model.
         + (selHasKind('provider')
-            ? '<button class="cchip providerchip" data-sel-open="provider">' + esc(selProviderLabel()) + ic('chevD') + '</button>'
+            ? '<span class="cgrp"><span class="clabel">Provider</span>'
+              + '<button class="cchip providerchip" data-sel-open="provider">' + esc(selProviderLabel()) + ic('chevD') + '</button></span>'
             : '')
         // Lane B — backend switch: the TUI's ComposerMetaControls renders
         // no model control when there is no model (cloud provider without
         // a chatModel, or local before the snapshot lands); the pane stays
         // reachable through the provider chip and the backend rows.
-        + modelChipHtml()
+        + (modelChipHtml()
+            ? '<span class="cgrp"><span class="clabel">Model</span>' + modelChipHtml() + '</span>' : '')
         + '<span style="flex:1"></span>'
-        + contextChip()
-        + codingModeChip()
+        + '<span class="cgrp"><span class="clabel">Context</span>' + contextChip() + '</span>'
+        + '<span class="cgrp"><span class="clabel">Mode</span>' + codingModeChip() + '</span>'
       + '</div>'
     + '</div></div>';
 }
@@ -2801,21 +2828,39 @@ function renderSettings() {
      is what the click handler's new branch tests. Deliberately NOT `data-close`:
      that branch runs act('close'), which does not clear S.settings. */
   el.dataset.setclose = '1';
-  const strip = SETTINGS_TABS.map(([id, label], i) =>
-      (i ? '<span class="tabsep">  |  </span>' : '')
-      + '<button class="settab' + (cur === id ? ' on' : '') + '" data-act="settings:' + id + '">' + esc(label + tabSuffix(id)) + '</button>').join('');
+  /* B.8 — the strip scrolls, and it used to say so nowhere: "изначально
+     ваще непонятно что эту полосу можно перекрутить". The pipe separators
+     are gone (they were doing a rule's job badly) and the strip is wrapped in
+     a rail that fades at whichever end still has tabs behind it. */
+  const strip = SETTINGS_TABS.map(([id, label]) =>
+      '<button class="settab' + (cur === id ? ' on' : '') + '" data-act="settings:' + id + '">'
+      + esc(label + tabSuffix(id)) + '</button>').join('');
   el.innerHTML = '<div class="setwin"><div class="settb">'
-    + '<div class="lights"><button class="lg lg-a" data-act="settings:close" title="Close" aria-label="Close"></button>'
-      + '<span class="lg" style="background:var(--bg-active)"></span><span class="lg" style="background:var(--bg-active)"></span></div>'
+    /* B.8 — one close control with a name on it, not three imitation macOS
+       lights of which one happened to be live. Every icon-only control in
+       this window carries a label or a tooltip: with the sidebar collapsed
+       the tester could not tell what any of the crosses did. */
     + '<span class="setttl">Menu › Manage</span>'
-    + '<span style="flex:1"></span><button class="iconbtn" data-act="settings:close" title="Close (Esc)">' + ic('x') + '</button>'
+    + '<span style="flex:1"></span>'
+    + '<button class="iconbtn" data-act="settings:close" title="Close (Esc)" aria-label="Close settings">' + ic('x') + '</button>'
     + '</div><div class="setcols">'
     + '<div class="setmenu">' + menuTreeHTML() + '</div>'
-    + '<div class="setmain"><div class="settabs">' + strip + '</div>'
-    + '<div class="setdiag">' + esc(diagLine()) + '</div>'
-    + '<div class="setbody">' + settingsPane() + '</div></div>'
+    + '<div class="setmain">'
+    /* The strip WRAPS rather than scrolling. The brief allows either, and a
+       strip that cannot overflow cannot hide its own navigation — there is no
+       affordance to miss and no gesture to discover. */
+    + '<div class="settabs">' + strip + '</div>'
+    + '<div class="setbody">' + settingsPane() + '</div>'
+    /* B.8 — the diagnostics line becomes a data plate at the BOTTOM, in mono,
+       carrying the agent binary and the build. It used to sit above the pane
+       as a grey sentence competing with the content. */
+    + '<div class="setplate plate"><dl>'
+      + '<dt>Build</dt><dd>' + esc(BUILD ? BUILD.version + ' · ' + BUILD.platform + ' ' + BUILD.arch : '—') + '</dd>'
+      + '<dt>Agent</dt><dd>' + esc(S.live.binary || 'not started') + '</dd>'
+      + '<dt>State</dt><dd>' + esc(diagLine()) + '</dd>'
+    + '</dl></div>'
+    + '</div>'
     + '</div></div>';
-  el.querySelector('.lights').style.marginRight = '0';
   $('#window').appendChild(el);
   // r6 cloud item 5: put the operator back where they were reading.
   SETTINGS_SCROLL.pane = cur;
@@ -3140,13 +3185,25 @@ function act(a) {
   if (a === 'context') { close(); S.overlay = 'context'; render(); return; }
   if (a === 'modes') { close(); S.overlay = 'modes'; render(); return; }
   if (a === 'sel:add') { WIZ.phase = 'pick_kind'; WIZ.row = null; WIZ.apiKey = ''; WIZ.baseUrl = ''; WIZ.error = null; render(); return; }
-  if (a === 'wiz:back') { WIZ.phase = WIZ.phase === 'configure' ? 'pick_kind' : null; WIZ.error = null; WIZ.uncheckedFor = null; WIZ.acceptUnchecked = false; WIZ.forId = null; render(); return; }
+  if (a === 'wiz:back') { WIZ.phase = WIZ.phase === 'pick_model' ? 'configure' : WIZ.phase === 'configure' ? 'pick_kind' : null; WIZ.error = null; WIZ.uncheckedFor = null; WIZ.acceptUnchecked = false; WIZ.forId = null; render(); return; }
   if (a === 'wiz:next') { wizNext(); return; }
   /* F1 — the second of the two buttons an unchecked key offers. It is the
      same path as Next, with the user's decision carried into it, so nothing
      about how the provider is saved and activated differs; only whether we
      were allowed to claim the key works. */
   if (a === 'wiz:saveUnchecked') { WIZ.acceptUnchecked = true; wizNext(); return; }
+  /* F6 — both ways out of the model step run the SAME save path: wizNext
+     again, with the choice made. Nothing about how the provider is written
+     differs between "use default" and picking a row. */
+  if (a === 'wiz:model' || a === 'wiz:useDefault') {
+    if (a === 'wiz:useDefault') WIZ.modelPick = WIZ.defaultModel;
+    if (!WIZ.modelPick) return;
+    WIZ.modelChosen = true;
+    WIZ.acceptUnchecked = true;   // already decided on the screen before this
+    WIZ.phase = 'configure';
+    wizNext();
+    return;
+  }
   /* F4 — the one action a person can take about an agent that is too old to
      have coding modes. Shipping the matching agent inside the DMG is the real
      fix and is not this window's to make; until then, take them to where the
@@ -3206,7 +3263,18 @@ function act(a) {
     toast('Nothing to send again', 'no message in this transcript', 'bad');
     return;
   }
-  if (a === 'dump') { close(); render(); toast('Write debug bundle', 'not available in the desktop'); return; } // Item 7: no bundle writer in the desktop
+  /* N3 — this used to toast "not available in the desktop", which left a
+     tester with no way to send us anything at all. It writes a file now:
+     the agent log, the config with every secret removed, and the build. */
+  if (a === 'dump') {
+    close(); render();
+    if (!BR || !BR.debugBundle) { toast('Write debug bundle', 'not available in this build', 'bad'); return; }
+    BR.debugBundle().then((res) => {
+      if (res && res.ok) { toast('Debug bundle written', res.path); if (BR.openPath) BR.openPath(res.path); }
+      else toast('Could not write the bundle', (res && res.error) || '', 'bad');
+    });
+    return;
+  }
   if (a === 'tools') { close(); S.inspector = true; S.inspTab = 'world'; render(); return; }
   if (a === 'restart') { close(); render(); toast('Agent runtime restarted'); return; }
   if (a === 'quit') { close(); if (BR && BR.quit) { BR.quit(); return; } render(); toast('This is a prototype', 'Nothing to quit'); return; }
@@ -3758,6 +3826,12 @@ document.addEventListener('click', (e) => {
   const selRow = t.closest('[data-sel-row]');
   if (selRow) { selActivate(SEL.rows[+selRow.dataset.selRow]); return; }
   const wizKind = t.closest('[data-wiz-kind]');
+  /* F6 — a model row, in whichever wizard is on screen. This lives on the
+     app's own click path, not the flow's: the flow's listener returns early
+     when the flow is closed, and the composer's popover is the other place
+     this step renders. */
+  const wizModel = e.target.closest && e.target.closest('[data-wizmodel]');
+  if (wizModel) { WIZ.modelPick = wizModel.dataset.wizmodel; render(); return; }
   if (wizKind) { WIZ.row = KIND_ROWS[+wizKind.dataset.wizKind]; WIZ.phase = 'configure'; WIZ.error = null; render(); return; }
   const selPreset = t.closest('[data-sel-preset]');
   if (selPreset) { SEL.presetCur = +selPreset.dataset.selPreset; render(); return; }
@@ -3818,6 +3892,7 @@ document.addEventListener('input', (e) => {
      character, watch it come back, and the provider is now impossible to
      correct without closing the wizard. Held here, the way `sel-filter`
      and `modelq` above are. */
+  if (e.target.id === 'wiz-model-q') { WIZ.modelFilter = e.target.value; render(); return; }
   if (e.target.id === 'wiz-key') {
     WIZ.apiKey = e.target.value;
     /* B.4 — the error clears on the first keystroke in the field it belongs
@@ -6808,10 +6883,19 @@ function obProposeHTML() {
 /** buildImportPickRows (import-step.ts:101-113): agents, then the import
  *  action once at least one is ticked, then the skip row LAST. */
 function obImportRows() {
+  /* B.5 — the list is the SOURCES. "Import from 4 agents" and "Skip adding
+     data from other agents" used to be rows in it, drawn as underlined text,
+     which read as links to nowhere ("надо сделать кнопками что я подчеркнула;
+     выглядит тупо как текст"). They are the step's two verbs and they live on
+     the action bar with every other step's verbs.
+
+     The keyboard model does not change: the arrow keys walk the sources, and
+     the two verbs keep their indices at the end so Enter on the list still
+     reaches them — obImportPickKey works off these rows. */
   const rows = OB.importAgents.map((agent, index) => ({kind:'agent', index, agent}));
   const picked = OB.importAgents.filter((a) => a.enabled).length;
-  if (picked > 0) rows.push({kind:'import', picked});
-  rows.push({kind:'skip'});
+  if (picked > 0) rows.push({kind:'import', picked, offList:true});
+  rows.push({kind:'skip', offList:true});
   return rows;
 }
 /** importActionLabel (import-step.ts:87-89). */
@@ -6819,11 +6903,23 @@ function obImportActionLabel(picked) {
   return picked === 1 ? 'Import from 1 agent' : 'Import from ' + picked + ' agents';
 }
 
+/** The live scan readout (B.5): SCANNING · 3 of 4 · claude-code. */
+function obScanStripHTML() {
+  const all = OB.importAgents || [];
+  const done = OB.scanDone || 0;
+  const at = OB.scanAt || '';
+  return '<div class="ob-scanstrip">'
+    + '<span class="ann caution">Scanning</span>'
+    + '<span class="readout">' + esc(all.length ? (Math.min(done + 1, all.length) + ' of ' + all.length) : '…') + '</span>'
+    + (at ? '<span class="ob-help">' + esc(at) + '</span>' : '')
+    + '</div>';
+}
+
 function obImportPickHTML() {
   const rows = obImportRows();
   const cursor = OB.cursor % rows.length;
   return '<div class="ob-explain">' + esc(OB_COPY.importExplainer.join('\n')) + '</div>'
-    + '<div class="ob-list">' + rows.map((row, i) => {
+    + '<div class="ob-list">' + rows.filter((r) => !r.offList).map((row, i) => {
         if (row.kind === 'agent') {
           /* r6 UX: `[x]` and `[ ]` are a terminal's checkbox. This row IS
              a checkbox — it toggles, it does not navigate — so it is
@@ -6835,10 +6931,13 @@ function obImportPickHTML() {
             esc(row.agent.dir), 'ob-check',
             ' role="checkbox" aria-checked="' + (row.agent.enabled ? 'true' : 'false') + '"');
         }
-        if (row.kind === 'import') return obRow(i, cursor === i, esc(obImportActionLabel(row.picked)), '');
-        return obRow(i, cursor === i, esc(OB_COPY.importSkipLabel), esc(OB_COPY.importSkipDetail));
+        return '';
       }).join('') + '</div>'
-    + (OB.busy ? '<div class="ob-explain">' + esc(OB_COPY.importScanning) + '</div>' : '');
+    /* B.5 — "scanning the sources…" was a grey sentence that said nothing
+       about progress, so there was no way to tell a scan from a hang ("не было
+       полосы импорта. Я не понимаю, работает или нет"). It is a readout now:
+       which source, and how far through. */
+    + (OB.busy ? obScanStripHTML() : '');
 }
 
 /** summarizeImportReport (import-step.ts:167-189) + reportHeadline (:200-212). */
@@ -6873,11 +6972,39 @@ function obImportHeadline(report, executed) {
   }
   return (s.migrated + s.conflict) > 0 ? OB_COPY.importPreviewActionable : OB_COPY.importPreviewNothing;
 }
+/* F7 — a failure you can look at.
+   The result screen printed counts and stopped: "444 migrated, 1 skipped, 6
+   failed" with no way anywhere in the UI to learn what those six were. A
+   count you cannot open is not a report. */
+function obImportFailures() {
+  const report = OB.importReport;
+  return ((report && report.items) || []).filter((i) => i.status === 'error');
+}
+
 function obImportReportHTML(executed) {
   const report = OB.importReport;
+  const bad = obImportFailures();
+  const open = OB.importFailuresOpen;
   return '<div class="ob-h">' + esc(obImportHeadline(report, executed)) + '</div>'
     + (report ? '<div class="ob-explain">' + esc(obImportSummary(report).join('\n')) + '</div>' : '')
-    + (OB.busy ? '<div class="ob-explain">' + esc(OB_COPY.importRunning) + '</div>' : '');
+    + (bad.length && !OB.busy
+      ? '<div class="ob-failures">'
+        + '<button class="btn btn-s" data-obact="import:failures">'
+        + esc((open ? 'Hide' : 'What failed') + ' (' + bad.length + ')') + '</button>'
+        + (executed ? '<button class="btn btn-s" data-obact="import:retry">Retry failed</button>' : '')
+        + '</div>'
+        + (open
+          ? '<div class="tbl-wrap"><table class="tbl"><thead><tr>'
+            + '<th>Item</th><th>Source</th><th>Why</th></tr></thead><tbody>'
+            + bad.slice(0, 200).map((i) =>
+                '<tr><td>' + esc(i.name || i.id || i.kind || 'item') + '</td>'
+                + '<td>' + esc(i.source || 'unknown') + '</td>'
+                + '<td>' + esc(i.error || i.reason || i.message || 'no reason given') + '</td></tr>').join('')
+            + '</tbody></table></div>'
+            + (bad.length > 200 ? '<div class="ob-help">' + esc('and ' + (bad.length - 200) + ' more') + '</div>' : '')
+          : '')
+      : '')
+    + (OB.busy ? obScanStripHTML() : '');
 }
 
 /**
@@ -6891,6 +7018,50 @@ function obWizRows() {
   const q = (WIZ.q || '').trim().toLowerCase();
   if (!q) return KIND_ROWS.map((k, i) => ({k, i}));
   return KIND_ROWS.map((k, i) => ({k, i})).filter(({k}) => k.label.toLowerCase().indexOf(q) >= 0);
+}
+
+/* F6 — the model step, rendered by BOTH wizards.
+   There are two of them — the first-run flow's and the composer popover's —
+   and every time something is added to one and not the other they drift; the
+   error slot on the key screen had drifted that way already. One function. */
+function wizModelStepHTML(withFoot) {
+  const q = (WIZ.modelFilter || '').trim().toLowerCase();
+  const all = WIZ.models || [];
+  const rows = q ? all.filter((m) => (m.id + ' ' + (m.name || '')).toLowerCase().includes(q)) : all;
+  const shown = rows.slice(0, 200);
+  return '<div class="ob-wiz">'
+    + '<div class="ob-kicker">Model</div>'
+    + '<div class="ob-h">' + esc(WIZ.savedLabel || 'Choose a model') + '</div>'
+    + (WIZ.unverifiedNote
+        ? '<div class="ob-err">' + esc(WIZ.unverifiedNote) + '</div>'
+        : '')
+    + '<div class="ob-help">'
+      + esc(WIZ.defaultModel ? 'Our default for this provider is ' + WIZ.defaultModel + '.' : 'Pick the model this provider should answer with.')
+    + '</div>'
+    + (all.length > 8
+        ? '<input class="ob-inp" id="wiz-model-q" placeholder="Search models" value="' + esc(WIZ.modelFilter || '') + '">'
+        : '')
+    + '<div class="ob-wizlist"><div class="prows">'
+      + shown.map((m) =>
+          '<button class="prow' + (m.id === WIZ.modelPick ? ' on' : '') + '" data-wizmodel="' + esc(m.id) + '">'
+          + '<span class="col"><span class="nm">' + esc(m.name || m.id) + '</span>'
+          + '<span class="ep">' + esc(m.id) + '</span></span>'
+          + (m.id === WIZ.defaultModel ? '<span class="ann lit">Default</span>' : '')
+          + '</button>').join('')
+    + '</div></div>'
+    + (rows.length > shown.length
+        ? '<div class="ob-help">' + esc('and ' + (rows.length - shown.length) + ' more — search to narrow it') + '</div>' : '')
+    + (withFoot ? '<div class="ob-foot">' + wizModelStepFoot() + '</div>' : '')
+    + '</div>';
+}
+
+/** The model step's verbs. The popover hands these to selShell instead of
+ *  putting them in the body, where they scrolled out of reach with the list. */
+function wizModelStepFoot() {
+  return '<button class="btn btn-g" data-act="wiz:back">Back</button>'
+    + '<span class="grow"></span>'
+    + '<button class="btn btn-g" data-act="wiz:useDefault">Use default</button>'
+    + '<button class="btn btn-p" data-act="wiz:model">Use this model</button>';
 }
 
 function obWizardHTML() {
@@ -6961,6 +7132,7 @@ function obWizardHTML() {
      labelled, it says what goes in it, and the .env sentence has moved
      BELOW the field, where help text belongs. The sentence itself is the
      copy contract's, verbatim. */
+  if (WIZ.phase === 'pick_model') return wizModelStepHTML(true);
   /* B.4 — one label, not three. This screen used to say "API key — AI/ML API"
      as a heading, "API key" again as the field's label, and then put the .env
      sentence between them; the tester read it as the same words twice and she
@@ -7050,6 +7222,16 @@ function obFootHTML() {
         + obBtn('url:skip', 'Continue without embeddings', 'btn-g', busy);
       right = obBtn('nav:go', busy ? 'Testing…' : 'Test and save', 'btn-p', busy);
       break;
+    /* B.5 — the import step's two verbs, on the action bar with every other
+       step's verbs rather than as underlined rows inside the list. Import is
+       the primary and carries the count; skipping is quiet, because it is a
+       real choice and not a failure. */
+    case 'import_pick': {
+      const picked = (OB.importAgents || []).filter((a) => a.enabled).length;
+      left = obBtn('import:skip', OB_COPY.importSkipLabel, 'btn-g', busy);
+      right = obBtn('import:go', busy ? 'Scanning…' : obImportActionLabel(picked), 'btn-p', busy || picked === 0);
+      break;
+    }
     case 'import_preview': {
       const report = OB.importReport;
       const actionable = report !== null && (report.summary.migrated + report.summary.conflict) > 0;
@@ -7767,13 +7949,24 @@ async function obRunImport(options, execute) {
   const items = [];
   const summary = {migrated:0, skipped:0, conflict:0, error:0};
   let failed = null;
+  /* B.5 — which source is being read, and how far through. Without this the
+     screen said "scanning the sources…" for as long as it took and there was
+     no way to tell that from a hang. */
+  const picked = OB.importAgents.filter((a) => a.enabled);
+  OB.scanDone = 0;
   for (const agent of OB.importAgents) {
     if (!agent.enabled) continue;
+    OB.scanAt = agent.label || agent.id;
+    render();
     const mine = options.filter((o) => o.agent === agent.id);
     if (agent.id === OB_TUI_AGENT_ID) {
       const part = await obRunTuiImport(mine, execute);
+      OB.scanDone = Math.min((OB.scanDone || 0) + 1, picked.length);
       if (part.error) { failed = part.error; break; }
-      for (const item of part.items) items.push(item);
+      /* F7 — every item remembers which source produced it, so a failure can
+         be named. The report used to concatenate items from four sources with
+         nothing to say which one a failed row came from. */
+      for (const item of part.items) items.push(Object.assign({source: agent.id}, item));
       summary.migrated += part.summary.migrated;
       summary.error += part.summary.error;
       continue;
@@ -7782,8 +7975,9 @@ async function obRunImport(options, execute) {
     const secrets = mine.some((o) => o.secret && o.enabled);
     const res = await BR.importRun({source: agent.id, dir: agent.dir, exclude, secrets,
       overwrite: false, limit: '', execute});
+    OB.scanDone = Math.min((OB.scanDone || 0) + 1, picked.length);
     if (!res || !res.ok) { failed = (res && res.error) || 'the import failed'; break; }
-    for (const item of (res.report.items || [])) items.push(item);
+    for (const item of (res.report.items || [])) items.push(Object.assign({source: agent.id}, item));
     summary.migrated += res.report.summary.migrated;
     summary.skipped += res.report.summary.skipped;
     summary.conflict += res.report.summary.conflict;
@@ -8271,6 +8465,28 @@ function obControlClick(spec) {
   }
   /* r6 UX — the action bar. Each of these presses the chord its label
      stands for, through obPress: the button and the key are one path. */
+  /* B.5 — the import step's verbs. They move the cursor onto the row that
+     already means each verb and press it, so the button and the keyboard go
+     through one path and cannot mean different things. */
+  if (spec === 'import:go' || spec === 'import:skip') {
+    const rows = obImportRows();
+    const at = rows.findIndex((r) => r.kind === (spec === 'import:go' ? 'import' : 'skip'));
+    if (at < 0) return;
+    obDispatch({type:'onboarding_cursor_set', cursor: at});
+    obKey('', {return:true});
+    return;
+  }
+  if (spec === 'import:failures') { OB.importFailuresOpen = !OB.importFailuresOpen; render(); return; }
+  /* F7 — retry only the sources that actually failed, so a retry after a
+     444-item import does not re-walk the 444 that worked. */
+  if (spec === 'import:retry') {
+    const bad = new Set(obImportFailures().map((i) => i.source).filter(Boolean));
+    if (!bad.size) return;
+    OB.importAgents = OB.importAgents.map((a2) => Object.assign({}, a2, {enabled: bad.has(a2.id)}));
+    OB.importFailuresOpen = false;
+    obDispatch({type:'onboarding_import_run_started'});
+    return;
+  }
   if (spec === 'nav:back') { obPress('esc'); return; }
   if (spec === 'nav:go') { obPress('enter'); return; }
   if (spec === 'url:skip') {
@@ -8384,6 +8600,10 @@ document.addEventListener('click', (e) => {
   if (row) { obRowClick(+row.dataset.obrow); return; }
   const ctl = e.target.closest && e.target.closest('[data-obact]');
   if (ctl) { obControlClick(ctl.dataset.obact); return; }
+  /* F6 — a click on a model row selects it; the verb is on the action bar,
+     the way every other step in this flow works. */
+  const wm = e.target.closest && e.target.closest('[data-wizmodel]');
+  if (wm) { WIZ.modelPick = wm.dataset.wizmodel; render(); return; }
   const wr = e.target.closest && e.target.closest('[data-obwiz]');
   if (wr) { obWizRowClick(+wr.dataset.obwiz); return; }
 });
@@ -10299,6 +10519,7 @@ function wizardHTML() {
       : '')
     + '<label class="cap">API key' + (k.env ? ' \u2014 blank reads ' + esc(k.env) : '') + '</label>'
     + '<input class="field-inp" id="wiz-key" type="password" style="width:100%" value="' + esc(WIZ.apiKey) + '">';
+  if (WIZ.phase === 'pick_model') return selShell(WIZ.savedLabel || 'Choose a model', wizModelStepHTML(false), wizModelStepFoot());
   const verifying = WIZ.phase === 'verifying';
   /* This is the SECOND place the app asks for an API key — the wizard's own
      screen is the other — and the two had drifted: this one wrote the error
@@ -10399,7 +10620,9 @@ async function wizNext() {
     render();
     return;
   }
-  const model = k.defaultModel && listed.models.some((m) => m.id === k.defaultModel) ? k.defaultModel : listed.models[0].id;
+  const model = WIZ.modelChosen && WIZ.modelPick && listed.models.some((m) => m.id === WIZ.modelPick)
+    ? WIZ.modelPick
+    : (k.defaultModel && listed.models.some((m) => m.id === k.defaultModel) ? k.defaultModel : listed.models[0].id);
 
   /* r6 cloud item 2 — the verification that can actually fail. The screen
      used to say "checking the key against the provider's model list", and
@@ -10442,6 +10665,24 @@ async function wizNext() {
   if (!unverified && BR.unverifiedSet) { try { await BR.unverifiedSet(id, false); } catch (e) { /* idem */ } }
   WIZ.acceptUnchecked = false;
   WIZ.uncheckedFor = null;
+  /* F6 — the model is a CHOICE, not something we take silently.
+     The wizard used to pick the kind's default model and move straight to the
+     completion screen, so the tester's "я выбрала аимлапи и типо ввела ключ —
+     а какая модель у меня выберется?" had no answer anywhere on screen. The
+     catalogue is already in hand at this point; the step shows it, with our
+     default preselected, and Use default is one button away. */
+  if (!WIZ.modelChosen) {
+    WIZ.phase = 'pick_model';
+    WIZ.models = listed.models;
+    WIZ.modelPick = model;
+    WIZ.defaultModel = model;
+    WIZ.savedId = id;
+    WIZ.savedLabel = k.label.split(' (')[0];
+    WIZ.unverifiedNote = unverified;
+    render();
+    return;
+  }
+  WIZ.modelChosen = false;
   // Lane B — backend switch: one write for the model + the activation, then
   // the restart main does for it. Not while a turn runs.
   if (S.busy) { WIZ.phase = 'configure'; WIZ.error = 'saved and verified, but not activated while a turn is running'; render(); refreshLiveConfig(); return; }
@@ -16107,6 +16348,13 @@ if (typeof window !== 'undefined') {
 if (typeof window !== 'undefined') {
   // item 9 — what the main process latched before anything could write.
   window.__firstRun = () => FIRSTRUN;
+  /* F10 — what the app last said about itself, and the console's record of
+     it. The transcript is asserted separately, and must NOT carry these. */
+  window.__appStatus = () => ({
+    text: APPSTATUS.text,
+    tone: APPSTATUS.tone,
+    logged: LOGS.map((r) => r[2]),
+  });
   /* F1 — which providers were saved without the key being checked. Read
      from disk each time, because the wizard writes it through main. */
   window.__unverified = () => (BR && BR.unverified ? BR.unverified() : Promise.resolve(null));
@@ -16357,7 +16605,8 @@ if (typeof window !== 'undefined') {
   window.__wizList = () => ({
     phase: WIZ.phase, q: WIZ.q, cur: WIZ.cur,
     rows: obWizRows().map(({k}) => k.label),
-    marked: Array.from(document.querySelectorAll('#onboarding .ob-wiz .modelrow.on .nm')).map((e) => e.textContent),
+    // B.3 renamed the provider rows from `.modelrow` to `.prow`.
+    marked: Array.from(document.querySelectorAll('#onboarding .ob-wiz .prow.on .nm')).map((e) => e.textContent),
     row: WIZ.row ? WIZ.row.label : null,
   });
   /** Everything the flow can seed for a check, in one call. */

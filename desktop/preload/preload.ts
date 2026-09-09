@@ -142,6 +142,7 @@ contextBridge.exposeInMainWorld("atomic", {
 
   platform: process.platform,
   build: () => ipcRenderer.invoke("app:build"),
+  debugBundle: () => ipcRenderer.invoke("app:debugBundle"),
   unverified: () => ipcRenderer.invoke("app:unverified"),
   unverifiedSet: (id: string, on: boolean) => ipcRenderer.invoke("app:unverifiedSet", { id, on }),
 

@@ -9,7 +9,7 @@ import { app, BrowserWindow, dialog, ipcMain, shell, systemPreferences} from "el
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { stat } from "node:fs/promises";   // item 5: the attachment strip stats what a turn wrote, nothing else
 import { execFile, execFileSync, spawn } from "node:child_process";   // item 2 (voice input): the smoke spawns the speech helper with --probe, and `say` writes its audio fixture
 // r5 item 7 review fix: the custom-endpoint SUCCESS path had no check at
@@ -536,6 +536,31 @@ function sessionMenuTemplate(
     { type: "separator" },
     { label: "Delete…", click: () => send("app:menu", "delask:" + id) },
   ];
+}
+
+/* N3 — the agent's output, on disk.
+   Everything `atag serve` said lived in the console drawer's 300-line ring,
+   in memory, and went with the window: a tester who quit had destroyed the
+   evidence, which is exactly what happened. It is appended to a rolling
+   `agent.log` in the state directory as well, so there is something to ask
+   for after the fact. Two files, ~2 MB each, so it cannot grow without
+   bound on a long-running window. */
+const AGENT_LOG_MAX = 2_000_000;
+function agentLogPath(): string {
+  return join(DESKTOP_STATE_DIR, "agent.log");
+}
+function appendAgentLog(line: string): void {
+  try {
+    const path = agentLogPath();
+    try {
+      if (statSync(path).size > AGENT_LOG_MAX) renameSync(path, path + ".1");
+    } catch {
+      /* no file yet, or a rotation that lost a race — either way, append. */
+    }
+    appendFileSync(path, line + "\n");
+  } catch {
+    /* Logging must never be the reason the window breaks. */
+  }
 }
 
 const AGENT_SAID: string[] = [];
@@ -1328,6 +1353,48 @@ function wireIpc(client: AgentClient): void {
     return writeUnverified(next);
   });
 
+  /* N3 — "Write Debug Bundle" toasted "not available in the desktop", and the
+     console drawer's LLM tab had no writer at all. A control that cannot do
+     its job is worse than no control: the tester had no way to send us
+     anything, so we asked her for screenshots of a scrolling pane. This
+     writes what the app actually holds — the agent log on disk, the config
+     with every secret removed, and what this build is — next to the state
+     directory, and answers with the path so the window can reveal it. */
+  ipcMain.handle("app:debugBundle", async () => {
+    try {
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const out = join(app.getPath("downloads"), `atomic-agent-debug-${stamp}.txt`);
+      const cfg = await readWholeConfig();
+      const redact = (v: unknown): unknown => {
+        if (Array.isArray(v)) return v.map(redact);
+        if (v && typeof v === "object") {
+          const o: Record<string, unknown> = {};
+          for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+            o[k] = /key|token|secret|password/i.test(k) && typeof val === "string" && val
+              ? `<redacted ${val.length} chars>` : redact(val);
+          }
+          return o;
+        }
+        return v;
+      };
+      let log = "";
+      try { log = readFileSync(agentLogPath(), "utf8").slice(-400_000); } catch { log = "(no agent.log yet)"; }
+      writeFileSync(out, [
+        `Atomic Agent ${app.getVersion()} · ${process.platform} ${process.arch}`,
+        `written ${new Date().toISOString()}`,
+        "",
+        "--- config (secrets removed) ---",
+        JSON.stringify(cfg.ok ? redact(cfg.config) : { error: cfg.error }, null, 2),
+        "",
+        "--- agent log (tail) ---",
+        log,
+      ].join("\n"));
+      return { ok: true, path: out };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
   ipcMain.handle("app:build", () => ({
     version: app.getVersion(),
     platform: process.platform,
@@ -1444,6 +1511,7 @@ function wireIpc(client: AgentClient): void {
   client.on("log", (event: { stream?: string; line?: string }) => {
     AGENT_SAID.push(`${event.stream === "stderr" ? "!" : " "}${String(event.line ?? "").slice(0, 300)}`);
     if (AGENT_SAID.length > 40) AGENT_SAID.shift();
+    appendAgentLog(`${new Date().toISOString()} ${event.stream === "stderr" ? "ERR" : "OUT"} ${String(event.line ?? "")}`);
   });
 
   // Lane B — backend switch: snapshot the route serve booted with, as soon
@@ -3681,7 +3749,8 @@ async function settingsTest(
     ["Setup", "Theme…", "h"], ["Setup", "Mouse…", null], ["Setup", "Hide or show the sidebar", null], ["Setup", "Analytics", null],
     ["Setup", "Enable or disable a skill…", null], ["Setup", "Create, cancel or run a task…", null],
     ["Help", "Commands", null], ["Help", "List built-in tools", null], ["Help", "Write debug bundle", "d"], ["Help", "Quit", "q"],
-    ["Danger zone", "Uninstall atomic-agent…", null],
+    // A.4: the product is Atomic Agent in every user-facing string.
+    ["Danger zone", "Uninstall Atomic Agent…", null],
   ];
   const nodes = await js<Array<{ group: string; label: string; chord: string | null; na: boolean; tab: string | null }>>("window.__menuNodes()");
   check("settings: every menu node has its TUI label and chord", same(nodes.map((n) => [n.group, n.label, n.chord]), NODES), JSON.stringify(nodes.map((n) => [n.group, n.label, n.chord])));
@@ -5029,12 +5098,22 @@ async function hfAndDeltaTest(
   const empty = await js<{ lines: string[] }>(
     `window.__chatEvent({turnId:${JSON.stringify(turnB)}, kind:'error', error:''})`,
   );
+  /* F2 changed what this line SAYS, so this check changed with it. The old
+     contract was "print the agent's message and its bracketed category" —
+     which is how `turn failed [transport]: fetch failed` reached a user. The
+     category is an enum name and never goes out now; a transport failure
+     names the provider instead, and every failure says how long it waited.
+     The bare-`turn failed: ` guard it was written for is still asserted: an
+     error frame with no message must still produce a sentence. */
+  const errLine = errored.lines.find((l) => /is not answering|could not be completed/i.test(l)) || "";
+  const emptyLine = empty.lines.find((l) => /is not answering|could not be completed/i.test(l)) || "";
   check(
-    "drift: a failed turn prints its message and its category, never a bare `turn failed: `",
-    errored.lines.includes("turn failed [transport]: boom")
-      && empty.lines.includes("turn failed: the agent gave no message")
-      && !empty.lines.some((l) => l === "turn failed: "),
-    JSON.stringify([...errored.lines, ...empty.lines].filter((l) => l.startsWith("turn failed"))),
+    "drift: a failed turn names the endpoint or the reason, and never the agent's category",
+    /is not answering/.test(errLine)
+      && !/\[transport\]|fetch failed/.test(errLine)
+      && emptyLine.length > 0
+      && !/:\s*$/.test(emptyLine),
+    JSON.stringify([errLine, emptyLine]),
   );
 
   /* ------------------------------------------------------------------
@@ -5591,7 +5670,7 @@ async function settingsTestPartC(
   const labelsOk = labels.every((l) => impBody.includes(`${l.padEnd(10)}: `));
   check(
     "import tab: the TUI form with its defaults, and no CLI run until Run preview",
-    imp.runs === 0 && impBody.includes("Import · Hermes → atomic-agent") && labelsOk && impBody.includes("Run preview") && impBody.includes("↑↓ move · ←/→ switch source · space toggle · type to edit · Enter on Run = preview · Ctrl+Enter preview")
+    imp.runs === 0 && impBody.includes("Import · Hermes → Atomic Agent") && labelsOk && impBody.includes("Run preview") && impBody.includes("↑↓ move · ←/→ switch source · space toggle · type to edit · Enter on Run = preview · Ctrl+Enter preview")
       && impBody.includes("OPENROUTER_API_KEY / AIMLAPI_API_KEY") && impBody.includes("replace differing destinations") && imp.form.source === "hermes" && imp.form.sessions && imp.form.cron && !imp.form.secrets && !imp.form.overwrite && imp.form.sourceDir.endsWith("/.hermes") && imp.mode === "configure",
     `runs=${imp.runs} dir=${imp.form.sourceDir}`,
   );
@@ -7164,14 +7243,21 @@ async function backendSwitchTest(
       toCloud?.daemon !== "stopped" || afterCloud?.memory?.embeddings?.enabled === false,
       `daemon=${toCloud?.daemon} memory.embeddings.enabled=${afterCloud?.memory?.embeddings?.enabled}`,
     );
-    // The TUI's runtime_info lines, verbatim, in the transcript.
+    /* F10 — these lines used to be pushed into the TRANSCRIPT, so the
+       conversation filled up with a commentary on the user's own clicks
+       ("все действия отображаются у меня в чате"). They are the app
+       reporting on itself: they belong on the status strip above the
+       composer and in the console drawer, which is the record. What is
+       asserted is that the switch is reported AND that it is not reported in
+       the conversation. */
     const lines = (await js<string[]>("window.__systemLines()")) ?? [];
-    const switchLine = `Switched active text provider to "${expected}". New messages use native_tools.`;
-    const stopLine = "local-llm: daemons stopped — hybrid recall off (embedding switch unchanged)";
+    const said = await js<{ text: string; logged: string[] }>("window.__appStatus()");
     check(
-      "backend: TUI runtime_info copy in the transcript",
-      lines.includes(switchLine) && (toCloud?.daemon !== "stopped" || lines.includes(stopLine)),
-      `switch=${lines.includes(switchLine)} stop=${lines.includes(stopLine)} daemon=${toCloud?.daemon}`,
+      "backend: the switch is reported on the status strip, not in the transcript",
+      said.text.includes(expected ?? "")
+        && said.logged.some((l) => l.includes(expected ?? ""))
+        && !lines.some((l) => /Switched active text provider/.test(l)),
+      `strip=${JSON.stringify(said.text)} inTranscript=${lines.some((l) => /Switched active text provider/.test(l))}`,
     );
 
     /* ---- r5 item 10 (review, minor): provider activation and the CLOUD
@@ -7553,7 +7639,6 @@ type ObState = {
   handOver: boolean;
 };
 type ObCopy = { subtitle: string; title: string; lines: string[]; footer: string; hints: string };
-type ObSky = { present: boolean; stars: number; running: boolean; reduced: boolean; frames: number };
 type Dl = {
   visible: boolean; label: string | null; kind: string | null; percent: number | null;
   transferred: number | null; total: number | null; eta: string; queued: number; text: string;
@@ -7625,131 +7710,97 @@ async function onboardingTest(
     /* ---- the flow opens, through the production path ----
        Review fix: the only check that counted the choice rows lived under
        `if (FORCE_ONBOARDING)` and never ran under `npm run smoke`, so the
-       acceptance it stood for was not held by the suite. This one drives
-       the menu command the first-run gate and `--onboarding` both drive
-       (`act('onboarding')` -> openOnboarding), asserts the title the old
-       one dropped, and — because openOnboarding renders once immediately
-       and again after four awaited IPC round trips — proves the reveal
-       and the star field survive that second render instead of restarting
-       under the operator (the second review fix). */
+       acceptance it stood for was not held by the suite. This one drives the
+       menu command the first-run gate and `--onboarding` both drive
+       (`act('onboarding')` -> openOnboarding) and asserts the title the old
+       one dropped.
+
+       It used to prove that a repaint did not restart the typewriter reveal
+       and the star field, because openOnboarding renders once immediately and
+       again after four awaited IPC round trips. There is nothing to restart
+       now — the card is at rest the moment it exists — so what the second
+       render must not disturb is the card's own content. */
     await js<unknown>("window.__obMenuOpen()");
     const openedNow = await js<ObState>("window.__ob()");
     await new Promise((r) => setTimeout(r, 250));
-    type SkyProgress = { frames: number; typed: number; typing: boolean };
-    const reveal0 = await js<SkyProgress>("window.__obSkyProgress()");
+    const cardBefore = await js<string>("((document.querySelector('.ob-introc')||{}).textContent||'').trim()");
     // Force the repaint openOnboarding's own second render is: a full
     // renderOverlays pass with the intro up.
     await js<unknown>("window.__obSeed({})");
     await new Promise((r) => setTimeout(r, 250));
-    const reveal1 = await js<SkyProgress>("window.__obSkyProgress()");
-    const openCopy = await js<ObCopy>("window.__obCopy()");
+    const cardAfter = await js<string>("((document.querySelector('.ob-introc')||{}).textContent||'').trim()");
     const openRows = await js<number>(
-      "(window.__obKey('down'), window.__obKey('down')," +
+      "(window.__obKey('down')," +
         " document.querySelectorAll('#onboarding .ob-row').length)",
     );
-    const openSubtitle = (await js<ObCopy>("window.__obCopy()")).subtitle;
+    const openTitle = await js<string>("((document.querySelector('#onboarding .ob-title')||{}).textContent||'').trim()");
     check(
-      "wizard opens on the intro, and a repaint does not restart the reveal",
+      "wizard opens on the title card, and a repaint leaves it alone",
       openedNow.open && openedNow.step === "intro" &&
-        openCopy.lines.some((l) => l.includes("Local AI-First Agent") || l.includes("ATOMIC")) &&
-        reveal1.frames >= reveal0.frames && reveal1.typed >= reveal0.typed &&
-        openRows === 3 && openSubtitle === "setup · step 1 of 2",
-      `open=${JSON.stringify(openedNow)} reveal ${JSON.stringify(reveal0)} -> ${JSON.stringify(reveal1)}` +
-        ` rows=${openRows} subtitle=${JSON.stringify(openSubtitle)}`,
+        cardBefore.includes("Atomic Agent") && cardAfter === cardBefore &&
+        openRows === 3 && openTitle === "Choose how Atomic Agent gets its model",
+      `open=${JSON.stringify(openedNow)} card=${JSON.stringify(cardBefore.slice(0, 60))}` +
+        ` same=${cardAfter === cardBefore} rows=${openRows} title=${JSON.stringify(openTitle)}`,
     );
     await js<unknown>("window.__obClose()");
 
-    /* ---- the intro ---- */
+    /* ---- the title card ----
+       This replaces a cluster of star-field checks: a canvas of 40-220 stars,
+       an rAF loop asserted to be running, a typewriter reveal with its own
+       reduced-motion and window-hidden behaviours, and a two-stage advance
+       where the first input finished the reveal and the second dismissed it.
+
+       None of that exists any more, and none of it is a regression: the
+       visual system rules starfields out, and a card that has to be hurried
+       is a card nobody reads. What the card owes the person in front of it is
+       what is asserted now — the mark, the product's name, one rule, WHICH
+       BUILD they are running, and a single input that leaves. */
     let ob = await js<ObState>("window.__obOpen('intro')");
-    await new Promise((r) => setTimeout(r, 400));
-    let sky = await js<ObSky>("window.__obSky()");
-    let copy = await js<ObCopy>("window.__obCopy()");
-    const noHead = await js<boolean>("document.querySelector('#onboarding .ob-head') === null");
+    await new Promise((r) => setTimeout(r, 300));
+    const card = await js<{
+      canvas: boolean; head: boolean; word: string; rule: number; build: string;
+      dismissLabel: string; extras: number;
+    }>(`(() => {
+      const root = document.querySelector('#ob-intro');
+      const t = (sel) => { const n = root && root.querySelector(sel); return n ? (n.textContent || '').trim() : ''; };
+      return {
+        canvas: !!document.querySelector('#ob-sky'),
+        head: document.querySelector('#onboarding .ob-head') !== null,
+        word: t('.ob-word'),
+        rule: root && root.querySelector('.ob-rule')
+          ? parseFloat(getComputedStyle(root.querySelector('.ob-rule')).borderTopWidth) : 0,
+        build: t('.ob-build'),
+        dismissLabel: t('.ob-any'),
+        extras: root ? root.querySelectorAll('.ob-introc > *').length : -1,
+      };
+    })()`);
     check(
-      "wizard: the intro is a real star field with no header",
-      ob.step === "intro" && sky.present && sky.stars >= 40 && sky.stars <= 220 && noHead,
-      `step=${ob.step} stars=${sky.stars} present=${sky.present} noHeader=${noHead}`,
+      "wizard: the title card is the mark, the name, one rule and the build — and nothing else",
+      ob.step === "intro" && !card.canvas && !card.head
+        && card.word === "Atomic Agent" && card.rule === 3
+        && /^\d+\.\d+\.\d+ · /.test(card.build)
+        && card.dismissLabel.length > 0 && card.extras === 5,
+      JSON.stringify(card),
     );
     check(
-      "wizard: the intro carries the TUI's own two lines and footer",
-      copy.lines.some((l) => l.includes("[ press any key to continue ]")) &&
-        copy.footer === "ctrl+c quit",
-      `${JSON.stringify(copy.lines.slice(0, 6))} footer=${JSON.stringify(copy.footer)}`,
-    );
-
-    // The sky moves, and two samples half a second apart differ.
-    const frames0 = (await js<ObSky>("window.__obSky()")).frames;
-    await new Promise((r) => setTimeout(r, 600));
-    sky = await js<ObSky>("window.__obSky()");
-    check(
-      "wizard: the star field is animating",
-      sky.running && sky.frames > frames0,
-      `running=${sky.running} frames ${frames0} -> ${sky.frames}`,
-    );
-
-    /* Reduced motion: one frame, no loop, the tagline complete.
-       Review fix: `__obReduce` now moves ONLY the single reduced-motion
-       source and re-renders — the complete tagline and the refused rAF
-       loop below are both produced by the production path (obIntroHTML
-       and obSkyStart read that same source), not painted by the hook. */
-    await js<ObSky>("window.__obReduce(true)");
-    await new Promise((r) => setTimeout(r, 400));
-    const stopped = await js<ObSky>("window.__obSky()");
-    copy = await js<ObCopy>("window.__obCopy()");
-    check(
-      "wizard: prefers-reduced-motion stops the loop and finishes the tagline",
-      stopped.running === false && stopped.reduced === true && stopped.frames === 1 &&
-        copy.lines.some((l) => l.includes("Local AI-First Agent")) &&
-        !copy.lines.some((l) => l.includes("▌")),
-      `running=${stopped.running} reduced=${stopped.reduced} frames=${stopped.frames} lines=${JSON.stringify(copy.lines.slice(0, 5))}`,
-    );
-    await js<ObSky>("window.__obReduce(null)");
-
-    /* Hiding the window and bringing it back. `obSkyStop` clears the
-       TYPEWRITER as well as the rAF, and the handler only ever resumed
-       the loop, so the tagline used to stay frozen mid-word for ever
-       (review fix). Driven through the handler's own body — the page
-       cannot force `document.hidden`. */
-    await js<ObState>("window.__obOpen('intro')");
-    await new Promise((r) => setTimeout(r, 250));
-    const hidden = await js<SkyProgress>("window.__obVisibility(true)");
-    const shown = await js<SkyProgress>("window.__obVisibility(false)");
-    await new Promise((r) => setTimeout(r, 350));
-    const afterShow = await js<SkyProgress>("window.__obSkyProgress()");
-    /* Nothing is asserted about the interval BETWEEN the two calls: with
-       `document.hidden` still false, any ordinary repaint in that window
-       legitimately re-arms the reveal, and a check that forbade it would
-       be asserting the simulation rather than the product. What the fix
-       is about is the pair itself — stop clears the typewriter, resume
-       brings it back, and the reveal carries on from where it stopped
-       rather than from the first character. */
-    check(
-      "wizard: hiding the window stops the reveal, and un-hiding restarts it where it stopped",
-      hidden.typing === false && shown.typing === true &&
-        shown.typed >= hidden.typed && afterShow.typed > hidden.typed,
-      `hidden=${JSON.stringify(hidden)} shown=${JSON.stringify(shown)} after=${JSON.stringify(afterShow)}`,
+      "wizard: nothing on the title card animates",
+      !card.canvas && !(await js<boolean>("!!document.querySelector('#ob-intro .ob-cur')")),
+      `canvas=${card.canvas}`,
     );
 
-    // Two-stage advance: the first input finishes the reveal, the second moves on.
+    // One input dismisses it, which is what the card says.
     ob = await js<ObState>("window.__obOpen('intro')");
     await new Promise((r) => setTimeout(r, 200));
     const afterFirst = await js<ObState>("window.__obKey('down')");
-    const typed = await js<ObCopy>("window.__obCopy()");
-    const afterSecond = await js<ObState>("window.__obKey('down')");
     check(
-      "wizard: the intro takes two inputs, not one",
-      afterFirst.step === "intro" &&
-        !typed.lines.some((l) => l.includes("▌")) &&
-        afterSecond.step === "choose",
-      `first=${afterFirst.step} second=${afterSecond.step}`,
+      "wizard: one input leaves the title card",
+      afterFirst.step === "choose",
+      `after one key: ${afterFirst.step}`,
     );
     /* The stamp the TUI writes AS THE SPLASH IS DISMISSED, not at the end
        of the flow (onboarding-screen.tsx:109-115) — asserted both as the
-       decision (nothing before the second input) and as the write that
-       lands in this lane's own config file. */
+       decision and as the write that lands in this lane's own config file. */
     let stamps = await stampLog();
-    // `atag config set` is a child process; the decision is synchronous
-    // with the key, the file is not, so the read waits for it.
     let introInFile = (await stampsNow()).introSeenAt;
     for (let i = 0; i < 20 && !introInFile; i += 1) {
       await new Promise((r) => setTimeout(r, 250));
@@ -7767,18 +7818,29 @@ async function onboardingTest(
     const labels = await js<string[]>(
       "Array.from(document.querySelectorAll('#onboarding .ob-row .t')).map((e) => e.textContent)",
     );
-    copy = await js<ObCopy>("window.__obCopy()");
+    let copy = await js<ObCopy>("window.__obCopy()");
     check(
       "wizard: the choose step offers all three backends, in the TUI's order",
       labels.length === 3 &&
         labels[0] === "Local models" && labels[1] === "Cloud models" && labels[2] === "Custom endpoint" &&
-        copy.footer === "↑/↓ move   enter select   1–3 jump   esc skip   ctrl+c quit",
+        copy.footer === "↑/↓ move   enter choose   1–3 jump   esc skip",
       `${JSON.stringify(labels)} footer=${JSON.stringify(copy.footer)}`,
     );
+    /* The subtitle was "setup · step 1 of 2" in 11px grey — the smallest
+       thing on a 1470px screen, and the tester never found it. The step
+       indicator is a numbered phase row now and the screen carries a real
+       title, so that is what is asserted. */
+    const chooseTitle = await js<string>("((document.querySelector('#onboarding .ob-title')||{}).textContent||'').trim()");
+    const phases = await js<string[]>(
+      "[...document.querySelectorAll('#onboarding .ob-phase')].map((n) => (n.textContent||'').trim())");
+    const phaseOn = await js<string>(
+      "((document.querySelector('#onboarding .ob-phase.on')||{}).textContent||'').trim()");
     check(
-      "wizard: the choose step's subtitle is the TUI's",
-      copy.subtitle === "setup · step 1 of 2",
-      JSON.stringify(copy.subtitle),
+      "wizard: the choose step is titled, and says which phase you are in",
+      chooseTitle === "Choose how Atomic Agent gets its model"
+        && phases.length === 2 && /01/.test(phases[0] || "") && /02/.test(phases[1] || "")
+        && /01/.test(phaseOn),
+      `title=${JSON.stringify(chooseTitle)} phases=${JSON.stringify(phases)} on=${JSON.stringify(phaseOn)}`,
     );
 
     /* Esc on `choose` is the TUI's skip and the ONLY route to the
@@ -7843,7 +7905,13 @@ async function onboardingTest(
       `viaImport=${viaImport} log=${JSON.stringify(escImportStamp)} config=${JSON.stringify(escImportInFile)}`,
     );
 
-    /* ---- every footer the TUI produces, asserted verbatim ---- */
+    /* ---- every footer, asserted verbatim ----
+       These were the TUI's strings word for word, which is how `ctrl+c quit`
+       came to be printed on every screen of a desktop app that has no such
+       chord — including the title card, where nothing else belongs. The
+       tables below are the desktop's own, and the invariant that matters is
+       asserted separately underneath: no footer may advertise a chord the
+       window does not answer. */
     const footers = await js<Record<string, string>>(
       "JSON.stringify(0) && (function(){const o={};" +
         "for (const s of ['intro','choose','local_pick','local_hf_pick','local_download','propose_second'," +
@@ -7851,16 +7919,16 @@ async function onboardingTest(
         " o[s] = window.__obFooterFor(s); return o;})()",
     );
     const wantFooters: Record<string, string> = {
-      intro: "ctrl+c quit",
-      choose: "↑/↓ move   enter select   1–3 jump   esc skip   ctrl+c quit",
-      local_pick: "↑/↓ move   enter select   esc back   ctrl+c quit",
-      local_hf_pick: "↑/↓ move   enter download   esc back   ctrl+c quit",
-      local_download: "c set up cloud meanwhile   s skip to the agent   ctrl+c quit",
-      propose_second: "↑/↓ move   enter select   esc skip   ctrl+c quit",
-      wait_or_jump: "↑/↓ move   enter start or add a provider   ctrl+c quit",
-      import_done: "any key to start   ctrl+c quit",
-      custom_chat_url: "enter test & continue   esc back   ctrl+c quit",
-      custom_embedding_url: "enter test & save   empty enter skips embeddings   esc back   ctrl+c quit",
+      intro: "",
+      choose: "↑/↓ move   enter choose   1–3 jump   esc skip",
+      local_pick: "↑/↓ move   enter choose   esc back",
+      local_hf_pick: "↑/↓ move   enter download   esc back",
+      local_download: "c set up cloud meanwhile   s skip to the agent",
+      propose_second: "↑/↓ move   enter choose   esc skip",
+      wait_or_jump: "↑/↓ move   enter start or add a provider",
+      import_done: "enter start",
+      custom_chat_url: "enter test & continue   esc back",
+      custom_embedding_url: "enter test & save   empty enter skips embeddings   esc back",
       finished: "",
     };
     const wrongFooter = Object.keys(wantFooters).find((k) => footers[k] !== wantFooters[k]);
@@ -7885,20 +7953,30 @@ async function onboardingTest(
         "window.__wizPhase(null); return out;})()",
     );
     const wantVariants = [
-      "↑/↓ move   / search   enter select   esc back   ctrl+c quit",
-      "↑/↓ move   enter select   esc back   ctrl+c quit",
-      "esc cancel the lookup   ctrl+c quit",
-      "enter look it up   ctrl+l clear   esc back   ctrl+c quit",
-      "enter look it up   esc back   ctrl+c quit",
-      "scanning…   ctrl+c quit",
-      "↑/↓ move   space tick   enter select   esc skip   ctrl+c quit",
-      "importing…   ctrl+c quit",
-      "enter import   esc adjust   ctrl+c quit",
+      "↑/↓ move   / search   enter choose   esc back",
+      "↑/↓ move   enter choose   esc back",
+      "esc cancel the lookup",
+      "enter look it up   ctrl+l clear   esc back",
+      "enter look it up   esc back",
+      "scanning…",
+      "↑/↓ move   space tick   enter continue   esc skip",
+      "importing…",
+      "enter import   esc adjust",
     ];
     check(
       "wizard: the nine variant footers match too",
       JSON.stringify(variants) === JSON.stringify(wantVariants),
       JSON.stringify(variants),
+    );
+    /* F8's invariant, and the one that actually protects the user: a footer
+       may not advertise a chord this window does not answer. `ctrl+c quit`
+       was printed on all twenty of these while the desktop had no such
+       binding, and the comment above the function that produced it said so. */
+    const advertised = [...Object.values(wantFooters), ...wantVariants].join("   ");
+    check(
+      "wizard: no footer advertises a chord the window does not have",
+      !/ctrl\+c/.test(advertised) && !/any key/.test(advertised),
+      `ctrl+c=${/ctrl\+c/.test(advertised)} anyKey=${/any key/.test(advertised)}`,
     );
 
     /* ---- the download strip ---- */
@@ -8524,8 +8602,12 @@ async function onboardingTest(
     const wl3 = await js<WizList>("(window.__obKey('enter'), window.__wizList())");
     check(
       "wizard: the cloud step accepts every chord its footer advertises",
-      wl0.cur === 0 && wl0.rows.length > 3 && wl0.marked.length === 1 && wl0.marked[0] === wl0.rows[0] &&
-        wl1.cur === 1 && wl1.marked[0] === wl0.rows[1] &&
+      /* B.3 — the row shows the provider's NAME; the kind and the
+         parenthesised blurb were noise in a list of fourteen. `rows` is still
+         the full label, so `marked` is compared against its head. */
+      wl0.cur === 0 && wl0.rows.length > 3 && wl0.marked.length === 1
+        && wl0.rows[0]!.startsWith(wl0.marked[0]!) &&
+        wl1.cur === 1 && wl0.rows[1]!.startsWith(wl1.marked[0]!) &&
         wl2.q === "gemini" && wl2.rows.length === 1 && wl2.rows[0] === "Gemini (Google AI)" &&
         wl3.phase === "configure" && wl3.row === "Gemini (Google AI)",
       `cur ${wl0.cur}->${wl1.cur} marked=${JSON.stringify(wl1.marked)} search=${JSON.stringify(wl2.rows)} picked=${JSON.stringify(wl3.row)}`,
@@ -8533,16 +8615,25 @@ async function onboardingTest(
     // ... and the .env sentence the copy contract spells out, on the
     // screen the pick lands on.
     const wizCopy = await js<string[]>(
-      "Array.from(document.querySelectorAll('#onboarding .ob-wiz .ob-h, #onboarding .ob-wiz .ob-explain')).map((e) => e.textContent)",
+      "Array.from(document.querySelectorAll('#onboarding .ob-wiz .ob-kicker, #onboarding .ob-wiz .ob-h,"
+        + " #onboarding .ob-wiz .ob-help')).map((e) => e.textContent)",
     );
     await js<ObState>("window.__obKey('esc')");
     const listCopy = await js<string[]>(
       "Array.from(document.querySelectorAll('#onboarding .ob-wiz .ob-h')).map((e) => e.textContent)",
     );
     check(
-      "wizard: the cloud step carries the wizard titles and the .env sentence verbatim",
-      listCopy.includes("LLM provider — add provider") &&
-        wizCopy.includes("API key — Gemini") &&
+      /* B.4 — one label, not three. The screen said "API key — Gemini" as a
+         heading, "API key" again as the field's label, and put the .env
+         sentence between them; the tester read the same words twice and she
+         was right. The screen is titled in the 11px style, the provider is
+         the subhead, and naming the field is the placeholder's job. The list
+         behind it lost its heading too: the step's own title already says
+         "Connect a cloud provider". */
+      "wizard: the key screen names the provider once, and keeps the .env sentence",
+      listCopy.length === 0 &&
+        wizCopy.includes("API key") && wizCopy.includes("Gemini") &&
+        wizCopy.filter((l) => /API key/i.test(l)).length === 1 &&
         wizCopy.includes("Saved to .env as GEMINI_API_KEY (mode 0600)."),
       `list=${JSON.stringify(listCopy)} key=${JSON.stringify(wizCopy)}`,
     );
@@ -8822,8 +8913,16 @@ async function onboardingTest(
         done = await js<ObState>("window.__ob()");
       }
       const writtenNow = existsSync(importedSkill);
-      // ... and any key from there closes the flow and stamps completedAt.
-      await js<ObState>("window.__obKey('down')");
+      /* F8 — Enter (or Space) closes the flow from here. It used to be ANY
+         key, a literal port of the TUI's "any key to start" footer, which in
+         a window with a focus ring is a trap rather than a shortcut: the
+         tester pressed a key to see what it did and was thrown out of the
+         step. An arrow must now do nothing, and Enter must finish. */
+      const arrowDid = await js<ObState>("window.__obKey('down')");
+      if (arrowDid.step !== "import_done") {
+        process.stdout.write("FAIL wizard: an arrow key finishes the import step — it must not\n");
+      }
+      await js<ObState>("window.__obKey('enter')");
       const closed = await settled();
       let completed = (await stampsNow()).completedAt;
       for (let i = 0; i < 20 && !completed; i += 1) {
@@ -8831,7 +8930,7 @@ async function onboardingTest(
         completed = (await stampsNow()).completedAt;
       }
       check(
-        "wizard: Enter on the preview is the write, and any key from `import_done` finishes the flow",
+        "wizard: Enter on the preview is the write, and Enter from `import_done` finishes the flow",
         done.step === "import_done" && writtenNow === true &&
           closed.open === false &&
           typeof completed === "string" && Date.parse(completed) >= runStart - 1000,
@@ -9618,19 +9717,21 @@ async function chromeTest(
         JSON.stringify(back),
       );
     }
-    // The "on" treatment is the accent, in both themes, with no new token.
+    /* The "on" treatment. It used to be asserted as a specific alpha over a
+       specific blue — 0,106,255 at 16% and 10% — which is three literals of a
+       palette that no longer exists. There are no coloured washes in this
+       system: an active control is the accent ink over the panel ground. What
+       is asserted is that it READS as on (a ground distinct from the page,
+       an accent foreground) and that it follows the theme. */
     const dark = await js<SbToggle>("window.__theme('dark')");
     const light = await js<SbToggle>("window.__theme('light')");
     await js<unknown>("window.__theme('system')");
-    const alpha = (rgba: string): number => {
-      const m = /rgba?\(\s*0,\s*106,\s*255(?:,\s*([\d.]+))?\s*\)/.exec(rgba.replace(/\s+/g, " "));
-      return m ? (m[1] === undefined ? 1 : Number(m[1])) : -1;
-    };
+    const opaque = (c: string): boolean => c !== "rgba(0, 0, 0, 0)" && c !== "transparent";
     check(
-      "item 2: the on state is the accent wash in both themes",
+      "item 2: the on state is marked in both themes, and follows the theme",
       dark.on && light.on
-        && Math.abs(alpha(dark.bg) - 0.16) < 0.005 && Math.abs(alpha(light.bg) - 0.1) < 0.005
-        && dark.fg === "rgb(91, 157, 255)" && light.fg === "rgb(0, 87, 214)",
+        && opaque(dark.bg) && opaque(light.bg)
+        && dark.bg !== light.bg && dark.fg !== light.fg,
       `dark bg=${dark.bg} fg=${dark.fg}; light bg=${light.bg} fg=${light.fg}`,
     );
 
@@ -9638,9 +9739,15 @@ async function chromeTest(
     const setBtn = await js<SetBtn | null>("window.__settingsBtn()");
     check(
       "item 8: the settings entry is a plain button with no keycap and no icon",
+      /* The ask was for a plain button with no hints on it — the keycaps and
+         the icon were what made it look like something other than a button.
+         It is default rank rather than primary now: in this visual system a
+         red fill is the PRIMARY ACTION OF THE SCREEN, and a permanent nav
+         control in the corner of every screen is not that. */
       !!setBtn && setBtn.text === "Settings" && setBtn.act === "settings:tasks"
         && setBtn.keycaps === 0 && setBtn.labelVisible && !setBtn.iconVisible
-        && setBtn.oldRow === 0 && /(^|\s)btn(\s|$)/.test(setBtn.classes) && /(^|\s)btn-p(\s|$)/.test(setBtn.classes),
+        && setBtn.oldRow === 0 && /(^|\s)btn(\s|$)/.test(setBtn.classes)
+        && !/(^|\s)btn-p(\s|$)/.test(setBtn.classes),
       JSON.stringify(setBtn),
     );
     // #sidebar is 260px with box-sizing:border-box and a 1px right border, so
@@ -9653,10 +9760,16 @@ async function chromeTest(
     const setDark = await js<SetBtn>("(() => { window.__theme('dark'); return window.__settingsBtn(); })()");
     const setLight = await js<SetBtn>("(() => { window.__theme('light'); return window.__settingsBtn(); })()");
     await js<unknown>("window.__theme('system')");
+    /* It used to be asserted as one hardcoded blue in both themes, which is
+       exactly the kind of thing the token system exists to stop: that colour
+       does not exist in the app any more. What matters is that it is legible
+       and drawn from the palette — a real border, a real ground, and a label
+       that is not the disabled ink — and that the two themes DIFFER, which is
+       what proves it is reading tokens rather than a literal. */
     check(
-      "item 8: it is the accent in both themes",
-      setDark.bg === "rgb(0, 106, 255)" && setDark.fg === "rgb(255, 255, 255)"
-        && setLight.bg === "rgb(0, 106, 255)" && setLight.fg === "rgb(255, 255, 255)",
+      "item 8: it is drawn from the palette, and follows the theme",
+      setDark.bg !== setLight.bg && setDark.fg !== setLight.fg
+        && setDark.bg !== "rgba(0, 0, 0, 0)" && setLight.bg !== "rgba(0, 0, 0, 0)",
       `dark ${setDark.bg}/${setDark.fg}; light ${setLight.bg}/${setLight.fg}`,
     );
     const opened = await js<{ settings: boolean; pane: string | null }>("window.__settingsBtnClick()");
@@ -9997,11 +10110,21 @@ async function chromeTest(
         && !!focusAsst && focusAsst.opacity === "1" && focusAsst.same && focusAsst.heightSame,
       `user ${JSON.stringify(focusUser)}; assistant ${JSON.stringify(focusAsst)}`,
     );
+    /* Named by behaviour, not by literal. The two reds are the system's — the
+       Worm red lifted for a dark ground, and its deeper variant where red
+       text sits on white — and hardcoding either here means editing this
+       check every time the palette moves. What must hold is that the control
+       reads as red in both themes, and that the two are not the same red. */
+    const retryDark = await js<string>("(() => { window.__theme('dark'); return window.__msgActs('user').dangerColor; })()");
+    const retryLight = await js<string>("(() => { window.__theme('light'); return window.__msgActs('user').dangerColor; })()");
+    const readsRed = (c: string): boolean => {
+      const m = /rgba?\((\d+), (\d+), (\d+)/.exec(c);
+      return !!m && Number(m[1]) > 150 && Number(m[1]) > Number(m[2]) * 2 && Number(m[1]) > Number(m[3]) * 2;
+    };
     check(
       "item 4: the retry control is red in both themes",
-      (await js<string>("(() => { window.__theme('dark'); return window.__msgActs('user').dangerColor; })()")) === "rgb(240, 112, 95)"
-        && (await js<string>("(() => { window.__theme('light'); return window.__msgActs('user').dangerColor; })()")) === "rgb(196, 52, 47)",
-      "the computed --danger in each theme",
+      readsRed(retryDark) && readsRed(retryLight) && retryDark !== retryLight,
+      `dark ${retryDark}; light ${retryLight}`,
     );
     await js<unknown>("window.__theme('system')");
     type ActShot = { count: number; buttons: number; reserved: number; boxBottom: number; endmark: number; colHeight: number };
