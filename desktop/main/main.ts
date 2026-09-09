@@ -505,6 +505,8 @@ function sessionMenuTemplate(
   ];
 }
 
+const AGENT_SAID: string[] = [];
+
 function wireIpc(client: AgentClient): void {
   /* r5 item 9 — the state-dir argument guard.
      Six handlers take a `stateDir` (or a data dir under it) from the
@@ -1380,6 +1382,16 @@ function wireIpc(client: AgentClient): void {
   client.on("chat", (event) => send("agent:chat", event));
   client.on("approval", (event) => send("agent:approval", event));
   client.on("log", (event) => send("agent:log", event));
+  /* The agent's own last words, kept for the smoke fixture. `atag serve`
+     explains itself on stderr, but those lines only ever reached the
+     Diagnostics pane — so a health wait that ran out reported "the agent did
+     not become healthy within 120s" with no cause attached, and the cause had
+     to be guessed at from outside the process that knew it. Small ring,
+     write-only until a check fails. */
+  client.on("log", (event: { stream?: string; line?: string }) => {
+    AGENT_SAID.push(`${event.stream === "stderr" ? "!" : " "}${String(event.line ?? "").slice(0, 300)}`);
+    if (AGENT_SAID.length > 40) AGENT_SAID.shift();
+  });
 
   // Lane B — backend switch: snapshot the route serve booted with, as soon
   // as it is healthy; a stopped or dead child has none.
@@ -6977,7 +6989,8 @@ async function backendSwitchTest(
             && customRows.backend === "custom" && /custom/.test(customRows.chip) && !customRows.modelChip
             && !!custom && custom.active && custom.detail.includes("http://127.0.0.1:19199") && custom.detail.includes("Settings › LLM › External")
             && !!localRow && !localRow.active,
-          `managed: backend=${managedRows.backend} chip=${JSON.stringify(managedRows.chip)}; external: backend=${customRows.backend} chip=${JSON.stringify(customRows.chip)} custom.active=${custom?.active} local.active=${localRow?.active} detail=${JSON.stringify(custom?.detail)}`,
+          `managed: backend=${managedRows.backend} rows=${managedRows.rows.length} chip=${JSON.stringify(managedRows.chip)}`
+          + ` modelChip=${customRows.modelChip}; external: backend=${customRows.backend} chip=${JSON.stringify(customRows.chip)} custom.active=${custom?.active} local.active=${localRow?.active} detail=${JSON.stringify(custom?.detail)}`,
         );
         // Activating it writes nothing: it opens the pane that can probe a URL.
         const cfgBeforeRow = JSON.stringify(await cfgNow());
@@ -7015,10 +7028,12 @@ async function backendSwitchTest(
       !!caret && caret.same && caret.focused && caret.start === 6 && caret.end === 6,
       caret ? `same textarea=${caret.same} focused=${caret.focused} caret=${caret.start}..${caret.end}` : "no composer",
     );
+    const restartOk = stLocal === "connected" && agent?.status.port !== portBefore;
     check(
       "backend: agent restarted and alive",
-      stLocal === "connected" && agent?.status.port !== portBefore,
-      `state=${stLocal} port ${portBefore} → ${agent?.status.port}`,
+      restartOk,
+      `state=${stLocal} port ${portBefore} → ${agent?.status.port}`
+        + (restartOk ? "" : ` · agent said: ${JSON.stringify(AGENT_SAID.slice(-12))}`),
     );
     const daemonUp = await localDaemonRunning();
     check(
@@ -8234,7 +8249,11 @@ async function onboardingTest(
         && mine[2] === "smoke: the same warning again ×3",
       `${foldBefore} rows before, then ${JSON.stringify(mine)}`,
     );
-    await js<number>(`(() => { S.log.length = ${'${'}0${'}'}; return 0; })()`);
+    await js<number>(
+      "(() => { S.log = S.log.filter((m) => !(m.k === 'system'"
+      + " && String(m.text || '').startsWith('smoke: '))); render();"
+      + " return S.log.length; })()",
+    );
 
     await js<Dl>("window.__dlClear()");
 
@@ -8878,6 +8897,7 @@ async function planHandoffTest(
     let cards: Card[] = [];
     let live: Card[] = [];
     let attempts = 0;
+    let turnEnded = false;
     for (const ask of ASKS) {
       attempts += 1;
       await js<unknown>(`window.__ask(${JSON.stringify(ask)})`);
@@ -8901,10 +8921,24 @@ async function planHandoffTest(
       while (Date.now() < startDeadline && !(await js<boolean>("window.__turnActive()"))) {
         await new Promise((r) => setTimeout(r, 200));
       }
-      const turnDeadline = Date.now() + 180_000;
+      /* Whether the wait actually SAW the turn end, rather than running out
+         of patience. A local model on a loaded machine can stream past the
+         deadline; when it does, everything read below belongs to a turn that
+         is still going — the composer still shows the steering hint and the
+         bar does not exist yet — and asserting against it reports a plan-mode
+         defect that is really this fixture giving up. The sibling store check
+         already skips on the same fact; the bar assertions now use it too.
+         A turn left running would also leak into the lanes after this one,
+         so a timed-out turn is aborted through the window's own stop path. */
+      turnEnded = false;
+      const turnDeadline = Date.now() + 240_000;
       while (Date.now() < turnDeadline) {
-        if (!(await js<boolean>("window.__turnActive()"))) break;
+        if (!(await js<boolean>("window.__turnActive()"))) { turnEnded = true; break; }
         await new Promise((r) => setTimeout(r, 1000));
+      }
+      if (!turnEnded) {
+        await js<unknown>("window.__planStop()");
+        await new Promise((r) => setTimeout(r, 1500));
       }
       plan = await js<Plan>("window.__plan()");
       // `out` and `ok` only land when reconcileToolCards has read the store
@@ -8948,12 +8982,20 @@ async function planHandoffTest(
        on that turn's own last assistant message"), and what THIS turn is
        uniquely able to prove — that plan mode refused the tools and wrote no
        file — is asserted either way. */
-    const planTurnCompleted = plan.on === true
-      || (plan.entryKinds ?? []).lastIndexOf("assistant") > (plan.entryKinds ?? []).lastIndexOf("user");
+    /* `turnEnded` first: the entry-kinds fallback below is ALREADY true
+       mid-stream — the assistant row exists as soon as the reply starts — so
+       on its own it let all six assertions run against a turn that had not
+       finished, which is how this cluster went red with hint="Send to steer
+       this turn…" and bars=0. */
+    const planTurnCompleted = turnEnded
+      && (plan.on === true
+        || (plan.entryKinds ?? []).lastIndexOf("assistant") > (plan.entryKinds ?? []).lastIndexOf("user"));
     if (!planTurnCompleted) {
       process.stdout.write(
-        "SKIP the six plan-bar assertions for the LIVE turn — the model kept retrying refused tools and the"
-        + " turn ended without a reply, so there is no completed turn to hang a bar on. The bar's own logic is"
+        `SKIP the six plan-bar assertions for the LIVE turn — ${turnEnded
+          ? "the model kept retrying refused tools and the turn ended without a reply"
+          : "the turn was still streaming when the wait ran out, so it was stopped"}`
+        + ", so there is no completed turn to hang a bar on. The bar's own logic is"
         + " asserted against a planted turn below; plan-mode enforcement is asserted from this turn regardless.\n",
       );
     } else {

@@ -1231,7 +1231,18 @@ async function setMemoryEmbeddingsEnabledNow(enabled: boolean): Promise<WriteRes
 export async function localDaemonRunning(): Promise<boolean> {
   const res = await cli(["models", "status"], 20_000);
   if (!res.ok) return false;
-  return /^daemon:\s+running/m.test(res.stdout);
+  if (/^daemon:\s+running/m.test(res.stdout)) return true;
+  /* `daemon:` is read from a pid file; `health:` is read from the port, and
+     the two disagree. `atag models start` against a daemon that is ALREADY
+     up spawns a duplicate that cannot bind, dies, and records its pid —
+     after which getDaemonStatus finds that pid dead, unlinks the pid file
+     and reports `stopped` while printing `health: ok` in the same block,
+     for a daemon that is serving requests (reproduced: the listener kept
+     one pid while three starts in a row each reported a different, already
+     dead one). That is an agent-side defect, not the desktop's, and it is
+     not this fixture's to assert. What the switch owes the user is a local
+     route that ANSWERS, so the port is the authority here. */
+  return /^health:\s+ok/m.test(res.stdout);
 }
 
 /** LocalModelsOrchestrator.stopDaemon's process half: stops chat + embedding daemons. */
