@@ -1543,7 +1543,7 @@ describe("tui.sessionRail (config v52)", () => {
   it("gives a v51 file the recency default — an empty order", () => {
     const parsed = parseUserConfigFile({ version: 51, tui: { theme: "nord" } });
     expect(parsed.version).toBe(USER_CONFIG_VERSION);
-    expect(parsed.tui.sessionRail).toEqual({ order: [] });
+    expect(parsed.tui.sessionRail).toEqual({ order: [], pinned: [] });
     expect(parsed.tui.theme).toBe("nord");
   });
 
@@ -1570,5 +1570,44 @@ describe("tui.sessionRail (config v52)", () => {
         tui: { sessionRail: { order: "s-a" } },
       }),
     ).toThrow(/tui\.sessionRail\.order/);
+  });
+});
+
+describe("tui.sessionRail.pinned (config v53)", () => {
+  it("gives a v52 file nothing pinned and keeps its order", () => {
+    const parsed = parseUserConfigFile({
+      version: 52,
+      tui: { sessionRail: { order: ["s-b", "s-a"] } },
+    });
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(parsed.tui.sessionRail).toEqual({ order: ["s-b", "s-a"], pinned: [] });
+  });
+
+  it("round-trips the pinned block next to the order", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      tui: { sessionRail: { order: ["s-b", "s-a", "s-c"], pinned: ["s-c", "s-a"] } },
+    });
+    expect(parsed.tui.sessionRail).toEqual({
+      order: ["s-b", "s-a", "s-c"],
+      pinned: ["s-c", "s-a"],
+    });
+  });
+
+  it("drops pinned entries that are not ids and dedupes them", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      tui: { sessionRail: { pinned: ["s-b", 7, "", null, "s-a", "s-b"] } },
+    });
+    expect(parsed.tui.sessionRail).toEqual({ order: [], pinned: ["s-b", "s-a"] });
+  });
+
+  it("rejects a pinned block that is not a list", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        tui: { sessionRail: { pinned: "s-a" } },
+      }),
+    ).toThrow(/tui\.sessionRail\.pinned/);
   });
 });

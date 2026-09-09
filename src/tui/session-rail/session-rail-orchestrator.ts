@@ -1,7 +1,8 @@
 import type { SessionPickerEntry } from "../tui-state.js";
 import {
-  persistSessionRailOrder,
-  readSessionRailOrder,
+  persistSessionRailLayout,
+  readSessionRailLayout,
+  type SessionRailLayout,
 } from "./persist-session-rail.js";
 import {
   applySessionRailOrder,
@@ -9,17 +10,18 @@ import {
 } from "./session-rail-order.js";
 
 /**
- * Where the manual order lives. Injectable so orchestrator tests stay
- * hermetic — the default reads and writes the user's `config.json`.
+ * Where the layout (manual order + pinned ids) lives. Injectable so
+ * orchestrator tests stay hermetic — the default reads and writes the
+ * user's `config.json`.
  */
-export interface SessionRailOrderStore {
-  read(): readonly string[];
-  write(order: readonly string[]): void;
+export interface SessionRailLayoutStore {
+  read(): SessionRailLayout;
+  write(layout: SessionRailLayout): void;
 }
 
-export const configSessionRailOrderStore: SessionRailOrderStore = {
-  read: readSessionRailOrder,
-  write: persistSessionRailOrder,
+export const configSessionRailLayoutStore: SessionRailLayoutStore = {
+  read: readSessionRailLayout,
+  write: persistSessionRailLayout,
 };
 
 /**
@@ -37,13 +39,13 @@ export class SessionRailOrchestrator {
   private lastRail: readonly SessionPickerEntry[] = [];
 
   constructor(
-    private readonly store: SessionRailOrderStore,
+    private readonly store: SessionRailLayoutStore,
     private readonly refresh: () => void,
   ) {}
 
   /** Apply the remembered order to the list about to be emitted. */
   arrange(entries: readonly SessionPickerEntry[]): SessionPickerEntry[] {
-    const arranged = applySessionRailOrder(entries, this.store.read());
+    const arranged = applySessionRailOrder(entries, this.store.read().order);
     this.lastRail = arranged;
     return arranged;
   }
@@ -53,7 +55,7 @@ export class SessionRailOrchestrator {
     const displayed = this.lastRail.map((entry) => entry.sessionId);
     const next = computeMovedOrder(displayed, sessionId, toIndex);
     if (!next) return;
-    this.store.write(next);
+    this.store.write({ order: next, pinned: this.store.read().pinned });
     this.refresh();
   }
 }

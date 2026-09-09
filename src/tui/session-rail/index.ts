@@ -7,13 +7,14 @@ export {
   pruneSessionRailOrder,
 } from "./session-rail-order.js";
 export {
-  persistSessionRailOrder,
-  readSessionRailOrder,
+  persistSessionRailLayout,
+  readSessionRailLayout,
+  type SessionRailLayout,
 } from "./persist-session-rail.js";
 export {
   SessionRailOrchestrator,
-  configSessionRailOrderStore,
-  type SessionRailOrderStore,
+  configSessionRailLayoutStore,
+  type SessionRailLayoutStore,
 } from "./session-rail-orchestrator.js";
 export {
   handleSessionMoveKey,

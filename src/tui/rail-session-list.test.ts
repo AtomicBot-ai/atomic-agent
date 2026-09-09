@@ -82,21 +82,26 @@ function harness(
   stored: ReturnType<typeof blank>[],
   settleTurns = false,
   order: string[] = [],
+  pinned: string[] = [],
 ) {
   const bus = makeTuiEventBus();
   const actions: TuiAction[] = [];
   bus.subscribe((a) => actions.push(a));
-  // The rail's manual order, held in memory instead of the developer's
-  // config.json; `written` is every snapshot the orchestrator persisted.
+  // The rail's layout, held in memory instead of the developer's
+  // config.json; `written` is every order snapshot the orchestrator
+  // persisted and `pins` every pinned list.
   const written: string[][] = [];
+  const pins: string[][] = [];
   const orchestrator = new ChatOrchestrator(stubRuntime(stored, settleTurns), bus, {
     maxSteps: 5,
     llamaUrl: "http://127.0.0.1:8080", readGateFacts: cloudGateFacts,
-    sessionRailOrder: {
-      read: () => order,
+    sessionRailLayout: {
+      read: () => ({ order, pinned }),
       write: (next) => {
-        order = [...next];
-        written.push([...next]);
+        order = [...next.order];
+        pinned = [...next.pinned];
+        written.push([...next.order]);
+        pins.push([...next.pinned]);
       },
     },
   });
@@ -114,7 +119,7 @@ function harness(
     }
     return [];
   };
-  return { orchestrator, rail, picker, actions, written };
+  return { orchestrator, rail, picker, actions, written, pins };
 }
 
 describe("rail session list", () => {

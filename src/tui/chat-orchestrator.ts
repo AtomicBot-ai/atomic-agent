@@ -48,8 +48,8 @@ import { PrivacyOrchestrator } from "./privacy/privacy-orchestrator.js";
 import { IntegrationsOrchestrator } from "./integrations/integrations-orchestrator.js";
 import {
   SessionRailOrchestrator,
-  configSessionRailOrderStore,
-  type SessionRailOrderStore,
+  configSessionRailLayoutStore,
+  type SessionRailLayoutStore,
 } from "./session-rail/index.js";
 import type { TuiEventBus } from "./tui-app.js";
 import { formatAgentErrorForChat } from "./format-agent-error-for-chat.js";
@@ -94,11 +94,12 @@ export interface ChatOrchestratorOptions {
    */
   readGateFacts?: () => LocalTurnGateFacts;
   /**
-   * Where the rail's manual session order is read from and written to.
-   * Injectable for the same reason as `readGateFacts`; the default is
-   * `tui.sessionRail.order` in the user's config file.
+   * Where the rail's layout — manual order and pinned ids — is read
+   * from and written to. Injectable for the same reason as
+   * `readGateFacts`; the default is `tui.sessionRail` in the user's
+   * config file.
    */
-  sessionRailOrder?: SessionRailOrderStore;
+  sessionRailLayout?: SessionRailLayoutStore;
 }
 
 /** Multiline text for the chat transcript (`/memory`); feed still gets `runtime_info` lines. */
@@ -252,7 +253,7 @@ export class ChatOrchestrator {
     // than reimplementing pairing / restart / enable.
     this.integrations = new IntegrationsOrchestrator(runtime, bus, this.telegram);
     this.sessionRail = new SessionRailOrchestrator(
-      options.sessionRailOrder ?? configSessionRailOrderStore,
+      options.sessionRailLayout ?? configSessionRailLayoutStore,
       () => this.refreshRecentSessions(),
     );
     // Tap the bus rather than the runtime handler: what the reducer was

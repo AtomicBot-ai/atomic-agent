@@ -1701,8 +1701,9 @@ export interface UserConfigFile {
    * `--no-mouse`. Older files are upgraded with `mouse: true`.
    *
    * `sessionRail` (config v52) remembers the operator's own ordering of
-   * the rail's Sessions list — see {@link SessionRailConfig}. Older
-   * files are upgraded with an empty order, which means "by recency".
+   * the rail's Sessions list, and (v53) which threads are pinned to its
+   * top — see {@link SessionRailConfig}. Older files are upgraded with
+   * an empty order, which means "by recency", and nothing pinned.
    */
   tui: {
     theme: string;
@@ -1855,7 +1856,10 @@ export interface UserConfigFile {
 // the rail's Sessions list (`order: string[]`, session ids). Additive: an
 // older file inherits `[]`, which keeps the list sorted by recency until
 // the operator moves a row for the first time.
-export const USER_CONFIG_VERSION = 52;
+// v53: `tui.sessionRail.pinned` (`string[]`, session ids) — the threads
+// the operator pinned to the top of the rail. Additive: an older file
+// inherits `[]`, nothing pinned, and `order` keeps its v52 meaning.
+export const USER_CONFIG_VERSION = 53;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -1996,6 +2000,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   49,
   50,
   51,
+  52,
   USER_CONFIG_VERSION,
 ];
 
@@ -2265,7 +2270,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
     theme: "auto",
     whileBusySubmit: "steer",
     mouse: true,
-    sessionRail: { order: [] },
+    sessionRail: { order: [], pinned: [] },
     onboarding: {
       completedAt: null,
       importOfferedAt: null,
@@ -4396,6 +4401,13 @@ export function parseWhileBusySubmit(
  */
 export interface SessionRailConfig {
   order: string[];
+  /**
+   * Session ids pinned to the top of the rail (config v53). Pinned rows
+   * form a block above everything else; inside the block they follow
+   * `order` like any other row. A pinned id that no longer exists is
+   * ignored on read and dropped on the next write.
+   */
+  pinned: string[];
 }
 
 export interface OnboardingState {
@@ -4414,38 +4426,45 @@ export interface OnboardingState {
  * predates the block.
  */
 /**
- * Parse `tui.sessionRail`. Absent → the recency default. The order is a
- * list of session ids; entries that are not non-empty strings are
- * dropped rather than rejected — a hand-edited or partially written id
- * costs one row its remembered place, not the whole config file — and
- * duplicates keep their first position so the on-disk form stays
- * canonical.
+ * Parse `tui.sessionRail`. Absent → the recency default, nothing pinned.
+ * `order` and `pinned` are lists of session ids; entries that are not
+ * non-empty strings are dropped rather than rejected — a hand-edited or
+ * partially written id costs one row its remembered place, not the
+ * whole config file — and duplicates keep their first position so the
+ * on-disk form stays canonical.
  */
 export function parseSessionRailConfig(raw: unknown): SessionRailConfig {
-  if (raw === undefined || raw === null) return { order: [] };
+  if (raw === undefined || raw === null) return { order: [], pinned: [] };
   if (typeof raw !== "object" || Array.isArray(raw)) {
     throw new ConfigValidationError(
       "tui.sessionRail",
       `expected object, got ${JSON.stringify(raw)}`,
     );
   }
-  const order = (raw as Record<string, unknown>).order;
-  if (order === undefined || order === null) return { order: [] };
-  if (!Array.isArray(order)) {
+  const block = raw as Record<string, unknown>;
+  return {
+    order: parseSessionIdList(block.order, "tui.sessionRail.order"),
+    pinned: parseSessionIdList(block.pinned, "tui.sessionRail.pinned"),
+  };
+}
+
+function parseSessionIdList(raw: unknown, path: string): string[] {
+  if (raw === undefined || raw === null) return [];
+  if (!Array.isArray(raw)) {
     throw new ConfigValidationError(
-      "tui.sessionRail.order",
-      `expected string[], got ${JSON.stringify(order)}`,
+      path,
+      `expected string[], got ${JSON.stringify(raw)}`,
     );
   }
   const seen = new Set<string>();
   const result: string[] = [];
-  for (const entry of order) {
+  for (const entry of raw) {
     if (typeof entry !== "string" || entry.length === 0) continue;
     if (seen.has(entry)) continue;
     seen.add(entry);
     result.push(entry);
   }
-  return { order: result };
+  return result;
 }
 
 export function parseOnboardingState(raw: unknown): OnboardingState {

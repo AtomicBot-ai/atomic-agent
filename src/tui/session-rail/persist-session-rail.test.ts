@@ -5,13 +5,13 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { getConfig, resetConfigCache } from "../../config/index.js";
 import {
-  persistSessionRailOrder,
-  readSessionRailOrder,
+  persistSessionRailLayout,
+  readSessionRailLayout,
 } from "./persist-session-rail.js";
 
 const STATE_DIR_ENV = "ATOMIC_AGENT_STATE_DIR";
 
-describe("persistSessionRailOrder", () => {
+describe("persistSessionRailLayout", () => {
   let stateDir: string;
   let originalEnv: string | undefined;
 
@@ -30,18 +30,18 @@ describe("persistSessionRailOrder", () => {
     rmSync(stateDir, { recursive: true, force: true });
   });
 
-  it("writes the order to config.json and getConfig() picks it up", () => {
-    expect(readSessionRailOrder()).toEqual([]);
-    persistSessionRailOrder(["s-b", "s-a"]);
+  it("writes order and pinned to config.json and getConfig() picks them up", () => {
+    expect(readSessionRailLayout()).toEqual({ order: [], pinned: [] });
+    persistSessionRailLayout({ order: ["s-b", "s-a"], pinned: ["s-a"] });
     const onDisk = JSON.parse(readFileSync(getConfig().paths.userConfigFile, "utf8"));
-    expect(onDisk.tui.sessionRail.order).toEqual(["s-b", "s-a"]);
-    expect(readSessionRailOrder()).toEqual(["s-b", "s-a"]);
+    expect(onDisk.tui.sessionRail).toEqual({ order: ["s-b", "s-a"], pinned: ["s-a"] });
+    expect(readSessionRailLayout()).toEqual({ order: ["s-b", "s-a"], pinned: ["s-a"] });
   });
 
-  it("replaces the previous order and leaves the rest of tui alone", () => {
-    persistSessionRailOrder(["s-a"]);
-    persistSessionRailOrder(["s-b", "s-a"]);
-    expect(getConfig().tui.sessionRail.order).toEqual(["s-b", "s-a"]);
+  it("replaces the previous layout and leaves the rest of tui alone", () => {
+    persistSessionRailLayout({ order: ["s-a"], pinned: ["s-a"] });
+    persistSessionRailLayout({ order: ["s-b", "s-a"], pinned: [] });
+    expect(getConfig().tui.sessionRail).toEqual({ order: ["s-b", "s-a"], pinned: [] });
     expect(getConfig().tui.theme).toBe("auto");
     expect(getConfig().tui.mouse).toBe(true);
   });
