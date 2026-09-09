@@ -307,6 +307,8 @@ A cloud key is checked before it is saved. The key screen refuses an empty key, 
 
 `workers` (1..8) caps how many workers run at once; `localModels.managed.parallel` is the llama-server `--parallel` slot count that lets them actually run concurrently (default 2, applied on the next daemon start). The orchestrator model is the provider's `defaultChatModel`; the worker model is the one the managed daemon serves.
 
+Once fusion is on, the cloud model gains one tool — `fusion.delegate` — and prompt guidance telling it to plan first and hand the independent bulk down: reading many files, first drafts, boilerplate, tests, wide searches. Each part it delegates runs as its own throwaway local turn (several at a time), and their replies come back into the same call for the orchestrator to check and merge; you see each worker start and finish in the chat feed. Workers cannot delegate further, cannot reach you, and cannot get an approval — anything that needs a person comes back up to the orchestrator to run.
+
 </details>
 
 <details>
