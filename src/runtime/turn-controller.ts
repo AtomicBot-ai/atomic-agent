@@ -13,7 +13,13 @@ export type TurnOrigin =
   | "sidecar"
   | "scheduler"
   | "telegram"
-  | "discord";
+  | "discord"
+  /**
+   * A fusion worker turn, submitted by the orchestrator turn on the
+   * parent session — not a person sending a message. Treated like
+   * `scheduler` wherever origin gates analytics or the usage meter.
+   */
+  | "fusion";
 
 /**
  * Per-turn event sink. Installed atomically when a submission starts

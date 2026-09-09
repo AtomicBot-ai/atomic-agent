@@ -83,12 +83,9 @@ import {
   createLocalLinkPreparer,
   DeferredLocalBackendProbes,
 } from "../llm/local-backend-gate.js";
-import { catalogForProvider } from "../llm/provider/catalog-for-provider.js";
 import { CostAccumulator } from "../llm/provider/cost-accumulator.js";
-import {
-  resolveModel,
-  type ResolvedModel,
-} from "../llm/provider/model-resolver.js";
+import type { ResolvedModel } from "../llm/provider/model-resolver.js";
+import { resolveModelPricingFor } from "./resolve-model-pricing.js";
 import {
   ProviderFallbackChain,
   resolveFallbackChain,
@@ -169,8 +166,11 @@ import type { AgentLoopEvent, RunTurnResult } from "../agent/agent-loop.js";
 import {
   SessionStore,
   createEmptySessionState,
+  createFusionWorkerSession,
+  readFusionWorkerMeta,
   contextUsageFromPrompt,
   type ContextUsageState,
+  type FusionWorkerMeta,
   SESSION_LLM_METADATA_KEY,
   type SessionLlmStamp,
   type SessionState,
@@ -487,6 +487,13 @@ export interface AgentRuntime {
    * NDJSON, future scheduler) pass an `eventHook` — events are routed
    * to the hook of the currently-running submission for that session
    * only. `origin` is informational; defaults to `"cli"`.
+   *
+   * `providerId` pins every completion of the turn to one configured
+   * provider and bypasses the fallback chain (a fusion worker on the
+   * local leg); an id the registry does not know rejects before the
+   * turn is queued — a pinned worker fails loudly rather than silently
+   * running on the active provider. `taskMaxDurationMs` is the turn's
+   * wall-clock ceiling (see `RunTurnOptions`).
    */
   runTurn(
     session: SessionState,
@@ -496,6 +503,8 @@ export interface AgentRuntime {
       signal?: AbortSignal;
       eventHook?: TurnEventHook;
       origin?: TurnOrigin;
+      providerId?: string;
+      taskMaxDurationMs?: number;
     },
   ): Promise<RunTurnResult>;
   /**
@@ -514,8 +523,22 @@ export interface AgentRuntime {
   executeTurn(
     session: SessionState,
     userMessage: string,
-    options?: { maxSteps?: number; signal?: AbortSignal },
+    options?: {
+      maxSteps?: number;
+      signal?: AbortSignal;
+      providerId?: string;
+      taskMaxDurationMs?: number;
+    },
   ): Promise<RunTurnResult>;
+  /**
+   * Mint an in-memory fusion worker session stamped with `meta`. Unlike
+   * `createSession` it is NOT persisted and opens no trace recorder; a
+   * turn run on it is `ephemeral` (no memory recall, reflection or
+   * lesson bump) and is never saved, so the id never reaches the session
+   * list. The orchestrator reads the returned transcript and discards
+   * it. See `src/session/fusion-worker-session.ts`.
+   */
+  createEphemeralSession(meta: FusionWorkerMeta): SessionState;
   /** Refresh the skill registry after install/uninstall and rebuild the catalog. */
   refreshSkills(): Promise<void>;
   /**
@@ -1487,28 +1510,15 @@ export async function createAgentRuntime(
   const turnUsageMeter = new TurnUsageMeter();
 
   /**
-   * Pricing for a model id on the active provider, when any is known.
-   *
-   * Two sources, in `resolveModel`'s own precedence: a hand-configured
-   * `userModels[].pricing` first, then the provider's bundled catalog.
-   * The catalog is what makes cost work out of the box on OpenRouter and
-   * aimlapi, whose published prices ship with the agent; without it only
-   * operators who priced their models by hand ever saw a `cost_usd`.
-   *
-   * Local runners still resolve to no pricing, which is why turn cost is
-   * reported as absent rather than zero for them.
+   * Pricing for a model id on the provider that served it (default: the
+   * active one). See `resolveModelPricingFor` for the sources and why
+   * the served id, not the active id, is the right key.
    */
   const resolveModelPricing = (
     modelId: string | null,
-  ): ResolvedModel | undefined => {
-    if (!modelId) return undefined;
-    const resolved = resolveLlmConfig(getConfig());
-    const entry = resolved.providers.find(
-      (p) => p.id === resolved.activeTextProvider,
-    );
-    if (!entry) return undefined;
-    return resolveModel(entry, modelId, catalogForProvider(entry));
-  };
+    providerId?: string,
+  ): ResolvedModel | undefined =>
+    resolveModelPricingFor(resolveLlmConfig(getConfig()), modelId, providerId);
 
   /**
    * The active model's context window, for providers the `/props` probe
@@ -1694,9 +1704,10 @@ export async function createAgentRuntime(
   const recordUnaryUsage = (
     params: LlmStreamParams,
     result: CompletionResult,
+    servedProviderId: string,
   ): void => {
     if (!result.usage) return;
-    const model = resolveModelPricing(result.modelId);
+    const model = resolveModelPricing(result.modelId, servedProviderId);
     if (costAccumulator) {
       costAccumulator.recordTurn({
         modelId: result.modelId,
@@ -1716,9 +1727,10 @@ export async function createAgentRuntime(
   const recordStreamUsage = (
     sessionId: string | undefined,
     result: CompletionResult,
+    servedProviderId: string,
   ): void => {
     if (!result.usage || !sessionId) return;
-    const model = resolveModelPricing(result.modelId);
+    const model = resolveModelPricing(result.modelId, servedProviderId);
     turnUsageMeter.record({
       sessionId,
       usage: result.usage,
@@ -2137,6 +2149,18 @@ export async function createAgentRuntime(
     capabilities,
     profile,
     contextWindow: resolveCatalogContextWindow,
+    // A pinned turn (`RunTurnOptions.providerId`, a fusion worker on the
+    // local leg) is built for the pinned link's wire shape, not the
+    // active provider's that the four getters below describe.
+    resolveLlmSlice: (providerId: string) => {
+      const slice = resolveActiveLlmSlice(providerId);
+      return {
+        toolTransport: slice.transport,
+        toolCallAdapter: slice.adapter,
+        supportsSlotAffinity: slice.slotAffinity,
+        supportsParallelTools: slice.parallelTools,
+      };
+    },
     ...(profileManager ? { profileManager } : {}),
     // Gates the two `/props` refreshes the loop owns, and carries the
     // lazy restore for a switch back to a local provider (issue #112).
@@ -2464,11 +2488,87 @@ export async function createAgentRuntime(
     return state;
   };
 
+  // In memory only: no `sessionStore.save`, no `ensureRecorder`. The
+  // worker stamp is what `executeTurn` keys its skips on.
+  const createEphemeralSession = (meta: FusionWorkerMeta): SessionState =>
+    createFusionWorkerSession({ workingDir, meta });
+
+  /**
+   * The loop-side budget for one turn. An explicit `maxSteps` from a
+   * caller (a durable task that pins its own budget, `run --max-steps`)
+   * is a *ceiling* that caller chose — honour it as one. Absent that,
+   * the config value is the leg length and `agent.task.*` supplies the
+   * ceiling, so an ordinary turn runs the task to completion instead of
+   * stopping at the first checkpoint. The provider pin and the duration
+   * ceiling ride along unchanged.
+   */
+  const buildLoopTurnBudget = (runOptions: {
+    maxSteps?: number;
+    signal?: AbortSignal;
+    providerId?: string;
+    taskMaxDurationMs?: number;
+  }) => ({
+    maxSteps: Math.min(
+      config.agent.maxSteps,
+      runOptions.maxSteps ?? config.agent.maxSteps,
+    ),
+    ...(runOptions.maxSteps === undefined
+      ? {}
+      : { taskMaxSteps: runOptions.maxSteps }),
+    ...(runOptions.taskMaxDurationMs === undefined
+      ? {}
+      : { taskMaxDurationMs: runOptions.taskMaxDurationMs }),
+    ...(runOptions.providerId === undefined
+      ? {}
+      : { providerId: runOptions.providerId }),
+    signal: runOptions.signal ?? new AbortController().signal,
+  });
+
+  /**
+   * A pinned turn must land on the provider it names. The registry is
+   * the authority; an id it does not hold would otherwise degrade to the
+   * active provider inside `resolveActiveLlmSlice` — for a fusion worker
+   * that means silently running on the cloud leg.
+   */
+  const assertKnownProvider = (providerId: string | undefined): void => {
+    if (providerId === undefined) return;
+    if (!providerRegistry.getProvider(providerId)) {
+      throw new Error(
+        `cannot pin turn to llm provider "${providerId}": not configured`,
+      );
+    }
+  };
+
   const executeTurn = async (
     session: SessionState,
     userMessage: string,
-    runOptions: { maxSteps?: number; signal?: AbortSignal } = {},
+    runOptions: {
+      maxSteps?: number;
+      signal?: AbortSignal;
+      providerId?: string;
+      taskMaxDurationMs?: number;
+    } = {},
   ): Promise<RunTurnResult> => {
+    assertKnownProvider(runOptions.providerId);
+    // A fusion worker session is throwaway: no recorder, no trace pin, no
+    // memory, and — at the end — no save. The parent session's turn
+    // owns the durable record of what the worker did.
+    const worker = readFusionWorkerMeta(session.metadata);
+    if (worker) {
+      return turnContext.run({ sessionId: session.id }, async () => {
+        try {
+          return await loop.runTurn(session, {
+            userMessage,
+            ephemeral: true,
+            ...buildLoopTurnBudget(runOptions),
+          });
+        } finally {
+          // The prompt_captured hook still records the worker's window
+          // occupancy under its id; nothing persists it, so drop it.
+          lastTurnContextUsage.delete(session.id);
+        }
+      });
+    }
     ensureRecorder(session);
     // Pin this session for the duration of the turn. Without it a burst of
     // new sessions can push this one's recorder out mid-turn, after which
@@ -2498,14 +2598,7 @@ export async function createAgentRuntime(
         // at the first checkpoint.
         const result = await loop.runTurn(session, {
           userMessage,
-          maxSteps: Math.min(
-            config.agent.maxSteps,
-            runOptions.maxSteps ?? config.agent.maxSteps,
-          ),
-          ...(runOptions.maxSteps === undefined
-            ? {}
-            : { taskMaxSteps: runOptions.maxSteps }),
-          signal: runOptions.signal ?? new AbortController().signal,
+          ...buildLoopTurnBudget(runOptions),
         });
         // Stamp the turn's window occupancy so the stored session can
         // restore the TUI's context gauge when it is reopened. A turn
@@ -2569,8 +2662,13 @@ export async function createAgentRuntime(
       signal?: AbortSignal;
       eventHook?: TurnEventHook;
       origin?: TurnOrigin;
+      providerId?: string;
+      taskMaxDurationMs?: number;
     } = {},
   ): Promise<RunTurnResult> => {
+    // Before the queue, so a bad pin rejects now rather than after
+    // waiting behind whatever is running on the session.
+    assertKnownProvider(runOptions.providerId);
     const origin = runOptions.origin ?? "cli";
     const submission = {
       sessionId: session.id,
@@ -2605,7 +2703,10 @@ export async function createAgentRuntime(
     // attempt. On throw we have no result, so only `outcome: "failed"`
     // is known. `captureMessageSent` no-ops when analytics is disabled
     // and also fires the one-time `first_message_sent`.
-    if (origin === "scheduler") {
+    // A fusion worker turn is excluded for the same reason: it is the
+    // orchestrator fanning out, not a person; the parent session's turn
+    // is the one `message_sent` and the meter already count.
+    if (origin === "scheduler" || origin === "fusion") {
       return turnController.enqueue(submission);
     }
     const startedAt = Date.now();
@@ -2932,6 +3033,7 @@ export async function createAgentRuntime(
     logger,
     metrics,
     createSession,
+    createEphemeralSession,
     runTurn,
     executeTurn,
     refreshSkills,
