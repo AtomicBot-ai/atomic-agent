@@ -22,6 +22,7 @@ import { buildOsWebFetchTool } from "./web-fetch.js";
 import { buildOsWebSearchTool } from "./web-search/index.js";
 import { osClipboardReadTool, osClipboardWriteTool } from "./clipboard.js";
 import { osWindowListTool, osWindowFocusTool } from "./window.js";
+import { buildOsEmailInboxTool, buildOsEmailSendTool } from "./email.js";
 import { osNotifyTool } from "./notify.js";
 import { osFsHashTool } from "./fs-hash.js";
 import { osFsDiffTool } from "./fs-diff.js";
@@ -62,6 +63,7 @@ export { buildOsWebSearchTool } from "./web-search/index.js";
 export { osClipboardReadTool, osClipboardWriteTool } from "./clipboard.js";
 export { osWindowListTool, osWindowFocusTool } from "./window.js";
 export { osNotifyTool } from "./notify.js";
+export { buildOsEmailInboxTool, buildOsEmailSendTool } from "./email.js";
 export { osFsHashTool } from "./fs-hash.js";
 export { osFsDiffTool } from "./fs-diff.js";
 export { buildOsFsPatchTool } from "./fs-patch.js";
@@ -147,6 +149,12 @@ export function registerOsTools(
   registry.register(osWindowListTool);
   registry.register(osWindowFocusTool);
   registry.register(osNotifyTool);
+  registry.register(
+    buildOsEmailInboxTool({ approvals: options.approvals, approvalRequired: options.approvalRequired }),
+  );
+  registry.register(
+    buildOsEmailSendTool({ approvals: options.approvals, approvalRequired: options.approvalRequired }),
+  );
   registry.register(osFsHashTool);
   registry.register(osFsDiffTool);
   registry.register(

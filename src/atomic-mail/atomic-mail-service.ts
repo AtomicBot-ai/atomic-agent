@@ -221,12 +221,15 @@ export class AtomicMailService {
   }
 
   /** Any mail from the agent — the `email.send` tool. */
-  async send(mail: { to: string; subject: string; text: string; html?: string }): Promise<string> {
-    return this.withSession((s) => this.client.send(s, mail));
+  async send(
+    mail: { to: string; subject: string; text: string; html?: string },
+    opts?: { signal?: AbortSignal },
+  ): Promise<string> {
+    return this.withSession((s) => this.client.send(s, mail, opts));
   }
 
-  async listInbox(limit = 20): Promise<InboxMessage[]> {
-    return this.withSession((s) => this.client.listInbox(s, limit));
+  async listInbox(limit = 20, opts?: { signal?: AbortSignal }): Promise<InboxMessage[]> {
+    return this.withSession((s) => this.client.listInbox(s, limit, opts));
   }
 
   /** Drop the owner address and any pending code; the inbox stays. */

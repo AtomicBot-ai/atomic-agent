@@ -33,6 +33,18 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
     tier: "rare",
   },
   {
+    name: "os.email.inbox",
+    summary: "Newest messages in the agent's own e-mail inbox (Atomic Mail): sender, subject, preview, unread.",
+    argsSchema: "{ limit?: number }",
+    tier: "rare",
+  },
+  {
+    name: "os.email.send",
+    summary: "Send a plain-text e-mail from the agent's own inbox; the operator approves recipient + subject first.",
+    argsSchema: "{ to: string, subject: string, text: string }",
+    tier: "rare",
+  },
+  {
     name: "skill.view",
     summary: "Load an installed skill body (SKILL.md) into the session tail.",
     argsSchema: "{ name: string }",

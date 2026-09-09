@@ -94,6 +94,12 @@ interface JmapContext {
   draftsMailboxId: string | null;
 }
 
+/** The request's own timeout, plus the caller's abort when there is one. */
+function requestSignal(caller?: AbortSignal): AbortSignal {
+  const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+  return caller ? AbortSignal.any([timeout, caller]) : timeout;
+}
+
 export class AtomicMailClient {
   private readonly authUrl: string;
   private readonly apiUrl: string;
@@ -110,7 +116,10 @@ export class AtomicMailClient {
     this.now = opts.now ?? Date.now;
   }
 
-  private async post(url: string, init: { jwt?: string; body?: unknown } = {}): Promise<Response> {
+  private async post(
+    url: string,
+    init: { jwt?: string; body?: unknown; signal?: AbortSignal } = {},
+  ): Promise<Response> {
     return this.call(url, {
       method: "POST",
       headers: {
@@ -118,7 +127,7 @@ export class AtomicMailClient {
         ...(init.body !== undefined ? { "content-type": "application/json" } : {}),
       },
       ...(init.body !== undefined ? { body: JSON.stringify(init.body) } : {}),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: requestSignal(init.signal),
     });
   }
 
@@ -243,10 +252,12 @@ export class AtomicMailClient {
   private async jmapCall(
     session: AtomicMailSession,
     methodCalls: unknown[],
+    signal?: AbortSignal,
   ): Promise<unknown[]> {
     const ctx = await this.context(session);
     const res = await this.post(ctx.apiUrl, {
       jwt: ctx.capabilityJwt,
+      ...(signal ? { signal } : {}),
       body: {
         using: [
           "urn:ietf:params:jmap:core",
@@ -284,7 +295,7 @@ export class AtomicMailClient {
   }
 
   /** Draft + submit in one batch. Resolves to the submission id. */
-  async send(session: AtomicMailSession, mail: SendMailInput): Promise<string> {
+  async send(session: AtomicMailSession, mail: SendMailInput, opts?: { signal?: AbortSignal }): Promise<string> {
     const ctx = await this.context(session);
     if (!ctx.draftsMailboxId) {
       ctx.draftsMailboxId = await this.mailboxId(session, "drafts").catch(() =>
@@ -295,14 +306,21 @@ export class AtomicMailClient {
     const responses = await this.jmapCall(
       session,
       buildSendBatch(ctx.accountId, ctx.address, ctx.draftsMailboxId, mail, identityId),
+      opts?.signal,
     );
     return parseSendResult(responses);
   }
 
   /** The newest `limit` inbox messages, newest first. */
-  async listInbox(session: AtomicMailSession, limit = 20): Promise<InboxMessage[]> {
+  async listInbox(
+    session: AtomicMailSession,
+    limit = 20,
+    opts?: { signal?: AbortSignal },
+  ): Promise<InboxMessage[]> {
     const ctx = await this.context(session);
     const inbox = await this.mailboxId(session, "inbox");
-    return parseInboxList(await this.jmapCall(session, buildInboxBatch(ctx.accountId, inbox, limit)));
+    return parseInboxList(
+      await this.jmapCall(session, buildInboxBatch(ctx.accountId, inbox, limit), opts?.signal),
+    );
   }
 }

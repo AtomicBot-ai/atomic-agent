@@ -5,6 +5,8 @@ import { runCommand } from "../sandbox/command-runner.js";
 export interface BuildCapabilitiesInput {
   workingDir: string;
   browserChannel: string;
+  /** The agent's own e-mail address, when an Atomic Mail inbox is registered. */
+  emailAddress?: string | null;
 }
 
 /**
@@ -29,6 +31,7 @@ export async function buildCapabilities(
     hasClipboard,
     hasWmctrl,
     hasNotifications,
+    ...(input.emailAddress ? { emailAddress: input.emailAddress } : {}),
   };
 }
 

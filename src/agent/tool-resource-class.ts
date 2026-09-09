@@ -113,6 +113,10 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   "os.window.focus": "memory_write",
   "os.notify": "memory_write",
 
+  // os.email.* — the agent's own inbox
+  "os.email.inbox": "pure_read",
+  "os.email.send": "approval_gated",
+
   // discovery
   "skill.view": "pure_read",
   "tool.view": "pure_read",

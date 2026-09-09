@@ -57,6 +57,8 @@ export interface CapabilitiesSummary {
   hasClipboard: boolean;
   hasWmctrl: boolean;
   hasNotifications: boolean;
+  /** The agent's own e-mail address (Atomic Mail), when an inbox exists. */
+  emailAddress?: string | null;
 }
 
 export interface SkillCatalogEntry {
@@ -312,7 +314,7 @@ export function formatToolForLoadedTail(
   return `${head}\n  examples:\n${ex}`;
 }
 
-function formatCapabilities(caps: CapabilitiesSummary): string {
+export function formatCapabilities(caps: CapabilitiesSummary): string {
   return [
     `platform: ${caps.platform}/${caps.arch}`,
     `browser: ${caps.browserChannel}`,
@@ -320,6 +322,7 @@ function formatCapabilities(caps: CapabilitiesSummary): string {
     `clipboard: ${caps.hasClipboard ? "yes" : "no"}`,
     `wmctrl: ${caps.hasWmctrl ? "yes" : "no"}`,
     `notifications: ${caps.hasNotifications ? "yes" : "no"}`,
+    ...(caps.emailAddress ? [`email: ${caps.emailAddress} (os.email.inbox / os.email.send)`] : []),
   ].join("\n");
 }
 

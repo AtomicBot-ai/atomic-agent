@@ -527,6 +527,8 @@ describe("registerOsTools", () => {
         "os.git.status",
         "os.http.request",
         "os.notify",
+        "os.email.inbox",
+        "os.email.send",
         "os.proc.kill",
         "os.proc.list",
         "os.shell.run",

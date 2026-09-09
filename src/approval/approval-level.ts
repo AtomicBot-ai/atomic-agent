@@ -28,6 +28,8 @@ export type ApprovalCategory =
   | "proc_kill"
   | "browser_nonweb"
   | "trust_config"
+  /** Mail leaving the agent's own inbox on the operator's behalf. */
+  | "email"
   | "other";
 
 /**
@@ -63,6 +65,7 @@ const AUTO_APPROVE_FROM_LEVEL: Record<ApprovalCategory, ApprovalLevel> = {
   proc_kill: 4,
   browser_nonweb: 5,
   trust_config: 5,
+  email: 5,
   other: 5,
 };
 
@@ -114,6 +117,9 @@ const GRANTABLE_CATEGORY: Record<ApprovalCategory, boolean> = {
   proc_kill: true,
   browser_nonweb: true,
   trust_config: false,
+  // A session grant would let the agent mail anyone for the rest of
+  // the session; each mail is its own decision.
+  email: false,
   other: true,
 };
 
@@ -138,6 +144,7 @@ export const APPROVAL_CATEGORY_LABELS: Record<ApprovalCategory, string> = {
   proc_kill: "process kill",
   browser_nonweb: "browser · non-web URL",
   trust_config: "agent trust config",
+  email: "e-mail send",
   other: "uncategorised",
 };
 

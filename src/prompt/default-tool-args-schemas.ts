@@ -485,6 +485,11 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
       ["title", "message"],
     ),
   ],
+  ["os.email.inbox", obj({ limit: numberSchema })],
+  [
+    "os.email.send",
+    obj({ to: stringSchema, subject: stringSchema, text: stringSchema }, ["to", "subject", "text"]),
+  ],
 
   // ── skill / tool ─────────────────────────────────────────────────────────
   ["skill.view", obj({ name: stringSchema }, ["name"])],

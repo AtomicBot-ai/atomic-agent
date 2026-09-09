@@ -24,13 +24,14 @@ const ALL_CATEGORIES: readonly ApprovalCategory[] = [
   "proc_kill",
   "browser_nonweb",
   "trust_config",
+  "email",
   "other",
 ];
 
 describe("session-grant eligibility", () => {
-  it("grants every category except trust_config", () => {
+  it("grants every category except trust_config and email", () => {
     for (const category of ALL_CATEGORIES) {
-      expect(isGrantableCategory(category)).toBe(category !== "trust_config");
+      expect(isGrantableCategory(category)).toBe(category !== "trust_config" && category !== "email");
     }
   });
 
@@ -58,6 +59,7 @@ describe("approval ladder", () => {
       proc_kill: 4,
       browser_nonweb: 5,
       trust_config: 5,
+      email: 5,
       other: 5,
     };
     for (const [category, from] of Object.entries(silentFrom) as [
@@ -96,6 +98,7 @@ describe("approval ladder", () => {
       "proc_kill",
       "browser_nonweb",
       "trust_config",
+      "email",
       "other",
     ];
     for (const category of categories) {

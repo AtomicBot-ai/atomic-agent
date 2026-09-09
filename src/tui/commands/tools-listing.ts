@@ -1,3 +1,4 @@
+import { readAtomicMailApiKey } from "../../atomic-mail/index.js";
 import { getConfig } from "../../config/index.js";
 import type { ToolDescriptor } from "../../prompt/stable-prefix.js";
 import { DEFAULT_TOOL_DESCRIPTORS } from "../../prompt/tool-descriptors.js";
@@ -57,6 +58,7 @@ export interface ToolGateSourceConfig {
     readonly lessons: { readonly enabled: boolean };
     readonly procedures: { readonly enabled: boolean };
   };
+  readonly atomicMail: { readonly address: string | null };
   readonly tasks: {
     readonly enabled: boolean;
     readonly agentToolsEnabled: boolean;
@@ -87,6 +89,9 @@ export function effectiveToolDescriptors(
     vision: {
       enabled: config.vision.enabled,
       providerAvailable: config.vision.enabled,
+    },
+    email: {
+      available: readAtomicMailApiKey() !== null && config.atomicMail.address !== null,
     },
     memory: {
       profile: { enabled: config.memory.profile.enabled },

@@ -155,6 +155,7 @@ import { seedStarterSkillsIfMissing } from "../skills/seed-starter-skills.js";
 
 import { DEFAULT_TOOL_DESCRIPTORS } from "../prompt/tool-descriptors.js";
 import { filterToolDescriptorsByConfig } from "./filter-disabled-tools.js";
+import { readAtomicMailApiKey } from "../atomic-mail/index.js";
 import { buildCapabilities } from "../prompt/capabilities.js";
 import { minUsableContextWindow } from "../prompt/token-budget.js";
 import type {
@@ -1099,6 +1100,8 @@ export async function createAgentRuntime(
   const capabilities = await buildCapabilities({
     workingDir,
     browserChannel: config.browser.channel,
+    // Only an inbox this machine holds the key for is the agent's to use.
+    emailAddress: readAtomicMailApiKey() ? config.atomicMail.address : null,
   });
 
   // Memory-v2 phase 7a — fail-fast clamp/decay validation. The
@@ -1667,6 +1670,9 @@ export async function createAgentRuntime(
       tasks: {
         agentToolsEnabled:
           config.tasks.enabled && config.tasks.agentToolsEnabled,
+      },
+      email: {
+        available: readAtomicMailApiKey() !== null && config.atomicMail.address !== null,
       },
       mcp: { enabled: liveMcpEnabled },
     });

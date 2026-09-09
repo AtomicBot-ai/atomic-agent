@@ -41,6 +41,12 @@ export interface ToolGateConfig {
   };
   tasks: { agentToolsEnabled: boolean };
   /**
+   * The agent's own inbox. Without a registered Atomic Mail inbox the
+   * `os.email.*` tools can only answer "set one up", so they leave the
+   * prefix; the tools stay registered and grammar-valid.
+   */
+  email: { available: boolean };
+  /**
    * MCP gate. `enabled=false` (or zero configured servers) drops the
    * aggregate `mcp.resource.*` and `mcp.prompt.*` descriptors from the
    * stable prefix so the agent does not see tools it cannot exercise.
@@ -93,6 +99,7 @@ const GATED_TOOLS = {
     "mcp.prompt.list",
     "mcp.prompt.get",
   ],
+  email: ["os.email.inbox", "os.email.send"],
 } as const;
 
 /**
@@ -131,6 +138,9 @@ export function filterToolDescriptorsByConfig(
   }
   if (!gates.mcp.enabled) {
     for (const name of GATED_TOOLS.mcp) disabled.add(name);
+  }
+  if (!gates.email.available) {
+    for (const name of GATED_TOOLS.email) disabled.add(name);
   }
 
   if (disabled.size === 0) return descriptors;
