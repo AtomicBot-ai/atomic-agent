@@ -78,6 +78,7 @@ import {
   persistMemoryEmbeddingsEnabled,
 } from "../persist-embedding-hybrid-recall.js";
 import { persistUserLocalModelsConfig } from "../persist-user-local-models-config.js";
+import { restartLocalDaemon } from "./local-models-daemon-restart.js";
 import { ChatPullMirror, downloadProgressFor } from "../local-turn-gate.js";
 import type { TuiEventBus } from "../tui-app.js";
 
@@ -1441,6 +1442,20 @@ export class LocalModelsOrchestrator {
       this.endActiveRefresh();
       await this.refresh();
     }
+  }
+
+  /**
+   * Bounce a wedged local model server: stop the chat daemon, start it
+   * again, leaving the embedding side (and hybrid recall) untouched. The
+   * decision table — managed / external / a cloud route is live — lives
+   * in `local-models-daemon-restart.ts`; this method is only the wiring.
+   */
+  async restartDaemon(): Promise<boolean> {
+    return await restartLocalDaemon({
+      emit: (action) => this.bus.emit(action),
+      stopChatDaemonOnly: () => this.stopChatDaemonOnly(),
+      startDaemon: () => this.startDaemon(),
+    });
   }
 
   /**

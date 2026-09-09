@@ -86,6 +86,14 @@ export type LocalModelsAction =
   | { type: "local_models_hf_repo_resolved"; repo: HuggingFaceRepoChoices }
   | { type: "local_models_hf_cursor_set"; cursor: number }
   | { type: "local_models_hf_cursor_moved"; delta: number }
+  /**
+   * `/llm restart` — bounce the managed chat daemon. A state no-op as a
+   * reducer action: the restart lives on
+   * `LocalModelsOrchestrator.restartDaemon`, which only the callback
+   * layer can reach, so `submit-handler` intercepts this before dispatch
+   * (same rule as `providers_contract_probe_requested` for `/llm check`).
+   */
+  | { type: "local_models_daemon_restart_requested" }
   | { type: "local_models_daemon_phase_set"; phase: DaemonPhase }
   | { type: "local_models_daemon_error_set"; message: string | null }
   | {

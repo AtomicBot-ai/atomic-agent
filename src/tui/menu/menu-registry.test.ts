@@ -145,12 +145,12 @@ const V0_2_2_SLASH_COMMANDS = [
   },
   {
     name: "llm",
-    // Updated when the Fallback pane got its deep link, and again for
-    // `/llm check`: every subcommand the handler answers has to be
-    // reachable from here, or it exists only for whoever types an
-    // invalid one and reads the usage line.
+    // Updated when the Fallback pane got its deep link, again for
+    // `/llm check`, and again for `/llm restart`: every subcommand the
+    // handler answers has to be reachable from here, or it exists only
+    // for whoever types an invalid one and reads the usage line.
     description:
-      "open LLM Local/Cloud/External/Fallback panel · `/llm provider <id>` switch text provider · `/llm check` test the active route's streaming tool contract · `/llm fallback` edit the fallover chain",
+      "open LLM Local/Cloud/External/Fallback panel · `/llm provider <id>` switch text provider · `/llm check` test the active route's streaming tool contract · `/llm fallback` edit the fallover chain · `/llm restart` bounce the local model server",
   },
   {
     name: "mcp",

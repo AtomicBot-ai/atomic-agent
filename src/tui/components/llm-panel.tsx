@@ -168,7 +168,7 @@ function RouteCard({
         local daemon: {formatDaemon(state)} · mode {state.localModelsPanel.configMode}
         {state.localModelsPanel.configMode === "external"
           ? ` · ${state.session.llamaUrl}`
-          : ""}
+          : " · R restart"}
       </Text>
     </Box>
   );
@@ -189,9 +189,13 @@ function footerHint(mode: LlmPanelMode, useFull: boolean): string {
       : "j/k · < > reorder · a add · d remove · l local · ←/→ pane";
   }
   if (mode === "local") {
+    // `←/→ switch pane` is the short form of the pane list the other
+    // hints spell out: the strip is budgeted as ONE row, and Ink wraps
+    // rather than clips, so `R restart` had to be paid for out of an
+    // existing hint rather than added on top.
     return useFull
-      ? "j/k move · Enter selected action · a add from hugging face · ←/→ switch Local/Cloud/External/Fallback · s start/stop · r refresh"
-      : "j/k · Enter · a add · ←/→ mode · r";
+      ? "j/k move · Enter selected action · a add from hugging face · ←/→ switch pane · s start/stop · R restart · r refresh"
+      : "j/k · Enter · a add · ←/→ mode · R restart · r";
   }
   return useFull
     ? "j/k move · Enter selected action · ←/→ switch Local/Cloud/External/Fallback · f filter · n add provider · c configure · r refresh"

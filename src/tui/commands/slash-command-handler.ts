@@ -715,8 +715,19 @@ function dispatchLlmSub(rawArgs: string): SlashDispatchResult {
         "checking the active provider's streaming tool-call contract — this sends one request",
     });
   }
+  // `/llm restart` bounces a wedged local model server from the chat
+  // surface. Until now the only restart was the LLM pane's `s` toggle
+  // pressed twice, which also stops the embedding daemon and turns
+  // hybrid recall off — and nothing on the chat surface pointed at it.
+  if (/^restart$/i.test(argPart)) {
+    return pureActions([{ type: "local_models_daemon_restart_requested" }], {
+      systemMessage:
+        "asking the local model server to restart — the feed carries the outcome",
+    });
+  }
   return pureActions([], {
-    systemMessage: "usage: /llm | /llm provider <id> | /llm check | /llm fallback",
+    systemMessage:
+      "usage: /llm | /llm provider <id> | /llm check | /llm fallback | /llm restart",
   });
 }
 

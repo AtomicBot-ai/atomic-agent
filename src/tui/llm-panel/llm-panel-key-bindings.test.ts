@@ -281,6 +281,49 @@ describe("handleLlmPanelKey", () => {
     expect(dispatched).not.toContainEqual({ type: "llm_dashboard_opened" });
   });
 
+  it("restarts the local model server on `R`, without touching stop/start", () => {
+    const onRestart = vi.fn();
+    const onStop = vi.fn();
+    const onStart = vi.fn();
+    const onRefresh = vi.fn();
+    const state = seededState();
+    const dispatched: TuiAction[] = [];
+    const handled = handleLlmPanelKey("R", emptyKey({ shift: true }), {
+      state,
+      dispatch: (action) => dispatched.push(action),
+      callbacks: callbacks({
+        onLocalModelsDaemonRestartRequested: onRestart,
+        onLocalModelsDaemonStopRequested: onStop,
+        onLocalModelsDaemonStartRequested: onStart,
+        onLocalModelsRefreshRequested: onRefresh,
+      }),
+    });
+    expect(handled).toBe(true);
+    expect(onRestart).toHaveBeenCalledTimes(1);
+    // `R` must not degrade into the `s` toggle (which stops the
+    // embedding daemon too) or into `r` (refresh).
+    expect(onStop).not.toHaveBeenCalled();
+    expect(onStart).not.toHaveBeenCalled();
+    expect(onRefresh).not.toHaveBeenCalled();
+    expect(dispatched).toEqual([]);
+  });
+
+  it("keeps lowercase `r` on refresh so the restart key cannot be hit by accident", () => {
+    const onRestart = vi.fn();
+    const onRefresh = vi.fn();
+    const state = seededState();
+    handleLlmPanelKey("r", emptyKey(), {
+      state,
+      dispatch: () => {},
+      callbacks: callbacks({
+        onLocalModelsDaemonRestartRequested: onRestart,
+        onLocalModelsRefreshRequested: onRefresh,
+      }),
+    });
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+    expect(onRestart).not.toHaveBeenCalled();
+  });
+
   it("opens the slash-command palette when `/` is pressed", () => {
     const state = seededState();
     const dispatched: TuiAction[] = [];

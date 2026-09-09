@@ -208,6 +208,13 @@ export function runSlashCommand(
       callbacks.onProvidersContractProbeRequested?.(action.providerId);
       continue;
     }
+    if (action.type === "local_models_daemon_restart_requested") {
+      // Same wiring rule for `/llm restart`: the restart lives on
+      // `LocalModelsOrchestrator.restartDaemon`, which the reducer
+      // cannot reach.
+      void callbacks.onLocalModelsDaemonRestartRequested?.();
+      continue;
+    }
     if (action.type === "providers_inline_models_ensure_requested") {
       // Same wiring rule for the inline Cloud-pane model list (`/model`):
       // the catalog ensure must reach
