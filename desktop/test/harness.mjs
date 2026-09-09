@@ -136,15 +136,15 @@ export async function firstRun(app, { provider = PROVIDER, key } = {}) {
      pointerdown listener were dropped tomorrow, a mouse-only user would be
      stuck on the splash forever and every scenario would still have passed.
 
-     The click lands on #ob-sky, the intro's star-field canvas, and the loop
-     is GATED on that canvas being there — not on the next screen's text.
-     Both halves matter. Clicking `#onboarding` (the whole overlay) puts the
-     pointer at its centre, which is where the backend rows are; #ob-sky is
-     drawn only on the intro step (renderOverlays → obIntroMounted) and
-     never carries a control, so a click on it can only ever mean "dismiss
-     the splash". The document-level pointerdown listener answers it,
-     guarded by `OB.step === 'intro'` (renderer.js:7634), which is the same
-     guard the loop reads.
+     The click used to land on #ob-sky, the intro's star-field canvas, with
+     the loop gated on that canvas being present. Neither exists now: the
+     visual system rules star fields out, and the card is dismissed by a
+     `click` on the layer rather than a `pointerdown` anywhere — a press that
+     dismissed the card used to hand the release to whatever was behind it.
+     The loop is gated on the STEP instead, which is the fact it was really
+     about, and clicking `#onboarding` at its centre is safe precisely
+     because the card takes the whole gesture: the screen behind it is never
+     pressed.
 
      `scroll: false` is not a detail either. The driver scrolls a target
      into view with a real wheel notch before pressing, and the intro
@@ -166,10 +166,16 @@ export async function firstRun(app, { provider = PROVIDER, key } = {}) {
      changes, the UX lane's one-click rows would start choosing a backend
      nobody looked at, so the check below — that the three choices are
      really on screen after the splash — is the tripwire for it. */
-  for (let i = 0; i < 8; i++) {
-    if (!(await app.eval(`!!document.querySelector('#ob-sky')`))) break;
-    await app.clickSel('#ob-sky', { scroll: false });
-    await sleep(500);
+  /* One click leaves the title card, and the thing to click is the card.
+     This used to click `#ob-sky` — the star field's canvas — in a loop that
+     ran while the canvas existed. The canvas is gone, so the loop's guard was
+     true on the first pass, it broke immediately, nothing was ever clicked,
+     and every caller sat on the intro until it timed out "waiting for the
+     three backend choices". Clicking the layer itself is what a person does. */
+  for (let i = 0; i < 8; i += 1) {
+    if ((await app.eval(`window.__ob ? window.__ob().step : ''`)) !== 'intro') break;
+    await app.clickSel('#onboarding', { scroll: false });
+    await sleep(400);
   }
   await app.waitFor(`/Cloud models/.test(${wizText})`, 'the three backend choices');
   await pick(app, 'Cloud models', `/LLM provider/.test(${wizText})`, 'the provider list');

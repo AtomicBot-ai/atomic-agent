@@ -90,9 +90,15 @@ export const dl = (app) => app.eval('window.__dl ? window.__dl() : null');
 /** Dismiss the two-stage splash by clicking its sky, as a mouse-only person does. */
 export async function passIntro(app) {
   await app.waitFor('!!document.querySelector("#onboarding")', 'the first-run wizard', { timeout: 120000 });
+  /* One click leaves the title card, and the thing to click is the card.
+     This used to click `#ob-sky` — the star field's canvas — in a loop that
+     ran while the canvas existed. The canvas is gone, so the loop's guard was
+     true on the first pass, it broke immediately, nothing was ever clicked,
+     and every caller sat on the intro until it timed out "waiting for the
+     three backend choices". Clicking the layer itself is what a person does. */
   for (let i = 0; i < 8; i += 1) {
-    if (!(await app.eval('!!document.querySelector("#ob-sky")'))) break;
-    await app.clickSel('#ob-sky', { scroll: false });
+    if ((await app.eval(`window.__ob ? window.__ob().step : ''`)) !== 'intro') break;
+    await app.clickSel('#onboarding', { scroll: false });
     await sleep(400);
   }
   await app.waitFor(`/Cloud models/.test(${WIZ_TEXT})`, 'the three backend choices', { timeout: 60000 });
@@ -163,6 +169,16 @@ export async function configureCloud(app, seedEnv, { timeout = 180000 } = {}) {
   const typed = await app.eval('((document.querySelector("#wiz-key")||{}).value || "").length');
   if (!typed) throw new Error('the key field is empty after typing — a repaint took the caret');
   await app.clickText('Next');
+  /* F6 — a verified key lands on the MODEL STEP, which is still the `cloud`
+     step with the flow open. Take the default and carry on: what these
+     callers want from this helper is a configured cloud provider, and which
+     model that is has never been their subject. */
+  await app.waitFor(
+    `(window.__wizList && window.__wizList().phase === 'pick_model') || window.__ob().step !== 'cloud' || !window.__ob().open`,
+    'the key to be answered', { timeout });
+  if (await app.eval(`window.__wizList && window.__wizList().phase === 'pick_model'`)) {
+    await app.clickText('Use default');
+  }
   const until = Date.now() + timeout;
   for (;;) {
     const s = await ob(app);

@@ -8564,7 +8564,18 @@ if (BR) {
        keeps the mouse and the keyboard from drifting apart again, which is
        the invariant all three lanes were arguing for. */
     if (OB.open && OB.step === 'cloud' && a === 'wiz:next') { obKey('', {return:true}); return; }
+    /* F6/F1 — the wizard's OTHER verbs. The guard at the bottom of this
+       function swallows everything not named here while the flow is open, so
+       a verb added to the wizard and not added here is simply inert inside
+       first run: the model step's two buttons and the unchecked-key offer did
+       nothing at all until they were listed. Same shape as the defect the
+       operator once reported as "when I click on next, nothing happens". */
+    if (OB.open && OB.step === 'cloud'
+        && (a === 'wiz:model' || a === 'wiz:useDefault' || a === 'wiz:saveUnchecked')) {
+      return prevAct(a);
+    }
     if (OB.open && OB.step === 'cloud' && (a === 'wiz:cancel' || a === 'wiz:back')) {
+      if (a === 'wiz:back' && WIZ.phase === 'pick_model') { WIZ.phase = 'configure'; WIZ.error = null; render(); return; }
       if (a === 'wiz:back' && WIZ.phase === 'configure') { WIZ.phase = 'pick_kind'; WIZ.error = null; render(); return; }
       WIZ.phase = null;
       obDispatch({type:'providers_wizard_closed'});
