@@ -7901,8 +7901,14 @@ async function onboardingTest(
       "window.__dlFeed({id:'qwen3.5-4b', kind:'weights', percent:0, transferredBytes:1200, totalBytes:5000000000})",
     );
     check(
-      "wizard: a crawling first sample is reported as unknowable, not as decades",
-      crawling.eta === "more than two days left" && !/\d{3,}h/.test(crawling.text),
+      /* The cap was the wrong answer: it made the nonsense shorter, and the
+         operator still saw `about 17100053h 3m left` from a sample taken in
+         the opening seconds of a 22 GB pull. An estimate now waits for the
+         transfer to reveal its rate — two samples AND 2% done — so this
+         crawling pair (1200 bytes of 5 GB, two samples) must report that it
+         is still estimating, and must never print an hour count. */
+      "wizard: a crawling first sample says it is still estimating, never a number",
+      crawling.eta === "estimating…" && !/\dh /.test(crawling.text) && !/\d{3,}h/.test(crawling.text),
       `eta=${JSON.stringify(crawling.eta)} strip=${JSON.stringify(crawling.text)}`,
     );
     await js<Dl>("window.__dlClear()");
