@@ -5,6 +5,7 @@ import {
   userTurn,
   type ConversationTurn,
 } from "../../session/conversation-turn.js";
+import { macroTurnStartsFromTurns } from "../../session/macro-turn-starts.js";
 import type { SessionState } from "../../session/session-state.js";
 import type {
   OpenclawBlock,
@@ -20,11 +21,16 @@ export const OPENCLAW_SESSION_ID_PREFIX = "openclaw:";
  * `SessionState`. Pure — no I/O. OpenClaw's event-sourced content blocks
  * are folded onto the four-kind `ConversationTurn` model:
  *
- *  - `user`        → `user` turn (text blocks joined).
- *  - `assistant`   → one `assistant_tool_call` per `toolCall` block (the
- *                    reasoning from `thinking` blocks attaches to the first
- *                    call), or an `assistant_reply` when there are no calls.
+ *  - `user`        → `user` turn (text blocks joined; dropped when empty).
+ *  - `assistant`   → `assistant_reply` from the `text` blocks (reasoning
+ *                    from `thinking` blocks rides along), then one
+ *                    `assistant_tool_call` per `toolCall` block. Without
+ *                    text the reasoning attaches to the first call; a
+ *                    row with neither text, calls nor reasoning is dropped.
  *  - `toolResult`  → `tool_result` turn (`isError` → `status: "error"`).
+ *
+ * Macro-turn starts are recorded at every user row so the pairs cap
+ * segments the import like a native session.
  */
 export function mapOpenclawSession(
   meta: OpenclawSessionMeta,
@@ -52,6 +58,7 @@ export function mapOpenclawSession(
     worldSnapshot: null,
     stepCount: 0,
     turnCount,
+    macroTurnStarts: macroTurnStartsFromTurns(turns),
     turns,
     createdAt,
     updatedAt: lastMessageAt,
@@ -70,9 +77,11 @@ function appendMessageTurns(
 ): void {
   const at = message.atMs;
   switch (message.role) {
-    case "user":
-      turns.push(userTurn(joinText(message.blocks), at));
+    case "user": {
+      const text = joinText(message.blocks);
+      if (text.length > 0) turns.push(userTurn(text, at));
       return;
+    }
     case "toolResult":
       turns.push(
         toolResultTurn({
@@ -85,30 +94,35 @@ function appendMessageTurns(
       return;
     case "assistant": {
       const reasoning = joinThinking(message.blocks);
+      const text = joinText(message.blocks);
       const calls = message.blocks.filter(
         (b): b is Extract<OpenclawBlock, { type: "toolCall" }> =>
           b.type === "toolCall",
       );
-      if (calls.length > 0) {
-        calls.forEach((call, index) => {
-          turns.push(
-            assistantToolCallTurn({
-              tool: call.name,
-              args: call.args,
-              at,
-              // One inference => one reasoning block; attach to the first call.
-              ...(index === 0 && reasoning.length > 0 ? { reasoning } : {}),
-            }),
-          );
-        });
-        return;
+      if (text.length > 0 || (calls.length === 0 && reasoning.length > 0)) {
+        // The empty-text case is a thinking-only row, which the TUI
+        // renders as a reasoning-only message.
+        turns.push(
+          assistantReplyTurn(text, {
+            at,
+            ...(reasoning.length > 0 ? { reasoning } : {}),
+          }),
+        );
       }
-      turns.push(
-        assistantReplyTurn(joinText(message.blocks), {
-          at,
-          ...(reasoning.length > 0 ? { reasoning } : {}),
-        }),
-      );
+      calls.forEach((call, index) => {
+        turns.push(
+          assistantToolCallTurn({
+            tool: call.name,
+            args: call.args,
+            at,
+            // One inference => one reasoning block. It rode the reply
+            // when there was one; otherwise it attaches to the first call.
+            ...(index === 0 && text.length === 0 && reasoning.length > 0
+              ? { reasoning }
+              : {}),
+          }),
+        );
+      });
       return;
     }
     default:

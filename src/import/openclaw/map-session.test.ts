@@ -145,4 +145,69 @@ describe("mapOpenclawSession", () => {
     expect(state.createdAt).toBe(1000);
     expect(state.updatedAt).toBe(2000);
   });
+
+  it("emits the reply before the calls when a row carries both", () => {
+    const state = mapOpenclawSession(
+      meta(),
+      [
+        msg("assistant", [
+          { type: "thinking", thinking: "r" },
+          { type: "text", text: "reading it" },
+          { type: "toolCall", id: "c1", name: "read", args: { path: "a.txt" } },
+        ]),
+      ],
+      "/fallback",
+    );
+    expect(state.turns).toEqual([
+      {
+        kind: "assistant_reply",
+        text: "reading it",
+        reasoning: "r",
+        at: 1_700_000_000_000,
+      },
+      {
+        kind: "assistant_tool_call",
+        tool: "read",
+        args: { path: "a.txt" },
+        at: 1_700_000_000_000,
+      },
+    ]);
+  });
+
+  it("drops user and assistant rows with nothing to show", () => {
+    const state = mapOpenclawSession(
+      meta(),
+      [
+        msg("user", []),
+        msg("user", [{ type: "text", text: "" }]),
+        msg("assistant", []),
+        msg("assistant", [{ type: "thinking", thinking: "only thought" }]),
+        msg("user", [{ type: "text", text: "hi" }], { atMs: 7 }),
+      ],
+      "/fallback",
+    );
+    expect(state.turns).toEqual([
+      {
+        kind: "assistant_reply",
+        text: "",
+        reasoning: "only thought",
+        at: 1_700_000_000_000,
+      },
+      { kind: "user", text: "hi", at: 7 },
+    ]);
+  });
+
+  it("records macro-turn starts at every user row after the first", () => {
+    const state = mapOpenclawSession(
+      meta(),
+      [
+        msg("user", [{ type: "text", text: "a" }]),
+        msg("assistant", [{ type: "text", text: "b" }]),
+        msg("user", [{ type: "text", text: "c" }]),
+        msg("assistant", [{ type: "text", text: "d" }]),
+      ],
+      "/fallback",
+    );
+    expect(state.macroTurnStarts).toEqual([2]);
+  });
 });
