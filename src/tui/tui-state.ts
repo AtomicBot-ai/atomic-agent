@@ -148,6 +148,13 @@ export interface ChatMessage {
    * the aborted turn's user message — never the notice's own text.
    */
   retryText?: string;
+  /**
+   * An action this notice offers, rendered as a button beside `[copy]`.
+   * `configure-fallback` is set on the notice a provider fallover
+   * leaves in the chat: the switch changed which model answers, and the
+   * pane that changes it back is one most operators have never opened.
+   */
+  action?: "configure-fallback";
   /** Number of tool steps the assistant ran inside this turn. */
   toolSteps?: number;
   /** Tool cards (call + result) attached to this assistant turn. */

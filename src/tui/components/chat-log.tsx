@@ -17,6 +17,7 @@ import {
 } from "./chat-message-height.js";
 import { ReasoningBubble } from "./reasoning-bubble.js";
 import { SplashBanner } from "./splash-banner.js";
+import { ChatConfigureFallbackButton } from "./chat-configure-fallback-button.js";
 import { SystemBubble } from "./system-bubble.js";
 import { ThinkingIndicator } from "./thinking-indicator.js";
 import { ToolCard } from "./tool-card.js";
@@ -280,6 +281,9 @@ function FinalisedMessage({
         */}
         {message.retryText !== undefined ? (
           <ChatTryAgainButton text={message.retryText} />
+        ) : null}
+        {message.action === "configure-fallback" ? (
+          <ChatConfigureFallbackButton />
         ) : null}
       </Box>
     </Box>

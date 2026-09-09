@@ -1123,6 +1123,8 @@ describe("a fallover away from the primary is said in the chat, not only the fee
     expect(system[0]?.text).toContain("openrouter");
     expect(system[0]?.text).toContain("local-llama");
     expect(system[0]?.variant).toBe("warn");
+    // and it carries the offer to go and change the order
+    expect(system[0]?.action).toBe("configure-fallback");
     // and the feed line the Fallback pane relies on is still there
     expect(next.feed.some((f) => f.line.includes("failed over"))).toBe(true);
   });

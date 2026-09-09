@@ -480,6 +480,7 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
           ? appendChatMessage(withSwitch, {
               role: "system",
               variant: "warn",
+              action: "configure-fallback",
               text: formatProviderFalloverNotice(event.from, event.to, event.reason),
             })
           : withSwitch,
