@@ -7,7 +7,16 @@ import {
   pruneSessionRailOrder,
 } from "./session-rail-order.js";
 
-const row = (sessionId: string) => ({ sessionId });
+/**
+ * A rail row. `updatedAt` defaults to a descending stamp derived from
+ * the id's trailing digit, so `row("s-3")` is newer than `row("s-1")`
+ * and the fixtures below read the way the store hands them over: newest
+ * first. Pass a stamp explicitly where the date is the point.
+ */
+const row = (sessionId: string, updatedAt?: number) => ({
+  sessionId,
+  updatedAt: updatedAt ?? Number(sessionId.replace(/\D/g, "") || 0) * 1000,
+});
 const ids = (rows: readonly { sessionId: string }[]) => rows.map((r) => r.sessionId);
 
 describe("applySessionRailOrder", () => {
@@ -22,12 +31,49 @@ describe("applySessionRailOrder", () => {
     expect(ids(arranged)).toEqual(["s-1", "s-3", "s-2"]);
   });
 
-  it("puts sessions the order has never seen on top, newest first", () => {
-    // s-5 and s-4 were started after the operator arranged the list;
-    // the store lists them first because they are the most recent.
+  it("puts sessions the order has never seen where their date earns it", () => {
+    // s-5 and s-4 were started after the operator arranged the list, so
+    // they are newer than every arranged row and land on top of it.
     const entries = [row("s-5"), row("s-1"), row("s-4"), row("s-2"), row("s-3")];
     const arranged = applySessionRailOrder(entries, ["s-1", "s-3", "s-2"]);
     expect(ids(arranged)).toEqual(["s-5", "s-4", "s-1", "s-3", "s-2"]);
+  });
+
+  it("drops an old import in among the rows of its own age, not on top", () => {
+    // The arranged rail holds this year's work; the import has just
+    // written a transcript from four years ago. It belongs at the
+    // bottom, beside the other old rows — not above today's thread.
+    const arrangedRows = [
+      row("s-now", 4_000),
+      row("s-mid", 3_000),
+      row("s-old", 1_000),
+    ];
+    const imported = row("s-import", 2_000);
+    const arranged = applySessionRailOrder(
+      [imported, ...arrangedRows],
+      ["s-now", "s-mid", "s-old"],
+    );
+    expect(ids(arranged)).toEqual(["s-now", "s-mid", "s-import", "s-old"]);
+  });
+
+  it("keeps a hand-arranged list from throwing a newcomer to the top", () => {
+    // The operator dragged the oldest thread to the top, so the list is
+    // in no date order at all. A newcomer older than two of the three
+    // rows still sits below both of them.
+    const entries = [
+      row("s-import", 2_000),
+      row("s-old", 1_000),
+      row("s-now", 4_000),
+      row("s-mid", 3_000),
+    ];
+    const arranged = applySessionRailOrder(entries, ["s-old", "s-now", "s-mid"]);
+    expect(ids(arranged)).toEqual(["s-old", "s-now", "s-mid", "s-import"]);
+  });
+
+  it("keeps several newcomers in their own recency order", () => {
+    const entries = [row("s-a", 5_000), row("s-b", 1_500), row("s-keep", 2_000)];
+    const arranged = applySessionRailOrder(entries, ["s-keep"]);
+    expect(ids(arranged)).toEqual(["s-a", "s-keep", "s-b"]);
   });
 
   it("ignores ids in the order that have no row", () => {

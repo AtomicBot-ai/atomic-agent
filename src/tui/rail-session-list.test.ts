@@ -249,6 +249,24 @@ describe("rail session list — manual order", () => {
     expect(rail().map((e) => e.sessionId)).toEqual(["s-1", "s-3", "s-2"]);
   });
 
+  it("gives an imported thread the slot its own date earns", () => {
+    // The operator arranged the rail this year; an import has just
+    // written a transcript from four years ago. It belongs beside the
+    // old rows, not above the ones the operator arranged.
+    const now = Date.now();
+    const stored = [
+      { ...spokenTo("s-2", "second"), updatedAt: now - 1_000 },
+      { ...spokenTo("s-1", "first"), updatedAt: now - 2_000 },
+      {
+        ...spokenTo("s-imported", "a transcript from four years ago"),
+        updatedAt: now - 4 * 365 * 24 * 3_600_000,
+      },
+    ];
+    const { orchestrator, rail } = harness(stored, false, ["s-2", "s-1"]);
+    orchestrator.refreshRecentSessions();
+    expect(rail().map((e) => e.sessionId)).toEqual(["s-2", "s-1", "s-imported"]);
+  });
+
   it("puts threads the order has never seen on top", () => {
     const stored = [
       spokenTo("s-new", "started after the arranging"),

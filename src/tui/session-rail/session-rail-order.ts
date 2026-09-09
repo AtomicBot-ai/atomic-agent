@@ -4,9 +4,11 @@
  * The list is recency-sorted until the operator touches it. The first
  * move snapshots the displayed ids as a manual order (persisted under
  * `tui.sessionRail.order`); from then on ids in that order keep it, and
- * ids the order has never seen — a thread started afterwards — go to
- * the TOP, still by recency among themselves, so a new conversation
- * lands where a recency-sorted rail would have put it anyway.
+ * ids the order has never seen take the slot their date earns them —
+ * as many rows down as there are rows newer than they are. A thread
+ * started now is the newest thing there is, so it lands on top; a
+ * four-year-old transcript that an import has just written lands beside
+ * the other four-year-old rows rather than above today's work.
  */
 
 /**
@@ -17,7 +19,7 @@
  * entry are ignored — a deleted thread leaves a stale id behind until
  * the next write prunes it.
  */
-export function applySessionRailOrder<T extends { sessionId: string }>(
+export function applySessionRailOrder<T extends RailRow>(
   entries: readonly T[],
   order: readonly string[],
 ): T[] {
@@ -27,14 +29,48 @@ export function applySessionRailOrder<T extends { sessionId: string }>(
     if (!rank.has(id)) rank.set(id, index);
   });
   const unknown: T[] = [];
-  const known: T[] = [];
+  const arranged: T[] = [];
   for (const entry of entries) {
-    (rank.has(entry.sessionId) ? known : unknown).push(entry);
+    (rank.has(entry.sessionId) ? arranged : unknown).push(entry);
   }
-  known.sort(
+  arranged.sort(
     (a, b) => (rank.get(a.sessionId) ?? 0) - (rank.get(b.sessionId) ?? 0),
   );
-  return [...unknown, ...known];
+  // Newest first, so a run of new rows keeps its own recency order as
+  // each one is placed.
+  unknown.sort((a, b) => b.updatedAt - a.updatedAt);
+  for (const row of unknown) insertByDate(arranged, row);
+  return arranged;
+}
+
+/** What the rail needs of a row to arrange it: an identity and a date. */
+interface RailRow {
+  sessionId: string;
+  updatedAt: number;
+}
+
+/**
+ * Put `row` directly below the last row that is newer than it, so it
+ * ends up under everything newer and above everything older.
+ *
+ * Scanning from the bottom for the last newer row — rather than from
+ * the top for the first older one — is what keeps this honest on a
+ * hand-arranged rail, which is in no date order at all. "Before the
+ * first older row" would throw a four-year-old import to the top the
+ * moment the operator had dragged an old thread up there. This rule
+ * holds the one property that matters either way: nothing newer ever
+ * ends up below it. A thread created now has nothing newer above it,
+ * so it still lands on top.
+ */
+function insertByDate<T extends RailRow>(rows: T[], row: T): void {
+  let at = 0;
+  for (let i = rows.length - 1; i >= 0; i -= 1) {
+    if ((rows[i]?.updatedAt ?? 0) > row.updatedAt) {
+      at = i + 1;
+      break;
+    }
+  }
+  rows.splice(at, 0, row);
 }
 
 /**
