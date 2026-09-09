@@ -9,7 +9,6 @@ import {
   HermesSource,
   IMPORT_AGENT_LABELS,
   ImportOptionError,
-  ONBOARDING_SESSION_LIMIT,
   resolveSelectedOptions,
   OpenclawImporter,
   OpenclawSource,
@@ -290,7 +289,7 @@ export class ImportOrchestrator {
           userConfigFile: config.paths.userConfigFile,
           globalSkillsDir: config.paths.globalSkillsDir,
           workingDirFallback: process.cwd(),
-        }).run({ ...common, options, limit: ONBOARDING_SESSION_LIMIT });
+        }).run({ ...common, options });
       }
       case "codex": {
         const options = enabled.filter(isCodexOption);
@@ -302,7 +301,7 @@ export class ImportOrchestrator {
           stateDir: config.paths.stateDir,
           globalSkillsDir: config.paths.globalSkillsDir,
           workingDirFallback: process.cwd(),
-        }).run({ ...common, options, limit: ONBOARDING_SESSION_LIMIT });
+        }).run({ ...common, options });
       }
     }
   }

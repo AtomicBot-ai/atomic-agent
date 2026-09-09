@@ -44,15 +44,6 @@ export interface ImportMemoryTarget {
   store(input: { content: string; tags?: string[]; source?: "user" }): unknown;
 }
 
-/**
- * Why the sessions cap exists at all: `~/.claude/projects` grows to
- * gigabytes, and the first-run flow must not spend minutes previewing
- * transcripts nobody asked to keep. The CLI leaves `limit` unset
- * (import everything) unless `--limit` says otherwise; the onboarding
- * step imports this many newest sessions instead.
- */
-export const ONBOARDING_SESSION_LIMIT = 100;
-
 export interface ClaudeCodeImporterDeps {
   source: ClaudeCodeSource;
   sessionStore: SessionStore;
@@ -74,7 +65,15 @@ export interface ClaudeCodeRunOptions {
   execute: boolean;
   /** Overwrite differing destinations instead of flagging a conflict. */
   overwrite: boolean;
-  /** Cap on the number of sessions processed (newest first). */
+  /**
+   * Cap on the number of sessions processed (newest first). Unset means
+   * every session: the first-run flow used to cap this at 100 because
+   * `~/.claude/projects` grows to gigabytes, but a cap that nothing
+   * later lifts leaves the operator with a history that silently stops
+   * at some point in the past. The listing sorts by mtime without
+   * opening a file, and only the sessions the cap admits are parsed, so
+   * the cost of "everything" is paid once and then skipped on re-runs.
+   */
   limit?: number;
 }
 

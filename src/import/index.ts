@@ -80,7 +80,6 @@ export {
   ClaudeCodeSourceError,
   mapClaudeCodeMcpServer,
   mapClaudeCodeSession,
-  ONBOARDING_SESSION_LIMIT,
   resolveClaudeCodeOptions,
 } from "./claude-code/index.js";
 export type {
