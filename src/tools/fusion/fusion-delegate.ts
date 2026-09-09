@@ -114,6 +114,32 @@ export function buildFusionDelegateTool(deps: FusionDelegateDeps): ToolDefinitio
         ),
       );
 
+      // Labels, never guesses: the resolver's pin when it has one, the
+      // provider id when it does not. Both legs are read from the same
+      // live `mode` the fan-out is about to run on.
+      const workerModel = mode.workerModel ?? workerProviderId;
+      const orchestratorModel =
+        mode.orchestratorModel ??
+        mode.orchestratorProviderId ??
+        mode.primaryProviderId;
+
+      // The orchestrator claims its own call before the workers start
+      // talking. Everything between this line and the closing one below
+      // is worker work on the local leg; this is the runtime's only
+      // honest, zero-cost place to say so — the parent turn's other
+      // steps are served through the fallback chain and may not have run
+      // on `orchestratorModel` at all, so they are deliberately left
+      // unlabelled rather than attributed on a guess.
+      deps.emitEvent(ctx.sessionId, {
+        type: "fusion_worker",
+        taskId: FUSION_DELEGATE_TOOL,
+        title: `${parsed.tasks.length} task${parsed.tasks.length === 1 ? "" : "s"}`,
+        phase: "tool",
+        role: "orchestrator",
+        model: orchestratorModel,
+        tool: FUSION_DELEGATE_TOOL,
+      });
+
       let results: WorkerTaskResult[];
       try {
         results = await runWorkerTasks(deps, {
@@ -121,6 +147,7 @@ export function buildFusionDelegateTool(deps: FusionDelegateDeps): ToolDefinitio
           tasks: parsed.tasks,
           maxWorkers,
           providerId: workerProviderId,
+          workerModel,
           workerMaxSteps: mode.workerMaxSteps,
           workerTimeoutMs: mode.workerTimeoutMs,
           signal: ctx.signal,
@@ -133,6 +160,20 @@ export function buildFusionDelegateTool(deps: FusionDelegateDeps): ToolDefinitio
           { reason: "fan-out-failed" },
         );
       }
+
+      // …and takes the turn back. One line, so the operator can see the
+      // spend return to the cloud leg instead of guessing which of the
+      // lines above was the last worker.
+      const okCount = results.filter((r) => r.status === "ok").length;
+      deps.emitEvent(ctx.sessionId, {
+        type: "fusion_worker",
+        taskId: FUSION_DELEGATE_TOOL,
+        title: `${results.length} task${results.length === 1 ? "" : "s"}`,
+        phase: "finished",
+        role: "orchestrator",
+        model: orchestratorModel,
+        summary: `${okCount}/${results.length} ok — merging`,
+      });
 
       const hint =
         poolSize === 1 && parsed.tasks.length > 1

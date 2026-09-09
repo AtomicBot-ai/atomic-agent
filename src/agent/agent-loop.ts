@@ -533,12 +533,12 @@ export type AgentLoopEvent =
     }
   | {
       /**
-       * One fusion worker turn started, ended, or was cut short. Emitted
-       * by `fusion.delegate` in the PARENT session's frame, never the
-       * worker's: the worker session has no recorder, no event hook and
-       * no UI, so an event tagged with its id would reach nobody. This is
-       * the only window the operator has into a fan-out that can occupy
-       * the orchestrator's turn for minutes.
+       * One leg of a fusion turn started, ran a tool, ended, or was cut
+       * short. Emitted by `fusion.delegate` in the PARENT session's
+       * frame, never a worker's: a worker session has no recorder, no
+       * event hook and no UI, so an event tagged with its id would reach
+       * nobody. This is the only window the operator has into a fan-out
+       * that can occupy the orchestrator's turn for minutes.
        *
        * Not produced by `AgentLoop` itself — it rides this union because
        * the runtime's event fan-out and every UI reducer are typed on it.
@@ -546,7 +546,23 @@ export type AgentLoopEvent =
       type: "fusion_worker";
       taskId: string;
       title: string;
-      phase: "started" | "finished" | "failed" | "cancelled";
+      phase: "started" | "tool" | "finished" | "failed" | "cancelled";
+      /**
+       * Which leg this line is about. `worker` when absent, so the
+       * event's original shape still reads correctly. The orchestrator
+       * uses it to claim its own `fusion.delegate` call: without it the
+       * whole fan-out block reads as if nothing but workers ran.
+       */
+      role?: "worker" | "orchestrator";
+      /**
+       * The model this leg is running — `runMode.workerModel` /
+       * `.orchestratorModel`, falling back to the provider id when the
+       * resolver has no label. Never a guess: a UI that invented a name
+       * here would be attributing spend to the wrong model.
+       */
+      model?: string;
+      /** `phase: "tool"` only: the tool this leg just started. */
+      tool?: string;
       stepCount?: number;
       durationMs?: number;
       /** One line about the outcome; the worker's reply, clipped. */

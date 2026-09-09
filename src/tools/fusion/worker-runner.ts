@@ -11,6 +11,15 @@ import {
   isWorkerVisibleTool,
 } from "./worker-tool-policy.js";
 
+/**
+ * How many `phase: "tool"` lines one worker may put in the parent's
+ * feed. Five is a deliberate compromise: enough to see what a worker
+ * reached for after it started, few enough that the worst case (8
+ * workers) is 40 lines — the same order as a single orchestrator turn's
+ * own feed — instead of an unbounded log.
+ */
+export const WORKER_TOOL_LINES_PER_TASK = 5;
+
 export interface WorkerRunnerDeps {
   /** `runtime.runTurn`, unchanged. */
   runTurn: (
@@ -41,6 +50,13 @@ export interface RunWorkerTasksOptions {
   maxWorkers: number;
   /** The local leg every worker turn is pinned to. */
   providerId: string;
+  /**
+   * Display label for the model the workers run on, already resolved by
+   * the caller (`runMode.workerModel ?? providerId`). Resolved there
+   * rather than here because the runner has no config access and must
+   * never invent a name it cannot stand behind.
+   */
+  workerModel: string;
   workerMaxSteps: number;
   workerTimeoutMs: number;
   signal: AbortSignal;
@@ -124,6 +140,41 @@ async function runOneTask(
       taskId: task.id,
       title: task.title,
       phase: "started",
+      role: "worker",
+      model: options.workerModel,
+    });
+  };
+
+  // Which tool this worker just picked up, named with the model running
+  // it — the operator's only view of how the fan-out is spending, since
+  // a worker's own step events are tagged with a session the UI drops.
+  //
+  // Bounded, because eight workers times a dozen tools each is a feed
+  // that shows nothing else. Two limits: a consecutive repeat is
+  // swallowed (a worker grepping fifteen times is one fact, not
+  // fifteen), and each worker announces at most
+  // `WORKER_TOOL_LINES_PER_TASK` tools in total. Nothing is lost — the
+  // complete per-tool tally comes back on the task's result row and
+  // into the orchestrator's transcript; the feed only has to answer
+  // "who is doing what right now".
+  let toolLines = 0;
+  let lastTool = "";
+  const announceTool = (tool: string): void => {
+    // The two terminals end the worker's turn, they are not work the
+    // operator is waiting on; the `done` line already reports that.
+    if (tool === "reply" || tool === "finish") return;
+    if (tool === lastTool) return;
+    lastTool = tool;
+    if (toolLines >= WORKER_TOOL_LINES_PER_TASK) return;
+    toolLines += 1;
+    deps.emitEvent(options.parentSessionId, {
+      type: "fusion_worker",
+      taskId: task.id,
+      title: task.title,
+      phase: "tool",
+      role: "worker",
+      model: options.workerModel,
+      tool,
     });
   };
   // A worker has no operator: an approval prompt would park the turn
@@ -151,6 +202,16 @@ async function runOneTask(
         ]),
         eventHook: (event) => {
           if (event.type === "turn_started") announceStart();
+          if (
+            event.type === "llm_event" &&
+            event.event.type === "tool_call_parsed"
+          ) {
+            // `tool_call_parsed` fires before execution, which is what
+            // "is being triggered" means — and it fires once per call in
+            // a batched step, so the dedupe above earns its keep.
+            announceStart();
+            announceTool(event.event.call.tool);
+          }
           collector.observe(event);
         },
       },
@@ -187,6 +248,8 @@ async function runOneTask(
     taskId: task.id,
     title: task.title,
     phase: workerPhase(result),
+    role: "worker",
+    model: options.workerModel,
     stepCount: result.stepCount,
     durationMs: result.durationMs,
     summary: summarise(result),

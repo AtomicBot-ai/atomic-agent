@@ -8,7 +8,11 @@ import {
   type FusionWorkerMeta,
 } from "../../session/fusion-worker-session.js";
 import type { DelegateTask } from "./delegate-args.js";
-import { runWorkerTasks, type WorkerRunnerDeps } from "./worker-runner.js";
+import {
+  runWorkerTasks,
+  WORKER_TOOL_LINES_PER_TASK,
+  type WorkerRunnerDeps,
+} from "./worker-runner.js";
 
 type RunTurnCall = {
   session: SessionState;
@@ -72,6 +76,7 @@ function turnResult(over: Partial<RunTurnResult> = {}): RunTurnResult {
 const BASE = {
   parentSessionId: "s-parent",
   providerId: "local-llama",
+  workerModel: "qwen-3.5-4b",
   workerMaxSteps: 7,
   workerTimeoutMs: 60_000,
 };
@@ -230,6 +235,86 @@ describe("runWorkerTasks", () => {
       stepCount: 4,
       summary: "the answer is here",
     });
+  });
+
+  it("announces each tool a worker starts, named with the worker's model", async () => {
+    // A worker's own tool calls never reach the parent's UI (the TUI
+    // reducer drops events whose session id is not the visible one), so
+    // without this the operator can see that three workers are running
+    // and nothing at all about what they are doing.
+    const { deps, events } = harness(async ({ options }) => {
+      options.eventHook?.({ type: "turn_started", turnIndex: 0 });
+      for (const tool of ["os.fs.read", "os.fs.grep", "reply"]) {
+        options.eventHook?.({
+          type: "llm_event",
+          event: {
+            type: "tool_call_parsed",
+            call: { tool, args: {} },
+            batchIndex: 0,
+            batchSize: 1,
+          },
+        });
+      }
+      return turnResult({ stepCount: 3 });
+    });
+    await runWorkerTasks(deps, {
+      ...BASE,
+      tasks: tasks(1),
+      maxWorkers: 1,
+      signal: new AbortController().signal,
+    });
+    expect(events.map((e) => e.sessionId)).toEqual(Array(4).fill("s-parent"));
+    expect(
+      events.map((e) =>
+        e.event.type === "fusion_worker"
+          ? [e.event.phase, e.event.role, e.event.model, e.event.tool ?? null]
+          : null,
+      ),
+    ).toEqual([
+      ["started", "worker", "qwen-3.5-4b", null],
+      ["tool", "worker", "qwen-3.5-4b", "os.fs.read"],
+      ["tool", "worker", "qwen-3.5-4b", "os.fs.grep"],
+      // `reply` ends the turn, it is not work the operator waits on —
+      // the `done` line below is what reports it.
+      ["finished", "worker", "qwen-3.5-4b", null],
+    ]);
+  });
+
+  it("bounds the tool lines: consecutive repeats collapse and the count is capped", async () => {
+    // Eight workers times a dozen tools each is a feed that shows
+    // nothing else. The complete tally still comes back on the result
+    // row, so the feed only owes the operator "who is doing what now".
+    const { deps, events } = harness(async ({ options }) => {
+      options.eventHook?.({ type: "turn_started", turnIndex: 0 });
+      const emit = (tool: string): void =>
+        options.eventHook?.({
+          type: "llm_event",
+          event: {
+            type: "tool_call_parsed",
+            call: { tool, args: {} },
+            batchIndex: 0,
+            batchSize: 1,
+          },
+        });
+      // Ten identical greps are one fact, not ten lines…
+      for (let i = 0; i < 10; i += 1) emit("os.fs.grep");
+      // …and past the cap the feed goes quiet rather than scrolling.
+      for (const tool of ["a", "b", "c", "d", "e", "f", "g"]) emit(tool);
+      return turnResult({ stepCount: 17 });
+    });
+    await runWorkerTasks(deps, {
+      ...BASE,
+      tasks: tasks(1),
+      maxWorkers: 1,
+      signal: new AbortController().signal,
+    });
+    const toolLines = events.flatMap(({ event }) =>
+      event.type === "fusion_worker" && event.phase === "tool"
+        ? [event.tool]
+        : [],
+    );
+    expect(toolLines).toHaveLength(WORKER_TOOL_LINES_PER_TASK);
+    expect(toolLines).toEqual(["os.fs.grep", "a", "b", "c", "d"]);
   });
 
   it("emits the failed and cancelled phases for the outcomes that earn them", async () => {

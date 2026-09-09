@@ -7,6 +7,10 @@ import { formatBackgroundApprovalNotice } from "./detached-turns.js";
 import { formatAgentErrorForChat } from "./format-agent-error-for-chat.js";
 import { formatFeedLine } from "./format-event.js";
 import {
+  formatFusionWorkerLine,
+  fusionWorkerLineColor,
+} from "./format-fusion-worker-line.js";
+import {
   appendChatMessage,
   appendFeed,
   appendReasoningDelta,
@@ -598,33 +602,19 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
     }
     case "fusion_worker": {
       // A fan-out can hold the orchestrator's turn for minutes with no
-      // steps of its own to show, so each worker gets a start line and
-      // an end line. `stepIndex: null` because these belong to the
-      // parent turn as a whole, not to any one of its steps — the
-      // events are emitted in the parent's frame from inside a worker
-      // session that has no step counter the operator can see.
-      const line =
-        event.phase === "started"
-          ? `» worker ${event.title}: started`
-          : event.phase === "cancelled"
-            ? `» worker ${event.title}: cancelled`
-            : event.phase === "failed"
-              ? `» worker ${event.title}: failed — ${event.summary ?? "no detail"}`
-              : `» worker ${event.title}: done — ${event.stepCount ?? 0} steps${
-                  event.summary ? `, ${event.summary}` : ""
-                }`;
+      // steps of its own to show, so each leg gets a start line, its
+      // (bounded) tool lines and an end line — each naming the model
+      // that ran it, because fusion is the one mode where two models
+      // and two bills share a single turn. `stepIndex: null` because
+      // these belong to the parent turn as a whole, not to any one of
+      // its steps — the events are emitted in the parent's frame from
+      // inside a worker session that has no step counter the operator
+      // can see.
       return appendFeed(state, {
         kind: "runtime_info",
         stepIndex: null,
-        line,
-        color:
-          event.phase === "failed"
-            ? "red"
-            : event.phase === "cancelled"
-              ? "yellow"
-              : event.phase === "finished"
-                ? "green"
-                : "gray",
+        line: formatFusionWorkerLine(event),
+        color: fusionWorkerLineColor(event),
       });
     }
     case "loop_detected":

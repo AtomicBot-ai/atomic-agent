@@ -89,6 +89,56 @@ describe("reduceTuiState fusion worker progress", () => {
     ]);
   });
 
+  it("attributes every line to the model that ran it", () => {
+    // Fusion is the one mode where two models on two bills share a
+    // single turn, and a worker's own step events are dropped by the
+    // reducer's session filter — so these lines are the only place the
+    // division of work is visible at all.
+    const lines = feedLines([
+      {
+        type: "agent_event",
+        event: {
+          type: "fusion_worker",
+          taskId: "fusion.delegate",
+          title: "2 tasks",
+          phase: "tool",
+          role: "orchestrator",
+          model: "claude-sonnet-4.5",
+          tool: "fusion.delegate",
+        },
+      },
+      {
+        type: "agent_event",
+        event: {
+          type: "fusion_worker",
+          taskId: "t2",
+          title: "2",
+          phase: "tool",
+          role: "worker",
+          model: "qwen-3.5-4b",
+          tool: "os.fs.write",
+        },
+      },
+      {
+        type: "agent_event",
+        event: {
+          type: "fusion_worker",
+          taskId: "t2",
+          title: "2",
+          phase: "finished",
+          role: "worker",
+          model: "qwen-3.5-4b",
+          stepCount: 4,
+        },
+      },
+    ]);
+    expect(lines).toEqual([
+      "» orchestrator · claude-sonnet-4.5 — fusion.delegate (2 tasks)",
+      "» worker 2 · qwen-3.5-4b — os.fs.write",
+      "» worker 2 · qwen-3.5-4b: done — 4 steps",
+    ]);
+  });
+
   it("does not disturb the turn's own status or step counter", () => {
     // These events belong to the parent turn as a whole, not to any one
     // of its steps — they must not read as a step boundary.

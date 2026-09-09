@@ -123,6 +123,74 @@ describe("fusion.delegate", () => {
     expect((await tool.run({ tasks: TASKS }, ctx())).status).toBe("error");
   });
 
+  it("re-resolves the worker leg on every call, never at registration", async () => {
+    // The pin the workers run on is spend. A leg captured when the tool
+    // was built would keep charging an operator who reconfigured the
+    // worker provider mid-session — and this branch registers the tool
+    // unconditionally at boot, so "registration time" can now be a run
+    // mode that no longer exists.
+    let mode = fusionMode();
+    const pins: Array<string | undefined> = [];
+    const tool = buildFusionDelegateTool(
+      deps({
+        resolveRunMode: () => mode,
+        runTurn: async (_session, _msg, options) => {
+          pins.push(options.providerId);
+          return turnResult();
+        },
+      }),
+    );
+    await tool.run({ tasks: [TASKS[0]!] }, ctx());
+    mode = fusionMode({ workerProviderId: "other-llama", workerModel: "tiny" });
+    await tool.run({ tasks: [TASKS[0]!] }, ctx());
+    expect(pins).toEqual(["local-llama", "other-llama"]);
+  });
+
+  it("brackets the fan-out with the orchestrator's own model", async () => {
+    // Between these two lines every feed line belongs to a worker on the
+    // local leg; the operator can otherwise only guess which model is
+    // spending. Both ride the parent session id, like the worker lines.
+    const events: Array<Record<string, unknown>> = [];
+    const tool = buildFusionDelegateTool(
+      deps({
+        emitEvent: (sessionId, event) => events.push({ sessionId, ...event }),
+      }),
+    );
+    await tool.run({ tasks: TASKS }, ctx());
+    const orchestrator = events.filter((e) => e.role === "orchestrator");
+    expect(orchestrator).toMatchObject([
+      {
+        sessionId: "s-parent",
+        phase: "tool",
+        model: "big",
+        tool: "fusion.delegate",
+        title: "2 tasks",
+      },
+      { sessionId: "s-parent", phase: "finished", model: "big", summary: "2/2 ok — merging" },
+    ]);
+    // The workers' own lines name the worker model, not the cloud one.
+    expect(
+      events.filter((e) => e.role === "worker").every((e) => e.model === "small"),
+    ).toBe(true);
+  });
+
+  it("falls back to the provider id when the resolver has no model label", async () => {
+    // `orchestratorModel` / `workerModel` are both nullable. A made-up
+    // string here would be attribution the runtime cannot stand behind.
+    const events: Array<Record<string, unknown>> = [];
+    const tool = buildFusionDelegateTool(
+      deps({
+        resolveRunMode: () =>
+          fusionMode({ orchestratorModel: null, workerModel: null }),
+        emitEvent: (sessionId, event) => events.push({ sessionId, ...event }),
+      }),
+    );
+    await tool.run({ tasks: [TASKS[0]!] }, ctx());
+    expect(new Set(events.map((e) => e.model))).toEqual(
+      new Set(["openrouter", "local-llama"]),
+    );
+  });
+
   it("reports invalid args as an error the orchestrator can fix", async () => {
     const tool = buildFusionDelegateTool(deps());
     const result = await tool.run({ tasks: [] }, ctx());

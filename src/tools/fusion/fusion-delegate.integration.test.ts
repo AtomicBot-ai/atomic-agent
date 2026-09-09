@@ -207,16 +207,38 @@ describe("fusion.delegate end to end", () => {
       // Progress reached the host handler tagged with the PARENT id —
       // the worker's own frame has no recorder and no hook, so an event
       // tagged with its id would reach nobody.
-      const progress = events.filter((e) => e.event.type === "fusion_worker");
-      expect(progress).toHaveLength(6);
+      const progress = events.flatMap(({ event, sessionId }) =>
+        event.type === "fusion_worker" ? [{ event, sessionId }] : [],
+      );
       for (const entry of progress) {
         expect(entry.sessionId).toBe(parent.id);
       }
-      const phases = progress.map((e) =>
-        e.event.type === "fusion_worker" ? e.event.phase : "?",
-      );
+      const workerLines = progress.filter((e) => e.event.role === "worker");
+      const phases = workerLines.map((e) => e.event.phase);
       expect(phases.filter((p) => p === "started")).toHaveLength(3);
       expect(phases.filter((p) => p === "finished")).toHaveLength(3);
+      // Every worker line names the model that ran it — here the
+      // managed daemon's id, resolved live rather than pinned.
+      for (const entry of workerLines) {
+        expect(entry.event.model).toBe("local-llama");
+      }
+      // The workers' own tool calls reach the parent's feed, attributed.
+      expect(
+        workerLines
+          .filter((e) => e.event.phase === "tool")
+          .map((e) => e.event.tool)
+          .sort(),
+      ).toEqual(["os.fs.read", "os.fs.read", "os.fs.write"]);
+      // …and the orchestrator claims its own call, on its own model.
+      const orchestratorLines = progress.filter(
+        (e) => e.event.role === "orchestrator",
+      );
+      expect(
+        orchestratorLines.map((e) => [e.event.phase, e.event.model]),
+      ).toEqual([
+        ["tool", "orchestrator-model"],
+        ["finished", "orchestrator-model"],
+      ]);
 
       // No worker row in the session store: ephemeral means ephemeral.
       const stored = runtime.sessionStore.listRecent(50).map((s) => s.id);
