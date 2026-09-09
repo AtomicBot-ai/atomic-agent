@@ -5,6 +5,7 @@ export type {
   LocalLlmMode,
   LogLevel,
   OnboardingState,
+  SessionRailConfig,
   TelegramConfig,
   TelegramParseMode,
   UserConfigFile,
@@ -20,6 +21,7 @@ export {
   USER_CONFIG_DEFAULTS,
   USER_CONFIG_VERSION,
   parseOnboardingState,
+  parseSessionRailConfig,
   parseUserConfigFile,
   parseWhileBusySubmit,
 } from "./config-schema.js";

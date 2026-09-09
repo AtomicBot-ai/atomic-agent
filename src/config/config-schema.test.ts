@@ -1538,3 +1538,37 @@ describe("numeric coercion of string config values", () => {
     ).toThrow(/tokenBudget/);
   });
 });
+
+describe("tui.sessionRail (config v52)", () => {
+  it("gives a v51 file the recency default — an empty order", () => {
+    const parsed = parseUserConfigFile({ version: 51, tui: { theme: "nord" } });
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(parsed.tui.sessionRail).toEqual({ order: [] });
+    expect(parsed.tui.theme).toBe("nord");
+  });
+
+  it("round-trips the operator's order", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      tui: { sessionRail: { order: ["s-b", "s-a", "s-c"] } },
+    });
+    expect(parsed.tui.sessionRail.order).toEqual(["s-b", "s-a", "s-c"]);
+  });
+
+  it("drops entries that are not ids and keeps the first of a duplicate", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      tui: { sessionRail: { order: ["s-b", 7, "", null, "s-a", "s-b"] } },
+    });
+    expect(parsed.tui.sessionRail.order).toEqual(["s-b", "s-a"]);
+  });
+
+  it("rejects an order that is not a list", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        tui: { sessionRail: { order: "s-a" } },
+      }),
+    ).toThrow(/tui\.sessionRail\.order/);
+  });
+});
