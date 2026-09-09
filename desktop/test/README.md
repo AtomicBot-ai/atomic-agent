@@ -33,6 +33,7 @@ and each scenario imports the driver it was proved against.
 | `drive-ux.mjs` | `onboarding-mouse.mjs` — adds `hover`, `moveAway`, `clearField`, `focusInfo`, `waitStep`, and an onboarding-shaped `snap()` |
 | `drive-selector-lib.mjs` | `drive-selector.mjs` — adds `tape()`, and the port-quiet / kill-the-group discipline that lane learned the hard way |
 | `drive-cloud-lib.mjs` | `cloud-setup.drive.mjs` — adds `check` / `step` / `report`, a transcript reader that knows rows are `#scroller .col720 > .turn` (there is no `#log`), and a reply matcher that waits for assistant PROSE so a `Reasoning · 1 steps` card is not mistaken for the answer |
+| `drive-download-lib.mjs` | `download-hover.drive.mjs` and `wizard-resume.drive.mjs` — adds a fresh-run helper, the first-run walk as far as a REAL `atag models pull`, a `scrollTo` that waits for Chromium's animated wheel to come to rest before anybody presses (a stale coordinate is how a driven click kept landing on the row below the one it measured), and `nodeIdAt`, which reads the identity of the node under the pointer with `DOM.getNodeForLocation` — from outside the page, writing nothing into it |
 
 `launch` (in `drive.mjs`) also takes `args` — extra Electron argv for the
 app's own TEST-ONLY switches. There is one: `--fake-ram=<gb>` makes
@@ -64,6 +65,8 @@ run falls back to the installed agent as before.
 | `model-picks.drive.mjs` | the local-model recommendation on three machine sizes: the picker and Settings › LLM › Local ordered for the host's RAM, each model's own blurb, one best fit, the small-model and tight-fit cautions, and the models held back as out of reach | `npm run drive:models` |
 | `cloud-setup.drive.mjs` | the cloud providers end to end against the real OpenRouter and AI/ML API | `npm run drive:cloud` |
 | `integration.drive.mjs` | **the four lanes in one window**: first run with the mouse, a cloud provider with a real key, a message and a reply, local, back to cloud, a second provider added from the composer chip, a model switch, and a reply from the model chosen last | `npm run drive:integration` |
+| `download-hover.drive.mjs` | a hover that survives a download: the pointer is parked on the wizard's offer card, on a wait-or-jump row and on the strip's Cancel button while a real pull reports, and the identity of the node under it, its `:hover` and its painted background are watched | `npm run drive:hover` |
+| `wizard-resume.drive.mjs` | the wizard ends where the operator sent it: a local download, a cloud provider set up mid-download, and "Start using the agent now" handing over the agent — plus the two neighbours (backing out of the cloud wizard returns where it came from; the wait-or-jump choice is offered once) | `npm run drive:wizard` |
 
 `integration.drive.mjs` is the pass that has to hold once the lanes are
 merged, and it is deliberately the ordinary arc rather than a corner: it
