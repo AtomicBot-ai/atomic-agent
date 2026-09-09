@@ -10172,10 +10172,34 @@ function renderItems() {
       const run = items.slice(i, j + 1);
       if (run.length >= 3 && !OPEN_GROUPS.has(m.id)) { html += groupCard(run); i = j; continue; }
     }
+    /* The same warning, over and over, is one fact — not news each time.
+       A retrying turn, a daemon that will not come up, a provider refusing
+       every call: each pushes its own system line, and the transcript
+       filled with identical rows that pushed the actual conversation off
+       the screen. A run of consecutive system lines with the SAME text
+       collapses to one line carrying how many times it happened, so the
+       count is still there and the wall of repeats is not. Only
+       CONSECUTIVE ones fold: a warning that returns after real work is a
+       new event in its own place in the history, and merging it upward
+       would move it in time. */
+    if (m.k === 'system') {
+      let j = i;
+      while (j + 1 < items.length && items[j + 1].k === 'system' && items[j + 1].text === m.text) j++;
+      const times = j - i + 1;
+      if (times >= 2) { html += systemRun(m, times); i = j; continue; }
+    }
     html += item(m, end.has(m.id));
   }
   return html;
 }
+/** One row for a run of identical system lines, with the repeat count.
+    `m.text` is already-escaped html on this path (the callers escape what
+    they interpolate), so it is emitted as the single row would emit it. */
+function systemRun(m, times) {
+  return '<div class="sysrow"><span></span><span>' + m.text
+    + ' <span class="sysrep" title="' + times + ' times in a row">\u00d7' + times + '</span></span></div>';
+}
+
 function groupCard(run) {
   const m = run[0];
   // item 4: the run's total counts only members with a number (trace, or observed while live);

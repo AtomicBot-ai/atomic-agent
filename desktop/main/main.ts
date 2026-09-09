@@ -8209,6 +8209,33 @@ async function onboardingTest(
     );
     if (jumped.open) await js<ObState>("window.__obKey('esc')");
     await settled();
+    /* The operator: "there are multiple warnings about the same stuff…
+       you should just condense them to one line". A retrying turn or a
+       daemon that will not start pushes one system row per attempt, and
+       the repeats pushed the conversation off the screen. Consecutive
+       identical rows fold to one carrying the count; a repeat that returns
+       AFTER other activity must stay in its own place, because merging it
+       upward would move it in time. Driven through S.log the way every
+       call site pushes, then read off the rendered rows. */
+    const foldBefore = await js<number>("document.querySelectorAll('.sysrow').length");
+    const folded = await js<string[]>(
+      "(() => { for (let i=0;i<5;i++) S.log.push({id:nid(), k:'system', text:'smoke: the same warning again'});"
+      + " S.log.push({id:nid(), k:'system', text:'smoke: something else happened'});"
+      + " for (let i=0;i<3;i++) S.log.push({id:nid(), k:'system', text:'smoke: the same warning again'});"
+      + " render();"
+      + " return [...document.querySelectorAll('.sysrow')].map((n) => (n.textContent||'').trim().replace(/\\s+/g,' ')); })()",
+    );
+    const mine = folded.filter((t) => t.startsWith("smoke: "));
+    check(
+      "a repeated warning is one row with a count, and a later repeat keeps its own place",
+      mine.length === 3
+        && mine[0] === "smoke: the same warning again ×5"
+        && mine[1] === "smoke: something else happened"
+        && mine[2] === "smoke: the same warning again ×3",
+      `${foldBefore} rows before, then ${JSON.stringify(mine)}`,
+    );
+    await js<number>(`(() => { S.log.length = ${'${'}0${'}'}; return 0; })()`);
+
     await js<Dl>("window.__dlClear()");
 
     /* ---- the branches the desktop used to be missing ---- */

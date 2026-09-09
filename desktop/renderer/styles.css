@@ -1381,3 +1381,10 @@ body.electron #settings{-webkit-app-region:no-drag}
 .tuirow .llm-fit-tight{color:var(--warn)}
 .tuirow .llm-fit-over{color:var(--text-tertiary)}
 .tuirow .llm-caution{color:var(--warn)}
+
+/* --- a repeated warning is one row with a count, not a wall --- */
+.sysrow .sysrep{
+  display:inline-block; margin-left:6px; padding:0 6px; border-radius:999px;
+  font-size:11px; font-variant-numeric:tabular-nums;
+  background:var(--bg-hover); color:var(--text-secondary);
+}
