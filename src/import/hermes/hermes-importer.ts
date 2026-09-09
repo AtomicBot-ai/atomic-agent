@@ -90,6 +90,15 @@ export class HermesImporter {
     }
     for (const session of sessions) {
       const messages = this.deps.source.readMessages(session.id);
+      if (messages.length === 0) {
+        items.push({
+          kind: "sessions",
+          source: session.id,
+          status: "skipped",
+          reason: "no messages",
+        });
+        continue;
+      }
       const mapped = mapHermesSession(
         session,
         messages,

@@ -223,7 +223,14 @@ export class CodexImporter {
       try {
         const session = this.deps.source.readSession(meta);
         if (session.messages.length === 0) {
-          // Meta-only rollout (no conversation): nothing to keep.
+          // Meta-only rollout (no conversation): nothing to keep, but
+          // listed so the report's counts add up.
+          items.push({
+            kind: "sessions",
+            source: meta.id,
+            status: "skipped",
+            reason: "no messages",
+          });
           continue;
         }
         mapped = mapCodexSession(session, this.deps.workingDirFallback);

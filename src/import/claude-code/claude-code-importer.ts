@@ -344,7 +344,15 @@ export class ClaudeCodeImporter {
       try {
         const session = this.deps.source.readSession(meta);
         if (session.messages.length === 0) {
-          // Warm-up / title-only transcript files: nothing to keep.
+          // Warm-up / title-only transcript files: nothing to keep, but
+          // the report still lists them so its counts add up to what
+          // the listing found.
+          items.push({
+            kind: "sessions",
+            source: meta.id,
+            status: "skipped",
+            reason: "no messages",
+          });
           continue;
         }
         mapped = mapClaudeCodeSession(session, this.deps.workingDirFallback);

@@ -288,6 +288,19 @@ describe("HermesImporter", () => {
     });
   });
 
+  it("lists a session without messages as skipped instead of importing a blank", () => {
+    seedStateDb(sourceDir, [{ id: "s-empty" }], []);
+    const report = buildImporter().run({
+      options: ["sessions"],
+      execute: true,
+      overwrite: false,
+    });
+    expect(report.items).toEqual([
+      { kind: "sessions", source: "s-empty", status: "skipped", reason: "no messages" },
+    ]);
+    expect(sessionStore.load("hermes:s-empty")).toBeNull();
+  });
+
   it("dry-run (execute=false) writes nothing", () => {
     seedStateDb(
       sourceDir,

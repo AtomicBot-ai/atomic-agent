@@ -80,6 +80,15 @@ export class OpenclawImporter {
     }
     for (const meta of metas) {
       const messages = this.deps.source.readMessages(meta);
+      if (messages.length === 0) {
+        items.push({
+          kind: "sessions",
+          source: meta.id,
+          status: "skipped",
+          reason: "no messages",
+        });
+        continue;
+      }
       const mapped = mapOpenclawSession(
         meta,
         messages,

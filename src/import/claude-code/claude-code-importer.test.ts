@@ -273,6 +273,24 @@ describe("ClaudeCodeImporter", () => {
     expect(limited.items.filter((i) => i.kind === "sessions")).toHaveLength(2);
   });
 
+  it("lists a transcript without messages as skipped, so counts add up", async () => {
+    const projectDir = join(sourceDir, "projects", "p");
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(
+      join(projectDir, "warmup.jsonl"),
+      line({ type: "ai-title", aiTitle: "nothing said yet" }),
+    );
+    const report = await buildImporter().run({
+      options: resolveClaudeCodeOptions({ exclude: ["skills", "memory", "mcp"] }),
+      execute: true,
+      overwrite: false,
+    });
+    expect(report.items).toEqual([
+      { kind: "sessions", source: "warmup", status: "skipped", reason: "no messages" },
+    ]);
+    expect(sessionStore.load("claude-code:warmup")).toBeNull();
+  });
+
   it("reports empty domains as skipped with a reason", async () => {
     const report = await buildImporter().run({
       options: resolveClaudeCodeOptions({ migrateSecrets: true }),
