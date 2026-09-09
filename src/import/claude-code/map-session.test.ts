@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { packConversation } from "../../session/conversation-turn.js";
 import {
   CLAUDE_CODE_SESSION_ID_PREFIX,
   mapClaudeCodeSession,
@@ -112,7 +113,7 @@ describe("mapClaudeCodeSession", () => {
     ]);
   });
 
-  it("keeps a thinking-only row as an empty reply with reasoning", () => {
+  it("keeps a trailing thinking-only row as an empty reply with reasoning", () => {
     const mapped = mapClaudeCodeSession(
       session({
         messages: [
@@ -128,6 +129,125 @@ describe("mapClaudeCodeSession", () => {
     expect(mapped.turns).toEqual([
       { kind: "assistant_reply", text: "", at: T0, reasoning: "interrupted" },
     ]);
+  });
+
+  it("carries a thinking-only row forward onto the next assistant row", () => {
+    const mapped = mapClaudeCodeSession(
+      session({
+        messages: [
+          {
+            role: "assistant",
+            blocks: [{ type: "thinking", thinking: "first thought" }],
+            atMs: T0,
+          },
+          {
+            role: "assistant",
+            blocks: [
+              { type: "thinking", thinking: "second thought" },
+              { type: "text", text: "answer" },
+            ],
+            atMs: T0 + 1,
+          },
+          {
+            role: "assistant",
+            blocks: [{ type: "thinking", thinking: "before a call" }],
+            atMs: T0 + 2,
+          },
+          {
+            role: "assistant",
+            blocks: [{ type: "toolUse", id: "t1", name: "Bash", args: {} }],
+            atMs: T0 + 3,
+          },
+        ],
+      }),
+      "/fallback",
+    );
+    expect(mapped.turns).toEqual([
+      {
+        kind: "assistant_reply",
+        text: "answer",
+        at: T0 + 1,
+        reasoning: "first thought\nsecond thought",
+      },
+      {
+        kind: "assistant_tool_call",
+        tool: "Bash",
+        args: {},
+        at: T0 + 3,
+        reasoning: "before a call",
+      },
+    ]);
+  });
+
+  it("surfaces an interrupted thought before the user message that cut it off", () => {
+    const mapped = mapClaudeCodeSession(
+      session({
+        messages: [
+          { role: "user", blocks: [{ type: "text", text: "go" }], atMs: T0 },
+          {
+            role: "assistant",
+            blocks: [{ type: "thinking", thinking: "interrupted" }],
+            atMs: T0 + 1,
+          },
+          { role: "user", blocks: [{ type: "text", text: "stop" }], atMs: T0 + 2 },
+          { role: "assistant", blocks: [{ type: "text", text: "ok" }], atMs: T0 + 3 },
+        ],
+      }),
+      "/fallback",
+    );
+    expect(mapped.turns).toEqual([
+      { kind: "user", text: "go", at: T0 },
+      { kind: "assistant_reply", text: "", at: T0 + 1, reasoning: "interrupted" },
+      { kind: "user", text: "stop", at: T0 + 2 },
+      { kind: "assistant_reply", text: "ok", at: T0 + 3 },
+    ]);
+  });
+
+  it("records macro-turn starts so the pairs cap segments reply-then-call tasks", () => {
+    const mapped = mapClaudeCodeSession(
+      session({
+        messages: [
+          { role: "user", blocks: [{ type: "text", text: "list files" }], atMs: T0 },
+          {
+            role: "assistant",
+            blocks: [
+              { type: "text", text: "running it" },
+              { type: "toolUse", id: "t1", name: "Bash", args: { command: "ls" } },
+            ],
+            atMs: T0 + 1,
+          },
+          {
+            role: "user",
+            blocks: [
+              { type: "toolResult", toolUseId: "t1", text: "README.md", isError: false },
+            ],
+            atMs: T0 + 2,
+          },
+          { role: "user", blocks: [{ type: "text", text: "delete them" }], atMs: T0 + 3 },
+          { role: "assistant", blocks: [{ type: "text", text: "done" }], atMs: T0 + 4 },
+        ],
+      }),
+      "/fallback",
+    );
+    expect(mapped.turns.map((t) => t.kind)).toEqual([
+      "user",
+      "assistant_reply",
+      "assistant_tool_call",
+      "tool_result",
+      "user",
+      "assistant_reply",
+    ]);
+    expect(mapped.macroTurnStarts).toEqual([4]);
+
+    const packed = packConversation(mapped.turns, 10_000, {
+      maxPairs: 1,
+      macroTurnStarts: mapped.macroTurnStarts,
+    });
+    expect(packed.visiblePairs).toBe(1);
+    expect(packed.droppedPairs).toBe(1);
+    expect(packed.visibleTurns).toEqual(mapped.turns.slice(4));
+    // Without the recorded starts the derived scan fuses both tasks.
+    expect(packConversation(mapped.turns, 10_000, { maxPairs: 1 }).droppedPairs).toBe(0);
   });
 
   it("falls back to the provided working dir", () => {

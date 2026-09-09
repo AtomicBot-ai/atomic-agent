@@ -5,6 +5,7 @@ import {
   userTurn,
   type ConversationTurn,
 } from "../../session/conversation-turn.js";
+import { macroTurnStartsFromTurns } from "../../session/macro-turn-starts.js";
 import type { SessionState } from "../../session/session-state.js";
 import type {
   ClaudeCodeBlock,
@@ -28,17 +29,30 @@ export const CLAUDE_CODE_SESSION_ID_PREFIX = "claude-code:";
  *    `thinking` blocks rides along); `toolUse` blocks → one
  *    `assistant_tool_call` each. A message with both emits the reply
  *    first, matching the order the blocks were produced in.
+ *  - a thinking-only assistant row is carried forward and prepended to
+ *    the reasoning of the next assistant row, so it never becomes an
+ *    empty reply mid-transcript. It surfaces as a reasoning-only reply
+ *    when a user message follows it (an interrupted turn) or when the
+ *    transcript ends on it.
+ *
+ * Macro-turn starts are recorded at every user row so the pairs cap
+ * segments the import like a native session.
  */
 export function mapClaudeCodeSession(
   session: ClaudeCodeSessionData,
   fallbackWorkingDir: string,
 ): SessionState {
-  const turns: ConversationTurn[] = [];
-  /** `tool_use` id → tool name, for naming the matching result rows. */
-  const toolNames = new Map<string, string>();
+  const state: MapState = {
+    turns: [],
+    toolNames: new Map(),
+    pendingReasoning: "",
+    pendingReasoningAt: 0,
+  };
   for (const message of session.messages) {
-    appendMessageTurns(turns, message, toolNames);
+    appendMessageTurns(state, message);
   }
+  flushPendingReasoning(state);
+  const { turns } = state;
 
   const createdAt =
     session.messages.length > 0 ? session.messages[0]!.atMs : 0;
@@ -59,6 +73,7 @@ export function mapClaudeCodeSession(
     worldSnapshot: null,
     stepCount: 0,
     turnCount,
+    macroTurnStarts: macroTurnStartsFromTurns(turns),
     turns,
     createdAt,
     updatedAt: lastMessageAt,
@@ -71,22 +86,32 @@ export function mapClaudeCodeSession(
   };
 }
 
-function appendMessageTurns(
-  turns: ConversationTurn[],
-  message: ClaudeCodeMessage,
-  toolNames: Map<string, string>,
-): void {
+interface MapState {
+  turns: ConversationTurn[];
+  /** `tool_use` id → tool name, for naming the matching result rows. */
+  toolNames: Map<string, string>;
+  /** Reasoning from thinking-only rows waiting for the row it belongs to. */
+  pendingReasoning: string;
+  pendingReasoningAt: number;
+}
+
+function appendMessageTurns(state: MapState, message: ClaudeCodeMessage): void {
   const at = message.atMs;
   if (message.role === "user") {
     const text = joinText(message.blocks);
-    if (text.length > 0) turns.push(userTurn(text, at));
+    // A user message after a thinking-only row means the turn was
+    // interrupted; the thought belongs before the interruption.
+    if (text.length > 0) {
+      flushPendingReasoning(state);
+      state.turns.push(userTurn(text, at));
+    }
     for (const block of message.blocks) {
       if (block.type !== "toolResult") continue;
-      turns.push(
+      state.turns.push(
         toolResultTurn({
           tool:
             (block.toolUseId !== null
-              ? toolNames.get(block.toolUseId)
+              ? state.toolNames.get(block.toolUseId)
               : undefined) ?? "unknown",
           status: block.isError ? "error" : "ok",
           summary: block.text,
@@ -96,14 +121,21 @@ function appendMessageTurns(
     }
     return;
   }
-  const reasoning = joinThinking(message.blocks);
+  const reasoning = joinNonEmpty(state.pendingReasoning, joinThinking(message.blocks));
   const text = joinText(message.blocks);
   const calls = message.blocks.filter(
     (b): b is Extract<ClaudeCodeBlock, { type: "toolUse" }> =>
       b.type === "toolUse",
   );
+  if (text.length === 0 && calls.length === 0) {
+    // Thinking-only row: hold the reasoning for the row that acts on it.
+    state.pendingReasoning = reasoning;
+    state.pendingReasoningAt = at;
+    return;
+  }
+  state.pendingReasoning = "";
   if (text.length > 0) {
-    turns.push(
+    state.turns.push(
       assistantReplyTurn(text, {
         at,
         ...(reasoning.length > 0 ? { reasoning } : {}),
@@ -111,8 +143,8 @@ function appendMessageTurns(
     );
   }
   calls.forEach((call, index) => {
-    if (call.id !== null) toolNames.set(call.id, call.name);
-    turns.push(
+    if (call.id !== null) state.toolNames.set(call.id, call.name);
+    state.turns.push(
       assistantToolCallTurn({
         tool: call.name,
         args: call.args,
@@ -125,11 +157,28 @@ function appendMessageTurns(
       }),
     );
   });
-  if (text.length === 0 && calls.length === 0 && reasoning.length > 0) {
-    // A thinking-only row (interrupted turn): keep the reasoning rather
-    // than dropping the message whole.
-    turns.push(assistantReplyTurn("", { at, reasoning }));
-  }
+}
+
+/**
+ * Surface held reasoning as a reasoning-only reply. The TUI renders an
+ * empty reply that carries reasoning as a reasoning block, so nothing
+ * the model thought is lost when it never got to act on it.
+ */
+function flushPendingReasoning(state: MapState): void {
+  if (state.pendingReasoning.length === 0) return;
+  state.turns.push(
+    assistantReplyTurn("", {
+      at: state.pendingReasoningAt,
+      reasoning: state.pendingReasoning,
+    }),
+  );
+  state.pendingReasoning = "";
+}
+
+function joinNonEmpty(first: string, second: string): string {
+  if (first.length === 0) return second;
+  if (second.length === 0) return first;
+  return `${first}\n${second}`;
 }
 
 function joinText(blocks: readonly ClaudeCodeBlock[]): string {
