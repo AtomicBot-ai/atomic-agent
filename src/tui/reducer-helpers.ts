@@ -166,6 +166,9 @@ export function startNewRun(state: TuiState): TuiState {
     currentStep: 0,
     stepStartedAt: null,
     runStartedAt: now,
+    // The readout belongs to the turn that is starting, not the one
+    // that just ended.
+    fusionLiveWorkers: [],
     feed: [],
     reasoning: [],
     currentTurnToolSteps: 0,
@@ -206,7 +209,10 @@ export function finishTurn(
         ? "failed"
         : "cancelled"
       : "completed";
-  const next = withRunHistoryEntry(state, {
+  // A fan-out cannot outlive the turn that started it, so the readout
+  // goes with it — leaving it up would claim workers are still running.
+  const cleared = { ...state, fusionLiveWorkers: [] as TuiState["fusionLiveWorkers"] };
+  const next = withRunHistoryEntry(cleared, {
     outcome,
     reason,
     stepCount,

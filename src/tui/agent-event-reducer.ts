@@ -10,6 +10,7 @@ import {
   formatFusionWorkerLine,
   fusionWorkerLineColor,
 } from "./format-fusion-worker-line.js";
+import { reduceFusionLiveWorkers } from "./fusion-live-workers.js";
 import {
   appendChatMessage,
   appendFeed,
@@ -610,12 +611,20 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
       // its steps — the events are emitted in the parent's frame from
       // inside a worker session that has no step counter the operator
       // can see.
-      return appendFeed(state, {
-        kind: "runtime_info",
-        stepIndex: null,
-        line: formatFusionWorkerLine(event),
-        color: fusionWorkerLineColor(event),
-      });
+      return appendFeed(
+        {
+          ...state,
+          // The chat surface shows the fan-out while it runs; the feed
+          // keeps the history of it.
+          fusionLiveWorkers: reduceFusionLiveWorkers(state.fusionLiveWorkers, event),
+        },
+        {
+          kind: "runtime_info",
+          stepIndex: null,
+          line: formatFusionWorkerLine(event),
+          color: fusionWorkerLineColor(event),
+        },
+      );
     }
     case "loop_detected":
       // Deliberately not rendered: the loop detector's own `### notice`
