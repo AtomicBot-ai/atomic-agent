@@ -3,7 +3,8 @@ import {
   COMPOSIO_GUIDANCE,
   isComposioActive,
 } from "./composio-guidance.js";
-import { FUSION_GUIDANCE, isFusionActive } from "./fusion-guidance.js";
+import { buildFusionGuidance, isFusionActive } from "./fusion-guidance.js";
+import type { FusionMachineFacts } from "./fusion-machine-facts.js";
 import { formatSkillCatalogLine } from "../skills/skill-catalog.js";
 
 /**
@@ -94,6 +95,15 @@ export interface StablePrefixInput {
    * prefix byte-identical to the legacy output (KV-cache safe).
    */
   toolTransport?: ToolCallTransport;
+  /**
+   * What this machine serves fusion workers with — slot count and local
+   * model. Read only when the `### fusion` block renders at all, so a
+   * non-fusion install's prefix stays byte-identical whatever is passed
+   * here. Omitted, the block keeps its behavioural lines and states no
+   * numbers; see `fusion-machine-facts.ts` for why an unknown fact is
+   * left unsaid rather than guessed.
+   */
+  fusion?: FusionMachineFacts;
 }
 
 /**
@@ -255,7 +265,9 @@ export function buildStablePrefix(input: StablePrefixInput): string {
     caps,
     ``,
     ...(composioActive ? [`### integrations`, COMPOSIO_GUIDANCE, ``] : []),
-    ...(fusionActive ? [`### fusion`, FUSION_GUIDANCE, ``] : []),
+    ...(fusionActive
+      ? [`### fusion`, buildFusionGuidance(input.fusion), ``]
+      : []),
     `### instructions`,
     // The emission instructions are the one transport-dependent block.
     // Grammar links parse text-JSON (GBNF-constrained locally), so they

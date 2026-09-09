@@ -20,6 +20,7 @@ import type {
   BuiltPrompt,
   BuiltPromptTruncationFlags,
 } from "./build-prompt-types.js";
+import { resolveFusionMachineFacts } from "./fusion-machine-facts.js";
 import { buildStablePrefix } from "./stable-prefix.js";
 import { buildSessionSectionParts } from "./session-tail-sections.js";
 import { renderLoadedToolsSection } from "./render-loaded-tools.js";
@@ -130,6 +131,11 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
       ? undefined
       : input.profile?.reasoningSystemToken,
     maxParallelToolCalls: config.agent.maxParallelToolCalls,
+    // Only read when the `### fusion` block actually renders. Config
+    // values, so they move only when the operator writes the config
+    // file — the same event that already flips the fusion descriptor
+    // gate and drops the KV cache once.
+    fusion: resolveFusionMachineFacts(config),
     ...(turnFraming !== undefined
       ? { turnSystemOpen: turnFraming.systemOpen }
       : {}),
