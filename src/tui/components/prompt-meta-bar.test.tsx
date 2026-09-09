@@ -10,7 +10,7 @@ import { MouseTargetRegistry } from "../mouse/mouse-registry.js";
 import type { TuiAction } from "../tui-action.js";
 import type { TuiAppCallbacks } from "../tui-app.js";
 import type { TuiState } from "../tui-state.js";
-import { PromptMetaBar } from "./prompt-meta-bar.js";
+import { META_SLOT_SHRINK, PromptMetaBar } from "./prompt-meta-bar.js";
 import { PromptShell } from "./prompt-shell.js";
 import { ProviderOutageReadout } from "./provider-outage-readout.js";
 
@@ -215,6 +215,23 @@ const ROUTE = {
   model: "qwen3-30b-a3b-instruct",
 };
 
+/**
+ * The bar's right-hand group, at the width `tui-app` really gives it:
+ * the context readout and the mode chip, both `flexShrink={0}`, are
+ * about fifty columns the left half never sees. Rendering the row
+ * without them was measuring a bar with fifty columns of slack in it —
+ * so nothing on the left ever had to shrink, and every assertion below
+ * about *which* half gives way passed by having no pressure to resolve.
+ * (Measured: with these two null, making the readout's head shrinkable
+ * changed no frame at any width in this file.)
+ */
+const RIGHT_GROUP = (
+  <>
+    <Text>{"context [==      ] 1/20 tasks ·  6.2k/32.8k"}</Text>
+    <Text>{" default "}</Text>
+  </>
+);
+
 function renderMetaBarAt(
   columns: number,
   leftSlot: ReactElement | null,
@@ -227,7 +244,7 @@ function renderMetaBarAt(
       provider={ROUTE.provider}
       model={ROUTE.model}
       rightSlot={null}
-      contextSlot={null}
+      contextSlot={RIGHT_GROUP}
       modeSlot={null}
     />,
     {
@@ -250,10 +267,15 @@ const OUTAGE_LINE = `${OUTAGE_HEAD}${OUTAGE_TAIL}`;
 
 /**
  * The readout used to sit in a `flexShrink={0}` slot, so it took the
- * left end of the bar outright: at 160 columns the route was gone, and
- * at 110 the readout itself was cut away and the row carried nothing at
- * all. Both halves are checked at every width — the provider is exactly
- * what an operator looks left for when the link is down.
+ * left end of the bar outright and the whole route statement was pushed
+ * off it — the provider gone from exactly the place someone looks when
+ * the link is down. Both halves are checked at each width.
+ *
+ * `columns` here is the **composer's inner width**, not the terminal's:
+ * the rail and the frame take about forty columns, so a 160-column
+ * terminal renders this bar at 119. Every number below is a bar width,
+ * and the ladder they describe is the one measured live under a PTY
+ * against a provider that kills the socket mid-stream.
  */
 describe("the meta bar while the provider is down", () => {
   const readout = (
@@ -264,39 +286,73 @@ describe("the meta bar while the provider is down", () => {
     />
   );
 
-  it.each([80, 100, 110, 160])("keeps the route at %i columns", (columns) => {
-    const frame = renderMetaBarAt(columns, readout).join("\n");
-    // Backend word, provider and model all still on the row. Below ~110
-    // the last two lose characters — the row simply needs more columns
-    // than the terminal has — but the route reads as a route.
-    expect(frame).toContain("custom");
-    expect(frame).toContain("llama.c");
-    expect(frame).toContain("qwen3-30b");
+  it.each([119, 130, 160, 200])(
+    "keeps the route legible at %i columns",
+    (columns) => {
+      // The backend word whole, and enough of the provider and the model
+      // to name them.
+      const frame = renderMetaBarAt(columns, readout).join("\n");
+      expect(frame).toContain("● custom");
+      expect(frame).toContain("llam");
+      expect(frame).toContain("qwen3-30b");
+    },
+  );
+
+  it.each([90, 110])(
+    "still names the backend at %i columns, where the model cannot fit",
+    (columns) => {
+      // The readout's numbers win this trade — the head is whole at both
+      // — but the row is not empty the way it was: the backend word is
+      // still there, which is what says *which* link is down.
+      const frame = renderMetaBarAt(columns, readout).join("\n");
+      expect(frame).toContain("● c");
+    },
+  );
+
+  it.each([140, 160, 200])("carries the route whole at %i columns", (columns) => {
+    expect(renderMetaBarAt(columns, readout).join("\n")).toContain(
+      "● custom · llama.cpp · qwen3-30b-a3b-instruct",
+    );
   });
 
-  it.each([80, 100, 110, 160])(
+  it.each([90, 110, 119, 130, 160])(
     "keeps the readout's numbers at %i columns",
     (columns) => {
       // `waiting` alone says the link is down, which the colour already
       // said; the counter is what says the wait is still progressing
-      // rather than hung. It is in the head, which does not shrink.
+      // rather than hung. It is in the head, which does not shrink — and
+      // this is the assertion that says so, so it has to run on a row
+      // that is actually under pressure. It is: at 110 the model name is
+      // already losing characters to keep this whole.
       const frame = renderMetaBarAt(columns, readout).join("\n");
       expect(frame).toContain(OUTAGE_HEAD);
     },
   );
 
+  it("degrades to the head alone before it gives up the head", () => {
+    // 75 columns is past what the row can carry: the head is clipped by
+    // the bar's own `overflow="hidden"` rather than by any shrink, and
+    // what survives is still the front of the state word. Recorded
+    // rather than wished away — "never shrinks" is a shrink-order claim,
+    // not a promise about a row narrower than one statement.
+    const frame = renderMetaBarAt(75, readout).join("\n");
+    expect(frame).toContain("waiting for provide");
+    expect(frame).not.toContain("custom");
+  });
+
   it("gives the reason the columns nothing else wants", () => {
     // The tail grows from nothing into the leftovers, so it appears
     // exactly when the row can afford it and never at the route's
-    // expense.
-    expect(renderMetaBarAt(160, readout).join("\n")).toContain(OUTAGE_LINE);
-    expect(renderMetaBarAt(80, readout).join("\n")).not.toContain(
+    // expense: not at 119, where the route is still losing characters,
+    // and whole once the route is whole with room to spare.
+    expect(renderMetaBarAt(200, readout).join("\n")).toContain(OUTAGE_LINE);
+    expect(renderMetaBarAt(119, readout).join("\n")).not.toContain(
       "connection dropped",
     );
   });
 
-  it("carries both statements whole at 160 columns", () => {
-    const frame = renderMetaBarAt(160, readout).join("\n");
+  it("carries both statements whole at 200 columns", () => {
+    const frame = renderMetaBarAt(200, readout).join("\n");
     expect(frame).toContain(OUTAGE_LINE);
     expect(frame).toContain("custom · llama.cpp · qwen3-30b-a3b-instruct");
   });
@@ -304,19 +360,46 @@ describe("the meta bar while the provider is down", () => {
   it("does not open a gap between the reason and the route", () => {
     // The tail is capped at its own text: growing past it would leave a
     // run of blanks in front of the separator.
-    expect(renderMetaBarAt(160, readout).join("\n")).toContain(
+    expect(renderMetaBarAt(200, readout).join("\n")).toContain(
       "mid-reply · ● custom",
     );
   });
 
-  it.each([80, 100, 110, 160])("stays one row tall at %i columns", (columns) => {
-    // Ink wraps rather than clips, and a second line here would push the
-    // composer's bottom border down.
-    const lines = renderMetaBarAt(columns, readout);
-    // `paddingY={1}` — one blank, the row, one blank.
-    expect(lines).toHaveLength(3);
-    for (const line of lines) expect(line.length).toBeLessThanOrEqual(columns);
-  });
+  it.each([75, 90, 110, 119, 130, 160, 200])(
+    "stays one row tall at %i columns",
+    (columns) => {
+      // Ink wraps rather than clips, and a second line here would push
+      // the composer's bottom border down.
+      const lines = renderMetaBarAt(columns, readout);
+      // `paddingY={1}` — one blank, the row, one blank.
+      expect(lines).toHaveLength(3);
+      for (const line of lines) expect(line.length).toBeLessThanOrEqual(columns);
+    },
+  );
+
+  it.each([75, 90, 110, 119, 130, 160, 200])(
+    "stays one row tall through the other two phases at %i columns",
+    (columns) => {
+      // A retry carries no reason at all, and a given-up badge is a
+      // different head with a different colour; neither may wrap either.
+      for (const slot of [
+        <ProviderOutageReadout
+          head="retrying provider (attempt 2) — 8s"
+          tail={null}
+          givenUp={false}
+        />,
+        <ProviderOutageReadout
+          head="provider unreachable"
+          tail=" — no connection"
+          givenUp
+        />,
+      ]) {
+        const lines = renderMetaBarAt(columns, slot);
+        expect(lines).toHaveLength(3);
+        for (const line of lines) expect(line.length).toBeLessThanOrEqual(columns);
+      }
+    },
+  );
 
   it("leaves a short composer notice next to the route", () => {
     // The other slot: it shrinks the ordinary way and must not be padded
@@ -327,6 +410,24 @@ describe("the meta bar while the provider is down", () => {
     expect(renderMetaBarAt(160, notice).join("\n")).toContain(
       "saved · ● custom",
     );
+  });
+
+  it("makes a long composer notice yield to the route", () => {
+    // `META_SLOT_SHRINK`, the reason the slot is no longer `flexShrink={0}`:
+    // a notice that kept its own width took the left end of the bar and
+    // pushed the route off it, which is the same failure the outage
+    // readout had. The notice gives up characters; the model name still
+    // reads.
+    const notice = (
+      <Box flexShrink={META_SLOT_SHRINK} minWidth={0}>
+        <Text wrap="truncate">
+          saved settings to ~/.atomic-agent/config.json
+        </Text>
+      </Box>
+    );
+    const frame = renderMetaBarAt(110, notice).join("\n");
+    expect(frame).toContain("qwen3-30b");
+    expect(frame).not.toContain("config.json");
   });
 
   it("opens the LLM pane when the readout is clicked", async () => {

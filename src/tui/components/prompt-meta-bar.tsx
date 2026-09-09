@@ -225,13 +225,15 @@ function MetaLeft({
       overflow="hidden"
     >
       {/*
-        Straight into the row, not inside a group box of its own. Yoga
-        only honours `flexShrink={0}` for the direct items of the line it
-        is shrinking: nested one level down, the outage readout's rigid
-        head was squeezed anyway and lost the very counter it exists to
-        protect (measured at composer width 119). Flat, the head sits
-        next to the backend word as another unshrinkable item and the
-        reason after it is what gives way.
+        Straight into the row, not inside a group box of its own. A
+        rigid item can only defend its columns on the line that is doing
+        the shrinking: nested one level down, the outage readout's
+        `flexShrink={0}` head sat inside a group that had itself shrunk
+        below the width of its children, and the `overflow="hidden"`
+        below clipped the very counter the head exists to protect
+        (measured at bar width 100 — see `prompt-meta-bar.test.tsx`).
+        Flat, the head sits next to the backend word as another
+        unshrinkable item and the reason after it is what gives way.
       */}
       {leftSlot}
       {leftSlot && hasRoute ? (

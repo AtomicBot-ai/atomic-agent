@@ -178,6 +178,13 @@ two app restarts and a fresh session — with nothing on screen to say the link 
      entry, assistant text, half-parsed tool calls) — otherwise the retry's reasoning is spliced
      onto the tail of the attempt whose socket died.
    - given up — the row stays `provider unreachable — <reason>` until a turn actually succeeds.
+   **A live wait belongs to a running turn and ends with it.** `turn_finished` clears a `parked` or
+   `retrying` outage whichever way the turn ended — Esc during the backoff (the feed line says
+   "· Esc stops") and a turn stopped at its step ceiling included. Left standing it counted a wait
+   nothing was waiting for, and the next turn's first `step_started` read it as the parked step
+   going back on the wire: a healthy turn labelled `retrying provider (attempt 1)`, with that
+   step's streamed reply wiped at every step boundary. Only `givenUp` survives the end of a turn,
+   because it is past tense on purpose.
    The reason is humanised in the TUI only (`terminated` / `socket hang up` / `other side closed` →
    `connection dropped mid-reply`, `fetch failed` → `no connection`); the runtime classifier keeps
    the raw wording, which is what the logs and the trace are matched on.
@@ -185,12 +192,19 @@ two app restarts and a fresh session — with nothing on screen to say the link 
    because the counter is what says the wait is progressing rather than hung; its reason grows into
    whatever the route leaves over (`flexGrow` from a zero basis, not `flexShrink`: Yoga leaves an
    item at full width rather than shrink it by more than it has to give, and a shrinking reason
-   clipped the route off the row); and the while-a-turn-runs Enter hint is dropped outright while an
-   outage is live, since it is repeated verbatim in the hint strip under the composer and its ~19
-   columns are what let both statements be read at all. The context and mode chips keep their
-   `flexShrink={0}` — "at 60 the right-hand readout must survive intact" still holds. Clicking the
-   readout opens Manage › LLM. Below roughly 130 composer columns the route cannot be shown as well;
-   the readout's numbers win that trade. The context readout is not touched: it is driven by
+   clipped the route off the row); and the while-a-turn-runs Enter hint is dropped outright while a
+   wait is live, since its ~19 columns are what let both statements be read at all. That drop is
+   only safe because the hint strip's `⏎` chip is **essential** (`hotkey-chips.ts`): at `shed: 3` it
+   was itself dropped at every width up to 112 columns as soon as the composer held a draft, which
+   is exactly the state the hint is written for, and the two disappearances together left nothing
+   on screen saying what Enter would do. A `givenUp` badge does not take the hint with it — it is
+   past tense, twenty columns wide and has no counter to protect. The context and mode chips keep
+   their `flexShrink={0}` — "at 60 the right-hand readout must survive intact" still holds. Clicking
+   the readout opens Manage › LLM (verified under a PTY, not only in unit tests: the readout is a
+   Box, and Ink cannot nest one inside a `<Text>`). Measured against a bar carrying its real
+   right-hand group, the ladder is: the head is whole from about 90 bar columns, the model name
+   joins it around 119, the route is whole around 140 and the reason around 190. The readout's
+   numbers win every trade below those. The context readout is not touched: it is driven by
    `prompt_built` / `llm_completed`, and a parked turn produces neither.
 
 ### No-progress loop detection

@@ -40,13 +40,20 @@ export interface ProviderOutageReadoutProps {
  * progressing rather than hung, and it used to be the first thing to go
  * because the row shrank the readout as one blob.
  *
- * Two things were tried first and do not work, both measured at
- * composer width 119: a `minWidth` floor on a single readout box (Yoga
- * declined to shrink it at all and clipped the route off the row), and
- * this same head/tail pair nested inside a shrinking group box (the
- * head was squeezed anyway — `flexShrink={0}` is only honoured for the
- * direct items of the line being shrunk). Hence the fragment: these two
- * boxes are siblings of the backend word, not children of a slot.
+ * Two things were tried first and do not work, both re-measured against
+ * a bar carrying its real right-hand group (`prompt-meta-bar.test.tsx`):
+ * a `minWidth` floor on a single readout box — the floor held the
+ * readout at its full 60 columns and the route was clipped off the row
+ * instead (bar width 100) — and this same head/tail pair nested inside
+ * one shrinking group box, where the head came out as `waiting for
+ * provid…` despite its `flexShrink={0}` (bar width 100). The second is
+ * worth stating precisely, because the obvious reading of it is wrong:
+ * Yoga does honour the nested `flexShrink={0}`, it just honours it
+ * *inside* a group that has itself already shrunk below the width of
+ * its two unshrinkable children — and `MetaLeft`'s `overflow="hidden"`
+ * then clips them. A rigid item can only defend its columns on the line
+ * that is doing the shrinking. Hence the fragment: these two boxes are
+ * siblings of the backend word, not children of a slot.
  *
  * `railWarn` while the wait is live, `railError` once it has run out —
  * both rail tokens, because this lands on the rail's ground and the
