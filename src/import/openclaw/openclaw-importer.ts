@@ -7,7 +7,11 @@ import {
   type ImportReport,
 } from "../import-report.js";
 import { reconcileImportedSession } from "../reconcile-session.js";
-import type { OpenclawSource } from "./openclaw-source.js";
+import {
+  OPENCLAW_DEFAULT_AGENT,
+  type OpenclawSessionMeta,
+  type OpenclawSource,
+} from "./openclaw-source.js";
 import type { OpenclawOptionId } from "./import-options.js";
 import { mapOpenclawCronJob } from "./map-cron.js";
 import { mapOpenclawSession } from "./map-session.js";
@@ -31,8 +35,14 @@ export interface OpenclawRunOptions {
   execute: boolean;
   /** Overwrite differing destinations instead of flagging a conflict. */
   overwrite: boolean;
-  /** Cap on the number of sessions processed (newest first). */
+  /** Cap on the number of sessions processed (newest first, across agents). */
   limit?: number;
+  /**
+   * Agents whose sessions are imported. Unset means the source's own
+   * agent (the CLI's `--agent`); pass `source.listAgents()` to take every
+   * agent on disk, which is what the TUI and the first-run flow do.
+   */
+  agents?: readonly string[];
 }
 
 /**
@@ -66,7 +76,8 @@ export class OpenclawImporter {
     items: ImportItemResult<OpenclawOptionId>[],
     options: OpenclawRunOptions,
   ): void {
-    if (!this.deps.source.hasSessions()) {
+    const sources = this.sessionSources(options).filter((s) => s.hasSessions());
+    if (sources.length === 0) {
       items.push({
         kind: "sessions",
         status: "skipped",
@@ -74,7 +85,13 @@ export class OpenclawImporter {
       });
       return;
     }
-    let metas = this.deps.source.listSessions();
+    // One newest-first list across every agent, so a limit keeps the
+    // most recent N overall rather than N per agent.
+    let metas = sources.flatMap((s) => s.listSessions());
+    metas.sort(
+      (a, b) =>
+        b.startedAtMs - a.startedAtMs || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+    );
     if (options.limit !== undefined && options.limit >= 0) {
       metas = metas.slice(0, options.limit);
     }
@@ -83,7 +100,7 @@ export class OpenclawImporter {
       if (messages.length === 0) {
         items.push({
           kind: "sessions",
-          source: meta.id,
+          source: sourceLabel(meta),
           status: "skipped",
           reason: "no messages",
         });
@@ -94,8 +111,17 @@ export class OpenclawImporter {
         messages,
         this.deps.workingDirFallback,
       );
-      items.push(this.reconcileSession(mapped, meta.id, options));
+      items.push(this.reconcileSession(mapped, sourceLabel(meta), options));
     }
+  }
+
+  /** The source's own agent, or one sibling reader per requested agent. */
+  private sessionSources(options: OpenclawRunOptions): OpenclawSource[] {
+    const own = this.deps.source;
+    if (!options.agents || options.agents.length === 0) return [own];
+    return options.agents.map((agent) =>
+      agent === own.agentName() ? own : own.forAgent(agent),
+    );
   }
 
   private reconcileSession(
@@ -183,3 +209,9 @@ export class OpenclawImporter {
   }
 }
 
+/** Report id for a session: bare for the default agent, `<agent>:<id>` otherwise. */
+function sourceLabel(meta: OpenclawSessionMeta): string {
+  return meta.agent === OPENCLAW_DEFAULT_AGENT
+    ? meta.id
+    : `${meta.agent}:${meta.id}`;
+}

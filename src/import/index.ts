@@ -54,6 +54,7 @@ export {
   OPENCLAW_SESSION_ID_PREFIX,
   resolveOpenclawOptions,
   mapOpenclawSession,
+  openclawSessionId,
   mapOpenclawCronJob,
 } from "./openclaw/index.js";
 export type {

@@ -1,6 +1,6 @@
 import type Database from "better-sqlite3";
 import { Database as DatabaseCtor } from "../../native/load-better-sqlite3.js";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 /**
@@ -10,7 +10,7 @@ import { join } from "node:path";
  * cron table). Everything downstream operates on the neutral types
  * exported here so the mappers never depend on OpenClaw's on-disk shape.
  *
- * Layout (default agent `main`):
+ * Layout (one subtree per agent; `main` is the default):
  *  - `agents/<agent>/sessions/<id>.jsonl`  — event-sourced transcript.
  *  - `agents/<agent>/sessions/<id>.trajectory.jsonl` — raw provider trace
  *    (skipped — not a user-visible transcript).
@@ -23,12 +23,17 @@ export class OpenclawSourceError extends Error {
   }
 }
 
-/** Default OpenClaw agent whose sessions are imported. */
+/**
+ * OpenClaw's default agent. Its sessions import under the bare
+ * `openclaw:<id>`; every other agent's under `openclaw:<agent>:<id>`.
+ */
 export const OPENCLAW_DEFAULT_AGENT = "main";
 
 /** Lightweight session header read from the leading `session` event. */
 export interface OpenclawSessionMeta {
   id: string;
+  /** The agent whose `sessions/` dir holds the log. */
+  agent: string;
   /** Absolute path to the `<id>.jsonl` runtime log. */
   file: string;
   cwd: string | null;
@@ -102,8 +107,42 @@ export class OpenclawSource {
     private readonly agent: string = OPENCLAW_DEFAULT_AGENT,
   ) {}
 
+  /** The agent this instance reads sessions and cron jobs for. */
+  agentName(): string {
+    return this.agent;
+  }
+
+  agentsDir(): string {
+    return join(this.sourceDir, "agents");
+  }
+
   sessionsDir(): string {
-    return join(this.sourceDir, "agents", this.agent, "sessions");
+    return join(this.agentsDir(), this.agent, "sessions");
+  }
+
+  /**
+   * Every agent on disk that has a `sessions/` dir, sorted by name. The
+   * TUI and the first-run flow import all of them; the CLI's `--agent`
+   * narrows to one.
+   */
+  listAgents(): string[] {
+    const root = this.agentsDir();
+    if (!existsSync(root)) return [];
+    const agents: string[] = [];
+    for (const entry of readdirSync(root).sort()) {
+      const sessions = join(root, entry, "sessions");
+      try {
+        if (statSync(sessions).isDirectory()) agents.push(entry);
+      } catch {
+        continue;
+      }
+    }
+    return agents;
+  }
+
+  /** A sibling reader over the same state dir for another agent. */
+  forAgent(agent: string): OpenclawSource {
+    return new OpenclawSource(this.sourceDir, agent);
   }
 
   stateDbPath(): string {
@@ -168,7 +207,7 @@ export class OpenclawSource {
       if (id !== null && model !== null) break;
     }
     if (id === null) return null;
-    return { id, file, cwd, model, startedAtMs };
+    return { id, agent: this.agent, file, cwd, model, startedAtMs };
   }
 
   /** Parse every `message` event of a session log into neutral messages. */

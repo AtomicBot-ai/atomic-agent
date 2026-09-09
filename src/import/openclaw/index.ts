@@ -26,6 +26,7 @@ export type {
 } from "./import-options.js";
 export {
   mapOpenclawSession,
+  openclawSessionId,
   OPENCLAW_SESSION_ID_PREFIX,
 } from "./map-session.js";
 export { mapOpenclawCronJob } from "./map-cron.js";

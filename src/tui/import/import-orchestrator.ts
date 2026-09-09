@@ -164,6 +164,7 @@ export class ImportOrchestrator {
         options,
         execute,
         overwrite: form.overwrite,
+        agents: source.listAgents(),
         ...(limit !== undefined ? { limit } : {}),
       });
       this.emitResult(report, execute, options);
@@ -273,7 +274,7 @@ export class ImportOrchestrator {
             taskStore: this.runtime.taskStore,
             maxAttempts: config.tasks.maxAttempts,
             workingDirFallback: process.cwd(),
-          }).run({ ...common, options });
+          }).run({ ...common, options, agents: source.listAgents() });
         } finally {
           source.close();
         }
