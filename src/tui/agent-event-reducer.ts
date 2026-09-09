@@ -27,6 +27,7 @@ import { reduceComposerSwitchAction } from "./composer-switch/composer-switch-re
 import { selectComposerBackend } from "./composer-switch/composer-switch-rows.js";
 import { reduceLocalModelsAction } from "./local-models/local-models-reducer.js";
 import { reduceTasksAction } from "./tasks/tasks-reducer.js";
+import { reduceSessionRailAction } from "./session-rail/session-rail-reducer.js";
 import { reduceSkillsAction } from "./skills/skills-reducer.js";
 import { reduceMemoryAction } from "./memory/memory-reducer.js";
 import { reduceMcpAction } from "./mcp/mcp-reducer.js";
@@ -57,6 +58,8 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
   if (localModelsHandled !== null) return localModelsHandled;
   const tasksHandled = reduceTasksAction(state, action);
   if (tasksHandled !== null) return tasksHandled;
+  const sessionRailHandled = reduceSessionRailAction(state, action);
+  if (sessionRailHandled !== null) return sessionRailHandled;
   const skillsHandled = reduceSkillsAction(state, action);
   if (skillsHandled !== null) return skillsHandled;
   const memoryHandled = reduceMemoryAction(state, action);

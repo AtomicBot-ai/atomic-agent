@@ -7,6 +7,7 @@ import type { ComposerSwitchAction } from "./composer-switch/composer-switch-act
 import type { ContextMenuState } from "./context-menu/context-menu-state.js";
 import type { LocalModelsAction } from "./local-models/local-models-actions.js";
 import type { TasksAction } from "./tasks/tasks-actions.js";
+import type { SessionRailAction } from "./session-rail/session-rail-actions.js";
 import type { SkillsAction } from "./skills/skills-actions.js";
 import type { MemoryAction } from "./memory/memory-actions.js";
 import type { McpAction } from "./mcp/mcp-actions.js";
@@ -307,6 +308,7 @@ export type TuiAction =
   | ComposerSwitchAction
   | LocalModelsAction
   | TasksAction
+  | SessionRailAction
   | SkillsAction
   | MemoryAction
   | McpAction

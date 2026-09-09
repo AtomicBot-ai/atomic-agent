@@ -78,13 +78,27 @@ function stubRuntime(
   } as unknown as AgentRuntime;
 }
 
-function harness(stored: ReturnType<typeof blank>[], settleTurns = false) {
+function harness(
+  stored: ReturnType<typeof blank>[],
+  settleTurns = false,
+  order: string[] = [],
+) {
   const bus = makeTuiEventBus();
   const actions: TuiAction[] = [];
   bus.subscribe((a) => actions.push(a));
+  // The rail's manual order, held in memory instead of the developer's
+  // config.json; `written` is every snapshot the orchestrator persisted.
+  const written: string[][] = [];
   const orchestrator = new ChatOrchestrator(stubRuntime(stored, settleTurns), bus, {
     maxSteps: 5,
     llamaUrl: "http://127.0.0.1:8080", readGateFacts: cloudGateFacts,
+    sessionRailOrder: {
+      read: () => order,
+      write: (next) => {
+        order = [...next];
+        written.push([...next]);
+      },
+    },
   });
   const rail = (): readonly SessionPickerEntry[] => {
     for (let i = actions.length - 1; i >= 0; i -= 1) {
@@ -100,7 +114,7 @@ function harness(stored: ReturnType<typeof blank>[], settleTurns = false) {
     }
     return [];
   };
-  return { orchestrator, rail, picker, actions };
+  return { orchestrator, rail, picker, actions, written };
 }
 
 describe("rail session list", () => {
@@ -220,5 +234,67 @@ describe("rail session list — steering", () => {
     orchestrator.newSession();
     orchestrator.steerMessage("opening line");
     expect(rail()[0]?.preview).toBe("opening line");
+  });
+});
+
+describe("rail session list — manual order", () => {
+  it("follows tui.sessionRail.order once the operator has arranged the rail", () => {
+    const stored = [
+      spokenTo("s-3", "third"),
+      spokenTo("s-2", "second"),
+      spokenTo("s-1", "first"),
+    ];
+    const { orchestrator, rail } = harness(stored, false, ["s-1", "s-3", "s-2"]);
+    orchestrator.refreshRecentSessions();
+    expect(rail().map((e) => e.sessionId)).toEqual(["s-1", "s-3", "s-2"]);
+  });
+
+  it("puts threads the order has never seen on top", () => {
+    const stored = [
+      spokenTo("s-new", "started after the arranging"),
+      spokenTo("s-2", "second"),
+      spokenTo("s-1", "first"),
+    ];
+    const { orchestrator, rail } = harness(stored, false, ["s-1", "s-2"]);
+    orchestrator.refreshRecentSessions();
+    expect(rail().map((e) => e.sessionId)).toEqual(["s-new", "s-1", "s-2"]);
+  });
+
+  it("keeps the first-prompt stand-in on top of an arranged list", () => {
+    const stored = [spokenTo("s-2", "second"), spokenTo("s-1", "first")];
+    const { orchestrator, rail } = harness(stored, false, ["s-1", "s-2"]);
+    orchestrator.newSession();
+    orchestrator.sendMessage("brand new thread");
+    expect(rail().map((e) => e.sessionId)).toEqual(["s-new-1", "s-1", "s-2"]);
+  });
+
+  it("moveSession snapshots the displayed list with the row on its new slot, then re-emits", () => {
+    const stored = [
+      spokenTo("s-3", "third"),
+      spokenTo("s-2", "second"),
+      spokenTo("s-1", "first"),
+    ];
+    const { orchestrator, rail, written } = harness(stored);
+    orchestrator.refreshRecentSessions();
+    // Recency until touched: nothing has been written yet.
+    expect(written).toEqual([]);
+    orchestrator.moveSession("s-1", 0);
+    expect(written).toEqual([["s-1", "s-3", "s-2"]]);
+    expect(rail().map((e) => e.sessionId)).toEqual(["s-1", "s-3", "s-2"]);
+    orchestrator.moveSession("s-3", 2);
+    expect(written.at(-1)).toEqual(["s-1", "s-2", "s-3"]);
+    expect(rail().map((e) => e.sessionId)).toEqual(["s-1", "s-2", "s-3"]);
+  });
+
+  it("writes nothing for a move that changes nothing or names no row", () => {
+    const stored = [spokenTo("s-2", "second"), spokenTo("s-1", "first")];
+    const { orchestrator, written, actions } = harness(stored);
+    orchestrator.refreshRecentSessions();
+    const emitted = actions.length;
+    orchestrator.moveSession("s-2", 0);
+    orchestrator.moveSession("s-2", -4);
+    orchestrator.moveSession("s-ghost", 1);
+    expect(written).toEqual([]);
+    expect(actions.length).toBe(emitted);
   });
 });

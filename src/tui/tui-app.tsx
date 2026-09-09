@@ -237,6 +237,12 @@ export interface TuiAppCallbacks {
   onSessionPickerRequested?(): void;
   /** Ask the orchestrator to swap to an existing persisted session. */
   onSessionSwitchRequested?(sessionId: string): void;
+  /**
+   * Put a rail session on another slot (Shift+↑/↓ or a row drag).
+   * `toIndex` indexes the list as displayed; the host persists the
+   * resulting order and re-emits `recent_sessions_updated`.
+   */
+  onSessionMoveRequested?(sessionId: string, toIndex: number): void;
   /** Ask the orchestrator to start a fresh session. */
   onSessionNewRequested?(): void;
   /** Ask the orchestrator to dump the current user profile into the chat log. */
@@ -1828,6 +1834,7 @@ export function TuiApp({
             maxTaskRows={sidebarRows.tasks}
             sessions={state.recentSessions}
             sessionsCursor={state.sidebarCursor}
+            sessionDrag={state.sidebarDrag}
             currentSessionId={state.session.sessionId}
             tasks={selectSidebarTasks(state.tasksPanel.rows)}
             runningTaskCount={countRunningTasks(state.tasksPanel.rows)}

@@ -46,6 +46,11 @@ import { FallbackOrchestrator } from "./llm-panel/fallback/fallback-orchestrator
 import { TuiTelegramOrchestrator } from "./telegram/tui-telegram-orchestrator.js";
 import { PrivacyOrchestrator } from "./privacy/privacy-orchestrator.js";
 import { IntegrationsOrchestrator } from "./integrations/integrations-orchestrator.js";
+import {
+  SessionRailOrchestrator,
+  configSessionRailOrderStore,
+  type SessionRailOrderStore,
+} from "./session-rail/index.js";
 import type { TuiEventBus } from "./tui-app.js";
 import { formatAgentErrorForChat } from "./format-agent-error-for-chat.js";
 import {
@@ -88,6 +93,12 @@ export interface ChatOrchestratorOptions {
    * `~/.atomic-agent` state.
    */
   readGateFacts?: () => LocalTurnGateFacts;
+  /**
+   * Where the rail's manual session order is read from and written to.
+   * Injectable for the same reason as `readGateFacts`; the default is
+   * `tui.sessionRail.order` in the user's config file.
+   */
+  sessionRailOrder?: SessionRailOrderStore;
 }
 
 /** Multiline text for the chat transcript (`/memory`); feed still gets `runtime_info` lines. */
@@ -197,6 +208,7 @@ export class ChatOrchestrator {
   public readonly telegram: TuiTelegramOrchestrator;
   public readonly privacy: PrivacyOrchestrator;
   public readonly integrations: IntegrationsOrchestrator;
+  private readonly sessionRail: SessionRailOrchestrator;
 
   constructor(
     private readonly runtime: AgentRuntime,
@@ -239,6 +251,10 @@ export class ChatOrchestrator {
     // The hub drives Telegram through its existing orchestrator rather
     // than reimplementing pairing / restart / enable.
     this.integrations = new IntegrationsOrchestrator(runtime, bus, this.telegram);
+    this.sessionRail = new SessionRailOrchestrator(
+      options.sessionRailOrder ?? configSessionRailOrderStore,
+      () => this.refreshRecentSessions(),
+    );
     // Tap the bus rather than the runtime handler: what the reducer was
     // offered is exactly what a switch-back may need to replay, session
     // tags included. `record` no-ops for sessions without a running
@@ -434,7 +450,7 @@ export class ChatOrchestrator {
       .filter((state) => hasFirstPrompt(state))
       .map((s) => toPickerEntry(s))
       .slice(0, RAIL_SESSION_LIMIT);
-    if (this.pendingRows.size === 0) return stored;
+    if (this.pendingRows.size === 0) return this.sessionRail.arrange(stored);
     const storedIds = new Set(stored.map((entry) => entry.sessionId));
     const pending: SessionPickerEntry[] = [];
     for (const [sessionId, entry] of this.pendingRows) {
@@ -448,7 +464,17 @@ export class ChatOrchestrator {
     }
     // Newest stand-in first, matching the store's recency order.
     pending.reverse();
-    return [...pending, ...stored];
+    // The manual order (if any) goes over the whole list: stand-ins are
+    // ids the order has never seen, so they stay on top.
+    return this.sessionRail.arrange([...pending, ...stored]);
+  }
+
+  /**
+   * Shift+↑/↓ or a row drag in the rail: put `sessionId` on slot
+   * `toIndex` of the list as displayed, remember the order, re-emit.
+   */
+  moveSession(sessionId: string, toIndex: number): void {
+    this.sessionRail.moveSession(sessionId, toIndex);
   }
 
   /**
