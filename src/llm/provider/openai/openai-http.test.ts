@@ -356,6 +356,195 @@ describe("openAiStartStream", () => {
   });
 });
 
+describe("credit-limit (402) recovery", () => {
+  /** The body OpenRouter actually sent in the reported session. */
+  const CREDIT_BODY =
+    "This request requires more credits, or fewer max_tokens. " +
+    "You requested up to 65536 tokens, but can only afford 45822.";
+
+  function sentBody(fetchImpl: ReturnType<typeof vi.fn>, call: number) {
+    const init = fetchImpl.mock.calls[call]?.[1] as RequestInit | undefined;
+    return JSON.parse(String(init?.body)) as Record<string, unknown>;
+  }
+
+  function collectingLogger() {
+    const warnings: Array<{ message: string; context?: Record<string, unknown> }> = [];
+    return {
+      warnings,
+      warn(message: string, context?: Record<string, unknown>) {
+        warnings.push({ message, ...(context ? { context } : {}) });
+      },
+    };
+  }
+
+  it("retries once with a ceiling the balance covers and succeeds", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(errorResponse(402, CREDIT_BODY))
+      .mockResolvedValueOnce(jsonResponse({ ok: true }));
+    const logger = collectingLogger();
+    const result = await openAiPostJson(
+      { ...depsWith(fetchImpl as unknown as typeof fetch), logger },
+      "/v1/chat/completions",
+      { model: "m", max_tokens: 65536 },
+      {},
+    );
+    expect(result).toEqual({ ok: true });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(sentBody(fetchImpl, 0).max_tokens).toBe(65536);
+    const retried = sentBody(fetchImpl, 1);
+    // Strictly below what the provider said the balance covers, and the
+    // rest of the request is untouched.
+    expect(retried.max_tokens).toBeLessThan(45822);
+    expect(retried.max_tokens).toBeGreaterThanOrEqual(1024);
+    expect(retried.model).toBe("m");
+  });
+
+  it("surfaces a second 402 instead of whittling the ceiling down again", async () => {
+    const fetchImpl = vi.fn(async () => errorResponse(402, CREDIT_BODY));
+    const logger = collectingLogger();
+    const err = await openAiPostJson(
+      { ...depsWith(fetchImpl as unknown as typeof fetch), logger },
+      "/x",
+      { max_tokens: 65536 },
+      {},
+    ).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(OpenAiHttpError);
+    expect((err as OpenAiHttpError).status).toBe(402);
+    expect((err as OpenAiHttpError).message).toContain("can only afford");
+    // Exactly one recovery attempt: the original plus one retry.
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(logger.warnings).toHaveLength(1);
+  });
+
+  it("does not retry a 402 whose body names no affordable ceiling", async () => {
+    const fetchImpl = vi.fn(async () => errorResponse(402, "Payment Required"));
+    const err = await openAiPostJson(
+      depsWith(fetchImpl as unknown as typeof fetch),
+      "/x",
+      { max_tokens: 65536 },
+      {},
+    ).catch((e: unknown) => e);
+    expect((err as OpenAiHttpError).status).toBe(402);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not retry when the affordable ceiling is unusably small", async () => {
+    const fetchImpl = vi.fn(async () =>
+      errorResponse(402, "You requested up to 65536 tokens, but can only afford 12."),
+    );
+    await expect(
+      openAiPostJson(
+        depsWith(fetchImpl as unknown as typeof fetch),
+        "/x",
+        { max_tokens: 65536 },
+        {},
+      ),
+    ).rejects.toBeInstanceOf(OpenAiHttpError);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not read the same wording on a non-402 status as a credit problem", async () => {
+    const fetchImpl = vi.fn(async () => errorResponse(400, CREDIT_BODY));
+    await expect(
+      openAiPostJson(
+        depsWith(fetchImpl as unknown as typeof fetch),
+        "/x",
+        { max_tokens: 65536 },
+        {},
+      ),
+    ).rejects.toBeInstanceOf(OpenAiHttpError);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("announces the retry with the provider and both ceilings", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(errorResponse(402, CREDIT_BODY))
+      .mockResolvedValueOnce(jsonResponse({ ok: true }));
+    const logger = collectingLogger();
+    await openAiPostJson(
+      { ...depsWith(fetchImpl as unknown as typeof fetch), logger },
+      "/x",
+      { max_tokens: 65536 },
+      {},
+    );
+    expect(logger.warnings).toHaveLength(1);
+    const { message, context } = logger.warnings[0]!;
+    expect(message).toContain("testprov");
+    expect(message).toContain("65536");
+    expect(message).toContain("45822");
+    expect(message.toLowerCase()).toContain("balance");
+    expect(context).toMatchObject({
+      provider: "testprov",
+      requestedMaxTokens: 65536,
+      affordableMaxTokens: 45822,
+    });
+  });
+
+  it("is never silent, even without a logger", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(errorResponse(402, CREDIT_BODY))
+      .mockResolvedValueOnce(jsonResponse({ ok: true }));
+    const stderr = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+    try {
+      await openAiPostJson(
+        depsWith(fetchImpl as unknown as typeof fetch),
+        "/x",
+        { max_tokens: 65536 },
+        {},
+      );
+      const written = stderr.mock.calls.map((c) => String(c[0])).join("");
+      expect(written).toContain("testprov");
+      expect(written).toContain("45822");
+    } finally {
+      stderr.mockRestore();
+    }
+  });
+
+  it("recovers the streaming open the same way", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(errorResponse(402, CREDIT_BODY))
+      .mockResolvedValueOnce(
+        new Response(new Blob(["data: {}\n\n"]).stream(), { status: 200 }),
+      );
+    const logger = collectingLogger();
+    const res = await openAiStartStream(
+      { ...depsWith(fetchImpl as unknown as typeof fetch), logger },
+      "/x",
+      { max_tokens: 65536, stream: true },
+      {},
+    );
+    expect(res.ok).toBe(true);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(sentBody(fetchImpl, 1).max_tokens).toBeLessThan(45822);
+    expect(logger.warnings).toHaveLength(1);
+  });
+
+  it("leaves the transient-failure retry budget alone", async () => {
+    // A 402 spends one attempt, exactly like any other non-retryable
+    // status; the recovery must not borrow from the 5xx budget.
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(errorResponse(402, CREDIT_BODY))
+      .mockResolvedValueOnce(errorResponse(500))
+      .mockResolvedValueOnce(jsonResponse({ ok: true }));
+    const logger = collectingLogger();
+    const result = await openAiPostJson(
+      { ...depsWith(fetchImpl as unknown as typeof fetch), logger },
+      "/x",
+      { max_tokens: 65536 },
+      {},
+    );
+    expect(result).toEqual({ ok: true });
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+  });
+});
+
 describe("humanizeOpenAiHttpError", () => {
   const mk = (
     status: number | null,
@@ -369,6 +558,8 @@ describe("humanizeOpenAiHttpError", () => {
     expect(humanizeOpenAiHttpError(mk(401))).toContain("rejected the API key (401)");
     expect(humanizeOpenAiHttpError(mk(403))).toContain("rejected the API key (403)");
     expect(humanizeOpenAiHttpError(mk(404))).toContain("model id or the base URL");
+    expect(humanizeOpenAiHttpError(mk(402))).toContain("lack of credit (402)");
+    expect(humanizeOpenAiHttpError(mk(402))).toContain("Top up the account");
     expect(humanizeOpenAiHttpError(mk(429))).toContain("rate-limiting this key (429)");
     expect(humanizeOpenAiHttpError(mk(500))).toContain("server trouble (500)");
     expect(humanizeOpenAiHttpError(mk(500))).toContain("not your setup");

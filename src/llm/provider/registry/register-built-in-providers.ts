@@ -65,6 +65,7 @@ export function registerBuiltInProviderKinds(): void {
       supportsParallelTools: entry.supportsTools ?? true,
       requestTimeoutMs: entry.requestTimeoutMs,
       extraBody: entry.extraBody,
+      logger: ctx.logger,
     });
   });
 
@@ -87,6 +88,7 @@ export function registerBuiltInProviderKinds(): void {
       requestTimeoutMs: entry.requestTimeoutMs,
       taggedToolCompatibility: "qwen",
       extraBody: entry.extraBody,
+      logger: ctx.logger,
     });
   });
 
@@ -101,6 +103,7 @@ export function registerBuiltInProviderKinds(): void {
       supportsVision: entry.supportsVision ?? true,
       supportsParallelTools: entry.supportsTools ?? true,
       requestTimeoutMs: entry.requestTimeoutMs,
+      logger: ctx.logger,
       httpReferer: OPENROUTER_APP_REFERER,
       xTitle: OPENROUTER_APP_TITLE,
       categories: OPENROUTER_APP_CATEGORIES,
@@ -118,6 +121,7 @@ export function registerBuiltInProviderKinds(): void {
       supportsVision: entry.supportsVision ?? true,
       supportsParallelTools: entry.supportsTools ?? true,
       requestTimeoutMs: entry.requestTimeoutMs,
+      logger: ctx.logger,
     });
   });
 
@@ -132,6 +136,7 @@ export function registerBuiltInProviderKinds(): void {
       supportsVision: entry.supportsVision ?? true,
       supportsParallelTools: entry.supportsTools ?? true,
       requestTimeoutMs: entry.requestTimeoutMs,
+      logger: ctx.logger,
     });
   });
 

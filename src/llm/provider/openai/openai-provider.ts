@@ -35,6 +35,7 @@ import { normaliseOpenAiChatResponse } from "./openai-normalise-response.js";
 import { normalizeOpenAiBaseUrl } from "./normalize-openai-base-url.js";
 import { describeImageViaOpenAi } from "./openai-describe-image.js";
 import { adaptQwenCompletionResult, adaptQwenTaggedToolResponse } from "./qwen-tagged-tool-response-adapter.js";
+import type { CreditLimitLogger } from "./plan-credit-limit-retry.js";
 
 export interface OpenAiProviderOptions {
   id: string;
@@ -63,6 +64,13 @@ export interface OpenAiProviderOptions {
    * this passthrough cannot override.
    */
   extraBody?: Record<string, unknown>;
+  /**
+   * Sink for the credit-limit retry warning (`plan-credit-limit-retry.ts`).
+   * Wired from the provider factory context so the notice lands wherever
+   * the rest of the runtime logs; without it the client falls back to a
+   * stderr line rather than recovering silently.
+   */
+  logger?: CreditLimitLogger;
 }
 
 export class OpenAiProvider implements LlmProvider {
@@ -106,6 +114,7 @@ export class OpenAiProvider implements LlmProvider {
       requestTimeoutMs: options.requestTimeoutMs ?? 600_000,
       fetchImpl: options.fetchImpl ?? fetch,
       label: options.id,
+      ...(options.logger ? { logger: options.logger } : {}),
     };
   }
 
