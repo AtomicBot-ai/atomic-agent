@@ -70,6 +70,14 @@ describe("applySessionRailOrder", () => {
     expect(ids(arranged)).toEqual(["s-old", "s-now", "s-mid", "s-import"]);
   });
 
+  it("keeps newcomers of the same age in the order they arrived", () => {
+    // A batch of imports written in one pass shares a timestamp; the
+    // list must not come out reversed.
+    const entries = [row("s-a", 2_000), row("s-b", 2_000), row("s-c", 2_000)];
+    const arranged = applySessionRailOrder(entries, ["s-keep"]);
+    expect(ids(arranged)).toEqual(["s-a", "s-b", "s-c"]);
+  });
+
   it("keeps several newcomers in their own recency order", () => {
     const entries = [row("s-a", 5_000), row("s-b", 1_500), row("s-keep", 2_000)];
     const arranged = applySessionRailOrder(entries, ["s-keep"]);
