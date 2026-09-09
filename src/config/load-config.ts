@@ -526,6 +526,9 @@ export function loadConfig(): AtomicAgentConfig {
       enabled: user.discord.enabled,
       ownerUserId: user.discord.ownerUserId,
     },
+    git: {
+      remoteSync: user.git.remoteSync,
+    },
     composio: {
       enabled: user.composio.enabled,
       apiKeyEnv: user.composio.apiKeyEnv,

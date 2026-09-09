@@ -861,6 +861,11 @@ export interface AtomicAgentConfig {
    */
   discord: DiscordConfig;
   /**
+   * Git remote-sync policy. Mirrors `UserConfigFile.git`. The GitHub
+   * token is not stored here — see `GitConfig`.
+   */
+  git: GitConfig;
+  /**
    * Composio integration. Mirrors `UserConfigFile.composio`. The API
    * key is not stored here — see `ComposioConfig`.
    */
@@ -1002,6 +1007,24 @@ export interface DiscordConfig {
    * unpaired — the channel refuses every message until it is set.
    */
   ownerUserId: string | null;
+}
+
+/**
+ * Git remote-sync policy. Added in config v52.
+ *
+ * The agent can drive a repository that never leaves the machine: with
+ * `remoteSync: false` (the default) every network git verb — `push`,
+ * `fetch`, `pull`, `clone`, `remote add` / `set-url` — is refused before
+ * any approval prompt, both through the dedicated `os.git.*` tools and
+ * through `os.shell.run`. Flipping it on lets the agent sync a
+ * repository with its remotes, each operation still going through the
+ * approval ladder. The GitHub token itself is **not** stored here — it
+ * lives in `<stateDir>/.env` as `GITHUB_TOKEN`, written by the
+ * Integrations hub, like every other credential.
+ */
+export interface GitConfig {
+  /** `false` keeps every repository local-only; the safe default. */
+  remoteSync: boolean;
 }
 
 /**
@@ -1730,6 +1753,12 @@ export interface UserConfigFile {
    */
   discord: DiscordConfig;
   /**
+   * Git remote-sync policy. Added in config v52. Older files are
+   * transparently upgraded with `{ remoteSync: false }`, which keeps
+   * every repository on this machine until the operator says otherwise.
+   */
+  git: GitConfig;
+  /**
    * Composio integration. Added in config v50. Older files are
    * transparently upgraded with the defaults below, which leave the
    * integration inert until a key is written to `<stateDir>/.env`.
@@ -1845,7 +1874,11 @@ export interface UserConfigFile {
 // v51: new `discord` block for the Discord remote-control channel.
 // Additive and inert by default — the channel is off, unpaired, and the
 // bot token lives in `<stateDir>/.env`, never here.
-export const USER_CONFIG_VERSION = 51;
+// v52: new `git` block carrying the remote-sync policy. Additive and
+// closed by default — `remoteSync: false` refuses every network git verb
+// so a repository the agent versions stays on this machine; the GitHub
+// token lives in `<stateDir>/.env`, never here.
+export const USER_CONFIG_VERSION = 52;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -1985,6 +2018,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   48,
   49,
   50,
+  51,
   USER_CONFIG_VERSION,
 ];
 
@@ -2277,6 +2311,11 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
     // would connect and then refuse every message, which looks broken.
     enabled: false,
     ownerUserId: null,
+  },
+  git: {
+    // Added in v52. Off by default: a repository the agent versions must
+    // not reach a remote until the operator deliberately opens the door.
+    remoteSync: false,
   },
   composio: {
     // Added in v50. `enabled: true` is safe because the key, not this
@@ -3497,6 +3536,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
   const telegram = (obj.telegram as Record<string, unknown> | undefined) ?? {};
   const composio = (obj.composio as Record<string, unknown> | undefined) ?? {};
   const discord = (obj.discord as Record<string, unknown> | undefined) ?? {};
+  const git = (obj.git as Record<string, unknown> | undefined) ?? {};
   const tui = (obj.tui as Record<string, unknown> | undefined) ?? {};
   const analytics =
     (obj.analytics as Record<string, unknown> | undefined) ?? {};
@@ -4294,6 +4334,12 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
       ownerUserId: parseNullableString(
         discord.ownerUserId,
         "discord.ownerUserId",
+      ),
+    },
+    git: {
+      remoteSync: parseBool(
+        git.remoteSync ?? USER_CONFIG_DEFAULTS.git.remoteSync,
+        "git.remoteSync",
       ),
     },
     composio: {
