@@ -223,7 +223,7 @@ describe("OpenclawImporter", () => {
     expect(taskStore.list({ limit: 100 })).toHaveLength(0);
   });
 
-  it("respects --limit on sessions (oldest first)", () => {
+  it("respects --limit on sessions, keeping the newest", () => {
     writeSession(
       sourceDir,
       "main",
@@ -239,6 +239,10 @@ describe("OpenclawImporter", () => {
       "2026-06-11T11:00:00.000Z",
     );
 
+    expect(
+      new OpenclawSource(sourceDir, "main").listSessions().map((m) => m.id),
+    ).toEqual(["gaia-new", "gaia-old"]);
+
     const report = buildImporter().run({
       options: ["sessions"],
       execute: true,
@@ -246,8 +250,8 @@ describe("OpenclawImporter", () => {
       limit: 1,
     });
     expect(report.summary.migrated).toBe(1);
-    expect(sessionStore.load("openclaw:gaia-old")).not.toBeNull();
-    expect(sessionStore.load("openclaw:gaia-new")).toBeNull();
+    expect(sessionStore.load("openclaw:gaia-new")).not.toBeNull();
+    expect(sessionStore.load("openclaw:gaia-old")).toBeNull();
   });
 
   it("skips sessions cleanly when the agent dir is absent", () => {

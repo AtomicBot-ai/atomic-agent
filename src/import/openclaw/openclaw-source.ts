@@ -119,8 +119,10 @@ export class OpenclawSource {
   }
 
   /**
-   * List session headers for the configured agent, ordered oldest-first.
-   * Only `<id>.jsonl` runtime logs are considered; `.trajectory.jsonl`
+   * List session headers for the configured agent, newest-first by the
+   * `session` event timestamp (id as the tiebreak), so a `limit` keeps
+   * the most recent N like every other source. Only `<id>.jsonl` runtime
+   * logs are considered; `.trajectory.jsonl`
    * (raw provider trace) and `.trajectory-path.json` pointers are skipped.
    * A file without a parseable `session` event is dropped.
    */
@@ -136,7 +138,7 @@ export class OpenclawSource {
       if (meta) metas.push(meta);
     }
     metas.sort((a, b) =>
-      a.startedAtMs - b.startedAtMs || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+      b.startedAtMs - a.startedAtMs || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
     );
     return metas;
   }

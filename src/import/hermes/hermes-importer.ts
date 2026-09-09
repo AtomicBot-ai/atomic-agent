@@ -38,7 +38,7 @@ export interface ImportRunOptions {
   execute: boolean;
   /** Overwrite differing destinations instead of flagging a conflict. */
   overwrite: boolean;
-  /** Cap on the number of sessions processed. */
+  /** Cap on the number of sessions processed (newest first). */
   limit?: number;
 }
 

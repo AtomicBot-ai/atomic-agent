@@ -310,18 +310,24 @@ describe("HermesImporter", () => {
     expect(taskStore.list({ limit: 100 })).toHaveLength(0);
   });
 
-  it("respects --limit on sessions", () => {
+  it("respects --limit on sessions, keeping the newest", () => {
     seedStateDb(
       sourceDir,
       [
         { id: "s-1", startedAt: 1_700_000_000 },
+        { id: "s-3", startedAt: 1_700_000_200 },
         { id: "s-2", startedAt: 1_700_000_100 },
       ],
       [
         { sessionId: "s-1", role: "user", content: "a" },
         { sessionId: "s-2", role: "user", content: "b" },
+        { sessionId: "s-3", role: "user", content: "c" },
       ],
     );
+    const source = new HermesSource(sourceDir);
+    sources.push(source);
+    expect(source.readSessions().map((s) => s.id)).toEqual(["s-3", "s-2", "s-1"]);
+
     const report = buildImporter().run({
       options: ["sessions"],
       execute: true,
@@ -329,8 +335,9 @@ describe("HermesImporter", () => {
       limit: 1,
     });
     expect(report.summary.migrated).toBe(1);
-    expect(sessionStore.load("hermes:s-1")).not.toBeNull();
+    expect(sessionStore.load("hermes:s-3")).not.toBeNull();
     expect(sessionStore.load("hermes:s-2")).toBeNull();
+    expect(sessionStore.load("hermes:s-1")).toBeNull();
   });
 
   describe("secrets", () => {
