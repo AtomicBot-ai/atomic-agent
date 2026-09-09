@@ -23,7 +23,11 @@
 
 import type { ToolDescriptor } from "./stable-prefix.js";
 
-/** The tool whose presence means the fan-out is available this boot. */
+/**
+ * The tool whose presence means the fan-out is available right now.
+ * Not "this boot": the runtime resolves the descriptor gate live, so
+ * the block appears and disappears with the effective run mode.
+ */
 export const FUSION_DELEGATE_TOOL = "fusion.delegate";
 
 /**

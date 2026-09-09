@@ -1732,7 +1732,39 @@ export async function createAgentRuntime(
       buildMcpToolDescriptors(mcpManager.listAllToolMeta()),
     );
   };
-  let effectiveToolDescriptors = rebuildToolDescriptorsFromMcp();
+  /**
+   * The descriptor list the loop reads, with a LIVE fusion gate.
+   *
+   * The gate cannot be a boot snapshot. `resolveCurrentRunMode()`
+   * changes answer the moment the operator switches the active provider
+   * or the stored mode — Manage → LLM writes the config file and resets
+   * the config cache in the same breath — and a list frozen at boot left
+   * the whole mode inert: an operator who started on local or cloud and
+   * switched into fusion got the mode's chrome, no `fusion.delegate`
+   * descriptor and no `### fusion` guidance, so the orchestrator never
+   * reached for the tool and fusion silently did nothing until a
+   * restart.
+   *
+   * Rebuilding is not free (it filters the whole catalog and re-merges
+   * the MCP descriptors), so the array is memoised on the gate: while
+   * the gate holds, every read returns the *same array identity* and the
+   * stable prefix stays byte-identical. When the gate flips the prefix
+   * legitimately changes once and that session's KV cache is dropped —
+   * exactly what installing a skill or live-adding an MCP server
+   * (`refreshMcp`) already costs, and for the same reason: the tool
+   * catalog changed, so the prefix must.
+   */
+  let cachedToolDescriptors = rebuildToolDescriptorsFromMcp();
+  let cachedFusionGate = resolveCurrentRunMode().effective === "fusion";
+  const rebuildToolDescriptors = (): readonly ToolDescriptor[] => {
+    cachedFusionGate = resolveCurrentRunMode().effective === "fusion";
+    cachedToolDescriptors = rebuildToolDescriptorsFromMcp();
+    return cachedToolDescriptors;
+  };
+  const effectiveToolDescriptors = (): readonly ToolDescriptor[] =>
+    (resolveCurrentRunMode().effective === "fusion") === cachedFusionGate
+      ? cachedToolDescriptors
+      : rebuildToolDescriptors();
   if (config.vision.enabled) {
     logger.info("vision provider configured", {
       provider: visionProvider?.name ?? "(none)",
@@ -2203,7 +2235,7 @@ export async function createAgentRuntime(
     // Mid-turn steering: the loop drains this at every step boundary.
     steeringInbox,
     ...(llmCompleteStream ? { llmCompleteStream } : {}),
-    toolDescriptors: effectiveToolDescriptors,
+    toolDescriptors: effectiveToolDescriptors(),
     capabilities,
     profile,
     contextWindow: resolveCatalogContextWindow,
@@ -2284,7 +2316,7 @@ export async function createAgentRuntime(
   });
   Object.defineProperty(loopDeps, "toolDescriptors", {
     enumerable: true,
-    get: () => effectiveToolDescriptors,
+    get: () => effectiveToolDescriptors(),
   });
   Object.defineProperty(loopDeps, "toolTransport", {
     enumerable: true,
@@ -2470,7 +2502,7 @@ export async function createAgentRuntime(
     const metas = mcpManager.listAllToolMeta();
     const rule = buildMcpToolNameRule(metas);
     grammar = applyMcpToolNameRule(baseGrammar, rule);
-    effectiveToolDescriptors = rebuildToolDescriptorsFromMcp();
+    rebuildToolDescriptors();
     logger.info("mcp: catalog refreshed", {
       servers: serverCount,
       tools: metas.length,
@@ -2843,33 +2875,37 @@ export async function createAgentRuntime(
     defaultListLimit: 20,
   });
 
-  // The orchestrator's fan-out. Registered when the resolver says fusion
-  // at boot — the same condition that puts the descriptor in the prompt
-  // — and the tool re-reads the mode on every call, so a provider switch
-  // mid-session degrades it to a refusal instead of a missing tool.
-  if (resolveCurrentRunMode().effective === "fusion") {
-    toolRegistry.register(
-      buildFusionDelegateTool({
-        runTurn: (session, userMessage, turnOptions) =>
-          runTurn(session, userMessage, turnOptions),
-        createEphemeralSession,
-        approvals,
-        slotManager,
-        resolveRunMode: resolveCurrentRunMode,
-        workerSupportsSlotAffinity: (providerId) =>
-          providerRegistry.getProvider(providerId)?.capabilities
-            .supportsSlotAffinity ?? false,
-        warmWorkerBackend: prepareLocalLink,
-        // The PARENT's id, explicitly: the hook these fire from runs
-        // under the worker's ALS frame, where the ambient session is a
-        // throwaway nobody is listening to.
-        emitEvent: emitAgentLoopEventFor,
-        workingDir,
-        outputCharCap: config.agent.batchToolResultCharCap,
-        logger,
-      }),
-    );
-  }
+  // The orchestrator's fan-out. Registered UNCONDITIONALLY: the tool
+  // re-reads `resolveRunMode()` on every call and refuses when fusion is
+  // not effective, which is the correct and only gate it needs. A boot
+  // gate here was worse than redundant — it made the tool unreachable
+  // for the rest of the process to anyone who switched into fusion
+  // mid-session, so the mode ran with its chip, its tint and its config
+  // and no way to delegate. What the model is *told* about still tracks
+  // the live mode: `effectiveToolDescriptors()` adds and drops the
+  // descriptor (and with it the `### fusion` guidance) as the resolver's
+  // answer changes.
+  toolRegistry.register(
+    buildFusionDelegateTool({
+      runTurn: (session, userMessage, turnOptions) =>
+        runTurn(session, userMessage, turnOptions),
+      createEphemeralSession,
+      approvals,
+      slotManager,
+      resolveRunMode: resolveCurrentRunMode,
+      workerSupportsSlotAffinity: (providerId) =>
+        providerRegistry.getProvider(providerId)?.capabilities
+          .supportsSlotAffinity ?? false,
+      warmWorkerBackend: prepareLocalLink,
+      // The PARENT's id, explicitly: the hook these fire from runs
+      // under the worker's ALS frame, where the ambient session is a
+      // throwaway nobody is listening to.
+      emitEvent: emitAgentLoopEventFor,
+      workingDir,
+      outputCharCap: config.agent.batchToolResultCharCap,
+      logger,
+    }),
+  );
 
   const scheduler =
     config.tasks.enabled && config.tasks.schedulerEnabled
@@ -3120,7 +3156,7 @@ export async function createAgentRuntime(
     mcpManager,
     providerRegistry,
     capabilities,
-    toolDescriptors: effectiveToolDescriptors,
+    toolDescriptors: effectiveToolDescriptors(),
     grammar,
     logger,
     metrics,
@@ -3151,6 +3187,14 @@ export async function createAgentRuntime(
   Object.defineProperty(runtime, "skillCatalog", {
     enumerable: true,
     get: () => skillCatalog,
+  });
+  // Same late binding as the loop's own getter: `/tools`, the sidecar
+  // and every host that reads the catalog off the runtime must see the
+  // fusion descriptor appear and disappear with the live run mode, not
+  // with whatever the mode was when bootstrap ran.
+  Object.defineProperty(runtime, "toolDescriptors", {
+    enumerable: true,
+    get: () => effectiveToolDescriptors(),
   });
 
   // Telegram remote-control channel. The channel is always constructed
