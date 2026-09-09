@@ -7,8 +7,10 @@ import { isPrimaryPress } from "../mouse/mouse-event.js";
 import { theme } from "../theme/theme.js";
 
 export interface ProviderOutageReadoutProps {
-  /** Already-formatted line from `formatProviderOutage`. */
-  text: string;
+  /** The state and its numbers, from `formatProviderOutageParts`. */
+  head: string;
+  /** The reason, or `null`. The half that gives up columns. */
+  tail: string | null;
   /** The wait budget ran out — the sticky, past-tense half. */
   givenUp: boolean;
   /** See `ComposerMetaControlsProps.mouseLayer`. */
@@ -31,6 +33,21 @@ export interface ProviderOutageReadoutProps {
  * meta bar as a self-contained element, which is why `MetaLeft` no
  * longer wraps its slot in a `<Text>` of its own.
  *
+ * **Two boxes, not one, and both go straight into the meta bar's row.**
+ * The head — `waiting for provider 12s/300s` — cannot shrink; the reason
+ * after it shrinks harder than anything in the route. That ordering is
+ * the point: the counter is what tells an operator the wait is
+ * progressing rather than hung, and it used to be the first thing to go
+ * because the row shrank the readout as one blob.
+ *
+ * Two things were tried first and do not work, both measured at
+ * composer width 119: a `minWidth` floor on a single readout box (Yoga
+ * declined to shrink it at all and clipped the route off the row), and
+ * this same head/tail pair nested inside a shrinking group box (the
+ * head was squeezed anyway — `flexShrink={0}` is only honoured for the
+ * direct items of the line being shrunk). Hence the fragment: these two
+ * boxes are siblings of the backend word, not children of a slot.
+ *
  * `railWarn` while the wait is live, `railError` once it has run out —
  * both rail tokens, because this lands on the rail's ground and the
  * page-side `warn` / `error` pair is picked to be read on the terminal's
@@ -39,7 +56,8 @@ export interface ProviderOutageReadoutProps {
  * point of the park is that it usually comes back.
  */
 export function ProviderOutageReadout({
-  text,
+  head,
+  tail,
   givenUp,
   mouseLayer,
 }: ProviderOutageReadoutProps): ReactElement {
@@ -52,14 +70,42 @@ export function ProviderOutageReadout({
     },
     mouseLayer === undefined ? {} : { layer: mouseLayer },
   );
+  const color = givenUp ? theme.colors.railError : theme.colors.railWarn;
   return (
-    <Box ref={ref} flexShrink={1} minWidth={0}>
-      <Text
-        color={givenUp ? theme.colors.railError : theme.colors.railWarn}
-        wrap="truncate"
-      >
-        {text}
-      </Text>
-    </Box>
+    <>
+      {/*
+        The click target rides the head, which is the half that is always
+        on screen — a target on a reason that has been truncated to
+        nothing is a target nobody can hit.
+      */}
+      <Box ref={ref} flexShrink={0}>
+        <Text color={color} wrap="truncate">
+          {head}
+        </Text>
+      </Box>
+      {tail === null ? null : (
+        <Box
+          // Grows into whatever the head, the separator and the route
+          // leave over, from a basis of zero — never shrinks. Yoga does
+          // not resolve a shrink whose share exceeds the item's own
+          // width: at composer width 119 a `flexShrink` tail simply
+          // refused to give up its 31 columns and the route was clipped
+          // off the row instead. Growing from nothing asks the same
+          // question the other way round, and asks it in the direction
+          // Yoga answers reliably — the reason appears only once
+          // everything else on the row is already whole. `maxWidth`
+          // stops it growing past its own text and opening a gap
+          // before the separator.
+          flexGrow={1}
+          flexBasis={0}
+          minWidth={0}
+          maxWidth={tail.length}
+        >
+          <Text color={color} wrap="truncate">
+            {tail}
+          </Text>
+        </Box>
+      )}
+    </>
   );
 }

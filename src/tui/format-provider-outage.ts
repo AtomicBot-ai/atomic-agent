@@ -25,6 +25,28 @@ const HUMANISED_REASONS: ReadonlyArray<readonly [RegExp, string]> = [
 ];
 
 /**
+ * The readout split where it is allowed to give up columns.
+ *
+ * `head` is the state and its numbers — `waiting for provider 12s/300s`
+ * — and never shrinks. `tail` is the reason, and goes first. The first
+ * word alone is not enough to leave standing: `waiting` says the link
+ * is down, which the colour already said, while the counter is the part
+ * that says the wait is still progressing rather than hung. The reason
+ * is the one part the feed line above already carries in full.
+ *
+ * A rigid head rather than a `minWidth` floor on the whole readout,
+ * because Yoga does not reliably clamp-and-redistribute: measured at
+ * composer width 119 a floored readout refused to shrink at all and
+ * clipped the route off the row instead. Two boxes — one that cannot
+ * shrink, one that shrinks hardest — need no clamping.
+ */
+export interface ProviderOutageParts {
+  readonly head: string;
+  /** `null` for the retrying phase, which carries no reason. */
+  readonly tail: string | null;
+}
+
+/**
  * The composer's provider-outage readout.
  *
  * Three states, because they ask for different things from the operator:
@@ -52,19 +74,35 @@ export function formatProviderOutage(
   outage: NonNullable<TuiState["providerOutage"]>,
   now: number = Date.now(),
 ): string {
+  const { head, tail } = formatProviderOutageParts(outage, now);
+  return tail === null ? head : `${head}${tail}`;
+}
+
+/** The same line, split at the point it is allowed to give up columns. */
+export function formatProviderOutageParts(
+  outage: NonNullable<TuiState["providerOutage"]>,
+  now: number = Date.now(),
+): ProviderOutageParts {
   if (outage.givenUp) {
-    return `provider unreachable — ${describeReason(outage.reason)}`;
+    return {
+      head: "provider unreachable",
+      tail: ` — ${describeReason(outage.reason)}`,
+    };
   }
   const inPhaseMs = Math.max(0, now - outage.sinceTs);
   if (outage.phase === "retrying") {
-    return `retrying provider (attempt ${outage.attempt}) — ${seconds(inPhaseMs)}s`;
+    return {
+      head: `retrying provider (attempt ${outage.attempt}) — ${seconds(inPhaseMs)}s`,
+      tail: null,
+    };
   }
   // Clamped: the loop never sleeps past the budget, so a counter that
   // ran through it would be promising a wait that is not coming.
   const waited = Math.min(outage.waitedMs + inPhaseMs, outage.maxWaitMs);
-  return `waiting for provider ${seconds(waited)}s/${seconds(
-    outage.maxWaitMs,
-  )}s — ${describeReason(outage.reason)}`;
+  return {
+    head: `waiting for provider ${seconds(waited)}s/${seconds(outage.maxWaitMs)}s`,
+    tail: ` — ${describeReason(outage.reason)}`,
+  };
 }
 
 function seconds(ms: number): number {

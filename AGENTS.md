@@ -180,11 +180,18 @@ two app restarts and a fresh session — with nothing on screen to say the link 
    - given up — the row stays `provider unreachable — <reason>` until a turn actually succeeds.
    The reason is humanised in the TUI only (`terminated` / `socket hang up` / `other side closed` →
    `connection dropped mid-reply`, `fetch failed` → `no connection`); the runtime classifier keeps
-   the raw wording, which is what the logs and the trace are matched on. The readout shrinks before
-   anything in the route statement and opens Manage › LLM when clicked, so a narrow terminal
-   degrades to the whole route plus a truncated warning rather than to a warning alone. The context
-   readout is not touched: it is driven by `prompt_built` / `llm_completed`, and a parked turn
-   produces neither.
+   the raw wording, which is what the logs and the trace are matched on.
+   **The row fits in this order:** the readout's head — the state and its numbers — never shrinks,
+   because the counter is what says the wait is progressing rather than hung; its reason grows into
+   whatever the route leaves over (`flexGrow` from a zero basis, not `flexShrink`: Yoga leaves an
+   item at full width rather than shrink it by more than it has to give, and a shrinking reason
+   clipped the route off the row); and the while-a-turn-runs Enter hint is dropped outright while an
+   outage is live, since it is repeated verbatim in the hint strip under the composer and its ~19
+   columns are what let both statements be read at all. The context and mode chips keep their
+   `flexShrink={0}` — "at 60 the right-hand readout must survive intact" still holds. Clicking the
+   readout opens Manage › LLM. Below roughly 130 composer columns the route cannot be shown as well;
+   the readout's numbers win that trade. The context readout is not touched: it is driven by
+   `prompt_built` / `llm_completed`, and a parked turn produces neither.
 
 ### No-progress loop detection
 

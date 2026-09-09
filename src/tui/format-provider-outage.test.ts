@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { formatProviderOutage } from "./format-provider-outage.js";
+import {
+  formatProviderOutage,
+  formatProviderOutageParts,
+} from "./format-provider-outage.js";
 import type { TuiState } from "./tui-state.js";
 
 type Outage = NonNullable<TuiState["providerOutage"]>;
@@ -123,6 +126,41 @@ describe("formatProviderOutage", () => {
     );
     expect(line.length).toBeLessThanOrEqual(80);
     expect(line.endsWith("…")).toBe(true);
+  });
+
+  it("splits the line where it is allowed to give up columns", () => {
+    // The head is what the meta bar refuses to shrink, so the counter
+    // survives a narrow row; the reason grows back in when there is
+    // room for it.
+    expect(
+      formatProviderOutageParts(
+        outage({ reason: "terminated", waitedMs: 12_000 }),
+        NOW,
+      ),
+    ).toEqual({
+      head: "waiting for provider 12s/300s",
+      tail: " — connection dropped mid-reply",
+    });
+  });
+
+  it("gives the retrying phase no tail at all", () => {
+    // It carries no reason — the attempt and its clock are the whole
+    // line, and there is nothing here that may be dropped.
+    expect(
+      formatProviderOutageParts(
+        outage({ phase: "retrying", attempt: 2 }),
+        NOW + 8_000,
+      ),
+    ).toEqual({ head: "retrying provider (attempt 2) — 8s", tail: null });
+  });
+
+  it("keeps the given-up state readable down to two words", () => {
+    expect(
+      formatProviderOutageParts(
+        outage({ reason: "fetch failed", givenUp: true }),
+        NOW,
+      ),
+    ).toEqual({ head: "provider unreachable", tail: " — no connection" });
   });
 
   it("flattens a multi-line reason it has no rewrite for", () => {

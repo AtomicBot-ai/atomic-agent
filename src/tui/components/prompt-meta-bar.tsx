@@ -77,8 +77,10 @@ export interface PromptMetaBarProps {
 const MODEL_LABEL_MAX_LEN = 32;
 
 /**
- * How eagerly the chat-surface slot gives up columns, against the route
- * controls' own factors (model 3, provider 1, backend 0).
+ * How eagerly a chat-surface slot gives up columns, against the route
+ * controls' own factors (model 3, provider 1, backend 0). Exported
+ * because the slot carries it: the slot goes straight into this row, so
+ * it owns its own shrink order.
  *
  * It used to be `0` — the slot never shrank, so a provider-outage
  * readout took the left end of the bar outright and pushed the entire
@@ -88,12 +90,16 @@ const MODEL_LABEL_MAX_LEN = 32;
  *
  * An order of magnitude above the route's factors rather than a
  * hairline above them, because Yoga shrinks *proportionally*: at 4 the
- * model would still give up a quarter of every lost column. The
- * intended degradation is the whole route plus a truncated readout, and
- * a factor this size is what expresses "this one goes first" in a
- * layout engine that has no such notion.
+ * model would still give up a quarter of every lost column.
+ *
+ * The outage readout does not use it. Yoga leaves an item at full width
+ * rather than shrink it by more than it has to give (measured: composer
+ * width 119, a 31-column reason with this factor gave up nothing and
+ * the route was clipped off the row), so the readout's reason grows
+ * into the leftovers from a basis of zero instead. Growth Yoga resolves
+ * reliably; large shrinks it does not.
  */
-const SLOT_SHRINK = 40;
+export const META_SLOT_SHRINK = 40;
 
 /**
  * Separator `runModeModelSummary` puts between the two fusion legs.
@@ -129,9 +135,12 @@ export function PromptMetaBar({
       {/*
         The meta group is the only thing allowed to give up columns: at
         60 the right-hand readout must survive intact, because a
-        half-drawn chip is worse than a truncated model name.
+        half-drawn chip is worse than a truncated model name. It also
+        takes the row's slack (`flexGrow`) rather than leaving it between
+        the two groups, so a slot that fills the leftovers — the outage
+        reason — has leftovers to fill.
       */}
-      <Box flexShrink={1} minWidth={0} overflow="hidden">
+      <Box flexGrow={1} flexShrink={1} minWidth={0} overflow="hidden">
         <MetaLeft
           leftSlot={leftSlot}
           backend={backend}
@@ -174,15 +183,18 @@ interface MetaLeftProps {
  *
  * That costs the free truncation the single `<Text wrap="truncate">`
  * used to give the whole group, so the row has to fit by shrinking: the
- * slot and its separator go first (`SLOT_SHRINK`), then the route labels
- * in the order `ComposerMetaControls` sets. Every `<Text>` in here is
- * `truncate` for the same reason — one that wrapped would take the
- * composer's bottom border down a line with it.
+ * slot goes first (`META_SLOT_SHRINK`, or its own arrangement — see the
+ * outage readout), then the route labels in the order
+ * `ComposerMetaControls` sets. Every `<Text>` in here is `truncate` for
+ * the same reason — one that wrapped would take the composer's bottom
+ * border down a line with it.
  *
  * The slot is rendered as it arrives, not wrapped in a `<Text>` of this
  * file's own: it can be a click target, and a click target is a Box,
  * which Ink cannot nest inside a `<Text>`. Callers hand over an element
- * that truncates itself.
+ * that truncates itself — and may hand over more than one box, which is
+ * how the outage readout keeps a rigid head next to a reason that gives
+ * way.
  */
 function MetaLeft({
   leftSlot,
@@ -198,36 +210,36 @@ function MetaLeft({
   const cleanModel = model ? formatModel(model) : null;
   const hasRoute = Boolean(backend || provider || cleanModel || needsModelDownload);
   return (
-    <Box flexDirection="row" flexShrink={1} minWidth={0}>
-      {leftSlot ? (
-        <Box
-          flexDirection="row"
-          flexShrink={SLOT_SHRINK}
-          minWidth={0}
-          // The belt to the caller's braces. The slot is rendered as it
-          // arrives — it can be a click target, and a click target is a
-          // Box, which Ink cannot nest inside a `<Text>` — so this file
-          // can no longer impose `wrap="truncate"` on it. A slot that
-          // forgot to truncate itself would wrap, and a wrapped meta bar
-          // takes the composer's bottom border down a line with it. One
-          // row, clipped.
-          height={1}
-          overflow="hidden"
-        >
-          {leftSlot}
-          {hasRoute ? (
-            // Inside the shrinking group but not shrinking itself: the
-            // three cells it costs are what keep a truncated readout
-            // from running into the route, and a separator that gave up
-            // columns of its own turned into a second ellipsis sitting
-            // next to the readout's.
-            <Box flexShrink={0}>
-              <Text color={theme.colors.railMuted} wrap="truncate">
-                {" "}
-                {theme.glyphs.dotSeparator}{" "}
-              </Text>
-            </Box>
-          ) : null}
+    <Box
+      flexDirection="row"
+      flexGrow={1}
+      flexShrink={1}
+      minWidth={0}
+      // One row, clipped. Ink wraps rather than clips, and a second line
+      // here would take the composer's bottom border down with it. The
+      // slot is rendered as it arrives — it can be a click target, and a
+      // click target is a Box, which Ink cannot nest inside a `<Text>` —
+      // so this file can no longer impose `wrap="truncate"` on it, and
+      // this is the belt to the caller's braces.
+      height={1}
+      overflow="hidden"
+    >
+      {/*
+        Straight into the row, not inside a group box of its own. Yoga
+        only honours `flexShrink={0}` for the direct items of the line it
+        is shrinking: nested one level down, the outage readout's rigid
+        head was squeezed anyway and lost the very counter it exists to
+        protect (measured at composer width 119). Flat, the head sits
+        next to the backend word as another unshrinkable item and the
+        reason after it is what gives way.
+      */}
+      {leftSlot}
+      {leftSlot && hasRoute ? (
+        <Box flexShrink={0}>
+          <Text color={theme.colors.railMuted} wrap="truncate">
+            {" "}
+            {theme.glyphs.dotSeparator}{" "}
+          </Text>
         </Box>
       ) : null}
       <ComposerMetaControls

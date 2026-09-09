@@ -1,5 +1,5 @@
 import { ContextChip } from "./components/context-chip.js";
-import { formatProviderOutage } from "./format-provider-outage.js";
+import { formatProviderOutageParts } from "./format-provider-outage.js";
 import type { ApprovalLevel } from "../approval/approval-level.js";
 import {
   codingModeLook,
@@ -88,6 +88,7 @@ import { TasksCancelModal } from "./components/tasks-cancel-modal.js";
 import { UpdateModal } from "./components/update-modal.js";
 import { UpdateIndicator } from "./components/update-indicator.js";
 import { UpdateRestartPrompt } from "./components/update-restart-prompt.js";
+import { META_SLOT_SHRINK } from "./components/prompt-meta-bar.js";
 import { ProviderOutageReadout } from "./components/provider-outage-readout.js";
 import { useElapsed } from "./hooks/use-elapsed.js";
 import { useTerminalSize } from "./hooks/use-terminal-size.js";
@@ -1615,22 +1616,31 @@ export function TuiApp({
   const outage = state.providerOutage;
   const outageTickFrom = outage && !outage.givenUp ? outage.sinceTs : null;
   const outageElapsedMs = useElapsed(outageTickFrom, 1000);
-  const promptLeftSlot = outage ? (
-    <ProviderOutageReadout
-      text={formatProviderOutage(
+  const outageParts = outage
+    ? formatProviderOutageParts(
         outage,
         outageTickFrom === null
           ? undefined
           : outageTickFrom + (outageElapsedMs ?? 0),
-      )}
+      )
+    : null;
+  const promptLeftSlot = outage && outageParts ? (
+    <ProviderOutageReadout
+      head={outageParts.head}
+      tail={outageParts.tail}
       givenUp={outage.givenUp}
       mouseLayer={MOUSE_LAYER_PANEL}
     />
   ) : state.composerNotice ? (
-    // Truncates itself: `MetaLeft` hands its slot straight to the row.
-    <Text color={theme.colors.railSuccess} wrap="truncate">
-      {state.composerNotice}
-    </Text>
+    // A Box that truncates itself: `MetaLeft` hands its slot straight
+    // into the row, so the slot owns both its wrapping and its shrink
+    // order. The notice yields before the route for the same reason the
+    // outage reason does — the route is what the row is for.
+    <Box flexShrink={META_SLOT_SHRINK} minWidth={0}>
+      <Text color={theme.colors.railSuccess} wrap="truncate">
+        {state.composerNotice}
+      </Text>
+    </Box>
   ) : null;
   // While a turn is running the meta-row gains a second job: the operator
   // needs to know what Enter will do to the message they are typing.
@@ -1641,8 +1651,18 @@ export function TuiApp({
   // What used to live here when idle was `ctx <window>` — the *size* of
   // the context window, which never changes and never told anyone
   // anything. The chip below reports how much of it is in use instead.
+  //
+  // Dropped outright while the link is down, not shrunk. It is the one
+  // thing on the row that is duplicated verbatim two lines below it, in
+  // the hint strip under the composer (`[⏎] steer · [ctrl+t] queue mode
+  // · [esc] abort`), so nothing is lost — and it is the ~19 columns that
+  // decide whether the outage readout and the route can both be read at
+  // the widths people actually run. This does NOT reopen the pinned "at
+  // 60 the right-hand readout must survive intact" decision: that
+  // argument is about a half-drawn context or mode chip, and both of
+  // those keep their `flexShrink={0}` and their place on the row.
   const promptRightSlot =
-    state.status === "running" ? (
+    state.status === "running" && !outage ? (
       <Text>
         <Text color={theme.colors.railAccent} bold>
           {"\u23ce"} {state.whileBusyMode}

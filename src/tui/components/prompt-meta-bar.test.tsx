@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { Box, render as inkRender } from "ink";
+import { Box, Text, render as inkRender } from "ink";
 import { render } from "ink-testing-library";
 import type { ReactElement } from "react";
 import { describe, expect, it } from "vitest";
@@ -215,7 +215,10 @@ const ROUTE = {
   model: "qwen3-30b-a3b-instruct",
 };
 
-function renderMetaBarAt(columns: number, leftSlot: ReactElement | null): string[] {
+function renderMetaBarAt(
+  columns: number,
+  leftSlot: ReactElement | null,
+): string[] {
   const stdout = new SizedStdout(columns);
   const instance = inkRender(
     <PromptMetaBar
@@ -241,7 +244,9 @@ function renderMetaBarAt(columns: number, leftSlot: ReactElement | null): string
   return frame.split("\n").map((line) => line.replace(/\s+$/, ""));
 }
 
-const OUTAGE_LINE = "waiting for provider 42s/300s — connection dropped mid-reply";
+const OUTAGE_HEAD = "waiting for provider 42s/300s";
+const OUTAGE_TAIL = " — connection dropped mid-reply";
+const OUTAGE_LINE = `${OUTAGE_HEAD}${OUTAGE_TAIL}`;
 
 /**
  * The readout used to sit in a `flexShrink={0}` slot, so it took the
@@ -252,27 +257,56 @@ const OUTAGE_LINE = "waiting for provider 42s/300s — connection dropped mid-re
  */
 describe("the meta bar while the provider is down", () => {
   const readout = (
-    <ProviderOutageReadout text={OUTAGE_LINE} givenUp={false} />
+    <ProviderOutageReadout
+      head={OUTAGE_HEAD}
+      tail={OUTAGE_TAIL}
+      givenUp={false}
+    />
   );
 
   it.each([80, 100, 110, 160])("keeps the route at %i columns", (columns) => {
     const frame = renderMetaBarAt(columns, readout).join("\n");
     // Backend word, provider and model all still on the row. Below ~110
-    // the last two lose a character each to Yoga's rounding — the row
-    // simply needs more columns than the terminal has — but the route
-    // reads as a route, which is the whole point.
+    // the last two lose characters — the row simply needs more columns
+    // than the terminal has — but the route reads as a route.
     expect(frame).toContain("custom");
     expect(frame).toContain("llama.c");
     expect(frame).toContain("qwen3-30b");
-    // Something of the readout survives too — a truncated warning is
-    // still a warning, and it is the click target for the LLM pane.
-    expect(frame).toContain("waiting for provider");
   });
 
-  it.each([110, 160])("carries both statements whole at %i columns", (columns) => {
-    const frame = renderMetaBarAt(columns, readout).join("\n");
+  it.each([80, 100, 110, 160])(
+    "keeps the readout's numbers at %i columns",
+    (columns) => {
+      // `waiting` alone says the link is down, which the colour already
+      // said; the counter is what says the wait is still progressing
+      // rather than hung. It is in the head, which does not shrink.
+      const frame = renderMetaBarAt(columns, readout).join("\n");
+      expect(frame).toContain(OUTAGE_HEAD);
+    },
+  );
+
+  it("gives the reason the columns nothing else wants", () => {
+    // The tail grows from nothing into the leftovers, so it appears
+    // exactly when the row can afford it and never at the route's
+    // expense.
+    expect(renderMetaBarAt(160, readout).join("\n")).toContain(OUTAGE_LINE);
+    expect(renderMetaBarAt(80, readout).join("\n")).not.toContain(
+      "connection dropped",
+    );
+  });
+
+  it("carries both statements whole at 160 columns", () => {
+    const frame = renderMetaBarAt(160, readout).join("\n");
     expect(frame).toContain(OUTAGE_LINE);
     expect(frame).toContain("custom · llama.cpp · qwen3-30b-a3b-instruct");
+  });
+
+  it("does not open a gap between the reason and the route", () => {
+    // The tail is capped at its own text: growing past it would leave a
+    // run of blanks in front of the separator.
+    expect(renderMetaBarAt(160, readout).join("\n")).toContain(
+      "mid-reply · ● custom",
+    );
   });
 
   it.each([80, 100, 110, 160])("stays one row tall at %i columns", (columns) => {
@@ -284,15 +318,15 @@ describe("the meta bar while the provider is down", () => {
     for (const line of lines) expect(line.length).toBeLessThanOrEqual(columns);
   });
 
-  it("spends the columns it loses on itself, not on the route", () => {
-    // 80 is 30 columns short of what the full row wants. The readout
-    // gives up 29 of them; the route gives up two characters.
-    const tail = (lines: string[]): string =>
-      lines.join("\n").split("waiting for provider")[1] ?? "";
-    const lost =
-      tail(renderMetaBarAt(160, readout)).length -
-      tail(renderMetaBarAt(80, readout)).length;
-    expect(lost).toBeGreaterThanOrEqual(25);
+  it("leaves a short composer notice next to the route", () => {
+    // The other slot: it shrinks the ordinary way and must not be padded
+    // out to some readout-sized floor.
+    const notice = (
+      <Text wrap="truncate">saved</Text>
+    );
+    expect(renderMetaBarAt(160, notice).join("\n")).toContain(
+      "saved · ● custom",
+    );
   });
 
   it("opens the LLM pane when the readout is clicked", async () => {
@@ -310,7 +344,11 @@ describe("the meta bar while the provider is down", () => {
         <Box width={100}>
           <PromptMetaBar
             leftSlot={
-              <ProviderOutageReadout text={OUTAGE_LINE} givenUp={false} />
+              <ProviderOutageReadout
+                head={OUTAGE_HEAD}
+                tail={OUTAGE_TAIL}
+                givenUp={false}
+              />
             }
             backend={ROUTE.backend}
             provider={ROUTE.provider}
@@ -323,7 +361,7 @@ describe("the meta bar while the provider is down", () => {
       </MouseProvider>,
     );
     await new Promise((resolve) => setTimeout(resolve, 120));
-    const { x, y } = locate(lastFrame() ?? "", "waiting for provider");
+    const { x, y } = locate(lastFrame() ?? "", OUTAGE_HEAD);
     expect(registry.dispatch(click(x, y))).toBe(true);
     expect(actions).toContainEqual({ type: "tab_changed", tab: "llm" });
     unmount();
