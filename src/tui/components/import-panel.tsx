@@ -9,8 +9,14 @@ import { theme } from "../theme/theme.js";
 import type {
   ImportFormState,
   ImportPanelState,
-  ImportSourceId,
 } from "../import/import-panel-state.js";
+import {
+  IMPORT_SOURCE_IDS,
+  importSourceLabel,
+  importSourcePlaceholder,
+  importSourceToggles,
+  type ImportSourceId,
+} from "../import/import-sources.js";
 
 export interface ImportPanelProps {
   panel: ImportPanelState;
@@ -25,7 +31,7 @@ export interface ImportPanelProps {
  */
 export function ImportPanel(props: ImportPanelProps): ReactElement {
   const { panel, maxRows = 12 } = props;
-  const sourceLabel = panel.form.source === "openclaw" ? "OpenClaw" : "Hermes";
+  const sourceLabel = importSourceLabel(panel.form.source);
   return (
     <Box flexDirection="column">
       <Text bold color={theme.colors.accentSoft}>
@@ -64,19 +70,18 @@ function ConfigureForm({ form }: { form: ImportFormState }): ReactElement {
       <TextRow
         label="source"
         value={form.sourceDir}
-        placeholder={form.source === "openclaw" ? "~/.openclaw" : "~/.hermes"}
+        placeholder={importSourcePlaceholder(form.source)}
         focused={form.focus === "source"}
       />
-      <ToggleRow label="sessions" on={form.sessions} focused={form.focus === "sessions"} />
-      <ToggleRow label="cron" on={form.cron} focused={form.focus === "cron"} />
-      {form.source === "hermes" ? (
+      {importSourceToggles(form.source).map((meta) => (
         <ToggleRow
-          label="secrets"
-          on={form.secrets}
-          focused={form.focus === "secrets"}
-          hint="OPENROUTER_API_KEY / AIMLAPI_API_KEY"
+          key={meta.id}
+          label={meta.id}
+          on={form[meta.id]}
+          focused={form.focus === meta.id}
+          {...(meta.hint !== undefined ? { hint: meta.hint } : {})}
         />
-      ) : null}
+      ))}
       <ToggleRow
         label="overwrite"
         on={form.overwrite}
@@ -110,9 +115,12 @@ function SourceRow({
   return (
     <Box>
       <Text color={theme.colors.muted}>{labelPrefix("source-of", focused)}</Text>
-      <SourceChoice label="hermes" active={source === "hermes"} />
-      <Text color={theme.colors.muted}> / </Text>
-      <SourceChoice label="openclaw" active={source === "openclaw"} />
+      {IMPORT_SOURCE_IDS.map((id, index) => (
+        <Box key={id}>
+          {index > 0 ? <Text color={theme.colors.muted}> / </Text> : null}
+          <SourceChoice label={id} active={source === id} />
+        </Box>
+      ))}
     </Box>
   );
 }
