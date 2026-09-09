@@ -1104,3 +1104,55 @@ describe("update banner state", () => {
     expect(reduceTuiState(running, offer)).toBe(running);
   });
 });
+
+describe("a fallover away from the primary is said in the chat, not only the feed", () => {
+  const away = {
+    type: "provider_switched" as const,
+    direction: "away" as const,
+    from: "openrouter",
+    to: "local-llama",
+    reason: '"openrouter" rejected the request (402).',
+  };
+
+  it("posts one system message naming the cause and what answers now", () => {
+    const next = apply(createInitialTuiState(fakeSession()), [
+      { type: "agent_event", event: away },
+    ]);
+    const system = next.messages.filter((m) => m.role === "system");
+    expect(system).toHaveLength(1);
+    expect(system[0]?.text).toContain("openrouter");
+    expect(system[0]?.text).toContain("local-llama");
+    expect(system[0]?.variant).toBe("warn");
+    // and the feed line the Fallback pane relies on is still there
+    expect(next.feed.some((f) => f.line.includes("failed over"))).toBe(true);
+  });
+
+  it("does not repeat itself when the chain re-announces the same switch", () => {
+    const s = apply(createInitialTuiState(fakeSession()), [
+      { type: "agent_event", event: away },
+      { type: "agent_event", event: away },
+    ]);
+    expect(s.messages.filter((m) => m.role === "system")).toHaveLength(1);
+  });
+
+  it("says nothing in the chat when the primary recovers", () => {
+    const first = apply(createInitialTuiState(fakeSession()), [
+      { type: "agent_event", event: away },
+    ]);
+    const before = first.messages.length;
+    const s = apply(first, [
+      {
+        type: "agent_event",
+        event: {
+          type: "provider_switched",
+          direction: "back",
+          from: "local-llama",
+          to: "openrouter",
+          reason: "probe ok",
+        },
+      },
+    ]);
+    expect(s.messages).toHaveLength(before);
+    expect(s.feed.some((f) => f.line.includes("recovered primary"))).toBe(true);
+  });
+});
