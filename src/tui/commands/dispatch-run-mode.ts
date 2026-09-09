@@ -1,4 +1,9 @@
-import { RUN_MODE_NAMES, type RunModeName } from "../../config/index.js";
+import {
+  FUSION_WORKERS_MAX,
+  FUSION_WORKERS_MIN,
+  RUN_MODE_NAMES,
+  type RunModeName,
+} from "../../config/index.js";
 
 export interface RunModeCommand {
   /** Bare `/runmode`: open the composer's "Where it runs" switch. */
@@ -7,12 +12,14 @@ export interface RunModeCommand {
   readonly mode?: RunModeName;
   /** `/runmode status`. */
   readonly status?: boolean;
+  /** `/runmode workers N`. */
+  readonly workers?: number;
   /** Usage line for anything else. */
   readonly error?: string;
 }
 
 export const RUN_MODE_USAGE =
-  "usage: /runmode (opens the switch) · /runmode local|cloud|fusion · /runmode status";
+  "usage: /runmode (opens the switch) · /runmode local|cloud|fusion · /runmode workers N · /runmode status";
 
 /**
  * Parse the arguments of `/runmode`. Split out of
@@ -25,6 +32,17 @@ export function parseRunModeCommand(rawArgs: string): RunModeCommand {
   const args = rawArgs.trim().toLowerCase();
   if (args.length === 0) return { openSwitch: true };
   if (args === "status") return { openSwitch: false, status: true };
+  const workers = /^workers\s+(\d+)$/.exec(args);
+  if (workers) {
+    const n = Number(workers[1]);
+    if (n < FUSION_WORKERS_MIN || n > FUSION_WORKERS_MAX) {
+      return {
+        openSwitch: false,
+        error: `workers must be ${FUSION_WORKERS_MIN}-${FUSION_WORKERS_MAX} — ${RUN_MODE_USAGE}`,
+      };
+    }
+    return { openSwitch: false, workers: n };
+  }
   if (RUN_MODE_NAMES.includes(args as RunModeName)) {
     return { openSwitch: false, mode: args as RunModeName };
   }

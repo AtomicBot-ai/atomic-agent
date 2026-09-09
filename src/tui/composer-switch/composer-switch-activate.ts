@@ -50,7 +50,30 @@ export function activateComposerSwitchRow(
   callbacks: TuiAppCallbacks,
 ): void {
   if (row.intent.kind === "llmRow") {
-    triggerLlmPrimary(row.intent.row, state, dispatch, callbacks);
+    const llmRow = row.intent.row;
+    if (
+      llmRow.kind === "cloudProvider" &&
+      llmRow.provider.hasApiKey &&
+      state.providersPanel.runMode?.effective === "fusion"
+    ) {
+      // Under fusion the provider control re-pins the orchestrator. The
+      // LLM tab's own `setActiveText` would move `activeTextProvider`
+      // away from the pinned orchestrator and drop the mode on the next
+      // read; the run-mode write moves the pin and the provider together.
+      callbacks.onRunModeChangeRequested?.("fusion", {
+        fusion: { orchestratorProvider: llmRow.provider.id },
+      });
+      return;
+    }
+    triggerLlmPrimary(llmRow, state, dispatch, callbacks);
+    return;
+  }
+  if (row.intent.kind === "fusionWorkerModel") {
+    activateWorkerModel(row.intent.modelId, state, callbacks);
+    return;
+  }
+  if (row.intent.kind === "fusionWorkers") {
+    callbacks.onFusionWorkersChangeRequested?.(row.intent.workers);
     return;
   }
   if (row.intent.kind === "addProvider") {
@@ -121,6 +144,31 @@ function activateFusion(
     return;
   }
   callbacks.onRunModeChangeRequested?.("fusion");
+}
+
+/**
+ * The worker model is the managed daemon's model. `setActive` on the
+ * local-models orchestrator restarts the daemon on it and writes only
+ * `localModels.*` — never `activeTextProvider` — so fusion survives the
+ * pick. `triggerLlmPrimary` is deliberately NOT used: its local branch
+ * also makes `local-llama` the active text provider, which under fusion
+ * is exactly the switch that would drop the mode.
+ */
+function activateWorkerModel(
+  modelId: import("../../local-llm/index.js").LocalModelId,
+  state: TuiState,
+  callbacks: TuiAppCallbacks,
+): void {
+  const row = state.localModelsPanel.rows.find((candidate) => candidate.id === modelId);
+  const chatUp =
+    state.localModelsPanel.daemon.running ||
+    state.localModelsPanel.daemonPhase === "starting";
+  if (row?.active && chatUp) return;
+  if (row?.active) {
+    callbacks.onLocalModelsDaemonStartRequested?.();
+    return;
+  }
+  callbacks.onLocalModelsSetActiveRequested?.(modelId);
 }
 
 /** A stored fusion that a plain cloud/local pick must clear in the same write. */

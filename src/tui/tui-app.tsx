@@ -57,6 +57,7 @@ import {
   runComposerSwitchRow,
   selectComposerBackend,
   selectComposerBackendMeta,
+  selectComposerWorkersLabel,
   selectComposerNeedsModelDownload,
   type ComposerSwitchRow,
 } from "./composer-switch/index.js";
@@ -436,6 +437,12 @@ export interface TuiAppCallbacks {
     mode: import("../config/index.js").RunModeName,
     opts?: import("./persist-run-mode.js").RunModeChangeOptions,
   ): void;
+  /**
+   * Fusion's `workers` control / `/runmode workers N`: persist the
+   * worker count and the matching llama-server slot count in one write,
+   * without changing the mode.
+   */
+  onFusionWorkersChangeRequested?(workers: number): void;
   /** Providers tab / LLM panel: select an exact chat model for a provider. */
   onProvidersSelectChatModel?(providerId: string, modelId: string): void;
   /**
@@ -1597,6 +1604,8 @@ export function TuiApp({
   // Managed-local with an empty catalog: the model slot becomes
   // `download model` and points at the pane that pulls one.
   const promptNeedsModelDownload = selectComposerNeedsModelDownload(state);
+  // Fusion's fourth control: the worker count, `null` on every other route.
+  const promptWorkers = selectComposerWorkersLabel(state);
   // A notice outranks the route for the couple of seconds it is up: it
   // is the answer to a keystroke the operator just made, and the route
   // is ambient.
@@ -2087,6 +2096,7 @@ export function TuiApp({
             model={promptLlm.model}
             provider={promptLlm.provider}
             needsModelDownload={promptNeedsModelDownload}
+            workers={promptWorkers}
             leftSlot={promptLeftSlot}
             rightSlot={promptRightSlot}
             contextSlot={promptContextSlot}

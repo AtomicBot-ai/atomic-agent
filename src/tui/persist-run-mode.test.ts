@@ -7,7 +7,11 @@ import { resetConfigCache } from "../config/config-cache.js";
 import { getUserConfigPath, writeUserConfigFileSync } from "../config/config-file.js";
 import { USER_CONFIG_DEFAULTS } from "../config/config-schema.js";
 import { getConfig } from "../config/index.js";
-import { RunModePersistError, setRunModeInConfig } from "./persist-run-mode.js";
+import {
+  RunModePersistError,
+  setFusionWorkersInConfig,
+  setRunModeInConfig,
+} from "./persist-run-mode.js";
 
 describe("setRunModeInConfig", () => {
   let stateDir: string;
@@ -94,5 +98,35 @@ describe("setRunModeInConfig", () => {
       RunModePersistError,
     );
     expect(getConfig().llm?.runMode).toBeUndefined();
+  });
+
+  it("moves the worker count and the llama-server slot count together", () => {
+    setFusionWorkersInConfig(4);
+    expect(getConfig().llm?.runMode?.fusion?.workers).toBe(4);
+    expect(getConfig().localModels.managed.parallel).toBe(4);
+    const llm = file().llm as { runMode?: { mode?: string } };
+    // The count is not a mode change: whatever mode was stored stays.
+    expect(llm.runMode?.mode).toBeUndefined();
+  });
+
+  it("keeps the stored mode and the orchestrator pin when only the count moves", () => {
+    setRunModeInConfig({
+      mode: "fusion",
+      activeTextProvider: "openrouter",
+      fusion: { orchestratorProvider: "openrouter" },
+    });
+    setFusionWorkersInConfig(6);
+    expect(getConfig().llm?.runMode).toEqual({
+      mode: "fusion",
+      fusion: { orchestratorProvider: "openrouter", workers: 6 },
+    });
+    expect(getConfig().llm?.activeTextProvider).toBe("openrouter");
+  });
+
+  it("refuses a count outside 1..8 without writing", () => {
+    for (const workers of [0, 9, 2.5]) {
+      expect(() => setFusionWorkersInConfig(workers)).toThrow(RunModePersistError);
+    }
+    expect(getConfig().localModels.managed.parallel).toBe(2);
   });
 });

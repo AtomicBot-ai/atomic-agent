@@ -11,6 +11,7 @@ import type { AgentRuntime } from "../../runtime/bootstrap.js";
 import type { LocalModelsOrchestrator } from "../local-models/local-models-orchestrator.js";
 import { wrapLlmConfigError } from "../persist-llm-provider.js";
 import {
+  setFusionWorkersInConfig,
   setRunModeInConfig,
   type RunModeChangeOptions,
 } from "../persist-run-mode.js";
@@ -122,6 +123,33 @@ export class RunModeOrchestrator {
         void this.deps.localModels.startDaemon();
       }
     }
+  }
+
+  /**
+   * The worker count, and with it the llama-server slot count. A daemon
+   * that is already up keeps the slot count it was launched with, so the
+   * notice says how to apply the new one — a silent write here would
+   * leave N workers queueing on the old slots with nothing on screen to
+   * explain why.
+   */
+  setWorkers(workers: number): void {
+    const before = getConfig().localModels.managed.parallel;
+    try {
+      setFusionWorkersInConfig(workers);
+    } catch (err) {
+      this.refuse(err instanceof Error ? err.message : String(err));
+      return;
+    }
+    this.deps.providers.refresh();
+    const after = getConfig().localModels;
+    const applyHint =
+      after.mode === "managed" && before !== workers
+        ? ` — restart the local daemon (Manage › LLM › Local, \`s\`) to apply --parallel ${workers}`
+        : "";
+    this.deps.bus.emit({
+      type: "runtime_info",
+      line: `fusion: ${workers} worker${workers === 1 ? "" : "s"}${applyHint}`,
+    });
   }
 
   private refuse(line: string): void {

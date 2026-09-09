@@ -540,6 +540,8 @@ export async function tuiCommand(args: string[]): Promise<number> {
         // `llm.activeTextProvider` together lives on this orchestrator.
         onRunModeChangeRequested: (mode, opts) =>
           void orchestrator.runMode.setMode(mode, opts),
+        onFusionWorkersChangeRequested: (workers) =>
+          orchestrator.runMode.setWorkers(workers),
         onProvidersSelectChatModel: (providerId, modelId) =>
           void orchestrator.providers.selectChatModel(providerId, modelId),
         onProvidersChatModelPickerRequested: (providerId) =>

@@ -141,6 +141,28 @@ describe("the composer's route line", () => {
     expect(out).not.toContain("healthy");
   });
 
+  it("adds the worker count as a fourth control on the fusion route", () => {
+    const { lastFrame, unmount } = render(
+      <Box>
+        <ComposerMetaControls
+          backend={{ kind: "fusion", status: "healthy" }}
+          provider="openrouter"
+          model="claude-opus-5 ⇄ qwen-3.5-4b"
+          workers="3 workers"
+        />
+      </Box>,
+    );
+    const text = plain(lastFrame() ?? "");
+    unmount();
+    expect(text).toContain("3 workers");
+    // Last: where it runs, who serves it, which model, how many workers.
+    expect(text.indexOf("claude-opus-5")).toBeLessThan(text.indexOf("3 workers"));
+  });
+
+  it("draws no fourth control when there are no workers to count", () => {
+    expect(plain(frame())).not.toContain("worker");
+  });
+
   it("renders nothing at all when there is no route to state", () => {
     const { lastFrame, unmount } = render(
       <Box>

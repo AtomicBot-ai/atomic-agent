@@ -49,6 +49,8 @@ export interface PromptMetaBarProps {
   provider: string | null;
   /** Turns the model slot into a `download model` call to action. */
   needsModelDownload?: boolean;
+  /** Fusion's fourth control (`2 workers`); `null` off that route. */
+  workers?: string | null;
   /** Chat-surface content rendered at the bar's right end. */
   rightSlot: ReactElement | null;
   /**
@@ -90,6 +92,7 @@ export function PromptMetaBar({
   model,
   provider,
   needsModelDownload,
+  workers,
   rightSlot,
   contextSlot,
   modeSlot,
@@ -119,6 +122,7 @@ export function PromptMetaBar({
           model={model}
           provider={provider}
           needsModelDownload={needsModelDownload ?? false}
+          workers={workers ?? null}
           mouseLayer={mouseLayer}
         />
       </Box>
@@ -145,6 +149,7 @@ interface MetaLeftProps {
   model: string | null;
   provider: string | null;
   needsModelDownload: boolean;
+  workers: string | null;
   mouseLayer?: number;
 }
 
@@ -166,6 +171,7 @@ function MetaLeft({
   model,
   provider,
   needsModelDownload,
+  workers,
   mouseLayer,
 }: MetaLeftProps): ReactElement {
   if (!leftSlot && !backend && !model && !provider && !needsModelDownload) {
@@ -193,6 +199,7 @@ function MetaLeft({
         provider={provider}
         model={cleanModel}
         needsModelDownload={needsModelDownload}
+        workers={workers}
         mouseLayer={mouseLayer}
       />
     </Box>

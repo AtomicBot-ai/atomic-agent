@@ -9,7 +9,7 @@
  * without closing, which is what makes the row behave like one control
  * strip rather than three unrelated popups.
  */
-export type ComposerSwitchKind = "backend" | "provider" | "model";
+export type ComposerSwitchKind = "backend" | "provider" | "model" | "workers";
 
 /** Left-to-right order of the controls, and of the ←/→ walk. */
 export const COMPOSER_SWITCH_KINDS: readonly ComposerSwitchKind[] = [
@@ -28,8 +28,10 @@ export const COMPOSER_SWITCH_KINDS: readonly ComposerSwitchKind[] = [
 export function composerSwitchKindsFor(
   backend: ComposerBackendKind,
 ): readonly ComposerSwitchKind[] {
-  // Fusion's provider and model controls address the orchestrator leg,
-  // so it walks the same three controls the cloud route does.
+  // Fusion's provider and model controls address the orchestrator leg;
+  // its fourth control, `workers`, is the local half — the worker model
+  // and how many run at once. Nowhere else draws it.
+  if (backend === "fusion") return [...COMPOSER_SWITCH_KINDS, "workers"];
   return backend === "local" ? ["backend", "model"] : COMPOSER_SWITCH_KINDS;
 }
 
@@ -69,6 +71,7 @@ export const COMPOSER_SWITCH_TITLES: Record<ComposerSwitchKind, string> = {
   backend: "Where it runs",
   provider: "Provider",
   model: "Model",
+  workers: "Workers",
 };
 
 /** Step `delta` controls along the row, clamped at both ends. */

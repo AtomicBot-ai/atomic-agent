@@ -243,6 +243,9 @@ export function runSlashCommand(
   }
   if (result.queueVerb) runQueueVerb(result.queueVerb, state, dispatch, callbacks);
   if (result.runModeVerb) runRunModeVerb(result.runModeVerb, state, dispatch, callbacks);
+  if (result.runModeWorkers !== undefined) {
+    callbacks.onFusionWorkersChangeRequested?.(result.runModeWorkers);
+  }
   if (result.triggerNewWindow) callbacks.onNewWindowRequested?.();
   if (result.triggerAbort) callbacks.onAbort();
   if (result.triggerQuit) {

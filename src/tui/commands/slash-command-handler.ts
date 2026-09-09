@@ -132,6 +132,8 @@ export interface SlashDispatchResult {
    * caller (`submit-handler.ts`) can reach.
    */
   readonly runModeVerb?: import("../../config/index.js").RunModeName | "status";
+  /** `/runmode workers N`: persist the fusion worker count. */
+  readonly runModeWorkers?: number;
 }
 
 /**
@@ -319,6 +321,7 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
         // list of the same three modes to keep in step.
         return pureActions([{ type: "composer_switch_opened", kind: "backend" }]);
       }
+      if (cmd.workers !== undefined) return pureActions([], { runModeWorkers: cmd.workers });
       return pureActions([], { runModeVerb: cmd.status ? "status" : cmd.mode });
     }
     default:
@@ -465,6 +468,7 @@ function pureActions(
     submitWhileBusy: undefined,
     setWhileBusyMode: undefined,
     runModeVerb: undefined,
+    runModeWorkers: undefined,
     ...overrides,
   };
 }

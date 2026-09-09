@@ -5,9 +5,11 @@ import {
   selectLocalRows,
 } from "../llm-panel/llm-panel-row-builders.js";
 import type { LlmPanelRow } from "../llm-panel/llm-panel-selectors.js";
+import type { LocalModelId } from "../../local-llm/index.js";
 import type { TuiState } from "../tui-state.js";
 import { describeFusionBlocker } from "../run-mode/fusion-preflight.js";
 import { selectComposerBackend } from "./composer-backend-selectors.js";
+import { selectWorkerRows } from "./composer-switch-worker-rows.js";
 import { filterSwitchRows } from "./composer-switch-filter.js";
 import {
   COMPOSER_SWITCH_TITLES,
@@ -31,7 +33,11 @@ export type ComposerSwitchIntent =
    * downloaded. The local model switch lists only what is on disk, so
    * this row is its way of saying "more exists than you see here".
    */
-  | { readonly kind: "localModelsPanel" };
+  | { readonly kind: "localModelsPanel" }
+  /** Fusion's `workers` control: the local model the workers run. */
+  | { readonly kind: "fusionWorkerModel"; readonly modelId: LocalModelId }
+  /** Fusion's `workers` control: how many workers run at once. */
+  | { readonly kind: "fusionWorkers"; readonly workers: number };
 
 export interface ComposerSwitchRow {
   readonly id: string;
@@ -209,7 +215,7 @@ function modelRows(state: TuiState): readonly ComposerSwitchRow[] {
  * downloaded". Enter on the row deep-links to the pane the list lives
  * in, same as the download row.
  */
-function localSliceLoadingRows(
+export function localSliceLoadingRows(
   state: TuiState,
 ): readonly ComposerSwitchRow[] {
   const panel = state.localModelsPanel;
@@ -234,7 +240,9 @@ export function selectComposerSwitchRows(
       ? backendRows(state)
       : kind === "provider"
         ? providerRows(state)
-        : modelRows(state);
+        : kind === "workers"
+          ? selectWorkerRows(state)
+          : modelRows(state);
   const open = state.composerSwitch;
   // The typed filter is applied here, not in the renderer: cursor
   // clamping, Enter and the popup must all see the same narrowed list,

@@ -1,4 +1,6 @@
 import {
+  FUSION_WORKERS_MAX,
+  FUSION_WORKERS_MIN,
   ensureUserConfigFileSync,
   getConfig,
   resetConfigCache,
@@ -81,6 +83,38 @@ export function setRunModeInConfig(args: SetRunModeArgs): void {
             managed: { ...file.localModels.managed, parallel: args.managedParallel },
           },
         }),
+  };
+  writeUserConfigFileSync(path, next);
+  resetConfigCache();
+}
+
+/**
+ * Persist the worker count without touching the mode: `llm.runMode.fusion.workers`
+ * and `localModels.managed.parallel` in one write. The two are one fact
+ * seen from two sides — how many workers the orchestrator may fan out,
+ * and how many llama-server slots exist for them to run in — so they
+ * must not be able to disagree. Valid off the fusion route too: the
+ * count is remembered for the next time fusion is picked.
+ */
+export function setFusionWorkersInConfig(workers: number): void {
+  if (!Number.isInteger(workers) || workers < FUSION_WORKERS_MIN || workers > FUSION_WORKERS_MAX) {
+    throw new RunModePersistError(
+      `workers must be an integer ${FUSION_WORKERS_MIN}-${FUSION_WORKERS_MAX}, got ${workers}`,
+    );
+  }
+  const path = getConfig().paths.userConfigFile;
+  const file = ensureUserConfigFileSync(path);
+  const llm = readLlmBlockOrDefault(file);
+  const next: UserConfigFile = {
+    ...file,
+    llm: {
+      ...llm,
+      runMode: { ...llm.runMode, fusion: { ...llm.runMode?.fusion, workers } },
+    },
+    localModels: {
+      ...file.localModels,
+      managed: { ...file.localModels.managed, parallel: workers },
+    },
   };
   writeUserConfigFileSync(path, next);
   resetConfigCache();

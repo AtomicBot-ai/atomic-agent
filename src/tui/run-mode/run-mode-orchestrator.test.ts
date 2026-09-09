@@ -139,4 +139,36 @@ describe("RunModeOrchestrator.setMode", () => {
     await app.orchestrator.setMode("fusion");
     expect(app.deps.localModels.startDaemon).not.toHaveBeenCalled();
   });
+
+  it("setWorkers writes both counts and says how to apply the new slot count", () => {
+    seed(BOTH_LEGS);
+    const app = harness();
+    app.orchestrator.setWorkers(4);
+    expect(getConfig().llm?.runMode?.fusion?.workers).toBe(4);
+    expect(getConfig().localModels.managed.parallel).toBe(4);
+    expect(app.deps.providers.refresh).toHaveBeenCalled();
+    const line = app.actions.find(
+      (a) => a.type === "runtime_info" && a.line.startsWith("fusion: 4 workers"),
+    );
+    expect(line).toBeDefined();
+    expect((line as { line: string }).line).toMatch(/restart the local daemon.*--parallel 4/);
+  });
+
+  it("setWorkers says nothing about restarting when the count did not move", () => {
+    seed(BOTH_LEGS);
+    const app = harness();
+    app.orchestrator.setWorkers(2);
+    const line = app.actions.find((a) => a.type === "runtime_info") as { line: string };
+    expect(line.line).toBe("fusion: 2 workers");
+  });
+
+  it("setWorkers refuses an out-of-range count with a notice, writing nothing", () => {
+    seed(BOTH_LEGS);
+    const app = harness();
+    app.orchestrator.setWorkers(99);
+    expect(getConfig().localModels.managed.parallel).toBe(2);
+    expect(app.actions.find((a) => a.type === "composer_notice")).toMatchObject({
+      text: expect.stringMatching(/workers must be an integer 1-8/),
+    });
+  });
 });

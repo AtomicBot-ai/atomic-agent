@@ -24,6 +24,10 @@ export {
   type ComposerBackendMeta,
 } from "./composer-backend-selectors.js";
 export { ComposerMetaControls } from "./composer-meta-controls.js";
+export {
+  selectComposerWorkersLabel,
+  selectWorkerRows,
+} from "./composer-switch-worker-rows.js";
 export { ComposerSwitchPopup } from "./composer-switch-popup.js";
 export { reduceComposerSwitchAction } from "./composer-switch-reducer.js";
 export {

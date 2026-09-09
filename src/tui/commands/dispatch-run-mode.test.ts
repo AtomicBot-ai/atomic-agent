@@ -19,6 +19,21 @@ describe("parseRunModeCommand", () => {
     expect(parseRunModeCommand("status")).toEqual({ openSwitch: false, status: true });
   });
 
+  it("takes a worker count", () => {
+    expect(parseRunModeCommand("workers 4")).toEqual({ openSwitch: false, workers: 4 });
+    expect(parseRunModeCommand("  WORKERS   1 ")).toEqual({ openSwitch: false, workers: 1 });
+  });
+
+  it("bounds the worker count", () => {
+    for (const raw of ["workers 0", "workers 9"]) {
+      const out = parseRunModeCommand(raw);
+      expect(out.workers).toBeUndefined();
+      expect(out.error).toMatch(/workers must be 1-8/);
+    }
+    // Not a count at all: falls through to the unknown-mode line.
+    expect(parseRunModeCommand("workers many").error).toMatch(/unknown run mode/);
+  });
+
   it("anything else is a usage line naming the input", () => {
     const out = parseRunModeCommand("hybrid");
     expect(out.openSwitch).toBe(false);

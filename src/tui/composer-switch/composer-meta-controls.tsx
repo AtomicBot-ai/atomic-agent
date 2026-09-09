@@ -23,6 +23,11 @@ export interface ComposerMetaControlsProps {
    */
   needsModelDownload?: boolean;
   /**
+   * Fusion's fourth control, `2 workers`: the local half of the route.
+   * `null` off the fusion route, where the strip has three controls.
+   */
+  workers?: string | null;
+  /**
    * Mouse layer the click targets register on. The composer floats over
    * the chat log with a `MOUSE_LAYER_PANEL` backstop behind it (see
    * `composer-overlay.tsx`), and a control left on the base layer would
@@ -72,6 +77,7 @@ export function ComposerMetaControls({
   provider,
   model,
   needsModelDownload = false,
+  workers = null,
   mouseLayer,
 }: ComposerMetaControlsProps): ReactElement | null {
   if (!backend && !provider && !model && !needsModelDownload) return null;
@@ -98,6 +104,15 @@ export function ComposerMetaControls({
           label={model}
           lead={Boolean(backend || provider)}
           shrink={3}
+          mouseLayer={mouseLayer}
+        />
+      ) : null}
+      {workers ? (
+        <Control
+          kind="workers"
+          label={workers}
+          lead={Boolean(backend || provider || model)}
+          shrink={2}
           mouseLayer={mouseLayer}
         />
       ) : null}
