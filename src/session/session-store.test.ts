@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Database as DatabaseCtor } from "../native/load-better-sqlite3.js";
 import { SessionStore } from "./session-store.js";
 import { createEmptySessionState } from "./session-state.js";
 import { EMPTY_CONTEXT_USAGE } from "./context-usage.js";
@@ -148,6 +149,36 @@ describe("SessionStore", () => {
       { workingDir: "/w2", updatedAt: 3000 },
       { workingDir: "/w3", updatedAt: 2000 },
     ]);
+  });
+
+  describe("with a corrupt row", () => {
+    const insertCorrupt = () => {
+      const raw = new DatabaseCtor(join(tmp, "sessions.sqlite"));
+      try {
+        raw
+          .prepare(
+            `INSERT INTO sessions (id, working_dir, status, payload, created_at, updated_at)
+             VALUES ('bad', '/w', 'pending', '{not json', 9, 9000)`,
+          )
+          .run();
+      } finally {
+        raw.close();
+      }
+    };
+
+    it("listRecent and listByWorkingDir skip it instead of throwing", () => {
+      store.save({ ...createEmptySessionState({ id: "ok", workingDir: "/w" }), updatedAt: 1 });
+      insertCorrupt();
+      expect(store.listRecent(10).map((s) => s.id)).toEqual(["ok"]);
+      expect(store.listByWorkingDir("/w", 10).map((s) => s.id)).toEqual(["ok"]);
+      expect(store.unreadableRowsSkipped).toBe(2);
+    });
+
+    it("load returns null for it", () => {
+      insertCorrupt();
+      expect(store.load("bad")).toBeNull();
+      expect(store.unreadableRowsSkipped).toBe(1);
+    });
   });
 
   it("delete removes a session", () => {
