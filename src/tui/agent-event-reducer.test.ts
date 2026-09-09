@@ -993,6 +993,84 @@ describe("provider outage", () => {
     });
   });
 
+  const turnFinished = (reason: string): TuiAction => ({
+    type: "agent_event",
+    event: {
+      type: "turn_finished",
+      turnIndex: 0,
+      reason,
+      stepCount: 1,
+      durationMs: 20,
+    } as never,
+  });
+
+  it.each(["cancelled", "max_steps"])(
+    "takes a live wait down with the turn that ended %s",
+    (reason) => {
+      // `waiting` and `retrying` are claims about a turn that is on the
+      // wire. Esc during the backoff is the ending the loop's own feed
+      // line advertises ("· Esc stops"), and it used to leave the
+      // readout standing and counting — measured live at 19s and
+      // climbing, fourteen seconds after the loop was dead.
+      const ended = apply(createInitialTuiState(fakeSession()), [
+        step(0),
+        waiting(),
+        turnFinished(reason),
+      ]);
+      expect(ended.providerOutage).toBeNull();
+    },
+  );
+
+  it("does not read the next turn's first step as the parked one", () => {
+    const ended = apply(createInitialTuiState(fakeSession()), [
+      step(0),
+      waiting(),
+      turnFinished("cancelled"),
+    ]);
+    const fresh = apply(ended, [
+      { type: "agent_event", event: { type: "turn_started" } as never },
+      step(0),
+    ]);
+    expect(fresh.providerOutage).toBeNull();
+  });
+
+  it("keeps the given-up badge across an aborted turn", () => {
+    // Sticky on purpose: the next message fails the same way until the
+    // link is back, and a state that clears itself between attempts is
+    // how eight identical failures read as eight separate surprises.
+    const dead = apply(createInitialTuiState(fakeSession()), [
+      waiting(),
+      {
+        type: "agent_event",
+        event: {
+          type: "loop_failed",
+          error: new Error("fetch failed"),
+          category: "transport",
+        },
+      },
+      turnFinished("failed"),
+    ]);
+    expect(dead.providerOutage).toMatchObject({ givenUp: true });
+    expect(reduceTuiState(dead, turnFinished("cancelled")).providerOutage)
+      .toMatchObject({ givenUp: true });
+  });
+
+  it("clears the given-up badge once a turn reaches the model", () => {
+    const dead = apply(createInitialTuiState(fakeSession()), [
+      waiting(),
+      {
+        type: "agent_event",
+        event: {
+          type: "loop_failed",
+          error: new Error("fetch failed"),
+          category: "transport",
+        },
+      },
+      turnFinished("failed"),
+    ]);
+    expect(reduceTuiState(dead, turnFinished("reply")).providerOutage).toBeNull();
+  });
+
   it("does not repeat the feed line on every retry", () => {
     // The backoff fires every few seconds at first; the meta-row carries
     // the live numbers, so a wall of identical lines would only bury the
