@@ -87,10 +87,16 @@ try {
   check('the wizard opens itself on a fresh state directory', (await step()) === 'intro');
   await snapshot('intro');
 
-  // "press any key" is two-stage: the first input finishes the reveal.
-  await app.clickSel('#onboarding');
-  await app.clickSel('#onboarding');
-  check('a click gets past the intro', (await step()) === 'choose', await step());
+  /* ONE click leaves the title card. It used to take two — the first
+     finished a typewriter reveal that no longer exists — and a driver still
+     spending two inputs here spent the second one on the setup screen behind
+     it, choosing a route nobody asked for.
+
+     `scroll: false` for the same reason the harness documents: the
+     scroll-into-view wheel is itself an input the card answers, so a
+     scrolling click is two inputs, not one. */
+  await app.clickSel('#onboarding', { scroll: false });
+  check('one click leaves the title card', (await step()) === 'choose', await step());
   await snapshot('choose');
 
   /* --- THE ROOT DEFECT: one click on a row must activate it. --- */
@@ -198,13 +204,21 @@ try {
     const catalogue = await app.js('window.__obPickCounts().models');
     check('every model in the catalogue is in the list, not the first six',
       painted === catalogue && catalogue > 6, `painted=${painted} catalogue=${catalogue}`);
-    say(await app.wheel('#onboarding .ob-models', 900));
-    const box = await app.boxOf('#onboarding .ob-models');
-    const last = await app.boxOf('#onboarding .ob-models .ob-row', { index: painted - 1 });
+    /* Wheel until the last row is actually in view, rather than a fixed 900px
+       and a hope. Row heights are a layout decision and they change; a
+       scroll amount hard-coded against yesterday's row height reports a
+       broken list the moment the rows get taller. */
+    let box = await app.boxOf('#onboarding .ob-models');
+    let last = await app.boxOf('#onboarding .ob-models .ob-row', { index: painted - 1 });
+    for (let i = 0; i < 12 && box && last && last.y > box.y + box.h / 2; i += 1) {
+      await app.wheel('#onboarding .ob-models', 400);
+      box = await app.boxOf('#onboarding .ob-models');
+      last = await app.boxOf('#onboarding .ob-models .ob-row', { index: painted - 1 });
+    }
     check('the wheel brings the last model under the pointer',
       !!box && !!last && last.y > box.y - box.h / 2 && last.y < box.y + box.h / 2,
       `list ${box ? box.y - box.h / 2 : '?'}..${box ? box.y + box.h / 2 : '?'}, last row at ${last ? last.y : '?'}`);
-    say(await app.wheel('#onboarding .ob-models', -900));
+    for (let i = 0; i < 12; i += 1) await app.wheel('#onboarding .ob-models', -400);
     say(await app.clickText('Add a model from Hugging Face'));
     check('ONE click on the pinned last row opens the Hugging Face step',
       (await step()) === 'local_hf_ref', await step());
@@ -266,14 +280,18 @@ try {
     const before = (await app.snap()).wizRows.findIndex((r) => r.startsWith('> '));
     say(await app.clickText('Groq'));
     const head = (await app.snap()).heads[0] || '';
+    /* B.4 — the screen says "API key" once, in the 11px kicker, and names
+       the provider as the subhead. It used to be one heading reading
+       "API key — Groq" with the words "API key" again on the field's label
+       below it, which the tester read as the same thing twice. */
     check('ONE click on a provider row that is not under the cursor opens its key screen',
-      /^API key — Groq/.test(head), `cursor was on row ${before}; head=${JSON.stringify(head)}`);
+      /^Groq/.test(head), `cursor was on row ${before}; head=${JSON.stringify(head)}`);
     say(await app.clickText('Back', { selector: '#onboarding .ob-foot button' }));
     check('Back returns to the provider list',
       (await app.snap()).wizRows.length > 0, JSON.stringify((await app.snap()).heads));
     say(await app.clickText('OpenRouter'));
     check('the first row also opens on one click',
-      /^API key — OpenRouter/.test((await app.snap()).heads[0] || ''), JSON.stringify((await app.snap()).heads));
+      /^OpenRouter/.test((await app.snap()).heads[0] || ''), JSON.stringify((await app.snap()).heads));
     say(await app.clickText('Back', { selector: '#onboarding .ob-foot button' }));
     /* Groq for the button test rather than OpenRouter: its model list
        needs the key, so a made-up one is refused instead of quietly
@@ -388,9 +406,13 @@ try {
     say(await app.clickText('Cloud models'));
     say(await app.clickText('OpenRouter'));
     const placeholder = await app.js("(document.getElementById('wiz-key')||{}).placeholder");
-    check('the key field is labelled and says what an empty one means',
-      /OPENROUTER_API_KEY/.test(placeholder || '')
-        && (await app.text('#onboarding label[for="wiz-key"]')) === 'API key',
+    /* B.4 — one label. The field's own <label> is gone: the screen is titled
+       "API key" in the 11px style and the placeholder names the field and
+       says what leaving it empty means, which is the only thing on this
+       screen a person actually needs told. */
+    check('the key field says what it wants and what an empty one means',
+      /OPENROUTER_API_KEY/.test(placeholder || '') && /paste/i.test(placeholder || '')
+        && /^api key$/i.test(await app.text('#onboarding .ob-kicker')),
       JSON.stringify(placeholder));
     const focused = await app.focusInfo();
     check('the key screen arrives with the caret already in the field',
@@ -401,11 +423,26 @@ try {
       await sleep(500);
       const now = await step();
       const open = await app.js('window.__ob().open');
-      if (now !== 'cloud' || open === false) landed = { step: now, open };
+      /* F6 — a verified key lands on the MODEL STEP, which is still the
+         `cloud` step with the wizard open; the flow has moved on even though
+         `step` has not. Watch for either. */
+      const phase = await app.js('window.__wizList ? window.__wizList().phase : null');
+      if (now !== 'cloud' || open === false || phase === 'pick_model') landed = { step: now, open, phase };
     }
-    check('an empty key on a provider whose variable is in .env verifies and moves the flow on',
-      !!landed && landed.step !== 'cloud',
-      landed ? JSON.stringify(landed) : `still on the key screen: ${JSON.stringify((await app.snap()).error)}`);
+    /* This one needs a state directory whose .env actually carries
+       OPENROUTER_API_KEY — the point is that an EMPTY box is answered by the
+       environment. Run with `--state <dir>` (or ATOMIC_AGENT_STATE_DIR) for
+       it; on the throwaway directory this driver makes for itself there is
+       no key, and the honest result is a skip rather than a failure that
+       says nothing about the app. */
+    const noKeyHere = /no API key/.test((await app.snap()).error || '');
+    if (noKeyHere && !process.env.ATOMIC_AGENT_STATE_DIR) {
+      say('SKIP an empty key verifies from .env — this run has no OPENROUTER_API_KEY to answer with');
+    } else {
+      check('an empty key on a provider whose variable is in .env verifies and moves the flow on',
+        !!landed && (landed.step !== 'cloud' || landed.phase === 'pick_model'),
+        landed ? JSON.stringify(landed) : `still on the key screen: ${JSON.stringify((await app.snap()).error)}`);
+    }
     await snapshot('cloud-verified');
   }
 
@@ -480,15 +517,23 @@ try {
     say(await app.clickText('Claude Code'));
     const rows = (await app.snap()).rows;
     const ticked = await app.js(`[...document.querySelectorAll('#onboarding [role=checkbox]')].map((n) => n.getAttribute('aria-checked'))`);
-    check('ONE click ticks an agent and reveals the import row',
-      JSON.stringify(ticked) === JSON.stringify(['true', 'false']) && rows.some((r) => /Import from 1 agent/.test(r)),
-      JSON.stringify(ticked) + ' ' + JSON.stringify(rows));
+    /* B.5 — the import verb is a BUTTON on the action bar now, not a row
+       inside the list drawn as underlined text. What one click on a source
+       must do is unchanged: tick it, and offer the verb with its count. */
+    const footVerbs = await app.js(
+      `[...document.querySelectorAll('#onboarding .ob-foot .btn')].map((b) => b.textContent.trim())`);
+    check('ONE click ticks an agent and offers the counted import verb',
+      JSON.stringify(ticked) === JSON.stringify(['true', 'false'])
+        && footVerbs.some((r) => /Import from 1 agent/.test(r)),
+      JSON.stringify(ticked) + ' ' + JSON.stringify(footVerbs));
     say(await app.clickText('Claude Code'));
-    const off = (await app.snap()).rows;
     const unticked = await app.js(`[...document.querySelectorAll('#onboarding [role=checkbox]')].map((n) => n.getAttribute('aria-checked'))`);
-    check('a second click unticks it again',
-      JSON.stringify(unticked) === JSON.stringify(['false', 'false']) && !off.some((r) => /Import from/.test(r)),
-      JSON.stringify(unticked) + ' ' + JSON.stringify(off));
+    const offVerbs = await app.js(
+      `[...document.querySelectorAll('#onboarding .ob-foot .btn')].map((b) => b.textContent.trim())`);
+    check('a second click unticks it again, and the import verb goes with it',
+      JSON.stringify(unticked) === JSON.stringify(['false', 'false'])
+        && !offVerbs.some((r) => /Import from/.test(r)),
+      JSON.stringify(unticked) + ' ' + JSON.stringify(offVerbs));
     say(await app.clickText('Skip adding data from other agents'));
     check('ONE click on the skip row ends the flow', (await step()) === 'finished', await step());
   }

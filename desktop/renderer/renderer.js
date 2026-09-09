@@ -7241,7 +7241,10 @@ function obFootHTML() {
     case 'import_pick': {
       const picked = (OB.importAgents || []).filter((a) => a.enabled).length;
       left = obBtn('import:skip', OB_COPY.importSkipLabel, 'btn-g', busy);
-      right = obBtn('import:go', busy ? 'Scanning…' : obImportActionLabel(picked), 'btn-p', busy || picked === 0);
+      /* Nothing ticked, no import verb. A greyed "Import from 0 agents" is a
+         control that exists only to be unusable — the row it replaced was
+         simply absent until something was ticked, and that was right. */
+      right = picked === 0 ? '' : obBtn('import:go', busy ? 'Scanning…' : obImportActionLabel(picked), 'btn-p', busy);
       break;
     }
     case 'import_preview': {
@@ -8602,7 +8605,15 @@ document.addEventListener('visibilitychange', () => obVisibilityChanged(document
    keys, a mouse press, a wheel notch and a non-empty paste
    (intro-input.ts:26-41). A release is not a press, and an empty paste
    is not a keystroke. */
-document.addEventListener('pointerdown', () => { if (OB.open && OB.step === 'intro') obIntroAdvance(); });
+/* The card leaves on the whole gesture, not on the press.
+   It used to dismiss on `pointerdown`, which was survivable while the intro
+   took two inputs — the first only finished the typewriter. Now that one
+   input leaves, a press that dismissed the card handed the release to
+   whatever was underneath, and Chromium fired the click there: one click on
+   the title card dismissed it AND chose a route off the setup screen behind
+   it. `click` fires after press and release on the card itself, so the
+   gesture ends where it started and nothing behind it is ever pressed. */
+document.addEventListener('click', () => { if (OB.open && OB.step === 'intro') obIntroAdvance(); });
 document.addEventListener('wheel', () => { if (OB.open && OB.step === 'intro') obIntroAdvance(); }, {passive:true});
 document.addEventListener('paste', (e) => {
   if (!OB.open || OB.step !== 'intro') return;
@@ -10535,7 +10546,15 @@ function wizardHTML() {
       : '')
     + '<label class="cap">API key' + (k.env ? ' \u2014 blank reads ' + esc(k.env) : '') + '</label>'
     + '<input class="field-inp" id="wiz-key" type="password" style="width:100%" value="' + esc(WIZ.apiKey) + '">';
-  if (WIZ.phase === 'pick_model') return selShell(WIZ.savedLabel || 'Choose a model', wizModelStepHTML(false), wizModelStepFoot());
+  /* The popover is a flex column with a fixed max-height, and `.selbody` is
+     the child that scrolls. Handing it a bare `.ob-wiz` meant nothing
+     scrolled: with a 37-model catalogue the content ran straight past the
+     bottom of the window and took the footer with it, so "Use this model"
+     was drawn 90px below the last visible pixel. */
+  if (WIZ.phase === 'pick_model') {
+    return selShell(WIZ.savedLabel || 'Choose a model',
+      '<div class="selbody">' + wizModelStepHTML(false) + '</div>', wizModelStepFoot());
+  }
   const verifying = WIZ.phase === 'verifying';
   /* This is the SECOND place the app asks for an API key — the wizard's own
      screen is the other — and the two had drifted: this one wrote the error
@@ -10628,7 +10647,14 @@ async function wizNext() {
   // The catalogue, to pick a model with. This is a LOOKUP, not a check:
   // openrouter and aimlapi answer it from a list bundled in the binary,
   // so it says nothing whatever about the key (see verifyProviderKey).
-  const listed = await BR.providerModels(id, k.kind);
+  /* The second pass — the model step committing a choice — must not re-do the
+     first pass's network. The catalogue is already in hand and the key has
+     already been checked; asking again costs another real completion, makes
+     the operator wait through a "Verifying…" they have already sat through,
+     and was slow enough that the step took over a minute to close. */
+  const listed = WIZ.modelChosen && (WIZ.models || []).length
+    ? {ok: true, models: WIZ.models}
+    : await BR.providerModels(id, k.kind);
   if (!listed || !listed.ok || !(listed.models || []).length) {
     if (!existedBefore && BR.removeProvider) await BR.removeProvider(id);
     WIZ.phase = 'configure';
@@ -10655,7 +10681,11 @@ async function wizNext() {
      real one-token completion, on the URL, key and model the next turn
      will use. A key that fails is rolled back out of the config rather
      than left behind pretending to be configured. */
-  const proof = BR.verifyProviderKey ? await BR.verifyProviderKey(entry, model) : {ok:true, checked:false};
+  /* Same for the proof: the key was checked on the way in, and what the user
+     decided about an unchecked one is carried on WIZ.unverifiedNote. */
+  const proof = WIZ.modelChosen
+    ? {ok: true, checked: !WIZ.unverifiedNote, error: WIZ.unverifiedNote || undefined}
+    : (BR.verifyProviderKey ? await BR.verifyProviderKey(entry, model) : {ok:true, checked:false});
   if (proof && proof.checked && !proof.ok) {
     if (!existedBefore && BR.removeProvider) await BR.removeProvider(id);
     WIZ.phase = 'configure';
@@ -10676,7 +10706,7 @@ async function wizNext() {
      pressed, and a provider saved unchecked is remembered as unverified —
      the provider list and the composer both say so — until a turn actually
      succeeds on it. */
-  if (proof && !proof.checked && !WIZ.acceptUnchecked) {
+  if (proof && !proof.checked && !WIZ.acceptUnchecked && !WIZ.modelChosen) {
     WIZ.phase = 'configure';
     WIZ.uncheckedFor = {id, model, label: k.label.split(' (')[0]};
     WIZ.error = proof.error || 'the key could not be checked';

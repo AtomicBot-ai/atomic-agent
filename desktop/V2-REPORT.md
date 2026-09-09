@@ -145,8 +145,17 @@ pass.
 `S.slash` and repaints a popover that is always rendered — so this needs
 driving before anything is changed, exactly as the brief says.
 
-**N4, N5.** N4 is a prompt-owner question, not code. N5 needs the catalogue
-figures checked against each provider's published context windows.
+**N4.** A prompt-owner question, not code.
+
+**N5 — traced, not fixed.** The desktop does not compute that number: it
+takes `contextUsage.contextWindow` from the agent and formats it. The figures
+the tester saw are hardcoded in the agent's own catalogues —
+`anthropic/claude-opus-5` is `contextWindow: 1_000_000` in
+`src/llm/provider/openrouter/openrouter-frontier-chat-models.ts:21`, and
+`openai/gpt-5.5` is `1_050_000` in the AI/ML API catalogue (which is where the
+1.1M on screen comes from, rounded). So the question is whether those two
+literals are right, which is a fact about the models rather than a bug in
+either app — but it is one edit in one file when someone confirms them.
 
 **"No green" is enforced as a colour, not yet as a shape everywhere.** The
 token is gone — `--success` resolves to ink, so nothing in the app draws a

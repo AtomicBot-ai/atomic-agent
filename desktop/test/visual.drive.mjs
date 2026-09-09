@@ -31,13 +31,40 @@ try {
   await app.send('Emulation.setDeviceMetricsOverride',
     { width: W, height: H, deviceScaleFactor: 2, mobile: false });
 
+  /* The fonts are vendored and the CSP is closed to 'self'. On a file://
+     page 'self' can be an opaque origin, in which case the faces would be
+     blocked and the app would quietly fall back to Helvetica — the kind of
+     thing that looks fine in a screenshot until you compare letterforms. Ask
+     the font loader, not the CSS. */
+  const fonts = await app.eval(`(async () => {
+    await document.fonts.ready;
+    return {
+      inter: document.fonts.check('600 34px Inter'),
+      mono: document.fonts.check('400 13px "DM Mono"'),
+      loaded: [...document.fonts].filter((f) => f.status === 'loaded').map((f) => f.family + ' ' + f.weight),
+    };
+  })()`);
+  console.log(`FONTS inter=${fonts.inter} mono=${fonts.mono} loaded=${fonts.loaded.length}`);
+  if (!fonts.inter || !fonts.mono) {
+    console.log('FAIL the vendored fonts did not load — the CSP or the paths are wrong');
+  }
+
   for (const theme of ['dark', 'light']) {
+    /* The theme verb goes through act(), and act() refuses everything while
+       the first-run flow is open — so setting it with the wizard up did
+       nothing at all and the "light" set came out dark. Close the flow, set
+       the theme, put the flow back. */
+    for (let i = 0; i < 90 && !(await app.eval(`window.__ob ? window.__ob().open : false`)); i++) await sleep(250);
+    await app.eval(`window.__obClose()`).catch(() => {});
+    await sleep(200);
     await app.eval(`window.__theme(${JSON.stringify(theme)})`).catch(() => {});
-    await sleep(250);
+    await app.waitFor(
+      `(document.documentElement.getAttribute('data-theme') || 'system') === ${JSON.stringify(theme)}`,
+      `the ${theme} theme`, { timeout: 8000 });
 
     // 1 — the title card
-    for (let i = 0; i < 90 && !(await app.eval(`window.__ob ? window.__ob().open : false`)); i++) await sleep(250);
-    if ((await app.eval(`window.__ob().step`)) !== 'intro') await app.eval(`window.__obOpen('intro')`);
+    await app.eval(`window.__obOpen('intro')`);
+    await sleep(400);
     await shot(`${theme}-1-title-card`);
 
     // 2 — the setup step, reached by a real keypress
@@ -83,7 +110,6 @@ try {
     await app.eval(`window.__ctxDraft('')`).catch(() => {});
     await sleep(200);
 
-    if (theme === 'dark') await app.eval(`window.__obOpen('intro')`);
   }
   await app.eval(`window.__theme('system')`).catch(() => {});
   console.log(`SHOTS in ${OUT}`);

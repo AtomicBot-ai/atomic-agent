@@ -1770,11 +1770,20 @@ body{font-family:var(--font-ui);font-size:var(--fs-cap);letter-spacing:0}
 /* B.7 — the composer's control row as a legend plate: the name above, the
    value below, values in machine type. Five unlabelled dropdowns is not a
    control row, it is a puzzle. */
-.cfoot{display:flex;align-items:flex-end;gap:var(--s4);padding:var(--s2) var(--s3) 0;
-  border-top:1px solid var(--line-hair);margin-top:var(--s2)}
+/* The row was a single 28px strip clipped to its own height; a named control
+   is two lines, so it sizes to its content. */
+.cfoot{display:flex;align-items:flex-end;gap:var(--s4);height:auto;overflow:visible;
+  padding:var(--s2) var(--s3) var(--s1) var(--s4);box-shadow:none;margin:0;
+  border-top:1px solid var(--line-hair)}
 .cgrp{display:flex;flex-direction:column;gap:1px;min-width:0}
 .clabel{font:500 var(--fs-label)/1.2 var(--font-ui);letter-spacing:var(--tr-label);
   text-transform:uppercase;color:var(--ink-3);padding:0 var(--s2)}
 .cfoot .cchip{height:22px;font-family:var(--font-mono);font-size:var(--fs-label);
   color:var(--ink);border-radius:var(--r);max-width:26ch;overflow:hidden;text-overflow:ellipsis}
 .cfoot .cchip:hover{background:var(--panel)}
+
+/* Inside the popover the shell's own body is the scroller, so the list must
+   not add a second one — two nested scrollers is how the footer ends up
+   somewhere nobody can reach. */
+.selpop .ob-wizlist{max-height:none;overflow:visible}
+.selpop .ob-wiz{padding:var(--s4) var(--s5)}
