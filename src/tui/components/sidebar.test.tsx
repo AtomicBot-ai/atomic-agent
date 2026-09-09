@@ -349,3 +349,40 @@ describe("Sidebar", () => {
     expect(strip(lastFrame() ?? "")).toContain("…");
   });
 });
+
+describe("Sidebar session drag feedback", () => {
+  it("paints ↕ on the row in hand and the chevron on the slot under the pointer", () => {
+    const { lastFrame } = render(
+      <Sidebar
+        width={30}
+        sessions={SESSIONS}
+        sessionsCursor={1}
+        sessionDrag={{ sessionId: "ghijkl5678", from: 1, over: 0 }}
+        currentSessionId={null}
+        tasks={[]}
+        tasksCursor={0}
+        activeSection="sessions"
+        focused={true}
+      />,
+    );
+    const text = strip(lastFrame() ?? "");
+    expect(text).toMatch(/↕ [^\n]*another conversa/);
+    expect(text).toMatch(/▸ [^\n]*first ever messa/);
+  });
+
+  it("paints no drag marks when nothing is dragged", () => {
+    const { lastFrame } = render(
+      <Sidebar
+        width={30}
+        sessions={SESSIONS}
+        sessionsCursor={1}
+        currentSessionId={null}
+        tasks={[]}
+        tasksCursor={0}
+        activeSection="sessions"
+        focused={true}
+      />,
+    );
+    expect(strip(lastFrame() ?? "")).not.toContain("↕");
+  });
+});

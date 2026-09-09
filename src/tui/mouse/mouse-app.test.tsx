@@ -151,6 +151,10 @@ function mountApp(): {
   seedSessions: () => void;
   /** Session ids the app asked the host to delete. */
   deleted: string[];
+  /** Session ids the app asked the host to switch to. */
+  switched: string[];
+  /** `[sessionId, toIndex]` pairs the app asked the host to reorder. */
+  moves: Array<[string, number]>;
   /** Clicks the Tasks header's `+ new` chip delivered to the host. */
   taskNews: number[];
   /** Provider ids `/model` asked the orchestrator to ensure a catalog for. */
@@ -160,6 +164,8 @@ function mountApp(): {
   const bus = makeTuiEventBus();
   const mouse = makeMouseSource();
   const deleted: string[] = [];
+  const switched: string[] = [];
+  const moves: Array<[string, number]> = [];
   const copied: string[] = [];
   const taskNews: number[] = [];
   const modelEnsures: Array<string | null> = [];
@@ -177,6 +183,9 @@ function mountApp(): {
       callbacks={{
         ...noopCallbacks(),
         onSessionDeleteConfirmed: (sessionId) => deleted.push(sessionId),
+        onSessionSwitchRequested: (sessionId) => switched.push(sessionId),
+        onSessionMoveRequested: (sessionId, toIndex) =>
+          moves.push([sessionId, toIndex]),
         onTaskNewRequested: () => taskNews.push(taskNews.length),
         onProvidersInlineModelsEnsureRequested: (providerId) =>
           modelEnsures.push(providerId),
@@ -190,6 +199,8 @@ function mountApp(): {
     mouse,
     stdin,
     deleted,
+    switched,
+    moves,
     taskNews,
     modelEnsures,
     copied,
@@ -634,6 +645,90 @@ describe("TuiApp mouse", () => {
     // The quit chord must not have been armed by that Ctrl+C.
     expect(app.frame()).not.toContain("press again to quit");
     app.unmount();
+  });
+
+  /**
+   * The rail's session rows: click-to-select, click-again-to-open, and
+   * the drag that reorders them. All three ride one press, so the
+   * gesture is arbitrated on release — pinned here end to end.
+   */
+  describe("session rows", () => {
+    const rowLine = (app: ReturnType<typeof mountApp>, needle: string): string =>
+      app
+        .frame()
+        .split("\n")
+        .find((line) => line.includes(needle)) ?? "";
+
+    const seedRail = async (app: ReturnType<typeof mountApp>): Promise<void> => {
+      await waitUntil(() => app.frame().includes("R U N"), "the Run screen");
+      app.seedSessions();
+      // The rail truncates previews to its width, so rows are found by a prefix.
+      await waitUntil(() => app.frame().includes("first th"), "the rail rows");
+      await delay(150);
+    };
+
+    /** Press+release on the row until it is the selected one. */
+    const clickRowUntilSelected = async (
+      app: ReturnType<typeof mountApp>,
+      needle: string,
+    ): Promise<void> => {
+      for (let attempt = 0; attempt < 40; attempt += 1) {
+        const at = locate(app.frame(), needle);
+        app.mouse.emit(click(at.x + 2, at.y));
+        await delay(30);
+        app.mouse.emit(release(at.x + 2, at.y));
+        await delay(50);
+        if (rowLine(app, needle).includes("[x]")) return;
+      }
+      throw new Error(`the ${needle} row never became selected`);
+    };
+
+    it("drags a row above another and asks the host to move it there", async () => {
+      const app = mountApp();
+      await seedRail(app);
+      // Press on the second row and hold; retry until the press has
+      // landed on a registered target (it selects the row).
+      for (let attempt = 0; attempt < 40; attempt += 1) {
+        const at = locate(app.frame(), "second th");
+        app.mouse.emit(click(at.x + 2, at.y));
+        await delay(50);
+        if (rowLine(app, "second th").includes("[x]")) break;
+        app.mouse.emit(release(at.x + 2, at.y));
+        await delay(30);
+      }
+      expect(rowLine(app, "second th")).toContain("[x]");
+      const target = locate(app.frame(), "first th");
+      app.mouse.emit(drag(target.x + 2, target.y));
+      await waitUntil(
+        () => rowLine(app, "second th").includes("↕"),
+        "the drag handle on the row in hand",
+      );
+      expect(rowLine(app, "first th")).toContain("▸");
+      app.mouse.emit(release(target.x + 2, target.y));
+      await waitUntil(() => app.moves.length > 0, "the move request");
+      expect(app.moves).toEqual([["s-2", 0]]);
+      // Dropping is not opening.
+      expect(app.switched).toEqual([]);
+      await waitUntil(() => !app.frame().includes("↕"), "the drag feedback to clear");
+      app.unmount();
+    });
+
+    it("opens a row on the second click, and only then", async () => {
+      const app = mountApp();
+      await seedRail(app);
+      await clickRowUntilSelected(app, "first th");
+      // The click that selected the row must not have opened it.
+      expect(app.switched).toEqual([]);
+      const at = locate(app.frame(), "first th");
+      app.mouse.emit(click(at.x + 2, at.y));
+      await delay(30);
+      app.mouse.emit(release(at.x + 2, at.y));
+      await waitUntil(() => app.switched.length > 0, "the switch request");
+      await delay(100);
+      expect(app.switched).toEqual(["s-1"]);
+      expect(app.moves).toEqual([]);
+      app.unmount();
+    });
   });
 
   it("moves a panel cursor with the wheel", async () => {

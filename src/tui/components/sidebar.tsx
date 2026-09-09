@@ -8,6 +8,7 @@ import {
 import { isPrimaryPress } from "../mouse/mouse-event.js";
 import { MOUSE_LAYER_BASE } from "../mouse/mouse-registry.js";
 import { computeRowWindow } from "../row-window.js";
+import { SessionRailRow, type SidebarDragState } from "../session-rail/index.js";
 import type { TaskSummaryRow } from "../tasks/tasks-panel-state.js";
 import { theme } from "../theme/theme.js";
 import type { SessionPickerEntry } from "../tui-state.js";
@@ -21,6 +22,8 @@ export interface SidebarProps {
   width: number;
   sessions: readonly SessionPickerEntry[];
   sessionsCursor: number;
+  /** A session row mid-drag: paints `↕` on it and a marker on the slot it is over. */
+  sessionDrag?: SidebarDragState | null;
   currentSessionId: string | null;
   tasks: readonly TaskSummaryRow[];
   tasksCursor: number;
@@ -98,6 +101,7 @@ export function Sidebar(props: SidebarProps): ReactElement {
     tasksCursor,
     activeSection,
     focused,
+    sessionDrag = null,
     sessionId = null,
     maxSessionRows = DEFAULT_MAX_SESSION_ROWS,
     maxTaskRows = DEFAULT_MAX_TASK_ROWS,
@@ -153,6 +157,7 @@ export function Sidebar(props: SidebarProps): ReactElement {
       <SessionsList
         sessions={sessions}
         cursor={sessionsCursor}
+        drag={sessionDrag}
         focused={sessionsActive}
         currentSessionId={currentSessionId}
         maxRows={maxSessionRows}
@@ -480,6 +485,7 @@ function runningCount(tasks: readonly TaskSummaryRow[]): number {
 interface SessionsListProps {
   sessions: readonly SessionPickerEntry[];
   cursor: number;
+  drag: SidebarDragState | null;
   focused: boolean;
   currentSessionId: string | null;
   maxRows: number;
@@ -490,6 +496,7 @@ interface SessionsListProps {
 function SessionsList({
   sessions,
   cursor,
+  drag,
   focused,
   currentSessionId,
   maxRows,
@@ -507,36 +514,45 @@ function SessionsList({
   const visible = sessions.slice(window.start, window.start + window.count);
   const visibleCursor =
     Math.max(0, Math.min(cursor, sessions.length - 1)) - window.start;
+  const dragRole = (entry: SessionPickerEntry, row: number): DragRole => {
+    if (!drag) return null;
+    if (entry.sessionId === drag.sessionId) return "source";
+    return row === drag.over ? "target" : null;
+  };
   return (
     <Box flexDirection="column">
       {visible.map((entry, idx) => (
-        <SidebarRow
+        <SessionRailRow
           key={entry.sessionId}
-          section="sessions"
+          sessionId={entry.sessionId}
           row={window.start + idx}
           selected={focused && idx === visibleCursor}
-          onActivate={(mouse) =>
-            mouse.callbacks.onSessionSwitchRequested?.(entry.sessionId)
-          }
+          windowStart={window.start}
+          windowEnd={window.start + window.count - 1}
         >
           <SessionRow
             entry={entry}
             selected={focused && idx === visibleCursor}
             current={entry.sessionId === currentSessionId}
+            drag={dragRole(entry, window.start + idx)}
             previewWidth={previewWidth}
             inner={inner}
           />
-        </SidebarRow>
+        </SessionRailRow>
       ))}
       <MoreRow hidden={window.hiddenAfter} inner={inner} />
     </Box>
   );
 }
 
+/** The row being dragged, the slot it hovers, or neither. */
+type DragRole = "source" | "target" | null;
+
 interface SessionRowProps {
   entry: SessionPickerEntry;
   selected: boolean;
   current: boolean;
+  drag: DragRole;
   previewWidth: number;
   inner: number;
 }
@@ -545,6 +561,7 @@ function SessionRow({
   entry,
   selected,
   current,
+  drag,
   previewWidth,
   inner,
 }: SessionRowProps): ReactElement {
@@ -552,7 +569,17 @@ function SessionRow({
   // the dot is "this is the thread you are in". The ground answers the
   // first one too, but only in colour — and a colour is nothing under
   // NO_COLOR or in a pipe, so the glyph stays.
-  const chevron = selected ? theme.glyphs.chevronRight : " ";
+  //
+  // A drag borrows the chevron cell: `↕` on the row in hand, and the
+  // chevron in the accent colour on the slot it would drop into — the
+  // 90s list-widget feedback, in glyph and colour only, so no row is
+  // added or resized while the pointer is held.
+  const chevron =
+    drag === "source"
+      ? DRAG_HANDLE
+      : drag === "target" || selected
+        ? theme.glyphs.chevronRight
+        : " ";
   const marker = current ? theme.glyphs.assistantMarker : " ";
   // The ground runs almost the full width of the rail with one column of
   // air either side, so a selected row reads as a row in a list rather
@@ -581,10 +608,11 @@ function SessionRow({
       <Text>{" ".repeat(ROW_MARGIN_COLUMNS)}</Text>
       <Box flexShrink={0} width={Math.max(0, groundWidth - CLOSE_COLUMNS)}>
         <Text
-          color={theme.colors.railForeground}
-          bold={selected || current}
+          color={drag === "target" ? theme.colors.accent : theme.colors.railForeground}
+          bold={selected || current || drag !== null}
+          underline={drag === "target"}
           wrap="truncate"
-          {...(selected ? { inverse: true } : {})}
+          {...(selected || drag === "source" ? { inverse: true } : {})}
         >
           {ground}
         </Text>
@@ -601,6 +629,8 @@ function SessionRow({
 
 /** Air either side of a rail list row's ground. */
 const ROW_MARGIN_COLUMNS = 1;
+/** Painted in the chevron cell of the row being dragged. */
+const DRAG_HANDLE = "↕";
 /** Cells the close affordance occupies inside the ground: `[x]` + a pad. */
 const CLOSE_COLUMNS = 4;
 

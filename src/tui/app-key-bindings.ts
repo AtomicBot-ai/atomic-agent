@@ -19,6 +19,7 @@ import {
 import type { MenuNode } from "./menu/menu-registry.js";
 import { cycleNavSlot, type NavSlot } from "./section.js";
 import { selectSidebarTasks } from "./sidebar-tasks-selector.js";
+import { handleSessionMoveKey } from "./session-rail/index.js";
 import type { TuiAction } from "./tui-action.js";
 import type { TuiState } from "./tui-state.js";
 import { isUninstallConfirmed } from "./uninstall/uninstall-state.js";
@@ -70,6 +71,8 @@ export interface AppKeyCallbacks {
   onQuit(): void;
   /** Optional — called when Enter is pressed on the focused sidebar row. */
   onSessionSwitchRequested?(sessionId: string): void;
+  /** Shift+↑/↓ in the rail: put the selected session on slot `toIndex`. */
+  onSessionMoveRequested?(sessionId: string, toIndex: number): void;
   /**
    * Optional — called when Enter is pressed on a sidebar Tasks row.
    * The handler is expected to switch to the Tasks debug tab and open
@@ -684,6 +687,9 @@ function handleSidebarKey(
     dispatch({ type: "chat_focus_set", focus: "editor" });
     return true;
   }
+  // Shift+↑/↓ moves the selected session row; checked before the plain
+  // arrows because Ink reports the chord with `upArrow` set as well.
+  if (handleSessionMoveKey(key, ctx)) return true;
   if (key.upArrow) {
     if (state.sidebarSection === "tasks") {
       dispatch({ type: "sidebar_tasks_cursor_moved", delta: -1 });
