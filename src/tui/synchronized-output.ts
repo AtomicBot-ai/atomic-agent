@@ -66,15 +66,29 @@ const ERASE_IN_LINE = /\u001B\[[0-2]?K/;
  * only Ink's frames. A full frame is many bytes and contains a newline;
  * a mode toggle is neither.
  *
- * Incremental rendering makes a third clause worth having. A repaint
- * that rewrites one line of a fullscreen frame carries no newline —
- * cursor moves, the line, `CSI K` — and its size is dominated by one
- * cursor-move per skipped row. On a normal terminal that still clears
- * 64 bytes (measured: at 110x34 and 80x24 no bracketed update came out
- * under 64 bytes), but on a short one — a dozen rows, a one-word label
- * — it does not, and a repaint that slips through unbracketed is
- * exactly the tearing this module exists to stop. So: anything that
- * erases a line is repainting, whatever its length.
+ * Incremental rendering makes a third clause worth having, as a
+ * backstop rather than as a fix for anything observed. A repaint that
+ * rewrites one line of a fullscreen frame carries no newline — cursor
+ * moves, the line, `CSI K` — so only its length keeps it bracketed, and
+ * its length is incidental: one cursor-move per skipped row plus
+ * whatever the changed line happens to contain.
+ *
+ * Measured, that length has never come close to the bar. Driving the
+ * TUI over a PTY at 110x34, 80x24 and 40x16 — the last is the smallest
+ * window the TUI will render in at all; below it the screen is
+ * `terminal too small`, and no frame is written — the smallest chunk
+ * this `write` bracketed was 189 bytes, and across every scenario
+ * (startup, menus, submenus, the Manage tabs, both pickers, the update
+ * modal, mouse drag and wheel, resizes in both dimensions, teardown)
+ * not one chunk was caught by this clause that the length test had not
+ * already caught. So it is insurance against a shape the app does not
+ * currently produce, not a repair.
+ *
+ * It is close to free: `||` short-circuits, so the regex only ever runs
+ * on chunks of 64 bytes or fewer with no newline in them — never on a
+ * frame. And the predicate is the honest one: something that erases a
+ * line is repainting, and a repaint that slips through unbracketed is
+ * exactly the tearing this module exists to stop.
  */
 export function looksLikeFrame(chunk: string): boolean {
   return (
