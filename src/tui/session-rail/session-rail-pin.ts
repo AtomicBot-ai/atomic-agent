@@ -10,7 +10,11 @@
  * touch" a move does.
  */
 
-import { applySessionRailOrder, moveSessionInOrder } from "./session-rail-order.js";
+import {
+  applySessionRailOrder,
+  moveSessionInOrder,
+  type RailRow,
+} from "./session-rail-order.js";
 
 /** What the rail remembers between runs: the manual order and the pinned ids. */
 export interface SessionRailLayout {
@@ -37,7 +41,7 @@ export function pinnedBlockLength(
  * over the rest, so an unarranged rail still reads by recency below
  * its pins.
  */
-export function arrangeSessionRail<T extends { sessionId: string }>(
+export function arrangeSessionRail<T extends RailRow>(
   entries: readonly T[],
   layout: SessionRailLayout,
 ): T[] {
