@@ -38,6 +38,11 @@ export type {
   PackedConversation,
 } from "./conversation-turn.js";
 export {
+  MACRO_TURN_START_CAP,
+  appendMacroTurnStart,
+  macroTurnStartsFromTurns,
+} from "./macro-turn-starts.js";
+export {
   CONVERSATION_SECTION_LABEL,
   EMPTY_CONTEXT_USAGE,
   contextUsageFromPrompt,
