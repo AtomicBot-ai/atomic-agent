@@ -411,6 +411,43 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
       pattern: stringSchema,
     }),
   ],
+  [
+    "os.git.init",
+    obj({
+      path: stringSchema,
+      initialBranch: stringSchema,
+      userName: stringSchema,
+      userEmail: stringSchema,
+    }),
+  ],
+  [
+    "os.git.add",
+    obj({
+      repo: stringSchema,
+      paths: stringArraySchema,
+      all: booleanSchema,
+      unstage: booleanSchema,
+    }),
+  ],
+  [
+    "os.git.commit",
+    obj(
+      { repo: stringSchema, message: stringSchema, all: booleanSchema },
+      ["message"],
+    ),
+  ],
+  [
+    "os.git.checkout",
+    obj(
+      {
+        repo: stringSchema,
+        branch: stringSchema,
+        create: booleanSchema,
+        startPoint: stringSchema,
+      },
+      ["branch"],
+    ),
+  ],
 
   // ── os.proc ──────────────────────────────────────────────────────────────
   ["os.proc.list", obj({ filter: stringSchema, limit: numberSchema })],

@@ -34,6 +34,10 @@ import {
   osGitShowTool,
   osGitBlameTool,
   osGitBranchTool,
+  buildOsGitInitTool,
+  buildOsGitAddTool,
+  buildOsGitCommitTool,
+  buildOsGitCheckoutTool,
 } from "./git/index.js";
 import { osProcListTool, buildOsProcKillTool } from "./proc/index.js";
 
@@ -73,6 +77,10 @@ export {
   osGitShowTool,
   osGitBlameTool,
   osGitBranchTool,
+  buildOsGitInitTool,
+  buildOsGitAddTool,
+  buildOsGitCommitTool,
+  buildOsGitCheckoutTool,
 } from "./git/index.js";
 export { osProcListTool, buildOsProcKillTool } from "./proc/index.js";
 export { isGogCommand } from "./shell-command-guard/index.js";
@@ -163,6 +171,16 @@ export function registerOsTools(
   registry.register(osGitShowTool);
   registry.register(osGitBlameTool);
   registry.register(osGitBranchTool);
+  // Local git writes ride the fs approval ladder against the repo root.
+  const gitWriteOptions = {
+    approvals: options.approvals,
+    approvalRequired: options.approvalRequired,
+    trustConfigPaths: options.trustConfigPaths,
+  };
+  registry.register(buildOsGitInitTool(gitWriteOptions));
+  registry.register(buildOsGitAddTool(gitWriteOptions));
+  registry.register(buildOsGitCommitTool(gitWriteOptions));
+  registry.register(buildOsGitCheckoutTool(gitWriteOptions));
   registry.register(osProcListTool);
   registry.register(
     buildOsProcKillTool({
