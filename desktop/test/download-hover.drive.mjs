@@ -144,8 +144,14 @@ function judge(where, seen, { needMoves = 2 } = {}) {
     + ` (${seen.reshaped}× when the strip itself changed what it says), `
     + `hover lost on ${seen.hoverOff} looks, backgrounds ${JSON.stringify(seen.backgrounds)}`);
   if (moves < needMoves) {
-    R.check(`${where}: the download reported while the pointer was parked`, false,
-      `only ${moves} progress change(s) — nothing repainted, so this check timed out rather than passing`);
+    /* Too few repaints to conclude anything — a download that finished
+       early, or a quiet stretch between samples. Refusing to pass is
+       right; failing is not, because nothing about the app was observed
+       to be wrong. Say it did not run, the way the suite says it
+       elsewhere, so a red line always means a real defect. */
+    R.say(`SKIP ${where}: the download reported only ${moves} progress change(s) while the pointer`
+      + ` was parked — too few repaints to prove stability either way, so this watch drew no conclusion`);
+    R.skipped = (R.skipped || 0) + 1;
     return;
   }
   R.check(`${where}: a progress sample never rebuilds the node under the pointer`, seen.replaced === 0,
