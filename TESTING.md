@@ -169,6 +169,11 @@ re-runs onboarding where an item needs it.
       top bar; the pull continues
 - [ ] Skipping does NOT trigger the "set up the other backend?" screen on the way out,
       and does not suppress it for future runs (completedAt stamped; nothing else)
+- [ ] Nor the "bring your data" import screen: a row that says "start using the agent
+      now" hands over the agent. It is not stamped as offered either, so `/import` and
+      a later `onboarding` run still have it to give (r8; the same is true of "Start
+      using the agent now" on the almost-there screen, and of nothing else — every
+      other way out of setup still stops on the import screen once)
 - [ ] Known limit: the "keeps running" promise is session-scoped — quitting the app
       mid-download does not resume the pull on relaunch (the turn gate explains the
       state if you chat before re-downloading)

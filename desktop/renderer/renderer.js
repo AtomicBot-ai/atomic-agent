@@ -194,19 +194,20 @@ const OB = {
   outcome: null,
   skipSecondOffer: false,
   /* r8: the operator asked, in so many words, to be put in the agent NOW.
-     One row says that at a point where the flow has already asked
-     everything it has to ask — the wait-or-jump screen's "Start using the
-     agent now — the download keeps running; progress shows in the top bar",
-     which is reached only by setting a cloud model up in the middle of a
-     download. It was still answered with another setup screen (the
-     second-backend pitch, then the import offer), which is the operator's
-     own report: "when I have chosen to proceed to the agent, I should have
-     proceeded to the agent, not to the setup again." A flow that ends this
-     way stamps itself complete and closes; nothing is stamped as OFFERED
-     that the operator never saw, so `/import` and the menu's `onboarding`
-     still have those steps to give later.
-     The download screen's own `s` row does NOT set this — see the note
-     there; its exit onto the import step is a standing acceptance. */
+     Two rows say exactly that, and only those two: the wait-or-jump
+     screen's "Start using the agent now — the download keeps running;
+     progress shows in the top bar", and the download screen's "Or skip the
+     wait — start using the agent now. The download keeps running; progress
+     shows in the top bar." Both were answered with another setup screen
+     (the second-backend pitch, then the import offer), which is the
+     operator's own report: "when I have chosen to proceed to the agent, I
+     should have proceeded to the agent, not to the setup again." A flow
+     that ends this way stamps itself complete and closes; nothing is
+     stamped as OFFERED that the operator never saw, so `/import` and the
+     menu's `onboarding` still have those steps to give later.
+     Nothing else sets it: `esc`, the propose screen's skip and the import
+     screen's own skip row all end the flow without being asked for the
+     agent by name, and they keep the closing screens they always had. */
   handOver: false,
   cursor: 0,
   chatUrl: '',
@@ -6014,9 +6015,26 @@ function dlBytes(bytes) {
   return Math.round(bytes) + ' B';
 }
 
-/** formatEta (use-transfer-rate.ts:59-67), verbatim. */
+/** How long an estimate is worth printing. Beyond this it is noise. */
+const DL_ETA_CAP_SECONDS = 48 * 3600;
+
+/**
+ * formatEta (use-transfer-rate.ts:59-67), with ONE addition: a cap.
+ *
+ * r8 (review): the estimate is `remaining / DL.rate`, and the rate is an
+ * exponentially smoothed sample that starts at whatever the first sample
+ * says. On a cold first sample of a 2.7 GB pull that is a few bytes a
+ * second, and the strip read `⇣ qwen-3.5-4b ░░░░░░░░░░ 0% about 258467h
+ * 14m left` — twenty-nine years, in the window chrome, while the operator
+ * watched the download crawl. The TUI's own formatter has no cap and
+ * would print the same string; the desktop puts one on because this strip
+ * lives in the chrome for the whole download rather than on a screen that
+ * is about to be replaced. Anything past two days is reported as what it
+ * really is — not yet knowable — instead of as a number.
+ */
 function dlEta(seconds) {
   if (seconds === null || seconds === undefined) return 'estimating…';
+  if (seconds > DL_ETA_CAP_SECONDS) return 'more than two days left';
   if (seconds < 60) return 'less than a minute left';
   const minutes = Math.round(seconds / 60);
   if (minutes < 60) return 'about ' + minutes + ' minute' + (minutes === 1 ? '' : 's') + ' left';
@@ -6935,16 +6953,30 @@ function obDownloadKey(input, key) {
   if (input === 's' && !key.ctrl) {
     // Outcome "local" because local is the backend they committed to;
     // the pull survives this screen and reports in the top strip.
-    /* skipSecondOffer because this screen already pitched cloud. NOT
-       `handOver`, even though this row also says "start using the agent
-       now": the import step is deliberately unskippable from here — main.ts
-       (`wizard: \`s\` leaves setup with the download still running`) is a
-       standing acceptance that this exit lands on `import_pick` with
-       `importOfferedAt` unstamped, written by a review that had already
-       corrected the opposite once. r8 does not overturn it from the side;
-       the wait-or-jump row is the one the operator reported and the one
-       that changed. */
-    obDispatch({type:'onboarding_finished', outcome:'local', skipSecondOffer:true});
+    /* skipSecondOffer because this screen already pitched cloud, and
+       `handOver` because this row makes the same promise as the
+       wait-or-jump row above, in nearly the same words: "Or skip the wait
+       — start using the agent now. The download keeps running; progress
+       shows in the top bar."
+
+       r8 review: for one commit only the wait-or-jump row honoured that
+       and this one still landed on `import_pick`, so two cards with one
+       promise behaved differently — an inconsistency this diff would have
+       introduced where there was none. Both are the operator's rule, so
+       both keep it: "when I have chosen to proceed to the agent, I should
+       have proceeded to the agent, not to the setup again."
+
+       This DOES overturn a standing acceptance — main.ts's `wizard: \`s\`
+       leaves setup with the download still running` asserted the landing
+       on `import_pick`, mirroring the TUI's shouldOfferImport ("no
+       outcome, shortcut or skip flag may route around this screen"). It is
+       overturned deliberately, in the same commit as the check that
+       asserts the new behaviour, and TESTING.md's own R3.1b — "`s` … lands
+       on the home screen with the download chip in the top bar" — is what
+       it now does. Nothing is stamped on the way out, so the import step
+       is still owed and still offered by `/import` and a later
+       `onboarding` run. */
+    obDispatch({type:'onboarding_finished', outcome:'local', skipSecondOffer:true, handOver:true});
     return true;
   }
   return false;
@@ -7557,14 +7589,20 @@ async function obSettle() {
   const outcome = OB.outcome || 'skipped';
   const state = await obReadiness();
   if (!OB.open) { OB.settling = false; return; }
-  /* r8: `handOver` is the operator saying "put me in the agent now", from a
-     row that promised exactly that. Neither remaining offer is raised on it
-     — not the second backend (they have just answered that question: the
-     download screen pitched cloud, and the wait-or-jump screen was reached
-     BY setting one up) and not the import step, whose own skip row is
-     worded "Go straight to your agent — /import works any time later",
-     which is the thing they already asked for. Nothing is stamped as
-     offered, so both steps are still there for a later `onboarding` run. */
+  /* r8: `handOver` is the operator saying "put me in the agent now", from
+     one of the two rows that promised exactly that. Neither remaining offer
+     is raised on it — not the second backend (both rows sit under a cloud
+     pitch this screen already made) and not the import step, whose own skip
+     row is worded "Go straight to your agent — /import works any time
+     later", which is the thing they already asked for. Nothing is stamped
+     as offered, so both steps are still there for a later `onboarding` run
+     and for `/import`.
+
+     This is where the desktop parts company with the TUI's
+     shouldOfferImport ("no outcome, shortcut or skip flag may route around
+     this screen"), and it is on purpose: those two rows name the agent, and
+     the operator filed the bug that they did not deliver it. Every other
+     way out of the flow still goes through the import step exactly once. */
   const offer = OB.skipSecondOffer || OB.handOver ? null : obDecideSecondBackend({
     outcome,
     cloudReady: state.cloudReady,
@@ -15691,6 +15729,11 @@ if (typeof window !== 'undefined') {
     open: OB.open, step: OB.step, cursor: OB.cursor, outcome: OB.outcome, offer: OB.offer,
     resumeAfterCloud: OB.resumeAfterCloud, busy: OB.busy, error: OB.error,
     localModelId: OB.localModelId, skipSecondOffer: OB.skipSecondOffer,
+    /* r8: the two "start using the agent now" rows are the only things
+       that set this, and what it suppresses (the second-backend pitch and
+       the import step) is asserted from outside — so it has to be visible
+       from outside. */
+    handOver: OB.handOver,
     rows: document.querySelectorAll('#onboarding .ob-row').length,
   });
   window.__obKey = (spec) => { obPress(spec); return window.__ob(); };

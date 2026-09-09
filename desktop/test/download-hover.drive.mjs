@@ -69,6 +69,19 @@ async function watch(app, sel, drive) {
   await sleep(250);
   const seen = { label: box.label, samples: 0, replaced: 0, reshaped: 0, hoverOff: 0, backgrounds: [], progress: [] };
   let lastId = await nodeIdAt(app, box.x, box.y);
+  /* When the node under the pointer last changed. The card carries
+     `transition: background .1s ease`, so for a tenth of a second after a
+     LEGITIMATE rebuild — the queue moving from the llama.cpp runtime to the
+     weights, which genuinely changes what the surface says — the background
+     is mid-fade: a run of this driver read
+     ["rgba(0,106,255,0.16)","rgba(0,0,0,0)","rgba(0,106,255,0.14)"] around
+     one such rebuild and called it oscillation. Those are three points on
+     one fade, not three states. The background is therefore sampled only
+     once the fade has had time to finish; what the flicker check rests on
+     is `replaced` (an identity change with the surface saying the same
+     thing), which stays strict and is not touched by this. */
+  let settledAt = Date.now();
+  const FADE_MS = 250;
   /* What the download IS, as against how far along it is. A queue that moves
      from the llama.cpp runtime to the model weights changes the strip's
      label and drops its "· 1 more queued" suffix — the surface genuinely
@@ -102,12 +115,15 @@ async function watch(app, sel, drive) {
       seen.samples += 1;
       if (id && lastId && id !== lastId) {
         if (shape === lastShape) seen.replaced += 1; else seen.reshaped += 1;
+        settledAt = Date.now();
       }
       if (id) lastId = id;
       lastShape = shape;
       if (now) {
         if (!now.hovered) seen.hoverOff += 1;
-        if (seen.backgrounds.indexOf(now.bg) < 0) seen.backgrounds.push(now.bg);
+        if (Date.now() - settledAt > FADE_MS && seen.backgrounds.indexOf(now.bg) < 0) {
+          seen.backgrounds.push(now.bg);
+        }
       } else {
         seen.hoverOff += 1;          // the control is not even under the pointer any more
       }

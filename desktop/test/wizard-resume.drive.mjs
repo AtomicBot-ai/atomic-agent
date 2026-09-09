@@ -18,6 +18,14 @@
  *   C. a cloud setup that finishes while the pull is still running offers
  *      the wait-or-jump choice ONCE — the operator is asked, not looped.
  *
+ * and D, the sibling card that makes the same promise on the screen before
+ * it — "Or skip the wait — start using the agent now" — which has to keep
+ * it too, or two identical promises behave differently. Lane D also watches
+ * two things that are only visible in a real run: the ETA the strip prints
+ * while the rate is still a guess, and `tui.onboarding.localSetupSeenAt`,
+ * which a whole-file config write used to overwrite moments after the
+ * wizard stamped it.
+ *
  * Nothing here calls into the app. `window.__ob` / `window.__dl` are read
  * to narrate what the screen already shows; every step is a click or a key.
  *
@@ -27,10 +35,11 @@
  * beside it is copied into each fresh dir), --shots=DIR.
  */
 
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   SMALL_MODEL, arg, boxOf, cancelPull, configureCloud, dl, freshRun,
-  launch, ob, passIntro, pickLocalModel, reporter, waitForRealSamples,
+  launch, ob, passIntro, pickLocalModel, reporter, sleep, waitForRealSamples,
 } from './drive-download-lib.mjs';
 
 const PORT = Number(arg('port', '9421'));
@@ -174,8 +183,80 @@ async function laneC() {
   }
 }
 
+/* ------------------------------------------------------------------ D --- */
+/**
+ * The download screen's own skip card — "Or skip the wait — start using
+ * the agent now. The download keeps running; progress shows in the top
+ * bar" — and the two things a real pull is the only way to see.
+ *
+ * The ETA: `remaining / rate` on a first, cold sample is a rate of a few
+ * bytes a second, and the strip printed `about 258467h 14m left` in the
+ * window chrome while the operator watched. Nothing here asserts a
+ * particular number — only that no sample prints an hour count no human
+ * would read as an estimate.
+ *
+ * The stamp: `tui.onboarding.localSetupSeenAt` is written the moment the
+ * local half of setup is entered, and it is what decides whether the flow
+ * may pitch the other backend on the way out. It was being lost to
+ * `useManagedMode()`, whose read-modify-write of the whole file started
+ * before the stamp and finished after it.
+ */
+async function laneD() {
+  const dirs = freshRun(join(ROOT, 'wiz-resume-d'), SEED);
+  const app = await launch({ port: PORT, stateDir: dirs.stateDir, workspace: dirs.workspace });
+  const etas = [];
+  try {
+    const measured = await toDownloading(app);
+    R.check('lane D has a real download reporting', !!measured,
+      measured ? `${measured.label} at ${measured.percent}%` : 'no sample in four minutes');
+    if (!measured) return;
+
+    // The strip, while the rate is still whatever the first samples said.
+    for (let i = 0; i < 12; i += 1) {
+      const strip = await dl(app);
+      if (strip && strip.eta && etas.indexOf(strip.eta) < 0) etas.push(strip.eta);
+      await sleep(500);
+    }
+    R.check('the strip never prints an estimate no one could read',
+      etas.every((e) => !/\d{3,}h/.test(e)),
+      etas.join(' | ') || 'no eta sampled');
+
+    // The skip card, clicked — the same promise as the wait-or-jump row.
+    await app.clickSel('#onboarding .ob-offer:not(.cloud)', { scroll: false });
+    const closed = await app.waitFor('!document.querySelector("#onboarding")',
+      'the wizard closing onto the agent', { timeout: 60000 }).then(() => true, () => false);
+    const end = await ob(app);
+    R.check('"skip the wait — start using the agent now" hands over the agent', closed,
+      closed ? '' : `still open on "${end && end.step}"`);
+    await shot(app, 'd1-after-skip.png');
+    if (closed) {
+      await app.waitFor('!!document.querySelector("#entry")', 'the composer', { timeout: 30000 });
+      const strip = await dl(app);
+      R.check('and the download it promised to keep running is still in the strip',
+        !!(strip && strip.visible), strip ? JSON.stringify(strip.text).slice(0, 80) : 'no strip');
+    }
+
+    /* The stamp the flow wrote on the way in has to still be there — the
+       file is read back from disk, not from the app. */
+    let seen = null;
+    for (let i = 0; i < 12 && seen === null; i += 1) {
+      try {
+        const cfg = JSON.parse(readFileSync(join(dirs.stateDir, 'config.json'), 'utf8'));
+        seen = ((cfg.tui || {}).onboarding || {}).localSetupSeenAt ?? null;
+      } catch { /* the CLI rewrites the file whole; read again */ }
+      if (seen === null) await sleep(500);
+    }
+    R.check('the local-setup stamp survived the writes around it',
+      typeof seen === 'string' && seen.length > 0, `localSetupSeenAt=${JSON.stringify(seen)}`);
+    await cancelPull(app);
+  } finally {
+    await app.close();
+  }
+}
+
 const only = arg('lane', null);
 if (!only || only === 'a') await laneA();
 if (!only || only === 'b') await laneB();
 if (!only || only === 'c') await laneC();
+if (!only || only === 'd') await laneD();
 process.exit(R.done() ? 1 : 0);

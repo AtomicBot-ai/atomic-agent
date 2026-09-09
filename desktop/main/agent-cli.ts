@@ -94,6 +94,46 @@ async function cli(args: string[], timeout = 30_000, cwd?: string): Promise<CliR
   }
 }
 
+/* ---------------------------------------------------------------
+   ONE CONFIG WRITER AT A TIME.
+
+   Every whole-file helper below is a read-modify-write: `config get`,
+   change one branch of the tree, `config set '<the whole json>'`. A
+   second write that lands BETWEEN that read and that write is not
+   merged — it is overwritten by a snapshot taken before it existed.
+
+   That is not theoretical. Driven on a fresh state dir (r8 review), with
+   config.json read ten times a second: clicking "Local models" fires
+   `useManagedMode()` and, in the same tick, the wizard stamps
+   `tui.onboarding.localSetupSeenAt` through the leaf `config set`. The
+   file showed the stamp arrive at +10.1s and vanish at +10.8s, replaced
+   by the managed-mode write built from the pre-stamp snapshot. The lost
+   stamp is what `obDecideSecondBackend` reads to decide whether the
+   local half of setup has been seen, so the flow re-pitched a setup
+   screen to an operator who had just walked through one. Lane D of
+   `test/wizard-resume.drive.mjs` reads that leaf back off disk at the end
+   of a real first run, which is the check that keeps this honest.
+
+   So all of this module's config writes queue on one chain: a
+   read-modify-write holds it across BOTH legs, and a leaf write waits
+   its turn. Reads that are not part of a mutation are not gated — they
+   only ever see a whole file, never a half-written one, because the CLI
+   writes it in one call.
+
+   The limit, said out loud: this serializes the writes THIS process
+   makes. `models pull` and `models update` are minutes-long children
+   that write the file themselves, and nothing here can hold a lock
+   across them; `models use` is short enough to hold and is held, since
+   the desktop follows it with a write of its own that must not race it.
+*/
+let configWriteChain: Promise<void> = Promise.resolve();
+/** Run `write` with the config file to itself; every writer here queues on this. */
+function withConfigLock<T>(write: () => Promise<T>): Promise<T> {
+  const next = configWriteChain.then(write, write);
+  configWriteChain = next.then(() => undefined, () => undefined);
+  return next;
+}
+
 export async function configGet(): Promise<{ ok: boolean; config?: unknown; error?: string }> {
   const res = await cli(["config", "get"]);
   if (!res.ok) return { ok: false, error: res.error };
@@ -119,7 +159,7 @@ export async function configSet(key: string, value: string): Promise<CliResult> 
       error: `${key} has no dotted spelling in this agent — use setActiveTextProvider / selectCloudModel`,
     };
   }
-  return cli(["config", "set", key, value]);
+  return withConfigLock(() => cli(["config", "set", key, value]));
 }
 
 export interface CatalogModel {
@@ -189,7 +229,12 @@ export async function modelsList(): Promise<{ ok: boolean; models?: CatalogModel
   return models.length ? { ok: true, models } : { ok: false, error: "could not parse the model catalog" };
 }
 
-export async function modelsUse(id: string): Promise<CliResult> {
+export function modelsUse(id: string): Promise<CliResult> {
+  return withConfigLock(() => modelsUseNow(id));
+}
+
+/** `models use` and the url sync it needs, as one held-lock unit. */
+async function modelsUseNow(id: string): Promise<CliResult> {
   // Item 7A: 96, not 64. A model added from Hugging Face is
   // `custom-` + slug.slice(0, 80) (src/local-llm/huggingface-model-def.ts
   // buildCustomModelId), i.e. up to 87 characters — the first real one
@@ -205,7 +250,7 @@ export async function modelsUse(id: string): Promise<CliResult> {
   // (src/cli/models-handlers.ts runLocalModelsUse), while the runtime
   // takes the file's url verbatim. The TUI's setActive goes through
   // persistUserLocalModelsConfig, which syncs; do the same here.
-  const synced = await syncLocalLlamaProviderUrlInFile();
+  const synced = await syncLocalLlamaProviderUrlInFileNow();
   if (!synced.ok) return { ...res, ok: false, error: synced.error };
   return res;
 }
@@ -373,13 +418,22 @@ export function normaliseLlmBlock(config: unknown): void {
  * servers, the external llama URL, the TUI import), and each one would
  * otherwise have to remember the rule.
  */
-export async function configSetWhole(config: unknown): Promise<CliResult> {
+export function configSetWhole(config: unknown): Promise<CliResult> {
+  return withConfigLock(() => writeWholeConfig(config));
+}
+
+/** The write itself, for the helpers below, which already hold the lock. */
+async function writeWholeConfig(config: unknown): Promise<CliResult> {
   normaliseLlmBlock(config);
   return cli(["config", "set", JSON.stringify(config)], 30_000);
 }
 
 /** Add a provider, or replace the entry that already carries its id. */
-export async function upsertProvider(entry: ProviderEntry): Promise<CliResult> {
+export function upsertProvider(entry: ProviderEntry): Promise<CliResult> {
+  return withConfigLock(() => upsertProviderNow(entry));
+}
+
+async function upsertProviderNow(entry: ProviderEntry): Promise<CliResult> {
   if (!/^[\w.-]{1,48}$/.test(entry.id)) {
     return { ok: false, stdout: "", stderr: "", error: `not a provider id: ${entry.id}` };
   }
@@ -396,7 +450,7 @@ export async function upsertProvider(entry: ProviderEntry): Promise<CliResult> {
   ) as ProviderEntry;
   if (at >= 0) providers[at] = { ...providers[at], ...clean };
   else providers.push(clean);
-  return configSetWhole(config);
+  return writeWholeConfig(config);
 }
 
 /**
@@ -414,7 +468,11 @@ export async function upsertProvider(entry: ProviderEntry): Promise<CliResult> {
  * (`runLocalModelsRemove`'s `if (wasCustom) removeCustomModel(idArg)`), so
  * the LLM pane's existing `d` key is already the complete removal path.
  */
-export async function addCustomModelEntry(
+export function addCustomModelEntry(def: Record<string, unknown>): Promise<CliResult> {
+  return withConfigLock(() => addCustomModelEntryNow(def));
+}
+
+async function addCustomModelEntryNow(
   def: Record<string, unknown>,
 ): Promise<CliResult> {
   const id = typeof def.id === "string" ? def.id : "";
@@ -429,7 +487,7 @@ export async function addCustomModelEntry(
   const localModels = (config.localModels ??= {});
   const kept = (localModels.customModels ?? []).filter((m) => m && m.id !== id);
   localModels.customModels = [...kept, def as { id?: string }];
-  return configSetWhole(config);
+  return writeWholeConfig(config);
 }
 
 /** Point a configured provider at one of its models. */
@@ -655,7 +713,11 @@ export async function verifyProviderKey(
 }
 
 /** Drop a provider entry by id — the rollback for a key that did not verify. */
-export async function removeProvider(id: string): Promise<CliResult> {
+export function removeProvider(id: string): Promise<CliResult> {
+  return withConfigLock(() => removeProviderNow(id));
+}
+
+async function removeProviderNow(id: string): Promise<CliResult> {
   if (!/^[\w.-]{1,48}$/.test(id)) return { ok: false, stdout: "", stderr: "", error: `not a provider id: ${id}` };
   const current = await configGet();
   if (!current.ok || !current.config) {
@@ -667,7 +729,7 @@ export async function removeProvider(id: string): Promise<CliResult> {
   const kept = providers.filter((p) => p.id !== id);
   if (kept.length === providers.length) return { ok: true, stdout: "", stderr: "" };
   config.llm!.providers = kept;
-  return configSetWhole(config);
+  return writeWholeConfig(config);
 }
 
 /* ---------------------------------------------------------------
@@ -1036,11 +1098,11 @@ export function syncLocalLlamaProviderUrl(cfg: UserConfigShape): boolean {
   return changed;
 }
 
-async function syncLocalLlamaProviderUrlInFile(): Promise<WriteResult> {
+async function syncLocalLlamaProviderUrlInFileNow(): Promise<WriteResult> {
   const read = await readWholeConfig();
   if (!read.ok || !read.config) return { ok: false, changed: false, error: read.error };
   if (!syncLocalLlamaProviderUrl(read.config)) return { ok: true, changed: false };
-  const w = await configSetWhole(read.config);
+  const w = await writeWholeConfig(read.config);
   return w.ok ? { ok: true, changed: true } : { ok: false, changed: false, error: w.error };
 }
 
@@ -1049,7 +1111,11 @@ async function syncLocalLlamaProviderUrlInFile(): Promise<WriteResult> {
  * the TUI does when it is absent (url only — no baseUrl), refuses an id
  * that names no provider, writes ONLY llm.activeTextProvider.
  */
-export async function setActiveTextProvider(id: string): Promise<WriteResult> {
+export function setActiveTextProvider(id: string): Promise<WriteResult> {
+  return withConfigLock(() => setActiveTextProviderNow(id));
+}
+
+async function setActiveTextProviderNow(id: string): Promise<WriteResult> {
   if (!/^[\w.-]{1,48}$/.test(id)) return { ok: false, changed: false, error: `not a provider id: ${id}` };
   const read = await readWholeConfig();
   if (!read.ok || !read.config) return { ok: false, changed: false, error: read.error };
@@ -1070,12 +1136,16 @@ export async function setActiveTextProvider(id: string): Promise<WriteResult> {
   }
   if (llm.activeTextProvider === id && !synthesized) return { ok: true, changed: false };
   llm.activeTextProvider = id;
-  const w = await configSetWhole(cfg);
+  const w = await writeWholeConfig(cfg);
   return w.ok ? { ok: true, changed: true } : { ok: false, changed: false, error: w.error };
 }
 
 /** LocalModelsOrchestrator.useManagedMode: persistUserLocalModelsConfig({mode:"managed"}) + url sync. */
-export async function useManagedMode(): Promise<WriteResult> {
+export function useManagedMode(): Promise<WriteResult> {
+  return withConfigLock(useManagedModeNow);
+}
+
+async function useManagedModeNow(): Promise<WriteResult> {
   const read = await readWholeConfig();
   if (!read.ok || !read.config) return { ok: false, changed: false, error: read.error };
   const cfg = read.config;
@@ -1083,7 +1153,7 @@ export async function useManagedMode(): Promise<WriteResult> {
   if (lm.mode === "managed") return { ok: true, changed: false };
   lm.mode = "managed";
   syncLocalLlamaProviderUrl(cfg);
-  const w = await configSetWhole(cfg);
+  const w = await writeWholeConfig(cfg);
   return w.ok ? { ok: true, changed: true } : { ok: false, changed: false, error: w.error };
 }
 
@@ -1106,7 +1176,11 @@ export async function useManagedMode(): Promise<WriteResult> {
  * does not disable embeddings the way the onboarding wizard's
  * persistUserRemoteLlmUrls does, because this pane never asked about them.
  */
-export async function setExternalLlamaUrl(url: string): Promise<WriteResult> {
+export function setExternalLlamaUrl(url: string): Promise<WriteResult> {
+  return withConfigLock(() => setExternalLlamaUrlNow(url));
+}
+
+async function setExternalLlamaUrlNow(url: string): Promise<WriteResult> {
   let parsed: URL;
   try {
     parsed = new URL(url);
@@ -1128,12 +1202,16 @@ export async function setExternalLlamaUrl(url: string): Promise<WriteResult> {
   if (wasUrl === url && wasMode === "external" && !providerMoved) {
     return { ok: true, changed: false };
   }
-  const w = await configSetWhole(cfg);
+  const w = await writeWholeConfig(cfg);
   return w.ok ? { ok: true, changed: true } : { ok: false, changed: false, error: w.error };
 }
 
 /** persistMemoryEmbeddingsEnabled: a no-op when the flag already matches. */
-export async function setMemoryEmbeddingsEnabled(enabled: boolean): Promise<WriteResult> {
+export function setMemoryEmbeddingsEnabled(enabled: boolean): Promise<WriteResult> {
+  return withConfigLock(() => setMemoryEmbeddingsEnabledNow(enabled));
+}
+
+async function setMemoryEmbeddingsEnabledNow(enabled: boolean): Promise<WriteResult> {
   const read = await readWholeConfig();
   if (!read.ok || !read.config) return { ok: false, changed: false, error: read.error };
   const cfg = read.config;
@@ -1141,7 +1219,7 @@ export async function setMemoryEmbeddingsEnabled(enabled: boolean): Promise<Writ
   const emb = (mem.embeddings ??= {});
   if (emb.enabled === enabled) return { ok: true, changed: false };
   emb.enabled = enabled;
-  const w = await configSetWhole(cfg);
+  const w = await writeWholeConfig(cfg);
   return w.ok ? { ok: true, changed: true } : { ok: false, changed: false, error: w.error };
 }
 
@@ -1353,7 +1431,7 @@ export async function configUnset(key: string): Promise<CliResult> {
   if (!/^[a-zA-Z][\w.]{0,80}$/.test(key)) {
     return { ok: false, stdout: "", stderr: "", error: `refusing to unset a suspicious key: ${key}` };
   }
-  return cli(["config", "unset", key]);
+  return withConfigLock(() => cli(["config", "unset", key]));
 }
 
 export interface TaskCreateInput {
@@ -1485,7 +1563,11 @@ function writeConfigPath(tree: Record<string, unknown>, key: string, value: unkn
  * before writing, so a bad entry comes back as its error text. Read
  * immediately before the write; never from a cached copy.
  */
-export async function configSetPath(key: string, value: unknown): Promise<CliResult> {
+export function configSetPath(key: string, value: unknown): Promise<CliResult> {
+  return withConfigLock(() => configSetPathNow(key, value));
+}
+
+async function configSetPathNow(key: string, value: unknown): Promise<CliResult> {
   if (!/^[a-zA-Z][\w.]{0,80}$/.test(key) || !isSafeConfigPath(key)) {
     return { ok: false, stdout: "", stderr: "", error: `refusing to write a suspicious key: ${key}` };
   }
@@ -1499,7 +1581,7 @@ export async function configSetPath(key: string, value: unknown): Promise<CliRes
   } catch (err) {
     return { ok: false, stdout: "", stderr: "", error: err instanceof Error ? err.message : String(err) };
   }
-  return configSetWhole(tree);
+  return writeWholeConfig(tree);
 }
 
 const SKILL_NAME_RE = /^[\w.-]{1,64}$/;
@@ -2302,7 +2384,14 @@ export function modelsUpdateStream(
  * some other provider keeps it, and the wizard has written an address
  * nothing uses.
  */
-export async function setExternalLlamaUrls(input: {
+export function setExternalLlamaUrls(input: {
+  chatUrl: string;
+  embeddingUrl?: string;
+}): Promise<WriteResult> {
+  return withConfigLock(() => setExternalLlamaUrlsNow(input));
+}
+
+async function setExternalLlamaUrlsNow(input: {
   chatUrl: string;
   embeddingUrl?: string;
 }): Promise<WriteResult> {
@@ -2349,7 +2438,7 @@ export async function setExternalLlamaUrls(input: {
     }
   }
   syncLocalLlamaProviderUrl(cfg);
-  const w = await configSetWhole(cfg);
+  const w = await writeWholeConfig(cfg);
   return w.ok ? { ok: true, changed: true } : { ok: false, changed: false, error: w.error };
 }
 

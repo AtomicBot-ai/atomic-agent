@@ -7481,6 +7481,8 @@ type ObState = {
   open: boolean; step: string; cursor: number; outcome: string | null; offer: string | null;
   resumeAfterCloud: string | null; busy: boolean; error: string | null;
   localModelId: string | null; skipSecondOffer: boolean; rows: number;
+  /** r8: set only by the two rows that promise the agent by name. */
+  handOver: boolean;
 };
 type ObCopy = { subtitle: string; title: string; lines: string[]; footer: string; hints: string };
 type ObSky = { present: boolean; stars: number; running: boolean; reduced: boolean; frames: number };
@@ -7753,6 +7755,25 @@ async function onboardingTest(
       `outcome=${escaped.outcome} sources=${JSON.stringify(sources)} settled=${afterEsc.step}/open=${afterEsc.open}` +
         ` closing=${JSON.stringify(closing)} file.skippedAt=${JSON.stringify(skippedInFile)}`,
     );
+    /* The import step's OWN rule, on the pass that raises it: the stamp is
+       written the moment the screen appears, not when it is answered.
+       (r8 review: this used to be asserted on the download screen's `s`
+       exit, which no longer raises the screen — the acceptance moved here,
+       to the exit that does, rather than being dropped with it.) */
+    const escImportStamp = stamps.find((e) => e.leaf === "importOfferedAt");
+    let escImportInFile = (await stampsNow()).importOfferedAt;
+    for (let i = 0; i < 20 && viaImport && !escImportInFile; i += 1) {
+      await new Promise((r) => setTimeout(r, 250));
+      escImportInFile = (await stampsNow()).importOfferedAt;
+    }
+    check(
+      "wizard: the import step is stamped the moment it appears, not when it is answered",
+      viaImport
+        ? !!escImportStamp && escImportStamp.step === "import_pick" &&
+          typeof escImportInFile === "string"
+        : escImportStamp === undefined,
+      `viaImport=${viaImport} log=${JSON.stringify(escImportStamp)} config=${JSON.stringify(escImportInFile)}`,
+    );
 
     /* ---- every footer the TUI produces, asserted verbatim ---- */
     const footers = await js<Record<string, string>>(
@@ -7864,6 +7885,32 @@ async function onboardingTest(
         !/%/.test(beforeFeed.text),
       `visible=${fed.visible} percent=${fed.percent} transferred=${fed.transferred} total=${fed.total} pre=${JSON.stringify(beforeFeed.text)}`,
     );
+    /* The ETA the strip prints on a COLD start, fed through the same
+       subscriber as everything above: two real samples a second apart
+       that moved a handful of bytes of a 5 GB file. `remaining / rate` is
+       then tens of millions of seconds, and the strip used to print it —
+       the operator watched `about 258467h 14m left` in the window chrome
+       (r8 review item 4). Twenty-nine years is not an estimate, so past
+       two days the strip says so in words. Nothing is called directly
+       here: the samples go in, and the string the strip drew comes out. */
+    await js<Dl>("window.__dlClear()");
+    await js<Dl>("window.__dlSeed([{kind:'weights', id:'qwen3.5-4b'}])");
+    await js<Dl>("window.__dlFeed({id:'qwen3.5-4b', kind:'weights', percent:0, transferredBytes:1000, totalBytes:5000000000})");
+    await new Promise((r) => setTimeout(r, 1100));
+    const crawling = await js<Dl>(
+      "window.__dlFeed({id:'qwen3.5-4b', kind:'weights', percent:0, transferredBytes:1200, totalBytes:5000000000})",
+    );
+    check(
+      "wizard: a crawling first sample is reported as unknowable, not as decades",
+      crawling.eta === "more than two days left" && !/\d{3,}h/.test(crawling.text),
+      `eta=${JSON.stringify(crawling.eta)} strip=${JSON.stringify(crawling.text)}`,
+    );
+    await js<Dl>("window.__dlClear()");
+    await js<Dl>("window.__dlSeed([{kind:'weights', id:'qwen3.5-4b'}])");
+    await js<Dl>(
+      `window.__dlFeed(Object.assign({id:'qwen3.5-4b'}, ${JSON.stringify(parsed)}))`,
+    );
+
     // The strip is chrome: it must sit ABOVE the overlay layer, or the
     // wizard covers the only surface reporting the download.
     const layered = await js<{ bar: number; overlays: number }>(
@@ -8070,36 +8117,91 @@ async function onboardingTest(
     await js<ObState>("window.__obKey('s')");
     const skipped = await settled();
     const dlAfter = await js<Dl>("window.__dl()");
-    /* IMPORT IS UNSKIPPABLE. The review found this check asserting
-       `open === false` — the neutered outcome the pre-stamped hook
-       produced — where the acceptance says the opposite: the download
-       screen's `s` exit sets `skipSecondOffer`, and the flow STILL lands
-       on `import_pick` while `importOfferedAt` is null and a source
-       exists. Nothing routes around that screen; its own skip row does. */
+    /* "Or skip the wait — START USING THE AGENT NOW. The download keeps
+       running; progress shows in the top bar."  That is what the card
+       says, so that is what this exit does: the wizard closes onto the
+       agent with the pull still reporting in the strip.
+
+       This assertion is REVERSED from the one that stood here (r8 review
+       item 1). It read `open === true && step === "import_pick"`, on the
+       rule the TUI states in import-step.ts:59-61 — no shortcut may route
+       around the import screen — and a review before that had corrected it
+       the other way after a pre-stamped hook neutered it. It is turned
+       deliberately now, with the operator's own report behind it ("when I
+       have chosen to proceed to the agent, I should have proceeded to the
+       agent, not to the setup again") and its sibling row on the
+       wait-or-jump screen, which promises the same thing in the same
+       words, doing the same thing in the next block down. TESTING.md R3.1b
+       asked for exactly this and had been failing quietly.
+
+       What is NOT waived: nothing may be stamped on the way out. The
+       import step is still owed — `/import` and a later `onboarding` run
+       must still offer it — so `importOfferedAt` has to be absent from
+       both the write log and the file, with a real source detected, which
+       is what makes this check non-vacuous. Every other way out of the
+       flow still stops on the import screen; the esc-from-choose pass
+       above is the check that says so. */
     const sourcesAtSkip = await js<string[]>("window.__obSources()");
     check(
-      "wizard: `s` leaves setup with the download still running",
-      skipped.skipSecondOffer === true && dlAfter.visible &&
-        (sourcesAtSkip.length > 0
-          ? skipped.open === true && skipped.step === "import_pick"
-          : skipped.open === false),
-      `open=${skipped.open} step=${skipped.step} skipSecondOffer=${skipped.skipSecondOffer} strip=${dlAfter.visible} sources=${JSON.stringify(sourcesAtSkip)}`,
+      "wizard: `s` hands over the agent, with the download still running",
+      skipped.skipSecondOffer === true && skipped.handOver === true &&
+        skipped.open === false && skipped.step === "finished" &&
+        skipped.outcome === "local" && dlAfter.visible,
+      `open=${skipped.open} step=${skipped.step} outcome=${skipped.outcome}` +
+        ` skipSecondOffer=${skipped.skipSecondOffer} handOver=${skipped.handOver}` +
+        ` strip=${dlAfter.visible} sources=${JSON.stringify(sourcesAtSkip)}`,
     );
     const skipStamps = await stampLog();
     const importStamp = skipStamps.find((e) => e.leaf === "importOfferedAt");
-    let importInFile = (await stampsNow()).importOfferedAt;
-    for (let i = 0; i < 20 && !!importStamp && !importInFile; i += 1) {
-      await new Promise((r) => setTimeout(r, 250));
-      importInFile = (await stampsNow()).importOfferedAt;
-    }
+    /* Give a stamp that should not exist time to appear anyway: the
+       settle path writes without blocking, so reading once would pass
+       for the wrong reason. */
+    for (let i = 0; i < 8; i += 1) await new Promise((r) => setTimeout(r, 250));
+    const importInFile = (await stampsNow()).importOfferedAt;
     check(
-      "wizard: the import step is stamped the moment it appears, not when it is answered",
-      sourcesAtSkip.length > 0
-        ? !!importStamp && importStamp.step === "import_pick" && typeof importInFile === "string"
-        : importStamp === undefined,
-      `log=${JSON.stringify(skipStamps)} config=${JSON.stringify(importInFile)}`,
+      "wizard: handing over the agent leaves the import step still owed, not stamped",
+      sourcesAtSkip.length > 0 && importStamp === undefined && importInFile == null &&
+        (await stampLog()).every((e) => e.leaf !== "importOfferedAt"),
+      `sources=${JSON.stringify(sourcesAtSkip)} log=${JSON.stringify(skipStamps)}` +
+        ` config=${JSON.stringify(importInFile)}`,
     );
     if (skipped.open) await js<ObState>("window.__obKey('esc')");
+    await settled();
+    await js<Dl>("window.__dlClear()");
+
+    /* ---- the sibling row, on the screen the operator reported ----
+       "Start using the agent now — the download keeps running; progress
+       shows in the top bar", row 0 of wait-or-jump, reached in a real run
+       only by setting a cloud model up in the middle of a download. Its
+       hand-over had no check at all (r8 review item 2): `npm run smoke`
+       would have stayed green with `handOver` dropped from the row or from
+       obSettle, and the only thing that would have caught it is a driver
+       that needs a 2.7 GB pull and ten minutes. */
+    await writeStamps(blank);
+    await js<ObState>("window.__obOpen('wait_or_jump')");
+    await js<Dl>("window.__dlSeed([{kind:'weights', id:'qwen3.5-4b'}])");
+    await js<Dl>("window.__dlFeed({id:'qwen3.5-4b', kind:'weights', percent:20, transferredBytes:50, totalBytes:250})");
+    // Row 0 is where `__obOpen` leaves the cursor, and where a person
+    // arrives: the screen draws its first row selected.
+    const jumpRows = await js<ObState>("window.__ob()");
+    await js<ObState>("window.__obKey('enter')");
+    const jumped = await settled();
+    const dlOnJump = await js<Dl>("window.__dl()");
+    const jumpSources = await js<string[]>("window.__obSources()");
+    for (let i = 0; i < 8; i += 1) await new Promise((r) => setTimeout(r, 250));
+    const jumpStamps = await stampLog();
+    const jumpImportInFile = (await stampsNow()).importOfferedAt;
+    check(
+      "wizard: `Start using the agent now` closes the flow and keeps the download",
+      jumpRows.step === "wait_or_jump" && jumpRows.cursor === 0 && jumped.open === false &&
+        jumped.step === "finished" && jumped.handOver === true &&
+        dlOnJump.visible && jumpSources.length > 0 &&
+        jumpStamps.every((e) => e.leaf !== "importOfferedAt") && jumpImportInFile == null,
+      `open=${jumped.open} step=${jumped.step} handOver=${jumped.handOver}` +
+        ` strip=${dlOnJump.visible} sources=${JSON.stringify(jumpSources)}` +
+        ` log=${JSON.stringify(jumpStamps)} config=${JSON.stringify(jumpImportInFile)}`,
+    );
+    if (jumped.open) await js<ObState>("window.__obKey('esc')");
     await settled();
     await js<Dl>("window.__dlClear()");
 
