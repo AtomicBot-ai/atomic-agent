@@ -280,3 +280,87 @@ describe("checkShellCommandGuard", () => {
     });
   });
 });
+
+describe("git remote-sync policy layer", () => {
+  const off = { isGitRemoteSyncEnabled: () => false };
+  const on = { isGitRemoteSyncEnabled: () => true };
+  const guardWith = (
+    policy: { isGitRemoteSyncEnabled: () => boolean },
+    cmd: string,
+    rawArgs: readonly string[],
+  ) => checkShellCommandGuard({ cmd, rawArgs, cwd: "/tmp" }, policy);
+
+  it.each([
+    ["git", ["push"]],
+    ["git", ["push", "origin", "main"]],
+    ["git", ["fetch", "--all"]],
+    ["git", ["pull", "--rebase"]],
+    ["git", ["clone", "https://github.com/x/y.git"]],
+    ["git", ["remote", "add", "origin", "git@github.com:x/y.git"]],
+    ["git", ["remote", "set-url", "origin", "https://github.com/x/y.git"]],
+    // Global options before the verb must not hide it.
+    ["git", ["-C", "/tmp/repo", "push"]],
+    ["git", ["-c", "http.sslVerify=false", "fetch"]],
+    ["/usr/bin/git", ["PUSH"]],
+  ])("blocks %s %j while remote sync is off", (cmd, rawArgs) => {
+    const verdict = guardWith(off, cmd, rawArgs);
+    expect(verdict.action).toBe("block");
+    expect(verdict.rule).toBe("policy.git_remote_sync_off");
+    expect(verdict.reason).toMatch(/remote sync is off/);
+    expect(verdict.reason).toMatch(/Integrations/);
+  });
+
+  it.each([
+    ["git", ["status"]],
+    ["git", ["commit", "-m", "x"]],
+    ["git", ["remote", "-v"]],
+    ["git", ["remote", "remove", "origin"]],
+    ["git", ["log", "--oneline"]],
+    ["git", []],
+  ])("leaves local git verb %s %j on the ordinary approval path", (cmd, rawArgs) => {
+    expect(guardWith(off, cmd, rawArgs)).toMatchObject({
+      action: "approval_required",
+      rule: "default",
+    });
+  });
+
+  it("does not touch other binaries", () => {
+    expect(guardWith(off, "gh", ["repo", "clone", "x/y"])).not.toMatchObject({
+      action: "block",
+    });
+    expect(guardWith(off, "npm", ["publish"])).toMatchObject({
+      action: "approval_required",
+    });
+  });
+
+  it("falls back to the ordinary path once remote sync is on", () => {
+    expect(guardWith(on, "git", ["push"])).toMatchObject({
+      action: "approval_required",
+      rule: "default",
+    });
+    // The dangerous layer still sees a force push.
+    expect(guardWith(on, "git", ["push", "--force"])).toMatchObject({
+      action: "approval_required",
+      rule: "dangerous.git_force_push",
+    });
+  });
+
+  it("reads the predicate on every call, so a live toggle is honoured", () => {
+    let enabled = false;
+    const live = { isGitRemoteSyncEnabled: () => enabled };
+    expect(guardWith(live, "git", ["push"]).action).toBe("block");
+    enabled = true;
+    expect(guardWith(live, "git", ["push"]).action).toBe("approval_required");
+  });
+
+  it("is absent without a policy (embedders keep the static rule set)", () => {
+    expect(guard("git", ["push"])).toMatchObject({
+      action: "approval_required",
+      rule: "default",
+    });
+  });
+
+  it("hardline rules still win over the policy layer", () => {
+    expect(guardWith(off, "rm", ["-rf", "/"]).rule).toMatch(/^hardline\./);
+  });
+});

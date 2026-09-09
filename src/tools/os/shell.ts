@@ -15,6 +15,7 @@ import {
   basenameCommand,
   checkShellCommandGuard,
   isGogCommand,
+  type ShellGuardPolicy,
 } from "./shell-command-guard/index.js";
 
 const GOG_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
@@ -182,7 +183,16 @@ export function isOpaqueInterpreterShape(shape: string): boolean {
   return OPAQUE_INTERPRETER_SHAPES.has(shape);
 }
 
-export function buildOsShellTool(options: DangerousToolOptions): ToolDefinition {
+export interface OsShellToolOptions extends DangerousToolOptions {
+  /**
+   * Operator policy for the pre-exec guard (the git remote-sync switch).
+   * Injected by the bootstrap as live predicates; omitted by embedders
+   * and tests, which then get the static rule set.
+   */
+  shellPolicy?: ShellGuardPolicy;
+}
+
+export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
   return {
     name: "os.shell.run",
     description:
@@ -247,7 +257,10 @@ export function buildOsShellTool(options: DangerousToolOptions): ToolDefinition 
           : { cmd, rawArgs: execArgs, cwd };
       const gogProbe = guardInput.cmd;
 
-      const guardVerdict = checkShellCommandGuard(guardInput);
+      const guardVerdict = checkShellCommandGuard(
+        guardInput,
+        options.shellPolicy,
+      );
       if (guardVerdict.action === "block") {
         return compressToolResult({
           tool: "os.shell.run",

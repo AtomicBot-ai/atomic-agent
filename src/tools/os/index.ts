@@ -2,6 +2,7 @@ import type { ToolRegistry } from "../tool-registry.js";
 import type { DangerousToolOptions } from "../../approval/dangerous-tool.js";
 import type { AtomicAgentConfig } from "../../config/index.js";
 import { buildOsShellTool } from "./shell.js";
+import type { ShellGuardPolicy } from "./shell-command-guard/index.js";
 import { osFsReadTool } from "./fs-read.js";
 import { buildOsFsWriteTool } from "./fs-write.js";
 import { buildOsFsTrashTool } from "./fs-trash.js";
@@ -76,6 +77,7 @@ export {
 } from "./git/index.js";
 export { osProcListTool, buildOsProcKillTool } from "./proc/index.js";
 export { isGogCommand } from "./shell-command-guard/index.js";
+export type { ShellGuardPolicy } from "./shell-command-guard/index.js";
 
 export interface RegisterOsToolsOptions extends DangerousToolOptions {
   config: Pick<AtomicAgentConfig, "http" | "web" | "projects">;
@@ -101,13 +103,28 @@ export interface RegisterOsToolsOptions extends DangerousToolOptions {
    * in-memory, which is what existing embedders and tests get.
    */
   stateDir?: string;
+  /**
+   * Operator policy for the shell guard — today the git remote-sync
+   * switch. Predicates rather than values so a toggle flipped live in
+   * the Integrations hub is honoured on the next command. Omitted
+   * disables the policy layer (embedders, tests).
+   */
+  shellPolicy?: ShellGuardPolicy;
 }
 
 export function registerOsTools(
   registry: ToolRegistry,
   options: RegisterOsToolsOptions,
 ): void {
-  registry.register(buildOsShellTool(options));
+  registry.register(
+    buildOsShellTool({
+      approvals: options.approvals,
+      approvalRequired: options.approvalRequired,
+      ...(options.shellPolicy === undefined
+        ? {}
+        : { shellPolicy: options.shellPolicy }),
+    }),
+  );
   registry.register(osFsReadTool);
   registry.register(buildOsFsWriteTool(options));
   registry.register(buildOsFsTrashTool(options));
