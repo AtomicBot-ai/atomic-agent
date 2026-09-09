@@ -93,6 +93,12 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   "os.git.show": "pure_read",
   "os.git.blame": "pure_read",
   "os.git.branch": "pure_read",
+  // os.git.* — network verbs; gated by the remote-sync switch, then approval
+  "os.git.remote": "approval_gated",
+  "os.git.fetch": "approval_gated",
+  "os.git.pull": "approval_gated",
+  "os.git.push": "approval_gated",
+  "os.git.clone": "approval_gated",
 
   // os.proc.*
   "os.proc.list": "pure_read",

@@ -35,6 +35,11 @@ import {
   osGitShowTool,
   osGitBlameTool,
   osGitBranchTool,
+  buildOsGitRemoteTool,
+  buildOsGitFetchTool,
+  buildOsGitPullTool,
+  buildOsGitPushTool,
+  buildOsGitCloneTool,
 } from "./git/index.js";
 import { osProcListTool, buildOsProcKillTool } from "./proc/index.js";
 
@@ -74,6 +79,11 @@ export {
   osGitShowTool,
   osGitBlameTool,
   osGitBranchTool,
+  buildOsGitRemoteTool,
+  buildOsGitFetchTool,
+  buildOsGitPullTool,
+  buildOsGitPushTool,
+  buildOsGitCloneTool,
 } from "./git/index.js";
 export { osProcListTool, buildOsProcKillTool } from "./proc/index.js";
 export { isGogCommand } from "./shell-command-guard/index.js";
@@ -180,6 +190,21 @@ export function registerOsTools(
   registry.register(osGitShowTool);
   registry.register(osGitBlameTool);
   registry.register(osGitBranchTool);
+  // Network git shares the shell guard's remote-sync predicate so the
+  // dedicated tools and the escape hatch can never disagree. With no
+  // policy injected (embedders, tests) the repository stays closed —
+  // the conservative reading of "nobody said it may leave".
+  const gitRemote = {
+    approvals: options.approvals,
+    approvalRequired: options.approvalRequired,
+    isRemoteSyncEnabled:
+      options.shellPolicy?.isGitRemoteSyncEnabled ?? (() => false),
+  };
+  registry.register(buildOsGitRemoteTool(gitRemote));
+  registry.register(buildOsGitFetchTool(gitRemote));
+  registry.register(buildOsGitPullTool(gitRemote));
+  registry.register(buildOsGitPushTool(gitRemote));
+  registry.register(buildOsGitCloneTool(gitRemote));
   registry.register(osProcListTool);
   registry.register(
     buildOsProcKillTool({

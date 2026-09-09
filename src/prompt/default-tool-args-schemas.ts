@@ -411,6 +411,49 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
       pattern: stringSchema,
     }),
   ],
+  [
+    "os.git.remote",
+    obj({
+      repo: stringSchema,
+      action: { type: "string", enum: ["list", "add", "set-url", "remove"] },
+      name: stringSchema,
+      url: stringSchema,
+    }),
+  ],
+  [
+    "os.git.fetch",
+    obj({
+      repo: stringSchema,
+      remote: stringSchema,
+      all: booleanSchema,
+      prune: booleanSchema,
+    }),
+  ],
+  [
+    "os.git.pull",
+    obj({
+      repo: stringSchema,
+      remote: stringSchema,
+      branch: stringSchema,
+      rebase: booleanSchema,
+    }),
+  ],
+  [
+    "os.git.push",
+    obj({ repo: stringSchema, remote: stringSchema, branch: stringSchema }),
+  ],
+  [
+    "os.git.clone",
+    obj(
+      {
+        url: stringSchema,
+        dest: stringSchema,
+        branch: stringSchema,
+        depth: numberSchema,
+      },
+      ["url"],
+    ),
+  ],
 
   // ── os.proc ──────────────────────────────────────────────────────────────
   ["os.proc.list", obj({ filter: stringSchema, limit: numberSchema })],
