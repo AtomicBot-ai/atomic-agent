@@ -256,6 +256,7 @@ export function PromptShell(props: PromptShellProps): ReactElement {
           model={model ?? null}
           provider={provider ?? null}
           needsModelDownload={needsModelDownload ?? false}
+          fusion={fusion}
           rightSlot={rightSlot ?? null}
           contextSlot={contextSlot ?? null}
           modeSlot={modeSlot ?? null}

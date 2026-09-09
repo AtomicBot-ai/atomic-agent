@@ -3,6 +3,7 @@ import type { ReactElement } from "react";
 import { MouseTarget, useMouseCommands } from "../mouse/mouse-context.js";
 import { isPrimaryPress } from "../mouse/mouse-event.js";
 import type { ContextUsageView } from "../select-context-usage.js";
+import { fusionBarGround } from "../theme/fusion-tint.js";
 import { mixColor } from "../theme/mix-color.js";
 import { readableOn } from "../theme/readable-foreground.js";
 import { theme } from "../theme/theme.js";
@@ -71,6 +72,7 @@ const STEP_MID = 66;
 export function ContextChip({
   usage,
   layer,
+  fusion = false,
 }: {
   usage: ContextUsageView;
   /**
@@ -80,8 +82,10 @@ export function ContextChip({
    * control could win the click.
    */
   layer?: number;
+  /** Ramp through the Fusion surface's orange instead of the accent. */
+  fusion?: boolean;
 }): ReactElement {
-  const background = groundFor(usage);
+  const background = groundFor(usage, fusion);
   const label = ` context ${chipBody(usage)} `;
   const chip = (
     <Text backgroundColor={background} color={readableOn(background)} bold>
@@ -159,12 +163,15 @@ export function chipBody(usage: ContextUsageView): string {
 }
 
 /** The chip's ground: three steps of accent, then violet once trimmed. */
-export function groundFor(usage: ContextUsageView): string {
+export function groundFor(usage: ContextUsageView, fusion = false): string {
   if (usage.droppedPairs > 0 || usage.droppedTurns > 0) {
     return theme.colors.accentAlt;
   }
-  const ground = theme.colors.railBackground;
-  const accent = theme.colors.accent;
+  // On the Fusion surface the ramp climbs through the palette's orange
+  // toward its own black ground: the blue ramp was built to sit on the
+  // rail, and against a black bar it read as a foreign chip.
+  const ground = fusion ? fusionBarGround() : theme.colors.railBackground;
+  const accent = fusion ? theme.colors.warnStrong : theme.colors.accent;
   // The ramp follows the same number the bar does — how full the window
   // is — so the chip gets louder as room runs out. Unknown fill sits at
   // the quiet end: that is a readout of a session which has barely

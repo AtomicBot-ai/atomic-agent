@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { contrastRatio } from "./color-contrast.js";
 import { mixColor } from "./mix-color.js";
 import { parseHexColor } from "./parse-hex-color.js";
-import { FUSION_GROUND_FADE } from "./fusion-tint.js";
+import { FUSION_BAR_MIX, FUSION_PANEL_MIX } from "./fusion-tint.js";
 import { CANONICAL_PAGE } from "./theme-palettes.js";
 import { THEMES, THEME_NAMES, type ThemeName, type TuiColors } from "./theme.js";
 
@@ -169,17 +169,31 @@ describe("theme contrast", () => {
         expectContrast(c.muted, c.badgeBackground, AA);
       });
 
-      it("the fusion chip and the fusion composer ground keep their ink", () => {
-        // `fusion-tint.ts`: the chip is `warnStrong` as a ground, the
-        // composer's panel is `warnStrong` mixed toward `badgeBackground`.
-        // Both are grounds this app paints, so both are pairs this gate
-        // owns — and the tint has to be visibly different from the
-        // plain panel, or the mode would be invisible.
-        const composer = mixColor(c.warnStrong, c.badgeBackground, FUSION_GROUND_FADE);
-        for (const ground of [c.warnStrong, composer]) {
+      it("every fusion surface keeps its ink", () => {
+        // `fusion-tint.ts` paints three grounds while fusion is the
+        // route: the chip (`warnStrong` itself), the composer's toolbar
+        // and the composer's panel — the last two mixed from the
+        // palette's orange toward black. All three are grounds this app
+        // paints, so all three are pairs this gate owns.
+        const bar = mixColor(c.warnStrong, "#000000", FUSION_BAR_MIX);
+        const panel = mixColor(c.warnStrong, "#000000", FUSION_PANEL_MIX);
+        for (const ground of [c.warnStrong, bar, panel]) {
           expectContrast(inkFor(c, ground), ground, AA);
         }
-        expectContrast(composer, c.badgeBackground, 1.3);
+        // The orange lands on those surfaces as a GROUND — the backend
+        // chip, the top step of the context ramp — never as text, so
+        // what has to hold is that it is distinguishable from the bar
+        // behind it, the same floor the context ramp is held to. (The
+        // light palettes' `warnStrong` is a dark burnt orange picked to
+        // be read on white; demanding 4.5:1 from it on black would be a
+        // gate on a pair nothing paints.)
+        expectContrast(c.warnStrong, bar, 1.3);
+        // And the two surfaces must be told apart, or the toolbar stops
+        // reading as a strip against the field above it.
+        // The gap has to survive the palette whose orange is darkest
+        // (classic-light's `#a03d00`), which is what sets the two mix
+        // ratios — a narrower gap collapsed both surfaces into one black.
+        expectContrast(bar, panel, 1.05);
       });
 
       it("every step of the context chip's ramp keeps its ink", () => {
