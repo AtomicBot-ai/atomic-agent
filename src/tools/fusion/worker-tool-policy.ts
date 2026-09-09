@@ -50,3 +50,15 @@ export function isWorkerVisibleTool(name: string): boolean {
 export const FUSION_WORKER_APPROVAL_REFUSED =
   "this step needs operator approval, which a worker cannot request. " +
   "Stop and, in your reply, state exactly what must be run or written so the orchestrator can do it.";
+
+/**
+ * The stable substring of the refusal that survives rewording of the
+ * surrounding sentence. Two consumers key off it — the worker brief
+ * (which names it so the model recognises the result) and the result
+ * classifier (which turns a refusal into `needs_orchestrator`) — and
+ * both would fail *silently* if the text drifted, so it is a constant
+ * with a test pinning it against `FUSION_WORKER_APPROVAL_REFUSED`
+ * rather than a literal copied into each call site.
+ */
+export const FUSION_WORKER_APPROVAL_MARKER =
+  "needs operator approval, which a worker cannot request";
