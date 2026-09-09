@@ -57,12 +57,12 @@ export function buildIssueReport(
   },
 ): IssueReport {
   const { snapshot, facts, level, redaction } = input;
+  // Both reduced levels mask absolute paths: `redactPersonal` only knows
+  // the home and working directories, so a path into another project —
+  // or one the model mistyped, which end-to-end testing turned up — sails
+  // through, and the level's own copy promises paths are redacted.
   const scrub = (s: string): string =>
-    level === "full"
-      ? maskSecrets(s)
-      : level === "errors"
-        ? redactPaths(scrubText(s, redaction))
-        : scrubText(s, redaction);
+    level === "full" ? maskSecrets(s) : redactPaths(scrubText(s, redaction));
   const deep = (v: unknown): unknown => mapStrings(v, scrub);
   // A model name can be a GGUF path on a local backend.
   const safeFacts = deep(facts) as IssueReportFacts;
@@ -87,7 +87,9 @@ export function buildIssueReport(
       timestamp: l.timestamp,
       level: l.level,
       message: scrub(l.message),
-      ...(l.context === undefined ? {} : { context: deep(l.context) }),
+      ...(l.context === undefined
+        ? {}
+        : { context: deep(dropJoinKeys(l.context, level)) }),
     }));
 
   const title = buildTitle(lastRunStatus, safeFacts);
@@ -244,9 +246,34 @@ function sessionFacts(
 }
 
 /**
- * A feed row for a tool call carries the call's arguments and its
- * result preview (`→ tool({…})`, `← tool ok: …`). Below `full` only the
- * tool name and status survive.
+ * Strip the keys that join a report back to the operator's other
+ * files. A log record's `context` carries `sessionId` on every "tool
+ * executed" line, which is how a session id survived the trace-level
+ * and session-facts stripping and reached a `scrubbed` report — found
+ * by end-to-end testing.
+ */
+function dropJoinKeys(context: unknown, level: IssueReportLevel): unknown {
+  if (level === "full") return context;
+  if (typeof context !== "object" || context === null) return context;
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(context)) {
+    if (key === "sessionId") continue;
+    out[key] = value;
+  }
+  return out;
+}
+
+/**
+ * Feed rows quote the session back at the reader, and below `full` the
+ * quote has to go while the shape stays.
+ *
+ * A tool call carries its arguments and its result preview
+ * (`→ tool({…})`, `← tool ok: …`). A step row carries the step's
+ * summary, which is the first tool result for a tool step and the
+ * assistant's own reply for the last one — so `step_finished` was
+ * putting the model's answer, verbatim, into a report whose level
+ * promises the conversation is removed. Found by end-to-end testing:
+ * it reached both the zip and the public issue body.
  */
 export function stripToolPayload(kind: string, line: string): string {
   if (kind === "tool_call_parsed") {
@@ -257,8 +284,26 @@ export function stripToolPayload(kind: string, line: string): string {
     const colon = line.indexOf(":");
     return colon === -1 ? line : `${line.slice(0, colon)}: …`;
   }
+  if (STEP_SUMMARY_KINDS.has(kind)) {
+    // Keep the `[step N]` / `»` marker and the trailing `(123ms)`;
+    // everything between them is the summary.
+    const marker = /^(\s*(?:\[step \d+\]|»|✗|●)?\s*)/.exec(line)?.[1] ?? "";
+    const timing = /\s(\(\d+ms\))\s*$/.exec(line)?.[1] ?? "";
+    return `${marker}…${timing ? ` ${timing}` : ""}`;
+  }
   return line;
 }
+
+/**
+ * Feed kinds whose line is a summary of what happened rather than a
+ * label for it.
+ */
+const STEP_SUMMARY_KINDS: ReadonlySet<string> = new Set([
+  "step_finished",
+  "step_error",
+  "loop_completed",
+  "loop_failed",
+]);
 
 function formatLog(l: {
   timestamp: number;
