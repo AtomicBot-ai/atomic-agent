@@ -22,6 +22,10 @@ import {
   startNewRun,
   upsertReasoning,
 } from "./reducer-helpers.js";
+import {
+  parkProviderOutage,
+  retryProviderOutage,
+} from "./provider-outage-state.js";
 import { reduceUiAction } from "./reduce-ui-actions.js";
 import { reduceComposerSwitchAction } from "./composer-switch/composer-switch-reducer.js";
 import { selectComposerBackend } from "./composer-switch/composer-switch-rows.js";
@@ -383,17 +387,22 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
         event.stepCount,
       );
     case "step_started":
-      return {
-        ...appendFeed(state, {
-          kind: "step_started",
-          stepIndex: event.stepIndex,
-          line: formatFeedLine({ type: "step_started", stepIndex: event.stepIndex }),
-          color: "blue",
-        }),
-        status: "running",
-        currentStep: event.stepIndex,
-        stepStartedAt: Date.now(),
-      };
+      // `retryProviderOutage` is a no-op unless an outage is live, so an
+      // ordinary step start goes through here exactly as it always did.
+      return retryProviderOutage(
+        {
+          ...appendFeed(state, {
+            kind: "step_started",
+            stepIndex: event.stepIndex,
+            line: formatFeedLine({ type: "step_started", stepIndex: event.stepIndex }),
+            color: "blue",
+          }),
+          status: "running",
+          currentStep: event.stepIndex,
+          stepStartedAt: Date.now(),
+        },
+        event.stepIndex,
+      );
     case "step_finished":
       return {
         ...appendFeed(state, {
@@ -550,16 +559,12 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
       )}s, waited ${Math.round(event.waitedMs / 1000)}s of ${Math.round(
         event.maxWaitMs / 1000,
       )}s · Esc stops`;
-      const next: TuiState = {
-        ...state,
-        providerOutage: {
-          reason: event.reason,
-          waitedMs: event.waitedMs,
-          maxWaitMs: event.maxWaitMs,
-          attempt: event.attempt,
-          givenUp: false,
-        },
-      };
+      const next: TuiState = parkProviderOutage(state, {
+        reason: event.reason,
+        waitedMs: event.waitedMs,
+        maxWaitMs: event.maxWaitMs,
+        attempt: event.attempt,
+      });
       // One feed line per outage, not per retry: the backoff fires every
       // few seconds at the start and the meta-row carries the live
       // numbers. A wall of identical lines would bury the work above it.
