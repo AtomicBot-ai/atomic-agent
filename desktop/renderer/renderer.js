@@ -93,7 +93,10 @@ let MODE_REASSERT = null;
    hint strip must not advertise a chord the step does not accept. `q` is
    null while the search box is closed; the Settings-side wizard ignores
    both fields and renders exactly as it did. */
-const WIZ = { phase:null, row:null, apiKey:'', baseUrl:'', error:null, busy:false, cur:0, q:null };
+/* `uncheckedFor` / `acceptUnchecked` are F1's two halves: what could not be
+   checked, and whether the user has said to save it anyway. */
+const WIZ = { phase:null, row:null, apiKey:'', baseUrl:'', error:null, busy:false, cur:0, q:null,
+  uncheckedFor:null, acceptUnchecked:false };
 /* Kind rows in the TUI's KIND_ROW_ORDER, minus the two subscription-CLI
    kinds, whose config shape the desktop does not write. */
 const KIND_ROWS = [
@@ -555,6 +558,10 @@ let FIRSTRUN = null;
    transcript's opening plate, and the diagnostics plate. Declared here, above
    the first render(), because the render path reads it. */
 let BUILD = null;
+/* F1 — provider ids whose key was saved without ever being checked. Read from
+   main at boot; a provider stays on this list until a turn actually succeeds
+   on it, so the badge cannot outlive the doubt it reports. */
+let UNVERIFIED = [];
 /* src/config/config-schema.ts localModels.url default. The agent's own
    isLocalBackendConfigured (src/tui/local-backend-readiness.ts) compares
    against this exact string and does NOT count the default it never
@@ -3087,8 +3094,13 @@ function act(a) {
   if (a === 'context') { close(); S.overlay = 'context'; render(); return; }
   if (a === 'modes') { close(); S.overlay = 'modes'; render(); return; }
   if (a === 'sel:add') { WIZ.phase = 'pick_kind'; WIZ.row = null; WIZ.apiKey = ''; WIZ.baseUrl = ''; WIZ.error = null; render(); return; }
-  if (a === 'wiz:back') { WIZ.phase = WIZ.phase === 'configure' ? 'pick_kind' : null; WIZ.error = null; render(); return; }
+  if (a === 'wiz:back') { WIZ.phase = WIZ.phase === 'configure' ? 'pick_kind' : null; WIZ.error = null; WIZ.uncheckedFor = null; WIZ.acceptUnchecked = false; WIZ.forId = null; render(); return; }
   if (a === 'wiz:next') { wizNext(); return; }
+  /* F1 — the second of the two buttons an unchecked key offers. It is the
+     same path as Next, with the user's decision carried into it, so nothing
+     about how the provider is saved and activated differs; only whether we
+     were allowed to claim the key works. */
+  if (a === 'wiz:saveUnchecked') { WIZ.acceptUnchecked = true; wizNext(); return; }
   if (a === 'wiz:cancel') { WIZ.phase = null; render(); return; }
   if (a === 'sel:browseLocal') { SEL.kind = 'model'; SEL.filter = ''; render(); selLoadLocal(); return; }
   if (a === 'sel:closeAdd') { SEL.addOpen = false; render(); return; }
@@ -3752,7 +3764,15 @@ document.addEventListener('input', (e) => {
      character, watch it come back, and the provider is now impossible to
      correct without closing the wizard. Held here, the way `sel-filter`
      and `modelq` above are. */
-  if (e.target.id === 'wiz-key') { WIZ.apiKey = e.target.value; return; }
+  if (e.target.id === 'wiz-key') {
+    WIZ.apiKey = e.target.value;
+    /* B.4 — the error clears on the first keystroke in the field it belongs
+       to. The tester entered a key and the old error stayed under it, so the
+       screen still read as a failure while she was fixing it. Repaint only
+       when there is something to clear: this fires on every character. */
+    if (WIZ.error || WIZ.uncheckedFor) { WIZ.error = null; WIZ.uncheckedFor = null; render(); }
+    return;
+  }
   if (e.target.id === 'wiz-url') { WIZ.baseUrl = e.target.value; return; }
   if (e.target.id === 'dial') { S.dialShare = +e.target.value; refreshDial(); return; }
 });
@@ -4850,6 +4870,16 @@ function onChatEvent(ev) {
     // sent-and-not-yet-echoed list goes with it — a `steer_applied` for this
     // turn cannot arrive after its done frame, and carrying entries into the
     // next turn would swallow a bubble there.
+    /* F1 — a turn that COMPLETED on a provider is the proof its key works,
+       and the only thing that can retire the UNVERIFIED cell. An error or an
+       abort proves nothing either way, so the badge stays. */
+    if (ev.kind !== 'error' && ev.kind !== 'aborted') {
+      const on = selActiveProviderId();
+      if (on && UNVERIFIED.indexOf(on) >= 0) {
+        UNVERIFIED = UNVERIFIED.filter((x) => x !== on);
+        if (BR && BR.unverifiedSet) BR.unverifiedSet(on, false).catch(() => {});
+      }
+    }
     STEER.ahead = 0;
     STEER.mine.length = 0;
     if (S.queued.length) {
@@ -6753,18 +6783,48 @@ function obWizardHTML() {
     selProviders().forEach((p) => { taken[p.id] = 1; });
     const rows = obWizRows();
     const cur = rows.length ? WIZ.cur % rows.length : 0;
-    return '<div class="ob-wiz">'
-      // providers-wizard.tsx:359 — the screen title the copy contract names.
-      + '<div class="ob-h">LLM provider — add provider</div>'
-      + (WIZ.q === null ? ''
-          : '<input class="ob-inp" id="wiz-q" placeholder="search" value="' + esc(WIZ.q) + '">')
-      + '<div class="ob-wizlist">' + rows.map(({k}, n) =>
-      '<button class="modelrow' + (taken[k.id] ? ' dim' : '') + (n === cur ? ' on' : '')
-      + '" data-obwiz="' + n + '" tabindex="' + (n === cur ? '0' : '-1')
+    /* B.3 — a row list, not a scrolling wall of identical boxes ("оч страшно
+       выглядит"). Each row is the provider's name over its endpoint in mono,
+       and one already set up carries a lit CONFIGURED cell rather than the
+       words "· already configured" tacked onto the endpoint.
+
+       The two we actually recommend sit above a hairline; the other twelve
+       are below it under MORE PROVIDERS. Fourteen equally-weighted rows is
+       not a choice, it is a wall — and the first thing anyone needs to know
+       is which two get them working fastest.
+
+       There are no logos: we have no right to draw most of them, and the
+       row's own structure carries the identity. */
+    const RECOMMENDED = new Set(['openrouter', 'aimlapi']);
+    /* The three built-in kinds carry no baseUrl — the agent holds their
+       endpoints — so the row fell back to printing the kind id (`openrouter`)
+       in the slot where a host belongs, which says nothing. These are the
+       hosts those kinds actually talk to, for display only. */
+    const KIND_HOST = {
+      openrouter: 'https://openrouter.ai/api',
+      aimlapi: 'https://api.aimlapi.com',
+      gemini: 'https://generativelanguage.googleapis.com',
+    };
+    const row = ({k}, n) =>
+      '<button class="prow' + (n === cur ? ' on' : '') + '"'
+      + ' data-obwiz="' + n + '" tabindex="' + (n === cur ? '0' : '-1')
       + '" aria-selected="' + (n === cur ? 'true' : 'false') + '">'
-      + '<span class="col"><span class="nm">' + esc(k.label) + '</span>'
-      + '<span class="cap">' + esc(k.custom ? 'you supply the URL' : k.baseUrl || k.kind)
-      + (taken[k.id] ? ' · already configured' : '') + '</span></span></button>').join('')
+      + '<span class="col"><span class="nm">' + esc(k.label.split(' (')[0]) + '</span>'
+      + '<span class="ep">' + esc(k.custom ? 'a URL you supply' : k.baseUrl || KIND_HOST[k.kind] || k.kind) + '</span></span>'
+      + (taken[k.id] ? '<span class="ann lit">Configured</span>' : '')
+      + '</button>';
+    const top = rows.filter(({k}) => RECOMMENDED.has(k.id));
+    const rest = rows.filter(({k}) => !RECOMMENDED.has(k.id));
+    const at = (r) => rows.indexOf(r);
+    return '<div class="ob-wiz">'
+      + (WIZ.q === null ? ''
+          : '<input class="ob-inp" id="wiz-q" placeholder="Search providers" value="' + esc(WIZ.q) + '">')
+      + '<div class="ob-wizlist">'
+        + (top.length ? '<div class="prows">' + top.map((r) => row(r, at(r))).join('') + '</div>' : '')
+        + (rest.length
+            ? '<div class="prow-more">More providers</div>'
+              + '<div class="prows">' + rest.map((r) => row(r, at(r))).join('') + '</div>'
+            : '')
       + '</div>'
       // Esc is the TUI's way out of the list; the desktop needs a control
       // for it too, and it routes through the same action.
@@ -6785,28 +6845,43 @@ function obWizardHTML() {
      labelled, it says what goes in it, and the .env sentence has moved
      BELOW the field, where help text belongs. The sentence itself is the
      copy contract's, verbatim. */
-  return '<div class="ob-wiz"><div class="ob-h">' + esc('API key — ' + k.label.split(' (')[0]) + '</div>'
-    + (k.custom ? '<label class="ob-explain" for="wiz-url">API base URL</label>'
+  /* B.4 — one label, not three. This screen used to say "API key — AI/ML API"
+     as a heading, "API key" again as the field's label, and then put the .env
+     sentence between them; the tester read it as the same words twice and she
+     was right. The screen is titled in the 11px label style, the provider is
+     the subhead, and naming the field is the placeholder's job.
+
+     F1 — when the key could not be CHECKED (as opposed to rejected), the two
+     buttons below are the whole decision: try again, or save it knowing it is
+     unchecked. There is no path from here to a completion screen. */
+  const service = k.label.split(' (')[0];
+  const unchecked = WIZ.uncheckedFor;
+  return '<div class="ob-wiz">'
+    + '<div class="ob-kicker">API key</div>'
+    + '<div class="ob-h">' + esc(service) + '</div>'
+    + (k.custom ? '<label class="ob-flabel" for="wiz-url">API base URL</label>'
         + '<input class="ob-inp" id="wiz-url" placeholder="https://host/v1" value="' + esc(WIZ.baseUrl) + '">' : '')
-    + '<label class="ob-explain" for="wiz-key">' + esc('API key') + '</label>'
     + '<input class="ob-inp" id="wiz-key" type="password" autocomplete="off" spellcheck="false"'
-    + ' placeholder="' + esc(k.env ? 'paste it here, or leave blank to use ' + k.env : 'paste it here') + '"'
+    + ' aria-label="API key for ' + esc(service) + '"'
+    + ' placeholder="' + esc(k.env ? 'Paste your key, or leave blank to use ' + k.env : 'Paste your key') + '"'
     + ' value="' + esc(WIZ.apiKey) + '">'
-    + (k.env ? '<div class="ob-explain">' + esc('Saved to .env as ' + k.env + ' (mode 0600).') + '</div>' : '')
-    /* r6 cloud: the sentence, not the check, is what changed here. The old
-       copy described checking the key against the provider's model list —
-       which for openrouter and aimlapi came out of a catalogue bundled in
-       the binary and so could not fail for any string at all. Verification
-       is now a real one-token completion, and the line says so. The field
-       above is r6 UX's labelled one; the cloud lane's duplicate bare input
-       is dropped, not lost — it carried no attribute this one lacks. */
-    + (verifying ? '<div class="ob-explain">asking the provider to answer once with this key…</div>' : '')
     + (WIZ.error ? '<div class="ob-err">' + esc(WIZ.error) + '</div>' : '')
-    + '<div class="ob-foot"><button class="btn btn-g" data-act="wiz:back"' + (verifying ? ' disabled' : '') + '>Back</button>'
-    + '<span class="grow"></span>'
-    + '<button class="btn btn-p" data-act="wiz:next"' + (verifying ? ' disabled' : '') + '>'
-    + (verifying ? 'Verifying…' : 'Next') + '</button></div></div>';
+    + (k.env ? '<div class="ob-help">' + esc('Saved to .env as ' + k.env + ' (mode 0600).') + '</div>' : '')
+    + (verifying ? '<div class="ob-help">Asking ' + esc(service) + ' to answer once with this key…</div>' : '')
+    + (unchecked
+      ? '<div class="ob-foot">'
+        + '<button class="btn btn-g" data-act="wiz:back">Back</button>'
+        + '<span class="grow"></span>'
+        + '<button class="btn btn-s" data-act="wiz:saveUnchecked">Save unchecked</button>'
+        + '<button class="btn btn-p" data-act="wiz:next">Try again</button>'
+        + '</div>'
+      : '<div class="ob-foot"><button class="btn btn-g" data-act="wiz:back"' + (verifying ? ' disabled' : '') + '>Back</button>'
+        + '<span class="grow"></span>'
+        + '<button class="btn btn-p" data-act="wiz:next"' + (verifying ? ' disabled' : '') + '>'
+        + (verifying ? 'Verifying…' : 'Next') + '</button></div>')
+    + '</div>';
 }
+
 
 /* --------------------------------------------------------------------------
    r6 UX — the action bar.
@@ -8099,6 +8174,7 @@ if (BR) {
      providersReady()'s key check (item 7), so the inferred half waits for
      that second round trip; the latched half does not depend on it. */
   if (BR && BR.build) BR.build().then((b) => { BUILD = b; render(); }).catch(() => {});
+  if (BR && BR.unverified) BR.unverified().then((ids) => { UNVERIFIED = ids || []; render(); }).catch(() => {});
   Promise.all([BR.firstRun ? BR.firstRun() : Promise.resolve(null), BR.configGet()]).then(async ([fr, res]) => {
     FIRSTRUN = fr;
     let ids = null;
@@ -8223,7 +8299,15 @@ document.addEventListener('input', (e) => {
      happened and no error. Keeping state in step with the field fixes the
      value for every repaint, whatever has focus. No render() here: a repaint
      per keystroke is what moves a caret. */
-  if (e.target.id === 'wiz-key') { WIZ.apiKey = e.target.value; return; }
+  if (e.target.id === 'wiz-key') {
+    WIZ.apiKey = e.target.value;
+    /* B.4 — the error clears on the first keystroke in the field it belongs
+       to. The tester entered a key and the old error stayed under it, so the
+       screen still read as a failure while she was fixing it. Repaint only
+       when there is something to clear: this fires on every character. */
+    if (WIZ.error || WIZ.uncheckedFor) { WIZ.error = null; WIZ.uncheckedFor = null; render(); }
+    return;
+  }
   if (e.target.id === 'wiz-url') { WIZ.baseUrl = e.target.value; return; }
 });
 
@@ -8705,6 +8789,9 @@ function selRows() {
     const rows = selProviders().map((p) => ({
       type:'provider', id:p.id, label:p.id,
       detail: !BSW.readyLoaded ? 'checking keys…' : BSW.readyIds.includes(p.id) ? (p.defaultChatModel || p.model || 'default model') : 'no API key',
+      /* F1 — a key we were never able to check is not a key we know works,
+         and the row has to keep saying so until a turn proves otherwise. */
+      unverified: UNVERIFIED.indexOf(p.id) >= 0,
       active: p.id === activeId,
     }));
     // The TUI's trailing row (intent addProvider): the same screen as the
@@ -8903,10 +8990,13 @@ function selectorHTML() {
     + (SEL.modelsBusy || SEL.localBusy ? '<div class="pad cap">reading the catalogue…</div>' : '')
     + (SEL.modelsErr ? '<div class="pad cap" style="color:var(--danger)">' + esc(SEL.modelsErr) + '</div>' : '')
     + rows.map((r, i) => '<button class="modelrow' + (r.active ? ' on' : '') + '" data-sel-row="' + i + '">'
-        + '<span class="radio"' + (r.active ? ' style="border-color:var(--accent);border-width:4px"' : '') + '></span>'
+        + '<span class="radio' + (r.active ? ' on' : '') + '"></span>'
         + '<span class="col"><span class="nm' + (r.type === 'cloudModel' || r.type === 'localModel' ? ' mono' : '') + '">'
         + esc(r.label) + '</span><span class="cap">' + esc(r.detail || '') + '</span></span>'
         + (r.type === 'localModel' && !r.downloaded ? '<span class="cap">download</span>' : '')
+        /* F1 — an unlit cell, not a lit one: this is a state we could not
+           confirm, not a fault we found. It goes out when a turn succeeds. */
+        + (r.unverified ? '<span class="ann">Unverified</span>' : '')
         + '</button>').join('')
     + (!real.length && SEL.kind === 'model' && SEL.filter && !SEL.modelsBusy && !SEL.localBusy ? '<div class="pad cap">no models match \u201c' + esc(SEL.filter) + '\u201d</div>' : '')
     + '</div>';
@@ -10083,13 +10173,46 @@ function wizardHTML() {
     + '<label class="cap">API key' + (k.env ? ' \u2014 blank reads ' + esc(k.env) : '') + '</label>'
     + '<input class="field-inp" id="wiz-key" type="password" style="width:100%" value="' + esc(WIZ.apiKey) + '">';
   const verifying = WIZ.phase === 'verifying';
+  /* This is the SECOND place the app asks for an API key — the wizard's own
+     screen is the other — and the two had drifted: this one wrote the error
+     into a `<p class="cap">` with an inline colour, so the error slot the
+     rest of the app (and F1's own check) looks for did not exist here at all.
+     Same class, same slot, same two buttons when a key could not be checked. */
+  const unchecked = WIZ.uncheckedFor;
   return selShell(k.label,
     '<div class="selbody" style="padding:12px 16px;display:flex;flex-direction:column;gap:8px">' + fields
-    + (verifying ? '<p class="cap">asking the provider to answer once with this key\u2026</p>' : '')
-    + (WIZ.error ? '<p class="cap" style="color:var(--danger)">' + esc(WIZ.error) + '</p>' : '')
+    + (verifying ? '<p class="ob-help">Asking the provider to answer once with this key\u2026</p>' : '')
+    + (WIZ.error ? '<div class="ob-err">' + esc(WIZ.error) + '</div>' : '')
     + '</div>',
-    '<button class="btn btn-g" data-act="wiz:back"' + (verifying ? ' disabled' : '') + '>Back</button>'
-    + '<button class="btn btn-p" data-act="wiz:next"' + (verifying ? ' disabled' : '') + '>' + (verifying ? 'Verifying\u2026' : 'Next') + '</button>');
+    unchecked
+      ? '<button class="btn btn-g" data-act="wiz:back">Back</button>'
+        + '<button class="btn btn-s" data-act="wiz:saveUnchecked">Save unchecked</button>'
+        + '<button class="btn btn-p" data-act="wiz:next">Try again</button>'
+      : '<button class="btn btn-g" data-act="wiz:back"' + (verifying ? ' disabled' : '') + '>Back</button>'
+        + '<button class="btn btn-p" data-act="wiz:next"' + (verifying ? ' disabled' : '') + '>' + (verifying ? 'Verifying\u2026' : 'Next') + '</button>');
+}
+
+/**
+ * A provider id the agent's schema will actually accept.
+ *
+ * The id used to be `custom-` plus the URL with only whitespace-ish runs
+ * replaced, which kept every dot and underscore in the host — so
+ * `https://api.example.com/v1` became `custom-api.example.com-v1` and the
+ * save came back `llm.providers[1].id: expected kebab-case id matching
+ * ^[a-z][a-z0-9-]{0,31}$`. That is every realistic URL: the Custom endpoint
+ * route could only save a host with no dots in it.
+ *
+ * Kebab-case, lower-case, a letter first, and inside the 32-character limit
+ * the schema sets — measured on the WHOLE id, prefix included.
+ */
+function customProviderId(url) {
+  const body = String(url || '')
+    .replace(/^https?:\/\//, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  const id = ('custom-' + (body || 'endpoint')).slice(0, 32).replace(/-+$/, '');
+  return /^[a-z]/.test(id) ? id : 'custom-endpoint';
 }
 
 async function wizNext() {
@@ -10102,12 +10225,26 @@ async function wizNext() {
   // Lane B — backend switch: opened for an existing entry without a key
   // (bswOpenKey), the write goes to that entry's own id, as the TUI's
   // openProviderConfigFor does; a fresh pick keeps the preset id.
+  /* Which entry this screen is editing survives a FAILED attempt. It used to
+     be cleared here, on the way in, so the second press of the button — Try
+     again after a key was rejected or could not be checked — no longer knew
+     it was editing an existing provider: it rebuilt the entry from the preset
+     row, dropped the endpoint that entry carried, and quietly asked a
+     different host. It is cleared when the wizard finishes or is left. */
   const existing = WIZ.forId ? selProviders().find((p) => p.id === WIZ.forId) : null;
-  WIZ.forId = null;
   const id = existing && existing.kind === k.kind ? existing.id
-    : k.custom ? 'custom-' + WIZ.baseUrl.replace(/^https?:\/\//, '').replace(/[^\w.-]+/g, '-').slice(0, 32) : k.id;
+    : k.custom ? customProviderId(WIZ.baseUrl) : k.id;
   const entry = {id, kind:k.kind};
-  if (k.baseUrl || k.custom) entry.baseUrl = k.custom ? WIZ.baseUrl : k.baseUrl;
+  /* Re-keying an existing provider must not move it to a different endpoint.
+     The entry is rebuilt from the PRESET row, and the two built-in kinds
+     carry no baseUrl of their own — so a provider configured against a
+     custom base URL had that URL dropped the moment its key was re-entered,
+     and silently started talking to the vendor's default host instead. The
+     preset's URL wins when it has one (that is what picking that row means),
+     then what the user typed, then whatever the entry already had. */
+  if (k.custom) entry.baseUrl = WIZ.baseUrl;
+  else if (k.baseUrl) entry.baseUrl = k.baseUrl;
+  else if (existing && existing.baseUrl) entry.baseUrl = existing.baseUrl;
   if (k.env) entry.apiKeyEnvVar = k.env;
   if (WIZ.apiKey) entry.apiKey = WIZ.apiKey;
   if (k.apiKeyHeader) entry.apiKeyHeader = k.apiKeyHeader;
@@ -10153,9 +10290,31 @@ async function wizNext() {
     render(); refreshLiveConfig();
     return;
   }
-  // Not verified is not the same as verified: the provider is saved and
-  // activated, and the toast says the check could not be made.
+  /* F1 — unchecked is not passed.
+     `verifyProviderKey` answers three ways: ok, rejected, and "the request
+     could not leave this machine, so nothing was checked". The third used to
+     fall through here into save + activate + the completion screen, with the
+     reason dropped into a toast that vanished in four seconds. The tester
+     typed random characters as a key, read "Cloud model ready", and every
+     turn afterwards failed.
+
+     So the flow stops on the key screen and hands the decision over: TRY
+     AGAIN, or SAVE UNCHECKED. Nothing is activated until one of those is
+     pressed, and a provider saved unchecked is remembered as unverified —
+     the provider list and the composer both say so — until a turn actually
+     succeeds on it. */
+  if (proof && !proof.checked && !WIZ.acceptUnchecked) {
+    WIZ.phase = 'configure';
+    WIZ.uncheckedFor = {id, model, label: k.label.split(' (')[0]};
+    WIZ.error = proof.error || 'the key could not be checked';
+    render();
+    return;
+  }
   const unverified = proof && !proof.checked ? (proof.error || 'the key could not be checked') : null;
+  if (unverified && BR.unverifiedSet) { try { await BR.unverifiedSet(id, true); } catch (e) { /* the badge is not worth failing the save */ } }
+  if (!unverified && BR.unverifiedSet) { try { await BR.unverifiedSet(id, false); } catch (e) { /* idem */ } }
+  WIZ.acceptUnchecked = false;
+  WIZ.uncheckedFor = null;
   // Lane B — backend switch: one write for the model + the activation, then
   // the restart main does for it. Not while a turn runs.
   if (S.busy) { WIZ.phase = 'configure'; WIZ.error = 'saved and verified, but not activated while a turn is running'; render(); refreshLiveConfig(); return; }
@@ -10170,6 +10329,7 @@ async function wizNext() {
   }
   bswReport(sel, 'Selected chat model ' + id + '/' + model + '.');
   WIZ.phase = null;
+  WIZ.forId = null;
   // r5 item 10: swxRun re-read the live config before it resolved.
   /* r5 item 7: the setup wizard mounts this same wizard inside its cloud
      step, where `closeSelector()` would close a popup that is not open
@@ -15763,6 +15923,9 @@ if (typeof window !== 'undefined') {
 if (typeof window !== 'undefined') {
   // item 9 — what the main process latched before anything could write.
   window.__firstRun = () => FIRSTRUN;
+  /* F1 — which providers were saved without the key being checked. Read
+     from disk each time, because the wizard writes it through main. */
+  window.__unverified = () => (BR && BR.unverified ? BR.unverified() : Promise.resolve(null));
   // item 9 — the fresh-install predicate, drivable without an agent.
   window.__needsOnboarding = (cfg) => needsOnboarding(cfg);
   // item 9 — the cross-lane import contract, straight through the bridge.

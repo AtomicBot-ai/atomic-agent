@@ -205,8 +205,25 @@ class App {
       const n = ns[${nth}];
       if (!n) return null;
       const r = n.getBoundingClientRect();
+      /* The window is not the only thing that can hide a control. A row
+         inside a pane with its own scrollbar is CLIPPED by that pane, and its
+         viewport coordinates say nothing about whether a person can see it —
+         so a box that looked fine by innerHeight got clicked at a point the
+         pane was not painting, and the press landed on whatever was behind
+         it. Report the nearest scrolling ancestor's rect; the wheel and the
+         hit test both need it. */
+      let sc = n.parentElement, clip = null;
+      while (sc && sc !== document.body) {
+        const cs2 = getComputedStyle(sc);
+        if (/(auto|scroll)/.test(cs2.overflowY) && sc.scrollHeight > sc.clientHeight + 1) {
+          const b = sc.getBoundingClientRect();
+          clip = { top: b.top, bottom: b.bottom, x: b.left + b.width / 2 };
+          break;
+        }
+        sc = sc.parentElement;
+      }
       return { x: r.left + r.width / 2, y: r.top + r.height / 2, top: r.top, bottom: r.bottom,
-               vh: innerHeight, disabled: !!n.disabled,
+               vh: innerHeight, disabled: !!n.disabled, clip,
                label: (n.getAttribute('aria-label') || n.textContent || n.id || n.tagName).trim().replace(/\\s+/g, ' ').slice(0, 44) };
     })()`);
   }
@@ -229,8 +246,25 @@ class App {
       const n = all[all.length - 1];
       if (!n) return null;
       const r = n.getBoundingClientRect();
+      /* The window is not the only thing that can hide a control. A row
+         inside a pane with its own scrollbar is CLIPPED by that pane, and its
+         viewport coordinates say nothing about whether a person can see it —
+         so a box that looked fine by innerHeight got clicked at a point the
+         pane was not painting, and the press landed on whatever was behind
+         it. Report the nearest scrolling ancestor's rect; the wheel and the
+         hit test both need it. */
+      let sc = n.parentElement, clip = null;
+      while (sc && sc !== document.body) {
+        const cs2 = getComputedStyle(sc);
+        if (/(auto|scroll)/.test(cs2.overflowY) && sc.scrollHeight > sc.clientHeight + 1) {
+          const b = sc.getBoundingClientRect();
+          clip = { top: b.top, bottom: b.bottom, x: b.left + b.width / 2 };
+          break;
+        }
+        sc = sc.parentElement;
+      }
       return { x: r.left + r.width / 2, y: r.top + r.height / 2, top: r.top, bottom: r.bottom,
-               vh: innerHeight, disabled: !!n.disabled,
+               vh: innerHeight, disabled: !!n.disabled, clip,
                label: (n.textContent || n.tagName).trim().replace(/\\s+/g, ' ').slice(0, 44) };
     })()`);
   }
@@ -238,10 +272,19 @@ class App {
   /** Scroll `box` into view the way a person does — with the wheel. */
   async _wheelInto(getBox) {
     let box = await getBox();
-    for (let i = 0; box && (box.top < 8 || box.bottom > box.vh - 8) && i < 24; i++) {
-      const down = box.bottom > box.vh - 8;
+    /* Scroll whatever actually clips the target — the pane it lives in if it
+       has one, the window otherwise — with the pointer over that thing, or
+       the notch goes to a scroller the target is not in. */
+    const bounds = (b) => b.clip ? { top: b.clip.top + 8, bottom: b.clip.bottom - 8, x: b.clip.x }
+                                 : { top: 8, bottom: b.vh - 8, x: b.x };
+    for (let i = 0; i < 24; i++) {
+      if (!box) break;
+      const lim = bounds(box);
+      if (box.top >= lim.top && box.bottom <= lim.bottom) break;
+      const down = box.bottom > lim.bottom;
       await this.send('Input.dispatchMouseEvent', {
-        type: 'mouseWheel', x: Math.min(Math.max(box.x, 4), 1200), y: Math.round(box.vh / 2),
+        type: 'mouseWheel', x: Math.min(Math.max(lim.x, 4), 1200),
+        y: Math.round(box.clip ? (lim.top + lim.bottom) / 2 : box.vh / 2),
         deltaX: 0, deltaY: down ? 120 : -120, button: 'none',
       });
       await sleep(60);

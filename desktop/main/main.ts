@@ -207,6 +207,39 @@ function readVoicePrefs(): VoicePrefs {
   }
 }
 
+/* F1 — which providers were saved WITHOUT the key ever being checked.
+   `verifyProviderKey` has three answers, not two: ok, rejected, and
+   "could not reach the host, so nothing was checked". The wizard used to
+   treat the third as a pass, activate the provider and show a completion
+   screen; the tester typed random characters as an AI/ML API key, was told
+   "Cloud model ready", and every turn after that died.
+
+   Unchecked is now a decision the user makes, and the consequence has to
+   outlive the wizard — the provider list and the composer both say
+   UNVERIFIED until a turn actually succeeds on it. That is a viewer-facing
+   fact about a provider, not agent state, so it lives beside voice.json in
+   userData rather than in the agent's config.json, whose schema would
+   reject an unknown key anyway. */
+const UNVERIFIED_PATH = () => join(app.getPath("userData"), "unverified.json");
+
+function readUnverified(): string[] {
+  try {
+    const raw = JSON.parse(readFileSync(UNVERIFIED_PATH(), "utf8")) as { ids?: unknown };
+    return Array.isArray(raw.ids) ? raw.ids.filter((i): i is string => typeof i === "string" && !!i) : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeUnverified(ids: string[]): { ok: boolean; error?: string } {
+  try {
+    writeFileSync(UNVERIFIED_PATH(), JSON.stringify({ ids: [...new Set(ids)].slice(0, 64) }));
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 function writeVoicePrefs(locales: string[]): { ok: boolean; error?: string } {
   try {
     writeFileSync(VOICE_PREFS_PATH(), JSON.stringify({ locales: locales.slice(0, 2) }));
@@ -1286,6 +1319,15 @@ function wireIpc(client: AgentClient): void {
      diagnostics plate in settings. The renderer had no way to ask, so the
      splash could only show a wordmark and the plates had to leave the build
      out. */
+  ipcMain.handle("app:unverified", () => readUnverified());
+  ipcMain.handle("app:unverifiedSet", (_event, payload: unknown) => {
+    const p = (payload || {}) as { id?: unknown; on?: unknown };
+    if (typeof p.id !== "string" || !p.id) return { ok: false, error: "id required" };
+    const now = readUnverified();
+    const next = p.on ? [...now, p.id] : now.filter((i) => i !== p.id);
+    return writeUnverified(next);
+  });
+
   ipcMain.handle("app:build", () => ({
     version: app.getVersion(),
     platform: process.platform,

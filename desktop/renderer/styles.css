@@ -1631,3 +1631,56 @@ body{font-family:var(--font-ui);font-size:var(--fs-cap);letter-spacing:0}
 /* The hint strip is chrome, not content: it sits at the foot of the window. */
 .ob-hints{color:var(--ink-3)}
 .ob-hints .hint{font-size:var(--fs-label);letter-spacing:0}
+
+/* ---------------- the API key screen (B.4) ----------------
+   Screen title in the label style, provider as the subhead, the field named
+   by its placeholder, help under it, and the error between the field and the
+   help — where the thing it is about actually is. */
+.ob-kicker{font:500 var(--fs-label)/1.45 var(--font-ui);letter-spacing:var(--tr-label);
+  text-transform:uppercase;color:var(--ink-3)}
+.ob-wiz .ob-h{font-size:var(--fs-sub);font-weight:600;letter-spacing:var(--tr-sub);color:var(--ink)}
+.ob-flabel{font:500 var(--fs-label)/1.45 var(--font-ui);letter-spacing:var(--tr-label);
+  text-transform:uppercase;color:var(--ink-3);margin-top:var(--s2)}
+.ob-help{font-size:var(--fs-cap);color:var(--ink-3);max-width:62ch;line-height:1.45}
+.ob-err{color:var(--red-deep);white-space:pre-wrap;max-width:62ch;font-size:var(--fs-cap);line-height:1.45}
+/* The field is an inset well, and the focus ring is the red the system uses
+   for attention — not a second accent. */
+.ob-inp{height:32px;padding:0 var(--s3);background:var(--panel-2);border:1px solid var(--line);
+  border-radius:var(--r);color:var(--ink);font-family:var(--font-ui);font-size:var(--fs-cap);
+  transition:border-color var(--t-state) var(--ease)}
+.ob-inp::placeholder{color:var(--ink-3)}
+.ob-inp:hover{border-color:var(--ink-3)}
+.ob-inp:focus{border-color:var(--red);outline:none}
+.ob-inp:disabled{background:var(--panel);color:var(--ink-3);cursor:not-allowed}
+/* No lift on press: 120ms linear state changes, nothing that springs. */
+.ob-foot .btn-g:active,.ob-foot .btn-p:active,.ob-wiz .ob-foot .btn:active{transform:none;background:var(--panel-2)}
+.ob-foot .btn[disabled]{opacity:1;pointer-events:none;background:var(--panel);
+  border-color:var(--line);color:var(--ink-3)}
+
+/* ---------------- the provider list (B.3) ----------------
+   Hairline-separated rows in one bordered block, the recommended pair above
+   the rest. The endpoint is machine text, so it is mono; CONFIGURED is an
+   annunciator, not a sentence fragment appended to the URL. */
+.prows{border:1px solid var(--line);display:flex;flex-direction:column}
+.prow{display:flex;align-items:center;gap:var(--s4);min-height:44px;padding:var(--s2) var(--s4);
+  border:0;border-bottom:1px solid var(--line-hair);border-left:var(--rule) solid transparent;
+  background:transparent;border-radius:0;text-align:left;width:100%;cursor:pointer;
+  transition:background var(--t-state) var(--ease)}
+.prows .prow:last-child{border-bottom:0}
+.prow:hover{background:var(--panel)}
+.prow.on{background:var(--panel);border-left-color:var(--red)}
+.prow:focus-visible{outline:2px solid var(--red);outline-offset:-2px}
+.prow .col{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1}
+.prow .nm{font-size:var(--fs-body);font-weight:500;color:var(--ink)}
+.prow .ep{font-family:var(--font-mono);font-size:var(--fs-label);color:var(--ink-3);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.prow-more{font:500 var(--fs-label)/1.45 var(--font-ui);letter-spacing:var(--tr-label);
+  text-transform:uppercase;color:var(--ink-3);margin:var(--s6) 0 var(--s2)}
+.ob-wizlist{max-height:52vh;overflow-y:auto;gap:0;scrollbar-gutter:stable}
+
+/* The selector's selection mark. It used to be drawn with an inline
+   border-colour on the accent token; in this system a chosen row is a filled
+   square, and the row's own red left rule carries the rest. */
+.radio{width:12px;height:12px;border-radius:0;border:1px solid var(--ink-3);flex:none;margin-top:3px}
+.radio.on{background:var(--ink);border-color:var(--ink)}
+.modelrow .ann{margin-left:auto}

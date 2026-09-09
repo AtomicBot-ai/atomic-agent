@@ -679,7 +679,10 @@ export async function verifyProviderKey(
     });
   } catch (err) {
     // Unreachable is not "your key is wrong": do not pretend to a verdict.
-    return { ok: false, checked: false, error: `could not reach ${new URL(url).host}: ${(err as Error).message}` };
+    /* F2 — "fetch failed" is undici's words, not a sentence for a person.
+       What the user needs is which host did not answer and what that means
+       for their key; the underlying message adds nothing they can act on. */
+    return { ok: false, checked: false, error: `Could not reach ${new URL(url).host} — the key was not checked.` };
   }
   if (res.ok) return { ok: true, checked: true, status: res.status };
   // 429 means the service knew who we were and throttled us. That is an
