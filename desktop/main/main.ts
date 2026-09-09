@@ -7838,10 +7838,12 @@ async function onboardingTest(
        indicator is a numbered phase row now and the screen carries a real
        title, so that is what is asserted. */
     const chooseTitle = await js<string>("((document.querySelector('#onboarding .ob-title')||{}).textContent||'').trim()");
+    /* `.ob-stepmark`, not `.ob-phase`: the download progress row owns that
+       name, and the collision is what reintroduced the hover flicker. */
     const phases = await js<string[]>(
-      "[...document.querySelectorAll('#onboarding .ob-phase')].map((n) => (n.textContent||'').trim())");
+      "[...document.querySelectorAll('#onboarding .ob-stepmark')].map((n) => (n.textContent||'').trim())");
     const phaseOn = await js<string>(
-      "((document.querySelector('#onboarding .ob-phase.on')||{}).textContent||'').trim()");
+      "((document.querySelector('#onboarding .ob-stepmark.on')||{}).textContent||'').trim()");
     check(
       "wizard: the choose step is titled, and says which phase you are in",
       chooseTitle === "Choose how Atomic Agent gets its model"
@@ -7985,6 +7987,41 @@ async function onboardingTest(
       !/ctrl\+c/.test(advertised) && !/any key/.test(advertised),
       `ctrl+c=${/ctrl\+c/.test(advertised)} anyKey=${/any key/.test(advertised)}`,
     );
+
+    /* ---- F8: arrows move, Enter and Space commit, nothing else ----
+       The tester was thrown out of a step by a key she pressed to see what
+       it did: `import_done` ran the flow's finish on ANY key, a literal port
+       of the TUI's "any key to start" footer. In a terminal that is a
+       shortcut; in a window with a focus ring it is a trap.
+
+       Asserted on three screens that each own their keyboard differently —
+       a list of routes, a list of models, and a list of tick boxes — because
+       the rule is app-wide and one handler passing proves nothing about the
+       others. */
+    for (const step of ["choose", "local_pick", "import_pick"] as const) {
+      await js<ObState>(`window.__obOpen(${JSON.stringify(step)})`);
+      await new Promise((r) => setTimeout(r, 150));
+      const before = await js<ObState>("window.__ob()");
+      const moved = await js<ObState>("window.__obKey('down')");
+      const stillHere = moved.step === before.step;
+      const cursorMoved = moved.cursor !== before.cursor || (before.rows ?? 0) <= 1;
+      check(
+        `F8 on ${step}: an arrow moves the selection and commits nothing`,
+        stillHere && cursorMoved,
+        `step ${before.step} → ${moved.step}, cursor ${before.cursor} → ${moved.cursor}`,
+      );
+    }
+    /* And the one that broke: the result screen finishes on Enter, and an
+       arrow there does nothing at all. */
+    await js<ObState>("window.__obOpen('import_done')");
+    await new Promise((r) => setTimeout(r, 150));
+    const arrowOnDone = await js<ObState>("window.__obKey('down')");
+    check(
+      "F8 on import_done: an arrow does not finish the flow",
+      arrowOnDone.step === "import_done" && arrowOnDone.open === true,
+      `step=${arrowOnDone.step} open=${arrowOnDone.open}`,
+    );
+    await js<ObState>("window.__obClose()");
 
     /* ---- the download strip ---- */
     /* THE PARSER ITSELF, against the CLI's own line — the review found

@@ -90,7 +90,7 @@ that. The ask's intent — a plain button with no keycaps and no icon — is kep
 | **F9** naming and first-run composition | **fixed** (A.4, B.1, B.2) |
 | **F10 / F11 / F12** transcript noise, hidden actions, raw markdown | **fixed** |
 | **F13** Manage hides its navigation | **fixed** (B.8) |
-| **F14** `/` showed no commands | **not reproduced yet** |
+| **F14** `/` showed no commands | **not a bug** — see below |
 | **N1 / N2** trace writer | **not done** — agent-side |
 | **N3** no log on disk, dead debug bundle | **fixed** |
 | **N4 / N5** | **not done** — see below |
@@ -110,6 +110,34 @@ Driving F1 turned up three defects in the same few lines, all now fixed:
 3. **"Try again" lost track of which provider it was editing.** `WIZ.forId`
    was cleared on the way *into* the first attempt, so a retry rebuilt the
    entry from the preset and dropped the endpoint again.
+
+Building the model step turned up two more, both mine and both found by
+driving rather than by reading:
+
+4. **The model step's buttons did nothing inside first run.** The onboarding
+   `act()` override swallows every verb it does not name while the flow is
+   open. A verb added to the wizard and not added there is simply inert —
+   which is the same shape as the defect the operator once reported as "when
+   I click on next, nothing happens". Both new verbs and the unchecked-key
+   offer are named now.
+5. **A 37-model catalogue pushed the step's own buttons off the screen.** The
+   popover is a flex column with a fixed max-height whose `.selbody` is the
+   scroller; the step handed it a bare block instead, so nothing scrolled and
+   "Use this model" was drawn 90px below the last visible pixel.
+
+And one regression I introduced and then caught: **the hover flicker came
+back**. The checklist header's phase indicator was called `.ob-phase`, which
+is what the download progress ROW has been called for longer. My rule sits
+later in the file, so it landed on that row — Inter instead of mono,
+uppercase, 0.12em of tracking — making it wide enough to wrap. The row is
+re-read on every CLI sample and its estimate changes length, so it gained and
+lost a line as the download ran, everything below it moved, and a pointer
+parked on the offer card kept losing `:hover`. That is exactly what the
+tester saw. Renamed, and the progress row is now pinned so it cannot change
+its own height whatever the estimate says.
+
+I only knew it was mine because I ran the same driver against the commit
+before Part A and it was green there.
 
 And one in the harness: `drive.mjs` judged whether a control was on screen by
 the *window's* height, so a row clipped inside a pane with its own scrollbar
@@ -141,9 +169,12 @@ spawns the user's *installed* `atag`, so none of them would reach the DMG
 without also shipping a new agent. Worth doing; out of scope for a desktop
 pass.
 
-**F14.** Not reproduced. The code path looks correct — typing `/` sets
-`S.slash` and repaints a popover that is always rendered — so this needs
-driving before anything is changed, exactly as the brief says.
+**F14 — closed as not-a-bug, with evidence.** Reproduced first, as the brief
+asks: typing `/` into the composer with a real key event opens the popover
+with 33 commands in it, in both themes, not clipped by the composer and not
+off the top of the window (`{popover:true, rows:33, top:614, bottom:806,
+clippedByComposer:false}`). Nothing was changed. The screenshots are
+`dark-6-slash.png` and `light-6-slash.png`.
 
 **N4.** A prompt-owner question, not code.
 
@@ -164,6 +195,26 @@ green tick any more — but the places that used to rely on green to mean
 some spots rather than as a filled square and the word DONE. The provider
 list and the model step carry proper annunciators; the model-download rows do
 not yet.
+
+## One operational trap worth knowing about
+
+`npm run smoke` and the `drive:*` scripts were running against **different
+agent binaries**. The drivers set `ATOMIC_AGENT_BIN` to a shim over this
+checkout's own `dist/cli/index.js`; the smoke, launched as `electron .
+--smoke`, gets whatever `candidateBinaries()` finds — here the installed
+`~/atag-agent/bin/atag`.
+
+Both call themselves 0.5.5. They do not understand the same config: the
+checkout's agent writes `version: 51`, and the installed one refuses it with
+`config set failed: version 51 is newer than this build understands (49)`.
+
+So running a driver against a shared fixture directory silently upgrades it
+and the suite then fails 33 checks on that directory — none of them about the
+app. It cost a full run to work out. Either give each lane its own state
+directory, or run both against the same agent (`ATOMIC_AGENT_BIN=<shim>`),
+which is what the green run below does and is the more honest pairing anyway:
+the desktop on this branch is meant to be shipped with the agent from this
+branch.
 
 ## How this was verified
 
@@ -186,3 +237,18 @@ not yet.
   that it is `rgb(240, 112, 95)`.
 - One new invariant, which is the one that would have caught the original
   defect: **no footer may advertise a chord the window does not have.**
+- The fonts are asserted to actually LOAD, not merely to be asked for: on a
+  `file://` page a CSP of `font-src 'self'` can be an opaque origin, which
+  would drop the faces silently and fall back to Helvetica. `document.fonts`
+  says both are loaded.
+- `drive:onboarding` 60/60 (one honest skip: that run has no
+  `OPENROUTER_API_KEY` for the empty-box case). `drive:wizard` 16/16.
+  `drive:hover` 22/22.
+- Five drivers were themselves out of date with the app and were updated
+  rather than worked around — most importantly `passIntro`, shared by three
+  of them, which dismissed the splash by clicking the star field's canvas.
+  With the canvas gone its loop broke immediately, clicked nothing, and every
+  caller sat on the intro until it timed out.
+- **`drive:selector` fails 3 checks, and it failed 9 on the commit before
+  Part A.** Those are pre-existing, on that state directory; my build gets
+  further. I have not chased them.

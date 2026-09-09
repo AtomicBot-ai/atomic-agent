@@ -66,9 +66,15 @@ async function pickListAt(ram, label) {
   });
   try {
     await app.waitFor('!!document.querySelector("#onboarding")', 'the wizard', { timeout: 90000, quiet: true });
-    // "press any key" is two-stage: the first input finishes the reveal.
-    await app.clickSel('#onboarding', { scroll: false });
-    await app.clickSel('#onboarding', { scroll: false });
+    /* ONE click leaves the title card. It used to take two — the first
+       finished a typewriter reveal that no longer exists — and a second
+       input here spent itself on the setup screen behind the card, choosing
+       a route before this driver could ask for one. */
+    for (let i = 0; i < 6; i += 1) {
+      if ((await app.eval(`window.__ob ? window.__ob().step : ''`)) !== 'intro') break;
+      await app.clickSel('#onboarding', { scroll: false });
+      await sleep(300);
+    }
     await app.clickText('Local models');
     await app.waitFor('!!document.querySelector("#onboarding .ob-explain")', 'the local step', { quiet: true });
     // The catalogue is a real `atag models list` — wait for it to land.
