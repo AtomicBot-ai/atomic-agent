@@ -257,17 +257,49 @@ let HOST_RAM_GB = 0;
 
 /* ONBOARDING_CHOICES (onboarding-state.ts:130-155), verbatim and in order
    — the order is load-bearing, the 1–3 digits are positional. */
+/* One line of consequence each. These used to be two lines apiece, which on
+   the choose screen made three paragraphs the eye had to read before it could
+   choose — the tester's "I have to peer at it". A route is picked on what it
+   costs you, so that is the line. */
 const OB_CHOICES = [
   {id:'local', label:'Local models', detail:[
-    'llama.cpp on this machine. Private, free per token,',
-    'one download of 2.7–22 GB.']},
+    'Runs on this Mac. Private and free per token, after one 2.7–22 GB download.', '']},
   {id:'cloud', label:'Cloud models', detail:[
-    'OpenRouter, Anthropic, Gemini, Groq and 20 more.',
-    'Fastest to a working agent — needs an API key.']},
+    'Fastest to a working agent. Needs an API key from one of 24 providers.', '']},
   {id:'custom', label:'Custom endpoint', detail:[
-    'An OpenAI-compatible or llama-server URL you already run.',
-    'Nothing is downloaded, nothing else is asked.']},
+    'A URL you already run. Nothing is downloaded and nothing else is asked.', '']},
 ];
+
+/* The flow has two phases, and the header says which one you are in as a
+   numbered row — `01 SETUP  02 DATA` — rather than "step 1 of 2" set in 11px
+   grey, which the tester could not find at all. A checklist card names its
+   steps and marks the one you are on; that is all this is. */
+const OB_PHASES = [{n:'01', label:'Setup'}, {n:'02', label:'Data'}];
+const OB_PHASE_OF = {
+  intro:null, choose:'01', cloud:'01', custom_chat_url:'01', custom_embedding_url:'01',
+  local_pick:'01', local_hf_ref:'01', local_hf_pick:'01', local_download:'01',
+  propose_second:'01',
+  import_pick:'02', import_preview:'02', import_done:'02',
+  wait_or_jump:'02', finished:'02',
+};
+/* The screen's own title, in the app's voice rather than the TUI's status
+   line. Plainest possible form: what this screen asks you to decide. */
+const OB_TITLES = {
+  choose: 'Choose how Atomic Agent gets its model',
+  cloud: 'Connect a cloud provider',
+  custom_chat_url: 'Point Atomic Agent at your endpoint',
+  custom_embedding_url: 'Embeddings endpoint',
+  local_pick: 'Choose a model to run on this Mac',
+  local_hf_ref: 'Find a model on Hugging Face',
+  local_hf_pick: 'Choose a file to download',
+  local_download: 'Downloading your model',
+  propose_second: 'Add a second way to run models?',
+  import_pick: 'Bring your data from other agents',
+  import_preview: 'Review what will be imported',
+  import_done: 'Import complete',
+  wait_or_jump: 'Almost there',
+  finished: 'Setting up…',
+};
 
 /* ONBOARDING_SUBTITLES (onboarding-chrome.ts:13-29), verbatim. */
 const OB_SUBTITLES = {
@@ -292,15 +324,14 @@ const OB_SUBTITLES = {
 const OB_COPY = {
   // onboarding-choose-step.tsx:30-33
   chooseExplainer: [
-    'atomic-agent can drive models three ways. Nothing here is permanent — you',
-    'can add the others at any time from the menu.'],
+    'Nothing here is permanent — you can add the others at any time from the menu.'],
   // onboarding-intro-step.tsx:53 / :12, logo.tsx TAGLINE
   tagline: 'Local AI-First Agent',
   taglineMsPerChar: 45,
-  pressAnyKey: '[ press any key to continue ]',
-  wordmark: 'ATOMIC',
+  pressAnyKey: 'Click anywhere, or press any key',
+  wordmark: 'Atomic Agent',
   // onboarding-header.tsx:9
-  headerWordmark: 'atomic',
+  headerWordmark: 'Atomic Agent',
   // onboarding-local-pick-step.tsx:25-27, :108
   localHeading: 'Recommended models',
   // onboarding-url-step.tsx:8-19
@@ -328,13 +359,13 @@ const OB_COPY = {
   cloudReadyLabel: 'Cloud model ready',
   // onboarding-propose-step.tsx:11-33
   proposeExplainer: [
-    'atomic-agent runs both side by side — local for private or offline work,',
+    'Atomic Agent runs both side by side — local for private or offline work,',
     'cloud for the heavy turns, switchable mid-session. You have one of the two.'],
   proposeSkip: {label:'Skip — take me to the agent', detail:'you can add it later from the menu (esc)'},
   // onboarding-import-step.tsx:25-34, :200-212; import-step.ts:80-85
   importExplainer: [
     'Other agents keep skills, memory, sessions and keys on this machine.',
-    'Tick which ones to bring into atomic-agent — nothing is written before',
+    'Tick which ones to bring into Atomic Agent — nothing is written before',
     'you see a preview, and nothing is ever removed from the source.'],
   importSkipLabel: 'Skip adding data from other agents',
   importSkipDetail: 'Go straight to your agent — /import works any time later.',
@@ -396,6 +427,9 @@ const OB_FIELD_TIERS   = [['bright',0.01],['mid',0.08],['dim',0.26],['faint',0.6
 const OB_HALO_TIERS    = [['bright',0.14],['mid',0.28],['dim',0.34],['faint',0.24]];
 /* The glyph ramp becomes radius, alpha and a theme token — the four
    brightnesses the TUI encodes in `· ✧ ✦ ✛`, drawn instead of written. */
+/* Last resort if a token ever resolves empty — ink, never a literal
+   colour, so the fallback still belongs to the system. */
+const FALLBACK_TIER_INK = 'currentColor';
 const OB_TIER_LOOK = {
   faint:  {r:0.6, a:0.35, token:'--text-tertiary', drift:0.35},
   dim:    {r:0.9, a:0.55, token:'--accent-text',   drift:0.55},
@@ -516,6 +550,11 @@ const DOWNLOAD_MODEL_LABEL = 'download model';
    create config.json. `null` until the boot check resolves; the wizard
    reads it, and the smoke asserts it. */
 let FIRSTRUN = null;
+/* Which build this is — version, platform, arch — for the three places that
+   must NAME it rather than leave the user guessing: the title card, the
+   transcript's opening plate, and the diagnostics plate. Declared here, above
+   the first render(), because the render path reads it. */
+let BUILD = null;
 /* src/config/config-schema.ts localModels.url default. The agent's own
    isLocalBackendConfigured (src/tui/local-backend-readiness.ts) compares
    against this exact string and does NOT count the default it never
@@ -641,7 +680,7 @@ const MENU_GROUPS = [
     {id:'help.quit', label:'Quit', chord:'q'},
   ]],
   ['Danger zone', [
-    {id:'danger.uninstall', label:'Uninstall atomic-agent…', na:true},
+    {id:'danger.uninstall', label:'Uninstall Atomic Agent…', na:true},
   ]],
 ];
 /* The desktop act each menu verb already has. Nodes with a `tab` and
@@ -1023,7 +1062,7 @@ function ic(n, cls) {
   return '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" '
     + 'stroke-linecap="round" stroke-linejoin="round"' + (cls ? ' class="' + cls + '"' : '') + '>' + (P[n] || '') + '</svg>';
 }
-const MARK_COLOR = '<svg width="16" height="16" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="14" fill="#006AFF"/><path fill="#fff" d="M35.24 49.92a1.25 1.25 0 0 0 1.3-1.24 12.2 12.2 0 0 1 12.14-12.14 1.25 1.25 0 0 0 1.24-1.3v-6.47c0-.69-.56-1.24-1.24-1.24H37.72c-.69 0-1.24-.56-1.24-1.25V15.32c0-.69-.56-1.24-1.24-1.24h-6.47c-.69 0-1.24.56-1.3 1.24A12.2 12.2 0 0 1 15.32 27.46c-.68.06-1.24.61-1.24 1.3v6.47c0 .69.56 1.24 1.24 1.24h10.96c.69 0 1.24.56 1.24 1.25v10.95c0 .69.56 1.24 1.24 1.24z"/></svg>';
+const MARK_COLOR = '<svg width="16" height="16" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" fill="var(--red)"/><path fill="var(--on-fill)" d="M35.24 49.92a1.25 1.25 0 0 0 1.3-1.24 12.2 12.2 0 0 1 12.14-12.14 1.25 1.25 0 0 0 1.24-1.3v-6.47c0-.69-.56-1.24-1.24-1.24H37.72c-.69 0-1.24-.56-1.24-1.25V15.32c0-.69-.56-1.24-1.24-1.24h-6.47c-.69 0-1.24.56-1.3 1.24A12.2 12.2 0 0 1 15.32 27.46c-.68.06-1.24.61-1.24 1.3v6.47c0 .69.56 1.24 1.24 1.24h10.96c.69 0 1.24.56 1.24 1.25v10.95c0 .69.56 1.24 1.24 1.24z"/></svg>';
 const MARK_MONO = '<svg width="20" height="20" viewBox="0 0 64 64" fill="currentColor" aria-hidden="true"><path d="M35.24 49.92a1.25 1.25 0 0 0 1.3-1.24 12.2 12.2 0 0 1 12.14-12.14 1.25 1.25 0 0 0 1.24-1.3v-6.47c0-.69-.56-1.24-1.24-1.24H37.72c-.69 0-1.24-.56-1.24-1.25V15.32c0-.69-.56-1.24-1.24-1.24h-6.47c-.69 0-1.24.56-1.3 1.24A12.2 12.2 0 0 1 15.32 27.46c-.68.06-1.24.61-1.24 1.3v6.47c0 .69.56 1.24 1.24 1.24h10.96c.69 0 1.24.56 1.24 1.25v10.95c0 .69.56 1.24 1.24 1.24z"/></svg>';
 
 const dur = (ms) => ms == null ? '…' : ms + 'ms';   // item 4: as the TUI prints it (tool-card.tsx), never X.Xs
@@ -1041,7 +1080,7 @@ const SLASH = [
   ['theme','switch the UI theme','<name>|list'],
   ['clear','clear chat transcript (keeps session)'],
   ['abort','abort the running turn'],
-  ['quit','exit atomic-agent'],
+  ['quit','exit Atomic Agent'],
   ['debug','toggle debug pane (feed / logs / world …)'],
   ['chat','return to single-view chat mode'],
   ['run','run mode — fusion orchestrates on cloud, executes locally','local|cloud|fusion [0-100]'],
@@ -1215,7 +1254,7 @@ function roomTitle() {
 function renderToolbar() {
   const [t, sub] = roomTitle();
   $('#toolbar').innerHTML =
-    '<div class="lights"><span class="lg" style="background:#FF5F57"></span><span class="lg" style="background:#FEBC2E"></span><span class="lg" style="background:#28C840"></span></div>'
+    '<div class="lights" aria-hidden="true"></div>'
     // r5 item 2: "the sidebar toggle should glow blue while the sidebar is
     // open" — the user's words. `.iconbtn.on` is the app's existing active
     // treatment (the Inspector and Console buttons below use it), so the
@@ -1331,7 +1370,7 @@ function renderSidebar() {
     // the sighted user hovering the same pixel. The spec's copy section asks
     // for "Settings (⌘ ,)" on both the tooltip and the label.
     + '<div class="sb-footwrap">'
-      + '<button class="btn btn-p sb-settings" data-act="settings:tasks" title="Settings (⌘ ,)" aria-label="Settings (⌘ ,)">'
+      + '<button class="btn sb-settings" data-act="settings:tasks" title="Settings (⌘ ,)" aria-label="Settings (⌘ ,)">'
         + '<span class="sb-settings-lb">Settings</span>'
         + '<span class="sb-settings-ic">' + ic('gear') + '</span>'
       + '</button></div>'
@@ -2713,7 +2752,7 @@ function renderSettings() {
       (i ? '<span class="tabsep">  |  </span>' : '')
       + '<button class="settab' + (cur === id ? ' on' : '') + '" data-act="settings:' + id + '">' + esc(label + tabSuffix(id)) + '</button>').join('');
   el.innerHTML = '<div class="setwin"><div class="settb">'
-    + '<div class="lights"><button class="lg" style="background:#FF5F57" data-act="settings:close"></button>'
+    + '<div class="lights"><button class="lg lg-a" data-act="settings:close" title="Close" aria-label="Close"></button>'
       + '<span class="lg" style="background:var(--bg-active)"></span><span class="lg" style="background:var(--bg-active)"></span></div>'
     + '<span class="setttl">Menu › Manage</span>'
     + '<span style="flex:1"></span><button class="iconbtn" data-act="settings:close" title="Close (Esc)">' + ic('x') + '</button>'
@@ -4416,7 +4455,7 @@ function applyStatus(st) {
        held in memory (the coding mode) is gone with it, so the generation
        moves here, before loadResources can confirm anything against it. */
     AGENT_GEN++;
-    S.log.push({id:nid(), k:'system', text:'connected to atomic-agent · ' + esc(S.live.workingDir)});
+    S.log.push({id:nid(), k:'system', text:'Connected · ' + esc(S.live.workingDir)});
     loadResources();
   }
   if (S.live.state === 'missing-binary' || S.live.state === 'error') {
@@ -5511,36 +5550,45 @@ function obStampOnce(leaf) {
 
 /* ---------------- chrome: subtitles and the hint strip ---------------- */
 
-/** onboardingFooterFor (onboarding-chrome.ts:31-88), verbatim.
- *  `ctrlCArmed` is always false here: the desktop has no Ctrl+C chord. */
+/** onboardingFooterFor (onboarding-chrome.ts:31-88), in desktop terms.
+ *
+ *  Two things had to change on the way over from the TUI. `ctrl+c quit` was
+ *  printed on every step including the title card, and it was never true —
+ *  the comment that used to sit here said so itself ("the desktop has no
+ *  Ctrl+C chord") while the string went out anyway. And `space tick` /
+ *  `enter select` on the same strip advertised the TUI's model, where the key
+ *  that moves you is also the key that fires; this app moves with the arrows
+ *  and commits with Enter or Space, so the strip says that instead.
+ *
+ *  The title card carries no strip at all: nothing else belongs on it. */
 function obFooter() {
-  const quit = 'ctrl+c quit';
   switch (OB.step) {
-    case 'choose': return '↑/↓ move   enter select   1–3 jump   esc skip   ' + quit;
+    case 'choose': return '↑/↓ move   enter choose   1–3 jump   esc skip';
     case 'cloud': return WIZ.phase === 'pick_kind'
-      ? '↑/↓ move   / search   enter select   esc back   ' + quit
-      : '↑/↓ move   enter select   esc back   ' + quit;
-    case 'custom_chat_url': return 'enter test & continue   esc back   ' + quit;
-    case 'custom_embedding_url': return 'enter test & save   empty enter skips embeddings   esc back   ' + quit;
-    case 'local_pick': return '↑/↓ move   enter select   esc back   ' + quit;
+      ? '↑/↓ move   / search   enter choose   esc back'
+      : '↑/↓ move   enter choose   esc back';
+    case 'custom_chat_url': return 'enter test & continue   esc back';
+    case 'custom_embedding_url': return 'enter test & save   empty enter skips embeddings   esc back';
+    case 'local_pick': return '↑/↓ move   enter choose   esc back';
     case 'local_hf_ref': {
-      if (OB.busy) return 'esc cancel the lookup   ' + quit;
+      if (OB.busy) return 'esc cancel the lookup';
       const clear = OB.hfReference.length > 0 ? 'ctrl+l clear   ' : '';
-      return 'enter look it up   ' + clear + 'esc back   ' + quit;
+      return 'enter look it up   ' + clear + 'esc back';
     }
-    case 'local_hf_pick': return '↑/↓ move   enter download   esc back   ' + quit;
-    case 'local_download': return 'c set up cloud meanwhile   s skip to the agent   ' + quit;
-    case 'propose_second': return '↑/↓ move   enter select   esc skip   ' + quit;
-    case 'import_pick': return OB.busy ? 'scanning…   ' + quit
-      : '↑/↓ move   space tick   enter select   esc skip   ' + quit;
-    case 'import_preview': return OB.busy ? 'importing…   ' + quit : 'enter import   esc adjust   ' + quit;
-    case 'import_done': return 'any key to start   ' + quit;
-    case 'wait_or_jump': return '↑/↓ move   enter start or add a provider   ' + quit;
+    case 'local_hf_pick': return '↑/↓ move   enter download   esc back';
+    case 'local_download': return 'c set up cloud meanwhile   s skip to the agent';
+    case 'propose_second': return '↑/↓ move   enter choose   esc skip';
+    case 'import_pick': return OB.busy ? 'scanning…'
+      : '↑/↓ move   space tick   enter continue   esc skip';
+    case 'import_preview': return OB.busy ? 'importing…' : 'enter import   esc adjust';
+    case 'import_done': return 'enter start';
+    case 'wait_or_jump': return '↑/↓ move   enter start or add a provider';
     case 'finished': return '';
-    case 'intro': return quit;
-    default: return quit;
+    case 'intro': return '';
+    default: return '';
   }
 }
+
 
 /** The hint strip, split back into chords and sentences by OB_KEY_TOKEN. */
 function obHintsHTML() {
@@ -5566,13 +5614,28 @@ function obHintsHTML() {
   return '<div class="ob-hints">' + hints + '</div>';
 }
 
-/** The header lockup (onboarding-header.tsx:42-72). The intro draws none. */
+/** The header lockup (onboarding-header.tsx:42-72), rebuilt as the top of a
+ *  checklist card: the product's own name, the two phases with the current one
+ *  marked, one 3px rule, and the screen's title at 24px. What was here before
+ *  was a lowercase `atomic` over `setup · step 1 of 2` in grey 11px — the
+ *  product's name was wrong and the step indicator was the smallest thing on
+ *  a 1470px screen. */
 function obHeadHTML() {
-  return '<div class="ob-head"><div class="ob-lock">'
-    + '<span class="ob-mark">' + MARK_COLOR.replace('width="16" height="16"', 'width="34" height="34"') + '</span>'
-    + '<span><span class="ob-wm">' + esc(OB_COPY.headerWordmark) + '</span><br>'
-    + '<span class="ob-sub2">' + esc(OB_SUBTITLES[OB.step] || '') + '</span></span>'
-    + '</div></div>';
+  const here = OB_PHASE_OF[OB.step] || null;
+  const phases = here === null ? '' : '<div class="ob-phases">' + OB_PHASES.map((p) =>
+    '<span class="ob-phase' + (p.n === here ? ' on' : '') + '">'
+    + '<span class="n">' + p.n + '</span> ' + esc(p.label) + '</span>').join('') + '</div>';
+  const title = OB_TITLES[OB.step] || OB_SUBTITLES[OB.step] || '';
+  return '<div class="ob-head">'
+    + '<div class="ob-lock">'
+      + '<span class="ob-mark">' + MARK_COLOR.replace('width="16" height="16"', 'width="20" height="20"') + '</span>'
+      + '<span class="ob-wm">' + esc(OB_COPY.headerWordmark) + '</span>'
+      + '<span class="ob-headspacer"></span>'
+      + phases
+    + '</div>'
+    + '<hr class="ob-headrule">'
+    + (title ? '<h2 class="ob-title">' + esc(title) + '</h2>' : '')
+    + '</div>';
 }
 
 /* ============================================================
@@ -5737,7 +5800,7 @@ function obSkyColours() {
   const cs = getComputedStyle(document.documentElement);
   const out = {};
   for (const tier of Object.keys(OB_TIER_LOOK)) {
-    out[tier] = (cs.getPropertyValue(OB_TIER_LOOK[tier].token) || '#8899aa').trim();
+    out[tier] = (cs.getPropertyValue(OB_TIER_LOOK[tier].token) || '').trim() || FALLBACK_TIER_INK;
   }
   return out;
 }
@@ -5935,18 +5998,13 @@ function obSkyStop() {
   if (OBSKY.typer) { clearInterval(OBSKY.typer); OBSKY.typer = 0; }
 }
 
-/** Two-stage advance (use-intro-input.ts:57-67): the first input finishes
- *  the reveal, the second dismisses. A splash that cannot be hurried is a
- *  wait; one that vanishes on the key meant to hurry it is never read. */
+/** One input, one dismissal. The TUI's two-stage advance
+ *  (use-intro-input.ts:57-67) existed because the tagline typed itself in and
+ *  the first key was needed to hurry it; the card is now at rest the moment it
+ *  exists, so a second press would just be a press that did nothing — and the
+ *  card says "click anywhere, or press any key", which has to be true. */
 function obIntroAdvance() {
   if (!OB.open || OB.step !== 'intro') return;
-  if (!OB.introTyped) {
-    OB.introTyped = true;
-    if (OBSKY.typer) { clearInterval(OBSKY.typer); OBSKY.typer = 0; }
-    OBSKY.typed = OB_COPY.tagline.length;
-    obPaintTagline();
-    return;
-  }
   // Recorded as it is dismissed, not at the end of the flow
   // (onboarding-screen.tsx:109-115).
   obStampOnce('introSeenAt');
@@ -5984,19 +6042,29 @@ function obStartTyping() {
 
 /** The intro screen. No header — onboarding-step-body.tsx:62-64. */
 function obIntroHTML() {
-  // The SAME source obSkyStart reads (review fix) — a second matchMedia
-  // read here is a second source, and a forced flag would move only one.
-  const done = obReducedMotion() || OB.introTyped;
+  /* A 1975 title card, not a screensaver. The starfield that used to run
+     behind this — 220 drifting particles on a canvas — is the one thing the
+     visual system names as out of bounds, and it was also the only part of
+     the app doing continuous work before the user had done anything.
+
+     What is left is what a title card is for: the mark, the product's name at
+     display size, one 3px rule, and a line saying which build you are looking
+     at. It sizes to the window rather than to a fixed block, so it is a title
+     card at 1470x923 and still one at the minimum window size. */
+  const b = BUILD || {};
+  const build = b.version
+    ? b.version + ' · ' + (b.platform === 'darwin' ? 'macOS' : b.platform) + ' ' + b.arch
+    : '';
   return '<div id="ob-intro">'
-    + '<canvas id="ob-sky"></canvas>'
     + '<div class="ob-introc">'
-      + '<span class="ob-markbig">' + MARK_COLOR.replace('width="16" height="16"', 'width="88" height="88"') + '</span>'
-      + '<span class="ob-word">' + esc(OB_COPY.wordmark) + '</span>'
-      + '<span class="ob-tag"><span id="ob-tag">' + esc(done ? OB_COPY.tagline : '') + '</span>'
-      + '<span class="ob-cur" id="ob-cur">' + (done ? '' : '▌') + '</span></span>'
+      + '<span class="ob-markbig">' + MARK_COLOR.replace('width="16" height="16"', 'width="64" height="64"') + '</span>'
+      + '<h1 class="ob-word">' + esc(OB_COPY.wordmark) + '</h1>'
+      + '<hr class="ob-rule">'
+      + (build ? '<span class="ob-build">' + esc(build) + '</span>' : '')
       + '<span class="ob-any">' + esc(OB_COPY.pressAnyKey) + '</span>'
     + '</div></div>';
 }
+
 
 /* ============================================================
    The download.  It does NOT live in the wizard: the strip under the
@@ -8030,6 +8098,7 @@ if (BR) {
      r5 integration — the cloud half of needsOnboarding() needs
      providersReady()'s key check (item 7), so the inferred half waits for
      that second round trip; the latched half does not depend on it. */
+  if (BR && BR.build) BR.build().then((b) => { BUILD = b; render(); }).catch(() => {});
   Promise.all([BR.firstRun ? BR.firstRun() : Promise.resolve(null), BR.configGet()]).then(async ([fr, res]) => {
     FIRSTRUN = fr;
     let ids = null;
@@ -12569,14 +12638,14 @@ function mcpAddModalHTML() {
     + '<textarea id="mcp-json" class="tuiarea" rows="6" spellcheck="false" placeholder=\'{"mcpServers":{"github":{"command":"npx","args":["-y","@github/mcp-server"]}}}\'' + (m.submitting ? ' disabled' : '') + '>' + esc(m.json) + '</textarea>'
     + (m.error ? '<div class="tuierr" style="margin-top:8px">! ' + esc(m.error) + '</div>' : '')
     + (m.submitting ? '<div class="ter" style="margin-top:8px">writing config…</div>' : '')
-    + '<div class="tuihint">' + tuiBtn('Enter: submit', 'mcp:addSubmit', {disabled: m.submitting}) + '<span>· Shift/Alt+Enter: newline ·</span>' + tuiBtn('Esc: cancel', 'mcp:addCancel') + '<span>· restart atomic-agent for the new server to connect</span></div>'
+    + '<div class="tuihint">' + tuiBtn('Enter: submit', 'mcp:addSubmit', {disabled: m.submitting}) + '<span>· Shift/Alt+Enter: newline ·</span>' + tuiBtn('Esc: cancel', 'mcp:addCancel') + '<span>· restart Atomic Agent for the new server to connect</span></div>'
     + '</div>';
 }
 function mcpRemoveModalHTML() {
   const c = MCP.removeConfirm;
   return '<div class="tuimodal' + (c.error ? ' danger' : ' warn') + '"><b style="color:var(--' + (c.error ? 'danger' : 'warn') + ')">remove MCP server?</b>'
     + '<div><span class="ter">name:</span> ' + esc(c.name) + '</div>'
-    + '<div class="ter">rewrites config.json; restart atomic-agent to drop the live connection.</div>'
+    + '<div class="ter">rewrites config.json; restart Atomic Agent to drop the live connection.</div>'
     + (c.error ? '<div class="tuierr">! ' + esc(c.error) + '</div>' : '')
     + (c.submitting ? '<div class="ter">working…</div>' : '<div class="tuihint">' + tuiBtn('y / Enter = confirm', 'mcp:removeConfirm') + '<span>·</span>' + tuiBtn('n / Esc = keep', 'mcp:removeCancel') + '</div>')
     + '</div>';
@@ -12649,7 +12718,7 @@ async function mcpAddSubmit(json) {
   m.submitting = false;
   if (!res || res.ok === false) { m.error = (res && res.error) || 'config write failed'; render(); return {ok:false, error:m.error}; }
   MCP.addModal = null;
-  MCP.msg = {text:'mcp: added ' + JSON.stringify(parsed.server.name) + ' (config.json updated, ' + (servers.length + 1) + ' total) — restart atomic-agent for the new server to connect', restart:true};
+  MCP.msg = {text:'mcp: added ' + JSON.stringify(parsed.server.name) + ' (config.json updated, ' + (servers.length + 1) + ' total) — restart Atomic Agent for the new server to connect', restart:true};
   await mcpRefresh();
   return {ok:true, name:parsed.server.name};
 }
@@ -12667,7 +12736,7 @@ async function mcpRemoveConfirm() {
   if (!res || res.ok === false) { c.error = (res && res.error) || 'config write failed'; render(); return; }
   MCP.removeConfirm = null;
   if (MCP.mode === 'detail' && MCP.detailName === c.name) { MCP.mode = 'list'; MCP.detailName = null; }
-  MCP.msg = {text:'mcp: removed ' + JSON.stringify(c.name) + ' (config.json updated, ' + next.length + ' remaining) — restart atomic-agent to drop the live connection', restart:true};
+  MCP.msg = {text:'mcp: removed ' + JSON.stringify(c.name) + ' (config.json updated, ' + next.length + ' remaining) — restart Atomic Agent to drop the live connection', restart:true};
   await mcpRefresh();
 }
 function mcpAct(what) {
@@ -14346,7 +14415,7 @@ function impDefaultDir(source) { return IMP.defaults ? (IMP.defaults[source] || 
 function importTab() {
   const f = IMP.form;
   const sourceLabel = f.source === 'openclaw' ? 'OpenClaw' : 'Hermes';
-  let body = '<b>Import · ' + sourceLabel + ' → atomic-agent</b>';
+  let body = '<b>Import · ' + sourceLabel + ' → Atomic Agent</b>';
   if (IMP.notice) body += '<div class="tuierr" style="margin-top:8px">! ' + esc(IMP.notice) + '</div>';
   if (IMP.mode === 'configure') body += impFormHTML(f);
   else if (IMP.mode === 'running') body += '<div class="ter" style="margin-top:8px">importing… please wait</div>';

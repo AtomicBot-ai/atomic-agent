@@ -1281,6 +1281,17 @@ function wireIpc(client: AgentClient): void {
      genuinely fresh directory could otherwise reach the chat window with
      no backend and no wizard. `fresh` is latched in state-dir-boot.ts
      before anything can write. */
+  /* What this build IS, for the places that must name it rather than imply
+     it: the title card, the transcript's opening data plate, and the
+     diagnostics plate in settings. The renderer had no way to ask, so the
+     splash could only show a wordmark and the plates had to leave the build
+     out. */
+  ipcMain.handle("app:build", () => ({
+    version: app.getVersion(),
+    platform: process.platform,
+    arch: process.arch,
+  }));
+
   ipcMain.handle("app:firstRun", () => ({
     fresh: DESKTOP_STATE_WAS_FRESH,
     stateDir: DESKTOP_STATE_DIR,

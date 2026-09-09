@@ -141,6 +141,7 @@ contextBridge.exposeInMainWorld("atomic", {
     ipcRenderer.invoke("app:dotenvSet", { stateDir, key, value }),
 
   platform: process.platform,
+  build: () => ipcRenderer.invoke("app:build"),
 
   /** Item 2 (voice input): on-device dictation.
    *  `voiceAudio` is the only `ipcRenderer.send` on this bridge and the only
