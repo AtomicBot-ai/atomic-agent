@@ -26,6 +26,7 @@ const ALL_ENABLED: ToolGateSourceConfig = {
   },
   tasks: { enabled: true, agentToolsEnabled: true },
   mcp: { servers: [{}] },
+  llm: { runMode: { mode: "fusion" } },
 };
 
 describe("listToolFamilies", () => {

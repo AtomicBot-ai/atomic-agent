@@ -5,6 +5,7 @@ import {
   QWEN_THINK_PROFILE,
 } from "../llm/model-profile.js";
 import { buildPrompt } from "./build-prompt.js";
+import { FUSION_GUIDANCE } from "./fusion-guidance.js";
 import { DEFAULT_TOOL_DESCRIPTORS } from "./tool-descriptors.js";
 import { createEmptySessionState } from "../session/session-state.js";
 import type { SessionState } from "../session/session-state.js";
@@ -112,6 +113,40 @@ describe("buildPrompt", () => {
     // (KV-cache change #1). The variable tail header `\n### lessons\n`
     // must be absent when nothing is surfaced.
     expect(text).not.toMatch(/\n### lessons\n/);
+  });
+
+  it("carries the ### fusion block exactly when fusion.delegate is in the catalog", () => {
+    // The block is stable-prefix content, so its presence is decided by
+    // the descriptor list and nothing else. Absent, the prefix must be
+    // byte-identical to a build that never had the feature -- which is
+    // what the KV cache of every non-fusion install depends on.
+    const session = mkSession();
+    const without = buildPrompt({
+      session,
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    expect(without.text).not.toContain("### fusion");
+
+    const withFusion = buildPrompt({
+      session,
+      toolDescriptors: [
+        ...TOOLS,
+        {
+          name: "fusion.delegate",
+          summary: "Delegate to local workers.",
+          argsSchema: "{ tasks: [] }",
+        },
+      ],
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    expect(withFusion.text).toContain("### fusion");
+    expect(withFusion.text).toContain(FUSION_GUIDANCE);
+    expect(withFusion.text.indexOf("### fusion")).toBeLessThan(
+      withFusion.text.indexOf("### instructions"),
+    );
   });
 
   it("appends a Windows platform hint to the stable prefix only on win32 capabilities", () => {

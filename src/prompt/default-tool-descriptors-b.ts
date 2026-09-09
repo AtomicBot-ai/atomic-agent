@@ -203,6 +203,21 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
     tier: "rare",
   },
   {
+    // `frequent` tier and a full example: the whole point of the tool is
+    // that a cloud orchestrator reaches for it instead of doing the bulk
+    // itself, and a one-line manifest is not enough to first-shot a
+    // well-formed task list. Only mounted in fusion mode, so the tokens
+    // are paid by exactly the runs that use it.
+    name: "fusion.delegate",
+    summary:
+      "Delegate independent parts of the work to local worker agents that run concurrently and report back. Each task becomes one throwaway worker turn with no memory of this conversation, so `instructions` must be self-contained (paths, acceptance criteria, the answer format you want). Returns every worker's reply plus a per-task status. Call it on its own, never alongside other tool calls.",
+    argsSchema:
+      "{ tasks: [{ id: string, title: string, instructions: string, deliverable?: string, files?: string[] }] /* 1..8 */, maxWorkers?: number /* 1..8 */ }",
+    examples: [
+      '{"tasks":[{"id":"t1","title":"Map the auth routes","instructions":"List every route under src/http/ that touches auth. For each: path, method, and the middleware it runs.","deliverable":"one bullet per route"},{"id":"t2","title":"Summarise the session store","instructions":"Read src/session/session-store.ts and describe its public API and persistence model.","files":["src/session/session-store.ts"]}]}',
+    ],
+  },
+  {
     name: "reply",
     summary: "Final natural-language answer; ends the macro-turn. Never use to announce a pending action; keep text short (no huge dumps). If the task requires an exact answer format or marker, `text` must be ONLY that bare value or marker line — no preamble or commentary.",
     argsSchema: "{ text: string }",

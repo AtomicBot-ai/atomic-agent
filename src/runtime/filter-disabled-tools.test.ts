@@ -19,6 +19,7 @@ const ALL_OPEN: ToolGateConfig = {
   },
   tasks: { agentToolsEnabled: true },
   mcp: { enabled: true },
+  fusion: { enabled: true },
 };
 
 function nameSet(
@@ -136,6 +137,23 @@ describe("filterToolDescriptorsByConfig", () => {
     }
   });
 
+  it("drops fusion.delegate when fusion is not the effective run mode", () => {
+    // The gate is what keeps a non-fusion install from advertising a
+    // fan-out it cannot perform -- and, because the `### fusion`
+    // guidance block keys off this same descriptor, what keeps its
+    // stable prefix byte-identical to a build without the feature.
+    const filtered = filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, {
+      ...ALL_OPEN,
+      fusion: { enabled: false },
+    });
+    expect(nameSet(filtered).has("fusion.delegate")).toBe(false);
+    expect(
+      nameSet(
+        filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, ALL_OPEN),
+      ).has("fusion.delegate"),
+    ).toBe(true);
+  });
+
   it("drops everything gated when every switch is off", () => {
     const filtered = filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, {
       browser: { enabled: false },
@@ -149,6 +167,7 @@ describe("filterToolDescriptorsByConfig", () => {
       },
       tasks: { agentToolsEnabled: false },
       mcp: { enabled: false },
+      fusion: { enabled: false },
     });
     const names = nameSet(filtered);
     const allGated = [
@@ -161,6 +180,7 @@ describe("filterToolDescriptorsByConfig", () => {
       ...GATED_TOOL_NAMES.memoryProcedures,
       ...GATED_TOOL_NAMES.tasks,
       ...GATED_TOOL_NAMES.mcp,
+      ...GATED_TOOL_NAMES.fusion,
     ];
     for (const dropped of allGated) {
       expect(names.has(dropped)).toBe(false);
@@ -181,6 +201,7 @@ describe("filterToolDescriptorsByConfig", () => {
       ...GATED_TOOL_NAMES.memoryProcedures,
       ...GATED_TOOL_NAMES.tasks,
       ...GATED_TOOL_NAMES.mcp,
+      ...GATED_TOOL_NAMES.fusion,
     ];
     for (const name of allGated) {
       expect(known.has(name)).toBe(true);

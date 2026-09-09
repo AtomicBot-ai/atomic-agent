@@ -62,6 +62,7 @@ export interface ToolGateSourceConfig {
     readonly agentToolsEnabled: boolean;
   };
   readonly mcp: { readonly servers: readonly unknown[] };
+  readonly llm?: { readonly runMode?: { readonly mode?: string } };
 }
 
 /**
@@ -71,12 +72,14 @@ export interface ToolGateSourceConfig {
  * apply the same gates or it advertises tools the agent cannot call
  * (e.g. `browser.*` under `browser.enabled=false`).
  *
- * Two gates are approximated because their runtime inputs are probed
- * at bootstrap, not read from config: vision uses `vision.enabled`
- * alone (the mmproj capability probe is not visible here), and the
- * MCP gate uses the configured server list instead of live
- * connections. Both approximations only ever err on the side of the
- * user's stated config.
+ * Three gates are approximated because their runtime inputs are probed
+ * or resolved at bootstrap, not read from config: vision uses
+ * `vision.enabled` alone (the mmproj capability probe is not visible
+ * here), the MCP gate uses the configured server list instead of live
+ * connections, and fusion uses the stored `llm.runMode.mode` rather
+ * than the resolver's effective mode (which also needs the active
+ * provider's kind). All three err on the side of the user's stated
+ * config.
  */
 export function effectiveToolDescriptors(
   config: ToolGateSourceConfig = getConfig(),
@@ -98,6 +101,7 @@ export function effectiveToolDescriptors(
       agentToolsEnabled: config.tasks.enabled && config.tasks.agentToolsEnabled,
     },
     mcp: { enabled: config.mcp.servers.length > 0 },
+    fusion: { enabled: config.llm?.runMode?.mode === "fusion" },
   });
 }
 

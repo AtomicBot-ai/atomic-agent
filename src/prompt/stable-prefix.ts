@@ -3,6 +3,7 @@ import {
   COMPOSIO_GUIDANCE,
   isComposioActive,
 } from "./composio-guidance.js";
+import { FUSION_GUIDANCE, isFusionActive } from "./fusion-guidance.js";
 import { formatSkillCatalogLine } from "../skills/skill-catalog.js";
 
 /**
@@ -191,6 +192,9 @@ export function buildStablePrefix(input: StablePrefixInput): string {
   // with no key pays nothing for it and its prefix is byte-identical
   // to before the integration existed.
   const composioActive = isComposioActive(input.toolDescriptors);
+  // Same contract as the Composio block: present only while the tool it
+  // describes is mounted, so a non-fusion install pays zero bytes.
+  const fusionActive = isFusionActive(input.toolDescriptors);
   const nativeTools = input.toolTransport === "native_tools";
   const persona =
     input.systemPersona ??
@@ -251,6 +255,7 @@ export function buildStablePrefix(input: StablePrefixInput): string {
     caps,
     ``,
     ...(composioActive ? [`### integrations`, COMPOSIO_GUIDANCE, ``] : []),
+    ...(fusionActive ? [`### fusion`, FUSION_GUIDANCE, ``] : []),
     `### instructions`,
     // The emission instructions are the one transport-dependent block.
     // Grammar links parse text-JSON (GBNF-constrained locally), so they

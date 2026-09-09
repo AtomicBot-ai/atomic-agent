@@ -68,6 +68,8 @@ import { registerSkillTools } from "../tools/skill/index.js";
 import { buildToolViewTool } from "../tools/tool-view/index.js";
 import { registerMemoryTools } from "../tools/memory/index.js";
 import { registerTaskTools } from "../tools/tasks/index.js";
+import { buildFusionDelegateTool } from "../tools/fusion/index.js";
+import { resolveRunMode, type ResolvedRunMode } from "../llm/run-mode/index.js";
 import { registerVisionTools } from "../tools/vision/index.js";
 import {
   type LlmProvider,
@@ -505,6 +507,11 @@ export interface AgentRuntime {
       origin?: TurnOrigin;
       providerId?: string;
       taskMaxDurationMs?: number;
+      /**
+       * Hide tools from this turn (see `RunTurnOptions.toolFilter`).
+       * `fusion.delegate` narrows a worker's catalog with it.
+       */
+      toolFilter?: (name: string) => boolean;
     },
   ): Promise<RunTurnResult>;
   /**
@@ -528,6 +535,7 @@ export interface AgentRuntime {
       signal?: AbortSignal;
       providerId?: string;
       taskMaxDurationMs?: number;
+      toolFilter?: (name: string) => boolean;
     },
   ): Promise<RunTurnResult>;
   /**
@@ -897,11 +905,19 @@ export async function createAgentRuntime(
    * closure (built later) routes through here, and so does the provider
    * fallback chain's notice sink — a `provider_switched` event surfaces
    * exactly like any other loop event (trace recorder, TUI/HTTP/sidecar
-   * event streams, host handler). Resolving the session from the per-turn
-   * ALS frame keeps two concurrent sessions from cross-contaminating.
+   * event streams, host handler).
+   *
+   * The session is a PARAMETER, not a read of the ambient ALS frame:
+   * `emitAgentLoopEvent` below supplies it from the frame for every
+   * ordinary caller, while the fusion fan-out supplies the parent's id
+   * explicitly from inside a worker's frame. Either way the id is what
+   * keeps two concurrent sessions from cross-contaminating.
    */
-  const emitAgentLoopEvent = (event: AgentLoopEvent): void => {
-    const ctx = turnContext.getStore();
+  const emitAgentLoopEventFor = (
+    sessionId: string | undefined,
+    event: AgentLoopEvent,
+  ): void => {
+    const ctx = sessionId === undefined ? undefined : { sessionId };
     if (ctx) {
       const recorder = touchRecorder(ctx.sessionId);
       recorder?.onAgentEvent(event);
@@ -936,6 +952,19 @@ export async function createAgentRuntime(
       });
     }
     options.handlers?.onAgentEvent?.(event, ctx?.sessionId);
+  };
+
+  /**
+   * The ALS-resolving form every in-turn caller uses. Split from
+   * `emitAgentLoopEventFor` for one caller that cannot use it:
+   * `fusion.delegate` emits its worker progress from inside a worker
+   * turn's event hook, which runs under the WORKER's ALS frame, and
+   * those events belong to the parent — the worker session has no
+   * recorder, no hook and no UI, so an event tagged with its id reaches
+   * nobody at all.
+   */
+  const emitAgentLoopEvent = (event: AgentLoopEvent): void => {
+    emitAgentLoopEventFor(turnContext.getStore()?.sessionId, event);
   };
 
   // Cross-provider fallover breaker. Owns no timer — every decision is
@@ -1470,6 +1499,19 @@ export async function createAgentRuntime(
   };
 
   /**
+   * The live run mode. Re-read per call, never captured: the resolver's
+   * rule is that `llm.activeTextProvider` is authoritative, so an
+   * operator who switches provider by hand drops out of fusion on the
+   * next read and `fusion.delegate` must see that immediately.
+   */
+  const resolveCurrentRunMode = (): ResolvedRunMode => {
+    const fresh = getConfig();
+    return resolveRunMode(resolveLlmConfig(fresh), {
+      managedModelId: fresh.localModels.managed.modelId,
+    });
+  };
+
+  /**
    * Real model identifier for analytics. Cloud providers carry the model
    * in their config entry (`defaultChatModel` / `model`). Local llama-server
    * has no model name in its synthesized `local-llama` entry, so we prefer
@@ -1679,6 +1721,10 @@ export async function createAgentRuntime(
           config.tasks.enabled && config.tasks.agentToolsEnabled,
       },
       mcp: { enabled: liveMcpEnabled },
+      // The fan-out descriptor (and the `### fusion` guidance block that
+      // keys off it) only exists while the resolver says fusion — an
+      // orchestrator that cannot delegate must not be told it can.
+      fusion: { enabled: resolveCurrentRunMode().effective === "fusion" },
     });
     if (!liveMcpEnabled) return base;
     return mergeMcpDescriptors(
@@ -1738,6 +1784,26 @@ export async function createAgentRuntime(
     });
   };
 
+  /**
+   * Warm a `llama-server` link before it is asked to infer: replay the
+   * probes a cloud boot deferred, refresh a stale profile, and let the
+   * loop know a local link is serving. A no-op for every other kind.
+   *
+   * Two callers, one seam. The fallback chain uses it when a cloud→local
+   * fallover is about to happen, and `fusion.delegate` uses it before it
+   * fans out — same problem, since a fusion boot is cloud-active and
+   * leaves the local backend on deferred state (plain profile, one-slot
+   * pool, no `/props`) until something reaches for it.
+   */
+  const prepareLocalLink = createLocalLinkPreparer({
+    gate: localBackend,
+    isLocalLink: (providerId) =>
+      providerIdIsLlamaServer(resolveLlmConfig(getConfig()), providerId),
+    refreshIfStale: async () => {
+      await profileManager?.refreshIfStale();
+    },
+  });
+
   const fallbackSeamDeps: FallbackSeamDeps = {
     fallbackChain,
     resolveSlice: (providerId) => {
@@ -1746,18 +1812,10 @@ export async function createAgentRuntime(
     },
     // Issue #112. The one place that knows a cloud→local fallover is
     // about to happen: the chain has already picked the link and the
-    // completion has not been sent. A `llama-server` link reached from a
-    // cloud boot runs on deferred state (plain profile, one-slot pool,
-    // no `/props`), so warm it here rather than infer against it.
-    // No-op on every other attempt — one boolean after the first call.
-    prepareLink: createLocalLinkPreparer({
-      gate: localBackend,
-      isLocalLink: (providerId) =>
-        providerIdIsLlamaServer(resolveLlmConfig(getConfig()), providerId),
-      refreshIfStale: async () => {
-        await profileManager?.refreshIfStale();
-      },
-    }),
+    // completion has not been sent, so warm it here rather than infer
+    // against it. No-op on every other attempt — one boolean after the
+    // first call. See `prepareLocalLink` above.
+    prepareLink: prepareLocalLink,
     recordUnaryUsage,
     recordStreamUsage,
   };
@@ -2507,6 +2565,7 @@ export async function createAgentRuntime(
     signal?: AbortSignal;
     providerId?: string;
     taskMaxDurationMs?: number;
+    toolFilter?: (name: string) => boolean;
   }) => ({
     maxSteps: Math.min(
       config.agent.maxSteps,
@@ -2521,6 +2580,9 @@ export async function createAgentRuntime(
     ...(runOptions.providerId === undefined
       ? {}
       : { providerId: runOptions.providerId }),
+    ...(runOptions.toolFilter === undefined
+      ? {}
+      : { toolFilter: runOptions.toolFilter }),
     signal: runOptions.signal ?? new AbortController().signal,
   });
 
@@ -2547,6 +2609,7 @@ export async function createAgentRuntime(
       signal?: AbortSignal;
       providerId?: string;
       taskMaxDurationMs?: number;
+      toolFilter?: (name: string) => boolean;
     } = {},
   ): Promise<RunTurnResult> => {
     assertKnownProvider(runOptions.providerId);
@@ -2664,6 +2727,7 @@ export async function createAgentRuntime(
       origin?: TurnOrigin;
       providerId?: string;
       taskMaxDurationMs?: number;
+      toolFilter?: (name: string) => boolean;
     } = {},
   ): Promise<RunTurnResult> => {
     // Before the queue, so a bad pin rejects now rather than after
@@ -2778,6 +2842,34 @@ export async function createAgentRuntime(
     defaultMaxAttempts: config.tasks.maxAttempts,
     defaultListLimit: 20,
   });
+
+  // The orchestrator's fan-out. Registered when the resolver says fusion
+  // at boot — the same condition that puts the descriptor in the prompt
+  // — and the tool re-reads the mode on every call, so a provider switch
+  // mid-session degrades it to a refusal instead of a missing tool.
+  if (resolveCurrentRunMode().effective === "fusion") {
+    toolRegistry.register(
+      buildFusionDelegateTool({
+        runTurn: (session, userMessage, turnOptions) =>
+          runTurn(session, userMessage, turnOptions),
+        createEphemeralSession,
+        approvals,
+        slotManager,
+        resolveRunMode: resolveCurrentRunMode,
+        workerSupportsSlotAffinity: (providerId) =>
+          providerRegistry.getProvider(providerId)?.capabilities
+            .supportsSlotAffinity ?? false,
+        warmWorkerBackend: prepareLocalLink,
+        // The PARENT's id, explicitly: the hook these fire from runs
+        // under the worker's ALS frame, where the ambient session is a
+        // throwaway nobody is listening to.
+        emitEvent: emitAgentLoopEventFor,
+        workingDir,
+        outputCharCap: config.agent.batchToolResultCharCap,
+        logger,
+      }),
+    );
+  }
 
   const scheduler =
     config.tasks.enabled && config.tasks.schedulerEnabled
