@@ -7,7 +7,6 @@ export {
 export {
   parseDelegateArgs,
   MAX_DELEGATE_TASKS,
-  MAX_DELEGATE_WORKERS,
   MAX_INSTRUCTIONS_CHARS,
   MAX_TASK_FILES,
 } from "./delegate-args.js";

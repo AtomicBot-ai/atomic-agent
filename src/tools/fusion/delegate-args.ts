@@ -9,8 +9,16 @@
  *
  * The caps are not style — each one bounds a real resource. Task count
  * bounds how many local turns one call can start, `instructions` bounds
- * the worker's prompt, `files` bounds the paths pasted into it, and
- * `maxWorkers` bounds the concurrency the pool is asked for.
+ * the worker's prompt, and `files` bounds the paths pasted into it.
+ *
+ * `maxWorkers` is deliberately NOT one of them. The orchestrator sizes
+ * its own fan-out (see `fusion-delegate.ts`), and the width it asks for
+ * is bounded downstream by things that physically exist — the task
+ * count and the server's request slots. A parser ceiling here would
+ * turn "wider than this machine can go" into a failed call the model
+ * has to notice and retry, instead of a fan-out that simply runs as
+ * wide as it can. Only a nonsense value (below one, not a number) is
+ * still a validation error.
  */
 
 /** One unit of delegated work; becomes exactly one worker turn. */
@@ -32,7 +40,6 @@ export type ParsedDelegateArgs =
   | { ok: false; error: string };
 
 export const MAX_DELEGATE_TASKS = 8;
-export const MAX_DELEGATE_WORKERS = 8;
 export const MAX_INSTRUCTIONS_CHARS = 8000;
 export const MAX_TASK_FILES = 32;
 
@@ -67,9 +74,7 @@ function readMaxWorkers(value: unknown): number | null | string {
     return "maxWorkers must be a number";
   }
   const n = Math.trunc(value);
-  if (n < 1 || n > MAX_DELEGATE_WORKERS) {
-    return `maxWorkers must be between 1 and ${MAX_DELEGATE_WORKERS}`;
-  }
+  if (n < 1) return "maxWorkers must be at least 1";
   return n;
 }
 

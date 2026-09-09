@@ -117,13 +117,17 @@ describe("parseDelegateArgs", () => {
     ).toContain("must be an array");
   });
 
-  it("rejects maxWorkers outside 1..8 and non-numbers", () => {
+  it("rejects a nonsense maxWorkers but no longer an ambitious one", () => {
+    // The orchestrator sizes its own fan-out, so a number wider than
+    // this machine can go must run as wide as it can — not come back as
+    // a validation error the model has to notice and retry.
     expect(expectError(parseDelegateArgs({ tasks: [task()], maxWorkers: 0 }))).toContain(
-      "between 1 and 8",
+      "at least 1",
     );
-    expect(expectError(parseDelegateArgs({ tasks: [task()], maxWorkers: 9 }))).toContain(
-      "between 1 and 8",
-    );
+    expect(parseDelegateArgs({ tasks: [task()], maxWorkers: 12 })).toMatchObject({
+      ok: true,
+      maxWorkers: 12,
+    });
     expect(
       expectError(parseDelegateArgs({ tasks: [task()], maxWorkers: "2" })),
     ).toContain("must be a number");

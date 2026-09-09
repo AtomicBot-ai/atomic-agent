@@ -278,6 +278,19 @@ describe("fusion.delegate", () => {
     ).toBe(2);
   });
 
+  it("runs an over-ambitious maxWorkers as wide as it can, instead of refusing", async () => {
+    // A number wider than the machine can go used to be a validation
+    // error the orchestrator had to notice and retry. It is a decision
+    // the tool can simply honour up to what exists.
+    const tool = buildFusionDelegateTool(
+      deps({ slotManager: { poolSize: () => 8 } }),
+    );
+    const result = await tool.run({ tasks: sixTasks(), maxWorkers: 40 }, ctx());
+    expect(result.status).toBe("ok");
+    expect(result.details.maxWorkers).toBe(6);
+    expect(result.details.requestedWorkers).toBe(40);
+  });
+
   it("still bounds the model's width by the slot pool on a slot-affine leg", async () => {
     // The one bound that survives: more workers than slots do not run,
     // they queue on the server and evict each other's KV cache.

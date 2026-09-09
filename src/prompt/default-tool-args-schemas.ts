@@ -652,7 +652,10 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
             ["id", "title", "instructions"],
           ),
         },
-        maxWorkers: { type: "integer", minimum: 1, maximum: 8 },
+        // No upper bound: the orchestrator sizes its own fan-out and
+        // the tool bounds the number by the task count and the server's
+        // request slots. See `delegate-args.ts`.
+        maxWorkers: { type: "integer", minimum: 1 },
       },
       ["tasks"],
     ),

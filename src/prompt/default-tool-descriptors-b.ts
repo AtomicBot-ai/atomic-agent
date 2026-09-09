@@ -210,9 +210,9 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
     // are paid by exactly the runs that use it.
     name: "fusion.delegate",
     summary:
-      "Delegate independent parts of the work to local worker agents that run concurrently and report back. Each task becomes one throwaway worker turn with no memory of this conversation, so `instructions` must be self-contained (paths, acceptance criteria, the answer format you want). Returns every worker's reply plus a per-task status. Call it on its own, never alongside other tool calls.",
+      "Delegate independent parts of the work to local worker agents that run concurrently and report back. Each task becomes one throwaway worker turn with no memory of this conversation, so `instructions` must be self-contained (paths, acceptance criteria, the answer format you want). Returns every worker's reply plus a per-task status. You choose `maxWorkers`; it is bounded only by the task count and the machine. Call it on its own, never alongside other tool calls.",
     argsSchema:
-      "{ tasks: [{ id: string, title: string, instructions: string, deliverable?: string, files?: string[] }] /* 1..8 */, maxWorkers?: number /* 1..8 */ }",
+      "{ tasks: [{ id: string, title: string, instructions: string, deliverable?: string, files?: string[] }] /* 1..8 */, maxWorkers?: number /* how many run at once; you decide */ }",
     examples: [
       '{"tasks":[{"id":"t1","title":"Map the auth routes","instructions":"List every route under src/http/ that touches auth. For each: path, method, and the middleware it runs.","deliverable":"one bullet per route"},{"id":"t2","title":"Summarise the session store","instructions":"Read src/session/session-store.ts and describe its public API and persistence model.","files":["src/session/session-store.ts"]}]}',
     ],
