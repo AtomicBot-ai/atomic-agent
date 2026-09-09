@@ -8,15 +8,22 @@ import type { InboundTextUpdate } from "./inbound-handler.js";
  * `message:text` handler so a test can feed it a synthetic context.
  */
 const { instances, MockBot } = vi.hoisted(() => {
-  const instances: Array<{ handlers: Map<string, (ctx: unknown) => unknown> }> = [];
+  const instances: Array<{
+    handlers: Map<string, (ctx: unknown) => unknown>;
+    errorHandler?: (err: unknown) => void;
+  }> = [];
   class MockBot {
     api = {};
     handlers = new Map<string, (ctx: unknown) => unknown>();
+    errorHandler: ((err: unknown) => void) | undefined;
     constructor(public token: string) {
       instances.push(this);
     }
     on(event: string, cb: (ctx: unknown) => unknown): void {
       this.handlers.set(event, cb);
+    }
+    catch(cb: (err: unknown) => void): void {
+      this.errorHandler = cb;
     }
     start(): Promise<never> {
       return new Promise(() => undefined);
@@ -43,6 +50,23 @@ async function projectedUpdate(message: Record<string, unknown>): Promise<Inboun
   expect(received).toHaveLength(1);
   return received[0]!;
 }
+
+describe("defaultGrammyBotFactory error routing", () => {
+  it("routes grammy's own failures to the caller instead of console.error", async () => {
+    // Ink owns the console in the TUI, so a poll loop that keeps failing
+    // looks like a healthy channel that never receives anything.
+    const errors: Error[] = [];
+    await defaultGrammyBotFactory("123:token", { onError: (e) => errors.push(e) });
+    const bot = instances.at(-1)!;
+    expect(bot.errorHandler).toBeDefined();
+    bot.errorHandler!(new Error("Call to 'getUpdates' failed!"));
+    expect(errors.map((e) => e.message)).toEqual(["Call to 'getUpdates' failed!"]);
+    // A non-Error rejection still arrives as one.
+    bot.errorHandler!("socket hang up");
+    expect(errors.at(-1)).toBeInstanceOf(Error);
+    expect(errors.at(-1)?.message).toBe("socket hang up");
+  });
+});
 
 describe("defaultGrammyBotFactory update projection", () => {
   it("projects a private DM exactly as before", async () => {

@@ -16,6 +16,12 @@ import type { ChannelLock } from "./telegram-lockfile.js";
  * `start` / `stop` and invokes the registered text handler with
  * fabricated updates.
  */
+/** Optional callbacks a bot factory may report through. */
+export interface BotFactoryHooks {
+  /** A failure inside grammy's own middleware / polling loop. */
+  onError?: (error: Error) => void;
+}
+
 export interface BotInstance {
   readonly api: TelegramApi & {
     getMe(): Promise<{
@@ -56,6 +62,7 @@ export interface BotInstance {
 
 export type BotFactory = (
   token: string,
+  hooks?: BotFactoryHooks,
 ) => BotInstance | Promise<BotInstance>;
 
 export interface TelegramChannelDeps {

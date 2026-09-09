@@ -9,9 +9,17 @@ import type { BotFactory, BotInstance } from "./telegram-channel.js";
  * channel never starts (e.g. `telegram.enabled === false`). Tests
  * inject their own factory via `TelegramChannel`'s `botFactory` dep.
  */
-export const defaultGrammyBotFactory: BotFactory = async (token) => {
+export const defaultGrammyBotFactory: BotFactory = async (token, hooks) => {
   const grammy = await import("grammy");
   const bot = new grammy.Bot(token);
+  // grammy reports polling failures through `bot.catch`, and without a
+  // handler it writes them to `console.error` — which Ink owns in the
+  // TUI, so a poll loop that keeps failing looks like a healthy channel
+  // that never receives anything. Route them to the caller instead.
+  bot.catch((err) => {
+    const cause = err instanceof Error ? err : new Error(String(err));
+    hooks?.onError?.(cause);
+  });
   let textHandler: ((u: InboundTextUpdate) => void | Promise<void>) | null =
     null;
   let callbackHandler:

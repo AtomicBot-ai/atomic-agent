@@ -235,7 +235,13 @@ export class TelegramChannel {
     try {
       this.lock.acquire();
       const factory = this.deps.botFactory ?? defaultGrammyBotFactory;
-      const bot = await factory(this.currentToken);
+      const bot = await factory(this.currentToken, {
+        onError: (err) => {
+          this.deps.logger.warn("telegram: polling error", {
+            error: scrubErrorMessage(err),
+          });
+        },
+      });
       const me = await bot.api.getMe();
       this.currentBotIdentity = {
         id: me.id,
