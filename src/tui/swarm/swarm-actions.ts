@@ -10,13 +10,15 @@ export type SwarmAction =
   | { type: "swarm_moved"; delta: number }
   | { type: "swarm_add_started" }
   | { type: "swarm_form_kind_set"; kind: SwarmKind }
-  | { type: "swarm_form_changed"; value: string }
+  | { type: "swarm_form_typed"; text: string }
+  | { type: "swarm_form_backspace" }
   | { type: "swarm_form_next" }
   | { type: "swarm_form_back" }
   | { type: "swarm_edit_started" }
   | { type: "swarm_edit_field_moved"; delta: number }
   | { type: "swarm_edit_typing_started" }
-  | { type: "swarm_edit_changed"; value: string }
+  | { type: "swarm_edit_typed"; text: string }
+  | { type: "swarm_edit_backspace" }
   | { type: "swarm_remove_started" }
   | { type: "swarm_cancelled" }
   | { type: "swarm_action_started" }

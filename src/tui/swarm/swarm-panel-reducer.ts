@@ -4,6 +4,7 @@ import {
   SWARM_ADD_STEPS,
   SWARM_EDIT_FIELDS,
   createInitialSwarmAddForm,
+  formStepValue,
   type SwarmAddForm,
   type SwarmPanelState,
 } from "./swarm-panel-state.js";
@@ -46,9 +47,22 @@ function reducePanel(panel: SwarmPanelState, action: SwarmAction): SwarmPanelSta
       if (panel.mode !== "add" || panel.form.step !== "kind") return panel;
       if (panel.form.kind === action.kind) return panel;
       return { ...panel, form: { ...panel.form, kind: action.kind } };
-    case "swarm_form_changed":
+    // Typed input is an *intent*, not a computed value: several
+    // keypresses can be handled against one render (holding backspace,
+    // a fast paste), and a `{value}` action built from the state the
+    // handler saw would then drop every keystroke but the last.
+    case "swarm_form_typed":
       if (panel.mode !== "add") return panel;
-      return { ...panel, form: withStepValue(panel.form, action.value) };
+      return {
+        ...panel,
+        form: withStepValue(panel.form, formStepValue(panel.form) + action.text),
+      };
+    case "swarm_form_backspace":
+      if (panel.mode !== "add") return panel;
+      return {
+        ...panel,
+        form: withStepValue(panel.form, dropLast(formStepValue(panel.form))),
+      };
     case "swarm_form_next": {
       if (panel.mode !== "add") return panel;
       const i = SWARM_ADD_STEPS.indexOf(panel.form.step);
@@ -85,9 +99,12 @@ function reducePanel(panel: SwarmPanelState, action: SwarmAction): SwarmPanelSta
       // Start empty rather than pre-filling: a token is masked everywhere
       // else and seeding the buffer would put it back on screen.
       return { ...panel, editBuffer: "" };
-    case "swarm_edit_changed":
+    case "swarm_edit_typed":
       if (panel.mode !== "edit" || panel.editBuffer === null) return panel;
-      return { ...panel, editBuffer: action.value };
+      return { ...panel, editBuffer: panel.editBuffer + action.text };
+    case "swarm_edit_backspace":
+      if (panel.mode !== "edit" || panel.editBuffer === null) return panel;
+      return { ...panel, editBuffer: dropLast(panel.editBuffer) };
     case "swarm_remove_started": {
       if (panel.mode !== "list") return panel;
       const row = panel.rows[panel.selected];
@@ -104,25 +121,41 @@ function reducePanel(panel: SwarmPanelState, action: SwarmAction): SwarmPanelSta
       return { ...panel, mode: "list", editBuffer: null };
     case "swarm_action_started":
       return { ...panel, busy: true };
-    case "swarm_action_settled":
+    case "swarm_action_settled": {
+      const failed = action.error !== undefined;
+      // A rejected add keeps the wizard open on the step that was
+      // rejected: everything typed — including a pasted token — is
+      // still there, so a bad owner id costs one field, not the form.
+      const mode =
+        panel.mode === "add"
+          ? failed
+            ? "add"
+            : "list"
+          : panel.mode === "remove"
+            ? "list"
+            : panel.mode;
       return {
         ...panel,
         busy: false,
-        // A finished action closes the wizard / confirm, and a saved
-        // value stops typing but stays in the detail view.
-        mode: panel.mode === "add" || panel.mode === "remove" ? "list" : panel.mode,
+        mode,
         editBuffer: null,
-        ...(panel.mode === "add" && action.error === undefined
-          ? { form: createInitialSwarmAddForm() }
-          : {}),
+        ...(panel.mode === "add" && !failed ? { form: createInitialSwarmAddForm() } : {}),
         message: action.message ?? null,
         lastError: action.error ?? null,
       };
+    }
     case "swarm_message_cleared":
       return { ...panel, message: null, lastError: null };
     default:
       return panel;
   }
+}
+
+/** Drop the last character, counting astral code points as one. */
+function dropLast(text: string): string {
+  const points = [...text];
+  points.pop();
+  return points.join("");
 }
 
 function withStepValue(form: SwarmAddForm, value: string): SwarmAddForm {

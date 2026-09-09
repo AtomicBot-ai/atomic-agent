@@ -76,9 +76,11 @@ describe("handleSwarmTabKey", () => {
     const { ctx, dispatch } = ctxOf({ mode: "add", form }, { onSwarmAddRequested });
     // `d` would be "remove" in the list; here it is token material.
     expect(handleSwarmTabKey("d", KEY, ctx)).toBe(true);
-    expect(dispatch).toHaveBeenCalledWith({ type: "swarm_form_changed", value: "abd" });
+    expect(dispatch).toHaveBeenCalledWith({ type: "swarm_form_typed", text: "d" });
     expect(handleSwarmTabKey("", { ...KEY, backspace: true }, ctx)).toBe(true);
-    expect(dispatch).toHaveBeenCalledWith({ type: "swarm_form_changed", value: "a" });
+    // An intent, not a computed value: a burst of keys handled against
+    // one render must not collapse into a single edit.
+    expect(dispatch).toHaveBeenCalledWith({ type: "swarm_form_backspace" });
     const owner = ctxOf({ mode: "add", form: { ...form, step: "owner", owner: "42" } }, { onSwarmAddRequested });
     expect(handleSwarmTabKey("", { ...KEY, return: true }, owner.ctx)).toBe(true);
     expect(onSwarmAddRequested).toHaveBeenCalledWith({

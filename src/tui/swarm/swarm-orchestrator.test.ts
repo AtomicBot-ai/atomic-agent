@@ -148,6 +148,20 @@ describe("SwarmOrchestrator", () => {
     o.dispose();
   });
 
+  it("refuses to pair a bot that is switched off instead of starting it silently", async () => {
+    const bus = fakeBus();
+    const { runtime, swarm } = fakeRuntime();
+    swarm.get.mockReturnValue({ config: { id: "ops", kind: "telegram", label: "Ops", enabled: false } });
+    const o = new SwarmOrchestrator(runtime, bus);
+    await o.pair("ops");
+    expect(swarm.startPairing).not.toHaveBeenCalled();
+    expect(bus.emitted.at(-1)).toMatchObject({
+      type: "swarm_action_settled",
+      error: "Ops is off — press enter to switch it on first",
+    });
+    o.dispose();
+  });
+
   it("pairing reports the claim and ticks a countdown only while a window is open", async () => {
     const bus = fakeBus();
     const { runtime, swarm } = fakeRuntime();

@@ -62,6 +62,12 @@ describe("SwarmPanel", () => {
     expect(frame).toMatch(/[▀▄]/);
     const short = render(<SwarmPanel panel={panelOf()} animate={false} width={90} maxRows={6} />);
     expect(short.lastFrame() ?? "").not.toMatch(/[▀▄]/);
+    // 9 rows is exactly list+strip with no slack: the pane's own footer
+    // ate the bottom row of the eggs, so the strip needs one more.
+    const tight = render(<SwarmPanel panel={panelOf()} animate={false} width={90} maxRows={9} />);
+    expect(tight.lastFrame() ?? "").not.toMatch(/[▀▄]/);
+    const roomy = render(<SwarmPanel panel={panelOf()} animate={false} width={90} maxRows={10} />);
+    expect(roomy.lastFrame() ?? "").toMatch(/[▀▄]/);
   });
 
   it("masks the token while it is being typed in the wizard", () => {
@@ -86,6 +92,30 @@ describe("SwarmPanel", () => {
     expect(flat(render(<SwarmPanel panel={pairing} animate={false} width={90} />).lastFrame())).toContain(
       "pairing… 41s",
     );
+  });
+
+  it("keeps a row on one line when the failure is long", () => {
+    // A wrapping row used to shove the role onto a second line and
+    // mangle the list; found by driving the real UI.
+    const panel = panelOf({
+      rows: [
+        row({
+          state: "down",
+          lastError:
+            "Discord rejected the bot token (HTTP 401). Check the token and try again.",
+          role: "papers channel",
+        }),
+      ],
+    });
+    const frame = render(<SwarmPanel panel={panel} animate={false} width={90} />).lastFrame() ?? "";
+    const rowLines = frame.split("\n").filter((l) => l.includes("[tg] Ops"));
+    expect(rowLines).toHaveLength(1);
+    // The failure is cut, so the role still fits on the same line.
+    expect(rowLines[0]).toContain("down: Discord rejected");
+    expect(rowLines[0]).toContain("…");
+    expect(rowLines[0]).toContain("papers channel");
+    // The tail of the message is gone rather than wrapped below.
+    expect(frame).not.toContain("try again.");
   });
 
   it("surfaces errors and messages above the list", () => {

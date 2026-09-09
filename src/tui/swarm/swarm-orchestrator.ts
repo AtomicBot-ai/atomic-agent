@@ -171,6 +171,13 @@ export class SwarmOrchestrator {
       this.settle(undefined, "Discord bots do not pair — set the owner id with e");
       return;
     }
+    // Pairing needs a running bot. Starting one the operator switched
+    // off, silently, would leave the row saying "off" while the bot is
+    // live — say what is missing instead.
+    if (!unit.config.enabled) {
+      this.settle(undefined, `${unit.config.label} is off — press enter to switch it on first`);
+      return;
+    }
     this.bus.emit({ type: "swarm_action_started" });
     try {
       // Returns once the window closes: claimed, timed out, or cancelled.

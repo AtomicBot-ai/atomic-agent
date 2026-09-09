@@ -2,7 +2,7 @@ import type { Key } from "ink";
 import type { TuiAction } from "../tui-action.js";
 import type { TuiAppCallbacks } from "../tui-app.js";
 import type { TuiState } from "../tui-state.js";
-import { formStepValue, selectedSwarmRow } from "./swarm-panel-state.js";
+import { selectedSwarmRow } from "./swarm-panel-state.js";
 
 export interface SwarmTabKeyContext {
   state: TuiState;
@@ -75,11 +75,11 @@ export function handleSwarmTabKey(input: string, key: Key, ctx: SwarmTabKeyConte
       return true;
     }
     if (key.backspace || key.delete) {
-      dispatch({ type: "swarm_form_changed", value: formStepValue(form).slice(0, -1) });
+      dispatch({ type: "swarm_form_backspace" });
       return true;
     }
     if (input.length > 0 && !key.ctrl && !key.meta) {
-      dispatch({ type: "swarm_form_changed", value: formStepValue(form) + input });
+      dispatch({ type: "swarm_form_typed", text: input });
       return true;
     }
     return true;
@@ -99,11 +99,11 @@ export function handleSwarmTabKey(input: string, key: Key, ctx: SwarmTabKeyConte
         return true;
       }
       if (key.backspace || key.delete) {
-        dispatch({ type: "swarm_edit_changed", value: panel.editBuffer.slice(0, -1) });
+        dispatch({ type: "swarm_edit_backspace" });
         return true;
       }
       if (input.length > 0 && !key.ctrl && !key.meta) {
-        dispatch({ type: "swarm_edit_changed", value: panel.editBuffer + input });
+        dispatch({ type: "swarm_edit_typed", text: input });
         return true;
       }
       return true;

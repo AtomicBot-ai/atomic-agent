@@ -92,11 +92,13 @@ export function selectedSwarmRow(state: SwarmPanelState): SwarmRow | undefined {
 }
 
 /**
- * Bots that count as "alive" for the hatchery: switched on and holding a
- * token. One critter each — a bot that cannot start does not get one.
+ * Bots that count as "alive" for the hatchery: switched on, holding a
+ * token, and not reporting a failure. One critter each — a bot whose
+ * row says `down` must not have a critter scurrying for it, or the
+ * strip contradicts the list right above it.
  */
 export function aliveSwarmCount(rows: readonly SwarmRow[]): number {
-  return rows.filter((r) => r.enabled && r.hasToken).length;
+  return rows.filter((r) => r.enabled && r.hasToken && r.state !== "down").length;
 }
 
 /** The text the wizard is currently editing. */

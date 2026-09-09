@@ -69,13 +69,13 @@ describe("reduceSwarmAction", () => {
     expect(panel.form.step).toBe("label");
     panel = reduce(
       panel,
-      { type: "swarm_form_changed", value: "Ops" },
+      { type: "swarm_form_typed", text: "Ops" },
       { type: "swarm_form_next" },
-      { type: "swarm_form_changed", value: "deploys" },
+      { type: "swarm_form_typed", text: "deploys" },
       { type: "swarm_form_next" },
-      { type: "swarm_form_changed", value: "tok" },
+      { type: "swarm_form_typed", text: "tok" },
       { type: "swarm_form_next" },
-      { type: "swarm_form_changed", value: "42" },
+      { type: "swarm_form_typed", text: "42" },
     );
     expect(panel.form).toMatchObject({ step: "owner", label: "Ops", role: "deploys", token: "tok", owner: "42" });
     // Past the last step nothing changes — the keyboard layer submits.
@@ -99,7 +99,7 @@ describe("reduceSwarmAction", () => {
     const rows = [row()];
     let panel = reduce({ rows, mode: "edit" }, { type: "swarm_edit_field_moved", delta: 2 });
     expect(panel.editField).toBe("owner");
-    panel = reduce(panel, { type: "swarm_edit_typing_started" }, { type: "swarm_edit_changed", value: "42" });
+    panel = reduce(panel, { type: "swarm_edit_typing_started" }, { type: "swarm_edit_typed", text: "42" });
     expect(panel.editBuffer).toBe("42");
     // Fields do not move while typing.
     expect(reduce(panel, { type: "swarm_edit_field_moved", delta: 1 }).editField).toBe("owner");
@@ -110,6 +110,8 @@ describe("reduceSwarmAction", () => {
   });
 
   it("a settled action closes the wizard on success and keeps it open on error", () => {
+    // Found by driving the real UI: a typo in the last field used to
+    // throw away the whole form, pasted bot token included.
     const ok = reduce(
       { mode: "add", form: { step: "owner", kind: "telegram", label: "Ops", role: "", token: "t", owner: "" } },
       { type: "swarm_action_started" },
@@ -118,11 +120,12 @@ describe("reduceSwarmAction", () => {
     expect(ok).toMatchObject({ mode: "list", busy: false, message: "Ops added" });
     expect(ok.form.label).toBe("");
     const bad = reduce(
-      { mode: "add", form: { step: "owner", kind: "telegram", label: "Ops", role: "", token: "t", owner: "" } },
-      { type: "swarm_action_settled", error: "nope" },
+      { mode: "add", form: { step: "owner", kind: "telegram", label: "Ops", role: "", token: "t", owner: "x" } },
+      { type: "swarm_action_settled", error: "owner id must be numeric" },
     );
-    expect(bad).toMatchObject({ mode: "list", lastError: "nope" });
-    expect(bad.form.label).toBe("Ops");
+    // Still in the wizard, on the rejected step, with every value intact.
+    expect(bad).toMatchObject({ mode: "add", lastError: "owner id must be numeric" });
+    expect(bad.form).toMatchObject({ step: "owner", label: "Ops", token: "t", owner: "x" });
     const edited = reduce(
       { mode: "edit", editBuffer: "x", rows: [row()] },
       { type: "swarm_action_settled", message: "label saved" },
@@ -131,13 +134,50 @@ describe("reduceSwarmAction", () => {
   });
 });
 
+describe("typed input survives batched keypresses", () => {
+  // Found by holding backspace in the real UI: actions used to carry a
+  // value computed from the state the key handler saw, so a burst of
+  // keys handled against one render collapsed into a single edit.
+  it("appends every keystroke of a burst", () => {
+    const panel = reduce(
+      { mode: "add", form: { step: "label", kind: "telegram", label: "", role: "", token: "", owner: "" } },
+      ...["O", "p", "s"].map((text) => ({ type: "swarm_form_typed", text })),
+    );
+    expect(panel.form.label).toBe("Ops");
+  });
+
+  it("erases one character per backspace, in the form and in the editor", () => {
+    const form = reduce(
+      { mode: "add", form: { step: "owner", kind: "telegram", label: "Ops", role: "", token: "", owner: "@name" } },
+      ...Array.from({ length: 4 }, () => ({ type: "swarm_form_backspace" })),
+    );
+    expect(form.form.owner).toBe("@");
+    const editor = reduce(
+      { mode: "edit", rows: [row()], editField: "owner", editBuffer: "12345" },
+      ...Array.from({ length: 3 }, () => ({ type: "swarm_edit_backspace" })),
+    );
+    expect(editor.editBuffer).toBe("12");
+  });
+
+  it("treats an astral character as one keystroke", () => {
+    const panel = reduce(
+      { mode: "add", form: { step: "label", kind: "telegram", label: "Ops 🐝", role: "", token: "", owner: "" } },
+      { type: "swarm_form_backspace" },
+    );
+    expect(panel.form.label).toBe("Ops ");
+  });
+});
+
 describe("aliveSwarmCount", () => {
-  it("counts bots that are on and hold a token", () => {
+  it("counts bots that are on, hold a token, and are not down", () => {
     expect(
       aliveSwarmCount([
         row(),
         row({ id: "off", enabled: false }),
         row({ id: "no-token", hasToken: false }),
+        // A row that reads "down: 401" must not have a critter running
+        // for it — the strip would contradict the list above it.
+        row({ id: "broken", state: "down", lastError: "401" }),
         PRIMARY,
       ]),
     ).toBe(2);

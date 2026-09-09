@@ -27,6 +27,14 @@ export interface SwarmPanelProps {
 
 /** The list needs this much room before the hatchery is worth drawing. */
 const STRIP_MIN_LIST_ROWS = 6;
+/**
+ * One row of slack on top of the list + strip. Without it the pane can
+ * hand out just enough rows for the strip to be drawn and then have its
+ * last row eaten by the footer, cutting the eggs in half.
+ */
+const STRIP_HEADROOM = 1;
+/** Longest failure text a row will show before it is cut. */
+const ROW_ERROR_CHARS = 44;
 
 /**
  * The Swarm tab: every bot on this runtime. The two primary channels
@@ -43,7 +51,7 @@ export function SwarmPanel({
 }: SwarmPanelProps): ReactElement {
   const size = useTerminalSize();
   const paneWidth = Math.max(0, (width ?? size.columns) - 2);
-  const showStrip = maxRows >= STRIP_MIN_LIST_ROWS + STRIP_ROWS;
+  const showStrip = maxRows >= STRIP_MIN_LIST_ROWS + STRIP_ROWS + STRIP_HEADROOM;
   const listRows = showStrip ? maxRows - STRIP_ROWS - 1 : maxRows;
   return (
     <Box flexDirection="column">
@@ -110,24 +118,31 @@ function ListView({ panel, maxRows }: { panel: SwarmPanelState; maxRows: number 
       {rows.map((row, i) => {
         const index = start + i;
         const active = index === panel.selected;
+        // One line per bot, always: a long failure message used to wrap
+        // and shove the role onto a second line, mangling the row.
+        const confirming = panel.mode === "remove" && active;
         return (
-          <Box key={row.id}>
-            <Text color={active ? theme.colors.accent : theme.colors.muted}>
-              {active ? "> " : "  "}
+          <Box key={row.id} height={1} overflow="hidden">
+            <Text wrap="truncate-end">
+              <Text color={active ? theme.colors.accent : theme.colors.muted}>
+                {active ? "> " : "  "}
+              </Text>
+              <Text color={theme.colors.muted}>{kindTag(row.kind)} </Text>
+              <Text bold={active}>{row.label}</Text>
+              {row.botUsername ? (
+                <Text color={theme.colors.muted}> @{row.botUsername}</Text>
+              ) : null}
+              <Text color={stateColor(row)}>
+                {"  "}
+                {stateText(row)}
+              </Text>
+              {row.role && !confirming ? (
+                <Text color={theme.colors.muted}>{"  · "}{row.role}</Text>
+              ) : null}
+              {confirming ? (
+                <Text color={theme.colors.error}>{"  remove? y / esc"}</Text>
+              ) : null}
             </Text>
-            <Text color={theme.colors.muted}>{kindTag(row.kind)} </Text>
-            <Text bold={active}>{row.label}</Text>
-            {row.botUsername ? (
-              <Text color={theme.colors.muted}> @{row.botUsername}</Text>
-            ) : null}
-            <Text color={stateColor(row)}>
-              {"  "}
-              {stateText(row)}
-            </Text>
-            {row.role ? <Text color={theme.colors.muted}>{"  · "}{row.role}</Text> : null}
-            {panel.mode === "remove" && active ? (
-              <Text color={theme.colors.error}>{"  remove? y / esc"}</Text>
-            ) : null}
           </Box>
         );
       })}
@@ -237,9 +252,17 @@ function stateText(row: SwarmRow): string {
   }
   if (!row.enabled) return "off";
   if (!row.hasToken) return "no token";
-  if (row.state === "down") return row.lastError ? `down: ${row.lastError}` : "down";
+  if (row.state === "down") {
+    return row.lastError ? `down: ${clip(row.lastError, ROW_ERROR_CHARS)}` : "down";
+  }
   if (row.state === "up" && row.ownerUserId === null) return "up · unpaired";
   return row.state;
+}
+
+/** Cut `text` to `max` characters on a code-point boundary. */
+function clip(text: string, max: number): string {
+  const points = [...text];
+  return points.length <= max ? text : `${points.slice(0, max - 1).join("")}…`;
 }
 
 function stateColor(row: SwarmRow): string {
