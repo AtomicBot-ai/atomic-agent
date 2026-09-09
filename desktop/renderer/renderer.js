@@ -1034,26 +1034,26 @@ const MAX_QUEUED = 20; // chat-orchestrator.ts:66 MAX_QUEUED_MESSAGES
 
 /* ---------------- icons: 16px optical, 1.5px stroke ---------------- */
 const P = {
-  chat:'<rect x="2.25" y="3.25" width="11.5" height="8.5" rx="2.5"/><path d="M5.5 11.75v2.1l2.8-2.1"/>',
-  tasks:'<rect x="2.5" y="3.5" width="11" height="10" rx="2"/><path d="M2.5 6.5h11M5.5 2.25v2.5M10.5 2.25v2.5M5.5 9.5h5"/>',
+  chat:'<rect x="2.25" y="3.25" width="11.5" height="8.5"/><path d="M5.5 11.75v2.1l2.8-2.1"/>',
+  tasks:'<rect x="2.5" y="3.5" width="11" height="10"/><path d="M2.5 6.5h11M5.5 2.25v2.5M10.5 2.25v2.5M5.5 9.5h5"/>',
   skills:'<path d="M8 2.2 9.55 5.6l3.7.42-2.75 2.5.75 3.63L8 10.35 4.75 12.15l.75-3.63L2.75 6.02l3.7-.42z"/>',
   memory:'<path d="M8 2.6C6.2 2.6 4.8 3.7 4.8 5.1c0 .5.2 1 .5 1.4-.6.5-1 1.2-1 2 0 1.6 1.6 2.9 3.7 2.9s3.7-1.3 3.7-2.9c0-.8-.4-1.5-1-2 .3-.4.5-.9.5-1.4 0-1.4-1.4-2.5-3.2-2.5Z"/><path d="M8 2.6v9"/>',
   search:'<circle cx="7.2" cy="7.2" r="4"/><path d="M10.2 10.2 13.5 13.5"/>',
-  sidebar:'<rect x="2" y="3" width="12" height="10" rx="2"/><path d="M6.2 3v10"/>',
-  inspector:'<rect x="2" y="3" width="12" height="10" rx="2"/><path d="M10 3v10"/>',
-  console:'<rect x="2" y="3" width="12" height="10" rx="2"/><path d="M2 9.6h12"/>',
+  sidebar:'<rect x="2" y="3" width="12" height="10"/><path d="M6.2 3v10"/>',
+  inspector:'<rect x="2" y="3" width="12" height="10"/><path d="M10 3v10"/>',
+  console:'<rect x="2" y="3" width="12" height="10"/><path d="M2 9.6h12"/>',
   plus:'<path d="M8 3.5v9M3.5 8h9"/>',
   chevD:'<path d="M4 6.2 8 10l4-3.8"/>',
   chevR:'<path d="M6.2 4 10 8l-3.8 4"/>',
   check:'<path d="M3.5 8.4 6.4 11.3 12.5 5.2"/>',
   x:'<path d="M4 4l8 8M12 4l-8 8"/>',
   warn:'<path d="M8 2.8 14 12.6H2z"/><path d="M8 6.6v3M8 11.1h.01"/>',
-  stop:'<rect x="4.5" y="4.5" width="7" height="7" rx="1.5"/>',
+  stop:'<rect x="4.5" y="4.5" width="7" height="7"/>',
   up:'<path d="M8 12.5v-9M4.2 7.3 8 3.5l3.8 3.8"/>',
-  copy:'<rect x="5.5" y="5.5" width="8" height="8" rx="2"/><path d="M10.5 5.5v-1a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v4a2 2 0 0 0 2 2h1"/>',
+  copy:'<rect x="5.5" y="5.5" width="8" height="8"/><path d="M10.5 5.5v-1a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v4a2 2 0 0 0 2 2h1"/>',
   gear:'<circle cx="8" cy="8" r="2.2"/><path d="M8 1.8v1.6M8 12.6v1.6M14.2 8h-1.6M3.4 8H1.8M12.4 3.6l-1.1 1.1M4.7 11.3l-1.1 1.1M12.4 12.4l-1.1-1.1M4.7 4.7 3.6 3.6"/>',
   cloud:'<path d="M4.6 12.2h6.6a2.9 2.9 0 0 0 .3-5.78A4 4 0 0 0 4.3 6.9a2.65 2.65 0 0 0 .3 5.3Z"/>',
-  cpu:'<rect x="5" y="5" width="6" height="6" rx="1.5"/><path d="M6.5 2.5v2.5M9.5 2.5v2.5M6.5 11v2.5M9.5 11v2.5M2.5 6.5h2.5M2.5 9.5h2.5M11 6.5h2.5M11 9.5h2.5"/>',
+  cpu:'<rect x="5" y="5" width="6" height="6"/><path d="M6.5 2.5v2.5M9.5 2.5v2.5M6.5 11v2.5M9.5 11v2.5M2.5 6.5h2.5M2.5 9.5h2.5M11 6.5h2.5M11 9.5h2.5"/>',
   key:'<circle cx="5.5" cy="8" r="2.6"/><path d="M8.1 8h5.4M11.6 8v2.2M13.5 8v1.6"/>',
   link:'<path d="M6.6 9.4a2.6 2.6 0 0 0 3.7 0l2-2a2.6 2.6 0 1 0-3.7-3.7l-.9.9"/><path d="M9.4 6.6a2.6 2.6 0 0 0-3.7 0l-2 2a2.6 2.6 0 1 0 3.7 3.7l.9-.9"/>',
   folder:'<path d="M2.5 4.6a1.6 1.6 0 0 1 1.6-1.6h2.1l1.4 1.7h4.3a1.6 1.6 0 0 1 1.6 1.6v5.1a1.6 1.6 0 0 1-1.6 1.6H4.1a1.6 1.6 0 0 1-1.6-1.6z"/>',
@@ -1075,7 +1075,10 @@ const P = {
 };
 function ic(n, cls) {
   return '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" '
-    + 'stroke-linecap="round" stroke-linejoin="round"' + (cls ? ' class="' + cls + '"' : '') + '>' + (P[n] || '') + '</svg>';
+    /* Square caps and joins. The icon set is on a 16px grid at 1.5px, which
+       was right; the round caps were the last soft edge left in a system that
+       has no radius above 2px anywhere else. */
+    + 'stroke-linecap="square" stroke-linejoin="miter"' + (cls ? ' class="' + cls + '"' : '') + '>' + (P[n] || '') + '</svg>';
 }
 const MARK_COLOR = '<svg width="16" height="16" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" fill="var(--red)"/><path fill="var(--on-fill)" d="M35.24 49.92a1.25 1.25 0 0 0 1.3-1.24 12.2 12.2 0 0 1 12.14-12.14 1.25 1.25 0 0 0 1.24-1.3v-6.47c0-.69-.56-1.24-1.24-1.24H37.72c-.69 0-1.24-.56-1.24-1.25V15.32c0-.69-.56-1.24-1.24-1.24h-6.47c-.69 0-1.24.56-1.3 1.24A12.2 12.2 0 0 1 15.32 27.46c-.68.06-1.24.61-1.24 1.3v6.47c0 .69.56 1.24 1.24 1.24h10.96c.69 0 1.24.56 1.24 1.25v10.95c0 .69.56 1.24 1.24 1.24z"/></svg>';
 const MARK_MONO = '<svg width="20" height="20" viewBox="0 0 64 64" fill="currentColor" aria-hidden="true"><path d="M35.24 49.92a1.25 1.25 0 0 0 1.3-1.24 12.2 12.2 0 0 1 12.14-12.14 1.25 1.25 0 0 0 1.24-1.3v-6.47c0-.69-.56-1.24-1.24-1.24H37.72c-.69 0-1.24-.56-1.24-1.25V15.32c0-.69-.56-1.24-1.24-1.24h-6.47c-.69 0-1.24.56-1.3 1.24A12.2 12.2 0 0 1 15.32 27.46c-.68.06-1.24.61-1.24 1.3v6.47c0 .69.56 1.24 1.24 1.24h10.96c.69 0 1.24.56 1.24 1.25v10.95c0 .69.56 1.24 1.24 1.24z"/></svg>';
@@ -3832,7 +3835,16 @@ document.addEventListener('click', (e) => {
      this step renders. */
   const wizModel = e.target.closest && e.target.closest('[data-wizmodel]');
   if (wizModel) { WIZ.modelPick = wizModel.dataset.wizmodel; render(); return; }
-  if (wizKind) { WIZ.row = KIND_ROWS[+wizKind.dataset.wizKind]; WIZ.phase = 'configure'; WIZ.error = null; render(); return; }
+  if (wizKind) {
+    /* A key belongs to the provider it was typed for. WIZ.apiKey survived a
+     Back and a different pick, so the field came up pre-filled with the
+     previous provider's key — and pressing Next would have saved it to
+     the new one. */
+    WIZ.row = KIND_ROWS[+wizKind.dataset.wizKind]; WIZ.phase = 'configure';
+    WIZ.error = null; WIZ.apiKey = ''; WIZ.baseUrl = ''; WIZ.uncheckedFor = null;
+    WIZ.acceptUnchecked = false; WIZ.modelChosen = false;
+    render(); return;
+  }
   const selPreset = t.closest('[data-sel-preset]');
   if (selPreset) { SEL.presetCur = +selPreset.dataset.selPreset; render(); return; }
   const ctxStep = t.closest('[data-ctx-step]');
@@ -7581,7 +7593,10 @@ function obCloudKey(input, key) {
     if (key.return) {
       const picked = rows[rows.length ? WIZ.cur % rows.length : 0];
       if (!picked) return true;
+      // Same rule as the popover's row: a new provider starts with an empty field.
       WIZ.row = picked.k; WIZ.phase = 'configure'; WIZ.error = null;
+      WIZ.apiKey = ''; WIZ.baseUrl = picked.k.custom ? WIZ.baseUrl : '';
+      WIZ.uncheckedFor = null; WIZ.acceptUnchecked = false; WIZ.modelChosen = false;
       render();
       return true;
     }
@@ -9935,7 +9950,8 @@ async function setCodingMode(id, post) {
   if (!res || !res.ok) {
     MODE.supported = res ? res.supported : true;
     S.log.push({id:nid(), k:'system', text: res && res.supported === false
-      ? 'coding modes need an agent build that carries /api/coding-mode'
+      // F4/A.4: the version, never the route name.
+      ? MODE_NEEDS_NEWER
       : 'could not change the mode: ' + esc((res && res.error) || '')});
     render();
     return;
@@ -10565,8 +10581,15 @@ function customProviderId(url) {
 
 async function wizNext() {
   const k = WIZ.row; if (!k) return;
-  const key = document.getElementById('wiz-key'); WIZ.apiKey = (key && key.value.trim()) || '';
-  const url = document.getElementById('wiz-url'); WIZ.baseUrl = (url && url.value.trim()) || '';
+  /* Read the fields only when they are ON SCREEN. wizNext runs a second time
+     for the model step — the choice is made and the save is re-entered — and
+     by then the key and URL inputs are gone, so an unconditional read set
+     both to the empty string and the entry was rewritten without the key the
+     user had just typed. Absent field means "unchanged", not "cleared". */
+  const key = document.getElementById('wiz-key');
+  if (key) WIZ.apiKey = key.value.trim();
+  const url = document.getElementById('wiz-url');
+  if (url) WIZ.baseUrl = url.value.trim();
   if (k.custom && !/^https?:\/\/\S+$/.test(WIZ.baseUrl)) { WIZ.error = 'That does not look like a URL.'; render(); return; }
   WIZ.phase = 'verifying'; WIZ.error = null; render();
 
@@ -10990,13 +11013,19 @@ function renderMarkdown(escaped) {
     out.push(line ? mdInline(line) : '');
   }
   closeList();
-  return out.join('\n').replace(/\u0000(\d+)\u0000/g, (m, i) => held[+i]);
+  /* The held code is NOT restored here. renderProse turns bare paths into
+     file chips and bare URLs into links, and both would happily rewrite the
+     inside of a code span — a path in backticks is a path the model wrote
+     literally, not a file to offer a button for. The placeholders survive
+     that pass and are put back afterwards. */
+  return { html: out.join('\n'), held };
 }
 
 function renderProse(text) {
   const URL_RE = /(?<![\w.])(?:https?:\/\/|www\.)[^\s<>"']+/g;
   const FILE_RE = /(?<![\w\/])((?:~|\/)(?:[\w.@+-]+\/)*[\w.@+-]+\.[A-Za-z0-9]{1,6})(?![\w\/])/g;
-  let html = renderMarkdown(esc(text));
+  const md = renderMarkdown(esc(text));
+  let html = md.html;
   html = html.replace(URL_RE, (u) => {
     const trail = (u.match(/[.,;:!?)\]}>"'\u00bb]+$/) || [''])[0];
     const core = u.slice(0, u.length - trail.length);
@@ -11007,7 +11036,7 @@ function renderProse(text) {
     const name = p.split('/').pop();
     return '<button class="filechip" data-file="' + p + '" title="' + p + '">' + ic('doc') + '<span>' + name + '</span></button>';
   });
-  return html;
+  return html.replace(/\u0000(\d+)\u0000/g, (m, i) => md.held[+i]);
 }
 function homeDir() {
   const wd = S.live.workingDir || '';

@@ -59,6 +59,10 @@ that. The ask's intent — a plain button with no keycaps and no icon — is kep
   `scanning the sources…` is a live readout (`SCANNING · 2 of 4 · claude-code`).
   Failures are inspectable: `WHAT FAILED (n)` opens a table of item, source and
   reason, and `RETRY FAILED` re-runs only the sources that failed.
+- **B.4 (F6).** A model step follows the key, always: the provider's
+  catalogue as a row list with our default preselected and marked `DEFAULT`,
+  a search box once there are more than eight, and `Use default` one button
+  away. Both wizards render it from one function.
 - **B.6 Chat.** App actions left the transcript for a status strip above the
   composer and the console drawer. Markdown renders. The last message keeps
   its Copy and Send-again controls, with their names on them. The empty state
@@ -80,7 +84,7 @@ that. The ask's intent — a plain button with no keycaps and no icon — is kep
 | **F3** turn declared dead while retrying | **partly** — see below |
 | **F4** coding mode dead | **fixed** (honest message + Update agent) |
 | **F5** duplicate label / stale error | **fixed** (B.4) |
-| **F6** no model choice after the key | **not done** — see below |
+| **F6** no model choice after the key | **fixed**, driven |
 | **F7** import runs blind | **fixed** (B.5) |
 | **F8** one keypress moves and fires | **fixed** at the step it broke on |
 | **F9** naming and first-run composition | **fixed** (A.4, B.1, B.2) |
@@ -137,17 +141,20 @@ spawns the user's *installed* `atag`, so none of them would reach the DMG
 without also shipping a new agent. Worth doing; out of scope for a desktop
 pass.
 
-**F6 — a model step after the key.** Not built. The wizard still takes the
-kind's default model silently. It is the one Part B item I did not reach; the
-groundwork is in place (the catalogue is already fetched in `wizNext` to pick
-that default) and it is a new wizard phase plus a row list.
-
 **F14.** Not reproduced. The code path looks correct — typing `/` sets
 `S.slash` and repaints a popover that is always rendered — so this needs
 driving before anything is changed, exactly as the brief says.
 
 **N4, N5.** N4 is a prompt-owner question, not code. N5 needs the catalogue
 figures checked against each provider's published context windows.
+
+**"No green" is enforced as a colour, not yet as a shape everywhere.** The
+token is gone — `--success` resolves to ink, so nothing in the app draws a
+green tick any more — but the places that used to rely on green to mean
+"done" (a downloaded model, a configured source) now read as ordinary text in
+some spots rather than as a filled square and the word DONE. The provider
+list and the model step carry proper annunciators; the model-download rows do
+not yet.
 
 ## How this was verified
 
@@ -156,6 +163,11 @@ figures checked against each provider's published context windows.
   provider whose host does not resolve.
 - `test/failure-line.drive.mjs` — **new**, 5 checks, F2 with a real turn sent
   by typing into the composer.
+- `test/model-step.drive.mjs` — **new**, F6 against a real provider catalogue:
+  the step appears, our default is preselected and marked, and the model
+  actually clicked is the model written to `config.json`.
+- `test/visual.drive.mjs` — **new**, the screenshot set at 1470×923 in both
+  themes, walked with trusted events, and F14's reproduction.
 - Twenty-one existing checks asserted the pre-brief design (the starfield and
   its rAF loop, the two-stage intro, the TUI's footers word for word including
   `ctrl+c quit`, the duplicate `API key` heading, the blue accent as three

@@ -7252,12 +7252,19 @@ async function backendSwitchTest(
        the conversation. */
     const lines = (await js<string[]>("window.__systemLines()")) ?? [];
     const said = await js<{ text: string; logged: string[] }>("window.__appStatus()");
+    /* The STRIP shows the latest thing the app did, which after a switch to
+       cloud is the daemon line, not the provider line — asserting the
+       provider against `text` was asserting that nothing else happened
+       afterwards, which is not the contract. The console drawer is the
+       record: the provider must be in it, the strip must be saying
+       something, and neither line may be in the conversation. */
     check(
       "backend: the switch is reported on the status strip, not in the transcript",
-      said.text.includes(expected ?? "")
+      said.text.length > 0
         && said.logged.some((l) => l.includes(expected ?? ""))
-        && !lines.some((l) => /Switched active text provider/.test(l)),
-      `strip=${JSON.stringify(said.text)} inTranscript=${lines.some((l) => /Switched active text provider/.test(l))}`,
+        && !lines.some((l) => /Switched active text provider|daemons stopped/.test(l)),
+      `strip=${JSON.stringify(said.text)} logged=${said.logged.length}`
+        + ` inTranscript=${lines.some((l) => /Switched active text provider|daemons stopped/.test(l))}`,
     );
 
     /* ---- r5 item 10 (review, minor): provider activation and the CLOUD
@@ -8732,26 +8739,34 @@ async function onboardingTest(
       options: { agent: string; option: string; secret: boolean; enabled: boolean }[];
       report: unknown;
     };
+    /* B.5 moved the two verbs OFF the list. They were rows drawn as
+       underlined text, which read as links to nowhere; they are buttons on
+       the action bar now, ranked primary and quiet. The keyboard model is
+       unchanged — obImportRows still ends with the import and skip entries so
+       Enter on the list reaches them, and the buttons press those same rows —
+       so `rows` is still asserted, and the LABELS are read from the action
+       bar instead of from inside the list. */
     let imp = await js<ObImport>("window.__obImport()");
-    const skipLabel = await js<string>(
-      "(document.querySelectorAll('#onboarding .ob-row .t')[document.querySelectorAll('#onboarding .ob-row').length - 1] || {}).textContent || ''",
+    const listRows = await js<string[]>(
+      "Array.from(document.querySelectorAll('#onboarding .ob-row .t')).map((e) => e.textContent || '')",
+    );
+    const footLabels = () => js<string[]>(
+      "Array.from(document.querySelectorAll('#onboarding .ob-foot .btn')).map((e) => (e.textContent || '').trim())",
     );
     check(
-      "wizard: the import step starts with nothing ticked and the skip row last",
+      "wizard: the import step starts with nothing ticked, and its verbs are buttons",
       imp.agents.every((a) => !a.enabled) &&
         JSON.stringify(imp.rows) === '["agent","agent","skip"]' &&
-        skipLabel === "Skip adding data from other agents",
-      `${JSON.stringify(imp.rows)} skip=${JSON.stringify(skipLabel)}`,
+        listRows.every((l) => !/Skip adding data|Import from/.test(l)) &&
+        (await footLabels()).includes("Skip adding data from other agents"),
+      `rows=${JSON.stringify(imp.rows)} list=${JSON.stringify(listRows)} foot=${JSON.stringify(await footLabels())}`,
     );
     imp = await js<ObImport>("(window.__obKey('space'), window.__obImport())");
-    const importLabel = await js<string>(
-      "Array.from(document.querySelectorAll('#onboarding .ob-row .t')).map((e) => e.textContent)[2] || ''",
-    );
     check(
-      "wizard: ticking one agent raises the import row above the skip row",
+      "wizard: ticking one agent puts the import verb on the action bar, counted",
       JSON.stringify(imp.rows) === '["agent","agent","import","skip"]' &&
-        importLabel === "Import from 1 agent",
-      `${JSON.stringify(imp.rows)} label=${JSON.stringify(importLabel)}`,
+        (await footLabels()).includes("Import from 1 agent"),
+      `${JSON.stringify(imp.rows)} foot=${JSON.stringify(await footLabels())}`,
     );
     // The domain defaults: everything but the credential rows.
     const options = await js<ObImport["options"]>(
