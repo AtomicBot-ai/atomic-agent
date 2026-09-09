@@ -47,7 +47,8 @@ export const discordIntegration: IntegrationDescriptor = {
     "Open the generated URL, pick your server, authorise. You can only DM a bot you share a server with.",
     "Discord → Settings → Advanced → Developer Mode on, right-click yourself → Copy User ID.",
     "Paste both below (e edits, enter saves), then set Channel to on.",
-    "DM the bot, or @mention it in a server channel. It answers only you.",
+    "More than one operator? Put every user ID on the same line, comma-separated.",
+    "DM the bot, or @mention it in a server channel. It answers only those accounts.",
   ],
   fields: [
     {
@@ -63,14 +64,16 @@ export const discordIntegration: IntegrationDescriptor = {
           : "Doesn't look like a bot token — that's the shape of the client secret or public key. Use Bot → Reset Token.",
     },
     {
-      key: "ownerUserId",
-      label: "Owner user ID",
+      key: "ownerUserIds",
+      label: "Owner user IDs",
       // Config-backed, not a secret: a Discord user id is public.
       store: "config",
-      configPath: "discord.ownerUserId",
+      kind: "list",
+      configPath: "discord.ownerUserIds",
       secret: false,
       required: true,
-      help: "Yours: Settings → Advanced → Developer Mode, right-click your name → Copy User ID. Only this account may drive the agent.",
+      help: "Comma-separated, and editing replaces the whole line. Yours: Settings → Advanced → Developer Mode, right-click your name → Copy User ID. Only these accounts may drive the agent — each of them fully, approvals included.",
+      // Runs per entry, so a bad id in a list of five names itself.
       validate: (raw) =>
         /^\d{15,25}$/.test(raw)
           ? undefined

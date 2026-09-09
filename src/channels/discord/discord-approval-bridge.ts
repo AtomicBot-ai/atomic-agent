@@ -39,8 +39,8 @@ export interface DiscordApprovalBridgeDeps {
   api: DiscordApi;
   approvals: ApprovalGate;
   logger: StructuredLogger;
-  /** Snowflake permitted to decide. Interactions from anyone else drop. */
-  ownerUserId: () => string | null;
+  /** Snowflakes permitted to decide. Interactions from anyone else drop. */
+  ownerUserIds: () => readonly string[];
 }
 
 interface Pending {
@@ -95,14 +95,17 @@ export class DiscordApprovalBridge {
       return false;
     }
     const actorId = event.member?.user?.id ?? event.user?.id;
-    const owner = this.deps.ownerUserId();
-    if (owner === null || actorId !== owner) {
-      // Anyone in a shared guild can click a button. Only the paired
-      // operator may decide whether a destructive tool runs.
+    const owners = this.deps.ownerUserIds();
+    if (actorId === undefined || !owners.includes(actorId)) {
+      // Anyone in a shared guild can click a button. Only a paired
+      // operator may decide whether a destructive tool runs — and
+      // every owner is equally one, which is the whole point of the
+      // list: an approval must not stall because the person who set
+      // the bot up is asleep.
       this.deps.logger.warn("discord: ignoring approval click from non-owner", {
         actorId,
       });
-      await this.ack(event, "Only the paired operator can answer this.");
+      await this.ack(event, "Only a paired operator can answer this.");
       return true;
     }
 

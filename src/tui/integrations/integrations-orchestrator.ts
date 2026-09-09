@@ -267,8 +267,8 @@ export class IntegrationsOrchestrator {
       if (integrationId === "discord") {
         const channel = this.runtime.discordChannel;
         if (channel) {
-          if (field.key === "ownerUserId") {
-            channel.setOwnerUserId(value);
+          if (field.key === "ownerUserIds") {
+            channel.setOwnerUserIds(getConfig().discord.ownerUserIds);
           }
           if (field.key === "enabled") {
             await channel.setEnabled(value === "on");

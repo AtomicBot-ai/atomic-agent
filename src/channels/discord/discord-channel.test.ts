@@ -12,7 +12,7 @@ function makeChannel(over: Record<string, unknown> = {}) {
     approvals: { resolve: vi.fn() } as never,
     approvalRouter: { setForSession: vi.fn(() => vi.fn()) } as never,
     enabled: true,
-    ownerUserId: "111",
+    ownerUserIds: ["111"],
     sessionPointerPath: "/tmp/does-not-matter.json",
     lock: lock as never,
     token: "a".repeat(24) + ".bbbbbb." + "c".repeat(30),

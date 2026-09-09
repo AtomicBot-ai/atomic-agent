@@ -6,7 +6,7 @@ import { discordIntegration } from "./discord-integration.js";
 import { DISCORD_BOT_TOKEN_KEY } from "../channels/discord/index.js";
 
 const TOKEN = "botToken";
-const OWNER = "ownerUserId";
+const OWNER = "ownerUserIds";
 /** Both fields are required, so "configured" needs both. */
 const BOTH = [TOKEN, OWNER];
 const VALID = `${"M".repeat(24)}.GaBcDe.${"z".repeat(30)}`;

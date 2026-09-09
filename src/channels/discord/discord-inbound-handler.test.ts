@@ -44,7 +44,7 @@ function makeCtx(
       rotate: vi.fn(),
     },
     logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
-    ownerUserId: OWNER,
+    ownerUserIds: [OWNER],
     botUserId: BOT,
     inflight: new Map(),
     ...overrides,
@@ -105,9 +105,24 @@ describe("handleDiscordMessage", () => {
     expect(ctx.sent).toEqual([]);
   });
 
+  it("acts on a message from any owner in the list", async () => {
+    // The report this fixes: one owner id meant a bot in a shared
+    // server answered exactly one person and silently dropped the rest.
+    const ctx = makeCtx({ ownerUserIds: [OWNER, "second-owner"] });
+    await handleDiscordMessage(msg({ author: { id: "second-owner" } }), ctx);
+    expect(ctx.runTurn).toHaveBeenCalledOnce();
+  });
+
+  it("still drops a stranger when several owners are configured", async () => {
+    const ctx = makeCtx({ ownerUserIds: [OWNER, "second-owner"] });
+    await handleDiscordMessage(msg({ author: { id: "impostor" } }), ctx);
+    expect(ctx.runTurn).not.toHaveBeenCalled();
+    expect(ctx.sent).toEqual([]);
+  });
+
   it("refuses everything while unpaired", async () => {
     // A token with no owner must not accept commands from the internet.
-    const ctx = makeCtx({ ownerUserId: null });
+    const ctx = makeCtx({ ownerUserIds: [] });
     await handleDiscordMessage(msg(), ctx);
     expect(ctx.runTurn).not.toHaveBeenCalled();
   });
@@ -136,7 +151,7 @@ describe("handleDiscordMessage", () => {
 
   it("lets pairing claim a message before the owner check", async () => {
     const tryClaimForPairing = vi.fn(() => true);
-    const ctx = makeCtx({ ownerUserId: null, tryClaimForPairing });
+    const ctx = makeCtx({ ownerUserIds: [], tryClaimForPairing });
     await handleDiscordMessage(msg({ author: { id: "new-owner" } }), ctx);
     expect(tryClaimForPairing).toHaveBeenCalled();
     expect(ctx.runTurn).not.toHaveBeenCalled();

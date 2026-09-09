@@ -3003,7 +3003,7 @@ export async function createAgentRuntime(
     approvals,
     approvalRouter,
     enabled: config.discord.enabled,
-    ownerUserId: config.discord.ownerUserId,
+    ownerUserIds: config.discord.ownerUserIds,
     sessionPointerPath: resolve(config.paths.stateDir, "discord-session.json"),
     lock: new DiscordLockfile(resolve(config.paths.stateDir, "discord.lock")),
     onStatus: (status) => options.handlers?.onChannelStatus?.(status),

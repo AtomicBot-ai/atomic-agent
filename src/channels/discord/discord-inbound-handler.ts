@@ -36,7 +36,7 @@ export interface DiscordInboundContext {
   sessionPointer: DiscordSessionPointer;
   logger: StructuredLogger;
   /** Snowflake of the sole permitted operator; `null` = unpaired. */
-  ownerUserId: string | null;
+  ownerUserIds: readonly string[];
   /** The bot's own snowflake, for mention detection and self-filtering. */
   botUserId: string;
   /** `channelId -> AbortController` for the in-flight turn. */
@@ -102,10 +102,10 @@ async function route(
     });
     return;
   }
-  if (ctx.ownerUserId === null || authorId !== ctx.ownerUserId) {
+  if (!ctx.ownerUserIds.includes(authorId)) {
     ctx.logger.warn("discord: dropping message from non-owner", {
       authorId,
-      ownerConfigured: ctx.ownerUserId !== null,
+      ownerConfigured: ctx.ownerUserIds.length > 0,
     });
     return;
   }

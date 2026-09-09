@@ -34,7 +34,7 @@ export interface DiscordChannelDeps {
   approvals: ApprovalGate;
   approvalRouter: ApprovalRouter;
   enabled: boolean;
-  ownerUserId: string | null;
+  ownerUserIds: readonly string[];
   sessionPointerPath: string;
   lock: DiscordLockfile;
   /** Explicit token wins over the env — the test seam. */
@@ -52,7 +52,7 @@ export class DiscordChannel {
   private bridge: DiscordApprovalBridge | null = null;
   private botUserId: string | null = null;
   private botUsername: string | null = null;
-  private ownerId: string | null;
+  private ownerIds: readonly string[];
   /**
    * Live kill switch. `deps.enabled` is only the value at construction:
    * reading it in `start()` meant an operator who switched the channel
@@ -67,7 +67,10 @@ export class DiscordChannel {
   private approvalSessionId: string | null = null;
 
   constructor(private readonly deps: DiscordChannelDeps) {
-    this.ownerId = deps.ownerUserId;
+    // Copied, not aliased: the caller hands us `config.discord.ownerUserIds`
+    // and the allowlist must not change under the gateway because
+    // something else edited that array.
+    this.ownerIds = [...deps.ownerUserIds];
     this.enabled = deps.enabled;
     this.pointer = new DiscordSessionPointer(deps.sessionPointerPath);
   }
@@ -81,8 +84,8 @@ export class DiscordChannel {
     return this.error;
   }
 
-  getOwnerUserId(): string | null {
-    return this.ownerId;
+  getOwnerUserIds(): readonly string[] {
+    return this.ownerIds;
   }
 
   getBotIdentity(): { id: string; username: string | null } | null {
@@ -133,7 +136,7 @@ export class DiscordChannel {
       api,
       approvals: this.deps.approvals,
       logger: this.deps.logger,
-      ownerUserId: () => this.ownerId,
+      ownerUserIds: () => this.ownerIds,
     });
 
     this.gateway = new DiscordGateway({
@@ -184,7 +187,7 @@ export class DiscordChannel {
       api,
       sessionPointer: this.pointer,
       logger: this.deps.logger,
-      ownerUserId: this.ownerId,
+      ownerUserIds: this.ownerIds,
       botUserId: this.botUserId,
       inflight: this.inflight,
       ensureApprovalSession: (sessionId, channelId) => {
@@ -227,9 +230,15 @@ export class DiscordChannel {
     this.setState("disabled");
   }
 
-  /** Persist a new owner and re-evaluate. */
-  setOwnerUserId(ownerUserId: string | null): void {
-    this.ownerId = ownerUserId;
+  /**
+   * Swap the owner allowlist on the live channel.
+   *
+   * The gateway and the approval bridge both read it through a getter,
+   * so a change lands on the very next message — no restart, and no
+   * window in which a removed owner can still drive the agent.
+   */
+  setOwnerUserIds(ownerUserIds: readonly string[]): void {
+    this.ownerIds = [...ownerUserIds];
   }
 
   /**
