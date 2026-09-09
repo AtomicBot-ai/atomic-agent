@@ -5855,8 +5855,15 @@ function obHintsHTML() {
  *  a 1470px screen. */
 function obHeadHTML() {
   const here = OB_PHASE_OF[OB.step] || null;
-  const phases = here === null ? '' : '<div class="ob-phases">' + OB_PHASES.map((p) =>
-    '<span class="ob-phase' + (p.n === here ? ' on' : '') + '">'
+  /* `ob-stepmark`, not `ob-phase`: the download progress ROW is `.ob-phase`
+     and has been since before this header existed. Reusing the name meant my
+     rule — uppercase, letter-spaced, Inter — landed on that row instead, made
+     it wide enough to wrap, and so changed its height every time the ETA text
+     changed length. Everything below it moved, and a pointer parked on the
+     offer card kept losing :hover. That is the exact flicker the operator
+     reported, reintroduced by a name. */
+  const phases = here === null ? '' : '<div class="ob-stepmarks">' + OB_PHASES.map((p) =>
+    '<span class="ob-stepmark' + (p.n === here ? ' on' : '') + '">'
     + '<span class="n">' + p.n + '</span> ' + esc(p.label) + '</span>').join('') + '</div>';
   const title = OB_TITLES[OB.step] || OB_SUBTITLES[OB.step] || '';
   return '<div class="ob-head">'

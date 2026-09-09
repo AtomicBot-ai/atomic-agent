@@ -1596,11 +1596,11 @@ body{font-family:var(--font-ui);font-size:var(--fs-cap);letter-spacing:0}
 .ob-lock .ob-wm{font-size:var(--fs-cap);font-weight:600;color:var(--ink);
   letter-spacing:var(--tr-label);text-transform:uppercase}
 .ob-headspacer{flex:1}
-.ob-phases{display:flex;gap:var(--s5)}
-.ob-phase{font:500 var(--fs-label)/1 var(--font-ui);letter-spacing:var(--tr-label);
+.ob-stepmarks{display:flex;gap:var(--s5)}
+.ob-stepmark{font:500 var(--fs-label)/1 var(--font-ui);letter-spacing:var(--tr-label);
   text-transform:uppercase;color:var(--ink-3)}
-.ob-phase .n{font-family:var(--font-mono)}
-.ob-phase.on{color:var(--ink)}
+.ob-stepmark .n{font-family:var(--font-mono)}
+.ob-stepmark.on{color:var(--ink)}
 .ob-headrule{border:0;border-top:var(--rule) solid var(--red);margin:var(--s4) 0 var(--s5)}
 .ob-title{margin:0;font-size:var(--fs-title);line-height:1.2;font-weight:600;
   letter-spacing:var(--tr-sub);color:var(--ink)}
@@ -1787,3 +1787,13 @@ body{font-family:var(--font-ui);font-size:var(--fs-cap);letter-spacing:0}
    somewhere nobody can reach. */
 .selpop .ob-wizlist{max-height:none;overflow:visible}
 .selpop .ob-wiz{padding:var(--s4) var(--s5)}
+
+
+/* The download progress row is re-read every CLI sample, and its trailing
+   text changes length as the estimate does. It may not reflow: a row that
+   grows a line moves everything under it, and a pointer parked on the card
+   below loses :hover — which is what the operator saw as lighting up and
+   down. Fixed field, tabular figures, no wrapping. */
+.ob-phase{flex-wrap:nowrap;white-space:nowrap}
+.ob-phase .pt{font-variant-numeric:tabular-nums;white-space:nowrap;
+  min-width:22ch;display:inline-block}
