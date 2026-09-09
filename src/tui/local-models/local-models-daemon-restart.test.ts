@@ -40,7 +40,10 @@ describe("restartLocalDaemon", () => {
     rmSync(stateDir, { recursive: true, force: true });
   });
 
-  function makeDeps(startResult = true): {
+  function makeDeps(
+    startResult = true,
+    stopResult = true,
+  ): {
     deps: Parameters<typeof restartLocalDaemon>[0];
     emitted: Emitted[];
     calls: string[];
@@ -51,6 +54,7 @@ describe("restartLocalDaemon", () => {
     const calls: string[] = [];
     const stopChatDaemonOnly = vi.fn(async () => {
       calls.push("stop");
+      return stopResult;
     });
     const startDaemon = vi.fn(async () => {
       calls.push("start");
@@ -105,6 +109,28 @@ describe("restartLocalDaemon", () => {
 
     await expect(restartLocalDaemon(deps)).resolves.toBe(false);
     expect(calls).toEqual(["stop", "start"]);
+  });
+
+  it("refuses to start on top of a stop that failed", async () => {
+    // The real `stopChatDaemonOnly` does not throw — it reports the
+    // failure and resolves false. Starting anyway would spawn a second
+    // `llama-server`: `daemon-lifecycle.startDaemon`'s pid-file guard is
+    // read a whole preflight before the file is written, so the survivor
+    // and the newcomer both get one, and only the last is addressable.
+    persistUserLocalModelsConfig({
+      mode: "managed",
+      managed: { modelId: "qwen-3.5-4b" },
+    });
+    resetConfigCache();
+    const { deps, emitted, calls, startDaemon } = makeDeps(true, false);
+
+    await expect(restartLocalDaemon(deps)).resolves.toBe(false);
+
+    expect(calls).toEqual(["stop"]);
+    expect(startDaemon).not.toHaveBeenCalled();
+    expect(
+      lines(emitted).some((l) => l.includes("restart aborted")),
+    ).toBe(true);
   });
 
   it("reports a throwing stop and never starts on top of it", async () => {
@@ -208,6 +234,7 @@ describe("LocalModelsOrchestrator.restartDaemon", () => {
       .spyOn(orchestrator, "stopChatDaemonOnly")
       .mockImplementation(async () => {
         order.push("stop");
+        return true;
       });
     const stopBoth = vi.spyOn(orchestrator, "stopDaemon").mockResolvedValue();
     const start = vi
@@ -223,5 +250,65 @@ describe("LocalModelsOrchestrator.restartDaemon", () => {
     expect(stopChatOnly).toHaveBeenCalledTimes(1);
     expect(start).toHaveBeenCalledTimes(1);
     expect(stopBoth).not.toHaveBeenCalled();
+  });
+
+  it("does not narrate the stop as a switch to an external server", () => {
+    // `stopChatDaemonOnly`'s default line was written for the one caller
+    // it had — saving an external URL. Mid-restart it claims a server
+    // that is not in play, one line before "starting …" contradicts it.
+    const emitted: Array<{ type: string; line?: string }> = [];
+    const orchestrator = new LocalModelsOrchestrator({
+      emit: (a) => emitted.push(a as never),
+      subscribe: () => () => {},
+    });
+    let stoppedLine: string | undefined;
+    vi.spyOn(orchestrator, "stopChatDaemonOnly").mockImplementation(
+      async (opts) => {
+        stoppedLine = opts?.stoppedLine;
+        return true;
+      },
+    );
+    vi.spyOn(orchestrator, "startDaemon").mockResolvedValue(true);
+
+    void orchestrator.restartDaemon();
+
+    expect(stoppedLine).toBeDefined();
+    expect(stoppedLine).not.toContain("external URL");
+  });
+
+  it("coalesces a double `R` onto one restart instead of two spawns", async () => {
+    // Two restarts in flight both clear the pid file on their stop and
+    // both find it empty at the top of `startDaemon` — the guard there
+    // is read a backend-update-and-device-probe before the file is
+    // written. Both spawn; the second overwrites the pid file, and the
+    // first `llama-server` is orphaned holding the port and the VRAM,
+    // unreachable by every TUI stop from then on.
+    const orchestrator = new LocalModelsOrchestrator({
+      emit: () => {},
+      subscribe: () => () => {},
+    });
+    const stop = vi
+      .spyOn(orchestrator, "stopChatDaemonOnly")
+      .mockImplementation(async () => {
+        await new Promise((r) => setTimeout(r, 5));
+        return true;
+      });
+    const start = vi
+      .spyOn(orchestrator, "startDaemon")
+      .mockImplementation(async () => {
+        await new Promise((r) => setTimeout(r, 5));
+        return true;
+      });
+
+    const first = orchestrator.restartDaemon();
+    const second = orchestrator.restartDaemon();
+
+    await expect(Promise.all([first, second])).resolves.toEqual([true, true]);
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(stop).toHaveBeenCalledTimes(1);
+
+    // The guard is per-restart, not a latch: the next `R` still works.
+    await expect(orchestrator.restartDaemon()).resolves.toBe(true);
+    expect(start).toHaveBeenCalledTimes(2);
   });
 });

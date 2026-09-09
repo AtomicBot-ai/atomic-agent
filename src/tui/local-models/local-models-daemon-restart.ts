@@ -16,8 +16,10 @@ export interface DaemonRestartDeps {
   /**
    * Stop ONLY the managed chat daemon. Leaves the embedding daemon (and
    * therefore hybrid recall) running, and is a no-op when nothing is up.
+   * Resolves false when the stop failed and the process is still up — it
+   * reports the failure itself, it does not throw.
    */
-  stopChatDaemonOnly(): Promise<void>;
+  stopChatDaemonOnly(): Promise<boolean>;
   /** Start the managed chat daemon; owns the model/backend preflight. */
   startDaemon(): Promise<boolean>;
 }
@@ -50,11 +52,17 @@ export async function restartLocalDaemon(deps: DaemonRestartDeps): Promise<boole
   // a `llama-server` entry under a custom id is still the local route.
   const llm = resolveLlmConfig(cfg);
   if (!activeTextProviderIsLlamaServer(llm)) {
+    // Careful with the wording: "nothing local to restart" is not true.
+    // `fallback.appendLocal` defaults to true, so a managed daemon is
+    // very often still up and still in the chain behind a cloud head.
+    // What is true is that this action bounces the daemon behind the
+    // ACTIVE route, and that is not one — switching the route back is
+    // the operator's call, not something a restart key should do.
     deps.emit({
       type: "runtime_info",
       line:
-        `local-llm: the active chat route is "${llm.activeTextProvider}" — nothing ` +
-        "local to restart; run /llm check to probe the live route",
+        `local-llm: the active chat route is "${llm.activeTextProvider}", not the ` +
+        "local one — nothing to restart on this route; run /llm check to probe it",
     });
     return false;
   }
@@ -71,8 +79,9 @@ export async function restartLocalDaemon(deps: DaemonRestartDeps): Promise<boole
     type: "runtime_info",
     line: "local-llm: restarting the model server…",
   });
+  let stopped: boolean;
   try {
-    await deps.stopChatDaemonOnly();
+    stopped = await deps.stopChatDaemonOnly();
   } catch (e) {
     // `stopChatDaemonOnly` reports its own failures, but a throw from it
     // must not leave the operator staring at "restarting…" forever.
@@ -81,6 +90,21 @@ export async function restartLocalDaemon(deps: DaemonRestartDeps): Promise<boole
     deps.emit({
       type: "runtime_info",
       line: `local-llm: restart failed — ${msg}`,
+    });
+    return false;
+  }
+  if (!stopped) {
+    // The old process is still up and still owns the port. Starting
+    // anyway would spawn a second `llama-server` — the only guard in
+    // `daemon-lifecycle.startDaemon` is a pid file the survivor still
+    // owns, and once a second spawn overwrites it the first is orphaned
+    // beyond the reach of any TUI stop. `stopChatDaemonOnly` has already
+    // set the error line, so this only names the consequence.
+    deps.emit({
+      type: "runtime_info",
+      line:
+        "local-llm: restart aborted — the chat daemon is still up; starting " +
+        "on top of it would leave a second server nothing can stop",
     });
     return false;
   }

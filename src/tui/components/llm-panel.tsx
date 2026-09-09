@@ -190,12 +190,23 @@ function footerHint(mode: LlmPanelMode, useFull: boolean): string {
   }
   if (mode === "local") {
     // `←/→ switch pane` is the short form of the pane list the other
-    // hints spell out: the strip is budgeted as ONE row, and Ink wraps
-    // rather than clips, so `R restart` had to be paid for out of an
-    // existing hint rather than added on top.
+    // hints spell out, so `R restart` is paid for out of an existing
+    // hint rather than added on top: the full strip ends up SHORTER than
+    // it was (115 columns against 128), which is what matters, because
+    // the header budgets this footer as two rows and Ink wraps rather
+    // than clips. It still takes both rows below ~116 columns — as it
+    // did before, and as the Cloud pane's 129-column strip does.
+    //
+    // The compact strip does NOT list it. It is budgeted as one row of a
+    // 3-row header and the supported floor is 40x16 (`minimum-window-
+    // size.test.tsx`), which leaves 38 columns once the root padding is
+    // paid: `R restart` pushed it to 46 and wrapped it onto a second row
+    // the header has not budgeted, and Ink paints the overflow over the
+    // list rather than clipping it. Compact already omits `s start/stop`,
+    // `e`/`E`, `B` and `L` on the same rule — the keys keep working.
     return useFull
       ? "j/k move · Enter selected action · a add from hugging face · ←/→ switch pane · s start/stop · R restart · r refresh"
-      : "j/k · Enter · a add · ←/→ mode · R restart · r";
+      : "j/k · Enter · a add · ←/→ mode · r";
   }
   return useFull
     ? "j/k move · Enter selected action · ←/→ switch Local/Cloud/External/Fallback · f filter · n add provider · c configure · r refresh"
