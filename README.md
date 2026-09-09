@@ -567,6 +567,8 @@ OBSIDIAN_VAULT_PATH=/Users/me/Documents/Obsidian Vault
 
 Shell-exported variables win over `.env`. The built-in parser intentionally supports only simple `KEY=VALUE` lines.
 
+The Integrations tab (`/integrations`) writes these for you. Its **GitHub** entry stores `GITHUB_TOKEN` and carries the **Remote sync** switch (`git.remoteSync`, off by default): while it is off, a repository the agent versions stays on this machine — `git push`, `fetch`, `pull`, `clone` and `remote add` are refused, through the git tools and through the shell alike — so you keep full local history without publishing anything. Turn it on when a project should reach GitHub; every sync then goes through the approval ladder.
+
 </details>
 
 <details>
