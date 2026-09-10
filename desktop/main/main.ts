@@ -1994,12 +1994,18 @@ async function smokeTest(): Promise<void> {
         + " const coalesced = window.__modeQueue();"
         + " const duringBusy = window.__modeState().current;"
         + " window.__modeBusy(false);"
-        + " await new Promise((r) => setTimeout(r, 2500));"
+        /* Wait for the queued re-assert to LAND, not for 2.5 seconds to pass.
+           Applying it is a round trip to the agent's coding-mode route, and
+           on a loaded machine that outruns any fixed window — this read
+           `default` and went red while the re-assert was still in flight. */
+        + " for (let i = 0; i < 60 && window.__modeState().current !== 'bypass'; i++)"
+        + "   await new Promise((r) => setTimeout(r, 250));"
         + " const afterWait = window.__modeState().current;"
         + " window.__modeBusy(true); window.__modeReassert('plan'); window.__modeBusy(false);"
         + " await window.__modeSet('default');"
         + " const cancelled = window.__modeQueue() === null;"
-        + " await new Promise((r) => setTimeout(r, 1500));"
+        + " for (let i = 0; i < 40 && window.__modeState().current !== 'default'; i++)"
+        + "   await new Promise((r) => setTimeout(r, 250));"
         + " return {start, queued: queued && queued.mode, coalesced: coalesced && coalesced.mode,"
         + "   duringBusy, afterWait, cancelled, afterCancel: window.__modeState().current}; })()",
       );
@@ -4338,6 +4344,25 @@ async function settingsTestPartB(
   await js<void>("window.__skillsAct('search:pdf')");
   const found = await until(skills, (s) => !s.hubLoading, 120_000);
   const first = found.hubRows[0];
+  /* ClawHub is somebody else's server, and these two checks go red when it
+     has a bad minute — seen for real: `ClawHub request failed (503)`, and the
+     window did exactly the right thing, falling back to the GitHub taps and
+     saying the preview is pulled at install. A check that fails when a third
+     party is down is a check that cries wolf; the same rule as the GitHub
+     rate-limit branch above. Skip with the reason, and keep asserting the
+     fallback the window is responsible for. */
+  const hubDown = /request failed \((?:5\d\d|429)\)|ENOTFOUND|ETIMEDOUT|fetch failed/i.test(found.hubError ?? "");
+  if (hubDown) {
+    process.stdout.write(
+      `SKIP the two ClawHub search checks — the service answered ${JSON.stringify(found.hubError)}. `
+      + `The window fell back to the GitHub taps, which is what it owes here.\n`,
+    );
+    check(
+      "skills hub: a ClawHub outage falls back to the taps instead of an empty pane",
+      found.hubRows.length > 0,
+      `${found.hubRows.length} rows from the taps while ClawHub is down`,
+    );
+  } else {
   check("skills hub: `/` search runs `atag skill search` and lists owner-qualified rows", found.hubRows.length > 0 && !!first && first.source === "clawhub" && first.identifier.startsWith("@"), `${found.hubRows.length} rows, first=${first ? first.identifier : "none"}${found.hubError ? " hubError=" + found.hubError : ""}`);
   if (first) {
     // ClawHub's search can list an owner its detail endpoint does not resolve (seen: search says @anthropics/pdf, the
@@ -4360,6 +4385,7 @@ async function settingsTestPartB(
       await js<void>("window.__skillsAct('back')");
     }
     check("skills hub: the card body comes from ClawHub's detail endpoint", !!resolved && chromeOk, outcomes.join("; "));
+    }
   }
   const backToList = await until(async () => { await js<void>("window.__skillsAct('back')"); return skills(); }, (s) => s.mode === "list", 3_000);
   check("skills hub: Esc returns to the list", backToList.mode === "list", `mode=${backToList.mode}`);
@@ -8947,7 +8973,17 @@ async function onboardingTest(
         " window.__obSeed({importReport:{items:[], summary:{migrated:0, skipped:3, conflict:0, error:0}, executed:false}})," +
         " window.__obKey('enter'))",
     );
-    const nothing = await settled();
+    /* Wait for the flow to CLOSE, not for it to be sitting on `finished`.
+       `settled()` only loops while the step is already "finished", so it
+       returns immediately during the gap between Enter and that step — and
+       Enter here starts async work (the stamp write, then the close). The
+       race is invisible on a quiet machine and cost a red run on a busy one.
+       If it genuinely never closes, this still fails, just after 10s. */
+    let nothing = await settled();
+    for (let i = 0; i < 40 && nothing.open; i += 1) {
+      await new Promise((r) => setTimeout(r, 250));
+      nothing = await js<ObState>("window.__ob()");
+    }
     const nothingCopy = await js<ObCopy>("window.__obCopy()");
     check(
       "wizard: a preview with nothing to do ends the flow, and says so",
@@ -9374,17 +9410,27 @@ async function planHandoffTest(
 
     }
     const refused = live.filter((c) => c.ok === false && c.out.startsWith("plan mode is on, so `"));
-    const anyResolved = live.some((c) => c.ok !== null);
+    /* A card the desktop FORCED carries no truth from the store.
+       reconcileToolCards gives up after ~6s and marks a card ok itself so the
+       transcript does not sit pending for ever — a kindness in the app, and a
+       trap here: `ok !== null` then looks like "the store answered" when the
+       store was never written at all. That is exactly what a turn which runs
+       past its budget produces, and it turned this check red with nine cards
+       reading ok=true/forced=true. What the store answered is only knowable
+       from the cards it did NOT force. */
+    const fromStore = live.filter((c) => !c.forced);
+    const anyResolved = fromStore.some((c) => c.ok !== null);
     if (live.length > 0 && !anyResolved) {
-      /* Cards exist but none carries a result. That is not a reconcile bug:
-         the session store is written when a turn ENDS, so a turn still going
-         (or one that hit its step limit while retrying refused tools) leaves
-         nothing to reconcile against, and the cards stay pending for ever.
-         Asserting the refusal text here would be asserting that the model
-         stopped, which is not this app's behaviour to guarantee. */
+      /* Cards exist but none carries a result FROM THE STORE. That is not a
+         reconcile bug: the session store is written when a turn ENDS, so a
+         turn still going (or one that hit its step limit while retrying
+         refused tools) leaves nothing to reconcile against. Asserting the
+         refusal text here would be asserting that the model stopped, which is
+         not this app's behaviour to guarantee. */
       process.stdout.write(
         `SKIP plan mode's refusal reaches the tool card verbatim from the store — the turn never finished,`
-        + ` so the store was never written (${live.length} card(s) still pending). Plan-mode enforcement is`
+        + ` so the store was never written (${live.length} card(s), ${live.filter((c) => c.forced).length} forced by the`
+        + ` reconcile timeout). Plan-mode enforcement is`
         + ` asserted by the no-file check below, which does not depend on the turn ending.\n`,
       );
     } else if (live.length > 0) {
