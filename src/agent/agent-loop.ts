@@ -948,18 +948,27 @@ export class AgentLoop {
      *
      * A recovery that "spends a step" is a promise of another
      * inference: the operator is told the turn is trying again, and the
-     * failure is dropped on the strength of that. All three ceilings
-     * can make that promise false. The task and time ceilings are
-     * already covered — the finalization guard above preempts every
-     * recovery on the last allowed step and on any step that starts
-     * past the duration ceiling, which is why the `stepCeiling` test
-     * here is belt-and-braces — but the LEG boundary is not covered by
-     * anything. A recovery taken on the final step of a
-     * leg that has produced nothing usable lands on the `no_progress`
-     * break, which leaves the loop before `executeStep` runs again: the
-     * announced retry never happens, the step is burnt for nothing, and
-     * the model diagnosis is swallowed into "ran out of steps" — taking
-     * the error report with it, since only `loop_failed` is captured.
+     * failure is dropped on the strength of that. The LEG boundary is
+     * the one ceiling that can make that promise entirely false, and it
+     * is the one this predicate exists for. A recovery taken on the
+     * final step of a leg that has produced nothing usable lands on the
+     * `no_progress` break, which leaves the loop before `executeStep`
+     * runs again: the announced retry never happens, the step is burnt
+     * for nothing, and the model diagnosis is swallowed into "ran out
+     * of steps" — taking the error report with it, since only
+     * `loop_failed` is captured.
+     *
+     * The step and duration ceilings are deliberately NOT solved here.
+     * The finalization guard preempts a recovery on a step that is
+     * already final, but nothing stops one from LANDING on the final
+     * step — and there the retry genuinely runs, so refusing it would
+     * forfeit a real inference (and, on the last step of a long task,
+     * the summary it might still produce). What that case needs is for
+     * its failure to be reported instead of swallowed, which is
+     * `repeatedEmptyAfterAnnouncedRetry` in the catch below. The
+     * `stepCeiling` test that follows is therefore only a floor: it
+     * rejects a retry with no step at all left to run in, which the
+     * finalization guard already makes unreachable.
      *
      * Reading `legMadeProgress` here is reading exactly what the
      * boundary will read: a recovery cannot set it (it produced nothing
@@ -1552,7 +1561,32 @@ export class AgentLoop {
           i -= 1;
           continue;
         }
-        if (finalizationStep && !cancelled) {
+        // The retry this turn ANNOUNCED, landing on the finalization
+        // step and coming back empty again.
+        //
+        // The guard below normally swallows a finalization failure: the
+        // turn ends `max_steps`/`stalled` and `runError` is dropped.
+        // That is right for a step nobody was promised, and wrong here.
+        // The operator was told the turn was trying again, and without
+        // this recovery the same scenario ends `failed` carrying the
+        // model's own diagnosis — so swallowing it would trade a
+        // readable failure for "ran out of steps" AND drop the error
+        // report, since only `loop_failed` is captured. Reporting it
+        // executes no further work, which is the one thing the
+        // finalization guard exists to prevent.
+        //
+        // Both ceilings put the retry here: the step ceiling whenever
+        // the empty lands on the second-to-last allowed step (`run
+        // --max-steps 2`; a fusion worker at step 38 of its 40), and
+        // the duration ceiling whenever `agent.task.maxDurationMs` is
+        // crossed between the two attempts.
+        const repeatedEmptyAfterAnnouncedRetry =
+          emptyRecoveries > 0 && isRecoverableEmptyCompletion(err);
+        if (
+          finalizationStep &&
+          !cancelled &&
+          !repeatedEmptyAfterAnnouncedRetry
+        ) {
           // A failed finalization must not execute more work or turn a
           // bounded run into an unbounded retry. Preserve the established
           // explicit max-steps/stalled outcome instead.
@@ -1643,8 +1677,15 @@ export class AgentLoop {
         // on the last step of a barren leg the retry would be announced
         // and never performed, and the operator would be handed
         // "ran out of steps" in place of the model's own diagnosis.
+        //
+        // `!finalizationStep` is redundant today — the guard above only
+        // falls through to here for a repeated empty, which has already
+        // spent the budget — but it is the invariant that keeps it
+        // redundant: a budget above one must never announce a retry on
+        // a step the loop is about to leave.
         if (
           !cancelled &&
+          !finalizationStep &&
           emptyRecoveries < EMPTY_COMPLETION_RECOVERY_BUDGET &&
           recoveryStepAvailable(i) &&
           isRecoverableEmptyCompletion(err)
@@ -1673,9 +1714,12 @@ export class AgentLoop {
         // describes a single empty completion — an operator reading it
         // would reasonably conclude the runtime never retried. Say the
         // count instead.
-        if (emptyRecoveries > 0 && isRecoverableEmptyCompletion(err)) {
+        // `category` is deliberately not recomputed: the rewrite keeps
+        // the same `reason` on a `ModelError`, whose category is pinned
+        // to `model`, so reclassifying could only ever return what it
+        // already holds.
+        if (repeatedEmptyAfterAnnouncedRetry) {
           runError = repeatedEmptyCompletionError(err);
-          category = classifyFailure(runError);
         }
         // The provider is not answering. Park the turn instead of
         // killing it: nothing of this step has been committed (a

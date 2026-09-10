@@ -2593,6 +2593,122 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     expect(failures[0]?.category).toBe("grammar");
   });
 
+  it("reports the doubled empty when the announced retry lands on the final allowed step", async () => {
+    // The retry is announced at step `stepCeiling - 2` and spent at
+    // `stepCeiling - 1`, which is the finalization step — and a
+    // finalization failure normally ends the turn `max_steps`/`stalled`
+    // with `runError` dropped. That would be a REGRESSION: without the
+    // recovery this scenario fails on the first empty carrying the
+    // model's diagnosis, so swallowing it would hand the operator "ran
+    // out of steps" for a promise the turn made and kept, and drop the
+    // error report with it. `run --max-steps 2` is the smallest window
+    // that reaches it.
+    const registry = buildDefaultToolRegistry();
+    let llmCalls = 0;
+    let recovered = 0;
+    const failures: Array<{ category: string; message: string }> = [];
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      toolTransport: "native_tools",
+      toolCallAdapter: null,
+      llmComplete: async () => {
+        llmCalls += 1;
+        return makeNativeCompletion();
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (event.type === "empty_completion_recovered") recovered += 1;
+        if (event.type === "loop_failed")
+          failures.push({
+            category: event.category,
+            message: event.error.message,
+          });
+      },
+    });
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "s-empty-nt-final", workingDir }),
+      {
+        userMessage: "go",
+        maxSteps: 2,
+        autoContinue: false,
+        signal: new AbortController().signal,
+      },
+    );
+    // The retry really happened — this is not the "no step left" guard.
+    expect(recovered).toBe(1);
+    expect(llmCalls).toBe(2);
+    expect(result.reason).toBe("failed");
+    expect(result.session.status).toBe("failed");
+    expect(failures).toHaveLength(1);
+    expect(failures[0]?.category).toBe("model");
+    expect(failures[0]?.message).toContain("twice in a row");
+  });
+
+  it("reports the doubled empty when the announced retry lands past the duration ceiling", async () => {
+    // The other way a retry lands on a finalization step: the step
+    // ceiling is nowhere near, but `agent.task.maxDurationMs` is
+    // crossed by the first attempt, so the retry starts `outOfTime`.
+    // Same swallow, same fix — and this one is unreachable by the
+    // `stepCeiling` arithmetic alone, which is why the guard is on the
+    // failure, not on the step count.
+    let clock = 1_000_000;
+    vi.spyOn(Date, "now").mockImplementation(() => clock);
+    try {
+      const registry = buildDefaultToolRegistry();
+      let llmCalls = 0;
+      let recovered = 0;
+      const failures: Array<{ category: string; message: string }> = [];
+      const loop = new AgentLoop({
+        registry,
+        slotManager: new SlotManager(2),
+        grammar: 'root ::= "ok"',
+        toolTransport: "native_tools",
+        toolCallAdapter: null,
+        llmComplete: async () => {
+          llmCalls += 1;
+          // Each attempt burns twice the task's whole time budget, so
+          // the step after the first one starts past the ceiling.
+          clock += 60_000;
+          return makeNativeCompletion();
+        },
+        toolDescriptors: TOOLS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        onEvent: (event) => {
+          if (event.type === "empty_completion_recovered") recovered += 1;
+          if (event.type === "loop_failed")
+            failures.push({
+              category: event.category,
+              message: event.error.message,
+            });
+        },
+      });
+      const result = await loop.runTurn(
+        createEmptySessionState({ id: "s-empty-nt-time", workingDir }),
+        {
+          userMessage: "go",
+          maxSteps: 40,
+          taskMaxSteps: 40,
+          taskMaxDurationMs: 30_000,
+          signal: new AbortController().signal,
+        },
+      );
+      expect(recovered).toBe(1);
+      expect(llmCalls).toBe(2);
+      expect(result.reason).toBe("failed");
+      expect(result.session.status).toBe("failed");
+      expect(failures).toHaveLength(1);
+      expect(failures[0]?.category).toBe("model");
+      expect(failures[0]?.message).toContain("twice in a row");
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
   it("does not recover a request the model server itself rejected", async () => {
     const registry = buildDefaultToolRegistry();
     let llmCalls = 0;
