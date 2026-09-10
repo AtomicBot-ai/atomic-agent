@@ -175,6 +175,24 @@ describe("handleEditorSubmit", () => {
     ).toBe(true);
   });
 
+  it("routes /llm restart through the callback, not dispatch", () => {
+    // Same rule as /model above: `restartDaemon` lives on the
+    // local-models orchestrator, which never sees a dispatched action.
+    const state = createInitialTuiState(fakeSession());
+    const dispatched: Array<{ type: string }> = [];
+    const onRestart = vi.fn();
+    handleEditorSubmit(
+      "/llm restart",
+      state,
+      ((a: { type: string }) => dispatched.push(a)) as never,
+      stubCallbacks({ onLocalModelsDaemonRestartRequested: onRestart }),
+    );
+    expect(onRestart).toHaveBeenCalledTimes(1);
+    expect(
+      dispatched.some((a) => a.type === "local_models_daemon_restart_requested"),
+    ).toBe(false);
+  });
+
   it("with palette open, runs the buffer when it is a full registered command (stale slashQuery)", () => {
     const base = createInitialTuiState(fakeSession());
     const state: TuiState = {

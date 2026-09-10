@@ -324,10 +324,27 @@ describe("dispatchSlashCommand", () => {
     expect(result.systemMessage).toContain("one request");
   });
 
-  it("names /llm check in the usage line so it is discoverable", () => {
+  it("asks the orchestrator to bounce the local model server on /llm restart", () => {
+    const result = dispatchSlashCommand("/llm restart");
+    // A reducer no-op on purpose: `submit-handler` intercepts it and
+    // calls `onLocalModelsDaemonRestartRequested`, the only path that
+    // reaches `LocalModelsOrchestrator.restartDaemon`.
+    expect(result.actions).toEqual([
+      { type: "local_models_daemon_restart_requested" },
+    ]);
+    // Deliberately not "restarting…": the same command answers "nothing
+    // local to restart" on a cloud route, and the chat line must not
+    // contradict the feed.
+    expect(result.systemMessage).toContain(
+      "asking the local model server to restart",
+    );
+  });
+
+  it("names /llm check and /llm restart in the usage line so they are discoverable", () => {
     const result = dispatchSlashCommand("/llm nonsense");
     expect(result.actions).toEqual([]);
     expect(result.systemMessage).toContain("/llm check");
+    expect(result.systemMessage).toContain("/llm restart");
   });
 
   it("signals triggerLocalModelsStatus for /models status", () => {

@@ -136,6 +136,15 @@ export function handleLlmPanelKey(
     triggerDaemonAction(state, callbacks);
     return true;
   }
+  // `R` (uppercase) restarts the local model server — one keypress for
+  // the "llama-server wedged" case. On shift so it cannot be confused
+  // with `r` (refresh the panel), and because it costs a model reload.
+  // Deliberately not `s` twice: that path also stops the embedding
+  // daemon and turns hybrid recall off.
+  if (input === "R") {
+    callbacks.onLocalModelsDaemonRestartRequested?.();
+    return true;
+  }
   // `a` — add a model the curated catalog does not carry. Local pane
   // only: it writes a local GGUF catalog entry, which means nothing
   // next to a cloud provider's model list. From the other panes it

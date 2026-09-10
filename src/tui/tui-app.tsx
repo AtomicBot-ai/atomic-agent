@@ -358,6 +358,12 @@ export interface TuiAppCallbacks {
   /** Ask the orchestrator to stop the llama-server daemon. */
   onLocalModelsDaemonStopRequested?(): void | Promise<void>;
   /**
+   * Bounce a wedged llama-server: stop the chat daemon and start it
+   * again. Distinct from stop-then-start by hand, which also tears down
+   * the embedding daemon and turns hybrid recall off.
+   */
+  onLocalModelsDaemonRestartRequested?(): void | Promise<void>;
+  /**
    * Memory-v2 phase 1B. Pull an embedding model's GGUF, then mark it as
    * the active embedding model. Does not (re)start the embedding
    * daemon — the operator chains an explicit `s` for that.

@@ -1,8 +1,13 @@
+import { Box } from "ink";
 import { render } from "ink-testing-library";
 import { describe, expect, it } from "vitest";
 
 import { createInitialTuiState, type TuiState } from "../tui-state.js";
 import { fakeSession } from "../test-fixtures.js";
+import {
+  LLM_PANEL_MODES,
+  type LlmPanelMode,
+} from "../llm-panel/llm-panel-state.js";
 import type { ProvidersChatModelPickerState } from "../providers/providers-panel-state.js";
 import { KIND_ROW_ORDER } from "../providers/providers-wizard-phases.js";
 import { createProvidersWizardState } from "../providers/providers-wizard-state.js";
@@ -281,4 +286,49 @@ describe("the status line's pane routing", () => {
       "probing http://10.0.0.5:8080…",
     );
   });
+});
+
+/**
+ * The compact header budgets the hint strip as exactly ONE row
+ * (`COMPACT_HEADER_ROWS` = route + status + footer), and Ink 7 paints an
+ * over-tall frame over the rows above rather than clipping it. The
+ * supported floor is 40x16 (`minimum-window-size.test.tsx`), which leaves
+ * 38 columns once `ROOT_PADDING_LEFT` is paid and the rail is hidden
+ * (it needs 100). So the compact strip has 38 columns, for every pane.
+ */
+describe("the compact hint strip fits the supported floor", () => {
+  const FLOOR_COLUMNS = 38;
+
+  function paneState(mode: LlmPanelMode): TuiState {
+    const base = createInitialTuiState(fakeSession());
+    return {
+      ...base,
+      uiMode: "debug" as const,
+      activeTab: "llm" as const,
+      llmPanel: { ...base.llmPanel, mode },
+    };
+  }
+
+  // The Fallback pane's compact strip is 57 columns and has overflowed
+  // this floor since it was written — a pre-existing bug with the same
+  // failure mode, but fixing it means deciding which of its five
+  // bindings to drop, which is not this change's call to make. Excluded
+  // rather than silently reshaped here.
+  const MODES = LLM_PANEL_MODES.filter((m) => m !== "fallback");
+
+  for (const mode of MODES) {
+    it(`stays on one row on the ${mode} pane`, () => {
+      const { lastFrame } = render(
+        <Box width={FLOOR_COLUMNS}>
+          <LlmPanel state={paneState(mode)} maxRows={8} />
+        </Box>,
+      );
+      const rows = stripAnsi(lastFrame() ?? "").split("\n");
+      const hint = rows.at(-1) ?? "";
+      // A wrapped strip shows up as a tail row that is a continuation of
+      // the hint rather than the whole of it: assert the last row starts
+      // the strip, so nothing spilled onto a row above it.
+      expect(hint.trimStart().startsWith("j/k"), `last row: ${hint}`).toBe(true);
+    });
+  }
 });

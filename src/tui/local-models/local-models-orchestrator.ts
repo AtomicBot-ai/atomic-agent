@@ -90,6 +90,7 @@ import { persistUserLocalModelsConfig } from "../persist-user-local-models-confi
 import { isDownloadNotifyChannelReady } from "../../notifications/index.js";
 import { persistDownloadNotifyChannel } from "./persist-download-notify.js";
 import type { LocalModelsNotifyChoice } from "./local-models-panel-state.js";
+import { restartLocalDaemon } from "./local-models-daemon-restart.js";
 import { ChatPullMirror, downloadProgressFor } from "../local-turn-gate.js";
 import type { TuiEventBus } from "../tui-app.js";
 
@@ -211,6 +212,12 @@ export class LocalModelsOrchestrator {
    * same in-flight promise.
    */
   private backendPullInFlight: Promise<void> | null = null;
+  /**
+   * Single-flight guard for `restartDaemon`. See that method for why a
+   * second concurrent restart is not merely redundant but leaks a
+   * `llama-server` process nothing can stop afterwards.
+   */
+  private restartInFlight: Promise<boolean> | null = null;
   /**
    * Devices enumerated via `llama-server --list-devices`, cached for the
    * process lifetime. `null` until a successful enumeration with the
@@ -1843,6 +1850,47 @@ export class LocalModelsOrchestrator {
   }
 
   /**
+   * Bounce a wedged local model server: stop the chat daemon, start it
+   * again, leaving the embedding side (and hybrid recall) untouched. The
+   * decision table — managed / external / a cloud route is live — lives
+   * in `local-models-daemon-restart.ts`; this method is only the wiring.
+   *
+   * Single-flight, for the same reason `pullBackend` is: `R` is one
+   * keypress with no on-pane feedback until the phase flips, so it gets
+   * pressed twice. Two restarts running at once both clear the pid file
+   * on their stop, both find it empty at the top of `startDaemon`, and
+   * both spawn — the pid-file guard in `daemon-lifecycle.startDaemon` is
+   * read a whole backend-update-and-device-probe before the file is
+   * written. The loser's `llama-server` is then orphaned: no pid file
+   * points at it, so nothing in the TUI can ever stop it, and it keeps
+   * the port and the VRAM. Concurrent callers share the one restart.
+   */
+  async restartDaemon(): Promise<boolean> {
+    if (this.restartInFlight) {
+      this.bus.emit({
+        type: "runtime_info",
+        line: "local-llm: a restart is already running — waiting for it",
+      });
+      return this.restartInFlight;
+    }
+    const inFlight = restartLocalDaemon({
+      emit: (action) => this.bus.emit(action),
+      stopChatDaemonOnly: () =>
+        this.stopChatDaemonOnly({
+          // The default line is written for the external-URL switch and
+          // would claim, mid-restart, that an external server is the
+          // route now. Nothing external is involved here.
+          stoppedLine: "local-llm: chat daemon stopped — bringing it back up…",
+        }),
+      startDaemon: () => this.startDaemon(),
+    }).finally(() => {
+      this.restartInFlight = null;
+    });
+    this.restartInFlight = inFlight;
+    return inFlight;
+  }
+
+  /**
    * Stop only the managed *chat* daemon, leaving the embedding daemon —
    * and therefore hybrid recall — running. Used when the chat route moves
    * to an external llama-server: the managed chat process is the one that
@@ -1852,14 +1900,24 @@ export class LocalModelsOrchestrator {
    * unconditionally without emitting a misleading "stopped" line.
    * `daemonSupervised` is deliberately left alone: the embedding side may
    * still be ours to tear down at exit.
+   *
+   * @param opts.stoppedLine overrides the feed line for callers that are
+   * not switching to an external server (the restart, which brings the
+   * managed daemon straight back).
+   * @returns whether the chat daemon is down afterwards — `false` only
+   * when the stop itself failed (a `ForeignDaemonError`, say). The
+   * failure is reported here rather than thrown, so a caller that means
+   * to start a server on top of the stop has to read this instead: the
+   * only guard in `daemon-lifecycle.startDaemon` is a pid file the dead
+   * process still owns.
    */
-  async stopChatDaemonOnly(): Promise<void> {
+  async stopChatDaemonOnly(opts?: { stoppedLine?: string }): Promise<boolean> {
     const cfg = getConfig();
     const dataDir = cfg.paths.localModelsDataDir;
     const status = await getDaemonStatus(dataDir, cfg.localModels.managed.port);
     if (!status.running) {
       await this.refresh();
-      return;
+      return true;
     }
     this.bus.emit({ type: "local_models_daemon_phase_set", phase: "stopping" });
     this.beginActiveRefresh();
@@ -1867,8 +1925,11 @@ export class LocalModelsOrchestrator {
       await stopChatDaemonProcess(dataDir);
       this.bus.emit({
         type: "runtime_info",
-        line: "local-llm: managed chat daemon stopped — the external URL is the chat route now",
+        line:
+          opts?.stoppedLine ??
+          "local-llm: managed chat daemon stopped — the external URL is the chat route now",
       });
+      return true;
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       this.bus.emit({ type: "local_models_daemon_error_set", message: msg });
@@ -1876,6 +1937,7 @@ export class LocalModelsOrchestrator {
         type: "runtime_info",
         line: `local-llm: stop failed — ${msg}`,
       });
+      return false;
     } finally {
       this.endActiveRefresh();
       await this.refresh();
