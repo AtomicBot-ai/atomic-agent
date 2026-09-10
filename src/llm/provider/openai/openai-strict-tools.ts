@@ -306,18 +306,36 @@ export function toStrictOpenAiTools(
  *
  * Because an optional parameter is expressed as "required, but may be
  * `null`", a model under strict mode stops omitting keys and starts
- * sending `"userName": null`. That is a real behaviour change on the
- * *response* side, and several tools branch on presence rather than on
- * value — `os.git.init` (`args.userName !== undefined`),
- * `memory.profile.set` (`rawArgs.pinned`, `rawArgs.keywords`) — so an
- * explicit null would take the "the caller asked for this" branch with
- * nothing to put in it.
+ * sending `"pinned": null`. That is a real behaviour change on the
+ * *response* side, and a tool that branches on presence rather than on
+ * value takes the "the caller asked for this" branch with nothing to
+ * put in it. `memory.profile.set` is the live example: `parseSetOptions`
+ * gates on `rawArgs.pinned !== undefined` and then demands a boolean, so
+ * an explicit null turns a well-formed call into a validation error.
+ * (`os.git.init` reads the same way at a glance but is safe — its own
+ * `optionalString` maps `null` to `undefined` before the presence check.)
  *
  * So when strict tools are on, a top-level `null` argument is dropped
  * and the call reads exactly as it did before: the key is absent.
- * **Top-level only.** A null nested inside an argument is data the
- * model meant to send, and no schema this transform converts turns a
- * nested optional into a null the caller did not choose.
+ *
+ * **Top-level only**, with two consequences worth naming rather than
+ * implying:
+ *
+ *   - A null nested inside an argument survives. That is usually right
+ *     — it is data the model meant to send — but this transform does
+ *     widen nested optionals too, so it is not only third-party
+ *     schemas that can produce one. In this repo the nested nullables
+ *     are `os.fs.archive.extract.limits.{maxEntries,maxEntryBytes,
+ *     maxTotalBytes}` and `fusion.delegate.tasks[].{deliverable,files}`;
+ *     all five readers (`readLimit`, `readString`, `readFiles`) already
+ *     map `null` to their default, so nothing is broken today. A new
+ *     nested optional whose reader gates on `!== undefined` would be.
+ *   - The drop rides on the tool-call adapter, so it covers the
+ *     `tool_calls` envelope only. `step-executor.ts` has two content
+ *     recovery paths (a GBNF-style array in `content`, and the same in
+ *     `reasoning_content`) that build a batch from the grammar parser
+ *     and use the adapter for `nameUnescape` alone — a null the model
+ *     puts in *those* reaches the tool unfiltered.
  */
 export function withoutTopLevelNullArgs(
   args: Record<string, unknown>,

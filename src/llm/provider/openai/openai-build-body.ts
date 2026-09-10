@@ -68,7 +68,19 @@ export function buildOpenAiChatBody(
     body.tools = strictTools
       ? toStrictOpenAiTools(filtered.tools)
       : filtered.tools;
-    body.parallel_tool_calls = filtered.parallelToolCalls ?? true;
+    // Strict decoding and parallel calls do not compose. OpenAI's own
+    // guidance: "Structured Outputs is not compatible with parallel
+    // function calls — when a parallel function call is generated, it
+    // may not match supplied schemas. Set `parallel_tool_calls: false`."
+    // Leaving the default `true` here would emit `strict: true` on
+    // every tool and still get best-effort adherence, i.e. the exact
+    // symptom the flag exists to cure. So opting into `strictTools`
+    // also opts out of parallel calls on the wire; the executor's own
+    // `maxParallelToolCalls` batching is untouched, and a provider
+    // without the flag keeps today's `parallel_tool_calls` verbatim.
+    body.parallel_tool_calls = strictTools
+      ? false
+      : (filtered.parallelToolCalls ?? true);
     if (filtered.toolChoice !== undefined) {
       body.tool_choice = filtered.toolChoice;
     }
