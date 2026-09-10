@@ -154,3 +154,35 @@ describe("formatTraceChronology parse_failure_recovered", () => {
     expect(line.length).toBeLessThan(300);
   });
 });
+
+describe("formatTraceChronology empty_completion_recovered", () => {
+  const event: TraceEvent = {
+    type: "empty_completion_recovered",
+    seq: 12,
+    sessionId: "s-1",
+    ts: Date.parse("2026-09-01T10:00:00.000Z"),
+    turnIndex: 0,
+    stepIndex: 2,
+    attempt: 1,
+    budget: 1,
+  };
+
+  it("says which step came back empty and how far into the budget", () => {
+    // The row a post-mortem of Sentry CLI-BA needs: an empty completion
+    // leaves nothing else in the trace — no tool call, no text, no
+    // error — so this line is the only evidence the step happened at
+    // all, and the only way to tell a turn that spent its retry from
+    // one that failed on the first empty.
+    const line = render([event]);
+    expect(line).toContain("#12 empty_completion_recovered");
+    expect(line).toContain("step=2 attempt=1/1");
+  });
+
+  it("carries no reason — there was no output to have rejected", () => {
+    const line = render([event]);
+    expect(line).not.toContain("reason=");
+    expect(line).not.toContain("undefined");
+    // One row, one line: the chronology stays greppable.
+    expect(line.trim().split("\n")).toHaveLength(1);
+  });
+});

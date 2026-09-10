@@ -750,6 +750,16 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
         color: "yellow",
       });
     }
+    case "empty_completion_recovered":
+      // Same reason as above, and more so: an empty completion produces
+      // literally nothing, so without this line the feed shows a step
+      // that never happened.
+      return appendFeed(state, {
+        kind: "runtime_info",
+        stepIndex: event.stepIndex,
+        line: `» the model returned an empty reply — trying again (${event.attempt}/${event.budget})`,
+        color: "yellow",
+      });
     case "loop_detected":
       // Deliberately not rendered: the loop detector's own `### notice`
       // changes what the model does, and the operator sees the effect

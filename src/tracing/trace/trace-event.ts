@@ -32,6 +32,7 @@ export type TraceEvent =
   | TraceProviderRecovered
   | TraceCompletionTruncated
   | TraceParseFailureRecovered
+  | TraceEmptyCompletionRecovered
   | TraceLessonDeprecated
   | TraceVoteApplied
   | TraceVoteRejected
@@ -204,6 +205,20 @@ export interface TraceParseFailureRecovered extends TraceEventBase {
   attempt: number;
   budget: number;
   reason: string;
+}
+
+/**
+ * A completion came back with nothing in any channel and the turn spent
+ * another step on it instead of ending. Distinct from
+ * `parse_failure_recovered`: there was no output to reject, so a
+ * post-mortem reading a `reason` here would be reading a fiction.
+ */
+export interface TraceEmptyCompletionRecovered extends TraceEventBase {
+  type: "empty_completion_recovered";
+  turnIndex: number;
+  stepIndex: number;
+  attempt: number;
+  budget: number;
 }
 
 /** The provider answered again and the parked turn resumed. */
