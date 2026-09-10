@@ -270,18 +270,44 @@ describe("OpenAiToolCallAdapter", () => {
         tools.find(
           (t) => (t as { function: { name: string } }).function.name === name,
         );
-      // The open-object fallback has no strict form...
+      // The open-object fallback has no strict form: it declares no
+      // properties, so closing it would mark a tool strict as taking no
+      // arguments at all.
       expect(pick(strictTools, "custom__tool")).toEqual(
         pick(plainTools, "custom__tool"),
       );
-      // ...and neither has `reply`, whose hand-tuned schema carries the
-      // `minLength: 1` that keeps an empty final answer off the wire.
-      expect(pick(strictTools, "reply")).toEqual(pick(plainTools, "reply"));
       // A mixed array is the point: `finish` converts, so it is marked.
       expect(
         (pick(strictTools, "finish") as { function: { strict?: boolean } })
           .function.strict,
       ).toBe(true);
+      // `reply` converts too. Its hand-tuned schema carries
+      // `minLength: 1`, which is stripped rather than refused over —
+      // the strict compiler implements no bound, so keeping it would
+      // cost the most important tool in the set its constraint and
+      // enforce nothing in exchange. The non-empty `text` rule the
+      // bound documents is the batch validator's job either way.
+      const reply = pick(strictTools, "reply") as {
+        function: { strict?: boolean; parameters: Record<string, unknown> };
+      };
+      expect(reply.function.strict).toBe(true);
+      expect(reply.function.parameters).toEqual({
+        type: "object",
+        properties: {
+          text: {
+            type: "string",
+            description: "User-visible reply text. Must be non-empty.",
+          },
+          attachments: {
+            type: ["array", "null"],
+            items: { type: "string" },
+            description:
+              "Paths of existing files to deliver with the reply (sent as files on Telegram/Discord).",
+          },
+        },
+        required: ["text", "attachments"],
+        additionalProperties: false,
+      });
     });
 
     it("survives an arbitrary MCP-supplied schema", () => {
