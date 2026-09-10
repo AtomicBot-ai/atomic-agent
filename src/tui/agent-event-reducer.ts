@@ -5,6 +5,7 @@ import {
 } from "./context-usage-from-prompt.js";
 import { formatBackgroundApprovalNotice } from "./detached-turns.js";
 import { formatAgentErrorForChat } from "./format-agent-error-for-chat.js";
+import { formatProviderFalloverNotice } from "./format-provider-fallover.js";
 import { formatFeedLine } from "./format-event.js";
 import {
   formatFusionWorkerLine,
@@ -502,19 +503,40 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
         event.direction === "away"
           ? `» failed over ${event.from} -> ${event.to} (${event.reason})`
           : `» recovered primary ${event.to} (probe ok)`;
-      return appendFeed(
-        {
-          ...state,
-          fallbackPanel: {
-            ...state.fallbackPanel,
-            lastSwitch: {
-              direction: event.direction,
-              from: event.from,
-              to: event.to,
-              reason: event.reason,
-            },
+      const prev = state.fallbackPanel.lastSwitch;
+      // Say it in the chat too, once per transition. A fallover changes
+      // which model answers and what it costs, and the feed lives in a
+      // tab the operator is not looking at while they work. Repeats of
+      // the same switch stay in the feed: the chain re-announces on
+      // every probe, and one notice per transition is the signal.
+      const announce =
+        event.direction === "away" &&
+        !(
+          prev?.direction === "away" &&
+          prev.from === event.from &&
+          prev.to === event.to
+        );
+      const withSwitch = {
+        ...state,
+        fallbackPanel: {
+          ...state.fallbackPanel,
+          lastSwitch: {
+            direction: event.direction,
+            from: event.from,
+            to: event.to,
+            reason: event.reason,
           },
         },
+      };
+      return appendFeed(
+        announce
+          ? appendChatMessage(withSwitch, {
+              role: "system",
+              variant: "warn",
+              action: "configure-fallback",
+              text: formatProviderFalloverNotice(event.from, event.to, event.reason),
+            })
+          : withSwitch,
         {
           kind: "runtime_info",
           stepIndex: null,

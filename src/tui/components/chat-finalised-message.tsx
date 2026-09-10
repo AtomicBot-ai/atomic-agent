@@ -8,6 +8,7 @@ import { ChatLinkButtons } from "./chat-link-buttons.js";
 import { ChatTryAgainButton } from "./chat-try-again-button.js";
 import { PlanHandoff } from "./plan-handoff.js";
 import { ReasoningBubble } from "./reasoning-bubble.js";
+import { ChatConfigureFallbackButton } from "./chat-configure-fallback-button.js";
 import { SystemBubble } from "./system-bubble.js";
 import { ToolCard } from "./tool-card.js";
 import { UserBubble } from "./user-bubble.js";
@@ -114,6 +115,9 @@ export function FinalisedMessage({
         */}
         {message.retryText !== undefined ? (
           <ChatTryAgainButton text={message.retryText} />
+        ) : null}
+        {message.action === "configure-fallback" ? (
+          <ChatConfigureFallbackButton />
         ) : null}
       </Box>
     </Box>
