@@ -2709,6 +2709,127 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     }
   });
 
+  it("lets a rejected completion between two empties buy the second one its own retry", async () => {
+    // The parse-recovery reset. A body that failed to parse is still
+    // tokens on the wire, so the empty that follows it is the FIRST of
+    // a new run, not the second of the old one — it gets its own nudge,
+    // and the terminal message never says "twice in a row" over a
+    // completion that carried something.
+    const registry = buildDefaultToolRegistry();
+    const script: CompletionResult[] = [
+      makeNativeCompletion(),
+      // Bad arguments twice: the first is the step's own one-shot
+      // repair, the second is what makes the step fail to parse.
+      makeNativeCompletion([{ name: "reply", arguments: "{ not json" }]),
+      makeNativeCompletion([{ name: "reply", arguments: "{ still not" }]),
+      makeNativeCompletion(),
+      makeNativeCompletion([
+        { name: "reply", arguments: JSON.stringify({ text: "done" }) },
+      ]),
+    ];
+    let llmCalls = 0;
+    const events: string[] = [];
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      toolTransport: "native_tools",
+      toolCallAdapter: null,
+      llmComplete: async () => {
+        const completion = script[llmCalls] ?? makeNativeCompletion();
+        llmCalls += 1;
+        return completion;
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (
+          event.type === "empty_completion_recovered" ||
+          event.type === "parse_failure_recovered"
+        )
+          events.push(event.type);
+      },
+    });
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "s-empty-nt-parse-reset", workingDir }),
+      {
+        userMessage: "go",
+        maxSteps: 10,
+        signal: new AbortController().signal,
+      },
+    );
+    expect(events).toEqual([
+      "empty_completion_recovered",
+      "parse_failure_recovered",
+      "empty_completion_recovered",
+    ]);
+    expect(llmCalls).toBe(5);
+    expect(result.reason).toBe("reply");
+  });
+
+  it("lets a cut reply between two empties buy the second one its own retry", async () => {
+    // The truncation-retry reset, same argument as the parse one: a
+    // reply the server cut short is a link that answered.
+    const registry = buildDefaultToolRegistry();
+    const script: CompletionResult[] = [
+      makeNativeCompletion(),
+      {
+        ...makeNativeCompletion(),
+        stop: false,
+        truncated: true,
+        usage: {
+          promptTokens: 6_000,
+          completionTokens: 8_192,
+          totalTokens: 14_192,
+        },
+      },
+      makeNativeCompletion(),
+      makeNativeCompletion([
+        { name: "reply", arguments: JSON.stringify({ text: "done" }) },
+      ]),
+    ];
+    let llmCalls = 0;
+    const events: string[] = [];
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      toolTransport: "native_tools",
+      toolCallAdapter: null,
+      llmComplete: async () => {
+        const completion = script[llmCalls] ?? makeNativeCompletion();
+        llmCalls += 1;
+        return completion;
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (
+          event.type === "empty_completion_recovered" ||
+          event.type === "completion_truncated"
+        )
+          events.push(event.type);
+      },
+    });
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "s-empty-nt-trunc-reset", workingDir }),
+      {
+        userMessage: "go",
+        maxSteps: 10,
+        signal: new AbortController().signal,
+      },
+    );
+    expect(events).toEqual([
+      "empty_completion_recovered",
+      "completion_truncated",
+      "empty_completion_recovered",
+    ]);
+    expect(llmCalls).toBe(4);
+    expect(result.reason).toBe("reply");
+  });
+
   it("does not recover a request the model server itself rejected", async () => {
     const registry = buildDefaultToolRegistry();
     let llmCalls = 0;
