@@ -57,6 +57,8 @@ type ConfigOverrides = {
   activeTextProvider?: string;
   runMode?: Record<string, unknown>;
   managedModelId?: string;
+  /** Same field, and same reason, as the Telegram twin's. */
+  extraProviders?: Array<Record<string, unknown>>;
 };
 
 function writeLlmConfig(stateDir: string, over: ConfigOverrides = {}): void {
@@ -106,6 +108,7 @@ function writeLlmConfig(stateDir: string, over: ConfigOverrides = {}): void {
         // The one cloud entry with no model of its own, for the
         // clear-the-pin rollback branch.
         { id: "aimlapi", kind: "aimlapi" },
+        ...(over.extraProviders ?? []),
       ],
     },
   });
@@ -518,5 +521,90 @@ describe("/model over Discord", () => {
     await say("/model openai-compat", "222");
     expect(sent).toHaveLength(0);
     expect(getConfig().llm?.activeTextProvider).toBe("local-llama");
+  });
+
+  /** Same path, and same reason, as the Telegram twin's. */
+  it("answers instead of rejecting when the config no longer parses", async () => {
+    writeLlmConfig(stateDir, { activeTextProvider: "ghost" });
+    await say("/model");
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toContain("Could not run /model:");
+    expect(sent[0]).toContain('unknown provider id "ghost"');
+  });
+
+  it("reports the managed local model only for the daemon that serves it", async () => {
+    writeLlmConfig(stateDir, {
+      managedModelId: "qwen-3.8-27b",
+      extraProviders: [
+        { id: "remote-box", kind: "llama-server", url: "http://10.0.0.9:8080" },
+      ],
+    });
+    await say("/model");
+    expect(sent[0]).toContain("• `local-llama` · `qwen-3.8-27b` (active)");
+    expect(sent[0]).toContain("• `remote-box` · `provider default`");
+  });
+
+  it("caps the provider list so the report stays one message", async () => {
+    writeLlmConfig(stateDir, {
+      // `PROVIDER_ID_RE` caps an id at 32 kebab-case characters, so
+      // the bulk here is the model names, which the schema does not
+      // bound at all.
+      extraProviders: Array.from({ length: 60 }, (_, i) => ({
+        id: `compat-provider-${i}`,
+        kind: "openai-compatible",
+        baseUrl: `http://127.0.0.1:${1300 + i}/v1`,
+        defaultChatModel: `vendor/really-long-model-identifier-v${i}-instruct`,
+      })),
+    });
+    await say("/model");
+    expect(sent).toHaveLength(1);
+    const [report = ""] = sent;
+    // `DiscordApi.sendMessage` chunks silently at
+    // `DISCORD_MESSAGE_LIMIT`; the stub above does not, so the length
+    // is asserted directly.
+    expect(report.length).toBeLessThanOrEqual(2000);
+    expect(report).toContain("more not shown");
+    expect(report).toContain("Model: `local-llama` · `provider default`");
+    expect(report).toContain("`/model <provider>` switches provider");
+  });
+
+  it("clips a model id long enough to fill the message on its own", async () => {
+    // A provider id cannot get here — `PROVIDER_ID_RE` caps it at 32
+    // characters — but a model id is any non-empty string.
+    const long = `vendor/${"m".repeat(400)}`;
+    writeLlmConfig(stateDir, {
+      extraProviders: [
+        {
+          id: "long-model-compat",
+          kind: "openai-compatible",
+          baseUrl: "http://127.0.0.1:1299/v1",
+          defaultChatModel: long,
+        },
+      ],
+    });
+    await say("/model");
+    expect(sent[0]).not.toContain(long);
+    expect(sent[0]).toContain("vendor/mmm");
+    expect(sent[0]).toContain("…");
+    expect(sent[0]?.length).toBeLessThanOrEqual(2000);
+  });
+
+  it("keeps the active provider in the list even when the cap drops the rest", async () => {
+    writeLlmConfig(stateDir, {
+      activeTextProvider: "compat-provider-59",
+      extraProviders: Array.from({ length: 60 }, (_, i) => ({
+        id: `compat-provider-${i}`,
+        kind: "openai-compatible",
+        baseUrl: `http://127.0.0.1:${1300 + i}/v1`,
+        defaultChatModel: `vendor/really-long-model-identifier-v${i}-instruct`,
+      })),
+    });
+    await say("/model");
+    const [report = ""] = sent;
+    expect(report.length).toBeLessThanOrEqual(2000);
+    expect(report).toContain(
+      "• `compat-provider-59` · `vendor/really-long-model-identifier-v59-instruct` (active)",
+    );
+    expect(report).toContain("more not shown");
   });
 });

@@ -67,6 +67,12 @@ type ConfigOverrides = {
   runMode?: Record<string, unknown>;
   /** `localModels.managed.modelId` — the GGUF the local daemon serves. */
   managedModelId?: string;
+  /**
+   * Appended to the fixture's five providers. Two cases need a longer
+   * list than the fixture: a second `llama-server` entry, and an
+   * install with enough entries to overflow a chat message.
+   */
+  extraProviders?: Array<Record<string, unknown>>;
 };
 
 function writeLlmConfig(stateDir: string, over: ConfigOverrides = {}): void {
@@ -121,6 +127,7 @@ function writeLlmConfig(stateDir: string, over: ConfigOverrides = {}): void {
         // The one cloud entry with no model of its own, so the rollback
         // test below can prove a pin is *cleared* and not just reverted.
         { id: "aimlapi", kind: "aimlapi" },
+        ...(over.extraProviders ?? []),
       ],
     },
   });
@@ -585,5 +592,102 @@ describe("/model over Telegram", () => {
     );
     expect(sent).toHaveLength(0);
     expect(getConfig().llm?.activeTextProvider).toBe("local-llama");
+  });
+
+  /**
+   * A config the agent booted on can stop parsing afterwards — a hand
+   * edit, a torn write — and `/model` always re-reads it: its own
+   * `setActiveTextProviderInConfig` calls `resetConfigCache()`, so the
+   * next invocation goes to disk. `runModelCommand` documents that it
+   * never throws, and this is the path that has no message of its own.
+   */
+  it("answers instead of rejecting when the config no longer parses", async () => {
+    writeLlmConfig(stateDir, { activeTextProvider: "ghost" });
+    await say("/model");
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toContain("Could not run /model:");
+    expect(sent[0]).toContain('unknown provider id "ghost"');
+  });
+
+  it("reports the managed local model only for the daemon that serves it", async () => {
+    // `localModels.managed` describes one daemon. A second
+    // `llama-server` entry — a box on the LAN — serves whatever it was
+    // started with, and the config says nothing about it.
+    writeLlmConfig(stateDir, {
+      managedModelId: "qwen-3.8-27b",
+      extraProviders: [
+        { id: "remote-box", kind: "llama-server", url: "http://10.0.0.9:8080" },
+      ],
+    });
+    await say("/model");
+    expect(sent[0]).toContain("• local-llama · qwen-3.8-27b (active)");
+    expect(sent[0]).toContain("• remote-box · provider default");
+  });
+
+  it("caps the provider list so the report stays one message", async () => {
+    writeLlmConfig(stateDir, {
+      // `PROVIDER_ID_RE` caps an id at 32 kebab-case characters, so
+      // the bulk here is the model names, which the schema does not
+      // bound at all.
+      extraProviders: Array.from({ length: 60 }, (_, i) => ({
+        id: `compat-provider-${i}`,
+        kind: "openai-compatible",
+        baseUrl: `http://127.0.0.1:${1300 + i}/v1`,
+        defaultChatModel: `vendor/really-long-model-identifier-v${i}-instruct`,
+      })),
+    });
+    await say("/model");
+    // Telegram chunks at 4096 characters and Discord at 2000, and the
+    // shared report has to survive the tighter of the two.
+    expect(sent).toHaveLength(1);
+    const [report = ""] = sent;
+    expect(report.length).toBeLessThanOrEqual(2000);
+    expect(report).toContain("more not shown");
+    // Whatever the cap drops, the answer to "what is this running on"
+    // is on the first line, and every provider is still switchable.
+    expect(report).toContain("Model: local-llama · provider default");
+    expect(report).toContain("/model <provider> switches provider");
+  });
+
+  it("clips a model id long enough to fill the message on its own", async () => {
+    // A provider id cannot get here — `PROVIDER_ID_RE` caps it at 32
+    // characters — but a model id is any non-empty string.
+    const long = `vendor/${"m".repeat(400)}`;
+    writeLlmConfig(stateDir, {
+      extraProviders: [
+        {
+          id: "long-model-compat",
+          kind: "openai-compatible",
+          baseUrl: "http://127.0.0.1:1299/v1",
+          defaultChatModel: long,
+        },
+      ],
+    });
+    await say("/model");
+    expect(sent[0]).not.toContain(long);
+    expect(sent[0]).toContain("vendor/mmm");
+    expect(sent[0]).toContain("…");
+    expect(sent[0]?.length).toBeLessThanOrEqual(2000);
+  });
+
+  it("keeps the active provider in the list even when the cap drops the rest", async () => {
+    // Sixtieth of sixty-one: the entry the report exists to describe
+    // must not be the one the budget throws away.
+    writeLlmConfig(stateDir, {
+      activeTextProvider: "compat-provider-59",
+      extraProviders: Array.from({ length: 60 }, (_, i) => ({
+        id: `compat-provider-${i}`,
+        kind: "openai-compatible",
+        baseUrl: `http://127.0.0.1:${1300 + i}/v1`,
+        defaultChatModel: `vendor/really-long-model-identifier-v${i}-instruct`,
+      })),
+    });
+    await say("/model");
+    const [report = ""] = sent;
+    expect(report.length).toBeLessThanOrEqual(2000);
+    expect(report).toContain(
+      "• compat-provider-59 · vendor/really-long-model-identifier-v59-instruct (active)",
+    );
+    expect(report).toContain("more not shown");
   });
 });

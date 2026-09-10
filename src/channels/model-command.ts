@@ -100,14 +100,43 @@ const KEY_REQUIRED_KINDS = new Set(["openrouter", "aimlapi", "gemini"]);
 const MODEL_PIN_IGNORED_KINDS = new Set([LOCAL_PROVIDER_KIND]);
 
 /**
- * Run `/model` and return the message to post. Never throws: a config
- * write, a provider reload or a session-store write that fails comes
- * back as a message, because the handlers that call this must not let
- * one bad command take the channel down — Discord's dispatch is a bare
- * `void this.onDispatch(...)` with no catch at all, so a rejection here
- * is an unhandled rejection there.
+ * Run `/model` and return the message to post.
+ *
+ * **Never throws**, and the guarantee is enforced here rather than
+ * promised leg by leg: the whole command runs inside this one
+ * `catch`, so a failure with no specific message of its own — the
+ * entry `getConfig()` on a config that no longer parses, most of all —
+ * still comes back as a message. The handlers that call this must not
+ * let one bad command take the channel down: Discord's dispatch is a
+ * bare `void this.onDispatch(...)` with no catch at all, so a rejection
+ * here is an unhandled rejection there, and Telegram's chat gets no
+ * reply of any kind.
+ *
+ * The legs that *do* have something better to say — a failed provider
+ * reload, a failed session-store write, a post-switch config re-read —
+ * still catch it themselves, inside {@link runModelCommandInner}. This
+ * is the floor under them, not a replacement for them.
  */
 export async function runModelCommand(
+  args: readonly string[],
+  chat: ModelCommandChat,
+): Promise<string> {
+  try {
+    return await runModelCommandInner(args, chat);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    try {
+      chat.runtime.logger.warn("model command failed", { error: message });
+    } catch {
+      // A logger that throws must not defeat the guarantee either.
+    }
+    // Deliberately undecorated: `chat.code` comes from the caller, and
+    // the one path that must never throw is not the place to call it.
+    return `Could not run /model: ${message}`;
+  }
+}
+
+async function runModelCommandInner(
   args: readonly string[],
   chat: ModelCommandChat,
 ): Promise<string> {
@@ -201,7 +230,10 @@ export async function runModelCommand(
     });
   }
   const entry = afterResolved.providers.find((p) => p.id === target.providerId);
-  const shown = entry ? displayModelOf(entry, after) : null;
+  // Active by construction: `setActive` + `setActiveTextProviderInConfig`
+  // both landed above, so the managed-daemon leg of `displayModelOf`
+  // applies to this entry the same way it applies in `bootstrap`.
+  const shown = entry ? displayModelOf(entry, after, true) : null;
   const reply = `Now on ${chat.code(target.providerId)} · ${chat.code(
     shown ?? "provider default",
   )}. Takes effect on the next message.`;
@@ -259,12 +291,12 @@ function runModeChangeNote(
         : ` until ${code(back)} is active again — ${code(`/model ${back}`)} restores it`
     }.`;
   }
-  if (after.effective === "fusion") {
-    return `${head} ${code("fusion.delegate")} is back, with ${after.workers} worker${
-      after.workers === 1 ? "" : "s"
-    } on ${code(after.workerProviderId ?? "the local provider")}.`;
-  }
-  return head;
+  // The two guards above leave exactly two shapes, and the branch just
+  // taken was the first: `before` is not "fusion", so `after.effective`
+  // is. No third case exists to fall through to.
+  return `${head} ${code("fusion.delegate")} is back, with ${after.workers} worker${
+    after.workers === 1 ? "" : "s"
+  } on ${code(after.workerProviderId ?? "the local provider")}.`;
 }
 
 /**
@@ -390,11 +422,14 @@ function resolveTarget(
 
   const match = matchProvider(token, resolved.providers);
   if (match.kind === "none") {
-    const ids = resolved.providers.map((p) => code(p.id)).join(", ");
+    const ids = joinIds(
+      resolved.providers.map((p) => p.id),
+      code,
+    );
     return {
       ok: false,
       message: [
-        `Unknown provider ${code(token)}.`,
+        `Unknown provider ${code(clipName(token))}.`,
         ids.length > 0 ? `Configured: ${ids}.` : "No providers are configured.",
         `A model id has to name its provider: ${code("/model <provider> <model-id>")}.`,
       ].join(" "),
@@ -403,9 +438,10 @@ function resolveTarget(
   if (match.kind === "ambiguous") {
     return {
       ok: false,
-      message: `${code(token)} matches ${match.ids
-        .map((id) => code(id))
-        .join(", ")} — say which one.`,
+      message: `${code(clipName(token))} matches ${joinIds(
+        match.ids,
+        code,
+      )} — say which one.`,
     };
   }
 
@@ -528,27 +564,134 @@ function chatModelOf(entry: LlmProviderConfigEntry): string | null {
 }
 
 /**
- * The model to *show* for an entry: its pin when it has one, and for a
- * local `llama-server` the managed daemon's GGUF id, which is what it
- * actually serves.
+ * The model to *show* for an entry: its pin when it has one, and — for
+ * the **active** local `llama-server` — the managed daemon's GGUF id,
+ * which is what it actually serves.
  *
- * Same first two legs and same order as `resolveActiveModelName()` in
+ * Same first legs and same order as `resolveActiveModelName()` in
  * `bootstrap.ts`, so the channel reports the model the cost lookup and
- * the `message_sent` events report. The legs that one has and this does
- * not are the operator `--alias` and the prompt-profile id, neither of
- * which is reachable from config alone — an external-mode llama-server
- * with no managed id still reads as "provider default" here.
+ * the `message_sent` events report. That parity is the whole
+ * justification for the `localModels` leg, and it only holds for the
+ * active entry: `bootstrap` computes that name for
+ * `resolved.activeTextProvider` alone, while the report walks every
+ * configured provider. `localModels.managed` describes *one* daemon —
+ * the managed one this install starts — so attributing its GGUF id to
+ * a second `llama-server` entry (a box on the LAN, say; `resolve-run-
+ * mode.ts` picks the worker leg with a `find`, so more than one is a
+ * shape the code expects) would report it as running a model it has
+ * never seen. A non-active local entry therefore reads as "provider
+ * default", which is the truth: nothing in the config says what it
+ * serves.
+ *
+ * `isActive` is passed in rather than re-derived so the post-switch
+ * reply — where the entry is active by construction — and the report
+ * cannot disagree about which entry that is.
+ *
+ * The legs `resolveActiveModelName` has and this does not are the
+ * operator `--alias` and the prompt-profile id, neither of which is
+ * reachable from config alone. The one thing this shares with it and
+ * would be wrong to "fix" here is that neither consults
+ * `localModels.mode`: an external-mode daemon with a managed id left
+ * over from an earlier download reads as that id in both places. Gating
+ * on the mode would make the channel disagree with the model name in
+ * every `message_sent` event and in the cost lookup, which is a worse
+ * failure than the stale id and belongs upstream in `bootstrap` if it
+ * is to be fixed at all.
  */
 function displayModelOf(
   entry: LlmProviderConfigEntry,
   config: AtomicAgentConfig,
+  isActive: boolean,
 ): string | null {
   const pinned = chatModelOf(entry);
   if (pinned !== null) return pinned;
-  if (entry.kind === LOCAL_PROVIDER_KIND) {
+  if (isActive && entry.kind === LOCAL_PROVIDER_KIND) {
     return config.localModels.managed.modelId ?? null;
   }
   return null;
+}
+
+/**
+ * Longest an unbounded name prints before it is clipped.
+ *
+ * Only the names the config schema does not already bound need this: a
+ * model id and an `apiKeyEnvVar` are `parseOptionalString`, so they are
+ * any non-empty string, and the token in `/model <token>` is whatever
+ * was typed into the chat. A *provider id* is not among them —
+ * `PROVIDER_ID_RE` in `llm-config.ts` caps it at 32 kebab-case
+ * characters — so ids print whole and clipping one would be dead code.
+ *
+ * 48 is generous enough that no realistic model id is touched
+ * (`openrouter/auto` is 15, and the vendor-namespaced ids the gateways
+ * use run to about 30) and short enough that one pathological entry
+ * cannot eat the whole message.
+ */
+const MAX_NAME_CHARS = 48;
+
+/**
+ * How long the provider report may get, in characters.
+ *
+ * A chat message is not a terminal pane. Discord splits at 2000
+ * characters (`DISCORD_MESSAGE_LIMIT`, and `DiscordApi.sendMessage`
+ * chunks silently), Telegram at 4096 (`outbound-sender.ts`), so an
+ * uncapped enumeration turns one answer into several messages — the
+ * heading in one, the active provider stranded in another, and on
+ * Telegram a chunk that a second 429 drops entirely. An install with a
+ * dozen `openai-compatible` entries is enough to cross the Discord
+ * limit. So the enumeration — the only unbounded part of the report —
+ * is fitted to a budget under the tighter of the two limits, and what
+ * does not fit is counted rather than printed. Nothing is lost by
+ * that: the active provider is named on the first line either way, and
+ * a provider that is not listed can still be switched to by name.
+ */
+const MAX_REPORT_CHARS = 1800;
+
+/** Room kept for the "…and N more" trailer while fitting the list. */
+const TRAILER_RESERVE_CHARS = 140;
+
+/** `text`, shortened to {@link MAX_NAME_CHARS} with a visible ellipsis. */
+function clipName(text: string): string {
+  if (text.length <= MAX_NAME_CHARS) return text;
+  return `${text.slice(0, MAX_NAME_CHARS - 1)}…`;
+}
+
+/** Most provider ids a refusal enumerates before it starts counting. */
+const MAX_LISTED_IDS = 12;
+
+/**
+ * Decorated, comma-joined provider ids for a refusal — capped the same
+ * way {@link formatReport} caps its list, and for the same reason: a
+ * refusal that names every entry on an install with dozens of them is
+ * the message most likely to be sent, and the one an operator is least
+ * able to act on when the chat splits it in two.
+ */
+function joinIds(ids: readonly string[], code: (text: string) => string): string {
+  const listed = ids.slice(0, MAX_LISTED_IDS).map((id) => code(id));
+  const hidden = ids.length - listed.length;
+  return hidden > 0
+    ? `${listed.join(", ")} and ${hidden} more`
+    : listed.join(", ");
+}
+
+/** One `• id · model (active) — no API key (VAR is unset)` line. */
+function providerLine(
+  entry: LlmProviderConfigEntry,
+  config: AtomicAgentConfig,
+  activeId: string,
+  code: (text: string) => string,
+): string {
+  const here = entry.id === activeId ? " (active)" : "";
+  const missing = missingApiKey(entry, config);
+  const keyless =
+    missing === null
+      ? ""
+      : missing.envVar === null
+        ? " — no API key"
+        : ` — no API key (${clipName(missing.envVar)} is unset)`;
+  const model = displayModelOf(entry, config, entry.id === activeId);
+  return `• ${code(entry.id)} · ${code(
+    model === null ? "provider default" : clipName(model),
+  )}${here}${keyless}`;
 }
 
 function formatReport(
@@ -558,9 +701,12 @@ function formatReport(
 ): string {
   const activeId = resolved.activeTextProvider;
   const active = resolved.providers.find((p) => p.id === activeId);
+  const activeModel = active ? displayModelOf(active, config, true) : null;
   const lines = [
     active
-      ? `Model: ${code(active.id)} · ${code(displayModelOf(active, config) ?? "provider default")}`
+      ? `Model: ${code(active.id)} · ${code(
+          activeModel === null ? "provider default" : clipName(activeModel),
+        )}`
       : `No active text provider is configured (config names ${code(activeId)}).`,
     // The run mode is not cosmetic here: it decides whether
     // `fusion.delegate` and the `### fusion` guidance are in the
@@ -568,26 +714,48 @@ function formatReport(
     // The TUI has a chip for this; the channels have this line.
     `Run mode: ${describeRunMode(currentRunMode(config, resolved))}`,
   ];
+  const foot = `${code("/model <provider>")} switches provider; ${code("/model <provider> <model-id>")} pins a model on it.`;
   if (resolved.providers.length > 0) {
     lines.push("", "Providers:");
+    // The active entry's line is budgeted up front and emitted wherever
+    // it falls in the list, so a long install cannot produce a report
+    // that omits the one provider it is reporting on. Everything above
+    // plus the footer is committed too; only the rest is fitted.
+    const activeLine = active
+      ? providerLine(active, config, activeId, code)
+      : null;
+    let used =
+      lines.join("\n").length +
+      1 +
+      foot.length +
+      1 +
+      (activeLine === null ? 0 : activeLine.length + 1);
+    let shown = 0;
     for (const entry of resolved.providers) {
-      const here = entry.id === activeId ? " (active)" : "";
-      const missing = missingApiKey(entry, config);
-      const keyless =
-        missing === null
-          ? ""
-          : missing.envVar === null
-            ? " — no API key"
-            : ` — no API key (${missing.envVar} is unset)`;
+      if (activeLine !== null && entry.id === activeId) {
+        lines.push(activeLine);
+        shown += 1;
+        continue;
+      }
+      const line = providerLine(entry, config, activeId, code);
+      // The trailer's room is always kept rather than predicted: at
+      // worst that costs one line on a report that turns out not to
+      // need one, and predicting it wrong costs a split message.
+      if (used + line.length + 1 + TRAILER_RESERVE_CHARS > MAX_REPORT_CHARS) {
+        continue;
+      }
+      lines.push(line);
+      used += line.length + 1;
+      shown += 1;
+    }
+    const hidden = resolved.providers.length - shown;
+    if (hidden > 0) {
       lines.push(
-        `• ${code(entry.id)} · ${code(displayModelOf(entry, config) ?? "provider default")}${here}${keyless}`,
+        `…and ${hidden} more not shown — ${code("/model <provider>")} switches to any of them, listed or not.`,
       );
     }
   }
-  lines.push(
-    "",
-    `${code("/model <provider>")} switches provider; ${code("/model <provider> <model-id>")} pins a model on it.`,
-  );
+  lines.push("", foot);
   return lines.join("\n");
 }
 
