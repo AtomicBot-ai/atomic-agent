@@ -63,6 +63,12 @@ import {
   formatTurnFailedRecord,
   isRecoverableParseFailure,
 } from "./parse-failure-recovery.js";
+import {
+  EMPTY_COMPLETION_RECOVERY_BUDGET,
+  composeEmptyCompletionNotice,
+  isRecoverableEmptyCompletion,
+  repeatedEmptyCompletionError,
+} from "./empty-completion-recovery.js";
 import { getConfig } from "../config/index.js";
 import type { AgentMetrics } from "../tracing/agent-metrics.js";
 import type { StructuredLogger } from "../tracing/structured-logger.js";
@@ -572,6 +578,20 @@ export type AgentLoopEvent =
     }
   | {
       /**
+       * The completion for step `stepIndex` came back with nothing in
+       * any channel, and the turn is spending another step on it rather
+       * than ending: the next prompt carries a `### notice` saying the
+       * reply was empty. Its own type rather than a
+       * `parse_failure_recovered` with an odd reason — there was no
+       * output to reject, and the operator line has to say so.
+       */
+      type: "empty_completion_recovered";
+      stepIndex: number;
+      attempt: number;
+      budget: number;
+    }
+  | {
+      /**
        * A leg of the task finished and the work is continuing. Fired at
        * every `maxSteps` boundary that does not end the task, so a long
        * job reports itself instead of going quiet for an hour.
@@ -913,6 +933,15 @@ export class AgentLoop {
      * the third try either, and the operator is owed the failure.
      */
     let parseRecoveries = 0;
+    /**
+     * Completions this turn that came back with nothing in any channel
+     * and were spent another step on. Bounded by
+     * `EMPTY_COMPLETION_RECOVERY_BUDGET`, and separate from
+     * `parseRecoveries` because the two shapes are different evidence:
+     * an unparseable body is a model that tried, an empty one is a model
+     * that emitted no tokens at all.
+     */
+    let emptyRecoveries = 0;
     // Per-turn no-progress loop tracker (OpenClaw-style). Threaded into
     // `executeStep` so the synchronous batch gate can veto looping calls
     // before they are dispatched; the agent loop consumes the resulting
@@ -1545,6 +1574,51 @@ export class AgentLoop {
           );
           runError = null;
           continue;
+        }
+        // The completion came back with nothing in it at all — no
+        // content, no reasoning, no tool calls — so there was nothing
+        // for the parser to read and nothing for the in-step repair to
+        // fix. Spend an ordinary step on it for the same reason as the
+        // parse failure above: the inference threw before any tool was
+        // dispatched, so nothing is repeated, and the next prompt
+        // carries a `### notice` telling the model its reply was empty,
+        // which is the only correction available for this shape.
+        //
+        // The step is counted, as the parse recovery is: it consumed an
+        // inference, and a leg made of empty completions must still
+        // reach its boundary as `no_progress`.
+        if (
+          !cancelled &&
+          emptyRecoveries < EMPTY_COMPLETION_RECOVERY_BUDGET &&
+          isRecoverableEmptyCompletion(err)
+        ) {
+          emptyRecoveries += 1;
+          stepsTaken += 1;
+          pendingNotice = composeEmptyCompletionNotice(noticeForThisStep);
+          this.deps.onEvent?.({
+            type: "empty_completion_recovered",
+            stepIndex: i,
+            attempt: emptyRecoveries,
+            budget: EMPTY_COMPLETION_RECOVERY_BUDGET,
+          });
+          this.deps.logger?.warn("completion was empty; retrying the turn", {
+            sessionId: state.id,
+            stepIndex: i,
+            attempt: emptyRecoveries,
+            budget: EMPTY_COMPLETION_RECOVERY_BUDGET,
+            category,
+          });
+          runError = null;
+          continue;
+        }
+        // The budget is spent and the model returned nothing again. The
+        // turn is terminal now, but `detectModelFailure`'s message
+        // describes a single empty completion — an operator reading it
+        // would reasonably conclude the runtime never retried. Say the
+        // count instead.
+        if (emptyRecoveries > 0 && isRecoverableEmptyCompletion(err)) {
+          runError = repeatedEmptyCompletionError(err);
+          category = classifyFailure(runError);
         }
         // The provider is not answering. Park the turn instead of
         // killing it: nothing of this step has been committed (a

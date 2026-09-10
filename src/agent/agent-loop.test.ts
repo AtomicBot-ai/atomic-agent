@@ -10,6 +10,7 @@ import { SlotManager } from "../llm/slot-manager.js";
 import { TransportError } from "../llm/reliability/llm-failures.js";
 import { LlamaServerError } from "../llm/llama-server-client.js";
 import { PARSE_RECOVERY_BUDGET } from "./parse-failure-recovery.js";
+import { EMPTY_COMPLETION_RECOVERY_BUDGET } from "./empty-completion-recovery.js";
 import { createEmptySessionState } from "../session/session-state.js";
 import type {
   CompletionResult,
@@ -46,6 +47,30 @@ function makeCompletion(
     cacheHitTokens: 0,
     slotId: 0,
     modelId,
+  };
+}
+
+/**
+ * A completion as a native-tools provider returns one: everything in
+ * `tool_calls`, nothing in `content`. Called with no arguments it is the
+ * wholly-empty completion behind Sentry CLI-BA — no content, no
+ * reasoning, no calls.
+ */
+function makeNativeCompletion(
+  toolCalls?: Array<{ name: string; arguments: string }>,
+): CompletionResult {
+  return {
+    ...makeCompletion("", "openai/gpt-5.5"),
+    slotId: -1,
+    ...(toolCalls === undefined
+      ? {}
+      : {
+          toolCalls: toolCalls.map((call, index) => ({
+            id: `call-${index}`,
+            type: "function" as const,
+            function: call,
+          })),
+        }),
   };
 }
 
@@ -2255,6 +2280,99 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     expect((last as { text: string }).text).toContain(
       "Nothing from it took effect",
     );
+  });
+
+  it("recovers a wholly empty native-tools completion by spending a step", async () => {
+    // Sentry CLI-BA: on `native_tools` a completion with nothing in any
+    // channel has no parse to retry and no repair to run, so before this
+    // it ended the turn on the first inference and the operator had to
+    // notice the silence and type "try again".
+    const registry = buildDefaultToolRegistry();
+    let llmCalls = 0;
+    const prompts: string[] = [];
+    const recoveries: Array<{ attempt: number; budget: number }> = [];
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      toolTransport: "native_tools",
+      toolCallAdapter: null,
+      llmComplete: async (params) => {
+        llmCalls += 1;
+        prompts.push(params.prompt);
+        return llmCalls === 1
+          ? makeNativeCompletion()
+          : makeNativeCompletion([
+              { name: "reply", arguments: JSON.stringify({ text: "done" }) },
+            ]);
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (event.type === "empty_completion_recovered")
+          recoveries.push({ attempt: event.attempt, budget: event.budget });
+      },
+    });
+    const session = createEmptySessionState({ id: "s-empty-nt", workingDir });
+    const result = await loop.runTurn(session, {
+      userMessage: "go",
+      maxSteps: 5,
+      signal: new AbortController().signal,
+    });
+    expect(result.reason).toBe("reply");
+    expect(result.session.status).toBe("pending");
+    expect(recoveries).toEqual([
+      { attempt: 1, budget: EMPTY_COMPLETION_RECOVERY_BUDGET },
+    ]);
+    // The retry is a different request, not a replay: the step that
+    // follows is told its predecessor came back empty.
+    expect(prompts[1] ?? "").toContain("completely empty");
+    expect(prompts[1] ?? "").toContain("Nothing has happened yet");
+    const replies = result.session.turns.filter(
+      (t) => t.kind === "assistant_reply",
+    );
+    expect(replies).toHaveLength(1);
+    expect(replies[0]).toMatchObject({ text: "done" });
+  });
+
+  it("ends the turn on the second empty native-tools completion, saying so", async () => {
+    const registry = buildDefaultToolRegistry();
+    let llmCalls = 0;
+    const failures: Array<{ category: string; message: string }> = [];
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      toolTransport: "native_tools",
+      toolCallAdapter: null,
+      llmComplete: async () => {
+        llmCalls += 1;
+        return makeNativeCompletion();
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (event.type === "loop_failed")
+          failures.push({
+            category: event.category,
+            message: event.error.message,
+          });
+      },
+    });
+    const session = createEmptySessionState({ id: "s-empty-nt2", workingDir });
+    const result = await loop.runTurn(session, {
+      userMessage: "go",
+      maxSteps: 5,
+      signal: new AbortController().signal,
+    });
+    expect(result.reason).toBe("failed");
+    expect(result.session.status).toBe("failed");
+    // One recovery, then terminal — the budget is not a retry loop.
+    expect(llmCalls).toBe(EMPTY_COMPLETION_RECOVERY_BUDGET + 1);
+    expect(failures[0]?.category).toBe("model");
+    expect(failures[0]?.message).toContain("twice in a row");
   });
 
   it("does not recover a request the model server itself rejected", async () => {

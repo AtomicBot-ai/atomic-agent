@@ -51,6 +51,13 @@ export {
   formatTurnFailedRecord,
   isRecoverableParseFailure,
 } from "./parse-failure-recovery.js";
+export {
+  EMPTY_COMPLETION_RECOVERY_BUDGET,
+  composeEmptyCompletionNotice,
+  formatEmptyCompletionNotice,
+  isRecoverableEmptyCompletion,
+  repeatedEmptyCompletionError,
+} from "./empty-completion-recovery.js";
 export { classifyTestCommand } from "./test-command-key.js";
 export type { RecognizedTestCommand } from "./test-command-key.js";
 export {
