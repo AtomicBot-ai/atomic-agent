@@ -66,6 +66,7 @@ export function registerBuiltInProviderKinds(): void {
       requestTimeoutMs: entry.requestTimeoutMs,
       extraBody: entry.extraBody,
       maxOutputTokens: entry.maxOutputTokens,
+      logger: ctx.logger,
     });
   });
 
@@ -89,6 +90,7 @@ export function registerBuiltInProviderKinds(): void {
       taggedToolCompatibility: "qwen",
       extraBody: entry.extraBody,
       maxOutputTokens: entry.maxOutputTokens,
+      logger: ctx.logger,
     });
   });
 
@@ -105,6 +107,7 @@ export function registerBuiltInProviderKinds(): void {
       requestTimeoutMs: entry.requestTimeoutMs,
       extraBody: entry.extraBody,
       maxOutputTokens: entry.maxOutputTokens,
+      logger: ctx.logger,
       httpReferer: OPENROUTER_APP_REFERER,
       xTitle: OPENROUTER_APP_TITLE,
       categories: OPENROUTER_APP_CATEGORIES,
@@ -124,6 +127,7 @@ export function registerBuiltInProviderKinds(): void {
       supportsVision: entry.supportsVision ?? true,
       supportsParallelTools: entry.supportsTools ?? true,
       requestTimeoutMs: entry.requestTimeoutMs,
+      logger: ctx.logger,
     });
   });
 
@@ -140,6 +144,7 @@ export function registerBuiltInProviderKinds(): void {
       supportsVision: entry.supportsVision ?? true,
       supportsParallelTools: entry.supportsTools ?? true,
       requestTimeoutMs: entry.requestTimeoutMs,
+      logger: ctx.logger,
     });
   });
 
