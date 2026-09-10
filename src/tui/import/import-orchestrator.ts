@@ -30,6 +30,8 @@ import type { ImportFormState } from "./import-panel-state.js";
 export interface ImportOrchestratorDeps {
   /** Refresh the Tasks tab after a cron import created scheduled tasks. */
   refreshTasks?(): void;
+  /** Refresh the session rail after a sessions import wrote new rows. */
+  refreshSessions?(): void;
 }
 
 /**
@@ -187,6 +189,8 @@ export class ImportOrchestrator {
       });
       // Cron import may have created scheduled tasks — refresh the tab.
       if (options.includes("cron")) this.deps.refreshTasks?.();
+      // Sessions import wrote rows the rail has not seen yet.
+      if (options.includes("sessions")) this.deps.refreshSessions?.();
     } else {
       this.bus.emit({ type: "import_preview_ready", report });
     }
@@ -205,6 +209,7 @@ export class ImportOrchestrator {
     await Promise.resolve();
     const items: ImportItemResult[] = [];
     let cronImported = false;
+    let sessionsImported = false;
     try {
       for (const agent of plan.agents) {
         if (!agent.enabled) continue;
@@ -215,6 +220,7 @@ export class ImportOrchestrator {
         const report = await this.runOnboardingAgent(agent.id, agent.dir, enabled, execute);
         if (report === null) continue;
         if (execute && enabled.includes("cron")) cronImported = true;
+        if (execute && enabled.includes("sessions")) sessionsImported = true;
         for (const item of report.items) {
           items.push({ ...item, kind: `${IMPORT_AGENT_LABELS[agent.id]} ${item.kind}` });
         }
@@ -234,6 +240,7 @@ export class ImportOrchestrator {
         line: `import done: ${formatSummary(report)}`,
       });
       if (cronImported) this.deps.refreshTasks?.();
+      if (sessionsImported) this.deps.refreshSessions?.();
     }
   }
 

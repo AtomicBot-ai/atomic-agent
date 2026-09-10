@@ -3,6 +3,9 @@ export type {
   SessionStoreOptions,
   RecentWorkingDirRow,
 } from "./session-store.js";
+export { summarizeSessionState } from "./session-summary.js";
+export type { SessionSummary } from "./session-summary.js";
+export { normalizeSessionState } from "./normalize-session-state.js";
 export {
   createEmptySessionState,
   appendFact,

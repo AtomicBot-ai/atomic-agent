@@ -8,6 +8,7 @@ import {
   isFailedSessionStatus,
   type SessionState,
 } from "../session/session-state.js";
+import type { SessionSummary } from "../session/session-summary.js";
 import { getConfig } from "../config/index.js";
 import { resolveLlmConfig } from "../llm/provider/registry/index.js";
 import {
@@ -216,6 +217,7 @@ export class ChatOrchestrator {
     this.mcp = new McpOrchestrator(runtime, bus);
     this.import = new ImportOrchestrator(runtime, bus, {
       refreshTasks: () => this.tasks.refresh(),
+      refreshSessions: () => this.refreshRecentSessions(),
     });
     this.providers = new ProvidersOrchestrator(runtime, bus);
     this.fallback = new FallbackOrchestrator(bus);
@@ -303,7 +305,25 @@ export class ChatOrchestrator {
   start(): void {
     if (this.started) return;
     this.started = true;
-    this.refreshRecentSessions();
+    // The rail is the one boot step that reads every stored row. A store
+    // that cannot answer must not abort the rest of the boot — the
+    // chat, the poller and the channels work without a session list.
+    try {
+      this.refreshRecentSessions();
+      const unreadable = this.runtime.sessionStore.countUnreadable();
+      if (unreadable > 0) {
+        this.bus.emit({
+          type: "runtime_info",
+          line: `${unreadable} unreadable session(s) skipped`,
+        });
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.bus.emit({
+        type: "runtime_info",
+        line: `session list unavailable: ${message}`,
+      });
+    }
     this.llmHealth.start();
     this.telegram.start();
     this.privacy.refresh();
@@ -441,17 +461,15 @@ export class ChatOrchestrator {
 
   /** Stored threads that have a first prompt, plus the pending ones. */
   private railSessions(): SessionPickerEntry[] {
-    // Read deeper than we show, because the filter runs HERE and the
-    // limit runs in SQL. Every `+ new` and every scheduled task mints a
-    // persisted, unnamed session; filtering a 25-row window would let
-    // those invisible rows squat it and push real conversations out —
-    // permanently, since a thread only re-enters the window by being
-    // spoken to, which you cannot do once it has no row.
+    // Every stored thread, not a window of them: the rail and the picker
+    // page their own rows. Every `+ new` and every scheduled task mints
+    // a persisted, unnamed session; those are hidden here (see
+    // `hasFirstPrompt`), and with no LIMIT in SQL there is no window for
+    // them to squat and push real conversations out of.
     const stored = this.runtime.sessionStore
-      .listRecent(RAIL_SCAN_LIMIT)
-      .filter((state) => hasFirstPrompt(state))
-      .map((s) => toPickerEntry(s))
-      .slice(0, RAIL_SESSION_LIMIT);
+      .listSummaries()
+      .filter((row) => row.firstPrompt !== null)
+      .map((row) => toPickerEntry(row));
     if (this.pendingRows.size === 0) return stored;
     const storedIds = new Set(stored.map((entry) => entry.sessionId));
     const pending: SessionPickerEntry[] = [];
@@ -1314,28 +1332,19 @@ function formatBytes(bytes: number): string {
  * session its name, and an unnamed row is indistinguishable from every
  * other unnamed row.
  */
-/** Rows the rail and the picker show. */
-const RAIL_SESSION_LIMIT = 25;
-/**
- * How deep to read before filtering. Generous rather than exact: unnamed
- * sessions accumulate (one per `+ new`, one per scheduled task) and each
- * one would otherwise cost a real thread its place in the list.
- */
-const RAIL_SCAN_LIMIT = 200;
-
 function hasFirstPrompt(state: SessionState): boolean {
   return state.turns.some((turn) => turn.kind === "user");
 }
 
-function toPickerEntry(state: SessionState): SessionPickerEntry {
-  const firstUser = state.turns.find((t) => t.kind === "user");
-  const preview = firstUser && firstUser.kind === "user" ? firstUser.text : "";
+/** A stored row with a first prompt (`firstPrompt !== null`) as a rail row. */
+function toPickerEntry(row: SessionSummary): SessionPickerEntry {
+  const preview = row.firstPrompt ?? "";
   return {
-    sessionId: state.id,
-    workingDir: state.workingDir,
-    turnCount: state.turnCount,
-    stepCount: state.stepCount,
-    updatedAt: state.updatedAt,
+    sessionId: row.id,
+    workingDir: row.workingDir,
+    turnCount: row.turnCount,
+    stepCount: row.stepCount,
+    updatedAt: row.updatedAt,
     preview: preview.length > 0 ? preview : "(empty)",
   };
 }
