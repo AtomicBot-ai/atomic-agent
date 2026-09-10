@@ -433,6 +433,8 @@ atomic-agent serve \
 
 `POST /v1/chat/completions` maps one request to one full macro-turn: `user -> 0..N tool steps -> reply`. Atomic-specific routes expose sessions, approvals, tasks, webhooks, events, skills, config, and capabilities.
 
+`serve` boots the same runtime the TUI does, so an enabled Telegram or Discord channel — and every enabled swarm bot — comes up in this process too. That makes `serve` the way to keep the bots answering with no TUI open; it stays in the foreground until you stop it and does not restart itself. A channel is single-instance: the first process to start it takes a lockfile in the state dir, and a second one leaves that channel down with `already running in another atomic-agent (pid N)` instead of retrying — so keep the bots in one process, this one or the TUI.
+
 </details>
 
 <details>
@@ -473,6 +475,8 @@ TELEGRAM_BOT_TOKEN=123456789:AA-your-bot-token
 ```
 
 The TUI can store the token, start the channel, open pairing mode, and show status. Approvals arrive as inline buttons in your DM. Telegram is intentionally single-user.
+
+The channel belongs to the runtime, not to the TUI: `atomic-agent serve` boots it exactly the same way, so the bot keeps answering with no terminal UI open. Only one process may hold a channel — it is guarded by a lockfile in the state dir — and the process that loses the race leaves that channel down with `already running in another atomic-agent (pid N)` (shown as an ordinary state, not an error, in the Integrations pane) and does not retry, so start the bot from `serve` or from the TUI, not from both.
 
 While a turn runs, the bot keeps one live progress bubble updated in place. It is sent silently and shows step labels only, never tool output; turn it off with `"telegram": { "progressIndicator": false }`.
 
