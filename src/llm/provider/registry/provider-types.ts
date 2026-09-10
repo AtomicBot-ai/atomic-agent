@@ -55,6 +55,16 @@ export type LlmProviderConfigEntry = {
   /** Per-provider output ceiling; absent means the model's own maximum. */
   maxOutputTokens?: number;
   /**
+   * Emit OpenAI strict function tools — `tools[].function.strict: true`
+   * — for this provider. Off by default because strict mode is not
+   * universal: a service that does not implement it rejects the whole
+   * request. Turn it on for a model that only calls tools reliably
+   * under constrained decoding. `extraBody` cannot express this:
+   * `strict` lives on each tool and `tools` is a reserved key. The
+   * schema rewrite lives in `openai/openai-strict-tools.ts`.
+   */
+  strictTools?: boolean;
+  /**
    * Settings for a `subscription-cli` provider — which vendor CLI to
    * drive and how to invoke it. Absent on every other kind.
    */

@@ -275,3 +275,99 @@ describe("buildOpenAiChatBody — the provider's own ceiling", () => {
     ).toBe(false);
   });
 });
+
+describe("buildOpenAiChatBody — strict function tools", () => {
+  const tools = [
+    {
+      type: "function",
+      function: {
+        name: "os__fs__read",
+        description: "read a file",
+        parameters: {
+          type: "object",
+          properties: { path: { type: "string" }, limit: { type: "integer" } },
+          required: ["path"],
+        },
+      },
+    },
+  ];
+  const request = { prompt: "hi", tools };
+
+  it("leaves the body byte-identical when the flag is absent", () => {
+    // The whole safety argument for the feature: an operator who never
+    // sets `strictTools` must get exactly the request they got before
+    // it existed. Compared as JSON so key order counts too.
+    const before = buildOpenAiChatBody(request, "gpt-test", false, {
+      chat_template_kwargs: { enable_thinking: false },
+    });
+    const after = buildOpenAiChatBody(
+      request,
+      "gpt-test",
+      false,
+      { chat_template_kwargs: { enable_thinking: false } },
+      undefined,
+      false,
+    );
+    expect(JSON.stringify(after)).toBe(JSON.stringify(before));
+    expect(after.tools).toEqual(tools);
+  });
+
+  it("rewrites the tools and marks them strict when the flag is on", () => {
+    const body = buildOpenAiChatBody(
+      request,
+      "gpt-test",
+      false,
+      undefined,
+      undefined,
+      true,
+    );
+    expect(body.tools).toEqual([
+      {
+        type: "function",
+        function: {
+          name: "os__fs__read",
+          description: "read a file",
+          strict: true,
+          parameters: {
+            type: "object",
+            properties: {
+              path: { type: "string" },
+              limit: { type: ["integer", "null"] },
+            },
+            required: ["path", "limit"],
+            additionalProperties: false,
+          },
+        },
+      },
+    ]);
+  });
+
+  it("keeps the strict tools over an extraBody that tries to replace them", () => {
+    // `tools` is a reserved key, restored on top of the merge. The
+    // transform therefore has to run *before* that restore, or the
+    // untransformed array would win. This pins that ordering.
+    const body = buildOpenAiChatBody(
+      request,
+      "gpt-test",
+      false,
+      { tools: [{ type: "function", function: { name: "hijack" } }] },
+      undefined,
+      true,
+    );
+    const emitted = body.tools as ReadonlyArray<Record<string, unknown>>;
+    expect(emitted).toHaveLength(1);
+    expect((emitted[0].function as Record<string, unknown>).strict).toBe(true);
+  });
+
+  it("sends no tools key at all when the request carries none", () => {
+    const body = buildOpenAiChatBody(
+      { prompt: "hi" },
+      "gpt-test",
+      false,
+      undefined,
+      undefined,
+      true,
+    );
+    expect("tools" in body).toBe(false);
+  });
+});

@@ -1,5 +1,6 @@
 import type { CompletionRequest } from "../completion-types.js";
 import { filterCloudCompletionRequest } from "./sampling-filter.js";
+import { toStrictOpenAiTools } from "./openai-strict-tools.js";
 
 /**
  * Fields the caller owns unconditionally. `extraBody` is merged *under*
@@ -15,6 +16,7 @@ export function buildOpenAiChatBody(
   stream: boolean,
   extraBody?: Record<string, unknown>,
   maxOutputTokens?: number,
+  strictTools?: boolean,
 ): Record<string, unknown> {
   const filtered = filterCloudCompletionRequest(request);
   const body: Record<string, unknown> = {
@@ -58,7 +60,14 @@ export function buildOpenAiChatBody(
   if (filtered.stop) body.stop = filtered.stop;
   if (typeof filtered.seed === "number") body.seed = filtered.seed;
   if (filtered.tools && filtered.tools.length > 0) {
-    body.tools = filtered.tools;
+    // Strict function tools, when the provider entry opted in. Done
+    // here — before the `extraBody` merge — precisely because `tools`
+    // is a reserved key: the loop below restores `body.tools` over the
+    // merge, so the transformed array is what survives. Off by default,
+    // and off it must leave this line byte-identical to what it was.
+    body.tools = strictTools
+      ? toStrictOpenAiTools(filtered.tools)
+      : filtered.tools;
     body.parallel_tool_calls = filtered.parallelToolCalls ?? true;
     if (filtered.toolChoice !== undefined) {
       body.tool_choice = filtered.toolChoice;

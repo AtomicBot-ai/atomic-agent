@@ -626,3 +626,53 @@ describe("provider maxOutputTokens", () => {
     }
   });
 });
+
+describe("provider strictTools", () => {
+  const withEntry = (strictTools: unknown) => ({
+    version: USER_CONFIG_VERSION,
+    llm: {
+      activeTextProvider: "mercury",
+      activeEmbeddingProvider: "local-llama",
+      toolTransport: "auto" as const,
+      providers: [
+        {
+          id: "local-llama",
+          kind: "llama-server",
+          url: "http://127.0.0.1:19091",
+        },
+        {
+          id: "mercury",
+          kind: "openai-compatible",
+          baseUrl: "https://api.inceptionlabs.ai/v1",
+          defaultChatModel: "mercury",
+          ...(strictTools === undefined ? {} : { strictTools }),
+        },
+      ],
+    },
+  });
+
+  const entry = (parsed: ReturnType<typeof parseUserConfigFile>) =>
+    parsed.llm?.providers.find((p) => p.id === "mercury");
+
+  it("round-trips the opt-in flag", () => {
+    expect(entry(parseUserConfigFile(withEntry(true)))?.strictTools).toBe(true);
+  });
+
+  it("round-trips an explicit opt-out", () => {
+    expect(entry(parseUserConfigFile(withEntry(false)))?.strictTools).toBe(
+      false,
+    );
+  });
+
+  it("is absent by default — nothing about the request changes", () => {
+    expect(
+      entry(parseUserConfigFile(withEntry(undefined)))?.strictTools,
+    ).toBeUndefined();
+  });
+
+  it("rejects anything that is not a boolean", () => {
+    for (const bad of ["true", 1, {}, []]) {
+      expect(() => parseUserConfigFile(withEntry(bad))).toThrow(/strictTools/);
+    }
+  });
+});
