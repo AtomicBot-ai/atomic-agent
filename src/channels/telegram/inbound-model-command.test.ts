@@ -52,15 +52,38 @@ const API_KEY_ENV = [
   "OPENAI_COMPAT_API_KEY",
   "OPENAI_API_KEY",
   "ATOMIC_AGENT_OPENAI_API_KEY",
+  // The preset entry below declares this one; see the `groq` fixture.
+  "GROQ_API_KEY",
 ] as const;
 
-function writeLlmConfig(stateDir: string): void {
+/**
+ * What a test wants changed about the fixture config. Everything else
+ * is fixed, so a test that touches none of these reads the same world
+ * as every other one.
+ */
+type ConfigOverrides = {
+  activeTextProvider?: string;
+  /** `llm.runMode`, for the fusion cases. */
+  runMode?: Record<string, unknown>;
+  /** `localModels.managed.modelId` — the GGUF the local daemon serves. */
+  managedModelId?: string;
+};
+
+function writeLlmConfig(stateDir: string, over: ConfigOverrides = {}): void {
   writeUserConfigFileSync(getUserConfigPath(stateDir), {
     ...USER_CONFIG_DEFAULTS,
+    localModels: {
+      ...USER_CONFIG_DEFAULTS.localModels,
+      managed: {
+        ...USER_CONFIG_DEFAULTS.localModels.managed,
+        modelId: over.managedModelId ?? null,
+      },
+    },
     llm: {
-      activeTextProvider: "local-llama",
+      activeTextProvider: over.activeTextProvider ?? "local-llama",
       activeEmbeddingProvider: "local-llama",
       toolTransport: "auto",
+      ...(over.runMode ? { runMode: over.runMode } : {}),
       providers: [
         {
           id: "local-llama",
@@ -84,11 +107,28 @@ function writeLlmConfig(stateDir: string): void {
           baseUrl: "http://127.0.0.1:1234/v1",
           defaultChatModel: "gpt-x",
         },
+        // A known-service preset, exactly as
+        // `providers-wizard-build-entry.ts` writes one: the same
+        // `openai-compatible` kind as the LM Studio entry above, told
+        // apart from it only by declaring its own `apiKeyEnvVar`.
+        {
+          id: "groq",
+          kind: "openai-compatible",
+          baseUrl: "https://api.groq.com/openai/v1",
+          defaultChatModel: "llama-3.3-70b",
+          apiKeyEnvVar: "GROQ_API_KEY",
+        },
+        // The one cloud entry with no model of its own, so the rollback
+        // test below can prove a pin is *cleared* and not just reverted.
+        { id: "aimlapi", kind: "aimlapi" },
       ],
     },
   });
   resetConfigCache();
 }
+
+/** Every configured id, in fixture order, for the "Configured:" lines. */
+const ALL_IDS = "local-llama, openrouter, openai-compat, groq, aimlapi";
 
 function makeRuntime(sessions: SessionState[]) {
   const busy = new Set<string>();
@@ -213,6 +253,10 @@ describe("/model over Telegram", () => {
     // the developer's environment.
     expect(process.env.OPENROUTER_API_KEY).toBeUndefined();
     expect(report).toContain("no API key");
+    // The run mode decides whether `fusion.delegate` is in the session
+    // at all, and switching provider is what turns it off — so the
+    // report that exists to answer "what is this running on" says it.
+    expect(report).toContain("Run mode: Local — active provider local-llama");
     // Plain text on Telegram: the id decoration must not leak backticks.
     expect(report).not.toContain("`");
   });
@@ -251,9 +295,7 @@ describe("/model over Telegram", () => {
   it("refuses an unknown provider and names the configured ones", async () => {
     await say("/model gpt-5.4-mini");
     expect(sent[0]).toContain("Unknown provider gpt-5.4-mini.");
-    expect(sent[0]).toContain(
-      "Configured: local-llama, openrouter, openai-compat.",
-    );
+    expect(sent[0]).toContain(`Configured: ${ALL_IDS}.`);
     expect(getConfig().llm?.activeTextProvider).toBe("local-llama");
   });
 
@@ -342,6 +384,8 @@ describe("/model over Telegram", () => {
       "local-llama",
       "openrouter",
       "openai-compat",
+      "groq",
+      "aimlapi",
     ]);
   });
 
@@ -361,16 +405,22 @@ describe("/model over Telegram", () => {
   });
 
   it("clears a pin that did not exist before when the reload fails", async () => {
+    process.env.AIMLAPI_API_KEY = "k";
     fake.failures.reload = new Error("nope");
-    await say("/model local-llama some-model");
-    expect(sent[0]).toBe("Could not switch to local-llama: nope");
+    // `aimlapi` is the fixture's one cloud entry with no
+    // `defaultChatModel`, so this is the *unset* rollback branch —
+    // `restoreProviderDefaultChatModelInConfig(id, undefined)` — and
+    // not the ordinary revert-to-previous one.
+    await say("/model aimlapi some-model");
+    expect(sent[0]).toBe("Could not switch to aimlapi: nope");
     // The config parser always materialises the key, so assert the
     // value: the rollback has to leave it unset, not set to the id the
     // reload refused.
     expect(
-      getConfig().llm?.providers.find((p) => p.id === "local-llama")
+      getConfig().llm?.providers.find((p) => p.id === "aimlapi")
         ?.defaultChatModel,
     ).toBeUndefined();
+    expect(getConfig().llm?.activeTextProvider).toBe("local-llama");
   });
 
   it("still answers when the session store cannot save the stamp", async () => {
@@ -382,6 +432,140 @@ describe("/model over Telegram", () => {
       "Now on openai-compat · gpt-x. Takes effect on the next message.",
     ]);
     expect(getConfig().llm?.activeTextProvider).toBe("openai-compat");
+  });
+
+  it("refuses to pin a model on a local llama-server provider", async () => {
+    // The llama-server factory never reads `entry.defaultChatModel`
+    // (`register-built-in-providers.ts`), but `resolveActiveModelName()`
+    // reads it FIRST — ahead of `localModels.managed.modelId` — so a pin
+    // here renames the model in the report, in `message_sent` and in the
+    // cost lookup while inference carries on unchanged, and no chat
+    // command can clear it again.
+    writeLlmConfig(stateDir, { managedModelId: "qwen-3.8-27b" });
+    await say("/model local-llama gpt-4-turbo");
+    expect(sent[0]).toContain("nothing reads a model id off its config entry");
+    expect(sent[0]).toContain("Local Models tab");
+    expect(
+      getConfig().llm?.providers.find((p) => p.id === "local-llama")
+        ?.defaultChatModel,
+    ).toBeUndefined();
+    // Nothing switched either, and the report is not poisoned.
+    expect(getConfig().llm?.activeTextProvider).toBe("local-llama");
+    expect(fake.reloaded).toEqual([]);
+    await say("/model");
+    expect(sent[1]).toContain("Model: local-llama · qwen-3.8-27b");
+  });
+
+  it("reports the managed local model, not a placeholder", async () => {
+    // The default local-first install: a managed daemon serving a
+    // downloaded GGUF whose id the config knows. "provider default"
+    // there answers the operator's actual question with a shrug.
+    writeLlmConfig(stateDir, { managedModelId: "qwen-3.8-27b" });
+    await say("/model");
+    expect(sent[0]).toContain("Model: local-llama · qwen-3.8-27b");
+    expect(sent[0]).toContain("• local-llama · qwen-3.8-27b (active)");
+    expect(sent[0]).not.toContain("local-llama · provider default");
+  });
+
+  it("refuses a preset provider whose declared env var is unset", async () => {
+    // `groq` is `kind: "openai-compatible"` like the LM Studio entry,
+    // so a kind-only check waves it through and every later turn 401s.
+    expect(process.env.GROQ_API_KEY).toBeUndefined();
+    await say("/model groq");
+    expect(sent[0]).toContain(
+      "has no API key configured (GROQ_API_KEY is unset)",
+    );
+    expect(getConfig().llm?.activeTextProvider).toBe("local-llama");
+    // ...and the report flags it, naming the variable to set.
+    await say("/model");
+    expect(sent[1]).toContain(
+      "• groq · llama-3.3-70b — no API key (GROQ_API_KEY is unset)",
+    );
+    // The keyless LM Studio-shaped entry must stay usable.
+    expect(sent[1]).toContain("• openai-compat · gpt-x\n");
+  });
+
+  it("accepts a preset provider once its declared env var is set", async () => {
+    process.env.GROQ_API_KEY = "gsk-x";
+    await say("/model groq");
+    expect(sent[0]).toBe(
+      "Now on groq · llama-3.3-70b. Takes effect on the next message.",
+    );
+    expect(getConfig().llm?.activeTextProvider).toBe("groq");
+  });
+
+  it("reports the run mode, including a fusion deployment", async () => {
+    writeLlmConfig(stateDir, {
+      activeTextProvider: "openrouter",
+      runMode: {
+        mode: "fusion",
+        fusion: {
+          orchestratorProvider: "openrouter",
+          workerProvider: "local-llama",
+        },
+      },
+      managedModelId: "qwen-3.8-27b",
+    });
+    await say("/model");
+    expect(sent[0]).toContain(
+      "Run mode: Fusion — orchestrator openrouter (openrouter/auto), 2 workers on local-llama (qwen-3.8-27b)",
+    );
+  });
+
+  it("says so when a switch drops the deployment out of fusion", async () => {
+    writeLlmConfig(stateDir, {
+      activeTextProvider: "openrouter",
+      runMode: {
+        mode: "fusion",
+        fusion: {
+          orchestratorProvider: "openrouter",
+          workerProvider: "local-llama",
+        },
+      },
+      managedModelId: "qwen-3.8-27b",
+    });
+    await say("/model local-llama");
+    // Leaving fusion removes `fusion.delegate` and the `### fusion`
+    // guidance from EVERY session and invalidates every KV prefix
+    // (`bootstrap.ts` gates the fan-out descriptor on
+    // `effective === "fusion"`). "Now on local-llama." alone does not
+    // say that, and there is no /runmode verb in this channel.
+    expect(sent[0]).toBe(
+      "Now on local-llama · qwen-3.8-27b. Takes effect on the next message.\n\n" +
+        "Run mode: Fusion → Local. fusion.delegate and its guidance are gone " +
+        "from every session until openrouter is active again — " +
+        "/model openrouter restores it.",
+    );
+    // And the bare report agrees about where it ended up.
+    await say("/model");
+    expect(sent[1]).toContain("stored fusion, effective local");
+  });
+
+  it("says so when a switch puts the deployment back into fusion", async () => {
+    process.env.OPENROUTER_API_KEY = "k";
+    writeLlmConfig(stateDir, {
+      activeTextProvider: "local-llama",
+      runMode: {
+        mode: "fusion",
+        fusion: {
+          orchestratorProvider: "openrouter",
+          workerProvider: "local-llama",
+        },
+      },
+    });
+    await say("/model openrouter");
+    expect(sent[0]).toContain("Run mode: Local → Fusion.");
+    expect(sent[0]).toContain("2 workers on local-llama");
+  });
+
+  it("stays quiet about an ordinary Local → Cloud switch", async () => {
+    // The provider name in the reply already says it; a run-mode
+    // paragraph on every switch is the noise that gets paragraphs
+    // skipped.
+    await say("/model openai-compat");
+    expect(sent[0]).toBe(
+      "Now on openai-compat · gpt-x. Takes effect on the next message.",
+    );
   });
 
   it("lists /model in the help text", async () => {

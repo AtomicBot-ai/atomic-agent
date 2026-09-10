@@ -29,14 +29,31 @@
  * silently pin a typo as the chat model and leave the agent broken
  * until someone opened the TUI; a refusal that names the configured
  * providers costs one message and teaches the form.
+ *
+ * Two more refusals exist for the same reason — a chat has no undo, so
+ * a write it cannot take back must not happen at all. A model id is
+ * refused on a `llama-server` provider, whose factory never reads one
+ * (see {@link MODEL_PIN_IGNORED_KINDS}), and a provider whose entry
+ * declares an `apiKeyEnvVar` that is unset is refused even though its
+ * kind is not in {@link KEY_REQUIRED_KINDS} (see {@link missingApiKey}).
  */
 
+import type { AtomicAgentConfig } from "../config/config-schema.js";
 import { getConfig } from "../config/index.js";
+import { LOCAL_PROVIDER_KIND } from "../config/llm-run-mode-config.js";
+import type { RunModeName } from "../config/llm-run-mode-config.js";
 import { resolveLlmProviderApiKey } from "../config/resolve-llm-api-key.js";
 import {
   resolveLlmConfig,
   type LlmProviderConfigEntry,
+  type ResolvedLlmConfig,
 } from "../llm/provider/registry/index.js";
+import {
+  describeRunMode,
+  resolveRunMode,
+  runModeLabel,
+  type ResolvedRunMode,
+} from "../llm/run-mode/index.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
 import { SESSION_LLM_METADATA_KEY } from "../session/index.js";
 import {
@@ -64,6 +81,25 @@ export interface ModelCommandChat {
 const KEY_REQUIRED_KINDS = new Set(["openrouter", "aimlapi", "gemini"]);
 
 /**
+ * Provider kinds whose factory never reads `entry.defaultChatModel`, so
+ * pinning a model on them changes no inference at all.
+ *
+ * `llama-server` is the only one (see `register-built-in-providers.ts`:
+ * every other factory passes `entry.defaultChatModel` to the provider,
+ * the llama-server factory does not — the daemon serves whichever GGUF
+ * it was started with). Writing a model id onto such an entry is worse
+ * than a no-op: `resolveActiveModelName()` in `bootstrap.ts` reads
+ * `entry.defaultChatModel` *first*, ahead of
+ * `localModels.managed.modelId`, so the pin would become the model name
+ * in every `message_sent` event, in the cost lookup and in the TUI —
+ * naming a model that is not running, with no way to clear it from a
+ * chat. The TUI cannot reach that state either: `openChatModelPicker`
+ * and `ensureInlineModels` both refuse non-cloud kinds. So neither can
+ * this command.
+ */
+const MODEL_PIN_IGNORED_KINDS = new Set([LOCAL_PROVIDER_KIND]);
+
+/**
  * Run `/model` and return the message to post. Never throws: a config
  * write, a provider reload or a session-store write that fails comes
  * back as a message, because the handlers that call this must not let
@@ -75,10 +111,11 @@ export async function runModelCommand(
   args: readonly string[],
   chat: ModelCommandChat,
 ): Promise<string> {
-  const resolved = resolveLlmConfig(getConfig());
-  if (args.length === 0) return formatReport(resolved, chat.code);
+  const config = getConfig();
+  const resolved = resolveLlmConfig(config);
+  if (args.length === 0) return formatReport(config, resolved, chat.code);
 
-  const target = resolveTarget(args, resolved, chat.code);
+  const target = resolveTarget(args, config, resolved, chat.code);
   if (!target.ok) return target.message;
 
   // Same shape as `/switch`: the arguments are validated first so a
@@ -91,6 +128,7 @@ export async function runModelCommand(
   const previousModelPin = resolved.providers.find(
     (p) => p.id === target.providerId,
   )?.defaultChatModel;
+  const modeBefore = currentRunMode(config, resolved).effective;
   let pinned = false;
   let activated = false;
   try {
@@ -137,20 +175,96 @@ export async function runModelCommand(
   // and the TUI restores a session's stamped provider when it opens it
   // (`session-llm.ts`). The switch itself has already landed in the
   // config, so a session store that cannot write must not turn a
-  // successful switch into no reply at all: log it and read the model
-  // straight off the config instead.
-  let chatModel: string | null;
+  // successful switch into no reply at all: log it and answer anyway.
   try {
-    chatModel = stampChatSession(chat, target.providerId);
+    stampChatSession(chat, target.providerId);
   } catch (err) {
     chat.runtime.logger.warn("model command: session stamp failed", {
       error: err instanceof Error ? err.message : String(err),
     });
-    chatModel = activeChatModelOf(target.providerId);
   }
-  return `Now on ${chat.code(target.providerId)} · ${chat.code(
-    chatModel ?? "provider default",
+
+  // Re-read: the reply has to describe what is now on disk, not what
+  // the pre-switch snapshot said. Guarded because this function promises
+  // its callers it never throws — Discord's dispatch is a bare
+  // `void this.onDispatch(...)` — and the switch has already landed, so
+  // a config that somehow no longer parses must degrade to the snapshot
+  // rather than turn a success into an unhandled rejection.
+  let after = config;
+  let afterResolved = resolved;
+  try {
+    after = getConfig();
+    afterResolved = resolveLlmConfig(after);
+  } catch (err) {
+    chat.runtime.logger.warn("model command: config re-read failed", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+  const entry = afterResolved.providers.find((p) => p.id === target.providerId);
+  const shown = entry ? displayModelOf(entry, after) : null;
+  const reply = `Now on ${chat.code(target.providerId)} · ${chat.code(
+    shown ?? "provider default",
   )}. Takes effect on the next message.`;
+  const note = runModeChangeNote(
+    modeBefore,
+    currentRunMode(after, afterResolved),
+    chat.code,
+  );
+  return note === null ? reply : `${reply}\n\n${note}`;
+}
+
+/** The run mode the live config resolves to, the way `bootstrap` does. */
+function currentRunMode(
+  config: AtomicAgentConfig,
+  resolved: ResolvedLlmConfig,
+): ResolvedRunMode {
+  return resolveRunMode(resolved, {
+    managedModelId: config.localModels.managed.modelId,
+  });
+}
+
+/**
+ * The line to append when a provider switch also moved the run mode, or
+ * `null` when it did not.
+ *
+ * Switching the active provider by hand *is* how one leaves fusion —
+ * `resolveRunMode` derives the effective mode from `activeTextProvider`
+ * on purpose, so the two keys can never contradict each other, and the
+ * TUI's own LLM pane drops out of fusion the same way. What the TUI has
+ * and the channels did not is a place that says so: the run-mode chip.
+ * Silently removing `fusion.delegate` and the `### fusion` guidance from
+ * every session (`bootstrap.ts` gates the fan-out descriptor on
+ * `effective === "fusion"`) is a large change to answer with "Now on
+ * local-llama."
+ *
+ * Only fusion transitions are announced. Local ↔ Cloud is a change of
+ * mode too, but it is the whole content of the request and the reply
+ * already names the provider that caused it; a line restating it on
+ * every ordinary switch would be noise that teaches operators to skip
+ * the paragraph that matters.
+ */
+function runModeChangeNote(
+  before: RunModeName,
+  after: ResolvedRunMode,
+  code: (text: string) => string,
+): string | null {
+  if (after.effective === before) return null;
+  if (before !== "fusion" && after.effective !== "fusion") return null;
+  const head = `Run mode: ${runModeLabel(before)} → ${runModeLabel(after.effective)}.`;
+  if (before === "fusion") {
+    const back = after.orchestratorProviderId;
+    return `${head} ${code("fusion.delegate")} and its guidance are gone from every session${
+      back === null
+        ? ""
+        : ` until ${code(back)} is active again — ${code(`/model ${back}`)} restores it`
+    }.`;
+  }
+  if (after.effective === "fusion") {
+    return `${head} ${code("fusion.delegate")} is back, with ${after.workers} worker${
+      after.workers === 1 ? "" : "s"
+    } on ${code(after.workerProviderId ?? "the local provider")}.`;
+  }
+  return head;
 }
 
 /**
@@ -227,14 +341,6 @@ async function rollback(
   }
 }
 
-/** The model the config now pins on `providerId`, if any. */
-function activeChatModelOf(providerId: string): string | null {
-  const entry = resolveLlmConfig(getConfig()).providers.find(
-    (p) => p.id === providerId,
-  );
-  return entry ? chatModelOf(entry) : null;
-}
-
 type ResolvedTarget =
   | { ok: true; providerId: string; modelId: string | null }
   | { ok: false; message: string };
@@ -253,7 +359,8 @@ type ResolvedTarget =
  */
 function resolveTarget(
   args: readonly string[],
-  resolved: ReturnType<typeof resolveLlmConfig>,
+  config: AtomicAgentConfig,
+  resolved: ResolvedLlmConfig,
   code: (text: string) => string,
 ): ResolvedTarget {
   // Refuse rather than ignore the tail. A third word is always a
@@ -303,10 +410,15 @@ function resolveTarget(
   }
 
   const entry = match.entry;
-  if (KEY_REQUIRED_KINDS.has(entry.kind) && !hasApiKey(entry)) {
+  const missingKey = missingApiKey(entry, config);
+  if (missingKey) {
     return {
       ok: false,
-      message: `Provider ${code(entry.id)} has no API key configured; add one in the TUI's LLM tab before switching to it.`,
+      message: `Provider ${code(entry.id)} has no API key configured${
+        missingKey.envVar === null
+          ? ""
+          : ` (${code(missingKey.envVar)} is unset)`
+      }; add one in the TUI's LLM tab before switching to it.`,
     };
   }
   const modelId = inlineModel === null ? null : inlineModel.trim();
@@ -314,6 +426,16 @@ function resolveTarget(
     return {
       ok: false,
       message: `Usage: ${code("/model <provider> <model-id>")}.`,
+    };
+  }
+  if (modelId !== null && MODEL_PIN_IGNORED_KINDS.has(entry.kind)) {
+    return {
+      ok: false,
+      message: [
+        `${code(entry.id)} is a local ${code(entry.kind)} provider: it serves whichever model its daemon loaded, and nothing reads a model id off its config entry.`,
+        `Pinning ${code(modelId)} would rename it everywhere — reports, analytics, cost — without changing what runs, and no chat command could undo that.`,
+        `Use ${code(`/model ${entry.id}`)} to switch to it; pick the local model in the TUI's Local Models tab.`,
+      ].join(" "),
     };
   }
   return { ok: true, providerId: entry.id, modelId };
@@ -360,32 +482,105 @@ function hasApiKey(entry: LlmProviderConfigEntry): boolean {
   return Boolean(resolveLlmProviderApiKey(entry)?.length);
 }
 
-/** The chat model an entry pins, or `null` when it names none. */
+/**
+ * Why `providerId` cannot authenticate, or `null` when it can (or does
+ * not need to).
+ *
+ * Two reasons, and the second is the one a kind check alone misses. The
+ * known-service presets — Groq, Nous, Anthropic and friends — are all
+ * stored as `kind: "openai-compatible"` with their own `apiKeyEnvVar`
+ * (`providers-wizard-build-entry.ts`), so keying only on kind reports
+ * them as usable and switches to them happily while
+ * `resolveLlmProviderApiKey` returns `undefined`; every following turn
+ * then 401s with nothing in the channel to explain it. An entry that
+ * *declares* an env var has said it needs a key, which is exactly the
+ * signal that separates it from a bare keyless compat entry (LM Studio,
+ * Ollama) that must keep working.
+ *
+ * `apiKeyEnvVar` lives on the user-config entry rather than on
+ * `LlmProviderConfigEntry`, so it is read off the file entry here.
+ */
+function missingApiKey(
+  entry: LlmProviderConfigEntry,
+  config: AtomicAgentConfig,
+): { envVar: string | null } | null {
+  if (hasApiKey(entry)) return null;
+  const envVar = config.llm?.providers.find(
+    (e) => e.id === entry.id,
+  )?.apiKeyEnvVar;
+  if (envVar !== undefined && envVar.length > 0) return { envVar };
+  return KEY_REQUIRED_KINDS.has(entry.kind) ? { envVar: null } : null;
+}
+
+/**
+ * The chat model an entry *pins*, or `null` when it names none.
+ *
+ * This is the switch-and-stamp value, deliberately not the display one:
+ * `executeTurn` stamps sessions with exactly this expression, and a
+ * stamp carrying a model on a `llama-server` entry would make the TUI's
+ * session restore call `selectChatModel` on reopen
+ * (`session-model-restore.ts`), writing that id into
+ * `defaultChatModel` — the poisoning `MODEL_PIN_IGNORED_KINDS` exists
+ * to prevent. Use {@link displayModelOf} for anything an operator reads.
+ */
 function chatModelOf(entry: LlmProviderConfigEntry): string | null {
   return entry.defaultChatModel ?? entry.model ?? null;
 }
 
+/**
+ * The model to *show* for an entry: its pin when it has one, and for a
+ * local `llama-server` the managed daemon's GGUF id, which is what it
+ * actually serves.
+ *
+ * Same first two legs and same order as `resolveActiveModelName()` in
+ * `bootstrap.ts`, so the channel reports the model the cost lookup and
+ * the `message_sent` events report. The legs that one has and this does
+ * not are the operator `--alias` and the prompt-profile id, neither of
+ * which is reachable from config alone — an external-mode llama-server
+ * with no managed id still reads as "provider default" here.
+ */
+function displayModelOf(
+  entry: LlmProviderConfigEntry,
+  config: AtomicAgentConfig,
+): string | null {
+  const pinned = chatModelOf(entry);
+  if (pinned !== null) return pinned;
+  if (entry.kind === LOCAL_PROVIDER_KIND) {
+    return config.localModels.managed.modelId ?? null;
+  }
+  return null;
+}
+
 function formatReport(
-  resolved: ReturnType<typeof resolveLlmConfig>,
+  config: AtomicAgentConfig,
+  resolved: ResolvedLlmConfig,
   code: (text: string) => string,
 ): string {
   const activeId = resolved.activeTextProvider;
   const active = resolved.providers.find((p) => p.id === activeId);
   const lines = [
     active
-      ? `Model: ${code(active.id)} · ${code(chatModelOf(active) ?? "provider default")}`
+      ? `Model: ${code(active.id)} · ${code(displayModelOf(active, config) ?? "provider default")}`
       : `No active text provider is configured (config names ${code(activeId)}).`,
+    // The run mode is not cosmetic here: it decides whether
+    // `fusion.delegate` and the `### fusion` guidance are in the
+    // session at all, and switching provider is what turns it off.
+    // The TUI has a chip for this; the channels have this line.
+    `Run mode: ${describeRunMode(currentRunMode(config, resolved))}`,
   ];
   if (resolved.providers.length > 0) {
     lines.push("", "Providers:");
     for (const entry of resolved.providers) {
       const here = entry.id === activeId ? " (active)" : "";
+      const missing = missingApiKey(entry, config);
       const keyless =
-        KEY_REQUIRED_KINDS.has(entry.kind) && !hasApiKey(entry)
-          ? " — no API key"
-          : "";
+        missing === null
+          ? ""
+          : missing.envVar === null
+            ? " — no API key"
+            : ` — no API key (${missing.envVar} is unset)`;
       lines.push(
-        `• ${code(entry.id)} · ${code(chatModelOf(entry) ?? "provider default")}${here}${keyless}`,
+        `• ${code(entry.id)} · ${code(displayModelOf(entry, config) ?? "provider default")}${here}${keyless}`,
       );
     }
   }
@@ -398,23 +593,22 @@ function formatReport(
 
 /**
  * Write the provider/model stamp onto this chat's session and persist
- * it, and return the model that was stamped. Re-reads the config so the
- * stamp records what actually landed on disk (a provider switch with no
- * model argument keeps that provider's own model). No session yet means
- * nothing to stamp — the choice is the global default the chat's first
- * session will inherit anyway.
+ * it. Re-reads the config so the stamp records what actually landed on
+ * disk (a provider switch with no model argument keeps that provider's
+ * own model), and uses {@link chatModelOf} rather than
+ * {@link displayModelOf} so the stamp stays byte-identical to the one
+ * `executeTurn` writes. No session yet means nothing to stamp — the
+ * choice is the global default the chat's first session will inherit
+ * anyway.
  */
-function stampChatSession(
-  chat: ModelCommandChat,
-  providerId: string,
-): string | null {
+function stampChatSession(chat: ModelCommandChat, providerId: string): void {
   const entry = resolveLlmConfig(getConfig()).providers.find(
     (p) => p.id === providerId,
   );
   const chatModel = entry ? chatModelOf(entry) : null;
-  if (!chat.sessionId) return chatModel;
+  if (!chat.sessionId) return;
   const session = chat.runtime.sessionStore.load(chat.sessionId);
-  if (!session) return chatModel;
+  if (!session) return;
   chat.runtime.sessionStore.save({
     ...session,
     metadata: {
@@ -422,5 +616,4 @@ function stampChatSession(
       [SESSION_LLM_METADATA_KEY]: { providerId, chatModel },
     },
   });
-  return chatModel;
 }
