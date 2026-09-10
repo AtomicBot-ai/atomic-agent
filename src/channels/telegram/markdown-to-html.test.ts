@@ -47,11 +47,12 @@ describe("convertMarkdownToTelegramHtml", () => {
     );
   });
 
-  // Word-flanked asterisks are multiplication, not emphasis. Reading
-  // them as emphasis does not merely restyle the text: Telegram turns
-  // `<i>` into italics and the `*` characters are gone from the
-  // rendered reply, so `2*pi*5` reaches the operator as `2pi5`.
-  describe("asterisk emphasis requires non-word flanking", () => {
+  // Word-flanked asterisks are multiplication, not emphasis, and so
+  // are space-flanked ones. Reading either as emphasis does not merely
+  // restyle the text: Telegram turns `<i>` into italics and the `*`
+  // characters are gone from the rendered reply, so `2*pi*5` reaches
+  // the operator as `2pi5` and `G1 * G2 * G3` as `G1  G2  G3`.
+  describe("asterisk emphasis requires non-word, non-space flanking", () => {
     const literal: Array<[name: string, input: string, expected: string]> = [
       ["a product of two factors", "2*pi*5", "2*pi*5"],
       [
@@ -65,6 +66,46 @@ describe("convertMarkdownToTelegramHtml", () => {
         "G_cont = 2*pi*5 and G1*G2*G3",
         "G_cont = 2*pi*5 and G1*G2*G3",
       ],
+      // The same arithmetic written with spaces around the operator.
+      // The word guard alone does not reach these — the flanks are
+      // spaces — but a `*` followed by whitespace cannot open emphasis
+      // under CommonMark either, and these are the shapes an agent
+      // emits when it pretty-prints a control-systems script.
+      [
+        "a spaced chain of transfer functions",
+        "G_cont = G1 * G2 * G3",
+        "G_cont = G1 * G2 * G3",
+      ],
+      ["a spaced product", "omega = 2 * pi * 5", "omega = 2 * pi * 5"],
+      [
+        "a spaced loose pair spanning a call",
+        "y = 20 * log10(abs(15 - 1 * 25))",
+        "y = 20 * log10(abs(15 - 1 * 25))",
+      ],
+      [
+        "Octave element-wise multiplication",
+        "matrix A .* B .* C",
+        "matrix A .* B .* C",
+      ],
+      [
+        "a SQL star next to a comparison",
+        "SELECT * FROM t WHERE c = *",
+        "SELECT * FROM t WHERE c = *",
+      ],
+      // `\w` is ASCII-only in JS, so the word guard on its own leaves
+      // Cyrillic-flanked products emphasised; the rule uses Unicode
+      // letter/number classes so prose in any script behaves the same.
+      ["a product inside Cyrillic prose", "пи*2*пи", "пи*2*пи"],
+      ["a Cyrillic factor", "цена 2*пи*5 герц", "цена 2*пи*5 герц"],
+      // The `_` rule had the same ASCII-only leak: `snake_case_name`
+      // was safe but its Cyrillic equivalent was not.
+      [
+        "a Cyrillic snake_case identifier",
+        "слово_это_слово",
+        "слово_это_слово",
+      ],
+      ["an ASCII snake_case identifier", "snake_case_name", "snake_case_name"],
+      ["a spaced underscore", "a _ b _ c", "a _ b _ c"],
     ];
     for (const [name, input, expected] of literal) {
       it(`leaves ${name} literal`, () => {
@@ -80,6 +121,21 @@ describe("convertMarkdownToTelegramHtml", () => {
       ["followed by punctuation", "*this*.", "<i>this</i>."],
       ["two runs on one line", "*one* and *two*", "<i>one</i> and <i>two</i>"],
       ["a multi-word run", "read *the whole thing* now", "read <i>the whole thing</i> now"],
+      [
+        "a run whose body is punctuation-flanked",
+        "see *(this)* here",
+        "see <i>(this)</i> here",
+      ],
+      [
+        "Cyrillic prose",
+        "это *очень* важно",
+        "это <i>очень</i> важно",
+      ],
+      [
+        "Cyrillic prose with underscores",
+        "это _очень_ важно",
+        "это <i>очень</i> важно",
+      ],
     ];
     for (const [name, input, expected] of emphasised) {
       it(`still emphasises ${name}`, () => {
@@ -112,6 +168,33 @@ describe("convertMarkdownToTelegramHtml", () => {
       );
       expect(html.match(/<i>/g)?.length ?? 0).toBe(3);
       expect(html.match(/<\/i>/g)?.length ?? 0).toBe(3);
+    });
+
+    it("still renders a bullet list whose marker is an asterisk", () => {
+      expect(convertMarkdownToTelegramHtml("* list item")).toBe("• list item");
+    });
+
+    it("keeps a lone spaced asterisk literal", () => {
+      expect(convertMarkdownToTelegramHtml("5 * 3 = 15")).toBe("5 * 3 = 15");
+    });
+
+    it("still emphasises a run that wraps bold", () => {
+      expect(convertMarkdownToTelegramHtml("*a **b** c*")).toBe(
+        "<i>a <b>b</b> c</i>",
+      );
+    });
+
+    // Telegram answers crossing tags with a 400 on the whole
+    // sendMessage; `sendOutbound` recovers by re-sending the chunk as
+    // plain text, but that costs every bit of formatting in the reply.
+    // An emphasis candidate whose body does not close what it opens
+    // stays literal instead of emitting an `<i>` across a `<b>`.
+    it("refuses an emphasis run that would cross a bold tag", () => {
+      expect(convertMarkdownToTelegramHtml("__* *a__*")).toBe("<b>* *a</b>*");
+    });
+
+    it("refuses an underscore run that would cross a bold tag", () => {
+      expect(convertMarkdownToTelegramHtml("**_ _a** _")).toBe("<b>_ _a</b> _");
     });
   });
 

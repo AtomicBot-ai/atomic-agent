@@ -236,30 +236,91 @@ function renderBold(s: string): string {
 }
 
 function renderItalic(s: string): string {
-  // Single `*` or `_` only, and both require a non-word character on
-  // the outer side of each delimiter. For `_` that keeps
-  // `snake_case_identifier` intact; for `*` it keeps arithmetic and
-  // shell globs intact, which matters more than it looks. Without
-  // the `*` guard a MATLAB expression like `20*log10(abs(15-1*25))`
-  // has its two loose asterisks read as an emphasis pair and comes
-  // out as `20<i>log10(abs(15-1</i>25))` — under `parse_mode: "HTML"`
-  // Telegram renders that as italics, so the asterisks are *deleted*
-  // from what the operator sees and the expression silently changes
-  // meaning. Restyling is recoverable; character loss is not.
+  // A single `*` or `_` opens emphasis only when it is not glued to a
+  // letter or digit on the outside and not followed by whitespace on
+  // the inside; the closing delimiter is the mirror image. Both
+  // conditions matter, and each covers a different half of the
+  // reported bug:
+  //
+  //  - The word guard keeps `20*log10(abs(15-1*25))` literal. Without
+  //    it the two loose asterisks are read as an emphasis pair and the
+  //    line comes out as `20<i>log10(abs(15-1</i>25))`; under
+  //    `parse_mode: "HTML"` Telegram renders that as italics, so the
+  //    asterisks are *deleted* from what the operator sees and the
+  //    expression silently changes meaning. Restyling is recoverable;
+  //    character loss is not.
+  //  - The whitespace guard keeps the spaced form of the same
+  //    arithmetic literal — `G_cont = G1 * G2 * G3`, `2 * pi * 5`,
+  //    Octave's `A .* B .* C`, `SELECT * FROM t`. There the outer
+  //    flanks are punctuation or spaces, so the word guard alone lets
+  //    the pair through.
+  //
+  // Deliberate divergence from CommonMark, in both directions:
+  //
+  //  - Stricter. CommonMark allows intraword emphasis with `*` (and
+  //    only with `*`; `_` is guarded there precisely so that
+  //    `snake_case` survives), so upstream `*Note*s` and
+  //    `un*frigging*believable` are `<em>` and here they stay
+  //    literal. That asymmetry is intentional in the spec, and we are
+  //    overriding it on purpose: in an agent transcript a `*` wedged
+  //    between two word characters is arithmetic or a glob far more
+  //    often than it is emphasis, and guessing wrong destroys
+  //    characters rather than merely dropping a style.
+  //  - Looser. This is a flanking approximation, not CommonMark's
+  //    left/right-flanking algorithm. A pair flanked on the outside
+  //    by punctuation — `rm build/*.o obj/*.o` — is still read as
+  //    emphasis. CommonMark emphasises that one too, so it is not a
+  //    divergence in itself, but the general punctuation case is only
+  //    approximated; closing it means porting the whole algorithm.
+  //
+  // Both rules use Unicode letter/number classes rather than `\w`,
+  // which is ASCII-only in JS. With `\w` the guards silently stopped
+  // applying to non-Latin prose: `пи*2*пи` was emphasised where
+  // `pi*2*pi` was not, and `слово_это_слово` lost its underscores
+  // where `snake_case_name` kept them.
   //
   // `renderBold` has already consumed `**pairs**`, so the remaining
   // `*` runs here are single delimiters; the closing lookahead still
   // rejects a trailing `*` so a stray third asterisk is never
   // stranded next to an emitted `<i>`.
   //
-  // This is a word guard, not CommonMark's full left/right-flanking
-  // rule: asterisks flanked by punctuation rather than by word
-  // characters — `build/*.o obj/*.o` — are still read as a pair.
-  // CommonMark reads that one as emphasis too, and closing it means
-  // porting the whole flanking algorithm.
+  // `tagsBalanced` is the safety net rather than a style rule: earlier
+  // passes have already emitted `<b>` / `<s>` / `<a>` into this
+  // string, and a marker soup like `__* *a__*` can otherwise place an
+  // `<i>` that crosses one of them. Telegram answers crossing tags
+  // with a 400 on the whole `sendMessage` — the outbound sender
+  // recovers by re-sending as plain text, but that costs the operator
+  // every bit of formatting in the reply — so a candidate whose body
+  // does not close what it opens stays literal instead.
   return s
-    .replace(/(^|[^*\w])\*([^*\n]+?)\*(?![\w*])/g, "$1<i>$2</i>")
-    .replace(/(^|[^_\w])_([^_\n]+?)_(?!\w)/g, "$1<i>$2</i>");
+    .replace(
+      /(^|[^*\p{L}\p{N}_])\*([^*\s](?:[^*\n]*?[^*\s])?)\*(?![\p{L}\p{N}_*])/gu,
+      (match: string, before: string, body: string) =>
+        tagsBalanced(body) ? `${before}<i>${body}</i>` : match,
+    )
+    .replace(
+      /(^|[^_\p{L}\p{N}])_([^_\s](?:[^_\n]*?[^_\s])?)_(?![\p{L}\p{N}_])/gu,
+      (match: string, before: string, body: string) =>
+        tagsBalanced(body) ? `${before}<i>${body}</i>` : match,
+    );
+}
+
+/**
+ * True when every HTML tag inside an emphasis candidate's body is
+ * opened and closed within that body. Used to refuse a `<i>` wrapper
+ * that would cross a `<b>` / `<s>` / `<a>` emitted by an earlier
+ * inline pass, which Telegram rejects with a 400.
+ */
+function tagsBalanced(body: string): boolean {
+  const stack: string[] = [];
+  for (const m of body.matchAll(/<(\/?)([a-z-]+)[^>]*>/g)) {
+    if (m[1] === "/") {
+      if (stack.pop() !== m[2]) return false;
+    } else {
+      stack.push(m[2] ?? "");
+    }
+  }
+  return stack.length === 0;
 }
 
 function renderStrikethrough(s: string): string {
