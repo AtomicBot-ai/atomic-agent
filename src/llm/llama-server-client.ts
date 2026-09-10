@@ -630,7 +630,7 @@ export class LlamaServerClient {
       temperature: request.temperature ?? ENV_TEMPERATURE ?? 0.2,
       top_p: request.topP ?? ENV_TOP_P ?? 0.95,
       top_k: request.topK ?? ENV_TOP_K ?? 40,
-      n_predict: request.maxTokens ?? config.localModels.completionMaxTokens,
+      n_predict: resolveNPredict(request.maxTokens, config.localModels.completionMaxTokens),
       repeat_penalty: request.repeatPenalty ?? 1.1,
       repeat_last_n: request.repeatLastN ?? 256,
     };
@@ -806,4 +806,23 @@ function computeBackoffMs(baseMs: number, attemptNumber: number): number {
 async function defaultSleep(ms: number): Promise<void> {
   if (ms <= 0) return;
   await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * `n_predict` for one local completion.
+ *
+ * `localModels.completionMaxTokens: 0` is the operator saying "no
+ * client-side cap"; llama.cpp spells that `-1`, which generates until
+ * the model emits a stop token or the context window fills. The context
+ * window is the real ceiling on a local run — memory is committed at
+ * daemon start by the model and `--ctx-size`, not by how long one reply
+ * runs — so what a positive cap actually buys is a bound on a runaway
+ * generation, not protection from a crash.
+ */
+export function resolveNPredict(
+  requested: number | undefined,
+  configured: number,
+): number {
+  const cap = requested ?? configured;
+  return cap === 0 ? -1 : cap;
 }

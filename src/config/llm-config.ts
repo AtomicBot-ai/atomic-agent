@@ -63,6 +63,13 @@ export type UserLlmProviderEntry = {
   supportsVision?: boolean;
   requestTimeoutMs?: number;
   /**
+   * Hard ceiling on this provider's output, in tokens. Absent means no
+   * ceiling: the service applies the model's own maximum, which is what
+   * makes a long single-file answer possible. Set it to bound spend or
+   * to satisfy a service that requires the field.
+   */
+  maxOutputTokens?: number;
+  /**
    * Prompt-caching policy for this provider. Declared in the config
    * schema and on `LlmProviderConfigEntry`; no provider reads it yet,
    * so today it only has to survive the round-trip through config.
@@ -278,6 +285,19 @@ export function parseLlmProviderEntry(
               throw new ConfigValidationError(
                 `${field}.requestTimeoutMs`,
                 "expected positive number",
+              );
+            })(),
+    maxOutputTokens:
+      obj.maxOutputTokens === undefined
+        ? undefined
+        : typeof obj.maxOutputTokens === "number" &&
+            Number.isInteger(obj.maxOutputTokens) &&
+            obj.maxOutputTokens > 0
+          ? obj.maxOutputTokens
+          : (() => {
+              throw new ConfigValidationError(
+                `${field}.maxOutputTokens`,
+                "expected positive integer",
               );
             })(),
     promptCache: parseOptionalEnum<

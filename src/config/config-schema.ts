@@ -2022,7 +2022,12 @@ export interface UserConfigFile {
 // v59: `tui.sessionRail.pinned` (`string[]`, session ids) — the threads
 // the operator pinned to the top of the rail. Additive: an older file
 // inherits `[]`, nothing pinned, and `order` keeps its v58 meaning.
-export const USER_CONFIG_VERSION = 59;
+// v60: `localModels.completionMaxTokens` accepts `0` — "no client-side
+// cap", generate until a stop token or the context window fills — and
+// provider entries accept `maxOutputTokens`, the per-provider cloud
+// ceiling that replaces the local knob a cloud request used to borrow.
+// Additive: an older file keeps its positive cap and no entry ceiling.
+export const USER_CONFIG_VERSION = 60;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -2170,6 +2175,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   56,
   57,
   58,
+  59,
   USER_CONFIG_VERSION,
 ];
 
@@ -2811,6 +2817,24 @@ export function parsePositiveInt(raw: unknown, field: string): number {
  * counterpart silently clamps because operator-supplied env vars are
  * less strict than file-supplied user config.
  */
+/**
+ * `localModels.completionMaxTokens` — the local runner's `n_predict`.
+ *
+ * `0` means **no client-side cap**: llama.cpp then generates until the
+ * model emits a stop token or the context window fills. That is the
+ * honest ceiling for a local run, and it is what an operator asking for
+ * one long file wants. It costs wall-clock time, not memory — the
+ * machine's exposure is fixed at daemon start by the model and
+ * `--ctx-size`, not by how many tokens a single reply runs to — so the
+ * only thing a cap buys locally is a bound on a runaway generation.
+ * Anything else is the usual 64..131072 window.
+ */
+export function parseLocalCompletionCap(raw: unknown, field: string): number {
+  const value = coerceIntLike(raw);
+  if (value === 0) return 0;
+  return parseBoundedPositiveInt(raw, field, 64, 131_072);
+}
+
 export function parseBoundedPositiveInt(
   raw: unknown,
   field: string,
@@ -4008,12 +4032,10 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
     localModels: {
       url: localModelsUrl,
       mode: localModelsMode,
-      completionMaxTokens: parseBoundedPositiveInt(
+      completionMaxTokens: parseLocalCompletionCap(
         localModels.completionMaxTokens ??
           USER_CONFIG_DEFAULTS.localModels.completionMaxTokens,
         "localModels.completionMaxTokens",
-        64,
-        131_072,
       ),
       managed,
       embeddings: embeddingsDaemon,

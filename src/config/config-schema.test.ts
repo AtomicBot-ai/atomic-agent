@@ -879,24 +879,35 @@ describe("parseUserConfigFile", () => {
   });
 
   it("defaults localModels.managed.parallel to 2 (the pre-v52 hard-coded slot count)", () => {
-    expect(parseUserConfigFile({ version: USER_CONFIG_VERSION }).localModels.managed.parallel).toBe(2);
+    expect(
+      parseUserConfigFile({ version: USER_CONFIG_VERSION }).localModels.managed
+        .parallel,
+    ).toBe(2);
     expect(USER_CONFIG_DEFAULTS.localModels.managed.parallel).toBe(2);
   });
 
   it("migrates a v51 file by filling localModels.managed.parallel=2", () => {
-    const parsed = parseUserConfigFile({ version: 51, localModels: { managed: { port: 19091 } } });
+    const parsed = parseUserConfigFile({
+      version: 51,
+      localModels: { managed: { port: 19091 } },
+    });
     expect(parsed.version).toBe(USER_CONFIG_VERSION);
     expect(parsed.localModels.managed.parallel).toBe(2);
   });
 
   it("keeps an explicit localModels.managed.parallel and bounds it to 1..8", () => {
     expect(
-      parseUserConfigFile({ version: USER_CONFIG_VERSION, localModels: { managed: { parallel: 4 } } })
-        .localModels.managed.parallel,
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        localModels: { managed: { parallel: 4 } },
+      }).localModels.managed.parallel,
     ).toBe(4);
     for (const parallel of [0, 9, 2.5]) {
       expect(() =>
-        parseUserConfigFile({ version: USER_CONFIG_VERSION, localModels: { managed: { parallel } } }),
+        parseUserConfigFile({
+          version: USER_CONFIG_VERSION,
+          localModels: { managed: { parallel } },
+        }),
       ).toThrow(/localModels\.managed\.parallel/);
     }
   });
@@ -1775,7 +1786,10 @@ describe("swarm units (config v52)", () => {
         swarm: { units: [unit, { ...unit, id: "two" }] },
       }),
     ).toThrow(/duplicate token env/);
-describe("tui.sessionRail (config v52)", () => {
+  });
+});
+
+describe("tui.sessionRail (config v58)", () => {
   it("gives a v51 file the recency default — an empty order", () => {
     const parsed = parseUserConfigFile({ version: 51, tui: { theme: "nord" } });
     expect(parsed.version).toBe(USER_CONFIG_VERSION);
@@ -1809,20 +1823,25 @@ describe("tui.sessionRail (config v52)", () => {
   });
 });
 
-describe("tui.sessionRail.pinned (config v53)", () => {
+describe("tui.sessionRail.pinned (config v59)", () => {
   it("gives a v52 file nothing pinned and keeps its order", () => {
     const parsed = parseUserConfigFile({
       version: 52,
       tui: { sessionRail: { order: ["s-b", "s-a"] } },
     });
     expect(parsed.version).toBe(USER_CONFIG_VERSION);
-    expect(parsed.tui.sessionRail).toEqual({ order: ["s-b", "s-a"], pinned: [] });
+    expect(parsed.tui.sessionRail).toEqual({
+      order: ["s-b", "s-a"],
+      pinned: [],
+    });
   });
 
   it("round-trips the pinned block next to the order", () => {
     const parsed = parseUserConfigFile({
       version: USER_CONFIG_VERSION,
-      tui: { sessionRail: { order: ["s-b", "s-a", "s-c"], pinned: ["s-c", "s-a"] } },
+      tui: {
+        sessionRail: { order: ["s-b", "s-a", "s-c"], pinned: ["s-c", "s-a"] },
+      },
     });
     expect(parsed.tui.sessionRail).toEqual({
       order: ["s-b", "s-a", "s-c"],
@@ -1835,7 +1854,10 @@ describe("tui.sessionRail.pinned (config v53)", () => {
       version: USER_CONFIG_VERSION,
       tui: { sessionRail: { pinned: ["s-b", 7, "", null, "s-a", "s-b"] } },
     });
-    expect(parsed.tui.sessionRail).toEqual({ order: [], pinned: ["s-b", "s-a"] });
+    expect(parsed.tui.sessionRail).toEqual({
+      order: [],
+      pinned: ["s-b", "s-a"],
+    });
   });
 
   it("rejects a pinned block that is not a list", () => {
@@ -1845,5 +1867,38 @@ describe("tui.sessionRail.pinned (config v53)", () => {
         tui: { sessionRail: { pinned: "s-a" } },
       }),
     ).toThrow(/tui\.sessionRail\.pinned/);
+  });
+});
+
+describe("localModels.completionMaxTokens (config v60)", () => {
+  it('accepts 0 as "no client-side cap"', () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      localModels: { completionMaxTokens: 0 },
+    });
+    expect(parsed.localModels.completionMaxTokens).toBe(0);
+  });
+
+  it("keeps the ordinary window and its bounds", () => {
+    expect(
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        localModels: { completionMaxTokens: 32_000 },
+      }).localModels.completionMaxTokens,
+    ).toBe(32_000);
+    for (const bad of [63, 131_073, -1]) {
+      expect(() =>
+        parseUserConfigFile({
+          version: USER_CONFIG_VERSION,
+          localModels: { completionMaxTokens: bad },
+        }),
+      ).toThrow(/completionMaxTokens/);
+    }
+  });
+
+  it("leaves an older file on its positive default", () => {
+    expect(
+      parseUserConfigFile({ version: 51 }).localModels.completionMaxTokens,
+    ).toBe(8192);
   });
 });

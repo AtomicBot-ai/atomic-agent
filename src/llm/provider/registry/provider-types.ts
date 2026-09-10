@@ -52,6 +52,8 @@ export type LlmProviderConfigEntry = {
    * the request from the resolved model or drop the tool contract.
    */
   extraBody?: Record<string, unknown>;
+  /** Per-provider output ceiling; absent means the model's own maximum. */
+  maxOutputTokens?: number;
   /**
    * Settings for a `subscription-cli` provider — which vendor CLI to
    * drive and how to invoke it. Absent on every other kind.

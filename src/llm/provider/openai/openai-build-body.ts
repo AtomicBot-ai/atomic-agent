@@ -1,4 +1,3 @@
-import { getConfig } from "../../../config/index.js";
 import type { CompletionRequest } from "../completion-types.js";
 import { filterCloudCompletionRequest } from "./sampling-filter.js";
 
@@ -15,15 +14,36 @@ export function buildOpenAiChatBody(
   defaultChatModel: string,
   stream: boolean,
   extraBody?: Record<string, unknown>,
+  maxOutputTokens?: number,
 ): Record<string, unknown> {
   const filtered = filterCloudCompletionRequest(request);
   const body: Record<string, unknown> = {
     model: defaultChatModel,
     messages: [{ role: "user", content: filtered.prompt }],
     temperature: filtered.temperature ?? 0.2,
-    max_tokens: filtered.maxTokens ?? getConfig().localModels.completionMaxTokens,
     stream,
   };
+  // `max_tokens` only when somebody actually asked for a bound.
+  //
+  // It used to default to `localModels.completionMaxTokens` — the
+  // llama-server `n_predict` knob, 8192 — which is the wrong number for
+  // a cloud model twice over: it is sized for a local runner's decode
+  // budget, and it silently capped every cloud completion at a fraction
+  // of what the model can emit. A turn that legitimately writes a long
+  // file (a whole page, a large refactor) hit that wall mid-JSON, the
+  // provider reported `finish_reason: "length"`, and the turn died with
+  // "model response truncated at 8192 tokens" — a limit nobody chose and
+  // nothing in the UI named.
+  //
+  // Omitted, the server applies the model's own default, which is what
+  // an operator picking a cloud model expects. A provider that requires
+  // the field, or a deployment that wants a hard ceiling, sets it
+  // through the entry's `extraBody` — `max_tokens` is deliberately not
+  // in `RESERVED_BODY_KEYS`, so that passthrough wins.
+  // Order: what this call asked for, else the provider's configured
+  // ceiling, else nothing at all.
+  const cap = filtered.maxTokens ?? maxOutputTokens;
+  if (typeof cap === "number") body.max_tokens = cap;
   if (stream) {
     // Ask for the usage block on the stream's last chunk. Without it
     // most servers send none — OpenAI, llama.cpp and everything built on
