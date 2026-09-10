@@ -42,6 +42,7 @@ import {
   // Lane B — backend switch
   chatModelsList,
   configSetWhole,
+  explainConfigWriteFailure,
   readWholeConfig,
   setRunMode,
   localDaemonRunning,
@@ -5122,6 +5123,31 @@ async function hfAndDeltaTest(
     "steer: the while-busy send button no longer promises a queue",
     !!sendBtn && sendBtn.title === "Steer this turn" && sendBtn.act === "send",
     JSON.stringify(sendBtn),
+  );
+
+  /* The version wall, in words.
+     A tester switching model got `config set failed: version 51 is newer than
+     this build understands (49)` on the status strip: two numbers and no idea
+     what to do. It reached her because this app started shipping its own
+     agent and prefers it over anything installed — before that it used
+     whatever `atag` was on the machine, which was the same agent that had
+     written her settings file. A bundled agent older than the state directory
+     it inherits is a real state, so it explains itself. */
+  const versionWall = explainConfigWriteFailure(
+    "config set failed: version 51 is newer than this build understands (49)",
+  );
+  check(
+    "a settings file newer than the bundled agent explains itself",
+    !!versionWall && !/^config set failed/.test(versionWall)
+      && versionWall.includes("51") && versionWall.includes("49")
+      && /update the app/i.test(versionWall),
+    JSON.stringify(versionWall?.slice(0, 120)),
+  );
+  check(
+    "and an unrelated config error is passed through untouched",
+    explainConfigWriteFailure("no such provider") === "no such provider"
+      && explainConfigWriteFailure(undefined) === undefined,
+    JSON.stringify(explainConfigWriteFailure("no such provider")),
   );
 
   /* F3 — a parked turn says so.

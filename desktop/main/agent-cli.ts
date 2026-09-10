@@ -425,7 +425,36 @@ export function configSetWhole(config: unknown): Promise<CliResult> {
 /** The write itself, for the helpers below, which already hold the lock. */
 async function writeWholeConfig(config: unknown): Promise<CliResult> {
   normaliseLlmBlock(config);
-  return cli(["config", "set", JSON.stringify(config)], 30_000);
+  const res = await cli(["config", "set", JSON.stringify(config)], 30_000);
+  return res.ok ? res : { ...res, error: explainConfigWriteFailure(res.error) };
+}
+
+/**
+ * The one config failure a person cannot act on as written.
+ *
+ * `config set failed: version 51 is newer than this build understands (49)`
+ * is the agent refusing to write a settings file that a NEWER agent created:
+ * writing it would silently drop whatever that newer schema added. Correct,
+ * and unreadable — a tester hit it switching model and saw two version
+ * numbers and no idea what to do.
+ *
+ * It reached her because this app now ships its own agent and prefers it over
+ * anything installed. Before that it used whatever `atag` was on the machine,
+ * which was the same one that had written the file. A bundled agent older
+ * than the state directory it inherits is a real state, and this says what it
+ * means and what fixes it.
+ */
+export function explainConfigWriteFailure(error: string | undefined): string | undefined {
+  if (!error) return error;
+  const m = /version (\d+) is newer than this build understands \((\d+)\)/.exec(error);
+  if (!m) return error;
+  return (
+    `This app's agent is older than your settings file — the file was written by `
+    + `Atomic Agent with a newer settings format (${m[1]}; this build reads ${m[2]}), `
+    + `and writing it now would quietly drop whatever that version added. `
+    + `Update the app to a build whose agent is at least as new, or start it on a `
+    + `fresh settings directory.`
+  );
 }
 
 /** Add a provider, or replace the entry that already carries its id. */
