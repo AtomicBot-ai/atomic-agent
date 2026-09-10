@@ -34,6 +34,24 @@
  * The ids get the same treatment plus a strict character allowlist —
  * they come off the wire through a structural `as` cast, so "it is a
  * snowflake" is an assumption, not a checked fact.
+ *
+ * What this does NOT do, so nobody builds on a guarantee that is not
+ * here:
+ *   - it does not make `[from]` unique in the message. Only the name
+ *     is escaped; the payload below it is not, so a message body or an
+ *     attachment filename can render another line-anchored `[from]`.
+ *     The envelope is "the first line", not "the `[from]` line" — see
+ *     `withSenderIdentity`.
+ *   - it does not bound the rendered name at `SENDER_NAME_MAX_CHARS`.
+ *     The cap is on the visible name and escaping can double it, so
+ *     the real ceiling is `2 * SENDER_NAME_MAX_CHARS + 1`.
+ *   - it does not sanitise the *content* of a name, only its shape. A
+ *     nickname is prose that reaches the model, the memory recall
+ *     query and the reflection runner's extraction input on every
+ *     turn. On Discord `member.nick` is settable by anyone in the
+ *     guild with Manage Nicknames, who need not be an owner — so that
+ *     is a non-owner write into the prompt, structurally inert but
+ *     semantically free-form.
  */
 
 /** The platform a channel message arrived on. */
@@ -84,11 +102,24 @@ export function sanitizeDisplayName(
   if (typeof raw !== "string") return undefined;
   const flattened = raw.replace(UNSAFE_TEXT, " ").replace(/\s+/gu, " ").trim();
   if (flattened.length === 0) return undefined;
-  // Truncate on the *visible* name, before escaping, so a name made of
-  // quotes cannot use its escape backslashes to eat the budget.
+  // Truncate the *visible* name, before escaping. That order is what
+  // keeps the escaping well formed: cutting the escaped string could
+  // land between a `\` and the character it escapes, and the escape
+  // pairs are exactly what stops a name leaving its field. (It does
+  // NOT bound the rendered field at `SENDER_NAME_MAX_CHARS` — a name
+  // of 64 quotes still renders as 128 characters. The cap bounds the
+  // name, escaping doubles the worst case, and that ceiling is the
+  // one this module promises.)
+  //
+  // Cut on code points, not UTF-16 units: `slice` on a string whose
+  // 64th unit is the high half of a surrogate pair leaves a lone
+  // surrogate, which is not valid UTF-8 and gets rewritten to U+FFFD
+  // the first time the prompt is encoded for the wire or saved to the
+  // session store.
+  const points = Array.from(flattened);
   const clipped =
-    flattened.length > SENDER_NAME_MAX_CHARS
-      ? `${flattened.slice(0, SENDER_NAME_MAX_CHARS - 1)}…`
+    points.length > SENDER_NAME_MAX_CHARS
+      ? `${points.slice(0, SENDER_NAME_MAX_CHARS - 1).join("")}…`
       : flattened;
   return clipped.replace(/[\\"]/gu, (c) => `\\${c}`);
 }
@@ -96,7 +127,17 @@ export function sanitizeDisplayName(
 /**
  * Ids are structural assumptions, not validated input, so keep only
  * what a real id can contain (digits, plus `-` for Telegram's negative
- * group ids) and cap the length. Anything else is dropped outright.
+ * group ids) and cap the length.
+ *
+ * Offending *characters* are dropped, not the id: `1 1\n1` renders as
+ * `111`, and only an id with nothing left renders no field at all. So
+ * a malformed id is reported as a plausible-looking wrong one rather
+ * than as absent. That is deliberate — the allowlist removes every
+ * character that could open a new field (space, `=`, `"`), so a
+ * mangled id can still only ever be a wrong value inside its own
+ * field, and dropping `chat=` entirely would be the worse failure for
+ * a model trying to tell two channels apart. Do not relax the
+ * allowlist on the assumption that ids are dropped whole.
  */
 function sanitizeId(raw: string | number | undefined): string | undefined {
   if (typeof raw !== "string" && typeof raw !== "number") return undefined;
@@ -136,11 +177,24 @@ export function formatSenderLine(sender: SenderIdentity): string {
  * `withSenderIdentity(buildAttachmentUserMessage(...), sender)`. Two
  * reasons, in order of weight:
  *  1. Everything below the line is attacker-controlled (message text,
- *     filenames). Envelope-before-payload means there is exactly one
- *     `[from]` line in the whole message and it is the first thing in
- *     it; anything that looks like a second one is visibly *inside* the
- *     payload. The reverse order would let the payload's last line sit
- *     flush against a trailing envelope and read as part of it.
+ *     filenames). Envelope-before-payload means the *authoritative*
+ *     `[from]` line is the first line of the message, so anything that
+ *     looks like a second one is visibly below it, inside the payload.
+ *     The reverse order would let the payload's last line sit flush
+ *     against a trailing envelope and read as part of it.
+ *
+ *     This is a positional guarantee, not a uniqueness one. The
+ *     payload is NOT escaped: a message body containing a line
+ *     `[from] …`, or an attachment whose filename does, renders a
+ *     second line-anchored `[from]` further down. Both surfaces are
+ *     gated on the owner allowlist (`ownerUserIds` / `ownerUserId`),
+ *     so forging one takes an account that can already drive the bot
+ *     outright — but with several owners on Discord that is a real
+ *     population, and a model told to trust `[from]` has nothing here
+ *     telling it that only the FIRST such line is the envelope. Read
+ *     the first line, not "the `[from]` line"; anything stronger needs
+ *     either a payload escape or a line in the system prompt, neither
+ *     of which this module does.
  *  2. The attachments block ends with a tool hint that talks about the
  *     lines immediately above it; slotting metadata between them would
  *     break that adjacency.
