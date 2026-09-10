@@ -848,6 +848,7 @@ export interface AtomicAgentConfig {
     whileBusySubmit: WhileBusySubmitMode;
     mouse: boolean;
     onboarding: OnboardingState;
+    sessionRail: SessionRailConfig;
   };
   /**
    * Anonymous product analytics (PostHog). Mirrors
@@ -1825,12 +1826,18 @@ export interface UserConfigFile {
    * wheel scrolling. Turning it off restores the terminal's own
    * drag-to-select, which mouse reporting takes over — see `/mouse` and
    * `--no-mouse`. Older files are upgraded with `mouse: true`.
+   *
+   * `sessionRail` (config v52) remembers the operator's own ordering of
+   * the rail's Sessions list, and (v53) which threads are pinned to its
+   * top — see {@link SessionRailConfig}. Older files are upgraded with
+   * an empty order, which means "by recency", and nothing pinned.
    */
   tui: {
     theme: string;
     whileBusySubmit: WhileBusySubmitMode;
     mouse: boolean;
     onboarding: OnboardingState;
+    sessionRail: SessionRailConfig;
   };
   /**
    * Anonymous product analytics (PostHog). Added in config v33. Older
@@ -2008,7 +2015,14 @@ export interface UserConfigFile {
 // `--parallel`, default 2 = the previously hard-coded value). Additive:
 // an older file parses with `runMode` absent and `parallel` 2, which
 // launches the daemon with byte-identical args.
-export const USER_CONFIG_VERSION = 57;
+// v58: new `tui.sessionRail` block holding the operator's manual order of
+// the rail's Sessions list (`order: string[]`, session ids). Additive: an
+// older file inherits `[]`, which keeps the list sorted by recency until
+// the operator moves a row for the first time.
+// v59: `tui.sessionRail.pinned` (`string[]`, session ids) — the threads
+// the operator pinned to the top of the rail. Additive: an older file
+// inherits `[]`, nothing pinned, and `order` keeps its v58 meaning.
+export const USER_CONFIG_VERSION = 59;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -2154,6 +2168,8 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   54,
   55,
   56,
+  57,
+  58,
   USER_CONFIG_VERSION,
 ];
 
@@ -2428,6 +2444,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
     theme: "auto",
     whileBusySubmit: "steer",
     mouse: true,
+    sessionRail: { order: [], pinned: [] },
     onboarding: {
       completedAt: null,
       importOfferedAt: null,
@@ -4650,6 +4667,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         "tui.mouse",
       ),
       onboarding: parseOnboardingState(tui.onboarding),
+      sessionRail: parseSessionRailConfig(tui.sessionRail),
     },
     analytics: {
       enabled: parseBool(
@@ -4792,6 +4810,27 @@ export function parseWhileBusySubmit(
  *   survives a launch: an interrupted first run is exactly the case
  *   where an operator would otherwise be shown it twice.
  */
+/**
+ * The rail's Sessions list order, as the operator arranged it.
+ *
+ * Empty means the list is sorted by recency, the way it always was. The
+ * first Shift+↑/↓ or row drag snapshots the list as displayed into
+ * `order`; from then on those ids keep this order and sessions the list
+ * has never seen (a newer thread, an id not in `order`) are inserted at
+ * the top. Ids that no longer exist are ignored on read and dropped on
+ * the next write.
+ */
+export interface SessionRailConfig {
+  order: string[];
+  /**
+   * Session ids pinned to the top of the rail (config v53). Pinned rows
+   * form a block above everything else; inside the block they follow
+   * `order` like any other row. A pinned id that no longer exists is
+   * ignored on read and dropped on the next write.
+   */
+  pinned: string[];
+}
+
 export interface OnboardingState {
   completedAt: string | null;
   introSeenAt: string | null;
@@ -4807,6 +4846,48 @@ export interface OnboardingState {
  * throwing — an older config file must never fail to load because it
  * predates the block.
  */
+/**
+ * Parse `tui.sessionRail`. Absent → the recency default, nothing pinned.
+ * `order` and `pinned` are lists of session ids; entries that are not
+ * non-empty strings are dropped rather than rejected — a hand-edited or
+ * partially written id costs one row its remembered place, not the
+ * whole config file — and duplicates keep their first position so the
+ * on-disk form stays canonical.
+ */
+export function parseSessionRailConfig(raw: unknown): SessionRailConfig {
+  if (raw === undefined || raw === null) return { order: [], pinned: [] };
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw new ConfigValidationError(
+      "tui.sessionRail",
+      `expected object, got ${JSON.stringify(raw)}`,
+    );
+  }
+  const block = raw as Record<string, unknown>;
+  return {
+    order: parseSessionIdList(block.order, "tui.sessionRail.order"),
+    pinned: parseSessionIdList(block.pinned, "tui.sessionRail.pinned"),
+  };
+}
+
+function parseSessionIdList(raw: unknown, path: string): string[] {
+  if (raw === undefined || raw === null) return [];
+  if (!Array.isArray(raw)) {
+    throw new ConfigValidationError(
+      path,
+      `expected string[], got ${JSON.stringify(raw)}`,
+    );
+  }
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== "string" || entry.length === 0) continue;
+    if (seen.has(entry)) continue;
+    seen.add(entry);
+    result.push(entry);
+  }
+  return result;
+}
+
 export function parseOnboardingState(raw: unknown): OnboardingState {
   const defaults = USER_CONFIG_DEFAULTS.tui.onboarding;
   if (raw === undefined || raw === null) return { ...defaults };

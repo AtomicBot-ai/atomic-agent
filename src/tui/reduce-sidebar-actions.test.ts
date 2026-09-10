@@ -21,6 +21,7 @@ function entry(overrides: Partial<SessionPickerEntry>): SessionPickerEntry {
     stepCount: 0,
     updatedAt: 0,
     preview: "",
+    pinned: false,
     ...overrides,
   };
 }
@@ -230,5 +231,82 @@ describe("reduce sidebar + chat scroll actions", () => {
       delta: -1,
     });
     expect(tooFarUp.sidebarTasksCursor).toBe(0);
+  });
+});
+
+describe("reduce sidebar drag actions", () => {
+  const seeded = () =>
+    reduceTuiState(
+      { ...createInitialTuiState(SESSION), chatFocus: "sidebar" as const },
+      {
+        type: "recent_sessions_updated",
+        sessions: [
+          entry({ sessionId: "a" }),
+          entry({ sessionId: "b" }),
+          entry({ sessionId: "c" }),
+        ],
+      },
+    );
+
+  it("starts with the pressed row as both origin and slot", () => {
+    const next = reduceTuiState(seeded(), {
+      type: "sidebar_drag_started",
+      sessionId: "b",
+      row: 1,
+    });
+    expect(next.sidebarDrag).toEqual({ sessionId: "b", from: 1, over: 1 });
+    // The list itself is untouched until the host re-emits it.
+    expect(next.recentSessions.map((e) => e.sessionId)).toEqual(["a", "b", "c"]);
+  });
+
+  it("moves the slot under the pointer, clamped to the list", () => {
+    const started = reduceTuiState(seeded(), {
+      type: "sidebar_drag_started",
+      sessionId: "b",
+      row: 1,
+    });
+    const over = reduceTuiState(started, { type: "sidebar_drag_moved", row: 0 });
+    expect(over.sidebarDrag).toEqual({ sessionId: "b", from: 1, over: 0 });
+    const past = reduceTuiState(over, { type: "sidebar_drag_moved", row: 9 });
+    expect(past.sidebarDrag?.over).toBe(2);
+    // Same slot again: the same state object, so nothing repaints.
+    expect(reduceTuiState(past, { type: "sidebar_drag_moved", row: 9 })).toBe(past);
+  });
+
+  it("ignores a move with no drag in flight", () => {
+    const state = seeded();
+    expect(reduceTuiState(state, { type: "sidebar_drag_moved", row: 0 })).toBe(state);
+  });
+
+  it("ends on release", () => {
+    const started = reduceTuiState(seeded(), {
+      type: "sidebar_drag_started",
+      sessionId: "b",
+      row: 1,
+    });
+    expect(reduceTuiState(started, { type: "sidebar_drag_ended" }).sidebarDrag).toBeNull();
+  });
+
+  it("is cleared by a list refresh and by focus leaving the rail", () => {
+    const started = reduceTuiState(seeded(), {
+      type: "sidebar_drag_started",
+      sessionId: "b",
+      row: 1,
+    });
+    const refreshed = reduceTuiState(started, {
+      type: "recent_sessions_updated",
+      sessions: [entry({ sessionId: "b" }), entry({ sessionId: "a" })],
+    });
+    expect(refreshed.sidebarDrag).toBeNull();
+    const unfocused = reduceTuiState(started, {
+      type: "chat_focus_set",
+      focus: "editor",
+    });
+    expect(unfocused.sidebarDrag).toBeNull();
+    const stillFocused = reduceTuiState(started, {
+      type: "chat_focus_set",
+      focus: "sidebar",
+    });
+    expect(stillFocused.sidebarDrag).not.toBeNull();
   });
 });

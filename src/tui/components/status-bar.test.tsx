@@ -19,6 +19,7 @@ function entry(preview: string): SessionPickerEntry {
     stepCount: 1,
     updatedAt: Date.now(),
     preview,
+    pinned: false,
   };
 }
 

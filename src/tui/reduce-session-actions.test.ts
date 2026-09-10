@@ -15,6 +15,7 @@ function entry(overrides: Partial<SessionPickerEntry> = {}): SessionPickerEntry 
     stepCount: 0,
     updatedAt: Date.now(),
     preview: "(empty)",
+    pinned: false,
     ...overrides,
   };
 }

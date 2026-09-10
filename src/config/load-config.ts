@@ -523,6 +523,10 @@ export function loadConfig(): AtomicAgentConfig {
       whileBusySubmit: user.tui.whileBusySubmit,
       mouse: user.tui.mouse,
       onboarding: { ...user.tui.onboarding },
+      sessionRail: {
+        order: [...user.tui.sessionRail.order],
+        pinned: [...user.tui.sessionRail.pinned],
+      },
     },
     analytics: {
       enabled: user.analytics.enabled,

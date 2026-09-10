@@ -10,6 +10,7 @@ import type { ContextMenuState } from "./context-menu/context-menu-state.js";
 import type { ApprovalRequest } from "../approval/approval-gate.js";
 import type { WhileBusySubmitMode } from "../config/index.js";
 import type { OnboardingUiState } from "./onboarding/onboarding-state.js";
+import type { SidebarDragState } from "./session-rail/session-rail-actions.js";
 import type {
   LatestResult,
   LoadedSkillBody,
@@ -301,6 +302,12 @@ export interface SessionPickerEntry {
   updatedAt: number;
   /** First user message snippet (trimmed) or "(empty)" for blank sessions. */
   preview: string;
+  /**
+   * Pinned to the top of the rail (`tui.sessionRail.pinned`). Stamped by
+   * the rail orchestrator when it arranges the list; `false` everywhere
+   * an entry is built.
+   */
+  pinned: boolean;
 }
 
 /**
@@ -605,6 +612,14 @@ export interface TuiState {
    */
   sidebarCursor: number;
   /**
+   * A session row being dragged to a new slot, or `null`. Paint-only
+   * feedback (`↕` on the dragged row, a marker on the slot under the
+   * pointer); the reorder itself reaches the orchestrator through
+   * `onSessionMoveRequested` on release. Cleared by the release, by a
+   * list refresh, and by focus leaving the rail.
+   */
+  sidebarDrag: SidebarDragState | null;
+  /**
    * Highlighted row in the sidebar's tasks list. Bounded by the number
    * of rows produced by `selectSidebarTasks` at render time; the
    * reducer clamps against the global `tasksPanel.rows` cap (5) since
@@ -819,6 +834,7 @@ export function createInitialTuiState(
     sidebarSection: "sessions",
     sidebarCollapsed: false,
     sidebarCursor: 0,
+    sidebarDrag: null,
     sidebarTasksCursor: 0,
     chatScrollOffset: 0,
     queuedMessages: [],

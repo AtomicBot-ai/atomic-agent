@@ -1,6 +1,12 @@
-import { createEmptySessionState, recordTurn } from "../session/session-state.js";
+import {
+  createEmptySessionState,
+  recordTurn,
+} from "../session/session-state.js";
 import { userTurn } from "../session/conversation-turn.js";
-import { summarizeSessionState, type SessionSummary } from "../session/session-summary.js";
+import {
+  summarizeSessionState,
+  type SessionSummary,
+} from "../session/session-summary.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
 import { ChatOrchestrator } from "./chat-orchestrator.js";
 import { makeTuiEventBus } from "./make-event-bus.js";
@@ -56,6 +62,10 @@ export interface StubOptions {
   settleTurns?: boolean;
   listSummaries?: () => SessionSummary[];
   countUnreadable?: () => number;
+  /** Seed for `tui.sessionRail.order` — the operator's manual order. */
+  order?: string[];
+  /** Seed for `tui.sessionRail.pinned`. */
+  pinned?: string[];
 }
 
 export function stubRuntime(
@@ -109,19 +119,39 @@ export function harness(stored: StoredSession[], options: StubOptions = {}) {
   const bus = makeTuiEventBus();
   const actions: TuiAction[] = [];
   bus.subscribe((a) => actions.push(a));
+  // The rail's layout, held in memory instead of the developer's
+  // config.json; `written` is every order snapshot the orchestrator
+  // persisted and `pins` every pinned list.
+  let order = [...(options.order ?? [])];
+  let pinned = [...(options.pinned ?? [])];
+  const written: string[][] = [];
+  const pins: string[][] = [];
   const orchestrator = new ChatOrchestrator(stubRuntime(stored, options), bus, {
     maxSteps: 5,
     llamaUrl: "http://127.0.0.1:8080",
     readGateFacts: cloudGateFacts,
+    sessionRailLayout: {
+      read: () => ({ order, pinned }),
+      write: (next) => {
+        order = [...next.order];
+        pinned = [...next.pinned];
+        written.push([...next.order]);
+        pins.push([...next.pinned]);
+      },
+    },
   });
-  const lastOf = (type: "recent_sessions_updated" | "session_picker_opened") => {
+  const lastOf = (
+    type: "recent_sessions_updated" | "session_picker_opened",
+  ) => {
     for (let i = actions.length - 1; i >= 0; i -= 1) {
       const action = actions[i];
       if (action?.type === type) return action.sessions;
     }
     return [] as readonly SessionPickerEntry[];
   };
-  const rail = (): readonly SessionPickerEntry[] => lastOf("recent_sessions_updated");
-  const picker = (): readonly SessionPickerEntry[] => lastOf("session_picker_opened");
-  return { orchestrator, rail, picker, actions };
+  const rail = (): readonly SessionPickerEntry[] =>
+    lastOf("recent_sessions_updated");
+  const picker = (): readonly SessionPickerEntry[] =>
+    lastOf("session_picker_opened");
+  return { orchestrator, rail, picker, actions, written, pins };
 }

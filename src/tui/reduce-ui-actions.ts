@@ -290,10 +290,13 @@ export function reduceUiAction(
       };
     case "recent_sessions_updated": {
       const max = Math.max(0, action.sessions.length - 1);
+      // A refreshed list is a different list: the row a drag started
+      // on may have moved or gone, so the drag feedback ends with it.
       return {
         ...state,
         recentSessions: action.sessions,
         sidebarCursor: Math.min(state.sidebarCursor, max),
+        sidebarDrag: null,
       };
     }
     case "chat_focus_toggled":
@@ -302,7 +305,11 @@ export function reduceUiAction(
         chatFocus: state.chatFocus === "editor" ? "sidebar" : "editor",
       };
     case "chat_focus_set":
-      return { ...state, chatFocus: action.focus };
+      return {
+        ...state,
+        chatFocus: action.focus,
+        sidebarDrag: action.focus === "sidebar" ? state.sidebarDrag : null,
+      };
     case "sidebar_collapse_toggled": {
       const collapsed = !state.sidebarCollapsed;
       // Folding the rail away takes its focus stop with it, so the
@@ -420,6 +427,7 @@ export function reduceUiAction(
         chatFocus: "editor",
         sidebarSection: "sessions",
         sidebarCursor: 0,
+        sidebarDrag: null,
         sidebarTasksCursor: 0,
         queuedMessages: [],
       };

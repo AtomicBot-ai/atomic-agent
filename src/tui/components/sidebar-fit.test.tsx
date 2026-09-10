@@ -26,6 +26,7 @@ const SESSIONS: readonly SessionPickerEntry[] = Array.from(
     stepCount: 1,
     updatedAt: 0,
     preview: `session ${idx}`,
+    pinned: false,
   }),
 );
 
