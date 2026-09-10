@@ -31,6 +31,10 @@ export type ResolvedRunMode = {
   workerProviderId: string | null;
   /** Display label for the worker model; the managed daemon's model unless pinned. */
   workerModel: string | null;
+  /**
+   * Default fan-out width for a `fusion.delegate` call that names no
+   * `maxWorkers`. Not a ceiling — see `UserLlmFusionConfig.workers`.
+   */
   workers: number;
   workerMaxSteps: number;
   workerTimeoutMs: number;

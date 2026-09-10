@@ -40,7 +40,18 @@ export type UserLlmFusionConfig = {
    * the label. Left unset by the TUI.
    */
   workerModel?: string;
-  /** How many workers may run at once, 1..8. Default 2. */
+  /**
+   * Default fan-out width, 1..8. Default 2.
+   *
+   * **Not a ceiling.** The orchestrator sizes each `fusion.delegate`
+   * call itself — it is the party that knows how divisible the job is,
+   * and the `### fusion` guidance tells it what this machine can serve
+   * — so a call that names `maxWorkers` gets the number it asked for.
+   * This value only fills in for a call that named nothing. What still
+   * bounds the width is physical: the task count, and the llama-server
+   * request slots (`localModels.managed.parallel`) on a worker leg with
+   * slot affinity.
+   */
   workers?: number;
   /** Step ceiling per worker turn. Default 40. */
   workerMaxSteps?: number;

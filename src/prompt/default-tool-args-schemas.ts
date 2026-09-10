@@ -639,6 +639,35 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
     ),
   ],
 
+  // ── fusion fan-out ───────────────────────────────────────────────────────
+  [
+    "fusion.delegate",
+    obj(
+      {
+        tasks: {
+          type: "array",
+          minItems: 1,
+          maxItems: 8,
+          items: obj(
+            {
+              id: stringSchema,
+              title: stringSchema,
+              instructions: stringSchema,
+              deliverable: stringSchema,
+              files: { ...stringArraySchema, maxItems: 32 },
+            },
+            ["id", "title", "instructions"],
+          ),
+        },
+        // No upper bound: the orchestrator sizes its own fan-out and
+        // the tool bounds the number by the task count and the server's
+        // request slots. See `delegate-args.ts`.
+        maxWorkers: { type: "integer", minimum: 1 },
+      },
+      ["tasks"],
+    ),
+  ],
+
   // ── terminal verbs ───────────────────────────────────────────────────────
   // The OpenAI adapter overrides these with hand-tuned schemas (see
   // `descriptorToJsonSchema` in openai-tool-call-adapter.ts), but we

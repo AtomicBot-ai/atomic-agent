@@ -130,6 +130,16 @@ export interface AgentLoopDependencies {
    */
   supportsParallelTools?: boolean;
   /**
+   * Resolve the wire slice for a provider a turn is pinned to
+   * (`RunTurnOptions.providerId`). The four global fields above describe
+   * the ACTIVE provider; a fusion worker turn runs on a different one
+   * (the local leg) inside the same process, so its steps must be built
+   * for that link's transport, adapter and slot affinity, not the
+   * orchestrator's. Resolved once per pinned turn. Absent, a pinned turn
+   * falls back to the global fields (test / legacy wiring).
+   */
+  resolveLlmSlice?: (providerId: string) => ResolvedTurnLlmSlice;
+  /**
    * Optional hot-swap supervisor. When provided, the loop re-probes
    * `/props` at the start of every turn and inspects the `modelId` of
    * each completion; if the operator swaps the model behind
@@ -254,6 +264,18 @@ export interface ReflectionSegmentationConfig {
   enabled: boolean;
   triggerEveryTurns: number;
   windowTurns: number;
+}
+
+/**
+ * The per-link wire shape a pinned turn is built for — the same four
+ * facts `AgentLoopDependencies` carries for the active provider, resolved
+ * for the pinned one instead. See `AgentLoopDependencies.resolveLlmSlice`.
+ */
+export interface ResolvedTurnLlmSlice {
+  toolTransport: ToolCallTransport;
+  toolCallAdapter: ToolCallAdapter | null;
+  supportsSlotAffinity: boolean;
+  supportsParallelTools: boolean;
 }
 
 export interface MemoryContextProviderInput {
@@ -450,6 +472,35 @@ export interface RunTurnOptions {
   signal: AbortSignal;
   /** Optional new user message to append before stepping. */
   userMessage?: string;
+  /**
+   * Pin every completion of this turn to one configured provider id.
+   * The step is built for that link's transport (via
+   * `AgentLoopDependencies.resolveLlmSlice`) and the request bypasses
+   * the fallback chain (see `LlmStreamParams.providerId`). A fusion
+   * worker turn sets this to the local leg while the orchestrator turn
+   * on the parent session keeps the active (cloud) provider.
+   */
+  providerId?: string;
+  /**
+   * The turn leaves no durable trace in the memory fabric: no recall or
+   * per-step memory refresh, no end-of-turn reflection, no lesson
+   * lifecycle bump. For fusion worker sessions — throwaway state whose
+   * transcript the orchestrator reads once and discards; letting it
+   * reflect would write the worker's half-context into the operator's
+   * long-term memory. Mid-turn steering is unaffected.
+   */
+  ephemeral?: boolean;
+  /**
+   * Hide tools from this turn. Applied to the descriptors handed to every
+   * step, composed with the finalization-step filter, so under native
+   * tools the hidden tool also leaves the wire payload — the step builds
+   * `tools` from the same descriptors. The two terminal tools are the
+   * exception: the OpenAI adapter appends `reply` / `finish` to the wire
+   * unconditionally, so filtering them only hides them from the prompt
+   * catalog. Used to keep a worker from delegating further, scheduling,
+   * or writing memory.
+   */
+  toolFilter?: (name: string) => boolean;
 }
 
 /** Why a `runTurn` invocation returned. */
@@ -522,6 +573,43 @@ export type AgentLoopEvent =
       stepsTaken: number;
       elapsedMs: number;
       stepCeiling: number;
+    }
+  | {
+      /**
+       * One leg of a fusion turn started, ran a tool, ended, or was cut
+       * short. Emitted by `fusion.delegate` in the PARENT session's
+       * frame, never a worker's: a worker session has no recorder, no
+       * event hook and no UI, so an event tagged with its id would reach
+       * nobody. This is the only window the operator has into a fan-out
+       * that can occupy the orchestrator's turn for minutes.
+       *
+       * Not produced by `AgentLoop` itself — it rides this union because
+       * the runtime's event fan-out and every UI reducer are typed on it.
+       */
+      type: "fusion_worker";
+      taskId: string;
+      title: string;
+      phase: "started" | "tool" | "finished" | "failed" | "cancelled";
+      /**
+       * Which leg this line is about. `worker` when absent, so the
+       * event's original shape still reads correctly. The orchestrator
+       * uses it to claim its own `fusion.delegate` call: without it the
+       * whole fan-out block reads as if nothing but workers ran.
+       */
+      role?: "worker" | "orchestrator";
+      /**
+       * The model this leg is running — `runMode.workerModel` /
+       * `.orchestratorModel`, falling back to the provider id when the
+       * resolver has no label. Never a guess: a UI that invented a name
+       * here would be attributing spend to the wrong model.
+       */
+      model?: string;
+      /** `phase: "tool"` only: the tool this leg just started. */
+      tool?: string;
+      stepCount?: number;
+      durationMs?: number;
+      /** One line about the outcome; the worker's reply, clipped. */
+      summary?: string;
     }
   | { type: "step_started"; stepIndex: number }
   | {
@@ -700,6 +788,20 @@ export class AgentLoop {
     const turnIndex = state.turnCount;
     this.deps.onEvent?.({ type: "turn_started", turnIndex });
     const turnStartedAt = Date.now();
+
+    // A pinned turn is built for the pinned link's wire shape. Resolved
+    // once: the pin does not move during a turn, and the global getters
+    // below describe the ACTIVE provider, which is the wrong one here.
+    const pinnedSlice =
+      options.providerId !== undefined && this.deps.resolveLlmSlice
+        ? this.deps.resolveLlmSlice(options.providerId)
+        : null;
+    const visibleToolDescriptors = (): readonly ToolDescriptor[] => {
+      const filter = options.toolFilter;
+      return filter
+        ? this.deps.toolDescriptors.filter(({ name }) => filter(name))
+        : this.deps.toolDescriptors;
+    };
 
     state = await refreshMemoryContext(this.deps, state, options);
 
@@ -955,10 +1057,10 @@ export class AgentLoop {
           {
             session: state,
             toolDescriptors: finalizationStep
-              ? this.deps.toolDescriptors.filter(
+              ? visibleToolDescriptors().filter(
                   ({ name }) => name === "reply" || name === "finish",
                 )
-              : this.deps.toolDescriptors,
+              : visibleToolDescriptors(),
             capabilities: this.deps.capabilities,
             skillCatalog: this.deps.skillCatalog,
             stepIndex: i,
@@ -994,10 +1096,21 @@ export class AgentLoop {
             ...(this.deps.contextWindow
               ? { contextWindow: this.deps.contextWindow() }
               : {}),
-            toolTransport: this.deps.toolTransport ?? "grammar",
-            toolCallAdapter: this.deps.toolCallAdapter ?? null,
-            supportsSlotAffinity: this.deps.supportsSlotAffinity ?? true,
-            supportsParallelTools: this.deps.supportsParallelTools ?? true,
+            toolTransport:
+              pinnedSlice?.toolTransport ?? this.deps.toolTransport ?? "grammar",
+            toolCallAdapter:
+              pinnedSlice?.toolCallAdapter ?? this.deps.toolCallAdapter ?? null,
+            supportsSlotAffinity:
+              pinnedSlice?.supportsSlotAffinity ??
+              this.deps.supportsSlotAffinity ??
+              true,
+            supportsParallelTools:
+              pinnedSlice?.supportsParallelTools ??
+              this.deps.supportsParallelTools ??
+              true,
+            ...(options.providerId !== undefined
+              ? { providerId: options.providerId }
+              : {}),
             llmComplete: this.deps.llmComplete,
             ...(this.deps.llmCompleteStream
               ? { llmCompleteStream: this.deps.llmCompleteStream }
@@ -1492,7 +1605,9 @@ export class AgentLoop {
         // `cancelled` is intentionally NOT routed here; that branch
         // returned earlier without calling the hook (cancellation
         // carries neither success nor failure signal).
-        invokeLessonLifecycle(this.deps, state.id, surfacedLessonIds, "failure");
+        if (!options.ephemeral) {
+          invokeLessonLifecycle(this.deps, state.id, surfacedLessonIds, "failure");
+        }
         return {
           session: state,
           reason: "failed",
@@ -1551,7 +1666,7 @@ export class AgentLoop {
     // `max_steps` are filtered out (neither a success nor failure
     // signal). The `failed` branch already fired the hook above
     // before its early `return`.
-    if (reason === "reply" || reason === "finish") {
+    if (!options.ephemeral && (reason === "reply" || reason === "finish")) {
       invokeLessonLifecycle(this.deps, state.id, surfacedLessonIds, "success");
     }
 
@@ -1572,8 +1687,13 @@ export class AgentLoop {
     //     `ReflectionInput.transcript`. The trailing pair's content
     //     is also mirrored into `userMessage`/`assistantReply` so
     //     the runner contract stays satisfied.
+    //
+    // Never for an ephemeral turn: a fusion worker's transcript is the
+    // orchestrator's scratch space, and reflecting on it would write
+    // half-context into the operator's long-term memory.
     if (
       this.deps.reflectionRunner &&
+      !options.ephemeral &&
       (reason === "reply" || reason === "finish")
     ) {
       const segmentation = this.deps.reflectionSegmentation;
@@ -1749,6 +1869,10 @@ async function refreshMemoryContext(
   options: RunTurnOptions,
 ): Promise<SessionState> {
   if (!deps.memoryContextProvider) return state;
+  // An ephemeral (fusion worker) turn neither reads nor primes memory:
+  // its prompt is the orchestrator's instruction, not the operator's
+  // history, and the recall would only pull unrelated notes into it.
+  if (options.ephemeral) return state;
   try {
     const ctx = await deps.memoryContextProvider.buildMemoryContext({
       sessionId: state.id,

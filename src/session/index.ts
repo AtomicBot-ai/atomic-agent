@@ -59,3 +59,11 @@ export {
   readSessionLlmStamp,
 } from "./session-llm.js";
 export type { SessionLlmStamp } from "./session-llm.js";
+export {
+  FUSION_WORKER_METADATA_KEY,
+  FUSION_WORKER_ID_PREFIX,
+  createFusionWorkerSession,
+  readFusionWorkerMeta,
+  isFusionWorkerSessionId,
+} from "./fusion-worker-session.js";
+export type { FusionWorkerMeta } from "./fusion-worker-session.js";

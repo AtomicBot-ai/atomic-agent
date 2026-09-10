@@ -1,9 +1,8 @@
 import type { ToolCallTransport } from "../llm/provider/completion-types.js";
-import {
-  COMPOSIO_GUIDANCE,
-  isComposioActive,
-} from "./composio-guidance.js";
+import { COMPOSIO_GUIDANCE, isComposioActive } from "./composio-guidance.js";
 import { GITHUB_GUIDANCE, isGithubActive } from "./github-guidance.js";
+import { buildFusionGuidance, isFusionActive } from "./fusion-guidance.js";
+import type { FusionMachineFacts } from "./fusion-machine-facts.js";
 import { formatSkillCatalogLine } from "../skills/skill-catalog.js";
 
 /**
@@ -96,6 +95,15 @@ export interface StablePrefixInput {
    * prefix byte-identical to the legacy output (KV-cache safe).
    */
   toolTransport?: ToolCallTransport;
+  /**
+   * What this machine serves fusion workers with — slot count and local
+   * model. Read only when the `### fusion` block renders at all, so a
+   * non-fusion install's prefix stays byte-identical whatever is passed
+   * here. Omitted, the block keeps its behavioural lines and states no
+   * numbers; see `fusion-machine-facts.ts` for why an unknown fact is
+   * left unsaid rather than guessed.
+   */
+  fusion?: FusionMachineFacts;
 }
 
 /**
@@ -201,6 +209,9 @@ export function buildStablePrefix(input: StablePrefixInput): string {
     ...(composioActive ? [COMPOSIO_GUIDANCE] : []),
     ...(githubActive ? [GITHUB_GUIDANCE] : []),
   ];
+  // Same contract as the Composio block: present only while the tool it
+  // describes is mounted, so a non-fusion install pays zero bytes.
+  const fusionActive = isFusionActive(input.toolDescriptors);
   const nativeTools = input.toolTransport === "native_tools";
   const persona =
     input.systemPersona ??
@@ -263,6 +274,9 @@ export function buildStablePrefix(input: StablePrefixInput): string {
     ...(integrationsBlock.length > 0
       ? [`### integrations`, integrationsBlock.join("\n"), ``]
       : []),
+    ...(fusionActive
+      ? [`### fusion`, buildFusionGuidance(input.fusion), ``]
+      : []),
     `### instructions`,
     // The emission instructions are the one transport-dependent block.
     // Grammar links parse text-JSON (GBNF-constrained locally), so they
@@ -297,9 +311,7 @@ export function formatToolFrequent(descriptor: ToolDescriptor): string {
   if (!descriptor.examples || descriptor.examples.length === 0) {
     return head;
   }
-  const examples = descriptor.examples
-    .map((ex) => `    - ${ex}`)
-    .join("\n");
+  const examples = descriptor.examples.map((ex) => `    - ${ex}`).join("\n");
   return `${head}\n  examples:\n${examples}`;
 }
 
@@ -332,7 +344,8 @@ export function formatCapabilities(caps: CapabilitiesSummary): string {
     `clipboard: ${caps.hasClipboard ? "yes" : "no"}`,
     `wmctrl: ${caps.hasWmctrl ? "yes" : "no"}`,
     `notifications: ${caps.hasNotifications ? "yes" : "no"}`,
-    ...(caps.emailAddress ? [`email: ${caps.emailAddress} (os.email.inbox / os.email.send)`] : []),
+    ...(caps.emailAddress
+      ? [`email: ${caps.emailAddress} (os.email.inbox / os.email.send)`]
+      : []),
   ].join("\n");
 }
-

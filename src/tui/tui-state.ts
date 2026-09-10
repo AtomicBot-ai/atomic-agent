@@ -328,6 +328,12 @@ export interface TuiState {
   stepStartedAt: number | null;
   /** Timestamp of the running loop start, used to compute a live duration. */
   runStartedAt: number | null;
+  /**
+   * Legs of the fusion fan-out running right now, for the chat's own
+   * readout. Empty off fusion and between turns. See
+   * `fusion-live-workers.ts`.
+   */
+  fusionLiveWorkers: readonly import("./fusion-live-workers.js").FusionLiveWorker[];
   feed: FeedEntry[];
   /** Chat transcript: human-friendly view onto the session turn list. */
   messages: ChatMessage[];
@@ -743,6 +749,7 @@ export function createInitialTuiState(
     currentStep: 0,
     stepStartedAt: null,
     runStartedAt: null,
+    fusionLiveWorkers: [],
     feed: [],
     messages: [],
     currentTurnToolSteps: 0,

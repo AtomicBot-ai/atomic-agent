@@ -166,3 +166,31 @@ describe("hashPrefix", () => {
     expect(hashPrefix("abc")).not.toBe(hashPrefix("abd"));
   });
 });
+
+describe("SlotManager.poolSize", () => {
+  it("is the configured count until a reflection slot is reserved", () => {
+    const mgr = new SlotManager(4);
+    expect(mgr.poolSize()).toBe(4);
+    expect(mgr.reserveReflectionSlot()).not.toBeNull();
+    // `getSlotCount` still says 4; only 3 can be handed to turns.
+    expect(mgr.getSlotCount()).toBe(4);
+    expect(mgr.poolSize()).toBe(3);
+  });
+
+  it("never drops to zero — the sole slot is not reservable", () => {
+    const mgr = new SlotManager(1);
+    expect(mgr.reserveReflectionSlot()).toBeNull();
+    expect(mgr.poolSize()).toBe(1);
+  });
+
+  it("tracks resize and reset", () => {
+    const mgr = new SlotManager(2);
+    mgr.reserveReflectionSlot();
+    expect(mgr.poolSize()).toBe(1);
+    mgr.resize(4);
+    // Reservation (slot 1) survives a widen, so 3 of 4 are usable.
+    expect(mgr.poolSize()).toBe(3);
+    mgr.reset();
+    expect(mgr.poolSize()).toBe(4);
+  });
+});

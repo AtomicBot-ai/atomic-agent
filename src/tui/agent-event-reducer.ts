@@ -7,6 +7,11 @@ import { formatBackgroundApprovalNotice } from "./detached-turns.js";
 import { formatAgentErrorForChat } from "./format-agent-error-for-chat.js";
 import { formatFeedLine } from "./format-event.js";
 import {
+  formatFusionWorkerLine,
+  fusionWorkerLineColor,
+} from "./format-fusion-worker-line.js";
+import { reduceFusionLiveWorkers } from "./fusion-live-workers.js";
+import {
   appendChatMessage,
   appendFeed,
   appendReasoningDelta,
@@ -638,6 +643,31 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
         line: `» still working — ${event.stepsTaken} steps, ${minutes} min (ceiling ${event.stepCeiling})`,
         color: "gray",
       });
+    }
+    case "fusion_worker": {
+      // A fan-out can hold the orchestrator's turn for minutes with no
+      // steps of its own to show, so each leg gets a start line, its
+      // (bounded) tool lines and an end line — each naming the model
+      // that ran it, because fusion is the one mode where two models
+      // and two bills share a single turn. `stepIndex: null` because
+      // these belong to the parent turn as a whole, not to any one of
+      // its steps — the events are emitted in the parent's frame from
+      // inside a worker session that has no step counter the operator
+      // can see.
+      return appendFeed(
+        {
+          ...state,
+          // The chat surface shows the fan-out while it runs; the feed
+          // keeps the history of it.
+          fusionLiveWorkers: reduceFusionLiveWorkers(state.fusionLiveWorkers, event),
+        },
+        {
+          kind: "runtime_info",
+          stepIndex: null,
+          line: formatFusionWorkerLine(event),
+          color: fusionWorkerLineColor(event),
+        },
+      );
     }
     case "loop_detected":
       // Deliberately not rendered: the loop detector's own `### notice`

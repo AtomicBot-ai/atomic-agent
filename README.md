@@ -310,6 +310,7 @@ A cloud key is checked before it is saved. The key screen refuses an empty key, 
 In the TUI, fusion is the last row of the composer's **Where it runs** switch (`ctrl+r`, or click the backend word): it needs a cloud provider with a key and a downloaded local model, and says which one is missing otherwise. While it is on, the backend word is an orange chip and the composer and the chat bubbles take the same tint. `/runmode local|cloud|fusion` and `ctrl+g 1/2/3` pick a mode from the keyboard; `/runmode status` says what the mode resolves to.
 
 On the fusion route the strip gains a fourth control, **Workers** (`→` past the model, or click the worker count): it picks the local model the workers run and how many run at once, and `/runmode workers N` does the same from the keyboard. The provider and model controls address the cloud orchestrator; the worker count also sets `localModels.managed.parallel`, so restart the local daemon to apply it.
+Once fusion is on, the cloud model gains one tool — `fusion.delegate` — and prompt guidance telling it to plan first and hand the independent bulk down: reading many files, first drafts, boilerplate, tests, wide searches. Each part it delegates runs as its own throwaway local turn (several at a time), and their replies come back into the same call for the orchestrator to check and merge; you see each worker start and finish in the chat feed. Workers cannot delegate further, cannot reach you, and cannot get an approval — anything that needs a person comes back up to the orchestrator to run.
 
 </details>
 

@@ -7,7 +7,19 @@ import type { AgentLoopEvent } from "../agent/agent-loop.js";
  * (recorder, metrics, scheduler audit) can.
  */
 export type TurnOrigin =
-  "cli" | "tui" | "http" | "sidecar" | "scheduler" | "telegram" | "discord";
+  | "cli"
+  | "tui"
+  | "http"
+  | "sidecar"
+  | "scheduler"
+  | "telegram"
+  | "discord"
+  /**
+   * A fusion worker turn, submitted by the orchestrator turn on the
+   * parent session — not a person sending a message. Treated like
+   * `scheduler` wherever origin gates analytics or the usage meter.
+   */
+  | "fusion";
 
 /**
  * Per-turn event sink. Installed atomically when a submission starts

@@ -27,6 +27,7 @@ const ALL_ENABLED: ToolGateSourceConfig = {
   atomicMail: { address: "atag-1@atomicmail.ai" },
   tasks: { enabled: true, agentToolsEnabled: true },
   mcp: { servers: [{}] },
+  llm: { runMode: { mode: "fusion" } },
 };
 
 /** The env the GitHub gate reads; a token means `github.*` is listed. */

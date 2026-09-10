@@ -59,6 +59,16 @@ export interface ToolGateConfig {
    * for them only invites the model to try.
    */
   github: { connected: boolean };
+  /**
+   * Fusion gate. `enabled=false` drops `fusion.delegate` from the stable
+   * prefix — and with it the whole `### fusion` guidance block, which
+   * keys off the descriptor. `true` only when the run-mode resolver says
+   * fusion is effective at boot: a cloud orchestrator with a configured
+   * local worker leg. The tool re-checks the mode live on every call, so
+   * a provider switch mid-session degrades it to a refusal rather than
+   * needing a descriptor rebuild.
+   */
+  fusion: { enabled: boolean };
 }
 
 /**
@@ -100,6 +110,7 @@ const GATED_TOOLS = {
     "tasks.cancel",
     "tasks.show",
   ],
+  fusion: ["fusion.delegate"],
   mcp: [
     "mcp.resource.list",
     "mcp.resource.read",
@@ -159,6 +170,9 @@ export function filterToolDescriptorsByConfig(
   }
   if (!gates.email.available) {
     for (const name of GATED_TOOLS.email) disabled.add(name);
+  }
+  if (!gates.fusion.enabled) {
+    for (const name of GATED_TOOLS.fusion) disabled.add(name);
   }
 
   if (disabled.size === 0) return descriptors;

@@ -4,24 +4,15 @@ import type {
   StreamChunk,
   ToolCallTransport,
 } from "../llm/provider/completion-types.js";
-import type { LlmProvider } from "../llm/provider/llm-provider.js";
-import {
-  primeStream,
-  replayPrimedStream,
-  runWithFallback,
-  type PrimedStream,
-} from "../llm/fallback/index.js";
+import { replayPrimedStream, runWithFallback } from "../llm/fallback/index.js";
 import type { ProviderFallbackChain } from "../llm/fallback/index.js";
+import {
+  completeOnLink,
+  openStreamOnLink,
+  type LinkAttemptDeps,
+} from "./llm-link-attempt.js";
 
-/**
- * The `{ provider, transport }` slice for one chosen link. `bootstrap`
- * resolves this from `resolveActiveLlmSlice(providerId)` per attempt so a
- * fallover to a different provider gets that provider's wire transport.
- */
-export interface ResolvedLinkSlice {
-  provider: LlmProvider;
-  transport: ToolCallTransport;
-}
+export type { ResolvedLinkSlice } from "./llm-link-attempt.js";
 
 /**
  * Dependencies the fallback seams need, injected so the seam is testable
@@ -30,10 +21,8 @@ export interface ResolvedLinkSlice {
  * through the two `record*Usage` callbacks — the seam only owns the
  * fallback loop and the `servedTransport` stamp.
  */
-export interface FallbackSeamDeps {
+export interface FallbackSeamDeps extends LinkAttemptDeps {
   fallbackChain: ProviderFallbackChain;
-  /** Resolve the served link's provider + transport for `providerId`. */
-  resolveSlice: (providerId: string) => ResolvedLinkSlice;
   /**
    * Awaited once per attempt, before the completion is sent, with the
    * link the chain picked. Exists for the state a link may need warmed
@@ -59,33 +48,23 @@ export interface FallbackSeamDeps {
    * link before it could mean anything more.
    */
   prepareLink?: (providerId: string) => Promise<void>;
-  /** Fold a unary completion's usage into cost + meter (no-op when absent). */
-  recordUnaryUsage: (params: LlmStreamParams, result: CompletionResult) => void;
-  /** Fold a streamed completion's usage into the meter. */
+  /**
+   * Fold a unary completion's usage into cost + meter (no-op when
+   * absent). `providerId` is the link that actually served — the chain's
+   * pick, or the pin — so pricing is looked up against the provider the
+   * tokens were spent on, not the active one.
+   */
+  recordUnaryUsage: (
+    params: LlmStreamParams,
+    result: CompletionResult,
+    providerId: string,
+  ) => void;
+  /** Fold a streamed completion's usage into the meter (same `providerId` contract). */
   recordStreamUsage: (
     sessionId: string | undefined,
     result: CompletionResult,
+    providerId: string,
   ) => void;
-}
-
-/**
- * Prompt text for the link that is about to serve this attempt. The main
- * `prompt` is built for the PRIMARY's transport; when the primary is
- * native-tools and the profile needs a reasoning prefill, the prompt was
- * built prefill-suppressed (issue #283) — but a grammar (llama-server)
- * link still expects the legacy prefill-carrying shape (its template and
- * GBNF prelude assume the open tag is pre-typed at the generation
- * point). `grammarPrompt` is the lazy variant the step executor provides
- * for exactly that fallover; absent (grammar primary, plain profile) the
- * shared prompt is already the right shape for the link.
- */
-function promptFor(
-  params: LlmStreamParams,
-  transport: ToolCallTransport,
-): string {
-  return transport === "native_tools"
-    ? params.prompt
-    : (params.grammarPrompt?.() ?? params.prompt);
 }
 
 /**
@@ -96,53 +75,39 @@ function promptFor(
  * reply with the served provider's transport, not the primary's (they can
  * differ on a cloud→local fallover). See AGENTS.md §"Provider fallback
  * chain" → "Cross-transport fallover".
+ *
+ * **A pinned request never falls over.** When `params.providerId` is
+ * set, the single attempt runs directly against that provider and
+ * `runWithFallback` is never entered. The pin exists to spend local
+ * tokens (a fusion worker on the local leg); falling over would silently
+ * run the worker on the cloud leg and invert the cost model the mode was
+ * chosen for. A pinned failure is rethrown as-is — the orchestrator is
+ * the retry authority, and the chain's breaker state stays untouched by
+ * a link it did not pick.
  */
 export function createFallbackCompleter(
   deps: FallbackSeamDeps,
 ): (params: LlmStreamParams) => Promise<CompletionResult> {
-  return async (params) =>
-    runWithFallback(
-      deps.fallbackChain,
-      async (providerId) => {
-        await deps.prepareLink?.(providerId);
-        const { provider, transport } = deps.resolveSlice(providerId);
-        const base = {
-          prompt: promptFor(params, transport),
-          sessionId: params.sessionId,
-          ...(typeof params.maxTokens === "number"
-            ? { maxTokens: params.maxTokens }
-            : {}),
-          ...(params.signal ? { signal: params.signal } : {}),
-        };
-        const result =
-          transport === "native_tools"
-            ? await provider.complete({
-                ...base,
-                ...(params.tools ? { tools: params.tools } : {}),
-                ...(params.toolChoice !== undefined
-                  ? { toolChoice: params.toolChoice }
-                  : {}),
-                ...(params.parallelToolCalls !== undefined
-                  ? { parallelToolCalls: params.parallelToolCalls }
-                  : {}),
-                // Cloud sub-runners forward a `responseFormat` JSON-Schema
-                // envelope; the main agent loop never sets it (it uses
-                // `tools`), so this branch is a no-op there.
-                ...(params.responseFormat
-                  ? { responseFormat: params.responseFormat }
-                  : {}),
-              })
-            : await provider.complete({
-                ...base,
-                grammar: params.grammar,
-                slotId: params.slotId,
-                cachePrompt: params.slotId >= 0,
-              });
-        deps.recordUnaryUsage(params, result);
-        return { ...result, servedTransport: transport };
-      },
-      params.sessionId,
+  const attempt = async (
+    providerId: string,
+    params: LlmStreamParams,
+  ): Promise<CompletionResult> => {
+    const { result, transport } = await completeOnLink(
+      deps,
+      params,
+      providerId,
     );
+    deps.recordUnaryUsage(params, result, providerId);
+    return { ...result, servedTransport: transport };
+  };
+  return async (params) =>
+    params.providerId !== undefined
+      ? attempt(params.providerId, params)
+      : runWithFallback(
+          deps.fallbackChain,
+          (providerId) => attempt(providerId, params),
+          params.sessionId,
+        );
 }
 
 /**
@@ -155,68 +120,41 @@ export function createFallbackCompleter(
  * live stream parser must know the serving transport up front to
  * classify grammar-served reasoning (which starts mid-`<think>`) as
  * reasoning deltas during a cross-transport fallover.
+ *
+ * A pinned request (`params.providerId`) opens the stream directly on
+ * that link and never enters the chain — same rationale as the unary
+ * seam.
  */
 export function createFallbackStreamer(
   deps: FallbackSeamDeps,
 ): (
   params: LlmStreamParams,
 ) => AsyncGenerator<StreamChunk, CompletionResult, void> {
-  const openStreamPrimed = async (
-    providerId: string,
-    params: LlmStreamParams,
-  ): Promise<{
-    primed: PrimedStream<StreamChunk, CompletionResult>;
-    transport: ToolCallTransport;
-  }> => {
-    await deps.prepareLink?.(providerId);
-    const { provider, transport } = deps.resolveSlice(providerId);
-    const base = {
-      prompt: promptFor(params, transport),
-      sessionId: params.sessionId,
-      // Same field the unary seam forwards. The agent loop's truncation
-      // retry raises the cap per step, and every turn streams — a cap
-      // that only reached the unary path was a retry that changed
-      // nothing on the wire.
-      ...(typeof params.maxTokens === "number"
-        ? { maxTokens: params.maxTokens }
-        : {}),
-      ...(params.signal ? { signal: params.signal } : {}),
-    };
-    const stream =
-      transport === "native_tools"
-        ? provider.completeStream({
-            ...base,
-            ...(params.tools ? { tools: params.tools } : {}),
-            ...(params.toolChoice !== undefined
-              ? { toolChoice: params.toolChoice }
-              : {}),
-            ...(params.parallelToolCalls !== undefined
-              ? { parallelToolCalls: params.parallelToolCalls }
-              : {}),
-          })
-        : provider.completeStream({
-            ...base,
-            grammar: params.grammar,
-            slotId: params.slotId,
-            cachePrompt: params.slotId >= 0,
-          });
-    return { primed: await primeStream(stream), transport };
-  };
-
   return (params) => {
     async function* run(): AsyncGenerator<StreamChunk, CompletionResult, void> {
-      const { primed, transport } = await runWithFallback(
-        deps.fallbackChain,
-        (id) => openStreamPrimed(id, params),
-        params.sessionId,
-      );
+      const opened =
+        params.providerId !== undefined
+          ? {
+              providerId: params.providerId,
+              ...(await openStreamOnLink(deps, params, params.providerId)),
+            }
+          : await runWithFallback(
+              deps.fallbackChain,
+              async (id) => ({
+                providerId: id,
+                ...(await openStreamOnLink(deps, params, id)),
+              }),
+              params.sessionId,
+            );
+      const { primed, transport, providerId } = opened;
       const result = yield* stampServedTransport(
         replayPrimedStream(primed),
         transport,
       );
+      deps.recordStreamUsage(params.sessionId, result, providerId);
       return { ...result, servedTransport: transport };
     }
-    return meterStream(deps, params.sessionId, run());
+    return run();
   };
 }
 
@@ -225,6 +163,12 @@ export function createFallbackStreamer(
  * `StreamChunk.servedTransport` contract — the final result's stamp
  * arrives too late for live consumers to reconfigure their parser on a
  * cross-transport fallover).
+ *
+ * Usage is folded by the caller once this returns: the stream's *return*
+ * value carries `usage` (deltas do not), so totals only exist once the
+ * generator finishes; an abandoned stream never returns and contributes
+ * nothing (a cancelled turn reports only what it finished accounting
+ * for).
  */
 async function* stampServedTransport(
   stream: AsyncGenerator<StreamChunk, CompletionResult, void>,
@@ -236,21 +180,4 @@ async function* stampServedTransport(
     next = await stream.next();
   }
   return next.value;
-}
-
-/**
- * Pass chunks through untouched and fold the final result's usage. The
- * stream's *return* value carries `usage` (deltas do not), so totals only
- * exist once the generator finishes; an abandoned stream never returns
- * and contributes nothing (a cancelled turn reports only what it
- * finished accounting for).
- */
-async function* meterStream(
-  deps: FallbackSeamDeps,
-  sessionId: string | undefined,
-  stream: AsyncGenerator<StreamChunk, CompletionResult, void>,
-): AsyncGenerator<StreamChunk, CompletionResult, void> {
-  const result = yield* stream;
-  deps.recordStreamUsage(sessionId, result);
-  return result;
 }
