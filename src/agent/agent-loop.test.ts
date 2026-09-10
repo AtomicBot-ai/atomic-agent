@@ -8,6 +8,8 @@ import { buildDefaultToolRegistry } from "../tools/index.js";
 import { osFsReadTool } from "../tools/os/fs-read.js";
 import { SlotManager } from "../llm/slot-manager.js";
 import { TransportError } from "../llm/reliability/llm-failures.js";
+import { LlamaServerError } from "../llm/llama-server-client.js";
+import { PARSE_RECOVERY_BUDGET } from "./parse-failure-recovery.js";
 import { createEmptySessionState } from "../session/session-state.js";
 import type {
   CompletionResult,
@@ -2034,11 +2036,12 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     expect(stepErrors[0]?.category).toBe("model");
   });
 
-  it("classifies persistent parse failure as GrammarError after one retry", async () => {
+  it("classifies persistent parse failure as GrammarError after the recovery budget", async () => {
     const registry = buildDefaultToolRegistry();
     let llmCalls = 0;
     const stepErrors: Array<{ category: string }> = [];
     const parseRetries: number[] = [];
+    const recoveries: Array<{ attempt: number; budget: number }> = [];
     const loop = new AgentLoop({
       registry,
       slotManager: new SlotManager(2),
@@ -2058,6 +2061,8 @@ describe("AgentLoop end-to-end with mock LLM", () => {
           event.event.type === "parse_retry"
         ) {
           parseRetries.push(event.event.attempt);
+        } else if (event.type === "parse_failure_recovered") {
+          recoveries.push({ attempt: event.attempt, budget: event.budget });
         }
       },
     });
@@ -2069,9 +2074,123 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     });
     expect(result.reason).toBe("failed");
     expect(result.session.status).toBe("failed");
-    expect(llmCalls).toBe(2);
-    expect(parseRetries).toHaveLength(1);
+    // Each step gets the step executor's own one-shot repair (2 calls);
+    // the turn then spends `PARSE_RECOVERY_BUDGET` further steps on a
+    // rebuilt prompt before giving up. A model that cannot emit a valid
+    // call three times running still fails, and still as `grammar`.
+    expect(recoveries).toEqual([
+      { attempt: 1, budget: PARSE_RECOVERY_BUDGET },
+      { attempt: 2, budget: PARSE_RECOVERY_BUDGET },
+    ]);
+    expect(llmCalls).toBe(2 * (PARSE_RECOVERY_BUDGET + 1));
+    expect(parseRetries).toHaveLength(PARSE_RECOVERY_BUDGET + 1);
     expect(stepErrors[0]?.category).toBe("grammar");
+  });
+
+  it("recovers a rejected tool call by spending a step on a corrected one", async () => {
+    const registry = buildDefaultToolRegistry();
+    let llmCalls = 0;
+    const prompts: string[] = [];
+    const recoveries: number[] = [];
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async (params) => {
+        llmCalls += 1;
+        prompts.push(params.prompt);
+        // The first step and its in-step repair both come back
+        // unparseable — the shape a large `os.fs.write` produces when
+        // the repair's own token cap cannot fit the argument again.
+        return llmCalls <= 2
+          ? makeCompletion('[{"tool":"os.fs.write","args":{"path":"/tmp/x","content":"aaa')
+          : makeCompletion(JSON.stringify({ tool: "reply", args: { text: "done" } }));
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (event.type === "parse_failure_recovered") recoveries.push(event.attempt);
+      },
+    });
+    const session = createEmptySessionState({ id: "s-parse-recovered", workingDir });
+    const result = await loop.runTurn(session, {
+      userMessage: "write the file",
+      maxSteps: 5,
+      signal: new AbortController().signal,
+    });
+    // The turn answers instead of dying, without the operator noticing
+    // the silence and typing "try again".
+    expect(result.reason).toBe("reply");
+    expect(result.session.status).toBe("pending");
+    expect(recoveries).toEqual([1]);
+    // The step after the rejection is told what was rejected — the
+    // feedback the model had no way to get before.
+    const afterRecovery = prompts[2] ?? "";
+    expect(afterRecovery).toContain("rejected before any tool ran");
+    expect(afterRecovery).toContain("Nothing you attempted has happened yet");
+    const replies = result.session.turns.filter((t) => t.kind === "assistant_reply");
+    expect(replies).toHaveLength(1);
+    expect(replies[0]).toMatchObject({ text: "done" });
+  });
+
+  it("leaves the failure in the transcript so the next turn is not blind", async () => {
+    const registry = buildDefaultToolRegistry();
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () =>
+        makeCompletion('[{"tool":"reply","args":{"text":'),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    const session = createEmptySessionState({ id: "s-failure-record", workingDir });
+    const result = await loop.runTurn(session, {
+      userMessage: "go",
+      maxSteps: 3,
+      signal: new AbortController().signal,
+    });
+    expect(result.reason).toBe("failed");
+    const last = result.session.turns[result.session.turns.length - 1];
+    expect(last?.kind).toBe("assistant_reply");
+    expect((last as { text: string }).text).toContain("this turn failed");
+    expect((last as { text: string }).text).toContain("grammar");
+    expect((last as { text: string }).text).toContain("Nothing from it took effect");
+  });
+
+  it("does not recover a request the model server itself rejected", async () => {
+    const registry = buildDefaultToolRegistry();
+    let llmCalls = 0;
+    const recoveries: number[] = [];
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () => {
+        llmCalls += 1;
+        throw new LlamaServerError("request too large", 413, "http://x/v1");
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (event.type === "parse_failure_recovered") recoveries.push(event.attempt);
+      },
+    });
+    const session = createEmptySessionState({ id: "s-413", workingDir });
+    const result = await loop.runTurn(session, {
+      userMessage: "go",
+      maxSteps: 3,
+      signal: new AbortController().signal,
+    });
+    // A 413 wears the same `GrammarError` shape, but re-prompting
+    // reproduces it: the operator gets the diagnosis now, not two
+    // wasted steps later.
+    expect(result.reason).toBe("failed");
+    expect(recoveries).toEqual([]);
+    expect(llmCalls).toBe(1);
   });
 
   it("classifies a missing tool call as ToolExecutionError", async () => {

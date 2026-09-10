@@ -31,6 +31,7 @@ export type TraceEvent =
   | TraceProviderWaiting
   | TraceProviderRecovered
   | TraceCompletionTruncated
+  | TraceParseFailureRecovered
   | TraceLessonDeprecated
   | TraceVoteApplied
   | TraceVoteRejected
@@ -187,6 +188,21 @@ export interface TraceProviderWaiting extends TraceEventBase {
   waitedMs: number;
   maxWaitMs: number;
   nextRetryMs: number;
+  reason: string;
+}
+
+/**
+ * A completion could not be read as tool calls and the turn spent
+ * another step on it instead of ending. This is the row that explains
+ * an inference with no tool call and no text behind it — without it a
+ * post-mortem sees a step that simply did nothing.
+ */
+export interface TraceParseFailureRecovered extends TraceEventBase {
+  type: "parse_failure_recovered";
+  turnIndex: number;
+  stepIndex: number;
+  attempt: number;
+  budget: number;
   reason: string;
 }
 

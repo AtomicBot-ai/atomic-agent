@@ -265,6 +265,43 @@ and [src/runtime/llm-fallback-seam.test.ts](src/runtime/llm-fallback-seam.test.t
 
 Known gap: a window learned while a fallback link served the completion is keyed to the configured
 provider (`activeModelKey`), not the serving link.
+### An unparseable completion is retried, not fatal
+
+A completion the runtime cannot read as tool calls used to end the turn. The step executor's own
+one-shot repair (`buildToolCallRepairPrompt`, capped at `REPAIR_MAX_TOKENS`) is not enough on its
+own: the cap exists to stop a reasoning model re-deliberating for minutes, but it also means a
+repair that must re-emit a large argument — a file body on `os.fs.write` — cannot fit, truncates,
+and fails the parse a second time. What the operator got was `Turn failed [grammar]: tool call
+"os.fs.write" arguments are not a valid JSON object`, a session with `lastError` set, nothing in the
+transcript, and a turn that only restarted when they noticed the silence and typed "try again".
+
+[src/agent/parse-failure-recovery.ts](src/agent/parse-failure-recovery.ts) lets the loop spend
+ordinary steps on it instead. Locked invariants (pinned by
+[src/agent/parse-failure-recovery.test.ts](src/agent/parse-failure-recovery.test.ts),
+[src/agent/agent-loop.test.ts](src/agent/agent-loop.test.ts) and
+[src/tui/agent-event-reducer.test.ts](src/tui/agent-event-reducer.test.ts)):
+
+1. **Only a body our parser rejected recovers.** `ToolCallParseError`, or a `GrammarError` whose
+   cause is not a `LlamaServerError`. A llama-server 400/413/422 wears the same `GrammarError`
+   shape and is the server refusing the request — re-prompting reproduces it, so it fails at once.
+2. **`PARSE_RECOVERY_BUDGET` (2) per turn, and the step is counted.** Unlike the outage park this
+   is a *new* step at the next index, not a replay: the model consumed an inference and the budget
+   must be visible in `stepsTaken`. `legMadeProgress` stays false, so a leg made entirely of
+   rejected completions still stops at its boundary as `no_progress`.
+3. **The retry carries a `### notice`, not the capped repair prompt.** `composeParseFailureNotice`
+   names the rejection, states that nothing ran, and points at oversized arguments as the likely
+   cause. It composes with whatever the step already owed the model (loop detector, steering)
+   rather than overwriting that slot, and the rejection comes first.
+4. **A failed turn leaves a row in the transcript.** `formatTurnFailedRecord` is recorded as an
+   `assistant_reply` turn — recorded only, with no `assistant_reply` event, because every surface
+   already prints its own line from `loop_failed` and a second copy would arrive as a message from
+   the agent. Without the row, the next turn is built from a history in which the attempt never
+   happened and the model repeats it verbatim.
+5. **The feed and the trace both say it.** One `parse_failure_recovered` line per recovery
+   (`» the model's output could not be read as a tool call (<reason>) — trying again (n/2)`),
+   because the recovering step produces neither a tool call nor text and would otherwise be a gap
+   on screen — and a `parse_failure_recovered` trace row carrying step, attempt/budget and reason,
+   because a post-mortem reading `<stateDir>/traces/<sessionId>.ndjson` needs the same answer.
 
 ### No-progress loop detection
 

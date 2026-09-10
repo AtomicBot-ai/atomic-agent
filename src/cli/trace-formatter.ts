@@ -84,6 +84,8 @@ function formatTraceEvent(event: TraceEvent, raw: boolean): string {
       return `${head} steps=${event.stepsTaken}/${event.stepCeiling} elapsed=${Math.round(
         event.elapsedMs / 1000,
       )}s`;
+    case "parse_failure_recovered":
+      return `${head} step=${event.stepIndex} attempt=${event.attempt}/${event.budget} reason=${truncate(event.reason, 120, raw)}`;
     case "provider_waiting":
       return `${head} attempt=${event.attempt} waited=${Math.round(
         event.waitedMs / 1000,

@@ -126,3 +126,31 @@ describe("formatTraceChronology loop_detected", () => {
     expect(only).toContain("detector=generic_repeat");
   });
 });
+
+describe("formatTraceChronology parse_failure_recovered", () => {
+  const event: TraceEvent = {
+    type: "parse_failure_recovered",
+    seq: 11,
+    sessionId: "s-1",
+    ts: Date.parse("2026-09-01T10:00:00.000Z"),
+    turnIndex: 0,
+    stepIndex: 2,
+    attempt: 1,
+    budget: 2,
+    reason: 'tool call "os.fs.write" arguments are not a valid JSON object',
+  };
+
+  it("says which step was retried, how far into the budget, and why", () => {
+    // Without this row a post-mortem sees an inference with no tool call
+    // and no text behind it, and nothing saying the step was retried.
+    const line = render([event]);
+    expect(line).toContain("#11 parse_failure_recovered");
+    expect(line).toContain("step=2 attempt=1/2");
+    expect(line).toContain("os.fs.write");
+  });
+
+  it("truncates a reason that quotes the model's own output", () => {
+    const line = render([{ ...event, reason: "x".repeat(400) }]);
+    expect(line.length).toBeLessThan(300);
+  });
+});

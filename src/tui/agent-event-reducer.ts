@@ -137,7 +137,10 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
         contextUsage: EMPTY_CONTEXT_USAGE,
       };
     case "skill_count_changed":
-      return { ...state, session: { ...state.session, skillCount: action.count } };
+      return {
+        ...state,
+        session: { ...state.session, skillCount: action.count },
+      };
     case "approval_level_changed":
       return {
         ...state,
@@ -233,7 +236,10 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
     case "metric":
       return applyMetric(state, action.sample);
     case "log":
-      return { ...state, logs: pushRing(state.logs, action.record, state.ringBufferSize) };
+      return {
+        ...state,
+        logs: pushRing(state.logs, action.record, state.ringBufferSize),
+      };
     case "tab_changed":
       if (action.tab === "models") {
         return {
@@ -294,7 +300,9 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
     case "quit_requested":
       return { ...state, status: "quitting", aborting: true };
     case "loaded_skill": {
-      const others = state.loadedSkills.filter((s) => s.name !== action.skill.name);
+      const others = state.loadedSkills.filter(
+        (s) => s.name !== action.skill.name,
+      );
       return { ...state, loadedSkills: [...others, action.skill] };
     }
     case "world_snapshot":
@@ -424,7 +432,8 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
       // answering again and the badge would be the lie instead.
       const reachedTheModel =
         event.reason === "reply" || event.reason === "finish";
-      const keepBadge = !reachedTheModel && Boolean(state.providerOutage?.givenUp);
+      const keepBadge =
+        !reachedTheModel && Boolean(state.providerOutage?.givenUp);
       return finishTurn(
         keepBadge ? state : { ...state, providerOutage: null },
         event.reason,
@@ -439,7 +448,10 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
           ...appendFeed(state, {
             kind: "step_started",
             stepIndex: event.stepIndex,
-            line: formatFeedLine({ type: "step_started", stepIndex: event.stepIndex }),
+            line: formatFeedLine({
+              type: "step_started",
+              stepIndex: event.stepIndex,
+            }),
             color: "blue",
           }),
           status: "running",
@@ -534,7 +546,11 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
               role: "system",
               variant: "warn",
               action: "configure-fallback",
-              text: formatProviderFalloverNotice(event.from, event.to, event.reason),
+              text: formatProviderFalloverNotice(
+                event.from,
+                event.to,
+                event.reason,
+              ),
             })
           : withSwitch,
         {
@@ -705,7 +721,10 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
           ...state,
           // The chat surface shows the fan-out while it runs; the feed
           // keeps the history of it.
-          fusionLiveWorkers: reduceFusionLiveWorkers(state.fusionLiveWorkers, event),
+          fusionLiveWorkers: reduceFusionLiveWorkers(
+            state.fusionLiveWorkers,
+            event,
+          ),
         },
         {
           kind: "runtime_info",
@@ -714,6 +733,22 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
           color: fusionWorkerLineColor(event),
         },
       );
+    }
+    case "parse_failure_recovered": {
+      // Rendered, unlike `loop_detected`: this step produced no tool
+      // call and no text, so without a line the feed shows a gap the
+      // operator has no way to read. One line per recovery — there are
+      // at most `budget` of them.
+      const reason =
+        event.reason.length > 120
+          ? `${event.reason.slice(0, 120)}…`
+          : event.reason;
+      return appendFeed(state, {
+        kind: "runtime_info",
+        stepIndex: event.stepIndex,
+        line: `» the model's output could not be read as a tool call (${reason}) — trying again (${event.attempt}/${event.budget})`,
+        color: "yellow",
+      });
     }
     case "loop_detected":
       // Deliberately not rendered: the loop detector's own `### notice`
@@ -826,8 +861,10 @@ function reduceStepEvent(
     }
     case "tool_call_executed": {
       const color = event.result.status === "ok" ? "green" : "red";
-      const toolsOk = state.metrics.toolsOk + (event.result.status === "ok" ? 1 : 0);
-      const toolsError = state.metrics.toolsError + (event.result.status === "error" ? 1 : 0);
+      const toolsOk =
+        state.metrics.toolsOk + (event.result.status === "ok" ? 1 : 0);
+      const toolsError =
+        state.metrics.toolsError + (event.result.status === "error" ? 1 : 0);
       const isReply = event.result.tool === "reply";
       const withFeed = appendFeed(state, {
         kind: "tool_call_executed",
@@ -848,7 +885,9 @@ function reduceStepEvent(
         status: event.result.status,
         summary: event.result.summary,
         truncated: event.result.truncated ?? false,
-        ...(event.result.details !== undefined ? { details: event.result.details } : {}),
+        ...(event.result.details !== undefined
+          ? { details: event.result.details }
+          : {}),
       });
       return {
         ...withCard,
@@ -856,7 +895,9 @@ function reduceStepEvent(
           tool: event.result.tool,
           status: event.result.status,
           summary: event.result.summary,
-          ...(event.result.details !== undefined ? { details: event.result.details } : {}),
+          ...(event.result.details !== undefined
+            ? { details: event.result.details }
+            : {}),
         },
         metrics: { ...withCard.metrics, toolsOk, toolsError },
         currentTurnToolSteps: isReply
@@ -882,7 +923,9 @@ function reduceStepEvent(
         text: event.text,
         toolSteps: state.currentTurnToolSteps,
         ...(toolCardsForTurn.length > 0 ? { toolCards: toolCardsForTurn } : {}),
-        ...(reasoningForTurn.length > 0 ? { reasoningBlocks: reasoningForTurn } : {}),
+        ...(reasoningForTurn.length > 0
+          ? { reasoningBlocks: reasoningForTurn }
+          : {}),
         ...(event.attachments !== undefined && event.attachments.length > 0
           ? { attachments: event.attachments }
           : {}),

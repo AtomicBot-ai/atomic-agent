@@ -31,6 +31,27 @@ describe("createTraceRecorder", () => {
     });
   });
 
+  it("records a parse-failure recovery against the current turn and step", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-parse", emit, now });
+    rec.onAgentEvent({ type: "turn_started", turnIndex: 3 } as AgentLoopEvent);
+    rec.onAgentEvent({
+      type: "parse_failure_recovered",
+      stepIndex: 2,
+      attempt: 1,
+      budget: 2,
+      reason: 'tool call "os.fs.write" arguments are not a valid JSON object',
+    } as AgentLoopEvent);
+    expect(events.find((e) => e.type === "parse_failure_recovered")).toMatchObject({
+      type: "parse_failure_recovered",
+      sessionId: "s-parse",
+      turnIndex: 3,
+      stepIndex: 2,
+      attempt: 1,
+      budget: 2,
+    });
+  });
+
   it("attaches user_message to the next turn_started", () => {
     const { events, emit } = collector();
     const rec = createTraceRecorder({ sessionId: "s-2", emit, now });

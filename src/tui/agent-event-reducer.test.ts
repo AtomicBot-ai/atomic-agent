@@ -32,7 +32,9 @@ function apply(state: TuiState, actions: TuiAction[]): TuiState {
 }
 
 describe("reduceTuiState fusion worker progress", () => {
-  const feedLines = (events: Parameters<typeof reduceTuiState>[1][]): string[] =>
+  const feedLines = (
+    events: Parameters<typeof reduceTuiState>[1][],
+  ): string[] =>
     apply(createInitialTuiState(fakeSession()), events).feed.map((f) => f.line);
 
   it("shows one line when a worker starts and one when it finishes", () => {
@@ -81,7 +83,12 @@ describe("reduceTuiState fusion worker progress", () => {
       },
       {
         type: "agent_event",
-        event: { type: "fusion_worker", taskId: "t2", title: "B", phase: "cancelled" },
+        event: {
+          type: "fusion_worker",
+          taskId: "t2",
+          title: "B",
+          phase: "cancelled",
+        },
       },
     ]);
     expect(lines).toEqual([
@@ -148,7 +155,12 @@ describe("reduceTuiState fusion worker progress", () => {
     ]);
     const after = reduceTuiState(running, {
       type: "agent_event",
-      event: { type: "fusion_worker", taskId: "t1", title: "A", phase: "started" },
+      event: {
+        type: "fusion_worker",
+        taskId: "t1",
+        title: "A",
+        phase: "started",
+      },
     });
     expect(after.status).toBe(running.status);
     expect(after.currentStep).toBe(3);
@@ -271,9 +283,7 @@ describe("reduceTuiState", () => {
   });
 
   describe("context usage", () => {
-    const prompt = (
-      overrides: Partial<BuiltPrompt> = {},
-    ): BuiltPrompt =>
+    const prompt = (overrides: Partial<BuiltPrompt> = {}): BuiltPrompt =>
       ({
         text: "",
         stablePrefix: "",
@@ -411,8 +421,12 @@ describe("reduceTuiState", () => {
     });
 
     it("resets when the transcript is cleared or the session changes", () => {
-      const built = apply(createInitialTuiState(fakeSession()), [promptBuilt()]);
-      expect(reduceTuiState(built, { type: "chat_cleared" }).contextUsage.tokens).toBeNull();
+      const built = apply(createInitialTuiState(fakeSession()), [
+        promptBuilt(),
+      ]);
+      expect(
+        reduceTuiState(built, { type: "chat_cleared" }).contextUsage.tokens,
+      ).toBeNull();
       expect(
         reduceTuiState(built, { type: "session_created", sessionId: "s2" })
           .contextUsage.tokens,
@@ -424,11 +438,26 @@ describe("reduceTuiState", () => {
     const initial = createInitialTuiState(fakeSession());
     const ts = Date.now();
     const next = apply(initial, [
-      { type: "metric", sample: { name: "llm.prompt_tokens", value: 2400, timestamp: ts } },
-      { type: "metric", sample: { name: "llm.completion_tokens", value: 32, timestamp: ts } },
-      { type: "metric", sample: { name: "llm.duration_ms", value: 850, timestamp: ts } },
-      { type: "metric", sample: { name: "llm.cache_reused", value: 1, timestamp: ts } },
-      { type: "metric", sample: { name: "llm.cache_reused", value: 0, timestamp: ts } },
+      {
+        type: "metric",
+        sample: { name: "llm.prompt_tokens", value: 2400, timestamp: ts },
+      },
+      {
+        type: "metric",
+        sample: { name: "llm.completion_tokens", value: 32, timestamp: ts },
+      },
+      {
+        type: "metric",
+        sample: { name: "llm.duration_ms", value: 850, timestamp: ts },
+      },
+      {
+        type: "metric",
+        sample: { name: "llm.cache_reused", value: 1, timestamp: ts },
+      },
+      {
+        type: "metric",
+        sample: { name: "llm.cache_reused", value: 0, timestamp: ts },
+      },
     ]);
     expect(next.metrics.promptTokensLast).toBe(2400);
     expect(next.metrics.completionTokensLast).toBe(32);
@@ -441,10 +470,16 @@ describe("reduceTuiState", () => {
   it("should return to idle and archive run on loop_completed with finish", () => {
     const initial = createInitialTuiState(fakeSession());
     const next = apply(initial, [
-      { type: "agent_event", event: { type: "user_message", text: "check email" } },
+      {
+        type: "agent_event",
+        event: { type: "user_message", text: "check email" },
+      },
       { type: "message_submitted" },
       { type: "agent_event", event: { type: "step_started", stepIndex: 0 } },
-      { type: "agent_event", event: { type: "loop_completed", reason: "finish" } },
+      {
+        type: "agent_event",
+        event: { type: "loop_completed", reason: "finish" },
+      },
     ]);
     expect(next.status).toBe("idle");
     expect(next.lastRunStatus).toBe("completed: finish");
@@ -457,7 +492,10 @@ describe("reduceTuiState", () => {
     const initial = createInitialTuiState(fakeSession());
     const next = apply(initial, [
       { type: "message_submitted" },
-      { type: "agent_event", event: { type: "loop_completed", reason: "cancelled" } },
+      {
+        type: "agent_event",
+        event: { type: "loop_completed", reason: "cancelled" },
+      },
     ]);
     expect(next.status).toBe("idle");
     expect(next.runHistory[0]?.outcome).toBe("cancelled");
@@ -467,7 +505,14 @@ describe("reduceTuiState", () => {
     const initial = createInitialTuiState(fakeSession());
     const next = apply(initial, [
       { type: "message_submitted" },
-      { type: "agent_event", event: { type: "loop_failed", error: new Error("boom"), category: "tool" } },
+      {
+        type: "agent_event",
+        event: {
+          type: "loop_failed",
+          error: new Error("boom"),
+          category: "tool",
+        },
+      },
     ]);
     expect(next.status).toBe("idle");
     expect(next.lastRunStatus).toBe("failed [tool]: boom");
@@ -482,7 +527,10 @@ describe("reduceTuiState", () => {
   it("renders a calm stopped-by-user notice with a retry prompt on a cancelled loop_failed", () => {
     const initial = createInitialTuiState(fakeSession());
     const next = apply(initial, [
-      { type: "agent_event", event: { type: "user_message", text: "count the stars" } },
+      {
+        type: "agent_event",
+        event: { type: "user_message", text: "count the stars" },
+      },
       { type: "message_submitted" },
       {
         type: "agent_event",
@@ -515,7 +563,10 @@ describe("reduceTuiState", () => {
     // operator's stop, not a provider failure.
     const initial = createInitialTuiState(fakeSession());
     const next = apply(initial, [
-      { type: "agent_event", event: { type: "user_message", text: "count the stars" } },
+      {
+        type: "agent_event",
+        event: { type: "user_message", text: "count the stars" },
+      },
       { type: "message_submitted" },
       { type: "abort_requested" },
       {
@@ -550,7 +601,9 @@ describe("reduceTuiState", () => {
     const warn = next.messages.find(
       (m) => m.role === "system" && m.variant === "warn",
     );
-    expect(warn?.text).toBe(withReportHint("Turn failed [model]: model returned empty content"));
+    expect(warn?.text).toBe(
+      withReportHint("Turn failed [model]: model returned empty content"),
+    );
   });
 
   it("leaves retryText off the stopped notice when no user message exists to re-run", () => {
@@ -612,7 +665,13 @@ describe("reduceTuiState", () => {
     const next = apply(initial, [
       {
         type: "providers_refresh",
-        rows: [providerRow({ id: "openrouter", kind: "openrouter", isActiveText: true })],
+        rows: [
+          providerRow({
+            id: "openrouter",
+            kind: "openrouter",
+            isActiveText: true,
+          }),
+        ],
       },
       { type: "message_submitted" },
       {
@@ -634,7 +693,9 @@ describe("reduceTuiState", () => {
     // llama one names the wrong server on a cloud route, and the drop one
     // would assert a reply was cut off on a turn that may have completed
     // zero steps.
-    expect(errMsg?.text).toBe(withReportHint("Turn failed [transport]: fetch failed"));
+    expect(errMsg?.text).toBe(
+      withReportHint("Turn failed [transport]: fetch failed"),
+    );
   });
 
   it("explains a cloud route's mid-stream drop through the whole reducer", () => {
@@ -645,7 +706,13 @@ describe("reduceTuiState", () => {
     const next = apply(initial, [
       {
         type: "providers_refresh",
-        rows: [providerRow({ id: "openrouter", kind: "openrouter", isActiveText: true })],
+        rows: [
+          providerRow({
+            id: "openrouter",
+            kind: "openrouter",
+            isActiveText: true,
+          }),
+        ],
       },
       { type: "message_submitted" },
       {
@@ -882,7 +949,11 @@ describe("reduceTuiState", () => {
         type: "agent_event",
         event: {
           type: "llm_event",
-          event: { type: "reasoning", stepIndex: 0, text: "some chain of thought" },
+          event: {
+            type: "reasoning",
+            stepIndex: 0,
+            text: "some chain of thought",
+          },
         },
       },
       {
@@ -906,7 +977,9 @@ describe("reduceTuiState", () => {
     expect(next.streamingAssistantText).toBeNull();
     expect(next.streamingToolCalls).toEqual([]);
     expect(next.streamingToolCards).toEqual([]);
-    expect(next.messages.at(-1)?.reasoningBlocks).toContain("some chain of thought");
+    expect(next.messages.at(-1)?.reasoningBlocks).toContain(
+      "some chain of thought",
+    );
   });
 
   it("mirrors approval_level_changed into state.session for the diagnostics line", () => {
@@ -950,7 +1023,11 @@ describe("reduceTuiState", () => {
 
     const next = reduceTuiState(running, {
       type: "agent_event",
-      event: { type: "steer_applied", text: "use the staging db", stepIndex: 1 },
+      event: {
+        type: "steer_applied",
+        text: "use the staging db",
+        stepIndex: 1,
+      },
     });
 
     // The operator's words show up as a user message, in the same
@@ -1057,6 +1134,50 @@ describe("truncated completion", () => {
   });
 });
 
+describe("parse-failure recovery", () => {
+  const recovered = (over: Record<string, unknown> = {}): TuiAction => ({
+    type: "agent_event",
+    event: {
+      type: "parse_failure_recovered",
+      stepIndex: 3,
+      attempt: 1,
+      budget: 2,
+      reason: 'tool call "os.fs.write" arguments are not a valid JSON object',
+      ...over,
+    } as never,
+  });
+
+  it("says the output was rejected and that the turn is trying again", () => {
+    const next = reduceTuiState(
+      createInitialTuiState(fakeSession()),
+      recovered(),
+    );
+    const line = next.feed.at(-1)?.line ?? "";
+    expect(line).toContain("could not be read as a tool call");
+    expect(line).toContain("os.fs.write");
+    expect(line).toContain("(1/2)");
+  });
+
+  it("clips a reason that quotes the model's own output", () => {
+    const next = reduceTuiState(
+      createInitialTuiState(fakeSession()),
+      recovered({ reason: "x".repeat(500) }),
+    );
+    expect((next.feed.at(-1)?.line ?? "").length).toBeLessThan(250);
+  });
+
+  it("leaves one line per recovery, not one per step", () => {
+    const next = apply(createInitialTuiState(fakeSession()), [
+      recovered(),
+      recovered({ attempt: 2, stepIndex: 4 }),
+    ]);
+    const lines = next.feed.filter((row) =>
+      row.line.includes("could not be read as a tool call"),
+    );
+    expect(lines).toHaveLength(2);
+  });
+});
+
 describe("provider outage", () => {
   const waiting = (over: Record<string, unknown> = {}): TuiAction => ({
     type: "agent_event",
@@ -1085,7 +1206,10 @@ describe("provider outage", () => {
   });
 
   it("shows the outage and says how long it will keep trying", () => {
-    const next = reduceTuiState(createInitialTuiState(fakeSession()), waiting());
+    const next = reduceTuiState(
+      createInitialTuiState(fakeSession()),
+      waiting(),
+    );
     expect(next.providerOutage).toMatchObject({
       reason: "fetch failed",
       attempt: 1,
@@ -1252,8 +1376,9 @@ describe("provider outage", () => {
       turnFinished("failed"),
     ]);
     expect(dead.providerOutage).toMatchObject({ givenUp: true });
-    expect(reduceTuiState(dead, turnFinished("cancelled")).providerOutage)
-      .toMatchObject({ givenUp: true });
+    expect(
+      reduceTuiState(dead, turnFinished("cancelled")).providerOutage,
+    ).toMatchObject({ givenUp: true });
   });
 
   it("clears the given-up badge once a turn reaches the model", () => {
@@ -1269,7 +1394,9 @@ describe("provider outage", () => {
       },
       turnFinished("failed"),
     ]);
-    expect(reduceTuiState(dead, turnFinished("reply")).providerOutage).toBeNull();
+    expect(
+      reduceTuiState(dead, turnFinished("reply")).providerOutage,
+    ).toBeNull();
   });
 
   it("does not repeat the feed line on every retry", () => {
@@ -1281,7 +1408,9 @@ describe("provider outage", () => {
       waiting({ attempt: 2, waitedMs: 2_000, nextRetryMs: 4_000 }),
       waiting({ attempt: 3, waitedMs: 6_000, nextRetryMs: 8_000 }),
     ]);
-    expect(next.feed.filter((f) => f.line.includes("provider not answering"))).toHaveLength(1);
+    expect(
+      next.feed.filter((f) => f.line.includes("provider not answering")),
+    ).toHaveLength(1);
     expect(next.providerOutage).toMatchObject({ attempt: 3, waitedMs: 6_000 });
   });
 
@@ -1294,7 +1423,9 @@ describe("provider outage", () => {
       },
     ]);
     expect(next.providerOutage).toBeNull();
-    expect(next.feed.at(-1)?.line).toContain("provider answered again after 6s");
+    expect(next.feed.at(-1)?.line).toContain(
+      "provider answered again after 6s",
+    );
   });
 
   it("stays on screen when the wait ran out and the turn failed", () => {
@@ -1407,7 +1538,6 @@ describe("llm health visibility", () => {
   });
 });
 
-
 describe("turn_gate_blocked", () => {
   it("after a fresh submit: prints the warn message and hands the composer back", () => {
     const submitted = apply(createInitialTuiState(fakeSession()), [
@@ -1434,9 +1564,15 @@ describe("turn_gate_blocked", () => {
       // A full earlier turn, so the trap has bait: the blocked text
       // never reaches `state.messages`, and a history entry minted for
       // the block would carry THIS message instead.
-      { type: "agent_event", event: { type: "user_message", text: "earlier turn" } },
+      {
+        type: "agent_event",
+        event: { type: "user_message", text: "earlier turn" },
+      },
       { type: "message_submitted" },
-      { type: "agent_event", event: { type: "loop_completed", reason: "finish" } },
+      {
+        type: "agent_event",
+        event: { type: "loop_completed", reason: "finish" },
+      },
       { type: "message_submitted" },
       {
         type: "turn_gate_blocked",

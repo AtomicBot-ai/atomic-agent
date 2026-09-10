@@ -381,6 +381,19 @@ export function createTraceRecorder(
             stepCeiling: event.stepCeiling,
           });
           return;
+        case "parse_failure_recovered":
+          push({
+            type: "parse_failure_recovered",
+            seq: nextSeq(),
+            sessionId,
+            ts: now(),
+            turnIndex: currentTurnIndex,
+            stepIndex: event.stepIndex,
+            attempt: event.attempt,
+            budget: event.budget,
+            reason: event.reason,
+          });
+          return;
         case "provider_waiting":
           push({
             type: "provider_waiting",
