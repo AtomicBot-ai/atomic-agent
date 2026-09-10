@@ -236,12 +236,29 @@ function renderBold(s: string): string {
 }
 
 function renderItalic(s: string): string {
-  // Single `*` or `_` only. We require a non-word boundary on the
-  // outer side for `_` so `snake_case_identifier` does not turn
-  // into `snake<i>case</i>identifier`. The same guard for `*` is
-  // not needed because `*` is rare inside identifiers.
+  // Single `*` or `_` only, and both require a non-word character on
+  // the outer side of each delimiter. For `_` that keeps
+  // `snake_case_identifier` intact; for `*` it keeps arithmetic and
+  // shell globs intact, which matters more than it looks. Without
+  // the `*` guard a MATLAB expression like `20*log10(abs(15-1*25))`
+  // has its two loose asterisks read as an emphasis pair and comes
+  // out as `20<i>log10(abs(15-1</i>25))` — under `parse_mode: "HTML"`
+  // Telegram renders that as italics, so the asterisks are *deleted*
+  // from what the operator sees and the expression silently changes
+  // meaning. Restyling is recoverable; character loss is not.
+  //
+  // `renderBold` has already consumed `**pairs**`, so the remaining
+  // `*` runs here are single delimiters; the closing lookahead still
+  // rejects a trailing `*` so a stray third asterisk is never
+  // stranded next to an emitted `<i>`.
+  //
+  // This is a word guard, not CommonMark's full left/right-flanking
+  // rule: asterisks flanked by punctuation rather than by word
+  // characters — `build/*.o obj/*.o` — are still read as a pair.
+  // CommonMark reads that one as emphasis too, and closing it means
+  // porting the whole flanking algorithm.
   return s
-    .replace(/(^|[^*])\*([^*\n]+?)\*(?!\*)/g, "$1<i>$2</i>")
+    .replace(/(^|[^*\w])\*([^*\n]+?)\*(?![\w*])/g, "$1<i>$2</i>")
     .replace(/(^|[^_\w])_([^_\n]+?)_(?!\w)/g, "$1<i>$2</i>");
 }
 

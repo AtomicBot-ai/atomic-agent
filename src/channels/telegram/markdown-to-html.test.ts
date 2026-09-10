@@ -47,6 +47,74 @@ describe("convertMarkdownToTelegramHtml", () => {
     );
   });
 
+  // Word-flanked asterisks are multiplication, not emphasis. Reading
+  // them as emphasis does not merely restyle the text: Telegram turns
+  // `<i>` into italics and the `*` characters are gone from the
+  // rendered reply, so `2*pi*5` reaches the operator as `2pi5`.
+  describe("asterisk emphasis requires non-word flanking", () => {
+    const literal: Array<[name: string, input: string, expected: string]> = [
+      ["a product of two factors", "2*pi*5", "2*pi*5"],
+      [
+        "a loose pair spanning a call",
+        "20*log10(abs(15-1*25))",
+        "20*log10(abs(15-1*25))",
+      ],
+      ["a chain of transfer functions", "G_cont = G1*G2*G3", "G_cont = G1*G2*G3"],
+      [
+        "mixed identifier and product",
+        "G_cont = 2*pi*5 and G1*G2*G3",
+        "G_cont = 2*pi*5 and G1*G2*G3",
+      ],
+    ];
+    for (const [name, input, expected] of literal) {
+      it(`leaves ${name} literal`, () => {
+        expect(convertMarkdownToTelegramHtml(input)).toBe(expected);
+      });
+    }
+
+    const emphasised: Array<[name: string, input: string, expected: string]> = [
+      ["space-flanked", "an *emphasised* word", "an <i>emphasised</i> word"],
+      ["at the start of the line", "*emphasised* word", "<i>emphasised</i> word"],
+      ["at the end of the line", "an *emphasised*", "an <i>emphasised</i>"],
+      ["parenthesised", "(*this*)", "(<i>this</i>)"],
+      ["followed by punctuation", "*this*.", "<i>this</i>."],
+      ["two runs on one line", "*one* and *two*", "<i>one</i> and <i>two</i>"],
+      ["a multi-word run", "read *the whole thing* now", "read <i>the whole thing</i> now"],
+    ];
+    for (const [name, input, expected] of emphasised) {
+      it(`still emphasises ${name}`, () => {
+        expect(convertMarkdownToTelegramHtml(input)).toBe(expected);
+      });
+    }
+
+    it("keeps bold working next to a product", () => {
+      expect(convertMarkdownToTelegramHtml("**gain**: G1*G2*G3")).toBe(
+        "<b>gain</b>: G1*G2*G3",
+      );
+    });
+
+    it("does not strand an asterisk when bold is word-flanked", () => {
+      expect(convertMarkdownToTelegramHtml("x**bold**y")).toBe("x<b>bold</b>y");
+    });
+
+    // Whatever stops being emphasis still has to reach the escaper —
+    // an unbalanced `<i>` makes Telegram reject the whole sendMessage
+    // with a 400 and the reply is demoted to plain text.
+    it("still escapes HTML characters in a line it leaves literal", () => {
+      expect(convertMarkdownToTelegramHtml("if 2*pi*5 > x && y < z")).toBe(
+        "if 2*pi*5 &gt; x &amp;&amp; y &lt; z",
+      );
+    });
+
+    it("emits balanced <i> tags for every emphasised run", () => {
+      const html = convertMarkdownToTelegramHtml(
+        "*a* 2*pi*5 *b* G1*G2*G3 *c*",
+      );
+      expect(html.match(/<i>/g)?.length ?? 0).toBe(3);
+      expect(html.match(/<\/i>/g)?.length ?? 0).toBe(3);
+    });
+  });
+
   it("renders strikethrough via ~~", () => {
     expect(convertMarkdownToTelegramHtml("~~old~~ new")).toBe("<s>old</s> new");
   });
