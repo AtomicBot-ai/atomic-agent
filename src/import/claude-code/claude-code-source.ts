@@ -1,9 +1,4 @@
-import {
-  existsSync,
-  readdirSync,
-  readFileSync,
-  statSync,
-} from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 /**
@@ -65,8 +60,18 @@ export interface ClaudeCodeSessionMeta {
 export type ClaudeCodeBlock =
   | { type: "text"; text: string }
   | { type: "thinking"; thinking: string }
-  | { type: "toolUse"; id: string | null; name: string; args: Record<string, unknown> }
-  | { type: "toolResult"; toolUseId: string | null; text: string; isError: boolean };
+  | {
+      type: "toolUse";
+      id: string | null;
+      name: string;
+      args: Record<string, unknown>;
+    }
+  | {
+      type: "toolResult";
+      toolUseId: string | null;
+      text: string;
+      isError: boolean;
+    };
 
 /** A projected `user` / `assistant` transcript row. */
 export interface ClaudeCodeMessage {
@@ -266,7 +271,10 @@ export class ClaudeCodeSource {
    * Read one transcript into a neutral session. Meta rows (`system`,
    * `queue-operation`, attachments, …) are skipped; sidechain rows
    * (subagent transcripts interleaved into the same file) are skipped;
-   * `custom-title` wins over `ai-title` for the session title.
+   * `custom-title` wins over `ai-title` for the session title. A row
+   * without a parseable timestamp takes the file's mtime, so a session
+   * never lands with `at: 0` and sinks to the bottom of every recency
+   * list.
    */
   readSession(meta: ClaudeCodeSessionMeta): ClaudeCodeSessionData {
     let text: string;
@@ -274,11 +282,14 @@ export class ClaudeCodeSource {
       text = readFileSync(meta.file, "utf8");
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      throw new ClaudeCodeSourceError(`failed to read ${meta.file}: ${message}`);
+      throw new ClaudeCodeSourceError(
+        `failed to read ${meta.file}: ${message}`,
+      );
     }
     let cwd: string | null = null;
     let customTitle: string | null = null;
     let aiTitle: string | null = null;
+    const fallbackAtMs = Math.round(meta.mtimeMs);
     const messages: ClaudeCodeMessage[] = [];
     for (const line of text.split(/\r?\n/)) {
       const trimmed = line.trim();
@@ -303,7 +314,7 @@ export class ClaudeCodeSource {
       if (type !== "user" && type !== "assistant") continue;
       if (event.isSidechain === true) continue;
       if (cwd === null && typeof event.cwd === "string") cwd = event.cwd;
-      const projected = projectMessage(type, event);
+      const projected = projectMessage(type, event, fallbackAtMs);
       if (projected) messages.push(projected);
     }
     return {
@@ -328,6 +339,7 @@ function sortedEntries(dir: string): string[] {
 function projectMessage(
   role: "user" | "assistant",
   event: Record<string, unknown>,
+  fallbackAtMs: number,
 ): ClaudeCodeMessage | null {
   const message = event.message;
   if (!message || typeof message !== "object") return null;
@@ -335,7 +347,9 @@ function projectMessage(
   const blocks = projectBlocks(content);
   if (blocks.length === 0) return null;
   const atMs =
-    typeof event.timestamp === "string" ? isoToMs(event.timestamp) ?? 0 : 0;
+    typeof event.timestamp === "string"
+      ? (isoToMs(event.timestamp) ?? fallbackAtMs)
+      : fallbackAtMs;
   return { role, blocks, atMs };
 }
 
@@ -367,7 +381,8 @@ function projectBlocks(content: unknown): ClaudeCodeBlock[] {
           id: typeof block.id === "string" ? block.id : null,
           name,
           args:
-            block.input && typeof block.input === "object" &&
+            block.input &&
+            typeof block.input === "object" &&
             !Array.isArray(block.input)
               ? (block.input as Record<string, unknown>)
               : {},

@@ -99,9 +99,9 @@ describe("ZipBackend", () => {
         followSymlinks: false,
         limits: DEFAULT_EXTRACT_LIMITS,
       });
-      expect(second.skippedEntries.some((s) => /overwrite=false/.test(s.reason))).toBe(
-        true,
-      );
+      expect(
+        second.skippedEntries.some((s) => /overwrite=false/.test(s.reason)),
+      ).toBe(true);
     });
   });
 
@@ -129,7 +129,9 @@ describe("ZipBackend", () => {
         limits: { maxTotalBytes: 1_000, maxEntryBytes: 5, maxEntries: 100 },
       });
       expect(
-        report.skippedEntries.some((s) => /entry_exceeds_max_entry_bytes/.test(s.reason)),
+        report.skippedEntries.some((s) =>
+          /entry_exceeds_max_entry_bytes/.test(s.reason),
+        ),
       ).toBe(true);
     });
   });

@@ -35,7 +35,10 @@ export function session(workingDir: string, updatedAt = 1): RecentSessionDir {
 }
 
 /** Windows without Developer Mode cannot create symlinks; skip there. */
-export async function trySymlink(target: string, path: string): Promise<boolean> {
+export async function trySymlink(
+  target: string,
+  path: string,
+): Promise<boolean> {
   try {
     await symlink(target, path, "dir");
     return true;

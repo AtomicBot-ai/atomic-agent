@@ -16,7 +16,10 @@ import { createOnboardingState } from "../onboarding/onboarding-state.js";
 import { createInitialTuiState } from "../tui-state.js";
 import { fakeSession } from "../test-fixtures.js";
 import { renderAtSize, type SizedRenderResult } from "../test-sized-render.js";
-import { FOOTER_ROWS, SURFACE_PADDING_TOP } from "./onboarding-surface-layout.js";
+import {
+  FOOTER_ROWS,
+  SURFACE_PADDING_TOP,
+} from "./onboarding-surface-layout.js";
 
 const STATE_DIR_ENV = "ATOMIC_AGENT_STATE_DIR";
 const strip = (s: string): string => s.replace(/\[[0-9;]*m/g, "");
@@ -89,7 +92,10 @@ describe("the download screen's frame", () => {
 
   // Both target sizes keep the sm mark, and a fresh state dir means no
   // cloud provider — the meanwhile offer is on screen.
-  const BLOCK_ROWS = countOnboardingDownloadBlockRows({ mark: "sm", offerCloud: true });
+  const BLOCK_ROWS = countOnboardingDownloadBlockRows({
+    mark: "sm",
+    offerCloud: true,
+  });
 
   for (const size of [
     { name: "full 100×30", columns: 100, rows: 30 },
@@ -106,11 +112,14 @@ describe("the download screen's frame", () => {
       // their row leaves on the right, within the odd-column cell. The
       // pull's counters fill the measured template, so the drawn row IS
       // the measured width (clamped by the terminal at 80 columns).
-      const bars = lines.find((line) => line.includes("llama.cpp runtime")) ?? "";
+      const bars =
+        lines.find((line) => line.includes("llama.cpp runtime")) ?? "";
       const leading = bars.length - bars.trimStart().length;
       const width = bars.trimEnd().length - leading;
       expect(width).toBeGreaterThan(0);
-      expect(Math.abs(leading - (size.columns - width) / 2)).toBeLessThanOrEqual(1);
+      expect(
+        Math.abs(leading - (size.columns - width) / 2),
+      ).toBeLessThanOrEqual(1);
       expect(leading).toBeGreaterThan(0);
 
       // The block is centred vertically too: the first drawn row sits a
@@ -170,7 +179,11 @@ describe("the download screen's frame", () => {
           ...base,
           localModelsPanel: {
             ...base.localModelsPanel,
-            pull: { ...TEMPLATE_WIDE_PULL, kind: "chat" as const, modelId: "gemma-4-e4b" },
+            pull: {
+              ...TEMPLATE_WIDE_PULL,
+              kind: "chat" as const,
+              modelId: "gemma-4-e4b",
+            },
           },
           onboarding,
         };

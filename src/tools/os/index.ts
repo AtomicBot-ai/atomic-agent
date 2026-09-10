@@ -2,6 +2,7 @@ import type { ToolRegistry } from "../tool-registry.js";
 import type { DangerousToolOptions } from "../../approval/dangerous-tool.js";
 import type { AtomicAgentConfig } from "../../config/index.js";
 import { buildOsShellTool } from "./shell.js";
+import type { ShellGuardPolicy } from "./shell-command-guard/index.js";
 import { osFsReadTool } from "./fs-read.js";
 import { buildOsFsWriteTool } from "./fs-write.js";
 import { buildOsFsTrashTool } from "./fs-trash.js";
@@ -22,6 +23,7 @@ import { buildOsWebFetchTool } from "./web-fetch.js";
 import { buildOsWebSearchTool } from "./web-search/index.js";
 import { osClipboardReadTool, osClipboardWriteTool } from "./clipboard.js";
 import { osWindowListTool, osWindowFocusTool } from "./window.js";
+import { buildOsEmailInboxTool, buildOsEmailSendTool } from "./email.js";
 import { osNotifyTool } from "./notify.js";
 import { osFsHashTool } from "./fs-hash.js";
 import { osFsDiffTool } from "./fs-diff.js";
@@ -34,6 +36,15 @@ import {
   osGitShowTool,
   osGitBlameTool,
   osGitBranchTool,
+  buildOsGitInitTool,
+  buildOsGitAddTool,
+  buildOsGitCheckoutTool,
+  buildOsGitCommitTool,
+  buildOsGitRemoteTool,
+  buildOsGitFetchTool,
+  buildOsGitPullTool,
+  buildOsGitPushTool,
+  buildOsGitCloneTool,
 } from "./git/index.js";
 import { osProcListTool, buildOsProcKillTool } from "./proc/index.js";
 
@@ -62,6 +73,7 @@ export { buildOsWebSearchTool } from "./web-search/index.js";
 export { osClipboardReadTool, osClipboardWriteTool } from "./clipboard.js";
 export { osWindowListTool, osWindowFocusTool } from "./window.js";
 export { osNotifyTool } from "./notify.js";
+export { buildOsEmailInboxTool, buildOsEmailSendTool } from "./email.js";
 export { osFsHashTool } from "./fs-hash.js";
 export { osFsDiffTool } from "./fs-diff.js";
 export { buildOsFsPatchTool } from "./fs-patch.js";
@@ -73,9 +85,19 @@ export {
   osGitShowTool,
   osGitBlameTool,
   osGitBranchTool,
+  buildOsGitInitTool,
+  buildOsGitAddTool,
+  buildOsGitCheckoutTool,
+  buildOsGitCommitTool,
+  buildOsGitRemoteTool,
+  buildOsGitFetchTool,
+  buildOsGitPullTool,
+  buildOsGitPushTool,
+  buildOsGitCloneTool,
 } from "./git/index.js";
 export { osProcListTool, buildOsProcKillTool } from "./proc/index.js";
 export { isGogCommand } from "./shell-command-guard/index.js";
+export type { ShellGuardPolicy } from "./shell-command-guard/index.js";
 
 export interface RegisterOsToolsOptions extends DangerousToolOptions {
   config: Pick<AtomicAgentConfig, "http" | "web" | "projects">;
@@ -101,13 +123,28 @@ export interface RegisterOsToolsOptions extends DangerousToolOptions {
    * in-memory, which is what existing embedders and tests get.
    */
   stateDir?: string;
+  /**
+   * Operator policy for the shell guard — today the git remote-sync
+   * switch. Predicates rather than values so a toggle flipped live in
+   * the Integrations hub is honoured on the next command. Omitted
+   * disables the policy layer (embedders, tests).
+   */
+  shellPolicy?: ShellGuardPolicy;
 }
 
 export function registerOsTools(
   registry: ToolRegistry,
   options: RegisterOsToolsOptions,
 ): void {
-  registry.register(buildOsShellTool(options));
+  registry.register(
+    buildOsShellTool({
+      approvals: options.approvals,
+      approvalRequired: options.approvalRequired,
+      ...(options.shellPolicy === undefined
+        ? {}
+        : { shellPolicy: options.shellPolicy }),
+    }),
+  );
   registry.register(osFsReadTool);
   registry.register(buildOsFsWriteTool(options));
   registry.register(buildOsFsTrashTool(options));
@@ -139,7 +176,10 @@ export function registerOsTools(
     }),
   );
   registry.register(
-    buildOsWebSearchTool({ config: options.config, stateDir: options.stateDir }),
+    buildOsWebSearchTool({
+      config: options.config,
+      stateDir: options.stateDir,
+    }),
   );
   registry.register(buildOsWebFetchTool({ config: options.config }));
   registry.register(osClipboardReadTool);
@@ -147,6 +187,18 @@ export function registerOsTools(
   registry.register(osWindowListTool);
   registry.register(osWindowFocusTool);
   registry.register(osNotifyTool);
+  registry.register(
+    buildOsEmailInboxTool({
+      approvals: options.approvals,
+      approvalRequired: options.approvalRequired,
+    }),
+  );
+  registry.register(
+    buildOsEmailSendTool({
+      approvals: options.approvals,
+      approvalRequired: options.approvalRequired,
+    }),
+  );
   registry.register(osFsHashTool);
   registry.register(osFsDiffTool);
   registry.register(
@@ -163,6 +215,31 @@ export function registerOsTools(
   registry.register(osGitShowTool);
   registry.register(osGitBlameTool);
   registry.register(osGitBranchTool);
+  // Local git writes ride the fs approval ladder against the repo root.
+  const gitWriteOptions = {
+    approvals: options.approvals,
+    approvalRequired: options.approvalRequired,
+    trustConfigPaths: options.trustConfigPaths,
+  };
+  registry.register(buildOsGitInitTool(gitWriteOptions));
+  registry.register(buildOsGitAddTool(gitWriteOptions));
+  registry.register(buildOsGitCheckoutTool(gitWriteOptions));
+  registry.register(buildOsGitCommitTool(gitWriteOptions));
+  // Network git shares the shell guard's remote-sync predicate so the
+  // dedicated tools and the escape hatch can never disagree. With no
+  // policy injected (embedders, tests) the repository stays closed —
+  // the conservative reading of "nobody said it may leave".
+  const gitRemote = {
+    approvals: options.approvals,
+    approvalRequired: options.approvalRequired,
+    isRemoteSyncEnabled:
+      options.shellPolicy?.isGitRemoteSyncEnabled ?? (() => false),
+  };
+  registry.register(buildOsGitRemoteTool(gitRemote));
+  registry.register(buildOsGitFetchTool(gitRemote));
+  registry.register(buildOsGitPullTool(gitRemote));
+  registry.register(buildOsGitPushTool(gitRemote));
+  registry.register(buildOsGitCloneTool(gitRemote));
   registry.register(osProcListTool);
   registry.register(
     buildOsProcKillTool({

@@ -5,7 +5,13 @@ import {
 } from "./context-usage-from-prompt.js";
 import { formatBackgroundApprovalNotice } from "./detached-turns.js";
 import { formatAgentErrorForChat } from "./format-agent-error-for-chat.js";
+import { formatProviderFalloverNotice } from "./format-provider-fallover.js";
 import { formatFeedLine } from "./format-event.js";
+import {
+  formatFusionWorkerLine,
+  fusionWorkerLineColor,
+} from "./format-fusion-worker-line.js";
+import { reduceFusionLiveWorkers } from "./fusion-live-workers.js";
 import {
   appendChatMessage,
   appendFeed,
@@ -22,11 +28,16 @@ import {
   startNewRun,
   upsertReasoning,
 } from "./reducer-helpers.js";
+import {
+  parkProviderOutage,
+  retryProviderOutage,
+} from "./provider-outage-state.js";
 import { reduceUiAction } from "./reduce-ui-actions.js";
 import { reduceComposerSwitchAction } from "./composer-switch/composer-switch-reducer.js";
-import { selectComposerBackend } from "./composer-switch/composer-switch-rows.js";
+import { selectComposerBackend } from "./composer-switch/composer-backend-selectors.js";
 import { reduceLocalModelsAction } from "./local-models/local-models-reducer.js";
 import { reduceTasksAction } from "./tasks/tasks-reducer.js";
+import { reduceSessionRailAction } from "./session-rail/session-rail-reducer.js";
 import { reduceSkillsAction } from "./skills/skills-reducer.js";
 import { reduceMemoryAction } from "./memory/memory-reducer.js";
 import { reduceMcpAction } from "./mcp/mcp-reducer.js";
@@ -39,6 +50,13 @@ import { reduceFallbackPanelAction } from "./llm-panel/fallback/fallback-panel-r
 import { reduceTelegramAction } from "./telegram/telegram-panel-reducer.js";
 import { reducePrivacyAction } from "./privacy/privacy-panel-reducer.js";
 import { reduceIntegrationsAction } from "./integrations/integrations-panel-reducer.js";
+import { reduceSwarmAction } from "./swarm/swarm-panel-reducer.js";
+import {
+  ISSUE_REPORT_LEVELS,
+  isIssueReportAction,
+  reduceIssueReport,
+} from "./issue-report/index.js";
+import { withReportHint } from "./format-agent-error-for-chat.js";
 import type { TuiAction } from "./tui-action.js";
 import type { RunOutcome, StreamingToolCall, TuiState } from "./tui-state.js";
 
@@ -57,6 +75,8 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
   if (localModelsHandled !== null) return localModelsHandled;
   const tasksHandled = reduceTasksAction(state, action);
   if (tasksHandled !== null) return tasksHandled;
+  const sessionRailHandled = reduceSessionRailAction(state, action);
+  if (sessionRailHandled !== null) return sessionRailHandled;
   const skillsHandled = reduceSkillsAction(state, action);
   if (skillsHandled !== null) return skillsHandled;
   const memoryHandled = reduceMemoryAction(state, action);
@@ -79,6 +99,16 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
   if (privacyHandled !== null) return privacyHandled;
   const integrationsHandled = reduceIntegrationsAction(state, action);
   if (integrationsHandled !== null) return integrationsHandled;
+  const swarmHandled = reduceSwarmAction(state, action);
+  if (swarmHandled !== null) return swarmHandled;
+  if (isIssueReportAction(action)) {
+    const next = reduceIssueReport(
+      state.issueReport,
+      action,
+      ISSUE_REPORT_LEVELS.length,
+    );
+    return next === state.issueReport ? state : { ...state, issueReport: next };
+  }
   const composerSwitchHandled = reduceComposerSwitchAction(state, action);
   if (composerSwitchHandled !== null) return composerSwitchHandled;
   const uiHandled = reduceUiAction(state, action);
@@ -107,7 +137,10 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
         contextUsage: EMPTY_CONTEXT_USAGE,
       };
     case "skill_count_changed":
-      return { ...state, session: { ...state.session, skillCount: action.count } };
+      return {
+        ...state,
+        session: { ...state.session, skillCount: action.count },
+      };
     case "approval_level_changed":
       return {
         ...state,
@@ -203,7 +236,10 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
     case "metric":
       return applyMetric(state, action.sample);
     case "log":
-      return { ...state, logs: pushRing(state.logs, action.record, state.ringBufferSize) };
+      return {
+        ...state,
+        logs: pushRing(state.logs, action.record, state.ringBufferSize),
+      };
     case "tab_changed":
       if (action.tab === "models") {
         return {
@@ -264,7 +300,9 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
     case "quit_requested":
       return { ...state, status: "quitting", aborting: true };
     case "loaded_skill": {
-      const others = state.loadedSkills.filter((s) => s.name !== action.skill.name);
+      const others = state.loadedSkills.filter(
+        (s) => s.name !== action.skill.name,
+      );
       return { ...state, loadedSkills: [...others, action.skill] };
     }
     case "world_snapshot":
@@ -372,28 +410,56 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
         currentTurnToolSteps: 0,
         runStartedAt: Date.now(),
       };
-    case "turn_finished":
-      // A turn that reached the model clears the outage: the link is
-      // demonstrably answering again. A failed one leaves it standing.
+    case "turn_finished": {
+      // `waiting` and `retrying` are claims about a turn that is still
+      // on the wire, so the end of the turn ends them — whichever way it
+      // ended. It used to clear only on `reply` / `finish`, which left a
+      // live outage standing after the two endings that reach it most
+      // often: Esc during the backoff (the feed line the loop prints
+      // says "· Esc stops") and a turn stopped at its step ceiling. The
+      // row then counted a wait that nothing was waiting for — measured
+      // at 19s and climbing, fourteen seconds after the loop was dead —
+      // and the next turn's first `step_started` read it as the parked
+      // step going back on the wire: a brand-new healthy turn labelled
+      // `retrying provider (attempt 1)`, with that step's streamed reply
+      // wiped at every step boundary for as long as it ran.
+      //
+      // `givenUp` is the one that survives, and survives on purpose: it
+      // is past tense, it is what stops nine identical failures reading
+      // as nine separate surprises, and `loop_failed` has already set it
+      // by the time this event lands. It survives until a turn actually
+      // reaches the model — at which point the link is demonstrably
+      // answering again and the badge would be the lie instead.
+      const reachedTheModel =
+        event.reason === "reply" || event.reason === "finish";
+      const keepBadge =
+        !reachedTheModel && Boolean(state.providerOutage?.givenUp);
       return finishTurn(
-        event.reason === "reply" || event.reason === "finish"
-          ? { ...state, providerOutage: null }
-          : state,
+        keepBadge ? state : { ...state, providerOutage: null },
         event.reason,
         event.stepCount,
       );
+    }
     case "step_started":
-      return {
-        ...appendFeed(state, {
-          kind: "step_started",
-          stepIndex: event.stepIndex,
-          line: formatFeedLine({ type: "step_started", stepIndex: event.stepIndex }),
-          color: "blue",
-        }),
-        status: "running",
-        currentStep: event.stepIndex,
-        stepStartedAt: Date.now(),
-      };
+      // `retryProviderOutage` is a no-op unless an outage is live, so an
+      // ordinary step start goes through here exactly as it always did.
+      return retryProviderOutage(
+        {
+          ...appendFeed(state, {
+            kind: "step_started",
+            stepIndex: event.stepIndex,
+            line: formatFeedLine({
+              type: "step_started",
+              stepIndex: event.stepIndex,
+            }),
+            color: "blue",
+          }),
+          status: "running",
+          currentStep: event.stepIndex,
+          stepStartedAt: Date.now(),
+        },
+        event.stepIndex,
+      );
     case "step_finished":
       return {
         ...appendFeed(state, {
@@ -449,19 +515,44 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
         event.direction === "away"
           ? `» failed over ${event.from} -> ${event.to} (${event.reason})`
           : `» recovered primary ${event.to} (probe ok)`;
-      return appendFeed(
-        {
-          ...state,
-          fallbackPanel: {
-            ...state.fallbackPanel,
-            lastSwitch: {
-              direction: event.direction,
-              from: event.from,
-              to: event.to,
-              reason: event.reason,
-            },
+      const prev = state.fallbackPanel.lastSwitch;
+      // Say it in the chat too, once per transition. A fallover changes
+      // which model answers and what it costs, and the feed lives in a
+      // tab the operator is not looking at while they work. Repeats of
+      // the same switch stay in the feed: the chain re-announces on
+      // every probe, and one notice per transition is the signal.
+      const announce =
+        event.direction === "away" &&
+        !(
+          prev?.direction === "away" &&
+          prev.from === event.from &&
+          prev.to === event.to
+        );
+      const withSwitch = {
+        ...state,
+        fallbackPanel: {
+          ...state.fallbackPanel,
+          lastSwitch: {
+            direction: event.direction,
+            from: event.from,
+            to: event.to,
+            reason: event.reason,
           },
         },
+      };
+      return appendFeed(
+        announce
+          ? appendChatMessage(withSwitch, {
+              role: "system",
+              variant: "warn",
+              action: "configure-fallback",
+              text: formatProviderFalloverNotice(
+                event.from,
+                event.to,
+                event.reason,
+              ),
+            })
+          : withSwitch,
         {
           kind: "runtime_info",
           stepIndex: null,
@@ -517,7 +608,11 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
           // llama-server entry under a custom id still earns the hint;
           // only a `cloud` route must not (the hint names the llama
           // URL). Rows land at TUI start via the providers refresh.
-          activeProviderIsLocal: selectComposerBackend(state) !== "cloud",
+          // Fusion's failing call is the cloud orchestrator's, so it is
+          // excluded for the same reason cloud is.
+          activeProviderIsLocal: !["cloud", "fusion"].includes(
+            selectComposerBackend(state),
+          ),
           llamaUrl: state.session.llamaUrl,
         },
       );
@@ -539,7 +634,7 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
             line: `» ${lastRunStatus}`,
             color: "red",
           }),
-          { role: "system", text: chatError, variant: "warn" },
+          { role: "system", text: withReportHint(chatError), variant: "warn" },
         ),
         { outcome: "failed", reason: event.error.message, lastRunStatus },
       );
@@ -550,16 +645,12 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
       )}s, waited ${Math.round(event.waitedMs / 1000)}s of ${Math.round(
         event.maxWaitMs / 1000,
       )}s · Esc stops`;
-      const next: TuiState = {
-        ...state,
-        providerOutage: {
-          reason: event.reason,
-          waitedMs: event.waitedMs,
-          maxWaitMs: event.maxWaitMs,
-          attempt: event.attempt,
-          givenUp: false,
-        },
-      };
+      const next: TuiState = parkProviderOutage(state, {
+        reason: event.reason,
+        waitedMs: event.waitedMs,
+        maxWaitMs: event.maxWaitMs,
+        attempt: event.attempt,
+      });
       // One feed line per outage, not per retry: the backoff fires every
       // few seconds at the start and the meta-row carries the live
       // numbers. A wall of identical lines would bury the work above it.
@@ -584,6 +675,25 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
           color: "green",
         },
       );
+    case "completion_truncated": {
+      // One line per retry, in the operator's terms: what was cut, and
+      // what the retry changes. The turn only fails on the second cut,
+      // and that message names the wall and the knob.
+      const cut =
+        event.completionTokens > 0
+          ? `reply cut off at ${event.completionTokens} tokens`
+          : "reply cut off";
+      const line =
+        event.retry.kind === "raise_cap"
+          ? `» ${cut} (cap ${event.requestedMaxTokens}) — retrying step ${event.stepIndex + 1} with a ${event.retry.maxTokens}-token cap`
+          : `» ${cut}: the model server ran out of context at ~${event.retry.contextWindow} tokens — trimming the conversation to fit and retrying step ${event.stepIndex + 1}`;
+      return appendFeed(state, {
+        kind: "runtime_info",
+        stepIndex: null,
+        line,
+        color: "yellow",
+      });
+    }
     case "task_continued": {
       // A long task must not go quiet. One line per leg, carrying the
       // two numbers someone deciding whether to wait actually wants:
@@ -594,6 +704,50 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
         stepIndex: null,
         line: `» still working — ${event.stepsTaken} steps, ${minutes} min (ceiling ${event.stepCeiling})`,
         color: "gray",
+      });
+    }
+    case "fusion_worker": {
+      // A fan-out can hold the orchestrator's turn for minutes with no
+      // steps of its own to show, so each leg gets a start line, its
+      // (bounded) tool lines and an end line — each naming the model
+      // that ran it, because fusion is the one mode where two models
+      // and two bills share a single turn. `stepIndex: null` because
+      // these belong to the parent turn as a whole, not to any one of
+      // its steps — the events are emitted in the parent's frame from
+      // inside a worker session that has no step counter the operator
+      // can see.
+      return appendFeed(
+        {
+          ...state,
+          // The chat surface shows the fan-out while it runs; the feed
+          // keeps the history of it.
+          fusionLiveWorkers: reduceFusionLiveWorkers(
+            state.fusionLiveWorkers,
+            event,
+          ),
+        },
+        {
+          kind: "runtime_info",
+          stepIndex: null,
+          line: formatFusionWorkerLine(event),
+          color: fusionWorkerLineColor(event),
+        },
+      );
+    }
+    case "parse_failure_recovered": {
+      // Rendered, unlike `loop_detected`: this step produced no tool
+      // call and no text, so without a line the feed shows a gap the
+      // operator has no way to read. One line per recovery — there are
+      // at most `budget` of them.
+      const reason =
+        event.reason.length > 120
+          ? `${event.reason.slice(0, 120)}…`
+          : event.reason;
+      return appendFeed(state, {
+        kind: "runtime_info",
+        stepIndex: event.stepIndex,
+        line: `» the model's output could not be read as a tool call (${reason}) — trying again (${event.attempt}/${event.budget})`,
+        color: "yellow",
       });
     }
     case "loop_detected":
@@ -707,8 +861,10 @@ function reduceStepEvent(
     }
     case "tool_call_executed": {
       const color = event.result.status === "ok" ? "green" : "red";
-      const toolsOk = state.metrics.toolsOk + (event.result.status === "ok" ? 1 : 0);
-      const toolsError = state.metrics.toolsError + (event.result.status === "error" ? 1 : 0);
+      const toolsOk =
+        state.metrics.toolsOk + (event.result.status === "ok" ? 1 : 0);
+      const toolsError =
+        state.metrics.toolsError + (event.result.status === "error" ? 1 : 0);
       const isReply = event.result.tool === "reply";
       const withFeed = appendFeed(state, {
         kind: "tool_call_executed",
@@ -729,7 +885,9 @@ function reduceStepEvent(
         status: event.result.status,
         summary: event.result.summary,
         truncated: event.result.truncated ?? false,
-        ...(event.result.details !== undefined ? { details: event.result.details } : {}),
+        ...(event.result.details !== undefined
+          ? { details: event.result.details }
+          : {}),
       });
       return {
         ...withCard,
@@ -737,7 +895,9 @@ function reduceStepEvent(
           tool: event.result.tool,
           status: event.result.status,
           summary: event.result.summary,
-          ...(event.result.details !== undefined ? { details: event.result.details } : {}),
+          ...(event.result.details !== undefined
+            ? { details: event.result.details }
+            : {}),
         },
         metrics: { ...withCard.metrics, toolsOk, toolsError },
         currentTurnToolSteps: isReply
@@ -763,7 +923,12 @@ function reduceStepEvent(
         text: event.text,
         toolSteps: state.currentTurnToolSteps,
         ...(toolCardsForTurn.length > 0 ? { toolCards: toolCardsForTurn } : {}),
-        ...(reasoningForTurn.length > 0 ? { reasoningBlocks: reasoningForTurn } : {}),
+        ...(reasoningForTurn.length > 0
+          ? { reasoningBlocks: reasoningForTurn }
+          : {}),
+        ...(event.attachments !== undefined && event.attachments.length > 0
+          ? { attachments: event.attachments }
+          : {}),
       });
       // Clear live reasoning along with the other streaming state so the
       // StreamingTail does not re-expand reasoning the instant the turn

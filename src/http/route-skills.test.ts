@@ -44,11 +44,14 @@ describe("/api/skills", () => {
     const sourcePath = stageSkill("api-test-skill");
     stagedDirs.push(sourcePath);
 
-    const installResponse = await fetch(`${harness.baseUrl}/api/skills/install`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ sourcePath, source: "global" }),
-    });
+    const installResponse = await fetch(
+      `${harness.baseUrl}/api/skills/install`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sourcePath, source: "global" }),
+      },
+    );
     expect(installResponse.status).toBe(200);
     const installBody = (await installResponse.json()) as {
       installed: boolean;

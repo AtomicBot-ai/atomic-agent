@@ -1,5 +1,8 @@
 import type { TuiState } from "../tui-state.js";
-import { isUninstallAction, type UninstallAction } from "./uninstall-actions.js";
+import {
+  isUninstallAction,
+  type UninstallAction,
+} from "./uninstall-actions.js";
 import {
   initialUninstallFlow,
   isUninstallConfirmed,

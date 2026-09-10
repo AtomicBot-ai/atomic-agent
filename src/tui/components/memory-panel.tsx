@@ -3,7 +3,10 @@ import { useMemo } from "react";
 import type { ReactElement } from "react";
 import { theme } from "../theme/theme.js";
 import { selectVisibleMemoryRows } from "../memory/memory-filter.js";
-import type { MemoryChannel, MemoryPanelState } from "../memory/memory-panel-state.js";
+import type {
+  MemoryChannel,
+  MemoryPanelState,
+} from "../memory/memory-panel-state.js";
 import { MemoryDetail } from "./memory-detail.js";
 import { MemoryList } from "./memory-list.js";
 
@@ -45,12 +48,8 @@ function ChannelBar({ panel }: { panel: MemoryPanelState }): ReactElement {
     panel.lastRefreshedAt
       ? `refreshed ${new Date(panel.lastRefreshedAt).toLocaleTimeString()}`
       : null,
-    panel.channel === "notes"
-      ? `notes: ${panel.notesArchiveFilter}`
-      : null,
-    panel.searchQuery.trim()
-      ? `search: "${panel.searchQuery.trim()}"`
-      : null,
+    panel.channel === "notes" ? `notes: ${panel.notesArchiveFilter}` : null,
+    panel.searchQuery.trim() ? `search: "${panel.searchQuery.trim()}"` : null,
     `${visibleCount(panel)} shown`,
   ]
     .filter(Boolean)

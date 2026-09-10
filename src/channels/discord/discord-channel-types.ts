@@ -63,7 +63,7 @@ export const FATAL_CLOSE_CODES = new Set([
 export function describeCloseCode(code: number): string {
   switch (code) {
     case 4004:
-      return "Discord rejected the bot token. Check it in the Integrations tab.";
+      return "Discord rejected the bot token.";
     case 4013:
       return "Discord rejected the gateway intents (invalid bitfield).";
     case 4014:

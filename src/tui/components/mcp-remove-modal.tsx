@@ -16,9 +16,7 @@ export interface McpRemoveModalProps {
  */
 export function McpRemoveModal(props: McpRemoveModalProps): ReactElement {
   const { confirm } = props;
-  const borderColor = confirm.error
-    ? theme.colors.error
-    : theme.colors.warn;
+  const borderColor = confirm.error ? theme.colors.error : theme.colors.warn;
   return (
     <Box
       borderStyle="round"

@@ -35,7 +35,8 @@ export const BACKEND_VARIANT_PREFERENCES = [
   "cuda-13.3",
 ] as const;
 
-export type BackendVariantPreference = (typeof BACKEND_VARIANT_PREFERENCES)[number];
+export type BackendVariantPreference =
+  (typeof BACKEND_VARIANT_PREFERENCES)[number];
 
 export function isBackendVariantPreference(
   raw: unknown,
@@ -76,7 +77,9 @@ export function getConfiguredBackendVariant(): BackendVariantPreference {
  * old enough to predate `BackendVersionInfo.asset` — the CPU zip was not
  * downloadable back then, so an undefined asset on win32 is a GPU build).
  */
-export function isWindowsGpuBackendAsset(assetName: string | undefined): boolean {
+export function isWindowsGpuBackendAsset(
+  assetName: string | undefined,
+): boolean {
   if (assetName === undefined) return true;
   return (
     assetName === WINDOWS_BACKEND_ASSETS.vulkan ||

@@ -130,10 +130,7 @@ function LinkChip({
   readonly revertAfterMs: number;
 }): ReactElement {
   const mouse = useMouseCommands();
-  const [status, flash] = useTransientStatus<OpenStatus>(
-    "idle",
-    revertAfterMs,
-  );
+  const [status, flash] = useTransientStatus<OpenStatus>("idle", revertAfterMs);
 
   const label = (
     <Text color={theme.colors.muted} dimColor={status === "idle"}>

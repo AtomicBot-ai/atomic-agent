@@ -31,6 +31,29 @@ describe("createTraceRecorder", () => {
     });
   });
 
+  it("records a parse-failure recovery against the current turn and step", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-parse", emit, now });
+    rec.onAgentEvent({ type: "turn_started", turnIndex: 3 } as AgentLoopEvent);
+    rec.onAgentEvent({
+      type: "parse_failure_recovered",
+      stepIndex: 2,
+      attempt: 1,
+      budget: 2,
+      reason: 'tool call "os.fs.write" arguments are not a valid JSON object',
+    } as AgentLoopEvent);
+    expect(
+      events.find((e) => e.type === "parse_failure_recovered"),
+    ).toMatchObject({
+      type: "parse_failure_recovered",
+      sessionId: "s-parse",
+      turnIndex: 3,
+      stepIndex: 2,
+      attempt: 1,
+      budget: 2,
+    });
+  });
+
   it("attaches user_message to the next turn_started", () => {
     const { events, emit } = collector();
     const rec = createTraceRecorder({ sessionId: "s-2", emit, now });
@@ -131,14 +154,10 @@ describe("createTraceRecorder", () => {
       ),
     ).toEqual([0, 1, 2]);
     expect(
-      invocations.map((e) =>
-        e.type === "tool_invocation" ? e.batchSize : -1,
-      ),
+      invocations.map((e) => (e.type === "tool_invocation" ? e.batchSize : -1)),
     ).toEqual([3, 3, 3]);
     expect(
-      invocations.map((e) =>
-        e.type === "tool_invocation" ? e.args : null,
-      ),
+      invocations.map((e) => (e.type === "tool_invocation" ? e.args : null)),
     ).toEqual([{ path: "f0" }, { path: "f1" }, { path: "f2" }]);
     // All events sit on the same stepIndex.
     expect(
@@ -235,7 +254,11 @@ describe("createTraceRecorder", () => {
     });
     rec.onAgentEvent({
       type: "llm_event",
-      event: { type: "step_error", error: new Error("boom"), category: "grammar" },
+      event: {
+        type: "step_error",
+        error: new Error("boom"),
+        category: "grammar",
+      },
     });
     expect(events.some((e) => e.type === "parse_retry")).toBe(true);
     const err = events.find((e) => e.type === "error");
@@ -268,6 +291,50 @@ describe("createTraceRecorder", () => {
       message: "loop blew up",
       category: "transport",
     });
+  });
+
+  it("records a truncation retry with its cause, counts and the retry taken", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-trunc", emit, now });
+    rec.onAgentEvent({ type: "turn_started", turnIndex: 2 });
+    rec.onAgentEvent({
+      type: "completion_truncated",
+      stepIndex: 5,
+      cause: "reply_cap",
+      completionTokens: 8_192,
+      promptTokens: 6_000,
+      requestedMaxTokens: 8_192,
+      retry: { kind: "raise_cap", maxTokens: 32_768 },
+    });
+    rec.onAgentEvent({
+      type: "completion_truncated",
+      stepIndex: 6,
+      cause: "context_window",
+      completionTokens: 2_768,
+      promptTokens: 30_000,
+      requestedMaxTokens: 8_192,
+      retry: { kind: "fit_window", contextWindow: 32_768 },
+    });
+    const recorded = events.filter((e) => e.type === "completion_truncated");
+    expect(recorded).toEqual([
+      expect.objectContaining({
+        type: "completion_truncated",
+        turnIndex: 2,
+        stepIndex: 5,
+        cause: "reply_cap",
+        completionTokens: 8_192,
+        promptTokens: 6_000,
+        requestedMaxTokens: 8_192,
+        retry: "raise_cap",
+        retryValue: 32_768,
+      }),
+      expect.objectContaining({
+        stepIndex: 6,
+        cause: "context_window",
+        retry: "fit_window",
+        retryValue: 32_768,
+      }),
+    ]);
   });
 
   it("carries the read-repeat detector payload into the recorded event", () => {
@@ -345,7 +412,11 @@ describe("createTraceRecorder", () => {
             stablePrefix: "",
             tail: "",
             tokens: { total: 0, stablePrefix: 0, tail: 0 },
-            truncated: { session: false, worldSnapshot: false, conversation: false },
+            truncated: {
+              session: false,
+              worldSnapshot: false,
+              conversation: false,
+            },
           } as never,
           slotId: 0,
         },

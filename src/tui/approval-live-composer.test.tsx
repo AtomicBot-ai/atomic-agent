@@ -62,7 +62,8 @@ interface Calls {
 function harness() {
   const calls: Calls = { decisions: [], retargets: [], replies: [], aborts: 0 };
   const callbacks: TuiAppCallbacks = {
-    onApprovalDecision: (id, approved) => calls.decisions.push({ id, approved }),
+    onApprovalDecision: (id, approved) =>
+      calls.decisions.push({ id, approved }),
     onApprovalRetarget: (id, path) => calls.retargets.push({ id, path }),
     onApprovalReply: (id, message) => calls.replies.push({ id, message }),
     onAbort: () => {
@@ -72,7 +73,9 @@ function harness() {
     onMessageSubmitted: () => {},
   };
   const bus = makeTuiEventBus();
-  const app = render(<TuiApp session={SESSION} bus={bus} callbacks={callbacks} />);
+  const app = render(
+    <TuiApp session={SESSION} bus={bus} callbacks={callbacks} />,
+  );
   return { calls, bus, ...app };
 }
 

@@ -5,10 +5,7 @@ import type { StructuredLogger } from "../../tracing/structured-logger.js";
 import { VOTE_GRAMMAR } from "./vote-grammar.js";
 import { VOTE_RESPONSE_FORMAT } from "./vote-response-format.js";
 import type { ResponseFormatJsonSchema } from "../../llm/provider/completion-types.js";
-import {
-  buildVotePrompt,
-  type VoteCandidate,
-} from "./vote-prompt.js";
+import { buildVotePrompt, type VoteCandidate } from "./vote-prompt.js";
 import {
   parseVoteOutput,
   type ParsedVote,
@@ -56,12 +53,7 @@ export interface VoteRunnerInput {
 }
 
 export type VoteRunnerOutcome =
-  | "ok"
-  | "none"
-  | "skipped"
-  | "aborted"
-  | "timeout"
-  | "failed";
+  "ok" | "none" | "skipped" | "aborted" | "timeout" | "failed";
 
 export interface VoteRunnerResult {
   outcome: VoteRunnerOutcome;
@@ -206,9 +198,7 @@ export function createVoteRunner(deps: VoteRunnerDeps): VoteRunner {
     }
   };
 
-  const runOne = async (
-    input: VoteRunnerInput,
-  ): Promise<VoteRunnerResult> => {
+  const runOne = async (input: VoteRunnerInput): Promise<VoteRunnerResult> => {
     if (input.candidates.length < minCandidates) {
       return finish("skipped", {
         sessionId: input.sessionId,

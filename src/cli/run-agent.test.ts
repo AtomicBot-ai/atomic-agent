@@ -30,7 +30,9 @@ describe("formatAgentEvent llama hint", () => {
       hintShown: { value: false },
     });
     expect(line).toContain("! [transport] fetch failed");
-    expect(line).toContain("llama-server is not reachable at http://127.0.0.1:8080");
+    expect(line).toContain(
+      "llama-server is not reachable at http://127.0.0.1:8080",
+    );
     expect(line).toContain("atomic-agent models start");
     expect(line).toContain("config set localModels.url");
   });
@@ -218,47 +220,39 @@ describe("runAgentCommand exit codes", () => {
     expect(stderr).toContain("unknown flag: --nope");
   });
 
-  it(
-    "exits 1 when the turn exhausts the step budget and the session stalls",
-    async () => {
-      // A non-terminal tool on every step: the loop never reaches `reply`
-      // or `finish`, so it runs the budget out and lands on `stalled`.
-      model.emits = JSON.stringify({
-        tool: "os.fs.read",
-        args: { path: "note.txt" },
-      });
-      feedStdin(["read the note\n"]);
-      const code = await runAgentCommand([
-        "--cwd",
-        workingDir,
-        "--max-steps",
-        "2",
-        "--no-approval",
-      ]);
-      expect(stderr).toContain('"status": "stalled"');
-      expect(code).toBe(1);
-    },
-    60_000,
-  );
+  it("exits 1 when the turn exhausts the step budget and the session stalls", async () => {
+    // A non-terminal tool on every step: the loop never reaches `reply`
+    // or `finish`, so it runs the budget out and lands on `stalled`.
+    model.emits = JSON.stringify({
+      tool: "os.fs.read",
+      args: { path: "note.txt" },
+    });
+    feedStdin(["read the note\n"]);
+    const code = await runAgentCommand([
+      "--cwd",
+      workingDir,
+      "--max-steps",
+      "2",
+      "--no-approval",
+    ]);
+    expect(stderr).toContain('"status": "stalled"');
+    expect(code).toBe(1);
+  }, 60_000);
 
-  it(
-    "still exits 0 when the same turn ends on a reply",
-    async () => {
-      model.emits = JSON.stringify({
-        tool: "reply",
-        args: { text: "the note says hello" },
-      });
-      feedStdin(["read the note\n"]);
-      const code = await runAgentCommand([
-        "--cwd",
-        workingDir,
-        "--max-steps",
-        "2",
-        "--no-approval",
-      ]);
-      expect(stderr).not.toContain('"status": "stalled"');
-      expect(code).toBe(0);
-    },
-    60_000,
-  );
+  it("still exits 0 when the same turn ends on a reply", async () => {
+    model.emits = JSON.stringify({
+      tool: "reply",
+      args: { text: "the note says hello" },
+    });
+    feedStdin(["read the note\n"]);
+    const code = await runAgentCommand([
+      "--cwd",
+      workingDir,
+      "--max-steps",
+      "2",
+      "--no-approval",
+    ]);
+    expect(stderr).not.toContain('"status": "stalled"');
+    expect(code).toBe(0);
+  }, 60_000);
 });

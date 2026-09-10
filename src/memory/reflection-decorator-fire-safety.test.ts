@@ -10,7 +10,10 @@ import { LessonStore } from "./lessons/lesson-store.js";
 import { ProcedureStore } from "./procedures/procedure-store.js";
 import { createVoteAwareReflectionRunner } from "./voting/vote-aware-reflection.js";
 import { createLinkAwareReflectionRunner } from "./links/link-aware-reflection.js";
-import type { ReflectionInput, ReflectionRunner } from "./reflection/reflection-runner.js";
+import type {
+  ReflectionInput,
+  ReflectionRunner,
+} from "./reflection/reflection-runner.js";
 import type { VoteRunner, VoteRunnerInput } from "./voting/vote-runner.js";
 import type {
   LinkGeneratorInput,
@@ -150,7 +153,9 @@ function recordingVoteRunner(calls: VoteRunnerInput[]): VoteRunner {
   };
 }
 
-function recordingLinkGenerator(calls: LinkGeneratorInput[]): LinkGeneratorRunner {
+function recordingLinkGenerator(
+  calls: LinkGeneratorInput[],
+): LinkGeneratorRunner {
   return {
     async generate(input) {
       calls.push(input);
@@ -186,7 +191,9 @@ describe("reflection decorators are fire-safe across a store close", () => {
       thrown = err;
     }
     expect(thrown).toBeInstanceOf(TypeError);
-    expect((thrown as Error).message).toContain("database connection is not open");
+    expect((thrown as Error).message).toContain(
+      "database connection is not open",
+    );
   });
 
   it("vote-aware: hydration reaches the vote runner while the stores are open", async () => {
@@ -404,7 +411,8 @@ describe("reflection decorators are fire-safe across a store close", () => {
 
   it("a hydration failure is logged, not silently swallowed", async () => {
     const fx = makeFixture();
-    const warnings: { message: string; fields?: Record<string, unknown> }[] = [];
+    const warnings: { message: string; fields?: Record<string, unknown> }[] =
+      [];
     const logger = {
       debug() {
         /* unused */

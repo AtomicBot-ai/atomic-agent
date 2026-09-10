@@ -1,10 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import type { ParsedSentryDsn } from "./sentry-config.js";
-import type {
-  ScrubbedErrorEvent,
-  SentryStackFrame,
-} from "./error-scrubber.js";
+import type { ScrubbedErrorEvent, SentryStackFrame } from "./error-scrubber.js";
 
 /** Constant context stamped on every envelope. */
 export interface EnvelopeMeta {

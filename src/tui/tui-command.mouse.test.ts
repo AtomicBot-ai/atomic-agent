@@ -32,7 +32,11 @@ import { DEFAULT_SELECTION_WINDOW_MS } from "./mouse/selection-passthrough.js";
 import type { TuiAction } from "./tui-action.js";
 
 const inkRender = vi.hoisted(() => vi.fn());
-const trackingCalls = vi.hoisted(() => ({ enabled: 0, disabled: 0, resumed: 0 }));
+const trackingCalls = vi.hoisted(() => ({
+  enabled: 0,
+  disabled: 0,
+  resumed: 0,
+}));
 const orchestratorCalls = vi.hoisted(() => ({ quits: 0 }));
 
 // `sea` is one of the few builtins Node only publishes under the
@@ -135,6 +139,8 @@ interface Booted {
    * exactly as the tracker does on an unclaimed drag.
    */
   readonly selectionDragIntent: () => void;
+  /** The second argument `tuiCommand` handed Ink's `render()`. */
+  readonly renderOptions: Record<string, unknown>;
   readonly seen: TuiMouseEvent[];
   /** Every bus action emitted after mount — system messages included. */
   readonly actions: TuiAction[];
@@ -154,10 +160,17 @@ async function bootTui(args: string[] = []): Promise<Booted> {
     releaseExit = resolve;
   });
   let props: Record<string, unknown> | null = null;
-  inkRender.mockImplementation((element: { props: Record<string, unknown> }) => {
-    props = element.props;
-    return { waitUntilExit: () => exited, clear: () => {} };
-  });
+  let renderOptions: Record<string, unknown> = {};
+  inkRender.mockImplementation(
+    (
+      element: { props: Record<string, unknown> },
+      options: Record<string, unknown>,
+    ) => {
+      props = element.props;
+      renderOptions = options;
+      return { waitUntilExit: () => exited, clear: () => {} };
+    },
+  );
 
   const { tuiCommand } = await import("./tui-command.js");
   const finished = tuiCommand(["--skip-llama-setup", ...args]);
@@ -189,6 +202,7 @@ async function bootTui(args: string[] = []): Promise<Booted> {
 
   return {
     mouse: captured.mouse,
+    renderOptions,
     setMouseEnabled,
     selectionDragIntent,
     seen,
@@ -240,6 +254,22 @@ describe("tuiCommand mouse wiring", () => {
     resetConfigCache();
   }
 
+  it("hands Ink the render options it was built with", async () => {
+    // `ink-render-options.test.ts` asserts what `buildInkRenderOptions`
+    // returns; nothing there asserts that the returned object is what
+    // reaches `render()`. Delete the call at the call site and every
+    // test in that file still passes, with the renderer silently back on
+    // full-frame repaints. This closes that gap: it reads the options
+    // off the intercepted `render` call, in the process that made it.
+    writeMouseConfig(false);
+    const app = await bootTui();
+    expect(app.renderOptions).toMatchObject({
+      incrementalRendering: true,
+      exitOnCtrlC: false,
+    });
+    await app.stop();
+  });
+
   it("hands TuiApp a mouse source even when mouse support starts off", async () => {
     writeMouseConfig(false);
     const app = await bootTui();
@@ -262,7 +292,12 @@ describe("tuiCommand mouse wiring", () => {
 
     stdin.emit("data", sgrPress(5, 3));
     expect(app.seen).toHaveLength(1);
-    expect(app.seen[0]).toMatchObject({ kind: "press", button: "left", x: 4, y: 2 });
+    expect(app.seen[0]).toMatchObject({
+      kind: "press",
+      button: "left",
+      x: 4,
+      y: 2,
+    });
     // The source the tree subscribed to at mount is the one receiving
     // them — that is the whole point.
     expect(app.mouse).toBeDefined();
@@ -440,9 +475,9 @@ describe("tuiCommand mouse wiring", () => {
     // The unclaimed drag was detected in the tree; the wiring under
     // test is what happens next.
     app.selectionDragIntent();
-    expect(
-      app.messages.some((m) => m.includes("drag again to select")),
-    ).toBe(true);
+    expect(app.messages.some((m) => m.includes("drag again to select"))).toBe(
+      true,
+    );
 
     // A report already in flight when the suspend landed is swallowed
     // — it also never reaches the tree, so the drag-intent tracker

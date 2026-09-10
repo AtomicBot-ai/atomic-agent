@@ -22,15 +22,20 @@ const ALL_CATEGORIES: readonly ApprovalCategory[] = [
   "shell",
   "script",
   "proc_kill",
+  "publish",
+  "git_remote",
   "browser_nonweb",
   "trust_config",
+  "email",
   "other",
 ];
 
 describe("session-grant eligibility", () => {
-  it("grants every category except trust_config", () => {
+  it("grants every category except trust_config and email", () => {
     for (const category of ALL_CATEGORIES) {
-      expect(isGrantableCategory(category)).toBe(category !== "trust_config");
+      expect(isGrantableCategory(category)).toBe(
+        category !== "trust_config" && category !== "email",
+      );
     }
   });
 
@@ -56,8 +61,11 @@ describe("approval ladder", () => {
       shell: 4,
       script: 4,
       proc_kill: 4,
+      publish: 4,
+      git_remote: 4,
       browser_nonweb: 5,
       trust_config: 5,
+      email: 5,
       other: 5,
     };
     for (const [category, from] of Object.entries(silentFrom) as [
@@ -77,12 +85,15 @@ describe("approval ladder", () => {
     // R5: hosts render `category` next to the prompt. Every category in
     // the union must have a non-empty label so no prompt shows a blank
     // kind; the compiler already forces a key here, this guards content.
-    for (const category of Object.keys(APPROVAL_CATEGORY_LABELS) as ApprovalCategory[]) {
+    for (const category of Object.keys(
+      APPROVAL_CATEGORY_LABELS,
+    ) as ApprovalCategory[]) {
       expect(formatApprovalCategory(category).length).toBeGreaterThan(0);
     }
     expect(formatApprovalCategory("fs_write_home")).toBe("file write · home");
     expect(formatApprovalCategory("trust_config")).toBe("agent trust config");
     expect(formatApprovalCategory("shell")).toBe("shell command");
+    expect(formatApprovalCategory("git_remote")).toBe("git · remote");
   });
 
   it("level 1 asks for every category and level 5 for none (cumulative ladder)", () => {
@@ -94,8 +105,10 @@ describe("approval ladder", () => {
       "shell",
       "script",
       "proc_kill",
+      "git_remote",
       "browser_nonweb",
       "trust_config",
+      "email",
       "other",
     ];
     for (const category of categories) {

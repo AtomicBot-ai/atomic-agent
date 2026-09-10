@@ -70,9 +70,13 @@ describe("LocalModelsOrchestrator", () => {
     orchestrator: LocalModelsOrchestrator;
     stopped: () => number;
   } {
-    const orchestrator = new LocalModelsOrchestrator({ emit() {}, subscribe: () => () => {} });
-    (orchestrator as unknown as { daemonSupervised: boolean }).daemonSupervised =
-      true;
+    const orchestrator = new LocalModelsOrchestrator({
+      emit() {},
+      subscribe: () => () => {},
+    });
+    (
+      orchestrator as unknown as { daemonSupervised: boolean }
+    ).daemonSupervised = true;
     const spy = vi
       .spyOn(
         orchestrator as unknown as {
@@ -114,8 +118,9 @@ describe("LocalModelsOrchestrator", () => {
     it("never stops a daemon it does not supervise", async () => {
       writeUserConfig({});
       const { orchestrator, stopped } = makeSupervisedOrchestrator();
-      (orchestrator as unknown as { daemonSupervised: boolean }).daemonSupervised =
-        false;
+      (
+        orchestrator as unknown as { daemonSupervised: boolean }
+      ).daemonSupervised = false;
       await orchestrator.shutdown();
       expect(stopped()).toBe(0);
     });
@@ -152,8 +157,12 @@ describe("LocalModelsOrchestrator", () => {
       });
       await orchestrator.refresh();
       const snapshot = actions.find(
-        (action): action is Extract<EmittedAction, { type: "local_models_snapshot_loaded" }> =>
-          action.type === "local_models_snapshot_loaded",
+        (
+          action,
+        ): action is Extract<
+          EmittedAction,
+          { type: "local_models_snapshot_loaded" }
+        > => action.type === "local_models_snapshot_loaded",
       );
       const rows = snapshot?.rows ?? [];
       const custom = rows.find((row) => row.id.startsWith("custom-"));

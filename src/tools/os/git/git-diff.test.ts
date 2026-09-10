@@ -1,7 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { rm } from "node:fs/promises";
 import { osGitDiffTool } from "./git-diff.js";
-import { makeCtx, makeGitRepo, runGitRaw, writeRepoFile } from "./test-helpers.js";
+import {
+  makeCtx,
+  makeGitRepo,
+  runGitRaw,
+  writeRepoFile,
+} from "./test-helpers.js";
 
 describe("os.git.diff", () => {
   let repo: string;

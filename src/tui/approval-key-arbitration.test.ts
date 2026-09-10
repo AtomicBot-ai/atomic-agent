@@ -8,7 +8,11 @@ import {
   submitApprovalPath,
 } from "./app-key-bindings.js";
 import { canGrantShape } from "../approval/approval-gate.js";
-import { createInitialTuiState, type TuiSessionInfo, type TuiState } from "./tui-state.js";
+import {
+  createInitialTuiState,
+  type TuiSessionInfo,
+  type TuiState,
+} from "./tui-state.js";
 import type { ApprovalRequest } from "../approval/approval-gate.js";
 
 /**
@@ -61,7 +65,9 @@ function session(): TuiSessionInfo {
   };
 }
 
-function writeRequest(overrides: Partial<ApprovalRequest> = {}): ApprovalRequest {
+function writeRequest(
+  overrides: Partial<ApprovalRequest> = {},
+): ApprovalRequest {
   return {
     approvalId: "ap-1",
     sessionId: "s-x",
@@ -138,7 +144,9 @@ describe("approvalHotkey", () => {
   it("ignores meta so alt+y stays a character, not a verdict", () => {
     const state = pending();
     expect(approvalHotkey(state, "y", key({ meta: true }))).toBeNull();
-    expect(approvalHotkey(state, "y", key({ ctrl: true, meta: true }))).toBeNull();
+    expect(
+      approvalHotkey(state, "y", key({ ctrl: true, meta: true })),
+    ).toBeNull();
   });
 
   it("says nothing when no prompt is up", () => {
@@ -158,7 +166,9 @@ describe("approvalHotkey", () => {
     });
 
     it("grants the command shape on a shell request", () => {
-      expect(approvalHotkey(shellWithShape, "b", key(ctrl))).toBe("grant_shape");
+      expect(approvalHotkey(shellWithShape, "b", key(ctrl))).toBe(
+        "grant_shape",
+      );
     });
 
     it("opens the target field on a write request", () => {
@@ -185,10 +195,27 @@ describe("approvalHotkey", () => {
       // would fail here — which is the point.
       const requests: ApprovalRequest[] = [
         writeRequest(),
-        writeRequest({ tool: "os.shell.run", category: "shell", commandShape: "git", redirectablePath: undefined }),
-        writeRequest({ tool: "os.shell.run", category: "shell", redirectablePath: undefined }),
-        writeRequest({ tool: "os.fs.trash", category: "fs_trash", redirectablePath: undefined }),
-        writeRequest({ tool: "os.http.request", category: "http", redirectablePath: undefined }),
+        writeRequest({
+          tool: "os.shell.run",
+          category: "shell",
+          commandShape: "git",
+          redirectablePath: undefined,
+        }),
+        writeRequest({
+          tool: "os.shell.run",
+          category: "shell",
+          redirectablePath: undefined,
+        }),
+        writeRequest({
+          tool: "os.fs.trash",
+          category: "fs_trash",
+          redirectablePath: undefined,
+        }),
+        writeRequest({
+          tool: "os.http.request",
+          category: "http",
+          redirectablePath: undefined,
+        }),
       ];
       for (const request of requests) {
         expect(
@@ -262,7 +289,9 @@ describe("submitApprovalPath", () => {
       "ap-1",
       "~/Documents/apple-site/index.html",
     );
-    expect(dispatch).toHaveBeenCalledWith({ type: "approval_path_edit_closed" });
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "approval_path_edit_closed",
+    });
     expect(dispatch).toHaveBeenCalledWith({
       type: "approval_resolved",
       approvalId: "ap-1",

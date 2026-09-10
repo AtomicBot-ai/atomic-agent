@@ -41,7 +41,10 @@ export function SlashPalette(props: SlashPaletteProps): ReactElement | null {
   const visible = completions.slice(windowStart, windowStart + MAX_ROWS);
   const visibleCursor = cursor - windowStart;
   const hiddenBefore = windowStart;
-  const hiddenAfter = Math.max(0, completions.length - windowStart - visible.length);
+  const hiddenAfter = Math.max(
+    0,
+    completions.length - windowStart - visible.length,
+  );
   return (
     <Box
       borderStyle="round"
@@ -93,7 +96,11 @@ export function SlashPalette(props: SlashPaletteProps): ReactElement | null {
  * "sticky bottom" behaviour: the window only moves when the cursor would
  * otherwise fall off the visible slice.
  */
-function computeWindowStart(cursor: number, total: number, size: number): number {
+function computeWindowStart(
+  cursor: number,
+  total: number,
+  size: number,
+): number {
   if (total <= size) return 0;
   if (cursor < size) return 0;
   return Math.min(cursor - size + 1, total - size);

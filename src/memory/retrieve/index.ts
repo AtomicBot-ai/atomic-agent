@@ -35,9 +35,7 @@ export {
 } from "./rewriter-gate.js";
 export { createEmbeddingGate } from "./embedding-gate.js";
 export { DEFAULT_REWRITER_EXEMPLARS } from "./default-rewriter-exemplars.js";
-export {
-  QUERY_REWRITER_GRAMMAR,
-} from "./query-rewriter-grammar.js";
+export { QUERY_REWRITER_GRAMMAR } from "./query-rewriter-grammar.js";
 export {
   QUERY_REWRITER_STABLE_PREFIX,
   REWRITER_LINE_CHAR_CAP,

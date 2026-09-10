@@ -110,9 +110,10 @@ export function buildOsFsGrepTool(
         });
       }
       if (result.exitCode !== 0) {
-        const reason = result.stderr.trim().length > 0
-          ? result.stderr.trim()
-          : `ripgrep exited with code ${result.exitCode}`;
+        const reason =
+          result.stderr.trim().length > 0
+            ? result.stderr.trim()
+            : `ripgrep exited with code ${result.exitCode}`;
         return compressToolResult({
           tool: "os.fs.grep",
           status: "error",
@@ -301,9 +302,10 @@ export function parseRipgrepJson(stdout: string): RgFileRecord[] {
     if (envelope.type !== "match" && envelope.type !== "context") continue;
     const path = extractText(envelope.data.path);
     if (path === undefined) continue;
-    const lineNumber = typeof envelope.data.line_number === "number"
-      ? envelope.data.line_number
-      : 0;
+    const lineNumber =
+      typeof envelope.data.line_number === "number"
+        ? envelope.data.line_number
+        : 0;
     const text = extractText(envelope.data.lines) ?? "";
     const submatchesRaw = Array.isArray(envelope.data.submatches)
       ? (envelope.data.submatches as RgSubmatch[])
@@ -391,7 +393,10 @@ function formatGrepResult(
         details: {
           outputMode: args.outputMode,
           totals: { files: totalFiles, matches: totalMatches },
-          counts: paged.slice.map((f) => ({ path: f.path, count: f.matchCount })),
+          counts: paged.slice.map((f) => ({
+            path: f.path,
+            count: f.matchCount,
+          })),
           truncated: paged.truncated || result.truncated,
           command: [rgPath, ...rgArgs],
           path: args.path,
@@ -424,9 +429,8 @@ function formatGrepResult(
     }
     segments.push("");
   }
-  const body = segments.length > 0
-    ? segments.join("\n").trimEnd()
-    : "(no matches)";
+  const body =
+    segments.length > 0 ? segments.join("\n").trimEnd() : "(no matches)";
   return compressToolResult(
     {
       tool: "os.fs.grep",

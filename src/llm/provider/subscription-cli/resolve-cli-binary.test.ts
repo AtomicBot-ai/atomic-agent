@@ -28,7 +28,13 @@ describe("resolveCliBinary", () => {
 
   it("falls back to the bare name on windows so ENOENT still surfaces", () => {
     expect(
-      resolveCliBinary("claude", undefined, "win32", { PATH: "C:\\npm" }, () => false),
+      resolveCliBinary(
+        "claude",
+        undefined,
+        "win32",
+        { PATH: "C:\\npm" },
+        () => false,
+      ),
     ).toBe("claude");
   });
 });

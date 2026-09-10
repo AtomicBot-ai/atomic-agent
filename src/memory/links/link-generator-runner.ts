@@ -49,12 +49,7 @@ export interface LinkGeneratorInput {
 }
 
 export type LinkGeneratorOutcome =
-  | "ok"
-  | "none"
-  | "skipped"
-  | "aborted"
-  | "timeout"
-  | "failed";
+  "ok" | "none" | "skipped" | "aborted" | "timeout" | "failed";
 
 /**
  * Memory-v2 phase 2. Per-call trace event surfaced to the runtime's

@@ -55,8 +55,12 @@ describe("telegramIntegration", () => {
 
   it("walks the operator through the setup states in order", () => {
     expect(telegramIntegration.status(ctx([])).level).toBe("not_configured");
-    expect(telegramIntegration.status(ctx([TOKEN])).detail).toMatch(/press p to pair/);
-    expect(telegramIntegration.status(ctx(BOTH)).detail).toMatch(/set Channel to on/);
+    expect(telegramIntegration.status(ctx([TOKEN])).detail).toMatch(
+      /press p to pair/,
+    );
+    expect(telegramIntegration.status(ctx(BOTH)).detail).toMatch(
+      /set Channel to on/,
+    );
     expect(telegramIntegration.status(ctx(BOTH, "up"))).toEqual({
       level: "connected",
       detail: "channel up",
@@ -86,7 +90,11 @@ describe("telegramIntegration", () => {
     // not already say. The channel knows why -- a held lock, a rejected
     // token -- and that is the only part worth the screen space.
     const status = telegramIntegration.status(
-      ctx(BOTH, "down", "another atomic-agent (pid 42) is already running the Telegram channel — stop it first"),
+      ctx(
+        BOTH,
+        "down",
+        "another atomic-agent (pid 42) is already running the Telegram channel — stop it first",
+      ),
     );
     expect(status.detail).toMatch(/already running/);
   });
@@ -106,12 +114,16 @@ describe("telegramIntegration", () => {
       ctx(BOTH, "down", formatChannelLockHeld(4242)),
     );
     expect(status.level).toBe("configured");
-    expect(status.detail).toBe("already running in another atomic-agent (pid 4242)");
+    expect(status.detail).toBe(
+      "already running in another atomic-agent (pid 4242)",
+    );
     expect(status.detail).not.toContain("channel-locked:");
   });
 
   it("still badges a genuine failure as an error", () => {
-    const status = telegramIntegration.status(ctx(BOTH, "down", "token rejected (HTTP 401)"));
+    const status = telegramIntegration.status(
+      ctx(BOTH, "down", "token rejected (HTTP 401)"),
+    );
     expect(status.level).toBe("error");
     expect(status.detail).toMatch(/401/);
   });

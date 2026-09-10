@@ -1,5 +1,7 @@
+import { readAtomicMailApiKey } from "../../atomic-mail/index.js";
 import { getConfig } from "../../config/index.js";
 import type { ToolDescriptor } from "../../prompt/stable-prefix.js";
+import { resolveGithubToken } from "../../github/index.js";
 import { DEFAULT_TOOL_DESCRIPTORS } from "../../prompt/tool-descriptors.js";
 import { filterToolDescriptorsByConfig } from "../../runtime/filter-disabled-tools.js";
 
@@ -57,11 +59,13 @@ export interface ToolGateSourceConfig {
     readonly lessons: { readonly enabled: boolean };
     readonly procedures: { readonly enabled: boolean };
   };
+  readonly atomicMail: { readonly address: string | null };
   readonly tasks: {
     readonly enabled: boolean;
     readonly agentToolsEnabled: boolean;
   };
   readonly mcp: { readonly servers: readonly unknown[] };
+  readonly llm?: { readonly runMode?: { readonly mode?: string } };
 }
 
 /**
@@ -71,15 +75,18 @@ export interface ToolGateSourceConfig {
  * apply the same gates or it advertises tools the agent cannot call
  * (e.g. `browser.*` under `browser.enabled=false`).
  *
- * Two gates are approximated because their runtime inputs are probed
- * at bootstrap, not read from config: vision uses `vision.enabled`
- * alone (the mmproj capability probe is not visible here), and the
- * MCP gate uses the configured server list instead of live
- * connections. Both approximations only ever err on the side of the
- * user's stated config.
+ * Three gates are approximated because their runtime inputs are probed
+ * or resolved at bootstrap, not read from config: vision uses
+ * `vision.enabled` alone (the mmproj capability probe is not visible
+ * here), the MCP gate uses the configured server list instead of live
+ * connections, and fusion uses the stored `llm.runMode.mode` rather
+ * than the resolver's effective mode (which also needs the active
+ * provider's kind). All three err on the side of the user's stated
+ * config.
  */
 export function effectiveToolDescriptors(
   config: ToolGateSourceConfig = getConfig(),
+  env: NodeJS.ProcessEnv = process.env,
 ): readonly ToolDescriptor[] {
   return filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, {
     browser: { enabled: config.browser.enabled },
@@ -87,6 +94,10 @@ export function effectiveToolDescriptors(
     vision: {
       enabled: config.vision.enabled,
       providerAvailable: config.vision.enabled,
+    },
+    email: {
+      available:
+        readAtomicMailApiKey() !== null && config.atomicMail.address !== null,
     },
     memory: {
       profile: { enabled: config.memory.profile.enabled },
@@ -98,6 +109,10 @@ export function effectiveToolDescriptors(
       agentToolsEnabled: config.tasks.enabled && config.tasks.agentToolsEnabled,
     },
     mcp: { enabled: config.mcp.servers.length > 0 },
+    // `/tools` reads the same env the runtime does, so this gate is
+    // exact rather than approximated.
+    github: { connected: resolveGithubToken(undefined, env) !== null },
+    fusion: { enabled: config.llm?.runMode?.mode === "fusion" },
   });
 }
 

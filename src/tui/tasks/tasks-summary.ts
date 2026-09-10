@@ -99,10 +99,7 @@ export function formatIntervalMs(ms: number): string {
  * "in 2m" / "3s ago" — used for the `next-run` column.
  * `null` renders as `-`.
  */
-export function formatRelativeMs(
-  target: number | null,
-  now: number,
-): string {
+export function formatRelativeMs(target: number | null, now: number): string {
   if (target === null) return "-";
   const deltaMs = target - now;
   const abs = Math.abs(deltaMs);

@@ -146,8 +146,7 @@ function coerceK(raw: unknown): number {
 function renderLessonBody(lesson: Lesson): string {
   const tagSegment =
     lesson.tags.length > 0 ? ` [${lesson.tags.join(",")}]` : "";
-  const statusSegment =
-    lesson.status === "deprecated" ? " (deprecated)" : "";
+  const statusSegment = lesson.status === "deprecated" ? " (deprecated)" : "";
   return [
     `*${lesson.id}${tagSegment}${statusSegment}`,
     `activation: ${lesson.activation}`,

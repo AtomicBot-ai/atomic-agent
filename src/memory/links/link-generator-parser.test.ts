@@ -6,9 +6,9 @@ describe("parseLinkGeneratorOutput", () => {
   const allowlist = new Set([1, 2, 3, 4]);
 
   it("returns none for the literal NONE", () => {
-    expect(
-      parseLinkGeneratorOutput("NONE", { allowlist }),
-    ).toEqual({ kind: "none" });
+    expect(parseLinkGeneratorOutput("NONE", { allowlist })).toEqual({
+      kind: "none",
+    });
   });
 
   it("returns none for empty or whitespace-only payloads", () => {
@@ -21,15 +21,12 @@ describe("parseLinkGeneratorOutput", () => {
   });
 
   it("parses a single LINK line", () => {
-    const r = parseLinkGeneratorOutput(
-      "LINK 1 2 [kind=RELATES_TO]\n",
-      { allowlist },
-    );
+    const r = parseLinkGeneratorOutput("LINK 1 2 [kind=RELATES_TO]\n", {
+      allowlist,
+    });
     expect(r.kind).toBe("links");
     if (r.kind !== "links") throw new Error();
-    expect(r.links).toEqual([
-      { fromId: 1, toId: 2, kind: "RELATES_TO" },
-    ]);
+    expect(r.links).toEqual([{ fromId: 1, toId: 2, kind: "RELATES_TO" }]);
   });
 
   it("parses multiple LINK lines and preserves order", () => {
@@ -70,10 +67,9 @@ describe("parseLinkGeneratorOutput", () => {
   });
 
   it("drops unknown link kinds", () => {
-    const r = parseLinkGeneratorOutput(
-      "LINK 1 2 [kind=BOGUS]\n",
-      { allowlist },
-    );
+    const r = parseLinkGeneratorOutput("LINK 1 2 [kind=BOGUS]\n", {
+      allowlist,
+    });
     expect(r).toEqual({ kind: "none" });
   });
 
@@ -124,10 +120,9 @@ describe("parseLinkGeneratorOutput", () => {
 
   describe("JSON shape (cloud Structured Outputs)", () => {
     it("parses { kind: 'none' } as the abstain branch", () => {
-      const r = parseLinkGeneratorOutput(
-        JSON.stringify({ kind: "none" }),
-        { allowlist },
-      );
+      const r = parseLinkGeneratorOutput(JSON.stringify({ kind: "none" }), {
+        allowlist,
+      });
       expect(r).toEqual({ kind: "none" });
     });
 
@@ -141,9 +136,7 @@ describe("parseLinkGeneratorOutput", () => {
       );
       expect(r.kind).toBe("links");
       if (r.kind !== "links") throw new Error();
-      expect(r.links).toEqual([
-        { fromId: 1, toId: 2, kind: "RELATES_TO" },
-      ]);
+      expect(r.links).toEqual([{ fromId: 1, toId: 2, kind: "RELATES_TO" }]);
     });
 
     it("applies the allowlist + self-loop filters on the JSON path too", () => {

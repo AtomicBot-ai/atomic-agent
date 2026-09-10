@@ -113,7 +113,8 @@ export function newlyCoveredCount(
   for (const range of covered) {
     if (range.end < span.start) continue;
     if (range.start > span.end) break;
-    fresh -= Math.min(range.end, span.end) - Math.max(range.start, span.start) + 1;
+    fresh -=
+      Math.min(range.end, span.end) - Math.max(range.start, span.start) + 1;
   }
   return Math.max(0, fresh);
 }
@@ -167,7 +168,11 @@ export function describeCoverage(
   if (covered.length === 0) return "";
   const shown = covered
     .slice(0, maxRanges)
-    .map((range) => (range.start === range.end ? `${range.start}` : `${range.start}-${range.end}`));
+    .map((range) =>
+      range.start === range.end
+        ? `${range.start}`
+        : `${range.start}-${range.end}`,
+    );
   return covered.length > maxRanges
     ? `${shown.join(", ")}, … (${covered.length - maxRanges} more)`
     : shown.join(", ");

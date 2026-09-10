@@ -31,9 +31,8 @@ vi.mock("node:child_process", async (importOriginal) => {
 
 const { runCliCommand } = await import("./run-cli-completion.js");
 const { streamCliCommand } = await import("./stream-cli-completion.js");
-const { SubscriptionCliSpawnError } = await import(
-  "./subscription-cli-errors.js"
-);
+const { SubscriptionCliSpawnError } =
+  await import("./subscription-cli-errors.js");
 
 const options = {
   binary: SHIM,
@@ -65,7 +64,9 @@ describe("a spawn that throws EINVAL", () => {
 
   it("still reports a genuinely missing binary as not installed", async () => {
     const missing = { ...options, binary: "definitely-not-a-real-binary-xyz" };
-    await expect(runCliCommand(missing)).rejects.toThrow(/was not found on PATH/);
+    await expect(runCliCommand(missing)).rejects.toThrow(
+      /was not found on PATH/,
+    );
     await expect(streamCliCommand(missing).next()).rejects.toThrow(
       /was not found on PATH/,
     );

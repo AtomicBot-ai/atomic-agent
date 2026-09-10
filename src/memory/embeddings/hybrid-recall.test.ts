@@ -76,10 +76,7 @@ describe("cosineSimilarity", () => {
   });
   it("throws on dim mismatch", () => {
     expect(() =>
-      cosineSimilarity(
-        new Float32Array([1, 2]),
-        new Float32Array([1, 2, 3]),
-      ),
+      cosineSimilarity(new Float32Array([1, 2]), new Float32Array([1, 2, 3])),
     ).toThrow(/dim mismatch/);
   });
 });
@@ -126,9 +123,7 @@ describe("recallHybrid", () => {
       },
       {
         k: 5,
-        bm25Hits: [
-          { ...m, bm25Score: -10 },
-        ],
+        bm25Hits: [{ ...m, bm25Score: -10 }],
         query: "lisbon",
       },
     );
@@ -167,11 +162,7 @@ describe("recallHybrid", () => {
   });
 
   it("skips cosine + emits brute_force_overflow when corpus > ceiling", async () => {
-    const client = makeClient(
-      new Map([
-        ["lisbon", [1, 0, 0, 0]],
-      ]),
-    );
+    const client = makeClient(new Map([["lisbon", [1, 0, 0, 0]]]));
     // Seed 5 embedding rows for the model "test-model" so countByModel
     // reports 5 > ceiling 2.
     for (let i = 0; i < 5; i += 1) {
@@ -212,11 +203,7 @@ describe("recallHybrid", () => {
   });
 
   it("re-ranks BM25 hits by cosine when corpus is small", async () => {
-    const client = makeClient(
-      new Map([
-        ["lisbon", [1, 0, 0, 0]],
-      ]),
-    );
+    const client = makeClient(new Map([["lisbon", [1, 0, 0, 0]]]));
     // Two BM25 candidates. Both score the same BM25 token-wise, but
     // one has a "lisbon" embedding (cosine 1) and the other has an
     // orthogonal embedding (cosine 0). The blend should favour the

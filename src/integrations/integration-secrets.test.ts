@@ -22,7 +22,8 @@ const KEY_FIELD: IntegrationField = {
   envVar: "TEST_INTEGRATION_KEY",
   secret: true,
   required: true,
-  validate: (raw) => (raw.startsWith("ok_") ? undefined : "must start with ok_"),
+  validate: (raw) =>
+    raw.startsWith("ok_") ? undefined : "must start with ok_",
 };
 
 const PLAIN_FIELD: IntegrationField = {
@@ -61,7 +62,9 @@ describe("readFieldValue", () => {
 
   it("reads an unset or blank value as absent", () => {
     expect(readFieldValue(KEY_FIELD, {})).toBeUndefined();
-    expect(readFieldValue(KEY_FIELD, { TEST_INTEGRATION_KEY: "  " })).toBeUndefined();
+    expect(
+      readFieldValue(KEY_FIELD, { TEST_INTEGRATION_KEY: "  " }),
+    ).toBeUndefined();
   });
 });
 
@@ -164,9 +167,9 @@ describe("config-backed fields", () => {
 
   it("reads a numeric config value as a string", () => {
     // A hand-edited config may hold a number; the UI is string-shaped.
-    expect(readFieldValue(OWNER_FIELD, {}, { discord: { ownerUserId: 7 } })).toBe(
-      "7",
-    );
+    expect(
+      readFieldValue(OWNER_FIELD, {}, { discord: { ownerUserId: 7 } }),
+    ).toBe("7");
   });
 
   it("reads an unset or null config value as absent", () => {
@@ -181,9 +184,13 @@ describe("config-backed fields", () => {
       ...DESCRIPTOR,
       fields: [OWNER_FIELD],
     };
-    const present = presentFieldKeys(descriptor, {}, {
-      discord: { ownerUserId: "123" },
-    });
+    const present = presentFieldKeys(
+      descriptor,
+      {},
+      {
+        discord: { ownerUserId: "123" },
+      },
+    );
     expect([...present]).toEqual(["ownerUserId"]);
   });
 
@@ -202,6 +209,95 @@ describe("config-backed fields", () => {
     expect(() =>
       writeFieldValue(stateDir, guarded, "123", {}, "/tmp/x.json"),
     ).toThrow(/nope/);
+  });
+});
+
+describe("list fields", () => {
+  const OWNERS_FIELD: IntegrationField = {
+    key: "ownerUserIds",
+    label: "Owner user IDs",
+    store: "config",
+    kind: "list",
+    configPath: "discord.ownerUserIds",
+    envVar: "",
+    secret: false,
+    required: true,
+    validate: (raw) => (/^\d{15,25}$/.test(raw) ? undefined : "not an id"),
+  };
+
+  it("renders the stored list as one comma-separated line", () => {
+    expect(
+      readFieldValue(
+        OWNERS_FIELD,
+        {},
+        {
+          discord: {
+            ownerUserIds: ["123456789012345678", "223456789012345678"],
+          },
+        },
+      ),
+    ).toBe("123456789012345678, 223456789012345678");
+  });
+
+  it("reads an empty or missing list as absent, so `required` still bites", () => {
+    expect(
+      readFieldValue(OWNERS_FIELD, {}, { discord: { ownerUserIds: [] } }),
+    ).toBeUndefined();
+    expect(readFieldValue(OWNERS_FIELD, {}, {})).toBeUndefined();
+  });
+
+  it("splits, trims and dedupes what the operator typed", () => {
+    const file = join(stateDir, "config.json");
+    writeFieldValue(
+      stateDir,
+      OWNERS_FIELD,
+      " 123456789012345678 ,223456789012345678, ,123456789012345678 ",
+      {},
+      file,
+    );
+    const onDisk = JSON.parse(readFileSync(file, "utf8")) as {
+      discord: { ownerUserIds: string[] };
+    };
+    expect(onDisk.discord.ownerUserIds).toEqual([
+      "123456789012345678",
+      "223456789012345678",
+    ]);
+  });
+
+  it("validates each entry and names the one that is wrong", () => {
+    // A single-id validator run over the joined line would reject every
+    // multi-entry value, so the per-entry pass is the contract.
+    expect(() =>
+      writeFieldValue(
+        stateDir,
+        OWNERS_FIELD,
+        "123456789012345678, nope",
+        {},
+        join(stateDir, "config.json"),
+      ),
+    ).toThrow(/nope: not an id/);
+  });
+
+  it("refuses a line with nothing in it", () => {
+    expect(() =>
+      writeFieldValue(
+        stateDir,
+        OWNERS_FIELD,
+        " , , ",
+        {},
+        join(stateDir, "config.json"),
+      ),
+    ).toThrow(/empty/);
+  });
+
+  it("clears to an empty list", () => {
+    const file = join(stateDir, "config.json");
+    writeFieldValue(stateDir, OWNERS_FIELD, "123456789012345678", {}, file);
+    writeFieldValue(stateDir, OWNERS_FIELD, null, {}, file);
+    const onDisk = JSON.parse(readFileSync(file, "utf8")) as {
+      discord: { ownerUserIds: string[] };
+    };
+    expect(onDisk.discord.ownerUserIds).toEqual([]);
   });
 });
 

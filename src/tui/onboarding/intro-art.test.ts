@@ -29,7 +29,9 @@ function stars(art: readonly string[]): Placed[] {
 }
 
 /** First and last inked column of the mark on each art row. */
-function markSpans(art: readonly string[]): ({ from: number; to: number } | null)[] {
+function markSpans(
+  art: readonly string[],
+): ({ from: number; to: number } | null)[] {
   return art.map((line) => {
     const inked = [...line].flatMap((glyph, index) =>
       MARK_GLYPHS.has(glyph) ? [index] : [],
@@ -64,25 +66,44 @@ describe("buildIntroArt", () => {
 
   it("uses every row of its budget once there is a sky to put in it", () => {
     for (const rows of [20, 24, 30]) {
-      const art = buildIntroArt({ columns: 100, rows, markRows: MARK, density: 1 });
+      const art = buildIntroArt({
+        columns: 100,
+        rows,
+        markRows: MARK,
+        density: 1,
+      });
       expect(art.length).toBe(rows);
     }
   });
 
   it("draws the mark alone when the sky is switched off", () => {
-    const art = buildIntroArt({ columns: 100, rows: 24, markRows: MARK, density: 0 });
+    const art = buildIntroArt({
+      columns: 100,
+      rows: 24,
+      markRows: MARK,
+      density: 0,
+    });
     expect(stars(art)).toEqual([]);
     expect(art.join("\n")).toContain("█");
     expect(art.length).toBe(MARK.length);
   });
 
   it("fills the sky at the size the flow actually opens at", () => {
-    const art = buildIntroArt({ ...OPENS_AT, markRows: MARK, density: 1, haloCount: 26 });
+    const art = buildIntroArt({
+      ...OPENS_AT,
+      markRows: MARK,
+      density: 1,
+      haloCount: 26,
+    });
     const placed = stars(art);
     expect(placed.length).toBeGreaterThan(100);
     // Both sides of the mark, not one strip down the edge.
-    expect(placed.filter((star) => star.column < 30).length).toBeGreaterThan(20);
-    expect(placed.filter((star) => star.column > 66).length).toBeGreaterThan(20);
+    expect(placed.filter((star) => star.column < 30).length).toBeGreaterThan(
+      20,
+    );
+    expect(placed.filter((star) => star.column > 66).length).toBeGreaterThan(
+      20,
+    );
     // Above and below it too — a bounding-box clear space would leave the
     // top and bottom of the canvas as the only room for those.
     expect(placed.filter((star) => star.row < 3).length).toBeGreaterThan(5);
@@ -90,20 +111,31 @@ describe("buildIntroArt", () => {
   });
 
   it("puts stars of every brightness in the sky", () => {
-    const art = buildIntroArt({ ...OPENS_AT, markRows: MARK, density: 1, haloCount: 26 });
+    const art = buildIntroArt({
+      ...OPENS_AT,
+      markRows: MARK,
+      density: 1,
+      haloCount: 26,
+    });
     const tiers = new Set(stars(art).map((star) => star.tier));
     expect(tiers).toEqual(new Set(Object.keys(STAR_GLYPHS)));
   });
 
   it("keeps the mark's clear space empty on every row", () => {
-    const art = buildIntroArt({ ...OPENS_AT, markRows: MARK, density: 1, haloCount: 26 });
+    const art = buildIntroArt({
+      ...OPENS_AT,
+      markRows: MARK,
+      density: 1,
+      haloCount: 26,
+    });
     const spans = markSpans(art);
     for (const star of stars(art)) {
       for (let offset = -GAP_ROWS; offset <= GAP_ROWS; offset += 1) {
         const span = spans[star.row + offset];
         if (!span) continue;
         const inside =
-          star.column >= span.from - GAP_COLUMNS && star.column <= span.to + GAP_COLUMNS;
+          star.column >= span.from - GAP_COLUMNS &&
+          star.column <= span.to + GAP_COLUMNS;
         expect({ star, span, offset, inside }).toMatchObject({ inside: false });
       }
     }
@@ -112,7 +144,12 @@ describe("buildIntroArt", () => {
   it("never lets a star overwrite the mark", () => {
     const inked = (art: readonly string[]): number =>
       [...art.join("")].filter((glyph) => MARK_GLYPHS.has(glyph)).length;
-    const sky = buildIntroArt({ ...OPENS_AT, markRows: MARK, density: 1, haloCount: 26 });
+    const sky = buildIntroArt({
+      ...OPENS_AT,
+      markRows: MARK,
+      density: 1,
+      haloCount: 26,
+    });
     const plain = buildIntroArt({ ...OPENS_AT, markRows: MARK, density: 0 });
     expect(inked(sky)).toBe(inked(plain));
   });
@@ -126,8 +163,18 @@ describe("buildIntroArt", () => {
   });
 
   it("thickens the sky as the terminal grows", () => {
-    const small = buildIntroArt({ columns: 68, rows: 12, markRows: MARK, density: 1 });
-    const large = buildIntroArt({ columns: 116, rows: 30, markRows: MARK, density: 1 });
+    const small = buildIntroArt({
+      columns: 68,
+      rows: 12,
+      markRows: MARK,
+      density: 1,
+    });
+    const large = buildIntroArt({
+      columns: 116,
+      rows: 30,
+      markRows: MARK,
+      density: 1,
+    });
     expect(stars(large).length).toBeGreaterThan(stars(small).length * 2);
   });
 });

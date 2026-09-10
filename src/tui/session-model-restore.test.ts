@@ -5,7 +5,9 @@ import {
   planModelRestore,
 } from "./session-model-restore.js";
 
-function resolved(overrides: Partial<ResolvedLlmConfig> = {}): ResolvedLlmConfig {
+function resolved(
+  overrides: Partial<ResolvedLlmConfig> = {},
+): ResolvedLlmConfig {
   return {
     activeTextProvider: "openrouter",
     activeEmbeddingProvider: "local-llama-embed",
@@ -65,7 +67,10 @@ describe("planModelRestore", () => {
 
   it("activates a model-less provider instead of selecting", () => {
     expect(
-      planModelRestore({ providerId: "local-llama", chatModel: null }, resolved()),
+      planModelRestore(
+        { providerId: "local-llama", chatModel: null },
+        resolved(),
+      ),
     ).toEqual({ kind: "activate", providerId: "local-llama" });
     // …and stays put when that provider is already active.
     expect(
@@ -81,7 +86,11 @@ describe("planModelRestore", () => {
       { providerId: "gone", chatModel: "x/y" },
       resolved(),
     );
-    expect(plan).toEqual({ kind: "missing", providerId: "gone", chatModel: "x/y" });
+    expect(plan).toEqual({
+      kind: "missing",
+      providerId: "gone",
+      chatModel: "x/y",
+    });
     expect(describeModelRestore(plan)).toContain("no longer configured");
   });
 

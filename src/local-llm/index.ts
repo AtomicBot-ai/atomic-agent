@@ -51,17 +51,38 @@ export {
 } from "./backend-paths.js";
 
 export {
+  DEFAULT_GIVE_UP_AFTER_MS,
+  DownloadGaveUpError,
+  classifyDownloadError,
   downloadFile,
   discardPartialDownload,
+  isResumableDownloadError,
   isRetryableDownloadError,
   readPartialDownload,
   resolvePartialMetaPath,
   resolvePartialPath,
+  type DownloadErrorKind,
   type DownloadFileOptions,
   type DownloadProgressFn,
   type DownloadRetryFn,
+  type DownloadRetryInfo,
   type PartialDownloadMeta,
 } from "./download-file.js";
+export {
+  DEFAULT_DOWNLOAD_CONNECTIONS,
+  MAX_DOWNLOAD_CONNECTIONS,
+  resolveDownloadConnections,
+  setDefaultDownloadConnections,
+} from "./download-settings.js";
+export {
+  DEFAULT_HF_ENDPOINT,
+  huggingFaceEndpointHost,
+  isHuggingFaceUrl,
+  normalizeHuggingFaceEndpoint,
+  resolveHuggingFaceEndpoint,
+  rewriteHuggingFaceUrl,
+  setDefaultHuggingFaceEndpoint,
+} from "./huggingface-endpoint.js";
 export {
   DOWNLOAD_JOB_VERSION,
   downloadJobId,
@@ -72,15 +93,30 @@ export {
   removeDownloadJob,
   resolveDownloadJobPath,
   resolveDownloadLogPath,
+  resolveDownloadNotifyPath,
   resolveDownloadsDir,
   writeDownloadJob,
   type DownloadJob,
   type DownloadJobKind,
   type DownloadJobMode,
   type DownloadJobStatus,
+  type DownloadJobNotified,
+  type DownloadJobWaiting,
 } from "./download-jobs.js";
 export {
+  STALE_RUNNING_MS,
+  downloadJobSilenceMs,
+  isDownloadJobStale,
+} from "./download-job-staleness.js";
+export {
+  isDownloadNotifyChannel,
+  readDownloadNotify,
+  writeDownloadNotify,
+  type DownloadNotifyChannel,
+} from "./download-notify-file.js";
+export {
   downloadWorkerArgs,
+  looksLikeDownloadWorker,
   spawnDownloadWorker,
   stopDownloadWorker,
   type SpawnDownloadWorkerInput,
@@ -88,6 +124,8 @@ export {
   type StopDownloadWorkerResult,
 } from "./download-spawn.js";
 export {
+  DEFAULT_WORKER_LIFETIME_MS,
+  WORKER_GIVE_UP_AFTER_MS,
   initialDownloadJob,
   runDownloadWorker,
   type DownloadWorkerInput,

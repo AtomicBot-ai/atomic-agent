@@ -23,8 +23,7 @@
 import type { McpToolMeta } from "./mcp-types.js";
 
 /** Static placeholder rule baked into `grammars/tool-call.gbnf`. */
-const PLACEHOLDER_RULE_RE =
-  /^mcp-server-tool ::= .+$/m;
+const PLACEHOLDER_RULE_RE = /^mcp-server-tool ::= .+$/m;
 
 /**
  * Build the dynamic `mcp-server-tool` rule body as a GBNF

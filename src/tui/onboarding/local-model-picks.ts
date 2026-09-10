@@ -110,11 +110,11 @@ function fitFor(def: LocalModelDef, ramGb: number): LocalModelPick["fit"] {
  * recommendation, not the boundary of what runs.
  */
 export const HUGGING_FACE_ROW_LABEL = "Add a model from Hugging Face…";
-export const HUGGING_FACE_ROW_NOTE = "paste an owner/repo id or a huggingface.co URL";
+export const HUGGING_FACE_ROW_NOTE =
+  "paste an owner/repo id or a huggingface.co URL";
 
 export type LocalPickRow =
-  | { kind: "model"; pick: LocalModelPick }
-  | { kind: "hugging_face" };
+  { kind: "model"; pick: LocalModelPick } | { kind: "hugging_face" };
 
 /**
  * The picker's rows in cursor order. The Hugging Face row is last and is
@@ -145,11 +145,14 @@ export function describeDownloadingModel(id: string | null): string {
 }
 
 /** Rows ordered for the first run: the recommendation first, then by size. */
-export function orderLocalModelPicks(picks: readonly LocalModelPick[]): LocalModelPick[] {
+export function orderLocalModelPicks(
+  picks: readonly LocalModelPick[],
+): LocalModelPick[] {
   const ordered = [...picks].sort((a, b) => {
     if (a.recommended !== b.recommended) return a.recommended ? -1 : 1;
     const fitRank = { fits: 0, tight: 1, over: 2 } as const;
-    if (fitRank[a.fit] !== fitRank[b.fit]) return fitRank[a.fit] - fitRank[b.fit];
+    if (fitRank[a.fit] !== fitRank[b.fit])
+      return fitRank[a.fit] - fitRank[b.fit];
     return a.sizeLabel.localeCompare(b.sizeLabel, "en", { numeric: true });
   });
   // Explicit pinning rule, applied AFTER the usual ordering: uncensored

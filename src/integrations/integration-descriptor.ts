@@ -29,8 +29,13 @@ export interface IntegrationField {
    * can run (an owner id, an endpoint). Without this the hub could
    * only ever be half a setup surface: the operator would paste a
    * token here and then hand-edit JSON for the rest.
+   *
+   * `"transient"` is a value that is *acted on*, not stored — a
+   * verification code typed back from a mail. The hub's edit flow
+   * collects it like any field and hands it to the orchestrator, which
+   * does something with it and keeps nothing.
    */
-  store?: "env" | "config";
+  store?: "env" | "config" | "transient";
   /**
    * Env var this field is stored under in `<stateDir>/.env`. Secrets
    * never enter `config.json`; this is the same split Telegram's bot
@@ -49,10 +54,19 @@ export interface IntegrationField {
    * Toggles are how a channel's kill switch reaches the hub — without
    * one an operator would set a token here and still need the CLI to
    * turn the thing on.
+   *
+   * `"list"` is edited as one comma-separated line and stored as a
+   * `string[]`. It exists because "who may drive this" is a list for
+   * every channel that has more than one operator, and a hub that can
+   * only hold one value would send them back to hand-editing JSON.
+   * `validate` runs per entry, so the error names the bad id rather
+   * than the whole line.
    */
-  kind?: "text" | "boolean";
+  kind?: "text" | "boolean" | "list";
   /** Mask the value in the UI and never log it. */
   secret: boolean;
+  /** Shown, never edited or cleared: an address the service assigned. */
+  readonly?: boolean;
   /** A field the integration cannot work without. */
   required: boolean;
   /** Short hint rendered under the input. */
@@ -65,10 +79,7 @@ export interface IntegrationField {
 }
 
 export type IntegrationStatusLevel =
-  | "not_configured"
-  | "configured"
-  | "connected"
-  | "error";
+  "not_configured" | "configured" | "connected" | "error";
 
 export interface IntegrationStatus {
   level: IntegrationStatusLevel;
@@ -102,6 +113,17 @@ export interface IntegrationStatusContext {
    * intents — and that is the only part worth screen space.
    */
   channelErrors?: ReadonlyMap<string, string>;
+  /**
+   * Result of an explicit `verify` action per integration id — the
+   * one line that proves the credential works ("@login · repo,
+   * workflow"). For an integration with no live channel or server
+   * (GitHub), this is the only signal that separates "token saved"
+   * from "token works", so the hub keeps the last answer for the life
+   * of the process and drops it when the field changes.
+   */
+  verifiedIdentities?: ReadonlyMap<string, string>;
+  /** Why the last `verify` failed, per integration id. */
+  verifyErrors?: ReadonlyMap<string, string>;
 }
 
 /**
@@ -166,9 +188,7 @@ export interface IntegrationDescriptor {
 
 /** Default status: configured-or-not, with no runtime signal. */
 export function basicStatus(ctx: IntegrationStatusContext): IntegrationStatus {
-  return ctx.configured
-    ? { level: "configured" }
-    : { level: "not_configured" };
+  return ctx.configured ? { level: "configured" } : { level: "not_configured" };
 }
 
 /** Every required field of `descriptor` that has a value. */

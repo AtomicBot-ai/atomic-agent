@@ -46,10 +46,7 @@ describe("buildSkillCatalog", () => {
   });
 
   it("accounts for join newlines and tags when applying maxChars", () => {
-    const records = [
-      record("first", "one"),
-      record("second", "two"),
-    ];
+    const records = [record("first", "one"), record("second", "two")];
     const catalog = buildSkillCatalog(records, {
       maxChars:
         formatSkillCatalogLine({

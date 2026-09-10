@@ -48,7 +48,9 @@ export interface OnboardingKeyContext {
  * and cannot disagree with the render's own derivation.
  */
 export function onboardingPickRows(): readonly LocalPickRow[] {
-  return buildLocalPickRows(orderLocalModelPicks(buildLocalModelPicks(hostRamGb())));
+  return buildLocalPickRows(
+    orderLocalModelPicks(buildLocalModelPicks(hostRamGb())),
+  );
 }
 
 /**
@@ -145,11 +147,19 @@ function handleLocalPickKey(
     return true;
   }
   if (key.upArrow || input === "k") {
-    ctx.dispatch({ type: "onboarding_cursor_moved", delta: -1, length: pickRows.length });
+    ctx.dispatch({
+      type: "onboarding_cursor_moved",
+      delta: -1,
+      length: pickRows.length,
+    });
     return true;
   }
   if (key.downArrow || input === "j") {
-    ctx.dispatch({ type: "onboarding_cursor_moved", delta: 1, length: pickRows.length });
+    ctx.dispatch({
+      type: "onboarding_cursor_moved",
+      delta: 1,
+      length: pickRows.length,
+    });
     return true;
   }
   if (key.return) {
@@ -159,7 +169,10 @@ function handleLocalPickKey(
       ctx.dispatch({ type: "onboarding_step_set", step: "local_hf_ref" });
       return true;
     }
-    ctx.dispatch({ type: "onboarding_local_model_picked", modelId: row.pick.id });
+    ctx.dispatch({
+      type: "onboarding_local_model_picked",
+      modelId: row.pick.id,
+    });
     ctx.callbacks.onLocalModelsPullRequested?.(row.pick.id as LocalModelId);
     return true;
   }
@@ -300,7 +313,10 @@ function handleProposeKey(
 }
 
 /** Hand over to the agent with whatever outcome the flow already earned. */
-function finishImport(ctx: OnboardingKeyContext, onboarding: OnboardingUiState): void {
+function finishImport(
+  ctx: OnboardingKeyContext,
+  onboarding: OnboardingUiState,
+): void {
   ctx.dispatch({
     type: "onboarding_finished",
     outcome: onboarding.outcome ?? "skipped",
@@ -345,7 +361,10 @@ function handleImportPickKey(
     case "agent":
       // Space and Enter both flip the tick — on a checkbox row there is
       // nothing else Enter could honestly mean.
-      ctx.dispatch({ type: "onboarding_import_agent_toggled", index: row.index });
+      ctx.dispatch({
+        type: "onboarding_import_agent_toggled",
+        index: row.index,
+      });
       return true;
     case "skip":
       if (toggle) return true;
@@ -385,8 +404,7 @@ function handleImportPreviewKey(
   if (key.return) {
     const report = onboarding.importReport;
     const actionable =
-      report !== null &&
-      report.summary.migrated + report.summary.conflict > 0;
+      report !== null && report.summary.migrated + report.summary.conflict > 0;
     if (!actionable) {
       finishImport(ctx, onboarding);
       return true;
@@ -417,7 +435,11 @@ function handleImportDoneKey(
 // The cloud step *is* the providers wizard — same keys, same
 // verification, same hot-swap — so it routes through the panel's own
 // handler rather than a second implementation of it.
-function handleCloudKey(input: string, key: Key, ctx: OnboardingKeyContext): boolean {
+function handleCloudKey(
+  input: string,
+  key: Key,
+  ctx: OnboardingKeyContext,
+): boolean {
   const wizard = ctx.state.providersPanel.wizard;
   if (!wizard) return false;
   return routeProvidersWizardKey(input, key, wizard, {
@@ -426,4 +448,3 @@ function handleCloudKey(input: string, key: Key, ctx: OnboardingKeyContext): boo
     onSubmitCancel: () => ctx.callbacks.onProvidersWizardSubmitCancel?.(),
   });
 }
-

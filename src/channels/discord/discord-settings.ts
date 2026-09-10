@@ -23,7 +23,7 @@ export interface DiscordSettingsPaths {
 
 export interface DiscordSettingsPatch {
   enabled?: boolean;
-  ownerUserId?: string | null;
+  ownerUserIds?: readonly string[];
 }
 
 /** Merge `patch` into `config.discord` and invalidate the config cache. */
@@ -37,9 +37,9 @@ export function writeDiscordSettings(
     discord: {
       ...prev.discord,
       ...(patch.enabled === undefined ? {} : { enabled: patch.enabled }),
-      ...(patch.ownerUserId === undefined
+      ...(patch.ownerUserIds === undefined
         ? {}
-        : { ownerUserId: patch.ownerUserId }),
+        : { ownerUserIds: [...patch.ownerUserIds] }),
     },
   };
   writeUserConfigFileSync(paths.userConfigFile, parseUserConfigFile(draft));

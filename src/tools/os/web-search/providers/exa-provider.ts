@@ -183,7 +183,9 @@ export function parseExaTextResults(
       title,
       url,
       snippet: readMultiLineField(block, "Highlights") ?? "",
-      ...(readField(block, "Published") ? { published: readField(block, "Published")! } : {}),
+      ...(readField(block, "Published")
+        ? { published: readField(block, "Published")! }
+        : {}),
     });
     if (results.length >= maxResults) break;
   }

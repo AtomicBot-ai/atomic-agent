@@ -1,7 +1,14 @@
 import type Database from "better-sqlite3";
 import { Database as DatabaseCtor } from "../../native/load-better-sqlite3.js";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+
+import {
+  isoToMs,
+  parseLogLine,
+  projectLogMessage,
+  splitLogLines,
+} from "./openclaw-log-events.js";
 
 /**
  * Read-only access to a `~/.openclaw` state directory. This is the **only**
@@ -10,7 +17,7 @@ import { join } from "node:path";
  * cron table). Everything downstream operates on the neutral types
  * exported here so the mappers never depend on OpenClaw's on-disk shape.
  *
- * Layout (default agent `main`):
+ * Layout (one subtree per agent; `main` is the default):
  *  - `agents/<agent>/sessions/<id>.jsonl`  — event-sourced transcript.
  *  - `agents/<agent>/sessions/<id>.trajectory.jsonl` — raw provider trace
  *    (skipped — not a user-visible transcript).
@@ -23,12 +30,17 @@ export class OpenclawSourceError extends Error {
   }
 }
 
-/** Default OpenClaw agent whose sessions are imported. */
+/**
+ * OpenClaw's default agent. Its sessions import under the bare
+ * `openclaw:<id>`; every other agent's under `openclaw:<agent>:<id>`.
+ */
 export const OPENCLAW_DEFAULT_AGENT = "main";
 
 /** Lightweight session header read from the leading `session` event. */
 export interface OpenclawSessionMeta {
   id: string;
+  /** The agent whose `sessions/` dir holds the log. */
+  agent: string;
   /** Absolute path to the `<id>.jsonl` runtime log. */
   file: string;
   cwd: string | null;
@@ -102,8 +114,42 @@ export class OpenclawSource {
     private readonly agent: string = OPENCLAW_DEFAULT_AGENT,
   ) {}
 
+  /** The agent this instance reads sessions and cron jobs for. */
+  agentName(): string {
+    return this.agent;
+  }
+
+  agentsDir(): string {
+    return join(this.sourceDir, "agents");
+  }
+
   sessionsDir(): string {
-    return join(this.sourceDir, "agents", this.agent, "sessions");
+    return join(this.agentsDir(), this.agent, "sessions");
+  }
+
+  /**
+   * Every agent on disk that has a `sessions/` dir, sorted by name. The
+   * TUI and the first-run flow import all of them; the CLI's `--agent`
+   * narrows to one.
+   */
+  listAgents(): string[] {
+    const root = this.agentsDir();
+    if (!existsSync(root)) return [];
+    const agents: string[] = [];
+    for (const entry of readdirSync(root).sort()) {
+      const sessions = join(root, entry, "sessions");
+      try {
+        if (statSync(sessions).isDirectory()) agents.push(entry);
+      } catch {
+        continue;
+      }
+    }
+    return agents;
+  }
+
+  /** A sibling reader over the same state dir for another agent. */
+  forAgent(agent: string): OpenclawSource {
+    return new OpenclawSource(this.sourceDir, agent);
   }
 
   stateDbPath(): string {
@@ -119,8 +165,10 @@ export class OpenclawSource {
   }
 
   /**
-   * List session headers for the configured agent, ordered oldest-first.
-   * Only `<id>.jsonl` runtime logs are considered; `.trajectory.jsonl`
+   * List session headers for the configured agent, newest-first by the
+   * `session` event timestamp (id as the tiebreak), so a `limit` keeps
+   * the most recent N like every other source. Only `<id>.jsonl` runtime
+   * logs are considered; `.trajectory.jsonl`
    * (raw provider trace) and `.trajectory-path.json` pointers are skipped.
    * A file without a parseable `session` event is dropped.
    */
@@ -135,8 +183,10 @@ export class OpenclawSource {
       const meta = this.readSessionMeta(file);
       if (meta) metas.push(meta);
     }
-    metas.sort((a, b) =>
-      a.startedAtMs - b.startedAtMs || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+    metas.sort(
+      (a, b) =>
+        b.startedAtMs - a.startedAtMs ||
+        (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
     );
     return metas;
   }
@@ -153,8 +203,8 @@ export class OpenclawSource {
     let cwd: string | null = null;
     let model: string | null = null;
     let startedAtMs = 0;
-    for (const line of splitLines(text)) {
-      const event = parseLine(line);
+    for (const line of splitLogLines(text)) {
+      const event = parseLogLine(line);
       if (!event) continue;
       if (event.type === "session") {
         id = typeof event.id === "string" ? event.id : null;
@@ -166,7 +216,7 @@ export class OpenclawSource {
       if (id !== null && model !== null) break;
     }
     if (id === null) return null;
-    return { id, file, cwd, model, startedAtMs };
+    return { id, agent: this.agent, file, cwd, model, startedAtMs };
   }
 
   /** Parse every `message` event of a session log into neutral messages. */
@@ -179,10 +229,10 @@ export class OpenclawSource {
       throw new OpenclawSourceError(`failed to read ${meta.file}: ${message}`);
     }
     const messages: OpenclawMessage[] = [];
-    for (const line of splitLines(text)) {
-      const event = parseLine(line);
+    for (const line of splitLogLines(text)) {
+      const event = parseLogLine(line);
       if (!event || event.type !== "message") continue;
-      const projected = projectMessage(event);
+      const projected = projectLogMessage(event);
       if (projected) messages.push(projected);
     }
     return messages;
@@ -239,100 +289,4 @@ export class OpenclawSource {
       this.db = null;
     }
   }
-}
-
-interface RawEvent {
-  type?: string;
-  id?: unknown;
-  cwd?: unknown;
-  timestamp?: unknown;
-  modelId?: unknown;
-  message?: unknown;
-}
-
-function splitLines(text: string): string[] {
-  return text.split(/\r?\n/);
-}
-
-/** Parse one JSONL line; malformed or blank lines yield null (skipped). */
-function parseLine(line: string): RawEvent | null {
-  const trimmed = line.trim();
-  if (trimmed.length === 0) return null;
-  try {
-    const parsed = JSON.parse(trimmed);
-    if (parsed && typeof parsed === "object") return parsed as RawEvent;
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-/** Project a raw `message` event into a neutral `OpenclawMessage`. */
-function projectMessage(event: RawEvent): OpenclawMessage | null {
-  const msg = event.message;
-  if (!msg || typeof msg !== "object") return null;
-  const m = msg as Record<string, unknown>;
-  const role = m.role;
-  if (role !== "user" && role !== "assistant" && role !== "toolResult") {
-    return null;
-  }
-  const blocks = projectBlocks(m.content);
-  const atMs =
-    typeof m.timestamp === "number"
-      ? Math.round(m.timestamp)
-      : isoToMs(event.timestamp) ?? 0;
-  return {
-    role,
-    blocks,
-    toolCallId: typeof m.toolCallId === "string" ? m.toolCallId : null,
-    toolName: typeof m.toolName === "string" ? m.toolName : null,
-    isError: m.isError === true,
-    atMs,
-  };
-}
-
-function projectBlocks(content: unknown): OpenclawBlock[] {
-  if (!Array.isArray(content)) return [];
-  const blocks: OpenclawBlock[] = [];
-  for (const raw of content) {
-    if (!raw || typeof raw !== "object") continue;
-    const block = raw as Record<string, unknown>;
-    switch (block.type) {
-      case "text":
-        if (typeof block.text === "string") {
-          blocks.push({ type: "text", text: block.text });
-        }
-        break;
-      case "thinking":
-        if (typeof block.thinking === "string") {
-          blocks.push({ type: "thinking", thinking: block.thinking });
-        }
-        break;
-      case "toolCall": {
-        const name = block.name;
-        if (typeof name !== "string" || name.length === 0) break;
-        blocks.push({
-          type: "toolCall",
-          id: typeof block.id === "string" ? block.id : null,
-          name,
-          args:
-            block.arguments && typeof block.arguments === "object" &&
-            !Array.isArray(block.arguments)
-              ? (block.arguments as Record<string, unknown>)
-              : {},
-        });
-        break;
-      }
-      default:
-        break;
-    }
-  }
-  return blocks;
-}
-
-/** Parse an ISO-8601 timestamp into integer ms; null on failure. */
-function isoToMs(value: unknown): number | null {
-  if (typeof value !== "string") return null;
-  const ms = Date.parse(value);
-  return Number.isNaN(ms) ? null : ms;
 }

@@ -26,7 +26,10 @@ function stubTree(entries: TreeEntry[], status = 200): void {
 }
 
 function stubStatus(status: number): void {
-  vi.stubGlobal("fetch", vi.fn(async () => new Response("", { status })));
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => new Response("", { status })),
+  );
 }
 
 afterEach(() => {
@@ -40,7 +43,9 @@ describe("resolveHuggingFaceGgufChoices", () => {
       { path: "Qwen3.5-4B-UD-Q4_K_XL.gguf", lfs: { size: 2.7 * GB } },
       { path: "Qwen3.5-4B-Q5_K_M.gguf", lfs: { size: 3 * GB } },
     ]);
-    const resolved = await resolveHuggingFaceGgufChoices("unsloth/Qwen3.5-4B-GGUF");
+    const resolved = await resolveHuggingFaceGgufChoices(
+      "unsloth/Qwen3.5-4B-GGUF",
+    );
     expect(resolved.repoId).toBe("unsloth/Qwen3.5-4B-GGUF");
     expect(resolved.choices.map((c) => c.filename)).toEqual([
       "Qwen3.5-4B-UD-Q4_K_XL.gguf",
@@ -59,7 +64,9 @@ describe("resolveHuggingFaceGgufChoices", () => {
       { path: "mmproj-BF16.gguf", lfs: { size: 0.5 * GB } },
     ]);
     const resolved = await resolveHuggingFaceGgufChoices("owner/repo");
-    expect(resolved.choices.map((c) => c.filename)).toEqual(["model-Q4_K_M.gguf"]);
+    expect(resolved.choices.map((c) => c.filename)).toEqual([
+      "model-Q4_K_M.gguf",
+    ]);
     expect(resolved.hidden).toBe(
       "3 more files hidden: 1 full-precision, 1 multi-part, 1 vision projector",
     );
@@ -74,7 +81,9 @@ describe("resolveHuggingFaceGgufChoices", () => {
     const resolved = await resolveHuggingFaceGgufChoices(
       "https://huggingface.co/owner/repo/blob/main/model-Q8_0.gguf",
     );
-    expect(resolved.choices.map((c) => c.filename)).toEqual(["model-Q8_0.gguf"]);
+    expect(resolved.choices.map((c) => c.filename)).toEqual([
+      "model-Q8_0.gguf",
+    ]);
   });
 
   it("refuses a direct link to a shard, quoting why", async () => {
@@ -142,7 +151,9 @@ describe("resolveHuggingFaceGgufChoices", () => {
 describe("buildCustomModelDef", () => {
   it("mints a filesystem-safe id and an advisory RAM envelope", async () => {
     stubTree([{ path: "Qwen3.5-4B-UD-Q4_K_XL.gguf", lfs: { size: 2.7 * GB } }]);
-    const resolved = await resolveHuggingFaceGgufChoices("unsloth/Qwen3.5-4B-GGUF");
+    const resolved = await resolveHuggingFaceGgufChoices(
+      "unsloth/Qwen3.5-4B-GGUF",
+    );
     const choice = resolved.choices[0]!;
     const def = buildCustomModelDef({
       repoId: resolved.repoId,

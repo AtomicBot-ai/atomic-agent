@@ -6,10 +6,7 @@ import { join } from "node:path";
 import { applyMigrations } from "../memory-schema.js";
 import { Database as DatabaseCtor } from "../../native/load-better-sqlite3.js";
 
-import {
-  LessonStore,
-  computeLessonCombinedScore,
-} from "./lesson-store.js";
+import { LessonStore, computeLessonCombinedScore } from "./lesson-store.js";
 
 /**
  * Memory-v2 phase 7a. Pins the post-BM25 reranking that consumes

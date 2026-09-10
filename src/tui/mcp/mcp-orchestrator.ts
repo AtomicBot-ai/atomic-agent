@@ -20,10 +20,7 @@ import {
   removeMcpServer,
 } from "../persist-mcp-server.js";
 import { isMcpAction } from "./mcp-actions.js";
-import type {
-  McpServerDetail,
-  McpServerRow,
-} from "./mcp-panel-state.js";
+import type { McpServerDetail, McpServerRow } from "./mcp-panel-state.js";
 
 export interface McpOrchestratorOptions {
   refreshIntervalMs?: number;

@@ -12,6 +12,7 @@ import type {
   LocalModelRow,
   LocalModelsPanelMode,
   LocalModelsPullState,
+  LocalModelsNotifyPrompt,
 } from "./local-models-panel-state.js";
 
 export type LocalModelsAction =
@@ -48,6 +49,15 @@ export type LocalModelsAction =
       sizeLabel: string;
     }
   | { type: "local_models_embedding_onboarding_dismissed" }
+  | {
+      /**
+       * "Tell me when it lands?" — asked once, the first time a pull
+       * starts with no remembered answer, or on demand with `N`.
+       */
+      type: "local_models_notify_prompt_opened";
+      prompt: LocalModelsNotifyPrompt;
+    }
+  | { type: "local_models_notify_prompt_closed" }
   | { type: "local_models_pull_started"; pull: LocalModelsPullState }
   | {
       type: "local_models_pull_progress";
@@ -55,6 +65,8 @@ export type LocalModelsAction =
       percent: number;
       transferredBytes: number;
       totalBytes: number;
+      /** Omitted = unchanged; `null` = bytes are flowing again. */
+      waiting?: LocalModelsPullState["waiting"];
     }
   | { type: "local_models_pull_finished"; kind?: LocalModelsPullState["kind"] }
   | {
@@ -86,6 +98,14 @@ export type LocalModelsAction =
   | { type: "local_models_hf_repo_resolved"; repo: HuggingFaceRepoChoices }
   | { type: "local_models_hf_cursor_set"; cursor: number }
   | { type: "local_models_hf_cursor_moved"; delta: number }
+  /**
+   * `/llm restart` — bounce the managed chat daemon. A state no-op as a
+   * reducer action: the restart lives on
+   * `LocalModelsOrchestrator.restartDaemon`, which only the callback
+   * layer can reach, so `submit-handler` intercepts this before dispatch
+   * (same rule as `providers_contract_probe_requested` for `/llm check`).
+   */
+  | { type: "local_models_daemon_restart_requested" }
   | { type: "local_models_daemon_phase_set"; phase: DaemonPhase }
   | { type: "local_models_daemon_error_set"; message: string | null }
   | {
@@ -98,7 +118,9 @@ export type LocalModelsAction =
     }
   | { type: "local_llm_logs_error"; message: string; path: string | null };
 
-export function isLocalModelsAction(action: { type: string }): action is LocalModelsAction {
+export function isLocalModelsAction(action: {
+  type: string;
+}): action is LocalModelsAction {
   return (
     action.type.startsWith("local_models_") ||
     action.type.startsWith("local_llm_logs_")

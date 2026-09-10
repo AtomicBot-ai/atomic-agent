@@ -38,13 +38,13 @@ export function LocalLlmLogsPanel({
             : ""}
         </Text>
       ) : null}
-      {logs.error ? (
-        <Text color="yellow">{logs.error}</Text>
-      ) : null}
+      {logs.error ? <Text color="yellow">{logs.error}</Text> : null}
       <Box marginTop={1} flexDirection="column">
         {tail.length === 0 ? (
           <Text color={theme.colors.muted}>
-            {logs.error ? "" : "(log is empty — start the daemon to see output)"}
+            {logs.error
+              ? ""
+              : "(log is empty — start the daemon to see output)"}
           </Text>
         ) : (
           tail.map((line, i) => (

@@ -41,7 +41,8 @@ export function HfReferenceEditor(props: {
   return (
     <Box flexDirection="column" flexShrink={0}>
       <Text>
-        Which model? <Text color={theme.colors.muted}>(it has to be a GGUF build)</Text>
+        Which model?{" "}
+        <Text color={theme.colors.muted}>(it has to be a GGUF build)</Text>
       </Text>
       <Text color={theme.colors.muted}>{HF_REF_EXAMPLES_LINE}</Text>
       <Box marginTop={1}>

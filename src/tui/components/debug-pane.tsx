@@ -27,6 +27,7 @@ import { MemoryPanel } from "./memory-panel.js";
 import { ImportPanel } from "./import-panel.js";
 import { PrivacyPanel } from "../privacy/components/privacy-panel.js";
 import { IntegrationsPanel } from "../integrations/components/integrations-panel.js";
+import { SwarmPanel } from "../swarm/components/swarm-panel.js";
 import { ProvidersPanel } from "./providers-panel.js";
 
 interface DebugPaneProps {
@@ -163,6 +164,7 @@ function buildManageTabs(state: TuiState): SubTab[] {
     { id: "memory", label: `Memory${suffix(state.memoryPanel.rows.length)}` },
     { id: "mcp", label: `MCP${suffix(state.mcpPanel.rows.length)}` },
     { id: "integrations", label: integrationsTabLabel(state) },
+    { id: "swarm", label: swarmTabLabel(state) },
     { id: "llm", label: "LLM" },
     { id: "import", label: "Import" },
     { id: "privacy", label: "Privacy" },
@@ -249,13 +251,18 @@ export function steppedPanelRows(
 
 /** Height the stepped panels actually render at a given budget. */
 export function steppedPanelRendered(maxRows: number): number {
-  return maxRows >= STEPPED_PANEL_TALL_ROWS ? STEPPED_PANEL_TALL_ROWS : STEPPED_PANEL_SHORT_ROWS;
+  return maxRows >= STEPPED_PANEL_TALL_ROWS
+    ? STEPPED_PANEL_TALL_ROWS
+    : STEPPED_PANEL_SHORT_ROWS;
 }
 
 const STEPPED_PANEL_SHORT_ROWS = 9;
 const STEPPED_PANEL_TALL_ROWS = 20;
 
-function tabContentBudget(terminalRows: number, composerVisible: boolean): number {
+function tabContentBudget(
+  terminalRows: number,
+  composerVisible: boolean,
+): number {
   return Math.max(
     MIN_LIST_ROWS,
     terminalRows -
@@ -318,7 +325,11 @@ function ActiveDebugTab({
       return <LogsTab state={state} maxVisible={maxVisible} />;
     case "tasks":
       return (
-        <TasksPanel panel={state.tasksPanel} now={Date.now()} maxRows={compactRows} />
+        <TasksPanel
+          panel={state.tasksPanel}
+          now={Date.now()}
+          maxRows={compactRows}
+        />
       );
     case "skills":
       return <SkillsPanel panel={state.skillsPanel} maxRows={compactRows} />;
@@ -346,7 +357,9 @@ function ActiveDebugTab({
         />
       );
     case "llm-logs":
-      return <LocalLlmLogsPanel logs={state.localLlmLogs} maxLines={maxVisible} />;
+      return (
+        <LocalLlmLogsPanel logs={state.localLlmLogs} maxLines={maxVisible} />
+      );
     case "import":
       return <ImportPanel panel={state.importPanel} />;
     case "privacy":
@@ -358,6 +371,8 @@ function ActiveDebugTab({
           maxRows={compactRows}
         />
       );
+    case "swarm":
+      return <SwarmPanel panel={state.swarmPanel} maxRows={compactRows} />;
     default:
       return <EventFeed state={state} maxVisible={maxVisible} />;
   }
@@ -377,6 +392,12 @@ function suffix(count: number): string {
  * Integrations tab label with a configured-count suffix, so an operator
  * can see at a glance whether anything is wired up without opening it.
  */
+/** Swarm tab label with a bot count, so the strip shows the fleet size. */
+function swarmTabLabel(state: TuiState): string {
+  const n = state.swarmPanel.rows.length;
+  return n > 0 ? `Swarm (${n})` : "Swarm";
+}
+
 function integrationsTabLabel(state: TuiState): string {
   const rows = state.integrationsPanel.rows;
   const ready = rows.filter(
@@ -384,7 +405,6 @@ function integrationsTabLabel(state: TuiState): string {
   ).length;
   return ready > 0 ? `Integrations (${ready})` : "Integrations";
 }
-
 
 /**
  * Re-export of the section-aware sub-tab cycler. Kept here so existing
@@ -400,4 +420,3 @@ export const DEBUG_TAB_ORDER: readonly TuiTab[] = [
   ...OBSERVE_TABS,
   ...MANAGE_TABS,
 ];
-

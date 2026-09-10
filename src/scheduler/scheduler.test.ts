@@ -2,7 +2,11 @@ import { describe, it, expect, vi } from "vitest";
 
 import type { DrainOutcome } from "../tasks/task-runner.js";
 
-import { Scheduler, type SchedulerClock, type SchedulerTaskRunner } from "./scheduler.js";
+import {
+  Scheduler,
+  type SchedulerClock,
+  type SchedulerTaskRunner,
+} from "./scheduler.js";
 
 interface FakeTimer {
   handler: () => void;
@@ -10,7 +14,11 @@ interface FakeTimer {
   cleared: boolean;
 }
 
-function createFakeClock(): { clock: SchedulerClock; timers: FakeTimer[]; nowMs: { value: number } } {
+function createFakeClock(): {
+  clock: SchedulerClock;
+  timers: FakeTimer[];
+  nowMs: { value: number };
+} {
   const nowMs = { value: 1_000_000 };
   const timers: FakeTimer[] = [];
   const clock: SchedulerClock = {
@@ -43,7 +51,10 @@ describe("Scheduler", () => {
   it("calls runDue with now() and batch on each tick", async () => {
     const { clock, timers, nowMs } = createFakeClock();
     const runDue = vi
-      .fn<Parameters<SchedulerTaskRunner["runDue"]>, ReturnType<SchedulerTaskRunner["runDue"]>>()
+      .fn<
+        Parameters<SchedulerTaskRunner["runDue"]>,
+        ReturnType<SchedulerTaskRunner["runDue"]>
+      >()
       .mockResolvedValue({ ...emptyOutcome(), drained: 2, completed: 2 });
     const scheduler = new Scheduler({
       taskRunner: { runDue },
@@ -72,7 +83,10 @@ describe("Scheduler", () => {
     const { clock, timers } = createFakeClock();
     let resolveFirst!: (value: DrainOutcome) => void;
     const runDue = vi
-      .fn<Parameters<SchedulerTaskRunner["runDue"]>, ReturnType<SchedulerTaskRunner["runDue"]>>()
+      .fn<
+        Parameters<SchedulerTaskRunner["runDue"]>,
+        ReturnType<SchedulerTaskRunner["runDue"]>
+      >()
       .mockImplementationOnce(
         () =>
           new Promise<DrainOutcome>((resolve) => {
@@ -106,7 +120,10 @@ describe("Scheduler", () => {
   it("swallows tick errors and keeps the interval alive", async () => {
     const { clock, timers } = createFakeClock();
     const runDue = vi
-      .fn<Parameters<SchedulerTaskRunner["runDue"]>, ReturnType<SchedulerTaskRunner["runDue"]>>()
+      .fn<
+        Parameters<SchedulerTaskRunner["runDue"]>,
+        ReturnType<SchedulerTaskRunner["runDue"]>
+      >()
       .mockRejectedValueOnce(new Error("boom"))
       .mockResolvedValue({ ...emptyOutcome(), drained: 1, completed: 1 });
     const warn = vi.fn();
@@ -142,7 +159,10 @@ describe("Scheduler", () => {
     const { clock, timers } = createFakeClock();
     let resolveTick!: (value: DrainOutcome) => void;
     const runDue = vi
-      .fn<Parameters<SchedulerTaskRunner["runDue"]>, ReturnType<SchedulerTaskRunner["runDue"]>>()
+      .fn<
+        Parameters<SchedulerTaskRunner["runDue"]>,
+        ReturnType<SchedulerTaskRunner["runDue"]>
+      >()
       .mockImplementation(
         () =>
           new Promise<DrainOutcome>((resolve) => {
@@ -180,7 +200,10 @@ describe("Scheduler", () => {
   it("start is a no-op after stop", async () => {
     const { clock, timers } = createFakeClock();
     const runDue = vi
-      .fn<Parameters<SchedulerTaskRunner["runDue"]>, ReturnType<SchedulerTaskRunner["runDue"]>>()
+      .fn<
+        Parameters<SchedulerTaskRunner["runDue"]>,
+        ReturnType<SchedulerTaskRunner["runDue"]>
+      >()
       .mockResolvedValue(emptyOutcome());
     const scheduler = new Scheduler({
       taskRunner: { runDue },
@@ -199,7 +222,10 @@ describe("Scheduler", () => {
   it("tickOnce runs a single drain regardless of the interval", async () => {
     const { clock } = createFakeClock();
     const runDue = vi
-      .fn<Parameters<SchedulerTaskRunner["runDue"]>, ReturnType<SchedulerTaskRunner["runDue"]>>()
+      .fn<
+        Parameters<SchedulerTaskRunner["runDue"]>,
+        ReturnType<SchedulerTaskRunner["runDue"]>
+      >()
       .mockResolvedValue({ ...emptyOutcome(), drained: 3, completed: 3 });
     const scheduler = new Scheduler({
       taskRunner: { runDue },

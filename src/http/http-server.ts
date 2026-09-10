@@ -1,4 +1,9 @@
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import {
+  createServer,
+  type IncomingMessage,
+  type Server,
+  type ServerResponse,
+} from "node:http";
 
 import type { AgentRuntime } from "../runtime/bootstrap.js";
 import { ApprovalBus } from "./approval-bus.js";
@@ -157,7 +162,9 @@ export function createHttpServer(
       server.off("error", onError);
       const address = server.address();
       const resolvedPort =
-        typeof address === "object" && address !== null ? address.port : options.port;
+        typeof address === "object" && address !== null
+          ? address.port
+          : options.port;
       resolvePromise({
         server,
         host: options.host,
@@ -191,7 +198,10 @@ async function dispatch(
     sendError(
       res,
       404,
-      openaiError(`No route for ${method} ${url.pathname}`, "invalid_request_error"),
+      openaiError(
+        `No route for ${method} ${url.pathname}`,
+        "invalid_request_error",
+      ),
     );
     return;
   }
@@ -224,7 +234,12 @@ function handleRouteError(res: ServerResponse, err: unknown): void {
     sendError(
       res,
       413,
-      openaiError(err.message, "invalid_request_error", null, "payload_too_large"),
+      openaiError(
+        err.message,
+        "invalid_request_error",
+        null,
+        "payload_too_large",
+      ),
     );
     return;
   }

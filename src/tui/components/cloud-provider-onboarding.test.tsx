@@ -22,7 +22,8 @@ import { KIND_ROW_ORDER } from "../providers/providers-wizard-phases.js";
 import { saveProviderWizardToConfig } from "../providers/save-provider-wizard.js";
 
 vi.mock("../../config/index.js", async (importOriginal) => {
-  const original = await importOriginal<typeof import("../../config/index.js")>();
+  const original =
+    await importOriginal<typeof import("../../config/index.js")>();
   return { ...original, getConfig: () => currentConfig };
 });
 
@@ -155,27 +156,26 @@ function stubProbeFetch(sse: string): { probeBodies: () => string[] } {
 }
 
 /** A complete native tool call: the one verdict that proves the route. */
-const PROBE_TOOL_CALL_SSE =
-  `data: ${JSON.stringify({
-    choices: [
-      {
-        delta: {
-          tool_calls: [
-            {
-              index: 0,
-              type: "function",
-              function: {
-                name: "atomic_contract_probe",
-                arguments: '{"ok":true}',
-              },
+const PROBE_TOOL_CALL_SSE = `data: ${JSON.stringify({
+  choices: [
+    {
+      delta: {
+        tool_calls: [
+          {
+            index: 0,
+            type: "function",
+            function: {
+              name: "atomic_contract_probe",
+              arguments: '{"ok":true}',
             },
-          ],
-        },
+          },
+        ],
       },
-    ],
-  })}\n\ndata: ${JSON.stringify({
-    choices: [{ delta: {}, finish_reason: "tool_calls" }],
-  })}\n\ndata: [DONE]\n\n`;
+    },
+  ],
+})}\n\ndata: ${JSON.stringify({
+  choices: [{ delta: {}, finish_reason: "tool_calls" }],
+})}\n\ndata: [DONE]\n\n`;
 
 /** Truncated mid-argument, with nothing announcing the end. */
 const PROBE_EARLY_EOF_SSE = `data: ${JSON.stringify({
@@ -433,7 +433,9 @@ describe("CloudProviderOnboarding contract probe", () => {
     expect(saveMock).toHaveBeenCalledTimes(1);
     expect(onFinished).toHaveBeenCalledTimes(1);
     expect(onFinished.mock.calls[0]?.[0]).toBe("saved_cloud");
-    expect(String(onFinished.mock.calls[0]?.[1])).toContain("closed the stream");
+    expect(String(onFinished.mock.calls[0]?.[1])).toContain(
+      "closed the stream",
+    );
     unmount();
   });
 });

@@ -7,7 +7,11 @@ import { MouseProvider } from "../mouse/mouse-context.js";
 import { MouseTargetRegistry } from "../mouse/mouse-registry.js";
 import type { TuiAction } from "../tui-action.js";
 import type { TuiAppCallbacks } from "../tui-app.js";
-import { createInitialTuiState, type TuiSessionInfo, type TuiState } from "../tui-state.js";
+import {
+  createInitialTuiState,
+  type TuiSessionInfo,
+  type TuiState,
+} from "../tui-state.js";
 import { ChatTryAgainButton } from "./chat-try-again-button.js";
 
 const SESSION: TuiSessionInfo = {
@@ -83,7 +87,10 @@ interface Harness {
 
 function mount(
   children: ReactNode,
-  { withMouse = true, initial }: { withMouse?: boolean; initial?: TuiState } = {},
+  {
+    withMouse = true,
+    initial,
+  }: { withMouse?: boolean; initial?: TuiState } = {},
 ): Harness {
   const registry = new MouseTargetRegistry();
   // A real reducer behind the provider: the point of these tests is what
@@ -171,7 +178,9 @@ describe("ChatTryAgainButton", () => {
       ...createInitialTuiState(SESSION),
       inputValue: "half-written thought",
     };
-    const app = mount(<ChatTryAgainButton text="run that again" />, { initial });
+    const app = mount(<ChatTryAgainButton text="run that again" />, {
+      initial,
+    });
     await app.clickUntil("[try again]", () => app.submitted.length > 0);
     expect(app.submitted).toEqual(["run that again"]);
     // Submitting blanks `inputValue` (`startNewRun`); the draft is put
@@ -187,7 +196,9 @@ describe("ChatTryAgainButton", () => {
       status: "running",
       whileBusyMode: "steer",
     };
-    const app = mount(<ChatTryAgainButton text="try that again" />, { initial });
+    const app = mount(<ChatTryAgainButton text="try that again" />, {
+      initial,
+    });
     await app.clickUntil("[try again]", () => app.steered.length > 0);
     expect(app.steered).toEqual(["try that again"]);
     // Not a second turn: the routing is `handleEditorSubmit`'s, not ours.

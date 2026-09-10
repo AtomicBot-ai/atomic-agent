@@ -30,10 +30,14 @@ export function checkProfileGrammarAligned(
   }
 
   if (!PRELUDE_ROOT_RE.test(grammar)) {
-    violations.push("reasoning profile grammar must route root through a prelude rule");
+    violations.push(
+      "reasoning profile grammar must route root through a prelude rule",
+    );
   }
   if (!grammar.includes(escapeGrammarLiteral(profile.reasoningCloseTag))) {
-    violations.push("reasoning profile grammar must contain the configured close tag");
+    violations.push(
+      "reasoning profile grammar must contain the configured close tag",
+    );
   }
   return violations;
 }
@@ -60,15 +64,21 @@ export function checkProfilePromptAligned(
   const trimmed = promptText.trimEnd();
 
   if (profile.reasoningStyle === "none") {
-    const leakedPrefix = getKnownReasoningOpenTags().find((tag) => trimmed.endsWith(tag));
+    const leakedPrefix = getKnownReasoningOpenTags().find((tag) =>
+      trimmed.endsWith(tag),
+    );
     if (leakedPrefix) {
-      violations.push("plain profile prompt must not end with a reasoning prelude");
+      violations.push(
+        "plain profile prompt must not end with a reasoning prelude",
+      );
     }
     return violations;
   }
 
   if (options.promptCarriesPrefill === false) {
-    const leakedPrefix = getKnownReasoningOpenTags().find((tag) => trimmed.endsWith(tag));
+    const leakedPrefix = getKnownReasoningOpenTags().find((tag) =>
+      trimmed.endsWith(tag),
+    );
     if (leakedPrefix) {
       violations.push(
         "prefill-suppressed prompt must not end with a reasoning prelude",
@@ -101,7 +111,9 @@ export function checkProfilePromptAligned(
   }
 
   if (!trimmed.endsWith(profile.reasoningOpenTag.trimEnd())) {
-    violations.push("reasoning profile prompt must end with the configured open tag");
+    violations.push(
+      "reasoning profile prompt must end with the configured open tag",
+    );
   }
   return violations;
 }

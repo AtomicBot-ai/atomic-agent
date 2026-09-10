@@ -4,20 +4,30 @@ import type { TuiAction } from "../tui-action.js";
 import type { TuiAppCallbacks } from "../tui-app.js";
 import type { TuiState } from "../tui-state.js";
 import { runComposerSwitchRow } from "./composer-switch-activate.js";
-import { cloudState, localState } from "./composer-switch-fixtures.js";
+import {
+  cloudState,
+  fusionState,
+  localModelDef,
+  localState,
+} from "./composer-switch-fixtures.js";
 import { selectComposerSwitchRows } from "./composer-switch-rows.js";
 import type { ComposerSwitchKind } from "./composer-switch-state.js";
 
 function harness(state: TuiState) {
   const actions: TuiAction[] = [];
   const callbacks = {
+    onRunModeChangeRequested: vi.fn(),
     onProvidersSetActiveText: vi.fn(),
     onProvidersSelectChatModel: vi.fn(),
     onLocalModelsSetActiveRequested: vi.fn(),
     onLocalModelsUseManagedRequested: vi.fn(),
     onLocalModelsDaemonStartRequested: vi.fn(),
     onLocalModelsDaemonStopRequested: vi.fn(),
+    onFusionWorkersChangeRequested: vi.fn(),
   } as unknown as TuiAppCallbacks & {
+    onRunModeChangeRequested: ReturnType<typeof vi.fn>;
+    onFusionWorkersChangeRequested: ReturnType<typeof vi.fn>;
+    onLocalModelsDaemonStartRequested: ReturnType<typeof vi.fn>;
     onProvidersSetActiveText: ReturnType<typeof vi.fn>;
     onProvidersSelectChatModel: ReturnType<typeof vi.fn>;
     onLocalModelsSetActiveRequested: ReturnType<typeof vi.fn>;
@@ -28,7 +38,12 @@ function harness(state: TuiState) {
       (candidate) => candidate.label === label,
     );
     if (!row) throw new Error(`no ${kind} row labelled ${label}`);
-    runComposerSwitchRow(row, state, (action) => actions.push(action), callbacks);
+    runComposerSwitchRow(
+      row,
+      state,
+      (action) => actions.push(action),
+      callbacks,
+    );
   };
   return { actions, callbacks, pick };
 }
@@ -87,7 +102,9 @@ describe("picking a model", () => {
     app.pick("model", "qwen-3.5-4b");
     // Already active with a live daemon: the row's primary action is
     // `current`, so nothing is re-selected and nothing is restarted.
-    expect(app.callbacks.onLocalModelsSetActiveRequested).not.toHaveBeenCalled();
+    expect(
+      app.callbacks.onLocalModelsSetActiveRequested,
+    ).not.toHaveBeenCalled();
   });
 
   it("re-selects the model when local is picked out of custom mode", () => {
@@ -149,7 +166,9 @@ describe("picking a backend", () => {
     app.pick("backend", "local");
     // `onLocalModelsSetActiveRequested` persists `mode: "managed"`
     // itself; a second writer racing it would be redundant at best.
-    expect(app.callbacks.onLocalModelsUseManagedRequested).not.toHaveBeenCalled();
+    expect(
+      app.callbacks.onLocalModelsUseManagedRequested,
+    ).not.toHaveBeenCalled();
   });
 
   it("custom opens the external base-URL editor where it is drawn", () => {
@@ -180,5 +199,172 @@ describe("the download deep link", () => {
       "llm_mode_set",
     ]);
     expect(app.actions.at(-1)).toEqual({ type: "llm_mode_set", mode: "local" });
+  });
+});
+
+describe("picking fusion", () => {
+  it("refuses with the pre-flight line when no cloud provider has a key", () => {
+    const app = harness(localState());
+    app.pick("backend", "fusion");
+    expect(app.callbacks.onRunModeChangeRequested).not.toHaveBeenCalled();
+    expect(app.actions).toContainEqual({
+      type: "composer_notice",
+      text: expect.stringMatching(/needs a cloud provider with a key/),
+    });
+  });
+
+  it("refuses when nothing is downloaded for the workers", () => {
+    const base = cloudState();
+    const state = {
+      ...base,
+      localModelsPanel: {
+        ...base.localModelsPanel,
+        rows: [],
+        lastRefreshedAt: 1,
+      },
+    };
+    const app = harness(state);
+    app.pick("backend", "fusion");
+    expect(app.callbacks.onRunModeChangeRequested).not.toHaveBeenCalled();
+    expect(app.actions).toContainEqual({
+      type: "composer_notice",
+      text: expect.stringMatching(/needs a downloaded local model/),
+    });
+  });
+
+  it("hands a ready state to the run-mode orchestrator and nothing else", () => {
+    const app = harness(fusionState({ stored: null, effective: "cloud" }));
+    app.pick("backend", "fusion");
+    expect(app.callbacks.onRunModeChangeRequested).toHaveBeenCalledWith(
+      "fusion",
+    );
+    expect(app.callbacks.onProvidersSetActiveText).not.toHaveBeenCalled();
+    expect(app.actions.map((action) => action.type)).toEqual([
+      "composer_switch_closed",
+    ]);
+  });
+});
+
+describe("leaving fusion", () => {
+  it("cloud clears the stored mode through the run-mode write, not set-active", () => {
+    const app = harness(fusionState());
+    app.pick("backend", "cloud");
+    expect(app.callbacks.onRunModeChangeRequested).toHaveBeenCalledWith(
+      "cloud",
+    );
+    expect(app.callbacks.onProvidersSetActiveText).not.toHaveBeenCalled();
+  });
+
+  it("local clears the stored mode the same way, then picks the model as before", () => {
+    const app = harness(fusionState());
+    app.pick("backend", "local");
+    expect(app.callbacks.onRunModeChangeRequested).toHaveBeenCalledWith(
+      "local",
+    );
+    // The model pick still goes through `triggerLlmPrimary`, whose own
+    // set-active call is a redundant write of the same provider — not a
+    // second mode. What must not happen is the mode write being skipped.
+    expect(app.callbacks.onRunModeChangeRequested).toHaveBeenCalledTimes(1);
+  });
+
+  it("off fusion, cloud and local keep going through set-active", () => {
+    const app = harness(cloudState({ isActiveText: false }));
+    app.pick("backend", "cloud");
+    expect(app.callbacks.onRunModeChangeRequested).not.toHaveBeenCalled();
+    expect(app.callbacks.onProvidersSetActiveText).toHaveBeenCalledWith(
+      "openrouter",
+    );
+  });
+});
+
+describe("the fusion configurators", () => {
+  it("picks a worker model through the local-models orchestrator, never the text provider", () => {
+    const base = fusionState();
+    const state = {
+      ...base,
+      localModelsPanel: {
+        ...base.localModelsPanel,
+        rows: [
+          ...base.localModelsPanel.rows.map((row) => ({
+            ...row,
+            active: false,
+          })),
+          {
+            id: "qwen-3.5-9b" as never,
+            def: localModelDef("qwen-3.5-9b"),
+            downloaded: true,
+            active: true,
+            mmprojStatus: "n/a" as const,
+          },
+        ],
+      },
+    };
+    const app = harness(state);
+    app.pick("workers", "qwen-3.5-4b");
+    // Its own writer touches `localModels.*` only, so fusion survives.
+    expect(app.callbacks.onLocalModelsSetActiveRequested).toHaveBeenCalledWith(
+      "qwen-3.5-4b",
+    );
+    expect(app.callbacks.onProvidersSetActiveText).not.toHaveBeenCalled();
+    expect(app.callbacks.onRunModeChangeRequested).not.toHaveBeenCalled();
+  });
+
+  it("starts the daemon when the picked model is already the live one but nothing is serving", () => {
+    const base = fusionState();
+    const state = {
+      ...base,
+      localModelsPanel: {
+        ...base.localModelsPanel,
+        daemon: { ...base.localModelsPanel.daemon, running: false },
+      },
+    };
+    const app = harness(state);
+    app.pick("workers", "qwen-3.5-4b");
+    expect(app.callbacks.onLocalModelsDaemonStartRequested).toHaveBeenCalled();
+    expect(
+      app.callbacks.onLocalModelsSetActiveRequested,
+    ).not.toHaveBeenCalled();
+  });
+
+  it("does nothing when the picked model is already live and serving", () => {
+    const app = harness(fusionState());
+    app.pick("workers", "qwen-3.5-4b");
+    expect(
+      app.callbacks.onLocalModelsSetActiveRequested,
+    ).not.toHaveBeenCalled();
+    expect(
+      app.callbacks.onLocalModelsDaemonStartRequested,
+    ).not.toHaveBeenCalled();
+  });
+
+  it("sends the worker count to the one writer that moves it with the slot count", () => {
+    const app = harness(fusionState());
+    app.pick("workers", "4 workers");
+    expect(app.callbacks.onFusionWorkersChangeRequested).toHaveBeenCalledWith(
+      4,
+    );
+  });
+
+  it("re-pins the orchestrator when a provider is picked under fusion", () => {
+    const app = harness(fusionState());
+    app.pick("provider", "openrouter");
+    expect(app.callbacks.onRunModeChangeRequested).toHaveBeenCalledWith(
+      "fusion",
+      {
+        fusion: { orchestratorProvider: "openrouter" },
+      },
+    );
+    // Not `setActiveText`: that would move the active provider away from
+    // the pin and drop the mode on the next read.
+    expect(app.callbacks.onProvidersSetActiveText).not.toHaveBeenCalled();
+  });
+
+  it("still opens the wizard for a keyless provider under fusion", () => {
+    const app = harness(fusionState());
+    app.pick("provider", "aimlapi");
+    expect(app.callbacks.onRunModeChangeRequested).not.toHaveBeenCalled();
+    expect(app.actions).toContainEqual(
+      expect.objectContaining({ type: "providers_wizard_opened" }),
+    );
   });
 });

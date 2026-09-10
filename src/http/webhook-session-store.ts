@@ -53,7 +53,9 @@ export class WebhookSessionStore {
         return {};
       }
       const out: Record<string, string> = {};
-      for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+      for (const [key, value] of Object.entries(
+        parsed as Record<string, unknown>,
+      )) {
         if (typeof value === "string" && value.length > 0) {
           out[key] = value;
         }

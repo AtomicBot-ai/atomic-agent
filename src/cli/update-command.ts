@@ -30,35 +30,38 @@ export interface UpdateCommandDeps {
   confirm?: (prompt: string) => Promise<boolean>;
 }
 
-const HELP = [
-  "atomic-agent update — self-update the installed binary from GitHub Releases",
-  "",
-  "Checks GitHub Releases for a newer published version and re-runs the",
-  "canonical installer (install.sh / install.ps1) in place, exactly like the",
-  "TUI's in-app update. Only meaningful for the installed SEA binary — a dev",
-  "checkout is updated via git. The running process is not restarted; the",
-  "next launch picks up the new binary.",
-  "",
-  "Flags:",
-  "  --check              Check only: report current vs latest, install nothing",
-  "  --version <tag>      Install a specific release tag (e.g. v0.3.2) instead of latest",
-  "  -h, --help           Show this help",
-  "",
-  "Exit codes:",
-  "  0  success (up to date, updated, or --check ran fine)",
-  "  1  operational failure (check failed, not self-updatable, installer failed)",
-  "  2  usage error (unknown flag, missing --version value, conflicting flags)",
-  "",
-  "Examples:",
-  "  atomic-agent update",
-  "  atomic-agent update --check",
-  "  atomic-agent update --version v0.3.2",
-].join("\n") + "\n";
+const HELP =
+  [
+    "atomic-agent update — self-update the installed binary from GitHub Releases",
+    "",
+    "Checks GitHub Releases for a newer published version and re-runs the",
+    "canonical installer (install.sh / install.ps1) in place, exactly like the",
+    "TUI's in-app update. Only meaningful for the installed SEA binary — a dev",
+    "checkout is updated via git. The running process is not restarted; the",
+    "next launch picks up the new binary.",
+    "",
+    "Flags:",
+    "  --check              Check only: report current vs latest, install nothing",
+    "  --version <tag>      Install a specific release tag (e.g. v0.3.2) instead of latest",
+    "  -h, --help           Show this help",
+    "",
+    "Exit codes:",
+    "  0  success (up to date, updated, or --check ran fine)",
+    "  1  operational failure (check failed, not self-updatable, installer failed)",
+    "  2  usage error (unknown flag, missing --version value, conflicting flags)",
+    "",
+    "Examples:",
+    "  atomic-agent update",
+    "  atomic-agent update --check",
+    "  atomic-agent update --version v0.3.2",
+  ].join("\n") + "\n";
 
 /** Parse flags into a discriminated plan; returns a usage error string on bad input. */
 function parseArgs(
   args: string[],
-): { ok: true; checkOnly: boolean; version?: string } | { ok: false; error: string } {
+):
+  | { ok: true; checkOnly: boolean; version?: string }
+  | { ok: false; error: string } {
   let checkOnly = false;
   let version: string | undefined;
   for (let i = 0; i < args.length; i += 1) {
@@ -119,7 +122,8 @@ export async function updateCommand(
   // stdin, not stdout: the answer comes from stdin, so that is the
   // stream whose interactivity decides whether asking is possible.
   const isTTY =
-    deps.isTTY ?? (() => process.stdin.isTTY === true && process.stdout.isTTY === true);
+    deps.isTTY ??
+    (() => process.stdin.isTTY === true && process.stdout.isTTY === true);
   const confirm = deps.confirm ?? defaultConfirm;
   const repo = getRepo();
 

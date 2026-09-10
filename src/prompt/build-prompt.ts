@@ -20,6 +20,7 @@ import type {
   BuiltPrompt,
   BuiltPromptTruncationFlags,
 } from "./build-prompt-types.js";
+import { resolveFusionMachineFacts } from "./fusion-machine-facts.js";
 import { buildStablePrefix } from "./stable-prefix.js";
 import { buildSessionSectionParts } from "./session-tail-sections.js";
 import { renderLoadedToolsSection } from "./render-loaded-tools.js";
@@ -130,6 +131,11 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
       ? undefined
       : input.profile?.reasoningSystemToken,
     maxParallelToolCalls: config.agent.maxParallelToolCalls,
+    // Only read when the `### fusion` block actually renders. Config
+    // values, so they move only when the operator writes the config
+    // file — the same event that already flips the fusion descriptor
+    // gate and drops the KV cache once.
+    fusion: resolveFusionMachineFacts(config),
     ...(turnFraming !== undefined
       ? { turnSystemOpen: turnFraming.systemOpen }
       : {}),
@@ -141,10 +147,7 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
       : {}),
   });
 
-  const sessionParts = buildSessionSectionParts(
-    input.session,
-    limits.session,
-  );
+  const sessionParts = buildSessionSectionParts(input.session, limits.session);
   const loadedForTail = sessionParts.loaded;
   const factsForTail = sessionParts.facts;
   const sessionPartsForBudget = [loadedForTail, factsForTail]
@@ -162,8 +165,7 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
   const profileMaxTokens =
     input.profileMaxTokens ?? config.memory.profile.maxTokens;
   const contextualKeywordGate =
-    input.contextualKeywordGate ??
-    config.memory.profile.contextualKeywordGate;
+    input.contextualKeywordGate ?? config.memory.profile.contextualKeywordGate;
   const profileFull =
     input.profileFacts !== undefined
       ? renderProfileSection(input.profileFacts, {
@@ -263,12 +265,16 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     completionMaxTokens,
   });
 
-  const packed = packConversation(input.session.turns, conversationCapEffective, {
-    maxPairs: conversationMaxPairs,
-    ...(input.session.macroTurnStarts
-      ? { macroTurnStarts: input.session.macroTurnStarts }
-      : {}),
-  });
+  const packed = packConversation(
+    input.session.turns,
+    conversationCapEffective,
+    {
+      maxPairs: conversationMaxPairs,
+      ...(input.session.macroTurnStarts
+        ? { macroTurnStarts: input.session.macroTurnStarts }
+        : {}),
+    },
+  );
   const conversation = renderPackedConversation(packed);
   const taskPolicy = renderTaskPolicy({
     userMessage: input.userMessage ?? null,
@@ -374,8 +380,7 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     worldSnapshot: worldSnapshot !== worldSnapshotFull,
     conversation: packed.droppedCount > 0,
     recalled: recalledFull !== null && recalled !== recalledFull,
-    memoryIndex:
-      memoryIndexFull !== null && memoryIndex !== memoryIndexFull,
+    memoryIndex: memoryIndexFull !== null && memoryIndex !== memoryIndexFull,
   };
 
   return {

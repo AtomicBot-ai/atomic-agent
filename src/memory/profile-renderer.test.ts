@@ -44,11 +44,7 @@ describe("renderProfileSection", () => {
       pinned("name", "Alex"),
     ]);
     expect(out).toBe(
-      [
-        "- language: ru",
-        "- name: Alex",
-        "- timezone: UTC",
-      ].join("\n"),
+      ["- language: ru", "- name: Alex", "- timezone: UTC"].join("\n"),
     );
   });
 
@@ -137,10 +133,7 @@ describe("renderProfileSection", () => {
 
   it("hides a pinned fact too when its vote_score is past the threshold", () => {
     const out = renderProfileSection(
-      [
-        pinned("language", "ru", 1, -5),
-        pinned("name", "Alex"),
-      ],
+      [pinned("language", "ru", 1, -5), pinned("name", "Alex")],
       { profileFilterThreshold: 3 },
     );
     expect(out).toBe("- name: Alex");
@@ -159,23 +152,18 @@ describe("renderProfileSection", () => {
       [pinned("language", "ru", 1, -1), pinned("name", "Alex")],
       { profileFilterThreshold: 3 },
     );
-    expect(out).toBe(
-      ["- language: ru", "- name: Alex"].join("\n"),
-    );
+    expect(out).toBe(["- language: ru", "- name: Alex"].join("\n"));
   });
 
   it("threshold=0 disables the filter (back-compat)", () => {
-    const out = renderProfileSection(
-      [pinned("language", "ru", 1, -99)],
-      { profileFilterThreshold: 0 },
-    );
+    const out = renderProfileSection([pinned("language", "ru", 1, -99)], {
+      profileFilterThreshold: 0,
+    });
     expect(out).toBe("- language: ru");
   });
 
   it("threshold=undefined disables the filter (back-compat)", () => {
-    const out = renderProfileSection([
-      pinned("language", "ru", 1, -99),
-    ]);
+    const out = renderProfileSection([pinned("language", "ru", 1, -99)]);
     expect(out).toBe("- language: ru");
   });
 });

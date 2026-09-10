@@ -103,7 +103,11 @@ interface CooldownEntry {
 export function createProviderCooldown(
   options: ProviderCooldownOptions = {},
 ): ProviderCooldown {
-  return buildCooldown(options, new Map<WebSearchProviderName, CooldownEntry>(), undefined);
+  return buildCooldown(
+    options,
+    new Map<WebSearchProviderName, CooldownEntry>(),
+    undefined,
+  );
 }
 
 /**

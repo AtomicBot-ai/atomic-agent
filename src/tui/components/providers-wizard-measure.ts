@@ -70,7 +70,11 @@ const WIZARD_CHROME_COLUMNS = 4;
 const OPTION_MARK_COLUMNS = 2;
 
 /** A pick list's hint line at the widest its counter can reach. */
-function hintLine(moveHint: string, count: number, actionsHint: string): string {
+function hintLine(
+  moveHint: string,
+  count: number,
+  actionsHint: string,
+): string {
   return `${moveHint} (${count}/${count}) · ${actionsHint}`;
 }
 

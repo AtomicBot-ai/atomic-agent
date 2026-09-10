@@ -1,8 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  parseDistillWithProcedureOutput,
-} from "./distill-parser.js";
+import { parseDistillWithProcedureOutput } from "./distill-parser.js";
 
 describe("parseDistillWithProcedureOutput", () => {
   it("parses a lesson-only output (procedure=null branch)", () => {
@@ -65,7 +63,10 @@ describe("parseDistillWithProcedureOutput", () => {
   });
 
   it("respects max step count (drops procedure when >8)", () => {
-    const steps = Array.from({ length: 9 }, (_, i) => `step ${i}@os.fs.read`).join("; ");
+    const steps = Array.from(
+      { length: 9 },
+      (_, i) => `step ${i}@os.fs.read`,
+    ).join("; ");
     const out = parseDistillWithProcedureOutput(
       `LESSON activation="a"; principle="b"; tags=a,b,c\n` +
         `PROCEDURE activation="trigger"; steps="${steps}"\n`,
@@ -156,9 +157,7 @@ describe("parseDistillWithProcedureOutput", () => {
           procedure: {
             activation: "act",
             // Only one step — below PROCEDURE_MIN_STEPS = 2.
-            steps: [
-              { description: "single step", tool_hint: null },
-            ],
+            steps: [{ description: "single step", tool_hint: null }],
             tags: [],
           },
         }),

@@ -193,9 +193,24 @@ describe("refreshAimlapiChatCatalogFromApi", () => {
         ok: true,
         json: async () => ({
           data: [
-            { id: "zeta/model", type: "chat-completion", features: ["openai.function"], info: { contextLength: 8000 } },
-            { id: "alpha/model", type: "chat-completion", features: ["openai.function"], info: { contextLength: 8000 } },
-            { id: "mid/model", type: "chat-completion", features: ["openai.function"], info: { contextLength: 8000 } },
+            {
+              id: "zeta/model",
+              type: "chat-completion",
+              features: ["openai.function"],
+              info: { contextLength: 8000 },
+            },
+            {
+              id: "alpha/model",
+              type: "chat-completion",
+              features: ["openai.function"],
+              info: { contextLength: 8000 },
+            },
+            {
+              id: "mid/model",
+              type: "chat-completion",
+              features: ["openai.function"],
+              info: { contextLength: 8000 },
+            },
           ],
         }),
       })),
@@ -313,8 +328,16 @@ describe("refreshAimlapiChatCatalogFromApi", () => {
         json: async () => ({
           data: [
             { type: "openai/chat-completions", info: { contextLength: 8000 } },
-            { id: "", type: "openai/chat-completions", info: { contextLength: 8000 } },
-            { id: "vendor/ok", type: "openai/chat-completions", info: { contextLength: 8000 } },
+            {
+              id: "",
+              type: "openai/chat-completions",
+              info: { contextLength: 8000 },
+            },
+            {
+              id: "vendor/ok",
+              type: "openai/chat-completions",
+              info: { contextLength: 8000 },
+            },
           ],
         }),
       })),

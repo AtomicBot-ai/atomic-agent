@@ -165,7 +165,10 @@ function optionRegistryFor(id: ImportAgentId): readonly OptionMetaLike[] {
  * the render and its test read the same lines.
  */
 export function summarizeImportReport(report: ImportReport): string[] {
-  const byKind = new Map<string, { migrated: number; skipped: number; conflict: number; error: number }>();
+  const byKind = new Map<
+    string,
+    { migrated: number; skipped: number; conflict: number; error: number }
+  >();
   for (const item of report.items) {
     let counts = byKind.get(item.kind);
     if (!counts) {

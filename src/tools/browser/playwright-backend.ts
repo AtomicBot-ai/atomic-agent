@@ -1,8 +1,5 @@
 import type { ChildProcess } from "node:child_process";
-import type {
-  BrowserContext as PwBrowserContext,
-  Page,
-} from "playwright-core";
+import type { BrowserContext as PwBrowserContext, Page } from "playwright-core";
 import type { BrowserChannel } from "../../config/index.js";
 import { loadPlaywrightCore } from "../../native/load-playwright-core.js";
 import { summariseAriaSnapshot } from "./aria-compressor.js";

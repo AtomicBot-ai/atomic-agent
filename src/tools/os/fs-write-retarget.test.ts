@@ -2,7 +2,10 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { ApprovalGate, type ApprovalRequest } from "../../approval/approval-gate.js";
+import {
+  ApprovalGate,
+  type ApprovalRequest,
+} from "../../approval/approval-gate.js";
 import { buildOsFsWriteTool } from "./fs-write.js";
 
 /**
@@ -40,7 +43,10 @@ describe("os.fs.write retarget", () => {
         gate.resolve({ approvalId: req.approvalId, approved: true });
       },
     });
-    const tool = buildOsFsWriteTool({ approvals: gate, approvalRequired: true });
+    const tool = buildOsFsWriteTool({
+      approvals: gate,
+      approvalRequired: true,
+    });
     await tool.run({ path: "out.txt", content: "hi" }, ctx());
     expect(seen[0]?.redirectablePath).toBe(join(dir, "out.txt"));
   });
@@ -54,15 +60,18 @@ describe("os.fs.write retarget", () => {
           pathOverride: join(dir, "brand", "new", "index.html"),
         }),
     });
-    const tool = buildOsFsWriteTool({ approvals: gate, approvalRequired: true });
+    const tool = buildOsFsWriteTool({
+      approvals: gate,
+      approvalRequired: true,
+    });
     const result = await tool.run(
       { path: "out.txt", content: "<h1>apple</h1>" },
       ctx(),
     );
     expect(result.status).toBe("ok");
-    expect(await readFile(join(dir, "brand", "new", "index.html"), "utf8")).toBe(
-      "<h1>apple</h1>",
-    );
+    expect(
+      await readFile(join(dir, "brand", "new", "index.html"), "utf8"),
+    ).toBe("<h1>apple</h1>");
     // The model has to learn where the file actually went, or its next
     // step reads back a path that was never written.
     expect(result.details.path).toBe(join(dir, "brand", "new", "index.html"));
@@ -89,7 +98,10 @@ describe("os.fs.write retarget", () => {
         gate.resolve({ approvalId: req.approvalId, approved: true });
       },
     });
-    const tool = buildOsFsWriteTool({ approvals: gate, approvalRequired: true });
+    const tool = buildOsFsWriteTool({
+      approvals: gate,
+      approvalRequired: true,
+    });
     try {
       const result = await tool.run({ path: "out.txt", content: "x" }, ctx());
       expect(result.status).toBe("ok");
@@ -143,7 +155,10 @@ describe("os.fs.write retarget", () => {
               : join(dir, `${hop}.txt`),
         }),
     });
-    const tool = buildOsFsWriteTool({ approvals: gate, approvalRequired: true });
+    const tool = buildOsFsWriteTool({
+      approvals: gate,
+      approvalRequired: true,
+    });
     try {
       await expect(
         tool.run({ path: "out.txt", content: "x" }, ctx()),

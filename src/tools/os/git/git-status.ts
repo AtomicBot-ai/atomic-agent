@@ -55,9 +55,10 @@ export const osGitStatusTool: ToolDefinition = {
         signal: ctx.signal,
         timeoutMs: 5_000,
       });
-      branch = headHash.exitCode === 0
-        ? `(detached ${headHash.stdout.trim()})`
-        : "(unborn)";
+      branch =
+        headHash.exitCode === 0
+          ? `(detached ${headHash.stdout.trim()})`
+          : "(unborn)";
     }
 
     const human = formatHuman(branch, branchInfo, entries);
@@ -88,7 +89,7 @@ export const osGitStatusTool: ToolDefinition = {
  * The very first record may be `## <branch>...` pseudo-header when
  * `--branch` is passed — we extract that into branchInfo.
  */
-function parsePorcelain(stdout: string): {
+export function parsePorcelain(stdout: string): {
   entries: GitStatusEntry[];
   branchInfo: string | null;
 } {

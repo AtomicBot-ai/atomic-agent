@@ -52,7 +52,13 @@ const ROW: IntegrationRow = {
   appliesLive: true,
   actions: [{ key: "s", id: "restart", label: "restart" }],
   fields: [
-    { key: "apiKey", label: "API key", kind: "text", display: "—", present: false },
+    {
+      key: "apiKey",
+      label: "API key",
+      kind: "text",
+      display: "—",
+      present: false,
+    },
     { key: "other", label: "Other", kind: "text", display: "x", present: true },
   ],
 };
@@ -107,7 +113,9 @@ describe("handleIntegrationsTabKey", () => {
       { onIntegrationFieldClearRequested },
     );
     handleIntegrationsTabKey("e", emptyKey(), c);
-    expect(dispatch).toHaveBeenCalledWith({ type: "integrations_edit_started" });
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "integrations_edit_started",
+    });
     handleIntegrationsTabKey("d", emptyKey(), c);
     expect(onIntegrationFieldClearRequested).toHaveBeenCalledWith(
       "composio",

@@ -79,15 +79,15 @@ export function ApprovalModal({
       </Text>
       <Box marginTop={1} flexDirection="column">
         <Text>
-          <Text color="gray">tool:    </Text>
+          <Text color="gray">tool: </Text>
           <Text bold>{request.tool}</Text>
         </Text>
         <Text>
-          <Text color="gray">kind:    </Text>
+          <Text color="gray">kind: </Text>
           {categoryLabel}
         </Text>
         <Text>
-          <Text color="gray">reason:  </Text>
+          <Text color="gray">reason: </Text>
           {request.reason}
         </Text>
         {request.preview ? (
@@ -133,76 +133,74 @@ export function ApprovalModal({
               <Text color="green">enter</Text> confirm target path
             </Text>
             <Text>
-              <Text color="gray">esc  </Text> back to the prompt
+              <Text color="gray">esc </Text> back to the prompt
             </Text>
           </Box>
         </Box>
       ) : (
-      <Box marginTop={1} flexDirection="column">
-        {/*
+        <Box marginTop={1} flexDirection="column">
+          {/*
           Two rows, not one: the pair that always exists sits together on
           top, and the optional session-scoped verbs go under them. A
           single wrapping row would put `deny` in a different place
           depending on which grants this particular request offers, and
           the destructive button is the last one that should move.
         */}
-        <Box flexDirection="row">
-          <ApprovalButton request={request} approved tone="primary">
-            {`✓ approve · ctrl+${APPROVAL_CHORDS.approve}`}
-          </ApprovalButton>
-          <Text> </Text>
-          <ApprovalButton request={request} approved={false} tone="danger">
-            {`✗ deny · ctrl+${APPROVAL_CHORDS.deny}`}
-          </ApprovalButton>
-        </Box>
-        {grantCategory || grantShape || editable ? (
-          <Box flexDirection="row" marginTop={1}>
-            {grantCategory ? (
-              <>
-                <ApprovalButton
-                  request={request}
-                  approved
-                  grant="category"
-                  tone="secondary"
-                >
-                  {`allow ${categoryLabel} this session · ctrl+${APPROVAL_CHORDS.grantCategory}`}
-                </ApprovalButton>
-                <Text> </Text>
-              </>
-            ) : null}
-            {/*
+          <Box flexDirection="row">
+            <ApprovalButton request={request} approved tone="primary">
+              {`✓ approve · ctrl+${APPROVAL_CHORDS.approve}`}
+            </ApprovalButton>
+            <Text> </Text>
+            <ApprovalButton request={request} approved={false} tone="danger">
+              {`✗ deny · ctrl+${APPROVAL_CHORDS.deny}`}
+            </ApprovalButton>
+          </Box>
+          {grantCategory || grantShape || editable ? (
+            <Box flexDirection="row" marginTop={1}>
+              {grantCategory ? (
+                <>
+                  <ApprovalButton
+                    request={request}
+                    approved
+                    grant="category"
+                    tone="secondary"
+                  >
+                    {`allow ${categoryLabel} this session · ctrl+${APPROVAL_CHORDS.grantCategory}`}
+                  </ApprovalButton>
+                  <Text> </Text>
+                </>
+              ) : null}
+              {/*
               `grantShape` and `editable` share this slot and share
               `ctrl+b`, because they can never both be offered: the shape
               grant is shell-only and the retarget is set by `os.fs.write`
               alone. Pinned by `approval-key-arbitration.test.ts`.
             */}
-            {grantShape ? (
-              <ApprovalButton
-                request={request}
-                approved
-                grant="shape"
-                tone="secondary"
-              >
-                {`allow all ${request.commandShape} this session · ctrl+${APPROVAL_CHORDS.contextual}`}
-              </ApprovalButton>
-            ) : null}
-            {editable ? (
-              <EditPathButton onOpen={onPathOpen}>
-                {`edit target path… · ctrl+${APPROVAL_CHORDS.contextual}`}
-              </EditPathButton>
-            ) : null}
+              {grantShape ? (
+                <ApprovalButton
+                  request={request}
+                  approved
+                  grant="shape"
+                  tone="secondary"
+                >
+                  {`allow all ${request.commandShape} this session · ctrl+${APPROVAL_CHORDS.contextual}`}
+                </ApprovalButton>
+              ) : null}
+              {editable ? (
+                <EditPathButton onOpen={onPathOpen}>
+                  {`edit target path… · ctrl+${APPROVAL_CHORDS.contextual}`}
+                </EditPathButton>
+              ) : null}
+            </Box>
+          ) : null}
+          <Box marginTop={1}>
+            <Text color={theme.colors.muted}>
+              esc abort run {theme.glyphs.dotSeparator} ctrl+c stop everything
+            </Text>
           </Box>
-        ) : null}
-        <Box marginTop={1}>
-          <Text color={theme.colors.muted}>
-            esc abort run {theme.glyphs.dotSeparator} ctrl+c stop everything
-          </Text>
         </Box>
-      </Box>
       )}
-      {editing ? null : (
-        <Text color="gray">{footerHint(grantCategory)}</Text>
-      )}
+      {editing ? null : <Text color="gray">{footerHint(grantCategory)}</Text>}
     </Box>
   );
 }

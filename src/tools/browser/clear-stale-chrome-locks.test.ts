@@ -80,7 +80,9 @@ describe("clearStaleChromeLocks", () => {
     });
     expect(result.removed).toEqual([]);
     expect(result.kept.length).toBeGreaterThan(0);
-    expect(fs.lstatSync(path.join(dir, "SingletonLock")).isSymbolicLink()).toBe(true);
+    expect(fs.lstatSync(path.join(dir, "SingletonLock")).isSymbolicLink()).toBe(
+      true,
+    );
   });
 
   it("clears locks when the owner pid is alive but is not a browser", () => {
@@ -103,8 +105,12 @@ describe("clearStaleChromeLocks", () => {
     });
     expect(result.removed).toEqual([]);
     expect(result.kept.length).toBeGreaterThan(0);
-    expect(result.reasons.some((r) => r.includes("identity unknown"))).toBe(true);
-    expect(fs.lstatSync(path.join(dir, "SingletonLock")).isSymbolicLink()).toBe(true);
+    expect(result.reasons.some((r) => r.includes("identity unknown"))).toBe(
+      true,
+    );
+    expect(fs.lstatSync(path.join(dir, "SingletonLock")).isSymbolicLink()).toBe(
+      true,
+    );
   });
 
   it("keeps locks when owner pid is this process (live) and processLooksLikeChromium is conservative", () => {

@@ -32,9 +32,9 @@ export type FallbackPanelAction =
   /** Record the last observed cross-provider switch (or clear it). */
   | { type: "fallback_last_switch_set"; lastSwitch: FallbackLastSwitch | null };
 
-export function isFallbackPanelAction(
-  action: { type: string },
-): action is FallbackPanelAction {
+export function isFallbackPanelAction(action: {
+  type: string;
+}): action is FallbackPanelAction {
   return (
     action.type === "fallback_refresh" ||
     action.type === "fallback_add_picker_opened" ||

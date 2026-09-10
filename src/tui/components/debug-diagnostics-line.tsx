@@ -23,7 +23,10 @@ export function DebugDiagnosticsLine({
     kvTotal === 0
       ? "kv —"
       : `kv ${Math.round((metrics.kvCacheHits / kvTotal) * 100)}%`;
-  const latency = formatLatency(metrics.llmDurationMsLast, metrics.stepDurationMsLast);
+  const latency = formatLatency(
+    metrics.llmDurationMsLast,
+    metrics.stepDurationMsLast,
+  );
   const line = [
     `cwd ${shortenPath(session.workingDir)}`,
     `llama ${session.llamaUrl}`,

@@ -43,7 +43,10 @@ const TOOL_CALL_STREAM =
               index: 0,
               id: "call_1",
               type: "function",
-              function: { name: CONTRACT_PROBE_TOOL_NAME, arguments: '{"ok":true}' },
+              function: {
+                name: CONTRACT_PROBE_TOOL_NAME,
+                arguments: '{"ok":true}',
+              },
             },
           ],
         },
@@ -81,9 +84,12 @@ describe("probeWizardContract", () => {
       "fetch",
       vi.fn(async (_url: unknown, init?: RequestInit) => {
         bodies.push(String(init?.body ?? ""));
-        if (bodies.length <= 2) return new Response("Bad Request", { status: 400 });
+        if (bodies.length <= 2)
+          return new Response("Bad Request", { status: 400 });
         return new Response(
-          sseEvent({ choices: [{ delta: { content: "hi" }, finish_reason: "stop" }] }),
+          sseEvent({
+            choices: [{ delta: { content: "hi" }, finish_reason: "stop" }],
+          }),
           { status: 200 },
         );
       }),
@@ -104,7 +110,9 @@ describe("probeWizardContract", () => {
           return new Response("Bad Request", { status: 400 });
         }
         return new Response(
-          sseEvent({ choices: [{ delta: { content: "Sure!" }, finish_reason: "stop" }] }),
+          sseEvent({
+            choices: [{ delta: { content: "Sure!" }, finish_reason: "stop" }],
+          }),
           { status: 200 },
         );
       }),
@@ -117,7 +125,9 @@ describe("probeWizardContract", () => {
   });
 
   it("never calls out for a server on this machine", async () => {
-    const fetchMock = vi.fn(async () => new Response(TOOL_CALL_STREAM, { status: 200 }));
+    const fetchMock = vi.fn(
+      async () => new Response(TOOL_CALL_STREAM, { status: 200 }),
+    );
     vi.stubGlobal("fetch", fetchMock);
     const outcome = await probeWizardContract(
       wizard("openai-compatible", {
@@ -134,7 +144,9 @@ describe("probeWizardContract", () => {
   });
 
   it("never calls out for a CLI-backed provider", async () => {
-    const fetchMock = vi.fn(async () => new Response(TOOL_CALL_STREAM, { status: 200 }));
+    const fetchMock = vi.fn(
+      async () => new Response(TOOL_CALL_STREAM, { status: 200 }),
+    );
     vi.stubGlobal("fetch", fetchMock);
     const outcome = await probeWizardContract(wizard("claude-cli"));
     expect(outcome.skipped).toBe("cli_backed");
@@ -143,7 +155,9 @@ describe("probeWizardContract", () => {
   });
 
   it("says a key is missing rather than pretending there is nothing to check", async () => {
-    const fetchMock = vi.fn(async () => new Response(TOOL_CALL_STREAM, { status: 200 }));
+    const fetchMock = vi.fn(
+      async () => new Response(TOOL_CALL_STREAM, { status: 200 }),
+    );
     vi.stubGlobal("fetch", fetchMock);
     const outcome = await probeWizardContract(
       wizard("openrouter", { apiKeyBuffer: "" }),
@@ -178,7 +192,9 @@ describe("probeWizardContract", () => {
         const body = String(init?.body ?? "");
         if (body.includes('"tool_choice":{')) {
           return new Response(
-            JSON.stringify({ error: "tool_choice does not support being set to object" }),
+            JSON.stringify({
+              error: "tool_choice does not support being set to object",
+            }),
             { status: 400 },
           );
         }
@@ -198,7 +214,9 @@ describe("probeWizardContract", () => {
     // models without a key — not because a completion works without
     // one. Probing anyway earns a 401 and the sentence "rejected the
     // key" about a key nobody sent.
-    const fetchMock = vi.fn(async () => new Response("Unauthorized", { status: 401 }));
+    const fetchMock = vi.fn(
+      async () => new Response("Unauthorized", { status: 401 }),
+    );
     vi.stubGlobal("fetch", fetchMock);
     const outcome = await probeWizardContract(
       wizard("openai-compatible", {

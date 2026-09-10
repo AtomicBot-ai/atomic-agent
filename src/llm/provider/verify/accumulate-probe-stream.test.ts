@@ -5,7 +5,9 @@ import { accumulateProbeStream } from "./accumulate-probe-stream.js";
 function sse(...events: unknown[]): string {
   return events
     .map((event) =>
-      typeof event === "string" ? `data: ${event}\n\n` : `data: ${JSON.stringify(event)}\n\n`,
+      typeof event === "string"
+        ? `data: ${event}\n\n`
+        : `data: ${JSON.stringify(event)}\n\n`,
     )
     .join("");
 }
@@ -26,7 +28,9 @@ function toolCallChunk(
               type: "function",
               function: {
                 ...(parts.name !== undefined ? { name: parts.name } : {}),
-                ...(parts.arguments !== undefined ? { arguments: parts.arguments } : {}),
+                ...(parts.arguments !== undefined
+                  ? { arguments: parts.arguments }
+                  : {}),
               },
             },
           ],
@@ -61,7 +65,10 @@ describe("accumulateProbeStream", () => {
     // but assembled into nothing" is the diagnosis, and a probe that
     // dropped it would report the far friendlier "no tool call".
     const observation = accumulateProbeStream(
-      sse(toolCallChunk({ arguments: '{"ok":true}' }), toolCallChunk({}, "tool_calls")),
+      sse(
+        toolCallChunk({ arguments: '{"ok":true}' }),
+        toolCallChunk({}, "tool_calls"),
+      ),
     );
     expect(observation.sawToolCallDelta).toBe(true);
     expect(observation.toolCalls[0]?.name).toBe("");

@@ -184,7 +184,11 @@ export class TaskRunner {
         : (input.scheduledFor ?? null);
 
     let sessionId: string | null | undefined = input.sessionId ?? null;
-    if (sessionId === null && isRecurring(schedule) && this.options.sessionFactory) {
+    if (
+      sessionId === null &&
+      isRecurring(schedule) &&
+      this.options.sessionFactory
+    ) {
       const label = schedule && schedule.kind === "cron" ? "cron" : "interval";
       const fresh = this.options.sessionFactory.create({
         metadata: {
@@ -339,14 +343,21 @@ export class TaskRunner {
       // just because the turn belonged to the scheduler: there is no host
       // to hand it to, so the structured log is the surface of record.
       if (result.undelivered !== undefined && result.undelivered.length > 0) {
-        this.options.logger?.warn?.("steering messages stranded by a task turn", {
-          taskId: claimed.id,
-          count: result.undelivered.length,
-          preview: result.undelivered[0]?.slice(0, 120),
-        });
+        this.options.logger?.warn?.(
+          "steering messages stranded by a task turn",
+          {
+            taskId: claimed.id,
+            count: result.undelivered.length,
+            preview: result.undelivered[0]?.slice(0, 120),
+          },
+        );
       }
       if (result.reason === "failed") {
-        return this.handleFailure(claimed, "transport", new Error("loop reported failed"));
+        return this.handleFailure(
+          claimed,
+          "transport",
+          new Error("loop reported failed"),
+        );
       }
       if (result.reason === "cancelled") {
         return this.handleCancelled(claimed, new Error("turn cancelled"));
@@ -559,7 +570,8 @@ export class TaskRunner {
     if (!this.options.sessionFactory) {
       this.options.store.markBlocked(task.id, {
         category: "tool",
-        message: "session_not_found: task has no session_id and no sessionFactory wired",
+        message:
+          "session_not_found: task has no session_id and no sessionFactory wired",
       });
       return null;
     }
@@ -624,7 +636,10 @@ export class TaskRunner {
       at: Date.now(),
     };
     const metadataWebhookName = session.metadata?.webhookName;
-    if (typeof metadataWebhookName === "string" && metadataWebhookName.length > 0) {
+    if (
+      typeof metadataWebhookName === "string" &&
+      metadataWebhookName.length > 0
+    ) {
       wakeReason.webhookName = metadataWebhookName;
     }
     session.metadata = {
@@ -643,7 +658,10 @@ export class TaskRunner {
    */
   private maybeRequeueRecurring(completed: TaskRecord): TaskRecord {
     if (!completed.recurring || !completed.schedule) return completed;
-    const next = resolveNextRecurring(completed.schedule, completed.completedAt);
+    const next = resolveNextRecurring(
+      completed.schedule,
+      completed.completedAt,
+    );
     const requeued = this.options.store.requeueRecurring(completed.id, next);
     this.options.metrics?.recordTaskRecurringRequeued({
       taskId: requeued.id,

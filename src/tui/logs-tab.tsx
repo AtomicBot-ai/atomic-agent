@@ -18,8 +18,16 @@ const LEVEL_COLOR: Record<LogRecord["level"], string> = {
 export function LogsTab({ state, maxVisible }: LogsTabProps): ReactElement {
   const visible = state.logs.slice(-maxVisible);
   return (
-    <Box flexDirection="column" flexGrow={1} borderStyle="round" borderColor="gray" paddingX={1}>
-      <Text color="gray">── logs ──────────────────────────────────────────</Text>
+    <Box
+      flexDirection="column"
+      flexGrow={1}
+      borderStyle="round"
+      borderColor="gray"
+      paddingX={1}
+    >
+      <Text color="gray">
+        ── logs ──────────────────────────────────────────
+      </Text>
       {visible.length === 0 ? (
         <Text color="gray">no log records yet</Text>
       ) : (
@@ -41,10 +49,14 @@ function LogRow({ record }: LogRowProps): ReactElement {
     <Text>
       <Text color="gray">{time}</Text>
       <Text> </Text>
-      <Text color={LEVEL_COLOR[record.level]}>{record.level.toUpperCase().padEnd(5)}</Text>
+      <Text color={LEVEL_COLOR[record.level]}>
+        {record.level.toUpperCase().padEnd(5)}
+      </Text>
       <Text> </Text>
       <Text>{record.message}</Text>
-      {record.context ? <Text color="gray"> {safeJson(record.context)}</Text> : null}
+      {record.context ? (
+        <Text color="gray"> {safeJson(record.context)}</Text>
+      ) : null}
     </Text>
   );
 }

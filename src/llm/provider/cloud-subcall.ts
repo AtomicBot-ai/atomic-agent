@@ -19,6 +19,18 @@ import type { ToolCallTransport } from "./completion-types.js";
  * (`extractCloudSubcallText` in `reflection-runner.ts` is the canonical
  * example) so the sub-call still extracts useful output.
  */
+/**
+ * Output bound for a structured sub-call when the caller names none.
+ *
+ * These emit one small JSON object against a schema (a handful of memory
+ * notes, a vote, a rewritten query), so a few thousand tokens is
+ * generous. It is set explicitly here rather than inherited from a
+ * global default: the main completion path deliberately sends no
+ * `max_tokens` at all (see `openai-build-body.ts`), and a cold-path
+ * sub-runner is exactly the place that should stay bounded regardless.
+ */
+export const CLOUD_SUBCALL_MAX_TOKENS = 2048;
+
 export function buildCloudSubcallRequest(params: {
   prompt: string;
   emitFunctionName: string;
@@ -30,7 +42,7 @@ export function buildCloudSubcallRequest(params: {
   return {
     prompt: params.prompt,
     sessionId: params.sessionId,
-    maxTokens: params.maxTokens,
+    maxTokens: params.maxTokens ?? CLOUD_SUBCALL_MAX_TOKENS,
     tools: [
       {
         type: "function",
@@ -46,8 +58,6 @@ export function buildCloudSubcallRequest(params: {
   };
 }
 
-export function isCloudSubcallTransport(
-  transport: ToolCallTransport,
-): boolean {
+export function isCloudSubcallTransport(transport: ToolCallTransport): boolean {
   return transport === "native_tools";
 }

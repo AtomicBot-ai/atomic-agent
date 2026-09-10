@@ -15,14 +15,26 @@ const LINE_CLIP = 120;
  * terminal legible — the underlying `ReasoningEntry.text` is preserved in
  * state for exporters / log dumps.
  */
-export function ReasoningTab({ state, maxVisible }: ReasoningTabProps): ReactElement {
+export function ReasoningTab({
+  state,
+  maxVisible,
+}: ReasoningTabProps): ReactElement {
   const visible = state.reasoning.slice(-maxVisible);
   return (
-    <Box flexDirection="column" flexGrow={1} borderStyle="round" borderColor="gray" paddingX={1}>
-      <Text color="gray">── reasoning ─────────────────────────────────────</Text>
+    <Box
+      flexDirection="column"
+      flexGrow={1}
+      borderStyle="round"
+      borderColor="gray"
+      paddingX={1}
+    >
+      <Text color="gray">
+        ── reasoning ─────────────────────────────────────
+      </Text>
       {visible.length === 0 ? (
         <Text color="gray">
-          no &lt;think&gt; blocks captured yet — the current model may not emit reasoning
+          no &lt;think&gt; blocks captured yet — the current model may not emit
+          reasoning
         </Text>
       ) : (
         visible.map((entry) => <ReasoningBlock key={entry.id} entry={entry} />)

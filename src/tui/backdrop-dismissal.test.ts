@@ -3,7 +3,11 @@ import {
   backdropRevertsThemePreview,
   resolveBackdropDismissal,
 } from "./backdrop-dismissal.js";
-import { createInitialTuiState, type TuiSessionInfo, type TuiState } from "./tui-state.js";
+import {
+  createInitialTuiState,
+  type TuiSessionInfo,
+  type TuiState,
+} from "./tui-state.js";
 
 function session(): TuiSessionInfo {
   return {
@@ -38,14 +42,27 @@ describe("what a click outside closes", () => {
    */
   it("closes the coding-mode menu", () => {
     expect(
+      resolveBackdropDismissal(
+        stateWith({
+          issueReport: {
+            step: "pick",
+            cursor: 0,
+            preview: null,
+            url: null,
+            error: null,
+          },
+        }),
+      ),
+    ).toEqual({ type: "issue_report_closed" });
+    expect(
       resolveBackdropDismissal(stateWith({ codingModeMenu: { cursor: 0 } })),
     ).toEqual({ type: "coding_mode_menu_closed" });
   });
 
   it("closes the theme picker", () => {
-    expect(resolveBackdropDismissal(stateWith({ themePickerOpen: true }))).toEqual(
-      { type: "theme_picker_closed" },
-    );
+    expect(
+      resolveBackdropDismissal(stateWith({ themePickerOpen: true })),
+    ).toEqual({ type: "theme_picker_closed" });
   });
 
   it("closes the session picker", () => {
@@ -95,10 +112,12 @@ describe("cancelling the theme picker puts the palette back", () => {
     // The picker previews live, so a dismissal that skipped the revert
     // would silently *apply* whatever the cursor was resting on — the
     // opposite of a cancel.
-    expect(backdropRevertsThemePreview(stateWith({ themePickerOpen: true }))).toBe(
-      true,
+    expect(
+      backdropRevertsThemePreview(stateWith({ themePickerOpen: true })),
+    ).toBe(true);
+    expect(backdropRevertsThemePreview(stateWith({ menuOpen: true }))).toBe(
+      false,
     );
-    expect(backdropRevertsThemePreview(stateWith({ menuOpen: true }))).toBe(false);
     expect(backdropRevertsThemePreview(stateWith({}))).toBe(false);
   });
 

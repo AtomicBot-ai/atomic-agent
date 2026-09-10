@@ -8,15 +8,11 @@
  * live on every call instead of caching to dodge a 60/hour cap.
  */
 
-export type ClawHubScanStatus = "clean" | "suspicious" | "malicious" | "unknown";
+export type ClawHubScanStatus =
+  "clean" | "suspicious" | "malicious" | "unknown";
 
 export type ClawHubSkillSort =
-  | "recommended"
-  | "downloads"
-  | "trending"
-  | "updated"
-  | "createdAt"
-  | "stars";
+  "recommended" | "downloads" | "trending" | "updated" | "createdAt" | "stars";
 
 /** Compact catalog row from `/skills` (browse) or `/search`. */
 export interface ClawHubSkillSummary {
@@ -43,11 +39,7 @@ export interface ClawHubSkillDetail {
 }
 
 export type ClawHubErrorCode =
-  | "not_found"
-  | "ambiguous"
-  | "rate_limited"
-  | "network"
-  | "unexpected";
+  "not_found" | "ambiguous" | "rate_limited" | "network" | "unexpected";
 
 export class ClawHubError extends Error {
   constructor(
@@ -122,7 +114,9 @@ export class ClawHubClient {
       nextCursor?: unknown;
     };
     const items = Array.isArray(body.items)
-      ? body.items.map(toSummaryFromBrowse).filter((s): s is ClawHubSkillSummary => s !== null)
+      ? body.items
+          .map(toSummaryFromBrowse)
+          .filter((s): s is ClawHubSkillSummary => s !== null)
       : [];
     const nextCursor =
       typeof body.nextCursor === "string" ? body.nextCursor : null;
@@ -216,9 +210,7 @@ export class ClawHubClient {
     if (opts.owner) params.set("owner", opts.owner);
     if (opts.version) params.set("version", opts.version);
     else params.set("tag", opts.tag ?? "latest");
-    const res = await this.apiFetch(
-      `/api/v1/download?${params.toString()}`,
-    );
+    const res = await this.apiFetch(`/api/v1/download?${params.toString()}`);
     const contentType = res.headers.get("content-type") ?? "";
     if (!contentType.includes("zip")) {
       // GitHub-backed skills with no hosted version return a JSON handoff.
@@ -300,7 +292,10 @@ function resolveDownloads(o: Record<string, unknown>): number {
     return o.downloads;
   }
   const stats = o.stats as { downloads?: unknown } | undefined;
-  if (typeof stats?.downloads === "number" && Number.isFinite(stats.downloads)) {
+  if (
+    typeof stats?.downloads === "number" &&
+    Number.isFinite(stats.downloads)
+  ) {
     return stats.downloads;
   }
   return 0;

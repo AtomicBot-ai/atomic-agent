@@ -1,7 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { rm } from "node:fs/promises";
 import { osGitBranchTool } from "./git-branch.js";
-import { makeCtx, makeGitRepo, runGitRaw, writeRepoFile } from "./test-helpers.js";
+import {
+  makeCtx,
+  makeGitRepo,
+  runGitRaw,
+  writeRepoFile,
+} from "./test-helpers.js";
 
 describe("os.git.branch", () => {
   let repo: string;
@@ -44,9 +49,9 @@ describe("os.git.branch", () => {
       { pattern: "feature/*" },
       makeCtx(repo),
     );
-    const names = (
-      result.details.branches as { name: string }[]
-    ).map((b) => b.name);
+    const names = (result.details.branches as { name: string }[]).map(
+      (b) => b.name,
+    );
     expect(names).toEqual(["feature/x"]);
   });
 });

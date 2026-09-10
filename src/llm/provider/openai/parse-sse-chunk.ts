@@ -45,7 +45,8 @@ export function parseOpenAiSseEvent(
       delta: "",
       reasoningDelta: "",
       toolArgsBuffer,
-      emittedReplyLength: extractPartialReplyTextFromToolArguments(toolArgsBuffer).length,
+      emittedReplyLength:
+        extractPartialReplyTextFromToolArguments(toolArgsBuffer).length,
       done: false,
       finishReason: null,
       modelId: null,
@@ -59,7 +60,8 @@ export function parseOpenAiSseEvent(
       delta: "",
       reasoningDelta: "",
       toolArgsBuffer,
-      emittedReplyLength: extractPartialReplyTextFromToolArguments(toolArgsBuffer).length,
+      emittedReplyLength:
+        extractPartialReplyTextFromToolArguments(toolArgsBuffer).length,
       done: true,
       finishReason: null,
       modelId: null,
@@ -69,7 +71,9 @@ export function parseOpenAiSseEvent(
   }
   try {
     const payload = JSON.parse(joined) as Record<string, unknown>;
-    const choice = (payload.choices as Array<Record<string, unknown>> | undefined)?.[0];
+    const choice = (
+      payload.choices as Array<Record<string, unknown>> | undefined
+    )?.[0];
     const delta = (choice?.delta as Record<string, unknown> | undefined) ?? {};
     const content = typeof delta.content === "string" ? delta.content : "";
     const reasoningDelta = reasoning.extractDelta({ delta });
@@ -103,9 +107,13 @@ export function parseOpenAiSseEvent(
         modelId,
         usage,
         toolCallDeltas: toolCalls.map((toolCall) => ({
-          ...(typeof toolCall.index === "number" ? { index: toolCall.index } : {}),
+          ...(typeof toolCall.index === "number"
+            ? { index: toolCall.index }
+            : {}),
           ...(typeof toolCall.id === "string" ? { id: toolCall.id } : {}),
-          ...(toolCall.type === "function" ? { type: "function" as const } : {}),
+          ...(toolCall.type === "function"
+            ? { type: "function" as const }
+            : {}),
           ...(toolCall.function
             ? {
                 function: {
@@ -138,7 +146,8 @@ export function parseOpenAiSseEvent(
       delta: "",
       reasoningDelta: "",
       toolArgsBuffer,
-      emittedReplyLength: extractPartialReplyTextFromToolArguments(toolArgsBuffer).length,
+      emittedReplyLength:
+        extractPartialReplyTextFromToolArguments(toolArgsBuffer).length,
       done: false,
       finishReason: null,
       modelId: null,

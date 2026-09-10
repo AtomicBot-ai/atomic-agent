@@ -31,7 +31,9 @@ describe("reduceProvidersPanel", () => {
       ],
     })!;
     expect(withRows.providersPanel.cursor).toBe(0);
-    const down = reduceProvidersPanel(withRows, { type: "providers_cursor_down" })!;
+    const down = reduceProvidersPanel(withRows, {
+      type: "providers_cursor_down",
+    })!;
     expect(down.providersPanel.cursor).toBe(1);
   });
 });

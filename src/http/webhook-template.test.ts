@@ -9,18 +9,17 @@ describe("renderWebhookTemplate", () => {
   });
 
   it("traverses nested paths", () => {
-    const out = renderWebhookTemplate(
-      "repo={{body.repository.full_name}}",
-      { repository: { full_name: "atomicbot/atomic-agent" } },
-    );
+    const out = renderWebhookTemplate("repo={{body.repository.full_name}}", {
+      repository: { full_name: "atomicbot/atomic-agent" },
+    });
     expect(out).toBe("repo=atomicbot/atomic-agent");
   });
 
   it("substitutes numbers and booleans as their string form", () => {
-    const out = renderWebhookTemplate(
-      "count={{body.count}} ok={{body.ok}}",
-      { count: 42, ok: true },
-    );
+    const out = renderWebhookTemplate("count={{body.count}} ok={{body.ok}}", {
+      count: 42,
+      ok: true,
+    });
     expect(out).toBe("count=42 ok=true");
   });
 

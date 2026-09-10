@@ -4,9 +4,7 @@ import type {
   MemoryContextProviderInput,
 } from "../../agent/agent-loop.js";
 
-import type {
-  QueryRewriterRunner,
-} from "./query-rewriter-runner.js";
+import type { QueryRewriterRunner } from "./query-rewriter-runner.js";
 
 /**
  * v2.5 query rewriter (Phase A) — provider decorator.

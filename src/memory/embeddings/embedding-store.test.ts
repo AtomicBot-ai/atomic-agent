@@ -41,9 +41,7 @@ describe("EmbeddingStore", () => {
     expect(got).not.toBeNull();
     expect(got!.dim).toBe(4);
     expect(Array.from(got!.vector)).toEqual([
-      0.10000000149011612,
-      -0.20000000298023224,
-      0.30000001192092896,
+      0.10000000149011612, -0.20000000298023224, 0.30000001192092896,
       -0.4000000059604645,
     ]);
   });
@@ -107,9 +105,9 @@ describe("EmbeddingStore", () => {
       vector: new Float32Array([0, 1]),
       createdAt: 2,
     });
-    const rows = embStore.listByModel("m").sort(
-      (x, y) => x.memoryId - y.memoryId,
-    );
+    const rows = embStore
+      .listByModel("m")
+      .sort((x, y) => x.memoryId - y.memoryId);
     expect(rows).toHaveLength(2);
     expect(rows[0]!.workingDir).toBe("/project/a");
     expect(rows[0]!.tags).toEqual(["alpha"]);

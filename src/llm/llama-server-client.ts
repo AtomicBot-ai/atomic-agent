@@ -34,7 +34,9 @@ function parseIntEnv(raw: string | undefined): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
-const ENV_TEMPERATURE = parseFloatEnv(process.env.ATOMIC_AGENT_LLAMA_TEMPERATURE);
+const ENV_TEMPERATURE = parseFloatEnv(
+  process.env.ATOMIC_AGENT_LLAMA_TEMPERATURE,
+);
 const ENV_TOP_P = parseFloatEnv(process.env.ATOMIC_AGENT_LLAMA_TOP_P);
 const ENV_TOP_K = parseIntEnv(process.env.ATOMIC_AGENT_LLAMA_TOP_K);
 const ENV_SEED = parseIntEnv(process.env.ATOMIC_AGENT_LLAMA_SEED);
@@ -58,10 +60,7 @@ const ENV_SEED = parseIntEnv(process.env.ATOMIC_AGENT_LLAMA_SEED);
  *    just under the idle budget.
  */
 export type LlamaTimeoutKind =
-  | "total"
-  | "first-token"
-  | "idle"
-  | "stream-total";
+  "total" | "first-token" | "idle" | "stream-total";
 
 export class LlamaServerError extends Error {
   constructor(
@@ -231,10 +230,7 @@ export class LlamaServerClient {
     const base = this.baseUrlOverride ?? config.localModels.url;
     const url = llamaEndpointUrl(base, "/props");
     const controller = new AbortController();
-    const timer = setTimeout(
-      () => controller.abort(),
-      this.requestTimeoutMs,
-    );
+    const timer = setTimeout(() => controller.abort(), this.requestTimeoutMs);
     try {
       const response = await this.fetchImpl(url, {
         method: "GET",
@@ -248,9 +244,16 @@ export class LlamaServerClient {
     } catch (err) {
       if (err instanceof LlamaServerError) throw err;
       const message = err instanceof Error ? err.message : String(err);
-      throw new LlamaServerError(message, null, url, false, readErrnoCode(err), {
-        cause: err,
-      });
+      throw new LlamaServerError(
+        message,
+        null,
+        url,
+        false,
+        readErrnoCode(err),
+        {
+          cause: err,
+        },
+      );
     } finally {
       clearTimeout(timer);
     }
@@ -305,8 +308,13 @@ export class LlamaServerClient {
       opened = await this.runWithRetry(
         url,
         async () => {
-          const { controller, cleanup, timedOut, keepAlive, startStreamDeadline } =
-            this.createRequestController(request.signal);
+          const {
+            controller,
+            cleanup,
+            timedOut,
+            keepAlive,
+            startStreamDeadline,
+          } = this.createRequestController(request.signal);
           try {
             const response = await this.fetchImpl(url, {
               method: "POST",
@@ -335,9 +343,16 @@ export class LlamaServerClient {
     } catch (err) {
       if (err instanceof LlamaServerError) throw err;
       const message = err instanceof Error ? err.message : String(err);
-      throw new LlamaServerError(message, null, url, false, readErrnoCode(err), {
-        cause: err,
-      });
+      throw new LlamaServerError(
+        message,
+        null,
+        url,
+        false,
+        readErrnoCode(err),
+        {
+          cause: err,
+        },
+      );
     }
     const { response, cleanup, timedOut, keepAlive, startStreamDeadline } =
       opened;
@@ -630,7 +645,10 @@ export class LlamaServerClient {
       temperature: request.temperature ?? ENV_TEMPERATURE ?? 0.2,
       top_p: request.topP ?? ENV_TOP_P ?? 0.95,
       top_k: request.topK ?? ENV_TOP_K ?? 40,
-      n_predict: request.maxTokens ?? config.localModels.completionMaxTokens,
+      n_predict: resolveNPredict(
+        request.maxTokens,
+        config.localModels.completionMaxTokens,
+      ),
       repeat_penalty: request.repeatPenalty ?? 1.1,
       repeat_last_n: request.repeatLastN ?? 256,
     };
@@ -743,7 +761,9 @@ function normaliseCompletionResponse(
   // cache the raw `prompt_n` is a small fraction of the prompt and the
   // context readout collapsed to it, then leapt back to the estimator's
   // full figure the moment anything reprojected it.
-  const evaluatedTokens = toNumber(timings.prompt_n ?? payload.tokens_evaluated);
+  const evaluatedTokens = toNumber(
+    timings.prompt_n ?? payload.tokens_evaluated,
+  );
   const cachedTokens = toNumber(payload.tokens_cached);
   return {
     content: typeof payload.content === "string" ? payload.content : "",
@@ -757,12 +777,13 @@ function normaliseCompletionResponse(
       promptMs: toNumber(timings.prompt_ms),
       predictedMs: toNumber(timings.predicted_ms),
       promptTokens: evaluatedTokens + cachedTokens,
-      predictedTokens: toNumber(timings.predicted_n ?? payload.tokens_predicted),
+      predictedTokens: toNumber(
+        timings.predicted_n ?? payload.tokens_predicted,
+      ),
     },
     cacheHitTokens: cachedTokens,
     slotId: toNumber(payload.slot_id ?? payload.id_slot, -1),
-    modelId:
-      typeof payload.model === "string" ? payload.model : null,
+    modelId: typeof payload.model === "string" ? payload.model : null,
   };
 }
 
@@ -806,4 +827,23 @@ function computeBackoffMs(baseMs: number, attemptNumber: number): number {
 async function defaultSleep(ms: number): Promise<void> {
   if (ms <= 0) return;
   await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * `n_predict` for one local completion.
+ *
+ * `localModels.completionMaxTokens: 0` is the operator saying "no
+ * client-side cap"; llama.cpp spells that `-1`, which generates until
+ * the model emits a stop token or the context window fills. The context
+ * window is the real ceiling on a local run — memory is committed at
+ * daemon start by the model and `--ctx-size`, not by how long one reply
+ * runs — so what a positive cap actually buys is a bound on a runaway
+ * generation, not protection from a crash.
+ */
+export function resolveNPredict(
+  requested: number | undefined,
+  configured: number,
+): number {
+  const cap = requested ?? configured;
+  return cap === 0 ? -1 : cap;
 }

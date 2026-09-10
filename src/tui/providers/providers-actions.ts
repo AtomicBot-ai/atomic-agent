@@ -1,9 +1,14 @@
+import type { ResolvedRunMode } from "../../llm/run-mode/index.js";
 import type { ProviderRow } from "./providers-panel-state.js";
 import type { ProvidersWizardState } from "./providers-wizard-state.js";
 
 export type ProvidersAction =
   | { type: "providers_refresh_requested" }
-  | { type: "providers_refresh"; rows: readonly ProviderRow[] }
+  | {
+      type: "providers_refresh";
+      rows: readonly ProviderRow[];
+      runMode?: ResolvedRunMode;
+    }
   | { type: "providers_set_active_text"; id: string }
   | { type: "providers_select_chat_model"; providerId: string; modelId: string }
   | {
@@ -50,7 +55,11 @@ export type ProvidersAction =
       generation: number;
       models: readonly string[];
     }
-  | { type: "providers_chat_model_picker_failed"; generation: number; error: string }
+  | {
+      type: "providers_chat_model_picker_failed";
+      generation: number;
+      error: string;
+    }
   | { type: "providers_chat_model_picker_cursor_set"; cursor: number }
   | { type: "providers_chat_model_picker_query_set"; query: string }
   | { type: "providers_chat_model_picker_closed" }
@@ -114,8 +123,8 @@ export type ProvidersAction =
   | { type: "providers_remove_failed"; error: string }
   | { type: "providers_remove_succeeded" };
 
-export function isProvidersAction(
-  action: { type: string },
-): action is ProvidersAction {
+export function isProvidersAction(action: {
+  type: string;
+}): action is ProvidersAction {
   return action.type.startsWith("providers_");
 }

@@ -20,10 +20,12 @@ export interface IntegrationFieldRow {
   key: string;
   label: string;
   /** `"boolean"` rows toggle with enter instead of opening an editor. */
-  kind: "text" | "boolean";
+  kind: "text" | "boolean" | "list";
   /** Already masked when the field is a secret — never the raw value. */
   display: string;
   present: boolean;
+  /** Shown, never edited or cleared. */
+  readonly?: boolean;
   help?: string;
 }
 

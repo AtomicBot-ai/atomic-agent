@@ -81,9 +81,9 @@ describe("os.proc.kill", () => {
       approvals: denyAll(),
       approvalRequired: true,
     });
-    await expect(
-      tool.run({ pid: victim.pid! }, makeCtx()),
-    ).rejects.toThrow(/approval denied/);
+    await expect(tool.run({ pid: victim.pid! }, makeCtx())).rejects.toThrow(
+      /approval denied/,
+    );
     expect(victim.killed).toBe(false);
   });
 

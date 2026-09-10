@@ -124,8 +124,12 @@ describe("buildReflectionPrompt", () => {
 
   it("phase C: typed prefix lists per-type forbidden content", () => {
     expect(REFLECTION_STABLE_PREFIX_TYPED).toContain("Forbidden in every NOTE");
-    expect(REFLECTION_STABLE_PREFIX_TYPED).toContain("NEVER use for a single one-off event");
-    expect(REFLECTION_STABLE_PREFIX_TYPED).toContain("NEVER use for events or behaviors");
+    expect(REFLECTION_STABLE_PREFIX_TYPED).toContain(
+      "NEVER use for a single one-off event",
+    );
+    expect(REFLECTION_STABLE_PREFIX_TYPED).toContain(
+      "NEVER use for events or behaviors",
+    );
   });
 
   it("phase C: typed prefix is byte-stable across calls (KV-cache hygiene)", () => {
@@ -158,9 +162,15 @@ describe("buildReflectionPrompt", () => {
         { user: "Next week", assistant: "Will do." },
       ],
     });
-    expect(prompt).toContain("### turn 1\nUSER: I'm in Lisbon\nASSISTANT: Got it.");
-    expect(prompt).toContain("### turn 2\nUSER: Plan a trip\nASSISTANT: Sure, when?");
-    expect(prompt).toContain("### turn 3\nUSER: Next week\nASSISTANT: Will do.");
+    expect(prompt).toContain(
+      "### turn 1\nUSER: I'm in Lisbon\nASSISTANT: Got it.",
+    );
+    expect(prompt).toContain(
+      "### turn 2\nUSER: Plan a trip\nASSISTANT: Sure, when?",
+    );
+    expect(prompt).toContain(
+      "### turn 3\nUSER: Next week\nASSISTANT: Will do.",
+    );
     expect(prompt).not.toContain("USER: ignored when transcript is present");
     expect(prompt.endsWith("### output\n")).toBe(true);
   });

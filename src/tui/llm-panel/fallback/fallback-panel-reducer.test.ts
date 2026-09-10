@@ -5,7 +5,10 @@ import { fakeSession } from "../../test-fixtures.js";
 import { createInitialTuiState } from "../../tui-state.js";
 import type { FallbackLinkRow } from "./fallback-panel-state.js";
 
-function link(providerId: string, over: Partial<FallbackLinkRow> = {}): FallbackLinkRow {
+function link(
+  providerId: string,
+  over: Partial<FallbackLinkRow> = {},
+): FallbackLinkRow {
   return {
     providerId,
     modelLabel: null,
@@ -39,7 +42,11 @@ describe("fallback panel reducer", () => {
     // shrinks to one link with nothing addable: only row 0 exists now.
     const parked = {
       ...base,
-      llmPanel: { ...base.llmPanel, mode: "fallback" as const, fallbackCursor: 3 },
+      llmPanel: {
+        ...base.llmPanel,
+        mode: "fallback" as const,
+        fallbackCursor: 3,
+      },
     };
     const next = reduceTuiState(parked, {
       type: "fallback_refresh",
@@ -54,7 +61,11 @@ describe("fallback panel reducer", () => {
     const base = createInitialTuiState(fakeSession());
     const parked = {
       ...base,
-      llmPanel: { ...base.llmPanel, mode: "fallback" as const, fallbackCursor: 3 },
+      llmPanel: {
+        ...base.llmPanel,
+        mode: "fallback" as const,
+        fallbackCursor: 3,
+      },
     };
     const next = reduceTuiState(parked, {
       type: "fallback_refresh",
@@ -74,7 +85,9 @@ describe("fallback panel reducer", () => {
       addableProviderIds: ["cloud-b", "cloud-c"],
       appendLocal: true,
     });
-    const opened = reduceTuiState(withAddable, { type: "fallback_add_picker_opened" });
+    const opened = reduceTuiState(withAddable, {
+      type: "fallback_add_picker_opened",
+    });
     expect(opened.fallbackPanel.addPicker).toEqual({ cursor: 0 });
 
     const moved = reduceTuiState(opened, {
@@ -84,7 +97,9 @@ describe("fallback panel reducer", () => {
     // Clamped to the last addable index (1).
     expect(moved.fallbackPanel.addPicker).toEqual({ cursor: 1 });
 
-    const closed = reduceTuiState(moved, { type: "fallback_add_picker_closed" });
+    const closed = reduceTuiState(moved, {
+      type: "fallback_add_picker_closed",
+    });
     expect(closed.fallbackPanel.addPicker).toBeNull();
   });
 
@@ -96,7 +111,9 @@ describe("fallback panel reducer", () => {
       addableProviderIds: [],
       appendLocal: true,
     });
-    const opened = reduceTuiState(noAddable, { type: "fallback_add_picker_opened" });
+    const opened = reduceTuiState(noAddable, {
+      type: "fallback_add_picker_opened",
+    });
     expect(opened.fallbackPanel.addPicker).toBeNull();
   });
 
@@ -125,7 +142,12 @@ describe("fallback panel reducer", () => {
     const base = createInitialTuiState(fakeSession());
     const switched = reduceTuiState(base, {
       type: "fallback_last_switch_set",
-      lastSwitch: { direction: "away", from: "cloud-a", to: "cloud-b", reason: "429" },
+      lastSwitch: {
+        direction: "away",
+        from: "cloud-a",
+        to: "cloud-b",
+        reason: "429",
+      },
     });
     expect(switched.fallbackPanel.lastSwitch).toMatchObject({
       direction: "away",

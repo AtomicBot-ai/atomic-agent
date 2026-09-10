@@ -79,7 +79,8 @@ function handleListKey(
 ): boolean {
   const { state, dispatch, callbacks } = ctx;
   const panel = state.tasksPanel;
-  if (panel.searchOpen) return handleSearchInputKey(input, key, panel, dispatch);
+  if (panel.searchOpen)
+    return handleSearchInputKey(input, key, panel, dispatch);
   if (key.escape) {
     if (panel.searchQuery.length > 0) {
       dispatch({ type: "tasks_search_closed", clearQuery: true });
@@ -239,11 +240,7 @@ function handleCreateFormKey(
     return true;
   }
   if (key.tab) {
-    const next = focusAfter(
-      form,
-      key.shift ? -1 : 1,
-      TASK_CREATE_FOCUS_ORDER,
-    );
+    const next = focusAfter(form, key.shift ? -1 : 1, TASK_CREATE_FOCUS_ORDER);
     dispatch({ type: "tasks_create_focus_set", focus: next });
     return true;
   }
@@ -330,18 +327,16 @@ function applyTextEdit(
   if (!field) return false;
   const current = form[field];
   const next = isBackspace ? current.slice(0, -1) : current + text;
-  const patch: Partial<TaskCreateFormState> = { [field]: next } as Partial<TaskCreateFormState>;
+  const patch: Partial<TaskCreateFormState> = {
+    [field]: next,
+  } as Partial<TaskCreateFormState>;
   dispatch({ type: "tasks_create_form_updated", patch });
   revalidateForm({ ...form, [field]: next } as TaskCreateFormState, dispatch);
   return true;
 }
 
 type TextFieldKey =
-  | "cronExpression"
-  | "intervalSeconds"
-  | "atIsoOrMs"
-  | "tz"
-  | "message";
+  "cronExpression" | "intervalSeconds" | "atIsoOrMs" | "tz" | "message";
 
 function fieldForFocus(
   focus: TaskCreateFocus,

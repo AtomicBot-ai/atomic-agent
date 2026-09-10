@@ -60,9 +60,7 @@ export interface McpServerConfig {
 export type McpTrustLevel = "approval_gated" | "pure_read";
 
 export type McpTransport =
-  | McpStdioTransport
-  | McpStreamableHttpTransport
-  | McpSseTransport;
+  McpStdioTransport | McpStreamableHttpTransport | McpSseTransport;
 
 /** Local subprocess wired over stdio. */
 export interface McpStdioTransport {
@@ -94,11 +92,7 @@ export interface McpSseTransport {
 }
 
 /** Server lifecycle states observable from outside the manager. */
-export type McpServerState =
-  | "disabled"
-  | "starting"
-  | "up"
-  | "down";
+export type McpServerState = "disabled" | "starting" | "up" | "down";
 
 /** Status snapshot emitted on every observable transition. */
 export interface McpServerStatus {

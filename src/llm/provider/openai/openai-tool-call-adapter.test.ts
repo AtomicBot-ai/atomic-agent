@@ -47,7 +47,12 @@ describe("OpenAiToolCallAdapter", () => {
   it("throws ToolCallArgumentsParseError on malformed non-empty JSON instead of substituting {}", () => {
     expect(() =>
       openAiToolCallsToBatch([
-        { function: { name: "os__fs__delete", arguments: '{"path":"widget.txt' } },
+        {
+          function: {
+            name: "os__fs__delete",
+            arguments: '{"path":"widget.txt',
+          },
+        },
       ]),
     ).toThrow(ToolCallArgumentsParseError);
   });
@@ -81,7 +86,9 @@ describe("OpenAiToolCallAdapter", () => {
   it("never includes the raw arguments string in the thrown error's message", () => {
     const secret = '{"path":"/etc/shadow","token":"sk-super-secret-do-not-log';
     try {
-      openAiToolCallsToBatch([{ function: { name: "os__fs__delete", arguments: secret } }]);
+      openAiToolCallsToBatch([
+        { function: { name: "os__fs__delete", arguments: secret } },
+      ]);
       expect.unreachable("expected a throw");
     } catch (err) {
       expect(err).toBeInstanceOf(ToolCallArgumentsParseError);
@@ -134,10 +141,10 @@ describe("OpenAiToolCallAdapter", () => {
       },
     ]);
     const shell = tools.find(
-      (t) => (t as { function: { name: string } }).function.name === "os__shell__run",
-    ) as
-      | { function: { parameters: Record<string, unknown> } }
-      | undefined;
+      (t) =>
+        (t as { function: { name: string } }).function.name ===
+        "os__shell__run",
+    ) as { function: { parameters: Record<string, unknown> } } | undefined;
     expect(shell?.function.parameters).toEqual(schema);
   });
 
@@ -151,10 +158,9 @@ describe("OpenAiToolCallAdapter", () => {
       },
     ]);
     const custom = tools.find(
-      (t) => (t as { function: { name: string } }).function.name === "custom__tool",
-    ) as
-      | { function: { parameters: Record<string, unknown> } }
-      | undefined;
+      (t) =>
+        (t as { function: { name: string } }).function.name === "custom__tool",
+    ) as { function: { parameters: Record<string, unknown> } } | undefined;
     expect(custom?.function.parameters).toEqual({
       type: "object",
       properties: {},
@@ -165,7 +171,8 @@ describe("OpenAiToolCallAdapter", () => {
   it("marks reply.text as required in the OpenAI tool schema", () => {
     const tools = descriptorsToOpenAiTools([]);
     const reply = tools.find(
-      (tool) => (tool as { function: { name: string } }).function.name === "reply",
+      (tool) =>
+        (tool as { function: { name: string } }).function.name === "reply",
     ) as
       | {
           function: {

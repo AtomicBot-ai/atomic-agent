@@ -150,10 +150,9 @@ describe("createVoteRunner", () => {
     const runner = createVoteRunner({
       llmComplete: async () =>
         completion(
-          [
-            `UPVOTE memory:${h.memoryId}`,
-            `DOWNVOTE lesson:${h.lessonId}`,
-          ].join("\n") + "\n",
+          [`UPVOTE memory:${h.memoryId}`, `DOWNVOTE lesson:${h.lessonId}`].join(
+            "\n",
+          ) + "\n",
         ),
       voteStore: h.voteStore,
       reflectionSlotId: 7,
@@ -196,9 +195,7 @@ describe("createVoteRunner", () => {
       sessionId: "s1",
       userMessage: "u",
       assistantReply: "a",
-      candidates: [
-        { kind: "memory", id: h.memoryId, preview: "m" },
-      ],
+      candidates: [{ kind: "memory", id: h.memoryId, preview: "m" }],
     });
     expect(result.outcome).toBe("none");
     expect(h.voteStore.getScore("memory", h.memoryId)).toBe(0);
@@ -213,8 +210,7 @@ describe("createVoteRunner", () => {
   // the runner exercises it through the round-trip path.
   it("rejects votes against ids outside the surfaced allowlist (scorecard 7a.B)", async () => {
     const runner = createVoteRunner({
-      llmComplete: async () =>
-        completion(`UPVOTE lesson:9999\n`),
+      llmComplete: async () => completion(`UPVOTE lesson:9999\n`),
       voteStore: h.voteStore,
       reflectionSlotId: 7,
       timeoutMs: 1_000,
@@ -226,9 +222,7 @@ describe("createVoteRunner", () => {
       sessionId: "s1",
       userMessage: "u",
       assistantReply: "a",
-      candidates: [
-        { kind: "lesson", id: h.lessonId, preview: "L" },
-      ],
+      candidates: [{ kind: "lesson", id: h.lessonId, preview: "L" }],
     });
     expect(result.applied).toBe(0);
     expect(result.rejected).toBe(1);
@@ -253,8 +247,7 @@ describe("createVoteRunner", () => {
     }
     expect(h.voteStore.getScore("lesson", h.lessonId)).toBe(3);
     const runner = createVoteRunner({
-      llmComplete: async () =>
-        completion(`UPVOTE lesson:${h.lessonId}\n`),
+      llmComplete: async () => completion(`UPVOTE lesson:${h.lessonId}\n`),
       voteStore: h.voteStore,
       reflectionSlotId: 7,
       timeoutMs: 1_000,
@@ -266,9 +259,7 @@ describe("createVoteRunner", () => {
       sessionId: "s1",
       userMessage: "u",
       assistantReply: "a",
-      candidates: [
-        { kind: "lesson", id: h.lessonId, preview: "L" },
-      ],
+      candidates: [{ kind: "lesson", id: h.lessonId, preview: "L" }],
     });
     expect(result.applied).toBe(0);
     expect(result.rejected).toBe(1);
@@ -304,9 +295,7 @@ describe("createVoteRunner", () => {
       sessionId: "s1",
       userMessage: "u",
       assistantReply: "a",
-      candidates: [
-        { kind: "memory", id: h.memoryId, preview: "m" },
-      ],
+      candidates: [{ kind: "memory", id: h.memoryId, preview: "m" }],
     });
     expect(result.outcome).toBe("timeout");
   });
@@ -327,9 +316,7 @@ describe("createVoteRunner", () => {
       sessionId: "s1",
       userMessage: "u",
       assistantReply: "a",
-      candidates: [
-        { kind: "memory", id: h.memoryId, preview: "m" },
-      ],
+      candidates: [{ kind: "memory", id: h.memoryId, preview: "m" }],
     });
     expect(result.outcome).toBe("failed");
     expect(result.applied).toBe(0);
@@ -359,18 +346,14 @@ describe("createVoteRunner", () => {
       sessionId: "s1",
       userMessage: "u",
       assistantReply: "a",
-      candidates: [
-        { kind: "memory", id: h.memoryId, preview: "m" },
-      ],
+      candidates: [{ kind: "memory", id: h.memoryId, preview: "m" }],
     });
     // Second call must abort the first.
     const second = runner.run({
       sessionId: "s1",
       userMessage: "u2",
       assistantReply: "a2",
-      candidates: [
-        { kind: "memory", id: h.memoryId, preview: "m" },
-      ],
+      candidates: [{ kind: "memory", id: h.memoryId, preview: "m" }],
     });
     release?.();
     const [r1] = await Promise.all([first, second]);
@@ -379,8 +362,7 @@ describe("createVoteRunner", () => {
 
   it("propagates eventLogMaxRows into VoteStore FIFO eviction", async () => {
     const runner = createVoteRunner({
-      llmComplete: async () =>
-        completion(`UPVOTE memory:${h.memoryId}\n`),
+      llmComplete: async () => completion(`UPVOTE memory:${h.memoryId}\n`),
       voteStore: h.voteStore,
       reflectionSlotId: 7,
       timeoutMs: 1_000,
@@ -394,9 +376,7 @@ describe("createVoteRunner", () => {
         sessionId: "s1",
         userMessage: "u",
         assistantReply: "a",
-        candidates: [
-          { kind: "memory", id: h.memoryId, preview: "m" },
-        ],
+        candidates: [{ kind: "memory", id: h.memoryId, preview: "m" }],
       });
     }
     expect(h.voteStore.getEventCount()).toBe(2);
@@ -520,9 +500,7 @@ describe("createVoteRunner", () => {
       candidates: [{ kind: "lesson", id: h.lessonId, preview: "L" }],
     });
 
-    expect(traced).toEqual([
-      { type: "applied", clampHit: true, score: 5 },
-    ]);
+    expect(traced).toEqual([{ type: "applied", clampHit: true, score: 5 }]);
   });
 
   it("swallows emitTrace failures without aborting vote application", async () => {

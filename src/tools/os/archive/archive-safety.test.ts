@@ -69,7 +69,8 @@ describe("sanitizeEntryPath", () => {
     withTmp((dir) => {
       const result = sanitizeEntryPath(dir, "../../etc/passwd");
       expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.error.reason).toBe("traversal_escapes_dest");
+      if (!result.ok)
+        expect(result.error.reason).toBe("traversal_escapes_dest");
     });
   });
 
@@ -134,7 +135,11 @@ describe("ExtractBudget", () => {
   });
 
   it("rejects when max entries exceeded", () => {
-    const b = new ExtractBudget({ maxTotalBytes: 1_000_000, maxEntryBytes: 1_000, maxEntries: 2 });
+    const b = new ExtractBudget({
+      maxTotalBytes: 1_000_000,
+      maxEntryBytes: 1_000,
+      maxEntries: 2,
+    });
     b.chargeEntry(1);
     b.chargeEntry(1);
     const d = b.chargeEntry(1);

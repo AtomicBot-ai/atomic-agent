@@ -8,18 +8,15 @@ import {
 
 /** How many presses apart two modes are, going the short way round. */
 function ringDistance(a: string, b: string): number {
-  const raw = Math.abs(CODING_MODES.indexOf(a as never) - CODING_MODES.indexOf(b as never));
+  const raw = Math.abs(
+    CODING_MODES.indexOf(a as never) - CODING_MODES.indexOf(b as never),
+  );
   return Math.min(raw, CODING_MODES.length - raw);
 }
 
 describe("the coding-mode ring", () => {
   it("puts plan next to default, and bypass as far from plan as the ring allows", () => {
-    expect([...CODING_MODES]).toEqual([
-      "default",
-      "plan",
-      "auto",
-      "bypass",
-    ]);
+    expect([...CODING_MODES]).toEqual(["default", "plan", "auto", "bypass"]);
     // The ring *wraps*, which is what makes severity order wrong: it
     // would leave `bypass` one backward press from `plan`, and `plan`
     // is exactly where a careful operator parks. Measured the way the

@@ -28,7 +28,9 @@ export function buildSkillRunScriptTool(
         throw new Error("skill.run_script: `skill` must be a non-empty string");
       }
       if (typeof scriptName !== "string" || scriptName.length === 0) {
-        throw new Error("skill.run_script: `script` must be a non-empty string");
+        throw new Error(
+          "skill.run_script: `script` must be a non-empty string",
+        );
       }
       const scriptArgs = Array.isArray(rawArgs.args)
         ? rawArgs.args.map((v) => String(v))

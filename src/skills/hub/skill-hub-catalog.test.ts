@@ -90,7 +90,9 @@ describe("browseTap", () => {
 
 describe("browseHub / searchHub", () => {
   const client = new FakeClient({
-    "openai/skills": [{ dir: "k8s", content: manifest("k8s", "Kubernetes ops") }],
+    "openai/skills": [
+      { dir: "k8s", content: manifest("k8s", "Kubernetes ops") },
+    ],
     "anthropics/skills": [
       { dir: "pdf", content: manifest("pdf", "Work with PDFs") },
     ],

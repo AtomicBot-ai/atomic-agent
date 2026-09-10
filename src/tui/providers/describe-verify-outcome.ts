@@ -12,7 +12,9 @@ export function describeProviderVerifyOutcome(
   label: string,
 ): string {
   const who = `"${label}"`;
-  const model = result.probedModel ? ` (tested with ${result.probedModel})` : "";
+  const model = result.probedModel
+    ? ` (tested with ${result.probedModel})`
+    : "";
   switch (result.status) {
     case "ok":
       return `${who} accepted the key${model}.`;

@@ -1,5 +1,6 @@
 import type { AtomicAgentConfig } from "../../../config/index.js";
 import type { UserSubscriptionCliOptions } from "../../../config/llm-config.js";
+import type { UserLlmRunModeConfig } from "../../../config/llm-run-mode-config.js";
 import type { LlamaServerClient } from "../../llama-server-client.js";
 import type { ModelProfile } from "../../model-profile.js";
 import type { StructuredLogger } from "../../../tracing/index.js";
@@ -51,6 +52,8 @@ export type LlmProviderConfigEntry = {
    * the request from the resolved model or drop the tool contract.
    */
   extraBody?: Record<string, unknown>;
+  /** Per-provider output ceiling; absent means the model's own maximum. */
+  maxOutputTokens?: number;
   /**
    * Settings for a `subscription-cli` provider — which vendor CLI to
    * drive and how to invoke it. Absent on every other kind.
@@ -97,6 +100,7 @@ export type ResolvedLlmConfig = {
   providers: LlmProviderConfigEntry[];
   toolTransport: "auto" | "grammar" | "native_tools";
   fallback?: LlmFallbackConfig;
+  runMode?: UserLlmRunModeConfig;
 };
 
 const factories = new Map<string, ProviderFactory>();
@@ -125,6 +129,7 @@ export function resolveLlmConfig(config: AtomicAgentConfig): ResolvedLlmConfig {
       providers: [...llm.providers],
       toolTransport: llm.toolTransport,
       ...(llm.fallback ? { fallback: llm.fallback } : {}),
+      ...(llm.runMode ? { runMode: llm.runMode } : {}),
     };
   }
   return {

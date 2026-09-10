@@ -138,7 +138,9 @@ function parseAt(
   }
   const parsed = parseIsoOrMs(raw);
   if (parsed === null) {
-    return fail("could not parse timestamp; try `2026-05-01T09:00:00Z` or Unix-ms");
+    return fail(
+      "could not parse timestamp; try `2026-05-01T09:00:00Z` or Unix-ms",
+    );
   }
   const schedule: TaskSchedule = { kind: "at", at: parsed };
   try {

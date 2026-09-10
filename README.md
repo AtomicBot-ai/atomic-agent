@@ -207,7 +207,7 @@ Atomic Agent drives a full desktop tool surface. Dangerous actions are routed th
 | **Filesystem & shell** | Read, write, edit, patch, glob, grep, diff, watch, hash, list, archive extract, run approved shell commands, and inspect or kill processes. |
 | **Desktop** | Clipboard read/write, desktop notifications, and window list/focus. |
 | **Documents** | Extract text locally from PDF, DOC, DOCX, XLSX, PPTX, ODT, RTF, and plain text. |
-| **Git** | Read-only status, log, diff, show, blame, and branch inspection. |
+| **Git** | Read-only status, log, diff, show, blame, and branch inspection, plus local write tools — init, add, commit, checkout — behind the same approval ladder as file writes (no remotes, no network). |
 | **Memory** | Profile facts, notes with hybrid recall, links, lessons, procedures, voting, and reflection. |
 | **Tasks** | Durable deferred turns, cron schedules, intervals, webhooks, and agent-created reminders. |
 | **Skills** | View and run Markdown skill playbooks (scripts are approval-gated), install more from ClawHub. Ships with 17 starter skills (Docker, GitHub, Notion, Obsidian, PDF, and more), auto-installed on first run. |
@@ -286,6 +286,31 @@ While mouse reporting is on the terminal hands clicks to the app, so its own pla
 Cloud provider setup pulls each provider's full live model catalog, hundreds of models, instead of a short hardcoded list; OpenAI-compatible servers are asked for their own `/v1/models`. The picker filters as you type, and `/model` switches models mid-session.
 
 A cloud key is checked before it is saved. The key screen refuses an empty key, and finishing the wizard asks the provider for a one-token completion from its cheapest model: a key that is rejected, or attached to an account with no balance, never reaches `.env` and never becomes the active provider. A provider that cannot be reached at all still saves, with a line saying the key went unverified — an offline or proxied machine stays configurable. Local servers have no account to check and are left alone.
+
+</details>
+
+<details>
+<summary><b>Run modes: Local · Cloud · Fusion</b></summary>
+
+`local` and `cloud` are the two routes the composer always offered. **Fusion** adds a third: a cloud model orchestrates and several local llama-server workers execute the parts it delegates, so cloud tokens pay only for the heavy thinking. The block is additive and `llm.activeTextProvider` stays authoritative:
+
+```json
+"llm": {
+  "activeTextProvider": "openrouter",
+  "runMode": {
+    "mode": "fusion",
+    "fusion": { "orchestratorProvider": "openrouter", "workerProvider": "local-llama", "workers": 3 }
+  }
+},
+"localModels": { "managed": { "parallel": 3 } }
+```
+
+`workers` (1..8) caps how many workers run at once; `localModels.managed.parallel` is the llama-server `--parallel` slot count that lets them actually run concurrently (default 2, applied on the next daemon start). The orchestrator model is the provider's `defaultChatModel`; the worker model is the one the managed daemon serves.
+
+In the TUI, fusion is the last row of the composer's **Where it runs** switch (`ctrl+r`, or click the backend word): it needs a cloud provider with a key and a downloaded local model, and says which one is missing otherwise. While it is on, the backend word is an orange chip and the composer and the chat bubbles take the same tint. `/runmode local|cloud|fusion` and `ctrl+g 1/2/3` pick a mode from the keyboard; `/runmode status` says what the mode resolves to.
+
+On the fusion route the strip gains a fourth control, **Workers** (`→` past the model, or click the worker count): it picks the local model the workers run and how many run at once, and `/runmode workers N` does the same from the keyboard. The provider and model controls address the cloud orchestrator; the worker count also sets `localModels.managed.parallel`, so restart the local daemon to apply it.
+Once fusion is on, the cloud model gains one tool — `fusion.delegate` — and prompt guidance telling it to plan first and hand the independent bulk down: reading many files, first drafts, boilerplate, tests, wide searches. Each part it delegates runs as its own throwaway local turn (several at a time), and their replies come back into the same call for the orchestrator to check and merge; you see each worker start and finish in the chat feed. Workers cannot delegate further, cannot reach you, and cannot get an approval — anything that needs a person comes back up to the orchestrator to run.
 
 </details>
 
@@ -451,6 +476,10 @@ The TUI can store the token, start the channel, open pairing mode, and show stat
 
 While a turn runs, the bot keeps one live progress bubble updated in place. It is sent silently and shows step labels only, never tool output; turn it off with `"telegram": { "progressIndicator": false }`.
 
+Send the bot a photo, document, voice note or any other file and it is saved under `~/.atomic-agent/inbox/telegram/`; the agent gets the path together with your caption and reads it with its file and vision tools. Albums arrive as one message. Telegram lets bots fetch files up to 20 MB; anything larger gets a clear "could not receive" reply.
+
+Ask for a file and you get a file: when the agent attaches something to its reply (a report it wrote, a screenshot, a converted document) it arrives as a Telegram message right after the text — images inline, everything else as a document, up to Telegram's 50 MB bot limit.
+
 Scheduled tasks can report back to the same chat: create a cron job with `atomic-agent task create --cron "0 9 * * *" --message "morning digest" --notify telegram` (or ask the agent to schedule with `notify: "telegram"`), and each run posts its final result to your paired DM when it finishes. Reporting is strictly per-task opt-in, and the report's result text is sent to Telegram's servers; when the channel is down or unpaired the report is skipped with a logged warning and the task itself is unaffected.
 
 </details>
@@ -542,6 +571,21 @@ The promise is not magic secrecy. The promise is that the agent control plane do
 </details>
 
 <details>
+<summary><b>How long a reply may run</b> (output ceilings)</summary>
+
+Cloud models are **uncapped by default** — the service applies the model's own maximum, so one turn can write a whole file. To bound it (spend, or a service that requires the field) set `maxOutputTokens` on the provider entry:
+
+```json
+"llm": { "providers": [{ "id": "openrouter", "kind": "openrouter", "maxOutputTokens": 64000 }] }
+```
+
+Reasoning models spend that same budget on thinking, so a low ceiling can be used up before any answer appears.
+
+Local models use `localModels.completionMaxTokens` (llama.cpp's `n_predict`, default `8192`). Set it to `0` for no cap — generation then stops at a stop token or when the context window fills. That knob bounds time and runaway loops, not memory: what your machine commits is decided at daemon start by the model and `--ctx-size`, and does not grow with the length of one reply.
+
+</details>
+
+<details>
 <summary><b>Configuration and secrets</b> (state dir, env vars, .env)</summary>
 
 User-facing configuration lives in `<stateDir>/config.json`.
@@ -566,6 +610,8 @@ OBSIDIAN_VAULT_PATH=/Users/me/Documents/Obsidian Vault
 ```
 
 Shell-exported variables win over `.env`. The built-in parser intentionally supports only simple `KEY=VALUE` lines.
+
+The Integrations tab (`/integrations`) writes these for you. Its **GitHub** entry stores `GITHUB_TOKEN` and carries the **Remote sync** switch (`git.remoteSync`, off by default): while it is off, a repository the agent versions stays on this machine — `git push`, `fetch`, `pull`, `clone` and `remote add` are refused, through the git tools and through the shell alike — so you keep full local history without publishing anything. Turn it on when a project should reach GitHub; every sync then goes through the approval ladder. The dedicated tools (`os.git.remote`, `fetch`, `pull`, `push`, `clone`) honour the same switch and hand the token to git only for `github.com`, only through the child process's environment — never in a URL, in argv, or in `.git/config` — and scrub it from every line of output.
 
 </details>
 

@@ -86,7 +86,9 @@ describe("configCommand", () => {
     };
     const code = await configCommand(["set", JSON.stringify(payload)]);
     expect(code).toBe(0);
-    const onDisk = JSON.parse(readFileSync(join(stateDir, "config.json"), "utf8"));
+    const onDisk = JSON.parse(
+      readFileSync(join(stateDir, "config.json"), "utf8"),
+    );
     expect(onDisk).toEqual(parseUserConfigFile(payload));
     expect(stdout).toContain("wrote ");
   });
@@ -133,7 +135,9 @@ describe("configCommand", () => {
       "}",
     ]);
     expect(code).toBe(0);
-    const onDisk = JSON.parse(readFileSync(join(stateDir, "config.json"), "utf8"));
+    const onDisk = JSON.parse(
+      readFileSync(join(stateDir, "config.json"), "utf8"),
+    );
     expect(onDisk.localModels.url).toBe("http://x:1");
   });
 
@@ -167,7 +171,9 @@ describe("configCommand", () => {
     stdout = "";
     const code = await configCommand(["set", match![1]]);
     expect(code).toBe(0);
-    const onDisk = JSON.parse(readFileSync(join(stateDir, "config.json"), "utf8"));
+    const onDisk = JSON.parse(
+      readFileSync(join(stateDir, "config.json"), "utf8"),
+    );
     expect(onDisk.version).toBe(USER_CONFIG_VERSION);
     expect(onDisk.localModels.url).toBe("http://127.0.0.1:19091");
   });
@@ -186,7 +192,9 @@ describe("configCommand", () => {
       seedSparseConfig({ agent: { maxSteps: 7 } });
       const code = await configCommand(["set", "log.level", "debug"]);
       expect(code).toBe(0);
-      const onDisk = JSON.parse(readFileSync(join(stateDir, "config.json"), "utf8"));
+      const onDisk = JSON.parse(
+        readFileSync(join(stateDir, "config.json"), "utf8"),
+      );
       expect(onDisk.log.level).toBe("debug");
       // The pre-existing user value survives untouched...
       expect(onDisk.agent.maxSteps).toBe(7);
@@ -201,9 +209,15 @@ describe("configCommand", () => {
       // The command never inspects the value: "false" becomes a boolean and
       // "19099" a number purely because the schema's parsers coerce them.
       // This is what keeps CLI typing from drifting from the schema.
-      expect(await configCommand(["set", "localModels.managed.autoUpdate", "false"])).toBe(0);
-      expect(await configCommand(["set", "localModels.managed.port", "19099"])).toBe(0);
-      const onDisk = JSON.parse(readFileSync(join(stateDir, "config.json"), "utf8"));
+      expect(
+        await configCommand(["set", "localModels.managed.autoUpdate", "false"]),
+      ).toBe(0);
+      expect(
+        await configCommand(["set", "localModels.managed.port", "19099"]),
+      ).toBe(0);
+      const onDisk = JSON.parse(
+        readFileSync(join(stateDir, "config.json"), "utf8"),
+      );
       expect(onDisk.localModels.managed.autoUpdate).toBe(false);
       expect(onDisk.localModels.managed.port).toBe(19099);
     });
@@ -355,7 +369,9 @@ describe("configCommand", () => {
       const code = await configCommand(["unset", "agent.maxSteps"]);
       expect(code).toBe(0);
       expect(stdout.trim()).toBe("agent.maxSteps \u2192 25 (default)");
-      const onDisk = JSON.parse(readFileSync(join(stateDir, "config.json"), "utf8"));
+      const onDisk = JSON.parse(
+        readFileSync(join(stateDir, "config.json"), "utf8"),
+      );
       // The now-empty `agent` block is pruned rather than left as a husk.
       expect(onDisk.agent).toBeUndefined();
     });
@@ -363,7 +379,9 @@ describe("configCommand", () => {
     it("unset works on list keys, which set refuses", async () => {
       seedSparseConfig({ projects: { roots: ["/tmp/x"] } });
       expect(await configCommand(["unset", "projects.roots"])).toBe(0);
-      const onDisk = JSON.parse(readFileSync(join(stateDir, "config.json"), "utf8"));
+      const onDisk = JSON.parse(
+        readFileSync(join(stateDir, "config.json"), "utf8"),
+      );
       expect(onDisk.projects).toBeUndefined();
     });
 

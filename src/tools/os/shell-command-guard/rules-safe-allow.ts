@@ -59,7 +59,8 @@ function matchZeroArg(input: NormalisedCommand): GuardVerdict | null {
 
 function matchVersionProbe(input: NormalisedCommand): GuardVerdict | null {
   if (!VERSION_SAFE_COMMANDS.has(input.cmd)) return null;
-  if (input.args.length !== 1 || !VERSION_FLAGS.has(input.args[0] ?? "")) return null;
+  if (input.args.length !== 1 || !VERSION_FLAGS.has(input.args[0] ?? ""))
+    return null;
   return {
     action: "allow",
     rule: "safe.version_probe",
@@ -69,7 +70,8 @@ function matchVersionProbe(input: NormalisedCommand): GuardVerdict | null {
 
 function matchWhichProbe(input: NormalisedCommand): GuardVerdict | null {
   if (input.cmd !== "which") return null;
-  if (input.args.length !== 1 || hasShellMetachar(input.args[0] ?? "")) return null;
+  if (input.args.length !== 1 || hasShellMetachar(input.args[0] ?? ""))
+    return null;
   return {
     action: "allow",
     rule: "safe.which_probe",
@@ -81,7 +83,8 @@ function matchWhereProbe(input: NormalisedCommand): GuardVerdict | null {
   // Windows analogue of `which`. `where node` locates an executable and is
   // read-only; without this every `where` probe would hit approval.
   if (input.cmd !== "where" && input.cmd !== "where.exe") return null;
-  if (input.args.length !== 1 || hasShellMetachar(input.args[0] ?? "")) return null;
+  if (input.args.length !== 1 || hasShellMetachar(input.args[0] ?? ""))
+    return null;
   return {
     action: "allow",
     rule: "safe.where_probe",

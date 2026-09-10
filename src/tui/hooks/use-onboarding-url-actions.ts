@@ -56,7 +56,11 @@ export function useOnboardingUrlActions(args: {
           });
           return;
         }
-        dispatch({ type: "onboarding_url_changed", field: "chat", value: base });
+        dispatch({
+          type: "onboarding_url_changed",
+          field: "chat",
+          value: base,
+        });
         dispatch({ type: "onboarding_step_set", step: "custom_embedding_url" });
       } catch (err) {
         dispatch({

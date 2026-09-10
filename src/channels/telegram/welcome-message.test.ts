@@ -1,9 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import {
-  WELCOME_MESSAGE_TEXT,
-  sendWelcomeMessage,
-} from "./welcome-message.js";
+import { WELCOME_MESSAGE_TEXT, sendWelcomeMessage } from "./welcome-message.js";
 import type { TelegramApi } from "./outbound-sender.js";
 
 function makeApi(impl?: TelegramApi["sendMessage"]): TelegramApi {
@@ -15,9 +12,7 @@ function makeApi(impl?: TelegramApi["sendMessage"]): TelegramApi {
 describe("sendWelcomeMessage", () => {
   it("posts the fixed welcome text exactly once with previews disabled and reports delivered=true", async () => {
     const api = makeApi();
-    await expect(
-      sendWelcomeMessage({ api, chatId: 42 }),
-    ).resolves.toBe(true);
+    await expect(sendWelcomeMessage({ api, chatId: 42 })).resolves.toBe(true);
     expect(api.sendMessage).toHaveBeenCalledTimes(1);
     expect(api.sendMessage).toHaveBeenCalledWith(
       42,

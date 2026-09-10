@@ -67,7 +67,10 @@ export function buildAtomRows(
 }
 
 /** Adjacent cells of the same colour become one run; trailing blanks go. */
-function compressRow(cells: readonly string[], hot: readonly boolean[]): AtomRun[] {
+function compressRow(
+  cells: readonly string[],
+  hot: readonly boolean[],
+): AtomRun[] {
   const runs: { text: string; hot: boolean }[] = [];
   for (const [index, glyph] of cells.entries()) {
     const isHot = hot[index] === true;

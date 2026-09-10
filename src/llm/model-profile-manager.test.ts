@@ -13,9 +13,10 @@ import {
 } from "./model-profile.fixtures.js";
 import type { LlamaServerClient } from "./llama-server-client.js";
 
-function makeLlamaStub(
-  responses: Record<string, unknown>[],
-): { client: Pick<LlamaServerClient, "fetchProps">; calls: number } {
+function makeLlamaStub(responses: Record<string, unknown>[]): {
+  client: Pick<LlamaServerClient, "fetchProps">;
+  calls: number;
+} {
   let calls = 0;
   const queue = [...responses];
   const client = {

@@ -2,7 +2,11 @@ import { compressToolResult } from "../../compressor/result-compressor.js";
 import type { ToolDefinition } from "../tool-registry.js";
 
 interface NotifierApi {
-  notify: (options: { title: string; message: string; sound?: boolean }) => Promise<void>;
+  notify: (options: {
+    title: string;
+    message: string;
+    sound?: boolean;
+  }) => Promise<void>;
 }
 
 let cached: NotifierApi | null = null;

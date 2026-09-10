@@ -117,10 +117,12 @@ export class EmbeddingStore {
    * the brute-force path for hybrid recall and is bounded by
    * `memory.embeddings.bruteForceCeiling` rows.
    */
-  listByModel(model: string): Array<EmbeddingRow & {
-    workingDir: string | null;
-    tags: string[];
-  }> {
+  listByModel(model: string): Array<
+    EmbeddingRow & {
+      workingDir: string | null;
+      tags: string[];
+    }
+  > {
     type Row = {
       memory_id: number;
       model: string;

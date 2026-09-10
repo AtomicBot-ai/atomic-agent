@@ -22,7 +22,9 @@ export function filterAndSortTaskRows(
   filter: TasksFilter,
 ): TaskSummaryRow[] {
   const needle = filter.search.trim().toLowerCase();
-  const matched = rows.filter((row) => matchesFilter(row, filter.status, needle));
+  const matched = rows.filter((row) =>
+    matchesFilter(row, filter.status, needle),
+  );
   return matched.slice().sort(compareTaskRows);
 }
 
@@ -40,7 +42,10 @@ function matchesFilter(
   );
 }
 
-function matchesStatus(row: TaskSummaryRow, status: TasksFilterStatus): boolean {
+function matchesStatus(
+  row: TaskSummaryRow,
+  status: TasksFilterStatus,
+): boolean {
   switch (status) {
     case "all":
       return true;

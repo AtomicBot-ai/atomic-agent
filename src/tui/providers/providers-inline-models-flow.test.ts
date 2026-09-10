@@ -33,7 +33,8 @@ import { ProvidersOrchestrator } from "./providers-orchestrator.js";
  */
 
 vi.mock("../../config/index.js", async (importOriginal) => {
-  const original = await importOriginal<typeof import("../../config/index.js")>();
+  const original =
+    await importOriginal<typeof import("../../config/index.js")>();
   return {
     ...original,
     getConfig: () => currentConfig,
@@ -190,10 +191,21 @@ function makeHarness() {
       dispatch: applyToReducer,
       callbacks,
     });
-  return { bus, orchestrator, store, callbacks, press, applyToReducer, onProvidersSelectChatModel };
+  return {
+    bus,
+    orchestrator,
+    store,
+    callbacks,
+    press,
+    applyToReducer,
+    onProvidersSelectChatModel,
+  };
 }
 
-function openLlmCloudTab(h: ReturnType<typeof makeHarness>, cursor: number): void {
+function openLlmCloudTab(
+  h: ReturnType<typeof makeHarness>,
+  cursor: number,
+): void {
   h.applyToReducer({ type: "ui_mode_set", mode: "debug" });
   h.applyToReducer({ type: "tab_changed", tab: "llm" });
   h.applyToReducer({ type: "llm_mode_set", mode: "cloud" });

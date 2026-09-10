@@ -8,7 +8,10 @@ import { SubscriptionCliAuthError } from "./subscription-cli-errors.js";
  * happens to a pending stdin write when the child stops reading, which
  * only the kernel can produce.
  */
-function options(script: string, extra: Partial<CliRunOptions> = {}): CliRunOptions {
+function options(
+  script: string,
+  extra: Partial<CliRunOptions> = {},
+): CliRunOptions {
   return {
     binary: process.execPath,
     args: ["-e", script],

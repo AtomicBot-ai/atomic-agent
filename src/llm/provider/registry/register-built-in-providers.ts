@@ -65,6 +65,8 @@ export function registerBuiltInProviderKinds(): void {
       supportsParallelTools: entry.supportsTools ?? true,
       requestTimeoutMs: entry.requestTimeoutMs,
       extraBody: entry.extraBody,
+      maxOutputTokens: entry.maxOutputTokens,
+      logger: ctx.logger,
     });
   });
 
@@ -87,6 +89,8 @@ export function registerBuiltInProviderKinds(): void {
       requestTimeoutMs: entry.requestTimeoutMs,
       taggedToolCompatibility: "qwen",
       extraBody: entry.extraBody,
+      maxOutputTokens: entry.maxOutputTokens,
+      logger: ctx.logger,
     });
   });
 
@@ -101,6 +105,9 @@ export function registerBuiltInProviderKinds(): void {
       supportsVision: entry.supportsVision ?? true,
       supportsParallelTools: entry.supportsTools ?? true,
       requestTimeoutMs: entry.requestTimeoutMs,
+      extraBody: entry.extraBody,
+      maxOutputTokens: entry.maxOutputTokens,
+      logger: ctx.logger,
       httpReferer: OPENROUTER_APP_REFERER,
       xTitle: OPENROUTER_APP_TITLE,
       categories: OPENROUTER_APP_CATEGORIES,
@@ -114,10 +121,13 @@ export function registerBuiltInProviderKinds(): void {
       baseUrl: entry.baseUrl,
       apiKey: entry.apiKey ?? "",
       defaultChatModel: entry.defaultChatModel ?? AIMLAPI_DEFAULT_CHAT_MODEL,
+      extraBody: entry.extraBody,
+      maxOutputTokens: entry.maxOutputTokens,
       headers: entry.headers,
       supportsVision: entry.supportsVision ?? true,
       supportsParallelTools: entry.supportsTools ?? true,
       requestTimeoutMs: entry.requestTimeoutMs,
+      logger: ctx.logger,
     });
   });
 
@@ -128,10 +138,13 @@ export function registerBuiltInProviderKinds(): void {
       baseUrl: entry.baseUrl,
       apiKey: entry.apiKey ?? "",
       defaultChatModel: entry.defaultChatModel ?? GEMINI_DEFAULT_CHAT_MODEL,
+      extraBody: entry.extraBody,
+      maxOutputTokens: entry.maxOutputTokens,
       headers: entry.headers,
       supportsVision: entry.supportsVision ?? true,
       supportsParallelTools: entry.supportsTools ?? true,
       requestTimeoutMs: entry.requestTimeoutMs,
+      logger: ctx.logger,
     });
   });
 
@@ -164,7 +177,8 @@ export function registerBuiltInProviderKinds(): void {
       ...(entry.requestTimeoutMs
         ? { requestTimeoutMs: entry.requestTimeoutMs }
         : {}),
-      onNotice: (message) => ctx.logger.warn("llm.subscription_cli", { message }),
+      onNotice: (message) =>
+        ctx.logger.warn("llm.subscription_cli", { message }),
     });
   });
 }

@@ -120,7 +120,8 @@ function PickListFrame({
   const mouse = useMouseCommands();
   const ref = useMouseTarget(
     (hit) => {
-      if (hit.event.kind !== "wheel" || !hit.event.wheel || !mouse) return false;
+      if (hit.event.kind !== "wheel" || !hit.event.wheel || !mouse)
+        return false;
       if (total === 0) return true;
       const delta = hit.event.wheel === "up" ? -1 : 1;
       const next = Math.min(Math.max(cursor + delta, 0), total - 1);
@@ -229,7 +230,9 @@ export function renderPickList(props: {
   const total = props.options.length;
   const route = props.route ?? storeWizardMouseRoute;
   const clamped = Math.min(Math.max(props.cursor, 0), Math.max(0, total - 1));
-  const errors = props.error ? errorLines(props.error).slice(0, MAX_ERROR_ROWS) : [];
+  const errors = props.error
+    ? errorLines(props.error).slice(0, MAX_ERROR_ROWS)
+    : [];
   const searchShown = props.search !== undefined;
   // The search line and the empty-list line are chrome for the row
   // budget in the same way the error lines are: Ink 7 paints an over-tall
@@ -318,11 +321,7 @@ export function renderPickList(props: {
         );
       })}
       {errors.map((line, i) => (
-        <Text
-          key={`err-${i}`}
-          color={theme.colors.error}
-          wrap="truncate-end"
-        >
+        <Text key={`err-${i}`} color={theme.colors.error} wrap="truncate-end">
           {i === 0 ? "! " : "  "}
           {line}
         </Text>

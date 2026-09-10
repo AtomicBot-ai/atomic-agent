@@ -41,8 +41,9 @@ export async function describeImageViaOpenAi(
     request,
   );
   const message =
-    (json.choices as Array<{ message?: Record<string, unknown> }> | undefined)?.[0]
-      ?.message ?? {};
+    (
+      json.choices as Array<{ message?: Record<string, unknown> }> | undefined
+    )?.[0]?.message ?? {};
   let text = normaliseMessageContent(message.content).trim();
   // Reasoning-only response: the model answered inside its think channel
   // and left `content` empty. The reasoning body is the best available

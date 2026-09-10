@@ -13,7 +13,10 @@
  * other account is ignored.
  */
 
-import type { ApprovalGate, ApprovalRequest } from "../../approval/approval-gate.js";
+import type {
+  ApprovalGate,
+  ApprovalRequest,
+} from "../../approval/approval-gate.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 import type { DiscordApi, DiscordComponentRow } from "./discord-api.js";
 import { scrubDiscordError } from "./discord-channel-types.js";
@@ -39,8 +42,8 @@ export interface DiscordApprovalBridgeDeps {
   api: DiscordApi;
   approvals: ApprovalGate;
   logger: StructuredLogger;
-  /** Snowflake permitted to decide. Interactions from anyone else drop. */
-  ownerUserId: () => string | null;
+  /** Snowflakes permitted to decide. Interactions from anyone else drop. */
+  ownerUserIds: () => readonly string[];
 }
 
 interface Pending {
@@ -91,18 +94,24 @@ export class DiscordApprovalBridge {
    */
   async handleInteraction(event: DiscordInteractionEvent): Promise<boolean> {
     const customId = event.data?.custom_id;
-    if (typeof customId !== "string" || !customId.startsWith(CUSTOM_ID_PREFIX)) {
+    if (
+      typeof customId !== "string" ||
+      !customId.startsWith(CUSTOM_ID_PREFIX)
+    ) {
       return false;
     }
     const actorId = event.member?.user?.id ?? event.user?.id;
-    const owner = this.deps.ownerUserId();
-    if (owner === null || actorId !== owner) {
-      // Anyone in a shared guild can click a button. Only the paired
-      // operator may decide whether a destructive tool runs.
+    const owners = this.deps.ownerUserIds();
+    if (actorId === undefined || !owners.includes(actorId)) {
+      // Anyone in a shared guild can click a button. Only a paired
+      // operator may decide whether a destructive tool runs — and
+      // every owner is equally one, which is the whole point of the
+      // list: an approval must not stall because the person who set
+      // the bot up is asleep.
       this.deps.logger.warn("discord: ignoring approval click from non-owner", {
         actorId,
       });
-      await this.ack(event, "Only the paired operator can answer this.");
+      await this.ack(event, "Only a paired operator can answer this.");
       return true;
     }
 
@@ -182,9 +191,7 @@ export function formatPrompt(request: ApprovalRequest): string {
     lines.push("```", preview, "```");
   }
   if (request.affectedResources?.length) {
-    lines.push(
-      `Affects: ${request.affectedResources.slice(0, 5).join(", ")}`,
-    );
+    lines.push(`Affects: ${request.affectedResources.slice(0, 5).join(", ")}`);
   }
   return lines.join("\n");
 }

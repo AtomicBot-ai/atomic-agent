@@ -212,7 +212,11 @@ function parseVoteJsonShape(
     const direction: VoteDirection | null =
       directionRaw === 1 ? 1 : directionRaw === -1 ? -1 : null;
     const rawJson = JSON.stringify(entry);
-    if (!isVoteKind(rawKind) || !Number.isInteger(targetId) || direction === null) {
+    if (
+      !isVoteKind(rawKind) ||
+      !Number.isInteger(targetId) ||
+      direction === null
+    ) {
       rejected.push({ raw: rawJson, reason: "malformed" });
       continue;
     }

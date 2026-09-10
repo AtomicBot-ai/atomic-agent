@@ -1,6 +1,9 @@
 import type { LinkRow } from "../../memory/links/link-store.js";
 import { renderNotePreview } from "../../memory/memory-store.js";
-import type { MemoryEntry, MemoryIndexEntry } from "../../memory/memory-store.js";
+import type {
+  MemoryEntry,
+  MemoryIndexEntry,
+} from "../../memory/memory-store.js";
 import type { LessonIndexEntry } from "../../memory/lessons/lesson-store.js";
 import type { ProcedureIndexEntry } from "../../memory/procedures/procedure-store.js";
 import type { ProfileFact } from "../../memory/profile-store.js";

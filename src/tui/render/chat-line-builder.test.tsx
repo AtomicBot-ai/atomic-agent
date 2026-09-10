@@ -43,9 +43,7 @@ describe("buildChatLines", () => {
   it("produces a separator + ribbon-padded body for a user message", () => {
     const state: TuiState = {
       ...createInitialTuiState(SESSION),
-      messages: [
-        { id: "u1", role: "user", text: "hello", timestamp: 1 },
-      ],
+      messages: [{ id: "u1", role: "user", text: "hello", timestamp: 1 }],
     };
     const lines = buildChatLines(state, {
       columns: 80,
@@ -120,9 +118,7 @@ describe("buildChatLines", () => {
     const long = "a ".repeat(80).trim();
     const state: TuiState = {
       ...createInitialTuiState(SESSION),
-      messages: [
-        { id: "u1", role: "user", text: long, timestamp: 1 },
-      ],
+      messages: [{ id: "u1", role: "user", text: long, timestamp: 1 }],
     };
     const lines = buildChatLines(state, {
       columns: 30,

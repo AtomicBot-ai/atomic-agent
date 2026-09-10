@@ -7,6 +7,7 @@ import type { WhileBusySubmitMode } from "../../config/index.js";
 import type { TuiAction } from "../tui-action.js";
 import { normalizeLocalLlmBaseUrl } from "../persist-user-local-models-config.js";
 import { isThemeName, THEME_NAMES } from "../theme/theme.js";
+import { parseRunModeCommand } from "./dispatch-run-mode.js";
 import { parseSlashCommand } from "./slash-command-parser.js";
 import { resolveSlashCommand, SLASH_COMMANDS } from "./slash-commands.js";
 import { renderToolsOverview, renderToolsSearch } from "./tools-listing.js";
@@ -42,6 +43,8 @@ export interface SlashDispatchResult {
   readonly triggerSkillCatalogDump: boolean;
   /** When true the caller should write the TUI debug zip (`/dump`). */
   readonly triggerDebugBundleDump: boolean;
+  /** When true the caller should open the issue-report popup (`/report`). */
+  readonly triggerIssueReport: boolean;
   /** When true the caller should forward the raw buffer as a normal message. */
   readonly forwardAsMessage: boolean;
   /** When set, caller should probe this URL, persist on success, then refresh UI. */
@@ -125,6 +128,14 @@ export interface SlashDispatchResult {
    * dialog it opens is what eventually asks for that.
    */
   readonly triggerUninstallPlan?: boolean;
+  /**
+   * `/runmode <mode>` picks a run mode, `/runmode status` prints what it
+   * resolves to. Both need the live state / orchestrator, which only the
+   * caller (`submit-handler.ts`) can reach.
+   */
+  readonly runModeVerb?: import("../../config/index.js").RunModeName | "status";
+  /** `/runmode workers N`: persist the fusion worker count. */
+  readonly runModeWorkers?: number;
 }
 
 /**
@@ -147,6 +158,7 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
       triggerMemoryDump: false,
       triggerSkillCatalogDump: false,
       triggerDebugBundleDump: false,
+      triggerIssueReport: false,
       forwardAsMessage: true,
       persistLlamaUrl: undefined,
     };
@@ -165,11 +177,16 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
       triggerMemoryDump: false,
       triggerSkillCatalogDump: false,
       triggerDebugBundleDump: false,
+      triggerIssueReport: false,
       forwardAsMessage: false,
       persistLlamaUrl: undefined,
     };
   }
   switch (resolved.name) {
+    case "report":
+      // The popup is the feedback; a system line here would be noise
+      // behind a modal.
+      return pureActions([], { triggerIssueReport: true });
     case "dump":
       return pureActions([], {
         triggerDebugBundleDump: true,
@@ -282,6 +299,12 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
         { type: "tab_changed", tab: "integrations" },
         { type: "integrations_message_cleared" },
       ]);
+    case "swarm":
+      return pureActions([
+        { type: "ui_mode_set", mode: "debug" },
+        { type: "tab_changed", tab: "swarm" },
+        { type: "swarm_message_cleared" },
+      ]);
     case "llm":
       return dispatchLlmSub(parsed.args);
     case "model":
@@ -304,6 +327,20 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
       return dispatchPrivacySub(parsed.args);
     case "analytics":
       return dispatchAnalyticsSub(parsed.args);
+    case "runmode": {
+      const cmd = parseRunModeCommand(parsed.args);
+      if (cmd.error) return pureActions([], { systemMessage: cmd.error });
+      if (cmd.openSwitch) {
+        // The composer's own popup, on its backend control: no second
+        // list of the same three modes to keep in step.
+        return pureActions([
+          { type: "composer_switch_opened", kind: "backend" },
+        ]);
+      }
+      if (cmd.workers !== undefined)
+        return pureActions([], { runModeWorkers: cmd.workers });
+      return pureActions([], { runModeVerb: cmd.status ? "status" : cmd.mode });
+    }
     default:
       return pureActions([], {
         systemMessage: `command /${resolved.name} not yet implemented`,
@@ -432,6 +469,7 @@ function pureActions(
     triggerMemoryDump: false,
     triggerSkillCatalogDump: false,
     triggerDebugBundleDump: false,
+    triggerIssueReport: false,
     forwardAsMessage: false,
     persistLlamaUrl: undefined,
     taskCancelId: undefined,
@@ -447,6 +485,8 @@ function pureActions(
     queueVerb: undefined,
     submitWhileBusy: undefined,
     setWhileBusyMode: undefined,
+    runModeVerb: undefined,
+    runModeWorkers: undefined,
     ...overrides,
   };
 }
@@ -517,7 +557,10 @@ function dispatchThemeSub(rawArgs: string): SlashDispatchResult {
  *   - `status`      — emit the managed-runtime status line in the feed.
  *   - `<base-url>`  — persist the base URL for external mode (back-compat).
  */
-function dispatchModelsSub(rawArgs: string, commandName: string): SlashDispatchResult {
+function dispatchModelsSub(
+  rawArgs: string,
+  commandName: string,
+): SlashDispatchResult {
   const argPart = rawArgs.trim();
   const bits = argPart.split(/\s+/).filter(Boolean);
   if (argPart.length === 0) {
@@ -710,13 +753,27 @@ function dispatchLlmSub(rawArgs: string): SlashDispatchResult {
   // test. Explicit only: it spends requests against the operator's own
   // account and must never run on a turn path.
   if (/^check$/i.test(argPart)) {
-    return pureActions([{ type: "providers_contract_probe_requested", providerId: null }], {
+    return pureActions(
+      [{ type: "providers_contract_probe_requested", providerId: null }],
+      {
+        systemMessage:
+          "checking the active provider's streaming tool-call contract — this sends one request",
+      },
+    );
+  }
+  // `/llm restart` bounces a wedged local model server from the chat
+  // surface. Until now the only restart was the LLM pane's `s` toggle
+  // pressed twice, which also stops the embedding daemon and turns
+  // hybrid recall off — and nothing on the chat surface pointed at it.
+  if (/^restart$/i.test(argPart)) {
+    return pureActions([{ type: "local_models_daemon_restart_requested" }], {
       systemMessage:
-        "checking the active provider's streaming tool-call contract — this sends one request",
+        "asking the local model server to restart — the feed carries the outcome",
     });
   }
   return pureActions([], {
-    systemMessage: "usage: /llm | /llm provider <id> | /llm check | /llm fallback",
+    systemMessage:
+      "usage: /llm | /llm provider <id> | /llm check | /llm fallback | /llm restart",
   });
 }
 

@@ -30,8 +30,7 @@ import {
  * the same flat shape Hermes and OpenClaw present.
  */
 export type ProvidersWizardKindRow =
-  | ProvidersWizardKind
-  | { readonly presetId: string };
+  ProvidersWizardKind | { readonly presetId: string };
 
 /**
  * The single source of row order for `pick_kind`. The render layer
@@ -109,7 +108,11 @@ function nextPhaseAfterApiKey(
   // row the URL step still follows it — that is the only screen where a
   // stored endpoint can be corrected. The add flow collected the URL
   // before the key instead. Presets and Gemini know their endpoint (#69).
-  if (kind === "openai-compatible" && !wizard.presetId && wizard.mode === "configure") {
+  if (
+    kind === "openai-compatible" &&
+    !wizard.presetId &&
+    wizard.mode === "configure"
+  ) {
     return "base_url";
   }
   return "chat_model_line";
@@ -264,7 +267,8 @@ export function advanceWizardPhase(
     // — a catalog TTL refresh landing, or the search box narrowing it —
     // the highlighted row is the last one, and Enter must select exactly
     // what is highlighted.
-    const picked = models[clampCursor(wizard.cursor, models.length)]?.id ?? null;
+    const picked =
+      models[clampCursor(wizard.cursor, models.length)]?.id ?? null;
     return {
       ...wizard,
       ...PHASE_ENTRY,

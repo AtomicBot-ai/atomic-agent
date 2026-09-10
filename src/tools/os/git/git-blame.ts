@@ -32,7 +32,11 @@ export const osGitBlameTool: ToolDefinition = {
         : "HEAD";
     const startLine = parseLine(rawArgs.startLine, "startLine");
     const endLine = parseLine(rawArgs.endLine, "endLine");
-    if (startLine !== undefined && endLine !== undefined && endLine < startLine) {
+    if (
+      startLine !== undefined &&
+      endLine !== undefined &&
+      endLine < startLine
+    ) {
       throw new Error("os.git.blame: endLine must be >= startLine");
     }
 

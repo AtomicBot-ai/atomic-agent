@@ -29,7 +29,10 @@ export const rtfExtractor: Extractor = async (input) => {
   const text = parseRtf(source, warnings);
   return {
     format: "rtf",
-    text: text.replace(/[\t ]+$/gm, "").replace(/\n{3,}/g, "\n\n").trim(),
+    text: text
+      .replace(/[\t ]+$/gm, "")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim(),
     warnings,
   };
 };
@@ -208,13 +211,33 @@ function handleControlWord(
 }
 
 const CP1252_OVERRIDES: Record<number, string> = {
-  0x80: "\u20AC", 0x82: "\u201A", 0x83: "\u0192", 0x84: "\u201E",
-  0x85: "\u2026", 0x86: "\u2020", 0x87: "\u2021", 0x88: "\u02C6",
-  0x89: "\u2030", 0x8A: "\u0160", 0x8B: "\u2039", 0x8C: "\u0152",
-  0x8E: "\u017D", 0x91: "\u2018", 0x92: "\u2019", 0x93: "\u201C",
-  0x94: "\u201D", 0x95: "\u2022", 0x96: "\u2013", 0x97: "\u2014",
-  0x98: "\u02DC", 0x99: "\u2122", 0x9A: "\u0161", 0x9B: "\u203A",
-  0x9C: "\u0153", 0x9E: "\u017E", 0x9F: "\u0178",
+  0x80: "\u20AC",
+  0x82: "\u201A",
+  0x83: "\u0192",
+  0x84: "\u201E",
+  0x85: "\u2026",
+  0x86: "\u2020",
+  0x87: "\u2021",
+  0x88: "\u02C6",
+  0x89: "\u2030",
+  0x8a: "\u0160",
+  0x8b: "\u2039",
+  0x8c: "\u0152",
+  0x8e: "\u017D",
+  0x91: "\u2018",
+  0x92: "\u2019",
+  0x93: "\u201C",
+  0x94: "\u201D",
+  0x95: "\u2022",
+  0x96: "\u2013",
+  0x97: "\u2014",
+  0x98: "\u02DC",
+  0x99: "\u2122",
+  0x9a: "\u0161",
+  0x9b: "\u203A",
+  0x9c: "\u0153",
+  0x9e: "\u017E",
+  0x9f: "\u0178",
 };
 
 /**
@@ -232,8 +255,12 @@ function skipUnicodeFallback(src: string, from: number, count: number): number {
     if (ch === "\\") {
       // `\'hh` is 4 bytes; a full control word would eat text we want to
       // keep. Only the `\'` form is a single-char fallback.
-      if (src[from + consumed + 1] === "'" &&
-          /^[0-9a-fA-F]{2}$/.test(src.slice(from + consumed + 2, from + consumed + 4))) {
+      if (
+        src[from + consumed + 1] === "'" &&
+        /^[0-9a-fA-F]{2}$/.test(
+          src.slice(from + consumed + 2, from + consumed + 4),
+        )
+      ) {
         consumed += 4;
         remaining--;
         continue;

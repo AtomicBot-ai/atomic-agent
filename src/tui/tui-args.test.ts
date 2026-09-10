@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { nonInteractiveStdinError, parseTuiArgs, TUI_HELP } from "./tui-args.js";
+import {
+  nonInteractiveStdinError,
+  parseTuiArgs,
+  TUI_HELP,
+} from "./tui-args.js";
 
 describe("nonInteractiveStdinError", () => {
   it("refuses a piped stdin with an actionable sentence", () => {
@@ -65,7 +69,9 @@ describe("parseTuiArgs --fake-update", () => {
 
   it("refuses a missing or flag-shaped value", () => {
     expect(parseTuiArgs(["--fake-update"])).toHaveProperty("error");
-    expect(parseTuiArgs(["--fake-update", "--no-mouse"])).toHaveProperty("error");
+    expect(parseTuiArgs(["--fake-update", "--no-mouse"])).toHaveProperty(
+      "error",
+    );
   });
 
   it("advertises the flag in --help", () => {

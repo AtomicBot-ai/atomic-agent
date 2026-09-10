@@ -133,7 +133,9 @@ describe("OpenclawImporter", () => {
     sources = [];
     sourceDir = mkdtempSync(join(tmpdir(), "oc-src-"));
     stateDir = mkdtempSync(join(tmpdir(), "oc-dst-"));
-    sessionStore = new SessionStore({ dbFile: join(stateDir, "sessions.sqlite") });
+    sessionStore = new SessionStore({
+      dbFile: join(stateDir, "sessions.sqlite"),
+    });
     taskStore = new TaskStore({ dbFile: join(stateDir, "tasks.sqlite") });
   });
 
@@ -141,14 +143,28 @@ describe("OpenclawImporter", () => {
     sessionStore.close();
     taskStore.close();
     for (const source of sources) source.close();
-    rmSync(sourceDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
-    rmSync(stateDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    rmSync(sourceDir, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 100,
+    });
+    rmSync(stateDir, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 100,
+    });
   });
 
   it("imports sessions and cron jobs", () => {
     writeSession(sourceDir, "main", "gaia-1", [
       messageEvent("user", [{ type: "text", text: "hi" }], 1_700_000_000_000),
-      messageEvent("assistant", [{ type: "text", text: "hello" }], 1_700_000_002_000),
+      messageEvent(
+        "assistant",
+        [{ type: "text", text: "hello" }],
+        1_700_000_002_000,
+      ),
     ]);
     seedCronTable(sourceDir, [{ job_id: "j-1", payload_message: "digest" }]);
 
@@ -179,7 +195,11 @@ describe("OpenclawImporter", () => {
     const dir = join(sourceDir, "agents", "main", "sessions");
     writeFileSync(
       join(dir, "gaia-1.trajectory.jsonl"),
-      JSON.stringify({ type: "session", id: "gaia-1-traj", timestamp: "2026-06-11T13:00:00.000Z" }) + "\n",
+      JSON.stringify({
+        type: "session",
+        id: "gaia-1-traj",
+        timestamp: "2026-06-11T13:00:00.000Z",
+      }) + "\n",
     );
 
     const report = buildImporter().run({
@@ -196,7 +216,11 @@ describe("OpenclawImporter", () => {
       messageEvent("user", [{ type: "text", text: "hi" }], 1_700_000_000_000),
     ]);
     seedCronTable(sourceDir, [{ job_id: "j-1", payload_message: "digest" }]);
-    const opts = { options: resolveOpenclawOptions(), execute: true, overwrite: false };
+    const opts = {
+      options: resolveOpenclawOptions(),
+      execute: true,
+      overwrite: false,
+    };
 
     buildImporter().run(opts);
     const second = buildImporter().run(opts);
@@ -223,7 +247,7 @@ describe("OpenclawImporter", () => {
     expect(taskStore.list({ limit: 100 })).toHaveLength(0);
   });
 
-  it("respects --limit on sessions (oldest first)", () => {
+  it("respects --limit on sessions, keeping the newest", () => {
     writeSession(
       sourceDir,
       "main",
@@ -239,6 +263,10 @@ describe("OpenclawImporter", () => {
       "2026-06-11T11:00:00.000Z",
     );
 
+    expect(
+      new OpenclawSource(sourceDir, "main").listSessions().map((m) => m.id),
+    ).toEqual(["gaia-new", "gaia-old"]);
+
     const report = buildImporter().run({
       options: ["sessions"],
       execute: true,
@@ -246,8 +274,72 @@ describe("OpenclawImporter", () => {
       limit: 1,
     });
     expect(report.summary.migrated).toBe(1);
-    expect(sessionStore.load("openclaw:gaia-old")).not.toBeNull();
-    expect(sessionStore.load("openclaw:gaia-new")).toBeNull();
+    expect(sessionStore.load("openclaw:gaia-new")).not.toBeNull();
+    expect(sessionStore.load("openclaw:gaia-old")).toBeNull();
+  });
+
+  it("imports every agent on request, keeping main's ids and prefixing the rest", () => {
+    writeSession(
+      sourceDir,
+      "main",
+      "gaia-1",
+      [messageEvent("user", [{ type: "text", text: "hi" }], 1_700_000_000_000)],
+      "2026-06-11T10:00:00.000Z",
+    );
+    writeSession(
+      sourceDir,
+      "ops",
+      "gaia-2",
+      [
+        messageEvent(
+          "user",
+          [{ type: "text", text: "deploy" }],
+          1_700_000_100_000,
+        ),
+      ],
+      "2026-06-11T11:00:00.000Z",
+    );
+    // An agent dir without sessions/ is not an agent worth listing.
+    mkdirSync(join(sourceDir, "agents", "empty"), { recursive: true });
+
+    const source = new OpenclawSource(sourceDir, "main");
+    sources.push(source);
+    expect(source.listAgents()).toEqual(["main", "ops"]);
+
+    // Default (the CLI's --agent contract): only the source's own agent.
+    const own = buildImporter().run({
+      options: ["sessions"],
+      execute: false,
+      overwrite: false,
+    });
+    expect(own.items.map((i) => i.source)).toEqual(["gaia-1"]);
+
+    const report = buildImporter().run({
+      options: ["sessions"],
+      execute: true,
+      overwrite: false,
+      agents: source.listAgents(),
+    });
+    expect(report.items.map((i) => [i.source, i.destination])).toEqual([
+      ["ops:gaia-2", "openclaw:ops:gaia-2"],
+      ["gaia-1", "openclaw:gaia-1"],
+    ]);
+    expect(sessionStore.load("openclaw:gaia-1")?.metadata.openclawAgent).toBe(
+      "main",
+    );
+    expect(sessionStore.load("openclaw:ops:gaia-2")?.turns[0]).toMatchObject({
+      text: "deploy",
+    });
+
+    // The limit spans agents: newest overall wins.
+    const limited = buildImporter().run({
+      options: ["sessions"],
+      execute: false,
+      overwrite: false,
+      agents: source.listAgents(),
+      limit: 1,
+    });
+    expect(limited.items.map((i) => i.source)).toEqual(["ops:gaia-2"]);
   });
 
   it("skips sessions cleanly when the agent dir is absent", () => {
@@ -257,6 +349,9 @@ describe("OpenclawImporter", () => {
       overwrite: false,
     });
     expect(report.summary.skipped).toBe(1);
-    expect(report.items[0]).toMatchObject({ kind: "sessions", status: "skipped" });
+    expect(report.items[0]).toMatchObject({
+      kind: "sessions",
+      status: "skipped",
+    });
   });
 });

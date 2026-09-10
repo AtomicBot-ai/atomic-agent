@@ -58,10 +58,7 @@ describe("memory.notes.store", () => {
 
   it("rejects content over the per-call cap without persisting", async () => {
     const tool = buildNotesStoreTool({ store, maxContentChars: 10 });
-    const result = await tool.run(
-      { content: "x".repeat(50) },
-      makeCtx(),
-    );
+    const result = await tool.run({ content: "x".repeat(50) }, makeCtx());
     expect(result.status).toBe("error");
     expect(result.details.field).toBe("content");
     expect(store.count()).toBe(0);
@@ -69,10 +66,7 @@ describe("memory.notes.store", () => {
 
   it("surfaces tag validation errors as tool-result errors", async () => {
     const tool = buildNotesStoreTool({ store, maxContentChars: 4_000 });
-    const result = await tool.run(
-      { content: "ok", tags: [""] },
-      makeCtx(),
-    );
+    const result = await tool.run({ content: "ok", tags: [""] }, makeCtx());
     expect(result.status).toBe("error");
     expect(result.details.field).toBe("tags");
   });

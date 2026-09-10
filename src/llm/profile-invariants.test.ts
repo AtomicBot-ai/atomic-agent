@@ -41,7 +41,9 @@ describe("checkProfileGrammarAligned", () => {
       "root ::= channel-prelude tool-call-array",
       'channel-prelude ::= channel-body "<channel|>" ws',
     ].join("\n");
-    expect(checkProfileGrammarAligned(GEMMA4_THINK_PROFILE, grammar)).toEqual([]);
+    expect(checkProfileGrammarAligned(GEMMA4_THINK_PROFILE, grammar)).toEqual(
+      [],
+    );
   });
 
   it("accepts the plain grammar for plain profile", () => {

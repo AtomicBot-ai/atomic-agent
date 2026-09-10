@@ -98,9 +98,10 @@ describe("readableOn", () => {
     const onDark = readableOn("#0d1117");
     const onLight = readableOn("#f6f8fa");
     expect(onDark).not.toBe(onLight);
-    expect([theme.colors.chipBackground, theme.colors.chipForeground]).toContain(
-      onDark,
-    );
+    expect([
+      theme.colors.chipBackground,
+      theme.colors.chipForeground,
+    ]).toContain(onDark);
   });
 
   /**

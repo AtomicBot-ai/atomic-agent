@@ -1,7 +1,7 @@
 ---
 name: github
 description: Drive GitHub via the official `gh` CLI — repos, issues, pull requests, releases, gists, Actions runs, and raw REST through `gh api`. Use when the user asks to inspect or manage GitHub.
-version: 1.1.1
+version: 1.2.0
 requires_tools:
   - os.shell.run
 dangerous: true
@@ -12,7 +12,8 @@ dangerous: true
 Use the official [`gh` CLI](https://cli.github.com/) as the GitHub gateway.
 Prefer `gh` over raw REST; fall back to `gh api <endpoint>` only when a verb is
 missing. `gh` already speaks the user's authenticated identity, so no tokens are
-handled in this skill.
+handled in this skill. A token saved in the TUI (Integrations → GitHub) is
+exported to `gh` as `GITHUB_TOKEN`, so either sign-in works.
 
 ## Setup check (lazy — do NOT probe every turn)
 
@@ -51,11 +52,20 @@ https://cli.github.com/ for their platform, then stop.
 `gh auth login` is interactive (opens a browser / device flow) and cannot run
 from a non-interactive tool shell. Reply:
 
-> "`gh` is installed but not authenticated. Run `gh auth login` in your own
-> terminal and complete the device flow, then tell me when you are done and I
-> will re-check."
+> "`gh` is installed but not authenticated. Either run `gh auth login` in your
+> own terminal and complete the device flow, or paste a personal access token
+> in the agent under Integrations → GitHub (`/integrations`). Tell me when you
+> are done and I will re-check."
 
 Do NOT attempt `gh auth login` through `os.shell.run`; it will hang.
+
+### remote sync is off
+
+A `git push` / `fetch` / `pull` / `clone` through the shell can come back as
+`blocked by shell guard: policy.git_remote_sync_off`. That is the operator's
+choice, not a fault: the repository is a closed, local-only one. Do not look
+for another way to reach the remote. Reply that Remote sync is off and that it
+can be turned on under Integrations → GitHub, then stop.
 
 ## When to use
 

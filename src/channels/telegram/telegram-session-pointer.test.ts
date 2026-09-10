@@ -3,8 +3,13 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { TelegramSessionPointer } from "./telegram-session-pointer.js";
+import {
+  TelegramSessionPointer,
+  telegramChatKey,
+} from "./telegram-session-pointer.js";
 
+// The per-chat mechanics are pinned in `../chat-session-map.test.ts`;
+// this file pins only what is Telegram-specific.
 describe("TelegramSessionPointer", () => {
   let dir: string;
   let path: string;
@@ -18,66 +23,31 @@ describe("TelegramSessionPointer", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it("returns { current: null } when the file does not exist", () => {
+  it("keeps a private chat and a group on separate sessions", () => {
     const ptr = new TelegramSessionPointer(path);
-    expect(ptr.read()).toEqual({ current: null });
+    ptr.setCurrent(telegramChatKey(42), "s-dm", "DM");
+    ptr.setCurrent(telegramChatKey(-1001), "s-group", "Ops");
+    expect(ptr.get("42").current).toBe("s-dm");
+    expect(ptr.get("-1001").current).toBe("s-group");
+    expect(new TelegramSessionPointer(path).entries()).toHaveLength(2);
   });
 
-  it("setCurrent persists and survives a fresh read", () => {
+  it("migrates the pre-per-chat file into the owner's DM", () => {
+    writeFileSync(path, JSON.stringify({ current: "s-old", history: ["s-1"] }));
     const ptr = new TelegramSessionPointer(path);
-    ptr.setCurrent("s-1");
-    expect(ptr.read()).toEqual({ current: "s-1" });
-    expect(new TelegramSessionPointer(path).read()).toEqual({
-      current: "s-1",
-    });
+    expect(ptr.adoptLegacy(telegramChatKey(42), "DM")).toBe("s-old");
+    expect(ptr.get("42")).toMatchObject({ current: "s-old", history: ["s-1"] });
+  });
+});
+
+describe("telegramChatKey", () => {
+  it("is the chat id outside forum topics", () => {
+    expect(telegramChatKey(42)).toBe("42");
+    expect(telegramChatKey(-1001234)).toBe("-1001234");
   });
 
-  it("rotate moves current into history and clears current", () => {
-    const ptr = new TelegramSessionPointer(path);
-    ptr.setCurrent("s-1");
-    ptr.rotate();
-    expect(ptr.read()).toEqual({ current: null, history: ["s-1"] });
-  });
-
-  it("rotate is idempotent when current is already null", () => {
-    const ptr = new TelegramSessionPointer(path);
-    ptr.rotate();
-    expect(ptr.read()).toEqual({ current: null });
-  });
-
-  it("history is capped to the most recent 16 rotated ids (newest first)", () => {
-    const ptr = new TelegramSessionPointer(path);
-    for (let i = 1; i <= 20; i += 1) {
-      ptr.setCurrent(`s-${i}`);
-      ptr.rotate();
-    }
-    const data = ptr.read();
-    expect(data.current).toBeNull();
-    expect(data.history).toBeDefined();
-    expect(data.history!.length).toBe(16);
-    expect(data.history![0]).toBe("s-20");
-    expect(data.history![15]).toBe("s-5");
-  });
-
-  it("corrupt file resets to { current: null } on read", () => {
-    writeFileSync(path, "not-json", "utf8");
-    expect(new TelegramSessionPointer(path).read()).toEqual({
-      current: null,
-    });
-  });
-
-  it("non-object JSON resets to { current: null } on read", () => {
-    writeFileSync(path, "[1, 2, 3]", "utf8");
-    expect(new TelegramSessionPointer(path).read()).toEqual({
-      current: null,
-    });
-  });
-
-  it("setCurrent after rotate preserves history", () => {
-    const ptr = new TelegramSessionPointer(path);
-    ptr.setCurrent("s-1");
-    ptr.rotate();
-    ptr.setCurrent("s-2");
-    expect(ptr.read()).toEqual({ current: "s-2", history: ["s-1"] });
+  it("folds the topic id in so each topic is its own conversation", () => {
+    expect(telegramChatKey(-1001234, 77)).toBe("-1001234:77");
+    expect(telegramChatKey(-1001234, 77)).not.toBe(telegramChatKey(-1001234));
   });
 });

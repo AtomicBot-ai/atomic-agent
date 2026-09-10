@@ -1,6 +1,10 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
-import { formatBytes, formatEta, useTransferRate } from "../hooks/use-transfer-rate.js";
+import {
+  formatBytes,
+  formatEta,
+  useTransferRate,
+} from "../hooks/use-transfer-rate.js";
 import type { LocalModelsPullState } from "../local-models/local-models-panel-state.js";
 import { theme } from "../theme/theme.js";
 
@@ -89,7 +93,9 @@ function PhaseLine(props: {
   pull: LocalModelsPullState | null;
 }): ReactElement {
   const percent = props.state === "done" ? 100 : (props.pull?.percent ?? 0);
-  const filled = Math.round((Math.min(100, Math.max(0, percent)) / 100) * BAR_WIDTH);
+  const filled = Math.round(
+    (Math.min(100, Math.max(0, percent)) / 100) * BAR_WIDTH,
+  );
   const bar = "█".repeat(filled) + "░".repeat(BAR_WIDTH - filled);
   const trailing =
     props.state === "done"
@@ -99,8 +105,14 @@ function PhaseLine(props: {
         : "waiting";
   return (
     <Text wrap="truncate">
-      <Text color={theme.colors.muted}>{props.label.padEnd(PHASE_LABEL_COLUMNS)}</Text>
-      <Text color={props.state === "pending" ? theme.colors.border : theme.colors.accent}>
+      <Text color={theme.colors.muted}>
+        {props.label.padEnd(PHASE_LABEL_COLUMNS)}
+      </Text>
+      <Text
+        color={
+          props.state === "pending" ? theme.colors.border : theme.colors.accent
+        }
+      >
         {bar}
       </Text>
       <Text color={theme.colors.muted}>{`  ${trailing}`}</Text>

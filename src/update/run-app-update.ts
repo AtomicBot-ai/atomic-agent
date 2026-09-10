@@ -214,7 +214,9 @@ function runProcess(
     child.stderr.on("data", emit);
 
     child.on("error", (err) => {
-      reject(new AppUpdateError(`install script failed to start: ${err.message}`));
+      reject(
+        new AppUpdateError(`install script failed to start: ${err.message}`),
+      );
     });
     child.on("close", (code) => {
       if (code === 0) {

@@ -5,10 +5,7 @@ import type { TuiAction } from "../tui-action.js";
 import type { TuiAppCallbacks } from "../tui-app.js";
 import { createInitialTuiState, type TuiSessionInfo } from "../tui-state.js";
 import { handleSkillsTabKey } from "./skills-key-bindings.js";
-import type {
-  HubSkillRow,
-  SkillsPanelState,
-} from "./skills-panel-state.js";
+import type { HubSkillRow, SkillsPanelState } from "./skills-panel-state.js";
 
 const SESSION: TuiSessionInfo = {
   sessionId: null,
@@ -185,7 +182,9 @@ describe("handleSkillsTabKey — hub mode", () => {
     };
     const ctx = makeCtx({ mode: "hub", hubCard: card });
     expect(handleSkillsTabKey("n", emptyKey(), ctx)).toBe(true);
-    expect(ctx.dispatch).toHaveBeenCalledWith({ type: "skills_hub_card_closed" });
+    expect(ctx.dispatch).toHaveBeenCalledWith({
+      type: "skills_hub_card_closed",
+    });
   });
 
   it("closes the hub on Esc", () => {

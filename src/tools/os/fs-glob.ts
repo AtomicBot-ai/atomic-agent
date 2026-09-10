@@ -98,7 +98,10 @@ export const osFsGlobTool: ToolDefinition = {
         const isDir = entry.isDirectory();
         const isFile = entry.isFile();
         const relForDir = isDir ? `${rel}/` : rel;
-        if (matchesAny(ignoreMatchers, rel) || matchesAny(ignoreMatchers, relForDir)) {
+        if (
+          matchesAny(ignoreMatchers, rel) ||
+          matchesAny(ignoreMatchers, relForDir)
+        ) {
           continue;
         }
         if (isFile && matchesAny(matchers, rel)) {
@@ -127,7 +130,9 @@ export const osFsGlobTool: ToolDefinition = {
     }
     const finalPaths = fileMatches
       .slice(0, args.limit)
-      .map((entry) => (args.absolute ? resolve(args.cwd, entry.path) : entry.path));
+      .map((entry) =>
+        args.absolute ? resolve(args.cwd, entry.path) : entry.path,
+      );
     const summary = finalPaths.join("\n");
     return compressToolResult(
       {
@@ -163,12 +168,16 @@ function parseArgs(
   } else if (Array.isArray(patternRaw)) {
     for (const p of patternRaw) {
       if (typeof p !== "string" || p.length === 0) {
-        throw new Error("os.fs.glob: `pattern[]` entries must be non-empty strings");
+        throw new Error(
+          "os.fs.glob: `pattern[]` entries must be non-empty strings",
+        );
       }
       patterns.push(p);
     }
     if (patterns.length === 0) {
-      throw new Error("os.fs.glob: `pattern` array must contain at least one pattern");
+      throw new Error(
+        "os.fs.glob: `pattern` array must contain at least one pattern",
+      );
     }
   } else {
     throw new Error("os.fs.glob: `pattern` is required (string or string[])");
@@ -184,7 +193,9 @@ function parseArgs(
   const cwdArg = cwdExplicit ?? pathAsRoot ?? workingDir;
   const cwd = resolveUserPath(cwdArg, workingDir);
   const ignore = Array.isArray(rawArgs.ignore)
-    ? rawArgs.ignore.filter((v): v is string => typeof v === "string" && v.length > 0)
+    ? rawArgs.ignore.filter(
+        (v): v is string => typeof v === "string" && v.length > 0,
+      )
     : DEFAULT_IGNORE;
   const absolute = rawArgs.absolute === true;
   const limit =

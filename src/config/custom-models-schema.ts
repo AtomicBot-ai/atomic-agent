@@ -44,7 +44,10 @@ function requireUrl(raw: unknown, field: string): string {
   try {
     new URL(str);
   } catch {
-    throw new ConfigValidationError(field, `expected a valid URL, got ${JSON.stringify(raw)}`);
+    throw new ConfigValidationError(
+      field,
+      `expected a valid URL, got ${JSON.stringify(raw)}`,
+    );
   }
   return str;
 }
@@ -65,7 +68,10 @@ function optionalString(raw: unknown, fallback: string): string {
   return typeof raw === "string" && raw.length > 0 ? raw : fallback;
 }
 
-export function parseCustomLocalModel(raw: unknown, field: string): LocalModelDef {
+export function parseCustomLocalModel(
+  raw: unknown,
+  field: string,
+): LocalModelDef {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
     throw new ConfigValidationError(field, "expected an object");
   }
@@ -106,7 +112,10 @@ export function parseCustomLocalModel(raw: unknown, field: string): LocalModelDe
   return {
     ...def,
     mmprojUrl: requireUrl(entry.mmprojUrl, `${field}.mmprojUrl`),
-    mmprojFilename: requireSafeFilename(entry.mmprojFilename, `${field}.mmprojFilename`),
+    mmprojFilename: requireSafeFilename(
+      entry.mmprojFilename,
+      `${field}.mmprojFilename`,
+    ),
     mmprojFileSizeGb: optionalNumber(
       entry.mmprojFileSizeGb,
       `${field}.mmprojFileSizeGb`,
@@ -115,14 +124,23 @@ export function parseCustomLocalModel(raw: unknown, field: string): LocalModelDe
   };
 }
 
-export function parseCustomLocalModels(raw: unknown, field: string): LocalModelDef[] {
+export function parseCustomLocalModels(
+  raw: unknown,
+  field: string,
+): LocalModelDef[] {
   if (raw === undefined || raw === null) return [];
-  if (!Array.isArray(raw)) throw new ConfigValidationError(field, "expected an array");
-  const parsed = raw.map((entry, i) => parseCustomLocalModel(entry, `${field}[${i}]`));
+  if (!Array.isArray(raw))
+    throw new ConfigValidationError(field, "expected an array");
+  const parsed = raw.map((entry, i) =>
+    parseCustomLocalModel(entry, `${field}[${i}]`),
+  );
   const seen = new Set<string>();
   for (const def of parsed) {
     if (seen.has(def.id)) {
-      throw new ConfigValidationError(field, `duplicate custom model id: ${def.id}`);
+      throw new ConfigValidationError(
+        field,
+        `duplicate custom model id: ${def.id}`,
+      );
     }
     seen.add(def.id);
   }

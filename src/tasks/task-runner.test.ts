@@ -3,11 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import {
-  CancelledError,
-  GrammarError,
-  TransportError,
-} from "../llm/index.js";
+import { CancelledError, GrammarError, TransportError } from "../llm/index.js";
 import { createEmptySessionState } from "../session/index.js";
 import type { SessionState } from "../session/index.js";
 import type { RunTurnResult } from "../agent/agent-loop.js";
@@ -29,7 +25,9 @@ interface FakeRuntimeOptions {
    * propagates verbatim. Sequence is consumed in order; once exhausted
    * the runtime defaults to a clean `reply`.
    */
-  scripts?: Array<(call: RuntimeCall) => RunTurnResult | Promise<RunTurnResult> | never>;
+  scripts?: Array<
+    (call: RuntimeCall) => RunTurnResult | Promise<RunTurnResult> | never
+  >;
 }
 
 function fakeRuntime(opts: FakeRuntimeOptions = {}): {
@@ -353,15 +351,30 @@ describe("TaskRunner", () => {
       sleep: async () => undefined,
     });
     store.create(
-      { sessionId: session.id, userMessage: "first", origin: "cli", maxAttempts: 1 },
+      {
+        sessionId: session.id,
+        userMessage: "first",
+        origin: "cli",
+        maxAttempts: 1,
+      },
       1_000,
     );
     store.create(
-      { sessionId: session.id, userMessage: "second", origin: "cli", maxAttempts: 1 },
+      {
+        sessionId: session.id,
+        userMessage: "second",
+        origin: "cli",
+        maxAttempts: 1,
+      },
       2_000,
     );
     store.create(
-      { sessionId: session.id, userMessage: "third", origin: "cli", maxAttempts: 1 },
+      {
+        sessionId: session.id,
+        userMessage: "third",
+        origin: "cli",
+        maxAttempts: 1,
+      },
       3_000,
     );
     await runner.drainPending();
@@ -613,7 +626,10 @@ describe("TaskRunner", () => {
                 tool: "finish",
                 status: "ok",
                 summary: "Backup complete (compressed)",
-                details: { summary: "Backup complete: 12 files archived", final: true },
+                details: {
+                  summary: "Backup complete: 12 files archived",
+                  final: true,
+                },
                 truncated: false,
               },
               batchIndex: 0,

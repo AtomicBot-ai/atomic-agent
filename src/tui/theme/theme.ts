@@ -159,6 +159,8 @@ export interface TuiGlyphs {
   readonly menuCursor: string;
   /** Hamburger, for the rail's menu button. */
   readonly menuGlyph: string;
+  /** Pins a session row to the top of the rail; sits at the row's right edge. */
+  readonly pinned: string;
   /** Folds the rail away; sits in its top-right corner. */
   readonly railCollapse: string;
   /** Reopens the folded rail; sits at the head of the status bar. */
@@ -207,6 +209,7 @@ const GLYPHS: TuiGlyphs = {
   chevronRight: "▸",
   menuCursor: "▶",
   menuGlyph: "☰",
+  pinned: "↑",
   railCollapse: "«",
   railRestore: "»",
   dotSeparator: "·",
@@ -398,7 +401,8 @@ function dimColors(colors: TuiColors): TuiColors {
  */
 export const theme: TuiTheme = new Proxy({} as TuiTheme, {
   get(_target, prop: string | symbol): unknown {
-    if (prop === "colors" && backdropDimmed) return dimColors(activeTheme.colors);
+    if (prop === "colors" && backdropDimmed)
+      return dimColors(activeTheme.colors);
     return activeTheme[prop as keyof TuiTheme];
   },
   has(_target, prop: string | symbol): boolean {

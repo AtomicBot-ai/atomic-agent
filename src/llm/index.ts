@@ -14,7 +14,10 @@ export type {
 export { checkLlamaServer } from "./llama-server-health.js";
 export { llamaEndpointUrl } from "./llama-endpoint-url.js";
 export { describeLlamaHealthFailure } from "./describe-llama-health-failure.js";
-export type { HealthCheckOptions, HealthResult } from "./llama-server-health.js";
+export type {
+  HealthCheckOptions,
+  HealthResult,
+} from "./llama-server-health.js";
 export { SlotManager, hashPrefix, DEFAULT_SLOT_COUNT } from "./slot-manager.js";
 export type { SlotAssignment } from "./slot-manager.js";
 export {
@@ -45,15 +48,21 @@ export {
   ToolExecutionError,
   TransportError,
   classifyFailure,
+  classifyTruncation,
   detectModelFailure,
+  formatTruncatedMessage,
+  isRequestSizeRejection,
 } from "./reliability/index.js";
 export type {
+  DetectModelFailureOptions,
   DetectedModelFailure,
   LlmFailureCategory,
   LlmFailureOptions,
   ModelErrorOptions,
   ModelFailureReason,
   ModelFailureStage,
+  TruncationCause,
+  TruncationDetail,
 } from "./reliability/index.js";
 export {
   LlamaServerProvider,

@@ -35,13 +35,19 @@ export function readFieldValue(
   const raw =
     field.store === "config"
       ? readConfigPath(config, field.configPath)
-      : field.envVar === undefined
+      : field.store === "transient" || field.envVar === undefined
         ? undefined
         : env[field.envVar];
   if (field.kind === "boolean") {
     // A toggle is always "present": off is a deliberate value, not an
     // empty field waiting to be filled in.
     return raw === true ? "on" : "off";
+  }
+  if (field.kind === "list") {
+    // An empty list reads as unset, so `required` still means "the
+    // operator has to fill this in" for a list field.
+    if (!Array.isArray(raw) || raw.length === 0) return undefined;
+    return raw.filter((e): e is string => typeof e === "string").join(", ");
   }
   if (typeof raw === "number") return String(raw);
   if (typeof raw !== "string") return undefined;
@@ -120,8 +126,13 @@ export function writeFieldValue(
     if (trimmed.length === 0) {
       throw new IntegrationSecretError(`${field.label} is empty`);
     }
-    const invalid = field.validate?.(trimmed);
-    if (invalid !== undefined) throw new IntegrationSecretError(invalid);
+    // A list validates per entry in `parseList` below — running a
+    // single-id validator over the joined line would reject every
+    // multi-entry value.
+    if (field.kind !== "list") {
+      const invalid = field.validate?.(trimmed);
+      if (invalid !== undefined) throw new IntegrationSecretError(invalid);
+    }
   }
 
   if (field.kind === "boolean") {
@@ -131,6 +142,22 @@ export function writeFieldValue(
       );
     }
     writeConfigPath(userConfigFile, field.configPath, trimmed === "on");
+    return;
+  }
+
+  // Acted on by the orchestrator, never written anywhere.
+  if (field.store === "transient") return;
+  if (field.kind === "list") {
+    if (!userConfigFile || !field.configPath) {
+      throw new IntegrationSecretError(
+        `${field.label} is a list but no config path was supplied`,
+      );
+    }
+    writeConfigPath(
+      userConfigFile,
+      field.configPath,
+      parseList(field, trimmed),
+    );
     return;
   }
 
@@ -160,6 +187,40 @@ export function writeFieldValue(
 }
 
 /**
+ * Split one comma-separated line into the entries a `list` field
+ * stores, validating each on its own so the message names the entry
+ * that is wrong. Whitespace and empty slots (a trailing comma, a
+ * double comma) are forgiving — those are typing, not intent.
+ *
+ * `writeFieldValue` has already run `field.validate` over the whole
+ * line for a text field; for a list it must NOT, because a validator
+ * written for one id can never match a joined line. That is why the
+ * per-entry pass lives here.
+ */
+function parseList(field: IntegrationField, raw: string | null): string[] {
+  if (raw === null) return [];
+  const entries = raw
+    .split(",")
+    .map((e) => e.trim())
+    .filter((e) => e.length > 0);
+  if (entries.length === 0) {
+    throw new IntegrationSecretError(`${field.label} is empty`);
+  }
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const entry of entries) {
+    const invalid = field.validate?.(entry);
+    if (invalid !== undefined) {
+      throw new IntegrationSecretError(`${entry}: ${invalid}`);
+    }
+    if (seen.has(entry)) continue;
+    seen.add(entry);
+    out.push(entry);
+  }
+  return out;
+}
+
+/**
  * Set a dotted path in `config.json`, re-validating the whole file
  * first so a stale on-disk schema cannot ride in on this edit, then
  * dropping the config cache so the next `getConfig()` sees it.
@@ -167,7 +228,7 @@ export function writeFieldValue(
 function writeConfigPath(
   userConfigFile: string,
   path: string,
-  value: string | boolean | null,
+  value: string | string[] | boolean | null,
 ): void {
   const prev = ensureUserConfigFileSync(userConfigFile) as unknown as Record<
     string,

@@ -86,9 +86,9 @@ describe("detectModelProfile", () => {
     // is about ordering and not about one gate quietly failing to match.
     expect(alias).toContain("qwen");
     expect(alias).toContain("nemotron");
-    expect(detectModelProfile({ ...NEMOTRON_PROPS, model_alias: alias })).toEqual(
-      QWEN_THINK_PROFILE,
-    );
+    expect(
+      detectModelProfile({ ...NEMOTRON_PROPS, model_alias: alias }),
+    ).toEqual(QWEN_THINK_PROFILE);
   });
 
   it("falls back to plain profile for gpt-oss style templates", () => {

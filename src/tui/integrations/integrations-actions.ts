@@ -9,6 +9,8 @@ import type { IntegrationRow } from "./integrations-panel-state.js";
 export type IntegrationsAction =
   | { type: "integrations_synced"; rows: readonly IntegrationRow[] }
   | { type: "integrations_moved"; delta: number }
+  /** Land the cursor on one integration by id — how another tab sends the operator to its setup. */
+  | { type: "integrations_selected"; id: string }
   | { type: "integrations_field_moved"; delta: number }
   | { type: "integrations_opened" }
   | { type: "integrations_closed" }

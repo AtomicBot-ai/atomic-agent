@@ -53,8 +53,7 @@ export function saveProviderWizardToConfig(
     presetId: wizard.presetId,
     existingProviderId: wizard.mode === "configure" ? wizard.providerId : null,
     takenProviderIds: providers.map((provider) => provider.id),
-    chatModelId:
-      wizard.selectedChatModelId ?? defaultChatModelForKind(kind),
+    chatModelId: wizard.selectedChatModelId ?? defaultChatModelForKind(kind),
     embeddingChoiceId:
       wizard.selectedEmbeddingChoiceId ?? LOCAL_EMBEDDING_CHOICE_ID,
     baseUrl: wizard.baseUrlLine,
@@ -62,9 +61,7 @@ export function saveProviderWizardToConfig(
     customEmbeddingModel: wizard.embeddingModelLine,
   });
 
-  const existing = providers.find(
-    (provider) => provider.id === built.entry.id,
-  );
+  const existing = providers.find((provider) => provider.id === built.entry.id);
   let entry = built.entry;
   // Reconfiguring must not wipe what the wizard has no screen for: a
   // subscription-cli entry can carry a hand-set binPath / extraArgs /
@@ -80,10 +77,15 @@ export function saveProviderWizardToConfig(
       },
     };
   }
-  if (existing?.requestTimeoutMs !== undefined && entry.requestTimeoutMs === undefined) {
+  if (
+    existing?.requestTimeoutMs !== undefined &&
+    entry.requestTimeoutMs === undefined
+  ) {
     entry = { ...entry, requestTimeoutMs: existing.requestTimeoutMs };
   }
-  const preset = wizard.presetId ? findProviderPreset(wizard.presetId) : undefined;
+  const preset = wizard.presetId
+    ? findProviderPreset(wizard.presetId)
+    : undefined;
   // Local servers (including a hand-added loopback endpoint) have no key
   // at all, and keyless-listing services work before one is entered, so
   // an empty key is a valid state for both: nothing is written to .env

@@ -12,6 +12,7 @@ import {
   writeDownloadJob,
   type DownloadJob,
 } from "./download-jobs.js";
+import { readDownloadNotify } from "./download-notify-file.js";
 import {
   downloadWorkerArgs,
   spawnDownloadWorker,
@@ -53,8 +54,42 @@ describe("download-spawn", () => {
     rmSync(dataDir, { recursive: true, force: true });
   });
 
+  it("arms, keeps or disarms the end-of-job ping beside the record", () => {
+    const spawn = vi.fn(
+      () => ({ pid: 777, unref: vi.fn() }) as unknown as ChildProcess,
+    );
+    const base = {
+      dataDir,
+      kind: "chat" as const,
+      modelId: "qwen-3.5-4b",
+      mode: "gguf-only" as const,
+      spawn: spawn as unknown as typeof nodeSpawn,
+      execPath: "/opt/node/bin/node",
+      argv: ["/opt/node/bin/node", "/repo/dist/cli/index.js"],
+      execArgv: [],
+      sea: false,
+      env: {},
+    };
+    const jobId = downloadJobId("chat", "qwen-3.5-4b");
+    spawnDownloadWorker({ ...base, notify: "telegram" });
+    expect(readDownloadNotify(dataDir, jobId)).toBe("telegram");
+    // A relaunch onto the partial that says nothing keeps the ping.
+    writeDownloadJob(dataDir, job({ pid: DEAD_PID }));
+    spawnDownloadWorker(base);
+    expect(readDownloadNotify(dataDir, jobId)).toBe("telegram");
+    // An explicit null disarms it — even when the worker is already
+    // running and nothing is spawned.
+    writeDownloadJob(dataDir, job({ pid: process.pid }));
+    expect(spawnDownloadWorker({ ...base, notify: null }).outcome).toBe(
+      "already-running",
+    );
+    expect(readDownloadNotify(dataDir, jobId)).toBeNull();
+  });
+
   it("spawns a detached copy of this program with the worker argv, logging to the job log", () => {
-    const spawn = vi.fn(() => ({ pid: 777, unref: vi.fn() }) as unknown as ChildProcess);
+    const spawn = vi.fn(
+      () => ({ pid: 777, unref: vi.fn() }) as unknown as ChildProcess,
+    );
 
     const result = spawnDownloadWorker({
       dataDir,
@@ -78,15 +113,24 @@ describe("download-spawn", () => {
     expect(cmd).toBe("/opt/node/bin/node");
     expect(args).toEqual([
       "/repo/dist/cli/index.js",
-      ...downloadWorkerArgs({ kind: "chat", modelId: "qwen-3.5-4b", mode: "gguf-only" }),
+      ...downloadWorkerArgs({
+        kind: "chat",
+        modelId: "qwen-3.5-4b",
+        mode: "gguf-only",
+      }),
     ]);
     expect(opts.detached).toBe(true);
     expect(opts.stdio[0]).toBe("ignore");
     expect(opts.env.ATOMIC_AGENT_STATE_DIR).toBe("/state");
     // The record exists before the worker has written a byte.
-    const seeded = readDownloadJob(dataDir, downloadJobId("chat", "qwen-3.5-4b"));
+    const seeded = readDownloadJob(
+      dataDir,
+      downloadJobId("chat", "qwen-3.5-4b"),
+    );
     expect(seeded).toMatchObject({ pid: 777, status: "interrupted" });
-    expect(existsSync(resolveDownloadLogPath(dataDir, "chat-qwen-3.5-4b"))).toBe(true);
+    expect(
+      existsSync(resolveDownloadLogPath(dataDir, "chat-qwen-3.5-4b")),
+    ).toBe(true);
   });
 
   it("does not start a second worker for a model whose worker is alive", () => {
@@ -106,7 +150,9 @@ describe("download-spawn", () => {
   });
 
   it("the worker log path is created next to the record", () => {
-    const spawn = vi.fn(() => ({ pid: 1, unref: vi.fn() }) as unknown as ChildProcess);
+    const spawn = vi.fn(
+      () => ({ pid: 1, unref: vi.fn() }) as unknown as ChildProcess,
+    );
     const result = spawnDownloadWorker({
       dataDir,
       kind: "embedding",
@@ -118,7 +164,9 @@ describe("download-spawn", () => {
     });
     expect(result.outcome).toBe("spawned");
     if (result.outcome !== "spawned") return;
-    expect(result.logPath).toBe(join(dataDir, "downloads", "embedding-nomic-embed-text-v1.5.log"));
+    expect(result.logPath).toBe(
+      join(dataDir, "downloads", "embedding-nomic-embed-text-v1.5.log"),
+    );
     expect(readFileSync(result.logPath, "utf-8")).toBe("");
   });
 
@@ -139,7 +187,10 @@ describe("download-spawn", () => {
       writeDownloadJob(dataDir, { ...j, status: "cancelled" });
     });
     const result = await stopDownloadWorker(dataDir, j, { kill, pollMs: 1 });
-    expect(result).toMatchObject({ outcome: "stopped", job: { status: "cancelled" } });
+    expect(result).toMatchObject({
+      outcome: "stopped",
+      job: { status: "cancelled" },
+    });
   });
 
   it("stopDownloadWorker reports a worker that ignores the stop", async () => {

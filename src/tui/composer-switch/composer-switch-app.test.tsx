@@ -1,7 +1,10 @@
 import { render } from "ink-testing-library";
 import { describe, expect, it } from "vitest";
 
-import { makeMouseSource, type MouseSourceEmitter } from "../mouse/mouse-source.js";
+import {
+  makeMouseSource,
+  type MouseSourceEmitter,
+} from "../mouse/mouse-source.js";
 import type { TuiMouseEvent } from "../mouse/mouse-event.js";
 import { makeTuiEventBus, TuiApp, type TuiAppCallbacks } from "../tui-app.js";
 import type { TuiSessionInfo } from "../tui-state.js";

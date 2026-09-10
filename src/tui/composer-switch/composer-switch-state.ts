@@ -9,7 +9,7 @@
  * without closing, which is what makes the row behave like one control
  * strip rather than three unrelated popups.
  */
-export type ComposerSwitchKind = "backend" | "provider" | "model";
+export type ComposerSwitchKind = "backend" | "provider" | "model" | "workers";
 
 /** Left-to-right order of the controls, and of the ←/→ walk. */
 export const COMPOSER_SWITCH_KINDS: readonly ComposerSwitchKind[] = [
@@ -28,6 +28,10 @@ export const COMPOSER_SWITCH_KINDS: readonly ComposerSwitchKind[] = [
 export function composerSwitchKindsFor(
   backend: ComposerBackendKind,
 ): readonly ComposerSwitchKind[] {
+  // Fusion's provider and model controls address the orchestrator leg;
+  // its fourth control, `workers`, is the local half — the worker model
+  // and how many run at once. Nowhere else draws it.
+  if (backend === "fusion") return [...COMPOSER_SWITCH_KINDS, "workers"];
   return backend === "local" ? ["backend", "model"] : COMPOSER_SWITCH_KINDS;
 }
 
@@ -40,8 +44,14 @@ export function composerSwitchKindsFor(
  * `external` for one the operator runs themselves at their own base URL.
  * There is no third provider kind behind `custom`: the config models it
  * as a mode of the local backend, and the switch says the same thing.
+ *
+ * `fusion` is a mode over two of them: the active provider is a cloud
+ * orchestrator and the managed llama.cpp hosts its workers. It is
+ * effective only while the orchestrator is the active provider — see
+ * `resolveRunMode` — so the switch reads it from the resolver's answer
+ * rather than from the provider rows.
  */
-export type ComposerBackendKind = "cloud" | "local" | "custom";
+export type ComposerBackendKind = "cloud" | "local" | "custom" | "fusion";
 
 export interface ComposerSwitchState {
   readonly kind: ComposerSwitchKind;
@@ -61,6 +71,7 @@ export const COMPOSER_SWITCH_TITLES: Record<ComposerSwitchKind, string> = {
   backend: "Where it runs",
   provider: "Provider",
   model: "Model",
+  workers: "Workers",
 };
 
 /** Step `delta` controls along the row, clamped at both ends. */

@@ -92,7 +92,7 @@ export function SessionDeleteModal({
       </Text>
       <Text>{fit("", inner)}</Text>
       <Box width={inner}>
-        <Text>{" "}</Text>
+        <Text> </Text>
         <ConfirmButton
           label="Yes"
           tone="primary"

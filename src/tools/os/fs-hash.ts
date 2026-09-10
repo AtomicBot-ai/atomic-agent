@@ -68,7 +68,12 @@ function parseAlgorithm(raw: unknown): HashAlgorithm {
     throw new Error("os.fs.hash: `algorithm` must be a string");
   }
   const norm = raw.toLowerCase();
-  if (norm === "md5" || norm === "sha1" || norm === "sha256" || norm === "sha512") {
+  if (
+    norm === "md5" ||
+    norm === "sha1" ||
+    norm === "sha256" ||
+    norm === "sha512"
+  ) {
     return norm;
   }
   throw new Error(

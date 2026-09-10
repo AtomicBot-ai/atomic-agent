@@ -150,10 +150,14 @@ function renderCloud(wizard: ProvidersWizardState) {
 
 // Effects fire after commit, so a persisted side effect is awaited by
 // polling config — never by trusting how fast a frame landed.
-async function untilStamped(read: () => boolean, timeoutMs = 1000): Promise<void> {
+async function untilStamped(
+  read: () => boolean,
+  timeoutMs = 1000,
+): Promise<void> {
   const start = Date.now();
   while (!read()) {
-    if (Date.now() - start > timeoutMs) throw new Error("stamp never persisted");
+    if (Date.now() - start > timeoutMs)
+      throw new Error("stamp never persisted");
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
 }
@@ -271,7 +275,8 @@ describe("OnboardingScreen", () => {
     const leading = Math.min(
       ...drawn.map((line) => line.length - line.trimStart().length),
     );
-    const width = Math.max(...drawn.map((line) => line.trimEnd().length)) - leading;
+    const width =
+      Math.max(...drawn.map((line) => line.trimEnd().length)) - leading;
     const balance = (120 - width) / 2;
     expect(Math.abs(leading - balance)).toBeLessThanOrEqual(1);
   });
@@ -317,7 +322,10 @@ describe("OnboardingScreen", () => {
     const { view, actions } = renderFlow();
     view.stdin.write(ESCAPE_KEY);
     await new Promise((resolve) => setTimeout(resolve, 30));
-    expect(actions).toContainEqual({ type: "onboarding_finished", outcome: "skipped" });
+    expect(actions).toContainEqual({
+      type: "onboarding_finished",
+      outcome: "skipped",
+    });
   });
 
   it("opens on the splash: mark, wordmark, tagline and the promise it makes", () => {
@@ -326,7 +334,9 @@ describe("OnboardingScreen", () => {
     expect(frame).toContain("\u2588"); // the mark
     expect(frame).toContain("press any key to continue");
     // The wordmark's first row, `ATOMIC` only — not `ATOMIC AGENT`.
-    expect(frame).toContain("\u2584\u2580\u2588 \u2580\u2588\u2580 \u2588\u2580\u2588");
+    expect(frame).toContain(
+      "\u2584\u2580\u2588 \u2580\u2588\u2580 \u2588\u2580\u2588",
+    );
     expect(frame).not.toContain("setup \u00b7 step 1 of 2");
   });
 
@@ -337,14 +347,20 @@ describe("OnboardingScreen", () => {
     expect(actions).toEqual([]);
     view.stdin.write("x");
     await new Promise((resolve) => setTimeout(resolve, 30));
-    expect(actions).toContainEqual({ type: "onboarding_step_set", step: "choose" });
+    expect(actions).toContainEqual({
+      type: "onboarding_step_set",
+      step: "choose",
+    });
   });
 
   it("does not let Esc skip setup from a screen that has not offered it yet", async () => {
     const { view, actions } = renderFlow("intro");
     view.stdin.write(ESCAPE_KEY);
     await new Promise((resolve) => setTimeout(resolve, 40));
-    expect(actions).not.toContainEqual({ type: "onboarding_finished", outcome: "skipped" });
+    expect(actions).not.toContainEqual({
+      type: "onboarding_finished",
+      outcome: "skipped",
+    });
   });
 
   it("fits the provider list plus its search line in 24 rows, footer intact", () => {
@@ -389,7 +405,11 @@ describe("OnboardingScreen", () => {
       expect(frame).toContain("Start using the agent now");
       expect(frame).toContain("Add another cloud provider");
       expect(frame).not.toContain("Wait here");
-      const last = frame.split("\n").filter((line) => line.trim().length > 0).at(-1) ?? "";
+      const last =
+        frame
+          .split("\n")
+          .filter((line) => line.trim().length > 0)
+          .at(-1) ?? "";
       expect(last).toContain("start or add a provider");
     });
 
@@ -397,11 +417,17 @@ describe("OnboardingScreen", () => {
       const { view, actions } = renderFlow("wait_or_jump", { panel: {} });
       view.stdin.write("\r");
       await new Promise((resolve) => setTimeout(resolve, 30));
-      expect(actions).toContainEqual({ type: "onboarding_finished", outcome: "cloud" });
+      expect(actions).toContainEqual({
+        type: "onboarding_finished",
+        outcome: "cloud",
+      });
     });
 
     it("opens the providers wizard again on the second row", async () => {
-      const { view, actions } = renderFlow("wait_or_jump", { cursor: 1, panel: {} });
+      const { view, actions } = renderFlow("wait_or_jump", {
+        cursor: 1,
+        panel: {},
+      });
       view.stdin.write("\r");
       await new Promise((resolve) => setTimeout(resolve, 30));
       expect(actions.map((action) => action.type)).toEqual([
@@ -457,7 +483,10 @@ describe("OnboardingScreen", () => {
     const { view, actions } = renderFlow();
     view.stdin.write("j");
     await new Promise((resolve) => setTimeout(resolve, 30));
-    expect(actions).toContainEqual({ type: "onboarding_cursor_moved", delta: 1 });
+    expect(actions).toContainEqual({
+      type: "onboarding_cursor_moved",
+      delta: 1,
+    });
   });
 
   describe("the download screen's skip exit", () => {
@@ -499,9 +528,14 @@ describe("OnboardingScreen", () => {
       // Skip = completing setup with a download in flight, not
       // abandoning it — so the flow stamps completedAt, not skippedAt.
       await untilStamped(() => getConfig().tui.onboarding.completedAt !== null);
-      expect(actions).toContainEqual({ type: "onboarding_set", onboarding: null });
+      expect(actions).toContainEqual({
+        type: "onboarding_set",
+        onboarding: null,
+      });
       expect(
-        actions.every((action) => action.type !== "onboarding_second_backend_offered"),
+        actions.every(
+          (action) => action.type !== "onboarding_second_backend_offered",
+        ),
       ).toBe(true);
       // The bypass must not masquerade as "the offer was made": the
       // propose screen was never shown, so its stamp stays unset.
@@ -513,10 +547,14 @@ describe("OnboardingScreen", () => {
       const { actions } = renderFinished(true, [
         { id: "hermes", label: "Hermes", dir: "/tmp/h" },
       ]);
-      await untilStamped(() => getConfig().tui.onboarding.importOfferedAt !== null);
+      await untilStamped(
+        () => getConfig().tui.onboarding.importOfferedAt !== null,
+      );
       expect(actions.map((a) => a.type)).toContain("onboarding_import_opened");
       expect(
-        actions.every((action) => action.type !== "onboarding_second_backend_offered"),
+        actions.every(
+          (action) => action.type !== "onboarding_second_backend_offered",
+        ),
       ).toBe(true);
       // Import intercepted the close-out, so the flow is not retired yet.
       expect(getConfig().tui.onboarding.completedAt).toBeNull();
@@ -537,7 +575,9 @@ describe("OnboardingScreen", () => {
   it("stamps localSetupSeenAt the moment the model list is reached", async () => {
     expect(getConfig().tui.onboarding.localSetupSeenAt).toBeNull();
     renderFlow("local_pick");
-    await untilStamped(() => getConfig().tui.onboarding.localSetupSeenAt !== null);
+    await untilStamped(
+      () => getConfig().tui.onboarding.localSetupSeenAt !== null,
+    );
     // The stamp is the exact input the next decision reads: with it,
     // the "set up local models too" pitch stays away for good.
     expect(

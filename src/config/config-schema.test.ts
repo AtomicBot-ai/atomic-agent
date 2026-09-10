@@ -77,7 +77,10 @@ describe("tui.onboarding (config v43, extended in v45)", () => {
 
   it("rejects a non-object onboarding block", () => {
     expect(() =>
-      parseUserConfigFile({ version: USER_CONFIG_VERSION, tui: { onboarding: true } }),
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        tui: { onboarding: true },
+      }),
     ).toThrow(ConfigValidationError);
   });
 });
@@ -206,9 +209,9 @@ describe("parseUserConfigFile", () => {
   });
 
   it("keeps a newer version rather than stamping its own", () => {
-    expect(parseUserConfigFile({ version: USER_CONFIG_VERSION + 7 }).version).toBe(
-      USER_CONFIG_VERSION + 7,
-    );
+    expect(
+      parseUserConfigFile({ version: USER_CONFIG_VERSION + 7 }).version,
+    ).toBe(USER_CONFIG_VERSION + 7);
   });
 
   // Every version-gated rule in the parse is a `<` comparison against the
@@ -460,6 +463,33 @@ describe("parseUserConfigFile", () => {
         web: { search: { cacheTtlMinutes: 5000 } },
       }),
     ).toThrow(/web.search.cacheTtlMinutes/);
+  });
+
+  it("fills git.remoteSync default false when migrating from v51", () => {
+    // A repository the agent versions must stay on this machine until
+    // the operator opens the door: an older file must never come up
+    // syncing.
+    const parsed = parseUserConfigFile({ version: 51 });
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(parsed.git.remoteSync).toBe(false);
+    expect(USER_CONFIG_DEFAULTS.git.remoteSync).toBe(false);
+  });
+
+  it("honours an explicit git.remoteSync opt-in", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      git: { remoteSync: true },
+    });
+    expect(parsed.git.remoteSync).toBe(true);
+  });
+
+  it("rejects a non-boolean git.remoteSync", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        git: { remoteSync: "yes please" },
+      }),
+    ).toThrow(/git.remoteSync/);
   });
 
   it("fills persistCache default true when migrating from v45 (#256)", () => {
@@ -875,6 +905,40 @@ describe("parseUserConfigFile", () => {
     expect(parsed.localModels.managed.tensorSplit).toEqual([3, 1]);
   });
 
+  it("defaults localModels.managed.parallel to 2 (the pre-v52 hard-coded slot count)", () => {
+    expect(
+      parseUserConfigFile({ version: USER_CONFIG_VERSION }).localModels.managed
+        .parallel,
+    ).toBe(2);
+    expect(USER_CONFIG_DEFAULTS.localModels.managed.parallel).toBe(2);
+  });
+
+  it("migrates a v51 file by filling localModels.managed.parallel=2", () => {
+    const parsed = parseUserConfigFile({
+      version: 51,
+      localModels: { managed: { port: 19091 } },
+    });
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(parsed.localModels.managed.parallel).toBe(2);
+  });
+
+  it("keeps an explicit localModels.managed.parallel and bounds it to 1..8", () => {
+    expect(
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        localModels: { managed: { parallel: 4 } },
+      }).localModels.managed.parallel,
+    ).toBe(4);
+    for (const parallel of [0, 9, 2.5]) {
+      expect(() =>
+        parseUserConfigFile({
+          version: USER_CONFIG_VERSION,
+          localModels: { managed: { parallel } },
+        }),
+      ).toThrow(/localModels\.managed\.parallel/);
+    }
+  });
+
   it("accepts fractional ratios and zeros that skip a device", () => {
     const parsed = parseUserConfigFile({
       version: USER_CONFIG_VERSION,
@@ -893,7 +957,12 @@ describe("parseUserConfigFile", () => {
   });
 
   it("rejects negative, non-numeric, and non-finite tensorSplit ratios", () => {
-    for (const bad of [[1, -1], [1, "1"], [1, Number.NaN], [1, null]]) {
+    for (const bad of [
+      [1, -1],
+      [1, "1"],
+      [1, Number.NaN],
+      [1, null],
+    ]) {
       expect(() =>
         parseUserConfigFile({
           version: USER_CONFIG_VERSION,
@@ -1002,7 +1071,68 @@ describe("parseUserConfigFile", () => {
     // Off and unpaired: a token alone must not start a channel that
     // would then refuse every message.
     expect(parsed.discord.enabled).toBe(false);
-    expect(parsed.discord.ownerUserId).toBeNull();
+    expect(parsed.discord.ownerUserIds).toEqual([]);
+  });
+
+  it("accepts a v52 file and fills in localModels.download.hfEndpoint (mirror support)", () => {
+    const parsed = parseUserConfigFile({
+      version: 52,
+      localModels: { download: { connections: 4 } },
+    });
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(parsed.localModels.download).toEqual({
+      connections: 4,
+      hfEndpoint: "https://huggingface.co",
+    });
+  });
+
+  it("normalizes an explicit hfEndpoint to an origin", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      localModels: { download: { hfEndpoint: "https://hf-mirror.com/" } },
+    });
+    expect(parsed.localModels.download.hfEndpoint).toBe(
+      "https://hf-mirror.com",
+    );
+  });
+
+  it("rejects an hfEndpoint that is not an http(s) origin", () => {
+    for (const hfEndpoint of ["hf-mirror.com", "ftp://x", "", 42]) {
+      expect(() =>
+        parseUserConfigFile({
+          version: USER_CONFIG_VERSION,
+          localModels: { download: { hfEndpoint } },
+        }),
+      ).toThrow(/localModels.download.hfEndpoint/);
+    }
+  });
+
+  it("accepts a v51 file and fills in localModels.download defaults (parallel downloads)", () => {
+    const parsed = parseUserConfigFile({ version: 51 });
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(parsed.localModels.download).toEqual({
+      connections: 16,
+      hfEndpoint: "https://huggingface.co",
+    });
+  });
+
+  it("honours an explicit localModels.download.connections", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      localModels: { download: { connections: 1 } },
+    });
+    expect(parsed.localModels.download.connections).toBe(1);
+  });
+
+  it("rejects localModels.download.connections outside 1..64 or non-integer", () => {
+    for (const connections of [0, 65, -3, 2.5, "many"]) {
+      expect(() =>
+        parseUserConfigFile({
+          version: USER_CONFIG_VERSION,
+          localModels: { download: { connections } },
+        }),
+      ).toThrow(/localModels.download.connections/);
+    }
   });
 
   it("accepts a v50 file and fills in discord.* defaults transparently", () => {
@@ -1011,15 +1141,141 @@ describe("parseUserConfigFile", () => {
     expect(parsed.discord).toEqual(USER_CONFIG_DEFAULTS.discord);
   });
 
-  it("keeps discord.ownerUserId a string", () => {
+  it("applies notifications defaults when the section is absent", () => {
+    const parsed = parseUserConfigFile({ version: USER_CONFIG_VERSION });
+    expect(parsed.notifications).toEqual(USER_CONFIG_DEFAULTS.notifications);
+    // `null` = not asked yet: the Models tab asks on the next pull.
+    expect(parsed.notifications.downloads.channel).toBeNull();
+  });
+
+  it("accepts a v51 file and fills in notifications.* defaults transparently", () => {
+    const parsed = parseUserConfigFile({ version: 51 });
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(parsed.notifications).toEqual(USER_CONFIG_DEFAULTS.notifications);
+  });
+
+  it("keeps a remembered download-notify channel and rejects an unknown one", () => {
+    expect(
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        notifications: { downloads: { channel: "telegram" } },
+      }).notifications.downloads.channel,
+    ).toBe("telegram");
+    expect(
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        notifications: { downloads: { channel: "off" } },
+      }).notifications.downloads.channel,
+    ).toBe("off");
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        notifications: { downloads: { channel: "pager" } },
+      }),
+    ).toThrow(/notifications\.downloads\.channel/);
+  });
+
+  it("applies atomicMail defaults when the section is absent, and accepts a v52 file", () => {
+    expect(
+      parseUserConfigFile({ version: USER_CONFIG_VERSION }).atomicMail,
+    ).toEqual(USER_CONFIG_DEFAULTS.atomicMail);
+    const parsed = parseUserConfigFile({ version: 52 });
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(parsed.atomicMail.address).toBeNull();
+  });
+
+  it("keeps a pending verification only when it is whole", () => {
+    const whole = {
+      email: "a@b.co",
+      codeHash: "ab".repeat(32),
+      expiresAt: "2026-09-09T00:00:00.000Z",
+    };
+    expect(
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        atomicMail: { pendingVerification: whole },
+      }).atomicMail.pendingVerification,
+    ).toEqual({ ...whole, attempts: 0 });
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        atomicMail: { pendingVerification: { email: "a@b.co" } },
+      }),
+    ).toThrow(/atomicMail\.pendingVerification/);
+  });
+
+  it("keeps every discord owner id a string", () => {
     // Discord snowflakes exceed Number.MAX_SAFE_INTEGER: parsing one as
     // a number silently corrupts the last digits, which would let the
     // wrong account drive the agent.
     const parsed = parseUserConfigFile({
       version: USER_CONFIG_VERSION,
+      discord: {
+        enabled: true,
+        ownerUserIds: ["123456789012345678", "223456789012345678"],
+      },
+    });
+    expect(parsed.discord.ownerUserIds).toEqual([
+      "123456789012345678",
+      "223456789012345678",
+    ]);
+  });
+
+  it("folds a v51 scalar discord.ownerUserId into the list", () => {
+    // The whole back-compat contract: an operator who paired under v51
+    // keeps working without touching config.json.
+    const parsed = parseUserConfigFile({
+      version: 51,
       discord: { enabled: true, ownerUserId: "123456789012345678" },
     });
-    expect(parsed.discord.ownerUserId).toBe("123456789012345678");
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(parsed.discord.ownerUserIds).toEqual(["123456789012345678"]);
+  });
+
+  it("lets the list win when a stale scalar is left beside it", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      discord: {
+        enabled: true,
+        ownerUserId: "999999999999999999",
+        ownerUserIds: ["123456789012345678"],
+      },
+    });
+    expect(parsed.discord.ownerUserIds).toEqual(["123456789012345678"]);
+  });
+
+  it("dedupes discord owner ids and keeps their order", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      discord: {
+        ownerUserIds: [
+          "223456789012345678",
+          "123456789012345678",
+          "223456789012345678",
+        ],
+      },
+    });
+    expect(parsed.discord.ownerUserIds).toEqual([
+      "223456789012345678",
+      "123456789012345678",
+    ]);
+  });
+
+  it("rejects a discord owner id that is not a snowflake", () => {
+    // A hand-edited id that can never match an author id would leave
+    // the channel silently refusing every message.
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        discord: { ownerUserIds: ["not-an-id"] },
+      }),
+    ).toThrow(/discord.ownerUserIds\[0\]/);
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        discord: { ownerUserIds: "123456789012345678" },
+      }),
+    ).toThrow(/expected string\[\]/);
   });
 
   it("applies composio defaults when the section is absent", () => {
@@ -1494,7 +1750,6 @@ describe("tui.whileBusySubmit", () => {
   });
 });
 
-
 describe("numeric coercion of string config values", () => {
   const base = { version: USER_CONFIG_VERSION };
 
@@ -1536,5 +1791,204 @@ describe("numeric coercion of string config values", () => {
         agent: { tokenBudget: "9007199254740993" },
       }),
     ).toThrow(/tokenBudget/);
+  });
+});
+
+describe("swarm units (config v52)", () => {
+  const base = { version: USER_CONFIG_VERSION };
+  const unit = {
+    id: "ops",
+    kind: "telegram",
+    label: "Ops",
+    role: "deploys",
+    enabled: true,
+    tokenEnv: "TELEGRAM_BOT_TOKEN_OPS",
+    ownerUserId: "42",
+  };
+
+  it("defaults to no units, including for a v51 file that predates the block", () => {
+    expect(parseUserConfigFile(base).swarm).toEqual({ units: [] });
+    expect(parseUserConfigFile({ version: 51 }).swarm).toEqual({ units: [] });
+  });
+
+  it("accepts a well-formed unit list and fills optional fields", () => {
+    const parsed = parseUserConfigFile({
+      ...base,
+      swarm: {
+        units: [
+          unit,
+          {
+            ...unit,
+            id: "g",
+            kind: "discord",
+            tokenEnv: "DISCORD_BOT_TOKEN_G",
+            role: undefined,
+            ownerUserId: null,
+            enabled: undefined,
+          },
+        ],
+      },
+    });
+    expect(parsed.swarm.units).toEqual([
+      unit,
+      {
+        id: "g",
+        kind: "discord",
+        label: "Ops",
+        role: "",
+        enabled: false,
+        tokenEnv: "DISCORD_BOT_TOKEN_G",
+        ownerUserId: null,
+      },
+    ]);
+  });
+
+  it("rejects malformed units with the field named", () => {
+    const bad = (patch: Record<string, unknown>) => () =>
+      parseUserConfigFile({
+        ...base,
+        swarm: { units: [{ ...unit, ...patch }] },
+      });
+    expect(bad({ id: "Ops Bot" })).toThrow(/swarm\.units\[0\]\.id/);
+    expect(bad({ kind: "slack" })).toThrow(/swarm\.units\[0\]\.kind/);
+    expect(bad({ label: "" })).toThrow(/swarm\.units\[0\]\.label/);
+    expect(bad({ tokenEnv: "lower-case" })).toThrow(
+      /swarm\.units\[0\]\.tokenEnv/,
+    );
+    expect(bad({ ownerUserId: "not-a-number" })).toThrow(
+      /swarm\.units\[0\]\.ownerUserId/,
+    );
+    expect(() =>
+      parseUserConfigFile({ ...base, swarm: { units: "nope" } }),
+    ).toThrow(/swarm\.units/);
+  });
+
+  it("rejects duplicate ids and duplicate token env names", () => {
+    expect(() =>
+      parseUserConfigFile({
+        ...base,
+        swarm: { units: [unit, { ...unit, tokenEnv: "TELEGRAM_BOT_TOKEN_X" }] },
+      }),
+    ).toThrow(/duplicate id/);
+    expect(() =>
+      parseUserConfigFile({
+        ...base,
+        swarm: { units: [unit, { ...unit, id: "two" }] },
+      }),
+    ).toThrow(/duplicate token env/);
+  });
+});
+
+describe("tui.sessionRail (config v58)", () => {
+  it("gives a v51 file the recency default — an empty order", () => {
+    const parsed = parseUserConfigFile({ version: 51, tui: { theme: "nord" } });
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(parsed.tui.sessionRail).toEqual({ order: [], pinned: [] });
+    expect(parsed.tui.theme).toBe("nord");
+  });
+
+  it("round-trips the operator's order", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      tui: { sessionRail: { order: ["s-b", "s-a", "s-c"] } },
+    });
+    expect(parsed.tui.sessionRail.order).toEqual(["s-b", "s-a", "s-c"]);
+  });
+
+  it("drops entries that are not ids and keeps the first of a duplicate", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      tui: { sessionRail: { order: ["s-b", 7, "", null, "s-a", "s-b"] } },
+    });
+    expect(parsed.tui.sessionRail.order).toEqual(["s-b", "s-a"]);
+  });
+
+  it("rejects an order that is not a list", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        tui: { sessionRail: { order: "s-a" } },
+      }),
+    ).toThrow(/tui\.sessionRail\.order/);
+  });
+});
+
+describe("tui.sessionRail.pinned (config v59)", () => {
+  it("gives a v52 file nothing pinned and keeps its order", () => {
+    const parsed = parseUserConfigFile({
+      version: 52,
+      tui: { sessionRail: { order: ["s-b", "s-a"] } },
+    });
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(parsed.tui.sessionRail).toEqual({
+      order: ["s-b", "s-a"],
+      pinned: [],
+    });
+  });
+
+  it("round-trips the pinned block next to the order", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      tui: {
+        sessionRail: { order: ["s-b", "s-a", "s-c"], pinned: ["s-c", "s-a"] },
+      },
+    });
+    expect(parsed.tui.sessionRail).toEqual({
+      order: ["s-b", "s-a", "s-c"],
+      pinned: ["s-c", "s-a"],
+    });
+  });
+
+  it("drops pinned entries that are not ids and dedupes them", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      tui: { sessionRail: { pinned: ["s-b", 7, "", null, "s-a", "s-b"] } },
+    });
+    expect(parsed.tui.sessionRail).toEqual({
+      order: [],
+      pinned: ["s-b", "s-a"],
+    });
+  });
+
+  it("rejects a pinned block that is not a list", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        tui: { sessionRail: { pinned: "s-a" } },
+      }),
+    ).toThrow(/tui\.sessionRail\.pinned/);
+  });
+});
+
+describe("localModels.completionMaxTokens (config v60)", () => {
+  it('accepts 0 as "no client-side cap"', () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      localModels: { completionMaxTokens: 0 },
+    });
+    expect(parsed.localModels.completionMaxTokens).toBe(0);
+  });
+
+  it("keeps the ordinary window and its bounds", () => {
+    expect(
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        localModels: { completionMaxTokens: 32_000 },
+      }).localModels.completionMaxTokens,
+    ).toBe(32_000);
+    for (const bad of [63, 131_073, -1]) {
+      expect(() =>
+        parseUserConfigFile({
+          version: USER_CONFIG_VERSION,
+          localModels: { completionMaxTokens: bad },
+        }),
+      ).toThrow(/completionMaxTokens/);
+    }
+  });
+
+  it("leaves an older file on its positive default", () => {
+    expect(
+      parseUserConfigFile({ version: 51 }).localModels.completionMaxTokens,
+    ).toBe(8192);
   });
 });

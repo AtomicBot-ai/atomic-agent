@@ -55,9 +55,7 @@ export function MouseProvider({
     () => value,
     [value.registry, value.dispatch, value.callbacks, value.getState],
   );
-  return (
-    <MouseContext.Provider value={memo}>{children}</MouseContext.Provider>
-  );
+  return <MouseContext.Provider value={memo}>{children}</MouseContext.Provider>;
 }
 
 /**

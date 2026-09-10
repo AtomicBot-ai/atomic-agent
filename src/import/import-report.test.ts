@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { buildReport, emptySummary, type ImportItemResult } from "./import-report.js";
+import {
+  buildReport,
+  emptySummary,
+  type ImportItemResult,
+} from "./import-report.js";
 
 describe("emptySummary", () => {
   it("starts every status at zero", () => {

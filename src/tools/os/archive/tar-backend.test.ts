@@ -37,7 +37,10 @@ describe("TarBackend", () => {
 
   it("reads a single entry from tar", async () => {
     const backend = new TarBackend("tar");
-    const body = await backend.readEntry(readFileSync(TAR_FIXTURE), "hello.txt");
+    const body = await backend.readEntry(
+      readFileSync(TAR_FIXTURE),
+      "hello.txt",
+    );
     expect(body.toString("utf8")).toBe("Hello from the archive.\n");
   });
 
@@ -89,10 +92,16 @@ describe("TarBackend", () => {
         destDir: dir,
         overwrite: false,
         followSymlinks: false,
-        limits: { maxTotalBytes: 1_000_000, maxEntryBytes: 1_000_000, maxEntries: 1 },
+        limits: {
+          maxTotalBytes: 1_000_000,
+          maxEntryBytes: 1_000_000,
+          maxEntries: 1,
+        },
       });
       expect(
-        report.skippedEntries.some((s) => /max_entries_exceeded/.test(s.reason)),
+        report.skippedEntries.some((s) =>
+          /max_entries_exceeded/.test(s.reason),
+        ),
       ).toBe(true);
     });
   });

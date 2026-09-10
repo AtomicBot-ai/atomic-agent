@@ -43,7 +43,9 @@ describe("stepped panel budget", () => {
     for (let rows = 18; rows <= 60; rows += 1) {
       const withComposer = steppedPanelRendered(steppedPanelRows(rows, true));
       const without = steppedPanelRendered(steppedPanelRows(rows, false));
-      expect(without, `terminal ${rows} rows`).toBeLessThanOrEqual(withComposer);
+      expect(without, `terminal ${rows} rows`).toBeLessThanOrEqual(
+        withComposer,
+      );
     }
   });
 

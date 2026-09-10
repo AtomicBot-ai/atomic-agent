@@ -20,14 +20,20 @@ const SESSION: TuiSessionInfo = {
 describe("reduceUiAction theme_set", () => {
   it("stores the new theme name to trigger a re-render", () => {
     const state = createInitialTuiState(SESSION);
-    const next = reduceUiAction(state, { type: "theme_set", name: "khorne-red" });
+    const next = reduceUiAction(state, {
+      type: "theme_set",
+      name: "khorne-red",
+    });
     expect(next).not.toBeNull();
     expect(next?.themeName).toBe("khorne-red");
   });
 
   it("leaves other slices untouched", () => {
     const state = createInitialTuiState(SESSION);
-    const next = reduceUiAction(state, { type: "theme_set", name: "darky-dark" });
+    const next = reduceUiAction(state, {
+      type: "theme_set",
+      name: "darky-dark",
+    });
     expect(next?.uiMode).toBe(state.uiMode);
     expect(next?.activeTab).toBe(state.activeTab);
   });
@@ -98,28 +104,52 @@ describe("input history navigation", () => {
 
   it("preserves the in-progress draft when Up recalls history", () => {
     const state = withHistory("draft I am typing");
-    const up = reduceTuiState(state, { type: "input_history_navigated", delta: -1 });
+    const up = reduceTuiState(state, {
+      type: "input_history_navigated",
+      delta: -1,
+    });
     expect(up.inputValue).toBe("second");
-    const back = reduceTuiState(up, { type: "input_history_navigated", delta: 1 });
+    const back = reduceTuiState(up, {
+      type: "input_history_navigated",
+      delta: 1,
+    });
     expect(back.inputValue).toBe("draft I am typing");
   });
 
   it("keeps the history cursor when the caret moves without editing", () => {
     const state = withHistory("draft");
-    const up = reduceTuiState(state, { type: "input_history_navigated", delta: -1 });
+    const up = reduceTuiState(state, {
+      type: "input_history_navigated",
+      delta: -1,
+    });
     expect(up.inputHistoryCursor).toBe(1);
-    const caret = reduceTuiState(up, { type: "input_changed", value: "second" });
+    const caret = reduceTuiState(up, {
+      type: "input_changed",
+      value: "second",
+    });
     expect(caret.inputHistoryCursor).toBe(1);
-    const older = reduceTuiState(caret, { type: "input_history_navigated", delta: -1 });
+    const older = reduceTuiState(caret, {
+      type: "input_history_navigated",
+      delta: -1,
+    });
     expect(older.inputValue).toBe("first");
   });
 
   it("drops the stashed draft once the recalled entry is edited", () => {
     const state = withHistory("draft");
-    const up = reduceTuiState(state, { type: "input_history_navigated", delta: -1 });
-    const edited = reduceTuiState(up, { type: "input_changed", value: "second!" });
+    const up = reduceTuiState(state, {
+      type: "input_history_navigated",
+      delta: -1,
+    });
+    const edited = reduceTuiState(up, {
+      type: "input_changed",
+      value: "second!",
+    });
     expect(edited.inputHistoryCursor).toBeNull();
-    const down = reduceTuiState(edited, { type: "input_history_navigated", delta: 1 });
+    const down = reduceTuiState(edited, {
+      type: "input_history_navigated",
+      delta: 1,
+    });
     expect(down.inputValue).toBe("second!");
   });
 });
@@ -138,7 +168,10 @@ describe("reduceUiAction message_queued", () => {
   it("appends in submission order", () => {
     const state = createInitialTuiState(SESSION);
     const first = reduceUiAction(state, { type: "message_queued", text: "a" });
-    const second = reduceUiAction(first!, { type: "message_queued", text: "b" });
+    const second = reduceUiAction(first!, {
+      type: "message_queued",
+      text: "b",
+    });
     expect(second?.queuedMessages).toEqual(["a", "b"]);
   });
 
@@ -258,7 +291,6 @@ describe("reduceUiAction while_busy_mode_changed", () => {
   });
 });
 
-
 describe("the context panel", () => {
   const open = (): ReturnType<typeof reduceTuiState> =>
     reduceTuiState(createInitialTuiState(SESSION), {
@@ -269,7 +301,8 @@ describe("the context panel", () => {
     const opened = open();
     expect(opened.contextPanelOpen).toBe(true);
     expect(
-      reduceTuiState(opened, { type: "context_panel_toggled" }).contextPanelOpen,
+      reduceTuiState(opened, { type: "context_panel_toggled" })
+        .contextPanelOpen,
     ).toBe(false);
   });
 

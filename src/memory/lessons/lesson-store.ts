@@ -158,12 +158,7 @@ interface LessonRow {
 export class LessonValidationError extends Error {
   constructor(
     public readonly field:
-      | "activation"
-      | "principle"
-      | "tags"
-      | "parentIds"
-      | "id"
-      | "query",
+      "activation" | "principle" | "tags" | "parentIds" | "id" | "query",
     message: string,
   ) {
     super(message);
@@ -684,10 +679,7 @@ function validatePrinciple(raw: unknown): string {
   }
   const trimmed = raw.trim();
   if (trimmed.length === 0) {
-    throw new LessonValidationError(
-      "principle",
-      "principle must be non-empty",
-    );
+    throw new LessonValidationError("principle", "principle must be non-empty");
   }
   if (trimmed.length > LESSON_PRINCIPLE_MAX_LENGTH) {
     throw new LessonValidationError(
@@ -735,7 +727,10 @@ function validateParentIds(raw: readonly number[]): number[] {
 
 function validateLessonId(raw: unknown): number {
   if (typeof raw !== "number" || !Number.isInteger(raw) || raw <= 0) {
-    throw new LessonValidationError("id", "lesson id must be a positive integer");
+    throw new LessonValidationError(
+      "id",
+      "lesson id must be a positive integer",
+    );
   }
   return raw;
 }

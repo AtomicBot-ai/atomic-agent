@@ -109,7 +109,9 @@ describe("extractSafeReason", () => {
   });
 
   it("drops an unrecognised reason (could be freeform text)", () => {
-    expect(extractSafeReason({ reason: "user typed something weird" })).toBeUndefined();
+    expect(
+      extractSafeReason({ reason: "user typed something weird" }),
+    ).toBeUndefined();
     expect(extractSafeReason(null)).toBeUndefined();
   });
 });
@@ -157,7 +159,9 @@ describe("extractSafeTool", () => {
   });
 
   it("drops a tool value that is not a bounded identifier (could echo model output)", () => {
-    expect(extractSafeTool({ tool: "please read /Users/alex/notes.txt" })).toBeUndefined();
+    expect(
+      extractSafeTool({ tool: "please read /Users/alex/notes.txt" }),
+    ).toBeUndefined();
     expect(extractSafeTool({ tool: "a".repeat(65) })).toBeUndefined();
   });
 });

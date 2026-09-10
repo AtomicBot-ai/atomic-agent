@@ -27,7 +27,8 @@ function replyFinishDescriptors(): ToolDescriptor[] {
       name: REPLY_TOOL,
       tier: "frequent",
       summary: "End the turn with a user-visible reply.",
-      argsSchema: "text: string (required)",
+      argsSchema:
+        "text: string (required), attachments: string[] (optional — paths of existing files to deliver with the reply)",
     },
     {
       name: FINISH_TOOL,
@@ -38,7 +39,9 @@ function replyFinishDescriptors(): ToolDescriptor[] {
   ];
 }
 
-function descriptorToJsonSchema(descriptor: ToolDescriptor): Record<string, unknown> {
+function descriptorToJsonSchema(
+  descriptor: ToolDescriptor,
+): Record<string, unknown> {
   if (descriptor.name === REPLY_TOOL) {
     return {
       type: "object",
@@ -47,6 +50,12 @@ function descriptorToJsonSchema(descriptor: ToolDescriptor): Record<string, unkn
           type: "string",
           minLength: 1,
           description: "User-visible reply text. Must be non-empty.",
+        },
+        attachments: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "Paths of existing files to deliver with the reply (sent as files on Telegram/Discord).",
         },
       },
       required: ["text"],

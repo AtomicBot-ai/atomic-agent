@@ -24,8 +24,21 @@ export {
   CONVERSATION_CAP_SAFETY_MARGIN,
   CONVERSATION_CAP_FLOOR,
 } from "./token-budget.js";
+export {
+  buildFusionGuidance,
+  isFusionActive,
+  FUSION_GUIDANCE,
+} from "./fusion-guidance.js";
+export {
+  resolveFusionMachineFacts,
+  NO_FUSION_MACHINE_FACTS,
+} from "./fusion-machine-facts.js";
+export type { FusionMachineFacts } from "./fusion-machine-facts.js";
 export { renderTaskPolicy } from "./render-task-policy.js";
-export type { RenderedTaskPolicy, TaskPolicyKind } from "./render-task-policy.js";
+export type {
+  RenderedTaskPolicy,
+  TaskPolicyKind,
+} from "./render-task-policy.js";
 export type {
   TokenBudgetLimits,
   BudgetCheckResult,

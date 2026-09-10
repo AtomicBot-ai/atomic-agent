@@ -25,9 +25,8 @@ export function SkillsList(props: SkillsListProps): ReactElement {
     return (
       <Box flexDirection="column" paddingY={1}>
         <Text color={theme.colors.muted}>
-          no skills match the current filter — install one with
-          `atomic-agent skill install`, or press `f` to cycle filter / `r`
-          to refresh.
+          no skills match the current filter — install one with `atomic-agent
+          skill install`, or press `f` to cycle filter / `r` to refresh.
         </Text>
       </Box>
     );
@@ -51,7 +50,10 @@ export function SkillsList(props: SkillsListProps): ReactElement {
           key={row.name}
           selected={idx + windowStart === clamped}
           onSelect={(mouse) =>
-            mouse.dispatch({ type: "skills_cursor_set", row: idx + windowStart })
+            mouse.dispatch({
+              type: "skills_cursor_set",
+              row: idx + windowStart,
+            })
           }
           onActivate={pressEnter(handleSkillsTabKey)}
         >
@@ -95,7 +97,7 @@ function HeaderRow(): ReactElement {
   return (
     <Box>
       <Text color={theme.colors.muted}>
-        {"  "}state     source   version  name                       description
+        {"  "}state source version name description
       </Text>
     </Box>
   );
@@ -146,7 +148,11 @@ function truncate(text: string, max: number): string {
   return `${text.slice(0, max - 1)}…`;
 }
 
-function computeWindowStart(cursor: number, total: number, size: number): number {
+function computeWindowStart(
+  cursor: number,
+  total: number,
+  size: number,
+): number {
   if (total <= size) return 0;
   if (cursor < size) return 0;
   return Math.min(cursor - size + 1, total - size);

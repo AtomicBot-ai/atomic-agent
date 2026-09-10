@@ -4,7 +4,10 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const DEV_TOOL_CALL_GRAMMAR_PATH = resolve(HERE, "../../../grammars/tool-call.gbnf");
+const DEV_TOOL_CALL_GRAMMAR_PATH = resolve(
+  HERE,
+  "../../../grammars/tool-call.gbnf",
+);
 
 const require = createRequire(import.meta.url);
 
@@ -88,7 +91,11 @@ export function loadToolCallGrammar(): string {
   if (typeof override === "string" && override.length > 0) {
     return readFileSync(override, "utf8");
   }
-  const nextToBinary = join(dirname(process.execPath), "grammars", "tool-call.gbnf");
+  const nextToBinary = join(
+    dirname(process.execPath),
+    "grammars",
+    "tool-call.gbnf",
+  );
   if (existsSync(nextToBinary)) {
     return readFileSync(nextToBinary, "utf8");
   }
@@ -124,7 +131,9 @@ export function extractReasoning(
   if (openRe.test(body)) {
     const match = body.match(openRe);
     const prefix = body.slice(0, match?.index ?? 0).trim();
-    const tail = body.slice((match?.index ?? 0) + (match?.[0].length ?? 0)).trim();
+    const tail = body
+      .slice((match?.index ?? 0) + (match?.[0].length ?? 0))
+      .trim();
     const peeled = peelTrailingToolJson(tail);
     const reasoningParts = [...collected];
     if (peeled.prefix.length > 0) reasoningParts.push(peeled.prefix);
@@ -209,7 +218,9 @@ export function parseToolCalls(
     throw new ToolCallParseError("tool-call array root must be a JSON array");
   }
   if (parsed.length === 0) {
-    throw new ToolCallParseError("tool-call array must contain at least one call");
+    throw new ToolCallParseError(
+      "tool-call array must contain at least one call",
+    );
   }
   const calls: ToolCallPayload[] = [];
   for (let i = 0; i < parsed.length; i += 1) {
@@ -231,7 +242,9 @@ export function parseToolCalls(
 function normalizeToolCall(payload: Record<string, unknown>): ToolCallPayload {
   const tool = readToolName(payload);
   if (tool.length === 0) {
-    throw new ToolCallParseError("tool-call must include a non-empty tool name");
+    throw new ToolCallParseError(
+      "tool-call must include a non-empty tool name",
+    );
   }
 
   const args = readArgs(payload);
@@ -272,7 +285,9 @@ function readArgs(payload: Record<string, unknown>): Record<string, unknown> {
   }
 
   const flatArgs = Object.fromEntries(
-    Object.entries(payload).filter(([key]) => !["tool", "name", "action"].includes(key)),
+    Object.entries(payload).filter(
+      ([key]) => !["tool", "name", "action"].includes(key),
+    ),
   );
   if (Object.keys(flatArgs).length === 0) {
     throw new ToolCallParseError("tool-call must include args");
@@ -406,7 +421,10 @@ function extractJsonRoot(raw: string): ExtractedRoot {
  * a re-scan seeded after each unmatched opener — add it if traces ever
  * show it.
  */
-function collectRootSpans(input: string): { spans: RootSpan[]; sawOpen: boolean } {
+function collectRootSpans(input: string): {
+  spans: RootSpan[];
+  sawOpen: boolean;
+} {
   const spans: RootSpan[] = [];
   const stack: { kind: "object" | "array"; start: number }[] = [];
   let sawOpen = false;

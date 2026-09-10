@@ -42,11 +42,12 @@ export function parseClawHubIdentifier(raw: string): ClawHubSkillRef {
   }
 
   if (trimmed.startsWith("@")) {
-    const segments = trimmed.slice(1).split("/").filter((s) => s.length > 0);
+    const segments = trimmed
+      .slice(1)
+      .split("/")
+      .filter((s) => s.length > 0);
     if (segments.length !== 2) {
-      throw new ClawHubIdentifierError(
-        `expected @owner/slug, got: ${raw}`,
-      );
+      throw new ClawHubIdentifierError(`expected @owner/slug, got: ${raw}`);
     }
     const owner = segments[0]!;
     const slug = segments[1]!;

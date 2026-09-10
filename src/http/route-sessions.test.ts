@@ -56,9 +56,12 @@ describe("/api/sessions", () => {
     });
     expect(first.status).toBe(200);
     expect(harness.runtime.sessionStore.load(session.id)).toBeNull();
-    const second = await fetch(`${harness.baseUrl}/api/sessions/${session.id}`, {
-      method: "DELETE",
-    });
+    const second = await fetch(
+      `${harness.baseUrl}/api/sessions/${session.id}`,
+      {
+        method: "DELETE",
+      },
+    );
     expect(second.status).toBe(200);
   });
 });
@@ -74,10 +77,7 @@ describe("POST /api/sessions/{id}/steer", () => {
     await harness.cleanup();
   });
 
-  async function steer(
-    sessionId: string,
-    body: unknown,
-  ): Promise<Response> {
+  async function steer(sessionId: string, body: unknown): Promise<Response> {
     return fetch(`${harness.baseUrl}/api/sessions/${sessionId}/steer`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -187,7 +187,6 @@ describe("POST /api/sessions/{id}/steer", () => {
   });
 });
 
-
 /**
  * The other half of the steering promise: `200 {steered:true}` is
  * acceptance, not delivery, and the surface has to say so when the turn
@@ -209,7 +208,12 @@ describe("GET|DELETE /api/sessions/{id}/steer (undelivered)", () => {
       reasoningContent: "",
       stop: true,
       truncated: false,
-      timing: { promptMs: 0, predictedMs: 0, promptTokens: 4, predictedTokens: 2 },
+      timing: {
+        promptMs: 0,
+        predictedMs: 0,
+        promptTokens: 4,
+        predictedTokens: 2,
+      },
       cacheHitTokens: 0,
       slotId: 0,
       modelId: null,

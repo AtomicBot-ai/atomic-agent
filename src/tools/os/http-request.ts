@@ -195,9 +195,7 @@ function parseArgs(
   }
 
   const rawMethod =
-    typeof rawArgs.method === "string"
-      ? rawArgs.method.toUpperCase()
-      : "GET";
+    typeof rawArgs.method === "string" ? rawArgs.method.toUpperCase() : "GET";
   if (rawMethod !== "GET" && rawMethod !== "POST") {
     throw new Error(
       `os.http.request: only GET and POST are supported (got ${JSON.stringify(rawArgs.method)})`,

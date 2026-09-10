@@ -5,10 +5,7 @@ import {
   AppUpdateError,
   type AppUpdateCheckResult,
 } from "../update/index.js";
-import {
-  updateCommand,
-  type UpdateCommandDeps,
-} from "./update-command.js";
+import { updateCommand, type UpdateCommandDeps } from "./update-command.js";
 
 function makeResult(
   overrides: Partial<AppUpdateCheckResult> = {},
@@ -98,7 +95,11 @@ describe("atomic-agent update", () => {
 
   it("--check reports up to date and exits 0 without installing", async () => {
     check.mockResolvedValue(
-      makeResult({ updateAvailable: false, latestTag: "v0.3.1", latestVersion: "0.3.1" }),
+      makeResult({
+        updateAvailable: false,
+        latestTag: "v0.3.1",
+        latestVersion: "0.3.1",
+      }),
     );
     expect(await updateCommand(["--check"], deps)).toBe(0);
     expect(stdout()).toMatch(/up to date \(0\.3\.1\)/);
@@ -127,7 +128,11 @@ describe("atomic-agent update", () => {
 
   it("reports up to date and exits 0 without installing when current", async () => {
     check.mockResolvedValue(
-      makeResult({ updateAvailable: false, latestTag: "v0.3.1", latestVersion: "0.3.1" }),
+      makeResult({
+        updateAvailable: false,
+        latestTag: "v0.3.1",
+        latestVersion: "0.3.1",
+      }),
     );
     expect(await updateCommand([], deps)).toBe(0);
     expect(stdout()).toMatch(/up to date \(0\.3\.1\)/);
@@ -162,9 +167,9 @@ describe("atomic-agent update", () => {
 
   it("prompts in an interactive terminal and cancels on 'no'", async () => {
     const confirm = vi.fn().mockResolvedValue(false);
-    expect(await updateCommand([], { ...deps, isTTY: () => true, confirm })).toBe(
-      0,
-    );
+    expect(
+      await updateCommand([], { ...deps, isTTY: () => true, confirm }),
+    ).toBe(0);
     expect(confirm).toHaveBeenCalledTimes(1);
     expect(confirm).toHaveBeenCalledWith("update to 0.3.2? [y/N] ");
     expect(stdout()).toMatch(/update cancelled/);
@@ -173,9 +178,9 @@ describe("atomic-agent update", () => {
 
   it("proceeds when the interactive prompt is accepted", async () => {
     const confirm = vi.fn().mockResolvedValue(true);
-    expect(await updateCommand([], { ...deps, isTTY: () => true, confirm })).toBe(
-      0,
-    );
+    expect(
+      await updateCommand([], { ...deps, isTTY: () => true, confirm }),
+    ).toBe(0);
     expect(confirm).toHaveBeenCalledTimes(1);
     expect(runInstaller).toHaveBeenCalledTimes(1);
   });
@@ -191,7 +196,11 @@ describe("atomic-agent update", () => {
 
   it("--version pins a specific tag even when the running version is newer", async () => {
     check.mockResolvedValue(
-      makeResult({ updateAvailable: false, latestTag: "v0.3.1", latestVersion: "0.3.1" }),
+      makeResult({
+        updateAvailable: false,
+        latestTag: "v0.3.1",
+        latestVersion: "0.3.1",
+      }),
     );
     expect(await updateCommand(["--version", "v0.3.2"], deps)).toBe(0);
     expect(stdout()).toMatch(/installing v0\.3\.2/);

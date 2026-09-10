@@ -4,6 +4,7 @@ import {
   chunkUtf16,
   sendOutbound,
   type TelegramApi,
+  withThread,
 } from "./outbound-sender.js";
 
 interface SendCall {
@@ -277,5 +278,40 @@ describe("sendOutbound", () => {
       const combined = calls.map((c) => c.text).join("");
       expect(combined).toContain("<b>header</b>");
     });
+  });
+});
+
+describe("sendOutbound — forum topics", () => {
+  it("adds message_thread_id to every chunk, including the plain-text fallback", async () => {
+    const { api, calls } = fakeApi([
+      {
+        error_code: 400,
+        description: "Bad Request: can't parse entities: bad tag",
+      },
+      null,
+    ]);
+    const result = await sendOutbound({
+      api,
+      chatId: 5,
+      threadId: 77,
+      text: "**bold**",
+      parseMode: "html",
+    });
+    expect(result).toEqual({ chunks: 1, dropped: 0, parseFallbacks: 1 });
+    expect(calls[0]!.opts).toEqual({
+      parse_mode: "HTML",
+      disable_web_page_preview: true,
+      message_thread_id: 77,
+    });
+    expect(calls[1]!.text).toBe("**bold**");
+    expect(calls[1]!.opts).toEqual({ message_thread_id: 77 });
+  });
+
+  it("keeps the pre-topic wire shape when there is no thread", async () => {
+    const { api, calls } = fakeApi();
+    await sendOutbound({ api, chatId: 5, text: "hi" });
+    expect(calls[0]!.opts).toBeUndefined();
+    expect(withThread(undefined, undefined)).toBeUndefined();
+    expect(withThread({ a: 1 }, 3)).toEqual({ a: 1, message_thread_id: 3 });
   });
 });

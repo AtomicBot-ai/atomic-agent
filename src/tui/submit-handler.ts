@@ -2,14 +2,23 @@ import {
   dispatchSlashCommand,
   type SlashDispatchResult,
 } from "./commands/slash-command-handler.js";
-import { parseSlashCommand, slashPrefix } from "./commands/slash-command-parser.js";
+import { runRunModeVerb } from "./commands/run-mode-verb.js";
+import {
+  parseSlashCommand,
+  slashPrefix,
+} from "./commands/slash-command-parser.js";
 import {
   filterSlashCommands,
   resolveSlashCommand,
 } from "./commands/slash-commands.js";
 import type { TuiAction } from "./tui-action.js";
 import { isKnownLocalModelId } from "../local-llm/index.js";
-import { isThemeName, setActiveTheme, THEME_NAMES, THEMES } from "./theme/theme.js";
+import {
+  isThemeName,
+  setActiveTheme,
+  THEME_NAMES,
+  THEMES,
+} from "./theme/theme.js";
 import type { TuiAppCallbacks } from "./tui-app.js";
 import type { WhileBusySubmitMode } from "../config/index.js";
 import {
@@ -173,6 +182,9 @@ export function runSlashCommand(
   if (result.triggerDebugBundleDump) {
     callbacks.onDebugBundleExportRequested?.(state);
   }
+  if (result.triggerIssueReport) {
+    callbacks.onIssueReportRequested?.();
+  }
   if (result.triggerUninstallPlan) {
     callbacks.onUninstallPlanRequested?.();
   }
@@ -208,6 +220,13 @@ export function runSlashCommand(
       callbacks.onProvidersContractProbeRequested?.(action.providerId);
       continue;
     }
+    if (action.type === "local_models_daemon_restart_requested") {
+      // Same wiring rule for `/llm restart`: the restart lives on
+      // `LocalModelsOrchestrator.restartDaemon`, which the reducer
+      // cannot reach.
+      void callbacks.onLocalModelsDaemonRestartRequested?.();
+      continue;
+    }
     if (action.type === "providers_inline_models_ensure_requested") {
       // Same wiring rule for the inline Cloud-pane model list (`/model`):
       // the catalog ensure must reach
@@ -240,7 +259,13 @@ export function runSlashCommand(
       });
     }
   }
-  if (result.queueVerb) runQueueVerb(result.queueVerb, state, dispatch, callbacks);
+  if (result.queueVerb)
+    runQueueVerb(result.queueVerb, state, dispatch, callbacks);
+  if (result.runModeVerb)
+    runRunModeVerb(result.runModeVerb, state, dispatch, callbacks);
+  if (result.runModeWorkers !== undefined) {
+    callbacks.onFusionWorkersChangeRequested?.(result.runModeWorkers);
+  }
   if (result.triggerNewWindow) callbacks.onNewWindowRequested?.();
   if (result.triggerAbort) callbacks.onAbort();
   if (result.triggerQuit) {
@@ -254,15 +279,19 @@ export function runSlashCommand(
   if (result.persistLlamaUrl) {
     callbacks.onPersistLlamaUrl?.(result.persistLlamaUrl);
   }
-  if (result.taskCancelId) callbacks.onTaskCancelConfirmed?.(result.taskCancelId);
+  if (result.taskCancelId)
+    callbacks.onTaskCancelConfirmed?.(result.taskCancelId);
   if (result.taskRunId) callbacks.onTaskRunNowRequested?.(result.taskRunId);
-  if (result.skillEnableName) callbacks.onSkillEnableRequested?.(result.skillEnableName);
-  if (result.skillDisableName) callbacks.onSkillDisableRequested?.(result.skillDisableName);
+  if (result.skillEnableName)
+    callbacks.onSkillEnableRequested?.(result.skillEnableName);
+  if (result.skillDisableName)
+    callbacks.onSkillDisableRequested?.(result.skillDisableName);
   if (result.skillHubBrowse) callbacks.onSkillHubOpen?.();
   if (result.skillHubSearchQuery !== undefined) {
     callbacks.onSkillHubSearch?.(result.skillHubSearchQuery);
   }
-  if (result.skillHubInstallId) callbacks.onSkillHubInstall?.(result.skillHubInstallId);
+  if (result.skillHubInstallId)
+    callbacks.onSkillHubInstall?.(result.skillHubInstallId);
   if (
     result.localModelsPullModelId &&
     isKnownLocalModelId(result.localModelsPullModelId)
@@ -275,7 +304,8 @@ export function runSlashCommand(
   ) {
     callbacks.onLocalModelsSetActiveRequested?.(result.localModelsUseModelId);
   }
-  if (result.triggerLocalModelsStatus) void callbacks.onLocalModelsStatusRequested?.();
+  if (result.triggerLocalModelsStatus)
+    void callbacks.onLocalModelsStatusRequested?.();
   if (result.telegramVerb) {
     runTelegramVerb(result.telegramVerb, callbacks);
   }
@@ -354,7 +384,9 @@ export function formatQueueListing(queued: readonly string[]): string {
     return "queue: (empty) \u2014 messages sent while a turn is running are parked here";
   }
   const header = `queue (${queued.length} message${queued.length === 1 ? "" : "s"})`;
-  const lines = queued.map((text, i) => `  ${i + 1}. ${text.replace(/\s+/g, " ").trim()}`);
+  const lines = queued.map(
+    (text, i) => `  ${i + 1}. ${text.replace(/\s+/g, " ").trim()}`,
+  );
   return [header, ...lines].join("\n");
 }
 

@@ -6,7 +6,11 @@ import {
 } from "../context-menu/context-menu-context.js";
 import { useMouseCommands } from "../mouse/mouse-context.js";
 import { plainKey } from "../mouse/synthetic-key.js";
-import { deleteSelection, insertText, type EditContext } from "./multi-line-editor-edits.js";
+import {
+  deleteSelection,
+  insertText,
+  type EditContext,
+} from "./multi-line-editor-edits.js";
 
 /**
  * The editor's clipboard-read side: the paste routine (shared by the

@@ -33,9 +33,7 @@ export function selectSidebarTasks(
 ): TaskSummaryRow[] {
   const active = rows.filter(
     (row) =>
-      row.status === "pending" ||
-      row.status === "running" ||
-      row.recurring,
+      row.status === "pending" || row.status === "running" || row.recurring,
   );
   const sorted = [...active].sort((a, b) => {
     const sa = STATUS_RANK[a.status] ?? 99;

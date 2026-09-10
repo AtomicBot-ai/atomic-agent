@@ -52,9 +52,9 @@ describe("applyMigrations", () => {
     applyMigrations(db);
     applyMigrations(db);
     const version = (
-      db
-        .prepare(`SELECT value FROM schema_meta WHERE key='version'`)
-        .get() as { value: string }
+      db.prepare(`SELECT value FROM schema_meta WHERE key='version'`).get() as {
+        value: string;
+      }
     ).value;
     expect(Number.parseInt(version, 10)).toBe(MEMORY_SCHEMA_VERSION);
   });
@@ -68,9 +68,9 @@ describe("applyMigrations", () => {
     `);
     applyMigrations(db);
     const version = (
-      db
-        .prepare(`SELECT value FROM schema_meta WHERE key='version'`)
-        .get() as { value: string }
+      db.prepare(`SELECT value FROM schema_meta WHERE key='version'`).get() as {
+        value: string;
+      }
     ).value;
     expect(Number.parseInt(version, 10)).toBe(MEMORY_SCHEMA_VERSION);
     const fact = db
@@ -129,9 +129,10 @@ describe("applyMigrations", () => {
 
   it("adds recall_count, last_recalled_at, consolidating_at columns to memories (v4)", () => {
     applyMigrations(db);
-    const columns = db
-      .prepare(`PRAGMA table_info(memories)`)
-      .all() as Array<{ name: string; dflt_value: string | null }>;
+    const columns = db.prepare(`PRAGMA table_info(memories)`).all() as Array<{
+      name: string;
+      dflt_value: string | null;
+    }>;
     const byName = new Map(columns.map((c) => [c.name, c.dflt_value]));
     expect(byName.has("recall_count")).toBe(true);
     expect(byName.has("last_recalled_at")).toBe(true);
@@ -263,9 +264,11 @@ describe("applyMigrations", () => {
 
   it("creates memory_links table on v6 with composite PK + dual FK cascade", () => {
     applyMigrations(db);
-    const cols = db
-      .prepare("PRAGMA table_info(memory_links)")
-      .all() as Array<{ name: string; pk: number; notnull: number }>;
+    const cols = db.prepare("PRAGMA table_info(memory_links)").all() as Array<{
+      name: string;
+      pk: number;
+      notnull: number;
+    }>;
     const colNames = cols.map((c) => c.name);
     expect(colNames).toEqual([
       "from_id",
@@ -274,7 +277,10 @@ describe("applyMigrations", () => {
       "weight",
       "created_at",
     ]);
-    const pkCols = cols.filter((c) => c.pk > 0).map((c) => c.name).sort();
+    const pkCols = cols
+      .filter((c) => c.pk > 0)
+      .map((c) => c.name)
+      .sort();
     expect(pkCols).toEqual(["from_id", "kind", "to_id"]);
     const fks = db
       .prepare("PRAGMA foreign_key_list(memory_links)")
@@ -306,15 +312,19 @@ describe("applyMigrations", () => {
       "INSERT INTO memory_links (from_id, to_id, kind, weight, created_at) VALUES (?, ?, 'RELATES_TO', 1.0, 1)",
     ).run(a, b);
     expect(
-      (db.prepare("SELECT COUNT(*) AS c FROM memory_links").get() as {
-        c: number;
-      }).c,
+      (
+        db.prepare("SELECT COUNT(*) AS c FROM memory_links").get() as {
+          c: number;
+        }
+      ).c,
     ).toBe(1);
     db.prepare("DELETE FROM memories WHERE id = ?").run(a);
     expect(
-      (db.prepare("SELECT COUNT(*) AS c FROM memory_links").get() as {
-        c: number;
-      }).c,
+      (
+        db.prepare("SELECT COUNT(*) AS c FROM memory_links").get() as {
+          c: number;
+        }
+      ).c,
     ).toBe(0);
   });
 
@@ -369,9 +379,12 @@ describe("applyMigrations", () => {
   it("adds vote_score columns to memories/lessons/profile_facts on v9", () => {
     applyMigrations(db);
     for (const table of ["memories", "lessons", "profile_facts"]) {
-      const cols = db
-        .prepare(`PRAGMA table_info(${table})`)
-        .all() as Array<{ name: string; type: string; dflt_value: string | null; notnull: number }>;
+      const cols = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{
+        name: string;
+        type: string;
+        dflt_value: string | null;
+        notnull: number;
+      }>;
       const byName = new Map(cols.map((c) => [c.name, c]));
       const col = byName.get("vote_score");
       expect(col, `${table}.vote_score must exist`).toBeDefined();
@@ -383,9 +396,11 @@ describe("applyMigrations", () => {
 
   it("creates vote_events table with autoincrement id + indexes on v9", () => {
     applyMigrations(db);
-    const cols = db
-      .prepare(`PRAGMA table_info(vote_events)`)
-      .all() as Array<{ name: string; notnull: number; pk: number }>;
+    const cols = db.prepare(`PRAGMA table_info(vote_events)`).all() as Array<{
+      name: string;
+      notnull: number;
+      pk: number;
+    }>;
     const names = cols.map((c) => c.name);
     expect(names).toEqual([
       "id",
@@ -509,9 +524,12 @@ describe("applyMigrations", () => {
 
   it("creates procedures table + procedures_fts + indexes on v10", () => {
     applyMigrations(db);
-    const cols = db
-      .prepare(`PRAGMA table_info(procedures)`)
-      .all() as Array<{ name: string; type: string; notnull: number; pk: number }>;
+    const cols = db.prepare(`PRAGMA table_info(procedures)`).all() as Array<{
+      name: string;
+      type: string;
+      notnull: number;
+      pk: number;
+    }>;
     const names = cols.map((c) => c.name);
     expect(names).toEqual([
       "id",
@@ -565,9 +583,13 @@ describe("applyMigrations", () => {
       INSERT INTO lessons (activation, principle, parent_ids, created_at, updated_at) VALUES ('a', 'p', '[1]', 1, 1);
     `);
     applyMigrations(db);
-    const mem = db.prepare(`SELECT content FROM memories`).get() as { content: string };
+    const mem = db.prepare(`SELECT content FROM memories`).get() as {
+      content: string;
+    };
     expect(mem.content).toBe("legacy");
-    const lesson = db.prepare(`SELECT activation FROM lessons`).get() as { activation: string };
+    const lesson = db.prepare(`SELECT activation FROM lessons`).get() as {
+      activation: string;
+    };
     expect(lesson.activation).toBe("a");
     const procCount = db
       .prepare(`SELECT COUNT(*) AS c FROM procedures`)

@@ -1,7 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { rm } from "node:fs/promises";
 import { osGitLogTool } from "./git-log.js";
-import { makeCtx, makeGitRepo, runGitRaw, writeRepoFile } from "./test-helpers.js";
+import {
+  makeCtx,
+  makeGitRepo,
+  runGitRaw,
+  writeRepoFile,
+} from "./test-helpers.js";
 
 describe("os.git.log", () => {
   let repo: string;
@@ -23,7 +28,10 @@ describe("os.git.log", () => {
     const result = await osGitLogTool.run({}, makeCtx(repo));
     expect(result.status).toBe("ok");
     expect(result.details.count).toBe(2);
-    const entries = result.details.entries as { subject: string; body?: string }[];
+    const entries = result.details.entries as {
+      subject: string;
+      body?: string;
+    }[];
     expect(entries[0].subject).toBe("second commit");
     expect(entries[1].subject).toBe("first commit");
     expect(entries[1].body).toBe("body line");
@@ -49,8 +57,8 @@ describe("os.git.log", () => {
 
     const result = await osGitLogTool.run({ path: "a.txt" }, makeCtx(repo));
     expect(result.details.count).toBe(1);
-    expect(
-      (result.details.entries as { subject: string }[])[0]!.subject,
-    ).toBe("touched a");
+    expect((result.details.entries as { subject: string }[])[0]!.subject).toBe(
+      "touched a",
+    );
   });
 });

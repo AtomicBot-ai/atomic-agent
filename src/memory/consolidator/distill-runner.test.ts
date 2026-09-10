@@ -3,10 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { CompletionResult } from "../../llm/llama-server-client.js";
 import type { MemoryEntry } from "../memory-store.js";
 
-import {
-  DistillRunner,
-  type DistillTraceEvent,
-} from "./distill-runner.js";
+import { DistillRunner, type DistillTraceEvent } from "./distill-runner.js";
 
 function completion(content: string): CompletionResult {
   return {
@@ -121,9 +118,7 @@ describe("DistillRunner trace emission", () => {
   it("never throws when the trace sink throws", async () => {
     const runner = new DistillRunner({
       llmComplete: async () =>
-        completion(
-          `LESSON activation="x"; principle="y"\n`,
-        ),
+        completion(`LESSON activation="x"; principle="y"\n`),
       slotId: -1,
       timeoutMs: 1_000,
       emitTrace: () => {

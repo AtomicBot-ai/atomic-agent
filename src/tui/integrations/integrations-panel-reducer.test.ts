@@ -26,9 +26,7 @@ function rowOf(id: string, fields = 1): IntegrationRow {
   };
 }
 
-function stateWith(
-  panel: Partial<IntegrationsPanelState> = {},
-): TuiState {
+function stateWith(panel: Partial<IntegrationsPanelState> = {}): TuiState {
   return {
     integrationsPanel: { ...createInitialIntegrationsPanelState(), ...panel },
   } as unknown as TuiState;
@@ -44,7 +42,9 @@ function panelAfter(
 
 describe("reduceIntegrationsAction", () => {
   it("declines actions from other slices", () => {
-    expect(reduceIntegrationsAction(stateWith(), { type: "privacy_synced" })).toBeNull();
+    expect(
+      reduceIntegrationsAction(stateWith(), { type: "privacy_synced" }),
+    ).toBeNull();
   });
 
   it("clamps the cursor when a sync shrinks the list", () => {
@@ -68,9 +68,24 @@ describe("reduceIntegrationsAction", () => {
 
   it("moves the list cursor and clamps at both ends", () => {
     const rows = [rowOf("a"), rowOf("b")];
-    expect(panelAfter({ rows, selected: 0 }, { type: "integrations_moved", delta: -1 }).selected).toBe(0);
-    expect(panelAfter({ rows, selected: 0 }, { type: "integrations_moved", delta: 1 }).selected).toBe(1);
-    expect(panelAfter({ rows, selected: 1 }, { type: "integrations_moved", delta: 1 }).selected).toBe(1);
+    expect(
+      panelAfter(
+        { rows, selected: 0 },
+        { type: "integrations_moved", delta: -1 },
+      ).selected,
+    ).toBe(0);
+    expect(
+      panelAfter(
+        { rows, selected: 0 },
+        { type: "integrations_moved", delta: 1 },
+      ).selected,
+    ).toBe(1);
+    expect(
+      panelAfter(
+        { rows, selected: 1 },
+        { type: "integrations_moved", delta: 1 },
+      ).selected,
+    ).toBe(1);
   });
 
   it("does not move the list cursor while in detail mode", () => {

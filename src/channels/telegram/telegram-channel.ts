@@ -4,9 +4,15 @@ import type { ChannelStatus } from "../../runtime/channel-status.js";
 import { getUserConfigPath } from "../../config/index.js";
 import type { TaskReport, TaskReportSink } from "../../tasks/index.js";
 
+import { createAttachmentInbox } from "../attachments/inbox.js";
 import {
+  handleInboundFile,
   handleInboundText,
+  type InboundContext,
   type InboundTextUpdate,
+  type PendingMediaGroup,
+  type TelegramBotIdentity,
+  type TelegramTarget,
 } from "./inbound-handler.js";
 import { ApprovalBridge } from "./approval-bridge.js";
 import { TelegramSessionPointer } from "./telegram-session-pointer.js";
@@ -18,8 +24,8 @@ import {
   type PairingMode,
 } from "./pairing-mode.js";
 import {
-  writeTelegramSettings,
-  writeTelegramToken,
+  type TelegramSettingsSink,
+  defaultTelegramSettingsSink,
 } from "./telegram-settings.js";
 import { sendOutbound, type TelegramParseMode } from "./outbound-sender.js";
 import { formatTaskReportMessage } from "./task-report-message.js";
@@ -58,11 +64,7 @@ export interface PairingStateSnapshot {
  * silent `sent`).
  */
 export type TaskReportDelivery =
-  | "sent"
-  | "queued"
-  | "channel_not_up"
-  | "not_paired"
-  | "delivery_failed";
+  "sent" | "queued" | "channel_not_up" | "not_paired" | "delivery_failed";
 
 /**
  * Hard cap on reports waiting for the channel to reach `up`. When the
@@ -95,7 +97,12 @@ export class TelegramChannel {
   private readonly deps: TelegramChannelDeps;
   private readonly sessionPointer: TelegramSessionPointer;
   private readonly lock: ChannelLock;
-  private readonly inflight = new Map<number, AbortController>();
+  /** Persistence target for the live-control setters (see `TelegramSettingsSink`). */
+  private readonly settings: TelegramSettingsSink;
+  /** `chatKey -> AbortController` for the turn running in that chat/topic. */
+  private readonly inflight = new Map<string, AbortController>();
+  /** Albums still arriving — see `InboundContext.mediaGroups`. */
+  private readonly mediaGroups = new Map<string, PendingMediaGroup>();
   private readonly userConfigPath: string;
   private readonly stateDir: string;
   private readonly pairing: PairingMode;
@@ -119,8 +126,7 @@ export class TelegramChannel {
    * `null` until the channel reaches `up` for the first time. Cleared
    * on stop so `down` panels never show a stale `@username`.
    */
-  private currentBotIdentity: { id: number; username: string | null } | null =
-    null;
+  private currentBotIdentity: TelegramBotIdentity | null = null;
   private bot: BotInstance | null = null;
   /**
    * Task reports that arrived while the channel was not `up` but a
@@ -135,11 +141,16 @@ export class TelegramChannel {
    */
   private readonly pendingTaskReports: TaskReport[] = [];
   private approvalBridge: ApprovalBridge | null = null;
-  private approvalSubscription: {
-    sessionId: string;
-    chatId: number;
-    unsubscribe: () => void;
-  } | null = null;
+  /**
+   * `sessionId -> approval binding`. One entry per chat that is (or
+   * recently was) talking to the bot: with per-chat sessions two chats
+   * can run turns at once, and each needs its approval keyboard in its
+   * own chat/topic. Dropped on `/new`, `/switch`, and `stop()`.
+   */
+  private readonly approvalSubscriptions = new Map<
+    string,
+    { target: TelegramTarget; unsubscribe: () => void }
+  >();
   private currentState: ChannelStatus["state"] = "disabled";
   private currentError: string | null = null;
   private startInFlight = false;
@@ -152,16 +163,27 @@ export class TelegramChannel {
   constructor(deps: TelegramChannelDeps) {
     this.deps = deps;
     this.currentToken = resolveTokenFromDeps(deps);
-    this.currentOwnerUserId = deps.config.telegram.ownerUserId;
+    this.currentOwnerUserId =
+      deps.ownerUserId !== undefined
+        ? deps.ownerUserId
+        : deps.config.telegram.ownerUserId;
     this.currentParseMode = deps.config.telegram.parseMode;
     this.stateDir = deps.config.paths.stateDir;
     this.userConfigPath =
       deps.userConfigPath ?? getUserConfigPath(this.stateDir);
     this.sessionPointer = new TelegramSessionPointer(
-      deps.sessionPointerPath ?? resolve(this.stateDir, "telegram-session.json"),
+      deps.sessionPointerPath ??
+        resolve(this.stateDir, "telegram-session.json"),
     );
     this.lock =
-      deps.lock ?? new TelegramLockfile(resolve(this.stateDir, "telegram.lock"));
+      deps.lock ??
+      new TelegramLockfile(resolve(this.stateDir, "telegram.lock"));
+    this.settings =
+      deps.settings ??
+      defaultTelegramSettingsSink({
+        userConfigPath: this.userConfigPath,
+        stateDir: this.stateDir,
+      });
     this.pairing = new DefaultPairingMode();
   }
 
@@ -184,6 +206,11 @@ export class TelegramChannel {
   }
 
   /** Live bot identity from the last successful `getMe`. */
+  /** Whether a bot token is currently resolved (env or explicit). */
+  hasToken(): boolean {
+    return this.currentToken !== null;
+  }
+
   getBotIdentity(): { id: number; username: string | null } | null {
     return this.currentBotIdentity;
   }
@@ -211,16 +238,35 @@ export class TelegramChannel {
     try {
       this.lock.acquire();
       const factory = this.deps.botFactory ?? defaultGrammyBotFactory;
-      const bot = await factory(this.currentToken);
+      const bot = await factory(this.currentToken, {
+        onError: (err) => {
+          this.deps.logger.warn("telegram: polling error", {
+            error: scrubErrorMessage(err),
+          });
+        },
+      });
       const me = await bot.api.getMe();
       this.currentBotIdentity = {
         id: me.id,
         username: me.username ?? null,
+        ...(typeof me.can_read_all_group_messages === "boolean"
+          ? { canReadAllGroupMessages: me.can_read_all_group_messages }
+          : {}),
       };
       this.deps.logger.info("telegram: getMe ok", {
         botId: me.id,
         botUsername: me.username,
+        canReadAllGroupMessages: me.can_read_all_group_messages,
       });
+      if (me.can_read_all_group_messages === false) {
+        // BotFather's default. Replies to the bot and `/cmd@bot` still
+        // arrive; a plain @mention in a group does not, so an operator
+        // who tries one gets silence. Say so once, where it can be read.
+        this.deps.logger.warn(
+          "telegram: privacy mode is on — plain @mentions in groups are not delivered; reply to the bot or use /cmd@<username>, or disable privacy mode in @BotFather (/setprivacy → Disable) and re-add the bot to the group",
+          { botUsername: me.username },
+        );
+      }
       const bridge = new ApprovalBridge({
         api: bot.api,
         approvals: this.deps.runtime.approvals,
@@ -228,36 +274,54 @@ export class TelegramChannel {
         logger: this.deps.logger,
       });
       this.approvalBridge = bridge;
-      bot.setTextHandler((update) =>
-        handleInboundText(update, {
-          runtime: this.deps.runtime,
-          api: bot.api,
-          sessionPointer: this.sessionPointer,
-          logger: this.deps.logger,
-          ownerUserId: this.currentOwnerUserId,
-          // Captured by value at registration time. `setParseMode`
-          // restarts the channel when up so the new mode reaches
-          // the freshly-registered text handler — same pattern as
-          // `setOwnerUserId`.
-          agentReplyParseMode: this.currentParseMode,
-          // Captured by value at registration time, same as parseMode:
-          // flipping `telegram.progressIndicator` takes effect on the
-          // next channel (re)start.
-          progressIndicator: this.deps.config.telegram.progressIndicator,
-          inflight: this.inflight,
-          ensureApprovalSession: (sessionId, chatId) =>
-            this.ensureApprovalSession(sessionId, chatId),
-          tryClaimForPairing: (u) => this.handlePairingClaim(u),
+      // One context for both handlers: the text and file paths share
+      // the owner check, the session pointer, the in-flight map and
+      // the approval binding, and must never drift apart.
+      const inboundCtx: InboundContext = {
+        runtime: this.deps.runtime,
+        api: bot.api,
+        sessionPointer: this.sessionPointer,
+        logger: this.deps.logger,
+        ownerUserId: this.currentOwnerUserId,
+        // Captured by value at registration time. `setParseMode`
+        // restarts the channel when up so the new mode reaches
+        // the freshly-registered text handler — same pattern as
+        // `setOwnerUserId`.
+        agentReplyParseMode: this.currentParseMode,
+        // Captured by value at registration time, same as parseMode:
+        // flipping `telegram.progressIndicator` takes effect on the
+        // next channel (re)start.
+        progressIndicator: this.deps.config.telegram.progressIndicator,
+        inflight: this.inflight,
+        inbox: createAttachmentInbox({
+          dir: resolve(this.stateDir, "inbox", "telegram"),
         }),
-      );
+        mediaGroups: this.mediaGroups,
+        botIdentity: this.currentBotIdentity,
+        ensureApprovalSession: (sessionId, target) =>
+          this.ensureApprovalSession(sessionId, target),
+        releaseApprovalSession: (sessionId) =>
+          this.releaseApprovalSession(sessionId),
+        tryClaimForPairing: (u) => this.handlePairingClaim(u),
+      };
+      bot.setTextHandler((update) => handleInboundText(update, inboundCtx));
+      bot.setFileHandler?.((update) => handleInboundFile(update, inboundCtx));
       bot.setCallbackHandler?.((update) => bridge.handleCallback(update));
       try {
         await bot.api.setMyCommands?.([
           { command: "start", description: "Show help" },
           { command: "help", description: "Show help" },
-          { command: "status", description: "Show active session" },
-          { command: "new", description: "Start a fresh session" },
-          { command: "cancel", description: "Cancel the current turn" },
+          { command: "status", description: "Show this chat's session" },
+          { command: "sessions", description: "List sessions by chat" },
+          {
+            command: "switch",
+            description: "Continue an existing session here",
+          },
+          {
+            command: "new",
+            description: "Start a fresh session for this chat",
+          },
+          { command: "cancel", description: "Cancel this chat's current turn" },
         ]);
       } catch (err) {
         this.deps.logger.warn("telegram: setMyCommands failed (non-fatal)", {
@@ -331,8 +395,16 @@ export class TelegramChannel {
       }
     }
     this.inflight.clear();
-    this.approvalSubscription?.unsubscribe();
-    this.approvalSubscription = null;
+    for (const group of this.mediaGroups.values()) {
+      try {
+        group.cancel();
+      } catch {
+        // a timer that will not cancel must not fail the shutdown
+      }
+    }
+    this.mediaGroups.clear();
+    for (const sub of this.approvalSubscriptions.values()) sub.unsubscribe();
+    this.approvalSubscriptions.clear();
     this.approvalBridge?.cancelAll();
     this.approvalBridge = null;
     if (this.bot) {
@@ -370,10 +442,7 @@ export class TelegramChannel {
    * outcome via `state()` + `lastError()`.
    */
   async setEnabled(enabled: boolean): Promise<void> {
-    writeTelegramSettings(
-      { userConfigPath: this.userConfigPath, stateDir: this.stateDir },
-      { enabled },
-    );
+    this.settings.writeSettings({ enabled });
     if (enabled) {
       await this.start();
     } else {
@@ -386,10 +455,7 @@ export class TelegramChannel {
    * inbound handler + approval bridge re-capture the new value.
    */
   async setOwnerUserId(ownerUserId: number | null): Promise<void> {
-    writeTelegramSettings(
-      { userConfigPath: this.userConfigPath, stateDir: this.stateDir },
-      { ownerUserId },
-    );
+    this.settings.writeSettings({ ownerUserId });
     this.currentOwnerUserId = ownerUserId;
     if (this.currentState === "up") {
       await this.restart();
@@ -403,10 +469,7 @@ export class TelegramChannel {
    * mirror so the next `start()` reads the fresh value.
    */
   async setParseMode(parseMode: TelegramParseMode): Promise<void> {
-    writeTelegramSettings(
-      { userConfigPath: this.userConfigPath, stateDir: this.stateDir },
-      { parseMode },
-    );
+    this.settings.writeSettings({ parseMode });
     this.currentParseMode = parseMode;
     if (this.currentState === "up") {
       await this.restart();
@@ -435,10 +498,7 @@ export class TelegramChannel {
    * lands in `down`. Never logs the value.
    */
   async setToken(token: string | null): Promise<void> {
-    writeTelegramToken(
-      { userConfigPath: this.userConfigPath, stateDir: this.stateDir },
-      token,
-    );
+    this.settings.writeToken(token);
     this.currentToken = token;
     if (this.currentState === "up") {
       await this.restart();
@@ -630,35 +690,57 @@ export class TelegramChannel {
   }
 
   /**
-   * Bind/re-bind the approval router so requests for the active
-   * Telegram session land on the inline-keyboard bridge with the
-   * right `chatId`. No-op when binding is already current.
+   * Bind/re-bind the approval router so requests for `sessionId` land
+   * on the inline-keyboard bridge in `target` (chat + optional forum
+   * topic). No-op when the binding is already current; a session that
+   * moved to another chat via `/switch` is re-pointed.
    */
-  private ensureApprovalSession(sessionId: string, chatId: number): void {
+  private ensureApprovalSession(
+    sessionId: string,
+    target: TelegramTarget,
+  ): void {
+    const existing = this.approvalSubscriptions.get(sessionId);
     if (
-      this.approvalSubscription &&
-      this.approvalSubscription.sessionId === sessionId &&
-      this.approvalSubscription.chatId === chatId
+      existing &&
+      existing.target.chatId === target.chatId &&
+      existing.target.threadId === target.threadId
     ) {
       return;
     }
-    this.approvalSubscription?.unsubscribe();
-    this.approvalSubscription = null;
+    existing?.unsubscribe();
+    this.approvalSubscriptions.delete(sessionId);
+    // A chat has exactly one current session, so any other session still
+    // bound to this same chat/topic is stale (hand-edited pointer, a
+    // pointer to a pruned session) and would leak.
+    for (const [otherId, sub] of this.approvalSubscriptions) {
+      if (
+        sub.target.chatId === target.chatId &&
+        sub.target.threadId === target.threadId
+      ) {
+        sub.unsubscribe();
+        this.approvalSubscriptions.delete(otherId);
+      }
+    }
     const bridge = this.approvalBridge;
     if (!bridge) return;
     const unsubscribe = this.deps.runtime.setApprovalHandlerForSession(
       sessionId,
       (request) => {
-        void bridge.dispatch(request, chatId);
+        void bridge.dispatch(request, target.chatId, target.threadId);
       },
     );
-    this.approvalSubscription = { sessionId, chatId, unsubscribe };
+    this.approvalSubscriptions.set(sessionId, { target, unsubscribe });
   }
 
-  private transition(
-    next: ChannelStatus["state"],
-    error: string | null,
-  ): void {
+  /** Drop the approval binding for a session no chat talks to anymore. */
+  private releaseApprovalSession(sessionId: string): void {
+    const existing = this.approvalSubscriptions.get(sessionId);
+    if (!existing) return;
+    existing.unsubscribe();
+    this.approvalSubscriptions.delete(sessionId);
+  }
+
+  private transition(next: ChannelStatus["state"], error: string | null): void {
     if (
       this.currentState === next &&
       (this.currentError ?? null) === (error ?? null)

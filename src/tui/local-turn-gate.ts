@@ -76,16 +76,17 @@ export function readLocalTurnGateFacts(): LocalTurnGateFacts {
     !inScope ||
     (modelId !== null &&
       isKnownLocalModelId(modelId) &&
-      isModelDownloaded(cfg.paths.localModelsDataDir, getLocalModelDef(modelId)));
+      isModelDownloaded(
+        cfg.paths.localModelsDataDir,
+        getLocalModelDef(modelId),
+      ));
   return {
     activeProviderIsLocal,
     managedMode,
     modelId,
     modelDownloaded,
     fallbackChainLength:
-      inScope && !modelDownloaded
-        ? resolveFallbackChain(llm).chain.length
-        : 1,
+      inScope && !modelDownloaded ? resolveFallbackChain(llm).chain.length : 1,
   };
 }
 
@@ -114,7 +115,8 @@ export function evaluateLocalTurnGate(
   facts: LocalTurnGateFacts,
   pull: LocalModelsPullState | null,
 ): LocalTurnGateDecision {
-  if (!facts.activeProviderIsLocal || !facts.managedMode) return { kind: "run" };
+  if (!facts.activeProviderIsLocal || !facts.managedMode)
+    return { kind: "run" };
   if (facts.modelId !== null && facts.modelDownloaded) return { kind: "run" };
   const status =
     facts.modelId === null
@@ -122,7 +124,9 @@ export function evaluateLocalTurnGate(
       : (downloadProgressFor(pull, facts.modelId) ??
         "not downloaded — open Models (/local) and press Enter on it to download");
   const subject =
-    facts.modelId === null ? status : `local model ${facts.modelId} is ${status}`;
+    facts.modelId === null
+      ? status
+      : `local model ${facts.modelId} is ${status}`;
   if (facts.fallbackChainLength > 1) {
     return {
       kind: "notice",
@@ -168,7 +172,9 @@ export function reduceChatPull(
 export class ChatPullMirror {
   private pull: LocalModelsPullState | null = null;
 
-  attach(bus: { subscribe(listener: (action: TuiAction) => void): () => void }): void {
+  attach(bus: {
+    subscribe(listener: (action: TuiAction) => void): () => void;
+  }): void {
     bus.subscribe((action) => {
       this.pull = reduceChatPull(this.pull, action);
     });

@@ -71,7 +71,9 @@ function ToggleRow(props: {
  * the checkbox analogue of `pressEnter`, so a click on the selected row
  * flips it exactly like the spacebar would.
  */
-function pressSpace(): NonNullable<Parameters<typeof MouseListRow>[0]["onActivate"]> {
+function pressSpace(): NonNullable<
+  Parameters<typeof MouseListRow>[0]["onActivate"]
+> {
   return (mouse) => {
     handleOnboardingStepKey(" ", plainKey(), {
       state: mouse.getState(),
@@ -82,7 +84,9 @@ function pressSpace(): NonNullable<Parameters<typeof MouseListRow>[0]["onActivat
 }
 
 /** The action rows' click: the Enter the key table already routes. */
-function pressReturn(): NonNullable<Parameters<typeof MouseListRow>[0]["onActivate"]> {
+function pressReturn(): NonNullable<
+  Parameters<typeof MouseListRow>[0]["onActivate"]
+> {
   return (mouse) => {
     handleOnboardingStepKey("", returnKey(), {
       state: mouse.getState(),
@@ -116,7 +120,9 @@ function ActionRow(props: {
           {`${rowPrefix(props.selected)}${props.label}`}
         </Text>
         {props.detail !== null ? (
-          <Text color={theme.colors.muted}>{`${ROW_INDENT}${props.detail}`}</Text>
+          <Text
+            color={theme.colors.muted}
+          >{`${ROW_INDENT}${props.detail}`}</Text>
         ) : null}
       </Box>
     </MouseListRow>
@@ -171,7 +177,11 @@ export function OnboardingImportPickStep(props: {
             key={row.kind}
             selected={selected === index}
             index={index}
-            label={row.kind === "skip" ? IMPORT_SKIP_LABEL : importActionLabel(row.picked)}
+            label={
+              row.kind === "skip"
+                ? IMPORT_SKIP_LABEL
+                : importActionLabel(row.picked)
+            }
             detail={row.kind === "skip" ? SKIP_DETAIL : null}
             bold={row.kind === "import"}
           />
@@ -197,7 +207,10 @@ export function measureOnboardingImportReportStep(
   ]);
 }
 
-function reportHeadline(report: ImportReport | null, executed: boolean): string {
+function reportHeadline(
+  report: ImportReport | null,
+  executed: boolean,
+): string {
   if (!report) return "";
   const s = report.summary;
   if (executed) {

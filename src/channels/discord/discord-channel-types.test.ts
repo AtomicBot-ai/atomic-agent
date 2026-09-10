@@ -46,7 +46,9 @@ describe("resolveDiscordToken", () => {
   it("treats a blank env value as unconfigured", () => {
     // A stray `DISCORD_BOT_TOKEN=` line must not read as a real token,
     // or the channel would try to connect and fail with a 401.
-    expect(resolveDiscordToken(undefined, { DISCORD_BOT_TOKEN: "  " })).toBeNull();
+    expect(
+      resolveDiscordToken(undefined, { DISCORD_BOT_TOKEN: "  " }),
+    ).toBeNull();
     expect(resolveDiscordToken(undefined, {})).toBeNull();
   });
 

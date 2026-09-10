@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -55,14 +61,50 @@ describe("CodexSource", () => {
     const newer = join(dayB, "rollout-2026-08-02-bbb.jsonl");
     writeFileSync(older, "");
     writeFileSync(newer, "");
-    utimesSync(older, new Date("2026-08-01T10:00:00Z"), new Date("2026-08-01T10:00:00Z"));
-    utimesSync(newer, new Date("2026-08-02T10:00:00Z"), new Date("2026-08-02T10:00:00Z"));
+    utimesSync(
+      older,
+      new Date("2026-08-01T10:00:00Z"),
+      new Date("2026-08-01T10:00:00Z"),
+    );
+    utimesSync(
+      newer,
+      new Date("2026-08-02T10:00:00Z"),
+      new Date("2026-08-02T10:00:00Z"),
+    );
 
     const metas = new CodexSource(stateDir).listSessions();
     expect(metas.map((m) => m.id)).toEqual([
       "2026-08-02-bbb",
       "2026-08-01-aaa",
     ]);
+  });
+
+  it("stamps rows without a timestamp with the file mtime", () => {
+    const dir = join(stateDir, "sessions");
+    mkdirSync(dir, { recursive: true });
+    const file = join(dir, "rollout-no-clock.jsonl");
+    writeFileSync(
+      file,
+      [
+        line({ type: "session_meta", payload: { id: "sess-2", cwd: "/work" } }),
+        line({
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: "hello" }],
+          },
+        }),
+      ].join(""),
+    );
+    const mtime = new Date("2026-08-03T12:00:00Z");
+    utimesSync(file, mtime, mtime);
+
+    const source = new CodexSource(stateDir);
+    const session = source.readSession(source.listSessions()[0]!);
+    expect(session.id).toBe("sess-2");
+    expect(session.startedAtMs).toBe(mtime.getTime());
+    expect(session.messages[0]!.atMs).toBe(mtime.getTime());
   });
 
   it("projects a rollout's response items and drops the wrappers", () => {
@@ -83,7 +125,12 @@ describe("CodexSource", () => {
           payload: {
             type: "message",
             role: "user",
-            content: [{ type: "input_text", text: "<user_instructions>be terse</user_instructions>" }],
+            content: [
+              {
+                type: "input_text",
+                text: "<user_instructions>be terse</user_instructions>",
+              },
+            ],
           },
         }),
         line({
@@ -131,7 +178,11 @@ describe("CodexSource", () => {
             content: [{ type: "output_text", text: "just README.md" }],
           },
         }),
-        line({ timestamp: "2026-08-02T10:00:07Z", type: "event_msg", payload: { type: "noise" } }),
+        line({
+          timestamp: "2026-08-02T10:00:07Z",
+          type: "event_msg",
+          payload: { type: "noise" },
+        }),
       ].join(""),
     );
 

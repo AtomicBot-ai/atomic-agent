@@ -27,12 +27,14 @@ const TOKEN_FIELD = "botToken";
  * same portal page, neither of which has this shape and both of which
  * would otherwise fail as an opaque 401 at connect.
  */
-const TOKEN_SHAPE = /^[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{20,}$/;
+const TOKEN_SHAPE =
+  /^[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{20,}$/;
 
 export const discordIntegration: IntegrationDescriptor = {
   id: "discord",
   label: "Discord",
-  summary: "Drive the agent from Discord — DM the bot or @mention it in a channel",
+  summary:
+    "Drive the agent from Discord — DM the bot or @mention it in a channel",
   docsUrl: "https://discord.com/developers/applications",
   // Live since the hub stopped relying on `restart()`: the token is
   // resolved at start(), the kill switch and the owner have their own
@@ -47,7 +49,8 @@ export const discordIntegration: IntegrationDescriptor = {
     "Open the generated URL, pick your server, authorise. You can only DM a bot you share a server with.",
     "Discord → Settings → Advanced → Developer Mode on, right-click yourself → Copy User ID.",
     "Paste both below (e edits, enter saves), then set Channel to on.",
-    "DM the bot, or @mention it in a server channel. It answers only you.",
+    "More than one operator? Put every user ID on the same line, comma-separated.",
+    "DM the bot, or @mention it in a server channel. It answers only those accounts.",
   ],
   fields: [
     {
@@ -63,14 +66,16 @@ export const discordIntegration: IntegrationDescriptor = {
           : "Doesn't look like a bot token — that's the shape of the client secret or public key. Use Bot → Reset Token.",
     },
     {
-      key: "ownerUserId",
-      label: "Owner user ID",
+      key: "ownerUserIds",
+      label: "Owner user IDs",
       // Config-backed, not a secret: a Discord user id is public.
       store: "config",
-      configPath: "discord.ownerUserId",
+      kind: "list",
+      configPath: "discord.ownerUserIds",
       secret: false,
       required: true,
-      help: "Yours: Settings → Advanced → Developer Mode, right-click your name → Copy User ID. Only this account may drive the agent.",
+      help: "Comma-separated, and editing replaces the whole line. Yours: Settings → Advanced → Developer Mode, right-click your name → Copy User ID. Only these accounts may drive the agent — each of them fully, approvals included.",
+      // Runs per entry, so a bad id in a list of five names itself.
       validate: (raw) =>
         /^\d{15,25}$/.test(raw)
           ? undefined
@@ -102,8 +107,7 @@ export const discordIntegration: IntegrationDescriptor = {
     switch (ctx.channelStates?.get("discord")) {
       case "up":
         return { level: "connected", detail: "gateway connected" };
-      case "down":
-      {
+      case "down": {
         const reason = ctx.channelErrors?.get("discord");
         // Another process already running the channel is not a
         // failure -- the bot is up, just not served from here.

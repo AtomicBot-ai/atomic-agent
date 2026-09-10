@@ -57,8 +57,7 @@ export function installGlobalErrorHandlers(
   if (globalHandlersInstalled) return;
   globalHandlersInstalled = true;
 
-  const soleUncaughtHandler =
-    process.listenerCount("uncaughtException") === 0;
+  const soleUncaughtHandler = process.listenerCount("uncaughtException") === 0;
 
   installStdioErrorGuards(soleUncaughtHandler);
 

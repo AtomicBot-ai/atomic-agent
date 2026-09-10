@@ -106,4 +106,5 @@ export const OPENROUTER_CHAT_MODEL_ORDER: readonly string[] = [
   "nvidia/nemotron-3.5-lightning",
   "amazon/nova-premier-v1",
   "amazon/nova-2-lite-v1",
-  "bytedance-seed/seed-2.0-code",];
+  "bytedance-seed/seed-2.0-code",
+];

@@ -81,9 +81,7 @@ export async function createComposioSession(
         user_id: opts.userId,
         workbench: { enable: false },
       }),
-      signal: opts.signal
-        ? AbortSignal.any([opts.signal, timeout])
-        : timeout,
+      signal: opts.signal ? AbortSignal.any([opts.signal, timeout]) : timeout,
     });
   } catch (err) {
     // A caller-side cancel is not a Composio outage — let it through
@@ -112,17 +110,26 @@ export async function createComposioSession(
 /** Narrow the untyped JSON body into `ComposioSession`. */
 export function parseSessionResponse(body: unknown): ComposioSession {
   if (typeof body !== "object" || body === null) {
-    throw new ComposioApiError("Composio returned a non-object session body.", 0);
+    throw new ComposioApiError(
+      "Composio returned a non-object session body.",
+      0,
+    );
   }
   const obj = body as Record<string, unknown>;
   const sessionId = obj.session_id;
   if (typeof sessionId !== "string" || sessionId.length === 0) {
-    throw new ComposioApiError("Composio session response carried no session_id.", 0);
+    throw new ComposioApiError(
+      "Composio session response carried no session_id.",
+      0,
+    );
   }
   const mcp = obj.mcp as Record<string, unknown> | undefined;
   const mcpUrl = mcp?.url;
   if (typeof mcpUrl !== "string" || mcpUrl.length === 0) {
-    throw new ComposioApiError("Composio session response carried no mcp.url.", 0);
+    throw new ComposioApiError(
+      "Composio session response carried no mcp.url.",
+      0,
+    );
   }
   const rawTools = obj.tool_router_tools;
   const toolNames = Array.isArray(rawTools)

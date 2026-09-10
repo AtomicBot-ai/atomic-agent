@@ -25,7 +25,6 @@ export {
   CLAUDE_CODE_MEMORY_TAG,
   CLAUDE_CODE_SECRET_ALLOWLIST,
   ClaudeCodeImporter,
-  ONBOARDING_SESSION_LIMIT,
 } from "./claude-code-importer.js";
 export type {
   ClaudeCodeImporterDeps,

@@ -232,43 +232,42 @@ export class LinkStore {
     fromId: number,
     kinds?: readonly LinkKind[],
   ): readonly LinkRow[] {
-    const rows = kinds && kinds.length > 0
-      ? (this.listOutgoingStmt.all(fromId, JSON.stringify(kinds)) as Array<{
-          from_id: number;
-          to_id: number;
-          kind: LinkKind;
-          weight: number;
-          created_at: number;
-        }>)
-      : (this.listOutgoingAllStmt.all(fromId) as Array<{
-          from_id: number;
-          to_id: number;
-          kind: LinkKind;
-          weight: number;
-          created_at: number;
-        }>);
+    const rows =
+      kinds && kinds.length > 0
+        ? (this.listOutgoingStmt.all(fromId, JSON.stringify(kinds)) as Array<{
+            from_id: number;
+            to_id: number;
+            kind: LinkKind;
+            weight: number;
+            created_at: number;
+          }>)
+        : (this.listOutgoingAllStmt.all(fromId) as Array<{
+            from_id: number;
+            to_id: number;
+            kind: LinkKind;
+            weight: number;
+            created_at: number;
+          }>);
     return rows.map(rowToLink);
   }
 
-  listIncoming(
-    toId: number,
-    kinds?: readonly LinkKind[],
-  ): readonly LinkRow[] {
-    const rows = kinds && kinds.length > 0
-      ? (this.listIncomingStmt.all(toId, JSON.stringify(kinds)) as Array<{
-          from_id: number;
-          to_id: number;
-          kind: LinkKind;
-          weight: number;
-          created_at: number;
-        }>)
-      : (this.listIncomingAllStmt.all(toId) as Array<{
-          from_id: number;
-          to_id: number;
-          kind: LinkKind;
-          weight: number;
-          created_at: number;
-        }>);
+  listIncoming(toId: number, kinds?: readonly LinkKind[]): readonly LinkRow[] {
+    const rows =
+      kinds && kinds.length > 0
+        ? (this.listIncomingStmt.all(toId, JSON.stringify(kinds)) as Array<{
+            from_id: number;
+            to_id: number;
+            kind: LinkKind;
+            weight: number;
+            created_at: number;
+          }>)
+        : (this.listIncomingAllStmt.all(toId) as Array<{
+            from_id: number;
+            to_id: number;
+            kind: LinkKind;
+            weight: number;
+            created_at: number;
+          }>);
     return rows.map(rowToLink);
   }
 

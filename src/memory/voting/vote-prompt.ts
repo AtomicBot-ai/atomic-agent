@@ -38,10 +38,7 @@ const PREVIEW_CHARS = 80;
 
 export function buildVotePrompt(input: VotePromptInput): string {
   const allowlistBlock = input.candidates
-    .map(
-      (c) =>
-        `${c.kind}:${c.id} — ${trimPreview(c.preview, PREVIEW_CHARS)}`,
-    )
+    .map((c) => `${c.kind}:${c.id} — ${trimPreview(c.preview, PREVIEW_CHARS)}`)
     .join("\n");
   return `${VOTE_STABLE_PREFIX}\nUSER: ${truncate(input.userMessage, 600)}\nASSISTANT: ${truncate(input.assistantReply, 600)}\n\nSURFACED:\n${allowlistBlock.length > 0 ? allowlistBlock : "(none)"}\n\n### votes\n`;
 }

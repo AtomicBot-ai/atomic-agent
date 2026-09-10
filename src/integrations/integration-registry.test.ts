@@ -8,6 +8,10 @@ describe("integration registry", () => {
     expect(listIntegrations().map((i) => i.id)).toContain("composio");
   });
 
+  it("lists GitHub", () => {
+    expect(listIntegrations().map((i) => i.id)).toContain("github");
+  });
+
   it("gives every integration a unique id", () => {
     const ids = listIntegrations().map((i) => i.id);
     expect(new Set(ids).size).toBe(ids.length);
@@ -29,7 +33,7 @@ describe("integration registry", () => {
     // throws at save time -- i.e. in front of the operator.
     for (const integration of listIntegrations()) {
       for (const field of integration.fields) {
-        if (field.store === "config") continue;
+        if (field.store === "config" || field.store === "transient") continue;
         expect(field.envVar).toMatch(/^[A-Z_][A-Z0-9_]*$/);
       }
     }

@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  isFailedSessionStatus,
-  type SessionStatus,
-} from "./session-state.js";
+import { isFailedSessionStatus, type SessionStatus } from "./session-state.js";
 
 describe("isFailedSessionStatus", () => {
   it("treats failed and stalled as non-zero exits", () => {

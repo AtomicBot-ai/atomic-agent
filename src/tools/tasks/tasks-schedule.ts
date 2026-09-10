@@ -15,9 +15,7 @@ export interface TasksScheduleToolOptions {
    * runner do it lazily, so the returned task id has a stable
    * sessionId the caller can inspect immediately.
    */
-  createSession(input?: {
-    metadata?: Record<string, unknown>;
-  }): SessionState;
+  createSession(input?: { metadata?: Record<string, unknown> }): SessionState;
   defaultMaxAttempts: number;
 }
 

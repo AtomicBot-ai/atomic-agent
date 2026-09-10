@@ -7,7 +7,10 @@ import type { TuiAppCallbacks } from "../tui-app.js";
 import { createInitialTuiState, type TuiSessionInfo } from "../tui-state.js";
 import { handleLocalModelsHfKey } from "./local-models-hf-keys.js";
 import { handleLocalModelsTabKey } from "./local-models-key-bindings.js";
-import type { LocalModelRow, MmprojStatus } from "./local-models-panel-state.js";
+import type {
+  LocalModelRow,
+  MmprojStatus,
+} from "./local-models-panel-state.js";
 
 const SESSION: TuiSessionInfo = {
   sessionId: null,
@@ -185,14 +188,16 @@ describe("handleLocalModelsTabKey — vision-aware Enter / g hotkey", () => {
     expect(onToggle).not.toHaveBeenCalled();
   });
 
-  it("Enter on a downloaded GGUF + missing mmproj row triggers mmproj-only pull", () => {
+  it("Enter on a downloaded GGUF + missing mmproj row makes it live and pulls the projector", () => {
     const onPull = vi.fn();
+    const onSetActive = vi.fn();
     const callbacks: TuiAppCallbacks = {
       onApprovalDecision: vi.fn(),
       onAbort: vi.fn(),
       onQuit: vi.fn(),
       onMessageSubmitted: vi.fn(),
       onLocalModelsPullRequested: onPull,
+      onLocalModelsSetActiveRequested: onSetActive,
     };
     const state = stateWithRow(
       makeRow("gemma-4-e4b", {
@@ -207,6 +212,47 @@ describe("handleLocalModelsTabKey — vision-aware Enter / g hotkey", () => {
       callbacks,
     });
     expect(handled).toBe(true);
+    // The weights work on their own: the model does not wait on a
+    // projector the repo may have stopped serving.
+    expect(onSetActive).toHaveBeenCalledWith("gemma-4-e4b");
+    expect(onPull).toHaveBeenCalledWith("gemma-4-e4b", "mmproj-only");
+  });
+
+  it("Enter on the live row with a missing mmproj only retries the projector", () => {
+    const onPull = vi.fn();
+    const onSetActive = vi.fn();
+    const onStart = vi.fn();
+    const callbacks: TuiAppCallbacks = {
+      onApprovalDecision: vi.fn(),
+      onAbort: vi.fn(),
+      onQuit: vi.fn(),
+      onMessageSubmitted: vi.fn(),
+      onLocalModelsPullRequested: onPull,
+      onLocalModelsSetActiveRequested: onSetActive,
+      onLocalModelsDaemonStartRequested: onStart,
+    };
+    const base = stateWithRow(
+      makeRow("gemma-4-e4b", {
+        supportsVision: true,
+        downloaded: true,
+        mmprojStatus: "missing",
+        active: true,
+      }),
+    );
+    const state = {
+      ...base,
+      localModelsPanel: {
+        ...base.localModelsPanel,
+        daemon: { ...base.localModelsPanel.daemon, running: true },
+      },
+    };
+    handleLocalModelsTabKey("", emptyKey({ return: true }), {
+      state,
+      dispatch: vi.fn(),
+      callbacks,
+    });
+    expect(onSetActive).not.toHaveBeenCalled();
+    expect(onStart).not.toHaveBeenCalled();
     expect(onPull).toHaveBeenCalledWith("gemma-4-e4b", "mmproj-only");
   });
 
@@ -449,7 +495,12 @@ describe("the Hugging Face branch's keys", () => {
 
   function hfState(
     mode: "list" | "hfRef" | "hfPick",
-    hf: Partial<{ reference: string; busy: boolean; cursor: number; repo: typeof REPO }> = {},
+    hf: Partial<{
+      reference: string;
+      busy: boolean;
+      cursor: number;
+      repo: typeof REPO;
+    }> = {},
   ) {
     const base = stateWithRow(
       makeRow("a" as LocalModelRow["id"], {
@@ -501,8 +552,12 @@ describe("the Hugging Face branch's keys", () => {
       });
       expect(handled).toBe(true);
       expect(dispatch).not.toHaveBeenCalled();
-      expect(callbacks.onLocalModelsDaemonStartRequested).not.toHaveBeenCalled();
-      expect(callbacks.onLocalModelsBackendPullRequested).not.toHaveBeenCalled();
+      expect(
+        callbacks.onLocalModelsDaemonStartRequested,
+      ).not.toHaveBeenCalled();
+      expect(
+        callbacks.onLocalModelsBackendPullRequested,
+      ).not.toHaveBeenCalled();
       expect(callbacks.onLocalModelsRefreshRequested).not.toHaveBeenCalled();
     }
   });
@@ -517,7 +572,9 @@ describe("the Hugging Face branch's keys", () => {
       dispatch: busyDispatch,
       callbacks: busyCallbacks,
     });
-    expect(busyCallbacks.onLocalModelsHfLookupCancelRequested).toHaveBeenCalled();
+    expect(
+      busyCallbacks.onLocalModelsHfLookupCancelRequested,
+    ).toHaveBeenCalled();
     expect(busyDispatch).not.toHaveBeenCalled();
 
     const idleDispatch = vi.fn();
@@ -526,7 +583,9 @@ describe("the Hugging Face branch's keys", () => {
       dispatch: idleDispatch,
       callbacks: {} as TuiAppCallbacks,
     });
-    expect(idleDispatch).toHaveBeenCalledWith({ type: "local_models_hf_closed" });
+    expect(idleDispatch).toHaveBeenCalledWith({
+      type: "local_models_hf_closed",
+    });
   });
 
   it("ctrl+l clears the reference, but not mid-lookup", () => {
@@ -645,9 +704,16 @@ describe("handleLocalModelsTabKey — x cancels the download in flight", () => {
   it("cancels the chat pull when one is in flight", () => {
     const onCancel = vi.fn();
     const base = stateWithRow(
-      makeRow("qwen-3.5-4b", { supportsVision: false, downloaded: false, mmprojStatus: "n/a" }),
+      makeRow("qwen-3.5-4b", {
+        supportsVision: false,
+        downloaded: false,
+        mmprojStatus: "n/a",
+      }),
     );
-    const state = { ...base, localModelsPanel: { ...base.localModelsPanel, pull } };
+    const state = {
+      ...base,
+      localModelsPanel: { ...base.localModelsPanel, pull },
+    };
     const handled = handleLocalModelsTabKey("x", emptyKey(), {
       state,
       dispatch: vi.fn(),
@@ -660,13 +726,21 @@ describe("handleLocalModelsTabKey — x cancels the download in flight", () => {
   it("falls through to the embedding pull when only that one is in flight", () => {
     const onCancel = vi.fn();
     const base = stateWithRow(
-      makeRow("qwen-3.5-4b", { supportsVision: false, downloaded: false, mmprojStatus: "n/a" }),
+      makeRow("qwen-3.5-4b", {
+        supportsVision: false,
+        downloaded: false,
+        mmprojStatus: "n/a",
+      }),
     );
     const state = {
       ...base,
       localModelsPanel: {
         ...base.localModelsPanel,
-        embeddingPull: { ...pull, kind: "embedding" as const, modelId: "nomic-embed-text-v1.5" as const },
+        embeddingPull: {
+          ...pull,
+          kind: "embedding" as const,
+          modelId: "nomic-embed-text-v1.5" as const,
+        },
       },
     };
     handleLocalModelsTabKey("x", emptyKey(), {
@@ -680,7 +754,11 @@ describe("handleLocalModelsTabKey — x cancels the download in flight", () => {
   it("is not handled when nothing is downloading", () => {
     const onCancel = vi.fn();
     const state = stateWithRow(
-      makeRow("qwen-3.5-4b", { supportsVision: false, downloaded: false, mmprojStatus: "n/a" }),
+      makeRow("qwen-3.5-4b", {
+        supportsVision: false,
+        downloaded: false,
+        mmprojStatus: "n/a",
+      }),
     );
     const handled = handleLocalModelsTabKey("x", emptyKey(), {
       state,
@@ -689,5 +767,74 @@ describe("handleLocalModelsTabKey — x cancels the download in flight", () => {
     });
     expect(handled).toBe(false);
     expect(onCancel).not.toHaveBeenCalled();
+  });
+});
+
+describe("handleLocalModelsTabKey — tell me when it lands", () => {
+  function callbacksWith(over: Partial<TuiAppCallbacks>): TuiAppCallbacks {
+    return {
+      onApprovalDecision: vi.fn(),
+      onAbort: vi.fn(),
+      onQuit: vi.fn(),
+      onMessageSubmitted: vi.fn(),
+      ...over,
+    };
+  }
+  const row = makeRow("gemma-4-e4b", {
+    supportsVision: false,
+    downloaded: false,
+    mmprojStatus: "n/a",
+  });
+
+  it("answers the open prompt with t / d / n and closes it with Esc, swallowing the rest", () => {
+    const onChoice = vi.fn();
+    const onDismiss = vi.fn();
+    const onPull = vi.fn();
+    const base = stateWithRow(row);
+    const state = {
+      ...base,
+      localModelsPanel: {
+        ...base.localModelsPanel,
+        notifyPrompt: { label: "Gemma", current: null },
+      },
+    };
+    const callbacks = callbacksWith({
+      onLocalModelsNotifyChoice: onChoice,
+      onLocalModelsNotifyDismissed: onDismiss,
+      onLocalModelsPullRequested: onPull,
+    });
+    const ctx = { state, dispatch: vi.fn(), callbacks };
+    expect(handleLocalModelsTabKey("t", emptyKey(), ctx)).toBe(true);
+    expect(handleLocalModelsTabKey("D", emptyKey(), ctx)).toBe(true);
+    expect(handleLocalModelsTabKey("e", emptyKey(), ctx)).toBe(true);
+    expect(handleLocalModelsTabKey("n", emptyKey(), ctx)).toBe(true);
+    expect(onChoice.mock.calls.map((c) => c[0])).toEqual([
+      "telegram",
+      "discord",
+      "email",
+      "off",
+    ]);
+    expect(handleLocalModelsTabKey("", emptyKey({ escape: true }), ctx)).toBe(
+      true,
+    );
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+    // Enter on the row underneath does not start a pull while the prompt is up.
+    expect(handleLocalModelsTabKey("", emptyKey({ return: true }), ctx)).toBe(
+      true,
+    );
+    expect(onPull).not.toHaveBeenCalled();
+  });
+
+  it("'N' asks for the prompt regardless of the cursor row", () => {
+    const onRequest = vi.fn();
+    const handled = handleLocalModelsTabKey("N", emptyKey({ shift: true }), {
+      state: stateWithRow(row),
+      dispatch: vi.fn(),
+      callbacks: callbacksWith({
+        onLocalModelsNotifyPromptRequested: onRequest,
+      }),
+    });
+    expect(handled).toBe(true);
+    expect(onRequest).toHaveBeenCalledTimes(1);
   });
 });

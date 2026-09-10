@@ -33,9 +33,7 @@ interface TestHarness {
   fireFirst: () => void;
 }
 
-function makeHarness(
-  overrides: Partial<ApprovalBridgeDeps> = {},
-): TestHarness {
+function makeHarness(overrides: Partial<ApprovalBridgeDeps> = {}): TestHarness {
   const decisions: ApprovalDecision[] = [];
   const resolve = vi.fn((decision: ApprovalDecision) => {
     decisions.push(decision);
@@ -85,7 +83,7 @@ function req(approvalId = "abc"): ApprovalRequest {
     sessionId: "s-1",
     tool: "os.shell.run",
     category: "shell",
-    reason: "skill needs to run \"git push\"",
+    reason: 'skill needs to run "git push"',
     preview: "git push origin main",
   };
 }
@@ -318,5 +316,22 @@ describe("ApprovalBridge.cancelAll", () => {
     expect(h.bridge.pendingCount()).toBe(0);
     expect(h.scheduled.every((e) => e.cancelled)).toBe(true);
     expect(h.approvals.decisions).toEqual([]);
+  });
+});
+
+describe("ApprovalBridge.dispatch — forum topics", () => {
+  it("carries message_thread_id when a topic id is given", async () => {
+    const h = makeHarness();
+    await h.bridge.dispatch(req("abc"), 7, 77);
+    const opts = h.api.sendMessage.mock.calls[0]![2] as Record<string, unknown>;
+    expect(opts.message_thread_id).toBe(77);
+    expect(opts.reply_markup).toBeDefined();
+  });
+
+  it("omits message_thread_id for a plain chat", async () => {
+    const h = makeHarness();
+    await h.bridge.dispatch(req("abc"), 7);
+    const opts = h.api.sendMessage.mock.calls[0]![2] as Record<string, unknown>;
+    expect(opts).not.toHaveProperty("message_thread_id");
   });
 });

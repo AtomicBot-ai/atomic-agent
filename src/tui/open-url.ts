@@ -92,10 +92,7 @@ export async function openUrlInBrowser(
   url: string,
   options: OpenUrlOptions = {},
 ): Promise<OpenUrlResult> {
-  const launch = buildOpenUrlCommand(
-    url,
-    options.platform ?? process.platform,
-  );
+  const launch = buildOpenUrlCommand(url, options.platform ?? process.platform);
   if (launch === null) {
     return { ok: false, reason: `not an http(s) URL: ${url}` };
   }

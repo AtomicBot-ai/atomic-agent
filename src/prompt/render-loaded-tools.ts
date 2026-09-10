@@ -25,12 +25,7 @@ export function renderLoadedToolsSection(
     return { body: null, truncated: true, tokens: 0 };
   }
   const parts = session.loadedTools.map((t) =>
-    formatToolForLoadedTail(
-      t.name,
-      t.summary,
-      t.argsSchema,
-      t.examples,
-    ),
+    formatToolForLoadedTail(t.name, t.summary, t.argsSchema, t.examples),
   );
   const full = parts.join("\n\n");
   const out = truncateToTokens(full, maxTokens);

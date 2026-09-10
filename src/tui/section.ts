@@ -33,6 +33,7 @@ export const MANAGE_TABS: readonly TuiTab[] = [
   "memory",
   "mcp",
   "integrations",
+  "swarm",
   "llm",
   "import",
   "privacy",
@@ -63,10 +64,7 @@ export function getDefaultTabForSection(section: TuiSection): TuiTab {
  * for the `run` section (no inner tabs) so the caller can fall through
  * to the next handler instead of consuming the keypress.
  */
-export function cycleSubTab(
-  state: TuiState,
-  direction: 1 | -1,
-): TuiTab | null {
+export function cycleSubTab(state: TuiState, direction: 1 | -1): TuiTab | null {
   const section = getCurrentSection(state);
   if (section === "run") return null;
   const tabs = section === "manage" ? MANAGE_TABS : OBSERVE_TABS;
@@ -82,9 +80,7 @@ export function cycleSubTab(
  * stands in for the chat surface (no inner tab); every other slot is a
  * concrete debug tab inside Observe or Manage.
  */
-export type NavSlot =
-  | { kind: "run" }
-  | { kind: "debug-tab"; tab: TuiTab };
+export type NavSlot = { kind: "run" } | { kind: "debug-tab"; tab: TuiTab };
 
 /**
  * Linear ordering of nav slots used by global Tab cycling: chat → all
@@ -111,10 +107,7 @@ export function getCurrentNavSlot(state: TuiState): NavSlot {
  * Tab / Shift+Tab in both chat and debug modes, so the operator has a
  * single key to walk every dashboard surface in order.
  */
-export function cycleNavSlot(
-  state: TuiState,
-  direction: 1 | -1,
-): NavSlot {
+export function cycleNavSlot(state: TuiState, direction: 1 | -1): NavSlot {
   const current = getCurrentNavSlot(state);
   const idx = NAV_SLOT_ORDER.findIndex((slot) => navSlotEquals(slot, current));
   const safe = idx === -1 ? 0 : idx;

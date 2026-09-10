@@ -1,6 +1,7 @@
 import { Box, Text } from "ink";
 import { useEffect, useState, type ReactElement } from "react";
 import { useSpinner } from "../hooks/use-spinner.js";
+import { formatFusionLiveWorker } from "../fusion-live-workers.js";
 import { theme } from "../theme/theme.js";
 import type { TuiState } from "../tui-state.js";
 
@@ -25,7 +26,9 @@ interface ThinkingIndicatorProps {
  * something is stuck. Self-cleans when `state.status` flips out of
  * `running` (renders `null`).
  */
-export function ThinkingIndicator({ state }: ThinkingIndicatorProps): ReactElement | null {
+export function ThinkingIndicator({
+  state,
+}: ThinkingIndicatorProps): ReactElement | null {
   const running = state.status === "running";
   const spinner = useSpinner(running);
   const elapsed = useElapsedSinceStart(state.runStartedAt, running);
@@ -34,9 +37,30 @@ export function ThinkingIndicator({ state }: ThinkingIndicatorProps): ReactEleme
   const elapsedLabel = formatElapsed(elapsed);
   const label = formatPhase(phase, elapsedLabel);
   return (
-    <Box marginLeft={3} marginTop={1}>
-      <Text color={theme.colors.assistant}>{spinner} </Text>
-      <Text color={theme.colors.muted}>{label}</Text>
+    <Box marginLeft={3} marginTop={1} flexDirection="column">
+      <Box>
+        <Text color={theme.colors.assistant}>{spinner} </Text>
+        <Text color={theme.colors.muted}>{label}</Text>
+      </Box>
+      {/*
+        A fusion fan-out holds this turn for minutes with nothing of the
+        orchestrator's own to show. Without this the operator watching
+        the chat sees only a spinner and has to open Observe › Feed to
+        learn that N local workers are busy and which model each runs —
+        which is the one thing this mode exists to make visible.
+      */}
+      {state.fusionLiveWorkers.map((worker) => (
+        <Box key={worker.taskId} marginLeft={2}>
+          <Text
+            color={worker.done ? theme.colors.muted : theme.colors.warnStrong}
+          >
+            {worker.done ? "·" : "▸"}{" "}
+          </Text>
+          <Text color={theme.colors.muted} wrap="truncate">
+            {formatFusionLiveWorker(worker)}
+          </Text>
+        </Box>
+      ))}
     </Box>
   );
 }
@@ -113,6 +137,12 @@ function formatPhase(phase: Phase, elapsed: string): string {
   }
 }
 
+/**
+ * How often the elapsed-time label re-reads the clock. Matches the
+ * resolution of what it renders: whole seconds.
+ */
+const ELAPSED_TICK_MS = 1000;
+
 function useElapsedSinceStart(
   startedAt: number | null,
   active: boolean,
@@ -120,7 +150,12 @@ function useElapsedSinceStart(
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (!active || startedAt === null) return;
-    const handle = setInterval(() => setNow(Date.now()), 250);
+    // One tick per second, because `formatElapsed` renders whole
+    // seconds and nothing finer. The old 250 ms interval re-rendered
+    // the whole app four times a second to produce the same string
+    // three times out of four — free repaints on a surface whose
+    // repaints the operator can see.
+    const handle = setInterval(() => setNow(Date.now()), ELAPSED_TICK_MS);
     return () => clearInterval(handle);
   }, [active, startedAt]);
   if (startedAt === null) return 0;

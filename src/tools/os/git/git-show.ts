@@ -155,9 +155,7 @@ function formatHuman(
   lines.push("");
   lines.push(`files: ${files.length}`);
   for (const f of files) {
-    const stat = f.binary
-      ? "bin"
-      : `+${f.addedLines}/-${f.removedLines}`;
+    const stat = f.binary ? "bin" : `+${f.addedLines}/-${f.removedLines}`;
     lines.push(`  ${stat}  ${f.path}`);
   }
   if (includePatch && patch.trim().length > 0) {

@@ -41,9 +41,7 @@ export function createResolveApprovalHandler(): HttpHandler {
       sendError(
         res,
         400,
-        openaiError(
-          "decision must be one of allow-once|deny|approve|reject",
-        ),
+        openaiError("decision must be one of allow-once|deny|approve|reject"),
       );
       return;
     }
@@ -53,11 +51,7 @@ export function createResolveApprovalHandler(): HttpHandler {
       ...(body.reason ? { reason: body.reason } : {}),
     });
     if (!resolved) {
-      sendError(
-        res,
-        404,
-        openaiError(`approvalId not pending: ${approvalId}`),
-      );
+      sendError(res, 404, openaiError(`approvalId not pending: ${approvalId}`));
       return;
     }
     ctx.approvalBus.resolved(approvalId);

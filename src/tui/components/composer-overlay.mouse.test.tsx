@@ -30,8 +30,7 @@ const SESSION: TuiSessionInfo = {
   skillCount: 0,
 };
 
-const strip = (value: string): string =>
-  value.replace(/\[[0-9;]*m/g, "");
+const strip = (value: string): string => value.replace(/\[[0-9;]*m/g, "");
 
 const delay = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
@@ -63,10 +62,7 @@ function click(x: number, y: number): TuiMouseEvent {
 }
 
 /** Screen cell of the LAST line containing `needle`. */
-function locateLast(
-  frame: string,
-  needle: string,
-): { x: number; y: number } {
+function locateLast(frame: string, needle: string): { x: number; y: number } {
   const lines = frame.split("\n");
   for (let y = lines.length - 1; y >= 0; y -= 1) {
     const x = (lines[y] ?? "").indexOf(needle);

@@ -71,7 +71,10 @@ export class EmbeddingProviderRegistry {
   private readonly providers: Map<string, EmbeddingClient>;
   private activeId: string;
 
-  private constructor(activeId: string, providers: Map<string, EmbeddingClient>) {
+  private constructor(
+    activeId: string,
+    providers: Map<string, EmbeddingClient>,
+  ) {
     this.activeId = activeId;
     this.providers = providers;
   }
@@ -90,7 +93,10 @@ export class EmbeddingProviderRegistry {
       const first = [...built.keys()][0]!;
       return new EmbeddingProviderRegistry(first, built);
     }
-    return new EmbeddingProviderRegistry(resolved.activeEmbeddingProvider, built);
+    return new EmbeddingProviderRegistry(
+      resolved.activeEmbeddingProvider,
+      built,
+    );
   }
 
   get active(): EmbeddingClient | undefined {

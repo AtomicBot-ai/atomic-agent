@@ -381,6 +381,19 @@ export function createTraceRecorder(
             stepCeiling: event.stepCeiling,
           });
           return;
+        case "parse_failure_recovered":
+          push({
+            type: "parse_failure_recovered",
+            seq: nextSeq(),
+            sessionId,
+            ts: now(),
+            turnIndex: currentTurnIndex,
+            stepIndex: event.stepIndex,
+            attempt: event.attempt,
+            budget: event.budget,
+            reason: event.reason,
+          });
+          return;
         case "provider_waiting":
           push({
             type: "provider_waiting",
@@ -406,6 +419,25 @@ export function createTraceRecorder(
             ts: now(),
             turnIndex: currentTurnIndex,
             waitedMs: event.waitedMs,
+          });
+          return;
+        case "completion_truncated":
+          push({
+            type: "completion_truncated",
+            seq: nextSeq(),
+            sessionId,
+            ts: now(),
+            turnIndex: currentTurnIndex,
+            stepIndex: event.stepIndex,
+            cause: event.cause,
+            completionTokens: event.completionTokens,
+            promptTokens: event.promptTokens,
+            requestedMaxTokens: event.requestedMaxTokens,
+            retry: event.retry.kind,
+            retryValue:
+              event.retry.kind === "raise_cap"
+                ? event.retry.maxTokens
+                : event.retry.contextWindow,
           });
           return;
         case "loop_detected":

@@ -8,8 +8,14 @@ import {
   swapInStagedBackend,
 } from "./backend-staging.js";
 import { downloadFile, type DownloadFileOptions } from "./download-file.js";
-import { readBackendVersion, writeBackendVersionAt } from "./backend-version.js";
-import { resolvePlatformAsset, UnsupportedPlatformError } from "./platform-assets.js";
+import {
+  readBackendVersion,
+  writeBackendVersionAt,
+} from "./backend-version.js";
+import {
+  resolvePlatformAsset,
+  UnsupportedPlatformError,
+} from "./platform-assets.js";
 import { resolveDownloadAsset } from "./windows-backend-variant.js";
 
 const GITHUB_REPO = "AtomicBot-ai/atomic-llama-cpp-turboquant-nightly";
@@ -154,7 +160,10 @@ export async function fetchLatestRelease(opts?: {
  * earlier (GitHub-ordered) candidate because `reduce` only swaps on a
  * strict improvement.
  */
-function releaseTime(r: { published_at?: string | null; created_at?: string | null }): number {
+function releaseTime(r: {
+  published_at?: string | null;
+  created_at?: string | null;
+}): number {
   const raw = r.published_at ?? r.created_at;
   if (!raw) return -Infinity;
   const t = Date.parse(raw);
@@ -170,9 +179,7 @@ export class GithubRateLimitedError extends Error {
   }
 }
 
-export async function checkForBackendUpdate(
-  dataDir: string,
-): Promise<{
+export async function checkForBackendUpdate(dataDir: string): Promise<{
   updateAvailable: boolean;
   latestTag: string | null;
   currentTag: string | null;
@@ -186,7 +193,8 @@ export async function checkForBackendUpdate(
   // the local machine, not of release ordering, so it is checked before
   // (and independently of) the recency comparison.
   const variantStale =
-    current?.asset !== undefined && current.asset !== resolveDownloadAsset().assetName;
+    current?.asset !== undefined &&
+    current.asset !== resolveDownloadAsset().assetName;
   if (release === null) {
     // Nothing resolvable to update *to* — keep whatever is installed.
     return {
@@ -243,7 +251,12 @@ export async function downloadBackend(
   dataDir: string,
   opts?: Pick<
     DownloadFileOptions,
-    "onProgress" | "onRetry" | "signal" | "maxRetries" | "retryDelayMs"
+    | "onProgress"
+    | "onRetry"
+    | "signal"
+    | "maxRetries"
+    | "retryDelayMs"
+    | "giveUpAfterMs"
   >,
 ): Promise<{ ok: true; tag: string }> {
   const { assetName, binaryName } = resolveDownloadAsset();

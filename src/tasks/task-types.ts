@@ -19,12 +19,7 @@ import type { LlmFailureCategory } from "../llm/reliability/index.js";
  * across requeues so the recurring task's conversation stays continuous.
  */
 export type TaskStatus =
-  | "pending"
-  | "running"
-  | "completed"
-  | "failed"
-  | "blocked"
-  | "cancelled";
+  "pending" | "running" | "completed" | "failed" | "blocked" | "cancelled";
 
 /**
  * Where the task was created. Mirrors `TurnOrigin` but kept as its own
@@ -32,12 +27,7 @@ export type TaskStatus =
  * even when no live `runTurn` initiated it.
  */
 export type TaskOrigin =
-  | "cli"
-  | "tui"
-  | "http"
-  | "sidecar"
-  | "scheduler"
-  | "agent";
+  "cli" | "tui" | "http" | "sidecar" | "scheduler" | "agent";
 
 /**
  * Who ultimately triggered the task. Informational only — used for

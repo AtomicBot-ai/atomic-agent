@@ -7,7 +7,9 @@ import {
   type UninstallPlanInput,
 } from "./uninstall-targets.js";
 
-function input(overrides: Partial<UninstallPlanInput> = {}): UninstallPlanInput {
+function input(
+  overrides: Partial<UninstallPlanInput> = {},
+): UninstallPlanInput {
   return {
     stateDir: "/Users/op/.atomic-agent",
     execPath: "/Users/op/.local/bin/atomic-agent",
@@ -20,7 +22,9 @@ function input(overrides: Partial<UninstallPlanInput> = {}): UninstallPlanInput 
 
 describe("planUninstallTargets", () => {
   it("lists the state dir and the debug bundles as data", () => {
-    const data = planUninstallTargets(input()).filter((t) => t.group === "data");
+    const data = planUninstallTargets(input()).filter(
+      (t) => t.group === "data",
+    );
     expect(data.map((t) => t.path)).toEqual([
       "/Users/op/.atomic-agent",
       "/Users/op/Documents/atomic-agent-debug",

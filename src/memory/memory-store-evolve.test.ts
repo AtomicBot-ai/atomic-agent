@@ -59,16 +59,16 @@ describe("MemoryStore.evolveTags", () => {
 
   it("rejects an empty add-tags list", () => {
     const seeded = store.store({ content: "x" });
-    expect(() =>
-      store.evolveTags(seeded.id, [], { leaseMs: 0 }),
-    ).toThrow(MemoryValidationError);
+    expect(() => store.evolveTags(seeded.id, [], { leaseMs: 0 })).toThrow(
+      MemoryValidationError,
+    );
   });
 
   it("respects the lease window (skip when held)", () => {
     const seeded = store.store({ content: "x", tags: ["a"] });
-    expect(
-      store.acquireConsolidationLease(seeded.id, 60_000, 1_000),
-    ).toBe(true);
+    expect(store.acquireConsolidationLease(seeded.id, 60_000, 1_000)).toBe(
+      true,
+    );
     const r = store.evolveTags(seeded.id, ["b"], {
       leaseMs: 60_000,
       now: 30_000,
@@ -89,21 +89,15 @@ describe("MemoryStore.evolveTags", () => {
 
   it("acquireConsolidationLease is single-writer: second concurrent acquire fails", () => {
     const seeded = store.store({ content: "x" });
-    expect(
-      store.acquireConsolidationLease(seeded.id, 60_000, 100),
-    ).toBe(true);
-    expect(
-      store.acquireConsolidationLease(seeded.id, 60_000, 200),
-    ).toBe(false);
+    expect(store.acquireConsolidationLease(seeded.id, 60_000, 100)).toBe(true);
+    expect(store.acquireConsolidationLease(seeded.id, 60_000, 200)).toBe(false);
   });
 
   it("releaseConsolidationLease lets a new acquire succeed", () => {
     const seeded = store.store({ content: "x" });
     store.acquireConsolidationLease(seeded.id, 60_000, 100);
     expect(store.releaseConsolidationLease(seeded.id)).toBe(true);
-    expect(
-      store.acquireConsolidationLease(seeded.id, 60_000, 200),
-    ).toBe(true);
+    expect(store.acquireConsolidationLease(seeded.id, 60_000, 200)).toBe(true);
   });
 
   it("bumps updated_at on a successful evolve, leaves it alone on no_change", () => {

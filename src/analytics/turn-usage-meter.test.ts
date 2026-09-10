@@ -6,7 +6,10 @@ import { TurnUsageMeter } from "./turn-usage-meter.js";
 
 const S = "session-a";
 
-function usage(promptTokens: number, completionTokens: number): CompletionUsage {
+function usage(
+  promptTokens: number,
+  completionTokens: number,
+): CompletionUsage {
   return {
     promptTokens,
     completionTokens,
@@ -44,7 +47,11 @@ function pricedModel(input: number, output: number): ResolvedModel {
 describe("TurnUsageMeter", () => {
   it("record() before any begin() is a no-op — snapshot() returns {}", () => {
     const meter = new TurnUsageMeter();
-    meter.record({ sessionId: S, usage: usage(100, 50), model: pricedModel(3, 15) });
+    meter.record({
+      sessionId: S,
+      usage: usage(100, 50),
+      model: pricedModel(3, 15),
+    });
     expect(meter.snapshot(S)).toEqual({});
   });
 
@@ -58,7 +65,11 @@ describe("TurnUsageMeter", () => {
   it("record() with usage but no model pricing accumulates tokens and omits costUsd entirely", () => {
     const meter = new TurnUsageMeter();
     meter.begin(S);
-    meter.record({ sessionId: S, usage: usage(100, 50), model: unpricedModel() });
+    meter.record({
+      sessionId: S,
+      usage: usage(100, 50),
+      model: unpricedModel(),
+    });
     const snap = meter.snapshot(S);
     expect(snap.promptTokens).toBe(100);
     expect(snap.completionTokens).toBe(50);
@@ -104,8 +115,16 @@ describe("TurnUsageMeter", () => {
   it("mixed turn: tokens sum across priced and unpriced calls, cost counts only the priced one", () => {
     const meter = new TurnUsageMeter();
     meter.begin(S);
-    meter.record({ sessionId: S, usage: usage(1_000_000, 1_000_000), model: pricedModel(3, 15) });
-    meter.record({ sessionId: S, usage: usage(200, 100), model: unpricedModel() });
+    meter.record({
+      sessionId: S,
+      usage: usage(1_000_000, 1_000_000),
+      model: pricedModel(3, 15),
+    });
+    meter.record({
+      sessionId: S,
+      usage: usage(200, 100),
+      model: unpricedModel(),
+    });
     const snap = meter.snapshot(S);
     expect(snap.promptTokens).toBe(1_000_200);
     expect(snap.completionTokens).toBe(1_000_100);

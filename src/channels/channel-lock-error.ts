@@ -28,7 +28,9 @@ export function formatChannelLockHeld(pid: number): string {
 }
 
 /** True when `reason` is a lock conflict rather than a real failure. */
-export function isChannelLockConflict(reason: string | null | undefined): boolean {
+export function isChannelLockConflict(
+  reason: string | null | undefined,
+): boolean {
   return typeof reason === "string" && reason.startsWith(CHANNEL_LOCKED_PREFIX);
 }
 

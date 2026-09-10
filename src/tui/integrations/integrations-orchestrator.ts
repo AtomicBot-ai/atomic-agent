@@ -3,8 +3,15 @@ import {
   clearComposioSession,
   resolveComposioServerConfig,
 } from "../../composio/index.js";
+import { AtomicMailService } from "../../atomic-mail/index.js";
 import { getConfig } from "../../config/index.js";
 import {
+  applyAtomicMailField,
+  runAtomicMailAction,
+} from "./integrations-orchestrator-atomic-mail.js";
+import {
+  GITHUB_INTEGRATION_ID,
+  GITHUB_TOKEN_FIELD,
   IntegrationSecretError,
   displayFieldValue,
   findIntegration,
@@ -31,6 +38,14 @@ export interface TelegramActions {
   ensureUpForPairing(): Promise<void>;
 }
 
+import {
+  importGithubTokenFromGh,
+  verifyGithubToken,
+  type GithubHubDeps,
+} from "./integrations-orchestrator-github.js";
+
+export type { GithubHubDeps } from "./integrations-orchestrator-github.js";
+
 /**
  * The only TUI module that touches credential storage and the live MCP
  * manager on behalf of the Integrations tab. The reducer and component
@@ -39,6 +54,14 @@ export interface TelegramActions {
  * other TUI orchestrators.
  */
 export class IntegrationsOrchestrator {
+  /**
+   * The last `verify` answer for GitHub, kept for the life of the
+   * process. A token has no channel or server to report liveness, so
+   * without this the badge could never say more than "saved".
+   */
+  private githubIdentity: string | null = null;
+  private githubVerifyError: string | null = null;
+
   constructor(
     private readonly runtime: AgentRuntime,
     private readonly bus: TuiEventBus & { emit(action: unknown): void },
@@ -48,7 +71,15 @@ export class IntegrationsOrchestrator {
      * are already correct there, and a second copy would drift.
      */
     private readonly telegram?: TelegramActions,
+    private readonly github: GithubHubDeps = {},
+    /** The agent's inbox. Constructed lazily so tests can inject one. */
+    private readonly atomicMail: AtomicMailService = new AtomicMailService(),
   ) {}
+
+  /** The one registration in flight, so a second `r` joins it instead of making a second inbox. */
+  private readonly registration: { inFlight: Promise<void> | null } = {
+    inFlight: null,
+  };
 
   /** Rebuild every row from credential presence + live server state. */
   refresh(): void {
@@ -78,6 +109,20 @@ export class IntegrationsOrchestrator {
       const err = discord.lastError();
       if (err) channelErrors.set("discord", err);
     }
+    const verifiedIdentities = new Map<string, string>();
+    const verifyErrors = new Map<string, string>();
+    if (this.githubIdentity !== null) {
+      verifiedIdentities.set(GITHUB_INTEGRATION_ID, this.githubIdentity);
+    }
+    if (this.githubVerifyError !== null) {
+      verifyErrors.set(GITHUB_INTEGRATION_ID, this.githubVerifyError);
+    }
+    // Atomic Mail runs no loop; its "state" is whether the owner typed
+    // the code back, which lives in config.
+    if (config.atomicMail.ownerVerifiedAt)
+      channelStates.set("atomic-mail", "verified");
+    else if (config.atomicMail.pendingVerification)
+      channelStates.set("atomic-mail", "pending");
     return listIntegrations().map((descriptor) => {
       const present = presentFieldKeys(
         descriptor,
@@ -92,6 +137,8 @@ export class IntegrationsOrchestrator {
         mcpServerStates,
         channelStates,
         channelErrors,
+        verifiedIdentities,
+        verifyErrors,
       };
       const status = descriptor.status(statusCtx);
       const fields: IntegrationFieldRow[] = descriptor.fields.map((field) => ({
@@ -107,6 +154,7 @@ export class IntegrationsOrchestrator {
           ),
         ),
         present: present.has(field.key),
+        ...(field.readonly ? { readonly: true } : {}),
         ...(field.help === undefined ? {} : { help: field.help }),
       }));
       return {
@@ -182,7 +230,61 @@ export class IntegrationsOrchestrator {
       await channel.start();
       return "Discord channel restarted";
     }
+    if (integrationId === GITHUB_INTEGRATION_ID) {
+      if (actionId === "verify") return this.verifyGithub();
+      if (actionId === "import") return this.importGithubTokenFromGh();
+    }
+    if (integrationId === "atomic-mail") {
+      return runAtomicMailAction(this.atomicMail, actionId, this.registration, {
+        onSettled: (message, error) => {
+          this.bus.emit({
+            type: "integrations_action_settled",
+            ...(message ? { message } : {}),
+            ...(error ? { error } : {}),
+          });
+          this.refresh();
+        },
+      });
+    }
     throw new Error(`unknown action ${actionId} for ${integrationId}`);
+  }
+
+  private async verifyGithub(): Promise<string> {
+    const outcome = await verifyGithubToken(this.github);
+    this.githubIdentity = outcome.identity;
+    this.githubVerifyError = outcome.error;
+    if (outcome.error !== null) throw new Error(outcome.error);
+    return outcome.message;
+  }
+
+  private async importGithubTokenFromGh(): Promise<string> {
+    const token = await importGithubTokenFromGh(this.github);
+    const descriptor = findIntegration(GITHUB_INTEGRATION_ID);
+    const field = descriptor?.fields.find((f) => f.key === GITHUB_TOKEN_FIELD);
+    if (!descriptor || !field)
+      throw new Error("GitHub integration unavailable");
+    const cfg = getConfig();
+    writeFieldValue(
+      cfg.paths.stateDir,
+      field,
+      token,
+      process.env,
+      cfg.paths.userConfigFile,
+    );
+    await this.applyGithub();
+    return "GitHub token imported from gh — press v to verify";
+  }
+
+  /**
+   * A token change invalidates whatever `verify` said about the old
+   * one, and the tool catalog has to gain or lose the `github.*`
+   * descriptors — `refreshMcp()` is the runtime's one "rebuild the
+   * catalog" verb, so a token save rides on it.
+   */
+  private async applyGithub(): Promise<void> {
+    this.githubIdentity = null;
+    this.githubVerifyError = null;
+    await this.runtime.refreshMcp?.();
   }
 
   /** Flip a boolean field to the opposite of its current value. */
@@ -227,13 +329,30 @@ export class IntegrationsOrchestrator {
     try {
       const descriptor = findIntegration(integrationId);
       if (!descriptor) {
-        throw new IntegrationSecretError(`unknown integration ${integrationId}`);
+        throw new IntegrationSecretError(
+          `unknown integration ${integrationId}`,
+        );
       }
       const field = descriptor.fields.find((f) => f.key === fieldKey);
       if (!field) {
         throw new IntegrationSecretError(`unknown field ${fieldKey}`);
       }
       const cfg = getConfig();
+      if (integrationId === "atomic-mail") {
+        // Acts *before* the write: the owner address must not land in
+        // config unless the code mail went out — the service writes
+        // both atomically — and a code is never written at all.
+        const message = await applyAtomicMailField(
+          this.atomicMail,
+          field,
+          value,
+        );
+        if (message !== null) {
+          this.bus.emit({ type: "integrations_action_settled", message });
+          this.refresh();
+          return;
+        }
+      }
       writeFieldValue(
         cfg.paths.stateDir,
         field,
@@ -241,8 +360,22 @@ export class IntegrationsOrchestrator {
         process.env,
         cfg.paths.userConfigFile,
       );
+      if (integrationId === "atomic-mail" && field.key === "apiKey") {
+        const { address } = await this.atomicMail.reconnect();
+        this.bus.emit({
+          type: "integrations_action_settled",
+          message: address
+            ? `Inbox connected: ${address}`
+            : "Inbox key cleared",
+        });
+        this.refresh();
+        return;
+      }
       if (integrationId === "composio") {
         await this.applyComposio(value !== null);
+      }
+      if (integrationId === GITHUB_INTEGRATION_ID) {
+        await this.applyGithub();
       }
       // A channel resolves its token and its kill switch when it is
       // constructed, so a saved value that never reaches the running
@@ -267,8 +400,8 @@ export class IntegrationsOrchestrator {
       if (integrationId === "discord") {
         const channel = this.runtime.discordChannel;
         if (channel) {
-          if (field.key === "ownerUserId") {
-            channel.setOwnerUserId(value);
+          if (field.key === "ownerUserIds") {
+            channel.setOwnerUserIds(getConfig().discord.ownerUserIds);
           }
           if (field.key === "enabled") {
             await channel.setEnabled(value === "on");

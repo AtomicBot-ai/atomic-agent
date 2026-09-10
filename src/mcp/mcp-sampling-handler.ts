@@ -45,7 +45,10 @@ export function createMcpSamplingHandler(
     params: CreateMessageRequest["params"],
     signal: AbortSignal,
   ): Promise<CreateMessageResult> => {
-    const prompt = flattenMessagesToPrompt(params.messages, params.systemPrompt);
+    const prompt = flattenMessagesToPrompt(
+      params.messages,
+      params.systemPrompt,
+    );
     const maxTokens =
       typeof params.maxTokens === "number" && params.maxTokens > 0
         ? Math.min(params.maxTokens, 4_096)

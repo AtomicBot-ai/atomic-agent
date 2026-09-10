@@ -56,11 +56,7 @@ describe("parseVoteOutput", () => {
 
   it("parses multiple votes in order", () => {
     const out = parseVoteOutput(
-      [
-        "UPVOTE memory:1",
-        "DOWNVOTE lesson:2",
-        "UPVOTE profile:3",
-      ].join("\n"),
+      ["UPVOTE memory:1", "DOWNVOTE lesson:2", "UPVOTE profile:3"].join("\n"),
       { allowlist: allowlist([1], [2], [3]) },
     );
     expect(out.kind).toBe("votes");
@@ -130,10 +126,7 @@ describe("parseVoteOutput", () => {
 
   it("deduplicates (kind, id) pairs within a single payload — first wins", () => {
     const out = parseVoteOutput(
-      [
-        "UPVOTE memory:5",
-        "DOWNVOTE memory:5",
-      ].join("\n"),
+      ["UPVOTE memory:5", "DOWNVOTE memory:5"].join("\n"),
       { allowlist: allowlist([5]) },
     );
     expect(out.kind).toBe("votes");
@@ -305,10 +298,9 @@ describe("parseVoteOutput", () => {
     });
 
     it("falls back when the JSON object is not our schema", () => {
-      const out = parseVoteOutput(
-        JSON.stringify({ foo: "bar" }),
-        { allowlist: allowlist([1]) },
-      );
+      const out = parseVoteOutput(JSON.stringify({ foo: "bar" }), {
+        allowlist: allowlist([1]),
+      });
       // JSON parses, but `kind` is missing — returns null from JSON
       // path → falls through to line grammar → single malformed line.
       expect(out.kind === "votes" || out.kind === "none").toBe(true);
@@ -318,9 +310,7 @@ describe("parseVoteOutput", () => {
       const out = parseVoteOutput(
         JSON.stringify({
           kind: "votes",
-          votes: [
-            { target_kind: "procedure", target_id: 7, direction: -1 },
-          ],
+          votes: [{ target_kind: "procedure", target_id: 7, direction: -1 }],
         }),
         { allowlist: allowlist([], [], [], [7]) },
       );

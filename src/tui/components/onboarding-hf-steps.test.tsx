@@ -51,7 +51,12 @@ function repo(
 describe("OnboardingLocalPickStep", () => {
   it("calls the curated list a recommendation and offers the way past it", () => {
     const view = render(
-      <OnboardingLocalPickStep picks={picks()} cursor={0} ramGb={16} fit={FULL} />,
+      <OnboardingLocalPickStep
+        picks={picks()}
+        cursor={0}
+        ramGb={16}
+        fit={FULL}
+      />,
     );
     const frame = strip(view.lastFrame() ?? "");
     expect(frame).toContain("Recommended models");
@@ -70,16 +75,24 @@ describe("OnboardingLocalPickStep", () => {
       />,
     );
     const frame = strip(view.lastFrame() ?? "");
-    const hf = frame.split("\n").find((line) => line.includes("Hugging Face")) ?? "";
+    const hf =
+      frame.split("\n").find((line) => line.includes("Hugging Face")) ?? "";
     expect(hf.trimStart().startsWith("›")).toBe(true);
     // The cursor is off the end of the curated rows, so none of them
     // may claim the marker as well.
-    expect(frame.split("\n").filter((line) => line.includes("›"))).toHaveLength(1);
+    expect(frame.split("\n").filter((line) => line.includes("›"))).toHaveLength(
+      1,
+    );
   });
 
   it("marks a curated row, not the Hugging Face one, while the cursor is in the list", () => {
     const view = render(
-      <OnboardingLocalPickStep picks={picks()} cursor={1} ramGb={16} fit={FULL} />,
+      <OnboardingLocalPickStep
+        picks={picks()}
+        cursor={1}
+        ramGb={16}
+        fit={FULL}
+      />,
     );
     const lines = strip(view.lastFrame() ?? "").split("\n");
     const marked = lines.filter((line) => line.includes("›"));
@@ -128,7 +141,9 @@ describe("OnboardingHuggingFaceRefStep", () => {
     // to drop both the reference and the refusal it earned.
     const lines = frame.split("\n");
     const clearRow = lines.findIndex((line) => line.includes("[ clear ]"));
-    const errorRow = lines.findIndex((line) => line.includes("no repo or revision"));
+    const errorRow = lines.findIndex((line) =>
+      line.includes("no repo or revision"),
+    );
     expect(clearRow).toBeGreaterThan(-1);
     expect(clearRow).toBeLessThan(errorRow);
   });
@@ -156,7 +171,12 @@ describe("OnboardingHuggingFaceRefStep", () => {
 describe("OnboardingHuggingFacePickStep", () => {
   it("names the repo and lists every servable file with its size", () => {
     const view = render(
-      <OnboardingHuggingFacePickStep repo={repo()} cursor={0} ramGb={16} error={null} />,
+      <OnboardingHuggingFacePickStep
+        repo={repo()}
+        cursor={0}
+        ramGb={16}
+        error={null}
+      />,
     );
     const frame = strip(view.lastFrame() ?? "");
     expect(frame).toContain("unsloth/Qwen3.5-4B-GGUF");
@@ -167,7 +187,12 @@ describe("OnboardingHuggingFacePickStep", () => {
 
   it("warns about a model larger than this machine's RAM without hiding it", () => {
     const view = render(
-      <OnboardingHuggingFacePickStep repo={repo()} cursor={1} ramGb={16} error={null} />,
+      <OnboardingHuggingFacePickStep
+        repo={repo()}
+        cursor={1}
+        ramGb={16}
+        error={null}
+      />,
     );
     const frame = strip(view.lastFrame() ?? "");
     expect(frame).toContain("40.0 GB model, 16 GB of RAM");
@@ -179,7 +204,12 @@ describe("OnboardingHuggingFacePickStep", () => {
 
   it("stays quiet about RAM when the file fits", () => {
     const view = render(
-      <OnboardingHuggingFacePickStep repo={repo()} cursor={0} ramGb={16} error={null} />,
+      <OnboardingHuggingFacePickStep
+        repo={repo()}
+        cursor={0}
+        ramGb={16}
+        error={null}
+      />,
     );
     expect(strip(view.lastFrame() ?? "")).not.toContain("of RAM");
   });
@@ -187,7 +217,9 @@ describe("OnboardingHuggingFacePickStep", () => {
   it("accounts for the files it left out", () => {
     const view = render(
       <OnboardingHuggingFacePickStep
-        repo={repo({ hidden: "2 more files hidden: 1 full-precision, 1 multi-part" })}
+        repo={repo({
+          hidden: "2 more files hidden: 1 full-precision, 1 multi-part",
+        })}
         cursor={0}
         ramGb={16}
         error={null}

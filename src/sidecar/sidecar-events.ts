@@ -217,6 +217,8 @@ export interface SteerUndeliveredPayload {
 export interface AssistantReplyPayload {
   sessionId: string;
   text: string;
+  /** Absolute paths of files the reply delivered (`reply.attachments`); absent when none. */
+  attachments?: readonly string[];
 }
 
 /**
@@ -306,8 +308,6 @@ export function isSidecarEvent(msg: SidecarMessage): msg is SidecarEvent {
   return msg.kind === "event";
 }
 
-export function isSidecarResponse(
-  msg: SidecarMessage,
-): msg is SidecarResponse {
+export function isSidecarResponse(msg: SidecarMessage): msg is SidecarResponse {
   return msg.kind === "response";
 }

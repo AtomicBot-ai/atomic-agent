@@ -31,6 +31,7 @@ interface FakeBotState {
   setMyCommandsCalls: number;
   textHandler: ((u: unknown) => void | Promise<void>) | null;
   callbackHandler: ((u: unknown) => void | Promise<void>) | null;
+  fileHandler: ((u: unknown) => void | Promise<void>) | null;
   /** Aggregated `sendMessage` invocations across every bot the factory has created. */
   sendMessageCalls: Array<{ chatId: number; text: string }>;
   /** Simulate the polling loop ending. Set once `start()` has run. */
@@ -54,6 +55,7 @@ function makeBotFactory(opts: FakeBotOptions = {}): {
     setMyCommandsCalls: 0,
     textHandler: null,
     callbackHandler: null,
+    fileHandler: null,
     sendMessageCalls: [],
     killPolling: null,
   };
@@ -67,6 +69,7 @@ function makeBotFactory(opts: FakeBotOptions = {}): {
         }),
         editMessageText: vi.fn(async () => undefined),
         answerCallbackQuery: vi.fn(async () => undefined),
+        downloadFile: vi.fn(async () => new Uint8Array([0xff, 0xd8, 0xff])),
         getMe: vi.fn(async () => {
           if (opts.getMeError) throw opts.getMeError;
           return { id: 1, username: "test_bot" };
@@ -82,6 +85,9 @@ function makeBotFactory(opts: FakeBotOptions = {}): {
       },
       setCallbackHandler(handler) {
         state.callbackHandler = handler;
+      },
+      setFileHandler(handler) {
+        state.fileHandler = handler;
       },
       start(_onStart, onStopped) {
         state.startCalls += 1;
@@ -113,12 +119,18 @@ function fakeLock(opts: { acquireError?: Error } = {}): {
       counters.released += 1;
     },
   };
-  return { lock, get acquired() { return counters.acquired; }, get released() { return counters.released; } };
+  return {
+    lock,
+    get acquired() {
+      return counters.acquired;
+    },
+    get released() {
+      return counters.released;
+    },
+  };
 }
 
-function fakeRuntime(
-  overrides: Partial<AgentRuntime> = {},
-): AgentRuntime {
+function fakeRuntime(overrides: Partial<AgentRuntime> = {}): AgentRuntime {
   return {
     approvals: { resolve: vi.fn(() => true) },
     setApprovalHandlerForSession: vi.fn(() => () => undefined),
@@ -169,7 +181,9 @@ describe("TelegramChannel", () => {
     await channel.start();
     expect(channel.state()).toBe("up");
 
-    state.killPolling?.(new Error("409: Conflict: terminated by other getUpdates"));
+    state.killPolling?.(
+      new Error("409: Conflict: terminated by other getUpdates"),
+    );
 
     expect(channel.state()).toBe("down");
     expect(channel.lastError()).toMatch(/Conflict/);
@@ -280,7 +294,9 @@ describe("TelegramChannel", () => {
     });
     await channel.start();
     state.killPolling?.(
-      new Error(`polling https://api.telegram.org/bot123456789:${"A".repeat(35)}/getUpdates failed`),
+      new Error(
+        `polling https://api.telegram.org/bot123456789:${"A".repeat(35)}/getUpdates failed`,
+      ),
     );
     expect(channel.lastError()).toContain("<token>");
     expect(channel.lastError()).not.toContain("A".repeat(35));
@@ -724,7 +740,10 @@ describe("TelegramChannel live-control surface", () => {
 
     const channel = new TelegramChannel({
       runtime: fakeRuntime(),
-      config: { ...makeConfig(dir), telegram: { enabled: true, ownerUserId: null } } as AtomicAgentConfig,
+      config: {
+        ...makeConfig(dir),
+        telegram: { enabled: true, ownerUserId: null },
+      } as AtomicAgentConfig,
       token: "1234:abcdef",
       logger,
       botFactory: factory,
@@ -1068,7 +1087,10 @@ describe("TelegramChannel live-control surface", () => {
     });
 
     it("returns delivery_failed with a delivered/total chunk warning when the API rejects a chunk", async () => {
-      const warnRecords: Array<{ message: string; context?: Record<string, unknown> }> = [];
+      const warnRecords: Array<{
+        message: string;
+        context?: Record<string, unknown>;
+      }> = [];
       const capturingLogger = new StructuredLogger({
         level: "warn",
         sinks: [
@@ -1124,10 +1146,16 @@ describe("TelegramChannel live-control surface", () => {
     }
 
     it("warn-logs with a reason and drops the report when no channel is constructed yet", async () => {
-      const warns: Array<{ message: string; context?: Record<string, unknown> }> = [];
+      const warns: Array<{
+        message: string;
+        context?: Record<string, unknown>;
+      }> = [];
       const sink = TelegramChannel.buildTaskReportSink({
         resolveChannel: () => null,
-        logger: { warn: (message, context) => warns.push({ message, ...(context ? { context } : {}) }) },
+        logger: {
+          warn: (message, context) =>
+            warns.push({ message, ...(context ? { context } : {}) }),
+        },
       });
       await sink(makeSinkReport());
       expect(warns).toHaveLength(1);
@@ -1136,12 +1164,18 @@ describe("TelegramChannel live-control surface", () => {
     });
 
     it("warn-logs the delivery outcome when the channel skips the report", async () => {
-      const warns: Array<{ message: string; context?: Record<string, unknown> }> = [];
+      const warns: Array<{
+        message: string;
+        context?: Record<string, unknown>;
+      }> = [];
       const sendTaskReport = vi.fn(async () => "channel_not_up" as const);
       const sink = TelegramChannel.buildTaskReportSink({
         resolveChannel: () =>
-          ({ sendTaskReport } as unknown as TelegramChannel),
-        logger: { warn: (message, context) => warns.push({ message, ...(context ? { context } : {}) }) },
+          ({ sendTaskReport }) as unknown as TelegramChannel,
+        logger: {
+          warn: (message, context) =>
+            warns.push({ message, ...(context ? { context } : {}) }),
+        },
       });
       await sink(makeSinkReport());
       expect(sendTaskReport).toHaveBeenCalledOnce();
@@ -1156,7 +1190,9 @@ describe("TelegramChannel live-control surface", () => {
       const warns: string[] = [];
       const sink = TelegramChannel.buildTaskReportSink({
         resolveChannel: () =>
-          ({ sendTaskReport: async () => "sent" as const } as unknown as TelegramChannel),
+          ({
+            sendTaskReport: async () => "sent" as const,
+          }) as unknown as TelegramChannel,
         logger: { warn: (message) => warns.push(message) },
       });
       await sink(makeSinkReport());
@@ -1167,7 +1203,9 @@ describe("TelegramChannel live-control surface", () => {
       const warns: string[] = [];
       const sink = TelegramChannel.buildTaskReportSink({
         resolveChannel: () =>
-          ({ sendTaskReport: async () => "queued" as const } as unknown as TelegramChannel),
+          ({
+            sendTaskReport: async () => "queued" as const,
+          }) as unknown as TelegramChannel,
         logger: { warn: (message) => warns.push(message) },
       });
       await sink(makeSinkReport());
@@ -1179,7 +1217,9 @@ describe("TelegramChannel live-control surface", () => {
 describe("scrubErrorMessage", () => {
   it("redacts a token-shaped substring", () => {
     const msg = scrubErrorMessage(
-      new Error("auth fail: 1234567:AAEoZw0X-1234567890abcdefghijklmnopqr happened"),
+      new Error(
+        "auth fail: 1234567:AAEoZw0X-1234567890abcdefghijklmnopqr happened",
+      ),
     );
     expect(msg).not.toContain("AAEoZw0X");
     expect(msg).toContain("<token>");
@@ -1201,5 +1241,189 @@ describe("scrubErrorMessage", () => {
     );
     expect(msg).not.toContain("AAEoZw0X");
     expect(msg).toContain("<token>");
+  });
+});
+
+describe("TelegramChannel per-chat approval bindings", () => {
+  let dir: string;
+  let logger: StructuredLogger;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "atomic-tg-perchat-approvals-"));
+    logger = new StructuredLogger({ level: "warn", sinks: [] });
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  /** A runtime real enough for the inbound handler to run a turn. */
+  function turnRuntime(setHandler: ReturnType<typeof vi.fn>): AgentRuntime {
+    const sessions = new Map<
+      string,
+      {
+        id: string;
+        status: string;
+        turnCount: number;
+        stepCount: number;
+        lastError: null;
+      }
+    >();
+    let n = 0;
+    return {
+      approvals: { resolve: vi.fn(() => true) },
+      setApprovalHandlerForSession: setHandler,
+      createSession: () => {
+        const s = {
+          id: `s-${++n}`,
+          status: "pending",
+          turnCount: 0,
+          stepCount: 0,
+          lastError: null,
+        };
+        sessions.set(s.id, s);
+        return s;
+      },
+      sessionStore: { load: (id: string) => sessions.get(id) ?? null },
+      turnController: { isBusy: () => false },
+      runTurn: async (
+        _s: unknown,
+        _t: string,
+        opts: { eventHook?: (e: unknown) => void },
+      ) => {
+        opts.eventHook?.({
+          type: "llm_event",
+          event: { type: "assistant_reply", text: "ok" },
+        });
+        return {};
+      },
+    } as unknown as AgentRuntime;
+  }
+
+  it("keeps one binding per chat, drops it on /new, and drops all on stop()", async () => {
+    const { factory, state } = makeBotFactory();
+    const { lock } = fakeLock();
+    const unsubscribes: Array<ReturnType<typeof vi.fn>> = [];
+    const setHandler = vi.fn(() => {
+      const u = vi.fn();
+      unsubscribes.push(u);
+      return u;
+    });
+    const channel = new TelegramChannel({
+      runtime: turnRuntime(setHandler),
+      config: makeConfig(dir),
+      token: "1234:abcdef",
+      logger,
+      botFactory: factory,
+      lock,
+      emitStatus: () => undefined,
+    });
+    await channel.start();
+    const dm = {
+      from: { id: 42 },
+      chat: { id: 42, type: "private" },
+      text: "hi",
+      message_id: 1,
+    };
+    const group = {
+      from: { id: 42 },
+      chat: { id: -100, type: "supergroup", title: "Ops" },
+      text: "@test_bot hi",
+      message_id: 2,
+    };
+    await state.textHandler!(dm);
+    await state.textHandler!(group);
+    // Two chats, two sessions, two live bindings — neither evicted the other.
+    expect(setHandler).toHaveBeenCalledTimes(2);
+    expect(setHandler.mock.calls.map((c) => c[0])).toEqual(["s-1", "s-2"]);
+    expect(unsubscribes.every((u) => !u.mock.calls.length)).toBe(true);
+    // A second DM turn re-uses the same session and binding.
+    await state.textHandler!({ ...dm, message_id: 3 });
+    expect(setHandler).toHaveBeenCalledTimes(2);
+    // /new in the DM releases only the DM's binding.
+    await state.textHandler!({ ...dm, text: "/new", message_id: 4 });
+    expect(unsubscribes[0]!).toHaveBeenCalledTimes(1);
+    expect(unsubscribes[1]!).not.toHaveBeenCalled();
+    // stop() drops whatever is left.
+    await channel.stop();
+    expect(unsubscribes[1]!).toHaveBeenCalledTimes(1);
+    // Replies went to the chats that asked.
+    expect(
+      state.sendMessageCalls
+        .filter((m) => m.text === "ok")
+        .map((m) => m.chatId),
+    ).toEqual([42, -100, 42]);
+  });
+});
+
+describe("TelegramChannel inbound files", () => {
+  let dir: string;
+  let logger: StructuredLogger;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "atomic-tg-channel-files-"));
+    logger = new StructuredLogger({ level: "warn", sinks: [] });
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("registers the file handler and routes an owner's photo into the inbox under stateDir", async () => {
+    const { factory, state } = makeBotFactory();
+    const { lock } = fakeLock();
+    const runTurn = vi.fn(
+      async (
+        _session: unknown,
+        _text: string,
+        opts?: { eventHook?: (e: unknown) => void },
+      ) => {
+        opts?.eventHook?.({
+          type: "llm_event",
+          event: { type: "assistant_reply", text: "seen" },
+        });
+        return { reason: "reply", stepCount: 1 };
+      },
+    );
+    const runtime = fakeRuntime({
+      runTurn,
+      createSession: () => ({
+        id: "s-file",
+        status: "active",
+        turnCount: 0,
+        stepCount: 0,
+      }),
+      sessionStore: { load: () => null },
+    } as unknown as Partial<AgentRuntime>);
+    const channel = new TelegramChannel({
+      runtime,
+      config: makeConfig(dir, 42),
+      token: "1234:abcdef",
+      logger,
+      botFactory: factory,
+      lock,
+      emitStatus: () => undefined,
+    });
+    await channel.start();
+    expect(channel.state()).toBe("up");
+    expect(state.fileHandler).not.toBeNull();
+
+    await state.fileHandler!({
+      from: { id: 42 },
+      chat: { id: 42, type: "private" },
+      message_id: 3,
+      caption: "look",
+      file: { kind: "photo", file_id: "f1", file_size: 3 },
+    });
+
+    expect(runTurn).toHaveBeenCalledTimes(1);
+    const message = runTurn.mock.calls[0]![1];
+    const inboxRoot = join(dir, "inbox", "telegram");
+    const path = /^- (\S+) \(image\/jpeg, 3 B\)$/m.exec(message)?.[1];
+    expect(path).toBeDefined();
+    expect(path!.startsWith(inboxRoot)).toBe(true);
+    expect(existsSync(path!)).toBe(true);
+    expect(state.sendMessageCalls.some((c) => c.text === "seen")).toBe(true);
+    await channel.stop();
   });
 });

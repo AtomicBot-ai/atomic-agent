@@ -8,7 +8,12 @@ import type { TuiAppCallbacks } from "../tui-app.js";
 import type { TuiState } from "../tui-state.js";
 import type { ContextUsageView } from "../select-context-usage.js";
 import { mixColor } from "../theme/mix-color.js";
-import { getActiveTheme, setActiveTheme, THEMES, theme } from "../theme/theme.js";
+import {
+  getActiveTheme,
+  setActiveTheme,
+  THEMES,
+  theme,
+} from "../theme/theme.js";
 import { ContextChip, groundFor } from "./context-chip.js";
 
 const original = getActiveTheme();
@@ -150,9 +155,9 @@ describe("the chip's ground", () => {
     expect(groundFor(usage({ conversationPercent: 12, droppedTurns: 3 }))).toBe(
       theme.colors.accentAlt,
     );
-    expect(groundFor(usage({ conversationPercent: 100, droppedTurns: 3 }))).toBe(
-      theme.colors.accentAlt,
-    );
+    expect(
+      groundFor(usage({ conversationPercent: 100, droppedTurns: 3 })),
+    ).toBe(theme.colors.accentAlt);
   });
 
   it("sits at the quiet end when the fill is unknown", () => {
@@ -163,7 +168,11 @@ describe("the chip's ground", () => {
   });
 });
 
-function press(x: number, y: number, button: "left" | "right" = "left"): TuiMouseEvent {
+function press(
+  x: number,
+  y: number,
+  button: "left" | "right" = "left",
+): TuiMouseEvent {
   return {
     kind: "press",
     button,
@@ -204,7 +213,12 @@ describe("clicking the chip", () => {
     // the effect after that commit, so a freshly mounted chip is not
     // hit-testable on the very first tick.
     await new Promise((resolve) => setTimeout(resolve, 120));
-    return { registry, actions, frame: () => (lastFrame() ?? "").replace(SGR, ""), unmount };
+    return {
+      registry,
+      actions,
+      frame: () => (lastFrame() ?? "").replace(SGR, ""),
+      unmount,
+    };
   }
 
   it("opens the detail panel", async () => {

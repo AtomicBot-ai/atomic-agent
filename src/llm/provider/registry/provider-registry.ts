@@ -14,7 +14,11 @@ import {
 
 export type { LlmProviderConfigEntry, UserModelConfigEntry, ResolvedLlmConfig };
 
-export { registerProviderKind, knownProviderKinds, resolveLlmConfig } from "./provider-types.js";
+export {
+  registerProviderKind,
+  knownProviderKinds,
+  resolveLlmConfig,
+} from "./provider-types.js";
 
 export class ProviderRegistry {
   private readonly providers: Map<string, LlmProvider>;

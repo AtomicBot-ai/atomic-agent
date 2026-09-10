@@ -111,7 +111,17 @@ export type StepEvent =
       source: "auto";
       stepIndex: number;
     }
-  | { type: "assistant_reply"; text: string }
+  | {
+      type: "assistant_reply";
+      text: string;
+      /**
+       * Absolute paths of files the reply delivers alongside the text
+       * (`reply.attachments`, validated and resolved by the tool).
+       * Absent when the reply carries none. Channels post them after
+       * the text; the TUI lists them under the bubble.
+       */
+      attachments?: readonly string[];
+    }
   /**
    * Emitted once when the first `parseToolCall` threw and the executor
    * re-runs the LLM call to recover. Includes the failure reason so

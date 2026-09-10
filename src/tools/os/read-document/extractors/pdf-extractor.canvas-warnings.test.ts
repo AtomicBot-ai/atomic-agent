@@ -96,7 +96,9 @@ async function makeCanvasFreeSandbox(): Promise<string> {
     dereference: true,
     filter: (src) => {
       const rel = src.slice(pdfjsRoot.length);
-      return !rel.startsWith(`${sep}node_modules`) && !rel.startsWith(`${sep}web`);
+      return (
+        !rel.startsWith(`${sep}node_modules`) && !rel.startsWith(`${sep}web`)
+      );
     },
   });
   return dir;

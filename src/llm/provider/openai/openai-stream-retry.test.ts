@@ -507,7 +507,11 @@ describe("OpenAiProvider stream transport retry (cancellation and commit orderin
     // the dead attempt's text.
     let consumeCalls = 0;
     const consumer: StreamConsumer = {
-      async *consume(): AsyncGenerator<StreamChunk, StreamFinalResult | void, void> {
+      async *consume(): AsyncGenerator<
+        StreamChunk,
+        StreamFinalResult | void,
+        void
+      > {
         consumeCalls += 1;
         if (consumeCalls === 1) {
           yield { delta: "ghost", reasoningDelta: "", done: true };

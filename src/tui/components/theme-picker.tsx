@@ -97,7 +97,11 @@ export function ThemePicker(props: ThemePickerProps): ReactElement {
   );
 }
 
-function computeWindowStart(cursor: number, total: number, size: number): number {
+function computeWindowStart(
+  cursor: number,
+  total: number,
+  size: number,
+): number {
   if (total <= size) return 0;
   if (cursor < size) return 0;
   return Math.min(cursor - size + 1, total - size);
@@ -129,9 +133,7 @@ function ThemeRow({
           {theme.glyphs.bullet}
         </Text>
       ))}
-      {current ? (
-        <Text color={theme.colors.muted}>{"  (current)"}</Text>
-      ) : null}
+      {current ? <Text color={theme.colors.muted}>{"  (current)"}</Text> : null}
     </Box>
   );
 }

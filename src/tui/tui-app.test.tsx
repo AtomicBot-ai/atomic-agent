@@ -1,10 +1,6 @@
 import { render } from "ink-testing-library";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import {
-  makeTuiEventBus,
-  TuiApp,
-  type TuiAppCallbacks,
-} from "./tui-app.js";
+import { makeTuiEventBus, TuiApp, type TuiAppCallbacks } from "./tui-app.js";
 import type { TuiSessionInfo } from "./tui-state.js";
 
 const SESSION: TuiSessionInfo = {

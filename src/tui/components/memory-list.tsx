@@ -50,7 +50,10 @@ export function MemoryList(props: MemoryListProps): ReactElement {
           key={row.rowKey}
           selected={idx + windowStart === clamped}
           onSelect={(mouse) =>
-            mouse.dispatch({ type: "memory_cursor_set", row: idx + windowStart })
+            mouse.dispatch({
+              type: "memory_cursor_set",
+              row: idx + windowStart,
+            })
           }
           onActivate={pressEnter(handleMemoryTabKey)}
         >
@@ -68,10 +71,10 @@ export function MemoryList(props: MemoryListProps): ReactElement {
 function HeaderRow({ channel }: { channel: string }): ReactElement {
   return (
     <Box>
+      <Text color={theme.colors.muted}>{"  "}primary secondary / meta</Text>
       <Text color={theme.colors.muted}>
-        {"  "}primary                    secondary / meta
+        {"     "}[{channel}]
       </Text>
-      <Text color={theme.colors.muted}>{"     "}[{channel}]</Text>
     </Box>
   );
 }
@@ -120,7 +123,11 @@ function truncate(text: string, max: number): string {
   return `${text.slice(0, max - 1)}…`;
 }
 
-function computeWindowStart(cursor: number, total: number, size: number): number {
+function computeWindowStart(
+  cursor: number,
+  total: number,
+  size: number,
+): number {
   if (total <= size) return 0;
   if (cursor < size) return 0;
   return Math.min(cursor - size + 1, total - size);

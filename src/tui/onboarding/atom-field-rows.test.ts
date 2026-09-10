@@ -41,7 +41,9 @@ describe("buildAtomRows", () => {
   });
 
   it("draws the atom at its rounded cell and nowhere else", () => {
-    const rows = text(buildAtomRows(field([atom({ column: 4.4, row: 2.4 })]), BOUNDS));
+    const rows = text(
+      buildAtomRows(field([atom({ column: 4.4, row: 2.4 })]), BOUNDS),
+    );
     expect(rows[2]).toBe(`${" ".repeat(4)}${ATOM_GLYPH}`);
     expect(rows.filter((row) => row.includes(ATOM_GLYPH))).toHaveLength(1);
   });
@@ -53,12 +55,17 @@ describe("buildAtomRows", () => {
   });
 
   it("skips a dormant atom rather than drawing it where it died", () => {
-    const rows = text(buildAtomRows(field([atom({ dormantSteps: 3 })]), BOUNDS));
+    const rows = text(
+      buildAtomRows(field([atom({ dormantSteps: 3 })]), BOUNDS),
+    );
     expect(rows.join("")).toBe("");
   });
 
   it("marks a collided atom's cells hot and leaves the rest cold", () => {
-    const runs = buildAtomRows(field([atom({ hotSteps: COLLISION_STEPS })]), BOUNDS);
+    const runs = buildAtomRows(
+      field([atom({ hotSteps: COLLISION_STEPS })]),
+      BOUNDS,
+    );
     const hot = runs[2]!.filter((run) => run.hot);
     expect(hot.map((run) => run.text).join("")).toBe(ATOM_COLLISION_GLYPH);
     expect(runs[0]!.some((run) => run.hot)).toBe(false);
@@ -66,7 +73,9 @@ describe("buildAtomRows", () => {
 
   it("swaps the glyph while hot, so a collision reads without colour", () => {
     const cold = text(buildAtomRows(field([atom()]), BOUNDS));
-    const hot = text(buildAtomRows(field([atom({ hotSteps: COLLISION_STEPS })]), BOUNDS));
+    const hot = text(
+      buildAtomRows(field([atom({ hotSteps: COLLISION_STEPS })]), BOUNDS),
+    );
     expect(cold[2]).toContain(ATOM_GLYPH);
     expect(hot[2]).toContain(ATOM_COLLISION_GLYPH);
     expect(hot[2]).not.toContain(ATOM_GLYPH);
@@ -96,7 +105,10 @@ describe("buildAtomRows", () => {
 
   it("clips an atom against the right edge rather than widening the row", () => {
     const rows = text(
-      buildAtomRows(field([atom({ column: BOUNDS.columns - 1, row: 1 })]), BOUNDS),
+      buildAtomRows(
+        field([atom({ column: BOUNDS.columns - 1, row: 1 })]),
+        BOUNDS,
+      ),
     );
     expect(rows[1]!.length).toBeLessThanOrEqual(BOUNDS.columns);
     expect(rows[1]).toContain("(");

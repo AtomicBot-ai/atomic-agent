@@ -41,7 +41,8 @@ export type SanitizationError =
 export function sanitizeEntryPath(
   destDir: string,
   rawPath: string,
-): { ok: true; value: SanitizedPath } | { ok: false; error: SanitizationError } {
+):
+  { ok: true; value: SanitizedPath } | { ok: false; error: SanitizationError } {
   if (typeof rawPath !== "string" || rawPath.length === 0) {
     return { ok: false, error: { reason: "empty_path" } };
   }
@@ -91,7 +92,10 @@ export class ExtractBudget {
 
   chargeEntry(size: number): BudgetDecision {
     if (this.entryCount >= this.limits.maxEntries) {
-      return { ok: false, reason: `max_entries_exceeded (${this.limits.maxEntries})` };
+      return {
+        ok: false,
+        reason: `max_entries_exceeded (${this.limits.maxEntries})`,
+      };
     }
     if (size > this.limits.maxEntryBytes) {
       return {
@@ -115,9 +119,7 @@ export class ExtractBudget {
   }
 }
 
-export type BudgetDecision =
-  | { ok: true }
-  | { ok: false; reason: string };
+export type BudgetDecision = { ok: true } | { ok: false; reason: string };
 
 /**
  * Describe a sanitisation failure in a single human-readable string that is

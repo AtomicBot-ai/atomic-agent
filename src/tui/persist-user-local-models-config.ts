@@ -19,7 +19,9 @@ export function normalizeLocalLlmBaseUrl(raw: string): string {
   if (trimmed.length === 0) {
     throw new Error("URL is empty");
   }
-  const withScheme = /^https?:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
+  const withScheme = /^https?:\/\//i.test(trimmed)
+    ? trimmed
+    : `http://${trimmed}`;
   try {
     new URL(withScheme);
   } catch {
@@ -52,7 +54,10 @@ export function isLoopbackBaseUrl(url: string): boolean {
  * so callers that tear the managed daemon down on a switch to external
  * must skip it here, or they would kill the server they just pointed at.
  */
-export function pointsAtManagedDaemon(url: string, managedPort: number): boolean {
+export function pointsAtManagedDaemon(
+  url: string,
+  managedPort: number,
+): boolean {
   try {
     const parsed = new URL(url);
     return isLoopbackBaseUrl(url) && parsed.port === String(managedPort);

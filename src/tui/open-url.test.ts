@@ -121,10 +121,7 @@ describe("openUrlInBrowser", () => {
   });
 
   it("returns a missing opener as a reason instead of throwing", async () => {
-    const { child } = fakeChild(
-      "error",
-      new Error("spawn xdg-open ENOENT"),
-    );
+    const { child } = fakeChild("error", new Error("spawn xdg-open ENOENT"));
     const spawn = vi.fn(() => child) as unknown as TerminalSpawn;
     const result = await openUrlInBrowser("https://a.io/", {
       platform: "linux",

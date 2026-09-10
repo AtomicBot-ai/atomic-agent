@@ -19,9 +19,7 @@ export const osWindowListTool: ToolDefinition = {
     const os = platform();
     const script = listScript(os);
     if (!script) {
-      throw new Error(
-        `os.window.list: unsupported platform ${os}`,
-      );
+      throw new Error(`os.window.list: unsupported platform ${os}`);
     }
     const result = await runCommand(script.cmd, script.args, {
       cwd: ctx.workingDir,
@@ -78,9 +76,9 @@ export const osWindowFocusTool: ToolDefinition = {
   },
 };
 
-function listScript(os: NodeJS.Platform):
-  | { cmd: string; args: string[] }
-  | null {
+function listScript(
+  os: NodeJS.Platform,
+): { cmd: string; args: string[] } | null {
   switch (os) {
     case "darwin":
       return {
@@ -142,14 +140,14 @@ function buildWindowsFocusScript(title: string): string {
   const needle = escapePowerShell(title);
   return [
     "$ErrorActionPreference = 'Stop'",
-    "Add-Type @\"",
+    'Add-Type @"',
     "using System;",
     "using System.Runtime.InteropServices;",
     "public class AtomicWin32 {",
     '  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);',
     '  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);',
     "}",
-    "\"@",
+    '"@',
     `$p = Get-Process | Where-Object { $_.MainWindowTitle -like '*${needle}*' } | Select-Object -First 1`,
     "if (-not $p) { Write-Error 'no matching window'; exit 1 }",
     "[void][AtomicWin32]::ShowWindow($p.MainWindowHandle, 9)",

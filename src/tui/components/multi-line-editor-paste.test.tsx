@@ -26,7 +26,9 @@ const settle = (): Promise<void> =>
 function mount(value: string, clipboardText: string) {
   const onChange = vi.fn();
   const app = render(
-    <ClipboardReaderProvider reader={createStaticClipboardReader(clipboardText)}>
+    <ClipboardReaderProvider
+      reader={createStaticClipboardReader(clipboardText)}
+    >
       <MultiLineEditor
         value={value}
         focus

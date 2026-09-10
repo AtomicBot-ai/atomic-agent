@@ -1,10 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  installSkill,
-  type InstallSkillResult,
-} from "../skill-installer.js";
+import { installSkill, type InstallSkillResult } from "../skill-installer.js";
 import { parseSkillFile, type SkillManifest } from "../skill-manifest.js";
 import {
   GithubSkillClient,
@@ -36,9 +33,7 @@ import {
  */
 
 export type SkillHubInstallErrorCode =
-  | "invalid_identifier"
-  | "manifest_missing"
-  | "dangerous_blocked";
+  "invalid_identifier" | "manifest_missing" | "dangerous_blocked";
 
 export class SkillHubInstallError extends Error {
   constructor(

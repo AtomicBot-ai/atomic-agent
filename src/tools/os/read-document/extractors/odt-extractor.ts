@@ -48,10 +48,14 @@ function visit(nodes: ReturnType<typeof parseXml>, out: string[]): void {
     if (tag === "text:h") {
       const level = parseOutlineLevel(attrs);
       const inline: string[] = [];
-      walkText(children as ReturnType<typeof parseXml>, {
-        isTextTag: () => false,
-        paragraphTags: () => false,
-      }, inline);
+      walkText(
+        children as ReturnType<typeof parseXml>,
+        {
+          isTextTag: () => false,
+          paragraphTags: () => false,
+        },
+        inline,
+      );
       // Harvest plain text too (headings contain spans).
       const text = collectInlineText(children as ReturnType<typeof parseXml>);
       if (text.trim().length > 0) {

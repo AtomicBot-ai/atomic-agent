@@ -29,7 +29,10 @@ export function buildNotesStoreTool(
     readonly: false,
     async run(rawArgs, ctx) {
       const content = rawArgs.content;
-      if (typeof content === "string" && content.length > options.maxContentChars) {
+      if (
+        typeof content === "string" &&
+        content.length > options.maxContentChars
+      ) {
         return compressToolResult({
           tool: "memory.notes.store",
           status: "error",

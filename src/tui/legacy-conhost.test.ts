@@ -92,6 +92,8 @@ describe("legacyConhostStartupHint", () => {
         env: { WT_SESSION: "a-guid" },
       }),
     ).toBeNull();
-    expect(legacyConhostStartupHint({ platform: "darwin", env: {} })).toBeNull();
+    expect(
+      legacyConhostStartupHint({ platform: "darwin", env: {} }),
+    ).toBeNull();
   });
 });

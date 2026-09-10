@@ -24,9 +24,14 @@ const ALL_ENABLED: ToolGateSourceConfig = {
     lessons: { enabled: true },
     procedures: { enabled: true },
   },
+  atomicMail: { address: "atag-1@atomicmail.ai" },
   tasks: { enabled: true, agentToolsEnabled: true },
   mcp: { servers: [{}] },
+  llm: { runMode: { mode: "fusion" } },
 };
+
+/** The env the GitHub gate reads; a token means `github.*` is listed. */
+const WITH_GITHUB = { GITHUB_TOKEN: "ghp_test" };
 
 describe("listToolFamilies", () => {
   it("groups tools by namespace and sorts both levels", () => {
@@ -37,11 +42,15 @@ describe("listToolFamilies", () => {
     expect(fs).toBeDefined();
     expect(fs!.tools).toContain("os.fs.read");
     expect(fs!.tools).toContain("os.fs.write");
-    expect(fs!.tools).toEqual([...fs!.tools].sort((a, b) => a.localeCompare(b)));
+    expect(fs!.tools).toEqual(
+      [...fs!.tools].sort((a, b) => a.localeCompare(b)),
+    );
   });
 
   it("covers the families users ask about", () => {
-    const names = listToolFamilies(DEFAULT_TOOL_DESCRIPTORS).map((f) => f.family);
+    const names = listToolFamilies(DEFAULT_TOOL_DESCRIPTORS).map(
+      (f) => f.family,
+    );
     for (const family of ["os.fs", "os.shell", "os.web", "browser"]) {
       expect(names).toContain(family);
     }
@@ -50,8 +59,23 @@ describe("listToolFamilies", () => {
 
 describe("effectiveToolDescriptors", () => {
   it("keeps the full catalog when every gate is open", () => {
-    const names = effectiveToolDescriptors(ALL_ENABLED).map((d) => d.name);
-    expect(names).toEqual(DEFAULT_TOOL_DESCRIPTORS.map((d) => d.name));
+    // Every gate open means both of them: a GitHub token in the hub and
+    // an Atomic Mail key in the environment.
+    process.env.ATOMIC_MAIL_API_KEY = "k";
+    try {
+      const names = effectiveToolDescriptors(ALL_ENABLED, WITH_GITHUB).map(
+        (d) => d.name,
+      );
+      expect(names).toEqual(DEFAULT_TOOL_DESCRIPTORS.map((d) => d.name));
+    } finally {
+      delete process.env.ATOMIC_MAIL_API_KEY;
+    }
+  });
+
+  it("drops github.* when the hub holds no token", () => {
+    const names = effectiveToolDescriptors(ALL_ENABLED, {}).map((d) => d.name);
+    expect(names).not.toContain("github.pr.create");
+    expect(names).toContain("os.git.push");
   });
 
   it("drops browser.* when the browser is disabled in config", () => {
@@ -74,6 +98,7 @@ describe("effectiveToolDescriptors", () => {
   it("drops tasks.* when agent task tools are off", () => {
     const names = effectiveToolDescriptors({
       ...ALL_ENABLED,
+      atomicMail: { address: "atag-1@atomicmail.ai" },
       tasks: { enabled: true, agentToolsEnabled: false },
     }).map((d) => d.name);
     expect(names.some((n) => n.startsWith("tasks."))).toBe(false);
@@ -104,7 +129,9 @@ describe("searchTools", () => {
   });
 
   it("matches a substring of a tool name", () => {
-    expect(searchTools("grep", DEFAULT_TOOL_DESCRIPTORS)).toContain("os.fs.grep");
+    expect(searchTools("grep", DEFAULT_TOOL_DESCRIPTORS)).toContain(
+      "os.fs.grep",
+    );
   });
 
   it("is case-insensitive", () => {

@@ -7,7 +7,9 @@ import {
   type SessionPickerEntry,
 } from "./tui-state.js";
 
-function entry(overrides: Partial<SessionPickerEntry> = {}): SessionPickerEntry {
+function entry(
+  overrides: Partial<SessionPickerEntry> = {},
+): SessionPickerEntry {
   return {
     sessionId: "s1",
     workingDir: "/tmp",
@@ -15,6 +17,7 @@ function entry(overrides: Partial<SessionPickerEntry> = {}): SessionPickerEntry 
     stepCount: 0,
     updatedAt: Date.now(),
     preview: "(empty)",
+    pinned: false,
     ...overrides,
   };
 }
@@ -173,22 +176,19 @@ describe("agent_event session filter", () => {
     ["s-visible", "s-visible", true],
     ["s-background", "s-visible", false],
     [undefined, "s-visible", true],
-  ])(
-    "event tagged %s with %s visible applied=%s",
-    (tag, visible, applied) => {
-      const base = apply(createInitialTuiState(fakeSession()), [
-        { type: "session_created", sessionId: visible },
-      ]);
-      const next = reduceTuiState(base, {
-        type: "agent_event",
-        event: userEvent,
-        ...(tag === undefined ? {} : { sessionId: tag }),
-      });
-      if (applied) {
-        expect(next.messages.some((m) => m.text === "hi")).toBe(true);
-      } else {
-        expect(next).toBe(base);
-      }
-    },
-  );
+  ])("event tagged %s with %s visible applied=%s", (tag, visible, applied) => {
+    const base = apply(createInitialTuiState(fakeSession()), [
+      { type: "session_created", sessionId: visible },
+    ]);
+    const next = reduceTuiState(base, {
+      type: "agent_event",
+      event: userEvent,
+      ...(tag === undefined ? {} : { sessionId: tag }),
+    });
+    if (applied) {
+      expect(next.messages.some((m) => m.text === "hi")).toBe(true);
+    } else {
+      expect(next).toBe(base);
+    }
+  });
 });

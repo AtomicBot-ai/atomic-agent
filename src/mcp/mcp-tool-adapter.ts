@@ -98,11 +98,11 @@ export function createMcpToolDefinition(
   // claim, exactly as the MCP spec defines `readOnlyHint`.
   const dangerous = gate?.dangerous;
   const gated =
-    gate?.trust === "approval_gated" &&
-    meta.annotations?.readOnlyHint !== true;
+    gate?.trust === "approval_gated" && meta.annotations?.readOnlyHint !== true;
   return {
     name: meta.qualifiedName,
-    description: meta.description || `MCP tool ${meta.rawName} on ${meta.server}`,
+    description:
+      meta.description || `MCP tool ${meta.rawName} on ${meta.server}`,
     // MCP tools are arbitrary third-party code — even when the server
     // advertises `readOnlyHint`, we cannot trust the wire flag for
     // batch-safety. The runtime's batching decision is owned by the
@@ -257,9 +257,7 @@ export function projectMcpResponseToText(res: unknown): string {
       const r = block.resource;
       if (r && typeof r === "object") {
         const uri = (r as { uri?: unknown }).uri;
-        parts.push(
-          `[resource ${typeof uri === "string" ? uri : "(unknown)"}]`,
-        );
+        parts.push(`[resource ${typeof uri === "string" ? uri : "(unknown)"}]`);
       } else {
         parts.push("[resource]");
       }

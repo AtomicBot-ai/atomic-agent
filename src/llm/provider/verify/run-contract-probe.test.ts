@@ -141,7 +141,9 @@ function scriptedFetch(responses: readonly (() => Response)[]): {
   const sent: Record<string, unknown>[] = [];
   let index = 0;
   const fetchImpl = vi.fn(async (_url: unknown, init?: RequestInit) => {
-    sent.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
+    sent.push(
+      JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>,
+    );
     const next = responses[index] ?? responses[responses.length - 1];
     index += 1;
     return next!();
@@ -170,6 +172,9 @@ describe("runProviderContractProbe", () => {
 
     const body = script.bodies()[0]!;
     expect(body.stream).toBe(true);
+    // The probe must show the route every field a turn sends, and a
+    // turn asks for usage on every stream.
+    expect(body.stream_options).toEqual({ include_usage: true });
     expect(body.model).toBe("vendor/some-model");
     expect(body.tool_choice).toEqual({
       type: "function",
@@ -180,7 +185,10 @@ describe("runProviderContractProbe", () => {
 
   it("reports a forced tool choice the route refuses but tools it accepts", async () => {
     const script = scriptedFetch([
-      () => errorResponse(400, { error: "tool_choice of type function is not supported" }),
+      () =>
+        errorResponse(400, {
+          error: "tool_choice of type function is not supported",
+        }),
       () => streamResponse(TOOL_CALL_STREAM),
     ]);
     const result = await runProviderContractProbe(TARGET, {

@@ -6,7 +6,10 @@ import {
   switchFilterTerms,
 } from "./composer-switch-filter.js";
 
-const row = (label: string, detail = ""): { label: string; detail: string } => ({
+const row = (
+  label: string,
+  detail = "",
+): { label: string; detail: string } => ({
   label,
   detail,
 });
@@ -18,9 +21,9 @@ describe("the switch filter's matching", () => {
   });
 
   it("is case-insensitive against the label", () => {
-    expect(
-      matchesSwitchFilter(row("anthropic/Claude-Opus-5"), ["opus"]),
-    ).toBe(true);
+    expect(matchesSwitchFilter(row("anthropic/Claude-Opus-5"), ["opus"])).toBe(
+      true,
+    );
   });
 
   it("ANDs terms so a second word narrows", () => {
@@ -30,9 +33,9 @@ describe("the switch filter's matching", () => {
   });
 
   it("falls back to the detail for terms the label cannot answer", () => {
-    expect(
-      matchesSwitchFilter(row("openrouter", "no API key"), ["api"]),
-    ).toBe(true);
+    expect(matchesSwitchFilter(row("openrouter", "no API key"), ["api"])).toBe(
+      true,
+    );
     expect(
       matchesSwitchFilter(row("openrouter", "no API key"), ["wizard"]),
     ).toBe(false);

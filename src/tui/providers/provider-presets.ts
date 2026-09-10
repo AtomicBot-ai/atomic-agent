@@ -263,9 +263,7 @@ export function findProviderPreset(id: string): ProviderPreset | undefined {
  * Reconfiguring such an entry must keep its service identity: the right
  * env var on the key screen and the same entry id on save.
  */
-export function presetForEntryId(
-  entryId: string,
-): ProviderPreset | undefined {
+export function presetForEntryId(entryId: string): ProviderPreset | undefined {
   const direct = findProviderPreset(entryId);
   if (direct) return direct;
   const suffixed = /^(.+)-\d+$/.exec(entryId);

@@ -33,17 +33,17 @@ describe("GET /api/capabilities", () => {
     // while any category still prompts (level < 5), `false` only at 5.
     harness = await startTestHarness({ approvalLevel: 5 });
 
-    expect((await fetchCapabilities(harness.baseUrl)).agent.approvalRequired).toBe(
-      false,
-    );
+    expect(
+      (await fetchCapabilities(harness.baseUrl)).agent.approvalRequired,
+    ).toBe(false);
     harness.runtime.setApprovalLevel(4);
-    expect((await fetchCapabilities(harness.baseUrl)).agent.approvalRequired).toBe(
-      true,
-    );
+    expect(
+      (await fetchCapabilities(harness.baseUrl)).agent.approvalRequired,
+    ).toBe(true);
     harness.runtime.setApprovalLevel(1);
-    expect((await fetchCapabilities(harness.baseUrl)).agent.approvalRequired).toBe(
-      true,
-    );
+    expect(
+      (await fetchCapabilities(harness.baseUrl)).agent.approvalRequired,
+    ).toBe(true);
   });
 });
 

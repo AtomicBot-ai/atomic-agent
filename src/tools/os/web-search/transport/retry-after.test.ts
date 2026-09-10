@@ -40,9 +40,15 @@ describe("parseRetryAfterMs", () => {
 describe("computeRetryDelayMs", () => {
   it("doubles the base delay per attempt when the server gave no header", () => {
     const policy = DEFAULT_SEARCH_RETRY_POLICY;
-    expect(computeRetryDelayMs({ attempt: 1, policy, retryAfterMs: null })).toBe(500);
-    expect(computeRetryDelayMs({ attempt: 2, policy, retryAfterMs: null })).toBe(1000);
-    expect(computeRetryDelayMs({ attempt: 3, policy, retryAfterMs: null })).toBe(2000);
+    expect(
+      computeRetryDelayMs({ attempt: 1, policy, retryAfterMs: null }),
+    ).toBe(500);
+    expect(
+      computeRetryDelayMs({ attempt: 2, policy, retryAfterMs: null }),
+    ).toBe(1000);
+    expect(
+      computeRetryDelayMs({ attempt: 3, policy, retryAfterMs: null }),
+    ).toBe(2000);
   });
 
   it("prefers the server's Retry-After over its own schedule", () => {

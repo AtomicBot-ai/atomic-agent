@@ -5,6 +5,7 @@ import {
   userTurn,
   type ConversationTurn,
 } from "../../session/conversation-turn.js";
+import { macroTurnStartsFromTurns } from "../../session/macro-turn-starts.js";
 import type { SessionState } from "../../session/session-state.js";
 import type { HermesMessage, HermesSession } from "./hermes-source.js";
 
@@ -20,6 +21,12 @@ interface ParsedToolCall {
  * Map one Hermes session plus its messages into a native `SessionState`.
  * Pure — no I/O. Roles are projected onto `ConversationTurn`s; REAL
  * second timestamps are converted to integer milliseconds.
+ *
+ * An assistant row that carries both `content` and `tool_calls` emits
+ * the reply first and then one `assistant_tool_call` per call, the way
+ * the model produced them; reasoning rides the reply when there is
+ * text, else the first call. Macro-turn starts are recorded at every
+ * user row so the pairs cap segments the import like a native session.
  */
 export function mapHermesSession(
   session: HermesSession,
@@ -49,6 +56,7 @@ export function mapHermesSession(
     worldSnapshot: null,
     stepCount: 0,
     turnCount,
+    macroTurnStarts: macroTurnStartsFromTurns(turns),
     turns,
     createdAt,
     updatedAt: lastMessageAt,
@@ -67,12 +75,17 @@ function appendMessageTurns(
   message: HermesMessage,
 ): void {
   const at = secondsToMs(message.timestampSeconds);
-  const reasoning = message.reasoning ?? undefined;
+  const reasoning =
+    message.reasoning !== null && message.reasoning.length > 0
+      ? message.reasoning
+      : undefined;
 
   switch (message.role) {
-    case "user":
-      turns.push(userTurn(message.content ?? "", at));
+    case "user": {
+      const text = message.content ?? "";
+      if (text.length > 0) turns.push(userTurn(text, at));
       return;
+    }
     case "tool":
       turns.push(
         toolResultTurn({
@@ -84,30 +97,34 @@ function appendMessageTurns(
       );
       return;
     case "assistant": {
+      const text = message.content ?? "";
       const calls = parseToolCalls(message.toolCalls);
-      if (calls.length > 0) {
-        calls.forEach((call, index) => {
-          turns.push(
-            assistantToolCallTurn({
-              tool: call.name,
-              args: call.args,
-              at,
-              // One inference => one reasoning block; attach to the first call.
-              ...(index === 0 && reasoning !== undefined
-                ? { reasoning }
-                : {}),
-            }),
-          );
-        });
-        return;
+      if (text.length > 0 || (calls.length === 0 && reasoning !== undefined)) {
+        // The empty-text case here is a thinking-only row: the TUI
+        // renders it as a reasoning-only message. An assistant row with
+        // no text, no calls and no reasoning has nothing to show and is
+        // dropped rather than becoming a blank bubble.
+        turns.push(
+          assistantReplyTurn(text, {
+            at,
+            ...(reasoning !== undefined ? { reasoning } : {}),
+          }),
+        );
       }
-      // Plain assistant reply (may also carry an empty content string).
-      turns.push(
-        assistantReplyTurn(message.content ?? "", {
-          at,
-          ...(reasoning !== undefined ? { reasoning } : {}),
-        }),
-      );
+      calls.forEach((call, index) => {
+        turns.push(
+          assistantToolCallTurn({
+            tool: call.name,
+            args: call.args,
+            at,
+            // One inference => one reasoning block. It rode the reply
+            // when there was one; otherwise it attaches to the first call.
+            ...(index === 0 && text.length === 0 && reasoning !== undefined
+              ? { reasoning }
+              : {}),
+          }),
+        );
+      });
       return;
     }
     default:

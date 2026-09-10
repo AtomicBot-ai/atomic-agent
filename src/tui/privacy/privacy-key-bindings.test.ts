@@ -2,7 +2,11 @@ import type { Key } from "ink";
 import { describe, expect, it, vi } from "vitest";
 
 import type { TuiAppCallbacks } from "../tui-app.js";
-import { createInitialTuiState, type TuiSessionInfo, type TuiState } from "../tui-state.js";
+import {
+  createInitialTuiState,
+  type TuiSessionInfo,
+  type TuiState,
+} from "../tui-state.js";
 import { handlePrivacyTabKey } from "./privacy-key-bindings.js";
 
 const SESSION: TuiSessionInfo = {

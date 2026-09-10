@@ -37,14 +37,18 @@ describe("models-catalog", () => {
   // reasoning marker `detectModelProfile` keys on) — not a silent field.
   it("ships no chat template override on any catalog entry", () => {
     for (const def of LOCAL_MODELS_CATALOG) {
-      expect(def.chatTemplateAsset, `${def.id} must not override its chat template`)
-        .toBeUndefined();
+      expect(
+        def.chatTemplateAsset,
+        `${def.id} must not override its chat template`,
+      ).toBeUndefined();
     }
   });
 
   it("throws on unknown id", () => {
     expect(() =>
-      getLocalModelDef("not-a-model" as import("./models-catalog.js").LocalModelId),
+      getLocalModelDef(
+        "not-a-model" as import("./models-catalog.js").LocalModelId,
+      ),
     ).toThrow(/unknown local model id/);
   });
 
@@ -97,10 +101,11 @@ describe("models-catalog", () => {
     // noMTP on purpose: the fused quants carry an inline MTP head the
     // daemon has no --model-draft wiring for; noMTP is plain GGUF.
     expect(last?.filename).toBe("Qwen3.8-27B-Uncensored-noMTP-Q4_K_M.gguf");
-    // The projector is not named "mmproj" in this repo — the installer
-    // keys on these fields, not on filename patterns, so that is fine.
+    // The repo renamed its projector to the conventional `mmproj-`
+    // prefix; the previous `…-vision-f16.gguf` URL answers 404 and
+    // stranded a fully downloaded model.
     expect(last?.supportsVision).toBe(true);
-    expect(last?.mmprojFilename).toBe("Qwen3.8-27B-Uncensored-vision-f16.gguf");
+    expect(last?.mmprojFilename).toBe("mmproj-Qwen3.8-27B-Uncensored-F16.gguf");
   });
 
   // Every uncensored entry must carry a warning tag — the onboarding row
@@ -110,6 +115,17 @@ describe("models-catalog", () => {
     for (const def of LOCAL_MODELS_CATALOG) {
       if (def.uncensored !== true) continue;
       expect(def.tag, `${def.id} must warn the operator`).toBeTruthy();
+    }
+  });
+
+  // The installer saves the projector under `mmprojFilename` and the
+  // daemon loads it from there; a filename that drifts from what the
+  // URL actually serves would download one file and look for another.
+  it("names each projector file exactly as its URL serves it", () => {
+    for (const def of LOCAL_MODELS_CATALOG) {
+      if (!def.mmprojUrl) continue;
+      const served = def.mmprojUrl.slice(def.mmprojUrl.lastIndexOf("/") + 1);
+      expect(def.mmprojFilename, `${def.id} projector filename`).toBe(served);
     }
   });
 

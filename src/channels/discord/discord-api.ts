@@ -1,5 +1,5 @@
 /**
- * The six Discord REST calls this channel makes, over `fetch`.
+ * The seven Discord REST calls this channel makes, over `fetch`.
  *
  * Rate limits are respected the cheap way: on a 429 we honour
  * `retry_after` once and retry. That is enough for a single-operator
@@ -7,6 +7,8 @@
  * reply; a full bucket-tracking client would be a lot of machinery for
  * traffic that is almost never concurrent.
  */
+
+import { readFile } from "node:fs/promises";
 
 import {
   DISCORD_API_BASE,
@@ -44,6 +46,8 @@ export interface DiscordApiOptions {
   token: string;
   baseUrl?: string;
   timeoutMs?: number;
+  /** Test seam; defaults to the global `fetch`. */
+  fetchImpl?: typeof fetch;
 }
 
 export class DiscordApi {
@@ -69,8 +73,7 @@ export class DiscordApi {
   /** The bot's own identity — used to detect @mentions and self-messages. */
   async currentUser(): Promise<DiscordUser> {
     const body = (await this.request("GET", "/users/@me")) as
-      | Record<string, unknown>
-      | undefined;
+      Record<string, unknown> | undefined;
     const id = body?.id;
     const username = body?.username;
     if (typeof id !== "string" || typeof username !== "string") {
@@ -113,10 +116,14 @@ export class DiscordApi {
     messageId: string,
     text: string,
   ): Promise<void> {
-    await this.request("PATCH", `/channels/${channelId}/messages/${messageId}`, {
-      content: text.slice(0, 2000),
-      components: [],
-    });
+    await this.request(
+      "PATCH",
+      `/channels/${channelId}/messages/${messageId}`,
+      {
+        content: text.slice(0, 2000),
+        components: [],
+      },
+    );
   }
 
   /**
@@ -136,6 +143,30 @@ export class DiscordApi {
     );
   }
 
+  /**
+   * Upload one local file to a channel as its own message. Multipart
+   * on the same messages endpoint: `payload_json` names the attachment
+   * slot, `files[0]` carries the bytes. Returns the message id.
+   */
+  async sendFile(
+    channelId: string,
+    file: { path: string; filename: string },
+  ): Promise<string | null> {
+    const bytes = await readFile(file.path);
+    const form = new FormData();
+    form.append(
+      "payload_json",
+      JSON.stringify({ attachments: [{ id: 0, filename: file.filename }] }),
+    );
+    form.append("files[0]", new Blob([bytes]), file.filename);
+    const body = (await this.request(
+      "POST",
+      `/channels/${channelId}/messages`,
+      form,
+    )) as { id?: unknown } | undefined;
+    return typeof body?.id === "string" ? body.id : null;
+  }
+
   /** Open (or reuse) the DM channel with a user. */
   async createDmChannel(userId: string): Promise<string> {
     const body = (await this.request("POST", "/users/@me/channels", {
@@ -153,16 +184,21 @@ export class DiscordApi {
     body?: unknown,
     attempt = 0,
   ): Promise<unknown> {
+    // A FormData body is a multipart upload: fetch writes the boundary
+    // into Content-Type itself, so the JSON header must stay off.
+    const multipart = body instanceof FormData;
     let res: Response;
     try {
-      res = await fetch(`${this.base}${path}`, {
+      res = await (this.opts.fetchImpl ?? fetch)(`${this.base}${path}`, {
         method,
         headers: {
           Authorization: `Bot ${this.opts.token}`,
-          "Content-Type": "application/json",
+          ...(multipart ? {} : { "Content-Type": "application/json" }),
           "User-Agent": "DiscordBot (https://atomicagent.io, 0.5.5)",
         },
-        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        ...(body === undefined
+          ? {}
+          : { body: multipart ? body : JSON.stringify(body) }),
         signal: AbortSignal.timeout(this.timeoutMs),
       });
     } catch (err) {
@@ -178,7 +214,7 @@ export class DiscordApi {
     }
     if (res.status === 401 || res.status === 403) {
       throw new DiscordApiError(
-        `Discord rejected the bot token (HTTP ${res.status}). Check it in the Integrations tab.`,
+        `Discord rejected the bot token (HTTP ${res.status}).`,
         res.status,
       );
     }

@@ -43,7 +43,7 @@ describe("LlamaServerClient.complete", () => {
 
     const result = await client.complete({
       prompt: "hello",
-      grammar: "root ::= \"ok\"",
+      grammar: 'root ::= "ok"',
       slotId: 2,
       maxTokens: 16,
     });
@@ -58,7 +58,10 @@ describe("LlamaServerClient.complete", () => {
     expect(result.slotId).toBe(2);
     expect(result.modelId).toBe("qwen-test");
     expect(captured).not.toBeNull();
-    const snapshot = captured as unknown as { url: string; body: Record<string, unknown> };
+    const snapshot = captured as unknown as {
+      url: string;
+      body: Record<string, unknown>;
+    };
     expect(snapshot.url).toBe("http://127.0.0.1:9999/completion");
     expect(snapshot.body.grammar).toBe('root ::= "ok"');
     expect(snapshot.body.slot_id).toBe(2);
@@ -71,17 +74,23 @@ describe("LlamaServerClient.complete", () => {
   it("reports the bare evaluated count when nothing was cached", async () => {
     const client = new LlamaServerClient({
       baseUrl: "http://127.0.0.1:9999",
-      fetchImpl: createMockFetch(async () =>
-        new Response(
-          JSON.stringify({
-            content: "ok",
-            stop: true,
-            truncated: false,
-            timings: { prompt_ms: 10, predicted_ms: 20, prompt_n: 40, predicted_n: 8 },
-            slot_id: 0,
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        ),
+      fetchImpl: createMockFetch(
+        async () =>
+          new Response(
+            JSON.stringify({
+              content: "ok",
+              stop: true,
+              truncated: false,
+              timings: {
+                prompt_ms: 10,
+                predicted_ms: 20,
+                prompt_n: 40,
+                predicted_n: 8,
+              },
+              slot_id: 0,
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
       ),
     });
 
@@ -117,7 +126,9 @@ describe("LlamaServerClient.complete", () => {
   it("throws LlamaServerError on non-2xx responses", async () => {
     const client = new LlamaServerClient({
       baseUrl: "http://127.0.0.1:9999",
-      fetchImpl: createMockFetch(async () => new Response("boom", { status: 503 })),
+      fetchImpl: createMockFetch(
+        async () => new Response("boom", { status: 503 }),
+      ),
       completionRetries: 1,
     });
     await expect(client.complete({ prompt: "x" })).rejects.toBeInstanceOf(
@@ -235,7 +246,9 @@ describe("LlamaServerClient.complete", () => {
           new Promise((_resolve, reject) => {
             calls += 1;
             init.signal?.addEventListener("abort", () => {
-              reject(Object.assign(new Error("aborted"), { name: "AbortError" }));
+              reject(
+                Object.assign(new Error("aborted"), { name: "AbortError" }),
+              );
             });
           }),
       ),
@@ -895,9 +908,9 @@ describe("extractLlamaErrorDetail", () => {
   });
 
   it("falls back to a top-level message field", () => {
-    expect(
-      extractLlamaErrorDetail(JSON.stringify({ message: "boom" })),
-    ).toBe("boom");
+    expect(extractLlamaErrorDetail(JSON.stringify({ message: "boom" }))).toBe(
+      "boom",
+    );
   });
 
   it("returns trimmed raw text when the body is not JSON", () => {

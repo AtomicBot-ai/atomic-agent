@@ -12,7 +12,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ToolContext } from "../tool-registry.js";
 import { osFsReadTool } from "./fs-read.js";
-import { parseReadCoverage, type ReadCoverageDetail } from "./fs-read-coverage.js";
+import {
+  parseReadCoverage,
+  type ReadCoverageDetail,
+} from "./fs-read-coverage.js";
 
 function makeCtx(workingDir: string): ToolContext {
   return {
@@ -89,10 +92,7 @@ describe("os.fs.read coverage detail", () => {
     await writeFile(join(dir, "real.txt"), "alpha\nbeta\n", "utf8");
     await symlink(join(dir, "real.txt"), join(dir, "link.txt"));
     const direct = await readCoverageOf(dir, { path: "real.txt" });
-    const viaLink = await osFsReadTool.run(
-      { path: "link.txt" },
-      makeCtx(dir),
-    );
+    const viaLink = await osFsReadTool.run({ path: "link.txt" }, makeCtx(dir));
     const linked = parseReadCoverage(viaLink.details)!;
     expect(linked.path).toBe(direct.path);
     expect(linked.path).toBe(await realpath(join(dir, "real.txt")));
@@ -125,8 +125,16 @@ describe("os.fs.read coverage detail", () => {
 
   it("keeps the fingerprint stable across reads of different ranges", async () => {
     await writeFile(join(dir, "a.txt"), "1\n2\n3\n4\n5\n6\n", "utf8");
-    const head = await readCoverageOf(dir, { path: "a.txt", offset: 1, limit: 2 });
-    const tail = await readCoverageOf(dir, { path: "a.txt", offset: 5, limit: 2 });
+    const head = await readCoverageOf(dir, {
+      path: "a.txt",
+      offset: 1,
+      limit: 2,
+    });
+    const tail = await readCoverageOf(dir, {
+      path: "a.txt",
+      offset: 5,
+      limit: 2,
+    });
     expect(tail.contentHash).toBe(head.contentHash);
   });
 
@@ -164,7 +172,8 @@ describe("os.fs.read coverage detail", () => {
     await writeFile(join(dir, "a.txt"), "one\ntwo\nthree\n", "utf8");
     expect((await readCoverageOf(dir, { path: "a.txt" })).numbered).toBe(false);
     expect(
-      (await readCoverageOf(dir, { path: "a.txt", lineNumbers: true })).numbered,
+      (await readCoverageOf(dir, { path: "a.txt", lineNumbers: true }))
+        .numbered,
     ).toBe(true);
     expect(
       (
@@ -179,9 +188,13 @@ describe("os.fs.read coverage detail", () => {
   });
 
   it("flags a byte-capped read, in both modes, and only when the cap bites", async () => {
-    const body = Array.from({ length: 400 }, (_, i) => `line ${i + 1}`).join("\n");
+    const body = Array.from({ length: 400 }, (_, i) => `line ${i + 1}`).join(
+      "\n",
+    );
     await writeFile(join(dir, "big.txt"), `${body}\n`, "utf8");
-    expect((await readCoverageOf(dir, { path: "big.txt" })).truncated).toBe(false);
+    expect((await readCoverageOf(dir, { path: "big.txt" })).truncated).toBe(
+      false,
+    );
     expect(
       (await readCoverageOf(dir, { path: "big.txt", maxBytes: 200 })).truncated,
     ).toBe(true);
@@ -204,7 +217,9 @@ describe("os.fs.read coverage detail", () => {
     // question (is there content NO offset of this call can reach?), so
     // it must stay false here or the notice would blame the byte cap for
     // a range the model can simply ask for.
-    const body = Array.from({ length: 40 }, (_, i) => `line ${i + 1}`).join("\n");
+    const body = Array.from({ length: 40 }, (_, i) => `line ${i + 1}`).join(
+      "\n",
+    );
     await writeFile(join(dir, "mid.txt"), `${body}\n`, "utf8");
     const result = await osFsReadTool.run(
       { path: "mid.txt", offset: 1, limit: 5 },

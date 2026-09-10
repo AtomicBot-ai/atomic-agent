@@ -1,10 +1,7 @@
 import type { ConversationTurn } from "../session/conversation-turn.js";
 
 export type TaskPolicyKind =
-  | "code_edit"
-  | "debug"
-  | "broad_exploration"
-  | "multi_step";
+  "code_edit" | "debug" | "broad_exploration" | "multi_step";
 
 export interface RenderTaskPolicyInput {
   userMessage?: string | null;
@@ -41,19 +38,37 @@ function resolveUserMessage(input: RenderTaskPolicyInput): string {
 
 function classifyTaskPolicy(message: string): TaskPolicyKind | null {
   const text = message.toLowerCase();
-  if (/\b(debug|failing|failure|failed|error|bug|regression|stack trace|test failure)\b/.test(text)) {
+  if (
+    /\b(debug|failing|failure|failed|error|bug|regression|stack trace|test failure)\b/.test(
+      text,
+    )
+  ) {
     return "debug";
   }
-  if (/\b(fix|implement|refactor|edit|change|update|add|wire|modify)\b/.test(text)) {
-    if (/\b(code|src\/|test|tests|file|files|module|function|class|typescript|javascript)\b/.test(text)) {
+  if (
+    /\b(fix|implement|refactor|edit|change|update|add|wire|modify)\b/.test(text)
+  ) {
+    if (
+      /\b(code|src\/|test|tests|file|files|module|function|class|typescript|javascript)\b/.test(
+        text,
+      )
+    ) {
       return "code_edit";
     }
     return "multi_step";
   }
-  if (/\b(explore|investigate|research|find out|where|how does|understand|trace)\b/.test(text)) {
+  if (
+    /\b(explore|investigate|research|find out|where|how does|understand|trace)\b/.test(
+      text,
+    )
+  ) {
     return "broad_exploration";
   }
-  if (/\b(plan|migrate|architecture|design|multi-file|multiple files)\b/.test(text)) {
+  if (
+    /\b(plan|migrate|architecture|design|multi-file|multiple files)\b/.test(
+      text,
+    )
+  ) {
     return "multi_step";
   }
   return null;

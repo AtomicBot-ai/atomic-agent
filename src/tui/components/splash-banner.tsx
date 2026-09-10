@@ -60,10 +60,7 @@ export function SplashBanner({ size }: SplashBannerProps = {}): ReactElement {
         />
       )}
       {tips.length > 0 ? (
-        <Box
-          marginTop={fit.logo === "none" ? 0 : 1}
-          flexDirection="column"
-        >
+        <Box marginTop={fit.logo === "none" ? 0 : 1} flexDirection="column">
           {tips.map((tip) => (
             <Tip key={tip.label} tip={tip} fit={fit} />
           ))}
@@ -85,9 +82,11 @@ function Tip({ tip, fit }: TipProps): ReactElement {
   const mouse = useMouseCommands();
   const row = (
     <Text wrap="truncate">
-      <Text color={theme.colors.muted}>  {theme.glyphs.bullet} </Text>
+      <Text color={theme.colors.muted}> {theme.glyphs.bullet} </Text>
       <Text color={theme.colors.accent}>{label}</Text>
-      <Text color={theme.colors.muted}>{description(tip, fit.descriptions)}</Text>
+      <Text color={theme.colors.muted}>
+        {description(tip, fit.descriptions)}
+      </Text>
     </Text>
   );
   if (!mouse) return row;

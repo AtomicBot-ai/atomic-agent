@@ -54,9 +54,9 @@ describe("fs approval scope", () => {
       "outside",
     );
     // Prefix trick: /root/home-evil must not match /root/home.
-    expect(
-      await resolveFsScope([`${home}-evil/notes.txt`], opts()),
-    ).toBe("outside");
+    expect(await resolveFsScope([`${home}-evil/notes.txt`], opts())).toBe(
+      "outside",
+    );
   });
 
   it("a symlink inside the workspace that points outside is NOT workspace", async () => {
@@ -119,10 +119,7 @@ describe("fs approval scope", () => {
 
   it("combines multiple paths to the weakest scope", async () => {
     expect(
-      await resolveFsScope(
-        [join(workspace, "a"), join(home, "b")],
-        opts(),
-      ),
+      await resolveFsScope([join(workspace, "a"), join(home, "b")], opts()),
     ).toBe("home");
     expect(
       await resolveFsScope(
@@ -204,9 +201,9 @@ describe("fs approval scope", () => {
     });
 
     it("write/edit/patch to config.json is trust_config (asks until L5)", async () => {
-      expect(await categorizeFsMutation("write", [configFile], trustOpts())).toBe(
-        "trust_config",
-      );
+      expect(
+        await categorizeFsMutation("write", [configFile], trustOpts()),
+      ).toBe("trust_config");
     });
 
     it("write to .env (API tokens) is trust_config too", async () => {
@@ -216,9 +213,9 @@ describe("fs approval scope", () => {
     });
 
     it("trashing the config file is a trust mutation as well", async () => {
-      expect(await categorizeFsMutation("trash", [configFile], trustOpts())).toBe(
-        "trust_config",
-      );
+      expect(
+        await categorizeFsMutation("trash", [configFile], trustOpts()),
+      ).toBe("trust_config");
     });
 
     it("a batch that includes config.json is trust_config even alongside a plain file", async () => {
@@ -267,9 +264,9 @@ describe("fs approval scope", () => {
     it("extraction never inherits the trust-config guard (targets a dir)", async () => {
       // Even if destDir is the state dir, extract stays on the scope
       // ladder; the guard only fires for write/trash of the exact file.
-      expect(await categorizeFsMutation("extract", [stateDir], trustOpts())).toBe(
-        "fs_write_home",
-      );
+      expect(
+        await categorizeFsMutation("extract", [stateDir], trustOpts()),
+      ).toBe("fs_write_home");
     });
   });
 });

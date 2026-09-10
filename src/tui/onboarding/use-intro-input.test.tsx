@@ -22,8 +22,7 @@ const ESCAPE_KEY = "\u001b";
 const F5_KEY = "\u001b[15~";
 const pasteOf = (text: string): string => `\u001b[200~${text}\u001b[201~`;
 
-const strip = (value: string): string =>
-  value.replace(/\u001b\[[0-9;]*m/g, "");
+const strip = (value: string): string => value.replace(/\u001b\[[0-9;]*m/g, "");
 const delay = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -166,7 +165,11 @@ describe("useIntroInput", () => {
 
   it("counts a wheel notch as input", async () => {
     const view = mountSplash();
-    await sendUntilClaimed(view, { kind: "wheel", button: "none", wheel: "down" });
+    await sendUntilClaimed(view, {
+      kind: "wheel",
+      button: "none",
+      wheel: "down",
+    });
     const point = pressAnyKeyPoint(view.frame());
     view.registry.dispatch(
       mouseEvent({ ...point, kind: "wheel", button: "none", wheel: "up" }),

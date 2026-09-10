@@ -5,10 +5,9 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../local-llm/index.js", async () => {
-  const actual =
-    await vi.importActual<typeof import("../local-llm/index.js")>(
-      "../local-llm/index.js",
-    );
+  const actual = await vi.importActual<typeof import("../local-llm/index.js")>(
+    "../local-llm/index.js",
+  );
   return {
     ...actual,
     maybeAutoUpdateBackend: vi.fn(),
@@ -18,7 +17,10 @@ vi.mock("../local-llm/index.js", async () => {
   };
 });
 
-import { getUserConfigPath, writeUserConfigFileSync } from "../config/config-file.js";
+import {
+  getUserConfigPath,
+  writeUserConfigFileSync,
+} from "../config/config-file.js";
 import { USER_CONFIG_DEFAULTS } from "../config/config-schema.js";
 import { getConfig, resetConfigCache } from "../config/index.js";
 import * as localLlm from "../local-llm/index.js";
@@ -29,7 +31,7 @@ import {
   WINDOWS_BACKEND_ASSETS,
   setConfiguredBackendVariant,
 } from "../local-llm/windows-backend-variant.js";
-import { runLocalModelsStart } from "./models-handlers.js";
+import { runLocalModelsPull, runLocalModelsStart } from "./models-handlers.js";
 
 const healthError = () =>
   new DaemonHealthError(
@@ -65,7 +67,9 @@ describe("runLocalModelsStart CPU-backend fallback", () => {
     vi.mocked(localLlm.maybeAutoUpdateBackend)
       .mockReset()
       .mockResolvedValue({ action: "current", tag: "turboquant-win" });
-    vi.mocked(localLlm.resolveManagedDevice).mockReset().mockResolvedValue("Vulkan0");
+    vi.mocked(localLlm.resolveManagedDevice)
+      .mockReset()
+      .mockResolvedValue("Vulkan0");
     vi.mocked(localLlm.startChatAndEmbeddingDaemons).mockReset();
     vi.mocked(localLlm.fallBackToCpuBackend)
       .mockReset()
@@ -84,15 +88,21 @@ describe("runLocalModelsStart CPU-backend fallback", () => {
     const dataDir = prepareManagedWindowsInstall();
     vi.mocked(localLlm.startChatAndEmbeddingDaemons)
       .mockRejectedValueOnce(healthError())
-      .mockResolvedValueOnce({ chat: { pid: 777 }, embedding: { skipped: true } });
+      .mockResolvedValueOnce({
+        chat: { pid: 777 },
+        embedding: { skipped: true },
+      });
 
     await expect(runLocalModelsStart()).resolves.toBe(0);
 
     // The download must carry a deadline and progress — the exact
     // stalled-open-connection hazard the auto-update path guards.
     expect(localLlm.fallBackToCpuBackend).toHaveBeenCalledTimes(1);
-    const [calledDataDir, dlOpts] = vi.mocked(localLlm.fallBackToCpuBackend).mock
-      .calls[0]! as [string, { signal?: AbortSignal; onProgress?: unknown }];
+    const [calledDataDir, dlOpts] = vi.mocked(localLlm.fallBackToCpuBackend)
+      .mock.calls[0]! as [
+      string,
+      { signal?: AbortSignal; onProgress?: unknown },
+    ];
     expect(calledDataDir).toBe(dataDir);
     expect(dlOpts.signal).toBeInstanceOf(AbortSignal);
     expect(dlOpts.onProgress).toBeTypeOf("function");
@@ -127,8 +137,12 @@ describe("runLocalModelsStart CPU-backend fallback", () => {
 
   it("surfaces a failed CPU download and exits non-zero", async () => {
     prepareManagedWindowsInstall();
-    vi.mocked(localLlm.startChatAndEmbeddingDaemons).mockRejectedValue(healthError());
-    vi.mocked(localLlm.fallBackToCpuBackend).mockRejectedValue(new Error("HTTP 503"));
+    vi.mocked(localLlm.startChatAndEmbeddingDaemons).mockRejectedValue(
+      healthError(),
+    );
+    vi.mocked(localLlm.fallBackToCpuBackend).mockRejectedValue(
+      new Error("HTTP 503"),
+    );
 
     await expect(runLocalModelsStart()).resolves.toBe(1);
 
@@ -164,4 +178,73 @@ describe("runLocalModelsStart CPU-backend fallback", () => {
     });
     return dataDir;
   }
+});
+
+/**
+ * The foreground `models pull --mmproj` mirrors the background worker:
+ * a projector the repo stopped serving must not read as a failed pull
+ * once the weights are saved.
+ */
+describe("runLocalModelsPull — projector failure after the weights", () => {
+  let stateDir: string;
+  let stdoutChunks: string[];
+  let stderrChunks: string[];
+  let previousFetch: typeof fetch;
+
+  beforeEach(() => {
+    stateDir = mkdtempSync(join(tmpdir(), "atomic-models-pull-"));
+    process.env.ATOMIC_AGENT_STATE_DIR = stateDir;
+    resetConfigCache();
+    stdoutChunks = [];
+    stderrChunks = [];
+    previousFetch = globalThis.fetch;
+    vi.spyOn(process.stdout, "write").mockImplementation((chunk: unknown) => {
+      stdoutChunks.push(typeof chunk === "string" ? chunk : String(chunk));
+      return true;
+    });
+    vi.spyOn(process.stderr, "write").mockImplementation((chunk: unknown) => {
+      stderrChunks.push(typeof chunk === "string" ? chunk : String(chunk));
+      return true;
+    });
+  });
+
+  afterEach(() => {
+    globalThis.fetch = previousFetch;
+    vi.restoreAllMocks();
+    rmSync(stateDir, { recursive: true, force: true });
+    delete process.env.ATOMIC_AGENT_STATE_DIR;
+    resetConfigCache();
+  });
+
+  it("saves the weights, notes the projector failure and exits 0", async () => {
+    globalThis.fetch = vi.fn(async (input: string | URL | Request) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url;
+      if (url.includes("mmproj")) {
+        return new Response(null, { status: 404, statusText: "Not Found" });
+      }
+      return new Response(
+        new ReadableStream({
+          pull(controller) {
+            controller.enqueue(Buffer.from("gguf"));
+            controller.close();
+          },
+        }),
+        { status: 200, headers: { "content-length": "4" } },
+      );
+    }) as typeof fetch;
+
+    const code = await runLocalModelsPull(["qwen-3.5-4b", "--mmproj"]);
+
+    expect(code).toBe(0);
+    expect(stdoutChunks.join("")).toMatch(/done\. model saved to /);
+    expect(stdoutChunks.join("")).not.toMatch(/mmproj saved/);
+    expect(stderrChunks.join("")).toMatch(
+      /note: projector download failed \(Download failed: HTTP 404 Not Found\) — qwen-3.5-4b is usable text-only; 'models pull --mmproj qwen-3.5-4b'/,
+    );
+  });
 });

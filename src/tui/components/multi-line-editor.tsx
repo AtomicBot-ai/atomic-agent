@@ -1,5 +1,11 @@
 import { Box, useInput, type Key } from "ink";
-import { useCallback, useEffect, useRef, useState, type ReactElement } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ReactElement,
+} from "react";
 import { useClipboard } from "../clipboard/clipboard-context.js";
 import { theme } from "../theme/theme.js";
 import { EditorBody } from "./multi-line-editor-body.js";
@@ -63,7 +69,7 @@ export interface MultiLineEditorProps {
    * this so `y` decides the prompt instead of landing in the buffer.
    */
   claimKey?: (input: string, key: Key) => boolean;
-   /**
+  /**
    * The operator clicked into the buffer. Fired even when the editor is
    * not focused — clicking an input is how every other application is
    * told "put the keyboard here", and the editor cannot move focus
@@ -273,15 +279,16 @@ export function MultiLineEditor(props: MultiLineEditorProps): ReactElement {
     copySelection,
   });
 
-  const { placeCursorAt, beginDrag, extendDrag, endDrag } =
-    createEditorPointer({
+  const { placeCursorAt, beginDrag, extendDrag, endDrag } = createEditorPointer(
+    {
       value,
       cursorPos,
       disabled,
       setCursorPos,
       setAnchor,
       onClickFocus,
-    });
+    },
+  );
   const body = (
     <EditorBody
       value={value}
@@ -303,7 +310,9 @@ export function MultiLineEditor(props: MultiLineEditorProps): ReactElement {
   return (
     <Box
       borderStyle="round"
-      borderColor={focus && !disabled ? theme.colors.accent : theme.colors.border}
+      borderColor={
+        focus && !disabled ? theme.colors.accent : theme.colors.border
+      }
       paddingX={1}
       flexDirection="column"
     >

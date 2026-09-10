@@ -41,7 +41,9 @@ export class GzipBackend implements ArchiveBackend {
   async readEntry(data: Buffer, path: string): Promise<Buffer> {
     const entryName = stripGzSuffix(this.sourceFilename);
     if (path !== entryName) {
-      throw new Error(`entry not found: ${path} (gz contains only ${entryName})`);
+      throw new Error(
+        `entry not found: ${path} (gz contains only ${entryName})`,
+      );
     }
     return gunzipSync(data);
   }

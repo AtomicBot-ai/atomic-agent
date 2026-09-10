@@ -8,6 +8,7 @@ import {
   isFailedSessionStatus,
   type SessionState,
 } from "../session/session-state.js";
+import type { SessionSummary } from "../session/session-summary.js";
 import { getConfig } from "../config/index.js";
 import { resolveLlmConfig } from "../llm/provider/registry/index.js";
 import {
@@ -19,7 +20,11 @@ import {
   describeModelRestore,
   planModelRestore,
 } from "./session-model-restore.js";
-import { checkForAppUpdate, runAppUpdate, canSelfUpdate } from "../update/index.js";
+import {
+  checkForAppUpdate,
+  runAppUpdate,
+  canSelfUpdate,
+} from "../update/index.js";
 import { clearTtyScreen } from "./clear-tty-screen.js";
 import {
   DetachedTurns,
@@ -43,9 +48,17 @@ import { McpOrchestrator } from "./mcp/mcp-orchestrator.js";
 import { ImportOrchestrator } from "./import/import-orchestrator.js";
 import { ProvidersOrchestrator } from "./providers/providers-orchestrator.js";
 import { FallbackOrchestrator } from "./llm-panel/fallback/fallback-orchestrator.js";
+import { RunModeOrchestrator } from "./run-mode/run-mode-orchestrator.js";
 import { TuiTelegramOrchestrator } from "./telegram/tui-telegram-orchestrator.js";
 import { PrivacyOrchestrator } from "./privacy/privacy-orchestrator.js";
 import { IntegrationsOrchestrator } from "./integrations/integrations-orchestrator.js";
+import { SwarmOrchestrator } from "./swarm/swarm-orchestrator.js";
+import { IssueReportOrchestrator } from "./issue-report/index.js";
+import {
+  SessionRailOrchestrator,
+  configSessionRailLayoutStore,
+  type SessionRailLayoutStore,
+} from "./session-rail/index.js";
 import type { TuiEventBus } from "./tui-app.js";
 import { formatAgentErrorForChat } from "./format-agent-error-for-chat.js";
 import {
@@ -88,6 +101,13 @@ export interface ChatOrchestratorOptions {
    * `~/.atomic-agent` state.
    */
   readGateFacts?: () => LocalTurnGateFacts;
+  /**
+   * Where the rail's layout — manual order and pinned ids — is read
+   * from and written to. Injectable for the same reason as
+   * `readGateFacts`; the default is `tui.sessionRail` in the user's
+   * config file.
+   */
+  sessionRailLayout?: SessionRailLayoutStore;
 }
 
 /** Multiline text for the chat transcript (`/memory`); feed still gets `runtime_info` lines. */
@@ -192,11 +212,15 @@ export class ChatOrchestrator {
   public readonly import: ImportOrchestrator;
   public readonly providers: ProvidersOrchestrator;
   public readonly fallback: FallbackOrchestrator;
+  public readonly runMode: RunModeOrchestrator;
   public readonly localModels: LocalModelsOrchestrator;
   public readonly llmHealth: LlmHealthPoller;
   public readonly telegram: TuiTelegramOrchestrator;
   public readonly privacy: PrivacyOrchestrator;
   public readonly integrations: IntegrationsOrchestrator;
+  public readonly swarm: SwarmOrchestrator;
+  public readonly issueReport: IssueReportOrchestrator;
+  private readonly sessionRail: SessionRailOrchestrator;
 
   constructor(
     private readonly runtime: AgentRuntime,
@@ -212,6 +236,7 @@ export class ChatOrchestrator {
     this.mcp = new McpOrchestrator(runtime, bus);
     this.import = new ImportOrchestrator(runtime, bus, {
       refreshTasks: () => this.tasks.refresh(),
+      refreshSessions: () => this.refreshRecentSessions(),
     });
     this.providers = new ProvidersOrchestrator(runtime, bus);
     this.fallback = new FallbackOrchestrator(bus);
@@ -233,12 +258,50 @@ export class ChatOrchestrator {
         // operator string.
         runtime.reportModelConfigured("llama.cpp", "local");
       },
+      // "Set up Telegram to get pinged": the hub is synced first so the
+      // row exists to land on, then the tab is opened on that row.
+      openIntegration: (id, message) => {
+        this.integrations.refresh();
+        bus.emit({ type: "ui_mode_set", mode: "debug" });
+        bus.emit({ type: "tab_changed", tab: "integrations" });
+        bus.emit({ type: "integrations_selected", id });
+        bus.emit({ type: "integrations_opened" });
+        bus.emit({ type: "integrations_action_settled", message });
+      },
+    });
+    this.runMode = new RunModeOrchestrator({
+      runtime,
+      bus,
+      providers: this.providers,
+      localModels: this.localModels,
     });
     this.telegram = new TuiTelegramOrchestrator(runtime, bus);
     this.privacy = new PrivacyOrchestrator(runtime, bus);
     // The hub drives Telegram through its existing orchestrator rather
     // than reimplementing pairing / restart / enable.
-    this.integrations = new IntegrationsOrchestrator(runtime, bus, this.telegram);
+    this.integrations = new IntegrationsOrchestrator(
+      runtime,
+      bus,
+      this.telegram,
+    );
+    this.swarm = new SwarmOrchestrator(runtime, bus);
+    this.issueReport = new IssueReportOrchestrator(runtime, bus, {
+      currentSessionId: () => this.session?.id ?? null,
+    });
+    this.sessionRail = new SessionRailOrchestrator(
+      options.sessionRailLayout ?? configSessionRailLayoutStore,
+      () => this.refreshRecentSessions(),
+      // A pinned thread must show whatever its age: when it has fallen
+      // out of the recency window `railSessions` reads, the rail fetches
+      // it by id and builds the same row the window would have.
+      (sessionId) => {
+        const state = this.runtime.sessionStore.load(sessionId);
+        if (!state) return null;
+        // The rail's rows come from a SQL projection now (#367); a
+        // pinned thread fetched by id is projected the same way here.
+        return toPickerEntry(summariseSessionState(state));
+      },
+    );
     // Tap the bus rather than the runtime handler: what the reducer was
     // offered is exactly what a switch-back may need to replay, session
     // tags included. `record` no-ops for sessions without a running
@@ -285,7 +348,25 @@ export class ChatOrchestrator {
   start(): void {
     if (this.started) return;
     this.started = true;
-    this.refreshRecentSessions();
+    // The rail is the one boot step that reads every stored row. A store
+    // that cannot answer must not abort the rest of the boot — the
+    // chat, the poller and the channels work without a session list.
+    try {
+      this.refreshRecentSessions();
+      const unreadable = this.runtime.sessionStore.countUnreadable();
+      if (unreadable > 0) {
+        this.bus.emit({
+          type: "runtime_info",
+          line: `${unreadable} unreadable session(s) skipped`,
+        });
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.bus.emit({
+        type: "runtime_info",
+        line: `session list unavailable: ${message}`,
+      });
+    }
     this.llmHealth.start();
     this.telegram.start();
     this.privacy.refresh();
@@ -423,18 +504,17 @@ export class ChatOrchestrator {
 
   /** Stored threads that have a first prompt, plus the pending ones. */
   private railSessions(): SessionPickerEntry[] {
-    // Read deeper than we show, because the filter runs HERE and the
-    // limit runs in SQL. Every `+ new` and every scheduled task mints a
-    // persisted, unnamed session; filtering a 25-row window would let
-    // those invisible rows squat it and push real conversations out —
-    // permanently, since a thread only re-enters the window by being
-    // spoken to, which you cannot do once it has no row.
+    // Every stored thread, not a window of them: the rail and the picker
+    // page their own rows. Every `+ new` and every scheduled task mints
+    // a persisted, unnamed session; those are hidden here (see
+    // `hasFirstPrompt`), and with no LIMIT in SQL there is no window for
+    // them to squat and push real conversations out of.
     const stored = this.runtime.sessionStore
-      .listRecent(RAIL_SCAN_LIMIT)
-      .filter((state) => hasFirstPrompt(state))
-      .map((s) => toPickerEntry(s))
-      .slice(0, RAIL_SESSION_LIMIT);
-    if (this.pendingRows.size === 0) return stored;
+      .listSummaries()
+      .filter((row) => row.firstPrompt !== null)
+      .map((row) => toPickerEntry(row));
+    // The manual order applies whether or not there are stand-ins.
+    if (this.pendingRows.size === 0) return this.sessionRail.arrange(stored);
     const storedIds = new Set(stored.map((entry) => entry.sessionId));
     const pending: SessionPickerEntry[] = [];
     for (const [sessionId, entry] of this.pendingRows) {
@@ -448,7 +528,26 @@ export class ChatOrchestrator {
     }
     // Newest stand-in first, matching the store's recency order.
     pending.reverse();
-    return [...pending, ...stored];
+    // The manual order (if any) goes over the whole list: stand-ins are
+    // ids the order has never seen, so they stay on top.
+    return this.sessionRail.arrange([...pending, ...stored]);
+  }
+
+  /**
+   * Shift+↑/↓ or a row drag in the rail: put `sessionId` on slot
+   * `toIndex` of the list as displayed, remember the order, re-emit.
+   */
+  moveSession(sessionId: string, toIndex: number): void {
+    this.sessionRail.moveSession(sessionId, toIndex);
+  }
+
+  /**
+   * `p` or the row's `↑` in the rail: pin `sessionId` to the top block,
+   * or release it. A config write only — the session row is untouched,
+   * so a pin never bumps `updatedAt`.
+   */
+  togglePinned(sessionId: string): void {
+    this.sessionRail.togglePinned(sessionId);
   }
 
   /**
@@ -470,6 +569,7 @@ export class ChatOrchestrator {
       stepCount: 0,
       updatedAt: Date.now(),
       preview: text,
+      pinned: false,
     });
     this.refreshRecentSessions();
   }
@@ -799,7 +899,10 @@ export class ChatOrchestrator {
         text: formatSkillCatalogSystemMessage(catalog),
       });
       if (catalog.length === 0) {
-        this.bus.emit({ type: "runtime_info", line: "skills: (none installed)" });
+        this.bus.emit({
+          type: "runtime_info",
+          line: "skills: (none installed)",
+        });
         return;
       }
       this.bus.emit({
@@ -1088,17 +1191,24 @@ export class ChatOrchestrator {
           this.notify(
             [
               `aborted: dropped ${dropped.length} undelivered steer${dropped.length === 1 ? "" : "s"}`,
-              ...dropped.map((text, i) => `  ${i + 1}. ${droppedPreview(text)}`),
+              ...dropped.map(
+                (text, i) => `  ${i + 1}. ${droppedPreview(text)}`,
+              ),
             ].join("\n"),
           );
         }
       } else if (attached) {
         this.rerouteUndelivered(result.undelivered);
-      } else if (result.undelivered !== undefined && result.undelivered.length > 0) {
+      } else if (
+        result.undelivered !== undefined &&
+        result.undelivered.length > 0
+      ) {
         // Detached: the visible queue feeds another thread now, so
         // re-queueing would aim old-thread corrections at the new one.
         // Announced with previews — never silent.
-        this.notify(formatDroppedSteersNotice(turnSessionId, result.undelivered));
+        this.notify(
+          formatDroppedSteersNotice(turnSessionId, result.undelivered),
+        );
       }
       if (isFailedSessionStatus(result.session.status)) this.exitCode = 1;
     } catch (err) {
@@ -1276,6 +1386,7 @@ export class ChatOrchestrator {
     this.memory.shutdown();
     this.mcp.shutdown();
     this.import.shutdown();
+    this.swarm.dispose();
     await this.localModels.shutdown();
     this.llmHealth.stop();
     this.telegram.shutdown();
@@ -1295,28 +1406,42 @@ function formatBytes(bytes: number): string {
  * session its name, and an unnamed row is indistinguishable from every
  * other unnamed row.
  */
-/** Rows the rail and the picker show. */
-const RAIL_SESSION_LIMIT = 25;
-/**
- * How deep to read before filtering. Generous rather than exact: unnamed
- * sessions accumulate (one per `+ new`, one per scheduled task) and each
- * one would otherwise cost a real thread its place in the list.
- */
-const RAIL_SCAN_LIMIT = 200;
-
 function hasFirstPrompt(state: SessionState): boolean {
   return state.turns.some((turn) => turn.kind === "user");
 }
 
-function toPickerEntry(state: SessionState): SessionPickerEntry {
+/** A stored row with a first prompt (`firstPrompt !== null`) as a rail row. */
+/**
+ * The `SessionSummary` shape `listSummaries()` projects, built from a
+ * loaded session — for the rows the recency window did not carry.
+ */
+function summariseSessionState(state: SessionState): SessionSummary {
   const firstUser = state.turns.find((t) => t.kind === "user");
-  const preview = firstUser && firstUser.kind === "user" ? firstUser.text : "";
   return {
-    sessionId: state.id,
+    id: state.id,
     workingDir: state.workingDir,
+    status: state.status,
+    createdAt: new Date(state.createdAt).getTime(),
+    updatedAt: new Date(state.updatedAt).getTime(),
     turnCount: state.turnCount,
     stepCount: state.stepCount,
-    updatedAt: state.updatedAt,
+    firstPrompt: firstUser && firstUser.kind === "user" ? firstUser.text : null,
+    importedFrom:
+      typeof state.metadata?.importedFrom === "string"
+        ? state.metadata.importedFrom
+        : null,
+  };
+}
+
+function toPickerEntry(row: SessionSummary): SessionPickerEntry {
+  const preview = row.firstPrompt ?? "";
+  return {
+    sessionId: row.id,
+    workingDir: row.workingDir,
+    turnCount: row.turnCount,
+    stepCount: row.stepCount,
+    updatedAt: row.updatedAt,
     preview: preview.length > 0 ? preview : "(empty)",
+    pinned: false,
   };
 }

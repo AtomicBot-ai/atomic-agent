@@ -7,12 +7,12 @@ function sseFrame(payload: Record<string, unknown>): string {
   return `data: ${JSON.stringify(payload)}\n\n`;
 }
 
-function toolCallFrame(
-  toolCalls: Array<Record<string, unknown>>,
-): string {
+function toolCallFrame(toolCalls: Array<Record<string, unknown>>): string {
   return sseFrame({
     model: "test-model",
-    choices: [{ index: 0, delta: { tool_calls: toolCalls }, finish_reason: null }],
+    choices: [
+      { index: 0, delta: { tool_calls: toolCalls }, finish_reason: null },
+    ],
   });
 }
 
@@ -36,9 +36,52 @@ async function drain(body: string): Promise<StreamFinalResult> {
   }
 }
 
-const DONE = sseFrame({
-  choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
-}) + "data: [DONE]\n\n";
+const DONE =
+  sseFrame({
+    choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
+  }) + "data: [DONE]\n\n";
+
+describe("openai stream consumer usage", () => {
+  it("keeps a length finish_reason and reads usage from the trailing empty-choices chunk", async () => {
+    // With `stream_options.include_usage`, OpenAI-style servers send the
+    // usage block on one more chunk after the finish_reason, with an
+    // empty `choices` array. Both must survive to the final result: the
+    // cut is what fails the step, the counts are what explain it.
+    const result = await drain(
+      sseFrame({
+        model: "test-model",
+        choices: [
+          {
+            index: 0,
+            delta: { content: "<think>still thinking" },
+            finish_reason: null,
+          },
+        ],
+      }) +
+        sseFrame({
+          model: "test-model",
+          choices: [{ index: 0, delta: {}, finish_reason: "length" }],
+        }) +
+        sseFrame({
+          model: "test-model",
+          choices: [],
+          usage: {
+            prompt_tokens: 6100,
+            completion_tokens: 8192,
+            total_tokens: 14292,
+          },
+        }) +
+        "data: [DONE]\n\n",
+    );
+    expect(result.finishReason).toBe("length");
+    expect(result.terminalObserved).toBe(true);
+    expect(result.usage).toEqual({
+      promptTokens: 6100,
+      completionTokens: 8192,
+      totalTokens: 14292,
+    });
+  });
+});
 
 describe("openai stream consumer tool-call assembly", () => {
   it("keeps unindexed calls with distinct ids apart", async () => {
@@ -158,7 +201,9 @@ describe("openai stream consumer tool-call assembly", () => {
           function: { name: "os__fs__read" },
         },
       ]) +
-        toolCallFrame([{ id: "call_a", function: { arguments: '{"path":"a.txt"}' } }]) +
+        toolCallFrame([
+          { id: "call_a", function: { arguments: '{"path":"a.txt"}' } },
+        ]) +
         DONE,
     );
 
@@ -188,6 +233,9 @@ describe("openai stream consumer tool-call assembly", () => {
     );
 
     expect(result.toolCalls).toHaveLength(2);
-    expect(result.toolCalls?.map((call) => call.id)).toEqual(["call_a", "call_b"]);
+    expect(result.toolCalls?.map((call) => call.id)).toEqual([
+      "call_a",
+      "call_b",
+    ]);
   });
 });

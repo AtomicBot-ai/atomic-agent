@@ -12,8 +12,15 @@ import type { ApprovalRouter } from "../../approval/approval-router.js";
 import type { ChannelStatus } from "../../runtime/channel-status.js";
 import type { AgentRuntime } from "../../runtime/bootstrap.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
+import {
+  createAttachmentInbox,
+  type AttachmentInbox,
+} from "../attachments/inbox.js";
 import { DiscordApi } from "./discord-api.js";
-import { DiscordApprovalBridge, type DiscordInteractionEvent } from "./discord-approval-bridge.js";
+import {
+  DiscordApprovalBridge,
+  type DiscordInteractionEvent,
+} from "./discord-approval-bridge.js";
 import {
   DISCORD_INTENTS,
   resolveDiscordToken,
@@ -34,8 +41,10 @@ export interface DiscordChannelDeps {
   approvals: ApprovalGate;
   approvalRouter: ApprovalRouter;
   enabled: boolean;
-  ownerUserId: string | null;
+  ownerUserIds: readonly string[];
   sessionPointerPath: string;
+  /** Where inbound files land: `<stateDir>/inbox/discord`. */
+  inboxDir: string;
   lock: DiscordLockfile;
   /** Explicit token wins over the env — the test seam. */
   token?: string | null;
@@ -52,7 +61,7 @@ export class DiscordChannel {
   private bridge: DiscordApprovalBridge | null = null;
   private botUserId: string | null = null;
   private botUsername: string | null = null;
-  private ownerId: string | null;
+  private ownerIds: readonly string[];
   /**
    * Live kill switch. `deps.enabled` is only the value at construction:
    * reading it in `start()` meant an operator who switched the channel
@@ -63,13 +72,26 @@ export class DiscordChannel {
   private lockHeld = false;
   private readonly inflight = new Map<string, AbortController>();
   private readonly pointer: DiscordSessionPointer;
-  private approvalUnsubscribe: (() => void) | null = null;
-  private approvalSessionId: string | null = null;
+  private readonly inbox: AttachmentInbox;
+  /**
+   * `sessionId -> approval binding`. One per channel that is (or recently
+   * was) talking to the bot: with per-channel sessions several channels
+   * can run turns at once and each needs its buttons in its own channel.
+   * Dropped on `/new`, `/switch`, and `stop()`.
+   */
+  private readonly approvalBindings = new Map<
+    string,
+    { channelId: string; unsubscribe: () => void }
+  >();
 
   constructor(private readonly deps: DiscordChannelDeps) {
-    this.ownerId = deps.ownerUserId;
+    // Copied, not aliased: the caller hands us `config.discord.ownerUserIds`
+    // and the allowlist must not change under the gateway because
+    // something else edited that array.
+    this.ownerIds = [...deps.ownerUserIds];
     this.enabled = deps.enabled;
     this.pointer = new DiscordSessionPointer(deps.sessionPointerPath);
+    this.inbox = createAttachmentInbox({ dir: deps.inboxDir });
   }
 
   /** Same accessor name as `TelegramChannel.state()`. */
@@ -81,8 +103,13 @@ export class DiscordChannel {
     return this.error;
   }
 
-  getOwnerUserId(): string | null {
-    return this.ownerId;
+  getOwnerUserIds(): readonly string[] {
+    return this.ownerIds;
+  }
+
+  /** Whether a bot token resolves right now (explicit dep or env). */
+  hasToken(): boolean {
+    return resolveDiscordToken(this.deps.token) !== null;
   }
 
   getBotIdentity(): { id: string; username: string | null } | null {
@@ -133,7 +160,7 @@ export class DiscordChannel {
       api,
       approvals: this.deps.approvals,
       logger: this.deps.logger,
-      ownerUserId: () => this.ownerId,
+      ownerUserIds: () => this.ownerIds,
     });
 
     this.gateway = new DiscordGateway({
@@ -178,36 +205,59 @@ export class DiscordChannel {
       authorId: msg.author?.id,
       isDm: msg.guild_id === undefined,
       mentionsBot: msg.mentions?.some((m) => m.id === this.botUserId) === true,
+      attachments: msg.attachments?.length ?? 0,
     });
     await handleDiscordMessage(data as DiscordMessageEvent, {
       runtime: this.deps.runtime,
       api,
       sessionPointer: this.pointer,
       logger: this.deps.logger,
-      ownerUserId: this.ownerId,
+      ownerUserIds: this.ownerIds,
       botUserId: this.botUserId,
       inflight: this.inflight,
+      inbox: this.inbox,
       ensureApprovalSession: (sessionId, channelId) => {
         this.bindApprovals(sessionId, channelId);
+      },
+      releaseApprovalSession: (sessionId) => {
+        this.releaseApprovals(sessionId);
       },
     });
   }
 
   /**
-   * Point the approval router at this Discord channel for `sessionId`.
-   * Idempotent: re-binding the same session is a no-op, and rotating to
-   * a new one drops the previous registration so a stale session cannot
-   * keep capturing prompts.
+   * Point the approval router at `channelId` for `sessionId`.
+   * Idempotent: re-binding the same pair is a no-op; a session that
+   * moved to another channel via `/switch` is re-pointed so its prompts
+   * follow the conversation.
    */
   private bindApprovals(sessionId: string, channelId: string): void {
-    if (this.approvalSessionId === sessionId) return;
-    this.approvalUnsubscribe?.();
+    const existing = this.approvalBindings.get(sessionId);
+    if (existing?.channelId === channelId) return;
+    existing?.unsubscribe();
+    this.approvalBindings.delete(sessionId);
+    // A channel has exactly one current session, so any other session
+    // still bound to this channel is stale and would leak.
+    for (const [otherId, binding] of this.approvalBindings) {
+      if (binding.channelId === channelId) {
+        binding.unsubscribe();
+        this.approvalBindings.delete(otherId);
+      }
+    }
     if (!this.bridge) return;
-    this.approvalUnsubscribe = this.deps.approvalRouter.setForSession(
+    const unsubscribe = this.deps.approvalRouter.setForSession(
       sessionId,
       this.bridge.handlerFor(channelId),
     );
-    this.approvalSessionId = sessionId;
+    this.approvalBindings.set(sessionId, { channelId, unsubscribe });
+  }
+
+  /** Drop the binding for a session no channel talks to anymore. */
+  private releaseApprovals(sessionId: string): void {
+    const existing = this.approvalBindings.get(sessionId);
+    if (!existing) return;
+    existing.unsubscribe();
+    this.approvalBindings.delete(sessionId);
   }
 
   async stop(): Promise<void> {
@@ -217,9 +267,8 @@ export class DiscordChannel {
     // socket is gone would post into a channel we can no longer reach.
     for (const controller of this.inflight.values()) controller.abort();
     this.inflight.clear();
-    this.approvalUnsubscribe?.();
-    this.approvalUnsubscribe = null;
-    this.approvalSessionId = null;
+    for (const binding of this.approvalBindings.values()) binding.unsubscribe();
+    this.approvalBindings.clear();
     this.bridge?.clear();
     await this.gateway?.stop();
     this.gateway = null;
@@ -227,9 +276,15 @@ export class DiscordChannel {
     this.setState("disabled");
   }
 
-  /** Persist a new owner and re-evaluate. */
-  setOwnerUserId(ownerUserId: string | null): void {
-    this.ownerId = ownerUserId;
+  /**
+   * Swap the owner allowlist on the live channel.
+   *
+   * The gateway and the approval bridge both read it through a getter,
+   * so a change lands on the very next message — no restart, and no
+   * window in which a removed owner can still drive the agent.
+   */
+  setOwnerUserIds(ownerUserIds: readonly string[]): void {
+    this.ownerIds = [...ownerUserIds];
   }
 
   /**

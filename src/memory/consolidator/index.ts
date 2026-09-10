@@ -4,10 +4,7 @@ export {
   type ClusteringDeps,
   type MemoryCluster,
 } from "./clustering.js";
-export {
-  buildDistillPrompt,
-  DISTILL_PROMPT_PREFIX,
-} from "./distill-prompt.js";
+export { buildDistillPrompt, DISTILL_PROMPT_PREFIX } from "./distill-prompt.js";
 export { DISTILL_GRAMMAR } from "./distill-grammar.js";
 export {
   parseDistillOutput,

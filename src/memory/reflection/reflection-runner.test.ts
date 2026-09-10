@@ -113,7 +113,12 @@ describe("createReflectionRunner", () => {
   });
 
   it("writes parsed SET facts into the profile store and records an `ok` outcome", async () => {
-    const calls: Array<{ prompt: string; grammar: string; slotId: number; sessionId: string }> = [];
+    const calls: Array<{
+      prompt: string;
+      grammar: string;
+      slotId: number;
+      sessionId: string;
+    }> = [];
     const runner = createReflectionRunner({
       llmComplete: async (params) => {
         calls.push({
@@ -287,8 +292,7 @@ describe("createReflectionRunner", () => {
 
   it("skips a fact that fails ProfileStore validation without failing the whole call", async () => {
     const runner = createReflectionRunner({
-      llmComplete: async () =>
-        completion("SET bad@key=oops\nSET ok=fine\n"),
+      llmComplete: async () => completion("SET bad@key=oops\nSET ok=fine\n"),
       profileStore: h.store,
       reflectionSlotId: 7,
       timeoutMs: 5_000,
@@ -324,7 +328,11 @@ describe("createReflectionRunner", () => {
     });
 
     await expect(
-      runner.reflect({ sessionId: "s1", userMessage: "u", assistantReply: "a" }),
+      runner.reflect({
+        sessionId: "s1",
+        userMessage: "u",
+        assistantReply: "a",
+      }),
     ).resolves.toBeUndefined();
 
     const counters = h.metricEvents.filter(
@@ -558,7 +566,8 @@ describe("createReflectionRunner", () => {
 
   it("records `ok` when only NOTE lines land and no SET facts are present", async () => {
     const runner = createReflectionRunner({
-      llmComplete: async () => completion("NOTE lone observation worth keeping\n"),
+      llmComplete: async () =>
+        completion("NOTE lone observation worth keeping\n"),
       profileStore: h.store,
       memoryStore: h.notesStore,
       reflectionSlotId: 7,
@@ -586,9 +595,7 @@ describe("createReflectionRunner", () => {
   it("clamps NOTE writes to `maxNotesPerCall`", async () => {
     const runner = createReflectionRunner({
       llmComplete: async () =>
-        completion(
-          ["NOTE a", "NOTE b", "NOTE c", "NOTE d"].join("\n") + "\n",
-        ),
+        completion(["NOTE a", "NOTE b", "NOTE c", "NOTE d"].join("\n") + "\n"),
       profileStore: h.store,
       memoryStore: h.notesStore,
       reflectionSlotId: 7,

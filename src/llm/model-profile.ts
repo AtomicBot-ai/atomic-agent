@@ -98,7 +98,8 @@ export type ModelProfile = PlainModelProfile | TaggedReasoningModelProfile;
  */
 export function reasoningOpenEmittedByModel(profile: ModelProfile): boolean {
   return (
-    profile.reasoningStyle !== "none" && profile.reasoningEmittedByModel === true
+    profile.reasoningStyle !== "none" &&
+    profile.reasoningEmittedByModel === true
   );
 }
 
@@ -150,7 +151,9 @@ export const GEMMA4_THINK_PROFILE: TaggedReasoningModelProfile = {
   vision: VISION_ABSENT,
 };
 
-export function detectModelProfile(props: Record<string, unknown>): ModelProfile {
+export function detectModelProfile(
+  props: Record<string, unknown>,
+): ModelProfile {
   const modelAlias = readString(props.model_alias).toLowerCase();
   const chatTemplate = readString(props.chat_template);
   const templateLower = chatTemplate.toLowerCase();
@@ -222,7 +225,13 @@ function selectBaseProfile(
   templateLower: string,
   supportsPreserveReasoning: boolean,
 ): ModelProfile {
-  if (looksLikeQwenThinkModel(modelAlias, templateLower, supportsPreserveReasoning)) {
+  if (
+    looksLikeQwenThinkModel(
+      modelAlias,
+      templateLower,
+      supportsPreserveReasoning,
+    )
+  ) {
     return QWEN_THINK_PROFILE;
   }
   // Nemotron needs its own detector but not its own profile. Its ChatML
@@ -311,7 +320,10 @@ function looksLikeNemotronThinkModel(
   return aliasHint && templateHint;
 }
 
-function looksLikeGemma4ThinkModel(modelAlias: string, templateLower: string): boolean {
+function looksLikeGemma4ThinkModel(
+  modelAlias: string,
+  templateLower: string,
+): boolean {
   const aliasHint = modelAlias.includes("gemma");
   const templateHint =
     templateLower.includes("<|channel>thought") &&

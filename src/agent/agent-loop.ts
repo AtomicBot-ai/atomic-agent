@@ -17,26 +17,22 @@ import {
   LlmFailure,
   TransportError,
   classifyFailure,
+  isRequestSizeRejection,
 } from "../llm/index.js";
-import type { LlmFailureCategory } from "../llm/index.js";
+import type {
+  LlmFailureCategory,
+  TruncationCause,
+  TruncationDetail,
+} from "../llm/index.js";
 import type { SessionState } from "../session/session-state.js";
-import {
-  incrementTurnCount,
-  recordTurn,
-} from "../session/session-state.js";
-import {
-  assistantReplyTurn,
-  userTurn,
-} from "../session/conversation-turn.js";
+import { incrementTurnCount, recordTurn } from "../session/session-state.js";
+import { assistantReplyTurn, userTurn } from "../session/conversation-turn.js";
 import type {
   CapabilitiesSummary,
   SkillCatalogEntry,
   ToolDescriptor,
 } from "../prompt/stable-prefix.js";
-import type {
-  MemoryEntry,
-  MemoryIndexEntry,
-} from "../memory/memory-store.js";
+import type { MemoryEntry, MemoryIndexEntry } from "../memory/memory-store.js";
 import type { LessonIndexEntry } from "../memory/lessons/lesson-store.js";
 import type { ProcedureIndexEntry } from "../memory/procedures/procedure-store.js";
 import type { ProfileFact } from "../memory/profile-store.js";
@@ -55,6 +51,18 @@ import {
 } from "./loop-detector.js";
 import type { BatchLoopSignal } from "./batch-executor.js";
 import { composeSteerNotice } from "./steer-notice.js";
+import {
+  composeTruncationNotice,
+  planTruncationRetry,
+  type TruncationRetry,
+  type TruncationRetryPlan,
+} from "./truncation-recovery.js";
+import {
+  PARSE_RECOVERY_BUDGET,
+  composeParseFailureNotice,
+  formatTurnFailedRecord,
+  isRecoverableParseFailure,
+} from "./parse-failure-recovery.js";
 import { getConfig } from "../config/index.js";
 import type { AgentMetrics } from "../tracing/agent-metrics.js";
 import type { StructuredLogger } from "../tracing/structured-logger.js";
@@ -91,6 +99,22 @@ export interface AgentLoopDependencies {
    * reflected without restarting the loop.
    */
   contextWindow?: () => number | null;
+  /**
+   * The model server just revealed its real context window: a reply
+   * stopped `context_window`-truncated after this many prompt + reply
+   * tokens. Bootstrap records it per provider/model so the next prompt
+   * is packed to fit (`contextWindow` above then returns it). Absent in
+   * test / legacy wiring, where a window truncation ends the turn.
+   */
+  onContextWindowObserved?: (contextWindow: number) => void;
+  /**
+   * A completion just succeeded with prompt + reply tokens above the
+   * window the runtime believes in. Whatever taught it that window was
+   * wrong (a provider clamping output, a stale observation); bootstrap
+   * forgets the learned value so the prompt is not packed to a number
+   * the server just disproved.
+   */
+  onContextWindowExceeded?: (tokens: number) => void;
   /** Defaults to `grammar` when omitted (test / legacy wiring). */
   toolTransport?: ToolCallTransport;
   toolCallAdapter?: ToolCallAdapter | null;
@@ -102,6 +126,16 @@ export interface AgentLoopDependencies {
    * `parallel_tool_calls` wire flag (issue #104).
    */
   supportsParallelTools?: boolean;
+  /**
+   * Resolve the wire slice for a provider a turn is pinned to
+   * (`RunTurnOptions.providerId`). The four global fields above describe
+   * the ACTIVE provider; a fusion worker turn runs on a different one
+   * (the local leg) inside the same process, so its steps must be built
+   * for that link's transport, adapter and slot affinity, not the
+   * orchestrator's. Resolved once per pinned turn. Absent, a pinned turn
+   * falls back to the global fields (test / legacy wiring).
+   */
+  resolveLlmSlice?: (providerId: string) => ResolvedTurnLlmSlice;
   /**
    * Optional hot-swap supervisor. When provided, the loop re-probes
    * `/props` at the start of every turn and inspects the `modelId` of
@@ -227,6 +261,18 @@ export interface ReflectionSegmentationConfig {
   enabled: boolean;
   triggerEveryTurns: number;
   windowTurns: number;
+}
+
+/**
+ * The per-link wire shape a pinned turn is built for — the same four
+ * facts `AgentLoopDependencies` carries for the active provider, resolved
+ * for the pinned one instead. See `AgentLoopDependencies.resolveLlmSlice`.
+ */
+export interface ResolvedTurnLlmSlice {
+  toolTransport: ToolCallTransport;
+  toolCallAdapter: ToolCallAdapter | null;
+  supportsSlotAffinity: boolean;
+  supportsParallelTools: boolean;
 }
 
 export interface MemoryContextProviderInput {
@@ -423,15 +469,40 @@ export interface RunTurnOptions {
   signal: AbortSignal;
   /** Optional new user message to append before stepping. */
   userMessage?: string;
+  /**
+   * Pin every completion of this turn to one configured provider id.
+   * The step is built for that link's transport (via
+   * `AgentLoopDependencies.resolveLlmSlice`) and the request bypasses
+   * the fallback chain (see `LlmStreamParams.providerId`). A fusion
+   * worker turn sets this to the local leg while the orchestrator turn
+   * on the parent session keeps the active (cloud) provider.
+   */
+  providerId?: string;
+  /**
+   * The turn leaves no durable trace in the memory fabric: no recall or
+   * per-step memory refresh, no end-of-turn reflection, no lesson
+   * lifecycle bump. For fusion worker sessions — throwaway state whose
+   * transcript the orchestrator reads once and discards; letting it
+   * reflect would write the worker's half-context into the operator's
+   * long-term memory. Mid-turn steering is unaffected.
+   */
+  ephemeral?: boolean;
+  /**
+   * Hide tools from this turn. Applied to the descriptors handed to every
+   * step, composed with the finalization-step filter, so under native
+   * tools the hidden tool also leaves the wire payload — the step builds
+   * `tools` from the same descriptors. The two terminal tools are the
+   * exception: the OpenAI adapter appends `reply` / `finish` to the wire
+   * unconditionally, so filtering them only hides them from the prompt
+   * catalog. Used to keep a worker from delegating further, scheduling,
+   * or writing memory.
+   */
+  toolFilter?: (name: string) => boolean;
 }
 
 /** Why a `runTurn` invocation returned. */
 export type AgentLoopReason =
-  | "reply"
-  | "finish"
-  | "max_steps"
-  | "cancelled"
-  | "failed";
+  "reply" | "finish" | "max_steps" | "cancelled" | "failed";
 
 export type AgentLoopEvent =
   | { type: "user_message"; text: string }
@@ -471,6 +542,36 @@ export type AgentLoopEvent =
     }
   | {
       /**
+       * The completion for step `stepIndex` came back cut off, and the
+       * same step is being retried with a different request: a larger
+       * reply cap, or a prompt re-packed to the context window the
+       * server just revealed. Fired once per retry; a second cut on the
+       * same step fails the turn with the cause in the message.
+       */
+      type: "completion_truncated";
+      stepIndex: number;
+      cause: TruncationCause;
+      completionTokens: number;
+      promptTokens: number;
+      requestedMaxTokens: number;
+      retry: TruncationRetry;
+    }
+  | {
+      /**
+       * The completion for step `stepIndex` could not be parsed into
+       * tool calls, and the turn is spending another step on it instead
+       * of ending: the next prompt carries a `### notice` naming the
+       * rejection. Fired once per recovery; `attempt` counts them within
+       * the turn, `budget` is the ceiling after which the turn fails.
+       */
+      type: "parse_failure_recovered";
+      stepIndex: number;
+      attempt: number;
+      budget: number;
+      reason: string;
+    }
+  | {
+      /**
        * A leg of the task finished and the work is continuing. Fired at
        * every `maxSteps` boundary that does not end the task, so a long
        * job reports itself instead of going quiet for an hour.
@@ -479,6 +580,43 @@ export type AgentLoopEvent =
       stepsTaken: number;
       elapsedMs: number;
       stepCeiling: number;
+    }
+  | {
+      /**
+       * One leg of a fusion turn started, ran a tool, ended, or was cut
+       * short. Emitted by `fusion.delegate` in the PARENT session's
+       * frame, never a worker's: a worker session has no recorder, no
+       * event hook and no UI, so an event tagged with its id would reach
+       * nobody. This is the only window the operator has into a fan-out
+       * that can occupy the orchestrator's turn for minutes.
+       *
+       * Not produced by `AgentLoop` itself — it rides this union because
+       * the runtime's event fan-out and every UI reducer are typed on it.
+       */
+      type: "fusion_worker";
+      taskId: string;
+      title: string;
+      phase: "started" | "tool" | "finished" | "failed" | "cancelled";
+      /**
+       * Which leg this line is about. `worker` when absent, so the
+       * event's original shape still reads correctly. The orchestrator
+       * uses it to claim its own `fusion.delegate` call: without it the
+       * whole fan-out block reads as if nothing but workers ran.
+       */
+      role?: "worker" | "orchestrator";
+      /**
+       * The model this leg is running — `runMode.workerModel` /
+       * `.orchestratorModel`, falling back to the provider id when the
+       * resolver has no label. Never a guess: a UI that invented a name
+       * here would be attributing spend to the wrong model.
+       */
+      model?: string;
+      /** `phase: "tool"` only: the tool this leg just started. */
+      tool?: string;
+      stepCount?: number;
+      durationMs?: number;
+      /** One line about the outcome; the worker's reply, clipped. */
+      summary?: string;
     }
   | { type: "step_started"; stepIndex: number }
   | {
@@ -658,6 +796,20 @@ export class AgentLoop {
     this.deps.onEvent?.({ type: "turn_started", turnIndex });
     const turnStartedAt = Date.now();
 
+    // A pinned turn is built for the pinned link's wire shape. Resolved
+    // once: the pin does not move during a turn, and the global getters
+    // below describe the ACTIVE provider, which is the wrong one here.
+    const pinnedSlice =
+      options.providerId !== undefined && this.deps.resolveLlmSlice
+        ? this.deps.resolveLlmSlice(options.providerId)
+        : null;
+    const visibleToolDescriptors = (): readonly ToolDescriptor[] => {
+      const filter = options.toolFilter;
+      return filter
+        ? this.deps.toolDescriptors.filter(({ name }) => filter(name))
+        : this.deps.toolDescriptors;
+    };
+
     state = await refreshMemoryContext(this.deps, state, options);
 
     // Proactively sync with the live `llama-server` before the first
@@ -703,7 +855,8 @@ export class AgentLoop {
     const stepCeiling = autoContinue
       ? Math.max(legSteps, options.taskMaxSteps ?? taskCfg.maxSteps)
       : legSteps;
-    const durationCeilingMs = options.taskMaxDurationMs ?? taskCfg.maxDurationMs;
+    const durationCeilingMs =
+      options.taskMaxDurationMs ?? taskCfg.maxDurationMs;
     const taskStartedAt = Date.now();
     /**
      * Why the task stopped, when the step loop ran out rather than the
@@ -711,7 +864,8 @@ export class AgentLoop {
      * and "made no progress for a whole leg" are different things to
      * tell someone, and the old single `max_steps` string said neither.
      */
-    let stopCause: "step_ceiling" | "time_ceiling" | "no_progress" = "step_ceiling";
+    let stopCause: "step_ceiling" | "time_ceiling" | "no_progress" =
+      "step_ceiling";
     /** Set by any step in the current leg that produced a usable result. */
     let legMadeProgress = false;
     // Provider-outage parking. A transport failure means "this link is
@@ -729,6 +883,36 @@ export class AgentLoop {
     let outageAttempts = 0;
     /** Retried a step after an outage and have not yet seen it succeed. */
     let awaitingRecovery = false;
+    // Truncation retry. A reply the server cut short is not a verdict on
+    // the step either — but unlike an outage, replaying the same request
+    // is pointless, so the retry changes it: a larger reply cap when the
+    // cap was spent, a re-packed prompt when the window filled. One
+    // retry per step index; the second cut ends the turn.
+    // Declared through a cast rather than a `null` literal: the literal
+    // narrows the binding to `null`, and the catch clause below — which
+    // TypeScript enters from the start of the `try`, before the loop's
+    // back-edge from this very clause is folded in — then reads it as
+    // `never`.
+    let truncationRetry = null as {
+      stepIndex: number;
+      maxTokens?: number;
+      /** The truncation that started the retry, for the message if the retry is refused. */
+      original: Error;
+    } | null;
+    /**
+     * The step index whose leg boundary already ran. A retried step
+     * (outage or truncation) re-enters the loop at the same index; the
+     * boundary must not run twice, or its progress flag — reset by the
+     * first pass — reads the retry as a whole leg with nothing to show.
+     */
+    let lastBoundaryIndex = -1;
+    /**
+     * Completions this turn that came back unparseable and were spent
+     * another step on. Bounded by `PARSE_RECOVERY_BUDGET`: a model that
+     * cannot emit a valid tool call twice in a row will not manage it on
+     * the third try either, and the operator is owed the failure.
+     */
+    let parseRecoveries = 0;
     // Per-turn no-progress loop tracker (OpenClaw-style). Threaded into
     // `executeStep` so the synchronous batch gate can veto looping calls
     // before they are dispatched; the agent loop consumes the resulting
@@ -785,7 +969,8 @@ export class AgentLoop {
       }
       // Leg boundary. Everything the task needs to keep running is
       // decided here, once per `legSteps` steps, and never mid-leg.
-      if (i > 0 && i % legSteps === 0) {
+      if (i > 0 && i % legSteps === 0 && i !== lastBoundaryIndex) {
+        lastBoundaryIndex = i;
         if (!legMadeProgress) {
           // A whole leg with nothing usable coming back is the honest
           // place to stop: the loop detector's breaker catches a model
@@ -888,10 +1073,10 @@ export class AgentLoop {
           {
             session: state,
             toolDescriptors: finalizationStep
-              ? this.deps.toolDescriptors.filter(
+              ? visibleToolDescriptors().filter(
                   ({ name }) => name === "reply" || name === "finish",
                 )
-              : this.deps.toolDescriptors,
+              : visibleToolDescriptors(),
             capabilities: this.deps.capabilities,
             skillCatalog: this.deps.skillCatalog,
             stepIndex: i,
@@ -907,6 +1092,10 @@ export class AgentLoop {
                 }
               : {}),
             ...(finalizationStep ? { terminalOnly: true } : {}),
+            ...(truncationRetry?.stepIndex === i &&
+            truncationRetry.maxTokens !== undefined
+              ? { maxTokens: truncationRetry.maxTokens }
+              : {}),
             ...(profileFacts !== undefined ? { profileFacts } : {}),
             ...(options.userMessage !== undefined
               ? { userMessage: options.userMessage }
@@ -923,10 +1112,23 @@ export class AgentLoop {
             ...(this.deps.contextWindow
               ? { contextWindow: this.deps.contextWindow() }
               : {}),
-            toolTransport: this.deps.toolTransport ?? "grammar",
-            toolCallAdapter: this.deps.toolCallAdapter ?? null,
-            supportsSlotAffinity: this.deps.supportsSlotAffinity ?? true,
-            supportsParallelTools: this.deps.supportsParallelTools ?? true,
+            toolTransport:
+              pinnedSlice?.toolTransport ??
+              this.deps.toolTransport ??
+              "grammar",
+            toolCallAdapter:
+              pinnedSlice?.toolCallAdapter ?? this.deps.toolCallAdapter ?? null,
+            supportsSlotAffinity:
+              pinnedSlice?.supportsSlotAffinity ??
+              this.deps.supportsSlotAffinity ??
+              true,
+            supportsParallelTools:
+              pinnedSlice?.supportsParallelTools ??
+              this.deps.supportsParallelTools ??
+              true,
+            ...(options.providerId !== undefined
+              ? { providerId: options.providerId }
+              : {}),
             llmComplete: this.deps.llmComplete,
             ...(this.deps.llmCompleteStream
               ? { llmCompleteStream: this.deps.llmCompleteStream }
@@ -966,8 +1168,23 @@ export class AgentLoop {
         state = outcome.nextSession;
         stepsTaken += 1;
         const tokensUsed =
-          (outcome.completion.timing?.promptTokens ?? outcome.prompt.tokens.total) +
+          (outcome.completion.timing?.promptTokens ??
+            outcome.prompt.tokens.total) +
           (outcome.completion.timing?.predictedTokens ?? 0);
+        // The server just held more than the runtime thought it could:
+        // a learned window was wrong, and packing to it would only
+        // throw context away.
+        const believedWindow = this.deps.contextWindow?.() ?? null;
+        const usage = outcome.completion.usage;
+        if (
+          usage !== undefined &&
+          believedWindow !== null &&
+          usage.promptTokens + usage.completionTokens > believedWindow
+        ) {
+          this.deps.onContextWindowExceeded?.(
+            usage.promptTokens + usage.completionTokens,
+          );
+        }
         // Step-level outcome rolls up batched results: any failed call
         // marks the step as `error` so metrics catch partial failures.
         const stepStatus: "ok" | "error" = outcome.toolResults.some(
@@ -1192,7 +1409,7 @@ export class AgentLoop {
         recordSurfacedProcedures(state);
       } catch (err) {
         runError = err instanceof Error ? err : new Error(String(err));
-        const category = classifyFailure(err);
+        let category = classifyFailure(err);
         // `cancelled` is user-initiated and should close the turn
         // cleanly without marking the session as failed. Classified
         // BEFORE the finalization guard below: a user abort during the
@@ -1203,6 +1420,67 @@ export class AgentLoop {
           err instanceof CancelledError ||
           (err instanceof LlmFailure && err.category === "cancelled") ||
           category === "cancelled";
+        // The reply was cut short. Retry the step with a request the wall
+        // does not apply to — a larger cap, or a prompt packed to the
+        // window the server just revealed. Same replay argument as the
+        // outage wait below: the completion failed before any tool ran.
+        // Ahead of the finalization guard on purpose: the summary step
+        // is the one a reasoning model is likeliest to think past, and
+        // one bounded retry that replays nothing is not "more work".
+        const truncationPlan: TruncationRetryPlan | null = cancelled
+          ? null
+          : planTruncationRetry({
+              error: err,
+              alreadyRetried: truncationRetry?.stepIndex === i,
+              contextWindow: this.deps.contextWindow?.() ?? null,
+              fallbackMaxTokens: getConfig().localModels.completionMaxTokens,
+              canFitWindow: this.deps.onContextWindowObserved !== undefined,
+            });
+        if (truncationPlan !== null) {
+          const detail: TruncationDetail = truncationPlan.detail;
+          const retry: TruncationRetry = truncationPlan.retry;
+          truncationRetry = {
+            stepIndex: i,
+            original: runError,
+            ...(retry.kind === "raise_cap"
+              ? { maxTokens: retry.maxTokens }
+              : {}),
+          };
+          if (retry.kind === "fit_window") {
+            this.deps.onContextWindowObserved?.(retry.contextWindow);
+          }
+          // The notice the cut attempt carried (loop detector, steering,
+          // a trimmed batch) is still owed to the retry.
+          pendingNotice = composeTruncationNotice(
+            noticeForThisStep,
+            detail,
+            retry,
+          );
+          this.deps.onEvent?.({
+            type: "completion_truncated",
+            stepIndex: i,
+            cause: detail.cause,
+            completionTokens: detail.completionTokens,
+            promptTokens: detail.promptTokens,
+            requestedMaxTokens: detail.requestedMaxTokens,
+            retry,
+          });
+          this.deps.logger?.warn("completion truncated; retrying the step", {
+            sessionId: state.id,
+            stepIndex: i,
+            cause: detail.cause,
+            completionTokens: detail.completionTokens,
+            promptTokens: detail.promptTokens,
+            requestedMaxTokens: detail.requestedMaxTokens,
+            retry: retry.kind,
+            ...(retry.kind === "raise_cap"
+              ? { maxTokens: retry.maxTokens }
+              : { contextWindow: retry.contextWindow }),
+          });
+          runError = null;
+          i -= 1;
+          continue;
+        }
         if (finalizationStep && !cancelled) {
           // A failed finalization must not execute more work or turn a
           // bounded run into an unbounded retry. Preserve the established
@@ -1219,6 +1497,54 @@ export class AgentLoop {
           stepsTaken += 1;
           reason = "max_steps";
           break;
+        }
+        // The completion came back but could not be read as tool calls,
+        // and the step executor's in-step repair did not rescue it
+        // either. Spend an ordinary step on it rather than ending the
+        // turn: the next prompt is built fresh at the full completion
+        // budget — which the capped repair is not — and carries a
+        // `### notice` naming what was rejected, so the model has
+        // something to correct against. Same replay argument as the
+        // outage park below: a parse failure throws before any tool is
+        // dispatched, so nothing is repeated and no side effect is
+        // duplicated.
+        //
+        // The step is counted. It consumed an inference, and leaving
+        // `legMadeProgress` false means a leg made entirely of rejected
+        // completions still stops at the boundary as `no_progress`.
+        if (
+          !cancelled &&
+          parseRecoveries < PARSE_RECOVERY_BUDGET &&
+          isRecoverableParseFailure(err)
+        ) {
+          parseRecoveries += 1;
+          stepsTaken += 1;
+          // The notice this step was carrying (loop detector, steering,
+          // a trimmed batch) is still owed to the next one.
+          pendingNotice = composeParseFailureNotice(
+            noticeForThisStep,
+            runError.message,
+          );
+          this.deps.onEvent?.({
+            type: "parse_failure_recovered",
+            stepIndex: i,
+            attempt: parseRecoveries,
+            budget: PARSE_RECOVERY_BUDGET,
+            reason: runError.message,
+          });
+          this.deps.logger?.warn(
+            "completion could not be parsed; retrying the turn",
+            {
+              sessionId: state.id,
+              stepIndex: i,
+              attempt: parseRecoveries,
+              budget: PARSE_RECOVERY_BUDGET,
+              error: runError.message,
+              category,
+            },
+          );
+          runError = null;
+          continue;
         }
         // The provider is not answering. Park the turn instead of
         // killing it: nothing of this step has been committed (a
@@ -1260,10 +1586,16 @@ export class AgentLoop {
           await abortableSleep(nextRetryMs, options.signal);
           outageWaitedMs += nextRetryMs;
           runError = null;
+          // The retried step still owes the model the notice this
+          // attempt carried.
+          pendingNotice = noticeForThisStep;
           if (options.signal.aborted) {
             reason = "cancelled";
             state = { ...state, status: "cancelled" };
-            this.deps.onEvent?.({ type: "loop_completed", reason: "cancelled" });
+            this.deps.onEvent?.({
+              type: "loop_completed",
+              reason: "cancelled",
+            });
             state = incrementTurnCount(state);
             break;
           }
@@ -1271,6 +1603,26 @@ export class AgentLoop {
           // so step back one to land on it again.
           i -= 1;
           continue;
+        }
+        // A raised cap the provider refused — a 400 naming `max_tokens`
+        // or the context length — is not a new failure. The turn fails
+        // with the truncation that started it, which names the knob.
+        if (
+          truncationRetry?.stepIndex === i &&
+          truncationRetry.maxTokens !== undefined &&
+          isRequestSizeRejection(err)
+        ) {
+          this.deps.logger?.warn(
+            "provider refused the raised reply cap; failing with the truncation",
+            {
+              sessionId: state.id,
+              stepIndex: i,
+              maxTokens: truncationRetry.maxTokens,
+              rejection: runError.message,
+            },
+          );
+          runError = truncationRetry.original;
+          category = classifyFailure(runError);
         }
         this.deps.logger?.error("agent loop failed", {
           sessionId: state.id,
@@ -1319,6 +1671,20 @@ export class AgentLoop {
         // fixing here. `cancelled` and `failed` are both classified
         // terminations; only programming bugs or unclassified errors
         // should ever bubble past this point.
+        //
+        // Leave the failure in the transcript. Without it the next turn
+        // — usually the operator typing "try again" — is built from a
+        // history in which the attempt never happened, and the model
+        // reproduces the same rejected output. Recorded only: every
+        // surface already renders its own line from `loop_failed`, so
+        // emitting an `assistant_reply` event here would post the text
+        // twice.
+        state = recordTurn(
+          state,
+          assistantReplyTurn(
+            formatTurnFailedRecord(category, runError.message),
+          ),
+        );
         state = { ...state, status: "failed", lastError: runError.message };
         this.deps.onEvent?.({ type: "loop_completed", reason: "failed" });
         state = incrementTurnCount(state);
@@ -1334,7 +1700,14 @@ export class AgentLoop {
         // `cancelled` is intentionally NOT routed here; that branch
         // returned earlier without calling the hook (cancellation
         // carries neither success nor failure signal).
-        invokeLessonLifecycle(this.deps, state.id, surfacedLessonIds, "failure");
+        if (!options.ephemeral) {
+          invokeLessonLifecycle(
+            this.deps,
+            state.id,
+            surfacedLessonIds,
+            "failure",
+          );
+        }
         return {
           session: state,
           reason: "failed",
@@ -1355,7 +1728,10 @@ export class AgentLoop {
         elapsedMs: Date.now() - taskStartedAt,
       });
       state = recordTurn(state, assistantReplyTurn(synthetic));
-      this.deps.onEvent?.({ type: "llm_event", event: { type: "assistant_reply", text: synthetic } });
+      this.deps.onEvent?.({
+        type: "llm_event",
+        event: { type: "assistant_reply", text: synthetic },
+      });
       this.deps.onEvent?.({ type: "loop_completed", reason });
       if (state.status !== "completed") {
         // `stalled` (not `pending`) signals to operators that the turn
@@ -1393,7 +1769,7 @@ export class AgentLoop {
     // `max_steps` are filtered out (neither a success nor failure
     // signal). The `failed` branch already fired the hook above
     // before its early `return`.
-    if (reason === "reply" || reason === "finish") {
+    if (!options.ephemeral && (reason === "reply" || reason === "finish")) {
       invokeLessonLifecycle(this.deps, state.id, surfacedLessonIds, "success");
     }
 
@@ -1414,8 +1790,13 @@ export class AgentLoop {
     //     `ReflectionInput.transcript`. The trailing pair's content
     //     is also mirrored into `userMessage`/`assistantReply` so
     //     the runner contract stays satisfied.
+    //
+    // Never for an ephemeral turn: a fusion worker's transcript is the
+    // orchestrator's scratch space, and reflecting on it would write
+    // half-context into the operator's long-term memory.
     if (
       this.deps.reflectionRunner &&
+      !options.ephemeral &&
       (reason === "reply" || reason === "finish")
     ) {
       const segmentation = this.deps.reflectionSegmentation;
@@ -1476,47 +1857,49 @@ export class AgentLoop {
           // `void` turns any escape into an unhandled rejection the
           // loop can neither see nor recover from, so the trailing
           // `.catch` pins the contract at the call site too.
-          void this.deps.reflectionRunner.reflect({
-            sessionId: state.id,
-            userMessage,
-            assistantReply,
-            // Memory-v2 phase 2. Surfaced ids for this turn — the
-            // allowlist for the link-generator sub-call. Empty /
-            // undefined when memory.notes is disabled OR no recall
-            // was performed.
-            ...(state.recalledNotes && state.recalledNotes.length > 0
-              ? { recalledMemoryIds: state.recalledNotes.map((n) => n.id) }
-              : {}),
-            // Memory-v2 phase 7a. Allowlist for the vote-runner —
-            // every lesson surfaced through any step of this turn,
-            // every profile fact currently active.
-            ...(surfacedLessonIds.size > 0
-              ? { recalledLessonIds: Array.from(surfacedLessonIds) }
-              : {}),
-            ...(surfacedProcedureIds.size > 0
-              ? { recalledProcedureIds: Array.from(surfacedProcedureIds) }
-              : {}),
-            ...(profileFacts.length > 0
-              ? {
-                  recalledProfileFactIds: profileFacts
-                    .map((f) => f.id)
-                    .filter((id): id is number => typeof id === "number"),
-                }
-              : {}),
-            turnIndex: state.turns.length,
-            // v2.5 (Phase B). Multi-turn window
-            // is only attached when segmentation is active —
-            // otherwise the runner falls back to the byte-stable
-            // single-pair prompt.
-            ...(segmentationActive && transcript.length > 0
-              ? { transcript }
-              : {}),
-          }).catch((err: unknown) => {
-            this.deps.logger?.warn("reflection failed after dispatch", {
+          void this.deps.reflectionRunner
+            .reflect({
               sessionId: state.id,
-              error: err instanceof Error ? err.message : String(err),
+              userMessage,
+              assistantReply,
+              // Memory-v2 phase 2. Surfaced ids for this turn — the
+              // allowlist for the link-generator sub-call. Empty /
+              // undefined when memory.notes is disabled OR no recall
+              // was performed.
+              ...(state.recalledNotes && state.recalledNotes.length > 0
+                ? { recalledMemoryIds: state.recalledNotes.map((n) => n.id) }
+                : {}),
+              // Memory-v2 phase 7a. Allowlist for the vote-runner —
+              // every lesson surfaced through any step of this turn,
+              // every profile fact currently active.
+              ...(surfacedLessonIds.size > 0
+                ? { recalledLessonIds: Array.from(surfacedLessonIds) }
+                : {}),
+              ...(surfacedProcedureIds.size > 0
+                ? { recalledProcedureIds: Array.from(surfacedProcedureIds) }
+                : {}),
+              ...(profileFacts.length > 0
+                ? {
+                    recalledProfileFactIds: profileFacts
+                      .map((f) => f.id)
+                      .filter((id): id is number => typeof id === "number"),
+                  }
+                : {}),
+              turnIndex: state.turns.length,
+              // v2.5 (Phase B). Multi-turn window
+              // is only attached when segmentation is active —
+              // otherwise the runner falls back to the byte-stable
+              // single-pair prompt.
+              ...(segmentationActive && transcript.length > 0
+                ? { transcript }
+                : {}),
+            })
+            .catch((err: unknown) => {
+              this.deps.logger?.warn("reflection failed after dispatch", {
+                sessionId: state.id,
+                error: err instanceof Error ? err.message : String(err),
+              });
             });
-          });
         }
       }
     }
@@ -1591,6 +1974,10 @@ async function refreshMemoryContext(
   options: RunTurnOptions,
 ): Promise<SessionState> {
   if (!deps.memoryContextProvider) return state;
+  // An ephemeral (fusion worker) turn neither reads nor primes memory:
+  // its prompt is the orchestrator's instruction, not the operator's
+  // history, and the recall would only pull unrelated notes into it.
+  if (options.ephemeral) return state;
   try {
     const ctx = await deps.memoryContextProvider.buildMemoryContext({
       sessionId: state.id,
@@ -1642,7 +2029,11 @@ function collectRecentToolResultSummaries(
   maxEntries = 4,
 ): string[] {
   const summaries: string[] = [];
-  for (let i = state.turns.length - 1; i >= 0 && summaries.length < maxEntries; i -= 1) {
+  for (
+    let i = state.turns.length - 1;
+    i >= 0 && summaries.length < maxEntries;
+    i -= 1
+  ) {
     const turn = state.turns[i];
     if (turn?.kind !== "tool_result") continue;
     summaries.push(`${turn.tool}: ${turn.summary}`);
@@ -1692,7 +2083,8 @@ function collectLastUserAssistantPairs(
       // must not REPLACE the founding message in the reflection pair —
       // memory extraction would then attribute the whole turn to the
       // correction alone. Join them in order instead.
-      pendingUser = pendingUser === null ? turn.text : `${pendingUser}\n\n${turn.text}`;
+      pendingUser =
+        pendingUser === null ? turn.text : `${pendingUser}\n\n${turn.text}`;
     } else if (turn.kind === "assistant_reply" && pendingUser !== null) {
       pairs.push({ user: pendingUser, assistant: turn.text });
       pendingUser = null;

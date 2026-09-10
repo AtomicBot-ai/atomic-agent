@@ -36,9 +36,7 @@ describe("restrictWindowsAcl", () => {
   it("tightens the ACL and verifies the file is still readable", () => {
     const { deps, icaclsCalls, probeCalls } = makeDeps();
     restrictWindowsAcl(PATH, deps);
-    expect(icaclsCalls).toEqual([
-      [PATH, "/inheritance:r", "/grant:r", "u:F"],
-    ]);
+    expect(icaclsCalls).toEqual([[PATH, "/inheritance:r", "/grant:r", "u:F"]]);
     expect(probeCalls).toEqual([PATH]);
   });
 

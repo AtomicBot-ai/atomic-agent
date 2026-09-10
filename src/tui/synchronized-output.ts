@@ -48,16 +48,50 @@ export interface SynchronizedOutputOptions {
 }
 
 /**
+ * Erase-in-line: `CSI K`, `CSI 0 K`, `CSI 1 K`, `CSI 2 K`.
+ *
+ * The one sequence that only ever appears when something is repainting
+ * text. Ink terminates every line it rewrites with `CSI K`, and its
+ * whole-block clears use `CSI 2 K`; no mode toggle, cursor nudge or
+ * mouse/kitty setup sequence contains either.
+ */
+const ERASE_IN_LINE = /\u001B\[[0-2]?K/;
+
+/**
  * True when `chunk` is worth bracketing.
  *
  * Wrapping a lone escape sequence in a synchronized update is not wrong,
  * but it is two extra sequences spent rendering nothing — and this
  * `write` sees every cursor nudge and mode toggle the app makes, not
- * only Ink's frames. A frame is many bytes and contains a newline; a
- * mode toggle is neither.
+ * only Ink's frames. A full frame is many bytes and contains a newline;
+ * a mode toggle is neither.
+ *
+ * Incremental rendering makes a third clause worth having, as a
+ * backstop rather than as a fix for anything observed. A repaint that
+ * rewrites one line of a fullscreen frame carries no newline — cursor
+ * moves, the line, `CSI K` — so only its length keeps it bracketed, and
+ * its length is incidental: one cursor-move per skipped row plus
+ * whatever the changed line happens to contain.
+ *
+ * Measured, that length has never come close to the bar. Driving the
+ * TUI over a PTY at 110x34, 80x24 and 40x16 — the last is the smallest
+ * window the TUI will render in at all; below it the screen is
+ * `terminal too small`, and no frame is written — the smallest chunk
+ * this `write` bracketed was 189 bytes, and across every scenario
+ * (startup, menus, submenus, the Manage tabs, both pickers, the update
+ * modal, mouse drag and wheel, resizes in both dimensions, teardown)
+ * not one chunk was caught by this clause that the length test had not
+ * already caught. So it is insurance against a shape the app does not
+ * currently produce, not a repair.
+ *
+ * It is close to free: `||` short-circuits, so the regex only ever runs
+ * on chunks of 64 bytes or fewer with no newline in them — never on a
+ * frame. And the predicate is the honest one: something that erases a
+ * line is repainting, and a repaint that slips through unbracketed is
+ * exactly the tearing this module exists to stop.
  */
 export function looksLikeFrame(chunk: string): boolean {
-  return chunk.length > 64 || chunk.includes("\n");
+  return chunk.length > 64 || chunk.includes("\n") || ERASE_IN_LINE.test(chunk);
 }
 
 /**

@@ -55,7 +55,9 @@ export class FakeBrowserBackend implements BrowserBackend {
       text: "url: https://example.com/\ntitle: Example\n",
     };
   }
-  async navigate(input: NavigateInput): Promise<{ url: string; title: string }> {
+  async navigate(
+    input: NavigateInput,
+  ): Promise<{ url: string; title: string }> {
     return { url: input.url, title: "Example" };
   }
   async click(input: ClickInput): Promise<{ clickedRef: string }> {
@@ -209,7 +211,9 @@ export async function startTestHarness(
       skipLlamaHealthCheck: true,
       llamaComplete: options.llamaComplete ?? defaultComplete,
       ...(options.llamaProps ? { llamaProps: options.llamaProps } : {}),
-      ...(options.llamaPropsError ? { llamaPropsError: options.llamaPropsError } : {}),
+      ...(options.llamaPropsError
+        ? { llamaPropsError: options.llamaPropsError }
+        : {}),
       ...(options.llamaCompleteStream
         ? { llamaCompleteStream: options.llamaCompleteStream }
         : {}),

@@ -37,11 +37,19 @@ describe("fingerprintWorkspace", () => {
   it("changes on a same-size replacement via mtime", async () => {
     const path = join(dir, "src", "app.py");
     await writeFile(path, "print('a')\n");
-    await utimes(path, new Date(1_700_000_000_000), new Date(1_700_000_000_000));
+    await utimes(
+      path,
+      new Date(1_700_000_000_000),
+      new Date(1_700_000_000_000),
+    );
     const before = fingerprintWorkspace(dir);
     // Same byte length, different content — only mtime distinguishes it.
     await writeFile(path, "print('b')\n");
-    await utimes(path, new Date(1_700_000_111_000), new Date(1_700_000_111_000));
+    await utimes(
+      path,
+      new Date(1_700_000_111_000),
+      new Date(1_700_000_111_000),
+    );
     expect(fingerprintWorkspace(dir)).not.toBe(before);
   });
 

@@ -69,5 +69,8 @@ export function placeOnboardingBlock(
  * would buy nothing.
  */
 export function widestLine(lines: readonly string[]): number {
-  return lines.reduce((widest, line) => Math.max(widest, line.trimEnd().length), 0);
+  return lines.reduce(
+    (widest, line) => Math.max(widest, line.trimEnd().length),
+    0,
+  );
 }

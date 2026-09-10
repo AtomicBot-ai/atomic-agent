@@ -143,7 +143,8 @@ export class ProviderFallbackChain {
     const now = this.now();
     const b = this.breaker(p, primary);
     const cooledDown = now >= b.cooldownUntil;
-    const throttleOk = now - b.lastProbeAt >= this.resolve().timing.probeThrottleMs;
+    const throttleOk =
+      now - b.lastProbeAt >= this.resolve().timing.probeThrottleMs;
     if (cooledDown && throttleOk) {
       b.lastProbeAt = now;
       return { providerId: primary, isProbe: true };
@@ -233,7 +234,10 @@ export class ProviderFallbackChain {
 
     // Reset the streak if the last failure is older than the no-error
     // window — the provider had a clean run since, so start fresh.
-    if (b.lastFailureAt > 0 && now - b.lastFailureAt >= timing.failureWindowMs) {
+    if (
+      b.lastFailureAt > 0 &&
+      now - b.lastFailureAt >= timing.failureWindowMs
+    ) {
       b.consecutiveFailures = 0;
       b.cooldownStep = 0;
     }
@@ -242,11 +246,15 @@ export class ProviderFallbackChain {
 
     // Arm (or escalate) the cooldown once the breaker trips: either an
     // immediate signal, or the consecutive-failure threshold is reached.
-    const tripped = immediate || b.consecutiveFailures >= timing.failureThreshold;
+    const tripped =
+      immediate || b.consecutiveFailures >= timing.failureThreshold;
     if (tripped) {
       const step = Math.min(b.cooldownStep, timing.cooldownMs.length - 1);
       b.cooldownUntil = now + timing.cooldownMs[step]!;
-      b.cooldownStep = Math.min(b.cooldownStep + 1, timing.cooldownMs.length - 1);
+      b.cooldownStep = Math.min(
+        b.cooldownStep + 1,
+        timing.cooldownMs.length - 1,
+      );
     }
   }
 
@@ -306,7 +314,34 @@ export class ProviderFallbackChain {
   }
 }
 
-function describeReason(err: unknown): string {
+/** Longest reason we carry: this lands in a chat notice and a feed line. */
+const MAX_REASON_CHARS = 180;
+
+/**
+ * What the operator is told about a fallover.
+ *
+ * The message, not the class name. This used to answer `OpenAiHttpError`
+ * — technically the error's `name`, and useless to the person deciding
+ * what to do: it names the transport, never the refusal. The provider's
+ * own text is the part that distinguishes "your key is wrong" from "you
+ * are out of credit" from "the service is down", and those want three
+ * different actions.
+ *
+ * Collapsed to one line and capped, because it is rendered inside a
+ * notice and a feed row; the untruncated original is still on the error
+ * the logger records.
+ */
+export function describeReason(err: unknown): string {
+  const message =
+    err && typeof err === "object" && "message" in err
+      ? (err as { message?: unknown }).message
+      : undefined;
+  if (typeof message === "string" && message.trim().length > 0) {
+    const line = message.replace(/\s+/g, " ").trim();
+    return line.length > MAX_REASON_CHARS
+      ? `${line.slice(0, MAX_REASON_CHARS - 1)}…`
+      : line;
+  }
   if (err && typeof err === "object" && "name" in err) {
     const name = (err as { name?: unknown }).name;
     if (typeof name === "string" && name.length > 0) return name;

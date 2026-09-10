@@ -136,7 +136,10 @@ export async function browseTap(
 export async function browseHub(
   client: SkillHubClient,
   taps: readonly SkillTap[],
-): Promise<{ entries: HubSkillEntry[]; errors: Array<{ repo: string; error: string }> }> {
+): Promise<{
+  entries: HubSkillEntry[];
+  errors: Array<{ repo: string; error: string }>;
+}> {
   const seen = new Set<string>();
   const entries: HubSkillEntry[] = [];
   const errors: Array<{ repo: string; error: string }> = [];
@@ -184,7 +187,10 @@ export async function searchHub(
   client: SkillHubClient,
   taps: readonly SkillTap[],
   query: string,
-): Promise<{ entries: HubSkillEntry[]; errors: Array<{ repo: string; error: string }> }> {
+): Promise<{
+  entries: HubSkillEntry[];
+  errors: Array<{ repo: string; error: string }>;
+}> {
   const { entries, errors } = await browseHub(client, taps);
   return { entries: filterHubEntries(entries, query), errors };
 }

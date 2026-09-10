@@ -1,9 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { join } from "node:path";
-import {
-  resolveRipgrepPath,
-  resetRipgrepCache,
-} from "./ripgrep-resolver.js";
+import { resolveRipgrepPath, resetRipgrepCache } from "./ripgrep-resolver.js";
 
 describe("resolveRipgrepPath", () => {
   beforeEach(() => {
@@ -67,17 +64,20 @@ describe("resolveRipgrepPath", () => {
   // The PATH-scan branch splits/joins with the host's `node:path` semantics
   // (`:` vs `;`, `/` vs `\`), so a POSIX-style PATH fixture only resolves on
   // a POSIX host. The Windows bundled-lookup path is covered above.
-  it.skipIf(process.platform === "win32")("falls back to PATH lookup on posix", () => {
-    const systemBin = "/opt/homebrew/bin/rg";
-    const result = resolveRipgrepPath({
-      env: { PATH: "/opt/homebrew/bin:/usr/bin" },
-      execPath: "/usr/local/bin/node",
-      cwd: "/repo",
-      platform: "darwin",
-      fileExists: (p) => p === systemBin,
-    });
-    expect(result).toBe(systemBin);
-  });
+  it.skipIf(process.platform === "win32")(
+    "falls back to PATH lookup on posix",
+    () => {
+      const systemBin = "/opt/homebrew/bin/rg";
+      const result = resolveRipgrepPath({
+        env: { PATH: "/opt/homebrew/bin:/usr/bin" },
+        execPath: "/usr/local/bin/node",
+        cwd: "/repo",
+        platform: "darwin",
+        fileExists: (p) => p === systemBin,
+      });
+      expect(result).toBe(systemBin);
+    },
+  );
 
   it("returns null when no candidate exists", () => {
     const result = resolveRipgrepPath({

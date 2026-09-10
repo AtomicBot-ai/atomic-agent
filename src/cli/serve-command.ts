@@ -54,7 +54,9 @@ const HELP =
     "  GET  /api/events                         SSE stream of pending approval requests",
   ].join("\n") + "\n";
 
-function parseArgs(args: string[]): ServeArgs | { help: true } | { error: string } {
+function parseArgs(
+  args: string[],
+): ServeArgs | { help: true } | { error: string } {
   let host = "127.0.0.1";
   let port = 8787;
   let workingDir: string | null = null;
@@ -178,7 +180,8 @@ export async function serveCommand(args: string[]): Promise<number> {
     process.stderr.write(`[atomic-agent] shutdown signal received, closing\n`);
     return 0;
   } catch (err) {
-    const message = err instanceof Error ? err.stack ?? err.message : String(err);
+    const message =
+      err instanceof Error ? (err.stack ?? err.message) : String(err);
     process.stderr.write(`serve failed: ${message}\n`);
     return 1;
   } finally {

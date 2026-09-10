@@ -53,11 +53,13 @@ const SUPPORTED_KEYWORDS = new Set([
 
 export function assertSupportedJsonSchema(schema: JsonSchema): void {
   for (const key of Object.keys(schema)) {
-    if (!SUPPORTED_KEYWORDS.has(key)) throw new Error(`unsupported schema keyword: ${key}`);
+    if (!SUPPORTED_KEYWORDS.has(key))
+      throw new Error(`unsupported schema keyword: ${key}`);
   }
   const types = typeof schema.type === "string" ? [schema.type] : schema.type;
   if (types !== undefined) {
-    if (!Array.isArray(types) || types.length === 0) throw new Error("invalid schema type");
+    if (!Array.isArray(types) || types.length === 0)
+      throw new Error("invalid schema type");
     for (const type of types) {
       if (typeof type !== "string" || !SUPPORTED_TYPES.has(type)) {
         throw new Error("unsupported schema type");
@@ -70,11 +72,13 @@ export function assertSupportedJsonSchema(schema: JsonSchema): void {
       if (!Array.isArray(branches) || branches.length === 0) {
         throw new Error(`invalid ${keyword}`);
       }
-      for (const branch of branches) assertSupportedJsonSchema(asSchema(branch));
+      for (const branch of branches)
+        assertSupportedJsonSchema(asSchema(branch));
     }
   }
   if (schema.not !== undefined) assertSupportedJsonSchema(asSchema(schema.not));
-  if (schema.items !== undefined) assertSupportedJsonSchema(asSchema(schema.items));
+  if (schema.items !== undefined)
+    assertSupportedJsonSchema(asSchema(schema.items));
   if (
     schema.additionalProperties !== undefined &&
     typeof schema.additionalProperties !== "boolean"
@@ -88,7 +92,10 @@ export function assertSupportedJsonSchema(schema: JsonSchema): void {
       assertSupportedJsonSchema(asSchema(child));
     }
   }
-  if (schema.enum !== undefined && (!Array.isArray(schema.enum) || schema.enum.length === 0)) {
+  if (
+    schema.enum !== undefined &&
+    (!Array.isArray(schema.enum) || schema.enum.length === 0)
+  ) {
     throw new Error("invalid enum");
   }
   if (schema.required !== undefined && !Array.isArray(schema.required)) {
@@ -112,7 +119,10 @@ export function assertSupportedJsonSchema(schema: JsonSchema): void {
     "multipleOf",
   ] as const) {
     const assertion = schema[keyword];
-    if (assertion !== undefined && (typeof assertion !== "number" || !Number.isFinite(assertion))) {
+    if (
+      assertion !== undefined &&
+      (typeof assertion !== "number" || !Number.isFinite(assertion))
+    ) {
       throw new Error(`invalid ${keyword}`);
     }
   }

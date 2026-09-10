@@ -120,7 +120,7 @@ export const SPLASH_TIPS: readonly SplashTip[] = [
   },
   {
     label: "/import",
-    description: "open the Import tab (Hermes migration)",
+    description: "bring sessions and skills over from another agent",
     short: "Hermes import",
     command: "/import",
   },
@@ -309,13 +309,20 @@ export function computeSplashFit(size: SplashSize): SplashFit {
   // Only when a mark is drawn: on a surface too small for one the tips
   // are all there is, and spending one of two rows on slack costs half
   // the page to guard artwork that is not on it.
-  const spare =
-    rows - markRows - (logo === "none" ? 0 : SPLASH_SLACK_ROWS);
+  const spare = rows - markRows - (logo === "none" ? 0 : SPLASH_SLACK_ROWS);
   const tipCount = Math.max(0, Math.min(SPLASH_TIPS.length, spare));
   const visible = SPLASH_TIPS.slice(0, tipCount);
 
   if (visible.length === 0) {
-    return { logo, wordmarkPlacement, wordmark, tagline, tipCount: 0, labelWidth: 0, descriptions: "none" };
+    return {
+      logo,
+      wordmarkPlacement,
+      wordmark,
+      tagline,
+      tipCount: 0,
+      labelWidth: 0,
+      descriptions: "none",
+    };
   }
 
   const longestLabel = maxLength(visible.map((tip) => tip.label));
@@ -325,13 +332,45 @@ export function computeSplashFit(size: SplashSize): SplashFit {
   const budget = inner - TIP_PREFIX_WIDTH;
 
   if (budget >= TIP_LABEL_WIDE + longestFull) {
-    return { logo, wordmarkPlacement, wordmark, tagline, tipCount, labelWidth: TIP_LABEL_WIDE, descriptions: "full" };
+    return {
+      logo,
+      wordmarkPlacement,
+      wordmark,
+      tagline,
+      tipCount,
+      labelWidth: TIP_LABEL_WIDE,
+      descriptions: "full",
+    };
   }
   if (budget >= tightLabel + longestFull) {
-    return { logo, wordmarkPlacement, wordmark, tagline, tipCount, labelWidth: tightLabel, descriptions: "full" };
+    return {
+      logo,
+      wordmarkPlacement,
+      wordmark,
+      tagline,
+      tipCount,
+      labelWidth: tightLabel,
+      descriptions: "full",
+    };
   }
   if (budget >= tightLabel + longestShort) {
-    return { logo, wordmarkPlacement, wordmark, tagline, tipCount, labelWidth: tightLabel, descriptions: "short" };
+    return {
+      logo,
+      wordmarkPlacement,
+      wordmark,
+      tagline,
+      tipCount,
+      labelWidth: tightLabel,
+      descriptions: "short",
+    };
   }
-  return { logo, wordmarkPlacement, wordmark, tagline, tipCount, labelWidth: 0, descriptions: "none" };
+  return {
+    logo,
+    wordmarkPlacement,
+    wordmark,
+    tagline,
+    tipCount,
+    labelWidth: 0,
+    descriptions: "none",
+  };
 }

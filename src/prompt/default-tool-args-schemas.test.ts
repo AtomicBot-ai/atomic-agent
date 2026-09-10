@@ -34,7 +34,8 @@ describe("default tool argsJsonSchema map", () => {
       required: ["cmd", "args"],
       additionalProperties: false,
     });
-    const properties = (schema as { properties: Record<string, unknown> }).properties;
+    const properties = (schema as { properties: Record<string, unknown> })
+      .properties;
     expect(properties.cmd).toEqual({ type: "string" });
     expect(properties.args).toEqual({
       type: "array",
@@ -49,7 +50,8 @@ describe("default tool argsJsonSchema map", () => {
       required: ["key", "value"],
       additionalProperties: false,
     });
-    const properties = (schema as { properties: Record<string, unknown> }).properties;
+    const properties = (schema as { properties: Record<string, unknown> })
+      .properties;
     expect(properties.keywords).toEqual({
       type: "array",
       items: { type: "string" },
@@ -63,7 +65,8 @@ describe("default tool argsJsonSchema map", () => {
       required: [],
       additionalProperties: false,
     });
-    const properties = (schema as { properties: Record<string, unknown> }).properties;
+    const properties = (schema as { properties: Record<string, unknown> })
+      .properties;
     expect(properties.scope).toEqual({
       type: "string",
       enum: ["project", "all"],
@@ -80,7 +83,8 @@ describe("default tool argsJsonSchema map", () => {
       required: ["prompt"],
       additionalProperties: false,
     });
-    const properties = (schema as { properties: Record<string, unknown> }).properties;
+    const properties = (schema as { properties: Record<string, unknown> })
+      .properties;
     expect(properties.paths).toEqual({
       type: "array",
       items: { type: "string" },
@@ -137,7 +141,9 @@ describe("default tool argsJsonSchema map", () => {
     // The descriptor array is static and cannot read config, so it
     // documents the DEFAULT with wording that stays true if someone
     // raises `vision.maxImagesPerCall`.
-    expect(descriptor!.summary).toContain("at most 4 images per call by default");
+    expect(descriptor!.summary).toContain(
+      "at most 4 images per call by default",
+    );
     expect(descriptor!.argsSchema).toContain("at most 4 by default");
   });
 

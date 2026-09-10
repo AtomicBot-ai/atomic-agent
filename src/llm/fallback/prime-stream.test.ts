@@ -5,7 +5,9 @@ import { ProviderFallbackChain } from "./provider-fallback-chain.js";
 import { DEFAULT_FALLBACK_TIMING } from "./fallback-config.js";
 import { OpenAiHttpError } from "../provider/openai/openai-http.js";
 
-async function* threeChunks(prefix: string): AsyncGenerator<string, string, void> {
+async function* threeChunks(
+  prefix: string,
+): AsyncGenerator<string, string, void> {
   yield `${prefix}-1`;
   yield `${prefix}-2`;
   return `${prefix}-done`;
@@ -56,13 +58,14 @@ describe("primeStream / replayPrimedStream", () => {
 
   it("falls the streaming path over when the primary fails to open", async () => {
     const chain = new ProviderFallbackChain({
-      resolve: () => ({ chain: ["primary", "backup"], timing: DEFAULT_FALLBACK_TIMING }),
+      resolve: () => ({
+        chain: ["primary", "backup"],
+        timing: DEFAULT_FALLBACK_TIMING,
+      }),
     });
 
     const primed = await runWithFallback(chain, (id) =>
-      primeStream(
-        id === "primary" ? throwsOnOpen() : threeChunks(id),
-      ),
+      primeStream(id === "primary" ? throwsOnOpen() : threeChunks(id)),
     );
     const { chunks, ret } = await collect(replayPrimedStream(primed));
     expect(chunks).toEqual(["backup-1", "backup-2"]);

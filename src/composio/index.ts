@@ -10,10 +10,7 @@ export {
   createComposioSession,
   parseSessionResponse,
 } from "./composio-api.js";
-export type {
-  ComposioSession,
-  CreateSessionOptions,
-} from "./composio-api.js";
+export type { ComposioSession, CreateSessionOptions } from "./composio-api.js";
 export {
   COMPOSIO_SERVER_NAME,
   buildComposioServerConfig,

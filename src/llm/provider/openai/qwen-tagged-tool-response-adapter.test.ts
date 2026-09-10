@@ -35,14 +35,18 @@ const offeredTools: NonNullable<CompletionRequest["tools"]> = [
   },
 ];
 
-function responseWith(message: Record<string, unknown>): Record<string, unknown> {
+function responseWith(
+  message: Record<string, unknown>,
+): Record<string, unknown> {
   return {
     model: "qwen",
     choices: [{ message, finish_reason: "stop" }],
   };
 }
 
-function firstMessage(response: Record<string, unknown>): Record<string, unknown> {
+function firstMessage(
+  response: Record<string, unknown>,
+): Record<string, unknown> {
   const choices = response.choices as Array<Record<string, unknown>>;
   return choices[0]!.message as Record<string, unknown>;
 }
@@ -89,7 +93,9 @@ describe("adaptQwenTaggedToolResponse", () => {
       options: { recursive: false },
       nothing: null,
     });
-    expect(JSON.parse(calls[1]!.function.arguments)).toEqual({ text: "second" });
+    expect(JSON.parse(calls[1]!.function.arguments)).toEqual({
+      text: "second",
+    });
   });
 
   it("converts a tagged call from reasoning_content", () => {
@@ -107,7 +113,10 @@ describe("adaptQwenTaggedToolResponse", () => {
     expect(message.content).toBe("brief rationale");
     expect(message.reasoning_content).toBeNull();
     expect(message.tool_calls).toMatchObject([
-      { type: "function", function: { name: "reply", arguments: '{"text":"done"}' } },
+      {
+        type: "function",
+        function: { name: "reply", arguments: '{"text":"done"}' },
+      },
     ]);
   });
 
@@ -117,7 +126,8 @@ describe("adaptQwenTaggedToolResponse", () => {
     const adapted = adaptQwenTaggedToolResponse(
       responseWith({
         role: "assistant",
-        content: "let me call <tool_call><function=os.fs.read><parameter=path>/x",
+        content:
+          "let me call <tool_call><function=os.fs.read><parameter=path>/x",
         reasoning_content:
           "<tool_call><function=reply><parameter=text>done</parameter></function></tool_call>",
       }),
@@ -126,7 +136,10 @@ describe("adaptQwenTaggedToolResponse", () => {
     const message = firstMessage(adapted);
 
     expect(message.tool_calls).toMatchObject([
-      { type: "function", function: { name: "reply", arguments: '{"text":"done"}' } },
+      {
+        type: "function",
+        function: { name: "reply", arguments: '{"text":"done"}' },
+      },
     ]);
     expect(message.reasoning_content).toBeNull();
   });
@@ -236,7 +249,10 @@ describe("adaptQwenTaggedToolResponse", () => {
     });
 
     expect(
-      adaptQwenTaggedToolResponse(original, { prompt: "x", tools: offeredTools }),
+      adaptQwenTaggedToolResponse(original, {
+        prompt: "x",
+        tools: offeredTools,
+      }),
     ).toBe(original);
   });
 
@@ -378,7 +394,9 @@ describe("adaptQwenTaggedToolResponse", () => {
 
     expect(adaptQwenTaggedToolResponse(missing, { tools })).toBe(missing);
     expect(adaptQwenTaggedToolResponse(both, { tools })).toBe(both);
-    expect(firstMessage(adaptQwenTaggedToolResponse(valid, { tools })).tool_calls).toBeDefined();
+    expect(
+      firstMessage(adaptQwenTaggedToolResponse(valid, { tools })).tool_calls,
+    ).toBeDefined();
   });
 
   it("inherits parent types while coercing oneOf alternatives", () => {
@@ -429,7 +447,11 @@ describe("adaptQwenTaggedToolResponse", () => {
             type: "object",
             properties: {
               even: { type: "integer", multipleOf: 2 },
-              tags: { type: "array", items: { type: "string" }, uniqueItems: true },
+              tags: {
+                type: "array",
+                items: { type: "string" },
+                uniqueItems: true,
+              },
               mode: { type: "string", not: { const: "blocked" } },
             },
             required: ["even", "tags", "mode"],
@@ -447,9 +469,9 @@ describe("adaptQwenTaggedToolResponse", () => {
         role: "assistant",
         content: `<tool_call><function=asserted>${parameters}</function></tool_call>`,
       });
-      expect(adaptQwenTaggedToolResponse(original, { tools: assertedTools })).toBe(
-        original,
-      );
+      expect(
+        adaptQwenTaggedToolResponse(original, { tools: assertedTools }),
+      ).toBe(original);
     }
 
     const unsupportedTools: NonNullable<CompletionRequest["tools"]> = [
@@ -471,9 +493,9 @@ describe("adaptQwenTaggedToolResponse", () => {
       content:
         "<tool_call><function=unsupported><parameter=value>x</parameter></function></tool_call>",
     });
-    expect(adaptQwenTaggedToolResponse(unsupported, { tools: unsupportedTools })).toBe(
-      unsupported,
-    );
+    expect(
+      adaptQwenTaggedToolResponse(unsupported, { tools: unsupportedTools }),
+    ).toBe(unsupported);
   });
 
   it("uses own-property checks for prototype-named parameters", () => {
@@ -513,6 +535,8 @@ describe("adaptQwenTaggedToolResponse", () => {
     const calls = firstMessage(adapted).tool_calls as Array<{
       function: { arguments: string };
     }>;
-    expect(JSON.parse(calls[0]!.function.arguments)).toEqual({ constructor: "own" });
+    expect(JSON.parse(calls[0]!.function.arguments)).toEqual({
+      constructor: "own",
+    });
   });
 });

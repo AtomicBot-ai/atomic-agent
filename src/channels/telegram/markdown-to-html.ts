@@ -181,7 +181,10 @@ interface Segment {
 
 function splitOnPlaceholders(text: string): Segment[] {
   const out: Segment[] = [];
-  const re = new RegExp(`${PLACEHOLDER_PREFIX}(\\d+)${PLACEHOLDER_SUFFIX}`, "g");
+  const re = new RegExp(
+    `${PLACEHOLDER_PREFIX}(\\d+)${PLACEHOLDER_SUFFIX}`,
+    "g",
+  );
   let last = 0;
   for (const m of text.matchAll(re)) {
     const start = m.index ?? 0;
@@ -202,12 +205,15 @@ function renderLinks(s: string): string {
   // generic pass below, the URL portion is escaped here. Anchors
   // with unsafe schemes degrade to `text (url)` plain text so we
   // never emit `<a href="javascript:...">`.
-  return s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_match, label: string, url: string) => {
-    if (!SAFE_URL_SCHEME.test(url)) {
-      return `${escapeHtmlText(label)} (${escapeHtmlText(url)})`;
-    }
-    return `<a href="${escapeHtmlAttr(url)}">${applyEmphasis(label)}</a>`;
-  });
+  return s.replace(
+    /\[([^\]]+)\]\(([^)\s]+)\)/g,
+    (_match, label: string, url: string) => {
+      if (!SAFE_URL_SCHEME.test(url)) {
+        return `${escapeHtmlText(label)} (${escapeHtmlText(url)})`;
+      }
+      return `<a href="${escapeHtmlAttr(url)}">${applyEmphasis(label)}</a>`;
+    },
+  );
 }
 
 function applyEmphasis(label: string): string {
@@ -268,7 +274,9 @@ function restorePlaceholders(text: string, store: Placeholder[]): string {
     if (ph.kind === "inline_code") {
       return `<code>${escapeHtmlText(ph.body)}</code>`;
     }
-    const language = ph.language ? ` class="language-${escapeHtmlAttr(ph.language)}"` : "";
+    const language = ph.language
+      ? ` class="language-${escapeHtmlAttr(ph.language)}"`
+      : "";
     return `<pre><code${language}>${escapeHtmlText(ph.body)}</code></pre>`;
   });
   return parts.join("");

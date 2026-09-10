@@ -20,7 +20,8 @@ const CLOUD_OFFER = [
   "┃  it takes about a minute, and the download keeps running.",
 ] as const;
 /** The failed variant: one line, because there is no download to keep. */
-const CLOUD_OFFER_FAILED = "┃  Set up a cloud model instead — it takes about a minute.";
+const CLOUD_OFFER_FAILED =
+  "┃  Set up a cloud model instead — it takes about a minute.";
 /** Set bold on the second offer line: it is the key, not the sentence. */
 const CLOUD_OFFER_KEY = "    press c";
 
@@ -34,7 +35,8 @@ const SKIP_OFFER = [
  * and the turn gate explains the state if they try to chat before
  * fixing it.
  */
-const SKIP_OFFER_FAILED = "┃  Or skip — start using the agent without a local model.";
+const SKIP_OFFER_FAILED =
+  "┃  Or skip — start using the agent without a local model.";
 const SKIP_OFFER_KEY = "    press s";
 
 /**
@@ -81,7 +83,9 @@ export function countOnboardingDownloadBlockRows(input: {
   // margin (1), the two bars (2), the rate line and its margin (2), the
   // skip row's margin plus its two lines (3, always drawn), and the
   // cloud offer's top margin plus two lines when it shows.
-  return countOnboardingHeaderRows(input.mark) + 10 + (input.offerCloud ? 4 : 0);
+  return (
+    countOnboardingHeaderRows(input.mark) + 10 + (input.offerCloud ? 4 : 0)
+  );
 }
 
 function headingLine(modelLabel: string): string {

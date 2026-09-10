@@ -142,7 +142,11 @@ describe("formatDotenvReadWarning", () => {
   });
 
   it("gives POSIX guidance elsewhere", () => {
-    const text = formatDotenvReadWarning("/home/u/.atomic-agent/.env", failure, "linux");
+    const text = formatDotenvReadWarning(
+      "/home/u/.atomic-agent/.env",
+      failure,
+      "linux",
+    );
     expect(text).toContain("chmod 600");
     expect(text).not.toContain("icacls");
   });

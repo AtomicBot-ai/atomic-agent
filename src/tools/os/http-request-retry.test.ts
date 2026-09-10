@@ -15,11 +15,7 @@ const publicLookup: HostLookup = async () => [
  * Curl stdout envelope, optionally carrying a Retry-After header value and a
  * redirect target. Field order mirrors the `-w` format: redirect_url is last.
  */
-function stubStdout(
-  status: number,
-  retryAfter = "",
-  redirectUrl = "",
-): string {
+function stubStdout(status: number, retryAfter = "", redirectUrl = ""): string {
   return (
     `body\n__ATOMIC_CURL_META__${status}|text/plain|4|0.01|` +
     `${redirectUrl}__ATOMIC_CURL_RA__${retryAfter}`
@@ -54,15 +50,13 @@ function scriptedRunCommand(
   }) as unknown as typeof RunCommandType;
 }
 
-function run(
-  input: {
-    method?: "GET" | "POST";
-    results: CommandResult[];
-    calls: string[][];
-    slept: number[];
-    maxRetries?: number;
-  },
-) {
+function run(input: {
+  method?: "GET" | "POST";
+  results: CommandResult[];
+  calls: string[][];
+  slept: number[];
+  maxRetries?: number;
+}) {
   return executeGuardedHttpRequest(
     "https://api.example/v1",
     {
@@ -223,7 +217,9 @@ describe("os.http.request retries", () => {
     const slept: number[] = [];
     await expect(
       run({
-        results: [makeResult({ exitCode: 6, stderr: "could not resolve host" })],
+        results: [
+          makeResult({ exitCode: 6, stderr: "could not resolve host" }),
+        ],
         calls,
         slept,
       }),
@@ -257,7 +253,9 @@ describe("os.http.request retry safety for non-idempotent methods", () => {
     await expect(
       run({
         method: "POST",
-        results: [makeResult({ exitCode: 28, stderr: "timed out", timedOut: true })],
+        results: [
+          makeResult({ exitCode: 28, stderr: "timed out", timedOut: true }),
+        ],
         calls,
         slept,
       }),
@@ -349,9 +347,7 @@ describe("os.http.request retry safety across redirects", () => {
     expect(response.status).toBe(502);
     // Two hops: the original POST and the 307 follow. No third attempt.
     expect(calls).toHaveLength(2);
-    expect(
-      calls.filter((a) => a.includes("--data-binary")),
-    ).toHaveLength(2);
+    expect(calls.filter((a) => a.includes("--data-binary"))).toHaveLength(2);
   });
 
   it("DOES retry a GET that a 303 downgraded it to", async () => {

@@ -128,8 +128,9 @@ describe("OnboardingDownloadAmbient", () => {
     // 18 viewport rows leave one free row below the block: a gap, not a
     // field, so nothing mounts at all.
     const view = mount(ambient({ viewportRows: 18 }));
-    expect(downloadAmbientRows({ viewportRows: 18, mark: "sm", offerCloud: true }))
-      .toBeLessThan(MIN_ATOM_ROWS);
+    expect(
+      downloadAmbientRows({ viewportRows: 18, mark: "sm", offerCloud: true }),
+    ).toBeLessThan(MIN_ATOM_ROWS);
     expect(strip(view.lastFrame() ?? "")).not.toContain(ATOM_GLYPH);
   });
 
@@ -150,11 +151,15 @@ describe("OnboardingDownloadAmbient", () => {
   }
 
   it("drifts on its own while the download runs", async () => {
-    expect(await frameMoves(mount(ambient({ atomStepMs: 20 })), 4000)).toBe(true);
+    expect(await frameMoves(mount(ambient({ atomStepMs: 20 })), 4000)).toBe(
+      true,
+    );
   });
 
   it("clears out once the weights are all the way down", () => {
-    const frame = strip(mount(ambient({ pull: pull({ percent: 100 }) })).lastFrame() ?? "");
+    const frame = strip(
+      mount(ambient({ pull: pull({ percent: 100 }) })).lastFrame() ?? "",
+    );
     expect(frame).not.toContain(ATOM_GLYPH);
   });
 
@@ -162,7 +167,9 @@ describe("OnboardingDownloadAmbient", () => {
     // Only finished weights end the wait: the runtime zip landing at
     // 100% just means the weights are about to start.
     const view = mount(
-      ambient({ pull: pull({ kind: "backend", modelId: "_backend", percent: 100 }) }),
+      ambient({
+        pull: pull({ kind: "backend", modelId: "_backend", percent: 100 }),
+      }),
     );
     expect(strip(view.lastFrame() ?? "")).toContain(ATOM_GLYPH);
   });
@@ -175,21 +182,27 @@ describe("OnboardingDownloadAmbient", () => {
     // again.
     const view = mount(ambient({ atomStepMs: 20 }));
     expect(strip(view.lastFrame() ?? "")).toContain(ATOM_GLYPH);
-    view.rerender(ambient({ pull: null, pullError: "connection reset", atomStepMs: 20 }));
+    view.rerender(
+      ambient({ pull: null, pullError: "connection reset", atomStepMs: 20 }),
+    );
     expect(strip(view.lastFrame() ?? "")).not.toContain(ATOM_GLYPH);
     expect(await frameMoves(view, 500)).toBe(false);
   });
 
   /** Atoms visible in a frame, hot or cold — a collision is still an atom. */
   const atomsDrawn = (frame: string): number =>
-    frame.split(ATOM_GLYPH).length + frame.split(ATOM_COLLISION_GLYPH).length - 2;
+    frame.split(ATOM_GLYPH).length +
+    frame.split(ATOM_COLLISION_GLYPH).length -
+    2;
 
   it("thins the population when the pane is only just tall enough", () => {
     // 25 viewport rows budget three rows of field, the smallest that
     // draws at all (the table above). A full population there is hot 22%
     // of the time; two keep the collision an event (measured 2% — see
     // atom-field.test.ts). The default geometry's 97×4 pane earns more.
-    const small = atomsDrawn(strip(mount(ambient({ viewportRows: 25 })).lastFrame() ?? ""));
+    const small = atomsDrawn(
+      strip(mount(ambient({ viewportRows: 25 })).lastFrame() ?? ""),
+    );
     const full = atomsDrawn(strip(mount(ambient()).lastFrame() ?? ""));
     expect(small).toBeGreaterThan(0);
     expect(small).toBeLessThanOrEqual(2);
@@ -205,7 +218,9 @@ describe("OnboardingDownloadAmbient", () => {
     // clipped to fewer rows.
     const PARKED_STEP_MS = 3_600_000;
     const fresh = strip(
-      mount(ambient({ viewportRows: 25, atomStepMs: PARKED_STEP_MS })).lastFrame() ?? "",
+      mount(
+        ambient({ viewportRows: 25, atomStepMs: PARKED_STEP_MS }),
+      ).lastFrame() ?? "",
     );
     expect(atomsDrawn(fresh)).toBe(2);
     const view = mount(ambient({ atomStepMs: PARKED_STEP_MS }));

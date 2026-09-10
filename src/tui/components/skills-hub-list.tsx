@@ -59,8 +59,8 @@ function renderBody(panel: SkillsPanelState, maxRows: number): ReactElement {
     return (
       <Box paddingY={1}>
         <Text color={theme.colors.muted}>
-          no skills found — press `/` to search, `r` to re-browse, or `Esc`
-          to go back.
+          no skills found — press `/` to search, `r` to re-browse, or `Esc` to
+          go back.
         </Text>
       </Box>
     );

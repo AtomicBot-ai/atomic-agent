@@ -49,7 +49,11 @@ describe("estimateMessageHeight", () => {
 
 describe("selectVisibleMessages", () => {
   it("returns all messages when budget is generous", () => {
-    const msgs = [userMsg("u1", "a"), assistantMsg("a1", "b"), userMsg("u2", "c")];
+    const msgs = [
+      userMsg("u1", "a"),
+      assistantMsg("a1", "b"),
+      userMsg("u2", "c"),
+    ];
     const slice = selectVisibleMessages(msgs, 0, 100);
     expect(slice.visible.map((m) => m.id)).toEqual(["u1", "a1", "u2"]);
     expect(slice.hiddenAbove).toBe(0);
@@ -94,11 +98,7 @@ describe("selectVisibleMessages", () => {
     const longMsg = userMsg("u1", "line1\nline2\nline3\nline4\nline5");
     // 5 body + 3 overhead + 1 copy button = 9 rows.
     expect(estimateMessageHeight(longMsg)).toBe(9);
-    const slice = selectVisibleMessages(
-      [longMsg, userMsg("u2", "tail")],
-      0,
-      6,
-    );
+    const slice = selectVisibleMessages([longMsg, userMsg("u2", "tail")], 0, 6);
     // The 5-line message would not fit in 6 rows alongside the
     // 4-row tail message, so only the tail remains and the long
     // one falls into hiddenAbove.

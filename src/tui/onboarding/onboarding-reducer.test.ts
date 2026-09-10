@@ -31,33 +31,54 @@ describe("onboarding reducer", () => {
     expect(fresh.onboarding?.step).toBe("intro");
     const opened = withFlow();
     expect(opened.onboarding?.step).toBe("choose");
-    const closed = reduceTuiState(opened, { type: "onboarding_set", onboarding: null });
+    const closed = reduceTuiState(opened, {
+      type: "onboarding_set",
+      onboarding: null,
+    });
     expect(closed.onboarding).toBeNull();
   });
 
   it("wraps the cursor at both ends", () => {
     let state = withFlow();
-    state = reduceTuiState(state, { type: "onboarding_cursor_moved", delta: -1 });
+    state = reduceTuiState(state, {
+      type: "onboarding_cursor_moved",
+      delta: -1,
+    });
     expect(state.onboarding?.cursor).toBe(2);
-    state = reduceTuiState(state, { type: "onboarding_cursor_moved", delta: 1 });
+    state = reduceTuiState(state, {
+      type: "onboarding_cursor_moved",
+      delta: 1,
+    });
     expect(state.onboarding?.cursor).toBe(0);
   });
 
   it("clears a stale error when the step changes", () => {
     let state = withFlow();
-    state = reduceTuiState(state, { type: "onboarding_error_set", error: "fetch failed" });
-    state = reduceTuiState(state, { type: "onboarding_step_set", step: "custom_chat_url" });
+    state = reduceTuiState(state, {
+      type: "onboarding_error_set",
+      error: "fetch failed",
+    });
+    state = reduceTuiState(state, {
+      type: "onboarding_step_set",
+      step: "custom_chat_url",
+    });
     expect(state.onboarding?.error).toBeNull();
   });
 
   it("ignores every action but `onboarding_set` while the flow is closed", () => {
     const state = createInitialTuiState(fakeSession(), 50);
-    const next = reduceTuiState(state, { type: "onboarding_cursor_moved", delta: 1 });
+    const next = reduceTuiState(state, {
+      type: "onboarding_cursor_moved",
+      delta: 1,
+    });
     expect(next.onboarding).toBeNull();
   });
 
   it("finishes with the outcome the host has to act on", () => {
-    const state = reduceTuiState(withFlow(), { type: "onboarding_finished", outcome: "local" });
+    const state = reduceTuiState(withFlow(), {
+      type: "onboarding_finished",
+      outcome: "local",
+    });
     // A plain finish never bypasses the second-backend offer.
     expect(state.onboarding).toMatchObject({
       step: "finished",
@@ -98,7 +119,10 @@ describe("onboarding reducer", () => {
         type: "local_models_pull_finished",
         kind: "chat",
       });
-      expect(state.onboarding).toMatchObject({ step: "finished", outcome: "local" });
+      expect(state.onboarding).toMatchObject({
+        step: "finished",
+        outcome: "local",
+      });
       expect(state.localModelsPanel.pull).toBeNull();
     });
 
@@ -138,7 +162,10 @@ describe("onboarding reducer", () => {
         delta: 2,
       });
       expect(state.onboarding?.cursor).toBe(2);
-      state = reduceTuiState(state, { type: "onboarding_step_set", step: "local_pick" });
+      state = reduceTuiState(state, {
+        type: "onboarding_step_set",
+        step: "local_pick",
+      });
       expect(state.onboarding?.cursor).toBe(0);
     });
   });
@@ -205,7 +232,9 @@ describe("onboarding reducer", () => {
 
     it("comes back to wait-or-jump when a second provider is added from it", () => {
       let state = pulling(withFlow("wait_or_jump"));
-      state = reduceTuiState(state, { type: "onboarding_cloud_meanwhile_opened" });
+      state = reduceTuiState(state, {
+        type: "onboarding_cloud_meanwhile_opened",
+      });
       expect(state.onboarding).toMatchObject({
         step: "cloud",
         resumeAfterCloud: "wait_or_jump",
@@ -226,7 +255,9 @@ describe("onboarding reducer", () => {
 
     it("backs out of the second wizard to wait-or-jump, not to the download", () => {
       let state = pulling(withFlow("wait_or_jump"));
-      state = reduceTuiState(state, { type: "onboarding_cloud_meanwhile_opened" });
+      state = reduceTuiState(state, {
+        type: "onboarding_cloud_meanwhile_opened",
+      });
       state = reduceTuiState(state, {
         type: "providers_wizard_opened",
         wizard: createProvidersWizardState("add"),
@@ -240,16 +271,24 @@ describe("onboarding reducer", () => {
 
     it("finishes from wait-or-jump when the second wizard outlives the pull", () => {
       let state = pulling(withFlow("wait_or_jump"));
-      state = reduceTuiState(state, { type: "onboarding_cloud_meanwhile_opened" });
+      state = reduceTuiState(state, {
+        type: "onboarding_cloud_meanwhile_opened",
+      });
       state = reduceTuiState(state, {
         type: "providers_wizard_opened",
         wizard: createProvidersWizardState("add"),
       });
       // The orchestrator reports in while the wizard is up: nothing is
       // left to come back for, so the flow ends instead.
-      state = reduceTuiState(state, { type: "local_models_pull_finished", kind: "chat" });
+      state = reduceTuiState(state, {
+        type: "local_models_pull_finished",
+        kind: "chat",
+      });
       state = reduceTuiState(state, { type: "providers_wizard_succeeded" });
-      expect(state.onboarding).toMatchObject({ step: "finished", outcome: "cloud" });
+      expect(state.onboarding).toMatchObject({
+        step: "finished",
+        outcome: "cloud",
+      });
     });
 
     it("closes the flow when the pull lands while wait-or-jump is up", () => {
@@ -273,7 +312,9 @@ describe("onboarding reducer", () => {
 
     it("returns from a cancelled second wizard to a truthful wait-or-jump when the pull landed meanwhile", () => {
       let state = pulling(withFlow("wait_or_jump"));
-      state = reduceTuiState(state, { type: "onboarding_cloud_meanwhile_opened" });
+      state = reduceTuiState(state, {
+        type: "onboarding_cloud_meanwhile_opened",
+      });
       state = reduceTuiState(state, {
         type: "providers_wizard_opened",
         wizard: createProvidersWizardState("add"),
@@ -281,7 +322,10 @@ describe("onboarding reducer", () => {
       // The pull ends while the wizard covers the screen: the flow's own
       // pull_finished case does not fire on the cloud step, only the
       // panel's does — the pull is simply gone when the wizard closes.
-      state = reduceTuiState(state, { type: "local_models_pull_finished", kind: "chat" });
+      state = reduceTuiState(state, {
+        type: "local_models_pull_finished",
+        kind: "chat",
+      });
       state = reduceTuiState(state, { type: "providers_wizard_closed" });
       expect(state.onboarding).toMatchObject({
         step: "wait_or_jump",
@@ -294,21 +338,31 @@ describe("onboarding reducer", () => {
 
     it("finishes instead of returning to a download that already landed", () => {
       let state = pulling(withFlow("local_download"));
-      state = reduceTuiState(state, { type: "onboarding_cloud_meanwhile_opened" });
+      state = reduceTuiState(state, {
+        type: "onboarding_cloud_meanwhile_opened",
+      });
       state = reduceTuiState(state, {
         type: "providers_wizard_opened",
         wizard: createProvidersWizardState("add"),
       });
-      state = reduceTuiState(state, { type: "local_models_pull_finished", kind: "chat" });
+      state = reduceTuiState(state, {
+        type: "local_models_pull_finished",
+        kind: "chat",
+      });
       state = reduceTuiState(state, { type: "providers_wizard_closed" });
       // The download step can only claim a running download; a clean
       // landing concludes the flow the way pull_finished would have.
-      expect(state.onboarding).toMatchObject({ step: "finished", outcome: "local" });
+      expect(state.onboarding).toMatchObject({
+        step: "finished",
+        outcome: "local",
+      });
     });
 
     it("lands on wait-or-jump with the failure when the pull dies under the wizard", () => {
       let state = pulling(withFlow("local_download"));
-      state = reduceTuiState(state, { type: "onboarding_cloud_meanwhile_opened" });
+      state = reduceTuiState(state, {
+        type: "onboarding_cloud_meanwhile_opened",
+      });
       state = reduceTuiState(state, {
         type: "providers_wizard_opened",
         wizard: createProvidersWizardState("add"),
@@ -321,7 +375,10 @@ describe("onboarding reducer", () => {
       state = reduceTuiState(state, { type: "providers_wizard_succeeded" });
       // A dead pull is still a question — retry, or run on cloud alone —
       // so the flow must not end with the failure unsaid.
-      expect(state.onboarding).toMatchObject({ step: "wait_or_jump", outcome: "cloud" });
+      expect(state.onboarding).toMatchObject({
+        step: "wait_or_jump",
+        outcome: "cloud",
+      });
       expect(state.localModelsPanel.pull).toBeNull();
       expect(state.localModelsPanel.errorLine).toBe("connection reset");
     });
@@ -348,7 +405,10 @@ describe("onboarding reducer", () => {
         wizard: createProvidersWizardState("add"),
       });
       state = reduceTuiState(state, { type: "providers_wizard_succeeded" });
-      expect(state.onboarding).toMatchObject({ step: "finished", outcome: "cloud" });
+      expect(state.onboarding).toMatchObject({
+        step: "finished",
+        outcome: "cloud",
+      });
       expect(state.providersPanel.wizard).toBeNull();
     });
 
@@ -411,9 +471,19 @@ describe("onboarding reducer", () => {
     // frame would render an empty list under the editor's own footer.
     it("lands on the file list, cursor reset, in a single action", () => {
       let state = withFlow("local_hf_ref");
-      state = reduceTuiState(state, { type: "onboarding_cursor_moved", delta: 3, length: 9 });
-      state = reduceTuiState(state, { type: "onboarding_busy_set", busy: true });
-      state = reduceTuiState(state, { type: "onboarding_hf_repo_resolved", repo: REPO });
+      state = reduceTuiState(state, {
+        type: "onboarding_cursor_moved",
+        delta: 3,
+        length: 9,
+      });
+      state = reduceTuiState(state, {
+        type: "onboarding_busy_set",
+        busy: true,
+      });
+      state = reduceTuiState(state, {
+        type: "onboarding_hf_repo_resolved",
+        repo: REPO,
+      });
       expect(state.onboarding?.step).toBe("local_hf_pick");
       expect(state.onboarding?.cursor).toBe(0);
       expect(state.onboarding?.busy).toBe(false);
@@ -422,7 +492,10 @@ describe("onboarding reducer", () => {
 
     it("sends an added model to the same download screen as a curated one", () => {
       let state = withFlow("local_hf_ref");
-      state = reduceTuiState(state, { type: "onboarding_hf_repo_resolved", repo: REPO });
+      state = reduceTuiState(state, {
+        type: "onboarding_hf_repo_resolved",
+        repo: REPO,
+      });
       state = reduceTuiState(state, {
         type: "onboarding_local_model_picked",
         modelId: "custom-unsloth-qwen3.5-4b-gguf-qwen3.5-4b-ud-q4_k_xl",

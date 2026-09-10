@@ -3,6 +3,7 @@ import type { TuiAction } from "../tui-action.js";
 import type { TuiAppCallbacks } from "../tui-app.js";
 import type { TuiState } from "../tui-state.js";
 import { handleLocalModelsHfKey } from "./local-models-hf-keys.js";
+import { handleNotifyPromptKey } from "./local-models-notify-keys.js";
 import {
   resolveRowAt,
   type EmbeddingModelRow,
@@ -24,6 +25,14 @@ export function handleLocalModelsTabKey(
   const { state, dispatch, callbacks } = ctx;
   if (state.uiMode !== "debug" || state.activeTab !== "models") return false;
   const panel = state.localModelsPanel;
+
+  // "Tell me when it lands?" is pushed the moment a pull starts, so it
+  // sits above every other modal: the operator's next keypress is the
+  // answer. Esc means "not this time" without remembering anything.
+  if (panel.notifyPrompt) {
+    if (handleNotifyPromptKey(input, key, callbacks)) return true;
+    return true;
+  }
 
   // Memory-v2 phase 1B onboarding modal takes precedence over all
   // other keys — including the chat-remove modal — because it is
@@ -114,6 +123,13 @@ export function handleLocalModelsTabKey(
   }
   if (key.upArrow || input === "k") {
     dispatch({ type: "local_models_cursor_up" });
+    return true;
+  }
+
+  // `N` (uppercase) reopens the "tell me when it lands?" prompt — for
+  // the download in flight, or as the default for the next ones.
+  if (input === "N") {
+    callbacks.onLocalModelsNotifyPromptRequested?.();
     return true;
   }
 
@@ -208,12 +224,14 @@ export function handleLocalModelsTabKey(
  * Enter picks the next obvious action for the row, taking mmproj
  * status into account so vision-capable models land in a usable state:
  * - GGUF missing → pull GGUF (+ mmproj for vision-capable rows).
- * - GGUF present, mmproj missing on a vision-capable row → pull
- *   mmproj only. The operator must restart the daemon with `--mmproj`
- *   afterwards; the orchestrator emits a hint.
- * - GGUF present (text-only OR mmproj also present) but row not active
- *   → set the row as the active managed model.
+ * - GGUF present but row not active → set the row as the active
+ *   managed model (the daemon restarts on it).
  * - Already downloaded + active but daemon down → start chat daemon (`s`).
+ * - On top of either, a vision-capable row whose mmproj is missing →
+ *   also pull the projector. The model never waits on it: a projector
+ *   the repo stopped serving costs vision, not the model. Once it
+ *   lands the operator restarts the daemon to enable vision; the
+ *   orchestrator emits the hint.
  */
 function triggerPrimaryAction(
   row: LocalModelRow,
@@ -224,18 +242,14 @@ function triggerPrimaryAction(
     callbacks.onLocalModelsPullRequested?.(row.id, "with-mmproj");
     return;
   }
-  if (row.mmprojStatus === "missing") {
-    callbacks.onLocalModelsPullRequested?.(row.id, "mmproj-only");
-    return;
-  }
   if (!row.active) {
     callbacks.onLocalModelsSetActiveRequested?.(row.id);
-    return;
+  } else {
+    const chatUp = panel.daemon.running || panel.daemonPhase === "starting";
+    if (!chatUp) callbacks.onLocalModelsDaemonStartRequested?.();
   }
-  const chatUp =
-    panel.daemon.running || panel.daemonPhase === "starting";
-  if (!chatUp) {
-    callbacks.onLocalModelsDaemonStartRequested?.();
+  if (row.mmprojStatus === "missing") {
+    callbacks.onLocalModelsPullRequested?.(row.id, "mmproj-only");
   }
 }
 
@@ -277,8 +291,7 @@ function triggerEmbeddingPrimaryAction(
     callbacks.onLocalModelsEmbeddingToggleEnabledRequested?.();
     return;
   }
-  const chatUp =
-    panel.daemon.running || panel.daemonPhase === "starting";
+  const chatUp = panel.daemon.running || panel.daemonPhase === "starting";
   if (!chatUp) {
     callbacks.onLocalModelsDaemonStartRequested?.();
     return;

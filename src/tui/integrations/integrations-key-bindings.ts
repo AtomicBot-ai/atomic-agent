@@ -96,7 +96,7 @@ export function handleIntegrationsTabKey(
       }
     }
     if (input === "e") {
-      if (field?.kind === "boolean") return true;
+      if (field?.kind === "boolean" || field?.readonly) return true;
       dispatch({ type: "integrations_edit_started" });
       return true;
     }
@@ -115,7 +115,7 @@ export function handleIntegrationsTabKey(
     if (input === "d") {
       const row = selectedRow(panel);
       const field = selectedField(panel);
-      if (row && field && field.present) {
+      if (row && field && field.present && !field.readonly) {
         void callbacks.onIntegrationFieldClearRequested?.(row.id, field.key);
       }
       return true;

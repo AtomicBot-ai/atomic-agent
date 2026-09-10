@@ -67,9 +67,7 @@ export function deriveSetupState(panel: TelegramPanelState): SetupView {
   // before the bot is back up.
   const inRestartTransient =
     panel.channelState === "stopping" ||
-    (panel.channelState === "disabled" &&
-      panel.enabled &&
-      panel.hasToken);
+    (panel.channelState === "disabled" && panel.enabled && panel.hasToken);
   if (panel.channelState === "starting" || panel.busy || inRestartTransient) {
     return {
       step: "connecting",

@@ -290,7 +290,8 @@ export function handleKey(ctx: KeyContext): void {
 }
 
 function isGlobalHotkey(input: string, key: Key): boolean {
-  if (key.ctrl && (input === "c" || input === "o" || input === "t")) return true;
+  if (key.ctrl && (input === "c" || input === "o" || input === "t"))
+    return true;
   // F-keys and other multi-byte escape sequences we don't handle locally.
   if (input.startsWith("\u001b") && input.length > 1) return true;
   return false;

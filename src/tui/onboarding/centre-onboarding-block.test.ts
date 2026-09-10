@@ -92,9 +92,9 @@ describe("placeOnboardingBlock", () => {
 
   for (const testCase of cases) {
     it(`places the block in ${testCase.name}`, () => {
-      expect(place(testCase.columns, testCase.rows, testCase.blockWidth)).toEqual(
-        testCase.expected,
-      );
+      expect(
+        place(testCase.columns, testCase.rows, testCase.blockWidth),
+      ).toEqual(testCase.expected);
     });
   }
 
@@ -110,7 +110,9 @@ describe("placeOnboardingBlock", () => {
     for (let columns = 1; columns <= 40; columns += 1) {
       const placement = place(columns, 24, 80);
       expect(placement.left).toBe(0);
-      expect(placement.width).toBeLessThanOrEqual(Math.max(0, columns - PADDING_LEFT));
+      expect(placement.width).toBeLessThanOrEqual(
+        Math.max(0, columns - PADDING_LEFT),
+      );
     }
   });
 });

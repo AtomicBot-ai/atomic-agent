@@ -1,6 +1,9 @@
 import { join } from "node:path";
 import { getConfig, resetConfigCache } from "../config/index.js";
-import { ensureUserConfigFileSync, writeUserConfigFileSync } from "../config/config-file.js";
+import {
+  ensureUserConfigFileSync,
+  writeUserConfigFileSync,
+} from "../config/config-file.js";
 import { removeCustomModel } from "../config/custom-models-store.js";
 import type { UserConfigFile } from "../config/config-schema.js";
 import {
@@ -9,7 +12,9 @@ import {
   downloadEmbeddingModel,
   downloadJobId,
   downloadMmproj,
+  DownloadGaveUpError,
   downloadModel,
+  writeDownloadNotify,
   EMBEDDING_MODELS_CATALOG,
   fallBackToCpuBackend,
   formatGgufSize,
@@ -30,7 +35,11 @@ import {
   maybeAutoUpdateBackend,
   readBackendVersion,
   readDownloadJob,
+  DEFAULT_HF_ENDPOINT,
+  huggingFaceEndpointHost,
   readPartialDownload,
+  resolveDownloadConnections,
+  resolveHuggingFaceEndpoint,
   removeModel,
   spawnDownloadWorker,
   resolveChatTemplatePath,
@@ -45,17 +54,28 @@ import {
   stopChatAndEmbeddingDaemons,
   type DownloadJobKind,
   type DownloadJobMode,
+  type DownloadNotifyChannel,
 } from "../local-llm/index.js";
 
-export function readCliOption(args: string[], name: string): string | undefined {
+export function readCliOption(
+  args: string[],
+  name: string,
+): string | undefined {
   const i = args.indexOf(name);
   if (i === -1) return undefined;
   return args[i + 1];
 }
 
-export { formatGb, renderPullProgress, renderPullRetry } from "./pull-progress.js";
+export {
+  formatGb,
+  renderPullProgress,
+  renderPullRetry,
+} from "./pull-progress.js";
 import { renderPullProgress, renderPullRetry } from "./pull-progress.js";
-import { followDownloadJob } from "./models-downloads.js";
+import {
+  describeProjectorSkipped,
+  followDownloadJob,
+} from "./models-downloads.js";
 
 export async function runLocalModelsList(): Promise<number> {
   const cfg = getConfig();
@@ -69,7 +89,10 @@ export async function runLocalModelsList(): Promise<number> {
   for (const m of listLocalModels()) {
     const dl = isModelDownloaded(dataDir, m) ? "yes" : "no";
     const active =
-      cfg.localModels.managed.modelId === m.id && cfg.localModels.mode === "managed" ? "*" : " ";
+      cfg.localModels.managed.modelId === m.id &&
+      cfg.localModels.mode === "managed"
+        ? "*"
+        : " ";
     process.stdout.write(
       `${m.id.padEnd(20)} | ${m.family.padEnd(8)} | ${m.sizeLabel.padEnd(6)} | ${m.contextLabel.padEnd(7)} | ${dl.padEnd(3)} | ${active}\n`,
     );
@@ -85,29 +108,42 @@ export async function runLocalModelsList(): Promise<number> {
  */
 export async function runLocalModelsPull(args: string[]): Promise<number> {
   const flags = new Set(args.filter((a) => a.startsWith("--")));
-  const idArg = args.find((a) => !a.startsWith("--"));
+  const idArg = positionalArgs(args)[0];
   if (!idArg || !isKnownLocalModelId(idArg)) {
     process.stderr.write(
-      `unknown model id. Valid: ${listLocalModels().map((m) => m.id).join(", ")}\n`,
+      `unknown model id. Valid: ${listLocalModels()
+        .map((m) => m.id)
+        .join(", ")}\n`,
     );
     return 1;
   }
   const m = getLocalModelDef(idArg);
   const dataDir = getConfig().paths.localModelsDataDir;
-  const mode: DownloadJobMode = flags.has("--mmproj") && m.supportsVision ? "with-mmproj" : "gguf-only";
+  const mode: DownloadJobMode =
+    flags.has("--mmproj") && m.supportsVision ? "with-mmproj" : "gguf-only";
   if (flags.has("--mmproj") && !m.supportsVision) {
-    process.stderr.write(`note: ${m.id} is not vision-capable — no mmproj to fetch\n`);
+    process.stderr.write(
+      `note: ${m.id} is not vision-capable — no mmproj to fetch\n`,
+    );
   }
 
+  const notify = parseNotifyFlag(args);
+  if (notify !== undefined && !flags.has("--background")) {
+    process.stderr.write(
+      "--notify only applies to a background pull (add --background)\n",
+    );
+    return 2;
+  }
   const live = readDownloadJob(dataDir, downloadJobId("chat", m.id));
   if (isDownloadJobLive(live)) {
+    if (notify !== undefined) armLiveJob(dataDir, live.id, notify);
     process.stderr.write(
       `${m.id} is already downloading in the background (pid ${live.pid}) — following it; Ctrl+C detaches\n`,
     );
     return followDownloadJob(dataDir, live.id);
   }
   if (flags.has("--background")) {
-    return startBackgroundPull({ kind: "chat", modelId: m.id, mode });
+    return startBackgroundPull({ kind: "chat", modelId: m.id, mode, notify });
   }
 
   const estTotal = Math.round(m.fileSizeGb * (1024 * 1024 * 1024));
@@ -116,7 +152,12 @@ export async function runLocalModelsPull(args: string[]): Promise<number> {
   const progressFor =
     (label: string, est: number) =>
     (percent: number, transferred: number, total: number): void => {
-      const line = renderPullProgress(label, percent, transferred, total > 0 ? total : est);
+      const line = renderPullProgress(
+        label,
+        percent,
+        transferred,
+        total > 0 ? total : est,
+      );
       if (tty) {
         process.stderr.write(`\r${line.padEnd(79)}`);
       } else if (percent % 5 === 0 || percent === 100) {
@@ -131,10 +172,16 @@ export async function runLocalModelsPull(args: string[]): Promise<number> {
     const partial = readPartialDownload(
       resolveModelFilePath(dataDir, m.id, m.filename),
     );
+    const streams = resolveDownloadConnections();
+    const mirror =
+      resolveHuggingFaceEndpoint() === DEFAULT_HF_ENDPOINT
+        ? ""
+        : ` via ${huggingFaceEndpointHost()}`;
+    const via = `${streams > 1 ? `, ${streams} connections` : ""}${mirror}`;
     process.stderr.write(
       partial
-        ? `resuming ${m.id} (${m.filename}, ${m.sizeLabel}) — ${formatGgufSize(partial.transferred)} already on disk\n`
-        : `downloading ${m.id} (${m.filename}, ${m.sizeLabel})\n`,
+        ? `resuming ${m.id} (${m.filename}, ${m.sizeLabel}${via}) — ${formatGgufSize(partial.transferred)} already on disk\n`
+        : `downloading ${m.id} (${m.filename}, ${m.sizeLabel}${via})\n`,
     );
     await downloadModel(dataDir, m, {
       onProgress: progressFor(`${m.filename} (${m.sizeLabel})`, estTotal),
@@ -144,24 +191,45 @@ export async function runLocalModelsPull(args: string[]): Promise<number> {
     else if (lastLine) process.stderr.write(`done: ${lastLine}\n`);
     const savedPath = join(dataDir, "models", m.id, m.filename);
     process.stdout.write(`done. model saved to ${savedPath}\n`);
-    if (mode === "with-mmproj" && m.mmprojFilename && !isMmprojDownloaded(dataDir, m)) {
+    if (
+      mode === "with-mmproj" &&
+      m.mmprojFilename &&
+      !isMmprojDownloaded(dataDir, m)
+    ) {
       process.stderr.write(`downloading mmproj ${m.mmprojFilename}\n`);
-      await downloadMmproj(dataDir, m, {
-        onProgress: progressFor(
-          m.mmprojFilename,
-          Math.round((m.mmprojFileSizeGb ?? 1) * (1024 * 1024 * 1024)),
-        ),
-        onRetry,
-      });
-      if (tty) process.stderr.write(`\n`);
-      process.stdout.write(
-        `done. mmproj saved to ${resolveMmprojFilePath(dataDir, m.id, m.mmprojFilename)}\n`,
-      );
+      try {
+        await downloadMmproj(dataDir, m, {
+          onProgress: progressFor(
+            m.mmprojFilename,
+            Math.round((m.mmprojFileSizeGb ?? 1) * (1024 * 1024 * 1024)),
+          ),
+          onRetry,
+        });
+        if (tty) process.stderr.write(`\n`);
+        process.stdout.write(
+          `done. mmproj saved to ${resolveMmprojFilePath(dataDir, m.id, m.mmprojFilename)}\n`,
+        );
+      } catch (e) {
+        // The weights are already saved; a projector the repo stopped
+        // serving must not read as a failed pull (same rule as the worker).
+        if (tty) process.stderr.write(`\n`);
+        process.stderr.write(
+          describeProjectorSkipped(
+            m.id,
+            e instanceof Error ? e.message : String(e),
+          ),
+        );
+      }
     }
     return 0;
   } catch (e) {
     if (tty) process.stderr.write(`\n`);
     process.stderr.write(`${e instanceof Error ? e.message : String(e)}\n`);
+    if (e instanceof DownloadGaveUpError) {
+      process.stderr.write(
+        `the partial file is kept — 'models pull --background ${m.id}' waits out an outage for days and resumes by itself\n`,
+      );
+    }
     return 1;
   }
 }
@@ -170,10 +238,55 @@ export async function runLocalModelsPull(args: string[]): Promise<number> {
  * Launch the detached worker and hand the terminal back. The record it
  * seeds is what `models downloads` shows a moment later.
  */
+/** The arguments that are not flags — nor the value of a flag that takes one. */
+function positionalArgs(args: readonly string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < args.length; i += 1) {
+    const a = args[i]!;
+    if (a === "--notify") {
+      i += 1;
+      continue;
+    }
+    if (!a.startsWith("--")) out.push(a);
+  }
+  return out;
+}
+
+/**
+ * `--notify telegram|discord|email` (or `--notify=…`): where the worker
+ * reports when the job ends. Absent leaves whatever is already armed.
+ */
+function parseNotifyFlag(
+  args: readonly string[],
+): DownloadNotifyChannel | null | undefined {
+  const joined = args.find((a) => a.startsWith("--notify="));
+  const i = args.indexOf("--notify");
+  if (!joined && i < 0) return undefined;
+  const raw = joined ? joined.slice("--notify=".length) : args[i + 1];
+  if (raw === "off" || raw === "none") return null;
+  if (raw === "telegram" || raw === "discord" || raw === "email") return raw;
+  throw new Error(
+    `--notify expects telegram, discord, email or off; got ${raw === undefined ? "nothing" : JSON.stringify(raw)}`,
+  );
+}
+
+/** `--notify` on a pull that is already running: re-arm the live job. */
+function armLiveJob(
+  dataDir: string,
+  jobId: string,
+  notify: DownloadNotifyChannel | null,
+): void {
+  writeDownloadNotify(dataDir, jobId, notify);
+  process.stderr.write(
+    notify ? `ping: ${notify} when it lands\n` : "ping disarmed\n",
+  );
+}
+
 function startBackgroundPull(input: {
   kind: DownloadJobKind;
   modelId: string;
   mode: DownloadJobMode;
+  notify?: DownloadNotifyChannel | null;
 }): number {
   const result = spawnDownloadWorker({
     ...input,
@@ -186,8 +299,12 @@ function startBackgroundPull(input: {
     return 0;
   }
   const { job, logPath } = result;
+  const ping = input.notify
+    ? `  ping:     ${input.notify} when it lands\n`
+    : "";
   process.stdout.write(
     `${job.transferredBytes > 0 ? "resuming" : "downloading"} ${job.label} in the background (pid ${job.pid})\n` +
+      ping +
       `  progress: atomic-agent models downloads\n` +
       `  follow:   atomic-agent models pull${input.kind === "embedding" ? "-embedding" : ""} ${input.modelId}\n` +
       `  stop:     atomic-agent models downloads cancel ${input.modelId}\n` +
@@ -197,17 +314,24 @@ function startBackgroundPull(input: {
   return 0;
 }
 
-export async function runLocalModelsUse(idArg: string | undefined): Promise<number> {
+export async function runLocalModelsUse(
+  idArg: string | undefined,
+): Promise<number> {
   if (!idArg || !isKnownLocalModelId(idArg)) {
     process.stderr.write(
-      `unknown model id. Valid: ${listLocalModels().map((m) => m.id).join(", ")}\n`,
+      `unknown model id. Valid: ${listLocalModels()
+        .map((m) => m.id)
+        .join(", ")}\n`,
     );
     return 1;
   }
   const cfg = getConfig();
   const path = cfg.paths.userConfigFile;
   const user = ensureUserConfigFileSync(path);
-  const st0 = await getDaemonStatus(cfg.paths.localModelsDataDir, cfg.localModels.managed.port);
+  const st0 = await getDaemonStatus(
+    cfg.paths.localModelsDataDir,
+    cfg.localModels.managed.port,
+  );
   const prevModel = user.localModels.managed.modelId;
   const next: UserConfigFile = {
     ...user,
@@ -256,7 +380,9 @@ function describeComputeBackend(installed: string | undefined): string {
 export async function runLocalModelsStatus(): Promise<number> {
   const cfg = getConfig();
   if (cfg.localModels.mode === "external") {
-    process.stdout.write(`mode:           external\nurl:            ${cfg.localModels.url}\n`);
+    process.stdout.write(
+      `mode:           external\nurl:            ${cfg.localModels.url}\n`,
+    );
     return 0;
   }
   const dataDir = cfg.paths.localModelsDataDir;
@@ -276,7 +402,9 @@ export async function runLocalModelsStatus(): Promise<number> {
   process.stdout.write(
     `backend:        ${ver?.tag ?? "(none)"} (installed ${ver?.downloadedAt ?? "n/a"}), binary ${binOk ? "ok" : "missing"}\n`,
   );
-  process.stdout.write(`compute:        ${describeComputeBackend(ver?.asset)}\n`);
+  process.stdout.write(
+    `compute:        ${describeComputeBackend(ver?.asset)}\n`,
+  );
   process.stdout.write(`active model:   ${modelLine}\n`);
   process.stdout.write(
     `daemon:         ${st.running ? `running (pid ${st.pid})` : "stopped"}  ${cfg.localModels.url}\n`,
@@ -350,7 +478,10 @@ export async function runLocalModelsStart(): Promise<number> {
   const m = getLocalModelDef(mid);
   const tpl = resolveChatTemplatePath(m) ?? undefined;
   const mmprojFile =
-    cfg.vision.enabled && m.supportsVision && m.mmprojFilename && isMmprojDownloaded(dataDir, m)
+    cfg.vision.enabled &&
+    m.supportsVision &&
+    m.mmprojFilename &&
+    isMmprojDownloaded(dataDir, m)
       ? resolveMmprojFilePath(dataDir, m.id, m.mmprojFilename)
       : undefined;
 
@@ -383,9 +514,13 @@ export async function runLocalModelsStart(): Promise<number> {
   const multiGpu = tensorSplit.length > 0;
   const { binaryName } = resolvePlatformAsset();
   const binPath = resolveServerBinPath(dataDir, binaryName);
-  const device = await resolveManagedDevice(binPath, cfg.localModels.managed.device, {
-    multiGpu,
-  });
+  const device = await resolveManagedDevice(
+    binPath,
+    cfg.localModels.managed.device,
+    {
+      multiGpu,
+    },
+  );
   process.stdout.write(
     `device:         ${describeDeviceChoice(cfg.localModels.managed.device, device, multiGpu)}\n`,
   );
@@ -397,6 +532,7 @@ export async function runLocalModelsStart(): Promise<number> {
         modelId: mid,
         port: cfg.localModels.managed.port,
         contextSize: cfg.localModels.managed.contextSize,
+        parallel: cfg.localModels.managed.parallel,
         ...(tpl ? { chatTemplateFile: tpl } : {}),
         ...(mmprojFile ? { mmprojFile } : {}),
         ...(dev ? { device: dev } : {}),
@@ -443,7 +579,8 @@ export async function runLocalModelsStart(): Promise<number> {
         signal: AbortSignal.timeout(BACKEND_DOWNLOAD_TIMEOUT_MS),
         onProgress: (p: number, t: number, tot: number) => {
           const line = renderPullProgress("cpu backend zip", p, t, tot);
-          if (process.stderr.isTTY) process.stderr.write(`\r${line.padEnd(79)}`);
+          if (process.stderr.isTTY)
+            process.stderr.write(`\r${line.padEnd(79)}`);
           else if (p % 5 === 0 || p === 100) process.stderr.write(`${line}\n`);
         },
       });
@@ -581,7 +718,9 @@ export async function runLocalModelsDevices(): Promise<number> {
   const configured = cfg.localModels.managed.device;
   const multiGpu = cfg.localModels.managed.tensorSplit.length > 0;
   const devices = await listVulkanDevices(binPath);
-  const resolved = await resolveManagedDevice(binPath, configured, { multiGpu });
+  const resolved = await resolveManagedDevice(binPath, configured, {
+    multiGpu,
+  });
 
   process.stdout.write(`configured device: ${configured}\n`);
   process.stdout.write(
@@ -651,9 +790,11 @@ export async function runLocalModelsUseDevice(
  * to the typed `EmbeddingModelId` union so the wrong catalog can't
  * be hit by accident.
  */
-export async function runLocalModelsPullEmbedding(args: string[]): Promise<number> {
+export async function runLocalModelsPullEmbedding(
+  args: string[],
+): Promise<number> {
   const flags = new Set(args.filter((a) => a.startsWith("--")));
-  const idArg = args.find((a) => !a.startsWith("--"));
+  const idArg = positionalArgs(args)[0];
   if (!idArg || !isKnownEmbeddingModelId(idArg)) {
     process.stderr.write(
       `unknown embedding model id. Valid: ${EMBEDDING_MODELS_CATALOG.map((m) => m.id).join(", ")}\n`,
@@ -670,8 +811,20 @@ export async function runLocalModelsPullEmbedding(args: string[]): Promise<numbe
     );
     return followDownloadJob(dataDir, live.id);
   }
+  const notify = parseNotifyFlag(args);
+  if (notify !== undefined && !flags.has("--background")) {
+    process.stderr.write(
+      "--notify only applies to a background pull (add --background)\n",
+    );
+    return 2;
+  }
   if (flags.has("--background")) {
-    return startBackgroundPull({ kind: "embedding", modelId: m.id, mode: "gguf-only" });
+    return startBackgroundPull({
+      kind: "embedding",
+      modelId: m.id,
+      mode: "gguf-only",
+      notify,
+    });
   }
 
   const estTotal = Math.round(m.fileSizeGb * (1024 * 1024 * 1024));
@@ -712,9 +865,7 @@ export async function runLocalModelsPullEmbedding(args: string[]): Promise<numbe
     process.stdout.write(`done. embedding model saved to ${savedPath}\n`);
     return 0;
   } catch (e) {
-    process.stderr.write(
-      `${e instanceof Error ? e.message : String(e)}\n`,
-    );
+    process.stderr.write(`${e instanceof Error ? e.message : String(e)}\n`);
     return 1;
   }
 }
@@ -733,9 +884,9 @@ export async function runLocalModelsUseEmbedding(
   arg: string | undefined,
 ): Promise<number> {
   const cfg = getConfig();
-  const existing = (ensureUserConfigFileSync(
+  const existing = ensureUserConfigFileSync(
     cfg.paths.userConfigFile,
-  )) as UserConfigFile;
+  ) as UserConfigFile;
   if (arg === "--disable" || arg === "off") {
     const next: UserConfigFile = {
       ...existing,
@@ -819,12 +970,15 @@ export async function runLocalModelsListEmbeddings(): Promise<number> {
 export async function runLocalModelsUpdate(): Promise<number> {
   const cfg = getConfig();
   if (cfg.localModels.mode !== "managed") {
-    process.stderr.write("switch to managed mode first (atomic-agent models use <id>)\n");
+    process.stderr.write(
+      "switch to managed mode first (atomic-agent models use <id>)\n",
+    );
     return 1;
   }
   const dataDir = cfg.paths.localModelsDataDir;
   try {
-    const { updateAvailable, latestTag, currentTag } = await checkForBackendUpdate(dataDir);
+    const { updateAvailable, latestTag, currentTag } =
+      await checkForBackendUpdate(dataDir);
     if (!updateAvailable) {
       // `latestTag` is null when no scanned release ships this
       // platform's asset — nothing to compare against, so the install
@@ -836,7 +990,9 @@ export async function runLocalModelsUpdate(): Promise<number> {
       );
       return 0;
     }
-    process.stdout.write(`current: ${currentTag ?? "none"} → latest: ${latestTag}\n`);
+    process.stdout.write(
+      `current: ${currentTag ?? "none"} → latest: ${latestTag}\n`,
+    );
     const st = await getDaemonStatus(dataDir, cfg.localModels.managed.port);
     if (st.running) await stopChatAndEmbeddingDaemons(dataDir);
     const tty = process.stderr.isTTY;
@@ -848,7 +1004,9 @@ export async function runLocalModelsUpdate(): Promise<number> {
       },
     });
     if (tty) process.stderr.write("\n");
-    process.stdout.write("done. run 'atomic-agent models start' to use the new backend.\n");
+    process.stdout.write(
+      "done. run 'atomic-agent models start' to use the new backend.\n",
+    );
     return 0;
   } catch (e) {
     process.stderr.write(`${e instanceof Error ? e.message : String(e)}\n`);
@@ -856,10 +1014,14 @@ export async function runLocalModelsUpdate(): Promise<number> {
   }
 }
 
-export async function runLocalModelsRemove(idArg: string | undefined): Promise<number> {
+export async function runLocalModelsRemove(
+  idArg: string | undefined,
+): Promise<number> {
   if (!idArg || !isKnownLocalModelId(idArg)) {
     process.stderr.write(
-      `unknown model id. Valid: ${listLocalModels().map((m) => m.id).join(", ")}\n`,
+      `unknown model id. Valid: ${listLocalModels()
+        .map((m) => m.id)
+        .join(", ")}\n`,
     );
     return 1;
   }

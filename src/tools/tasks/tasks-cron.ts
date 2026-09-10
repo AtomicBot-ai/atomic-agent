@@ -1,8 +1,5 @@
 import { compressToolResult } from "../../compressor/result-compressor.js";
-import {
-  TaskValidationError,
-  type TaskRunner,
-} from "../../tasks/index.js";
+import { TaskValidationError, type TaskRunner } from "../../tasks/index.js";
 import type { ToolDefinition } from "../tool-registry.js";
 
 export interface TasksCronToolOptions {
@@ -28,7 +25,7 @@ export function buildTasksCronTool(
   return {
     name: "tasks.cron",
     description:
-      'Schedule a recurring task via a standard 5- or 6-field cron expression. Args: { userMessage, expression, tz?, notify? }. Each firing runs in its own persistent session (not the caller\'s). Set notify: "telegram" to send each firing\'s final result to the paired Telegram chat.',
+      "Schedule a recurring task via a standard 5- or 6-field cron expression. Args: { userMessage, expression, tz?, notify? }. Each firing runs in its own persistent session (not the caller's). Set notify: \"telegram\" to send each firing's final result to the paired Telegram chat.",
     readonly: false,
     async run(rawArgs) {
       const userMessage = rawArgs.userMessage;

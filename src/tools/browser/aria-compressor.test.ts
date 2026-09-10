@@ -2,9 +2,11 @@ import { describe, it, expect } from "vitest";
 import { summariseAriaSnapshot } from "./aria-compressor.js";
 
 describe("summariseAriaSnapshot", () => {
-
   it("applies maxChars budget and reports size truncation footer", () => {
-    const lines = Array.from({ length: 200 }, (_, i) => `- link "Item ${i}" [ref=e${i}]`);
+    const lines = Array.from(
+      { length: 200 },
+      (_, i) => `- link "Item ${i}" [ref=e${i}]`,
+    );
     const raw = lines.join("\n");
     const out = summariseAriaSnapshot(
       raw,
@@ -20,7 +22,10 @@ describe("summariseAriaSnapshot", () => {
   it("applies char budget and noise dropping together (default call-site path)", () => {
     // The only real call site (playwright-backend) passes no options, so the
     // char budget and noise dropping always run together. Cover that here.
-    const noise = Array.from({ length: 20 }, (_, i) => `  - generic [ref=n${i}]:`);
+    const noise = Array.from(
+      { length: 20 },
+      (_, i) => `  - generic [ref=n${i}]:`,
+    );
     const links = Array.from(
       { length: 200 },
       (_, i) => `- link "Item ${i}" [ref=e${i}]`,
@@ -54,8 +59,8 @@ describe("summariseAriaSnapshot", () => {
   it("extracts refs and emits a header", () => {
     const raw = [
       "- banner",
-      '  - link [ref=e5]: Home',
-      '  - textbox [ref=e7]: Search',
+      "  - link [ref=e5]: Home",
+      "  - textbox [ref=e7]: Search",
     ].join("\n");
     const out = summariseAriaSnapshot(raw, {
       url: "https://u/",
@@ -117,7 +122,7 @@ describe("summariseAriaSnapshot", () => {
     const raw = [
       "- generic [ref=e1]:",
       "  - generic [ref=e2]:",
-      '    - link [ref=e3]: /url',
+      "    - link [ref=e3]: /url",
     ].join("\n");
     const out = summariseAriaSnapshot(
       raw,

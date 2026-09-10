@@ -85,14 +85,18 @@ async function handleList(args: string[]): Promise<number> {
 async function handleShow(args: string[]): Promise<number> {
   const sessionId = args[0];
   if (!sessionId || sessionId.startsWith("-")) {
-    process.stderr.write("usage: atomic-agent trace show <sessionId> [--step N] [--raw]\n");
+    process.stderr.write(
+      "usage: atomic-agent trace show <sessionId> [--step N] [--raw]\n",
+    );
     return 1;
   }
   const dir = getConfig().paths.tracesDir;
   const path = traceFilePath(dir, sessionId);
   const events = await readTraceFile(path);
   if (events.length === 0) {
-    process.stderr.write(`no trace events found for session ${sessionId} at ${path}\n`);
+    process.stderr.write(
+      `no trace events found for session ${sessionId} at ${path}\n`,
+    );
     return 1;
   }
   const stepStr = readOptionValue(args, "--step");
@@ -100,9 +104,7 @@ async function handleShow(args: string[]): Promise<number> {
   const raw = args.includes("--raw");
   const output = formatTraceChronology(
     events,
-    typeof step === "number" && Number.isFinite(step)
-      ? { step, raw }
-      : { raw },
+    typeof step === "number" && Number.isFinite(step) ? { step, raw } : { raw },
   );
   process.stdout.write(`${output}\n`);
   return 0;
@@ -111,9 +113,7 @@ async function handleShow(args: string[]): Promise<number> {
 async function handleReplay(args: string[]): Promise<number> {
   const sessionId = args[0];
   if (!sessionId || sessionId.startsWith("-")) {
-    process.stderr.write(
-      "usage: atomic-agent trace replay <sessionId>\n",
-    );
+    process.stderr.write("usage: atomic-agent trace replay <sessionId>\n");
     return 1;
   }
   const config = getConfig();
@@ -124,13 +124,16 @@ async function handleReplay(args: string[]): Promise<number> {
 
   const firstEvents = await readTraceFile(path);
   if (firstEvents.length === 0) {
-    process.stderr.write(`no trace events found for session ${sessionId} at ${path}\n`);
+    process.stderr.write(
+      `no trace events found for session ${sessionId} at ${path}\n`,
+    );
     return 1;
   }
   const sessionStarted = firstEvents.find((e) => e.type === "session_started");
-  const workingDir = sessionStarted?.type === "session_started"
-    ? sessionStarted.workingDir
-    : process.cwd();
+  const workingDir =
+    sessionStarted?.type === "session_started"
+      ? sessionStarted.workingDir
+      : process.cwd();
 
   const skillRegistry = new SkillRegistry({
     globalDir: config.paths.globalSkillsDir,
@@ -155,9 +158,10 @@ async function handleReplay(args: string[]): Promise<number> {
     },
   });
 
-  const filtered = typeof targetStep === "number" && Number.isFinite(targetStep)
-    ? report.steps.filter((s) => s.stepIndex === targetStep)
-    : report.steps;
+  const filtered =
+    typeof targetStep === "number" && Number.isFinite(targetStep)
+      ? report.steps.filter((s) => s.stepIndex === targetStep)
+      : report.steps;
 
   const lines: string[] = [
     `session: ${report.sessionId}`,
@@ -184,7 +188,9 @@ async function handleReplay(args: string[]): Promise<number> {
     if (filtered.some((s) => s.drift)) {
       lines.push("");
       lines.push("Drift means the stable prefix was rebuilt differently —");
-      lines.push("usually a persona/tool/capability/skill change since recording.");
+      lines.push(
+        "usually a persona/tool/capability/skill change since recording.",
+      );
     }
   }
   process.stdout.write(`${lines.join("\n")}\n`);

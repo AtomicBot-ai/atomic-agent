@@ -5,12 +5,7 @@
 export type MemoryPanelMode = "list" | "detail";
 
 export type MemoryChannel =
-  | "profile"
-  | "notes"
-  | "lessons"
-  | "procedures"
-  | "links"
-  | "votes";
+  "profile" | "notes" | "lessons" | "procedures" | "links" | "votes";
 
 export const MEMORY_CHANNEL_ORDER: readonly MemoryChannel[] = [
   "profile",

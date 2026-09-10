@@ -23,9 +23,7 @@ describe("scanSkillFiles", () => {
   });
 
   it("flags recursive delete of home as dangerous", () => {
-    const result = scanSkillFiles([
-      { path: "run.sh", content: "rm -rf ~/" },
-    ]);
+    const result = scanSkillFiles([{ path: "run.sh", content: "rm -rf ~/" }]);
     expect(result.verdict).toBe("dangerous");
   });
 

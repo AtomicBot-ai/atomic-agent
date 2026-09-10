@@ -117,13 +117,23 @@ function countOccurrences(haystack: string, needle: string): number {
   return count;
 }
 
-function replaceOnce(source: string, oldString: string, newString: string): string {
+function replaceOnce(
+  source: string,
+  oldString: string,
+  newString: string,
+): string {
   const idx = source.indexOf(oldString);
   if (idx === -1) return source;
-  return source.slice(0, idx) + newString + source.slice(idx + oldString.length);
+  return (
+    source.slice(0, idx) + newString + source.slice(idx + oldString.length)
+  );
 }
 
-function replaceAll(source: string, oldString: string, newString: string): string {
+function replaceAll(
+  source: string,
+  oldString: string,
+  newString: string,
+): string {
   // Avoid String.prototype.replaceAll here so we don't need to escape regex
   // metachars inside `oldString` when falling back to String.replace.
   const parts: string[] = [];
@@ -169,7 +179,11 @@ async function atomicWrite(target: string, content: string): Promise<void> {
  * diff is well approximated by a simple before/after line listing around
  * the changed region.
  */
-function renderUnifiedDiff(before: string, after: string, path: string): string {
+function renderUnifiedDiff(
+  before: string,
+  after: string,
+  path: string,
+): string {
   const beforeLines = before.split(/\r?\n/);
   const afterLines = after.split(/\r?\n/);
   const firstDiff = findFirstDiffLine(beforeLines, afterLines);
@@ -179,12 +193,19 @@ function renderUnifiedDiff(before: string, after: string, path: string): string 
   const head = Math.max(0, firstDiff - contextBefore);
   const lastDiffBefore = findLastDiffLine(beforeLines, afterLines);
   const lastDiffAfter = findLastDiffLineFromEnd(beforeLines, afterLines);
-  const tailBefore = Math.min(beforeLines.length - 1, lastDiffBefore + contextAfter);
+  const tailBefore = Math.min(
+    beforeLines.length - 1,
+    lastDiffBefore + contextAfter,
+  );
 
   const segments: string[] = [];
   segments.push(`--- a/${path}`);
   segments.push(`+++ b/${path}`);
-  for (let i = head; i <= Math.min(beforeLines.length - 1, tailBefore) && i < firstDiff; i++) {
+  for (
+    let i = head;
+    i <= Math.min(beforeLines.length - 1, tailBefore) && i < firstDiff;
+    i++
+  ) {
     segments.push(` ${beforeLines[i]}`);
   }
   for (let i = firstDiff; i <= lastDiffBefore; i++) {
@@ -201,7 +222,9 @@ function renderUnifiedDiff(before: string, after: string, path: string): string 
     segments.push(` ${beforeLines[i]}`);
   }
   if (segments.length > DIFF_MAX_LINES + 2) {
-    return segments.slice(0, DIFF_MAX_LINES + 2).join("\n") + "\n… [diff truncated]";
+    return (
+      segments.slice(0, DIFF_MAX_LINES + 2).join("\n") + "\n… [diff truncated]"
+    );
   }
   return segments.join("\n");
 }
@@ -219,7 +242,11 @@ function findLastDiffLine(before: string[], after: string[]): number {
   // Returns the last index in `before` that differs from `after` (walking
   // from the end). Treats missing indices as different.
   const len = Math.max(before.length, after.length);
-  for (let i = before.length - 1, j = after.length - 1; i >= 0 && j >= 0; i--, j--) {
+  for (
+    let i = before.length - 1, j = after.length - 1;
+    i >= 0 && j >= 0;
+    i--, j--
+  ) {
     if (before[i] !== after[j]) return i;
   }
   if (before.length < after.length) return -1;
@@ -227,7 +254,11 @@ function findLastDiffLine(before: string[], after: string[]): number {
 }
 
 function findLastDiffLineFromEnd(before: string[], after: string[]): number {
-  for (let i = after.length - 1, j = before.length - 1; i >= 0 && j >= 0; i--, j--) {
+  for (
+    let i = after.length - 1, j = before.length - 1;
+    i >= 0 && j >= 0;
+    i--, j--
+  ) {
     if (after[i] !== before[j]) return i;
   }
   if (after.length > before.length) return after.length - 1;

@@ -10,13 +10,7 @@ import type { TuiTab } from "../tui-state.js";
  * stays true as entries are added.
  */
 export type MenuGroup =
-  | "go"
-  | "session"
-  | "model"
-  | "run"
-  | "setup"
-  | "help"
-  | "danger";
+  "go" | "session" | "model" | "run" | "setup" | "help" | "danger";
 
 /** Display order of the groups in the menu. */
 export const MENU_GROUP_ORDER: readonly MenuGroup[] = [
@@ -76,6 +70,15 @@ interface MenuNodeBase {
   readonly slash?: MenuSlash;
   /** Parent submenu id, for nodes one level down. */
   readonly parent?: string;
+  /**
+   * Slash line run when this node is activated, for entries that take
+   * an argument (`/runmode fusion`). Defaults to `/${slash.name}`. An
+   * activation channel, not a listing: a node with `command` and no
+   * `slash` never appears in the palette, so the palette stays one
+   * entry per verb while a submenu can still fan a verb's arguments out
+   * as rows with chords.
+   */
+  readonly command?: string;
 }
 
 /** A destination: a section, or a tab inside one. */
@@ -112,8 +115,7 @@ export const MENU: readonly MenuNode[] = [
     chord: "r",
     slash: {
       name: "chat",
-      description:
-        "return to single-view chat mode",
+      description: "return to single-view chat mode",
       aliases: ["run"],
       rank: 9,
     },
@@ -139,8 +141,7 @@ export const MENU: readonly MenuNode[] = [
     chord: "f",
     slash: {
       name: "feed",
-      description:
-        "jump to the Observe → Feed tab",
+      description: "jump to the Observe → Feed tab",
       rank: 12,
     },
     section: "observe",
@@ -155,8 +156,7 @@ export const MENU: readonly MenuNode[] = [
     chord: "w",
     slash: {
       name: "world",
-      description:
-        "jump to the Observe → World tab",
+      description: "jump to the Observe → World tab",
       rank: 15,
     },
     section: "observe",
@@ -171,8 +171,7 @@ export const MENU: readonly MenuNode[] = [
     chord: "e",
     slash: {
       name: "reasoning",
-      description:
-        "jump to the Observe → Reasoning tab",
+      description: "jump to the Observe → Reasoning tab",
       rank: 14,
     },
     section: "observe",
@@ -187,8 +186,7 @@ export const MENU: readonly MenuNode[] = [
     chord: "o",
     slash: {
       name: "logs",
-      description:
-        "jump to the Observe → Logs tab",
+      description: "jump to the Observe → Logs tab",
       rank: 13,
     },
     section: "observe",
@@ -225,8 +223,7 @@ export const MENU: readonly MenuNode[] = [
     chord: "t",
     slash: {
       name: "tasks",
-      description:
-        "jump to the Tasks tab (Option 4 cron + ingress UI)",
+      description: "jump to the Tasks tab (Option 4 cron + ingress UI)",
       rank: 28,
     },
     section: "manage",
@@ -301,6 +298,23 @@ export const MENU: readonly MenuNode[] = [
   },
   {
     kind: "place",
+    id: "go.manage.swarm",
+    label: "Swarm",
+    group: "go",
+    // `s` is Skills; `b` — bots — is free.
+    chord: "b",
+    slash: {
+      name: "swarm",
+      description:
+        "open the Swarm tab — every Telegram / Discord bot on this runtime; add more bots, each with its own token, owner and role",
+      rank: 40,
+    },
+    section: "manage",
+    tab: "swarm",
+    parent: "go.manage",
+  },
+  {
+    kind: "place",
     id: "go.manage.llm",
     label: "LLM",
     group: "go",
@@ -308,7 +322,7 @@ export const MENU: readonly MenuNode[] = [
     slash: {
       name: "llm",
       description:
-        "open LLM Local/Cloud/External/Fallback panel · `/llm provider <id>` switch text provider · `/llm check` test the active route's streaming tool contract · `/llm fallback` edit the fallover chain",
+        "open LLM Local/Cloud/External/Fallback panel · `/llm provider <id>` switch text provider · `/llm check` test the active route's streaming tool contract · `/llm fallback` edit the fallover chain · `/llm restart` bounce the local model server",
       rank: 24,
     },
     section: "manage",
@@ -340,7 +354,7 @@ export const MENU: readonly MenuNode[] = [
     slash: {
       name: "import",
       description:
-        "open the Import tab (one-shot Hermes -> atomic-agent migration)",
+        "open the Import tab (Hermes, OpenClaw, Claude Code or Codex)",
       rank: 31,
     },
     section: "manage",
@@ -375,8 +389,7 @@ export const MENU: readonly MenuNode[] = [
     // fourth place to go.
     slash: {
       name: "debug",
-      description:
-        "toggle debug pane (feed / logs / world …)",
+      description: "toggle debug pane (feed / logs / world …)",
       rank: 8,
     },
   },
@@ -388,8 +401,7 @@ export const MENU: readonly MenuNode[] = [
     chord: "n",
     slash: {
       name: "new",
-      description:
-        "start a fresh session (keeps warm runtime)",
+      description: "start a fresh session (keeps warm runtime)",
       rank: 20,
     },
   },
@@ -401,8 +413,7 @@ export const MENU: readonly MenuNode[] = [
     chord: "u",
     slash: {
       name: "sessions",
-      description:
-        "open session picker to switch threads",
+      description: "open session picker to switch threads",
       rank: 19,
     },
   },
@@ -413,8 +424,7 @@ export const MENU: readonly MenuNode[] = [
     group: "session",
     slash: {
       name: "clear",
-      description:
-        "clear chat transcript (keeps session)",
+      description: "clear chat transcript (keeps session)",
       rank: 4,
     },
   },
@@ -425,8 +435,7 @@ export const MENU: readonly MenuNode[] = [
     group: "session",
     slash: {
       name: "context",
-      description:
-        "show where this session's context window went",
+      description: "show where this session's context window went",
       rank: 38,
     },
   },
@@ -437,8 +446,7 @@ export const MENU: readonly MenuNode[] = [
     group: "session",
     slash: {
       name: "session",
-      description:
-        "show current session id",
+      description: "show current session id",
       rank: 18,
     },
   },
@@ -455,6 +463,46 @@ export const MENU: readonly MenuNode[] = [
       aliases: ["models", "local"],
       rank: 27,
     },
+  },
+  {
+    kind: "submenu",
+    id: "run.type",
+    label: "Where it runs…",
+    group: "run",
+    slash: {
+      name: "runmode",
+      description:
+        "where the chat runs: `/runmode` opens the switch · `/runmode local|cloud|fusion` sets one · `/runmode status`",
+      // 40 is /swarm and 41 is /report on this branch.
+      rank: 42,
+    },
+  },
+  {
+    kind: "action",
+    id: "run.type.local",
+    label: "Local",
+    group: "run",
+    parent: "run.type",
+    chord: "1",
+    command: "/runmode local",
+  },
+  {
+    kind: "action",
+    id: "run.type.cloud",
+    label: "Cloud",
+    group: "run",
+    parent: "run.type",
+    chord: "2",
+    command: "/runmode cloud",
+  },
+  {
+    kind: "action",
+    id: "run.type.fusion",
+    label: "Fusion",
+    group: "run",
+    parent: "run.type",
+    chord: "3",
+    command: "/runmode fusion",
   },
   {
     kind: "action",
@@ -481,8 +529,7 @@ export const MENU: readonly MenuNode[] = [
     chord: "a",
     slash: {
       name: "abort",
-      description:
-        "abort the running turn",
+      description: "abort the running turn",
       rank: 5,
     },
   },
@@ -505,8 +552,7 @@ export const MENU: readonly MenuNode[] = [
     group: "session",
     slash: {
       name: "window",
-      description:
-        "open a new terminal window running atomic-agent (ctrl+n)",
+      description: "open a new terminal window running atomic-agent (ctrl+n)",
       aliases: ["newwindow"],
       rank: 36,
     },
@@ -530,8 +576,7 @@ export const MENU: readonly MenuNode[] = [
     group: "run",
     slash: {
       name: "expand",
-      description:
-        "expand every tool card in the chat log",
+      description: "expand every tool card in the chat log",
       rank: 16,
     },
   },
@@ -542,8 +587,7 @@ export const MENU: readonly MenuNode[] = [
     group: "run",
     slash: {
       name: "collapse",
-      description:
-        "collapse every tool card in the chat log",
+      description: "collapse every tool card in the chat log",
       rank: 17,
     },
   },
@@ -579,8 +623,7 @@ export const MENU: readonly MenuNode[] = [
     group: "setup",
     slash: {
       name: "sidebar",
-      description:
-        "hide or show the session rail (the rail's « does the same)",
+      description: "hide or show the session rail (the rail's « does the same)",
       rank: 39,
     },
   },
@@ -591,8 +634,7 @@ export const MENU: readonly MenuNode[] = [
     group: "setup",
     slash: {
       name: "analytics",
-      description:
-        "toggle anonymous analytics: `/analytics on|off|status`",
+      description: "toggle anonymous analytics: `/analytics on|off|status`",
       rank: 33,
     },
   },
@@ -627,8 +669,7 @@ export const MENU: readonly MenuNode[] = [
     group: "help",
     slash: {
       name: "help",
-      description:
-        "list available slash commands",
+      description: "list available slash commands",
       rank: 1,
     },
   },
@@ -659,14 +700,28 @@ export const MENU: readonly MenuNode[] = [
   },
   {
     kind: "action",
+    id: "help.report",
+    label: "Report an issue on GitHub…",
+    group: "help",
+    // `r` is Run and `b` is Swarm (bots); `R` — Report — follows the
+    // uppercase precedent of `L` (LLM logs) and `M`.
+    chord: "R",
+    slash: {
+      name: "report",
+      description:
+        "file a GitHub issue with your logs attached — you choose how much leaves this machine",
+      rank: 41,
+    },
+  },
+  {
+    kind: "action",
     id: "help.quit",
     label: "Quit",
     group: "help",
     chord: "q",
     slash: {
       name: "quit",
-      description:
-        "exit atomic-agent",
+      description: "exit atomic-agent",
       aliases: ["exit"],
       rank: 7,
     },
@@ -706,7 +761,9 @@ export function menuChildren(parentId: string): readonly MenuNode[] {
 
 /** Top-level nodes of a group — submenu children are excluded. */
 export function menuRoots(group: MenuGroup): readonly MenuNode[] {
-  return MENU.filter((node) => node.group === group && node.parent === undefined);
+  return MENU.filter(
+    (node) => node.group === group && node.parent === undefined,
+  );
 }
 
 /** Resolve a node by id. */

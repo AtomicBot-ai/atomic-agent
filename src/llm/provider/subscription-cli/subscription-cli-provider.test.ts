@@ -28,7 +28,9 @@ function stubRunner(stdout: string, calls: CliRunOptions[] = []) {
   };
 }
 
-function makeProvider(overrides: Partial<Parameters<typeof buildOptions>[0]> = {}) {
+function makeProvider(
+  overrides: Partial<Parameters<typeof buildOptions>[0]> = {},
+) {
   return new SubscriptionCliProvider(buildOptions(overrides));
 }
 
@@ -174,7 +176,10 @@ describe("SubscriptionCliProvider.completeStream", () => {
     // degrade to buffered behaviour, never to an empty turn.
     const provider = makeProvider({
       streamCliImpl: async function* () {
-        yield JSON.stringify({ type: "stream_event", event: { type: "unknown" } });
+        yield JSON.stringify({
+          type: "stream_event",
+          event: { type: "unknown" },
+        });
         yield SUCCESS.replace('"subtype"', '"type":"result","subtype"');
       },
     });

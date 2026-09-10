@@ -37,7 +37,10 @@ describe("pickTier", () => {
   it("spends the whole roll and no more", () => {
     for (const [name, table] of Object.entries(tables)) {
       const total = table.reduce((sum, [, weight]) => sum + weight, 0);
-      expect({ name, total: Math.round(total * 1000) }).toEqual({ name, total: 1000 });
+      expect({ name, total: Math.round(total * 1000) }).toEqual({
+        name,
+        total: 1000,
+      });
     }
   });
 

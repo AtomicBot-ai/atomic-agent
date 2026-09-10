@@ -91,11 +91,7 @@ export interface TaskCreateFormState {
 }
 
 export type TaskCreateFocus =
-  | "kind"
-  | "expression"
-  | "tz"
-  | "message"
-  | "submit";
+  "kind" | "expression" | "tz" | "message" | "submit";
 
 /** Validator output. `ok=false` disables the submit button. */
 export interface TaskCreatePreview {

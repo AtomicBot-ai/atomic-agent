@@ -40,7 +40,14 @@ describe("stripInstallerPathLine", () => {
   });
 
   it("keeps a deliberate separator that is not the installer's own", () => {
-    const rc = ["a=1", "", "", INSTALLER_PATH_MARKER, "export PATH=x", "b=2"].join("\n");
+    const rc = [
+      "a=1",
+      "",
+      "",
+      INSTALLER_PATH_MARKER,
+      "export PATH=x",
+      "b=2",
+    ].join("\n");
     // One blank line goes with the stanza; the other was the operator's.
     expect(stripInstallerPathLine(rc).content).toBe("a=1\n\nb=2");
   });

@@ -9,7 +9,8 @@ import { fakeSession } from "../test-fixtures.js";
 import { createInitialTuiState, type TuiState } from "../tui-state.js";
 import { HotkeyHint } from "./hotkey-hint.js";
 
-const ANSI = /[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g;
+const ANSI =
+  /[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g;
 
 // Literal spellings, deliberately NOT derived from process.platform the
 // way the component does it — otherwise the assertion would be true by
@@ -273,7 +274,10 @@ describe("HotkeyHint pending ctrl+g leader", () => {
 
   it("keeps the approval footer, which outranks the leader on keys", () => {
     const { lastFrame, unmount } = render(
-      <HotkeyHint state={chatState({ pendingApproval: fakeApproval() })} menuLeaderArmed />,
+      <HotkeyHint
+        state={chatState({ pendingApproval: fakeApproval() })}
+        menuLeaderArmed
+      />,
     );
     const out = (lastFrame() ?? "").replace(ANSI, "");
     unmount();
@@ -292,7 +296,9 @@ describe("HotkeyHint scroll key spelling per platform", () => {
 
   // SCROLL_KEY is resolved at module load, so each case re-imports the
   // component after stubbing process.platform.
-  async function renderIdleFooterOn(platform: NodeJS.Platform): Promise<string> {
+  async function renderIdleFooterOn(
+    platform: NodeJS.Platform,
+  ): Promise<string> {
     Object.defineProperty(process, "platform", { value: platform });
     vi.resetModules();
     const fresh = await import("./hotkey-hint.js");
@@ -360,6 +366,30 @@ describe("HotkeyHint queue affordances", () => {
     );
     expect(out.split("\n").filter((l) => l.trim().length > 0)).toHaveLength(1);
   });
+
+  it.each([54, 70, 79, 100])(
+    "keeps the Enter chip on a %i-column row with a draft in the buffer",
+    (columns) => {
+      // The one chip in the running strip with no shed rank. A draft
+      // lengthens the Esc chip to `abort, draft kept`, and at `shed: 3`
+      // that was enough to drop `[⏎] steer` at every width up to 112 —
+      // in the one state the chip exists for, and the one state where
+      // the meta row above has dropped its own copy of the hint to make
+      // room for the provider-outage numbers. `ctrl+t` may still go.
+      const out = renderHint(
+        chatState({
+          status: "running",
+          inputValue: "a message the operator is part-way through",
+        }),
+        columns,
+      );
+      expect(out).toMatch(/\[⏎\]\s*steer/);
+      expect(out).toContain("abort, draft kept");
+      expect(out.split("\n").filter((l) => l.trim().length > 0)).toHaveLength(
+        1,
+      );
+    },
+  );
 
   it("gives an armed ctrl+c the whole row", () => {
     const { lastFrame, unmount } = render(

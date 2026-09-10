@@ -58,5 +58,7 @@ export function filterIdsByPricing(
   lookup: ModelEntryLookup | undefined,
 ): readonly string[] {
   if (filter === "all") return ids;
-  return ids.filter((id) => matchesModelPricingFilter(filter, id, lookup?.(id)));
+  return ids.filter((id) =>
+    matchesModelPricingFilter(filter, id, lookup?.(id)),
+  );
 }

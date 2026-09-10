@@ -101,7 +101,10 @@ describe("ClawHubClient.getSkillDetail", () => {
     const client = new ClawHubClient({
       fetchImpl: fetchImpl as unknown as typeof fetch,
     });
-    const detail = await client.getSkillDetail({ slug: "pdf", owner: "awspace" });
+    const detail = await client.getSkillDetail({
+      slug: "pdf",
+      owner: "awspace",
+    });
     expect(detail.skillMd).toBe(skillMd);
     expect(detail.ownerHandle).toBe("awspace");
     expect(detail.downloads).toBe(43002);
@@ -109,15 +112,15 @@ describe("ClawHubClient.getSkillDetail", () => {
   });
 
   it("maps a 409 to an 'ambiguous' error", async () => {
-    const fetchImpl = vi.fn(async () =>
-      new Response("conflict", { status: 409 }),
+    const fetchImpl = vi.fn(
+      async () => new Response("conflict", { status: 409 }),
     );
     const client = new ClawHubClient({
       fetchImpl: fetchImpl as unknown as typeof fetch,
     });
-    await expect(
-      client.getSkillDetail({ slug: "pdf" }),
-    ).rejects.toMatchObject({ code: "ambiguous" });
+    await expect(client.getSkillDetail({ slug: "pdf" })).rejects.toMatchObject({
+      code: "ambiguous",
+    });
   });
 });
 
@@ -161,9 +164,7 @@ describe("ClawHubClient.downloadZip", () => {
   });
 
   it("throws when the response is a non-ZIP handoff", async () => {
-    const fetchImpl = vi.fn(async () =>
-      jsonResponse({ source: "github" }),
-    );
+    const fetchImpl = vi.fn(async () => jsonResponse({ source: "github" }));
     const client = new ClawHubClient({
       fetchImpl: fetchImpl as unknown as typeof fetch,
     });
@@ -174,11 +175,12 @@ describe("ClawHubClient.downloadZip", () => {
 
   it("enforces the size cap", async () => {
     const big = Buffer.alloc(64);
-    const fetchImpl = vi.fn(async () =>
-      new Response(big, {
-        status: 200,
-        headers: { "content-type": "application/zip" },
-      }),
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(big, {
+          status: 200,
+          headers: { "content-type": "application/zip" },
+        }),
     );
     const client = new ClawHubClient({
       fetchImpl: fetchImpl as unknown as typeof fetch,
@@ -192,8 +194,8 @@ describe("ClawHubClient.downloadZip", () => {
 
 describe("ClawHubClient error mapping", () => {
   it("maps 409 to an 'ambiguous' error", async () => {
-    const fetchImpl = vi.fn(async () =>
-      new Response("conflict", { status: 409 }),
+    const fetchImpl = vi.fn(
+      async () => new Response("conflict", { status: 409 }),
     );
     const client = new ClawHubClient({
       fetchImpl: fetchImpl as unknown as typeof fetch,
@@ -202,8 +204,8 @@ describe("ClawHubClient error mapping", () => {
   });
 
   it("maps 429 to a 'rate_limited' error", async () => {
-    const fetchImpl = vi.fn(async () =>
-      new Response("slow down", { status: 429 }),
+    const fetchImpl = vi.fn(
+      async () => new Response("slow down", { status: 429 }),
     );
     const client = new ClawHubClient({
       fetchImpl: fetchImpl as unknown as typeof fetch,

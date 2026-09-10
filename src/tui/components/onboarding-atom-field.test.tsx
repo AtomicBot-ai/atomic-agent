@@ -1,7 +1,10 @@
 import { render } from "ink-testing-library";
 import React from "react";
 import { describe, expect, it } from "vitest";
-import { ATOM_COLLISION_COLOR, OnboardingAtomField } from "./onboarding-atom-field.js";
+import {
+  ATOM_COLLISION_COLOR,
+  OnboardingAtomField,
+} from "./onboarding-atom-field.js";
 import {
   ATOM_COLLISION_GLYPH,
   ATOM_GLYPH,
@@ -30,13 +33,17 @@ function field(over: Partial<Atom> = {}): AtomFieldState {
 
 describe("OnboardingAtomField", () => {
   it("draws exactly the rows it was given, blank ones included", () => {
-    const view = render(<OnboardingAtomField field={field()} columns={40} rows={6} />);
+    const view = render(
+      <OnboardingAtomField field={field()} columns={40} rows={6} />,
+    );
     expect(strip(view.lastFrame() ?? "").split("\n")).toHaveLength(6);
     view.unmount();
   });
 
   it("puts the atom on its own row and leaves the others empty", () => {
-    const view = render(<OnboardingAtomField field={field()} columns={40} rows={6} />);
+    const view = render(
+      <OnboardingAtomField field={field()} columns={40} rows={6} />,
+    );
     const rows = strip(view.lastFrame() ?? "").split("\n");
     expect(rows[2]).toContain(ATOM_GLYPH);
     expect(rows.filter((row) => row.trim().length > 0)).toHaveLength(1);
@@ -48,7 +55,9 @@ describe("OnboardingAtomField", () => {
     // terminals and monochrome ones — which is exactly why the stripped
     // frame has to carry the collision by itself. Shape changes, cells
     // do not: swapping the marker back yields the resting frame.
-    const cold = render(<OnboardingAtomField field={field()} columns={40} rows={6} />);
+    const cold = render(
+      <OnboardingAtomField field={field()} columns={40} rows={6} />,
+    );
     const hot = render(
       <OnboardingAtomField
         field={field({ hotSteps: COLLISION_STEPS })}
@@ -71,7 +80,9 @@ describe("OnboardingAtomField", () => {
     // ever adopts this green, the collision stops reading as an event
     // and starts reading as a state.
     for (const name of THEME_NAMES) {
-      expect(Object.values(THEMES[name].colors)).not.toContain(ATOM_COLLISION_COLOR);
+      expect(Object.values(THEMES[name].colors)).not.toContain(
+        ATOM_COLLISION_COLOR,
+      );
     }
   });
 });

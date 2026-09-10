@@ -93,7 +93,11 @@ describe("createProvidersWizardState configure prefill", () => {
       kind: "claude-cli",
       chatModel: "opus",
     });
-    const result = handleProvidersWizardKey("", emptyKey({ return: true }), wizard);
+    const result = handleProvidersWizardKey(
+      "",
+      emptyKey({ return: true }),
+      wizard,
+    );
     expect(result).toMatchObject({ handled: true, submit: true });
   });
 
@@ -191,7 +195,11 @@ describe("handleProvidersWizardKey", () => {
     wizard = next(wizard, "", emptyKey({ return: true }));
     expect(wizard.phase).toBe("pick_embedding");
 
-    const result = handleProvidersWizardKey("", emptyKey({ return: true }), wizard);
+    const result = handleProvidersWizardKey(
+      "",
+      emptyKey({ return: true }),
+      wizard,
+    );
     expect(result).toMatchObject({ handled: true, submit: true });
     if ("wizard" in result) {
       expect(result.wizard.selectedEmbeddingChoiceId).toBe(
@@ -252,7 +260,11 @@ describe("handleProvidersWizardKey", () => {
       wizard = next(wizard, "", emptyKey({ downArrow: true }));
       // Choosing a discovered model is the final step: it records the id
       // and submits, no embedding screen after it.
-      const result = handleProvidersWizardKey("", emptyKey({ return: true }), wizard);
+      const result = handleProvidersWizardKey(
+        "",
+        emptyKey({ return: true }),
+        wizard,
+      );
       expect(result).toMatchObject({ handled: true, submit: true });
       if ("wizard" in result) {
         expect(result.wizard.chatModelLine).toBe("b-model");
@@ -273,7 +285,11 @@ describe("handleProvidersWizardKey", () => {
       for (const ch of "my-own") wizard = next(wizard, ch, emptyKey());
       // A typed id is the final step now: Enter saves from the chat model
       // line, the embedding screen is gone from the flow.
-      const result = handleProvidersWizardKey("", emptyKey({ return: true }), wizard);
+      const result = handleProvidersWizardKey(
+        "",
+        emptyKey({ return: true }),
+        wizard,
+      );
       expect(result).toMatchObject({ handled: true, submit: true });
       if ("wizard" in result) {
         expect(result.wizard.chatModelLine).toBe("my-own");
@@ -338,9 +354,8 @@ describe("handleProvidersWizardKey", () => {
      */
     async function freshOpenRouterPickPhase(count: number) {
       vi.resetModules();
-      const catalog = await import(
-        "../../llm/provider/openrouter/fetch-openrouter-chat-catalog.js"
-      );
+      const catalog =
+        await import("../../llm/provider/openrouter/fetch-openrouter-chat-catalog.js");
       const bindings = await import("./providers-wizard-key-bindings.js");
       stubOpenRouterCatalog(count);
       await catalog.refreshOpenRouterChatCatalogFromApi();
@@ -432,7 +447,11 @@ describe("handleProvidersWizardKey", () => {
     expect(wizard.phase).toBe("pick_embedding");
     expect(wizard.selectedChatModelId).toBeTruthy();
 
-    const result = handleProvidersWizardKey("", emptyKey({ return: true }), wizard);
+    const result = handleProvidersWizardKey(
+      "",
+      emptyKey({ return: true }),
+      wizard,
+    );
     expect(result).toMatchObject({ handled: true, submit: true });
     if ("wizard" in result) {
       expect(result.wizard.selectedEmbeddingChoiceId).toBe(
@@ -519,7 +538,11 @@ describe("handleProvidersWizardKey", () => {
 
     // Model ids are Ollama tags, typed as the server reports them.
     for (const ch of "llama3.2:latest") wizard = next(wizard, ch, emptyKey());
-    const result = handleProvidersWizardKey("", emptyKey({ return: true }), wizard);
+    const result = handleProvidersWizardKey(
+      "",
+      emptyKey({ return: true }),
+      wizard,
+    );
     expect(result).toMatchObject({ handled: true, submit: true });
     if ("wizard" in result) {
       expect(result.wizard.chatModelLine).toBe("llama3.2:latest");
@@ -812,7 +835,11 @@ describe("handleProvidersWizardKey", () => {
     wizard = next(wizard, "", emptyKey({ return: true }));
     expect(wizard.phase).toBe("chat_model_line");
 
-    const result = handleProvidersWizardKey("", emptyKey({ escape: true }), wizard);
+    const result = handleProvidersWizardKey(
+      "",
+      emptyKey({ escape: true }),
+      wizard,
+    );
     expect(result.handled).toBe(true);
     expect("closed" in result && result.closed).toBeFalsy();
     expect("wizard" in result && result.wizard.phase).toBe("pick_kind");
@@ -822,7 +849,11 @@ describe("handleProvidersWizardKey", () => {
 
   it("Esc on the provider list closes the wizard", () => {
     const wizard = createProvidersWizardState("add");
-    const result = handleProvidersWizardKey("", emptyKey({ escape: true }), wizard);
+    const result = handleProvidersWizardKey(
+      "",
+      emptyKey({ escape: true }),
+      wizard,
+    );
     expect("closed" in result && result.closed).toBe(true);
   });
 
@@ -849,7 +880,11 @@ describe("handleProvidersWizardKey", () => {
     expect(wizard.phase).toBe("chat_model_line");
     // Screen two: type a model id and save. No URL, no key, no embedding.
     for (const ch of "hermes-4-405b") wizard = next(wizard, ch, emptyKey());
-    const result = handleProvidersWizardKey("", emptyKey({ return: true }), wizard);
+    const result = handleProvidersWizardKey(
+      "",
+      emptyKey({ return: true }),
+      wizard,
+    );
     expect(result).toMatchObject({ handled: true, submit: true });
     if ("wizard" in result) {
       expect(result.wizard.chatModelLine).toBe("hermes-4-405b");
@@ -882,9 +917,8 @@ describe("cloud pick list price facet (p)", () => {
    */
   async function freshMixedPickPhase() {
     vi.resetModules();
-    const catalog = await import(
-      "../../llm/provider/openrouter/fetch-openrouter-chat-catalog.js"
-    );
+    const catalog =
+      await import("../../llm/provider/openrouter/fetch-openrouter-chat-catalog.js");
     const bindings = await import("./providers-wizard-key-bindings.js");
     const phases = await import("./providers-wizard-phases.js");
     const data = [
@@ -930,7 +964,10 @@ describe("cloud pick list price facet (p)", () => {
 
     const filtered = step(wizard, "p", emptyKey());
     expect(filtered.pricingFilter).toBe("free");
-    expect(visibleIds(filtered)).toEqual(["vendor/free-000", "vendor/free-002"]);
+    expect(visibleIds(filtered)).toEqual([
+      "vendor/free-000",
+      "vendor/free-002",
+    ]);
   });
 
   it("cycles free → paid → all and back to the full list", async () => {
@@ -938,7 +975,10 @@ describe("cloud pick list price facet (p)", () => {
 
     const paidView = step(step(wizard, "p", emptyKey()), "p", emptyKey());
     expect(paidView.pricingFilter).toBe("paid");
-    expect(visibleIds(paidView)).toEqual(["vendor/paid-001", "vendor/paid-003"]);
+    expect(visibleIds(paidView)).toEqual([
+      "vendor/paid-001",
+      "vendor/paid-003",
+    ]);
 
     const allView = step(paidView, "p", emptyKey());
     expect(allView.pricingFilter).toBe("all");

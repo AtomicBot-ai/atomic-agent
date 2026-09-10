@@ -235,8 +235,7 @@ export class VoteStore {
    * `null` when the row does not exist. Pure read; no audit. */
   getScore(kind: VoteKind, targetId: number): number | null {
     const row = this.readScoreByKind[kind].get({ id: targetId }) as
-      | { score: number }
-      | undefined;
+      { score: number } | undefined;
     return row ? row.score : null;
   }
 
@@ -410,10 +409,7 @@ export class VoteStore {
         `direction: expected +1 or -1, got ${JSON.stringify(input.direction)}`,
       );
     }
-    if (
-      !Number.isInteger(input.maxVotePerItem) ||
-      input.maxVotePerItem <= 0
-    ) {
+    if (!Number.isInteger(input.maxVotePerItem) || input.maxVotePerItem <= 0) {
       throw new VoteValidationError(
         "maxVotePerItem",
         `maxVotePerItem: expected positive integer, got ${JSON.stringify(input.maxVotePerItem)}`,

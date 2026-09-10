@@ -28,8 +28,7 @@ const V0_2_2_SLASH_COMMANDS = [
   },
   {
     name: "help",
-    description:
-      "list available slash commands",
+    description: "list available slash commands",
   },
   {
     name: "tools",
@@ -43,13 +42,11 @@ const V0_2_2_SLASH_COMMANDS = [
   },
   {
     name: "clear",
-    description:
-      "clear chat transcript (keeps session)",
+    description: "clear chat transcript (keeps session)",
   },
   {
     name: "abort",
-    description:
-      "abort the running turn",
+    description: "abort the running turn",
   },
   {
     name: "mode",
@@ -58,19 +55,16 @@ const V0_2_2_SLASH_COMMANDS = [
   },
   {
     name: "quit",
-    description:
-      "exit atomic-agent",
+    description: "exit atomic-agent",
     aliases: ["exit"],
   },
   {
     name: "debug",
-    description:
-      "toggle debug pane (feed / logs / world …)",
+    description: "toggle debug pane (feed / logs / world …)",
   },
   {
     name: "chat",
-    description:
-      "return to single-view chat mode",
+    description: "return to single-view chat mode",
     aliases: ["run"],
   },
   {
@@ -85,48 +79,39 @@ const V0_2_2_SLASH_COMMANDS = [
   },
   {
     name: "feed",
-    description:
-      "jump to the Observe → Feed tab",
+    description: "jump to the Observe → Feed tab",
   },
   {
     name: "logs",
-    description:
-      "jump to the Observe → Logs tab",
+    description: "jump to the Observe → Logs tab",
   },
   {
     name: "reasoning",
-    description:
-      "jump to the Observe → Reasoning tab",
+    description: "jump to the Observe → Reasoning tab",
   },
   {
     name: "world",
-    description:
-      "jump to the Observe → World tab",
+    description: "jump to the Observe → World tab",
   },
   {
     name: "expand",
-    description:
-      "expand every tool card in the chat log",
+    description: "expand every tool card in the chat log",
   },
   {
     name: "collapse",
-    description:
-      "collapse every tool card in the chat log",
+    description: "collapse every tool card in the chat log",
   },
   {
     name: "session",
-    description:
-      "show current session id",
+    description: "show current session id",
   },
   {
     name: "sessions",
-    description:
-      "open session picker to switch threads",
+    description: "open session picker to switch threads",
   },
   {
     name: "new",
-    description:
-      "start a fresh session (keeps warm runtime)",
+    description: "start a fresh session (keeps warm runtime)",
   },
   {
     name: "skills",
@@ -145,12 +130,12 @@ const V0_2_2_SLASH_COMMANDS = [
   },
   {
     name: "llm",
-    // Updated when the Fallback pane got its deep link, and again for
-    // `/llm check`: every subcommand the handler answers has to be
-    // reachable from here, or it exists only for whoever types an
-    // invalid one and reads the usage line.
+    // Updated when the Fallback pane got its deep link, again for
+    // `/llm check`, and again for `/llm restart`: every subcommand the
+    // handler answers has to be reachable from here, or it exists only
+    // for whoever types an invalid one and reads the usage line.
     description:
-      "open LLM Local/Cloud/External/Fallback panel · `/llm provider <id>` switch text provider · `/llm check` test the active route's streaming tool contract · `/llm fallback` edit the fallover chain",
+      "open LLM Local/Cloud/External/Fallback panel · `/llm provider <id>` switch text provider · `/llm check` test the active route's streaming tool contract · `/llm fallback` edit the fallover chain · `/llm restart` bounce the local model server",
   },
   {
     name: "mcp",
@@ -170,8 +155,7 @@ const V0_2_2_SLASH_COMMANDS = [
   },
   {
     name: "tasks",
-    description:
-      "jump to the Tasks tab (Option 4 cron + ingress UI)",
+    description: "jump to the Tasks tab (Option 4 cron + ingress UI)",
   },
   {
     name: "task",
@@ -185,8 +169,7 @@ const V0_2_2_SLASH_COMMANDS = [
   },
   {
     name: "import",
-    description:
-      "open the Import tab (one-shot Hermes -> atomic-agent migration)",
+    description: "open the Import tab (Hermes, OpenClaw, Claude Code or Codex)",
   },
   {
     name: "privacy",
@@ -195,8 +178,7 @@ const V0_2_2_SLASH_COMMANDS = [
   },
   {
     name: "analytics",
-    description:
-      "toggle anonymous analytics: `/analytics on|off|status`",
+    description: "toggle anonymous analytics: `/analytics on|off|status`",
   },
   // Added after v0.2.2: the mid-run message queue (#156) and steering (#159).
   {
@@ -211,8 +193,7 @@ const V0_2_2_SLASH_COMMANDS = [
   },
   {
     name: "window",
-    description:
-      "open a new terminal window running atomic-agent (ctrl+n)",
+    description: "open a new terminal window running atomic-agent (ctrl+n)",
     aliases: ["newwindow"],
   },
   {
@@ -228,8 +209,22 @@ const V0_2_2_SLASH_COMMANDS = [
   // keyboard's route to the same flip.
   {
     name: "sidebar",
+    description: "hide or show the session rail (the rail's « does the same)",
+  },
+  {
+    name: "swarm",
     description:
-      "hide or show the session rail (the rail's « does the same)",
+      "open the Swarm tab \u2014 every Telegram / Discord bot on this runtime; add more bots, each with its own token, owner and role",
+  },
+  {
+    name: "report",
+    description:
+      "file a GitHub issue with your logs attached — you choose how much leaves this machine",
+  },
+  {
+    name: "runmode",
+    description:
+      "where the chat runs: `/runmode` opens the switch · `/runmode local|cloud|fusion` sets one · `/runmode status`",
   },
   {
     name: "uninstall",
@@ -259,6 +254,33 @@ describe("menu registry", () => {
       node.slash ? [node.slash.name, ...(node.slash.aliases ?? [])] : [],
     );
     expect(new Set(names).size).toBe(names.length);
+  });
+
+  it("routes every `command` through a registered slash verb", () => {
+    for (const node of MENU) {
+      if (!node.command) continue;
+      expect(node.command.startsWith("/")).toBe(true);
+      const verb = node.command.slice(1).split(/\s+/)[0] ?? "";
+      expect(
+        SLASH_COMMANDS.some(
+          (cmd) => cmd.name === verb || cmd.aliases?.includes(verb),
+        ),
+      ).toBe(true);
+      // An activation channel, not a listing: a `command` node never
+      // duplicates its verb in the palette.
+      expect(node.slash).toBeUndefined();
+    }
+  });
+
+  it("fans Local, Cloud and Fusion out under Where it runs with the digit chords", () => {
+    const children = MENU.filter((node) => node.parent === "run.type");
+    expect(
+      children.map((node) => [node.label, node.chord, node.command]),
+    ).toEqual([
+      ["Local", "1", "/runmode local"],
+      ["Cloud", "2", "/runmode cloud"],
+      ["Fusion", "3", "/runmode fusion"],
+    ]);
   });
 
   it("gives every slash command a distinct palette rank", () => {
@@ -313,6 +335,7 @@ describe("menu registry", () => {
       "Memory",
       "MCP",
       "Integrations",
+      "Swarm",
       "LLM",
       "Telegram",
       "Import",

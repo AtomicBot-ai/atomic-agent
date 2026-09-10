@@ -47,7 +47,8 @@ export function buildMcpPromptListTool(manager: McpManager): ToolDefinition {
       return compressToolResult({
         tool: "mcp.prompt.list",
         status: "ok",
-        output: lines.length === 0 ? `(no prompts on ${server})` : lines.join("\n"),
+        output:
+          lines.length === 0 ? `(no prompts on ${server})` : lines.join("\n"),
         details: {
           server,
           count: rows.length,
@@ -95,7 +96,9 @@ export function buildMcpPromptGetTool(manager: McpManager): ToolDefinition {
           details: {
             server,
             name,
-            ...(res && typeof res === "object" && typeof (res as { description?: unknown }).description === "string"
+            ...(res &&
+            typeof res === "object" &&
+            typeof (res as { description?: unknown }).description === "string"
               ? { description: (res as { description: string }).description }
               : {}),
           },
@@ -118,7 +121,10 @@ function projectPromptMessages(res: unknown): string {
   const parts: string[] = [];
   for (const m of messages) {
     if (!m || typeof m !== "object") continue;
-    const role = typeof (m as { role?: unknown }).role === "string" ? (m as { role: string }).role : "?";
+    const role =
+      typeof (m as { role?: unknown }).role === "string"
+        ? (m as { role: string }).role
+        : "?";
     const content = (m as { content?: unknown }).content;
     let text = "";
     if (content && typeof content === "object" && !Array.isArray(content)) {

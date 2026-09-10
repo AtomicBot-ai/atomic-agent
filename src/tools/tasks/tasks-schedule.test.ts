@@ -31,7 +31,8 @@ function makeTaskRunner() {
     lastErrorCategory: null,
     schedule: input.schedule ?? null,
     scheduledFor: input.scheduledFor ?? null,
-    recurring: input.schedule?.kind === "cron" || input.schedule?.kind === "interval",
+    recurring:
+      input.schedule?.kind === "cron" || input.schedule?.kind === "interval",
     lastScheduledAt: null,
     createdAt: 0,
     updatedAt: 0,

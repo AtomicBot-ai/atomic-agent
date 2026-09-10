@@ -87,7 +87,10 @@ describe("validateSchedule", () => {
 
   it("accepts a minimal valid interval", () => {
     expect(() =>
-      validateSchedule({ kind: "interval", everyMs: SCHEDULE_INTERVAL_MIN_MS }, NOW),
+      validateSchedule(
+        { kind: "interval", everyMs: SCHEDULE_INTERVAL_MIN_MS },
+        NOW,
+      ),
     ).not.toThrow();
   });
 

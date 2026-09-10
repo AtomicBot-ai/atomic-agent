@@ -120,7 +120,9 @@ export function classifyProbeStream(
       call.name === CONTRACT_PROBE_TOOL_NAME &&
       argumentsAreDispatchable(call.arguments);
     if (dispatchable) return "tools_supported";
-    return truncatedByOurCap ? "inconclusive_no_tool_call" : "malformed_tool_call";
+    return truncatedByOurCap
+      ? "inconclusive_no_tool_call"
+      : "malformed_tool_call";
   }
 
   if (truncatedByOurCap) return "inconclusive_no_tool_call";
@@ -145,7 +147,9 @@ function argumentsAreDispatchable(raw: string): boolean {
   if (trimmed.length === 0) return true;
   try {
     const parsed: unknown = JSON.parse(trimmed);
-    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed);
+    return (
+      typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+    );
   } catch {
     return false;
   }

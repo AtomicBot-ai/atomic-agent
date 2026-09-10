@@ -21,9 +21,7 @@ describe("MarkdownRenderer", () => {
   });
 
   it("renders headings without literal hash markers", () => {
-    const { lastFrame } = render(
-      <MarkdownRenderer text={"# Title\n\nbody"} />,
-    );
+    const { lastFrame } = render(<MarkdownRenderer text={"# Title\n\nbody"} />);
     const text = strip(lastFrame() ?? "");
     expect(text).toContain("Title");
     expect(text).not.toContain("# Title");
@@ -53,7 +51,9 @@ describe("MarkdownRenderer", () => {
       <MarkdownRenderer text="[cursor](https://cursor.com)" />,
     );
     const text = lastFrame() ?? "";
-    expect(text).toContain("\u001b]8;;https://cursor.com\u001b\\cursor\u001b]8;;\u001b\\");
+    expect(text).toContain(
+      "\u001b]8;;https://cursor.com\u001b\\cursor\u001b]8;;\u001b\\",
+    );
     expect(text).toContain("(https://cursor.com)");
   });
 

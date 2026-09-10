@@ -10,8 +10,15 @@ const SNAPSHOT_TEXT_LIMIT = 400;
 
 export function WorldPanel({ state }: WorldPanelProps): ReactElement {
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor="gray" paddingX={1}>
-      <Text color="gray">── world ─────────────────────────────────────────</Text>
+    <Box
+      flexDirection="column"
+      borderStyle="round"
+      borderColor="gray"
+      paddingX={1}
+    >
+      <Text color="gray">
+        ── world ─────────────────────────────────────────
+      </Text>
       <WorldSnapshotView state={state} />
       <LoadedSkillsView state={state} />
       <LatestResultView state={state} />
@@ -69,7 +76,10 @@ function LatestResultView({ state }: { state: TuiState }): ReactElement {
         <Text> </Text>
         <Text bold>{result.tool}</Text>
       </Text>
-      <Text>{"  "}{clip(result.summary, SNAPSHOT_TEXT_LIMIT)}</Text>
+      <Text>
+        {"  "}
+        {clip(result.summary, SNAPSHOT_TEXT_LIMIT)}
+      </Text>
     </Box>
   );
 }

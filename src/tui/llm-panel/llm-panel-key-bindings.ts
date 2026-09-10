@@ -55,7 +55,10 @@ export function handleLlmPanelKey(
   // edit the filter, ↑/↓ walk the filtered models, Enter selects, Esc
   // unfocuses (the text stays). Letters are text here, so this branch
   // must run before every letter hotkey below.
-  if (state.llmPanel.mode === "cloud" && state.llmPanel.cloudModelFilterFocused) {
+  if (
+    state.llmPanel.mode === "cloud" &&
+    state.llmPanel.cloudModelFilterFocused
+  ) {
     return handleCloudFilterKey(input, key, ctx);
   }
 
@@ -121,6 +124,12 @@ export function handleLlmPanelKey(
     openAddProvider(dispatch);
     return true;
   }
+  // `N` — reopen "tell me when it lands?" for the download in flight,
+  // or to change the remembered answer for the next ones.
+  if (input === "N") {
+    callbacks.onLocalModelsNotifyPromptRequested?.();
+    return true;
+  }
   if (input === "c") {
     dispatch({ type: "llm_mode_set", mode: "cloud" });
     openProviderConfig(state, dispatch);
@@ -128,6 +137,15 @@ export function handleLlmPanelKey(
   }
   if (input === "s") {
     triggerDaemonAction(state, callbacks);
+    return true;
+  }
+  // `R` (uppercase) restarts the local model server — one keypress for
+  // the "llama-server wedged" case. On shift so it cannot be confused
+  // with `r` (refresh the panel), and because it costs a model reload.
+  // Deliberately not `s` twice: that path also stops the embedding
+  // daemon and turns hybrid recall off.
+  if (input === "R") {
+    callbacks.onLocalModelsDaemonRestartRequested?.();
     return true;
   }
   // `a` — add a model the curated catalog does not carry. Local pane
@@ -204,11 +222,7 @@ function handleCloudFilterKey(
     return true;
   }
   const isNavigationKey =
-    key.tab ||
-    key.leftArrow ||
-    key.rightArrow ||
-    key.pageUp ||
-    key.pageDown;
+    key.tab || key.leftArrow || key.rightArrow || key.pageUp || key.pageDown;
   if (
     input.length > 0 &&
     !key.ctrl &&
@@ -221,4 +235,3 @@ function handleCloudFilterKey(
   }
   return true;
 }
-

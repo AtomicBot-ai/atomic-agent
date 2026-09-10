@@ -1,6 +1,10 @@
 import { render } from "ink-testing-library";
 import { describe, expect, it } from "vitest";
-import { createInitialTuiState, type TuiSessionInfo, type TuiState } from "../tui-state.js";
+import {
+  createInitialTuiState,
+  type TuiSessionInfo,
+  type TuiState,
+} from "../tui-state.js";
 import { ChatLog } from "./chat-log.js";
 
 const BASE_SESSION: TuiSessionInfo = {
@@ -214,9 +218,7 @@ describe("ChatLog", () => {
       "paragraph one is quite long and detailed so the summary has to clip it with an ellipsis and still fit on one line, and then paragraph two follows with even more extra detail that must not appear verbatim in the collapsed summary";
     const state: TuiState = {
       ...createInitialTuiState(BASE_SESSION),
-      reasoning: [
-        { id: "r1", stepIndex: 0, text: longThink, timestamp: 1 },
-      ],
+      reasoning: [{ id: "r1", stepIndex: 0, text: longThink, timestamp: 1 }],
       streamingAssistantText: "Hi",
     };
     const { lastFrame } = render(<ChatLog state={state} />);

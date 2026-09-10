@@ -77,7 +77,8 @@ describe("parseHuggingFaceModelRef", () => {
     },
     {
       name: "a pasted two-argument hf download command",
-      input: "hf download unsloth/Qwen3.5-4B-GGUF Qwen3.5-4B-Q4_K_M.gguf --local-dir .",
+      input:
+        "hf download unsloth/Qwen3.5-4B-GGUF Qwen3.5-4B-Q4_K_M.gguf --local-dir .",
       repoId: "unsloth/Qwen3.5-4B-GGUF",
       revision: "main",
       filePath: "Qwen3.5-4B-Q4_K_M.gguf",
@@ -103,12 +104,24 @@ describe("parseHuggingFaceModelRef", () => {
   });
 
   const rejected: { name: string; input: string; message: RegExp }[] = [
-    { name: "empty input", input: "   ", message: /repo id or a huggingface\.co URL/ },
-    { name: "a plain search phrase", input: "qwen coder 30b", message: /Not a Hugging Face URL/ },
+    {
+      name: "empty input",
+      input: "   ",
+      message: /repo id or a huggingface\.co URL/,
+    },
+    {
+      name: "a plain search phrase",
+      input: "qwen coder 30b",
+      message: /Not a Hugging Face URL/,
+    },
     // `new URL` reads a bare word as a hostname, so this lands on the
     // wrong-host branch rather than the unparseable one. Either way it
     // is refused, and the message still quotes what was typed.
-    { name: "one bare word", input: "qwen", message: /Not a huggingface\.co URL: "qwen"/ },
+    {
+      name: "one bare word",
+      input: "qwen",
+      message: /Not a huggingface\.co URL: "qwen"/,
+    },
     {
       name: "a URL on another host",
       input: "https://example.com/owner/repo",

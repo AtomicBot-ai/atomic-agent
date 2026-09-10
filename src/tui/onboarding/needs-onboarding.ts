@@ -25,7 +25,11 @@ export function decideOnboarding(): OnboardingDecision {
   const onboarding = getConfig().tui.onboarding;
   if (onboarding.completedAt) return { needed: false, reason: "completed" };
   if (onboarding.skippedAt) return { needed: false, reason: "skipped" };
-  if (isCloudTextProviderReady() || isManagedModeReadyOnDisk() || isLocalBackendConfigured()) {
+  if (
+    isCloudTextProviderReady() ||
+    isManagedModeReadyOnDisk() ||
+    isLocalBackendConfigured()
+  ) {
     return { needed: false, reason: "backend_configured" };
   }
   return { needed: true, reason: "fresh_install" };

@@ -41,7 +41,9 @@ export interface DragIntentTracker {
 }
 
 /** `onIntent` fires at most once per unclaimed press, on its first held motion. */
-export function createDragIntentTracker(onIntent: () => void): DragIntentTracker {
+export function createDragIntentTracker(
+  onIntent: () => void,
+): DragIntentTracker {
   // Whether the last press went unclaimed — the pending "this drag
   // would be a selection" state. Firing, releasing, or a claimed press
   // all disarm it.

@@ -29,7 +29,9 @@ export interface BuildChromeLaunchArgsInput {
   platform?: NodeJS.Platform;
 }
 
-export function buildChromeLaunchArgs(input: BuildChromeLaunchArgsInput): string[] {
+export function buildChromeLaunchArgs(
+  input: BuildChromeLaunchArgsInput,
+): string[] {
   const platform = input.platform ?? process.platform;
   const args: string[] = [
     `--remote-debugging-port=${input.cdpPort}`,

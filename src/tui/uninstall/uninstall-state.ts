@@ -33,11 +33,7 @@ export interface UninstallPreview {
  * WAL and a directory that reappears a second after you removed it.
  */
 export type UninstallStep =
-  | "loading"
-  | "review"
-  | "confirm"
-  | "closing"
-  | "failed";
+  "loading" | "review" | "confirm" | "closing" | "failed";
 
 export interface UninstallFlowState {
   readonly step: UninstallStep;

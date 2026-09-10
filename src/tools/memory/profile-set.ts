@@ -47,7 +47,12 @@ export function buildProfileSetTool(
         return compressToolResult({
           tool: "memory.profile.set",
           status: "ok",
-          output: renderOkOutput(fact.key, fact.value, fact.pinned, fact.keywords),
+          output: renderOkOutput(
+            fact.key,
+            fact.value,
+            fact.pinned,
+            fact.keywords,
+          ),
           details: {
             key: fact.key,
             value: fact.value,
@@ -76,10 +81,7 @@ function parseSetOptions(rawArgs: Record<string, unknown>): ProfileSetOptions {
   const options: ProfileSetOptions = {};
   if (rawArgs.pinned !== undefined) {
     if (typeof rawArgs.pinned !== "boolean") {
-      throw new ProfileValidationError(
-        "keywords",
-        "pinned must be a boolean",
-      );
+      throw new ProfileValidationError("keywords", "pinned must be a boolean");
     }
     options.pinned = rawArgs.pinned;
   }

@@ -170,7 +170,10 @@ export function removeMcpServer(name: string): RemoveResult {
       `server ${JSON.stringify(trimmed)} not found in config.mcp.servers`,
     );
   }
-  const nextServers = [...prevServers.slice(0, idx), ...prevServers.slice(idx + 1)];
+  const nextServers = [
+    ...prevServers.slice(0, idx),
+    ...prevServers.slice(idx + 1),
+  ];
   const nextMcp = { ...prev.mcp, servers: nextServers };
   const draft = { ...prev, mcp: nextMcp };
   try {
@@ -200,7 +203,11 @@ function extractServerObject(
   // single-server.
   const envelope = obj.mcpServers;
   if (envelope !== undefined) {
-    if (envelope === null || typeof envelope !== "object" || Array.isArray(envelope)) {
+    if (
+      envelope === null ||
+      typeof envelope !== "object" ||
+      Array.isArray(envelope)
+    ) {
       throw new McpAddServerError(
         "`mcpServers` must be an object keyed by server name",
       );

@@ -121,10 +121,7 @@ export function nextMenuCursor(state: TuiState, delta: number): number {
   return clampMenuCursor(state, state.menuCursor + delta);
 }
 
-function enterSubmenu(
-  dispatch: (action: TuiAction) => void,
-  id: string,
-): void {
+function enterSubmenu(dispatch: (action: TuiAction) => void, id: string): void {
   dispatch({ type: "menu_path_set", path: id });
   dispatch({ type: "menu_cursor_set", cursor: 0 });
 }
@@ -133,10 +130,7 @@ function enterSubmenu(
  * Typing flattens the tree: a query ranks across the whole registry, so any
  * submenu the operator had walked into is dropped at the same time.
  */
-function setQuery(
-  dispatch: (action: TuiAction) => void,
-  query: string,
-): void {
+function setQuery(dispatch: (action: TuiAction) => void, query: string): void {
   dispatch({ type: "menu_query_changed", query });
   dispatch({ type: "menu_cursor_set", cursor: 0 });
 }

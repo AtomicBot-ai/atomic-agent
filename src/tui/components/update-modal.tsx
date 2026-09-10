@@ -27,12 +27,11 @@ export function UpdateModal(props: UpdateModalProps): ReactElement {
         update available
       </Text>
       <Text>
-        <Text color={theme.colors.muted}>current:</Text> v{current}{"  "}
+        <Text color={theme.colors.muted}>current:</Text> v{current}
+        {"  "}
         <Text color={theme.colors.muted}>latest:</Text> v{latest}
       </Text>
-      <Text color={theme.colors.muted}>
-        y = update now · n / Esc = skip
-      </Text>
+      <Text color={theme.colors.muted}>y = update now · n / Esc = skip</Text>
     </Box>
   );
 }

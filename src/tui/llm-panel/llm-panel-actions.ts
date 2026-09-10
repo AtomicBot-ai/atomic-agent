@@ -20,9 +20,9 @@ export type LlmPanelAction =
   /** Cycle the inline list's price facet: all → free → paid → all. */
   | { type: "llm_cloud_pricing_cycled" };
 
-export function isLlmPanelAction(
-  action: { type: string },
-): action is LlmPanelAction {
+export function isLlmPanelAction(action: {
+  type: string;
+}): action is LlmPanelAction {
   return (
     action.type === "llm_mode_set" ||
     action.type === "llm_mode_set_to_active_route" ||

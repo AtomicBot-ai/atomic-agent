@@ -296,7 +296,8 @@ export class McpManager {
         tools: s.registeredToolNames.length,
       });
     } catch (err) {
-      const msg = err instanceof McpConnectError ? err.message : scrubErrorMessage(err);
+      const msg =
+        err instanceof McpConnectError ? err.message : scrubErrorMessage(err);
       s.lastError = msg;
       this.transition(s, "down");
       this.deps.logger?.warn("mcp.server_down", {

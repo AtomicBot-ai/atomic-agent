@@ -1,14 +1,9 @@
-import type {
-  MemoryEntry,
-  MemoryIndexEntry,
-} from "../memory/memory-store.js";
+import type { MemoryEntry, MemoryIndexEntry } from "../memory/memory-store.js";
 import type { LessonIndexEntry } from "../memory/lessons/lesson-store.js";
 import type { ProcedureIndexEntry } from "../memory/procedures/procedure-store.js";
-import {
-  appendTurn,
-  type ConversationTurn,
-} from "./conversation-turn.js";
+import { appendTurn, type ConversationTurn } from "./conversation-turn.js";
 import type { ContextUsageState } from "./context-usage.js";
+import { appendMacroTurnStart } from "./macro-turn-starts.js";
 
 export type SessionStatus =
   | "pending"
@@ -326,29 +321,6 @@ export function incrementTurnCount(state: SessionState): SessionState {
     ),
     updatedAt: Date.now(),
   };
-}
-
-/**
- * Boundaries a pairs-capped prompt can only ever need the tail of, so the
- * list is bounded. 200 is well past `agent.conversationMaxPairs`'s
- * ceiling of 100 and keeps a session that runs for days from carrying an
- * ever-growing array of integers it will never read.
- */
-const MACRO_TURN_START_CAP = 200;
-
-function appendMacroTurnStart(
-  starts: number[] | undefined,
-  index: number,
-): number[] {
-  const prev = starts ?? [];
-  // A termination that recorded no turns (an empty steer, a cancel
-  // before the first step) would otherwise push the same index twice and
-  // read as a pair with nothing in it.
-  if (prev[prev.length - 1] === index) return prev;
-  const next = [...prev, index];
-  return next.length > MACRO_TURN_START_CAP
-    ? next.slice(next.length - MACRO_TURN_START_CAP)
-    : next;
 }
 
 /**

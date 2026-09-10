@@ -61,6 +61,8 @@ export type SkillsAction =
   | { type: "skills_remove_failed"; error: string };
 
 /** Narrow runtime guard used by the root reducer to dispatch. */
-export function isSkillsAction(action: { type: string }): action is SkillsAction {
+export function isSkillsAction(action: {
+  type: string;
+}): action is SkillsAction {
   return action.type.startsWith("skills_");
 }

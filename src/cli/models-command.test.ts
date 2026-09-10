@@ -4,7 +4,10 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { getUserConfigPath, writeUserConfigFileSync } from "../config/config-file.js";
+import {
+  getUserConfigPath,
+  writeUserConfigFileSync,
+} from "../config/config-file.js";
 import { resetConfigCache, getConfig } from "../config/index.js";
 import { USER_CONFIG_DEFAULTS } from "../config/config-schema.js";
 

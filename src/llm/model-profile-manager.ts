@@ -75,9 +75,7 @@ export class ModelProfileManager {
   private readonly llama: LlamaServerClient;
   private readonly grammarsDir: string | undefined;
   private readonly browserEnabled: boolean;
-  private readonly onTotalSlots:
-    | ((totalSlots: number) => void)
-    | undefined;
+  private readonly onTotalSlots: ((totalSlots: number) => void) | undefined;
   private readonly logger: StructuredLogger | undefined;
 
   constructor(options: ModelProfileManagerOptions) {

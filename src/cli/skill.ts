@@ -339,10 +339,11 @@ function configuredTaps(restrictTo?: string): SkillTap[] {
 
 async function handleBrowse(args: string[]): Promise<number> {
   const sourceIdx = args.indexOf("--source");
-  const source =
-    sourceIdx !== -1 ? args[sourceIdx + 1]?.trim() : undefined;
+  const source = sourceIdx !== -1 ? args[sourceIdx + 1]?.trim() : undefined;
   if (sourceIdx !== -1 && !source) {
-    process.stderr.write("usage: atomic-agent skill browse [--source owner/repo]\n");
+    process.stderr.write(
+      "usage: atomic-agent skill browse [--source owner/repo]\n",
+    );
     return 2;
   }
   // ClawHub is the primary catalog; `--source owner/repo` narrows to a
@@ -354,7 +355,10 @@ async function handleBrowse(args: string[]): Promise<number> {
 }
 
 async function handleSearch(args: string[]): Promise<number> {
-  const query = args.filter((a) => !a.startsWith("--")).join(" ").trim();
+  const query = args
+    .filter((a) => !a.startsWith("--"))
+    .join(" ")
+    .trim();
   if (query.length === 0) {
     process.stderr.write("usage: atomic-agent skill search <query>\n");
     return 2;
@@ -441,7 +445,9 @@ async function handleTap(args: string[]): Promise<number> {
   if (verb === "add" || verb === "remove") {
     const repo = args[1]?.trim();
     if (!repo) {
-      process.stderr.write(`usage: atomic-agent skill tap ${verb} <owner/repo>\n`);
+      process.stderr.write(
+        `usage: atomic-agent skill tap ${verb} <owner/repo>\n`,
+      );
       return 2;
     }
     try {
@@ -461,11 +467,15 @@ async function handleTap(args: string[]): Promise<number> {
     });
     if (!result) {
       process.stdout.write(
-        verb === "add" ? `tap already present: ${repo}\n` : `tap not present: ${repo}\n`,
+        verb === "add"
+          ? `tap already present: ${repo}\n`
+          : `tap not present: ${repo}\n`,
       );
       return 0;
     }
-    process.stdout.write(verb === "add" ? `tap added: ${repo}\n` : `tap removed: ${repo}\n`);
+    process.stdout.write(
+      verb === "add" ? `tap added: ${repo}\n` : `tap removed: ${repo}\n`,
+    );
     return 0;
   }
   process.stderr.write(

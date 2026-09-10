@@ -115,11 +115,17 @@ function handleAddPickerKey(
     return true;
   }
   if (key.downArrow || input === "j") {
-    dispatch({ type: "fallback_add_picker_cursor_set", cursor: picker.cursor + 1 });
+    dispatch({
+      type: "fallback_add_picker_cursor_set",
+      cursor: picker.cursor + 1,
+    });
     return true;
   }
   if (key.upArrow || input === "k") {
-    dispatch({ type: "fallback_add_picker_cursor_set", cursor: picker.cursor - 1 });
+    dispatch({
+      type: "fallback_add_picker_cursor_set",
+      cursor: picker.cursor - 1,
+    });
     return true;
   }
   if (key.return) {

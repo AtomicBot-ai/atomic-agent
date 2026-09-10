@@ -1,4 +1,7 @@
-import type { EmbeddingModelRow, LocalModelRow } from "../local-models/local-models-panel-state.js";
+import type {
+  EmbeddingModelRow,
+  LocalModelRow,
+} from "../local-models/local-models-panel-state.js";
 import type { ProviderRow } from "../providers/providers-panel-state.js";
 import type { TuiState } from "../tui-state.js";
 import type { LlmPanelMode } from "./llm-panel-state.js";
@@ -34,12 +37,7 @@ export type LlmPanelRow =
       active: boolean;
       available: boolean;
       primaryAction:
-        | "download"
-        | "downloading"
-        | "use"
-        | "enable"
-        | "start"
-        | "current";
+        "download" | "downloading" | "use" | "enable" | "start" | "current";
       enterEffect: string;
     }
   | {
@@ -175,13 +173,42 @@ export function selectLlmActiveRouteSummary(
       state.llmHealth.model,
     providerLabel: activeTextProvider?.id ?? "unknown",
     toolTransportLabel: localActive ? "grammar" : "native_tools",
-    cacheLabel: localActive ? "local slot/cache_prompt" : "cloud: no slot affinity",
+    cacheLabel: localActive
+      ? "local slot/cache_prompt"
+      : "cloud: no slot affinity",
     usesLocalHealth: localActive || activeTextProvider === null,
   };
 }
 
 export function selectPromptLlmMeta(state: TuiState): PromptLlmMeta {
-  const active = state.providersPanel.rows.find((row) => row.isActiveText) ?? null;
+  const active =
+    state.providersPanel.rows.find((row) => row.isActiveText) ?? null;
+  const runMode = state.providersPanel.runMode;
+  if (runMode?.effective === "fusion") {
+    // Each leg is labelled from ITS OWN provider row, never from
+    // whichever row happens to be active: the rows are a mirror that
+    // lands one refresh behind the config write, so right after the
+    // switch `active` can still be the local entry the operator just
+    // left — which is how both slots came to show a local model.
+    const orchestratorRow =
+      state.providersPanel.rows.find(
+        (row) => row.id === runMode.orchestratorProviderId,
+      ) ?? null;
+    const orchestrator =
+      runMode.orchestratorModel ??
+      orchestratorRow?.chatModel ??
+      runMode.orchestratorProviderId ??
+      "cloud";
+    const worker =
+      runMode.workerModel ??
+      state.localModelsPanel.activeModelId ??
+      state.llmHealth.model ??
+      "local";
+    return {
+      model: `${orchestrator} ⇄ ${worker}`,
+      provider: runMode.orchestratorProviderId ?? active?.id ?? null,
+    };
+  }
   if (active && active.kind !== "llama-server") {
     return { model: active.chatModel, provider: active.id };
   }
@@ -206,4 +233,3 @@ export function isLocalTextActive(state: TuiState): boolean {
     (row) => row.id === "local-llama" && row.isActiveText,
   );
 }
-

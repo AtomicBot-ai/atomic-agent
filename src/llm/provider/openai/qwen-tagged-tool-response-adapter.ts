@@ -1,4 +1,8 @@
-import type { CompletionRequest, CompletionResult, OpenAiToolCall } from "../completion-types.js";
+import type {
+  CompletionRequest,
+  CompletionResult,
+  OpenAiToolCall,
+} from "../completion-types.js";
 import {
   coerceJsonSchemaValue,
   validateJsonSchemaValue,
@@ -16,14 +20,16 @@ type TaggedCall = {
   parameters: Array<{ name: string; value: string }>;
 };
 
-const TOOL_CALL_RE = /\s*<tool_call>\s*<function=([^>\n]+)>([\s\S]*?)<\/function>\s*<\/tool_call>/gy;
+const TOOL_CALL_RE =
+  /\s*<tool_call>\s*<function=([^>\n]+)>([\s\S]*?)<\/function>\s*<\/tool_call>/gy;
 const PARAMETER_RE = /\s*<parameter=([^>\n]+)>([\s\S]*?)<\/parameter>/gy;
 
 export function adaptQwenTaggedToolResponse(
   response: Record<string, unknown>,
   request: Pick<CompletionRequest, "tools">,
 ): Record<string, unknown> {
-  const choices = response.choices as Array<Record<string, unknown>> | undefined;
+  const choices = response.choices as
+    Array<Record<string, unknown>> | undefined;
   const choice = choices?.[0];
   const message = choice?.message as Record<string, unknown> | undefined;
   if (
@@ -54,7 +60,11 @@ export function adaptQwenTaggedToolResponse(
   };
   if (fromReasoning) nextMessage.reasoning_content = null;
   const nextChoices = [...choices];
-  nextChoices[0] = { ...choice, message: nextMessage, finish_reason: "tool_calls" };
+  nextChoices[0] = {
+    ...choice,
+    message: nextMessage,
+    finish_reason: "tool_calls",
+  };
   return { ...response, choices: nextChoices };
 }
 
@@ -117,11 +127,16 @@ function indexOfferedTools(
       wireName: fn.name,
       schema: parameters ?? { type: "object", properties: {} },
       properties: Object.fromEntries(
-        Object.entries(properties).map(([name, schema]) => [name, asRecord(schema) ?? {}]),
+        Object.entries(properties).map(([name, schema]) => [
+          name,
+          asRecord(schema) ?? {},
+        ]),
       ),
       required: new Set(
         Array.isArray(parameters?.required)
-          ? parameters.required.filter((name): name is string => typeof name === "string")
+          ? parameters.required.filter(
+              (name): name is string => typeof name === "string",
+            )
           : [],
       ),
     };
@@ -186,8 +201,12 @@ function parseParameters(
   while (offset < source.length) {
     PARAMETER_RE.lastIndex = offset;
     const match = PARAMETER_RE.exec(source);
-    if (!match) return source.slice(offset).trim().length === 0 ? parameters : null;
-    parameters.push({ name: (match[1] ?? "").trim(), value: (match[2] ?? "").trim() });
+    if (!match)
+      return source.slice(offset).trim().length === 0 ? parameters : null;
+    parameters.push({
+      name: (match[1] ?? "").trim(),
+      value: (match[2] ?? "").trim(),
+    });
     offset = PARAMETER_RE.lastIndex;
   }
   return parameters;
@@ -212,7 +231,8 @@ function coerceArguments(
       );
     }
     for (const name of tool.required) {
-      if (!Object.hasOwn(args, name)) throw new Error("missing required parameter");
+      if (!Object.hasOwn(args, name))
+        throw new Error("missing required parameter");
     }
     if (!validateJsonSchemaValue(args, tool.schema)) {
       throw new Error("arguments do not match offered schema");

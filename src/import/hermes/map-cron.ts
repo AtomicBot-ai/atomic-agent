@@ -7,8 +7,7 @@ import type { HermesCronJob } from "./hermes-source.js";
 
 /** Outcome of mapping one Hermes cron job. */
 export type MapCronResult =
-  | { kind: "task"; input: TaskCreateInput }
-  | { kind: "skip"; reason: string };
+  { kind: "task"; input: TaskCreateInput } | { kind: "skip"; reason: string };
 
 export interface MapCronOptions {
   /** Retry budget applied to the created task. */
@@ -78,7 +77,10 @@ function resolveSchedule(
         return { skip: "interval job without positive minutes" };
       }
       return {
-        schedule: { kind: "interval", everyMs: Math.round(schedule.minutes * 60_000) },
+        schedule: {
+          kind: "interval",
+          everyMs: Math.round(schedule.minutes * 60_000),
+        },
       };
     }
     case "cron": {
@@ -88,6 +90,8 @@ function resolveSchedule(
       return { schedule: { kind: "cron", expression: schedule.expr } };
     }
     default:
-      return { skip: `unsupported schedule kind: ${schedule.kind || "(none)"}` };
+      return {
+        skip: `unsupported schedule kind: ${schedule.kind || "(none)"}`,
+      };
   }
 }

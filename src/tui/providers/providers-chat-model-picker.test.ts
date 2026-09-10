@@ -169,7 +169,9 @@ describe("model picker modal keys", () => {
       emptyKey({ downArrow: true }),
       stateWithPicker(readyPicker({ cursor: 2 })),
     );
-    expect(dispatched).toEqual([{ type: "providers_chat_model_picker_cursor_set", cursor: 0 }]);
+    expect(dispatched).toEqual([
+      { type: "providers_chat_model_picker_cursor_set", cursor: 0 },
+    ]);
   });
 
   it("Enter selects the model under the cursor, closes, and routes the switch", () => {
@@ -180,8 +182,13 @@ describe("model picker modal keys", () => {
       stateWithPicker(readyPicker({ cursor: 2 })),
       callbacks({ onProvidersSelectChatModel }),
     );
-    expect(dispatched).toEqual([{ type: "providers_chat_model_picker_closed" }]);
-    expect(onProvidersSelectChatModel).toHaveBeenCalledWith("my-vllm", "yi-34b");
+    expect(dispatched).toEqual([
+      { type: "providers_chat_model_picker_closed" },
+    ]);
+    expect(onProvidersSelectChatModel).toHaveBeenCalledWith(
+      "my-vllm",
+      "yi-34b",
+    );
   });
 
   it("Esc closes without selecting", () => {
@@ -192,7 +199,9 @@ describe("model picker modal keys", () => {
       stateWithPicker(readyPicker()),
       callbacks({ onProvidersSelectChatModel }),
     );
-    expect(dispatched).toEqual([{ type: "providers_chat_model_picker_closed" }]);
+    expect(dispatched).toEqual([
+      { type: "providers_chat_model_picker_closed" },
+    ]);
     expect(onProvidersSelectChatModel).not.toHaveBeenCalled();
   });
 
@@ -212,7 +221,9 @@ describe("model picker modal keys", () => {
       emptyKey({ return: true }),
       stateWithPicker(readyPicker({ status: "error", error: "http 500" })),
     );
-    expect(dispatched).toEqual([{ type: "providers_chat_model_picker_closed" }]);
+    expect(dispatched).toEqual([
+      { type: "providers_chat_model_picker_closed" },
+    ]);
   });
 });
 
@@ -294,7 +305,10 @@ describe("model picker filtering", () => {
       stateWithPicker(readyPicker({ query: "yi", cursor: 0 })),
       callbacks({ onProvidersSelectChatModel }),
     );
-    expect(onProvidersSelectChatModel).toHaveBeenCalledWith("my-vllm", "yi-34b");
+    expect(onProvidersSelectChatModel).toHaveBeenCalledWith(
+      "my-vllm",
+      "yi-34b",
+    );
   });
 
   it("Enter on an empty result set does nothing", () => {
@@ -315,7 +329,9 @@ describe("model picker filtering", () => {
       emptyKey({ escape: true }),
       stateWithPicker(readyPicker({ query: "qwen" })),
     );
-    expect(dispatched).toEqual([{ type: "providers_chat_model_picker_closed" }]);
+    expect(dispatched).toEqual([
+      { type: "providers_chat_model_picker_closed" },
+    ]);
   });
 
   it("ctrl and meta combos are not typed into the filter", () => {
@@ -348,7 +364,10 @@ describe("model picker filtering", () => {
   });
 
   it("left/right arrows are not typed into the filter", () => {
-    for (const overrides of [{ leftArrow: true }, { rightArrow: true }] as const) {
+    for (const overrides of [
+      { leftArrow: true },
+      { rightArrow: true },
+    ] as const) {
       const { dispatched } = pressModal(
         "",
         emptyKey(overrides),
@@ -382,10 +401,7 @@ describe("picker armed by bare /model", () => {
   // to the picker request (opened + loaded). Guards the #83 promise that
   // the filter is live from the first keystroke after /model, not only
   // when the picker state is hand-built.
-  function stateAfterBareModel(
-    generation: number,
-    from?: TuiState,
-  ): TuiState {
+  function stateAfterBareModel(generation: number, from?: TuiState): TuiState {
     let state = from ?? createInitialTuiState(fakeSession());
     for (const action of dispatchSlashCommand("/model").actions) {
       state = reduceTuiState(state, action);

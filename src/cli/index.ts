@@ -88,7 +88,8 @@ const COMMANDS: CommandDescriptor[] = [
   },
   {
     name: "serve",
-    summary: "Expose an OpenAI-compatible HTTP API plus atomic-agent admin routes",
+    summary:
+      "Expose an OpenAI-compatible HTTP API plus atomic-agent admin routes",
     run: serveCommand,
   },
   {
@@ -114,12 +115,14 @@ const COMMANDS: CommandDescriptor[] = [
   },
   {
     name: "import",
-    summary: "Import conversation history + cron jobs from another agent (hermes)",
+    summary:
+      "Import conversation history + cron jobs from another agent (hermes)",
     run: importCommand,
   },
   {
     name: "update",
-    summary: "Self-update the installed binary from GitHub Releases (--check to probe only)",
+    summary:
+      "Self-update the installed binary from GitHub Releases (--check to probe only)",
     run: updateCommand,
   },
   {
@@ -152,7 +155,7 @@ function printHelp(): void {
     "Bootstrap env:",
     "  ATOMIC_AGENT_STATE_DIR         Directory for persistent state + config.json (default ~/.atomic-agent)",
     "  ATOMIC_AGENT_LLAMA_API_KEY     Optional bearer token for the llama-server",
-    "  ATOMIC_AGENT_LLAMA_MAX_TOKENS  Max new tokens per completion (n_predict), default 4096, clamped 64..131072",
+    "  ATOMIC_AGENT_LLAMA_MAX_TOKENS  Max new tokens per completion (n_predict / max_tokens), default 8192, clamped 64..131072",
     "  ATOMIC_AGENT_BROWSER_CHANNEL           Preferred browser family: chrome | msedge | chromium (default chrome)",
     "  ATOMIC_AGENT_BROWSER_EXECUTABLE_PATH   Explicit path to a Chromium-family binary (overrides auto-detect)",
     "  ATOMIC_AGENT_BROWSER_HEADLESS          1 to run headless (default 0)",
@@ -219,7 +222,8 @@ async function main(): Promise<number> {
 main()
   .then((code) => exit(code))
   .catch((err) => {
-    const message = err instanceof Error ? err.stack ?? err.message : String(err);
+    const message =
+      err instanceof Error ? (err.stack ?? err.message) : String(err);
     process.stderr.write(`${message}\n`);
     exit(1);
   });

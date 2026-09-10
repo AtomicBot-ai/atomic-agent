@@ -27,7 +27,8 @@ export function useRotatingPlaceholder(
   intervalMs: number = 4000,
   active: boolean = true,
 ): string | undefined {
-  const initial = phrases.length > 0 ? Math.floor(Math.random() * phrases.length) : 0;
+  const initial =
+    phrases.length > 0 ? Math.floor(Math.random() * phrases.length) : 0;
   const [idx, setIdx] = useState<number>(initial);
   useEffect(() => {
     if (!active || phrases.length <= 1) return;

@@ -45,13 +45,20 @@ export async function buildGrammar(
   grammarsDir = resolveDefaultGrammarsDir(),
   options: BuildGrammarOptions = {},
 ): Promise<string> {
-  const baseGrammar = await readFile(join(grammarsDir, "tool-call.gbnf"), "utf8");
+  const baseGrammar = await readFile(
+    join(grammarsDir, "tool-call.gbnf"),
+    "utf8",
+  );
   const withBrowser =
     options.browserEnabled === false
       ? removeBrowserToolRule(baseGrammar)
       : baseGrammar;
-  const withMcp = applyMcpToolNameRule(withBrowser, options.mcpToolNameRule ?? null);
-  if (!profile.allowThinkPrelude || profile.reasoningStyle === "none") return withMcp;
+  const withMcp = applyMcpToolNameRule(
+    withBrowser,
+    options.mcpToolNameRule ?? null,
+  );
+  if (!profile.allowThinkPrelude || profile.reasoningStyle === "none")
+    return withMcp;
   const ruleStem = profile.id === "gemma4-think" ? "channel" : "think";
   // After thinking, the model emits the array-only form (always `[`).
   // This avoids the GBNF first-token bias toward `{` that small models

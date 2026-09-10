@@ -8,10 +8,7 @@ export {
 } from "./skill-hub-source.js";
 export type { SkillIdentifier, SkillTap } from "./skill-hub-source.js";
 
-export {
-  GithubSkillClient,
-  GithubSkillError,
-} from "./github-skill-client.js";
+export { GithubSkillClient, GithubSkillError } from "./github-skill-client.js";
 export type {
   DownloadedSkillFile,
   GithubSkillClientOptions,
@@ -28,10 +25,7 @@ export {
 } from "./skill-hub-catalog.js";
 export type { HubSkillEntry } from "./skill-hub-catalog.js";
 
-export {
-  scanSkillFiles,
-  summarizeScan,
-} from "./skill-security-scanner.js";
+export { scanSkillFiles, summarizeScan } from "./skill-security-scanner.js";
 export type {
   ScannableFile,
   SkillScanFinding,

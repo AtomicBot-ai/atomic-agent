@@ -16,7 +16,8 @@ describe("parseToolCall", () => {
   });
 
   it("normalizes action alias with flat args when grammar is not enforced", () => {
-    const raw = '\n\n{"action":"browser.navigate","url":"https://www.google.com"}';
+    const raw =
+      '\n\n{"action":"browser.navigate","url":"https://www.google.com"}';
     const out = parseToolCall(raw);
     expect(out.tool).toBe("browser.navigate");
     expect(out.args).toEqual({ url: "https://www.google.com" });
@@ -150,7 +151,11 @@ first thought
       '{"tool":"os.fs.edit","args":{"path":"a.ts","oldString":"foo","newString":"bar"}}',
     );
     expect(out.tool).toBe("os.fs.edit");
-    expect(out.args).toEqual({ path: "a.ts", oldString: "foo", newString: "bar" });
+    expect(out.args).toEqual({
+      path: "a.ts",
+      oldString: "foo",
+      newString: "bar",
+    });
   });
 
   it("parses an os.fs.read_document tool-call with pagination args", () => {
@@ -339,9 +344,7 @@ first thought
       closeTag: "<channel|>",
     });
     expect(extracted.reasoning).toBe("");
-    expect(extracted.body).toBe(
-      '[{"tool":"reply","args":{"text":"Привет!"}}]',
-    );
+    expect(extracted.body).toBe('[{"tool":"reply","args":{"text":"Привет!"}}]');
     const batch = parseToolCalls(raw, {
       openTag: "<|channel>thought\n",
       closeTag: "<channel|>",
@@ -366,9 +369,7 @@ first thought
   });
 
   it("accepts a single-element array (array-only grammar produces [{...}])", () => {
-    const out = parseToolCall(
-      '[{"tool":"os.fs.read","args":{"path":"a.ts"}}]',
-    );
+    const out = parseToolCall('[{"tool":"os.fs.read","args":{"path":"a.ts"}}]');
     expect(out.tool).toBe("os.fs.read");
     expect(out.args).toEqual({ path: "a.ts" });
   });
@@ -451,9 +452,7 @@ maybe [{"tool":"finish","args":{"summary":"no"}}] — actually no
 
 describe("parseToolCalls", () => {
   it("returns kind=single for a plain object", () => {
-    const out = parseToolCalls(
-      '{"tool":"os.fs.read","args":{"path":"a.ts"}}',
-    );
+    const out = parseToolCalls('{"tool":"os.fs.read","args":{"path":"a.ts"}}');
     expect(out.kind).toBe("single");
     expect(out.calls).toHaveLength(1);
     expect(out.calls[0]!.tool).toBe("os.fs.read");
@@ -471,11 +470,7 @@ describe("parseToolCalls", () => {
       "os.fs.read",
       "os.fs.read",
     ]);
-    expect(out.calls.map((c) => c.args.path)).toEqual([
-      "a.ts",
-      "b.ts",
-      "c.ts",
-    ]);
+    expect(out.calls.map((c) => c.args.path)).toEqual(["a.ts", "b.ts", "c.ts"]);
   });
 
   it("attaches reasoning once for the whole batch", () => {
@@ -494,9 +489,9 @@ describe("parseToolCalls", () => {
   });
 
   it("rejects an array entry that is not an object", () => {
-    expect(() =>
-      parseToolCalls('[{"tool":"x","args":{}},42]'),
-    ).toThrow(ToolCallParseError);
+    expect(() => parseToolCalls('[{"tool":"x","args":{}},42]')).toThrow(
+      ToolCallParseError,
+    );
   });
 
   it("rejects an array of malformed entries", () => {
@@ -504,7 +499,8 @@ describe("parseToolCalls", () => {
   });
 
   it("legacy parseToolCall throws when given a batch", () => {
-    const raw = '[{"tool":"os.fs.read","args":{"path":"a.ts"}},{"tool":"os.fs.read","args":{"path":"b.ts"}}]';
+    const raw =
+      '[{"tool":"os.fs.read","args":{"path":"a.ts"}},{"tool":"os.fs.read","args":{"path":"b.ts"}}]';
     expect(() => parseToolCall(raw)).toThrow(ToolCallParseError);
   });
 
@@ -513,10 +509,7 @@ describe("parseToolCalls", () => {
       '[{"tool":"os.fs.read","args":{"path":"a.ts"}},{"tool":"os.fs.glob","args":{"pattern":"**/*.ts"}}]';
     const out = parseToolCalls(raw);
     expect(out.kind).toBe("batch");
-    expect(out.calls.map((c) => c.tool)).toEqual([
-      "os.fs.read",
-      "os.fs.glob",
-    ]);
+    expect(out.calls.map((c) => c.tool)).toEqual(["os.fs.read", "os.fs.glob"]);
   });
 
   it("handles a single-element array as a batch (kind=batch, length 1)", () => {

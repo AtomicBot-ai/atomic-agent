@@ -32,12 +32,7 @@ describe("PromptShell", () => {
 
   it("shows the send button inside the field", () => {
     const { lastFrame, unmount } = render(
-      <PromptShell
-        value=""
-        focus
-        onChange={() => {}}
-        onSubmit={() => {}}
-      />,
+      <PromptShell value="" focus onChange={() => {}} onSubmit={() => {}} />,
     );
     const frame = strip(lastFrame() ?? "");
     expect(frame).toContain("send");
@@ -244,12 +239,7 @@ describe("PromptShell", () => {
    */
   it("keeps the action bar with no model and no slots", () => {
     const { lastFrame, unmount } = render(
-      <PromptShell
-        value=""
-        focus
-        onChange={() => {}}
-        onSubmit={() => {}}
-      />,
+      <PromptShell value="" focus onChange={() => {}} onSubmit={() => {}} />,
     );
     const frame = strip(lastFrame() ?? "");
     expect(frame).not.toContain("llama.cpp");

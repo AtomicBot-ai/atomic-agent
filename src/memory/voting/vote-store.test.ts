@@ -51,8 +51,7 @@ function makeFixture(): Fixture {
     seedMemory: (content = "note body") =>
       (insertMemory.get(content, clock.now, clock.now) as { id: number }).id,
     seedLesson: (activation = "when X") =>
-      (insertLesson.get(activation, clock.now, clock.now) as { id: number })
-        .id,
+      (insertLesson.get(activation, clock.now, clock.now) as { id: number }).id,
     seedProfileFact: (key, value) =>
       (
         insertProfile.get(key, value, clock.now, clock.now, clock.now) as {

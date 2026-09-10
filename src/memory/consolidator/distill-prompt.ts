@@ -144,15 +144,7 @@ export function buildDistillPrompt(input: {
   if (input.withProcedure === true) {
     segments.push(DISTILL_PROCEDURE_DOCTRINE);
   }
-  segments.push(
-    "",
-    tagHint,
-    "### cluster",
-    ...lines,
-    "",
-    "### output",
-    "",
-  );
+  segments.push("", tagHint, "### cluster", ...lines, "", "### output", "");
   return segments.join("\n");
 }
 

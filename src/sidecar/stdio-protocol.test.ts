@@ -1,10 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { PassThrough } from "node:stream";
 import { StdioProtocol } from "./stdio-protocol.js";
-import type {
-  ApprovalRequestPayload,
-  HostRequest,
-} from "./sidecar-events.js";
+import type { ApprovalRequestPayload, HostRequest } from "./sidecar-events.js";
 
 function createProtocol() {
   const input = new PassThrough();
@@ -24,7 +21,9 @@ async function readLines(stream: PassThrough, count: number, timeoutMs = 1000) {
     const lines: string[] = [];
     let buffer = "";
     const timer = setTimeout(() => {
-      reject(new Error(`timeout waiting for ${count} lines, got ${lines.length}`));
+      reject(
+        new Error(`timeout waiting for ${count} lines, got ${lines.length}`),
+      );
     }, timeoutMs);
     const onData = (chunk: string) => {
       buffer += chunk;
@@ -67,8 +66,18 @@ describe("StdioProtocol", () => {
     const { input, protocol } = createProtocol();
     const received: HostRequest[] = [];
     protocol.onRequest((req) => received.push(req));
-    const a: HostRequest = { kind: "request", id: "a", type: "ping", payload: {} };
-    const b: HostRequest = { kind: "request", id: "b", type: "cancel", payload: { sessionId: "s1" } };
+    const a: HostRequest = {
+      kind: "request",
+      id: "a",
+      type: "ping",
+      payload: {},
+    };
+    const b: HostRequest = {
+      kind: "request",
+      id: "b",
+      type: "cancel",
+      payload: { sessionId: "s1" },
+    };
     input.write(`${JSON.stringify(a)}\n${JSON.stringify(b)}\n`);
     await new Promise((r) => setImmediate(r));
     expect(received.map((m) => m.id)).toEqual(["a", "b"]);
@@ -78,7 +87,12 @@ describe("StdioProtocol", () => {
     const { input, protocol } = createProtocol();
     const received: HostRequest[] = [];
     protocol.onRequest((req) => received.push(req));
-    const msg: HostRequest = { kind: "request", id: "split", type: "ping", payload: {} };
+    const msg: HostRequest = {
+      kind: "request",
+      id: "split",
+      type: "ping",
+      payload: {},
+    };
     const raw = JSON.stringify(msg);
     const half = Math.floor(raw.length / 2);
     input.write(raw.slice(0, half));
@@ -94,7 +108,12 @@ describe("StdioProtocol", () => {
     const received: HostRequest[] = [];
     protocol.onRequest((req) => received.push(req));
     input.write("{not json\n");
-    const good: HostRequest = { kind: "request", id: "ok", type: "ping", payload: {} };
+    const good: HostRequest = {
+      kind: "request",
+      id: "ok",
+      type: "ping",
+      payload: {},
+    };
     input.write(`${JSON.stringify(good)}\n`);
     await new Promise((r) => setImmediate(r));
     expect(parseErrors).toHaveLength(1);
@@ -107,7 +126,11 @@ describe("StdioProtocol", () => {
     const linesPromise = readLines(output, 1);
     protocol.emitEvent("pong", { at: 42 });
     const [line] = await linesPromise;
-    const parsed = JSON.parse(line!) as { kind: string; type: string; payload: { at: number } };
+    const parsed = JSON.parse(line!) as {
+      kind: string;
+      type: string;
+      payload: { at: number };
+    };
     expect(parsed.kind).toBe("event");
     expect(parsed.type).toBe("pong");
     expect(parsed.payload.at).toBe(42);
@@ -189,7 +212,12 @@ describe("StdioProtocol", () => {
     const { input, protocol } = createProtocol();
     const received: HostRequest[] = [];
     protocol.onRequest((req) => received.push(req));
-    const msg: HostRequest = { kind: "request", id: "x", type: "ping", payload: {} };
+    const msg: HostRequest = {
+      kind: "request",
+      id: "x",
+      type: "ping",
+      payload: {},
+    };
     input.write(`\n\n${JSON.stringify(msg)}\n\n`);
     await new Promise((r) => setImmediate(r));
     expect(received).toHaveLength(1);

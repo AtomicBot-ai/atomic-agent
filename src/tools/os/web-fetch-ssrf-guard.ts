@@ -102,7 +102,8 @@ function parseIpv6ToBigInt(value: string): bigint | null {
   const halves = input.split("::");
   if (halves.length > 2) return null;
   const head = halves[0] ? halves[0].split(":") : [];
-  const tailGroups = halves.length === 2 && halves[1] ? halves[1].split(":") : [];
+  const tailGroups =
+    halves.length === 2 && halves[1] ? halves[1].split(":") : [];
   if (halves.length === 1 && head.length !== 8) return null;
   const missing = 8 - head.length - tailGroups.length;
   if (missing < 0) return null;
@@ -149,7 +150,9 @@ function isBlockedIpv6(value: string): boolean {
     const net = parseIpv6ToBigInt(network);
     if (net === null) continue;
     const mask =
-      prefix === 0 ? 0n : ((1n << 128n) - 1n) ^ ((1n << BigInt(128 - prefix)) - 1n);
+      prefix === 0
+        ? 0n
+        : ((1n << 128n) - 1n) ^ ((1n << BigInt(128 - prefix)) - 1n);
     if ((ip & mask) === (net & mask)) return true;
   }
   return false;
@@ -198,10 +201,7 @@ export async function assertHostAllowed(
   // IP literals do not need DNS — reject them directly so a custom/test
   // lookup cannot whitewash a private target by returning a public pin.
   if (isBlockedIp(host)) {
-    throw new SsrfBlockedError(
-      `${host} is a private/internal address`,
-      host,
-    );
+    throw new SsrfBlockedError(`${host} is a private/internal address`, host);
   }
   let addresses: readonly { address: string; family: number }[];
   try {
