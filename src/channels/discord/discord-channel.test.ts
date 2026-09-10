@@ -18,6 +18,7 @@ function makeChannel(over: Record<string, unknown> = {}) {
     enabled: true,
     ownerUserId: "111",
     sessionPointerPath: "/tmp/does-not-matter.json",
+    inboxDir: "/tmp/does-not-matter-inbox",
     lock: lock as never,
     token: "a".repeat(24) + ".bbbbbb." + "c".repeat(30),
     onStatus: (s) => statuses.push(s),

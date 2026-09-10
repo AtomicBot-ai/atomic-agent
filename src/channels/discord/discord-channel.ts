@@ -12,6 +12,10 @@ import type { ApprovalRouter } from "../../approval/approval-router.js";
 import type { ChannelStatus } from "../../runtime/channel-status.js";
 import type { AgentRuntime } from "../../runtime/bootstrap.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
+import {
+  createAttachmentInbox,
+  type AttachmentInbox,
+} from "../attachments/inbox.js";
 import { DiscordApi } from "./discord-api.js";
 import { DiscordApprovalBridge, type DiscordInteractionEvent } from "./discord-approval-bridge.js";
 import {
@@ -36,6 +40,8 @@ export interface DiscordChannelDeps {
   enabled: boolean;
   ownerUserId: string | null;
   sessionPointerPath: string;
+  /** Where inbound files land: `<stateDir>/inbox/discord`. */
+  inboxDir: string;
   lock: DiscordLockfile;
   /** Explicit token wins over the env — the test seam. */
   token?: string | null;
@@ -63,6 +69,7 @@ export class DiscordChannel {
   private lockHeld = false;
   private readonly inflight = new Map<string, AbortController>();
   private readonly pointer: DiscordSessionPointer;
+  private readonly inbox: AttachmentInbox;
   /**
    * `sessionId -> approval binding`. One per channel that is (or recently
    * was) talking to the bot: with per-channel sessions several channels
@@ -78,6 +85,7 @@ export class DiscordChannel {
     this.ownerId = deps.ownerUserId;
     this.enabled = deps.enabled;
     this.pointer = new DiscordSessionPointer(deps.sessionPointerPath);
+    this.inbox = createAttachmentInbox({ dir: deps.inboxDir });
   }
 
   /** Same accessor name as `TelegramChannel.state()`. */
@@ -191,6 +199,7 @@ export class DiscordChannel {
       authorId: msg.author?.id,
       isDm: msg.guild_id === undefined,
       mentionsBot: msg.mentions?.some((m) => m.id === this.botUserId) === true,
+      attachments: msg.attachments?.length ?? 0,
     });
     await handleDiscordMessage(data as DiscordMessageEvent, {
       runtime: this.deps.runtime,
@@ -200,6 +209,7 @@ export class DiscordChannel {
       ownerUserId: this.ownerId,
       botUserId: this.botUserId,
       inflight: this.inflight,
+      inbox: this.inbox,
       ensureApprovalSession: (sessionId, channelId) => {
         this.bindApprovals(sessionId, channelId);
       },

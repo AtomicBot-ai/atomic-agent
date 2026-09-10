@@ -16,6 +16,12 @@ import type { LlmFailureCategory } from "../../llm/reliability/index.js";
 import type { AgentRuntime } from "../../runtime/bootstrap.js";
 import type { SessionState } from "../../session/index.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
+import {
+  buildAttachmentUserMessage,
+  formatBytes,
+  type AttachmentInbox,
+  type AttachmentOutcome,
+} from "../attachments/inbox.js";
 import type { DiscordApi } from "./discord-api.js";
 import { scrubDiscordError } from "./discord-channel-types.js";
 import type { DiscordSessionPointer } from "./discord-session-pointer.js";
@@ -32,6 +38,22 @@ export interface DiscordMessageEvent {
   content: string;
   author?: { id: string; bot?: boolean; username?: string };
   mentions?: ReadonlyArray<{ id: string }>;
+  /**
+   * Files on the message. Discord delivers these (like `content`)
+   * without the privileged intent for exactly the two cases this
+   * channel acts on — a DM and an @mention.
+   */
+  attachments?: ReadonlyArray<DiscordAttachment>;
+}
+
+/** The subset of a Discord attachment object the channel reads. */
+export interface DiscordAttachment {
+  id: string;
+  filename: string;
+  size: number;
+  /** Signed CDN URL; expires, so the download happens immediately. */
+  url: string;
+  content_type?: string;
 }
 
 export interface DiscordInboundContext {
@@ -52,7 +74,25 @@ export interface DiscordInboundContext {
   /** Pairing hook — consumes the message and returns true when claimed. */
   tryClaimForPairing?: (event: DiscordMessageEvent) => boolean;
   onMessageReceived?: () => void;
+  /**
+   * Where inbound files land — `<stateDir>/inbox/discord` in
+   * production, a tmp dir in tests. The agent is told the saved path
+   * and reads it with the ordinary fs / vision tools.
+   */
+  inbox: AttachmentInbox;
+  /** Test seam — replaces the CDN fetch. Defaults to `fetch` with a timeout. */
+  downloadAttachment?: (url: string) => Promise<Uint8Array>;
 }
+
+/**
+ * Largest attachment the channel will pull off the CDN. Discord itself
+ * allows far more with boosts and Nitro; this is a sanity cap for a
+ * remote control, not a platform limit, and an oversized file is
+ * reported in the chat rather than silently skipped.
+ */
+export const DISCORD_ATTACHMENT_DOWNLOAD_LIMIT_BYTES = 50 * 1024 * 1024;
+
+const ATTACHMENT_FETCH_TIMEOUT_MS = 60_000;
 
 const HELP_TEXT = [
   "**atomic-agent — Discord remote control**",
@@ -128,8 +168,15 @@ async function route(
   }
 
   ctx.onMessageReceived?.();
-  const text = stripMention(event.content, ctx.botUserId).trim();
-  if (text.length === 0) return;
+  const text = stripMention(
+    typeof event.content === "string" ? event.content : "",
+    ctx.botUserId,
+  ).trim();
+  // A message with files is a request about those files, even when
+  // the text is empty or looks like a command — download first, then
+  // run one turn that names every saved path.
+  const attachments = event.attachments ?? [];
+  if (text.length === 0 && attachments.length === 0) return;
   const ref: ChannelRef = {
     channelId: event.channel_id,
     guildId: event.guild_id,
@@ -141,6 +188,14 @@ async function route(
   // session rather than on an empty entry the next text message would
   // then silently fill from `legacy`.
   adoptLegacyForDm(ref, ctx);
+  // A message with files is a request about those files, even when
+  // the text is empty or looks like a command — download first, then
+  // run one turn that names every saved path. It belongs to this
+  // channel's session, exactly like a text message from here.
+  if (attachments.length > 0) {
+    await dispatchWithAttachments(text, attachments, ref, ctx);
+    return;
+  }
   if (text.startsWith("/")) {
     await handleSlashCommand(text, ref, ctx);
     return;
@@ -306,6 +361,88 @@ function formatSessions(ref: ChannelRef, ctx: DiscordInboundContext): string {
     "",
     "`/switch <session-id>` points this channel at one of them.",
   ].join("\n");
+}
+
+/**
+ * Download every attachment (in parallel), tell the operator about the
+ * ones that failed, then run the turn when there is anything for the
+ * agent — at least one saved file or some text. A lone failed file
+ * with no text ends at the notice.
+ */
+async function dispatchWithAttachments(
+  text: string,
+  attachments: ReadonlyArray<DiscordAttachment>,
+  ref: ChannelRef,
+  ctx: DiscordInboundContext,
+): Promise<void> {
+  const items = await Promise.all(
+    attachments.map((attachment) => receiveAttachment(attachment, ctx)),
+  );
+  for (const item of items) {
+    if (item.status === "failed") {
+      await send(ctx, ref.channelId, `Could not receive ${item.name}: ${item.reason}`);
+    }
+  }
+  const anySaved = items.some((item) => item.status === "saved");
+  if (!anySaved && text.length === 0) return;
+  await dispatchToRuntime(buildAttachmentUserMessage(text, items), ref, ctx);
+}
+
+/**
+ * Fetch + save one attachment. Never rejects: every failure is a
+ * `failed` outcome with a scrubbed reason, so `Promise.all` over a
+ * message's files cannot be taken down by one bad file.
+ */
+async function receiveAttachment(
+  attachment: DiscordAttachment,
+  ctx: DiscordInboundContext,
+): Promise<AttachmentOutcome> {
+  const name =
+    typeof attachment.filename === "string" && attachment.filename.length > 0
+      ? attachment.filename
+      : "attachment";
+  const tooBig = `over the ${formatBytes(DISCORD_ATTACHMENT_DOWNLOAD_LIMIT_BYTES)} inbound limit`;
+  if (
+    typeof attachment.size === "number" &&
+    attachment.size > DISCORD_ATTACHMENT_DOWNLOAD_LIMIT_BYTES
+  ) {
+    return { status: "failed", name, reason: tooBig };
+  }
+  if (typeof attachment.url !== "string" || attachment.url.length === 0) {
+    return { status: "failed", name, reason: "Discord sent no download URL" };
+  }
+  try {
+    const bytes = await (ctx.downloadAttachment ?? fetchAttachment)(attachment.url);
+    if (bytes.byteLength > DISCORD_ATTACHMENT_DOWNLOAD_LIMIT_BYTES) {
+      return { status: "failed", name, reason: tooBig };
+    }
+    const saved = await ctx.inbox.save({
+      name,
+      ...(typeof attachment.content_type === "string"
+        ? { mimeType: attachment.content_type }
+        : {}),
+      bytes,
+    });
+    ctx.logger.info("discord: attachment saved", {
+      path: saved.path,
+      bytes: saved.bytes,
+    });
+    return { status: "saved", saved };
+  } catch (err) {
+    const reason = scrubDiscordError(err);
+    ctx.logger.warn("discord: attachment not saved", { name, error: reason });
+    return { status: "failed", name, reason };
+  }
+}
+
+async function fetchAttachment(url: string): Promise<Uint8Array> {
+  const res = await fetch(url, {
+    signal: AbortSignal.timeout(ATTACHMENT_FETCH_TIMEOUT_MS),
+  });
+  if (!res.ok) {
+    throw new Error(`Discord CDN returned HTTP ${res.status}`);
+  }
+  return new Uint8Array(await res.arrayBuffer());
 }
 
 async function dispatchToRuntime(

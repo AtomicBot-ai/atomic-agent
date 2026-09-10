@@ -8,6 +8,7 @@ import type { TelegramSettingsSink } from "./telegram-settings.js";
 import type { InboundCallbackUpdate } from "./approval-bridge.js";
 import type { InboundTextUpdate } from "./inbound-handler.js";
 import type { TelegramApi } from "./outbound-sender.js";
+import type { InboundFileUpdate } from "./telegram-file-update.js";
 import type { ChannelLock } from "./telegram-lockfile.js";
 
 /**
@@ -35,6 +36,15 @@ export interface BotInstance {
     ): Promise<unknown>;
   };
   setTextHandler(handler: (u: InboundTextUpdate) => void | Promise<void>): void;
+  /**
+   * Register the handler for file-bearing messages (photo, document,
+   * video, audio, voice, animation, video note, sticker). Optional so
+   * a fake bot that only exercises the text path still satisfies the
+   * interface; the grammy adapter always provides it.
+   */
+  setFileHandler?(
+    handler: (u: InboundFileUpdate) => void | Promise<void>,
+  ): void;
   /**
    * Register the inline-keyboard callback handler. Optional because a
    * bot that never sends a keyboard does not need one — slice 1 ran

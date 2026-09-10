@@ -50,6 +50,15 @@ export interface TelegramApi {
     callbackQueryId: string,
     opts?: Record<string, unknown>,
   ): Promise<unknown>;
+  /**
+   * Fetch an inbound file's bytes by `file_id` (`getFile` + the
+   * token-bearing download URL). Optional because only the inbound
+   * file path needs it and only the grammy adapter can provide it —
+   * it is the one place that holds the token the URL requires. When
+   * absent the handler reports the attachment as unsupported rather
+   * than dropping it silently.
+   */
+  downloadFile?(fileId: string): Promise<Uint8Array>;
 }
 
 export interface TelegramLogger {

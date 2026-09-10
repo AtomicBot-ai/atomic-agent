@@ -318,6 +318,9 @@ export class SwarmRegistry {
       logger: deps.logger,
       approvals: deps.approvals,
       approvalRouter: deps.approvalRouter,
+      // One inbox per unit: two bots receiving files at the same moment
+      // must not write into the same directory.
+      inboxDir: resolve(deps.stateDir, "inbox", "discord", config.id),
       enabled: config.enabled,
       ownerUserId: config.ownerUserId,
       token: readSwarmUnitToken(config.tokenEnv),

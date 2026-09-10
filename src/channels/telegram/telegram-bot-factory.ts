@@ -1,6 +1,31 @@
 import type { InboundCallbackUpdate } from "./approval-bridge.js";
 import type { InboundTextUpdate } from "./inbound-handler.js";
 import type { BotFactory, BotInstance } from "./telegram-channel.js";
+import { scrubErrorMessage } from "./telegram-channel-types.js";
+import {
+  pickTelegramFile,
+  type InboundFileUpdate,
+  type TelegramFileMessage,
+} from "./telegram-file-update.js";
+
+/**
+ * Every filter query that carries a file. Registered as one `bot.on`
+ * so a message matching several (Telegram sends a GIF as both
+ * `animation` and `document`) runs the handler exactly once.
+ */
+const FILE_FILTERS = [
+  "message:photo",
+  "message:animation",
+  "message:video_note",
+  "message:video",
+  "message:voice",
+  "message:audio",
+  "message:sticker",
+  "message:document",
+] as const;
+
+/** Bot API download endpoint; `getFile` returns the trailing `file_path`. */
+const TELEGRAM_FILE_BASE = "https://api.telegram.org/file/bot";
 
 /**
  * Default `BotFactory` — wraps `grammy.Bot` to satisfy `BotInstance`.
@@ -25,6 +50,8 @@ export const defaultGrammyBotFactory: BotFactory = async (token, hooks) => {
   let callbackHandler:
     | ((u: InboundCallbackUpdate) => void | Promise<void>)
     | null = null;
+  let fileHandler: ((u: InboundFileUpdate) => void | Promise<void>) | null =
+    null;
   // grammy's built-in `bot.start()` long-polling drains updates
   // sequentially: it `await`s every middleware before fetching the
   // next batch via `getUpdates`. Awaiting `textHandler` here would
@@ -89,6 +116,38 @@ export const defaultGrammyBotFactory: BotFactory = async (token, hooks) => {
         );
       });
   });
+  // File-bearing messages (photo, document, voice, …) take the same
+  // fire-and-forget path: a download plus an agent turn must never
+  // block the polling loop. `message:text` never matches these — a
+  // media message carries `caption`, not `text` — so no update is
+  // dispatched twice.
+  bot.on([...FILE_FILTERS], (gctx) => {
+    const handler = fileHandler;
+    if (!handler) return;
+    const msg = gctx.message;
+    if (!msg) return;
+    const file = pickTelegramFile(msg as TelegramFileMessage);
+    if (!file) return;
+    const update: InboundFileUpdate = {
+      ...(gctx.from ? { from: { id: gctx.from.id } } : {}),
+      chat: { id: msg.chat.id, type: msg.chat.type },
+      message_id: msg.message_id,
+      ...(typeof msg.caption === "string" ? { caption: msg.caption } : {}),
+      ...(typeof msg.media_group_id === "string"
+        ? { media_group_id: msg.media_group_id }
+        : {}),
+      file,
+    };
+    void Promise.resolve()
+      .then(() => handler(update))
+      .catch((err) => {
+        process.stderr.write(
+          `[telegram] fileHandler rejected unexpectedly: ${
+            err instanceof Error ? err.message : String(err)
+          }\n`,
+        );
+      });
+  });
   // Same fire-and-forget pattern as `message:text` (see comment
   // above): grammy's polling loop blocks `getUpdates` while it awaits
   // any middleware, so awaiting an approval-callback handler would
@@ -121,13 +180,39 @@ export const defaultGrammyBotFactory: BotFactory = async (token, hooks) => {
         );
       });
   });
+  // The download URL embeds the token, so the fetch lives here — the
+  // only module that holds it — and never in the inbound handler.
+  // Errors are scrubbed before they leave, since a failed fetch
+  // routinely quotes the URL.
+  const downloadFile = async (fileId: string): Promise<Uint8Array> => {
+    const info = await bot.api.getFile(fileId);
+    const filePath = info.file_path;
+    if (typeof filePath !== "string" || filePath.length === 0) {
+      throw new Error("Telegram returned no file_path for the attachment");
+    }
+    let res: Response;
+    try {
+      res = await fetch(`${TELEGRAM_FILE_BASE}${token}/${filePath}`);
+    } catch (err) {
+      throw new Error(`Telegram file download failed: ${scrubErrorMessage(err)}`);
+    }
+    if (!res.ok) {
+      throw new Error(`Telegram file download failed with HTTP ${res.status}`);
+    }
+    return new Uint8Array(await res.arrayBuffer());
+  };
+  const api = bot.api as unknown as BotInstance["api"];
+  Object.assign(api, { downloadFile });
   const instance: BotInstance = {
-    api: bot.api as unknown as BotInstance["api"],
+    api,
     setTextHandler(handler) {
       textHandler = handler;
     },
     setCallbackHandler(handler) {
       callbackHandler = handler;
+    },
+    setFileHandler(handler) {
+      fileHandler = handler;
     },
     start(onStart, onStopped) {
       // grammy's `bot.start()` promise settles when polling ends —

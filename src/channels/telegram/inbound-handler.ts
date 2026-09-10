@@ -5,11 +5,22 @@ import type { SessionState } from "../../session/index.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 
 import {
+  buildAttachmentUserMessage,
+  formatBytes,
+  type AttachmentInbox,
+  type AttachmentOutcome,
+} from "../attachments/inbox.js";
+import {
   sendOutbound,
   type TelegramApi,
   type TelegramLogger,
   type TelegramParseMode,
 } from "./outbound-sender.js";
+import { scrubErrorMessage } from "./telegram-channel-types.js";
+import type {
+  InboundFileUpdate,
+  InboundTelegramFile,
+} from "./telegram-file-update.js";
 import {
   progressLabel,
   TelegramProgressIndicator,
@@ -103,6 +114,22 @@ export interface InboundContext {
    */
   inflight: Map<string, AbortController>;
   /**
+   * Where inbound files land — `<stateDir>/inbox/telegram` in
+   * production, a tmp dir in tests. The agent is told the saved path
+   * and reads it with the ordinary fs / vision tools.
+   */
+  inbox: AttachmentInbox;
+  /**
+   * Channel-owned `media_group_id -> pending album` buffer. Telegram
+   * delivers an album as one update per file; holding them for a
+   * short window turns "five photos" into one turn instead of five.
+   * Lives on the channel for the same reason `inflight` does, and so
+   * `stop()` can cancel the timers.
+   */
+  mediaGroups: Map<string, PendingMediaGroup>;
+  /** Test seam — replaces `setTimeout` for the album flush. */
+  scheduleMediaGroupFlush?: (cb: () => void, ms: number) => () => void;
+  /**
    * Bind the approval router so a request for `sessionId` lands on
    * the Telegram inline-keyboard bridge in `target`. Provided by
    * `TelegramChannel`; absent in slice 1-style tests that only
@@ -152,6 +179,39 @@ export interface InboundContext {
 
 /** How long Telegram displays a `chatAction: "typing"` indicator. */
 const TYPING_KEEPALIVE_MS = 4_000;
+
+/**
+ * Bot API ceiling for `getFile`. Checked against the reported
+ * `file_size` before any request goes out, so an oversized file costs
+ * one plain-text notice rather than a round trip that ends in
+ * `400: file is too big`.
+ */
+export const TELEGRAM_BOT_DOWNLOAD_LIMIT_BYTES = 20 * 1024 * 1024;
+
+/**
+ * How long after the last album member arrives before the album is
+ * dispatched as one turn. Telegram sends the members of one
+ * `media_group_id` back to back (usually inside a single `getUpdates`
+ * batch), so a short debounce is enough; the window restarts on every
+ * arrival, and downloads run in parallel underneath it.
+ */
+export const MEDIA_GROUP_WINDOW_MS = 1_500;
+
+/** An album (`media_group_id`) whose members are still arriving. */
+export interface PendingMediaGroup {
+  /**
+   * The chat (or forum topic) the album arrived in. A `ChatRef`, not a
+   * bare id, so an album lands in the same session a text message from
+   * that chat would — per-chat sessions key on the topic too.
+   */
+  ref: ChatRef;
+  /** First non-empty caption seen — Telegram attaches it to one member only. */
+  caption: string | undefined;
+  /** Per-member download + save, already in flight. Never rejects. */
+  items: Promise<AttachmentOutcome>[];
+  /** Cancels the pending flush timer. */
+  cancel: () => void;
+}
 
 function helpText(ctx: InboundContext): string {
   const bot = ctx.botIdentity ?? null;
@@ -341,6 +401,207 @@ function chatRefOf(update: InboundTextUpdate, isPrivate: boolean): ChatRef {
     label: threadId === undefined ? base : `${base} › topic ${threadId}`,
     chatType: update.chat.type,
   };
+}
+
+/**
+ * File counterpart of `handleInboundText`. Same drop rules (private
+ * chat, owner only, pairing first), then the file is downloaded and
+ * saved into the inbox and the turn is dispatched with the caption
+ * plus an `[attachments]` block naming the saved path. Album members
+ * are buffered by `media_group_id` and dispatched together. Never
+ * throws past this boundary.
+ */
+export async function handleInboundFile(
+  update: InboundFileUpdate,
+  ctx: InboundContext,
+): Promise<void> {
+  if (update.chat.type !== "private") return;
+  const fromId = update.from?.id;
+  if (typeof fromId !== "number") return;
+  // A file DM is as valid a pairing claim as a text one — the operator
+  // was told to "send the bot any message". Project it onto the text
+  // shape the pairing state machine understands.
+  const claimText = update.caption?.trim() || `[${update.file.kind}]`;
+  if (
+    ctx.tryClaimForPairing?.({
+      from: { id: fromId },
+      chat: update.chat,
+      text: claimText,
+      message_id: update.message_id,
+    })
+  ) {
+    ctx.logger.info("telegram: pairing claimed by inbound file DM", {
+      fromId,
+      chatId: update.chat.id,
+    });
+    return;
+  }
+  if (ctx.ownerUserId === null || fromId !== ctx.ownerUserId) {
+    ctx.logger.warn("telegram: dropping non-owner file DM", {
+      fromId,
+      ownerConfigured: ctx.ownerUserId !== null,
+      kind: update.file.kind,
+    });
+    return;
+  }
+  ctx.onMessageReceived?.();
+  const ref = chatRefOf(
+    {
+      from: { id: fromId },
+      chat: update.chat,
+      text: claimText,
+      message_id: update.message_id,
+    },
+    true,
+  );
+  const outcome = receiveAttachment(update.file, ctx);
+  if (update.media_group_id !== undefined) {
+    enqueueMediaGroup(update.media_group_id, ref, update.caption, outcome, ctx);
+    return;
+  }
+  await dispatchAttachments(ref, update.caption, [await outcome], ctx);
+}
+
+/**
+ * Download + save one file. Every failure becomes a `failed` outcome
+ * with a scrubbed reason — this promise never rejects, which is what
+ * lets an album `Promise.all` its members without a single bad file
+ * taking the rest down.
+ */
+async function receiveAttachment(
+  file: InboundTelegramFile,
+  ctx: InboundContext,
+): Promise<AttachmentOutcome> {
+  const name = file.file_name ?? file.kind;
+  if (
+    typeof file.file_size === "number" &&
+    file.file_size > TELEGRAM_BOT_DOWNLOAD_LIMIT_BYTES
+  ) {
+    return {
+      status: "failed",
+      name,
+      reason: `Telegram bots cannot download files over ${formatBytes(TELEGRAM_BOT_DOWNLOAD_LIMIT_BYTES)}`,
+    };
+  }
+  const download = ctx.api.downloadFile;
+  if (!download) {
+    return {
+      status: "failed",
+      name,
+      reason: "file download is not supported by this bot adapter",
+    };
+  }
+  try {
+    const bytes = await download.call(ctx.api, file.file_id);
+    const saved = await ctx.inbox.save({
+      ...(file.file_name !== undefined ? { name: file.file_name } : {}),
+      ...(file.mime_type !== undefined ? { mimeType: file.mime_type } : {}),
+      bytes,
+      kind: file.kind,
+    });
+    ctx.logger.info("telegram: attachment saved", {
+      kind: file.kind,
+      path: saved.path,
+      bytes: saved.bytes,
+    });
+    return { status: "saved", saved };
+  } catch (err) {
+    const reason = scrubErrorMessage(err);
+    ctx.logger.warn("telegram: attachment not saved", {
+      kind: file.kind,
+      error: reason,
+    });
+    return { status: "failed", name, reason };
+  }
+}
+
+/**
+ * Tell the operator about every file that did not make it (plain
+ * text, channel infrastructure), then run the turn when there is
+ * anything for the agent — at least one saved file or a caption.
+ * A lone failed file with no caption ends here: the notice *is* the
+ * reply.
+ */
+async function dispatchAttachments(
+  ref: ChatRef,
+  caption: string | undefined,
+  items: ReadonlyArray<AttachmentOutcome>,
+  ctx: InboundContext,
+): Promise<void> {
+  for (const item of items) {
+    if (item.status === "failed") {
+      await sendText(
+        ctx,
+        ref.target,
+        `Could not receive ${item.name}: ${item.reason}`,
+      );
+    }
+  }
+  const anySaved = items.some((item) => item.status === "saved");
+  const text = caption?.trim() ?? "";
+  if (!anySaved && text.length === 0) return;
+  await dispatchToRuntime(buildAttachmentUserMessage(caption, items), ref, ctx);
+}
+
+function enqueueMediaGroup(
+  groupId: string,
+  ref: ChatRef,
+  caption: string | undefined,
+  outcome: Promise<AttachmentOutcome>,
+  ctx: InboundContext,
+): void {
+  const existing = ctx.mediaGroups.get(groupId);
+  if (existing) {
+    existing.cancel();
+    existing.items.push(outcome);
+    if (existing.caption === undefined && caption !== undefined) {
+      existing.caption = caption;
+    }
+    existing.cancel = scheduleMediaGroupFlush(groupId, ctx);
+    return;
+  }
+  const group: PendingMediaGroup = {
+    ref,
+    caption,
+    items: [outcome],
+    cancel: () => undefined,
+  };
+  ctx.mediaGroups.set(groupId, group);
+  group.cancel = scheduleMediaGroupFlush(groupId, ctx);
+}
+
+function scheduleMediaGroupFlush(
+  groupId: string,
+  ctx: InboundContext,
+): () => void {
+  const schedule = ctx.scheduleMediaGroupFlush ?? defaultScheduleOnce;
+  return schedule(() => {
+    flushMediaGroup(groupId, ctx).catch((err: unknown) => {
+      ctx.logger.warn("telegram: album flush failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+  }, MEDIA_GROUP_WINDOW_MS);
+}
+
+async function flushMediaGroup(
+  groupId: string,
+  ctx: InboundContext,
+): Promise<void> {
+  const group = ctx.mediaGroups.get(groupId);
+  if (!group) return;
+  ctx.mediaGroups.delete(groupId);
+  const items = await Promise.all(group.items);
+  await dispatchAttachments(group.ref, group.caption, items, ctx);
+}
+
+function defaultScheduleOnce(cb: () => void, ms: number): () => void {
+  const handle = setTimeout(cb, ms);
+  // A pending album must never keep the process alive past shutdown.
+  if (typeof (handle as { unref?: () => unknown }).unref === "function") {
+    (handle as { unref: () => unknown }).unref();
+  }
+  return () => clearTimeout(handle);
 }
 
 async function handleSlashCommand(
