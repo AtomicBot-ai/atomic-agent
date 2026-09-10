@@ -135,6 +135,8 @@ interface Booted {
    * exactly as the tracker does on an unclaimed drag.
    */
   readonly selectionDragIntent: () => void;
+  /** The second argument `tuiCommand` handed Ink's `render()`. */
+  readonly renderOptions: Record<string, unknown>;
   readonly seen: TuiMouseEvent[];
   /** Every bus action emitted after mount — system messages included. */
   readonly actions: TuiAction[];
@@ -154,10 +156,17 @@ async function bootTui(args: string[] = []): Promise<Booted> {
     releaseExit = resolve;
   });
   let props: Record<string, unknown> | null = null;
-  inkRender.mockImplementation((element: { props: Record<string, unknown> }) => {
-    props = element.props;
-    return { waitUntilExit: () => exited, clear: () => {} };
-  });
+  let renderOptions: Record<string, unknown> = {};
+  inkRender.mockImplementation(
+    (
+      element: { props: Record<string, unknown> },
+      options: Record<string, unknown>,
+    ) => {
+      props = element.props;
+      renderOptions = options;
+      return { waitUntilExit: () => exited, clear: () => {} };
+    },
+  );
 
   const { tuiCommand } = await import("./tui-command.js");
   const finished = tuiCommand(["--skip-llama-setup", ...args]);
@@ -189,6 +198,7 @@ async function bootTui(args: string[] = []): Promise<Booted> {
 
   return {
     mouse: captured.mouse,
+    renderOptions,
     setMouseEnabled,
     selectionDragIntent,
     seen,
@@ -239,6 +249,22 @@ describe("tuiCommand mouse wiring", () => {
     });
     resetConfigCache();
   }
+
+  it("hands Ink the render options it was built with", async () => {
+    // `ink-render-options.test.ts` asserts what `buildInkRenderOptions`
+    // returns; nothing there asserts that the returned object is what
+    // reaches `render()`. Delete the call at the call site and every
+    // test in that file still passes, with the renderer silently back on
+    // full-frame repaints. This closes that gap: it reads the options
+    // off the intercepted `render` call, in the process that made it.
+    writeMouseConfig(false);
+    const app = await bootTui();
+    expect(app.renderOptions).toMatchObject({
+      incrementalRendering: true,
+      exitOnCtrlC: false,
+    });
+    await app.stop();
+  });
 
   it("hands TuiApp a mouse source even when mouse support starts off", async () => {
     writeMouseConfig(false);
