@@ -38,7 +38,7 @@ const HELP =
     "",
     "Usage:",
     "  atomic-agent run [options]           interactive: one message per line",
-    "  echo \"<goal>\" | atomic-agent run     one-shot: answer on stdout, logs on stderr",
+    '  echo "<goal>" | atomic-agent run     one-shot: answer on stdout, logs on stderr',
     "",
     "Options:",
     "  --cwd <dir>          Working directory for OS tools (default: current directory)",
@@ -50,7 +50,9 @@ const HELP =
     "Exit codes:  0 replied · 1 failed · 2 usage error",
   ].join("\n") + "\n";
 
-function parseArgs(args: string[]): RunArgs | { error: string } | { help: true } {
+function parseArgs(
+  args: string[],
+): RunArgs | { error: string } | { help: true } {
   let workingDir: string | null = null;
   let maxSteps: number | null = null;
   let noApproval = false;
@@ -141,9 +143,7 @@ async function promptApproval(
     }
     options.push("N = deny");
     if (!grantCategory) {
-      lines.push(
-        "  (trust-config writes are never granted for the session)",
-      );
+      lines.push("  (trust-config writes are never granted for the session)");
     }
     lines.push(`  approve? [${options.join(", ")}] `);
     process.stderr.write(`${lines.join("\n")}`);
@@ -169,7 +169,8 @@ async function promptApproval(
 }
 
 /** Transport failures that mean "nothing answered at the configured URL". */
-const TRANSPORT_NO_ANSWER = /fetch failed|ECONNREFUSED|ECONNRESET|socket hang up|timeout/i;
+const TRANSPORT_NO_ANSWER =
+  /fetch failed|ECONNREFUSED|ECONNRESET|socket hang up|timeout/i;
 
 function withLlamaHint(
   base: string,
@@ -178,7 +179,8 @@ function withLlamaHint(
   ctx?: { llamaHint?: string | null; hintShown?: { value: boolean } },
 ): string {
   if (!ctx?.llamaHint || ctx.hintShown?.value) return base;
-  if (category !== "transport" || !TRANSPORT_NO_ANSWER.test(message)) return base;
+  if (category !== "transport" || !TRANSPORT_NO_ANSWER.test(message))
+    return base;
   if (ctx.hintShown) ctx.hintShown.value = true;
   const indented = ctx.llamaHint
     .split("\n")
@@ -262,7 +264,10 @@ async function runChatLoop(opts: ChatLoopOptions): Promise<SessionState> {
     let reply: string | null = null;
     return {
       onEvent: (event) => {
-        if (event.type === "llm_event" && event.event.type === "assistant_reply") {
+        if (
+          event.type === "llm_event" &&
+          event.event.type === "assistant_reply"
+        ) {
           reply = event.event.text;
         }
       },

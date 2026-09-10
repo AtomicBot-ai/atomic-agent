@@ -51,7 +51,8 @@ describe("atomic-agent uninstall", () => {
     resolvePlan.mockResolvedValue(makePlan());
     ask.mockResolvedValue("uninstall");
     deps = {
-      resolvePlan: resolvePlan as unknown as UninstallCommandDeps["resolvePlan"],
+      resolvePlan:
+        resolvePlan as unknown as UninstallCommandDeps["resolvePlan"],
       run: run as unknown as UninstallCommandDeps["run"],
       getStateDir: () => "/Users/op/.atomic-agent",
       isTTY: () => true,

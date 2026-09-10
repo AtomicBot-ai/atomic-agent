@@ -11,6 +11,8 @@ export function describePullWaiting(
 ): string {
   const inMs = Date.parse(waiting.nextRetryAt) - now;
   const when =
-    Number.isFinite(inMs) && inMs > 0 ? `next try in ${Math.ceil(inMs / 1000)}s` : "retrying";
+    Number.isFinite(inMs) && inMs > 0
+      ? `next try in ${Math.ceil(inMs / 1000)}s`
+      : "retrying";
   return `⏸ waiting for the network — attempt ${waiting.attempt}, ${when} (${waiting.reason})`;
 }

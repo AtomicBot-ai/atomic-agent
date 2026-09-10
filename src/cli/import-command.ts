@@ -191,8 +191,7 @@ async function importHermes(args: string[]): Promise<number> {
       return 0;
     }
 
-    const actionable =
-      preview.summary.migrated + preview.summary.conflict > 0;
+    const actionable = preview.summary.migrated + preview.summary.conflict > 0;
     if (!actionable) {
       process.stdout.write("\nNothing to import.\n");
       return 0;
@@ -291,8 +290,7 @@ async function importOpenclaw(args: string[]): Promise<number> {
       return 0;
     }
 
-    const actionable =
-      preview.summary.migrated + preview.summary.conflict > 0;
+    const actionable = preview.summary.migrated + preview.summary.conflict > 0;
     if (!actionable) {
       process.stdout.write("\nNothing to import.\n");
       return 0;
@@ -402,8 +400,7 @@ async function importClaudeCode(args: string[]): Promise<number> {
       return 0;
     }
 
-    const actionable =
-      preview.summary.migrated + preview.summary.conflict > 0;
+    const actionable = preview.summary.migrated + preview.summary.conflict > 0;
     if (!actionable) {
       process.stdout.write("\nNothing to import.\n");
       return 0;
@@ -512,8 +509,7 @@ async function importCodex(args: string[]): Promise<number> {
       return 0;
     }
 
-    const actionable =
-      preview.summary.migrated + preview.summary.conflict > 0;
+    const actionable = preview.summary.migrated + preview.summary.conflict > 0;
     if (!actionable) {
       process.stdout.write("\nNothing to import.\n");
       return 0;

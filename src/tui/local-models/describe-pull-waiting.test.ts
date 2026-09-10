@@ -7,7 +7,11 @@ describe("describePullWaiting", () => {
 
   it("says how long until the next attempt and why the last one died", () => {
     const line = describePullWaiting(
-      { reason: "fetch failed", attempt: 4, nextRetryAt: "2026-09-08T18:30:32.000Z" },
+      {
+        reason: "fetch failed",
+        attempt: 4,
+        nextRetryAt: "2026-09-08T18:30:32.000Z",
+      },
       now,
     );
     expect(line).toBe(
@@ -17,7 +21,11 @@ describe("describePullWaiting", () => {
 
   it("reads as retrying once the scheduled time has passed", () => {
     const line = describePullWaiting(
-      { reason: "Download stalled: no data for 60s", attempt: 1, nextRetryAt: "2026-09-08T18:29:00.000Z" },
+      {
+        reason: "Download stalled: no data for 60s",
+        attempt: 1,
+        nextRetryAt: "2026-09-08T18:29:00.000Z",
+      },
       now,
     );
     expect(line).toMatch(/attempt 1, retrying \(Download stalled/);

@@ -49,7 +49,9 @@ describe("formatTraceChronology completion_truncated", () => {
       },
     ]);
     expect(out).toContain("completion_truncated");
-    expect(out).toContain("step=2 cause=reply_cap reply=8192 prompt=6000 cap=8192 retry=raise_cap:32768");
+    expect(out).toContain(
+      "step=2 cause=reply_cap reply=8192 prompt=6000 cap=8192 retry=raise_cap:32768",
+    );
   });
 });
 
@@ -68,7 +70,9 @@ describe("formatTraceChronology loop_detected", () => {
     // Every detector benefits: "count=3" alone never said whether the
     // generic repeat counter, the wandering spread or a test re-run was
     // what tripped.
-    const line = render([loopDetected({ detector: "wandering", tool: "noop" })]);
+    const line = render([
+      loopDetected({ detector: "wandering", tool: "noop" }),
+    ]);
     expect(line).toContain("detector=wandering");
     expect(line).not.toContain("path=");
   });

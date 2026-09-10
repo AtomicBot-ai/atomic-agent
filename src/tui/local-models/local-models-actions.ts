@@ -110,7 +110,9 @@ export type LocalModelsAction =
     }
   | { type: "local_llm_logs_error"; message: string; path: string | null };
 
-export function isLocalModelsAction(action: { type: string }): action is LocalModelsAction {
+export function isLocalModelsAction(action: {
+  type: string;
+}): action is LocalModelsAction {
   return (
     action.type.startsWith("local_models_") ||
     action.type.startsWith("local_llm_logs_")

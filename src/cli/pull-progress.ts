@@ -44,4 +44,3 @@ export function renderPullProgress(
       : `${formatGb(transferred)}`;
   return `[${bar}] ${percent}%  ${tail}  ${label}`;
 }
-

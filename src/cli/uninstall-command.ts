@@ -28,39 +28,40 @@ export interface UninstallCommandDeps {
   writeErr?: (text: string) => void;
 }
 
-const HELP = [
-  "atomic-agent uninstall — remove atomic-agent and its data from this machine",
-  "",
-  "Deletes the state directory (config, memory, sessions, tasks, traces and any",
-  "downloaded GGUF models), the installed binary and its `atag` alias, the asset",
-  "directories the installer put beside them, and the PATH line install.sh added",
-  "to your shell rc file.",
-  "",
-  "This cannot be undone. There is no backup. Nothing is uploaded anywhere, and",
-  "nothing is kept — after this the only trace of atomic-agent on the machine is",
-  "whatever you copied out yourself.",
-  "",
-  "Interactive runs print the full list with sizes and then ask you to type the",
-  `word \`${CONFIRM_WORD}\`. Non-interactive runs must pass --yes.`,
-  "",
-  "Flags:",
-  "  --dry-run            Print exactly what would be removed, remove nothing",
-  "  --keep-data          Keep the state directory; remove only the program",
-  "  --keep-binary        Keep the binary; remove only the data",
-  "  --keep-path          Leave the installer's PATH line in your rc file",
-  "  -y, --yes            Skip the typed confirmation (for scripts)",
-  "  -h, --help           Show this help",
-  "",
-  "Exit codes:",
-  "  0  success (removed, or --dry-run printed the plan, or you declined)",
-  "  1  operational failure (something could not be removed)",
-  "  2  usage error (unknown flag, or no TTY and no --yes)",
-  "",
-  "Examples:",
-  "  atomic-agent uninstall --dry-run",
-  "  atomic-agent uninstall",
-  "  atomic-agent uninstall --keep-data      # reinstall later, keep your memory",
-].join("\n") + "\n";
+const HELP =
+  [
+    "atomic-agent uninstall — remove atomic-agent and its data from this machine",
+    "",
+    "Deletes the state directory (config, memory, sessions, tasks, traces and any",
+    "downloaded GGUF models), the installed binary and its `atag` alias, the asset",
+    "directories the installer put beside them, and the PATH line install.sh added",
+    "to your shell rc file.",
+    "",
+    "This cannot be undone. There is no backup. Nothing is uploaded anywhere, and",
+    "nothing is kept — after this the only trace of atomic-agent on the machine is",
+    "whatever you copied out yourself.",
+    "",
+    "Interactive runs print the full list with sizes and then ask you to type the",
+    `word \`${CONFIRM_WORD}\`. Non-interactive runs must pass --yes.`,
+    "",
+    "Flags:",
+    "  --dry-run            Print exactly what would be removed, remove nothing",
+    "  --keep-data          Keep the state directory; remove only the program",
+    "  --keep-binary        Keep the binary; remove only the data",
+    "  --keep-path          Leave the installer's PATH line in your rc file",
+    "  -y, --yes            Skip the typed confirmation (for scripts)",
+    "  -h, --help           Show this help",
+    "",
+    "Exit codes:",
+    "  0  success (removed, or --dry-run printed the plan, or you declined)",
+    "  1  operational failure (something could not be removed)",
+    "  2  usage error (unknown flag, or no TTY and no --yes)",
+    "",
+    "Examples:",
+    "  atomic-agent uninstall --dry-run",
+    "  atomic-agent uninstall",
+    "  atomic-agent uninstall --keep-data      # reinstall later, keep your memory",
+  ].join("\n") + "\n";
 
 interface UninstallFlags {
   dryRun: boolean;
@@ -144,9 +145,11 @@ export async function uninstallCommand(
   const run = deps.run ?? runUninstall;
   const getStateDir = deps.getStateDir ?? (() => getConfig().paths.stateDir);
   const isTTY =
-    deps.isTTY ?? (() => process.stdin.isTTY === true && process.stdout.isTTY === true);
+    deps.isTTY ??
+    (() => process.stdin.isTTY === true && process.stdout.isTTY === true);
   const ask = deps.ask ?? defaultAsk;
-  const write = deps.write ?? ((text: string) => void process.stdout.write(text));
+  const write =
+    deps.write ?? ((text: string) => void process.stdout.write(text));
   const writeErr =
     deps.writeErr ?? ((text: string) => void process.stderr.write(text));
 
@@ -223,7 +226,10 @@ export async function uninstallCommand(
 }
 
 /** The plan, with sizes, as the operator sees it before deciding. */
-function renderPlan(plan: ResolvedUninstallPlan, flags: UninstallFlags): string {
+function renderPlan(
+  plan: ResolvedUninstallPlan,
+  flags: UninstallFlags,
+): string {
   const lines: string[] = ["", "atomic-agent uninstall will remove:", ""];
   for (const target of plan.measured.targets) {
     lines.push(

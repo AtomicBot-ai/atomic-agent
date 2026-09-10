@@ -16,12 +16,18 @@ function hfChoiceCount(panel: LocalModelsPanelState): number {
   return panel.hf.repo?.choices.length ?? 0;
 }
 
-export function reduceLocalModelsAction(state: TuiState, action: TuiAction): TuiState | null {
+export function reduceLocalModelsAction(
+  state: TuiState,
+  action: TuiAction,
+): TuiState | null {
   if (!isLocalModelsAction(action)) return null;
   const p = state.localModelsPanel;
   switch (action.type) {
     case "local_models_refresh_started":
-      return { ...state, localModelsPanel: { ...p, loading: true, errorLine: null } };
+      return {
+        ...state,
+        localModelsPanel: { ...p, loading: true, errorLine: null },
+      };
     case "local_models_snapshot_loaded": {
       const nextPanel = {
         ...p,
@@ -194,7 +200,10 @@ export function reduceLocalModelsAction(state: TuiState, action: TuiAction): Tui
         localModelsPanel: { ...p, embeddingOnboardingPrompt: null },
       };
     case "local_models_notify_prompt_opened":
-      return { ...state, localModelsPanel: { ...p, notifyPrompt: action.prompt } };
+      return {
+        ...state,
+        localModelsPanel: { ...p, notifyPrompt: action.prompt },
+      };
     case "local_models_notify_prompt_closed":
       return { ...state, localModelsPanel: { ...p, notifyPrompt: null } };
     case "local_models_pull_started":
@@ -231,7 +240,9 @@ export function reduceLocalModelsAction(state: TuiState, action: TuiAction): Tui
               percent: action.percent,
               transferredBytes: action.transferredBytes,
               totalBytes: action.totalBytes,
-              ...(action.waiting !== undefined ? { waiting: action.waiting } : {}),
+              ...(action.waiting !== undefined
+                ? { waiting: action.waiting }
+                : {}),
             },
           },
         };
@@ -246,7 +257,9 @@ export function reduceLocalModelsAction(state: TuiState, action: TuiAction): Tui
             percent: action.percent,
             transferredBytes: action.transferredBytes,
             totalBytes: action.totalBytes,
-            ...(action.waiting !== undefined ? { waiting: action.waiting } : {}),
+            ...(action.waiting !== undefined
+              ? { waiting: action.waiting }
+              : {}),
           },
         },
       };
@@ -290,7 +303,10 @@ export function reduceLocalModelsAction(state: TuiState, action: TuiAction): Tui
         },
       };
     case "local_models_backend_check_started":
-      return { ...state, localModelsPanel: { ...p, mode: "backendUpdate", loading: true } };
+      return {
+        ...state,
+        localModelsPanel: { ...p, mode: "backendUpdate", loading: true },
+      };
     case "local_models_backend_check_loaded":
       return {
         ...state,
@@ -302,7 +318,10 @@ export function reduceLocalModelsAction(state: TuiState, action: TuiAction): Tui
         },
       };
     case "local_models_error_set":
-      return { ...state, localModelsPanel: { ...p, errorLine: action.message } };
+      return {
+        ...state,
+        localModelsPanel: { ...p, errorLine: action.message },
+      };
     case "local_models_error_cleared":
       return { ...state, localModelsPanel: { ...p, errorLine: null } };
     case "local_models_mode_set":
@@ -328,7 +347,11 @@ export function reduceLocalModelsAction(state: TuiState, action: TuiAction): Tui
     case "local_models_daemon_error_set":
       return {
         ...state,
-        localModelsPanel: { ...p, daemonError: action.message, daemonPhase: "idle" },
+        localModelsPanel: {
+          ...p,
+          daemonError: action.message,
+          daemonPhase: "idle",
+        },
       };
     case "local_llm_logs_loaded":
       return {

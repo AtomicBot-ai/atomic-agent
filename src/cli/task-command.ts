@@ -157,7 +157,9 @@ async function handleCreate(args: string[]): Promise<number> {
   }
   const notify = notifyRaw === "telegram" ? ("telegram" as const) : undefined;
 
-  const scheduleFlags = [atRaw, cronRaw, everyRaw].filter((v) => v !== undefined);
+  const scheduleFlags = [atRaw, cronRaw, everyRaw].filter(
+    (v) => v !== undefined,
+  );
   if (scheduleFlags.length > 1) {
     process.stderr.write(
       "--at, --cron, and --every are mutually exclusive — pick one\n",
@@ -298,7 +300,9 @@ function handleCancel(args: string[]): number {
 async function handleRun(args: string[]): Promise<number> {
   const config = getConfig();
   if (!config.tasks.enabled) {
-    process.stderr.write("tasks subsystem disabled (config.tasks.enabled=false)\n");
+    process.stderr.write(
+      "tasks subsystem disabled (config.tasks.enabled=false)\n",
+    );
     return 1;
   }
   const allPending = args.includes("--all-pending");
@@ -320,7 +324,9 @@ async function handleRun(args: string[]): Promise<number> {
     if (explicitId) {
       const result = await runtime.taskRunner.runOne(explicitId);
       if (!result) {
-        process.stderr.write(`task not found or already claimed: ${explicitId}\n`);
+        process.stderr.write(
+          `task not found or already claimed: ${explicitId}\n`,
+        );
         return 1;
       }
       process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
@@ -346,11 +352,15 @@ async function handleRun(args: string[]): Promise<number> {
 async function handleTick(args: string[]): Promise<number> {
   const config = getConfig();
   if (!config.tasks.enabled) {
-    process.stderr.write("tasks subsystem disabled (config.tasks.enabled=false)\n");
+    process.stderr.write(
+      "tasks subsystem disabled (config.tasks.enabled=false)\n",
+    );
     return 1;
   }
   const limitRaw = readOption(args, "--limit");
-  const limit = limitRaw ? Number.parseInt(limitRaw, 10) : Number.MAX_SAFE_INTEGER;
+  const limit = limitRaw
+    ? Number.parseInt(limitRaw, 10)
+    : Number.MAX_SAFE_INTEGER;
   if (!Number.isFinite(limit) || limit <= 0) {
     process.stderr.write("--limit must be a positive integer\n");
     return 1;
@@ -382,7 +392,9 @@ function readOption(args: string[], name: string): string | undefined {
   return value;
 }
 
-function parseStatuses(raw: string | undefined): TaskStatus[] | undefined | "invalid" {
+function parseStatuses(
+  raw: string | undefined,
+): TaskStatus[] | undefined | "invalid" {
   if (!raw) return undefined;
   const allowed: TaskStatus[] = [
     "pending",
@@ -392,7 +404,10 @@ function parseStatuses(raw: string | undefined): TaskStatus[] | undefined | "inv
     "blocked",
     "cancelled",
   ];
-  const parts = raw.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
+  const parts = raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
   for (const part of parts) {
     if (!allowed.includes(part as TaskStatus)) return "invalid";
   }

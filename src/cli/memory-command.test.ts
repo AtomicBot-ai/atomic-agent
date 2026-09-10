@@ -98,7 +98,9 @@ describe("memoryCommand", () => {
     process.env.OBSIDIAN_VAULT_PATH = vaultDir;
     const code = await memoryCommand(["export", "--folder", "brain"]);
     expect(code).toBe(0);
-    expect(existsSync(join(vaultDir, "brain", "notes", "note-1.md"))).toBe(true);
+    expect(existsSync(join(vaultDir, "brain", "notes", "note-1.md"))).toBe(
+      true,
+    );
   });
 
   it("maps a folder escaping the vault to a usage error", async () => {

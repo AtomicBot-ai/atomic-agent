@@ -247,6 +247,8 @@ export async function runDownloadWorker(
       },
     };
   };
+  let mmprojError: string | null = null;
+
   try {
     if (input.kind === "embedding") {
       const def = getEmbeddingModelDef(input.modelId as EmbeddingModelId);
@@ -269,11 +271,17 @@ export async function runDownloadWorker(
       const needGguf = wantGguf && !isModelDownloaded(input.dataDir, def);
       const needMmproj = wantMmproj && !isMmprojDownloaded(input.dataDir, def);
       if (needGguf && needMmproj) {
-        await downloadGgufAndMmprojTogether(def, input, {
+        const pair = await downloadGgufAndMmprojTogether(def, input, {
           persist,
           log,
           stamp,
         });
+        if (pair.mmprojError !== null) {
+          mmprojError = pair.mmprojError;
+          log(
+            `[${stamp()}] projector failed: ${mmprojError} — landing text-only`,
+          );
+        }
       }
       if (needGguf && !needMmproj) {
         await downloadModel(
@@ -289,32 +297,62 @@ export async function runDownloadWorker(
         log(`[${stamp()}] gguf complete`);
       }
       if (needMmproj && !needGguf) {
-        await downloadMmproj(
-          input.dataDir,
-          def,
-          phaseOpts(
-            `${def.name} (mmproj)`,
-            "mmproj",
-            resolveMmprojFilePath(
-              input.dataDir,
-              def.id,
-              def.mmprojFilename ?? "",
+        try {
+          await downloadMmproj(
+            input.dataDir,
+            def,
+            phaseOpts(
+              `${def.name} (mmproj)`,
+              "mmproj",
+              resolveMmprojFilePath(
+                input.dataDir,
+                def.id,
+                def.mmprojFilename ?? "",
+              ),
+              gb(def.mmprojFileSizeGb ?? 1),
             ),
-            gb(def.mmprojFileSizeGb ?? 1),
-          ),
-        );
-        log(`[${stamp()}] mmproj complete`);
+          );
+          log(`[${stamp()}] mmproj complete`);
+        } catch (err) {
+          // The projector is an extra on top of weights that already
+          // work: a file the repo no longer serves (renamed, 404) must
+          // not turn a finished multi-GB download into a failed job.
+          // Land the model text-only, keep any projector partial for a
+          // retry, and record why. A cancel is still a cancel, and with
+          // no weights on disk there is nothing to land.
+          if (isAbortError(err) || input.signal?.aborted) throw err;
+          if (!isModelDownloaded(input.dataDir, def)) throw err;
+          mmprojError = err instanceof Error ? err.message : String(err);
+          log(
+            `[${stamp()}] projector failed: ${mmprojError} — landing text-only`,
+          );
+        }
       }
     }
-    const done: Partial<DownloadJob> = {
-      status: "done",
-      percent: 100,
-      error: null,
-      waiting: null,
-      finishedAt: stamp(),
-    };
+    // A text-only landing keeps the projector phase's real numbers —
+    // the bar that follows it must not claim 100% of a file that never came.
+    const done: Partial<DownloadJob> = mmprojError
+      ? {
+          status: "done",
+          error: null,
+          mmprojError,
+          waiting: null,
+          finishedAt: stamp(),
+        }
+      : {
+          status: "done",
+          percent: 100,
+          error: null,
+          waiting: null,
+          finishedAt: stamp(),
+        };
     persist({ ...done, ...(await finishHook({ ...job, ...done })) }, true);
-    log(`[${stamp()}] done`);
+    log(
+      mmprojError
+        ? `[${stamp()}] done — text-only (projector: ${mmprojError})`
+        : `[${stamp()}] done`,
+    );
+
     return "done";
   } catch (err) {
     if (isAbortError(err) || input.signal?.aborted) {

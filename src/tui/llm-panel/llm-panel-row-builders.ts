@@ -172,12 +172,16 @@ function localTextRow(state: TuiState, model: LocalModelRow): LlmPanelRow {
     return buildLocalTextRow(model, active, false, "download", "Enter: download");
   }
   if (model.def.supportsVision && model.mmprojStatus === "missing") {
+    // The weights are here, so Enter makes the model live (text-only)
+    // and fetches the projector alongside; on a live model it is a retry.
     return buildLocalTextRow(
       model,
       active,
       false,
       "download-mmproj",
-      `Enter: download projector for ${model.id}`,
+      localActive && model.active
+        ? `Enter: download projector for ${model.id} (text chat works without it)`
+        : `Enter: select model, download projector for ${model.id}`,
     );
   }
   if (!localActive || !model.active) {

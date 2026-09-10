@@ -141,10 +141,6 @@ function triggerLocalChatModel(
     callbacks.onLocalModelsPullRequested?.(model.id, "with-mmproj");
     return;
   }
-  if (model.mmprojStatus === "missing") {
-    callbacks.onLocalModelsPullRequested?.(model.id, "mmproj-only");
-    return;
-  }
   if (!model.active) callbacks.onLocalModelsSetActiveRequested?.(model.id);
   if (!isLocalTextActive(state)) {
     callbacks.onProvidersSetActiveText?.("local-llama");
@@ -153,6 +149,12 @@ function triggerLocalChatModel(
     state.localModelsPanel.daemon.running ||
     state.localModelsPanel.daemonPhase === "starting";
   if (model.active && !chatUp) callbacks.onLocalModelsDaemonStartRequested?.();
+  // A vision row whose projector is not here yet: the weights work on
+  // their own, so the model goes live first and the projector follows.
+  // A projector the repo stopped serving then costs vision, not the model.
+  if (model.mmprojStatus === "missing") {
+    callbacks.onLocalModelsPullRequested?.(model.id, "mmproj-only");
+  }
 }
 
 function triggerLocalEmbeddingModel(

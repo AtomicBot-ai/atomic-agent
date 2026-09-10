@@ -53,6 +53,23 @@ function dyingBodyOf(chunks: readonly string[], error: Error): ReadableStream {
   });
 }
 
+function fetchWithMissingProjector(): typeof fetch {
+  return vi.fn(async (input: string | URL | Request) => {
+    const url =
+      typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.href
+          : input.url;
+    return url.includes("mmproj")
+      ? new Response(null, { status: 404, statusText: "Not Found" })
+      : new Response(bodyOf(["gg", "uf"]), {
+          status: 200,
+          headers: { "content-length": "4" },
+        });
+  }) as typeof fetch;
+}
+
 describe("download-worker", () => {
   let dataDir: string;
   let prevFetch: typeof fetch;
@@ -434,7 +451,10 @@ describe("download-worker", () => {
     expect(log.some((l) => /mmproj complete/.test(l))).toBe(true);
   });
 
-  it("a failing mmproj cancels the GGUF transfer and keeps its partial", async () => {
+  it("a failing mmproj lets the GGUF finish and lands the model text-only", async () => {
+    // #364's rule wins over the pair's original one: a projector the
+    // repo no longer serves costs vision, not a multi-GB download. The
+    // weights leg is no longer cancelled by the projector's 404.
     let releaseGguf: (() => void) | null = null;
     const ggufDest = resolveModelFilePath(dataDir, VISION.id, VISION.filename);
     globalThis.fetch = vi.fn(async (url: unknown) => {
@@ -469,7 +489,7 @@ describe("download-worker", () => {
       });
     }) as typeof fetch;
 
-    const outcome = await runDownloadWorker({
+    const pending = runDownloadWorker({
       dataDir,
       kind: "chat",
       modelId: VISION.id,
@@ -477,15 +497,18 @@ describe("download-worker", () => {
       log: (l) => log.push(l),
       writeIntervalMs: 0,
     });
+    await waitFor(() => releaseGguf !== null);
     releaseGguf?.();
+    const outcome = await pending;
 
-    expect(outcome).toBe("failed");
+    expect(outcome).toBe("done");
     const job = readDownloadJob(dataDir, downloadJobId("chat", VISION.id));
-    expect(job?.status).toBe("failed");
-    expect(job?.error).toMatch(/HTTP 404/);
+    expect(job?.status).toBe("done");
+    expect(job?.error).toBeNull();
+    expect(job?.mmprojError).toMatch(/HTTP 404/);
     const dest = resolveModelFilePath(dataDir, VISION.id, VISION.filename);
-    expect(existsSync(dest)).toBe(false);
-    expect(readFileSync(resolvePartialPath(dest), "utf-8")).toBe("ab");
+    expect(readFileSync(dest, "utf-8")).toBe("abcd");
+    expect(existsSync(resolvePartialPath(dest))).toBe(false);
   });
 
   it("initialDownloadJob sums both files of a vision pull that needs both", () => {
@@ -550,6 +573,165 @@ describe("download-worker", () => {
       Math.round(EMB.fileSizeGb * 1024 * 1024 * 1024),
     );
     expect(job.label).toBe(EMB.name);
+  });
+
+  it("lands a vision model text-only when its projector fails after the GGUF", async () => {
+    globalThis.fetch = fetchWithMissingProjector();
+
+    const outcome = await runDownloadWorker({
+      dataDir,
+      kind: "chat",
+      modelId: CHAT.id,
+      mode: "with-mmproj",
+      log: (l) => log.push(l),
+      writeIntervalMs: 0,
+    });
+
+    expect(outcome).toBe("done");
+    expect(
+      readFileSync(
+        resolveModelFilePath(dataDir, CHAT.id, CHAT.filename),
+        "utf-8",
+      ),
+    ).toBe("gguf");
+    expect(
+      existsSync(resolveMmprojFilePath(dataDir, CHAT.id, CHAT.mmprojFilename!)),
+    ).toBe(false);
+    const job = readDownloadJob(dataDir, downloadJobId("chat", CHAT.id));
+    // Done, but with the projector phase's honest numbers: nothing of
+    // that file came, and the bar must not say 100% of it did.
+    expect(job).toMatchObject({
+      status: "done",
+      error: null,
+      phase: "mmproj",
+      percent: 0,
+    });
+    expect(job?.mmprojError).toMatch(/HTTP 404/);
+    expect(log.some((l) => /projector failed: .*404.*text-only/.test(l))).toBe(
+      true,
+    );
+    expect(log.at(-1)).toMatch(/done — text-only/);
+  });
+
+  it("a projector-only pull with the weights on disk lands text-only too", async () => {
+    const dest = resolveModelFilePath(dataDir, CHAT.id, CHAT.filename);
+    mkdirSync(dirname(dest), { recursive: true });
+    writeFileSync(dest, "gguf");
+    globalThis.fetch = fetchWithMissingProjector();
+
+    const outcome = await runDownloadWorker({
+      dataDir,
+      kind: "chat",
+      modelId: CHAT.id,
+      mode: "mmproj-only",
+      log: (l) => log.push(l),
+      writeIntervalMs: 0,
+    });
+
+    expect(outcome).toBe("done");
+    const job = readDownloadJob(dataDir, downloadJobId("chat", CHAT.id));
+    expect(job?.status).toBe("done");
+    expect(job?.mmprojError).toMatch(/HTTP 404/);
+  });
+
+  it("a projector-only pull with no weights on disk still fails — nothing landed", async () => {
+    globalThis.fetch = fetchWithMissingProjector();
+
+    const outcome = await runDownloadWorker({
+      dataDir,
+      kind: "chat",
+      modelId: CHAT.id,
+      mode: "mmproj-only",
+      log: (l) => log.push(l),
+      writeIntervalMs: 0,
+    });
+
+    expect(outcome).toBe("failed");
+    const job = readDownloadJob(dataDir, downloadJobId("chat", CHAT.id));
+    expect(job?.status).toBe("failed");
+    expect(job?.error).toMatch(/HTTP 404/);
+    expect(job?.mmprojError).toBeUndefined();
+  });
+
+  it("a cancel during the projector phase is still a cancel, never a text-only landing", async () => {
+    let release: (() => void) | null = null;
+    // Built inside the mock, not up front: a ReadableStream pulls its
+    // first chunk on construction, and the abort must land in the
+    // projector phase, after the GGUF has been written whole.
+    const gated = (): ReadableStream =>
+      new ReadableStream({
+        async pull(controller) {
+          if (release === null) {
+            controller.enqueue(Buffer.from("ab"));
+            await new Promise<void>((resolve) => {
+              release = resolve;
+            });
+            controller.enqueue(Buffer.from("cd"));
+            return;
+          }
+          controller.close();
+        },
+      });
+    globalThis.fetch = vi.fn(async (input: string | URL | Request) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url;
+      return url.includes("mmproj")
+        ? new Response(gated(), {
+            status: 200,
+            headers: { "content-length": "4" },
+          })
+        : new Response(bodyOf(["gg", "uf"]), {
+            status: 200,
+            headers: { "content-length": "4" },
+          });
+    }) as typeof fetch;
+
+    const controller = new AbortController();
+    const pending = runDownloadWorker({
+      dataDir,
+      kind: "chat",
+      modelId: CHAT.id,
+      mode: "with-mmproj",
+      signal: controller.signal,
+      log: (l) => log.push(l),
+      writeIntervalMs: 0,
+    });
+    const mmproj = resolveMmprojFilePath(
+      dataDir,
+      CHAT.id,
+      CHAT.mmprojFilename!,
+    );
+    // Cancel once the weights have landed AND the projector's first
+    // bytes are on disk: the two files stream side by side now (the
+    // paired pull), so waiting only on the projector could catch the
+    // GGUF mid-flight and the assertions below would be about a
+    // different scenario.
+    await waitFor(
+      () =>
+        existsSync(resolveModelFilePath(dataDir, CHAT.id, CHAT.filename)) &&
+        existsSync(resolvePartialPath(mmproj)) &&
+        readFileSync(resolvePartialPath(mmproj), "utf-8") === "ab",
+    );
+    controller.abort();
+    release?.();
+
+    expect(await pending).toBe("cancelled");
+    const job = readDownloadJob(dataDir, downloadJobId("chat", CHAT.id));
+    expect(job?.status).toBe("cancelled");
+    expect(job?.mmprojError).toBeUndefined();
+    // The weights landed before the cancel; the projector partial is kept.
+    expect(
+      readFileSync(
+        resolveModelFilePath(dataDir, CHAT.id, CHAT.filename),
+        "utf-8",
+      ),
+    ).toBe("gguf");
+    expect(existsSync(mmproj)).toBe(false);
+    expect(readFileSync(resolvePartialPath(mmproj), "utf-8")).toBe("ab");
   });
 });
 

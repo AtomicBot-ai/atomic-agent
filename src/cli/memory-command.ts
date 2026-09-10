@@ -56,7 +56,8 @@ function handleExport(args: string[]): number {
   // `getConfig()` first: it merges `<stateDir>/.env` into `process.env`,
   // so an OBSIDIAN_VAULT_PATH kept there is visible below.
   const config = getConfig();
-  const vaultDir = readOption(args, "--vault") ?? process.env.OBSIDIAN_VAULT_PATH;
+  const vaultDir =
+    readOption(args, "--vault") ?? process.env.OBSIDIAN_VAULT_PATH;
   if (!vaultDir) {
     process.stderr.write(
       "usage: atomic-agent memory export --vault <path> [--folder <name>] (or set OBSIDIAN_VAULT_PATH)\n",

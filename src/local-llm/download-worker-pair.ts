@@ -33,7 +33,7 @@ export async function downloadGgufAndMmprojTogether(
     log: (line: string) => void;
     stamp: () => string;
   },
-): Promise<void> {
+): Promise<{ mmprojError: string | null }> {
   const ggufDest = resolveModelFilePath(input.dataDir, def.id, def.filename);
   const mmprojDest = resolveMmprojFilePath(
     input.dataDir,
@@ -91,13 +91,17 @@ export async function downloadGgufAndMmprojTogether(
       },
     };
   };
+  // Weights failing stop the projector — there is nothing to attach it
+  // to. The projector failing does NOT stop the weights: a renamed or
+  // 404 projector must cost vision, not a multi-GB download that is
+  // already half done (see the text-only landing in `download-worker`).
   const guard = (work: Promise<void>): Promise<void> =>
     work.catch((err: unknown) => {
       pair.abort();
       throw err;
     });
   try {
-    const results = await Promise.allSettled([
+    const [ggufResult, mmprojResult] = await Promise.allSettled([
       guard(
         downloadModel(input.dataDir, def, fileOpts("gguf")).then(() => {
           ggufDone = true;
@@ -105,21 +109,32 @@ export async function downloadGgufAndMmprojTogether(
           report(true);
         }),
       ),
-      guard(
-        downloadMmproj(input.dataDir, def, fileOpts("mmproj")).then(() => {
-          io.log(`[${io.stamp()}] mmproj complete`);
-          report(true);
-        }),
-      ),
+      downloadMmproj(input.dataDir, def, fileOpts("mmproj")).then(() => {
+        io.log(`[${io.stamp()}] mmproj complete`);
+        report(true);
+      }),
     ]);
-    const failures = results.flatMap((r) =>
-      r.status === "rejected" ? [r.reason as unknown] : [],
-    );
-    if (failures.length > 0) {
-      // The real cause comes first; the other file's AbortError is the
+    if (ggufResult.status === "rejected") {
+      // The real cause comes first; the projector's AbortError is the
       // echo of our own cancel.
-      throw failures.find((f) => !isAbortError(f)) ?? failures[0];
+      const echo =
+        mmprojResult.status === "rejected" ? mmprojResult.reason : undefined;
+      const real = !isAbortError(ggufResult.reason)
+        ? ggufResult.reason
+        : echo !== undefined && !isAbortError(echo)
+          ? echo
+          : ggufResult.reason;
+      throw real;
     }
+    if (mmprojResult.status === "rejected") {
+      // A cancel is still a cancel, never a text-only landing.
+      if (isAbortError(mmprojResult.reason) || input.signal?.aborted) {
+        throw mmprojResult.reason;
+      }
+      const err = mmprojResult.reason;
+      return { mmprojError: err instanceof Error ? err.message : String(err) };
+    }
+    return { mmprojError: null };
   } finally {
     input.signal?.removeEventListener("abort", onCallerAbort);
   }

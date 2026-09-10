@@ -88,7 +88,8 @@ const COMMANDS: CommandDescriptor[] = [
   },
   {
     name: "serve",
-    summary: "Expose an OpenAI-compatible HTTP API plus atomic-agent admin routes",
+    summary:
+      "Expose an OpenAI-compatible HTTP API plus atomic-agent admin routes",
     run: serveCommand,
   },
   {
@@ -114,12 +115,14 @@ const COMMANDS: CommandDescriptor[] = [
   },
   {
     name: "import",
-    summary: "Import conversation history + cron jobs from another agent (hermes)",
+    summary:
+      "Import conversation history + cron jobs from another agent (hermes)",
     run: importCommand,
   },
   {
     name: "update",
-    summary: "Self-update the installed binary from GitHub Releases (--check to probe only)",
+    summary:
+      "Self-update the installed binary from GitHub Releases (--check to probe only)",
     run: updateCommand,
   },
   {
@@ -219,7 +222,8 @@ async function main(): Promise<number> {
 main()
   .then((code) => exit(code))
   .catch((err) => {
-    const message = err instanceof Error ? err.stack ?? err.message : String(err);
+    const message =
+      err instanceof Error ? (err.stack ?? err.message) : String(err);
     process.stderr.write(`${message}\n`);
     exit(1);
   });

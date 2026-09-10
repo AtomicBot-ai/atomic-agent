@@ -75,7 +75,9 @@ function handleGet(args: string[]): number {
     return 0;
   }
   if (!findConfigLeaf(key)) return rejectUnknownKey("get", key);
-  process.stdout.write(`${formatConfigValue(key, readConfigPath(file, key))}\n`);
+  process.stdout.write(
+    `${formatConfigValue(key, readConfigPath(file, key))}\n`,
+  );
   return 0;
 }
 
@@ -228,9 +230,7 @@ function handleList(): number {
       continue;
     }
     const shown = formatConfigValue(row.leaf.key, row.leaf.defaultValue);
-    process.stdout.write(
-      `${row.rendered.padEnd(width)}  (default ${shown})\n`,
-    );
+    process.stdout.write(`${row.rendered.padEnd(width)}  (default ${shown})\n`);
   }
   return 0;
 }
@@ -267,7 +267,10 @@ function readRawConfigTree(path: string): Record<string, unknown> {
     parsed = JSON.parse(text);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    throw new ConfigValidationError("<file>", `${path} is not valid JSON: ${message}`);
+    throw new ConfigValidationError(
+      "<file>",
+      `${path} is not valid JSON: ${message}`,
+    );
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new ConfigValidationError("<file>", `${path} is not a JSON object`);

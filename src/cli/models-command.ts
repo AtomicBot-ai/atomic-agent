@@ -24,7 +24,7 @@ const HELP =
   [
     "atomic-agent models — manage the local-LLM runtime (llama.cpp backend + GGUF models)",
     "",
-    "Available only when config.localModels.mode = \"managed\" (see `atomic-agent config`).",
+    'Available only when config.localModels.mode = "managed" (see `atomic-agent config`).',
     "",
     "Subcommands:",
     "  list                          Show model catalog + disk presence (active marked with *)",
@@ -33,7 +33,7 @@ const HELP =
     "                                --mmproj also fetches the vision projector)",
     "  downloads [cancel <id>|clear] List background downloads, stop one (partial kept), or",
     "                                forget finished records",
-    "  use <id>                      Set active model and switch mode to \"managed\"",
+    '  use <id>                      Set active model and switch mode to "managed"',
     "  status                        Show mode, backend version, active model, daemon/health",
     "  start                         Spawn detached llama-server daemon (writes .pid)",
     "  stop                          Stop daemon (SIGTERM → SIGKILL after 3s)",

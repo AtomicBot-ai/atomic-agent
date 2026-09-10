@@ -109,6 +109,13 @@ export interface DownloadJob {
   startedAt: string;
   updatedAt: string;
   finishedAt: string | null;
+  /**
+   * Set on a `done` chat job whose projector phase failed after the
+   * GGUF had landed: the weights are usable text-only, any projector
+   * partial is kept, and a later `mmproj-only` pull retries it.
+   * Additive on version 1 — older readers ignore it.
+   */
+  mmprojError?: string | null;
 }
 
 export function resolveDownloadsDir(dataDir: string): string {

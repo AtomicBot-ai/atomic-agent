@@ -35,14 +35,20 @@ import { renderPullProgress } from "./pull-progress.js";
  * SIGTERM (what `downloads cancel` sends) becomes an abort, so the
  * record ends as `cancelled` rather than as a dead `running` pid.
  */
-export async function runLocalModelsPullWorker(args: string[]): Promise<number> {
+export async function runLocalModelsPullWorker(
+  args: string[],
+): Promise<number> {
   const [kindArg, modelId, modeArg] = args;
   if ((kindArg !== "chat" && kindArg !== "embedding") || !modelId) {
-    process.stderr.write("usage: models pull-worker <chat|embedding> <id> [mode]\n");
+    process.stderr.write(
+      "usage: models pull-worker <chat|embedding> <id> [mode]\n",
+    );
     return 2;
   }
   const mode: DownloadJobMode =
-    modeArg === "with-mmproj" || modeArg === "mmproj-only" ? modeArg : "gguf-only";
+    modeArg === "with-mmproj" || modeArg === "mmproj-only"
+      ? modeArg
+      : "gguf-only";
   const controller = new AbortController();
   const onSignal = (): void => controller.abort();
   process.once("SIGTERM", onSignal);
@@ -85,9 +91,15 @@ async function reportDownloadOutcome(
   const at = new Date().toISOString();
   // `getConfig()` already merged `<stateDir>/.env` into the environment,
   // so the bot tokens are where the notifier looks for them.
-  const result = await notifyDownloadOutcome({ channel, job, config: getConfig() });
+  const result = await notifyDownloadOutcome({
+    channel,
+    job,
+    config: getConfig(),
+  });
   const reason = result.outcome === "sent" ? null : result.reason;
-  process.stdout.write(`[${at}] notify ${channel} ${result.outcome}${reason ? `: ${reason}` : ""}\n`);
+  process.stdout.write(
+    `[${at}] notify ${channel} ${result.outcome}${reason ? `: ${reason}` : ""}\n`,
+  );
   return { notified: { channel, outcome: result.outcome, reason, at } };
 }
 
@@ -104,7 +116,10 @@ export function describeDownloadWait(
 ): string | null {
   if (!job.waiting) return null;
   const inMs = Date.parse(job.waiting.nextRetryAt) - now;
-  const when = Number.isFinite(inMs) && inMs > 0 ? `retry in ${Math.ceil(inMs / 1000)}s` : "retrying";
+  const when =
+    Number.isFinite(inMs) && inMs > 0
+      ? `retry in ${Math.ceil(inMs / 1000)}s`
+      : "retrying";
   return `waiting for network (attempt ${job.waiting.attempt}, ${when})`;
 }
 
@@ -125,6 +140,9 @@ export function describeDownloadJob(
     else if (isDownloadJobStale(job, now)) {
       state += ` · not reporting for ${Math.round(downloadJobSilenceMs(job, now) / 60_000)} min`;
     }
+  } else if (job.status === "done" && job.mmprojError) {
+    // Weights landed, projector did not: the model is usable, without vision.
+    state = "done, text-only";
   } else if (job.status === "failed") {
     state = `failed: ${job.error ?? "unknown error"}${job.resumable ? " (resumes on next launch)" : ""}`;
   } else {
@@ -135,7 +153,21 @@ export function describeDownloadJob(
     : notify
       ? `  → ${notify}`
       : "";
-  return `${job.id.padEnd(40)} ${state.padEnd(28)} ${size}  ${job.label}${ping}`;
+  const label = job.mmprojError
+    ? `${job.label} — projector: ${job.mmprojError}`
+    : job.label;
+  return `${job.id.padEnd(40)} ${state.padEnd(28)} ${size}  ${label}${ping}`;
+}
+
+/** The weights landed but the projector did not: usable text-only, retryable. */
+export function describeProjectorSkipped(
+  modelId: string,
+  error: string,
+): string {
+  return (
+    `note: projector download failed (${error}) — ${modelId} is usable text-only; ` +
+    `'models pull --mmproj ${modelId}' retries the projector\n`
+  );
 }
 
 /**
@@ -166,9 +198,7 @@ export async function runLocalModelsDownloads(args: string[]): Promise<number> {
     process.stdout.write("no background downloads\n");
     return 0;
   }
-  process.stdout.write(
-    `${"JOB".padEnd(40)} ${"STATE".padEnd(28)} PROGRESS\n`,
-  );
+  process.stdout.write(`${"JOB".padEnd(40)} ${"STATE".padEnd(28)} PROGRESS\n`);
   for (const job of jobs) {
     process.stdout.write(
       `${describeDownloadJob(job, Date.now(), readDownloadNotify(dataDir, job.id))}\n`,
@@ -188,7 +218,10 @@ function findJob(dataDir: string, ref: string): DownloadJob | null {
   );
 }
 
-async function cancelDownload(dataDir: string, ref: string | undefined): Promise<number> {
+async function cancelDownload(
+  dataDir: string,
+  ref: string | undefined,
+): Promise<number> {
   if (!ref) {
     process.stderr.write("usage: models downloads cancel <job-or-model-id>\n");
     return 2;
@@ -210,7 +243,9 @@ async function cancelDownload(dataDir: string, ref: string | undefined): Promise
       );
       return 1;
     case "still-running":
-      process.stderr.write(`sent stop to pid ${job.pid}, but it is still running\n`);
+      process.stderr.write(
+        `sent stop to pid ${job.pid}, but it is still running\n`,
+      );
       return 1;
     default:
       process.stdout.write(
@@ -256,18 +291,31 @@ export async function followDownloadJob(
         job.totalBytes,
       );
       if (tty) process.stderr.write(`\r${line.padEnd(79)}`);
-      else if (job.percent !== lastPercent && (job.percent % 5 === 0 || job.status !== "running")) {
+      else if (
+        job.percent !== lastPercent &&
+        (job.percent % 5 === 0 || job.status !== "running")
+      ) {
         process.stderr.write(`${line}\n`);
       }
       lastPercent = job.percent;
       const wait = describeDownloadWait(job);
       if (wait !== lastWait) {
-        if (wait) process.stderr.write(`${tty ? "\n" : ""}${wait} — the partial file is kept\n`);
+        if (wait)
+          process.stderr.write(
+            `${tty ? "\n" : ""}${wait} — the partial file is kept\n`,
+          );
         lastWait = wait;
       }
       if (job.status !== "running") {
         if (tty) process.stderr.write("\n");
-        if (job.status === "done") return 0;
+        if (job.status === "done") {
+          if (job.mmprojError) {
+            process.stderr.write(
+              describeProjectorSkipped(job.modelId, job.mmprojError),
+            );
+          }
+          return 0;
+        }
         process.stderr.write(
           job.status === "failed"
             ? `background download failed: ${job.error ?? "unknown error"}${job.resumable ? ` — partial kept; run 'models pull ${job.modelId}' or relaunch the app to resume` : ""}\n`
