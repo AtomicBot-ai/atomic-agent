@@ -51,4 +51,9 @@ describe("cloud provider factories", () => {
     const f = factories.find((x) => x.kind === kind);
     expect(f!.body).toContain("extraBody: entry.extraBody");
   });
+
+  it.each(openAiShaped)("%s forwards strictTools", (kind) => {
+    const f = factories.find((x) => x.kind === kind);
+    expect(f!.body).toContain("strictTools: entry.strictTools");
+  });
 });
