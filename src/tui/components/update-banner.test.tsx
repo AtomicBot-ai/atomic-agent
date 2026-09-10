@@ -7,7 +7,9 @@ const strip = (s: string): string => s.replace(/\u001b\[[0-9;]*m/g, "");
 
 describe("UpdateBanner", () => {
   it("says the whole sentence when the row has room", () => {
-    const view = render(<UpdateBanner latest="9.9.9" phase="offer" budget={60} />);
+    const view = render(
+      <UpdateBanner latest="9.9.9" phase="offer" budget={60} />,
+    );
     const frame = strip(view.lastFrame() ?? "");
     expect(frame).toContain("new version v9.9.9 available");
     expect(frame).toContain("Update");
@@ -15,21 +17,27 @@ describe("UpdateBanner", () => {
 
   it("sheds the sentence, then the version, as the row fills up", () => {
     const medium = strip(
-      render(<UpdateBanner latest="9.9.9" phase="offer" budget={20} />).lastFrame() ?? "",
+      render(
+        <UpdateBanner latest="9.9.9" phase="offer" budget={20} />,
+      ).lastFrame() ?? "",
     );
     expect(medium).toContain("v9.9.9");
     expect(medium).not.toContain("new version");
     expect(medium).toContain("Update");
 
     const tight = strip(
-      render(<UpdateBanner latest="9.9.9" phase="offer" budget={9} />).lastFrame() ?? "",
+      render(
+        <UpdateBanner latest="9.9.9" phase="offer" budget={9} />,
+      ).lastFrame() ?? "",
     );
     expect(tight).toContain("Update");
     expect(tight).not.toContain("9.9.9");
   });
 
   it("disappears rather than wrapping the one-row bar", () => {
-    const view = render(<UpdateBanner latest="9.9.9" phase="offer" budget={5} />);
+    const view = render(
+      <UpdateBanner latest="9.9.9" phase="offer" budget={5} />,
+    );
     expect(strip(view.lastFrame() ?? "").trim()).toBe("");
   });
 

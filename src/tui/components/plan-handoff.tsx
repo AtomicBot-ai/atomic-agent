@@ -122,11 +122,7 @@ function ExecuteButton({
   );
 }
 
-function DismissButton({
-  onDismiss,
-}: {
-  onDismiss: () => void;
-}): ReactElement {
+function DismissButton({ onDismiss }: { onDismiss: () => void }): ReactElement {
   const face = (
     <Text
       backgroundColor={theme.colors.badgeBackground}

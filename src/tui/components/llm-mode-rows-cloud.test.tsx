@@ -77,9 +77,13 @@ describe("CloudRows inline model section", () => {
     const lines = frame.split("\n").map((line) => line.trimEnd());
     const providersIdx = lines.findIndex((l) => l.includes("Cloud providers"));
     const headerIdx = lines.findIndex((l) => l.includes("Cloud text models"));
-    const providerLineIdx = lines.findIndex((l) => l.startsWith("provider: nous"));
+    const providerLineIdx = lines.findIndex((l) =>
+      l.startsWith("provider: nous"),
+    );
     const filterLineIdx = lines.findIndex((l) => l.startsWith("filter:"));
-    const embeddingsIdx = lines.findIndex((l) => l.includes("Cloud embeddings"));
+    const embeddingsIdx = lines.findIndex((l) =>
+      l.includes("Cloud embeddings"),
+    );
     expect(providersIdx).toBeGreaterThanOrEqual(0);
     expect(headerIdx).toBeGreaterThan(providersIdx);
     expect(providerLineIdx).toBe(headerIdx + 1);
@@ -88,8 +92,9 @@ describe("CloudRows inline model section", () => {
   });
 
   it("windows 354 models to exactly 12 visible rows with the (n/N) counter", async () => {
-    const models = Array.from({ length: 354 }, (_, i) =>
-      `m-${String(i).padStart(3, "0")}`,
+    const models = Array.from(
+      { length: 354 },
+      (_, i) => `m-${String(i).padStart(3, "0")}`,
     );
     await seedCompatCache("https://render354.nous.example", models);
     const state = cloudState([
@@ -111,7 +116,11 @@ describe("CloudRows inline model section", () => {
     ]);
     const state = cloudState(
       [compatProvider({ baseUrl: "https://renderfilter.nous.example" })],
-      { cloudModelFilter: "m-0", cloudModelFilterFocused: true, cloudCursor: 1 },
+      {
+        cloudModelFilter: "m-0",
+        cloudModelFilterFocused: true,
+        cloudCursor: 1,
+      },
     );
     const frame = renderRows(state, 30);
     expect(frame).toContain("filter: m-0");
@@ -242,7 +251,9 @@ describe("CloudRows empty provider list", () => {
   // is the only thing telling them what to do.
   it("tells the user how to add a provider when none are configured", () => {
     const frame = renderRows(cloudState([]), 30);
-    expect(frame).toContain("No cloud providers configured. Press n to add one.");
+    expect(frame).toContain(
+      "No cloud providers configured. Press n to add one.",
+    );
   });
 
   it("drops the hint once a provider exists", async () => {

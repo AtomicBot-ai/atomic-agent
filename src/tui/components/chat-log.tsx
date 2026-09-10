@@ -3,24 +3,23 @@ import { useEffect, useRef, useState, type ReactElement } from "react";
 import { useTerminalSize } from "../hooks/use-terminal-size.js";
 import { computeChatViewportRows } from "../layout.js";
 import type { TuiAction } from "../tui-action.js";
-import type { ChatMessage, TuiState } from "../tui-state.js";
+import type { TuiState } from "../tui-state.js";
 import { theme } from "../theme/theme.js";
 import { AssistantBubble } from "./assistant-bubble.js";
+import { selectComposerBackend } from "../composer-switch/composer-backend-selectors.js";
+import {
+  FinalisedMessage,
+  isVisibleToolCard,
+} from "./chat-finalised-message.js";
 import type { CodingMode } from "../coding-mode.js";
-import { ChatCopyButton } from "./chat-copy-button.js";
-import { ChatLinkButtons } from "./chat-link-buttons.js";
-import { PlanHandoff } from "./plan-handoff.js";
-import { ChatTryAgainButton } from "./chat-try-again-button.js";
 import {
   estimateMessageHeight,
   estimateStreamingTailHeight,
 } from "./chat-message-height.js";
 import { ReasoningBubble } from "./reasoning-bubble.js";
 import { SplashBanner } from "./splash-banner.js";
-import { SystemBubble } from "./system-bubble.js";
 import { ThinkingIndicator } from "./thinking-indicator.js";
 import { ToolCard } from "./tool-card.js";
-import { UserBubble } from "./user-bubble.js";
 
 interface ChatLogProps {
   state: TuiState;
@@ -40,18 +39,6 @@ interface ChatLogProps {
    * may omit this — the visual clamp on its own is enough.
    */
   dispatch?: (action: TuiAction) => void;
-}
-
-/**
- * Tools whose only "output" is the assistant reply itself. Their tool
- * cards duplicate the `AssistantBubble` body verbatim and add zero
- * information — hide them from the chat surface. The full-fidelity
- * trace still records them.
- */
-const HIDDEN_TOOL_NAMES: ReadonlySet<string> = new Set(["reply"]);
-
-function isVisibleToolCard(card: { tool: string }): boolean {
-  return !HIDDEN_TOOL_NAMES.has(card.tool);
 }
 
 /**
@@ -150,6 +137,9 @@ export function ChatLog({
     );
   }
   const stickyBottom = offset === 0;
+  // The Fusion tint on the bubbles — the same answer the composer's
+  // backend control gives, so the two halves of the chat zone agree.
+  const fusion = selectComposerBackend(state) === "fusion";
   return (
     <Box
       flexDirection="column"
@@ -166,6 +156,7 @@ export function ChatLog({
               key={message.id}
               message={message}
               toolsExpandedById={state.toolsExpandedById}
+              fusion={fusion}
               // The plan's own buttons, under the plan. Only the last
               // message can carry them: the offer is about the newest
               // plan, and an older one further up the log would be an
@@ -181,7 +172,9 @@ export function ChatLog({
               }
             />
           ))}
-          {hasStreamingTail ? <StreamingTail state={state} /> : null}
+          {hasStreamingTail ? (
+            <StreamingTail state={state} fusion={fusion} />
+          ) : null}
           {showIndicator ? <ThinkingIndicator state={state} /> : null}
         </Box>
       </Box>
@@ -190,104 +183,13 @@ export function ChatLog({
   );
 }
 
-interface FinalisedMessageProps {
-  message: ChatMessage;
-  toolsExpandedById: Readonly<Record<string, boolean>>;
-  /** Present only on the message that *is* the plan. */
-  planHandoff: {
-    onExecute: (mode: CodingMode) => void;
-    onDismiss: () => void;
-  } | null;
-}
-
-function FinalisedMessage({
-  message,
-  toolsExpandedById,
-  planHandoff,
-}: FinalisedMessageProps): ReactElement {
-  if (message.role === "user") {
-    return (
-      <Box flexDirection="column">
-        <UserBubble text={message.text} />
-        <Box flexDirection="row">
-          <ChatCopyButton text={message.text} />
-          <ChatTryAgainButton text={message.text} />
-          <ChatLinkButtons text={message.text} />
-        </Box>
-      </Box>
-    );
-  }
-  if (message.role === "assistant") {
-    return (
-      <Box flexDirection="column">
-        {message.reasoningBlocks && message.reasoningBlocks.length > 0 ? (
-          <ReasoningBubble
-            blocks={message.reasoningBlocks}
-            expanded={false}
-          />
-        ) : null}
-        {message.toolCards && message.toolCards.length > 0 ? (
-          (() => {
-            const visible = message.toolCards.filter(isVisibleToolCard);
-            if (visible.length === 0) return null;
-            return (
-              <Box flexDirection="column" marginLeft={2}>
-                {visible.map((card) => (
-                  <ToolCard
-                    key={card.id}
-                    card={card}
-                    expanded={toolsExpandedById[card.id] ?? false}
-                  />
-                ))}
-              </Box>
-            );
-          })()
-        ) : null}
-        <AssistantBubble
-          text={message.text}
-          toolSteps={message.toolSteps ?? 0}
-          {...(message.attachments ? { attachments: message.attachments } : {})}
-        />
-        {/* Link chips ride the copy row on user and assistant messages
-            only: those carry the URLs someone means to follow. System
-            bubbles are TUI runtime output, and their occasional URL is
-            documentation, not a destination. */}
-        <Box flexDirection="row">
-          <ChatCopyButton text={message.text} />
-          <ChatLinkButtons text={message.text} />
-        </Box>
-        {planHandoff ? (
-          <PlanHandoff
-            onExecute={planHandoff.onExecute}
-            onDismiss={planHandoff.onDismiss}
-          />
-        ) : null}
-      </Box>
-    );
-  }
-  return (
-    <Box flexDirection="column">
-      <SystemBubble
-        text={message.text}
-        warn={message.variant === "warn"}
-      />
-      <Box flexDirection="row">
-        <ChatCopyButton text={message.text} />
-        {/*
-          Only the abort notice sets `retryText`, and the button resends
-          THAT — the stopped turn's user prompt — not the notice's own
-          text. Same shared footer row as every other role, so
-          `estimateMessageHeight` stays role-blind.
-        */}
-        {message.retryText !== undefined ? (
-          <ChatTryAgainButton text={message.retryText} />
-        ) : null}
-      </Box>
-    </Box>
-  );
-}
-
-function StreamingTail({ state }: { state: TuiState }): ReactElement | null {
+function StreamingTail({
+  state,
+  fusion,
+}: {
+  state: TuiState;
+  fusion: boolean;
+}): ReactElement | null {
   const hasStreaming =
     state.streamingAssistantText !== null ||
     state.streamingToolCalls.length > 0 ||
@@ -324,7 +226,11 @@ function StreamingTail({ state }: { state: TuiState }): ReactElement | null {
         ))}
       </Box>
       {state.streamingAssistantText !== null ? (
-        <AssistantBubble text={state.streamingAssistantText} streaming />
+        <AssistantBubble
+          text={state.streamingAssistantText}
+          streaming
+          fusion={fusion}
+        />
       ) : null}
     </Box>
   );
@@ -334,7 +240,8 @@ function ScrollHint({ offset }: { offset: number }): ReactElement {
   return (
     <Box marginTop={1}>
       <Text color={theme.colors.muted} dimColor>
-        ↑ scrolled up {offset} line{offset === 1 ? "" : "s"} — Esc to jump to latest
+        ↑ scrolled up {offset} line{offset === 1 ? "" : "s"} — Esc to jump to
+        latest
       </Text>
     </Box>
   );

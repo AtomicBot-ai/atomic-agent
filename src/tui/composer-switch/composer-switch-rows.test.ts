@@ -2,12 +2,20 @@ import { describe, expect, it } from "vitest";
 
 import { fakeSession } from "../test-fixtures.js";
 import { createInitialTuiState, type TuiState } from "../tui-state.js";
-import { cloudState, localModelDef, localState } from "./composer-switch-fixtures.js";
 import {
-  initialComposerSwitchCursor,
   selectComposerBackend,
   selectComposerBackendMeta,
   selectComposerNeedsModelDownload,
+} from "./composer-backend-selectors.js";
+import {
+  cloudState,
+  fusionState,
+  localModelDef,
+  localState,
+} from "./composer-switch-fixtures.js";
+import {
+  backendSwitchRow,
+  initialComposerSwitchCursor,
   selectComposerSwitchRows,
 } from "./composer-switch-rows.js";
 
@@ -24,6 +32,14 @@ describe("which backend the route is on", () => {
       "nothing configured at all",
       () => createInitialTuiState(fakeSession()),
       "custom",
+    ],
+    // The resolver's answer, not the rows': the active provider under
+    // fusion is a cloud one, and the rows alone would say `cloud`.
+    ["an effective fusion", () => fusionState(), "fusion"],
+    [
+      "a stored fusion that is not effective",
+      () => fusionState({ effective: "cloud" }),
+      "cloud",
     ],
   ];
   for (const [name, build, expected] of cases) {
@@ -57,15 +73,57 @@ describe("the backend control's dot", () => {
   it("does not invent a fault for a cloud route", () => {
     expect(selectComposerBackendMeta(cloudState()).status).toBe("healthy");
   });
+
+  it("carries the worker daemon's probe on the fusion route", () => {
+    const base = fusionState();
+    expect(selectComposerBackendMeta(base)).toEqual({ kind: "fusion", status: "unknown" });
+    const probed = {
+      ...base,
+      llmHealth: { ...base.llmHealth, localConfigured: true, status: "healthy" as const },
+    };
+    expect(selectComposerBackendMeta(probed)).toEqual({ kind: "fusion", status: "healthy" });
+  });
 });
 
 describe("the switch rows", () => {
-  it("offers exactly cloud, local and custom, marking the live one", () => {
+  it("offers cloud, local, custom and fusion — fusion last — marking the live one", () => {
     const rows = selectComposerSwitchRows(localState("external"), "backend");
-    expect(rows.map((row) => row.label)).toEqual(["cloud", "local", "custom"]);
+    expect(rows.map((row) => row.label)).toEqual(["cloud", "local", "custom", "fusion"]);
     expect(rows.filter((row) => row.active).map((row) => row.label)).toEqual([
       "custom",
     ]);
+    expect(rows.at(-1)?.emphasis).toBe("fusion");
+  });
+
+  it("marks fusion live and says what it is made of", () => {
+    const rows = selectComposerSwitchRows(fusionState({ workers: 3 }), "backend");
+    const fusion = rows.find((row) => row.label === "fusion");
+    expect(fusion?.active).toBe(true);
+    expect(fusion?.detail).toBe("cloud plans · 3 local workers");
+    expect(rows.filter((row) => row.active)).toHaveLength(1);
+  });
+
+  it("puts the pre-flight blocker in the fusion row's detail column", () => {
+    const rows = selectComposerSwitchRows(localState("managed"), "backend");
+    expect(rows.find((row) => row.label === "fusion")?.detail).toMatch(
+      /needs a cloud provider with a key/,
+    );
+  });
+
+  it("hands `/runmode <mode>` the very row the popup lists", () => {
+    const state = fusionState();
+    expect(backendSwitchRow(state, "fusion")).toEqual(
+      selectComposerSwitchRows(state, "backend").find((row) => row.label === "fusion"),
+    );
+    expect(backendSwitchRow(state, "local").intent).toEqual({ kind: "backend", backend: "local" });
+  });
+
+  it("lists the orchestrator's cloud models as the model rows under fusion", () => {
+    const fusion = selectComposerSwitchRows(fusionState(), "model").map((row) => row.label);
+    const cloud = selectComposerSwitchRows(cloudState(), "model").map((row) => row.label);
+    expect(fusion.length).toBeGreaterThan(0);
+    expect(fusion).toEqual(cloud);
+    expect(fusion).not.toContain("Download more models…");
   });
 
   it("lists the configured providers and an entry that adds one", () => {

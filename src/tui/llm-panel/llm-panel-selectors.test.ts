@@ -130,6 +130,111 @@ describe("llm-panel selectors", () => {
     });
   });
 
+  it("names both legs, orchestrator first, on an effective fusion", () => {
+    const base = createInitialTuiState(fakeSession());
+    const state = {
+      ...base,
+      localModelsPanel: {
+        ...base.localModelsPanel,
+        configMode: "managed" as const,
+        activeModelId: "qwen-3.5-4b" as LocalModelDef["id"],
+      },
+      providersPanel: {
+        ...base.providersPanel,
+        runMode: {
+          stored: "fusion" as const,
+          effective: "fusion" as const,
+          orchestratorProviderId: "openrouter",
+          orchestratorModel: null,
+          workerProviderId: "local-llama",
+          workerModel: null,
+          workers: 2,
+          workerMaxSteps: 40,
+          workerTimeoutMs: 600_000,
+          primaryProviderId: "openrouter",
+          degraded: null,
+        },
+        rows: [
+          {
+            id: "openrouter",
+            kind: "openrouter",
+            isActiveText: true,
+            isActiveEmbedding: false,
+            hasApiKey: true,
+            baseUrl: null,
+            subscriptionCli: null,
+            chatModel: "openai/gpt-4o-mini",
+            embeddingModel: null,
+          },
+        ],
+      },
+    };
+    expect(selectPromptLlmMeta(state)).toEqual({
+      model: "openai/gpt-4o-mini ⇄ qwen-3.5-4b",
+      provider: "openrouter",
+    });
+  });
+
+  it("labels each fusion leg from its own provider, not from a stale active row", () => {
+    const base = createInitialTuiState(fakeSession());
+    const state = {
+      ...base,
+      localModelsPanel: {
+        ...base.localModelsPanel,
+        configMode: "managed" as const,
+        activeModelId: "qwen-3.5-4b" as LocalModelDef["id"],
+      },
+      providersPanel: {
+        ...base.providersPanel,
+        runMode: {
+          stored: "fusion" as const,
+          effective: "fusion" as const,
+          orchestratorProviderId: "openrouter",
+          orchestratorModel: null,
+          workerProviderId: "local-llama",
+          workerModel: null,
+          workers: 2,
+          workerMaxSteps: 40,
+          workerTimeoutMs: 600_000,
+          primaryProviderId: "openrouter",
+          degraded: null,
+        },
+        // The mirror lands one refresh behind the config write, so the
+        // local entry can still be flagged active right after a switch.
+        // Reading the orchestrator label off it put a local model in
+        // both slots.
+        rows: [
+          {
+            id: "local-llama",
+            kind: "llama-server",
+            isActiveText: true,
+            isActiveEmbedding: false,
+            hasApiKey: false,
+            baseUrl: null,
+            subscriptionCli: null,
+            chatModel: null,
+            embeddingModel: null,
+          },
+          {
+            id: "openrouter",
+            kind: "openrouter",
+            isActiveText: false,
+            isActiveEmbedding: false,
+            hasApiKey: true,
+            baseUrl: null,
+            subscriptionCli: null,
+            chatModel: "openai/gpt-4o-mini",
+            embeddingModel: null,
+          },
+        ],
+      },
+    };
+    expect(selectPromptLlmMeta(state)).toEqual({
+      model: "openai/gpt-4o-mini ⇄ qwen-3.5-4b",
+      provider: "openrouter",
+    });
+  });
+
   it("shows the picked catalog id, not the GGUF name, on managed local", () => {
     const base = createInitialTuiState(fakeSession());
     const state = {

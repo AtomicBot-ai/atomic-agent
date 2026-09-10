@@ -31,6 +31,7 @@ import { theme } from "../theme/theme.js";
 export function CodingModeChip({
   mode,
   layer,
+  fusion = false,
 }: {
   mode: CodingMode;
   /**
@@ -39,11 +40,19 @@ export function CodingModeChip({
    * base layer — otherwise a covered chat control could win the click.
    */
   layer?: number;
+  /** Take the neutral tone from the Fusion surface, not the app accent. */
+  fusion?: boolean;
 }): ReactElement {
   const look = codingModeLook(mode);
   const background =
     look.tone === "accent"
-      ? theme.colors.accent
+      ? // The neutral tone follows the surface it sits on: the app accent
+        // is blue, and one blue chip on the Fusion bar was the last thing
+        // still saying "ordinary composer". The other three tones mean
+        // something (permitted / caution / danger) and keep their hues.
+        fusion
+        ? theme.colors.warnStrong
+        : theme.colors.accent
       : look.tone === "success"
         ? theme.colors.success
         : look.tone === "warn"

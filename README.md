@@ -290,6 +290,30 @@ A cloud key is checked before it is saved. The key screen refuses an empty key, 
 </details>
 
 <details>
+<summary><b>Run modes: Local · Cloud · Fusion</b></summary>
+
+`local` and `cloud` are the two routes the composer always offered. **Fusion** adds a third: a cloud model orchestrates and several local llama-server workers execute the parts it delegates, so cloud tokens pay only for the heavy thinking. The block is additive and `llm.activeTextProvider` stays authoritative:
+
+```json
+"llm": {
+  "activeTextProvider": "openrouter",
+  "runMode": {
+    "mode": "fusion",
+    "fusion": { "orchestratorProvider": "openrouter", "workerProvider": "local-llama", "workers": 3 }
+  }
+},
+"localModels": { "managed": { "parallel": 3 } }
+```
+
+`workers` (1..8) caps how many workers run at once; `localModels.managed.parallel` is the llama-server `--parallel` slot count that lets them actually run concurrently (default 2, applied on the next daemon start). The orchestrator model is the provider's `defaultChatModel`; the worker model is the one the managed daemon serves.
+
+In the TUI, fusion is the last row of the composer's **Where it runs** switch (`ctrl+r`, or click the backend word): it needs a cloud provider with a key and a downloaded local model, and says which one is missing otherwise. While it is on, the backend word is an orange chip and the composer and the chat bubbles take the same tint. `/runmode local|cloud|fusion` and `ctrl+g 1/2/3` pick a mode from the keyboard; `/runmode status` says what the mode resolves to.
+
+On the fusion route the strip gains a fourth control, **Workers** (`→` past the model, or click the worker count): it picks the local model the workers run and how many run at once, and `/runmode workers N` does the same from the keyboard. The provider and model controls address the cloud orchestrator; the worker count also sets `localModels.managed.parallel`, so restart the local daemon to apply it.
+
+</details>
+
+<details>
 <summary><b>Managed local models</b></summary>
 
 The CLI can manage a paired `llama.cpp` setup for chat and embeddings:

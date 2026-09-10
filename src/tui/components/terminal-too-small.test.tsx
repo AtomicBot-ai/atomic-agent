@@ -46,9 +46,16 @@ describe("TerminalTooSmall", () => {
       </Box>,
     );
     const rendered = lines(lastFrame() ?? "");
-    const widest = rendered.reduce((acc, line) => Math.max(acc, line.length), 0);
-    expect(widest, `overflowed ${columns} columns`).toBeLessThanOrEqual(columns);
-    expect(rendered.length, `overflowed ${rows} rows`).toBeLessThanOrEqual(rows);
+    const widest = rendered.reduce(
+      (acc, line) => Math.max(acc, line.length),
+      0,
+    );
+    expect(widest, `overflowed ${columns} columns`).toBeLessThanOrEqual(
+      columns,
+    );
+    expect(rendered.length, `overflowed ${rows} rows`).toBeLessThanOrEqual(
+      rows,
+    );
   });
 
   it("says what is needed and what there is", () => {
@@ -59,7 +66,9 @@ describe("TerminalTooSmall", () => {
     );
     const body = lines(lastFrame() ?? "").join("\n");
     expect(body).toContain("terminal too small");
-    expect(body).toContain(`needs ${MIN_TERMINAL_COLUMNS}x${MIN_TERMINAL_ROWS}`);
+    expect(body).toContain(
+      `needs ${MIN_TERMINAL_COLUMNS}x${MIN_TERMINAL_ROWS}`,
+    );
     expect(body).toContain("this one is 30x10");
   });
 

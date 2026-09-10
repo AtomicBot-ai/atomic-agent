@@ -3,8 +3,15 @@ import type { ReactElement } from "react";
 import { PasteFieldTarget } from "../context-menu/paste-field-target.js";
 import { pasteIntoCloudModelFilter } from "../llm-panel/llm-panel-paste.js";
 import { selectCloudModelSection } from "../llm-panel/llm-panel-row-builders.js";
-import { activeCursor, selectLlmPanelRows, type LlmPanelRow } from "../llm-panel/llm-panel-selectors.js";
-import { classifyRamFit, classifyVramFit } from "../local-models/local-models-panel-state.js";
+import {
+  activeCursor,
+  selectLlmPanelRows,
+  type LlmPanelRow,
+} from "../llm-panel/llm-panel-selectors.js";
+import {
+  classifyRamFit,
+  classifyVramFit,
+} from "../local-models/local-models-panel-state.js";
 import { computeRowWindow } from "../row-window.js";
 import { MouseListRow, pressEnter } from "../mouse/mouse-list-row.js";
 import { handleLlmPanelKey } from "../llm-panel/llm-panel-key-bindings.js";
@@ -44,7 +51,8 @@ export function LlmModeRows({
   if (fullViewHeight > maxRows) {
     return <WindowedRows rows={rows} state={state} maxRows={maxRows} />;
   }
-  if (state.llmPanel.mode === "local") return <LocalRows rows={rows} state={state} />;
+  if (state.llmPanel.mode === "local")
+    return <LocalRows rows={rows} state={state} />;
   return <ExternalRows rows={rows} state={state} />;
 }
 
@@ -139,11 +147,17 @@ function LocalRows({
   state: TuiState;
 }): ReactElement {
   const textRows = rows.filter((row) => row.kind === "localTextModel");
-  const embeddingRows = rows.filter((row) => row.kind === "localEmbeddingModel");
+  const embeddingRows = rows.filter(
+    (row) => row.kind === "localEmbeddingModel",
+  );
   return (
     <Box flexDirection="column">
       <RowsSection title="Local text models" rows={textRows} state={state} />
-      <RowsSection title="Local embeddings" rows={embeddingRows} state={state} />
+      <RowsSection
+        title="Local embeddings"
+        rows={embeddingRows}
+        state={state}
+      />
     </Box>
   );
 }
@@ -172,7 +186,9 @@ function CloudRows({
 }): ReactElement {
   const providerRows = rows.filter((row) => row.kind === "cloudProvider");
   const textRows = rows.filter((row) => row.kind === "cloudChatModel");
-  const embeddingRows = rows.filter((row) => row.kind === "cloudEmbeddingModel");
+  const embeddingRows = rows.filter(
+    (row) => row.kind === "cloudEmbeddingModel",
+  );
   const section = selectCloudModelSection(state);
   const filter = state.llmPanel.cloudModelFilter;
   const filterFocused = state.llmPanel.cloudModelFilterFocused;
@@ -254,7 +270,7 @@ function CloudRows({
           {" · p cycles free/paid/all"}
         </Text>
         {section.status === "loading" ? (
-          <Text color={theme.colors.muted}>  fetching model list…</Text>
+          <Text color={theme.colors.muted}> fetching model list…</Text>
         ) : null}
         {section.status === "error" ? (
           <Text color={theme.colors.error}>
@@ -270,7 +286,11 @@ function CloudRows({
           {filterFocused ? " · type to filter · Enter select · Esc done" : ""}
         </Text>
       </Box>
-      <RowsSection title="Cloud embeddings" rows={embeddingRows} state={state} />
+      <RowsSection
+        title="Cloud embeddings"
+        rows={embeddingRows}
+        state={state}
+      />
     </Box>
   );
 }
@@ -341,7 +361,13 @@ function RowsSection({
   );
 }
 
-function Row({ row, state }: { row: LlmPanelRow; state: TuiState }): ReactElement {
+function Row({
+  row,
+  state,
+}: {
+  row: LlmPanelRow;
+  state: TuiState;
+}): ReactElement {
   const rows = selectLlmPanelRows(state);
   const idx = rows.findIndex((candidate) => candidate.id === row.id);
   const selected = idx === activeCursor(state);
@@ -430,9 +456,12 @@ function externalStatus(active: boolean, state: TuiState): string {
   return latencyMs === null ? status : `${status} · ${latencyMs}ms`;
 }
 
-function localModelStatus(model: Extract<LlmPanelRow, { kind: "localTextModel" }>["model"]): string {
+function localModelStatus(
+  model: Extract<LlmPanelRow, { kind: "localTextModel" }>["model"],
+): string {
   if (!model.downloaded) return "remote";
-  if (model.def.supportsVision && model.mmprojStatus === "missing") return "gguf, mmproj missing";
+  if (model.def.supportsVision && model.mmprojStatus === "missing")
+    return "gguf, mmproj missing";
   if (model.def.supportsVision) return "gguf+mmproj";
   return "downloaded";
 }
@@ -448,4 +477,3 @@ function formatDaemon(state: TuiState): string {
   }
   return `pid ${panel.daemon.pid} health unreachable`;
 }
-

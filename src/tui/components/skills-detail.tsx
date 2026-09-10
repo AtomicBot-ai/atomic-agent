@@ -49,18 +49,13 @@ export function SkillsDetail(props: SkillsDetailProps): ReactElement {
         {renderBody(panel.detailBody, maxBodyLines)}
       </Box>
       <Box marginTop={1}>
-        <Text color={theme.colors.muted}>
-          Esc back · e toggle · r refresh
-        </Text>
+        <Text color={theme.colors.muted}>Esc back · e toggle · r refresh</Text>
       </Box>
     </Box>
   );
 }
 
-function renderBody(
-  body: string | null,
-  maxLines: number,
-): ReactElement {
+function renderBody(body: string | null, maxLines: number): ReactElement {
   if (body === null) {
     return <Text color={theme.colors.muted}>(loading…)</Text>;
   }
@@ -74,7 +69,8 @@ function renderBody(
       ))}
       {truncated ? (
         <Text color={theme.colors.muted}>
-          … ({lines.length - maxLines} more line{lines.length - maxLines === 1 ? "" : "s"} hidden)
+          … ({lines.length - maxLines} more line
+          {lines.length - maxLines === 1 ? "" : "s"} hidden)
         </Text>
       ) : null}
     </Box>

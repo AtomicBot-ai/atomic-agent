@@ -149,7 +149,9 @@ describe("the add-provider wizard fits the terminal", () => {
       const { lastFrame } = render(
         <LlmPanel state={stateWithWizard()} maxRows={budget} />,
       );
-      expect((lastFrame() ?? "").split("\n").length).toBeLessThanOrEqual(budget);
+      expect((lastFrame() ?? "").split("\n").length).toBeLessThanOrEqual(
+        budget,
+      );
     });
   }
 
@@ -237,7 +239,11 @@ describe("the status line's pane routing", () => {
   it("shows an external-save verdict, unprefixed, on the External pane", () => {
     const { lastFrame } = render(
       <LlmPanel
-        state={stateWithStatus("external", "external", "probing http://10.0.0.5:8080…")}
+        state={stateWithStatus(
+          "external",
+          "external",
+          "probing http://10.0.0.5:8080…",
+        )}
         maxRows={30}
       />,
     );
@@ -255,16 +261,24 @@ describe("the status line's pane routing", () => {
         maxRows={30}
       />,
     );
-    expect(stripAnsi(lastFrame() ?? "")).not.toContain("updating model catalog");
+    expect(stripAnsi(lastFrame() ?? "")).not.toContain(
+      "updating model catalog",
+    );
   });
 
   it("keeps an external verdict off the cloud pane's prefixed slot", () => {
     const { lastFrame } = render(
       <LlmPanel
-        state={stateWithStatus("cloud", "external", "probing http://10.0.0.5:8080…")}
+        state={stateWithStatus(
+          "cloud",
+          "external",
+          "probing http://10.0.0.5:8080…",
+        )}
         maxRows={30}
       />,
     );
-    expect(stripAnsi(lastFrame() ?? "")).not.toContain("probing http://10.0.0.5:8080…");
+    expect(stripAnsi(lastFrame() ?? "")).not.toContain(
+      "probing http://10.0.0.5:8080…",
+    );
   });
 });

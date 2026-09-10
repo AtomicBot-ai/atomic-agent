@@ -878,6 +878,29 @@ describe("parseUserConfigFile", () => {
     expect(parsed.localModels.managed.tensorSplit).toEqual([3, 1]);
   });
 
+  it("defaults localModels.managed.parallel to 2 (the pre-v52 hard-coded slot count)", () => {
+    expect(parseUserConfigFile({ version: USER_CONFIG_VERSION }).localModels.managed.parallel).toBe(2);
+    expect(USER_CONFIG_DEFAULTS.localModels.managed.parallel).toBe(2);
+  });
+
+  it("migrates a v51 file by filling localModels.managed.parallel=2", () => {
+    const parsed = parseUserConfigFile({ version: 51, localModels: { managed: { port: 19091 } } });
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(parsed.localModels.managed.parallel).toBe(2);
+  });
+
+  it("keeps an explicit localModels.managed.parallel and bounds it to 1..8", () => {
+    expect(
+      parseUserConfigFile({ version: USER_CONFIG_VERSION, localModels: { managed: { parallel: 4 } } })
+        .localModels.managed.parallel,
+    ).toBe(4);
+    for (const parallel of [0, 9, 2.5]) {
+      expect(() =>
+        parseUserConfigFile({ version: USER_CONFIG_VERSION, localModels: { managed: { parallel } } }),
+      ).toThrow(/localModels\.managed\.parallel/);
+    }
+  });
+
   it("accepts fractional ratios and zeros that skip a device", () => {
     const parsed = parseUserConfigFile({
       version: USER_CONFIG_VERSION,

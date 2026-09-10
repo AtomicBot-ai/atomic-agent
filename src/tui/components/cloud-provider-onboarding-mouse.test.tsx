@@ -127,7 +127,9 @@ describe("CloudProviderOnboarding mouse", () => {
     expect(row).toContain(`> ${second.label}`);
     // ...and nothing wizard-shaped leaked into the store's slice.
     expect(
-      view.actions.every((action) => action.type !== "providers_wizard_updated"),
+      view.actions.every(
+        (action) => action.type !== "providers_wizard_updated",
+      ),
     ).toBe(true);
     view.unmount();
   });
@@ -143,7 +145,9 @@ describe("CloudProviderOnboarding mouse", () => {
     // the proof the click reached this screen's own wizard.
     expect(view.frame()).not.toContain("LLM provider — add provider");
     expect(
-      view.actions.every((action) => action.type !== "providers_wizard_updated"),
+      view.actions.every(
+        (action) => action.type !== "providers_wizard_updated",
+      ),
     ).toBe(true);
     view.unmount();
   });

@@ -25,7 +25,9 @@ interface ThinkingIndicatorProps {
  * something is stuck. Self-cleans when `state.status` flips out of
  * `running` (renders `null`).
  */
-export function ThinkingIndicator({ state }: ThinkingIndicatorProps): ReactElement | null {
+export function ThinkingIndicator({
+  state,
+}: ThinkingIndicatorProps): ReactElement | null {
   const running = state.status === "running";
   const spinner = useSpinner(running);
   const elapsed = useElapsedSinceStart(state.runStartedAt, running);

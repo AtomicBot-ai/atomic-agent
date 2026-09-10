@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { reduceTuiState } from "../agent-event-reducer.js";
 import type { TuiAction } from "../tui-action.js";
 import type { TuiState } from "../tui-state.js";
-import { cloudState, localState } from "./composer-switch-fixtures.js";
+import { cloudState, fusionState, localState } from "./composer-switch-fixtures.js";
 import { handleComposerSwitchKey } from "./composer-switch-key-bindings.js";
 import type { ComposerSwitchRow } from "./composer-switch-rows.js";
 
@@ -87,7 +87,9 @@ describe("driving an open strip", () => {
     app.press("", { downArrow: true });
     app.press("", { downArrow: true });
     app.press("", { downArrow: true });
-    expect(app.at().composerSwitch?.cursor).toBe(2);
+    app.press("", { downArrow: true });
+    // Four backend rows (cloud, local, custom, fusion): clamps on the last.
+    expect(app.at().composerSwitch?.cursor).toBe(3);
   });
 
   it("←→ walk the three controls without closing", () => {
@@ -230,5 +232,31 @@ describe("the typed filter", () => {
       cursor: 0,
       filter: "",
     });
+  });
+});
+
+describe("the fusion route's fourth control", () => {
+  it("→ walks backend, provider, model, workers", () => {
+    const app = driver(fusionState());
+    app.press("r", { ctrl: true });
+    expect(app.at().composerSwitch?.kind).toBe("backend");
+    app.press("", { rightArrow: true });
+    expect(app.at().composerSwitch?.kind).toBe("provider");
+    app.press("", { rightArrow: true });
+    expect(app.at().composerSwitch?.kind).toBe("model");
+    app.press("", { rightArrow: true });
+    expect(app.at().composerSwitch?.kind).toBe("workers");
+    // Right-hand end: another → is a no-op, not a wrap.
+    app.press("", { rightArrow: true });
+    expect(app.at().composerSwitch?.kind).toBe("workers");
+    app.press("", { leftArrow: true });
+    expect(app.at().composerSwitch?.kind).toBe("model");
+  });
+
+  it("is unreachable off the fusion route", () => {
+    const app = driver(cloudState());
+    app.press("r", { ctrl: true });
+    for (let i = 0; i < 5; i += 1) app.press("", { rightArrow: true });
+    expect(app.at().composerSwitch?.kind).toBe("model");
   });
 });

@@ -24,7 +24,7 @@ import {
 } from "./reducer-helpers.js";
 import { reduceUiAction } from "./reduce-ui-actions.js";
 import { reduceComposerSwitchAction } from "./composer-switch/composer-switch-reducer.js";
-import { selectComposerBackend } from "./composer-switch/composer-switch-rows.js";
+import { selectComposerBackend } from "./composer-switch/composer-backend-selectors.js";
 import { reduceLocalModelsAction } from "./local-models/local-models-reducer.js";
 import { reduceTasksAction } from "./tasks/tasks-reducer.js";
 import { reduceSkillsAction } from "./skills/skills-reducer.js";
@@ -534,7 +534,11 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
           // llama-server entry under a custom id still earns the hint;
           // only a `cloud` route must not (the hint names the llama
           // URL). Rows land at TUI start via the providers refresh.
-          activeProviderIsLocal: selectComposerBackend(state) !== "cloud",
+          // Fusion's failing call is the cloud orchestrator's, so it is
+          // excluded for the same reason cloud is.
+          activeProviderIsLocal: !["cloud", "fusion"].includes(
+            selectComposerBackend(state),
+          ),
           llamaUrl: state.session.llamaUrl,
         },
       );

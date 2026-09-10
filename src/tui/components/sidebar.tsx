@@ -253,17 +253,19 @@ function RailBrand({
   sessionId: string | null;
 }): ReactElement {
   const art = RAIL_MARK;
-  const textWidth = Math.max(
-    0,
-    inner - MARK_COLUMNS - 1 - COLLAPSE_COLUMNS,
-  );
+  const textWidth = Math.max(0, inner - MARK_COLUMNS - 1 - COLLAPSE_COLUMNS);
   return (
     <Box flexDirection="column">
       <RailBlank />
       <Box>
         <Box flexDirection="column" flexShrink={0}>
           {art.map((row, idx) => (
-            <Text key={idx} color={theme.colors.railAccent} bold wrap="truncate">
+            <Text
+              key={idx}
+              color={theme.colors.railAccent}
+              bold
+              wrap="truncate"
+            >
               {row}
             </Text>
           ))}

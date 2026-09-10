@@ -16,7 +16,10 @@ function strip(value: string): string {
   return value.replace(/\[[0-9;]*m/g, "");
 }
 
-function link(providerId: string, over: Partial<FallbackLinkRow> = {}): FallbackLinkRow {
+function link(
+  providerId: string,
+  over: Partial<FallbackLinkRow> = {},
+): FallbackLinkRow {
   return {
     providerId,
     modelLabel: null,
@@ -27,7 +30,9 @@ function link(providerId: string, over: Partial<FallbackLinkRow> = {}): Fallback
   };
 }
 
-function fallbackState(patch: Partial<TuiState["fallbackPanel"]> = {}): TuiState {
+function fallbackState(
+  patch: Partial<TuiState["fallbackPanel"]> = {},
+): TuiState {
   const base = createInitialTuiState(fakeSession());
   return {
     ...base,
@@ -47,7 +52,9 @@ describe("FallbackRows", () => {
       addableProviderIds: ["cloud-c"],
       appendLocal: true,
     });
-    const { lastFrame } = render(<LlmModeRows rows={[]} state={state} maxRows={20} />);
+    const { lastFrame } = render(
+      <LlmModeRows rows={[]} state={state} maxRows={20} />,
+    );
     const out = strip(lastFrame() ?? "");
     expect(out).toContain("Fallback chain");
     // Order preserved with 1-based numbering.
@@ -64,7 +71,9 @@ describe("FallbackRows", () => {
 
   it("shows the empty-state hint when no chain is configured", () => {
     const state = fallbackState({ links: [], addableProviderIds: ["cloud-a"] });
-    const { lastFrame } = render(<LlmModeRows rows={[]} state={state} maxRows={20} />);
+    const { lastFrame } = render(
+      <LlmModeRows rows={[]} state={state} maxRows={20} />,
+    );
     const out = strip(lastFrame() ?? "");
     expect(out).toContain("No chain configured");
   });
@@ -74,7 +83,9 @@ describe("FallbackRows", () => {
     // or no chain — the renderer must agree, or the cursor sits on a row
     // the screen never drew and Enter looks like it does nothing.
     const state = fallbackState({ links: [], addableProviderIds: ["cloud-a"] });
-    const { lastFrame } = render(<LlmModeRows rows={[]} state={state} maxRows={20} />);
+    const { lastFrame } = render(
+      <LlmModeRows rows={[]} state={state} maxRows={20} />,
+    );
     const out = strip(lastFrame() ?? "");
     expect(out).toContain("+ add link");
     // Cursor 0 = the add row; it renders selected.
@@ -83,7 +94,9 @@ describe("FallbackRows", () => {
 
   it("renders neither hint marker nor add row when nothing is addable and no chain", () => {
     const state = fallbackState({ links: [], addableProviderIds: [] });
-    const { lastFrame } = render(<LlmModeRows rows={[]} state={state} maxRows={20} />);
+    const { lastFrame } = render(
+      <LlmModeRows rows={[]} state={state} maxRows={20} />,
+    );
     const out = strip(lastFrame() ?? "");
     expect(out).toContain("No chain configured");
     expect(out).not.toContain("+ add link");
@@ -92,9 +105,16 @@ describe("FallbackRows", () => {
   it("surfaces the last fallover as a live status line (no invented countdown)", () => {
     const state = fallbackState({
       links: [link("cloud-a", { isActive: true })],
-      lastSwitch: { direction: "away", from: "cloud-a", to: "cloud-b", reason: "429" },
+      lastSwitch: {
+        direction: "away",
+        from: "cloud-a",
+        to: "cloud-b",
+        reason: "429",
+      },
     });
-    const { lastFrame } = render(<LlmModeRows rows={[]} state={state} maxRows={20} />);
+    const { lastFrame } = render(
+      <LlmModeRows rows={[]} state={state} maxRows={20} />,
+    );
     const out = strip(lastFrame() ?? "");
     expect(out).toContain("failed over cloud-a");
     expect(out).toContain("cloud-b");
@@ -102,9 +122,15 @@ describe("FallbackRows", () => {
   });
 
   it("says on primary when nothing has failed over", () => {
-    const state = fallbackState({ links: [link("cloud-a", { isActive: true })] });
-    const { lastFrame } = render(<LlmModeRows rows={[]} state={state} maxRows={20} />);
-    expect(strip(lastFrame() ?? "")).toContain("on primary (no fallover this session)");
+    const state = fallbackState({
+      links: [link("cloud-a", { isActive: true })],
+    });
+    const { lastFrame } = render(
+      <LlmModeRows rows={[]} state={state} maxRows={20} />,
+    );
+    expect(strip(lastFrame() ?? "")).toContain(
+      "on primary (no fallover this session)",
+    );
   });
 
   it("renders the add-link picker when open", () => {
@@ -113,7 +139,9 @@ describe("FallbackRows", () => {
       addableProviderIds: ["cloud-b", "cloud-c"],
       addPicker: { cursor: 1 },
     });
-    const { lastFrame } = render(<LlmModeRows rows={[]} state={state} maxRows={20} />);
+    const { lastFrame } = render(
+      <LlmModeRows rows={[]} state={state} maxRows={20} />,
+    );
     const out = strip(lastFrame() ?? "");
     expect(out).toContain("Add fallback link");
     expect(out).toContain("cloud-b");
@@ -125,8 +153,12 @@ describe("FallbackRows", () => {
       links: [link("cloud-a", { isActive: true })],
       appendLocal: false,
     });
-    const { lastFrame } = render(<LlmModeRows rows={[]} state={state} maxRows={20} />);
-    expect(strip(lastFrame() ?? "")).toContain("append local as last resort: off");
+    const { lastFrame } = render(
+      <LlmModeRows rows={[]} state={state} maxRows={20} />,
+    );
+    expect(strip(lastFrame() ?? "")).toContain(
+      "append local as last resort: off",
+    );
   });
 });
 

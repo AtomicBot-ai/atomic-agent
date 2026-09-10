@@ -1,12 +1,16 @@
 import { Box } from "ink";
 import type { ReactElement } from "react";
-import type { ComposerBackendMeta } from "../composer-switch/composer-switch-rows.js";
+import type { ComposerBackendMeta } from "../composer-switch/composer-backend-selectors.js";
 import { useRotatingPlaceholder } from "../hooks/use-rotating-placeholder.js";
+import { fusionComposerGround } from "../theme/fusion-tint.js";
 import { readableOn } from "../theme/readable-foreground.js";
 import { theme } from "../theme/theme.js";
 import { ComposerSendButton } from "./composer-send-button.js";
 import { ComposerStopButton } from "./composer-stop-button.js";
-import { MultiLineEditor, type MultiLineEditorProps } from "./multi-line-editor.js";
+import {
+  MultiLineEditor,
+  type MultiLineEditorProps,
+} from "./multi-line-editor.js";
 import { PromptMetaBar } from "./prompt-meta-bar.js";
 
 /**
@@ -41,8 +45,10 @@ import { PromptMetaBar } from "./prompt-meta-bar.js";
  * The shell does **not** open the autocomplete popup — slash-palette
  * stays where it lived before, rendered by the parent above the editor.
  */
-export interface PromptShellProps
-  extends Omit<MultiLineEditorProps, "bare" | "placeholder"> {
+export interface PromptShellProps extends Omit<
+  MultiLineEditorProps,
+  "bare" | "placeholder"
+> {
   /** Static placeholder shown when the rotating list is empty / unset. */
   placeholder?: string;
   /**
@@ -54,6 +60,13 @@ export interface PromptShellProps
   rotatingPlaceholders?: readonly string[];
   /** Rotation period in milliseconds. Defaults to 4000. */
   placeholderRotationMs?: number;
+  /**
+   * The Fusion run mode is on: the frame and the panel take the
+   * palette's orange (`fusion-tint.ts`) so the chat zone says which
+   * mode it is in without a label. The ink is re-measured against the
+   * tinted ground, the same way it is against the plain one.
+   */
+  fusion?: boolean;
   /**
    * The route's backend kind (cloud / local / custom) and its health
    * dot, rendered as the first of the action bar's three controls.
@@ -71,6 +84,8 @@ export interface PromptShellProps
    * managed-local route with nothing on disk to run.
    */
   needsModelDownload?: boolean;
+  /** Fusion's fourth control (`2 workers`); `null` off that route. */
+  workers?: string | null;
   /**
    * Optional content rendered at the start of the action bar, before the
    * model/provider labels. Used by the chat surface to show the live
@@ -100,10 +115,12 @@ export function PromptShell(props: PromptShellProps): ReactElement {
     placeholder,
     rotatingPlaceholders,
     placeholderRotationMs = 4000,
+    fusion = false,
     backend,
     model,
     provider,
     needsModelDownload,
+    workers,
     leftSlot,
     rightSlot,
     contextSlot,
@@ -131,12 +148,17 @@ export function PromptShell(props: PromptShellProps): ReactElement {
   const effectivePlaceholder = placeholderVisible
     ? (rotated ?? placeholder ?? "")
     : "";
-  const accent = focus && !disabled ? theme.colors.accent : theme.colors.border;
+  const accent = fusion
+    ? theme.colors.warnStrong
+    : focus && !disabled
+      ? theme.colors.accent
+      : theme.colors.border;
+  const ground = fusion ? fusionComposerGround() : theme.colors.badgeBackground;
   // Measured, not assumed: `readableOn` weighs the panel's ground
   // against both ends of the palette's chip pair and takes the better
   // one, so the buffer stays legible whichever side of the line the
   // active theme sits on.
-  const composerInk = readableOn(theme.colors.badgeBackground);
+  const composerInk = readableOn(ground);
   // Send is live on exactly the condition Enter is: a non-blank buffer
   // in an editor that is accepting input. `handleEditorSubmit` drops a
   // blank buffer anyway, but a button that visibly does nothing when
@@ -165,7 +187,7 @@ export function PromptShell(props: PromptShellProps): ReactElement {
       <Box
         borderStyle="round"
         borderColor={accent}
-        backgroundColor={theme.colors.badgeBackground}
+        backgroundColor={ground}
         flexDirection="column"
       >
         {/*
@@ -242,6 +264,8 @@ export function PromptShell(props: PromptShellProps): ReactElement {
           model={model ?? null}
           provider={provider ?? null}
           needsModelDownload={needsModelDownload ?? false}
+          workers={workers ?? null}
+          fusion={fusion}
           rightSlot={rightSlot ?? null}
           contextSlot={contextSlot ?? null}
           modeSlot={modeSlot ?? null}

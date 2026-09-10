@@ -1,10 +1,17 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
 import { LinkifiedText } from "../render/linkify-text.js";
+import { fusionInk } from "../theme/fusion-tint.js";
 import { theme } from "../theme/theme.js";
 
 interface UserBubbleProps {
   text: string;
+  /**
+   * The Fusion run mode is on: the border takes the palette's orange.
+   * The `YOU` label keeps the user colour — the human did not change,
+   * the mode the message is answered under did.
+   */
+  fusion?: boolean;
 }
 
 /**
@@ -20,7 +27,10 @@ interface UserBubbleProps {
  * No markdown rendering — the user authored the text and expects to
  * see exactly what they typed.
  */
-export function UserBubble({ text }: UserBubbleProps): ReactElement {
+export function UserBubble({
+  text,
+  fusion = false,
+}: UserBubbleProps): ReactElement {
   return (
     <Box marginTop={1} flexDirection="column">
       <Text color={theme.colors.user} bold>
@@ -32,7 +42,7 @@ export function UserBubble({ text }: UserBubbleProps): ReactElement {
         borderRight={false}
         borderBottom={false}
         borderLeft
-        borderColor={theme.colors.user}
+        borderColor={fusion ? fusionInk() : theme.colors.user}
         paddingBottom={1}
         paddingLeft={2}
         paddingRight={1}

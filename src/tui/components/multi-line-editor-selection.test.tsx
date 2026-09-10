@@ -252,4 +252,4 @@ describe("kitty-reported cmd chords", () => {
     expect(app.onChange).not.toHaveBeenCalled();
     app.unmount();
   });
-})
+});

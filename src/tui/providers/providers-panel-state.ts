@@ -1,3 +1,4 @@
+import type { ResolvedRunMode } from "../../llm/run-mode/index.js";
 import {
   searchModelIds,
   type ModelEntryLookup,
@@ -133,6 +134,12 @@ export interface ProvidersPanelState {
   chatModelPickerGeneration: number;
   /** Inline Cloud-pane model catalog; `null` until first ensured. */
   inlineModels: InlineModelCatalogState | null;
+  /**
+   * What `llm.runMode` resolves to, mirrored on every `providers_refresh`
+   * so the composer's backend control and the switch rows read the same
+   * snapshot the provider rows came from. `null` until the first refresh.
+   */
+  runMode: ResolvedRunMode | null;
 }
 
 export function createInitialProvidersPanelState(): ProvidersPanelState {
@@ -148,5 +155,6 @@ export function createInitialProvidersPanelState(): ProvidersPanelState {
     chatModelPicker: null,
     chatModelPickerGeneration: 0,
     inlineModels: null,
+    runMode: null,
   };
 }

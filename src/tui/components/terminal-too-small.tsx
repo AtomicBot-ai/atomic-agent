@@ -1,10 +1,7 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
 
-import {
-  MIN_TERMINAL_COLUMNS,
-  MIN_TERMINAL_ROWS,
-} from "../layout.js";
+import { MIN_TERMINAL_COLUMNS, MIN_TERMINAL_ROWS } from "../layout.js";
 import { theme } from "../theme/theme.js";
 
 /**

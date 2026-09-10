@@ -19,7 +19,9 @@ function rows(frame: string | undefined): string[] {
 
 describe("ImportPanel — configure form", () => {
   it("offers all four sources on the source-type row", () => {
-    const { lastFrame } = render(<ImportPanel panel={panelWith({ source: "hermes" })} />);
+    const { lastFrame } = render(
+      <ImportPanel panel={panelWith({ source: "hermes" })} />,
+    );
     const frame = lastFrame() ?? "";
     expect(frame).toContain("Import · Hermes");
     expect(frame).toContain("‹hermes›");
@@ -30,7 +32,9 @@ describe("ImportPanel — configure form", () => {
 
   it("draws the Claude Code rows: skills, memory, mcp, sessions, secrets", () => {
     const { lastFrame } = render(
-      <ImportPanel panel={panelWith({ source: "claude-code", sourceDir: "" })} />,
+      <ImportPanel
+        panel={panelWith({ source: "claude-code", sourceDir: "" })}
+      />,
     );
     const frame = lastFrame() ?? "";
     expect(frame).toContain("Import · Claude Code");
@@ -39,8 +43,15 @@ describe("ImportPanel — configure form", () => {
       .map((line) => /^[^a-z]*([a-z-]+)\s*:/.exec(line)?.[1])
       .filter((label): label is string => label !== undefined);
     expect(labels).toEqual([
-      "source-of", "source", "skills", "memory", "mcp", "sessions", "secrets",
-      "overwrite", "limit",
+      "source-of",
+      "source",
+      "skills",
+      "memory",
+      "mcp",
+      "sessions",
+      "secrets",
+      "overwrite",
+      "limit",
     ]);
     expect(frame).toContain("ANTHROPIC_API_KEY");
     expect(frame).not.toContain("cron");
@@ -59,7 +70,9 @@ describe("ImportPanel — configure form", () => {
   });
 
   it("keeps the OpenClaw form free of a secrets row", () => {
-    const { lastFrame } = render(<ImportPanel panel={panelWith({ source: "openclaw" })} />);
+    const { lastFrame } = render(
+      <ImportPanel panel={panelWith({ source: "openclaw" })} />,
+    );
     const frame = lastFrame() ?? "";
     expect(frame).toContain("Import · OpenClaw");
     expect(frame).not.toMatch(/^\s*\S?\s*secrets\s*:/m);

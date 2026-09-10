@@ -18,7 +18,9 @@ function offered(): TuiState {
 
 describe("StatusBar update banner", () => {
   it("shows the offer at the end of the bar", () => {
-    const frame = strip(render(<StatusBar state={offered()} />).lastFrame() ?? "");
+    const frame = strip(
+      render(<StatusBar state={offered()} />).lastFrame() ?? "",
+    );
     expect(frame).toContain("v9.9.9");
     expect(frame).toContain("Update");
   });
@@ -32,7 +34,9 @@ describe("StatusBar update banner", () => {
 
   it("narrates the install instead of offering it while the installer runs", () => {
     const running = apply(offered(), [{ type: "update_started" }]);
-    const frame = strip(render(<StatusBar state={running} />).lastFrame() ?? "");
+    const frame = strip(
+      render(<StatusBar state={running} />).lastFrame() ?? "",
+    );
     expect(frame).toContain("do not close");
     // The button is gone: a second accept mid-install has no meaning.
     expect(frame).not.toContain("Update");

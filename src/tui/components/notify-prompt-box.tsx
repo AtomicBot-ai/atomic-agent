@@ -1,10 +1,16 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
-import type { LocalModelsNotifyChoice, LocalModelsNotifyPrompt, LocalModelsPullState } from "../local-models/local-models-panel-state.js";
+import type {
+  LocalModelsNotifyChoice,
+  LocalModelsNotifyPrompt,
+  LocalModelsPullState,
+} from "../local-models/local-models-panel-state.js";
 import { theme } from "../theme/theme.js";
 
 /** `t Telegram · d Discord · e E-mail · n no · Esc not now`, the remembered pick marked. */
-export function notifyPromptHint(current: LocalModelsNotifyChoice | null): string {
+export function notifyPromptHint(
+  current: LocalModelsNotifyChoice | null,
+): string {
   const mark = (choice: LocalModelsNotifyChoice, text: string): string =>
     current === choice ? `${text} ✓` : text;
   return `${mark("telegram", "t Telegram")} · ${mark("discord", "d Discord")} · ${mark("email", "e E-mail")} · ${mark("off", "n no")} · Esc not now`;
@@ -37,8 +43,8 @@ export function NotifyPromptBox({
         ✦ Tell you when {prompt.label} lands?
       </Text>
       <Text color={theme.colors.muted}>
-        A message from the worker when the download finishes — even with the app closed.
-        Remembered for the next ones; N changes it.
+        A message from the worker when the download finishes — even with the app
+        closed. Remembered for the next ones; N changes it.
       </Text>
       {pull ? (
         <Text color={theme.colors.muted}>

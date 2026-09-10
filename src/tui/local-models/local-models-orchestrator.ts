@@ -1627,6 +1627,7 @@ export class LocalModelsOrchestrator {
           chatTemplateFile: tpl,
           mmprojFile,
           contextSize: cfg.localModels.managed.contextSize,
+          parallel: cfg.localModels.managed.parallel,
           ...(device ? { device } : {}),
           ...(multiGpu ? { tensorSplit } : {}),
         },

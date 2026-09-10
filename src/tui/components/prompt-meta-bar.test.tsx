@@ -122,7 +122,6 @@ describe("composer buttons", () => {
     unmount();
   });
 
-
   it("ignores a right-button press on Send", async () => {
     const sent: string[] = [];
     const { registry, frame, unmount } = await mountWithMouse(
@@ -134,9 +133,7 @@ describe("composer buttons", () => {
       />,
     );
     const { x, y } = locate(frame(), "send");
-    expect(
-      registry.dispatch({ ...click(x, y), button: "right" }),
-    ).toBe(false);
+    expect(registry.dispatch({ ...click(x, y), button: "right" })).toBe(false);
     expect(sent).toEqual([]);
     unmount();
   });

@@ -239,13 +239,17 @@ describe("ProvidersWizard search box", () => {
   }
 
   it("advertises the search box on the closed provider list", () => {
-    const { lastFrame } = render(<ProvidersWizard wizard={providerList(null)} />);
+    const { lastFrame } = render(
+      <ProvidersWizard wizard={providerList(null)} />,
+    );
     const text = stripAnsi(lastFrame() ?? "");
     expect(text).toContain("search: / to search");
   });
 
   it("shows the query, the surviving rows, and a counter over the filtered set", () => {
-    const { lastFrame } = render(<ProvidersWizard wizard={providerList("cli")} />);
+    const { lastFrame } = render(
+      <ProvidersWizard wizard={providerList("cli")} />,
+    );
     const text = stripAnsi(lastFrame() ?? "");
     expect(text).toContain("search: cli");
     // Both subscription CLI rows survive "cli"; nothing else does.
@@ -273,7 +277,9 @@ describe("ProvidersWizard search box", () => {
     // Nothing in the flow leaves a cursor past the end, but a catalog
     // refresh landing between two keypresses can, and the highlight has
     // to stay on a row that exists — it is what Enter selects.
-    const { lastFrame } = render(<ProvidersWizard wizard={providerList("cli", 9)} />);
+    const { lastFrame } = render(
+      <ProvidersWizard wizard={providerList("cli", 9)} />,
+    );
     const text = stripAnsi(lastFrame() ?? "");
     expect(text).toContain("> OpenAI Codex subscription");
     expect(text).toContain("(2/2)");

@@ -16,7 +16,8 @@ const SGR = /^\u001B\[[0-9;]*m$/u;
 const FOREGROUND = /^\u001B\[(?:38;[25];[\d;]+|3[0-7]|9[0-7])m$/u;
 const FOREGROUND_OFF = /^\u001B\[(?:0|39)m$/u;
 
-const strip = (frame: string): string => frame.replace(/\u001B\[[0-9;]*m/gu, "");
+const strip = (frame: string): string =>
+  frame.replace(/\u001B\[[0-9;]*m/gu, "");
 
 /** The truecolor SGR Ink emits for a hex foreground, e.g. `ESC[38;2;r;g;bm`. */
 function foregroundSgr(hex: string): string {
@@ -99,8 +100,11 @@ describe("OnboardingIntroStep", () => {
     const frame = frameAt(100, 30);
     const row = frame
       .split("\n")
-      .find((line) => strip(line).includes("\u2584\u2580\u2588 \u2580\u2588\u2580"));
-    if (row === undefined) throw new Error("no frame line carries the wordmark");
+      .find((line) =>
+        strip(line).includes("\u2584\u2580\u2588 \u2580\u2588\u2580"),
+      );
+    if (row === undefined)
+      throw new Error("no frame line carries the wordmark");
     expect(row).toContain(foregroundSgr(theme.colors.accent));
     expect(row).not.toContain(foregroundSgr(theme.colors.accentSoft));
   });

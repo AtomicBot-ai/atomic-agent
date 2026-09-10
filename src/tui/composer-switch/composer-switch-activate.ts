@@ -11,6 +11,7 @@ import type { LlmPanelRow } from "../llm-panel/llm-panel-selectors.js";
 import type { TuiAction } from "../tui-action.js";
 import type { TuiAppCallbacks } from "../tui-app.js";
 import type { TuiState } from "../tui-state.js";
+import { describeFusionBlocker } from "../run-mode/fusion-preflight.js";
 import type { ComposerBackendKind } from "./composer-switch-state.js";
 import type { ComposerSwitchRow } from "./composer-switch-rows.js";
 
@@ -49,7 +50,30 @@ export function activateComposerSwitchRow(
   callbacks: TuiAppCallbacks,
 ): void {
   if (row.intent.kind === "llmRow") {
-    triggerLlmPrimary(row.intent.row, state, dispatch, callbacks);
+    const llmRow = row.intent.row;
+    if (
+      llmRow.kind === "cloudProvider" &&
+      llmRow.provider.hasApiKey &&
+      state.providersPanel.runMode?.effective === "fusion"
+    ) {
+      // Under fusion the provider control re-pins the orchestrator. The
+      // LLM tab's own `setActiveText` would move `activeTextProvider`
+      // away from the pinned orchestrator and drop the mode on the next
+      // read; the run-mode write moves the pin and the provider together.
+      callbacks.onRunModeChangeRequested?.("fusion", {
+        fusion: { orchestratorProvider: llmRow.provider.id },
+      });
+      return;
+    }
+    triggerLlmPrimary(llmRow, state, dispatch, callbacks);
+    return;
+  }
+  if (row.intent.kind === "fusionWorkerModel") {
+    activateWorkerModel(row.intent.modelId, state, callbacks);
+    return;
+  }
+  if (row.intent.kind === "fusionWorkers") {
+    callbacks.onFusionWorkersChangeRequested?.(row.intent.workers);
     return;
   }
   if (row.intent.kind === "addProvider") {
@@ -89,11 +113,67 @@ function activateBackend(
     activateLocal(state, dispatch, callbacks);
     return;
   }
+  if (backend === "fusion") {
+    activateFusion(state, dispatch, callbacks);
+    return;
+  }
   // A custom backend is a base URL, and a base URL has to be typed and
   // probed before it can be the route — see `persistUserLocalLlmUrl`.
   // The External pane's single row opens exactly that editor.
   goToLlmPane(dispatch, "external");
   triggerLlmPrimary(selectExternalRows(state)[0] ?? null, state, dispatch, callbacks);
+}
+
+/**
+ * Fusion is a mode over the cloud and local routes, so it needs both: a
+ * keyed cloud provider to orchestrate and a downloaded local model for
+ * the workers. The pre-flight is the one line the row's detail column
+ * already shows; on a pass the change goes to `RunModeOrchestrator`,
+ * which re-checks from config, writes the mode and the orchestrator
+ * provider in one write and starts the worker daemon.
+ */
+function activateFusion(
+  state: TuiState,
+  dispatch: (action: TuiAction) => void,
+  callbacks: TuiAppCallbacks,
+): void {
+  const blocker = describeFusionBlocker(state);
+  if (blocker) {
+    dispatch({ type: "composer_notice", text: `fusion: ${blocker}` });
+    dispatch({ type: "runtime_info", line: `fusion: ${blocker}` });
+    return;
+  }
+  callbacks.onRunModeChangeRequested?.("fusion");
+}
+
+/**
+ * The worker model is the managed daemon's model. `setActive` on the
+ * local-models orchestrator restarts the daemon on it and writes only
+ * `localModels.*` — never `activeTextProvider` — so fusion survives the
+ * pick. `triggerLlmPrimary` is deliberately NOT used: its local branch
+ * also makes `local-llama` the active text provider, which under fusion
+ * is exactly the switch that would drop the mode.
+ */
+function activateWorkerModel(
+  modelId: import("../../local-llm/index.js").LocalModelId,
+  state: TuiState,
+  callbacks: TuiAppCallbacks,
+): void {
+  const row = state.localModelsPanel.rows.find((candidate) => candidate.id === modelId);
+  const chatUp =
+    state.localModelsPanel.daemon.running ||
+    state.localModelsPanel.daemonPhase === "starting";
+  if (row?.active && chatUp) return;
+  if (row?.active) {
+    callbacks.onLocalModelsDaemonStartRequested?.();
+    return;
+  }
+  callbacks.onLocalModelsSetActiveRequested?.(modelId);
+}
+
+/** A stored fusion that a plain cloud/local pick must clear in the same write. */
+function leavingFusion(state: TuiState): boolean {
+  return state.providersPanel.runMode?.stored === "fusion";
 }
 
 /**
@@ -120,6 +200,12 @@ function activateCloud(
     return;
   }
   if (!provider.hasApiKey) goToLlmPane(dispatch, "cloud");
+  if (provider.hasApiKey && leavingFusion(state)) {
+    // `setActiveText` alone would leave `llm.runMode.mode: "fusion"` in
+    // the file; the run-mode write moves both keys together.
+    callbacks.onRunModeChangeRequested?.("cloud");
+    return;
+  }
   triggerLlmPrimary(cloudProviderRow(provider), state, dispatch, callbacks);
 }
 
@@ -143,8 +229,15 @@ function activateLocal(
   const ready =
     rows.find((row) => row.model.active && row.model.downloaded) ??
     rows.find((row) => row.model.downloaded);
+  // Out of fusion, the provider swap is the run-mode write (both keys
+  // at once); the model logic below is unchanged and still the local
+  // models orchestrator's own.
+  const setActiveLocal = (): void => {
+    if (leavingFusion(state)) callbacks.onRunModeChangeRequested?.("local");
+    else callbacks.onProvidersSetActiveText?.("local-llama");
+  };
   if (!ready) {
-    callbacks.onProvidersSetActiveText?.("local-llama");
+    setActiveLocal();
     // With no model to set active, nothing downstream would write
     // `localModels.mode: "managed"` — and the config still saying
     // `external` is exactly the bug where this control read `custom`
@@ -163,6 +256,7 @@ function activateLocal(
   if (state.localModelsPanel.configMode === "external") {
     callbacks.onLocalModelsSetActiveRequested?.(ready.model.id);
   }
+  if (leavingFusion(state)) setActiveLocal();
   triggerLlmPrimary(ready, state, dispatch, callbacks);
 }
 

@@ -3,10 +3,7 @@ import type { ReactElement } from "react";
 import { theme } from "../theme/theme.js";
 import { MouseListRow, pressEnter } from "../mouse/mouse-list-row.js";
 import { handleMcpTabKey } from "../mcp/mcp-key-bindings.js";
-import type {
-  McpPanelState,
-  McpServerRow,
-} from "../mcp/mcp-panel-state.js";
+import type { McpPanelState, McpServerRow } from "../mcp/mcp-panel-state.js";
 
 export interface McpListProps {
   panel: McpPanelState;
@@ -25,7 +22,10 @@ export function McpList(props: McpListProps): ReactElement {
   }
   const start = Math.max(
     0,
-    Math.min(total - maxRows, Math.max(0, panel.cursor - Math.floor(maxRows / 2))),
+    Math.min(
+      total - maxRows,
+      Math.max(0, panel.cursor - Math.floor(maxRows / 2)),
+    ),
   );
   const end = Math.min(total, start + maxRows);
   const slice = panel.rows.slice(start, end);
@@ -57,8 +57,7 @@ function Row({
   const marker = active ? ">" : " ";
   const stateColor = stateToColor(row.state);
   const stateBadge = `[${row.state}]`;
-  const trustBadge =
-    row.trust === "pure_read" ? "pure_read" : "approval_gated";
+  const trustBadge = row.trust === "pure_read" ? "pure_read" : "approval_gated";
   const counts = `${row.toolCount} tools · ${row.resourceCount} res · ${row.promptCount} prompts`;
   return (
     <Box flexDirection="column">
@@ -68,7 +67,9 @@ function Row({
         </Text>
         <Text bold>{padRight(row.name, 18)}</Text>
         <Text color={stateColor}>{padRight(stateBadge, 11)}</Text>
-        <Text color={theme.colors.muted}>{padRight(row.transportKind, 18)}</Text>
+        <Text color={theme.colors.muted}>
+          {padRight(row.transportKind, 18)}
+        </Text>
         <Text color={theme.colors.muted}>{padRight(trustBadge, 16)}</Text>
         <Text color={theme.colors.muted}>{counts}</Text>
       </Box>

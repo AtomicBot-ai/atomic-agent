@@ -68,7 +68,16 @@ function mount(panel: ImportPanelState): Mounted {
 }
 
 function pressAt(x: number, y: number): TuiMouseEvent {
-  return { kind: "press", button: "left", wheel: null, x, y, shift: false, alt: false, ctrl: false };
+  return {
+    kind: "press",
+    button: "left",
+    wheel: null,
+    x,
+    y,
+    shift: false,
+    alt: false,
+    ctrl: false,
+  };
 }
 
 /** Screen cell of `label`, off the rendered frame. */
@@ -90,9 +99,14 @@ async function clickUntilClaimed(view: Mounted, label: string): Promise<void> {
   throw new Error(`nothing claimed a click on "${label}"`);
 }
 
-function reportPanel(mode: "preview" | "done", storeWarning?: string): ImportPanelState {
+function reportPanel(
+  mode: "preview" | "done",
+  storeWarning?: string,
+): ImportPanelState {
   const report: ImportReport = {
-    items: [{ kind: "sessions", source: "a", destination: "b", status: "migrated" }],
+    items: [
+      { kind: "sessions", source: "a", destination: "b", status: "migrated" },
+    ],
     summary: { migrated: 1, skipped: 0, conflict: 0, error: 0 },
     executed: mode === "done",
   };
@@ -125,8 +139,14 @@ describe("ImportPanel mouse", () => {
   it("flips the checkbox that was clicked, and focuses its row", async () => {
     const view = mount(createInitialImportPanelState());
     await clickUntilClaimed(view, "sessions");
-    expect(view.actions).toContainEqual({ type: "import_toggled", field: "sessions" });
-    expect(view.actions).toContainEqual({ type: "import_focus_set", focus: "sessions" });
+    expect(view.actions).toContainEqual({
+      type: "import_toggled",
+      field: "sessions",
+    });
+    expect(view.actions).toContainEqual({
+      type: "import_focus_set",
+      focus: "sessions",
+    });
     view.unmount();
   });
 
@@ -161,7 +181,12 @@ describe("ImportPanel mouse", () => {
   });
 
   it("shows unreadable stored sessions on the report", () => {
-    const view = mount(reportPanel("done", "2 sessions already in the store cannot be read and are not listed"));
+    const view = mount(
+      reportPanel(
+        "done",
+        "2 sessions already in the store cannot be read and are not listed",
+      ),
+    );
     expect(view.frame()).toContain("cannot be read");
     view.unmount();
   });

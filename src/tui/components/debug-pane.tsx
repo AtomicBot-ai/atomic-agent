@@ -251,13 +251,18 @@ export function steppedPanelRows(
 
 /** Height the stepped panels actually render at a given budget. */
 export function steppedPanelRendered(maxRows: number): number {
-  return maxRows >= STEPPED_PANEL_TALL_ROWS ? STEPPED_PANEL_TALL_ROWS : STEPPED_PANEL_SHORT_ROWS;
+  return maxRows >= STEPPED_PANEL_TALL_ROWS
+    ? STEPPED_PANEL_TALL_ROWS
+    : STEPPED_PANEL_SHORT_ROWS;
 }
 
 const STEPPED_PANEL_SHORT_ROWS = 9;
 const STEPPED_PANEL_TALL_ROWS = 20;
 
-function tabContentBudget(terminalRows: number, composerVisible: boolean): number {
+function tabContentBudget(
+  terminalRows: number,
+  composerVisible: boolean,
+): number {
   return Math.max(
     MIN_LIST_ROWS,
     terminalRows -
@@ -320,7 +325,11 @@ function ActiveDebugTab({
       return <LogsTab state={state} maxVisible={maxVisible} />;
     case "tasks":
       return (
-        <TasksPanel panel={state.tasksPanel} now={Date.now()} maxRows={compactRows} />
+        <TasksPanel
+          panel={state.tasksPanel}
+          now={Date.now()}
+          maxRows={compactRows}
+        />
       );
     case "skills":
       return <SkillsPanel panel={state.skillsPanel} maxRows={compactRows} />;
@@ -348,7 +357,9 @@ function ActiveDebugTab({
         />
       );
     case "llm-logs":
-      return <LocalLlmLogsPanel logs={state.localLlmLogs} maxLines={maxVisible} />;
+      return (
+        <LocalLlmLogsPanel logs={state.localLlmLogs} maxLines={maxVisible} />
+      );
     case "import":
       return <ImportPanel panel={state.importPanel} />;
     case "privacy":
@@ -395,7 +406,6 @@ function integrationsTabLabel(state: TuiState): string {
   return ready > 0 ? `Integrations (${ready})` : "Integrations";
 }
 
-
 /**
  * Re-export of the section-aware sub-tab cycler. Kept here so existing
  * callers (`app-key-bindings.ts`) can continue importing from the debug
@@ -410,4 +420,3 @@ export const DEBUG_TAB_ORDER: readonly TuiTab[] = [
   ...OBSERVE_TABS,
   ...MANAGE_TABS,
 ];
-

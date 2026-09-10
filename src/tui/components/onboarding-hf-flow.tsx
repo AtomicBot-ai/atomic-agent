@@ -40,7 +40,9 @@ export function OnboardingHuggingFaceFlow(props: {
         }
         onSubmit={huggingFace.resolveReference}
         onClear={huggingFace.clearReference}
-        onBack={() => dispatch({ type: "onboarding_step_set", step: "local_pick" })}
+        onBack={() =>
+          dispatch({ type: "onboarding_step_set", step: "local_pick" })
+        }
       />
     );
   }
@@ -48,7 +50,9 @@ export function OnboardingHuggingFaceFlow(props: {
     return (
       <OnboardingHuggingFacePickStep
         repo={onboarding.hfRepo}
-        cursor={onboarding.cursor % Math.max(1, onboarding.hfRepo.choices.length)}
+        cursor={
+          onboarding.cursor % Math.max(1, onboarding.hfRepo.choices.length)
+        }
         ramGb={props.ramGb}
         error={onboarding.error}
       />

@@ -55,7 +55,12 @@ export function FallbackRows({ state }: { state: TuiState }): ReactElement {
       <Box flexDirection="column">
         <Text color={theme.colors.muted}>
           append local as last resort:{" "}
-          <Text bold color={panel.appendLocal ? theme.colors.success : theme.colors.muted}>
+          <Text
+            bold
+            color={
+              panel.appendLocal ? theme.colors.success : theme.colors.muted
+            }
+          >
             {panel.appendLocal ? "on" : "off"}
           </Text>
           <Text color={theme.colors.muted}> · l to toggle</Text>
@@ -141,7 +146,9 @@ function FallbackRow({
           wrap="truncate-end"
         >
           {selected ? ">" : " "} + add link{" "}
-          <Text color={theme.colors.muted}>· Enter or a to choose a provider</Text>
+          <Text color={theme.colors.muted}>
+            · Enter or a to choose a provider
+          </Text>
         </Text>
       ) : (
         <Text
@@ -203,7 +210,9 @@ function AddLinkPicker({ state }: { state: TuiState }): ReactElement {
           </MouseListRow>
         ))
       )}
-      <Text color={theme.colors.muted}>{"  "}↑/↓ move · Enter add · Esc cancel</Text>
+      <Text color={theme.colors.muted}>
+        {"  "}↑/↓ move · Enter add · Esc cancel
+      </Text>
     </Box>
   );
 }

@@ -65,10 +65,7 @@ function click(x: number, y: number): TuiMouseEvent {
 }
 
 /** Screen cell of the LAST line containing `needle`. */
-function locateLast(
-  frame: string,
-  needle: string,
-): { x: number; y: number } {
+function locateLast(frame: string, needle: string): { x: number; y: number } {
   const lines = frame.split("\n");
   for (let y = lines.length - 1; y >= 0; y -= 1) {
     const x = (lines[y] ?? "").indexOf(needle);

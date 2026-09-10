@@ -65,7 +65,12 @@ export function ImportPanel(props: ImportPanelProps): ReactElement {
         />
       ) : null}
       {panel.mode === "done" && panel.report ? (
-        <ReportView report={panel.report} executed maxRows={maxRows} form={panel.form} />
+        <ReportView
+          report={panel.report}
+          executed
+          maxRows={maxRows}
+          form={panel.form}
+        />
       ) : null}
     </Box>
   );
@@ -149,7 +154,9 @@ function SourceRow({
 }): ReactElement {
   return (
     <Box>
-      <Text color={theme.colors.muted}>{labelPrefix("source-of", focused)}</Text>
+      <Text color={theme.colors.muted}>
+        {labelPrefix("source-of", focused)}
+      </Text>
       {IMPORT_SOURCE_IDS.map((id, index) => (
         <Box key={id}>
           {index > 0 ? <Text color={theme.colors.muted}> / </Text> : null}
@@ -177,7 +184,10 @@ function SourceChoice({
   active: boolean;
 }): ReactElement {
   return (
-    <Text color={active ? theme.colors.success : theme.colors.muted} bold={active}>
+    <Text
+      color={active ? theme.colors.success : theme.colors.muted}
+      bold={active}
+    >
       {active ? `‹${label}›` : ` ${label} `}
     </Text>
   );
@@ -224,7 +234,12 @@ function ToggleRow({
       <Text color={on ? theme.colors.success : theme.colors.muted} bold={on}>
         [{on ? theme.glyphs.check : " "}]
       </Text>
-      {hint ? <Text color={theme.colors.muted}>{"  "}{hint}</Text> : null}
+      {hint ? (
+        <Text color={theme.colors.muted}>
+          {"  "}
+          {hint}
+        </Text>
+      ) : null}
     </Box>
   );
 }
@@ -232,7 +247,10 @@ function ToggleRow({
 function RunRow({ focused }: { focused: boolean }): ReactElement {
   return (
     <Box marginTop={1}>
-      <Text color={focused ? theme.colors.success : theme.colors.muted} bold={focused}>
+      <Text
+        color={focused ? theme.colors.success : theme.colors.muted}
+        bold={focused}
+      >
         {focused ? theme.glyphs.chevronRight : " "} Run preview
       </Text>
     </Box>
@@ -267,12 +285,14 @@ function ReportView({
         <ReportRow key={`${item.kind}:${idx}`} item={item} />
       ))}
       {hidden > 0 ? (
-        <Text color={theme.colors.muted}>  … {hidden} more</Text>
+        <Text color={theme.colors.muted}> … {hidden} more</Text>
       ) : null}
       <SummaryRow report={report} />
       <Box marginTop={1}>
         {executed ? (
-          <ImportClick onClick={(ctx) => ctx.dispatch({ type: "import_reset" })}>
+          <ImportClick
+            onClick={(ctx) => ctx.dispatch({ type: "import_reset" })}
+          >
             <Text color={theme.colors.muted}>Enter / Esc back to form</Text>
           </ImportClick>
         ) : (
@@ -284,7 +304,9 @@ function ReportView({
                 y / Enter apply
               </Text>
             </ImportClick>
-            <ImportClick onClick={(ctx) => ctx.dispatch({ type: "import_reset" })}>
+            <ImportClick
+              onClick={(ctx) => ctx.dispatch({ type: "import_reset" })}
+            >
               <Text color={theme.colors.muted}> · e edit · Esc cancel</Text>
             </ImportClick>
           </Box>
@@ -298,7 +320,7 @@ function ReportRow({ item }: { item: ImportItemResult }): ReactElement {
   const arrow =
     item.source && item.destination
       ? `${item.source} ${theme.glyphs.arrowRight} ${item.destination}`
-      : item.source ?? item.destination ?? "";
+      : (item.source ?? item.destination ?? "");
   const reason = item.reason ? ` (${item.reason})` : "";
   return (
     <Text>

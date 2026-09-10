@@ -54,13 +54,14 @@ describe("listToolFamilies", () => {
 
 describe("effectiveToolDescriptors", () => {
   it("keeps the full catalog when every gate is open", () => {
-    const names = effectiveToolDescriptors(ALL_ENABLED, WITH_GITHUB).map(
-      (d) => d.name,
-    );
+    // Every gate open means both of them: a GitHub token in the hub and
+    // an Atomic Mail key in the environment.
     process.env.ATOMIC_MAIL_API_KEY = "k";
     try {
-    const names = effectiveToolDescriptors(ALL_ENABLED).map((d) => d.name);
-    expect(names).toEqual(DEFAULT_TOOL_DESCRIPTORS.map((d) => d.name));
+      const names = effectiveToolDescriptors(ALL_ENABLED, WITH_GITHUB).map(
+        (d) => d.name,
+      );
+      expect(names).toEqual(DEFAULT_TOOL_DESCRIPTORS.map((d) => d.name));
     } finally {
       delete process.env.ATOMIC_MAIL_API_KEY;
     }

@@ -43,7 +43,12 @@ export function IssueReportPopup({
       width={width}
     >
       {visible.map((line, idx) => (
-        <Text key={idx} color={line.color} bold={line.bold} inverse={line.inverse}>
+        <Text
+          key={idx}
+          color={line.color}
+          bold={line.bold}
+          inverse={line.inverse}
+        >
           {fitToWidth(line.text, inner)}
         </Text>
       ))}
@@ -64,13 +69,20 @@ function bodyLines(report: IssueReportState, inner: number): Line[] {
     color: chromeTheme.colors.railForeground,
     bold: true,
   });
-  const muted = (t: string): Line => ({ text: ` ${t}`, color: chromeTheme.colors.railMuted });
+  const muted = (t: string): Line => ({
+    text: ` ${t}`,
+    color: chromeTheme.colors.railMuted,
+  });
   const plain = (t: string): Line => ({ text: ` ${t}` });
-  const wrap = (t: string): Line[] => wrapText(t, inner - 4).map((s) => plain(`  ${s}`));
+  const wrap = (t: string): Line[] =>
+    wrapText(t, inner - 4).map((s) => plain(`  ${s}`));
 
   switch (report.step) {
     case "pick": {
-      const out: Line[] = [title("REPORT AN ISSUE ON GITHUB"), muted("What may leave this machine?")];
+      const out: Line[] = [
+        title("REPORT AN ISSUE ON GITHUB"),
+        muted("What may leave this machine?"),
+      ];
       ISSUE_REPORT_LEVELS.forEach((info, idx) => {
         const selected = idx === report.cursor;
         out.push({
@@ -78,18 +90,26 @@ function bodyLines(report: IssueReportState, inner: number): Line[] {
           inverse: selected,
           bold: selected,
         });
-        out.push(...wrapText(info.detail, inner - 6).map((s) => muted(`     ${s}`)));
+        out.push(
+          ...wrapText(info.detail, inner - 6).map((s) => muted(`     ${s}`)),
+        );
       });
       out.push(muted("↑↓ move · enter choose · esc cancel"));
       return out;
     }
     case "building":
-      return [title("REPORT AN ISSUE ON GITHUB"), plain("Collecting logs and traces…")];
+      return [
+        title("REPORT AN ISSUE ON GITHUB"),
+        plain("Collecting logs and traces…"),
+      ];
     case "confirm": {
       const p = report.preview;
       if (!p) return [title("REPORT AN ISSUE ON GITHUB"), plain("…")];
       const info = ISSUE_REPORT_LEVELS.find((l) => l.level === p.level);
-      const pages = p.comments === 0 ? "one issue body" : `issue body + ${p.comments} comment${p.comments === 1 ? "" : "s"}`;
+      const pages =
+        p.comments === 0
+          ? "one issue body"
+          : `issue body + ${p.comments} comment${p.comments === 1 ? "" : "s"}`;
       // Long values wrap onto indented continuation lines rather than
       // being cut: the zip path and the disclosure are the two things
       // this screen exists to show in full.
@@ -100,13 +120,28 @@ function bodyLines(report: IssueReportState, inner: number): Line[] {
       return [
         title("SEND THIS REPORT?"),
         ...field("Title:", p.title),
-        ...field("Level:", `${info?.label ?? p.level} — ${info?.disclosure ?? ""}`),
-        ...field("To:", "github.com/AtomicBot-ai/atomic-agent — a public issue, under your account"),
-        ...field("Inline:", `${pages}, ${p.bodyChars.toLocaleString()} chars in the body`),
+        ...field(
+          "Level:",
+          `${info?.label ?? p.level} — ${info?.disclosure ?? ""}`,
+        ),
+        ...field(
+          "To:",
+          "github.com/AtomicBot-ai/atomic-agent — a public issue, under your account",
+        ),
+        ...field(
+          "Inline:",
+          `${pages}, ${p.bodyChars.toLocaleString()} chars in the body`,
+        ),
         ...(p.overflow.length > 0
-          ? wrapText(`Not inline (too large): ${p.overflow.join(", ")}`, inner - 10).map((s) => muted(`        ${s}`))
+          ? wrapText(
+              `Not inline (too large): ${p.overflow.join(", ")}`,
+              inner - 10,
+            ).map((s) => muted(`        ${s}`))
           : []),
-        ...field("Zip:", `${p.zipPath} (${formatBytes(p.zipBytes)}) — open it to see exactly what is included`),
+        ...field(
+          "Zip:",
+          `${p.zipPath} (${formatBytes(p.zipBytes)}) — open it to see exactly what is included`,
+        ),
         muted("enter/y send · esc/n cancel"),
       ];
     }
@@ -116,14 +151,22 @@ function bodyLines(report: IssueReportState, inner: number): Line[] {
       return [
         title("ISSUE FILED"),
         plain(report.url ?? ""),
-        ...(report.preview ? [muted(`zip kept at ${report.preview.zipPath}`)] : []),
+        ...(report.preview
+          ? [muted(`zip kept at ${report.preview.zipPath}`)]
+          : []),
         muted("any key to close"),
       ];
     case "error":
       return [
-        { text: " COULD NOT FILE THE ISSUE", color: chromeTheme.colors.warn, bold: true },
+        {
+          text: " COULD NOT FILE THE ISSUE",
+          color: chromeTheme.colors.warn,
+          bold: true,
+        },
         ...wrap(report.error ?? "unknown error"),
-        ...(report.preview ? [muted(`the zip is still at ${report.preview.zipPath}`)] : []),
+        ...(report.preview
+          ? [muted(`the zip is still at ${report.preview.zipPath}`)]
+          : []),
         muted("any key to close"),
       ];
     default:

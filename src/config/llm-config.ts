@@ -1,4 +1,8 @@
 import { ConfigValidationError } from "./config-validation-error.js";
+import {
+  parseLlmRunModeConfig,
+  type UserLlmRunModeConfig,
+} from "./llm-run-mode-config.js";
 import { SUBSCRIPTION_CLI_KIND } from "./provider-auth-mode.js";
 
 export type UserLlmToolTransport = "auto" | "grammar" | "native_tools";
@@ -138,6 +142,8 @@ export type UserLlmFileConfig = {
   toolTransport: UserLlmToolTransport;
   providers: UserLlmProviderEntry[];
   fallback?: UserLlmFallbackConfig;
+  /** Run mode (local | cloud | fusion) and the fusion legs. See `llm-run-mode-config.ts`. */
+  runMode?: UserLlmRunModeConfig;
 };
 
 const PROVIDER_ID_RE = /^[a-z][a-z0-9-]{0,31}$/;
@@ -668,6 +674,10 @@ export function parseUserLlmFileConfig(
           new Set(providers.map((p) => p.id)),
           "llm.fallback",
         );
+  const runMode =
+    obj.runMode === undefined || obj.runMode === null
+      ? undefined
+      : parseLlmRunModeConfig(obj.runMode, providers, "llm.runMode");
 
   return {
     activeTextProvider,
@@ -675,5 +685,6 @@ export function parseUserLlmFileConfig(
     toolTransport: toolTransportRaw,
     providers,
     ...(fallback ? { fallback } : {}),
+    ...(runMode ? { runMode } : {}),
   };
 }

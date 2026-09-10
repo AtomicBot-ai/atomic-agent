@@ -108,7 +108,8 @@ export function OnboardingStepBody(props: {
             error={onboarding.error}
           />
         ) : null}
-        {onboarding.step === "import_preview" || onboarding.step === "import_done" ? (
+        {onboarding.step === "import_preview" ||
+        onboarding.step === "import_done" ? (
           <OnboardingImportReportStep
             report={onboarding.importReport}
             executed={onboarding.step === "import_done"}
@@ -131,7 +132,9 @@ export function OnboardingStepBody(props: {
             modelLabel={describeDownloadingModel(onboarding.localModelId)}
             cursor={
               onboarding.cursor %
-              waitOrJumpRowCount(waitOrJumpPullStatus(props.pull, props.pullError))
+              waitOrJumpRowCount(
+                waitOrJumpPullStatus(props.pull, props.pullError),
+              )
             }
             fit={props.fit}
           />
@@ -157,7 +160,9 @@ export function OnboardingStepBody(props: {
               dispatch({ type: "onboarding_url_changed", field: "chat", value })
             }
             onSubmit={props.onChatUrlSubmit}
-            onBack={() => dispatch({ type: "onboarding_step_set", step: "choose" })}
+            onBack={() =>
+              dispatch({ type: "onboarding_step_set", step: "choose" })
+            }
           />
         ) : null}
         {onboarding.step === "custom_embedding_url" ? (
@@ -167,7 +172,11 @@ export function OnboardingStepBody(props: {
             busy={onboarding.busy}
             error={onboarding.error}
             onChange={(value) =>
-              dispatch({ type: "onboarding_url_changed", field: "embedding", value })
+              dispatch({
+                type: "onboarding_url_changed",
+                field: "embedding",
+                value,
+              })
             }
             onSubmit={props.onEmbeddingUrlSubmit}
             onBack={() =>

@@ -21,7 +21,11 @@ export interface TasksFilterBarProps {
 export function TasksFilterBar(props: TasksFilterBarProps): ReactElement {
   const { panel, visibleCount, totalCount, now } = props;
   const filterLabel = formatFilterLabel(panel.filterStatus);
-  const refreshLabel = formatRefreshLabel(panel.lastRefreshedAt, panel.autoRefresh, now);
+  const refreshLabel = formatRefreshLabel(
+    panel.lastRefreshedAt,
+    panel.autoRefresh,
+    now,
+  );
   return (
     <Box>
       <Text color={theme.colors.accentSoft} bold>

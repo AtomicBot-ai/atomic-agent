@@ -62,7 +62,6 @@ export interface OnboardingScreenCallbacks {
 /** Named once — the offer screens quote it back at the operator. */
 const CLOUD_READY_LABEL = "Cloud model ready";
 
-
 /**
  * The whole first-run surface. It owns the terminal while it is mounted:
  * no status bar, no rail, no composer, no hint strip but its own, and
@@ -286,7 +285,11 @@ export function OnboardingScreen(props: {
       */}
       <Box flexShrink={0}>
         <Text color={theme.colors.muted} wrap="truncate">
-          {onboardingFooterFor(onboarding, props.ctrlCArmed ?? false, wizardState)}
+          {onboardingFooterFor(
+            onboarding,
+            props.ctrlCArmed ?? false,
+            wizardState,
+          )}
           {fit.sizeAdvice ? `   ·   ${ONBOARDING_SIZE_ADVICE}` : ""}
         </Text>
       </Box>

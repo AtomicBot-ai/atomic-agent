@@ -8,7 +8,8 @@ import {
 import type { TaskSummaryRow } from "../tasks/tasks-panel-state.js";
 import type { SessionPickerEntry } from "../tui-state.js";
 
-const ANSI = /[\u001b\u009b][[()#;?]*.{0,2}(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g;
+const ANSI =
+  /[\u001b\u009b][[()#;?]*.{0,2}(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g;
 
 function strip(text: string): string {
   return text.replace(ANSI, "");
@@ -147,7 +148,11 @@ describe("Sidebar", () => {
     // prop is the projected slice — counting it is how "5 running"
     // got printed under seven live tasks.
     const rows = Array.from({ length: 7 }, (_, idx) =>
-      taskRow({ id: `run-${idx}`, status: "running", userMessage: `run ${idx}` }),
+      taskRow({
+        id: `run-${idx}`,
+        status: "running",
+        userMessage: `run ${idx}`,
+      }),
     );
     const { lastFrame } = render(
       <Sidebar
@@ -329,7 +334,9 @@ describe("Sidebar", () => {
   });
 
   it("narrows the previews with the rail rather than overflowing it", () => {
-    const long = [{ ...SESSIONS[0]!, preview: "a very long session preview indeed" }];
+    const long = [
+      { ...SESSIONS[0]!, preview: "a very long session preview indeed" },
+    ];
     const { lastFrame } = render(
       <Sidebar
         width={24}

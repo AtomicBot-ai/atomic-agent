@@ -36,7 +36,9 @@ function pull(over: Partial<LocalModelsPullState> = {}): LocalModelsPullState {
   };
 }
 
-function step(props: Partial<React.ComponentProps<typeof OnboardingDownloadStep>> = {}) {
+function step(
+  props: Partial<React.ComponentProps<typeof OnboardingDownloadStep>> = {},
+) {
   return (
     <OnboardingDownloadStep
       pull={pull()}
@@ -73,10 +75,14 @@ describe("OnboardingDownloadStep", () => {
 
   it("marks the weights as waiting while the runtime is still coming down", () => {
     const view = mount(
-      step({ pull: pull({ kind: "backend", modelId: "_backend", percent: 6 }) }),
+      step({
+        pull: pull({ kind: "backend", modelId: "_backend", percent: 6 }),
+      }),
     );
     const frame = strip(view.lastFrame() ?? "");
-    const weights = frame.split("\n").find((row) => row.includes("model weights"));
+    const weights = frame
+      .split("\n")
+      .find((row) => row.includes("model weights"));
     expect(weights).toContain("waiting");
     expect(frame).toContain("6%");
   });
@@ -115,7 +121,9 @@ describe("OnboardingDownloadStep", () => {
   });
 
   it("estimates a rate once a second sample arrives", async () => {
-    const view = mount(step({ pull: pull({ transferredBytes: 1_000_000_000 }) }));
+    const view = mount(
+      step({ pull: pull({ transferredBytes: 1_000_000_000 }) }),
+    );
     expect(strip(view.lastFrame() ?? "")).toContain("estimating");
     view.rerender(step({ pull: pull({ transferredBytes: 1_400_000_000 }) }));
     await new Promise((resolve) => setTimeout(resolve, 60));
@@ -137,15 +145,27 @@ describe("countOnboardingDownloadBlockRows", () => {
     // headline + margin + 2 bars + margin + rate + 2-row margin + offer
     // + the skip row's margin and two lines
     expect(lines.length).toBe(13);
-    const withMark = countOnboardingDownloadBlockRows({ mark: "sm", offerCloud: true });
-    const noMark = countOnboardingDownloadBlockRows({ mark: "xs", offerCloud: true });
+    const withMark = countOnboardingDownloadBlockRows({
+      mark: "sm",
+      offerCloud: true,
+    });
+    const noMark = countOnboardingDownloadBlockRows({
+      mark: "xs",
+      offerCloud: true,
+    });
     expect(withMark).toBe(lines.length + 3 + 1);
     expect(noMark).toBe(lines.length + 2 + 1);
   });
 
   it("gives the offer's four rows back once it is spent", () => {
-    const withOffer = countOnboardingDownloadBlockRows({ mark: "sm", offerCloud: true });
-    const without = countOnboardingDownloadBlockRows({ mark: "sm", offerCloud: false });
+    const withOffer = countOnboardingDownloadBlockRows({
+      mark: "sm",
+      offerCloud: true,
+    });
+    const without = countOnboardingDownloadBlockRows({
+      mark: "sm",
+      offerCloud: false,
+    });
     expect(withOffer - without).toBe(4);
     // The skip row stays: 6 progress rows plus its margin and two lines.
     const view = mount(step({ offerCloudMeanwhile: false }));

@@ -122,13 +122,15 @@ function catalogState(size: number, filter = ""): TuiState {
 }
 
 describe("the switch popup", () => {
-  it("lists the three backends and marks the live one", async () => {
+  it("lists the four backends, fusion last, and marks the live one", async () => {
     const app = await mount(open("backend"));
     const frame = app.frame();
     expect(frame).toContain("WHERE IT RUNS");
     expect(frame).toContain("cloud");
     expect(frame).toContain("local");
     expect(frame).toContain("custom");
+    expect(frame).toContain("fusion");
+    expect(frame.indexOf("custom")).toBeLessThan(frame.indexOf("fusion"));
     expect(frame).toContain("↑↓ move");
     expect(frame).toContain("←→ switch");
     app.unmount();

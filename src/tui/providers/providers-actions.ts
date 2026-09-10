@@ -1,9 +1,10 @@
+import type { ResolvedRunMode } from "../../llm/run-mode/index.js";
 import type { ProviderRow } from "./providers-panel-state.js";
 import type { ProvidersWizardState } from "./providers-wizard-state.js";
 
 export type ProvidersAction =
   | { type: "providers_refresh_requested" }
-  | { type: "providers_refresh"; rows: readonly ProviderRow[] }
+  | { type: "providers_refresh"; rows: readonly ProviderRow[]; runMode?: ResolvedRunMode }
   | { type: "providers_set_active_text"; id: string }
   | { type: "providers_select_chat_model"; providerId: string; modelId: string }
   | {

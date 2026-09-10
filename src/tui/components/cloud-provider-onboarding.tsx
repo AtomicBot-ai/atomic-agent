@@ -56,8 +56,7 @@ export function CloudProviderOnboarding(props: {
    * check and it aborts first: no cancel, no second run.
    */
   const checkStillWanted = useCallback(
-    (abort: AbortController): boolean =>
-      alive.current && !abort.signal.aborted,
+    (abort: AbortController): boolean => alive.current && !abort.signal.aborted,
     [],
   );
 
@@ -189,7 +188,10 @@ export function CloudProviderOnboarding(props: {
       <Text color={theme.colors.muted}>
         Configure a cloud text provider now. Esc returns to backend choice.
       </Text>
-      <ProvidersWizard wizard={{ ...wizard, submitting }} mouseRoute={mouseRoute} />
+      <ProvidersWizard
+        wizard={{ ...wizard, submitting }}
+        mouseRoute={mouseRoute}
+      />
     </Box>
   );
 }

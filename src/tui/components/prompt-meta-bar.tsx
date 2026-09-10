@@ -1,7 +1,8 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
 import { ComposerMetaControls } from "../composer-switch/composer-meta-controls.js";
-import type { ComposerBackendMeta } from "../composer-switch/composer-switch-rows.js";
+import type { ComposerBackendMeta } from "../composer-switch/composer-backend-selectors.js";
+import { fusionBarGround } from "../theme/fusion-tint.js";
 import { theme } from "../theme/theme.js";
 
 /**
@@ -49,6 +50,15 @@ export interface PromptMetaBarProps {
   provider: string | null;
   /** Turns the model slot into a `download model` call to action. */
   needsModelDownload?: boolean;
+  /** Fusion's fourth control (`2 workers`); `null` off that route. */
+  workers?: string | null;
+  /**
+   * Re-skin the bar for the Fusion run mode: black ground, white ink,
+   * orange accents — see `fusion-tint.ts`. The blue the bar normally
+   * wears is the ordinary state, and leaving it under an orange chip
+   * made fusion look like a badge on the normal composer.
+   */
+  fusion?: boolean;
   /** Chat-surface content rendered at the bar's right end. */
   rightSlot: ReactElement | null;
   /**
@@ -90,6 +100,8 @@ export function PromptMetaBar({
   model,
   provider,
   needsModelDownload,
+  workers,
+  fusion = false,
   rightSlot,
   contextSlot,
   modeSlot,
@@ -99,7 +111,7 @@ export function PromptMetaBar({
     <Box
       flexDirection="row"
       justifyContent="space-between"
-      backgroundColor={theme.colors.railBackground}
+      backgroundColor={fusion ? fusionBarGround() : theme.colors.railBackground}
       paddingX={1}
       // Matches the buffer's own padding above. The rows carry no
       // foreground, so the bar's ground paints straight through them and
@@ -119,6 +131,8 @@ export function PromptMetaBar({
           model={model}
           provider={provider}
           needsModelDownload={needsModelDownload ?? false}
+          workers={workers ?? null}
+          fusion={fusion}
           mouseLayer={mouseLayer}
         />
       </Box>
@@ -145,6 +159,8 @@ interface MetaLeftProps {
   model: string | null;
   provider: string | null;
   needsModelDownload: boolean;
+  workers: string | null;
+  fusion: boolean;
   mouseLayer?: number;
 }
 
@@ -166,13 +182,17 @@ function MetaLeft({
   model,
   provider,
   needsModelDownload,
+  workers,
+  fusion,
   mouseLayer,
 }: MetaLeftProps): ReactElement {
   if (!leftSlot && !backend && !model && !provider && !needsModelDownload) {
     return <Text> </Text>;
   }
   const cleanModel = model ? formatModel(model) : null;
-  const hasRoute = Boolean(backend || provider || cleanModel || needsModelDownload);
+  const hasRoute = Boolean(
+    backend || provider || cleanModel || needsModelDownload,
+  );
   return (
     <Box flexDirection="row" flexShrink={1} minWidth={0}>
       {leftSlot ? (
@@ -193,6 +213,8 @@ function MetaLeft({
         provider={provider}
         model={cleanModel}
         needsModelDownload={needsModelDownload}
+        workers={workers}
+        fusion={fusion}
         mouseLayer={mouseLayer}
       />
     </Box>

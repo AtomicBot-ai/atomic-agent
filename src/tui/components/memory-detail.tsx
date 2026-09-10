@@ -38,7 +38,9 @@ export function MemoryDetail(props: MemoryDetailProps): ReactElement {
       <Box marginTop={1}>
         <Text color={theme.colors.muted}>
           Esc back · r refresh
-          {detail.channel === "notes" ? " · g expand graph · Enter neighbor" : ""}
+          {detail.channel === "notes"
+            ? " · g expand graph · Enter neighbor"
+            : ""}
         </Text>
       </Box>
     </Box>

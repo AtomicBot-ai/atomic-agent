@@ -4,6 +4,7 @@ import {
   parseUserLlmFileConfig,
   type UserLlmFileConfig,
 } from "./llm-config.js";
+import type { UserLlmRunModeConfig } from "./llm-run-mode-config.js";
 
 export type { ApprovalLevel } from "../approval/approval-level.js";
 import type { DotenvLoadResult } from "./load-dotenv.js";
@@ -981,6 +982,13 @@ export interface AtomicAgentConfig {
       probeThrottleMs?: number;
       failureWindowMs?: number;
     };
+    /**
+     * Run mode: `local` | `cloud` | `fusion`, plus the fusion legs
+     * (cloud orchestrator + llama-server workers). Additive —
+     * `activeTextProvider` stays authoritative; see
+     * `src/llm/run-mode/resolve-run-mode.ts`.
+     */
+    runMode?: UserLlmRunModeConfig;
   };
 }
 
@@ -1230,6 +1238,14 @@ export interface UserManagedLocalLlmConfig {
    * Added in config v48; older files inherit `[]` transparently.
    */
   tensorSplit: number[];
+  /**
+   * llama-server request slots (`--parallel`) for the managed chat
+   * daemon, 1..8. Default `2` — the value that was hard-coded before
+   * config v52, so older files launch byte-identically. Fusion workers
+   * run one per slot; raising this is what lets them run concurrently
+   * instead of queueing on the server. Applied on the next daemon start.
+   */
+  parallel: number;
   /**
    * Stop the managed chat daemon when the last CLI session exits.
    * `true` (default) — closing the terminal frees the RAM/VRAM the
@@ -1987,7 +2003,12 @@ export interface UserConfigFile {
 // v56: new `atomicMail` block — the agent's own inbox and the owner's
 // verified e-mail. Additive and inert: every field starts `null`; the API
 // key lives in `<stateDir>/.env`, never here.
-export const USER_CONFIG_VERSION = 56;
+// v57: `llm.runMode` (mode local|cloud|fusion + the fusion legs and
+// worker count) and `localModels.managed.parallel` (llama-server
+// `--parallel`, default 2 = the previously hard-coded value). Additive:
+// an older file parses with `runMode` absent and `parallel` 2, which
+// launches the daemon with byte-identical args.
+export const USER_CONFIG_VERSION = 57;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -2132,6 +2153,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   53,
   54,
   55,
+  56,
   USER_CONFIG_VERSION,
 ];
 
@@ -2151,6 +2173,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       backendVariant: "auto",
       contextSize: 0,
       tensorSplit: [],
+      parallel: 2,
     },
     embeddings: {
       enabled: false,
@@ -3885,6 +3908,12 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
     tensorSplit: parseTensorSplit(
       rawManaged.tensorSplit,
       "localModels.managed.tensorSplit",
+    ),
+    parallel: parseBoundedPositiveInt(
+      rawManaged.parallel ?? USER_CONFIG_DEFAULTS.localModels.managed.parallel,
+      "localModels.managed.parallel",
+      1,
+      8,
     ),
   };
 

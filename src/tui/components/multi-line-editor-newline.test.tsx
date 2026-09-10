@@ -26,7 +26,11 @@ const CASES: ReadonlyArray<{
   { name: "legacy Enter", bytes: "\r", expect: "submit" },
   // The one that cannot be fixed in JS: identical bytes to Enter.
   { name: "legacy Shift+Enter", bytes: "\r", expect: "submit" },
-  { name: "legacy Alt+Enter", bytes: String.fromCharCode(27) + "\r", expect: "newline" },
+  {
+    name: "legacy Alt+Enter",
+    bytes: String.fromCharCode(27) + "\r",
+    expect: "newline",
+  },
   { name: "legacy Ctrl+J", bytes: "\n", expect: "newline" },
   { name: "kitty Enter", bytes: `${CSI}13u`, expect: "submit" },
   { name: "kitty Shift+Enter", bytes: `${CSI}13;2u`, expect: "newline" },

@@ -109,10 +109,58 @@ describe("the composer's route line", () => {
     expect(out).not.toContain("unknown");
   });
 
+  it("draws the fusion word as an orange chip, never as orange rail ink", () => {
+    const { lastFrame, unmount } = render(
+      <Box>
+        <ComposerMetaControls
+          backend={{ kind: "fusion", status: "healthy" }}
+          provider="openrouter"
+          model="claude-opus-5 ⇄ qwen-3.5-4b"
+        />
+      </Box>,
+    );
+    const out = lastFrame() ?? "";
+    unmount();
+    const orange = theme.colors.warnStrong;
+    const value = Number.parseInt(orange.slice(1), 16);
+    const bg = `\u001b[48;2;${(value >> 16) & 0xff};${(value >> 8) & 0xff};${value & 0xff}m`;
+    // The chip pads its word, so the dot and the word sit a chip-edge apart.
+    expect(plain(out)).toMatch(/● +fusion +· openrouter/);
+    // The ground is the palette's orange…
+    expect(out).toContain(bg);
+    // …and the word is never painted in it as text on the rail.
+    expect(out).not.toContain(`${ink(orange)}fusion`);
+    expect(out).not.toContain(`${ink(orange)} fusion`);
+    // The neighbours stay rail text.
+    expect(out).toContain(`${ink(theme.colors.railForeground)}openrouter`);
+  });
+
   it("gives cloud its dot but never a word no probe stands behind", () => {
     const out = plain(frame());
     expect(out).toContain("● cloud");
     expect(out).not.toContain("healthy");
+  });
+
+  it("adds the worker count as a fourth control on the fusion route", () => {
+    const { lastFrame, unmount } = render(
+      <Box>
+        <ComposerMetaControls
+          backend={{ kind: "fusion", status: "healthy" }}
+          provider="openrouter"
+          model="claude-opus-5 ⇄ qwen-3.5-4b"
+          workers="3 workers"
+        />
+      </Box>,
+    );
+    const text = plain(lastFrame() ?? "");
+    unmount();
+    expect(text).toContain("3 workers");
+    // Last: where it runs, who serves it, which model, how many workers.
+    expect(text.indexOf("claude-opus-5")).toBeLessThan(text.indexOf("3 workers"));
+  });
+
+  it("draws no fourth control when there are no workers to count", () => {
+    expect(plain(frame())).not.toContain("worker");
   });
 
   it("renders nothing at all when there is no route to state", () => {

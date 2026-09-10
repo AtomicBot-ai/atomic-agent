@@ -25,13 +25,18 @@ describe("DownloadChip", () => {
     const frame = strip(view.lastFrame() ?? "");
     expect(frame).toContain("gemma-4-e4b");
     expect(frame).toContain("61%");
-    expect(frame.split("\n").filter((line) => line.trim().length > 0)).toHaveLength(1);
+    expect(
+      frame.split("\n").filter((line) => line.trim().length > 0),
+    ).toHaveLength(1);
   });
 
   /** Two samples, so the rate — and therefore the ETA — exists. */
   async function frameAt(budget: number): Promise<string> {
     const view = render(
-      <DownloadChip pull={pull({ transferredBytes: 2_000_000_000 })} budget={budget} />,
+      <DownloadChip
+        pull={pull({ transferredBytes: 2_000_000_000 })}
+        budget={budget}
+      />,
     );
     view.rerender(<DownloadChip pull={pull()} budget={budget} />);
     await new Promise((resolve) => setTimeout(resolve, 60));
@@ -54,9 +59,15 @@ describe("DownloadChip", () => {
 
   it("swaps the bar for a paused form while the worker waits for the network", () => {
     const waiting = pull({
-      waiting: { reason: "fetch failed", attempt: 3, nextRetryAt: new Date(Date.now() + 30_000).toISOString() },
+      waiting: {
+        reason: "fetch failed",
+        attempt: 3,
+        nextRetryAt: new Date(Date.now() + 30_000).toISOString(),
+      },
     });
-    const wide = strip(render(<DownloadChip pull={waiting} budget={60} />).lastFrame() ?? "");
+    const wide = strip(
+      render(<DownloadChip pull={waiting} budget={60} />).lastFrame() ?? "",
+    );
     expect(wide).toContain("⏸");
     expect(wide).toContain("gemma-4-e4b");
     expect(wide).toContain("61%");
@@ -64,7 +75,9 @@ describe("DownloadChip", () => {
     expect(wide).not.toContain("█");
     expect(wide).not.toMatch(/minute|second/);
 
-    const tight = strip(render(<DownloadChip pull={waiting} budget={16} />).lastFrame() ?? "");
+    const tight = strip(
+      render(<DownloadChip pull={waiting} budget={16} />).lastFrame() ?? "",
+    );
     expect(tight).toContain("61%");
     expect(tight).not.toContain("gemma");
   });
@@ -75,7 +88,9 @@ describe("DownloadChip", () => {
   });
 
   it("names the runtime rather than a model id during the backend pull", () => {
-    const view = render(<DownloadChip pull={pull({ kind: "backend", modelId: "_backend" })} />);
+    const view = render(
+      <DownloadChip pull={pull({ kind: "backend", modelId: "_backend" })} />,
+    );
     expect(strip(view.lastFrame() ?? "")).toContain("llama.cpp");
   });
 
@@ -87,7 +102,9 @@ describe("DownloadChip", () => {
     const SHOWN = `${LONG_ID.slice(0, 29)}…`;
 
     function longFrame(budget: number): string {
-      const view = render(<DownloadChip pull={pull({ modelId: LONG_ID })} budget={budget} />);
+      const view = render(
+        <DownloadChip pull={pull({ modelId: LONG_ID })} budget={budget} />,
+      );
       return strip(view.lastFrame() ?? "");
     }
 
@@ -103,7 +120,9 @@ describe("DownloadChip", () => {
           budget={100}
         />,
       );
-      view.rerender(<DownloadChip pull={pull({ modelId: LONG_ID })} budget={100} />);
+      view.rerender(
+        <DownloadChip pull={pull({ modelId: LONG_ID })} budget={100} />,
+      );
       await new Promise((resolve) => setTimeout(resolve, 60));
       const frame = strip(view.lastFrame() ?? "");
       expect(frame).toContain(SHOWN);

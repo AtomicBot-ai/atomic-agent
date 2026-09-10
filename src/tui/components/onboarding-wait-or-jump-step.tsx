@@ -83,14 +83,18 @@ export function measureOnboardingWaitOrJumpStep(props: {
     // itself around an arbitrary message.
   }
   if (status === "running") lines.push(PROGRESS_TEMPLATE_LINE);
-  lines.push(`${ROW_INDENT}${ROW_COPY.jump.label}`, `${ROW_INDENT}${ROW_COPY.add.label}`);
+  lines.push(
+    `${ROW_INDENT}${ROW_COPY.jump.label}`,
+    `${ROW_INDENT}${ROW_COPY.add.label}`,
+  );
   if (status === "failed") lines.push(`${ROW_INDENT}${ROW_COPY.retry.label}`);
   if (props.fit.rowDetails) {
     lines.push(
       `${ROW_INDENT}${ROW_COPY.jump.details[status]}`,
       `${ROW_INDENT}${ROW_COPY.add.detail}`,
     );
-    if (status === "failed") lines.push(`${ROW_INDENT}${ROW_COPY.retry.detail}`);
+    if (status === "failed")
+      lines.push(`${ROW_INDENT}${ROW_COPY.retry.detail}`);
   }
   return widestLine(lines);
 }
@@ -152,7 +156,10 @@ export function OnboardingWaitOrJumpStep(props: {
       ) : null}
       {status === "ready" ? null : (
         <Box marginTop={1} flexDirection="column">
-          <OnboardingDownloadProgress pull={props.pull} error={props.pullError} />
+          <OnboardingDownloadProgress
+            pull={props.pull}
+            error={props.pullError}
+          />
         </Box>
       )}
       <Box flexDirection="column" marginTop={1}>
@@ -199,11 +206,16 @@ function Row(props: {
       onActivate={pressEnter(handleOnboardingStepKey)}
     >
       <Box flexDirection="column" marginBottom={1}>
-        <Text color={props.selected ? theme.colors.accent : undefined} bold={props.selected}>
+        <Text
+          color={props.selected ? theme.colors.accent : undefined}
+          bold={props.selected}
+        >
           {`${rowPrefix(props.selected)}${props.label}`}
         </Text>
         {props.detail ? (
-          <Text color={theme.colors.muted}>{`${ROW_INDENT}${props.detail}`}</Text>
+          <Text
+            color={theme.colors.muted}
+          >{`${ROW_INDENT}${props.detail}`}</Text>
         ) : null}
       </Box>
     </MouseListRow>

@@ -46,7 +46,8 @@ describe("OnboardingWaitOrJumpStep", () => {
     const frame = frameOf();
     expect(frame).toContain("Cloud model ready");
     expect(frame).toContain("Still downloading gemma-4-e4b");
-    const weights = frame.split("\n").find((row) => row.includes("model weights")) ?? "";
+    const weights =
+      frame.split("\n").find((row) => row.includes("model weights")) ?? "";
     // The same bar the download screen draws: percent and bytes, not a
     // sentence claiming progress the screen never shows.
     expect(weights).toContain("█");
@@ -109,7 +110,11 @@ describe("OnboardingWaitOrJumpStep", () => {
   });
 
   it("moves the marker onto the retry row", () => {
-    const frame = frameOf({ cursor: 2, pull: null, pullError: "connection reset" });
+    const frame = frameOf({
+      cursor: 2,
+      pull: null,
+      pullError: "connection reset",
+    });
     const retry =
       frame.split("\n").find((row) => row.includes("Retry the download")) ?? "";
     expect(retry.trimStart().startsWith("›")).toBe(true);

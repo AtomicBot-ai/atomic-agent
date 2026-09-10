@@ -58,10 +58,15 @@ export function DownloadChip({
   /** Columns left on the status-bar row. Under 12 the chip is dropped. */
   budget?: number;
 }): ReactElement | null {
-  const { etaSeconds } = useTransferRate(pull.transferredBytes, pull.totalBytes);
+  const { etaSeconds } = useTransferRate(
+    pull.transferredBytes,
+    pull.totalBytes,
+  );
   const percent = Math.min(100, Math.max(0, Math.round(pull.percent)));
   const filled = Math.round((percent / 100) * BAR_WIDTH);
-  const label = capLabel(pull.kind === "backend" ? "llama.cpp" : String(pull.modelId));
+  const label = capLabel(
+    pull.kind === "backend" ? "llama.cpp" : String(pull.modelId),
+  );
   if (budget < MINIMAL_COLUMNS) return null;
   const waiting = pull.waiting ?? null;
   if (waiting) {
@@ -92,10 +97,14 @@ export function DownloadChip({
       {withBar ? (
         <>
           <Text color={theme.colors.accent}>{"█".repeat(filled)}</Text>
-          <Text color={theme.colors.border}>{"░".repeat(BAR_WIDTH - filled)}</Text>
+          <Text color={theme.colors.border}>
+            {"░".repeat(BAR_WIDTH - filled)}
+          </Text>
         </>
       ) : null}
-      <Text color={theme.colors.muted}>{withBar ? ` ${percentText}` : percentText}</Text>
+      <Text color={theme.colors.muted}>
+        {withBar ? ` ${percentText}` : percentText}
+      </Text>
       {withEta ? (
         <Text color={theme.colors.muted}>{`  ${formatEta(etaSeconds)}`}</Text>
       ) : null}
