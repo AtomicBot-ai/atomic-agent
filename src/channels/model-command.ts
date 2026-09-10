@@ -665,7 +665,10 @@ const MAX_LISTED_IDS = 12;
  * the message most likely to be sent, and the one an operator is least
  * able to act on when the chat splits it in two.
  */
-function joinIds(ids: readonly string[], code: (text: string) => string): string {
+function joinIds(
+  ids: readonly string[],
+  code: (text: string) => string,
+): string {
   const listed = ids.slice(0, MAX_LISTED_IDS).map((id) => code(id));
   const hidden = ids.length - listed.length;
   return hidden > 0
