@@ -16,6 +16,14 @@ import {
   isBackendVariantPreference,
   type BackendVariantPreference,
 } from "../local-llm/windows-backend-variant.js";
+import {
+  DEFAULT_DOWNLOAD_CONNECTIONS,
+  MAX_DOWNLOAD_CONNECTIONS,
+} from "../local-llm/download-settings.js";
+import {
+  DEFAULT_HF_ENDPOINT,
+  normalizeHuggingFaceEndpoint,
+} from "../local-llm/huggingface-endpoint.js";
 import { parseCustomLocalModels } from "./custom-models-schema.js";
 import {
   MCP_SERVER_NAME_MAX_LENGTH,
@@ -215,6 +223,8 @@ export interface AtomicAgentConfig {
      * healthy. Disabled / unreachable ⇒ FTS5-only recall path.
      */
     embeddings: UserManagedEmbeddingLlmConfig;
+    /** Parallel-connection download settings (config v52). */
+    download: LocalModelDownloadConfig;
   };
   /**
    * Outcome of the startup `<stateDir>/.env` load performed by
@@ -1204,6 +1214,27 @@ export interface UserManagedLocalLlmConfig {
  * `enabled=false` (default) ⇒ no second daemon, no embedding writes,
  * no hybrid recall — observably identical to phase 1A.
  */
+/**
+ * How model and backend files are fetched. Added in config v52.
+ * `connections` is the number of parallel HTTP range requests one file
+ * is split across (1–64). Hugging Face's CDN caps each connection, so
+ * one stream is slow regardless of the link; `1` restores the old
+ * single-stream behaviour. The `ATOMIC_AGENT_DOWNLOAD_CONNECTIONS` env
+ * var, when set, wins over this file value (operator override).
+ */
+export interface LocalModelDownloadConfig {
+  connections: number;
+  /**
+   * Origin that serves Hugging Face for this install (config v53), e.g.
+   * a regional mirror. Catalogue and custom-model URLs stay canonical
+   * `https://huggingface.co/...`; the endpoint is applied at request
+   * time, so switching it never invalidates a partial download. The
+   * `HF_ENDPOINT` env var (what `huggingface_hub` honours) wins over
+   * this value when set.
+   */
+  hfEndpoint: string;
+}
+
 export interface UserManagedEmbeddingLlmConfig {
   enabled: boolean;
   /** `EmbeddingModelId` from the catalog, or `null` when not chosen. */
@@ -1248,6 +1279,8 @@ export interface UserConfigFile {
      * `{ enabled: false, modelId: null, port: 19092 }`.
      */
     embeddings: UserManagedEmbeddingLlmConfig;
+    /** Parallel-connection download settings (config v52). */
+    download: LocalModelDownloadConfig;
     /**
      * GGUF models the operator added from an arbitrary Hugging Face repo
      * (config v44). Each entry is a whole `LocalModelDef` with a
@@ -1885,7 +1918,13 @@ export interface UserConfigFile {
 // bot token lives in `<stateDir>/.env`, never here.
 // v52: new `swarm` block — extra Telegram / Discord bots on one runtime,
 // each with its own token (`.env`), owner and label. Default `{ units: [] }`.
-export const USER_CONFIG_VERSION = 52;
+// v53: localModels gains `download.connections` — how many parallel range
+// requests one model/backend file is split across (default 16). Older
+// files inherit the default; `1` is the previous single-stream behaviour.
+// v54: `download.hfEndpoint` — the origin that serves Hugging Face (a
+// mirror for regions where huggingface.co is slow or blocked). Default is
+// the canonical host; `HF_ENDPOINT` in the environment overrides it.
+export const USER_CONFIG_VERSION = 54;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -2024,7 +2063,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   47,
   48,
   49,
-  50, 51,
+  50, 51, 52, 53,
   USER_CONFIG_VERSION,
 ];
 
@@ -2051,6 +2090,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       port: 19092,
       url: "http://127.0.0.1:19092",
     },
+    download: { connections: DEFAULT_DOWNLOAD_CONNECTIONS, hfEndpoint: DEFAULT_HF_ENDPOINT },
     customModels: [],
   },
   log: { level: "info" },
@@ -3499,6 +3539,17 @@ function unknownTopLevelKeys(
  * keys are carried through verbatim (forward compat); unknown keys
  * *inside* a known block are still dropped.
  */
+function parseHfEndpoint(value: unknown, path: string): string {
+  const normalized = typeof value === "string" ? normalizeHuggingFaceEndpoint(value) : null;
+  if (!normalized) {
+    throw new ConfigValidationError(
+      path,
+      `must be an http(s) origin such as "https://hf-mirror.com", got ${JSON.stringify(value)}`,
+    );
+  }
+  return normalized;
+}
+
 export function parseUserConfigFile(raw: unknown): UserConfigFile {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
     throw new ConfigValidationError("<root>", "expected JSON object");
@@ -3683,6 +3734,21 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
     ),
   };
 
+  const rawDownload =
+    (localModels.download as Record<string, unknown> | undefined) ?? {};
+  const download: LocalModelDownloadConfig = {
+    connections: parseBoundedPositiveInt(
+      rawDownload.connections ?? USER_CONFIG_DEFAULTS.localModels.download.connections,
+      "localModels.download.connections",
+      1,
+      MAX_DOWNLOAD_CONNECTIONS,
+    ),
+    hfEndpoint: parseHfEndpoint(
+      rawDownload.hfEndpoint ?? USER_CONFIG_DEFAULTS.localModels.download.hfEndpoint,
+      "localModels.download.hfEndpoint",
+    ),
+  };
+
   const localModelsMode = parseLocalLlmMode(
     localModels.mode ?? USER_CONFIG_DEFAULTS.localModels.mode,
     "localModels.mode",
@@ -3729,6 +3795,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
       ),
       managed,
       embeddings: embeddingsDaemon,
+      download,
       customModels,
     },
     log: {

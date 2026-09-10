@@ -6,7 +6,7 @@
  * "does not exist" and the message has to cover both.
  */
 
-const HF_API = "https://huggingface.co/api";
+import { huggingFaceEndpointHost, resolveHuggingFaceEndpoint } from "./huggingface-endpoint.js";
 
 export interface HuggingFaceFile {
   path: string;
@@ -26,7 +26,7 @@ async function fetchHfJson(
   const timeout = AbortSignal.timeout(opts?.timeoutMs ?? 15_000);
   let res: Response;
   try {
-    res = await fetch(`${HF_API}${path}`, {
+    res = await fetch(`${resolveHuggingFaceEndpoint()}/api${path}`, {
       headers: {
         "User-Agent": "atomic-agent/local-llm",
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -39,7 +39,7 @@ async function fetchHfJson(
     // difference from huggingface.co being down.
     if (opts?.signal?.aborted) throw err;
     throw new Error(
-      `Could not reach huggingface.co: ${err instanceof Error ? err.message : String(err)}`,
+      `Could not reach ${huggingFaceEndpointHost()}: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
   if (res.status === 401 || res.status === 403) {
@@ -87,6 +87,11 @@ export async function listHuggingFaceGgufFiles(
   });
 }
 
+/**
+ * Always the canonical host: stored model definitions and download
+ * sidecars keep `huggingface.co` URLs, and the endpoint is applied at
+ * request time (`rewriteHuggingFaceUrl`).
+ */
 export function resolveHuggingFaceFileUrl(
   repoId: string,
   revision: string,

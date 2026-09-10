@@ -30,7 +30,11 @@ import {
   maybeAutoUpdateBackend,
   readBackendVersion,
   readDownloadJob,
+  DEFAULT_HF_ENDPOINT,
+  huggingFaceEndpointHost,
   readPartialDownload,
+  resolveDownloadConnections,
+  resolveHuggingFaceEndpoint,
   removeModel,
   spawnDownloadWorker,
   resolveChatTemplatePath,
@@ -131,10 +135,14 @@ export async function runLocalModelsPull(args: string[]): Promise<number> {
     const partial = readPartialDownload(
       resolveModelFilePath(dataDir, m.id, m.filename),
     );
+    const streams = resolveDownloadConnections();
+    const mirror =
+      resolveHuggingFaceEndpoint() === DEFAULT_HF_ENDPOINT ? "" : ` via ${huggingFaceEndpointHost()}`;
+    const via = `${streams > 1 ? `, ${streams} connections` : ""}${mirror}`;
     process.stderr.write(
       partial
-        ? `resuming ${m.id} (${m.filename}, ${m.sizeLabel}) — ${formatGgufSize(partial.transferred)} already on disk\n`
-        : `downloading ${m.id} (${m.filename}, ${m.sizeLabel})\n`,
+        ? `resuming ${m.id} (${m.filename}, ${m.sizeLabel}${via}) — ${formatGgufSize(partial.transferred)} already on disk\n`
+        : `downloading ${m.id} (${m.filename}, ${m.sizeLabel}${via})\n`,
     );
     await downloadModel(dataDir, m, {
       onProgress: progressFor(`${m.filename} (${m.sizeLabel})`, estTotal),

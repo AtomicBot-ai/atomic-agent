@@ -63,6 +63,21 @@ export {
   type PartialDownloadMeta,
 } from "./download-file.js";
 export {
+  DEFAULT_DOWNLOAD_CONNECTIONS,
+  MAX_DOWNLOAD_CONNECTIONS,
+  resolveDownloadConnections,
+  setDefaultDownloadConnections,
+} from "./download-settings.js";
+export {
+  DEFAULT_HF_ENDPOINT,
+  huggingFaceEndpointHost,
+  isHuggingFaceUrl,
+  normalizeHuggingFaceEndpoint,
+  resolveHuggingFaceEndpoint,
+  rewriteHuggingFaceUrl,
+  setDefaultHuggingFaceEndpoint,
+} from "./huggingface-endpoint.js";
+export {
   DOWNLOAD_JOB_VERSION,
   downloadJobId,
   isDownloadJobLive,
