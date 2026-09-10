@@ -74,21 +74,41 @@ const HEALTH_POLL_MS = 300;
 /**
  * Where the agent might be, in order of preference.
  *
- * `ATOMIC_AGENT_BIN` wins. Then `~/atag-agent/bin/atag`: a locally built
- * agent, preferred when it exists because a released install can be
- * behind the routes the desktop needs (a 0.5.5 SEA binary has no
- * `/api/coding-mode`, which is what greys the coding-mode chip out).
- * After that the released install, which is the normal case. Nothing
- * here repoints `~/.local/bin/atag`, so a terminal `atag` keeps running
- * whatever was installed; only the desktop prefers the local build, and
- * the diagnostics line names the binary it actually started. Delete
- * `~/atag-agent` to fall back.
+ * `ATOMIC_AGENT_BIN` wins — that is how a driven test aims the app at a
+ * particular build.
+ *
+ * Then THE AGENT INSIDE THIS APP. A packaged build ships the matching
+ * agent in `Resources/agent`, and it is preferred over anything installed
+ * because it is the only one guaranteed to be the same version as the
+ * window drawing it. That is what F4 was about: the coding-mode chip was
+ * greyed out and captioned with an internal route name because the agent
+ * the app happened to find — a released 0.5.5 install — has no
+ * `/api/coding-mode`. Shipping the pair together is the fix; the message
+ * about needing a newer agent is still there for a run that has no
+ * bundled agent to fall back on.
+ *
+ * After that, a locally built `~/atag-agent/bin/atag` (a developer
+ * checkout), then the released install. Nothing here repoints
+ * `~/.local/bin/atag`, so a terminal `atag` keeps running whatever was
+ * installed, and the diagnostics line names the binary actually started.
  */
+export function bundledAgentPath(): string | null {
+  /* `process.resourcesPath` is only meaningful in a packaged app; in a dev
+     run it points into the Electron install, where there is no agent. Both
+     cases are handled by simply testing the path. */
+  const root = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
+  if (!root) return null;
+  return join(root, "agent", "atomic-agent");
+}
+
 function candidateBinaries(): string[] {
   const fromEnv = process.env.ATOMIC_AGENT_BIN;
+  const bundled = bundledAgentPath();
   const home = homedir();
   return [
+    // The override wins, so a driven run can aim the app at one build.
     ...(fromEnv ? [fromEnv] : []),
+    ...(bundled ? [bundled] : []),
     join(home, "atag-agent", "bin", "atag"),
     join(home, ".local", "bin", "atag"),
     join(home, ".local", "bin", "atomic-agent"),

@@ -48,6 +48,10 @@
       {
         "from": "LICENSE",
         "to": "LICENSE.txt"
+      },
+      {
+        "from": "../THIRD-PARTY-NOTICES.txt",
+        "to": "THIRD-PARTY-NOTICES.txt"
       }
     ],
     "directories": {
