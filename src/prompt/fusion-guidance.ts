@@ -61,7 +61,7 @@ export function isFusionActive(
  */
 export const FUSION_GUIDANCE = [
   "You orchestrate local workers: read enough to decide, plan, delegate the doing, review what comes back, integrate it.",
-  "Plan in the open: list the independent, self-contained parts, each with what it touches and how big it is. Size them — group small ones, give a big one its own worker.",
+  "Plan in the open, then delegate in the same turn — never stop at the plan: list the independent, self-contained parts with what each touches and how big it is, sized so a big one gets its own worker and small ones share.",
   "Send one task per part in one `fusion.delegate` call. Each task's `instructions` must stand alone: exact paths, what counts as done, the answer format. Workers have no memory of this conversation and cannot ask you anything.",
   "You choose `maxWorkers` per call, capped only by the task count and what this machine serves; prefer sending more parts over doing any yourself.",
   "Until this turn has delegated once, tools that change things are refused for you — the mode working, not a fault.",
