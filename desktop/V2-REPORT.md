@@ -196,6 +196,45 @@ some spots rather than as a filled square and the word DONE. The provider
 list and the model step carry proper annunciators; the model-download rows do
 not yet.
 
+## Synced to v0.5.7, and three TUI gaps closed
+
+The branch was 204 commits behind main. Main never touches `desktop/`, so
+the merge came down to 13 shared files and two conflicts — both "each side
+added something", both kept. Two things a clean text merge hides:
+
+- `effectiveToolDescriptors` became late-bound in main so a live MCP add is
+  visible without a restart; `previewPrompt` was reading it as a value.
+- Both branches had written an OpenAI error humaniser and they disagreed
+  about 402. Main's explained the mechanism; this branch's insisted a 402
+  must not discard the provider's own sentence, because OpenRouter's reads
+  "This request requires more credits, or fewer max_tokens. You requested up
+  to 8192 tokens, but can only afford 7181" — an instruction with the actual
+  numbers in it. A 402 carries both now, and the two tests that each encoded
+  one side moved to the merged contract.
+
+**F3 is done, and the sync is what unblocked it.** The agent has parked
+turns on a provider outage for a while and told the TUI about it;
+`provider_waiting` and `provider_recovered` stopped at the loop and reached
+no other host. The SSE forwarder carries both now (extensions opt-in), and
+the composer shows `WAITING · <provider> · attempt n · next try 30s` with a
+Stop, and the reason in words rather than undici's.
+
+Measured against the TUI's menu registry (48 nodes), what was missing:
+
+| gap | state |
+|---|---|
+| Run mode incl. **fusion** | **added** — Settings › LLM; the worker count appears only when fusion is the mode running |
+| `/report` | **added** as the desktop's own version |
+| `go.run` / `go.observe*` / `go.debug` | deliberately absent — Go and Observe were removed on request |
+| **Swarm** | **not done** |
+| **Integrations** | **not done** |
+
+Swarm and Integrations are TUI-only surfaces: no HTTP route, no CLI
+subcommand, ~1,800 and ~1,300 lines reaching the runtime directly. Bringing
+them over means designing an agent-side API for them first. That is agent
+work, and guessing at the contract is how you ship a pane that looks right
+and writes the wrong config.
+
 ## The DMG carries its own agent
 
 F4's preferred fix, and the one that makes the artifact publishable: the app

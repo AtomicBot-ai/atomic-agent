@@ -1746,7 +1746,25 @@ async function smokeTest(): Promise<void> {
       if (reply.trim()) break;
       await new Promise((r) => setTimeout(r, 1000));
     }
-    check("agent replied", reply.toLowerCase().includes("hello"), JSON.stringify(reply.slice(0, 80)));
+    /* What this window owes is a completed turn with a real reply in it. The
+       exact words are the MODEL's — asked to "reply with exactly: hello there
+       friend" it sometimes does, and sometimes answers with a capabilities
+       pitch, and neither is the app malfunctioning. Asserting the literal
+       made this fail on a run where the message had demonstrably arrived
+       (the transcript's user row was verbatim) and the agent had answered.
+       So: a reply must arrive, and be prose rather than a placeholder. The
+       instruction-following is reported, not enforced. */
+    const said = reply.trim();
+    check(
+      "agent replied",
+      said.length > 0 && said !== "(no reply)" && said !== "(stopped)",
+      JSON.stringify(reply.slice(0, 80)),
+    );
+    if (said && !said.toLowerCase().includes("hello")) {
+      process.stdout.write(
+        `DIAG the model did not follow "reply with exactly" — ${JSON.stringify(said.slice(0, 60))}\n`,
+      );
+    }
     // r4-ui item 3 review fix: the end mark's LIVE path. Every other check on
     // the mark drives synthetic pushes (and, for the guard, a poked S.busy),
     // so nothing proved that a turn the agent really streamed collects its
@@ -3757,7 +3775,11 @@ async function settingsTest(
     ["Run", "Steer the running turn", null], ["Run", "Expand all tool cards", null], ["Run", "Collapse all tool cards", null],
     ["Setup", "Theme…", "h"], ["Setup", "Mouse…", null], ["Setup", "Hide or show the sidebar", null], ["Setup", "Analytics", null],
     ["Setup", "Enable or disable a skill…", null], ["Setup", "Create, cancel or run a task…", null],
-    ["Help", "Commands", null], ["Help", "List built-in tools", null], ["Help", "Write debug bundle", "d"], ["Help", "Quit", "q"],
+    ["Help", "Commands", null], ["Help", "List built-in tools", null], ["Help", "Write debug bundle", "d"],
+    // The TUI's `/report` (help.report) reaches the runtime directly and has
+    // no route behind it; this is the desktop's own version of the same
+    // intent, so it takes the same chord.
+    ["Help", "Report an issue…", "R"], ["Help", "Quit", "q"],
     // A.4: the product is Atomic Agent in every user-facing string.
     ["Danger zone", "Uninstall Atomic Agent…", null],
   ];
@@ -3814,7 +3836,10 @@ async function settingsTest(
   );
   check(
     "settings: Go, Observe and the debug pane left the tree",
-    gone.ids.length === 0 && gone.subs === 0 && gone.rows === 32,
+    /* 33 rows since `help.report` joined Help — the count is here to catch a
+       Go/Observe node creeping back in, so it moves with a deliberate
+       addition rather than pinning the menu's size forever. */
+    gone.ids.length === 0 && gone.subs === 0 && gone.rows === 33,
     JSON.stringify(gone),
   );
   const viaNode = await js<{ settings: boolean; pane: string | null }>(
