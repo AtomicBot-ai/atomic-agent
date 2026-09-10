@@ -368,6 +368,397 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     expect(calls).toBe(4);
   });
 
+  it("retries a step whose reply spent the cap, with a bigger cap and a notice", async () => {
+    // A reasoning model thinks past `max_tokens` before it emits the tool
+    // call. The old outcome was `Turn failed [model]: model response
+    // truncated`; the same request would hit the same wall, so the retry
+    // is a different one.
+    const registry = buildDefaultToolRegistry();
+    const events: Array<{ type: string } & Record<string, unknown>> = [];
+    const capsSeen: Array<number | undefined> = [];
+    const prompts: string[] = [];
+    let calls = 0;
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async ({ maxTokens, prompt }) => {
+        calls += 1;
+        capsSeen.push(maxTokens);
+        prompts.push(prompt);
+        if (calls === 1) {
+          return {
+            ...makeCompletion(""),
+            reasoningContent: "Let me think about this at great length",
+            stop: false,
+            truncated: true,
+            usage: { promptTokens: 6_000, completionTokens: 8_192, totalTokens: 14_192 },
+          };
+        }
+        return makeCompletion(
+          JSON.stringify({ tool: "reply", args: { text: "short answer" } }),
+        );
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (event.type === "completion_truncated" || event.type === "loop_failed") {
+          events.push(event as { type: string } & Record<string, unknown>);
+        }
+      },
+    });
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "s-trunc-cap", workingDir }),
+      {
+        userMessage: "write the module",
+        maxSteps: 5,
+        taskMaxSteps: 5,
+        signal: new AbortController().signal,
+      },
+    );
+
+    expect(result.reason).toBe("reply");
+    expect(calls).toBe(2);
+    // The first completion ran under the config cap; the retry under 4×.
+    expect(capsSeen[0]).toBeUndefined();
+    expect(capsSeen[1]).toBe(32_768);
+    // The model is told why it is being asked again.
+    expect(prompts[1]).toContain("cut off after 8192 tokens");
+    expect(prompts[1]).toContain("Keep your reasoning brief");
+    expect(prompts[0]).not.toContain("cut off after");
+    // One event, carrying the cause and the retry; no failure.
+    expect(events).toEqual([
+      expect.objectContaining({
+        type: "completion_truncated",
+        stepIndex: 0,
+        cause: "reply_cap",
+        completionTokens: 8_192,
+        promptTokens: 6_000,
+        requestedMaxTokens: 8_192,
+        retry: { kind: "raise_cap", maxTokens: 32_768 },
+      }),
+    ]);
+    // A retried step is one step.
+    expect(result.session.stepCount).toBe(1);
+  });
+
+  it("retries a cut on a leg boundary instead of calling the leg unproductive", async () => {
+    // A retry re-enters the loop at the same index. If that index is a
+    // leg boundary, the boundary check must not run a second time: its
+    // first pass reset the progress flag, and a second pass would read
+    // the retry as a whole leg with nothing to show.
+    const registry = buildDefaultToolRegistry();
+    registry.register({
+      name: "noop",
+      description: "no-op",
+      readonly: true,
+      async run() {
+        return { tool: "noop", status: "ok" as const, summary: "noop", details: {}, truncated: false };
+      },
+    });
+    const kinds: string[] = [];
+    let calls = 0;
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () => {
+        calls += 1;
+        if (calls <= 2) return makeCompletion(JSON.stringify({ tool: "noop", args: {} }));
+        if (calls === 3) {
+          return {
+            ...makeCompletion(""),
+            stop: false,
+            truncated: true,
+            usage: { promptTokens: 6_000, completionTokens: 8_192, totalTokens: 14_192 },
+          };
+        }
+        return makeCompletion(JSON.stringify({ tool: "reply", args: { text: "done" } }));
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (
+          event.type === "task_continued" ||
+          event.type === "completion_truncated" ||
+          event.type === "loop_completed"
+        ) {
+          kinds.push(event.type === "loop_completed" ? `loop_completed:${event.reason}` : event.type);
+        }
+      },
+    });
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "s-trunc-leg", workingDir }),
+      {
+        userMessage: "keep going",
+        maxSteps: 2,
+        taskMaxSteps: 10,
+        signal: new AbortController().signal,
+      },
+    );
+    expect(result.reason).toBe("reply");
+    expect(calls).toBe(4);
+    expect(kinds).toEqual(["task_continued", "completion_truncated", "loop_completed:reply"]);
+  });
+
+  it("retries a cut on the finalization step, where a reasoning model is likeliest to think past the cap", async () => {
+    const registry = buildDefaultToolRegistry();
+    let calls = 0;
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () => {
+        calls += 1;
+        if (calls === 1) {
+          return {
+            ...makeCompletion(""),
+            stop: false,
+            truncated: true,
+            usage: { promptTokens: 6_000, completionTokens: 8_192, totalTokens: 14_192 },
+          };
+        }
+        return makeCompletion(JSON.stringify({ tool: "reply", args: { text: "summary" } }));
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "s-trunc-final", workingDir }),
+      {
+        userMessage: "summarise",
+        // One step: it is the finalization step from the start.
+        maxSteps: 1,
+        taskMaxSteps: 1,
+        signal: new AbortController().signal,
+      },
+    );
+    expect(result.reason).toBe("reply");
+    expect(calls).toBe(2);
+  });
+
+  it("keeps the notice the cut attempt carried on the retry", async () => {
+    const registry = buildDefaultToolRegistry();
+    const prompts: string[] = [];
+    let calls = 0;
+    let drained = false;
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async ({ prompt }) => {
+        calls += 1;
+        prompts.push(prompt);
+        if (calls === 1) {
+          return {
+            ...makeCompletion(""),
+            stop: false,
+            truncated: true,
+            usage: { promptTokens: 6_000, completionTokens: 8_192, totalTokens: 14_192 },
+          };
+        }
+        return makeCompletion(JSON.stringify({ tool: "reply", args: { text: "ok" } }));
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      steeringInbox: {
+        open: () => {},
+        drain: () => {
+          if (drained) return [];
+          drained = true;
+          return ["also add the tests"];
+        },
+        closeAndDrain: () => [],
+      },
+    });
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "s-trunc-notice", workingDir }),
+      {
+        userMessage: "write it",
+        maxSteps: 5,
+        taskMaxSteps: 5,
+        signal: new AbortController().signal,
+      },
+    );
+    expect(result.reason).toBe("reply");
+    expect(prompts[0]).toContain("also add the tests");
+    expect(prompts[1]).toContain("also add the tests");
+    expect(prompts[1]).toContain("cut off after 8192 tokens");
+  });
+
+  it("forgets a learned window the server just proved too small", async () => {
+    const registry = buildDefaultToolRegistry();
+    const exceeded: number[] = [];
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () => ({
+        ...makeCompletion(JSON.stringify({ tool: "reply", args: { text: "ok" } })),
+        usage: { promptTokens: 20_000, completionTokens: 500, totalTokens: 20_500 },
+      }),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      contextWindow: () => 16_384,
+      onContextWindowExceeded: (tokens) => exceeded.push(tokens),
+    });
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "s-trunc-unlearn", workingDir }),
+      { userMessage: "hi", maxSteps: 5, taskMaxSteps: 5, signal: new AbortController().signal },
+    );
+    expect(result.reason).toBe("reply");
+    expect(exceeded).toEqual([20_500]);
+  });
+
+  it("fails the turn on the second cut of the same step, naming the wall", async () => {
+    const registry = buildDefaultToolRegistry();
+    const failures: string[] = [];
+    let calls = 0;
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async ({ maxTokens }) => {
+        calls += 1;
+        const cap = maxTokens ?? 8_192;
+        return {
+          ...makeCompletion(""),
+          stop: false,
+          truncated: true,
+          usage: { promptTokens: 6_000, completionTokens: cap, totalTokens: 6_000 + cap },
+        };
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (event.type === "loop_failed") {
+          failures.push(`${event.category}: ${event.error.message}`);
+        }
+      },
+    });
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "s-trunc-twice", workingDir }),
+      {
+        userMessage: "write the module",
+        maxSteps: 5,
+        taskMaxSteps: 5,
+        signal: new AbortController().signal,
+      },
+    );
+    expect(result.reason).toBe("failed");
+    expect(calls).toBe(2);
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toContain("model: model response truncated at 32768 tokens");
+    expect(failures[0]).toContain("localModels.completionMaxTokens");
+    expect(result.session.lastError).toContain("model response truncated");
+  });
+
+  it("learns the context window when the reply stopped short of the cap, and retries under it", async () => {
+    // Lemonade / llama.cpp sized the window below the model's advertised
+    // one; the runtime believed the catalogue. Prompt + reply *is* the
+    // window, so the retry is packed to it.
+    const registry = buildDefaultToolRegistry();
+    const observed: number[] = [];
+    let learned: number | null = null;
+    const prompts: string[] = [];
+    let calls = 0;
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async ({ prompt, maxTokens }) => {
+        calls += 1;
+        prompts.push(prompt);
+        if (calls === 1) {
+          return {
+            ...makeCompletion(""),
+            stop: false,
+            truncated: true,
+            usage: { promptTokens: 30_000, completionTokens: 2_768, totalTokens: 32_768 },
+          };
+        }
+        // Same cap as the first attempt: the window was the wall, not the cap.
+        expect(maxTokens).toBeUndefined();
+        return makeCompletion(
+          JSON.stringify({ tool: "reply", args: { text: "fits now" } }),
+        );
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      contextWindow: () => learned,
+      onContextWindowObserved: (contextWindow) => {
+        observed.push(contextWindow);
+        learned = contextWindow;
+      },
+    });
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "s-trunc-window", workingDir }),
+      {
+        userMessage: "keep going",
+        maxSteps: 5,
+        taskMaxSteps: 5,
+        signal: new AbortController().signal,
+      },
+    );
+    expect(result.reason).toBe("reply");
+    expect(observed).toEqual([32_768]);
+    expect(prompts[1]).toContain("ran out of context");
+    expect(calls).toBe(2);
+  });
+
+  it("fails with the truncation, not the 400, when the provider refuses the raised cap", async () => {
+    const registry = buildDefaultToolRegistry();
+    const failures: string[] = [];
+    let calls = 0;
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () => {
+        calls += 1;
+        if (calls === 1) {
+          return {
+            ...makeCompletion(""),
+            stop: false,
+            truncated: true,
+            usage: { promptTokens: 6_000, completionTokens: 8_192, totalTokens: 14_192 },
+          };
+        }
+        throw new TransportError('"vendor" rejected the request (400).', 400, "https://x/v1", {
+          cause: new Error("max_tokens is too large: 32768. This model supports at most 16384 completion tokens"),
+        });
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (event.type === "loop_failed") {
+          failures.push(`${event.category}: ${event.error.message}`);
+        }
+      },
+    });
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "s-trunc-400", workingDir }),
+      {
+        userMessage: "write the module",
+        maxSteps: 5,
+        taskMaxSteps: 5,
+        signal: new AbortController().signal,
+      },
+    );
+    expect(result.reason).toBe("failed");
+    expect(calls).toBe(2);
+    expect(failures[0]).toContain("model: model response truncated at 8192 tokens");
+    expect(failures[0]).not.toContain("rejected the request");
+  });
+
   it("does not wait out a failure that will never fix itself", async () => {
     // `transport` also covers a wrong URL answering 404 and a dead key
     // answering 401. Parking a turn for five minutes in front of a typo

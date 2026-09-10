@@ -24,6 +24,17 @@ export function buildOpenAiChatBody(
     max_tokens: filtered.maxTokens ?? getConfig().localModels.completionMaxTokens,
     stream,
   };
+  if (stream) {
+    // Ask for the usage block on the stream's last chunk. Without it
+    // most servers send none — OpenAI, llama.cpp and everything built on
+    // it — and a reply cut off by `finish_reason: "length"` then arrives
+    // with no token counts, which is exactly what tells a spent reply
+    // cap apart from a full context window (`classifyTruncation`).
+    // Providers that never needed the flag ignore it (OpenRouter,
+    // Anthropic's compatibility layer); Gemini honours it from 2.5. A
+    // vendor that rejects it can drop it through `extraBody`.
+    body.stream_options = { include_usage: true };
+  }
   if (filtered.stop) body.stop = filtered.stop;
   if (typeof filtered.seed === "number") body.seed = filtered.seed;
   if (filtered.tools && filtered.tools.length > 0) {

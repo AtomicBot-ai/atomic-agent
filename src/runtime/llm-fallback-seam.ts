@@ -173,6 +173,13 @@ export function createFallbackStreamer(
     const base = {
       prompt: promptFor(params, transport),
       sessionId: params.sessionId,
+      // Same field the unary seam forwards. The agent loop's truncation
+      // retry raises the cap per step, and every turn streams — a cap
+      // that only reached the unary path was a retry that changed
+      // nothing on the wire.
+      ...(typeof params.maxTokens === "number"
+        ? { maxTokens: params.maxTokens }
+        : {}),
       ...(params.signal ? { signal: params.signal } : {}),
     };
     const stream =

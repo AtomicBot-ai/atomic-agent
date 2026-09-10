@@ -1542,10 +1542,42 @@ export async function createAgentRuntime(
    * Resolved per step rather than captured once, so switching model
    * mid-session is picked up by the next prompt.
    */
+  /**
+   * Context windows the model server revealed by cutting a reply short
+   * — `completion_truncated` with cause `context_window`, where prompt +
+   * reply tokens is the window. Keyed by provider and model, kept for the
+   * life of the process: the same server keeps the same window, and a
+   * restart may well change it (llama.cpp `-c`, Lemonade's auto-sizing).
+   * A demonstrated window overrides the catalogue's nominal 128k default
+   * and clamps a real catalogue entry, since a server can run a model
+   * with less context than the model supports.
+   */
+  const observedContextWindows = new Map<string, number>();
+  const activeModelKey = (): string =>
+    `${resolveLlmConfig(getConfig()).activeTextProvider}/${resolveActiveModelName()}`;
+  const observeContextWindow = (contextWindow: number): void => {
+    if (!Number.isFinite(contextWindow) || contextWindow <= 0) return;
+    const key = activeModelKey();
+    const known = observedContextWindows.get(key);
+    observedContextWindows.set(
+      key,
+      known === undefined ? contextWindow : Math.min(known, contextWindow),
+    );
+  };
+  const forgetContextWindowBelow = (tokens: number): void => {
+    const key = activeModelKey();
+    const known = observedContextWindows.get(key);
+    if (known !== undefined && tokens > known) observedContextWindows.delete(key);
+  };
   const resolveCatalogContextWindow = (): number | null => {
+    const observed = observedContextWindows.get(activeModelKey());
     const model = resolveModelPricing(resolveActiveModelName());
-    if (!model || model.source === "default") return null;
-    return model.contextWindow > 0 ? model.contextWindow : null;
+    const catalogued =
+      !model || model.source === "default" || model.contextWindow <= 0
+        ? null
+        : model.contextWindow;
+    if (observed === undefined) return catalogued;
+    return catalogued === null ? observed : Math.min(observed, catalogued);
   };
 
   // Vision reuses the active text provider when it exposes describeImage.
@@ -2157,6 +2189,8 @@ export async function createAgentRuntime(
     capabilities,
     profile,
     contextWindow: resolveCatalogContextWindow,
+    onContextWindowObserved: observeContextWindow,
+    onContextWindowExceeded: forgetContextWindowBelow,
     ...(profileManager ? { profileManager } : {}),
     // Gates the two `/props` refreshes the loop owns, and carries the
     // lazy restore for a switch back to a local provider (issue #112).

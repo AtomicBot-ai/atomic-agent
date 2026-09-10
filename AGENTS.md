@@ -171,6 +171,65 @@ two app restarts and a fresh session — with nothing on screen to say the link 
    <reason>` until a turn actually succeeds. The context readout is not touched: it is driven by
    `prompt_built` / `llm_completed`, and a parked turn produces neither.
 
+### Truncated completions
+
+A reply the server cut short arrives as `finish_reason: "length"` on every OpenAI-compatible route and
+as `truncated: true` from llama-server, and it used to end the turn on the spot — `Turn failed [model]:
+model response truncated`, with no token count on a streamed reply because the request never asked for
+one. Different walls produce it, and they want different remedies: a reasoning model that spent the
+whole reply cap (`max_tokens` / `n_predict` = `localModels.completionMaxTokens`, 8192) before it emitted
+the tool call needs a **bigger cap**; a server whose context window filled mid-reply (llama.cpp `-c`,
+Lemonade's auto-sizing — both routinely below the model's advertised window) needs a **smaller prompt**;
+a provider that clamps the model's output below our cap needs a **lower cap** and nothing else.
+Locked invariants (pinned by [src/agent/agent-loop.test.ts](src/agent/agent-loop.test.ts),
+[src/agent/truncation-recovery.test.ts](src/agent/truncation-recovery.test.ts),
+[src/agent/step-executor.test.ts](src/agent/step-executor.test.ts),
+[src/llm/reliability/detect-model-failure.test.ts](src/llm/reliability/detect-model-failure.test.ts),
+[src/llm/reliability/request-size-rejection.test.ts](src/llm/reliability/request-size-rejection.test.ts)
+and [src/runtime/llm-fallback-seam.test.ts](src/runtime/llm-fallback-seam.test.ts)):
+
+1. **Streamed requests ask for usage.** `buildOpenAiChatBody` sends `stream_options: { include_usage:
+   true }` on every streamed body, and the contract probe carries it too, so the last chunk's `usage`
+   reaches `CompletionResult.usage`. Without it llama.cpp, OpenAI and Gemini send none. `extraBody` can
+   drop it for a vendor that rejects it.
+2. **The cause is classified, never guessed.** `classifyTruncation` compares `completion_tokens` with
+   the cap the request carried: within 16 tokens of it ⇒ `reply_cap`; short of it ⇒ `context_window`
+   (prompt + reply *is* the window) — unless the runtime knows a window and prompt + reply sit under
+   90 % of it, which is the provider's `output_limit` for the model, not the window. A timings-only
+   completion (llama-server, whose `truncated` means the context overflowed) is `context_window`
+   whatever the count. No usage ⇒ `unknown`. Cause and counts travel on `ModelError.truncation`;
+   `formatTruncatedMessage` names the wall and the knob.
+3. **A cut reply dispatches nothing.** The execution-integrity suite's rule stands: an explicit
+   `length` fails closed at the dispatch boundary even when the tool-call arguments parse — a cut
+   between call A and call B of a batch would otherwise run A alone. The loop re-asks instead.
+4. **One retry per step, with a different request.** `planTruncationRetry` ([src/agent/truncation-recovery.ts](src/agent/truncation-recovery.ts)):
+   `reply_cap` / `unknown` ⇒ the same step index again with the cap raised to `min(4 × cap, 32768)`,
+   clamped under a known window; `context_window` ⇒ `onContextWindowObserved(prompt + reply)` so
+   bootstrap records the window per provider/model, the re-packed prompt fits, and the same step runs
+   again under the same cap; `output_limit` ⇒ no retry. The per-step cap travels as
+   `StepContext.maxTokens` and **both** fallback seams forward it (the streaming seam used to drop it).
+   The retry keeps the `### notice` the cut attempt carried and adds its own; it runs on the
+   finalization step too; `stepsTaken` does not move; a leg boundary re-entered by a retry runs its
+   check once (`lastBoundaryIndex`), never reading the retry as an unproductive leg. A second cut on
+   the same index fails the turn with the classified message.
+5. **A request-size 400 is deterministic.** `isRequestSizeRejection` (a 400/413 whose body names the
+   cap or the context length *and* says it is too large) keeps `shouldAdvance` from falling the chain
+   over to a link that may not be running; on the raised-cap retry the turn fails with the *original*
+   truncation, and elsewhere the provider's own sentence about the limit stays in the message.
+6. **A learned window is forgotten the moment the server disproves it.** A successful completion whose
+   prompt + reply exceed the believed window fires `onContextWindowExceeded`, and bootstrap drops the
+   observation (catalogue windows are never touched). Learned windows live for the process; a
+   restart may change the server.
+7. **The repair pass on `native_tools` runs under the step's cap, not `REPAIR_MAX_TOKENS`.** The
+   1024-token cap is a grammar-link guard: the prefill strip keeps the think block short there. On the
+   chat transport a reasoning model thinks server-side and 1024 is a guaranteed truncation, so every
+   repair ended the turn it was meant to save. Grammar repairs keep the cap.
+8. **It is visible.** `completion_truncated` on the loop event union carries cause, counts and the retry
+   taken; the TUI renders one yellow feed line, the trace records it, `atomic-agent trace` prints it.
+
+Known gap: a window learned while a fallback link served the completion is keyed to the configured
+provider (`activeModelKey`), not the serving link.
+
 ### No-progress loop detection
 
 The runtime guards against "stuck" turns where the model re-emits the same tool call (same args, same result) without making progress. The detector is [src/agent/loop-detector.ts](src/agent/loop-detector.ts) `ToolLoopTracker` — **one instance per turn**, owned by `AgentLoop.runTurn`, threaded into `executeStep` → `executeBatch` via `BatchExecutionContext.tracker`. Ported from OpenClaw 2026.6.5; the design goal is **graceful termination, never a hard failure**.
@@ -2051,7 +2110,7 @@ Every terminal failure the agent loop surfaces is normalised into a canonical `L
 | ----------- | -------------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
 | `transport` | `TransportError`     | `LlamaServerError` with `status === null` or `status >= 500` (after the bounded retry is exhausted).  | Carries `status` and `url`. Transport retries already fired; runtime does not retry again here.  |
 | `grammar`   | `GrammarError`       | `LlamaServerError` 4xx, or `ToolCallParseError` that survives the one-shot parser retry.              | Carries `rawPreview` of the completion body so postmortems can diagnose without replaying SSE.   |
-| `model`     | `ModelError`         | `detectModelFailure` returns `truncated` / `empty` / `no_stop` on the initial or retry completion.    | **Never retried in-place** — the same prompt would reproduce the same wall. Parser retry skipped. |
+| `model`     | `ModelError`         | `detectModelFailure` returns `truncated` / `empty` / `no_stop` on the initial or retry completion.    | **Never retried with the same request** — the same prompt under the same cap reproduces the same wall. `truncated` is retried once with a *different* request (§"Truncated completions"); `empty` / `no_stop` are not. Parser retry skipped. Carries `truncation` (cause + token counts) for `truncated`. |
 | `tool`      | `ToolExecutionError` | Tool missing from the registry, or any unexpected error escaping the tool dispatch path.              | Carries `tool` name. Runtime tool failures from `registry.invoke` are folded into `CompressedToolResult { status: "error" }` and do **not** reach this category. |
 | `cancelled` | `CancelledError`     | `ctx.signal.aborted` is true, or the caught error is an `AbortError` / message mentions `aborted`.    | The agent loop closes the turn with `reason: cancelled` and status `cancelled`, not `failed`.    |
 

@@ -45,15 +45,21 @@ export {
   ToolExecutionError,
   TransportError,
   classifyFailure,
+  classifyTruncation,
   detectModelFailure,
+  formatTruncatedMessage,
+  isRequestSizeRejection,
 } from "./reliability/index.js";
 export type {
+  DetectModelFailureOptions,
   DetectedModelFailure,
   LlmFailureCategory,
   LlmFailureOptions,
   ModelErrorOptions,
   ModelFailureReason,
   ModelFailureStage,
+  TruncationCause,
+  TruncationDetail,
 } from "./reliability/index.js";
 export {
   LlamaServerProvider,

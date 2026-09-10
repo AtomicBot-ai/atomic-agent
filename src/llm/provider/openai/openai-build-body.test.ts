@@ -39,6 +39,24 @@ describe("buildOpenAiChatBody", () => {
     });
   });
 
+  it("asks for the usage block on a streamed request, and only there", () => {
+    // A streamed reply cut off by `finish_reason: "length"` arrives with
+    // no token counts unless the request asks; the counts are what tell
+    // a spent reply cap apart from a full context window.
+    const streamed = buildOpenAiChatBody({ prompt: "hi" }, "m", true);
+    expect(streamed.stream_options).toEqual({ include_usage: true });
+    const unary = buildOpenAiChatBody({ prompt: "hi" }, "m", false);
+    expect(unary).not.toHaveProperty("stream_options");
+  });
+
+  it("lets extraBody drop stream_options for a vendor that rejects it", () => {
+    const body = buildOpenAiChatBody({ prompt: "hi" }, "m", true, {
+      stream_options: undefined,
+    });
+    expect(body.stream_options).toBeUndefined();
+    expect(JSON.parse(JSON.stringify(body))).not.toHaveProperty("stream_options");
+  });
+
   it("honours explicit strict=false override", () => {
     const body = buildOpenAiChatBody(
       {

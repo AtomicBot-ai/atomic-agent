@@ -170,6 +170,9 @@ describe("runProviderContractProbe", () => {
 
     const body = script.bodies()[0]!;
     expect(body.stream).toBe(true);
+    // The probe must show the route every field a turn sends, and a
+    // turn asks for usage on every stream.
+    expect(body.stream_options).toEqual({ include_usage: true });
     expect(body.model).toBe("vendor/some-model");
     expect(body.tool_choice).toEqual({
       type: "function",

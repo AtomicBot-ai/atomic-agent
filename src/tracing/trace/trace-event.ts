@@ -30,6 +30,7 @@ export type TraceEvent =
   | TraceTaskContinued
   | TraceProviderWaiting
   | TraceProviderRecovered
+  | TraceCompletionTruncated
   | TraceLessonDeprecated
   | TraceVoteApplied
   | TraceVoteRejected
@@ -194,6 +195,23 @@ export interface TraceProviderRecovered extends TraceEventBase {
   type: "provider_recovered";
   turnIndex: number;
   waitedMs: number;
+}
+
+/**
+ * A reply the server cut short is being retried with a different
+ * request. `retry` says which: `raise_cap` with the new cap in
+ * `retryValue`, or `fit_window` with the learned context window.
+ */
+export interface TraceCompletionTruncated extends TraceEventBase {
+  type: "completion_truncated";
+  turnIndex: number;
+  stepIndex: number;
+  cause: "reply_cap" | "context_window" | "output_limit" | "unknown";
+  completionTokens: number;
+  promptTokens: number;
+  requestedMaxTokens: number;
+  retry: "raise_cap" | "fit_window";
+  retryValue: number;
 }
 
 export interface TraceLoopDetected extends TraceEventBase {

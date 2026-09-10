@@ -35,6 +35,7 @@ import {
   classifyFailure,
   detectModelFailure,
   humanizeOpenAiHttpError,
+  isRequestSizeRejection,
 } from "../llm/index.js";
 import { getConfig } from "../config/index.js";
 import {
@@ -235,6 +236,13 @@ export interface StepContext {
   userMessage?: string | null;
   /** Restrict this step to the terminal reply/finish tools. */
   terminalOnly?: boolean;
+  /**
+   * Reply cap for this step's completions, in place of
+   * `localModels.completionMaxTokens`. The agent loop sets it when the
+   * previous attempt at this very step came back cut off by the cap
+   * (`planTruncationRetry`); nothing else overrides the config.
+   */
+  maxTokens?: number;
 }
 
 /**
@@ -453,6 +461,9 @@ async function executeStepInner(
     promptTokens: prompt.tokens.total,
   });
 
+  // The cap every completion of this step runs under. Named here so the
+  // failure detector can say which wall a cut-off reply hit.
+  const replyCap = ctx.maxTokens ?? getConfig().localModels.completionMaxTokens;
   const llmParams: LlmStreamParams = {
     ...buildLlmStreamParams({
       promptText: prompt.text,
@@ -463,6 +474,7 @@ async function executeStepInner(
       signal: ctx.signal,
     }),
     ...(grammarPrompt ? { grammarPrompt } : {}),
+    ...(ctx.maxTokens !== undefined ? { maxTokens: ctx.maxTokens } : {}),
   };
 
   const firstAttempt = await runInitialCompletion({
@@ -506,7 +518,11 @@ async function executeStepInner(
   // tool-call providers are the exception for reasoning-only empty bodies:
   // the model may have thought but failed to emit a required tool call, and
   // the existing repair path can recover with a stricter one-shot prompt.
-  const initialModelFailure = detectModelFailure(completion);
+  const initialModelFailure = detectModelFailure(completion, {
+    requestedMaxTokens: replyCap,
+    stage: "initial",
+    contextWindow: deps.contextWindow ?? null,
+  });
   if (initialModelFailure !== null) {
     const initialParseDeps = parseDepsFor(completion, deps);
     const repairable = isGrammarEmptyCompletionWorthRepairing(
@@ -536,7 +552,13 @@ async function executeStepInner(
         // `stage: "initial"` is the other half of the split: the same
         // `reason` + `transport` pair is also raised after the one-shot
         // repair below, and only this field tells the two apart.
-        { transport: initialParseDeps.toolTransport, stage: "initial" },
+        {
+          transport: initialParseDeps.toolTransport,
+          stage: "initial",
+          ...(initialModelFailure.truncation
+            ? { truncation: initialModelFailure.truncation }
+            : {}),
+        },
       );
     }
     if (repairable) {
@@ -797,7 +819,12 @@ async function executeStepInner(
       // `GrammarError: tool-call body is empty`. 1024 keeps the
       // anti-loop guard (still well under `completionMaxTokens=8192`)
       // while leaving room for one full edit call in the worst case.
-      maxTokens: REPAIR_MAX_TOKENS,
+      //
+      // Grammar links only. On the chat transport a reasoning model
+      // thinks server-side, with no prefill to strip, and 1024 is a
+      // guaranteed truncation — the repair would end every turn it was
+      // meant to save. See `repairReplyCap`.
+      maxTokens: repairReplyCap(deps.toolTransport, replyCap),
     });
     const retryDurationMs = Date.now() - retryStartedAt;
     deps.onCompletion?.(completion);
@@ -834,7 +861,11 @@ async function executeStepInner(
     // a truncated or empty reply on the second attempt, it is a model
     // failure, not a grammar one — no point emitting `GrammarError` for
     // an empty body.
-    const retryModelFailure = detectModelFailure(completion);
+    const retryModelFailure = detectModelFailure(completion, {
+      requestedMaxTokens: repairReplyCap(deps.toolTransport, replyCap),
+      stage: "repair",
+      contextWindow: deps.contextWindow ?? null,
+    });
     const retryParseDeps = parseDepsFor(completion, deps);
     if (
       retryModelFailure !== null &&
@@ -861,7 +892,13 @@ async function executeStepInner(
         // first-attempt throw was skipped) and the repair came back with
         // nothing in any channel. Same `reason=empty`, same
         // `transport=native_tools`, different story.
-        { transport: retryParseDeps.toolTransport, stage: "repair" },
+        {
+          transport: retryParseDeps.toolTransport,
+          stage: "repair",
+          ...(retryModelFailure.truncation
+            ? { truncation: retryModelFailure.truncation }
+            : {}),
+        },
       );
     }
 
@@ -1294,6 +1331,23 @@ function isNativeToolsEmptyCompletionHandledByParser(
       ? completion.reasoningContent.trim()
       : "";
   return reasoning.length > 0;
+}
+
+/**
+ * The cap the one-shot repair completion runs under.
+ *
+ * `REPAIR_MAX_TOKENS` is a grammar-link guard: the repair prompt strips
+ * the reasoning prefill there, which keeps the think block short, and
+ * the cap stops a self-deliberation loop from holding a llama-server
+ * slot for minutes. On `native_tools` neither premise holds — the chat
+ * template opens the think block server-side and there is no slot — so
+ * a reasoning model routinely needs more than 1024 tokens just to reach
+ * the tool call, and the cap turned every repair into a truncation.
+ * The step's own cap bounds it instead, the same bound as the first
+ * completion.
+ */
+function repairReplyCap(transport: ToolCallTransport, stepCap: number): number {
+  return transport === "native_tools" ? stepCap : REPAIR_MAX_TOKENS;
 }
 
 /**
@@ -1833,6 +1887,9 @@ function rawPreview(content: string): string {
  * old/new strings) hitting the 512 ceiling and surfacing as
  * `GrammarError: tool-call body is empty`. 1024 still keeps the
  * anti-runaway guard well under `completionMaxTokens` (8192).
+ *
+ * Applies to grammar links only — see `repairReplyCap` for why the chat
+ * transport runs the repair under the step's cap instead.
  */
 export const REPAIR_MAX_TOKENS = 1024;
 
@@ -2011,7 +2068,13 @@ function toLlmFailure(err: unknown, ctx: StepContext): LlmFailure {
   // The chat message gets the human wording; the raw technical string
   // stays on the cause for logs.
   if (err instanceof OpenAiHttpError) {
-    return new TransportError(humanizeOpenAiHttpError(err), err.status, err.url, {
+    // A request the provider refused for its size is the one 400 whose
+    // body the user needs to read: it names the limit. Everything else
+    // keeps the humanized line alone.
+    const message = isRequestSizeRejection(err)
+      ? `${humanizeOpenAiHttpError(err)} ${requestSizeExcerpt(err.message)}`
+      : humanizeOpenAiHttpError(err);
+    return new TransportError(message, err.status, err.url, {
       cause: err,
     });
   }
@@ -2039,6 +2102,12 @@ function toLlmFailure(err: unknown, ctx: StepContext): LlmFailure {
     return new TransportError(wrapped.message, null, "", { cause: err });
   }
   return new ToolExecutionError("unknown", wrapped.message, { cause: err });
+}
+
+/** The provider's own sentence about the limit, without the status prefix. */
+function requestSizeExcerpt(message: string): string {
+  const body = message.replace(/^openai provider \d+:\s*/, "").trim();
+  return body.length > 200 ? `${body.slice(0, 200)}…` : body;
 }
 
 function isAbortError(err: unknown): boolean {

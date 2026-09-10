@@ -17,8 +17,13 @@ import {
   LlmFailure,
   TransportError,
   classifyFailure,
+  isRequestSizeRejection,
 } from "../llm/index.js";
-import type { LlmFailureCategory } from "../llm/index.js";
+import type {
+  LlmFailureCategory,
+  TruncationCause,
+  TruncationDetail,
+} from "../llm/index.js";
 import type { SessionState } from "../session/session-state.js";
 import {
   incrementTurnCount,
@@ -55,6 +60,12 @@ import {
 } from "./loop-detector.js";
 import type { BatchLoopSignal } from "./batch-executor.js";
 import { composeSteerNotice } from "./steer-notice.js";
+import {
+  composeTruncationNotice,
+  planTruncationRetry,
+  type TruncationRetry,
+  type TruncationRetryPlan,
+} from "./truncation-recovery.js";
 import { getConfig } from "../config/index.js";
 import type { AgentMetrics } from "../tracing/agent-metrics.js";
 import type { StructuredLogger } from "../tracing/structured-logger.js";
@@ -91,6 +102,22 @@ export interface AgentLoopDependencies {
    * reflected without restarting the loop.
    */
   contextWindow?: () => number | null;
+  /**
+   * The model server just revealed its real context window: a reply
+   * stopped `context_window`-truncated after this many prompt + reply
+   * tokens. Bootstrap records it per provider/model so the next prompt
+   * is packed to fit (`contextWindow` above then returns it). Absent in
+   * test / legacy wiring, where a window truncation ends the turn.
+   */
+  onContextWindowObserved?: (contextWindow: number) => void;
+  /**
+   * A completion just succeeded with prompt + reply tokens above the
+   * window the runtime believes in. Whatever taught it that window was
+   * wrong (a provider clamping output, a stale observation); bootstrap
+   * forgets the learned value so the prompt is not packed to a number
+   * the server just disproved.
+   */
+  onContextWindowExceeded?: (tokens: number) => void;
   /** Defaults to `grammar` when omitted (test / legacy wiring). */
   toolTransport?: ToolCallTransport;
   toolCallAdapter?: ToolCallAdapter | null;
@@ -471,6 +498,22 @@ export type AgentLoopEvent =
     }
   | {
       /**
+       * The completion for step `stepIndex` came back cut off, and the
+       * same step is being retried with a different request: a larger
+       * reply cap, or a prompt re-packed to the context window the
+       * server just revealed. Fired once per retry; a second cut on the
+       * same step fails the turn with the cause in the message.
+       */
+      type: "completion_truncated";
+      stepIndex: number;
+      cause: TruncationCause;
+      completionTokens: number;
+      promptTokens: number;
+      requestedMaxTokens: number;
+      retry: TruncationRetry;
+    }
+  | {
+      /**
        * A leg of the task finished and the work is continuing. Fired at
        * every `maxSteps` boundary that does not end the task, so a long
        * job reports itself instead of going quiet for an hour.
@@ -729,6 +772,29 @@ export class AgentLoop {
     let outageAttempts = 0;
     /** Retried a step after an outage and have not yet seen it succeed. */
     let awaitingRecovery = false;
+    // Truncation retry. A reply the server cut short is not a verdict on
+    // the step either — but unlike an outage, replaying the same request
+    // is pointless, so the retry changes it: a larger reply cap when the
+    // cap was spent, a re-packed prompt when the window filled. One
+    // retry per step index; the second cut ends the turn.
+    // Declared through a cast rather than a `null` literal: the literal
+    // narrows the binding to `null`, and the catch clause below — which
+    // TypeScript enters from the start of the `try`, before the loop's
+    // back-edge from this very clause is folded in — then reads it as
+    // `never`.
+    let truncationRetry = null as {
+      stepIndex: number;
+      maxTokens?: number;
+      /** The truncation that started the retry, for the message if the retry is refused. */
+      original: Error;
+    } | null;
+    /**
+     * The step index whose leg boundary already ran. A retried step
+     * (outage or truncation) re-enters the loop at the same index; the
+     * boundary must not run twice, or its progress flag — reset by the
+     * first pass — reads the retry as a whole leg with nothing to show.
+     */
+    let lastBoundaryIndex = -1;
     // Per-turn no-progress loop tracker (OpenClaw-style). Threaded into
     // `executeStep` so the synchronous batch gate can veto looping calls
     // before they are dispatched; the agent loop consumes the resulting
@@ -785,7 +851,8 @@ export class AgentLoop {
       }
       // Leg boundary. Everything the task needs to keep running is
       // decided here, once per `legSteps` steps, and never mid-leg.
-      if (i > 0 && i % legSteps === 0) {
+      if (i > 0 && i % legSteps === 0 && i !== lastBoundaryIndex) {
+        lastBoundaryIndex = i;
         if (!legMadeProgress) {
           // A whole leg with nothing usable coming back is the honest
           // place to stop: the loop detector's breaker catches a model
@@ -907,6 +974,10 @@ export class AgentLoop {
                 }
               : {}),
             ...(finalizationStep ? { terminalOnly: true } : {}),
+            ...(truncationRetry?.stepIndex === i &&
+            truncationRetry.maxTokens !== undefined
+              ? { maxTokens: truncationRetry.maxTokens }
+              : {}),
             ...(profileFacts !== undefined ? { profileFacts } : {}),
             ...(options.userMessage !== undefined
               ? { userMessage: options.userMessage }
@@ -968,6 +1039,18 @@ export class AgentLoop {
         const tokensUsed =
           (outcome.completion.timing?.promptTokens ?? outcome.prompt.tokens.total) +
           (outcome.completion.timing?.predictedTokens ?? 0);
+        // The server just held more than the runtime thought it could:
+        // a learned window was wrong, and packing to it would only
+        // throw context away.
+        const believedWindow = this.deps.contextWindow?.() ?? null;
+        const usage = outcome.completion.usage;
+        if (
+          usage !== undefined &&
+          believedWindow !== null &&
+          usage.promptTokens + usage.completionTokens > believedWindow
+        ) {
+          this.deps.onContextWindowExceeded?.(usage.promptTokens + usage.completionTokens);
+        }
         // Step-level outcome rolls up batched results: any failed call
         // marks the step as `error` so metrics catch partial failures.
         const stepStatus: "ok" | "error" = outcome.toolResults.some(
@@ -1192,7 +1275,7 @@ export class AgentLoop {
         recordSurfacedProcedures(state);
       } catch (err) {
         runError = err instanceof Error ? err : new Error(String(err));
-        const category = classifyFailure(err);
+        let category = classifyFailure(err);
         // `cancelled` is user-initiated and should close the turn
         // cleanly without marking the session as failed. Classified
         // BEFORE the finalization guard below: a user abort during the
@@ -1203,6 +1286,61 @@ export class AgentLoop {
           err instanceof CancelledError ||
           (err instanceof LlmFailure && err.category === "cancelled") ||
           category === "cancelled";
+        // The reply was cut short. Retry the step with a request the wall
+        // does not apply to — a larger cap, or a prompt packed to the
+        // window the server just revealed. Same replay argument as the
+        // outage wait below: the completion failed before any tool ran.
+        // Ahead of the finalization guard on purpose: the summary step
+        // is the one a reasoning model is likeliest to think past, and
+        // one bounded retry that replays nothing is not "more work".
+        const truncationPlan: TruncationRetryPlan | null = cancelled
+          ? null
+          : planTruncationRetry({
+              error: err,
+              alreadyRetried: truncationRetry?.stepIndex === i,
+              contextWindow: this.deps.contextWindow?.() ?? null,
+              fallbackMaxTokens: getConfig().localModels.completionMaxTokens,
+              canFitWindow: this.deps.onContextWindowObserved !== undefined,
+            });
+        if (truncationPlan !== null) {
+          const detail: TruncationDetail = truncationPlan.detail;
+          const retry: TruncationRetry = truncationPlan.retry;
+          truncationRetry = {
+            stepIndex: i,
+            original: runError,
+            ...(retry.kind === "raise_cap" ? { maxTokens: retry.maxTokens } : {}),
+          };
+          if (retry.kind === "fit_window") {
+            this.deps.onContextWindowObserved?.(retry.contextWindow);
+          }
+          // The notice the cut attempt carried (loop detector, steering,
+          // a trimmed batch) is still owed to the retry.
+          pendingNotice = composeTruncationNotice(noticeForThisStep, detail, retry);
+          this.deps.onEvent?.({
+            type: "completion_truncated",
+            stepIndex: i,
+            cause: detail.cause,
+            completionTokens: detail.completionTokens,
+            promptTokens: detail.promptTokens,
+            requestedMaxTokens: detail.requestedMaxTokens,
+            retry,
+          });
+          this.deps.logger?.warn("completion truncated; retrying the step", {
+            sessionId: state.id,
+            stepIndex: i,
+            cause: detail.cause,
+            completionTokens: detail.completionTokens,
+            promptTokens: detail.promptTokens,
+            requestedMaxTokens: detail.requestedMaxTokens,
+            retry: retry.kind,
+            ...(retry.kind === "raise_cap"
+              ? { maxTokens: retry.maxTokens }
+              : { contextWindow: retry.contextWindow }),
+          });
+          runError = null;
+          i -= 1;
+          continue;
+        }
         if (finalizationStep && !cancelled) {
           // A failed finalization must not execute more work or turn a
           // bounded run into an unbounded retry. Preserve the established
@@ -1260,6 +1398,9 @@ export class AgentLoop {
           await abortableSleep(nextRetryMs, options.signal);
           outageWaitedMs += nextRetryMs;
           runError = null;
+          // The retried step still owes the model the notice this
+          // attempt carried.
+          pendingNotice = noticeForThisStep;
           if (options.signal.aborted) {
             reason = "cancelled";
             state = { ...state, status: "cancelled" };
@@ -1271,6 +1412,23 @@ export class AgentLoop {
           // so step back one to land on it again.
           i -= 1;
           continue;
+        }
+        // A raised cap the provider refused — a 400 naming `max_tokens`
+        // or the context length — is not a new failure. The turn fails
+        // with the truncation that started it, which names the knob.
+        if (
+          truncationRetry?.stepIndex === i &&
+          truncationRetry.maxTokens !== undefined &&
+          isRequestSizeRejection(err)
+        ) {
+          this.deps.logger?.warn("provider refused the raised reply cap; failing with the truncation", {
+            sessionId: state.id,
+            stepIndex: i,
+            maxTokens: truncationRetry.maxTokens,
+            rejection: runError.message,
+          });
+          runError = truncationRetry.original;
+          category = classifyFailure(runError);
         }
         this.deps.logger?.error("agent loop failed", {
           sessionId: state.id,

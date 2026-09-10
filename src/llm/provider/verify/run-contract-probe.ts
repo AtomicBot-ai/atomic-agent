@@ -364,7 +364,8 @@ async function runRung(
 /**
  * The probe request, in the same shape `buildOpenAiChatBody` gives a
  * real turn — the streamed transport, the tools payload,
- * `parallel_tool_calls`, and the `max_tokens` cap a turn always carries.
+ * `parallel_tool_calls`, the `max_tokens` cap a turn always carries and
+ * the `stream_options` usage request that goes with every stream.
  * Sending anything less would let a route pass the probe and then fail
  * the first message on a field the probe never showed it.
  *
@@ -387,6 +388,7 @@ function probeBody(
     temperature: 0,
     max_tokens: PROBE_MAX_TOKENS,
     stream: true,
+    stream_options: { include_usage: true },
   };
   if (mode === null) return body;
   body.tools = [contractProbeToolDefinition()];

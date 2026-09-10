@@ -92,6 +92,8 @@ function formatTraceEvent(event: TraceEvent, raw: boolean): string {
       )}s reason=${truncate(event.reason, 120, raw)}`;
     case "provider_recovered":
       return `${head} waited=${Math.round(event.waitedMs / 1000)}s`;
+    case "completion_truncated":
+      return `${head} step=${event.stepIndex} cause=${event.cause} reply=${event.completionTokens} prompt=${event.promptTokens} cap=${event.requestedMaxTokens} retry=${event.retry}:${event.retryValue}`;
     case "loop_detected":
       return `${head} step=${event.stepIndex} tool=${event.tool} count=${event.count}${
         event.detector !== undefined ? ` detector=${event.detector}` : ""
