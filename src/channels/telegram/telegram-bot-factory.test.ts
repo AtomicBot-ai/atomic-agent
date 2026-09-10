@@ -37,7 +37,9 @@ vi.mock("grammy", () => ({ Bot: MockBot }));
 
 import { defaultGrammyBotFactory } from "./telegram-bot-factory.js";
 
-async function projectedUpdate(message: Record<string, unknown>): Promise<InboundTextUpdate> {
+async function projectedUpdate(
+  message: Record<string, unknown>,
+): Promise<InboundTextUpdate> {
   const bot = await defaultGrammyBotFactory("123:token");
   const received: InboundTextUpdate[] = [];
   bot.setTextHandler((u) => {
@@ -56,11 +58,15 @@ describe("defaultGrammyBotFactory error routing", () => {
     // Ink owns the console in the TUI, so a poll loop that keeps failing
     // looks like a healthy channel that never receives anything.
     const errors: Error[] = [];
-    await defaultGrammyBotFactory("123:token", { onError: (e) => errors.push(e) });
+    await defaultGrammyBotFactory("123:token", {
+      onError: (e) => errors.push(e),
+    });
     const bot = instances.at(-1)!;
     expect(bot.errorHandler).toBeDefined();
     bot.errorHandler!(new Error("Call to 'getUpdates' failed!"));
-    expect(errors.map((e) => e.message)).toEqual(["Call to 'getUpdates' failed!"]);
+    expect(errors.map((e) => e.message)).toEqual([
+      "Call to 'getUpdates' failed!",
+    ]);
     // A non-Error rejection still arrives as one.
     bot.errorHandler!("socket hang up");
     expect(errors.at(-1)).toBeInstanceOf(Error);

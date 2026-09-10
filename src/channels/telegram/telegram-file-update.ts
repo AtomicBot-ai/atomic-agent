@@ -107,7 +107,9 @@ function project(kind: TelegramFileKind, f: FileLike): InboundTelegramFile {
   return {
     kind,
     file_id: f.file_id,
-    ...(f.file_unique_id !== undefined ? { file_unique_id: f.file_unique_id } : {}),
+    ...(f.file_unique_id !== undefined
+      ? { file_unique_id: f.file_unique_id }
+      : {}),
     ...(typeof f.file_size === "number" ? { file_size: f.file_size } : {}),
     ...(typeof f.file_name === "string" ? { file_name: f.file_name } : {}),
     ...(typeof f.mime_type === "string" ? { mime_type: f.mime_type } : {}),

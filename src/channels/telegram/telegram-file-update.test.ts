@@ -11,13 +11,25 @@ describe("pickTelegramFile", () => {
         { file_id: "medium", file_size: 20_000 },
       ],
     });
-    expect(file).toEqual({ kind: "photo", file_id: "large", file_size: 90_000 });
+    expect(file).toEqual({
+      kind: "photo",
+      file_id: "large",
+      file_size: 90_000,
+    });
   });
 
   it("prefers animation over the document alias Telegram sends with it", () => {
     const file = pickTelegramFile({
-      animation: { file_id: "anim", mime_type: "video/mp4", file_name: "cat.mp4" },
-      document: { file_id: "anim", mime_type: "video/mp4", file_name: "cat.mp4" },
+      animation: {
+        file_id: "anim",
+        mime_type: "video/mp4",
+        file_name: "cat.mp4",
+      },
+      document: {
+        file_id: "anim",
+        mime_type: "video/mp4",
+        file_name: "cat.mp4",
+      },
     });
     expect(file?.kind).toBe("animation");
   });
@@ -50,7 +62,10 @@ describe("pickTelegramFile", () => {
     });
     expect(
       pickTelegramFile({ sticker: { file_id: "s", is_animated: true } }),
-    ).toMatchObject({ file_name: "sticker.tgs", mime_type: "application/x-tgsticker" });
+    ).toMatchObject({
+      file_name: "sticker.tgs",
+      mime_type: "application/x-tgsticker",
+    });
     expect(
       pickTelegramFile({ sticker: { file_id: "s", is_video: true } }),
     ).toMatchObject({ file_name: "sticker.webm", mime_type: "video/webm" });

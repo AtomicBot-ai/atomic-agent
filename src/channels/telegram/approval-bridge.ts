@@ -153,7 +153,10 @@ export class ApprovalBridge {
       const sent = await this.deps.api.sendMessage(
         chatId,
         formatApprovalText(request),
-        withThread({ reply_markup: buildKeyboard(request.approvalId) }, threadId),
+        withThread(
+          { reply_markup: buildKeyboard(request.approvalId) },
+          threadId,
+        ),
       );
       const id = (sent as { message_id?: number } | null)?.message_id;
       if (typeof id !== "number") {
@@ -270,11 +273,7 @@ export class ApprovalBridge {
         reason: "timeout",
       });
       if (resolved) {
-        void this.editFinal(
-          chatId,
-          messageId,
-          "⏱ timed out — auto-denied",
-        );
+        void this.editFinal(chatId, messageId, "⏱ timed out — auto-denied");
       }
     };
     if (this.deps.schedule) return this.deps.schedule(fire, this.timeoutMs);

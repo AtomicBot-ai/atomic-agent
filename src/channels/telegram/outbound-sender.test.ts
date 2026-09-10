@@ -284,7 +284,10 @@ describe("sendOutbound", () => {
 describe("sendOutbound — forum topics", () => {
   it("adds message_thread_id to every chunk, including the plain-text fallback", async () => {
     const { api, calls } = fakeApi([
-      { error_code: 400, description: "Bad Request: can't parse entities: bad tag" },
+      {
+        error_code: 400,
+        description: "Bad Request: can't parse entities: bad tag",
+      },
       null,
     ]);
     const result = await sendOutbound({

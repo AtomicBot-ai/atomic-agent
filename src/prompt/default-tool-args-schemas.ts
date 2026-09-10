@@ -637,7 +637,7 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
   // `descriptorToJsonSchema` in openai-tool-call-adapter.ts), but we
   // keep entries here so the "every default tool ships a schema" pin
   // test stays exhaustive.
-  ["reply", obj({ text: stringSchema }, ["text"])],
+  ["reply", obj({ text: stringSchema, attachments: stringArraySchema }, ["text"])],
   ["finish", obj({ summary: stringSchema, text: stringSchema })],
 ]);
 

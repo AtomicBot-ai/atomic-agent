@@ -6,7 +6,10 @@ import {
   type TelegramParseMode,
   type UserConfigFile,
 } from "../../config/index.js";
-import { setDotenvKey, type SetDotenvKeyResult } from "../../config/dotenv-writer.js";
+import {
+  setDotenvKey,
+  type SetDotenvKeyResult,
+} from "../../config/dotenv-writer.js";
 
 /**
  * Token-only environment variable. Lives in `<stateDir>/.env`, never

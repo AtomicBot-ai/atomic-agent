@@ -2240,6 +2240,21 @@ interface AppendBatchedTurnsParams {
 }
 
 /**
+ * The `attachments` a `reply` result carries, or `[]`. Defensive on
+ * shape: only a `string[]` of non-empty entries counts, so a hand-rolled
+ * or legacy result without the field projects to "no attachments".
+ */
+export function readReplyAttachments(
+  details: Record<string, unknown> | undefined,
+): string[] {
+  const raw = details?.attachments;
+  if (!Array.isArray(raw)) return [];
+  return raw.filter(
+    (entry): entry is string => typeof entry === "string" && entry.length > 0,
+  );
+}
+
+/**
  * Project the executed step (single or batched) into the conversation
  * transcript. The terminal `reply` verb (`terminal === "turn"`) is
  * collapsed into a single `assistant_reply` turn — no separate
@@ -2312,15 +2327,24 @@ function appendBatchedTurns(
       terminalCall.args.text.length > 0
         ? (terminalCall.args.text as string)
         : terminalResult.summary;
-    onEvent?.({ type: "assistant_reply", text });
+    // Attachments come from the tool *result*, not the call args: the
+    // tool has already validated the paths exist and resolved them
+    // against the working directory, so every consumer downstream gets
+    // absolute paths it can open without repeating that work.
+    const attachments = readReplyAttachments(terminalResult.details);
+    onEvent?.({
+      type: "assistant_reply",
+      text,
+      ...(attachments.length > 0 ? { attachments } : {}),
+    });
     return recordTurn(
       next,
-      assistantReplyTurn(
-        text,
+      assistantReplyTurn(text, {
         // Reasoning attaches to the first non-terminal pair when one
         // exists; otherwise the reply itself owns the <think> block.
-        !hasNonTerminal && reasoning.length > 0 ? { reasoning } : undefined,
-      ),
+        ...(!hasNonTerminal && reasoning.length > 0 ? { reasoning } : {}),
+        ...(attachments.length > 0 ? { attachments } : {}),
+      }),
     );
   }
 

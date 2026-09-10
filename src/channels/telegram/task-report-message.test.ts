@@ -102,9 +102,7 @@ describe("formatTaskReportMessage", () => {
     expect(taskLine).toContain("line one line two");
     expect(taskLine).not.toContain("\t");
     // preview cap + "…" + surrounding label text, never the raw 300 chars
-    expect(taskLine.length).toBeLessThan(
-      TASK_REPORT_PROMPT_PREVIEW_CHARS + 60,
-    );
+    expect(taskLine.length).toBeLessThan(TASK_REPORT_PROMPT_PREVIEW_CHARS + 60);
   });
 
   it("labels one-shot tasks (at-schedule and eager) as one-shot", () => {

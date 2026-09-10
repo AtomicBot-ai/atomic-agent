@@ -64,11 +64,7 @@ export interface PairingStateSnapshot {
  * silent `sent`).
  */
 export type TaskReportDelivery =
-  | "sent"
-  | "queued"
-  | "channel_not_up"
-  | "not_paired"
-  | "delivery_failed";
+  "sent" | "queued" | "channel_not_up" | "not_paired" | "delivery_failed";
 
 /**
  * Hard cap on reports waiting for the channel to reach `up`. When the
@@ -130,8 +126,7 @@ export class TelegramChannel {
    * `null` until the channel reaches `up` for the first time. Cleared
    * on stop so `down` panels never show a stale `@username`.
    */
-  private currentBotIdentity: TelegramBotIdentity | null =
-    null;
+  private currentBotIdentity: TelegramBotIdentity | null = null;
   private bot: BotInstance | null = null;
   /**
    * Task reports that arrived while the channel was not `up` but a
@@ -177,10 +172,12 @@ export class TelegramChannel {
     this.userConfigPath =
       deps.userConfigPath ?? getUserConfigPath(this.stateDir);
     this.sessionPointer = new TelegramSessionPointer(
-      deps.sessionPointerPath ?? resolve(this.stateDir, "telegram-session.json"),
+      deps.sessionPointerPath ??
+        resolve(this.stateDir, "telegram-session.json"),
     );
     this.lock =
-      deps.lock ?? new TelegramLockfile(resolve(this.stateDir, "telegram.lock"));
+      deps.lock ??
+      new TelegramLockfile(resolve(this.stateDir, "telegram.lock"));
     this.settings =
       deps.settings ??
       defaultTelegramSettingsSink({
@@ -316,8 +313,14 @@ export class TelegramChannel {
           { command: "help", description: "Show help" },
           { command: "status", description: "Show this chat's session" },
           { command: "sessions", description: "List sessions by chat" },
-          { command: "switch", description: "Continue an existing session here" },
-          { command: "new", description: "Start a fresh session for this chat" },
+          {
+            command: "switch",
+            description: "Continue an existing session here",
+          },
+          {
+            command: "new",
+            description: "Start a fresh session for this chat",
+          },
           { command: "cancel", description: "Cancel this chat's current turn" },
         ]);
       } catch (err) {
@@ -737,10 +740,7 @@ export class TelegramChannel {
     this.approvalSubscriptions.delete(sessionId);
   }
 
-  private transition(
-    next: ChannelStatus["state"],
-    error: string | null,
-  ): void {
+  private transition(next: ChannelStatus["state"], error: string | null): void {
     if (
       this.currentState === next &&
       (this.currentError ?? null) === (error ?? null)

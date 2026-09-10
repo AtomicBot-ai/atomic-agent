@@ -78,10 +78,7 @@ interface ActiveSession {
  */
 export class DefaultPairingMode implements PairingMode {
   private active: ActiveSession | null = null;
-  private readonly scheduleTimeout: (
-    cb: () => void,
-    ms: number,
-  ) => () => void;
+  private readonly scheduleTimeout: (cb: () => void, ms: number) => () => void;
   private readonly now: () => number;
 
   constructor(opts: PairingModeOptions = {}) {
@@ -89,7 +86,9 @@ export class DefaultPairingMode implements PairingMode {
     this.now = opts.now ?? Date.now;
   }
 
-  start(timeoutMs: number = DEFAULT_PAIRING_TIMEOUT_MS): Promise<ClaimedPairing | null> {
+  start(
+    timeoutMs: number = DEFAULT_PAIRING_TIMEOUT_MS,
+  ): Promise<ClaimedPairing | null> {
     if (timeoutMs <= 0) {
       return Promise.resolve(null);
     }

@@ -246,6 +246,7 @@ function FinalisedMessage({
         <AssistantBubble
           text={message.text}
           toolSteps={message.toolSteps ?? 0}
+          {...(message.attachments ? { attachments: message.attachments } : {})}
         />
         {/* Link chips ride the copy row on user and assistant messages
             only: those carry the URLs someone means to follow. System

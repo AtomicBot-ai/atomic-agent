@@ -48,9 +48,7 @@ describe("convertMarkdownToTelegramHtml", () => {
   });
 
   it("renders strikethrough via ~~", () => {
-    expect(convertMarkdownToTelegramHtml("~~old~~ new")).toBe(
-      "<s>old</s> new",
-    );
+    expect(convertMarkdownToTelegramHtml("~~old~~ new")).toBe("<s>old</s> new");
   });
 
   it("renders inline code via single backticks and escapes the body", () => {
@@ -75,7 +73,7 @@ describe("convertMarkdownToTelegramHtml", () => {
   it("renders fenced code blocks with a language class", () => {
     const md = "```python\nprint('hi')\n```";
     expect(convertMarkdownToTelegramHtml(md)).toBe(
-      '<pre><code class="language-python">print(\'hi\')</code></pre>',
+      "<pre><code class=\"language-python\">print('hi')</code></pre>",
     );
   });
 
@@ -107,21 +105,21 @@ describe("convertMarkdownToTelegramHtml", () => {
   });
 
   it("renders a tg:// mention link as <a>", () => {
-    expect(
-      convertMarkdownToTelegramHtml("hi [me](tg://user?id=42)"),
-    ).toBe('hi <a href="tg://user?id=42">me</a>');
+    expect(convertMarkdownToTelegramHtml("hi [me](tg://user?id=42)")).toBe(
+      'hi <a href="tg://user?id=42">me</a>',
+    );
   });
 
   it("rejects unsafe schemes by degrading to escaped plain text", () => {
-    expect(
-      convertMarkdownToTelegramHtml("[click](javascript:alert(1))"),
-    ).toBe("click (javascript:alert(1))");
+    expect(convertMarkdownToTelegramHtml("[click](javascript:alert(1))")).toBe(
+      "click (javascript:alert(1))",
+    );
   });
 
   it("escapes <,>,& inside link href attributes", () => {
-    expect(
-      convertMarkdownToTelegramHtml("[x](https://e.com/?a=1&b=2)"),
-    ).toBe('<a href="https://e.com/?a=1&amp;b=2">x</a>');
+    expect(convertMarkdownToTelegramHtml("[x](https://e.com/?a=1&b=2)")).toBe(
+      '<a href="https://e.com/?a=1&amp;b=2">x</a>',
+    );
   });
 
   it("renders unordered list items with bullets", () => {
@@ -160,9 +158,9 @@ describe("convertMarkdownToTelegramHtml", () => {
   });
 
   it("preserves emitted tags untouched while escaping interleaved <,>,&", () => {
-    expect(
-      convertMarkdownToTelegramHtml("**bold** and a < b"),
-    ).toBe("<b>bold</b> and a &lt; b");
+    expect(convertMarkdownToTelegramHtml("**bold** and a < b")).toBe(
+      "<b>bold</b> and a &lt; b",
+    );
   });
 
   it("strips heading trailing-hash markers", () => {

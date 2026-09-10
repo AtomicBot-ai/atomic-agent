@@ -48,8 +48,7 @@ export const defaultGrammyBotFactory: BotFactory = async (token, hooks) => {
   let textHandler: ((u: InboundTextUpdate) => void | Promise<void>) | null =
     null;
   let callbackHandler:
-    | ((u: InboundCallbackUpdate) => void | Promise<void>)
-    | null = null;
+    ((u: InboundCallbackUpdate) => void | Promise<void>) | null = null;
   let fileHandler: ((u: InboundFileUpdate) => void | Promise<void>) | null =
     null;
   // grammy's built-in `bot.start()` long-polling drains updates
@@ -194,15 +193,35 @@ export const defaultGrammyBotFactory: BotFactory = async (token, hooks) => {
     try {
       res = await fetch(`${TELEGRAM_FILE_BASE}${token}/${filePath}`);
     } catch (err) {
-      throw new Error(`Telegram file download failed: ${scrubErrorMessage(err)}`);
+      throw new Error(
+        `Telegram file download failed: ${scrubErrorMessage(err)}`,
+      );
     }
     if (!res.ok) {
       throw new Error(`Telegram file download failed with HTTP ${res.status}`);
     }
     return new Uint8Array(await res.arrayBuffer());
   };
+  // Outbound files go through grammy's `InputFile` so the adapter
+  // streams the file from disk; the rest of the channel only ever
+  // handles paths.
+  const sendFile = async (
+    chatId: number,
+    file: { path: string; kind: "photo" | "document"; threadId?: number },
+  ): Promise<unknown> => {
+    const input = new grammy.InputFile(file.path);
+    // A file answering a question asked in a forum topic belongs in
+    // that topic, same as the text reply.
+    const other =
+      file.threadId === undefined
+        ? undefined
+        : { message_thread_id: file.threadId };
+    return file.kind === "photo"
+      ? bot.api.sendPhoto(chatId, input, other)
+      : bot.api.sendDocument(chatId, input, other);
+  };
   const api = bot.api as unknown as BotInstance["api"];
-  Object.assign(api, { downloadFile });
+  Object.assign(api, { downloadFile, sendFile });
   const instance: BotInstance = {
     api,
     setTextHandler(handler) {

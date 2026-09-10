@@ -11,6 +11,10 @@ import {
   type AttachmentOutcome,
 } from "../attachments/inbox.js";
 import {
+  formatAttachmentFailure,
+  sendAttachments,
+} from "./outbound-attachments.js";
+import {
   sendOutbound,
   type TelegramApi,
   type TelegramLogger,
@@ -229,10 +233,10 @@ function helpText(ctx: InboundContext): string {
     groupLine +
     "Every chat and forum topic is its own conversation.\n\n" +
     "Commands:\n" +
-  "  /start, /help — this message\n" +
-  "  /status — this chat's session id and progress counters\n" +
-  "  /sessions — every chat this bot has a session for\n" +
-  "  /switch <session-id> — point this chat at an existing session\n" +
+    "  /start, /help — this message\n" +
+    "  /status — this chat's session id and progress counters\n" +
+    "  /sessions — every chat this bot has a session for\n" +
+    "  /switch <session-id> — point this chat at an existing session\n" +
     "  /new — rotate this chat to a fresh session (current one is archived)\n" +
     "  /cancel — abort this chat's current turn if one is running"
   );
@@ -345,7 +349,10 @@ export function addressedText(
   // Telegram's own rule (tdlib): a mention is `@username` not glued to
   // a letter, digit or underscore on either side — so "(@bot)" and
   // "hi,@bot" count, "x@bot" and "@bot_v2" do not.
-  const mention = new RegExp(`(?<![\\p{L}\\p{N}_])@${u}(?![\\p{L}\\p{N}_])`, "iu");
+  const mention = new RegExp(
+    `(?<![\\p{L}\\p{N}_])@${u}(?![\\p{L}\\p{N}_])`,
+    "iu",
+  );
   const targetedCommand = new RegExp(
     `^\\s*/[A-Za-z0-9_]+@${u}(?![\\p{L}\\p{N}_])`,
     "iu",
@@ -366,8 +373,14 @@ export function stripBotMention(text: string, username: string | null): string {
   if (!username) return text;
   const u = escapeRegExp(username);
   return text
-    .replace(new RegExp(`^\\s*[(\\[]?@${u}(?![\\p{L}\\p{N}_])[)\\]]?[\\s,:]*`, "iu"), "")
-    .replace(new RegExp(`^(/[A-Za-z0-9_]+)@${u}(?![\\p{L}\\p{N}_])`, "iu"), "$1");
+    .replace(
+      new RegExp(`^\\s*[(\\[]?@${u}(?![\\p{L}\\p{N}_])[)\\]]?[\\s,:]*`, "iu"),
+      "",
+    )
+    .replace(
+      new RegExp(`^(/[A-Za-z0-9_]+)@${u}(?![\\p{L}\\p{N}_])`, "iu"),
+      "$1",
+    );
 }
 
 function escapeRegExp(s: string): string {
@@ -393,7 +406,11 @@ function chatRefOf(update: InboundTextUpdate, isPrivate: boolean): ChatRef {
       ? { chatId: update.chat.id }
       : { chatId: update.chat.id, threadId };
   const title = update.chat.title?.trim();
-  const base = isPrivate ? "DM" : title && title.length > 0 ? title : `chat ${update.chat.id}`;
+  const base = isPrivate
+    ? "DM"
+    : title && title.length > 0
+      ? title
+      : `chat ${update.chat.id}`;
   return {
     target,
     key: telegramChatKey(update.chat.id, threadId),
@@ -657,11 +674,7 @@ async function handleSlashCommand(
       return;
     }
     default:
-      await sendText(
-        ctx,
-        ref.target,
-        `Unknown command: ${verb}. Try /help.`,
-      );
+      await sendText(ctx, ref.target, `Unknown command: ${verb}. Try /help.`);
   }
 }
 
@@ -759,6 +772,7 @@ async function dispatchToRuntime(
   ctx.inflight.set(ref.key, controller);
 
   let reply: string | null = null;
+  let replyAttachments: ReadonlyArray<string> = [];
   let failure: { error: Error; category: LlmFailureCategory } | null = null;
   // Live progress indicator: a single editable message that mirrors the
   // turn's activity ("Thinking…" → "🔧 <tool>" → "✅ <summary>") so the
@@ -779,7 +793,10 @@ async function dispatchToRuntime(
       : null;
   const eventHook = (event: AgentLoopEvent): void => {
     if (event.type === "llm_event") {
-      if (event.event.type === "assistant_reply") reply = event.event.text;
+      if (event.event.type === "assistant_reply") {
+        reply = event.event.text;
+        replyAttachments = event.event.attachments ?? [];
+      }
     }
     if (event.type === "loop_failed") {
       failure = { error: event.error, category: event.category };
@@ -838,6 +855,23 @@ async function dispatchToRuntime(
     await sendText(ctx, ref.target, "Turn cancelled.");
   } else if (reply !== null) {
     await sendText(ctx, ref.target, reply, ctx.agentReplyParseMode ?? "plain");
+    // Files follow the text, one message each. A file that could not
+    // be delivered is announced in plain text — the operator asked for
+    // the file, not for the sentence saying it was sent.
+    if (replyAttachments.length > 0) {
+      const delivery = await sendAttachments({
+        api: ctx.api,
+        chatId: ref.target.chatId,
+        ...(ref.target.threadId === undefined
+          ? {}
+          : { threadId: ref.target.threadId }),
+        paths: replyAttachments,
+        logger: toTelegramLogger(ctx.logger),
+      });
+      for (const failed of delivery.failed) {
+        await sendText(ctx, ref.target, formatAttachmentFailure(failed));
+      }
+    }
   } else if (failure) {
     await sendText(ctx, ref.target, formatFailure(failure));
   } else {
@@ -856,15 +890,21 @@ async function dispatchToRuntime(
  * was the owner's DM in practice); a fresh session stamped with where
  * it came from.
  */
-function acquireOrCreateSession(ref: ChatRef, ctx: InboundContext): SessionState {
+function acquireOrCreateSession(
+  ref: ChatRef,
+  ctx: InboundContext,
+): SessionState {
   const current = ctx.sessionPointer.get(ref.key).current;
   if (current) {
     const existing = ctx.runtime.sessionStore.load(current);
     if (existing) return existing;
-    ctx.logger.warn("telegram: pointer references missing session, recreating", {
-      chatKey: ref.key,
-      sessionId: current,
-    });
+    ctx.logger.warn(
+      "telegram: pointer references missing session, recreating",
+      {
+        chatKey: ref.key,
+        sessionId: current,
+      },
+    );
     // Nothing can ever request approval for a session that is gone.
     ctx.releaseApprovalSession?.(current);
   }
@@ -903,7 +943,11 @@ function adoptLegacyForDm(ref: ChatRef, ctx: InboundContext): void {
  * drop its approval binding. Deferred to here so a `/new` typed while
  * the turn was running never cut the keyboard off from the turn.
  */
-function releaseIfMovedOn(ref: ChatRef, sessionId: string, ctx: InboundContext): void {
+function releaseIfMovedOn(
+  ref: ChatRef,
+  sessionId: string,
+  ctx: InboundContext,
+): void {
   if (ctx.sessionPointer.get(ref.key).current === sessionId) return;
   const heldElsewhere = ctx.sessionPointer
     .entries()

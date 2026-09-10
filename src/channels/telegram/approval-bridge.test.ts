@@ -33,9 +33,7 @@ interface TestHarness {
   fireFirst: () => void;
 }
 
-function makeHarness(
-  overrides: Partial<ApprovalBridgeDeps> = {},
-): TestHarness {
+function makeHarness(overrides: Partial<ApprovalBridgeDeps> = {}): TestHarness {
   const decisions: ApprovalDecision[] = [];
   const resolve = vi.fn((decision: ApprovalDecision) => {
     decisions.push(decision);
@@ -85,7 +83,7 @@ function req(approvalId = "abc"): ApprovalRequest {
     sessionId: "s-1",
     tool: "os.shell.run",
     category: "shell",
-    reason: "skill needs to run \"git push\"",
+    reason: 'skill needs to run "git push"',
     preview: "git push origin main",
   };
 }

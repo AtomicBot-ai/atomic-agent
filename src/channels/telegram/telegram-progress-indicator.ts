@@ -122,9 +122,9 @@ export class TelegramProgressIndicator {
           // The turn finished while we were sending; don't leave a stale
           // bubble behind.
           if (typeof messageId === "number") {
-            await this.api.deleteMessage?.(this.chatId, messageId).catch(
-              () => undefined,
-            );
+            await this.api
+              .deleteMessage?.(this.chatId, messageId)
+              .catch(() => undefined);
           }
           return;
         }

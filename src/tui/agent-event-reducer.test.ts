@@ -713,6 +713,41 @@ describe("reduceTuiState", () => {
     expect(lastMessage?.reasoningBlocks).toContain("plan v2");
   });
 
+  it("carries reply attachments onto the finalised assistant message", () => {
+    const initial = createInitialTuiState(fakeSession());
+    const next = apply(initial, [
+      { type: "message_submitted" },
+      {
+        type: "agent_event",
+        event: {
+          type: "llm_event",
+          event: {
+            type: "assistant_reply",
+            text: "here is the report",
+            attachments: ["/tmp/report.pdf"],
+          },
+        },
+      },
+    ]);
+    expect(next.messages.at(-1)).toMatchObject({
+      role: "assistant",
+      text: "here is the report",
+      attachments: ["/tmp/report.pdf"],
+    });
+    // A reply without attachments does not grow a stray field.
+    const plain = apply(initial, [
+      { type: "message_submitted" },
+      {
+        type: "agent_event",
+        event: {
+          type: "llm_event",
+          event: { type: "assistant_reply", text: "plain" },
+        },
+      },
+    ]);
+    expect(plain.messages.at(-1)).not.toHaveProperty("attachments");
+  });
+
   it("should clear live reasoning on assistant_reply so the tail does not re-expand it", () => {
     const initial = createInitialTuiState(fakeSession());
     const next = apply(initial, [

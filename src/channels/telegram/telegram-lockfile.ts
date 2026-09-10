@@ -1,10 +1,5 @@
 import { formatChannelLockHeld } from "../channel-lock-error.js";
-import {
-  existsSync,
-  readFileSync,
-  unlinkSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 
 /**
  * Single-instance enforcement primitive used by the Telegram channel.

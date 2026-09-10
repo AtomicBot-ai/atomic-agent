@@ -453,6 +453,8 @@ While a turn runs, the bot keeps one live progress bubble updated in place. It i
 
 Send the bot a photo, document, voice note or any other file and it is saved under `~/.atomic-agent/inbox/telegram/`; the agent gets the path together with your caption and reads it with its file and vision tools. Albums arrive as one message. Telegram lets bots fetch files up to 20 MB; anything larger gets a clear "could not receive" reply.
 
+Ask for a file and you get a file: when the agent attaches something to its reply (a report it wrote, a screenshot, a converted document) it arrives as a Telegram message right after the text — images inline, everything else as a document, up to Telegram's 50 MB bot limit.
+
 Scheduled tasks can report back to the same chat: create a cron job with `atomic-agent task create --cron "0 9 * * *" --message "morning digest" --notify telegram` (or ask the agent to schedule with `notify: "telegram"`), and each run posts its final result to your paired DM when it finishes. Reporting is strictly per-task opt-in, and the report's result text is sent to Telegram's servers; when the channel is down or unpaired the report is skipped with a logged warning and the task itself is unaffected.
 
 </details>

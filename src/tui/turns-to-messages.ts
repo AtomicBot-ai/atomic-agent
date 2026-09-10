@@ -75,6 +75,9 @@ export function turnsToMessages(
         if (!pendingAssistant) pendingAssistant = freshAssistant(turn.at);
         pendingAssistant.text = turn.text;
         pendingAssistant.timestamp = turn.at;
+        if (turn.attachments && turn.attachments.length > 0) {
+          pendingAssistant.attachments = [...turn.attachments];
+        }
         if (turn.reasoning && turn.reasoning.length > 0) {
           pendingAssistant.reasoningBlocks.push(turn.reasoning);
         }
@@ -93,6 +96,7 @@ interface MutableAssistant {
   toolSteps: number;
   toolCards: ToolCardEntry[];
   reasoningBlocks: string[];
+  attachments: string[];
   pendingCall: {
     id: string;
     stepIndex: number;
@@ -109,6 +113,7 @@ function freshAssistant(at: number): MutableAssistant {
     toolSteps: 0,
     toolCards: [],
     reasoningBlocks: [],
+    attachments: [],
     pendingCall: null,
   };
 }
@@ -123,5 +128,6 @@ function finalizeAssistant(a: MutableAssistant): ChatMessage {
   };
   if (a.toolCards.length > 0) base.toolCards = a.toolCards;
   if (a.reasoningBlocks.length > 0) base.reasoningBlocks = a.reasoningBlocks;
+  if (a.attachments.length > 0) base.attachments = a.attachments;
   return base;
 }

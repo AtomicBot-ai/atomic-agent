@@ -10,6 +10,13 @@ interface AssistantBubbleProps {
   streaming?: boolean;
   /** Counts non-reply tool steps run during the turn. */
   toolSteps?: number;
+  /**
+   * Files the reply delivered (`reply.attachments`). Listed under the
+   * text so an attachment is visible here too, not only on the channel
+   * that received it — a field nothing renders is a field the model
+   * learns to ignore.
+   */
+  attachments?: readonly string[];
 }
 
 /**
@@ -33,8 +40,10 @@ export function AssistantBubble({
   text,
   streaming = false,
   toolSteps,
+  attachments,
 }: AssistantBubbleProps): ReactElement {
   const showFooter = !streaming && toolSteps !== undefined && toolSteps > 0;
+  const files = attachments ?? [];
   return (
     <Box flexDirection="column" marginTop={1}>
       <Text color={theme.colors.assistant} bold>
@@ -59,6 +68,16 @@ export function AssistantBubble({
         ) : (
           <MarkdownRenderer text={text} />
         )}
+        {files.length > 0 ? (
+          <Box flexDirection="column" marginTop={1}>
+            {files.map((path) => (
+              <Text key={path} color={theme.colors.muted}>
+                {"📎 "}
+                {path}
+              </Text>
+            ))}
+          </Box>
+        ) : null}
       </Box>
       {showFooter ? (
         <Box marginLeft={3}>
