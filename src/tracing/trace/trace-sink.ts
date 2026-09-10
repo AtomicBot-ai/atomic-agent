@@ -1,13 +1,17 @@
 import {
   appendFileSync,
+  closeSync,
+  fsyncSync,
   mkdirSync,
+  openSync,
   readFileSync,
+  readdirSync,
   renameSync,
   rmSync,
   statSync,
-  writeFileSync,
+  writeSync,
 } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 import type { StructuredLogger } from "../structured-logger.js";
 
@@ -51,6 +55,14 @@ const TRIM_TARGET_RATIO = 0.5;
 const MARKER_BUDGET_BYTES = 512;
 
 /**
+ * Suffix given to the temp file a trim writes before renaming it over
+ * the trace. Also the prefix `reapStaleTemps` scans for: a process
+ * killed between the write and the rename leaves one behind, and
+ * nothing else would ever delete it.
+ */
+const TEMP_SUFFIX = ".trim-";
+
+/**
  * Resolve the on-disk path for a session trace. Exposed so tooling (CLI
  * `trace show/export`, tests) can open files without duplicating the
  * naming convention.
@@ -77,6 +89,16 @@ interface SessionWriterState {
   disabled: boolean;
   /** One warning per session for events too big to ever store. */
   oversizedWarned: boolean;
+  /**
+   * Size the last trim of this file actually produced — the floor a
+   * further trim could not get below, because a preserved header plus
+   * the marker are irreducible. Without this the guard on
+   * `bytesWritten <= target` is not enough to bound the rewrite rate:
+   * a file whose floor sits ABOVE the target can be shrunk by a few
+   * bytes forever, paying a whole-file rewrite per event. `0` until
+   * the first trim, which is the only rewrite that can be wasted.
+   */
+  trimFloor: number;
 }
 
 /** Monotonic suffix so two trims can never pick the same temp name. */
@@ -122,6 +144,7 @@ export function createNdjsonTraceSink(
     } catch {
       // File does not exist yet — fresh session trace.
     }
+    reapStaleTemps(options, path);
     // Deliberately NO "already over the cap, give up" flag here. A
     // resumed session whose file is over the cap — including one left
     // by an older build that stopped writing at the cap — trims on its
@@ -133,6 +156,7 @@ export function createNdjsonTraceSink(
       bytesWritten,
       disabled: false,
       oversizedWarned: false,
+      trimFloor: 0,
     };
     states.set(sessionId, state);
     return state;
@@ -153,7 +177,15 @@ export function createNdjsonTraceSink(
       // is the thing that does not fit and rewriting buys nothing.
       // Drop that one event and keep the file. This is what bounds the
       // trim to at most one rewrite per `cap/2` bytes appended.
-      if (state.bytesWritten <= target) {
+      //
+      // `trimFloor` is the second half of that bound. A trim cannot
+      // always reach `target` — a preserved header plus the marker is
+      // irreducible — and when the floor sits above the target, "am I
+      // above the target?" stays true forever and every single event
+      // pays a whole-file rewrite for a few bytes of progress. Once a
+      // trim has told us where the floor is, that is the number to
+      // compare against.
+      if (state.bytesWritten <= Math.max(target, state.trimFloor)) {
         warnOversized(state, event, size, options);
         return;
       }
@@ -223,8 +255,10 @@ function warnOversized(
  *    events and bytes were lost, so no reader mistakes the first
  *    surviving row for the start of the session;
  *  - is crash-safe: the new content is written to a temp file in the
- *    same directory and renamed over the original, so the trace is
- *    never missing or half-written, whatever happens mid-rewrite.
+ *    same directory, flushed, and renamed over the original, so the
+ *    trace is never missing or half-written, whatever happens
+ *    mid-rewrite. A temp a hard kill strands is swept by the next
+ *    process to touch the session (`reapStaleTemps`).
  *
  * Returns `false` if the rewrite could not be completed; the caller
  * treats that as a filesystem failure. Never throws.
@@ -235,14 +269,20 @@ function trimHeadInPlace(
   targetBytes: number,
   options: NdjsonTraceSinkOptions,
 ): boolean {
-  const temp = `${state.path}.trim-${process.pid}-${tempCounter++}`;
+  const temp = `${state.path}${TEMP_SUFFIX}${process.pid}-${tempCounter++}`;
   try {
     const raw = readFileSync(state.path);
 
-    // 1. Preserve a leading `session_started` row if there is one.
+    // 1. Preserve a leading `session_started` row if there is one —
+    //    but only while it is small next to the target. A header that
+    //    is itself most of the budget leaves no room for the tail it
+    //    was meant to introduce, and pins the file above the target
+    //    for good, which is a rewrite per event (see `trimFloor`).
+    //    Half the target is the line: the tail is the reason the file
+    //    exists, so it gets at least half of what survives.
     const firstBreak = raw.indexOf(0x0a);
     let headerEnd = 0;
-    if (firstBreak >= 0) {
+    if (firstBreak >= 0 && 2 * (firstBreak + 1) <= targetBytes) {
       const first = parseLine(raw.subarray(0, firstBreak));
       if (first?.type === "session_started") headerEnd = firstBreak + 1;
     }
@@ -292,14 +332,28 @@ function trimHeadInPlace(
       droppedBytes,
     };
 
+    const markerBytes = Buffer.from(serializeTraceEvent(marker), "utf8");
     const next = Buffer.concat([
       raw.subarray(0, headerEnd),
-      Buffer.from(serializeTraceEvent(marker), "utf8"),
+      markerBytes,
       raw.subarray(cut),
     ]);
-    writeFileSync(temp, next);
+    // `rename` is atomic for the directory entry, not for the data
+    // behind it: without the flush a power cut after the rename can
+    // leave the trace pointing at an unwritten extent, i.e. lose the
+    // whole file rather than half of it. One flush per `cap/2` bytes
+    // of trace is nothing next to that.
+    const fd = openSync(temp, "w");
+    try {
+      writeSync(fd, next);
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
     renameSync(temp, state.path);
     state.bytesWritten = next.length;
+    // The header and the marker are what no further trim can remove.
+    state.trimFloor = headerEnd + markerBytes.length;
     return true;
   } catch (err) {
     options.logger?.warn("trace: failed to trim the head of the trace file", {
@@ -326,7 +380,46 @@ function parseLine(line: Buffer): Partial<TraceEvent> | null {
 function countLines(chunk: Buffer): number {
   let count = 0;
   for (let i = 0; i < chunk.length; i++) if (chunk[i] === 0x0a) count += 1;
+  // A file we did not write ourselves can end without a line break —
+  // that last unterminated row is still an event we are dropping.
+  if (chunk.length > 0 && chunk[chunk.length - 1] !== 0x0a) count += 1;
   return count;
+}
+
+/**
+ * Delete temp files a previous trim of THIS session left behind. A
+ * process killed between the write and the rename leaks one — up to
+ * half the cap of raw, unredacted trace content under a name no reader
+ * lists (`trace list` only globs `*.ndjson`), so nothing would ever
+ * clean it up and it would accumulate one per crash.
+ *
+ * Only temps whose owning pid is gone are touched: another live
+ * process trimming the same session id is already a losing race, but
+ * pulling its temp out from under it would turn that into a hard
+ * failure for no gain.
+ */
+function reapStaleTemps(options: NdjsonTraceSinkOptions, path: string): void {
+  const prefix = `${basename(path)}${TEMP_SUFFIX}`;
+  try {
+    for (const name of readdirSync(options.dir)) {
+      if (!name.startsWith(prefix)) continue;
+      const pid = Number.parseInt(name.slice(prefix.length), 10);
+      if (Number.isFinite(pid) && pid !== process.pid && isAlive(pid)) continue;
+      rmSync(join(options.dir, name), { force: true });
+    }
+  } catch {
+    // Best-effort housekeeping: a trace sink never fails on cleanup.
+  }
+}
+
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    // EPERM means the pid exists and belongs to somebody else.
+    return (err as NodeJS.ErrnoException)?.code === "EPERM";
+  }
 }
 
 /**
