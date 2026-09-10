@@ -22,6 +22,7 @@ import {
   type AttachmentInbox,
   type AttachmentOutcome,
 } from "../attachments/inbox.js";
+import { runModelCommand } from "../model-command.js";
 import type { DiscordApi } from "./discord-api.js";
 import { scrubDiscordError } from "./discord-channel-types.js";
 import {
@@ -110,6 +111,7 @@ const HELP_TEXT = [
   "  `/sessions` — every channel this bot has a session for",
   "  `/switch <session-id>` — point this channel at an existing session",
   "  `/new` — rotate this channel to a fresh session (current one is archived)",
+  "  `/model` — show the provider and model in use; `/model <provider> [model-id]` switches",
   "  `/cancel` — abort this channel's current turn if one is running",
 ].join("\n");
 
@@ -243,6 +245,20 @@ async function handleSlashCommand(
       return;
     case "/switch":
       await switchSession(rest[0], ref, ctx);
+      return;
+    case "/model":
+      // Owner-gated already: `route` drops every message from outside
+      // `ownerUserIds` before this dispatch runs, so there is no second
+      // check here — the same contract `/switch` and `/new` run under.
+      await send(
+        ctx,
+        ref.channelId,
+        await runModelCommand(rest, {
+          runtime: ctx.runtime,
+          sessionId: ctx.sessionPointer.get(ref.channelId).current,
+          code: (text) => `\`${text}\``,
+        }),
+      );
       return;
     case "/new": {
       const previous = ctx.sessionPointer.get(ref.channelId).current;

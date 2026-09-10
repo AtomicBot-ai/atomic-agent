@@ -29,6 +29,8 @@ interface FakeBotState {
   startCalls: number;
   stopCalls: number;
   setMyCommandsCalls: number;
+  /** The command menu of the most recent `setMyCommands` call. */
+  registeredCommands: string[];
   textHandler: ((u: unknown) => void | Promise<void>) | null;
   callbackHandler: ((u: unknown) => void | Promise<void>) | null;
   fileHandler: ((u: unknown) => void | Promise<void>) | null;
@@ -53,6 +55,7 @@ function makeBotFactory(opts: FakeBotOptions = {}): {
     startCalls: 0,
     stopCalls: 0,
     setMyCommandsCalls: 0,
+    registeredCommands: [],
     textHandler: null,
     callbackHandler: null,
     fileHandler: null,
@@ -74,11 +77,16 @@ function makeBotFactory(opts: FakeBotOptions = {}): {
           if (opts.getMeError) throw opts.getMeError;
           return { id: 1, username: "test_bot" };
         }),
-        setMyCommands: vi.fn(async () => {
-          state.setMyCommandsCalls += 1;
-          if (opts.setMyCommandsError) throw opts.setMyCommandsError;
-          return undefined;
-        }),
+        setMyCommands: vi.fn(
+          async (
+            cmds: ReadonlyArray<{ command: string; description: string }>,
+          ) => {
+            state.setMyCommandsCalls += 1;
+            state.registeredCommands = cmds.map((c) => c.command);
+            if (opts.setMyCommandsError) throw opts.setMyCommandsError;
+            return undefined;
+          },
+        ),
       },
       setTextHandler(handler) {
         state.textHandler = handler;
@@ -322,6 +330,19 @@ describe("TelegramChannel", () => {
     expect(state.startCalls).toBe(1);
     expect(state.textHandler).not.toBeNull();
     expect(state.setMyCommandsCalls).toBe(1);
+    // The command menu is the only discovery surface on a phone — every
+    // verb the slash dispatch answers has to be in it, `/model`
+    // included.
+    expect(state.registeredCommands).toEqual([
+      "start",
+      "help",
+      "status",
+      "sessions",
+      "switch",
+      "new",
+      "model",
+      "cancel",
+    ]);
   });
 
   it("emits down with the right error when token is null", async () => {

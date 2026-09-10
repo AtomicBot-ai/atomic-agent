@@ -321,6 +321,10 @@ export class TelegramChannel {
             command: "new",
             description: "Start a fresh session for this chat",
           },
+          {
+            command: "model",
+            description: "Show or switch the provider and model",
+          },
           { command: "cancel", description: "Cancel this chat's current turn" },
         ]);
       } catch (err) {

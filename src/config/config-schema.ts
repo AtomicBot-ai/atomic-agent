@@ -921,6 +921,15 @@ export interface AtomicAgentConfig {
        * accept `Authorization: Bearer` (Anthropic wants `x-api-key`).
        */
       apiKeyHeader?: string;
+      /**
+       * Env var holding this entry's API key, set by the known-service
+       * presets so each service keeps its own (`GROQ_API_KEY`,
+       * `NOUS_API_KEY`, ...). Authoritative when present — see
+       * `resolveLlmProviderApiKey`. `parseLlmProviders` has always
+       * carried it through `UserLlmProviderEntry`; it was simply
+       * missing from this mirror of that shape.
+       */
+      apiKeyEnvVar?: string;
       supportsTools?: boolean;
       supportsVision?: boolean;
       requestTimeoutMs?: number;

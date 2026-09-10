@@ -10,6 +10,7 @@ import {
   type AttachmentInbox,
   type AttachmentOutcome,
 } from "../attachments/inbox.js";
+import { runModelCommand } from "../model-command.js";
 import {
   formatAttachmentFailure,
   sendAttachments,
@@ -238,6 +239,7 @@ function helpText(ctx: InboundContext): string {
     "  /sessions — every chat this bot has a session for\n" +
     "  /switch <session-id> — point this chat at an existing session\n" +
     "  /new — rotate this chat to a fresh session (current one is archived)\n" +
+    "  /model — show the provider and model in use; /model <provider> [model-id] switches\n" +
     "  /cancel — abort this chat's current turn if one is running"
   );
 }
@@ -640,6 +642,21 @@ async function handleSlashCommand(
       return;
     case "/switch": {
       await switchSession(rest[0], ref, ctx);
+      return;
+    }
+    case "/model": {
+      // Owner-gated already: `handleInboundText` drops every non-owner
+      // update before it reaches this dispatch, so there is no second
+      // check here — the same contract `/switch` and `/new` run under.
+      await sendText(
+        ctx,
+        ref.target,
+        await runModelCommand(rest, {
+          runtime: ctx.runtime,
+          sessionId: ctx.sessionPointer.get(ref.key).current,
+          code: (text) => text,
+        }),
+      );
       return;
     }
     case "/new": {
