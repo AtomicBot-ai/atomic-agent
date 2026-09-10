@@ -7,14 +7,26 @@ import {
 } from "../../session/conversation-turn.js";
 import { macroTurnStartsFromTurns } from "../../session/macro-turn-starts.js";
 import type { SessionState } from "../../session/session-state.js";
-import type {
-  OpenclawBlock,
-  OpenclawMessage,
-  OpenclawSessionMeta,
+import {
+  OPENCLAW_DEFAULT_AGENT,
+  type OpenclawBlock,
+  type OpenclawMessage,
+  type OpenclawSessionMeta,
 } from "./openclaw-source.js";
 
 /** Prefix applied to imported session ids so they never collide with native ids. */
 export const OPENCLAW_SESSION_ID_PREFIX = "openclaw:";
+
+/**
+ * `openclaw:<id>` for the default agent — the id every earlier import
+ * used, so re-syncs land on the same session — and
+ * `openclaw:<agent>:<id>` for any other agent.
+ */
+export function openclawSessionId(meta: OpenclawSessionMeta): string {
+  return meta.agent === OPENCLAW_DEFAULT_AGENT
+    ? `${OPENCLAW_SESSION_ID_PREFIX}${meta.id}`
+    : `${OPENCLAW_SESSION_ID_PREFIX}${meta.agent}:${meta.id}`;
+}
 
 /**
  * Map one OpenClaw session (its header + projected messages) into a native
@@ -48,7 +60,7 @@ export function mapOpenclawSession(
   const turnCount = turns.filter((t) => t.kind === "assistant_reply").length;
 
   return {
-    id: `${OPENCLAW_SESSION_ID_PREFIX}${meta.id}`,
+    id: openclawSessionId(meta),
     workingDir: meta.cwd ?? fallbackWorkingDir,
     status: "completed",
     knownFacts: [],
@@ -66,6 +78,7 @@ export function mapOpenclawSession(
     metadata: {
       importedFrom: "openclaw",
       openclawSessionId: meta.id,
+      openclawAgent: meta.agent,
       ...(meta.model !== null ? { openclawModel: meta.model } : {}),
     },
   };

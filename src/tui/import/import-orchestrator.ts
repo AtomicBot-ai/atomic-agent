@@ -1,30 +1,18 @@
 import type { AgentRuntime } from "../../runtime/bootstrap.js";
 import {
   buildReport,
-  ClaudeCodeImporter,
-  ClaudeCodeSource,
-  CodexImporter,
-  CodexSource,
-  HermesImporter,
-  HermesSource,
   IMPORT_AGENT_LABELS,
   ImportOptionError,
-  ONBOARDING_SESSION_LIMIT,
-  resolveSelectedOptions,
-  OpenclawImporter,
-  OpenclawSource,
-  OPENCLAW_DEFAULT_AGENT,
-  resolveOpenclawOptions,
-  type ClaudeCodeOptionId,
-  type CodexOptionId,
-  type ImportAgentId,
   type ImportItemResult,
-  type ImportOptionId,
-  type OpenclawOptionId,
   type ImportReport,
 } from "../../import/index.js";
 import type { OnboardingImportPlan } from "../onboarding/import-step.js";
 import type { TuiEventBus } from "../tui-app.js";
+import { buildImportRunner } from "./build-importer.js";
+import {
+  nothingSelectedNotice,
+  resolveImportFormOptions,
+} from "./import-form-options.js";
 import type { ImportFormState } from "./import-panel-state.js";
 
 export interface ImportOrchestratorDeps {
@@ -35,15 +23,16 @@ export interface ImportOrchestratorDeps {
 }
 
 /**
- * Bridge between the Import tab state slice and the Hermes import logic.
- * The reducer never touches SQLite or the importer; every side-effecting
+ * Bridge between the Import tab state slice and the import logic. The
+ * reducer never touches SQLite or the importers; every side-effecting
  * operation enters here first and emits `import_*` actions on the bus so
  * the reducer (and therefore the UI) stays consistent.
  *
- * Reuses the runtime's already-open `sessionStore` / `taskStore` — the
- * CLI path opens its own handles, but here those handles are owned by
- * the runtime and must NOT be closed. Only the per-run `HermesSource`
- * (read-only access to `~/.hermes`) is opened and closed locally.
+ * Reuses the runtime's already-open stores — the CLI path opens its own
+ * handles, but here those handles are owned by the runtime and must NOT
+ * be closed. Only the per-run source (read-only access to the other
+ * agent's state dir) is opened and closed locally, inside
+ * `buildImportRunner`'s `close()`.
  */
 export class ImportOrchestrator {
   constructor(
@@ -78,100 +67,28 @@ export class ImportOrchestrator {
       this.bus.emit({ type: "import_failed", error: errorMessage(err) });
       return;
     }
+    const options = resolveImportFormOptions(form);
+    if (options.length === 0) {
+      this.bus.emit({ type: "import_failed", error: nothingSelectedNotice(form) });
+      return;
+    }
 
     // Let the `running` frame paint before the synchronous import runs.
     await Promise.resolve();
 
+    const runner = buildImportRunner(this.runtime, form.source, form.sourceDir.trim());
     try {
-      if (form.source === "openclaw") {
-        this.runOpenclaw(form, execute, limit);
-      } else {
-        this.runHermes(form, execute, limit);
-      }
+      const report = await runner.run({
+        options,
+        execute,
+        overwrite: form.overwrite,
+        ...(limit !== undefined ? { limit } : {}),
+      });
+      this.emitResult(report, execute, options);
     } catch (err) {
       this.bus.emit({ type: "import_failed", error: errorMessage(err) });
-    }
-  }
-
-  private runHermes(
-    form: ImportFormState,
-    execute: boolean,
-    limit: number | undefined,
-  ): void {
-    const exclude: string[] = [];
-    if (!form.sessions) exclude.push("sessions");
-    if (!form.cron) exclude.push("cron");
-    const options: ImportOptionId[] = resolveSelectedOptions({
-      preset: "default",
-      exclude,
-      migrateSecrets: form.secrets,
-    });
-    if (options.length === 0) {
-      this.bus.emit({
-        type: "import_failed",
-        error: "nothing selected to import — enable sessions, cron or secrets",
-      });
-      return;
-    }
-    const source = new HermesSource(form.sourceDir.trim());
-    try {
-      const importer = new HermesImporter({
-        source,
-        sessionStore: this.runtime.sessionStore,
-        taskStore: this.runtime.taskStore,
-        stateDir: this.runtime.config.paths.stateDir,
-        maxAttempts: this.runtime.config.tasks.maxAttempts,
-        workingDirFallback: process.cwd(),
-      });
-      const report = importer.run({
-        options,
-        execute,
-        overwrite: form.overwrite,
-        ...(limit !== undefined ? { limit } : {}),
-      });
-      this.emitResult(report, execute, options);
     } finally {
-      source.close();
-    }
-  }
-
-  private runOpenclaw(
-    form: ImportFormState,
-    execute: boolean,
-    limit: number | undefined,
-  ): void {
-    const exclude: string[] = [];
-    if (!form.sessions) exclude.push("sessions");
-    if (!form.cron) exclude.push("cron");
-    const options: OpenclawOptionId[] = resolveOpenclawOptions({ exclude });
-    if (options.length === 0) {
-      this.bus.emit({
-        type: "import_failed",
-        error: "nothing selected to import — enable sessions or cron",
-      });
-      return;
-    }
-    const source = new OpenclawSource(
-      form.sourceDir.trim(),
-      OPENCLAW_DEFAULT_AGENT,
-    );
-    try {
-      const importer = new OpenclawImporter({
-        source,
-        sessionStore: this.runtime.sessionStore,
-        taskStore: this.runtime.taskStore,
-        maxAttempts: this.runtime.config.tasks.maxAttempts,
-        workingDirFallback: process.cwd(),
-      });
-      const report = importer.run({
-        options,
-        execute,
-        overwrite: form.overwrite,
-        ...(limit !== undefined ? { limit } : {}),
-      });
-      this.emitResult(report, execute, options);
-    } finally {
-      source.close();
+      runner.close();
     }
   }
 
@@ -181,8 +98,13 @@ export class ImportOrchestrator {
     execute: boolean,
     options: readonly string[],
   ): void {
+    const storeWarning = this.describeUnreadableRows();
     if (execute) {
-      this.bus.emit({ type: "import_execute_done", report });
+      this.bus.emit({
+        type: "import_execute_done",
+        report,
+        ...(storeWarning ? { storeWarning } : {}),
+      });
       this.bus.emit({
         type: "runtime_info",
         line: `import done: ${formatSummary(report)}`,
@@ -192,16 +114,51 @@ export class ImportOrchestrator {
       // Sessions import wrote rows the rail has not seen yet.
       if (options.includes("sessions")) this.deps.refreshSessions?.();
     } else {
-      this.bus.emit({ type: "import_preview_ready", report });
+      this.bus.emit({
+        type: "import_preview_ready",
+        report,
+        ...(storeWarning ? { storeWarning } : {}),
+      });
     }
+  }
+
+  /**
+   * Rows in the destination store whose payload will not parse, phrased
+   * for the report screen — or `null` when there are none.
+   *
+   * The count is discovered at boot, where it has nowhere to go: the
+   * chat is on the start page and the list simply leaves those rows
+   * out, so a truncated write looks like sessions that quietly went
+   * missing. The import screen is where the operator is already asking
+   * "did everything arrive?", which makes it the right place to answer.
+   *
+   * Read through an optional call because counting unreadable rows is a
+   * capability of the newer store; against an older one this is silent
+   * rather than a crash.
+   */
+  private describeUnreadableRows(): string | null {
+    const store = this.runtime.sessionStore as {
+      countUnreadable?: () => number;
+    };
+    let unreadable = 0;
+    try {
+      unreadable = store.countUnreadable?.() ?? 0;
+    } catch {
+      return null;
+    }
+    if (unreadable <= 0) return null;
+    return unreadable === 1
+      ? "1 session already in the store cannot be read and is not listed"
+      : `${unreadable} sessions already in the store cannot be read and are not listed`;
   }
 
   /**
    * The first-run flow's multi-source run: every picked agent in plan
    * order, each with its own importer, folded into one report whose
    * item kinds carry the agent's name (`Claude Code sessions`) so the
-   * summary reads without a legend. Conflicts stay conflicts —
-   * onboarding never overwrites — and the answer lands on the bus as
+   * summary reads without a legend. Every session is taken (no limit);
+   * a destination that diverged stays a conflict — onboarding never
+   * overwrites — and the answer lands on the bus as
    * `onboarding_import_report` / `onboarding_import_failed`.
    */
   async runOnboarding(plan: OnboardingImportPlan, execute: boolean): Promise<void> {
@@ -217,8 +174,13 @@ export class ImportOrchestrator {
           .filter((row) => row.agent === agent.id && row.enabled)
           .map((row) => row.option);
         if (enabled.length === 0) continue;
-        const report = await this.runOnboardingAgent(agent.id, agent.dir, enabled, execute);
-        if (report === null) continue;
+        const runner = buildImportRunner(this.runtime, agent.id, agent.dir);
+        let report: ImportReport;
+        try {
+          report = await runner.run({ options: enabled, execute, overwrite: false });
+        } finally {
+          runner.close();
+        }
         if (execute && enabled.includes("cron")) cronImported = true;
         if (execute && enabled.includes("sessions")) sessionsImported = true;
         for (const item of report.items) {
@@ -244,108 +206,11 @@ export class ImportOrchestrator {
     }
   }
 
-  private async runOnboardingAgent(
-    id: ImportAgentId,
-    dir: string,
-    enabled: readonly string[],
-    execute: boolean,
-  ): Promise<ImportReport | null> {
-    const config = this.runtime.config;
-    const common = { execute, overwrite: false } as const;
-    switch (id) {
-      case "hermes": {
-        const options = enabled.filter(isHermesOption);
-        if (options.length === 0) return null;
-        const source = new HermesSource(dir);
-        try {
-          return new HermesImporter({
-            source,
-            sessionStore: this.runtime.sessionStore,
-            taskStore: this.runtime.taskStore,
-            stateDir: config.paths.stateDir,
-            maxAttempts: config.tasks.maxAttempts,
-            workingDirFallback: process.cwd(),
-          }).run({ ...common, options });
-        } finally {
-          source.close();
-        }
-      }
-      case "openclaw": {
-        const options = enabled.filter(isOpenclawOption);
-        if (options.length === 0) return null;
-        const source = new OpenclawSource(dir, OPENCLAW_DEFAULT_AGENT);
-        try {
-          return new OpenclawImporter({
-            source,
-            sessionStore: this.runtime.sessionStore,
-            taskStore: this.runtime.taskStore,
-            maxAttempts: config.tasks.maxAttempts,
-            workingDirFallback: process.cwd(),
-          }).run({ ...common, options });
-        } finally {
-          source.close();
-        }
-      }
-      case "claude-code": {
-        const options = enabled.filter(isClaudeCodeOption);
-        if (options.length === 0) return null;
-        return new ClaudeCodeImporter({
-          source: new ClaudeCodeSource(dir),
-          sessionStore: this.runtime.sessionStore,
-          memoryStore: this.runtime.notesStore,
-          stateDir: config.paths.stateDir,
-          userConfigFile: config.paths.userConfigFile,
-          globalSkillsDir: config.paths.globalSkillsDir,
-          workingDirFallback: process.cwd(),
-        }).run({ ...common, options, limit: ONBOARDING_SESSION_LIMIT });
-      }
-      case "codex": {
-        const options = enabled.filter(isCodexOption);
-        if (options.length === 0) return null;
-        return new CodexImporter({
-          source: new CodexSource(dir),
-          sessionStore: this.runtime.sessionStore,
-          memoryStore: this.runtime.notesStore,
-          stateDir: config.paths.stateDir,
-          globalSkillsDir: config.paths.globalSkillsDir,
-          workingDirFallback: process.cwd(),
-        }).run({ ...common, options, limit: ONBOARDING_SESSION_LIMIT });
-      }
-    }
-  }
-
   shutdown(): void {
     // No timers or open handles to release — the per-run source is always
-    // closed inside the runHermes/runOpenclaw finally. Present for symmetry
-    // with the other tab orchestrators.
+    // closed inside the runner's finally. Present for symmetry with the
+    // other tab orchestrators.
   }
-}
-
-// The plan's option ids are already source-scoped by construction (each
-// row was built from that source's registry); the guards restate that
-// for the type system at the seam where the unions meet.
-function isHermesOption(id: string): id is ImportOptionId {
-  return id === "sessions" || id === "cron" || id === "secrets";
-}
-
-function isOpenclawOption(id: string): id is OpenclawOptionId {
-  return id === "sessions" || id === "cron";
-}
-
-function isClaudeCodeOption(id: string): id is ClaudeCodeOptionId {
-  return (
-    id === "skills" ||
-    id === "memory" ||
-    id === "mcp" ||
-    id === "sessions" ||
-    id === "secrets"
-  );
-}
-
-function isCodexOption(id: string): id is CodexOptionId {
-  return (
-    id === "skills" || id === "memory" || id === "sessions" || id === "secrets"
-  );
 }
 
 function parseLimit(raw: string): number | undefined {

@@ -223,7 +223,7 @@ describe("OpenclawImporter", () => {
     expect(taskStore.list({ limit: 100 })).toHaveLength(0);
   });
 
-  it("respects --limit on sessions (oldest first)", () => {
+  it("respects --limit on sessions, keeping the newest", () => {
     writeSession(
       sourceDir,
       "main",
@@ -239,6 +239,10 @@ describe("OpenclawImporter", () => {
       "2026-06-11T11:00:00.000Z",
     );
 
+    expect(
+      new OpenclawSource(sourceDir, "main").listSessions().map((m) => m.id),
+    ).toEqual(["gaia-new", "gaia-old"]);
+
     const report = buildImporter().run({
       options: ["sessions"],
       execute: true,
@@ -246,8 +250,60 @@ describe("OpenclawImporter", () => {
       limit: 1,
     });
     expect(report.summary.migrated).toBe(1);
-    expect(sessionStore.load("openclaw:gaia-old")).not.toBeNull();
-    expect(sessionStore.load("openclaw:gaia-new")).toBeNull();
+    expect(sessionStore.load("openclaw:gaia-new")).not.toBeNull();
+    expect(sessionStore.load("openclaw:gaia-old")).toBeNull();
+  });
+
+  it("imports every agent on request, keeping main's ids and prefixing the rest", () => {
+    writeSession(
+      sourceDir,
+      "main",
+      "gaia-1",
+      [messageEvent("user", [{ type: "text", text: "hi" }], 1_700_000_000_000)],
+      "2026-06-11T10:00:00.000Z",
+    );
+    writeSession(
+      sourceDir,
+      "ops",
+      "gaia-2",
+      [messageEvent("user", [{ type: "text", text: "deploy" }], 1_700_000_100_000)],
+      "2026-06-11T11:00:00.000Z",
+    );
+    // An agent dir without sessions/ is not an agent worth listing.
+    mkdirSync(join(sourceDir, "agents", "empty"), { recursive: true });
+
+    const source = new OpenclawSource(sourceDir, "main");
+    sources.push(source);
+    expect(source.listAgents()).toEqual(["main", "ops"]);
+
+    // Default (the CLI's --agent contract): only the source's own agent.
+    const own = buildImporter().run({ options: ["sessions"], execute: false, overwrite: false });
+    expect(own.items.map((i) => i.source)).toEqual(["gaia-1"]);
+
+    const report = buildImporter().run({
+      options: ["sessions"],
+      execute: true,
+      overwrite: false,
+      agents: source.listAgents(),
+    });
+    expect(report.items.map((i) => [i.source, i.destination])).toEqual([
+      ["ops:gaia-2", "openclaw:ops:gaia-2"],
+      ["gaia-1", "openclaw:gaia-1"],
+    ]);
+    expect(sessionStore.load("openclaw:gaia-1")?.metadata.openclawAgent).toBe("main");
+    expect(sessionStore.load("openclaw:ops:gaia-2")?.turns[0]).toMatchObject({
+      text: "deploy",
+    });
+
+    // The limit spans agents: newest overall wins.
+    const limited = buildImporter().run({
+      options: ["sessions"],
+      execute: false,
+      overwrite: false,
+      agents: source.listAgents(),
+      limit: 1,
+    });
+    expect(limited.items.map((i) => i.source)).toEqual(["ops:gaia-2"]);
   });
 
   it("skips sessions cleanly when the agent dir is absent", () => {

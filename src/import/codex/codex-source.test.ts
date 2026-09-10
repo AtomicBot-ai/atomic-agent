@@ -65,6 +65,34 @@ describe("CodexSource", () => {
     ]);
   });
 
+  it("stamps rows without a timestamp with the file mtime", () => {
+    const dir = join(stateDir, "sessions");
+    mkdirSync(dir, { recursive: true });
+    const file = join(dir, "rollout-no-clock.jsonl");
+    writeFileSync(
+      file,
+      [
+        line({ type: "session_meta", payload: { id: "sess-2", cwd: "/work" } }),
+        line({
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: "hello" }],
+          },
+        }),
+      ].join(""),
+    );
+    const mtime = new Date("2026-08-03T12:00:00Z");
+    utimesSync(file, mtime, mtime);
+
+    const source = new CodexSource(stateDir);
+    const session = source.readSession(source.listSessions()[0]!);
+    expect(session.id).toBe("sess-2");
+    expect(session.startedAtMs).toBe(mtime.getTime());
+    expect(session.messages[0]!.atMs).toBe(mtime.getTime());
+  });
+
   it("projects a rollout's response items and drops the wrappers", () => {
     const dir = join(stateDir, "sessions");
     mkdirSync(dir, { recursive: true });

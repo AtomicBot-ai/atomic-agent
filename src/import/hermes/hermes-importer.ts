@@ -10,6 +10,7 @@ import {
   type ImportItemResult,
   type ImportReport,
 } from "../import-report.js";
+import { reconcileImportedSession } from "../reconcile-session.js";
 import type { HermesSource } from "./hermes-source.js";
 import type { ImportOptionId } from "./import-options.js";
 import { mapHermesCronJob } from "./map-cron.js";
@@ -37,7 +38,7 @@ export interface ImportRunOptions {
   execute: boolean;
   /** Overwrite differing destinations instead of flagging a conflict. */
   overwrite: boolean;
-  /** Cap on the number of sessions processed. */
+  /** Cap on the number of sessions processed (newest first). */
   limit?: number;
 }
 
@@ -89,6 +90,15 @@ export class HermesImporter {
     }
     for (const session of sessions) {
       const messages = this.deps.source.readMessages(session.id);
+      if (messages.length === 0) {
+        items.push({
+          kind: "sessions",
+          source: session.id,
+          status: "skipped",
+          reason: "no messages",
+        });
+        continue;
+      }
       const mapped = mapHermesSession(
         session,
         messages,
@@ -109,23 +119,18 @@ export class HermesImporter {
       destination: mapped.id,
       status: "migrated",
     };
-    const existing = this.deps.sessionStore.load(mapped.id);
-    if (!existing) {
-      if (options.execute) this.deps.sessionStore.save(mapped);
-      return base;
-    }
-    if (sessionsMatch(existing, mapped)) {
-      return { ...base, status: "skipped", reason: "already matches" };
-    }
-    if (!options.overwrite) {
-      return {
-        ...base,
-        status: "conflict",
-        reason: "destination differs; use --overwrite",
-      };
-    }
-    if (options.execute) this.deps.sessionStore.save(mapped);
-    return { ...base, status: "migrated", reason: "overwritten" };
+    const outcome = reconcileImportedSession({
+      existing: this.deps.sessionStore.load(mapped.id),
+      mapped,
+      execute: options.execute,
+      overwrite: options.overwrite,
+      save: (state) => this.deps.sessionStore.save(state),
+    });
+    return {
+      ...base,
+      status: outcome.status,
+      ...(outcome.reason !== undefined ? { reason: outcome.reason } : {}),
+    };
   }
 
   private importCron(
@@ -235,12 +240,6 @@ export class HermesImporter {
       items.push({ ...base, reason: "overwritten" });
     }
   }
-}
-
-/** Structural equality of two sessions' transcripts. */
-function sessionsMatch(a: SessionState, b: SessionState): boolean {
-  if (a.turns.length !== b.turns.length) return false;
-  return JSON.stringify(a.turns) === JSON.stringify(b.turns);
 }
 
 /**

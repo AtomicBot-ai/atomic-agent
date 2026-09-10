@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { Database as DatabaseCtor } from "../../native/load-better-sqlite3.js";
+import { assistantReplyTurn } from "../../session/conversation-turn.js";
 import { SessionStore } from "../../session/index.js";
 import { TaskStore } from "../../tasks/index.js";
 import { HermesImporter } from "./hermes-importer.js";
@@ -218,6 +219,88 @@ describe("HermesImporter", () => {
     });
   });
 
+  it("picks up messages a session gained since the last import", () => {
+    seedStateDb(
+      sourceDir,
+      [{ id: "s-1" }],
+      [{ sessionId: "s-1", role: "user", content: "first", timestamp: 1_700_000_001 }],
+    );
+    const opts = { options: ["sessions" as const], execute: true, overwrite: false };
+    buildImporter().run(opts);
+    // A model stamp the runtime adds locally must survive the update.
+    const imported = sessionStore.load("hermes:s-1")!;
+    sessionStore.save({
+      ...imported,
+      metadata: { ...imported.metadata, llm: { providerId: "p", chatModel: "m" } },
+    });
+
+    for (const source of sources) source.close();
+    rmSync(join(sourceDir, "state.db"), { maxRetries: 5, retryDelay: 100 });
+    seedStateDb(
+      sourceDir,
+      [{ id: "s-1" }],
+      [
+        { sessionId: "s-1", role: "user", content: "first", timestamp: 1_700_000_001 },
+        { sessionId: "s-1", role: "assistant", content: "reply", timestamp: 1_700_000_002 },
+      ],
+    );
+
+    const second = buildImporter().run(opts);
+    expect(second.items[0]).toMatchObject({
+      status: "migrated",
+      reason: "updated (+1 turns)",
+    });
+    const updated = sessionStore.load("hermes:s-1");
+    expect(updated?.turns).toHaveLength(2);
+    expect(updated?.metadata.llm).toEqual({ providerId: "p", chatModel: "m" });
+    expect(updated?.metadata.importedFrom).toBe("hermes");
+  });
+
+  it("never replaces a session the operator continued locally", () => {
+    seedStateDb(
+      sourceDir,
+      [{ id: "s-1" }],
+      [{ sessionId: "s-1", role: "user", content: "first", timestamp: 1_700_000_001 }],
+    );
+    const opts = { options: ["sessions" as const], execute: true, overwrite: false };
+    buildImporter().run(opts);
+    const imported = sessionStore.load("hermes:s-1")!;
+    sessionStore.save({
+      ...imported,
+      turns: [...imported.turns, assistantReplyTurn("continued in atomic-agent", 5)],
+    });
+
+    // The source grew too — but the local continuation is not its prefix.
+    for (const source of sources) source.close();
+    rmSync(join(sourceDir, "state.db"), { maxRetries: 5, retryDelay: 100 });
+    seedStateDb(
+      sourceDir,
+      [{ id: "s-1" }],
+      [
+        { sessionId: "s-1", role: "user", content: "first", timestamp: 1_700_000_001 },
+        { sessionId: "s-1", role: "assistant", content: "reply", timestamp: 1_700_000_002 },
+      ],
+    );
+    const second = buildImporter().run(opts);
+    expect(second.items[0]).toMatchObject({ status: "conflict" });
+    expect(sessionStore.load("hermes:s-1")?.turns[1]).toMatchObject({
+      text: "continued in atomic-agent",
+    });
+  });
+
+  it("lists a session without messages as skipped instead of importing a blank", () => {
+    seedStateDb(sourceDir, [{ id: "s-empty" }], []);
+    const report = buildImporter().run({
+      options: ["sessions"],
+      execute: true,
+      overwrite: false,
+    });
+    expect(report.items).toEqual([
+      { kind: "sessions", source: "s-empty", status: "skipped", reason: "no messages" },
+    ]);
+    expect(sessionStore.load("hermes:s-empty")).toBeNull();
+  });
+
   it("dry-run (execute=false) writes nothing", () => {
     seedStateDb(
       sourceDir,
@@ -240,18 +323,24 @@ describe("HermesImporter", () => {
     expect(taskStore.list({ limit: 100 })).toHaveLength(0);
   });
 
-  it("respects --limit on sessions", () => {
+  it("respects --limit on sessions, keeping the newest", () => {
     seedStateDb(
       sourceDir,
       [
         { id: "s-1", startedAt: 1_700_000_000 },
+        { id: "s-3", startedAt: 1_700_000_200 },
         { id: "s-2", startedAt: 1_700_000_100 },
       ],
       [
         { sessionId: "s-1", role: "user", content: "a" },
         { sessionId: "s-2", role: "user", content: "b" },
+        { sessionId: "s-3", role: "user", content: "c" },
       ],
     );
+    const source = new HermesSource(sourceDir);
+    sources.push(source);
+    expect(source.readSessions().map((s) => s.id)).toEqual(["s-3", "s-2", "s-1"]);
+
     const report = buildImporter().run({
       options: ["sessions"],
       execute: true,
@@ -259,8 +348,9 @@ describe("HermesImporter", () => {
       limit: 1,
     });
     expect(report.summary.migrated).toBe(1);
-    expect(sessionStore.load("hermes:s-1")).not.toBeNull();
+    expect(sessionStore.load("hermes:s-3")).not.toBeNull();
     expect(sessionStore.load("hermes:s-2")).toBeNull();
+    expect(sessionStore.load("hermes:s-1")).toBeNull();
   });
 
   describe("secrets", () => {

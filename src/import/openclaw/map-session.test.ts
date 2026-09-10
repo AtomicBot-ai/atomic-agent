@@ -9,6 +9,7 @@ import type {
 function meta(overrides: Partial<OpenclawSessionMeta> = {}): OpenclawSessionMeta {
   return {
     id: "gaia-123",
+    agent: "main",
     file: "/x/gaia-123.jsonl",
     cwd: "/work/proj",
     model: "qwen-3.6-35b-a3b",

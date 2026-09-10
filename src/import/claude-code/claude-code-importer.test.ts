@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  appendFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -195,6 +196,30 @@ describe("ClaudeCodeImporter", () => {
     });
   });
 
+  it("picks up turns a session gained since the last import", async () => {
+    seedSession();
+    const options = resolveClaudeCodeOptions({ exclude: ["skills", "memory", "mcp"] });
+    await buildImporter().run({ options, execute: true, overwrite: false });
+    expect(sessionStore.load("claude-code:s1")?.turns).toHaveLength(2);
+
+    // The operator kept talking to Claude Code: the transcript grew.
+    appendFileSync(
+      join(sourceDir, "projects", "-work", "s1.jsonl"),
+      line({
+        type: "user",
+        timestamp: "2026-08-02T10:05:00Z",
+        message: { role: "user", content: "and one more thing" },
+      }),
+    );
+    const second = await buildImporter().run({ options, execute: true, overwrite: false });
+    expect(second.items[0]).toMatchObject({
+      kind: "sessions",
+      status: "migrated",
+      reason: "updated (+1 turns)",
+    });
+    expect(sessionStore.load("claude-code:s1")?.turns).toHaveLength(3);
+  });
+
   it("skips an mcp server whose name is already configured", async () => {
     writeFileSync(
       join(home, ".claude.json"),
@@ -246,6 +271,24 @@ describe("ClaudeCodeImporter", () => {
       limit: 2,
     });
     expect(limited.items.filter((i) => i.kind === "sessions")).toHaveLength(2);
+  });
+
+  it("lists a transcript without messages as skipped, so counts add up", async () => {
+    const projectDir = join(sourceDir, "projects", "p");
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(
+      join(projectDir, "warmup.jsonl"),
+      line({ type: "ai-title", aiTitle: "nothing said yet" }),
+    );
+    const report = await buildImporter().run({
+      options: resolveClaudeCodeOptions({ exclude: ["skills", "memory", "mcp"] }),
+      execute: true,
+      overwrite: false,
+    });
+    expect(report.items).toEqual([
+      { kind: "sessions", source: "warmup", status: "skipped", reason: "no messages" },
+    ]);
+    expect(sessionStore.load("claude-code:warmup")).toBeNull();
   });
 
   it("reports empty domains as skipped with a reason", async () => {
