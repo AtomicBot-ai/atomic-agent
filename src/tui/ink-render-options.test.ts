@@ -8,14 +8,15 @@ const streams = {
 };
 
 describe("buildInkRenderOptions", () => {
-  it("renders incrementally", () => {
-    // The whole point of the option: Ink's default rewrites every line
-    // of the frame on every state change, and while a turn runs that is
-    // a full-screen erase several times a second — visible as blinking
-    // on any terminal without synchronized output. Losing this flag
-    // silently brings the blink back, so it is pinned here.
+  it("repaints the whole frame", () => {
+    // Pinned as false, not merely absent. Ink's incremental renderer
+    // anchors its line diff to the bottom of the previous frame, and a
+    // session swap replaces the transcript, the rail and the meta bar
+    // in one commit — after which the rail's background stops being
+    // painted and the composer wears what the rail left behind. The
+    // measurement is in the comment beside the option.
     const options = buildInkRenderOptions({ ...streams, kittyKeyboard: false });
-    expect(options.incrementalRendering).toBe(true);
+    expect(options.incrementalRendering).toBe(false);
   });
 
   it("keeps Ctrl+C for the app", () => {
