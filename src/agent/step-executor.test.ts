@@ -3208,3 +3208,148 @@ describe("truncated completions", () => {
     });
   });
 });
+
+describe('strictTools wiring (supportsTools: "strict")', () => {
+  // Two tools, one convertible and one not, so the per-tool half of the
+  // contract is exercised in both directions of the same step.
+  const convertible = {
+    name: "acme.put",
+    tier: "frequent" as const,
+    summary: "store a value",
+    argsSchema: "{ key: string, note?: string }",
+    argsJsonSchema: {
+      type: "object",
+      properties: { key: { type: "string" }, note: { type: "string" } },
+      required: ["key"],
+      additionalProperties: false,
+    } as Record<string, unknown>,
+  };
+  // Left open by its server, so closing it would forbid arguments it
+  // accepts today: the converter refuses, and the function ships exactly
+  // as it does with the level off — including its REQUIRED nullable.
+  const refused = {
+    name: "acme.raw",
+    tier: "frequent" as const,
+    summary: "store a raw value",
+    argsSchema: "{ key: string, value: string | null }",
+    argsJsonSchema: {
+      type: "object",
+      properties: {
+        key: { type: "string" },
+        value: { type: ["string", "null"] },
+      },
+      required: ["key", "value"],
+    } as Record<string, unknown>,
+  };
+
+  // One call per step: a two-call batch is rejected before dispatch
+  // because these invented tools carry no resource class.
+  async function runStrictStep(
+    call: { name: string; args: Record<string, unknown> } = {
+      name: "acme__put",
+      args: { key: "k", note: null },
+    },
+  ): Promise<{
+    tools: ReadonlyArray<Record<string, unknown>>;
+    argsSeen: Record<string, Record<string, unknown>>;
+  }> {
+    const argsSeen: Record<string, Record<string, unknown>> = {};
+    const registry = new ToolRegistry();
+    for (const name of [convertible.name, refused.name]) {
+      registry.register({
+        name,
+        description: name,
+        readonly: true,
+        async run(args: Record<string, unknown>) {
+          argsSeen[name] = args;
+          return compressToolResult({ tool: name, status: "ok", output: "ok" });
+        },
+      });
+    }
+    let tools: ReadonlyArray<Record<string, unknown>> = [];
+    const outcome = await executeStep(
+      {
+        session: createEmptySessionState({ id: "s-strict", workingDir: "/w" }),
+        toolDescriptors: [convertible, refused],
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        stepIndex: 0,
+        signal: new AbortController().signal,
+        userMessage: "store both",
+      },
+      {
+        registry,
+        slotManager: new SlotManager(2),
+        async llmComplete(params) {
+          tools = (params.tools ?? []) as ReadonlyArray<
+            Record<string, unknown>
+          >;
+          return {
+            content: "",
+            reasoningContent: "",
+            stop: true,
+            truncated: false,
+            timing: {
+              promptMs: 1,
+              predictedMs: 1,
+              promptTokens: 20,
+              predictedTokens: 5,
+            },
+            cacheHitTokens: 0,
+            slotId: -1,
+            modelId: "mercury-2.5",
+            toolCalls: [
+              {
+                id: "c1",
+                type: "function",
+                function: {
+                  name: call.name,
+                  arguments: JSON.stringify(call.args),
+                },
+              },
+            ],
+          };
+        },
+        grammar: "",
+        profile: PLAIN_INSTRUCT_PROFILE,
+        toolTransport: "native_tools",
+        toolCallAdapter: null,
+        supportsSlotAffinity: false,
+        strictTools: true,
+      },
+    );
+    expect(outcome.toolResults.every((r) => r.status === "ok")).toBe(true);
+    return { tools, argsSeen };
+  }
+
+  it("marks only the convertible function strict on the wire", async () => {
+    const { tools } = await runStrictStep();
+    const byName = new Map(
+      tools.map((t) => [
+        (t as { function: { name: string } }).function.name,
+        t as { function: { strict?: boolean } },
+      ]),
+    );
+    expect(byName.get("acme__put")?.function.strict).toBe(true);
+    expect(byName.get("acme__raw")?.function.strict).toBeUndefined();
+  });
+
+  it("undoes the null padding for that function and only that one", async () => {
+    // Converted: the null is the schema's doing (an optional forced
+    // into `required`), so the tool sees the absent key it would see
+    // with the level off.
+    const converted = await runStrictStep({
+      name: "acme__put",
+      args: { key: "k", note: null },
+    });
+    expect(converted.argsSeen["acme.put"]).toEqual({ key: "k" });
+    // Refused: the null is the model's answer to the tool's OWN schema,
+    // in which `value` is required and nullable. Deleting it would hand
+    // the server a call missing a required key.
+    const untouched = await runStrictStep({
+      name: "acme__raw",
+      args: { key: "k", value: null },
+    });
+    expect(untouched.argsSeen["acme.raw"]).toEqual({ key: "k", value: null });
+  });
+});

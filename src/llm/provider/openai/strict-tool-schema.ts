@@ -29,7 +29,20 @@
  * their raw args with `!== undefined` (`memory.profile.set.pinned`,
  * `memory.notes.recall.id`) and would take a branch they must not on a
  * literal `null`, which is why the adapter drops null-valued arguments
- * on the way back in — see `openAiToolCallsToBatch`.
+ * of the tools it converted on the way back in — see
+ * `openAiToolCallsToBatch`. Because that undo is keyed to exactly the
+ * functions this module rewrote, the rewrite is invisible from a
+ * tool's point of view: it sees the same absent key it sees today.
+ *
+ * Nullability is the one place where "faithful" needs stating twice.
+ * A schema may already be nullable in any of the three standard
+ * spellings — `type: ["string", "null"]`, `anyOf` with a
+ * `{ type: "null" }` branch, or a bare `{ type: "null" }` — and all
+ * three are accepted, left alone when they are already what we would
+ * produce, and never widened twice. That is what makes the conversion
+ * idempotent (feed our own output back in and it comes out unchanged)
+ * and what makes it usable on the pydantic/FastMCP schemas an MCP
+ * server actually ships, where `Optional[str]` is the common case.
  */
 
 type Schema = Record<string, unknown>;
@@ -51,6 +64,24 @@ const SUPPORTED_KEYWORDS: ReadonlySet<string> = new Set([
   "items",
   "enum",
   "anyOf",
+]);
+
+/**
+ * Accepted, then dropped from the node we emit: annotations that carry
+ * no constraint, that the strict compiler has no rule for, and that
+ * pydantic-generated MCP schemas put on almost every property.
+ *
+ * `default` is the interesting one. Under strict there is no absent
+ * key for a default to fill, so passing it through would state
+ * something the decode cannot honour; dropping it loses nothing,
+ * because the null the model sends for an unset optional is deleted
+ * again in `openAiToolCallsToBatch` and the tool (or the MCP server)
+ * applies its own default to the absent key exactly as it does today.
+ */
+const DROPPED_KEYWORDS: ReadonlySet<string> = new Set([
+  "default",
+  "$schema",
+  "$comment",
 ]);
 
 const SCALAR_TYPES: ReadonlySet<string> = new Set([
@@ -85,18 +116,22 @@ const SCALAR_TYPES: ReadonlySet<string> = new Set([
  */
 const MAX_NESTING = 5;
 
+
 /**
  * The strict form of `schema`, or `null` when it cannot be produced.
  * The input is never mutated: every node is rebuilt.
  */
 export function toStrictJsonSchema(schema: unknown): Schema | null {
   const root = asObject(schema);
-  if (!root || root.type !== "object") return null;
-  return convertNode(root, 0);
+  if (!root) return null;
+  const stripped = stripAnnotations(root);
+  if (stripped.type !== "object") return null;
+  return convertNode(stripped, 0);
 }
 
-function convertNode(node: Schema, depth: number): Schema | null {
+function convertNode(raw: Schema, depth: number): Schema | null {
   if (depth > MAX_NESTING) return null;
+  const node = stripAnnotations(raw);
   for (const key of Object.keys(node)) {
     if (!SUPPORTED_KEYWORDS.has(key)) return null;
   }
@@ -106,8 +141,8 @@ function convertNode(node: Schema, depth: number): Schema | null {
     // guess at.
     if (node.type !== undefined || !Array.isArray(node.anyOf)) return null;
     const branches: Schema[] = [];
-    for (const raw of node.anyOf) {
-      const branch = asObject(raw);
+    for (const branchRaw of node.anyOf) {
+      const branch = asObject(branchRaw);
       if (!branch) return null;
       const converted = convertNode(branch, depth);
       if (!converted) return null;
@@ -116,32 +151,68 @@ function convertNode(node: Schema, depth: number): Schema | null {
     if (branches.length === 0) return null;
     return { ...node, anyOf: branches };
   }
-  const type = node.type;
-  if (typeof type !== "string") return null;
-  if (SCALAR_TYPES.has(type)) {
-    if (node.enum !== undefined && !Array.isArray(node.enum)) return null;
-    return { ...node };
+  // `type` is either a name or a union spelled as an array of names —
+  // `["string", "null"]` is `Optional[str]` as pydantic emits it, and
+  // it is also what this module produces for an optional property, so
+  // reading it back is what makes the conversion idempotent.
+  const kinds = readTypeNames(node.type);
+  if (!kinds) return null;
+  const structural = kinds.filter((kind) => kind !== "null");
+  // A leaf: scalars, `null`, or a union of those.
+  if (structural.every((kind) => SCALAR_TYPES.has(kind))) {
+    return convertScalar(node);
   }
-  if (type === "array") {
+  // Anything else has exactly one structural branch to convert; a
+  // union of two structural types has one `items`/`properties` and no
+  // way to say which branch it belongs to.
+  if (structural.length !== 1) return null;
+  if (structural[0] === "array") {
     const items = asObject(node.items);
     if (!items) return null;
     const converted = convertNode(items, depth + 1);
     if (!converted) return null;
     return { ...node, items: converted };
   }
-  if (type !== "object") return null;
+  if (structural[0] !== "object") return null;
   return convertObject(node, depth);
 }
 
-function convertObject(node: Schema, depth: number): Schema | null {
-  // An open object is the case with no strict form: closing it would
-  // silently forbid arguments the tool accepts today.
-  if (
-    node.additionalProperties !== undefined &&
-    node.additionalProperties !== false
-  ) {
-    return null;
+/** `type` as a list of names, or `null` if it is not a legal `type`. */
+function readTypeNames(value: unknown): string[] | null {
+  if (typeof value === "string") return [value];
+  if (!Array.isArray(value) || value.length === 0) return null;
+  const names: string[] = [];
+  for (const member of value) {
+    if (typeof member !== "string") return null;
+    names.push(member);
   }
+  return names;
+}
+
+/**
+ * A leaf: a scalar, `null`, or a union of those. Emitted verbatim, so
+ * refuse the structural keywords that would then ride through
+ * unconverted — a `properties` or `items` hanging off a scalar node is
+ * not a shape we can vouch for.
+ */
+function convertScalar(node: Schema): Schema | null {
+  if (node.enum !== undefined && !Array.isArray(node.enum)) return null;
+  if (node.properties !== undefined || node.items !== undefined) return null;
+  if (node.additionalProperties !== undefined) return null;
+  if (node.required !== undefined) return null;
+  return { ...node };
+}
+
+function convertObject(node: Schema, depth: number): Schema | null {
+  // An object that does not close itself is open — that is the JSON
+  // Schema default, and an absent `additionalProperties` means it as
+  // loudly as an explicit `true` does. Closing either one would
+  // silently forbid arguments the tool accepts today, which on a
+  // third-party MCP schema is exactly the failure this module exists
+  // to refuse. Our own descriptors spell `additionalProperties: false`
+  // out on every object (`default-tool-args-schemas.ts` conventions),
+  // so requiring it costs the built-ins nothing.
+  if (node.additionalProperties !== false) return null;
   // `properties` absent means an object of unknown shape — same story.
   // The zero-argument tools spell that out as an explicit `{}`.
   const properties =
@@ -151,13 +222,18 @@ function convertObject(node: Schema, depth: number): Schema | null {
   const required = readRequired(node.required);
   if (!required) return null;
 
-  const out: Schema = {};
+  // Built through entries rather than `out[name] = ...`: a property
+  // literally named `__proto__` is a legal JSON Schema key and an
+  // assignment would set the prototype instead of an own key, quietly
+  // dropping the argument from a schema we then mark strict.
+  // `Object.fromEntries` defines own properties and keeps it.
+  const entries: [string, Schema][] = [];
   for (const [name, raw] of Object.entries(properties)) {
     const child = asObject(raw);
     if (!child) return null;
     const converted = convertNode(child, depth + 1);
     if (!converted) return null;
-    out[name] = required.has(name) ? converted : nullable(converted);
+    entries.push([name, required.has(name) ? converted : nullable(converted)]);
     required.delete(name);
   }
   // A `required` entry with no matching property is rejected by the
@@ -165,10 +241,12 @@ function convertObject(node: Schema, depth: number): Schema | null {
   if (required.size > 0) return null;
 
   return {
+    // `type` is carried through rather than re-stated: an optional
+    // object arrives back here as `["object", "null"]` and must keep
+    // its null branch.
     ...node,
-    type: "object",
-    properties: out,
-    required: Object.keys(out),
+    properties: Object.fromEntries(entries),
+    required: entries.map(([name]) => name),
     additionalProperties: false,
   };
 }
@@ -178,14 +256,45 @@ function convertObject(node: Schema, depth: number): Schema | null {
  * survives being forced into `required`. An enum has to admit `null`
  * as a member too, or the widened type and the enum contradict each
  * other and nothing validates.
+ *
+ * Idempotent in all three spellings of "already nullable": a node that
+ * admits `null` today comes back untouched, so converting our own
+ * output (or a schema an MCP server already wrote in strict shape) is
+ * a no-op rather than a double-widening the compiler would reject.
  */
 function nullable(node: Schema): Schema {
   if (Array.isArray(node.anyOf)) {
+    if (node.anyOf.some(isNullBranch)) return node;
     return { ...node, anyOf: [...node.anyOf, { type: "null" }] };
   }
-  const widened: Schema = { ...node, type: [node.type, "null"] };
-  if (Array.isArray(node.enum)) widened.enum = [...node.enum, null];
-  return widened;
+  const type = node.type;
+  if (type === "null") return node;
+  if (Array.isArray(type)) {
+    if (type.includes("null")) return node;
+    return withNullEnum({ ...node, type: [...type, "null"] });
+  }
+  return withNullEnum({ ...node, type: [type, "null"] });
+}
+
+function withNullEnum(node: Schema): Schema {
+  if (!Array.isArray(node.enum) || node.enum.includes(null)) return node;
+  return { ...node, enum: [...node.enum, null] };
+}
+
+function isNullBranch(value: unknown): boolean {
+  const branch = asObject(value);
+  return branch?.type === "null";
+}
+
+/** A copy of `node` without the annotations we accept but do not emit. */
+function stripAnnotations(node: Schema): Schema {
+  let out: Schema | null = null;
+  for (const key of Object.keys(node)) {
+    if (!DROPPED_KEYWORDS.has(key)) continue;
+    out ??= { ...node };
+    delete out[key];
+  }
+  return out ?? node;
 }
 
 function readRequired(value: unknown): Set<string> | null {

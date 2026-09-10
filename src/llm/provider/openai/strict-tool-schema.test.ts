@@ -22,11 +22,12 @@ describe("toStrictJsonSchema", () => {
     });
   });
 
-  it("adds the closing keywords a descriptor left implicit", () => {
+  it("adds the `required` a descriptor left implicit", () => {
     expect(
       toStrictJsonSchema({
         type: "object",
         properties: { text: { type: "string", description: "why" } },
+        additionalProperties: false,
       }),
     ).toEqual({
       type: "object",
@@ -36,6 +37,110 @@ describe("toStrictJsonSchema", () => {
       required: ["text"],
       additionalProperties: false,
     });
+  });
+
+  it("accepts every spelling of an already-nullable property", () => {
+    // The three shapes a real schema uses for `Optional[str]`. All must
+    // survive, and none may be widened a second time.
+    const strict = toStrictJsonSchema({
+      type: "object",
+      properties: {
+        union: { anyOf: [{ type: "string" }, { type: "null" }] },
+        listed: { type: ["string", "null"] },
+        onlyNull: { type: "null" },
+        widenedEnum: { type: ["string", "null"], enum: ["a", null] },
+      },
+      required: [],
+      additionalProperties: false,
+    });
+    expect(strict?.properties).toEqual({
+      union: { anyOf: [{ type: "string" }, { type: "null" }] },
+      listed: { type: ["string", "null"] },
+      onlyNull: { type: "null" },
+      widenedEnum: { type: ["string", "null"], enum: ["a", null] },
+    });
+  });
+
+  it("keeps a nullable member the caller declared required", () => {
+    // A third-party MCP tool that genuinely wants `null` for a required
+    // argument. Nothing here may narrow it, and nothing downstream may
+    // delete the key — see the adapter's per-tool null drop.
+    expect(
+      toStrictJsonSchema({
+        type: "object",
+        properties: {
+          key: { type: "string" },
+          value: { type: ["string", "null"] },
+        },
+        required: ["key", "value"],
+        additionalProperties: false,
+      }),
+    ).toEqual({
+      type: "object",
+      properties: {
+        key: { type: "string" },
+        value: { type: ["string", "null"] },
+      },
+      required: ["key", "value"],
+      additionalProperties: false,
+    });
+  });
+
+  it("drops the annotations the strict compiler has no rule for", () => {
+    // pydantic/FastMCP puts `default` and `title` on nearly every
+    // property. `title` is harmless and rides along; `default` states
+    // something a strict decode cannot honour (there is no absent key
+    // to fill) so it is dropped rather than gambled on.
+    expect(
+      toStrictJsonSchema({
+        $schema: "https://json-schema.org/draft/2020-12/schema",
+        type: "object",
+        properties: {
+          q: { anyOf: [{ type: "string" }, { type: "null" }], default: null },
+          n: { type: "integer", default: 10, title: "N" },
+        },
+        required: ["q"],
+        additionalProperties: false,
+      }),
+    ).toEqual({
+      type: "object",
+      properties: {
+        q: { anyOf: [{ type: "string" }, { type: "null" }] },
+        n: { type: ["integer", "null"], title: "N" },
+      },
+      required: ["q", "n"],
+      additionalProperties: false,
+    });
+  });
+
+  it("keeps a property named __proto__ instead of eating it", () => {
+    // `out[name] = ...` on an object literal would set the prototype
+    // and drop the key, leaving a function marked strict whose schema
+    // silently forbids an argument the tool declares.
+    const schema = JSON.parse(
+      '{"type":"object","properties":{"__proto__":{"type":"string"},' +
+        '"ok":{"type":"string"}},"required":["ok"],' +
+        '"additionalProperties":false}',
+    ) as Record<string, unknown>;
+    const strict = toStrictJsonSchema(schema);
+    expect(JSON.stringify(strict)).toBe(
+      '{"type":"object","properties":{"__proto__":{"type":["string","null"]},' +
+        '"ok":{"type":"string"}},"required":["__proto__","ok"],' +
+        '"additionalProperties":false}',
+    );
+  });
+
+  it("is idempotent over its own output", () => {
+    // Its own output is a legal input, which is also what lets it run
+    // on an MCP server that already ships strict-shaped schemas.
+    for (const name of DEFAULT_TOOL_NAMES) {
+      const once = toStrictJsonSchema(getDefaultArgsJsonSchema(name));
+      if (!once) continue;
+      expect(
+        JSON.stringify(toStrictJsonSchema(once)),
+        `${name} does not survive a second pass`,
+      ).toBe(JSON.stringify(once));
+    }
   });
 
   it("widens an optional enum's members as well as its type", () => {
@@ -135,6 +240,36 @@ describe("toStrictJsonSchema", () => {
       ).toBeNull();
     });
 
+    it("refuses an object that never said it was closed", () => {
+      // An absent `additionalProperties` is the JSON Schema default and
+      // it means OPEN. Closing it is the same silent narrowing as the
+      // explicit `true` above — harmless on our own descriptors, which
+      // all spell `additionalProperties: false` out, and wrong on a
+      // third-party MCP schema that left it off on purpose.
+      expect(
+        toStrictJsonSchema({
+          type: "object",
+          properties: { a: { type: "string" } },
+          required: ["a"],
+        }),
+      ).toBeNull();
+      // The zero-property MCP tool is the same case, and the one where
+      // closing it looks most innocent: it would be marked strict as a
+      // tool that takes no arguments at all.
+      expect(toStrictJsonSchema({ type: "object", properties: {} })).toBeNull();
+    });
+
+    it("refuses a union it cannot attribute to one branch", () => {
+      expect(
+        toStrictJsonSchema({
+          type: "object",
+          properties: { x: { type: ["array", "object"] } },
+          required: ["x"],
+          additionalProperties: false,
+        }),
+      ).toBeNull();
+    });
+
     it("refuses a keyword the strict compiler does not implement", () => {
       expect(
         toStrictJsonSchema({
@@ -174,7 +309,21 @@ describe("toStrictJsonSchema", () => {
     it("refuses schema shapes it has no rule for", () => {
       expect(toStrictJsonSchema({ type: "string" })).toBeNull();
       expect(toStrictJsonSchema(undefined)).toBeNull();
-      expect(toStrictJsonSchema({ type: "object" })).toBeNull();
+      expect(
+        toStrictJsonSchema({ type: "object", additionalProperties: false }),
+      ).toBeNull();
+      // `$defs` / `$ref` is the one common MCP shape still refused: a
+      // pydantic model nested inside another one. Resolving references
+      // faithfully is a separate change.
+      expect(
+        toStrictJsonSchema({
+          type: "object",
+          $defs: { Ref: { type: "string" } },
+          properties: { ref: { type: "string" } },
+          required: ["ref"],
+          additionalProperties: false,
+        }),
+      ).toBeNull();
       expect(
         toStrictJsonSchema({
           type: "object",

@@ -4,6 +4,7 @@ import {
   nameEscape,
   nameUnescape,
   descriptorsToOpenAiTools,
+  strictOpenAiToolNames,
   openAiToolCallsToBatch,
   ToolCallArgumentsParseError,
 } from "./openai-tool-call-adapter.js";
@@ -312,6 +313,25 @@ describe("OpenAiToolCallAdapter", () => {
           server: "acme",
           description: "no schema at all",
         },
+        {
+          rawName: "put",
+          qualifiedName: "mcp.acme.put",
+          server: "acme",
+          description: "store a value that may legitimately be null",
+          inputSchema: {
+            type: "object",
+            properties: {
+              key: { type: "string" },
+              value: { type: ["string", "null"] },
+              note: {
+                anyOf: [{ type: "string" }, { type: "null" }],
+                default: null,
+              },
+            },
+            required: ["key", "value"],
+            additionalProperties: false,
+          },
+        },
       ] as unknown as Parameters<typeof buildMcpToolDescriptors>[0];
       const tools = descriptorsToOpenAiTools(buildMcpToolDescriptors(metas), {
         strict: true,
@@ -324,7 +344,29 @@ describe("OpenAiToolCallAdapter", () => {
       );
       expect(byName.get("mcp__acme__search")?.function.strict).toBeUndefined();
       expect(byName.get("mcp__acme__bare")?.function.strict).toBeUndefined();
-      expect(byName.get("mcp__acme__ping")?.function.strict).toBe(true);
+      // `ping` declares no `additionalProperties`, so by JSON Schema it
+      // is OPEN and the server may well accept arguments. Marking it
+      // strict would close it and publish it as a zero-argument tool.
+      expect(byName.get("mcp__acme__ping")?.function.strict).toBeUndefined();
+      // A pydantic-shaped schema — `Optional[str]` as `anyOf` + a
+      // `default`, closed object — is the case the feature exists for.
+      expect(byName.get("mcp__acme__put")?.function.strict).toBe(true);
+      expect(
+        (
+          byName.get("mcp__acme__put") as unknown as {
+            function: { parameters: Record<string, unknown> };
+          }
+        ).function.parameters,
+      ).toEqual({
+        type: "object",
+        properties: {
+          key: { type: "string" },
+          value: { type: ["string", "null"] },
+          note: { anyOf: [{ type: "string" }, { type: "null" }] },
+        },
+        required: ["key", "value", "note"],
+        additionalProperties: false,
+      });
     });
 
     it("drops the nulls a strict schema forces the model to send", () => {
@@ -344,8 +386,9 @@ describe("OpenAiToolCallAdapter", () => {
       // `memory.profile.set` reads `rawArgs.pinned !== undefined`, so a
       // literal null takes a branch an omitted key never would.
       expect(
-        openAiToolCallsToBatch(call, undefined, { strict: true }).calls[0]
-          ?.args,
+        openAiToolCallsToBatch(call, undefined, {
+          strictToolNames: new Set(["memory__profile__set"]),
+        }).calls[0]?.args,
       ).toEqual({ key: "city", value: "Belgrade" });
       // Off, the payload is passed through byte-for-byte as before.
       expect(openAiToolCallsToBatch(call).calls[0]?.args).toEqual({
@@ -356,25 +399,76 @@ describe("OpenAiToolCallAdapter", () => {
       });
     });
 
+    it("keeps the nulls of a tool whose schema was refused", () => {
+      // The whole point of the per-tool set. `mcp.acme.put` shipped
+      // with its own schema untouched, in which `value` is a REQUIRED
+      // `["string", "null"]`: the model was told to send that null and
+      // the server would reject a call missing the key. Batch-level
+      // gating deleted it.
+      const call = [
+        {
+          function: {
+            name: "mcp__acme__put",
+            arguments: JSON.stringify({ key: "k", value: null }),
+          },
+        },
+        {
+          function: {
+            name: "memory__profile__set",
+            arguments: JSON.stringify({ key: "city", pinned: null }),
+          },
+        },
+      ];
+      const batch = openAiToolCallsToBatch(call, undefined, {
+        strictToolNames: new Set(["memory__profile__set"]),
+      });
+      expect(batch.calls[0]?.args).toEqual({ key: "k", value: null });
+      expect(batch.calls[1]?.args).toEqual({ key: "city" });
+    });
+
+    it("names exactly the functions it marked strict", () => {
+      const descriptors = [
+        shellDescriptor,
+        {
+          name: "custom.tool",
+          tier: "frequent" as const,
+          summary: "no schema",
+          argsSchema: "{ anything: any }",
+        },
+      ];
+      const marked = descriptorsToOpenAiTools(descriptors, { strict: true })
+        .filter((t) => (t as { function: { strict?: boolean } }).function.strict)
+        .map((t) => (t as { function: { name: string } }).function.name);
+      expect([...strictOpenAiToolNames(descriptors, { strict: true })]).toEqual(
+        marked,
+      );
+      expect(strictOpenAiToolNames(descriptors).size).toBe(0);
+      expect(strictOpenAiToolNames(descriptors, { strict: false }).size).toBe(
+        0,
+      );
+    });
+
     it("leaves nulls nested inside an argument alone", () => {
       const batch = openAiToolCallsToBatch(
         [
           {
             function: {
-              name: "os__http__request",
+              name: "os__shell__run",
               arguments: JSON.stringify({
-                url: "https://example.test",
-                body: { note: null },
+                cmd: "echo",
+                args: ["hi"],
+                env: { HOME: null },
               }),
             },
           },
         ],
         undefined,
-        { strict: true },
+        { strictToolNames: new Set(["os__shell__run"]) },
       );
       expect(batch.calls[0]?.args).toEqual({
-        url: "https://example.test",
-        body: { note: null },
+        cmd: "echo",
+        args: ["hi"],
+        env: { HOME: null },
       });
     });
   });

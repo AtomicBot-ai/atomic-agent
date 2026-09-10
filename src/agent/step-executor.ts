@@ -728,6 +728,7 @@ async function executeStepInner(
     completion,
     deps.profile,
     parseDepsFor(completion, deps),
+    stepToolDescriptors,
   );
   if (ctx.terminalOnly && parsed.ok) {
     const nonTerminal = parsed.batch.calls.find(
@@ -921,7 +922,12 @@ async function executeStepInner(
       );
     }
 
-    parsed = tryParseToolCalls(completion, deps.profile, retryParseDeps);
+    parsed = tryParseToolCalls(
+      completion,
+      deps.profile,
+      retryParseDeps,
+      stepToolDescriptors,
+    );
     if (ctx.terminalOnly && parsed.ok) {
       const nonTerminal = parsed.batch.calls.find(
         ({ tool }) => tool !== "reply" && tool !== "finish",
@@ -1408,16 +1414,15 @@ function isGrammarEmptyCompletionWorthRepairing(
  * grammar, not as OpenAI `tool_calls`. Absent `servedTransport` (the
  * direct, non-wrapped path), the configured transport is authoritative.
  */
-function parseDepsFor(
-  completion: CompletionResult,
-  deps: Pick<
-    StepDependencies,
-    "toolTransport" | "toolCallAdapter" | "strictTools"
-  >,
-): Pick<
+type ParseDeps = Pick<
   StepDependencies,
   "toolTransport" | "toolCallAdapter" | "strictTools"
-> {
+>;
+
+function parseDepsFor(
+  completion: CompletionResult,
+  deps: ParseDeps,
+): ParseDeps {
   const served = completion.servedTransport;
   if (served === undefined || served === deps.toolTransport) return deps;
   return {
@@ -1440,10 +1445,11 @@ function parseDepsFor(
 function tryParseToolCalls(
   completion: CompletionResult,
   profile: ModelProfile,
-  deps: Pick<
-    StepDependencies,
-    "toolTransport" | "toolCallAdapter" | "strictTools"
-  >,
+  deps: ParseDeps,
+  // The descriptor list the REQUEST was built from: the strict-marked
+  // names have to be derived from the same input, or the undo on the
+  // way in stops matching the rewrite on the way out.
+  toolDescriptors: readonly ToolDescriptor[],
 ): ToolCallBatchParseResult {
   const assumeOpenReasoning = completionAssumesOpenReasoning(
     profile,
@@ -1458,8 +1464,17 @@ function tryParseToolCalls(
           profile,
           assumeOpenReasoning,
         );
+        // Per tool, not per batch: only the functions this adapter
+        // actually marked strict were decoded against a schema we
+        // rewrote, so only their arguments get the rewrite undone. The
+        // names come from the same adapter and the same descriptor
+        // list the request was built from.
+        const strictToolNames =
+          deps.strictTools === true && adapter.strictToolNames
+            ? adapter.strictToolNames(toolDescriptors, { strict: true })
+            : undefined;
         const batch = adapter.toolCallsToBatch(completion.toolCalls, reasoning, {
-          strict: deps.strictTools === true,
+          ...(strictToolNames ? { strictToolNames } : {}),
         });
         if (batch.calls.length === 0) {
           return {

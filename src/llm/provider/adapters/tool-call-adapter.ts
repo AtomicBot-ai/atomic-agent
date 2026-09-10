@@ -3,7 +3,7 @@ import type { ToolCallBatch } from "../../grammar/tool-call-grammar.js";
 import type { OpenAiToolCall } from "../completion-types.js";
 
 /**
- * Both directions carry the same one fact: the resolved model declares
+ * The outgoing side of one fact: the resolved model declares
  * `supportsTools: "strict"`, so the provider should constrain the
  * decode to the tool schemas. It is off unless the operator sets that
  * level by hand, and an adapter that has no strict mode ignores it.
@@ -12,8 +12,17 @@ export interface ToolDefinitionOptions {
   strict?: boolean;
 }
 
+/**
+ * The incoming side, and NOT a boolean. Strict is granted per tool —
+ * the adapter marks only the functions whose schema it could rewrite
+ * faithfully — so undoing the rewrite on the way back in has to be per
+ * tool too. This carries the provider-facing (escaped) names that were
+ * actually marked, i.e. exactly the calls that were decoded against a
+ * schema we changed. A call to a tool that shipped unconverted is
+ * indistinguishable from the flag-off payload and must be left alone.
+ */
 export interface ToolBatchOptions {
-  strict?: boolean;
+  strictToolNames?: ReadonlySet<string>;
 }
 
 /**
@@ -32,6 +41,16 @@ export interface ToolCallAdapter {
     descriptors: readonly ToolDescriptor[],
     options?: ToolDefinitionOptions,
   ): ReadonlyArray<Record<string, unknown>>;
+  /**
+   * The provider-facing names `descriptorsToTools` emitted under the
+   * provider's strict mode, for the same descriptors and options —
+   * fed straight back into `toolCallsToBatch`. An adapter with no
+   * strict mode omits this and every call is parsed as it is today.
+   */
+  strictToolNames?(
+    descriptors: readonly ToolDescriptor[],
+    options?: ToolDefinitionOptions,
+  ): ReadonlySet<string>;
   /** Convert provider tool_calls into the runtime `ToolCallBatch`. */
   toolCallsToBatch(
     toolCalls: ReadonlyArray<OpenAiToolCall>,

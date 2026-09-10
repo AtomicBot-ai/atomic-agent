@@ -90,6 +90,43 @@ function descriptorToJsonSchema(
 }
 
 /**
+ * The one pass both directions read: the emitted function definitions
+ * and, alongside them, the escaped names that actually came out
+ * `strict`. Keeping them in one place is what makes the null-drop on
+ * the way back in exactly as per-tool as the conversion on the way out
+ * — see `openAiToolCallsToBatch`.
+ */
+function buildFunctions(
+  descriptors: readonly ToolDescriptor[],
+  options?: ToolDefinitionOptions,
+): {
+  tools: ReadonlyArray<Record<string, unknown>>;
+  strictNames: ReadonlySet<string>;
+} {
+  const seen = new Set<string>();
+  const strictNames = new Set<string>();
+  const out: Record<string, unknown>[] = [];
+  const all = [...descriptors, ...replyFinishDescriptors()];
+  for (const d of all) {
+    const escaped = nameEscape(d.name);
+    if (seen.has(escaped)) continue;
+    seen.add(escaped);
+    const parameters = descriptorToJsonSchema(d);
+    const strict = options?.strict ? toStrictJsonSchema(parameters) : null;
+    if (strict) strictNames.add(escaped);
+    out.push({
+      type: "function",
+      function: {
+        name: escaped,
+        description: `${d.summary}\nArgs: ${d.argsSchema}`,
+        ...(strict ? { parameters: strict, strict: true } : { parameters }),
+      },
+    });
+  }
+  return { tools: out, strictNames };
+}
+
+/**
  * `options.strict` is the `supportsTools: "strict"` model level reaching
  * the wire. It is a request, not an instruction: each function is marked
  * `strict` only when `toStrictJsonSchema` could rewrite its parameters
@@ -102,26 +139,28 @@ export function descriptorsToOpenAiTools(
   descriptors: readonly ToolDescriptor[],
   options?: ToolDefinitionOptions,
 ): ReadonlyArray<Record<string, unknown>> {
-  const seen = new Set<string>();
-  const out: Record<string, unknown>[] = [];
-  const all = [...descriptors, ...replyFinishDescriptors()];
-  for (const d of all) {
-    const escaped = nameEscape(d.name);
-    if (seen.has(escaped)) continue;
-    seen.add(escaped);
-    const parameters = descriptorToJsonSchema(d);
-    const strict = options?.strict ? toStrictJsonSchema(parameters) : null;
-    out.push({
-      type: "function",
-      function: {
-        name: escaped,
-        description: `${d.summary}\nArgs: ${d.argsSchema}`,
-        ...(strict ? { parameters: strict, strict: true } : { parameters }),
-      },
-    });
-  }
-  return out;
+  return buildFunctions(descriptors, options).tools;
 }
+
+/**
+ * The escaped function names `descriptorsToOpenAiTools` marked strict
+ * for the same descriptors and options — the caller hands this back to
+ * `openAiToolCallsToBatch` so the incoming side knows which calls were
+ * decoded against a rewritten schema and which shipped untouched.
+ *
+ * Escaped names, deliberately: `nameUnescape` cannot round-trip a tool
+ * whose own name contains an underscore, and this set has to match the
+ * wire exactly.
+ */
+export function strictOpenAiToolNames(
+  descriptors: readonly ToolDescriptor[],
+  options?: ToolDefinitionOptions,
+): ReadonlySet<string> {
+  if (!options?.strict) return EMPTY_NAMES;
+  return buildFunctions(descriptors, options).strictNames;
+}
+
+const EMPTY_NAMES: ReadonlySet<string> = new Set<string>();
 
 /**
  * A tool call's `function.arguments` was non-empty but not valid JSON (or
@@ -165,6 +204,14 @@ function parseArguments(raw: string): Record<string, unknown> {
  * `memory.notes.recall.id`, `os.git.init.userName`) and would take a
  * branch on a literal `null` that an omitted key never triggers.
  *
+ * Applied only to the functions we actually rewrote — see
+ * `options.strictToolNames`. A tool whose schema was refused went out
+ * byte-identical to the flag-off payload, so a `null` in its arguments
+ * is a `null` the model chose to send: a third-party MCP tool with a
+ * required `["string", "null"]` argument means it literally, and
+ * deleting the key would hand its server a call missing a required
+ * field.
+ *
  * Top level only, and deliberately so: no schema we convert has a
  * nested object today, while `null` deeper inside an argument is data
  * the model meant to send (a JSON body, an MCP server's own payload)
@@ -191,7 +238,9 @@ export function openAiToolCallsToBatch(
     let args: Record<string, unknown>;
     try {
       args = parseArguments(tc.function.arguments);
-      if (options?.strict) args = dropNullArgs(args);
+      if (options?.strictToolNames?.has(tc.function.name)) {
+        args = dropNullArgs(args);
+      }
     } catch (err) {
       if (err instanceof SyntaxError) {
         throw new ToolCallArgumentsParseError(name);
@@ -219,5 +268,6 @@ export const openAiToolCallAdapter: ToolCallAdapter = {
   nameEscape,
   nameUnescape,
   descriptorsToTools: descriptorsToOpenAiTools,
+  strictToolNames: strictOpenAiToolNames,
   toolCallsToBatch: openAiToolCallsToBatch,
 };
