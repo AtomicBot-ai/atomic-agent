@@ -110,7 +110,17 @@ function formatTraceEvent(event: TraceEvent, raw: boolean): string {
     case "error":
       return `${head} message=${event.message}`;
     case "trace_truncated":
-      return `${head} reason=${event.reason}`;
+      // The counts are the point of the row: they tell the reader how
+      // much of the session is missing above this line.
+      return `${head}${
+        event.droppedEvents !== undefined
+          ? ` droppedEvents=${event.droppedEvents}`
+          : ""
+      }${
+        event.droppedBytes !== undefined
+          ? ` droppedBytes=${event.droppedBytes}`
+          : ""
+      } reason=${event.reason}`;
     default:
       return `${head} ${JSON.stringify(event)}`;
   }

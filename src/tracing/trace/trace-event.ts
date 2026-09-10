@@ -431,13 +431,26 @@ export interface TraceError extends TraceEventBase {
 }
 
 /**
- * Synthetic terminal marker emitted by the NDJSON sink when a trace file
- * hits `maxBytesPerSession`. Subsequent events are dropped silently — the
- * runtime never stops because of trace overflow.
+ * Synthetic marker written by the NDJSON sink at the seam where it
+ * dropped the oldest part of a trace file to stay under
+ * `maxBytesPerSession`. It is NOT terminal: events keep being appended
+ * after it. Its job is to stop a reader — human or agent — from taking
+ * the row that follows it for the start of the session.
+ *
+ * `seq` and `ts` are those of the LAST dropped event, so the file stays
+ * ordered by both and the marker sits exactly where the gap ends.
  */
 export interface TraceTruncated extends TraceEventBase {
   type: "trace_truncated";
   reason: string;
+  /**
+   * Events removed from the head of this file so far, across every
+   * trim it has been through. Optional: traces recorded before the
+   * sink learned to keep the tail carry a marker without it.
+   */
+  droppedEvents?: number;
+  /** Bytes of event data removed so far. Optional, as `droppedEvents`. */
+  droppedBytes?: number;
 }
 
 /** Stable JSON serialization: one event per line, trailing newline. */
