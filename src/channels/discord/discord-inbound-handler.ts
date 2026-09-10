@@ -24,6 +24,10 @@ import {
 } from "../attachments/inbox.js";
 import type { DiscordApi } from "./discord-api.js";
 import { scrubDiscordError } from "./discord-channel-types.js";
+import {
+  formatDiscordAttachmentFailure,
+  sendDiscordAttachments,
+} from "./discord-outbound-attachments.js";
 import type { DiscordSessionPointer } from "./discord-session-pointer.js";
 
 /**
@@ -268,7 +272,11 @@ async function handleSlashCommand(
       return;
     }
     default:
-      await send(ctx, ref.channelId, `Unknown command: ${verb}. Try \`/help\`.`);
+      await send(
+        ctx,
+        ref.channelId,
+        `Unknown command: ${verb}. Try \`/help\`.`,
+      );
   }
 }
 
@@ -287,7 +295,11 @@ async function switchSession(
   }
   const current = ctx.sessionPointer.get(ref.channelId).current;
   if (current === sessionId) {
-    await send(ctx, ref.channelId, `This channel is already on \`${sessionId}\`.`);
+    await send(
+      ctx,
+      ref.channelId,
+      `This channel is already on \`${sessionId}\`.`,
+    );
     return;
   }
   const session = ctx.runtime.sessionStore.load(sessionId);
@@ -347,7 +359,9 @@ function formatSessions(ref: ChannelRef, ctx: DiscordInboundContext): string {
     .map((e) => {
       const here = e.chatKey === ref.channelId ? " (this channel)" : "";
       const where = e.entry.label === "DM" ? "DM" : `<#${e.chatKey}>`;
-      const current = e.entry.current ? `\`${e.entry.current}\`` : "no active session";
+      const current = e.entry.current
+        ? `\`${e.entry.current}\``
+        : "no active session";
       const archived = e.entry.history?.length ?? 0;
       const tail = archived > 0 ? `, ${archived} archived` : "";
       return `• ${where}${here}: ${current}${tail}`;
@@ -380,7 +394,11 @@ async function dispatchWithAttachments(
   );
   for (const item of items) {
     if (item.status === "failed") {
-      await send(ctx, ref.channelId, `Could not receive ${item.name}: ${item.reason}`);
+      await send(
+        ctx,
+        ref.channelId,
+        `Could not receive ${item.name}: ${item.reason}`,
+      );
     }
   }
   const anySaved = items.some((item) => item.status === "saved");
@@ -412,7 +430,9 @@ async function receiveAttachment(
     return { status: "failed", name, reason: "Discord sent no download URL" };
   }
   try {
-    const bytes = await (ctx.downloadAttachment ?? fetchAttachment)(attachment.url);
+    const bytes = await (ctx.downloadAttachment ?? fetchAttachment)(
+      attachment.url,
+    );
     if (bytes.byteLength > DISCORD_ATTACHMENT_DOWNLOAD_LIMIT_BYTES) {
       return { status: "failed", name, reason: tooBig };
     }
@@ -460,10 +480,12 @@ async function dispatchToRuntime(
   ctx.inflight.set(ref.channelId, controller);
 
   let reply: string | null = null;
+  let replyAttachments: ReadonlyArray<string> = [];
   let failure: { error: Error; category: LlmFailureCategory } | null = null;
   const eventHook = (event: AgentLoopEvent): void => {
     if (event.type === "llm_event" && event.event.type === "assistant_reply") {
       reply = event.event.text;
+      replyAttachments = event.event.attachments ?? [];
     }
     if (event.type === "loop_failed") {
       failure = { error: event.error, category: event.category };
@@ -492,6 +514,20 @@ async function dispatchToRuntime(
     await send(ctx, ref.channelId, "Turn cancelled.");
   } else if (reply !== null) {
     await send(ctx, ref.channelId, reply);
+    // Files follow the text, one message each. A file that could not
+    // be delivered is announced in the channel — the operator asked
+    // for the file, not for the sentence saying it was sent.
+    if (replyAttachments.length > 0) {
+      const delivery = await sendDiscordAttachments({
+        api: ctx.api,
+        channelId: ref.channelId,
+        paths: replyAttachments,
+        logger: ctx.logger,
+      });
+      for (const failed of delivery.failed) {
+        await send(ctx, ref.channelId, formatDiscordAttachmentFailure(failed));
+      }
+    }
   } else if (failure) {
     await send(ctx, ref.channelId, formatFailure(failure));
   } else {

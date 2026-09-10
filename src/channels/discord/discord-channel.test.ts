@@ -54,7 +54,9 @@ describe("DiscordChannel", () => {
     const { channel, statuses } = makeChannel({
       lock: {
         acquire: () => {
-          throw new Error("another atomic-agent process (pid 42) is already running the Discord channel");
+          throw new Error(
+            "another atomic-agent process (pid 42) is already running the Discord channel",
+          );
         },
         release: vi.fn(),
       },
@@ -108,7 +110,12 @@ describe("DiscordChannel", () => {
 
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => new Response(JSON.stringify({ id: "9", username: "b" }), { status: 200 })),
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ id: "9", username: "b" }), {
+            status: 200,
+          }),
+      ),
     );
     await channel.setEnabled(true);
 
@@ -121,7 +128,12 @@ describe("DiscordChannel", () => {
     const { channel, lock } = makeChannel();
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => new Response(JSON.stringify({ id: "9", username: "b" }), { status: 200 })),
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ id: "9", username: "b" }), {
+            status: 200,
+          }),
+      ),
     );
     await channel.start();
     await channel.setEnabled(false);
@@ -137,7 +149,12 @@ describe("DiscordChannel", () => {
     const { channel, lock } = makeChannel();
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => new Response(JSON.stringify({ id: "9", username: "b" }), { status: 200 })),
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ id: "9", username: "b" }), {
+            status: 200,
+          }),
+      ),
     );
     await channel.start();
     const acquiredOnce = lock.acquire.mock.calls.length;
@@ -164,7 +181,10 @@ describe("DiscordChannel per-channel approval bindings", () => {
       // A real socket answers close() with a close event; the gateway's
       // stop() waits for it.
       for (const cb of this.handlers.close ?? []) {
-        (cb as (e: unknown) => void)({ code: code ?? 1000, reason: reason ?? "" });
+        (cb as (e: unknown) => void)({
+          code: code ?? 1000,
+          reason: reason ?? "",
+        });
       }
     }
     addEventListener(type: string, cb: (ev: never) => void): void {
@@ -172,7 +192,9 @@ describe("DiscordChannel per-channel approval bindings", () => {
     }
     frame(op: number, d: unknown, t?: string): void {
       for (const cb of this.handlers.message ?? []) {
-        (cb as (e: unknown) => void)({ data: JSON.stringify({ op, d, t, s: 1 }) });
+        (cb as (e: unknown) => void)({
+          data: JSON.stringify({ op, d, t, s: 1 }),
+        });
       }
     }
   }
@@ -190,7 +212,10 @@ describe("DiscordChannel per-channel approval bindings", () => {
       return u;
     });
     let n = 0;
-    const sessions = new Map<string, { id: string; metadata: Record<string, unknown> }>();
+    const sessions = new Map<
+      string,
+      { id: string; metadata: Record<string, unknown> }
+    >();
     const runtime = {
       createSession: (input?: { metadata?: Record<string, unknown> }) => {
         const s = { id: `s${++n}`, metadata: input?.metadata ?? {} };
@@ -199,22 +224,38 @@ describe("DiscordChannel per-channel approval bindings", () => {
       },
       sessionStore: { load: (id: string) => sessions.get(id) ?? null },
       turnController: { isBusy: () => false },
-      runTurn: vi.fn(async (_s: unknown, _t: string, opts: { eventHook?: (e: unknown) => void }) => {
-        opts.eventHook?.({ type: "llm_event", event: { type: "assistant_reply", text: "done" } });
-        return {};
-      }),
+      runTurn: vi.fn(
+        async (
+          _s: unknown,
+          _t: string,
+          opts: { eventHook?: (e: unknown) => void },
+        ) => {
+          opts.eventHook?.({
+            type: "llm_event",
+            event: { type: "assistant_reply", text: "done" },
+          });
+          return {};
+        },
+      ),
     };
     const posted: string[] = [];
     vi.stubGlobal(
       "fetch",
       vi.fn(async (url: string, init?: { method?: string }) => {
         if (url.endsWith("/users/@me")) {
-          return new Response(JSON.stringify({ id: "9", username: "b" }), { status: 200 });
+          return new Response(JSON.stringify({ id: "9", username: "b" }), {
+            status: 200,
+          });
         }
         if (url.endsWith("/gateway/bot")) {
-          return new Response(JSON.stringify({ url: "wss://gw.test" }), { status: 200 });
+          return new Response(JSON.stringify({ url: "wss://gw.test" }), {
+            status: 200,
+          });
         }
-        if (init?.method === "POST" && /\/channels\/[^/]+\/messages$/.test(url)) {
+        if (
+          init?.method === "POST" &&
+          /\/channels\/[^/]+\/messages$/.test(url)
+        ) {
           posted.push(url.split("/channels/")[1]!.split("/")[0]!);
           return new Response(JSON.stringify({ id: "m1" }), { status: 200 });
         }
@@ -256,11 +297,9 @@ describe("DiscordChannel per-channel approval bindings", () => {
     socket!.frame(OP.DISPATCH, inGuild("a", "more A"), "MESSAGE_CREATE");
     await settle();
     expect(setForSession).toHaveBeenCalledTimes(2);
-    expect(runtime.runTurn.mock.calls.map((c) => (c[0] as { id: string }).id)).toEqual([
-      "s1",
-      "s2",
-      "s1",
-    ]);
+    expect(
+      runtime.runTurn.mock.calls.map((c) => (c[0] as { id: string }).id),
+    ).toEqual(["s1", "s2", "s1"]);
     // /new in #a releases only #a's binding.
     socket!.frame(OP.DISPATCH, inGuild("a", "/new"), "MESSAGE_CREATE");
     await settle();

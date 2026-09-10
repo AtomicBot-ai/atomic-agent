@@ -21,7 +21,8 @@ class FakeSocket implements WebSocketLike {
     (this.handlers[type] ??= []).push(cb);
   }
   emit(type: string, ev: unknown): void {
-    for (const cb of this.handlers[type] ?? []) (cb as (e: unknown) => void)(ev);
+    for (const cb of this.handlers[type] ?? [])
+      (cb as (e: unknown) => void)(ev);
   }
   /** Feed a gateway frame to the client. */
   frame(op: number, d?: unknown, t?: string, s?: number): void {
@@ -77,7 +78,12 @@ describe("DiscordGateway", () => {
     gw.start();
     await tick();
     first.hello();
-    first.frame(OP.DISPATCH, { session_id: "sess-1", resume_gateway_url: "wss://resume.test" }, "READY", 5);
+    first.frame(
+      OP.DISPATCH,
+      { session_id: "sess-1", resume_gateway_url: "wss://resume.test" },
+      "READY",
+      5,
+    );
     first.emit("close", { code: 1006, reason: "dropped" });
     await tick();
     await tick();

@@ -13,7 +13,10 @@
  * other account is ignored.
  */
 
-import type { ApprovalGate, ApprovalRequest } from "../../approval/approval-gate.js";
+import type {
+  ApprovalGate,
+  ApprovalRequest,
+} from "../../approval/approval-gate.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 import type { DiscordApi, DiscordComponentRow } from "./discord-api.js";
 import { scrubDiscordError } from "./discord-channel-types.js";
@@ -91,7 +94,10 @@ export class DiscordApprovalBridge {
    */
   async handleInteraction(event: DiscordInteractionEvent): Promise<boolean> {
     const customId = event.data?.custom_id;
-    if (typeof customId !== "string" || !customId.startsWith(CUSTOM_ID_PREFIX)) {
+    if (
+      typeof customId !== "string" ||
+      !customId.startsWith(CUSTOM_ID_PREFIX)
+    ) {
       return false;
     }
     const actorId = event.member?.user?.id ?? event.user?.id;
@@ -182,9 +188,7 @@ export function formatPrompt(request: ApprovalRequest): string {
     lines.push("```", preview, "```");
   }
   if (request.affectedResources?.length) {
-    lines.push(
-      `Affects: ${request.affectedResources.slice(0, 5).join(", ")}`,
-    );
+    lines.push(`Affects: ${request.affectedResources.slice(0, 5).join(", ")}`);
   }
   return lines.join("\n");
 }

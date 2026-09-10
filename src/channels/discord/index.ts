@@ -8,10 +8,7 @@ export { DiscordApi, DiscordApiError } from "./discord-api.js";
 export type { DiscordUser, DiscordComponentRow } from "./discord-api.js";
 export { DiscordGateway } from "./discord-gateway.js";
 export type { GatewayDeps, GatewayLogger } from "./discord-gateway.js";
-export {
-  backoffMs,
-  MAX_BACKOFF_MS,
-} from "./discord-gateway-transport.js";
+export { backoffMs, MAX_BACKOFF_MS } from "./discord-gateway-transport.js";
 export type { WebSocketLike } from "./discord-gateway-transport.js";
 export {
   DISCORD_API_BASE,
@@ -43,10 +40,7 @@ export {
   formatPrompt,
 } from "./discord-approval-bridge.js";
 export type { DiscordInteractionEvent } from "./discord-approval-bridge.js";
-export {
-  writeDiscordSettings,
-  writeDiscordToken,
-} from "./discord-settings.js";
+export { writeDiscordSettings, writeDiscordToken } from "./discord-settings.js";
 export type {
   DiscordSettingsPaths,
   DiscordSettingsPatch,

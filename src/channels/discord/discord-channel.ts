@@ -17,7 +17,10 @@ import {
   type AttachmentInbox,
 } from "../attachments/inbox.js";
 import { DiscordApi } from "./discord-api.js";
-import { DiscordApprovalBridge, type DiscordInteractionEvent } from "./discord-approval-bridge.js";
+import {
+  DiscordApprovalBridge,
+  type DiscordInteractionEvent,
+} from "./discord-approval-bridge.js";
 import {
   DISCORD_INTENTS,
   resolveDiscordToken,

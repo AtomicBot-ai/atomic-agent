@@ -190,11 +190,12 @@ export class DiscordGateway {
         const interval = (frame.d as { heartbeat_interval?: number })
           ?.heartbeat_interval;
         this.startHeartbeat(socket, interval ?? 41_250);
-        if (this.sessionId) this.send(socket, OP.RESUME, {
-          token: this.deps.token,
-          session_id: this.sessionId,
-          seq: this.sequence,
-        });
+        if (this.sessionId)
+          this.send(socket, OP.RESUME, {
+            token: this.deps.token,
+            session_id: this.sessionId,
+            seq: this.sequence,
+          });
         else this.identify(socket);
         return;
       }
@@ -244,7 +245,11 @@ export class DiscordGateway {
     this.send(socket, OP.IDENTIFY, {
       token: this.deps.token,
       intents: this.deps.intents,
-      properties: { os: process.platform, browser: "atomic-agent", device: "atomic-agent" },
+      properties: {
+        os: process.platform,
+        browser: "atomic-agent",
+        device: "atomic-agent",
+      },
     });
   }
 
@@ -256,7 +261,9 @@ export class DiscordGateway {
         // A missed ACK means the connection is a zombie: the socket is
         // open but Discord is not listening. Closing with a non-1000
         // code keeps the session resumable.
-        this.deps.logger.warn("discord: heartbeat not acknowledged, reconnecting");
+        this.deps.logger.warn(
+          "discord: heartbeat not acknowledged, reconnecting",
+        );
         try {
           socket.close(4000, "zombie connection");
         } catch {
