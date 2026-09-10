@@ -1071,15 +1071,205 @@ describe("provider outage", () => {
     } as never,
   });
 
+  const step = (stepIndex: number): TuiAction => ({
+    type: "agent_event",
+    event: { type: "step_started", stepIndex },
+  });
+
+  const reasoningDelta = (stepIndex: number, text: string): TuiAction => ({
+    type: "agent_event",
+    event: {
+      type: "llm_event",
+      event: { type: "reasoning_delta", stepIndex, text },
+    } as never,
+  });
+
   it("shows the outage and says how long it will keep trying", () => {
     const next = reduceTuiState(createInitialTuiState(fakeSession()), waiting());
     expect(next.providerOutage).toMatchObject({
       reason: "fetch failed",
       attempt: 1,
+      phase: "parked",
       givenUp: false,
     });
+    expect(next.providerOutage?.sinceTs).toBeGreaterThan(0);
     expect(next.feed.at(-1)?.line).toContain("provider not answering");
     expect(next.feed.at(-1)?.line).toContain("retrying in 2s");
+  });
+
+  it("flips to `retrying` when the parked step goes back on the wire", () => {
+    // The loop emits nothing between the backoff and
+    // `provider_recovered`, which only lands once the replayed step has
+    // *finished*. `step_started` during an outage is the one event that
+    // says the retry is live, and without it a step that streams for
+    // minutes leaves the row counting a wait that is already over.
+    const parked = apply(createInitialTuiState(fakeSession()), [
+      step(4),
+      waiting(),
+    ]);
+    expect(parked.providerOutage).toMatchObject({ phase: "parked" });
+    const retrying = reduceTuiState(parked, step(4));
+    expect(retrying.providerOutage).toMatchObject({
+      phase: "retrying",
+      attempt: 1,
+      // The wait total is not rewritten — the next `provider_waiting`
+      // owns it, and the readout counts the retry off `sinceTs`.
+      waitedMs: 0,
+    });
+    expect(retrying.providerOutage?.sinceTs).toBeGreaterThanOrEqual(
+      parked.providerOutage?.sinceTs ?? 0,
+    );
+  });
+
+  it("drops the dead attempt's reasoning instead of splicing the retry onto it", () => {
+    // `appendReasoningDelta` merges into the trailing entry whenever the
+    // step index matches, so the retry's thinking used to be welded onto
+    // the tail of the attempt whose socket died — the model's reasoning
+    // shown twice, joined mid-sentence.
+    const next = apply(createInitialTuiState(fakeSession()), [
+      step(2),
+      reasoningDelta(2, "first attempt thinking"),
+      waiting({ reason: "terminated" }),
+      step(2),
+      reasoningDelta(2, "retry thinking"),
+    ]);
+    expect(next.reasoning).toHaveLength(1);
+    expect(next.reasoning[0]?.text).toBe("retry thinking");
+  });
+
+  it("clears the dead attempt's streamed reply and half-parsed tool calls", () => {
+    const parked: TuiState = {
+      ...apply(createInitialTuiState(fakeSession()), [step(1), waiting()]),
+      streamingAssistantText: "half a sentence before the socket",
+      streamingToolCalls: [
+        {
+          id: "call_1",
+          stepIndex: 1,
+          tool: "os.fs.read",
+          args: {},
+          startedAt: Date.now(),
+        },
+      ],
+    };
+    const retrying = reduceTuiState(parked, step(1));
+    expect(retrying.streamingAssistantText).toBeNull();
+    expect(retrying.streamingToolCalls).toEqual([]);
+  });
+
+  it("leaves an ordinary step start completely alone", () => {
+    // The retry branch hangs off `step_started`, which every turn fires
+    // for every step. With no outage live it must change nothing.
+    const before = apply(createInitialTuiState(fakeSession()), [
+      step(0),
+      reasoningDelta(0, "thinking"),
+    ]);
+    const after = reduceTuiState(
+      { ...before, streamingAssistantText: "partial" },
+      step(0),
+    );
+    expect(after.providerOutage).toBeNull();
+    expect(after.reasoning).toHaveLength(1);
+    expect(after.reasoning[0]?.text).toBe("thinking");
+    expect(after.streamingAssistantText).toBe("partial");
+  });
+
+  it("does not turn a given-up outage back into a live wait", () => {
+    // The badge is past tense and sticky until a turn actually
+    // succeeds; the next turn's first step must not restart a countdown.
+    const dead = apply(createInitialTuiState(fakeSession()), [
+      waiting(),
+      {
+        type: "agent_event",
+        event: {
+          type: "loop_failed",
+          error: new Error("fetch failed"),
+          category: "transport",
+        },
+      },
+    ]);
+    const next = reduceTuiState(dead, step(0));
+    expect(next.providerOutage).toMatchObject({
+      givenUp: true,
+      phase: "parked",
+    });
+  });
+
+  const turnFinished = (reason: string): TuiAction => ({
+    type: "agent_event",
+    event: {
+      type: "turn_finished",
+      turnIndex: 0,
+      reason,
+      stepCount: 1,
+      durationMs: 20,
+    } as never,
+  });
+
+  it.each(["cancelled", "max_steps"])(
+    "takes a live wait down with the turn that ended %s",
+    (reason) => {
+      // `waiting` and `retrying` are claims about a turn that is on the
+      // wire. Esc during the backoff is the ending the loop's own feed
+      // line advertises ("· Esc stops"), and it used to leave the
+      // readout standing and counting — measured live at 19s and
+      // climbing, fourteen seconds after the loop was dead.
+      const ended = apply(createInitialTuiState(fakeSession()), [
+        step(0),
+        waiting(),
+        turnFinished(reason),
+      ]);
+      expect(ended.providerOutage).toBeNull();
+    },
+  );
+
+  it("does not read the next turn's first step as the parked one", () => {
+    const ended = apply(createInitialTuiState(fakeSession()), [
+      step(0),
+      waiting(),
+      turnFinished("cancelled"),
+    ]);
+    const fresh = apply(ended, [
+      { type: "agent_event", event: { type: "turn_started" } as never },
+      step(0),
+    ]);
+    expect(fresh.providerOutage).toBeNull();
+  });
+
+  it("keeps the given-up badge across an aborted turn", () => {
+    // Sticky on purpose: the next message fails the same way until the
+    // link is back, and a state that clears itself between attempts is
+    // how eight identical failures read as eight separate surprises.
+    const dead = apply(createInitialTuiState(fakeSession()), [
+      waiting(),
+      {
+        type: "agent_event",
+        event: {
+          type: "loop_failed",
+          error: new Error("fetch failed"),
+          category: "transport",
+        },
+      },
+      turnFinished("failed"),
+    ]);
+    expect(dead.providerOutage).toMatchObject({ givenUp: true });
+    expect(reduceTuiState(dead, turnFinished("cancelled")).providerOutage)
+      .toMatchObject({ givenUp: true });
+  });
+
+  it("clears the given-up badge once a turn reaches the model", () => {
+    const dead = apply(createInitialTuiState(fakeSession()), [
+      waiting(),
+      {
+        type: "agent_event",
+        event: {
+          type: "loop_failed",
+          error: new Error("fetch failed"),
+          category: "transport",
+        },
+      },
+      turnFinished("failed"),
+    ]);
+    expect(reduceTuiState(dead, turnFinished("reply")).providerOutage).toBeNull();
   });
 
   it("does not repeat the feed line on every retry", () => {

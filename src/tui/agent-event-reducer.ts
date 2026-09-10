@@ -27,6 +27,10 @@ import {
   startNewRun,
   upsertReasoning,
 } from "./reducer-helpers.js";
+import {
+  parkProviderOutage,
+  retryProviderOutage,
+} from "./provider-outage-state.js";
 import { reduceUiAction } from "./reduce-ui-actions.js";
 import { reduceComposerSwitchAction } from "./composer-switch/composer-switch-reducer.js";
 import { selectComposerBackend } from "./composer-switch/composer-backend-selectors.js";
@@ -397,28 +401,52 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
         currentTurnToolSteps: 0,
         runStartedAt: Date.now(),
       };
-    case "turn_finished":
-      // A turn that reached the model clears the outage: the link is
-      // demonstrably answering again. A failed one leaves it standing.
+    case "turn_finished": {
+      // `waiting` and `retrying` are claims about a turn that is still
+      // on the wire, so the end of the turn ends them — whichever way it
+      // ended. It used to clear only on `reply` / `finish`, which left a
+      // live outage standing after the two endings that reach it most
+      // often: Esc during the backoff (the feed line the loop prints
+      // says "· Esc stops") and a turn stopped at its step ceiling. The
+      // row then counted a wait that nothing was waiting for — measured
+      // at 19s and climbing, fourteen seconds after the loop was dead —
+      // and the next turn's first `step_started` read it as the parked
+      // step going back on the wire: a brand-new healthy turn labelled
+      // `retrying provider (attempt 1)`, with that step's streamed reply
+      // wiped at every step boundary for as long as it ran.
+      //
+      // `givenUp` is the one that survives, and survives on purpose: it
+      // is past tense, it is what stops nine identical failures reading
+      // as nine separate surprises, and `loop_failed` has already set it
+      // by the time this event lands. It survives until a turn actually
+      // reaches the model — at which point the link is demonstrably
+      // answering again and the badge would be the lie instead.
+      const reachedTheModel =
+        event.reason === "reply" || event.reason === "finish";
+      const keepBadge = !reachedTheModel && Boolean(state.providerOutage?.givenUp);
       return finishTurn(
-        event.reason === "reply" || event.reason === "finish"
-          ? { ...state, providerOutage: null }
-          : state,
+        keepBadge ? state : { ...state, providerOutage: null },
         event.reason,
         event.stepCount,
       );
+    }
     case "step_started":
-      return {
-        ...appendFeed(state, {
-          kind: "step_started",
-          stepIndex: event.stepIndex,
-          line: formatFeedLine({ type: "step_started", stepIndex: event.stepIndex }),
-          color: "blue",
-        }),
-        status: "running",
-        currentStep: event.stepIndex,
-        stepStartedAt: Date.now(),
-      };
+      // `retryProviderOutage` is a no-op unless an outage is live, so an
+      // ordinary step start goes through here exactly as it always did.
+      return retryProviderOutage(
+        {
+          ...appendFeed(state, {
+            kind: "step_started",
+            stepIndex: event.stepIndex,
+            line: formatFeedLine({ type: "step_started", stepIndex: event.stepIndex }),
+            color: "blue",
+          }),
+          status: "running",
+          currentStep: event.stepIndex,
+          stepStartedAt: Date.now(),
+        },
+        event.stepIndex,
+      );
     case "step_finished":
       return {
         ...appendFeed(state, {
@@ -579,16 +607,12 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
       )}s, waited ${Math.round(event.waitedMs / 1000)}s of ${Math.round(
         event.maxWaitMs / 1000,
       )}s · Esc stops`;
-      const next: TuiState = {
-        ...state,
-        providerOutage: {
-          reason: event.reason,
-          waitedMs: event.waitedMs,
-          maxWaitMs: event.maxWaitMs,
-          attempt: event.attempt,
-          givenUp: false,
-        },
-      };
+      const next: TuiState = parkProviderOutage(state, {
+        reason: event.reason,
+        waitedMs: event.waitedMs,
+        maxWaitMs: event.maxWaitMs,
+        attempt: event.attempt,
+      });
       // One feed line per outage, not per retry: the backoff fires every
       // few seconds at the start and the meta-row carries the live
       // numbers. A wall of identical lines would bury the work above it.

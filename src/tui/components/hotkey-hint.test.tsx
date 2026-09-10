@@ -367,6 +367,28 @@ describe("HotkeyHint queue affordances", () => {
     expect(out.split("\n").filter((l) => l.trim().length > 0)).toHaveLength(1);
   });
 
+  it.each([54, 70, 79, 100])(
+    "keeps the Enter chip on a %i-column row with a draft in the buffer",
+    (columns) => {
+      // The one chip in the running strip with no shed rank. A draft
+      // lengthens the Esc chip to `abort, draft kept`, and at `shed: 3`
+      // that was enough to drop `[⏎] steer` at every width up to 112 —
+      // in the one state the chip exists for, and the one state where
+      // the meta row above has dropped its own copy of the hint to make
+      // room for the provider-outage numbers. `ctrl+t` may still go.
+      const out = renderHint(
+        chatState({
+          status: "running",
+          inputValue: "a message the operator is part-way through",
+        }),
+        columns,
+      );
+      expect(out).toMatch(/\[⏎\]\s*steer/);
+      expect(out).toContain("abort, draft kept");
+      expect(out.split("\n").filter((l) => l.trim().length > 0)).toHaveLength(1);
+    },
+  );
+
   it("gives an armed ctrl+c the whole row", () => {
     const { lastFrame, unmount } = render(
       <HotkeyHint state={chatState({ status: "running" })} ctrlCArmed />,

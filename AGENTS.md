@@ -165,10 +165,46 @@ two app restarts and a fresh session — with nothing on screen to say the link 
    `cancelled`, not `failed`.
 5. **The budget resets after a recovery**, so a second outage later in a long task gets its own; the
    task's wall-clock ceiling is what bounds the total.
-6. **The UI says it once, then keeps it live.** One feed line per outage (not per retry — the
-   backoff fires every few seconds at first), the composer meta-row carries `waiting for provider
-   14s/300s — <reason>`, and when the wait runs out the row stays as `provider unreachable —
-   <reason>` until a turn actually succeeds. The context readout is not touched: it is driven by
+6. **The UI says it once, then keeps it live — and *live* means moving.** One feed line per outage
+   (not per retry — the backoff fires every few seconds at first), and the composer meta-row carries
+   the state in three wordings:
+   - parked in the backoff — `waiting for provider 14s/300s — <reason>`, counted off the clock
+     (`sinceTs`) on a one-second tick and clipped at the budget, not off the last event: the loop
+     emits nothing for up to 30s at a time and a row that only repainted on an event stood frozen.
+   - retrying — `retrying provider (attempt 2) — 8s`. A `step_started` while an outage is live *is*
+     the parked step going back on the wire; `provider_recovered` only lands once that step has
+     finished, so a step that streams for minutes has no other event to say it is alive. The same
+     transition drops what the dead attempt left streaming for that step index (trailing reasoning
+     entry, assistant text, half-parsed tool calls) — otherwise the retry's reasoning is spliced
+     onto the tail of the attempt whose socket died.
+   - given up — the row stays `provider unreachable — <reason>` until a turn actually succeeds.
+   **A live wait belongs to a running turn and ends with it.** `turn_finished` clears a `parked` or
+   `retrying` outage whichever way the turn ended — Esc during the backoff (the feed line says
+   "· Esc stops") and a turn stopped at its step ceiling included. Left standing it counted a wait
+   nothing was waiting for, and the next turn's first `step_started` read it as the parked step
+   going back on the wire: a healthy turn labelled `retrying provider (attempt 1)`, with that
+   step's streamed reply wiped at every step boundary. Only `givenUp` survives the end of a turn,
+   because it is past tense on purpose.
+   The reason is humanised in the TUI only (`terminated` / `socket hang up` / `other side closed` →
+   `connection dropped mid-reply`, `fetch failed` → `no connection`); the runtime classifier keeps
+   the raw wording, which is what the logs and the trace are matched on.
+   **The row fits in this order:** the readout's head — the state and its numbers — never shrinks,
+   because the counter is what says the wait is progressing rather than hung; its reason grows into
+   whatever the route leaves over (`flexGrow` from a zero basis, not `flexShrink`: Yoga leaves an
+   item at full width rather than shrink it by more than it has to give, and a shrinking reason
+   clipped the route off the row); and the while-a-turn-runs Enter hint is dropped outright while a
+   wait is live, since its ~19 columns are what let both statements be read at all. That drop is
+   only safe because the hint strip's `⏎` chip is **essential** (`hotkey-chips.ts`): at `shed: 3` it
+   was itself dropped at every width up to 112 columns as soon as the composer held a draft, which
+   is exactly the state the hint is written for, and the two disappearances together left nothing
+   on screen saying what Enter would do. A `givenUp` badge does not take the hint with it — it is
+   past tense, twenty columns wide and has no counter to protect. The context and mode chips keep
+   their `flexShrink={0}` — "at 60 the right-hand readout must survive intact" still holds. Clicking
+   the readout opens Manage › LLM (verified under a PTY, not only in unit tests: the readout is a
+   Box, and Ink cannot nest one inside a `<Text>`). Measured against a bar carrying its real
+   right-hand group, the ladder is: the head is whole from about 90 bar columns, the model name
+   joins it around 119, the route is whole around 140 and the reason around 190. The readout's
+   numbers win every trade below those. The context readout is not touched: it is driven by
    `prompt_built` / `llm_completed`, and a parked turn produces neither.
 
 ### Truncated completions

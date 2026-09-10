@@ -1,5 +1,5 @@
 import { ContextChip } from "./components/context-chip.js";
-import { formatProviderOutage } from "./format-provider-outage.js";
+import { formatProviderOutageParts } from "./format-provider-outage.js";
 import type { ApprovalLevel } from "../approval/approval-level.js";
 import {
   codingModeLook,
@@ -91,6 +91,9 @@ import { TasksCancelModal } from "./components/tasks-cancel-modal.js";
 import { UpdateModal } from "./components/update-modal.js";
 import { UpdateIndicator } from "./components/update-indicator.js";
 import { UpdateRestartPrompt } from "./components/update-restart-prompt.js";
+import { META_SLOT_SHRINK } from "./components/prompt-meta-bar.js";
+import { ProviderOutageReadout } from "./components/provider-outage-readout.js";
+import { useElapsed } from "./hooks/use-elapsed.js";
 import { useTerminalSize } from "./hooks/use-terminal-size.js";
 import {
   computeSidebarRowBudget,
@@ -1702,12 +1705,41 @@ export function TuiApp({
   // slot rather than taking a row of its own so the meta-bar keeps its
   // shape — `contextSlot` and `modeSlot` are separate props at the far
   // end and are not touched by it.
-  const promptLeftSlot = state.providerOutage ? (
-    <Text color={theme.colors.railError}>
-      {formatProviderOutage(state.providerOutage)}
-    </Text>
+  //
+  // The counter has to move on its own: between the backoff's
+  // `provider_waiting` and the retry's `provider_recovered` the loop
+  // emits nothing for as long as the replayed step streams, and a row
+  // that only repainted on an event stood frozen through it. One tick a
+  // second, armed only while an outage is actually live and still
+  // waiting — a `givenUp` badge is past tense and has nothing to count.
+  const outage = state.providerOutage;
+  const outageTickFrom = outage && !outage.givenUp ? outage.sinceTs : null;
+  const outageElapsedMs = useElapsed(outageTickFrom, 1000);
+  const outageParts = outage
+    ? formatProviderOutageParts(
+        outage,
+        outageTickFrom === null
+          ? undefined
+          : outageTickFrom + (outageElapsedMs ?? 0),
+      )
+    : null;
+  const promptLeftSlot = outage && outageParts ? (
+    <ProviderOutageReadout
+      head={outageParts.head}
+      tail={outageParts.tail}
+      givenUp={outage.givenUp}
+      mouseLayer={MOUSE_LAYER_PANEL}
+    />
   ) : state.composerNotice ? (
-    <Text color={theme.colors.railSuccess}>{state.composerNotice}</Text>
+    // A Box that truncates itself: `MetaLeft` hands its slot straight
+    // into the row, so the slot owns both its wrapping and its shrink
+    // order. The notice yields before the route for the same reason the
+    // outage reason does — the route is what the row is for.
+    <Box flexShrink={META_SLOT_SHRINK} minWidth={0}>
+      <Text color={theme.colors.railSuccess} wrap="truncate">
+        {state.composerNotice}
+      </Text>
+    </Box>
   ) : null;
   // While a turn is running the meta-row gains a second job: the operator
   // needs to know what Enter will do to the message they are typing.
@@ -1718,8 +1750,28 @@ export function TuiApp({
   // What used to live here when idle was `ctx <window>` — the *size* of
   // the context window, which never changes and never told anyone
   // anything. The chip below reports how much of it is in use instead.
+  //
+  // Dropped outright while a wait is live, not shrunk. It is the one
+  // thing on the row that is duplicated two lines below it, in the hint
+  // strip under the composer, so nothing is lost — and it is the ~19
+  // columns that decide whether the outage readout and the route can
+  // both be read at the widths people actually run. What makes "nothing
+  // is lost" true rather than hopeful is that the strip's `⏎` chip is
+  // essential (`hotkey-chips.ts`): it used to carry `shed: 3` and was
+  // dropped at every width up to 112 columns as soon as the composer
+  // held a draft — which is precisely the state this hint exists for.
+  // This does NOT reopen the pinned "at 60 the right-hand readout must
+  // survive intact" decision: that argument is about a half-drawn
+  // context or mode chip, and both of those keep their `flexShrink={0}`
+  // and their place on the row.
+  //
+  // A `givenUp` badge does not take the hint with it. It is past tense
+  // and 20 columns wide, it has no counter to protect, and the turn
+  // running underneath it is an ordinary turn whose Enter the operator
+  // still has to aim.
+  const outageIsLive = Boolean(outage && !outage.givenUp);
   const promptRightSlot =
-    state.status === "running" ? (
+    state.status === "running" && !outageIsLive ? (
       <Text>
         <Text color={theme.colors.railAccent} bold>
           {"\u23ce"} {state.whileBusyMode}

@@ -396,6 +396,22 @@ export interface TuiState {
     maxWaitMs: number;
     /** Retry attempts made so far. */
     attempt: number;
+    /**
+     * Which half of the retry cycle the turn is in.
+     *
+     * `parked` is the backoff sleep — nothing is on the wire and the
+     * only useful facts are how long it has waited and how long it may.
+     * `retrying` is the replayed step, which can stream for minutes; a
+     * row that still counted the *wait* through it read as frozen, and
+     * the operator had no way to tell a live retry from a dead one.
+     */
+    phase: "parked" | "retrying";
+    /**
+     * Wall clock when `phase` was entered. The readout counts from here
+     * on a one-second tick rather than from `waitedMs`, which only moves
+     * when the loop emits another event.
+     */
+    sinceTs: number;
     /** `true` once the wait budget ran out and the turn failed. */
     givenUp: boolean;
   } | null;

@@ -141,16 +141,28 @@ export function resolveChips(
     const steering = state.whileBusyMode === "steer";
     const chips: HotkeyChip[] = [
       { key: SCROLL_KEY, label: "scroll", shed: 1 },
-      { key: "⏎", label: steering ? "steer" : "queue message", shed: 3 },
+      // Essential, and the only chip in this list that is: the composer
+      // stays live through a turn, so Enter is a key the operator can
+      // press at any moment with a half-written message in the buffer,
+      // and it either steers into the running turn or parks the message
+      // behind it. Nothing else on screen says which — and while the
+      // provider is down the meta row above drops its own copy of this
+      // hint to make room for the outage numbers, so this is then the
+      // last statement of it anywhere. At `shed: 3` it was not: it went
+      // at every width up to 112 columns the moment a draft lengthened
+      // the Esc chip to `abort, draft kept`, which is exactly the state
+      // it is written for. `ctrl+t` keeps its rank — the mode is worth
+      // less than what the key does right now.
+      { key: "⏎", label: steering ? "steer" : "queue message" },
       {
         key: "ctrl+t",
         label: steering ? "queue mode" : "steer mode",
-        shed: 4,
+        shed: 3,
       },
       { key: "esc", label: hasDraft ? "abort, draft kept" : "abort" },
       ...(composerSelectionActive(state)
         ? [
-            { key: "ctrl+x", label: "cut", shed: 5 },
+            { key: "ctrl+x", label: "cut", shed: 4 },
             { key: "ctrl+c", label: "copy" },
           ]
         : [
