@@ -465,6 +465,33 @@ describe("parseUserConfigFile", () => {
     ).toThrow(/web.search.cacheTtlMinutes/);
   });
 
+  it("fills git.remoteSync default false when migrating from v51", () => {
+    // A repository the agent versions must stay on this machine until
+    // the operator opens the door: an older file must never come up
+    // syncing.
+    const parsed = parseUserConfigFile({ version: 51 });
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(parsed.git.remoteSync).toBe(false);
+    expect(USER_CONFIG_DEFAULTS.git.remoteSync).toBe(false);
+  });
+
+  it("honours an explicit git.remoteSync opt-in", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      git: { remoteSync: true },
+    });
+    expect(parsed.git.remoteSync).toBe(true);
+  });
+
+  it("rejects a non-boolean git.remoteSync", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        git: { remoteSync: "yes please" },
+      }),
+    ).toThrow(/git.remoteSync/);
+  });
+
   it("fills persistCache default true when migrating from v45 (#256)", () => {
     const parsed = parseUserConfigFile({ version: 45 });
     expect(parsed.version).toBe(USER_CONFIG_VERSION);

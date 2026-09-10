@@ -31,11 +31,29 @@ describe("githubIntegration", () => {
   it("stores the token under GITHUB_TOKEN, the name every consumer reads", () => {
     // gh, the skill hub, the updater and the backend installer all
     // already read this variable; a different name would mean two tokens.
-    expect(githubIntegration.fields).toHaveLength(1);
-    expect(githubIntegration.fields[0]?.envVar).toBe(GITHUB_TOKEN_ENV);
-    expect(githubIntegration.fields[0]?.envVar).toBe("GITHUB_TOKEN");
-    expect(githubIntegration.fields[0]?.secret).toBe(true);
-    expect(githubIntegration.fields[0]?.required).toBe(true);
+    const token = githubIntegration.fields.find(
+      (f) => f.key === GITHUB_TOKEN_FIELD,
+    );
+    expect(token?.envVar).toBe(GITHUB_TOKEN_ENV);
+    expect(token?.envVar).toBe("GITHUB_TOKEN");
+    expect(token?.secret).toBe(true);
+    expect(token?.required).toBe(true);
+  });
+
+  it("carries the remote-sync switch as config, not as a secret", () => {
+    // The switch is policy, not a credential: it belongs in
+    // config.json where an operator can read it back, and it is the
+    // one field here that must never be required — a token with the
+    // switch off is the default posture, not a half-finished setup.
+    const remoteSync = githubIntegration.fields.find(
+      (f) => f.key === "remoteSync",
+    );
+    expect(remoteSync?.store).toBe("config");
+    expect(remoteSync?.configPath).toBe("git.remoteSync");
+    expect(remoteSync?.kind).toBe("boolean");
+    expect(remoteSync?.secret).toBe(false);
+    expect(remoteSync?.required).toBe(false);
+    expect(remoteSync?.envVar).toBeUndefined();
   });
 
   it("reads an absent token as not configured", () => {

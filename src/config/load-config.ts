@@ -556,6 +556,9 @@ export function loadConfig(): AtomicAgentConfig {
       ownerVerifiedAt: user.atomicMail.ownerVerifiedAt,
       pendingVerification: user.atomicMail.pendingVerification,
     },
+    git: {
+      remoteSync: user.git.remoteSync,
+    },
     composio: {
       enabled: user.composio.enabled,
       apiKeyEnv: user.composio.apiKeyEnv,

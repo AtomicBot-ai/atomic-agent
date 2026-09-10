@@ -1389,6 +1389,13 @@ export async function createAgentRuntime(
     // Pinned by the `#256` seam case in bootstrap.test.ts — the direct
     // persistence tests cannot see this line.
     stateDir: config.paths.stateDir,
+    // The closed-repository switch, read live: the Integrations hub
+    // writes `git.remoteSync` and resets the config cache, so the very
+    // next `git push` through the shell sees the new answer without a
+    // restart. The guard never reads config itself.
+    shellPolicy: {
+      isGitRemoteSyncEnabled: () => getConfig().git.remoteSync,
+    },
   });
   // Always registered; each call resolves `GITHUB_TOKEN` afresh so a
   // token saved in the Integrations hub works on the next turn. The

@@ -1,6 +1,7 @@
 export type {
   AtomicAgentConfig,
   BrowserChannel,
+  GitConfig,
   HttpApprovalMode,
   LocalLlmMode,
   LogLevel,

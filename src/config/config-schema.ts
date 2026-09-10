@@ -879,6 +879,11 @@ export interface AtomicAgentConfig {
   /** The agent's own inbox. Mirrors `UserConfigFile.atomicMail`. */
   atomicMail: AtomicMailConfig;
   /**
+   * Git remote-sync policy. Mirrors `UserConfigFile.git`. The GitHub
+   * token is not stored here — see `GitConfig`.
+   */
+  git: GitConfig;
+  /**
    * Composio integration. Mirrors `UserConfigFile.composio`. The API
    * key is not stored here — see `ComposioConfig`.
    */
@@ -1061,6 +1066,24 @@ export interface SwarmUnitConfig {
 
 export interface SwarmConfig {
   units: SwarmUnitConfig[];
+}
+
+/**
+ * Git remote-sync policy. Added in config v52.
+ *
+ * The agent can drive a repository that never leaves the machine: with
+ * `remoteSync: false` (the default) every network git verb — `push`,
+ * `fetch`, `pull`, `clone`, `remote add` / `set-url` — is refused before
+ * any approval prompt, both through the dedicated `os.git.*` tools and
+ * through `os.shell.run`. Flipping it on lets the agent sync a
+ * repository with its remotes, each operation still going through the
+ * approval ladder. The GitHub token itself is **not** stored here — it
+ * lives in `<stateDir>/.env` as `GITHUB_TOKEN`, written by the
+ * Integrations hub, like every other credential.
+ */
+export interface GitConfig {
+  /** `false` keeps every repository local-only; the safe default. */
+  remoteSync: boolean;
 }
 
 /**
@@ -1884,6 +1907,12 @@ export interface UserConfigFile {
    */
   atomicMail: AtomicMailConfig;
   /**
+   * Git remote-sync policy. Added in config v62. Older files are
+   * transparently upgraded with `{ remoteSync: false }`, which keeps
+   * every repository on this machine until the operator says otherwise.
+   */
+  git: GitConfig;
+  /**
    * Composio integration. Added in config v50. Older files are
    * transparently upgraded with the defaults below, which leave the
    * integration inert until a key is written to `<stateDir>/.env`.
@@ -2034,7 +2063,11 @@ export interface UserConfigFile {
 // (list) so a bot can answer to more than one person. A pre-v61 file's
 // scalar is folded in as the first entry on read, so nothing an
 // operator already configured stops working.
-export const USER_CONFIG_VERSION = 61;
+// v62: new `git` block carrying the remote-sync policy. Additive and
+// closed by default — `remoteSync: false` refuses every network git verb
+// so a repository the agent versions stays on this machine; the GitHub
+// token lives in `<stateDir>/.env`, never here.
+export const USER_CONFIG_VERSION = 62;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -2184,6 +2217,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   58,
   59,
   60,
+  61,
   USER_CONFIG_VERSION,
 ];
 
@@ -2501,6 +2535,11 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
     ownerEmail: null,
     ownerVerifiedAt: null,
     pendingVerification: null,
+  },
+  git: {
+    // Added in v52. Off by default: a repository the agent versions must
+    // not reach a remote until the operator deliberately opens the door.
+    remoteSync: false,
   },
   composio: {
     // Added in v50. `enabled: true` is safe because the key, not this
@@ -3962,6 +4001,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
     (notifications.downloads as Record<string, unknown> | undefined) ?? {};
   const atomicMail =
     (obj.atomicMail as Record<string, unknown> | undefined) ?? {};
+  const git = (obj.git as Record<string, unknown> | undefined) ?? {};
   const tui = (obj.tui as Record<string, unknown> | undefined) ?? {};
   const analytics =
     (obj.analytics as Record<string, unknown> | undefined) ?? {};
@@ -4820,6 +4860,12 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
       pendingVerification: parsePendingVerification(
         atomicMail.pendingVerification,
         "atomicMail.pendingVerification",
+      ),
+    },
+    git: {
+      remoteSync: parseBool(
+        git.remoteSync ?? USER_CONFIG_DEFAULTS.git.remoteSync,
+        "git.remoteSync",
       ),
     },
     composio: {

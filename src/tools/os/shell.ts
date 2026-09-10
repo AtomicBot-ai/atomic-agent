@@ -15,6 +15,7 @@ import {
   basenameCommand,
   checkShellCommandGuard,
   isGogCommand,
+  type ShellGuardPolicy,
 } from "./shell-command-guard/index.js";
 
 const GOG_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
@@ -182,13 +183,20 @@ export function isOpaqueInterpreterShape(shape: string): boolean {
   return OPAQUE_INTERPRETER_SHAPES.has(shape);
 }
 
-export function buildOsShellTool(
-  options: DangerousToolOptions,
-): ToolDefinition {
+export interface OsShellToolOptions extends DangerousToolOptions {
+  /**
+   * Operator policy for the pre-exec guard (the git remote-sync switch).
+   * Injected by the bootstrap as live predicates; omitted by embedders
+   * and tests, which then get the static rule set.
+   */
+  shellPolicy?: ShellGuardPolicy;
+}
+
+export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
   return {
     name: "os.shell.run",
     description:
-      'Run an OS command in the session working directory. Prefer the structured form `{cmd, args:[...]}` (argv globs `*`/`?` are expanded). Shell metacharacters (`|`, `&&`, `;`, `>`, `<`, `$`, backticks) are interpreted via the OS subshell (`sh -c` on macOS/Linux, `cmd.exe /c` on Windows) — a full command line passed as `cmd` (e.g. `"ffprobe -v quiet … f.mp3"` or `"pip3 list | grep foo"`) runs as written. Do not use for deleting user files — use `os.fs.trash` unless the user explicitly requests permanent shell deletion. Runs through a pre-exec guard: safe commands run directly, risky commands require approval, catastrophic commands are blocked without execution. By default there is no timeout (the command runs until it exits or the turn is cancelled); pass `timeoutMs` to set an explicit limit.',
+      "Run an OS command in the session working directory. Prefer the structured form `{cmd, args:[...]}` (argv globs `*`/`?` are expanded). Shell metacharacters (`|`, `&&`, `;`, `>`, `<`, `$`, backticks) are interpreted via the OS subshell (`sh -c` on macOS/Linux, `cmd.exe /c` on Windows) — a full command line passed as `cmd` (e.g. `\"ffprobe -v quiet … f.mp3\"` or `\"pip3 list | grep foo\"`) runs as written. Do not use for deleting user files — use `os.fs.trash` unless the user explicitly requests permanent shell deletion. Runs through a pre-exec guard: safe commands run directly, risky commands require approval, catastrophic commands are blocked without execution. By default there is no timeout (the command runs until it exits or the turn is cancelled); pass `timeoutMs` to set an explicit limit.",
     readonly: false,
     async run(rawArgs, ctx) {
       const cmd = rawArgs.cmd;
@@ -208,7 +216,7 @@ export function buildOsShellTool(
           output:
             "os.shell.run: `args` must be an array of strings (got " +
             describeArgsShape(rawArgs.args) +
-            '). Pass arguments as JSON array literal, e.g. {"cmd":"ls","args":["-la","./src"]}.',
+            "). Pass arguments as JSON array literal, e.g. {\"cmd\":\"ls\",\"args\":[\"-la\",\"./src\"]}.",
           details: {
             cmd,
             rawArgsType: describeArgsShape(rawArgs.args),
@@ -249,7 +257,10 @@ export function buildOsShellTool(
           : { cmd, rawArgs: execArgs, cwd };
       const gogProbe = guardInput.cmd;
 
-      const guardVerdict = checkShellCommandGuard(guardInput);
+      const guardVerdict = checkShellCommandGuard(
+        guardInput,
+        options.shellPolicy,
+      );
       if (guardVerdict.action === "block") {
         return compressToolResult({
           tool: "os.shell.run",

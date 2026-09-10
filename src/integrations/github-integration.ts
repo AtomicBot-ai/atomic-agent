@@ -59,6 +59,16 @@ export const githubIntegration: IntegrationDescriptor = {
           ? undefined
           : "Doesn't look like a GitHub token — expected github_pat_… or ghp_…. Copy the token itself, not its name.",
     },
+    {
+      key: "remoteSync",
+      label: "Remote sync",
+      kind: "boolean",
+      store: "config",
+      configPath: "git.remoteSync",
+      secret: false,
+      required: false,
+      help: "off keeps every repository on this machine — no push, fetch, pull or clone. on allows them, each with approval. Enter toggles.",
+    },
   ],
   actions: [
     {
