@@ -4,6 +4,7 @@ import type { AtomicAgentConfig } from "../../config/index.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 import type { AgentMetrics } from "../../tracing/agent-metrics.js";
 
+import type { TelegramSettingsSink } from "./telegram-settings.js";
 import type { InboundCallbackUpdate } from "./approval-bridge.js";
 import type { InboundTextUpdate } from "./inbound-handler.js";
 import type { TelegramApi } from "./outbound-sender.js";
@@ -15,9 +16,20 @@ import type { ChannelLock } from "./telegram-lockfile.js";
  * `start` / `stop` and invokes the registered text handler with
  * fabricated updates.
  */
+/** Optional callbacks a bot factory may report through. */
+export interface BotFactoryHooks {
+  /** A failure inside grammy's own middleware / polling loop. */
+  onError?: (error: Error) => void;
+}
+
 export interface BotInstance {
   readonly api: TelegramApi & {
-    getMe(): Promise<{ id: number; username?: string }>;
+    getMe(): Promise<{
+      id: number;
+      username?: string;
+      /** `false` = privacy mode on: plain @mentions in groups are withheld. */
+      can_read_all_group_messages?: boolean;
+    }>;
     setMyCommands?(
       cmds: ReadonlyArray<{ command: string; description: string }>,
     ): Promise<unknown>;
@@ -50,6 +62,7 @@ export interface BotInstance {
 
 export type BotFactory = (
   token: string,
+  hooks?: BotFactoryHooks,
 ) => BotInstance | Promise<BotInstance>;
 
 export interface TelegramChannelDeps {
@@ -80,6 +93,17 @@ export interface TelegramChannelDeps {
    * `config.paths.stateDir`. Tests point this at a tmp file.
    */
   userConfigPath?: string;
+  /**
+   * Owner override for a swarm unit. `undefined` (the primary channel)
+   * reads `config.telegram.ownerUserId`; a unit passes its own.
+   */
+  ownerUserId?: number | null;
+  /**
+   * Where `setEnabled` / `setOwnerUserId` / `setToken` persist. Defaults
+   * to `config.telegram` + `TELEGRAM_BOT_TOKEN`; a swarm unit supplies a
+   * sink that writes its own config entry and `.env` key.
+   */
+  settings?: TelegramSettingsSink;
 }
 
 /**

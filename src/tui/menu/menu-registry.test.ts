@@ -232,6 +232,11 @@ const V0_2_2_SLASH_COMMANDS = [
       "hide or show the session rail (the rail's « does the same)",
   },
   {
+    name: "swarm",
+    description:
+      "open the Swarm tab \u2014 every Telegram / Discord bot on this runtime; add more bots, each with its own token, owner and role",
+  },
+  {
     name: "uninstall",
     description:
       "remove atomic-agent and all of its data from this machine — permanent, no undo",
@@ -313,6 +318,7 @@ describe("menu registry", () => {
       "Memory",
       "MCP",
       "Integrations",
+      "Swarm",
       "LLM",
       "Telegram",
       "Import",

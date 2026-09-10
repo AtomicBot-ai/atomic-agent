@@ -124,6 +124,7 @@ import type { ImportFormState } from "./import/import-panel-state.js";
 import { handleProvidersTabKey } from "./providers/providers-key-bindings.js";
 import { handlePrivacyTabKey } from "./privacy/privacy-key-bindings.js";
 import { handleIntegrationsTabKey } from "./integrations/integrations-key-bindings.js";
+import { handleSwarmTabKey } from "./swarm/swarm-key-bindings.js";
 import { ContextMenuPopup, ContextMenuProvider } from "./context-menu/index.js";
 import { createDragIntentTracker } from "./mouse/drag-intent.js";
 import { MouseProvider } from "./mouse/mouse-context.js";
@@ -597,6 +598,30 @@ export interface TuiAppCallbacks {
     integrationId: string,
     actionId: string,
   ): void | Promise<void>;
+  /** Swarm tab: re-read every bot's config + live state. */
+  onSwarmRefreshRequested?(): void;
+  /** Swarm tab: add a bot from the wizard. */
+  onSwarmAddRequested?(input: {
+    kind: "telegram" | "discord";
+    label: string;
+    role: string;
+    token: string;
+    ownerUserId: string;
+  }): void | Promise<void>;
+  /** Swarm tab: save one field of a unit (label, role, owner, token). */
+  onSwarmFieldSaveRequested?(
+    unitId: string,
+    field: "label" | "role" | "owner" | "token",
+    value: string,
+  ): void | Promise<void>;
+  /** Swarm tab: flip a unit's kill switch. */
+  onSwarmToggleRequested?(unitId: string): void | Promise<void>;
+  /** Swarm tab: remove a unit (stops it, forgets its token). */
+  onSwarmRemoveRequested?(unitId: string): void | Promise<void>;
+  /** Swarm tab: open a Telegram pairing window on a unit. */
+  onSwarmPairRequested?(unitId: string): void | Promise<void>;
+  /** Swarm tab: restart a unit's channel. */
+  onSwarmRestartRequested?(unitId: string): void | Promise<void>;
   /** Import tab: run a dry-run preview of the Hermes import. */
   onImportPreview?(form: ImportFormState): void;
   /** Import tab: execute the import (write sessions / tasks / secrets). */
@@ -777,6 +802,12 @@ export function TuiApp({
   }, [state.uiMode, state.activeTab, callbacks]);
 
   useEffect(() => {
+    if (state.uiMode === "debug" && state.activeTab === "swarm") {
+      callbacks.onSwarmRefreshRequested?.();
+    }
+  }, [state.uiMode, state.activeTab, callbacks]);
+
+  useEffect(() => {
     if (
       state.uiMode === "debug" &&
       (state.activeTab === "providers" || state.activeTab === "llm")
@@ -869,6 +900,7 @@ export function TuiApp({
     state.uiMode === "debug" && state.activeTab === "privacy";
   const integrationsTabActive =
     state.uiMode === "debug" && state.activeTab === "integrations";
+  const swarmTabActive = state.uiMode === "debug" && state.activeTab === "swarm";
   const terminalSize = useTerminalSize();
   const sidebarVisible =
     state.uiMode === "chat" &&
@@ -980,6 +1012,7 @@ export function TuiApp({
         !importTabActive &&
         !privacyTabActive &&
         !integrationsTabActive &&
+        !swarmTabActive &&
         !sidebarFocused &&
         !(
           localModelsTabActive &&
@@ -1052,6 +1085,7 @@ export function TuiApp({
     if (integrationsTabActive) {
       return handleIntegrationsTabKey(input, key, ctx);
     }
+    if (swarmTabActive) return handleSwarmTabKey(input, key, ctx);
     return null;
   };
 

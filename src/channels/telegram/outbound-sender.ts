@@ -26,6 +26,7 @@ export interface TelegramApi {
   sendChatAction?(
     chatId: number,
     action: "typing",
+    opts?: Record<string, unknown>,
   ): Promise<unknown>;
   editMessageText?(
     chatId: number,
@@ -72,6 +73,13 @@ export interface OutboundSendOptions {
    * reply. See AGENTS.md §"Telegram remote-control channel".
    */
   parseMode?: TelegramParseMode;
+  /**
+   * Forum-topic id (`message_thread_id`) when the reply belongs to a
+   * topic inside a supergroup. Without it Telegram posts the message
+   * into the group's General topic, away from the conversation that
+   * asked. Omit for private chats and plain groups.
+   */
+  threadId?: number;
 }
 
 export interface OutboundSendResult {
@@ -128,7 +136,7 @@ export async function sendOutbound(
   for (let i = 0; i < chunks.length; i += 1) {
     const rawChunk = chunks[i]!;
     const formatted = formatChunk(rawChunk, parseMode);
-    const sendOpts = parseModeSendOptions(parseMode);
+    const sendOpts = withThread(parseModeSendOptions(parseMode), opts.threadId);
     try {
       await opts.api.sendMessage(opts.chatId, formatted, sendOpts);
     } catch (err) {
@@ -161,7 +169,11 @@ export async function sendOutbound(
           error: stringifyError(err),
         });
         try {
-          await opts.api.sendMessage(opts.chatId, rawChunk);
+          await opts.api.sendMessage(
+            opts.chatId,
+            rawChunk,
+            withThread(undefined, opts.threadId),
+          );
         } catch (secondErr) {
           dropped += 1;
           opts.logger?.warn("telegram: plain-text fallback also failed", {
@@ -186,6 +198,19 @@ export async function sendOutbound(
 function formatChunk(raw: string, parseMode: TelegramParseMode): string {
   if (parseMode === "html") return convertMarkdownToTelegramHtml(raw);
   return raw;
+}
+
+/**
+ * Fold `message_thread_id` into a `sendMessage` options bag. Returns
+ * the bag untouched (possibly `undefined`) when there is no topic, so
+ * private-chat sends keep their exact pre-topic wire shape.
+ */
+export function withThread(
+  sendOpts: Record<string, unknown> | undefined,
+  threadId: number | undefined,
+): Record<string, unknown> | undefined {
+  if (threadId === undefined) return sendOpts;
+  return { ...(sendOpts ?? {}), message_thread_id: threadId };
 }
 
 function parseModeSendOptions(

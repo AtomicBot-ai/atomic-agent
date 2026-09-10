@@ -63,6 +63,10 @@ import {
   type IntegrationsPanelState,
 } from "./integrations/integrations-panel-state.js";
 import {
+  createInitialSwarmPanelState,
+  type SwarmPanelState,
+} from "./swarm/swarm-panel-state.js";
+import {
   createInitialProvidersPanelState,
   type ProvidersPanelState,
 } from "./providers/providers-panel-state.js";
@@ -122,7 +126,8 @@ export type TuiTab =
   | "providers"
   | "import"
   | "privacy"
-  | "integrations";
+  | "integrations"
+  | "swarm";
 
 /**
  * Top-level UI mode: `chat` is the default single-scroll openclaw-style
@@ -536,6 +541,7 @@ export interface TuiState {
   privacyPanel: PrivacyPanelState;
   /** State slice driving the Integrations tab (third-party credentials). */
   integrationsPanel: IntegrationsPanelState;
+  swarmPanel: SwarmPanelState;
   /** Cloud / local LLM provider registry (hot-swap active text provider). */
   providersPanel: ProvidersPanelState;
   /** Unified operator LLM panel combining provider routing and local daemon state. */
@@ -790,6 +796,7 @@ export function createInitialTuiState(
     importPanel: createInitialImportPanelState(),
     privacyPanel: createInitialPrivacyPanelState(),
     integrationsPanel: createInitialIntegrationsPanelState(),
+    swarmPanel: createInitialSwarmPanelState(),
     providersPanel: createInitialProvidersPanelState(),
     llmPanel,
     fallbackPanel: createInitialFallbackPanelState(),

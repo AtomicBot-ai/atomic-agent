@@ -320,3 +320,20 @@ describe("ApprovalBridge.cancelAll", () => {
     expect(h.approvals.decisions).toEqual([]);
   });
 });
+
+describe("ApprovalBridge.dispatch — forum topics", () => {
+  it("carries message_thread_id when a topic id is given", async () => {
+    const h = makeHarness();
+    await h.bridge.dispatch(req("abc"), 7, 77);
+    const opts = h.api.sendMessage.mock.calls[0]![2] as Record<string, unknown>;
+    expect(opts.message_thread_id).toBe(77);
+    expect(opts.reply_markup).toBeDefined();
+  });
+
+  it("omits message_thread_id for a plain chat", async () => {
+    const h = makeHarness();
+    await h.bridge.dispatch(req("abc"), 7);
+    const opts = h.api.sendMessage.mock.calls[0]![2] as Record<string, unknown>;
+    expect(opts).not.toHaveProperty("message_thread_id");
+  });
+});

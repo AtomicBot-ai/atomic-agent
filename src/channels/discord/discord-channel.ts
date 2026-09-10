@@ -63,8 +63,16 @@ export class DiscordChannel {
   private lockHeld = false;
   private readonly inflight = new Map<string, AbortController>();
   private readonly pointer: DiscordSessionPointer;
-  private approvalUnsubscribe: (() => void) | null = null;
-  private approvalSessionId: string | null = null;
+  /**
+   * `sessionId -> approval binding`. One per channel that is (or recently
+   * was) talking to the bot: with per-channel sessions several channels
+   * can run turns at once and each needs its buttons in its own channel.
+   * Dropped on `/new`, `/switch`, and `stop()`.
+   */
+  private readonly approvalBindings = new Map<
+    string,
+    { channelId: string; unsubscribe: () => void }
+  >();
 
   constructor(private readonly deps: DiscordChannelDeps) {
     this.ownerId = deps.ownerUserId;
@@ -83,6 +91,11 @@ export class DiscordChannel {
 
   getOwnerUserId(): string | null {
     return this.ownerId;
+  }
+
+  /** Whether a bot token resolves right now (explicit dep or env). */
+  hasToken(): boolean {
+    return resolveDiscordToken(this.deps.token) !== null;
   }
 
   getBotIdentity(): { id: string; username: string | null } | null {
@@ -190,24 +203,45 @@ export class DiscordChannel {
       ensureApprovalSession: (sessionId, channelId) => {
         this.bindApprovals(sessionId, channelId);
       },
+      releaseApprovalSession: (sessionId) => {
+        this.releaseApprovals(sessionId);
+      },
     });
   }
 
   /**
-   * Point the approval router at this Discord channel for `sessionId`.
-   * Idempotent: re-binding the same session is a no-op, and rotating to
-   * a new one drops the previous registration so a stale session cannot
-   * keep capturing prompts.
+   * Point the approval router at `channelId` for `sessionId`.
+   * Idempotent: re-binding the same pair is a no-op; a session that
+   * moved to another channel via `/switch` is re-pointed so its prompts
+   * follow the conversation.
    */
   private bindApprovals(sessionId: string, channelId: string): void {
-    if (this.approvalSessionId === sessionId) return;
-    this.approvalUnsubscribe?.();
+    const existing = this.approvalBindings.get(sessionId);
+    if (existing?.channelId === channelId) return;
+    existing?.unsubscribe();
+    this.approvalBindings.delete(sessionId);
+    // A channel has exactly one current session, so any other session
+    // still bound to this channel is stale and would leak.
+    for (const [otherId, binding] of this.approvalBindings) {
+      if (binding.channelId === channelId) {
+        binding.unsubscribe();
+        this.approvalBindings.delete(otherId);
+      }
+    }
     if (!this.bridge) return;
-    this.approvalUnsubscribe = this.deps.approvalRouter.setForSession(
+    const unsubscribe = this.deps.approvalRouter.setForSession(
       sessionId,
       this.bridge.handlerFor(channelId),
     );
-    this.approvalSessionId = sessionId;
+    this.approvalBindings.set(sessionId, { channelId, unsubscribe });
+  }
+
+  /** Drop the binding for a session no channel talks to anymore. */
+  private releaseApprovals(sessionId: string): void {
+    const existing = this.approvalBindings.get(sessionId);
+    if (!existing) return;
+    existing.unsubscribe();
+    this.approvalBindings.delete(sessionId);
   }
 
   async stop(): Promise<void> {
@@ -217,9 +251,8 @@ export class DiscordChannel {
     // socket is gone would post into a channel we can no longer reach.
     for (const controller of this.inflight.values()) controller.abort();
     this.inflight.clear();
-    this.approvalUnsubscribe?.();
-    this.approvalUnsubscribe = null;
-    this.approvalSessionId = null;
+    for (const binding of this.approvalBindings.values()) binding.unsubscribe();
+    this.approvalBindings.clear();
     this.bridge?.clear();
     await this.gateway?.stop();
     this.gateway = null;

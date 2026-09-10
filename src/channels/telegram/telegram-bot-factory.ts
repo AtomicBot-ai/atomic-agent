@@ -9,9 +9,17 @@ import type { BotFactory, BotInstance } from "./telegram-channel.js";
  * channel never starts (e.g. `telegram.enabled === false`). Tests
  * inject their own factory via `TelegramChannel`'s `botFactory` dep.
  */
-export const defaultGrammyBotFactory: BotFactory = async (token) => {
+export const defaultGrammyBotFactory: BotFactory = async (token, hooks) => {
   const grammy = await import("grammy");
   const bot = new grammy.Bot(token);
+  // grammy reports polling failures through `bot.catch`, and without a
+  // handler it writes them to `console.error` — which Ink owns in the
+  // TUI, so a poll loop that keeps failing looks like a healthy channel
+  // that never receives anything. Route them to the caller instead.
+  bot.catch((err) => {
+    const cause = err instanceof Error ? err : new Error(String(err));
+    hooks?.onError?.(cause);
+  });
   let textHandler: ((u: InboundTextUpdate) => void | Promise<void>) | null =
     null;
   let callbackHandler:
@@ -41,11 +49,35 @@ export const defaultGrammyBotFactory: BotFactory = async (token) => {
     if (!handler) return;
     const msg = gctx.message;
     if (!msg) return;
-    const update = {
+    const title = "title" in msg.chat ? msg.chat.title : undefined;
+    const replyFrom = msg.reply_to_message?.from;
+    const update: InboundTextUpdate = {
       ...(gctx.from ? { from: { id: gctx.from.id } } : {}),
-      chat: { id: msg.chat.id, type: msg.chat.type },
+      chat: {
+        id: msg.chat.id,
+        type: msg.chat.type,
+        ...(typeof title === "string" ? { title } : {}),
+      },
       text: msg.text,
       message_id: msg.message_id,
+      // Forum-topic routing: `is_topic_message` marks a real topic;
+      // `message_thread_id` alone is also set on plain replies.
+      ...(typeof msg.message_thread_id === "number"
+        ? { message_thread_id: msg.message_thread_id }
+        : {}),
+      ...(msg.is_topic_message === true ? { is_topic_message: true } : {}),
+      // Who the replied-to message came from, so "reply to the bot" can
+      // count as addressing it in a group.
+      ...(replyFrom
+        ? {
+            reply_to_message: {
+              from: {
+                id: replyFrom.id,
+                ...(replyFrom.is_bot === true ? { is_bot: true } : {}),
+              },
+            },
+          }
+        : {}),
     };
     void Promise.resolve()
       .then(() => handler(update))

@@ -860,6 +860,8 @@ export interface AtomicAgentConfig {
    * The bot token is not stored here — see `DiscordConfig`.
    */
   discord: DiscordConfig;
+  /** Extra Telegram / Discord bots. Mirrors `UserConfigFile.swarm`. */
+  swarm: SwarmConfig;
   /**
    * Composio integration. Mirrors `UserConfigFile.composio`. The API
    * key is not stored here — see `ComposioConfig`.
@@ -1002,6 +1004,37 @@ export interface DiscordConfig {
    * unpaired — the channel refuses every message until it is set.
    */
   ownerUserId: string | null;
+}
+
+/**
+ * One extra bot in the swarm: a second (third, …) Telegram or Discord
+ * bot on the same runtime, with its own token, owner and label, so an
+ * operator can point different bots at different rooms or roles. The
+ * primary `telegram` / `discord` blocks stay as they are; units are
+ * additional. The token lives in `<stateDir>/.env` under `tokenEnv`,
+ * never here. Added in config v52.
+ */
+export interface SwarmUnitConfig {
+  /** Stable slug, unique across units: `[a-z0-9][a-z0-9-]{0,31}`. */
+  id: string;
+  kind: "telegram" | "discord";
+  /** Display name in the Swarm tab and in session labels. */
+  label: string;
+  /** Free text: what this bot is for ("ops", "research"). Informational for now. */
+  role: string;
+  enabled: boolean;
+  /** Name of the `.env` key holding this unit's bot token. */
+  tokenEnv: string;
+  /**
+   * The sole operator this unit listens to, as a string for both kinds
+   * (Discord snowflakes exceed `Number.MAX_SAFE_INTEGER`; Telegram ids
+   * are parsed back to a number at construction). `null` = unpaired.
+   */
+  ownerUserId: string | null;
+}
+
+export interface SwarmConfig {
+  units: SwarmUnitConfig[];
 }
 
 /**
@@ -1730,6 +1763,11 @@ export interface UserConfigFile {
    */
   discord: DiscordConfig;
   /**
+   * Extra Telegram / Discord bots ("swarm units"). Added in config v52.
+   * Older files are transparently upgraded with `{ units: [] }`.
+   */
+  swarm: SwarmConfig;
+  /**
    * Composio integration. Added in config v50. Older files are
    * transparently upgraded with the defaults below, which leave the
    * integration inert until a key is written to `<stateDir>/.env`.
@@ -1845,7 +1883,9 @@ export interface UserConfigFile {
 // v51: new `discord` block for the Discord remote-control channel.
 // Additive and inert by default — the channel is off, unpaired, and the
 // bot token lives in `<stateDir>/.env`, never here.
-export const USER_CONFIG_VERSION = 51;
+// v52: new `swarm` block — extra Telegram / Discord bots on one runtime,
+// each with its own token (`.env`), owner and label. Default `{ units: [] }`.
+export const USER_CONFIG_VERSION = 52;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -1984,7 +2024,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   47,
   48,
   49,
-  50,
+  50, 51,
   USER_CONFIG_VERSION,
 ];
 
@@ -2277,6 +2317,10 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
     // would connect and then refuse every message, which looks broken.
     enabled: false,
     ownerUserId: null,
+  },
+  swarm: {
+    // Added in v52. No extra bots until the operator adds one.
+    units: [],
   },
   composio: {
     // Added in v50. `enabled: true` is safe because the key, not this
@@ -2755,7 +2799,71 @@ export function parseNonEmptyString(raw: unknown, field: string): string {
  * (key missing) and `null` (explicitly cleared) both read as `null`,
  * so a cleared cache entry and a never-written one behave alike.
  */
-export function parseNullableString(
+export const SWARM_UNIT_ID = /^[a-z0-9][a-z0-9-]{0,31}$/;
+const SWARM_TOKEN_ENV = /^[A-Z_][A-Z0-9_]*$/;
+const SWARM_LABEL_MAX = 40;
+const SWARM_ROLE_MAX = 120;
+
+/**
+ * `swarm.units[]`. Every unit is checked in full — a half-valid unit
+ * would construct a channel that can never start — and ids / token
+ * env names must be unique or two units would share a bot.
+ */
+function parseSwarmUnits(value: unknown, field: string): SwarmUnitConfig[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) {
+    throw new ConfigValidationError(field, "must be an array");
+  }
+  const ids = new Set<string>();
+  const envs = new Set<string>();
+  return value.map((raw, i) => {
+    const at = `${field}[${i}]`;
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      throw new ConfigValidationError(at, "must be an object");
+    }
+    const u = raw as Record<string, unknown>;
+    const id = parseNonEmptyString(u.id, `${at}.id`);
+    if (!SWARM_UNIT_ID.test(id)) {
+      throw new ConfigValidationError(`${at}.id`, "must match [a-z0-9][a-z0-9-]{0,31}");
+    }
+    if (ids.has(id)) throw new ConfigValidationError(`${at}.id`, `duplicate id '${id}'`);
+    ids.add(id);
+    if (u.kind !== "telegram" && u.kind !== "discord") {
+      throw new ConfigValidationError(`${at}.kind`, 'must be "telegram" or "discord"');
+    }
+    const label = parseNonEmptyString(u.label, `${at}.label`);
+    if (label.length > SWARM_LABEL_MAX) {
+      throw new ConfigValidationError(`${at}.label`, `must be at most ${SWARM_LABEL_MAX} characters`);
+    }
+    const role = u.role === undefined || u.role === null ? "" : u.role;
+    if (typeof role !== "string" || role.length > SWARM_ROLE_MAX) {
+      throw new ConfigValidationError(`${at}.role`, `must be a string of at most ${SWARM_ROLE_MAX} characters`);
+    }
+    const tokenEnv = parseNonEmptyString(u.tokenEnv, `${at}.tokenEnv`);
+    if (!SWARM_TOKEN_ENV.test(tokenEnv)) {
+      throw new ConfigValidationError(`${at}.tokenEnv`, "must be an env var name ([A-Z_][A-Z0-9_]*)");
+    }
+    if (envs.has(tokenEnv)) {
+      throw new ConfigValidationError(`${at}.tokenEnv`, `duplicate token env '${tokenEnv}'`);
+    }
+    envs.add(tokenEnv);
+    const ownerUserId = parseNullableString(u.ownerUserId, `${at}.ownerUserId`);
+    if (ownerUserId !== null && !/^\d{1,25}$/.test(ownerUserId)) {
+      throw new ConfigValidationError(`${at}.ownerUserId`, "must be a numeric user id");
+    }
+    return {
+      id,
+      kind: u.kind,
+      label,
+      role,
+      enabled: parseBool(u.enabled ?? false, `${at}.enabled`),
+      tokenEnv,
+      ownerUserId,
+    };
+  });
+}
+
+function parseNullableString(
   raw: unknown,
   field: string,
 ): string | null {
@@ -3497,6 +3605,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
   const telegram = (obj.telegram as Record<string, unknown> | undefined) ?? {};
   const composio = (obj.composio as Record<string, unknown> | undefined) ?? {};
   const discord = (obj.discord as Record<string, unknown> | undefined) ?? {};
+  const swarm = (obj.swarm as Record<string, unknown> | undefined) ?? {};
   const tui = (obj.tui as Record<string, unknown> | undefined) ?? {};
   const analytics =
     (obj.analytics as Record<string, unknown> | undefined) ?? {};
@@ -4295,6 +4404,9 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         discord.ownerUserId,
         "discord.ownerUserId",
       ),
+    },
+    swarm: {
+      units: parseSwarmUnits(swarm.units, "swarm.units"),
     },
     composio: {
       enabled: parseBool(

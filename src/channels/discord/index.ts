@@ -25,7 +25,10 @@ export {
 } from "./discord-channel-types.js";
 export { DiscordLockfile } from "./discord-lockfile.js";
 export { DiscordSessionPointer } from "./discord-session-pointer.js";
-export type { DiscordSessionPointerData } from "./discord-session-pointer.js";
+export type {
+  DiscordChatSessionEntry,
+  DiscordSessionPointerData,
+} from "./discord-session-pointer.js";
 export {
   handleDiscordMessage,
   stripMention,

@@ -110,3 +110,27 @@ export function writeTelegramToken(
   }
   return result;
 }
+
+/**
+ * Where a channel's live-control setters persist. The primary channel
+ * writes `config.telegram` + `TELEGRAM_BOT_TOKEN`; a swarm unit writes
+ * its own `swarm.units[]` entry and its own `.env` key instead, so two
+ * bots never overwrite each other's settings.
+ */
+export interface TelegramSettingsSink {
+  writeSettings(patch: Partial<PersistedTelegramSettings>): void;
+  writeToken(token: string | null): void;
+}
+
+export function defaultTelegramSettingsSink(
+  paths: TelegramSettingsPaths,
+): TelegramSettingsSink {
+  return {
+    writeSettings: (patch) => {
+      writeTelegramSettings(paths, patch);
+    },
+    writeToken: (token) => {
+      writeTelegramToken(paths, token);
+    },
+  };
+}

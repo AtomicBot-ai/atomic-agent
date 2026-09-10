@@ -301,6 +301,23 @@ export const MENU: readonly MenuNode[] = [
   },
   {
     kind: "place",
+    id: "go.manage.swarm",
+    label: "Swarm",
+    group: "go",
+    // `s` is Skills; `b` — bots — is free.
+    chord: "b",
+    slash: {
+      name: "swarm",
+      description:
+        "open the Swarm tab — every Telegram / Discord bot on this runtime; add more bots, each with its own token, owner and role",
+      rank: 40,
+    },
+    section: "manage",
+    tab: "swarm",
+    parent: "go.manage",
+  },
+  {
+    kind: "place",
     id: "go.manage.llm",
     label: "LLM",
     group: "go",

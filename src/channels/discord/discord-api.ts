@@ -178,7 +178,7 @@ export class DiscordApi {
     }
     if (res.status === 401 || res.status === 403) {
       throw new DiscordApiError(
-        `Discord rejected the bot token (HTTP ${res.status}). Check it in the Integrations tab.`,
+        `Discord rejected the bot token (HTTP ${res.status}).`,
         res.status,
       );
     }

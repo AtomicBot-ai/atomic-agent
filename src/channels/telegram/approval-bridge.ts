@@ -2,7 +2,7 @@ import type { ApprovalGate, ApprovalRequest } from "../../approval/index.js";
 import { formatApprovalCategory } from "../../approval/index.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 
-import type { TelegramApi } from "./outbound-sender.js";
+import { withThread, type TelegramApi } from "./outbound-sender.js";
 
 /**
  * Default auto-deny window for an approval delivered to Telegram.
@@ -135,7 +135,11 @@ export class ApprovalBridge {
    * Slack-style channel would resolve the same way (channel id, not
    * chat id) and the dispatch shape stays clean.
    */
-  async dispatch(request: ApprovalRequest, chatId: number): Promise<void> {
+  async dispatch(
+    request: ApprovalRequest,
+    chatId: number,
+    threadId?: number,
+  ): Promise<void> {
     if (this.pending.has(request.approvalId)) {
       // Defensive: the gate enforces single-pending-per-session, so a
       // duplicate approvalId would be a runtime bug. Log and ignore.
@@ -149,7 +153,7 @@ export class ApprovalBridge {
       const sent = await this.deps.api.sendMessage(
         chatId,
         formatApprovalText(request),
-        { reply_markup: buildKeyboard(request.approvalId) },
+        withThread({ reply_markup: buildKeyboard(request.approvalId) }, threadId),
       );
       const id = (sent as { message_id?: number } | null)?.message_id;
       if (typeof id !== "number") {

@@ -66,3 +66,6 @@ export {
   parseCustomLocalModel,
   parseCustomLocalModels,
 } from "./custom-models-schema.js";
+
+/** Swarm units — extra Telegram / Discord bots (config v52). */
+export type { SwarmConfig, SwarmUnitConfig } from "./config-schema.js";
