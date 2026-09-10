@@ -61,6 +61,14 @@ export type UserLlmProviderEntry = {
   apiKeyHeader?: string;
   supportsTools?: boolean;
   supportsVision?: boolean;
+  /**
+   * Whether the provider supports parallel tool calls in a single
+   * completion.  Absent defaults to `true` for most providers, but
+   * some (e.g. Gemini) emit parallel `tool_calls` without stable
+   * indices — the runtime derives `parallel_tool_calls` from this
+   * flag combined with `agent.maxParallelToolCalls`.
+   */
+  supportsParallelTools?: boolean;
   requestTimeoutMs?: number;
   /**
    * Hard ceiling on this provider's output, in tokens. Absent means no
@@ -271,6 +279,17 @@ export function parseLlmProviderEntry(
           : (() => {
               throw new ConfigValidationError(
                 `${field}.supportsVision`,
+                "expected boolean",
+              );
+            })(),
+    supportsParallelTools:
+      obj.supportsParallelTools === undefined
+        ? undefined
+        : typeof obj.supportsParallelTools === "boolean"
+          ? obj.supportsParallelTools
+          : (() => {
+              throw new ConfigValidationError(
+                `${field}.supportsParallelTools`,
                 "expected boolean",
               );
             })(),

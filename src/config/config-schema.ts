@@ -923,6 +923,7 @@ export interface AtomicAgentConfig {
       apiKeyHeader?: string;
       supportsTools?: boolean;
       supportsVision?: boolean;
+      supportsParallelTools?: boolean;
       requestTimeoutMs?: number;
       promptCache?: "auto" | "off" | "explicit-markers";
       providerPreferences?: Record<string, unknown>;
