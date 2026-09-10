@@ -19,6 +19,7 @@ the global skills dir — it will be replaced on the next boot. Use a distinct
 | `wttr-weather/` | Weather lookup via `wttr.in` | none |
 | `currency/` | Exchange rates & conversion via the Frankfurter API | none |
 | `skill-creator/` | Author or edit `SKILL.md` files | none |
+| `verify-work/` | Run what you just wrote and prove it works before reporting | none |
 | `github/` | GitHub repos / issues / PRs / Actions via the `gh` CLI | `gh` installed + `gh auth login` |
 | `apple-calendar/` | Read Calendar via `icalBuddy`, create events via AppleScript | macOS + `brew install ical-buddy` + Calendar permission |
 | `obsidian/` | Read / search / write notes in an Obsidian vault | `OBSIDIAN_VAULT_PATH` env var (default `~/Documents/Obsidian Vault`) |
