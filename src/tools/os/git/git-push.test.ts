@@ -20,6 +20,14 @@ function approveAll(): ApprovalGate {
 
 const TOKEN = `ghp_${"A".repeat(36)}`;
 
+/**
+ * These cases are about the push itself, not about the closed-repository
+ * policy (that is git-remote-sync.test.ts): every tool here is built with
+ * Remote sync on, the way the bootstrap builds it once the operator has
+ * flipped the switch.
+ */
+const SYNC_ON = { isRemoteSyncEnabled: () => true } as const;
+
 describe("os.git.push", () => {
   let repo: string;
   let bare: string;
@@ -39,6 +47,7 @@ describe("os.git.push", () => {
 
   it("pushes the current branch with -u and reports the upstream", async () => {
     const tool = buildOsGitPushTool({
+      ...SYNC_ON,
       approvals: approveAll(),
       approvalRequired: true,
       resolveToken: () => TOKEN,
@@ -63,6 +72,7 @@ describe("os.git.push", () => {
   it("pushes a named branch without -u when asked", async () => {
     await runGitRaw(repo, ["branch", "feat/x"]);
     const tool = buildOsGitPushTool({
+      ...SYNC_ON,
       approvals: approveAll(),
       approvalRequired: true,
     });
@@ -90,6 +100,7 @@ describe("os.git.push", () => {
       },
     });
     const tool = buildOsGitPushTool({
+      ...SYNC_ON,
       approvals: gate,
       approvalRequired: true,
     });
@@ -104,6 +115,7 @@ describe("os.git.push", () => {
       emit: (req) => gate.reject(req.approvalId, "denied"),
     });
     const tool = buildOsGitPushTool({
+      ...SYNC_ON,
       approvals: gate,
       approvalRequired: true,
     });
@@ -123,6 +135,7 @@ describe("os.git.push", () => {
       },
     });
     const tool = buildOsGitPushTool({
+      ...SYNC_ON,
       approvals: gate,
       approvalRequired: true,
     });
@@ -135,6 +148,7 @@ describe("os.git.push", () => {
   it("refuses to push a detached HEAD without an explicit branch", async () => {
     await runGitRaw(repo, ["checkout", "-q", "--detach"]);
     const tool = buildOsGitPushTool({
+      ...SYNC_ON,
       approvals: approveAll(),
       approvalRequired: false,
     });
@@ -151,6 +165,7 @@ describe("os.git.push", () => {
       await runGitRaw(other, ["commit", "-m", "remote-ahead"]);
       await runGitRaw(other, ["push", "-q", "origin", "main"]);
       const tool = buildOsGitPushTool({
+        ...SYNC_ON,
         approvals: approveAll(),
         approvalRequired: false,
       });

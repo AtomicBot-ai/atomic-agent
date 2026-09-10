@@ -93,11 +93,16 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   "os.git.show": "pure_read",
   "os.git.blame": "pure_read",
   "os.git.branch": "pure_read",
+  // os.git.* — network verbs; gated by the remote-sync switch, then approval
+  "os.git.remote": "approval_gated",
+  "os.git.fetch": "approval_gated",
+  "os.git.pull": "approval_gated",
+  "os.git.push": "approval_gated",
+  "os.git.clone": "approval_gated",
 
-  // os.git.* — mutating; each goes through requireApproval
+  // os.git.* — mutating locally; each goes through requireApproval
   "os.git.checkout": "approval_gated",
   "os.git.commit": "approval_gated",
-  "os.git.push": "approval_gated",
 
   // github.* — REST reads are free; writes publish under the user's name
   "github.whoami": "pure_read",

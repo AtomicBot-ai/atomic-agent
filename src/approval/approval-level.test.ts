@@ -23,6 +23,7 @@ const ALL_CATEGORIES: readonly ApprovalCategory[] = [
   "script",
   "proc_kill",
   "publish",
+  "git_remote",
   "browser_nonweb",
   "trust_config",
   "email",
@@ -61,6 +62,7 @@ describe("approval ladder", () => {
       script: 4,
       proc_kill: 4,
       publish: 4,
+      git_remote: 4,
       browser_nonweb: 5,
       trust_config: 5,
       email: 5,
@@ -91,6 +93,7 @@ describe("approval ladder", () => {
     expect(formatApprovalCategory("fs_write_home")).toBe("file write · home");
     expect(formatApprovalCategory("trust_config")).toBe("agent trust config");
     expect(formatApprovalCategory("shell")).toBe("shell command");
+    expect(formatApprovalCategory("git_remote")).toBe("git · remote");
   });
 
   it("level 1 asks for every category and level 5 for none (cumulative ladder)", () => {
@@ -102,6 +105,7 @@ describe("approval ladder", () => {
       "shell",
       "script",
       "proc_kill",
+      "git_remote",
       "browser_nonweb",
       "trust_config",
       "email",

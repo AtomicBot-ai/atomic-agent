@@ -1,9 +1,10 @@
 import { compressToolResult } from "../../../compressor/result-compressor.js";
 import type { ToolDefinition } from "../../tool-registry.js";
 import {
-  requireApproval,
-  type DangerousToolOptions,
-} from "../../../approval/dangerous-tool.js";
+  refuseWhenRemoteSyncOff,
+  requireGitRemoteApproval,
+  type GitRemoteToolOptions,
+} from "./git-remote-policy.js";
 import {
   githubAuthGitEnv,
   isGithubHttpsRemote,
@@ -13,7 +14,7 @@ import {
 import { requireBranchName } from "./git-checkout.js";
 import { requireGitSuccess, runGit } from "./git-runner.js";
 
-export interface OsGitPushOptions extends DangerousToolOptions {
+export interface OsGitPushOptions extends GitRemoteToolOptions {
   /** Test seam; production reads `GITHUB_TOKEN` at call time. */
   resolveToken?: () => string | null;
 }
@@ -37,7 +38,7 @@ export function buildOsGitPushTool(options: OsGitPushOptions): ToolDefinition {
   return {
     name: "os.git.push",
     description:
-      "Push a branch to a remote. Args: `remote` (default origin), `branch` (default: current branch), `setUpstream` (default true — `-u` so later pushes need no args), `repo` (optional path). Uses the GitHub token from the Integrations tab for github.com remotes. No force-push. May require approval.",
+      "Push a branch to a remote. Args: `remote` (default origin), `branch` (default: current branch), `setUpstream` (default true — `-u` so later pushes need no args), `repo` (optional path). Uses the GitHub token from the Integrations tab for github.com remotes. Needs Remote sync on (Integrations \u2192 GitHub). No force-push. Asks for approval \u2014 this is the moment a repository leaves the machine.",
     readonly: false,
     async run(rawArgs, ctx) {
       const repo = typeof rawArgs.repo === "string" ? rawArgs.repo : undefined;
@@ -49,7 +50,27 @@ export function buildOsGitPushTool(options: OsGitPushOptions): ToolDefinition {
         rawArgs.branch === undefined || rawArgs.branch === null
           ? await currentBranch(repo, ctx)
           : requireBranchName(rawArgs.branch, "os.git.push");
-      const setUpstream = rawArgs.setUpstream !== false;
+      // `-u` is for a branch's *first* push. Asking for it again on a
+      // branch that already tracks one is noise in the preview and a
+      // second write to .git/config for no gain, so the flag is
+      // dropped once an upstream exists — the operator's explicit
+      // `setUpstream: false` still wins.
+      const setUpstream =
+        rawArgs.setUpstream !== false &&
+        !(await hasUpstream(repo, ctx, branch));
+
+      // The closed-repository check comes before the remote is even
+      // resolved and before any prompt: with the switch off nothing
+      // about this repository — not its remote URL, not a branch name —
+      // needs to travel anywhere.
+      const refused = refuseWhenRemoteSyncOff(
+        "os.git.push",
+        // An embedder or a test that never injected the predicate reads
+        // as "nobody said this repository may leave" — closed.
+        { ...options, isRemoteSyncEnabled: options.isRemoteSyncEnabled ?? (() => false) },
+        { remote, branch },
+      );
+      if (refused) return refused;
 
       const remoteUrl = await readRemoteUrl(repo, ctx, remote);
       const invocation = buildPushInvocation({
@@ -59,14 +80,17 @@ export function buildOsGitPushTool(options: OsGitPushOptions): ToolDefinition {
         remoteUrl,
         token: resolveToken(),
       });
-      await requireApproval(
+      // `git_remote`, not `shell`: this is the moment a repository
+      // leaves the machine, and a session grant answered on an
+      // unrelated shell prompt must not be able to silence it.
+      await requireGitRemoteApproval(
         options,
         {
           sessionId: ctx.sessionId,
           tool: "os.git.push",
-          category: "shell",
           reason: `push ${branch} to ${remote}`,
           preview: `git ${invocation.args.join(" ")}\nremote: ${remoteUrl}${invocation.authenticated ? "\nauth: GitHub token from the Integrations tab" : ""}`,
+          affectedResources: [remoteUrl],
         },
         ctx.signal,
       );
@@ -165,6 +189,21 @@ async function currentBranch(
     );
   }
   return branch;
+}
+
+async function hasUpstream(
+  repo: string | undefined,
+  ctx: { workingDir: string; signal: AbortSignal },
+  branch: string,
+): Promise<boolean> {
+  const res = await runGit({
+    repo,
+    workingDir: ctx.workingDir,
+    args: ["rev-parse", "--abbrev-ref", `${branch}@{upstream}`],
+    signal: ctx.signal,
+    timeoutMs: 5_000,
+  });
+  return res.exitCode === 0 && res.stdout.trim().length > 0;
 }
 
 async function readRemoteUrl(

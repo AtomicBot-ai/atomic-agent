@@ -270,6 +270,40 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
     tier: "rare",
   },
   {
+    name: "os.git.remote",
+    summary:
+      "List, add, re-point or remove remotes. add/set-url need Remote sync on and approval; URLs with embedded credentials are refused.",
+    argsSchema: `{ repo?: string, action?: "list" | "add" | "set-url" | "remove", name?: string, url?: string }`,
+    tier: "rare",
+  },
+  {
+    name: "os.git.fetch",
+    summary: "Fetch a remote (default origin) or all. Needs Remote sync on; approval-gated.",
+    argsSchema: "{ repo?: string, remote?: string, all?: boolean, prune?: boolean }",
+    tier: "rare",
+  },
+  {
+    name: "os.git.pull",
+    summary: "Pull the current branch's upstream, fast-forward only unless rebase. Needs Remote sync on; approval-gated.",
+    argsSchema: "{ repo?: string, remote?: string, branch?: string, rebase?: boolean }",
+    tier: "rare",
+  },
+  {
+    name: "os.git.push",
+    summary:
+      "Push a branch (default: current) to a remote (default origin); sets upstream on first push; never forces. Needs Remote sync on; approval-gated.",
+    argsSchema: "{ repo?: string, remote?: string, branch?: string }",
+    examples: ['{"remote":"origin"}'],
+    tier: "rare",
+  },
+  {
+    name: "os.git.clone",
+    summary: "Clone a repository into the working directory (or dest). Needs Remote sync on; approval-gated.",
+    argsSchema: "{ url: string, dest?: string, branch?: string, depth?: number }",
+    examples: ['{"url":"https://github.com/owner/repo.git"}'],
+    tier: "rare",
+  },
+  {
     name: "os.proc.list",
     summary: "List processes (filter, limit). Read-only.",
     argsSchema: "{ filter?: string, limit?: number }",

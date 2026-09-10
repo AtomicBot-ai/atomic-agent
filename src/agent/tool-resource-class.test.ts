@@ -38,6 +38,11 @@ describe("tool-resource-class", () => {
       "os.proc.kill",
       "os.http.request",
       "skill.run_script",
+      "os.git.remote",
+      "os.git.fetch",
+      "os.git.pull",
+      "os.git.push",
+      "os.git.clone",
     ] as const;
     for (const name of expected) {
       expect(resourceClassFor(name)).toBe("approval_gated");
