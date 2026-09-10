@@ -76,6 +76,13 @@ export interface AgentLoopDependencies {
    * gate uses for `approvalRequired`.
    */
   isPlanMode?: () => boolean;
+  /**
+   * Whether the run mode resolves to fusion right now. Read per turn,
+   * for the reason `isPlanMode` is read per call: the operator can flip
+   * the mode between turns and the next turn should honour it. Absent
+   * (embedders, tests) means "not fusion", which gates nothing.
+   */
+  isFusionMode?: () => boolean;
   slotManager: SlotManager;
   grammar: string;
   llmComplete: (params: LlmStreamParams) => Promise<CompletionResult>;
@@ -838,6 +845,14 @@ export class AgentLoop {
       }
     }
 
+    // Fusion's division of labour is per TURN, not per session: each
+    // turn starts owing a plan and a fan-out before it may write. An
+    // ephemeral turn is a worker's own — the gate is the orchestrator's
+    // and must never close on the hands it is meant to free.
+    const fusionOrchestratorTurn =
+      (this.deps.isFusionMode?.() ?? false) && options.ephemeral !== true;
+    let fusionDelegatedThisTurn = false;
+
     let reason: AgentLoopReason = "max_steps";
     let stepsTaken = 0;
     let runError: Error | null = null;
@@ -1105,6 +1120,15 @@ export class AgentLoop {
             registry: this.deps.registry,
             ...(this.deps.isPlanMode
               ? { isPlanMode: this.deps.isPlanMode }
+              : {}),
+            ...(fusionOrchestratorTurn
+              ? {
+                  isFusionOrchestrator: () => true,
+                  hasDelegated: () => fusionDelegatedThisTurn,
+                  onDelegated: () => {
+                    fusionDelegatedThisTurn = true;
+                  },
+                }
               : {}),
             slotManager: this.deps.slotManager,
             grammar: activeGrammar,

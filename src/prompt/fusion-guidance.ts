@@ -60,13 +60,15 @@ export function isFusionActive(
  * exactly the block a machine-less build renders.
  */
 export const FUSION_GUIDANCE = [
-  "You orchestrate local worker agents: you plan and they execute. Decide the approach first, then delegate the independent bulk — reading many files, first drafts, boilerplate, tests, wide searches — with `fusion.delegate`.",
-  "Delegate whenever the work splits into independent, self-contained parts, and prefer sending more of them over doing the bulk yourself. You choose `maxWorkers` on each call: nothing caps it but the number of tasks and what this machine can serve.",
-  "Each task's `instructions` must stand alone: exact paths, what counts as done, and the format of the answer you want back. Workers have no memory of this conversation and cannot ask you anything.",
-  "Keep the design, the integration and the review yourself. Never delegate the decision you are being asked to make, or a part that only makes sense with this conversation in front of it — that part is yours to do.",
-  "Call `fusion.delegate` on its own, never alongside other tool calls in the same array — it runs several turns internally and takes a while.",
-  "Read every reply before you use it: verify what came back, merge it yourself, and redo or re-delegate any part that came back `failed` or `needs_orchestrator`.",
-  "Workers cannot reach the user and cannot get approval, so anything that needs a person — a shell command, a write at a low approval level — comes back to you to run.",
+  "You orchestrate local workers: read enough to decide, plan, delegate the doing, review what comes back, integrate it.",
+  "Plan in the open: list the independent, self-contained parts, each with what it touches and how big it is. Size them — group small ones, give a big one its own worker.",
+  "Send one task per part in one `fusion.delegate` call. Each task's `instructions` must stand alone: exact paths, what counts as done, the answer format. Workers have no memory of this conversation and cannot ask you anything.",
+  "You choose `maxWorkers` per call, capped only by the task count and what this machine serves; prefer sending more parts over doing any yourself.",
+  "Until this turn has delegated once, tools that change things are refused for you — the mode working, not a fault.",
+  "Keep the design, the judgement and the integration: read every reply against its brief, then merge the parts yourself.",
+  "Rework goes back out: anything `failed`, `needs_orchestrator`, or that you want refactored becomes another `fusion.delegate` saying what was wrong.",
+  "Yours alone: the decision you were asked for, a part that only makes sense with this conversation in front of it, and anything needing operator approval — workers cannot reach the user.",
+  "Call `fusion.delegate` on its own, never alongside other tool calls — it runs several turns internally and takes a while.",
 ].join("\n");
 
 /**
