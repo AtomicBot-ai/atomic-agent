@@ -235,9 +235,61 @@ function renderBold(s: string): string {
     .replace(/__([^_\n]+?)__/g, "<b>$1</b>");
 }
 
+// Characters that count as "inside a word" for the flanking guards
+// below: letters, digits, `_`, and the combining marks that attach to
+// them. `\p{M}` is in the set because a mark is part of the word it
+// sits on — without it the keycap `1️⃣*x*` would open emphasis (the
+// character immediately before the `*` is U+20E3 COMBINING ENCLOSING
+// KEYCAP) where the bare `1*x*` does not.
+//
+// These are Unicode classes rather than `\w`, which is ASCII-only in
+// JS. With `\w` the guards silently stopped applying to non-Latin
+// prose: `пи*2*пи` was emphasised where `pi*2*pi` was not, and
+// `слово_это_слово` lost its underscores where `snake_case_name` kept
+// them.
+const WORD_FLANK = String.raw`\p{L}\p{N}\p{M}_`;
+
+// Scripts written without spaces between words, exempted from the `*`
+// word guard.
+//
+// In Chinese, Japanese, Korean or Thai prose *every* emphasis run is
+// flanked by letters, so there the word guard is not a heuristic that
+// tells arithmetic from emphasis — it is a blanket disable of
+// single-`*` italics for the whole language, which is what it silently
+// became when the guard moved from `\w` to `\p{L}`. `这是*重点*内容`
+// has to stay `<i>`; CommonMark emphasises it and so do we.
+//
+// Exempting them costs very little on the arithmetic side, because the
+// guard only ever inspects the character immediately beside the
+// delimiter, and real code and arithmetic put an ASCII operand there:
+// `这是 20*log10(abs(15-1*25)) 的结果` is still literal, every `*` in
+// it flanked by ASCII digits and letters. What is given up is the
+// CJK-identifier product written with no spaces at all (`长*宽*高`
+// becomes `长<i>宽</i>高`) — the same result every CommonMark renderer
+// produces for that input.
+//
+// `_` is deliberately *not* exempted: CommonMark forbids intraword `_`
+// in every script, CJK included, so `这是_重点_内容` is literal
+// upstream too and matching that costs nothing.
+const SPACELESS_SCRIPT = String.raw`\p{scx=Han}\p{scx=Hiragana}\p{scx=Katakana}\p{scx=Hangul}\p{scx=Bopomofo}\p{scx=Thai}\p{scx=Lao}\p{scx=Khmer}\p{scx=Myanmar}\p{scx=Tibetan}`;
+
+const ITALIC_STAR = new RegExp(
+  `(^|[^*${WORD_FLANK}]|[${SPACELESS_SCRIPT}])` +
+    String.raw`\*([^*\s](?:[^*\n]*?[^*\s])?)\*` +
+    `(?!\\*)(?:(?=[${SPACELESS_SCRIPT}])|(?![${WORD_FLANK}]))`,
+  "gu",
+);
+
+const ITALIC_UNDERSCORE = new RegExp(
+  `(^|[^${WORD_FLANK}])` +
+    String.raw`_([^_\s](?:[^_\n]*?[^_\s])?)_` +
+    `(?![${WORD_FLANK}])`,
+  "gu",
+);
+
 function renderItalic(s: string): string {
   // A single `*` or `_` opens emphasis only when it is not glued to a
-  // letter or digit on the outside and not followed by whitespace on
+  // word character on the outside and not followed by whitespace on
   // the inside; the closing delimiter is the mirror image. Both
   // conditions matter, and each covers a different half of the
   // reported bug:
@@ -262,47 +314,103 @@ function renderItalic(s: string): string {
   //    `snake_case` survives), so upstream `*Note*s` and
   //    `un*frigging*believable` are `<em>` and here they stay
   //    literal. That asymmetry is intentional in the spec, and we are
-  //    overriding it on purpose: in an agent transcript a `*` wedged
-  //    between two word characters is arithmetic or a glob far more
-  //    often than it is emphasis, and guessing wrong destroys
-  //    characters rather than merely dropping a style.
+  //    overriding it on purpose: in a space-separated script, a `*`
+  //    wedged between two word characters is arithmetic or a glob far
+  //    more often than it is emphasis, and guessing wrong destroys
+  //    characters rather than merely dropping a style. In a script
+  //    written without spaces that reasoning does not hold at all,
+  //    which is why `SPACELESS_SCRIPT` is exempt.
   //  - Looser. This is a flanking approximation, not CommonMark's
   //    left/right-flanking algorithm. A pair flanked on the outside
   //    by punctuation — `rm build/*.o obj/*.o` — is still read as
   //    emphasis. CommonMark emphasises that one too, so it is not a
   //    divergence in itself, but the general punctuation case is only
   //    approximated; closing it means porting the whole algorithm.
-  //
-  // Both rules use Unicode letter/number classes rather than `\w`,
-  // which is ASCII-only in JS. With `\w` the guards silently stopped
-  // applying to non-Latin prose: `пи*2*пи` was emphasised where
-  // `pi*2*pi` was not, and `слово_это_слово` lost its underscores
-  // where `snake_case_name` kept them.
+  //    The `SPACELESS_SCRIPT` exemption widens that same gap a little,
+  //    because the word guard was masking part of it: over the 55,986
+  //    strings from the alphabet `* _ space a 这 点` up to length 6,
+  //    the count we emphasise and CommonMark leaves literal is 465
+  //    here against 71 with the guard applied to CJK — and 5,565 on
+  //    `origin/main`. All of the extra ones are marker soup (`*_*重`),
+  //    none of them are ill-formed, and none of them emphasise
+  //    anything `origin/main` leaves literal.
   //
   // `renderBold` has already consumed `**pairs**`, so the remaining
   // `*` runs here are single delimiters; the closing lookahead still
   // rejects a trailing `*` so a stray third asterisk is never
   // stranded next to an emitted `<i>`.
   //
-  // `tagsBalanced` is the safety net rather than a style rule: earlier
-  // passes have already emitted `<b>` / `<s>` / `<a>` into this
-  // string, and a marker soup like `__* *a__*` can otherwise place an
-  // `<i>` that crosses one of them. Telegram answers crossing tags
-  // with a 400 on the whole `sendMessage` — the outbound sender
-  // recovers by re-sending as plain text, but that costs the operator
-  // every bit of formatting in the reply — so a candidate whose body
-  // does not close what it opens stays literal instead.
-  return s
-    .replace(
-      /(^|[^*\p{L}\p{N}_])\*([^*\s](?:[^*\n]*?[^*\s])?)\*(?![\p{L}\p{N}_*])/gu,
-      (match: string, before: string, body: string) =>
-        tagsBalanced(body) ? `${before}<i>${body}</i>` : match,
-    )
-    .replace(
-      /(^|[^_\p{L}\p{N}])_([^_\s](?:[^_\n]*?[^_\s])?)_(?![\p{L}\p{N}_])/gu,
-      (match: string, before: string, body: string) =>
-        tagsBalanced(body) ? `${before}<i>${body}</i>` : match,
-    );
+  // The two structural guards below are safety nets rather than style
+  // rules. Earlier passes have already emitted `<b>` / `<s>` / `<a>`
+  // into this string, and Telegram answers malformed markup with a 400
+  // on the whole `sendMessage` — the outbound sender recovers by
+  // re-sending the chunk as plain text, but that costs the operator
+  // every bit of formatting in the reply.
+  //
+  //  - `tagsBalanced` refuses a candidate whose body opens a tag it
+  //    does not close, so a marker soup like `__* *a__*` cannot place
+  //    an `<i>` that crosses an earlier `<b>` / `<s>` / `<a>`.
+  //  - `tagMask` refuses a candidate whose own delimiter sits inside
+  //    a tag that an earlier pass emitted. `tagsBalanced` cannot see
+  //    that case, because a delimiter that splits `<a href="…">` down
+  //    the middle leaves no complete tag in the body to be unbalanced:
+  //    `*[a](http://x/*)*` used to come out as
+  //    `<i>&lt;a href="http://x/</i>">a</a>*`, with an orphan `</a>`
+  //    that Telegram rejects. That one is not caused by the emphasis
+  //    guards — it reproduces on `origin/main` too — but it is the
+  //    same class of damage these nets exist to stop.
+  //
+  // Neither net is a well-formedness proof for the converter as a
+  // whole. A raw `<` typed by the user still reaches the output
+  // unescaped through `escapeNonTagText` (`convert("<b>hello")` is
+  // `"<b>hello"`, on this branch and on `origin/main` alike); that is a
+  // separate, pre-existing hole and is not addressed here.
+  return renderItalicPass(renderItalicPass(s, ITALIC_STAR), ITALIC_UNDERSCORE);
+}
+
+function renderItalicPass(s: string, pattern: RegExp): string {
+  const tags = tagMask(s);
+  return s.replace(
+    pattern,
+    (match: string, before: string, body: string, offset: number) => {
+      const open = offset + before.length;
+      const close = offset + match.length - 1;
+      if (tags && (tags[open] === 1 || tags[close] === 1)) return match;
+      return tagsBalanced(body) ? `${before}<i>${body}</i>` : match;
+    },
+  );
+}
+
+/**
+ * Exactly the tags an earlier inline pass can have put into the string
+ * by the time `renderItalic` runs: `<b>` / `<i>` / `<s>` from
+ * `renderBold` and `renderStrikethrough`, and the anchor from
+ * `renderLinks` (whose href is already attribute-escaped, so it can
+ * hold no raw `"`). Code spans and fences are placeholders at this
+ * point, not tags.
+ *
+ * The pattern is deliberately this narrow rather than a generic
+ * `<[^<>]*>`: a `<a *>` the *user* typed is not one of our tags, and
+ * treating it as one would shield it from the emphasis pass and let it
+ * reach the output verbatim through the pre-existing
+ * `escapeNonTagText` hole.
+ */
+const EMITTED_TAG = /<\/?[bis]>|<a href="[^"]*">|<\/a>/g;
+
+/**
+ * A byte per character, 1 where that character belongs to a tag this
+ * converter has already emitted, or `null` when there is no such tag.
+ * Used to keep an emphasis delimiter from splitting an `<a href="…">`
+ * down the middle.
+ */
+function tagMask(s: string): Uint8Array | null {
+  if (!s.includes("<")) return null;
+  let mask: Uint8Array | null = null;
+  for (const m of s.matchAll(EMITTED_TAG)) {
+    mask ??= new Uint8Array(s.length);
+    mask.fill(1, m.index, m.index + m[0].length);
+  }
+  return mask;
 }
 
 /**

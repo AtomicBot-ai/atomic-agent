@@ -106,6 +106,23 @@ describe("convertMarkdownToTelegramHtml", () => {
       ],
       ["an ASCII snake_case identifier", "snake_case_name", "snake_case_name"],
       ["a spaced underscore", "a _ b _ c", "a _ b _ c"],
+      // Scripts written without spaces are exempt from the *word*
+      // guard (see below), but the exemption is per-character: real
+      // arithmetic puts an ASCII operand next to the `*`, so the same
+      // MATLAB line embedded in Chinese prose is still protected.
+      [
+        "a loose pair spanning a call inside Chinese prose",
+        "这是 20*log10(abs(15-1*25)) 的结果",
+        "这是 20*log10(abs(15-1*25)) 的结果",
+      ],
+      // CommonMark forbids intraword `_` in every script, CJK
+      // included, so there is nothing to give back here.
+      ["a Chinese underscore run", "这是_重点_内容", "这是_重点_内容"],
+      // The flanking character is U+20E3 COMBINING ENCLOSING KEYCAP,
+      // which is a mark rather than a digit; the word guard counts
+      // marks so the keycap behaves like the bare digit beside it.
+      ["a keycap-flanked pair", "1️⃣*x*", "1️⃣*x*"],
+      ["a digit-flanked pair", "1*x*", "1*x*"],
     ];
     for (const [name, input, expected] of literal) {
       it(`leaves ${name} literal`, () => {
@@ -136,6 +153,15 @@ describe("convertMarkdownToTelegramHtml", () => {
         "это _очень_ важно",
         "это <i>очень</i> важно",
       ],
+      // Chinese, Japanese, Korean and Thai are written without spaces
+      // between words, so *every* emphasis run in them is flanked by
+      // letters. Applying the word guard there is not a heuristic, it
+      // is a blanket disable of single-`*` italics for the language —
+      // these four are the reason `SPACELESS_SCRIPT` is exempt.
+      ["Chinese prose", "这是*重点*内容", "这是<i>重点</i>内容"],
+      ["Japanese prose", "これは*重要*です", "これは<i>重要</i>です"],
+      ["Korean prose", "이것은*중요*합니다", "이것은<i>중요</i>합니다"],
+      ["Thai prose", "ราคา*สอง*บาท", "ราคา<i>สอง</i>บาท"],
     ];
     for (const [name, input, expected] of emphasised) {
       it(`still emphasises ${name}`, () => {
@@ -195,6 +221,30 @@ describe("convertMarkdownToTelegramHtml", () => {
 
     it("refuses an underscore run that would cross a bold tag", () => {
       expect(convertMarkdownToTelegramHtml("**_ _a** _")).toBe("<b>_ _a</b> _");
+    });
+
+    it("keeps bold working in a script written without spaces", () => {
+      expect(convertMarkdownToTelegramHtml("这是**重点**内容")).toBe(
+        "这是<b>重点</b>内容",
+      );
+    });
+
+    // A `*` inside a URL splits the `<a href="…">` that `renderLinks`
+    // emitted, so the emphasis body holds no complete tag for
+    // `tagsBalanced` to reject and the run used to be wrapped anyway —
+    // producing `<i>&lt;a href="http://x/</i>">a</a>*`, an orphan
+    // `</a>` that Telegram answers with a 400. A delimiter sitting
+    // inside an already-emitted tag now refuses the candidate.
+    it("refuses a run whose delimiter sits inside an emitted anchor", () => {
+      expect(convertMarkdownToTelegramHtml("*[a](http://x/*)*")).toBe(
+        '*<a href="http://x/*">a</a>*',
+      );
+    });
+
+    it("refuses an underscore run whose delimiter sits inside an anchor", () => {
+      expect(convertMarkdownToTelegramHtml("_[a](http://x/_)_")).toBe(
+        '_<a href="http://x/_">a</a>_',
+      );
     });
   });
 
