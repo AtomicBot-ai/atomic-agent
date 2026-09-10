@@ -65,3 +65,37 @@ export interface ToolCallAdapter {
     options?: ToolBatchOptions,
   ): ToolCallBatch;
 }
+
+/**
+ * Whether an emitted tool array actually carries a `strict: true`
+ * function — i.e. whether the provider is being asked to constrain the
+ * decode for at least one tool.
+ *
+ * The reason this exists rather than a `strictTools` boolean read
+ * straight off the deps: strict is granted PER TOOL. `descriptorsToTools`
+ * marks only the functions whose schema it could rewrite, and an
+ * adapter with no strict mode ignores the option entirely, so "the
+ * operator asked for strict" and "this request contains strict tools"
+ * are different facts. Everything downstream that has to react to
+ * strict decoding — `parallel_tool_calls`, the tagged-response
+ * decoder's reading of `required` — keys off the array, which cannot
+ * disagree with itself.
+ *
+ * The shape is the OpenAI one because that is the shape
+ * `descriptorsToTools` returns for every adapter in the repo; a tool
+ * that is not a function, or carries no `strict`, simply does not
+ * match.
+ */
+export function hasStrictFunctionTools(
+  tools: ReadonlyArray<Record<string, unknown>> | undefined,
+): boolean {
+  if (!tools) return false;
+  return tools.some((tool) => {
+    const fn = tool.function;
+    return (
+      fn !== null &&
+      typeof fn === "object" &&
+      (fn as Record<string, unknown>).strict === true
+    );
+  });
+}

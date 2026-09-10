@@ -184,9 +184,14 @@ function buildFunctionsMemo(
  * the wire. It is a request, not an instruction: each function is marked
  * `strict` only when `toStrictJsonSchema` could rewrite its parameters
  * faithfully, and the ones it refuses (an open-object fallback schema, a
- * bound the strict compiler does not implement) ship exactly as they do
- * with the flag off. A mixed array is legal; a whole-array flag would
- * turn one unconvertible tool into a 400 on every request.
+ * typed open map, a `$ref`) ship exactly as they do with the flag off.
+ * A mixed array is legal; a whole-array flag would turn one
+ * unconvertible tool into a 400 on every request.
+ *
+ * A caller that puts this array in a request must also read
+ * `hasStrictFunctionTools` off it: strict decoding and parallel function
+ * calls do not compose, so a request carrying a strict function sends
+ * `parallel_tool_calls: false`. See `buildLlmStreamParams`.
  */
 export function descriptorsToOpenAiTools(
   descriptors: readonly ToolDescriptor[],

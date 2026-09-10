@@ -15,6 +15,7 @@ import { createEmptySessionState } from "../session/session-state.js";
 import { DEFAULT_TOOL_DESCRIPTORS } from "../prompt/tool-descriptors.js";
 import { replyTool } from "../tools/conversation/reply.js";
 import { resetConfigCache } from "../config/index.js";
+import { buildOpenAiChatBody } from "../llm/provider/openai/openai-build-body.js";
 import type {
   CapabilitiesSummary,
   SkillCatalogEntry,
@@ -1941,6 +1942,7 @@ describe("parallelToolCalls derivation (issue #104)", () => {
   async function captureStreamParams(deps?: {
     supportsParallelTools?: boolean;
     maxParallelToolCallsEnv?: string;
+    strictTools?: boolean;
   }) {
     if (deps?.maxParallelToolCallsEnv !== undefined) {
       process.env.ATOMIC_AGENT_MAX_PARALLEL_TOOL_CALLS =
@@ -1952,7 +1954,10 @@ describe("parallelToolCalls derivation (issue #104)", () => {
       id: "s-parallel-flag",
       workingDir: "/w",
     });
-    let captured: { parallelToolCalls?: boolean } | null = null;
+    let captured: {
+      parallelToolCalls?: boolean;
+      tools?: ReadonlyArray<Record<string, unknown>>;
+    } | null = null;
     const outcome = await executeStep(
       {
         session,
@@ -1967,7 +1972,10 @@ describe("parallelToolCalls derivation (issue #104)", () => {
         registry,
         slotManager: new SlotManager(2),
         llmComplete: async (params) => {
-          captured = { parallelToolCalls: params.parallelToolCalls };
+          captured = {
+            parallelToolCalls: params.parallelToolCalls,
+            ...(params.tools ? { tools: params.tools } : {}),
+          };
           return {
             content: JSON.stringify([
               {
@@ -1996,6 +2004,9 @@ describe("parallelToolCalls derivation (issue #104)", () => {
         supportsSlotAffinity: false,
         ...(deps?.supportsParallelTools !== undefined
           ? { supportsParallelTools: deps.supportsParallelTools }
+          : {}),
+        ...(deps?.strictTools !== undefined
+          ? { strictTools: deps.strictTools }
           : {}),
       },
     );
@@ -2029,6 +2040,78 @@ describe("parallelToolCalls derivation (issue #104)", () => {
       maxParallelToolCallsEnv: "8",
     });
     expect(captured.parallelToolCalls).toBe(true);
+  });
+
+  /**
+   * The fourth veto, and the one that is not a preference: OpenAI
+   * documents that Structured Outputs is not compatible with parallel
+   * function calls — a parallel call generated under strict mode "may
+   * not match supplied schemas" — and says to send
+   * `parallel_tool_calls: false`. A request that marks tools `strict`
+   * and still asks for parallel calls buys best-effort adherence, which
+   * is exactly the symptom `supportsTools: "strict"` exists to cure.
+   */
+  it("sends parallelToolCalls false under strict tools, whatever the cap says", async () => {
+    const captured = await captureStreamParams({
+      strictTools: true,
+      supportsParallelTools: true,
+      maxParallelToolCallsEnv: "8",
+    });
+    expect(
+      captured.tools?.some(
+        (t) =>
+          (t.function as { strict?: boolean } | undefined)?.strict === true,
+      ),
+    ).toBe(true);
+    expect(captured.parallelToolCalls).toBe(false);
+  });
+
+  it("reaches the wire body as parallel_tool_calls: false", async () => {
+    // End to end, because that is the only place the two facts meet:
+    // the executor decides, `buildOpenAiChatBody` serialises, and a
+    // regression in either one is invisible from the other's tests.
+    const captured = await captureStreamParams({
+      strictTools: true,
+      supportsParallelTools: true,
+      maxParallelToolCallsEnv: "8",
+    });
+    const body = buildOpenAiChatBody(
+      {
+        prompt: "read the file",
+        tools: captured.tools,
+        ...(captured.parallelToolCalls !== undefined
+          ? { parallelToolCalls: captured.parallelToolCalls }
+          : {}),
+      },
+      "mercury-2.5",
+      false,
+    );
+    expect(body.parallel_tool_calls).toBe(false);
+  });
+
+  it("leaves the wire body alone when the level is off", async () => {
+    // The other half: no strict marking anywhere, so nothing about this
+    // request may differ from what it was before the feature existed.
+    const captured = await captureStreamParams({
+      supportsParallelTools: true,
+      maxParallelToolCallsEnv: "8",
+    });
+    expect(
+      captured.tools?.some(
+        (t) =>
+          (t.function as { strict?: boolean } | undefined)?.strict === true,
+      ),
+    ).toBe(false);
+    const body = buildOpenAiChatBody(
+      {
+        prompt: "read the file",
+        tools: captured.tools,
+        parallelToolCalls: captured.parallelToolCalls ?? true,
+      },
+      "mercury-2.5",
+      false,
+    );
+    expect(body.parallel_tool_calls).toBe(true);
   });
 });
 

@@ -82,7 +82,10 @@ import type {
   ResponseFormatJsonSchema,
   ToolCallTransport,
 } from "../llm/provider/completion-types.js";
-import type { ToolCallAdapter } from "../llm/provider/adapters/tool-call-adapter.js";
+import {
+  hasStrictFunctionTools,
+  type ToolCallAdapter,
+} from "../llm/provider/adapters/tool-call-adapter.js";
 import { openAiToolCallAdapter } from "../llm/provider/openai/openai-tool-call-adapter.js";
 import type { ProfileFact } from "../memory/profile-store.js";
 import type { AgentMetrics } from "../tracing/agent-metrics.js";
@@ -1669,6 +1672,9 @@ function buildLlmStreamParams(args: {
     return base;
   }
   const adapter = args.deps.toolCallAdapter ?? openAiToolCallAdapter;
+  const tools = adapter.descriptorsToTools(args.toolDescriptors, {
+    strict: args.deps.strictTools === true,
+  });
   return {
     ...base,
     // Keep `grammar` populated (not blanked) even on the native path: the
@@ -1676,9 +1682,7 @@ function buildLlmStreamParams(args: {
     // llama-server link, which needs the GBNF. Native (cloud) providers
     // ignore `grammar` entirely and read `tools`, so carrying both makes
     // the request valid for whichever link actually serves it.
-    tools: adapter.descriptorsToTools(args.toolDescriptors, {
-      strict: args.deps.strictTools === true,
-    }),
+    tools,
     // `auto` instead of `required`. Three production-observed reasons:
     //   * Qwen-thinking providers (Alibaba gate) reject `required` outright
     //     with `<400> InvalidParameter: tool_choice does not support being
@@ -1702,7 +1706,26 @@ function buildLlmStreamParams(args: {
     // (Gemini) lack stable indices for parallel calls, so the setting
     // must reach the wire, not just the executor's batch planner
     // (issue #104).
+    //
+    // A request carrying strict tools has a third veto, and it is not
+    // optional: OpenAI states that Structured Outputs is not compatible
+    // with parallel function calls — "when a parallel function call is
+    // generated, it may not match supplied schemas" — and says to set
+    // `parallel_tool_calls: false`. Leaving it at `true` would mark
+    // every convertible tool `strict` and still get best-effort
+    // adherence, which is the exact symptom this feature exists to
+    // cure, so the operator who turns strict on gets one tool call per
+    // response on the wire. (Credit: the parallel work on #402 found
+    // this; this branch had missed it.) The executor's own
+    // `maxParallelToolCalls` batching is untouched — a model that
+    // emits several calls anyway is still planned and run the same way.
+    //
+    // Keyed to the emitted array, not to `deps.strictTools`: strict is
+    // granted per tool, and an adapter that ignored the option, or a
+    // descriptor set where nothing converted, must not silently lose
+    // parallel calls for a request that is not constrained at all.
     parallelToolCalls:
+      !hasStrictFunctionTools(tools) &&
       getConfig().agent.maxParallelToolCalls > 1 &&
       (args.deps.supportsParallelTools ?? true),
   };
