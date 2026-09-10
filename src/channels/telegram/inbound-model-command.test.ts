@@ -690,4 +690,115 @@ describe("/model over Telegram", () => {
     );
     expect(report).toContain("more not shown");
   });
+
+  /**
+   * The three refusals and the one confirmation below all interpolate a
+   * name the config schema does not bound, and all four are reachable
+   * with a single chat message: Discord accepts 2000 characters inbound
+   * and Telegram 4096, so "the operator just typed it" is the *likeliest*
+   * source of a pathological id, not the least likely. The report's cap
+   * (above) never sees these paths.
+   */
+  it("clips the model id in the switch confirmation", async () => {
+    process.env.OPENROUTER_API_KEY = "k";
+    // 2000 characters in total — exactly what Discord accepts inbound,
+    // and well inside Telegram's own 4096.
+    const long = `vendor/${"m".repeat(1975)}`;
+    await say(`/model openrouter ${long}`);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]?.length).toBeLessThanOrEqual(2000);
+    expect(sent[0]).not.toContain(long);
+    expect(sent[0]).toContain("…");
+    // Clipping is a display concern only: the pin the TUI reads back is
+    // the id that was typed, whole.
+    expect(
+      getConfig().llm?.providers.find((p) => p.id === "openrouter")
+        ?.defaultChatModel,
+    ).toBe(long);
+  });
+
+  it("clips the model id in the llama-server refusal", async () => {
+    const long = `vendor/${"m".repeat(1974)}`;
+    await say(`/model local-llama ${long}`);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]?.length).toBeLessThanOrEqual(2000);
+    expect(sent[0]).not.toContain(long);
+    expect(sent[0]).toContain("…");
+    // Still a refusal, not a pin.
+    expect(
+      getConfig().llm?.providers.find((p) => p.id === "local-llama")
+        ?.defaultChatModel,
+    ).toBeUndefined();
+  });
+
+  it("clips a declared env var in the no-key refusal", async () => {
+    // `apiKeyEnvVar` is `parseOptionalString`, so it is any non-empty
+    // string — the report already clips it, and this refusal is the
+    // other place it is printed.
+    const long = `LONG_${"E".repeat(500)}`;
+    writeLlmConfig(stateDir, {
+      extraProviders: [
+        {
+          id: "long-env",
+          kind: "openai-compatible",
+          baseUrl: "http://127.0.0.1:1298/v1",
+          defaultChatModel: "gpt-x",
+          apiKeyEnvVar: long,
+        },
+      ],
+    });
+    await say("/model long-env");
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toContain("has no API key configured");
+    expect(sent[0]).not.toContain(long);
+    expect(sent[0]).toContain("…");
+    expect(sent[0]?.length).toBeLessThanOrEqual(2000);
+    expect(getConfig().llm?.activeTextProvider).toBe("local-llama");
+  });
+
+  it("names every candidate an ambiguous prefix matches", async () => {
+    // This is the one message whose whole job is "say which one", so it
+    // is fitted to the message limit rather than to an entry count: a
+    // candidate that is hidden cannot be picked, and a chat offers no
+    // way to page through the rest.
+    writeLlmConfig(stateDir, {
+      extraProviders: Array.from({ length: 60 }, (_, i) => ({
+        id: `compat-provider-${i}`,
+        kind: "openai-compatible",
+        baseUrl: `http://127.0.0.1:${1300 + i}/v1`,
+        defaultChatModel: `vendor/really-long-model-identifier-v${i}-instruct`,
+      })),
+    });
+    await say("/model compat");
+    expect(sent).toHaveLength(1);
+    const [msg = ""] = sent;
+    expect(msg.length).toBeLessThanOrEqual(2000);
+    expect(msg).toContain("compat-provider-0");
+    // The sixtieth, not a count: all of them fit, so all of them print.
+    expect(msg).toContain("compat-provider-59");
+    expect(msg).not.toMatch(/and \d+ more/);
+    expect(getConfig().llm?.activeTextProvider).toBe("local-llama");
+  });
+
+  it("counts ambiguous candidates only past the limit, and says how to narrow", async () => {
+    // 120 entries at the longest id `PROVIDER_ID_RE` allows (32
+    // characters) — more than one message can hold however it is
+    // fitted, which is the only case where hiding one is unavoidable.
+    writeLlmConfig(stateDir, {
+      extraProviders: Array.from({ length: 120 }, (_, i) => ({
+        id: `zz-aaaaaaaaaaaaaaaaaaaaaaaaa-${String(i).padStart(3, "0")}`,
+        kind: "openai-compatible",
+        baseUrl: `http://127.0.0.1:${1300 + i}/v1`,
+        defaultChatModel: "gpt-x",
+      })),
+    });
+    await say("/model zz");
+    expect(sent).toHaveLength(1);
+    const [msg = ""] = sent;
+    expect(msg.length).toBeLessThanOrEqual(2000);
+    expect(msg).toMatch(/and \d+ more/);
+    // A count alone would be unactionable; this is the one thing the
+    // operator can do about it from a chat.
+    expect(msg).toContain("type more of the id to narrow the list");
+  });
 });

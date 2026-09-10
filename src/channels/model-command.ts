@@ -234,8 +234,11 @@ async function runModelCommandInner(
   // both landed above, so the managed-daemon leg of `displayModelOf`
   // applies to this entry the same way it applies in `bootstrap`.
   const shown = entry ? displayModelOf(entry, after, true) : null;
+  // Clipped exactly as the report clips it, and for the same reason:
+  // the model id here is whatever was just typed into the chat, so this
+  // is the *most* likely message to carry a pathological one.
   const reply = `Now on ${chat.code(target.providerId)} · ${chat.code(
-    shown ?? "provider default",
+    shown === null ? "provider default" : clipName(shown),
   )}. Takes effect on the next message.`;
   const note = runModeChangeNote(
     modeBefore,
@@ -436,12 +439,22 @@ function resolveTarget(
     };
   }
   if (match.kind === "ambiguous") {
+    // Fitted to a character budget rather than an entry count: this is
+    // the one message whose whole job is "say which one", so hiding a
+    // candidate that would have fitted removes the very information it
+    // asks the operator to act on. See {@link MAX_AMBIGUOUS_LIST_CHARS}.
+    const fitted = fitIds(match.ids, code, {
+      maxChars: MAX_AMBIGUOUS_LIST_CHARS,
+    });
+    const listed =
+      fitted.hidden === 0
+        ? fitted.text
+        : `${fitted.text} and ${fitted.hidden} more`;
     return {
       ok: false,
-      message: `${code(clipName(token))} matches ${joinIds(
-        match.ids,
-        code,
-      )} — say which one.`,
+      message: `${code(clipName(token))} matches ${listed} — say which one${
+        fitted.hidden === 0 ? "" : ", or type more of the id to narrow the list"
+      }.`,
     };
   }
 
@@ -453,7 +466,7 @@ function resolveTarget(
       message: `Provider ${code(entry.id)} has no API key configured${
         missingKey.envVar === null
           ? ""
-          : ` (${code(missingKey.envVar)} is unset)`
+          : ` (${code(clipName(missingKey.envVar))} is unset)`
       }; add one in the TUI's LLM tab before switching to it.`,
     };
   }
@@ -469,7 +482,7 @@ function resolveTarget(
       ok: false,
       message: [
         `${code(entry.id)} is a local ${code(entry.kind)} provider: it serves whichever model its daemon loaded, and nothing reads a model id off its config entry.`,
-        `Pinning ${code(modelId)} would rename it everywhere — reports, analytics, cost — without changing what runs, and no chat command could undo that.`,
+        `Pinning ${code(clipName(modelId))} would rename it everywhere — reports, analytics, cost — without changing what runs, and no chat command could undo that.`,
         `Use ${code(`/model ${entry.id}`)} to switch to it; pick the local model in the TUI's Local Models tab.`,
       ].join(" "),
     };
@@ -655,25 +668,73 @@ function clipName(text: string): string {
   return `${text.slice(0, MAX_NAME_CHARS - 1)}…`;
 }
 
-/** Most provider ids a refusal enumerates before it starts counting. */
+/**
+ * Most provider ids the **unknown-provider** refusal enumerates before
+ * it starts counting.
+ *
+ * That list is orientation, not a menu: the token matched nothing, so
+ * what the refusal has to teach is the *form* of the command plus
+ * enough real ids to recognise the shape of one. A dozen does that on
+ * any install, and keeps a hundred-entry config from turning a typo
+ * into the longest message the bot ever sends.
+ */
 const MAX_LISTED_IDS = 12;
 
 /**
- * Decorated, comma-joined provider ids for a refusal — capped the same
- * way {@link formatReport} caps its list, and for the same reason: a
- * refusal that names every entry on an install with dozens of them is
- * the message most likely to be sent, and the one an operator is least
- * able to act on when the chat splits it in two.
+ * Characters the **ambiguous-prefix** refusal may spend on its
+ * candidate list.
+ *
+ * Fitted by size and not by count, because unlike the list above these
+ * ids *are* the answer: the sentence asks the operator to pick one, and
+ * a candidate that was hidden cannot be picked — there is no way to
+ * page through them from a chat. So everything that fits in one message
+ * is printed. `PROVIDER_ID_RE` caps an id at 32 characters, so 1500
+ * holds at least 40 of the longest ids that can exist and about 75
+ * realistic ones, while leaving the rest of the sentence room under
+ * Discord's 2000. Past that the count appears — and then the message
+ * also says the one thing that shortens the list, which is typing more
+ * of the id.
+ */
+const MAX_AMBIGUOUS_LIST_CHARS = 1500;
+
+/**
+ * Decorated provider ids fitted to a limit, and how many did not fit.
+ *
+ * `maxIds` caps the entries, `maxChars` the printed length; either may
+ * be omitted. At least one id is always listed when there is one —
+ * a budget too small for even a single entry would otherwise render as
+ * "matches  and 3 more", which names nothing at all.
+ */
+function fitIds(
+  ids: readonly string[],
+  code: (text: string) => string,
+  limit: { maxIds?: number; maxChars?: number },
+): { text: string; hidden: number } {
+  const maxIds = limit.maxIds ?? ids.length;
+  const maxChars = limit.maxChars ?? Number.POSITIVE_INFINITY;
+  const listed: string[] = [];
+  let used = 0;
+  for (const id of ids) {
+    if (listed.length >= maxIds) break;
+    const piece = code(id);
+    const cost = piece.length + (listed.length === 0 ? 0 : 2);
+    if (listed.length > 0 && used + cost > maxChars) break;
+    listed.push(piece);
+    used += cost;
+  }
+  return { text: listed.join(", "), hidden: ids.length - listed.length };
+}
+
+/**
+ * Decorated, comma-joined provider ids for the unknown-provider
+ * refusal, capped at {@link MAX_LISTED_IDS} with the overflow counted.
  */
 function joinIds(
   ids: readonly string[],
   code: (text: string) => string,
 ): string {
-  const listed = ids.slice(0, MAX_LISTED_IDS).map((id) => code(id));
-  const hidden = ids.length - listed.length;
-  return hidden > 0
-    ? `${listed.join(", ")} and ${hidden} more`
-    : listed.join(", ");
+  const { text, hidden } = fitIds(ids, code, { maxIds: MAX_LISTED_IDS });
+  return hidden > 0 ? `${text} and ${hidden} more` : text;
 }
 
 /** One `• id · model (active) — no API key (VAR is unset)` line. */
