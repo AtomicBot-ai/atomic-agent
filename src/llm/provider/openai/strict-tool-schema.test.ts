@@ -200,6 +200,86 @@ describe("toStrictJsonSchema", () => {
         }),
       ).toBeNull();
     });
+
+    /**
+     * `anyOf` next to a sibling `type` is a shape the module declines to
+     * guess at, and it is not academic: a strict compiler reads the two
+     * as contradicting each other, and passing it through would emit a
+     * node no provider can compile — a 400 on the whole request, not on
+     * this one tool. Nothing pinned the refusal, so inverting the test
+     * for it was a silent mutation.
+     */
+    it("refuses a union that also declares a sibling type", () => {
+      expect(
+        toStrictJsonSchema({
+          type: "object",
+          properties: {
+            x: {
+              type: "string",
+              anyOf: [{ type: "string" }, { type: "number" }],
+            },
+          },
+          required: ["x"],
+          additionalProperties: false,
+        }),
+      ).toBeNull();
+    });
+
+    /**
+     * The bound on nesting. Built-in descriptors reach two levels, so
+     * only a third-party MCP `inputSchema` gets anywhere near this —
+     * which is exactly the input nobody controls. Past the ceiling the
+     * tool keeps the definition it ships today instead of taking every
+     * other tool's definition down with it in a rejected request.
+     */
+    it("refuses a schema nested deeper than the strict ceiling", () => {
+      const nest = (levels: number): Record<string, unknown> => {
+        let node: Record<string, unknown> = { type: "string" };
+        for (let i = 0; i < levels; i += 1) {
+          node = {
+            type: "object",
+            properties: { p: node },
+            required: ["p"],
+            additionalProperties: false,
+          };
+        }
+        return node;
+      };
+      expect(toStrictJsonSchema(nest(5))).not.toBeNull();
+      expect(toStrictJsonSchema(nest(6))).toBeNull();
+      // Arrays count as a level too. `rows` is one, its `items` a
+      // second, so four more object wrappers overrun a ceiling that the
+      // same four would clear one level higher.
+      const inArray = (levels: number): Record<string, unknown> => ({
+        type: "object",
+        properties: { rows: { type: "array", items: nest(levels) } },
+        required: ["rows"],
+        additionalProperties: false,
+      });
+      expect(toStrictJsonSchema(inArray(3))).not.toBeNull();
+      expect(toStrictJsonSchema(inArray(4))).toBeNull();
+    });
+
+    /**
+     * A self-referential descriptor cannot come off the wire — MCP
+     * schemas arrive through `JSON.parse` — but it can be built in
+     * process, and the recursion used to answer it with a `RangeError`
+     * that escaped `descriptorsToOpenAiTools` and killed the step. A
+     * refusal is the only acceptable answer to a schema we cannot
+     * express.
+     */
+    it("refuses a cyclic schema instead of overflowing the stack", () => {
+      const cyclic: Record<string, unknown> = {
+        type: "object",
+        properties: {},
+        required: [],
+        additionalProperties: false,
+      };
+      (cyclic.properties as Record<string, unknown>).self = cyclic;
+      (cyclic.required as string[]).push("self");
+      expect(() => toStrictJsonSchema(cyclic)).not.toThrow();
+      expect(toStrictJsonSchema(cyclic)).toBeNull();
+    });
   });
 
   /**

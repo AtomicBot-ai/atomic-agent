@@ -61,16 +61,42 @@ const SCALAR_TYPES: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * How deep a schema may nest and still convert.
+ *
+ * The keyword allowlist bounds *what* a node may say; nothing bounded
+ * how many of them there are, and the built-in descriptors (deepest:
+ * `os.shell.run`, two levels) hid that. A third-party MCP `inputSchema`
+ * is not so polite. Two things go wrong without a bound, both of them
+ * exactly the failure this module exists to avoid:
+ *
+ *   * strict compilers cap nesting — OpenAI documents a ceiling and
+ *     other OpenAI-compatible vendors are not more generous — and a
+ *     schema past it is rejected with the whole request, taking every
+ *     other tool's definition down with it;
+ *   * a self-referential node (an in-process descriptor, not something
+ *     `JSON.parse` can build, but nothing here promised otherwise) ran
+ *     the recursion into a `RangeError` that escaped
+ *     `descriptorsToOpenAiTools` and killed the step.
+ *
+ * Five is the conservative reading of the published ceiling. Refusing a
+ * deeper schema costs that one tool its strict marking and nothing else
+ * — it ships exactly as it does today — so the cheap answer is the
+ * right one.
+ */
+const MAX_NESTING = 5;
+
+/**
  * The strict form of `schema`, or `null` when it cannot be produced.
  * The input is never mutated: every node is rebuilt.
  */
 export function toStrictJsonSchema(schema: unknown): Schema | null {
   const root = asObject(schema);
   if (!root || root.type !== "object") return null;
-  return convertNode(root);
+  return convertNode(root, 0);
 }
 
-function convertNode(node: Schema): Schema | null {
+function convertNode(node: Schema, depth: number): Schema | null {
+  if (depth > MAX_NESTING) return null;
   for (const key of Object.keys(node)) {
     if (!SUPPORTED_KEYWORDS.has(key)) return null;
   }
@@ -83,7 +109,7 @@ function convertNode(node: Schema): Schema | null {
     for (const raw of node.anyOf) {
       const branch = asObject(raw);
       if (!branch) return null;
-      const converted = convertNode(branch);
+      const converted = convertNode(branch, depth);
       if (!converted) return null;
       branches.push(converted);
     }
@@ -99,15 +125,15 @@ function convertNode(node: Schema): Schema | null {
   if (type === "array") {
     const items = asObject(node.items);
     if (!items) return null;
-    const converted = convertNode(items);
+    const converted = convertNode(items, depth + 1);
     if (!converted) return null;
     return { ...node, items: converted };
   }
   if (type !== "object") return null;
-  return convertObject(node);
+  return convertObject(node, depth);
 }
 
-function convertObject(node: Schema): Schema | null {
+function convertObject(node: Schema, depth: number): Schema | null {
   // An open object is the case with no strict form: closing it would
   // silently forbid arguments the tool accepts today.
   if (
@@ -129,7 +155,7 @@ function convertObject(node: Schema): Schema | null {
   for (const [name, raw] of Object.entries(properties)) {
     const child = asObject(raw);
     if (!child) return null;
-    const converted = convertNode(child);
+    const converted = convertNode(child, depth + 1);
     if (!converted) return null;
     out[name] = required.has(name) ? converted : nullable(converted);
     required.delete(name);
