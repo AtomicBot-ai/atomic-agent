@@ -590,6 +590,27 @@ Local models use `localModels.completionMaxTokens` (llama.cpp's `n_predict`, def
 </details>
 
 <details>
+<summary><b>Models that need strict tool schemas</b> (<code>strictTools</code>)</summary>
+
+Some models call tools reliably only when the provider constrains decoding to the tool's schema — OpenAI's **strict mode**. Set `strictTools` on the provider entry to send every function as `strict`:
+
+```json
+"llm": { "providers": [{ "id": "mercury", "kind": "openai-compatible", "strictTools": true }] }
+```
+
+Off by default, and only for OpenAI-compatible kinds (`openai-compatible`, `qwen-openai-compatible`, `openrouter`, `aimlapi`, `gemini`). `strict` is a field on each tool, so `extraBody` cannot reach it — `tools` is a reserved key that is re-applied after that merge.
+
+With the flag on, every tool schema is rewritten into the subset strict mode accepts: objects are closed, every property is listed in `required` (an optional one becomes nullable instead of being omitted), and value-range keywords the runtime validators enforce anyway (`minItems`, `minLength`, `pattern`, `format`, `default`, …) are stripped. A handful of tools take a free-form map — `os.http.request`'s headers and body, `mcp.prompt.get`'s arguments — and those cannot be expressed strictly; they are sent unconstrained (`strict: false`) rather than silently losing their arguments.
+
+Because optionals become nullable, a strict model sends `"pinned": null` where it used to omit the key; on these providers a top-level `null` argument is dropped again before the call runs, so tools that check for presence behave as they always did.
+
+The flag also sends `parallel_tool_calls: false`. Strict decoding and parallel calls do not compose — OpenAI's guidance is that a parallel call "may not match supplied schemas" — so a provider asked for strict tools is asked for one call per response. `agent.maxParallelToolCalls` still governs how the runtime executes a batch.
+
+Turn it on only for a service that implements strict mode: one that does not will reject the whole request, not just the field.
+
+</details>
+
+<details>
 <summary><b>Configuration and secrets</b> (state dir, env vars, .env)</summary>
 
 User-facing configuration lives in `<stateDir>/config.json`.

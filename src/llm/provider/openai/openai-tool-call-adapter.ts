@@ -13,6 +13,7 @@ import {
   strictWidenedProperties,
   toStrictJsonSchema,
 } from "./strict-tool-schema.js";
+import { withoutTopLevelNullArgs } from "./openai-strict-tools.js";
 
 const REPLY_TOOL = "reply";
 const FINISH_TOOL = "finish";
@@ -341,6 +342,31 @@ export function openAiToolCallsToBatch(
     return { kind: "batch", calls, reasoning };
   }
   return { kind: "batch", calls, reasoning };
+}
+
+/**
+ * Wraps an adapter so parsed calls lose their top-level `null`
+ * arguments — the shape a model produces once strict mode has forced
+ * every optional parameter into `required` as a nullable. Applied only
+ * on providers that opted into `strictTools`, so nothing changes for
+ * anyone else. See `withoutTopLevelNullArgs`.
+ */
+export function withStrictNullArgumentDrop(
+  adapter: ToolCallAdapter,
+): ToolCallAdapter {
+  return {
+    ...adapter,
+    toolCallsToBatch: (toolCalls, reasoningText) => {
+      const batch = adapter.toolCallsToBatch(toolCalls, reasoningText);
+      return {
+        ...batch,
+        calls: batch.calls.map((call) => {
+          const args = withoutTopLevelNullArgs(call.args);
+          return args === call.args ? call : { ...call, args };
+        }),
+      };
+    },
+  };
 }
 
 export const openAiToolCallAdapter: ToolCallAdapter = {

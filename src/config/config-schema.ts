@@ -946,6 +946,14 @@ export interface AtomicAgentConfig {
        */
       extraBody?: Record<string, unknown>;
       /**
+       * Emit OpenAI strict function tools (`tools[].function.strict`)
+       * for this provider, rewriting each tool schema into the subset
+       * strict mode accepts. Off by default: a service that does not
+       * implement strict mode rejects the whole request. Not reachable
+       * through `extraBody`, because `tools` is a reserved key.
+       */
+      strictTools?: boolean;
+      /**
        * Settings for a `subscription-cli` provider: which already
        * signed-in vendor CLI to drive (`claude`, `codex`) and how to
        * invoke it. There is no API key on these entries — the CLI
@@ -2093,7 +2101,14 @@ export interface UserConfigFile {
 // is the old default `2` (which nobody chose — it was the schema's)
 // becomes `"auto"`; any other number is read as a deliberate pin and
 // kept.
-export const USER_CONFIG_VERSION = 63;
+// v64: provider entries accept `strictTools` — emit OpenAI strict
+// function tools (`tools[].function.strict: true`) for this provider,
+// with every tool schema rewritten into the subset strict mode accepts.
+// Additive and off by default: an older file has no flag, and without
+// the flag the request body is byte-identical to v63's. (Written as v63
+// on its own branch; renumbered here because the slot-count change took
+// that number first.)
+export const USER_CONFIG_VERSION = 64;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -2245,6 +2260,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   60,
   61,
   62,
+  63,
   USER_CONFIG_VERSION,
 ];
 

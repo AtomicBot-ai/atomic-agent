@@ -1,6 +1,7 @@
 import type { CompletionRequest } from "../completion-types.js";
 import { hasStrictFunctionTools } from "../adapters/tool-call-adapter.js";
 import { filterCloudCompletionRequest } from "./sampling-filter.js";
+import { toStrictOpenAiTools } from "./openai-strict-tools.js";
 
 /**
  * Fields the caller owns unconditionally. `extraBody` is merged *under*
@@ -16,6 +17,7 @@ export function buildOpenAiChatBody(
   stream: boolean,
   extraBody?: Record<string, unknown>,
   maxOutputTokens?: number,
+  strictTools?: boolean,
 ): Record<string, unknown> {
   const filtered = filterCloudCompletionRequest(request);
   const body: Record<string, unknown> = {
@@ -59,18 +61,30 @@ export function buildOpenAiChatBody(
   if (filtered.stop) body.stop = filtered.stop;
   if (typeof filtered.seed === "number") body.seed = filtered.seed;
   if (filtered.tools && filtered.tools.length > 0) {
-    body.tools = filtered.tools;
+    // Strict function tools, when the provider entry opted in. Done
+    // here — before the `extraBody` merge — precisely because `tools`
+    // is a reserved key: the loop below restores `body.tools` over the
+    // merge, so the transformed array is what survives. Off by default,
+    // and off it must leave this line byte-identical to what it was.
+    const emittedTools = strictTools
+      ? toStrictOpenAiTools(filtered.tools)
+      : filtered.tools;
+    body.tools = emittedTools;
     // Structured Outputs and parallel function calls do not compose:
     // OpenAI documents that a parallel call generated under strict mode
     // "may not match supplied schemas" and says to send
-    // `parallel_tool_calls: false`. The caller decides this — see
-    // `buildLlmStreamParams` — and this line is the floor under that
-    // decision: whoever builds a request carrying a `strict: true`
-    // function cannot end up asking for parallel calls with it,
-    // including the callers that never learned about the setting.
-    // Keyed to the array itself, so the two points cannot disagree.
+    // `parallel_tool_calls: false`.
+    //
+    // Keyed to the array that actually goes on the wire, which covers
+    // both ways a request can end up carrying strict functions: the
+    // provider flag above, which marks every tool, and a caller that
+    // marked some itself (`buildLlmStreamParams`). Whoever builds the
+    // request, it cannot leave here asking for parallel calls with a
+    // `strict: true` function in the payload. The executor's own
+    // `maxParallelToolCalls` batching is untouched, and a provider
+    // without either keeps today's value verbatim.
     body.parallel_tool_calls =
-      !hasStrictFunctionTools(filtered.tools) &&
+      !hasStrictFunctionTools(emittedTools) &&
       (filtered.parallelToolCalls ?? true);
     if (filtered.toolChoice !== undefined) {
       body.tool_choice = filtered.toolChoice;
