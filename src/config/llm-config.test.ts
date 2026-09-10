@@ -244,15 +244,27 @@ describe("llm-config", () => {
         workers: 3,
       },
     });
+    // A pin still has to name a configured provider — that is what the
+    // validation is for. Which KIND holds which leg is the operator's
+    // choice, so a local orchestrator parses.
     expect(() =>
+      parseUserConfigFile({
+        ...baseLlm(undefined),
+        llm: {
+          ...baseLlm(undefined).llm,
+          runMode: { fusion: { orchestratorProvider: "not-configured" } },
+        },
+      }),
+    ).toThrow(/llm\.runMode\.fusion\.orchestratorProvider/);
+    expect(
       parseUserConfigFile({
         ...baseLlm(undefined),
         llm: {
           ...baseLlm(undefined).llm,
           runMode: { fusion: { orchestratorProvider: "local-llama" } },
         },
-      }),
-    ).toThrow(/llm\.runMode\.fusion\.orchestratorProvider/);
+      }).llm?.runMode?.fusion?.orchestratorProvider,
+    ).toBe("local-llama");
   });
 
   it("omits runMode entirely when not configured", () => {
