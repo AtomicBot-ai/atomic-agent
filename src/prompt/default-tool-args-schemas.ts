@@ -31,6 +31,7 @@
 
 import { DOCUMENT_FORMATS } from "../tools/os/read-document/extractors/extractor-types.js";
 import type { ToolDescriptor } from "./stable-prefix.js";
+import { GITHUB_TOOL_ARGS_SCHEMAS } from "./github-tool-args-schemas.js";
 
 type Schema = Record<string, unknown>;
 
@@ -411,6 +412,7 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
       pattern: stringSchema,
     }),
   ],
+  ...GITHUB_TOOL_ARGS_SCHEMAS,
 
   // ── os.proc ──────────────────────────────────────────────────────────────
   ["os.proc.list", obj({ filter: stringSchema, limit: numberSchema })],

@@ -94,6 +94,19 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   "os.git.blame": "pure_read",
   "os.git.branch": "pure_read",
 
+  // os.git.* — mutating; each goes through requireApproval
+  "os.git.checkout": "approval_gated",
+  "os.git.commit": "approval_gated",
+  "os.git.push": "approval_gated",
+
+  // github.* — REST reads are free; writes publish under the user's name
+  "github.whoami": "pure_read",
+  "github.pr.list": "pure_read",
+  "github.issue.list": "pure_read",
+  "github.pr.create": "approval_gated",
+  "github.issue.create": "approval_gated",
+  "github.issue.comment": "approval_gated",
+
   // os.proc.*
   "os.proc.list": "pure_read",
   "os.proc.kill": "approval_gated",

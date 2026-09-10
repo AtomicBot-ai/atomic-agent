@@ -1,4 +1,6 @@
 import { CODING_MODES, type CodingMode } from "./coding-mode.js";
+import { ISSUE_REPORT_LEVELS, type IssueReportLevel } from "./issue-report/report-levels.js";
+import type { IssueReportState } from "./issue-report/issue-report-state.js";
 import { handleComposerSwitchKey } from "./composer-switch/composer-switch-key-bindings.js";
 import type { ComposerSwitchRow } from "./composer-switch/composer-switch-rows.js";
 import { handleContextPanelKey } from "./context-panel-keys.js";
@@ -57,6 +59,12 @@ export interface AppKeyCallbacks {
   onSessionDeleteConfirmed?(sessionId: string): void;
   /** The word was typed and Enter pressed — take the app down and remove it. */
   onUninstallConfirmed?(): void;
+  /** Issue-report popup: a level was chosen (enter or 1-3). */
+  onIssueReportPickRequested?(level: IssueReportLevel, state: TuiState): void;
+  /** Issue-report popup: the operator confirmed sending. */
+  onIssueReportSendRequested?(): void;
+  /** Issue-report popup: dismissed on any step. */
+  onIssueReportCloseRequested?(): void;
   onApprovalDecision(
     approvalId: string,
     approved: boolean,
@@ -312,6 +320,14 @@ export function handleAppKey(
       ctx.onPlanDismiss?.();
       return true;
     }
+  }
+  // The issue-report popup is modal: it owns every key while it is up.
+  // Above the approval keys, or `y` / `n` / a digit typed at the popup
+  // would answer a pending approval instead. Ctrl+C alone falls
+  // through, so the app's quit path stays reachable under it.
+  if (state.issueReport && !(key.ctrl && input === "c")) {
+    handleIssueReportKey(input, key, state.issueReport, ctx);
+    return true;
   }
   // Only the visible thread's question is answerable from the
   // keyboard. The reducer never arms `pendingApproval` for another
@@ -1134,5 +1150,57 @@ function handleApprovalKey(
       return true;
     default:
       return false;
+  }
+}
+
+function handleIssueReportKey(
+  input: string,
+  key: Key,
+  report: IssueReportState,
+  ctx: AppKeyContext,
+): void {
+  const { state, dispatch, callbacks } = ctx;
+  const close = (): void => {
+    // The orchestrator forgets its prepared report; the reducer closes
+    // the popup. Both, so a stub without the callback still closes.
+    callbacks.onIssueReportCloseRequested?.();
+    dispatch({ type: "issue_report_closed" });
+  };
+  // A send in flight cannot be abandoned: the issue may already exist
+  // and the link is the only thing left to show. A build can — the
+  // orchestrator drops a result that arrives after the close.
+  if (report.step === "sending") return;
+  if (report.step === "building") {
+    if (key.escape) close();
+    return;
+  }
+  if (key.escape || report.step === "sent" || report.step === "error") {
+    close();
+    return;
+  }
+  if (report.step === "pick") {
+    if (key.upArrow || key.downArrow || input === "j" || input === "k") {
+      dispatch({
+        type: "issue_report_cursor_moved",
+        delta: key.downArrow || input === "j" ? 1 : -1,
+      });
+      return;
+    }
+    const digit = /^[1-9]$/.test(input) ? Number(input) - 1 : -1;
+    const picked =
+      digit >= 0
+        ? ISSUE_REPORT_LEVELS[digit]
+        : key.return
+          ? ISSUE_REPORT_LEVELS[report.cursor]
+          : undefined;
+    if (picked) callbacks.onIssueReportPickRequested?.(picked.level, state);
+    return;
+  }
+  if (report.step === "confirm") {
+    if (input === "n") {
+      close();
+      return;
+    }
+    if (key.return || input === "y") callbacks.onIssueReportSendRequested?.();
   }
 }

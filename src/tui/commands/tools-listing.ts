@@ -1,5 +1,6 @@
 import { getConfig } from "../../config/index.js";
 import type { ToolDescriptor } from "../../prompt/stable-prefix.js";
+import { resolveGithubToken } from "../../github/index.js";
 import { DEFAULT_TOOL_DESCRIPTORS } from "../../prompt/tool-descriptors.js";
 import { filterToolDescriptorsByConfig } from "../../runtime/filter-disabled-tools.js";
 
@@ -80,6 +81,7 @@ export interface ToolGateSourceConfig {
  */
 export function effectiveToolDescriptors(
   config: ToolGateSourceConfig = getConfig(),
+  env: NodeJS.ProcessEnv = process.env,
 ): readonly ToolDescriptor[] {
   return filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, {
     browser: { enabled: config.browser.enabled },
@@ -98,6 +100,9 @@ export function effectiveToolDescriptors(
       agentToolsEnabled: config.tasks.enabled && config.tasks.agentToolsEnabled,
     },
     mcp: { enabled: config.mcp.servers.length > 0 },
+    // `/tools` reads the same env the runtime does, so this gate is
+    // exact rather than approximated.
+    github: { connected: resolveGithubToken(undefined, env) !== null },
   });
 }
 

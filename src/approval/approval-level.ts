@@ -28,6 +28,13 @@ export type ApprovalCategory =
   | "proc_kill"
   | "browser_nonweb"
   | "trust_config"
+  /**
+   * Publishing under the operator's name — a pull request, an issue, a
+   * comment on GitHub. Level 4 like a shell command: an `http` grant
+   * from an unrelated `os.http.request` prompt must not silence it, and
+   * it must not stay quiet below the level where `os.git.push` does.
+   */
+  | "publish"
   | "other";
 
 /**
@@ -61,6 +68,7 @@ const AUTO_APPROVE_FROM_LEVEL: Record<ApprovalCategory, ApprovalLevel> = {
   shell: 4,
   script: 4,
   proc_kill: 4,
+  publish: 4,
   browser_nonweb: 5,
   trust_config: 5,
   other: 5,
@@ -112,6 +120,9 @@ const GRANTABLE_CATEGORY: Record<ApprovalCategory, boolean> = {
   shell: true,
   script: true,
   proc_kill: true,
+  // Grantable, but only by its own name: an operator who answers
+  // "always allow publishing this session" has said exactly that.
+  publish: true,
   browser_nonweb: true,
   trust_config: false,
   other: true,
@@ -136,6 +147,7 @@ export const APPROVAL_CATEGORY_LABELS: Record<ApprovalCategory, string> = {
   shell: "shell command",
   script: "skill script",
   proc_kill: "process kill",
+  publish: "publish · GitHub",
   browser_nonweb: "browser · non-web URL",
   trust_config: "agent trust config",
   other: "uncategorised",

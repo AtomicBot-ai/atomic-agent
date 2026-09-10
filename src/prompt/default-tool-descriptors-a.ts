@@ -196,6 +196,62 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
     tier: "rare",
   },
   {
+    name: "os.git.checkout",
+    summary:
+      "Switch to a branch, or create one first (may require approval). Never discards local changes.",
+    argsSchema: "{ branch: string, create?: boolean, startPoint?: string, repo?: string }",
+  },
+  {
+    name: "os.git.commit",
+    summary:
+      "Stage (`paths` or `all`) and commit with `message` (may require approval). Neither → commits what is already staged.",
+    argsSchema: "{ message: string, paths?: string[], all?: boolean, repo?: string }",
+  },
+  {
+    name: "os.git.push",
+    summary:
+      "Push the current (or named) branch to a remote, `-u` by default (may require approval). No force-push. Uses the connected GitHub token for github.com.",
+    argsSchema: "{ remote?: string, branch?: string, setUpstream?: boolean, repo?: string }",
+  },
+  {
+    name: "github.whoami",
+    summary: "The GitHub account behind the connected token, plus its scopes. Read-only.",
+    argsSchema: "{}",
+    tier: "rare",
+  },
+  {
+    name: "github.pr.list",
+    summary: "List pull requests of a repo (default: origin of the working dir). Read-only.",
+    argsSchema: `{ repo?: string /* owner/name */, state?: "open" | "closed" | "all", limit?: number }`,
+    tier: "rare",
+  },
+  {
+    name: "github.pr.create",
+    summary:
+      "Open a pull request (may require approval). Push the branch with os.git.push first. `head`/`base`/`repo` default to the current branch, the repo's default branch and origin.",
+    argsSchema:
+      "{ title: string, body?: string, head?: string, base?: string, draft?: boolean, repo?: string /* owner/name */ }",
+    tier: "rare",
+  },
+  {
+    name: "github.issue.list",
+    summary: "List issues of a repo (default: origin), PRs excluded. Read-only.",
+    argsSchema: `{ repo?: string /* owner/name */, state?: "open" | "closed" | "all", labels?: string[], limit?: number }`,
+    tier: "rare",
+  },
+  {
+    name: "github.issue.create",
+    summary: "File an issue (may require approval).",
+    argsSchema: "{ title: string, body?: string, labels?: string[], repo?: string /* owner/name */ }",
+    tier: "rare",
+  },
+  {
+    name: "github.issue.comment",
+    summary: "Comment on an issue or pull request by number (may require approval).",
+    argsSchema: "{ number: number, body: string, repo?: string /* owner/name */ }",
+    tier: "rare",
+  },
+  {
     name: "os.proc.list",
     summary: "List processes (filter, limit). Read-only.",
     argsSchema: "{ filter?: string, limit?: number }",

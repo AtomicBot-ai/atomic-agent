@@ -3,6 +3,7 @@ import {
   COMPOSIO_GUIDANCE,
   isComposioActive,
 } from "./composio-guidance.js";
+import { GITHUB_GUIDANCE, isGithubActive } from "./github-guidance.js";
 import { formatSkillCatalogLine } from "../skills/skill-catalog.js";
 
 /**
@@ -191,6 +192,13 @@ export function buildStablePrefix(input: StablePrefixInput): string {
   // with no key pays nothing for it and its prefix is byte-identical
   // to before the integration existed.
   const composioActive = isComposioActive(input.toolDescriptors);
+  // Same contract for GitHub: the `github.*` descriptors are only in
+  // the catalog while the hub holds a token.
+  const githubActive = isGithubActive(input.toolDescriptors);
+  const integrationsBlock = [
+    ...(composioActive ? [COMPOSIO_GUIDANCE] : []),
+    ...(githubActive ? [GITHUB_GUIDANCE] : []),
+  ];
   const nativeTools = input.toolTransport === "native_tools";
   const persona =
     input.systemPersona ??
@@ -250,7 +258,9 @@ export function buildStablePrefix(input: StablePrefixInput): string {
     `### capabilities`,
     caps,
     ``,
-    ...(composioActive ? [`### integrations`, COMPOSIO_GUIDANCE, ``] : []),
+    ...(integrationsBlock.length > 0
+      ? [`### integrations`, integrationsBlock.join("\n"), ``]
+      : []),
     `### instructions`,
     // The emission instructions are the one transport-dependent block.
     // Grammar links parse text-JSON (GBNF-constrained locally), so they

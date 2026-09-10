@@ -66,6 +66,8 @@ import { buildBrowserTools } from "../tools/browser/index.js";
 import { PlaywrightBackend } from "../tools/browser/playwright-backend.js";
 import type { BrowserBackend } from "../tools/browser/browser-backend.js";
 import { registerOsTools } from "../tools/os/index.js";
+import { registerGithubTools } from "../tools/github/index.js";
+import { resolveGithubToken } from "../github/index.js";
 import { registerSkillTools } from "../tools/skill/index.js";
 import { buildToolViewTool } from "../tools/tool-view/index.js";
 import { registerMemoryTools } from "../tools/memory/index.js";
@@ -1327,6 +1329,12 @@ export async function createAgentRuntime(
     // persistence tests cannot see this line.
     stateDir: config.paths.stateDir,
   });
+  // Always registered; each call resolves `GITHUB_TOKEN` afresh so a
+  // token saved in the Integrations hub works on the next turn. The
+  // descriptors, by contrast, are gated on the token (see
+  // `rebuildToolDescriptorsFromMcp`) so the model never sees tools it
+  // cannot exercise.
+  registerGithubTools(toolRegistry, dangerous);
   registerSkillTools(toolRegistry, skillRegistry, dangerous);
   toolRegistry.register(buildToolViewTool());
   registerMemoryTools(toolRegistry, {
@@ -1678,6 +1686,9 @@ export async function createAgentRuntime(
           config.tasks.enabled && config.tasks.agentToolsEnabled,
       },
       mcp: { enabled: liveMcpEnabled },
+      // Read at rebuild time, not boot time: the Integrations hub calls
+      // `refreshMcp()` after a token save, which lands here.
+      github: { connected: resolveGithubToken() !== null },
     });
     if (!liveMcpEnabled) return base;
     return mergeMcpDescriptors(

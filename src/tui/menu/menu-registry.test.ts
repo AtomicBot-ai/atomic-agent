@@ -237,6 +237,11 @@ const V0_2_2_SLASH_COMMANDS = [
       "open the Swarm tab \u2014 every Telegram / Discord bot on this runtime; add more bots, each with its own token, owner and role",
   },
   {
+    name: "report",
+    description:
+      "file a GitHub issue with your logs attached — you choose how much leaves this machine",
+  },
+  {
     name: "uninstall",
     description:
       "remove atomic-agent and all of its data from this machine — permanent, no undo",

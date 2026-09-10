@@ -676,6 +676,21 @@ export const MENU: readonly MenuNode[] = [
   },
   {
     kind: "action",
+    id: "help.report",
+    label: "Report an issue on GitHub…",
+    group: "help",
+    // `r` is Run and `b` is Swarm (bots); `R` — Report — follows the
+    // uppercase precedent of `L` (LLM logs) and `M`.
+    chord: "R",
+    slash: {
+      name: "report",
+      description:
+        "file a GitHub issue with your logs attached — you choose how much leaves this machine",
+      rank: 41,
+    },
+  },
+  {
+    kind: "action",
     id: "help.quit",
     label: "Quit",
     group: "help",

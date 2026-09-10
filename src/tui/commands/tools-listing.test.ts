@@ -28,6 +28,9 @@ const ALL_ENABLED: ToolGateSourceConfig = {
   mcp: { servers: [{}] },
 };
 
+/** The env the GitHub gate reads; a token means `github.*` is listed. */
+const WITH_GITHUB = { GITHUB_TOKEN: "ghp_test" };
+
 describe("listToolFamilies", () => {
   it("groups tools by namespace and sorts both levels", () => {
     const families = listToolFamilies(DEFAULT_TOOL_DESCRIPTORS);
@@ -50,8 +53,16 @@ describe("listToolFamilies", () => {
 
 describe("effectiveToolDescriptors", () => {
   it("keeps the full catalog when every gate is open", () => {
-    const names = effectiveToolDescriptors(ALL_ENABLED).map((d) => d.name);
+    const names = effectiveToolDescriptors(ALL_ENABLED, WITH_GITHUB).map(
+      (d) => d.name,
+    );
     expect(names).toEqual(DEFAULT_TOOL_DESCRIPTORS.map((d) => d.name));
+  });
+
+  it("drops github.* when the hub holds no token", () => {
+    const names = effectiveToolDescriptors(ALL_ENABLED, {}).map((d) => d.name);
+    expect(names).not.toContain("github.pr.create");
+    expect(names).toContain("os.git.push");
   });
 
   it("drops browser.* when the browser is disabled in config", () => {

@@ -34,6 +34,9 @@ import {
   osGitShowTool,
   osGitBlameTool,
   osGitBranchTool,
+  buildOsGitCheckoutTool,
+  buildOsGitCommitTool,
+  buildOsGitPushTool,
 } from "./git/index.js";
 import { osProcListTool, buildOsProcKillTool } from "./proc/index.js";
 
@@ -73,6 +76,9 @@ export {
   osGitShowTool,
   osGitBlameTool,
   osGitBranchTool,
+  buildOsGitCheckoutTool,
+  buildOsGitCommitTool,
+  buildOsGitPushTool,
 } from "./git/index.js";
 export { osProcListTool, buildOsProcKillTool } from "./proc/index.js";
 export { isGogCommand } from "./shell-command-guard/index.js";
@@ -163,6 +169,24 @@ export function registerOsTools(
   registry.register(osGitShowTool);
   registry.register(osGitBlameTool);
   registry.register(osGitBranchTool);
+  registry.register(
+    buildOsGitCheckoutTool({
+      approvals: options.approvals,
+      approvalRequired: options.approvalRequired,
+    }),
+  );
+  registry.register(
+    buildOsGitCommitTool({
+      approvals: options.approvals,
+      approvalRequired: options.approvalRequired,
+    }),
+  );
+  registry.register(
+    buildOsGitPushTool({
+      approvals: options.approvals,
+      approvalRequired: options.approvalRequired,
+    }),
+  );
   registry.register(osProcListTool);
   registry.register(
     buildOsProcKillTool({

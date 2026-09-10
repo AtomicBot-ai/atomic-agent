@@ -8,6 +8,10 @@ describe("integration registry", () => {
     expect(listIntegrations().map((i) => i.id)).toContain("composio");
   });
 
+  it("lists GitHub", () => {
+    expect(listIntegrations().map((i) => i.id)).toContain("github");
+  });
+
   it("gives every integration a unique id", () => {
     const ids = listIntegrations().map((i) => i.id);
     expect(new Set(ids).size).toBe(ids.length);

@@ -40,6 +40,12 @@ import { reduceTelegramAction } from "./telegram/telegram-panel-reducer.js";
 import { reducePrivacyAction } from "./privacy/privacy-panel-reducer.js";
 import { reduceIntegrationsAction } from "./integrations/integrations-panel-reducer.js";
 import { reduceSwarmAction } from "./swarm/swarm-panel-reducer.js";
+import {
+  ISSUE_REPORT_LEVELS,
+  isIssueReportAction,
+  reduceIssueReport,
+} from "./issue-report/index.js";
+import { withReportHint } from "./format-agent-error-for-chat.js";
 import type { TuiAction } from "./tui-action.js";
 import type { RunOutcome, StreamingToolCall, TuiState } from "./tui-state.js";
 
@@ -82,6 +88,14 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
   if (integrationsHandled !== null) return integrationsHandled;
   const swarmHandled = reduceSwarmAction(state, action);
   if (swarmHandled !== null) return swarmHandled;
+  if (isIssueReportAction(action)) {
+    const next = reduceIssueReport(
+      state.issueReport,
+      action,
+      ISSUE_REPORT_LEVELS.length,
+    );
+    return next === state.issueReport ? state : { ...state, issueReport: next };
+  }
   const composerSwitchHandled = reduceComposerSwitchAction(state, action);
   if (composerSwitchHandled !== null) return composerSwitchHandled;
   const uiHandled = reduceUiAction(state, action);
@@ -542,7 +556,7 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
             line: `» ${lastRunStatus}`,
             color: "red",
           }),
-          { role: "system", text: chatError, variant: "warn" },
+          { role: "system", text: withReportHint(chatError), variant: "warn" },
         ),
         { outcome: "failed", reason: event.error.message, lastRunStatus },
       );

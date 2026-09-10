@@ -38,6 +38,13 @@ describe("what a click outside closes", () => {
    */
   it("closes the coding-mode menu", () => {
     expect(
+      resolveBackdropDismissal(
+        stateWith({
+          issueReport: { step: "pick", cursor: 0, preview: null, url: null, error: null },
+        }),
+      ),
+    ).toEqual({ type: "issue_report_closed" });
+    expect(
       resolveBackdropDismissal(stateWith({ codingModeMenu: { cursor: 0 } })),
     ).toEqual({ type: "coding_mode_menu_closed" });
   });

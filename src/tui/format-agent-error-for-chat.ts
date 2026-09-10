@@ -136,3 +136,16 @@ export function formatAgentErrorForChat(
   }
   return base;
 }
+
+/**
+ * The line under every failed turn that says where a bug report goes.
+ * Appended by the reducer at the one site that renders a turn failure,
+ * so the wording lives next to the message it follows and a test can
+ * pin the two together.
+ */
+export const REPORT_HINT =
+  "  /report files this on GitHub with your logs — you choose how much is shared";
+
+export function withReportHint(text: string): string {
+  return `${text}\n${REPORT_HINT}`;
+}
