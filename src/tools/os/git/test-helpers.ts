@@ -1,8 +1,39 @@
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import {
+  ApprovalGate,
+  type ApprovalRequest,
+} from "../../../approval/approval-gate.js";
 import { runCommand } from "../../../sandbox/command-runner.js";
 import type { ToolContext } from "../../tool-registry.js";
+
+/** Gate that approves every request. */
+export function makeApprovingGate(): ApprovalGate {
+  const gate = new ApprovalGate({
+    emit: (req) => gate.resolve({ approvalId: req.approvalId, approved: true }),
+  });
+  return gate;
+}
+
+/** Gate that denies every request. */
+export function makeDenyingGate(): ApprovalGate {
+  const gate = new ApprovalGate({
+    emit: (req) => gate.reject(req.approvalId, "denied by test"),
+  });
+  return gate;
+}
+
+/** Gate that records every request into `prompts` and then approves it. */
+export function makeRecordingGate(prompts: ApprovalRequest[]): ApprovalGate {
+  const gate = new ApprovalGate({
+    emit: (req) => {
+      prompts.push(req);
+      gate.resolve({ approvalId: req.approvalId, approved: true });
+    },
+  });
+  return gate;
+}
 
 export async function makeGitRepo(prefix = "atomic-git-"): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), prefix));

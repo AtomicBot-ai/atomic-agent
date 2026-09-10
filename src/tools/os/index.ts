@@ -36,6 +36,8 @@ import {
   osGitShowTool,
   osGitBlameTool,
   osGitBranchTool,
+  buildOsGitInitTool,
+  buildOsGitAddTool,
   buildOsGitCheckoutTool,
   buildOsGitCommitTool,
   buildOsGitRemoteTool,
@@ -83,6 +85,8 @@ export {
   osGitShowTool,
   osGitBlameTool,
   osGitBranchTool,
+  buildOsGitInitTool,
+  buildOsGitAddTool,
   buildOsGitCheckoutTool,
   buildOsGitCommitTool,
   buildOsGitRemoteTool,
@@ -211,18 +215,16 @@ export function registerOsTools(
   registry.register(osGitShowTool);
   registry.register(osGitBlameTool);
   registry.register(osGitBranchTool);
-  registry.register(
-    buildOsGitCheckoutTool({
-      approvals: options.approvals,
-      approvalRequired: options.approvalRequired,
-    }),
-  );
-  registry.register(
-    buildOsGitCommitTool({
-      approvals: options.approvals,
-      approvalRequired: options.approvalRequired,
-    }),
-  );
+  // Local git writes ride the fs approval ladder against the repo root.
+  const gitWriteOptions = {
+    approvals: options.approvals,
+    approvalRequired: options.approvalRequired,
+    trustConfigPaths: options.trustConfigPaths,
+  };
+  registry.register(buildOsGitInitTool(gitWriteOptions));
+  registry.register(buildOsGitAddTool(gitWriteOptions));
+  registry.register(buildOsGitCheckoutTool(gitWriteOptions));
+  registry.register(buildOsGitCommitTool(gitWriteOptions));
   // Network git shares the shell guard's remote-sync predicate so the
   // dedicated tools and the escape hatch can never disagree. With no
   // policy injected (embedders, tests) the repository stays closed —

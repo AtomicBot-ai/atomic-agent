@@ -207,7 +207,7 @@ Atomic Agent drives a full desktop tool surface. Dangerous actions are routed th
 | **Filesystem & shell** | Read, write, edit, patch, glob, grep, diff, watch, hash, list, archive extract, run approved shell commands, and inspect or kill processes. |
 | **Desktop** | Clipboard read/write, desktop notifications, and window list/focus. |
 | **Documents** | Extract text locally from PDF, DOC, DOCX, XLSX, PPTX, ODT, RTF, and plain text. |
-| **Git** | Read-only status, log, diff, show, blame, and branch inspection. |
+| **Git** | Read-only status, log, diff, show, blame, and branch inspection, plus local write tools — init, add, commit, checkout — behind the same approval ladder as file writes (no remotes, no network). |
 | **Memory** | Profile facts, notes with hybrid recall, links, lessons, procedures, voting, and reflection. |
 | **Tasks** | Durable deferred turns, cron schedules, intervals, webhooks, and agent-created reminders. |
 | **Skills** | View and run Markdown skill playbooks (scripts are approval-gated), install more from ClawHub. Ships with 17 starter skills (Docker, GitHub, Notion, Obsidian, PDF, and more), auto-installed on first run. |

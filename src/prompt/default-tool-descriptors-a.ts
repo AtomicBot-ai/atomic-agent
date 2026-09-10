@@ -304,6 +304,37 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
     tier: "rare",
   },
   {
+    name: "os.git.init",
+    summary:
+      "Create a local git repository (no remote); optional repo-local identity. No-op on an existing repo. Approval like a file write.",
+    argsSchema:
+      "{ path?: string, initialBranch?: string, userName?: string, userEmail?: string }",
+    tier: "rare",
+  },
+  {
+    name: "os.git.add",
+    summary:
+      "Stage changes (`all` = everything, or `paths`); `unstage` reverses. Approval like a file write.",
+    argsSchema:
+      "{ repo?: string, paths?: string[], all?: boolean, unstage?: boolean }",
+    examples: ['{"all":true}'],
+  },
+  {
+    name: "os.git.commit",
+    summary:
+      "Commit staged changes with a message; `all` also commits tracked modifications. Approval like a file write.",
+    argsSchema: "{ repo?: string, message: string, all?: boolean }",
+    examples: ['{"message":"feat: add parser"}'],
+  },
+  {
+    name: "os.git.checkout",
+    summary:
+      "Switch branches; `create` makes a new one (optionally from `startPoint`). Branches only, never paths. Approval like a file write.",
+    argsSchema:
+      "{ repo?: string, branch: string, create?: boolean, startPoint?: string }",
+    tier: "rare",
+  },
+  {
     name: "os.proc.list",
     summary: "List processes (filter, limit). Read-only.",
     argsSchema: "{ filter?: string, limit?: number }",

@@ -1,9 +1,12 @@
 import { compressToolResult } from "../../../compressor/result-compressor.js";
 import type { ToolDefinition } from "../../tool-registry.js";
+import type { FsDangerousToolOptions } from "../fs-require-approval.js";
+import { buildGitErrorResult } from "./git-error-result.js";
 import {
-  requireApproval,
-  type DangerousToolOptions,
-} from "../../../approval/dangerous-tool.js";
+  formatGitCommandLine,
+  requireGitMutationApproval,
+} from "./git-mutation-approval.js";
+import { resolveGitToplevel } from "./git-repo-probe.js";
 import { requireGitSuccess, runGit } from "./git-runner.js";
 
 /**
@@ -20,7 +23,7 @@ import { requireGitSuccess, runGit } from "./git-runner.js";
  * global config says, exactly as if the operator had typed it.
  */
 export function buildOsGitCommitTool(
-  options: DangerousToolOptions,
+  options: FsDangerousToolOptions,
 ): ToolDefinition {
   return {
     name: "os.git.commit",
@@ -38,15 +41,31 @@ export function buildOsGitCommitTool(
         );
       }
 
-      const preview = await describeStaging(repo, ctx, paths, all);
-      await requireApproval(
+      const probe = { repo, workingDir: ctx.workingDir, signal: ctx.signal };
+      const toplevel = await resolveGitToplevel(probe);
+      if (!toplevel.ok)
+        return buildGitErrorResult(
+          "os.git.commit",
+          `os.git.commit: ${toplevel.message}`,
+        );
+
+      // The prompt says both halves: the exact command line first — a
+      // commit is a write to this repository and the operator should
+      // see the signing override and the message it will carry — and
+      // then what that commit will actually sweep up.
+      const staging = await describeStaging(repo, ctx, paths, all);
+      const commandLine = formatGitCommandLine(commitArgs(message));
+      const preview = `${commandLine}\n\n${staging}`;
+      await requireGitMutationApproval(
         options,
         {
           sessionId: ctx.sessionId,
           tool: "os.git.commit",
-          category: "shell",
-          reason: `commit "${firstLine(message)}"`,
+          repoRoot: toplevel.root,
+          reason: `commit "${firstLine(message)}" in ${toplevel.root}`,
           preview,
+          workingDir: ctx.workingDir,
+          trustConfigPaths: options.trustConfigPaths,
         },
         ctx.signal,
       );
@@ -72,7 +91,11 @@ export function buildOsGitCommitTool(
       const commit = await runGit({
         repo,
         workingDir: ctx.workingDir,
-        args: ["commit", "-m", message],
+        // `-c commit.gpgsign=false` goes before the subcommand so it
+        // beats any repo or global setting: a signing prompt has no
+        // terminal to appear on here, and the commit would hang until
+        // the turn's timeout with nothing to show for it.
+        args: commitArgs(message),
         signal: ctx.signal,
         timeoutMs: 30_000,
       });
@@ -146,6 +169,16 @@ function firstLine(message: string): string {
  * failure here must not block the approval prompt, it just makes the
  * preview less informative.
  */
+/**
+ * `-c commit.gpgsign=false` goes before the subcommand so it beats any
+ * repo or global setting: a signing prompt has no terminal to appear on
+ * here, and the commit would hang until the turn's timeout with nothing
+ * to show for it.
+ */
+function commitArgs(message: string): string[] {
+  return ["-c", "commit.gpgsign=false", "commit", "-m", message];
+}
+
 async function describeStaging(
   repo: string | undefined,
   ctx: { workingDir: string; signal: AbortSignal },

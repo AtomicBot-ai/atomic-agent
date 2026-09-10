@@ -413,6 +413,24 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
     }),
   ],
   [
+    "os.git.init",
+    obj({
+      path: stringSchema,
+      initialBranch: stringSchema,
+      userName: stringSchema,
+      userEmail: stringSchema,
+    }),
+  ],
+  [
+    "os.git.add",
+    obj({
+      repo: stringSchema,
+      paths: stringArraySchema,
+      all: booleanSchema,
+      unstage: booleanSchema,
+    }),
+  ],
+  [
     "os.git.remote",
     obj({
       repo: stringSchema,

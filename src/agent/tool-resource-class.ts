@@ -112,6 +112,10 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   "github.issue.create": "approval_gated",
   "github.issue.comment": "approval_gated",
 
+  // os.git.* — local writes; approval-gated like fs writes
+  "os.git.init": "approval_gated",
+  "os.git.add": "approval_gated",
+
   // os.proc.*
   "os.proc.list": "pure_read",
   "os.proc.kill": "approval_gated",

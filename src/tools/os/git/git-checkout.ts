@@ -1,9 +1,9 @@
 import { compressToolResult } from "../../../compressor/result-compressor.js";
 import type { ToolDefinition } from "../../tool-registry.js";
-import {
-  requireApproval,
-  type DangerousToolOptions,
-} from "../../../approval/dangerous-tool.js";
+import type { FsDangerousToolOptions } from "../fs-require-approval.js";
+import { buildGitErrorResult } from "./git-error-result.js";
+import { requireGitMutationApproval } from "./git-mutation-approval.js";
+import { resolveGitToplevel } from "./git-repo-probe.js";
 import { requireGitSuccess, runGit } from "./git-runner.js";
 
 /**
@@ -17,7 +17,7 @@ import { requireGitSuccess, runGit } from "./git-runner.js";
  * refusal, never lost work.
  */
 export function buildOsGitCheckoutTool(
-  options: DangerousToolOptions,
+  options: FsDangerousToolOptions,
 ): ToolDefinition {
   return {
     name: "os.git.checkout",
@@ -41,16 +41,33 @@ export function buildOsGitCheckoutTool(
         ? ["checkout", "-b", branch, ...(startPoint ? [startPoint] : [])]
         : ["checkout", branch];
 
-      await requireApproval(
+      const toplevel = await resolveGitToplevel({
+        repo,
+        workingDir: ctx.workingDir,
+        signal: ctx.signal,
+      });
+      if (!toplevel.ok)
+        return buildGitErrorResult(
+          "os.git.checkout",
+          `os.git.checkout: ${toplevel.message}`,
+        );
+
+      // A checkout is a write to the whole repository — including, in a
+      // repository that happens to hold the agent's own config, the
+      // trust surface itself. The funnel categorises it against the
+      // repo root and escalates to `trust_config` in that case.
+      await requireGitMutationApproval(
         options,
         {
           sessionId: ctx.sessionId,
           tool: "os.git.checkout",
-          category: "shell",
+          repoRoot: toplevel.root,
           reason: create
-            ? `create branch ${branch}${startPoint ? ` from ${startPoint}` : ""} and switch to it`
-            : `switch to branch ${branch}`,
+            ? `create branch ${branch}${startPoint ? ` from ${startPoint}` : ""} and switch to it in ${toplevel.root}`
+            : `switch to branch ${branch} in ${toplevel.root}`,
           preview: `git ${args.join(" ")}`,
+          workingDir: ctx.workingDir,
+          trustConfigPaths: options.trustConfigPaths,
         },
         ctx.signal,
       );

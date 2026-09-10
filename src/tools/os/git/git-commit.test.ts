@@ -96,7 +96,9 @@ describe("os.git.commit", () => {
     await tool
       .run({ message: "fix: a\n\nlonger body" }, makeCtx(repo))
       .catch(() => {});
-    expect(reason).toBe('commit "fix: a"');
+    // The reason names the repository too, so an approval prompt for a
+    // commit in some other checkout cannot be mistaken for this one.
+    expect(reason).toContain('commit "fix: a"');
     expect(preview).toContain("committing what is already staged");
   });
 
