@@ -22,7 +22,8 @@
  * the README says so rather than pretending otherwise.
  */
 import { execFileSync, spawnSync } from "node:child_process";
-import { cpSync, existsSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -59,7 +60,42 @@ function copyAgent(appPath) {
   if (!existsSync(probe)) {
     throw new Error(`the agent copy is missing its native module: ${probe}`);
   }
-  console.log(`agent → ${dest}`);
+  /* PRESENT is not the same as LOADABLE.
+     `better-sqlite3` is a native module and the SEA embeds its own Node, so
+     the two have to agree on the ABI. They did not: the repo's node_modules
+     carries a build for the Node that ran `npm install` (22, ABI 127) while
+     the SEA embeds Node 25 (ABI 141), and the module only fails when
+     something opens a store — which the app does on its first turn, not at
+     startup. Shipped, it looked like a working DMG until the agent died with
+     `NODE_MODULE_VERSION 141` and the window said `state=error`.
+
+     So the build asks the agent to do something that opens sqlite. `task
+     list` is the cheapest: it exits 0 and prints "(no tasks)" on a throwaway
+     state directory, and exits 1 naming NODE_MODULE_VERSION when the module
+     is wrong. A broken agent fails the BUILD now instead of the user. */
+  const probeDir = mkdtempSync(join(tmpdir(), "atag-agent-abi-"));
+  try {
+    const agentBin = join(dest, "atomic-agent");
+    const run = spawnSync(agentBin, ["task", "list"], {
+      env: { ...process.env, ATOMIC_AGENT_STATE_DIR: probeDir },
+      encoding: "utf8",
+      timeout: 120_000,
+    });
+    const said = `${run.stdout ?? ""}${run.stderr ?? ""}`;
+    if (run.status !== 0) {
+      throw new Error(
+        `the bundled agent cannot open its own database — this DMG would ship broken.\n`
+        + (/NODE_MODULE_VERSION/.test(said)
+          ? "better-sqlite3 was built for a different Node than the SEA embeds. "
+            + "Rebuild it against the SEA's Node (>= 25.7) and re-run bundle:package.\n"
+          : "")
+        + said.split("\n").slice(0, 6).join("\n"),
+      );
+    }
+  } finally {
+    rmSync(probeDir, { recursive: true, force: true });
+  }
+  console.log(`agent → ${dest} (opens its database)`);
 }
 
 export default async function signAdhoc(context) {
