@@ -1,5 +1,6 @@
 import { compressToolResult } from "../../compressor/result-compressor.js";
 import { VisionUnsupportedError, type LlmProvider } from "../../llm/index.js";
+import type { StructuredLogger } from "../../tracing/structured-logger.js";
 import type { ToolDefinition } from "../tool-registry.js";
 import { loadImageFile, UnsupportedImageFormatError } from "./load-image.js";
 
@@ -9,6 +10,11 @@ export interface VisionDescribeToolOptions {
   maxImagesPerCall: number;
   /** Per-image byte cap mirrored from `config.vision.maxImageBytes`. */
   maxImageBytes: number;
+  /**
+   * Optional — `loadImageFile` warns through it when a file's extension
+   * contradicts its bytes. Absent in tests that do not care.
+   */
+  logger?: StructuredLogger | undefined;
 }
 
 interface ParsedArgs {
@@ -81,7 +87,9 @@ export function buildVisionDescribeTool(
       const images = [];
       for (let i = 0; i < parsed.paths.length; i += 1) {
         try {
-          const loaded = await loadImageFile(parsed.paths[i]!, ctx.workingDir);
+          const loaded = await loadImageFile(parsed.paths[i]!, ctx.workingDir, {
+            logger: options.logger,
+          });
           if (loaded.bytes.byteLength > options.maxImageBytes) {
             return errorResult(
               `image ${loaded.path} exceeds maxImageBytes=${options.maxImageBytes}`,
@@ -91,6 +99,7 @@ export function buildVisionDescribeTool(
             id: i + 1,
             bytes: loaded.bytes,
             mimeType: loaded.mimeType,
+            mimeTypeSource: loaded.mimeTypeSource,
             path: loaded.path,
           });
         } catch (error) {
@@ -124,6 +133,7 @@ export function buildVisionDescribeTool(
               path: img.path,
               bytes: img.bytes.byteLength,
               mimeType: img.mimeType,
+              mimeTypeSource: img.mimeTypeSource,
             })),
             durationMs: result.durationMs,
           },

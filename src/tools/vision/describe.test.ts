@@ -80,7 +80,7 @@ describe("buildVisionDescribeTool", () => {
     expect(result.summary).toMatch(/vision is not available/i);
   });
 
-  it("rejects unsupported file extensions", async () => {
+  it("rejects a file that is neither a known extension nor known bytes", async () => {
     const tmp = await mkdtemp(join(tmpdir(), "vision-tool-"));
     const path = join(tmp, "note.txt");
     await writeFile(path, "not an image");
@@ -91,7 +91,30 @@ describe("buildVisionDescribeTool", () => {
     });
     const result = await tool.run({ prompt: "describe", path }, ctx(tmp));
     expect(result.status).toBe("error");
-    expect(result.summary).toMatch(/unsupported image extension/i);
+    expect(result.summary).toMatch(/unsupported image/i);
+  });
+
+  // A chat client names the file; only the bytes know what it is. A PNG
+  // screenshot that arrives from Telegram as `photo.jpg` must reach the
+  // provider labelled `image/png`, or the request comes back a 400.
+  it("labels an image by its bytes, not by a lying extension", async () => {
+    const tmp = await mkdtemp(join(tmpdir(), "vision-tool-"));
+    const path = join(tmp, "photo.jpg");
+    await writeFile(
+      path,
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]),
+    );
+    const provider = fakeProvider();
+    const tool = buildVisionDescribeTool({
+      provider,
+      maxImagesPerCall: 2,
+      maxImageBytes: 1024,
+    });
+    const result = await tool.run({ prompt: "describe", path }, ctx(tmp));
+    expect(result.status).toBe("ok");
+    const call = (provider.describeImage as ReturnType<typeof vi.fn>).mock
+      .calls[0]![0] as VisionRequest;
+    expect(call.images[0]!.mimeType).toBe("image/png");
   });
 
   it("forwards loaded image bytes to the provider and returns its text", async () => {
