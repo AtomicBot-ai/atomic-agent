@@ -158,6 +158,15 @@ export interface StepDependencies {
    * as `BatchExecutionContext.isPlanMode`. Absent ⇒ off.
    */
   isPlanMode?: () => boolean;
+  /**
+   * Fusion's division of labour, forwarded to the batch context. Set by
+   * the loop only for an ORCHESTRATOR turn in fusion mode; a worker's
+   * own turn and every other run mode leave all three absent, which
+   * gates nothing.
+   */
+  isFusionOrchestrator?: () => boolean;
+  hasDelegated?: () => boolean;
+  onDelegated?: () => void;
   slotManager: SlotManager;
   llmComplete: (params: LlmStreamParams) => Promise<CompletionResult>;
   /**
@@ -1028,6 +1037,13 @@ async function executeStepInner(
     signal: ctx.signal,
     ...(deps.tracker ? { tracker: deps.tracker } : {}),
     ...(deps.isPlanMode ? { isPlanMode: deps.isPlanMode } : {}),
+    ...(deps.isFusionOrchestrator
+      ? {
+          isFusionOrchestrator: deps.isFusionOrchestrator,
+          ...(deps.hasDelegated ? { hasDelegated: deps.hasDelegated } : {}),
+          ...(deps.onDelegated ? { onDelegated: deps.onDelegated } : {}),
+        }
+      : {}),
     ...(batch.maxWaveSize !== undefined
       ? { maxWaveSize: batch.maxWaveSize }
       : {}),

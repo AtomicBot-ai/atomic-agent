@@ -2303,6 +2303,10 @@ export async function createAgentRuntime(
     // gate is the single live switch rather than a boolean copied into
     // each tool registration.
     isPlanMode: () => planMode,
+    // The same live resolution the `fusion.delegate` descriptor gate
+    // reads, so the tool the orchestrator is being pushed towards is
+    // always in the catalog when the push happens.
+    isFusionMode: () => resolveCurrentRunMode().effective === "fusion",
     slotManager,
     grammar,
     llmComplete,
