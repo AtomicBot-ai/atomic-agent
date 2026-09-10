@@ -373,17 +373,15 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
     tag: "Use at your own risk",
     uncensored: true,
     supportsVision: true,
-    // The vision file IS the projector — the model card states both
-    // vision files carry the same 334-tensor projector; it is simply not
-    // named "mmproj". Safe here: the installer and daemon key on the
-    // mmprojUrl/mmprojFilename *fields* (see `model-installer.ts`,
-    // `backend-paths.resolveMmprojFilePath`), never on filename patterns
-    // — `judgeGgufFile`'s "projector"/f16 rejections only run in the
-    // Hugging Face custom-add flow when picking MAIN weights.
+    // The repo renamed its projector from `…-vision-f16.gguf` to the
+    // conventional `mmproj-` prefix after this entry first shipped; the
+    // old URL answers 404, which stranded a fully downloaded model
+    // (installer and daemon key on these two fields, so the filename
+    // here must track the repo exactly).
     mmprojUrl:
-      "https://huggingface.co/JonathanColetti/Qwen3.8-27B-Uncensored-GGUF/resolve/main/Qwen3.8-27B-Uncensored-vision-f16.gguf",
-    mmprojFilename: "Qwen3.8-27B-Uncensored-vision-f16.gguf",
-    mmprojFileSizeGb: 0.9,
+      "https://huggingface.co/JonathanColetti/Qwen3.8-27B-Uncensored-GGUF/resolve/main/mmproj-Qwen3.8-27B-Uncensored-F16.gguf",
+    mmprojFilename: "mmproj-Qwen3.8-27B-Uncensored-F16.gguf",
+    mmprojFileSizeGb: 0.93,
   },
 ];
 
