@@ -2,7 +2,12 @@ import { compressToolResult } from "../../compressor/result-compressor.js";
 import { VisionUnsupportedError, type LlmProvider } from "../../llm/index.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 import type { ToolDefinition } from "../tool-registry.js";
-import { loadImageFile, UnsupportedImageFormatError } from "./load-image.js";
+import {
+  ImageTooLargeError,
+  loadImageFile,
+  NotARegularFileError,
+  UnsupportedImageFormatError,
+} from "./load-image.js";
 
 export interface VisionDescribeToolOptions {
   provider: LlmProvider;
@@ -89,7 +94,11 @@ export function buildVisionDescribeTool(
         try {
           const loaded = await loadImageFile(parsed.paths[i]!, ctx.workingDir, {
             logger: options.logger,
+            maxBytes: options.maxImageBytes,
           });
+          // `maxBytes` already rejected an over-cap file from its `stat`;
+          // this covers the one case that cannot: a file that grew
+          // between the stat and the read.
           if (loaded.bytes.byteLength > options.maxImageBytes) {
             return errorResult(
               `image ${loaded.path} exceeds maxImageBytes=${options.maxImageBytes}`,
@@ -103,7 +112,11 @@ export function buildVisionDescribeTool(
             path: loaded.path,
           });
         } catch (error) {
-          if (error instanceof UnsupportedImageFormatError) {
+          if (
+            error instanceof UnsupportedImageFormatError ||
+            error instanceof ImageTooLargeError ||
+            error instanceof NotARegularFileError
+          ) {
             return errorResult(error.message);
           }
           return errorResult(

@@ -4,8 +4,17 @@ import type { StructuredLogger } from "../../tracing/structured-logger.js";
 import { buildVisionDescribeTool } from "./describe.js";
 
 export { buildVisionDescribeTool } from "./describe.js";
-export { loadImageFile, UnsupportedImageFormatError } from "./load-image.js";
-export type { LoadedImage, MimeTypeSource } from "./load-image.js";
+export {
+  ImageTooLargeError,
+  loadImageFile,
+  NotARegularFileError,
+  UnsupportedImageFormatError,
+} from "./load-image.js";
+export type {
+  LoadedImage,
+  LoadImageOptions,
+  MimeTypeSource,
+} from "./load-image.js";
 export {
   sniffImageType,
   IMAGE_SNIFF_PREFIX_BYTES,

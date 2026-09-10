@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { extname } from "node:path";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 import { resolveUserPath } from "../os/expand-home.js";
@@ -33,6 +33,17 @@ export interface LoadImageOptions {
    * operator, not a control flow.
    */
   logger?: StructuredLogger | undefined;
+  /**
+   * Refuse — **before reading** — a file whose on-disk size already
+   * exceeds the caller's per-image cap (`config.vision.maxImageBytes`).
+   * Deciding the format from the bytes means the read now happens for
+   * every path the agent names, including ones the extension used to
+   * reject unopened, so the cheap `stat` is what keeps
+   * `vision.describe /var/log/install.log` from materialising a
+   * multi-gigabyte buffer only to throw it away. Absent disables the
+   * guard, for callers with no cap of their own.
+   */
+  maxBytes?: number | undefined;
 }
 
 export class UnsupportedImageFormatError extends Error {
@@ -46,6 +57,38 @@ export class UnsupportedImageFormatError extends Error {
         ).join(", ")}`,
     );
     this.name = "UnsupportedImageFormatError";
+  }
+}
+
+/**
+ * The file is already bigger than the caller's per-image cap, so there
+ * is no point reading it. Raised from the `stat` that precedes the read
+ * — the byte-length check the caller keeps afterwards still covers a
+ * file that grows between the two.
+ */
+export class ImageTooLargeError extends Error {
+  constructor(path: string, size: number, maxBytes: number) {
+    super(
+      `image ${path} exceeds maxImageBytes=${maxBytes} (${size} bytes on disk)`,
+    );
+    this.name = "ImageTooLargeError";
+  }
+}
+
+/**
+ * Not a regular file. `readFile` on a character device (`/dev/zero`,
+ * `/dev/urandom`) or a FIFO never returns — it grows a buffer until the
+ * process dies — and typing an image from its bytes means we would
+ * otherwise open whatever path the agent hands us before any check can
+ * reject it.
+ */
+export class NotARegularFileError extends Error {
+  constructor(path: string) {
+    super(
+      `${path} is not a regular file — vision.describe reads images from` +
+        ` files on disk, not from devices, pipes or directories`,
+    );
+    this.name = "NotARegularFileError";
   }
 }
 
@@ -78,6 +121,13 @@ export class UnsupportedImageFormatError extends Error {
  * is decided, because only the bytes can decide it. A supported image
  * with no extension at all — common for downloads and for `mktemp`-style
  * names — used to be rejected without ever being opened and now loads.
+ *
+ * That is also why the read is fronted by a `stat`. The extension check
+ * used to be the thing that stopped `vision.describe` from opening an
+ * arbitrary path; with it gone, the two cases where `readFile` is
+ * unbounded have to be rejected explicitly — anything that is not a
+ * regular file (`/dev/zero` grows a buffer until the process dies) and
+ * a regular file already past the caller's `maxBytes`.
  */
 export async function loadImageFile(
   inputPath: string,
@@ -87,6 +137,13 @@ export async function loadImageFile(
   const absolute = resolveUserPath(inputPath, workingDir);
   const ext = extname(absolute).toLowerCase();
   const fromExtension = MIME_BY_EXT.get(ext);
+  const stats = await stat(absolute);
+  if (!stats.isFile()) {
+    throw new NotARegularFileError(absolute);
+  }
+  if (options.maxBytes !== undefined && stats.size > options.maxBytes) {
+    throw new ImageTooLargeError(absolute, stats.size, options.maxBytes);
+  }
   const buffer = await readFile(absolute);
   const bytes = new Uint8Array(
     buffer.buffer,

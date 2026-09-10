@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -8,7 +8,12 @@ import {
   StructuredLogger,
   type LogRecord,
 } from "../../tracing/structured-logger.js";
-import { loadImageFile, UnsupportedImageFormatError } from "./load-image.js";
+import {
+  ImageTooLargeError,
+  loadImageFile,
+  NotARegularFileError,
+  UnsupportedImageFormatError,
+} from "./load-image.js";
 
 const ascii = (text: string): number[] =>
   Array.from(text, (char) => char.charCodeAt(0));
@@ -188,4 +193,76 @@ describe("loadImageFile", () => {
     expect(loaded.path).toBe(join(dir, "rel.png"));
     expect(loaded.mimeType).toBe("image/png");
   });
+});
+
+/**
+ * Deciding the format from the bytes means the extension no longer
+ * gates the read: every path the agent names is now opened. These are
+ * the two shapes where `readFile` is unbounded, and they have to be
+ * rejected from the `stat` that precedes it — after the read is too
+ * late by definition.
+ */
+describe("loadImageFile — guards in front of the read", () => {
+  it("rejects a file already larger than maxBytes, from its stat", async () => {
+    const path = await write("shot.png", imageBytes(PNG));
+    const error = await loadImageFile(path, dir, { maxBytes: 8 }).catch(
+      (err: unknown) => err,
+    );
+    expect(error).toBeInstanceOf(ImageTooLargeError);
+    expect((error as Error).message).toContain("maxImageBytes=8");
+    expect((error as Error).message).toContain("56 bytes on disk");
+  });
+
+  it("rejects an over-cap file the extension used to reject unopened", async () => {
+    // The regression this guard exists for: `.log` never reached
+    // `readFile` before the sniffer, and would now be materialised in
+    // full only to be thrown away.
+    const path = await write("install.log", Buffer.alloc(4096, 0x61));
+    await expect(
+      loadImageFile(path, dir, { maxBytes: 64 }),
+    ).rejects.toBeInstanceOf(ImageTooLargeError);
+  });
+
+  it("accepts a file exactly at maxBytes", async () => {
+    const bytes = imageBytes(PNG);
+    const path = await write("edge.png", bytes);
+    const loaded = await loadImageFile(path, dir, {
+      maxBytes: bytes.byteLength,
+    });
+    expect(loaded.mimeType).toBe("image/png");
+    expect(loaded.bytes.byteLength).toBe(bytes.byteLength);
+  });
+
+  it("applies no size guard when maxBytes is absent", async () => {
+    const path = await write("big.png", imageBytes(PNG));
+    const loaded = await loadImageFile(path, dir);
+    expect(loaded.mimeType).toBe("image/png");
+  });
+
+  it("rejects a directory instead of surfacing a raw EISDIR", async () => {
+    const nested = join(dir, "shots");
+    await mkdir(nested);
+    const error = await loadImageFile(nested, dir).catch(
+      (err: unknown) => err,
+    );
+    expect(error).toBeInstanceOf(NotARegularFileError);
+    expect((error as Error).message).toContain("not a regular file");
+  });
+
+  // `readFile("/dev/zero")` never returns — it grows a buffer until the
+  // process dies. Before the sniffer the extension check rejected it in
+  // microseconds; the stat has to keep doing so. If this ever regresses
+  // the test does not fail politely, it eats the worker.
+  it.skipIf(process.platform === "win32")(
+    "rejects a character device without reading it",
+    async () => {
+      const started = Date.now();
+      const error = await loadImageFile("/dev/zero", dir).catch(
+        (err: unknown) => err,
+      );
+      expect(error).toBeInstanceOf(NotARegularFileError);
+      expect(Date.now() - started).toBeLessThan(1000);
+    },
+    2000,
+  );
 });
