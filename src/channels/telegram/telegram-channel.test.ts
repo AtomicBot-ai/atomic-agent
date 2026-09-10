@@ -16,6 +16,7 @@ import type { ChannelStatus } from "../../runtime/channel-status.js";
 import type { TaskReport } from "../../tasks/index.js";
 import { StructuredLogger } from "../../tracing/structured-logger.js";
 
+import { TelegramLockfile } from "./telegram-lockfile.js";
 import {
   TASK_REPORT_QUEUE_LIMIT,
   TelegramChannel,
@@ -385,6 +386,36 @@ describe("TelegramChannel", () => {
     await channel.start();
     expect(channel.state()).toBe("down");
     expect(channel.lastError()).toContain("lockfile held");
+  });
+
+  it("leaves the winner's lock file intact when start() loses the race", async () => {
+    // The bug this pins: start() releases from its catch block, and
+    // `release()` used to unlink the file unconditionally. So the
+    // process that LOST the race deleted the winner's lock on its way
+    // down; the winner kept polling from memory while the file was
+    // gone, and the next process acquired "successfully" -- two
+    // pollers on one token, stopped only by Telegram's 409.
+    //
+    // `process.ppid` stands in for the winner: certainly alive, and
+    // never this process, on POSIX and Windows alike.
+    const lockPath = join(dir, "telegram.lock");
+    writeFileSync(lockPath, String(process.ppid), "utf8");
+    const { factory, state } = makeBotFactory();
+    const channel = new TelegramChannel({
+      runtime: fakeRuntime(),
+      config: makeConfig(dir),
+      token: "1234:abcdef",
+      logger,
+      botFactory: factory,
+      lock: new TelegramLockfile(lockPath),
+    });
+
+    await channel.start();
+
+    expect(channel.state()).toBe("down");
+    expect(channel.lastError()).toContain("already running");
+    expect(state.startCalls).toBe(0);
+    expect(readFileSync(lockPath, "utf8")).toBe(String(process.ppid));
   });
 
   it("emits down with scrubbed error when getMe fails", async () => {
