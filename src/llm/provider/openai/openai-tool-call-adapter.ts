@@ -9,7 +9,10 @@ import type {
   ToolBatchOptions,
   ToolDefinitionOptions,
 } from "../adapters/tool-call-adapter.js";
-import { toStrictJsonSchema } from "./strict-tool-schema.js";
+import {
+  strictWidenedProperties,
+  toStrictJsonSchema,
+} from "./strict-tool-schema.js";
 
 const REPLY_TOOL = "reply";
 const FINISH_TOOL = "finish";
@@ -89,22 +92,30 @@ function descriptorToJsonSchema(
   };
 }
 
+interface BuiltFunctions {
+  tools: ReadonlyArray<Record<string, unknown>>;
+  /**
+   * Escaped function name -> the arguments whose optionality the strict
+   * rewrite erased. Only the functions that actually came out `strict`
+   * appear, and a function whose properties were all already required
+   * maps to an empty set.
+   */
+  widenedArgs: ReadonlyMap<string, ReadonlySet<string>>;
+}
+
 /**
  * The one pass both directions read: the emitted function definitions
- * and, alongside them, the escaped names that actually came out
- * `strict`. Keeping them in one place is what makes the null-drop on
- * the way back in exactly as per-tool as the conversion on the way out
- * — see `openAiToolCallsToBatch`.
+ * and, alongside them, the per-function record of what the rewrite
+ * changed. Keeping them in one place is what makes the null-drop on the
+ * way back in exactly as narrow as the conversion on the way out — see
+ * `openAiToolCallsToBatch`.
  */
 function buildFunctions(
   descriptors: readonly ToolDescriptor[],
   options?: ToolDefinitionOptions,
-): {
-  tools: ReadonlyArray<Record<string, unknown>>;
-  strictNames: ReadonlySet<string>;
-} {
+): BuiltFunctions {
   const seen = new Set<string>();
-  const strictNames = new Set<string>();
+  const widenedArgs = new Map<string, ReadonlySet<string>>();
   const out: Record<string, unknown>[] = [];
   const all = [...descriptors, ...replyFinishDescriptors()];
   for (const d of all) {
@@ -113,7 +124,7 @@ function buildFunctions(
     seen.add(escaped);
     const parameters = descriptorToJsonSchema(d);
     const strict = options?.strict ? toStrictJsonSchema(parameters) : null;
-    if (strict) strictNames.add(escaped);
+    if (strict) widenedArgs.set(escaped, strictWidenedProperties(parameters));
     out.push({
       type: "function",
       function: {
@@ -123,7 +134,49 @@ function buildFunctions(
       },
     });
   }
-  return { tools: out, strictNames };
+  return { tools: out, widenedArgs };
+}
+
+/**
+ * Both directions of one inference ask for the same build: the request
+ * builder for `tools`, the tool-call parser for what got widened. A
+ * one-entry memo keyed on the descriptor array's identity and the
+ * strict flag turns the second into a lookup instead of a full
+ * re-conversion of every registered schema.
+ *
+ * Identity is a sound key here because a descriptor array is REBUILT,
+ * never edited: `rebuildToolDescriptorsFromMcp` assigns a fresh array
+ * (of fresh descriptor objects) whenever the catalog changes, and the
+ * step executor's `terminalOnly` narrowing is a `filter`. A reference
+ * that compares equal therefore describes the same tools.
+ *
+ * Deliberately a single slot: the two calls are adjacent within a step,
+ * nothing needs to survive past them, and holding descriptor arrays
+ * alive is not worth a cache.
+ */
+let lastBuild:
+  | {
+      descriptors: readonly ToolDescriptor[];
+      strict: boolean;
+      built: BuiltFunctions;
+    }
+  | undefined;
+
+function buildFunctionsMemo(
+  descriptors: readonly ToolDescriptor[],
+  options?: ToolDefinitionOptions,
+): BuiltFunctions {
+  const strict = options?.strict === true;
+  if (
+    lastBuild &&
+    lastBuild.descriptors === descriptors &&
+    lastBuild.strict === strict
+  ) {
+    return lastBuild.built;
+  }
+  const built = buildFunctions(descriptors, options);
+  lastBuild = { descriptors, strict, built };
+  return built;
 }
 
 /**
@@ -139,28 +192,32 @@ export function descriptorsToOpenAiTools(
   descriptors: readonly ToolDescriptor[],
   options?: ToolDefinitionOptions,
 ): ReadonlyArray<Record<string, unknown>> {
-  return buildFunctions(descriptors, options).tools;
+  return buildFunctionsMemo(descriptors, options).tools;
 }
 
 /**
- * The escaped function names `descriptorsToOpenAiTools` marked strict
- * for the same descriptors and options — the caller hands this back to
- * `openAiToolCallsToBatch` so the incoming side knows which calls were
- * decoded against a rewritten schema and which shipped untouched.
+ * What `descriptorsToOpenAiTools` actually CHANGED, for the same
+ * descriptors and options: each function it marked strict, mapped to
+ * the arguments whose optionality the rewrite erased. The caller hands
+ * this back to `openAiToolCallsToBatch`, which is then able to undo the
+ * rewrite exactly where it happened and nowhere else.
  *
  * Escaped names, deliberately: `nameUnescape` cannot round-trip a tool
- * whose own name contains an underscore, and this set has to match the
- * wire exactly.
+ * whose own name contains an underscore, and these keys have to match
+ * the wire exactly.
  */
-export function strictOpenAiToolNames(
+export function strictOpenAiWidenedArgs(
   descriptors: readonly ToolDescriptor[],
   options?: ToolDefinitionOptions,
-): ReadonlySet<string> {
-  if (!options?.strict) return EMPTY_NAMES;
-  return buildFunctions(descriptors, options).strictNames;
+): ReadonlyMap<string, ReadonlySet<string>> {
+  if (!options?.strict) return EMPTY_WIDENED;
+  return buildFunctionsMemo(descriptors, options).widenedArgs;
 }
 
-const EMPTY_NAMES: ReadonlySet<string> = new Set<string>();
+const EMPTY_WIDENED: ReadonlyMap<string, ReadonlySet<string>> = new Map<
+  string,
+  ReadonlySet<string>
+>();
 
 /**
  * A tool call's `function.arguments` was non-empty but not valid JSON (or
@@ -204,23 +261,32 @@ function parseArguments(raw: string): Record<string, unknown> {
  * `memory.notes.recall.id`, `os.git.init.userName`) and would take a
  * branch on a literal `null` that an omitted key never triggers.
  *
- * Applied only to the functions we actually rewrote — see
- * `options.strictToolNames`. A tool whose schema was refused went out
- * byte-identical to the flag-off payload, so a `null` in its arguments
- * is a `null` the model chose to send: a third-party MCP tool with a
- * required `["string", "null"]` argument means it literally, and
- * deleting the key would hand its server a call missing a required
- * field.
+ * Applied only to the arguments we actually widened — see
+ * `options.strictWidenedArgs`. Two things are therefore left alone, and
+ * both matter:
+ *
+ *   * every argument of a tool whose schema was REFUSED. That function
+ *     went out byte-identical to the flag-off payload, so a `null` in
+ *     it is a `null` the model chose to send;
+ *   * an argument of a CONVERTED tool that was already `required`. It
+ *     too was emitted byte-identical — the converter only widens what
+ *     it moves — so if it is also nullable (`z.string().nullable()`
+ *     through the MCP SDK; `["string", "null"]` listed in `required`)
+ *     the model means the null literally, and deleting the key would
+ *     hand its server a call missing a required field.
  *
  * Top level only, and deliberately so: no schema we convert has a
  * nested object today, while `null` deeper inside an argument is data
  * the model meant to send (a JSON body, an MCP server's own payload)
  * and is not ours to rewrite.
  */
-function dropNullArgs(args: Record<string, unknown>): Record<string, unknown> {
+function dropNullArgs(
+  args: Record<string, unknown>,
+  widened: ReadonlySet<string>,
+): Record<string, unknown> {
   let out: Record<string, unknown> | null = null;
   for (const [key, value] of Object.entries(args)) {
-    if (value !== null) continue;
+    if (value !== null || !widened.has(key)) continue;
     out ??= { ...args };
     delete out[key];
   }
@@ -238,8 +304,9 @@ export function openAiToolCallsToBatch(
     let args: Record<string, unknown>;
     try {
       args = parseArguments(tc.function.arguments);
-      if (options?.strictToolNames?.has(tc.function.name)) {
-        args = dropNullArgs(args);
+      const widened = options?.strictWidenedArgs?.get(tc.function.name);
+      if (widened && widened.size > 0) {
+        args = dropNullArgs(args, widened);
       }
     } catch (err) {
       if (err instanceof SyntaxError) {
@@ -268,6 +335,6 @@ export const openAiToolCallAdapter: ToolCallAdapter = {
   nameEscape,
   nameUnescape,
   descriptorsToTools: descriptorsToOpenAiTools,
-  strictToolNames: strictOpenAiToolNames,
+  strictWidenedArgs: strictOpenAiWidenedArgs,
   toolCallsToBatch: openAiToolCallsToBatch,
 };

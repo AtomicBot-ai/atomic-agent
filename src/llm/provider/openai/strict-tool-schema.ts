@@ -116,6 +116,39 @@ const SCALAR_TYPES: ReadonlySet<string> = new Set([
  */
 const MAX_NESTING = 5;
 
+/**
+ * Every node this module emits is spread (`{ ...node, ... }`) so the
+ * annotations it accepts survive. That spread is also how an
+ * allowlisted keyword the node's SHAPE has no rule for would ride out
+ * into a schema we then mark strict, unconverted — `enum` on an object
+ * node emitting its raw sub-objects verbatim is the sharp case, and
+ * `items` on an object (or `properties` on an array) is the same bug
+ * with a different key. `convertScalar` has always refused its own
+ * strays; these are the other three shapes' lists, so the keyword
+ * allowlist means what the module's header says it means.
+ *
+ * `enum` appears in all three: a non-scalar enum member is a whole
+ * sub-value we would have to convert and do not.
+ */
+const UNION_STRAYS: readonly string[] = [
+  "properties",
+  "required",
+  "additionalProperties",
+  "items",
+  "enum",
+];
+const ARRAY_STRAYS: readonly string[] = [
+  "properties",
+  "required",
+  "additionalProperties",
+  "enum",
+];
+const OBJECT_STRAYS: readonly string[] = ["items", "enum"];
+
+function hasStrayKeyword(node: Schema, strays: readonly string[]): boolean {
+  return strays.some((key) => node[key] !== undefined);
+}
+
 
 /**
  * The strict form of `schema`, or `null` when it cannot be produced.
@@ -129,6 +162,39 @@ export function toStrictJsonSchema(schema: unknown): Schema | null {
   return convertNode(stripped, 0);
 }
 
+/**
+ * The top-level property names whose OPTIONALITY this conversion
+ * erases: exactly those `toStrictJsonSchema` moves into `required` and
+ * unions with `null` because the original schema left them out of
+ * `required`.
+ *
+ * This, and not "the tool converted", is what the null-drop on the way
+ * back in must be keyed to — see `openAiToolCallsToBatch`. A property
+ * that was ALREADY required is emitted byte-identical, nullable or not,
+ * so a `null` the model sends for it is a `null` the tool's own schema
+ * asked for. `z.string().nullable()` in the official MCP SDK produces
+ * exactly that shape (`anyOf: [{string},{null}]`, listed in `required`),
+ * and deleting its key would hand the server a call missing a required
+ * field.
+ *
+ * Only meaningful for a schema `toStrictJsonSchema` accepted; call it
+ * on the same input and only when that returned non-null.
+ */
+export function strictWidenedProperties(schema: unknown): ReadonlySet<string> {
+  const root = asObject(schema);
+  const properties = asObject(root?.properties);
+  if (!properties) return EMPTY_NAMES;
+  const required = readRequired(root?.required);
+  if (!required) return EMPTY_NAMES;
+  const widened = new Set<string>();
+  for (const name of Object.keys(properties)) {
+    if (!required.has(name)) widened.add(name);
+  }
+  return widened;
+}
+
+const EMPTY_NAMES: ReadonlySet<string> = new Set<string>();
+
 function convertNode(raw: Schema, depth: number): Schema | null {
   if (depth > MAX_NESTING) return null;
   const node = stripAnnotations(raw);
@@ -138,13 +204,19 @@ function convertNode(raw: Schema, depth: number): Schema | null {
   if (node.anyOf !== undefined) {
     // A union node carries its branches and nothing else structural;
     // `type` alongside `anyOf` is a shape we do not emit and will not
-    // guess at.
+    // guess at, and the rest would ride out through the spread below
+    // unconverted.
     if (node.type !== undefined || !Array.isArray(node.anyOf)) return null;
+    if (hasStrayKeyword(node, UNION_STRAYS)) return null;
     const branches: Schema[] = [];
     for (const branchRaw of node.anyOf) {
       const branch = asObject(branchRaw);
       if (!branch) return null;
-      const converted = convertNode(branch, depth);
+      // `depth + 1`, not `depth`: a branch is a nesting level like any
+      // other. Recursing at the same depth left the bound unenforced on
+      // this path, so a self-referential `anyOf` still overflowed the
+      // stack and an arbitrarily deep union chain still converted.
+      const converted = convertNode(branch, depth + 1);
       if (!converted) return null;
       branches.push(converted);
     }
@@ -167,6 +239,7 @@ function convertNode(raw: Schema, depth: number): Schema | null {
   // way to say which branch it belongs to.
   if (structural.length !== 1) return null;
   if (structural[0] === "array") {
+    if (hasStrayKeyword(node, ARRAY_STRAYS)) return null;
     const items = asObject(node.items);
     if (!items) return null;
     const converted = convertNode(items, depth + 1);
@@ -204,6 +277,7 @@ function convertScalar(node: Schema): Schema | null {
 }
 
 function convertObject(node: Schema, depth: number): Schema | null {
+  if (hasStrayKeyword(node, OBJECT_STRAYS)) return null;
   // An object that does not close itself is open — that is the JSON
   // Schema default, and an absent `additionalProperties` means it as
   // loudly as an explicit `true` does. Closing either one would

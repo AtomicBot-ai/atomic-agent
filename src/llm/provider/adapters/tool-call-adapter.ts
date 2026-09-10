@@ -13,16 +13,22 @@ export interface ToolDefinitionOptions {
 }
 
 /**
- * The incoming side, and NOT a boolean. Strict is granted per tool —
- * the adapter marks only the functions whose schema it could rewrite
- * faithfully — so undoing the rewrite on the way back in has to be per
- * tool too. This carries the provider-facing (escaped) names that were
- * actually marked, i.e. exactly the calls that were decoded against a
- * schema we changed. A call to a tool that shipped unconverted is
- * indistinguishable from the flag-off payload and must be left alone.
+ * The incoming side, and NOT a boolean — nor even a set of tool names.
+ * Strict is granted per tool (the adapter marks only the functions
+ * whose schema it could rewrite), but the rewrite that has to be undone
+ * is per PROPERTY: only an argument the converter moved from optional
+ * into `required` carries a `null` the schema put there. An argument
+ * that was already required went out byte-identical, so its `null` is
+ * the model answering the tool's own schema — deleting it would hand an
+ * MCP server a call missing a required field.
+ *
+ * So this maps a provider-facing (escaped) function name to the
+ * argument names whose optionality the rewrite erased. A function
+ * absent from the map shipped unconverted; a name absent from its set
+ * was never widened. Both are left exactly as they arrive.
  */
 export interface ToolBatchOptions {
-  strictToolNames?: ReadonlySet<string>;
+  strictWidenedArgs?: ReadonlyMap<string, ReadonlySet<string>>;
 }
 
 /**
@@ -42,15 +48,16 @@ export interface ToolCallAdapter {
     options?: ToolDefinitionOptions,
   ): ReadonlyArray<Record<string, unknown>>;
   /**
-   * The provider-facing names `descriptorsToTools` emitted under the
-   * provider's strict mode, for the same descriptors and options —
-   * fed straight back into `toolCallsToBatch`. An adapter with no
-   * strict mode omits this and every call is parsed as it is today.
+   * For the same descriptors and options `descriptorsToTools` was
+   * called with: each function emitted under the provider's strict mode
+   * mapped to the arguments whose optionality that rewrite erased. Fed
+   * straight back into `toolCallsToBatch`. An adapter with no strict
+   * mode omits this and every call is parsed as it is today.
    */
-  strictToolNames?(
+  strictWidenedArgs?(
     descriptors: readonly ToolDescriptor[],
     options?: ToolDefinitionOptions,
-  ): ReadonlySet<string>;
+  ): ReadonlyMap<string, ReadonlySet<string>>;
   /** Convert provider tool_calls into the runtime `ToolCallBatch`. */
   toolCallsToBatch(
     toolCalls: ReadonlyArray<OpenAiToolCall>,

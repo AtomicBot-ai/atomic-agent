@@ -4,7 +4,7 @@ import {
   nameEscape,
   nameUnescape,
   descriptorsToOpenAiTools,
-  strictOpenAiToolNames,
+  strictOpenAiWidenedArgs,
   openAiToolCallsToBatch,
   ToolCallArgumentsParseError,
 } from "./openai-tool-call-adapter.js";
@@ -369,6 +369,66 @@ describe("OpenAiToolCallAdapter", () => {
       });
     });
 
+    // The set of descriptors these round-trip tests share. `put` is the
+    // load-bearing one: it CONVERTS (it is a closed object), and it has
+    // a required nullable (`value`) next to an optional nullable
+    // (`note`) — exactly what `z.string().nullable()` vs
+    // `z.string().nullable().optional()` emit through the official MCP
+    // SDK. Nothing here hand-builds the strict map; it comes out of the
+    // same call that built the payload, which is the only version of
+    // this test that can fail.
+    const nullableDescriptors = [
+      {
+        name: "memory.profile.set",
+        tier: "frequent" as const,
+        summary: "set a profile fact",
+        argsSchema: "{ key, value, pinned?, keywords? }",
+        argsJsonSchema: {
+          type: "object",
+          properties: {
+            key: { type: "string" },
+            value: { type: "string" },
+            pinned: { type: "boolean" },
+            keywords: { type: "array", items: { type: "string" } },
+          },
+          required: ["key", "value"],
+          additionalProperties: false,
+        } as Record<string, unknown>,
+      },
+      {
+        name: "mcp.acme.put",
+        tier: "frequent" as const,
+        summary: "store a value that may legitimately be null",
+        argsSchema: "{ key, value, note? }",
+        argsJsonSchema: {
+          type: "object",
+          properties: {
+            key: { type: "string" },
+            value: { type: ["string", "null"] },
+            note: { anyOf: [{ type: "string" }, { type: "null" }] },
+          },
+          required: ["key", "value"],
+          additionalProperties: false,
+        } as Record<string, unknown>,
+      },
+      {
+        name: "mcp.acme.raw",
+        tier: "frequent" as const,
+        summary: "left open by its server, so the converter refuses it",
+        argsSchema: "{ key, value }",
+        argsJsonSchema: {
+          type: "object",
+          properties: {
+            key: { type: "string" },
+            value: { type: ["string", "null"] },
+          },
+          required: ["key", "value"],
+        } as Record<string, unknown>,
+      },
+    ];
+    const widenedFor = () =>
+      strictOpenAiWidenedArgs(nullableDescriptors, { strict: true });
+
     it("drops the nulls a strict schema forces the model to send", () => {
       const call = [
         {
@@ -387,7 +447,7 @@ describe("OpenAiToolCallAdapter", () => {
       // literal null takes a branch an omitted key never would.
       expect(
         openAiToolCallsToBatch(call, undefined, {
-          strictToolNames: new Set(["memory__profile__set"]),
+          strictWidenedArgs: widenedFor(),
         }).calls[0]?.args,
       ).toEqual({ key: "city", value: "Belgrade" });
       // Off, the payload is passed through byte-for-byte as before.
@@ -400,30 +460,55 @@ describe("OpenAiToolCallAdapter", () => {
     });
 
     it("keeps the nulls of a tool whose schema was refused", () => {
-      // The whole point of the per-tool set. `mcp.acme.put` shipped
-      // with its own schema untouched, in which `value` is a REQUIRED
-      // `["string", "null"]`: the model was told to send that null and
-      // the server would reject a call missing the key. Batch-level
-      // gating deleted it.
-      const call = [
-        {
-          function: {
-            name: "mcp__acme__put",
-            arguments: JSON.stringify({ key: "k", value: null }),
+      // `mcp.acme.raw` does not close itself, so the converter refuses
+      // it and it ships with its own schema untouched — in which
+      // `value` is a REQUIRED `["string", "null"]`. The model was told
+      // to send that null and the server would reject a call missing
+      // the key.
+      const batch = openAiToolCallsToBatch(
+        [
+          {
+            function: {
+              name: "mcp__acme__raw",
+              arguments: JSON.stringify({ key: "k", value: null }),
+            },
           },
-        },
-        {
-          function: {
-            name: "memory__profile__set",
-            arguments: JSON.stringify({ key: "city", pinned: null }),
+          {
+            function: {
+              name: "memory__profile__set",
+              arguments: JSON.stringify({ key: "city", pinned: null }),
+            },
           },
-        },
-      ];
-      const batch = openAiToolCallsToBatch(call, undefined, {
-        strictToolNames: new Set(["memory__profile__set"]),
-      });
+        ],
+        undefined,
+        { strictWidenedArgs: widenedFor() },
+      );
       expect(batch.calls[0]?.args).toEqual({ key: "k", value: null });
       expect(batch.calls[1]?.args).toEqual({ key: "city" });
+    });
+
+    it("keeps a required nullable argument of a tool that DID convert", () => {
+      // The undo is per property, not per tool. `mcp.acme.put`
+      // converted — `note` was widened — but `value` was already
+      // required and already nullable, so it went out byte-identical
+      // and its null is the model answering the tool's OWN schema.
+      // Keyed per tool, this deleted a required field on the way to the
+      // server.
+      const widened = widenedFor();
+      expect([...(widened.get("mcp__acme__put") ?? [])]).toEqual(["note"]);
+      const batch = openAiToolCallsToBatch(
+        [
+          {
+            function: {
+              name: "mcp__acme__put",
+              arguments: JSON.stringify({ key: "k", value: null, note: null }),
+            },
+          },
+        ],
+        undefined,
+        { strictWidenedArgs: widened },
+      );
+      expect(batch.calls[0]?.args).toEqual({ key: "k", value: null });
     });
 
     it("names exactly the functions it marked strict", () => {
@@ -439,11 +524,18 @@ describe("OpenAiToolCallAdapter", () => {
       const marked = descriptorsToOpenAiTools(descriptors, { strict: true })
         .filter((t) => (t as { function: { strict?: boolean } }).function.strict)
         .map((t) => (t as { function: { name: string } }).function.name);
-      expect([...strictOpenAiToolNames(descriptors, { strict: true })]).toEqual(
-        marked,
-      );
-      expect(strictOpenAiToolNames(descriptors).size).toBe(0);
-      expect(strictOpenAiToolNames(descriptors, { strict: false }).size).toBe(
+      expect([
+        ...strictOpenAiWidenedArgs(descriptors, { strict: true }).keys(),
+      ]).toEqual(marked);
+      // ...and each one carries the arguments whose optionality the
+      // rewrite erased, not merely the fact that it was rewritten.
+      expect([
+        ...(strictOpenAiWidenedArgs(descriptors, { strict: true }).get(
+          "os__shell__run",
+        ) ?? []),
+      ]).toEqual(["cwd"]);
+      expect(strictOpenAiWidenedArgs(descriptors).size).toBe(0);
+      expect(strictOpenAiWidenedArgs(descriptors, { strict: false }).size).toBe(
         0,
       );
     });
@@ -463,7 +555,11 @@ describe("OpenAiToolCallAdapter", () => {
           },
         ],
         undefined,
-        { strictToolNames: new Set(["os__shell__run"]) },
+        {
+          strictWidenedArgs: new Map([
+            ["os__shell__run", new Set(["cwd"])],
+          ]),
+        },
       );
       expect(batch.calls[0]?.args).toEqual({
         cmd: "echo",

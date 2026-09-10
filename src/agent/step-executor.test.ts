@@ -3242,6 +3242,27 @@ describe('strictTools wiring (supportsTools: "strict")', () => {
     } as Record<string, unknown>,
   };
 
+  // Converts (it closes itself) AND has a required nullable next to an
+  // optional one: the case where "the tool converted" and "this
+  // argument was widened" come apart. Keyed per tool, the null-drop ate
+  // `value` here on its way to the server.
+  const convertedNullable = {
+    name: "acme.mixed",
+    tier: "frequent" as const,
+    summary: "store a value that may legitimately be null",
+    argsSchema: "{ key: string, value: string | null, note?: string }",
+    argsJsonSchema: {
+      type: "object",
+      properties: {
+        key: { type: "string" },
+        value: { anyOf: [{ type: "string" }, { type: "null" }] },
+        note: { type: "string" },
+      },
+      required: ["key", "value"],
+      additionalProperties: false,
+    } as Record<string, unknown>,
+  };
+
   // One call per step: a two-call batch is rejected before dispatch
   // because these invented tools carry no resource class.
   async function runStrictStep(
@@ -3255,7 +3276,11 @@ describe('strictTools wiring (supportsTools: "strict")', () => {
   }> {
     const argsSeen: Record<string, Record<string, unknown>> = {};
     const registry = new ToolRegistry();
-    for (const name of [convertible.name, refused.name]) {
+    for (const name of [
+      convertible.name,
+      convertedNullable.name,
+      refused.name,
+    ]) {
       registry.register({
         name,
         description: name,
@@ -3270,7 +3295,7 @@ describe('strictTools wiring (supportsTools: "strict")', () => {
     const outcome = await executeStep(
       {
         session: createEmptySessionState({ id: "s-strict", workingDir: "/w" }),
-        toolDescriptors: [convertible, refused],
+        toolDescriptors: [convertible, convertedNullable, refused],
         capabilities: CAPS,
         skillCatalog: SKILLS,
         stepIndex: 0,
@@ -3351,5 +3376,23 @@ describe('strictTools wiring (supportsTools: "strict")', () => {
       args: { key: "k", value: null },
     });
     expect(untouched.argsSeen["acme.raw"]).toEqual({ key: "k", value: null });
+  });
+
+  it("keeps a required nullable argument of a function that converted", () => {
+    // The undo is per ARGUMENT. `acme.mixed` converted — `note` was
+    // widened — but `value` was already required and already nullable,
+    // so it shipped byte-identical and its null is the model answering
+    // the tool's own schema.
+    return runStrictStep({
+      name: "acme__mixed",
+      args: { key: "k", value: null, note: null },
+    }).then(({ tools, argsSeen }) => {
+      const mixed = tools.find(
+        (t) =>
+          (t as { function: { name: string } }).function.name === "acme__mixed",
+      ) as { function: { strict?: boolean } };
+      expect(mixed.function.strict).toBe(true);
+      expect(argsSeen["acme.mixed"]).toEqual({ key: "k", value: null });
+    });
   });
 });

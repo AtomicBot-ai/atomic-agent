@@ -1464,17 +1464,17 @@ function tryParseToolCalls(
           profile,
           assumeOpenReasoning,
         );
-        // Per tool, not per batch: only the functions this adapter
-        // actually marked strict were decoded against a schema we
-        // rewrote, so only their arguments get the rewrite undone. The
-        // names come from the same adapter and the same descriptor
-        // list the request was built from.
-        const strictToolNames =
-          deps.strictTools === true && adapter.strictToolNames
-            ? adapter.strictToolNames(toolDescriptors, { strict: true })
+        // Per ARGUMENT, not per batch and not even per tool: only the
+        // arguments this adapter moved from optional into `required`
+        // carry a `null` the schema put there, so only those get the
+        // rewrite undone. The map comes from the same adapter and the
+        // same descriptor list the request was built from.
+        const strictWidenedArgs =
+          deps.strictTools === true && adapter.strictWidenedArgs
+            ? adapter.strictWidenedArgs(toolDescriptors, { strict: true })
             : undefined;
         const batch = adapter.toolCallsToBatch(completion.toolCalls, reasoning, {
-          ...(strictToolNames ? { strictToolNames } : {}),
+          ...(strictWidenedArgs ? { strictWidenedArgs } : {}),
         });
         if (batch.calls.length === 0) {
           return {

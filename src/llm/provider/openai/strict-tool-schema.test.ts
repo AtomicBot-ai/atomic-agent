@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { toStrictJsonSchema } from "./strict-tool-schema.js";
+import {
+  strictWidenedProperties,
+  toStrictJsonSchema,
+} from "./strict-tool-schema.js";
 import { getDefaultArgsJsonSchema } from "../../../prompt/default-tool-args-schemas.js";
 
 describe("toStrictJsonSchema", () => {
@@ -429,6 +432,98 @@ describe("toStrictJsonSchema", () => {
       expect(() => toStrictJsonSchema(cyclic)).not.toThrow();
       expect(toStrictJsonSchema(cyclic)).toBeNull();
     });
+
+    /**
+     * The same two failures spelled through `anyOf`. The bound counts a
+     * union branch as a level like any other; recursing into branches at
+     * the caller's depth left this path unbounded, so the cycle still
+     * overflowed the stack and the chain still converted.
+     */
+    it("bounds the union path as well as the object and array ones", () => {
+      const cyclic: Record<string, unknown> = { anyOf: [] };
+      (cyclic.anyOf as unknown[]).push(cyclic);
+      const wrapped = {
+        type: "object",
+        properties: { x: cyclic },
+        required: ["x"],
+        additionalProperties: false,
+      };
+      expect(() => toStrictJsonSchema(wrapped)).not.toThrow();
+      expect(toStrictJsonSchema(wrapped)).toBeNull();
+
+      const chain = (levels: number): Record<string, unknown> => {
+        let node: Record<string, unknown> = { type: "string" };
+        for (let i = 0; i < levels; i += 1) node = { anyOf: [node] };
+        return {
+          type: "object",
+          properties: { x: node },
+          required: ["x"],
+          additionalProperties: false,
+        };
+      };
+      // The property is level 1, so four more union levels fit and a
+      // fifth does not.
+      expect(toStrictJsonSchema(chain(4))).not.toBeNull();
+      expect(toStrictJsonSchema(chain(5))).toBeNull();
+    });
+
+    /**
+     * Every emitted node is a spread of the node that came in, so an
+     * allowlisted keyword the node's SHAPE has no rule for would ride
+     * out unconverted into a schema we then mark strict. `convertScalar`
+     * always refused its own; these are the other three shapes.
+     */
+    it("refuses an allowlisted keyword its node shape cannot convert", () => {
+      const wrap = (x: Record<string, unknown>) => ({
+        type: "object",
+        properties: { x },
+        required: ["x"],
+        additionalProperties: false,
+      });
+      const emptyObject = {
+        type: "object",
+        properties: {},
+        required: [],
+        additionalProperties: false,
+      };
+      // `enum` on an object node: its members are whole sub-values this
+      // module never converts, and it emitted them verbatim.
+      expect(
+        toStrictJsonSchema(wrap({ ...emptyObject, enum: [{}] })),
+      ).toBeNull();
+      // `items` on an object node, and the object keywords on an array
+      // node: unconverted either way.
+      expect(
+        toStrictJsonSchema(wrap({ ...emptyObject, items: { type: "string" } })),
+      ).toBeNull();
+      expect(
+        toStrictJsonSchema(
+          wrap({
+            type: "array",
+            items: { type: "string" },
+            additionalProperties: false,
+          }),
+        ),
+      ).toBeNull();
+      expect(
+        toStrictJsonSchema(
+          wrap({ type: "array", items: { type: "string" }, enum: [[]] }),
+        ),
+      ).toBeNull();
+      // ...and on a union node, where none of them belong at all.
+      expect(
+        toStrictJsonSchema(
+          wrap({
+            anyOf: [{ type: "string" }],
+            properties: { y: { type: "string" } },
+          }),
+        ),
+      ).toBeNull();
+      // The scalar spelling of `enum` is the one that stays legal.
+      expect(
+        toStrictJsonSchema(wrap({ type: "string", enum: ["a", "b"] })),
+      ).not.toBeNull();
+    });
   });
 
   /**
@@ -459,7 +554,43 @@ describe("toStrictJsonSchema", () => {
       "vision.describe",
     ]);
     expect(converted).toBe(DEFAULT_TOOL_NAMES.length - refused.length);
-    expect(converted).toBeGreaterThan(60);
+    // 82 registered schemas, 77 of them strict. Pinned as a number so
+    // the sample cannot quietly shrink.
+    expect(DEFAULT_TOOL_NAMES.length).toBe(82);
+    expect(converted).toBe(77);
+  });
+
+  /**
+   * What the null-drop on the way back in is keyed to. It has to be the
+   * properties the rewrite MOVED, not the tools it converted: an
+   * argument that was already required is emitted byte-identical,
+   * nullable or not, so its null is the model answering the tool's own
+   * schema.
+   */
+  it("names the properties whose optionality the rewrite erased", () => {
+    const schema = {
+      type: "object",
+      properties: {
+        key: { type: "string" },
+        // Already required AND already nullable — the shape
+        // `z.string().nullable()` produces through the MCP SDK.
+        value: { anyOf: [{ type: "string" }, { type: "null" }] },
+        note: { type: "string" },
+      },
+      required: ["key", "value"],
+      additionalProperties: false,
+    };
+    expect(toStrictJsonSchema(schema)).not.toBeNull();
+    expect([...strictWidenedProperties(schema)]).toEqual(["note"]);
+    // Nothing optional, nothing widened.
+    expect(
+      strictWidenedProperties({
+        type: "object",
+        properties: { key: { type: "string" } },
+        required: ["key"],
+        additionalProperties: false,
+      }).size,
+    ).toBe(0);
   });
 });
 
@@ -540,6 +671,20 @@ const DEFAULT_TOOL_NAMES: readonly string[] = [
   "mcp.prompt.list",
   "mcp.prompt.get",
   "fusion.delegate",
+  // The nine from `github-tool-args-schemas.ts`, spread into the same
+  // registry. Left out of this list, a bound added to one of them would
+  // have joined the refusal set silently — the exact surprise the pin
+  // exists to prevent, and `github.pr.list` is the schema AGENTS.md
+  // cites for the widened-enum note.
+  "os.git.checkout",
+  "os.git.commit",
+  "os.git.push",
+  "github.whoami",
+  "github.pr.list",
+  "github.pr.create",
+  "github.issue.list",
+  "github.issue.create",
+  "github.issue.comment",
   "reply",
   "finish",
 ].sort();

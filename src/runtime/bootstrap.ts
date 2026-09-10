@@ -78,7 +78,6 @@ import {
   resolveLlmConfig,
 } from "../llm/provider/index.js";
 import { resolveActiveToolTransport } from "../llm/provider/registry/resolve-tool-transport.js";
-import type { ResolvedLlmConfig } from "../llm/provider/registry/index.js";
 import {
   activeTextProviderIsLlamaServer,
   providerIdIsLlamaServer,
@@ -88,11 +87,8 @@ import {
   DeferredLocalBackendProbes,
 } from "../llm/local-backend-gate.js";
 import { CostAccumulator } from "../llm/provider/cost-accumulator.js";
-import { catalogForProvider } from "../llm/provider/catalog-for-provider.js";
-import {
-  resolveModel,
-  type ResolvedModel,
-} from "../llm/provider/model-resolver.js";
+import { modelWantsStrictTools } from "../llm/provider/model-strict-tools.js";
+import type { ResolvedModel } from "../llm/provider/model-resolver.js";
 import { resolveModelPricingFor } from "./resolve-model-pricing.js";
 import {
   ProviderFallbackChain,
@@ -1513,29 +1509,6 @@ export async function createAgentRuntime(
     getProfile: getLiveProfile,
     logger,
   });
-
-  /**
-   * `supportsTools: "strict"` on the model this link serves — the one
-   * consumer of that level. It is a per-MODEL fact, not a provider
-   * capability: the operator sets it on a `userModels[]` entry for the
-   * one model that needs the provider to constrain the decode (a
-   * report of mercury-2.5 misforming tool calls without it), while the
-   * next model on the same endpoint keeps today's behaviour. Resolved
-   * per call for the same reason the slice is: a hot-swapped model must
-   * be seen by the next inference, not the next process.
-   */
-  const modelWantsStrictTools = (
-    resolved: ResolvedLlmConfig,
-    providerId: string,
-  ): boolean => {
-    const entry = resolved.providers.find((p) => p.id === providerId);
-    const modelId = entry?.defaultChatModel ?? entry?.model;
-    if (!entry || !modelId) return false;
-    return (
-      resolveModel(entry, modelId, catalogForProvider(entry)).supportsTools ===
-      "strict"
-    );
-  };
 
   /**
    * Re-read on every inference so TUI `setActive` hot-swap takes effect.

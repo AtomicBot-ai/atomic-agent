@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import type { CompletionRequest } from "../completion-types.js";
 import { adaptQwenTaggedToolResponse } from "./qwen-tagged-tool-response-adapter.js";
+import { descriptorsToOpenAiTools } from "./openai-tool-call-adapter.js";
+import { getDefaultArgsJsonSchema } from "../../../prompt/default-tool-args-schemas.js";
 
 const offeredTools: NonNullable<CompletionRequest["tools"]> = [
   {
@@ -538,5 +540,98 @@ describe("adaptQwenTaggedToolResponse", () => {
     expect(JSON.parse(calls[0]!.function.arguments)).toEqual({
       constructor: "own",
     });
+  });
+});
+
+/**
+ * The strict tool payload and the tagged decoder meet here.
+ *
+ * `supportsTools: "strict"` rewrites every optional argument into a
+ * `null` union listed in `required` — that is what the provider's
+ * strict DECODER wants. This provider does not use that decoder: the
+ * model writes `<tool_call>` prose and we parse it ourselves. Read
+ * literally, the inflated `required` rejects every realistic tagged
+ * call for omitting an optional, and the whole call disappears into
+ * text — strictly worse than not turning the level on. So the decoder
+ * reads the strict spelling the way strict means it.
+ */
+describe("adaptQwenTaggedToolResponse with a strict tools payload", () => {
+  const listDescriptor = {
+    name: "os.fs.list",
+    tier: "frequent" as const,
+    summary: "list a directory",
+    argsSchema: "{ path, pattern?, kind?, ... }",
+    argsJsonSchema: getDefaultArgsJsonSchema("os.fs.list"),
+  };
+  const tagged =
+    "<tool_call><function=os__fs__list><parameter=path>/tmp</parameter></function></tool_call>";
+
+  function callsFor(strict: boolean): unknown {
+    const tools = descriptorsToOpenAiTools([listDescriptor], {
+      strict,
+    }) as NonNullable<CompletionRequest["tools"]>;
+    const adapted = adaptQwenTaggedToolResponse(
+      responseWith({ role: "assistant", content: tagged }),
+      { tools },
+    );
+    return firstMessage(adapted).tool_calls;
+  }
+
+  it("still parses a call that omits every optional argument", () => {
+    // `os.fs.list` requires only `path`; the strict rewrite puts its
+    // five optionals into `required` as well.
+    const expected = [
+      {
+        id: "call_qwen_tagged_0",
+        type: "function",
+        function: {
+          name: "os__fs__list",
+          arguments: JSON.stringify({ path: "/tmp" }),
+        },
+      },
+    ];
+    expect(callsFor(false)).toEqual(expected);
+    expect(callsFor(true)).toEqual(expected);
+  });
+
+  it("still rejects a call that omits a genuinely required argument", () => {
+    const withoutPath =
+      "<tool_call><function=os__fs__list><parameter=pattern>*.ts</parameter></function></tool_call>";
+    const tools = descriptorsToOpenAiTools([listDescriptor], {
+      strict: true,
+    }) as NonNullable<CompletionRequest["tools"]>;
+    const response = responseWith({ role: "assistant", content: withoutPath });
+    // `path` is non-nullable, so it survives the narrowing and the
+    // unparseable call is left as text rather than synthesized.
+    expect(adaptQwenTaggedToolResponse(response, { tools })).toBe(response);
+  });
+
+  it("does not loosen a non-strict function's required list", () => {
+    // The narrowing is keyed to `strict: true` on the function. A
+    // plain payload keeps reading `required` literally, nullable
+    // members included.
+    const tools: NonNullable<CompletionRequest["tools"]> = [
+      {
+        type: "function",
+        function: {
+          name: "acme__put",
+          parameters: {
+            type: "object",
+            properties: {
+              key: { type: "string" },
+              value: { type: ["string", "null"] },
+            },
+            required: ["key", "value"],
+            additionalProperties: false,
+          },
+        },
+      },
+    ];
+    const response = responseWith({
+      role: "assistant",
+      content:
+        "<tool_call><function=acme__put><parameter=key>k</parameter></function></tool_call>",
+    });
+    expect(adaptQwenTaggedToolResponse(response, { tools })).toBe(response);
   });
 });
