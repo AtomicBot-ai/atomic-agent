@@ -334,10 +334,33 @@ had upgraded the file — before checking that the shim's own agent is 49 too.
   would drop the faces silently and fall back to Helvetica. `document.fonts`
   says both are loaded.
 - `npm run smoke` — **498 checks, 0 failures**, on the repaired fixture.
-- The **packaged app**, copied out of the checkout and run on its own
-  bundled agent — **497 passed, 0 failed, 1 skipped** (the skip is a
-  source-file scan; a packaged app ships only the compiled emit, and the
-  source run covers it).
+- The **packaged app**, installed from the DMG the way a recipient does and
+  run on its own bundled agent — **501 passed, 0 failed, 2 skipped**. Both
+  skips are honest: a source-file scan (a packaged app ships only compiled
+  output) and the live-pasteboard round trip (macOS refuses a clipboard
+  write to an unfocused app, and asserting against the operator's own
+  clipboard would be asserting something this suite does not own).
+
+### The ABI trap, twice
+
+The first DMG of this round mounted, installed, launched — and its agent
+died the moment anything opened a database: `NODE_MODULE_VERSION 141`.
+`better-sqlite3` is native, the SEA embeds its own Node 25 (ABI 141), and
+the copy in the repo's `node_modules` is built for whichever Node ran `npm
+install` (22, ABI 127). Nothing about that is visible at startup, which is
+what makes it dangerous: it looks like a finished artifact.
+
+The bundled module is built against the SEA's Node now, in a throwaway
+directory — rebuilding it in place would fix the DMG and break `npx vitest`,
+which runs on 22. And the afterPack hook no longer asks whether the file is
+present; it runs the bundled agent against a temp state dir so sqlite
+actually opens, and fails the build otherwise. I confirmed the gate
+discriminates by restoring the wrong module and watching the build refuse
+it.
+
+Rebuilding the agent at all needed Node ≥ 25.7 (this shell has 22), so the
+first build would otherwise have shipped an agent predating both the merge
+and the F3 forwarding.
 - `drive:onboarding` 60/60 (one honest skip: that run has no
   `OPENROUTER_API_KEY` for the empty-box case). `drive:wizard` 16/16.
   `drive:hover` 22/22. `drive:models` 29/29.
