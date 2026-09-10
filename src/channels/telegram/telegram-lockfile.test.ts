@@ -1,4 +1,5 @@
 import {
+  chmodSync,
   existsSync,
   mkdtempSync,
   readFileSync,
@@ -18,7 +19,11 @@ beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "atomic-tg-lock-"));
   path = join(dir, "telegram.lock");
 });
-afterEach(() => rmSync(dir, { recursive: true, force: true }));
+afterEach(() => {
+  // A 0o000 file from the unreadable-lock case still has to be
+  // removable, and its directory is ours, so force is enough.
+  rmSync(dir, { recursive: true, force: true });
+});
 
 describe("TelegramLockfile", () => {
   it("acquires and then releases its own lock", () => {
@@ -56,9 +61,57 @@ describe("TelegramLockfile", () => {
     { name: "garbage contents", write: "not-a-pid" },
     { name: "a dead pid", write: "999999" },
     { name: "a negative pid", write: "-1" },
-  ])("release() does not throw on $name", ({ write }) => {
+    { name: "a fractional pid", write: "12.34" },
+  ])("release() does not throw on $name, and removes nothing", ({ write }) => {
+    // Two assertions, because "did not throw" alone passes for a
+    // release() that deletes every one of these. Anything we cannot
+    // read as our own pid belongs to someone else until proven
+    // otherwise; acquire()'s stale branch reclaims the junk safely,
+    // so leaving it costs nothing and removing it can cost the token.
     if (write !== null) writeFileSync(path, write, "utf8");
     expect(() => new TelegramLockfile(path).release()).not.toThrow();
+    expect(existsSync(path)).toBe(write !== null);
+  });
+
+  // chmod is advisory for root and meaningless on Windows, so the
+  // unreadable case can only be staged where file modes bite.
+  const modesBite =
+    process.platform !== "win32" && (process.getuid?.() ?? 0) !== 0;
+
+  it.runIf(modesBite)(
+    "leaves an unreadable lock file alone instead of unlinking blind",
+    () => {
+      // The tempting shortcut is to treat a failed read as "nothing of
+      // ours is there" and unlink anyway. On POSIX that deletes the
+      // file regardless: unlink permission comes from the *directory*,
+      // which is ours, so an unreadable lock held by another user's
+      // atomic-agent would be swept away and its token handed to a
+      // second poller.
+      writeFileSync(path, String(process.ppid), "utf8");
+      chmodSync(path, 0o000);
+      try {
+        expect(() => new TelegramLockfile(path).release()).not.toThrow();
+        expect(existsSync(path)).toBe(true);
+      } finally {
+        chmodSync(path, 0o600);
+      }
+    },
+  );
+
+  it.runIf(modesBite)("stays silent when the unlink itself fails", () => {
+    // The other half of the contract: the read can succeed and the
+    // unlink still fail -- a read-only state dir, or the holder's own
+    // stop() landing between the two syscalls. release() is called
+    // from failure paths that must not acquire a second failure.
+    const lock = new TelegramLockfile(path);
+    lock.acquire();
+    chmodSync(dir, 0o500);
+    try {
+      expect(() => lock.release()).not.toThrow();
+      expect(existsSync(path)).toBe(true);
+    } finally {
+      chmodSync(dir, 0o700);
+    }
   });
 
   it("still reclaims a stale lock on acquire()", () => {

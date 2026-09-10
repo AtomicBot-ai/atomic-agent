@@ -9,10 +9,17 @@ import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
  *
  * `acquire()` throws when another live process holds the file. Stale
  * locks (PID dead) are reclaimed transparently. `release()` is
- * best-effort and removes the file only when this process owns it — a
- * lingering file just means the next `acquire()` replaces it on the
- * stale-lock path, whereas removing someone else's lock hands the token
- * to a second poller.
+ * best-effort and removes the file only when this process owns it —
+ * removing someone else's lock hands the token to a second poller, and
+ * a file we leave behind is reclaimed by the next `acquire()` as long
+ * as its PID is dead.
+ *
+ * The residual case, shared with `DiscordLockfile`: a holder killed
+ * without releasing leaves a PID the OS may later recycle onto an
+ * unrelated process. `acquire()` then sees a live PID and keeps
+ * refusing, so the channel stays down until the file is deleted by
+ * hand. That is the deliberate trade — a rare manual unwedge beats
+ * silently allowing two pollers on one token.
  */
 export interface ChannelLock {
   acquire(): void;
