@@ -64,10 +64,12 @@ export interface PostmortemReport {
    */
   problemTurns: readonly TurnSummary[];
   /**
-   * Last `trace_truncated` event if any was recorded, indicating the
-   * trace hit `tracing.trace.maxBytesPerSession` and subsequent
-   * events were dropped — important caveat for postmortems on long
-   * runs.
+   * Last `trace_truncated` event if any was recorded. The sink writes
+   * one at the seam where it dropped the OLDEST part of the file to
+   * stay under `tracing.trace.maxBytesPerSession`: everything at or
+   * below `atSeq` is missing, everything after it is intact. Important
+   * caveat for postmortems on long runs — the opening turns are the
+   * ones that are gone.
    */
   traceTruncated: { reason: string; atSeq: number } | null;
 }
@@ -219,7 +221,7 @@ export function renderPostmortem(report: PostmortemReport): string {
   lines.push(`- Total turns: ${report.totalTurns}`);
   if (report.traceTruncated) {
     lines.push(
-      `- ⚠ Trace truncated at seq=${report.traceTruncated.atSeq} (reason: ${report.traceTruncated.reason})`,
+      `- ⚠ Trace head dropped up to seq=${report.traceTruncated.atSeq} (reason: ${report.traceTruncated.reason})`,
     );
   }
   lines.push("");

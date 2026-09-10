@@ -496,7 +496,11 @@ export interface AtomicAgentConfig {
       enabled: boolean | null;
       /** Directory for per-session NDJSON trace files. */
       dir: string;
-      /** Hard cap on a single session's trace file before writes stop. */
+      /**
+       * Hard cap on a single session's trace file. Crossing it drops
+       * the OLDEST events, not the newest: the sink trims the head
+       * back to half the cap and keeps recording.
+       */
       maxBytesPerSession: number;
     };
   };

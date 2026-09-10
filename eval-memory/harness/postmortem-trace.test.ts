@@ -187,14 +187,16 @@ describe("renderPostmortem", () => {
     expect(out).toContain("| 1 | max_steps | 16 | 60000 | 20000 | 0 |");
   });
 
-  it("notes when trace was truncated", () => {
+  it("notes which end of the trace was dropped", () => {
     const events: TraceEvent[] = [
       turnStarted(0, 0),
       turnFinished(0, 1, "reply"),
       { type: "trace_truncated", seq: 2, sessionId, ts, reason: "cap" },
     ];
     const out = renderPostmortem(analyzeTrace(events));
-    expect(out).toContain("Trace truncated at seq=2");
+    // The marker means the events at or below this seq are gone, not
+    // that the trace stops here — the sink keeps writing past it.
+    expect(out).toContain("Trace head dropped up to seq=2");
   });
 
   it("explicitly says (none) when no problem turns", () => {

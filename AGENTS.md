@@ -2490,7 +2490,7 @@ Emitted `TraceEvent` types (see [src/tracing/trace/trace-event.ts](src/tracing/t
 
 Invariants:
 
-- **Append-only.** Sinks never rewrite past lines. `trace_truncated` is a synthetic final marker when the per-session cap (`tracing.trace.maxBytesPerSession`, default 10 MiB) is hit; further events are dropped silently.
+- **Append-only, except at the cap.** Sinks never rewrite a line's content. When the per-session cap (`tracing.trace.maxBytesPerSession`, default 10 MiB) would be crossed, the NDJSON sink rewrites the file keeping its TAIL — whole leading lines are dropped down to half the cap and a synthetic `trace_truncated` marker is left at the seam with `droppedEvents` / `droppedBytes`. Writing then continues: the end of a long session, where postmortems live, is never lost. The rewrite is atomic (temp file + rename) and there is still exactly one file per session.
 - **Per-session file.** One NDJSON per `sessionId`; no cross-session mixing.
 - **Monotonic `seq`.** Every event carries a monotonic in-session sequence starting at `0`.
 - **No redaction yet.** Secret redaction is an explicit NON-goal of this milestone; treat trace files as sensitive local artefacts.
