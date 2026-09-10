@@ -8,12 +8,19 @@ import {
 } from "./session-rail-pin.js";
 
 const row = (sessionId: string) => ({ sessionId });
-const ids = (rows: readonly { sessionId: string }[]) => rows.map((r) => r.sessionId);
+const ids = (rows: readonly { sessionId: string }[]) =>
+  rows.map((r) => r.sessionId);
 
 describe("arrangeSessionRail", () => {
   it("puts the pinned block on top, ordered by `order`, above the unpinned half", () => {
     // Recency says s-5 first; the pins say s-1 and s-3 come first, s-3 ahead.
-    const entries = [row("s-5"), row("s-4"), row("s-3"), row("s-2"), row("s-1")];
+    const entries = [
+      row("s-5"),
+      row("s-4"),
+      row("s-3"),
+      row("s-2"),
+      row("s-1"),
+    ];
     const arranged = arrangeSessionRail(entries, {
       order: ["s-3", "s-1", "s-2", "s-4"],
       pinned: ["s-1", "s-3"],
@@ -23,7 +30,10 @@ describe("arrangeSessionRail", () => {
 
   it("keeps recency below the pins while nothing has been arranged", () => {
     const entries = [row("s-3"), row("s-2"), row("s-1")];
-    const arranged = arrangeSessionRail(entries, { order: [], pinned: ["s-1"] });
+    const arranged = arrangeSessionRail(entries, {
+      order: [],
+      pinned: ["s-1"],
+    });
     expect(ids(arranged)).toEqual(["s-1", "s-3", "s-2"]);
   });
 
@@ -38,13 +48,19 @@ describe("arrangeSessionRail", () => {
 
   it("ignores pinned ids that have no entry", () => {
     const entries = [row("s-2"), row("s-1")];
-    const arranged = arrangeSessionRail(entries, { order: [], pinned: ["s-gone"] });
+    const arranged = arrangeSessionRail(entries, {
+      order: [],
+      pinned: ["s-gone"],
+    });
     expect(ids(arranged)).toEqual(["s-2", "s-1"]);
   });
 
   it("is the plain manual order when nothing is pinned", () => {
     const entries = [row("s-3"), row("s-2"), row("s-1")];
-    const arranged = arrangeSessionRail(entries, { order: ["s-1", "s-3"], pinned: [] });
+    const arranged = arrangeSessionRail(entries, {
+      order: ["s-1", "s-3"],
+      pinned: [],
+    });
     expect(ids(arranged)).toEqual(["s-2", "s-1", "s-3"]);
   });
 });
@@ -59,7 +75,11 @@ describe("pinnedBlockLength", () => {
 describe("togglePinned", () => {
   it("pin appends the row to the end of the pinned block", () => {
     const displayed = ["p-1", "p-2", "u-1", "u-2", "u-3"];
-    const next = togglePinned({ order: displayed, pinned: ["p-1", "p-2"] }, displayed, "u-2");
+    const next = togglePinned(
+      { order: displayed, pinned: ["p-1", "p-2"] },
+      displayed,
+      "u-2",
+    );
     expect(next).toEqual({
       order: ["p-1", "p-2", "u-2", "u-1", "u-3"],
       pinned: ["p-1", "p-2", "u-2"],
@@ -70,7 +90,9 @@ describe("togglePinned", () => {
     const displayed = ["s-3", "s-2", "s-1"];
     const next = togglePinned({ order: [], pinned: [] }, displayed, "s-1");
     expect(next).toEqual({ order: ["s-1", "s-3", "s-2"], pinned: ["s-1"] });
-    expect(ids(arrangeSessionRail(displayed.map(row), next!))).toEqual(next!.order);
+    expect(ids(arrangeSessionRail(displayed.map(row), next!))).toEqual(
+      next!.order,
+    );
   });
 
   it("unpin drops the row at the top of the unpinned half", () => {
@@ -88,13 +110,21 @@ describe("togglePinned", () => {
 
   it("unpinning the only pin leaves the row on top and the block empty", () => {
     const displayed = ["p-1", "u-1"];
-    const next = togglePinned({ order: displayed, pinned: ["p-1"] }, displayed, "p-1");
+    const next = togglePinned(
+      { order: displayed, pinned: ["p-1"] },
+      displayed,
+      "p-1",
+    );
     expect(next).toEqual({ order: ["p-1", "u-1"], pinned: [] });
   });
 
   it("prunes a pinned id that is no longer displayed", () => {
     const displayed = ["p-1", "u-1"];
-    const next = togglePinned({ order: displayed, pinned: ["p-1", "gone"] }, displayed, "u-1");
+    const next = togglePinned(
+      { order: displayed, pinned: ["p-1", "gone"] },
+      displayed,
+      "u-1",
+    );
     expect(next?.pinned).toEqual(["p-1", "u-1"]);
   });
 
@@ -141,7 +171,12 @@ describe("computeDroppedLayout", () => {
   });
 
   it("never pins when nothing is pinned", () => {
-    const flat = computeDroppedLayout({ order: [], pinned: [] }, ["a", "b", "c"], "c", 0);
+    const flat = computeDroppedLayout(
+      { order: [], pinned: [] },
+      ["a", "b", "c"],
+      "c",
+      0,
+    );
     expect(flat).toEqual({ order: ["c", "a", "b"], pinned: [] });
   });
 

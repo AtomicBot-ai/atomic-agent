@@ -7,10 +7,7 @@ import { randomUUID } from "node:crypto";
 import type { LlmFailureCategory } from "../llm/reliability/index.js";
 
 import { applyMigrations } from "./task-schema.js";
-import {
-  parseScheduleRow,
-  serializeScheduleValue,
-} from "./task-schedule.js";
+import { parseScheduleRow, serializeScheduleValue } from "./task-schedule.js";
 import {
   TASK_LAST_ERROR_MAX_LENGTH,
   TASK_NOTIFY_TARGETS,
@@ -155,9 +152,7 @@ export class TaskStore {
          @last_scheduled_at, @trigger_source, @notify
        )`,
     );
-    this.selectStmt = this.db.prepare(
-      `SELECT * FROM tasks WHERE id = ?`,
-    );
+    this.selectStmt = this.db.prepare(`SELECT * FROM tasks WHERE id = ?`);
     this.listAllStmt = this.db.prepare(
       `SELECT * FROM tasks ORDER BY created_at DESC LIMIT ?`,
     );
@@ -328,10 +323,15 @@ export class TaskStore {
    * this when an HTTP `POST /tasks/:id/run` targets one task and we want
    * to drain only its session.
    */
-  listPending(options: { sessionId?: string; limit?: number } = {}): TaskRecord[] {
+  listPending(
+    options: { sessionId?: string; limit?: number } = {},
+  ): TaskRecord[] {
     const limit = options.limit ?? 100;
     const rows = options.sessionId
-      ? (this.listPendingBySessionStmt.all(options.sessionId, limit) as TaskRow[])
+      ? (this.listPendingBySessionStmt.all(
+          options.sessionId,
+          limit,
+        ) as TaskRow[])
       : (this.listPendingStmt.all(limit) as TaskRow[]);
     return rows.map(rowToRecord);
   }
@@ -364,7 +364,9 @@ export class TaskStore {
   }
 
   markCompleted(id: string, now: number = Date.now()): TaskRecord {
-    const result = this.markCompletedStmt.run({ id, now }) as { changes: number };
+    const result = this.markCompletedStmt.run({ id, now }) as {
+      changes: number;
+    };
     if (result.changes === 0) {
       throw this.transitionError(id, "completed");
     }
@@ -451,7 +453,9 @@ export class TaskStore {
    */
   recoverStale(staleAfterMs: number, now: number = Date.now()): number {
     const threshold = now - staleAfterMs;
-    const result = this.recoverStaleStmt.run({ now, threshold }) as { changes: number };
+    const result = this.recoverStaleStmt.run({ now, threshold }) as {
+      changes: number;
+    };
     return result.changes;
   }
 
@@ -565,7 +569,10 @@ function normalizeNotify(raw: string | null): TaskNotifyTarget | null {
 function validateSessionId(raw: string | null): string | null {
   if (raw === null || raw === undefined) return null;
   if (typeof raw !== "string") {
-    throw new TaskValidationError("sessionId", "sessionId must be a string or null");
+    throw new TaskValidationError(
+      "sessionId",
+      "sessionId must be a string or null",
+    );
   }
   const trimmed = raw.trim();
   if (trimmed.length === 0) {
@@ -579,10 +586,16 @@ function validateSessionId(raw: string | null): string | null {
 
 function validateUserMessage(raw: unknown): string {
   if (typeof raw !== "string") {
-    throw new TaskValidationError("userMessage", "userMessage must be a string");
+    throw new TaskValidationError(
+      "userMessage",
+      "userMessage must be a string",
+    );
   }
   if (raw.length === 0) {
-    throw new TaskValidationError("userMessage", "userMessage must be non-empty");
+    throw new TaskValidationError(
+      "userMessage",
+      "userMessage must be non-empty",
+    );
   }
   if (raw.length > TASK_USER_MESSAGE_MAX_LENGTH) {
     throw new TaskValidationError(

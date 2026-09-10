@@ -124,9 +124,7 @@ export function resolveFallbackChain(
   const appendLocal = fallback?.appendLocal ?? true;
   const chain = [...withPrimary];
   if (appendLocal) {
-    const localId = resolved.providers.find(
-      (p) => p.kind === LOCAL_KIND,
-    )?.id;
+    const localId = resolved.providers.find((p) => p.kind === LOCAL_KIND)?.id;
     if (localId && !chain.includes(localId)) {
       chain.push(localId);
     }

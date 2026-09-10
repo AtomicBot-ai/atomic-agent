@@ -29,7 +29,10 @@ export function resolveImportFormOptions(form: ImportFormState): string[] {
     case "openclaw":
       return resolveOpenclawOptions({ exclude });
     case "claude-code":
-      return resolveClaudeCodeOptions({ exclude, migrateSecrets: form.secrets });
+      return resolveClaudeCodeOptions({
+        exclude,
+        migrateSecrets: form.secrets,
+      });
     case "codex":
       return resolveCodexOptions({ exclude, migrateSecrets: form.secrets });
   }

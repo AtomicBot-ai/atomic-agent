@@ -1,4 +1,10 @@
-import { chmodSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdtempSync,
+  mkdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -69,7 +75,7 @@ describe("readShimHead", () => {
       "utf16.cmd",
       Buffer.concat([
         Buffer.from([0xff, 0xfe]),
-        Buffer.from('@node cli.js %*\r\n', "utf16le"),
+        Buffer.from("@node cli.js %*\r\n", "utf16le"),
       ]),
     );
     expect(ARG_SUBSTITUTION.test(readShimHead(path) ?? "")).toBe(true);

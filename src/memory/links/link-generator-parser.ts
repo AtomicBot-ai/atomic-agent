@@ -29,8 +29,7 @@ export interface ParsedLink {
 }
 
 export type ParsedLinkGeneratorOutput =
-  | { kind: "none" }
-  | { kind: "links"; links: ParsedLink[] };
+  { kind: "none" } | { kind: "links"; links: ParsedLink[] };
 
 export interface ParseOptions {
   /** Ids the LLM is allowed to reference. Required. */
@@ -39,8 +38,7 @@ export interface ParseOptions {
   maxLinks?: number;
 }
 
-const LINE_RE =
-  /^LINK\s+(\d+)\s+(\d+)\s+\[kind=([A-Z_]+)\]\s*$/;
+const LINE_RE = /^LINK\s+(\d+)\s+(\d+)\s+\[kind=([A-Z_]+)\]\s*$/;
 
 export function parseLinkGeneratorOutput(
   raw: string,
@@ -140,7 +138,8 @@ function parseJsonShape(
     const rec = entry as Record<string, unknown>;
     const fromId = toPositiveInt(rec["from_id"]);
     const toId = toPositiveInt(rec["to_id"]);
-    const kindRaw = typeof rec["link_kind"] === "string" ? rec["link_kind"] : "";
+    const kindRaw =
+      typeof rec["link_kind"] === "string" ? rec["link_kind"] : "";
     if (fromId === null || toId === null) continue;
     if (fromId === toId) continue;
     if (!isLinkKind(kindRaw)) continue;

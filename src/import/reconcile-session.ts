@@ -48,7 +48,10 @@ export function reconcileImportedSession(
   if (turnsEqual(existing.turns, mapped.turns)) {
     return { status: "skipped", reason: "already matches" };
   }
-  if (sameSource(existing, mapped) && isStrictPrefix(existing.turns, mapped.turns)) {
+  if (
+    sameSource(existing, mapped) &&
+    isStrictPrefix(existing.turns, mapped.turns)
+  ) {
     if (execute) {
       save({
         ...mapped,

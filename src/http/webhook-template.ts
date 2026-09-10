@@ -9,10 +9,7 @@
  * stricter contract should validate `body` upstream. Escape literal
  * `{{` with a double-backslash prefix: `\\{{not a placeholder}}`.
  */
-export function renderWebhookTemplate(
-  template: string,
-  body: unknown,
-): string {
+export function renderWebhookTemplate(template: string, body: unknown): string {
   return template.replace(
     /\\\{\{|\{\{\s*([a-zA-Z0-9_.-]+)\s*\}\}/g,
     (match, path: string | undefined) => {

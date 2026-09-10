@@ -23,7 +23,12 @@ import type { OnboardingAction } from "./onboarding/onboarding-actions.js";
 import type { UninstallAction } from "./uninstall/uninstall-actions.js";
 import type { FallbackPanelAction } from "./llm-panel/fallback/fallback-panel-actions.js";
 import type { WhileBusySubmitMode } from "../config/index.js";
-import type { ChatMessage, SessionPickerEntry, TuiTab, TuiUiMode } from "./tui-state.js";
+import type {
+  ChatMessage,
+  SessionPickerEntry,
+  TuiTab,
+  TuiUiMode,
+} from "./tui-state.js";
 import type { ContextUsageState } from "../session/context-usage.js";
 
 /**

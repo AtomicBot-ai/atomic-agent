@@ -1,4 +1,7 @@
-export { OpenRouterProvider, type OpenRouterProviderOptions } from "./openrouter-provider.js";
+export {
+  OpenRouterProvider,
+  type OpenRouterProviderOptions,
+} from "./openrouter-provider.js";
 export {
   OPENROUTER_CHAT_MODEL_ORDER,
   OPENROUTER_MODELS_CATALOG,

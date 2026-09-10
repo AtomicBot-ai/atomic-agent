@@ -106,7 +106,10 @@ describe("rail session pin key", () => {
     const c = ctx(railState(1, "sessions", rows));
     expect(handleAppKey("p", key(), c)).toBe(true);
     expect(c.callbacks.onSessionPinToggled).toHaveBeenCalledWith("s-1");
-    expect(c.dispatch).toHaveBeenCalledWith({ type: "sidebar_cursor_set", row: 1 });
+    expect(c.dispatch).toHaveBeenCalledWith({
+      type: "sidebar_cursor_set",
+      row: 1,
+    });
   });
 
   it("follows a released row to the head of the unpinned half", () => {
@@ -115,7 +118,10 @@ describe("rail session pin key", () => {
     const rows = [entry("s-1", true), entry("s-2", true), entry("s-3")];
     const c = ctx(railState(0, "sessions", rows));
     expect(handleAppKey("p", key(), c)).toBe(true);
-    expect(c.dispatch).toHaveBeenCalledWith({ type: "sidebar_cursor_set", row: 1 });
+    expect(c.dispatch).toHaveBeenCalledWith({
+      type: "sidebar_cursor_set",
+      row: 1,
+    });
   });
 
   it("works on an already-pinned row — the same key releases it", () => {

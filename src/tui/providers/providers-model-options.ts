@@ -72,7 +72,10 @@ export function listOpenRouterEmbeddingModels(): readonly ProviderModelOption[] 
   ];
   for (const [id, entry] of OPENROUTER_MODELS_CATALOG) {
     if (entry.kind !== "embedding") continue;
-    out.push({ id, label: `${id} · ${formatOpenRouterEmbeddingModelDetails(id)}` });
+    out.push({
+      id,
+      label: `${id} · ${formatOpenRouterEmbeddingModelDetails(id)}`,
+    });
   }
   return out;
 }
@@ -117,7 +120,10 @@ export function listAimlapiEmbeddingModels(): readonly ProviderModelOption[] {
   ];
   for (const [id, entry] of AIMLAPI_MODELS_CATALOG) {
     if (entry.kind !== "embedding") continue;
-    out.push({ id, label: `${id} · ${formatAimlapiEmbeddingModelDetails(id)}` });
+    out.push({
+      id,
+      label: `${id} · ${formatAimlapiEmbeddingModelDetails(id)}`,
+    });
   }
   return out;
 }
@@ -167,10 +173,16 @@ export function catalogEntryLookupForKind(
   return undefined;
 }
 
-function resolveAimlapiCatalogEntry(modelId: string): ModelCatalogEntry | undefined {
+function resolveAimlapiCatalogEntry(
+  modelId: string,
+): ModelCatalogEntry | undefined {
   return liveAimlapiEntryById(modelId) ?? AIMLAPI_MODELS_CATALOG.get(modelId);
 }
 
-function resolveOpenRouterCatalogEntry(modelId: string): ModelCatalogEntry | undefined {
-  return liveOpenRouterEntryById(modelId) ?? OPENROUTER_MODELS_CATALOG.get(modelId);
+function resolveOpenRouterCatalogEntry(
+  modelId: string,
+): ModelCatalogEntry | undefined {
+  return (
+    liveOpenRouterEntryById(modelId) ?? OPENROUTER_MODELS_CATALOG.get(modelId)
+  );
 }

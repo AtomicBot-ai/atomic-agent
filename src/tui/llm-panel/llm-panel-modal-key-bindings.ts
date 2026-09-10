@@ -20,7 +20,11 @@ export function handleLlmModalKey(
 ): boolean | null {
   const { state, dispatch, callbacks } = ctx;
   if (state.providersPanel.wizard !== null) {
-    const result = handleProvidersWizardKey(input, key, state.providersPanel.wizard);
+    const result = handleProvidersWizardKey(
+      input,
+      key,
+      state.providersPanel.wizard,
+    );
     if (!result.handled) return false;
     if ("closed" in result && result.closed) {
       dispatch({ type: "providers_wizard_closed" });
@@ -74,7 +78,9 @@ export function handleLlmModalKey(
   if (state.localModelsPanel.removeConfirmId) {
     const lower = input.toLowerCase();
     if (lower === "y") {
-      callbacks.onLocalModelsRemoveConfirmed?.(state.localModelsPanel.removeConfirmId);
+      callbacks.onLocalModelsRemoveConfirmed?.(
+        state.localModelsPanel.removeConfirmId,
+      );
       dispatch({ type: "local_models_remove_confirm_closed" });
       return true;
     }
@@ -113,7 +119,10 @@ export function handleLlmModalKey(
         if (rows.length === 0) return true;
         const delta = key.downArrow ? 1 : -1;
         const next = (picker.cursor + delta + rows.length) % rows.length;
-        dispatch({ type: "providers_chat_model_picker_cursor_set", cursor: next });
+        dispatch({
+          type: "providers_chat_model_picker_cursor_set",
+          cursor: next,
+        });
         return true;
       }
       if (key.return) {

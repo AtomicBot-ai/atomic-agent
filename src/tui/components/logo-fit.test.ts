@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { LOGO_ART, TAGLINE, WORDMARK_ROWS } from "./logo.js";
-import { LOGO_METRICS, WORDMARK_WIDTH, type LogoVariant } from "./splash-fit.js";
+import {
+  LOGO_METRICS,
+  WORDMARK_WIDTH,
+  type LogoVariant,
+} from "./splash-fit.js";
 
 function measure(rows: readonly string[]): { width: number; height: number } {
   return {

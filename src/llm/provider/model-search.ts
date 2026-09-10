@@ -62,13 +62,18 @@ export function modelSearchTags(
   tags.push(entry.supportsVision ? "vision" : "text");
   if (entry.supportsTools !== "none") tags.push("tools");
   if (entry.supportsPromptCache) tags.push("cache");
-  if (entry.contextWindow > 0) tags.push(...contextWindowTags(entry.contextWindow));
+  if (entry.contextWindow > 0)
+    tags.push(...contextWindowTags(entry.contextWindow));
   // Price tags mirror what the row displays, so searching for what you
   // can see works: `openrouter/auto` renders as "routed", not "free",
   // even though its list price is zero.
   const priceLabel = formatTokenPrice(modelId ?? entry.id, entry.pricing);
   if (priceLabel === "free" || priceLabel === "routed") tags.push(priceLabel);
-  else if (entry.pricing && entry.pricing.input > 0 && entry.pricing.input < 1) {
+  else if (
+    entry.pricing &&
+    entry.pricing.input > 0 &&
+    entry.pricing.input < 1
+  ) {
     tags.push("cheap");
   }
   return tags;
@@ -131,7 +136,9 @@ function rankTerm(
     // A term that starts a word ("opus" in "claude-opus-5") is a better
     // hit than one buried mid-token ("pus").
     const before = at === 0 ? "" : id[at - 1]!;
-    return at === 0 || /[^a-z0-9]/.test(before) ? RANK.wordStart : RANK.substring;
+    return at === 0 || /[^a-z0-9]/.test(before)
+      ? RANK.wordStart
+      : RANK.substring;
   }
   if (tags.includes(term)) return RANK.tag;
   return isSubsequence(term, id) ? RANK.subsequence : RANK.none;

@@ -115,5 +115,4 @@ export const GITHUB_TOOL_ARGS_SCHEMAS: readonly [string, Schema][] = [
       ["number", "body"],
     ),
   ],
-
 ];

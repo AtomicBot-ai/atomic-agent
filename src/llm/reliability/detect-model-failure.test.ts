@@ -2,7 +2,9 @@ import { describe, it, expect } from "vitest";
 import type { CompletionResult } from "../llama-server-client.js";
 import { detectModelFailure } from "./detect-model-failure.js";
 
-function makeCompletion(overrides: Partial<CompletionResult>): CompletionResult {
+function makeCompletion(
+  overrides: Partial<CompletionResult>,
+): CompletionResult {
   return {
     content: "",
     reasoningContent: "",
@@ -51,9 +53,15 @@ describe("detectModelFailure", () => {
     const completion = makeCompletion({
       content: "",
       truncated: true,
-      usage: { promptTokens: 6_000, completionTokens: 8_192, totalTokens: 14_192 },
+      usage: {
+        promptTokens: 6_000,
+        completionTokens: 8_192,
+        totalTokens: 14_192,
+      },
     });
-    const result = detectModelFailure(completion, { requestedMaxTokens: 8_192 });
+    const result = detectModelFailure(completion, {
+      requestedMaxTokens: 8_192,
+    });
     expect(result?.reason).toBe("truncated");
     expect(result?.truncation).toEqual({
       cause: "reply_cap",
@@ -74,7 +82,8 @@ describe("detectModelFailure", () => {
       usage: { promptTokens: 100, completionTokens: 8_190, totalTokens: 8_290 },
     });
     expect(
-      detectModelFailure(completion, { requestedMaxTokens: 8_192 })?.truncation?.cause,
+      detectModelFailure(completion, { requestedMaxTokens: 8_192 })?.truncation
+        ?.cause,
     ).toBe("reply_cap");
   });
 
@@ -82,9 +91,15 @@ describe("detectModelFailure", () => {
     const completion = makeCompletion({
       content: "",
       truncated: true,
-      usage: { promptTokens: 30_000, completionTokens: 2_768, totalTokens: 32_768 },
+      usage: {
+        promptTokens: 30_000,
+        completionTokens: 2_768,
+        totalTokens: 32_768,
+      },
     });
-    const result = detectModelFailure(completion, { requestedMaxTokens: 8_192 });
+    const result = detectModelFailure(completion, {
+      requestedMaxTokens: 8_192,
+    });
     expect(result?.truncation?.cause).toBe("context_window");
     expect(result?.message).toContain("ran out of context");
     expect(result?.message).toContain("30000-token prompt");
@@ -98,7 +113,11 @@ describe("detectModelFailure", () => {
     const completion = makeCompletion({
       content: "",
       truncated: true,
-      usage: { promptTokens: 6_000, completionTokens: 4_096, totalTokens: 10_096 },
+      usage: {
+        promptTokens: 6_000,
+        completionTokens: 4_096,
+        totalTokens: 10_096,
+      },
     });
     const result = detectModelFailure(completion, {
       requestedMaxTokens: 8_192,
@@ -113,17 +132,25 @@ describe("detectModelFailure", () => {
     const completion = makeCompletion({
       content: "",
       truncated: true,
-      usage: { promptTokens: 30_000, completionTokens: 2_700, totalTokens: 32_700 },
+      usage: {
+        promptTokens: 30_000,
+        completionTokens: 2_700,
+        totalTokens: 32_700,
+      },
     });
     expect(
-      detectModelFailure(completion, { requestedMaxTokens: 8_192, contextWindow: 32_768 })
-        ?.truncation?.cause,
+      detectModelFailure(completion, {
+        requestedMaxTokens: 8_192,
+        contextWindow: 32_768,
+      })?.truncation?.cause,
     ).toBe("context_window");
   });
 
   it("says it cannot tell when the provider reported no usage", () => {
     const completion = makeCompletion({ content: "", truncated: true });
-    const result = detectModelFailure(completion, { requestedMaxTokens: 8_192 });
+    const result = detectModelFailure(completion, {
+      requestedMaxTokens: 8_192,
+    });
     expect(result?.truncation?.cause).toBe("unknown");
     expect(result?.message).toContain("8192-token reply cap");
     expect(result?.message).toContain("context window");
@@ -151,9 +178,16 @@ describe("detectModelFailure", () => {
     const completion = makeCompletion({
       content: "",
       truncated: true,
-      timing: { promptMs: 1, predictedMs: 1, promptTokens: 7_000, predictedTokens: 900 },
+      timing: {
+        promptMs: 1,
+        predictedMs: 1,
+        promptTokens: 7_000,
+        predictedTokens: 900,
+      },
     });
-    expect(detectModelFailure(completion, { requestedMaxTokens: 8_192 })?.truncation).toEqual({
+    expect(
+      detectModelFailure(completion, { requestedMaxTokens: 8_192 })?.truncation,
+    ).toEqual({
       cause: "context_window",
       completionTokens: 900,
       promptTokens: 7_000,
@@ -162,10 +196,16 @@ describe("detectModelFailure", () => {
     const onTheCap = makeCompletion({
       content: "",
       truncated: true,
-      timing: { promptMs: 1, predictedMs: 1, promptTokens: 7_000, predictedTokens: 8_192 },
+      timing: {
+        promptMs: 1,
+        predictedMs: 1,
+        promptTokens: 7_000,
+        predictedTokens: 8_192,
+      },
     });
     expect(
-      detectModelFailure(onTheCap, { requestedMaxTokens: 8_192 })?.truncation?.cause,
+      detectModelFailure(onTheCap, { requestedMaxTokens: 8_192 })?.truncation
+        ?.cause,
     ).toBe("context_window");
   });
 

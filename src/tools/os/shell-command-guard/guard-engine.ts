@@ -47,7 +47,9 @@ export function checkShellCommandGuardWithRules(
   };
 }
 
-function normaliseSafely(input: GuardInput):
+function normaliseSafely(
+  input: GuardInput,
+):
   | { status: "ok"; command: ReturnType<typeof normaliseCommand> }
   | { status: "error"; verdict: GuardVerdict } {
   try {

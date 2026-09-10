@@ -3,7 +3,11 @@ import type { TuiAction } from "../tui-action.js";
 import type { TuiState } from "../tui-state.js";
 import { isLlmPanelAction } from "./llm-panel-actions.js";
 import { selectCloudModelSection } from "./llm-panel-row-builders.js";
-import { cursorFieldFor, LLM_PANEL_MODES, type LlmPanelMode } from "./llm-panel-state.js";
+import {
+  cursorFieldFor,
+  LLM_PANEL_MODES,
+  type LlmPanelMode,
+} from "./llm-panel-state.js";
 
 export function reduceLlmPanelAction(
   state: TuiState,
@@ -23,7 +27,9 @@ export function reduceLlmPanelAction(
         ...state,
         llmPanel: {
           ...panel,
-          ...(mode ? { mode, syncModeToActiveRoute: false } : { syncModeToActiveRoute: true }),
+          ...(mode
+            ? { mode, syncModeToActiveRoute: false }
+            : { syncModeToActiveRoute: true }),
         },
       };
     }
@@ -115,7 +121,9 @@ export function reduceLlmPanelAction(
         llmPanel: {
           ...panel,
           cloudModelFilterFocused: true,
-          cloudCursor: cursorInSection ? panel.cloudCursor : section.sectionStart,
+          cloudCursor: cursorInSection
+            ? panel.cloudCursor
+            : section.sectionStart,
         },
       };
     }
@@ -166,7 +174,9 @@ export function nextMode(mode: LlmPanelMode, delta: number): LlmPanelMode {
   return LLM_PANEL_MODES[(at + delta + len) % len] ?? mode;
 }
 
-export function resolveModeFromActiveRoute(state: TuiState): LlmPanelMode | null {
+export function resolveModeFromActiveRoute(
+  state: TuiState,
+): LlmPanelMode | null {
   const activeTextProvider = state.providersPanel.rows.find(
     (row) => row.isActiveText,
   );

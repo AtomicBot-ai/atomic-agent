@@ -37,13 +37,21 @@ import { ISSUE_REPORT_LEVELS, type IssueReportLevel } from "./report-levels.js";
 import { writeReportZip } from "./write-report-zip.js";
 
 /** Where reports are filed. */
-export const ISSUE_REPORT_REPO = { owner: "AtomicBot-ai", repo: "atomic-agent" } as const;
+export const ISSUE_REPORT_REPO = {
+  owner: "AtomicBot-ai",
+  repo: "atomic-agent",
+} as const;
 export const ISSUE_REPORT_DIR_NAME = "atomic-agent-debug";
 const TRACE_LIMIT = 5;
 const ISSUE_LABELS = ["bug", "from-agent"];
 
 export interface IssueReportBus {
-  emit(action: IssueReportAction | { type: "system_message"; text: string; variant?: "normal" | "warn" } | { type: "runtime_info"; line: string }): void;
+  emit(
+    action:
+      | IssueReportAction
+      | { type: "system_message"; text: string; variant?: "normal" | "warn" }
+      | { type: "runtime_info"; line: string },
+  ): void;
 }
 
 export interface IssueReportRuntime {
@@ -53,7 +61,9 @@ export interface IssueReportRuntime {
 
 export interface IssueReportDeps {
   resolveToken?: () => string | null;
-  apiFactory?: (token: string) => Pick<GithubApi, "createIssue" | "addIssueComment">;
+  apiFactory?: (
+    token: string,
+  ) => Pick<GithubApi, "createIssue" | "addIssueComment">;
   homeDir?: string;
   outDir?: string;
   now?: () => Date;
@@ -132,11 +142,20 @@ export class IssueReportOrchestrator {
         report,
         traceDir: this.runtime.config.tracing.trace.dir,
         sessionIds: this.collectSessionIds(state),
-        outDir: this.deps.outDir ?? join(this.deps.homeDir ?? homedir(), "Documents", ISSUE_REPORT_DIR_NAME),
+        outDir:
+          this.deps.outDir ??
+          join(
+            this.deps.homeDir ?? homedir(),
+            "Documents",
+            ISSUE_REPORT_DIR_NAME,
+          ),
         redaction,
         now,
       });
-      const packed = packIssue(report.header, [...report.sections, ...zip.traceSections]);
+      const packed = packIssue(report.header, [
+        ...report.sections,
+        ...zip.traceSections,
+      ]);
       if (generation !== this.generation) return;
       this.prepared = { report, packed, zipPath: zip.path };
       this.bus.emit({
@@ -165,18 +184,26 @@ export class IssueReportOrchestrator {
     if (this.busy) return;
     const prepared = this.prepared;
     if (!prepared) {
-      this.bus.emit({ type: "issue_report_failed", error: "nothing to send — pick a level first" });
+      this.bus.emit({
+        type: "issue_report_failed",
+        error: "nothing to send — pick a level first",
+      });
       return;
     }
     const token = (this.deps.resolveToken ?? (() => resolveGithubToken()))();
     if (!token) {
-      this.bus.emit({ type: "issue_report_failed", error: GITHUB_NOT_CONNECTED });
+      this.bus.emit({
+        type: "issue_report_failed",
+        error: GITHUB_NOT_CONNECTED,
+      });
       return;
     }
     this.busy = true;
     this.bus.emit({ type: "issue_report_sending" });
     try {
-      const api = (this.deps.apiFactory ?? ((t: string) => new GithubApi({ token: t })))(token);
+      const api = (
+        this.deps.apiFactory ?? ((t: string) => new GithubApi({ token: t }))
+      )(token);
       const issue = await api.createIssue({
         ...ISSUE_REPORT_REPO,
         title: prepared.report.title,
@@ -186,7 +213,11 @@ export class IssueReportOrchestrator {
       let posted = 0;
       for (const comment of prepared.packed.comments) {
         try {
-          await api.addIssueComment({ ...ISSUE_REPORT_REPO, number: issue.number, body: comment });
+          await api.addIssueComment({
+            ...ISSUE_REPORT_REPO,
+            number: issue.number,
+            body: comment,
+          });
           posted += 1;
         } catch (err) {
           // The issue exists; a lost comment is a note, not a failure.

@@ -202,11 +202,11 @@ export function usageAtPairs(
 function overheadOf(usage: ContextUsageView): number {
   let overhead = 0;
   for (const section of usage.sections) {
-    if (section.label !== CONVERSATION_SECTION_LABEL) overhead += section.tokens;
+    if (section.label !== CONVERSATION_SECTION_LABEL)
+      overhead += section.tokens;
   }
   return overhead;
 }
-
 
 export function selectContextUsage(state: TuiState): ContextUsageView | null {
   const {
@@ -240,7 +240,10 @@ export function selectContextUsage(state: TuiState): ContextUsageView | null {
     conversationPercent:
       conversationCap === null || conversationCap <= 0
         ? null
-        : Math.min(100, Math.round((conversationTokens / conversationCap) * 100)),
+        : Math.min(
+            100,
+            Math.round((conversationTokens / conversationCap) * 100),
+          ),
     capSource: resolveCapSource(
       conversationCap,
       conversationCapConfigured,

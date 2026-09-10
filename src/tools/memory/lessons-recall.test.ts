@@ -51,7 +51,10 @@ describe("memory.lessons.recall", () => {
     expect(result.status).toBe("ok");
     expect(result.details.count).toBe(1);
     expect(result.summary).toContain("pnpm install over npm install");
-    const arr = result.details.lessons as Array<{ id: number; principle: string }>;
+    const arr = result.details.lessons as Array<{
+      id: number;
+      principle: string;
+    }>;
     expect(arr[0]?.id).toBe(lesson.id);
     expect(arr[0]?.principle).toContain("pnpm");
   });

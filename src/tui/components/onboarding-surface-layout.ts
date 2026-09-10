@@ -130,7 +130,10 @@ function measureStepBody(input: MeasureInput): number {
     case "custom_embedding_url":
       return measureOnboardingUrlStep("embedding");
     case "local_hf_ref":
-      return Math.min(input.available, measureOnboardingHfRefStep(input.hfError ?? null));
+      return Math.min(
+        input.available,
+        measureOnboardingHfRefStep(input.hfError ?? null),
+      );
     case "local_hf_pick":
       return Math.min(
         input.available,

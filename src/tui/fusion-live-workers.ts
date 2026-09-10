@@ -34,7 +34,9 @@ export function reduceFusionLiveWorkers(
   if (event.role === "orchestrator") return current;
   const at = current.findIndex((w) => w.taskId === event.taskId);
   const done =
-    event.phase === "finished" || event.phase === "failed" || event.phase === "cancelled";
+    event.phase === "finished" ||
+    event.phase === "failed" ||
+    event.phase === "cancelled";
   const next: FusionLiveWorker = {
     taskId: event.taskId,
     title: event.title,

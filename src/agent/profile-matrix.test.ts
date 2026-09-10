@@ -45,9 +45,7 @@ describe("profile matrix", () => {
     // to plain-instruct and emits no reasoning at all.
     await expectScenario({
       props: NEMOTRON_PROPS,
-      chunks: [
-        'inner thought</think>[{"tool":"reply","args":{"text":"ok"}}]',
-      ],
+      chunks: ['inner thought</think>[{"tool":"reply","args":{"text":"ok"}}]'],
       expectReasoning: true,
     });
   });
@@ -94,9 +92,13 @@ async function expectScenario(input: {
   });
 
   try {
-    const result = await harness.runtime.runTurn(harness.runtime.createSession(), "hi", {
-      maxSteps: 3,
-    });
+    const result = await harness.runtime.runTurn(
+      harness.runtime.createSession(),
+      "hi",
+      {
+        maxSteps: 3,
+      },
+    );
     expect(result.reason).toBe("reply");
 
     const reasoningEvents = llmEvents
@@ -106,7 +108,10 @@ async function expectScenario(input: {
       )
       .map((event) => event.event as StepEvent);
     const reasoningText = reasoningEvents
-      .filter((event): event is { type: "reasoning"; text: string } => event.type === "reasoning")
+      .filter(
+        (event): event is { type: "reasoning"; text: string } =>
+          event.type === "reasoning",
+      )
       .map((event) => event.text)
       .join("");
 

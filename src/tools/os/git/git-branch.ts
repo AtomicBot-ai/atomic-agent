@@ -40,11 +40,7 @@ export const osGitBranchTool: ToolDefinition = {
     // commit hash, and finally the subject line.
     const format =
       "%(refname)%00%(refname:short)%00%(objectname)%00%(contents:subject)";
-    const args: string[] = [
-      "for-each-ref",
-      "--format",
-      format,
-    ];
+    const args: string[] = ["for-each-ref", "--format", format];
     if (contains) args.push(`--contains=${contains}`);
     args.push("refs/heads");
     if (includeRemote) args.push("refs/remotes");

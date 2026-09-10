@@ -1,13 +1,7 @@
-import type {
-  MemoryEntry,
-  MemoryIndexEntry,
-} from "../memory/memory-store.js";
+import type { MemoryEntry, MemoryIndexEntry } from "../memory/memory-store.js";
 import type { LessonIndexEntry } from "../memory/lessons/lesson-store.js";
 import type { ProcedureIndexEntry } from "../memory/procedures/procedure-store.js";
-import {
-  appendTurn,
-  type ConversationTurn,
-} from "./conversation-turn.js";
+import { appendTurn, type ConversationTurn } from "./conversation-turn.js";
 import type { ContextUsageState } from "./context-usage.js";
 import { appendMacroTurnStart } from "./macro-turn-starts.js";
 

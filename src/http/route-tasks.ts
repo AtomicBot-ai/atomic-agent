@@ -47,8 +47,7 @@ export function createCreateTaskHandler(): HttpHandler {
       typeof body.maxAttempts === "number"
         ? body.maxAttempts
         : ctx.runtime.config.tasks.maxAttempts;
-    const maxSteps =
-      typeof body.maxSteps === "number" ? body.maxSteps : null;
+    const maxSteps = typeof body.maxSteps === "number" ? body.maxSteps : null;
     if (typeof sessionId !== "string" || typeof userMessage !== "string") {
       sendError(
         res,
@@ -68,7 +67,11 @@ export function createCreateTaskHandler(): HttpHandler {
       sendJson(res, 201, recordToJson(created));
     } catch (err) {
       if (err instanceof TaskValidationError) {
-        sendError(res, 400, openaiError(err.message, "invalid_request_error", err.field));
+        sendError(
+          res,
+          400,
+          openaiError(err.message, "invalid_request_error", err.field),
+        );
         return;
       }
       throw err;
@@ -233,7 +236,10 @@ function parseStatusParam(
     "blocked",
     "cancelled",
   ];
-  const parts = raw.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
+  const parts = raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
   for (const part of parts) {
     if (!allowed.includes(part as TaskStatus)) return "invalid";
   }

@@ -20,7 +20,11 @@ describe("mapCodexSession", () => {
     const mapped = mapCodexSession(
       session({
         messages: [
-          { role: "user", blocks: [{ type: "text", text: "list files" }], atMs: T0 },
+          {
+            role: "user",
+            blocks: [{ type: "text", text: "list files" }],
+            atMs: T0,
+          },
           {
             role: "assistant",
             blocks: [{ type: "thinking", thinking: "an ls will do" }],
@@ -29,7 +33,12 @@ describe("mapCodexSession", () => {
           {
             role: "assistant",
             blocks: [
-              { type: "toolCall", id: "c1", name: "shell", args: { command: ["ls"] } },
+              {
+                type: "toolCall",
+                id: "c1",
+                name: "shell",
+                args: { command: ["ls"] },
+              },
             ],
             atMs: T0 + 2,
           },
@@ -96,12 +105,19 @@ describe("mapCodexSession", () => {
       "/fallback",
     );
     expect(mapped.turns).toEqual([
-      { kind: "assistant_reply", text: "42", at: T0 + 1, reasoning: "short answer" },
+      {
+        kind: "assistant_reply",
+        text: "42",
+        at: T0 + 1,
+        reasoning: "short answer",
+      },
     ]);
   });
 
   it("falls back to the provided working dir", () => {
-    expect(mapCodexSession(session({ cwd: null }), "/fb").workingDir).toBe("/fb");
+    expect(mapCodexSession(session({ cwd: null }), "/fb").workingDir).toBe(
+      "/fb",
+    );
   });
 
   it("records macro-turn starts at every user row after the first", () => {
@@ -109,9 +125,17 @@ describe("mapCodexSession", () => {
       session({
         messages: [
           { role: "user", blocks: [{ type: "text", text: "a" }], atMs: T0 },
-          { role: "assistant", blocks: [{ type: "text", text: "b" }], atMs: T0 + 1 },
+          {
+            role: "assistant",
+            blocks: [{ type: "text", text: "b" }],
+            atMs: T0 + 1,
+          },
           { role: "user", blocks: [{ type: "text", text: "c" }], atMs: T0 + 2 },
-          { role: "assistant", blocks: [{ type: "text", text: "d" }], atMs: T0 + 3 },
+          {
+            role: "assistant",
+            blocks: [{ type: "text", text: "d" }],
+            atMs: T0 + 3,
+          },
         ],
       }),
       "/fallback",

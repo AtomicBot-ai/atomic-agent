@@ -1044,7 +1044,7 @@ describe("parseUserConfigFile", () => {
     // Off and unpaired: a token alone must not start a channel that
     // would then refuse every message.
     expect(parsed.discord.enabled).toBe(false);
-    expect(parsed.discord.ownerUserId).toBeNull();
+    expect(parsed.discord.ownerUserIds).toEqual([]);
   });
 
   it("accepts a v52 file and fills in localModels.download.hfEndpoint (mirror support)", () => {
@@ -1177,15 +1177,78 @@ describe("parseUserConfigFile", () => {
     ).toThrow(/atomicMail\.pendingVerification/);
   });
 
-  it("keeps discord.ownerUserId a string", () => {
+  it("keeps every discord owner id a string", () => {
     // Discord snowflakes exceed Number.MAX_SAFE_INTEGER: parsing one as
     // a number silently corrupts the last digits, which would let the
     // wrong account drive the agent.
     const parsed = parseUserConfigFile({
       version: USER_CONFIG_VERSION,
+      discord: {
+        enabled: true,
+        ownerUserIds: ["123456789012345678", "223456789012345678"],
+      },
+    });
+    expect(parsed.discord.ownerUserIds).toEqual([
+      "123456789012345678",
+      "223456789012345678",
+    ]);
+  });
+
+  it("folds a v51 scalar discord.ownerUserId into the list", () => {
+    // The whole back-compat contract: an operator who paired under v51
+    // keeps working without touching config.json.
+    const parsed = parseUserConfigFile({
+      version: 51,
       discord: { enabled: true, ownerUserId: "123456789012345678" },
     });
-    expect(parsed.discord.ownerUserId).toBe("123456789012345678");
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(parsed.discord.ownerUserIds).toEqual(["123456789012345678"]);
+  });
+
+  it("lets the list win when a stale scalar is left beside it", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      discord: {
+        enabled: true,
+        ownerUserId: "999999999999999999",
+        ownerUserIds: ["123456789012345678"],
+      },
+    });
+    expect(parsed.discord.ownerUserIds).toEqual(["123456789012345678"]);
+  });
+
+  it("dedupes discord owner ids and keeps their order", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      discord: {
+        ownerUserIds: [
+          "223456789012345678",
+          "123456789012345678",
+          "223456789012345678",
+        ],
+      },
+    });
+    expect(parsed.discord.ownerUserIds).toEqual([
+      "223456789012345678",
+      "123456789012345678",
+    ]);
+  });
+
+  it("rejects a discord owner id that is not a snowflake", () => {
+    // A hand-edited id that can never match an author id would leave
+    // the channel silently refusing every message.
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        discord: { ownerUserIds: ["not-an-id"] },
+      }),
+    ).toThrow(/discord.ownerUserIds\[0\]/);
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        discord: { ownerUserIds: "123456789012345678" },
+      }),
+    ).toThrow(/expected string\[\]/);
   });
 
   it("applies composio defaults when the section is absent", () => {

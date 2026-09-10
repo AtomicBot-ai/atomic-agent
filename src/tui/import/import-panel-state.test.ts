@@ -9,18 +9,46 @@ import {
 describe("importFocusOrder", () => {
   it("draws only the rows a source supports between source and overwrite", () => {
     expect(importFocusOrder("hermes")).toEqual([
-      "sourceType", "source", "sessions", "cron", "secrets", "overwrite", "limit", "run",
+      "sourceType",
+      "source",
+      "sessions",
+      "cron",
+      "secrets",
+      "overwrite",
+      "limit",
+      "run",
     ]);
     expect(importFocusOrder("openclaw")).toEqual([
-      "sourceType", "source", "sessions", "cron", "overwrite", "limit", "run",
+      "sourceType",
+      "source",
+      "sessions",
+      "cron",
+      "overwrite",
+      "limit",
+      "run",
     ]);
     expect(importFocusOrder("claude-code")).toEqual([
-      "sourceType", "source", "skills", "memory", "mcp", "sessions", "secrets",
-      "overwrite", "limit", "run",
+      "sourceType",
+      "source",
+      "skills",
+      "memory",
+      "mcp",
+      "sessions",
+      "secrets",
+      "overwrite",
+      "limit",
+      "run",
     ]);
     expect(importFocusOrder("codex")).toEqual([
-      "sourceType", "source", "skills", "memory", "sessions", "secrets",
-      "overwrite", "limit", "run",
+      "sourceType",
+      "source",
+      "skills",
+      "memory",
+      "sessions",
+      "secrets",
+      "overwrite",
+      "limit",
+      "run",
     ]);
   });
 });

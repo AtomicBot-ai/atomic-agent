@@ -51,7 +51,9 @@ export function ThinkingIndicator({
       */}
       {state.fusionLiveWorkers.map((worker) => (
         <Box key={worker.taskId} marginLeft={2}>
-          <Text color={worker.done ? theme.colors.muted : theme.colors.warnStrong}>
+          <Text
+            color={worker.done ? theme.colors.muted : theme.colors.warnStrong}
+          >
             {worker.done ? "·" : "▸"}{" "}
           </Text>
           <Text color={theme.colors.muted} wrap="truncate">

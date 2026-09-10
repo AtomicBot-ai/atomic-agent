@@ -30,12 +30,10 @@ export class MessageRouter {
   private async dispatch(request: HostRequest): Promise<void> {
     const handler = this.handlers.get(request.type);
     if (!handler) {
-      this.protocol.respond(
-        request.id,
-        {},
-        false,
-        { message: `no handler for request type: ${request.type}`, code: "unknown_request" },
-      );
+      this.protocol.respond(request.id, {}, false, {
+        message: `no handler for request type: ${request.type}`,
+        code: "unknown_request",
+      });
       return;
     }
     try {
@@ -43,12 +41,10 @@ export class MessageRouter {
       this.protocol.respond(request.id, result);
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err));
-      this.protocol.respond(
-        request.id,
-        {},
-        false,
-        { message: error.message, code: "handler_failed" },
-      );
+      this.protocol.respond(request.id, {}, false, {
+        message: error.message,
+        code: "handler_failed",
+      });
       this.protocol.emitEvent("error", {
         message: error.message,
         code: "handler_failed",

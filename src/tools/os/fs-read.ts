@@ -232,7 +232,9 @@ function resolveRange(
     startIndex = Math.min(total, offset - 1);
   }
   const effectiveLimit =
-    limit === undefined ? total - startIndex : Math.min(limit, total - startIndex);
+    limit === undefined
+      ? total - startIndex
+      : Math.min(limit, total - startIndex);
   return { startIndex, limit: Math.max(0, effectiveLimit) };
 }
 

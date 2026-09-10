@@ -94,6 +94,8 @@ describe("formatFusionWorkerLine", () => {
     expect(fusionWorkerLineColor({ ...base, phase: "tool" })).toBe("gray");
     expect(fusionWorkerLineColor({ ...base, phase: "finished" })).toBe("green");
     expect(fusionWorkerLineColor({ ...base, phase: "failed" })).toBe("red");
-    expect(fusionWorkerLineColor({ ...base, phase: "cancelled" })).toBe("yellow");
+    expect(fusionWorkerLineColor({ ...base, phase: "cancelled" })).toBe(
+      "yellow",
+    );
   });
 });

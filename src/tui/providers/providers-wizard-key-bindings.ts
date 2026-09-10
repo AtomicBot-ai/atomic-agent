@@ -144,7 +144,13 @@ export function handleProvidersWizardKey(
       // Navigation keys only ("j"/"k" stay printable): typed characters
       // fall through to line editing so an id the server does not
       // advertise can still be entered by hand.
-      const moved = nextListCursor(input, key, wizard.cursor, picks.length, false);
+      const moved = nextListCursor(
+        input,
+        key,
+        wizard.cursor,
+        picks.length,
+        false,
+      );
       if (moved !== null) {
         return { handled: true, wizard: { ...wizard, cursor: moved } };
       }
@@ -159,8 +165,7 @@ export function handleProvidersWizardKey(
         };
       }
     }
-    const field =
-      wizard.phase === "base_url" ? "baseUrlLine" : "chatModelLine";
+    const field = wizard.phase === "base_url" ? "baseUrlLine" : "chatModelLine";
     if (key.return) {
       // `chat_model_line` is the final step now that the embedding screen
       // is gone: embeddings stay on the local daemon unless changed later
@@ -207,7 +212,12 @@ export function handleProvidersWizardKey(
   // open, `handleWizardSearchKey` above consumed every printable key as
   // query text, `p` included. Handled before the empty-list bailout so
   // a facet that matched nothing can still be cycled away from.
-  if (wizard.phase === "pick_chat_model" && input === "p" && !key.ctrl && !key.meta) {
+  if (
+    wizard.phase === "pick_chat_model" &&
+    input === "p" &&
+    !key.ctrl &&
+    !key.meta
+  ) {
     return {
       handled: true,
       wizard: {
@@ -242,7 +252,10 @@ export function handleProvidersWizardKey(
   }
   if (key.return) {
     if (wizard.phase === "pick_kind") {
-      const row = kindRowAtCursor(clampCursor(wizard.cursor, len), wizard.search);
+      const row = kindRowAtCursor(
+        clampCursor(wizard.cursor, len),
+        wizard.search,
+      );
       if (typeof row === "object") {
         const preset = findProviderPreset(row.presetId);
         if (!preset) return { handled: true, wizard };

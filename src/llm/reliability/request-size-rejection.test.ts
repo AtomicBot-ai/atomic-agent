@@ -17,15 +17,28 @@ describe("isRequestSizeRejection", () => {
     ).toBe(true);
     expect(
       isRequestSizeRejection(
-        new OpenAiHttpError("openai provider 400: This model's maximum context length is 8192 tokens", 400, "u"),
+        new OpenAiHttpError(
+          "openai provider 400: This model's maximum context length is 8192 tokens",
+          400,
+          "u",
+        ),
       ),
     ).toBe(true);
   });
 
   it("reads through the humanized chat message to the provider's body on the cause", () => {
-    const rejected = new TransportError('"vendor" rejected the request (400).', 400, "https://x/v1", {
-      cause: new OpenAiHttpError("openai provider 400: max_completion_tokens exceeds the limit", 400, "u"),
-    });
+    const rejected = new TransportError(
+      '"vendor" rejected the request (400).',
+      400,
+      "https://x/v1",
+      {
+        cause: new OpenAiHttpError(
+          "openai provider 400: max_completion_tokens exceeds the limit",
+          400,
+          "u",
+        ),
+      },
+    );
     expect(isRequestSizeRejection(rejected)).toBe(true);
   });
 
@@ -56,10 +69,24 @@ describe("isRequestSizeRejection", () => {
   });
 
   it("leaves every other failure alone", () => {
-    expect(isRequestSizeRejection(new TransportError("bad request", 400, ""))).toBe(false);
-    expect(isRequestSizeRejection(new OpenAiHttpError("openai provider 400: invalid tool schema", 400, "u"))).toBe(false);
-    expect(isRequestSizeRejection(new TransportError("max_tokens", 500, ""))).toBe(false);
-    expect(isRequestSizeRejection(new TransportError("max_tokens", null, ""))).toBe(false);
+    expect(
+      isRequestSizeRejection(new TransportError("bad request", 400, "")),
+    ).toBe(false);
+    expect(
+      isRequestSizeRejection(
+        new OpenAiHttpError(
+          "openai provider 400: invalid tool schema",
+          400,
+          "u",
+        ),
+      ),
+    ).toBe(false);
+    expect(
+      isRequestSizeRejection(new TransportError("max_tokens", 500, "")),
+    ).toBe(false);
+    expect(
+      isRequestSizeRejection(new TransportError("max_tokens", null, "")),
+    ).toBe(false);
     expect(isRequestSizeRejection(new Error("max_tokens"))).toBe(false);
   });
 });

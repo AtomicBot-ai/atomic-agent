@@ -10,10 +10,7 @@
  * available (see `pick-probe-models`).
  */
 
-import {
-  openAiFetch,
-  type OpenAiHttpDeps,
-} from "../openai/openai-http.js";
+import { openAiFetch, type OpenAiHttpDeps } from "../openai/openai-http.js";
 import {
   classifyVerifyResponse,
   classifyVerifyTransportError,
@@ -39,7 +36,6 @@ export const PROVIDER_VERIFY_TIMEOUT_MS = 8_000;
 /** model → other token field → next model. Never more than that. */
 const MAX_VERIFY_REQUESTS = 3;
 
-
 export async function verifyProviderKey(
   target: ProviderVerifyTarget,
   opts: {
@@ -51,7 +47,13 @@ export async function verifyProviderKey(
   const startedAt = Date.now();
   const models = target.probeModels.filter((id) => id.length > 0);
   if (models.length === 0) {
-    return result("model_unavailable", null, null, "no model to test with", startedAt);
+    return result(
+      "model_unavailable",
+      null,
+      null,
+      "no model to test with",
+      startedAt,
+    );
   }
 
   const deps: OpenAiHttpDeps = {
@@ -87,7 +89,13 @@ export async function verifyProviderKey(
               startedAt,
               target.apiKey,
             )
-          : result("model_unavailable", model, null, "no usable model", startedAt);
+          : result(
+              "model_unavailable",
+              model,
+              null,
+              "no usable model",
+              startedAt,
+            );
       }
       if (opts.signal?.aborted) {
         return result("cancelled", model, null, "check cancelled", startedAt);
@@ -125,7 +133,10 @@ export async function verifyProviderKey(
         tokenField = "max_completion_tokens";
         continue;
       }
-      if (verdict.kind === "retry_next_model" || verdict.kind === "retry_token_field") {
+      if (
+        verdict.kind === "retry_next_model" ||
+        verdict.kind === "retry_token_field"
+      ) {
         lastVerdict = {
           status: "model_unavailable",
           model,
@@ -134,7 +145,14 @@ export async function verifyProviderKey(
         };
         break;
       }
-      return result(verdict.status, model, res.status, body, startedAt, target.apiKey);
+      return result(
+        verdict.status,
+        model,
+        res.status,
+        body,
+        startedAt,
+        target.apiKey,
+      );
     }
   }
 
@@ -147,7 +165,13 @@ export async function verifyProviderKey(
         startedAt,
         target.apiKey,
       )
-    : result("model_unavailable", models[0] ?? null, null, "no usable model", startedAt);
+    : result(
+        "model_unavailable",
+        models[0] ?? null,
+        null,
+        "no usable model",
+        startedAt,
+      );
 }
 
 /**

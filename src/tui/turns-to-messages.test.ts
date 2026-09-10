@@ -62,10 +62,32 @@ describe("turnsToMessages", () => {
   it("groups multiple tool calls under the same assistant reply", () => {
     const turns: ConversationTurn[] = [
       { kind: "user", text: "inspect", at: 1 },
-      { kind: "assistant_tool_call", tool: "shell.exec", args: { cmd: "ls" }, at: 2 },
-      { kind: "tool_result", tool: "shell.exec", status: "ok", summary: "a b", at: 3 },
-      { kind: "assistant_tool_call", tool: "shell.exec", args: { cmd: "pwd" }, at: 4 },
-      { kind: "tool_result", tool: "shell.exec", status: "ok", summary: "/tmp", at: 5 },
+      {
+        kind: "assistant_tool_call",
+        tool: "shell.exec",
+        args: { cmd: "ls" },
+        at: 2,
+      },
+      {
+        kind: "tool_result",
+        tool: "shell.exec",
+        status: "ok",
+        summary: "a b",
+        at: 3,
+      },
+      {
+        kind: "assistant_tool_call",
+        tool: "shell.exec",
+        args: { cmd: "pwd" },
+        at: 4,
+      },
+      {
+        kind: "tool_result",
+        tool: "shell.exec",
+        status: "ok",
+        summary: "/tmp",
+        at: 5,
+      },
       { kind: "assistant_reply", text: "done", at: 6 },
     ];
     const messages = turnsToMessages(turns);
@@ -84,7 +106,13 @@ describe("turnsToMessages", () => {
         reasoning: "I should just answer",
         at: 2,
       },
-      { kind: "tool_result", tool: "reply", status: "ok", summary: "replied", at: 3 },
+      {
+        kind: "tool_result",
+        tool: "reply",
+        status: "ok",
+        summary: "replied",
+        at: 3,
+      },
       { kind: "assistant_reply", text: "ok", at: 4 },
     ];
     const messages = turnsToMessages(turns);
@@ -95,8 +123,19 @@ describe("turnsToMessages", () => {
   it("materialises an assistant message even without a reply when the turn is in progress", () => {
     const turns: ConversationTurn[] = [
       { kind: "user", text: "run", at: 1 },
-      { kind: "assistant_tool_call", tool: "shell.exec", args: { cmd: "ls" }, at: 2 },
-      { kind: "tool_result", tool: "shell.exec", status: "ok", summary: "a", at: 3 },
+      {
+        kind: "assistant_tool_call",
+        tool: "shell.exec",
+        args: { cmd: "ls" },
+        at: 2,
+      },
+      {
+        kind: "tool_result",
+        tool: "shell.exec",
+        status: "ok",
+        summary: "a",
+        at: 3,
+      },
     ];
     const messages = turnsToMessages(turns);
     expect(messages).toHaveLength(2);
@@ -179,7 +218,13 @@ describe("turnsToMessages", () => {
     const turns: ConversationTurn[] = [
       { kind: "user", text: "run", at: 1 },
       { kind: "assistant_tool_call", tool: "shell.exec", args: {}, at: 2 },
-      { kind: "tool_result", tool: "shell.exec", status: "ok", summary: "a", at: 3 },
+      {
+        kind: "tool_result",
+        tool: "shell.exec",
+        status: "ok",
+        summary: "a",
+        at: 3,
+      },
       { kind: "assistant_reply", text: "", at: 4 },
     ];
     const messages = turnsToMessages(turns);
@@ -192,7 +237,13 @@ describe("turnsToMessages", () => {
     const turns = [
       { kind: "user", text: 42, at: 1 },
       { kind: "assistant_tool_call", tool: "x", args: {}, at: 2 },
-      { kind: "tool_result", tool: "x", status: "ok", summary: { ok: true }, at: 3 },
+      {
+        kind: "tool_result",
+        tool: "x",
+        status: "ok",
+        summary: { ok: true },
+        at: 3,
+      },
       { kind: "assistant_reply", text: null, reasoning: ["a", "b"], at: 4 },
     ] as unknown as ConversationTurn[];
     const messages = turnsToMessages(turns);
@@ -214,7 +265,9 @@ describe("turnsToMessages", () => {
   });
 
   it("uses 0 when the first turn has no usable time", () => {
-    const turns = [{ kind: "user", text: "hi" }] as unknown as ConversationTurn[];
+    const turns = [
+      { kind: "user", text: "hi" },
+    ] as unknown as ConversationTurn[];
     expect(turnsToMessages(turns)[0]?.timestamp).toBe(0);
   });
 });

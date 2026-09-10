@@ -45,7 +45,9 @@ function buildCorpus(dbFile: string): {
       content: "Tap the simulator with a duration or taps get dropped.",
       tags: ["ios", "simulator"],
     }).id;
-    const noteB = notes.store({ content: "idb is the reliable input path." }).id;
+    const noteB = notes.store({
+      content: "idb is the reliable input path.",
+    }).id;
     const noteC = notes.store({ content: "A note that will be deleted." }).id;
 
     const links = new LinkStore({
@@ -232,7 +234,9 @@ describe("exportMemoryToObsidian", () => {
     const ids = buildCorpus(dbFile);
     const first = exportMemoryToObsidian({ dbFile, vaultDir });
     const path = join(first.root, "notes", `note-${ids.noteB}.md`);
-    expect(readFileSync(path, "utf8")).toContain("idb is the reliable input path.");
+    expect(readFileSync(path, "utf8")).toContain(
+      "idb is the reliable input path.",
+    );
 
     const db = new DatabaseCtor(dbFile);
     try {
@@ -304,10 +308,7 @@ describe("exportMemoryToObsidian", () => {
 
     const result = exportMemoryToObsidian({ dbFile, vaultDir });
     expect(result).toMatchObject({ notes: 1, lessons: 0, procedures: 0 });
-    const note = readFileSync(
-      join(result.root, "notes", "note-1.md"),
-      "utf8",
-    );
+    const note = readFileSync(join(result.root, "notes", "note-1.md"), "utf8");
     expect(note).toContain("legacy note");
     expect(note).toContain('  - "old"');
 
@@ -315,9 +316,14 @@ describe("exportMemoryToObsidian", () => {
     const check = new DatabaseCtor(dbFile, { readonly: true });
     try {
       const tables = check
-        .prepare(`SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name`)
+        .prepare(
+          `SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name`,
+        )
         .all() as { name: string }[];
-      expect(tables.map((t) => t.name)).toEqual(["memories", "sqlite_sequence"]);
+      expect(tables.map((t) => t.name)).toEqual([
+        "memories",
+        "sqlite_sequence",
+      ]);
     } finally {
       check.close();
     }

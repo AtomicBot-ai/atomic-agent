@@ -70,12 +70,18 @@ describe("LlmHealthPoller", () => {
       latencyMs: 42,
     } satisfies HealthResult);
     const capture = makeCapture();
-    const poller = new LlmHealthPoller(capture, "http://127.0.0.1:19091", 10_000);
+    const poller = new LlmHealthPoller(
+      capture,
+      "http://127.0.0.1:19091",
+      10_000,
+    );
     poller.start();
     await new Promise((resolve) => setTimeout(resolve, 20));
     poller.stop();
 
-    const health = capture.actions.filter((a) => a.type === "llm_health_updated");
+    const health = capture.actions.filter(
+      (a) => a.type === "llm_health_updated",
+    );
     expect(health).toHaveLength(2);
     expect(health[0]).toMatchObject({ status: "probing" });
     expect(health[1]).toMatchObject({
@@ -102,7 +108,9 @@ describe("LlmHealthPoller", () => {
     await sleep(450);
     poller.stop();
 
-    const health = capture.actions.filter((a) => a.type === "llm_health_updated");
+    const health = capture.actions.filter(
+      (a) => a.type === "llm_health_updated",
+    );
     const probings = health.filter((a) => a.status === "probing");
     const healthies = health.filter((a) => a.status === "healthy");
     expect(probings).toHaveLength(1);
@@ -124,7 +132,9 @@ describe("LlmHealthPoller", () => {
     await sleep(450);
     poller.stop();
 
-    const health = capture.actions.filter((a) => a.type === "llm_health_updated");
+    const health = capture.actions.filter(
+      (a) => a.type === "llm_health_updated",
+    );
     const probings = health.filter((a) => a.status === "probing");
     const downs = health.filter((a) => a.status === "unreachable");
     expect(probings).toHaveLength(1);
@@ -158,7 +168,9 @@ describe("LlmHealthPoller", () => {
     await sleep(30);
     poller.stop();
 
-    const health = capture.actions.filter((a) => a.type === "llm_health_updated");
+    const health = capture.actions.filter(
+      (a) => a.type === "llm_health_updated",
+    );
     expect(health.filter((a) => a.status === "probing")).toHaveLength(2);
     expect(spy).toHaveBeenCalledTimes(2);
   });
@@ -171,7 +183,11 @@ describe("LlmHealthPoller", () => {
       latencyMs: 3,
     } satisfies HealthResult);
     const capture = makeCapture();
-    const poller = new LlmHealthPoller(capture, "http://127.0.0.1:19091", 10_000);
+    const poller = new LlmHealthPoller(
+      capture,
+      "http://127.0.0.1:19091",
+      10_000,
+    );
     poller.start();
     await new Promise((resolve) => setTimeout(resolve, 20));
     poller.stop();
@@ -193,12 +209,21 @@ describe("LlmHealthPoller", () => {
         }),
     );
     const capture = makeCapture();
-    const poller = new LlmHealthPoller(capture, "http://127.0.0.1:19091", 10_000);
+    const poller = new LlmHealthPoller(
+      capture,
+      "http://127.0.0.1:19091",
+      10_000,
+    );
     poller.start();
     poller.updateUrl("http://127.0.0.1:19091");
     await new Promise((resolve) => setTimeout(resolve, 5));
     expect(spy).toHaveBeenCalledTimes(1);
-    resolveFirst?.({ reachable: true, status: 200, error: null, latencyMs: 10 });
+    resolveFirst?.({
+      reachable: true,
+      status: 200,
+      error: null,
+      latencyMs: 10,
+    });
     await new Promise((resolve) => setTimeout(resolve, 5));
     poller.stop();
   });
@@ -300,10 +325,9 @@ describe("LlmHealthPoller", () => {
     const fetchImpl: typeof fetch = () => {
       propsCount += 1;
       return Promise.resolve(
-        new Response(
-          JSON.stringify({ model_alias: "restarted-model" }),
-          { status: 200 },
-        ),
+        new Response(JSON.stringify({ model_alias: "restarted-model" }), {
+          status: 200,
+        }),
       );
     };
     const capture = makeCapture();
@@ -361,11 +385,9 @@ describe("LlmHealthPoller", () => {
     );
     // Three: first label, reset to null on URL change, second label.
     expect(modelEvents).toHaveLength(3);
-    expect(modelEvents.map((a) => (a as { model: string | null }).model)).toEqual([
-      "first",
-      null,
-      "second",
-    ]);
+    expect(
+      modelEvents.map((a) => (a as { model: string | null }).model),
+    ).toEqual(["first", null, "second"]);
   });
 
   it("should not emit after stop", async () => {
@@ -377,7 +399,11 @@ describe("LlmHealthPoller", () => {
         }),
     );
     const capture = makeCapture();
-    const poller = new LlmHealthPoller(capture, "http://127.0.0.1:19091", 10_000);
+    const poller = new LlmHealthPoller(
+      capture,
+      "http://127.0.0.1:19091",
+      10_000,
+    );
     poller.start();
     await new Promise((resolve) => setTimeout(resolve, 5));
     poller.stop();
@@ -420,7 +446,9 @@ describe("LlmHealthPoller", () => {
     await sleep(30);
     poller.stop();
     expect(urls).toEqual(["https://box.example/llama/props"]);
-    const modelEvents = capture.actions.filter((a) => a.type === "llm_model_updated");
+    const modelEvents = capture.actions.filter(
+      (a) => a.type === "llm_model_updated",
+    );
     expect(modelEvents.at(-1)).toMatchObject({ model: "my-model" });
   });
 
@@ -438,7 +466,12 @@ describe("LlmHealthPoller", () => {
       latencyMs: 1,
     } satisfies HealthResult);
     const capture = makeCapture();
-    const poller = new LlmHealthPoller(capture, "http://127.0.0.1:19091", 50, stubProps);
+    const poller = new LlmHealthPoller(
+      capture,
+      "http://127.0.0.1:19091",
+      50,
+      stubProps,
+    );
     poller.start();
     await sleep(140);
     poller.stop();
@@ -518,13 +551,22 @@ describe("LlmHealthPoller — gated on the active text provider", () => {
           defaultChatModel: "cloudy-1",
           apiKey: "sk-test",
         },
-        { id: "local-llama-embed", kind: "llama-server", url: "http://127.0.0.1:19092" },
+        {
+          id: "local-llama-embed",
+          kind: "llama-server",
+          url: "http://127.0.0.1:19092",
+        },
       ],
       toolTransport: "auto",
     });
     const props = vi.fn(stubProps);
     const capture = makeCapture();
-    const poller = new LlmHealthPoller(capture, "http://127.0.0.1:8080", 10, props);
+    const poller = new LlmHealthPoller(
+      capture,
+      "http://127.0.0.1:8080",
+      10,
+      props,
+    );
     poller.start();
     await sleep(40);
     poller.stop();
@@ -548,7 +590,12 @@ describe("LlmHealthPoller — gated on the active text provider", () => {
     } satisfies HealthResult);
     const props = vi.fn(stubProps);
     const capture = makeCapture();
-    const poller = new LlmHealthPoller(capture, "http://127.0.0.1:8080", 10_000, props);
+    const poller = new LlmHealthPoller(
+      capture,
+      "http://127.0.0.1:8080",
+      10_000,
+      props,
+    );
     poller.start();
     await sleep(30);
     poller.stop();
@@ -626,7 +673,11 @@ describe("LlmHealthPoller — gated on the active text provider", () => {
           defaultChatModel: "cloudy-1",
           apiKey: "sk-test",
         },
-        { id: "local-llama-embed", kind: "llama-server", url: "http://127.0.0.1:19092" },
+        {
+          id: "local-llama-embed",
+          kind: "llama-server",
+          url: "http://127.0.0.1:19092",
+        },
       ],
       toolTransport: "auto",
     });
@@ -637,7 +688,12 @@ describe("LlmHealthPoller — gated on the active text provider", () => {
       latencyMs: 1,
     } satisfies HealthResult);
     const capture = makeCapture();
-    const poller = new LlmHealthPoller(capture, "http://127.0.0.1:8080", 10, stubProps);
+    const poller = new LlmHealthPoller(
+      capture,
+      "http://127.0.0.1:8080",
+      10,
+      stubProps,
+    );
     poller.start();
     await sleep(40);
     expect(spy).toHaveBeenCalledTimes(0);

@@ -256,7 +256,11 @@ describe("reduce sidebar drag actions", () => {
     });
     expect(next.sidebarDrag).toEqual({ sessionId: "b", from: 1, over: 1 });
     // The list itself is untouched until the host re-emits it.
-    expect(next.recentSessions.map((e) => e.sessionId)).toEqual(["a", "b", "c"]);
+    expect(next.recentSessions.map((e) => e.sessionId)).toEqual([
+      "a",
+      "b",
+      "c",
+    ]);
   });
 
   it("moves the slot under the pointer, clamped to the list", () => {
@@ -265,17 +269,24 @@ describe("reduce sidebar drag actions", () => {
       sessionId: "b",
       row: 1,
     });
-    const over = reduceTuiState(started, { type: "sidebar_drag_moved", row: 0 });
+    const over = reduceTuiState(started, {
+      type: "sidebar_drag_moved",
+      row: 0,
+    });
     expect(over.sidebarDrag).toEqual({ sessionId: "b", from: 1, over: 0 });
     const past = reduceTuiState(over, { type: "sidebar_drag_moved", row: 9 });
     expect(past.sidebarDrag?.over).toBe(2);
     // Same slot again: the same state object, so nothing repaints.
-    expect(reduceTuiState(past, { type: "sidebar_drag_moved", row: 9 })).toBe(past);
+    expect(reduceTuiState(past, { type: "sidebar_drag_moved", row: 9 })).toBe(
+      past,
+    );
   });
 
   it("ignores a move with no drag in flight", () => {
     const state = seeded();
-    expect(reduceTuiState(state, { type: "sidebar_drag_moved", row: 0 })).toBe(state);
+    expect(reduceTuiState(state, { type: "sidebar_drag_moved", row: 0 })).toBe(
+      state,
+    );
   });
 
   it("ends on release", () => {
@@ -284,7 +295,9 @@ describe("reduce sidebar drag actions", () => {
       sessionId: "b",
       row: 1,
     });
-    expect(reduceTuiState(started, { type: "sidebar_drag_ended" }).sidebarDrag).toBeNull();
+    expect(
+      reduceTuiState(started, { type: "sidebar_drag_ended" }).sidebarDrag,
+    ).toBeNull();
   });
 
   it("is cleared by a list refresh and by focus leaving the rail", () => {

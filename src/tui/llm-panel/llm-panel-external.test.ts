@@ -84,11 +84,11 @@ describe("external llama.cpp pane", () => {
 
   it("steps backwards with ← (wraps to the last pane, Fallback)", () => {
     const state = createInitialTuiState(fakeSession());
-    const [action] = press(
-      "",
-      emptyKey({ leftArrow: true }),
-      { ...state, uiMode: "debug", activeTab: "llm" },
-    );
+    const [action] = press("", emptyKey({ leftArrow: true }), {
+      ...state,
+      uiMode: "debug",
+      activeTab: "llm",
+    });
     expect(action).toEqual({ type: "llm_mode_set", mode: "fallback" });
   });
 
@@ -154,7 +154,10 @@ describe("external llama.cpp pane", () => {
 
   it("persists a scheme-less URL on Enter and closes the editor", () => {
     const state = externalState();
-    state.llmPanel = { ...state.llmPanel, externalUrlDraft: "192.168.1.50:8080" };
+    state.llmPanel = {
+      ...state.llmPanel,
+      externalUrlDraft: "192.168.1.50:8080",
+    };
     const onPersist = vi.fn();
     const dispatched = press(
       "",
@@ -162,7 +165,9 @@ describe("external llama.cpp pane", () => {
       state,
       callbacks({ onPersistLlamaUrl: onPersist }),
     );
-    expect(dispatched).toEqual([{ type: "llm_external_url_draft_set", value: null }]);
+    expect(dispatched).toEqual([
+      { type: "llm_external_url_draft_set", value: null },
+    ]);
     expect(onPersist).toHaveBeenCalledWith("http://192.168.1.50:8080");
   });
 
@@ -190,7 +195,9 @@ describe("external llama.cpp pane", () => {
       state,
       callbacks({ onPersistLlamaUrl: onPersist }),
     );
-    expect(dispatched).toEqual([{ type: "llm_external_url_draft_set", value: null }]);
+    expect(dispatched).toEqual([
+      { type: "llm_external_url_draft_set", value: null },
+    ]);
     expect(onPersist).not.toHaveBeenCalled();
   });
 
@@ -266,7 +273,9 @@ describe("openai-compat steer prompt", () => {
       ["", emptyKey({ escape: true })],
     ] as const) {
       const dispatched = press(input, key, steerState());
-      expect(dispatched).toEqual([{ type: "llm_external_compat_steer_closed" }]);
+      expect(dispatched).toEqual([
+        { type: "llm_external_compat_steer_closed" },
+      ]);
     }
   });
 

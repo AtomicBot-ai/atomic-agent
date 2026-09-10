@@ -48,7 +48,9 @@ export function handleSessionPinKey(
   // released — the two slots `togglePinned` moves it to.
   const block = pinnedBlockLength(
     state.recentSessions.map((row) => row.sessionId),
-    state.recentSessions.filter((row) => row.pinned).map((row) => row.sessionId),
+    state.recentSessions
+      .filter((row) => row.pinned)
+      .map((row) => row.sessionId),
   );
   ctx.dispatch({
     type: "sidebar_cursor_set",

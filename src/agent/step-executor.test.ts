@@ -180,7 +180,10 @@ describe("executeStep batch handling", () => {
   async function runWithBody(body: string) {
     const registry = makeRegistry();
     const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE, grammarsDir);
-    const session = createEmptySessionState({ id: "s-batch", workingDir: "/w" });
+    const session = createEmptySessionState({
+      id: "s-batch",
+      workingDir: "/w",
+    });
     return executeStep(
       {
         session,
@@ -803,8 +806,7 @@ describe("executeStep batch handling", () => {
         async llmComplete() {
           llmCalls += 1;
           return {
-            content:
-              '[{"tool":"reply","args":{"text":"Привет, инициат!"}}]',
+            content: '[{"tool":"reply","args":{"text":"Привет, инициат!"}}]',
             reasoningContent: "",
             stop: true,
             truncated: false,
@@ -968,7 +970,10 @@ describe("executeStep batch handling", () => {
   it("uses a structured repair prompt for validation retry", async () => {
     const registry = makeRegistry();
     const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE, grammarsDir);
-    const session = createEmptySessionState({ id: "s-repair", workingDir: "/w" });
+    const session = createEmptySessionState({
+      id: "s-repair",
+      workingDir: "/w",
+    });
     const prompts: string[] = [];
     // Mid-batch terminal: invalid (`reply` must be last); the model is
     // asked to re-emit. The repair attempt returns a clean solo reply.
@@ -1134,7 +1139,10 @@ describe("executeStep batch handling", () => {
       // and surfaces a `### notice` for the next step listing the
       // dropped tools so the model can retry them one-by-one.
       const body = JSON.stringify([
-        { tool: "os.fs.write", args: { path: "src/constants.ts", content: "x" } },
+        {
+          tool: "os.fs.write",
+          args: { path: "src/constants.ts", content: "x" },
+        },
         {
           tool: "os.fs.edit",
           args: { path: "src/a.ts", oldString: "x", newString: "y" },
@@ -1144,7 +1152,8 @@ describe("executeStep batch handling", () => {
           args: { path: "src/b.ts", oldString: "x", newString: "y" },
         },
       ]);
-      const events: Array<{ type: string; reason?: string; kept?: string }> = [];
+      const events: Array<{ type: string; reason?: string; kept?: string }> =
+        [];
       const registry = makeRegistry();
       const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE, grammarsDir);
       const session = createEmptySessionState({
@@ -1239,27 +1248,24 @@ describe("executeStep batch handling", () => {
     },
   );
 
-  it(
-    "trims an approval-gated call even when it is not the first in the batch",
-    async () => {
-      // Model batches [read, edit]: the read is `pure_read` (batchable)
-      // but the edit is approval-gated, so the validator rejects the
-      // whole batch. Trim keeps the edit (the first approval-gated
-      // call), drops the read, and surfaces the read in the notice so
-      // the model can re-emit it next step if it still wants it.
-      const body = JSON.stringify([
-        { tool: "os.fs.read", args: { path: "src/a.ts" } },
-        {
-          tool: "os.fs.edit",
-          args: { path: "src/a.ts", oldString: "x", newString: "y" },
-        },
-      ]);
-      const outcome = await runWithBody(body);
-      expect(outcome.toolCalls).toHaveLength(1);
-      expect(outcome.toolCalls[0]!.tool).toBe("os.fs.edit");
-      expect(outcome.trimmedBatchNotice).toContain("os.fs.read");
-    },
-  );
+  it("trims an approval-gated call even when it is not the first in the batch", async () => {
+    // Model batches [read, edit]: the read is `pure_read` (batchable)
+    // but the edit is approval-gated, so the validator rejects the
+    // whole batch. Trim keeps the edit (the first approval-gated
+    // call), drops the read, and surfaces the read in the notice so
+    // the model can re-emit it next step if it still wants it.
+    const body = JSON.stringify([
+      { tool: "os.fs.read", args: { path: "src/a.ts" } },
+      {
+        tool: "os.fs.edit",
+        args: { path: "src/a.ts", oldString: "x", newString: "y" },
+      },
+    ]);
+    const outcome = await runWithBody(body);
+    expect(outcome.toolCalls).toHaveLength(1);
+    expect(outcome.toolCalls[0]!.tool).toBe("os.fs.edit");
+    expect(outcome.trimmedBatchNotice).toContain("os.fs.read");
+  });
 
   it("emits one tool_call_parsed and tool_call_executed per call with batchIndex", async () => {
     const body = JSON.stringify([
@@ -1342,12 +1348,8 @@ describe("executeStep batch handling", () => {
       "assistant_tool_call",
       "tool_result",
     ]);
-    expect(
-      (tail[1] as { summary: string }).summary,
-    ).toBe("read a");
-    expect(
-      (tail[3] as { summary: string }).summary,
-    ).toBe("read b");
+    expect((tail[1] as { summary: string }).summary).toBe("read a");
+    expect((tail[3] as { summary: string }).summary).toBe("read b");
   });
 
   it("does not collect a per-failed-rare autoload for successful batches", async () => {
@@ -1444,7 +1446,9 @@ describe("executeStep pure-read wave splitting (#111)", () => {
 
   // Default cap is 8 (ENV_DEFAULTS.MAX_PARALLEL_TOOL_CALLS). 14 reads
   // is the issue's canonical oversized case → waves of 8 and 6.
-  function reads(n: number): Array<{ tool: string; args: Record<string, unknown> }> {
+  function reads(
+    n: number,
+  ): Array<{ tool: string; args: Record<string, unknown> }> {
     return Array.from({ length: n }, (_, i) => ({
       tool: "os.fs.read",
       args: { path: `f${i}` },
@@ -1591,7 +1595,9 @@ describe("executeStep pure-read wave splitting (#111)", () => {
     // Explicit issue case: an oversized batch whose first call is
     // approval-gated must bypass BOTH wave splitting AND approval
     // trimming — parse_retry, no original call dispatched.
-    const calls = [{ tool: "os.fs.write", args: { path: "a.ts", content: "x" } }];
+    const calls = [
+      { tool: "os.fs.write", args: { path: "a.ts", content: "x" } },
+    ];
     calls.push(...reads(13));
     const { outcome, events, llmCalls } = await runWithBody(
       JSON.stringify(calls),
@@ -1616,7 +1622,9 @@ describe("executeStep pure-read wave splitting (#111)", () => {
         JSON.stringify(calls),
         { repairBody: JSON.stringify(reads(1)) },
       );
-      expect(events.filter((e) => e.type === "batch_wave_split")).toHaveLength(0);
+      expect(events.filter((e) => e.type === "batch_wave_split")).toHaveLength(
+        0,
+      );
       expect(events.filter((e) => e.type === "parse_retry")).toHaveLength(1);
       expect(llmCalls).toBe(2);
       expect(outcome.toolCalls).toHaveLength(1);
@@ -1643,7 +1651,9 @@ describe("executeStep streaming reasoning accumulator", () => {
     chunks: Array<{ delta: string; reasoningDelta: string; done: boolean }>;
     finalContent: string;
     finalReasoning: string;
-  }): Promise<{ captured: import("../llm/llama-server-client.js").CompletionResult | null }> {
+  }): Promise<{
+    captured: import("../llm/llama-server-client.js").CompletionResult | null;
+  }> {
     const registry = new ToolRegistry();
     registry.register({
       name: "reply",
@@ -1658,7 +1668,10 @@ describe("executeStep streaming reasoning accumulator", () => {
       },
     });
     const grammar = await buildGrammar(QWEN_THINK_PROFILE, grammarsDir);
-    const session = createEmptySessionState({ id: "s-stream", workingDir: "/w" });
+    const session = createEmptySessionState({
+      id: "s-stream",
+      workingDir: "/w",
+    });
     const finalCompletion = {
       content: args.finalContent,
       reasoningContent: args.finalReasoning,
@@ -1674,8 +1687,8 @@ describe("executeStep streaming reasoning accumulator", () => {
       slotId: 0,
       modelId: "mock",
     } as const;
-    let captured: import("../llm/llama-server-client.js").CompletionResult | null =
-      null;
+    let captured:
+      import("../llm/llama-server-client.js").CompletionResult | null = null;
     await executeStep(
       {
         session,
@@ -1841,7 +1854,10 @@ describe("executeStep unparseable-completion fallback", () => {
     const grammar = await buildGrammar(QWEN_THINK_PROFILE, grammarsDir);
     return executeStep(
       {
-        session: createEmptySessionState({ id: "s-fallback", workingDir: "/w" }),
+        session: createEmptySessionState({
+          id: "s-fallback",
+          workingDir: "/w",
+        }),
         toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
         capabilities: CAPS,
         skillCatalog: SKILLS,
@@ -2016,7 +2032,6 @@ describe("parallelToolCalls derivation (issue #104)", () => {
   });
 });
 
-
 describe("native_tools thinking-profile prompt hygiene (issue #283)", () => {
   // A think-tag prefill is a llama-server text-completion artifact. On
   // the native-tools chat transport the prompt ships as a chat message
@@ -2062,7 +2077,10 @@ describe("native_tools thinking-profile prompt hygiene (issue #283)", () => {
   }
 
   it("native_tools: the prompt carries no trailing <think> prefill and the reply is not mis-parsed as reasoning", async () => {
-    const session = createEmptySessionState({ id: "s-283-a", workingDir: "/w" });
+    const session = createEmptySessionState({
+      id: "s-283-a",
+      workingDir: "/w",
+    });
     const prompts: string[] = [];
     const events: Array<{ type: string; text?: string }> = [];
     const outcome = await executeStep(
@@ -2106,10 +2124,13 @@ describe("native_tools thinking-profile prompt hygiene (issue #283)", () => {
   });
 
   it("native_tools: streamed content deltas are not reclassified as pre-opened reasoning", async () => {
-    const session = createEmptySessionState({ id: "s-283-b", workingDir: "/w" });
+    const session = createEmptySessionState({
+      id: "s-283-b",
+      workingDir: "/w",
+    });
     const events: Array<{ type: string }> = [];
-    let captured: import("../llm/llama-server-client.js").CompletionResult | null =
-      null;
+    let captured:
+      import("../llm/llama-server-client.js").CompletionResult | null = null;
     const finalCompletion = mkCompletion("Answer text");
     const outcome = await executeStep(
       {
@@ -2158,7 +2179,10 @@ describe("native_tools thinking-profile prompt hygiene (issue #283)", () => {
   });
 
   it("native_tools: the one-shot repair prompt does not re-append the reasoning prefill", async () => {
-    const session = createEmptySessionState({ id: "s-283-c", workingDir: "/w" });
+    const session = createEmptySessionState({
+      id: "s-283-c",
+      workingDir: "/w",
+    });
     const prompts: string[] = [];
     // Two terminal `reply` calls in one batch fail validation and route
     // through the repair path.
@@ -2166,7 +2190,9 @@ describe("native_tools thinking-profile prompt hygiene (issue #283)", () => {
       { tool: "reply", args: { text: "a" } },
       { tool: "reply", args: { text: "b" } },
     ]);
-    const goodBatch = JSON.stringify([{ tool: "reply", args: { text: "fixed" } }]);
+    const goodBatch = JSON.stringify([
+      { tool: "reply", args: { text: "fixed" } },
+    ]);
     const outcome = await executeStep(
       {
         session,
@@ -2201,7 +2227,10 @@ describe("native_tools thinking-profile prompt hygiene (issue #283)", () => {
   it("grammar transport regression: prefill still sent and reasoning still extracted", async () => {
     const registry = makeReplyRegistry();
     const grammar = await buildGrammar(QWEN_THINK_PROFILE, grammarsDir);
-    const session = createEmptySessionState({ id: "s-283-d", workingDir: "/w" });
+    const session = createEmptySessionState({
+      id: "s-283-d",
+      workingDir: "/w",
+    });
     const prompts: string[] = [];
     const reasoningEvents: string[] = [];
     const outcome = await executeStep(
@@ -2255,7 +2284,10 @@ describe("native_tools thinking-profile prompt hygiene (issue #283)", () => {
     // the SERVED transport (stamped on each chunk by the fallback seam)
     // or live reasoning classification silently dies for the whole
     // outage window.
-    const session = createEmptySessionState({ id: "s-283-e", workingDir: "/w" });
+    const session = createEmptySessionState({
+      id: "s-283-e",
+      workingDir: "/w",
+    });
     const raw =
       'pondering deeply about it</think>\n[{"tool":"reply","args":{"text":"hi"}}]';
     const finalCompletion = {
@@ -2293,7 +2325,11 @@ describe("native_tools thinking-profile prompt hygiene (issue #283)", () => {
         slotManager: new SlotManager(2),
         llmComplete: async () => finalCompletion,
         llmCompleteStream: async function* () {
-          const stamp = { reasoningDelta: "", done: false, servedTransport: "grammar" as const };
+          const stamp = {
+            reasoningDelta: "",
+            done: false,
+            servedTransport: "grammar" as const,
+          };
           yield { ...stamp, delta: "pondering deeply" };
           yield { ...stamp, delta: " about it</think>\n" };
           yield { ...stamp, delta: '[{"tool":"reply","args":{"text":"hi"}}]' };
@@ -2326,7 +2362,10 @@ describe("native_tools thinking-profile prompt hygiene (issue #283)", () => {
     // native-tools link below it. A chat completion never continues our
     // text-completion prefill — prepending `<think>` here would swallow
     // the clean reply whole as reasoning.
-    const session = createEmptySessionState({ id: "s-283-f", workingDir: "/w" });
+    const session = createEmptySessionState({
+      id: "s-283-f",
+      workingDir: "/w",
+    });
     const events: Array<{ type: string; text?: string }> = [];
     const outcome = await executeStep(
       {
@@ -2417,7 +2456,6 @@ describe("executeStep raw-network-failure classification", () => {
     ).rejects.toMatchObject({ name: "ToolExecutionError", category: "tool" });
   });
 });
-
 
 describe("executeStep empty-completion repair", () => {
   const grammarsDir = join(process.cwd(), "grammars");
@@ -2841,13 +2879,20 @@ describe("truncated completions", () => {
     return registry;
   }
 
-  function nativeCompletion(overrides: Partial<CompletionResult>): CompletionResult {
+  function nativeCompletion(
+    overrides: Partial<CompletionResult>,
+  ): CompletionResult {
     return {
       content: "",
       reasoningContent: "",
       stop: true,
       truncated: false,
-      timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5 },
+      timing: {
+        promptMs: 1,
+        predictedMs: 1,
+        promptTokens: 20,
+        predictedTokens: 5,
+      },
       cacheHitTokens: 0,
       slotId: -1,
       modelId: "ornith-1.0-35b",
@@ -2855,7 +2900,10 @@ describe("truncated completions", () => {
     };
   }
 
-  function ctxFor(session: ReturnType<typeof createEmptySessionState>, maxTokens?: number) {
+  function ctxFor(
+    session: ReturnType<typeof createEmptySessionState>,
+    maxTokens?: number,
+  ) {
     return {
       session,
       toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
@@ -2873,7 +2921,10 @@ describe("truncated completions", () => {
     // ("explicit finish_reason: length: executions = 0"): a cut reply
     // dispatches nothing — the agent loop re-asks with a different
     // request instead. Kept here so the truncation detail travels too.
-    const session = createEmptySessionState({ id: "s-trunc-closed", workingDir: "/w" });
+    const session = createEmptySessionState({
+      id: "s-trunc-closed",
+      workingDir: "/w",
+    });
     await expect(
       executeStep(ctxFor(session), {
         registry: makeNativeRegistry(),
@@ -2883,12 +2934,19 @@ describe("truncated completions", () => {
             stop: false,
             truncated: true,
             finishReason: "length",
-            usage: { promptTokens: 6_000, completionTokens: 8_192, totalTokens: 14_192 },
+            usage: {
+              promptTokens: 6_000,
+              completionTokens: 8_192,
+              totalTokens: 14_192,
+            },
             toolCalls: [
               {
                 id: "call-1",
                 type: "function",
-                function: { name: "reply", arguments: JSON.stringify({ text: "done" }) },
+                function: {
+                  name: "reply",
+                  arguments: JSON.stringify({ text: "done" }),
+                },
               },
             ],
           });
@@ -2907,7 +2965,10 @@ describe("truncated completions", () => {
   });
 
   it("native_tools: a cut short of the cap inside a known window is the provider's output limit", async () => {
-    const session = createEmptySessionState({ id: "s-trunc-limit", workingDir: "/w" });
+    const session = createEmptySessionState({
+      id: "s-trunc-limit",
+      workingDir: "/w",
+    });
     await expect(
       executeStep(ctxFor(session), {
         registry: makeNativeRegistry(),
@@ -2919,7 +2980,11 @@ describe("truncated completions", () => {
             stop: false,
             truncated: true,
             finishReason: "length",
-            usage: { promptTokens: 6_000, completionTokens: 4_096, totalTokens: 10_096 },
+            usage: {
+              promptTokens: 6_000,
+              completionTokens: 4_096,
+              totalTokens: 10_096,
+            },
           });
         },
         grammar: "",
@@ -2935,7 +3000,10 @@ describe("truncated completions", () => {
   });
 
   it("keeps the provider's own wording on a 400 that refuses the request's size", async () => {
-    const session = createEmptySessionState({ id: "s-size-400", workingDir: "/w" });
+    const session = createEmptySessionState({
+      id: "s-size-400",
+      workingDir: "/w",
+    });
     await expect(
       executeStep(ctxFor(session), {
         registry: makeNativeRegistry(),
@@ -2964,7 +3032,10 @@ describe("truncated completions", () => {
   });
 
   it("native_tools: a call whose arguments were cut mid-JSON is a truncation, with the cause attached", async () => {
-    const session = createEmptySessionState({ id: "s-trunc-cut", workingDir: "/w" });
+    const session = createEmptySessionState({
+      id: "s-trunc-cut",
+      workingDir: "/w",
+    });
     await expect(
       executeStep(ctxFor(session), {
         registry: makeNativeRegistry(),
@@ -2974,12 +3045,19 @@ describe("truncated completions", () => {
             stop: false,
             truncated: true,
             finishReason: "length",
-            usage: { promptTokens: 6_000, completionTokens: 8_192, totalTokens: 14_192 },
+            usage: {
+              promptTokens: 6_000,
+              completionTokens: 8_192,
+              totalTokens: 14_192,
+            },
             toolCalls: [
               {
                 id: "call-1",
                 type: "function",
-                function: { name: "reply", arguments: '{"text":"the reply was going to be very lo' },
+                function: {
+                  name: "reply",
+                  arguments: '{"text":"the reply was going to be very lo',
+                },
               },
             ],
           });
@@ -3006,7 +3084,10 @@ describe("truncated completions", () => {
   it("native_tools: a reply cut inside its reasoning is a truncation against the step's own cap", async () => {
     // The agent loop's retry hands the step a raised cap; the request
     // must carry it, and the failure detector must judge against it.
-    const session = createEmptySessionState({ id: "s-trunc-cap", workingDir: "/w" });
+    const session = createEmptySessionState({
+      id: "s-trunc-cap",
+      workingDir: "/w",
+    });
     const capsSeen: Array<number | undefined> = [];
     await expect(
       executeStep(ctxFor(session, 32_768), {
@@ -3019,7 +3100,11 @@ describe("truncated completions", () => {
             stop: false,
             truncated: true,
             finishReason: "length",
-            usage: { promptTokens: 6_000, completionTokens: 32_768, totalTokens: 38_768 },
+            usage: {
+              promptTokens: 6_000,
+              completionTokens: 32_768,
+              totalTokens: 38_768,
+            },
           });
         },
         grammar: "",
@@ -3039,7 +3124,10 @@ describe("truncated completions", () => {
     // A reasoning model on the chat transport thinks server-side; 1024
     // tokens is a guaranteed truncation there, which turned every repair
     // into `Turn failed [model]: model response truncated`.
-    const session = createEmptySessionState({ id: "s-trunc-repair", workingDir: "/w" });
+    const session = createEmptySessionState({
+      id: "s-trunc-repair",
+      workingDir: "/w",
+    });
     const capsSeen: Array<number | undefined> = [];
     let calls = 0;
     const outcome = await executeStep(ctxFor(session, 20_000), {
@@ -3058,7 +3146,10 @@ describe("truncated completions", () => {
             {
               id: "call-repair",
               type: "function",
-              function: { name: "reply", arguments: JSON.stringify({ text: "ok" }) },
+              function: {
+                name: "reply",
+                arguments: JSON.stringify({ text: "ok" }),
+              },
             },
           ],
         });
@@ -3075,7 +3166,10 @@ describe("truncated completions", () => {
   });
 
   it("native_tools: a repair that comes back cut off names the repair stage and its cap", async () => {
-    const session = createEmptySessionState({ id: "s-trunc-repair-cut", workingDir: "/w" });
+    const session = createEmptySessionState({
+      id: "s-trunc-repair-cut",
+      workingDir: "/w",
+    });
     let calls = 0;
     await expect(
       executeStep(ctxFor(session), {
@@ -3084,14 +3178,20 @@ describe("truncated completions", () => {
         async llmComplete() {
           calls += 1;
           if (calls === 1) {
-            return nativeCompletion({ reasoningContent: "I should reply now." });
+            return nativeCompletion({
+              reasoningContent: "I should reply now.",
+            });
           }
           return nativeCompletion({
             reasoningContent: "Let me reconsider…",
             stop: false,
             truncated: true,
             finishReason: "length",
-            usage: { promptTokens: 6_100, completionTokens: 8_192, totalTokens: 14_292 },
+            usage: {
+              promptTokens: 6_100,
+              completionTokens: 8_192,
+              totalTokens: 14_292,
+            },
           });
         },
         grammar: "",
@@ -3107,5 +3207,4 @@ describe("truncated completions", () => {
       truncation: { cause: "reply_cap", requestedMaxTokens: 8_192 },
     });
   });
-
 });

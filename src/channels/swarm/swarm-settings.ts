@@ -86,6 +86,9 @@ export function slugForUnit(label: string, taken: ReadonlySet<string>): string {
 }
 
 /** `.env` key for a unit's token: `TELEGRAM_BOT_TOKEN_OPS_BOT`. */
-export function tokenEnvForUnit(kind: "telegram" | "discord", id: string): string {
+export function tokenEnvForUnit(
+  kind: "telegram" | "discord",
+  id: string,
+): string {
   return `${kind.toUpperCase()}_BOT_TOKEN_${id.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}`;
 }

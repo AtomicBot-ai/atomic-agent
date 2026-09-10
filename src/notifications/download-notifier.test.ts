@@ -32,14 +32,28 @@ function job(patch: Partial<DownloadJob> = {}): DownloadJob {
 }
 
 const config = {
-  telegram: { enabled: true, ownerUserId: 42, parseMode: "html" as const, progressIndicator: true },
-  discord: { enabled: true, ownerUserId: "123456789012345678" },
-  atomicMail: { address: null, accountId: null, ownerEmail: null, ownerVerifiedAt: null, pendingVerification: null },
+  telegram: {
+    enabled: true,
+    ownerUserId: 42,
+    parseMode: "html" as const,
+    progressIndicator: true,
+  },
+  discord: { enabled: true, ownerUserIds: ["123456789012345678"] },
+  atomicMail: {
+    address: null,
+    accountId: null,
+    ownerEmail: null,
+    ownerVerifiedAt: null,
+    pendingVerification: null,
+  },
   paths: { stateDir: "/nowhere" } as never,
 };
 
 function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
 }
 
 describe("formatDownloadNotification", () => {
@@ -53,14 +67,23 @@ describe("formatDownloadNotification", () => {
 
   it("tells a resumable failure apart from a dead one", () => {
     const paused = formatDownloadNotification(
-      job({ status: "failed", resumable: true, error: "Download gave up: no progress for 7 days", transferredBytes: 1_100_000_000 }),
+      job({
+        status: "failed",
+        resumable: true,
+        error: "Download gave up: no progress for 7 days",
+        transferredBytes: 1_100_000_000,
+      }),
     );
     expect(paused).toContain("⏸ Download paused");
     expect(paused).toContain("1.0 GB of 4.1 GB is kept");
     expect(paused).toContain("resumes by itself");
 
     const dead = formatDownloadNotification(
-      job({ status: "failed", resumable: false, error: "Download failed: HTTP 404 Not Found" }),
+      job({
+        status: "failed",
+        resumable: false,
+        error: "Download failed: HTTP 404 Not Found",
+      }),
     );
     expect(dead).toContain("❌ Download failed");
     expect(dead).toContain("HTTP 404");
@@ -70,7 +93,14 @@ describe("formatDownloadNotification", () => {
 describe("notifyDownloadOutcome", () => {
   it("reports not_configured, never throws, when a channel has no credentials", async () => {
     const env = {};
-    expect(await notifyDownloadOutcome({ channel: "telegram", job: job(), config, env })).toMatchObject({
+    expect(
+      await notifyDownloadOutcome({
+        channel: "telegram",
+        job: job(),
+        config,
+        env,
+      }),
+    ).toMatchObject({
       outcome: "not_configured",
       reason: "no bot token",
     });
@@ -78,15 +108,32 @@ describe("notifyDownloadOutcome", () => {
       await notifyDownloadOutcome({
         channel: "telegram",
         job: job(),
-        config: { ...config, telegram: { ...config.telegram, ownerUserId: null } },
+        config: {
+          ...config,
+          telegram: { ...config.telegram, ownerUserId: null },
+        },
         env: { TELEGRAM_BOT_TOKEN: "t" },
       }),
     ).toMatchObject({ outcome: "not_configured", reason: "not paired" });
-    expect(await notifyDownloadOutcome({ channel: "discord", job: job(), config, env })).toMatchObject({
+    expect(
+      await notifyDownloadOutcome({
+        channel: "discord",
+        job: job(),
+        config,
+        env,
+      }),
+    ).toMatchObject({
       outcome: "not_configured",
       reason: "no bot token",
     });
-    expect(await notifyDownloadOutcome({ channel: "email", job: job(), config, env })).toMatchObject({
+    expect(
+      await notifyDownloadOutcome({
+        channel: "email",
+        job: job(),
+        config,
+        env,
+      }),
+    ).toMatchObject({
       outcome: "not_configured",
       reason: "no Atomic Mail inbox",
     });
@@ -112,12 +159,15 @@ describe("notifyDownloadOutcome", () => {
 
   it("opens the Discord DM channel and posts there", async () => {
     const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
-    const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
-      const u = String(url);
-      calls.push({ url: u, body: JSON.parse(String(init?.body ?? "{}")) });
-      if (u.endsWith("/users/@me/channels")) return jsonResponse({ id: "dm-1" });
-      return jsonResponse({ id: "msg-1" });
-    }) as unknown as typeof fetch;
+    const fetchImpl = vi.fn(
+      async (url: string | URL | Request, init?: RequestInit) => {
+        const u = String(url);
+        calls.push({ url: u, body: JSON.parse(String(init?.body ?? "{}")) });
+        if (u.endsWith("/users/@me/channels"))
+          return jsonResponse({ id: "dm-1" });
+        return jsonResponse({ id: "msg-1" });
+      },
+    ) as unknown as typeof fetch;
     const result = await notifyDownloadOutcome({
       channel: "discord",
       job: job(),
@@ -151,31 +201,81 @@ describe("notifyDownloadOutcome", () => {
 
   it("mails the verified owner through the Atomic Mail service", async () => {
     const sendDownloadMail = vi.fn(async () => undefined);
-    const atomicMail = { readiness: () => ({ level: "ready" as const, address: "a@atomicmail.ai", ownerEmail: "v@x.io" }), sendDownloadMail };
-    const result = await notifyDownloadOutcome({ channel: "email", job: job(), config, env: {}, atomicMail });
+    const atomicMail = {
+      readiness: () => ({
+        level: "ready" as const,
+        address: "a@atomicmail.ai",
+        ownerEmail: "v@x.io",
+      }),
+      sendDownloadMail,
+    };
+    const result = await notifyDownloadOutcome({
+      channel: "email",
+      job: job(),
+      config,
+      env: {},
+      atomicMail,
+    });
     expect(result).toEqual({ outcome: "sent", channel: "email" });
     expect(sendDownloadMail).toHaveBeenCalledTimes(1);
 
-    const unverified = { readiness: () => ({ level: "unverified" as const, address: "a", ownerEmail: "v", pendingUntil: null }), sendDownloadMail };
-    expect(await notifyDownloadOutcome({ channel: "email", job: job(), config, env: {}, atomicMail: unverified })).toMatchObject({
+    const unverified = {
+      readiness: () => ({
+        level: "unverified" as const,
+        address: "a",
+        ownerEmail: "v",
+        pendingUntil: null,
+      }),
+      sendDownloadMail,
+    };
+    expect(
+      await notifyDownloadOutcome({
+        channel: "email",
+        job: job(),
+        config,
+        env: {},
+        atomicMail: unverified,
+      }),
+    ).toMatchObject({
       outcome: "not_configured",
       reason: "owner e-mail not verified",
     });
   });
 
   it("knows which channels could deliver right now", () => {
-    expect(isDownloadNotifyChannelReady("telegram", config, { TELEGRAM_BOT_TOKEN: "t" })).toBe(true);
-    expect(isDownloadNotifyChannelReady("telegram", config, {})).toBe(false);
-    expect(isDownloadNotifyChannelReady("discord", config, { DISCORD_BOT_TOKEN: "d" })).toBe(true);
     expect(
-      isDownloadNotifyChannelReady("discord", { ...config, discord: { enabled: true, ownerUserId: null } }, { DISCORD_BOT_TOKEN: "d" }),
+      isDownloadNotifyChannelReady("telegram", config, {
+        TELEGRAM_BOT_TOKEN: "t",
+      }),
+    ).toBe(true);
+    expect(isDownloadNotifyChannelReady("telegram", config, {})).toBe(false);
+    expect(
+      isDownloadNotifyChannelReady("discord", config, {
+        DISCORD_BOT_TOKEN: "d",
+      }),
+    ).toBe(true);
+    expect(
+      isDownloadNotifyChannelReady(
+        "discord",
+        { ...config, discord: { enabled: true, ownerUserIds: [] } },
+        { DISCORD_BOT_TOKEN: "d" },
+      ),
     ).toBe(false);
     expect(isDownloadNotifyChannelReady("email", config, {})).toBe(false);
     const verified = {
       ...config,
-      atomicMail: { ...config.atomicMail, address: "a@atomicmail.ai", ownerEmail: "v@x.io", ownerVerifiedAt: "2026-09-09T00:00:00.000Z" },
+      atomicMail: {
+        ...config.atomicMail,
+        address: "a@atomicmail.ai",
+        ownerEmail: "v@x.io",
+        ownerVerifiedAt: "2026-09-09T00:00:00.000Z",
+      },
     };
-    expect(isDownloadNotifyChannelReady("email", verified, { ATOMIC_MAIL_API_KEY: "k" })).toBe(true);
+    expect(
+      isDownloadNotifyChannelReady("email", verified, {
+        ATOMIC_MAIL_API_KEY: "k",
+      }),
+    ).toBe(true);
     expect(isDownloadNotifyChannelReady("email", verified, {})).toBe(false);
   });
 });

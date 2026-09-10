@@ -45,7 +45,11 @@ describe("tasks.cron", () => {
     const runner = makeTaskRunner();
     const tool = buildTasksCronTool({ taskRunner: runner as never });
     const result = await tool.run(
-      { userMessage: "morning digest", expression: "0 9 * * *", tz: "Europe/Berlin" },
+      {
+        userMessage: "morning digest",
+        expression: "0 9 * * *",
+        tz: "Europe/Berlin",
+      },
       makeCtx(),
     );
     expect(result.status).toBe("ok");

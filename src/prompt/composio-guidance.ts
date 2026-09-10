@@ -47,7 +47,7 @@ export function isComposioActive(
  */
 export const COMPOSIO_GUIDANCE = [
   "External accounts — Gmail, Slack, Notion, Linear, Jira, GitHub, Discord and ~1500 more apps — are reachable through Composio, which also handles their sign-in.",
-  "When the user asks for something that lives in one of those apps, call `mcp.composio.COMPOSIO_SEARCH_TOOLS` with the use case (e.g. `{ queries: [{ use_case: \"send an email\" }] }`) before anything else — never guess an app tool's name or arguments.",
+  'When the user asks for something that lives in one of those apps, call `mcp.composio.COMPOSIO_SEARCH_TOOLS` with the use case (e.g. `{ queries: [{ use_case: "send an email" }] }`) before anything else — never guess an app tool\'s name or arguments.',
   "Then run what it found via `mcp.composio.COMPOSIO_MULTI_EXECUTE_TOOL` (use `mcp.composio.COMPOSIO_GET_TOOL_SCHEMAS` first if you need the exact arguments).",
   "If the account is not connected yet, `mcp.composio.COMPOSIO_MANAGE_CONNECTIONS` returns a sign-in link: put that URL in a `reply` so the user can click it, wait for them to confirm, then retry. Connections persist, so this happens once per app.",
 ].join("\n");

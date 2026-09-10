@@ -34,22 +34,30 @@ describe("parseCreditLimit", () => {
 
   it("accepts thousands separators in the counts", () => {
     expect(
-      parseCreditLimit("You requested up to 65,536 tokens, but can only afford 45,822."),
+      parseCreditLimit(
+        "You requested up to 65,536 tokens, but can only afford 45,822.",
+      ),
     ).toEqual({ requested: 65536, affordable: 45822 });
   });
 
   it("is case-insensitive", () => {
     expect(
-      parseCreditLimit("YOU REQUESTED UP TO 4096 TOKENS, BUT CAN ONLY AFFORD 512."),
+      parseCreditLimit(
+        "YOU REQUESTED UP TO 4096 TOKENS, BUT CAN ONLY AFFORD 512.",
+      ),
     ).toEqual({ requested: 4096, affordable: 512 });
   });
 
   it("returns null when the affordable count is not smaller", () => {
     expect(
-      parseCreditLimit("You requested up to 1000 tokens, but can only afford 1000."),
+      parseCreditLimit(
+        "You requested up to 1000 tokens, but can only afford 1000.",
+      ),
     ).toBeNull();
     expect(
-      parseCreditLimit("You requested up to 1000 tokens, but can only afford 2000."),
+      parseCreditLimit(
+        "You requested up to 1000 tokens, but can only afford 2000.",
+      ),
     ).toBeNull();
   });
 
@@ -74,10 +82,14 @@ describe("parseCreditLimit", () => {
 
   it("returns null on a zero or non-numeric affordable count", () => {
     expect(
-      parseCreditLimit("You requested up to 65536 tokens, but can only afford 0."),
+      parseCreditLimit(
+        "You requested up to 65536 tokens, but can only afford 0.",
+      ),
     ).toBeNull();
     expect(
-      parseCreditLimit("You requested up to 65536 tokens, but can only afford many."),
+      parseCreditLimit(
+        "You requested up to 65536 tokens, but can only afford many.",
+      ),
     ).toBeNull();
   });
 

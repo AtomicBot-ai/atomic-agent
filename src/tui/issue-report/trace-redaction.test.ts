@@ -5,14 +5,67 @@ import { redactTraceNdjson } from "./trace-redaction.js";
 const CTX = { homeDir: "/Users/valerii", workingDir: "/Users/valerii/proj" };
 
 const ROWS = [
-  { seq: 0, type: "turn_started", sessionId: "s", ts: 0, turnIndex: 0, userMessage: "my private ask" },
-  { seq: 1, type: "session_started", sessionId: "s", ts: 1, workingDir: "/Users/valerii/proj" },
-  { seq: 2, type: "prompt_captured", sessionId: "s", ts: 2, tail: "secret plans", tokens: 12 },
-  { seq: 3, type: "tool_invocation", sessionId: "s", ts: 3, tool: "os.fs.read", args: { path: "/Users/valerii/proj/a" }, summary: "file body", status: "ok" },
-  { seq: 4, type: "llm_completion", sessionId: "s", ts: 4, content: "reply text", modelId: "m", timing: { ms: 5 } },
+  {
+    seq: 0,
+    type: "turn_started",
+    sessionId: "s",
+    ts: 0,
+    turnIndex: 0,
+    userMessage: "my private ask",
+  },
+  {
+    seq: 1,
+    type: "session_started",
+    sessionId: "s",
+    ts: 1,
+    workingDir: "/Users/valerii/proj",
+  },
+  {
+    seq: 2,
+    type: "prompt_captured",
+    sessionId: "s",
+    ts: 2,
+    tail: "secret plans",
+    tokens: 12,
+  },
+  {
+    seq: 3,
+    type: "tool_invocation",
+    sessionId: "s",
+    ts: 3,
+    tool: "os.fs.read",
+    args: { path: "/Users/valerii/proj/a" },
+    summary: "file body",
+    status: "ok",
+  },
+  {
+    seq: 4,
+    type: "llm_completion",
+    sessionId: "s",
+    ts: 4,
+    content: "reply text",
+    modelId: "m",
+    timing: { ms: 5 },
+  },
   { seq: 5, type: "reflection", sessionId: "s", ts: 5, notes: ["private"] },
-  { seq: 6, type: "error", sessionId: "s", ts: 6, message: `boom at /Users/valerii/proj/x ghp_${"A".repeat(36)}`, stack: "at /opt/agent/dist/x.js:1", category: "tool" },
-  { seq: 7, type: "step_finished", sessionId: "s", ts: 7, stepIndex: 0, summary: "file contents preview", durationMs: 3 },
+  {
+    seq: 6,
+    type: "error",
+    sessionId: "s",
+    ts: 6,
+    message: `boom at /Users/valerii/proj/x ghp_${"A".repeat(36)}`,
+    stack: "at /opt/agent/dist/x.js:1",
+    category: "tool",
+  },
+  {
+    seq: 7,
+    type: "step_finished",
+    sessionId: "s",
+    ts: 7,
+    stepIndex: 0,
+    summary: "file contents preview",
+    durationMs: 3,
+  },
 ];
 const NDJSON = `${ROWS.map((r) => JSON.stringify(r)).join("\n")}\n`;
 
@@ -82,7 +135,11 @@ describe("redactTraceNdjson", () => {
   });
 
   it("drops rows it cannot parse rather than passing them through", () => {
-    const { text, stats } = redactTraceNdjson('not json\n{"type":"error","message":"x"}\n', "full", CTX);
+    const { text, stats } = redactTraceNdjson(
+      'not json\n{"type":"error","message":"x"}\n',
+      "full",
+      CTX,
+    );
     expect(parse(text)).toHaveLength(1);
     expect(stats.dropped).toBe(1);
   });

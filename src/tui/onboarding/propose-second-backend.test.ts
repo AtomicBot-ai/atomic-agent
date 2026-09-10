@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { decideSecondBackendOffer, isLocalSetupStep } from "./propose-second-backend.js";
+import {
+  decideSecondBackendOffer,
+  isLocalSetupStep,
+} from "./propose-second-backend.js";
 import type { OnboardingStep } from "./onboarding-state.js";
 
 const base = {
@@ -34,26 +37,40 @@ describe("decideSecondBackendOffer", () => {
 
   it("never follows a custom endpoint — that operator has answered already", () => {
     expect(
-      decideSecondBackendOffer({ ...base, outcome: "custom", cloudReady: false }),
+      decideSecondBackendOffer({
+        ...base,
+        outcome: "custom",
+        cloudReady: false,
+      }),
     ).toBeNull();
   });
 
   it("never follows a skip", () => {
     expect(
-      decideSecondBackendOffer({ ...base, outcome: "skipped", cloudReady: false }),
+      decideSecondBackendOffer({
+        ...base,
+        outcome: "skipped",
+        cloudReady: false,
+      }),
     ).toBeNull();
   });
 
   it("is offered once and never again", () => {
-    expect(decideSecondBackendOffer({ ...base, alreadyProposed: true })).toBeNull();
+    expect(
+      decideSecondBackendOffer({ ...base, alreadyProposed: true }),
+    ).toBeNull();
   });
 
   it("does not pitch local to someone who opened the list and backed out", () => {
-    expect(decideSecondBackendOffer({ ...base, localSetupSeen: true })).toBeNull();
+    expect(
+      decideSecondBackendOffer({ ...base, localSetupSeen: true }),
+    ).toBeNull();
   });
 
   it("still pitches local to someone who never opened the list", () => {
-    expect(decideSecondBackendOffer({ ...base, localSetupSeen: false })).toBe("local");
+    expect(decideSecondBackendOffer({ ...base, localSetupSeen: false })).toBe(
+      "local",
+    );
   });
 
   it("still pitches cloud to a local operator, who has seen the list by definition", () => {

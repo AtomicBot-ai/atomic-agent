@@ -32,7 +32,8 @@ export const FUSION_MARK = [
 ].join("\n");
 
 export function describeFusionIntro(rm: ResolvedRunMode): string {
-  const orchestrator = rm.orchestratorModel ?? rm.orchestratorProviderId ?? "your cloud provider";
+  const orchestrator =
+    rm.orchestratorModel ?? rm.orchestratorProviderId ?? "your cloud provider";
   const worker = rm.workerModel ?? "the local model";
   const workers = rm.workers;
   return [

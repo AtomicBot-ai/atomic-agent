@@ -17,7 +17,12 @@
  * Tests that want to *observe* a copy mount `ClipboardProvider` with a
  * fake and get an exact record of what was copied.
  */
-import { createContext, useContext, type ReactElement, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  type ReactElement,
+  type ReactNode,
+} from "react";
 import {
   createClipboardWriter,
   type ClipboardWriter,

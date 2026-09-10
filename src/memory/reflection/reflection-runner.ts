@@ -4,10 +4,7 @@ import type { StructuredLogger } from "../../tracing/structured-logger.js";
 
 import type { NeighborEvolver } from "../evolution/neighbor-evolver.js";
 import { MemoryStore, MemoryValidationError } from "../memory-store.js";
-import {
-  ProfileStore,
-  ProfileValidationError,
-} from "../profile-store.js";
+import { ProfileStore, ProfileValidationError } from "../profile-store.js";
 
 import { REFLECTION_GRAMMAR } from "./reflection-grammar.js";
 import { parseReflectionOutput } from "./reflection-parser.js";
@@ -82,11 +79,7 @@ export interface ReflectionInput {
  * aggregate it verbatim.
  */
 export type ReflectionOutcome =
-  | "ok"
-  | "none"
-  | "aborted"
-  | "timeout"
-  | "failed";
+  "ok" | "none" | "aborted" | "timeout" | "failed";
 
 /**
  * Memory-v2. Per-call trace event surfaced to the runtime's
@@ -250,13 +243,16 @@ export function createReflectionRunner(
    */
   const pending = new Map<string, AbortController>();
 
-  const finish = (outcome: ReflectionOutcome, context: {
-    sessionId: string;
-    startedAt: number;
-    factsWritten?: number;
-    notesWritten?: number;
-    reason?: string;
-  }): void => {
+  const finish = (
+    outcome: ReflectionOutcome,
+    context: {
+      sessionId: string;
+      startedAt: number;
+      factsWritten?: number;
+      notesWritten?: number;
+      reason?: string;
+    },
+  ): void => {
     const tookMs = Math.max(0, now() - context.startedAt);
     deps.metrics?.recordReflection({
       sessionId: context.sessionId,
@@ -319,7 +315,6 @@ export function createReflectionRunner(
     pending.set(input.sessionId, controller);
     const startedAt = now();
     deps.logger?.debug("reflection.fired", { sessionId: input.sessionId });
-
 
     let timedOut = false;
     const timer = setTimeout(() => {
@@ -404,11 +399,7 @@ export function createReflectionRunner(
         deps.neighborEvolver,
         input,
       );
-      if (
-        factsWritten === 0 &&
-        notesWritten === 0 &&
-        evolvesApplied === 0
-      ) {
+      if (factsWritten === 0 && notesWritten === 0 && evolvesApplied === 0) {
         finish("none", { sessionId: input.sessionId, startedAt });
         return;
       }

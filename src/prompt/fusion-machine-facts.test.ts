@@ -83,9 +83,8 @@ describe("resolveFusionMachineFacts", () => {
         .workerModel,
     ).toBe("entry-3b");
     expect(
-      resolveFusionMachineFacts(
-        config({ mode: "external", modelId: null }),
-      ).workerModel,
+      resolveFusionMachineFacts(config({ mode: "external", modelId: null }))
+        .workerModel,
     ).toBeNull();
   });
 
@@ -112,7 +111,10 @@ describe("the facts reaching the prompt", () => {
     writeFileSync(
       join(dir, "config.json"),
       JSON.stringify({
-        localModels: { mode: "managed", managed: { modelId: "qwen-3.5-4b", parallel: 5 } },
+        localModels: {
+          mode: "managed",
+          managed: { modelId: "qwen-3.5-4b", parallel: 5 },
+        },
       }),
     );
     process.env.ATOMIC_AGENT_STATE_DIR = dir;

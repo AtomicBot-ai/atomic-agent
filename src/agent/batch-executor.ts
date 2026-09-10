@@ -265,7 +265,10 @@ export async function executeBatch(
   const toInvoke: BatchCallInput[] = [];
   for (const input of nonTerminalInputs) {
     if (ctx.signal.aborted) {
-      slots[input.batchIndex] = { ...slots[input.batchIndex]!, cancelled: true };
+      slots[input.batchIndex] = {
+        ...slots[input.batchIndex]!,
+        cancelled: true,
+      };
       continue;
     }
     // Plan mode first: a call that is not going to run should not spend
@@ -407,7 +410,9 @@ export async function executeBatch(
       groupTasks.push(
         (async (): Promise<void> => {
           for (let i = 0; i < calls.length; i += waveSize) {
-            await Promise.allSettled(calls.slice(i, i + waveSize).map(invokeOne));
+            await Promise.allSettled(
+              calls.slice(i, i + waveSize).map(invokeOne),
+            );
           }
         })(),
       );
@@ -690,7 +695,8 @@ function observeReadCoverage(
       // `checkReadRepeat` only reports a repeat when it has seen this
       // file before, so the previous fingerprint is always present here;
       // the fallback keeps the type honest without a non-null assertion.
-      previousFingerprint: repeat.previousFingerprint ?? observation.contentHash,
+      previousFingerprint:
+        repeat.previousFingerprint ?? observation.contentHash,
     },
   });
 }

@@ -59,7 +59,10 @@ export class ImportOrchestrator {
    * action. Deferred onto a microtask so the `running` mode renders before
    * the synchronous SQLite work begins.
    */
-  private async runImport(form: ImportFormState, execute: boolean): Promise<void> {
+  private async runImport(
+    form: ImportFormState,
+    execute: boolean,
+  ): Promise<void> {
     let limit: number | undefined;
     try {
       limit = parseLimit(form.limit);
@@ -69,14 +72,21 @@ export class ImportOrchestrator {
     }
     const options = resolveImportFormOptions(form);
     if (options.length === 0) {
-      this.bus.emit({ type: "import_failed", error: nothingSelectedNotice(form) });
+      this.bus.emit({
+        type: "import_failed",
+        error: nothingSelectedNotice(form),
+      });
       return;
     }
 
     // Let the `running` frame paint before the synchronous import runs.
     await Promise.resolve();
 
-    const runner = buildImportRunner(this.runtime, form.source, form.sourceDir.trim());
+    const runner = buildImportRunner(
+      this.runtime,
+      form.source,
+      form.sourceDir.trim(),
+    );
     try {
       const report = await runner.run({
         options,
@@ -161,7 +171,10 @@ export class ImportOrchestrator {
    * overwrites — and the answer lands on the bus as
    * `onboarding_import_report` / `onboarding_import_failed`.
    */
-  async runOnboarding(plan: OnboardingImportPlan, execute: boolean): Promise<void> {
+  async runOnboarding(
+    plan: OnboardingImportPlan,
+    execute: boolean,
+  ): Promise<void> {
     // Let the busy frame paint before the synchronous SQLite work begins.
     await Promise.resolve();
     const items: ImportItemResult[] = [];
@@ -177,14 +190,21 @@ export class ImportOrchestrator {
         const runner = buildImportRunner(this.runtime, agent.id, agent.dir);
         let report: ImportReport;
         try {
-          report = await runner.run({ options: enabled, execute, overwrite: false });
+          report = await runner.run({
+            options: enabled,
+            execute,
+            overwrite: false,
+          });
         } finally {
           runner.close();
         }
         if (execute && enabled.includes("cron")) cronImported = true;
         if (execute && enabled.includes("sessions")) sessionsImported = true;
         for (const item of report.items) {
-          items.push({ ...item, kind: `${IMPORT_AGENT_LABELS[agent.id]} ${item.kind}` });
+          items.push({
+            ...item,
+            kind: `${IMPORT_AGENT_LABELS[agent.id]} ${item.kind}`,
+          });
         }
       }
     } catch (err) {
@@ -195,7 +215,11 @@ export class ImportOrchestrator {
       return;
     }
     const report = buildReport(items, execute);
-    this.bus.emit({ type: "onboarding_import_report", report, executed: execute });
+    this.bus.emit({
+      type: "onboarding_import_report",
+      report,
+      executed: execute,
+    });
     if (execute) {
       this.bus.emit({
         type: "runtime_info",

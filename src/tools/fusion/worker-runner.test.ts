@@ -28,9 +28,7 @@ function tasks(n: number): DelegateTask[] {
   }));
 }
 
-function harness(
-  runTurn: (call: RunTurnCall) => Promise<RunTurnResult>,
-): {
+function harness(runTurn: (call: RunTurnCall) => Promise<RunTurnResult>): {
   deps: WorkerRunnerDeps;
   calls: RunTurnCall[];
   policies: Array<{ op: "set" | "clear"; sessionId: string }>;
@@ -56,7 +54,8 @@ function harness(
     },
     approvals: {
       setSessionPolicy: (sessionId) => policies.push({ op: "set", sessionId }),
-      clearSessionPolicy: (sessionId) => policies.push({ op: "clear", sessionId }),
+      clearSessionPolicy: (sessionId) =>
+        policies.push({ op: "clear", sessionId }),
     },
     emitEvent: (sessionId, event) => events.push({ sessionId, event }),
     workingDir: "/repo",
@@ -84,7 +83,10 @@ const BASE = {
 describe("runWorkerTasks", () => {
   it("pins each worker turn to the local leg with the fusion origin and the worker filter", async () => {
     const { deps, calls } = harness(async ({ options }) => {
-      options.eventHook?.({ type: "llm_event", event: { type: "assistant_reply", text: "done" } });
+      options.eventHook?.({
+        type: "llm_event",
+        event: { type: "assistant_reply", text: "done" },
+      });
       return turnResult({ stepCount: 3 });
     });
     const results = await runWorkerTasks(deps, {
@@ -104,7 +106,12 @@ describe("runWorkerTasks", () => {
     expect(calls[0]!.options.toolFilter?.("fusion.delegate")).toBe(false);
     expect(calls[0]!.options.toolFilter?.("os.fs.read")).toBe(true);
     expect(calls[0]!.userMessage).toContain("Do part 0");
-    expect(results[0]).toMatchObject({ id: "t0", status: "ok", reply: "done", stepCount: 3 });
+    expect(results[0]).toMatchObject({
+      id: "t0",
+      status: "ok",
+      reply: "done",
+      stepCount: 3,
+    });
   });
 
   it("runs on a fresh session id, never the parent's — that would deadlock", async () => {
@@ -133,7 +140,10 @@ describe("runWorkerTasks", () => {
       maxWorkers: 1,
       signal: new AbortController().signal,
     });
-    expect(results[0]).toMatchObject({ status: "failed", error: "provider exploded" });
+    expect(results[0]).toMatchObject({
+      status: "failed",
+      error: "provider exploded",
+    });
     // A policy left behind outlives the session it was keyed to: it is a
     // leak the gate never garbage-collects, so `finally` owns the clear.
     expect(policies.map((p) => p.op)).toEqual(["set", "clear"]);
@@ -318,7 +328,9 @@ describe("runWorkerTasks", () => {
   });
 
   it("emits the failed and cancelled phases for the outcomes that earn them", async () => {
-    const { deps, events } = harness(async () => turnResult({ reason: "failed" }));
+    const { deps, events } = harness(async () =>
+      turnResult({ reason: "failed" }),
+    );
     await runWorkerTasks(deps, {
       ...BASE,
       tasks: tasks(1),
@@ -350,7 +362,9 @@ describe("runWorkerTasks", () => {
       signal: new AbortController().signal,
     });
     expect(
-      events.map((e) => (e.event.type === "fusion_worker" ? e.event.phase : e.event.type)),
+      events.map((e) =>
+        e.event.type === "fusion_worker" ? e.event.phase : e.event.type,
+      ),
     ).toEqual(["started", "failed"]);
   });
 

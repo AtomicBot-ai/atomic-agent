@@ -117,7 +117,11 @@ export function backendSwitchRow(
   state: TuiState,
   backend: ComposerBackendKind,
 ): ComposerSwitchRow {
-  const row = backendRows(state).find((candidate) => candidate.intent.kind === "backend" && candidate.intent.backend === backend);
+  const row = backendRows(state).find(
+    (candidate) =>
+      candidate.intent.kind === "backend" &&
+      candidate.intent.backend === backend,
+  );
   if (!row) throw new Error(`no backend row for ${backend}`);
   return row;
 }

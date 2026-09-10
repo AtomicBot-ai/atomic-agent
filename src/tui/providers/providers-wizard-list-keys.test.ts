@@ -28,7 +28,10 @@ function key(patch: Partial<Key> = {}): Key {
 }
 
 /** Feed a string of printable characters through the wizard, one key each. */
-function type(wizard: ProvidersWizardState, text: string): ProvidersWizardState {
+function type(
+  wizard: ProvidersWizardState,
+  text: string,
+): ProvidersWizardState {
   let current = wizard;
   for (const char of text) {
     const result = handleProvidersWizardKey(char, key(), current);
@@ -106,7 +109,11 @@ describe("the search box on the provider list", () => {
       ["c", { ctrl: true }],
       ["c", { meta: true }],
     ] as const) {
-      const result = handleProvidersWizardKey(input, { ...key(), ...patch }, opened);
+      const result = handleProvidersWizardKey(
+        input,
+        { ...key(), ...patch },
+        opened,
+      );
       expect("wizard" in result && result.wizard.search).toBe("");
     }
   });

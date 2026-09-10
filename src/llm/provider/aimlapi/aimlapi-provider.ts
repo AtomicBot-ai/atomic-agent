@@ -1,4 +1,7 @@
-import { OpenAiProvider, type OpenAiProviderOptions } from "../openai/openai-provider.js";
+import {
+  OpenAiProvider,
+  type OpenAiProviderOptions,
+} from "../openai/openai-provider.js";
 
 /** Root without `/v1` — {@link OpenAiProvider} appends `/v1/chat/completions`. */
 export const DEFAULT_AIMLAPI_BASE = "https://api.aimlapi.com";

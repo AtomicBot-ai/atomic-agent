@@ -14,7 +14,10 @@ import {
   handleOnboardingStepKey,
   onboardingPickRows,
 } from "./onboarding-step-keys.js";
-import { createOnboardingState, type OnboardingStep } from "./onboarding-state.js";
+import {
+  createOnboardingState,
+  type OnboardingStep,
+} from "./onboarding-state.js";
 
 const STATE_DIR_ENV = "ATOMIC_AGENT_STATE_DIR";
 
@@ -82,7 +85,12 @@ describe("handleOnboardingStepKey", () => {
   });
 
   it("declines the steps whose keys belong to someone else", () => {
-    for (const step of ["intro", "local_hf_ref", "custom_chat_url", "finished"] as const) {
+    for (const step of [
+      "intro",
+      "local_hf_ref",
+      "custom_chat_url",
+      "finished",
+    ] as const) {
       const driven = drive(stateAt(step));
       expect(driven.handle("", returnKey())).toBe(false);
       expect(driven.actions).toEqual([]);
@@ -111,7 +119,10 @@ describe("handleOnboardingStepKey", () => {
   it("choose: an arrow moves the cursor exactly as before", () => {
     const driven = drive(stateAt("choose"));
     expect(driven.handle("", arrowKey("down"))).toBe(true);
-    expect(driven.actions).toContainEqual({ type: "onboarding_cursor_moved", delta: 1 });
+    expect(driven.actions).toContainEqual({
+      type: "onboarding_cursor_moved",
+      delta: 1,
+    });
   });
 
   it("local_pick: Enter on the pinned row opens the Hugging Face branch", () => {
@@ -129,7 +140,8 @@ describe("handleOnboardingStepKey", () => {
   it("local_pick: Enter on a curated row commits to it and starts the pull", () => {
     const rows = onboardingPickRows();
     const first = rows[0];
-    if (first?.kind !== "model") throw new Error("no curated rows in the catalog");
+    if (first?.kind !== "model")
+      throw new Error("no curated rows in the catalog");
     const driven = drive(stateAt("local_pick", { cursor: 0 }));
     expect(driven.handle("", returnKey())).toBe(true);
     expect(driven.actions).toContainEqual({
@@ -164,7 +176,9 @@ describe("handleOnboardingStepKey", () => {
   });
 
   it("wait_or_jump: the row count tracks the pull, retry included", () => {
-    const failedState = stateAt("wait_or_jump", { localModelId: "gemma-4-e4b" });
+    const failedState = stateAt("wait_or_jump", {
+      localModelId: "gemma-4-e4b",
+    });
     failedState.localModelsPanel = {
       ...failedState.localModelsPanel,
       pull: null,

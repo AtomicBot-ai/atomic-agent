@@ -18,8 +18,12 @@ describe("channel lock conflict", () => {
   it("does not mistake a real failure for a lock conflict", () => {
     // A rejected token or disallowed intents must stay an error --
     // that is the case where red is the right answer.
-    expect(isChannelLockConflict("Discord rejected the bot token (HTTP 401)")).toBe(false);
-    expect(isChannelLockConflict("409: Conflict: terminated by other getUpdates")).toBe(false);
+    expect(
+      isChannelLockConflict("Discord rejected the bot token (HTTP 401)"),
+    ).toBe(false);
+    expect(
+      isChannelLockConflict("409: Conflict: terminated by other getUpdates"),
+    ).toBe(false);
     expect(isChannelLockConflict(null)).toBe(false);
     expect(isChannelLockConflict(undefined)).toBe(false);
   });

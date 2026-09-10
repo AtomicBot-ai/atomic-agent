@@ -50,7 +50,9 @@ export function esc(text: string): string {
 
 /** A sprite as a table of 6px cells — the one pixel art every inbox can draw. */
 export function renderSprite(color: string, mirror = false): string {
-  const rows = INVADER.map((row) => (mirror ? [...row].reverse().join("") : row));
+  const rows = INVADER.map((row) =>
+    mirror ? [...row].reverse().join("") : row,
+  );
   const cells = rows
     .map(
       (row) =>

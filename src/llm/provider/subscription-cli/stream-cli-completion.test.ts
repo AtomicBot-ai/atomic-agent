@@ -13,7 +13,10 @@ import {
  * instead would test the mock, not the buffering behaviour that the
  * NDJSON reader actually has to get right.
  */
-function options(script: string, extra: Partial<CliRunOptions> = {}): CliRunOptions {
+function options(
+  script: string,
+  extra: Partial<CliRunOptions> = {},
+): CliRunOptions {
   return {
     binary: process.execPath,
     args: ["-e", script],
@@ -59,9 +62,9 @@ describe("streamCliCommand", () => {
       process.stdin.on("data", (c) => { buf += c; });
       process.stdin.on("end", () => process.stdout.write(buf.length + "\\n"));
     `;
-    expect(await collect(options(script, { input: "x".repeat(5000) }))).toEqual([
-      "5000",
-    ]);
+    expect(await collect(options(script, { input: "x".repeat(5000) }))).toEqual(
+      ["5000"],
+    );
   });
 
   it("raises a typed error when the binary does not exist", async () => {
@@ -174,9 +177,9 @@ describe("streamCliCommand stdin", () => {
     const script = `
       process.stdout.write('{"type":"a"}\\n', () => process.exit(0));
     `;
-    await expect(collect(options(script, { input: BIG_PROMPT }))).rejects.toThrow(
-      /stopped reading the prompt/,
-    );
+    await expect(
+      collect(options(script, { input: BIG_PROMPT })),
+    ).rejects.toThrow(/stopped reading the prompt/);
   });
 });
 

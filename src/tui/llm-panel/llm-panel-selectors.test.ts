@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import type { LocalModelDef, EmbeddingModelDef } from "../../local-llm/index.js";
+import type {
+  LocalModelDef,
+  EmbeddingModelDef,
+} from "../../local-llm/index.js";
 import { createInitialTuiState } from "../tui-state.js";
 import { fakeSession } from "../test-fixtures.js";
 import {
@@ -84,7 +87,8 @@ describe("llm-panel selectors", () => {
       }),
     );
     const activeCloud = cloudRows.find(
-      (row) => row.kind === "cloudChatModel" && row.modelId === "qwen/qwen3.7-max",
+      (row) =>
+        row.kind === "cloudChatModel" && row.modelId === "qwen/qwen3.7-max",
     );
     expect(activeCloud?.enterEffect).toContain("1M");
     expect(activeCloud?.enterEffect).toContain("text");
@@ -107,7 +111,11 @@ describe("llm-panel selectors", () => {
     const base = createInitialTuiState(fakeSession());
     const state = {
       ...base,
-      llmHealth: { ...base.llmHealth, status: "healthy" as const, model: "local.gguf" },
+      llmHealth: {
+        ...base.llmHealth,
+        status: "healthy" as const,
+        model: "local.gguf",
+      },
       providersPanel: {
         ...base.providersPanel,
         rows: [
@@ -420,4 +428,3 @@ describe("local model rows during a pull", () => {
     );
   });
 });
-

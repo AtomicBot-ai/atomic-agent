@@ -12,10 +12,12 @@ function jsonResponse(body: unknown, status = 200): Response {
 describe("one-shot Telegram sender", () => {
   it("posts one sendMessage to the Bot API with the chat id and text", async () => {
     const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
-    const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
-      calls.push({ url: String(url), body: JSON.parse(String(init?.body)) });
-      return jsonResponse({ ok: true, result: { message_id: 7 } });
-    }) as unknown as typeof fetch;
+    const fetchImpl = vi.fn(
+      async (url: string | URL | Request, init?: RequestInit) => {
+        calls.push({ url: String(url), body: JSON.parse(String(init?.body)) });
+        return jsonResponse({ ok: true, result: { message_id: 7 } });
+      },
+    ) as unknown as typeof fetch;
 
     const result = await sendTelegramOneShot({
       token: "123456:ABCDEF",
@@ -26,8 +28,13 @@ describe("one-shot Telegram sender", () => {
 
     expect(result).toEqual({ chunks: 1, dropped: 0, parseFallbacks: 0 });
     expect(calls).toHaveLength(1);
-    expect(calls[0].url).toBe("https://api.telegram.org/bot123456:ABCDEF/sendMessage");
-    expect(calls[0].body).toMatchObject({ chat_id: 42, text: "✅ Model ready" });
+    expect(calls[0].url).toBe(
+      "https://api.telegram.org/bot123456:ABCDEF/sendMessage",
+    );
+    expect(calls[0].body).toMatchObject({
+      chat_id: 42,
+      text: "✅ Model ready",
+    });
     // Infrastructure speaks plain text: no parse_mode.
     expect(calls[0].body.parse_mode).toBeUndefined();
   });
@@ -37,7 +44,12 @@ describe("one-shot Telegram sender", () => {
       token: "t",
       fetchImpl: (async () =>
         jsonResponse(
-          { ok: false, error_code: 429, description: "Too Many Requests", parameters: { retry_after: 3 } },
+          {
+            ok: false,
+            error_code: 429,
+            description: "Too Many Requests",
+            parameters: { retry_after: 3 },
+          },
           429,
         )) as unknown as typeof fetch,
     });
@@ -49,7 +61,14 @@ describe("one-shot Telegram sender", () => {
 
   it("drops the chunk (never throws) when the API keeps refusing", async () => {
     const fetchImpl = vi.fn(async () =>
-      jsonResponse({ ok: false, error_code: 403, description: "bot was blocked by the user" }, 403),
+      jsonResponse(
+        {
+          ok: false,
+          error_code: 403,
+          description: "bot was blocked by the user",
+        },
+        403,
+      ),
     ) as unknown as typeof fetch;
     const warn = vi.fn();
     const result = await sendTelegramOneShot({

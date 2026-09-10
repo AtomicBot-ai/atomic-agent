@@ -41,7 +41,10 @@ export function decodeJwtPayload(jwt: string): Record<string, unknown> {
   const part = jwt.split(".")[1];
   if (!part) throw new AtomicMailError("malformed token", 0);
   const b64 = part.replace(/-/g, "+").replace(/_/g, "/");
-  return JSON.parse(Buffer.from(b64, "base64").toString("utf-8")) as Record<string, unknown>;
+  return JSON.parse(Buffer.from(b64, "base64").toString("utf-8")) as Record<
+    string,
+    unknown
+  >;
 }
 
 export function jwtExpiryMs(jwt: string): number {
@@ -61,8 +64,12 @@ export function hasLeadingZeroBits(hash: Uint8Array, bits: number): boolean {
 
 export function scryptHash(data: string): Promise<Uint8Array> {
   return new Promise((resolve, reject) => {
-    scrypt(Buffer.from(data, "utf-8"), Buffer.from(POW_SALT_HEX, "utf-8"), POW_HASH_BYTES, SCRYPT, (err, key) =>
-      err ? reject(err) : resolve(new Uint8Array(key)),
+    scrypt(
+      Buffer.from(data, "utf-8"),
+      Buffer.from(POW_SALT_HEX, "utf-8"),
+      POW_HASH_BYTES,
+      SCRYPT,
+      (err, key) => (err ? reject(err) : resolve(new Uint8Array(key))),
     );
   });
 }
@@ -76,7 +83,10 @@ export async function solveProofOfWork(
   for (let nonce = 0; ; nonce += 1) {
     const digest = await scryptHash(`${challenge}:${nonce}`);
     if (hasLeadingZeroBits(digest, difficulty)) {
-      return { powHex: Buffer.from(digest).toString("hex"), nonce: String(nonce) };
+      return {
+        powHex: Buffer.from(digest).toString("hex"),
+        nonce: String(nonce),
+      };
     }
     if (onProgress && nonce % 64 === 0) onProgress(nonce);
   }
@@ -85,19 +95,28 @@ export async function solveProofOfWork(
 export function readBearer(res: Response): string {
   const raw = res.headers.get("authorization") ?? "";
   const m = /^Bearer\s+(\S+)$/i.exec(raw.trim());
-  if (!m) throw new AtomicMailError("no bearer token in the response", res.status);
+  if (!m)
+    throw new AtomicMailError("no bearer token in the response", res.status);
   return m[1]!;
 }
 
-export async function failFrom(res: Response, what: string): Promise<AtomicMailError> {
+export async function failFrom(
+  res: Response,
+  what: string,
+): Promise<AtomicMailError> {
   let hint: string | undefined;
   try {
-    const body = (await res.json()) as { error?: { message?: string; hint?: string } | string };
+    const body = (await res.json()) as {
+      error?: { message?: string; hint?: string } | string;
+    };
     if (typeof body.error === "string") hint = body.error;
     else hint = body.error?.hint ?? body.error?.message;
   } catch {
     /* no body */
   }
-  return new AtomicMailError(`${what} failed: HTTP ${res.status}`, res.status, hint);
+  return new AtomicMailError(
+    `${what} failed: HTTP ${res.status}`,
+    res.status,
+    hint,
+  );
 }
-

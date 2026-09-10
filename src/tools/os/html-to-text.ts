@@ -6,12 +6,7 @@ import { convert as htmlToTextConvert } from "html-to-text";
  * deliberately conservative: we only want HTML pages to be stripped, never
  * JSON documents that happen to contain `<` characters.
  */
-const HTML_BODY_SNIFF_PREFIXES = [
-  "<!doctype html",
-  "<html",
-  "<?xml",
-  "<rss",
-];
+const HTML_BODY_SNIFF_PREFIXES = ["<!doctype html", "<html", "<?xml", "<rss"];
 
 /**
  * Decide whether to strip tags from this response body. Trusts
@@ -34,7 +29,11 @@ export function looksLikeHtml(
   ) {
     return true;
   }
-  if (ct.length > 0 && ct !== "application/octet-stream" && ct !== "text/plain") {
+  if (
+    ct.length > 0 &&
+    ct !== "application/octet-stream" &&
+    ct !== "text/plain"
+  ) {
     return false;
   }
   const head = body.trimStart().slice(0, 32).toLowerCase();

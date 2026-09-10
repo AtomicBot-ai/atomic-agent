@@ -120,15 +120,18 @@ function validateManifest(raw: unknown): SkillManifest {
   const versionRaw = typeof obj.version === "string" ? obj.version.trim() : "";
   const version = versionRaw.length > 0 ? versionRaw : "0.0.0";
 
-  const requiresTools = normaliseStringList(obj.requires_tools, issues, "requires_tools");
+  const requiresTools = normaliseStringList(
+    obj.requires_tools,
+    issues,
+    "requires_tools",
+  );
   const requiresScripts = normaliseStringList(
     obj.requires_scripts,
     issues,
     "requires_scripts",
   );
 
-  const dangerous =
-    typeof obj.dangerous === "boolean" ? obj.dangerous : false;
+  const dangerous = typeof obj.dangerous === "boolean" ? obj.dangerous : false;
 
   const platforms = normalisePlatformList(obj.platforms, issues);
 

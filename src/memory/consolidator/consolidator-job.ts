@@ -2,10 +2,7 @@ import type { AgentMetrics } from "../../tracing/agent-metrics.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 import type { LessonStore } from "../lessons/lesson-store.js";
 import type { LinkStore } from "../links/link-store.js";
-import type {
-  MemoryEntry,
-  MemoryStore,
-} from "../memory-store.js";
+import type { MemoryEntry, MemoryStore } from "../memory-store.js";
 import type { ProcedureStore } from "../procedures/procedure-store.js";
 
 import { clusterEpisodes, type MemoryCluster } from "./clustering.js";
@@ -181,10 +178,7 @@ export interface ConsolidatorJobDeps {
    * The job stays decoupled from `TraceBus` so unit tests do not
    * need to wire one up.
    */
-  onLessonDeprecated?: (event: {
-    lessonId: number;
-    reason: string;
-  }) => void;
+  onLessonDeprecated?: (event: { lessonId: number; reason: string }) => void;
   /**
    * Memory-v2 phase 7b. Optional trace bridges for procedures.
    * `onProcedureCreated` fires once per persisted procedure;
@@ -323,9 +317,7 @@ export class ConsolidatorJob {
     return result;
   }
 
-  private async runTick(
-    signal: AbortSignal,
-  ): Promise<ConsolidatorTickResult> {
+  private async runTick(signal: AbortSignal): Promise<ConsolidatorTickResult> {
     const now = this.now();
     const candidates = this.selectCandidates(now);
     if (candidates.length === 0) {
@@ -573,10 +565,13 @@ export class ConsolidatorJob {
               this.emitProcedureDeprecated(id, "downvoted");
             }
           } catch (err) {
-            this.deps.logger?.warn?.("consolidator.sweep.procedure.vote.failed", {
-              procedureId: id,
-              error: err instanceof Error ? err.message : String(err),
-            });
+            this.deps.logger?.warn?.(
+              "consolidator.sweep.procedure.vote.failed",
+              {
+                procedureId: id,
+                error: err instanceof Error ? err.message : String(err),
+              },
+            );
           }
         }
       }
@@ -596,10 +591,13 @@ export class ConsolidatorJob {
               this.emitProcedureDeprecated(id, "aged_out");
             }
           } catch (err) {
-            this.deps.logger?.warn?.("consolidator.sweep.procedure.age.failed", {
-              procedureId: id,
-              error: err instanceof Error ? err.message : String(err),
-            });
+            this.deps.logger?.warn?.(
+              "consolidator.sweep.procedure.age.failed",
+              {
+                procedureId: id,
+                error: err instanceof Error ? err.message : String(err),
+              },
+            );
           }
         }
       }
@@ -735,10 +733,7 @@ export class ConsolidatorJob {
    * because someone (the reflection-side `neighbor-evolver` or a
    * sibling tick) already held them.
    */
-  private acquireClusterLease(
-    cluster: MemoryCluster,
-    now: number,
-  ): number[] {
+  private acquireClusterLease(cluster: MemoryCluster, now: number): number[] {
     const taken: number[] = [];
     for (const id of cluster.members) {
       const ok = this.deps.memoryStore.acquireConsolidationLease(
@@ -784,7 +779,10 @@ export class ConsolidatorJob {
     cluster: MemoryCluster;
     episodesById: Map<number, MemoryEntry>;
     signal: AbortSignal;
-  }): Promise<{ outcome: "ok" | "none" | "failed"; procedureCreated: boolean }> {
+  }): Promise<{
+    outcome: "ok" | "none" | "failed";
+    procedureCreated: boolean;
+  }> {
     const episodes: MemoryEntry[] = [];
     for (const id of args.cluster.members) {
       const entry = args.episodesById.get(id);
@@ -893,11 +891,14 @@ export class ConsolidatorJob {
     try {
       this.deps.onProcedureDeprecated({ procedureId, reason });
     } catch (err) {
-      this.deps.logger?.warn?.("consolidator.trace.procedure_deprecated.failed", {
-        procedureId,
-        reason,
-        error: err instanceof Error ? err.message : String(err),
-      });
+      this.deps.logger?.warn?.(
+        "consolidator.trace.procedure_deprecated.failed",
+        {
+          procedureId,
+          reason,
+          error: err instanceof Error ? err.message : String(err),
+        },
+      );
     }
   }
 }

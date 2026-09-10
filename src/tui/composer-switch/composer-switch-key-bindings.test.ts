@@ -4,7 +4,11 @@ import { describe, expect, it, vi } from "vitest";
 import { reduceTuiState } from "../agent-event-reducer.js";
 import type { TuiAction } from "../tui-action.js";
 import type { TuiState } from "../tui-state.js";
-import { cloudState, fusionState, localState } from "./composer-switch-fixtures.js";
+import {
+  cloudState,
+  fusionState,
+  localState,
+} from "./composer-switch-fixtures.js";
 import { handleComposerSwitchKey } from "./composer-switch-key-bindings.js";
 import type { ComposerSwitchRow } from "./composer-switch-rows.js";
 

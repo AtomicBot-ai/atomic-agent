@@ -65,15 +65,13 @@ describe("os.fs tools", () => {
       makeCtx(dir),
     );
     expect(result.status).toBe("ok");
-    expect(result.summary).toBe(`${"2".padStart(6, " ")}|two\n${"3".padStart(6, " ")}|three`);
+    expect(result.summary).toBe(
+      `${"2".padStart(6, " ")}|two\n${"3".padStart(6, " ")}|three`,
+    );
   });
 
   it("os.fs.read treats negative offset as counting from the end", async () => {
-    await writeFile(
-      join(dir, "tail.txt"),
-      "l1\nl2\nl3\nl4\nl5\n",
-      "utf8",
-    );
+    await writeFile(join(dir, "tail.txt"), "l1\nl2\nl3\nl4\nl5\n", "utf8");
     const result = await osFsReadTool.run(
       { path: "tail.txt", offset: -2 },
       makeCtx(dir),
@@ -108,20 +106,24 @@ describe("os.fs tools", () => {
         gate.reject(req.approvalId, "denied by test");
       },
     });
-    const tool = buildOsFsWriteTool({ approvals: gate, approvalRequired: true });
+    const tool = buildOsFsWriteTool({
+      approvals: gate,
+      approvalRequired: true,
+    });
     await expect(
-      tool.run(
-        { path: "out.txt", content: "hello" },
-        makeCtx(dir),
-      ),
+      tool.run({ path: "out.txt", content: "hello" }, makeCtx(dir)),
     ).rejects.toMatchObject({ name: "ApprovalDeniedError" });
   });
 
   it("os.fs.write writes after approval", async () => {
     const gate = new ApprovalGate({
-      emit: (req) => gate.resolve({ approvalId: req.approvalId, approved: true }),
+      emit: (req) =>
+        gate.resolve({ approvalId: req.approvalId, approved: true }),
     });
-    const tool = buildOsFsWriteTool({ approvals: gate, approvalRequired: true });
+    const tool = buildOsFsWriteTool({
+      approvals: gate,
+      approvalRequired: true,
+    });
     const result = await tool.run(
       { path: "out.txt", content: "hello" },
       makeCtx(dir),
@@ -176,7 +178,10 @@ describe("os.shell.run", () => {
     });
     const tool = buildOsShellTool({ approvals: gate, approvalRequired: true });
     await expect(
-      tool.run({ cmd: "node", args: ["-e", "process.stdout.write('hi')"] }, makeCtx(dir)),
+      tool.run(
+        { cmd: "node", args: ["-e", "process.stdout.write('hi')"] },
+        makeCtx(dir),
+      ),
     ).rejects.toMatchObject({ name: "ApprovalDeniedError" });
   });
 
@@ -198,7 +203,8 @@ describe("os.shell.run", () => {
 
   it("executes echo and captures stdout when approved", async () => {
     const gate = new ApprovalGate({
-      emit: (req) => gate.resolve({ approvalId: req.approvalId, approved: true }),
+      emit: (req) =>
+        gate.resolve({ approvalId: req.approvalId, approved: true }),
     });
     const tool = buildOsShellTool({ approvals: gate, approvalRequired: true });
     const result = await tool.run(
@@ -220,7 +226,10 @@ describe("os.shell.run", () => {
       },
     });
     const tool = buildOsShellTool({ approvals: gate, approvalRequired: true });
-    const result = await tool.run({ cmd: "rm", args: ["-rf", "/"] }, makeCtx(dir));
+    const result = await tool.run(
+      { cmd: "rm", args: ["-rf", "/"] },
+      makeCtx(dir),
+    );
     expect(result.status).toBe("error");
     expect(result.summary).toContain("blocked by shell guard");
     expect(result.details.guardVerdict).toBe("block");
@@ -230,11 +239,12 @@ describe("os.shell.run", () => {
 
   it("recovers a JSON-stringified array `args` (cloud native_tools double-serialise bug)", async () => {
     const gate = new ApprovalGate({
-      emit: (req) => gate.resolve({ approvalId: req.approvalId, approved: true }),
+      emit: (req) =>
+        gate.resolve({ approvalId: req.approvalId, approved: true }),
     });
     const tool = buildOsShellTool({ approvals: gate, approvalRequired: true });
     const result = await tool.run(
-      { cmd: "echo", args: "[\"hello\",\"world\"]" },
+      { cmd: "echo", args: '["hello","world"]' },
       makeCtx(dir),
     );
     // The string is shaped like a JSON array — coerced back to
@@ -289,9 +299,13 @@ describe("os.shell.run", () => {
       await writeFile(join(dir, "x.png"), "1", "utf8");
       await writeFile(join(dir, "y.png"), "2", "utf8");
       const gate = new ApprovalGate({
-        emit: (req) => gate.resolve({ approvalId: req.approvalId, approved: true }),
+        emit: (req) =>
+          gate.resolve({ approvalId: req.approvalId, approved: true }),
       });
-      const tool = buildOsShellTool({ approvals: gate, approvalRequired: true });
+      const tool = buildOsShellTool({
+        approvals: gate,
+        approvalRequired: true,
+      });
       const result = await tool.run(
         { cmd: "rm", args: ["-f", "*.png"] },
         makeCtx(dir),
@@ -305,7 +319,8 @@ describe("os.shell.run", () => {
   it("runs a piped command line via a subshell", async () => {
     if (process.platform === "win32") return;
     const gate = new ApprovalGate({
-      emit: (req) => gate.resolve({ approvalId: req.approvalId, approved: true }),
+      emit: (req) =>
+        gate.resolve({ approvalId: req.approvalId, approved: true }),
     });
     const tool = buildOsShellTool({ approvals: gate, approvalRequired: true });
     const result = await tool.run(
@@ -321,7 +336,8 @@ describe("os.shell.run", () => {
   it("expands an env var via a subshell", async () => {
     if (process.platform === "win32") return;
     const gate = new ApprovalGate({
-      emit: (req) => gate.resolve({ approvalId: req.approvalId, approved: true }),
+      emit: (req) =>
+        gate.resolve({ approvalId: req.approvalId, approved: true }),
     });
     const tool = buildOsShellTool({ approvals: gate, approvalRequired: true });
     const result = await tool.run({ cmd: 'echo "$HOME"' }, makeCtx(dir));
@@ -333,7 +349,8 @@ describe("os.shell.run", () => {
   it("treats a pre-joined command line in `cmd` as a subshell command", async () => {
     if (process.platform === "win32") return;
     const gate = new ApprovalGate({
-      emit: (req) => gate.resolve({ approvalId: req.approvalId, approved: true }),
+      emit: (req) =>
+        gate.resolve({ approvalId: req.approvalId, approved: true }),
     });
     const tool = buildOsShellTool({ approvals: gate, approvalRequired: true });
     const result = await tool.run({ cmd: "echo hello world" }, makeCtx(dir));
@@ -345,7 +362,8 @@ describe("os.shell.run", () => {
   it("runs a piped command line via a cmd.exe subshell (win32)", async () => {
     if (process.platform !== "win32") return;
     const gate = new ApprovalGate({
-      emit: (req) => gate.resolve({ approvalId: req.approvalId, approved: true }),
+      emit: (req) =>
+        gate.resolve({ approvalId: req.approvalId, approved: true }),
     });
     const tool = buildOsShellTool({ approvals: gate, approvalRequired: true });
     const result = await tool.run(
@@ -360,7 +378,8 @@ describe("os.shell.run", () => {
   it("expands a %VAR% via a cmd.exe subshell (win32)", async () => {
     if (process.platform !== "win32") return;
     const gate = new ApprovalGate({
-      emit: (req) => gate.resolve({ approvalId: req.approvalId, approved: true }),
+      emit: (req) =>
+        gate.resolve({ approvalId: req.approvalId, approved: true }),
     });
     const tool = buildOsShellTool({ approvals: gate, approvalRequired: true });
     const result = await tool.run({ cmd: "echo %USERPROFILE%" }, makeCtx(dir));
@@ -372,7 +391,8 @@ describe("os.shell.run", () => {
   it("chains commands with && via a cmd.exe subshell (win32)", async () => {
     if (process.platform !== "win32") return;
     const gate = new ApprovalGate({
-      emit: (req) => gate.resolve({ approvalId: req.approvalId, approved: true }),
+      emit: (req) =>
+        gate.resolve({ approvalId: req.approvalId, approved: true }),
     });
     const tool = buildOsShellTool({ approvals: gate, approvalRequired: true });
     const result = await tool.run({ cmd: "echo a && echo b" }, makeCtx(dir));
@@ -384,7 +404,8 @@ describe("os.shell.run", () => {
 
   it("keeps the direct argv path for a structured command", async () => {
     const gate = new ApprovalGate({
-      emit: (req) => gate.resolve({ approvalId: req.approvalId, approved: true }),
+      emit: (req) =>
+        gate.resolve({ approvalId: req.approvalId, approved: true }),
     });
     const tool = buildOsShellTool({ approvals: gate, approvalRequired: true });
     // Use a real executable (not a cmd.exe builtin) so the direct-exec
@@ -401,10 +422,14 @@ describe("os.shell.run", () => {
 
   it("still blocks a catastrophic command line routed through the subshell", async () => {
     const gate = new ApprovalGate({
-      emit: (req) => gate.resolve({ approvalId: req.approvalId, approved: true }),
+      emit: (req) =>
+        gate.resolve({ approvalId: req.approvalId, approved: true }),
     });
     const tool = buildOsShellTool({ approvals: gate, approvalRequired: true });
-    const result = await tool.run({ cmd: "rm -rf / --no-preserve-root" }, makeCtx(dir));
+    const result = await tool.run(
+      { cmd: "rm -rf / --no-preserve-root" },
+      makeCtx(dir),
+    );
     expect(result.status).toBe("error");
     expect(result.summary).toContain("blocked by shell guard");
   });
@@ -426,7 +451,10 @@ describe("os.fs.trash", () => {
     const gate = new ApprovalGate({
       emit: (req) => gate.reject(req.approvalId, "no"),
     });
-    const tool = buildOsFsTrashTool({ approvals: gate, approvalRequired: true });
+    const tool = buildOsFsTrashTool({
+      approvals: gate,
+      approvalRequired: true,
+    });
     await expect(
       tool.run({ paths: ["t.txt"] }, makeCtx(dir)),
     ).rejects.toMatchObject({ name: "ApprovalDeniedError" });
@@ -434,9 +462,13 @@ describe("os.fs.trash", () => {
 
   it("returns error when path is missing", async () => {
     const gate = new ApprovalGate({
-      emit: (req) => gate.resolve({ approvalId: req.approvalId, approved: true }),
+      emit: (req) =>
+        gate.resolve({ approvalId: req.approvalId, approved: true }),
     });
-    const tool = buildOsFsTrashTool({ approvals: gate, approvalRequired: true });
+    const tool = buildOsFsTrashTool({
+      approvals: gate,
+      approvalRequired: true,
+    });
     const result = await tool.run({ paths: ["nope.txt"] }, makeCtx(dir));
     expect(result.status).toBe("error");
     expect(result.summary).toContain("not found");
@@ -453,9 +485,13 @@ describe("os.fs.trash", () => {
     const target = join(dir, "trash-me.txt");
     await writeFile(target, "bye", "utf8");
     const gate = new ApprovalGate({
-      emit: (req) => gate.resolve({ approvalId: req.approvalId, approved: true }),
+      emit: (req) =>
+        gate.resolve({ approvalId: req.approvalId, approved: true }),
     });
-    const tool = buildOsFsTrashTool({ approvals: gate, approvalRequired: true });
+    const tool = buildOsFsTrashTool({
+      approvals: gate,
+      approvalRequired: true,
+    });
     const result = await tool.run({ paths: ["trash-me.txt"] }, makeCtx(dir));
     expect(result.status).toBe("ok");
     expect(existsSync(target)).toBe(false);
@@ -498,7 +534,10 @@ describe("registerOsTools", () => {
       },
       listRecentSessionDirs: () => [],
     });
-    const names = registry.list().map((t) => t.name).sort();
+    const names = registry
+      .list()
+      .map((t) => t.name)
+      .sort();
     expect(names).toEqual(
       [
         "os.clipboard.read",

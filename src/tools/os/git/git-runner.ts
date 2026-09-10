@@ -1,5 +1,8 @@
 import { stat } from "node:fs/promises";
-import { runCommand, type CommandResult } from "../../../sandbox/command-runner.js";
+import {
+  runCommand,
+  type CommandResult,
+} from "../../../sandbox/command-runner.js";
 import { resolveUserPath } from "../expand-home.js";
 
 /**
@@ -80,9 +83,7 @@ async function resolveRepoRoot(
   try {
     const info = await stat(candidate);
     if (!info.isDirectory()) {
-      throw new Error(
-        `os.git: repo path ${candidate} is not a directory`,
-      );
+      throw new Error(`os.git: repo path ${candidate} is not a directory`);
     }
   } catch (err) {
     throw new Error(
@@ -97,10 +98,7 @@ async function resolveRepoRoot(
  * is preserved verbatim because its messages are uniformly the most
  * useful thing to show the operator.
  */
-export function requireGitSuccess(
-  tool: string,
-  result: GitRunResult,
-): void {
+export function requireGitSuccess(tool: string, result: GitRunResult): void {
   if (result.timedOut) {
     throw new Error(`${tool}: git timed out after ${result.durationMs}ms`);
   }

@@ -213,7 +213,14 @@ export async function openAiPostJson(
 ): Promise<Record<string, unknown>> {
   return withCreditLimitRetry(deps, body, (attemptBody) =>
     runOpenAiWithRetry(deps, path, request.signal, async () => {
-      const res = await openAiFetch(deps, path, attemptBody, request, false, "POST");
+      const res = await openAiFetch(
+        deps,
+        path,
+        attemptBody,
+        request,
+        false,
+        "POST",
+      );
       if (!res.ok) {
         throw await httpErrorFromResponse(deps, path, res);
       }
@@ -294,13 +301,26 @@ export async function openAiStartStream(
   // refused before any bytes exist, so re-sending with a lower ceiling
   // cannot duplicate output — the same argument the open-retry makes.
   return withCreditLimitRetry(deps, body, (attemptBody) =>
-    runOpenAiWithRetry(deps, path, request.signal, async () => {
-      const res = await openAiFetch(deps, path, attemptBody, request, true, "POST");
-      if (!res.ok || !res.body) {
-        throw await httpErrorFromResponse(deps, path, res);
-      }
-      return res as Response & { body: NonNullable<Response["body"]> };
-    }, budget),
+    runOpenAiWithRetry(
+      deps,
+      path,
+      request.signal,
+      async () => {
+        const res = await openAiFetch(
+          deps,
+          path,
+          attemptBody,
+          request,
+          true,
+          "POST",
+        );
+        if (!res.ok || !res.body) {
+          throw await httpErrorFromResponse(deps, path, res);
+        }
+        return res as Response & { body: NonNullable<Response["body"]> };
+      },
+      budget,
+    ),
   );
 }
 

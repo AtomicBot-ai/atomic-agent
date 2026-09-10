@@ -23,7 +23,10 @@ function Probe(props: { text: string; skip?: boolean }): React.ReactElement {
  * ~30fps. Hence a short string here — the assertion is that the reveal
  * progresses and settles, not how fast it does so.
  */
-async function waitFor(read: () => string, match: (frame: string) => boolean): Promise<string> {
+async function waitFor(
+  read: () => string,
+  match: (frame: string) => boolean,
+): Promise<string> {
   // Generous: under a full parallel test run Ink commits frames far
   // slower than the reveal interval, and this waits on frames.
   const deadline = Date.now() + 10_000;

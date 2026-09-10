@@ -2,7 +2,11 @@ import type { SwarmUnitView } from "../../channels/swarm/index.js";
 import { getConfig } from "../../config/index.js";
 import type { AgentRuntime } from "../../runtime/bootstrap.js";
 import type { TuiEventBus } from "../tui-app.js";
-import type { SwarmEditField, SwarmKind, SwarmRow } from "./swarm-panel-state.js";
+import type {
+  SwarmEditField,
+  SwarmKind,
+  SwarmRow,
+} from "./swarm-panel-state.js";
 
 /** Countdown refresh while a Telegram pairing window is open. */
 const PAIRING_TICK_MS = 1_000;
@@ -53,7 +57,10 @@ export class SwarmOrchestrator {
   async add(input: SwarmAddInput): Promise<void> {
     const swarm = this.runtime.swarm;
     if (!swarm) {
-      this.settle(undefined, "the swarm registry is not available in this build");
+      this.settle(
+        undefined,
+        "the swarm registry is not available in this build",
+      );
       return;
     }
     if (input.label.trim().length === 0) {
@@ -62,7 +69,10 @@ export class SwarmOrchestrator {
     }
     const owner = input.ownerUserId.trim();
     if (owner.length > 0 && !/^\d{1,25}$/.test(owner)) {
-      this.settle(undefined, "owner id must be numeric (Telegram user id / Discord snowflake)");
+      this.settle(
+        undefined,
+        "owner id must be numeric (Telegram user id / Discord snowflake)",
+      );
       return;
     }
     this.bus.emit({ type: "swarm_action_started" });
@@ -89,7 +99,11 @@ export class SwarmOrchestrator {
     this.refresh();
   }
 
-  async saveField(id: string, field: SwarmEditField, value: string): Promise<void> {
+  async saveField(
+    id: string,
+    field: SwarmEditField,
+    value: string,
+  ): Promise<void> {
     const swarm = this.runtime.swarm;
     if (!swarm || isPrimary(id)) {
       this.settle(undefined, "the primary bots are edited in /integrations");
@@ -109,11 +123,16 @@ export class SwarmOrchestrator {
           if (trimmed.length > 0 && !/^\d{1,25}$/.test(trimmed)) {
             throw new Error("owner id must be numeric");
           }
-          await swarm.update(id, { ownerUserId: trimmed.length > 0 ? trimmed : null });
+          await swarm.update(id, {
+            ownerUserId: trimmed.length > 0 ? trimmed : null,
+          });
           break;
         }
         case "token":
-          await swarm.setToken(id, value.trim().length > 0 ? value.trim() : null);
+          await swarm.setToken(
+            id,
+            value.trim().length > 0 ? value.trim() : null,
+          );
           break;
       }
       this.settle(`${field} saved`);
@@ -145,7 +164,10 @@ export class SwarmOrchestrator {
   async remove(id: string): Promise<void> {
     const swarm = this.runtime.swarm;
     if (!swarm || isPrimary(id)) {
-      this.settle(undefined, "the primary bots are managed in /integrations and cannot be removed");
+      this.settle(
+        undefined,
+        "the primary bots are managed in /integrations and cannot be removed",
+      );
       return;
     }
     const label = swarm.get(id)?.config.label ?? id;
@@ -168,14 +190,20 @@ export class SwarmOrchestrator {
     const unit = swarm.get(id);
     if (!unit) return;
     if (unit.config.kind !== "telegram") {
-      this.settle(undefined, "Discord bots do not pair — set the owner id with e");
+      this.settle(
+        undefined,
+        "Discord bots do not pair — set the owner id with e",
+      );
       return;
     }
     // Pairing needs a running bot. Starting one the operator switched
     // off, silently, would leave the row saying "off" while the bot is
     // live — say what is missing instead.
     if (!unit.config.enabled) {
-      this.settle(undefined, `${unit.config.label} is off — press enter to switch it on first`);
+      this.settle(
+        undefined,
+        `${unit.config.label} is off — press enter to switch it on first`,
+      );
       return;
     }
     this.bus.emit({ type: "swarm_action_started" });
@@ -228,12 +256,18 @@ export class SwarmOrchestrator {
         role: "primary",
         enabled: config.telegram.enabled,
         hasToken: telegram.hasToken(),
-        ownerUserId: config.telegram.ownerUserId === null ? null : String(config.telegram.ownerUserId),
+        ownerUserId:
+          config.telegram.ownerUserId === null
+            ? null
+            : String(config.telegram.ownerUserId),
         state: telegram.state(),
         lastError: telegram.lastError(),
         botUsername: identity?.username ?? null,
         pairing: pairing.active
-          ? { active: true, secondsLeft: secondsLeft(pairing.expiresAt, this.now()) }
+          ? {
+              active: true,
+              secondsLeft: secondsLeft(pairing.expiresAt, this.now()),
+            }
           : null,
       });
     }
@@ -248,14 +282,17 @@ export class SwarmOrchestrator {
         role: "primary",
         enabled: config.discord.enabled,
         hasToken: discord.hasToken(),
-        ownerUserId: config.discord.ownerUserId,
+        // The Swarm row shows one owner; for the primary Discord bot
+        // that is the first of its allowlist (#388).
+        ownerUserId: config.discord.ownerUserIds[0] ?? null,
         state: discord.state(),
         lastError: discord.lastError(),
         botUsername: identity?.username ?? null,
         pairing: null,
       });
     }
-    for (const view of this.runtime.swarm?.views() ?? []) rows.push(rowOf(view, this.now()));
+    for (const view of this.runtime.swarm?.views() ?? [])
+      rows.push(rowOf(view, this.now()));
     return rows;
   }
 
@@ -303,7 +340,10 @@ function rowOf(view: SwarmUnitView, now: number): SwarmRow {
     botUsername: view.botUsername,
     pairing:
       view.pairing?.active === true
-        ? { active: true, secondsLeft: secondsLeft(view.pairing.expiresAt, now) }
+        ? {
+            active: true,
+            secondsLeft: secondsLeft(view.pairing.expiresAt, now),
+          }
         : null,
   };
 }

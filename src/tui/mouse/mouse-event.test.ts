@@ -39,7 +39,9 @@ describe("isSecondaryPress", () => {
     expect(isSecondaryPress(event({ button: "right", kind: "motion" }))).toBe(
       false,
     );
-    expect(isSecondaryPress(event({ button: "right", ctrl: true }))).toBe(false);
+    expect(isSecondaryPress(event({ button: "right", ctrl: true }))).toBe(
+      false,
+    );
     expect(isSecondaryPress(event({ button: "right", shift: true }))).toBe(
       false,
     );

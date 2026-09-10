@@ -59,11 +59,14 @@ export function renderDownloadMail(input: DownloadMailInput): RenderedMail {
   const name = modelName(job);
   const total = job.totalBytes > 0 ? job.totalBytes : job.transferredBytes;
   const started = Date.parse(job.startedAt);
-  const finished = Date.parse(job.finishedAt ?? "") || (input.now ?? new Date()).getTime();
+  const finished =
+    Date.parse(job.finishedAt ?? "") || (input.now ?? new Date()).getTime();
   const took = formatDuration(finished - started);
   const q = quant(job);
   const what = job.phase === "mmproj" ? "VISION PROJECTOR" : "MODEL";
-  const factsLine = [formatBytes(total), q, took !== "—" ? took : null].filter(Boolean).join(" · ");
+  const factsLine = [formatBytes(total), q, took !== "—" ? took : null]
+    .filter(Boolean)
+    .join(" · ");
 
   if (job.status === "done") {
     const subject = `▶ ${what} READY: ${name}`;
@@ -101,7 +104,8 @@ export function renderDownloadMail(input: DownloadMailInput): RenderedMail {
   }
 
   const reason = job.error ?? "unknown error";
-  const percent = total > 0 ? Math.round((job.transferredBytes / total) * 100) : 0;
+  const percent =
+    total > 0 ? Math.round((job.transferredBytes / total) * 100) : 0;
   if (job.resumable) {
     const kept =
       job.transferredBytes > 0
@@ -115,7 +119,7 @@ export function renderDownloadMail(input: DownloadMailInput): RenderedMail {
       `> ${name}`,
       `> ${reason}`,
       `> ${kept}`,
-      `> [${"█".repeat(Math.round(percent / 100 * 24))}${"░".repeat(24 - Math.round(percent / 100 * 24))}] ${percent}%`,
+      `> [${"█".repeat(Math.round((percent / 100) * 24))}${"░".repeat(24 - Math.round((percent / 100) * 24))}] ${percent}%`,
       "",
       "NOT ENOUGH BANDWIDTH · THE PARTIAL WAITS",
       "",
@@ -148,7 +152,7 @@ export function renderDownloadMail(input: DownloadMailInput): RenderedMail {
     "DOWNLOAD FAILED",
     `> ${name}`,
     `> ${reason}`,
-    `> [${"█".repeat(Math.round(percent / 100 * 24))}${"░".repeat(24 - Math.round(percent / 100 * 24))}] ${percent}%`,
+    `> [${"█".repeat(Math.round((percent / 100) * 24))}${"░".repeat(24 - Math.round((percent / 100) * 24))}] ${percent}%`,
     "",
     "MISSION ABORTED · THE FILE, NOT THE LINK",
     "",

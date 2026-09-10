@@ -50,7 +50,15 @@ interface WorksheetLike {
   id: number;
   eachRow(
     options: { includeEmpty: boolean },
-    cb: (row: { eachCell: (opts: { includeEmpty: boolean }, cb: (cell: CellLike, col: number) => void) => void }, rowNumber: number) => void,
+    cb: (
+      row: {
+        eachCell: (
+          opts: { includeEmpty: boolean },
+          cb: (cell: CellLike, col: number) => void,
+        ) => void;
+      },
+      rowNumber: number,
+    ) => void,
   ): void;
 }
 
@@ -131,14 +139,18 @@ function toArrayBuffer(buf: Buffer): ArrayBuffer {
   return copy.buffer;
 }
 
-type ExcelJsModule = { Workbook: new () => { xlsx: { load(data: ArrayBuffer): Promise<unknown> }; worksheets: WorksheetLike[] } };
+type ExcelJsModule = {
+  Workbook: new () => {
+    xlsx: { load(data: ArrayBuffer): Promise<unknown> };
+    worksheets: WorksheetLike[];
+  };
+};
 
 let excelJsModule: ExcelJsModule | undefined;
 async function loadExcelJs(): Promise<ExcelJsModule> {
   if (!excelJsModule) {
     const mod = (await import("exceljs")) as
-      | ExcelJsModule
-      | { default: ExcelJsModule };
+      ExcelJsModule | { default: ExcelJsModule };
     excelJsModule = "default" in mod ? mod.default : mod;
   }
   return excelJsModule;

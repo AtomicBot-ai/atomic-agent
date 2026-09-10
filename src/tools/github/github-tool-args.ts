@@ -75,7 +75,11 @@ export async function currentBranch(ctx: ToolContext): Promise<string> {
   return branch;
 }
 
-export function requireString(raw: unknown, tool: string, field: string): string {
+export function requireString(
+  raw: unknown,
+  tool: string,
+  field: string,
+): string {
   if (typeof raw !== "string" || raw.trim().length === 0) {
     throw new Error(`${tool}: \`${field}\` must be a non-empty string`);
   }
@@ -95,7 +99,11 @@ export function optionalString(
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-export function requireNumber(raw: unknown, tool: string, field: string): number {
+export function requireNumber(
+  raw: unknown,
+  tool: string,
+  field: string,
+): number {
   if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0) {
     throw new Error(`${tool}: \`${field}\` must be a positive number`);
   }
@@ -111,11 +119,16 @@ export function parseStringArray(
   if (!Array.isArray(raw) || !raw.every((v) => typeof v === "string")) {
     throw new Error(`${tool}: \`${field}\` must be an array of strings`);
   }
-  const values = (raw as string[]).map((v) => v.trim()).filter((v) => v.length > 0);
+  const values = (raw as string[])
+    .map((v) => v.trim())
+    .filter((v) => v.length > 0);
   return values.length > 0 ? values : undefined;
 }
 
-export function parseState(raw: unknown, tool: string): "open" | "closed" | "all" {
+export function parseState(
+  raw: unknown,
+  tool: string,
+): "open" | "closed" | "all" {
   if (raw === undefined || raw === null) return "open";
   if (raw === "open" || raw === "closed" || raw === "all") return raw;
   throw new Error(`${tool}: \`state\` must be open, closed or all`);

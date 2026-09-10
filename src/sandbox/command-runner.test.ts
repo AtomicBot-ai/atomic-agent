@@ -103,9 +103,9 @@ describe("isBrokenPipe", () => {
   it("does not swallow errors that mean something else", () => {
     // These have to keep travelling as errors — absorbing everything on
     // the stream would turn a real local fault into a silent success.
-    expect(isBrokenPipe(Object.assign(new Error("x"), { code: "EACCES" }))).toBe(
-      false,
-    );
+    expect(
+      isBrokenPipe(Object.assign(new Error("x"), { code: "EACCES" })),
+    ).toBe(false);
     expect(isBrokenPipe(new Error("no code at all"))).toBe(false);
     expect(isBrokenPipe(null)).toBe(false);
   });

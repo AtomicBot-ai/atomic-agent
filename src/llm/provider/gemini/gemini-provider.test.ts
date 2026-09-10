@@ -50,7 +50,9 @@ describe("GeminiProvider", () => {
         ],
       });
     });
-    const provider = await buildGeminiProvider(fetchImpl as unknown as typeof fetch);
+    const provider = await buildGeminiProvider(
+      fetchImpl as unknown as typeof fetch,
+    );
 
     const result = await provider.complete({
       prompt: "hi",
@@ -72,8 +74,7 @@ describe("GeminiProvider", () => {
     });
     const provider = new GeminiProvider({
       id: "gemini",
-      baseUrl:
-        "https://generativelanguage.googleapis.com/v1beta/openai/",
+      baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai/",
       apiKey: "test-...ey",
       fetchImpl: fetchImpl as unknown as typeof fetch,
     });
@@ -91,7 +92,9 @@ describe("GeminiProvider", () => {
         { status: 200, headers: { "content-type": "text/event-stream" } },
       );
     });
-    const provider = await buildGeminiProvider(fetchImpl as unknown as typeof fetch);
+    const provider = await buildGeminiProvider(
+      fetchImpl as unknown as typeof fetch,
+    );
 
     const stream = provider.completeStream({ prompt: "hello" });
     await stream.next();
@@ -104,7 +107,9 @@ describe("GeminiProvider", () => {
       expect(url).toBe(GEMINI_CHAT_URL);
       return jsonResponse({ choices: [{ message: { content: "image" } }] });
     });
-    const provider = await buildGeminiProvider(fetchImpl as unknown as typeof fetch);
+    const provider = await buildGeminiProvider(
+      fetchImpl as unknown as typeof fetch,
+    );
 
     await provider.describeImage({
       prompt: "describe",
@@ -119,9 +124,13 @@ describe("GeminiProvider", () => {
       expect(url).toBe(GEMINI_MODELS_URL);
       return jsonResponse({ data: [{ id: "gemini-2.5-flash" }] });
     });
-    const provider = await buildGeminiProvider(fetchImpl as unknown as typeof fetch);
+    const provider = await buildGeminiProvider(
+      fetchImpl as unknown as typeof fetch,
+    );
 
-    await expect(provider.listModels?.()).resolves.toEqual(["gemini-2.5-flash"]);
+    await expect(provider.listModels?.()).resolves.toEqual([
+      "gemini-2.5-flash",
+    ]);
   });
 
   it("checks health at Google's OpenAI-compatible models path", async () => {
@@ -129,9 +138,14 @@ describe("GeminiProvider", () => {
       expect(url).toBe(GEMINI_MODELS_URL);
       return jsonResponse({ data: [] });
     });
-    const provider = await buildGeminiProvider(fetchImpl as unknown as typeof fetch);
+    const provider = await buildGeminiProvider(
+      fetchImpl as unknown as typeof fetch,
+    );
 
-    await expect(provider.health()).resolves.toMatchObject({ reachable: true, status: 200 });
+    await expect(provider.health()).resolves.toMatchObject({
+      reachable: true,
+      status: 200,
+    });
   });
 
   it("does not expose the API key in provider errors", async () => {
@@ -140,7 +154,10 @@ describe("GeminiProvider", () => {
     const factory = getProviderFactory("gemini");
     expect(factory).toBeTypeOf("function");
     if (!factory) throw new Error("gemini provider kind is not registered");
-    vi.stubGlobal("fetch", vi.fn(async () => new Response("unauthorized", { status: 401 })));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("unauthorized", { status: 401 })),
+    );
     const provider = await factory({
       config: {} as AtomicAgentConfig,
       entry: { id: "gemini", kind: "gemini", apiKey: key },

@@ -38,7 +38,9 @@ describe("os.fs.watch", () => {
     expect(result.details.eventsReceived).toBeGreaterThanOrEqual(1);
     expect(result.details.timedOut).toBe(false);
     const events = result.details.events as { kind: string; path: string }[];
-    expect(events.some((e) => e.kind === "add" && e.path === "new.txt")).toBe(true);
+    expect(events.some((e) => e.kind === "add" && e.path === "new.txt")).toBe(
+      true,
+    );
   });
 
   it("captures change events on an existing file", async () => {
@@ -68,10 +70,7 @@ describe("os.fs.watch", () => {
 
   it("rejects timeout beyond the cap", async () => {
     await expect(
-      osFsWatchTool.run(
-        { path: ".", timeoutMs: 120_000 },
-        makeCtx(dir),
-      ),
+      osFsWatchTool.run({ path: ".", timeoutMs: 120_000 }, makeCtx(dir)),
     ).rejects.toThrow(/cap/);
   });
 

@@ -66,11 +66,17 @@ describe("ProviderFallbackChain", () => {
     // but the primary is NOT yet in cooldown — a probe is still eligible.
     chain.advanceFrom("primary", timeout);
     chain.recordSuccess("backup", false);
-    expect(chain.pickProvider()).toEqual({ providerId: "primary", isProbe: true });
+    expect(chain.pickProvider()).toEqual({
+      providerId: "primary",
+      isProbe: true,
+    });
 
     chain.advanceFrom("primary", timeout);
     chain.recordSuccess("backup", false);
-    expect(chain.pickProvider()).toEqual({ providerId: "primary", isProbe: true });
+    expect(chain.pickProvider()).toEqual({
+      providerId: "primary",
+      isProbe: true,
+    });
 
     // Failure #3 reaches the threshold → cooldown (30s) now arms, so the
     // immediate next pick stays on backup rather than probing.
@@ -114,7 +120,10 @@ describe("ProviderFallbackChain", () => {
     expect(chain.pickProvider().providerId).toBe("backup");
     // 30s elapsed → probe primary.
     clock.advance(2_000);
-    expect(chain.pickProvider()).toEqual({ providerId: "primary", isProbe: true });
+    expect(chain.pickProvider()).toEqual({
+      providerId: "primary",
+      isProbe: true,
+    });
 
     // Probe fails again → escalate to 60s.
     chain.advanceFrom("primary", http(500));
@@ -122,7 +131,10 @@ describe("ProviderFallbackChain", () => {
     clock.advance(59_000);
     expect(chain.pickProvider().providerId).toBe("backup");
     clock.advance(2_000);
-    expect(chain.pickProvider()).toEqual({ providerId: "primary", isProbe: true });
+    expect(chain.pickProvider()).toEqual({
+      providerId: "primary",
+      isProbe: true,
+    });
 
     // Probe fails again → escalate to 300s (cap).
     chain.advanceFrom("primary", http(500));
@@ -130,7 +142,10 @@ describe("ProviderFallbackChain", () => {
     clock.advance(299_000);
     expect(chain.pickProvider().providerId).toBe("backup");
     clock.advance(2_000);
-    expect(chain.pickProvider()).toEqual({ providerId: "primary", isProbe: true });
+    expect(chain.pickProvider()).toEqual({
+      providerId: "primary",
+      isProbe: true,
+    });
 
     // One more failure stays capped at 300s (does not grow to 600s).
     chain.advanceFrom("primary", http(500));
@@ -186,7 +201,10 @@ describe("ProviderFallbackChain", () => {
     chain.advanceFrom("primary", http(500));
     chain.recordSuccess("backup", false);
     clock.advance(DEFAULT_FALLBACK_TIMING.probeThrottleMs + 1);
-    expect(chain.pickProvider()).toEqual({ providerId: "primary", isProbe: true });
+    expect(chain.pickProvider()).toEqual({
+      providerId: "primary",
+      isProbe: true,
+    });
 
     // The probe turn hands the primary the request and it 429s again mid-turn.
     // The chain must advance back to backup, re-arm an ESCALATED cooldown
@@ -206,7 +224,10 @@ describe("ProviderFallbackChain", () => {
 
     // After the throttle window fully passes, it probes again (not stuck).
     clock.advance(DEFAULT_FALLBACK_TIMING.probeThrottleMs);
-    expect(chain.pickProvider()).toEqual({ providerId: "primary", isProbe: true });
+    expect(chain.pickProvider()).toEqual({
+      providerId: "primary",
+      isProbe: true,
+    });
   });
 
   it("throttles repeat probes: after a failed probe, waits probeThrottleMs before the next", () => {
@@ -221,7 +242,10 @@ describe("ProviderFallbackChain", () => {
     // First probe fires at the cooldown boundary — the throttle does not
     // gate the very first probe (lastProbeAt = 0).
     clock.advance(31_000);
-    expect(chain.pickProvider()).toEqual({ providerId: "primary", isProbe: true });
+    expect(chain.pickProvider()).toEqual({
+      providerId: "primary",
+      isProbe: true,
+    });
 
     // Probe fails → cooldown re-arms (short, escalated to 60s) but the
     // 5-min throttle must now suppress a second probe even after 60s.
@@ -235,7 +259,10 @@ describe("ProviderFallbackChain", () => {
 
     // Once the throttle window fully passes, probing resumes.
     clock.advance(DEFAULT_FALLBACK_TIMING.probeThrottleMs);
-    expect(chain.pickProvider()).toEqual({ providerId: "primary", isProbe: true });
+    expect(chain.pickProvider()).toEqual({
+      providerId: "primary",
+      isProbe: true,
+    });
   });
 
   it("does not switch on a grammar error (deterministic, same everywhere)", () => {
@@ -244,7 +271,9 @@ describe("ProviderFallbackChain", () => {
       resolve: () => chainOf(["primary", "backup"]),
       noticeSink: (n) => notices.push(n),
     });
-    expect(chain.advanceFrom("primary", new GrammarError("bad", ""))).toBeNull();
+    expect(
+      chain.advanceFrom("primary", new GrammarError("bad", "")),
+    ).toBeNull();
     expect(chain.activeOverride).toBeNull();
     expect(notices).toHaveLength(0);
   });
@@ -306,7 +335,10 @@ describe("ProviderFallbackChain", () => {
       resolve: () => chainOf(["only"]),
       noticeSink: (n) => notices.push(n),
     });
-    expect(chain.pickProvider()).toEqual({ providerId: "only", isProbe: false });
+    expect(chain.pickProvider()).toEqual({
+      providerId: "only",
+      isProbe: false,
+    });
     // Advance-worthy failure but nowhere to go → null, no notice.
     expect(chain.advanceFrom("only", http(500))).toBeNull();
     expect(notices).toHaveLength(0);
@@ -330,14 +362,20 @@ describe("ProviderFallbackChain", () => {
     chain.advanceFrom("primary", nonImmediate);
     chain.recordSuccess("backup", false);
     // Primary not in cooldown → immediately probe-eligible (throttle 0).
-    expect(chain.pickProvider()).toEqual({ providerId: "primary", isProbe: true });
+    expect(chain.pickProvider()).toEqual({
+      providerId: "primary",
+      isProbe: true,
+    });
 
     // Let the no-error window pass so the streak resets, then one more
     // non-immediate failure should again be below threshold (not the 2nd).
     clock.advance(20_000);
     chain.advanceFrom("primary", nonImmediate);
     chain.recordSuccess("backup", false);
-    expect(chain.pickProvider()).toEqual({ providerId: "primary", isProbe: true });
+    expect(chain.pickProvider()).toEqual({
+      providerId: "primary",
+      isProbe: true,
+    });
   });
 
   it("does not advance on a cancellation", () => {
@@ -356,7 +394,9 @@ describe("ProviderFallbackChain", () => {
       });
 
       // Session A fails over to backup.
-      expect(chain.advanceFrom("primary", http(429), "sessionA")).toBe("backup");
+      expect(chain.advanceFrom("primary", http(429), "sessionA")).toBe(
+        "backup",
+      );
       expect(chain.activeOverrideFor("sessionA")).toBe("backup");
 
       // Session B is untouched: still on primary, no override.
@@ -376,7 +416,9 @@ describe("ProviderFallbackChain", () => {
 
       // Session A trips the primary cooldown (immediate 5xx) and is now
       // stuck on backup until the cooldown elapses.
-      expect(chain.advanceFrom("primary", http(503), "sessionA")).toBe("backup");
+      expect(chain.advanceFrom("primary", http(503), "sessionA")).toBe(
+        "backup",
+      );
       expect(chain.activeOverrideFor("sessionA")).toBe("backup");
 
       // Session B independently succeeds on primary — this must NOT reset

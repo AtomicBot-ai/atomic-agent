@@ -10,7 +10,8 @@ import type {
   ResolvedLlmConfig,
 } from "../provider/registry/provider-types.js";
 
-export type RunModeDegradationReason = "no-cloud-provider" | "no-local-provider";
+export type RunModeDegradationReason =
+  "no-cloud-provider" | "no-local-provider";
 
 export type RunModeDegradation = {
   reason: RunModeDegradationReason;
@@ -93,13 +94,16 @@ export function resolveRunMode(
   const active = byId(resolved.activeTextProvider);
   // An unresolvable active provider means a broken config; assume local
   // so a broken file can never silently start spending cloud tokens.
-  const derived: RunModeName = active === undefined || isLocalKind(active) ? "local" : "cloud";
+  const derived: RunModeName =
+    active === undefined || isLocalKind(active) ? "local" : "cloud";
 
   const orchestrator =
     byId(fusion?.orchestratorProvider) ??
     (active !== undefined && !isLocalKind(active) ? active : undefined) ??
     resolved.providers.find((p) => !isLocalKind(p));
-  const worker = byId(fusion?.workerProvider) ?? resolved.providers.find((p) => isLocalKind(p));
+  const worker =
+    byId(fusion?.workerProvider) ??
+    resolved.providers.find((p) => isLocalKind(p));
 
   const orchestratorProviderId = orchestrator?.id ?? null;
   const workerProviderId = worker?.id ?? null;
@@ -130,12 +134,17 @@ export function resolveRunMode(
     effective,
     orchestratorProviderId,
     orchestratorModel:
-      fusion?.orchestratorModel ?? orchestrator?.defaultChatModel ?? orchestrator?.model ?? null,
+      fusion?.orchestratorModel ??
+      orchestrator?.defaultChatModel ??
+      orchestrator?.model ??
+      null,
     workerProviderId,
-    workerModel: fusion?.workerModel ?? opts.managedModelId ?? worker?.model ?? null,
+    workerModel:
+      fusion?.workerModel ?? opts.managedModelId ?? worker?.model ?? null,
     workers: fusion?.workers ?? DEFAULT_FUSION_WORKERS,
     workerMaxSteps: fusion?.workerMaxSteps ?? DEFAULT_FUSION_WORKER_MAX_STEPS,
-    workerTimeoutMs: fusion?.workerTimeoutMs ?? DEFAULT_FUSION_WORKER_TIMEOUT_MS,
+    workerTimeoutMs:
+      fusion?.workerTimeoutMs ?? DEFAULT_FUSION_WORKER_TIMEOUT_MS,
     primaryProviderId,
     degraded,
   };

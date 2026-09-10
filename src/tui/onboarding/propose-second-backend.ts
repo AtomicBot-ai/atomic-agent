@@ -41,7 +41,9 @@ export type SecondBackendOffer = "local" | "cloud" | null;
  *   costs a key and an API key the operator either has or does not, so
  *   it keeps the rules above and nothing more.
  */
-export function decideSecondBackendOffer(inputs: SecondBackendInputs): SecondBackendOffer {
+export function decideSecondBackendOffer(
+  inputs: SecondBackendInputs,
+): SecondBackendOffer {
   if (inputs.alreadyProposed) return null;
   if (inputs.outcome === "custom" || inputs.outcome === "skipped") return null;
   if (inputs.cloudReady && inputs.localReady) return null;
@@ -58,5 +60,9 @@ export function decideSecondBackendOffer(inputs: SecondBackendInputs): SecondBac
  * straight into a pull cannot quietly reopen the pitch.
  */
 export function isLocalSetupStep(step: OnboardingStep): boolean {
-  return step === "local_pick" || step === "local_download" || step === "wait_or_jump";
+  return (
+    step === "local_pick" ||
+    step === "local_download" ||
+    step === "wait_or_jump"
+  );
 }

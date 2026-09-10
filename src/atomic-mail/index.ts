@@ -31,5 +31,12 @@ export {
   type AtomicMailReadiness,
   type AtomicMailServiceOptions,
 } from "./atomic-mail-service.js";
-export { renderDownloadMail, type DownloadMailInput, type RenderedMail } from "./templates/download-mail.js";
-export { renderAccessCodeMail, type AccessCodeMailInput } from "./templates/access-code-mail.js";
+export {
+  renderDownloadMail,
+  type DownloadMailInput,
+  type RenderedMail,
+} from "./templates/download-mail.js";
+export {
+  renderAccessCodeMail,
+  type AccessCodeMailInput,
+} from "./templates/access-code-mail.js";

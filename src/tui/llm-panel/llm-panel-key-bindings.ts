@@ -55,7 +55,10 @@ export function handleLlmPanelKey(
   // edit the filter, ↑/↓ walk the filtered models, Enter selects, Esc
   // unfocuses (the text stays). Letters are text here, so this branch
   // must run before every letter hotkey below.
-  if (state.llmPanel.mode === "cloud" && state.llmPanel.cloudModelFilterFocused) {
+  if (
+    state.llmPanel.mode === "cloud" &&
+    state.llmPanel.cloudModelFilterFocused
+  ) {
     return handleCloudFilterKey(input, key, ctx);
   }
 
@@ -219,11 +222,7 @@ function handleCloudFilterKey(
     return true;
   }
   const isNavigationKey =
-    key.tab ||
-    key.leftArrow ||
-    key.rightArrow ||
-    key.pageUp ||
-    key.pageDown;
+    key.tab || key.leftArrow || key.rightArrow || key.pageUp || key.pageDown;
   if (
     input.length > 0 &&
     !key.ctrl &&
@@ -236,4 +235,3 @@ function handleCloudFilterKey(
   }
   return true;
 }
-

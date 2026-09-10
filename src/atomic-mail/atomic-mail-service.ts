@@ -43,7 +43,12 @@ export interface AtomicMailServiceOptions extends AtomicMailClientOptions {
 export type AtomicMailReadiness =
   | { level: "no_inbox" }
   | { level: "no_owner"; address: string }
-  | { level: "unverified"; address: string; ownerEmail: string; pendingUntil: string | null }
+  | {
+      level: "unverified";
+      address: string;
+      ownerEmail: string;
+      pendingUntil: string | null;
+    }
   | { level: "ready"; address: string; ownerEmail: string };
 
 function hashCode(code: string): string {
@@ -53,7 +58,10 @@ function hashCode(code: string): string {
 export class AtomicMailService {
   private readonly client: AtomicMailClient;
   private readonly env: NodeJS.ProcessEnv;
-  private readonly config: () => Pick<AtomicAgentConfig, "atomicMail" | "paths">;
+  private readonly config: () => Pick<
+    AtomicAgentConfig,
+    "atomicMail" | "paths"
+  >;
   private readonly makeCode: () => string;
   private readonly stateDirOverride: string | undefined;
 
@@ -61,7 +69,8 @@ export class AtomicMailService {
     this.client = new AtomicMailClient(opts);
     this.env = opts.env ?? process.env;
     this.config = opts.config ?? (() => getConfig());
-    this.makeCode = opts.makeCode ?? (() => String(randomInt(0, 1_000_000)).padStart(6, "0"));
+    this.makeCode =
+      opts.makeCode ?? (() => String(randomInt(0, 1_000_000)).padStart(6, "0"));
     this.stateDirOverride = opts.stateDir;
   }
 
@@ -72,7 +81,8 @@ export class AtomicMailService {
   readiness(): AtomicMailReadiness {
     const cfg = this.config().atomicMail;
     const address = cfg.address;
-    if (!readAtomicMailApiKey(this.env) || !address) return { level: "no_inbox" };
+    if (!readAtomicMailApiKey(this.env) || !address)
+      return { level: "no_inbox" };
     if (!cfg.ownerEmail) return { level: "no_owner", address };
     if (!cfg.ownerVerifiedAt) {
       return {
@@ -88,7 +98,11 @@ export class AtomicMailService {
   /** A usable session: the cached one inside its hour, else a fresh login (one proof-of-work). */
   private async session(force = false): Promise<AtomicMailSession> {
     const apiKey = readAtomicMailApiKey(this.env);
-    if (!apiKey) throw new AtomicMailError("no Atomic Mail inbox yet — press r in Integrations → Atomic Mail", 0);
+    if (!apiKey)
+      throw new AtomicMailError(
+        "no Atomic Mail inbox yet — press r in Integrations → Atomic Mail",
+        0,
+      );
     const cached = force ? null : readCachedSession(this.stateDir());
     if (AtomicMailClient.sessionIsFresh(cached)) return cached;
     this.client.resetContext();
@@ -102,7 +116,9 @@ export class AtomicMailService {
    * (revoked, key rotated, clock skew) however fresh its expiry looks —
    * log in again once and retry, rather than fail for the rest of the hour.
    */
-  private async withSession<T>(fn: (session: AtomicMailSession) => Promise<T>): Promise<T> {
+  private async withSession<T>(
+    fn: (session: AtomicMailSession) => Promise<T>,
+  ): Promise<T> {
     try {
       return await fn(await this.session());
     } catch (err) {
@@ -121,7 +137,10 @@ export class AtomicMailService {
   ): Promise<{ address: string }> {
     const reg = await this.client.register(username, onProgress);
     writeAtomicMailApiKey(this.stateDir(), reg.apiKey);
-    writeCachedSession(this.stateDir(), { sessionJwt: reg.sessionJwt, sessionExpiresAt: reg.sessionExpiresAt });
+    writeCachedSession(this.stateDir(), {
+      sessionJwt: reg.sessionJwt,
+      sessionExpiresAt: reg.sessionExpiresAt,
+    });
     const address = reg.address || `${username}@${ATOMIC_MAIL_DOMAIN}`;
     persistAtomicMailConfig({
       address,
@@ -141,15 +160,27 @@ export class AtomicMailService {
   async sendCode(email: string): Promise<{ expiresAt: string }> {
     const to = email.trim();
     const address = this.config().atomicMail.address;
-    if (!address) throw new AtomicMailError("no Atomic Mail inbox yet — press r first", 0);
+    if (!address)
+      throw new AtomicMailError("no Atomic Mail inbox yet — press r first", 0);
     const code = this.makeCode();
-    const expiresAt = new Date(Date.now() + CODE_TTL_MINUTES * 60_000).toISOString();
-    const mail = renderAccessCodeMail({ code, expiresInMinutes: CODE_TTL_MINUTES, from: address });
+    const expiresAt = new Date(
+      Date.now() + CODE_TTL_MINUTES * 60_000,
+    ).toISOString();
+    const mail = renderAccessCodeMail({
+      code,
+      expiresInMinutes: CODE_TTL_MINUTES,
+      from: address,
+    });
     await this.withSession((s) => this.client.send(s, { to, ...mail }));
     persistAtomicMailConfig({
       ownerEmail: to,
       ownerVerifiedAt: null,
-      pendingVerification: { email: to, codeHash: hashCode(code), expiresAt, attempts: 0 },
+      pendingVerification: {
+        email: to,
+        codeHash: hashCode(code),
+        expiresAt,
+        attempts: 0,
+      },
     });
     return { expiresAt };
   }
@@ -161,22 +192,39 @@ export class AtomicMailService {
    * could set `ownerVerifiedAt` by hand, and the gate runs in their
    * process.
    */
-  verifyCode(raw: string): { ok: true; email: string } | { ok: false; reason: string } {
+  verifyCode(
+    raw: string,
+  ): { ok: true; email: string } | { ok: false; reason: string } {
     const pending = this.config().atomicMail.pendingVerification;
     const code = raw.replace(/\D/g, "");
-    if (!pending) return { ok: false, reason: "no code has been sent — enter your e-mail first" };
+    if (!pending)
+      return {
+        ok: false,
+        reason: "no code has been sent — enter your e-mail first",
+      };
     if (Date.parse(pending.expiresAt) < Date.now()) {
       persistAtomicMailConfig({ pendingVerification: null });
-      return { ok: false, reason: "that code has expired — press v to get a new one" };
+      return {
+        ok: false,
+        reason: "that code has expired — press v to get a new one",
+      };
     }
     if (code.length !== 6 || hashCode(code) !== pending.codeHash) {
       const attempts = pending.attempts + 1;
       if (attempts >= CODE_MAX_ATTEMPTS) {
         persistAtomicMailConfig({ pendingVerification: null });
-        return { ok: false, reason: "too many wrong guesses — press v to get a new code" };
+        return {
+          ok: false,
+          reason: "too many wrong guesses — press v to get a new code",
+        };
       }
-      persistAtomicMailConfig({ pendingVerification: { ...pending, attempts } });
-      return { ok: false, reason: `that is not the code in the mail (${CODE_MAX_ATTEMPTS - attempts} tries left)` };
+      persistAtomicMailConfig({
+        pendingVerification: { ...pending, attempts },
+      });
+      return {
+        ok: false,
+        reason: `that is not the code in the mail (${CODE_MAX_ATTEMPTS - attempts} tries left)`,
+      };
     }
     persistAtomicMailConfig({
       ownerEmail: pending.email,
@@ -195,11 +243,20 @@ export class AtomicMailService {
     writeCachedSession(this.stateDir(), null);
     this.client.resetContext();
     if (!readAtomicMailApiKey(this.env)) {
-      persistAtomicMailConfig({ address: null, accountId: null, ownerVerifiedAt: null, pendingVerification: null });
+      persistAtomicMailConfig({
+        address: null,
+        accountId: null,
+        ownerVerifiedAt: null,
+        pendingVerification: null,
+      });
       return { address: null };
     }
     const address = await this.withSession((s) => this.client.address(s));
-    persistAtomicMailConfig({ address, ownerVerifiedAt: null, pendingVerification: null });
+    persistAtomicMailConfig({
+      address,
+      ownerVerifiedAt: null,
+      pendingVerification: null,
+    });
     return { address };
   }
 
@@ -217,7 +274,9 @@ export class AtomicMailService {
       );
     }
     const mail = renderDownloadMail({ job, from: ready.address });
-    await this.withSession((s) => this.client.send(s, { to: ready.ownerEmail, ...mail }));
+    await this.withSession((s) =>
+      this.client.send(s, { to: ready.ownerEmail, ...mail }),
+    );
   }
 
   /** Any mail from the agent — the `email.send` tool. */
@@ -228,13 +287,20 @@ export class AtomicMailService {
     return this.withSession((s) => this.client.send(s, mail, opts));
   }
 
-  async listInbox(limit = 20, opts?: { signal?: AbortSignal }): Promise<InboxMessage[]> {
+  async listInbox(
+    limit = 20,
+    opts?: { signal?: AbortSignal },
+  ): Promise<InboxMessage[]> {
     return this.withSession((s) => this.client.listInbox(s, limit, opts));
   }
 
   /** Drop the owner address and any pending code; the inbox stays. */
   clearOwner(): void {
-    persistAtomicMailConfig({ ownerEmail: null, ownerVerifiedAt: null, pendingVerification: null });
+    persistAtomicMailConfig({
+      ownerEmail: null,
+      ownerVerifiedAt: null,
+      pendingVerification: null,
+    });
   }
 
   /** Forget the inbox on this machine (the account itself stays at Atomic Mail). */

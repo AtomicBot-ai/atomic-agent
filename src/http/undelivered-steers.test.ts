@@ -67,7 +67,10 @@ describe("UndeliveredSteerStore", () => {
 
   it("hands a batch back whole even when it alone exceeds the cap", () => {
     const store = new UndeliveredSteerStore();
-    const texts = Array.from({ length: MAX_PARKED_STEERS + 3 }, (_, i) => `m${i}`);
+    const texts = Array.from(
+      { length: MAX_PARKED_STEERS + 3 },
+      (_, i) => `m${i}`,
+    );
     const parked = store.park("s1", texts);
     // The return value IS the hand-back — it becomes
     // `undelivered_steers` on the response — so trimming it would drop
@@ -94,7 +97,10 @@ describe("UndeliveredSteerStore", () => {
 
   it("keeps the loss counter when the host acks the entries it was shown", () => {
     const store = new UndeliveredSteerStore();
-    store.park("s1", Array.from({ length: MAX_PARKED_STEERS }, (_, i) => `m${i}`));
+    store.park(
+      "s1",
+      Array.from({ length: MAX_PARKED_STEERS }, (_, i) => `m${i}`),
+    );
     store.park("s1", ["late-1", "late-2", "late-3"]);
     expect(store.discarded("s1")).toBe(3);
     // Acking the highest seq in the listing is what a host does first;
@@ -110,7 +116,10 @@ describe("UndeliveredSteerStore", () => {
 
   it("clears the loss counter only by its own ack, and reclaims the box then", () => {
     const store = new UndeliveredSteerStore();
-    store.park("s1", Array.from({ length: MAX_PARKED_STEERS }, (_, i) => `m${i}`));
+    store.park(
+      "s1",
+      Array.from({ length: MAX_PARKED_STEERS }, (_, i) => `m${i}`),
+    );
     store.park("s1", ["late-1", "late-2", "late-3"]);
     store.ack("s1", store.list("s1").at(-1)!.seq);
     // By count, not by flag: a partial ack leaves the rest outstanding,
@@ -129,7 +138,10 @@ describe("UndeliveredSteerStore", () => {
   it("still reclaims a discard-only box on purge and on session eviction", () => {
     const store = new UndeliveredSteerStore();
     const overflow = (id: string): void => {
-      store.park(id, Array.from({ length: MAX_PARKED_STEERS }, (_, i) => `m${i}`));
+      store.park(
+        id,
+        Array.from({ length: MAX_PARKED_STEERS }, (_, i) => `m${i}`),
+      );
       store.park(id, ["one too many"]);
       store.ack(id, Number.MAX_SAFE_INTEGER);
     };

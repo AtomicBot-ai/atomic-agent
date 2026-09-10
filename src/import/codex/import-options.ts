@@ -100,7 +100,5 @@ export function resolveCodexOptions(
   }
 
   // Preserve registry order for deterministic output.
-  return CODEX_IMPORT_OPTIONS.map((o) => o.id).filter((id) =>
-    selected.has(id),
-  );
+  return CODEX_IMPORT_OPTIONS.map((o) => o.id).filter((id) => selected.has(id));
 }

@@ -141,7 +141,9 @@ export class SessionStore {
            updated_at = @updated_at
        WHERE id = @id`,
     );
-    this.selectStmt = this.db.prepare(`SELECT payload FROM sessions WHERE id = ?`);
+    this.selectStmt = this.db.prepare(
+      `SELECT payload FROM sessions WHERE id = ?`,
+    );
     this.listByWorkingDirStmt = this.db.prepare(
       `SELECT payload FROM sessions WHERE working_dir = ? ORDER BY updated_at DESC LIMIT ?`,
     );

@@ -71,7 +71,9 @@ export function selectMenuTitle(state: TuiState): string {
     return "Menu";
   }
   const parent = menuNodeById(state.menuPath);
-  return parent ? `Menu ${String.fromCodePoint(0x203a)} ${parent.label}` : "Menu";
+  return parent
+    ? `Menu ${String.fromCodePoint(0x203a)} ${parent.label}`
+    : "Menu";
 }
 
 function rootRows(state: TuiState): readonly MenuRow[] {
@@ -100,8 +102,8 @@ function searchRows(state: TuiState, query: string): readonly MenuRow[] {
     .map((node, idx) => {
       const haystacks = [node.label, node.slash?.name ?? "", crumbFor(node)];
       const best = Math.max(
-        ...haystacks.map(
-          (h) => (h ? (fuzzysort.single(query, h)?.score ?? -Infinity) : -Infinity),
+        ...haystacks.map((h) =>
+          h ? (fuzzysort.single(query, h)?.score ?? -Infinity) : -Infinity,
         ),
       );
       return { node, score: best, idx };

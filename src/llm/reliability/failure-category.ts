@@ -24,11 +24,7 @@
  *                 and retry logic do not treat it as one.
  */
 export type LlmFailureCategory =
-  | "transport"
-  | "grammar"
-  | "model"
-  | "tool"
-  | "cancelled";
+  "transport" | "grammar" | "model" | "tool" | "cancelled";
 
 /**
  * Why a completion was flagged as a model-side defect. Aligned with the
@@ -55,10 +51,7 @@ export type ModelFailureReason = "truncated" | "empty" | "no_stop";
  *  - `unknown`:        no usage came back; the walls cannot be told apart.
  */
 export type TruncationCause =
-  | "reply_cap"
-  | "context_window"
-  | "output_limit"
-  | "unknown";
+  "reply_cap" | "context_window" | "output_limit" | "unknown";
 
 /** What is known about a truncation, for the message and the retry. */
 export interface TruncationDetail {

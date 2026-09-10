@@ -156,7 +156,9 @@ describe("the composer's route line", () => {
     unmount();
     expect(text).toContain("3 workers");
     // Last: where it runs, who serves it, which model, how many workers.
-    expect(text.indexOf("claude-opus-5")).toBeLessThan(text.indexOf("3 workers"));
+    expect(text.indexOf("claude-opus-5")).toBeLessThan(
+      text.indexOf("3 workers"),
+    );
   });
 
   it("draws no fourth control when there are no workers to count", () => {
@@ -211,7 +213,9 @@ describe("the model slot's download call to action", () => {
     // and `warnStrong` is the warn picked to be read on the page.
     expect(out).toContain(`${ink(theme.colors.railWarn)}download model`);
     expect(out).not.toContain(`${ink(theme.colors.warnStrong)}download model`);
-    expect(out).not.toContain(`${ink(theme.colors.railForeground)}download model`);
+    expect(out).not.toContain(
+      `${ink(theme.colors.railForeground)}download model`,
+    );
   });
 
   it("still renders the route when the CTA is the only thing to say", () => {

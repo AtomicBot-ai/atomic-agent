@@ -7,7 +7,9 @@ import type { RunModeDegradation } from "./resolve-run-mode.js";
  * and the wording can be asserted on its own — and so the TUI, the CLI
  * and any HTTP surface all say exactly the same thing.
  */
-export function describeRunModeDegradation(degraded: RunModeDegradation): string {
+export function describeRunModeDegradation(
+  degraded: RunModeDegradation,
+): string {
   switch (degraded.reason) {
     case "no-cloud-provider":
       return degraded.requested === "fusion"

@@ -327,7 +327,9 @@ export class SkillsOrchestrator {
     const errors: string[] = [];
 
     const clawEntries = await this.loadClawHub(trimmed).catch((err) => {
-      errors.push(`clawhub: ${err instanceof Error ? err.message : String(err)}`);
+      errors.push(
+        `clawhub: ${err instanceof Error ? err.message : String(err)}`,
+      );
       return [] as HubSkillEntry[];
     });
 
@@ -341,7 +343,9 @@ export class SkillsOrchestrator {
       const tapErr = formatTapErrors(tapErrors);
       if (tapErr) errors.push(tapErr);
     } catch (err) {
-      errors.push(`github: ${err instanceof Error ? err.message : String(err)}`);
+      errors.push(
+        `github: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
 
     const merged = [...clawEntries, ...githubEntries];
@@ -433,7 +437,8 @@ export class SkillsOrchestrator {
           version: row.version,
           downloads: row.downloads,
           body: null,
-          bodyError: "preview unavailable for GitHub taps (SKILL.md is pulled at install)",
+          bodyError:
+            "preview unavailable for GitHub taps (SKILL.md is pulled at install)",
         },
       });
       return;

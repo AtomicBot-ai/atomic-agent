@@ -146,7 +146,9 @@ function appendMessageTurns(
 /** Concatenate every `text` block, newline-separated. */
 function joinText(blocks: readonly OpenclawBlock[]): string {
   return blocks
-    .filter((b): b is Extract<OpenclawBlock, { type: "text" }> => b.type === "text")
+    .filter(
+      (b): b is Extract<OpenclawBlock, { type: "text" }> => b.type === "text",
+    )
     .map((b) => b.text)
     .join("\n");
 }

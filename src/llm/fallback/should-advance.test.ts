@@ -78,7 +78,11 @@ describe("shouldAdvance", () => {
     expect(
       shouldAdvance(
         new TransportError('"vendor" rejected the request (400).', 400, "u", {
-          cause: new OpenAiHttpError("openai provider 400: This model's maximum context length is 8192 tokens", 400, "u"),
+          cause: new OpenAiHttpError(
+            "openai provider 400: This model's maximum context length is 8192 tokens",
+            400,
+            "u",
+          ),
         }),
       ),
     ).toEqual({ advance: false, immediate: false });
@@ -86,7 +90,13 @@ describe("shouldAdvance", () => {
 
   it("still advances on any other cloud 400 — the body may be wrong for this vendor only", () => {
     expect(
-      shouldAdvance(new OpenAiHttpError("openai provider 400: unsupported parameter: tools", 400, "u")),
+      shouldAdvance(
+        new OpenAiHttpError(
+          "openai provider 400: unsupported parameter: tools",
+          400,
+          "u",
+        ),
+      ),
     ).toEqual({ advance: true, immediate: false });
   });
 
@@ -100,7 +110,9 @@ describe("shouldAdvance", () => {
   });
 
   it("advances immediately on a local llama 5xx", () => {
-    expect(shouldAdvance(new LlamaServerError("x", 502, "http://local"))).toEqual({
+    expect(
+      shouldAdvance(new LlamaServerError("x", 502, "http://local")),
+    ).toEqual({
       advance: true,
       immediate: true,
     });
@@ -109,7 +121,9 @@ describe("shouldAdvance", () => {
   it("does NOT advance on a local llama 400 (request-shape, grammar category)", () => {
     // A 400 is the server rejecting THIS request; the next link rejects
     // it the same way, so falling over buys nothing.
-    expect(shouldAdvance(new LlamaServerError("x", 400, "http://local"))).toEqual({
+    expect(
+      shouldAdvance(new LlamaServerError("x", 400, "http://local")),
+    ).toEqual({
       advance: false,
       immediate: false,
     });
@@ -124,14 +138,18 @@ describe("shouldAdvance", () => {
     // in the 429/408/5xx provider-down set, so the cooldown that keeps the
     // link quarantined across later turns is armed only once the
     // consecutive-failure threshold trips.
-    expect(shouldAdvance(new LlamaServerError("x", 404, "http://local"))).toEqual({
+    expect(
+      shouldAdvance(new LlamaServerError("x", 404, "http://local")),
+    ).toEqual({
       advance: true,
       immediate: false,
     });
   });
 
   it("advances on a local llama 405 without arming the breaker", () => {
-    expect(shouldAdvance(new LlamaServerError("x", 405, "http://local"))).toEqual({
+    expect(
+      shouldAdvance(new LlamaServerError("x", 405, "http://local")),
+    ).toEqual({
       advance: true,
       immediate: false,
     });
@@ -142,14 +160,18 @@ describe("shouldAdvance", () => {
     // `isImmediateSignal` status read already handled 429; it was simply
     // unreachable while 4xx classified as grammar. The extra `immediate`
     // buys the cooldown straight away, not an earlier switch.
-    expect(shouldAdvance(new LlamaServerError("x", 429, "http://local"))).toEqual({
+    expect(
+      shouldAdvance(new LlamaServerError("x", 429, "http://local")),
+    ).toEqual({
       advance: true,
       immediate: true,
     });
   });
 
   it("advances on a local llama 408 and arms the breaker on the first failure", () => {
-    expect(shouldAdvance(new LlamaServerError("x", 408, "http://local"))).toEqual({
+    expect(
+      shouldAdvance(new LlamaServerError("x", 408, "http://local")),
+    ).toEqual({
       advance: true,
       immediate: true,
     });
@@ -162,7 +184,9 @@ describe("shouldAdvance", () => {
     // `immediate` is false and the breaker cooldown waits for the
     // consecutive-failure threshold.
     expect(
-      shouldAdvance(new SubscriptionCliNotInstalledError("claude", "Install it.")),
+      shouldAdvance(
+        new SubscriptionCliNotInstalledError("claude", "Install it."),
+      ),
     ).toEqual({ advance: true, immediate: false });
   });
 

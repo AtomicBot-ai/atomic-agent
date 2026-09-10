@@ -104,7 +104,11 @@ describe("resolveWindowsCliInvocation on win32", () => {
     // What `resolveCliBinary` hands over, and what a configured
     // `binPath` looks like: no lookup should be needed — but it still
     // has to be on disk.
-    const out = onWindows("C:\\npm\\codex.cmd", ["exec"], ["C:\\npm\\codex.cmd"]);
+    const out = onWindows(
+      "C:\\npm\\codex.cmd",
+      ["exec"],
+      ["C:\\npm\\codex.cmd"],
+    );
     expect(out.command).toBe("C:\\Windows\\System32\\cmd.exe");
     expect(out.args[3]).toBe('"C:\\npm\\codex.cmd ^^^"exec^^^""');
   });
@@ -157,9 +161,7 @@ describe("resolveWindowsCliInvocation on win32", () => {
     // Program Files (x86) install is just as ordinary.
     const binPath = "C:/Program Files (x86)/npm/./claude.cmd";
     const out = onWindows(binPath, [], [binPath]);
-    expect(out.args[3]).toBe(
-      '"C:\\Program^ Files^ ^(x86^)\\npm\\claude.cmd"',
-    );
+    expect(out.args[3]).toBe('"C:\\Program^ Files^ ^(x86^)\\npm\\claude.cmd"');
   });
 });
 
@@ -251,7 +253,13 @@ describe("the double-escape gate", () => {
 
   it("single-escapes a batch file that never reads its arguments", () => {
     const target = "C:\\tools\\claude.cmd";
-    const out = onWindows(target, ["a&b"], [target], WIN_ENV, () => ARGLESS_BAT);
+    const out = onWindows(
+      target,
+      ["a&b"],
+      [target],
+      WIN_ENV,
+      () => ARGLESS_BAT,
+    );
     expect(out.args[3]).toBe(`"${target} ^"a^&b^""`);
   });
 
@@ -429,8 +437,32 @@ describe("the escaping rewrite is a rewrite, not a change", () => {
   /** Deterministic corpus; no seed drift between runs or machines. */
   function* corpus(): Generator<string> {
     const alphabet = [
-      "\\", '"', "a", " ", "&", "^", "%", "|", "<", ">", "(", ")", "!", ",",
-      "*", "?", "`", ";", "[", "]", "{", "}", ":", "$", "~", "/",
+      "\\",
+      '"',
+      "a",
+      " ",
+      "&",
+      "^",
+      "%",
+      "|",
+      "<",
+      ">",
+      "(",
+      ")",
+      "!",
+      ",",
+      "*",
+      "?",
+      "`",
+      ";",
+      "[",
+      "]",
+      "{",
+      "}",
+      ":",
+      "$",
+      "~",
+      "/",
     ];
     let seed = 0x2f6e2b1;
     const next = () => {
@@ -468,8 +500,11 @@ describe("the escaping rewrite is a rewrite, not a change", () => {
         const expected = referenceEscape(arg, doubleEscape);
         if (escapeThrough(arg, doubleEscape) !== expected) {
           // Reported through `expect` so the failure names the input.
-          expect({ arg, doubleEscape, got: escapeThrough(arg, doubleEscape) })
-            .toEqual({ arg, doubleEscape, got: expected });
+          expect({
+            arg,
+            doubleEscape,
+            got: escapeThrough(arg, doubleEscape),
+          }).toEqual({ arg, doubleEscape, got: expected });
         }
         compared += 1;
       }

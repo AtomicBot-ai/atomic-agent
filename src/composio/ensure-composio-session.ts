@@ -17,10 +17,7 @@
 
 import { randomUUID } from "node:crypto";
 
-import {
-  createComposioSession,
-  type ComposioSession,
-} from "./composio-api.js";
+import { createComposioSession, type ComposioSession } from "./composio-api.js";
 
 /** The three values persisted in `config.composio`. */
 export interface ComposioSessionCache {

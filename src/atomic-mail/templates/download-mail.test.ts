@@ -32,7 +32,9 @@ const from = "atag-3f9a2c@atomicmail.ai";
 describe("renderDownloadMail", () => {
   it("announces a landed model with its facts, in HTML and in plain text", () => {
     const mail = renderDownloadMail({ job: job(), from });
-    expect(mail.subject).toBe("▶ MODEL READY: Qwen3.8 27B Uncensored Q4_K_M GGUF");
+    expect(mail.subject).toBe(
+      "▶ MODEL READY: Qwen3.8 27B Uncensored Q4_K_M GGUF",
+    );
     for (const body of [mail.text, mail.html]) {
       expect(body).toContain("Qwen3.8 27B Uncensored Q4_K_M GGUF");
       expect(body).toContain("15.4 GB · Q4_K_M · 3 h 12 min");
@@ -49,7 +51,13 @@ describe("renderDownloadMail", () => {
 
   it("tells an outage apart from a dead file", () => {
     const paused = renderDownloadMail({
-      job: job({ status: "failed", resumable: true, transferredBytes: 10_590_336_000, error: "Download gave up: no progress for 7 days (last error: fetch failed)" }),
+      job: job({
+        status: "failed",
+        resumable: true,
+        transferredBytes: 10_590_336_000,
+        error:
+          "Download gave up: no progress for 7 days (last error: fetch failed)",
+      }),
       from,
     });
     expect(paused.subject).toMatch(/^⏸ TRANSMISSION LOST: .* \(64%\)$/);
@@ -58,29 +66,46 @@ describe("renderDownloadMail", () => {
     expect(paused.html).toContain("NOT ENOUGH BANDWIDTH");
 
     const dead = renderDownloadMail({
-      job: job({ status: "failed", resumable: false, transferredBytes: 0, error: "Download failed: HTTP 404 Not Found" }),
+      job: job({
+        status: "failed",
+        resumable: false,
+        transferredBytes: 0,
+        error: "Download failed: HTTP 404 Not Found",
+      }),
       from,
     });
-    expect(dead.subject).toBe("✕ DOWNLOAD FAILED: Qwen3.8 27B Uncensored Q4_K_M GGUF");
+    expect(dead.subject).toBe(
+      "✕ DOWNLOAD FAILED: Qwen3.8 27B Uncensored Q4_K_M GGUF",
+    );
     expect(dead.text).toContain("HTTP 404");
     expect(dead.text).toContain("MISSION ABORTED");
   });
 
   it("escapes what came from the network", () => {
-    const mail = renderDownloadMail({ job: job({ status: "failed", error: "<img src=x onerror=alert(1)>" }), from });
+    const mail = renderDownloadMail({
+      job: job({ status: "failed", error: "<img src=x onerror=alert(1)>" }),
+      from,
+    });
     expect(mail.html).not.toContain("<img");
     expect(mail.html).toContain("&lt;img");
   });
 
   it("names a vision projector as such", () => {
-    const mail = renderDownloadMail({ job: job({ phase: "mmproj", label: "Qwen3.8 27B (mmproj)" }), from });
+    const mail = renderDownloadMail({
+      job: job({ phase: "mmproj", label: "Qwen3.8 27B (mmproj)" }),
+      from,
+    });
     expect(mail.subject).toBe("▶ VISION PROJECTOR READY: Qwen3.8 27B");
   });
 });
 
 describe("renderAccessCodeMail", () => {
   it("shows the six digits, the deadline and who sent it", () => {
-    const mail = renderAccessCodeMail({ code: "482913", expiresInMinutes: 10, from });
+    const mail = renderAccessCodeMail({
+      code: "482913",
+      expiresInMinutes: 10,
+      from,
+    });
     expect(mail.subject).toBe("▶ ACCESS CODE 482913 — Atomic Agent");
     expect(mail.text).toContain("4  8  2  9  1  3");
     expect(mail.text).toContain("within 10 minutes");

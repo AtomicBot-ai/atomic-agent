@@ -49,25 +49,81 @@ interface ScanRule {
  */
 const RULES: readonly ScanRule[] = [
   // --- dangerous ---
-  { rule: "remote-exec", severity: "dangerous", pattern: /\b(curl|wget)\b[^\n|]*\|\s*(sudo\s+)?(ba)?sh\b/i },
-  { rule: "decode-exec", severity: "dangerous", pattern: /base64\s+(--decode|-d|-D)\b[^\n|]*\|\s*(ba)?sh\b/i },
-  { rule: "recursive-delete", severity: "dangerous", pattern: /\brm\s+-[a-z]*r[a-z]*f?\s+(\/|~|\$HOME|\*)/i },
-  { rule: "fork-bomb", severity: "dangerous", pattern: /:\s*\(\s*\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:/ },
-  { rule: "disk-wipe", severity: "dangerous", pattern: /\b(mkfs|dd\s+if=)[^\n]*\bof=\/dev\/|>\s*\/dev\/sd[a-z]/i },
-  { rule: "chmod-root", severity: "dangerous", pattern: /\bchmod\s+-R?\s*777\s+\//i },
-  { rule: "history-wipe", severity: "dangerous", pattern: /\b(history\s+-c|>\s*~\/\.bash_history)\b/i },
+  {
+    rule: "remote-exec",
+    severity: "dangerous",
+    pattern: /\b(curl|wget)\b[^\n|]*\|\s*(sudo\s+)?(ba)?sh\b/i,
+  },
+  {
+    rule: "decode-exec",
+    severity: "dangerous",
+    pattern: /base64\s+(--decode|-d|-D)\b[^\n|]*\|\s*(ba)?sh\b/i,
+  },
+  {
+    rule: "recursive-delete",
+    severity: "dangerous",
+    pattern: /\brm\s+-[a-z]*r[a-z]*f?\s+(\/|~|\$HOME|\*)/i,
+  },
+  {
+    rule: "fork-bomb",
+    severity: "dangerous",
+    pattern: /:\s*\(\s*\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:/,
+  },
+  {
+    rule: "disk-wipe",
+    severity: "dangerous",
+    pattern: /\b(mkfs|dd\s+if=)[^\n]*\bof=\/dev\/|>\s*\/dev\/sd[a-z]/i,
+  },
+  {
+    rule: "chmod-root",
+    severity: "dangerous",
+    pattern: /\bchmod\s+-R?\s*777\s+\//i,
+  },
+  {
+    rule: "history-wipe",
+    severity: "dangerous",
+    pattern: /\b(history\s+-c|>\s*~\/\.bash_history)\b/i,
+  },
   // --- caution ---
-  { rule: "credential-read", severity: "caution", pattern: /(~\/\.ssh\b|~\/\.aws\b|\.aws\/credentials|AWS_SECRET_ACCESS_KEY|GITHUB_TOKEN|PRIVATE_KEY|id_rsa)/ },
-  { rule: "netcat", severity: "caution", pattern: /\bnc\s+(-[a-z]+\s+)*[\w.-]+\s+\d+/i },
-  { rule: "network-fetch", severity: "caution", pattern: /\b(curl|wget|Invoke-WebRequest)\b/i },
+  {
+    rule: "credential-read",
+    severity: "caution",
+    pattern:
+      /(~\/\.ssh\b|~\/\.aws\b|\.aws\/credentials|AWS_SECRET_ACCESS_KEY|GITHUB_TOKEN|PRIVATE_KEY|id_rsa)/,
+  },
+  {
+    rule: "netcat",
+    severity: "caution",
+    pattern: /\bnc\s+(-[a-z]+\s+)*[\w.-]+\s+\d+/i,
+  },
+  {
+    rule: "network-fetch",
+    severity: "caution",
+    pattern: /\b(curl|wget|Invoke-WebRequest)\b/i,
+  },
   { rule: "eval", severity: "caution", pattern: /\b(eval|exec)\s*\(/ },
-  { rule: "prompt-injection", severity: "caution", pattern: /\b(ignore (all )?(previous|prior) instructions|disregard (the )?(system )?prompt|you are now)\b/i },
+  {
+    rule: "prompt-injection",
+    severity: "caution",
+    pattern:
+      /\b(ignore (all )?(previous|prior) instructions|disregard (the )?(system )?prompt|you are now)\b/i,
+  },
 ];
 
 const EXCERPT_MAX = 160;
 
 /** File extensions worth scanning beyond SKILL.md (scripts). */
-const SCRIPT_EXTENSIONS = [".sh", ".bash", ".zsh", ".py", ".js", ".mjs", ".ts", ".ps1", ".rb"];
+const SCRIPT_EXTENSIONS = [
+  ".sh",
+  ".bash",
+  ".zsh",
+  ".py",
+  ".js",
+  ".mjs",
+  ".ts",
+  ".ps1",
+  ".rb",
+];
 
 function isScannable(path: string): boolean {
   if (path === "SKILL.md" || path.endsWith("/SKILL.md")) return true;
@@ -75,7 +131,9 @@ function isScannable(path: string): boolean {
   return SCRIPT_EXTENSIONS.some((ext) => lower.endsWith(ext));
 }
 
-export function scanSkillFiles(files: readonly ScannableFile[]): SkillScanResult {
+export function scanSkillFiles(
+  files: readonly ScannableFile[],
+): SkillScanResult {
   const findings: SkillScanFinding[] = [];
   for (const file of files) {
     if (!isScannable(file.path)) continue;

@@ -190,7 +190,8 @@ export class ProvidersOrchestrator {
     const provider = resolved.providers.find((p) => p.id === id);
     const fileEntry = config.llm?.providers.find((e) => e.id === id);
     if (!provider || !isCloudProviderKind(provider.kind)) return;
-    if (provider.kind !== "openai-compatible" && provider.kind !== "gemini") return;
+    if (provider.kind !== "openai-compatible" && provider.kind !== "gemini")
+      return;
     const generation = ++this.inlineModelsGeneration;
     this.bus.emit({
       type: "providers_inline_models_loading",
@@ -237,7 +238,8 @@ export class ProvidersOrchestrator {
         // A CLI-backed entry has no key by design. Without this the row
         // renders unavailable and Enter is a silent no-op.
         hasApiKey:
-          Boolean(resolveLlmProviderApiKey(p)?.length) || usesExternalCliAuth(p),
+          Boolean(resolveLlmProviderApiKey(p)?.length) ||
+          usesExternalCliAuth(p),
         baseUrl: fileEntry?.baseUrl ?? null,
         subscriptionCli: fileEntry?.subscriptionCli
           ? { cli: fileEntry.subscriptionCli.cli }
@@ -315,7 +317,10 @@ export class ProvidersOrchestrator {
     }
   }
 
-  async selectEmbeddingModel(providerId: string, modelId: string): Promise<void> {
+  async selectEmbeddingModel(
+    providerId: string,
+    modelId: string,
+  ): Promise<void> {
     this.bus.emit({ type: "providers_busy", busy: true });
     try {
       setProviderDefaultEmbeddingModelInConfig(providerId, modelId);
@@ -379,7 +384,9 @@ export class ProvidersOrchestrator {
       // The key is checked against the service before anything reaches
       // disk: a dead or unfunded key used to be written to .env and made
       // the active provider, and only failed on the first real message.
-      const gate = await verifyWizardBeforeSave(wizard, { signal: abort.signal });
+      const gate = await verifyWizardBeforeSave(wizard, {
+        signal: abort.signal,
+      });
       // A cancel already put the wizard back in an editable state; a
       // late verdict from the abandoned check must not overwrite it.
       if (abort.signal.aborted) return;
@@ -397,7 +404,9 @@ export class ProvidersOrchestrator {
       // It cannot refuse the save (see `probe-wizard-contract`), but it
       // runs while Esc can still abandon the whole submit, so nothing
       // has reached disk yet if the operator gives up on a slow route.
-      const contract = await probeWizardContract(wizard, { signal: abort.signal });
+      const contract = await probeWizardContract(wizard, {
+        signal: abort.signal,
+      });
       if (abort.signal.aborted) return;
       // Both checks are over; from here Esc has nothing to cancel and
       // must not interrupt the save that follows.
@@ -499,7 +508,9 @@ export class ProvidersOrchestrator {
     const config = getConfig();
     const resolved = resolveLlmConfig(config);
     const id = providerId ?? resolved.activeTextProvider;
-    const provider = id ? resolved.providers.find((p) => p.id === id) : undefined;
+    const provider = id
+      ? resolved.providers.find((p) => p.id === id)
+      : undefined;
     if (!id || !provider) {
       this.bus.emit({
         type: "providers_status",
@@ -552,7 +563,11 @@ export class ProvidersOrchestrator {
       // source (`redactProviderDetail`), and only when there is a
       // problem — a passing route's stream summary tells nobody
       // anything.
-      if (outcome?.result && !outcome.proven && outcome.result.detail.length > 0) {
+      if (
+        outcome?.result &&
+        !outcome.proven &&
+        outcome.result.detail.length > 0
+      ) {
         this.bus.emit({
           type: "runtime_info",
           line: `Route said: ${outcome.result.detail}`,

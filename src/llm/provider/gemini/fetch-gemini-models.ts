@@ -36,9 +36,7 @@ export function getCachedGeminiModels(
  * guards the *fetch* path so an anonymous request never reuses an
  * authenticated response; here the freshest entry wins regardless of key.
  */
-export function getCachedGeminiModelsForPanel():
-  | readonly string[]
-  | undefined {
+export function getCachedGeminiModelsForPanel(): readonly string[] | undefined {
   let best: { fetchedAt: number; ids: readonly string[] } | undefined;
   for (const hit of cache.values()) {
     if (Date.now() - hit.fetchedAt > CACHE_TTL_MS) continue;

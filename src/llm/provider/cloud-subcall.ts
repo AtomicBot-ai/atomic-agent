@@ -58,8 +58,6 @@ export function buildCloudSubcallRequest(params: {
   };
 }
 
-export function isCloudSubcallTransport(
-  transport: ToolCallTransport,
-): boolean {
+export function isCloudSubcallTransport(transport: ToolCallTransport): boolean {
   return transport === "native_tools";
 }

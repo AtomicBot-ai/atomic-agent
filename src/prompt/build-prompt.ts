@@ -147,10 +147,7 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
       : {}),
   });
 
-  const sessionParts = buildSessionSectionParts(
-    input.session,
-    limits.session,
-  );
+  const sessionParts = buildSessionSectionParts(input.session, limits.session);
   const loadedForTail = sessionParts.loaded;
   const factsForTail = sessionParts.facts;
   const sessionPartsForBudget = [loadedForTail, factsForTail]
@@ -168,8 +165,7 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
   const profileMaxTokens =
     input.profileMaxTokens ?? config.memory.profile.maxTokens;
   const contextualKeywordGate =
-    input.contextualKeywordGate ??
-    config.memory.profile.contextualKeywordGate;
+    input.contextualKeywordGate ?? config.memory.profile.contextualKeywordGate;
   const profileFull =
     input.profileFacts !== undefined
       ? renderProfileSection(input.profileFacts, {
@@ -269,12 +265,16 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     completionMaxTokens,
   });
 
-  const packed = packConversation(input.session.turns, conversationCapEffective, {
-    maxPairs: conversationMaxPairs,
-    ...(input.session.macroTurnStarts
-      ? { macroTurnStarts: input.session.macroTurnStarts }
-      : {}),
-  });
+  const packed = packConversation(
+    input.session.turns,
+    conversationCapEffective,
+    {
+      maxPairs: conversationMaxPairs,
+      ...(input.session.macroTurnStarts
+        ? { macroTurnStarts: input.session.macroTurnStarts }
+        : {}),
+    },
+  );
   const conversation = renderPackedConversation(packed);
   const taskPolicy = renderTaskPolicy({
     userMessage: input.userMessage ?? null,
@@ -380,8 +380,7 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     worldSnapshot: worldSnapshot !== worldSnapshotFull,
     conversation: packed.droppedCount > 0,
     recalled: recalledFull !== null && recalled !== recalledFull,
-    memoryIndex:
-      memoryIndexFull !== null && memoryIndex !== memoryIndexFull,
+    memoryIndex: memoryIndexFull !== null && memoryIndex !== memoryIndexFull,
   };
 
   return {

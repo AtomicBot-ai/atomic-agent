@@ -86,7 +86,9 @@ describe("resolveComposioServerConfig", () => {
     ).resolves.toBeUndefined();
     expect(log.warn).toHaveBeenCalledWith(
       "composio unavailable; continuing without it",
-      expect.objectContaining({ error: expect.stringContaining("ECONNREFUSED") }),
+      expect.objectContaining({
+        error: expect.stringContaining("ECONNREFUSED"),
+      }),
     );
   });
 

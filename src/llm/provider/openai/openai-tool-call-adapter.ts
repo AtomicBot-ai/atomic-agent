@@ -39,7 +39,9 @@ function replyFinishDescriptors(): ToolDescriptor[] {
   ];
 }
 
-function descriptorToJsonSchema(descriptor: ToolDescriptor): Record<string, unknown> {
+function descriptorToJsonSchema(
+  descriptor: ToolDescriptor,
+): Record<string, unknown> {
   if (descriptor.name === REPLY_TOOL) {
     return {
       type: "object",

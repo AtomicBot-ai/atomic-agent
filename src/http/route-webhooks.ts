@@ -134,8 +134,13 @@ function resolveWebhookSessionId(
   webhook: WebhookConfig,
   name: string,
   runtime: {
-    createSession(input?: { metadata?: Record<string, unknown> }): { id: string };
-    webhookSessionStore: { get(name: string): string | null; set(name: string, sessionId: string): void };
+    createSession(input?: { metadata?: Record<string, unknown> }): {
+      id: string;
+    };
+    webhookSessionStore: {
+      get(name: string): string | null;
+      set(name: string, sessionId: string): void;
+    };
   },
 ): string | null {
   const mode = webhook.sessionMode ?? "ephemeral";

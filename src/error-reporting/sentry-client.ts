@@ -46,7 +46,8 @@ export class SentryClient {
   constructor(private readonly options: SentryClientOptions) {
     this.fetchImpl =
       options.fetchImpl ??
-      ((input, init) => fetch(input, init) as Promise<{ ok: boolean; status: number }>);
+      ((input, init) =>
+        fetch(input, init) as Promise<{ ok: boolean; status: number }>);
   }
 
   capture(event: ScrubbedErrorEvent): void {
@@ -90,7 +91,9 @@ export class SentryClient {
   /** Await in-flight sends up to `timeoutMs`; never rejects. */
   async flush(timeoutMs = 2000): Promise<void> {
     if (this.pending.size === 0) return;
-    const inflight = Promise.allSettled([...this.pending]).then(() => undefined);
+    const inflight = Promise.allSettled([...this.pending]).then(
+      () => undefined,
+    );
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<void>((resolve) => {
       timer = setTimeout(resolve, timeoutMs);

@@ -81,11 +81,13 @@ export class MemoryOrchestrator {
     }
   }
 
-  refresh(opts: {
-    channel?: MemoryChannel;
-    notesArchiveFilter?: MemoryNotesArchiveFilter;
-    searchQuery?: string;
-  } = {}): void {
+  refresh(
+    opts: {
+      channel?: MemoryChannel;
+      notesArchiveFilter?: MemoryNotesArchiveFilter;
+      searchQuery?: string;
+    } = {},
+  ): void {
     try {
       this.lastRefreshOpts = {
         channel: opts.channel ?? this.lastRefreshOpts.channel,
@@ -209,7 +211,10 @@ function loadChannelRows(
           hint: "memory.profile.enabled=false — enable in config to populate profile",
         };
       }
-      return { rows: toProfileSummaryRows(runtime.profileStore.list()), hint: null };
+      return {
+        rows: toProfileSummaryRows(runtime.profileStore.list()),
+        hint: null,
+      };
     case "notes": {
       if (!cfg.notes.enabled) {
         return {
@@ -333,7 +338,11 @@ function buildDetail(
       if (id === undefined) return null;
       const proc = runtime.procedureStore.getById(id);
       if (!proc) return null;
-      return { channel: "procedures", id, body: formatProcedureDetailBody(proc) };
+      return {
+        channel: "procedures",
+        id,
+        body: formatProcedureDetailBody(proc),
+      };
     }
     case "links": {
       const from = row.linkFromId;
@@ -354,7 +363,10 @@ function buildDetail(
       if (!event) return { channel: "votes", body: row.primary };
       return {
         channel: "votes",
-        body: formatVoteDetailBody(event, resolveVoteTargetPreview(runtime, event)),
+        body: formatVoteDetailBody(
+          event,
+          resolveVoteTargetPreview(runtime, event),
+        ),
       };
     }
   }

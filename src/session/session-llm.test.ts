@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { readSessionLlmStamp, SESSION_LLM_METADATA_KEY } from "./session-llm.js";
+import {
+  readSessionLlmStamp,
+  SESSION_LLM_METADATA_KEY,
+} from "./session-llm.js";
 
 describe("readSessionLlmStamp", () => {
   it("reads a well-formed stamp", () => {
@@ -21,7 +24,10 @@ describe("readSessionLlmStamp", () => {
     ).toEqual({ providerId: "local-llama", chatModel: null });
     expect(
       readSessionLlmStamp({
-        [SESSION_LLM_METADATA_KEY]: { providerId: "local-llama", chatModel: "" },
+        [SESSION_LLM_METADATA_KEY]: {
+          providerId: "local-llama",
+          chatModel: "",
+        },
       }),
     ).toEqual({ providerId: "local-llama", chatModel: null });
   });
@@ -31,8 +37,12 @@ describe("readSessionLlmStamp", () => {
     // hand-edited stores all feed into it.
     expect(readSessionLlmStamp(undefined)).toBeNull();
     expect(readSessionLlmStamp({})).toBeNull();
-    expect(readSessionLlmStamp({ [SESSION_LLM_METADATA_KEY]: null })).toBeNull();
-    expect(readSessionLlmStamp({ [SESSION_LLM_METADATA_KEY]: "gpt" })).toBeNull();
+    expect(
+      readSessionLlmStamp({ [SESSION_LLM_METADATA_KEY]: null }),
+    ).toBeNull();
+    expect(
+      readSessionLlmStamp({ [SESSION_LLM_METADATA_KEY]: "gpt" }),
+    ).toBeNull();
     expect(readSessionLlmStamp({ [SESSION_LLM_METADATA_KEY]: [] })).toBeNull();
     expect(
       readSessionLlmStamp({ [SESSION_LLM_METADATA_KEY]: { providerId: "" } }),

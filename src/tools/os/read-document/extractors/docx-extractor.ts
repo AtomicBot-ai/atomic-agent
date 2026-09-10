@@ -14,9 +14,10 @@ export const docxExtractor: Extractor = async (input) => {
   const mammoth = await loadMammoth();
   const warnings: string[] = [];
 
-  const convertFn = input.includeTables === false
-    ? mammoth.extractRawText
-    : mammoth.convertToMarkdown;
+  const convertFn =
+    input.includeTables === false
+      ? mammoth.extractRawText
+      : mammoth.convertToMarkdown;
 
   const result = await convertFn({ buffer: input.data });
   for (const msg of result.messages) {
@@ -45,9 +46,7 @@ function normaliseMarkdown(raw: string): string {
   );
 }
 
-type MammothFn = (options: {
-  buffer: Buffer;
-}) => Promise<{
+type MammothFn = (options: { buffer: Buffer }) => Promise<{
   value: string;
   messages: Array<{ type: string; message: string }>;
 }>;
@@ -65,8 +64,7 @@ async function loadMammoth(): Promise<MammothModule> {
     // `unknown` because its published types omit `convertToMarkdown`
     // despite the function existing in the JS source.
     const mod = (await import("mammoth")) as unknown as
-      | MammothModule
-      | { default: MammothModule };
+      MammothModule | { default: MammothModule };
     mammothModule = "default" in mod ? mod.default : mod;
   }
   return mammothModule;

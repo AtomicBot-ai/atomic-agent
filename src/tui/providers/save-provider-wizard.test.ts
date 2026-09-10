@@ -76,10 +76,12 @@ describe("saveProviderWizardToConfig", () => {
     expect(process.env.OPENROUTER_API_KEY).toBe("sk-or-test");
     expect(cfg.llm?.activeTextProvider).toBe("openrouter");
     expect(cfg.llm?.activeEmbeddingProvider).toBe("local-llama");
-    expect(cfg.llm?.providers.find((p) => p.id === "openrouter")).toMatchObject({
-      kind: "openrouter",
-      defaultChatModel: "openai/gpt-5.5",
-    });
+    expect(cfg.llm?.providers.find((p) => p.id === "openrouter")).toMatchObject(
+      {
+        kind: "openrouter",
+        defaultChatModel: "openai/gpt-5.5",
+      },
+    );
     expect(cfg.llm?.providers.some((p) => p.id === "local-llama")).toBe(true);
   });
 
@@ -112,13 +114,14 @@ describe("saveProviderWizardToConfig", () => {
 
     expect(process.env.OPENAI_COMPAT_API_KEY).toBe("venice-key");
     expect(process.env.OPENAI_API_KEY).toBeUndefined();
-    expect(getConfig().llm?.providers.find((p) => p.id === "openai-compatible"))
-      .toMatchObject({
-        kind: "openai-compatible",
-        // trailing slash normalized away — callers append `/v1/...`
-        baseUrl: "https://api.venice.ai/api",
-        defaultChatModel: "venice-uncensored",
-      });
+    expect(
+      getConfig().llm?.providers.find((p) => p.id === "openai-compatible"),
+    ).toMatchObject({
+      kind: "openai-compatible",
+      // trailing slash normalized away — callers append `/v1/...`
+      baseUrl: "https://api.venice.ai/api",
+      defaultChatModel: "venice-uncensored",
+    });
   });
 
   function groqWizard(apiKey: string) {
@@ -298,7 +301,9 @@ describe("saveProviderWizardToConfig", () => {
 
     expect(built.entry.id).toBe("groq");
     const providers = getConfig().llm?.providers ?? [];
-    expect(providers.filter((p) => p.kind === "openai-compatible")).toHaveLength(1);
+    expect(
+      providers.filter((p) => p.kind === "openai-compatible"),
+    ).toHaveLength(1);
     expect(providers.find((p) => p.id === "groq")).toMatchObject({
       defaultChatModel: "qwen-qwq-32b",
       apiKeyEnvVar: "GROQ_API_KEY",
@@ -330,5 +335,4 @@ describe("saveProviderWizardToConfig", () => {
     expect(cfg.llm?.activeEmbeddingProvider).toBe("local-llama");
     expect(existsSync(join(stateDir, ".env"))).toBe(false);
   });
-
 });

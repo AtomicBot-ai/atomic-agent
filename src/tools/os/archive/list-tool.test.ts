@@ -20,10 +20,7 @@ const FIXTURES = resolve(
 describe("os.fs.archive.list", () => {
   it("lists zip entries", async () => {
     const tool = buildOsFsArchiveListTool();
-    const result = await tool.run(
-      { path: "sample.zip" },
-      makeCtx(FIXTURES),
-    );
+    const result = await tool.run({ path: "sample.zip" }, makeCtx(FIXTURES));
     expect(result.status).toBe("ok");
     expect(result.summary).toMatch(/hello\.txt/);
     expect(result.summary).toMatch(/nested\/world\.txt/);
@@ -34,10 +31,7 @@ describe("os.fs.archive.list", () => {
 
   it("lists tar entries", async () => {
     const tool = buildOsFsArchiveListTool();
-    const result = await tool.run(
-      { path: "sample.tar" },
-      makeCtx(FIXTURES),
-    );
+    const result = await tool.run({ path: "sample.tar" }, makeCtx(FIXTURES));
     expect(result.summary).toMatch(/hello\.txt/);
     const details = (result.details ?? {}) as Record<string, unknown>;
     expect(details.format).toBe("tar");
@@ -45,20 +39,14 @@ describe("os.fs.archive.list", () => {
 
   it("lists tar.gz entries", async () => {
     const tool = buildOsFsArchiveListTool();
-    const result = await tool.run(
-      { path: "sample.tar.gz" },
-      makeCtx(FIXTURES),
-    );
+    const result = await tool.run({ path: "sample.tar.gz" }, makeCtx(FIXTURES));
     const details = (result.details ?? {}) as Record<string, unknown>;
     expect(details.format).toBe("tar.gz");
   });
 
   it("lists gz (single synthetic entry)", async () => {
     const tool = buildOsFsArchiveListTool();
-    const result = await tool.run(
-      { path: "sample.txt.gz" },
-      makeCtx(FIXTURES),
-    );
+    const result = await tool.run({ path: "sample.txt.gz" }, makeCtx(FIXTURES));
     const details = (result.details ?? {}) as Record<string, unknown>;
     expect(details.format).toBe("gz");
     expect(details.entryCount).toBe(1);

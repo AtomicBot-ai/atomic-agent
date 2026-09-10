@@ -27,7 +27,11 @@ describe("AttachmentInbox.save", () => {
   it("writes under <dir>/<date>/<time>-<name> and reports what it wrote", async () => {
     const inbox = createAttachmentInbox({ dir, now: () => FIXED });
     const bytes = new Uint8Array([1, 2, 3]);
-    const saved = await inbox.save({ name: "report.pdf", mimeType: "application/pdf", bytes });
+    const saved = await inbox.save({
+      name: "report.pdf",
+      mimeType: "application/pdf",
+      bytes,
+    });
     expect(saved.path).toBe(join(dir, "2026-09-08", "143012-report.pdf"));
     expect(saved.name).toBe("143012-report.pdf");
     expect(saved.bytes).toBe(3);
@@ -37,9 +41,18 @@ describe("AttachmentInbox.save", () => {
 
   it("never overwrites: a second file in the same second gets a -2 suffix", async () => {
     const inbox = createAttachmentInbox({ dir, now: () => FIXED });
-    const first = await inbox.save({ name: "a.txt", bytes: new Uint8Array([1]) });
-    const second = await inbox.save({ name: "a.txt", bytes: new Uint8Array([2]) });
-    const third = await inbox.save({ name: "a.txt", bytes: new Uint8Array([3]) });
+    const first = await inbox.save({
+      name: "a.txt",
+      bytes: new Uint8Array([1]),
+    });
+    const second = await inbox.save({
+      name: "a.txt",
+      bytes: new Uint8Array([2]),
+    });
+    const third = await inbox.save({
+      name: "a.txt",
+      bytes: new Uint8Array([3]),
+    });
     expect(basename(first.path)).toBe("143012-a.txt");
     expect(basename(second.path)).toBe("143012-a-2.txt");
     expect(basename(third.path)).toBe("143012-a-3.txt");
@@ -60,7 +73,10 @@ describe("AttachmentInbox.save", () => {
 
   it("falls back to the platform kind for both name and extension", async () => {
     const inbox = createAttachmentInbox({ dir, now: () => FIXED });
-    const saved = await inbox.save({ kind: "photo", bytes: new Uint8Array([1]) });
+    const saved = await inbox.save({
+      kind: "photo",
+      bytes: new Uint8Array([1]),
+    });
     expect(basename(saved.path)).toBe("143012-photo.jpg");
     // No MIME reported — inferred back from the extension we chose.
     expect(saved.mimeType).toBe("image/jpeg");
@@ -87,7 +103,9 @@ describe("AttachmentInbox.save", () => {
 
 describe("sanitizeFilename", () => {
   it("strips directories, control chars and Windows-hostile punctuation", () => {
-    expect(sanitizeFilename("C:\\Users\\me\\my: file?.txt")).toBe("my__file_.txt");
+    expect(sanitizeFilename("C:\\Users\\me\\my: file?.txt")).toBe(
+      "my__file_.txt",
+    );
     expect(sanitizeFilename("a\u0000b\u001fc.png")).toBe("abc.png");
     expect(sanitizeFilename("  spaced   name .jpg")).toBe("spaced_name_.jpg");
   });
@@ -122,9 +140,18 @@ describe("formatBytes", () => {
 describe("attachments block + user message", () => {
   const saved = {
     status: "saved" as const,
-    saved: { path: "/inbox/2026-09-08/143012-photo.jpg", name: "143012-photo.jpg", bytes: 2048, mimeType: "image/jpeg" },
+    saved: {
+      path: "/inbox/2026-09-08/143012-photo.jpg",
+      name: "143012-photo.jpg",
+      bytes: 2048,
+      mimeType: "image/jpeg",
+    },
   };
-  const failed = { status: "failed" as const, name: "big.zip", reason: "too big" };
+  const failed = {
+    status: "failed" as const,
+    name: "big.zip",
+    reason: "too big",
+  };
 
   it("lists saved files with type and size, failures with the reason", () => {
     expect(formatAttachmentsBlock([saved, failed])).toBe(

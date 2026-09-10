@@ -92,9 +92,7 @@ export function parseSkillIdentifier(raw: string): SkillIdentifier {
 
   const segments = body.split("/").filter((s) => s.length > 0);
   if (segments.length < 2) {
-    throw new SkillIdentifierError(
-      `expected at least owner/repo, got: ${raw}`,
-    );
+    throw new SkillIdentifierError(`expected at least owner/repo, got: ${raw}`);
   }
   const owner = segments[0]!;
   const repo = segments[1]!;
@@ -137,9 +135,7 @@ export function looksLikeHubIdentifier(raw: string): boolean {
 export function parseTapRepo(repo: string): { owner: string; repo: string } {
   const segments = repo.split("/").filter((s) => s.length > 0);
   if (segments.length !== 2) {
-    throw new SkillIdentifierError(
-      `tap repo must be owner/repo, got: ${repo}`,
-    );
+    throw new SkillIdentifierError(`tap repo must be owner/repo, got: ${repo}`);
   }
   const owner = segments[0]!;
   const name = segments[1]!;

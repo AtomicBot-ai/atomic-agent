@@ -101,8 +101,12 @@ describe("os-tool names the local-model grammar admits", () => {
   it("includes the agent's e-mail tools — a descriptor the grammar cannot emit is a tool local models cannot call", () => {
     const { readFileSync } = require("node:fs") as typeof import("node:fs");
     const { resolve } = require("node:path") as typeof import("node:path");
-    const grammar = readFileSync(resolve(__dirname, "../../../grammars/tool-call.gbnf"), "utf8");
-    const osToolLine = grammar.split("\n").find((l) => l.startsWith("os-tool ::=")) ?? "";
+    const grammar = readFileSync(
+      resolve(__dirname, "../../../grammars/tool-call.gbnf"),
+      "utf8",
+    );
+    const osToolLine =
+      grammar.split("\n").find((l) => l.startsWith("os-tool ::=")) ?? "";
     for (const name of ["email.inbox", "email.send", "notify", "web.fetch"]) {
       expect(osToolLine).toContain(`"${name}"`);
     }

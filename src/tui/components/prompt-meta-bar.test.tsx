@@ -306,11 +306,14 @@ describe("the meta bar while the provider is down", () => {
     },
   );
 
-  it.each([140, 160, 200])("carries the route whole at %i columns", (columns) => {
-    expect(renderMetaBarAt(columns, readout).join("\n")).toContain(
-      "● custom · llama.cpp · qwen3-30b-a3b-instruct",
-    );
-  });
+  it.each([140, 160, 200])(
+    "carries the route whole at %i columns",
+    (columns) => {
+      expect(renderMetaBarAt(columns, readout).join("\n")).toContain(
+        "● custom · llama.cpp · qwen3-30b-a3b-instruct",
+      );
+    },
+  );
 
   it.each([90, 110, 119, 130, 160])(
     "keeps the readout's numbers at %i columns",
@@ -370,7 +373,8 @@ describe("the meta bar while the provider is down", () => {
       const lines = renderMetaBarAt(columns, readout);
       // `paddingY={1}` — one blank, the row, one blank.
       expect(lines).toHaveLength(3);
-      for (const line of lines) expect(line.length).toBeLessThanOrEqual(columns);
+      for (const line of lines)
+        expect(line.length).toBeLessThanOrEqual(columns);
     },
   );
 
@@ -393,7 +397,8 @@ describe("the meta bar while the provider is down", () => {
       ]) {
         const lines = renderMetaBarAt(columns, slot);
         expect(lines).toHaveLength(3);
-        for (const line of lines) expect(line.length).toBeLessThanOrEqual(columns);
+        for (const line of lines)
+          expect(line.length).toBeLessThanOrEqual(columns);
       }
     },
   );
@@ -401,9 +406,7 @@ describe("the meta bar while the provider is down", () => {
   it("leaves a short composer notice next to the route", () => {
     // The other slot: it shrinks the ordinary way and must not be padded
     // out to some readout-sized floor.
-    const notice = (
-      <Text wrap="truncate">saved</Text>
-    );
+    const notice = <Text wrap="truncate">saved</Text>;
     expect(renderMetaBarAt(160, notice).join("\n")).toContain(
       "saved · ● custom",
     );

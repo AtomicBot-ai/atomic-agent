@@ -129,16 +129,23 @@ function eggSlots(width: number): number[] {
  * the tab opened) and every egg intact.
  */
 export function createStrip(width: number, count: number): StripState {
-  const eggs: EggState[] = eggSlots(width).map((x) => ({ x, stage: 0, wait: 0 }));
-  const span = Math.max(1, width - CRITTER_WIDTH);
-  const critters: CritterState[] = Array.from({ length: Math.max(0, count) }, (_, i) => ({
-    id: i + 1,
-    // Spread the starting pack out and alternate direction so they do
-    // not march in lockstep.
-    x: Math.round(((i + 1) * span) / (count + 1)),
-    dir: i % 2 === 0 ? 1 : -1,
-    hatching: null,
+  const eggs: EggState[] = eggSlots(width).map((x) => ({
+    x,
+    stage: 0,
+    wait: 0,
   }));
+  const span = Math.max(1, width - CRITTER_WIDTH);
+  const critters: CritterState[] = Array.from(
+    { length: Math.max(0, count) },
+    (_, i) => ({
+      id: i + 1,
+      // Spread the starting pack out and alternate direction so they do
+      // not march in lockstep.
+      x: Math.round(((i + 1) * span) / (count + 1)),
+      dir: i % 2 === 0 ? 1 : -1,
+      hatching: null,
+    }),
+  );
   return { width, tick: 0, nextId: critters.length + 1, eggs, critters };
 }
 
@@ -146,7 +153,11 @@ export function createStrip(width: number, count: number): StripState {
  * Advance one tick towards `targetCount` critters. Deterministic: the
  * only randomness-like variety comes from `tick` parity.
  */
-export function stepStrip(state: StripState, targetCount: number, width: number): StripState {
+export function stepStrip(
+  state: StripState,
+  targetCount: number,
+  width: number,
+): StripState {
   const tick = state.tick + 1;
   let eggs = state.eggs;
   if (width !== state.width) {
@@ -163,7 +174,9 @@ export function stepStrip(state: StripState, targetCount: number, width: number)
   // Move the runners; hatchlings sit still until their timer runs out.
   let critters: CritterState[] = state.critters.map((c) => {
     if (c.hatching !== null) {
-      return c.hatching <= 1 ? { ...c, hatching: null } : { ...c, hatching: c.hatching - 1 };
+      return c.hatching <= 1
+        ? { ...c, hatching: null }
+        : { ...c, hatching: c.hatching - 1 };
     }
     let x = c.x + c.dir;
     let dir = c.dir;
@@ -195,11 +208,18 @@ export function stepStrip(state: StripState, targetCount: number, width: number)
     // from thin air so the count never lags the truth for long.
     const idx = eggs.findIndex((e) => e.stage === 0);
     if (idx >= 0) {
-      eggs = eggs.map((e, i) => (i === idx ? { ...e, stage: 1, wait: CRACK_TICKS } : e));
+      eggs = eggs.map((e, i) =>
+        i === idx ? { ...e, stage: 1, wait: CRACK_TICKS } : e,
+      );
     } else if (pending === 0) {
       critters = [
         ...critters,
-        { id: nextId++, x: Math.min(span, Math.max(0, Math.floor(width / 2))), dir: 1, hatching: null },
+        {
+          id: nextId++,
+          x: Math.min(span, Math.max(0, Math.floor(width / 2))),
+          dir: 1,
+          hatching: null,
+        },
       ];
     }
   }
@@ -260,13 +280,17 @@ function blit(
  */
 export function renderStrip(state: StripState): Cell[][] {
   const { width } = state;
-  const buffer: (string | null)[][] = Array.from({ length: SCENE_PIXEL_ROWS }, () =>
-    Array.from({ length: width }, () => null),
+  const buffer: (string | null)[][] = Array.from(
+    { length: SCENE_PIXEL_ROWS },
+    () => Array.from({ length: width }, () => null),
   );
-  for (const egg of state.eggs) blit(buffer, EGG_FRAMES[egg.stage]!, egg.x, 1, width);
+  for (const egg of state.eggs)
+    blit(buffer, EGG_FRAMES[egg.stage]!, egg.x, 1, width);
   for (const c of state.critters) {
     const sprite =
-      c.hatching !== null ? CRITTER_HATCH : CRITTER_FRAMES[(state.tick + c.id) % 2]!;
+      c.hatching !== null
+        ? CRITTER_HATCH
+        : CRITTER_FRAMES[(state.tick + c.id) % 2]!;
     blit(buffer, sprite, c.x, c.dir, width);
   }
   const rows: Cell[][] = [];
@@ -286,7 +310,9 @@ export function renderStrip(state: StripState): Cell[][] {
 }
 
 /** Merge runs of identically styled cells so Ink gets few `<Text>` nodes. */
-export function runsOf(row: readonly Cell[]): Array<{ text: string; fg?: string; bg?: string }> {
+export function runsOf(
+  row: readonly Cell[],
+): Array<{ text: string; fg?: string; bg?: string }> {
   const runs: Array<{ text: string; fg?: string; bg?: string }> = [];
   for (const cell of row) {
     const last = runs.at(-1);

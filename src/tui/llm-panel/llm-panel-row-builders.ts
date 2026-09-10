@@ -6,7 +6,10 @@ import { getCachedOpenAiCompatModelsForBaseUrl } from "../../llm/provider/openai
 import { getCachedGeminiModelsForPanel } from "../../llm/provider/gemini/fetch-gemini-models.js";
 import { GEMINI_DEFAULT_CHAT_MODEL } from "../../llm/provider/gemini/gemini-provider.js";
 import { filterIdsByPricing } from "../../llm/provider/model-pricing-filter.js";
-import { filterModelIds, type ProviderRow } from "../providers/providers-panel-state.js";
+import {
+  filterModelIds,
+  type ProviderRow,
+} from "../providers/providers-panel-state.js";
 import {
   catalogEntryLookupForKind,
   formatAimlapiChatModelDetails,
@@ -27,7 +30,8 @@ import type { LlmPanelRow } from "./llm-panel-selectors.js";
 
 export function selectLocalRows(state: TuiState): readonly LlmPanelRow[] {
   const rows: LlmPanelRow[] = [];
-  for (const model of state.localModelsPanel.rows) rows.push(localTextRow(state, model));
+  for (const model of state.localModelsPanel.rows)
+    rows.push(localTextRow(state, model));
   for (const model of state.localModelsPanel.embeddingRows) {
     rows.push(localEmbeddingRow(state, model));
   }
@@ -107,7 +111,11 @@ export function selectCloudModelSection(state: TuiState): CloudModelSection {
   // either way, but this keeps the facet from paying the ranked-search
   // cost on the rows it is about to drop.
   const filtered = filterModelIds(
-    filterIdsByPricing(catalog.models, state.llmPanel.cloudModelPricing, lookup),
+    filterIdsByPricing(
+      catalog.models,
+      state.llmPanel.cloudModelPricing,
+      lookup,
+    ),
     state.llmPanel.cloudModelFilter,
     lookup,
   );
@@ -118,7 +126,9 @@ export function selectCloudRows(state: TuiState): readonly LlmPanelRow[] {
   const providers = state.providersPanel.rows.filter(
     (row) => row.kind !== "llama-server",
   );
-  const rows: LlmPanelRow[] = providers.map((provider) => cloudProviderRow(provider));
+  const rows: LlmPanelRow[] = providers.map((provider) =>
+    cloudProviderRow(provider),
+  );
   const section = selectCloudModelSection(state);
   if (section.provider) {
     for (const modelId of section.filtered) {
@@ -153,9 +163,7 @@ function pullFor(
 
 /** `Downloading… 42%` — the percentage is the part that moves. */
 function downloadingLabel(pull: LocalModelsPullState): string {
-  return pull.totalBytes > 0
-    ? `Downloading… ${pull.percent}%`
-    : "Downloading…";
+  return pull.totalBytes > 0 ? `Downloading… ${pull.percent}%` : "Downloading…";
 }
 
 function localTextRow(state: TuiState, model: LocalModelRow): LlmPanelRow {
@@ -166,10 +174,22 @@ function localTextRow(state: TuiState, model: LocalModelRow): LlmPanelRow {
   const active = localActive && model.active && daemonWorks;
   const pull = pullFor(state, "chat", model.id);
   if (pull) {
-    return buildLocalTextRow(model, active, false, "downloading", downloadingLabel(pull));
+    return buildLocalTextRow(
+      model,
+      active,
+      false,
+      "downloading",
+      downloadingLabel(pull),
+    );
   }
   if (!model.downloaded) {
-    return buildLocalTextRow(model, active, false, "download", "Enter: download");
+    return buildLocalTextRow(
+      model,
+      active,
+      false,
+      "download",
+      "Enter: download",
+    );
   }
   if (model.def.supportsVision && model.mmprojStatus === "missing") {
     // The weights are here, so Enter makes the model live (text-only)
@@ -195,7 +215,9 @@ function localTextRow(state: TuiState, model: LocalModelRow): LlmPanelRow {
     active,
     true,
     running ? "current" : "start",
-    running ? `Current: local-llama/${model.id}` : `Enter: start local daemon for ${model.id}`,
+    running
+      ? `Current: local-llama/${model.id}`
+      : `Enter: start local daemon for ${model.id}`,
   );
 }
 
@@ -203,7 +225,10 @@ function buildLocalTextRow(
   model: LocalModelRow,
   active: boolean,
   available: boolean,
-  primaryAction: Extract<LlmPanelRow, { kind: "localTextModel" }>["primaryAction"],
+  primaryAction: Extract<
+    LlmPanelRow,
+    { kind: "localTextModel" }
+  >["primaryAction"],
   enterEffect: string,
 ): LlmPanelRow {
   return {
@@ -218,7 +243,10 @@ function buildLocalTextRow(
   };
 }
 
-function localEmbeddingRow(state: TuiState, model: EmbeddingModelRow): LlmPanelRow {
+function localEmbeddingRow(
+  state: TuiState,
+  model: EmbeddingModelRow,
+): LlmPanelRow {
   const daemon = state.localModelsPanel.embeddingDaemon;
   const localEmbeddingActive = state.providersPanel.rows.some(
     (row) => row.id === "local-llama" && row.isActiveEmbedding,
@@ -277,7 +305,10 @@ function buildLocalEmbeddingRow(
   model: EmbeddingModelRow,
   active: boolean,
   available: boolean,
-  primaryAction: Extract<LlmPanelRow, { kind: "localEmbeddingModel" }>["primaryAction"],
+  primaryAction: Extract<
+    LlmPanelRow,
+    { kind: "localEmbeddingModel" }
+  >["primaryAction"],
   enterEffect: string,
 ): LlmPanelRow {
   return {
@@ -326,7 +357,10 @@ export function cloudProviderRow(provider: ProviderRow): LlmPanelRow {
 }
 
 /** Exported for the composer's model switch — see `cloudProviderRow`. */
-export function cloudChatRow(provider: ProviderRow, modelId: string): LlmPanelRow {
+export function cloudChatRow(
+  provider: ProviderRow,
+  modelId: string,
+): LlmPanelRow {
   const active = provider.isActiveText && provider.chatModel === modelId;
   return {
     kind: "cloudChatModel",
@@ -337,13 +371,21 @@ export function cloudChatRow(provider: ProviderRow, modelId: string): LlmPanelRo
     modelId,
     active,
     available: provider.hasApiKey,
-    primaryAction: provider.hasApiKey ? (active ? "current" : "use") : "configure",
+    primaryAction: provider.hasApiKey
+      ? active
+        ? "current"
+        : "use"
+      : "configure",
     enterEffect: cloudChatEnterEffect(provider, modelId, active),
   };
 }
 
-function cloudEmbeddingRow(provider: ProviderRow, modelId: string): LlmPanelRow {
-  const active = provider.isActiveEmbedding && provider.embeddingModel === modelId;
+function cloudEmbeddingRow(
+  provider: ProviderRow,
+  modelId: string,
+): LlmPanelRow {
+  const active =
+    provider.isActiveEmbedding && provider.embeddingModel === modelId;
   return {
     kind: "cloudEmbeddingModel",
     id: `cloud-embedding:${provider.id}:${modelId}`,
@@ -353,7 +395,11 @@ function cloudEmbeddingRow(provider: ProviderRow, modelId: string): LlmPanelRow 
     modelId,
     active,
     available: provider.hasApiKey,
-    primaryAction: provider.hasApiKey ? (active ? "current" : "use") : "configure",
+    primaryAction: provider.hasApiKey
+      ? active
+        ? "current"
+        : "use"
+      : "configure",
     enterEffect: cloudEmbeddingEnterEffect(provider, modelId, active),
   };
 }
@@ -363,7 +409,8 @@ function cloudChatEnterEffect(
   modelId: string,
   active: boolean,
 ): string {
-  if (!provider.hasApiKey) return `Enter: configure ${provider.id} before using ${modelId}`;
+  if (!provider.hasApiKey)
+    return `Enter: configure ${provider.id} before using ${modelId}`;
   if (provider.kind === "openrouter") {
     const details = formatOpenRouterChatModelDetails(modelId);
     return active ? `Current · ${details}` : details;
@@ -372,7 +419,9 @@ function cloudChatEnterEffect(
     const details = formatAimlapiChatModelDetails(modelId);
     return active ? `Current · ${details}` : details;
   }
-  return active ? `Current: ${provider.id}/${modelId}` : `Enter: use ${provider.id}/${modelId}`;
+  return active
+    ? `Current: ${provider.id}/${modelId}`
+    : `Enter: use ${provider.id}/${modelId}`;
 }
 
 function cloudEmbeddingEnterEffect(
@@ -380,7 +429,8 @@ function cloudEmbeddingEnterEffect(
   modelId: string,
   active: boolean,
 ): string {
-  if (!provider.hasApiKey) return `Enter: configure ${provider.id} before using embeddings`;
+  if (!provider.hasApiKey)
+    return `Enter: configure ${provider.id} before using embeddings`;
   if (provider.kind === "openrouter") {
     const details = formatOpenRouterEmbeddingModelDetails(modelId);
     return active ? `Current embedding · ${details}` : details;
@@ -407,7 +457,11 @@ function cloudEmbeddingEnterEffect(
 function inlineModelsForProvider(
   state: TuiState,
   provider: ProviderRow,
-): { models: readonly string[]; status: "loading" | "ready" | "error"; error: string | null } {
+): {
+  models: readonly string[];
+  status: "loading" | "ready" | "error";
+  error: string | null;
+} {
   const out = new Set<string>();
   for (const option of provider.chatModelOptions ?? []) out.add(option);
   if (provider.chatModel) out.add(provider.chatModel);

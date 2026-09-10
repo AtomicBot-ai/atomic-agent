@@ -1,5 +1,8 @@
 import { CODING_MODES, type CodingMode } from "./coding-mode.js";
-import { ISSUE_REPORT_LEVELS, type IssueReportLevel } from "./issue-report/report-levels.js";
+import {
+  ISSUE_REPORT_LEVELS,
+  type IssueReportLevel,
+} from "./issue-report/report-levels.js";
 import type { IssueReportState } from "./issue-report/issue-report-state.js";
 import { handleComposerSwitchKey } from "./composer-switch/composer-switch-key-bindings.js";
 import type { ComposerSwitchRow } from "./composer-switch/composer-switch-rows.js";
@@ -209,8 +212,7 @@ export function isPanelModalOpen(state: TuiState): boolean {
   // applies only when a modal is open and Tab/letters need to be
   // captured by the modal layer instead of cycling away from it.
   const telegramTabBusy =
-    state.uiMode === "debug" &&
-    state.telegramPanel.mode !== "list";
+    state.uiMode === "debug" && state.telegramPanel.mode !== "list";
   // MCP tab is "busy" while a modal is open: the add-server modal
   // owns its own MultiLineEditor and the panel must keep capturing
   // letter/Tab keys; the remove-confirm modal claims `y`/`n` and Esc
@@ -393,7 +395,13 @@ export function handleAppKey(
   }
   // The menu and its leader sit above every panel guard on purpose: they are
   // the way out of a panel, so a panel must never be able to swallow them.
-  if (handleMenuKey(input, key, { state, dispatch, activate: ctx.activateMenuNode })) {
+  if (
+    handleMenuKey(input, key, {
+      state,
+      dispatch,
+      activate: ctx.activateMenuNode,
+    })
+  ) {
     return true;
   }
   // Below the menu on purpose: the `ctrl+g` leader should still reach
@@ -790,11 +798,7 @@ export function applyNavSlot(
   dispatch({ type: "tab_changed", tab: slot.tab });
 }
 
-function handleUpdateKey(
-  input: string,
-  key: Key,
-  ctx: AppKeyContext,
-): boolean {
+function handleUpdateKey(input: string, key: Key, ctx: AppKeyContext): boolean {
   if (key.ctrl || key.meta) return false;
   const lower = input.toLowerCase();
   if (lower === "y") {
@@ -863,12 +867,7 @@ export function decideApproval(
 
 /** What a keystroke means to the approval prompt, if anything. */
 export type ApprovalHotkey =
-  | "approve"
-  | "grant_category"
-  | "grant_shape"
-  | "edit_path"
-  | "deny"
-  | "abort";
+  "approve" | "grant_category" | "grant_shape" | "edit_path" | "deny" | "abort";
 
 /**
  * The chord each approval verb answers to, and the label the button
@@ -963,8 +962,10 @@ export function approvalHotkey(
 
 /** Whether this request offers a retarget (`[e]`). */
 export function canEditPath(request: ApprovalRequest): boolean {
-  return typeof request.redirectablePath === "string"
-    && request.redirectablePath.length > 0;
+  return (
+    typeof request.redirectablePath === "string" &&
+    request.redirectablePath.length > 0
+  );
 }
 
 /**
@@ -1116,7 +1117,13 @@ function handleUninstallKey(
     dispatch({ type: "uninstall_typed_set", typed: flow.typed.slice(0, -1) });
     return true;
   }
-  if (input && !key.upArrow && !key.downArrow && !key.leftArrow && !key.rightArrow) {
+  if (
+    input &&
+    !key.upArrow &&
+    !key.downArrow &&
+    !key.leftArrow &&
+    !key.rightArrow
+  ) {
     // Capped at a little over the word's length: a paste of a whole
     // paragraph should not become a field the operator has to clear
     // one backspace at a time.

@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { applyMcpToolNameRule, buildMcpToolNameRule } from "./mcp-grammar-builder.js";
+import {
+  applyMcpToolNameRule,
+  buildMcpToolNameRule,
+} from "./mcp-grammar-builder.js";
 import type { McpToolMeta } from "./mcp-types.js";
 
 function metaOf(server: string, rawName: string): McpToolMeta {
@@ -35,7 +38,9 @@ describe("buildMcpToolNameRule", () => {
       metaOf("m", "tool_m"),
     ]);
     expect(a).toBe(b);
-    expect(a).toContain('"\\"mcp.a.tool_a\\"" | "\\"mcp.m.tool_m\\"" | "\\"mcp.z.tool_b\\""');
+    expect(a).toContain(
+      '"\\"mcp.a.tool_a\\"" | "\\"mcp.m.tool_m\\"" | "\\"mcp.z.tool_b\\""',
+    );
   });
 
   it("deduplicates collisions (same qualifiedName twice → single literal)", () => {
@@ -56,7 +61,7 @@ describe("buildMcpToolNameRule", () => {
 
 describe("applyMcpToolNameRule", () => {
   const baseGrammar = [
-    'root ::= tool-call-array',
+    "root ::= tool-call-array",
     'tool-name ::= browser-tool | mcp-server-tool | "\\"reply\\""',
     'mcp-server-tool ::= "\\"mcp." [a-z0-9-]+ "." [a-zA-Z0-9._-]+ "\\""',
     'browser-tool ::= "\\"browser.open\\""',
@@ -69,13 +74,15 @@ describe("applyMcpToolNameRule", () => {
   it("replaces the static placeholder with the dynamic rule", () => {
     const dyn = 'mcp-server-tool ::= "\\"mcp.github.create_issue\\""';
     const out = applyMcpToolNameRule(baseGrammar, dyn);
-    expect(out).toContain('mcp-server-tool ::= "\\"mcp.github.create_issue\\""');
+    expect(out).toContain(
+      'mcp-server-tool ::= "\\"mcp.github.create_issue\\""',
+    );
     expect(out).not.toContain('[a-z0-9-]+ "." [a-zA-Z0-9._-]+');
   });
 
   it("appends the rule when the placeholder is missing (fail-open)", () => {
     const grammarWithoutPlaceholder = [
-      'root ::= tool-call-array',
+      "root ::= tool-call-array",
       'browser-tool ::= "\\"browser.open\\""',
     ].join("\n");
     const dyn = 'mcp-server-tool ::= "\\"mcp.github.create_issue\\""';

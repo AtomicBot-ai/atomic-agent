@@ -2,10 +2,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import {
-  GithubSkillClient,
-  GithubSkillError,
-} from "./github-skill-client.js";
+import { GithubSkillClient, GithubSkillError } from "./github-skill-client.js";
 
 const API = "https://api.github.com";
 const RAW = "https://raw.githubusercontent.com";
@@ -125,8 +122,8 @@ describe("GithubSkillClient", () => {
     await expect(client.resolveDefaultBranch("o", "r")).rejects.toBeInstanceOf(
       GithubSkillError,
     );
-    await expect(
-      client.resolveDefaultBranch("o", "r"),
-    ).rejects.toMatchObject({ code: "rate_limited" });
+    await expect(client.resolveDefaultBranch("o", "r")).rejects.toMatchObject({
+      code: "rate_limited",
+    });
   });
 });

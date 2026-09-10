@@ -50,7 +50,8 @@ export function computeOrbitField(options: OrbitFieldOptions): OrbitCell[] {
     const row = Math.round(center.row + Math.sin(angle) * verticalRadius);
     if (column < 0 || column >= columns) continue;
     if (row < 0 || row >= rows) continue;
-    if (reserved.some((band) => row >= band.top && row <= band.bottom)) continue;
+    if (reserved.some((band) => row >= band.top && row <= band.bottom))
+      continue;
     const key = `${column},${row}`;
     if (seen.has(key)) continue;
     seen.add(key);
@@ -60,7 +61,9 @@ export function computeOrbitField(options: OrbitFieldOptions): OrbitCell[] {
 }
 
 /** Group ring cells by row, so a renderer can emit one `<Text>` per line. */
-export function orbitRowMap(cells: readonly OrbitCell[]): Map<number, number[]> {
+export function orbitRowMap(
+  cells: readonly OrbitCell[],
+): Map<number, number[]> {
   const byRow = new Map<number, number[]>();
   for (const cell of cells) {
     const columns = byRow.get(cell.row) ?? [];

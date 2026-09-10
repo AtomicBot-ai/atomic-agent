@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { onboardingFooterFor } from "./onboarding-chrome.js";
-import { createOnboardingState, type OnboardingStep } from "./onboarding-state.js";
+import {
+  createOnboardingState,
+  type OnboardingStep,
+} from "./onboarding-state.js";
 
 function at(step: OnboardingStep) {
   return { ...createOnboardingState("http://127.0.0.1:8080"), step };

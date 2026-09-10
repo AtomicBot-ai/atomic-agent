@@ -104,7 +104,9 @@ export function buildIntroArt(options: IntroArtOptions): string[] {
 function haloRing(
   options: IntroArtOptions,
   box: { height: number; markWidth: number; markLeft: number; markTop: number },
-): { center: { row: number; column: number }; radius: number; count: number } | undefined {
+):
+  | { center: { row: number; column: number }; radius: number; count: number }
+  | undefined {
   const count = options.haloCount ?? 0;
   if (count <= 0) return undefined;
   const markHeight = options.markRows.length;

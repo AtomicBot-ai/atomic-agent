@@ -30,12 +30,7 @@ export type ImportPanelMode = "configure" | "preview" | "running" | "done";
 
 /** Which field has keyboard focus inside the configure form. */
 export type ImportFormFocus =
-  | "sourceType"
-  | "source"
-  | ImportOptionToggle
-  | "overwrite"
-  | "limit"
-  | "run";
+  "sourceType" | "source" | ImportOptionToggle | "overwrite" | "limit" | "run";
 
 /** Boolean fields toggled with space / left / right inside the form. */
 export const IMPORT_TOGGLE_FIELDS = [

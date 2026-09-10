@@ -28,7 +28,9 @@ export function buildOsFsArchiveListTool(
     async run(rawArgs, ctx) {
       const path = rawArgs.path;
       if (typeof path !== "string" || path.length === 0) {
-        throw new Error("os.fs.archive.list: `path` must be a non-empty string");
+        throw new Error(
+          "os.fs.archive.list: `path` must be a non-empty string",
+        );
       }
       const formatOverride = parseFormatOverride(rawArgs.format);
       const resolved = await resolveArchive(

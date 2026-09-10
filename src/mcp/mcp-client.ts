@@ -19,16 +19,17 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 
 import { resourceClassFor } from "../agent/tool-resource-class.js";
-import { McpConnectError, McpRequestError, scrubErrorMessage } from "./mcp-errors.js";
+import {
+  McpConnectError,
+  McpRequestError,
+  scrubErrorMessage,
+} from "./mcp-errors.js";
 import {
   attachStderrTail,
   formatStderrTail,
   type StderrTail,
 } from "./mcp-stderr-tail.js";
-import {
-  qualifyMcpToolName,
-  splitMcpToolName,
-} from "./mcp-resource-class.js";
+import { qualifyMcpToolName, splitMcpToolName } from "./mcp-resource-class.js";
 import {
   MCP_TOOL_NAME_RE,
   type McpPromptMeta,
@@ -142,9 +143,7 @@ export class McpClient {
       const client = new Client(
         { name: CLIENT_NAME, version: CLIENT_VERSION },
         {
-          capabilities: this.deps.samplingHandler
-            ? { sampling: {} }
-            : {},
+          capabilities: this.deps.samplingHandler ? { sampling: {} } : {},
         },
       );
 
@@ -207,9 +206,7 @@ export class McpClient {
     const client = this.requireClient();
     const caps = client.getServerCapabilities() ?? {};
 
-    const toolsRes = caps.tools
-      ? await safeResult(client.listTools({}))
-      : null;
+    const toolsRes = caps.tools ? await safeResult(client.listTools({})) : null;
     const resourcesRes = caps.resources
       ? await safeResult(client.listResources({}))
       : null;
@@ -250,12 +247,14 @@ export class McpClient {
       });
     }
 
-    const validResources: McpResourceMeta[] = (resources as Array<{
-      uri: string;
-      name?: string;
-      description?: string;
-      mimeType?: string;
-    }>).map((r) => ({
+    const validResources: McpResourceMeta[] = (
+      resources as Array<{
+        uri: string;
+        name?: string;
+        description?: string;
+        mimeType?: string;
+      }>
+    ).map((r) => ({
       server: this.config.name,
       uri: r.uri,
       ...(r.name ? { name: r.name } : {}),
@@ -263,11 +262,17 @@ export class McpClient {
       ...(r.mimeType ? { mimeType: r.mimeType } : {}),
     }));
 
-    const validPrompts: McpPromptMeta[] = (prompts as Array<{
-      name: string;
-      description?: string;
-      arguments?: Array<{ name: string; description?: string; required?: boolean }>;
-    }>).map((p) => ({
+    const validPrompts: McpPromptMeta[] = (
+      prompts as Array<{
+        name: string;
+        description?: string;
+        arguments?: Array<{
+          name: string;
+          description?: string;
+          required?: boolean;
+        }>;
+      }>
+    ).map((p) => ({
       server: this.config.name,
       name: p.name,
       ...(p.description ? { description: p.description } : {}),
@@ -417,9 +422,7 @@ export class McpClient {
   }
 
   private buildTransport():
-    | StdioClientTransport
-    | StreamableHTTPClientTransport
-    | SSEClientTransport {
+    StdioClientTransport | StreamableHTTPClientTransport | SSEClientTransport {
     const t = this.config.transport;
     if (t.kind === "stdio") {
       // Inherit the agent's `process.env` (already augmented from
@@ -457,13 +460,10 @@ export class McpClient {
 
   private installSamplingHandler(client: Client): void {
     const handler = this.deps.samplingHandler!;
-    client.setRequestHandler(
-      CreateMessageRequestSchema,
-      async (req, extra) => {
-        const signal = extra.signal ?? new AbortController().signal;
-        return handler(req.params, signal);
-      },
-    );
+    client.setRequestHandler(CreateMessageRequestSchema, async (req, extra) => {
+      const signal = extra.signal ?? new AbortController().signal;
+      return handler(req.params, signal);
+    });
   }
 }
 

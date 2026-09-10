@@ -18,10 +18,7 @@ import {
   SkillHubInstallError,
   type StagedSkillInstall,
 } from "../hub/install-from-hub.js";
-import {
-  ClawHubClient,
-  type ClawHubScanStatus,
-} from "./clawhub-client.js";
+import { ClawHubClient, type ClawHubScanStatus } from "./clawhub-client.js";
 import { parseClawHubIdentifier } from "./clawhub-source.js";
 
 /**

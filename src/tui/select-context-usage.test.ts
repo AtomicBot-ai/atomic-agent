@@ -347,9 +347,8 @@ describe("a model the bundled catalogue has never heard of", () => {
         }),
       })),
     );
-    const fetcher = await import(
-      "../llm/provider/aimlapi/fetch-aimlapi-chat-catalog.js"
-    );
+    const fetcher =
+      await import("../llm/provider/aimlapi/fetch-aimlapi-chat-catalog.js");
     expect(await fetcher.refreshAimlapiChatCatalogFromApi()).toBe(true);
 
     const selector = await import("./select-context-usage.js");

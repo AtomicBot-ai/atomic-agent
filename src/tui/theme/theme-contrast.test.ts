@@ -4,7 +4,12 @@ import { mixColor } from "./mix-color.js";
 import { parseHexColor } from "./parse-hex-color.js";
 import { FUSION_BAR_MIX, FUSION_PANEL_MIX } from "./fusion-tint.js";
 import { CANONICAL_PAGE } from "./theme-palettes.js";
-import { THEMES, THEME_NAMES, type ThemeName, type TuiColors } from "./theme.js";
+import {
+  THEMES,
+  THEME_NAMES,
+  type ThemeName,
+  type TuiColors,
+} from "./theme.js";
 
 /**
  * The contrast gate.
@@ -127,9 +132,7 @@ describe("theme contrast", () => {
 
       it("uses valid 6-digit lowercase hex for every token", () => {
         for (const [key, value] of Object.entries(c)) {
-          expect(value, `${key} is not a hex colour`).toMatch(
-            /^#[0-9a-f]{6}$/,
-          );
+          expect(value, `${key} is not a hex colour`).toMatch(/^#[0-9a-f]{6}$/);
         }
       });
 

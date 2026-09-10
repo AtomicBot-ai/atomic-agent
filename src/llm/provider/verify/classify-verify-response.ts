@@ -69,7 +69,9 @@ export function classifyVerifyResponse(
 }
 
 /** A thrown transport failure, which says nothing about the key itself. */
-export function classifyVerifyTransportError(err: unknown): ProviderVerifyStatus {
+export function classifyVerifyTransportError(
+  err: unknown,
+): ProviderVerifyStatus {
   if (err instanceof OpenAiHttpError) {
     if (err.timedOut) return "timeout";
     if (err.status === null) return "unreachable";

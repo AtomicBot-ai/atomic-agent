@@ -42,7 +42,10 @@ function makeRecord(overrides: Partial<TaskRecord> = {}): TaskRecord {
 
 describe("tasks.list", () => {
   it("lists tasks for the current session by default", async () => {
-    const list = vi.fn(() => [makeRecord({ id: "t1" }), makeRecord({ id: "t2" })]);
+    const list = vi.fn(() => [
+      makeRecord({ id: "t1" }),
+      makeRecord({ id: "t2" }),
+    ]);
     const tool = buildTasksListTool({
       taskStore: { list } as never,
       defaultLimit: 20,
@@ -59,10 +62,7 @@ describe("tasks.list", () => {
       taskStore: { list } as never,
       defaultLimit: 20,
     });
-    const result = await tool.run(
-      { status: "pending,running" },
-      makeCtx(),
-    );
+    const result = await tool.run({ status: "pending,running" }, makeCtx());
     expect(result.status).toBe("ok");
     expect(list).toHaveBeenCalledWith(
       expect.objectContaining({ status: ["pending", "running"] }),
@@ -103,8 +103,6 @@ describe("tasks.list", () => {
       defaultLimit: 20,
     });
     await tool.run({ limit: 10_000 }, makeCtx());
-    expect(list).toHaveBeenCalledWith(
-      expect.objectContaining({ limit: 200 }),
-    );
+    expect(list).toHaveBeenCalledWith(expect.objectContaining({ limit: 200 }));
   });
 });

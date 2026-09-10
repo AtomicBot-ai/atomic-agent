@@ -182,7 +182,8 @@ export class DistillRunner {
       }
       const procedure: ParsedProcedure | null =
         withProcedure && "procedure" in parsed
-          ? ((parsed as { procedure: ParsedProcedure | null }).procedure ?? null)
+          ? ((parsed as { procedure: ParsedProcedure | null }).procedure ??
+            null)
           : null;
       this.deps.logger?.info?.("consolidator.distill.ok", {
         sessionId: request.sessionId,

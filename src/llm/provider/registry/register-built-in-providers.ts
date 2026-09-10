@@ -177,7 +177,8 @@ export function registerBuiltInProviderKinds(): void {
       ...(entry.requestTimeoutMs
         ? { requestTimeoutMs: entry.requestTimeoutMs }
         : {}),
-      onNotice: (message) => ctx.logger.warn("llm.subscription_cli", { message }),
+      onNotice: (message) =>
+        ctx.logger.warn("llm.subscription_cli", { message }),
     });
   });
 }

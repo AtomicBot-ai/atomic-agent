@@ -43,7 +43,9 @@ export type FalloverCause = "billing" | "auth" | "other";
  */
 export function classifyFalloverReason(reason: string): FalloverCause {
   const text = reason.toLowerCase();
-  if (/\b402\b|credit|quota|insufficient|billing|payment/.test(text)) return "billing";
-  if (/\b401\b|\b403\b|unauthor|forbidden|invalid api key|api key/.test(text)) return "auth";
+  if (/\b402\b|credit|quota|insufficient|billing|payment/.test(text))
+    return "billing";
+  if (/\b401\b|\b403\b|unauthor|forbidden|invalid api key|api key/.test(text))
+    return "auth";
   return "other";
 }

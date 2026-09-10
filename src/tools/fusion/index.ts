@@ -11,7 +11,10 @@ export {
   MAX_TASK_FILES,
 } from "./delegate-args.js";
 export type { DelegateTask, ParsedDelegateArgs } from "./delegate-args.js";
-export { renderWorkerBrief, WORKER_REPLY_CHAR_BUDGET } from "./worker-prompt.js";
+export {
+  renderWorkerBrief,
+  WORKER_REPLY_CHAR_BUDGET,
+} from "./worker-prompt.js";
 export {
   WorkerRunCollector,
   classifyWorkerStatus,
@@ -24,6 +27,12 @@ export type {
   WorkerToolStats,
 } from "./worker-result.js";
 export { runWorkerTasks } from "./worker-runner.js";
-export type { WorkerRunnerDeps, RunWorkerTasksOptions } from "./worker-runner.js";
-export { buildFusionDelegateTool, FUSION_DELEGATE_TOOL } from "./fusion-delegate.js";
+export type {
+  WorkerRunnerDeps,
+  RunWorkerTasksOptions,
+} from "./worker-runner.js";
+export {
+  buildFusionDelegateTool,
+  FUSION_DELEGATE_TOOL,
+} from "./fusion-delegate.js";
 export type { FusionDelegateDeps } from "./fusion-delegate.js";

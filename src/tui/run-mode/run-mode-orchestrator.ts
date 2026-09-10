@@ -26,7 +26,10 @@ export interface RunModeOrchestratorDeps {
   /** Fires `providerRegistry.setActive` — the hot-apply half. */
   readonly runtime: Pick<AgentRuntime, "providerRegistry">;
   readonly bus: { emit(action: TuiAction): void };
-  readonly providers: Pick<ProvidersOrchestrator, "refresh" | "ensureInlineModels">;
+  readonly providers: Pick<
+    ProvidersOrchestrator,
+    "refresh" | "ensureInlineModels"
+  >;
   readonly localModels: Pick<LocalModelsOrchestrator, "startDaemon">;
 }
 
@@ -55,14 +58,19 @@ export class RunModeOrchestrator {
     });
   }
 
-  async setMode(mode: RunModeName, opts: RunModeChangeOptions = {}): Promise<void> {
+  async setMode(
+    mode: RunModeName,
+    opts: RunModeChangeOptions = {},
+  ): Promise<void> {
     const config = getConfig();
     const resolved = resolveLlmConfig(config);
     const rm = resolveRunMode(resolved);
     const isCloud = (id: string | null | undefined): boolean =>
       id !== null &&
       id !== undefined &&
-      resolved.providers.some((p) => p.id === id && p.kind !== LOCAL_PROVIDER_KIND);
+      resolved.providers.some(
+        (p) => p.id === id && p.kind !== LOCAL_PROVIDER_KIND,
+      );
     const activeIsCloud = isCloud(resolved.activeTextProvider);
 
     let leg: string | null;
@@ -74,11 +82,21 @@ export class RunModeOrchestrator {
         this.firstUsableCloudProvider(resolved) ??
         rm.orchestratorProviderId;
       if (leg === null || leg === undefined) {
-        this.refuse(describeRunModeDegradation({ reason: "no-cloud-provider", requested: mode }));
+        this.refuse(
+          describeRunModeDegradation({
+            reason: "no-cloud-provider",
+            requested: mode,
+          }),
+        );
         return;
       }
       if (rm.workerProviderId === null) {
-        this.refuse(describeRunModeDegradation({ reason: "no-local-provider", requested: mode }));
+        this.refuse(
+          describeRunModeDegradation({
+            reason: "no-local-provider",
+            requested: mode,
+          }),
+        );
         return;
       }
       // Pin BOTH legs. Leaving either to the resolver's "first entry of
@@ -92,9 +110,16 @@ export class RunModeOrchestrator {
         workerProvider: opts.fusion?.workerProvider ?? rm.workerProviderId,
       };
     } else if (mode === "cloud") {
-      leg = activeIsCloud ? resolved.activeTextProvider : rm.orchestratorProviderId;
+      leg = activeIsCloud
+        ? resolved.activeTextProvider
+        : rm.orchestratorProviderId;
       if (leg === null) {
-        this.refuse(describeRunModeDegradation({ reason: "no-cloud-provider", requested: mode }));
+        this.refuse(
+          describeRunModeDegradation({
+            reason: "no-cloud-provider",
+            requested: mode,
+          }),
+        );
         return;
       }
     } else {
@@ -106,7 +131,9 @@ export class RunModeOrchestrator {
         mode,
         activeTextProvider: leg,
         ...(fusion ? { fusion } : {}),
-        ...(opts.managedParallel === undefined ? {} : { managedParallel: opts.managedParallel }),
+        ...(opts.managedParallel === undefined
+          ? {}
+          : { managedParallel: opts.managedParallel }),
       });
     } catch (err) {
       this.refuse(wrapLlmConfigError(err));
@@ -127,11 +154,17 @@ export class RunModeOrchestrator {
     this.deps.providers.refresh();
     if (mode !== "local") void this.deps.providers.ensureInlineModels(leg);
     const now = this.current();
-    this.deps.bus.emit({ type: "runtime_info", line: `run mode: ${describeRunMode(now)}` });
+    this.deps.bus.emit({
+      type: "runtime_info",
+      line: `run mode: ${describeRunMode(now)}`,
+    });
     // Only on the way IN. Re-applying fusion to change the orchestrator
     // is not a moment that needs the mode explained again.
     if (now.effective === "fusion" && rm.effective !== "fusion") {
-      this.deps.bus.emit({ type: "system_message", text: describeFusionIntro(now) });
+      this.deps.bus.emit({
+        type: "system_message",
+        text: describeFusionIntro(now),
+      });
     }
     if (now.effective === "fusion") {
       const local = getConfig().localModels;
@@ -176,8 +209,12 @@ export class RunModeOrchestrator {
    * the pre-flight has already said whether one is usable.
    */
   private firstUsableCloudProvider(resolved: ResolvedLlmConfig): string | null {
-    const cloud = resolved.providers.filter((p) => p.kind !== LOCAL_PROVIDER_KIND);
-    const keyed = cloud.find((p) => Boolean(resolveLlmProviderApiKey(p)) || usesExternalCliAuth(p));
+    const cloud = resolved.providers.filter(
+      (p) => p.kind !== LOCAL_PROVIDER_KIND,
+    );
+    const keyed = cloud.find(
+      (p) => Boolean(resolveLlmProviderApiKey(p)) || usesExternalCliAuth(p),
+    );
     return (keyed ?? cloud[0])?.id ?? null;
   }
 

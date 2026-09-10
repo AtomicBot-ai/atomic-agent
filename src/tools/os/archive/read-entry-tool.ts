@@ -84,9 +84,7 @@ export function buildOsFsArchiveReadEntryTool(
 function parseAs(raw: unknown): "utf8" | "base64" {
   if (raw === undefined || raw === null) return "utf8";
   if (raw === "utf8" || raw === "base64") return raw;
-  throw new Error(
-    "os.fs.archive.read_entry: `as` must be 'utf8' or 'base64'",
-  );
+  throw new Error("os.fs.archive.read_entry: `as` must be 'utf8' or 'base64'");
 }
 
 function parseMaxBytes(raw: unknown): number {

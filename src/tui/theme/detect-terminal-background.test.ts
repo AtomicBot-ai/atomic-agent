@@ -116,7 +116,9 @@ describe("detectTerminalBackground", () => {
   it("does not resolve early on an unterminated reply (P4), times out unknown", async () => {
     const stdin = new FakeStdin();
     const stdout = new FakeStdout();
-    const promise = detectTerminalBackground(deps({ stdin, stdout, timeoutMs: 20 }));
+    const promise = detectTerminalBackground(
+      deps({ stdin, stdout, timeoutMs: 20 }),
+    );
     // Complete color, but no BEL/ST terminator -> must not match.
     stdin.emit("data", "\x1b]11;rgb:ffff/ffff/ffff");
     expect(await promise).toBe("unknown");
@@ -215,7 +217,9 @@ describe("detectTerminalBackground", () => {
     stdout.isTTY = false;
     const stderr = new FakeStdout();
     stderr.isTTY = false;
-    const result = await detectTerminalBackground(deps({ stdin, stdout, stderr }));
+    const result = await detectTerminalBackground(
+      deps({ stdin, stdout, stderr }),
+    );
     expect(result).toBe("unknown");
     expect(stdin.rawCalls).toEqual([]);
   });

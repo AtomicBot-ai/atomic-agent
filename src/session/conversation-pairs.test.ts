@@ -18,8 +18,17 @@ const at = (): number => BASE + (clock += 1000);
 function task(label: string): ConversationTurn[] {
   return [
     userTurn(`ask ${label}`, at()),
-    assistantToolCallTurn({ tool: "fs.read", args: { path: `/${label}` }, at: at() }),
-    toolResultTurn({ tool: "fs.read", status: "ok", summary: `read ${label}`, at: at() }),
+    assistantToolCallTurn({
+      tool: "fs.read",
+      args: { path: `/${label}` },
+      at: at(),
+    }),
+    toolResultTurn({
+      tool: "fs.read",
+      status: "ok",
+      summary: `read ${label}`,
+      at: at(),
+    }),
     assistantReplyTurn(`answer ${label}`, at()),
   ];
 }
@@ -28,8 +37,17 @@ function task(label: string): ConversationTurn[] {
 function abandonedTask(label: string): ConversationTurn[] {
   return [
     userTurn(`ask ${label}`, at()),
-    assistantToolCallTurn({ tool: "fs.read", args: { path: `/${label}` }, at: at() }),
-    toolResultTurn({ tool: "fs.read", status: "ok", summary: `read ${label}`, at: at() }),
+    assistantToolCallTurn({
+      tool: "fs.read",
+      args: { path: `/${label}` },
+      at: at(),
+    }),
+    toolResultTurn({
+      tool: "fs.read",
+      status: "ok",
+      summary: `read ${label}`,
+      at: at(),
+    }),
   ];
 }
 
@@ -50,7 +68,12 @@ describe("counting macro-turns", () => {
       userTurn("ask a", at()),
       assistantToolCallTurn({ tool: "fs.read", args: {}, at: at() }),
       userTurn("actually, also check b", at()),
-      toolResultTurn({ tool: "fs.read", status: "ok", summary: "ok", at: at() }),
+      toolResultTurn({
+        tool: "fs.read",
+        status: "ok",
+        summary: "ok",
+        at: at(),
+      }),
       assistantReplyTurn("answer a", at()),
       ...task("c"),
     ];
@@ -157,7 +180,11 @@ describe("tokens remain the ceiling", () => {
     const turns: ConversationTurn[] = [userTurn("ask big", at())];
     for (let i = 0; i < 40; i += 1) {
       turns.push(
-        assistantToolCallTurn({ tool: "fs.read", args: { path: `/f${i}` }, at: at() }),
+        assistantToolCallTurn({
+          tool: "fs.read",
+          args: { path: `/f${i}` },
+          at: at(),
+        }),
         toolResultTurn({
           tool: "fs.read",
           status: "ok",

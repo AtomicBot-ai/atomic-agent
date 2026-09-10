@@ -26,7 +26,10 @@ export function reduceSwarmAction(
   return { ...state, swarmPanel: next };
 }
 
-function reducePanel(panel: SwarmPanelState, action: SwarmAction): SwarmPanelState {
+function reducePanel(
+  panel: SwarmPanelState,
+  action: SwarmAction,
+): SwarmPanelState {
   switch (action.type) {
     case "swarm_synced": {
       // A re-sync must not yank the cursor: rows can grow or shrink
@@ -42,7 +45,13 @@ function reducePanel(panel: SwarmPanelState, action: SwarmAction): SwarmPanelSta
     }
     case "swarm_add_started":
       if (panel.mode !== "list") return panel;
-      return { ...panel, mode: "add", form: createInitialSwarmAddForm(), message: null, lastError: null };
+      return {
+        ...panel,
+        mode: "add",
+        form: createInitialSwarmAddForm(),
+        message: null,
+        lastError: null,
+      };
     case "swarm_form_kind_set":
       if (panel.mode !== "add" || panel.form.step !== "kind") return panel;
       if (panel.form.kind === action.kind) return panel;
@@ -55,7 +64,10 @@ function reducePanel(panel: SwarmPanelState, action: SwarmAction): SwarmPanelSta
       if (panel.mode !== "add") return panel;
       return {
         ...panel,
-        form: withStepValue(panel.form, formStepValue(panel.form) + action.text),
+        form: withStepValue(
+          panel.form,
+          formStepValue(panel.form) + action.text,
+        ),
       };
     case "swarm_form_backspace":
       if (panel.mode !== "add") return panel;
@@ -70,7 +82,8 @@ function reducePanel(panel: SwarmPanelState, action: SwarmAction): SwarmPanelSta
       // Past the last step the keyboard layer submits; nothing to fold.
       if (step === undefined) return panel;
       // A label is the one thing a bot cannot do without.
-      if (panel.form.step === "label" && panel.form.label.trim().length === 0) return panel;
+      if (panel.form.step === "label" && panel.form.label.trim().length === 0)
+        return panel;
       return { ...panel, form: { ...panel.form, step } };
     }
     case "swarm_form_back": {
@@ -85,12 +98,20 @@ function reducePanel(panel: SwarmPanelState, action: SwarmAction): SwarmPanelSta
       const row = panel.rows[panel.selected];
       // Primaries are edited in Integrations; only units open here.
       if (!row || row.primary) return panel;
-      return { ...panel, mode: "edit", editField: "label", editBuffer: null, message: null, lastError: null };
+      return {
+        ...panel,
+        mode: "edit",
+        editField: "label",
+        editBuffer: null,
+        message: null,
+        lastError: null,
+      };
     }
     case "swarm_edit_field_moved": {
       if (panel.mode !== "edit" || panel.editBuffer !== null) return panel;
       const i = SWARM_EDIT_FIELDS.indexOf(panel.editField);
-      const field = SWARM_EDIT_FIELDS[clamp(i + action.delta, SWARM_EDIT_FIELDS.length)]!;
+      const field =
+        SWARM_EDIT_FIELDS[clamp(i + action.delta, SWARM_EDIT_FIELDS.length)]!;
       if (field === panel.editField) return panel;
       return { ...panel, editField: field };
     }
@@ -139,7 +160,9 @@ function reducePanel(panel: SwarmPanelState, action: SwarmAction): SwarmPanelSta
         busy: false,
         mode,
         editBuffer: null,
-        ...(panel.mode === "add" && !failed ? { form: createInitialSwarmAddForm() } : {}),
+        ...(panel.mode === "add" && !failed
+          ? { form: createInitialSwarmAddForm() }
+          : {}),
         message: action.message ?? null,
         lastError: action.error ?? null,
       };

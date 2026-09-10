@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import type { DebugBundleSnapshot } from "../debug-bundle/build-snapshot.js";
-import { buildIssueReport, type IssueReportFacts } from "./build-issue-report.js";
+import {
+  buildIssueReport,
+  type IssueReportFacts,
+} from "./build-issue-report.js";
 import { renderSection } from "./issue-body.js";
 
 const HOME = "/Users/valerii";
@@ -39,36 +42,105 @@ function snapshot(): DebugBundleSnapshot {
     activeTab: "feed",
     lastRunStatus: `failed [tool]: ENOENT ${CWD}/missing.txt for me@x.io`,
     messages: [
-      { id: "m1", role: "user", text: `please read ${CWD}/secret.txt`, timestamp: 1 },
+      {
+        id: "m1",
+        role: "user",
+        text: `please read ${CWD}/secret.txt`,
+        timestamp: 1,
+      },
       {
         id: "m2",
         role: "assistant",
         text: `I used ${TOKEN}`,
         timestamp: 2,
-        toolCards: [{ id: "c", tool: "os.fs.read", args: { path: `${CWD}/secret.txt` }, summary: "contents", status: "ok" }],
+        toolCards: [
+          {
+            id: "c",
+            tool: "os.fs.read",
+            args: { path: `${CWD}/secret.txt` },
+            summary: "contents",
+            status: "ok",
+          },
+        ],
       },
     ],
     feed: [
-      { id: "f1", kind: "runtime_info", stepIndex: null, line: `read ${CWD}/x`, color: "blue", timestamp: 3 },
-      { id: "f2", kind: "tool_call_parsed", stepIndex: 0, line: `  → os.fs.read({"path":"${CWD}/secret.txt"})`, color: "gray", timestamp: 3 },
-      { id: "f3", kind: "tool_call_executed", stepIndex: 0, line: "  ← os.fs.read ok: the secret contents", color: "green", timestamp: 3 },
-      { id: "f4", kind: "step_finished", stepIndex: 9, line: "[step 9] Done. I added divide() and opened the PR (2986ms)", color: "gray", timestamp: 3 },
-      { id: "f5", kind: "loop_failed", stepIndex: null, line: "» ENOENT: no such file, stat '/opt/other/thing.js'", color: "red", timestamp: 3 },
+      {
+        id: "f1",
+        kind: "runtime_info",
+        stepIndex: null,
+        line: `read ${CWD}/x`,
+        color: "blue",
+        timestamp: 3,
+      },
+      {
+        id: "f2",
+        kind: "tool_call_parsed",
+        stepIndex: 0,
+        line: `  → os.fs.read({"path":"${CWD}/secret.txt"})`,
+        color: "gray",
+        timestamp: 3,
+      },
+      {
+        id: "f3",
+        kind: "tool_call_executed",
+        stepIndex: 0,
+        line: "  ← os.fs.read ok: the secret contents",
+        color: "green",
+        timestamp: 3,
+      },
+      {
+        id: "f4",
+        kind: "step_finished",
+        stepIndex: 9,
+        line: "[step 9] Done. I added divide() and opened the PR (2986ms)",
+        color: "gray",
+        timestamp: 3,
+      },
+      {
+        id: "f5",
+        kind: "loop_failed",
+        stepIndex: null,
+        line: "» ENOENT: no such file, stat '/opt/other/thing.js'",
+        color: "red",
+        timestamp: 3,
+      },
     ],
     logs: [
       { level: "debug", message: `dbg ${HOME}/y`, timestamp: 4 },
-      { level: "warn", message: "slow provider", context: { host: "10.0.0.5", key: TOKEN, sessionId: "sess-1" }, timestamp: 5 },
-      { level: "error", message: `boom ${CWD}/z and /opt/vendor/cfg.yml`, timestamp: 6 },
+      {
+        level: "warn",
+        message: "slow provider",
+        context: { host: "10.0.0.5", key: TOKEN, sessionId: "sess-1" },
+        timestamp: 5,
+      },
+      {
+        level: "error",
+        message: `boom ${CWD}/z and /opt/vendor/cfg.yml`,
+        timestamp: 6,
+      },
     ],
-    reasoning: [{ id: "r", stepIndex: 0, text: "thinking about secrets", timestamp: 7 }],
+    reasoning: [
+      { id: "r", stepIndex: 0, text: "thinking about secrets", timestamp: 7 },
+    ],
     runHistory: [
-      { message: "please read the secret file", outcome: "failed", reason: `ENOENT ${CWD}/missing.txt`, stepCount: 2, durationMs: 40, finishedAt: 8 },
+      {
+        message: "please read the secret file",
+        outcome: "failed",
+        reason: `ENOENT ${CWD}/missing.txt`,
+        stepCount: 2,
+        durationMs: 40,
+        finishedAt: 8,
+      },
     ],
     metrics: { turns: 1 } as unknown as DebugBundleSnapshot["metrics"],
   } as unknown as DebugBundleSnapshot;
 }
 
-function text(level: "errors" | "scrubbed" | "full"): { md: string; json: string } {
+function text(level: "errors" | "scrubbed" | "full"): {
+  md: string;
+  json: string;
+} {
   const report = buildIssueReport({
     snapshot: snapshot(),
     facts: FACTS,
@@ -76,18 +148,31 @@ function text(level: "errors" | "scrubbed" | "full"): { md: string; json: string
     redaction: { homeDir: HOME, workingDir: CWD },
   });
   return {
-    md: [report.title, report.header, ...report.sections.map(renderSection)].join("\n"),
+    md: [
+      report.title,
+      report.header,
+      ...report.sections.map(renderSection),
+    ].join("\n"),
     json: JSON.stringify(report.snapshot),
   };
 }
 
 describe("buildIssueReport", () => {
   it("titles a failed turn after its status line", () => {
-    const report = buildIssueReport({ snapshot: snapshot(), facts: FACTS, level: "errors", redaction: { homeDir: HOME, workingDir: CWD } });
-    expect(report.title).toBe("Turn failed [tool]: ENOENT <cwd>/missing.txt for <email>");
+    const report = buildIssueReport({
+      snapshot: snapshot(),
+      facts: FACTS,
+      level: "errors",
+      redaction: { homeDir: HOME, workingDir: CWD },
+    });
+    expect(report.title).toBe(
+      "Turn failed [tool]: ENOENT <cwd>/missing.txt for <email>",
+    );
     expect(report.header).toContain("| **Version** | 0.5.6 |");
     // A local model name can be a path: it is scrubbed like everything else.
-    expect(report.header).toContain("openrouter · ~/models/qwen3.gguf (native_tools)");
+    expect(report.header).toContain(
+      "openrouter · ~/models/qwen3.gguf (native_tools)",
+    );
     expect(report.header).toContain("Errors only");
   });
 
@@ -166,7 +251,12 @@ describe("buildIssueReport", () => {
   it("falls back to a generic title when the last run did not fail", () => {
     const snap = snapshot();
     snap.lastRunStatus = "completed";
-    const report = buildIssueReport({ snapshot: snap, facts: FACTS, level: "errors", redaction: { homeDir: HOME } });
+    const report = buildIssueReport({
+      snapshot: snap,
+      facts: FACTS,
+      level: "errors",
+      redaction: { homeDir: HOME },
+    });
     expect(report.title).toBe("Issue report from atomic-agent v0.5.6");
   });
 });

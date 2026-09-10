@@ -38,9 +38,15 @@ describe("planTruncationRetry", () => {
   it("never raises past the ceiling", () => {
     const plan = planTruncationRetry({
       ...BASE,
-      error: truncated({ requestedMaxTokens: 16_384, completionTokens: 16_384 }),
+      error: truncated({
+        requestedMaxTokens: 16_384,
+        completionTokens: 16_384,
+      }),
     });
-    expect(plan?.retry).toEqual({ kind: "raise_cap", maxTokens: TRUNCATION_RETRY_CAP_CEILING });
+    expect(plan?.retry).toEqual({
+      kind: "raise_cap",
+      maxTokens: TRUNCATION_RETRY_CAP_CEILING,
+    });
   });
 
   it("stays under a known window", () => {
@@ -49,16 +55,27 @@ describe("planTruncationRetry", () => {
     const plan = planTruncationRetry({
       ...BASE,
       contextWindow: 20_000,
-      error: truncated({ requestedMaxTokens: 4_096, completionTokens: 4_096, promptTokens: 12_000 }),
+      error: truncated({
+        requestedMaxTokens: 4_096,
+        completionTokens: 4_096,
+        promptTokens: 12_000,
+      }),
     });
-    expect(plan?.retry).toEqual({ kind: "raise_cap", maxTokens: 20_000 - 12_000 - 512 });
+    expect(plan?.retry).toEqual({
+      kind: "raise_cap",
+      maxTokens: 20_000 - 12_000 - 512,
+    });
   });
 
   it("plans nothing when the window leaves no room to raise", () => {
     const plan = planTruncationRetry({
       ...BASE,
       contextWindow: 15_000,
-      error: truncated({ requestedMaxTokens: 8_192, completionTokens: 8_192, promptTokens: 6_500 }),
+      error: truncated({
+        requestedMaxTokens: 8_192,
+        completionTokens: 8_192,
+        promptTokens: 6_500,
+      }),
     });
     expect(plan).toBeNull();
   });
@@ -66,7 +83,12 @@ describe("planTruncationRetry", () => {
   it("treats an unknown cause as the cap, using the fallback when the error carries none", () => {
     const plan = planTruncationRetry({
       ...BASE,
-      error: truncated({ cause: "unknown", completionTokens: 0, promptTokens: 0, requestedMaxTokens: 0 }),
+      error: truncated({
+        cause: "unknown",
+        completionTokens: 0,
+        promptTokens: 0,
+        requestedMaxTokens: 0,
+      }),
     });
     expect(plan?.retry).toEqual({ kind: "raise_cap", maxTokens: 32_768 });
   });
@@ -74,7 +96,11 @@ describe("planTruncationRetry", () => {
   it("learns the window when the reply stopped short of the cap", () => {
     const plan = planTruncationRetry({
       ...BASE,
-      error: truncated({ cause: "context_window", completionTokens: 2_768, promptTokens: 30_000 }),
+      error: truncated({
+        cause: "context_window",
+        completionTokens: 2_768,
+        promptTokens: 30_000,
+      }),
     });
     expect(plan?.retry).toEqual({ kind: "fit_window", contextWindow: 32_768 });
   });
@@ -83,7 +109,11 @@ describe("planTruncationRetry", () => {
     const plan = planTruncationRetry({
       ...BASE,
       canFitWindow: false,
-      error: truncated({ cause: "context_window", completionTokens: 2_768, promptTokens: 30_000 }),
+      error: truncated({
+        cause: "context_window",
+        completionTokens: 2_768,
+        promptTokens: 30_000,
+      }),
     });
     expect(plan).toBeNull();
   });
@@ -92,18 +122,31 @@ describe("planTruncationRetry", () => {
     const plan = planTruncationRetry({
       ...BASE,
       contextWindow: 131_072,
-      error: truncated({ cause: "output_limit", completionTokens: 4_096, promptTokens: 6_000 }),
+      error: truncated({
+        cause: "output_limit",
+        completionTokens: 4_096,
+        promptTokens: 6_000,
+      }),
     });
     expect(plan).toBeNull();
   });
 
   it("retries a step once", () => {
-    expect(planTruncationRetry({ ...BASE, alreadyRetried: true, error: truncated({}) })).toBeNull();
+    expect(
+      planTruncationRetry({
+        ...BASE,
+        alreadyRetried: true,
+        error: truncated({}),
+      }),
+    ).toBeNull();
   });
 
   it("ignores every other failure", () => {
     expect(
-      planTruncationRetry({ ...BASE, error: new TransportError("fetch failed", null, "") }),
+      planTruncationRetry({
+        ...BASE,
+        error: new TransportError("fetch failed", null, ""),
+      }),
     ).toBeNull();
     expect(
       planTruncationRetry({
@@ -113,7 +156,10 @@ describe("planTruncationRetry", () => {
     ).toBeNull();
     // A truncated ModelError from a caller that did not classify it.
     expect(
-      planTruncationRetry({ ...BASE, error: new ModelError("truncated", "model response truncated") }),
+      planTruncationRetry({
+        ...BASE,
+        error: new ModelError("truncated", "model response truncated"),
+      }),
     ).toBeNull();
   });
 });
@@ -127,7 +173,10 @@ describe("truncation notice", () => {
   };
 
   it("tells the model its reply was cut and what the retry allows", () => {
-    const notice = formatTruncationNotice(detail, { kind: "raise_cap", maxTokens: 32_768 });
+    const notice = formatTruncationNotice(detail, {
+      kind: "raise_cap",
+      maxTokens: 32_768,
+    });
     expect(notice).toContain("cut off after 8192 tokens");
     expect(notice).toContain("32768 tokens");
     expect(notice).toContain("Keep your reasoning brief");
@@ -143,11 +192,20 @@ describe("truncation notice", () => {
   });
 
   it("keeps whatever notice the step already carried, first", () => {
-    const composed = composeTruncationNotice("loop detector says stop", detail, {
-      kind: "raise_cap",
-      maxTokens: 32_768,
-    });
+    const composed = composeTruncationNotice(
+      "loop detector says stop",
+      detail,
+      {
+        kind: "raise_cap",
+        maxTokens: 32_768,
+      },
+    );
     expect(composed.startsWith("loop detector says stop\n\n")).toBe(true);
-    expect(composeTruncationNotice(undefined, detail, { kind: "raise_cap", maxTokens: 1 })).not.toContain("\n\n");
+    expect(
+      composeTruncationNotice(undefined, detail, {
+        kind: "raise_cap",
+        maxTokens: 1,
+      }),
+    ).not.toContain("\n\n");
   });
 });

@@ -54,8 +54,15 @@ export interface IntegrationField {
    * Toggles are how a channel's kill switch reaches the hub — without
    * one an operator would set a token here and still need the CLI to
    * turn the thing on.
+   *
+   * `"list"` is edited as one comma-separated line and stored as a
+   * `string[]`. It exists because "who may drive this" is a list for
+   * every channel that has more than one operator, and a hub that can
+   * only hold one value would send them back to hand-editing JSON.
+   * `validate` runs per entry, so the error names the bad id rather
+   * than the whole line.
    */
-  kind?: "text" | "boolean";
+  kind?: "text" | "boolean" | "list";
   /** Mask the value in the UI and never log it. */
   secret: boolean;
   /** Shown, never edited or cleared: an address the service assigned. */

@@ -76,9 +76,7 @@ describe("parseReflectionOutput", () => {
   });
 
   it("deduplicates keys keeping the last value", () => {
-    const result = parseReflectionOutput(
-      "SET name=Alex\nSET name=Alexandra\n",
-    );
+    const result = parseReflectionOutput("SET name=Alex\nSET name=Alexandra\n");
     expect(result.facts).toEqual([pinnedFact("name", "Alexandra")]);
   });
 
@@ -94,10 +92,7 @@ describe("parseReflectionOutput", () => {
 
   it("tolerates CRLF line endings", () => {
     const result = parseReflectionOutput("SET a=1\r\nSET b=2\r\n");
-    expect(result.facts).toEqual([
-      pinnedFact("a", "1"),
-      pinnedFact("b", "2"),
-    ]);
+    expect(result.facts).toEqual([pinnedFact("a", "1"), pinnedFact("b", "2")]);
   });
 
   it("recognises the [pinned=false; keywords=...] marker on a SET line", () => {
@@ -140,9 +135,7 @@ describe("parseReflectionOutput", () => {
   });
 
   it("does not mistake a [tags=...] marker at the end of a SET value for the SET marker", () => {
-    const result = parseReflectionOutput(
-      "SET note=today [tags=foo]\n",
-    );
+    const result = parseReflectionOutput("SET note=today [tags=foo]\n");
     expect(result.facts).toEqual([
       {
         key: "note",
@@ -232,7 +225,9 @@ describe("parseReflectionOutput", () => {
       "h",
       "i",
     ].join(",");
-    const result = parseReflectionOutput(`NOTE some observation [tags=${tagList}]\n`);
+    const result = parseReflectionOutput(
+      `NOTE some observation [tags=${tagList}]\n`,
+    );
     expect(result.notes[0]?.tags).toHaveLength(8);
     expect(result.notes[0]?.tags[0]).toBe("good");
     expect(result.notes[0]?.tags).not.toContain("UPPER");
@@ -269,10 +264,8 @@ describe("parseReflectionOutput", () => {
 
   it("dedupes EVOLVE entries by targetId (last writer wins)", () => {
     const result = parseReflectionOutput(
-      [
-        "EVOLVE #5 [tags=alpha]",
-        "EVOLVE #5 [tags=beta,gamma]",
-      ].join("\n") + "\n",
+      ["EVOLVE #5 [tags=alpha]", "EVOLVE #5 [tags=beta,gamma]"].join("\n") +
+        "\n",
     );
     expect(result.evolves).toEqual([
       { targetId: 5, addTags: ["beta", "gamma"] },
@@ -300,9 +293,7 @@ describe("parseReflectionOutput", () => {
     );
     expect(result.facts).toHaveLength(2);
     expect(result.notes).toHaveLength(1);
-    expect(result.evolves).toEqual([
-      { targetId: 7, addTags: ["routing"] },
-    ]);
+    expect(result.evolves).toEqual([{ targetId: 7, addTags: ["routing"] }]);
   });
 
   it("lower-cases EVOLVE tags and drops invalid tokens", () => {
@@ -438,10 +429,10 @@ describe("parseReflectionOutput", () => {
     // unknown type slip through (or a legacy session is replayed),
     // the parser fails closed on the tag namespace but does NOT drop
     // the body — the observation is still worth recalling.
-    const result = parseReflectionOutput("NOTE [type=garbage] something happened\n");
-    expect(result.notes).toEqual([
-      { body: "something happened", tags: [] },
-    ]);
+    const result = parseReflectionOutput(
+      "NOTE [type=garbage] something happened\n",
+    );
+    expect(result.notes).toEqual([{ body: "something happened", tags: [] }]);
   });
 
   it("phase C: legacy untyped NOTE keeps the existing behaviour (no type tag added)", () => {

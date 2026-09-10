@@ -113,9 +113,7 @@ describe("createDefaultMemoryContextProvider", () => {
       recall: { enabled: false, k: 0 },
       index: { enabled: true, limit: 10, previewChars: 40 },
     });
-    const ctx = (await provider.buildMemoryContext(
-      input(null),
-    )) as unknown as {
+    const ctx = (await provider.buildMemoryContext(input(null))) as unknown as {
       recalled: unknown[];
       index: Array<{ preview: string }>;
     };

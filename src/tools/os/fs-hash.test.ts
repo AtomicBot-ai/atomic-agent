@@ -83,16 +83,13 @@ describe("os.fs.hash", () => {
     const path = join(dir, "x.txt");
     await writeFile(path, "hi", "utf8");
     await expect(
-      osFsHashTool.run(
-        { path: "x.txt", algorithm: "whirlpool" },
-        makeCtx(dir),
-      ),
+      osFsHashTool.run({ path: "x.txt", algorithm: "whirlpool" }, makeCtx(dir)),
     ).rejects.toThrow(/unknown algorithm/);
   });
 
   it("rejects when path is a directory", async () => {
-    await expect(
-      osFsHashTool.run({ path: "." }, makeCtx(dir)),
-    ).rejects.toThrow(/not a regular file/);
+    await expect(osFsHashTool.run({ path: "." }, makeCtx(dir))).rejects.toThrow(
+      /not a regular file/,
+    );
   });
 });

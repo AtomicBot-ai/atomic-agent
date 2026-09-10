@@ -21,23 +21,27 @@ describe("parseLlmRunModeConfig", () => {
   });
 
   it.each(["local", "cloud", "fusion"] as const)("accepts mode %s", (mode) => {
-    expect(parseLlmRunModeConfig({ mode }, providers, "llm.runMode")).toEqual({ mode });
+    expect(parseLlmRunModeConfig({ mode }, providers, "llm.runMode")).toEqual({
+      mode,
+    });
   });
 
   it("rejects an unknown mode", () => {
-    expect(() => parseLlmRunModeConfig({ mode: "hybrid" }, providers, "llm.runMode")).toThrow(
-      ConfigValidationError,
-    );
-    expect(() => parseLlmRunModeConfig({ mode: "hybrid" }, providers, "llm.runMode")).toThrow(
-      /llm\.runMode\.mode/,
-    );
+    expect(() =>
+      parseLlmRunModeConfig({ mode: "hybrid" }, providers, "llm.runMode"),
+    ).toThrow(ConfigValidationError);
+    expect(() =>
+      parseLlmRunModeConfig({ mode: "hybrid" }, providers, "llm.runMode"),
+    ).toThrow(/llm\.runMode\.mode/);
   });
 
   it("rejects a non-object block", () => {
-    expect(() => parseLlmRunModeConfig("fusion", providers, "llm.runMode")).toThrow(
+    expect(() =>
+      parseLlmRunModeConfig("fusion", providers, "llm.runMode"),
+    ).toThrow(/expected object/);
+    expect(() => parseLlmRunModeConfig([], providers, "llm.runMode")).toThrow(
       /expected object/,
     );
-    expect(() => parseLlmRunModeConfig([], providers, "llm.runMode")).toThrow(/expected object/);
   });
 
   it("round-trips a full fusion block", () => {
@@ -50,7 +54,13 @@ describe("parseLlmRunModeConfig", () => {
       workerMaxSteps: 25,
       workerTimeoutMs: 120_000,
     };
-    expect(parseLlmRunModeConfig({ mode: "fusion", fusion }, providers, "llm.runMode")).toEqual({
+    expect(
+      parseLlmRunModeConfig(
+        { mode: "fusion", fusion },
+        providers,
+        "llm.runMode",
+      ),
+    ).toEqual({
       mode: "fusion",
       fusion,
     });
@@ -83,7 +93,9 @@ describe("parseLlmRunModeConfig", () => {
         providers,
         "llm.runMode",
       ),
-    ).toThrow(/llm\.runMode\.fusion\.orchestratorProvider.*must be a cloud provider/);
+    ).toThrow(
+      /llm\.runMode\.fusion\.orchestratorProvider.*must be a cloud provider/,
+    );
   });
 
   it("rejects a worker pin that names a cloud provider", () => {
@@ -105,7 +117,11 @@ describe("parseLlmRunModeConfig", () => {
       ),
     ).toThrow(/unknown provider id "nope"/);
     expect(() =>
-      parseLlmRunModeConfig({ fusion: { workerProvider: "" } }, providers, "llm.runMode"),
+      parseLlmRunModeConfig(
+        { fusion: { workerProvider: "" } },
+        providers,
+        "llm.runMode",
+      ),
     ).toThrow(/expected non-empty string/);
   });
 
@@ -118,7 +134,8 @@ describe("parseLlmRunModeConfig", () => {
   it("accepts the worker-count bounds", () => {
     for (const workers of [FUSION_WORKERS_MIN, FUSION_WORKERS_MAX]) {
       expect(
-        parseLlmRunModeConfig({ fusion: { workers } }, providers, "llm.runMode").fusion?.workers,
+        parseLlmRunModeConfig({ fusion: { workers } }, providers, "llm.runMode")
+          .fusion?.workers,
       ).toBe(workers);
     }
     expect(DEFAULT_FUSION_WORKERS).toBeGreaterThanOrEqual(FUSION_WORKERS_MIN);
@@ -127,23 +144,38 @@ describe("parseLlmRunModeConfig", () => {
 
   it("bounds the worker step and time ceilings", () => {
     expect(() =>
-      parseLlmRunModeConfig({ fusion: { workerMaxSteps: 0 } }, providers, "llm.runMode"),
+      parseLlmRunModeConfig(
+        { fusion: { workerMaxSteps: 0 } },
+        providers,
+        "llm.runMode",
+      ),
     ).toThrow(/workerMaxSteps/);
     expect(() =>
-      parseLlmRunModeConfig({ fusion: { workerTimeoutMs: 10 } }, providers, "llm.runMode"),
+      parseLlmRunModeConfig(
+        { fusion: { workerTimeoutMs: 10 } },
+        providers,
+        "llm.runMode",
+      ),
     ).toThrow(/workerTimeoutMs/);
   });
 
   it("rejects an empty model label", () => {
     expect(() =>
-      parseLlmRunModeConfig({ fusion: { orchestratorModel: "" } }, providers, "llm.runMode"),
+      parseLlmRunModeConfig(
+        { fusion: { orchestratorModel: "" } },
+        providers,
+        "llm.runMode",
+      ),
     ).toThrow(/orchestratorModel/);
   });
 });
 
 describe("scrubRunModeProviderPins", () => {
   it("returns the block untouched when nothing points at the removed id", () => {
-    const block = { mode: "fusion" as const, fusion: { orchestratorProvider: "openrouter" } };
+    const block = {
+      mode: "fusion" as const,
+      fusion: { orchestratorProvider: "openrouter" },
+    };
     expect(scrubRunModeProviderPins(block, "groq")).toBe(block);
     expect(scrubRunModeProviderPins(undefined, "groq")).toBeUndefined();
     const noFusion = { mode: "cloud" as const };
@@ -153,7 +185,11 @@ describe("scrubRunModeProviderPins", () => {
   it("drops only the pin that names the removed provider", () => {
     const block = {
       mode: "fusion" as const,
-      fusion: { orchestratorProvider: "openrouter", workerProvider: "local-llama", workers: 3 },
+      fusion: {
+        orchestratorProvider: "openrouter",
+        workerProvider: "local-llama",
+        workers: 3,
+      },
     };
     expect(scrubRunModeProviderPins(block, "openrouter")).toEqual({
       mode: "fusion",

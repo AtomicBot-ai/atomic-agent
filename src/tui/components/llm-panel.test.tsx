@@ -328,7 +328,9 @@ describe("the compact hint strip fits the supported floor", () => {
       // A wrapped strip shows up as a tail row that is a continuation of
       // the hint rather than the whole of it: assert the last row starts
       // the strip, so nothing spilled onto a row above it.
-      expect(hint.trimStart().startsWith("j/k"), `last row: ${hint}`).toBe(true);
+      expect(hint.trimStart().startsWith("j/k"), `last row: ${hint}`).toBe(
+        true,
+      );
     });
   }
 });

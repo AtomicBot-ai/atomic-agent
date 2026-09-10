@@ -170,7 +170,7 @@ export function beginSse(
   res.writeHead(200, {
     "content-type": "text/event-stream; charset=utf-8",
     "cache-control": "no-cache, no-transform",
-    "connection": "keep-alive",
+    connection: "keep-alive",
     "x-accel-buffering": "no",
     ...extraHeaders,
   });

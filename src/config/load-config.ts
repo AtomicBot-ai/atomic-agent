@@ -539,7 +539,7 @@ export function loadConfig(): AtomicAgentConfig {
     },
     discord: {
       enabled: user.discord.enabled,
-      ownerUserId: user.discord.ownerUserId,
+      ownerUserIds: user.discord.ownerUserIds,
     },
     swarm: {
       units: user.swarm.units.map((u) => ({ ...u })),

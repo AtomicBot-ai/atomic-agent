@@ -40,10 +40,14 @@ describe("release matrix alignment", () => {
       .map(parseSlug)
       .filter((s): s is string => Boolean(s));
 
-    expect(activeSlugs, "release.yml active matrix slugs").toContain("linux-arm64");
+    expect(activeSlugs, "release.yml active matrix slugs").toContain(
+      "linux-arm64",
+    );
 
     // Prefer the GitHub-hosted ARM runner callout, not a self-hosted label.
-    const armLines = uncommentedSlugLines(yml).filter((l) => l.includes("linux-arm64"));
+    const armLines = uncommentedSlugLines(yml).filter((l) =>
+      l.includes("linux-arm64"),
+    );
     expect(armLines.length).toBeGreaterThan(0);
     expect(armLines.some((l) => l.includes("ubuntu-24.04-arm"))).toBe(true);
   });

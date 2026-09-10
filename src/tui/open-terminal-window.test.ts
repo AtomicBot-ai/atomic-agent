@@ -131,7 +131,9 @@ describe("isOnPath", () => {
   });
 
   it("misses one that does not", () => {
-    expect(isOnPath("definitely-not-a-real-binary", { PATH: "/bin" })).toBe(false);
+    expect(isOnPath("definitely-not-a-real-binary", { PATH: "/bin" })).toBe(
+      false,
+    );
   });
 
   it("treats an empty PATH as a miss rather than an error", () => {

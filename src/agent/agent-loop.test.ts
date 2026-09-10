@@ -16,10 +16,7 @@ import type {
   LlamaServerClient,
 } from "../llm/llama-server-client.js";
 import { ModelProfileManager } from "../llm/model-profile-manager.js";
-import {
-  GEMMA4_PROPS,
-  QWEN3_PROPS,
-} from "../llm/model-profile.fixtures.js";
+import { GEMMA4_PROPS, QWEN3_PROPS } from "../llm/model-profile.fixtures.js";
 import {
   GEMMA4_THINK_PROFILE,
   QWEN_THINK_PROFILE,
@@ -40,7 +37,12 @@ function makeCompletion(
     reasoningContent: "",
     stop: true,
     truncated: false,
-    timing: { promptMs: 1, predictedMs: 1, promptTokens: 10, predictedTokens: 5 },
+    timing: {
+      promptMs: 1,
+      predictedMs: 1,
+      promptTokens: 10,
+      predictedTokens: 5,
+    },
     cacheHitTokens: 0,
     slotId: 0,
     modelId,
@@ -335,7 +337,10 @@ describe("AgentLoop end-to-end with mock LLM", () => {
       capabilities: CAPS,
       skillCatalog: SKILLS,
       onEvent: (event) => {
-        if (event.type === "provider_waiting" || event.type === "provider_recovered") {
+        if (
+          event.type === "provider_waiting" ||
+          event.type === "provider_recovered"
+        ) {
           events.push(event as { type: string } & Record<string, unknown>);
         }
       },
@@ -394,7 +399,11 @@ describe("AgentLoop end-to-end with mock LLM", () => {
             reasoningContent: "Let me think about this at great length",
             stop: false,
             truncated: true,
-            usage: { promptTokens: 6_000, completionTokens: 8_192, totalTokens: 14_192 },
+            usage: {
+              promptTokens: 6_000,
+              completionTokens: 8_192,
+              totalTokens: 14_192,
+            },
           };
         }
         return makeCompletion(
@@ -405,7 +414,10 @@ describe("AgentLoop end-to-end with mock LLM", () => {
       capabilities: CAPS,
       skillCatalog: SKILLS,
       onEvent: (event) => {
-        if (event.type === "completion_truncated" || event.type === "loop_failed") {
+        if (
+          event.type === "completion_truncated" ||
+          event.type === "loop_failed"
+        ) {
           events.push(event as { type: string } & Record<string, unknown>);
         }
       },
@@ -456,7 +468,13 @@ describe("AgentLoop end-to-end with mock LLM", () => {
       description: "no-op",
       readonly: true,
       async run() {
-        return { tool: "noop", status: "ok" as const, summary: "noop", details: {}, truncated: false };
+        return {
+          tool: "noop",
+          status: "ok" as const,
+          summary: "noop",
+          details: {},
+          truncated: false,
+        };
       },
     });
     const kinds: string[] = [];
@@ -467,16 +485,23 @@ describe("AgentLoop end-to-end with mock LLM", () => {
       grammar: 'root ::= "ok"',
       llmComplete: async () => {
         calls += 1;
-        if (calls <= 2) return makeCompletion(JSON.stringify({ tool: "noop", args: {} }));
+        if (calls <= 2)
+          return makeCompletion(JSON.stringify({ tool: "noop", args: {} }));
         if (calls === 3) {
           return {
             ...makeCompletion(""),
             stop: false,
             truncated: true,
-            usage: { promptTokens: 6_000, completionTokens: 8_192, totalTokens: 14_192 },
+            usage: {
+              promptTokens: 6_000,
+              completionTokens: 8_192,
+              totalTokens: 14_192,
+            },
           };
         }
-        return makeCompletion(JSON.stringify({ tool: "reply", args: { text: "done" } }));
+        return makeCompletion(
+          JSON.stringify({ tool: "reply", args: { text: "done" } }),
+        );
       },
       toolDescriptors: TOOLS,
       capabilities: CAPS,
@@ -487,7 +512,11 @@ describe("AgentLoop end-to-end with mock LLM", () => {
           event.type === "completion_truncated" ||
           event.type === "loop_completed"
         ) {
-          kinds.push(event.type === "loop_completed" ? `loop_completed:${event.reason}` : event.type);
+          kinds.push(
+            event.type === "loop_completed"
+              ? `loop_completed:${event.reason}`
+              : event.type,
+          );
         }
       },
     });
@@ -502,7 +531,11 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     );
     expect(result.reason).toBe("reply");
     expect(calls).toBe(4);
-    expect(kinds).toEqual(["task_continued", "completion_truncated", "loop_completed:reply"]);
+    expect(kinds).toEqual([
+      "task_continued",
+      "completion_truncated",
+      "loop_completed:reply",
+    ]);
   });
 
   it("retries a cut on the finalization step, where a reasoning model is likeliest to think past the cap", async () => {
@@ -519,10 +552,16 @@ describe("AgentLoop end-to-end with mock LLM", () => {
             ...makeCompletion(""),
             stop: false,
             truncated: true,
-            usage: { promptTokens: 6_000, completionTokens: 8_192, totalTokens: 14_192 },
+            usage: {
+              promptTokens: 6_000,
+              completionTokens: 8_192,
+              totalTokens: 14_192,
+            },
           };
         }
-        return makeCompletion(JSON.stringify({ tool: "reply", args: { text: "summary" } }));
+        return makeCompletion(
+          JSON.stringify({ tool: "reply", args: { text: "summary" } }),
+        );
       },
       toolDescriptors: TOOLS,
       capabilities: CAPS,
@@ -559,10 +598,16 @@ describe("AgentLoop end-to-end with mock LLM", () => {
             ...makeCompletion(""),
             stop: false,
             truncated: true,
-            usage: { promptTokens: 6_000, completionTokens: 8_192, totalTokens: 14_192 },
+            usage: {
+              promptTokens: 6_000,
+              completionTokens: 8_192,
+              totalTokens: 14_192,
+            },
           };
         }
-        return makeCompletion(JSON.stringify({ tool: "reply", args: { text: "ok" } }));
+        return makeCompletion(
+          JSON.stringify({ tool: "reply", args: { text: "ok" } }),
+        );
       },
       toolDescriptors: TOOLS,
       capabilities: CAPS,
@@ -600,8 +645,14 @@ describe("AgentLoop end-to-end with mock LLM", () => {
       slotManager: new SlotManager(2),
       grammar: 'root ::= "ok"',
       llmComplete: async () => ({
-        ...makeCompletion(JSON.stringify({ tool: "reply", args: { text: "ok" } })),
-        usage: { promptTokens: 20_000, completionTokens: 500, totalTokens: 20_500 },
+        ...makeCompletion(
+          JSON.stringify({ tool: "reply", args: { text: "ok" } }),
+        ),
+        usage: {
+          promptTokens: 20_000,
+          completionTokens: 500,
+          totalTokens: 20_500,
+        },
       }),
       toolDescriptors: TOOLS,
       capabilities: CAPS,
@@ -611,7 +662,12 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     });
     const result = await loop.runTurn(
       createEmptySessionState({ id: "s-trunc-unlearn", workingDir }),
-      { userMessage: "hi", maxSteps: 5, taskMaxSteps: 5, signal: new AbortController().signal },
+      {
+        userMessage: "hi",
+        maxSteps: 5,
+        taskMaxSteps: 5,
+        signal: new AbortController().signal,
+      },
     );
     expect(result.reason).toBe("reply");
     expect(exceeded).toEqual([20_500]);
@@ -632,7 +688,11 @@ describe("AgentLoop end-to-end with mock LLM", () => {
           ...makeCompletion(""),
           stop: false,
           truncated: true,
-          usage: { promptTokens: 6_000, completionTokens: cap, totalTokens: 6_000 + cap },
+          usage: {
+            promptTokens: 6_000,
+            completionTokens: cap,
+            totalTokens: 6_000 + cap,
+          },
         };
       },
       toolDescriptors: TOOLS,
@@ -656,7 +716,9 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     expect(result.reason).toBe("failed");
     expect(calls).toBe(2);
     expect(failures).toHaveLength(1);
-    expect(failures[0]).toContain("model: model response truncated at 32768 tokens");
+    expect(failures[0]).toContain(
+      "model: model response truncated at 32768 tokens",
+    );
     expect(failures[0]).toContain("localModels.completionMaxTokens");
     expect(result.session.lastError).toContain("model response truncated");
   });
@@ -682,7 +744,11 @@ describe("AgentLoop end-to-end with mock LLM", () => {
             ...makeCompletion(""),
             stop: false,
             truncated: true,
-            usage: { promptTokens: 30_000, completionTokens: 2_768, totalTokens: 32_768 },
+            usage: {
+              promptTokens: 30_000,
+              completionTokens: 2_768,
+              totalTokens: 32_768,
+            },
           };
         }
         // Same cap as the first attempt: the window was the wall, not the cap.
@@ -730,12 +796,23 @@ describe("AgentLoop end-to-end with mock LLM", () => {
             ...makeCompletion(""),
             stop: false,
             truncated: true,
-            usage: { promptTokens: 6_000, completionTokens: 8_192, totalTokens: 14_192 },
+            usage: {
+              promptTokens: 6_000,
+              completionTokens: 8_192,
+              totalTokens: 14_192,
+            },
           };
         }
-        throw new TransportError('"vendor" rejected the request (400).', 400, "https://x/v1", {
-          cause: new Error("max_tokens is too large: 32768. This model supports at most 16384 completion tokens"),
-        });
+        throw new TransportError(
+          '"vendor" rejected the request (400).',
+          400,
+          "https://x/v1",
+          {
+            cause: new Error(
+              "max_tokens is too large: 32768. This model supports at most 16384 completion tokens",
+            ),
+          },
+        );
       },
       toolDescriptors: TOOLS,
       capabilities: CAPS,
@@ -757,7 +834,9 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     );
     expect(result.reason).toBe("failed");
     expect(calls).toBe(2);
-    expect(failures[0]).toContain("model: model response truncated at 8192 tokens");
+    expect(failures[0]).toContain(
+      "model: model response truncated at 8192 tokens",
+    );
     expect(failures[0]).not.toContain("rejected the request");
   });
 
@@ -1232,7 +1311,9 @@ describe("AgentLoop end-to-end with mock LLM", () => {
       text: expect.stringContaining("continue"),
     });
     expect(result.session.status).toBe("stalled");
-    expect(result.session.lastError).toMatch(/task_stopped:step_ceiling: 2 steps/);
+    expect(result.session.lastError).toMatch(
+      /task_stopped:step_ceiling: 2 steps/,
+    );
   });
 
   it("reserves the final step for a terminal reply", async () => {
@@ -1542,7 +1623,9 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     // third returned only lines the first already showed.
     const registry = buildDefaultToolRegistry();
     registry.register(osFsReadTool);
-    const body = Array.from({ length: 200 }, (_, i) => `line ${i + 1}`).join("\n");
+    const body = Array.from({ length: 200 }, (_, i) => `line ${i + 1}`).join(
+      "\n",
+    );
     writeFileSync(join(workingDir, "src.ts"), `${body}\n`, "utf8");
     const script = [
       { tool: "os.fs.read", args: { path: "src.ts" } },
@@ -1568,7 +1651,8 @@ describe("AgentLoop end-to-end with mock LLM", () => {
       skillCatalog: SKILLS,
       onEvent: (event) => {
         if (event.type === "loop_detected") detected.push(event);
-        if (process.env.DBG && event.type === "loop_failed") console.log("ERRMSG", (event as any).error?.message);
+        if (process.env.DBG && event.type === "loop_failed")
+          console.log("ERRMSG", (event as any).error?.message);
       },
     });
     const session = createEmptySessionState({ id: "s-read-loop", workingDir });
@@ -1959,9 +2043,7 @@ describe("AgentLoop end-to-end with mock LLM", () => {
       llmComplete: async () => {
         llmCalls += 1;
         return {
-          ...makeCompletion(
-            '{"tool":"finish","args":{"summary":"never finis',
-          ),
+          ...makeCompletion('{"tool":"finish","args":{"summary":"never finis'),
           truncated: true,
         };
       },
@@ -2103,17 +2185,25 @@ describe("AgentLoop end-to-end with mock LLM", () => {
         // unparseable — the shape a large `os.fs.write` produces when
         // the repair's own token cap cannot fit the argument again.
         return llmCalls <= 2
-          ? makeCompletion('[{"tool":"os.fs.write","args":{"path":"/tmp/x","content":"aaa')
-          : makeCompletion(JSON.stringify({ tool: "reply", args: { text: "done" } }));
+          ? makeCompletion(
+              '[{"tool":"os.fs.write","args":{"path":"/tmp/x","content":"aaa',
+            )
+          : makeCompletion(
+              JSON.stringify({ tool: "reply", args: { text: "done" } }),
+            );
       },
       toolDescriptors: TOOLS,
       capabilities: CAPS,
       skillCatalog: SKILLS,
       onEvent: (event) => {
-        if (event.type === "parse_failure_recovered") recoveries.push(event.attempt);
+        if (event.type === "parse_failure_recovered")
+          recoveries.push(event.attempt);
       },
     });
-    const session = createEmptySessionState({ id: "s-parse-recovered", workingDir });
+    const session = createEmptySessionState({
+      id: "s-parse-recovered",
+      workingDir,
+    });
     const result = await loop.runTurn(session, {
       userMessage: "write the file",
       maxSteps: 5,
@@ -2129,7 +2219,9 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     const afterRecovery = prompts[2] ?? "";
     expect(afterRecovery).toContain("rejected before any tool ran");
     expect(afterRecovery).toContain("Nothing you attempted has happened yet");
-    const replies = result.session.turns.filter((t) => t.kind === "assistant_reply");
+    const replies = result.session.turns.filter(
+      (t) => t.kind === "assistant_reply",
+    );
     expect(replies).toHaveLength(1);
     expect(replies[0]).toMatchObject({ text: "done" });
   });
@@ -2146,7 +2238,10 @@ describe("AgentLoop end-to-end with mock LLM", () => {
       capabilities: CAPS,
       skillCatalog: SKILLS,
     });
-    const session = createEmptySessionState({ id: "s-failure-record", workingDir });
+    const session = createEmptySessionState({
+      id: "s-failure-record",
+      workingDir,
+    });
     const result = await loop.runTurn(session, {
       userMessage: "go",
       maxSteps: 3,
@@ -2157,7 +2252,9 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     expect(last?.kind).toBe("assistant_reply");
     expect((last as { text: string }).text).toContain("this turn failed");
     expect((last as { text: string }).text).toContain("grammar");
-    expect((last as { text: string }).text).toContain("Nothing from it took effect");
+    expect((last as { text: string }).text).toContain(
+      "Nothing from it took effect",
+    );
   });
 
   it("does not recover a request the model server itself rejected", async () => {
@@ -2176,7 +2273,8 @@ describe("AgentLoop end-to-end with mock LLM", () => {
       capabilities: CAPS,
       skillCatalog: SKILLS,
       onEvent: (event) => {
-        if (event.type === "parse_failure_recovered") recoveries.push(event.attempt);
+        if (event.type === "parse_failure_recovered")
+          recoveries.push(event.attempt);
       },
     });
     const session = createEmptySessionState({ id: "s-413", workingDir });
@@ -2201,9 +2299,7 @@ describe("AgentLoop end-to-end with mock LLM", () => {
       slotManager: new SlotManager(2),
       grammar: 'root ::= "ok"',
       llmComplete: async () =>
-        makeCompletion(
-          JSON.stringify({ tool: "does_not_exist", args: {} }),
-        ),
+        makeCompletion(JSON.stringify({ tool: "does_not_exist", args: {} })),
       toolDescriptors: TOOLS,
       capabilities: CAPS,
       skillCatalog: SKILLS,
@@ -2263,10 +2359,7 @@ describe("AgentLoop end-to-end with mock LLM", () => {
       profile: QWEN_THINK_PROFILE,
       profileManager,
       llmComplete: async () =>
-        makeCompletion(
-          toolCall("finish", { summary: "done" }),
-          "gemma-4-it",
-        ),
+        makeCompletion(toolCall("finish", { summary: "done" }), "gemma-4-it"),
       toolDescriptors: TOOLS,
       capabilities: CAPS,
       skillCatalog: SKILLS,
@@ -2324,21 +2417,12 @@ describe("AgentLoop end-to-end with mock LLM", () => {
 
     const completions: CompletionResult[] = [
       // Step 0: served by Qwen still (modelId matches baseline).
-      makeCompletion(
-        toolCall("noop", {}),
-        "qwen3-30b-a3b-instruct-2507",
-      ),
+      makeCompletion(toolCall("noop", {}), "qwen3-30b-a3b-instruct-2507"),
       // Step 1: server has been hot-swapped to Gemma. Reactive refresh
       // must pick it up before step 2 starts.
-      makeCompletion(
-        toolCall("noop", {}),
-        "gemma-4-it",
-      ),
+      makeCompletion(toolCall("noop", {}), "gemma-4-it"),
       // Step 2: close the turn so the loop doesn't stall.
-      makeCompletion(
-        toolCall("finish", { summary: "ok" }),
-        "gemma-4-it",
-      ),
+      makeCompletion(toolCall("finish", { summary: "ok" }), "gemma-4-it"),
     ];
     let callIndex = 0;
     const loop = new AgentLoop({
@@ -2383,14 +2467,16 @@ describe("AgentLoop reflection hook", () => {
   });
 
   function makeReplyLoop(
-    reflectionRunner: {
-      reflect: (input: {
-        sessionId: string;
-        userMessage: string;
-        assistantReply: string;
-      }) => Promise<void>;
-      abortPending: () => void;
-    } | undefined,
+    reflectionRunner:
+      | {
+          reflect: (input: {
+            sessionId: string;
+            userMessage: string;
+            assistantReply: string;
+          }) => Promise<void>;
+          abortPending: () => void;
+        }
+      | undefined,
   ): AgentLoop {
     const registry = buildDefaultToolRegistry();
     return new AgentLoop({

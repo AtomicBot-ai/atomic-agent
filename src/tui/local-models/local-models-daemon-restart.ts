@@ -46,7 +46,9 @@ export interface DaemonRestartDeps {
  *
  * @returns true only when the chat daemon came back up.
  */
-export async function restartLocalDaemon(deps: DaemonRestartDeps): Promise<boolean> {
+export async function restartLocalDaemon(
+  deps: DaemonRestartDeps,
+): Promise<boolean> {
   const cfg = getConfig();
   // KIND-based, the predicate `local-turn-gate` and the runtime share:
   // a `llama-server` entry under a custom id is still the local route.

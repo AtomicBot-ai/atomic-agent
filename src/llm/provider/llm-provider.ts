@@ -35,10 +35,7 @@ export interface ProviderHealthResult {
 export type ToolsSupportLevel = "none" | "basic" | "parallel" | "strict";
 
 export type ReasoningFormat =
-  | "none"
-  | "delta_reasoning"
-  | "delta_thinking"
-  | "delta_reasoning_content";
+  "none" | "delta_reasoning" | "delta_thinking" | "delta_reasoning_content";
 
 /**
  * Snapshot of what a provider can do. `toolTransport` drives whether

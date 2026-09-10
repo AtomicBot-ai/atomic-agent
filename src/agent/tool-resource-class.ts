@@ -185,7 +185,8 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
  * is consulted only when the static lookup misses, so it cannot
  * override the built-in classes.
  */
-let dynamicResourceClassResolver: ((toolName: string) => ResourceClass | null) | null = null;
+let dynamicResourceClassResolver:
+  ((toolName: string) => ResourceClass | null) | null = null;
 
 /**
  * Install a dynamic resolver. Pass `null` to unregister (e.g. during

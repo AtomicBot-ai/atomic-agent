@@ -178,7 +178,9 @@ function renderOutput(
 
   const filterParts = describeFilter(args);
   if (filterParts.length > 0) {
-    header.push(`filter: ${filterParts.join(", ")} → matched=${matched.length}`);
+    header.push(
+      `filter: ${filterParts.join(", ")} → matched=${matched.length}`,
+    );
   }
 
   const topExt = topExtensions(all, TOP_EXTENSIONS_IN_HEADER);
@@ -200,7 +202,9 @@ function renderOutput(
       ? ``
       : shown.map((e) => formatRow(e, args.sort)).join("\n");
 
-  return [header.join("\n"), shownLabel, body].filter((s) => s.length > 0).join("\n");
+  return [header.join("\n"), shownLabel, body]
+    .filter((s) => s.length > 0)
+    .join("\n");
 }
 
 function describeFilter(args: ParsedArgs): string[] {

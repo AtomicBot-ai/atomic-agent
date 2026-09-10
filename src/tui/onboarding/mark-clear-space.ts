@@ -32,7 +32,9 @@ export interface MarkClearSpaceOptions {
  * quadrants between the arms, which is what stops the mark looking
  * pasted onto the sky rather than in it.
  */
-export function computeMarkClearSpans(options: MarkClearSpaceOptions): ClearSpan[] {
+export function computeMarkClearSpans(
+  options: MarkClearSpaceOptions,
+): ClearSpan[] {
   const inked = options.markRows.map(inkedSpan);
   const spans: ClearSpan[] = [];
   for (let row = 0; row < options.rows; row += 1) {

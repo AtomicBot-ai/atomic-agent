@@ -33,15 +33,26 @@ describe("persistSessionRailLayout", () => {
   it("writes order and pinned to config.json and getConfig() picks them up", () => {
     expect(readSessionRailLayout()).toEqual({ order: [], pinned: [] });
     persistSessionRailLayout({ order: ["s-b", "s-a"], pinned: ["s-a"] });
-    const onDisk = JSON.parse(readFileSync(getConfig().paths.userConfigFile, "utf8"));
-    expect(onDisk.tui.sessionRail).toEqual({ order: ["s-b", "s-a"], pinned: ["s-a"] });
-    expect(readSessionRailLayout()).toEqual({ order: ["s-b", "s-a"], pinned: ["s-a"] });
+    const onDisk = JSON.parse(
+      readFileSync(getConfig().paths.userConfigFile, "utf8"),
+    );
+    expect(onDisk.tui.sessionRail).toEqual({
+      order: ["s-b", "s-a"],
+      pinned: ["s-a"],
+    });
+    expect(readSessionRailLayout()).toEqual({
+      order: ["s-b", "s-a"],
+      pinned: ["s-a"],
+    });
   });
 
   it("replaces the previous layout and leaves the rest of tui alone", () => {
     persistSessionRailLayout({ order: ["s-a"], pinned: ["s-a"] });
     persistSessionRailLayout({ order: ["s-b", "s-a"], pinned: [] });
-    expect(getConfig().tui.sessionRail).toEqual({ order: ["s-b", "s-a"], pinned: [] });
+    expect(getConfig().tui.sessionRail).toEqual({
+      order: ["s-b", "s-a"],
+      pinned: [],
+    });
     expect(getConfig().tui.theme).toBe("auto");
     expect(getConfig().tui.mouse).toBe(true);
   });

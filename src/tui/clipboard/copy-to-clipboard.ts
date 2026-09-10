@@ -128,11 +128,7 @@ export function platformClipboardCommand(
  * than a non-zero exit, so both collapse to `false` — the caller only
  * ever needs "did the clipboard change".
  */
-const spawnClipboardCommand: ClipboardCommandRunner = (
-  command,
-  args,
-  text,
-) =>
+const spawnClipboardCommand: ClipboardCommandRunner = (command, args, text) =>
   new Promise<boolean>((resolve) => {
     let settled = false;
     const done = (ok: boolean): void => {

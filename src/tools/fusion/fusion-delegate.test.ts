@@ -81,7 +81,11 @@ const TASKS = [
 ];
 
 /** Six independent tasks — more than the fixture's configured `workers` (3). */
-function sixTasks(): Array<{ id: string; title: string; instructions: string }> {
+function sixTasks(): Array<{
+  id: string;
+  title: string;
+  instructions: string;
+}> {
   return Array.from({ length: 6 }, (_, i) => ({
     id: `t${i + 1}`,
     title: `Task ${i + 1}`,
@@ -117,7 +121,10 @@ describe("fusion.delegate", () => {
     // leg the operator just walked away from.
     const runTurn = vi.fn(async () => turnResult());
     const tool = buildFusionDelegateTool(
-      deps({ runTurn, resolveRunMode: () => fusionMode({ effective: "cloud" }) }),
+      deps({
+        runTurn,
+        resolveRunMode: () => fusionMode({ effective: "cloud" }),
+      }),
     );
     const result = await tool.run({ tasks: TASKS }, ctx());
     expect(result.status).toBe("error");
@@ -175,11 +182,18 @@ describe("fusion.delegate", () => {
         tool: "fusion.delegate",
         title: "2 tasks",
       },
-      { sessionId: "s-parent", phase: "finished", model: "big", summary: "2/2 ok — merging" },
+      {
+        sessionId: "s-parent",
+        phase: "finished",
+        model: "big",
+        summary: "2/2 ok — merging",
+      },
     ]);
     // The workers' own lines name the worker model, not the cloud one.
     expect(
-      events.filter((e) => e.role === "worker").every((e) => e.model === "small"),
+      events
+        .filter((e) => e.role === "worker")
+        .every((e) => e.model === "small"),
     ).toBe(true);
   });
 
@@ -274,7 +288,8 @@ describe("fusion.delegate", () => {
       deps({ slotManager: { poolSize: () => 8 } }),
     );
     expect(
-      (await tool.run({ tasks: TASKS, maxWorkers: 8 }, ctx())).details.maxWorkers,
+      (await tool.run({ tasks: TASKS, maxWorkers: 8 }, ctx())).details
+        .maxWorkers,
     ).toBe(2);
   });
 
@@ -374,11 +389,16 @@ describe("fusion.delegate", () => {
         },
       }),
     );
-    const result = await tool.run({ tasks: TASKS }, ctx({ signal: controller.signal }));
-    expect(result.status).toBe("ok");
-    expect((result.details.tasks as WorkerTaskResult[]).every((r) => r.status === "cancelled")).toBe(
-      true,
+    const result = await tool.run(
+      { tasks: TASKS },
+      ctx({ signal: controller.signal }),
     );
+    expect(result.status).toBe("ok");
+    expect(
+      (result.details.tasks as WorkerTaskResult[]).every(
+        (r) => r.status === "cancelled",
+      ),
+    ).toBe(true);
   });
 
   it("does not fail the call when warming the backend throws", async () => {

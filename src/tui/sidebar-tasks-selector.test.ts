@@ -45,10 +45,7 @@ describe("selectSidebarTasks", () => {
       row({ id: "rec-failed", status: "failed", recurring: true }),
       row({ id: "one-shot-completed", status: "completed", recurring: false }),
     ]);
-    expect(result.map((r) => r.id)).toEqual([
-      "rec-failed",
-      "rec-completed",
-    ]);
+    expect(result.map((r) => r.id)).toEqual(["rec-failed", "rec-completed"]);
   });
 
   it("orders running before pending before everything else", () => {

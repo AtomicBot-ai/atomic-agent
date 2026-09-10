@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { cloudState, fusionState, localState } from "./composer-switch-fixtures.js";
+import {
+  cloudState,
+  fusionState,
+  localState,
+} from "./composer-switch-fixtures.js";
 import { selectComposerSwitchRows } from "./composer-switch-rows.js";
 import {
   selectComposerWorkersLabel,
@@ -49,14 +53,18 @@ describe("the workers switch", () => {
     const base = fusionState();
     const external = {
       ...base,
-      localModelsPanel: { ...base.localModelsPanel, configMode: "external" as const },
+      localModelsPanel: {
+        ...base.localModelsPanel,
+        configMode: "external" as const,
+      },
     };
-    expect(selectWorkerRows(external).find((row) => row.label === "2 workers")?.detail).toBe(
-      "external server — set --parallel yourself",
-    );
-    expect(selectWorkerRows(base).find((row) => row.label === "2 workers")?.detail).toBe(
-      "llama-server --parallel 2 · restart to apply",
-    );
+    expect(
+      selectWorkerRows(external).find((row) => row.label === "2 workers")
+        ?.detail,
+    ).toBe("external server — set --parallel yourself");
+    expect(
+      selectWorkerRows(base).find((row) => row.label === "2 workers")?.detail,
+    ).toBe("llama-server --parallel 2 · restart to apply");
   });
 
   it("never offers a model that is not on disk", () => {
@@ -65,29 +73,40 @@ describe("the workers switch", () => {
       ...base,
       localModelsPanel: {
         ...base.localModelsPanel,
-        rows: base.localModelsPanel.rows.map((row) => ({ ...row, downloaded: false })),
+        rows: base.localModelsPanel.rows.map((row) => ({
+          ...row,
+          downloaded: false,
+        })),
       },
     };
-    expect(selectWorkerRows(state).some((row) => row.intent.kind === "fusionWorkerModel")).toBe(
-      false,
-    );
+    expect(
+      selectWorkerRows(state).some(
+        (row) => row.intent.kind === "fusionWorkerModel",
+      ),
+    ).toBe(false);
   });
 
   it("is the switch's rows for the `workers` kind", () => {
     const state = fusionState();
-    expect(selectComposerSwitchRows(state, "workers")).toEqual(selectWorkerRows(state));
+    expect(selectComposerSwitchRows(state, "workers")).toEqual(
+      selectWorkerRows(state),
+    );
   });
 });
 
 describe("the meta bar's worker label", () => {
   it("counts the workers on the fusion route", () => {
     expect(selectComposerWorkersLabel(fusionState())).toBe("2 workers");
-    expect(selectComposerWorkersLabel(fusionState({ workers: 1 }))).toBe("1 worker");
+    expect(selectComposerWorkersLabel(fusionState({ workers: 1 }))).toBe(
+      "1 worker",
+    );
   });
 
   it("says nothing anywhere else", () => {
     expect(selectComposerWorkersLabel(cloudState())).toBeNull();
     expect(selectComposerWorkersLabel(localState())).toBeNull();
-    expect(selectComposerWorkersLabel(fusionState({ effective: "cloud" }))).toBeNull();
+    expect(
+      selectComposerWorkersLabel(fusionState({ effective: "cloud" })),
+    ).toBeNull();
   });
 });

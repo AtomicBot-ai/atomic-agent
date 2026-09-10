@@ -1,6 +1,12 @@
-import { FUSION_WORKERS_MAX, FUSION_WORKERS_MIN } from "../../config/llm-run-mode-config.js";
+import {
+  FUSION_WORKERS_MAX,
+  FUSION_WORKERS_MIN,
+} from "../../config/llm-run-mode-config.js";
 import type { TuiState } from "../tui-state.js";
-import { localSliceLoadingRows, type ComposerSwitchRow } from "./composer-switch-rows.js";
+import {
+  localSliceLoadingRows,
+  type ComposerSwitchRow,
+} from "./composer-switch-rows.js";
 
 /**
  * The rows of the composer's fourth control, `workers` — drawn only on
@@ -21,7 +27,9 @@ import { localSliceLoadingRows, type ComposerSwitchRow } from "./composer-switch
  * the server. A running daemon keeps its old slot count until it is
  * restarted, which the orchestrator says in a notice.
  */
-export function selectWorkerRows(state: TuiState): readonly ComposerSwitchRow[] {
+export function selectWorkerRows(
+  state: TuiState,
+): readonly ComposerSwitchRow[] {
   const workers = state.providersPanel.runMode?.workers ?? 2;
   const external = state.localModelsPanel.configMode === "external";
   // The panel's own `active` flag, not the LLM pane's row: that one

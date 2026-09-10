@@ -91,7 +91,8 @@ export function packIssue(
       const room = pageLimit - current.length - separator.length;
       // Only when a cut fragment has something to show; a header that
       // fills the page on its own keeps the section for the next one.
-      const minRoom = renderSection({ ...section, body: CUT_MARKER }).length + 16;
+      const minRoom =
+        renderSection({ ...section, body: CUT_MARKER }).length + 16;
       if (room >= minRoom) {
         current = `${current}${separator}${cutSection(section, room)}`;
         continue;
@@ -125,7 +126,11 @@ export function packIssue(
     // titles alone can exceed it, so fall back to a note without them.
     const short = `${pages[last]}\n\n_More sections in the attached zip._`;
     pages[last] =
-      withNote.length <= limit ? withNote : short.length <= limit ? short : pages[last]!;
+      withNote.length <= limit
+        ? withNote
+        : short.length <= limit
+          ? short
+          : pages[last]!;
   }
   const [body = header, ...comments] = pages;
   return { body, comments, overflow };

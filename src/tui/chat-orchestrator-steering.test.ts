@@ -82,7 +82,8 @@ function makeHarness(): Harness {
 
   const chat = new ChatOrchestrator(runtime, bus, {
     maxSteps: 4,
-    llamaUrl: "http://127.0.0.1:8080", readGateFacts: cloudGateFacts,
+    llamaUrl: "http://127.0.0.1:8080",
+    readGateFacts: cloudGateFacts,
   });
 
   return {
@@ -114,8 +115,9 @@ function makeHarness(): Harness {
 
 function infoLines(actions: readonly TuiAction[]): string[] {
   return actions
-    .filter((a): a is Extract<TuiAction, { type: "runtime_info" }> =>
-      a.type === "runtime_info",
+    .filter(
+      (a): a is Extract<TuiAction, { type: "runtime_info" }> =>
+        a.type === "runtime_info",
     )
     .map((a) => a.line);
 }
@@ -300,7 +302,8 @@ function makeGapHarness(): GapHarness {
 
   const chat = new ChatOrchestrator(runtime, bus, {
     maxSteps: 4,
-    llamaUrl: "http://127.0.0.1:8080", readGateFacts: cloudGateFacts,
+    llamaUrl: "http://127.0.0.1:8080",
+    readGateFacts: cloudGateFacts,
   });
 
   return {

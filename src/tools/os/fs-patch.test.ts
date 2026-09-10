@@ -124,11 +124,7 @@ describe("os.fs.patch", () => {
   it("refuses whole apply when any hunk cannot land (no partial writes)", async () => {
     const file = join(dir, "x.txt");
     await writeFile(file, "wrong content\n", "utf8");
-    const patch = buildPatch(
-      "x.txt",
-      "real content\n",
-      "updated content\n",
-    );
+    const patch = buildPatch("x.txt", "real content\n", "updated content\n");
     const tool = buildOsFsPatchTool({
       approvals: approveAll(),
       approvalRequired: true,

@@ -20,8 +20,10 @@ interface FakeProviderOptions {
 function fakeProvider(options: FakeProviderOptions = {}): LlmProvider {
   return {
     name: "fake",
-    capabilities:
-      options.capabilities ?? { vision: true, visionSource: "has_multimodal" },
+    capabilities: options.capabilities ?? {
+      vision: true,
+      visionSource: "has_multimodal",
+    },
     describeImage: vi.fn(
       options.onCall ??
         (async () => ({
@@ -46,10 +48,7 @@ describe("buildVisionDescribeTool", () => {
       maxImagesPerCall: 2,
       maxImageBytes: 1024,
     });
-    const result = await tool.run(
-      { path: "x.png" },
-      ctx(process.cwd()),
-    );
+    const result = await tool.run({ path: "x.png" }, ctx(process.cwd()));
     expect(result.status).toBe("error");
     expect(result.summary).toMatch(/prompt/i);
   });
@@ -60,10 +59,7 @@ describe("buildVisionDescribeTool", () => {
       maxImagesPerCall: 2,
       maxImageBytes: 1024,
     });
-    const result = await tool.run(
-      { prompt: "describe" },
-      ctx(process.cwd()),
-    );
+    const result = await tool.run({ prompt: "describe" }, ctx(process.cwd()));
     expect(result.status).toBe("error");
     expect(result.summary).toMatch(/path|paths/i);
   });
@@ -93,10 +89,7 @@ describe("buildVisionDescribeTool", () => {
       maxImagesPerCall: 2,
       maxImageBytes: 1024,
     });
-    const result = await tool.run(
-      { prompt: "describe", path },
-      ctx(tmp),
-    );
+    const result = await tool.run({ prompt: "describe", path }, ctx(tmp));
     expect(result.status).toBe("error");
     expect(result.summary).toMatch(/unsupported image extension/i);
   });
@@ -111,10 +104,7 @@ describe("buildVisionDescribeTool", () => {
       maxImagesPerCall: 2,
       maxImageBytes: 1024,
     });
-    const result = await tool.run(
-      { prompt: "describe", path },
-      ctx(tmp),
-    );
+    const result = await tool.run({ prompt: "describe", path }, ctx(tmp));
     expect(result.status).toBe("ok");
     expect(result.summary).toContain("a small red square");
     const calls = (provider.describeImage as ReturnType<typeof vi.fn>).mock
@@ -218,10 +208,7 @@ describe("buildVisionDescribeTool", () => {
       maxImagesPerCall: 2,
       maxImageBytes: 8,
     });
-    const result = await tool.run(
-      { prompt: "describe", path },
-      ctx(tmp),
-    );
+    const result = await tool.run({ prompt: "describe", path }, ctx(tmp));
     expect(result.status).toBe("error");
     expect(result.summary).toMatch(/maxImageBytes/);
   });

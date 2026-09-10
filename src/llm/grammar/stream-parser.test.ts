@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  createStreamParser,
-  type StreamParseEvent,
-} from "./stream-parser.js";
+import { createStreamParser, type StreamParseEvent } from "./stream-parser.js";
 
 function feedAll(
   chunks: string[],
@@ -29,8 +26,9 @@ function feedAllWithPreOpenedThink(chunks: string[]): StreamParseEvent[] {
 
 function concatReply(events: StreamParseEvent[]): string {
   return events
-    .filter((e): e is Extract<StreamParseEvent, { kind: "reply_text_delta" }> =>
-      e.kind === "reply_text_delta",
+    .filter(
+      (e): e is Extract<StreamParseEvent, { kind: "reply_text_delta" }> =>
+        e.kind === "reply_text_delta",
     )
     .map((e) => e.text)
     .join("");
@@ -64,7 +62,7 @@ describe("createStreamParser", () => {
   it("handles chunk boundary in the middle of the closing </think> tag", () => {
     const events = feedAll([
       "<think>abc</thi",
-      "nk>{\"tool\":\"reply\",\"args\":{\"text\":\"ok\"}}",
+      'nk>{"tool":"reply","args":{"text":"ok"}}',
     ]);
     expect(concatReasoning(events)).toBe("abc");
     expect(events.filter((e) => e.kind === "reasoning_close")).toHaveLength(1);
@@ -97,8 +95,7 @@ describe("createStreamParser", () => {
   });
 
   it("streams char by char when chunks split every single character", () => {
-    const raw =
-      '<think>hi</think>{"tool":"reply","args":{"text":"hello"}}';
+    const raw = '<think>hi</think>{"tool":"reply","args":{"text":"hello"}}';
     const chunks = raw.split("");
     const events = feedAll(chunks);
     expect(concatReasoning(events)).toBe("hi");
@@ -122,10 +119,7 @@ describe("createStreamParser", () => {
 
   it("supports custom reasoning tags split across the closing sentinel", () => {
     const events = feedAll(
-      [
-        "alpha<chan",
-        'nel|>{"tool":"reply","args":{"text":"ok"}}',
-      ],
+      ["alpha<chan", 'nel|>{"tool":"reply","args":{"text":"ok"}}'],
       {
         preOpenedThink: true,
         reasoningOpenTag: "<|channel>thought\n",
@@ -173,14 +167,11 @@ describe("createStreamParser", () => {
   });
 
   it("streams array-only reply when think is pre-opened but close sentinel is missing", () => {
-    const events = feedAll(
-      ['[{"tool":"reply","args":{"text":"Привет!"}}]'],
-      {
-        preOpenedThink: true,
-        reasoningOpenTag: "<|channel>thought\n",
-        reasoningCloseTag: "<channel|>",
-      },
-    );
+    const events = feedAll(['[{"tool":"reply","args":{"text":"Привет!"}}]'], {
+      preOpenedThink: true,
+      reasoningOpenTag: "<|channel>thought\n",
+      reasoningCloseTag: "<channel|>",
+    });
     expect(concatReasoning(events)).toBe("");
     expect(events.filter((e) => e.kind === "reasoning_close")).toHaveLength(1);
     expect(concatReply(events)).toBe("Привет!");
@@ -190,11 +181,14 @@ describe("createStreamParser", () => {
     // The brace lands in the buffer while the close tag has not arrived
     // yet — the old parser treated it as the tool-call start, closed the
     // reasoning stream and froze the live display for the rest of the step.
-    const events = feedAll([
-      'the config is {"a": 1} so I should',
-      " change it</think>",
-      '{"tool":"reply","args":{"text":"ok"}}',
-    ], { preOpenedThink: true });
+    const events = feedAll(
+      [
+        'the config is {"a": 1} so I should',
+        " change it</think>",
+        '{"tool":"reply","args":{"text":"ok"}}',
+      ],
+      { preOpenedThink: true },
+    );
     expect(concatReasoning(events)).toBe(
       'the config is {"a": 1} so I should change it',
     );
@@ -246,14 +240,13 @@ describe("createStreamParser", () => {
   });
 
   it("treats an unresolved trailing brace at stream end as reasoning", () => {
-    const events = feedAll(["<think>ends with {\"a\": 1}"]);
+    const events = feedAll(['<think>ends with {"a": 1}']);
     expect(concatReasoning(events)).toBe('ends with {"a": 1}');
     expect(events.at(-1)).toEqual({ kind: "reasoning_close" });
   });
 
   it("splits reply.args.text across chunks preserving backslash escapes", () => {
-    const raw =
-      '{"tool":"reply","args":{"text":"a\\\\b\\nc"}}';
+    const raw = '{"tool":"reply","args":{"text":"a\\\\b\\nc"}}';
     // Split right between `\` and `\\` sequence
     const events = feedAll([
       raw.slice(0, raw.indexOf("\\\\") + 1),

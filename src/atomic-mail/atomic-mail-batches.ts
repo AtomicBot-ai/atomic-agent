@@ -15,7 +15,9 @@ export function buildSendBatch(
   mail: SendMailInput,
   identityId: string | null = null,
 ): unknown[] {
-  const bodyValues: Record<string, { value: string }> = { t: { value: mail.text } };
+  const bodyValues: Record<string, { value: string }> = {
+    t: { value: mail.text },
+  };
   if (mail.html) bodyValues.h = { value: mail.html };
   return [
     [
@@ -29,7 +31,9 @@ export function buildSendBatch(
             to: [{ email: mail.to }],
             subject: mail.subject,
             textBody: [{ partId: "t", type: "text/plain" }],
-            ...(mail.html ? { htmlBody: [{ partId: "h", type: "text/html" }] } : {}),
+            ...(mail.html
+              ? { htmlBody: [{ partId: "h", type: "text/html" }] }
+              : {}),
             bodyValues,
             keywords: { $draft: true, $seen: true },
           },
@@ -45,7 +49,10 @@ export function buildSendBatch(
           s1: {
             emailId: "#d1",
             ...(identityId ? { identityId } : {}),
-            envelope: { mailFrom: { email: from }, rcptTo: [{ email: mail.to }] },
+            envelope: {
+              mailFrom: { email: from },
+              rcptTo: [{ email: mail.to }],
+            },
           },
         },
         onSuccessUpdateEmail: { "#s1": { "keywords/$draft": null } },
@@ -62,7 +69,11 @@ export function parseSendResult(responses: unknown[]): string {
     | undefined;
   const draftWhy = draft?.notCreated?.d1;
   if (draftWhy) {
-    throw new AtomicMailError("the draft was not accepted", 0, draftWhy.description ?? draftWhy.type);
+    throw new AtomicMailError(
+      "the draft was not accepted",
+      0,
+      draftWhy.description ?? draftWhy.type,
+    );
   }
   const submission = typed.find(
     ([name]) => name === "EmailSubmission/set",
@@ -75,13 +86,21 @@ export function parseSendResult(responses: unknown[]): string {
   const id = submission?.created?.s1?.id;
   if (!id) {
     const why = submission?.notCreated?.s1;
-    throw new AtomicMailError("send was not accepted", 0, why?.description ?? why?.type);
+    throw new AtomicMailError(
+      "send was not accepted",
+      0,
+      why?.description ?? why?.type,
+    );
   }
   return id;
 }
 
 /** Newest `limit` messages of a mailbox, with the fields the inbox tool shows. */
-export function buildInboxBatch(accountId: string, mailboxId: string, limit: number): unknown[] {
+export function buildInboxBatch(
+  accountId: string,
+  mailboxId: string,
+  limit: number,
+): unknown[] {
   return [
     [
       "Email/query",
@@ -98,7 +117,14 @@ export function buildInboxBatch(accountId: string, mailboxId: string, limit: num
       {
         accountId,
         "#ids": { resultOf: "q", name: "Email/query", path: "/ids" },
-        properties: ["id", "from", "subject", "receivedAt", "preview", "keywords"],
+        properties: [
+          "id",
+          "from",
+          "subject",
+          "receivedAt",
+          "preview",
+          "keywords",
+        ],
       },
       "g",
     ],
@@ -106,15 +132,19 @@ export function buildInboxBatch(accountId: string, mailboxId: string, limit: num
 }
 
 export function parseInboxList(responses: unknown[]): InboxMessage[] {
-  const got = (responses as [string, Record<string, unknown>][]).find(([name]) => name === "Email/get")?.[1] as
-    | { list?: Array<Record<string, unknown>> }
-    | undefined;
+  const got = (responses as [string, Record<string, unknown>][]).find(
+    ([name]) => name === "Email/get",
+  )?.[1] as { list?: Array<Record<string, unknown>> } | undefined;
   return (got?.list ?? []).map((m) => {
-    const from = (m.from as Array<{ email?: string; name?: string }> | undefined)?.[0];
+    const from = (
+      m.from as Array<{ email?: string; name?: string }> | undefined
+    )?.[0];
     const keywords = (m.keywords as Record<string, boolean> | undefined) ?? {};
     return {
       id: String(m.id ?? ""),
-      from: from?.name ? `${from.name} <${from.email ?? ""}>` : (from?.email ?? ""),
+      from: from?.name
+        ? `${from.name} <${from.email ?? ""}>`
+        : (from?.email ?? ""),
       subject: String(m.subject ?? ""),
       receivedAt: String(m.receivedAt ?? ""),
       preview: String(m.preview ?? ""),

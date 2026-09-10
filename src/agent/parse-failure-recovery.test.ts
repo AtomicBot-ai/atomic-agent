@@ -26,7 +26,9 @@ describe("isRecoverableParseFailure", () => {
 
   it("accepts a bare parser error", () => {
     expect(
-      isRecoverableParseFailure(new ToolCallParseError("tool-call body is empty")),
+      isRecoverableParseFailure(
+        new ToolCallParseError("tool-call body is empty"),
+      ),
     ).toBe(true);
   });
 
@@ -58,7 +60,9 @@ describe("formatParseFailureNotice", () => {
     const notice = formatParseFailureNotice(
       'tool call "os.fs.write" arguments are not a valid JSON object',
     );
-    expect(notice).toContain('tool call "os.fs.write" arguments are not a valid JSON object');
+    expect(notice).toContain(
+      'tool call "os.fs.write" arguments are not a valid JSON object',
+    );
     expect(notice).toContain("Nothing you attempted has happened yet");
     expect(notice).toContain("split the work into several smaller calls");
   });
@@ -87,7 +91,10 @@ describe("composeParseFailureNotice", () => {
   });
 
   it("keeps what the step already owed the model, rejection first", () => {
-    const out = composeParseFailureNotice("The user sent a new message", "bad json");
+    const out = composeParseFailureNotice(
+      "The user sent a new message",
+      "bad json",
+    );
     expect(out).toContain("bad json");
     expect(out).toContain("The user sent a new message");
     expect(out.indexOf("bad json")).toBeLessThan(
@@ -104,16 +111,19 @@ describe("composeParseFailureNotice", () => {
 
 describe("formatTurnFailedRecord", () => {
   it("reads as the turn's own account of why it produced nothing", () => {
-    const row = formatTurnFailedRecord("grammar", 'tool call "os.fs.write" arguments are not a valid JSON object');
+    const row = formatTurnFailedRecord(
+      "grammar",
+      'tool call "os.fs.write" arguments are not a valid JSON object',
+    );
     expect(row).toContain("grammar");
     expect(row).toContain("os.fs.write");
     expect(row).toContain("Nothing from it took effect");
   });
 
   it("clips a runaway message", () => {
-    expect(formatTurnFailedRecord("grammar", "z".repeat(5_000)).length).toBeLessThan(
-      500,
-    );
+    expect(
+      formatTurnFailedRecord("grammar", "z".repeat(5_000)).length,
+    ).toBeLessThan(500);
   });
 });
 

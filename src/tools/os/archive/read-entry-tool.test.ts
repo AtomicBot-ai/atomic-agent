@@ -74,10 +74,7 @@ describe("os.fs.archive.read_entry", () => {
   it("throws when the entry is missing", async () => {
     const tool = buildOsFsArchiveReadEntryTool();
     await expect(
-      tool.run(
-        { path: "sample.zip", entry: "missing.txt" },
-        makeCtx(FIXTURES),
-      ),
+      tool.run({ path: "sample.zip", entry: "missing.txt" }, makeCtx(FIXTURES)),
     ).rejects.toThrow(/entry not found/);
   });
 });

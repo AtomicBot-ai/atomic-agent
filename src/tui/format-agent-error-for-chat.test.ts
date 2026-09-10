@@ -174,14 +174,17 @@ describe("formatAgentErrorForChat", () => {
       `socket hang up <center>502 Bad Gateway</center>${"x".repeat(900)}`,
       "upstream HTTP 502 (wrong API URL or provider config)",
     ],
-  ])("drops the hint when the body was replaced: %s", (_name, message, body) => {
-    expect(
-      formatAgentErrorForChat("transport", message, {
-        activeProviderIsLocal: false,
-        llamaUrl: "http://127.0.0.1:19091",
-      }),
-    ).toBe(`Turn failed [transport]: ${body}`);
-  });
+  ])(
+    "drops the hint when the body was replaced: %s",
+    (_name, message, body) => {
+      expect(
+        formatAgentErrorForChat("transport", message, {
+          activeProviderIsLocal: false,
+          llamaUrl: "http://127.0.0.1:19091",
+        }),
+      ).toBe(`Turn failed [transport]: ${body}`);
+    },
+  );
 
   // The wall's second entrance — sheer bulk — is a threshold, and a
   // threshold nobody tests drifts. Both sides pinned: `800 → 799` kills

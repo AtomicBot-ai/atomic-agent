@@ -11,12 +11,7 @@
 import type { IssueReportLevel } from "./report-levels.js";
 
 export type IssueReportStep =
-  | "pick"
-  | "building"
-  | "confirm"
-  | "sending"
-  | "sent"
-  | "error";
+  "pick" | "building" | "confirm" | "sending" | "sent" | "error";
 
 export interface IssueReportPreview {
   level: IssueReportLevel;
@@ -70,7 +65,8 @@ export function reduceIssueReport(
     case "issue_report_opened":
       // Re-opening while a leg is in flight would lose its outcome;
       // every other step starts over.
-      if (state && (state.step === "sending" || state.step === "building")) return state;
+      if (state && (state.step === "sending" || state.step === "building"))
+        return state;
       return createIssueReportState();
     case "issue_report_closed":
       return null;
@@ -84,7 +80,12 @@ export function reduceIssueReport(
       return { ...state, step: "building", error: null };
     case "issue_report_previewed":
       if (!state) return state;
-      return { ...state, step: "confirm", preview: action.preview, error: null };
+      return {
+        ...state,
+        step: "confirm",
+        preview: action.preview,
+        error: null,
+      };
     case "issue_report_sending":
       if (!state) return state;
       return { ...state, step: "sending", error: null };

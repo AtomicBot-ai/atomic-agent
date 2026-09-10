@@ -34,11 +34,19 @@ describe("fusion worker sessions", () => {
   it("readFusionWorkerMeta is defensive about malformed metadata", () => {
     expect(readFusionWorkerMeta(undefined)).toBeNull();
     expect(readFusionWorkerMeta({})).toBeNull();
-    expect(readFusionWorkerMeta({ [FUSION_WORKER_METADATA_KEY]: null })).toBeNull();
-    expect(readFusionWorkerMeta({ [FUSION_WORKER_METADATA_KEY]: "yes" })).toBeNull();
-    expect(readFusionWorkerMeta({ [FUSION_WORKER_METADATA_KEY]: [] })).toBeNull();
     expect(
-      readFusionWorkerMeta({ [FUSION_WORKER_METADATA_KEY]: { parentSessionId: "s" } }),
+      readFusionWorkerMeta({ [FUSION_WORKER_METADATA_KEY]: null }),
+    ).toBeNull();
+    expect(
+      readFusionWorkerMeta({ [FUSION_WORKER_METADATA_KEY]: "yes" }),
+    ).toBeNull();
+    expect(
+      readFusionWorkerMeta({ [FUSION_WORKER_METADATA_KEY]: [] }),
+    ).toBeNull();
+    expect(
+      readFusionWorkerMeta({
+        [FUSION_WORKER_METADATA_KEY]: { parentSessionId: "s" },
+      }),
     ).toBeNull();
     expect(
       readFusionWorkerMeta({

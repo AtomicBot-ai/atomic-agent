@@ -82,10 +82,7 @@ export function resolveScheduledFor(
  * land on disk. Reused by `resolveScheduledFor` to keep the error
  * surface consistent.
  */
-export function validateSchedule(
-  schedule: TaskSchedule,
-  fromMs: number,
-): void {
+export function validateSchedule(schedule: TaskSchedule, fromMs: number): void {
   if (!schedule || typeof schedule !== "object") {
     throw new TaskValidationError("schedule", "schedule must be an object");
   }
@@ -124,7 +121,10 @@ export function validateSchedule(
     return;
   }
   if (schedule.kind === "cron") {
-    if (typeof schedule.expression !== "string" || schedule.expression.length === 0) {
+    if (
+      typeof schedule.expression !== "string" ||
+      schedule.expression.length === 0
+    ) {
       throw new TaskValidationError(
         "schedule",
         "schedule.expression must be a non-empty string",

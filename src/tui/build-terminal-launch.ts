@@ -93,7 +93,11 @@ const LINUX_TERMINALS: readonly LinuxTerminal[] = [
     label: "x-terminal-emulator",
     args: (command) => ["-e", "sh", "-c", command],
   },
-  { bin: "xterm", label: "xterm", args: (command) => ["-e", "sh", "-c", command] },
+  {
+    bin: "xterm",
+    label: "xterm",
+    args: (command) => ["-e", "sh", "-c", command],
+  },
 ];
 
 /**
@@ -156,8 +160,11 @@ function forwardedEnv(
   env: Readonly<Record<string, string | undefined>>,
 ): [string, string][] {
   return Object.entries(env)
-    .filter((pair): pair is [string, string] =>
-      pair[0].startsWith("ATOMIC_AGENT_") && typeof pair[1] === "string" && pair[1].length > 0,
+    .filter(
+      (pair): pair is [string, string] =>
+        pair[0].startsWith("ATOMIC_AGENT_") &&
+        typeof pair[1] === "string" &&
+        pair[1].length > 0,
     )
     .sort(([a], [b]) => (a < b ? -1 : 1));
 }
@@ -209,7 +216,9 @@ function posixLaunch(input: TerminalLaunchInput): TerminalLaunch | null {
       // Unknown emulator: the single-string `-e` dialect is the broadest
       // (xterm, konsole, terminator and tilix all accept it; the
       // multi-arg form breaks the last two).
-      args: known ? known.args(command) : ["-e", `sh -c ${shellQuote(command)}`],
+      args: known
+        ? known.args(command)
+        : ["-e", `sh -c ${shellQuote(command)}`],
       label: preferred,
     };
   }

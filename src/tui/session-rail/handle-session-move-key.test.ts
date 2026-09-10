@@ -97,7 +97,10 @@ describe("rail session move keys", () => {
     const c = ctx(railState(1));
     expect(handleAppKey("", key({ upArrow: true, shift: true }), c)).toBe(true);
     expect(c.callbacks.onSessionMoveRequested).toHaveBeenCalledWith("s-2", 0);
-    expect(c.dispatch).toHaveBeenCalledWith({ type: "sidebar_cursor_set", row: 0 });
+    expect(c.dispatch).toHaveBeenCalledWith({
+      type: "sidebar_cursor_set",
+      row: 0,
+    });
     // Not a plain cursor move: the chord must not ALSO walk the list.
     expect(c.dispatch).not.toHaveBeenCalledWith({
       type: "sidebar_cursor_moved",
@@ -107,9 +110,14 @@ describe("rail session move keys", () => {
 
   it("Shift+↓ moves the selected row down", () => {
     const c = ctx(railState(1));
-    expect(handleAppKey("", key({ downArrow: true, shift: true }), c)).toBe(true);
+    expect(handleAppKey("", key({ downArrow: true, shift: true }), c)).toBe(
+      true,
+    );
     expect(c.callbacks.onSessionMoveRequested).toHaveBeenCalledWith("s-2", 2);
-    expect(c.dispatch).toHaveBeenCalledWith({ type: "sidebar_cursor_set", row: 2 });
+    expect(c.dispatch).toHaveBeenCalledWith({
+      type: "sidebar_cursor_set",
+      row: 2,
+    });
   });
 
   it("accepts Meta+↑/↓ as the same chord", () => {
@@ -120,11 +128,15 @@ describe("rail session move keys", () => {
 
   it("does nothing on the top row for Shift+↑, and on the last for Shift+↓", () => {
     const top = ctx(railState(0));
-    expect(handleAppKey("", key({ upArrow: true, shift: true }), top)).toBe(true);
+    expect(handleAppKey("", key({ upArrow: true, shift: true }), top)).toBe(
+      true,
+    );
     expect(top.callbacks.onSessionMoveRequested).not.toHaveBeenCalled();
     expect(top.dispatch).not.toHaveBeenCalled();
     const bottom = ctx(railState(2));
-    expect(handleAppKey("", key({ downArrow: true, shift: true }), bottom)).toBe(true);
+    expect(
+      handleAppKey("", key({ downArrow: true, shift: true }), bottom),
+    ).toBe(true);
     expect(bottom.callbacks.onSessionMoveRequested).not.toHaveBeenCalled();
     expect(bottom.dispatch).not.toHaveBeenCalled();
   });
@@ -135,23 +147,37 @@ describe("rail session move keys", () => {
     // that is a pin change, which only `p` may make.
     const rows = [entry("s-1", true), entry("s-2"), entry("s-3")];
     const lastPinned = ctx(railState(0, "sessions", rows));
-    expect(handleAppKey("", key({ downArrow: true, shift: true }), lastPinned)).toBe(true);
+    expect(
+      handleAppKey("", key({ downArrow: true, shift: true }), lastPinned),
+    ).toBe(true);
     expect(lastPinned.callbacks.onSessionMoveRequested).not.toHaveBeenCalled();
     expect(lastPinned.dispatch).not.toHaveBeenCalled();
     const firstUnpinned = ctx(railState(1, "sessions", rows));
-    expect(handleAppKey("", key({ upArrow: true, shift: true }), firstUnpinned)).toBe(true);
-    expect(firstUnpinned.callbacks.onSessionMoveRequested).not.toHaveBeenCalled();
+    expect(
+      handleAppKey("", key({ upArrow: true, shift: true }), firstUnpinned),
+    ).toBe(true);
+    expect(
+      firstUnpinned.callbacks.onSessionMoveRequested,
+    ).not.toHaveBeenCalled();
     // Inside the unpinned half the move still works.
     const inside = ctx(railState(1, "sessions", rows));
-    expect(handleAppKey("", key({ downArrow: true, shift: true }), inside)).toBe(true);
-    expect(inside.callbacks.onSessionMoveRequested).toHaveBeenCalledWith("s-2", 2);
+    expect(
+      handleAppKey("", key({ downArrow: true, shift: true }), inside),
+    ).toBe(true);
+    expect(inside.callbacks.onSessionMoveRequested).toHaveBeenCalledWith(
+      "s-2",
+      2,
+    );
   });
 
   it("leaves a plain ↑ alone", () => {
     const c = ctx(railState(1));
     expect(handleAppKey("", key({ upArrow: true }), c)).toBe(true);
     expect(c.callbacks.onSessionMoveRequested).not.toHaveBeenCalled();
-    expect(c.dispatch).toHaveBeenCalledWith({ type: "sidebar_cursor_moved", delta: -1 });
+    expect(c.dispatch).toHaveBeenCalledWith({
+      type: "sidebar_cursor_moved",
+      delta: -1,
+    });
   });
 
   it("is not a move on the Tasks pane", () => {

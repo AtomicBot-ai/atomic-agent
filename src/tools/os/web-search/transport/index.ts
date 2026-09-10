@@ -1,7 +1,4 @@
-export {
-  parseCurlMeta,
-  searchHttp,
-} from "./search-http.js";
+export { parseCurlMeta, searchHttp } from "./search-http.js";
 export type {
   SearchHttpMethod,
   SearchHttpRequest,

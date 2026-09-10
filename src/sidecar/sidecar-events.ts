@@ -308,8 +308,6 @@ export function isSidecarEvent(msg: SidecarMessage): msg is SidecarEvent {
   return msg.kind === "event";
 }
 
-export function isSidecarResponse(
-  msg: SidecarMessage,
-): msg is SidecarResponse {
+export function isSidecarResponse(msg: SidecarMessage): msg is SidecarResponse {
   return msg.kind === "response";
 }

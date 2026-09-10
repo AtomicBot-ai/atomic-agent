@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { COMPOSIO_GUIDANCE, COMPOSIO_SEARCH_TOOL } from "./composio-guidance.js";
+import {
+  COMPOSIO_GUIDANCE,
+  COMPOSIO_SEARCH_TOOL,
+} from "./composio-guidance.js";
 import {
   GITHUB_GUIDANCE,
   GITHUB_MARKER_TOOL,
@@ -35,13 +38,19 @@ describe("isGithubActive", () => {
 
 describe("the ### integrations prefix section", () => {
   it("is absent when GitHub is not connected", () => {
-    const prefix = prefixWith([descriptor("os.fs.read"), descriptor("os.git.push")]);
+    const prefix = prefixWith([
+      descriptor("os.fs.read"),
+      descriptor("os.git.push"),
+    ]);
     expect(prefix).not.toContain("### integrations");
     expect(prefix).not.toContain("GitHub is connected");
   });
 
   it("carries the GitHub guidance once the hub holds a token", () => {
-    const prefix = prefixWith([descriptor("os.fs.read"), descriptor(GITHUB_MARKER_TOOL)]);
+    const prefix = prefixWith([
+      descriptor("os.fs.read"),
+      descriptor(GITHUB_MARKER_TOOL),
+    ]);
     expect(prefix).toContain("### integrations");
     expect(prefix).toContain(GITHUB_GUIDANCE);
     expect(prefix).not.toContain(COMPOSIO_GUIDANCE);

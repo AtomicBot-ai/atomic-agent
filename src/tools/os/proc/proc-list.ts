@@ -59,7 +59,11 @@ function parseArgs(raw: Record<string, unknown>): ListArgs {
       : undefined;
   let limit = DEFAULT_LIMIT;
   if (raw.limit !== undefined && raw.limit !== null) {
-    if (typeof raw.limit !== "number" || !Number.isFinite(raw.limit) || raw.limit <= 0) {
+    if (
+      typeof raw.limit !== "number" ||
+      !Number.isFinite(raw.limit) ||
+      raw.limit <= 0
+    ) {
       throw new Error("os.proc.list: `limit` must be a positive number");
     }
     limit = Math.min(5000, Math.floor(raw.limit));
@@ -193,8 +197,7 @@ function parseCsvRow(line: string): string[] {
 
 function formatTable(rows: readonly ProcessInfo[]): string {
   if (rows.length === 0) return "(no processes matched)";
-  const header =
-    "PID      PPID     USER               CPU%   MEM%   COMMAND";
+  const header = "PID      PPID     USER               CPU%   MEM%   COMMAND";
   const lines = [header];
   for (const r of rows) {
     lines.push(

@@ -58,7 +58,9 @@ describe("splitMcpToolName", () => {
 });
 
 describe("createMcpResourceClassResolver", () => {
-  function buildTrust(entries: Array<[string, McpTrustLevel]>): Map<string, McpTrustLevel> {
+  function buildTrust(
+    entries: Array<[string, McpTrustLevel]>,
+  ): Map<string, McpTrustLevel> {
     return new Map(entries);
   }
 

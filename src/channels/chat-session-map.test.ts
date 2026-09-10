@@ -41,7 +41,10 @@ describe("ChatSessionMap", () => {
   it("writes the v2 shape with a version marker", () => {
     const map = new ChatSessionMap(path);
     map.setCurrent("100", "s-a");
-    const raw = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+    const raw = JSON.parse(readFileSync(path, "utf8")) as Record<
+      string,
+      unknown
+    >;
     expect(raw.version).toBe(2);
     expect(raw.chats).toMatchObject({ "100": { current: "s-a" } });
   });
@@ -135,7 +138,10 @@ describe("ChatSessionMap", () => {
       writeFileSync(path, JSON.stringify({ current: "s-old" }));
       const map = new ChatSessionMap(path);
       map.setCurrent("200", "s-group");
-      const raw = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+      const raw = JSON.parse(readFileSync(path, "utf8")) as Record<
+        string,
+        unknown
+      >;
       expect(raw.legacy).toEqual({ current: "s-old" });
       expect(new ChatSessionMap(path).adoptLegacy("42")).toBe("s-old");
     });

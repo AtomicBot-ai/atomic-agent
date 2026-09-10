@@ -22,7 +22,9 @@ describe("looksLikeGithubToken", () => {
   it("rejects the things people paste by mistake", () => {
     // The token's name, a client secret, an SSH key, an empty field.
     expect(looksLikeGithubToken("atomic-agent")).toBe(false);
-    expect(looksLikeGithubToken("Xy9_ThisLooksLikeAClientSecret123456")).toBe(false);
+    expect(looksLikeGithubToken("Xy9_ThisLooksLikeAClientSecret123456")).toBe(
+      false,
+    );
     expect(looksLikeGithubToken("ssh-ed25519 AAAAC3Nza")).toBe(false);
     expect(looksLikeGithubToken("")).toBe(false);
     expect(looksLikeGithubToken("ghp_short")).toBe(false);
@@ -31,14 +33,20 @@ describe("looksLikeGithubToken", () => {
 
 describe("resolveGithubToken", () => {
   it("reads GITHUB_TOKEN and treats blank as absent", () => {
-    expect(resolveGithubToken(undefined, { [GITHUB_TOKEN_ENV]: CLASSIC })).toBe(CLASSIC);
-    expect(resolveGithubToken(undefined, { [GITHUB_TOKEN_ENV]: "   " })).toBeNull();
+    expect(resolveGithubToken(undefined, { [GITHUB_TOKEN_ENV]: CLASSIC })).toBe(
+      CLASSIC,
+    );
+    expect(
+      resolveGithubToken(undefined, { [GITHUB_TOKEN_ENV]: "   " }),
+    ).toBeNull();
     expect(resolveGithubToken(undefined, {})).toBeNull();
   });
 
   it("lets an explicit value win, including an explicit null", () => {
     expect(resolveGithubToken("x", { [GITHUB_TOKEN_ENV]: CLASSIC })).toBe("x");
-    expect(resolveGithubToken(null, { [GITHUB_TOKEN_ENV]: CLASSIC })).toBeNull();
+    expect(
+      resolveGithubToken(null, { [GITHUB_TOKEN_ENV]: CLASSIC }),
+    ).toBeNull();
   });
 });
 

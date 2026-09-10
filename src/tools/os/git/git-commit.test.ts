@@ -2,7 +2,12 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { rm } from "node:fs/promises";
 import { ApprovalGate } from "../../../approval/approval-gate.js";
 import { buildOsGitCommitTool } from "./git-commit.js";
-import { makeCtx, makeGitRepo, runGitRaw, writeRepoFile } from "./test-helpers.js";
+import {
+  makeCtx,
+  makeGitRepo,
+  runGitRaw,
+  writeRepoFile,
+} from "./test-helpers.js";
 
 function approveAll(): ApprovalGate {
   const gate = new ApprovalGate({
@@ -31,7 +36,10 @@ describe("os.git.commit", () => {
   it("stages the given paths and commits", async () => {
     await writeRepoFile(repo, "a.txt", "two\n");
     await writeRepoFile(repo, "b.txt", "new\n");
-    const tool = buildOsGitCommitTool({ approvals: approveAll(), approvalRequired: true });
+    const tool = buildOsGitCommitTool({
+      approvals: approveAll(),
+      approvalRequired: true,
+    });
     const result = await tool.run(
       { message: "feat: a only", paths: ["a.txt"] },
       makeCtx(repo),
@@ -47,7 +55,10 @@ describe("os.git.commit", () => {
   it("stages everything with all: true", async () => {
     await writeRepoFile(repo, "a.txt", "two\n");
     await writeRepoFile(repo, "b.txt", "new\n");
-    const tool = buildOsGitCommitTool({ approvals: approveAll(), approvalRequired: true });
+    const tool = buildOsGitCommitTool({
+      approvals: approveAll(),
+      approvalRequired: true,
+    });
     await tool.run({ message: "feat: everything", all: true }, makeCtx(repo));
     const status = await runGitRaw(repo, ["status", "--porcelain"]);
     expect(status.stdout.trim()).toBe("");
@@ -57,7 +68,10 @@ describe("os.git.commit", () => {
     await writeRepoFile(repo, "a.txt", "two\n");
     await writeRepoFile(repo, "c.txt", "staged\n");
     await runGitRaw(repo, ["add", "c.txt"]);
-    const tool = buildOsGitCommitTool({ approvals: approveAll(), approvalRequired: true });
+    const tool = buildOsGitCommitTool({
+      approvals: approveAll(),
+      approvalRequired: true,
+    });
     await tool.run({ message: "chore: staged only" }, makeCtx(repo));
     const status = await runGitRaw(repo, ["status", "--porcelain"]);
     expect(status.stdout).toContain(" M a.txt");
@@ -75,8 +89,13 @@ describe("os.git.commit", () => {
         gate.resolve({ approvalId: req.approvalId, approved: true });
       },
     });
-    const tool = buildOsGitCommitTool({ approvals: gate, approvalRequired: true });
-    await tool.run({ message: "fix: a\n\nlonger body" }, makeCtx(repo)).catch(() => {});
+    const tool = buildOsGitCommitTool({
+      approvals: gate,
+      approvalRequired: true,
+    });
+    await tool
+      .run({ message: "fix: a\n\nlonger body" }, makeCtx(repo))
+      .catch(() => {});
     expect(reason).toBe('commit "fix: a"');
     expect(preview).toContain("committing what is already staged");
   });
@@ -86,7 +105,10 @@ describe("os.git.commit", () => {
     const gate = new ApprovalGate({
       emit: (req) => gate.reject(req.approvalId, "denied"),
     });
-    const tool = buildOsGitCommitTool({ approvals: gate, approvalRequired: true });
+    const tool = buildOsGitCommitTool({
+      approvals: gate,
+      approvalRequired: true,
+    });
     await expect(
       tool.run({ message: "x", all: true }, makeCtx(repo)),
     ).rejects.toThrow(/approval denied/);
@@ -96,14 +118,20 @@ describe("os.git.commit", () => {
   });
 
   it("says so when there is nothing to commit", async () => {
-    const tool = buildOsGitCommitTool({ approvals: approveAll(), approvalRequired: false });
+    const tool = buildOsGitCommitTool({
+      approvals: approveAll(),
+      approvalRequired: false,
+    });
     await expect(tool.run({ message: "empty" }, makeCtx(repo))).rejects.toThrow(
       /nothing to commit/,
     );
   });
 
   it("validates its arguments", async () => {
-    const tool = buildOsGitCommitTool({ approvals: approveAll(), approvalRequired: false });
+    const tool = buildOsGitCommitTool({
+      approvals: approveAll(),
+      approvalRequired: false,
+    });
     await expect(tool.run({}, makeCtx(repo))).rejects.toThrow(/`message`/);
     await expect(
       tool.run({ message: "m", paths: ["a"], all: true }, makeCtx(repo)),

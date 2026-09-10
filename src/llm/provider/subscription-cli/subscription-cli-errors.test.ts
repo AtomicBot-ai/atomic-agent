@@ -26,7 +26,9 @@ const base = {
 
 describe("isEnoent", () => {
   it("detects the spawn error for a missing binary", () => {
-    expect(isEnoent(Object.assign(new Error("x"), { code: "ENOENT" }))).toBe(true);
+    expect(isEnoent(Object.assign(new Error("x"), { code: "ENOENT" }))).toBe(
+      true,
+    );
     expect(isEnoent(new Error("x"))).toBe(false);
     expect(isEnoent(null)).toBe(false);
   });
@@ -40,15 +42,15 @@ describe("isSpawnEinval", () => {
       syscall: "spawn",
     });
     expect(isSpawnEinval(err)).toBe(true);
-    expect(isSpawnEinval(Object.assign(new Error("x"), { code: "EINVAL" }))).toBe(
-      true,
-    );
+    expect(
+      isSpawnEinval(Object.assign(new Error("x"), { code: "EINVAL" })),
+    ).toBe(true);
   });
 
   it("ignores anything else", () => {
-    expect(isSpawnEinval(Object.assign(new Error("x"), { code: "ENOENT" }))).toBe(
-      false,
-    );
+    expect(
+      isSpawnEinval(Object.assign(new Error("x"), { code: "ENOENT" })),
+    ).toBe(false);
     expect(
       isSpawnEinval(
         Object.assign(new Error("x"), { code: "EINVAL", syscall: "read" }),

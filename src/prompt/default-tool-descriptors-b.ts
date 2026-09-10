@@ -34,13 +34,15 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
   },
   {
     name: "os.email.inbox",
-    summary: "Newest messages in the agent's own e-mail inbox (Atomic Mail): sender, subject, preview, unread.",
+    summary:
+      "Newest messages in the agent's own e-mail inbox (Atomic Mail): sender, subject, preview, unread.",
     argsSchema: "{ limit?: number }",
     tier: "rare",
   },
   {
     name: "os.email.send",
-    summary: "Send a plain-text e-mail from the agent's own inbox; the operator approves recipient + subject first.",
+    summary:
+      "Send a plain-text e-mail from the agent's own inbox; the operator approves recipient + subject first.",
     argsSchema: "{ to: string, subject: string, text: string }",
     tier: "rare",
   },
@@ -51,18 +53,22 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
   },
   {
     name: "tool.view",
-    summary: "Load full args schema for a tool listed in `# extras` into `### loaded-tools`.",
+    summary:
+      "Load full args schema for a tool listed in `# extras` into `### loaded-tools`.",
     argsSchema: '{ name: string } /* e.g. "os.git.show" */',
   },
   {
     name: "skill.run_script",
-    summary: "Run a script from a skill's requires_scripts (may require approval).",
-    argsSchema: "{ skill: string, script: string, args?: string[], timeoutMs?: number }",
+    summary:
+      "Run a script from a skill's requires_scripts (may require approval).",
+    argsSchema:
+      "{ skill: string, script: string, args?: string[], timeoutMs?: number }",
     tier: "rare",
   },
   {
     name: "memory.profile.set",
-    summary: "Upsert a durable user profile fact (pinned vs contextual with keywords).",
+    summary:
+      "Upsert a durable user profile fact (pinned vs contextual with keywords).",
     argsSchema:
       "{ key: string, value: string, pinned?: boolean, keywords?: string[] /* required when pinned=false */ }",
     examples: [
@@ -82,14 +88,17 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
   },
   {
     name: "memory.profile.history",
-    summary: "Return the bi-temporal history of one profile key (oldest first; active value last).",
+    summary:
+      "Return the bi-temporal history of one profile key (oldest first; active value last).",
     argsSchema: "{ key: string }",
     examples: ['{"key":"language"}'],
   },
   {
     name: "memory.notes.store",
-    summary: "Store a durable note (triggers: remember, outcomes, preferences; before reply on non-trivial work).",
-    argsSchema: "{ content: string /* max 4000 chars */, tags?: string[] /* 1–4 */ }",
+    summary:
+      "Store a durable note (triggers: remember, outcomes, preferences; before reply on non-trivial work).",
+    argsSchema:
+      "{ content: string /* max 4000 chars */, tags?: string[] /* 1–4 */ }",
     examples: [
       '{"content":"Prefer pnpm; package-lock ignored","tags":["prefs","tooling"]}',
       '{"content":"Fix auth test via Date mock — 8f2a1c9","tags":["bugfix"]}',
@@ -117,10 +126,7 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
     summary:
       "Read distilled lessons by id (pointer from `### lessons`) or BM25 query. Returns full principle bodies; the prompt only shows activation pointers.",
     argsSchema: "{ id?: number, query?: string, k?: number /* 1..10 */ }",
-    examples: [
-      '{"id":42}',
-      '{"query":"pnpm install","k":2}',
-    ],
+    examples: ['{"id":42}', '{"query":"pnpm install","k":2}'],
   },
   {
     name: "memory.procedures.recall",
@@ -135,7 +141,8 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
   {
     name: "tasks.schedule",
     summary: "Schedule a one-shot task; current session or newSession.",
-    argsSchema: '{ userMessage: string, at?: number, inSeconds?: number, newSession?: boolean, notify?: "telegram" }',
+    argsSchema:
+      '{ userMessage: string, at?: number, inSeconds?: number, newSession?: boolean, notify?: "telegram" }',
     examples: [
       '{"userMessage":"check build","inSeconds":300}',
       '{"userMessage":"PR follow-up","at":1735689600000,"newSession":true}',
@@ -145,8 +152,11 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
   {
     name: "tasks.cron",
     summary: "Recurring cron task; runs in a dedicated persistent session.",
-    argsSchema: '{ userMessage: string, expression: string, tz?: string /* IANA */, notify?: "telegram" /* report result to paired Telegram */ }',
-    examples: ['{"userMessage":"digest","expression":"0 9 * * *","tz":"Europe/Berlin","notify":"telegram"}'],
+    argsSchema:
+      '{ userMessage: string, expression: string, tz?: string /* IANA */, notify?: "telegram" /* report result to paired Telegram */ }',
+    examples: [
+      '{"userMessage":"digest","expression":"0 9 * * *","tz":"Europe/Berlin","notify":"telegram"}',
+    ],
     tier: "rare",
   },
   {
@@ -174,7 +184,8 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
     // `{paths: [...]}` without `prompt` and burning a step on the
     // schema error before retrying with the right shape.
     name: "vision.describe",
-    summary: "Describe one or more images via the configured vision LLM. Only available when the active model + provider support multimodal input. Accepts at most 4 images per call by default (`vision.maxImagesPerCall`); to cover more images, split them across several calls.",
+    summary:
+      "Describe one or more images via the configured vision LLM. Only available when the active model + provider support multimodal input. Accepts at most 4 images per call by default (`vision.maxImagesPerCall`); to cover more images, split them across several calls.",
     argsSchema:
       "{ prompt: string, path?: string, paths?: string[] /* png|jpg|jpeg|webp|gif; at most 4 by default */ }",
     examples: [
@@ -231,12 +242,14 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
   },
   {
     name: "reply",
-    summary: "Final natural-language answer; ends the macro-turn. Never use to announce a pending action; keep text short (no huge dumps). If the task requires an exact answer format or marker, `text` must be ONLY that bare value or marker line — no preamble or commentary. `attachments`: paths of existing files to deliver with the reply (a report you wrote, a screenshot, a converted file) — on Telegram/Discord they are sent as files after the text; never paste a file's contents into `text` when you can attach it.",
+    summary:
+      "Final natural-language answer; ends the macro-turn. Never use to announce a pending action; keep text short (no huge dumps). If the task requires an exact answer format or marker, `text` must be ONLY that bare value or marker line — no preamble or commentary. `attachments`: paths of existing files to deliver with the reply (a report you wrote, a screenshot, a converted file) — on Telegram/Discord they are sent as files after the text; never paste a file's contents into `text` when you can attach it.",
     argsSchema: "{ text: string, attachments?: string[] }",
   },
   {
     name: "finish",
-    summary: "End the session with a final summary; only if the user asked to end.",
+    summary:
+      "End the session with a final summary; only if the user asked to end.",
     argsSchema: "{ summary: string }",
   },
 ];

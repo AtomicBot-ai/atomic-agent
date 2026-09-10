@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { buildCloudSubcallRequest, CLOUD_SUBCALL_MAX_TOKENS } from "./cloud-subcall.js";
+import {
+  buildCloudSubcallRequest,
+  CLOUD_SUBCALL_MAX_TOKENS,
+} from "./cloud-subcall.js";
 
 describe("buildCloudSubcallRequest", () => {
   it("exposes the synthetic emit function with tool_choice 'auto'", () => {

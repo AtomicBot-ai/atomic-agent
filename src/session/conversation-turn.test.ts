@@ -108,9 +108,9 @@ describe("conversation-turn helpers", () => {
         }),
       ),
     ).toBe("tool_result[os.fs.read error]: nope (truncated)");
-    expect(
-      renderTurnForPrompt(assistantReplyTurn("there", 4)),
-    ).toBe("assistant: there");
+    expect(renderTurnForPrompt(assistantReplyTurn("there", 4))).toBe(
+      "assistant: there",
+    );
   });
 
   it("renders assistant turns in editorialised form (no reasoning leak)", () => {
@@ -347,7 +347,10 @@ describe("conversation-turn helpers", () => {
           }),
         );
         turns.push(
-          assistantReplyTurn(`reply${i} ${"y".repeat(50)}`, base + i * 1000 + 300),
+          assistantReplyTurn(
+            `reply${i} ${"y".repeat(50)}`,
+            base + i * 1000 + 300,
+          ),
         );
       }
       const out = packConversation(turns, 120);
@@ -409,7 +412,10 @@ describe("packConversation memoisation (issue #121)", () => {
     const turns: ConversationTurn[] = [userTurn("go")];
     for (let i = 0; i < steps; i += 1) {
       turns.push(
-        assistantToolCallTurn({ tool: "os.fs.read", args: { path: `/x/${i}` } }),
+        assistantToolCallTurn({
+          tool: "os.fs.read",
+          args: { path: `/x/${i}` },
+        }),
       );
       turns.push(
         toolResultTurn({
@@ -451,7 +457,9 @@ describe("packConversation memoisation (issue #121)", () => {
     // Pack fresh first so the fresh cost is the one cached first.
     packConversation(freshTurns, 100_000);
     const aged = packConversation(agedTurns, 100_000);
-    const agedRender = renderTurnForPrompt(httpResult, { inCurrentMacroTurn: false });
+    const agedRender = renderTurnForPrompt(httpResult, {
+      inCurrentMacroTurn: false,
+    });
     expect(agedRender.length).toBeLessThan(body.length);
     expect(aged.visibleTurns).toHaveLength(4);
   });

@@ -147,7 +147,10 @@ export function registerOsTools(
     }),
   );
   registry.register(
-    buildOsWebSearchTool({ config: options.config, stateDir: options.stateDir }),
+    buildOsWebSearchTool({
+      config: options.config,
+      stateDir: options.stateDir,
+    }),
   );
   registry.register(buildOsWebFetchTool({ config: options.config }));
   registry.register(osClipboardReadTool);
@@ -156,10 +159,16 @@ export function registerOsTools(
   registry.register(osWindowFocusTool);
   registry.register(osNotifyTool);
   registry.register(
-    buildOsEmailInboxTool({ approvals: options.approvals, approvalRequired: options.approvalRequired }),
+    buildOsEmailInboxTool({
+      approvals: options.approvals,
+      approvalRequired: options.approvalRequired,
+    }),
   );
   registry.register(
-    buildOsEmailSendTool({ approvals: options.approvals, approvalRequired: options.approvalRequired }),
+    buildOsEmailSendTool({
+      approvals: options.approvals,
+      approvalRequired: options.approvalRequired,
+    }),
   );
   registry.register(osFsHashTool);
   registry.register(osFsDiffTool);

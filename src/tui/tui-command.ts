@@ -23,7 +23,8 @@ import { buildInkRenderOptions } from "./ink-render-options.js";
 import { enableSynchronizedOutput } from "./synchronized-output.js";
 import { legacyConhostStartupHint } from "./legacy-conhost.js";
 import { ChatOrchestrator } from "./chat-orchestrator.js";
-import { parseTuiArgs,
+import {
+  parseTuiArgs,
   nonInteractiveStdinError,
   TUI_HELP,
 } from "./tui-args.js";
@@ -132,7 +133,8 @@ export async function tuiCommand(args: string[]): Promise<number> {
   // pre-render gate could do, because neither the alt screen nor the
   // runtime existed at the point it ran.
   const skipOnboarding =
-    parsed.skipLlamaSetup || process.env.ATOMIC_AGENT_TUI_SKIP_LLAMA_SETUP === "1";
+    parsed.skipLlamaSetup ||
+    process.env.ATOMIC_AGENT_TUI_SKIP_LLAMA_SETUP === "1";
   const onboarding =
     !skipOnboarding && needsOnboarding()
       ? createOnboardingState(getConfig().localModels.url)
@@ -182,7 +184,8 @@ export async function tuiCommand(args: string[]): Promise<number> {
   let uninstallRequested = false;
 
   const logSink: LogSink = (record: LogRecord) => bus.emitLog(record);
-  const metricSink: MetricSink = (sample: MetricSample) => bus.emitMetric(sample);
+  const metricSink: MetricSink = (sample: MetricSample) =>
+    bus.emitMetric(sample);
 
   // Forward declaration: the channel-status sink needs the
   // orchestrator, but the orchestrator needs the runtime, which the
@@ -268,12 +271,17 @@ export async function tuiCommand(args: string[]): Promise<number> {
   // still chatting, leave it running".
   const releaseSession = registerSession(config.paths.localModelsDataDir);
 
-  const altScreen = enterAltScreen({ stdout: process.stdout, hideCursor: false });
+  const altScreen = enterAltScreen({
+    stdout: process.stdout,
+    hideCursor: false,
+  });
   // Immediately after the alt screen and before the first render: every
   // frame from here on is bracketed as one synchronized update, so a
   // terminal that renders as bytes arrive shows whole frames instead of
   // half of the old one and half of the new.
-  const synchronizedOutput = enableSynchronizedOutput({ stdout: process.stdout });
+  const synchronizedOutput = enableSynchronizedOutput({
+    stdout: process.stdout,
+  });
 
   // Mouse support. Enabling SGR tracking (1002 + 1006) is what makes
   // clicking panels, rows, tabs and the prompt work at all — the app
@@ -377,7 +385,10 @@ export async function tuiCommand(args: string[]): Promise<number> {
       persistUserTuiMouse(next);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      bus.emit({ type: "runtime_info", line: `mouse setting not saved: ${msg}` });
+      bus.emit({
+        type: "runtime_info",
+        line: `mouse setting not saved: ${msg}`,
+      });
     }
     bus.emit({
       type: "system_message",
@@ -456,11 +467,14 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onOpenUrlRequested: (url) => openUrlFromChat(url, bus),
         onMemoryDumpRequested: () => orchestrator.dumpProfile(),
         onSkillCatalogRequested: () => orchestrator.dumpSkillCatalog(),
-        onPersistLlamaUrl: (nextUrl) => persistLlamaUrl(nextUrl, bus, orchestrator, runtime),
-        onThemePersistRequested: (themeName) => persistThemeChoice(themeName, bus),
+        onPersistLlamaUrl: (nextUrl) =>
+          persistLlamaUrl(nextUrl, bus, orchestrator, runtime),
+        onThemePersistRequested: (themeName) =>
+          persistThemeChoice(themeName, bus),
         onTasksAutoRefreshStart: () => orchestrator.tasks.startAutoRefresh(),
         onTasksRefreshRequested: () => orchestrator.tasks.refresh(),
-        onTaskDetailRequested: (taskId) => orchestrator.tasks.openDetail(taskId),
+        onTaskDetailRequested: (taskId) =>
+          orchestrator.tasks.openDetail(taskId),
         onSidebarTaskActivated: (taskId) => {
           // Sidebar Enter on a task: jump to the Tasks debug tab and
           // surface the detail view. Two dispatches because the keymap
@@ -483,7 +497,8 @@ export async function tuiCommand(args: string[]): Promise<number> {
         },
         onTaskOpenSessionRequested: (taskId) =>
           orchestrator.tasks.openSession(taskId),
-        onTaskCancelConfirmed: (taskId) => orchestrator.tasks.cancelTask(taskId),
+        onTaskCancelConfirmed: (taskId) =>
+          orchestrator.tasks.cancelTask(taskId),
         onTaskRunNowRequested: (taskId) => orchestrator.tasks.runNow(taskId),
         onTaskCreateSubmitted: (input) => orchestrator.tasks.createTask(input),
         onSkillsAutoRefreshStart: () => orchestrator.skills.startAutoRefresh(),
@@ -502,8 +517,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
           void orchestrator.skills.setSkillDisabled(name, true),
         onSkillHubOpen: () => void orchestrator.skills.openHub(),
         onSkillHubRefresh: () => void orchestrator.skills.refreshHub(),
-        onSkillHubSearch: (query) =>
-          void orchestrator.skills.searchHub(query),
+        onSkillHubSearch: (query) => void orchestrator.skills.searchHub(query),
         onSkillHubCardOpen: (row) => void orchestrator.skills.openHubCard(row),
         onSkillHubInstall: (identifier, source) =>
           void orchestrator.skills.installFromHub(identifier, source),
@@ -591,7 +605,8 @@ export async function tuiCommand(args: string[]): Promise<number> {
           void orchestrator.import.runOnboarding(plan, execute),
         onMcpDetailRequested: (serverName) =>
           orchestrator.mcp.openDetail(serverName),
-        onMcpAddServerSubmit: (json) => orchestrator.mcp.addServerFromJson(json),
+        onMcpAddServerSubmit: (json) =>
+          orchestrator.mcp.addServerFromJson(json),
         onMcpRemoveServer: (name) => orchestrator.mcp.removeServer(name),
         onDebugBundleExportRequested: (state) =>
           orchestrator.exportDebugBundle(state),
@@ -600,7 +615,8 @@ export async function tuiCommand(args: string[]): Promise<number> {
           void orchestrator.issueReport.pick(level, state),
         onIssueReportSendRequested: () => void orchestrator.issueReport.send(),
         onIssueReportCloseRequested: () => orchestrator.issueReport.close(),
-        onLocalModelsAutoRefreshStart: () => orchestrator.localModels.startAutoRefresh(),
+        onLocalModelsAutoRefreshStart: () =>
+          orchestrator.localModels.startAutoRefresh(),
         onLocalModelsPullRequested: (id, mode) =>
           void orchestrator.localModels.pullModel(id, mode),
         onLocalModelsPullCancelRequested: (kind) =>
@@ -611,7 +627,8 @@ export async function tuiCommand(args: string[]): Promise<number> {
           void orchestrator.localModels.useManagedMode(),
         onLocalModelsBackendPullRequested: () =>
           void orchestrator.localModels.pullBackend(),
-        onLocalModelsRefreshRequested: () => void orchestrator.localModels.refresh(),
+        onLocalModelsRefreshRequested: () =>
+          void orchestrator.localModels.refresh(),
         onLocalModelsHfResolveRequested: (reference) =>
           void orchestrator.localModels.resolveHuggingFaceReference(reference),
         onLocalModelsHfLookupCancelRequested: () =>
@@ -624,7 +641,8 @@ export async function tuiCommand(args: string[]): Promise<number> {
           void orchestrator.localModels.toggleBackendAutoUpdate(),
         onLocalModelsRemoveConfirmed: (id) =>
           void orchestrator.localModels.removeLocalModel(id),
-        onLocalModelsStatusRequested: () => orchestrator.localModels.emitStatusLine(),
+        onLocalModelsStatusRequested: () =>
+          orchestrator.localModels.emitStatusLine(),
         onLocalModelsDaemonStartRequested: () =>
           void orchestrator.localModels.startDaemon(),
         onLocalModelsDaemonStopRequested: () =>
@@ -655,7 +673,8 @@ export async function tuiCommand(args: string[]): Promise<number> {
           orchestrator.localModels.startLogsAutoRefresh(),
         onLocalLlmLogsAutoRefreshStop: () =>
           orchestrator.localModels.stopLogsAutoRefresh(),
-        onTelegramRefreshRequested: () => orchestrator.telegram.refreshSettings(),
+        onTelegramRefreshRequested: () =>
+          orchestrator.telegram.refreshSettings(),
         onTelegramToggleEnabledRequested: () => {
           // The toggle reads from the live runtime config rather than
           // a (possibly stale) UI mirror so multiple rapid hotkey
@@ -670,8 +689,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
           bus.emit({ type: "telegram_token_prompt_opened" }),
         onTelegramTokenSubmitted: (buffer) =>
           orchestrator.telegram.submitToken(buffer),
-        onTelegramClearTokenRequested: () =>
-          orchestrator.telegram.clearToken(),
+        onTelegramClearTokenRequested: () => orchestrator.telegram.clearToken(),
         onTelegramStartPairingRequested: () =>
           orchestrator.telegram.startPairing(),
         onTelegramCancelPairingRequested: () =>
@@ -881,9 +899,24 @@ function simulateFakeUpdate(
 ): void {
   bus.emit({ type: "update_started" });
   const script: readonly [number, TuiAction][] = [
-    [400, { type: "runtime_info", line: `[update] (fake) downloading atomic-agent v${version}…` }],
-    [1500, { type: "runtime_info", line: "[update] (fake) verifying checksum…" }],
-    [2200, { type: "runtime_info", line: "[update] (fake) installing — nothing on this machine is being replaced" }],
+    [
+      400,
+      {
+        type: "runtime_info",
+        line: `[update] (fake) downloading atomic-agent v${version}…`,
+      },
+    ],
+    [
+      1500,
+      { type: "runtime_info", line: "[update] (fake) verifying checksum…" },
+    ],
+    [
+      2200,
+      {
+        type: "runtime_info",
+        line: "[update] (fake) installing — nothing on this machine is being replaced",
+      },
+    ],
     [3000, { type: "update_finished", ok: true, version }],
   ];
   for (const [delay, action] of script) {
@@ -1041,7 +1074,9 @@ function persistLlamaUrl(
       // URL *is* the managed daemon — stopping it would kill the server
       // we just pointed at. Both branches refresh the LLM tab so it stops
       // reporting managed mode.
-      if (pointsAtManagedDaemon(nextUrl, getConfig().localModels.managed.port)) {
+      if (
+        pointsAtManagedDaemon(nextUrl, getConfig().localModels.managed.port)
+      ) {
         await orchestrator.localModels.refresh();
       } else {
         await orchestrator.localModels.stopChatDaemonOnly();

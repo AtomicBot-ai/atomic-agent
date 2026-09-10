@@ -91,9 +91,7 @@ const ERASE_IN_LINE = /\u001B\[[0-2]?K/;
  * exactly the tearing this module exists to stop.
  */
 export function looksLikeFrame(chunk: string): boolean {
-  return (
-    chunk.length > 64 || chunk.includes("\n") || ERASE_IN_LINE.test(chunk)
-  );
+  return chunk.length > 64 || chunk.includes("\n") || ERASE_IN_LINE.test(chunk);
 }
 
 /**

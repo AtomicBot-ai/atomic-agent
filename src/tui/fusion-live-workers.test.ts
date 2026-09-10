@@ -21,19 +21,28 @@ describe("the live fan-out readout", () => {
     let s: readonly FusionLiveWorker[] = [];
     s = reduceFusionLiveWorkers(s, ev());
     s = reduceFusionLiveWorkers(s, ev({ taskId: "t2", title: "worker 2" }));
-    s = reduceFusionLiveWorkers(s, ev({ taskId: "t1", phase: "tool", tool: "os.fs.read" }));
+    s = reduceFusionLiveWorkers(
+      s,
+      ev({ taskId: "t1", phase: "tool", tool: "os.fs.read" }),
+    );
     expect(s.map((w) => w.taskId)).toEqual(["t1", "t2"]);
     expect(s[0]?.tool).toBe("os.fs.read");
   });
 
   it("carries the model forward when a later event omits it", () => {
     let s = reduceFusionLiveWorkers([], ev());
-    s = reduceFusionLiveWorkers(s, ev({ phase: "tool", tool: "os.fs.read", model: undefined }));
+    s = reduceFusionLiveWorkers(
+      s,
+      ev({ phase: "tool", tool: "os.fs.read", model: undefined }),
+    );
     expect(s[0]?.model).toBe("qwen-3.5-4b");
   });
 
   it("marks a finished leg done and drops its tool, without removing it", () => {
-    let s = reduceFusionLiveWorkers([], ev({ phase: "tool", tool: "os.fs.read" }));
+    let s = reduceFusionLiveWorkers(
+      [],
+      ev({ phase: "tool", tool: "os.fs.read" }),
+    );
     s = reduceFusionLiveWorkers(s, ev({ phase: "finished" }));
     expect(s).toHaveLength(1);
     expect(s[0]).toMatchObject({ done: true, tool: null });
@@ -45,7 +54,9 @@ describe("the live fan-out readout", () => {
   });
 
   it("ignores the orchestrator's own bracket lines", () => {
-    expect(reduceFusionLiveWorkers([], ev({ role: "orchestrator" }))).toHaveLength(0);
+    expect(
+      reduceFusionLiveWorkers([], ev({ role: "orchestrator" })),
+    ).toHaveLength(0);
   });
 
   it("names the model and what the leg is doing", () => {

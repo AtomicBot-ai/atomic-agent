@@ -49,9 +49,9 @@ describe("LinkStore", () => {
 
   it("rejects self-loops", () => {
     const a = newId();
-    expect(() =>
-      store.add({ fromId: a, toId: a, kind: "RELATES_TO" }),
-    ).toThrow(LinkValidationError);
+    expect(() => store.add({ fromId: a, toId: a, kind: "RELATES_TO" })).toThrow(
+      LinkValidationError,
+    );
   });
 
   it("rejects unknown link kinds", () => {
@@ -68,9 +68,9 @@ describe("LinkStore", () => {
   });
 
   it("rejects non-positive ids", () => {
-    expect(() =>
-      store.add({ fromId: 0, toId: 1, kind: "RELATES_TO" }),
-    ).toThrow(LinkValidationError);
+    expect(() => store.add({ fromId: 0, toId: 1, kind: "RELATES_TO" })).toThrow(
+      LinkValidationError,
+    );
     expect(() =>
       store.add({ fromId: 1, toId: -5, kind: "RELATES_TO" }),
     ).toThrow(LinkValidationError);
@@ -93,12 +93,10 @@ describe("LinkStore", () => {
     const b = newId();
     const c = newId();
     expect(
-      store.add({ fromId: a, toId: b, kind: "RELATES_TO", weight: 2.5 })
-        .weight,
+      store.add({ fromId: a, toId: b, kind: "RELATES_TO", weight: 2.5 }).weight,
     ).toBe(1);
     expect(
-      store.add({ fromId: a, toId: c, kind: "RELATES_TO", weight: -1 })
-        .weight,
+      store.add({ fromId: a, toId: c, kind: "RELATES_TO", weight: -1 }).weight,
     ).toBe(0);
   });
 

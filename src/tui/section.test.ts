@@ -51,11 +51,7 @@ describe("section nav model", () => {
     const order = NAV_SLOT_ORDER.map((slot) =>
       slot.kind === "run" ? "run" : slot.tab,
     );
-    expect(order).toEqual([
-      "run",
-      ...OBSERVE_TABS,
-      ...MANAGE_TABS,
-    ]);
+    expect(order).toEqual(["run", ...OBSERVE_TABS, ...MANAGE_TABS]);
     expect(MANAGE_TABS).toContain("llm");
     expect(MANAGE_TABS).not.toContain("providers");
     expect(MANAGE_TABS).not.toContain("models");

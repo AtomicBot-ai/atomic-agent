@@ -9,8 +9,7 @@ import type { FallbackLinkRow } from "./fallback-panel-state.js";
  * never disagree on what is selected.
  */
 export type FallbackPaneRow =
-  | { kind: "link"; link: FallbackLinkRow; index: number }
-  | { kind: "add" };
+  { kind: "link"; link: FallbackLinkRow; index: number } | { kind: "add" };
 
 export function selectFallbackPaneRows(
   state: TuiState,

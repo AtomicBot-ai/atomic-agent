@@ -132,9 +132,7 @@ function makeReplyLoop(deps: {
     skillCatalog: SKILLS,
     memoryContextProvider: NOOP_PROVIDER,
     reflectionRunner: captureReflectionRunner(deps.reflectionCalls),
-    ...(deps.segmentation
-      ? { reflectionSegmentation: deps.segmentation }
-      : {}),
+    ...(deps.segmentation ? { reflectionSegmentation: deps.segmentation } : {}),
   });
 }
 
@@ -155,9 +153,7 @@ function makeFinishLoop(deps: {
     skillCatalog: SKILLS,
     memoryContextProvider: NOOP_PROVIDER,
     reflectionRunner: captureReflectionRunner(deps.reflectionCalls),
-    ...(deps.segmentation
-      ? { reflectionSegmentation: deps.segmentation }
-      : {}),
+    ...(deps.segmentation ? { reflectionSegmentation: deps.segmentation } : {}),
   });
 }
 
@@ -194,7 +190,10 @@ describe("AgentLoop reflection segmentation (phase B)", () => {
       reflectionCalls: calls,
       segmentation: { enabled: true, triggerEveryTurns: 3, windowTurns: 5 },
     });
-    let session: SessionState = createEmptySessionState({ id: "s2", workingDir });
+    let session: SessionState = createEmptySessionState({
+      id: "s2",
+      workingDir,
+    });
     for (let n = 1; n <= 3; n += 1) {
       const result = await loop.runTurn(session, {
         userMessage: `msg ${n}`,
@@ -221,7 +220,10 @@ describe("AgentLoop reflection segmentation (phase B)", () => {
       reflectionCalls: calls,
       segmentation: { enabled: true, triggerEveryTurns: 2, windowTurns: 2 },
     });
-    let session: SessionState = createEmptySessionState({ id: "s3", workingDir });
+    let session: SessionState = createEmptySessionState({
+      id: "s3",
+      workingDir,
+    });
     for (let n = 1; n <= 4; n += 1) {
       const result = await loop.runTurn(session, {
         userMessage: `t${n}`,
@@ -241,7 +243,10 @@ describe("AgentLoop reflection segmentation (phase B)", () => {
       reflectionCalls: calls,
       segmentation: { enabled: true, triggerEveryTurns: 5, windowTurns: 4 },
     });
-    let session: SessionState = createEmptySessionState({ id: "s4", workingDir });
+    let session: SessionState = createEmptySessionState({
+      id: "s4",
+      workingDir,
+    });
     const r1 = await replyLoop.runTurn(session, {
       userMessage: "first",
       maxSteps: 2,

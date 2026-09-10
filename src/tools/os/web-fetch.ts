@@ -19,10 +19,7 @@ import {
 const TOOL_NAME = "os.web.fetch";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
-import {
-  describeChallenge,
-  detectChallenge,
-} from "./web-fetch-challenge.js";
+import { describeChallenge, detectChallenge } from "./web-fetch-challenge.js";
 
 const MAX_RESPONSE_BYTES = 2_000_000;
 const MAX_REDIRECTS = 3;
@@ -247,8 +244,14 @@ function parseArgs(
     mode = rawMode;
   }
   let maxChars = DEFAULT_MAX_CHARS;
-  if (typeof rawArgs.maxChars === "number" && Number.isFinite(rawArgs.maxChars)) {
-    maxChars = Math.min(MAX_CHARS_CAP, Math.max(1, Math.trunc(rawArgs.maxChars)));
+  if (
+    typeof rawArgs.maxChars === "number" &&
+    Number.isFinite(rawArgs.maxChars)
+  ) {
+    maxChars = Math.min(
+      MAX_CHARS_CAP,
+      Math.max(1, Math.trunc(rawArgs.maxChars)),
+    );
   }
   // Mirrors os.http.request: a per-call `timeoutMs` overrides the configured
   // default so the model can shorten the budget for a host it expects to be
@@ -489,9 +492,7 @@ function buildCurlArgs(
   ];
 }
 
-export function parseCurlMeta(
-  stdout: string,
-): Omit<CurlResponse, "truncated"> {
+export function parseCurlMeta(stdout: string): Omit<CurlResponse, "truncated"> {
   const markerIdx = stdout.lastIndexOf(CURL_META_MARKER);
   if (markerIdx === -1) {
     return {

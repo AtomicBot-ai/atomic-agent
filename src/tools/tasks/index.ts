@@ -1,8 +1,5 @@
 import type { ToolRegistry } from "../tool-registry.js";
-import type {
-  TaskRunner,
-  TaskStore,
-} from "../../tasks/index.js";
+import type { TaskRunner, TaskStore } from "../../tasks/index.js";
 import type { SessionState } from "../../session/index.js";
 
 import { buildTasksScheduleTool } from "./tasks-schedule.js";
@@ -21,9 +18,7 @@ export interface RegisterTaskToolsOptions {
   taskStore: TaskStore;
   taskRunner: TaskRunner;
   /** Factory used by `tasks.schedule` when `newSession: true` is requested. */
-  createSession(input?: {
-    metadata?: Record<string, unknown>;
-  }): SessionState;
+  createSession(input?: { metadata?: Record<string, unknown> }): SessionState;
   /** Master kill switch — maps to `config.tasks.agentToolsEnabled`. */
   agentToolsEnabled: boolean;
   /**

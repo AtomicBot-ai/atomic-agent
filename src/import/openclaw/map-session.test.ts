@@ -6,7 +6,9 @@ import type {
   OpenclawSessionMeta,
 } from "./openclaw-source.js";
 
-function meta(overrides: Partial<OpenclawSessionMeta> = {}): OpenclawSessionMeta {
+function meta(
+  overrides: Partial<OpenclawSessionMeta> = {},
+): OpenclawSessionMeta {
   return {
     id: "gaia-123",
     agent: "main",
@@ -102,7 +104,9 @@ describe("mapOpenclawSession", () => {
       reasoning: "r",
     });
     expect(state.turns[1]).toMatchObject({ tool: "grep", args: { q: "x" } });
-    expect((state.turns[1] as { reasoning?: string }).reasoning).toBeUndefined();
+    expect(
+      (state.turns[1] as { reasoning?: string }).reasoning,
+    ).toBeUndefined();
     expect(state.turnCount).toBe(0);
   });
 

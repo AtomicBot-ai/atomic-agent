@@ -501,7 +501,11 @@ async function parseRequestBody(
     body = await readJsonBody<ChatCompletionRequest>(req);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    sendError(res, 400, openaiError(`Invalid JSON in request body: ${message}`));
+    sendError(
+      res,
+      400,
+      openaiError(`Invalid JSON in request body: ${message}`),
+    );
     return null;
   }
   if (!Array.isArray(body.messages) || body.messages.length === 0) {
@@ -536,15 +540,18 @@ async function parseRequestBody(
     return null;
   }
   return {
-    model: typeof body.model === "string" && body.model.length > 0
-      ? body.model
-      : MODEL_DEFAULT,
+    model:
+      typeof body.model === "string" && body.model.length > 0
+        ? body.model
+        : MODEL_DEFAULT,
     stream: Boolean(body.stream),
     systemPrompt,
     userMessage: lastUser.content,
     firstUserMessage: firstUser?.content ?? lastUser.content,
     sessionIdOverride,
-    extensionsEnabled: isExtensionsHeaderTruthy(getHeader(req, EXTENSIONS_HEADER)),
+    extensionsEnabled: isExtensionsHeaderTruthy(
+      getHeader(req, EXTENSIONS_HEADER),
+    ),
   };
 }
 
@@ -557,7 +564,12 @@ async function parseRequestBody(
 function isExtensionsHeaderTruthy(value: string | null): boolean {
   if (value === null) return false;
   const normalised = value.trim().toLowerCase();
-  return normalised === "1" || normalised === "true" || normalised === "on" || normalised === "yes";
+  return (
+    normalised === "1" ||
+    normalised === "true" ||
+    normalised === "on" ||
+    normalised === "yes"
+  );
 }
 
 /**

@@ -11,7 +11,11 @@ import {
 } from "./components/plan-handoff.js";
 import { reduceUiAction } from "./reduce-ui-actions.js";
 import { finishTurn, startNewRun } from "./reducer-helpers.js";
-import { createInitialTuiState, type TuiSessionInfo, type TuiState } from "./tui-state.js";
+import {
+  createInitialTuiState,
+  type TuiSessionInfo,
+  type TuiState,
+} from "./tui-state.js";
 
 function session(): TuiSessionInfo {
   return {
@@ -149,8 +153,9 @@ describe("when the offer appears", () => {
 
   it("stays away in every other mode", () => {
     for (const mode of ["default", "auto", "bypass"] as const) {
-      expect(finishTurn(stateWith({ codingMode: mode }), "completed", 3).planHandoff)
-        .toBe(false);
+      expect(
+        finishTurn(stateWith({ codingMode: mode }), "completed", 3).planHandoff,
+      ).toBe(false);
     }
   });
 

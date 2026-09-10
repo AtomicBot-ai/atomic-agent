@@ -401,7 +401,8 @@ function dimColors(colors: TuiColors): TuiColors {
  */
 export const theme: TuiTheme = new Proxy({} as TuiTheme, {
   get(_target, prop: string | symbol): unknown {
-    if (prop === "colors" && backdropDimmed) return dimColors(activeTheme.colors);
+    if (prop === "colors" && backdropDimmed)
+      return dimColors(activeTheme.colors);
     return activeTheme[prop as keyof TuiTheme];
   },
   has(_target, prop: string | symbol): boolean {

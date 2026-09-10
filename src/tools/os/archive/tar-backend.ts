@@ -44,7 +44,8 @@ export class TarBackend implements ArchiveBackend {
       };
       if (typeof header.size === "number") entry.size = header.size;
       if (header.mtime) entry.mtime = header.mtime;
-      if (kind === "symlink" && header.linkname) entry.linkTarget = header.linkname;
+      if (kind === "symlink" && header.linkname)
+        entry.linkTarget = header.linkname;
       entries.push(entry);
     });
     return entries;
@@ -61,7 +62,11 @@ export class TarBackend implements ArchiveBackend {
         for await (const _chunk of stream) void _chunk;
         return;
       }
-      if (header.type && header.type !== "file" && header.type !== "contiguous-file") {
+      if (
+        header.type &&
+        header.type !== "file" &&
+        header.type !== "contiguous-file"
+      ) {
         throw new Error(`entry is not a regular file: ${path}`);
       }
       const chunks: Buffer[] = [];
@@ -83,7 +88,9 @@ export class TarBackend implements ArchiveBackend {
     const includeMatches = (p: string) =>
       !options.include || options.include.length === 0
         ? true
-        : options.include.some((prefix) => p === prefix || p.startsWith(prefix + "/"));
+        : options.include.some(
+            (prefix) => p === prefix || p.startsWith(prefix + "/"),
+          );
 
     await this.walk(data, async (header, stream) => {
       const rawName = normaliseTarName(header.name);
@@ -227,7 +234,8 @@ export class TarBackend implements ArchiveBackend {
   ): Promise<void> {
     const source = Readable.from([data]);
     const parser = tarExtractStream();
-    const pipeline = this.format === "tar.gz" ? source.pipe(createGunzip()) : source;
+    const pipeline =
+      this.format === "tar.gz" ? source.pipe(createGunzip()) : source;
     pipeline.on("error", (err) => parser.destroy(err));
     pipeline.pipe(parser);
 

@@ -208,7 +208,9 @@ export class GithubApi {
           Accept: "application/vnd.github+json",
           "X-GitHub-Api-Version": "2022-11-28",
           "User-Agent": this.userAgent,
-          ...(payload === undefined ? {} : { "Content-Type": "application/json" }),
+          ...(payload === undefined
+            ? {}
+            : { "Content-Type": "application/json" }),
         },
         ...(payload === undefined ? {} : { body: JSON.stringify(payload) }),
         signal: AbortSignal.timeout(this.timeoutMs),
@@ -229,7 +231,9 @@ export class GithubApi {
       // Primary limits zero the remaining counter; secondary (abuse)
       // limits arrive as 403 with a Retry-After and a healthy counter.
       const rateLimited =
-        remaining === "0" || res.status === 429 || res.headers.has("retry-after");
+        remaining === "0" ||
+        res.status === 429 ||
+        res.headers.has("retry-after");
       throw new GithubApiError(
         rateLimited
           ? `GitHub rate limit reached (HTTP ${res.status}). ${detail}`.trim()

@@ -22,9 +22,7 @@ function makeCtx(): ToolContext {
   };
 }
 
-function makeCommandResult(
-  overrides: Partial<CommandResult>,
-): CommandResult {
+function makeCommandResult(overrides: Partial<CommandResult>): CommandResult {
   return {
     command: "curl",
     args: [],
@@ -191,20 +189,18 @@ describe("os.http.request", () => {
   });
 
   it("performs GET without approval when approvalMode=writes", async () => {
-    const capture: { cmd?: string; args?: string[]; opts?: CommandOptions } = {};
+    const capture: { cmd?: string; args?: string[]; opts?: CommandOptions } =
+      {};
     const tool = buildOsHttpRequestTool({
       lookup: publicLookup,
       approvals: denyAll(),
       approvalRequired: true,
       config: makeHttpConfig({ approvalMode: "writes" }),
       runCommand: fakeRun(capture, {
-        stdout: 'ok\n__ATOMIC_CURL_META__200|text/plain|2|0.01',
+        stdout: "ok\n__ATOMIC_CURL_META__200|text/plain|2|0.01",
       }),
     });
-    const result = await tool.run(
-      { url: "https://example.com" },
-      makeCtx(),
-    );
+    const result = await tool.run({ url: "https://example.com" }, makeCtx());
     expect(result.status).toBe("ok");
     expect(result.details.status).toBe(200);
     expect(capture.args!.some((a) => a.includes("example.com"))).toBe(true);
@@ -212,17 +208,21 @@ describe("os.http.request", () => {
   });
 
   it("returns status:error for a 404 while keeping the body in details", async () => {
-    const capture: { cmd?: string; args?: string[]; opts?: CommandOptions } = {};
+    const capture: { cmd?: string; args?: string[]; opts?: CommandOptions } =
+      {};
     const tool = buildOsHttpRequestTool({
       lookup: publicLookup,
       approvals: approveAll(),
       approvalRequired: false,
       config: makeHttpConfig({ approvalMode: "never" }),
       runCommand: fakeRun(capture, {
-        stdout: 'not found\n__ATOMIC_CURL_META__404|text/plain|9|0.01',
+        stdout: "not found\n__ATOMIC_CURL_META__404|text/plain|9|0.01",
       }),
     });
-    const result = await tool.run({ url: "https://example.com/missing" }, makeCtx());
+    const result = await tool.run(
+      { url: "https://example.com/missing" },
+      makeCtx(),
+    );
     expect(result.status).toBe("error");
     expect(result.summary).toContain("HTTP 404");
     expect(result.details.status).toBe(404);
@@ -230,17 +230,21 @@ describe("os.http.request", () => {
   });
 
   it("returns status:error for a 500", async () => {
-    const capture: { cmd?: string; args?: string[]; opts?: CommandOptions } = {};
+    const capture: { cmd?: string; args?: string[]; opts?: CommandOptions } =
+      {};
     const tool = buildOsHttpRequestTool({
       lookup: publicLookup,
       approvals: approveAll(),
       approvalRequired: false,
       config: makeHttpConfig({ approvalMode: "never" }),
       runCommand: fakeRun(capture, {
-        stdout: 'boom\n__ATOMIC_CURL_META__500|text/plain|4|0.01',
+        stdout: "boom\n__ATOMIC_CURL_META__500|text/plain|4|0.01",
       }),
     });
-    const result = await tool.run({ url: "https://example.com/boom" }, makeCtx());
+    const result = await tool.run(
+      { url: "https://example.com/boom" },
+      makeCtx(),
+    );
     expect(result.status).toBe("error");
     expect(result.summary).toContain("HTTP 500");
     expect(result.details.status).toBe(500);
@@ -276,14 +280,15 @@ describe("os.http.request", () => {
   });
 
   it("bypasses approval entirely when approvalMode=never", async () => {
-    const capture: { cmd?: string; args?: string[]; opts?: CommandOptions } = {};
+    const capture: { cmd?: string; args?: string[]; opts?: CommandOptions } =
+      {};
     const tool = buildOsHttpRequestTool({
       lookup: publicLookup,
       approvals: denyAll(),
       approvalRequired: true,
       config: makeHttpConfig({ approvalMode: "never" }),
       runCommand: fakeRun(capture, {
-        stdout: 'ok\n__ATOMIC_CURL_META__201|text/plain|2|0.01',
+        stdout: "ok\n__ATOMIC_CURL_META__201|text/plain|2|0.01",
       }),
     });
     const result = await tool.run(
@@ -295,14 +300,15 @@ describe("os.http.request", () => {
   });
 
   it("serialises object body to JSON and auto-sets Content-Type", async () => {
-    const capture: { cmd?: string; args?: string[]; opts?: CommandOptions } = {};
+    const capture: { cmd?: string; args?: string[]; opts?: CommandOptions } =
+      {};
     const tool = buildOsHttpRequestTool({
       lookup: publicLookup,
       approvals: approveAll(),
       approvalRequired: true,
       config: makeHttpConfig({ approvalMode: "never" }),
       runCommand: fakeRun(capture, {
-        stdout: 'ok\n__ATOMIC_CURL_META__200|application/json|2|0.01',
+        stdout: "ok\n__ATOMIC_CURL_META__200|application/json|2|0.01",
       }),
     });
     await tool.run(
@@ -327,14 +333,15 @@ describe("os.http.request", () => {
   });
 
   it("passes custom headers through to curl and does not override them", async () => {
-    const capture: { cmd?: string; args?: string[]; opts?: CommandOptions } = {};
+    const capture: { cmd?: string; args?: string[]; opts?: CommandOptions } =
+      {};
     const tool = buildOsHttpRequestTool({
       lookup: publicLookup,
       approvals: approveAll(),
       approvalRequired: true,
       config: makeHttpConfig({ approvalMode: "never" }),
       runCommand: fakeRun(capture, {
-        stdout: 'ok\n__ATOMIC_CURL_META__200|text/plain|2|0.01',
+        stdout: "ok\n__ATOMIC_CURL_META__200|text/plain|2|0.01",
       }),
     });
     await tool.run(
@@ -358,29 +365,33 @@ describe("os.http.request", () => {
   });
 
   it("injects a default Accept header when none is provided", async () => {
-    const capture: { cmd?: string; args?: string[]; opts?: CommandOptions } = {};
+    const capture: { cmd?: string; args?: string[]; opts?: CommandOptions } =
+      {};
     const tool = buildOsHttpRequestTool({
       lookup: publicLookup,
       approvals: approveAll(),
       approvalRequired: true,
       config: makeHttpConfig({ approvalMode: "never" }),
       runCommand: fakeRun(capture, {
-        stdout: 'ok\n__ATOMIC_CURL_META__200|text/plain|2|0.01',
+        stdout: "ok\n__ATOMIC_CURL_META__200|text/plain|2|0.01",
       }),
     });
     await tool.run({ url: "https://mcp.exa.ai/mcp" }, makeCtx());
-    expect(capture.args).toContain("Accept: application/json, text/event-stream");
+    expect(capture.args).toContain(
+      "Accept: application/json, text/event-stream",
+    );
   });
 
   it("does not override an explicit Accept header", async () => {
-    const capture: { cmd?: string; args?: string[]; opts?: CommandOptions } = {};
+    const capture: { cmd?: string; args?: string[]; opts?: CommandOptions } =
+      {};
     const tool = buildOsHttpRequestTool({
       lookup: publicLookup,
       approvals: approveAll(),
       approvalRequired: true,
       config: makeHttpConfig({ approvalMode: "never" }),
       runCommand: fakeRun(capture, {
-        stdout: 'ok\n__ATOMIC_CURL_META__200|application/json|2|0.01',
+        stdout: "ok\n__ATOMIC_CURL_META__200|application/json|2|0.01",
       }),
     });
     await tool.run(
@@ -438,15 +449,15 @@ describe("os.http.request", () => {
       approvals: approveAll(),
       approvalRequired: true,
       config: makeHttpConfig({ approvalMode: "never" }),
-      runCommand: fakeRun({}, {
-        exitCode: 6,
-        stderr: "curl: (6) Could not resolve host: does.not.exist",
-      }),
+      runCommand: fakeRun(
+        {},
+        {
+          exitCode: 6,
+          stderr: "curl: (6) Could not resolve host: does.not.exist",
+        },
+      ),
     });
-    const result = await tool.run(
-      { url: "https://does.not.exist" },
-      makeCtx(),
-    );
+    const result = await tool.run({ url: "https://does.not.exist" }, makeCtx());
     expect(result.status).toBe("error");
     expect(result.summary).toContain("Could not resolve host");
     expect(result.details.exitCode).toBe(6);
@@ -465,14 +476,14 @@ describe("os.http.request", () => {
       approvals: approveAll(),
       approvalRequired: true,
       config: makeHttpConfig({ approvalMode: "never" }),
-      runCommand: fakeRun({}, {
-        stdout: `${html}\n__ATOMIC_CURL_META__200|text/html; charset=utf-8|${html.length}|0.01`,
-      }),
+      runCommand: fakeRun(
+        {},
+        {
+          stdout: `${html}\n__ATOMIC_CURL_META__200|text/html; charset=utf-8|${html.length}|0.01`,
+        },
+      ),
     });
-    const result = await tool.run(
-      { url: "https://example.com" },
-      makeCtx(),
-    );
+    const result = await tool.run({ url: "https://example.com" }, makeCtx());
     expect(result.status).toBe("ok");
     expect(result.details.htmlStripped).toBeUndefined();
     expect(result.summary).toContain("<h1>Hello</h1>");
@@ -482,7 +493,10 @@ describe("os.http.request", () => {
 
   it("leaves JSON responses intact", async () => {
     const json = JSON.stringify({
-      items: [{ id: 1, name: "a" }, { id: 2, name: "b" }],
+      items: [
+        { id: 1, name: "a" },
+        { id: 2, name: "b" },
+      ],
       cursor: "abc",
     });
     const tool = buildOsHttpRequestTool({
@@ -490,9 +504,12 @@ describe("os.http.request", () => {
       approvals: approveAll(),
       approvalRequired: true,
       config: makeHttpConfig({ approvalMode: "never" }),
-      runCommand: fakeRun({}, {
-        stdout: `${json}\n__ATOMIC_CURL_META__200|application/json; charset=utf-8|${json.length}|0.01`,
-      }),
+      runCommand: fakeRun(
+        {},
+        {
+          stdout: `${json}\n__ATOMIC_CURL_META__200|application/json; charset=utf-8|${json.length}|0.01`,
+        },
+      ),
     });
     const result = await tool.run(
       { url: "https://api.example.com/items" },
@@ -512,14 +529,14 @@ describe("os.http.request", () => {
       approvals: approveAll(),
       approvalRequired: true,
       config: makeHttpConfig({ approvalMode: "never" }),
-      runCommand: fakeRun({}, {
-        stdout: `${html}\n__ATOMIC_CURL_META__200||${html.length}|0.01`,
-      }),
+      runCommand: fakeRun(
+        {},
+        {
+          stdout: `${html}\n__ATOMIC_CURL_META__200||${html.length}|0.01`,
+        },
+      ),
     });
-    const result = await tool.run(
-      { url: "https://example.com" },
-      makeCtx(),
-    );
+    const result = await tool.run({ url: "https://example.com" }, makeCtx());
     expect(result.details.htmlStripped).toBeUndefined();
     expect(result.summary).toContain("<p>Sniffed</p>");
   });
@@ -531,14 +548,14 @@ describe("os.http.request", () => {
       approvals: approveAll(),
       approvalRequired: true,
       config: makeHttpConfig({ approvalMode: "never" }),
-      runCommand: fakeRun({}, {
-        stdout: `${body}\n__ATOMIC_CURL_META__200|text/plain|${body.length}|0.01`,
-      }),
+      runCommand: fakeRun(
+        {},
+        {
+          stdout: `${body}\n__ATOMIC_CURL_META__200|text/plain|${body.length}|0.01`,
+        },
+      ),
     });
-    const result = await tool.run(
-      { url: "https://example.com" },
-      makeCtx(),
-    );
+    const result = await tool.run({ url: "https://example.com" }, makeCtx());
     expect(result.details.htmlStripped).toBeUndefined();
     expect(result.summary).toContain("a < b");
   });
@@ -553,9 +570,12 @@ describe("os.http.request", () => {
       approvals: approveAll(),
       approvalRequired: true,
       config: makeHttpConfig({ approvalMode: "never" }),
-      runCommand: fakeRun({}, {
-        stdout: `${big}\n__ATOMIC_CURL_META__200|application/json|${big.length}|0.01`,
-      }),
+      runCommand: fakeRun(
+        {},
+        {
+          stdout: `${big}\n__ATOMIC_CURL_META__200|application/json|${big.length}|0.01`,
+        },
+      ),
     });
     const result = await tool.run(
       { url: "https://api.example.com/big" },
@@ -567,12 +587,16 @@ describe("os.http.request", () => {
   });
 
   it("uses config.http.defaultTimeoutMs when timeoutMs is not provided", async () => {
-    const capture: { cmd?: string; args?: string[]; opts?: CommandOptions } = {};
+    const capture: { cmd?: string; args?: string[]; opts?: CommandOptions } =
+      {};
     const tool = buildOsHttpRequestTool({
       lookup: publicLookup,
       approvals: approveAll(),
       approvalRequired: true,
-      config: makeHttpConfig({ defaultTimeoutMs: 7_000, approvalMode: "never" }),
+      config: makeHttpConfig({
+        defaultTimeoutMs: 7_000,
+        approvalMode: "never",
+      }),
       runCommand: fakeRun(capture, {
         stdout: "ok\n" + meta(200, "text/plain", 2),
       }),

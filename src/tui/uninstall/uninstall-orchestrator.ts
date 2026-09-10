@@ -71,13 +71,16 @@ export interface PerformUninstallOptions {
 export async function performUninstall(
   options: PerformUninstallOptions,
 ): Promise<number> {
-  const write = options.write ?? ((text: string) => void process.stdout.write(text));
+  const write =
+    options.write ?? ((text: string) => void process.stdout.write(text));
   write("uninstalling atomic-agent…\n");
   let plan: ResolvedUninstallPlan;
   try {
     plan = await resolveUninstallPlan({ stateDir: options.stateDir });
   } catch (err) {
-    write(`uninstall failed: ${err instanceof Error ? err.message : String(err)}\n`);
+    write(
+      `uninstall failed: ${err instanceof Error ? err.message : String(err)}\n`,
+    );
     return 1;
   }
   const result = await runUninstall({

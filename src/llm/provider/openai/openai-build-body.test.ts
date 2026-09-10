@@ -54,7 +54,9 @@ describe("buildOpenAiChatBody", () => {
       stream_options: undefined,
     });
     expect(body.stream_options).toBeUndefined();
-    expect(JSON.parse(JSON.stringify(body))).not.toHaveProperty("stream_options");
+    expect(JSON.parse(JSON.stringify(body))).not.toHaveProperty(
+      "stream_options",
+    );
   });
 
   it("honours explicit strict=false override", () => {
@@ -97,11 +99,7 @@ describe("buildOpenAiChatBody", () => {
   });
 
   it("omits response_format entirely when not provided", () => {
-    const body = buildOpenAiChatBody(
-      { prompt: "hi" },
-      "gpt-5-2",
-      false,
-    );
+    const body = buildOpenAiChatBody({ prompt: "hi" }, "gpt-5-2", false);
     expect(body.response_format).toBeUndefined();
   });
 
@@ -114,7 +112,11 @@ describe("buildOpenAiChatBody", () => {
   });
 
   it("keeps the body byte-identical when extraBody is absent", () => {
-    const withoutArg = buildOpenAiChatBody({ prompt: "hi" }, "qwen3.8-27b", false);
+    const withoutArg = buildOpenAiChatBody(
+      { prompt: "hi" },
+      "qwen3.8-27b",
+      false,
+    );
     const withUndefined = buildOpenAiChatBody(
       { prompt: "hi" },
       "qwen3.8-27b",
@@ -204,26 +206,39 @@ describe("buildOpenAiChatBody — the output bound", () => {
   });
 
   it("honours a cap the caller set", () => {
-    const body = buildOpenAiChatBody({ ...request, maxTokens: 512 }, "gpt-test", false);
+    const body = buildOpenAiChatBody(
+      { ...request, maxTokens: 512 },
+      "gpt-test",
+      false,
+    );
     expect(body.max_tokens).toBe(512);
   });
 
   it("lets a provider entry pin one through extraBody", () => {
-    const body = buildOpenAiChatBody(request, "gpt-test", false, { max_tokens: 64_000 });
+    const body = buildOpenAiChatBody(request, "gpt-test", false, {
+      max_tokens: 64_000,
+    });
     expect(body.max_tokens).toBe(64_000);
   });
 
   it("still lets the caller's cap lose to an explicit passthrough", () => {
     // `max_tokens` is deliberately not reserved: an operator who pins a
     // ceiling for a provider that requires one gets the last word.
-    const body = buildOpenAiChatBody({ ...request, maxTokens: 512 }, "gpt-test", false, {
-      max_tokens: 4096,
-    });
+    const body = buildOpenAiChatBody(
+      { ...request, maxTokens: 512 },
+      "gpt-test",
+      false,
+      {
+        max_tokens: 4096,
+      },
+    );
     expect(body.max_tokens).toBe(4096);
   });
 
   it("keeps the fields the caller owns unconditionally", () => {
-    const body = buildOpenAiChatBody(request, "gpt-test", true, { model: "hijack" });
+    const body = buildOpenAiChatBody(request, "gpt-test", true, {
+      model: "hijack",
+    });
     expect(body.model).toBe("gpt-test");
     expect(body.stream).toBe(true);
   });
@@ -233,7 +248,13 @@ describe("buildOpenAiChatBody — the provider's own ceiling", () => {
   const request = { prompt: "hi" };
 
   it("applies a configured ceiling when the call names none", () => {
-    const body = buildOpenAiChatBody(request, "gpt-test", false, undefined, 64_000);
+    const body = buildOpenAiChatBody(
+      request,
+      "gpt-test",
+      false,
+      undefined,
+      64_000,
+    );
     expect(body.max_tokens).toBe(64_000);
   });
 
@@ -249,6 +270,8 @@ describe("buildOpenAiChatBody — the provider's own ceiling", () => {
   });
 
   it("sends nothing when neither names one", () => {
-    expect("max_tokens" in buildOpenAiChatBody(request, "gpt-test", false)).toBe(false);
+    expect(
+      "max_tokens" in buildOpenAiChatBody(request, "gpt-test", false),
+    ).toBe(false);
   });
 });

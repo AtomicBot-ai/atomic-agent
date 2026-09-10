@@ -8,7 +8,12 @@ import {
 } from "./delegate-args.js";
 
 function task(over: Record<string, unknown> = {}): Record<string, unknown> {
-  return { id: "t1", title: "Read the router", instructions: "Read src/http/", ...over };
+  return {
+    id: "t1",
+    title: "Read the router",
+    instructions: "Read src/http/",
+    ...over,
+  };
 }
 
 function expectError(result: ReturnType<typeof parseDelegateArgs>): string {
@@ -21,7 +26,9 @@ describe("parseDelegateArgs", () => {
     const result = parseDelegateArgs({ tasks: [task({ id: "  t1  " })] });
     expect(result).toEqual({
       ok: true,
-      tasks: [{ id: "t1", title: "Read the router", instructions: "Read src/http/" }],
+      tasks: [
+        { id: "t1", title: "Read the router", instructions: "Read src/http/" },
+      ],
     });
   });
 
@@ -43,7 +50,9 @@ describe("parseDelegateArgs", () => {
   });
 
   it("rejects a missing or non-array tasks field", () => {
-    expect(expectError(parseDelegateArgs({}))).toContain("tasks must be an array");
+    expect(expectError(parseDelegateArgs({}))).toContain(
+      "tasks must be an array",
+    );
     expect(expectError(parseDelegateArgs({ tasks: "t1" }))).toContain(
       "tasks must be an array",
     );
@@ -63,9 +72,9 @@ describe("parseDelegateArgs", () => {
       `at most ${MAX_DELEGATE_TASKS}`,
     );
     // The cap is exactly at the boundary, not one below it.
-    expect(parseDelegateArgs({ tasks: tasks.slice(0, MAX_DELEGATE_TASKS) }).ok).toBe(
-      true,
-    );
+    expect(
+      parseDelegateArgs({ tasks: tasks.slice(0, MAX_DELEGATE_TASKS) }).ok,
+    ).toBe(true);
   });
 
   it("rejects duplicate ids — the output is keyed by them", () => {
@@ -76,12 +85,12 @@ describe("parseDelegateArgs", () => {
   });
 
   it("rejects blank ids, titles and instructions", () => {
-    expect(expectError(parseDelegateArgs({ tasks: [task({ id: "   " })] }))).toContain(
-      "id must be a non-empty string",
-    );
-    expect(expectError(parseDelegateArgs({ tasks: [task({ title: "" })] }))).toContain(
-      "title must be a non-empty string",
-    );
+    expect(
+      expectError(parseDelegateArgs({ tasks: [task({ id: "   " })] })),
+    ).toContain("id must be a non-empty string");
+    expect(
+      expectError(parseDelegateArgs({ tasks: [task({ title: "" })] })),
+    ).toContain("title must be a non-empty string");
     expect(
       expectError(parseDelegateArgs({ tasks: [task({ instructions: null })] })),
     ).toContain("instructions must be a non-empty string");
@@ -105,7 +114,11 @@ describe("parseDelegateArgs", () => {
     expect(
       expectError(
         parseDelegateArgs({
-          tasks: [task({ files: Array.from({ length: MAX_TASK_FILES + 1 }, () => "a") })],
+          tasks: [
+            task({
+              files: Array.from({ length: MAX_TASK_FILES + 1 }, () => "a"),
+            }),
+          ],
         }),
       ),
     ).toContain(`at most ${MAX_TASK_FILES}`);
@@ -121,26 +134,30 @@ describe("parseDelegateArgs", () => {
     // The orchestrator sizes its own fan-out, so a number wider than
     // this machine can go must run as wide as it can — not come back as
     // a validation error the model has to notice and retry.
-    expect(expectError(parseDelegateArgs({ tasks: [task()], maxWorkers: 0 }))).toContain(
-      "at least 1",
-    );
-    expect(parseDelegateArgs({ tasks: [task()], maxWorkers: 12 })).toMatchObject({
+    expect(
+      expectError(parseDelegateArgs({ tasks: [task()], maxWorkers: 0 })),
+    ).toContain("at least 1");
+    expect(
+      parseDelegateArgs({ tasks: [task()], maxWorkers: 12 }),
+    ).toMatchObject({
       ok: true,
       maxWorkers: 12,
     });
     expect(
       expectError(parseDelegateArgs({ tasks: [task()], maxWorkers: "2" })),
     ).toContain("must be a number");
-    expect(parseDelegateArgs({ tasks: [task()], maxWorkers: 2.7 })).toMatchObject({
+    expect(
+      parseDelegateArgs({ tasks: [task()], maxWorkers: 2.7 }),
+    ).toMatchObject({
       ok: true,
       maxWorkers: 2,
     });
   });
 
   it("rejects a task that is not an object", () => {
-    expect(expectError(parseDelegateArgs({ tasks: ["do the thing"] }))).toContain(
-      "must be an object",
-    );
+    expect(
+      expectError(parseDelegateArgs({ tasks: ["do the thing"] })),
+    ).toContain("must be an object");
     expect(expectError(parseDelegateArgs({ tasks: [[]] }))).toContain(
       "must be an object",
     );
@@ -152,7 +169,9 @@ describe("parseDelegateArgs", () => {
       { tasks: [{ id: {}, title: [], instructions: 7 }] },
       { tasks: [task()], maxWorkers: Number.NaN },
     ]) {
-      expect(() => parseDelegateArgs(raw as Record<string, unknown>)).not.toThrow();
+      expect(() =>
+        parseDelegateArgs(raw as Record<string, unknown>),
+      ).not.toThrow();
     }
   });
 });

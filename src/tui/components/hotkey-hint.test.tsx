@@ -385,7 +385,9 @@ describe("HotkeyHint queue affordances", () => {
       );
       expect(out).toMatch(/\[⏎\]\s*steer/);
       expect(out).toContain("abort, draft kept");
-      expect(out.split("\n").filter((l) => l.trim().length > 0)).toHaveLength(1);
+      expect(out.split("\n").filter((l) => l.trim().length > 0)).toHaveLength(
+        1,
+      );
     },
   );
 

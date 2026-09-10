@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 import { join } from "node:path";
 import { OpenAiProvider } from "../llm/provider/openai/openai-provider.js";
 import { openAiToolCallAdapter } from "../llm/provider/openai/openai-tool-call-adapter.js";
-import type { CompletionRequest, CompletionResult } from "../llm/provider/completion-types.js";
+import type {
+  CompletionRequest,
+  CompletionResult,
+} from "../llm/provider/completion-types.js";
 import { executeStep, type StepDependencies } from "./step-executor.js";
 import { ToolRegistry } from "../tools/tool-registry.js";
 import { SlotManager } from "../llm/slot-manager.js";
@@ -11,7 +14,10 @@ import { buildGrammar } from "../llm/grammar/build-grammar.js";
 import { createEmptySessionState } from "../session/session-state.js";
 import { DEFAULT_TOOL_DESCRIPTORS } from "../prompt/tool-descriptors.js";
 import { compressToolResult } from "../compressor/result-compressor.js";
-import type { CapabilitiesSummary, SkillCatalogEntry } from "../prompt/stable-prefix.js";
+import type {
+  CapabilitiesSummary,
+  SkillCatalogEntry,
+} from "../prompt/stable-prefix.js";
 
 /**
  * Execution-integrity regression suite for the native OpenAI-compatible
@@ -28,12 +34,30 @@ import type { CapabilitiesSummary, SkillCatalogEntry } from "../prompt/stable-pr
  */
 
 const tools: NonNullable<CompletionRequest["tools"]> = [
-  { type: "function", function: { name: "os__fs__delete", parameters: { type: "object", properties: {} } } },
+  {
+    type: "function",
+    function: {
+      name: "os__fs__delete",
+      parameters: { type: "object", properties: {} },
+    },
+  },
 ];
 
 const parallelTools: NonNullable<CompletionRequest["tools"]> = [
-  { type: "function", function: { name: "os__fs__read", parameters: { type: "object", properties: {} } } },
-  { type: "function", function: { name: "os__fs__grep", parameters: { type: "object", properties: {} } } },
+  {
+    type: "function",
+    function: {
+      name: "os__fs__read",
+      parameters: { type: "object", properties: {} },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "os__fs__grep",
+      parameters: { type: "object", properties: {} },
+    },
+  },
 ];
 
 function sseFrame(obj: Record<string, unknown>): string {
@@ -52,12 +76,32 @@ function eofBody(toolCallArgs: string, toolName = "os__fs__delete"): string {
       choices: [
         {
           index: 0,
-          delta: { role: "assistant", tool_calls: [{ index: 0, id: "call_1", type: "function", function: { name: toolName, arguments: "" } }] },
+          delta: {
+            role: "assistant",
+            tool_calls: [
+              {
+                index: 0,
+                id: "call_1",
+                type: "function",
+                function: { name: toolName, arguments: "" },
+              },
+            ],
+          },
           finish_reason: null,
         },
       ],
     }) +
-    sseFrame({ choices: [{ index: 0, delta: { tool_calls: [{ index: 0, function: { arguments: toolCallArgs } }] }, finish_reason: null }] })
+    sseFrame({
+      choices: [
+        {
+          index: 0,
+          delta: {
+            tool_calls: [{ index: 0, function: { arguments: toolCallArgs } }],
+          },
+          finish_reason: null,
+        },
+      ],
+    })
   );
 }
 
@@ -70,8 +114,18 @@ function parallelEofBody(): string {
           delta: {
             role: "assistant",
             tool_calls: [
-              { index: 0, id: "call_a", type: "function", function: { name: "os__fs__read", arguments: "" } },
-              { index: 1, id: "call_b", type: "function", function: { name: "os__fs__grep", arguments: "" } },
+              {
+                index: 0,
+                id: "call_a",
+                type: "function",
+                function: { name: "os__fs__read", arguments: "" },
+              },
+              {
+                index: 1,
+                id: "call_b",
+                type: "function",
+                function: { name: "os__fs__grep", arguments: "" },
+              },
             ],
           },
           finish_reason: null,
@@ -102,7 +156,8 @@ function qwenTaggedBody(finishReason: string | null = null): string {
         index: 0,
         delta: {
           role: "assistant",
-          content: "<tool_call><function=os__fs__delete></function></tool_call>",
+          content:
+            "<tool_call><function=os__fs__delete></function></tool_call>",
         },
         finish_reason: finishReason,
       },
@@ -110,24 +165,40 @@ function qwenTaggedBody(finishReason: string | null = null): string {
   });
 }
 
-function healthyBody(toolCallArgs: string, toolName = "os__fs__delete"): string {
+function healthyBody(
+  toolCallArgs: string,
+  toolName = "os__fs__delete",
+): string {
   return (
     eofBody(toolCallArgs, toolName) +
-    sseFrame({ choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } }) +
+    sseFrame({
+      choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+    }) +
     "data: [DONE]\n\n"
   );
 }
 
-function lengthTerminatedBody(toolCallArgs: string, toolName = "os__fs__delete"): string {
+function lengthTerminatedBody(
+  toolCallArgs: string,
+  toolName = "os__fs__delete",
+): string {
   return (
     eofBody(toolCallArgs, toolName) +
-    sseFrame({ choices: [{ index: 0, delta: {}, finish_reason: "length" }], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } }) +
+    sseFrame({
+      choices: [{ index: 0, delta: {}, finish_reason: "length" }],
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+    }) +
     "data: [DONE]\n\n"
   );
 }
 
 function fetchReturning(body: string) {
-  return (async () => new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } })) as unknown as typeof fetch;
+  return (async () =>
+    new Response(body, {
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+    })) as unknown as typeof fetch;
 }
 
 function fetchErroringMidStream(prefixBody: string) {
@@ -139,7 +210,10 @@ function fetchErroringMidStream(prefixBody: string) {
         controller.error(new Error("simulated transport read error"));
       },
     });
-    return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
+    return new Response(body, {
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+    });
   }) as unknown as typeof fetch;
 }
 
@@ -170,7 +244,15 @@ async function drainCompleteStream(
 }
 
 function makeCaps(): CapabilitiesSummary {
-  return { platform: "linux", arch: "x64", browserChannel: "chrome", workingDir: "/work", hasClipboard: false, hasWmctrl: false, hasNotifications: false };
+  return {
+    platform: "linux",
+    arch: "x64",
+    browserChannel: "chrome",
+    workingDir: "/work",
+    hasClipboard: false,
+    hasWmctrl: false,
+    hasNotifications: false,
+  };
 }
 
 async function runStepThroughLlmComplete(
@@ -184,13 +266,20 @@ async function runStepThroughLlmComplete(
     description: "reply",
     readonly: true,
     async run(args: Record<string, unknown>) {
-      return compressToolResult({ tool: "reply", status: "ok", output: String(args.text ?? "") });
+      return compressToolResult({
+        tool: "reply",
+        status: "ok",
+        output: String(args.text ?? ""),
+      });
     },
   });
 
   const grammarsDir = join(process.cwd(), "grammars");
   const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE, grammarsDir);
-  const session = createEmptySessionState({ id: "s-integrity", workingDir: "/w" });
+  const session = createEmptySessionState({
+    id: "s-integrity",
+    workingDir: "/w",
+  });
   const deps: StepDependencies = {
     registry,
     slotManager: new SlotManager(2),
@@ -233,7 +322,10 @@ async function runStepFromFetch(
   },
 ): Promise<{ outcomeOrError: unknown; completion: CompletionResult }> {
   const completion = await drainCompleteStream(fetchImpl, options);
-  const { outcomeOrError } = await runStepThroughLlmComplete(async () => completion, registerTools);
+  const { outcomeOrError } = await runStepThroughLlmComplete(
+    async () => completion,
+    registerTools,
+  );
   return { outcomeOrError, completion };
 }
 
@@ -248,7 +340,11 @@ function countingTool(name: string) {
         readonly: false,
         async run(args: Record<string, unknown>) {
           count += 1;
-          return compressToolResult({ tool: name, status: "ok", output: `noop args=${JSON.stringify(args)}` });
+          return compressToolResult({
+            tool: name,
+            status: "ok",
+            output: `noop args=${JSON.stringify(args)}`,
+          });
         },
       });
     },
@@ -258,14 +354,20 @@ function countingTool(name: string) {
 describe("native tool-call execution integrity", () => {
   it("1. healthy valid tool call: executions = 1", async () => {
     const tool = countingTool("os.fs.delete");
-    const { outcomeOrError } = await runStepFromFetch(fetchReturning(healthyBody('{"path":"widget.txt"}')), tool.register);
+    const { outcomeOrError } = await runStepFromFetch(
+      fetchReturning(healthyBody('{"path":"widget.txt"}')),
+      tool.register,
+    );
     expect(tool.executions()).toBe(1);
     expect(outcomeOrError).not.toBeInstanceOf(Error);
   });
 
   it("2. malformed JSON + clean terminal (finish_reason: tool_calls): executions = 0", async () => {
     const tool = countingTool("os.fs.delete");
-    const { outcomeOrError } = await runStepFromFetch(fetchReturning(healthyBody('{"path":"widget.txt')), tool.register);
+    const { outcomeOrError } = await runStepFromFetch(
+      fetchReturning(healthyBody('{"path":"widget.txt')),
+      tool.register,
+    );
     expect(tool.executions()).toBe(0);
     // Routed through the existing one-shot repair path, not a silent {} execute.
     expect(outcomeOrError).toBeInstanceOf(Error);
@@ -273,7 +375,10 @@ describe("native tool-call execution integrity", () => {
 
   it("3. malformed JSON + abrupt EOF (no finish_reason, no [DONE]): executions = 0", async () => {
     const tool = countingTool("os.fs.delete");
-    const { outcomeOrError, completion } = await runStepFromFetch(fetchReturning(eofBody('{"path":"widget.txt')), tool.register);
+    const { outcomeOrError, completion } = await runStepFromFetch(
+      fetchReturning(eofBody('{"path":"widget.txt')),
+      tool.register,
+    );
     expect(completion.finishReason).toBeNull();
     expect(completion.truncated).toBe(true); // now correctly flagged
     expect(tool.executions()).toBe(0);
@@ -283,7 +388,9 @@ describe("native tool-call execution integrity", () => {
   it("4. container-level truncated JSON + abrupt EOF: executions = 0", async () => {
     const tool = countingTool("os.shell.run");
     const { outcomeOrError } = await runStepFromFetch(
-      fetchReturning(eofBody('{"commands":["npm install","npm test"', "os__shell__run")),
+      fetchReturning(
+        eofBody('{"commands":["npm install","npm test"', "os__shell__run"),
+      ),
       tool.register,
     );
     expect(tool.executions()).toBe(0);
@@ -292,7 +399,10 @@ describe("native tool-call execution integrity", () => {
 
   it("5. syntactically COMPLETE JSON but ambiguous EOF: executions = 0", async () => {
     const tool = countingTool("os.fs.delete");
-    const { outcomeOrError, completion } = await runStepFromFetch(fetchReturning(eofBody('{"path":"widget.txt"}')), tool.register);
+    const { outcomeOrError, completion } = await runStepFromFetch(
+      fetchReturning(eofBody('{"path":"widget.txt"}')),
+      tool.register,
+    );
     expect(completion.finishReason).toBeNull();
     expect(completion.truncated).toBe(true);
     expect(tool.executions()).toBe(0);
@@ -301,7 +411,10 @@ describe("native tool-call execution integrity", () => {
 
   it("6. explicit finish_reason: length: executions = 0 (control, unchanged)", async () => {
     const tool = countingTool("os.fs.delete");
-    const { outcomeOrError, completion } = await runStepFromFetch(fetchReturning(lengthTerminatedBody('{"path":"widget.txt"}')), tool.register);
+    const { outcomeOrError, completion } = await runStepFromFetch(
+      fetchReturning(lengthTerminatedBody('{"path":"widget.txt"}')),
+      tool.register,
+    );
     expect(completion.finishReason).toBe("length");
     expect(completion.truncated).toBe(true);
     expect(tool.executions()).toBe(0);
@@ -332,7 +445,9 @@ describe("native tool-call execution integrity", () => {
     const tool = countingTool("os.fs.delete");
     let threw = false;
     try {
-      await drainCompleteStream(fetchErroringMidStream(eofBody('{"path":"widget.txt')));
+      await drainCompleteStream(
+        fetchErroringMidStream(eofBody('{"path":"widget.txt')),
+      );
     } catch {
       threw = true;
     }
@@ -347,10 +462,16 @@ describe("native tool-call execution integrity", () => {
     // ambiguous just because [DONE] never arrived.
     const bodyWithFinishReasonButNoDone =
       eofBody('{"path":"widget.txt"}') +
-      sseFrame({ choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } });
+      sseFrame({
+        choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+      });
     // deliberately no "data: [DONE]\n\n" appended
     const tool = countingTool("os.fs.delete");
-    const { outcomeOrError, completion } = await runStepFromFetch(fetchReturning(bodyWithFinishReasonButNoDone), tool.register);
+    const { outcomeOrError, completion } = await runStepFromFetch(
+      fetchReturning(bodyWithFinishReasonButNoDone),
+      tool.register,
+    );
     expect(completion.finishReason).toBe("tool_calls");
     expect(completion.truncated).toBe(false);
     expect(tool.executions()).toBe(1);
@@ -358,8 +479,18 @@ describe("native tool-call execution integrity", () => {
   });
 
   it("10. compatibility: plain text-only response with ambiguous EOF is unaffected by the tool-call fix", async () => {
-    const textOnlyEofBody = sseFrame({ choices: [{ index: 0, delta: { role: "assistant", content: "hello" }, finish_reason: null }] });
-    const completion = await drainCompleteStream(fetchReturning(textOnlyEofBody));
+    const textOnlyEofBody = sseFrame({
+      choices: [
+        {
+          index: 0,
+          delta: { role: "assistant", content: "hello" },
+          finish_reason: null,
+        },
+      ],
+    });
+    const completion = await drainCompleteStream(
+      fetchReturning(textOnlyEofBody),
+    );
     expect(completion.toolCalls).toBeUndefined();
     expect(completion.truncated).toBe(false);
     expect(completion.stop).toBe(true);
@@ -398,9 +529,15 @@ describe("native tool-call execution integrity", () => {
   it("13. final finish_reason event without trailing blank line is flushed at EOF", async () => {
     const body =
       eofBody('{"path":"widget.txt"}') +
-      sseTail({ choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } });
+      sseTail({
+        choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+      });
     const tool = countingTool("os.fs.delete");
-    const { outcomeOrError, completion } = await runStepFromFetch(fetchReturning(body), tool.register);
+    const { outcomeOrError, completion } = await runStepFromFetch(
+      fetchReturning(body),
+      tool.register,
+    );
     expect(completion.finishReason).toBe("tool_calls");
     expect(completion.truncated).toBe(false);
     expect(completion.stop).toBe(true);
@@ -411,7 +548,10 @@ describe("native tool-call execution integrity", () => {
   it("14. final [DONE] event without trailing blank line is flushed at EOF", async () => {
     const body = eofBody('{"path":"widget.txt"}') + "data: [DONE]";
     const tool = countingTool("os.fs.delete");
-    const { outcomeOrError, completion } = await runStepFromFetch(fetchReturning(body), tool.register);
+    const { outcomeOrError, completion } = await runStepFromFetch(
+      fetchReturning(body),
+      tool.register,
+    );
     expect(completion.finishReason).toBeNull();
     expect(completion.truncated).toBe(false);
     expect(completion.stop).toBe(true);

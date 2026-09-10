@@ -18,7 +18,10 @@ import {
   scrubText,
   type RedactionContext,
 } from "./redact.js";
-import { issueReportLevelInfo, type IssueReportLevel } from "./report-levels.js";
+import {
+  issueReportLevelInfo,
+  type IssueReportLevel,
+} from "./report-levels.js";
 
 /** Environment facts the orchestrator reads at report time. */
 export interface IssueReportFacts {
@@ -48,14 +51,12 @@ const MAX_LOG_LINES = 400;
 const MAX_FEED_LINES = 400;
 const MAX_RUNS = 30;
 
-export function buildIssueReport(
-  input: {
-    snapshot: DebugBundleSnapshot;
-    facts: IssueReportFacts;
-    level: IssueReportLevel;
-    redaction: RedactionContext;
-  },
-): IssueReport {
+export function buildIssueReport(input: {
+  snapshot: DebugBundleSnapshot;
+  facts: IssueReportFacts;
+  level: IssueReportLevel;
+  redaction: RedactionContext;
+}): IssueReport {
   const { snapshot, facts, level, redaction } = input;
   // Both reduced levels mask absolute paths: `redactPersonal` only knows
   // the home and working directories, so a path into another project —
@@ -111,7 +112,10 @@ export function buildIssueReport(
     });
   }
   sections.push({
-    title: level === "errors" ? `Warnings and errors (${logs.length})` : `Logs (${logs.length})`,
+    title:
+      level === "errors"
+        ? `Warnings and errors (${logs.length})`
+        : `Logs (${logs.length})`,
     body: logs.length > 0 ? logs.map(formatLog).join("\n") : "(none)",
     fenced: true,
     lang: "text",
@@ -142,7 +146,10 @@ export function buildIssueReport(
       body:
         feed.length > 0
           ? feed
-              .map((f) => `${new Date(f.timestamp).toISOString().slice(11, 19)} ${f.kind} ${f.line}`)
+              .map(
+                (f) =>
+                  `${new Date(f.timestamp).toISOString().slice(11, 19)} ${f.kind} ${f.line}`,
+              )
               .join("\n")
           : "(none)",
       fenced: true,
@@ -181,7 +188,10 @@ export function buildIssueReport(
   return { level, title, header, sections, snapshot: filtered };
 }
 
-function buildTitle(lastRunStatus: string | null, facts: IssueReportFacts): string {
+function buildTitle(
+  lastRunStatus: string | null,
+  facts: IssueReportFacts,
+): string {
   if (lastRunStatus && /^failed/i.test(lastRunStatus)) {
     const line = lastRunStatus.replace(/^failed\s*/i, "").split("\n")[0] ?? "";
     const short = line.length > 90 ? `${line.slice(0, 87)}…` : line;
@@ -200,7 +210,10 @@ function buildHeader(
   const rows: [string, string][] = [
     ["Version", facts.version],
     ["Platform", `${facts.platform} ${facts.arch}, node ${facts.node}`],
-    ["Provider", `${facts.providerLabel}${facts.textModel ? ` · ${facts.textModel}` : ""} (${facts.toolTransport})`],
+    [
+      "Provider",
+      `${facts.providerLabel}${facts.textModel ? ` · ${facts.textModel}` : ""} (${facts.toolTransport})`,
+    ],
     ["Approval level", `${facts.approvalLevel} · mode ${facts.codingMode}`],
     ["Last run", snapshot.lastRunStatus === null ? "—" : "see below"],
     ["Captured", facts.capturedAt],

@@ -108,7 +108,8 @@ function makeHarness(
   bus.subscribe((a) => actions.push(a));
   const orchestrator = new ChatOrchestrator(runtime, bus, {
     maxSteps: 5,
-    llamaUrl: "http://127.0.0.1:8080", readGateFacts: cloudGateFacts,
+    llamaUrl: "http://127.0.0.1:8080",
+    readGateFacts: cloudGateFacts,
   });
   return {
     orchestrator,

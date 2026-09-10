@@ -55,7 +55,5 @@ export function resolveBackdropDismissal(state: TuiState): TuiAction | null {
  * cursor.
  */
 export function backdropRevertsThemePreview(state: TuiState): boolean {
-  return (
-    resolveBackdropDismissal(state)?.type === "theme_picker_closed"
-  );
+  return resolveBackdropDismissal(state)?.type === "theme_picker_closed";
 }

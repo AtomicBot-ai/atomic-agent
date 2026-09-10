@@ -37,12 +37,18 @@ export function ZerglingStrip({
   animate = true,
   schedule,
 }: ZerglingStripProps): ReactElement | null {
-  const [state, setState] = useState<StripState>(() => createStrip(width, count));
+  const [state, setState] = useState<StripState>(() =>
+    createStrip(width, count),
+  );
 
   useEffect(() => {
     if (!animate) {
       // Still converge on the right number of critters — just without motion.
-      setState((s) => (s.critters.length === count && s.width === width ? s : createStrip(width, count)));
+      setState((s) =>
+        s.critters.length === count && s.width === width
+          ? s
+          : createStrip(width, count),
+      );
       return;
     }
     const tick = (): void => setState((s) => stepStrip(s, count, width));
@@ -54,7 +60,12 @@ export function ZerglingStrip({
   if (width < MIN_STRIP_WIDTH) return null;
   const rows = renderStrip(state.width === width ? state : { ...state, width });
   return (
-    <Box flexDirection="column" height={STRIP_ROWS} width={width} overflow="hidden">
+    <Box
+      flexDirection="column"
+      height={STRIP_ROWS}
+      width={width}
+      overflow="hidden"
+    >
       {rows.map((row, i) => (
         <Box key={i} height={1}>
           {runsOf(row).map((run, j) => (

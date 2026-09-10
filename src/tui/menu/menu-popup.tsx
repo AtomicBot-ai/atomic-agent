@@ -91,7 +91,9 @@ export function MenuPopup({
 
   const rows = selectMenuRows(state);
   const cursor = clampMenuCursor(state, state.menuCursor);
-  const itemIndexes = rows.flatMap((row, idx) => (row.kind === "item" ? [idx] : []));
+  const itemIndexes = rows.flatMap((row, idx) =>
+    row.kind === "item" ? [idx] : [],
+  );
   const cursorRowIdx = itemIndexes[cursor] ?? -1;
 
   const bodyRows = Math.max(
@@ -119,7 +121,10 @@ export function MenuPopup({
       <TitleRow state={state} inner={inner} onActivate={onActivate} />
       {visible.map((row, idx) =>
         row.kind === "header" ? (
-          <Text key={`h-${row.label}-${idx}`} color={chromeTheme.colors.railMuted}>
+          <Text
+            key={`h-${row.label}-${idx}`}
+            color={chromeTheme.colors.railMuted}
+          >
             {fitToWidth(` ${row.label.toUpperCase()}`, inner)}
           </Text>
         ) : (
@@ -134,7 +139,9 @@ export function MenuPopup({
         ),
       )}
       {rows.length === 0 ? (
-        <Text color={chromeTheme.colors.warn}>{fitToWidth(" nothing matches", inner)}</Text>
+        <Text color={chromeTheme.colors.warn}>
+          {fitToWidth(" nothing matches", inner)}
+        </Text>
       ) : null}
       <Text color={chromeTheme.colors.railMuted}>
         {chromeTheme.glyphs.toolBoxHorizontal.repeat(Math.max(0, inner))}
@@ -227,7 +234,10 @@ function moveMenuCursor(
   // re-renders — and each one would otherwise compute the same
   // destination from the same stale index, moving the cursor one row for
   // the whole gesture.
-  const current = clampMenuCursor(mouse.getState(), mouse.getState().menuCursor);
+  const current = clampMenuCursor(
+    mouse.getState(),
+    mouse.getState().menuCursor,
+  );
   const next = Math.max(0, Math.min(itemCount - 1, current + delta));
   if (next === current) return;
   mouse.dispatch({ type: "menu_cursor_set", cursor: next });
@@ -289,14 +299,21 @@ function MenuItem({
   const mouse = useMouseCommands();
   const { node } = row;
   const marker = selected ? chromeTheme.glyphs.menuCursor : " ";
-  const arrow = node.kind === "submenu" ? ` ${chromeTheme.glyphs.arrowRight}` : "";
+  const arrow =
+    node.kind === "submenu" ? ` ${chromeTheme.glyphs.arrowRight}` : "";
   // Leading and trailing space are part of the row, not Box padding, so the
   // whole line is opaque edge to edge.
-  const label = fitToWidth(` ${marker} ${node.label}${arrow}`, Math.min(LABEL_WIDTH, inner));
+  const label = fitToWidth(
+    ` ${marker} ${node.label}${arrow}`,
+    Math.min(LABEL_WIDTH, inner),
+  );
   // The shortcut is flush right, as drawn: it is a column the eye scans
   // down, so it cannot float behind a label of whatever length.
   const chordText = node.chord ? `${MENU_LEADER_LABEL} ${node.chord} ` : "";
-  const chordWidth = Math.min(chordText.length, Math.max(0, inner - label.length));
+  const chordWidth = Math.min(
+    chordText.length,
+    Math.max(0, inner - label.length),
+  );
   const chord = chordText.padStart(chordWidth).slice(0, chordWidth);
   const detailWidth = Math.max(0, inner - label.length - chordWidth);
   const detail = fitToWidth(
@@ -367,7 +384,11 @@ function footer(state: TuiState, hiddenAfter: number): string {
  * through this — it is what makes the popup opaque.
  */
 /** Scroll window that keeps the cursor row visible. */
-function windowStart(total: number, cursorRowIdx: number, size: number): number {
+function windowStart(
+  total: number,
+  cursorRowIdx: number,
+  size: number,
+): number {
   if (total <= size || cursorRowIdx < 0) return 0;
   if (cursorRowIdx < size) return 0;
   return Math.min(cursorRowIdx - size + 1, total - size);

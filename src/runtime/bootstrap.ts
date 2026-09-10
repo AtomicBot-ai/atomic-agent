@@ -3316,7 +3316,7 @@ export async function createAgentRuntime(
     approvals,
     approvalRouter,
     enabled: config.discord.enabled,
-    ownerUserId: config.discord.ownerUserId,
+    ownerUserIds: config.discord.ownerUserIds,
     sessionPointerPath: resolve(config.paths.stateDir, "discord-session.json"),
     inboxDir: resolve(config.paths.stateDir, "inbox", "discord"),
     lock: new DiscordLockfile(resolve(config.paths.stateDir, "discord.lock")),

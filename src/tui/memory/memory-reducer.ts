@@ -49,7 +49,10 @@ function reducePanel(
       };
     }
     case "memory_cursor_set":
-      return { ...panel, cursor: clampCursor(action.row, visibleLength(panel)) };
+      return {
+        ...panel,
+        cursor: clampCursor(action.row, visibleLength(panel)),
+      };
     case "memory_channel_cycled":
       return {
         ...panel,

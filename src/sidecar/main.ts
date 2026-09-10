@@ -67,9 +67,8 @@ export async function bootstrapSidecar(): Promise<{
     active = null;
   };
 
-  const forwardAgentEvent = (
-    sessionId: string,
-  ): ((event: AgentLoopEvent) => void) =>
+  const forwardAgentEvent =
+    (sessionId: string): ((event: AgentLoopEvent) => void) =>
     (event) => {
       switch (event.type) {
         case "step_started":
@@ -120,7 +119,8 @@ export async function bootstrapSidecar(): Promise<{
             protocol.emitEvent("assistant_reply", {
               sessionId,
               text: inner.text,
-              ...(inner.attachments !== undefined && inner.attachments.length > 0
+              ...(inner.attachments !== undefined &&
+              inner.attachments.length > 0
                 ? { attachments: inner.attachments }
                 : {}),
             });
@@ -300,9 +300,7 @@ export async function bootstrapSidecar(): Promise<{
     { reason: string; turnCount: number; stepCount: number }
   >("send_message", async (request) => {
     if (!active || active.session.id !== request.payload.sessionId) {
-      throw new Error(
-        `no active session with id ${request.payload.sessionId}`,
-      );
+      throw new Error(`no active session with id ${request.payload.sessionId}`);
     }
     const { runtime } = active;
     const sessionId = request.payload.sessionId;
@@ -386,9 +384,11 @@ export async function bootstrapSidecar(): Promise<{
   router.register<GetSessionPayload, SessionState | null>(
     "get_session",
     (request) => {
-      if (active?.session.id === request.payload.sessionId) return active.session;
+      if (active?.session.id === request.payload.sessionId)
+        return active.session;
       // Fall back to sqlite if we have a runtime to ask.
-      if (active) return active.runtime.sessionStore.load(request.payload.sessionId);
+      if (active)
+        return active.runtime.sessionStore.load(request.payload.sessionId);
       return null;
     },
   );
@@ -396,7 +396,8 @@ export async function bootstrapSidecar(): Promise<{
   router.register<SkillInstallPayload, { name: string; installedAt: string }>(
     "skill_install",
     async (request) => {
-      if (!active) throw new Error("no active session — call start_session first");
+      if (!active)
+        throw new Error("no active session — call start_session first");
       const result = await installSkill({
         sourceDir: request.payload.sourcePath,
         targetRoot: config.paths.globalSkillsDir,
@@ -412,7 +413,8 @@ export async function bootstrapSidecar(): Promise<{
   router.register<SkillUninstallPayload, { removed: boolean }>(
     "skill_uninstall",
     async (request) => {
-      if (!active) throw new Error("no active session — call start_session first");
+      if (!active)
+        throw new Error("no active session — call start_session first");
       const result = await uninstallSkill(
         config.paths.globalSkillsDir,
         request.payload.name,
@@ -442,7 +444,10 @@ export async function bootstrapSidecar(): Promise<{
   protocol.emitEvent("log", {
     level: "info",
     message: "atomic-agent sidecar booted",
-    context: { llamaUrl: config.localModels.url, stateDir: config.paths.stateDir },
+    context: {
+      llamaUrl: config.localModels.url,
+      stateDir: config.paths.stateDir,
+    },
   });
 
   return {

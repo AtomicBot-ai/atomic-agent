@@ -37,7 +37,9 @@ const CODE_PAYLOAD_CMDS = new Set([
 
 /** Matches with the guard's view of the binary: basename, case-folded. */
 function isCodePayloadCmd(cmd: string): boolean {
-  const bin = basenameCommand(cmd).toLowerCase().replace(/\.exe$/, "");
+  const bin = basenameCommand(cmd)
+    .toLowerCase()
+    .replace(/\.exe$/, "");
   if (CODE_PAYLOAD_CMDS.has(bin)) return true;
   return /^python\d+(\.\d+)*$/.test(bin);
 }

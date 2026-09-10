@@ -89,7 +89,9 @@ export interface ClaudeCodeRunOptions {
 export class ClaudeCodeImporter {
   constructor(private readonly deps: ClaudeCodeImporterDeps) {}
 
-  async run(options: ClaudeCodeRunOptions): Promise<ImportReport<ClaudeCodeOptionId>> {
+  async run(
+    options: ClaudeCodeRunOptions,
+  ): Promise<ImportReport<ClaudeCodeOptionId>> {
     const items: ImportItemResult<ClaudeCodeOptionId>[] = [];
     const selected = new Set(options.options);
 
@@ -193,7 +195,11 @@ export class ClaudeCodeImporter {
     try {
       files = this.deps.source.listMemoryFiles();
     } catch (err) {
-      items.push({ kind: "memory", status: "error", reason: errorMessage(err) });
+      items.push({
+        kind: "memory",
+        status: "error",
+        reason: errorMessage(err),
+      });
       return;
     }
     if (files.length === 0) {

@@ -186,8 +186,10 @@ export class HermesSource {
       throw new HermesSourceError(`failed to parse ${path}: ${message}`);
     }
     const jobs =
-      parsed && typeof parsed === "object" && Array.isArray((parsed as { jobs?: unknown }).jobs)
-        ? ((parsed as { jobs: unknown[] }).jobs)
+      parsed &&
+      typeof parsed === "object" &&
+      Array.isArray((parsed as { jobs?: unknown }).jobs)
+        ? (parsed as { jobs: unknown[] }).jobs
         : [];
     const result: HermesCronJob[] = [];
     for (const raw of jobs) {

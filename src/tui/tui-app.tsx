@@ -207,7 +207,7 @@ export interface TuiAppCallbacks {
    * running turn.
    */
   onApprovalReply?(approvalId: string, message: string): void;
-   /**
+  /**
    * Remove a session for good. Confirmed by the operator in the dialog
    * the rail's `x` opens — the host does the deleting and decides where
    * the UI lands if the current thread was the one removed.
@@ -327,7 +327,9 @@ export interface TuiAppCallbacks {
    * worker keeps its partial file, so Enter on the row resumes it.
    */
   onLocalModelsPullCancelRequested?(kind: "chat" | "embedding"): void;
-  onLocalModelsSetActiveRequested?(modelId: import("../local-llm/index.js").LocalModelId): void;
+  onLocalModelsSetActiveRequested?(
+    modelId: import("../local-llm/index.js").LocalModelId,
+  ): void;
   /**
    * Persist `localModels.mode: "managed"` without picking a model — the
    * composer's way of switching to "local" while nothing is downloaded
@@ -354,7 +356,9 @@ export interface TuiAppCallbacks {
   /** Cycle the managed daemon's GPU preference (auto → devices → cpu). */
   onLocalModelsDeviceCycleRequested?(): void | Promise<void>;
   onLocalModelsAutoUpdateToggleRequested?(): void | Promise<void>;
-  onLocalModelsRemoveConfirmed?(modelId: import("../local-llm/index.js").LocalModelId): void;
+  onLocalModelsRemoveConfirmed?(
+    modelId: import("../local-llm/index.js").LocalModelId,
+  ): void;
   onLocalModelsStatusRequested?(): void | Promise<void>;
   /** Ask the orchestrator to (re)start the llama-server daemon. */
   onLocalModelsDaemonStartRequested?(): void | Promise<void>;
@@ -405,7 +409,9 @@ export interface TuiAppCallbacks {
    * ping (or hop to that integration's setup when it has no credentials
    * yet), `off` remembers "no". Dismissed = Esc, nothing remembered.
    */
-  onLocalModelsNotifyChoice?(choice: "telegram" | "discord" | "email" | "off"): void;
+  onLocalModelsNotifyChoice?(
+    choice: "telegram" | "discord" | "email" | "off",
+  ): void;
   onLocalModelsNotifyDismissed?(): void;
   /** `N` in the Models tab: reopen the prompt. */
   onLocalModelsNotifyPromptRequested?(): void;
@@ -539,7 +545,9 @@ export interface TuiAppCallbacks {
    */
   onMcpRemoveServer?(name: string): void;
   /** Providers tab: finish the add/configure wizard. */
-  onProvidersWizardSubmit?(wizard: import("./providers/providers-wizard-state.js").ProvidersWizardState): void;
+  onProvidersWizardSubmit?(
+    wizard: import("./providers/providers-wizard-state.js").ProvidersWizardState,
+  ): void;
   /** Providers tab: abandon a running pre-save key check. */
   onProvidersWizardSubmitCancel?(): void;
   /**
@@ -768,8 +776,15 @@ export function TuiApp({
   initialLayout,
   mouse,
 }: TuiAppProps): ReactElement {
-  const [state, dispatch] = useReducer(reduceTuiState, { session, initialLayout }, (init) =>
-    createInitialTuiState(init.session, DEFAULT_RING_BUFFER_SIZE, init.initialLayout),
+  const [state, dispatch] = useReducer(
+    reduceTuiState,
+    { session, initialLayout },
+    (init) =>
+      createInitialTuiState(
+        init.session,
+        DEFAULT_RING_BUFFER_SIZE,
+        init.initialLayout,
+      ),
   );
   const app = useApp();
   const [ctrlCArmed, setCtrlCArmed] = useState(false);
@@ -921,7 +936,10 @@ export function TuiApp({
 
   useEffect(() => {
     if (!ctrlCArmed) return;
-    ctrlCTimer.current = setTimeout(() => setCtrlCArmed(false), CTRL_C_WINDOW_MS);
+    ctrlCTimer.current = setTimeout(
+      () => setCtrlCArmed(false),
+      CTRL_C_WINDOW_MS,
+    );
     return () => {
       if (ctrlCTimer.current) clearTimeout(ctrlCTimer.current);
     };
@@ -946,8 +964,7 @@ export function TuiApp({
     state.uiMode === "debug" && state.activeTab === "skills";
   const memoryTabActive =
     state.uiMode === "debug" && state.activeTab === "memory";
-  const mcpTabActive =
-    state.uiMode === "debug" && state.activeTab === "mcp";
+  const mcpTabActive = state.uiMode === "debug" && state.activeTab === "mcp";
   const providersTabActive =
     state.uiMode === "debug" && state.activeTab === "providers";
   const localModelsTabActive =
@@ -959,7 +976,8 @@ export function TuiApp({
     state.uiMode === "debug" && state.activeTab === "privacy";
   const integrationsTabActive =
     state.uiMode === "debug" && state.activeTab === "integrations";
-  const swarmTabActive = state.uiMode === "debug" && state.activeTab === "swarm";
+  const swarmTabActive =
+    state.uiMode === "debug" && state.activeTab === "swarm";
   const terminalSize = useTerminalSize();
   const sidebarVisible =
     state.uiMode === "chat" &&
@@ -1357,7 +1375,12 @@ export function TuiApp({
   const executePlan = useCallback(
     (mode: CodingMode) => {
       dispatch({ type: "coding_mode_cycled", mode });
-      handleEditorSubmit(EXECUTE_PLAN_MESSAGE, stateRef.current, dispatch, callbacks);
+      handleEditorSubmit(
+        EXECUTE_PLAN_MESSAGE,
+        stateRef.current,
+        dispatch,
+        callbacks,
+      );
     },
     [callbacks],
   );
@@ -1558,7 +1581,7 @@ export function TuiApp({
     },
     [state.pendingApproval, callbacks],
   );
-   /**
+  /**
    * Clicking the prompt takes the keyboard back from the rail. Without
    * this the caret moved but the arrow keys still walked the session
    * list, which is the behaviour of no other application anywhere.
@@ -1607,7 +1630,12 @@ export function TuiApp({
       return;
     }
     dispatch({ type: "input_history_navigated", delta: -1 });
-  }, [state.slashPaletteOpen, state.sessionPickerOpen, state.themePickerOpen, state.themePickerCursor]);
+  }, [
+    state.slashPaletteOpen,
+    state.sessionPickerOpen,
+    state.themePickerOpen,
+    state.themePickerCursor,
+  ]);
 
   const onHistoryNext = useCallback(() => {
     if (state.themePickerOpen) {
@@ -1624,7 +1652,12 @@ export function TuiApp({
       return;
     }
     dispatch({ type: "input_history_navigated", delta: 1 });
-  }, [state.slashPaletteOpen, state.sessionPickerOpen, state.themePickerOpen, state.themePickerCursor]);
+  }, [
+    state.slashPaletteOpen,
+    state.sessionPickerOpen,
+    state.themePickerOpen,
+    state.themePickerCursor,
+  ]);
 
   // Pin the layout to the live terminal height **only** under a real
   // TTY. ink-testing-library's mock stdout reports a fake `rows` value
@@ -1637,7 +1670,6 @@ export function TuiApp({
   setBackdropDimmed(
     state.menuOpen || state.contextPanelOpen || state.composerSwitch !== null,
   );
-
 
   const isTty = Boolean(process.stdout.isTTY);
   const rootHeight = isTty ? terminalSize.rows : undefined;
@@ -1723,24 +1755,25 @@ export function TuiApp({
           : outageTickFrom + (outageElapsedMs ?? 0),
       )
     : null;
-  const promptLeftSlot = outage && outageParts ? (
-    <ProviderOutageReadout
-      head={outageParts.head}
-      tail={outageParts.tail}
-      givenUp={outage.givenUp}
-      mouseLayer={MOUSE_LAYER_PANEL}
-    />
-  ) : state.composerNotice ? (
-    // A Box that truncates itself: `MetaLeft` hands its slot straight
-    // into the row, so the slot owns both its wrapping and its shrink
-    // order. The notice yields before the route for the same reason the
-    // outage reason does — the route is what the row is for.
-    <Box flexShrink={META_SLOT_SHRINK} minWidth={0}>
-      <Text color={theme.colors.railSuccess} wrap="truncate">
-        {state.composerNotice}
-      </Text>
-    </Box>
-  ) : null;
+  const promptLeftSlot =
+    outage && outageParts ? (
+      <ProviderOutageReadout
+        head={outageParts.head}
+        tail={outageParts.tail}
+        givenUp={outage.givenUp}
+        mouseLayer={MOUSE_LAYER_PANEL}
+      />
+    ) : state.composerNotice ? (
+      // A Box that truncates itself: `MetaLeft` hands its slot straight
+      // into the row, so the slot owns both its wrapping and its shrink
+      // order. The notice yields before the route for the same reason the
+      // outage reason does — the route is what the row is for.
+      <Box flexShrink={META_SLOT_SHRINK} minWidth={0}>
+        <Text color={theme.colors.railSuccess} wrap="truncate">
+          {state.composerNotice}
+        </Text>
+      </Box>
+    ) : null;
   // While a turn is running the meta-row gains a second job: the operator
   // needs to know what Enter will do to the message they are typing.
   // Running only: during a pending approval every key routes to the
@@ -1833,7 +1866,10 @@ export function TuiApp({
     // step to the same number — while the reducer, applying each in
     // turn, arrives somewhere else. Whatever was last persisted is the
     // honest base, and it is known here synchronously.
-    const current = selectedPairsRef.current ?? stateRef.current.contextPanelPairsDraft ?? cap;
+    const current =
+      selectedPairsRef.current ??
+      stateRef.current.contextPanelPairsDraft ??
+      cap;
     const next = Math.max(1, Math.min(100, current + delta));
     if (next === current) return;
     // Write first, then move the number. The other order leaves the
@@ -1911,33 +1947,33 @@ export function TuiApp({
         getState={getState}
       >
         <ContextMenuProvider>
-        {/*
+          {/*
           No paddingLeft here, unlike the chat frame below: the flow owns
           the gutter itself (see the screen's root box), so its splash
           click target spans the full terminal width, inset included.
         */}
-        <Box
-          flexDirection="column"
-          ref={contentMouseRef}
-          {...(rootHeight ? { height: rootHeight } : {})}
-        >
-          <OnboardingScreen
-            state={state}
-            onboarding={state.onboarding}
-            dispatch={dispatch}
-            callbacks={callbacks}
-            ctrlCArmed={ctrlCArmed}
-          />
-          {/* The flow's root box sits at the terminal origin with no
+          <Box
+            flexDirection="column"
+            ref={contentMouseRef}
+            {...(rootHeight ? { height: rootHeight } : {})}
+          >
+            <OnboardingScreen
+              state={state}
+              onboarding={state.onboarding}
+              dispatch={dispatch}
+              callbacks={callbacks}
+              ctrlCArmed={ctrlCArmed}
+            />
+            {/* The flow's root box sits at the terminal origin with no
               padding, so the click cell needs no pane offset here. */}
-          <ContextMenuPopup
-            menu={state.contextMenu}
-            paneLeft={0}
-            paneTop={0}
-            availableRows={terminalSize.rows}
-            availableColumns={terminalSize.columns}
-          />
-        </Box>
+            <ContextMenuPopup
+              menu={state.contextMenu}
+              paneLeft={0}
+              paneTop={0}
+              availableRows={terminalSize.rows}
+              availableColumns={terminalSize.columns}
+            />
+          </Box>
         </ContextMenuProvider>
       </MouseProvider>
     );
@@ -1950,59 +1986,64 @@ export function TuiApp({
       callbacks={callbacks}
       getState={getState}
     >
-    <ContextMenuProvider>
-    <Box
-      flexDirection="column"
-      paddingLeft={ROOT_PADDING_COLUMNS}
-      ref={contentMouseRef}
-      {...(rootHeight ? { height: rootHeight } : {})}
-    >
-      {/*
+      <ContextMenuProvider>
+        <Box
+          flexDirection="column"
+          paddingLeft={ROOT_PADDING_COLUMNS}
+          ref={contentMouseRef}
+          {...(rootHeight ? { height: rootHeight } : {})}
+        >
+          {/*
         The rail carries the brand, the version and the way to the menu,
         but NOT where you are — so the one-row bar stays either way and
         keeps the breadcrumb on screen. When the rail is up the bar drops
         its own brand lockup, since two copies of it read as a rendering
         bug rather than as chrome.
       */}
-      <Box flexShrink={0}>
-        <StatusBar
-          state={state}
-          width={terminalSize.columns - ROOT_PADDING_COLUMNS}
-          brand={!sidebarVisible}
-          railRestore={sidebarRestorable}
-        />
-      </Box>
-      {/*
+          <Box flexShrink={0}>
+            <StatusBar
+              state={state}
+              width={terminalSize.columns - ROOT_PADDING_COLUMNS}
+              brand={!sidebarVisible}
+              railRestore={sidebarRestorable}
+            />
+          </Box>
+          {/*
         The design separates the top bar and the hint strip from the
         content with a hairline. In a terminal that is a row of box-drawing
         characters — the one honest way to draw a 1px rule when the
         smallest unit you own is a cell.
       */}
-      <Rule width={terminalSize.columns - ROOT_PADDING_COLUMNS} />
-      <Box flexDirection="row" flexGrow={1} flexShrink={1} overflow="hidden">
-        {sidebarVisible ? (
-          <Sidebar
-            width={sidebarWidth}
-            maxSessionRows={sidebarRows.sessions}
-            maxTaskRows={sidebarRows.tasks}
-            sessions={state.recentSessions}
-            sessionsCursor={state.sidebarCursor}
-            sessionDrag={state.sidebarDrag}
-            currentSessionId={state.session.sessionId}
-            tasks={selectSidebarTasks(state.tasksPanel.rows)}
-            runningTaskCount={countRunningTasks(state.tasksPanel.rows)}
-            tasksCursor={state.sidebarTasksCursor}
-            activeSection={state.sidebarSection}
-            focused={sidebarFocused}
-          />
-        ) : null}
-        <Box
-          flexDirection="column"
-          flexGrow={1}
-          overflow="hidden"
-          {...(sidebarVisible ? { paddingLeft: RAIL_GUTTER_COLUMNS } : {})}
-        >
-          {/*
+          <Rule width={terminalSize.columns - ROOT_PADDING_COLUMNS} />
+          <Box
+            flexDirection="row"
+            flexGrow={1}
+            flexShrink={1}
+            overflow="hidden"
+          >
+            {sidebarVisible ? (
+              <Sidebar
+                width={sidebarWidth}
+                maxSessionRows={sidebarRows.sessions}
+                maxTaskRows={sidebarRows.tasks}
+                sessions={state.recentSessions}
+                sessionsCursor={state.sidebarCursor}
+                sessionDrag={state.sidebarDrag}
+                currentSessionId={state.session.sessionId}
+                tasks={selectSidebarTasks(state.tasksPanel.rows)}
+                runningTaskCount={countRunningTasks(state.tasksPanel.rows)}
+                tasksCursor={state.sidebarTasksCursor}
+                activeSection={state.sidebarSection}
+                focused={sidebarFocused}
+              />
+            ) : null}
+            <Box
+              flexDirection="column"
+              flexGrow={1}
+              overflow="hidden"
+              {...(sidebarVisible ? { paddingLeft: RAIL_GUTTER_COLUMNS } : {})}
+            >
+              {/*
             The composer's stage: everything the overlay may float over.
             It is `relative` so the overlay's `bottom: 0` lands on the
             row just above the hint strip, and it clips (`overflow
@@ -2010,202 +2051,220 @@ export function TuiApp({
             never climb under the status bar — Ink 7 would overlap
             rather than clip an over-tall frame at the root.
           */}
-          <Box
-            flexDirection="column"
-            flexGrow={1}
-            flexShrink={1}
-            overflow="hidden"
-            position="relative"
-          >
-          <Box
-            flexDirection="column"
-            flexGrow={1}
-            flexShrink={1}
-            overflow="hidden"
-            position="relative"
-          >
-            {state.uiMode === "chat" ? (
-              <ChatLog
-                state={state}
-                dispatch={dispatch}
-                onPlanExecute={executePlan}
-                onPlanDismiss={dismissPlan}
-              />
-            ) : (
-              <DebugPane
-                state={state}
-                maxVisible={maxVisibleRows}
-                composerVisible={composerVisible}
-                onMcpAddJsonChange={(json) =>
-                  dispatch({ type: "mcp_add_json_changed", json })
-                }
-                onMcpAddSubmit={(json) =>
-                  callbacks.onMcpAddServerSubmit?.(json)
-                }
-                onMcpAddCancel={() =>
-                  dispatch({ type: "mcp_add_modal_closed" })
-                }
-              />
-            )}
-            {state.uninstall ? (
-              <UninstallModal
-                flow={state.uninstall}
-                availableRows={menuPaneRows}
-                availableColumns={
-                  terminalSize.columns - 4 - (sidebarVisible ? sidebarWidth : 0)
-                }
-                onCancel={() => dispatch({ type: "uninstall_closed" })}
-                onContinue={() =>
-                  dispatch({ type: "uninstall_review_accepted" })
-                }
-                onFocus={(cursor) =>
-                  dispatch({ type: "uninstall_cursor_set", cursor })
-                }
-              />
-            ) : null}
-            {state.sessionDelete ? (
-              <SessionDeleteModal
-                confirm={state.sessionDelete}
-                availableRows={menuPaneRows}
-                availableColumns={
-                  terminalSize.columns - 4 - (sidebarVisible ? sidebarWidth : 0)
-                }
-                onConfirm={(sessionId) => {
-                  callbacks.onSessionDeleteConfirmed?.(sessionId);
-                  dispatch({ type: "session_delete_closed" });
-                }}
-                onCancel={() => dispatch({ type: "session_delete_closed" })}
-                onFocus={(cursor) =>
-                  dispatch({ type: "session_delete_cursor_set", cursor })
-                }
-              />
-            ) : null}
-            {state.contextPanelOpen ? (
-              <ContextPanel
-                usage={contextUsage}
-                availableRows={menuPaneRows}
-                availableColumns={
-                  terminalSize.columns - 4 - (sidebarVisible ? sidebarWidth : 0)
-                }
-                reservedForReply={state.session.completionMaxTokens}
-                pairsDraft={state.contextPanelPairsDraft}
-                onStepPairs={stepConversationPairs}
-              />
-            ) : null}
-            <ComposerSwitchPopup
-              state={state}
-              availableRows={switchPaneRows}
-              availableColumns={
-                terminalSize.columns - 4 - (sidebarVisible ? sidebarWidth : 0)
-              }
-              onActivate={activateComposerSwitch}
-            />
-            {state.codingModeMenu ? (
-              // Same pane geometry as the route switch: both hang off a
-              // control on the composer's toolbar, so both belong at the
-              // bottom of the content pane rather than in the middle of
-              // the window.
-              <CodingModePopup
-                cursor={state.codingModeMenu.cursor}
-                active={state.codingMode}
-                availableRows={switchPaneRows}
-                availableColumns={
-                  terminalSize.columns - 4 - (sidebarVisible ? sidebarWidth : 0)
-                }
-                onActivate={(mode) =>
-                  dispatch({ type: "coding_mode_cycled", mode })
-                }
-              />
-            ) : null}
-            {state.issueReport ? (
-              <IssueReportPopup
-                report={state.issueReport}
-                availableRows={switchPaneRows}
-                availableColumns={
-                  terminalSize.columns - 4 - (sidebarVisible ? sidebarWidth : 0)
-                }
-              />
-            ) : null}
-            {state.menuOpen ? (
-              <MenuPopup
-                state={state}
-                availableRows={menuPaneRows}
-                availableColumns={
-                  terminalSize.columns - 4 - (sidebarVisible ? sidebarWidth : 0)
-                }
-                onActivate={activateMenuNode}
-              />
-            ) : null}
-          </Box>
-          {state.pendingApproval ? (
-            <Box flexShrink={0}>
-              <ApprovalModal
-                request={state.pendingApproval}
-                pathDraft={state.approvalPathDraft}
-                onPathOpen={onApprovalPathOpen}
-                onPathChange={(value) =>
-                  dispatch({ type: "approval_path_edit_changed", value })
-                }
-                onPathSubmit={onApprovalPathSubmit}
-                onPathCancel={() =>
-                  dispatch({ type: "approval_path_edit_closed" })
-                }
-              />
-            </Box>
-          ) : null}
-          {state.sessionPickerOpen ? (
-            <Box flexShrink={0}>
-              <SessionPicker
-                sessions={state.sessionPickerList}
-                cursor={state.sessionPickerCursor}
-                currentSessionId={state.session.sessionId}
-              />
-            </Box>
-          ) : null}
-          {state.themePickerOpen ? (
-            <Box flexShrink={0}>
-              <ThemePicker
-                cursor={state.themePickerCursor}
-                original={state.themePickerOriginal}
-              />
-            </Box>
-          ) : null}
-          {state.slashPaletteOpen ? (
-            <SlashPalette
-              query={state.slashQuery}
-              cursor={state.slashPaletteCursor}
-            />
-          ) : null}
-          {state.tasksPanel.cancelConfirm ? (
-            <Box flexShrink={0}>
-              <TasksCancelModal confirm={state.tasksPanel.cancelConfirm} />
-            </Box>
-          ) : null}
-          {state.updatePrompt ? (
-            <Box flexShrink={0}>
-              <UpdateModal
-                current={state.updatePrompt.current}
-                latest={state.updatePrompt.latest}
-              />
-            </Box>
-          ) : null}
-          {state.updateStatus === "running" ? (
-            <Box flexShrink={0}>
-              <UpdateIndicator />
-            </Box>
-          ) : null}
-          {state.updateStatus === "done" ? (
-            <Box flexShrink={0}>
-              <UpdateRestartPrompt />
-            </Box>
-          ) : null}
-          {composerVisible ? (
-            <>
-              <QueuedMessages
-                queued={state.queuedMessages}
-                width={mainColumnWidth}
-              />
-              {/*
+              <Box
+                flexDirection="column"
+                flexGrow={1}
+                flexShrink={1}
+                overflow="hidden"
+                position="relative"
+              >
+                <Box
+                  flexDirection="column"
+                  flexGrow={1}
+                  flexShrink={1}
+                  overflow="hidden"
+                  position="relative"
+                >
+                  {state.uiMode === "chat" ? (
+                    <ChatLog
+                      state={state}
+                      dispatch={dispatch}
+                      onPlanExecute={executePlan}
+                      onPlanDismiss={dismissPlan}
+                    />
+                  ) : (
+                    <DebugPane
+                      state={state}
+                      maxVisible={maxVisibleRows}
+                      composerVisible={composerVisible}
+                      onMcpAddJsonChange={(json) =>
+                        dispatch({ type: "mcp_add_json_changed", json })
+                      }
+                      onMcpAddSubmit={(json) =>
+                        callbacks.onMcpAddServerSubmit?.(json)
+                      }
+                      onMcpAddCancel={() =>
+                        dispatch({ type: "mcp_add_modal_closed" })
+                      }
+                    />
+                  )}
+                  {state.uninstall ? (
+                    <UninstallModal
+                      flow={state.uninstall}
+                      availableRows={menuPaneRows}
+                      availableColumns={
+                        terminalSize.columns -
+                        4 -
+                        (sidebarVisible ? sidebarWidth : 0)
+                      }
+                      onCancel={() => dispatch({ type: "uninstall_closed" })}
+                      onContinue={() =>
+                        dispatch({ type: "uninstall_review_accepted" })
+                      }
+                      onFocus={(cursor) =>
+                        dispatch({ type: "uninstall_cursor_set", cursor })
+                      }
+                    />
+                  ) : null}
+                  {state.sessionDelete ? (
+                    <SessionDeleteModal
+                      confirm={state.sessionDelete}
+                      availableRows={menuPaneRows}
+                      availableColumns={
+                        terminalSize.columns -
+                        4 -
+                        (sidebarVisible ? sidebarWidth : 0)
+                      }
+                      onConfirm={(sessionId) => {
+                        callbacks.onSessionDeleteConfirmed?.(sessionId);
+                        dispatch({ type: "session_delete_closed" });
+                      }}
+                      onCancel={() =>
+                        dispatch({ type: "session_delete_closed" })
+                      }
+                      onFocus={(cursor) =>
+                        dispatch({ type: "session_delete_cursor_set", cursor })
+                      }
+                    />
+                  ) : null}
+                  {state.contextPanelOpen ? (
+                    <ContextPanel
+                      usage={contextUsage}
+                      availableRows={menuPaneRows}
+                      availableColumns={
+                        terminalSize.columns -
+                        4 -
+                        (sidebarVisible ? sidebarWidth : 0)
+                      }
+                      reservedForReply={state.session.completionMaxTokens}
+                      pairsDraft={state.contextPanelPairsDraft}
+                      onStepPairs={stepConversationPairs}
+                    />
+                  ) : null}
+                  <ComposerSwitchPopup
+                    state={state}
+                    availableRows={switchPaneRows}
+                    availableColumns={
+                      terminalSize.columns -
+                      4 -
+                      (sidebarVisible ? sidebarWidth : 0)
+                    }
+                    onActivate={activateComposerSwitch}
+                  />
+                  {state.codingModeMenu ? (
+                    // Same pane geometry as the route switch: both hang off a
+                    // control on the composer's toolbar, so both belong at the
+                    // bottom of the content pane rather than in the middle of
+                    // the window.
+                    <CodingModePopup
+                      cursor={state.codingModeMenu.cursor}
+                      active={state.codingMode}
+                      availableRows={switchPaneRows}
+                      availableColumns={
+                        terminalSize.columns -
+                        4 -
+                        (sidebarVisible ? sidebarWidth : 0)
+                      }
+                      onActivate={(mode) =>
+                        dispatch({ type: "coding_mode_cycled", mode })
+                      }
+                    />
+                  ) : null}
+                  {state.issueReport ? (
+                    <IssueReportPopup
+                      report={state.issueReport}
+                      availableRows={switchPaneRows}
+                      availableColumns={
+                        terminalSize.columns -
+                        4 -
+                        (sidebarVisible ? sidebarWidth : 0)
+                      }
+                    />
+                  ) : null}
+                  {state.menuOpen ? (
+                    <MenuPopup
+                      state={state}
+                      availableRows={menuPaneRows}
+                      availableColumns={
+                        terminalSize.columns -
+                        4 -
+                        (sidebarVisible ? sidebarWidth : 0)
+                      }
+                      onActivate={activateMenuNode}
+                    />
+                  ) : null}
+                </Box>
+                {state.pendingApproval ? (
+                  <Box flexShrink={0}>
+                    <ApprovalModal
+                      request={state.pendingApproval}
+                      pathDraft={state.approvalPathDraft}
+                      onPathOpen={onApprovalPathOpen}
+                      onPathChange={(value) =>
+                        dispatch({ type: "approval_path_edit_changed", value })
+                      }
+                      onPathSubmit={onApprovalPathSubmit}
+                      onPathCancel={() =>
+                        dispatch({ type: "approval_path_edit_closed" })
+                      }
+                    />
+                  </Box>
+                ) : null}
+                {state.sessionPickerOpen ? (
+                  <Box flexShrink={0}>
+                    <SessionPicker
+                      sessions={state.sessionPickerList}
+                      cursor={state.sessionPickerCursor}
+                      currentSessionId={state.session.sessionId}
+                    />
+                  </Box>
+                ) : null}
+                {state.themePickerOpen ? (
+                  <Box flexShrink={0}>
+                    <ThemePicker
+                      cursor={state.themePickerCursor}
+                      original={state.themePickerOriginal}
+                    />
+                  </Box>
+                ) : null}
+                {state.slashPaletteOpen ? (
+                  <SlashPalette
+                    query={state.slashQuery}
+                    cursor={state.slashPaletteCursor}
+                  />
+                ) : null}
+                {state.tasksPanel.cancelConfirm ? (
+                  <Box flexShrink={0}>
+                    <TasksCancelModal
+                      confirm={state.tasksPanel.cancelConfirm}
+                    />
+                  </Box>
+                ) : null}
+                {state.updatePrompt ? (
+                  <Box flexShrink={0}>
+                    <UpdateModal
+                      current={state.updatePrompt.current}
+                      latest={state.updatePrompt.latest}
+                    />
+                  </Box>
+                ) : null}
+                {state.updateStatus === "running" ? (
+                  <Box flexShrink={0}>
+                    <UpdateIndicator />
+                  </Box>
+                ) : null}
+                {state.updateStatus === "done" ? (
+                  <Box flexShrink={0}>
+                    <UpdateRestartPrompt />
+                  </Box>
+                ) : null}
+                {composerVisible ? (
+                  <>
+                    <QueuedMessages
+                      queued={state.queuedMessages}
+                      width={mainColumnWidth}
+                    />
+                    {/*
                 The composer holds exactly this slot in the flex column
                 — its collapsed height, whatever the buffer holds — and
                 paints itself over the stage from the overlay below.
@@ -2213,71 +2272,71 @@ export function TuiApp({
                 every newline compressed the chat log and reflowed the
                 whole screen.
               */}
-              <ComposerSlot />
-              <ComposerOverlay>
-                <PromptShell
-            fusion={promptBackend.kind === "fusion"}
-            value={state.inputValue}
-            placeholder={
-              // While a plan is on offer the field says what typing into
-              // it would *do*. The buttons above cover running and
-              // dropping the plan; this is the third option, and the
-              // composer is the one place it can be said without adding
-              // a fourth control to say it.
-              state.planHandoff
-                ? "Type to change the plan — it stays in plan mode…"
-                : "Type a message or `/` for commands…"
-            }
-            // No rotation while a plan is on offer. `PromptShell`
-            // resolves `rotated ?? placeholder`, so a rotating pool —
-            // which is never empty — outranks the specific line above
-            // and the plan hint could never appear on screen at all.
-            // The offer is the one moment the field has something
-            // particular to say, so it says it instead of rotating.
-            rotatingPlaceholders={
-              state.planHandoff ? NO_ROTATION : PROMPT_PLACEHOLDERS
-            }
-            backend={promptBackend}
-            model={promptLlm.model}
-            provider={promptLlm.provider}
-            needsModelDownload={promptNeedsModelDownload}
-            workers={promptWorkers}
-            leftSlot={promptLeftSlot}
-            rightSlot={promptRightSlot}
-            contextSlot={promptContextSlot}
-            modeSlot={promptModeSlot}
-            running={state.status === "running"}
-            onStop={onStopRun}
-            focus={editorFocus}
-            disabled={!canTypeMessage(state)}
-            claimKey={composerClaimKey}
-            onChange={onEditorChange}
-            onSubmit={submit}
-            onEscape={onEscape}
-            onTab={onTab}
-            onAutocomplete={onTab}
-            maxVisibleLines={composerMaxEditorLines}
-            mouseLayer={MOUSE_LAYER_PANEL}
-                onClickFocus={focusEditorFromClick}
-                onSelectionChange={(hasSelection) =>
-                  dispatch({
-                    type: "composer_selection_changed",
-                    hasSelection,
-                  })
-                }
-                onCopy={(text) =>
-                  dispatch({
-                    type: "composer_notice",
-                    text: `copied ${text.length} character${text.length === 1 ? "" : "s"}`,
-                  })
-                }
-                onHistoryPrev={onHistoryPrev}
-                onHistoryNext={onHistoryNext}
-                />
-              </ComposerOverlay>
-            </>
-          ) : null}
-          {/*
+                    <ComposerSlot />
+                    <ComposerOverlay>
+                      <PromptShell
+                        fusion={promptBackend.kind === "fusion"}
+                        value={state.inputValue}
+                        placeholder={
+                          // While a plan is on offer the field says what typing into
+                          // it would *do*. The buttons above cover running and
+                          // dropping the plan; this is the third option, and the
+                          // composer is the one place it can be said without adding
+                          // a fourth control to say it.
+                          state.planHandoff
+                            ? "Type to change the plan — it stays in plan mode…"
+                            : "Type a message or `/` for commands…"
+                        }
+                        // No rotation while a plan is on offer. `PromptShell`
+                        // resolves `rotated ?? placeholder`, so a rotating pool —
+                        // which is never empty — outranks the specific line above
+                        // and the plan hint could never appear on screen at all.
+                        // The offer is the one moment the field has something
+                        // particular to say, so it says it instead of rotating.
+                        rotatingPlaceholders={
+                          state.planHandoff ? NO_ROTATION : PROMPT_PLACEHOLDERS
+                        }
+                        backend={promptBackend}
+                        model={promptLlm.model}
+                        provider={promptLlm.provider}
+                        needsModelDownload={promptNeedsModelDownload}
+                        workers={promptWorkers}
+                        leftSlot={promptLeftSlot}
+                        rightSlot={promptRightSlot}
+                        contextSlot={promptContextSlot}
+                        modeSlot={promptModeSlot}
+                        running={state.status === "running"}
+                        onStop={onStopRun}
+                        focus={editorFocus}
+                        disabled={!canTypeMessage(state)}
+                        claimKey={composerClaimKey}
+                        onChange={onEditorChange}
+                        onSubmit={submit}
+                        onEscape={onEscape}
+                        onTab={onTab}
+                        onAutocomplete={onTab}
+                        maxVisibleLines={composerMaxEditorLines}
+                        mouseLayer={MOUSE_LAYER_PANEL}
+                        onClickFocus={focusEditorFromClick}
+                        onSelectionChange={(hasSelection) =>
+                          dispatch({
+                            type: "composer_selection_changed",
+                            hasSelection,
+                          })
+                        }
+                        onCopy={(text) =>
+                          dispatch({
+                            type: "composer_notice",
+                            text: `copied ${text.length} character${text.length === 1 ? "" : "s"}`,
+                          })
+                        }
+                        onHistoryPrev={onHistoryPrev}
+                        onHistoryNext={onHistoryNext}
+                      />
+                    </ComposerOverlay>
+                  </>
+                ) : null}
+                {/*
             Last child of the stage, so it paints over everything the
             stage holds — the composer overlay included, which is where
             most right-clicks land. The pane offsets are the stage's
@@ -2287,34 +2346,34 @@ export function TuiApp({
             is anchored to an absolute click cell, and Ink margins
             offset from the parent box, so the popup subtracts these.
           */}
-          <ContextMenuPopup
-            menu={state.contextMenu}
-            paneLeft={
-              ROOT_PADDING_COLUMNS +
-              (sidebarVisible ? sidebarWidth + RAIL_GUTTER_COLUMNS : 0)
-            }
-            paneTop={2}
-            availableRows={
-              menuPaneRows + (composerVisible ? COMPOSER_COLLAPSED_ROWS : 0)
-            }
-            availableColumns={
-              terminalSize.columns -
-              ROOT_PADDING_COLUMNS -
-              (sidebarVisible ? sidebarWidth + RAIL_GUTTER_COLUMNS : 0)
-            }
-          />
+                <ContextMenuPopup
+                  menu={state.contextMenu}
+                  paneLeft={
+                    ROOT_PADDING_COLUMNS +
+                    (sidebarVisible ? sidebarWidth + RAIL_GUTTER_COLUMNS : 0)
+                  }
+                  paneTop={2}
+                  availableRows={
+                    menuPaneRows +
+                    (composerVisible ? COMPOSER_COLLAPSED_ROWS : 0)
+                  }
+                  availableColumns={
+                    terminalSize.columns -
+                    ROOT_PADDING_COLUMNS -
+                    (sidebarVisible ? sidebarWidth + RAIL_GUTTER_COLUMNS : 0)
+                  }
+                />
+              </Box>
+              <HotkeyHint
+                state={state}
+                ctrlCArmed={ctrlCArmed}
+                menuLeaderArmed={menuLeaderArmed}
+                width={mainColumnWidth}
+              />
+            </Box>
           </Box>
-          <HotkeyHint
-            state={state}
-            ctrlCArmed={ctrlCArmed}
-            menuLeaderArmed={menuLeaderArmed}
-            width={mainColumnWidth}
-          />
         </Box>
-      </Box>
-    </Box>
-    </ContextMenuProvider>
+      </ContextMenuProvider>
     </MouseProvider>
   );
 }
-

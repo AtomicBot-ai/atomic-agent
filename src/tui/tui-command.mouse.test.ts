@@ -32,7 +32,11 @@ import { DEFAULT_SELECTION_WINDOW_MS } from "./mouse/selection-passthrough.js";
 import type { TuiAction } from "./tui-action.js";
 
 const inkRender = vi.hoisted(() => vi.fn());
-const trackingCalls = vi.hoisted(() => ({ enabled: 0, disabled: 0, resumed: 0 }));
+const trackingCalls = vi.hoisted(() => ({
+  enabled: 0,
+  disabled: 0,
+  resumed: 0,
+}));
 const orchestratorCalls = vi.hoisted(() => ({ quits: 0 }));
 
 // `sea` is one of the few builtins Node only publishes under the
@@ -288,7 +292,12 @@ describe("tuiCommand mouse wiring", () => {
 
     stdin.emit("data", sgrPress(5, 3));
     expect(app.seen).toHaveLength(1);
-    expect(app.seen[0]).toMatchObject({ kind: "press", button: "left", x: 4, y: 2 });
+    expect(app.seen[0]).toMatchObject({
+      kind: "press",
+      button: "left",
+      x: 4,
+      y: 2,
+    });
     // The source the tree subscribed to at mount is the one receiving
     // them — that is the whole point.
     expect(app.mouse).toBeDefined();
@@ -466,9 +475,9 @@ describe("tuiCommand mouse wiring", () => {
     // The unclaimed drag was detected in the tree; the wiring under
     // test is what happens next.
     app.selectionDragIntent();
-    expect(
-      app.messages.some((m) => m.includes("drag again to select")),
-    ).toBe(true);
+    expect(app.messages.some((m) => m.includes("drag again to select"))).toBe(
+      true,
+    );
 
     // A report already in flight when the suspend landed is swallowed
     // — it also never reaches the tree, so the drag-intent tracker

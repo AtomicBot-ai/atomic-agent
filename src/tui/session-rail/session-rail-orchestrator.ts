@@ -30,7 +30,9 @@ export const configSessionRailLayoutStore: SessionRailLayoutStore = {
  * `null` when it no longer exists. Injected so tests never touch a
  * session store.
  */
-export type SessionRailEntryLoader = (sessionId: string) => SessionPickerEntry | null;
+export type SessionRailEntryLoader = (
+  sessionId: string,
+) => SessionPickerEntry | null;
 
 /**
  * The rail's layout, owned by the chat orchestrator.
@@ -96,7 +98,11 @@ export class SessionRailOrchestrator {
 
   /** Pin `sessionId` to the end of the block, or release it to the top of the rest. */
   togglePinned(sessionId: string): void {
-    const next = togglePinned(this.store.read(), this.displayedIds(), sessionId);
+    const next = togglePinned(
+      this.store.read(),
+      this.displayedIds(),
+      sessionId,
+    );
     if (!next) return;
     this.store.write(next);
     this.refresh();

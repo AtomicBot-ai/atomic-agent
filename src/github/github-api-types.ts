@@ -89,4 +89,3 @@ export interface GithubApiOptions {
   fetchImpl?: typeof fetch;
   userAgent?: string;
 }
-

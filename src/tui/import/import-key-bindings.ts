@@ -136,7 +136,11 @@ function handlePreviewKey(
   return true;
 }
 
-function handleDoneKey(_input: string, key: Key, ctx: ImportTabKeyContext): boolean {
+function handleDoneKey(
+  _input: string,
+  key: Key,
+  ctx: ImportTabKeyContext,
+): boolean {
   if (key.return || key.escape) {
     ctx.dispatch({ type: "import_reset" });
     return true;

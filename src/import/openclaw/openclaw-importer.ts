@@ -90,7 +90,8 @@ export class OpenclawImporter {
     let metas = sources.flatMap((s) => s.listSessions());
     metas.sort(
       (a, b) =>
-        b.startedAtMs - a.startedAtMs || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+        b.startedAtMs - a.startedAtMs ||
+        (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
     );
     if (options.limit !== undefined && options.limit >= 0) {
       metas = metas.slice(0, options.limit);

@@ -15,7 +15,10 @@ export {
   scrubText,
   type RedactionContext,
 } from "./redact.js";
-export { redactTraceNdjson, type TraceRedactionStats } from "./trace-redaction.js";
+export {
+  redactTraceNdjson,
+  type TraceRedactionStats,
+} from "./trace-redaction.js";
 export {
   packIssue,
   renderSection,

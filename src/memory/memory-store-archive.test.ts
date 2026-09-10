@@ -87,9 +87,7 @@ describe("MemoryStore archive (phase 5)", () => {
     const b = h.store.store({ content: "note B", source: "agent" });
     h.store.archiveInto([a.id], 9);
     expect(
-      h.store
-        .listIndex({ excludeArchived: true })
-        .map((r) => r.id),
+      h.store.listIndex({ excludeArchived: true }).map((r) => r.id),
     ).toEqual([b.id]);
   });
 

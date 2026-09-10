@@ -618,7 +618,11 @@ function SessionRow({
       <Text>{" ".repeat(ROW_MARGIN_COLUMNS)}</Text>
       <Box flexShrink={0} width={Math.max(0, groundWidth - marks)}>
         <Text
-          color={drag === "target" ? theme.colors.railAccent : theme.colors.railForeground}
+          color={
+            drag === "target"
+              ? theme.colors.railAccent
+              : theme.colors.railForeground
+          }
           bold={selected || current || drag !== null}
           underline={drag === "target"}
           wrap="truncate"

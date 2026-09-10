@@ -27,9 +27,7 @@ function noopCallbacks(): TuiAppCallbacks {
 }
 
 function strip(value: string): string {
-  return value
-    .replace(/\u001B\[[0-9;]*m/g, "")
-    .replace(/\u001B\]8;;[^]*/g, "");
+  return value.replace(/\u001B\[[0-9;]*m/g, "").replace(/\u001B\]8;;[^]*/g, "");
 }
 
 /**
@@ -179,22 +177,22 @@ function mountApp(): {
   };
   const { lastFrame, stdin, unmount } = render(
     <ClipboardProvider writer={clipboard}>
-    <TuiApp
-      session={SESSION}
-      bus={bus}
-      callbacks={{
-        ...noopCallbacks(),
-        onSessionDeleteConfirmed: (sessionId) => deleted.push(sessionId),
-        onSessionSwitchRequested: (sessionId) => switched.push(sessionId),
-        onSessionPinToggled: (sessionId) => pins.push(sessionId),
-        onSessionMoveRequested: (sessionId, toIndex) =>
-          moves.push([sessionId, toIndex]),
-        onTaskNewRequested: () => taskNews.push(taskNews.length),
-        onProvidersInlineModelsEnsureRequested: (providerId) =>
-          modelEnsures.push(providerId),
-      }}
-      mouse={mouse}
-    />
+      <TuiApp
+        session={SESSION}
+        bus={bus}
+        callbacks={{
+          ...noopCallbacks(),
+          onSessionDeleteConfirmed: (sessionId) => deleted.push(sessionId),
+          onSessionSwitchRequested: (sessionId) => switched.push(sessionId),
+          onSessionPinToggled: (sessionId) => pins.push(sessionId),
+          onSessionMoveRequested: (sessionId, toIndex) =>
+            moves.push([sessionId, toIndex]),
+          onTaskNewRequested: () => taskNews.push(taskNews.length),
+          onProvidersInlineModelsEnsureRequested: (providerId) =>
+            modelEnsures.push(providerId),
+        }}
+        mouse={mouse}
+      />
     </ClipboardProvider>,
   );
   return {
@@ -239,22 +237,22 @@ function mountApp(): {
       bus.emit({
         type: "skills_refreshed",
         at: 0,
-      rows: [
-        {
-          name: "alpha-skill",
-          description: "first",
-          version: "1.0.0",
-          source: "builtin",
-          disabled: false,
-        },
-        {
-          name: "beta-skill",
-          description: "second",
-          version: "1.0.0",
-          source: "builtin",
-          disabled: false,
-        },
-      ],
+        rows: [
+          {
+            name: "alpha-skill",
+            description: "first",
+            version: "1.0.0",
+            source: "builtin",
+            disabled: false,
+          },
+          {
+            name: "beta-skill",
+            description: "second",
+            version: "1.0.0",
+            source: "builtin",
+            disabled: false,
+          },
+        ],
       });
     },
     unmount,
@@ -377,7 +375,9 @@ describe("TuiApp mouse", () => {
    * it, click away to dismiss.
    */
   describe("operator menu", () => {
-    const openMenu = async (app: ReturnType<typeof mountApp>): Promise<void> => {
+    const openMenu = async (
+      app: ReturnType<typeof mountApp>,
+    ): Promise<void> => {
       await waitUntil(() => app.frame().includes("R U N"), "the Run screen");
       // Esc on the empty idle prompt — the keyboard's route to the menu.
       app.stdin.write(String.fromCharCode(27));
@@ -405,7 +405,10 @@ describe("TuiApp mouse", () => {
       expect(selected(app)).toContain("Observe");
       // And back up again: one notch, one row, the same as the keys.
       app.mouse.emit(wheel("up", at.x + 4, at.y + 3));
-      await waitUntil(() => selected(app).includes("Run"), "the cursor back on Run");
+      await waitUntil(
+        () => selected(app).includes("Run"),
+        "the cursor back on Run",
+      );
       app.unmount();
     });
 
@@ -502,7 +505,11 @@ describe("TuiApp mouse", () => {
       // dialog — that would satisfy a "dialog is gone" predicate while
       // deleting nothing. Re-open and try again until something is
       // actually deleted.
-      for (let attempt = 0; attempt < 20 && app.deleted.length === 0; attempt += 1) {
+      for (
+        let attempt = 0;
+        attempt < 20 && app.deleted.length === 0;
+        attempt += 1
+      ) {
         if (!app.frame().includes("DELETE THE SESSION?")) {
           await openDialog(app);
         }
@@ -537,7 +544,10 @@ describe("TuiApp mouse", () => {
     // The two positions of one hinge: « in the rail's top-right corner
     // folds it away, » at the head of the status bar brings it back.
     const app = mountApp();
-    await waitUntil(() => app.frame().includes("SESSIONS"), "the rail on screen");
+    await waitUntil(
+      () => app.frame().includes("SESSIONS"),
+      "the rail on screen",
+    );
     await clickUntil(
       app.mouse,
       () => locate(app.frame(), "«"),
@@ -661,13 +671,18 @@ describe("TuiApp mouse", () => {
    * gesture is arbitrated on release — pinned here end to end.
    */
   describe("session rows", () => {
-    const rowLine = (app: ReturnType<typeof mountApp>, needle: string): string =>
+    const rowLine = (
+      app: ReturnType<typeof mountApp>,
+      needle: string,
+    ): string =>
       app
         .frame()
         .split("\n")
         .find((line) => line.includes(needle)) ?? "";
 
-    const seedRail = async (app: ReturnType<typeof mountApp>): Promise<void> => {
+    const seedRail = async (
+      app: ReturnType<typeof mountApp>,
+    ): Promise<void> => {
       await waitUntil(() => app.frame().includes("R U N"), "the Run screen");
       app.seedSessions();
       // The rail truncates previews to its width, so rows are found by a prefix.
@@ -717,7 +732,10 @@ describe("TuiApp mouse", () => {
       expect(app.moves).toEqual([["s-2", 0]]);
       // Dropping is not opening.
       expect(app.switched).toEqual([]);
-      await waitUntil(() => !app.frame().includes("↕"), "the drag feedback to clear");
+      await waitUntil(
+        () => !app.frame().includes("↕"),
+        "the drag feedback to clear",
+      );
       app.unmount();
     });
 
@@ -772,7 +790,10 @@ describe("TuiApp mouse", () => {
         .find((candidate) => candidate.includes(name));
       return line?.trimStart().slice(0, 1) ?? "";
     };
-    await waitUntil(() => marker("alpha-skill") === "▸", "the seeded skill rows");
+    await waitUntil(
+      () => marker("alpha-skill") === "▸",
+      "the seeded skill rows",
+    );
     for (let attempt = 0; attempt < 40; attempt += 1) {
       app.mouse.emit(wheel("down", 10, 6));
       await delay(50);
@@ -792,7 +813,10 @@ describe("TuiApp mouse", () => {
         .find((candidate) => candidate.includes(name));
       return line?.trimStart().slice(0, 1) ?? "";
     };
-    await waitUntil(() => marker("alpha-skill") === "▸", "the seeded skill rows");
+    await waitUntil(
+      () => marker("alpha-skill") === "▸",
+      "the seeded skill rows",
+    );
     await clickUntil(
       app.mouse,
       () => locate(app.frame(), "beta-skill"),

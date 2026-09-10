@@ -46,5 +46,8 @@ export function parseRunModeCommand(rawArgs: string): RunModeCommand {
   if (RUN_MODE_NAMES.includes(args as RunModeName)) {
     return { openSwitch: false, mode: args as RunModeName };
   }
-  return { openSwitch: false, error: `unknown run mode "${rawArgs.trim()}" — ${RUN_MODE_USAGE}` };
+  return {
+    openSwitch: false,
+    error: `unknown run mode "${rawArgs.trim()}" — ${RUN_MODE_USAGE}`,
+  };
 }

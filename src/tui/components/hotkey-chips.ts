@@ -42,7 +42,8 @@ export interface HotkeyChip {
  * PageUp; Mac keyboards reach it via Fn+Up, and that is the spelling
  * Mac users actually recognise.
  */
-const SCROLL_KEY = process.platform === "darwin" ? "fn+\u2191\u2193" : "pgup/pgdn";
+const SCROLL_KEY =
+  process.platform === "darwin" ? "fn+\u2191\u2193" : "pgup/pgdn";
 
 /**
  * A live composer selection flips what Ctrl+C will actually do (copy,
@@ -60,7 +61,6 @@ function composerSelectionActive(state: TuiState): boolean {
     !state.contextPanelOpen
   );
 }
-
 
 export function resolveChips(
   state: TuiState,
@@ -203,7 +203,8 @@ export function resolveChips(
       {
         key: "esc",
         label: "back to Run",
-        onClick: (mouse) => mouse.dispatch({ type: "ui_mode_set", mode: "chat" }),
+        onClick: (mouse) =>
+          mouse.dispatch({ type: "ui_mode_set", mode: "chat" }),
       },
       {
         key: "ctrl+c",

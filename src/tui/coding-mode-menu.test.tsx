@@ -5,7 +5,11 @@ import { describe, expect, it } from "vitest";
 import { CODING_MODES, codingModeLook } from "./coding-mode.js";
 import { CodingModePopup } from "./components/coding-mode-popup.js";
 import { reduceUiAction } from "./reduce-ui-actions.js";
-import { createInitialTuiState, type TuiSessionInfo, type TuiState } from "./tui-state.js";
+import {
+  createInitialTuiState,
+  type TuiSessionInfo,
+  type TuiState,
+} from "./tui-state.js";
 
 function session(): TuiSessionInfo {
   return {
@@ -24,7 +28,10 @@ function stateWith(overrides: Partial<TuiState> = {}): TuiState {
   return { ...createInitialTuiState(session()), ...overrides };
 }
 
-function apply(state: TuiState, action: Parameters<typeof reduceUiAction>[1]): TuiState {
+function apply(
+  state: TuiState,
+  action: Parameters<typeof reduceUiAction>[1],
+): TuiState {
   return reduceUiAction(state, action) ?? state;
 }
 
@@ -38,7 +45,12 @@ function apply(state: TuiState, action: Parameters<typeof reduceUiAction>[1]): T
  */
 function frame(cursor: number, columns = 76, rows = 12): string {
   const { lastFrame, unmount } = render(
-    <Box flexDirection="column" position="relative" width={columns} height={rows}>
+    <Box
+      flexDirection="column"
+      position="relative"
+      width={columns}
+      height={rows}
+    >
       {Array.from({ length: rows }, (_unused, row) => (
         <Text key={`bg-${row}`}>{"·".repeat(columns)}</Text>
       ))}
@@ -113,7 +125,11 @@ describe("the coding-mode menu", () => {
   });
 
   it("never draws wider or taller than the pane it was given", () => {
-    for (const [columns, rows] of [[70, 12], [40, 8], [30, 6]] as const) {
+    for (const [columns, rows] of [
+      [70, 12],
+      [40, 8],
+      [30, 6],
+    ] as const) {
       const lines = frame(0, columns, rows).split("\n");
       const widest = lines.reduce((a, l) => Math.max(a, l.length), 0);
       expect(widest, `${columns}x${rows} width`).toBeLessThanOrEqual(columns);
@@ -125,13 +141,10 @@ describe("driving the menu", () => {
   it("opens seeded on the mode in force", () => {
     // The menu opens as a statement of where you are before it is a list
     // of where you could go.
-    const state = apply(
-      stateWith({ codingMode: "auto" }),
-      { type: "coding_mode_menu_opened" },
-    );
-    expect(state.codingModeMenu?.cursor).toBe(
-      CODING_MODES.indexOf("auto"),
-    );
+    const state = apply(stateWith({ codingMode: "auto" }), {
+      type: "coding_mode_menu_opened",
+    });
+    expect(state.codingModeMenu?.cursor).toBe(CODING_MODES.indexOf("auto"));
   });
 
   it("wraps the cursor in both directions", () => {
@@ -153,20 +166,18 @@ describe("driving the menu", () => {
   it("closes even when the row picked is the one already in force", () => {
     // Picking the row you are on is a decision too; leaving the popup up
     // would read as the click not landing.
-    let state = apply(
-      stateWith({ codingMode: "plan" }),
-      { type: "coding_mode_menu_opened" },
-    );
+    let state = apply(stateWith({ codingMode: "plan" }), {
+      type: "coding_mode_menu_opened",
+    });
     state = apply(state, { type: "coding_mode_cycled", mode: "plan" });
     expect(state.codingMode).toBe("plan");
     expect(state.codingModeMenu).toBeNull();
   });
 
   it("cancels without changing the mode", () => {
-    let state = apply(
-      stateWith({ codingMode: "default" }),
-      { type: "coding_mode_menu_opened" },
-    );
+    let state = apply(stateWith({ codingMode: "default" }), {
+      type: "coding_mode_menu_opened",
+    });
     state = apply(state, { type: "coding_mode_menu_cursor_moved", delta: 1 });
     state = apply(state, { type: "coding_mode_menu_closed" });
     expect(state.codingModeMenu).toBeNull();

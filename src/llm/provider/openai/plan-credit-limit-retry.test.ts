@@ -7,7 +7,11 @@ import {
   planCreditLimitRetry,
 } from "./plan-credit-limit-retry.js";
 
-function refusal(affordable: number, requested = 65536, status: number | null = 402) {
+function refusal(
+  affordable: number,
+  requested = 65536,
+  status: number | null = 402,
+) {
   return {
     status,
     message:
@@ -46,9 +50,13 @@ describe("planCreditLimitRetry", () => {
   });
 
   it("declines when the affordable ceiling is below the usable floor", () => {
-    expect(planCreditLimitRetry(refusal(CREDIT_LIMIT_MIN_MAX_TOKENS - 1))).toBeNull();
+    expect(
+      planCreditLimitRetry(refusal(CREDIT_LIMIT_MIN_MAX_TOKENS - 1)),
+    ).toBeNull();
     // The floor itself is still worth trying.
-    expect(planCreditLimitRetry(refusal(CREDIT_LIMIT_MIN_MAX_TOKENS))).not.toBeNull();
+    expect(
+      planCreditLimitRetry(refusal(CREDIT_LIMIT_MIN_MAX_TOKENS)),
+    ).not.toBeNull();
   });
 
   it("never plans a retry below the floor even after headroom", () => {

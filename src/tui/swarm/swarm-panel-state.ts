@@ -32,7 +32,13 @@ export interface SwarmRow {
 export type SwarmPanelMode = "list" | "add" | "edit" | "remove";
 
 /** Wizard steps for adding a bot, in order. */
-export const SWARM_ADD_STEPS = ["kind", "label", "role", "token", "owner"] as const;
+export const SWARM_ADD_STEPS = [
+  "kind",
+  "label",
+  "role",
+  "token",
+  "owner",
+] as const;
 export type SwarmAddStep = (typeof SWARM_ADD_STEPS)[number];
 
 /** Editable unit fields, in the order the detail view lists them. */
@@ -69,7 +75,14 @@ export interface SwarmPanelState {
 }
 
 export function createInitialSwarmAddForm(): SwarmAddForm {
-  return { step: "kind", kind: "telegram", label: "", role: "", token: "", owner: "" };
+  return {
+    step: "kind",
+    kind: "telegram",
+    label: "",
+    role: "",
+    token: "",
+    owner: "",
+  };
 }
 
 export function createInitialSwarmPanelState(): SwarmPanelState {
@@ -98,7 +111,8 @@ export function selectedSwarmRow(state: SwarmPanelState): SwarmRow | undefined {
  * strip contradicts the list right above it.
  */
 export function aliveSwarmCount(rows: readonly SwarmRow[]): number {
-  return rows.filter((r) => r.enabled && r.hasToken && r.state !== "down").length;
+  return rows.filter((r) => r.enabled && r.hasToken && r.state !== "down")
+    .length;
 }
 
 /** The text the wizard is currently editing. */

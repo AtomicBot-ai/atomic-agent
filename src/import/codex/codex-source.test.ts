@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -55,8 +61,16 @@ describe("CodexSource", () => {
     const newer = join(dayB, "rollout-2026-08-02-bbb.jsonl");
     writeFileSync(older, "");
     writeFileSync(newer, "");
-    utimesSync(older, new Date("2026-08-01T10:00:00Z"), new Date("2026-08-01T10:00:00Z"));
-    utimesSync(newer, new Date("2026-08-02T10:00:00Z"), new Date("2026-08-02T10:00:00Z"));
+    utimesSync(
+      older,
+      new Date("2026-08-01T10:00:00Z"),
+      new Date("2026-08-01T10:00:00Z"),
+    );
+    utimesSync(
+      newer,
+      new Date("2026-08-02T10:00:00Z"),
+      new Date("2026-08-02T10:00:00Z"),
+    );
 
     const metas = new CodexSource(stateDir).listSessions();
     expect(metas.map((m) => m.id)).toEqual([
@@ -111,7 +125,12 @@ describe("CodexSource", () => {
           payload: {
             type: "message",
             role: "user",
-            content: [{ type: "input_text", text: "<user_instructions>be terse</user_instructions>" }],
+            content: [
+              {
+                type: "input_text",
+                text: "<user_instructions>be terse</user_instructions>",
+              },
+            ],
           },
         }),
         line({
@@ -159,7 +178,11 @@ describe("CodexSource", () => {
             content: [{ type: "output_text", text: "just README.md" }],
           },
         }),
-        line({ timestamp: "2026-08-02T10:00:07Z", type: "event_msg", payload: { type: "noise" } }),
+        line({
+          timestamp: "2026-08-02T10:00:07Z",
+          type: "event_msg",
+          payload: { type: "noise" },
+        }),
       ].join(""),
     );
 

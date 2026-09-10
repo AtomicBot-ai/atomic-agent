@@ -36,7 +36,12 @@ function makeCompletion(content: string): CompletionResult {
     reasoningContent: "",
     stop: true,
     truncated: false,
-    timing: { promptMs: 1, predictedMs: 1, promptTokens: 10, predictedTokens: 5 },
+    timing: {
+      promptMs: 1,
+      predictedMs: 1,
+      promptTokens: 10,
+      predictedTokens: 5,
+    },
     cacheHitTokens: 0,
     slotId: 0,
     modelId: "mock",
@@ -44,7 +49,11 @@ function makeCompletion(content: string): CompletionResult {
 }
 
 const TOOLS: ToolDescriptor[] = [
-  { name: "finish", summary: "Finish the session.", argsSchema: '{"summary": string}' },
+  {
+    name: "finish",
+    summary: "Finish the session.",
+    argsSchema: '{"summary": string}',
+  },
 ];
 
 const CAPS: CapabilitiesSummary = {
@@ -108,7 +117,10 @@ function buildLoop(opts: {
     ...(opts.inbox ? { steeringInbox: opts.inbox } : {}),
     onEvent: (event) => {
       events.push(event);
-      if (event.type === "llm_event" && event.event.type === "prompt_captured") {
+      if (
+        event.type === "llm_event" &&
+        event.event.type === "prompt_captured"
+      ) {
         tails.push(event.event.tail);
       }
     },
@@ -170,7 +182,9 @@ describe("AgentLoop mid-turn steering", () => {
     // the point — so assert on the notice framing, not on the text.
     expect(tails[1]).toContain("### notice");
     expect(tails[1]).toMatch(/Take it into account before your next action/);
-    expect(tails[2]).not.toMatch(/Take it into account before your next action/);
+    expect(tails[2]).not.toMatch(
+      /Take it into account before your next action/,
+    );
     expect(tails[2]).toContain("one-shot please");
   });
 
@@ -184,7 +198,11 @@ describe("AgentLoop mid-turn steering", () => {
     });
     const result = await loop.runTurn(
       createEmptySessionState({ id: "s-turn", workingDir }),
-      { userMessage: "deploy", maxSteps: 4, signal: new AbortController().signal },
+      {
+        userMessage: "deploy",
+        maxSteps: 4,
+        signal: new AbortController().signal,
+      },
     );
 
     const userTurns = result.session.turns.filter((t) => t.kind === "user");

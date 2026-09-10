@@ -42,7 +42,9 @@ describe("createTraceRecorder", () => {
       budget: 2,
       reason: 'tool call "os.fs.write" arguments are not a valid JSON object',
     } as AgentLoopEvent);
-    expect(events.find((e) => e.type === "parse_failure_recovered")).toMatchObject({
+    expect(
+      events.find((e) => e.type === "parse_failure_recovered"),
+    ).toMatchObject({
       type: "parse_failure_recovered",
       sessionId: "s-parse",
       turnIndex: 3,
@@ -152,14 +154,10 @@ describe("createTraceRecorder", () => {
       ),
     ).toEqual([0, 1, 2]);
     expect(
-      invocations.map((e) =>
-        e.type === "tool_invocation" ? e.batchSize : -1,
-      ),
+      invocations.map((e) => (e.type === "tool_invocation" ? e.batchSize : -1)),
     ).toEqual([3, 3, 3]);
     expect(
-      invocations.map((e) =>
-        e.type === "tool_invocation" ? e.args : null,
-      ),
+      invocations.map((e) => (e.type === "tool_invocation" ? e.args : null)),
     ).toEqual([{ path: "f0" }, { path: "f1" }, { path: "f2" }]);
     // All events sit on the same stepIndex.
     expect(
@@ -256,7 +254,11 @@ describe("createTraceRecorder", () => {
     });
     rec.onAgentEvent({
       type: "llm_event",
-      event: { type: "step_error", error: new Error("boom"), category: "grammar" },
+      event: {
+        type: "step_error",
+        error: new Error("boom"),
+        category: "grammar",
+      },
     });
     expect(events.some((e) => e.type === "parse_retry")).toBe(true);
     const err = events.find((e) => e.type === "error");
@@ -410,7 +412,11 @@ describe("createTraceRecorder", () => {
             stablePrefix: "",
             tail: "",
             tokens: { total: 0, stablePrefix: 0, tail: 0 },
-            truncated: { session: false, worldSnapshot: false, conversation: false },
+            truncated: {
+              session: false,
+              worldSnapshot: false,
+              conversation: false,
+            },
           } as never,
           slotId: 0,
         },

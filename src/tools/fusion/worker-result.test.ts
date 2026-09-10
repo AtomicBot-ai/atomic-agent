@@ -32,7 +32,9 @@ function reply(text: string): AgentLoopEvent {
 }
 
 function completed(
-  usage: { promptTokens: number; completionTokens: number; totalTokens: number } | undefined,
+  usage:
+    | { promptTokens: number; completionTokens: number; totalTokens: number }
+    | undefined,
 ): AgentLoopEvent {
   return {
     type: "llm_event",
@@ -43,7 +45,12 @@ function completed(
         reasoningContent: "",
         stop: true,
         truncated: false,
-        timing: { promptMs: 1, predictedMs: 1, promptTokens: 1, predictedTokens: 1 },
+        timing: {
+          promptMs: 1,
+          predictedMs: 1,
+          promptTokens: 1,
+          predictedTokens: 1,
+        },
         cacheHitTokens: 0,
         slotId: 0,
         modelId: "m",
@@ -59,8 +66,12 @@ describe("WorkerRunCollector", () => {
     c.observe(toolExecuted("os.fs.read", "ok"));
     c.observe(toolExecuted("os.fs.read", "error"));
     c.observe(toolExecuted("os.fs.grep", "ok"));
-    c.observe(completed({ promptTokens: 10, completionTokens: 2, totalTokens: 12 }));
-    c.observe(completed({ promptTokens: 5, completionTokens: 3, totalTokens: 8 }));
+    c.observe(
+      completed({ promptTokens: 10, completionTokens: 2, totalTokens: 12 }),
+    );
+    c.observe(
+      completed({ promptTokens: 5, completionTokens: 3, totalTokens: 8 }),
+    );
     c.observe(reply("here is the map"));
     const result = c.finish({
       id: "t1",
@@ -74,7 +85,11 @@ describe("WorkerRunCollector", () => {
       status: "ok",
       reply: "here is the map",
       stepCount: 3,
-      tools: { calls: 3, errors: 1, byTool: { "os.fs.read": 2, "os.fs.grep": 1 } },
+      tools: {
+        calls: 3,
+        errors: 1,
+        byTool: { "os.fs.read": 2, "os.fs.grep": 1 },
+      },
       usage: { promptTokens: 15, completionTokens: 5, totalTokens: 20 },
     });
   });
@@ -84,8 +99,13 @@ describe("WorkerRunCollector", () => {
     c.observe(reply("first leg"));
     c.observe(reply("final answer"));
     expect(
-      c.finish({ id: "t", title: "T", reason: "reply", stepCount: 1, durationMs: 1 })
-        .reply,
+      c.finish({
+        id: "t",
+        title: "T",
+        reason: "reply",
+        stepCount: 1,
+        durationMs: 1,
+      }).reply,
     ).toBe("final answer");
   });
 
@@ -93,7 +113,13 @@ describe("WorkerRunCollector", () => {
     const c = new WorkerRunCollector();
     c.observe(completed(undefined));
     expect(
-      c.finish({ id: "t", title: "T", reason: "reply", stepCount: 1, durationMs: 1 }),
+      c.finish({
+        id: "t",
+        title: "T",
+        reason: "reply",
+        stepCount: 1,
+        durationMs: 1,
+      }),
     ).not.toHaveProperty("usage");
   });
 
@@ -116,12 +142,21 @@ describe("WorkerRunCollector", () => {
     // and an orchestrator that read that as `ok` would merge a hole.
     const c = new WorkerRunCollector();
     c.observe(
-      toolExecuted("os.fs.write", "error", `denied: ${FUSION_WORKER_APPROVAL_REFUSED}`),
+      toolExecuted(
+        "os.fs.write",
+        "error",
+        `denied: ${FUSION_WORKER_APPROVAL_REFUSED}`,
+      ),
     );
     c.observe(reply("needs `npm run build` run for me"));
     expect(
-      c.finish({ id: "t", title: "T", reason: "reply", stepCount: 2, durationMs: 5 })
-        .status,
+      c.finish({
+        id: "t",
+        title: "T",
+        reason: "reply",
+        stepCount: 2,
+        durationMs: 5,
+      }).status,
     ).toBe("needs_orchestrator");
   });
 
@@ -132,7 +167,9 @@ describe("WorkerRunCollector", () => {
       }),
     ).toBe(true);
     expect(resultCarriesApprovalRefusal("all good", {})).toBe(false);
-    expect(resultCarriesApprovalRefusal("all good", { deniedReason: 7 })).toBe(false);
+    expect(resultCarriesApprovalRefusal("all good", { deniedReason: 7 })).toBe(
+      false,
+    );
   });
 });
 
@@ -172,8 +209,13 @@ function row(over: Partial<WorkerTaskResult> = {}): WorkerTaskResult {
 
 describe("formatDelegateOutput", () => {
   it("renders one headed block per task", () => {
-    const out = formatDelegateOutput([row(), row({ id: "t2", status: "failed" })], 4000);
-    expect(out).toContain("[t1] ok — Map (2 steps, 3s, 1 tool calls, 0 errors)");
+    const out = formatDelegateOutput(
+      [row(), row({ id: "t2", status: "failed" })],
+      4000,
+    );
+    expect(out).toContain(
+      "[t1] ok — Map (2 steps, 3s, 1 tool calls, 0 errors)",
+    );
     expect(out).toContain("[t2] failed — Map");
     expect(out).toContain("the map");
   });
@@ -186,7 +228,10 @@ describe("formatDelegateOutput", () => {
 
   it("caps each task so one verbose worker cannot crowd out its siblings", () => {
     const long = row({ reply: "x".repeat(5000) });
-    const out = formatDelegateOutput([long, row({ id: "t2", reply: "short" })], 2000);
+    const out = formatDelegateOutput(
+      [long, row({ id: "t2", reply: "short" })],
+      2000,
+    );
     expect(out).toContain("[truncated]");
     // The sibling survives — the whole value of a fan-out is seeing the
     // parts, and a single greedy block must not eat the budget.

@@ -290,7 +290,9 @@ describe("buildPrompt", () => {
     // The summary must not claim read_document rejects text files — it
     // extracts .txt/.md/.csv as `plain`, and a summary that contradicts the
     // tool re-creates the very ambiguity this change removes.
-    expect(prompt.stablePrefix).not.toContain("NOT for source code or text files");
+    expect(prompt.stablePrefix).not.toContain(
+      "NOT for source code or text files",
+    );
     // The bad guess in issue #113 was `format: "text"`. The stable prefix
     // carries the closed set so the guess is never reachable.
     expect(prompt.stablePrefix).toContain(
@@ -371,8 +373,12 @@ describe("buildPrompt", () => {
     // Array-only contract — every emission starts with `[`. This is
     // load-bearing: the GBNF root collapsed to `tool-call-array` to
     // beat the first-token bias.
-    expect(prompt.stablePrefix).toContain("Emit a JSON ARRAY of tool calls now");
-    expect(prompt.stablePrefix).toContain("Always start with `[` and end with `]`");
+    expect(prompt.stablePrefix).toContain(
+      "Emit a JSON ARRAY of tool calls now",
+    );
+    expect(prompt.stablePrefix).toContain(
+      "Always start with `[` and end with `]`",
+    );
     expect(prompt.stablePrefix).toContain(
       "Use `reply` for natural-language answers to the user.",
     );
@@ -408,9 +414,7 @@ describe("buildPrompt", () => {
     });
     // When an exact format/marker is requested, `reply` must be the bare
     // value only — no preamble/essay. Recovers GAIA `FINAL ANSWER:` tasks.
-    expect(prompt.stablePrefix).toContain(
-      "the `reply` text MUST be ONLY that",
-    );
+    expect(prompt.stablePrefix).toContain("the `reply` text MUST be ONLY that");
     expect(prompt.stablePrefix).toContain(
       "emit exactly that line as the entire reply",
     );
@@ -495,9 +499,9 @@ describe("buildPrompt", () => {
       profile: GEMMA4_THINK_PROFILE,
     });
     // System turn opens first with the reasoning token at the very top.
-    expect(prompt.stablePrefix.startsWith("<|turn>system\n<|think|>\n### system")).toBe(
-      true,
-    );
+    expect(
+      prompt.stablePrefix.startsWith("<|turn>system\n<|think|>\n### system"),
+    ).toBe(true);
     // Prompt ends at the model-turn opener — NOT a prefilled channel block
     // (a prefilled `<|channel>thought\n` reads as thinking-disabled on Gemma).
     expect(prompt.tail.endsWith("<turn|>\n<|turn>model\n")).toBe(true);
@@ -688,7 +692,11 @@ describe("buildPrompt", () => {
       ...base,
       turns: [
         ...longTurns,
-        { kind: "user" as const, text: "the latest important question", at: 999 },
+        {
+          kind: "user" as const,
+          text: "the latest important question",
+          at: 999,
+        },
       ],
     };
     const prompt = buildPrompt({
@@ -838,8 +846,7 @@ describe("buildPrompt", () => {
     });
     expect(prompt.truncated).toBe(true);
     expect(prompt.truncation.loadedSkills).toBe(true);
-    const sessionTok =
-      prompt.tokens.loadedSkills + prompt.tokens.sessionFacts;
+    const sessionTok = prompt.tokens.loadedSkills + prompt.tokens.sessionFacts;
     expect(sessionTok).toBeLessThanOrEqual(prompt.limits.session);
   });
 
@@ -862,7 +869,11 @@ describe("buildPrompt", () => {
       ...base,
       turns: [
         ...longTurns,
-        { kind: "user" as const, text: "the latest important question", at: 9_999 },
+        {
+          kind: "user" as const,
+          text: "the latest important question",
+          at: 9_999,
+        },
       ],
     };
     const prompt = buildPrompt({
@@ -999,7 +1010,13 @@ describe("buildPrompt", () => {
       },
     ];
     const prof = [
-      { key: "language", value: "ru", updatedAt: 1, pinned: true, keywords: [] },
+      {
+        key: "language",
+        value: "ru",
+        updatedAt: 1,
+        pinned: true,
+        keywords: [],
+      },
     ];
     const a = buildPrompt({
       session: mkSession({ loadedSkills: skills, knownFacts: [] }),
@@ -1091,7 +1108,13 @@ describe("buildPrompt profile section", () => {
       capabilities: CAPS,
       skillCatalog: SKILLS,
       profileFacts: [
-        { key: "language", value: "ru", updatedAt: 1, pinned: true, keywords: [] },
+        {
+          key: "language",
+          value: "ru",
+          updatedAt: 1,
+          pinned: true,
+          keywords: [],
+        },
       ],
     });
     const loadedIdx = prompt.tail.indexOf("### loaded-skills");
@@ -1118,7 +1141,13 @@ describe("buildPrompt profile section", () => {
       capabilities: CAPS,
       skillCatalog: SKILLS,
       profileFacts: [
-        { key: "name", value: "Alex", updatedAt: 1, pinned: true, keywords: [] },
+        {
+          key: "name",
+          value: "Alex",
+          updatedAt: 1,
+          pinned: true,
+          keywords: [],
+        },
         {
           key: "timezone",
           value: "Europe/Moscow",
@@ -1134,7 +1163,13 @@ describe("buildPrompt profile section", () => {
 
   it("threads userMessage through the profile gate to reveal contextual facts", () => {
     const facts = [
-      { key: "language", value: "ru", updatedAt: 1, pinned: true, keywords: [] },
+      {
+        key: "language",
+        value: "ru",
+        updatedAt: 1,
+        pinned: true,
+        keywords: [],
+      },
       {
         key: "deploy_cmd",
         value: "pnpm run deploy",
@@ -1204,7 +1239,13 @@ describe("buildPrompt profile section", () => {
       capabilities: CAPS,
       skillCatalog: SKILLS,
       profileFacts: [
-        { key: "blob", value: giantValue, updatedAt: 1, pinned: true, keywords: [] },
+        {
+          key: "blob",
+          value: giantValue,
+          updatedAt: 1,
+          pinned: true,
+          keywords: [],
+        },
       ],
       profileMaxTokens: 50,
     });
@@ -1380,7 +1421,9 @@ describe("buildPrompt tool transport (issue #285)", () => {
     const native = buildPrompt({ ...base(), toolTransport: "native_tools" });
     // The dual mandate: with an OpenAI `tools` payload on the request,
     // the prompt must not also order text-JSON emission.
-    expect(native.stablePrefix).not.toContain("Emit a JSON ARRAY of tool calls now");
+    expect(native.stablePrefix).not.toContain(
+      "Emit a JSON ARRAY of tool calls now",
+    );
     expect(native.stablePrefix).not.toContain(
       "Each step emits exactly one JSON array matching the tool grammar",
     );
@@ -1409,7 +1452,9 @@ describe("buildPrompt tool transport (issue #285)", () => {
     const explicit = buildPrompt({ ...base(), toolTransport: "grammar" });
     expect(explicit.stablePrefix).toBe(implicit.stablePrefix);
     // And it still carries the legacy text-JSON mandate untouched.
-    expect(explicit.stablePrefix).toContain("Emit a JSON ARRAY of tool calls now");
+    expect(explicit.stablePrefix).toContain(
+      "Emit a JSON ARRAY of tool calls now",
+    );
     expect(explicit.stablePrefix).toContain(
       "Each step emits exactly one JSON array matching the tool grammar",
     );

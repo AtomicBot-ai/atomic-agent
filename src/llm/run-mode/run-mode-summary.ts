@@ -23,7 +23,9 @@ export function describeRunMode(rm: ResolvedRunMode): string {
       }`,
     );
   } else {
-    parts.push(`${runModeLabel(rm.effective)} — active provider ${rm.primaryProviderId}`);
+    parts.push(
+      `${runModeLabel(rm.effective)} — active provider ${rm.primaryProviderId}`,
+    );
   }
   if (rm.degraded) {
     parts.push(describeRunModeDegradation(rm.degraded));

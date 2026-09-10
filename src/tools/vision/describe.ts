@@ -19,7 +19,8 @@ interface ParsedArgs {
 function parseArgs(rawArgs: Record<string, unknown>): ParsedArgs {
   const path = typeof rawArgs.path === "string" ? rawArgs.path : undefined;
   const pathsRaw = rawArgs.paths;
-  const prompt = typeof rawArgs.prompt === "string" ? rawArgs.prompt.trim() : "";
+  const prompt =
+    typeof rawArgs.prompt === "string" ? rawArgs.prompt.trim() : "";
 
   let paths: string[] = [];
   if (path) paths.push(path);
@@ -96,14 +97,20 @@ export function buildVisionDescribeTool(
           if (error instanceof UnsupportedImageFormatError) {
             return errorResult(error.message);
           }
-          return errorResult(`failed to load image: ${(error as Error).message}`);
+          return errorResult(
+            `failed to load image: ${(error as Error).message}`,
+          );
         }
       }
 
       try {
         const result = await options.provider.describeImage({
           prompt: parsed.prompt,
-          images: images.map(({ id, bytes, mimeType }) => ({ id, bytes, mimeType })),
+          images: images.map(({ id, bytes, mimeType }) => ({
+            id,
+            bytes,
+            mimeType,
+          })),
           signal: ctx.signal,
         });
         return compressToolResult({

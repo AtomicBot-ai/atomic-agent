@@ -17,6 +17,8 @@ describe("readReplyAttachments", () => {
     expect(readReplyAttachments(undefined)).toEqual([]);
     expect(readReplyAttachments({ text: "x", terminal: "turn" })).toEqual([]);
     expect(readReplyAttachments({ attachments: "/tmp/a.pdf" })).toEqual([]);
-    expect(readReplyAttachments({ attachments: [1, "", "/ok"] })).toEqual(["/ok"]);
+    expect(readReplyAttachments({ attachments: [1, "", "/ok"] })).toEqual([
+      "/ok",
+    ]);
   });
 });

@@ -183,8 +183,10 @@ export class OpenclawSource {
       const meta = this.readSessionMeta(file);
       if (meta) metas.push(meta);
     }
-    metas.sort((a, b) =>
-      b.startedAtMs - a.startedAtMs || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+    metas.sort(
+      (a, b) =>
+        b.startedAtMs - a.startedAtMs ||
+        (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
     );
     return metas;
   }

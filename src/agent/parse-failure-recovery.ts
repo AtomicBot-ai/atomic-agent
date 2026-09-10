@@ -21,7 +21,11 @@
  * inference reproduces it exactly.
  */
 
-import { GrammarError, LlamaServerError, ToolCallParseError } from "../llm/index.js";
+import {
+  GrammarError,
+  LlamaServerError,
+  ToolCallParseError,
+} from "../llm/index.js";
 
 /**
  * Recoveries allowed per turn. Two, not one: the first is usually enough

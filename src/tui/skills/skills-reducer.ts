@@ -1,6 +1,9 @@
 import type { TuiState } from "../tui-state.js";
 import { cycleSkillsFilter, selectVisibleSkillRows } from "./skills-filter.js";
-import { HUB_CARD_BODY_WINDOW, type SkillsPanelState } from "./skills-panel-state.js";
+import {
+  HUB_CARD_BODY_WINDOW,
+  type SkillsPanelState,
+} from "./skills-panel-state.js";
 import { isSkillsAction, type SkillsAction } from "./skills-actions.js";
 
 /**
@@ -50,7 +53,10 @@ function reducePanel(
       return { ...panel, cursor: nextCursor };
     }
     case "skills_cursor_set":
-      return { ...panel, cursor: clampCursor(action.row, visibleLength(panel)) };
+      return {
+        ...panel,
+        cursor: clampCursor(action.row, visibleLength(panel)),
+      };
     case "skills_filter_cycled":
       return {
         ...panel,
@@ -176,9 +182,14 @@ function reducePanel(
       };
     case "skills_hub_card_scrolled": {
       if (!panel.hubCard) return panel;
-      const lineCount = panel.hubCard.body ? panel.hubCard.body.split("\n").length : 0;
+      const lineCount = panel.hubCard.body
+        ? panel.hubCard.body.split("\n").length
+        : 0;
       const maxStart = Math.max(0, lineCount - HUB_CARD_BODY_WINDOW);
-      const next = Math.max(0, Math.min(maxStart, panel.cardScroll + action.delta));
+      const next = Math.max(
+        0,
+        Math.min(maxStart, panel.cardScroll + action.delta),
+      );
       return next === panel.cardScroll ? panel : { ...panel, cardScroll: next };
     }
     case "skills_remove_confirm_opened":

@@ -23,12 +23,7 @@ export const IMPORT_SOURCE_IDS: readonly ImportSourceId[] = [
 
 /** Per-source option toggles, in the row order the form draws them. */
 export type ImportOptionToggle =
-  | "skills"
-  | "memory"
-  | "mcp"
-  | "sessions"
-  | "cron"
-  | "secrets";
+  "skills" | "memory" | "mcp" | "sessions" | "cron" | "secrets";
 
 export interface ImportToggleMeta {
   id: ImportOptionToggle;

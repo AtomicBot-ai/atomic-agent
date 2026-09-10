@@ -14,10 +14,18 @@ const event = (over: Partial<TuiMouseEvent>): TuiMouseEvent => ({
   ...over,
 });
 
-const MOUSE_CASES: readonly { name: string; event: TuiMouseEvent; advances: boolean }[] = [
+const MOUSE_CASES: readonly {
+  name: string;
+  event: TuiMouseEvent;
+  advances: boolean;
+}[] = [
   { name: "a left click", event: event({}), advances: true },
   { name: "a right click", event: event({ button: "right" }), advances: true },
-  { name: "a middle click", event: event({ button: "middle" }), advances: true },
+  {
+    name: "a middle click",
+    event: event({ button: "middle" }),
+    advances: true,
+  },
   // A modified click is still a click: there is nothing on the splash
   // to select, so shift does not mean "extend" here.
   { name: "a shift+click", event: event({ shift: true }), advances: true },

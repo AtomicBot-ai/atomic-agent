@@ -4,7 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { resetConfigCache } from "../config/config-cache.js";
-import { getUserConfigPath, writeUserConfigFileSync } from "../config/config-file.js";
+import {
+  getUserConfigPath,
+  writeUserConfigFileSync,
+} from "../config/config-file.js";
 import { USER_CONFIG_DEFAULTS } from "../config/config-schema.js";
 import { getConfig } from "../config/index.js";
 import {
@@ -27,7 +30,11 @@ describe("setRunModeInConfig", () => {
         activeEmbeddingProvider: "local-llama",
         toolTransport: "auto",
         providers: [
-          { id: "local-llama", kind: "llama-server", url: "http://127.0.0.1:19091" },
+          {
+            id: "local-llama",
+            kind: "llama-server",
+            url: "http://127.0.0.1:19091",
+          },
           { id: "openrouter", kind: "openrouter", defaultChatModel: "gpt" },
         ],
       },
@@ -42,10 +49,9 @@ describe("setRunModeInConfig", () => {
   });
 
   function file(): Record<string, unknown> {
-    return JSON.parse(readFileSync(getUserConfigPath(stateDir), "utf8")) as Record<
-      string,
-      unknown
-    >;
+    return JSON.parse(
+      readFileSync(getUserConfigPath(stateDir), "utf8"),
+    ) as Record<string, unknown>;
   }
 
   it("moves the mode and the active provider in one write", () => {
@@ -94,9 +100,9 @@ describe("setRunModeInConfig", () => {
   });
 
   it("refuses a provider that is not configured, without writing", () => {
-    expect(() => setRunModeInConfig({ mode: "cloud", activeTextProvider: "ghost" })).toThrow(
-      RunModePersistError,
-    );
+    expect(() =>
+      setRunModeInConfig({ mode: "cloud", activeTextProvider: "ghost" }),
+    ).toThrow(RunModePersistError);
     expect(getConfig().llm?.runMode).toBeUndefined();
   });
 
@@ -125,7 +131,9 @@ describe("setRunModeInConfig", () => {
 
   it("refuses a count outside 1..8 without writing", () => {
     for (const workers of [0, 9, 2.5]) {
-      expect(() => setFusionWorkersInConfig(workers)).toThrow(RunModePersistError);
+      expect(() => setFusionWorkersInConfig(workers)).toThrow(
+        RunModePersistError,
+      );
     }
     expect(getConfig().localModels.managed.parallel).toBe(2);
   });

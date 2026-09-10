@@ -143,13 +143,20 @@ describe("loadConfig", () => {
         activeEmbeddingProvider: "local-llama",
         toolTransport: "auto",
         providers: [
-          { id: "local-llama", kind: "llama-server", url: "http://127.0.0.1:19091" },
+          {
+            id: "local-llama",
+            kind: "llama-server",
+            url: "http://127.0.0.1:19091",
+          },
           { id: "openrouter", kind: "openrouter", defaultChatModel: "gpt" },
         ],
         runMode: { mode: "fusion", fusion: { workers: 3 } },
       },
     });
-    expect(loadConfig().llm?.runMode).toEqual({ mode: "fusion", fusion: { workers: 3 } });
+    expect(loadConfig().llm?.runMode).toEqual({
+      mode: "fusion",
+      fusion: { workers: 3 },
+    });
   });
 
   it("keeps non-user-facing knobs on environment variables", () => {

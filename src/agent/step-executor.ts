@@ -13,10 +13,7 @@ import {
   type BatchLoopSignal,
 } from "./batch-executor.js";
 import type { ToolLoopTracker } from "./loop-detector.js";
-import {
-  isBatchable,
-  resourceClassFor,
-} from "./tool-resource-class.js";
+import { isBatchable, resourceClassFor } from "./tool-resource-class.js";
 import { createStreamParser } from "../llm/grammar/stream-parser.js";
 import type {
   StreamParseEvent,
@@ -407,9 +404,7 @@ async function executeStepInner(
     ...(ctx.profileFacts !== undefined
       ? { profileFacts: ctx.profileFacts }
       : {}),
-    ...(ctx.userMessage !== undefined
-      ? { userMessage: ctx.userMessage }
-      : {}),
+    ...(ctx.userMessage !== undefined ? { userMessage: ctx.userMessage } : {}),
   };
   const prompt = buildPrompt(promptInput);
   // A grammar (llama-server) fallback link behind a native-tools primary
@@ -444,9 +439,13 @@ async function executeStepInner(
         cacheReused: false,
       };
   if (ctx.stepIndex === 0) {
-    const promptViolations = checkProfilePromptAligned(deps.profile, prompt.text, {
-      promptCarriesPrefill,
-    });
+    const promptViolations = checkProfilePromptAligned(
+      deps.profile,
+      prompt.text,
+      {
+        promptCarriesPrefill,
+      },
+    );
     if (promptViolations.length > 0) {
       deps.logger?.warn("profile/prompt invariant violated", {
         profile: deps.profile.id,
@@ -688,10 +687,7 @@ async function executeStepInner(
       if (!callArgsSchemaValid(call, ctx.toolDescriptors)) return null;
     }
     const waveCount = Math.ceil(calls.length / cap);
-    const boundaries = Array.from(
-      { length: waveCount },
-      (_, i) => i * cap,
-    );
+    const boundaries = Array.from({ length: waveCount }, (_, i) => i * cap);
     waveSplitNotice = formatWaveSplitNotice(calls.length, cap, waveCount);
     deps.onEvent?.({
       type: "batch_wave_split",
@@ -1024,9 +1020,7 @@ async function executeStepInner(
   // Names of skills already loaded this session: a `skill.view` for any of
   // these is short-circuited inside `executeBatch` with a terse pointer
   // instead of re-reading and re-dumping the body.
-  const loadedSkillNames = new Set(
-    ctx.session.loadedSkills.map((s) => s.name),
-  );
+  const loadedSkillNames = new Set(ctx.session.loadedSkills.map((s) => s.name));
   const batchOutcome = await executeBatch(inputs, deps.registry, {
     workingDir: ctx.session.workingDir,
     sessionId: ctx.session.id,
@@ -1034,7 +1028,9 @@ async function executeStepInner(
     signal: ctx.signal,
     ...(deps.tracker ? { tracker: deps.tracker } : {}),
     ...(deps.isPlanMode ? { isPlanMode: deps.isPlanMode } : {}),
-    ...(batch.maxWaveSize !== undefined ? { maxWaveSize: batch.maxWaveSize } : {}),
+    ...(batch.maxWaveSize !== undefined
+      ? { maxWaveSize: batch.maxWaveSize }
+      : {}),
     ...(loadedSkillNames.size > 0 ? { loadedSkillNames } : {}),
     onCallFinished: ({ batchIndex, result, durationMs }) => {
       deps.onEvent?.({
@@ -1317,8 +1313,7 @@ function normalizeContent(
 }
 
 type ToolCallBatchParseResult =
-  | { ok: true; batch: ToolCallBatch }
-  | { ok: false; error: Error };
+  { ok: true; batch: ToolCallBatch } | { ok: false; error: Error };
 
 function isNativeToolsEmptyCompletionHandledByParser(
   deps: Pick<StepDependencies, "toolTransport">,
@@ -1443,16 +1438,11 @@ function tryParseToolCalls(
           profile,
           assumeOpenReasoning,
         );
-        const batch = adapter.toolCallsToBatch(
-          completion.toolCalls,
-          reasoning,
-        );
+        const batch = adapter.toolCallsToBatch(completion.toolCalls, reasoning);
         if (batch.calls.length === 0) {
           return {
             ok: false,
-            error: new Error(
-              "native tool_calls array was empty after mapping",
-            ),
+            error: new Error("native tool_calls array was empty after mapping"),
           };
         }
         return { ok: true, batch };
@@ -1840,7 +1830,9 @@ export function trimBatchToFirstApprovalGated(
  * stable prefix).
  */
 export function formatBatchTrimNotice(trim: BatchTrimResult): string {
-  const droppedNames = trim.dropped.map((call) => `\`${call.tool}\``).join(", ");
+  const droppedNames = trim.dropped
+    .map((call) => `\`${call.tool}\``)
+    .join(", ");
   return [
     `Your previous emission contained ${trim.originalSize} calls including approval-gated tools that must be solo (length-1 array). The runtime auto-executed \`${trim.kept.tool}\` and dropped the rest: ${droppedNames}.`,
     "Retry the dropped calls now, one per step, each as a length-1 array. Do not re-batch them.",
@@ -2011,7 +2003,9 @@ function stripTrailingReasoningPrefill(
     let trimmed = promptText.trimEnd();
     const assistantOpen = framing.assistantOpen.trimEnd();
     if (trimmed.endsWith(assistantOpen)) {
-      trimmed = trimmed.slice(0, trimmed.length - assistantOpen.length).trimEnd();
+      trimmed = trimmed
+        .slice(0, trimmed.length - assistantOpen.length)
+        .trimEnd();
     }
     const turnClose = framing.turnClose.trimEnd();
     if (trimmed.endsWith(turnClose)) {
@@ -2079,7 +2073,9 @@ function toLlmFailure(err: unknown, ctx: StepContext): LlmFailure {
     // Only `transport` becomes a `TransportError`; every other answer
     // keeps the historical `GrammarError`.
     if (classifyFailure(err) === "transport") {
-      return new TransportError(err.message, err.status, err.url, { cause: err });
+      return new TransportError(err.message, err.status, err.url, {
+        cause: err,
+      });
     }
     return new GrammarError(err.message, "", { cause: err });
   }
@@ -2366,9 +2362,7 @@ export function readReplyAttachments(
  * section bounded under pathological large-batch outputs without
  * losing the call/result pairing.
  */
-function appendBatchedTurns(
-  params: AppendBatchedTurnsParams,
-): SessionState {
+function appendBatchedTurns(params: AppendBatchedTurnsParams): SessionState {
   const { state, calls, results, reasoning, terminal, onEvent } = params;
 
   // `reply` collapses into `assistant_reply` regardless of batch
@@ -2521,8 +2515,7 @@ function applyStateEffects(
       typeof toolLoaded === "object" &&
       typeof (toolLoaded as { name?: unknown }).name === "string" &&
       typeof (toolLoaded as { summary?: unknown }).summary === "string" &&
-      typeof (toolLoaded as { argsSchema?: unknown }).argsSchema ===
-        "string" &&
+      typeof (toolLoaded as { argsSchema?: unknown }).argsSchema === "string" &&
       ((toolLoaded as { source?: unknown }).source === "explicit" ||
         (toolLoaded as { source?: unknown }).source === "auto")
     ) {

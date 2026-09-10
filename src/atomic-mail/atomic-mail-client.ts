@@ -13,7 +13,12 @@ import {
   solveProofOfWork,
 } from "./atomic-mail-auth.js";
 
-import { buildInboxBatch, buildSendBatch, parseInboxList, parseSendResult } from "./atomic-mail-batches.js";
+import {
+  buildInboxBatch,
+  buildSendBatch,
+  parseInboxList,
+  parseSendResult,
+} from "./atomic-mail-batches.js";
 
 export {
   ATOMIC_MAIL_API_URL,
@@ -124,7 +129,9 @@ export class AtomicMailClient {
       method: "POST",
       headers: {
         ...(init.jwt ? { authorization: `Bearer ${init.jwt}` } : {}),
-        ...(init.body !== undefined ? { "content-type": "application/json" } : {}),
+        ...(init.body !== undefined
+          ? { "content-type": "application/json" }
+          : {}),
       },
       ...(init.body !== undefined ? { body: JSON.stringify(init.body) } : {}),
       signal: requestSignal(init.signal),
@@ -142,7 +149,8 @@ export class AtomicMailClient {
     const payload = decodeJwtPayload(challengeJwt);
     const challenge = String(payload.jti ?? "");
     const difficulty = Number(payload.difficulty ?? 0);
-    if (!challenge) throw new AtomicMailError("challenge token carries no jti", 0);
+    if (!challenge)
+      throw new AtomicMailError("challenge token carries no jti", 0);
     const solved = await this.pow(challenge, difficulty, onProgress);
     const sessionRes = await this.post(`${this.authUrl}/api/v1/session`, {
       jwt: challengeJwt,
@@ -169,13 +177,25 @@ export class AtomicMailClient {
     onProgress?: (nonce: number) => void,
   ): Promise<AtomicMailRegistration & AtomicMailSession> {
     if (!/^[a-z0-9][a-z0-9.-]{3,19}[a-z0-9]$/.test(username)) {
-      throw new AtomicMailError("username must be 5–21 characters: letters, digits, dots, dashes", 0);
+      throw new AtomicMailError(
+        "username must be 5–21 characters: letters, digits, dots, dashes",
+        0,
+      );
     }
-    const { sessionJwt, apiKey } = await this.openSession({ username }, onProgress);
-    if (!apiKey) throw new AtomicMailError("registration returned no API key", 0);
+    const { sessionJwt, apiKey } = await this.openSession(
+      { username },
+      onProgress,
+    );
+    if (!apiKey)
+      throw new AtomicMailError("registration returned no API key", 0);
     const session = { sessionJwt, sessionExpiresAt: jwtExpiryMs(sessionJwt) };
     const ctx = await this.context(session);
-    return { address: ctx.address, accountId: ctx.accountId, apiKey, ...session };
+    return {
+      address: ctx.address,
+      accountId: ctx.accountId,
+      apiKey,
+      ...session,
+    };
   }
 
   /** Log in with a stored API key. Costs one proof-of-work; cache the session. */
@@ -184,16 +204,27 @@ export class AtomicMailClient {
     return { sessionJwt, sessionExpiresAt: jwtExpiryMs(sessionJwt) };
   }
 
-  static sessionIsFresh(session: AtomicMailSession | null, now: number = Date.now()): session is AtomicMailSession {
-    return session !== null && now < session.sessionExpiresAt - SESSION_SAFETY_MARGIN_MS;
+  static sessionIsFresh(
+    session: AtomicMailSession | null,
+    now: number = Date.now(),
+  ): session is AtomicMailSession {
+    return (
+      session !== null &&
+      now < session.sessionExpiresAt - SESSION_SAFETY_MARGIN_MS
+    );
   }
 
   /** Capability token + JMAP session discovery, cached for the capability's life. */
   private async context(session: AtomicMailSession): Promise<JmapContext> {
-    if (this.jmap && this.now() < this.jmap.capabilityExpiresAt - CAPABILITY_SAFETY_MARGIN_MS) {
+    if (
+      this.jmap &&
+      this.now() < this.jmap.capabilityExpiresAt - CAPABILITY_SAFETY_MARGIN_MS
+    ) {
       return this.jmap;
     }
-    const capRes = await this.post(`${this.authUrl}/api/v1/capability`, { jwt: session.sessionJwt });
+    const capRes = await this.post(`${this.authUrl}/api/v1/capability`, {
+      jwt: session.sessionJwt,
+    });
     if (!capRes.ok) throw await failFrom(capRes, "capability");
     const capabilityJwt = readBearer(capRes);
     const wellKnown = await this.call(`${this.apiUrl}/.well-known/jmap`, {
@@ -208,7 +239,8 @@ export class AtomicMailClient {
       accounts?: Record<string, { name?: string }>;
     };
     const accountId = s.primaryAccounts?.["urn:ietf:params:jmap:mail"];
-    if (!s.apiUrl || !accountId) throw new AtomicMailError("JMAP session lacks apiUrl/accountId", 0);
+    if (!s.apiUrl || !accountId)
+      throw new AtomicMailError("JMAP session lacks apiUrl/accountId", 0);
     const raw = s.username ?? s.accounts?.[accountId]?.name ?? "";
     // The session names the local part alone; mail needs the whole address.
     const address = raw.includes("@") ? raw : `${raw}@${ATOMIC_MAIL_DOMAIN}`;
@@ -216,7 +248,9 @@ export class AtomicMailClient {
       capabilityJwt,
       capabilityExpiresAt: jwtExpiryMs(capabilityJwt),
       accountId,
-      apiUrl: s.apiUrl.startsWith("http") ? s.apiUrl : `${this.apiUrl}${s.apiUrl}`,
+      apiUrl: s.apiUrl.startsWith("http")
+        ? s.apiUrl
+        : `${this.apiUrl}${s.apiUrl}`,
       address,
       // Carried over: identities and mailbox ids outlive a capability.
       identityId: this.jmap?.identityId ?? null,
@@ -273,7 +307,11 @@ export class AtomicMailClient {
     for (const r of responses) {
       const [name, args] = r as [string, Record<string, unknown>];
       if (name === "error") {
-        throw new AtomicMailError(`JMAP ${String(args.type ?? "error")}`, 0, typeof args.description === "string" ? args.description : undefined);
+        throw new AtomicMailError(
+          `JMAP ${String(args.type ?? "error")}`,
+          0,
+          typeof args.description === "string" ? args.description : undefined,
+        );
       }
     }
     return responses;
@@ -284,7 +322,10 @@ export class AtomicMailClient {
     return (await this.context(session)).address;
   }
 
-  private async mailboxId(session: AtomicMailSession, role: "inbox" | "drafts"): Promise<string> {
+  private async mailboxId(
+    session: AtomicMailSession,
+    role: "inbox" | "drafts",
+  ): Promise<string> {
     const ctx = await this.context(session);
     const [[, q]] = (await this.jmapCall(session, [
       ["Mailbox/query", { accountId: ctx.accountId, filter: { role } }, "q"],
@@ -295,7 +336,11 @@ export class AtomicMailClient {
   }
 
   /** Draft + submit in one batch. Resolves to the submission id. */
-  async send(session: AtomicMailSession, mail: SendMailInput, opts?: { signal?: AbortSignal }): Promise<string> {
+  async send(
+    session: AtomicMailSession,
+    mail: SendMailInput,
+    opts?: { signal?: AbortSignal },
+  ): Promise<string> {
     const ctx = await this.context(session);
     if (!ctx.draftsMailboxId) {
       ctx.draftsMailboxId = await this.mailboxId(session, "drafts").catch(() =>
@@ -305,7 +350,13 @@ export class AtomicMailClient {
     const identityId = await this.identityId(session);
     const responses = await this.jmapCall(
       session,
-      buildSendBatch(ctx.accountId, ctx.address, ctx.draftsMailboxId, mail, identityId),
+      buildSendBatch(
+        ctx.accountId,
+        ctx.address,
+        ctx.draftsMailboxId,
+        mail,
+        identityId,
+      ),
       opts?.signal,
     );
     return parseSendResult(responses);
@@ -320,7 +371,11 @@ export class AtomicMailClient {
     const ctx = await this.context(session);
     const inbox = await this.mailboxId(session, "inbox");
     return parseInboxList(
-      await this.jmapCall(session, buildInboxBatch(ctx.accountId, inbox, limit), opts?.signal),
+      await this.jmapCall(
+        session,
+        buildInboxBatch(ctx.accountId, inbox, limit),
+        opts?.signal,
+      ),
     );
   }
 }

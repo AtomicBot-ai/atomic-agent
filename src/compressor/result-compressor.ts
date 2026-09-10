@@ -60,7 +60,8 @@ function extractTail(
 ): { text: string; truncated: boolean } {
   if (text.length === 0) return { text: "", truncated: false };
   const lines = text.split("\n").filter((line) => line.trim().length > 0);
-  if (lines.length <= maxLines) return { text: lines.join("\n"), truncated: false };
+  if (lines.length <= maxLines)
+    return { text: lines.join("\n"), truncated: false };
   const slice = lines.slice(-maxLines);
   return {
     text: `… [omitted ${lines.length - maxLines} lines]\n${slice.join("\n")}`,

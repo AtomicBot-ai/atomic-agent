@@ -89,7 +89,11 @@ export function togglePinned(
   // pinned row the block ends at `block - 2`, so `block - 1` is the top
   // of the unpinned half; after removing an unpinned row the block is
   // intact and `block` is the slot right after it.
-  const order = moveSessionInOrder(displayedIds, from, wasPinned ? block - 1 : block);
+  const order = moveSessionInOrder(
+    displayedIds,
+    from,
+    wasPinned ? block - 1 : block,
+  );
   if (wasPinned) pinnedSet.delete(sessionId);
   else pinnedSet.add(sessionId);
   return { order, pinned: order.filter((id) => pinnedSet.has(id)) };

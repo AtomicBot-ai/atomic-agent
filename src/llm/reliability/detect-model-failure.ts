@@ -84,7 +84,8 @@ export function detectModelFailure(
   if (!completion.stop && !looksLikeClosedJsonObject(trimmedContent)) {
     return {
       reason: "no_stop",
-      message: "model stream ended without a stop token and output is incomplete",
+      message:
+        "model stream ended without a stop token and output is incomplete",
     };
   }
   return null;
@@ -127,7 +128,9 @@ export function classifyTruncation(
   contextWindow: number | null = null,
 ): TruncationDetail {
   const completionTokens =
-    completion.usage?.completionTokens ?? completion.timing?.predictedTokens ?? 0;
+    completion.usage?.completionTokens ??
+    completion.timing?.predictedTokens ??
+    0;
   const promptTokens =
     completion.usage?.promptTokens ?? completion.timing?.promptTokens ?? 0;
   const requested = requestedMaxTokens ?? 0;
@@ -147,7 +150,12 @@ export function classifyTruncation(
       cause = "context_window";
     }
   }
-  return { cause, completionTokens, promptTokens, requestedMaxTokens: requested };
+  return {
+    cause,
+    completionTokens,
+    promptTokens,
+    requestedMaxTokens: requested,
+  };
 }
 
 /**

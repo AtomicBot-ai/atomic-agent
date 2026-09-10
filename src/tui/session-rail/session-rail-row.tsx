@@ -59,10 +59,17 @@ export function SessionRailRow({
     (hit) => {
       if (!mouse) return false;
       if (isPrimaryPress(hit.event)) {
-        gesture.current = { selectedAtPress: selected, moved: false, over: row };
+        gesture.current = {
+          selectedAtPress: selected,
+          moved: false,
+          over: row,
+        };
         if (!selected) {
           mouse.dispatch({ type: "chat_focus_set", focus: "sidebar" });
-          mouse.dispatch({ type: "sidebar_section_focused", section: "sessions" });
+          mouse.dispatch({
+            type: "sidebar_section_focused",
+            section: "sessions",
+          });
           mouse.dispatch({ type: "sidebar_cursor_set", row });
         }
         mouse.registry.capturePointer(ref);
@@ -71,7 +78,10 @@ export function SessionRailRow({
       const current = gesture.current;
       if (!current) return false;
       if (hit.event.kind === "motion" && hit.event.button === "left") {
-        const over = Math.min(windowEnd, Math.max(windowStart, row + hit.localY));
+        const over = Math.min(
+          windowEnd,
+          Math.max(windowStart, row + hit.localY),
+        );
         if (over === current.over) return true;
         if (!current.moved) {
           current.moved = true;

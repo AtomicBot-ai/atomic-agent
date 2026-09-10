@@ -16,7 +16,9 @@ function baseState() {
 
 describe("reduceMemoryAction", () => {
   it("returns null for unrelated actions", () => {
-    expect(reduceMemoryAction(baseState(), { type: "chat_cleared" })).toBeNull();
+    expect(
+      reduceMemoryAction(baseState(), { type: "chat_cleared" }),
+    ).toBeNull();
   });
 
   it("loads rows and clamps cursor", () => {

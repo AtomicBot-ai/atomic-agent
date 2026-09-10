@@ -1,4 +1,9 @@
-import { sendOutbound, type OutboundSendResult, type TelegramApi, type TelegramLogger } from "./outbound-sender.js";
+import {
+  sendOutbound,
+  type OutboundSendResult,
+  type TelegramApi,
+  type TelegramLogger,
+} from "./outbound-sender.js";
 
 /**
  * One message to one chat from a process that runs no bot: the detached
@@ -41,17 +46,24 @@ export function fetchTelegramApi(opts: {
         body: JSON.stringify({ chat_id: chatId, text, ...(extra ?? {}) }),
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
-      const body = (await res.json().catch(() => null)) as
-        | { ok?: boolean; result?: unknown; error_code?: number; description?: string; parameters?: unknown }
-        | null;
+      const body = (await res.json().catch(() => null)) as {
+        ok?: boolean;
+        result?: unknown;
+        error_code?: number;
+        description?: string;
+        parameters?: unknown;
+      } | null;
       if (!res.ok || !body || body.ok !== true) {
         // Shaped like grammy's `GrammyError` so `sendOutbound`'s 429 and
         // parse-error sniffing applies unchanged.
-        throw Object.assign(new Error(body?.description ?? `HTTP ${res.status}`), {
-          error_code: body?.error_code ?? res.status,
-          description: body?.description ?? `HTTP ${res.status}`,
-          parameters: body?.parameters ?? {},
-        });
+        throw Object.assign(
+          new Error(body?.description ?? `HTTP ${res.status}`),
+          {
+            error_code: body?.error_code ?? res.status,
+            description: body?.description ?? `HTTP ${res.status}`,
+            parameters: body?.parameters ?? {},
+          },
+        );
       }
       return body.result;
     },

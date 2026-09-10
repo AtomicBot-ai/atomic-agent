@@ -64,7 +64,11 @@ export type UserLlmRunModeConfig = {
   fusion?: UserLlmFusionConfig;
 };
 
-export const RUN_MODE_NAMES: readonly RunModeName[] = ["local", "cloud", "fusion"];
+export const RUN_MODE_NAMES: readonly RunModeName[] = [
+  "local",
+  "cloud",
+  "fusion",
+];
 
 /** Provider kind that identifies a local (worker-capable) leg. */
 export const LOCAL_PROVIDER_KIND = "llama-server";
@@ -88,7 +92,10 @@ function parseLegProviderId(
   }
   const entry = providers.find((p) => p.id === raw);
   if (!entry) {
-    throw new ConfigValidationError(field, `unknown provider id ${JSON.stringify(raw)}`);
+    throw new ConfigValidationError(
+      field,
+      `unknown provider id ${JSON.stringify(raw)}`,
+    );
   }
   const isLocal = entry.kind === LOCAL_PROVIDER_KIND;
   if (leg === "orchestrator" && isLocal) {
@@ -106,8 +113,18 @@ function parseLegProviderId(
   return raw;
 }
 
-function parseBoundedInt(raw: unknown, field: string, min: number, max: number): number {
-  if (typeof raw !== "number" || !Number.isInteger(raw) || raw < min || raw > max) {
+function parseBoundedInt(
+  raw: unknown,
+  field: string,
+  min: number,
+  max: number,
+): number {
+  if (
+    typeof raw !== "number" ||
+    !Number.isInteger(raw) ||
+    raw < min ||
+    raw > max
+  ) {
     throw new ConfigValidationError(
       field,
       `expected an integer ${min}-${max}, got ${JSON.stringify(raw)}`,
@@ -156,7 +173,10 @@ function parseFusion(
     );
   }
   if (obj.workerModel !== undefined) {
-    out.workerModel = parseOptionalLabel(obj.workerModel, `${field}.workerModel`);
+    out.workerModel = parseOptionalLabel(
+      obj.workerModel,
+      `${field}.workerModel`,
+    );
   }
   if (obj.workers !== undefined) {
     out.workers = parseBoundedInt(
@@ -167,7 +187,12 @@ function parseFusion(
     );
   }
   if (obj.workerMaxSteps !== undefined) {
-    out.workerMaxSteps = parseBoundedInt(obj.workerMaxSteps, `${field}.workerMaxSteps`, 1, 1000);
+    out.workerMaxSteps = parseBoundedInt(
+      obj.workerMaxSteps,
+      `${field}.workerMaxSteps`,
+      1,
+      1000,
+    );
   }
   if (obj.workerTimeoutMs !== undefined) {
     out.workerTimeoutMs = parseBoundedInt(
@@ -198,8 +223,14 @@ export function parseLlmRunModeConfig(
   const out: UserLlmRunModeConfig = {};
   if (obj.mode !== undefined) {
     const mode = obj.mode;
-    if (typeof mode !== "string" || !RUN_MODE_NAMES.includes(mode as RunModeName)) {
-      throw new ConfigValidationError(`${field}.mode`, `expected ${RUN_MODE_NAMES.join("|")}`);
+    if (
+      typeof mode !== "string" ||
+      !RUN_MODE_NAMES.includes(mode as RunModeName)
+    ) {
+      throw new ConfigValidationError(
+        `${field}.mode`,
+        `expected ${RUN_MODE_NAMES.join("|")}`,
+      );
     }
     out.mode = mode as RunModeName;
   }
@@ -221,7 +252,8 @@ export function scrubRunModeProviderPins(
 ): UserLlmRunModeConfig | undefined {
   if (!runMode?.fusion) return runMode;
   const { orchestratorProvider, workerProvider, ...rest } = runMode.fusion;
-  if (orchestratorProvider !== removedId && workerProvider !== removedId) return runMode;
+  if (orchestratorProvider !== removedId && workerProvider !== removedId)
+    return runMode;
   return {
     ...runMode,
     fusion: {
@@ -229,7 +261,9 @@ export function scrubRunModeProviderPins(
       ...(orchestratorProvider && orchestratorProvider !== removedId
         ? { orchestratorProvider }
         : {}),
-      ...(workerProvider && workerProvider !== removedId ? { workerProvider } : {}),
+      ...(workerProvider && workerProvider !== removedId
+        ? { workerProvider }
+        : {}),
     },
   };
 }

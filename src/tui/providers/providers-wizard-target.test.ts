@@ -132,7 +132,9 @@ describe("apiKeyPhaseError", () => {
     expect(apiKeyPhaseError(wizardFor("openrouter"))).toContain(
       "API key required",
     );
-    expect(apiKeyPhaseError(wizardFor("aimlapi"))).toContain("API key required");
+    expect(apiKeyPhaseError(wizardFor("aimlapi"))).toContain(
+      "API key required",
+    );
     expect(apiKeyPhaseError(wizardFor("gemini"))).toContain("API key required");
     expect(apiKeyForWizard(wizardFor("openrouter"))).toBeUndefined();
   });
@@ -304,7 +306,9 @@ describe("verifyTargetForWizard", () => {
   });
 
   it("has nothing to check for keyless and local providers", () => {
-    expect(verifyTargetForWizard(withKey("openai-compatible", "lmstudio"))).toBeNull();
+    expect(
+      verifyTargetForWizard(withKey("openai-compatible", "lmstudio")),
+    ).toBeNull();
     expect(
       verifyTargetForWizard({
         ...withKey("openai-compatible"),

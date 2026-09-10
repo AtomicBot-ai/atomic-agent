@@ -73,7 +73,10 @@ describe("reconcileImportedSession", () => {
 
   it("updates when the same source grew since the last import", () => {
     const { result, saved } = run(session([T1, T2]), session([T1, T2, T3]));
-    expect(result).toEqual({ status: "migrated", reason: "updated (+1 turns)" });
+    expect(result).toEqual({
+      status: "migrated",
+      reason: "updated (+1 turns)",
+    });
     expect(saved).toHaveLength(1);
     expect(saved[0]!.turns).toEqual([T1, T2, T3]);
   });
@@ -138,7 +141,10 @@ describe("reconcileImportedSession", () => {
     expect(refused.saved).toEqual([]);
 
     const forced = run(existing, mapped, { overwrite: true });
-    expect(forced.result).toEqual({ status: "migrated", reason: "overwritten" });
+    expect(forced.result).toEqual({
+      status: "migrated",
+      reason: "overwritten",
+    });
     expect(forced.saved).toEqual([mapped]);
   });
 });

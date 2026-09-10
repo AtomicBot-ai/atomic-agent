@@ -54,8 +54,7 @@ export function mapClaudeCodeSession(
   flushPendingReasoning(state);
   const { turns } = state;
 
-  const createdAt =
-    session.messages.length > 0 ? session.messages[0]!.atMs : 0;
+  const createdAt = session.messages.length > 0 ? session.messages[0]!.atMs : 0;
   const lastMessageAt =
     session.messages.length > 0
       ? session.messages[session.messages.length - 1]!.atMs
@@ -121,7 +120,10 @@ function appendMessageTurns(state: MapState, message: ClaudeCodeMessage): void {
     }
     return;
   }
-  const reasoning = joinNonEmpty(state.pendingReasoning, joinThinking(message.blocks));
+  const reasoning = joinNonEmpty(
+    state.pendingReasoning,
+    joinThinking(message.blocks),
+  );
   const text = joinText(message.blocks);
   const calls = message.blocks.filter(
     (b): b is Extract<ClaudeCodeBlock, { type: "toolUse" }> =>
@@ -183,7 +185,9 @@ function joinNonEmpty(first: string, second: string): string {
 
 function joinText(blocks: readonly ClaudeCodeBlock[]): string {
   return blocks
-    .filter((b): b is Extract<ClaudeCodeBlock, { type: "text" }> => b.type === "text")
+    .filter(
+      (b): b is Extract<ClaudeCodeBlock, { type: "text" }> => b.type === "text",
+    )
     .map((b) => b.text)
     .join("\n");
 }

@@ -18,12 +18,14 @@ export const OPENCLAW_IMPORT_OPTIONS: readonly OpenclawOptionMeta[] = [
   {
     id: "sessions",
     label: "Sessions",
-    description: "Transcript logs (agents/<agent>/sessions/*.jsonl) -> sessions.sqlite",
+    description:
+      "Transcript logs (agents/<agent>/sessions/*.jsonl) -> sessions.sqlite",
   },
   {
     id: "cron",
     label: "Cron jobs",
-    description: "Scheduled jobs (state/openclaw.sqlite cron_jobs) -> tasks.sqlite",
+    description:
+      "Scheduled jobs (state/openclaw.sqlite cron_jobs) -> tasks.sqlite",
   },
 ];
 

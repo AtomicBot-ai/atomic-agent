@@ -51,7 +51,8 @@ export function SwarmPanel({
 }: SwarmPanelProps): ReactElement {
   const size = useTerminalSize();
   const paneWidth = Math.max(0, (width ?? size.columns) - 2);
-  const showStrip = maxRows >= STRIP_MIN_LIST_ROWS + STRIP_ROWS + STRIP_HEADROOM;
+  const showStrip =
+    maxRows >= STRIP_MIN_LIST_ROWS + STRIP_ROWS + STRIP_HEADROOM;
   const listRows = showStrip ? maxRows - STRIP_ROWS - 1 : maxRows;
   return (
     <Box flexDirection="column">
@@ -78,7 +79,11 @@ export function SwarmPanel({
       </Box>
       {showStrip ? (
         <Box marginTop={1}>
-          <ZerglingStrip width={paneWidth} count={aliveSwarmCount(panel.rows)} animate={animate} />
+          <ZerglingStrip
+            width={paneWidth}
+            count={aliveSwarmCount(panel.rows)}
+            animate={animate}
+          />
         </Box>
       ) : null}
     </Box>
@@ -101,7 +106,13 @@ function Header({ panel }: { panel: SwarmPanelState }): ReactElement {
   );
 }
 
-function ListView({ panel, maxRows }: { panel: SwarmPanelState; maxRows: number }): ReactElement {
+function ListView({
+  panel,
+  maxRows,
+}: {
+  panel: SwarmPanelState;
+  maxRows: number;
+}): ReactElement {
   if (panel.rows.length === 0) {
     return (
       <Box marginTop={1}>
@@ -111,7 +122,10 @@ function ListView({ panel, maxRows }: { panel: SwarmPanelState; maxRows: number 
   }
   // Keep the cursor on screen when the list outgrows the pane.
   const visible = Math.max(1, maxRows);
-  const start = Math.max(0, Math.min(panel.selected - visible + 1, panel.rows.length - visible));
+  const start = Math.max(
+    0,
+    Math.min(panel.selected - visible + 1, panel.rows.length - visible),
+  );
   const rows = panel.rows.slice(start, start + visible);
   return (
     <Box marginTop={1} flexDirection="column">
@@ -137,7 +151,10 @@ function ListView({ panel, maxRows }: { panel: SwarmPanelState; maxRows: number 
                 {stateText(row)}
               </Text>
               {row.role && !confirming ? (
-                <Text color={theme.colors.muted}>{"  · "}{row.role}</Text>
+                <Text color={theme.colors.muted}>
+                  {"  · "}
+                  {row.role}
+                </Text>
               ) : null}
               {confirming ? (
                 <Text color={theme.colors.error}>{"  remove? y / esc"}</Text>
@@ -151,7 +168,8 @@ function ListView({ panel, maxRows }: { panel: SwarmPanelState; maxRows: number 
 }
 
 function AddWizard({ form }: { form: SwarmAddForm }): ReactElement {
-  const stepIndex = ["kind", "label", "role", "token", "owner"].indexOf(form.step) + 1;
+  const stepIndex =
+    ["kind", "label", "role", "token", "owner"].indexOf(form.step) + 1;
   return (
     <Box marginTop={1} flexDirection="column">
       <Box>
@@ -162,31 +180,53 @@ function AddWizard({ form }: { form: SwarmAddForm }): ReactElement {
       </Box>
       {form.step === "kind" ? (
         <Box marginTop={1}>
-          <Text color={theme.colors.muted}>{"  "}Where does it live?{"  "}</Text>
-          <Text color={form.kind === "telegram" ? theme.colors.accent : theme.colors.muted}>
+          <Text color={theme.colors.muted}>
+            {"  "}Where does it live?{"  "}
+          </Text>
+          <Text
+            color={
+              form.kind === "telegram"
+                ? theme.colors.accent
+                : theme.colors.muted
+            }
+          >
             {form.kind === "telegram" ? "[ Telegram ]" : "  Telegram  "}
           </Text>
-          <Text color={form.kind === "discord" ? theme.colors.accent : theme.colors.muted}>
+          <Text
+            color={
+              form.kind === "discord" ? theme.colors.accent : theme.colors.muted
+            }
+          >
             {form.kind === "discord" ? "[ Discord ]" : "  Discord  "}
           </Text>
         </Box>
       ) : (
         <Box marginTop={1} flexDirection="column">
           <Box>
-            <Text color={theme.colors.muted}>{"  "}{stepLabel(form)}{"  "}</Text>
+            <Text color={theme.colors.muted}>
+              {"  "}
+              {stepLabel(form)}
+              {"  "}
+            </Text>
             <Text color={theme.colors.accent}>
-              {form.step === "token" ? "•".repeat(formStepValue(form).length) : formStepValue(form)}
+              {form.step === "token"
+                ? "•".repeat(formStepValue(form).length)
+                : formStepValue(form)}
               <Text color={theme.colors.muted}>▏</Text>
             </Text>
           </Box>
           <Box>
-            <Text color={theme.colors.muted}>{"    "}{stepHelp(form)}</Text>
+            <Text color={theme.colors.muted}>
+              {"    "}
+              {stepHelp(form)}
+            </Text>
           </Box>
         </Box>
       )}
       <Box marginTop={1}>
         <Text color={theme.colors.muted}>
-          {"  "}{kindTag(form.kind)} {form.label || "…"}
+          {"  "}
+          {kindTag(form.kind)} {form.label || "…"}
           {form.role ? ` · ${form.role}` : ""}
         </Text>
       </Box>
@@ -226,11 +266,15 @@ function EditView({ panel }: { panel: SwarmPanelState }): ReactElement {
               <Text color={theme.colors.muted}>{"  "}</Text>
               {typing ? (
                 <Text color={theme.colors.accent}>
-                  {field === "token" ? "•".repeat(panel.editBuffer!.length) : panel.editBuffer}
+                  {field === "token"
+                    ? "•".repeat(panel.editBuffer!.length)
+                    : panel.editBuffer}
                   <Text color={theme.colors.muted}>▏</Text>
                 </Text>
               ) : (
-                <Text color={theme.colors.accentSoft}>{fieldValue(row, field)}</Text>
+                <Text color={theme.colors.accentSoft}>
+                  {fieldValue(row, field)}
+                </Text>
               )}
             </Box>
           );
@@ -253,7 +297,9 @@ function stateText(row: SwarmRow): string {
   if (!row.enabled) return "off";
   if (!row.hasToken) return "no token";
   if (row.state === "down") {
-    return row.lastError ? `down: ${clip(row.lastError, ROW_ERROR_CHARS)}` : "down";
+    return row.lastError
+      ? `down: ${clip(row.lastError, ROW_ERROR_CHARS)}`
+      : "down";
   }
   if (row.state === "up" && row.ownerUserId === null) return "up · unpaired";
   return row.state;
@@ -349,7 +395,8 @@ function hint(panel: SwarmPanelState): string {
       return "y remove · esc keep";
     default: {
       const row = panel.rows[panel.selected];
-      if (row?.primary) return "↑/↓ move · a add · primaries are managed in /integrations";
+      if (row?.primary)
+        return "↑/↓ move · a add · primaries are managed in /integrations";
       return "↑/↓ move · a add · e edit · enter on/off · p pair · s restart · d remove";
     }
   }

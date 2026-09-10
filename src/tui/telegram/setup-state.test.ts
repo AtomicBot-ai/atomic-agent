@@ -149,7 +149,11 @@ describe("deriveSetupState", () => {
         hasToken: true,
         channelState: "up",
         ownerUserId: 1,
-        tokenPrompt: { buffer: "1234567890:ABCDEF", error: null, submitting: false },
+        tokenPrompt: {
+          buffer: "1234567890:ABCDEF",
+          error: null,
+          submitting: false,
+        },
       }),
     );
     expect(JSON.stringify(view)).not.toContain("1234567890");

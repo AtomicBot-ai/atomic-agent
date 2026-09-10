@@ -75,7 +75,8 @@ describe("terminal restore net", () => {
     try {
       registerTerminalRestore(() => seen.push("restore"));
       const handlers = process.listeners("uncaughtException");
-      for (const handler of handlers) handler(new Error("boom"), "uncaughtException");
+      for (const handler of handlers)
+        handler(new Error("boom"), "uncaughtException");
     } finally {
       process.off("uncaughtException", reporter);
     }

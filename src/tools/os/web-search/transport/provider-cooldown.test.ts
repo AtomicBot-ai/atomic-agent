@@ -158,7 +158,10 @@ describe("createPersistentProviderCooldown (#256)", () => {
     first.park("exa", T0, null);
     first.clear("exa");
 
-    const second = createPersistentProviderCooldown({ filePath, now: () => T0 });
+    const second = createPersistentProviderCooldown({
+      filePath,
+      now: () => T0,
+    });
     expect(second.isParked("exa", T0)).toBe(false);
     expect(second.park("exa", T0, null)).toBe(60_000);
   });
@@ -169,7 +172,10 @@ describe("createPersistentProviderCooldown (#256)", () => {
     expect(first.isParked("exa", T0)).toBe(false);
 
     first.park("exa", T0, null);
-    const second = createPersistentProviderCooldown({ filePath, now: () => T0 });
+    const second = createPersistentProviderCooldown({
+      filePath,
+      now: () => T0,
+    });
     expect(second.isParked("exa", T0)).toBe(true);
   });
 

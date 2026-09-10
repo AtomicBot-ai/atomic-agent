@@ -23,7 +23,10 @@ export function describeFusionBlocker(state: TuiState): string | null {
     return "needs a cloud provider with a key — Manage › LLM › Cloud";
   }
   const local = state.localModelsPanel;
-  if (local.lastRefreshedAt !== null && !local.rows.some((row) => row.downloaded)) {
+  if (
+    local.lastRefreshedAt !== null &&
+    !local.rows.some((row) => row.downloaded)
+  ) {
     return "needs a downloaded local model — Manage › LLM › Local";
   }
   return null;

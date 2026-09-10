@@ -1,9 +1,4 @@
-import {
-  existsSync,
-  readdirSync,
-  readFileSync,
-  statSync,
-} from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 /**
@@ -65,8 +60,18 @@ export interface ClaudeCodeSessionMeta {
 export type ClaudeCodeBlock =
   | { type: "text"; text: string }
   | { type: "thinking"; thinking: string }
-  | { type: "toolUse"; id: string | null; name: string; args: Record<string, unknown> }
-  | { type: "toolResult"; toolUseId: string | null; text: string; isError: boolean };
+  | {
+      type: "toolUse";
+      id: string | null;
+      name: string;
+      args: Record<string, unknown>;
+    }
+  | {
+      type: "toolResult";
+      toolUseId: string | null;
+      text: string;
+      isError: boolean;
+    };
 
 /** A projected `user` / `assistant` transcript row. */
 export interface ClaudeCodeMessage {
@@ -277,7 +282,9 @@ export class ClaudeCodeSource {
       text = readFileSync(meta.file, "utf8");
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      throw new ClaudeCodeSourceError(`failed to read ${meta.file}: ${message}`);
+      throw new ClaudeCodeSourceError(
+        `failed to read ${meta.file}: ${message}`,
+      );
     }
     let cwd: string | null = null;
     let customTitle: string | null = null;
@@ -341,7 +348,7 @@ function projectMessage(
   if (blocks.length === 0) return null;
   const atMs =
     typeof event.timestamp === "string"
-      ? isoToMs(event.timestamp) ?? fallbackAtMs
+      ? (isoToMs(event.timestamp) ?? fallbackAtMs)
       : fallbackAtMs;
   return { role, blocks, atMs };
 }
@@ -374,7 +381,8 @@ function projectBlocks(content: unknown): ClaudeCodeBlock[] {
           id: typeof block.id === "string" ? block.id : null,
           name,
           args:
-            block.input && typeof block.input === "object" &&
+            block.input &&
+            typeof block.input === "object" &&
             !Array.isArray(block.input)
               ? (block.input as Record<string, unknown>)
               : {},

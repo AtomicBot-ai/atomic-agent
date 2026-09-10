@@ -76,19 +76,34 @@ describe("the backend control's dot", () => {
 
   it("carries the worker daemon's probe on the fusion route", () => {
     const base = fusionState();
-    expect(selectComposerBackendMeta(base)).toEqual({ kind: "fusion", status: "unknown" });
+    expect(selectComposerBackendMeta(base)).toEqual({
+      kind: "fusion",
+      status: "unknown",
+    });
     const probed = {
       ...base,
-      llmHealth: { ...base.llmHealth, localConfigured: true, status: "healthy" as const },
+      llmHealth: {
+        ...base.llmHealth,
+        localConfigured: true,
+        status: "healthy" as const,
+      },
     };
-    expect(selectComposerBackendMeta(probed)).toEqual({ kind: "fusion", status: "healthy" });
+    expect(selectComposerBackendMeta(probed)).toEqual({
+      kind: "fusion",
+      status: "healthy",
+    });
   });
 });
 
 describe("the switch rows", () => {
   it("offers cloud, local, custom and fusion — fusion last — marking the live one", () => {
     const rows = selectComposerSwitchRows(localState("external"), "backend");
-    expect(rows.map((row) => row.label)).toEqual(["cloud", "local", "custom", "fusion"]);
+    expect(rows.map((row) => row.label)).toEqual([
+      "cloud",
+      "local",
+      "custom",
+      "fusion",
+    ]);
     expect(rows.filter((row) => row.active).map((row) => row.label)).toEqual([
       "custom",
     ]);
@@ -96,7 +111,10 @@ describe("the switch rows", () => {
   });
 
   it("marks fusion live and says what it is made of", () => {
-    const rows = selectComposerSwitchRows(fusionState({ workers: 3 }), "backend");
+    const rows = selectComposerSwitchRows(
+      fusionState({ workers: 3 }),
+      "backend",
+    );
     const fusion = rows.find((row) => row.label === "fusion");
     expect(fusion?.active).toBe(true);
     expect(fusion?.detail).toBe("cloud plans · 3 local workers");
@@ -113,14 +131,23 @@ describe("the switch rows", () => {
   it("hands `/runmode <mode>` the very row the popup lists", () => {
     const state = fusionState();
     expect(backendSwitchRow(state, "fusion")).toEqual(
-      selectComposerSwitchRows(state, "backend").find((row) => row.label === "fusion"),
+      selectComposerSwitchRows(state, "backend").find(
+        (row) => row.label === "fusion",
+      ),
     );
-    expect(backendSwitchRow(state, "local").intent).toEqual({ kind: "backend", backend: "local" });
+    expect(backendSwitchRow(state, "local").intent).toEqual({
+      kind: "backend",
+      backend: "local",
+    });
   });
 
   it("lists the orchestrator's cloud models as the model rows under fusion", () => {
-    const fusion = selectComposerSwitchRows(fusionState(), "model").map((row) => row.label);
-    const cloud = selectComposerSwitchRows(cloudState(), "model").map((row) => row.label);
+    const fusion = selectComposerSwitchRows(fusionState(), "model").map(
+      (row) => row.label,
+    );
+    const cloud = selectComposerSwitchRows(cloudState(), "model").map(
+      (row) => row.label,
+    );
     expect(fusion.length).toBeGreaterThan(0);
     expect(fusion).toEqual(cloud);
     expect(fusion).not.toContain("Download more models…");
@@ -250,9 +277,9 @@ describe("the switch rows", () => {
       ...base,
       composerSwitch: { kind: "model", cursor: 0, filter: "qwen coder" },
     };
-    expect(selectComposerSwitchRows(state, "model").map((r) => r.label)).toEqual(
-      ["qwen/qwen3-coder"],
-    );
+    expect(
+      selectComposerSwitchRows(state, "model").map((r) => r.label),
+    ).toEqual(["qwen/qwen3-coder"]);
     // The filter belongs to the switch that is open, never to a sibling.
     expect(selectComposerSwitchRows(state, "provider").length).toBe(3);
   });
@@ -283,7 +310,9 @@ describe("the switch rows", () => {
 
 describe("where an opened switch lands", () => {
   it("puts the cursor on the choice already in effect", () => {
-    expect(initialComposerSwitchCursor(localState("external"), "backend")).toBe(2);
+    expect(initialComposerSwitchCursor(localState("external"), "backend")).toBe(
+      2,
+    );
     expect(initialComposerSwitchCursor(cloudState(), "backend")).toBe(0);
   });
 
@@ -350,9 +379,9 @@ describe("the model slot's download call to action", () => {
   it("never asks off the managed-local route", () => {
     // Cloud has nothing to download, and `custom` points at a server
     // somebody else runs.
-    expect(selectComposerNeedsModelDownload(withCatalog(cloudState(), []))).toBe(
-      false,
-    );
+    expect(
+      selectComposerNeedsModelDownload(withCatalog(cloudState(), [])),
+    ).toBe(false);
     expect(
       selectComposerNeedsModelDownload(withCatalog(localState("external"), [])),
     ).toBe(false);

@@ -39,7 +39,10 @@ describe("checkLlamaServer", () => {
   });
 
   it("accepts a real llama.cpp /health answer", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({ status: "ok" })));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse({ status: "ok" })),
+    );
     const result = await checkLlamaServer({
       url: "http://127.0.0.1:8080",
       retries: 0,
@@ -51,7 +54,10 @@ describe("checkLlamaServer", () => {
   it("rejects a 200 that is not llama.cpp's health shape (KoboldCpp web UI)", async () => {
     // First call: /health returns HTML. Second call: /v1/models also HTML,
     // so this is not even an OpenAI-compatible endpoint.
-    vi.stubGlobal("fetch", vi.fn(async () => htmlResponse()));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => htmlResponse()),
+    );
     const result = await checkLlamaServer({
       url: "http://127.0.0.1:5001",
       retries: 0,
@@ -234,8 +240,13 @@ describe("checkLlamaServer", () => {
     // llama.cpp exempts /health from --api-key, so the plain probe
     // passes and the row claims healthy while every completion 401s.
     const fetchMock = vi.fn(async (url: unknown) => {
-      if (String(url).endsWith("/health")) return jsonResponse({ status: "ok" });
-      return jsonResponse({ error: { code: 401, message: "Invalid API Key" } }, false, 401);
+      if (String(url).endsWith("/health"))
+        return jsonResponse({ status: "ok" });
+      return jsonResponse(
+        { error: { code: 401, message: "Invalid API Key" } },
+        false,
+        401,
+      );
     });
     vi.stubGlobal("fetch", fetchMock);
     const result = await checkLlamaServer({
@@ -263,7 +274,8 @@ describe("checkLlamaServer", () => {
     // An old build without /props (404) is still a llama-server;
     // only an explicit 401/403 may flip the verdict.
     const fetchMock = vi.fn(async (url: unknown) => {
-      if (String(url).endsWith("/health")) return jsonResponse({ status: "ok" });
+      if (String(url).endsWith("/health"))
+        return jsonResponse({ status: "ok" });
       return jsonResponse({ error: "not found" }, false, 404);
     });
     vi.stubGlobal("fetch", fetchMock);

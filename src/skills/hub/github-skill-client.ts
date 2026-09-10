@@ -49,11 +49,7 @@ export interface SkillHubClient {
 }
 
 export type GithubSkillErrorCode =
-  | "not_found"
-  | "rate_limited"
-  | "network"
-  | "too_large"
-  | "unexpected";
+  "not_found" | "rate_limited" | "network" | "too_large" | "unexpected";
 
 export class GithubSkillError extends Error {
   constructor(
@@ -96,8 +92,7 @@ export class GithubSkillClient implements SkillHubClient {
   private readonly maxBytes: number;
 
   constructor(options: GithubSkillClientOptions = {}) {
-    this.token =
-      options.token ?? process.env.GITHUB_TOKEN?.trim() ?? null;
+    this.token = options.token ?? process.env.GITHUB_TOKEN?.trim() ?? null;
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch;
     this.apiBase = (options.apiBase ?? DEFAULT_API_BASE).replace(/\/$/, "");
     this.rawBase = (options.rawBase ?? DEFAULT_RAW_BASE).replace(/\/$/, "");

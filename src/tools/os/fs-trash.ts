@@ -31,7 +31,10 @@ async function trashOneDarwin(
     signal,
   });
   if (result.exitCode !== 0) {
-    const err = [result.stderr, result.stdout].filter(Boolean).join("\n").trim();
+    const err = [result.stderr, result.stdout]
+      .filter(Boolean)
+      .join("\n")
+      .trim();
     return { ok: false, message: err || `osascript exit ${result.exitCode}` };
   }
   return { ok: true };
@@ -53,10 +56,15 @@ async function trashPathsLinux(
     signal,
   });
   if (result2.exitCode === 0) return { ok: true };
-  const msg = [result.stderr, result2.stderr].filter(Boolean).join(" | ").trim();
+  const msg = [result.stderr, result2.stderr]
+    .filter(Boolean)
+    .join(" | ")
+    .trim();
   return {
     ok: false,
-    message: msg || "neither `gio trash` nor `trash-put` succeeded (install trash-cli?)",
+    message:
+      msg ||
+      "neither `gio trash` nor `trash-put` succeeded (install trash-cli?)",
   };
 }
 
@@ -74,7 +82,10 @@ async function trashOneWindows(
     { cwd: process.cwd(), timeoutMs: 120_000, signal },
   );
   if (result.exitCode !== 0) {
-    const err = [result.stderr, result.stdout].filter(Boolean).join("\n").trim();
+    const err = [result.stderr, result.stdout]
+      .filter(Boolean)
+      .join("\n")
+      .trim();
     return { ok: false, message: err || `powershell exit ${result.exitCode}` };
   }
   return { ok: true };
@@ -113,7 +124,9 @@ async function trashPaths(
   };
 }
 
-export function buildOsFsTrashTool(options: FsDangerousToolOptions): ToolDefinition {
+export function buildOsFsTrashTool(
+  options: FsDangerousToolOptions,
+): ToolDefinition {
   return {
     name: "os.fs.trash",
     description:
@@ -122,7 +135,9 @@ export function buildOsFsTrashTool(options: FsDangerousToolOptions): ToolDefinit
     async run(rawArgs, ctx) {
       const rawPaths = rawArgs.paths;
       if (!Array.isArray(rawPaths) || rawPaths.length === 0) {
-        throw new Error("os.fs.trash: `paths` must be a non-empty array of strings");
+        throw new Error(
+          "os.fs.trash: `paths` must be a non-empty array of strings",
+        );
       }
       if (rawPaths.length > MAX_PATHS_PER_CALL) {
         throw new Error(

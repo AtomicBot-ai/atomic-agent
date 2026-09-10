@@ -69,7 +69,8 @@ export function planTruncationRetry(
   input: PlanTruncationRetryInput,
 ): TruncationRetryPlan | null {
   const { error } = input;
-  if (!(error instanceof ModelError) || error.reason !== "truncated") return null;
+  if (!(error instanceof ModelError) || error.reason !== "truncated")
+    return null;
   const detail = error.truncation;
   if (detail === undefined || input.alreadyRetried) return null;
   if (detail.cause === "output_limit") return null;
@@ -80,7 +81,9 @@ export function planTruncationRetry(
     return { detail, retry: { kind: "fit_window", contextWindow } };
   }
   const requested =
-    detail.requestedMaxTokens > 0 ? detail.requestedMaxTokens : input.fallbackMaxTokens;
+    detail.requestedMaxTokens > 0
+      ? detail.requestedMaxTokens
+      : input.fallbackMaxTokens;
   if (requested <= 0) return null;
   let raised = Math.min(
     TRUNCATION_RETRY_CAP_CEILING,
@@ -88,7 +91,11 @@ export function planTruncationRetry(
   );
   // A cap the window cannot hold is a 400 waiting to happen on a strict
   // provider, and a silent clamp on llama.cpp. Stay under what is known.
-  if (input.contextWindow !== null && input.contextWindow > 0 && detail.promptTokens > 0) {
+  if (
+    input.contextWindow !== null &&
+    input.contextWindow > 0 &&
+    detail.promptTokens > 0
+  ) {
     raised = Math.min(
       raised,
       input.contextWindow - detail.promptTokens - WINDOW_HEADROOM_TOKENS,

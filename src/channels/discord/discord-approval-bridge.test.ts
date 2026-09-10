@@ -19,7 +19,7 @@ const REQUEST: ApprovalRequest = {
   preview: "rm -rf build",
 };
 
-function makeBridge(owner: string | null = OWNER) {
+function makeBridge(owners: readonly string[] = [OWNER]) {
   const api = {
     sendMessage: vi.fn(async () => "msg-1"),
     updateInteraction: vi.fn(async () => undefined),
@@ -30,7 +30,7 @@ function makeBridge(owner: string | null = OWNER) {
     api: api as never,
     approvals: approvals as never,
     logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } as never,
-    ownerUserId: () => owner,
+    ownerUserIds: () => owners,
   });
   return { bridge, api, approvals };
 }
@@ -112,13 +112,29 @@ describe("DiscordApprovalBridge", () => {
     expect(api.updateInteraction).toHaveBeenCalledWith(
       "i1",
       "itok",
-      expect.stringContaining("Only the paired operator"),
+      expect.stringContaining("Only a paired operator"),
     );
   });
 
   it("ignores every click while unpaired", async () => {
-    const { bridge, approvals } = makeBridge(null);
+    const { bridge, approvals } = makeBridge([]);
     await bridge.handleInteraction(click("yes", OWNER));
+    expect(approvals.resolve).not.toHaveBeenCalled();
+  });
+
+  it("lets a second owner answer an approval", async () => {
+    // The reason the list exists: an approval must not stall because
+    // the account that set the bot up is asleep.
+    const { bridge, approvals } = makeBridge([OWNER, "222"]);
+    await bridge.handleInteraction(click("yes", "222"));
+    expect(approvals.resolve).toHaveBeenCalledWith(
+      expect.objectContaining({ approvalId: "ap-1", approved: true }),
+    );
+  });
+
+  it("still refuses a click from outside the list", async () => {
+    const { bridge, approvals } = makeBridge([OWNER, "222"]);
+    await bridge.handleInteraction(click("yes", "333"));
     expect(approvals.resolve).not.toHaveBeenCalled();
   });
 

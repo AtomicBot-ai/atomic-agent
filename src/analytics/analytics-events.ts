@@ -156,8 +156,12 @@ export function captureMessageSent(
   }
   client.capture(ANALYTICS_EVENTS.messageSent, {
     ...base,
-    ...(context.latencyMs !== undefined ? { latency_ms: context.latencyMs } : {}),
-    ...(context.stepCount !== undefined ? { step_count: context.stepCount } : {}),
+    ...(context.latencyMs !== undefined
+      ? { latency_ms: context.latencyMs }
+      : {}),
+    ...(context.stepCount !== undefined
+      ? { step_count: context.stepCount }
+      : {}),
     ...(context.outcome !== undefined ? { outcome: context.outcome } : {}),
     ...(context.promptTokens !== undefined
       ? { prompt_tokens: context.promptTokens }

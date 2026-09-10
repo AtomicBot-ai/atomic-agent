@@ -62,8 +62,8 @@ export function buildOsGitCheckoutTool(
         signal: ctx.signal,
       });
       requireGitSuccess("os.git.checkout", result);
-      const output = (result.stderr.trim() || result.stdout.trim()) ||
-        `switched to ${branch}`;
+      const output =
+        result.stderr.trim() || result.stdout.trim() || `switched to ${branch}`;
       return compressToolResult({
         tool: "os.git.checkout",
         status: "ok",
@@ -95,7 +95,11 @@ export function requireBranchName(raw: unknown, tool: string): string {
  * `--force` would turn `checkout -b x --force` into a working-tree
  * reset. Rejected here, by name, before git sees it.
  */
-export function requireRevision(raw: unknown, tool: string, field: string): string {
+export function requireRevision(
+  raw: unknown,
+  tool: string,
+  field: string,
+): string {
   const branch = checkRef(raw, tool, field);
   return branch;
 }

@@ -63,9 +63,7 @@ describe("killProcessTree on win32", () => {
     const { child, signals } = fakeChild(4242);
     const { calls, impl } = fakeSpawn();
     killProcessTree(child, { platform: "win32", spawnImpl: impl });
-    expect(calls).toEqual([
-      { file: "taskkill", args: ["/PID", "4242", "/T"] },
-    ]);
+    expect(calls).toEqual([{ file: "taskkill", args: ["/PID", "4242", "/T"] }]);
     expect(signals).toEqual([]);
   });
 
@@ -106,9 +104,7 @@ describe("killProcessTree on win32", () => {
         throw new Error("ESRCH");
       },
     };
-    expect(() =>
-      killProcessTree(child, { platform: "darwin" }),
-    ).not.toThrow();
+    expect(() => killProcessTree(child, { platform: "darwin" })).not.toThrow();
   });
 });
 

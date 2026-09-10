@@ -55,10 +55,9 @@ describe("renderRecalledSection", () => {
 
   it("collapses whitespace and clips long previews with an ellipsis", () => {
     const longText = "line1\n\nline2 with " + "x".repeat(200);
-    const out = renderRecalledSection(
-      [mkEntry({ id: 1, content: longText })],
-      { previewChars: 20 },
-    );
+    const out = renderRecalledSection([mkEntry({ id: 1, content: longText })], {
+      previewChars: 20,
+    });
     expect(out.startsWith("- #1 ")).toBe(true);
     expect(out.length).toBeLessThanOrEqual(40);
     expect(out.endsWith("…")).toBe(true);
@@ -81,7 +80,11 @@ describe("renderMemoryIndexSection", () => {
 
   it("emits one line per index entry with id, tags, preview", () => {
     const out = renderMemoryIndexSection([
-      mkIndexEntry({ id: 100, preview: "project uses pnpm", tags: ["tooling"] }),
+      mkIndexEntry({
+        id: 100,
+        preview: "project uses pnpm",
+        tags: ["tooling"],
+      }),
       mkIndexEntry({ id: 101, preview: "prefer terse replies" }),
     ]);
     expect(out).toBe(

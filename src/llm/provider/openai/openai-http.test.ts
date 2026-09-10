@@ -10,7 +10,10 @@ import {
 } from "./openai-http.js";
 import { classifyFailure } from "../../reliability/classify-failure.js";
 
-function depsWith(fetchImpl: typeof fetch, requestTimeoutMs = 60_000): OpenAiHttpDeps {
+function depsWith(
+  fetchImpl: typeof fetch,
+  requestTimeoutMs = 60_000,
+): OpenAiHttpDeps {
   return {
     baseUrl: "https://api.example.com",
     apiKey: "key",
@@ -66,7 +69,12 @@ describe("openAiPostJson", () => {
   it("does not retry deterministic 4xx failures", async () => {
     const fetchImpl = vi.fn(async () => errorResponse(401));
     await expect(
-      openAiPostJson(depsWith(fetchImpl as unknown as typeof fetch), "/x", {}, {}),
+      openAiPostJson(
+        depsWith(fetchImpl as unknown as typeof fetch),
+        "/x",
+        {},
+        {},
+      ),
     ).rejects.toBeInstanceOf(OpenAiHttpError);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
@@ -103,7 +111,9 @@ describe("openAiPostJson", () => {
   it("retries 429 and reads retry-after into the error", async () => {
     const fetchImpl = vi
       .fn()
-      .mockResolvedValueOnce(errorResponse(429, "slow down", { "retry-after": "0" }))
+      .mockResolvedValueOnce(
+        errorResponse(429, "slow down", { "retry-after": "0" }),
+      )
       .mockResolvedValueOnce(jsonResponse({ ok: true }));
     const result = await openAiPostJson(
       depsWith(fetchImpl as unknown as typeof fetch),
@@ -158,7 +168,9 @@ describe("openAiPostJson", () => {
         vi.spyOn(Math, "random").mockReturnValue(0.5);
         const fetchImpl = vi
           .fn()
-          .mockResolvedValueOnce(errorResponse(status, retryInfoBody(retryDelay, status)))
+          .mockResolvedValueOnce(
+            errorResponse(status, retryInfoBody(retryDelay, status)),
+          )
           .mockResolvedValueOnce(jsonResponse({ ok: true }));
         const pending = openAiPostJson(
           depsWith(fetchImpl as unknown as typeof fetch),
@@ -368,7 +380,10 @@ describe("credit-limit (402) recovery", () => {
   }
 
   function collectingLogger() {
-    const warnings: Array<{ message: string; context?: Record<string, unknown> }> = [];
+    const warnings: Array<{
+      message: string;
+      context?: Record<string, unknown>;
+    }> = [];
     return {
       warnings,
       warn(message: string, context?: Record<string, unknown>) {
@@ -431,7 +446,10 @@ describe("credit-limit (402) recovery", () => {
 
   it("does not retry when the affordable ceiling is unusably small", async () => {
     const fetchImpl = vi.fn(async () =>
-      errorResponse(402, "You requested up to 65536 tokens, but can only afford 12."),
+      errorResponse(
+        402,
+        "You requested up to 65536 tokens, but can only afford 12.",
+      ),
     );
     await expect(
       openAiPostJson(
@@ -546,24 +564,42 @@ describe("credit-limit (402) recovery", () => {
 });
 
 describe("humanizeOpenAiHttpError", () => {
-  const mk = (
-    status: number | null,
-    timedOut = false,
-  ): OpenAiHttpError =>
-    new OpenAiHttpError("raw", status, "https://api.x.ai/v1/y", timedOut, null, "openrouter");
+  const mk = (status: number | null, timedOut = false): OpenAiHttpError =>
+    new OpenAiHttpError(
+      "raw",
+      status,
+      "https://api.x.ai/v1/y",
+      timedOut,
+      null,
+      "openrouter",
+    );
 
   it("names the provider and the remedy per failure class", () => {
-    expect(humanizeOpenAiHttpError(mk(null))).toContain('Can\'t reach "openrouter"');
-    expect(humanizeOpenAiHttpError(mk(null))).toContain("Check the provider URL");
-    expect(humanizeOpenAiHttpError(mk(401))).toContain("rejected the API key (401)");
-    expect(humanizeOpenAiHttpError(mk(403))).toContain("rejected the API key (403)");
-    expect(humanizeOpenAiHttpError(mk(404))).toContain("model id or the base URL");
+    expect(humanizeOpenAiHttpError(mk(null))).toContain(
+      'Can\'t reach "openrouter"',
+    );
+    expect(humanizeOpenAiHttpError(mk(null))).toContain(
+      "Check the provider URL",
+    );
+    expect(humanizeOpenAiHttpError(mk(401))).toContain(
+      "rejected the API key (401)",
+    );
+    expect(humanizeOpenAiHttpError(mk(403))).toContain(
+      "rejected the API key (403)",
+    );
+    expect(humanizeOpenAiHttpError(mk(404))).toContain(
+      "model id or the base URL",
+    );
     expect(humanizeOpenAiHttpError(mk(402))).toContain("lack of credit (402)");
     expect(humanizeOpenAiHttpError(mk(402))).toContain("Top up the account");
-    expect(humanizeOpenAiHttpError(mk(429))).toContain("rate-limiting this key (429)");
+    expect(humanizeOpenAiHttpError(mk(429))).toContain(
+      "rate-limiting this key (429)",
+    );
     expect(humanizeOpenAiHttpError(mk(500))).toContain("server trouble (500)");
     expect(humanizeOpenAiHttpError(mk(500))).toContain("not your setup");
-    expect(humanizeOpenAiHttpError(mk(null, true))).toContain("took too long to answer");
+    expect(humanizeOpenAiHttpError(mk(null, true))).toContain(
+      "took too long to answer",
+    );
   });
 
   it("claims a retry count only for classes the client retries", () => {
@@ -584,16 +620,22 @@ describe("humanizeOpenAiHttpError", () => {
 describe("classification", () => {
   it("classifies every cloud HTTP status as transport, never tool", () => {
     for (const status of [400, 401, 403, 404, 429, 500, 502, 503]) {
-      const err = new OpenAiHttpError(`openai provider ${status}: x`, status, "u");
+      const err = new OpenAiHttpError(
+        `openai provider ${status}: x`,
+        status,
+        "u",
+      );
       expect(classifyFailure(err)).toBe("transport");
     }
   });
 
   it("classifies cloud network failures and timeouts as transport", () => {
-    expect(classifyFailure(new OpenAiHttpError("net", null, "u"))).toBe("transport");
-    expect(classifyFailure(new OpenAiHttpError("timeout", null, "u", true))).toBe(
+    expect(classifyFailure(new OpenAiHttpError("net", null, "u"))).toBe(
       "transport",
     );
+    expect(
+      classifyFailure(new OpenAiHttpError("timeout", null, "u", true)),
+    ).toBe("transport");
   });
 });
 

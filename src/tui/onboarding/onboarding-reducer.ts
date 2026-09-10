@@ -2,7 +2,10 @@ import { reduceLocalModelsAction } from "../local-models/local-models-reducer.js
 import { reduceProvidersPanel } from "../providers/providers-reducer.js";
 import type { TuiAction } from "../tui-action.js";
 import type { TuiState } from "../tui-state.js";
-import { moveOnboardingCursor, type OnboardingCloudReturn } from "./onboarding-state.js";
+import {
+  moveOnboardingCursor,
+  type OnboardingCloudReturn,
+} from "./onboarding-state.js";
 
 /**
  * Folds the first-run actions. Returns `null` when the action is not
@@ -50,7 +53,10 @@ export function reduceOnboardingAction(
     }
     case "onboarding_cursor_set": {
       if (!state.onboarding) return state;
-      return { ...state, onboarding: { ...state.onboarding, cursor: action.cursor } };
+      return {
+        ...state,
+        onboarding: { ...state.onboarding, cursor: action.cursor },
+      };
     }
     case "onboarding_url_changed": {
       if (!state.onboarding) return state;
@@ -62,11 +68,17 @@ export function reduceOnboardingAction(
     }
     case "onboarding_busy_set": {
       if (!state.onboarding) return state;
-      return { ...state, onboarding: { ...state.onboarding, busy: action.busy } };
+      return {
+        ...state,
+        onboarding: { ...state.onboarding, busy: action.busy },
+      };
     }
     case "onboarding_error_set": {
       if (!state.onboarding) return state;
-      return { ...state, onboarding: { ...state.onboarding, error: action.error } };
+      return {
+        ...state,
+        onboarding: { ...state.onboarding, error: action.error },
+      };
     }
     case "onboarding_local_model_picked": {
       if (!state.onboarding) return state;
@@ -111,7 +123,9 @@ export function reduceOnboardingAction(
       // Both mid-download screens open the wizard with this action, and
       // whichever asked is the one to come back to.
       const from: OnboardingCloudReturn =
-        state.onboarding.step === "wait_or_jump" ? "wait_or_jump" : "local_download";
+        state.onboarding.step === "wait_or_jump"
+          ? "wait_or_jump"
+          : "local_download";
       return {
         ...state,
         onboarding: {
@@ -256,7 +270,11 @@ export function reduceOnboardingAction(
     // still exists in the LLM panel, where there is room to explain it.
     case "local_models_embedding_onboarding_opened": {
       const active = state.onboarding?.step;
-      if (active !== "local_download" && active !== "wait_or_jump" && active !== "cloud") {
+      if (
+        active !== "local_download" &&
+        active !== "wait_or_jump" &&
+        active !== "cloud"
+      ) {
         return null;
       }
       return state;

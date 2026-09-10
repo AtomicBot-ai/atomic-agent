@@ -84,7 +84,9 @@ describe("GzipBackend", () => {
       });
       expect(report.extractedEntries).toBe(0);
       expect(
-        report.skippedEntries.some((s) => /entry_exceeds_max_entry_bytes/.test(s.reason)),
+        report.skippedEntries.some((s) =>
+          /entry_exceeds_max_entry_bytes/.test(s.reason),
+        ),
       ).toBe(true);
     });
   });

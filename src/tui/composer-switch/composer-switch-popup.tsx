@@ -93,10 +93,7 @@ export function ComposerSwitchPopup({
   const counter = `(${rows.length === 0 ? 0 : cursor + 1}/${rows.length})`;
 
   return (
-    <PopupFrame
-      offsetTop={Math.max(0, availableRows - height)}
-      width={width}
-    >
+    <PopupFrame offsetTop={Math.max(0, availableRows - height)} width={width}>
       {showTitle ? (
         <Text color={chromeTheme.colors.railForeground} bold>
           {fitToWidth(
@@ -106,7 +103,11 @@ export function ComposerSwitchPopup({
         </Text>
       ) : null}
       {showFilter ? (
-        <FilterLine filter={open.filter} inner={inner} onActivate={onActivate} />
+        <FilterLine
+          filter={open.filter}
+          inner={inner}
+          onActivate={onActivate}
+        />
       ) : null}
       {visible.map((row, idx) => (
         <SwitchRow

@@ -10,23 +10,31 @@ interface Call {
 }
 
 function fakeFetch(
-  respond: (call: Call) => { status: number; body?: unknown; headers?: Record<string, string> },
+  respond: (call: Call) => {
+    status: number;
+    body?: unknown;
+    headers?: Record<string, string>;
+  },
 ): { fetchImpl: typeof fetch; calls: Call[] } {
   const calls: Call[] = [];
-  const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
-    const call: Call = {
-      url: String(input),
-      method: init?.method ?? "GET",
-      headers: (init?.headers ?? {}) as Record<string, string>,
-      ...(typeof init?.body === "string" ? { body: JSON.parse(init.body) } : {}),
-    };
-    calls.push(call);
-    const res = respond(call);
-    return new Response(
-      res.body === undefined ? null : JSON.stringify(res.body),
-      { status: res.status, headers: res.headers ?? {} },
-    );
-  }) as unknown as typeof fetch;
+  const fetchImpl = vi.fn(
+    async (input: string | URL | Request, init?: RequestInit) => {
+      const call: Call = {
+        url: String(input),
+        method: init?.method ?? "GET",
+        headers: (init?.headers ?? {}) as Record<string, string>,
+        ...(typeof init?.body === "string"
+          ? { body: JSON.parse(init.body) }
+          : {}),
+      };
+      calls.push(call);
+      const res = respond(call);
+      return new Response(
+        res.body === undefined ? null : JSON.stringify(res.body),
+        { status: res.status, headers: res.headers ?? {} },
+      );
+    },
+  ) as unknown as typeof fetch;
   return { fetchImpl, calls };
 }
 
@@ -41,7 +49,11 @@ describe("GithubApi", () => {
     }));
     const api = new GithubApi({ token: TOKEN, fetchImpl });
     const me = await api.whoami();
-    expect(me).toEqual({ login: "octo", name: "Octo Cat", scopes: ["repo", "workflow"] });
+    expect(me).toEqual({
+      login: "octo",
+      name: "Octo Cat",
+      scopes: ["repo", "workflow"],
+    });
     expect(calls[0]?.url).toBe("https://api.github.com/user");
     expect(calls[0]?.headers.Authorization).toBe(`Bearer ${TOKEN}`);
     expect(calls[0]?.headers["X-GitHub-Api-Version"]).toBe("2022-11-28");
@@ -49,7 +61,10 @@ describe("GithubApi", () => {
   });
 
   it("reads an empty scopes header as no scopes (fine-grained PAT)", async () => {
-    const { fetchImpl } = fakeFetch(() => ({ status: 200, body: { login: "octo" } }));
+    const { fetchImpl } = fakeFetch(() => ({
+      status: 200,
+      body: { login: "octo" },
+    }));
     const me = await new GithubApi({ token: TOKEN, fetchImpl }).whoami();
     expect(me.scopes).toEqual([]);
     expect(me.name).toBeNull();
@@ -132,13 +147,23 @@ describe("GithubApi", () => {
       body: { id: 99, html_url: "c" },
     }));
     const api = new GithubApi({ token: TOKEN, fetchImpl });
-    const c = await api.addIssueComment({ owner: "a", repo: "b", number: 5, body: "hi" });
+    const c = await api.addIssueComment({
+      owner: "a",
+      repo: "b",
+      number: 5,
+      body: "hi",
+    });
     expect(c).toEqual({ id: 99, htmlUrl: "c" });
-    expect(calls[0]?.url).toBe("https://api.github.com/repos/a/b/issues/5/comments");
+    expect(calls[0]?.url).toBe(
+      "https://api.github.com/repos/a/b/issues/5/comments",
+    );
   });
 
   it("turns 401 into a message that points at the hub", async () => {
-    const { fetchImpl } = fakeFetch(() => ({ status: 401, body: { message: "Bad credentials" } }));
+    const { fetchImpl } = fakeFetch(() => ({
+      status: 401,
+      body: { message: "Bad credentials" },
+    }));
     const api = new GithubApi({ token: TOKEN, fetchImpl });
     await expect(api.whoami()).rejects.toMatchObject({
       name: "GithubApiError",
@@ -157,7 +182,13 @@ describe("GithubApi", () => {
     }));
     const api = new GithubApi({ token: TOKEN, fetchImpl });
     await expect(
-      api.createPullRequest({ owner: "a", repo: "b", title: "t", head: "h", base: "b" }),
+      api.createPullRequest({
+        owner: "a",
+        repo: "b",
+        title: "t",
+        head: "h",
+        base: "b",
+      }),
     ).rejects.toThrow(/already exists/);
   });
 
@@ -177,12 +208,18 @@ describe("GithubApi", () => {
       headers: { "x-ratelimit-remaining": "4999" },
     }));
     await expect(
-      new GithubApi({ token: TOKEN, fetchImpl: forbidden.fetchImpl }).getRepo("a", "b"),
+      new GithubApi({ token: TOKEN, fetchImpl: forbidden.fetchImpl }).getRepo(
+        "a",
+        "b",
+      ),
     ).rejects.toThrow(/not accessible/);
   });
 
   it("explains a 404 as 'does not exist or the token cannot see it'", async () => {
-    const { fetchImpl } = fakeFetch(() => ({ status: 404, body: { message: "Not Found" } }));
+    const { fetchImpl } = fakeFetch(() => ({
+      status: 404,
+      body: { message: "Not Found" },
+    }));
     await expect(
       new GithubApi({ token: TOKEN, fetchImpl }).getRepo("a", "b"),
     ).rejects.toThrow(/cannot see it/);
@@ -201,9 +238,12 @@ describe("GithubApi", () => {
   });
 
   it("rejects a malformed user body", async () => {
-    const { fetchImpl } = fakeFetch(() => ({ status: 200, body: { nope: true } }));
-    await expect(new GithubApi({ token: TOKEN, fetchImpl }).whoami()).rejects.toThrow(
-      /malformed user/,
-    );
+    const { fetchImpl } = fakeFetch(() => ({
+      status: 200,
+      body: { nope: true },
+    }));
+    await expect(
+      new GithubApi({ token: TOKEN, fetchImpl }).whoami(),
+    ).rejects.toThrow(/malformed user/);
   });
 });

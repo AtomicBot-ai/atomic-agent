@@ -26,7 +26,10 @@ export {
   type ResolvedLlmConfig,
 } from "./registry/index.js";
 export { resolveModel, type ResolvedModel } from "./model-resolver.js";
-export { CostAccumulator, type CostAccumulatorSnapshot } from "./cost-accumulator.js";
+export {
+  CostAccumulator,
+  type CostAccumulatorSnapshot,
+} from "./cost-accumulator.js";
 export { OpenAiProvider, type OpenAiProviderOptions } from "./openai/index.js";
 export { OpenRouterProvider } from "./openrouter/index.js";
 export {

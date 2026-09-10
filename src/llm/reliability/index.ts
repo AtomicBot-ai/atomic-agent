@@ -13,10 +13,7 @@ export {
   ToolExecutionError,
   TransportError,
 } from "./llm-failures.js";
-export type {
-  LlmFailureOptions,
-  ModelErrorOptions,
-} from "./llm-failures.js";
+export type { LlmFailureOptions, ModelErrorOptions } from "./llm-failures.js";
 export { classifyFailure } from "./classify-failure.js";
 export { isRequestSizeRejection } from "./request-size-rejection.js";
 // `looksLikeDroppedConnection` is deliberately NOT re-exported: it is the

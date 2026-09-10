@@ -201,7 +201,10 @@ function handleHubCardKey(
     return true;
   }
   if (key.pageUp) {
-    dispatch({ type: "skills_hub_card_scrolled", delta: -HUB_CARD_BODY_WINDOW });
+    dispatch({
+      type: "skills_hub_card_scrolled",
+      delta: -HUB_CARD_BODY_WINDOW,
+    });
     return true;
   }
   return true;
@@ -296,9 +299,7 @@ function handleDetailKey(
   return false;
 }
 
-function selectedVisibleRow(
-  panel: SkillsPanelState,
-): SkillSummaryRow | null {
+function selectedVisibleRow(panel: SkillsPanelState): SkillSummaryRow | null {
   const visible = selectVisibleSkillRows(panel);
   if (visible.length === 0) return null;
   const clamped = Math.max(0, Math.min(panel.cursor, visible.length - 1));

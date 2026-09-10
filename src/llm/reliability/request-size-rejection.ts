@@ -54,7 +54,11 @@ const MAX_CAUSE_DEPTH = 5;
 function messageChain(error: unknown): string {
   const parts: string[] = [];
   let current: unknown = error;
-  for (let depth = 0; depth < MAX_CAUSE_DEPTH && current !== undefined; depth += 1) {
+  for (
+    let depth = 0;
+    depth < MAX_CAUSE_DEPTH && current !== undefined;
+    depth += 1
+  ) {
     if (current instanceof Error) {
       parts.push(current.message);
       current = (current as { cause?: unknown }).cause;

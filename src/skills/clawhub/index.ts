@@ -1,7 +1,4 @@
-export {
-  ClawHubClient,
-  ClawHubError,
-} from "./clawhub-client.js";
+export { ClawHubClient, ClawHubError } from "./clawhub-client.js";
 export type {
   BrowseOptions,
   ClawHubClientOptions,

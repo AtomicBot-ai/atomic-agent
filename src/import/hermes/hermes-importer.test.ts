@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -122,7 +128,9 @@ describe("HermesImporter", () => {
     sources = [];
     sourceDir = mkdtempSync(join(tmpdir(), "hermes-src-"));
     stateDir = mkdtempSync(join(tmpdir(), "hermes-dst-"));
-    sessionStore = new SessionStore({ dbFile: join(stateDir, "sessions.sqlite") });
+    sessionStore = new SessionStore({
+      dbFile: join(stateDir, "sessions.sqlite"),
+    });
     taskStore = new TaskStore({ dbFile: join(stateDir, "tasks.sqlite") });
   });
 
@@ -130,8 +138,18 @@ describe("HermesImporter", () => {
     sessionStore.close();
     taskStore.close();
     for (const source of sources) source.close();
-    rmSync(sourceDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
-    rmSync(stateDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    rmSync(sourceDir, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 100,
+    });
+    rmSync(stateDir, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 100,
+    });
   });
 
   it("imports sessions and cron jobs", () => {
@@ -139,12 +157,27 @@ describe("HermesImporter", () => {
       sourceDir,
       [{ id: "s-1", cwd: "/work", title: "t1" }],
       [
-        { sessionId: "s-1", role: "user", content: "hi", timestamp: 1_700_000_000 },
-        { sessionId: "s-1", role: "assistant", content: "hello", timestamp: 1_700_000_002 },
+        {
+          sessionId: "s-1",
+          role: "user",
+          content: "hi",
+          timestamp: 1_700_000_000,
+        },
+        {
+          sessionId: "s-1",
+          role: "assistant",
+          content: "hello",
+          timestamp: 1_700_000_002,
+        },
       ],
     );
     writeCronJobs(sourceDir, [
-      { id: "j-1", prompt: "digest", enabled: true, schedule: { kind: "cron", expr: "0 9 * * *" } },
+      {
+        id: "j-1",
+        prompt: "digest",
+        enabled: true,
+        schedule: { kind: "cron", expr: "0 9 * * *" },
+      },
     ]);
 
     const report = buildImporter().run({
@@ -173,9 +206,18 @@ describe("HermesImporter", () => {
       [{ sessionId: "s-1", role: "user", content: "hi" }],
     );
     writeCronJobs(sourceDir, [
-      { id: "j-1", prompt: "digest", enabled: true, schedule: { kind: "cron", expr: "0 9 * * *" } },
+      {
+        id: "j-1",
+        prompt: "digest",
+        enabled: true,
+        schedule: { kind: "cron", expr: "0 9 * * *" },
+      },
     ]);
-    const opts = { options: resolveSelectedOptions(), execute: true, overwrite: false };
+    const opts = {
+      options: resolveSelectedOptions(),
+      execute: true,
+      overwrite: false,
+    };
 
     buildImporter().run(opts);
     const second = buildImporter().run(opts);
@@ -192,7 +234,11 @@ describe("HermesImporter", () => {
       [{ id: "s-1" }],
       [{ sessionId: "s-1", role: "user", content: "first" }],
     );
-    const opts = { options: ["sessions" as const], execute: true, overwrite: false };
+    const opts = {
+      options: ["sessions" as const],
+      execute: true,
+      overwrite: false,
+    };
     buildImporter().run(opts);
 
     // Mutate the source so the mapped transcript differs. Close any open
@@ -223,15 +269,29 @@ describe("HermesImporter", () => {
     seedStateDb(
       sourceDir,
       [{ id: "s-1" }],
-      [{ sessionId: "s-1", role: "user", content: "first", timestamp: 1_700_000_001 }],
+      [
+        {
+          sessionId: "s-1",
+          role: "user",
+          content: "first",
+          timestamp: 1_700_000_001,
+        },
+      ],
     );
-    const opts = { options: ["sessions" as const], execute: true, overwrite: false };
+    const opts = {
+      options: ["sessions" as const],
+      execute: true,
+      overwrite: false,
+    };
     buildImporter().run(opts);
     // A model stamp the runtime adds locally must survive the update.
     const imported = sessionStore.load("hermes:s-1")!;
     sessionStore.save({
       ...imported,
-      metadata: { ...imported.metadata, llm: { providerId: "p", chatModel: "m" } },
+      metadata: {
+        ...imported.metadata,
+        llm: { providerId: "p", chatModel: "m" },
+      },
     });
 
     for (const source of sources) source.close();
@@ -240,8 +300,18 @@ describe("HermesImporter", () => {
       sourceDir,
       [{ id: "s-1" }],
       [
-        { sessionId: "s-1", role: "user", content: "first", timestamp: 1_700_000_001 },
-        { sessionId: "s-1", role: "assistant", content: "reply", timestamp: 1_700_000_002 },
+        {
+          sessionId: "s-1",
+          role: "user",
+          content: "first",
+          timestamp: 1_700_000_001,
+        },
+        {
+          sessionId: "s-1",
+          role: "assistant",
+          content: "reply",
+          timestamp: 1_700_000_002,
+        },
       ],
     );
 
@@ -260,14 +330,28 @@ describe("HermesImporter", () => {
     seedStateDb(
       sourceDir,
       [{ id: "s-1" }],
-      [{ sessionId: "s-1", role: "user", content: "first", timestamp: 1_700_000_001 }],
+      [
+        {
+          sessionId: "s-1",
+          role: "user",
+          content: "first",
+          timestamp: 1_700_000_001,
+        },
+      ],
     );
-    const opts = { options: ["sessions" as const], execute: true, overwrite: false };
+    const opts = {
+      options: ["sessions" as const],
+      execute: true,
+      overwrite: false,
+    };
     buildImporter().run(opts);
     const imported = sessionStore.load("hermes:s-1")!;
     sessionStore.save({
       ...imported,
-      turns: [...imported.turns, assistantReplyTurn("continued in atomic-agent", 5)],
+      turns: [
+        ...imported.turns,
+        assistantReplyTurn("continued in atomic-agent", 5),
+      ],
     });
 
     // The source grew too — but the local continuation is not its prefix.
@@ -277,8 +361,18 @@ describe("HermesImporter", () => {
       sourceDir,
       [{ id: "s-1" }],
       [
-        { sessionId: "s-1", role: "user", content: "first", timestamp: 1_700_000_001 },
-        { sessionId: "s-1", role: "assistant", content: "reply", timestamp: 1_700_000_002 },
+        {
+          sessionId: "s-1",
+          role: "user",
+          content: "first",
+          timestamp: 1_700_000_001,
+        },
+        {
+          sessionId: "s-1",
+          role: "assistant",
+          content: "reply",
+          timestamp: 1_700_000_002,
+        },
       ],
     );
     const second = buildImporter().run(opts);
@@ -296,7 +390,12 @@ describe("HermesImporter", () => {
       overwrite: false,
     });
     expect(report.items).toEqual([
-      { kind: "sessions", source: "s-empty", status: "skipped", reason: "no messages" },
+      {
+        kind: "sessions",
+        source: "s-empty",
+        status: "skipped",
+        reason: "no messages",
+      },
     ]);
     expect(sessionStore.load("hermes:s-empty")).toBeNull();
   });
@@ -308,7 +407,12 @@ describe("HermesImporter", () => {
       [{ sessionId: "s-1", role: "user", content: "hi" }],
     );
     writeCronJobs(sourceDir, [
-      { id: "j-1", prompt: "digest", enabled: true, schedule: { kind: "cron", expr: "0 9 * * *" } },
+      {
+        id: "j-1",
+        prompt: "digest",
+        enabled: true,
+        schedule: { kind: "cron", expr: "0 9 * * *" },
+      },
     ]);
 
     const report = buildImporter().run({
@@ -339,7 +443,11 @@ describe("HermesImporter", () => {
     );
     const source = new HermesSource(sourceDir);
     sources.push(source);
-    expect(source.readSessions().map((s) => s.id)).toEqual(["s-3", "s-2", "s-1"]);
+    expect(source.readSessions().map((s) => s.id)).toEqual([
+      "s-3",
+      "s-2",
+      "s-1",
+    ]);
 
     const report = buildImporter().run({
       options: ["sessions"],
@@ -368,7 +476,10 @@ describe("HermesImporter", () => {
 
     it("migrates a new provider key and never leaks its value", () => {
       seedStateDb(sourceDir, [{ id: "s-1" }], []);
-      writeFileSync(join(sourceDir, ".env"), "OPENROUTER_API_KEY=sk-or-secret\n");
+      writeFileSync(
+        join(sourceDir, ".env"),
+        "OPENROUTER_API_KEY=sk-or-secret\n",
+      );
 
       const report = buildImporter().run({
         options: resolveSelectedOptions({ migrateSecrets: true }),

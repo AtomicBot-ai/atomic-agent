@@ -1,4 +1,11 @@
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -34,19 +41,25 @@ function fakeApi() {
   const calls: Array<{ op: string; body: string; title?: string }> = [];
   return {
     calls,
-    createIssue: vi.fn(async (input: { title: string; body?: string; labels?: readonly string[] }) => {
-      calls.push({ op: "issue", body: input.body ?? "", title: input.title });
-      return {
-        number: 42,
-        title: input.title,
-        state: "open",
-        htmlUrl: "https://github.com/AtomicBot-ai/atomic-agent/issues/42",
-        author: "me",
-        labels: [...(input.labels ?? [])],
-        createdAt: "",
-        isPullRequest: false,
-      };
-    }),
+    createIssue: vi.fn(
+      async (input: {
+        title: string;
+        body?: string;
+        labels?: readonly string[];
+      }) => {
+        calls.push({ op: "issue", body: input.body ?? "", title: input.title });
+        return {
+          number: 42,
+          title: input.title,
+          state: "open",
+          htmlUrl: "https://github.com/AtomicBot-ai/atomic-agent/issues/42",
+          author: "me",
+          labels: [...(input.labels ?? [])],
+          createdAt: "",
+          isPullRequest: false,
+        };
+      },
+    ),
     addIssueComment: vi.fn(async (input: { number: number; body: string }) => {
       calls.push({ op: "comment", body: input.body });
       return { id: calls.length, htmlUrl: "c" };
@@ -67,11 +80,24 @@ describe("IssueReportOrchestrator", () => {
     state = createInitialTuiState(fakeSession());
     state = {
       ...state,
-      session: { ...state.session, sessionId: "sess-1", workingDir: `${dir}/proj` },
+      session: {
+        ...state.session,
+        sessionId: "sess-1",
+        workingDir: `${dir}/proj`,
+      },
       lastRunStatus: `failed [tool]: boom in ${dir}/proj/a.ts`,
-      logs: [{ level: "error", message: `died ${dir}/proj/a.ts`, timestamp: 1 }],
+      logs: [
+        { level: "error", message: `died ${dir}/proj/a.ts`, timestamp: 1 },
+      ],
       runHistory: [
-        { message: "do the thing", outcome: "failed", reason: "boom", stepCount: 1, durationMs: 5, finishedAt: 1 },
+        {
+          message: "do the thing",
+          outcome: "failed",
+          reason: "boom",
+          stepCount: 1,
+          durationMs: 5,
+          finishedAt: 1,
+        },
       ],
     };
     mkdirSync(traceDir, { recursive: true });
@@ -85,13 +111,21 @@ describe("IssueReportOrchestrator", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  function make(deps: Partial<IssueReportDeps> & { api?: ReturnType<typeof fakeApi> } = {}) {
+  function make(
+    deps: Partial<IssueReportDeps> & { api?: ReturnType<typeof fakeApi> } = {},
+  ) {
     const bus = makeBus();
     const api = deps.api ?? fakeApi();
     const orchestrator = new IssueReportOrchestrator(
       {
-        config: { tracing: { trace: { dir: traceDir, enabled: true, maxBytesPerSession: 1 } } },
-        sessionStore: { listRecent: () => [{ id: "sess-1" }, { id: "sess-0" }] as never },
+        config: {
+          tracing: {
+            trace: { dir: traceDir, enabled: true, maxBytesPerSession: 1 },
+          },
+        },
+        sessionStore: {
+          listRecent: () => [{ id: "sess-1" }, { id: "sess-0" }] as never,
+        },
       },
       bus,
       {
@@ -113,9 +147,16 @@ describe("IssueReportOrchestrator", () => {
     orchestrator.open();
     expect(bus.last("issue_report_opened")).toBeDefined();
     await orchestrator.pick("errors", state);
-    const previewed = bus.last("issue_report_previewed") as { preview: Record<string, unknown> };
+    const previewed = bus.last("issue_report_previewed") as {
+      preview: Record<string, unknown>;
+    };
     expect(previewed).toBeDefined();
-    const preview = previewed.preview as { zipPath: string; level: string; comments: number; title: string };
+    const preview = previewed.preview as {
+      zipPath: string;
+      level: string;
+      comments: number;
+      title: string;
+    };
     expect(preview.level).toBe("errors");
     expect(preview.title).toContain("Turn failed");
     expect(preview.zipPath.startsWith(outDir)).toBe(true);
@@ -125,7 +166,12 @@ describe("IssueReportOrchestrator", () => {
     const zip = await JSZip.loadAsync(readFileSync(preview.zipPath));
     const names = Object.keys(zip.files).sort();
     // Traces are named by ordinal: a session id is a join key.
-    expect(names).toEqual(["report.md", "snapshot.json", "traces/", "traces/1.ndjson"]);
+    expect(names).toEqual([
+      "report.md",
+      "snapshot.json",
+      "traces/",
+      "traces/1.ndjson",
+    ]);
     const trace = await zip.file("traces/1.ndjson")!.async("string");
     expect(trace).not.toContain("sess-1");
     const snapshot = await zip.file("snapshot.json")!.async("string");
@@ -148,16 +194,23 @@ describe("IssueReportOrchestrator", () => {
     await orchestrator.send();
     expect(bus.last("issue_report_failed")).toBeUndefined();
     const sent = bus.last("issue_report_sent") as { url: string };
-    expect(sent.url).toBe("https://github.com/AtomicBot-ai/atomic-agent/issues/42");
+    expect(sent.url).toBe(
+      "https://github.com/AtomicBot-ai/atomic-agent/issues/42",
+    );
     expect(api.createIssue).toHaveBeenCalledWith(
-      expect.objectContaining({ ...ISSUE_REPORT_REPO, labels: ["bug", "from-agent"] }),
+      expect.objectContaining({
+        ...ISSUE_REPORT_REPO,
+        labels: ["bug", "from-agent"],
+      }),
     );
     const issue = api.calls.find((c) => c.op === "issue")!;
     expect(issue.body).toContain("Logs, scrubbed");
     expect(issue.body).not.toContain(dir);
     expect(issue.body).toContain("<cwd>/a.ts");
     const msg = bus.last("system_message") as { text: string };
-    expect(msg.text).toContain("Issue filed: https://github.com/AtomicBot-ai/atomic-agent/issues/42");
+    expect(msg.text).toContain(
+      "Issue filed: https://github.com/AtomicBot-ai/atomic-agent/issues/42",
+    );
     expect(msg.text).toContain("report zip:");
   });
 
@@ -166,7 +219,9 @@ describe("IssueReportOrchestrator", () => {
     orchestrator.open();
     await orchestrator.pick("errors", state);
     await orchestrator.send();
-    expect((bus.last("issue_report_failed") as { error: string }).error).toBe(GITHUB_NOT_CONNECTED);
+    expect((bus.last("issue_report_failed") as { error: string }).error).toBe(
+      GITHUB_NOT_CONNECTED,
+    );
     expect(api.calls).toEqual([]);
   });
 
@@ -174,7 +229,9 @@ describe("IssueReportOrchestrator", () => {
     const { orchestrator, bus, api } = make();
     orchestrator.open();
     await orchestrator.send();
-    expect((bus.last("issue_report_failed") as { error: string }).error).toMatch(/pick a level/);
+    expect(
+      (bus.last("issue_report_failed") as { error: string }).error,
+    ).toMatch(/pick a level/);
     expect(api.calls).toEqual([]);
   });
 
@@ -218,11 +275,12 @@ describe("IssueReportOrchestrator", () => {
     const { orchestrator, bus } = make();
     orchestrator.open();
     await orchestrator.pick("full", state);
-    const preview = (bus.last("issue_report_previewed") as { preview: { zipPath: string } }).preview;
+    const preview = (
+      bus.last("issue_report_previewed") as { preview: { zipPath: string } }
+    ).preview;
     const zip = await JSZip.loadAsync(readFileSync(preview.zipPath));
     const trace = await zip.file("traces/1.ndjson")!.async("string");
     expect(trace).toContain("private prompt");
     expect(trace).toContain("sess-1");
   });
 });
-

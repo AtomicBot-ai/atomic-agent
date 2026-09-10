@@ -36,7 +36,9 @@ describe("parseGithubRemote", () => {
     expect(parseGithubRemote("https://github.com.evil.io/a/b.git")).toBeNull();
     expect(parseGithubRemote("https://notgithub.com/a/b.git")).toBeNull();
     // Another host whose URL merely contains `@github.com:`.
-    expect(parseGithubRemote("https://evil.example/x@github.com:a/b")).toBeNull();
+    expect(
+      parseGithubRemote("https://evil.example/x@github.com:a/b"),
+    ).toBeNull();
     expect(parseGithubRemote("ssh://evil.example/x@github.com/a/b")).toBeNull();
     expect(parseGithubRemote("/local/path/repo.git")).toBeNull();
     expect(parseGithubRemote("")).toBeNull();
@@ -49,8 +51,14 @@ describe("parseGithubRemote", () => {
 
 describe("parseRepoSlug", () => {
   it("accepts owner/name and a pasted URL", () => {
-    expect(parseRepoSlug("acme/widgets")).toEqual({ owner: "acme", repo: "widgets" });
-    expect(parseRepoSlug("acme/widgets.git")).toEqual({ owner: "acme", repo: "widgets" });
+    expect(parseRepoSlug("acme/widgets")).toEqual({
+      owner: "acme",
+      repo: "widgets",
+    });
+    expect(parseRepoSlug("acme/widgets.git")).toEqual({
+      owner: "acme",
+      repo: "widgets",
+    });
     expect(parseRepoSlug("https://github.com/acme/widgets")).toEqual({
       owner: "acme",
       repo: "widgets",

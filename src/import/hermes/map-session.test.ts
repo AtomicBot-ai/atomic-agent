@@ -50,7 +50,14 @@ describe("mapHermesSession", () => {
   it("converts REAL second timestamps to integer milliseconds", () => {
     const state = mapHermesSession(
       session({ startedAtSeconds: 1_700_000_000.5 }),
-      [msg({ id: 1, role: "user", content: "hi", timestampSeconds: 1_700_000_123.4 })],
+      [
+        msg({
+          id: 1,
+          role: "user",
+          content: "hi",
+          timestampSeconds: 1_700_000_123.4,
+        }),
+      ],
       "/fallback",
     );
     expect(state.createdAt).toBe(1_700_000_000_500);
@@ -137,7 +144,9 @@ describe("mapHermesSession", () => {
     expect(state.turns).toHaveLength(2);
     expect(state.turns[0]).toMatchObject({ tool: "a", reasoning: "r" });
     expect(state.turns[1]).toMatchObject({ tool: "b" });
-    expect((state.turns[1] as { reasoning?: string }).reasoning).toBeUndefined();
+    expect(
+      (state.turns[1] as { reasoning?: string }).reasoning,
+    ).toBeUndefined();
   });
 
   it("wraps malformed tool-call arguments in a _raw field", () => {
@@ -208,7 +217,12 @@ describe("mapHermesSession", () => {
       [
         msg({ id: 1, role: "user", content: "" }),
         msg({ id: 2, role: "assistant", content: "", reasoning: "" }),
-        msg({ id: 3, role: "assistant", content: null, reasoning: "only thought" }),
+        msg({
+          id: 3,
+          role: "assistant",
+          content: null,
+          reasoning: "only thought",
+        }),
         msg({ id: 4, role: "user", content: "hi" }),
       ],
       "/fallback",
@@ -257,7 +271,11 @@ describe("mapHermesSession", () => {
     expect(packed.droppedPairs).toBe(1);
     expect(packed.visibleTurns).toEqual(state.turns.slice(4));
     // Without the recorded starts the derived scan fuses both tasks.
-    expect(packConversation(state.turns, 10_000, { maxPairs: 1 }).visiblePairs).toBe(1);
-    expect(packConversation(state.turns, 10_000, { maxPairs: 1 }).droppedPairs).toBe(0);
+    expect(
+      packConversation(state.turns, 10_000, { maxPairs: 1 }).visiblePairs,
+    ).toBe(1);
+    expect(
+      packConversation(state.turns, 10_000, { maxPairs: 1 }).droppedPairs,
+    ).toBe(0);
   });
 });

@@ -14,7 +14,12 @@ import { summarizeSessionState } from "./session-summary.js";
  * and that is the point — the rows come from a truncated write or a
  * hand edit, not from `save`.
  */
-function insertRaw(file: string, id: string, payload: string, updatedAt: number) {
+function insertRaw(
+  file: string,
+  id: string,
+  payload: string,
+  updatedAt: number,
+) {
   const raw = new DatabaseCtor(file);
   try {
     raw
@@ -55,7 +60,10 @@ describe("SessionStore.listSummaries", () => {
       userTurn("first thing said"),
     );
     const b = recordTurn(
-      recordTurn(createEmptySessionState({ id: "b", workingDir: "/w" }), userTurn("hello")),
+      recordTurn(
+        createEmptySessionState({ id: "b", workingDir: "/w" }),
+        userTurn("hello"),
+      ),
       assistantReplyTurn("hi"),
     );
     const c = createEmptySessionState({ id: "c", workingDir: "/w" });
@@ -102,23 +110,39 @@ describe("SessionStore.listSummaries", () => {
 
   it("agrees with summarizeSessionState on a saved state", () => {
     const s = recordTurn(
-      createEmptySessionState({ id: "same", workingDir: "/w", metadata: { importedFrom: "codex" } }),
+      createEmptySessionState({
+        id: "same",
+        workingDir: "/w",
+        metadata: { importedFrom: "codex" },
+      }),
       userTurn("prompt"),
     );
-    const saved = { ...s, updatedAt: 42, createdAt: 41, turnCount: 1, stepCount: 2 };
+    const saved = {
+      ...s,
+      updatedAt: 42,
+      createdAt: 41,
+      turnCount: 1,
+      stepCount: 2,
+    };
     store.save(saved);
     expect(store.listSummaries()[0]).toEqual(summarizeSessionState(saved));
   });
 
   it("skips a corrupt payload row and counts it as unreadable", () => {
-    store.save({ ...createEmptySessionState({ id: "ok", workingDir: "/w" }), updatedAt: 1 });
+    store.save({
+      ...createEmptySessionState({ id: "ok", workingDir: "/w" }),
+      updatedAt: 1,
+    });
     insertRaw(file, "bad", '{"id":"bad","turns":[', 9999);
     expect(store.listSummaries().map((r) => r.id)).toEqual(["ok"]);
     expect(store.countUnreadable()).toBe(1);
   });
 
   it("leaves out a payload with no turns array, without counting it unreadable", () => {
-    store.save({ ...createEmptySessionState({ id: "ok", workingDir: "/w" }), updatedAt: 1 });
+    store.save({
+      ...createEmptySessionState({ id: "ok", workingDir: "/w" }),
+      updatedAt: 1,
+    });
     insertRaw(file, "empty-object", "{}", 5000);
     insertRaw(file, "string-turns", '{"id":"string-turns","turns":"x"}', 6000);
     expect(store.listSummaries().map((r) => r.id)).toEqual(["ok"]);
@@ -126,8 +150,17 @@ describe("SessionStore.listSummaries", () => {
   });
 
   it("coerces missing counts to 0 and non-object turns to no prompt", () => {
-    insertRaw(file, "thin", '{"id":"thin","turns":[1,"two",{"kind":"user","text":"three"}]}', 1);
+    insertRaw(
+      file,
+      "thin",
+      '{"id":"thin","turns":[1,"two",{"kind":"user","text":"three"}]}',
+      1,
+    );
     const [row] = store.listSummaries();
-    expect(row).toMatchObject({ turnCount: 0, stepCount: 0, firstPrompt: "three" });
+    expect(row).toMatchObject({
+      turnCount: 0,
+      stepCount: 0,
+      firstPrompt: "three",
+    });
   });
 });

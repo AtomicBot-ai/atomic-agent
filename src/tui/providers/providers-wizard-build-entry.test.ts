@@ -201,5 +201,4 @@ describe("buildProviderEntryFromWizard", () => {
     // under a ChatGPT login.
     expect(built.entry.defaultChatModel).toBeUndefined();
   });
-
 });

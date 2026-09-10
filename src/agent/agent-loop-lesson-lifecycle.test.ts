@@ -131,9 +131,7 @@ describe("AgentLoop lesson lifecycle hook (phase 6)", () => {
       slotManager: new SlotManager(2),
       grammar: 'root ::= "ok"',
       llmComplete: async () =>
-        makeCompletion(
-          JSON.stringify({ tool: "reply", args: { text: "hi" } }),
-        ),
+        makeCompletion(JSON.stringify({ tool: "reply", args: { text: "hi" } })),
       toolDescriptors: TOOLS,
       capabilities: CAPS,
       skillCatalog: SKILLS,
@@ -219,9 +217,7 @@ describe("AgentLoop lesson lifecycle hook (phase 6)", () => {
       slotManager: new SlotManager(2),
       grammar: 'root ::= "ok"',
       llmComplete: async () =>
-        makeCompletion(
-          JSON.stringify({ tool: "reply", args: { text: "hi" } }),
-        ),
+        makeCompletion(JSON.stringify({ tool: "reply", args: { text: "hi" } })),
       toolDescriptors: TOOLS,
       capabilities: CAPS,
       skillCatalog: SKILLS,
@@ -302,9 +298,7 @@ describe("AgentLoop lesson lifecycle hook (phase 6)", () => {
       slotManager: new SlotManager(2),
       grammar: 'root ::= "ok"',
       llmComplete: async () =>
-        makeCompletion(
-          JSON.stringify({ tool: "reply", args: { text: "hi" } }),
-        ),
+        makeCompletion(JSON.stringify({ tool: "reply", args: { text: "hi" } })),
       toolDescriptors: TOOLS,
       capabilities: CAPS,
       skillCatalog: SKILLS,

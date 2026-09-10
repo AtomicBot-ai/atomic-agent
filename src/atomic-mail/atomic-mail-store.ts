@@ -1,4 +1,10 @@
-import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 
 import { restrictWindowsAcl } from "../config/windows-acl.js";
@@ -21,14 +27,19 @@ import type { AtomicMailSession } from "./atomic-mail-client.js";
  */
 export const ATOMIC_MAIL_API_KEY_KEY = "ATOMIC_MAIL_API_KEY";
 
-export function readAtomicMailApiKey(env: NodeJS.ProcessEnv = process.env): string | null {
+export function readAtomicMailApiKey(
+  env: NodeJS.ProcessEnv = process.env,
+): string | null {
   const raw = env[ATOMIC_MAIL_API_KEY_KEY];
   if (typeof raw !== "string") return null;
   const trimmed = raw.trim();
   return trimmed.length > 0 ? trimmed : null;
 }
 
-export function writeAtomicMailApiKey(stateDir: string, apiKey: string | null): void {
+export function writeAtomicMailApiKey(
+  stateDir: string,
+  apiKey: string | null,
+): void {
   setDotenvKey(stateDir, ATOMIC_MAIL_API_KEY_KEY, apiKey);
   if (apiKey === null) delete process.env[ATOMIC_MAIL_API_KEY_KEY];
   else process.env[ATOMIC_MAIL_API_KEY_KEY] = apiKey;
@@ -40,15 +51,27 @@ export function resolveSessionPath(stateDir: string): string {
 
 export function readCachedSession(stateDir: string): AtomicMailSession | null {
   try {
-    const raw = JSON.parse(readFileSync(resolveSessionPath(stateDir), "utf-8")) as Partial<AtomicMailSession>;
-    if (typeof raw.sessionJwt !== "string" || typeof raw.sessionExpiresAt !== "number") return null;
-    return { sessionJwt: raw.sessionJwt, sessionExpiresAt: raw.sessionExpiresAt };
+    const raw = JSON.parse(
+      readFileSync(resolveSessionPath(stateDir), "utf-8"),
+    ) as Partial<AtomicMailSession>;
+    if (
+      typeof raw.sessionJwt !== "string" ||
+      typeof raw.sessionExpiresAt !== "number"
+    )
+      return null;
+    return {
+      sessionJwt: raw.sessionJwt,
+      sessionExpiresAt: raw.sessionExpiresAt,
+    };
   } catch {
     return null;
   }
 }
 
-export function writeCachedSession(stateDir: string, session: AtomicMailSession | null): void {
+export function writeCachedSession(
+  stateDir: string,
+  session: AtomicMailSession | null,
+): void {
   const path = resolveSessionPath(stateDir);
   if (session === null) {
     try {
@@ -59,7 +82,10 @@ export function writeCachedSession(stateDir: string, session: AtomicMailSession 
     return;
   }
   mkdirSync(join(stateDir, "atomic-mail"), { recursive: true, mode: 0o700 });
-  writeFileSync(path, JSON.stringify(session), { encoding: "utf-8", mode: 0o600 });
+  writeFileSync(path, JSON.stringify(session), {
+    encoding: "utf-8",
+    mode: 0o600,
+  });
   try {
     chmodSync(path, 0o600);
   } catch {
@@ -69,7 +95,9 @@ export function writeCachedSession(stateDir: string, session: AtomicMailSession 
 }
 
 /** Merge a patch into `config.json`'s `atomicMail` block. */
-export function persistAtomicMailConfig(patch: Partial<AtomicMailConfig>): void {
+export function persistAtomicMailConfig(
+  patch: Partial<AtomicMailConfig>,
+): void {
   const path = getConfig().paths.userConfigFile;
   const prev = ensureUserConfigFileSync(path);
   const draft = { ...prev, atomicMail: { ...prev.atomicMail, ...patch } };

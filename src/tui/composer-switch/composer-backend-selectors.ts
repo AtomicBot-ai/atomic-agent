@@ -42,12 +42,16 @@ export interface ComposerBackendMeta {
  * Fusion carries the same local probe: its cloud leg has nothing to
  * probe, and the worker daemon is the half that can actually be down.
  */
-export function selectComposerBackendMeta(state: TuiState): ComposerBackendMeta {
+export function selectComposerBackendMeta(
+  state: TuiState,
+): ComposerBackendMeta {
   const kind = selectComposerBackend(state);
   if (kind === "cloud") return { kind, status: "healthy" };
   return {
     kind,
-    status: state.llmHealth.localConfigured ? state.llmHealth.status : "unknown",
+    status: state.llmHealth.localConfigured
+      ? state.llmHealth.status
+      : "unknown",
   };
 }
 

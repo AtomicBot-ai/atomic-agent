@@ -30,7 +30,10 @@ const strip = (value: string): string =>
 const settle = (): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, FLUSH_MS));
 
-function trackingCallbacks(counts: { quit: number; abort: number }): TuiAppCallbacks {
+function trackingCallbacks(counts: {
+  quit: number;
+  abort: number;
+}): TuiAppCallbacks {
   return {
     onApprovalDecision: () => {},
     onAbort: () => {
@@ -51,7 +54,11 @@ describe("Esc in the chat editor", () => {
     const counts = { quit: 0, abort: 0 };
     const bus = makeTuiEventBus();
     const { lastFrame, stdin, unmount } = render(
-      <TuiApp session={SESSION} bus={bus} callbacks={trackingCallbacks(counts)} />,
+      <TuiApp
+        session={SESSION}
+        bus={bus}
+        callbacks={trackingCallbacks(counts)}
+      />,
     );
     await settle();
     stdin.write(ESC);
@@ -66,7 +73,11 @@ describe("Esc in the chat editor", () => {
     const counts = { quit: 0, abort: 0 };
     const bus = makeTuiEventBus();
     const { lastFrame, stdin, unmount } = render(
-      <TuiApp session={SESSION} bus={bus} callbacks={trackingCallbacks(counts)} />,
+      <TuiApp
+        session={SESSION}
+        bus={bus}
+        callbacks={trackingCallbacks(counts)}
+      />,
     );
     await settle();
     stdin.write("half a thought");
@@ -87,7 +98,11 @@ describe("Esc in the chat editor", () => {
     const counts = { quit: 0, abort: 0 };
     const bus = makeTuiEventBus();
     const { stdin, unmount } = render(
-      <TuiApp session={SESSION} bus={bus} callbacks={trackingCallbacks(counts)} />,
+      <TuiApp
+        session={SESSION}
+        bus={bus}
+        callbacks={trackingCallbacks(counts)}
+      />,
     );
     await settle();
 
@@ -103,7 +118,11 @@ describe("Esc in the chat editor", () => {
     const counts = { quit: 0, abort: 0 };
     const bus = makeTuiEventBus();
     const { lastFrame, stdin, unmount } = render(
-      <TuiApp session={SESSION} bus={bus} callbacks={trackingCallbacks(counts)} />,
+      <TuiApp
+        session={SESSION}
+        bus={bus}
+        callbacks={trackingCallbacks(counts)}
+      />,
     );
     await settle();
     stdin.write("draft message");
@@ -126,7 +145,11 @@ describe("Esc in the chat editor", () => {
     const counts = { quit: 0, abort: 0 };
     const bus = makeTuiEventBus();
     const { lastFrame, stdin, unmount } = render(
-      <TuiApp session={SESSION} bus={bus} callbacks={trackingCallbacks(counts)} />,
+      <TuiApp
+        session={SESSION}
+        bus={bus}
+        callbacks={trackingCallbacks(counts)}
+      />,
     );
     await settle();
     stdin.write("draft message");
@@ -169,7 +192,11 @@ describe("Esc in the chat editor", () => {
     const counts = { quit: 0, abort: 0 };
     const bus = makeTuiEventBus();
     const { lastFrame, stdin, unmount } = render(
-      <TuiApp session={SESSION} bus={bus} callbacks={trackingCallbacks(counts)} />,
+      <TuiApp
+        session={SESSION}
+        bus={bus}
+        callbacks={trackingCallbacks(counts)}
+      />,
     );
     await settle();
     bus.emit({ type: "ui_mode_set", mode: "debug" });

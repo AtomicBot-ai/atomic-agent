@@ -251,7 +251,9 @@ describe("ToolLoopTracker read-coverage detector", () => {
     tracker.recordRead(observe("/a.ts", "v1", { start: 10, end: 20 }));
     tracker.recordRead(observe("/a.ts", "v1", { start: 30, end: 40 }));
     tracker.recordRead(observe("/a.ts", "v1", { start: 51, end: 60 }));
-    const check = tracker.checkReadRepeat(observe("/a.ts", "v1", { start: 1, end: 5 }));
+    const check = tracker.checkReadRepeat(
+      observe("/a.ts", "v1", { start: 1, end: 5 }),
+    );
     expect(check.count).toBe(1);
   });
 
@@ -308,8 +310,9 @@ describe("ToolLoopTracker read-coverage detector", () => {
     }
     // The same range in a different file is a different question.
     expect(
-      tracker.checkReadRepeat(observe("/other.ts", "v0", { start: 1, end: 120 }))
-        .repeat,
+      tracker.checkReadRepeat(
+        observe("/other.ts", "v0", { start: 1, end: 120 }),
+      ).repeat,
     ).toBe(false);
   });
 
@@ -318,9 +321,9 @@ describe("ToolLoopTracker read-coverage detector", () => {
     const past = observe("/a.ts", "v1", null, 40);
     expect(tracker.checkReadRepeat(past).repeat).toBe(false);
     tracker.recordRead(past);
-    expect(tracker.checkReadRepeat(observe("/a.ts", "v1", null, 40)).repeat).toBe(
-      true,
-    );
+    expect(
+      tracker.checkReadRepeat(observe("/a.ts", "v1", null, 40)).repeat,
+    ).toBe(true);
   });
 
   it("bounds the number of tracked files", () => {
@@ -328,7 +331,9 @@ describe("ToolLoopTracker read-coverage detector", () => {
     const first = observe("/file-0.ts", "v0", { start: 1, end: 10 });
     tracker.recordRead(first);
     for (let i = 1; i <= 250; i += 1) {
-      tracker.recordRead(observe(`/file-${i}.ts`, `v${i}`, { start: 1, end: 10 }));
+      tracker.recordRead(
+        observe(`/file-${i}.ts`, `v${i}`, { start: 1, end: 10 }),
+      );
     }
     // The oldest entry has been evicted, so its re-read reads as fresh —
     // a missed detection, which is the safe direction.
@@ -365,13 +370,19 @@ describe("formatReadRepeatNotice", () => {
   });
 
   it("words an empty return honestly", () => {
-    const notice = formatReadRepeatNotice({ ...base, startLine: 0, endLine: 0 });
+    const notice = formatReadRepeatNotice({
+      ...base,
+      startLine: 0,
+      endLine: 0,
+    });
     expect(notice).toContain("returned no lines at all");
     // An empty return did NOT re-read a covered range, so the notice must
     // not say it did — that advice points back at the request that just
     // came back empty.
     expect(notice).not.toContain("Re-reading a covered range");
-    expect(notice).toContain("outside the part of the file this read can reach");
+    expect(notice).toContain(
+      "outside the part of the file this read can reach",
+    );
     expect(notice).toContain("Stay inside lines 1-900");
   });
 
@@ -397,7 +408,9 @@ describe("formatReadRepeatNotice", () => {
     // turn already had gets the original advice, and never the byte-cap
     // wording — the cap is irrelevant when the range came back.
     const notice = formatReadRepeatNotice({ ...base, truncated: true });
-    expect(notice).toContain("Re-reading a covered range returns the same text");
+    expect(notice).toContain(
+      "Re-reading a covered range returns the same text",
+    );
     expect(notice).not.toContain("Raise `maxBytes`");
     expect(notice).toContain("content has not changed since the previous read");
   });
@@ -443,7 +456,9 @@ describe("read-coverage detection end to end", () => {
   beforeEach(async () => {
     dir = await mkdtemp(join(tmpdir(), "atomic-read-loop-"));
     tracker = new ToolLoopTracker();
-    const body = Array.from({ length: 200 }, (_, i) => `line ${i + 1}`).join("\n");
+    const body = Array.from({ length: 200 }, (_, i) => `line ${i + 1}`).join(
+      "\n",
+    );
     await writeFile(join(dir, "src.ts"), `${body}\n`, "utf8");
   });
 
@@ -557,7 +572,12 @@ describe("read-coverage detection end to end", () => {
       await runRead(dir, tracker, { path: "src.ts", maxBytes: 400 }),
     ).toEqual([]);
     expect(
-      await runRead(dir, tracker, { path: "src.ts", maxBytes: 4000, offset: 1, limit: 5 }),
+      await runRead(dir, tracker, {
+        path: "src.ts",
+        maxBytes: 4000,
+        offset: 1,
+        limit: 5,
+      }),
     ).toEqual([]);
   });
 
@@ -594,9 +614,9 @@ describe("read-coverage detection end to end", () => {
     // covered range — it is asking for something no `offset` can deliver —
     // so the signal has to carry that fact through to the notice.
     const cap = { path: "src.ts", maxBytes: 300 };
-    expect(await runRead(dir, tracker, { ...cap, offset: 1, limit: 5 })).toEqual(
-      [],
-    );
+    expect(
+      await runRead(dir, tracker, { ...cap, offset: 1, limit: 5 }),
+    ).toEqual([]);
     expect(
       await runRead(dir, tracker, { ...cap, offset: 150, limit: 10 }),
     ).toHaveLength(1);
@@ -611,7 +631,10 @@ describe("read-coverage detection end to end", () => {
     expect(read.endLine).toBe(0);
     expect(read.truncated).toBe(true);
     expect(read.totalLines).toBeLessThan(200);
-    const notice = formatReadRepeatNotice({ count: signals[0]!.count, ...read });
+    const notice = formatReadRepeatNotice({
+      count: signals[0]!.count,
+      ...read,
+    });
     expect(notice).toContain("Raise `maxBytes`");
     expect(notice).not.toContain("Re-reading a covered range");
   });
@@ -630,7 +653,10 @@ describe("read-coverage detection end to end", () => {
     });
     const read = signals[0]!.read!;
     expect(read.truncated).toBe(false);
-    const notice = formatReadRepeatNotice({ count: signals[0]!.count, ...read });
+    const notice = formatReadRepeatNotice({
+      count: signals[0]!.count,
+      ...read,
+    });
     expect(notice).toContain("Stay inside lines 1-200");
     expect(notice).not.toContain("Raise `maxBytes`");
   });

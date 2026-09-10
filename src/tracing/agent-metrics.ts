@@ -173,11 +173,7 @@ export interface BatchWaveSplitMetricSample {
  * tag space from a single module.
  */
 export type ReflectionOutcomeTag =
-  | "ok"
-  | "none"
-  | "aborted"
-  | "timeout"
-  | "failed";
+  "ok" | "none" | "aborted" | "timeout" | "failed";
 
 export interface ReflectionMetricSample {
   sessionId: string;
@@ -224,9 +220,7 @@ export interface MemoryEvictionMetricSample {
  * so dashboards can isolate "is it dedup, eviction, or recall scoring".
  */
 export type MemoryClockSkewSiteTag =
-  | "memory_store_recall"
-  | "memory_store_dedup"
-  | "memory_store_eviction";
+  "memory_store_recall" | "memory_store_dedup" | "memory_store_eviction";
 
 export interface MemoryClockSkewMetricSample {
   site: MemoryClockSkewSiteTag;
@@ -249,10 +243,7 @@ export interface MemoryEmbeddingsGeneratedSample {
 }
 
 export type MemoryEmbeddingsFallbackReason =
-  | "embed_failed"
-  | "client_missing"
-  | "store_missing"
-  | "feature_disabled";
+  "embed_failed" | "client_missing" | "store_missing" | "feature_disabled";
 
 export interface MemoryEmbeddingsFallbackSample {
   reason: MemoryEmbeddingsFallbackReason;
@@ -281,12 +272,7 @@ export interface MemoryEmbeddingsDaemonHealthSample {
  *     bucket so dashboards can spot pathological depths.
  */
 export type LinkGeneratorOutcomeTag =
-  | "ok"
-  | "none"
-  | "skipped"
-  | "aborted"
-  | "timeout"
-  | "failed";
+  "ok" | "none" | "skipped" | "aborted" | "timeout" | "failed";
 
 export interface MemoryLinkGeneratorSample {
   sessionId: string;
@@ -329,10 +315,7 @@ export interface RetrieveRewriterMetricSample {
 export type RetrieveRewriterGateModeTag = "heuristic" | "embedding" | "always";
 
 export type RetrieveRewriterGateSkipReason =
-  | "below_threshold"
-  | "no_history"
-  | "unavailable"
-  | "empty_message";
+  "below_threshold" | "no_history" | "unavailable" | "empty_message";
 
 export interface RetrieveRewriterGateFiredSample {
   gateMode: RetrieveRewriterGateModeTag;
@@ -485,12 +468,7 @@ export interface MemoryProfileSupersededSample {
  *                  runner itself never throws (invariant 13).
  */
 export type VotingRunnerOutcomeTag =
-  | "ok"
-  | "none"
-  | "skipped"
-  | "aborted"
-  | "timeout"
-  | "failed";
+  "ok" | "none" | "skipped" | "aborted" | "timeout" | "failed";
 
 export interface MemoryVotingRunnerSample {
   sessionId: string;
@@ -551,19 +529,11 @@ export interface MemoryVotingDecayedSample {
  * / `running`) which never reach the metrics layer.
  */
 export type TaskTerminalStatus =
-  | "completed"
-  | "failed"
-  | "blocked"
-  | "cancelled";
+  "completed" | "failed" | "blocked" | "cancelled";
 
 /** Origin tag used by every task-level metric for downstream slicing. */
 export type TaskOriginTag =
-  | "cli"
-  | "tui"
-  | "http"
-  | "sidecar"
-  | "scheduler"
-  | "agent";
+  "cli" | "tui" | "http" | "sidecar" | "scheduler" | "agent";
 
 export interface TaskCreatedSample {
   taskId: string;
@@ -669,7 +639,11 @@ export class AgentMetrics {
   recordStep(sample: StepMetricSample): void {
     const tags = { sessionId: sample.sessionId, outcome: sample.outcome };
     this.collector.histogram(METRIC_NAMES.stepTokens, sample.tokensUsed, tags);
-    this.collector.histogram(METRIC_NAMES.stepDuration, sample.durationMs, tags);
+    this.collector.histogram(
+      METRIC_NAMES.stepDuration,
+      sample.durationMs,
+      tags,
+    );
     this.collector.counter(METRIC_NAMES.stepOutcome, 1, tags);
   }
 
@@ -679,17 +653,19 @@ export class AgentMetrics {
       cacheReused: sample.cacheReused ? "true" : "false",
     };
     this.collector.histogram(METRIC_NAMES.llmLatency, sample.durationMs, tags);
-    this.collector.histogram(METRIC_NAMES.llmPromptTokens, sample.promptTokens, tags);
+    this.collector.histogram(
+      METRIC_NAMES.llmPromptTokens,
+      sample.promptTokens,
+      tags,
+    );
     this.collector.histogram(
       METRIC_NAMES.llmCompletionTokens,
       sample.completionTokens,
       tags,
     );
-    this.collector.gauge(
-      METRIC_NAMES.kvCacheHit,
-      sample.cacheReused ? 1 : 0,
-      { sessionId: sample.sessionId },
-    );
+    this.collector.gauge(METRIC_NAMES.kvCacheHit, sample.cacheReused ? 1 : 0, {
+      sessionId: sample.sessionId,
+    });
   }
 
   recordTool(sample: ToolMetricSample): void {
@@ -791,14 +767,10 @@ export class AgentMetrics {
    */
   recordMemoryEviction(sample: MemoryEvictionMetricSample): void {
     if (sample.evicted <= 0) return;
-    this.collector.counter(
-      METRIC_NAMES.memoryEvictionEvicted,
-      sample.evicted,
-      {
-        reason: sample.reason,
-        utilityWeighted: sample.utilityWeighted ? "true" : "false",
-      },
-    );
+    this.collector.counter(METRIC_NAMES.memoryEvictionEvicted, sample.evicted, {
+      reason: sample.reason,
+      utilityWeighted: sample.utilityWeighted ? "true" : "false",
+    });
   }
 
   /**
@@ -833,9 +805,7 @@ export class AgentMetrics {
    * transient daemon outage (`embed_failed`) from a permanent
    * deployment state (`feature_disabled`).
    */
-  recordMemoryEmbeddingsFallback(
-    sample: MemoryEmbeddingsFallbackSample,
-  ): void {
+  recordMemoryEmbeddingsFallback(sample: MemoryEmbeddingsFallbackSample): void {
     this.collector.counter(METRIC_NAMES.memoryEmbeddingsFallback, 1, {
       reason: sample.reason,
     });
@@ -850,14 +820,10 @@ export class AgentMetrics {
   recordMemoryEmbeddingsBruteForceOverflow(
     sample: MemoryEmbeddingsBruteForceOverflowSample,
   ): void {
-    this.collector.counter(
-      METRIC_NAMES.memoryEmbeddingsBruteForceOverflow,
-      1,
-      {
-        rows: String(sample.rows),
-        ceiling: String(sample.ceiling),
-      },
-    );
+    this.collector.counter(METRIC_NAMES.memoryEmbeddingsBruteForceOverflow, 1, {
+      rows: String(sample.rows),
+      ceiling: String(sample.ceiling),
+    });
   }
 
   /**
@@ -984,11 +950,9 @@ export class AgentMetrics {
    * (scenario 7b.C.6).
    */
   recordProceduresRecalled(sample: MemoryProcedureRecalledSample): void {
-    this.collector.counter(
-      METRIC_NAMES.memoryProceduresRecalled,
-      sample.hits,
-      { session_id: sample.sessionId },
-    );
+    this.collector.counter(METRIC_NAMES.memoryProceduresRecalled, sample.hits, {
+      session_id: sample.sessionId,
+    });
   }
 
   /**
@@ -1321,7 +1285,9 @@ export class AgentMetrics {
    * `missing_token`, …) so dashboards can split persistent backend
    * issues from operator-initiated stops.
    */
-  recordTelegramDown(sample: TelegramLifecycleSample = { outcome: "ok" }): void {
+  recordTelegramDown(
+    sample: TelegramLifecycleSample = { outcome: "ok" },
+  ): void {
     this.collector.counter(METRIC_NAMES.telegramDown, 1, {
       outcome: sample.outcome,
       ...(sample.reason ? { reason: sample.reason } : {}),
@@ -1358,7 +1324,11 @@ export class AgentMetrics {
     });
   }
 
-  recordApproval(input: { sessionId: string; tool: string; approved: boolean }): void {
+  recordApproval(input: {
+    sessionId: string;
+    tool: string;
+    approved: boolean;
+  }): void {
     const tags = { sessionId: input.sessionId, tool: input.tool };
     this.collector.counter(METRIC_NAMES.approvalRequested, 1, tags);
     if (input.approved) {

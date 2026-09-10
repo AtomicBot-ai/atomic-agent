@@ -27,7 +27,9 @@ describe("fetchOpenAiCompatModels", () => {
       headers: { authorization: "Bearer key" },
     });
 
-    expect(getCachedOpenAiCompatModels("https://vllm.example/", "key")).toEqual(ids);
+    expect(getCachedOpenAiCompatModels("https://vllm.example/", "key")).toEqual(
+      ids,
+    );
     await fetchOpenAiCompatModels("https://vllm.example", "key");
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
@@ -40,8 +42,12 @@ describe("fetchOpenAiCompatModels", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await fetchOpenAiCompatModels("https://keyed.example", "first");
-    expect(getCachedOpenAiCompatModels("https://keyed.example", "second")).toBeUndefined();
-    expect(getCachedOpenAiCompatModels("https://keyed.example")).toBeUndefined();
+    expect(
+      getCachedOpenAiCompatModels("https://keyed.example", "second"),
+    ).toBeUndefined();
+    expect(
+      getCachedOpenAiCompatModels("https://keyed.example"),
+    ).toBeUndefined();
 
     await fetchOpenAiCompatModels("https://keyed.example", "second");
     expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -57,7 +63,9 @@ describe("fetchOpenAiCompatModels", () => {
 
     await fetchOpenAiCompatModels("https://stale.example", "key");
     vi.advanceTimersByTime(60 * 60 * 1000 + 1);
-    expect(getCachedOpenAiCompatModels("https://stale.example", "key")).toBeUndefined();
+    expect(
+      getCachedOpenAiCompatModels("https://stale.example", "key"),
+    ).toBeUndefined();
 
     await fetchOpenAiCompatModels("https://stale.example", "key");
     expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -73,9 +81,9 @@ describe("fetchOpenAiCompatModels", () => {
 
     await fetchOpenAiCompatModels("https://panel.example", "secret");
     // The panel knows the base URL but not the key that fetched the list.
-    expect(getCachedOpenAiCompatModelsForBaseUrl("https://panel.example/")).toEqual([
-      "grok-4",
-    ]);
+    expect(
+      getCachedOpenAiCompatModelsForBaseUrl("https://panel.example/"),
+    ).toEqual(["grok-4"]);
 
     vi.advanceTimersByTime(60 * 60 * 1000 + 1);
     expect(
@@ -99,7 +107,10 @@ describe("fetchOpenAiCompatModels", () => {
       headers: { "some-version": "2023-06-01" },
     });
 
-    const headers = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    const headers = fetchMock.mock.calls[0]?.[1]?.headers as Record<
+      string,
+      string
+    >;
     expect(headers["x-api-key"]).toBe("sk-test");
     expect(headers["some-version"]).toBe("2023-06-01");
     expect(headers.authorization).toBeUndefined();
@@ -119,7 +130,10 @@ describe("fetchOpenAiCompatModels", () => {
       headers: { "some-version": "2023-06-01" },
     });
 
-    const headers = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    const headers = fetchMock.mock.calls[0]?.[1]?.headers as Record<
+      string,
+      string
+    >;
     expect(headers).toEqual({ "some-version": "2023-06-01" });
   });
 
@@ -131,7 +145,9 @@ describe("fetchOpenAiCompatModels", () => {
     await expect(
       fetchOpenAiCompatModels("https://locked.example"),
     ).rejects.toThrow("http 401");
-    expect(getCachedOpenAiCompatModels("https://locked.example")).toBeUndefined();
+    expect(
+      getCachedOpenAiCompatModels("https://locked.example"),
+    ).toBeUndefined();
   });
 
   it("rejects a non-ASCII key with a readable reason, never a ByteString crash", async () => {

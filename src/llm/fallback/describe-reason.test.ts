@@ -9,15 +9,22 @@ import { describeReason } from "./provider-fallback-chain.js";
  */
 describe("the reason an operator is shown for a fallover", () => {
   it("is the provider's own message, not the error class", () => {
-    const err = Object.assign(new Error('"openrouter" rejected the request (402).'), {
-      name: "OpenAiHttpError",
-    });
-    expect(describeReason(err)).toBe('"openrouter" rejected the request (402).');
+    const err = Object.assign(
+      new Error('"openrouter" rejected the request (402).'),
+      {
+        name: "OpenAiHttpError",
+      },
+    );
+    expect(describeReason(err)).toBe(
+      '"openrouter" rejected the request (402).',
+    );
     expect(describeReason(err)).not.toBe("OpenAiHttpError");
   });
 
   it("collapses whitespace to one line and caps the length", () => {
-    const reason = describeReason(new Error("a".repeat(400) + "\n\nsecond line"));
+    const reason = describeReason(
+      new Error("a".repeat(400) + "\n\nsecond line"),
+    );
     expect(reason.length).toBeLessThanOrEqual(180);
     expect(reason).not.toContain("\n");
     expect(reason.endsWith("\u2026")).toBe(true);
@@ -30,9 +37,11 @@ describe("the reason an operator is shown for a fallover", () => {
   });
 
   it("falls back to the class name when there is no message", () => {
-    expect(describeReason(Object.assign(new Error("   "), { name: "TransportError" }))).toBe(
-      "TransportError",
-    );
+    expect(
+      describeReason(
+        Object.assign(new Error("   "), { name: "TransportError" }),
+      ),
+    ).toBe("TransportError");
   });
 
   it("falls back to a plain sentence for anything that is not an error", () => {

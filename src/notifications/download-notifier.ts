@@ -1,4 +1,7 @@
-import { ATOMIC_MAIL_API_KEY_KEY, AtomicMailService } from "../atomic-mail/index.js";
+import {
+  ATOMIC_MAIL_API_KEY_KEY,
+  AtomicMailService,
+} from "../atomic-mail/index.js";
 import { DiscordApi, resolveDiscordToken } from "../channels/discord/index.js";
 import {
   TELEGRAM_BOT_TOKEN_KEY,
@@ -21,13 +24,20 @@ import type { DownloadJob, DownloadNotifyChannel } from "../local-llm/index.js";
  */
 export type DownloadNotifyResult =
   | { outcome: "sent"; channel: DownloadNotifyChannel }
-  | { outcome: "not_configured"; channel: DownloadNotifyChannel; reason: string }
+  | {
+      outcome: "not_configured";
+      channel: DownloadNotifyChannel;
+      reason: string;
+    }
   | { outcome: "failed"; channel: DownloadNotifyChannel; reason: string };
 
 export interface DownloadNotifyInput {
   channel: DownloadNotifyChannel;
   job: DownloadJob;
-  config: Pick<AtomicAgentConfig, "telegram" | "discord" | "atomicMail" | "paths">;
+  config: Pick<
+    AtomicAgentConfig,
+    "telegram" | "discord" | "atomicMail" | "paths"
+  >;
   /** Test seam for the e-mail leg. */
   atomicMail?: Pick<AtomicMailService, "readiness" | "sendDownloadMail">;
   /** Defaults to `process.env` — where `loadConfig` puts `<stateDir>/.env`. */
@@ -56,7 +66,10 @@ function modelName(job: DownloadJob): string {
 export function formatDownloadNotification(job: DownloadJob): string {
   const name = modelName(job);
   const what = job.phase === "mmproj" ? "Vision projector" : "Model";
-  const size = job.totalBytes > 0 ? formatBytes(job.totalBytes) : formatBytes(job.transferredBytes);
+  const size =
+    job.totalBytes > 0
+      ? formatBytes(job.totalBytes)
+      : formatBytes(job.transferredBytes);
   if (job.status === "done") {
     return [
       `✅ ${what} ready: ${name}`,
@@ -92,8 +105,10 @@ export async function notifyDownloadOutcome(
     if (channel === "telegram") {
       const token = (env[TELEGRAM_BOT_TOKEN_KEY] ?? "").trim();
       const chatId = input.config.telegram.ownerUserId;
-      if (!token) return { outcome: "not_configured", channel, reason: "no bot token" };
-      if (chatId === null) return { outcome: "not_configured", channel, reason: "not paired" };
+      if (!token)
+        return { outcome: "not_configured", channel, reason: "no bot token" };
+      if (chatId === null)
+        return { outcome: "not_configured", channel, reason: "not paired" };
       // `sendOutbound` never throws; the reason a chunk was dropped only
       // reaches its logger. Keep the last one so the job log says "401
       // Unauthorized", not just "dropped".
@@ -104,22 +119,33 @@ export async function notifyDownloadOutcome(
         text,
         logger: {
           warn: (message, context) => {
-            const detail = context && typeof context.error === "string" ? context.error : "";
-            lastWarn = scrubErrorMessage(detail ? `${message} (${detail})` : message);
+            const detail =
+              context && typeof context.error === "string" ? context.error : "";
+            lastWarn = scrubErrorMessage(
+              detail ? `${message} (${detail})` : message,
+            );
           },
         },
         ...(input.fetchImpl ? { fetchImpl: input.fetchImpl } : {}),
         ...(input.telegramApiBase ? { apiBase: input.telegramApiBase } : {}),
       });
       return result.dropped > 0
-        ? { outcome: "failed", channel, reason: lastWarn ?? `Telegram dropped ${result.dropped} chunk(s)` }
+        ? {
+            outcome: "failed",
+            channel,
+            reason: lastWarn ?? `Telegram dropped ${result.dropped} chunk(s)`,
+          }
         : { outcome: "sent", channel };
     }
     if (channel === "discord") {
       const token = resolveDiscordToken(undefined, env);
-      const userId = input.config.discord.ownerUserId;
-      if (!token) return { outcome: "not_configured", channel, reason: "no bot token" };
-      if (!userId) return { outcome: "not_configured", channel, reason: "no owner" };
+      // The ping goes to the owner who set the bot up — the first
+      // entry of the allowlist (#388).
+      const userId = input.config.discord.ownerUserIds[0] ?? null;
+      if (!token)
+        return { outcome: "not_configured", channel, reason: "no bot token" };
+      if (!userId)
+        return { outcome: "not_configured", channel, reason: "no owner" };
       const api = new DiscordApi({
         token,
         ...(input.discordApiBase ? { baseUrl: input.discordApiBase } : {}),
@@ -128,7 +154,9 @@ export async function notifyDownloadOutcome(
       await api.sendMessage(await api.createDmChannel(userId), text);
       return { outcome: "sent", channel };
     }
-    const mail = input.atomicMail ?? new AtomicMailService({ env, config: () => input.config });
+    const mail =
+      input.atomicMail ??
+      new AtomicMailService({ env, config: () => input.config });
     const ready = mail.readiness();
     if (ready.level !== "ready") {
       return {
@@ -165,10 +193,16 @@ export function isDownloadNotifyChannelReady(
     );
   }
   if (channel === "telegram") {
-    return (env[TELEGRAM_BOT_TOKEN_KEY] ?? "").trim().length > 0 && config.telegram.ownerUserId !== null;
+    return (
+      (env[TELEGRAM_BOT_TOKEN_KEY] ?? "").trim().length > 0 &&
+      config.telegram.ownerUserId !== null
+    );
   }
   if (channel === "discord") {
-    return resolveDiscordToken(undefined, env) !== null && !!config.discord.ownerUserId;
+    return (
+      resolveDiscordToken(undefined, env) !== null &&
+      config.discord.ownerUserIds.length > 0
+    );
   }
   return false;
 }

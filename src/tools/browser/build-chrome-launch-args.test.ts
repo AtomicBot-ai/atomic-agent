@@ -22,9 +22,7 @@ describe("buildChromeLaunchArgs", () => {
     expect(args).not.toContain("--enable-automation");
     expect(args).not.toContain("--disable-blink-features=AutomationControlled");
     expect(args).not.toContain("--remote-debugging-pipe");
-    expect(
-      args.some((a) => a.includes("AutomationControlled")),
-    ).toBe(false);
+    expect(args.some((a) => a.includes("AutomationControlled"))).toBe(false);
   });
 
   it("adds headless + disable-gpu when headless is true", () => {

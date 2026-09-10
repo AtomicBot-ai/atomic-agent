@@ -56,7 +56,11 @@ describe("fusion.delegate end to end", () => {
     stateDir = mkdtempSync(join(tmpdir(), "atomic-fusion-state-"));
     workingDir = mkdtempSync(join(tmpdir(), "atomic-fusion-cwd-"));
     mkdirSync(join(workingDir, ".atomic-agent", "skills"), { recursive: true });
-    writeFileSync(join(workingDir, "notes.txt"), "the file a worker reads\n", "utf8");
+    writeFileSync(
+      join(workingDir, "notes.txt"),
+      "the file a worker reads\n",
+      "utf8",
+    );
     writeFileSync(
       join(stateDir, "config.json"),
       JSON.stringify({
@@ -103,7 +107,10 @@ describe("fusion.delegate end to end", () => {
   });
 
   it("fans three workers out on the local leg and merges their replies", async () => {
-    const events: Array<{ event: AgentLoopEvent; sessionId: string | undefined }> = [];
+    const events: Array<{
+      event: AgentLoopEvent;
+      sessionId: string | undefined;
+    }> = [];
     const approvals: ApprovalRequest[] = [];
 
     // Worker concurrency probe. The first completion of each worker
@@ -128,10 +135,7 @@ describe("fusion.delegate end to end", () => {
           if (inFlight >= 2) openGate();
           // Bounded: a regression that serialises the pool must fail the
           // concurrency assertion, not hang the suite.
-          await Promise.race([
-            gate,
-            new Promise((r) => setTimeout(r, 3000)),
-          ]);
+          await Promise.race([gate, new Promise((r) => setTimeout(r, 3000))]);
           inFlight -= 1;
           // One worker tries a write; at approval level 1 that is a
           // prompt nobody can answer, so the gate must refuse it.
@@ -139,7 +143,10 @@ describe("fusion.delegate end to end", () => {
           return completion(
             JSON.stringify([
               wantsWrite
-                ? { tool: "os.fs.write", args: { path: "out.txt", content: "x" } }
+                ? {
+                    tool: "os.fs.write",
+                    args: { path: "out.txt", content: "x" },
+                  }
                 : { tool: "os.fs.read", args: { path: "notes.txt" } },
             ]),
           );
@@ -152,7 +159,11 @@ describe("fusion.delegate end to end", () => {
         return completion(
           delegateCall([
             { id: "t1", title: "Read one", instructions: "Read notes.txt" },
-            { id: "t2", title: "Read two", instructions: "Read notes.txt again" },
+            {
+              id: "t2",
+              title: "Read two",
+              instructions: "Read notes.txt again",
+            },
             { id: "t3", title: "Write one", instructions: "Write out.txt" },
           ]),
         );
@@ -242,7 +253,9 @@ describe("fusion.delegate end to end", () => {
 
       // No worker row in the session store: ephemeral means ephemeral.
       const stored = runtime.sessionStore.listRecent(50).map((s) => s.id);
-      expect(stored.some((id) => id.startsWith(FUSION_WORKER_ID_PREFIX))).toBe(false);
+      expect(stored.some((id) => id.startsWith(FUSION_WORKER_ID_PREFIX))).toBe(
+        false,
+      );
       expect(stored).toContain(parent.id);
       for (const workerId of workerSessions) {
         expect(runtime.sessionStore.load(workerId)).toBeNull();
@@ -296,7 +309,9 @@ describe("fusion.delegate end to end", () => {
           steps.set(params.sessionId, step);
           return completion(
             params.providerId !== LOCAL && step === 1
-              ? delegateCall([{ id: "t1", title: "One", instructions: "Do one" }])
+              ? delegateCall([
+                  { id: "t1", title: "One", instructions: "Do one" },
+                ])
               : replyCall("ok"),
           );
         },
@@ -312,7 +327,9 @@ describe("fusion.delegate end to end", () => {
       expect(workerPrompt).toBeDefined();
       expect(workerPrompt!.prompt).not.toContain("fusion.delegate");
       expect(workerPrompt!.prompt).not.toContain("### fusion");
-      expect(workerPrompt!.prompt).toContain("worker agent executing one delegated task");
+      expect(workerPrompt!.prompt).toContain(
+        "worker agent executing one delegated task",
+      );
     } finally {
       await runtime.shutdown();
     }

@@ -167,7 +167,10 @@ describe("SessionStore", () => {
     };
 
     it("listRecent and listByWorkingDir skip it instead of throwing", () => {
-      store.save({ ...createEmptySessionState({ id: "ok", workingDir: "/w" }), updatedAt: 1 });
+      store.save({
+        ...createEmptySessionState({ id: "ok", workingDir: "/w" }),
+        updatedAt: 1,
+      });
       insertCorrupt();
       expect(store.listRecent(10).map((s) => s.id)).toEqual(["ok"]);
       expect(store.listByWorkingDir("/w", 10).map((s) => s.id)).toEqual(["ok"]);
@@ -203,9 +206,7 @@ describe("SessionStore", () => {
           updatedAt: 1,
         },
       ],
-      memoryIndex: [
-        { id: 1, preview: "note", tags: ["x"], updatedAt: 1 },
-      ],
+      memoryIndex: [{ id: 1, preview: "note", tags: ["x"], updatedAt: 1 }],
     });
     const loaded = store.load("eph")!;
     expect(loaded.recalledNotes).toBeUndefined();

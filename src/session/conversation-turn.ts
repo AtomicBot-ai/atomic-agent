@@ -286,10 +286,7 @@ export function macroTurnBoundaries(
   }
   const derived = [0];
   for (let i = 1; i < turns.length; i += 1) {
-    if (
-      turns[i]?.kind === "user" &&
-      turns[i - 1]?.kind === "assistant_reply"
-    ) {
+    if (turns[i]?.kind === "user" && turns[i - 1]?.kind === "assistant_reply") {
       derived.push(i);
     }
   }
@@ -500,7 +497,8 @@ function tokenCostForTurn(
   const slot = TURN_TOKEN_COST_CACHE.get(key);
   const cached = inCurrentMacroTurn ? slot?.fresh : slot?.aged;
   if (cached !== undefined) return cached;
-  const cost = estimateTokens(renderTurnForPrompt(turn, { inCurrentMacroTurn })) + 1;
+  const cost =
+    estimateTokens(renderTurnForPrompt(turn, { inCurrentMacroTurn })) + 1;
   const nextSlot = slot ?? {};
   if (inCurrentMacroTurn) nextSlot.fresh = cost;
   else nextSlot.aged = cost;

@@ -1,4 +1,7 @@
-export type { SessionRailAction, SidebarDragState } from "./session-rail-actions.js";
+export type {
+  SessionRailAction,
+  SidebarDragState,
+} from "./session-rail-actions.js";
 export { reduceSessionRailAction } from "./session-rail-reducer.js";
 export {
   applySessionRailOrder,
@@ -36,4 +39,7 @@ export {
   PIN_COLUMNS,
   type PinSessionButtonProps,
 } from "./pin-session-button.js";
-export { SessionRailRow, type SessionRailRowProps } from "./session-rail-row.js";
+export {
+  SessionRailRow,
+  type SessionRailRowProps,
+} from "./session-rail-row.js";

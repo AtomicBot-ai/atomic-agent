@@ -37,12 +37,7 @@ export class McpRequestError extends McpError {
 
 /** Operator-facing classification used by status badges and logs. */
 export type McpFailureCategory =
-  | "config"
-  | "connect"
-  | "transport"
-  | "protocol"
-  | "tool"
-  | "cancelled";
+  "config" | "connect" | "transport" | "protocol" | "tool" | "cancelled";
 
 /**
  * Strip noisy `Error: ` prefixes, trim, and clip long error messages

@@ -17,7 +17,9 @@ describe("rail session list — boot", () => {
       expect(() => orchestrator.start()).not.toThrow();
       expect(rail()).toEqual([]);
       const notice = actions.find(
-        (a) => a.type === "runtime_info" && a.line.startsWith("session list unavailable:"),
+        (a) =>
+          a.type === "runtime_info" &&
+          a.line.startsWith("session list unavailable:"),
       );
       expect(notice).toMatchObject({
         line: "session list unavailable: database disk image is malformed",
@@ -30,9 +32,12 @@ describe("rail session list — boot", () => {
   });
 
   it("says how many rows it skipped when the store holds unreadable ones", async () => {
-    const { orchestrator, rail, actions } = harness([spokenTo("s-old", "older")], {
-      countUnreadable: () => 2,
-    });
+    const { orchestrator, rail, actions } = harness(
+      [spokenTo("s-old", "older")],
+      {
+        countUnreadable: () => 2,
+      },
+    );
     try {
       orchestrator.start();
       expect(rail().map((entry) => entry.sessionId)).toEqual(["s-old"]);
@@ -50,7 +55,9 @@ describe("rail session list — boot", () => {
     try {
       orchestrator.start();
       expect(
-        actions.some((a) => a.type === "runtime_info" && a.line.includes("unreadable")),
+        actions.some(
+          (a) => a.type === "runtime_info" && a.line.includes("unreadable"),
+        ),
       ).toBe(false);
     } finally {
       await orchestrator.shutdown();

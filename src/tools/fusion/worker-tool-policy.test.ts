@@ -11,7 +11,9 @@ describe("worker tool policy", () => {
     const known = new Set(DEFAULT_TOOL_DESCRIPTORS.map((d) => d.name));
     for (const name of WORKER_EXCLUDED_TOOLS) {
       if (name === "fusion.delegate") continue;
-      expect(known.has(name), `${name} is not a default tool descriptor`).toBe(true);
+      expect(known.has(name), `${name} is not a default tool descriptor`).toBe(
+        true,
+      );
     }
     // Pinned even though PR 5 has not registered it: the day it lands,
     // a worker must already be unable to fan out again.

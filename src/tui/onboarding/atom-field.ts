@@ -121,7 +121,16 @@ function spawnAtom(
   const rowVelocity = (roll() < 0.5 ? -speed : speed) / CELL_ASPECT;
   const lifeSteps = LIFE_MIN + Math.floor(roll() * (LIFE_MAX - LIFE_MIN + 1));
   return {
-    atom: { id, column, row, columnVelocity, rowVelocity, hotSteps: 0, lifeSteps, dormantSteps: 0 },
+    atom: {
+      id,
+      column,
+      row,
+      columnVelocity,
+      rowVelocity,
+      hotSteps: 0,
+      lifeSteps,
+      dormantSteps: 0,
+    },
     seed: cursor,
   };
 }
@@ -186,7 +195,11 @@ function reflect(
 }
 
 function moveAtom(atom: Atom, bounds: AtomBounds): Atom {
-  const horizontal = reflect(atom.column, atom.columnVelocity, maxColumnFor(bounds));
+  const horizontal = reflect(
+    atom.column,
+    atom.columnVelocity,
+    maxColumnFor(bounds),
+  );
   const vertical = reflect(atom.row, atom.rowVelocity, maxRowFor(bounds));
   return {
     ...atom,
@@ -214,7 +227,10 @@ function collide(atoms: Atom[]): Atom[] {
       if (!left || !right) continue;
       if (left.dormantSteps > 0 || right.dormantSteps > 0) continue;
       if (Math.round(left.row) !== Math.round(right.row)) continue;
-      if (Math.abs(Math.round(left.column) - Math.round(right.column)) >= ATOM_WIDTH) {
+      if (
+        Math.abs(Math.round(left.column) - Math.round(right.column)) >=
+        ATOM_WIDTH
+      ) {
         continue;
       }
       const leftIsLeading = left.column <= right.column;
@@ -238,7 +254,10 @@ function collide(atoms: Atom[]): Atom[] {
 }
 
 /** One tick of the field: move, age, retire, respawn, then collide. */
-export function stepAtoms(state: AtomFieldState, bounds: AtomBounds): AtomFieldState {
+export function stepAtoms(
+  state: AtomFieldState,
+  bounds: AtomBounds,
+): AtomFieldState {
   let seed = state.seed;
   let nextId = state.nextId;
   const atoms: Atom[] = [];

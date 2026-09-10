@@ -94,7 +94,10 @@ describe("createComposioSession", () => {
   });
 
   it("reports a rejected key distinctly from other failures", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({}, 401)));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse({}, 401)),
+    );
     await expect(
       createComposioSession({ apiKey: "bad", userId: "u" }),
     ).rejects.toMatchObject({ name: "ComposioApiError", status: 401 });
@@ -104,7 +107,10 @@ describe("createComposioSession", () => {
   });
 
   it("surfaces a server-side failure with its status", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({}, 503)));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse({}, 503)),
+    );
     await expect(
       createComposioSession({ apiKey: "ak", userId: "u" }),
     ).rejects.toMatchObject({ name: "ComposioApiError", status: 503 });

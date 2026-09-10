@@ -134,7 +134,9 @@ export function mapCodexSession(
 
 function joinText(blocks: readonly CodexBlock[]): string {
   return blocks
-    .filter((b): b is Extract<CodexBlock, { type: "text" }> => b.type === "text")
+    .filter(
+      (b): b is Extract<CodexBlock, { type: "text" }> => b.type === "text",
+    )
     .map((b) => b.text)
     .join("\n");
 }

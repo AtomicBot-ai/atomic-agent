@@ -7,7 +7,9 @@ const DRAG_ACTIONS = new Set<string>([
   "sidebar_drag_ended",
 ]);
 
-function isSessionRailAction(action: { type: string }): action is SessionRailAction {
+function isSessionRailAction(action: {
+  type: string;
+}): action is SessionRailAction {
   return DRAG_ACTIONS.has(action.type);
 }
 

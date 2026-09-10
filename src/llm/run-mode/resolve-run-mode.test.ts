@@ -9,7 +9,11 @@ function llm(
   runMode?: UserLlmRunModeConfig,
   providers: ResolvedLlmConfig["providers"] = [
     { id: "local-llama", kind: "llama-server", url: "http://127.0.0.1:19091" },
-    { id: "openrouter", kind: "openrouter", defaultChatModel: "anthropic/claude-sonnet-4.5" },
+    {
+      id: "openrouter",
+      kind: "openrouter",
+      defaultChatModel: "anthropic/claude-sonnet-4.5",
+    },
     { id: "groq", kind: "openai-compatible", defaultChatModel: "llama-3.3" },
   ],
 ): ResolvedLlmConfig {
@@ -56,7 +60,10 @@ describe("resolveRunMode", () => {
     const rm = resolveRunMode(
       llm("openrouter", {
         mode: "fusion",
-        fusion: { orchestratorProvider: "openrouter", workerProvider: "local-llama" },
+        fusion: {
+          orchestratorProvider: "openrouter",
+          workerProvider: "local-llama",
+        },
       }),
     );
     expect(rm.effective).toBe("fusion");
@@ -66,7 +73,10 @@ describe("resolveRunMode", () => {
 
   it("drops to the derived mode when the operator switched provider by hand", () => {
     const rm = resolveRunMode(
-      llm("groq", { mode: "fusion", fusion: { orchestratorProvider: "openrouter" } }),
+      llm("groq", {
+        mode: "fusion",
+        fusion: { orchestratorProvider: "openrouter" },
+      }),
     );
     expect(rm.stored).toBe("fusion");
     expect(rm.effective).toBe("cloud");
@@ -76,32 +86,53 @@ describe("resolveRunMode", () => {
   it("degrades fusion with no cloud provider to local", () => {
     const rm = resolveRunMode(
       llm("local-llama", { mode: "fusion" }, [
-        { id: "local-llama", kind: "llama-server", url: "http://127.0.0.1:19091" },
+        {
+          id: "local-llama",
+          kind: "llama-server",
+          url: "http://127.0.0.1:19091",
+        },
       ]),
     );
     expect(rm.effective).toBe("local");
-    expect(rm.degraded).toEqual({ reason: "no-cloud-provider", requested: "fusion" });
+    expect(rm.degraded).toEqual({
+      reason: "no-cloud-provider",
+      requested: "fusion",
+    });
     expect(rm.orchestratorProviderId).toBeNull();
   });
 
   it("degrades fusion with no llama-server provider to cloud-only", () => {
     const rm = resolveRunMode(
       llm("groq", { mode: "fusion" }, [
-        { id: "groq", kind: "openai-compatible", defaultChatModel: "llama-3.3" },
+        {
+          id: "groq",
+          kind: "openai-compatible",
+          defaultChatModel: "llama-3.3",
+        },
       ]),
     );
     expect(rm.effective).toBe("cloud");
-    expect(rm.degraded).toEqual({ reason: "no-local-provider", requested: "fusion" });
+    expect(rm.degraded).toEqual({
+      reason: "no-local-provider",
+      requested: "fusion",
+    });
     expect(rm.workerProviderId).toBeNull();
   });
 
   it("degrades a stored cloud mode with no cloud provider", () => {
     const rm = resolveRunMode(
       llm("local-llama", { mode: "cloud" }, [
-        { id: "local-llama", kind: "llama-server", url: "http://127.0.0.1:19091" },
+        {
+          id: "local-llama",
+          kind: "llama-server",
+          url: "http://127.0.0.1:19091",
+        },
       ]),
     );
-    expect(rm.degraded).toEqual({ reason: "no-cloud-provider", requested: "cloud" });
+    expect(rm.degraded).toEqual({
+      reason: "no-cloud-provider",
+      requested: "cloud",
+    });
   });
 
   it("assumes local for an unresolvable active provider and never leaves primary empty", () => {
@@ -115,8 +146,16 @@ describe("resolveRunMode", () => {
   it("accepts a subscription-cli provider as the orchestrator", () => {
     const rm = resolveRunMode(
       llm("claude-cli", { mode: "fusion" }, [
-        { id: "local-llama", kind: "llama-server", url: "http://127.0.0.1:19091" },
-        { id: "claude-cli", kind: "subscription-cli", defaultChatModel: "sonnet" },
+        {
+          id: "local-llama",
+          kind: "llama-server",
+          url: "http://127.0.0.1:19091",
+        },
+        {
+          id: "claude-cli",
+          kind: "subscription-cli",
+          defaultChatModel: "sonnet",
+        },
       ]),
     );
     expect(rm.effective).toBe("fusion");
@@ -138,15 +177,19 @@ describe("resolveRunMode", () => {
     );
     expect(pinned.orchestratorModel).toBe("opus");
     expect(pinned.workerModel).toBe("gemma");
-    expect(resolveRunMode(llm("openrouter", { mode: "fusion" })).workerModel).toBeNull();
+    expect(
+      resolveRunMode(llm("openrouter", { mode: "fusion" })).workerModel,
+    ).toBeNull();
   });
 
   it("applies the worker defaults and honours overrides", () => {
-    expect(resolveRunMode(llm("openrouter", { mode: "fusion" }))).toMatchObject({
-      workers: 2,
-      workerMaxSteps: 40,
-      workerTimeoutMs: 600_000,
-    });
+    expect(resolveRunMode(llm("openrouter", { mode: "fusion" }))).toMatchObject(
+      {
+        workers: 2,
+        workerMaxSteps: 40,
+        workerTimeoutMs: 600_000,
+      },
+    );
     expect(
       resolveRunMode(
         llm("openrouter", {

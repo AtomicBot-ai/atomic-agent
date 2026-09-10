@@ -24,9 +24,16 @@ export function runRunModeVerb(
     const rm = state.providersPanel.runMode;
     dispatch({
       type: "system_message",
-      text: rm ? describeRunMode(rm) : "run mode: not resolved yet — open Manage › LLM once",
+      text: rm
+        ? describeRunMode(rm)
+        : "run mode: not resolved yet — open Manage › LLM once",
     });
     return;
   }
-  activateComposerSwitchRow(backendSwitchRow(state, verb), state, dispatch, callbacks);
+  activateComposerSwitchRow(
+    backendSwitchRow(state, verb),
+    state,
+    dispatch,
+    callbacks,
+  );
 }

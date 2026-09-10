@@ -139,7 +139,5 @@ export function createAnalyticsClient(options: {
 
 /** True when running under Vitest / `NODE_ENV=test`. */
 function isTestEnvironment(): boolean {
-  return (
-    process.env.VITEST !== undefined || process.env.NODE_ENV === "test"
-  );
+  return process.env.VITEST !== undefined || process.env.NODE_ENV === "test";
 }

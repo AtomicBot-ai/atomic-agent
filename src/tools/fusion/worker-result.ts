@@ -1,5 +1,8 @@
 import type { CompletionUsage } from "../../llm/provider/completion-types.js";
-import type { AgentLoopEvent, AgentLoopReason } from "../../agent/agent-loop.js";
+import type {
+  AgentLoopEvent,
+  AgentLoopReason,
+} from "../../agent/agent-loop.js";
 import { FUSION_WORKER_APPROVAL_MARKER } from "./worker-tool-policy.js";
 
 /**
@@ -13,11 +16,7 @@ import { FUSION_WORKER_APPROVAL_MARKER } from "./worker-tool-policy.js";
  * itself without re-reading a transcript it no longer has.
  */
 export type WorkerTaskStatus =
-  | "ok"
-  | "failed"
-  | "cancelled"
-  | "needs_orchestrator"
-  | "max_steps";
+  "ok" | "failed" | "cancelled" | "needs_orchestrator" | "max_steps";
 
 export interface WorkerToolStats {
   calls: number;
@@ -111,7 +110,11 @@ export class WorkerRunCollector {
       reply: this.replyText,
       stepCount: input.stepCount,
       durationMs: input.durationMs,
-      tools: { calls: this.calls, errors: this.errors, byTool: { ...this.byTool } },
+      tools: {
+        calls: this.calls,
+        errors: this.errors,
+        byTool: { ...this.byTool },
+      },
       ...(this.usage ? { usage: this.usage } : {}),
       ...(input.error === undefined ? {} : { error: input.error }),
     };
@@ -176,5 +179,7 @@ function renderBlock(result: WorkerTaskResult, perTaskCap: number): string {
     body.length > perTaskCap
       ? `${body.slice(0, Math.max(0, perTaskCap - 15))}\n… [truncated]`
       : body;
-  return result.error ? `${head}\n${clipped}\nerror: ${result.error}` : `${head}\n${clipped}`;
+  return result.error
+    ? `${head}\n${clipped}\nerror: ${result.error}`
+    : `${head}\n${clipped}`;
 }

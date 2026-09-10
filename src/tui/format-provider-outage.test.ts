@@ -25,9 +25,7 @@ function outage(over: Partial<Outage> = {}): Outage {
 
 describe("formatProviderOutage", () => {
   it("counts the wait against its budget while the turn is parked", () => {
-    expect(
-      formatProviderOutage(outage({ waitedMs: 14_000 }), NOW),
-    ).toBe(
+    expect(formatProviderOutage(outage({ waitedMs: 14_000 }), NOW)).toBe(
       "waiting for provider 14s/300s — connection refused by 127.0.0.1:8080",
     );
   });
@@ -118,7 +116,7 @@ describe("formatProviderOutage", () => {
     const line = formatProviderOutage(
       outage({
         reason:
-          "Can't reach \"aimlapi\" — no response from api.aimlapi.com after three attempts, check the provider URL or your connection",
+          'Can\'t reach "aimlapi" — no response from api.aimlapi.com after three attempts, check the provider URL or your connection',
         waitedMs: 4_000,
         attempt: 2,
       }),

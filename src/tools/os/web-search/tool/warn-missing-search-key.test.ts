@@ -43,13 +43,19 @@ describe("checkMissingSearchKey", () => {
 
   it("stays silent when the key is present", () => {
     expect(
-      checkMissingSearchKey({ config: makeConfig(), env: { EXA_API_KEY: "k" } }),
+      checkMissingSearchKey({
+        config: makeConfig(),
+        env: { EXA_API_KEY: "k" },
+      }),
     ).toBeNull();
   });
 
   it("treats a whitespace-only key as missing", () => {
     expect(
-      checkMissingSearchKey({ config: makeConfig(), env: { EXA_API_KEY: "   " } }),
+      checkMissingSearchKey({
+        config: makeConfig(),
+        env: { EXA_API_KEY: "   " },
+      }),
     ).not.toBeNull();
   });
 
@@ -72,7 +78,10 @@ describe("checkMissingSearchKey", () => {
 
   it("stays silent when search is disabled outright", () => {
     expect(
-      checkMissingSearchKey({ config: makeConfig({ enabled: false }), env: {} }),
+      checkMissingSearchKey({
+        config: makeConfig({ enabled: false }),
+        env: {},
+      }),
     ).toBeNull();
   });
 

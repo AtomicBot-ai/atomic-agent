@@ -3,7 +3,11 @@ import { StructuredLogger } from "./structured-logger.js";
 import { MetricsCollector } from "./metrics-collector.js";
 import { AgentMetrics, METRIC_NAMES } from "./agent-metrics.js";
 import { createLogNdjsonSink, createMetricNdjsonSink } from "./ndjson-sinks.js";
-import type { SidecarEvent, LogPayload, MetricPayload } from "../sidecar/sidecar-events.js";
+import type {
+  SidecarEvent,
+  LogPayload,
+  MetricPayload,
+} from "../sidecar/sidecar-events.js";
 
 describe("StructuredLogger", () => {
   it("respects the configured level threshold", () => {
@@ -32,9 +36,20 @@ describe("StructuredLogger", () => {
 
 describe("MetricsCollector + AgentMetrics", () => {
   it("records canonical step/llm/tool metric names", () => {
-    const samples: Array<{ name: string; value: number; tags?: Record<string, string> }> = [];
+    const samples: Array<{
+      name: string;
+      value: number;
+      tags?: Record<string, string>;
+    }> = [];
     const collector = new MetricsCollector({
-      sinks: [(s) => samples.push({ name: s.name, value: s.value, ...(s.tags ? { tags: s.tags } : {}) })],
+      sinks: [
+        (s) =>
+          samples.push({
+            name: s.name,
+            value: s.value,
+            ...(s.tags ? { tags: s.tags } : {}),
+          }),
+      ],
     });
     const metrics = new AgentMetrics(collector);
 
@@ -98,14 +113,27 @@ describe("MetricsCollector + AgentMetrics", () => {
       durationMs: 2,
       cacheReused: false,
     });
-    const hitSamples = samples.filter((s) => s.name === METRIC_NAMES.kvCacheHit);
+    const hitSamples = samples.filter(
+      (s) => s.name === METRIC_NAMES.kvCacheHit,
+    );
     expect(hitSamples.map((s) => s.value)).toEqual([1, 0]);
   });
 
   it("records LLM failures tagged by category", () => {
-    const samples: Array<{ name: string; value: number; tags?: Record<string, string> }> = [];
+    const samples: Array<{
+      name: string;
+      value: number;
+      tags?: Record<string, string>;
+    }> = [];
     const collector = new MetricsCollector({
-      sinks: [(s) => samples.push({ name: s.name, value: s.value, ...(s.tags ? { tags: s.tags } : {}) })],
+      sinks: [
+        (s) =>
+          samples.push({
+            name: s.name,
+            value: s.value,
+            ...(s.tags ? { tags: s.tags } : {}),
+          }),
+      ],
     });
     const metrics = new AgentMetrics(collector);
 
@@ -124,7 +152,11 @@ describe("MetricsCollector + AgentMetrics", () => {
   });
 
   it("records reflection outcomes tagged by outcome with matching latency samples", () => {
-    const samples: Array<{ name: string; value: number; tags?: Record<string, string> }> = [];
+    const samples: Array<{
+      name: string;
+      value: number;
+      tags?: Record<string, string>;
+    }> = [];
     const collector = new MetricsCollector({
       sinks: [
         (s) =>
@@ -171,7 +203,12 @@ describe("NDJSON sinks", () => {
   it("wraps log records in sidecar log events", () => {
     const events: SidecarEvent[] = [];
     const sink = createLogNdjsonSink((e) => events.push(e));
-    sink({ level: "info", message: "hello", context: { k: 1 }, timestamp: 123 });
+    sink({
+      level: "info",
+      message: "hello",
+      context: { k: 1 },
+      timestamp: 123,
+    });
     expect(events).toHaveLength(1);
     expect(events[0]?.type).toBe("log");
     const payload = events[0]?.payload as LogPayload;
@@ -183,7 +220,12 @@ describe("NDJSON sinks", () => {
   it("wraps metric samples in sidecar metric events with timestamp", () => {
     const events: SidecarEvent[] = [];
     const sink = createMetricNdjsonSink((e) => events.push(e));
-    sink({ name: "agent.step.tokens", value: 1200, tags: { outcome: "ok" }, timestamp: 42 });
+    sink({
+      name: "agent.step.tokens",
+      value: 1200,
+      tags: { outcome: "ok" },
+      timestamp: 42,
+    });
     expect(events).toHaveLength(1);
     expect(events[0]?.type).toBe("metric");
     const payload = events[0]?.payload as MetricPayload & { timestamp: number };

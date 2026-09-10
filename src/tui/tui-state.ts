@@ -94,11 +94,7 @@ import type { UninstallFlowState } from "./uninstall/uninstall-state.js";
  * recorded in `runHistory`; the live status is always one of
  * `idle | running | awaiting_approval`.
  */
-export type TuiStatus =
-  | "idle"
-  | "running"
-  | "awaiting_approval"
-  | "quitting";
+export type TuiStatus = "idle" | "running" | "awaiting_approval" | "quitting";
 
 export type RunOutcome = "completed" | "failed" | "cancelled";
 
@@ -760,9 +756,10 @@ export function createInitialTuiState(
   layout?: InitialTuiLayoutOptions,
 ): TuiState {
   const requestedTab = layout?.activeTab ?? "feed";
-  const activeTab = requestedTab === "models" || requestedTab === "providers"
-    ? "llm"
-    : requestedTab;
+  const activeTab =
+    requestedTab === "models" || requestedTab === "providers"
+      ? "llm"
+      : requestedTab;
   const llmPanel = createInitialLlmPanelState();
   if (requestedTab === "models") llmPanel.syncModeToActiveRoute = true;
   if (requestedTab === "providers") llmPanel.mode = "cloud";

@@ -333,9 +333,12 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
       if (cmd.openSwitch) {
         // The composer's own popup, on its backend control: no second
         // list of the same three modes to keep in step.
-        return pureActions([{ type: "composer_switch_opened", kind: "backend" }]);
+        return pureActions([
+          { type: "composer_switch_opened", kind: "backend" },
+        ]);
       }
-      if (cmd.workers !== undefined) return pureActions([], { runModeWorkers: cmd.workers });
+      if (cmd.workers !== undefined)
+        return pureActions([], { runModeWorkers: cmd.workers });
       return pureActions([], { runModeVerb: cmd.status ? "status" : cmd.mode });
     }
     default:
@@ -554,7 +557,10 @@ function dispatchThemeSub(rawArgs: string): SlashDispatchResult {
  *   - `status`      — emit the managed-runtime status line in the feed.
  *   - `<base-url>`  — persist the base URL for external mode (back-compat).
  */
-function dispatchModelsSub(rawArgs: string, commandName: string): SlashDispatchResult {
+function dispatchModelsSub(
+  rawArgs: string,
+  commandName: string,
+): SlashDispatchResult {
   const argPart = rawArgs.trim();
   const bits = argPart.split(/\s+/).filter(Boolean);
   if (argPart.length === 0) {
@@ -747,10 +753,13 @@ function dispatchLlmSub(rawArgs: string): SlashDispatchResult {
   // test. Explicit only: it spends requests against the operator's own
   // account and must never run on a turn path.
   if (/^check$/i.test(argPart)) {
-    return pureActions([{ type: "providers_contract_probe_requested", providerId: null }], {
-      systemMessage:
-        "checking the active provider's streaming tool-call contract — this sends one request",
-    });
+    return pureActions(
+      [{ type: "providers_contract_probe_requested", providerId: null }],
+      {
+        systemMessage:
+          "checking the active provider's streaming tool-call contract — this sends one request",
+      },
+    );
   }
   // `/llm restart` bounces a wedged local model server from the chat
   // surface. Until now the only restart was the LLM pane's `s` toggle

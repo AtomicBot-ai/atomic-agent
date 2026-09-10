@@ -78,7 +78,9 @@ describe("sidecar steer_message", () => {
       },
     });
 
-    const session = runtime.createSession({ metadata: { source: "steer-test" } });
+    const session = runtime.createSession({
+      metadata: { source: "steer-test" },
+    });
     const steer = makeSteerHandler(runtime, session.id);
 
     const turn = runtime.runTurn(session, "start working", {

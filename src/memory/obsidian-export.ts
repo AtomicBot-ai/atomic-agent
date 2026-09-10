@@ -151,7 +151,10 @@ export function exportMemoryToObsidian(
   }
   for (const row of lessons) {
     const id = asId(row.id);
-    writeIfChanged(join(lessonsDir, `lesson-${id}.md`), renderLesson(row, noteIds));
+    writeIfChanged(
+      join(lessonsDir, `lesson-${id}.md`),
+      renderLesson(row, noteIds),
+    );
   }
   for (const row of procedures) {
     const id = asId(row.id);
@@ -175,7 +178,10 @@ export function exportMemoryToObsidian(
   };
 }
 
-function resolveExportRoot(vaultDir: string, folder: string | undefined): string {
+function resolveExportRoot(
+  vaultDir: string,
+  folder: string | undefined,
+): string {
   const name = folder ?? DEFAULT_EXPORT_FOLDER;
   if (name.trim().length === 0) {
     throw new ObsidianExportUsageError("--folder must not be empty");
@@ -195,7 +201,9 @@ function readAll(db: Database.Database, table: string, orderBy: string): Row[] {
     .prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`)
     .get(table);
   if (present === undefined) return [];
-  return db.prepare(`SELECT * FROM ${table} ORDER BY ${orderBy}`).all() as Row[];
+  return db
+    .prepare(`SELECT * FROM ${table} ORDER BY ${orderBy}`)
+    .all() as Row[];
 }
 
 // ---------------------------------------------------------------------------
@@ -257,7 +265,12 @@ function renderLesson(row: Row, noteIds: Set<number>): string {
     noteIds.has(id),
   );
   if (sources.length > 0) {
-    lines.push("", "## Sources", "", ...sources.map((id) => `- [[note-${id}]]`));
+    lines.push(
+      "",
+      "## Sources",
+      "",
+      ...sources.map((id) => `- [[note-${id}]]`),
+    );
   }
   lines.push("");
   return lines.join("\n");
@@ -378,7 +391,9 @@ function parseNumberArray(raw: unknown): number[] {
   }
 }
 
-function parseSteps(raw: unknown): { description: string; toolHint: string | null }[] {
+function parseSteps(
+  raw: unknown,
+): { description: string; toolHint: string | null }[] {
   if (typeof raw !== "string" || raw.length === 0) return [];
   try {
     const parsed: unknown = JSON.parse(raw);
@@ -391,7 +406,8 @@ function parseSteps(raw: unknown): { description: string; toolHint: string | nul
       const toolHint = (item as Row).toolHint;
       steps.push({
         description,
-        toolHint: typeof toolHint === "string" && toolHint.length > 0 ? toolHint : null,
+        toolHint:
+          typeof toolHint === "string" && toolHint.length > 0 ? toolHint : null,
       });
     }
     return steps;
@@ -421,7 +437,11 @@ function writeIfChanged(path: string, content: string): void {
  * `<kind>-<n>.md` names are candidates — the user's own files in the
  * export folders are never touched.
  */
-function pruneStale(dir: string, pattern: RegExp, liveIds: Set<number>): number {
+function pruneStale(
+  dir: string,
+  pattern: RegExp,
+  liveIds: Set<number>,
+): number {
   let pruned = 0;
   for (const name of readdirSync(dir)) {
     const match = pattern.exec(name);

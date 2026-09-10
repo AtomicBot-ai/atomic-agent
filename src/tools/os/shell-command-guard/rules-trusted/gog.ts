@@ -260,7 +260,8 @@ export const gogReadOnlyRule: Rule = {
     if (containsDangerousWord(input.args)) return null;
     const enabled = readEnabledCommands(input.args);
     if (enabled.length === 0) return null;
-    if (!enabled.every((name) => SAFE_GOG_ENABLE_COMMANDS.has(name))) return null;
+    if (!enabled.every((name) => SAFE_GOG_ENABLE_COMMANDS.has(name)))
+      return null;
     return {
       action: "allow",
       rule: "gog.read_only",

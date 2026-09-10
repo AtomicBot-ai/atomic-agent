@@ -52,8 +52,7 @@ const NOISE_ROLES = new Set([
 ]);
 
 /** Matches "- <role>[ ...]..." — a Playwright AI-mode tree node. */
-const LINE_PATTERN =
-  /^-\s+([A-Za-z][A-Za-z0-9_-]*)(.*)$/;
+const LINE_PATTERN = /^-\s+([A-Za-z][A-Za-z0-9_-]*)(.*)$/;
 const NAME_PATTERN = /^\s+"/;
 const REF_PATTERN = /\[ref=([A-Za-z0-9]+)\]/;
 
@@ -81,8 +80,7 @@ function parseLine(raw: string): ParsedLine | null {
   // We take the segment after the last colon to avoid picking up colons
   // inside a quoted name.
   const colonIdx = rest.lastIndexOf(":");
-  const textAfterColon =
-    colonIdx >= 0 ? rest.slice(colonIdx + 1).trim() : "";
+  const textAfterColon = colonIdx >= 0 ? rest.slice(colonIdx + 1).trim() : "";
   return { indent, role, hasName, ref, textAfterColon };
 }
 
@@ -144,7 +142,9 @@ export function summariseAriaSnapshot(
   const omittedCharsByBudget = charPacked.omittedChars;
 
   const truncatedByLimit = afterChars.length > maxLines;
-  const finalLines = truncatedByLimit ? afterChars.slice(0, maxLines) : afterChars;
+  const finalLines = truncatedByLimit
+    ? afterChars.slice(0, maxLines)
+    : afterChars;
   const omittedByLimit = afterChars.length - finalLines.length;
   const omittedCharsByLines = truncatedByLimit
     ? afterChars.slice(maxLines).reduce((sum, line) => sum + line.length + 1, 0)
@@ -153,9 +153,7 @@ export function summariseAriaSnapshot(
   const body = finalLines.join("\n");
   const footerParts: string[] = [];
   if (droppedNoise > 0) {
-    footerParts.push(
-      `… [collapsed ${droppedNoise} empty container lines]`,
-    );
+    footerParts.push(`… [collapsed ${droppedNoise} empty container lines]`);
   }
   if (truncatedByChars) {
     footerParts.push(
@@ -169,12 +167,7 @@ export function summariseAriaSnapshot(
   }
   const footer = footerParts.length > 0 ? `\n${footerParts.join("\n")}` : "";
 
-  const text = [
-    `url: ${meta.url}`,
-    `title: ${meta.title}`,
-    "",
-    body + footer,
-  ]
+  const text = [`url: ${meta.url}`, `title: ${meta.title}`, "", body + footer]
     .join("\n")
     .trimEnd();
 
@@ -201,7 +194,11 @@ export function packLinesToCharBudget(
     return { lines: [...lines], truncated: false, omittedChars: 0 };
   }
   if (maxChars <= 0) {
-    return { lines: [], truncated: lines.length > 0, omittedChars: lines.join("\n").length };
+    return {
+      lines: [],
+      truncated: lines.length > 0,
+      omittedChars: lines.join("\n").length,
+    };
   }
   const out: string[] = [];
   let used = 0;
@@ -212,7 +209,10 @@ export function packLinesToCharBudget(
     if (used + add > maxChars) {
       const omittedChars = lines
         .slice(i)
-        .reduce((sum, l, idx) => sum + l.length + (idx > 0 || out.length > 0 ? 1 : 0), 0);
+        .reduce(
+          (sum, l, idx) => sum + l.length + (idx > 0 || out.length > 0 ? 1 : 0),
+          0,
+        );
       return { lines: out, truncated: true, omittedChars };
     }
     out.push(line);

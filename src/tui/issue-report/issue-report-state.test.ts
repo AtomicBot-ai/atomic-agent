@@ -21,9 +21,17 @@ describe("reduceIssueReport", () => {
   it("opens on pick, wraps the cursor, closes to null", () => {
     let s = reduceIssueReport(null, { type: "issue_report_opened" }, 3);
     expect(s).toEqual(createIssueReportState());
-    s = reduceIssueReport(s, { type: "issue_report_cursor_moved", delta: -1 }, 3);
+    s = reduceIssueReport(
+      s,
+      { type: "issue_report_cursor_moved", delta: -1 },
+      3,
+    );
     expect(s?.cursor).toBe(2);
-    s = reduceIssueReport(s, { type: "issue_report_cursor_moved", delta: 1 }, 3);
+    s = reduceIssueReport(
+      s,
+      { type: "issue_report_cursor_moved", delta: 1 },
+      3,
+    );
     expect(s?.cursor).toBe(0);
     expect(reduceIssueReport(s, { type: "issue_report_closed" }, 3)).toBeNull();
   });
@@ -33,20 +41,34 @@ describe("reduceIssueReport", () => {
     s = reduceIssueReport(s, { type: "issue_report_building" }, 3);
     expect(s?.step).toBe("building");
     // The cursor is frozen once a level is chosen.
-    expect(reduceIssueReport(s, { type: "issue_report_cursor_moved", delta: 1 }, 3)).toBe(s);
-    s = reduceIssueReport(s, { type: "issue_report_previewed", preview: PREVIEW }, 3);
+    expect(
+      reduceIssueReport(s, { type: "issue_report_cursor_moved", delta: 1 }, 3),
+    ).toBe(s);
+    s = reduceIssueReport(
+      s,
+      { type: "issue_report_previewed", preview: PREVIEW },
+      3,
+    );
     expect(s?.step).toBe("confirm");
     expect(s?.preview).toEqual(PREVIEW);
     s = reduceIssueReport(s, { type: "issue_report_sending" }, 3);
     expect(s?.step).toBe("sending");
-    s = reduceIssueReport(s, { type: "issue_report_sent", url: "https://x/1" }, 3);
+    s = reduceIssueReport(
+      s,
+      { type: "issue_report_sent", url: "https://x/1" },
+      3,
+    );
     expect(s?.step).toBe("sent");
     expect(s?.url).toBe("https://x/1");
   });
 
   it("records a failure and keeps the preview so the zip path stays visible", () => {
     let s = reduceIssueReport(null, { type: "issue_report_opened" }, 3);
-    s = reduceIssueReport(s, { type: "issue_report_previewed", preview: PREVIEW }, 3);
+    s = reduceIssueReport(
+      s,
+      { type: "issue_report_previewed", preview: PREVIEW },
+      3,
+    );
     s = reduceIssueReport(s, { type: "issue_report_failed", error: "401" }, 3);
     expect(s?.step).toBe("error");
     expect(s?.error).toBe("401");
@@ -54,7 +76,10 @@ describe("reduceIssueReport", () => {
   });
 
   it("does not reopen over a leg in flight", () => {
-    for (const step of ["issue_report_sending", "issue_report_building"] as const) {
+    for (const step of [
+      "issue_report_sending",
+      "issue_report_building",
+    ] as const) {
       let s = reduceIssueReport(null, { type: "issue_report_opened" }, 3);
       s = reduceIssueReport(s, { type: step }, 3);
       expect(reduceIssueReport(s, { type: "issue_report_opened" }, 3)).toBe(s);
@@ -62,8 +87,12 @@ describe("reduceIssueReport", () => {
   });
 
   it("ignores progress actions when closed", () => {
-    expect(reduceIssueReport(null, { type: "issue_report_sending" }, 3)).toBeNull();
-    expect(reduceIssueReport(null, { type: "issue_report_failed", error: "x" }, 3)).toBeNull();
+    expect(
+      reduceIssueReport(null, { type: "issue_report_sending" }, 3),
+    ).toBeNull();
+    expect(
+      reduceIssueReport(null, { type: "issue_report_failed", error: "x" }, 3),
+    ).toBeNull();
   });
 
   it("narrows by prefix", () => {

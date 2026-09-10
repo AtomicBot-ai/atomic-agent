@@ -36,12 +36,17 @@ export function fakeProvider(
       supportsPromptCache: false,
       reasoningFormat: "none",
     },
-    toolCallAdapter: transport === "native_tools" ? openAiToolCallAdapter : null,
+    toolCallAdapter:
+      transport === "native_tools" ? openAiToolCallAdapter : null,
     streamConsumer: null,
     complete: serve,
     async *completeStream(request) {
       const result = await serve(request);
-      yield { delta: result.content, reasoningDelta: "", done: true } as StreamChunk;
+      yield {
+        delta: result.content,
+        reasoningDelta: "",
+        done: true,
+      } as StreamChunk;
       return result;
     },
     async describeImage() {
@@ -61,7 +66,12 @@ export function fakeAnswer(id: string, content = "ok"): CompletionResult {
     reasoningContent: "",
     stop: true,
     truncated: false,
-    timing: { promptMs: 1, predictedMs: 1, promptTokens: 1, predictedTokens: 1 },
+    timing: {
+      promptMs: 1,
+      predictedMs: 1,
+      promptTokens: 1,
+      predictedTokens: 1,
+    },
     cacheHitTokens: 0,
     slotId: 0,
     modelId: `${id}-model`,

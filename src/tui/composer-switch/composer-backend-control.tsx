@@ -89,7 +89,10 @@ export function BackendControl({
             {` ${backend.kind} `}
           </Text>
         ) : (
-          <Text color={fusion ? fusionSurfaceInk() : theme.colors.railForeground} bold>
+          <Text
+            color={fusion ? fusionSurfaceInk() : theme.colors.railForeground}
+            bold
+          >
             {backend.kind}
           </Text>
         )}

@@ -135,9 +135,9 @@ describe("the machine facts in the ### fusion block", () => {
     expect(noSlots).toContain("`qwen3-4b`");
     expect(noSlots).not.toContain("request slot");
     // Nothing known at all: the behavioural lines and not a word more.
-    expect(
-      buildFusionGuidance({ workerSlots: null, workerModel: null }),
-    ).toBe(FUSION_GUIDANCE);
+    expect(buildFusionGuidance({ workerSlots: null, workerModel: null })).toBe(
+      FUSION_GUIDANCE,
+    );
     expect(buildFusionGuidance()).toBe(FUSION_GUIDANCE);
   });
 

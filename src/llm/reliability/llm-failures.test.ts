@@ -39,8 +39,8 @@ describe("LlmFailure subclasses", () => {
     expect(transport.status).toBe(503);
     expect(transport.url).toBe("http://host/completion");
 
-    const grammar = new GrammarError("bad", "{\"tool\":...");
-    expect(grammar.rawPreview).toBe("{\"tool\":...");
+    const grammar = new GrammarError("bad", '{"tool":...');
+    expect(grammar.rawPreview).toBe('{"tool":...');
 
     const model = new ModelError("no_stop", "ran away");
     expect(model.reason).toBe("no_stop");

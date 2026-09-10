@@ -1,7 +1,5 @@
 export { buildOsWebSearchTool } from "./tool/index.js";
-export type {
-  OsWebSearchOptions,
-} from "./tool/index.js";
+export type { OsWebSearchOptions } from "./tool/index.js";
 export type {
   WebSearchProvider,
   WebSearchProviderName,

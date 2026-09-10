@@ -43,7 +43,9 @@ function drive(state: TuiState) {
 
 describe("handleImportTabKey — source type row", () => {
   it("cycles forward with → / space / Enter and back with ←", () => {
-    const { actions, handle } = drive(stateWith({ focus: "sourceType", source: "openclaw" }));
+    const { actions, handle } = drive(
+      stateWith({ focus: "sourceType", source: "openclaw" }),
+    );
     expect(handle("", sideKey("right"))).toBe(true);
     expect(handle(" ", plainKey())).toBe(true);
     expect(handle("", returnKey())).toBe(true);
@@ -57,7 +59,9 @@ describe("handleImportTabKey — source type row", () => {
   });
 
   it("reaches codex and wraps back to hermes", () => {
-    const { actions, handle } = drive(stateWith({ focus: "sourceType", source: "codex" }));
+    const { actions, handle } = drive(
+      stateWith({ focus: "sourceType", source: "codex" }),
+    );
     handle("", sideKey("right"));
     expect(actions).toEqual([{ type: "import_source_set", source: "hermes" }]);
   });
@@ -81,13 +85,17 @@ describe("handleImportTabKey — focus order per source", () => {
   });
 
   it("has no mcp or cron row for Codex", () => {
-    const { actions, handle } = drive(stateWith({ focus: "memory", source: "codex" }));
+    const { actions, handle } = drive(
+      stateWith({ focus: "memory", source: "codex" }),
+    );
     handle("", arrowKey("down"));
     expect(actions).toEqual([{ type: "import_focus_set", focus: "sessions" }]);
   });
 
   it("still runs the preview from the run row", () => {
-    const { previews, handle } = drive(stateWith({ focus: "run", source: "codex" }));
+    const { previews, handle } = drive(
+      stateWith({ focus: "run", source: "codex" }),
+    );
     handle("", returnKey());
     expect(previews).toHaveLength(1);
     expect(previews[0]!.source).toBe("codex");

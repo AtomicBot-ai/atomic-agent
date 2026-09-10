@@ -121,7 +121,12 @@ function activateBackend(
   // probed before it can be the route — see `persistUserLocalLlmUrl`.
   // The External pane's single row opens exactly that editor.
   goToLlmPane(dispatch, "external");
-  triggerLlmPrimary(selectExternalRows(state)[0] ?? null, state, dispatch, callbacks);
+  triggerLlmPrimary(
+    selectExternalRows(state)[0] ?? null,
+    state,
+    dispatch,
+    callbacks,
+  );
 }
 
 /**
@@ -159,7 +164,9 @@ function activateWorkerModel(
   state: TuiState,
   callbacks: TuiAppCallbacks,
 ): void {
-  const row = state.localModelsPanel.rows.find((candidate) => candidate.id === modelId);
+  const row = state.localModelsPanel.rows.find(
+    (candidate) => candidate.id === modelId,
+  );
   const chatUp =
     state.localModelsPanel.daemon.running ||
     state.localModelsPanel.daemonPhase === "starting";

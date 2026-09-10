@@ -35,7 +35,10 @@ export interface ImportClickContext {
   callbacks: TuiAppCallbacks;
 }
 
-export function ImportClick({ onClick, children }: ImportClickProps): ReactElement {
+export function ImportClick({
+  onClick,
+  children,
+}: ImportClickProps): ReactElement {
   const mouse = useMouseCommands();
   if (!mouse) return <>{children}</>;
   return (
@@ -70,7 +73,9 @@ export function importRowClick(
   };
 }
 
-function focusAction(focus: Extract<TuiAction, { type: "import_focus_set" }>["focus"]): TuiAction {
+function focusAction(
+  focus: Extract<TuiAction, { type: "import_focus_set" }>["focus"],
+): TuiAction {
   return { type: "import_focus_set", focus };
 }
 

@@ -1,7 +1,10 @@
 import type { Lesson } from "../../memory/lessons/lesson-store.js";
 import type { LinkRow } from "../../memory/links/link-store.js";
 import type { MemoryEntry } from "../../memory/memory-store.js";
-import type { Procedure, ProcedureStep } from "../../memory/procedures/procedure-store.js";
+import type {
+  Procedure,
+  ProcedureStep,
+} from "../../memory/procedures/procedure-store.js";
 import type { ProfileFact } from "../../memory/profile-store.js";
 import type { VoteEventRow } from "../../memory/voting/vote-store.js";
 import type { MemoryLinkNeighbor } from "./memory-panel-state.js";
@@ -12,9 +15,14 @@ export function formatProfileHistoryBody(
   key: string,
   chain: readonly ProfileFact[],
 ): string {
-  const lines = [`key: ${key}`, `chain (${chain.length} row${chain.length === 1 ? "" : "s"}):`, ""];
+  const lines = [
+    `key: ${key}`,
+    `chain (${chain.length} row${chain.length === 1 ? "" : "s"}):`,
+    "",
+  ];
   for (const row of chain) {
-    const active = row.supersededBy === null ? " (active)" : ` → #${row.supersededBy}`;
+    const active =
+      row.supersededBy === null ? " (active)" : ` → #${row.supersededBy}`;
     lines.push(
       `[#${row.id}] ${new Date(row.validFrom).toISOString()}: ${row.value}${active}`,
     );
@@ -41,9 +49,7 @@ export function formatNoteDetailBody(
     entry.sessionId ? `session: ${entry.sessionId}` : null,
     entry.workingDir ? `working_dir: ${entry.workingDir}` : null,
     `tags: ${entry.tags.length > 0 ? entry.tags.join(", ") : "(none)"}`,
-    consolidatedInto !== null
-      ? `archived → lesson #${consolidatedInto}`
-      : null,
+    consolidatedInto !== null ? `archived → lesson #${consolidatedInto}` : null,
     `updated: ${new Date(entry.updatedAt).toISOString()}`,
     "",
     entry.content,
@@ -123,7 +129,11 @@ function formatLinkSection(
   expandedNeighbors: readonly number[],
 ): string {
   const parts: string[] = ["--- links ---"];
-  if (outgoing.length === 0 && incoming.length === 0 && expandedNeighbors.length === 0) {
+  if (
+    outgoing.length === 0 &&
+    incoming.length === 0 &&
+    expandedNeighbors.length === 0
+  ) {
     parts.push("(none)");
     return parts.join("\n");
   }
@@ -140,7 +150,9 @@ function formatLinkSection(
     }
   }
   if (expandedNeighbors.length > 0) {
-    parts.push(`expanded (g): ${expandedNeighbors.map((id) => `#${id}`).join(", ")}`);
+    parts.push(
+      `expanded (g): ${expandedNeighbors.map((id) => `#${id}`).join(", ")}`,
+    );
   }
   return parts.join("\n");
 }

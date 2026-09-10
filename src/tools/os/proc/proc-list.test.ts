@@ -21,10 +21,7 @@ describe("os.proc.list", () => {
   });
 
   it("filters by substring (case-insensitive)", async () => {
-    const result = await osProcListTool.run(
-      { filter: "node" },
-      makeCtx(),
-    );
+    const result = await osProcListTool.run({ filter: "node" }, makeCtx());
     const processes = result.details.processes as { command: string }[];
     expect(processes.length).toBeGreaterThan(0);
     expect(
@@ -35,6 +32,8 @@ describe("os.proc.list", () => {
   it("respects limit", async () => {
     const result = await osProcListTool.run({ limit: 3 }, makeCtx());
     expect(result.details.returned).toBeLessThanOrEqual(3);
-    expect((result.details.processes as unknown[]).length).toBeLessThanOrEqual(3);
+    expect((result.details.processes as unknown[]).length).toBeLessThanOrEqual(
+      3,
+    );
   });
 });

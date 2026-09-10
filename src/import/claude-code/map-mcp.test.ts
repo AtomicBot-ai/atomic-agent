@@ -51,7 +51,10 @@ describe("mapClaudeCodeMcpServer", () => {
   });
 
   it("skips entries with neither command nor url", () => {
-    const result = mapClaudeCodeMcpServer({ name: "weird", raw: { type: "ws" } });
+    const result = mapClaudeCodeMcpServer({
+      name: "weird",
+      raw: { type: "ws" },
+    });
     expect(result.kind).toBe("skip");
     if (result.kind === "skip") {
       expect(result.reason).toContain("no command or url");

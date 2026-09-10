@@ -44,14 +44,26 @@ describe("CodexImporter", () => {
   beforeEach(() => {
     sourceDir = mkdtempSync(join(tmpdir(), "codex-imp-src-"));
     stateDir = mkdtempSync(join(tmpdir(), "codex-imp-dst-"));
-    sessionStore = new SessionStore({ dbFile: join(stateDir, "sessions.sqlite") });
+    sessionStore = new SessionStore({
+      dbFile: join(stateDir, "sessions.sqlite"),
+    });
     memoryContents = [];
   });
 
   afterEach(() => {
     sessionStore.close();
-    rmSync(sourceDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
-    rmSync(stateDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    rmSync(sourceDir, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 100,
+    });
+    rmSync(stateDir, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 100,
+    });
   });
 
   function seedAll(): void {
@@ -97,7 +109,9 @@ describe("CodexImporter", () => {
 
     expect(report.summary.error).toBe(0);
     expect(report.summary.migrated).toBe(4);
-    expect(existsSync(join(stateDir, "skills", "review", "SKILL.md"))).toBe(true);
+    expect(existsSync(join(stateDir, "skills", "review", "SKILL.md"))).toBe(
+      true,
+    );
     expect(memoryContents).toEqual(["prefer bun"]);
     expect(sessionStore.load("codex:sess-1")).not.toBeNull();
     expect(readFileSync(join(stateDir, ".env"), "utf8")).toContain(

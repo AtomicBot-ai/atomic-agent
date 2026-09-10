@@ -18,7 +18,8 @@ export const GITHUB_TOKEN_ENV = "GITHUB_TOKEN";
  * a client secret, an SSH key, the token's *name* — and would otherwise
  * fail as an opaque 401 on first use.
  */
-const TOKEN_SHAPE = /^(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{40,})$/;
+const TOKEN_SHAPE =
+  /^(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{40,})$/;
 
 export function looksLikeGithubToken(raw: string): boolean {
   return TOKEN_SHAPE.test(raw.trim());

@@ -77,9 +77,10 @@ export function fusionSurfaceMuted(palette: TuiTheme = theme): string {
  * `chromeTheme` ignores dimming, which is why every other pixel of the
  * popup already reads from it.
  */
-export function fusionChipColors(
-  palette: TuiTheme = theme,
-): { background: string; ink: string } {
+export function fusionChipColors(palette: TuiTheme = theme): {
+  background: string;
+  ink: string;
+} {
   const background = palette.colors.warnStrong;
   return { background, ink: readableOn(background) };
 }

@@ -42,11 +42,15 @@ describe("listToolFamilies", () => {
     expect(fs).toBeDefined();
     expect(fs!.tools).toContain("os.fs.read");
     expect(fs!.tools).toContain("os.fs.write");
-    expect(fs!.tools).toEqual([...fs!.tools].sort((a, b) => a.localeCompare(b)));
+    expect(fs!.tools).toEqual(
+      [...fs!.tools].sort((a, b) => a.localeCompare(b)),
+    );
   });
 
   it("covers the families users ask about", () => {
-    const names = listToolFamilies(DEFAULT_TOOL_DESCRIPTORS).map((f) => f.family);
+    const names = listToolFamilies(DEFAULT_TOOL_DESCRIPTORS).map(
+      (f) => f.family,
+    );
     for (const family of ["os.fs", "os.shell", "os.web", "browser"]) {
       expect(names).toContain(family);
     }
@@ -125,7 +129,9 @@ describe("searchTools", () => {
   });
 
   it("matches a substring of a tool name", () => {
-    expect(searchTools("grep", DEFAULT_TOOL_DESCRIPTORS)).toContain("os.fs.grep");
+    expect(searchTools("grep", DEFAULT_TOOL_DESCRIPTORS)).toContain(
+      "os.fs.grep",
+    );
   });
 
   it("is case-insensitive", () => {

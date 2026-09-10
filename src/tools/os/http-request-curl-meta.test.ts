@@ -71,7 +71,12 @@ describe("the curl meta line survives origin-controlled text", () => {
 
   it("still reads the fixed fields", () => {
     const parsed = parseCurlOutput(
-      meta({ status: "503", contentType: "application/json", size: "4", time: "1.5" }),
+      meta({
+        status: "503",
+        contentType: "application/json",
+        size: "4",
+        time: "1.5",
+      }),
     );
     expect(parsed.status).toBe(503);
     expect(parsed.contentType).toBe("application/json");

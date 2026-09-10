@@ -32,7 +32,10 @@ describe("mapOpenclawCronJob", () => {
   });
 
   it("carries the timezone when present", () => {
-    const result = mapOpenclawCronJob(job({ scheduleTz: "Europe/Berlin" }), OPTS);
+    const result = mapOpenclawCronJob(
+      job({ scheduleTz: "Europe/Berlin" }),
+      OPTS,
+    );
     expect(result).toMatchObject({
       kind: "task",
       input: { schedule: { kind: "cron", tz: "Europe/Berlin" } },
@@ -68,7 +71,10 @@ describe("mapOpenclawCronJob", () => {
       job({ scheduleExpr: null, at: past }),
       OPTS,
     );
-    expect(result).toEqual({ kind: "skip", reason: "one-shot scheduled in the past" });
+    expect(result).toEqual({
+      kind: "skip",
+      reason: "one-shot scheduled in the past",
+    });
   });
 
   it("skips a disabled job", () => {

@@ -143,7 +143,8 @@ export class ProviderFallbackChain {
     const now = this.now();
     const b = this.breaker(p, primary);
     const cooledDown = now >= b.cooldownUntil;
-    const throttleOk = now - b.lastProbeAt >= this.resolve().timing.probeThrottleMs;
+    const throttleOk =
+      now - b.lastProbeAt >= this.resolve().timing.probeThrottleMs;
     if (cooledDown && throttleOk) {
       b.lastProbeAt = now;
       return { providerId: primary, isProbe: true };
@@ -233,7 +234,10 @@ export class ProviderFallbackChain {
 
     // Reset the streak if the last failure is older than the no-error
     // window — the provider had a clean run since, so start fresh.
-    if (b.lastFailureAt > 0 && now - b.lastFailureAt >= timing.failureWindowMs) {
+    if (
+      b.lastFailureAt > 0 &&
+      now - b.lastFailureAt >= timing.failureWindowMs
+    ) {
       b.consecutiveFailures = 0;
       b.cooldownStep = 0;
     }
@@ -242,11 +246,15 @@ export class ProviderFallbackChain {
 
     // Arm (or escalate) the cooldown once the breaker trips: either an
     // immediate signal, or the consecutive-failure threshold is reached.
-    const tripped = immediate || b.consecutiveFailures >= timing.failureThreshold;
+    const tripped =
+      immediate || b.consecutiveFailures >= timing.failureThreshold;
     if (tripped) {
       const step = Math.min(b.cooldownStep, timing.cooldownMs.length - 1);
       b.cooldownUntil = now + timing.cooldownMs[step]!;
-      b.cooldownStep = Math.min(b.cooldownStep + 1, timing.cooldownMs.length - 1);
+      b.cooldownStep = Math.min(
+        b.cooldownStep + 1,
+        timing.cooldownMs.length - 1,
+      );
     }
   }
 

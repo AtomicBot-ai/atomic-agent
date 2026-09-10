@@ -91,7 +91,11 @@ export function createOpenAiStreamConsumer(
           while (boundary >= 0 || (done && buffer.trim().length > 0)) {
             const rawEvent = boundary >= 0 ? buffer.slice(0, boundary) : buffer;
             buffer = boundary >= 0 ? buffer.slice(boundary + 2) : "";
-            const chunk = parseOpenAiSseEvent(rawEvent, reasoning, toolArgsBuffer);
+            const chunk = parseOpenAiSseEvent(
+              rawEvent,
+              reasoning,
+              toolArgsBuffer,
+            );
             content += chunk.delta;
             reasoningContent += chunk.reasoningDelta;
             if (chunk.finishReason !== null) terminalObserved = true;
@@ -113,9 +117,8 @@ export function createOpenAiStreamConsumer(
             }
             if (chunk.toolArgsDelta !== undefined) {
               toolArgsBuffer = chunk.toolArgsBuffer;
-              const replyText = extractPartialReplyTextFromToolArguments(
-                toolArgsBuffer,
-              );
+              const replyText =
+                extractPartialReplyTextFromToolArguments(toolArgsBuffer);
               if (replyText.length > 0) {
                 yield {
                   delta: replyText.slice(chunk.emittedReplyLength),
@@ -292,7 +295,9 @@ function toOpenAiToolCall(call: MutableToolCall): OpenAiToolCall | null {
   };
 }
 
-function normaliseUsage(raw: Record<string, unknown> | null): CompletionUsage | undefined {
+function normaliseUsage(
+  raw: Record<string, unknown> | null,
+): CompletionUsage | undefined {
   if (!raw) return undefined;
   return {
     promptTokens: Number(raw.prompt_tokens ?? 0),

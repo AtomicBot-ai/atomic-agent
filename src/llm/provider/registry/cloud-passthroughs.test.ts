@@ -27,10 +27,19 @@ describe("cloud provider factories", () => {
     .slice(1)
     .map((chunk) => ({
       kind: /^"([^"]+)"|^([A-Z_]+)/.exec(chunk)?.[1] ?? "(constant)",
-      body: chunk.slice(0, chunk.indexOf("registerProviderKind") + 1 || undefined),
+      body: chunk.slice(
+        0,
+        chunk.indexOf("registerProviderKind") + 1 || undefined,
+      ),
     }));
 
-  const openAiShaped = ["openai-compatible", "qwen-openai-compatible", "openrouter", "aimlapi", "gemini"];
+  const openAiShaped = [
+    "openai-compatible",
+    "qwen-openai-compatible",
+    "openrouter",
+    "aimlapi",
+    "gemini",
+  ];
 
   it.each(openAiShaped)("%s forwards maxOutputTokens", (kind) => {
     const f = factories.find((x) => x.kind === kind);

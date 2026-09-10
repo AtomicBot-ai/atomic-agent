@@ -63,7 +63,10 @@ export function setRunModeInConfig(args: SetRunModeArgs): void {
       `provider "${args.activeTextProvider}" is not configured`,
     );
   }
-  const fusion: UserLlmFusionConfig = { ...llm.runMode?.fusion, ...args.fusion };
+  const fusion: UserLlmFusionConfig = {
+    ...llm.runMode?.fusion,
+    ...args.fusion,
+  };
   const next: UserConfigFile = {
     ...file,
     llm: {
@@ -80,7 +83,10 @@ export function setRunModeInConfig(args: SetRunModeArgs): void {
       : {
           localModels: {
             ...file.localModels,
-            managed: { ...file.localModels.managed, parallel: args.managedParallel },
+            managed: {
+              ...file.localModels.managed,
+              parallel: args.managedParallel,
+            },
           },
         }),
   };
@@ -97,7 +103,11 @@ export function setRunModeInConfig(args: SetRunModeArgs): void {
  * count is remembered for the next time fusion is picked.
  */
 export function setFusionWorkersInConfig(workers: number): void {
-  if (!Number.isInteger(workers) || workers < FUSION_WORKERS_MIN || workers > FUSION_WORKERS_MAX) {
+  if (
+    !Number.isInteger(workers) ||
+    workers < FUSION_WORKERS_MIN ||
+    workers > FUSION_WORKERS_MAX
+  ) {
     throw new RunModePersistError(
       `workers must be an integer ${FUSION_WORKERS_MIN}-${FUSION_WORKERS_MAX}, got ${workers}`,
     );

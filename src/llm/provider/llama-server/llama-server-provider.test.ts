@@ -77,9 +77,7 @@ describe("LlamaServerProvider", () => {
     await expect(
       provider.describeImage({
         prompt: "what is this?",
-        images: [
-          { id: 1, bytes: new Uint8Array([1]), mimeType: "image/png" },
-        ],
+        images: [{ id: 1, bytes: new Uint8Array([1]), mimeType: "image/png" }],
       }),
     ).rejects.toBeInstanceOf(VisionUnsupportedError);
   });
@@ -168,8 +166,7 @@ describe("LlamaServerProvider", () => {
 
     expect(result.text).toBe("a square");
     expect(fetchImpl).toHaveBeenCalledTimes(1);
-    const [url, init] = (fetchImpl as ReturnType<typeof vi.fn>).mock
-      .calls[0]!;
+    const [url, init] = (fetchImpl as ReturnType<typeof vi.fn>).mock.calls[0]!;
     expect(String(url)).toBe("http://test-llama:9999/v1/chat/completions");
     expect(init?.method).toBe("POST");
     const body = JSON.parse(String(init?.body)) as {
@@ -256,7 +253,11 @@ describe("LlamaServerProvider", () => {
       provider.describeImage({
         prompt: "x",
         images: [
-          { id: 1, bytes: new Uint8Array([0xff, 0xd8, 0xff]), mimeType: "image/jpeg" },
+          {
+            id: 1,
+            bytes: new Uint8Array([0xff, 0xd8, 0xff]),
+            mimeType: "image/jpeg",
+          },
         ],
       }),
     ).rejects.toThrow(/http 500/);

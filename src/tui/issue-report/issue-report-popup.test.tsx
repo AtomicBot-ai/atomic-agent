@@ -11,11 +11,20 @@ function popup(report: IssueReportState): string {
   const rows = 30;
   const columns = 100;
   const { lastFrame, unmount } = render(
-    <Box flexDirection="column" position="relative" width={columns} height={rows}>
+    <Box
+      flexDirection="column"
+      position="relative"
+      width={columns}
+      height={rows}
+    >
       {Array.from({ length: rows }, (_unused, row) => (
         <Text key={`bg-${row}`}>{"·".repeat(columns)}</Text>
       ))}
-      <IssueReportPopup report={report} availableRows={rows} availableColumns={columns} />
+      <IssueReportPopup
+        report={report}
+        availableRows={rows}
+        availableColumns={columns}
+      />
     </Box>,
   );
   const frame = (lastFrame() ?? "").replace(/\[[0-9;]*m/g, "");
@@ -23,7 +32,13 @@ function popup(report: IssueReportState): string {
   return frame;
 }
 
-const BASE: IssueReportState = { step: "pick", cursor: 1, preview: null, url: null, error: null };
+const BASE: IssueReportState = {
+  step: "pick",
+  cursor: 1,
+  preview: null,
+  url: null,
+  error: null,
+};
 
 describe("IssueReportPopup", () => {
   it("lists the three levels with the cursor on the chosen one", () => {
@@ -61,15 +76,21 @@ describe("IssueReportPopup", () => {
   });
 
   it("shows the two waiting screens", () => {
-    expect(popup({ ...BASE, step: "building" })).toContain("Collecting logs and traces");
+    expect(popup({ ...BASE, step: "building" })).toContain(
+      "Collecting logs and traces",
+    );
     expect(popup({ ...BASE, step: "sending" })).toContain("Filing the issue");
   });
 
   it("shows the link once filed and the error when refused", () => {
-    expect(popup({ ...BASE, step: "sent", url: "https://github.com/x/y/issues/1" })).toContain(
-      "https://github.com/x/y/issues/1",
-    );
-    const err = popup({ ...BASE, step: "error", error: "GitHub is not connected." });
+    expect(
+      popup({ ...BASE, step: "sent", url: "https://github.com/x/y/issues/1" }),
+    ).toContain("https://github.com/x/y/issues/1");
+    const err = popup({
+      ...BASE,
+      step: "error",
+      error: "GitHub is not connected.",
+    });
     expect(err).toContain("COULD NOT FILE THE ISSUE");
     expect(err).toContain("GitHub is not connected.");
   });

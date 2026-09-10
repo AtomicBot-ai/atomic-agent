@@ -7,7 +7,10 @@ import { isFusionWorkerSessionId } from "../../session/fusion-worker-session.js"
 import type { ToolDefinition } from "../tool-registry.js";
 import { parseDelegateArgs } from "./delegate-args.js";
 import { runWorkerTasks, type WorkerRunnerDeps } from "./worker-runner.js";
-import { formatDelegateOutput, type WorkerTaskResult } from "./worker-result.js";
+import {
+  formatDelegateOutput,
+  type WorkerTaskResult,
+} from "./worker-result.js";
 
 export const FUSION_DELEGATE_TOOL = "fusion.delegate";
 
@@ -24,7 +27,10 @@ export interface FusionDelegateDeps extends WorkerRunnerDeps {
   logger: StructuredLogger;
 }
 
-function error(output: string, details: Record<string, unknown> = {}): CompressedToolResult {
+function error(
+  output: string,
+  details: Record<string, unknown> = {},
+): CompressedToolResult {
   return compressToolResult({
     tool: FUSION_DELEGATE_TOOL,
     status: "error",
@@ -69,7 +75,9 @@ function error(output: string, details: Record<string, unknown> = {}): Compresse
  * the wrong place to decide. The bounds that remain are physical: the
  * task count, and the server's request slots on a slot-affine leg.
  */
-export function buildFusionDelegateTool(deps: FusionDelegateDeps): ToolDefinition {
+export function buildFusionDelegateTool(
+  deps: FusionDelegateDeps,
+): ToolDefinition {
   return {
     name: FUSION_DELEGATE_TOOL,
     description:

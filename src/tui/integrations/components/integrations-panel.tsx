@@ -86,9 +86,7 @@ function ListView({
           <Box>
             <Text
               color={
-                i === panel.selected
-                  ? theme.colors.accent
-                  : theme.colors.muted
+                i === panel.selected ? theme.colors.accent : theme.colors.muted
               }
             >
               {i === panel.selected ? "> " : "  "}
@@ -100,7 +98,10 @@ function ListView({
             </Text>
           </Box>
           <Box>
-            <Text color={theme.colors.muted}>{"    "}{row.summary}</Text>
+            <Text color={theme.colors.muted}>
+              {"    "}
+              {row.summary}
+            </Text>
           </Box>
           {i === panel.selected && row.level === "not_configured" ? (
             <Box>
@@ -140,7 +141,10 @@ function DetailView({
       </Box>
       {row.docsUrl ? (
         <Box>
-          <Text color={theme.colors.muted}>{"  "}{row.docsUrl}</Text>
+          <Text color={theme.colors.muted}>
+            {"  "}
+            {row.docsUrl}
+          </Text>
         </Box>
       ) : null}
       {(row.setupSteps ?? []).length > 0 ? (
@@ -165,9 +169,7 @@ function DetailView({
           return (
             <Box key={field.key} flexDirection="column">
               <Box>
-                <Text
-                  color={active ? theme.colors.accent : theme.colors.muted}
-                >
+                <Text color={active ? theme.colors.accent : theme.colors.muted}>
                   {active ? "> " : "  "}
                 </Text>
                 <Text>{field.label}</Text>
@@ -195,7 +197,10 @@ function DetailView({
               </Box>
               {active && field.help ? (
                 <Box>
-                  <Text color={theme.colors.muted}>{"    "}{field.help}</Text>
+                  <Text color={theme.colors.muted}>
+                    {"    "}
+                    {field.help}
+                  </Text>
                 </Box>
               ) : null}
             </Box>
@@ -206,7 +211,9 @@ function DetailView({
         <Box marginTop={1}>
           <Text color={theme.colors.muted}>
             {"  "}
-            {(row.actions ?? []).map((a) => `${a.key} ${a.label}`).join("  ·  ")}
+            {(row.actions ?? [])
+              .map((a) => `${a.key} ${a.label}`)
+              .join("  ·  ")}
           </Text>
         </Box>
       ) : null}
@@ -253,7 +260,12 @@ function hint(panel: IntegrationsPanelState): string {
   if (panel.mode === "detail") {
     const row = panel.rows[panel.selected];
     const field = row?.fields[panel.selectedField];
-    const verb = field?.kind === "boolean" ? "enter toggle" : field?.readonly ? "assigned" : "e edit · d clear";
+    const verb =
+      field?.kind === "boolean"
+        ? "enter toggle"
+        : field?.readonly
+          ? "assigned"
+          : "e edit · d clear";
     return `↑/↓ field · ${verb} · esc back`;
   }
   return "↑/↓ move · enter open · r refresh";

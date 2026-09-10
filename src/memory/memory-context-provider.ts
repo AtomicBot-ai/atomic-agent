@@ -10,10 +10,7 @@ import type {
   MemoryIndexEntry,
   MemoryStore,
 } from "./memory-store.js";
-import type {
-  LessonIndexEntry,
-  LessonStore,
-} from "./lessons/lesson-store.js";
+import type { LessonIndexEntry, LessonStore } from "./lessons/lesson-store.js";
 import type {
   ProcedureIndexEntry,
   ProcedureStore,
@@ -185,7 +182,9 @@ interface LoadProceduresArgs {
  * its keyword overlap would otherwise have surfaced it
  * (scenario 7b.E.3).
  */
-function loadProcedures(args: LoadProceduresArgs): readonly ProcedureIndexEntry[] {
+function loadProcedures(
+  args: LoadProceduresArgs,
+): readonly ProcedureIndexEntry[] {
   const cfg = args.procedures;
   if (!cfg || !cfg.enabled || cfg.k <= 0) return [];
   const query = args.query.trim();

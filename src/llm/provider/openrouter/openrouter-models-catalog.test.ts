@@ -55,7 +55,9 @@ describe("OPENROUTER_MODELS_CATALOG", () => {
   it("includes Qwen 3.6 slugs aligned with local catalog", () => {
     expect(OPENROUTER_MODELS_CATALOG.has("qwen/qwen3.6-35b-a3b")).toBe(true);
     expect(OPENROUTER_MODELS_CATALOG.has("qwen/qwen3.5-35b-a3b")).toBe(false);
-    expect(OPENROUTER_MODELS_CATALOG.has("qwen/qwen3.5-flash-02-23")).toBe(false);
+    expect(OPENROUTER_MODELS_CATALOG.has("qwen/qwen3.5-flash-02-23")).toBe(
+      false,
+    );
   });
 
   it("includes Kimi K2.7 and GLM picks", () => {

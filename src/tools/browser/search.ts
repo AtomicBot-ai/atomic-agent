@@ -3,7 +3,9 @@ import type { ToolDefinition } from "../tool-registry.js";
 import type { BrowserBackend, SearchInput } from "./browser-backend.js";
 import { captureWorldSnapshot } from "./capture-world-snapshot.js";
 
-export function buildBrowserSearchTool(backend: BrowserBackend): ToolDefinition {
+export function buildBrowserSearchTool(
+  backend: BrowserBackend,
+): ToolDefinition {
   return {
     name: "browser.search",
     description:

@@ -2,7 +2,10 @@ type JsonSchema = Record<string, unknown>;
 
 import { assertSupportedJsonSchema } from "./json-schema-support.js";
 
-export function coerceJsonSchemaValue(value: string, schema: JsonSchema): unknown {
+export function coerceJsonSchemaValue(
+  value: string,
+  schema: JsonSchema,
+): unknown {
   assertSupportedJsonSchema(schema);
   const candidates: unknown[] = [];
   for (const type of coercionTypes(schema)) {
@@ -22,7 +25,10 @@ export function coerceJsonSchemaValue(value: string, schema: JsonSchema): unknow
   return candidates[0];
 }
 
-export function validateJsonSchemaValue(value: unknown, schema: JsonSchema): boolean {
+export function validateJsonSchemaValue(
+  value: unknown,
+  schema: JsonSchema,
+): boolean {
   assertSupportedJsonSchema(schema);
   return matchesSchema(value, schema);
 }
@@ -93,7 +99,10 @@ function coerceByType(value: string, type: string): unknown {
 
 function matchesSchema(value: unknown, schema: JsonSchema): boolean {
   const anyOf = schema.anyOf;
-  if (Array.isArray(anyOf) && !anyOf.some((entry) => matchesSchema(value, asSchema(entry)))) {
+  if (
+    Array.isArray(anyOf) &&
+    !anyOf.some((entry) => matchesSchema(value, asSchema(entry)))
+  ) {
     return false;
   }
   const oneOf = schema.oneOf;
@@ -104,30 +113,50 @@ function matchesSchema(value: unknown, schema: JsonSchema): boolean {
     return false;
   }
   const allOf = schema.allOf;
-  if (Array.isArray(allOf) && !allOf.every((entry) => matchesSchema(value, asSchema(entry)))) {
+  if (
+    Array.isArray(allOf) &&
+    !allOf.every((entry) => matchesSchema(value, asSchema(entry)))
+  ) {
     return false;
   }
   if (isRecord(schema.not) && matchesSchema(value, schema.not)) return false;
-  if (Object.hasOwn(schema, "const") && !jsonEqual(value, schema.const)) return false;
-  if (Array.isArray(schema.enum) && !schema.enum.some((entry) => jsonEqual(value, entry))) {
+  if (Object.hasOwn(schema, "const") && !jsonEqual(value, schema.const))
+    return false;
+  if (
+    Array.isArray(schema.enum) &&
+    !schema.enum.some((entry) => jsonEqual(value, entry))
+  ) {
     return false;
   }
   if (!matchesType(value, schema.type)) return false;
 
   if (typeof value === "string") {
-    if (typeof schema.minLength === "number" && value.length < schema.minLength) return false;
-    if (typeof schema.maxLength === "number" && value.length > schema.maxLength) return false;
-    if (typeof schema.pattern === "string" && !new RegExp(schema.pattern, "u").test(value)) {
+    if (typeof schema.minLength === "number" && value.length < schema.minLength)
+      return false;
+    if (typeof schema.maxLength === "number" && value.length > schema.maxLength)
+      return false;
+    if (
+      typeof schema.pattern === "string" &&
+      !new RegExp(schema.pattern, "u").test(value)
+    ) {
       return false;
     }
   }
   if (typeof value === "number") {
-    if (typeof schema.minimum === "number" && value < schema.minimum) return false;
-    if (typeof schema.maximum === "number" && value > schema.maximum) return false;
-    if (typeof schema.exclusiveMinimum === "number" && value <= schema.exclusiveMinimum) {
+    if (typeof schema.minimum === "number" && value < schema.minimum)
+      return false;
+    if (typeof schema.maximum === "number" && value > schema.maximum)
+      return false;
+    if (
+      typeof schema.exclusiveMinimum === "number" &&
+      value <= schema.exclusiveMinimum
+    ) {
       return false;
     }
-    if (typeof schema.exclusiveMaximum === "number" && value >= schema.exclusiveMaximum) {
+    if (
+      typeof schema.exclusiveMaximum === "number" &&
+      value >= schema.exclusiveMaximum
+    ) {
       return false;
     }
     if (
@@ -138,27 +167,40 @@ function matchesSchema(value: unknown, schema: JsonSchema): boolean {
     }
   }
   if (Array.isArray(value)) {
-    if (typeof schema.minItems === "number" && value.length < schema.minItems) return false;
-    if (typeof schema.maxItems === "number" && value.length > schema.maxItems) return false;
+    if (typeof schema.minItems === "number" && value.length < schema.minItems)
+      return false;
+    if (typeof schema.maxItems === "number" && value.length > schema.maxItems)
+      return false;
     if (
       schema.uniqueItems === true &&
-      value.some((entry, index) => value.slice(0, index).some((prior) => jsonEqual(prior, entry)))
+      value.some((entry, index) =>
+        value.slice(0, index).some((prior) => jsonEqual(prior, entry)),
+      )
     ) {
       return false;
     }
     const items = isRecord(schema.items) ? schema.items : null;
-    if (items && !value.every((entry) => matchesSchema(entry, items))) return false;
+    if (items && !value.every((entry) => matchesSchema(entry, items)))
+      return false;
   }
   if (isRecord(value)) {
     const properties = isRecord(schema.properties) ? schema.properties : {};
     const required = Array.isArray(schema.required)
-      ? schema.required.filter((entry): entry is string => typeof entry === "string")
+      ? schema.required.filter(
+          (entry): entry is string => typeof entry === "string",
+        )
       : [];
     const keys = Object.keys(value);
-    if (typeof schema.minProperties === "number" && keys.length < schema.minProperties) {
+    if (
+      typeof schema.minProperties === "number" &&
+      keys.length < schema.minProperties
+    ) {
       return false;
     }
-    if (typeof schema.maxProperties === "number" && keys.length > schema.maxProperties) {
+    if (
+      typeof schema.maxProperties === "number" &&
+      keys.length > schema.maxProperties
+    ) {
       return false;
     }
     if (!required.every((name) => Object.hasOwn(value, name))) return false;
@@ -180,37 +222,48 @@ function matchesSchema(value: unknown, schema: JsonSchema): boolean {
 
 function matchesType(value: unknown, type: unknown): boolean {
   if (type === undefined) return true;
-  if (Array.isArray(type)) return type.some((entry) => matchesType(value, entry));
+  if (Array.isArray(type))
+    return type.some((entry) => matchesType(value, entry));
   if (type === "null") return value === null;
   if (type === "array") return Array.isArray(value);
   if (type === "object") return isRecord(value);
-  if (type === "integer") return typeof value === "number" && Number.isSafeInteger(value);
+  if (type === "integer")
+    return typeof value === "number" && Number.isSafeInteger(value);
   return typeof value === type;
 }
 
 function isMultipleOf(value: number, multiple: number): boolean {
   const quotient = value / multiple;
-  return Number.isFinite(quotient) && Math.abs(quotient - Math.round(quotient)) < 1e-10;
+  return (
+    Number.isFinite(quotient) &&
+    Math.abs(quotient - Math.round(quotient)) < 1e-10
+  );
 }
 
 function jsonType(value: unknown): string {
   if (value === null) return "null";
   if (Array.isArray(value)) return "array";
   if (isRecord(value)) return "object";
-  if (typeof value === "number" && Number.isSafeInteger(value)) return "integer";
+  if (typeof value === "number" && Number.isSafeInteger(value))
+    return "integer";
   return typeof value;
 }
 
 function jsonEqual(left: unknown, right: unknown): boolean {
   if (Object.is(left, right)) return true;
   if (Array.isArray(left) && Array.isArray(right)) {
-    return left.length === right.length && left.every((entry, i) => jsonEqual(entry, right[i]));
+    return (
+      left.length === right.length &&
+      left.every((entry, i) => jsonEqual(entry, right[i]))
+    );
   }
   if (isRecord(left) && isRecord(right)) {
     const keys = Object.keys(left);
     return (
       keys.length === Object.keys(right).length &&
-      keys.every((key) => Object.hasOwn(right, key) && jsonEqual(left[key], right[key]))
+      keys.every(
+        (key) => Object.hasOwn(right, key) && jsonEqual(left[key], right[key]),
+      )
     );
   }
   return false;

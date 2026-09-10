@@ -6,7 +6,8 @@ import { createProvidersWizardState } from "./providers-wizard-state.js";
 import type { ProvidersWizardState } from "./providers-wizard-state.js";
 
 vi.mock("../../config/index.js", async (importOriginal) => {
-  const original = await importOriginal<typeof import("../../config/index.js")>();
+  const original =
+    await importOriginal<typeof import("../../config/index.js")>();
   return {
     ...original,
     getConfig: () => currentConfig,
@@ -223,7 +224,10 @@ describe("configureWizardKindForRow", () => {
 
     expect(configureWizardKindForRow({ kind: "llama-server" })).toBeNull();
     expect(
-      configureWizardKindForRow({ kind: "subscription-cli", subscriptionCli: null }),
+      configureWizardKindForRow({
+        kind: "subscription-cli",
+        subscriptionCli: null,
+      }),
     ).toBeNull();
     expect(
       configureWizardKindForRow({
@@ -330,10 +334,11 @@ describe("ProvidersOrchestrator.completeWizard", () => {
     currentConfig = configWithGemini();
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () =>
-        new Response(JSON.stringify({ error: "Insufficient credits" }), {
-          status: 402,
-        }),
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ error: "Insufficient credits" }), {
+            status: 402,
+          }),
       ),
     );
     const { ProvidersOrchestrator } = await importFreshOrchestrator();
@@ -343,7 +348,9 @@ describe("ProvidersOrchestrator.completeWizard", () => {
 
     await orchestrator.completeWizard(wizardFor("openrouter"));
 
-    const types = bus.emit.mock.calls.map((call) => (call[0] as { type: string }).type);
+    const types = bus.emit.mock.calls.map(
+      (call) => (call[0] as { type: string }).type,
+    );
     expect(types).toContain("providers_wizard_failed");
     expect(types).not.toContain("providers_wizard_succeeded");
     // Nothing reloaded means nothing was written: the save never ran.
@@ -355,10 +362,11 @@ describe("ProvidersOrchestrator.completeWizard", () => {
     currentConfig = configWithGemini();
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () =>
-        new Response(JSON.stringify({ error: "No auth credentials found" }), {
-          status: 401,
-        }),
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ error: "No auth credentials found" }), {
+            status: 401,
+          }),
       ),
     );
     const { ProvidersOrchestrator } = await importFreshOrchestrator();
@@ -423,27 +431,26 @@ describe("ProvidersOrchestrator.completeWizard", () => {
     return { bodies: () => bodies };
   }
 
-  const PROBE_TOOL_CALL_SSE =
-    `data: ${JSON.stringify({
-      choices: [
-        {
-          delta: {
-            tool_calls: [
-              {
-                index: 0,
-                type: "function",
-                function: {
-                  name: "atomic_contract_probe",
-                  arguments: '{"ok":true}',
-                },
+  const PROBE_TOOL_CALL_SSE = `data: ${JSON.stringify({
+    choices: [
+      {
+        delta: {
+          tool_calls: [
+            {
+              index: 0,
+              type: "function",
+              function: {
+                name: "atomic_contract_probe",
+                arguments: '{"ok":true}',
               },
-            ],
-          },
+            },
+          ],
         },
-      ],
-    })}\n\ndata: ${JSON.stringify({
-      choices: [{ delta: {}, finish_reason: "tool_calls" }],
-    })}\n\ndata: [DONE]\n\n`;
+      },
+    ],
+  })}\n\ndata: ${JSON.stringify({
+    choices: [{ delta: {}, finish_reason: "tool_calls" }],
+  })}\n\ndata: [DONE]\n\n`;
 
   /** Truncated mid-argument, with nothing announcing the end. */
   const PROBE_EARLY_EOF_SSE = `data: ${JSON.stringify({
@@ -463,7 +470,10 @@ describe("ProvidersOrchestrator.completeWizard", () => {
   })}\n\n`;
 
   function wizardWithModel(): ProvidersWizardState {
-    return { ...wizardFor("openrouter"), selectedChatModelId: "vendor/picked-model" };
+    return {
+      ...wizardFor("openrouter"),
+      selectedChatModelId: "vendor/picked-model",
+    };
   }
 
   it("probes the route on save and reports a backend only once it is proven", async () => {
@@ -485,7 +495,9 @@ describe("ProvidersOrchestrator.completeWizard", () => {
     expect(probeBody?.model).toBe("vendor/picked-model");
     expect(JSON.stringify(probeBody?.tools)).toContain("atomic_contract_probe");
 
-    const types = bus.emit.mock.calls.map((call) => (call[0] as { type: string }).type);
+    const types = bus.emit.mock.calls.map(
+      (call) => (call[0] as { type: string }).type,
+    );
     expect(types).toContain("providers_wizard_succeeded");
     expect(runtime.reportModelConfigured).toHaveBeenCalledWith(
       "openrouter",
@@ -505,7 +517,9 @@ describe("ProvidersOrchestrator.completeWizard", () => {
 
     // The key is live, so the save stands — the probe is advisory and
     // may never refuse one.
-    const types = bus.emit.mock.calls.map((call) => (call[0] as { type: string }).type);
+    const types = bus.emit.mock.calls.map(
+      (call) => (call[0] as { type: string }).type,
+    );
     expect(types).toContain("providers_wizard_succeeded");
     // But the route was never shown to run a turn, so "this install has
     // a working cloud backend" must not be claimed on its behalf.
@@ -606,12 +620,16 @@ describe("ProvidersOrchestrator.completeWizard", () => {
     const running = orchestrator.completeWizard(wizardFor("openrouter"));
     await flush();
     // Still waiting on the provider: submitting is on, nothing saved.
-    const midTypes = bus.emit.mock.calls.map((call) => (call[0] as { type: string }).type);
+    const midTypes = bus.emit.mock.calls.map(
+      (call) => (call[0] as { type: string }).type,
+    );
     expect(midTypes).toContain("providers_wizard_submit_started");
     expect(midTypes).not.toContain("providers_wizard_succeeded");
 
     orchestrator.cancelWizardVerification();
-    const cancelTypes = bus.emit.mock.calls.map((call) => (call[0] as { type: string }).type);
+    const cancelTypes = bus.emit.mock.calls.map(
+      (call) => (call[0] as { type: string }).type,
+    );
     expect(cancelTypes).toContain("providers_wizard_verify_cancelled");
 
     releaseFetch();
@@ -619,8 +637,9 @@ describe("ProvidersOrchestrator.completeWizard", () => {
     expect(runtime.reloadLlmProviders).not.toHaveBeenCalled();
     // The late answer from the abandoned check stays quiet: the wizard is
     // already back under the operator's hands.
-    const finalTypes = bus.emit.mock.calls.map((call) => (call[0] as { type: string }).type);
+    const finalTypes = bus.emit.mock.calls.map(
+      (call) => (call[0] as { type: string }).type,
+    );
     expect(finalTypes).not.toContain("providers_wizard_failed");
   });
-
 });

@@ -16,7 +16,12 @@ import {
   type StripState,
 } from "./swarm-critters.js";
 
-function run(state: StripState, ticks: number, target: number, width = state.width): StripState {
+function run(
+  state: StripState,
+  ticks: number,
+  target: number,
+  width = state.width,
+): StripState {
   let s = state;
   for (let i = 0; i < ticks; i += 1) s = stepStrip(s, target, width);
   return s;
@@ -155,11 +160,15 @@ describe("renderStrip", () => {
     const s = createStrip(50, 1);
     const cells = renderStrip(s).flat();
     const glyphs = new Set(cells.map((c) => c.ch));
-    expect([...glyphs].every((g) => g === " " || g === "▀" || g === "▄")).toBe(true);
+    expect([...glyphs].every((g) => g === " " || g === "▀" || g === "▄")).toBe(
+      true,
+    );
     // A `▀` over a filled bottom pixel carries both colours.
     expect(cells.some((c) => c.ch === "▀" && c.fg && c.bg)).toBe(true);
     // Blank cells carry no colour at all so the terminal background shows.
-    expect(cells.filter((c) => c.ch === " ").every((c) => !c.fg && !c.bg)).toBe(true);
+    expect(cells.filter((c) => c.ch === " ").every((c) => !c.fg && !c.bg)).toBe(
+      true,
+    );
   });
 
   it("draws every egg and every critter somewhere on the strip", () => {

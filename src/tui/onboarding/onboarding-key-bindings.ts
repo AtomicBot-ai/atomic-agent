@@ -20,7 +20,11 @@ export type OnboardingIntent =
 
 export type OnboardingKeyResult =
   | { handled: false }
-  | { handled: true; actions: readonly OnboardingAction[]; intent?: OnboardingIntent };
+  | {
+      handled: true;
+      actions: readonly OnboardingAction[];
+      intent?: OnboardingIntent;
+    };
 
 /**
  * Keys for the steps the flow draws itself. Steps that hand the keyboard
@@ -36,7 +40,8 @@ export function handleOnboardingKey(
   onboarding: OnboardingUiState,
 ): OnboardingKeyResult {
   if (key.ctrl && input === "c") return { handled: false };
-  if (stepOwnsItsKeyboard(onboarding.step)) return { handled: true, actions: [] };
+  if (stepOwnsItsKeyboard(onboarding.step))
+    return { handled: true, actions: [] };
   // The splash promises "press any key", so it claims every key there is
   // — including Esc, which must not skip setup from a screen that has
   // not yet said setup is what comes next.
@@ -48,18 +53,32 @@ export function handleOnboardingKey(
     return { handled: true, actions: [], intent: { kind: "skip" } };
   }
   if (key.upArrow || input === "k") {
-    return { handled: true, actions: [{ type: "onboarding_cursor_moved", delta: -1 }] };
+    return {
+      handled: true,
+      actions: [{ type: "onboarding_cursor_moved", delta: -1 }],
+    };
   }
   if (key.downArrow || input === "j") {
-    return { handled: true, actions: [{ type: "onboarding_cursor_moved", delta: 1 }] };
+    return {
+      handled: true,
+      actions: [{ type: "onboarding_cursor_moved", delta: 1 }],
+    };
   }
   if (key.return) {
     const choice = ONBOARDING_CHOICES[onboarding.cursor];
     if (!choice) return { handled: true, actions: [] };
-    return { handled: true, actions: [], intent: { kind: "pick", choice: choice.id } };
+    return {
+      handled: true,
+      actions: [],
+      intent: { kind: "pick", choice: choice.id },
+    };
   }
   const digit = Number.parseInt(input, 10);
-  if (Number.isInteger(digit) && digit >= 1 && digit <= ONBOARDING_CHOICES.length) {
+  if (
+    Number.isInteger(digit) &&
+    digit >= 1 &&
+    digit <= ONBOARDING_CHOICES.length
+  ) {
     const choice = ONBOARDING_CHOICES[digit - 1]!;
     return {
       handled: true,

@@ -43,9 +43,7 @@ describe("isReferentialMessage", () => {
   });
 
   it("fires on Russian pronouns inside longer messages", () => {
-    expect(
-      isReferentialMessage("расскажи подробнее про это", 2),
-    ).toBe(true);
+    expect(isReferentialMessage("расскажи подробнее про это", 2)).toBe(true);
   });
 
   it("fires on conjunction starters (English)", () => {

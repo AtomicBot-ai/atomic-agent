@@ -2,7 +2,11 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { REPLY_ATTACHMENTS_MAX, replyTool, resolveReplyAttachments } from "./reply.js";
+import {
+  REPLY_ATTACHMENTS_MAX,
+  replyTool,
+  resolveReplyAttachments,
+} from "./reply.js";
 
 const ctx = {
   workingDir: "/tmp",
@@ -126,7 +130,10 @@ describe("reply attachments", () => {
   });
 
   it("caps the count", async () => {
-    const many = Array.from({ length: REPLY_ATTACHMENTS_MAX + 1 }, () => "report.pdf");
+    const many = Array.from(
+      { length: REPLY_ATTACHMENTS_MAX + 1 },
+      () => "report.pdf",
+    );
     await expect(resolveReplyAttachments(many, dir)).rejects.toThrow(
       /at most 10 attachments/,
     );

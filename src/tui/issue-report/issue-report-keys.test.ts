@@ -76,9 +76,15 @@ describe("issue-report popup keys", () => {
     const state = withReport(report("pick", 1));
     const { c, callbacks } = ctx(state);
     handleAppKey("", { ...KEY, return: true }, c);
-    expect(callbacks.onIssueReportPickRequested).toHaveBeenLastCalledWith("scrubbed", state);
+    expect(callbacks.onIssueReportPickRequested).toHaveBeenLastCalledWith(
+      "scrubbed",
+      state,
+    );
     handleAppKey("3", KEY, c);
-    expect(callbacks.onIssueReportPickRequested).toHaveBeenLastCalledWith("full", state);
+    expect(callbacks.onIssueReportPickRequested).toHaveBeenLastCalledWith(
+      "full",
+      state,
+    );
     handleAppKey("9", KEY, c);
     expect(callbacks.onIssueReportPickRequested).toHaveBeenCalledTimes(2);
   });
@@ -138,7 +144,10 @@ describe("issue-report popup keys", () => {
     handleAppKey("1", KEY, c);
     handleAppKey("y", KEY, c);
     expect(callbacks.onApprovalDecision).not.toHaveBeenCalled();
-    expect(callbacks.onIssueReportPickRequested).toHaveBeenCalledWith("errors", armed);
+    expect(callbacks.onIssueReportPickRequested).toHaveBeenCalledWith(
+      "errors",
+      armed,
+    );
   });
 
   it("lets ctrl+c through so the quit path stays reachable", () => {

@@ -4,7 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { resetConfigCache } from "../config/config-cache.js";
-import { getUserConfigPath, writeUserConfigFileSync } from "../config/config-file.js";
+import {
+  getUserConfigPath,
+  writeUserConfigFileSync,
+} from "../config/config-file.js";
 import { USER_CONFIG_DEFAULTS } from "../config/config-schema.js";
 import { getConfig } from "../config/index.js";
 import {
@@ -18,7 +21,9 @@ import {
 
 describe("normalizeLocalLlmBaseUrl", () => {
   it("adds http when scheme is missing", () => {
-    expect(normalizeLocalLlmBaseUrl("127.0.0.1:9000")).toBe("http://127.0.0.1:9000");
+    expect(normalizeLocalLlmBaseUrl("127.0.0.1:9000")).toBe(
+      "http://127.0.0.1:9000",
+    );
   });
 
   it("preserves https", () => {
@@ -124,10 +129,14 @@ describe("persistUserLocalLlmUrl", () => {
     expect(written.localModels.mode).toBe("external");
     expect(written.localModels.url).toBe("http://10.0.0.10:8080");
     expect(written.localModels.embeddings.enabled).toBe(true);
-    expect(written.localModels.embeddings.modelId).toBe("nomic-embed-text-v1.5");
+    expect(written.localModels.embeddings.modelId).toBe(
+      "nomic-embed-text-v1.5",
+    );
     expect(written.localModels.embeddings.url).toBe("http://10.0.0.11:19092");
     expect(written.memory.embeddings.enabled).toBe(true);
-    expect(getConfig().localModels.embeddings.url).toBe("http://10.0.0.11:19092");
+    expect(getConfig().localModels.embeddings.url).toBe(
+      "http://10.0.0.11:19092",
+    );
   });
 
   it("persists remote chat URL without enabling optional embeddings", () => {
@@ -169,7 +178,11 @@ describe("persistUserLocalLlmUrl", () => {
         activeEmbeddingProvider: "local-llama",
         toolTransport: "auto",
         providers: [
-          { id: "local-llama", kind: "llama-server", url: "http://127.0.0.1:19091" },
+          {
+            id: "local-llama",
+            kind: "llama-server",
+            url: "http://127.0.0.1:19091",
+          },
           {
             id: "lan-compat",
             kind: "openai-compatible",
@@ -252,7 +265,9 @@ describe("pointsAtManagedDaemon", () => {
 
   it("rejects another port, another host, and unparseable input", () => {
     expect(pointsAtManagedDaemon("http://127.0.0.1:8080", 19091)).toBe(false);
-    expect(pointsAtManagedDaemon("http://192.168.1.50:19091", 19091)).toBe(false);
+    expect(pointsAtManagedDaemon("http://192.168.1.50:19091", 19091)).toBe(
+      false,
+    );
     expect(pointsAtManagedDaemon("not a url", 19091)).toBe(false);
   });
 });

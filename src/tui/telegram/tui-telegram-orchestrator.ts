@@ -255,7 +255,9 @@ export class TuiTelegramOrchestrator {
     );
   }
 
-  async startPairing(timeoutMs: number = PAIRING_DEFAULT_TIMEOUT_MS): Promise<void> {
+  async startPairing(
+    timeoutMs: number = PAIRING_DEFAULT_TIMEOUT_MS,
+  ): Promise<void> {
     const channel = this.runtime.telegramChannel;
     if (!channel) {
       this.emitInfo("telegram channel unavailable; cannot pair");

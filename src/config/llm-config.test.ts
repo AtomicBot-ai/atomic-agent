@@ -228,13 +228,21 @@ describe("llm-config", () => {
         ...baseLlm(undefined).llm,
         runMode: {
           mode: "fusion",
-          fusion: { orchestratorProvider: "openrouter", workerProvider: "local-llama", workers: 3 },
+          fusion: {
+            orchestratorProvider: "openrouter",
+            workerProvider: "local-llama",
+            workers: 3,
+          },
         },
       },
     });
     expect(parsed.llm?.runMode).toEqual({
       mode: "fusion",
-      fusion: { orchestratorProvider: "openrouter", workerProvider: "local-llama", workers: 3 },
+      fusion: {
+        orchestratorProvider: "openrouter",
+        workerProvider: "local-llama",
+        workers: 3,
+      },
     });
     expect(() =>
       parseUserConfigFile({
@@ -248,8 +256,12 @@ describe("llm-config", () => {
   });
 
   it("omits runMode entirely when not configured", () => {
-    expect(parseUserConfigFile(baseLlm(undefined)).llm?.runMode).toBeUndefined();
-    expect("runMode" in (parseUserConfigFile(baseLlm(undefined)).llm ?? {})).toBe(false);
+    expect(
+      parseUserConfigFile(baseLlm(undefined)).llm?.runMode,
+    ).toBeUndefined();
+    expect(
+      "runMode" in (parseUserConfigFile(baseLlm(undefined)).llm ?? {}),
+    ).toBe(false);
   });
 
   it("parses extraBody on an openai-compatible provider entry", () => {
@@ -577,8 +589,17 @@ describe("provider maxOutputTokens", () => {
       activeEmbeddingProvider: "local-llama",
       toolTransport: "auto" as const,
       providers: [
-        { id: "local-llama", kind: "llama-server", url: "http://127.0.0.1:19091" },
-        { id: "openrouter", kind: "openrouter", defaultChatModel: "gpt", maxOutputTokens },
+        {
+          id: "local-llama",
+          kind: "llama-server",
+          url: "http://127.0.0.1:19091",
+        },
+        {
+          id: "openrouter",
+          kind: "openrouter",
+          defaultChatModel: "gpt",
+          maxOutputTokens,
+        },
       ],
     },
   });
@@ -599,7 +620,9 @@ describe("provider maxOutputTokens", () => {
 
   it("rejects a non-positive or fractional ceiling", () => {
     for (const bad of [0, -1, 1.5, "lots"]) {
-      expect(() => parseUserConfigFile(withEntry(bad))).toThrow(/maxOutputTokens/);
+      expect(() => parseUserConfigFile(withEntry(bad))).toThrow(
+        /maxOutputTokens/,
+      );
     }
   });
 });

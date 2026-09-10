@@ -2,7 +2,11 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtemp, mkdir, writeFile, rm, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { installSkill, uninstallSkill, SkillInstallError } from "./skill-installer.js";
+import {
+  installSkill,
+  uninstallSkill,
+  SkillInstallError,
+} from "./skill-installer.js";
 
 async function writeSource(root: string, name = "demo"): Promise<string> {
   const sourceDir = join(root, "source");
@@ -37,12 +41,12 @@ describe("installSkill", () => {
 
   it("copies a valid skill into the target dir", async () => {
     const source = await writeSource(base);
-    const result = await installSkill({ sourceDir: source, targetRoot: target });
+    const result = await installSkill({
+      sourceDir: source,
+      targetRoot: target,
+    });
     expect(result.manifest.name).toBe("demo");
-    const installed = await readFile(
-      join(target, "demo", "SKILL.md"),
-      "utf8",
-    );
+    const installed = await readFile(join(target, "demo", "SKILL.md"), "utf8");
     expect(installed).toContain("name: demo");
   });
 

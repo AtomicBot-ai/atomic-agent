@@ -27,8 +27,14 @@ import type { StructuredLogger } from "../../tracing/structured-logger.js";
 import { DiscordChannel } from "../discord/discord-channel.js";
 import type { WebSocketLike } from "../discord/discord-gateway-transport.js";
 import { DiscordLockfile } from "../discord/discord-lockfile.js";
-import type { PairingOutcome, PairingStateSnapshot } from "../telegram/telegram-channel.js";
-import { TelegramChannel, type BotFactory } from "../telegram/telegram-channel.js";
+import type {
+  PairingOutcome,
+  PairingStateSnapshot,
+} from "../telegram/telegram-channel.js";
+import {
+  TelegramChannel,
+  type BotFactory,
+} from "../telegram/telegram-channel.js";
 import { TelegramLockfile } from "../telegram/telegram-lockfile.js";
 import {
   readSwarmUnitToken,
@@ -132,7 +138,10 @@ export class SwarmRegistry {
   async startEnabled(): Promise<void> {
     await Promise.all(
       [...this.units.values()]
-        .filter((u) => u.config.enabled && readSwarmUnitToken(u.config.tokenEnv) !== null)
+        .filter(
+          (u) =>
+            u.config.enabled && readSwarmUnitToken(u.config.tokenEnv) !== null,
+        )
         .map((u) => this.startUnit(u)),
     );
   }
@@ -163,7 +172,11 @@ export class SwarmRegistry {
     const unit = this.construct(config);
     this.units.set(id, unit);
     this.persist();
-    this.deps.logger.info("swarm: unit added", { id, kind: input.kind, hasToken: token !== null });
+    this.deps.logger.info("swarm: unit added", {
+      id,
+      kind: input.kind,
+      hasToken: token !== null,
+    });
     if (config.enabled && token !== null) await this.startUnit(unit);
     this.emit();
     return unit;
@@ -174,7 +187,9 @@ export class SwarmRegistry {
     const unit = this.require(id);
     const next: SwarmUnitConfig = {
       ...unit.config,
-      ...(patch.label !== undefined ? { label: patch.label.trim() || unit.config.label } : {}),
+      ...(patch.label !== undefined
+        ? { label: patch.label.trim() || unit.config.label }
+        : {}),
       ...(patch.role !== undefined ? { role: patch.role.trim() } : {}),
       ...(patch.ownerUserId !== undefined
         ? { ownerUserId: normaliseOwner(patch.ownerUserId) }
@@ -193,12 +208,17 @@ export class SwarmRegistry {
           next.ownerUserId === null ? null : Number(next.ownerUserId),
         );
       } else {
-        unit.channel.setOwnerUserId(next.ownerUserId);
+        // A swarm unit has one owner of its own; the Discord channel
+        // takes an allowlist (#388), so it is a list of one.
+        unit.channel.setOwnerUserIds(
+          next.ownerUserId === null ? [] : [next.ownerUserId],
+        );
       }
     }
     if (patch.enabled !== undefined) {
       if (patch.enabled) {
-        if (readSwarmUnitToken(next.tokenEnv) !== null) await this.startUnit(updated);
+        if (readSwarmUnitToken(next.tokenEnv) !== null)
+          await this.startUnit(updated);
       } else {
         await this.stopUnit(updated);
       }
@@ -217,7 +237,11 @@ export class SwarmRegistry {
     if (unit.channel instanceof TelegramChannel) {
       // Persists via the unit's sink and restarts when up.
       await unit.channel.setToken(trimmed);
-      if (trimmed !== null && unit.config.enabled && unit.channel.state() !== "up") {
+      if (
+        trimmed !== null &&
+        unit.config.enabled &&
+        unit.channel.state() !== "up"
+      ) {
         await this.startUnit(unit);
       }
       this.emit();
@@ -225,7 +249,10 @@ export class SwarmRegistry {
     }
     writeSwarmUnitToken(this.paths(), unit.config.tokenEnv, trimmed);
     await this.stopUnit(unit);
-    const rebuilt: SwarmUnit = { config: unit.config, channel: this.construct(unit.config).channel };
+    const rebuilt: SwarmUnit = {
+      config: unit.config,
+      channel: this.construct(unit.config).channel,
+    };
     this.units.set(id, rebuilt);
     if (trimmed !== null && unit.config.enabled) await this.startUnit(rebuilt);
     this.emit();
@@ -260,10 +287,15 @@ export class SwarmRegistry {
   }
 
   /** Telegram only: open a pairing window on the unit's bot. */
-  async startPairing(id: string, timeoutMs?: number): Promise<PairingOutcome | null> {
+  async startPairing(
+    id: string,
+    timeoutMs?: number,
+  ): Promise<PairingOutcome | null> {
     const unit = this.require(id);
     if (!(unit.channel instanceof TelegramChannel)) {
-      throw new Error("only Telegram bots pair by DM; set the Discord owner id directly");
+      throw new Error(
+        "only Telegram bots pair by DM; set the Discord owner id directly",
+      );
     }
     if (unit.channel.state() !== "up") {
       if (readSwarmUnitToken(unit.config.tokenEnv) === null) {
@@ -301,15 +333,24 @@ export class SwarmRegistry {
         config: deps.config,
         logger: deps.logger,
         token: readSwarmUnitToken(config.tokenEnv),
-        ownerUserId: config.ownerUserId === null ? null : Number(config.ownerUserId),
-        lock: new TelegramLockfile(resolve(deps.stateDir, `telegram-${config.id}.lock`)),
+        ownerUserId:
+          config.ownerUserId === null ? null : Number(config.ownerUserId),
+        lock: new TelegramLockfile(
+          resolve(deps.stateDir, `telegram-${config.id}.lock`),
+        ),
         sessionPointerPath: this.pointerPath(config),
         settings: {
           writeSettings: (patch) => this.applyChannelPatch(config.id, patch),
           writeToken: (token) =>
-            writeSwarmUnitToken(this.paths(), this.tokenEnvOf(config.id), token),
+            writeSwarmUnitToken(
+              this.paths(),
+              this.tokenEnvOf(config.id),
+              token,
+            ),
         },
-        ...(deps.telegramBotFactory ? { botFactory: deps.telegramBotFactory } : {}),
+        ...(deps.telegramBotFactory
+          ? { botFactory: deps.telegramBotFactory }
+          : {}),
       });
       return { config, channel };
     }
@@ -322,11 +363,15 @@ export class SwarmRegistry {
       // must not write into the same directory.
       inboxDir: resolve(deps.stateDir, "inbox", "discord", config.id),
       enabled: config.enabled,
-      ownerUserId: config.ownerUserId,
+      ownerUserIds: config.ownerUserId === null ? [] : [config.ownerUserId],
       token: readSwarmUnitToken(config.tokenEnv),
       sessionPointerPath: this.pointerPath(config),
-      lock: new DiscordLockfile(resolve(deps.stateDir, `discord-${config.id}.lock`)),
-      ...(deps.createDiscordSocket ? { createSocket: deps.createDiscordSocket } : {}),
+      lock: new DiscordLockfile(
+        resolve(deps.stateDir, `discord-${config.id}.lock`),
+      ),
+      ...(deps.createDiscordSocket
+        ? { createSocket: deps.createDiscordSocket }
+        : {}),
       ...(deps.discordApiBaseUrl ? { apiBaseUrl: deps.discordApiBaseUrl } : {}),
     });
     return { config, channel };
@@ -347,7 +392,10 @@ export class SwarmRegistry {
       ...unit.config,
       ...(patch.enabled !== undefined ? { enabled: patch.enabled } : {}),
       ...(patch.ownerUserId !== undefined
-        ? { ownerUserId: patch.ownerUserId === null ? null : String(patch.ownerUserId) }
+        ? {
+            ownerUserId:
+              patch.ownerUserId === null ? null : String(patch.ownerUserId),
+          }
         : {}),
     };
     this.units.set(id, { config: next, channel: unit.channel });
@@ -407,15 +455,23 @@ export class SwarmRegistry {
   }
 
   private tokenEnvOf(id: string): string {
-    return this.units.get(id)?.config.tokenEnv ?? tokenEnvForUnit("telegram", id);
+    return (
+      this.units.get(id)?.config.tokenEnv ?? tokenEnvForUnit("telegram", id)
+    );
   }
 
   private pointerPath(config: SwarmUnitConfig): string {
-    return resolve(this.deps.stateDir, `${config.kind}-session-${config.id}.json`);
+    return resolve(
+      this.deps.stateDir,
+      `${config.kind}-session-${config.id}.json`,
+    );
   }
 
   private paths(): { stateDir: string; userConfigFile: string } {
-    return { stateDir: this.deps.stateDir, userConfigFile: this.deps.userConfigFile };
+    return {
+      stateDir: this.deps.stateDir,
+      userConfigFile: this.deps.userConfigFile,
+    };
   }
 }
 

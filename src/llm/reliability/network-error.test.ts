@@ -69,14 +69,19 @@ describe("isNetworkError", () => {
   });
 
   it("recognises an errno carried anywhere in the chain", () => {
-    const inner = Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:19091"), {
-      code: "ECONNREFUSED",
-    });
+    const inner = Object.assign(
+      new Error("connect ECONNREFUSED 127.0.0.1:19091"),
+      {
+        code: "ECONNREFUSED",
+      },
+    );
     expect(isNetworkError(fetchFailed(inner))).toBe(true);
   });
 
   it("does not claim ordinary runtime bugs", () => {
-    expect(isNetworkError(new TypeError("x.map is not a function"))).toBe(false);
+    expect(isNetworkError(new TypeError("x.map is not a function"))).toBe(
+      false,
+    );
     expect(isNetworkError(new Error("tool crashed"))).toBe(false);
     expect(isNetworkError(undefined)).toBe(false);
   });

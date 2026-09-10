@@ -80,7 +80,9 @@ describe("describeLlamaHealthFailure", () => {
       result({ kind: "unknown", error: "fetch failed" }),
       "http://10.0.0.7:8080",
     );
-    expect(line).toBe("local-llm /health failed at http://10.0.0.7:8080: fetch failed");
+    expect(line).toBe(
+      "local-llm /health failed at http://10.0.0.7:8080: fetch failed",
+    );
   });
 });
 

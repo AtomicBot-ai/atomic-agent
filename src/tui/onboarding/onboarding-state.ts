@@ -47,7 +47,6 @@ export type OnboardingStep =
  */
 export type OnboardingOutcome = "local" | "cloud" | "custom" | "skipped";
 
-
 /**
  * The screens a cloud wizard can be opened from while a pull is still
  * running: the download itself, and the "almost there" screen a first
@@ -193,7 +192,9 @@ export function moveOnboardingCursor(
  * keystroke is processed twice.
  */
 export function stepOwnsItsKeyboard(step: OnboardingStep): boolean {
-  return step === "cloud" || step === "local_hf_ref" || step.startsWith("custom_");
+  return (
+    step === "cloud" || step === "local_hf_ref" || step.startsWith("custom_")
+  );
 }
 
 /** Steps where the flow is over and the host is closing it down. */

@@ -35,7 +35,10 @@ export function SwitchRow({
     row.detail.length > 0 ? Math.min(LABEL_WIDTH, inner) : inner;
   const prefix = ` ${marker} ${check}`;
   const label = fitToWidth(`${prefix}${row.label}`, labelBudget);
-  const detail = fitToWidth(` ${row.detail}`, Math.max(0, inner - label.length));
+  const detail = fitToWidth(
+    ` ${row.detail}`,
+    Math.max(0, inner - label.length),
+  );
   const body = (
     <>
       {/*
@@ -44,7 +47,12 @@ export function SwitchRow({
         faint to see, and the marker is the part that survives NO_COLOR.
       */}
       {row.emphasis === "fusion" ? (
-        <FusionLabel prefix={prefix} word={row.label} width={label.length} selected={selected} />
+        <FusionLabel
+          prefix={prefix}
+          word={row.label}
+          width={label.length}
+          selected={selected}
+        />
       ) : (
         <Text color={chromeTheme.colors.railForeground} bold={selected}>
           {label}
@@ -61,7 +69,10 @@ export function SwitchRow({
         if (!isPrimaryPress(hit.event)) return false;
         // One click acts, the way the operator menu's rows do: this list
         // was opened to pick something from it.
-        mouse.dispatch({ type: "composer_switch_cursor_set", cursor: rowIndex });
+        mouse.dispatch({
+          type: "composer_switch_cursor_set",
+          cursor: rowIndex,
+        });
         onActivate(row);
         return true;
       }}

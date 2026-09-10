@@ -182,11 +182,13 @@ export function isOpaqueInterpreterShape(shape: string): boolean {
   return OPAQUE_INTERPRETER_SHAPES.has(shape);
 }
 
-export function buildOsShellTool(options: DangerousToolOptions): ToolDefinition {
+export function buildOsShellTool(
+  options: DangerousToolOptions,
+): ToolDefinition {
   return {
     name: "os.shell.run",
     description:
-      "Run an OS command in the session working directory. Prefer the structured form `{cmd, args:[...]}` (argv globs `*`/`?` are expanded). Shell metacharacters (`|`, `&&`, `;`, `>`, `<`, `$`, backticks) are interpreted via the OS subshell (`sh -c` on macOS/Linux, `cmd.exe /c` on Windows) — a full command line passed as `cmd` (e.g. `\"ffprobe -v quiet … f.mp3\"` or `\"pip3 list | grep foo\"`) runs as written. Do not use for deleting user files — use `os.fs.trash` unless the user explicitly requests permanent shell deletion. Runs through a pre-exec guard: safe commands run directly, risky commands require approval, catastrophic commands are blocked without execution. By default there is no timeout (the command runs until it exits or the turn is cancelled); pass `timeoutMs` to set an explicit limit.",
+      'Run an OS command in the session working directory. Prefer the structured form `{cmd, args:[...]}` (argv globs `*`/`?` are expanded). Shell metacharacters (`|`, `&&`, `;`, `>`, `<`, `$`, backticks) are interpreted via the OS subshell (`sh -c` on macOS/Linux, `cmd.exe /c` on Windows) — a full command line passed as `cmd` (e.g. `"ffprobe -v quiet … f.mp3"` or `"pip3 list | grep foo"`) runs as written. Do not use for deleting user files — use `os.fs.trash` unless the user explicitly requests permanent shell deletion. Runs through a pre-exec guard: safe commands run directly, risky commands require approval, catastrophic commands are blocked without execution. By default there is no timeout (the command runs until it exits or the turn is cancelled); pass `timeoutMs` to set an explicit limit.',
     readonly: false,
     async run(rawArgs, ctx) {
       const cmd = rawArgs.cmd;
@@ -206,7 +208,7 @@ export function buildOsShellTool(options: DangerousToolOptions): ToolDefinition 
           output:
             "os.shell.run: `args` must be an array of strings (got " +
             describeArgsShape(rawArgs.args) +
-            "). Pass arguments as JSON array literal, e.g. {\"cmd\":\"ls\",\"args\":[\"-la\",\"./src\"]}.",
+            '). Pass arguments as JSON array literal, e.g. {"cmd":"ls","args":["-la","./src"]}.',
           details: {
             cmd,
             rawArgsType: describeArgsShape(rawArgs.args),

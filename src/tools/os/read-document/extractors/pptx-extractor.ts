@@ -19,7 +19,12 @@ export const pptxExtractor: Extractor = async (input) => {
   const zip = await openZip(input.data);
   const slidePaths = listSlides(zip);
   if (slidePaths.length === 0) {
-    return { format: "pptx", text: "", slideCount: 0, warnings: ["no slides found"] };
+    return {
+      format: "pptx",
+      text: "",
+      slideCount: 0,
+      warnings: ["no slides found"],
+    };
   }
   const slideCount = slidePaths.length;
   const start = input.pagesFrom ?? 1;
@@ -45,9 +50,7 @@ export const pptxExtractor: Extractor = async (input) => {
       }
       extracted.push(n);
     } catch (err) {
-      warnings.push(
-        `slide ${n}: failed to parse (${(err as Error).message})`,
-      );
+      warnings.push(`slide ${n}: failed to parse (${(err as Error).message})`);
     }
   }
 

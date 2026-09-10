@@ -11,7 +11,12 @@ import {
 
 describe("import sources registry", () => {
   it("offers all four agents in a fixed cycle order", () => {
-    expect(IMPORT_SOURCE_IDS).toEqual(["hermes", "openclaw", "claude-code", "codex"]);
+    expect(IMPORT_SOURCE_IDS).toEqual([
+      "hermes",
+      "openclaw",
+      "claude-code",
+      "codex",
+    ]);
   });
 
   it("cycles forward and back, wrapping at both ends", () => {
@@ -28,7 +33,13 @@ describe("import sources registry", () => {
       importSourceToggles(source).map((meta) => meta.id);
     expect(ids("hermes")).toEqual(["sessions", "cron", "secrets"]);
     expect(ids("openclaw")).toEqual(["sessions", "cron"]);
-    expect(ids("claude-code")).toEqual(["skills", "memory", "mcp", "sessions", "secrets"]);
+    expect(ids("claude-code")).toEqual([
+      "skills",
+      "memory",
+      "mcp",
+      "sessions",
+      "secrets",
+    ]);
     expect(ids("codex")).toEqual(["skills", "memory", "sessions", "secrets"]);
     expect(importSourceSupports("openclaw", "secrets")).toBe(false);
     expect(importSourceSupports("codex", "mcp")).toBe(false);

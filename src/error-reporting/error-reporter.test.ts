@@ -46,7 +46,9 @@ describe("captureError", () => {
   it("reports a non-Error thrown value as NonError without stringifying it", () => {
     const { client, captured } = fakeClient();
     // A thrown string could contain user data — it must never be sent.
-    captureError(client, "/Users/alex/secret prompt text", { source: "uncaughtException" });
+    captureError(client, "/Users/alex/secret prompt text", {
+      source: "uncaughtException",
+    });
     expect(captured).toHaveLength(1);
     expect(captured[0].errorType).toBe("NonError");
     expect(captured[0].message).toBeUndefined();

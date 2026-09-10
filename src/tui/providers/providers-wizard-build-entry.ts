@@ -59,7 +59,9 @@ function providerIdForWizardSave(input: {
   if (input.existingProviderId && input.existingProviderId.length > 0) {
     return input.existingProviderId;
   }
-  const preset = input.presetId ? findProviderPreset(input.presetId) : undefined;
+  const preset = input.presetId
+    ? findProviderPreset(input.presetId)
+    : undefined;
   if (preset) {
     return suggestPresetEntryId(preset, input.takenProviderIds ?? []);
   }
@@ -110,13 +112,15 @@ export function buildProviderEntryFromWizard(input: {
       activateEmbeddingProviderId: "local-llama",
     };
   }
-  const preset = input.presetId ? findProviderPreset(input.presetId) : undefined;
+  const preset = input.presetId
+    ? findProviderPreset(input.presetId)
+    : undefined;
   const chatModel = isCuratedCatalogKind(input.kind)
     ? input.chatModelId
-    : (input.customChatModel?.trim() ||
+    : input.customChatModel?.trim() ||
       (input.kind === "gemini"
         ? GEMINI_DEFAULT_CHAT_MODEL
-        : OPENAI_COMPAT_DEFAULT_CHAT_MODEL));
+        : OPENAI_COMPAT_DEFAULT_CHAT_MODEL);
   const useLocal =
     input.embeddingChoiceId === LOCAL_EMBEDDING_CHOICE_ID ||
     (input.kind === "openai-compatible" &&
@@ -133,9 +137,7 @@ export function buildProviderEntryFromWizard(input: {
     id,
     kind: input.kind,
     defaultChatModel: chatModel,
-    ...(defaultEmbeddingModel
-      ? { defaultEmbeddingModel }
-      : {}),
+    ...(defaultEmbeddingModel ? { defaultEmbeddingModel } : {}),
     ...(input.kind === "openai-compatible"
       ? {
           baseUrl:
@@ -155,9 +157,7 @@ export function buildProviderEntryFromWizard(input: {
     ...(input.kind === "openai-compatible" && preset
       ? {
           apiKeyEnvVar: preset.envVar,
-          ...(preset.apiKeyHeader
-            ? { apiKeyHeader: preset.apiKeyHeader }
-            : {}),
+          ...(preset.apiKeyHeader ? { apiKeyHeader: preset.apiKeyHeader } : {}),
           ...(preset.headers ? { headers: { ...preset.headers } } : {}),
         }
       : {}),

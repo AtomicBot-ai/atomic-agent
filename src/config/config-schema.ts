@@ -1020,13 +1020,16 @@ export interface DiscordConfig {
   /** Master kill switch. `false` constructs the channel but never starts it. */
   enabled: boolean;
   /**
-   * Discord snowflake of the sole permitted operator. A **string**,
-   * not a number: snowflakes exceed `Number.MAX_SAFE_INTEGER`, so
-   * parsing one as a number silently corrupts the last digits and
-   * would let the wrong account drive the agent. `null` means
-   * unpaired — the channel refuses every message until it is set.
+   * Discord snowflakes of every permitted operator. **Strings**, not
+   * numbers: snowflakes exceed `Number.MAX_SAFE_INTEGER`, so parsing
+   * one as a number silently corrupts the last digits and would let
+   * the wrong account drive the agent. Empty means unpaired — the
+   * channel refuses every message until at least one id is set.
+   *
+   * A v51 file's scalar `ownerUserId` is folded in as the first entry,
+   * so an existing single-owner setup keeps working untouched.
    */
-  ownerUserId: string | null;
+  ownerUserIds: string[];
 }
 
 /**
@@ -2027,7 +2030,11 @@ export interface UserConfigFile {
 // provider entries accept `maxOutputTokens`, the per-provider cloud
 // ceiling that replaces the local knob a cloud request used to borrow.
 // Additive: an older file keeps its positive cap and no entry ceiling.
-export const USER_CONFIG_VERSION = 60;
+// v61: `discord.ownerUserId` (scalar) becomes `discord.ownerUserIds`
+// (list) so a bot can answer to more than one person. A pre-v61 file's
+// scalar is folded in as the first entry on read, so nothing an
+// operator already configured stops working.
+export const USER_CONFIG_VERSION = 61;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -2176,6 +2183,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   57,
   58,
   59,
+  60,
   USER_CONFIG_VERSION,
 ];
 
@@ -2473,7 +2481,8 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
     // Added in v51. Off by default: an unpaired channel with a token
     // would connect and then refuse every message, which looks broken.
     enabled: false,
-    ownerUserId: null,
+    // v52: a list. Empty is the unpaired state the switch above assumes.
+    ownerUserIds: [],
   },
   swarm: {
     // Added in v52. No extra bots until the operator adds one.
@@ -3293,6 +3302,65 @@ export function parseSkillNameArray(raw: unknown, field: string): string[] {
 
 const TAP_REPO_RE =
   /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/;
+
+/**
+ * A Discord snowflake as it appears in the client's "Copy User ID":
+ * 15-25 digits. Validated here as well as in the hub's field so a
+ * hand-edited `config.json` cannot arm an owner id that can never
+ * match an author id.
+ */
+const DISCORD_SNOWFLAKE_RE = /^\d{15,25}$/;
+
+/**
+ * Parse `discord.ownerUserIds`, accepting the v51 scalar
+ * `discord.ownerUserId` as a one-entry list.
+ *
+ * Both keys present is not an error — the list wins and the scalar is
+ * ignored, which is what a file written by v52 and then hand-edited by
+ * someone following v51 docs should do. Order is preserved and
+ * duplicates are dropped so the parsed shape is canonical.
+ */
+export function parseDiscordOwnerUserIds(
+  discord: Record<string, unknown>,
+): string[] {
+  const field = "discord.ownerUserIds";
+  const raw = discord.ownerUserIds;
+  if (raw === undefined || raw === null) {
+    const legacy = parseNullableString(
+      discord.ownerUserId,
+      "discord.ownerUserId",
+    );
+    if (legacy === null) return [];
+    if (!DISCORD_SNOWFLAKE_RE.test(legacy)) {
+      throw new ConfigValidationError(
+        "discord.ownerUserId",
+        `expected a 15-25 digit Discord user id, got ${JSON.stringify(legacy)}`,
+      );
+    }
+    return [legacy];
+  }
+  if (!Array.isArray(raw)) {
+    throw new ConfigValidationError(
+      field,
+      `expected string[], got ${JSON.stringify(raw)}`,
+    );
+  }
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (let i = 0; i < raw.length; i++) {
+    const entry = raw[i];
+    if (typeof entry !== "string" || !DISCORD_SNOWFLAKE_RE.test(entry)) {
+      throw new ConfigValidationError(
+        `${field}[${i}]`,
+        `expected a 15-25 digit Discord user id, got ${JSON.stringify(entry)}`,
+      );
+    }
+    if (seen.has(entry)) continue;
+    seen.add(entry);
+    result.push(entry);
+  }
+  return result;
+}
 
 /**
  * Parse the skill hub `taps` list — GitHub `owner/repo` repository
@@ -4721,10 +4789,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         discord.enabled ?? USER_CONFIG_DEFAULTS.discord.enabled,
         "discord.enabled",
       ),
-      ownerUserId: parseNullableString(
-        discord.ownerUserId,
-        "discord.ownerUserId",
-      ),
+      ownerUserIds: parseDiscordOwnerUserIds(discord),
     },
     swarm: {
       units: parseSwarmUnits(swarm.units, "swarm.units"),

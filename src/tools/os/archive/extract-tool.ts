@@ -130,12 +130,16 @@ function parseStringArray(
 ): readonly string[] | undefined {
   if (raw === undefined || raw === null) return undefined;
   if (!Array.isArray(raw)) {
-    throw new Error(`os.fs.archive.extract: \`${field}\` must be an array of strings`);
+    throw new Error(
+      `os.fs.archive.extract: \`${field}\` must be an array of strings`,
+    );
   }
   const out: string[] = [];
   for (const item of raw) {
     if (typeof item !== "string" || item.length === 0) {
-      throw new Error(`os.fs.archive.extract: \`${field}\` entries must be non-empty strings`);
+      throw new Error(
+        `os.fs.archive.extract: \`${field}\` entries must be non-empty strings`,
+      );
     }
     out.push(item);
   }
@@ -149,9 +153,21 @@ function parseLimits(raw: unknown): ExtractLimits {
   }
   const obj = raw as Record<string, unknown>;
   return {
-    maxTotalBytes: readLimit(obj.maxTotalBytes, DEFAULT_EXTRACT_LIMITS.maxTotalBytes, "maxTotalBytes"),
-    maxEntryBytes: readLimit(obj.maxEntryBytes, DEFAULT_EXTRACT_LIMITS.maxEntryBytes, "maxEntryBytes"),
-    maxEntries: readLimit(obj.maxEntries, DEFAULT_EXTRACT_LIMITS.maxEntries, "maxEntries"),
+    maxTotalBytes: readLimit(
+      obj.maxTotalBytes,
+      DEFAULT_EXTRACT_LIMITS.maxTotalBytes,
+      "maxTotalBytes",
+    ),
+    maxEntryBytes: readLimit(
+      obj.maxEntryBytes,
+      DEFAULT_EXTRACT_LIMITS.maxEntryBytes,
+      "maxEntryBytes",
+    ),
+    maxEntries: readLimit(
+      obj.maxEntries,
+      DEFAULT_EXTRACT_LIMITS.maxEntries,
+      "maxEntries",
+    ),
   };
 }
 

@@ -65,7 +65,10 @@ export function buildImportRunner(
       });
       return {
         run: async (input) =>
-          importer.run({ ...input, options: input.options.filter(isHermesOption) }),
+          importer.run({
+            ...input,
+            options: input.options.filter(isHermesOption),
+          }),
         close: () => source.close(),
       };
     }
@@ -118,7 +121,10 @@ export function buildImportRunner(
       });
       return {
         run: (input) =>
-          importer.run({ ...input, options: input.options.filter(isCodexOption) }),
+          importer.run({
+            ...input,
+            options: input.options.filter(isCodexOption),
+          }),
         close: () => {},
       };
     }

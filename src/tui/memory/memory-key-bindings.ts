@@ -7,7 +7,10 @@ import {
   cycleNotesArchiveFilter,
   selectVisibleMemoryRows,
 } from "./memory-filter.js";
-import type { MemoryPanelState, MemorySummaryRow } from "./memory-panel-state.js";
+import type {
+  MemoryPanelState,
+  MemorySummaryRow,
+} from "./memory-panel-state.js";
 
 export interface MemoryTabKeyContext {
   state: TuiState;
@@ -66,21 +69,13 @@ function handleListKey(
     return true;
   }
   if (input === "[") {
-    const next = cycleMemoryChannel(
-      panel.channel,
-      panel.availableChannels,
-      -1,
-    );
+    const next = cycleMemoryChannel(panel.channel, panel.availableChannels, -1);
     dispatch({ type: "memory_channel_set", channel: next });
     dispatchRefresh({ ...panel, channel: next }, dispatch);
     return true;
   }
   if (input === "]") {
-    const next = cycleMemoryChannel(
-      panel.channel,
-      panel.availableChannels,
-      1,
-    );
+    const next = cycleMemoryChannel(panel.channel, panel.availableChannels, 1);
     dispatch({ type: "memory_channel_set", channel: next });
     dispatchRefresh({ ...panel, channel: next }, dispatch);
     return true;
@@ -153,9 +148,7 @@ function dispatchRefresh(
   });
 }
 
-function selectedVisibleRow(
-  panel: MemoryPanelState,
-): MemorySummaryRow | null {
+function selectedVisibleRow(panel: MemoryPanelState): MemorySummaryRow | null {
   const visible = selectVisibleMemoryRows(panel);
   if (visible.length === 0) return null;
   const clamped = Math.max(0, Math.min(panel.cursor, visible.length - 1));

@@ -28,7 +28,10 @@ const TALL_CHAT_LINES = 40;
 const settle = (): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, FLUSH_MS));
 
-function trackingCallbacks(counts: { quit: number; abort: number }): TuiAppCallbacks {
+function trackingCallbacks(counts: {
+  quit: number;
+  abort: number;
+}): TuiAppCallbacks {
   return {
     onApprovalDecision: () => {},
     onAbort: () => {
@@ -46,7 +49,11 @@ describe("Esc while a turn is running", () => {
     const counts = { quit: 0, abort: 0 };
     const bus = makeTuiEventBus();
     const { stdin, unmount } = render(
-      <TuiApp session={SESSION} bus={bus} callbacks={trackingCallbacks(counts)} />,
+      <TuiApp
+        session={SESSION}
+        bus={bus}
+        callbacks={trackingCallbacks(counts)}
+      />,
     );
     await settle();
     bus.emit({ type: "message_submitted" });
@@ -69,7 +76,11 @@ describe("Esc while a turn is running", () => {
     const counts = { quit: 0, abort: 0 };
     const bus = makeTuiEventBus();
     const { stdin, unmount } = render(
-      <TuiApp session={SESSION} bus={bus} callbacks={trackingCallbacks(counts)} />,
+      <TuiApp
+        session={SESSION}
+        bus={bus}
+        callbacks={trackingCallbacks(counts)}
+      />,
     );
     await settle();
     bus.emit({ type: "ui_mode_set", mode: "debug" });
@@ -91,7 +102,11 @@ describe("Esc while a turn is running", () => {
     const counts = { quit: 0, abort: 0 };
     const bus = makeTuiEventBus();
     const { stdin, unmount } = render(
-      <TuiApp session={SESSION} bus={bus} callbacks={trackingCallbacks(counts)} />,
+      <TuiApp
+        session={SESSION}
+        bus={bus}
+        callbacks={trackingCallbacks(counts)}
+      />,
     );
     await settle();
     bus.emit({ type: "message_submitted" });
@@ -127,7 +142,11 @@ describe("Esc while a turn is running", () => {
     const counts = { quit: 0, abort: 0 };
     const bus = makeTuiEventBus();
     const { stdin, unmount } = render(
-      <TuiApp session={SESSION} bus={bus} callbacks={trackingCallbacks(counts)} />,
+      <TuiApp
+        session={SESSION}
+        bus={bus}
+        callbacks={trackingCallbacks(counts)}
+      />,
     );
     await settle();
     bus.emit({ type: "ui_mode_set", mode: "debug" });

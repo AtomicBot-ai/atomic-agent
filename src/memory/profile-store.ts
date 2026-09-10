@@ -246,83 +246,82 @@ export class ProfileStore {
         ? optionsOrNow
         : {};
     const now =
-      typeof optionsOrNow === "number"
-        ? optionsOrNow
-        : (nowArg ?? Date.now());
-    const pinned = options.pinned === undefined ? true : Boolean(options.pinned);
+      typeof optionsOrNow === "number" ? optionsOrNow : (nowArg ?? Date.now());
+    const pinned =
+      options.pinned === undefined ? true : Boolean(options.pinned);
     const keywords = pinned ? [] : validateKeywords(options.keywords);
     const supersedesKeyRaw = options.supersedesKey;
     const supersedesKey =
       supersedesKeyRaw !== undefined ? validateKey(supersedesKeyRaw) : null;
 
-    const txn = this.db.transaction((): { id: number; supersedes: number | null } => {
-      // Same-key auto-chain: if there is an active row for the
-      // incoming key, capture its id so we can flip it after insert.
-      const sameKeyActive = this.selectActiveByKeyStmt.get(normalisedKey) as
-        | ProfileRow
-        | undefined;
-      // Cross-key supersession: only fires when `supersedesKey` was
-      // provided AND differs from the incoming key (same-key is
-      // already handled above).
-      const crossKeyActive =
-        supersedesKey !== null && supersedesKey !== normalisedKey
-          ? (this.selectActiveByKeyStmt.get(supersedesKey) as
-              | ProfileRow
-              | undefined)
-          : undefined;
+    const txn = this.db.transaction(
+      (): { id: number; supersedes: number | null } => {
+        // Same-key auto-chain: if there is an active row for the
+        // incoming key, capture its id so we can flip it after insert.
+        const sameKeyActive = this.selectActiveByKeyStmt.get(normalisedKey) as
+          ProfileRow | undefined;
+        // Cross-key supersession: only fires when `supersedesKey` was
+        // provided AND differs from the incoming key (same-key is
+        // already handled above).
+        const crossKeyActive =
+          supersedesKey !== null && supersedesKey !== normalisedKey
+            ? (this.selectActiveByKeyStmt.get(supersedesKey) as
+                ProfileRow | undefined)
+            : undefined;
 
-      // Pick which row this new write supersedes. Same-key wins over
-      // cross-key — the parser-emitted `supersedesKey` is more of a
-      // hint and the storage layer always honours the structural
-      // same-key chain first.
-      const directParent = sameKeyActive ?? crossKeyActive ?? null;
+        // Pick which row this new write supersedes. Same-key wins over
+        // cross-key — the parser-emitted `supersedesKey` is more of a
+        // hint and the storage layer always honours the structural
+        // same-key chain first.
+        const directParent = sameKeyActive ?? crossKeyActive ?? null;
 
-      // Flip every soon-to-be-superseded parent out of the active
-      // set with a sentinel `superseded_by = id` BEFORE inserting the
-      // new row. Without this the partial unique index
-      // (`idx_profile_active_key WHERE superseded_by IS NULL`) would
-      // reject the insert because two rows would briefly count as
-      // active for the same `key`.
-      if (sameKeyActive) {
-        this.preflipParentStmt.run(sameKeyActive.id);
-      }
-      if (crossKeyActive && crossKeyActive.id !== (sameKeyActive?.id ?? -1)) {
-        this.preflipParentStmt.run(crossKeyActive.id);
-      }
+        // Flip every soon-to-be-superseded parent out of the active
+        // set with a sentinel `superseded_by = id` BEFORE inserting the
+        // new row. Without this the partial unique index
+        // (`idx_profile_active_key WHERE superseded_by IS NULL`) would
+        // reject the insert because two rows would briefly count as
+        // active for the same `key`.
+        if (sameKeyActive) {
+          this.preflipParentStmt.run(sameKeyActive.id);
+        }
+        if (crossKeyActive && crossKeyActive.id !== (sameKeyActive?.id ?? -1)) {
+          this.preflipParentStmt.run(crossKeyActive.id);
+        }
 
-      const insertResult = this.insertStmt.run({
-        key: normalisedKey,
-        value: normalisedValue,
-        pinned: pinned ? 1 : 0,
-        keywords: keywords.length > 0 ? JSON.stringify(keywords) : null,
-        valid_from: now,
-        supersedes: directParent ? directParent.id : null,
-        created_at: now,
-        updated_at: now,
-      }) as { lastInsertRowid: number | bigint };
-      const newId = Number(insertResult.lastInsertRowid);
+        const insertResult = this.insertStmt.run({
+          key: normalisedKey,
+          value: normalisedValue,
+          pinned: pinned ? 1 : 0,
+          keywords: keywords.length > 0 ? JSON.stringify(keywords) : null,
+          valid_from: now,
+          supersedes: directParent ? directParent.id : null,
+          created_at: now,
+          updated_at: now,
+        }) as { lastInsertRowid: number | bigint };
+        const newId = Number(insertResult.lastInsertRowid);
 
-      // Flip the parent (and the cross-key sibling, if any).
-      if (sameKeyActive) {
-        this.markSupersededStmt.run({
-          new_id: newId,
-          now,
-          id: sameKeyActive.id,
-        });
-      }
-      if (crossKeyActive && crossKeyActive.id !== (sameKeyActive?.id ?? -1)) {
-        this.markSupersededStmt.run({
-          new_id: newId,
-          now,
-          id: crossKeyActive.id,
-        });
-      }
+        // Flip the parent (and the cross-key sibling, if any).
+        if (sameKeyActive) {
+          this.markSupersededStmt.run({
+            new_id: newId,
+            now,
+            id: sameKeyActive.id,
+          });
+        }
+        if (crossKeyActive && crossKeyActive.id !== (sameKeyActive?.id ?? -1)) {
+          this.markSupersededStmt.run({
+            new_id: newId,
+            now,
+            id: crossKeyActive.id,
+          });
+        }
 
-      return {
-        id: newId,
-        supersedes: directParent ? directParent.id : null,
-      };
-    });
+        return {
+          id: newId,
+          supersedes: directParent ? directParent.id : null,
+        };
+      },
+    );
 
     const { id, supersedes } = txn();
 
@@ -369,8 +368,7 @@ export class ProfileStore {
   get(key: string): ProfileFact | null {
     const normalisedKey = validateKey(key);
     const row = this.selectActiveByKeyStmt.get(normalisedKey) as
-      | ProfileRow
-      | undefined;
+      ProfileRow | undefined;
     if (!row) return null;
     return rowToFact(row);
   }
@@ -485,7 +483,10 @@ function validateValue(raw: unknown): string {
     throw new ProfileValidationError("value", "profile value must be a string");
   }
   if (raw.length === 0) {
-    throw new ProfileValidationError("value", "profile value must be non-empty");
+    throw new ProfileValidationError(
+      "value",
+      "profile value must be non-empty",
+    );
   }
   if (raw.length > PROFILE_VALUE_MAX_LENGTH) {
     throw new ProfileValidationError(

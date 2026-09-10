@@ -80,7 +80,10 @@ describe("reduceImportAction", () => {
 
   it("toggles the skills / memory / mcp rows the new sources add", () => {
     const state = createInitialTuiState(SESSION);
-    const next = reduceImportAction(state, { type: "import_toggled", field: "mcp" });
+    const next = reduceImportAction(state, {
+      type: "import_toggled",
+      field: "mcp",
+    });
     expect(next!.importPanel.form.mcp).toBe(false);
     expect(next!.importPanel.form.skills).toBe(true);
   });

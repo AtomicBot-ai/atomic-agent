@@ -4,7 +4,12 @@ import { ApprovalGate } from "../../approval/approval-gate.js";
 import type { GithubApi } from "../../github/index.js";
 import { GITHUB_NOT_CONNECTED } from "../../github/index.js";
 import type { ToolDefinition } from "../tool-registry.js";
-import { makeCtx, makeGitRepo, runGitRaw, writeRepoFile } from "../os/git/test-helpers.js";
+import {
+  makeCtx,
+  makeGitRepo,
+  runGitRaw,
+  writeRepoFile,
+} from "../os/git/test-helpers.js";
 import { buildGithubTools } from "./github-tools.js";
 
 function approveAll(): ApprovalGate {
@@ -93,7 +98,12 @@ describe("github.* tools", () => {
   let repo: string;
   beforeEach(async () => {
     repo = await makeGitRepo();
-    await runGitRaw(repo, ["remote", "add", "origin", "git@github.com:acme/widgets.git"]);
+    await runGitRaw(repo, [
+      "remote",
+      "add",
+      "origin",
+      "git@github.com:acme/widgets.git",
+    ]);
     await writeRepoFile(repo, "a.txt", "one\n");
     await runGitRaw(repo, ["add", "."]);
     await runGitRaw(repo, ["commit", "-m", "init"]);
@@ -161,10 +171,12 @@ describe("github.* tools", () => {
   it("lets explicit repo/head/base override the defaults", async () => {
     const api = fakeApi();
     const tools = toolsWith(api);
-    await tools.get("github.pr.create")!.run(
-      { title: "t", repo: "other/place", head: "h", base: "b", draft: true },
-      makeCtx(repo),
-    );
+    await tools
+      .get("github.pr.create")!
+      .run(
+        { title: "t", repo: "other/place", head: "h", base: "b", draft: true },
+        makeCtx(repo),
+      );
     expect(api.calls).not.toContain("getRepo");
     const create = api.calls.find((c) => c.startsWith("createPullRequest"))!;
     expect(create).toContain('"owner":"other"');
@@ -182,7 +194,9 @@ describe("github.* tools", () => {
       tools.get("github.issue.create")!.run({ title: "t" }, makeCtx(repo)),
     ).rejects.toThrow(/approval denied/);
     await expect(
-      tools.get("github.issue.comment")!.run({ number: 3, body: "b" }, makeCtx(repo)),
+      tools
+        .get("github.issue.comment")!
+        .run({ number: 3, body: "b" }, makeCtx(repo)),
     ).rejects.toThrow(/approval denied/);
     expect(api.calls.filter((c) => !c.startsWith("getRepo"))).toEqual([]);
   });
@@ -200,10 +214,15 @@ describe("github.* tools", () => {
   });
 
   it("asks under the publish category with the body as preview", async () => {
-    const seen: Array<{ category: string; preview?: string; tool: string }> = [];
+    const seen: Array<{ category: string; preview?: string; tool: string }> =
+      [];
     const gate = new ApprovalGate({
       emit: (req) => {
-        seen.push({ category: req.category, preview: req.preview, tool: req.tool });
+        seen.push({
+          category: req.category,
+          preview: req.preview,
+          tool: req.tool,
+        });
         gate.resolve({ approvalId: req.approvalId, approved: true });
       },
     });
@@ -224,11 +243,16 @@ describe("github.* tools", () => {
   });
 
   it("refuses a non-GitHub origin and a bad slug with a pointer to `repo`", async () => {
-    await runGitRaw(repo, ["remote", "set-url", "origin", "https://gitlab.com/a/b.git"]);
+    await runGitRaw(repo, [
+      "remote",
+      "set-url",
+      "origin",
+      "https://gitlab.com/a/b.git",
+    ]);
     const tools = toolsWith(fakeApi());
-    await expect(tools.get("github.pr.list")!.run({}, makeCtx(repo))).rejects.toThrow(
-      /not on github\.com/,
-    );
+    await expect(
+      tools.get("github.pr.list")!.run({}, makeCtx(repo)),
+    ).rejects.toThrow(/not on github\.com/);
     await expect(
       tools.get("github.pr.list")!.run({ repo: "nope" }, makeCtx(repo)),
     ).rejects.toThrow(/owner\/name/);
@@ -237,9 +261,9 @@ describe("github.* tools", () => {
   it("validates arguments before touching the API", async () => {
     const api = fakeApi();
     const tools = toolsWith(api);
-    await expect(tools.get("github.pr.create")!.run({}, makeCtx(repo))).rejects.toThrow(
-      /`title`/,
-    );
+    await expect(
+      tools.get("github.pr.create")!.run({}, makeCtx(repo)),
+    ).rejects.toThrow(/`title`/);
     await expect(
       tools.get("github.issue.comment")!.run({ body: "b" }, makeCtx(repo)),
     ).rejects.toThrow(/`number`/);

@@ -4,7 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ApprovalGate } from "../../../approval/approval-gate.js";
 import { buildOsGitPushTool, buildPushInvocation } from "./git-push.js";
-import { makeCtx, makeGitRepo, runGitRaw, writeRepoFile } from "./test-helpers.js";
+import {
+  makeCtx,
+  makeGitRepo,
+  runGitRaw,
+  writeRepoFile,
+} from "./test-helpers.js";
 
 function approveAll(): ApprovalGate {
   const gate = new ApprovalGate({
@@ -47,13 +52,20 @@ describe("os.git.push", () => {
     const remoteHead = await runGitRaw(bare, ["rev-parse", "main"]);
     const localHead = await runGitRaw(repo, ["rev-parse", "main"]);
     expect(remoteHead.stdout.trim()).toBe(localHead.stdout.trim());
-    const upstream = await runGitRaw(repo, ["rev-parse", "--abbrev-ref", "main@{upstream}"]);
+    const upstream = await runGitRaw(repo, [
+      "rev-parse",
+      "--abbrev-ref",
+      "main@{upstream}",
+    ]);
     expect(upstream.stdout.trim()).toBe("origin/main");
   });
 
   it("pushes a named branch without -u when asked", async () => {
     await runGitRaw(repo, ["branch", "feat/x"]);
-    const tool = buildOsGitPushTool({ approvals: approveAll(), approvalRequired: true });
+    const tool = buildOsGitPushTool({
+      approvals: approveAll(),
+      approvalRequired: true,
+    });
     const result = await tool.run(
       { branch: "feat/x", setUpstream: false },
       makeCtx(repo),
@@ -61,9 +73,11 @@ describe("os.git.push", () => {
     expect(result.details.setUpstream).toBe(false);
     const remoteBranches = await runGitRaw(bare, ["branch", "--list"]);
     expect(remoteBranches.stdout).toContain("feat/x");
-    const upstream = await runGitRaw(repo, ["config", "--get", "branch.feat/x.remote"]).catch(
-      () => ({ stdout: "" }),
-    );
+    const upstream = await runGitRaw(repo, [
+      "config",
+      "--get",
+      "branch.feat/x.remote",
+    ]).catch(() => ({ stdout: "" }));
     expect(upstream.stdout.trim()).toBe("");
   });
 
@@ -75,7 +89,10 @@ describe("os.git.push", () => {
         gate.resolve({ approvalId: req.approvalId, approved: true });
       },
     });
-    const tool = buildOsGitPushTool({ approvals: gate, approvalRequired: true });
+    const tool = buildOsGitPushTool({
+      approvals: gate,
+      approvalRequired: true,
+    });
     await tool.run({}, makeCtx(repo));
     expect(preview).toContain("git push -u origin main:main");
     expect(preview).toContain(`remote: ${bare}`);
@@ -86,8 +103,13 @@ describe("os.git.push", () => {
     const gate = new ApprovalGate({
       emit: (req) => gate.reject(req.approvalId, "denied"),
     });
-    const tool = buildOsGitPushTool({ approvals: gate, approvalRequired: true });
-    await expect(tool.run({}, makeCtx(repo))).rejects.toThrow(/approval denied/);
+    const tool = buildOsGitPushTool({
+      approvals: gate,
+      approvalRequired: true,
+    });
+    await expect(tool.run({}, makeCtx(repo))).rejects.toThrow(
+      /approval denied/,
+    );
     const remoteBranches = await runGitRaw(bare, ["branch", "--list"]);
     expect(remoteBranches.stdout.trim()).toBe("");
   });
@@ -100,16 +122,22 @@ describe("os.git.push", () => {
         gate.resolve({ approvalId: req.approvalId, approved: true });
       },
     });
-    const tool = buildOsGitPushTool({ approvals: gate, approvalRequired: true });
-    await expect(tool.run({ remote: "upstream" }, makeCtx(repo))).rejects.toThrow(
-      /remote "upstream" is not configured/,
-    );
+    const tool = buildOsGitPushTool({
+      approvals: gate,
+      approvalRequired: true,
+    });
+    await expect(
+      tool.run({ remote: "upstream" }, makeCtx(repo)),
+    ).rejects.toThrow(/remote "upstream" is not configured/);
     expect(asked).toBe(false);
   });
 
   it("refuses to push a detached HEAD without an explicit branch", async () => {
     await runGitRaw(repo, ["checkout", "-q", "--detach"]);
-    const tool = buildOsGitPushTool({ approvals: approveAll(), approvalRequired: false });
+    const tool = buildOsGitPushTool({
+      approvals: approveAll(),
+      approvalRequired: false,
+    });
     await expect(tool.run({}, makeCtx(repo))).rejects.toThrow(/detached/);
   });
 
@@ -122,7 +150,10 @@ describe("os.git.push", () => {
       await runGitRaw(other, ["add", "."]);
       await runGitRaw(other, ["commit", "-m", "remote-ahead"]);
       await runGitRaw(other, ["push", "-q", "origin", "main"]);
-      const tool = buildOsGitPushTool({ approvals: approveAll(), approvalRequired: false });
+      const tool = buildOsGitPushTool({
+        approvals: approveAll(),
+        approvalRequired: false,
+      });
       await expect(tool.run({}, makeCtx(repo))).rejects.toThrow(
         /os\.git\.push: git push exited/,
       );
@@ -144,7 +175,9 @@ describe("buildPushInvocation", () => {
     expect(inv.authenticated).toBe(true);
     expect(inv.args).toEqual(["push", "-u", "origin", "feat/x:feat/x"]);
     expect(inv.args.join(" ")).not.toContain(TOKEN);
-    expect(inv.env.GIT_CONFIG_KEY_0).toBe("http.https://github.com/.extraheader");
+    expect(inv.env.GIT_CONFIG_KEY_0).toBe(
+      "http.https://github.com/.extraheader",
+    );
     expect(inv.env.GIT_CONFIG_VALUE_0).toContain("AUTHORIZATION: basic ");
   });
 

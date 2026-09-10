@@ -34,10 +34,13 @@ function Harness(): ReactElement {
   return createElement(MultiLineEditor, {
     value: state.inputValue,
     focus: true,
-    onChange: (next: string) => dispatch({ type: "input_changed", value: next }),
+    onChange: (next: string) =>
+      dispatch({ type: "input_changed", value: next }),
     onSubmit: () => {},
-    onHistoryPrev: () => dispatch({ type: "input_history_navigated", delta: -1 }),
-    onHistoryNext: () => dispatch({ type: "input_history_navigated", delta: 1 }),
+    onHistoryPrev: () =>
+      dispatch({ type: "input_history_navigated", delta: -1 }),
+    onHistoryNext: () =>
+      dispatch({ type: "input_history_navigated", delta: 1 }),
   });
 }
 

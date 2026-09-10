@@ -45,7 +45,9 @@ describe("buildOpenAiAuthHeaders header guard", () => {
   });
 
   it("passes an ASCII key through to the named header", () => {
-    const headers = buildOpenAiAuthHeaders("sk-ok", { apiKeyHeader: "x-api-key" });
+    const headers = buildOpenAiAuthHeaders("sk-ok", {
+      apiKeyHeader: "x-api-key",
+    });
     expect(headers["x-api-key"]).toBe("sk-ok");
   });
 });
@@ -91,7 +93,13 @@ describe("buildOpenAiHeaders header guard", () => {
     const fetchImpl = vi.fn();
     let caught: unknown;
     try {
-      await openAiFetch({ ...deps, apiKey: "sk-т", fetchImpl }, "/v1/chat", null, {}, false);
+      await openAiFetch(
+        { ...deps, apiKey: "sk-т", fetchImpl },
+        "/v1/chat",
+        null,
+        {},
+        false,
+      );
     } catch (err) {
       caught = err;
     }

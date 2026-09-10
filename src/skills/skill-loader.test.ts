@@ -80,7 +80,11 @@ describe("loadSkills", () => {
 
   it("collects errors for broken SKILL.md", async () => {
     await mkdir(join(global, "broken"), { recursive: true });
-    await writeFile(join(global, "broken", "SKILL.md"), "no frontmatter", "utf8");
+    await writeFile(
+      join(global, "broken", "SKILL.md"),
+      "no frontmatter",
+      "utf8",
+    );
     const result = await loadSkills({ globalDir: global, projectDir: null });
     expect(result.skills).toEqual([]);
     expect(result.errors).toHaveLength(1);

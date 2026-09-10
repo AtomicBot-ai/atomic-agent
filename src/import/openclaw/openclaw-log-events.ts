@@ -32,7 +32,9 @@ export function parseLogLine(line: string): OpenclawRawEvent | null {
 }
 
 /** Project a raw `message` event into a neutral `OpenclawMessage`. */
-export function projectLogMessage(event: OpenclawRawEvent): OpenclawMessage | null {
+export function projectLogMessage(
+  event: OpenclawRawEvent,
+): OpenclawMessage | null {
   const msg = event.message;
   if (!msg || typeof msg !== "object") return null;
   const m = msg as Record<string, unknown>;
@@ -44,7 +46,7 @@ export function projectLogMessage(event: OpenclawRawEvent): OpenclawMessage | nu
   const atMs =
     typeof m.timestamp === "number"
       ? Math.round(m.timestamp)
-      : isoToMs(event.timestamp) ?? 0;
+      : (isoToMs(event.timestamp) ?? 0);
   return {
     role,
     blocks,
@@ -80,7 +82,8 @@ function projectBlocks(content: unknown): OpenclawBlock[] {
           id: typeof block.id === "string" ? block.id : null,
           name,
           args:
-            block.arguments && typeof block.arguments === "object" &&
+            block.arguments &&
+            typeof block.arguments === "object" &&
             !Array.isArray(block.arguments)
               ? (block.arguments as Record<string, unknown>)
               : {},

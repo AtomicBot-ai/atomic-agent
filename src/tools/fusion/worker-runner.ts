@@ -4,7 +4,10 @@ import type { SessionState } from "../../session/session-state.js";
 import type { FusionWorkerMeta } from "../../session/fusion-worker-session.js";
 import type { TurnOrigin } from "../../runtime/turn-controller.js";
 import type { DelegateTask } from "./delegate-args.js";
-import { renderWorkerBrief, WORKER_REPLY_CHAR_BUDGET } from "./worker-prompt.js";
+import {
+  renderWorkerBrief,
+  WORKER_REPLY_CHAR_BUDGET,
+} from "./worker-prompt.js";
 import { WorkerRunCollector, type WorkerTaskResult } from "./worker-result.js";
 import {
   FUSION_WORKER_APPROVAL_REFUSED,

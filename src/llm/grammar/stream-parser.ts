@@ -60,9 +60,13 @@ interface EscapeCarry {
   unicodeHex: string;
 }
 
-export function createStreamParser(options: StreamParserOptions = {}): StreamParser {
-  const reasoningOpenTag = options.reasoningOpenTag ?? DEFAULT_REASONING_OPEN_TAG;
-  const reasoningCloseTag = options.reasoningCloseTag ?? DEFAULT_REASONING_CLOSE_TAG;
+export function createStreamParser(
+  options: StreamParserOptions = {},
+): StreamParser {
+  const reasoningOpenTag =
+    options.reasoningOpenTag ?? DEFAULT_REASONING_OPEN_TAG;
+  const reasoningCloseTag =
+    options.reasoningCloseTag ?? DEFAULT_REASONING_CLOSE_TAG;
   const openRe = new RegExp(escapeRegex(reasoningOpenTag));
   const closeRe = new RegExp(escapeRegex(reasoningCloseTag));
   const closeHoldbackLen = Math.max(16, reasoningCloseTag.length);
@@ -135,7 +139,11 @@ export function createStreamParser(options: StreamParserOptions = {}): StreamPar
         // boundary) alongside the possible close-tag prefix; everything
         // before either stays live reasoning.
         const holdFrom = start === null ? buffer.length : start.index;
-        const safeIdx = findSafeReasoningEmitIndex(buffer, reasoningCloseTag, closeHoldbackLen);
+        const safeIdx = findSafeReasoningEmitIndex(
+          buffer,
+          reasoningCloseTag,
+          closeHoldbackLen,
+        );
         const cutAt = Math.min(holdFrom, safeIdx);
         const emit = buffer.slice(0, cutAt);
         if (emit.length > 0) {

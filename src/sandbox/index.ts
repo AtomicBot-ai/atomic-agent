@@ -5,8 +5,5 @@ export type {
   KillableChild,
   KillProcessTreeOptions,
 } from "./kill-process-tree.js";
-export {
-  buildSubshellInvocation,
-  quoteCmdArg,
-} from "./shell-invocation.js";
+export { buildSubshellInvocation, quoteCmdArg } from "./shell-invocation.js";
 export type { SubshellInvocation } from "./shell-invocation.js";

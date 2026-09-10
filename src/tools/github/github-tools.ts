@@ -94,7 +94,11 @@ export function buildGithubTools(
         output: lines.length
           ? `${formatRepoSlug(ref)}\n${lines.join("\n")}`
           : `${formatRepoSlug(ref)}: no pull requests`,
-        details: { repo: formatRepoSlug(ref), count: prs.length, pullRequests: prs },
+        details: {
+          repo: formatRepoSlug(ref),
+          count: prs.length,
+          pullRequests: prs,
+        },
       });
     },
   };
@@ -106,7 +110,11 @@ export function buildGithubTools(
     readonly: true,
     async run(rawArgs, ctx) {
       const ref = await resolveRepo(rawArgs.repo, ctx, "github.issue.list");
-      const labels = parseStringArray(rawArgs.labels, "github.issue.list", "labels");
+      const labels = parseStringArray(
+        rawArgs.labels,
+        "github.issue.list",
+        "labels",
+      );
       const issues = (
         await client().listIssues({
           ...ref,
@@ -185,9 +193,17 @@ export function buildGithubTools(
     readonly: false,
     async run(rawArgs, ctx) {
       const ref = await resolveRepo(rawArgs.repo, ctx, "github.issue.create");
-      const title = requireString(rawArgs.title, "github.issue.create", "title");
+      const title = requireString(
+        rawArgs.title,
+        "github.issue.create",
+        "title",
+      );
       const body = optionalString(rawArgs.body, "github.issue.create", "body");
-      const labels = parseStringArray(rawArgs.labels, "github.issue.create", "labels");
+      const labels = parseStringArray(
+        rawArgs.labels,
+        "github.issue.create",
+        "labels",
+      );
 
       await requireApproval(
         options,
@@ -224,7 +240,11 @@ export function buildGithubTools(
     readonly: false,
     async run(rawArgs, ctx) {
       const ref = await resolveRepo(rawArgs.repo, ctx, "github.issue.comment");
-      const number = requireNumber(rawArgs.number, "github.issue.comment", "number");
+      const number = requireNumber(
+        rawArgs.number,
+        "github.issue.comment",
+        "number",
+      );
       const body = requireString(rawArgs.body, "github.issue.comment", "body");
 
       await requireApproval(

@@ -26,7 +26,11 @@ export interface SwarmTabKeyContext {
  * characters that are bindings everywhere else, and a paste that
  * silently triggered "remove" halfway through would be destructive.
  */
-export function handleSwarmTabKey(input: string, key: Key, ctx: SwarmTabKeyContext): boolean {
+export function handleSwarmTabKey(
+  input: string,
+  key: Key,
+  ctx: SwarmTabKeyContext,
+): boolean {
   const { state, dispatch, callbacks } = ctx;
   if (state.uiMode !== "debug" || state.activeTab !== "swarm") return false;
   const panel = state.swarmPanel;
@@ -94,7 +98,11 @@ export function handleSwarmTabKey(input: string, key: Key, ctx: SwarmTabKeyConte
       }
       if (key.return) {
         if (row) {
-          void callbacks.onSwarmFieldSaveRequested?.(row.id, panel.editField, panel.editBuffer);
+          void callbacks.onSwarmFieldSaveRequested?.(
+            row.id,
+            panel.editField,
+            panel.editBuffer,
+          );
         }
         return true;
       }

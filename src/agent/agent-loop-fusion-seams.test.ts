@@ -36,7 +36,12 @@ function makeCompletion(content: string): CompletionResult {
     reasoningContent: "",
     stop: true,
     truncated: false,
-    timing: { promptMs: 1, predictedMs: 1, promptTokens: 10, predictedTokens: 5 },
+    timing: {
+      promptMs: 1,
+      predictedMs: 1,
+      promptTokens: 10,
+      predictedTokens: 5,
+    },
     cacheHitTokens: 0,
     slotId: 0,
     modelId: "mock",
@@ -44,9 +49,21 @@ function makeCompletion(content: string): CompletionResult {
 }
 
 const TOOLS: ToolDescriptor[] = [
-  { name: "reply", summary: "Reply to the user.", argsSchema: '{"text": string}' },
-  { name: "finish", summary: "Finish the session.", argsSchema: '{"summary": string}' },
-  { name: "os.fs.read", summary: "Read a file.", argsSchema: '{"path": string}' },
+  {
+    name: "reply",
+    summary: "Reply to the user.",
+    argsSchema: '{"text": string}',
+  },
+  {
+    name: "finish",
+    summary: "Finish the session.",
+    argsSchema: '{"summary": string}',
+  },
+  {
+    name: "os.fs.read",
+    summary: "Read a file.",
+    argsSchema: '{"path": string}',
+  },
 ];
 
 const CAPS: CapabilitiesSummary = {
@@ -111,7 +128,10 @@ describe("AgentLoop fusion seams", () => {
       skillCatalog: SKILLS,
     });
     const session = createEmptySessionState({ id: "s-w-pinned", workingDir });
-    const result = await loop.runTurn(session, turnOptions({ providerId: "local-x" }));
+    const result = await loop.runTurn(
+      session,
+      turnOptions({ providerId: "local-x" }),
+    );
     expect(result.reason).toBe("reply");
     expect(resolvedFor).toEqual(["local-x"]);
     expect(seen).toHaveLength(1);
@@ -137,7 +157,9 @@ describe("AgentLoop fusion seams", () => {
       },
       llmComplete: async (params) => {
         seen.push(params);
-        return makeCompletion(JSON.stringify({ tool: "reply", args: { text: "hi" } }));
+        return makeCompletion(
+          JSON.stringify({ tool: "reply", args: { text: "hi" } }),
+        );
       },
       toolDescriptors: TOOLS,
       capabilities: CAPS,
@@ -160,7 +182,13 @@ describe("AgentLoop fusion seams", () => {
           recalled: [],
           index: [],
           lessons: [
-            { id: 7, activation: "l", tags: [], workingDir: null, updatedAt: 1 },
+            {
+              id: 7,
+              activation: "l",
+              tags: [],
+              workingDir: null,
+              updatedAt: 1,
+            },
           ],
         };
       },
@@ -182,7 +210,9 @@ describe("AgentLoop fusion seams", () => {
         slotManager: new SlotManager(2),
         grammar: 'root ::= "ok"',
         llmComplete: async () =>
-          makeCompletion(JSON.stringify({ tool: "reply", args: { text: "hi" } })),
+          makeCompletion(
+            JSON.stringify({ tool: "reply", args: { text: "hi" } }),
+          ),
         toolDescriptors: TOOLS,
         capabilities: CAPS,
         skillCatalog: SKILLS,
@@ -245,7 +275,9 @@ describe("AgentLoop fusion seams", () => {
       (t) => (t as { function?: { name?: string } }).function?.name ?? "",
     );
     expect(names).toContain("reply");
-    expect(names.some((n) => n.includes("fs") && n.includes("read"))).toBe(false);
+    expect(names.some((n) => n.includes("fs") && n.includes("read"))).toBe(
+      false,
+    );
     // The prompt's tool catalog is built from the same descriptors.
     expect(seen[0]!.prompt).not.toContain("Read a file.");
     expect(seen[0]!.prompt).toContain("Reply to the user.");

@@ -132,10 +132,9 @@ describe("createLinkGeneratorRunner", () => {
     const runner = createLinkGeneratorRunner({
       llmComplete: async () =>
         completion(
-          [
-            "LINK 1 2 [kind=RELATES_TO]",
-            "LINK 2 3 [kind=CAUSED_BY]",
-          ].join("\n") + "\n",
+          ["LINK 1 2 [kind=RELATES_TO]", "LINK 2 3 [kind=CAUSED_BY]"].join(
+            "\n",
+          ) + "\n",
         ),
       linkStore: h.linkStore,
       reflectionSlotId: 7,
@@ -168,8 +167,7 @@ describe("createLinkGeneratorRunner", () => {
       linksWritten?: number;
     }> = [];
     const runner = createLinkGeneratorRunner({
-      llmComplete: async () =>
-        completion("LINK 1 2 [kind=RELATES_TO]\n"),
+      llmComplete: async () => completion("LINK 1 2 [kind=RELATES_TO]\n"),
       linkStore: h.linkStore,
       reflectionSlotId: 7,
       timeoutMs: 1_000,
@@ -220,8 +218,7 @@ describe("createLinkGeneratorRunner", () => {
 
   it("drops links whose ids are outside the allowlist", async () => {
     const runner = createLinkGeneratorRunner({
-      llmComplete: async () =>
-        completion("LINK 1 99 [kind=RELATES_TO]\n"),
+      llmComplete: async () => completion("LINK 1 99 [kind=RELATES_TO]\n"),
       linkStore: h.linkStore,
       reflectionSlotId: 7,
       timeoutMs: 1_000,

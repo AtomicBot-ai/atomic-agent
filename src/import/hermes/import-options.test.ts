@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  ImportOptionError,
-  resolveSelectedOptions,
-} from "./import-options.js";
+import { ImportOptionError, resolveSelectedOptions } from "./import-options.js";
 
 describe("resolveSelectedOptions", () => {
   it("defaults to the 'default' preset (sessions + cron, no secrets)", () => {
@@ -55,8 +52,8 @@ describe("resolveSelectedOptions", () => {
   });
 
   it("rejects an unknown preset", () => {
-    expect(() =>
-      resolveSelectedOptions({ preset: "wat" as never }),
-    ).toThrow(ImportOptionError);
+    expect(() => resolveSelectedOptions({ preset: "wat" as never })).toThrow(
+      ImportOptionError,
+    );
   });
 });

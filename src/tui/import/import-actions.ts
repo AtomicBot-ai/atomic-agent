@@ -28,7 +28,11 @@ export type ImportAction =
    * has no other surface: it is discovered at boot, when the chat is
    * still on the start page and nothing is there to print it.
    */
-  | { type: "import_preview_ready"; report: ImportReport; storeWarning?: string }
+  | {
+      type: "import_preview_ready";
+      report: ImportReport;
+      storeWarning?: string;
+    }
   /** Executed report is ready — switch to the `done` mode. */
   | { type: "import_execute_done"; report: ImportReport; storeWarning?: string }
   /** Preview / execute failed — surface a notice and return to `configure`. */
@@ -37,6 +41,8 @@ export type ImportAction =
   | { type: "import_reset" };
 
 /** Narrow runtime guard used by the root reducer to dispatch. */
-export function isImportAction(action: { type: string }): action is ImportAction {
+export function isImportAction(action: {
+  type: string;
+}): action is ImportAction {
   return action.type.startsWith("import_");
 }

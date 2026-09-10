@@ -55,14 +55,16 @@ function readString(value: unknown): string | null {
 
 function readFiles(value: unknown, taskLabel: string): string[] | string {
   if (value === undefined || value === null) return [];
-  if (!Array.isArray(value)) return `${taskLabel}.files must be an array of strings`;
+  if (!Array.isArray(value))
+    return `${taskLabel}.files must be an array of strings`;
   if (value.length > MAX_TASK_FILES) {
     return `${taskLabel}.files has ${value.length} entries; at most ${MAX_TASK_FILES}`;
   }
   const out: string[] = [];
   for (const entry of value) {
     const path = readString(entry);
-    if (path === null) return `${taskLabel}.files must contain non-empty strings`;
+    if (path === null)
+      return `${taskLabel}.files must contain non-empty strings`;
     out.push(path);
   }
   return out;
@@ -83,12 +85,15 @@ function readMaxWorkers(value: unknown): number | null | string {
  * call comes back as `{ ok: false, error }` for the tool to render as a
  * `status: "error"` result the orchestrator can act on.
  */
-export function parseDelegateArgs(raw: Record<string, unknown>): ParsedDelegateArgs {
+export function parseDelegateArgs(
+  raw: Record<string, unknown>,
+): ParsedDelegateArgs {
   const rawTasks = raw.tasks;
   if (!Array.isArray(rawTasks)) {
     return fail("tasks must be an array of { id, title, instructions }");
   }
-  if (rawTasks.length === 0) return fail("tasks must contain at least one task");
+  if (rawTasks.length === 0)
+    return fail("tasks must contain at least one task");
   if (rawTasks.length > MAX_DELEGATE_TASKS) {
     return fail(
       `tasks has ${rawTasks.length} entries; at most ${MAX_DELEGATE_TASKS} per call`,
@@ -109,7 +114,8 @@ export function parseDelegateArgs(raw: Record<string, unknown>): ParsedDelegateA
     if (seen.has(id)) return fail(`${label}.id "${id}" is not unique`);
     seen.add(id);
     const title = readString(record.title);
-    if (title === null) return fail(`${label}.title must be a non-empty string`);
+    if (title === null)
+      return fail(`${label}.title must be a non-empty string`);
     const instructions = readString(record.instructions);
     if (instructions === null) {
       return fail(`${label}.instructions must be a non-empty string`);

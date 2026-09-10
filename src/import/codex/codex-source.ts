@@ -1,9 +1,4 @@
-import {
-  existsSync,
-  readdirSync,
-  readFileSync,
-  statSync,
-} from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 /**
@@ -47,7 +42,12 @@ export interface CodexSessionMeta {
 export type CodexBlock =
   | { type: "text"; text: string }
   | { type: "thinking"; thinking: string }
-  | { type: "toolCall"; id: string | null; name: string; args: Record<string, unknown> }
+  | {
+      type: "toolCall";
+      id: string | null;
+      name: string;
+      args: Record<string, unknown>;
+    }
   | { type: "toolResult"; callId: string | null; text: string };
 
 /** A projected rollout `response_item`. */
@@ -208,7 +208,7 @@ export class CodexSource {
       const p = payload as Record<string, unknown>;
       const atMs =
         typeof event.timestamp === "string"
-          ? isoToMs(event.timestamp) ?? fallbackAtMs
+          ? (isoToMs(event.timestamp) ?? fallbackAtMs)
           : fallbackAtMs;
       if (event.type === "session_meta") {
         if (typeof p.id === "string") id = p.id;

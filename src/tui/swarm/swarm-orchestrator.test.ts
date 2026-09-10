@@ -6,7 +6,7 @@ import { SwarmOrchestrator } from "./swarm-orchestrator.js";
 vi.mock("../../config/index.js", () => ({
   getConfig: () => ({
     telegram: { enabled: true, ownerUserId: 42 },
-    discord: { enabled: false, ownerUserId: null },
+    discord: { enabled: false, ownerUserIds: [] },
   }),
 }));
 
@@ -40,8 +40,14 @@ function fakeRuntime(over: Partial<Record<string, unknown>> = {}) {
   const listeners = new Set<() => void>();
   const swarm = {
     views: vi.fn(() => views),
-    get: vi.fn((id: string) => (id === "ops" ? { config: { id, kind: "telegram", label: "Ops", enabled: true } } : undefined)),
-    add: vi.fn(async (input: { label: string }) => ({ config: { label: input.label } })),
+    get: vi.fn((id: string) =>
+      id === "ops"
+        ? { config: { id, kind: "telegram", label: "Ops", enabled: true } }
+        : undefined,
+    ),
+    add: vi.fn(async (input: { label: string }) => ({
+      config: { label: input.label },
+    })),
     update: vi.fn(async () => undefined),
     setToken: vi.fn(async () => undefined),
     remove: vi.fn(async () => undefined),
@@ -69,7 +75,15 @@ function fakeRuntime(over: Partial<Record<string, unknown>> = {}) {
     state: () => "disabled",
     lastError: () => null,
   };
-  return { runtime: { swarm, telegramChannel, discordChannel, ...over } as unknown as AgentRuntime, swarm };
+  return {
+    runtime: {
+      swarm,
+      telegramChannel,
+      discordChannel,
+      ...over,
+    } as unknown as AgentRuntime,
+    swarm,
+  };
 }
 
 describe("SwarmOrchestrator", () => {
@@ -85,11 +99,31 @@ describe("SwarmOrchestrator", () => {
     const { runtime } = fakeRuntime();
     const o = new SwarmOrchestrator(runtime, bus);
     o.refresh();
-    const synced = bus.emitted.find((a) => a.type === "swarm_synced") as { rows: Array<Record<string, unknown>> };
-    expect(synced.rows.map((r) => r.id)).toEqual(["primary:telegram", "primary:discord", "ops"]);
-    expect(synced.rows[0]).toMatchObject({ primary: true, ownerUserId: "42", botUsername: "main_bot", enabled: true });
-    expect(synced.rows[1]).toMatchObject({ primary: true, hasToken: false, enabled: false });
-    expect(synced.rows[2]).toMatchObject({ primary: false, label: "Ops", role: "deploys", state: "up" });
+    const synced = bus.emitted.find((a) => a.type === "swarm_synced") as {
+      rows: Array<Record<string, unknown>>;
+    };
+    expect(synced.rows.map((r) => r.id)).toEqual([
+      "primary:telegram",
+      "primary:discord",
+      "ops",
+    ]);
+    expect(synced.rows[0]).toMatchObject({
+      primary: true,
+      ownerUserId: "42",
+      botUsername: "main_bot",
+      enabled: true,
+    });
+    expect(synced.rows[1]).toMatchObject({
+      primary: true,
+      hasToken: false,
+      enabled: false,
+    });
+    expect(synced.rows[2]).toMatchObject({
+      primary: false,
+      label: "Ops",
+      role: "deploys",
+      state: "up",
+    });
     o.dispose();
   });
 
@@ -98,21 +132,49 @@ describe("SwarmOrchestrator", () => {
     const { runtime, swarm } = fakeRuntime();
     const o = new SwarmOrchestrator(runtime, bus);
     swarm.fire();
-    expect(bus.emitted.filter((a) => a.type === "swarm_synced")).toHaveLength(1);
+    expect(bus.emitted.filter((a) => a.type === "swarm_synced")).toHaveLength(
+      1,
+    );
     o.dispose();
     swarm.fire();
-    expect(bus.emitted.filter((a) => a.type === "swarm_synced")).toHaveLength(1);
+    expect(bus.emitted.filter((a) => a.type === "swarm_synced")).toHaveLength(
+      1,
+    );
   });
 
   it("add validates, forwards to the registry and reports the next step", async () => {
     const bus = fakeBus();
     const { runtime, swarm } = fakeRuntime();
     const o = new SwarmOrchestrator(runtime, bus);
-    await o.add({ kind: "telegram", label: "Ops", role: "", token: "", ownerUserId: "" });
-    expect(swarm.add).toHaveBeenCalledWith({ kind: "telegram", label: "Ops", role: "", token: null, ownerUserId: null });
-    expect(bus.emitted.at(-2)).toMatchObject({ type: "swarm_action_settled", message: "Ops added — set its token with e" });
-    await o.add({ kind: "discord", label: "G", role: "", token: "t", ownerUserId: "abc" });
-    expect(bus.emitted.at(-1)).toMatchObject({ type: "swarm_action_settled", error: expect.stringContaining("numeric") });
+    await o.add({
+      kind: "telegram",
+      label: "Ops",
+      role: "",
+      token: "",
+      ownerUserId: "",
+    });
+    expect(swarm.add).toHaveBeenCalledWith({
+      kind: "telegram",
+      label: "Ops",
+      role: "",
+      token: null,
+      ownerUserId: null,
+    });
+    expect(bus.emitted.at(-2)).toMatchObject({
+      type: "swarm_action_settled",
+      message: "Ops added — set its token with e",
+    });
+    await o.add({
+      kind: "discord",
+      label: "G",
+      role: "",
+      token: "t",
+      ownerUserId: "abc",
+    });
+    expect(bus.emitted.at(-1)).toMatchObject({
+      type: "swarm_action_settled",
+      error: expect.stringContaining("numeric"),
+    });
     o.dispose();
   });
 
@@ -125,7 +187,9 @@ describe("SwarmOrchestrator", () => {
     await o.saveField("primary:telegram", "label", "x");
     expect(swarm.update).not.toHaveBeenCalled();
     expect(swarm.remove).not.toHaveBeenCalled();
-    for (const a of bus.emitted.filter((e) => e.type === "swarm_action_settled")) {
+    for (const a of bus.emitted.filter(
+      (e) => e.type === "swarm_action_settled",
+    )) {
       expect(String(a.error)).toContain("/integrations");
     }
     o.dispose();
@@ -151,7 +215,9 @@ describe("SwarmOrchestrator", () => {
   it("refuses to pair a bot that is switched off instead of starting it silently", async () => {
     const bus = fakeBus();
     const { runtime, swarm } = fakeRuntime();
-    swarm.get.mockReturnValue({ config: { id: "ops", kind: "telegram", label: "Ops", enabled: false } });
+    swarm.get.mockReturnValue({
+      config: { id: "ops", kind: "telegram", label: "Ops", enabled: false },
+    });
     const o = new SwarmOrchestrator(runtime, bus);
     await o.pair("ops");
     expect(swarm.startPairing).not.toHaveBeenCalled();
@@ -186,15 +252,22 @@ describe("SwarmOrchestrator", () => {
     o.refresh();
     const before = bus.emitted.filter((a) => a.type === "swarm_synced").length;
     vi.advanceTimersByTime(2_100);
-    expect(bus.emitted.filter((a) => a.type === "swarm_synced").length).toBeGreaterThan(before);
+    expect(
+      bus.emitted.filter((a) => a.type === "swarm_synced").length,
+    ).toBeGreaterThan(before);
     active = false;
     o.refresh();
     const settled = bus.emitted.filter((a) => a.type === "swarm_synced").length;
     vi.advanceTimersByTime(5_000);
-    expect(bus.emitted.filter((a) => a.type === "swarm_synced").length).toBe(settled);
+    expect(bus.emitted.filter((a) => a.type === "swarm_synced").length).toBe(
+      settled,
+    );
     await o.pair("ops");
     expect(swarm.startPairing).toHaveBeenCalledWith("ops");
-    expect(bus.emitted.at(-2)).toMatchObject({ type: "swarm_action_settled", message: "Ops paired with user 777" });
+    expect(bus.emitted.at(-2)).toMatchObject({
+      type: "swarm_action_settled",
+      message: "Ops paired with user 777",
+    });
     o.dispose();
   });
 });

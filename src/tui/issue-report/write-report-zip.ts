@@ -17,7 +17,10 @@ import { debugBundleTimestamp } from "../debug-bundle/build-snapshot.js";
 import type { IssueReport } from "./build-issue-report.js";
 import { renderSection, type ReportSection } from "./issue-body.js";
 import type { RedactionContext } from "./redact.js";
-import { redactTraceNdjson, type TraceRedactionStats } from "./trace-redaction.js";
+import {
+  redactTraceNdjson,
+  type TraceRedactionStats,
+} from "./trace-redaction.js";
 
 export interface WriteReportZipOptions {
   report: IssueReport;
@@ -34,10 +37,19 @@ export interface WriteReportZipResult {
   /** Trace sections to append to the issue, one per session that had rows. */
   traceSections: ReportSection[];
   /** One row per requested trace, in the order they were read. */
-  traces: Array<{ index: number; sessionId?: string; included: boolean; stats?: TraceRedactionStats; reason?: string }>;
+  traces: Array<{
+    index: number;
+    sessionId?: string;
+    included: boolean;
+    stats?: TraceRedactionStats;
+    reason?: string;
+  }>;
 }
 
-export function reportZipFileName(level: string, now: Date = new Date()): string {
+export function reportZipFileName(
+  level: string,
+  now: Date = new Date(),
+): string {
   return `atomic-agent-report-${debugBundleTimestamp(now)}-${level}.zip`;
 }
 
@@ -71,8 +83,17 @@ export async function writeReportZip(
       });
       continue;
     }
-    const { text, stats } = redactTraceNdjson(raw, report.level, options.redaction);
-    traces.push({ index, ...(full ? { sessionId } : {}), included: true, stats });
+    const { text, stats } = redactTraceNdjson(
+      raw,
+      report.level,
+      options.redaction,
+    );
+    traces.push({
+      index,
+      ...(full ? { sessionId } : {}),
+      included: true,
+      stats,
+    });
     if (text.length === 0) continue;
     zip.file(`traces/${index}.ndjson`, text);
     traceSections.push({
@@ -93,7 +114,10 @@ export async function writeReportZip(
     ...traceSections.map(renderSection),
   ].join("\n\n");
   zip.file("report.md", markdown);
-  zip.file("snapshot.json", JSON.stringify({ ...report.snapshot, traces }, null, 2));
+  zip.file(
+    "snapshot.json",
+    JSON.stringify({ ...report.snapshot, traces }, null, 2),
+  );
 
   const payload = await zip.generateAsync({
     type: "nodebuffer",
@@ -101,7 +125,10 @@ export async function writeReportZip(
     compressionOptions: { level: 6 },
   });
   await mkdir(options.outDir, { recursive: true });
-  const path = join(options.outDir, reportZipFileName(report.level, options.now));
+  const path = join(
+    options.outDir,
+    reportZipFileName(report.level, options.now),
+  );
   await writeFile(path, payload);
   return { path, bytes: payload.byteLength, traceSections, traces };
 }

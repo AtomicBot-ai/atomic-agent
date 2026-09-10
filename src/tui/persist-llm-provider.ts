@@ -175,7 +175,9 @@ export function persistLlmProvider(entry: UserLlmProviderEntry): void {
 
 export function removeLlmProvider(id: string): void {
   if (id === "local-llama") {
-    throw new LlmRemoveProviderError('cannot remove built-in provider "local-llama"');
+    throw new LlmRemoveProviderError(
+      'cannot remove built-in provider "local-llama"',
+    );
   }
   const path = getConfig().paths.userConfigFile;
   const file = ensureUserConfigFileSync(path);
@@ -272,7 +274,9 @@ export function setProviderDefaultChatModelInConfig(
     return { ...provider, defaultChatModel: trimmed };
   });
   if (!found) {
-    throw new LlmRemoveProviderError(`provider "${providerId}" is not configured`);
+    throw new LlmRemoveProviderError(
+      `provider "${providerId}" is not configured`,
+    );
   }
   writeUserConfigFileSync(path, {
     ...file,
@@ -299,7 +303,9 @@ export function setProviderDefaultEmbeddingModelInConfig(
     return { ...provider, defaultEmbeddingModel: trimmed };
   });
   if (!found) {
-    throw new LlmRemoveProviderError(`provider "${providerId}" is not configured`);
+    throw new LlmRemoveProviderError(
+      `provider "${providerId}" is not configured`,
+    );
   }
   writeUserConfigFileSync(path, {
     ...file,
@@ -350,7 +356,10 @@ export function setFallbackChainInConfig(
 }
 
 export function wrapLlmConfigError(err: unknown): string {
-  if (err instanceof LlmAddProviderError || err instanceof LlmRemoveProviderError) {
+  if (
+    err instanceof LlmAddProviderError ||
+    err instanceof LlmRemoveProviderError
+  ) {
     return err.message;
   }
   if (err instanceof ConfigValidationError) {

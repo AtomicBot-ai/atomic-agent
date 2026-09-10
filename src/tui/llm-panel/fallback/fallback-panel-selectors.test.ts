@@ -20,7 +20,9 @@ function resolved(over: Partial<ResolvedLlmConfig> = {}): ResolvedLlmConfig {
 describe("buildFallbackChainView", () => {
   it("lists the effective chain in order with the active provider as the head", () => {
     const view = buildFallbackChainView(
-      resolved({ fallback: { chain: ["cloud-a", "cloud-b"], appendLocal: false } }),
+      resolved({
+        fallback: { chain: ["cloud-a", "cloud-b"], appendLocal: false },
+      }),
     );
     expect(view.links.map((l) => l.providerId)).toEqual(["cloud-a", "cloud-b"]);
     expect(view.links[0]).toMatchObject({
@@ -29,7 +31,10 @@ describe("buildFallbackChainView", () => {
       modelLabel: "vendor/a",
       kind: "openrouter",
     });
-    expect(view.links[1]).toMatchObject({ providerId: "cloud-b", isActive: false });
+    expect(view.links[1]).toMatchObject({
+      providerId: "cloud-b",
+      isActive: false,
+    });
   });
 
   it("hoists the active text provider to the head even when listed later", () => {
@@ -47,7 +52,10 @@ describe("buildFallbackChainView", () => {
     const view = buildFallbackChainView(
       resolved({ fallback: { chain: ["cloud-a"], appendLocal: true } }),
     );
-    expect(view.links.map((l) => l.providerId)).toEqual(["cloud-a", "local-llama"]);
+    expect(view.links.map((l) => l.providerId)).toEqual([
+      "cloud-a",
+      "local-llama",
+    ]);
     const local = view.links.find((l) => l.providerId === "local-llama")!;
     expect(local.isAppendedLocal).toBe(true);
     expect(view.appendLocal).toBe(true);
@@ -66,7 +74,9 @@ describe("buildFallbackChainView", () => {
   it("defaults the chain to the active provider only when no fallback block is set", () => {
     const view = buildFallbackChainView(
       resolved({
-        providers: [{ id: "cloud-a", kind: "openrouter", defaultChatModel: "vendor/a" }],
+        providers: [
+          { id: "cloud-a", kind: "openrouter", defaultChatModel: "vendor/a" },
+        ],
       }),
     );
     expect(view.links.map((l) => l.providerId)).toEqual(["cloud-a"]);

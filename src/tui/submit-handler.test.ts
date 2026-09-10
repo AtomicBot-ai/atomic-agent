@@ -189,7 +189,9 @@ describe("handleEditorSubmit", () => {
     );
     expect(onRestart).toHaveBeenCalledTimes(1);
     expect(
-      dispatched.some((a) => a.type === "local_models_daemon_restart_requested"),
+      dispatched.some(
+        (a) => a.type === "local_models_daemon_restart_requested",
+      ),
     ).toBe(false);
   });
 
@@ -216,7 +218,12 @@ describe("handleEditorSubmit", () => {
   it("invokes onIssueReportRequested for /report", () => {
     const state = createInitialTuiState(fakeSession());
     const onIssueReportRequested = vi.fn();
-    handleEditorSubmit("/report", state, vi.fn(), stubCallbacks({ onIssueReportRequested }));
+    handleEditorSubmit(
+      "/report",
+      state,
+      vi.fn(),
+      stubCallbacks({ onIssueReportRequested }),
+    );
     expect(onIssueReportRequested).toHaveBeenCalledTimes(1);
   });
 
@@ -233,7 +240,6 @@ describe("handleEditorSubmit", () => {
     expect(onDebugBundleExportRequested).toHaveBeenCalledTimes(1);
     expect(onDebugBundleExportRequested).toHaveBeenCalledWith(state);
   });
-
 });
 
 describe("handleEditorSubmit while a turn is running", () => {
@@ -386,7 +392,9 @@ describe("steer vs queue while a turn is running", () => {
       ((a: { type: string }) => dispatched.push(a)) as never,
       stubCallbacks({ onMessageSteered, onMessageSubmitted }),
     );
-    expect(onMessageSubmitted).toHaveBeenCalledWith("afterwards, run the tests");
+    expect(onMessageSubmitted).toHaveBeenCalledWith(
+      "afterwards, run the tests",
+    );
     expect(onMessageSteered).not.toHaveBeenCalled();
     expect(dispatched.some((a) => a.type === "message_queued")).toBe(true);
   });
@@ -417,9 +425,9 @@ describe("steer vs queue while a turn is running", () => {
       stubCallbacks({ onMessageSteered, onWhileBusyModePersistRequested }),
     );
     expect(onMessageSteered).toHaveBeenCalledWith("drop what you are doing");
-    expect(
-      dispatched.some((a) => a.type === "while_busy_mode_changed"),
-    ).toBe(false);
+    expect(dispatched.some((a) => a.type === "while_busy_mode_changed")).toBe(
+      false,
+    );
     // The message-carrying form is a one-off: nothing reaches the config file.
     expect(onWhileBusyModePersistRequested).not.toHaveBeenCalled();
   });
@@ -441,9 +449,9 @@ describe("steer vs queue while a turn is running", () => {
     );
     expect(onMessageSubmitted).toHaveBeenCalledWith("and then deploy");
     expect(onMessageSteered).not.toHaveBeenCalled();
-    expect(
-      dispatched.some((a) => a.type === "while_busy_mode_changed"),
-    ).toBe(false);
+    expect(dispatched.some((a) => a.type === "while_busy_mode_changed")).toBe(
+      false,
+    );
     expect(onWhileBusyModePersistRequested).not.toHaveBeenCalled();
   });
 
@@ -457,7 +465,8 @@ describe("steer vs queue while a turn is running", () => {
     handleEditorSubmit(
       "/steer",
       busy("queue"),
-      ((a: { type: string; mode?: string }) => steerDispatched.push(a)) as never,
+      ((a: { type: string; mode?: string }) =>
+        steerDispatched.push(a)) as never,
       stubCallbacks({ onWhileBusyModePersistRequested: onSteerPersist }),
     );
     expect(steerDispatched).toContainEqual({
@@ -471,7 +480,8 @@ describe("steer vs queue while a turn is running", () => {
     handleEditorSubmit(
       "/queue mode",
       busy("steer"),
-      ((a: { type: string; mode?: string }) => queueDispatched.push(a)) as never,
+      ((a: { type: string; mode?: string }) =>
+        queueDispatched.push(a)) as never,
       stubCallbacks({ onWhileBusyModePersistRequested: onQueuePersist }),
     );
     expect(queueDispatched).toContainEqual({
@@ -520,4 +530,3 @@ describe("steer vs queue while a turn is running", () => {
     expect(dispatched.some((a) => a.type === "message_submitted")).toBe(true);
   });
 });
-

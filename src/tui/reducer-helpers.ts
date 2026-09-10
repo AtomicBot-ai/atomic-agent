@@ -211,7 +211,10 @@ export function finishTurn(
       : "completed";
   // A fan-out cannot outlive the turn that started it, so the readout
   // goes with it — leaving it up would claim workers are still running.
-  const cleared = { ...state, fusionLiveWorkers: [] as TuiState["fusionLiveWorkers"] };
+  const cleared = {
+    ...state,
+    fusionLiveWorkers: [] as TuiState["fusionLiveWorkers"],
+  };
   const next = withRunHistoryEntry(cleared, {
     outcome,
     reason,
@@ -344,9 +347,7 @@ export function finalizeStreamingToolCall(
     details?: Record<string, unknown>;
   },
 ): { state: TuiState; card: ToolCardEntry | null } {
-  const idx = state.streamingToolCalls.findIndex(
-    (c) => c.tool === params.tool,
-  );
+  const idx = state.streamingToolCalls.findIndex((c) => c.tool === params.tool);
   if (idx === -1) return { state, card: null };
   const call = state.streamingToolCalls[idx];
   if (!call) return { state, card: null };

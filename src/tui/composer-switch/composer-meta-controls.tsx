@@ -87,7 +87,13 @@ export function ComposerMetaControls({
   if (!backend && !provider && !model && !needsModelDownload) return null;
   return (
     <>
-      {backend ? <BackendControl backend={backend} fusion={fusion} mouseLayer={mouseLayer} /> : null}
+      {backend ? (
+        <BackendControl
+          backend={backend}
+          fusion={fusion}
+          mouseLayer={mouseLayer}
+        />
+      ) : null}
       {provider ? (
         <Control
           kind="provider"
@@ -228,7 +234,10 @@ function Control({
           </Text>
         ) : null}
         {glyph ?? null}
-        <Text color={fusion ? fusionSurfaceInk() : theme.colors.railForeground} bold>
+        <Text
+          color={fusion ? fusionSurfaceInk() : theme.colors.railForeground}
+          bold
+        >
           {label}
         </Text>
       </Text>

@@ -96,7 +96,9 @@ const EXT_BY_MIME: ReadonlyMap<string, string> = new Map([
 ]);
 
 const MIME_BY_EXT: ReadonlyMap<string, string> = new Map([
-  ...Array.from(EXT_BY_MIME.entries()).map(([mime, ext]) => [ext, mime] as const),
+  ...Array.from(EXT_BY_MIME.entries()).map(
+    ([mime, ext]) => [ext, mime] as const,
+  ),
   [".jpeg", "image/jpeg"],
 ]);
 
@@ -183,7 +185,10 @@ function extFromMime(mimeType: string | undefined): string | undefined {
   return normalised === null ? undefined : EXT_BY_MIME.get(normalised);
 }
 
-function resolveMimeType(reported: string | undefined, name: string): string | null {
+function resolveMimeType(
+  reported: string | undefined,
+  name: string,
+): string | null {
   const normalised = normaliseMime(reported);
   if (normalised !== null) return normalised;
   return MIME_BY_EXT.get(extname(name).toLowerCase()) ?? null;

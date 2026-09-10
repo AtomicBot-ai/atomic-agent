@@ -84,7 +84,8 @@ describe("restartLocalDaemon", () => {
       managed: { modelId: "qwen-3.5-4b" },
     });
     resetConfigCache();
-    const { deps, emitted, calls, stopChatDaemonOnly, startDaemon } = makeDeps();
+    const { deps, emitted, calls, stopChatDaemonOnly, startDaemon } =
+      makeDeps();
 
     await expect(restartLocalDaemon(deps)).resolves.toBe(true);
 
@@ -96,7 +97,9 @@ describe("restartLocalDaemon", () => {
     expect(lines(emitted)).toContain("local-llm: restarting the model server…");
     // Never `errorLine` on a healthy restart: every refresh wipes it, and
     // onboarding reads a set error line as "the download failed".
-    expect(emitted.some((a) => a.type === "local_models_daemon_error_set")).toBe(false);
+    expect(
+      emitted.some((a) => a.type === "local_models_daemon_error_set"),
+    ).toBe(false);
   });
 
   it("reports a start that failed without inventing success", async () => {
@@ -128,9 +131,9 @@ describe("restartLocalDaemon", () => {
 
     expect(calls).toEqual(["stop"]);
     expect(startDaemon).not.toHaveBeenCalled();
-    expect(
-      lines(emitted).some((l) => l.includes("restart aborted")),
-    ).toBe(true);
+    expect(lines(emitted).some((l) => l.includes("restart aborted"))).toBe(
+      true,
+    );
   });
 
   it("reports a throwing stop and never starts on top of it", async () => {

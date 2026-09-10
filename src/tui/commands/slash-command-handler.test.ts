@@ -92,7 +92,9 @@ describe("dispatchSlashCommand", () => {
 
   it("bare /runmode opens the composer's backend switch", () => {
     const result = dispatchSlashCommand("/runmode");
-    expect(result.actions).toEqual([{ type: "composer_switch_opened", kind: "backend" }]);
+    expect(result.actions).toEqual([
+      { type: "composer_switch_opened", kind: "backend" },
+    ]);
     expect(result.runModeVerb).toBeUndefined();
   });
 
@@ -493,7 +495,9 @@ describe("dispatchSlashCommand", () => {
     });
     expect(queue.setWhileBusyMode).toBeUndefined();
 
-    expect(dispatchSlashCommand("/queue clear").setWhileBusyMode).toBeUndefined();
+    expect(
+      dispatchSlashCommand("/queue clear").setWhileBusyMode,
+    ).toBeUndefined();
   });
 
   it("/uninstall opens the ladder and asks for a plan — it removes nothing", () => {
@@ -505,5 +509,4 @@ describe("dispatchSlashCommand", () => {
     expect(result.triggerQuit).toBe(false);
     expect(result.triggerAbort).toBe(false);
   });
-
 });

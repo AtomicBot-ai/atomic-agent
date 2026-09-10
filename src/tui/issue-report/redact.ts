@@ -36,10 +36,16 @@ const SECRET_PATTERNS: readonly [RegExp, string][] = [
   [/\b\d{8,10}:[A-Za-z0-9_-]{35}\b/g, "<token>"],
   [/\b[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{20,}\b/g, "<token>"],
   // Authorization headers of any scheme
-  [/(authorization\s*[:=]\s*(?:bearer|basic|token)\s+)[A-Za-z0-9+/=._-]+/gi, "$1<redacted>"],
+  [
+    /(authorization\s*[:=]\s*(?:bearer|basic|token)\s+)[A-Za-z0-9+/=._-]+/gi,
+    "$1<redacted>",
+  ],
   [/(\bbearer\s+)[A-Za-z0-9+/=._-]{16,}/gi, "$1<redacted>"],
   // KEY=value lines and JSON fields whose name says secret
-  [/((?:api[_-]?key|secret|token|password|passwd)["']?\s*[:=]\s*["']?)[^\s"',}]{6,}/gi, "$1<redacted>"],
+  [
+    /((?:api[_-]?key|secret|token|password|passwd)["']?\s*[:=]\s*["']?)[^\s"',}]{6,}/gi,
+    "$1<redacted>",
+  ],
   // AWS
   [/\bAKIA[0-9A-Z]{16}\b/g, "<key>"],
   // Credentials embedded in a URL
@@ -67,7 +73,8 @@ const WINDOWS_HOMES = /[A-Za-z]:(?:\\\\|\\)Users(?:\\\\|\\)[^\\\s"'`]+/g;
  * `/Volumes/ClientName/…` or `/opt/…` — which the home and cwd rules
  * cannot know about — does not leave the machine either.
  */
-const ABSOLUTE_PATH = /(?<![\w<~>/.:])(?:[A-Za-z]:)?(?:[\\/][^\s\\/"'`:)\]>]+){2,}/g;
+const ABSOLUTE_PATH =
+  /(?<![\w<~>/.:])(?:[A-Za-z]:)?(?:[\\/][^\s\\/"'`:)\]>]+){2,}/g;
 
 export function redactPersonal(text: string, ctx: RedactionContext): string {
   let out = text;
@@ -96,10 +103,17 @@ export function redactPaths(text: string): string {
  * Replace `prefix` only where it ends a path segment, so `/Users/v/proj`
  * does not eat the front of `/Users/v/proj-2/x`.
  */
-function replacePathPrefix(text: string, prefix: string, replacement: string): string {
+function replacePathPrefix(
+  text: string,
+  prefix: string,
+  replacement: string,
+): string {
   if (!text.includes(prefix)) return text;
   const escaped = prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return text.replace(new RegExp(`${escaped}(?=[\\/\\\\\\s"'\`:)\\]>,]|$)`, "g"), replacement);
+  return text.replace(
+    new RegExp(`${escaped}(?=[\\/\\\\\\s"'\`:)\\]>,]|$)`, "g"),
+    replacement,
+  );
 }
 
 /** `maskSecrets` then `redactPersonal` — the `scrubbed` level's pass. */
@@ -120,7 +134,8 @@ export function mapStrings(
 ): unknown {
   if (depth > 32) return "<too deep>";
   if (typeof value === "string") return fn(value);
-  if (Array.isArray(value)) return value.map((v) => mapStrings(v, fn, depth + 1));
+  if (Array.isArray(value))
+    return value.map((v) => mapStrings(v, fn, depth + 1));
   if (typeof value === "object" && value !== null) {
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(value)) {

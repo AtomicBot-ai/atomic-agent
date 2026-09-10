@@ -52,16 +52,30 @@ export function cloudState(overrides: Partial<ProviderRow> = {}): TuiState {
     providersPanel: {
       ...base.providersPanel,
       rows: [
-        providerRow({ id: "local-llama", kind: "llama-server", hasApiKey: false, chatModel: null, chatModelOptions: [] }),
+        providerRow({
+          id: "local-llama",
+          kind: "llama-server",
+          hasApiKey: false,
+          chatModel: null,
+          chatModelOptions: [],
+        }),
         providerRow({ isActiveText: true, ...overrides }),
-        providerRow({ id: "aimlapi", kind: "aimlapi", hasApiKey: false, chatModel: null, chatModelOptions: [] }),
+        providerRow({
+          id: "aimlapi",
+          kind: "aimlapi",
+          hasApiKey: false,
+          chatModel: null,
+          chatModelOptions: [],
+        }),
       ],
     },
   };
 }
 
 /** A managed-local route with one downloaded model and a live daemon. */
-export function localState(configMode: "managed" | "external" = "managed"): TuiState {
+export function localState(
+  configMode: "managed" | "external" = "managed",
+): TuiState {
   const base = createInitialTuiState(fakeSession());
   return {
     ...base,
@@ -81,7 +95,13 @@ export function localState(configMode: "managed" | "external" = "managed"): TuiS
     localModelsPanel: {
       ...base.localModelsPanel,
       configMode,
-      daemon: { running: true, healthy: true, loading: false, pid: 1, port: 19091 },
+      daemon: {
+        running: true,
+        healthy: true,
+        loading: false,
+        pid: 1,
+        port: 19091,
+      },
       rows: [
         {
           id: "qwen-3.5-4b" as LocalModelDef["id"],
@@ -99,7 +119,9 @@ export function localState(configMode: "managed" | "external" = "managed"): TuiS
  * A resolver answer for an effective fusion: openrouter orchestrates,
  * the managed llama.cpp hosts the workers.
  */
-export function resolvedFusion(overrides: Partial<ResolvedRunMode> = {}): ResolvedRunMode {
+export function resolvedFusion(
+  overrides: Partial<ResolvedRunMode> = {},
+): ResolvedRunMode {
   return {
     stored: "fusion",
     effective: "fusion",
@@ -121,12 +143,17 @@ export function resolvedFusion(overrides: Partial<ResolvedRunMode> = {}): Resolv
  * orchestrator plus the local fixture's downloaded model and live
  * daemon for the workers, with the resolver saying fusion is effective.
  */
-export function fusionState(overrides: Partial<ResolvedRunMode> = {}): TuiState {
+export function fusionState(
+  overrides: Partial<ResolvedRunMode> = {},
+): TuiState {
   const cloud = cloudState();
   const local = localState("managed");
   return {
     ...cloud,
-    providersPanel: { ...cloud.providersPanel, runMode: resolvedFusion(overrides) },
+    providersPanel: {
+      ...cloud.providersPanel,
+      runMode: resolvedFusion(overrides),
+    },
     localModelsPanel: { ...local.localModelsPanel, lastRefreshedAt: 1 },
   };
 }

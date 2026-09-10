@@ -248,9 +248,16 @@ describe("Anthropic preset — outgoing request headers", () => {
     const preset = findProviderPreset("anthropic")!;
     // Distinct host: the module-level cache is keyed by base URL, and a
     // sibling test in this run must not serve this one a cached list.
-    await fetchOpenAiCompatModels("https://anthropic-discovery.invalid", KEY, preset);
+    await fetchOpenAiCompatModels(
+      "https://anthropic-discovery.invalid",
+      KEY,
+      preset,
+    );
 
-    const headers = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    const headers = fetchMock.mock.calls[0]?.[1]?.headers as Record<
+      string,
+      string
+    >;
     expect(headers["x-api-key"]).toBe(KEY);
     expect(headers["anthropic-version"]).toBe("2023-06-01");
     expect(headers.authorization).toBeUndefined();
@@ -262,7 +269,12 @@ describe("Anthropic preset — outgoing request headers", () => {
         new Response(
           JSON.stringify({
             model: "claude-opus-4-5",
-            choices: [{ message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
+            choices: [
+              {
+                message: { role: "assistant", content: "ok" },
+                finish_reason: "stop",
+              },
+            ],
             usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
           }),
           { status: 200, headers: { "content-type": "application/json" } },

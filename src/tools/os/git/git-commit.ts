@@ -33,7 +33,9 @@ export function buildOsGitCommitTool(
       const paths = parsePaths(rawArgs.paths);
       const all = rawArgs.all === true;
       if (all && paths.length > 0) {
-        throw new Error("os.git.commit: pass either `paths` or `all`, not both");
+        throw new Error(
+          "os.git.commit: pass either `paths` or `all`, not both",
+        );
       }
 
       const preview = await describeStaging(repo, ctx, paths, all);
@@ -74,7 +76,10 @@ export function buildOsGitCommitTool(
         signal: ctx.signal,
         timeoutMs: 30_000,
       });
-      if (commit.exitCode !== 0 && /nothing to commit/i.test(commit.stdout + commit.stderr)) {
+      if (
+        commit.exitCode !== 0 &&
+        /nothing to commit/i.test(commit.stdout + commit.stderr)
+      ) {
         throw new Error(
           "os.git.commit: nothing to commit — stage changes with `paths` or `all: true`",
         );
@@ -117,10 +122,14 @@ function parsePaths(raw: unknown): string[] {
   if (!Array.isArray(raw) || !raw.every((p) => typeof p === "string")) {
     throw new Error("os.git.commit: `paths` must be an array of strings");
   }
-  const paths = (raw as string[]).map((p) => p.trim()).filter((p) => p.length > 0);
+  const paths = (raw as string[])
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0);
   for (const p of paths) {
     if (p.startsWith("-")) {
-      throw new Error(`os.git.commit: path ${JSON.stringify(p)} must not start with '-'`);
+      throw new Error(
+        `os.git.commit: path ${JSON.stringify(p)} must not start with '-'`,
+      );
     }
   }
   return paths;
@@ -154,18 +163,24 @@ async function describeStaging(
       timeoutMs: 10_000,
     });
     if (status.exitCode !== 0) return "(could not read git status)";
-    const lines = status.stdout.split(/\r?\n/).filter((l) => l.trim().length > 0);
+    const lines = status.stdout
+      .split(/\r?\n/)
+      .filter((l) => l.trim().length > 0);
     const scope = all
       ? "staging every change"
       : paths.length > 0
         ? `staging ${paths.length} path${paths.length === 1 ? "" : "s"}`
         : "committing what is already staged";
     // Without `all` or `paths`, only the index matters: drop unstaged rows.
-    const shown = all || paths.length > 0
-      ? lines
-      : lines.filter((l) => l[0] !== " " && l[0] !== "?");
+    const shown =
+      all || paths.length > 0
+        ? lines
+        : lines.filter((l) => l[0] !== " " && l[0] !== "?");
     const head = shown.slice(0, 40);
-    const more = shown.length > head.length ? `\n… ${shown.length - head.length} more` : "";
+    const more =
+      shown.length > head.length
+        ? `\n… ${shown.length - head.length} more`
+        : "";
     return `${scope}\n${head.join("\n") || "(no changes)"}${more}`;
   } catch (err) {
     return `(could not read git status: ${(err as Error).message})`;

@@ -41,7 +41,7 @@ export function buildOsFsReadDocumentTool(
   return {
     name: "os.fs.read_document",
     description:
-      'Extract plain text (with light structure markers) from PDF, DOCX, DOC (legacy), XLSX, RTF, ODT, PPTX, and plain-text files. NOT for source code — read code with os.fs.read, which pages with offset/limit. Auto-detects format by extension; override with `format`, one of: pdf, docx, doc, xlsx, rtf, odt, pptx, plain. Read-only, no approval required.',
+      "Extract plain text (with light structure markers) from PDF, DOCX, DOC (legacy), XLSX, RTF, ODT, PPTX, and plain-text files. NOT for source code — read code with os.fs.read, which pages with offset/limit. Auto-detects format by extension; override with `format`, one of: pdf, docx, doc, xlsx, rtf, odt, pptx, plain. Read-only, no approval required.",
     readonly: true,
     async run(rawArgs, ctx) {
       const args = await parseArgs(rawArgs, ctx.workingDir);
@@ -68,8 +68,10 @@ export function buildOsFsReadDocumentTool(
         warnings: result.warnings,
       };
       if (result.pageCount !== undefined) details.pageCount = result.pageCount;
-      if (result.sheetCount !== undefined) details.sheetCount = result.sheetCount;
-      if (result.slideCount !== undefined) details.slideCount = result.slideCount;
+      if (result.sheetCount !== undefined)
+        details.sheetCount = result.sheetCount;
+      if (result.slideCount !== undefined)
+        details.slideCount = result.slideCount;
       if (result.pagesExtracted !== undefined) {
         details.pagesExtracted = result.pagesExtracted;
       }
@@ -93,16 +95,12 @@ async function parseArgs(
 ): Promise<ReadArgs> {
   const path = rawArgs.path;
   if (typeof path !== "string" || path.length === 0) {
-    throw new Error(
-      "os.fs.read_document: `path` must be a non-empty string",
-    );
+    throw new Error("os.fs.read_document: `path` must be a non-empty string");
   }
   const absolute = resolveUserPath(path, workingDir);
   const info = await stat(absolute);
   if (!info.isFile()) {
-    throw new Error(
-      `os.fs.read_document: ${absolute} is not a regular file`,
-    );
+    throw new Error(`os.fs.read_document: ${absolute} is not a regular file`);
   }
 
   const format = detectFormat(absolute, rawArgs.format);
@@ -115,14 +113,8 @@ async function parseArgs(
   const maxPages = parseOptionalPositiveInt(rawArgs.maxPages, "maxPages");
   const pagesFrom = parseOptionalPositiveInt(rawArgs.pagesFrom, "pagesFrom");
   const pagesTo = parseOptionalPositiveInt(rawArgs.pagesTo, "pagesTo");
-  if (
-    pagesFrom !== undefined &&
-    pagesTo !== undefined &&
-    pagesFrom > pagesTo
-  ) {
-    throw new Error(
-      "os.fs.read_document: pagesFrom must be <= pagesTo",
-    );
+  if (pagesFrom !== undefined && pagesTo !== undefined && pagesFrom > pagesTo) {
+    throw new Error("os.fs.read_document: pagesFrom must be <= pagesTo");
   }
 
   const sheets = parseSheetsArg(rawArgs.sheets);
@@ -217,12 +209,66 @@ function parseSheetsArg(
  * `plain`. That asymmetry is inherited from `extname`, not introduced here.
  */
 const SOURCE_LIKE_EXTENSIONS: ReadonlySet<string> = new Set([
-  "bash", "c", "cc", "cfg", "cjs", "clj", "conf", "cpp", "cs", "css", "cxx",
-  "dart", "env", "erl", "ex", "exs", "fish", "go", "gradle", "h", "hh", "hpp",
-  "hs", "ini", "ipynb", "java", "js", "jsonc", "jsx", "kt", "kts", "less",
-  "lua", "m", "mjs", "mm", "php", "pl", "pm", "properties", "proto", "ps1",
-  "py", "pyi", "r", "rb", "rs", "sass", "scala", "scss", "sh", "sql", "svelte",
-  "swift", "tf", "toml", "ts", "tsx", "vue", "zsh",
+  "bash",
+  "c",
+  "cc",
+  "cfg",
+  "cjs",
+  "clj",
+  "conf",
+  "cpp",
+  "cs",
+  "css",
+  "cxx",
+  "dart",
+  "env",
+  "erl",
+  "ex",
+  "exs",
+  "fish",
+  "go",
+  "gradle",
+  "h",
+  "hh",
+  "hpp",
+  "hs",
+  "ini",
+  "ipynb",
+  "java",
+  "js",
+  "jsonc",
+  "jsx",
+  "kt",
+  "kts",
+  "less",
+  "lua",
+  "m",
+  "mjs",
+  "mm",
+  "php",
+  "pl",
+  "pm",
+  "properties",
+  "proto",
+  "ps1",
+  "py",
+  "pyi",
+  "r",
+  "rb",
+  "rs",
+  "sass",
+  "scala",
+  "scss",
+  "sh",
+  "sql",
+  "svelte",
+  "swift",
+  "tf",
+  "toml",
+  "ts",
+  "tsx",
+  "vue",
+  "zsh",
 ]);
 
 /**

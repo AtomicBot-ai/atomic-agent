@@ -47,7 +47,9 @@ export const FUSION_DELEGATE_TOOL = "fusion.delegate";
  * descriptors rather than passed as a flag, so the guidance cannot
  * drift out of sync with what actually got mounted.
  */
-export function isFusionActive(descriptors: readonly ToolDescriptor[]): boolean {
+export function isFusionActive(
+  descriptors: readonly ToolDescriptor[],
+): boolean {
   return descriptors.some((d) => d.name === FUSION_DELEGATE_TOOL);
 }
 

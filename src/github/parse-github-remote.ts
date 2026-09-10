@@ -38,7 +38,10 @@ export function parseRepoSlug(raw: string): GithubRepoRef | null {
   const trimmed = raw.trim();
   const fromUrl = parseGithubRemote(trimmed);
   if (fromUrl) return fromUrl;
-  const m = /^([A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)\/([A-Za-z0-9._-]+?)(?:\.git)?$/.exec(trimmed);
+  const m =
+    /^([A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)\/([A-Za-z0-9._-]+?)(?:\.git)?$/.exec(
+      trimmed,
+    );
   if (!m || !m[1] || !m[2]) return null;
   return { owner: m[1], repo: m[2] };
 }

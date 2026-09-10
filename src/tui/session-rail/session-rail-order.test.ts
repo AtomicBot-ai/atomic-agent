@@ -17,12 +17,17 @@ const row = (sessionId: string, updatedAt?: number) => ({
   sessionId,
   updatedAt: updatedAt ?? Number(sessionId.replace(/\D/g, "") || 0) * 1000,
 });
-const ids = (rows: readonly { sessionId: string }[]) => rows.map((r) => r.sessionId);
+const ids = (rows: readonly { sessionId: string }[]) =>
+  rows.map((r) => r.sessionId);
 
 describe("applySessionRailOrder", () => {
   it("keeps the recency order while nothing has been arranged", () => {
     const entries = [row("s-3"), row("s-2"), row("s-1")];
-    expect(ids(applySessionRailOrder(entries, []))).toEqual(["s-3", "s-2", "s-1"]);
+    expect(ids(applySessionRailOrder(entries, []))).toEqual([
+      "s-3",
+      "s-2",
+      "s-1",
+    ]);
   });
 
   it("follows the manual order", () => {
@@ -34,7 +39,13 @@ describe("applySessionRailOrder", () => {
   it("puts sessions the order has never seen where their date earns it", () => {
     // s-5 and s-4 were started after the operator arranged the list, so
     // they are newer than every arranged row and land on top of it.
-    const entries = [row("s-5"), row("s-1"), row("s-4"), row("s-2"), row("s-3")];
+    const entries = [
+      row("s-5"),
+      row("s-1"),
+      row("s-4"),
+      row("s-2"),
+      row("s-3"),
+    ];
     const arranged = applySessionRailOrder(entries, ["s-1", "s-3", "s-2"]);
     expect(ids(arranged)).toEqual(["s-5", "s-4", "s-1", "s-3", "s-2"]);
   });
@@ -66,7 +77,11 @@ describe("applySessionRailOrder", () => {
       row("s-now", 4_000),
       row("s-mid", 3_000),
     ];
-    const arranged = applySessionRailOrder(entries, ["s-old", "s-now", "s-mid"]);
+    const arranged = applySessionRailOrder(entries, [
+      "s-old",
+      "s-now",
+      "s-mid",
+    ]);
     expect(ids(arranged)).toEqual(["s-old", "s-now", "s-mid", "s-import"]);
   });
 
@@ -79,7 +94,11 @@ describe("applySessionRailOrder", () => {
   });
 
   it("keeps several newcomers in their own recency order", () => {
-    const entries = [row("s-a", 5_000), row("s-b", 1_500), row("s-keep", 2_000)];
+    const entries = [
+      row("s-a", 5_000),
+      row("s-b", 1_500),
+      row("s-keep", 2_000),
+    ];
     const arranged = applySessionRailOrder(entries, ["s-keep"]);
     expect(ids(arranged)).toEqual(["s-a", "s-keep", "s-b"]);
   });
@@ -133,9 +152,8 @@ describe("computeMovedOrder", () => {
 
 describe("pruneSessionRailOrder", () => {
   it("drops ids that are no longer live, keeping the order", () => {
-    expect(pruneSessionRailOrder(["b", "gone", "a"], ["a", "b", "new"])).toEqual([
-      "b",
-      "a",
-    ]);
+    expect(
+      pruneSessionRailOrder(["b", "gone", "a"], ["a", "b", "new"]),
+    ).toEqual(["b", "a"]);
   });
 });

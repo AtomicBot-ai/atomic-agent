@@ -130,7 +130,8 @@ describe("skill tools", () => {
   it("skill.run_script runs an allowed script after approval", async () => {
     const skills = await installEcho();
     const gate = new ApprovalGate({
-      emit: (req) => gate.resolve({ approvalId: req.approvalId, approved: true }),
+      emit: (req) =>
+        gate.resolve({ approvalId: req.approvalId, approved: true }),
     });
     const tool = buildSkillRunScriptTool(skills, {
       approvals: gate,
