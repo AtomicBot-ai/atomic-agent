@@ -5,6 +5,7 @@ import {
   userTurn,
   type ConversationTurn,
 } from "../../session/conversation-turn.js";
+import { macroTurnStartsFromTurns } from "../../session/macro-turn-starts.js";
 import type { SessionState } from "../../session/session-state.js";
 import type { CodexBlock, CodexSessionData } from "./codex-source.js";
 
@@ -22,6 +23,9 @@ export const CODEX_SESSION_ID_PREFIX = "codex:";
  *    attaches when no reply claimed it).
  *  - `toolResult`      → `tool_result`, named through the `call_id`
  *    seen on the matching call.
+ *
+ * Macro-turn starts are recorded at every user row so the pairs cap
+ * segments the import like a native session.
  */
 export function mapCodexSession(
   session: CodexSessionData,
@@ -116,6 +120,7 @@ export function mapCodexSession(
     worldSnapshot: null,
     stepCount: 0,
     turnCount,
+    macroTurnStarts: macroTurnStartsFromTurns(turns),
     turns,
     createdAt,
     updatedAt: lastMessageAt,

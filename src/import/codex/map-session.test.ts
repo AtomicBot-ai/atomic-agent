@@ -103,4 +103,19 @@ describe("mapCodexSession", () => {
   it("falls back to the provided working dir", () => {
     expect(mapCodexSession(session({ cwd: null }), "/fb").workingDir).toBe("/fb");
   });
+
+  it("records macro-turn starts at every user row after the first", () => {
+    const mapped = mapCodexSession(
+      session({
+        messages: [
+          { role: "user", blocks: [{ type: "text", text: "a" }], atMs: T0 },
+          { role: "assistant", blocks: [{ type: "text", text: "b" }], atMs: T0 + 1 },
+          { role: "user", blocks: [{ type: "text", text: "c" }], atMs: T0 + 2 },
+          { role: "assistant", blocks: [{ type: "text", text: "d" }], atMs: T0 + 3 },
+        ],
+      }),
+      "/fallback",
+    );
+    expect(mapped.macroTurnStarts).toEqual([2]);
+  });
 });
