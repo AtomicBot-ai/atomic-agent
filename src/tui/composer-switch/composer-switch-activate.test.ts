@@ -337,12 +337,13 @@ describe("the fusion configurators", () => {
     ).not.toHaveBeenCalled();
   });
 
-  it("sends the worker count to the one writer that moves it with the slot count", () => {
+  it("offers no worker count to pick at all", () => {
+    // v63: the count left the composer. The machine sizes the slot pool
+    // (`managed.parallel: "auto"`) and the orchestrator sizes each
+    // fan-out inside it, so there is nothing here for a person to set.
     const app = harness(fusionState());
-    app.pick("workers", "4 workers");
-    expect(app.callbacks.onFusionWorkersChangeRequested).toHaveBeenCalledWith(
-      4,
-    );
+    expect(() => app.pick("workers", "4 workers")).toThrow();
+    expect(app.callbacks.onFusionWorkersChangeRequested).not.toHaveBeenCalled();
   });
 
   it("re-pins the orchestrator when a provider is picked under fusion", () => {

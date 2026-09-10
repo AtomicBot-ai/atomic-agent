@@ -200,9 +200,16 @@ describe("RunModeOrchestrator.setMode", () => {
     );
   });
 
-  it("setWorkers says nothing about restarting when the count did not move", () => {
+  it("setWorkers says nothing about restarting when the pin did not move", () => {
+    // Against `"auto"` a number always moves the slot count — it pins
+    // what the machine was deciding — so the quiet case is a re-pin to
+    // the number already written.
     seed(BOTH_LEGS);
     const app = harness();
+    // Pin it first: against `"auto"` a number always moves the slot
+    // count, so the quiet case is a re-pin to what is already written.
+    app.orchestrator.setWorkers(2);
+    app.actions.length = 0;
     app.orchestrator.setWorkers(2);
     const line = app.actions.find((a) => a.type === "runtime_info") as {
       line: string;
@@ -214,7 +221,7 @@ describe("RunModeOrchestrator.setMode", () => {
     seed(BOTH_LEGS);
     const app = harness();
     app.orchestrator.setWorkers(99);
-    expect(getConfig().localModels.managed.parallel).toBe(2);
+    expect(getConfig().localModels.managed.parallel).toBe("auto");
     expect(app.actions.find((a) => a.type === "composer_notice")).toMatchObject(
       {
         text: expect.stringMatching(/workers must be an integer 1-8/),

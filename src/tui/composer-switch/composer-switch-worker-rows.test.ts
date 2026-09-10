@@ -12,59 +12,35 @@ import {
 } from "./composer-switch-worker-rows.js";
 
 describe("the workers switch", () => {
-  it("lists the downloaded local models, then every worker count, then the deep link", () => {
+  it("lists the downloaded local models, then the deep link — and no counts", () => {
+    // The count rows are gone with v63: how many workers run at once is
+    // the machine's answer (`managed.parallel: "auto"` derives it from
+    // the launch context) and how many a turn spends is the
+    // orchestrator's, per call. Neither is an operator's list.
     const rows = selectWorkerRows(fusionState());
     expect(rows[0]?.label).toBe("qwen-3.5-4b");
     expect(rows[0]?.detail).toBe("worker model");
-    expect(rows.slice(1, 9).map((row) => row.label)).toEqual([
-      "1 worker",
-      "2 workers",
-      "3 workers",
-      "4 workers",
-      "5 workers",
-      "6 workers",
-      "7 workers",
-      "8 workers",
+    expect(rows.map((row) => row.label)).toEqual([
+      "qwen-3.5-4b",
+      "Download more models…",
     ]);
-    expect(rows.at(-1)?.label).toBe("Download more models…");
+    expect(rows.some((row) => /worker(s)?$/.test(row.label))).toBe(false);
   });
 
-  it("marks the model in force and the count in force", () => {
+  it("marks the model in force", () => {
     const rows = selectWorkerRows(fusionState({ workers: 4 }));
     expect(rows.filter((row) => row.active).map((row) => row.label)).toEqual([
       "qwen-3.5-4b",
-      "4 workers",
     ]);
   });
 
-  it("carries the intents the activation path branches on", () => {
+  it("carries the one intent the activation path still branches on", () => {
     const rows = selectWorkerRows(fusionState());
     expect(rows.find((row) => row.label === "qwen-3.5-4b")?.intent).toEqual({
       kind: "fusionWorkerModel",
       modelId: "qwen-3.5-4b",
     });
-    expect(rows.find((row) => row.label === "3 workers")?.intent).toEqual({
-      kind: "fusionWorkers",
-      workers: 3,
-    });
-  });
-
-  it("says the slot count is the operator's problem on an external server", () => {
-    const base = fusionState();
-    const external = {
-      ...base,
-      localModelsPanel: {
-        ...base.localModelsPanel,
-        configMode: "external" as const,
-      },
-    };
-    expect(
-      selectWorkerRows(external).find((row) => row.label === "2 workers")
-        ?.detail,
-    ).toBe("external server — set --parallel yourself");
-    expect(
-      selectWorkerRows(base).find((row) => row.label === "2 workers")?.detail,
-    ).toBe("llama-server --parallel 2 · restart to apply");
+    expect(rows.some((row) => row.intent?.kind === "fusionWorkers")).toBe(false);
   });
 
   it("never offers a model that is not on disk", () => {
@@ -95,10 +71,12 @@ describe("the workers switch", () => {
 });
 
 describe("the meta bar's worker label", () => {
-  it("counts the workers on the fusion route", () => {
-    expect(selectComposerWorkersLabel(fusionState())).toBe("2 workers");
+  it("states the machine's capacity on the fusion route, not a setting", () => {
+    // "up to N": N is what this machine serves at once, not a number
+    // anyone picked and not a promise about this turn.
+    expect(selectComposerWorkersLabel(fusionState())).toBe("up to 2 workers");
     expect(selectComposerWorkersLabel(fusionState({ workers: 1 }))).toBe(
-      "1 worker",
+      "up to 1 worker",
     );
   });
 

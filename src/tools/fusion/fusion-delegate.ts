@@ -130,10 +130,21 @@ export function buildFusionDelegateTool(
       // on a slot-affine leg you cannot run more than the server has
       // request slots (the rest would queue and evict each other's KV
       // cache rather than run).
-      const requested = parsed.maxWorkers ?? mode.workers;
+      // A call that named no width gets the machine's capacity, not a
+      // number from a config file. The operator is not the party that
+      // knows how divisible this particular job is, and the slot pool is
+      // already the honest ceiling — `runMode.fusion.workers` survives
+      // only as a pin for someone who deliberately wrote one.
+      const requested =
+        parsed.maxWorkers ??
+        (Number.isFinite(poolSize) ? (poolSize as number) : mode.workers);
       const wanted = Math.max(1, Math.min(requested, parsed.tasks.length));
       const maxWorkers = Math.max(1, Math.min(wanted, poolSize));
-      const poolIsBinding = maxWorkers < wanted;
+      // The pool held this fan-out down when it ran fewer at a time than
+      // there was work for — whether the orchestrator asked for a wider
+      // number or simply had more tasks than the machine has slots.
+      const poolIsBinding =
+        maxWorkers < wanted || maxWorkers < parsed.tasks.length;
 
       // Labels, never guesses: the resolver's pin when it has one, the
       // provider id when it does not. Both legs are read from the same
@@ -202,7 +213,7 @@ export function buildFusionDelegateTool(
       // all three things it needs: what was wanted, what actually ran
       // concurrently, and the config key that changes the second number.
       const hint = poolIsBinding
-        ? `\n\nNote: ${wanted} workers were wanted for this fan-out but the local server has ${poolSize} request slot${poolSize === 1 ? "" : "s"}, so only ${maxWorkers} ran at a time and the rest queued — raise \`localModels.managed.parallel\` (llama-server \`--parallel\`) to widen it.`
+        ? `\n\nNote: ${Math.max(wanted, parsed.tasks.length)} workers' worth of work was sent but the local server has ${poolSize} request slot${poolSize === 1 ? "" : "s"}, so only ${maxWorkers} ran at a time and the rest queued. That number comes from the machine — llama-server divides its context between slots (\`localModels.managed.parallel\`, \`"auto"\` by default). Split into fewer, larger tasks if the queueing is costing more than the parallelism buys.`
         : "";
       return compressToolResult(
         {

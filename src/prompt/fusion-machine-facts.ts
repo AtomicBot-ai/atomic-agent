@@ -28,6 +28,7 @@
  */
 
 import type { AtomicAgentConfig } from "../config/config-schema.js";
+import { resolveWorkerSlots } from "../local-llm/worker-slots.js";
 
 export interface FusionMachineFacts {
   /**
@@ -66,7 +67,22 @@ export function resolveFusionMachineFacts(
   // the runtime itself launches the daemon with `managed.parallel`. An
   // external server was started by the operator with flags this process
   // never saw.
-  const workerSlots = local.mode === "managed" ? local.managed.parallel : null;
+  // `"auto"` is the default now, and it resolves against the context the
+  // daemon is launched with — which this process only knows when the
+  // operator pinned one (`contextSize: 0` means llama.cpp sizes it from
+  // VRAM at start-up, well after the prefix is built). Unknown stays
+  // unknown: a guessed slot count is a number the model would plan
+  // against, which is the one thing this module refuses to produce.
+  const configured = local.mode === "managed" ? local.managed.parallel : null;
+  const pinnedContext = local.mode === "managed" ? local.managed.contextSize : 0;
+  const workerSlots =
+    configured === null
+      ? null
+      : configured === "auto"
+        ? pinnedContext > 0
+          ? resolveWorkerSlots({ contextSize: pinnedContext, cpuOnly: false })
+          : null
+        : configured;
 
   // Same chain `resolveRunMode` uses for its worker label, minus the
   // resolver: the explicit pin, then the managed daemon's model, then

@@ -1,7 +1,3 @@
-import {
-  FUSION_WORKERS_MAX,
-  FUSION_WORKERS_MIN,
-} from "../../config/llm-run-mode-config.js";
 import type { TuiState } from "../tui-state.js";
 import {
   localSliceLoadingRows,
@@ -21,17 +17,18 @@ import {
  * it through the local-models orchestrator, which never touches
  * `activeTextProvider`, so fusion stays effective across the pick.
  *
- * The count rows mirror `llm.runMode.fusion.workers` and, in the same
- * write, `localModels.managed.parallel` — the llama-server slot count
- * that lets N workers actually run side by side rather than queue on
- * the server. A running daemon keeps its old slot count until it is
- * restarted, which the orchestrator says in a notice.
+ * There are no count rows. How many workers a fan-out runs is the
+ * orchestrator's call per call, bounded by what the machine serves —
+ * `localModels.managed.parallel: "auto"` derives the slot count from the
+ * context the daemon launches with (`worker-slots.ts`), and the `###
+ * fusion` block states it so the model chooses against a real number.
+ * An operator picking it from a list was choosing for two parties that
+ * both know better: the machine, which knows its capacity, and the
+ * model, which knows how divisible this job is.
  */
 export function selectWorkerRows(
   state: TuiState,
 ): readonly ComposerSwitchRow[] {
-  const workers = state.providersPanel.runMode?.workers ?? 2;
-  const external = state.localModelsPanel.configMode === "external";
   // The panel's own `active` flag, not the LLM pane's row: that one
   // means "local-llama is the chat route", which under fusion it never
   // is — the cloud orchestrator holds that seat. What matters here is
@@ -45,22 +42,9 @@ export function selectWorkerRows(
       active: row.active,
       intent: { kind: "fusionWorkerModel" as const, modelId: row.id },
     }));
-  const counts: ComposerSwitchRow[] = [];
-  for (let n = FUSION_WORKERS_MIN; n <= FUSION_WORKERS_MAX; n += 1) {
-    counts.push({
-      id: `worker:count:${n}`,
-      label: `${n} worker${n === 1 ? "" : "s"}`,
-      detail: external
-        ? "external server — set --parallel yourself"
-        : `llama-server --parallel ${n} · restart to apply`,
-      active: n === workers,
-      intent: { kind: "fusionWorkers" as const, workers: n },
-    });
-  }
   return [
     ...localSliceLoadingRows(state),
     ...models,
-    ...counts,
     {
       id: "worker:model:download-more",
       label: "Download more models…",
@@ -71,9 +55,16 @@ export function selectWorkerRows(
   ];
 }
 
-/** The fourth control's word on the meta bar, `null` off the fusion route. */
+/**
+ * The fourth control's word on the meta bar, `null` off the fusion route.
+ *
+ * "up to N", not "N workers": the number is what this machine can serve
+ * at once, and how many of them a given turn actually spends is the
+ * orchestrator's decision on that turn. The old wording read as a
+ * setting, which is precisely what it no longer is.
+ */
 export function selectComposerWorkersLabel(state: TuiState): string | null {
   const runMode = state.providersPanel.runMode;
   if (runMode?.effective !== "fusion") return null;
-  return `${runMode.workers} worker${runMode.workers === 1 ? "" : "s"}`;
+  return `up to ${runMode.workers} worker${runMode.workers === 1 ? "" : "s"}`;
 }
