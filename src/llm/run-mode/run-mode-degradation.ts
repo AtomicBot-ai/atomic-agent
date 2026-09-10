@@ -15,7 +15,9 @@ export function describeRunModeDegradation(
       return degraded.requested === "fusion"
         ? "Fusion needs a cloud orchestrator — no cloud provider is configured. Staying on local. Add one in Manage → LLM → Cloud (or /llm)."
         : "Cloud mode needs a cloud provider — none is configured. Staying on local. Add one in Manage → LLM → Cloud (or /llm).";
-    case "no-local-provider":
-      return "Fusion needs local workers — no llama-server provider is configured. Running cloud-only.";
+    case "no-second-provider":
+      // Either leg may be cloud or local; what fusion cannot do is run
+      // both of them on the same provider.
+      return "Fusion needs two providers — one to orchestrate and one to run the workers. Only one is configured. Add another in Manage → LLM (or /llm).";
   }
 }

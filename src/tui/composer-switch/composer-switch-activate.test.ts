@@ -203,17 +203,20 @@ describe("the download deep link", () => {
 });
 
 describe("picking fusion", () => {
-  it("refuses with the pre-flight line when no cloud provider has a key", () => {
+  it("refuses with the pre-flight line when only one leg can answer", () => {
+    // `localState()` has the local leg and no keyed cloud one. Either
+    // kind may hold either slot now, so what is missing is a second
+    // provider — here, the one that would orchestrate.
     const app = harness(localState());
     app.pick("backend", "fusion");
     expect(app.callbacks.onRunModeChangeRequested).not.toHaveBeenCalled();
     expect(app.actions).toContainEqual({
       type: "composer_notice",
-      text: expect.stringMatching(/needs a cloud provider with a key/),
+      text: expect.stringMatching(/needs a second provider to orchestrate/),
     });
   });
 
-  it("refuses when nothing is downloaded for the workers", () => {
+  it("refuses when the second leg has nothing to run", () => {
     const base = cloudState();
     const state = {
       ...base,
@@ -228,7 +231,7 @@ describe("picking fusion", () => {
     expect(app.callbacks.onRunModeChangeRequested).not.toHaveBeenCalled();
     expect(app.actions).toContainEqual({
       type: "composer_notice",
-      text: expect.stringMatching(/needs a downloaded local model/),
+      text: expect.stringMatching(/needs a second provider/),
     });
   });
 

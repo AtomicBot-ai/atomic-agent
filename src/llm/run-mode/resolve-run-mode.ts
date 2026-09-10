@@ -11,7 +11,7 @@ import type {
 } from "../provider/registry/provider-types.js";
 
 export type RunModeDegradationReason =
-  "no-cloud-provider" | "no-local-provider";
+  "no-cloud-provider" | "no-second-provider";
 
 export type RunModeDegradation = {
   reason: RunModeDegradationReason;
@@ -101,9 +101,19 @@ export function resolveRunMode(
     byId(fusion?.orchestratorProvider) ??
     (active !== undefined && !isLocalKind(active) ? active : undefined) ??
     resolved.providers.find((p) => !isLocalKind(p));
+  // Local first, because that is what fusion is usually for — cloud
+  // thinking, local bulk. But only as the DEFAULT: a pinned leg is
+  // honoured whatever its kind, so an operator can run the orchestrator
+  // locally and the workers in the cloud, or any other pairing their
+  // use case calls for. The one thing a leg may not be is the other
+  // leg: a fan-out to the model that is already doing the orchestrating
+  // buys nothing and doubles the bill.
   const worker =
     byId(fusion?.workerProvider) ??
-    resolved.providers.find((p) => isLocalKind(p));
+    resolved.providers.find(
+      (p) => isLocalKind(p) && p.id !== orchestrator?.id,
+    ) ??
+    resolved.providers.find((p) => p.id !== orchestrator?.id);
 
   const orchestratorProviderId = orchestrator?.id ?? null;
   const workerProviderId = worker?.id ?? null;
@@ -114,7 +124,9 @@ export function resolveRunMode(
     if (orchestratorProviderId === null) {
       degraded = { reason: "no-cloud-provider", requested: stored };
     } else if (workerProviderId === null) {
-      degraded = { reason: "no-local-provider", requested: stored };
+      // Two legs, two providers. Which kinds they are is the operator's
+      // business; that there are two of them is not negotiable.
+      degraded = { reason: "no-second-provider", requested: stored };
     } else if (resolved.activeTextProvider === orchestratorProviderId) {
       effective = "fusion";
     }

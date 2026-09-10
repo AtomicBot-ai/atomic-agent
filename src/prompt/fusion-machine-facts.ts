@@ -63,6 +63,8 @@ export function resolveFusionMachineFacts(
   config: AtomicAgentConfig,
 ): FusionMachineFacts {
   const local = config.localModels;
+  const fusion = config.llm?.runMode?.fusion;
+  const providers = config.llm?.providers ?? [];
   // `--parallel` is only ours to state in managed mode: that is where
   // the runtime itself launches the daemon with `managed.parallel`. An
   // external server was started by the operator with flags this process
@@ -73,7 +75,18 @@ export function resolveFusionMachineFacts(
   // VRAM at start-up, well after the prefix is built). Unknown stays
   // unknown: a guessed slot count is a number the model would plan
   // against, which is the one thing this module refuses to produce.
-  const configured = local.mode === "managed" ? local.managed.parallel : null;
+  // Slots are a fact about the LOCAL daemon, so they only describe this
+  // fan-out when the local leg is the one running the workers. With
+  // cloud workers there is no slot pool to speak of — the width is
+  // whatever the provider will take concurrently — and stating a number
+  // from the idle daemon would be stating a number about the wrong
+  // machine.
+  const workersAreLocal =
+    fusion?.workerProvider === undefined ||
+    providers.find((p) => p.id === fusion.workerProvider)?.kind ===
+      "llama-server";
+  const configured =
+    workersAreLocal && local.mode === "managed" ? local.managed.parallel : null;
   const pinnedContext = local.mode === "managed" ? local.managed.contextSize : 0;
   const workerSlots =
     configured === null
@@ -88,8 +101,6 @@ export function resolveFusionMachineFacts(
   // resolver: the explicit pin, then the managed daemon's model, then
   // the `model` field of the llama-server provider entry the worker leg
   // names. Never an invented string.
-  const fusion = config.llm?.runMode?.fusion;
-  const providers = config.llm?.providers ?? [];
   const workerEntry =
     providers.find((p) => p.id === fusion?.workerProvider) ??
     providers.find((p) => p.kind === "llama-server");

@@ -16,18 +16,28 @@ import type { TuiState } from "../tui-state.js";
  * `rows` is indistinguishable from "nothing downloaded" before then.
  */
 export function describeFusionBlocker(state: TuiState): string | null {
-  const cloudReady = state.providersPanel.rows.some(
+  // Two legs, and either may be cloud or local — so the check is "are
+  // there two providers that could actually answer", not "is there a
+  // cloud one and a local one". A cloud row can answer when it has a
+  // key; the local row can answer when something is on disk.
+  const cloudReady = state.providersPanel.rows.filter(
     (row) => row.kind !== "llama-server" && row.hasApiKey,
-  );
-  if (!cloudReady) {
-    return "needs a cloud provider with a key — Manage › LLM › Cloud";
-  }
+  ).length;
   const local = state.localModelsPanel;
-  if (
-    local.lastRefreshedAt !== null &&
-    !local.rows.some((row) => row.downloaded)
-  ) {
-    return "needs a downloaded local model — Manage › LLM › Local";
+  // Abstains until the first snapshot lands, for the reason
+  // `selectComposerNeedsModelDownload` does: an empty `rows` is
+  // indistinguishable from "nothing downloaded" before then.
+  const localReady =
+    local.lastRefreshedAt === null || local.rows.some((row) => row.downloaded)
+      ? state.providersPanel.rows.filter((row) => row.kind === "llama-server")
+          .length
+      : 0;
+  if (cloudReady + localReady >= 2) return null;
+  if (cloudReady + localReady === 1 && localReady === 1) {
+    return "needs a second provider to orchestrate — Manage › LLM › Cloud";
   }
-  return null;
+  if (cloudReady + localReady === 1) {
+    return "needs a second provider for the workers — Manage › LLM";
+  }
+  return "needs two providers, one per leg — Manage › LLM";
 }

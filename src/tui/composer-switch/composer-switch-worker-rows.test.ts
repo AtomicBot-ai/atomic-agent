@@ -12,19 +12,32 @@ import {
 } from "./composer-switch-worker-rows.js";
 
 describe("the workers switch", () => {
-  it("lists the downloaded local models, then the deep link — and no counts", () => {
-    // The count rows are gone with v63: how many workers run at once is
-    // the machine's answer (`managed.parallel: "auto"` derives it from
-    // the launch context) and how many a turn spends is the
-    // orchestrator's, per call. Neither is an operator's list.
+  it("offers both kinds for the worker slot, and no counts", () => {
+    // The slot takes either kind: the models on disk, and every cloud
+    // provider that is not already holding the orchestrator slot. The
+    // count rows are gone — the machine sizes the pool and the
+    // orchestrator sizes each fan-out.
     const rows = selectWorkerRows(fusionState());
     expect(rows[0]?.label).toBe("qwen-3.5-4b");
-    expect(rows[0]?.detail).toBe("worker model");
+    expect(rows[0]?.detail).toBe("workers · on this machine");
     expect(rows.map((row) => row.label)).toEqual([
       "qwen-3.5-4b",
+      "aimlapi",
       "Download more models…",
     ]);
+    expect(rows.find((row) => row.label === "aimlapi")?.intent).toEqual({
+      kind: "fusionLeg",
+      leg: "worker",
+      providerId: "aimlapi",
+    });
     expect(rows.some((row) => /worker(s)?$/.test(row.label))).toBe(false);
+  });
+
+  it("never offers the orchestrator's own provider as its workers", () => {
+    // Fanning out to the model that is doing the orchestrating buys
+    // nothing and doubles the bill.
+    const rows = selectWorkerRows(fusionState());
+    expect(rows.some((row) => row.label === "openrouter")).toBe(false);
   });
 
   it("marks the model in force", () => {
