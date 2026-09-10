@@ -151,8 +151,16 @@ export function resolveRunMode(
       orchestrator?.model ??
       null,
     workerProviderId,
+    // `managedModelId` is the model the LOCAL daemon serves, so it only
+    // describes the worker leg while that leg is the local one. With the
+    // legs swapped it is the name of an idle model on this machine, and
+    // every surface that shows it — the composer strip, the LLM pane —
+    // would be naming a model that runs nothing.
     workerModel:
-      fusion?.workerModel ?? opts.managedModelId ?? worker?.model ?? null,
+      fusion?.workerModel ??
+      (worker !== undefined && isLocalKind(worker)
+        ? (opts.managedModelId ?? worker.model ?? null)
+        : (worker?.defaultChatModel ?? worker?.model ?? null)),
     workers: fusion?.workers ?? DEFAULT_FUSION_WORKERS,
     workerMaxSteps: fusion?.workerMaxSteps ?? DEFAULT_FUSION_WORKER_MAX_STEPS,
     workerTimeoutMs:

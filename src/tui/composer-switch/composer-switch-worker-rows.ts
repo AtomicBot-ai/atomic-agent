@@ -91,5 +91,13 @@ export function selectWorkerRows(
 export function selectComposerWorkersLabel(state: TuiState): string | null {
   const runMode = state.providersPanel.runMode;
   if (runMode?.effective !== "fusion") return null;
+  // The number is llama-server's slot count, so it only describes a
+  // local worker leg. With cloud workers there is no pool to cap at —
+  // the width is whatever the provider takes concurrently — and showing
+  // the idle daemon's number would be describing the wrong machine.
+  const workerRow = state.providersPanel.rows.find(
+    (row) => row.id === runMode.workerProviderId,
+  );
+  if (workerRow && workerRow.kind !== "llama-server") return "cloud workers";
   return `up to ${runMode.workers} worker${runMode.workers === 1 ? "" : "s"}`;
 }

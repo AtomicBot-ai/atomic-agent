@@ -101,3 +101,23 @@ describe("the meta bar's worker label", () => {
     ).toBeNull();
   });
 });
+
+describe("the meta bar with the legs swapped", () => {
+  it("stops quoting a slot count when the workers are in the cloud", () => {
+    // `up to N` is llama-server's request-slot count. A cloud worker leg
+    // has no such pool, and the idle daemon's number would be a fact
+    // about the wrong machine.
+    const base = fusionState();
+    const state = {
+      ...base,
+      providersPanel: {
+        ...base.providersPanel,
+        runMode: {
+          ...base.providersPanel.runMode!,
+          workerProviderId: "aimlapi",
+        },
+      },
+    };
+    expect(selectComposerWorkersLabel(state)).toBe("cloud workers");
+  });
+});
