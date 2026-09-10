@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { buildMcpToolDescriptors } from "../../../mcp/mcp-descriptor-builder.js";
+import { DEFAULT_TOOL_DESCRIPTORS } from "../../../prompt/tool-descriptors.js";
 import {
   nameEscape,
   nameUnescape,
@@ -270,44 +271,18 @@ describe("OpenAiToolCallAdapter", () => {
         tools.find(
           (t) => (t as { function: { name: string } }).function.name === name,
         );
-      // The open-object fallback has no strict form: it declares no
-      // properties, so closing it would mark a tool strict as taking no
-      // arguments at all.
+      // The open-object fallback has no strict form...
       expect(pick(strictTools, "custom__tool")).toEqual(
         pick(plainTools, "custom__tool"),
       );
+      // ...and neither has `reply`, whose hand-tuned schema carries the
+      // `minLength: 1` that keeps an empty final answer off the wire.
+      expect(pick(strictTools, "reply")).toEqual(pick(plainTools, "reply"));
       // A mixed array is the point: `finish` converts, so it is marked.
       expect(
         (pick(strictTools, "finish") as { function: { strict?: boolean } })
           .function.strict,
       ).toBe(true);
-      // `reply` converts too. Its hand-tuned schema carries
-      // `minLength: 1`, which is stripped rather than refused over —
-      // the strict compiler implements no bound, so keeping it would
-      // cost the most important tool in the set its constraint and
-      // enforce nothing in exchange. The non-empty `text` rule the
-      // bound documents is the batch validator's job either way.
-      const reply = pick(strictTools, "reply") as {
-        function: { strict?: boolean; parameters: Record<string, unknown> };
-      };
-      expect(reply.function.strict).toBe(true);
-      expect(reply.function.parameters).toEqual({
-        type: "object",
-        properties: {
-          text: {
-            type: "string",
-            description: "User-visible reply text. Must be non-empty.",
-          },
-          attachments: {
-            type: ["array", "null"],
-            items: { type: "string" },
-            description:
-              "Paths of existing files to deliver with the reply (sent as files on Telegram/Discord).",
-          },
-        },
-        required: ["text", "attachments"],
-        additionalProperties: false,
-      });
     });
 
     it("survives an arbitrary MCP-supplied schema", () => {
@@ -592,6 +567,51 @@ describe("OpenAiToolCallAdapter", () => {
         args: ["hi"],
         env: { HOME: null },
       });
+    });
+
+    /**
+     * The premise `dropNullArgs` states in its own header, and the one
+     * the `indexOfferedTools` narrowing shares: no schema we convert has
+     * a nested object. Both walk the TOP level only — the undo drops a
+     * widened null there and nowhere else, and the tagged-call reader
+     * narrows the top-level `required` and nothing else — so a built-in
+     * whose strict form nests an object silently escapes both, and the
+     * tagged reader's escape is a real tool call collapsing into prose.
+     *
+     * That is not a hypothetical: a round of this branch converted
+     * `fusion.delegate` and `os.fs.archive.extract` by stripping their
+     * bounds, and both nest. It was retracted. This is the pin that
+     * would have caught it, so the next attempt fails here rather than
+     * on a qwen-tagged link.
+     */
+    it("emits no nested object inside a function it marked strict", () => {
+      const nested: string[] = [];
+      const walk = (node: unknown, path: string, depth: number): void => {
+        if (!node || typeof node !== "object") return;
+        const schema = node as Record<string, unknown>;
+        if (schema.type === "object" || schema.properties !== undefined) {
+          if (depth > 0) nested.push(path);
+          const props = (schema.properties ?? {}) as Record<string, unknown>;
+          for (const [key, value] of Object.entries(props)) {
+            walk(value, `${path}.${key}`, depth + 1);
+          }
+        }
+        if (schema.items !== undefined)
+          walk(schema.items, `${path}[]`, depth + 1);
+        if (Array.isArray(schema.anyOf)) {
+          schema.anyOf.forEach((branch, index) =>
+            walk(branch, `${path}|${index}`, depth + 1),
+          );
+        }
+      };
+      for (const tool of descriptorsToOpenAiTools(DEFAULT_TOOL_DESCRIPTORS, {
+        strict: true,
+      })) {
+        const fn = (tool as { function: Record<string, unknown> }).function;
+        if (fn.strict !== true) continue;
+        walk(fn.parameters, String(fn.name), 0);
+      }
+      expect(nested).toEqual([]);
     });
   });
 });

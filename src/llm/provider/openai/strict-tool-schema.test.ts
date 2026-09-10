@@ -4,8 +4,6 @@ import {
   toStrictJsonSchema,
 } from "./strict-tool-schema.js";
 import { getDefaultArgsJsonSchema } from "../../../prompt/default-tool-args-schemas.js";
-import { DEFAULT_TOOL_DESCRIPTORS } from "../../../prompt/tool-descriptors.js";
-import { descriptorsToOpenAiTools } from "./openai-tool-call-adapter.js";
 
 describe("toStrictJsonSchema", () => {
   it("closes the object and promotes every property into required", () => {
@@ -232,116 +230,6 @@ describe("toStrictJsonSchema", () => {
     expect(JSON.stringify(source)).toBe(snapshot);
   });
 
-  describe("strips value-range bounds instead of refusing over them", () => {
-    it("drops a bound wherever it sits and keeps the tool strict", () => {
-      const strict = toStrictJsonSchema({
-        type: "object",
-        properties: {
-          text: { type: "string", minLength: 1, maxLength: 4000 },
-          slug: { type: "string", pattern: "^[a-z]+$", format: "hostname" },
-          files: {
-            type: "array",
-            items: { type: "string", minLength: 1 },
-            minItems: 1,
-            maxItems: 32,
-            uniqueItems: true,
-          },
-          workers: { type: "integer", minimum: 1, maximum: 8, multipleOf: 1 },
-        },
-        required: ["text"],
-        additionalProperties: false,
-      });
-      expect(strict).toEqual({
-        type: "object",
-        properties: {
-          text: { type: "string" },
-          slug: { type: ["string", "null"] },
-          files: { type: ["array", "null"], items: { type: "string" } },
-          workers: { type: ["integer", "null"] },
-        },
-        required: ["text", "slug", "files", "workers"],
-        additionalProperties: false,
-      });
-    });
-
-    it("leaves a property NAMED after a bound alone", () => {
-      // `pattern` and `format` are property names in four built-ins
-      // (`os.fs.glob`, `os.fs.grep`, `os.fs.read_document`,
-      // `os.fs.archive.*`). The strip runs on schema NODES; a
-      // `properties` map is a map of names, and a strip that walked it
-      // would delete the argument instead of a keyword.
-      const strict = toStrictJsonSchema({
-        type: "object",
-        properties: {
-          pattern: { type: "string" },
-          format: { type: "string", enum: ["md", "txt"] },
-          minimum: { type: "number" },
-        },
-        required: ["pattern"],
-        additionalProperties: false,
-      });
-      expect(Object.keys(strict?.properties as object)).toEqual([
-        "pattern",
-        "format",
-        "minimum",
-      ]);
-    });
-
-    it("does not change which properties count as widened", () => {
-      // The claim the whole strip rests on: a bound says nothing about
-      // whether a property is in `required`, so the null-drop
-      // bookkeeping is identical with and without it.
-      const bounded = {
-        type: "object",
-        properties: {
-          text: { type: "string", minLength: 1 },
-          note: { type: "string", maxLength: 10 },
-        },
-        required: ["text"],
-        additionalProperties: false,
-      };
-      const bare = {
-        type: "object",
-        properties: { text: { type: "string" }, note: { type: "string" } },
-        required: ["text"],
-        additionalProperties: false,
-      };
-      expect([...strictWidenedProperties(bounded)]).toEqual([
-        ...strictWidenedProperties(bare),
-      ]);
-      expect(JSON.stringify(toStrictJsonSchema(bounded))).toBe(
-        JSON.stringify(toStrictJsonSchema(bare)),
-      );
-    });
-
-    it("closes an object that declares properties and also says open", () => {
-      // `os.fs.archive.extract.limits` — the declared keys are the whole
-      // documented contract and `parseLimits` reads no others, so
-      // forbidding extras takes away nothing a caller could have known
-      // to send.
-      const strict = toStrictJsonSchema({
-        type: "object",
-        properties: {
-          limits: {
-            type: "object",
-            properties: { maxEntries: { type: "number" } },
-            additionalProperties: true,
-          },
-        },
-        required: ["limits"],
-        additionalProperties: false,
-      });
-      expect(strict?.properties).toEqual({
-        limits: {
-          type: "object",
-          properties: { maxEntries: { type: ["number", "null"] } },
-          required: ["maxEntries"],
-          additionalProperties: false,
-        },
-      });
-    });
-  });
-
   describe("refuses what it cannot rewrite faithfully", () => {
     it("refuses the open-object fallback", () => {
       // Closing this would silently turn every unschema'd tool into a
@@ -385,18 +273,21 @@ describe("toStrictJsonSchema", () => {
       ).toBeNull();
     });
 
-    it("refuses a keyword that pins a value rather than bounding one", () => {
-      // `const` reads like an annotation and is not one: it names the
-      // single value the schema accepts, the way a one-member `enum`
-      // does. Stripping it would let the model send anything at all
-      // where the tool documented one thing, so it stays a refusal —
-      // unlike the bounds below, which the strict compiler ignores and
-      // the tool's own parser re-checks.
+    it("refuses a keyword the strict compiler does not implement", () => {
       expect(
         toStrictJsonSchema({
           type: "object",
-          properties: { mode: { type: "string", const: "replace" } },
-          required: ["mode"],
+          properties: { text: { type: "string", minLength: 1 } },
+          required: ["text"],
+          additionalProperties: false,
+        }),
+      ).toBeNull();
+      expect(
+        toStrictJsonSchema({
+          type: "object",
+          properties: {
+            files: { type: "array", items: { type: "string" }, maxItems: 4 },
+          },
           additionalProperties: false,
         }),
       ).toBeNull();
@@ -641,7 +532,7 @@ describe("toStrictJsonSchema", () => {
    * knowingly — either the schema loses a bound it does not need, or
    * the tool joins this list.
    */
-  it("converts all but two of the sampled built-in tool schemas", () => {
+  it("converts all but five of the sampled built-in tool schemas", () => {
     const refused: string[] = [];
     let converted = 0;
     for (const name of DEFAULT_TOOL_NAMES) {
@@ -651,33 +542,22 @@ describe("toStrictJsonSchema", () => {
       else refused.push(name);
     }
     expect(refused).toEqual([
+      // minItems / maxItems on the task list.
+      "fusion.delegate",
       // `arguments` is a map of arbitrary string keys.
       "mcp.prompt.get",
+      // `limits` is deliberately an open object.
+      "os.fs.archive.extract",
       // `headers` is a map; `body` may be any object.
       "os.http.request",
+      // maxItems on `paths`.
+      "vision.describe",
     ]);
     expect(converted).toBe(DEFAULT_TOOL_NAMES.length - refused.length);
-    // 82 registered schemas, 80 of them strict. Pinned as a number so
+    // 82 registered schemas, 77 of them strict. Pinned as a number so
     // the sample cannot quietly shrink.
     expect(DEFAULT_TOOL_NAMES.length).toBe(82);
-    expect(converted).toBe(80);
-  });
-
-  /**
-   * The number that actually reaches the wire. The pin above reads the
-   * registry; `reply` and `finish` do not come from it — the adapter
-   * hand-writes their schemas — so a regression in the one tool the
-   * feature most needs to constrain would not show up there.
-   */
-  it("marks 80 of the 82 emitted functions strict", () => {
-    const tools = descriptorsToOpenAiTools(DEFAULT_TOOL_DESCRIPTORS, {
-      strict: true,
-    });
-    const refused = tools
-      .filter((t) => (t.function as { strict?: boolean }).strict !== true)
-      .map((t) => (t.function as { name: string }).name);
-    expect(refused).toEqual(["os__http__request", "mcp__prompt__get"]);
-    expect(tools).toHaveLength(82);
+    expect(converted).toBe(77);
   });
 
   /**

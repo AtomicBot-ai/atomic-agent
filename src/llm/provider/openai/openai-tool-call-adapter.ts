@@ -284,6 +284,13 @@ function parseArguments(raw: string): Record<string, unknown> {
  * nested object today, while `null` deeper inside an argument is data
  * the model meant to send (a JSON body, an MCP server's own payload)
  * and is not ours to rewrite.
+ *
+ * That first clause is a premise, not an observation, and it is shared
+ * with `indexOfferedTools`, whose strict narrowing walks the top-level
+ * `required` and nothing else. So it is pinned over the real emitted
+ * payload ("emits no nested object inside a function it marked strict",
+ * in this module's test): a built-in whose strict form nests an object
+ * has to teach BOTH walks to recurse, in the same change.
  */
 function dropNullArgs(
   args: Record<string, unknown>,

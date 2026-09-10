@@ -10,22 +10,17 @@
  * keywords the compiler does not implement (`minLength`, `minItems`,
  * `maxItems`, `pattern`, `format`, `$ref`, ...). Our descriptors were
  * written for plain validation and use those freely — `reply` carries
- * `minLength: 1`, `fusion.delegate` carries `minItems`/`maxItems` — and
+ * `minLength: 1`, `fusion.delegate` carries `minItems`/`maxItems`, and
  * a descriptor with no registered schema falls back to an open
- * `{ properties: {}, additionalProperties: true }` object, which has no
- * strict form at all short of declaring the tool zero-argument.
+ * `{ additionalProperties: true }` object, which has no strict form at
+ * all short of declaring the tool zero-argument.
  *
- * A value-range bound is STRIPPED rather than refused over: the
- * compiler ignores it either way, so refusing over one would cost the
- * tool its constraint and enforce nothing in exchange — see
- * `STRIPPED_BOUNDS` for why that is safe and what stays a refusal.
- * Everything else the compiler has no rule for still refuses, and the
- * refusal is per tool: this returns `null` for anything it cannot
- * rewrite faithfully, and the caller leaves that one function exactly
- * as it ships today. A `tools` array mixing strict and non-strict
- * functions is legal, and a partial win beats a 400 on every request —
- * which is what a whole-array flag would buy, and is strictly worse for
- * the operator than the bug.
+ * So the conversion is per tool and the refusal is per tool: this
+ * returns `null` for anything it cannot rewrite faithfully, and the
+ * caller leaves that one function exactly as it ships today. A `tools`
+ * array mixing strict and non-strict functions is legal, and a partial
+ * win beats a 400 on every request — which is what a whole-array flag
+ * would buy, and is strictly worse for the operator than the bug.
  *
  * The one rewrite that is not a pure no-op is optionality. Strict has
  * no notion of an absent key, so an optional property is unioned with
@@ -53,12 +48,11 @@
 type Schema = Record<string, unknown>;
 
 /**
- * The keyword allowlist IS the safety property. Anything outside it and
- * outside the two strip lists below — a `$ref`, a `oneOf`, a `const`, a
- * vendor extension on a third-party MCP schema — means we do not know
- * what the provider's compiler will do with the node, so the tool keeps
- * its current non-strict definition instead of gambling the request on
- * it.
+ * The keyword allowlist IS the safety property. Anything outside it —
+ * a bound, a `pattern`, a `$ref`, a `oneOf`, a vendor extension on a
+ * third-party MCP schema — means we do not know what the provider's
+ * compiler will do with the node, so the tool keeps its current
+ * non-strict definition instead of gambling the request on it.
  */
 const SUPPORTED_KEYWORDS: ReadonlySet<string> = new Set([
   "type",
@@ -88,62 +82,6 @@ const DROPPED_KEYWORDS: ReadonlySet<string> = new Set([
   "default",
   "$schema",
   "$comment",
-  "examples",
-  "readOnly",
-  "writeOnly",
-  "deprecated",
-  "contentEncoding",
-  "contentMediaType",
-]);
-
-/**
- * Value-range keywords: stripped, not refused over.
- *
- * These constrain a value the decode has already got the *shape* of.
- * The strict compiler implements none of them, so they cannot be sent;
- * the question is only whether the tool keeps them and loses strict, or
- * loses them and keeps strict. Refusing buys nothing, because a strict
- * decode never enforced the bound in the first place — the tool ends up
- * unconstrained AND unbounded instead of constrained and unbounded.
- *
- * Dropping one is safe for the reason `default-tool-args-schemas.ts`
- * states in its own header: these schemas guard shape, and every bound
- * they carry is re-checked by the tool's own parser, which is what
- * actually rejects a bad call today (the provider never saw the schema
- * at all before this feature). Checked one by one for the three
- * built-ins this recovers: `reply`'s `minLength: 1` is re-enforced by
- * the batch validator's non-empty `text` rule, `vision.describe`'s
- * `maxItems` by `maxImagesPerCall`, and `fusion.delegate`'s
- * `minItems`/`maxItems`/`minimum` by `parseDelegateArgs`
- * (`MAX_DELEGATE_TASKS`, `MAX_TASK_FILES`, `maxWorkers < 1`).
- *
- * Deliberately NOT here: `const`. It reads like an annotation and is
- * not one — it pins a value the way a one-member `enum` does, and
- * dropping it would let the model send anything at all where the schema
- * named one thing. That is a change to what the tool accepts, so it
- * stays a refusal. No built-in uses it.
- *
- * Stripping cannot disturb the null-drop bookkeeping: a bound says
- * nothing about whether a property is in `required`, so
- * `strictWidenedProperties` — which reads the ORIGINAL schema's
- * `properties` and `required` and nothing else — returns the same set
- * either way.
- */
-const STRIPPED_BOUNDS: ReadonlySet<string> = new Set([
-  "minLength",
-  "maxLength",
-  "pattern",
-  "format",
-  "minItems",
-  "maxItems",
-  "uniqueItems",
-  "minProperties",
-  "maxProperties",
-  "minimum",
-  "maximum",
-  "exclusiveMinimum",
-  "exclusiveMaximum",
-  "multipleOf",
 ]);
 
 const SCALAR_TYPES: ReadonlySet<string> = new Set([
@@ -338,56 +276,22 @@ function convertScalar(node: Schema): Schema | null {
   return { ...node };
 }
 
-/**
- * Whether an object that did NOT say `additionalProperties: false` may
- * still be closed. Strict mode has one spelling for an object and it is
- * the closed one, so the alternative is refusing the whole tool.
- *
- * Exactly one shape qualifies: an explicit `additionalProperties: true`
- * on a node that also declares at least one property. The author wrote
- * both halves by hand, the declared list is the tool's whole documented
- * contract, and the model is never shown anything else — so forbidding
- * extras takes away only keys it had no way to know about.
- * `os.fs.archive.extract.limits` is the built-in, and its reader
- * (`parseLimits`) looks at the three declared keys and ignores the rest,
- * so closing it is observably a no-op.
- *
- * Two neighbours stay refusals, and the line between them is about
- * exposure rather than semantics — JSON Schema says an absent
- * `additionalProperties` and an explicit `true` mean the same thing:
- *
- *   * `properties: {}` with `true`. That is `descriptorToJsonSchema`'s
- *     fallback for a descriptor with no registered schema, and closing
- *     it would mark a tool strict as taking no arguments at all,
- *     deleting every argument it does take.
- *   * an ABSENT `additionalProperties`. Same semantics as `true`, very
- *     different provenance: it is what pydantic/FastMCP emit for every
- *     model, i.e. the default of a generator rather than a statement by
- *     an author, and it is the majority shape among third-party MCP
- *     `inputSchema`s. Refusing there keeps this rule's blast radius to
- *     schemas somebody actually typed `true` into.
- *
- * A schema-valued `additionalProperties` (`{ type: "string" }`) is a
- * typed open map — the map IS the payload — and is refused by both
- * checks below.
- */
-function canClose(node: Schema, properties: Schema): boolean {
-  return (
-    node.additionalProperties === true && Object.keys(properties).length > 0
-  );
-}
-
 function convertObject(node: Schema, depth: number): Schema | null {
   if (hasStrayKeyword(node, OBJECT_STRAYS)) return null;
-  // `properties` absent means an object of unknown shape, and there is
-  // no strict form of that short of declaring it zero-argument. The
-  // real zero-argument tools spell it out as an explicit `{}`.
+  // An object that does not close itself is open — that is the JSON
+  // Schema default, and an absent `additionalProperties` means it as
+  // loudly as an explicit `true` does. Closing either one would
+  // silently forbid arguments the tool accepts today, which on a
+  // third-party MCP schema is exactly the failure this module exists
+  // to refuse. Our own descriptors spell `additionalProperties: false`
+  // out on every object (`default-tool-args-schemas.ts` conventions),
+  // so requiring it costs the built-ins nothing.
+  if (node.additionalProperties !== false) return null;
+  // `properties` absent means an object of unknown shape — same story.
+  // The zero-argument tools spell that out as an explicit `{}`.
   const properties =
     node.properties === undefined ? null : asObject(node.properties);
   if (properties === null) return null;
-  if (node.additionalProperties !== false && !canClose(node, properties)) {
-    return null;
-  }
 
   const required = readRequired(node.required);
   if (!required) return null;
@@ -456,16 +360,11 @@ function isNullBranch(value: unknown): boolean {
   return branch?.type === "null";
 }
 
-/**
- * A copy of `node` without the keywords we accept but do not emit: the
- * annotations that carry no constraint, and the value-range bounds the
- * strict compiler has no rule for. Returns the input itself when there
- * is nothing to remove, so the common node allocates nothing.
- */
+/** A copy of `node` without the annotations we accept but do not emit. */
 function stripAnnotations(node: Schema): Schema {
   let out: Schema | null = null;
   for (const key of Object.keys(node)) {
-    if (!DROPPED_KEYWORDS.has(key) && !STRIPPED_BOUNDS.has(key)) continue;
+    if (!DROPPED_KEYWORDS.has(key)) continue;
     out ??= { ...node };
     delete out[key];
   }
