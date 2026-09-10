@@ -84,6 +84,21 @@ Adding a new tool **requires** an entry in `TOOL_RESOURCE_CLASS`; pinned by [src
 6. **Auto-expand on error.** Failed rare-tool calls trigger `autoExpandRareOnError` independently per batch index — each rare tool that errored gets its full descriptor injected into `### loaded-tools` for the next step.
 7. **Append turns.** `appendBatchedTurns` writes N `assistant_tool_call` + N `tool_result` pairs in batch-index order. For tail-terminal batches (`[..., reply]`) the trailing `reply` collapses into a single `assistant_reply` turn after the non-terminal tool-call / tool-result pairs — the transcript reads `tool_call → tool_result → assistant_reply` and `assistant_reply` is emitted exactly once. Reasoning is attached once on the first `assistant_tool_call` (one inference ⇒ one `<think>` block); when the batch is pure terminal (length-1 `reply`) the reasoning attaches to `assistant_reply` directly. The new `agent.batchToolResultCharCap` (default `16000`, env `ATOMIC_AGENT_BATCH_TOOL_RESULT_CHAR_CAP`) trims oldest within-batch summaries first when the combined char total overflows.
 
+### Strict tool schemas
+
+`llm.providers[].userModels[].supportsTools` is a *level*, and `"strict"` is the only one with an effect on the wire: it asks an OpenAI-compatible provider to constrain the decode to the tool schemas (`function.strict: true`). It exists for models that misform tool calls without it — the report that prompted this was mercury-2.5 on Inception Labs. It is **off unless set by hand**; `extraBody` cannot substitute, since it merges at the top level of the request body and never reaches a per-tool `function.strict`.
+
+```jsonc
+"llm": { "providers": [{ "id": "inception", "kind": "openai-compatible",
+  "userModels": [{ "id": "mercury-2.5", "kind": "chat", "supportsTools": "strict" }] }] }
+```
+
+Strict schemas are far more restrictive than our descriptors: every object must carry `additionalProperties: false`, every property must appear in `required` (optionals expressed as a `null` union), and the bounds keywords (`minLength`, `minItems`, `maxItems`, `pattern`) are rejected outright. Marking the whole `tools` array strict would therefore 400 **every** request the moment one tool does not fit — worse than the bug. So [strict-tool-schema.ts](src/llm/provider/openai/strict-tool-schema.ts) converts **per tool** against a keyword allowlist and refuses per tool; `descriptorsToOpenAiTools` marks only what converted, and a mixed array is what goes on the wire. Today 77 of 82 registered schemas convert; the refusals are `fusion.delegate`, `vision.describe` (bounds), `os.http.request`, `mcp.prompt.get` (map-shaped objects), `os.fs.archive.extract` (an open `limits` object), plus `reply` (its hand-tuned `minLength: 1`) and any descriptor with no schema at all, which falls back to an open object that has no strict form.
+
+The one non-cosmetic rewrite is optionality: an optional property is unioned with `null` and moved into `required`, so the model answers `"cwd": null` where it used to omit the key. `openAiToolCallsToBatch` drops those top-level nulls again under the same flag — several tools branch on `rawArgs.x !== undefined` (`memory.profile.set.pinned`, `memory.notes.recall.id`, `os.git.init.userName`) and a literal `null` is not what they mean. Nested nulls are left alone: they are data the model meant to send.
+
+Pinned by [strict-tool-schema.test.ts](src/llm/provider/openai/strict-tool-schema.test.ts) and the strict cases in [openai-tool-call-adapter.test.ts](src/llm/provider/openai/openai-tool-call-adapter.test.ts), including that the flag off is byte-identical to today's payload.
+
 ### Locked invariants (pinned by tests)
 
 Pinned by [src/agent/batch-executor.test.ts](src/agent/batch-executor.test.ts), [src/agent/step-executor.test.ts](src/agent/step-executor.test.ts), [src/agent/parallel-tool-calls.integration.test.ts](src/agent/parallel-tool-calls.integration.test.ts), [src/agent/loop-detector.test.ts](src/agent/loop-detector.test.ts), [src/llm/grammar/tool-call-grammar.test.ts](src/llm/grammar/tool-call-grammar.test.ts), [src/llm/grammar/build-grammar.test.ts](src/llm/grammar/build-grammar.test.ts), [src/tracing/trace/trace-recorder.test.ts](src/tracing/trace/trace-recorder.test.ts):

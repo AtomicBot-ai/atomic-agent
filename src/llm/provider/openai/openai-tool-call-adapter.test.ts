@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { buildMcpToolDescriptors } from "../../../mcp/mcp-descriptor-builder.js";
 import {
   nameEscape,
   nameUnescape,
@@ -188,5 +189,193 @@ describe("OpenAiToolCallAdapter", () => {
     expect(reply?.function.description).toContain("Args: text: string");
     expect(reply?.function.parameters.required).toEqual(["text"]);
     expect(reply?.function.parameters.properties).toHaveProperty("text");
+  });
+  describe('strict tool schemas (supportsTools: "strict")', () => {
+    const shellDescriptor = {
+      name: "os.shell.run",
+      tier: "frequent" as const,
+      summary: "shell",
+      argsSchema: "{ cmd, args, cwd? }",
+      argsJsonSchema: {
+        type: "object",
+        properties: {
+          cmd: { type: "string" },
+          args: { type: "array", items: { type: "string" } },
+          cwd: { type: "string" },
+        },
+        required: ["cmd", "args"],
+        additionalProperties: false,
+      } as Record<string, unknown>,
+    };
+
+    it("changes nothing at all when the option is absent or off", () => {
+      const descriptors = [
+        shellDescriptor,
+        {
+          name: "custom.tool",
+          tier: "frequent" as const,
+          summary: "no schema",
+          argsSchema: "{ anything: any }",
+        },
+      ];
+      const today = JSON.stringify(descriptorsToOpenAiTools(descriptors));
+      expect(JSON.stringify(descriptorsToOpenAiTools(descriptors, {}))).toBe(
+        today,
+      );
+      expect(
+        JSON.stringify(
+          descriptorsToOpenAiTools(descriptors, { strict: false }),
+        ),
+      ).toBe(today);
+    });
+
+    it("marks a convertible function strict and rewrites its parameters", () => {
+      const tools = descriptorsToOpenAiTools([shellDescriptor], {
+        strict: true,
+      });
+      const shell = tools.find(
+        (t) =>
+          (t as { function: { name: string } }).function.name ===
+          "os__shell__run",
+      ) as {
+        function: { strict?: boolean; parameters: Record<string, unknown> };
+      };
+      expect(shell.function.strict).toBe(true);
+      expect(shell.function.parameters).toEqual({
+        type: "object",
+        properties: {
+          cmd: { type: "string" },
+          args: { type: "array", items: { type: "string" } },
+          cwd: { type: ["string", "null"] },
+        },
+        required: ["cmd", "args", "cwd"],
+        additionalProperties: false,
+      });
+    });
+
+    it("leaves the tools it cannot convert exactly as they ship", () => {
+      const open = {
+        name: "custom.tool",
+        tier: "frequent" as const,
+        summary: "no schema",
+        argsSchema: "{ anything: any }",
+      };
+      const strictTools = descriptorsToOpenAiTools([open], { strict: true });
+      const plainTools = descriptorsToOpenAiTools([open]);
+      const pick = (
+        tools: ReadonlyArray<Record<string, unknown>>,
+        name: string,
+      ) =>
+        tools.find(
+          (t) => (t as { function: { name: string } }).function.name === name,
+        );
+      // The open-object fallback has no strict form...
+      expect(pick(strictTools, "custom__tool")).toEqual(
+        pick(plainTools, "custom__tool"),
+      );
+      // ...and neither has `reply`, whose hand-tuned schema carries the
+      // `minLength: 1` that keeps an empty final answer off the wire.
+      expect(pick(strictTools, "reply")).toEqual(pick(plainTools, "reply"));
+      // A mixed array is the point: `finish` converts, so it is marked.
+      expect(
+        (pick(strictTools, "finish") as { function: { strict?: boolean } })
+          .function.strict,
+      ).toBe(true);
+    });
+
+    it("survives an arbitrary MCP-supplied schema", () => {
+      const metas = [
+        {
+          rawName: "search",
+          qualifiedName: "mcp.acme.search",
+          server: "acme",
+          description: "search things",
+          inputSchema: {
+            type: "object",
+            properties: {
+              query: { type: "string", minLength: 2 },
+              filters: { $ref: "#/$defs/Filters" },
+            },
+            required: ["query"],
+          },
+        },
+        {
+          rawName: "ping",
+          qualifiedName: "mcp.acme.ping",
+          server: "acme",
+          description: "ping",
+          inputSchema: { type: "object", properties: {} },
+        },
+        {
+          rawName: "bare",
+          qualifiedName: "mcp.acme.bare",
+          server: "acme",
+          description: "no schema at all",
+        },
+      ] as unknown as Parameters<typeof buildMcpToolDescriptors>[0];
+      const tools = descriptorsToOpenAiTools(buildMcpToolDescriptors(metas), {
+        strict: true,
+      });
+      const byName = new Map(
+        tools.map((t) => [
+          (t as { function: { name: string } }).function.name,
+          t as { function: { strict?: boolean } },
+        ]),
+      );
+      expect(byName.get("mcp__acme__search")?.function.strict).toBeUndefined();
+      expect(byName.get("mcp__acme__bare")?.function.strict).toBeUndefined();
+      expect(byName.get("mcp__acme__ping")?.function.strict).toBe(true);
+    });
+
+    it("drops the nulls a strict schema forces the model to send", () => {
+      const call = [
+        {
+          function: {
+            name: "memory__profile__set",
+            arguments: JSON.stringify({
+              key: "city",
+              value: "Belgrade",
+              pinned: null,
+              keywords: null,
+            }),
+          },
+        },
+      ];
+      // `memory.profile.set` reads `rawArgs.pinned !== undefined`, so a
+      // literal null takes a branch an omitted key never would.
+      expect(
+        openAiToolCallsToBatch(call, undefined, { strict: true }).calls[0]
+          ?.args,
+      ).toEqual({ key: "city", value: "Belgrade" });
+      // Off, the payload is passed through byte-for-byte as before.
+      expect(openAiToolCallsToBatch(call).calls[0]?.args).toEqual({
+        key: "city",
+        value: "Belgrade",
+        pinned: null,
+        keywords: null,
+      });
+    });
+
+    it("leaves nulls nested inside an argument alone", () => {
+      const batch = openAiToolCallsToBatch(
+        [
+          {
+            function: {
+              name: "os__http__request",
+              arguments: JSON.stringify({
+                url: "https://example.test",
+                body: { note: null },
+              }),
+            },
+          },
+        ],
+        undefined,
+        { strict: true },
+      );
+      expect(batch.calls[0]?.args).toEqual({
+        url: "https://example.test",
+        body: { note: null },
+      });
+    });
   });
 });

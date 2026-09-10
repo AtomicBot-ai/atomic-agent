@@ -197,6 +197,14 @@ export interface StepDependencies {
    */
   supportsParallelTools?: boolean;
   /**
+   * The resolved model declares `supportsTools: "strict"`, so the
+   * native-tools request asks the provider to constrain the decode to
+   * the tool schemas. Off unless the operator sets that level by hand
+   * on a `llm.providers[].userModels[]` entry; the adapter still
+   * refuses per tool whatever it cannot express strictly.
+   */
+  strictTools?: boolean;
+  /**
    * Provider pin for every completion this step issues (initial call
    * and repair retry alike). Forwarded verbatim as
    * `LlmStreamParams.providerId`; see that field for the contract.
@@ -1402,8 +1410,14 @@ function isGrammarEmptyCompletionWorthRepairing(
  */
 function parseDepsFor(
   completion: CompletionResult,
-  deps: Pick<StepDependencies, "toolTransport" | "toolCallAdapter">,
-): Pick<StepDependencies, "toolTransport" | "toolCallAdapter"> {
+  deps: Pick<
+    StepDependencies,
+    "toolTransport" | "toolCallAdapter" | "strictTools"
+  >,
+): Pick<
+  StepDependencies,
+  "toolTransport" | "toolCallAdapter" | "strictTools"
+> {
   const served = completion.servedTransport;
   if (served === undefined || served === deps.toolTransport) return deps;
   return {
@@ -1411,6 +1425,9 @@ function parseDepsFor(
     // A grammar link needs no adapter; a native link uses the default
     // OpenAI adapter unless the caller carried a custom one for it.
     toolCallAdapter: served === "native_tools" ? deps.toolCallAdapter : null,
+    ...(deps.strictTools !== undefined
+      ? { strictTools: deps.strictTools }
+      : {}),
   };
 }
 
@@ -1423,7 +1440,10 @@ function parseDepsFor(
 function tryParseToolCalls(
   completion: CompletionResult,
   profile: ModelProfile,
-  deps: Pick<StepDependencies, "toolTransport" | "toolCallAdapter">,
+  deps: Pick<
+    StepDependencies,
+    "toolTransport" | "toolCallAdapter" | "strictTools"
+  >,
 ): ToolCallBatchParseResult {
   const assumeOpenReasoning = completionAssumesOpenReasoning(
     profile,
@@ -1438,7 +1458,9 @@ function tryParseToolCalls(
           profile,
           assumeOpenReasoning,
         );
-        const batch = adapter.toolCallsToBatch(completion.toolCalls, reasoning);
+        const batch = adapter.toolCallsToBatch(completion.toolCalls, reasoning, {
+          strict: deps.strictTools === true,
+        });
         if (batch.calls.length === 0) {
           return {
             ok: false,
@@ -1610,6 +1632,7 @@ function buildLlmStreamParams(args: {
     | "toolTransport"
     | "toolCallAdapter"
     | "supportsParallelTools"
+    | "strictTools"
     | "providerId"
   >;
   slotId: number;
@@ -1638,7 +1661,9 @@ function buildLlmStreamParams(args: {
     // llama-server link, which needs the GBNF. Native (cloud) providers
     // ignore `grammar` entirely and read `tools`, so carrying both makes
     // the request valid for whichever link actually serves it.
-    tools: adapter.descriptorsToTools(args.toolDescriptors),
+    tools: adapter.descriptorsToTools(args.toolDescriptors, {
+      strict: args.deps.strictTools === true,
+    }),
     // `auto` instead of `required`. Three production-observed reasons:
     //   * Qwen-thinking providers (Alibaba gate) reject `required` outright
     //     with `<400> InvalidParameter: tool_choice does not support being
