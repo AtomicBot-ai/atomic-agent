@@ -99,7 +99,12 @@ function mountApp(clipboardText: string) {
       <ClipboardReaderProvider
         reader={createStaticClipboardReader(clipboardText)}
       >
-        <TuiApp session={SESSION} bus={bus} callbacks={callbacks} mouse={mouse} />
+        <TuiApp
+          session={SESSION}
+          bus={bus}
+          callbacks={callbacks}
+          mouse={mouse}
+        />
       </ClipboardReaderProvider>
     </ClipboardProvider>,
   );
@@ -194,8 +199,10 @@ describe("right-click context menu", () => {
     await waitUntil(() => app.frame().includes("hello"), "typed draft");
 
     const spot = () => locate(app.frame(), "hello");
-    await openMenuAt(app, () => ({ x: spot().x + 2, y: spot().y }), () =>
-      menuOpen(app.frame()),
+    await openMenuAt(
+      app,
+      () => ({ x: spot().x + 2, y: spot().y }),
+      () => menuOpen(app.frame()),
     );
     // Caret only: no cut, no copy.
     expect(app.frame()).not.toContain(row("cut"));
@@ -260,8 +267,10 @@ describe("right-click context menu", () => {
     await waitUntil(() => app.frame().includes("charlie"), "three-line draft");
 
     const spot = () => locate(app.frame(), "bravo");
-    await openMenuAt(app, () => ({ x: spot().x + 2, y: spot().y }), () =>
-      menuOpen(app.frame()),
+    await openMenuAt(
+      app,
+      () => ({ x: spot().x + 2, y: spot().y }),
+      () => menuOpen(app.frame()),
     );
     // The modal clamp (`composerMaxEditorLines -> 1`) must NOT apply.
     // A collapsed viewport would show ONLY the caret's line (charlie),
@@ -291,8 +300,10 @@ describe("right-click context menu", () => {
     );
 
     const spot = () => locate(app.frame(), "filter:");
-    await openMenuAt(app, () => ({ x: spot().x + 3, y: spot().y }), () =>
-      menuOpen(app.frame()),
+    await openMenuAt(
+      app,
+      () => ({ x: spot().x + 3, y: spot().y }),
+      () => menuOpen(app.frame()),
     );
     expect(app.frame()).not.toContain(row("cut"));
 
@@ -315,8 +326,10 @@ describe("right-click context menu", () => {
     await waitUntil(() => app.frame().includes("draft"), "typed draft");
 
     const spot = () => locate(app.frame(), "draft");
-    await openMenuAt(app, () => ({ x: spot().x + 2, y: spot().y }), () =>
-      menuOpen(app.frame()),
+    await openMenuAt(
+      app,
+      () => ({ x: spot().x + 2, y: spot().y }),
+      () => menuOpen(app.frame()),
     );
     app.mouse.emit(press("left", 0, 0));
     await waitUntil(() => !menuOpen(app.frame()), "the menu to close");

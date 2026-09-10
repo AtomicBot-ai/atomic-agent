@@ -174,7 +174,10 @@ describe("os.fs.locate_project sources", () => {
     const root = join(base, "files-heavy");
     await mkdir(root, { recursive: true });
     for (let i = 0; i < 600; i++) {
-      await writeFile(join(root, `aaa-file-${String(i).padStart(3, "0")}.txt`), "");
+      await writeFile(
+        join(root, `aaa-file-${String(i).padStart(3, "0")}.txt`),
+        "",
+      );
     }
     await mkdir(join(root, "zzz-needle"));
 

@@ -30,7 +30,9 @@ describe("seedStarterSkillsIfMissing", () => {
     const source = resolveStarterSkillsSourceDir();
     expect(source).not.toBeNull();
 
-    const first = await seedStarterSkillsIfMissing({ globalSkillsDir: globalDir });
+    const first = await seedStarterSkillsIfMissing({
+      globalSkillsDir: globalDir,
+    });
     expect(first.sourceDir).toBe(source);
     expect(first.installed.length).toBeGreaterThan(0);
     expect(first.installed).toContain("skill-creator");
@@ -39,7 +41,9 @@ describe("seedStarterSkillsIfMissing", () => {
     writeFileSync(hijack, "stale-content", "utf8");
     expect(readFileSync(hijack, "utf8")).toBe("stale-content");
 
-    const second = await seedStarterSkillsIfMissing({ globalSkillsDir: globalDir });
+    const second = await seedStarterSkillsIfMissing({
+      globalSkillsDir: globalDir,
+    });
     expect(second.installed.sort()).toEqual(first.installed.sort());
     expect(readFileSync(hijack, "utf8")).not.toBe("stale-content");
     expect(readFileSync(hijack, "utf8")).toContain("skill-creator");
@@ -74,13 +78,17 @@ describe("seedStarterSkillsIfMissing", () => {
     writeFileSync(join(staleDdgrPath, "SKILL.md"), "old ddgr skill", "utf8");
     writeFileSync(join(staleExaPath, "SKILL.md"), "old exa skill", "utf8");
 
-    const first = await seedStarterSkillsIfMissing({ globalSkillsDir: globalDir });
+    const first = await seedStarterSkillsIfMissing({
+      globalSkillsDir: globalDir,
+    });
     expect(first.removed).toContain("ddgr-web-search");
     expect(first.removed).toContain("exa-web-search");
     expect(existsSync(staleDdgrPath)).toBe(false);
     expect(existsSync(staleExaPath)).toBe(false);
 
-    const second = await seedStarterSkillsIfMissing({ globalSkillsDir: globalDir });
+    const second = await seedStarterSkillsIfMissing({
+      globalSkillsDir: globalDir,
+    });
     expect(second.removed).not.toContain("ddgr-web-search");
     expect(second.removed).not.toContain("exa-web-search");
   });

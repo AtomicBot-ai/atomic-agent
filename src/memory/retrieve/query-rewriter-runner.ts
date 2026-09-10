@@ -10,10 +10,7 @@ import {
   buildRewriterPrompt,
 } from "./query-rewriter-prompt.js";
 import { parseRewriterOutput } from "./query-rewriter-parser.js";
-import {
-  createHeuristicGate,
-  type RewriterGate,
-} from "./rewriter-gate.js";
+import { createHeuristicGate, type RewriterGate } from "./rewriter-gate.js";
 
 /**
  * v2.5 query rewriter (Phase A) — runner.

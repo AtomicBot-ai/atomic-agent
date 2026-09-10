@@ -89,8 +89,10 @@ describe("what colour the composer types in", () => {
           ? colors.chipBackground
           : colors.chipForeground;
       const ratio = contrastRatio(chosen, colors.badgeBackground);
-      expect(ratio, `${name}: ${ratio.toFixed(2)}:1 on the composer panel`)
-        .toBeGreaterThanOrEqual(4.5);
+      expect(
+        ratio,
+        `${name}: ${ratio.toFixed(2)}:1 on the composer panel`,
+      ).toBeGreaterThanOrEqual(4.5);
     }
   });
 

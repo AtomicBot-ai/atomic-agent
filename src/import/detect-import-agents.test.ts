@@ -3,10 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import {
-  detectImportAgents,
-  importAgentDir,
-} from "./detect-import-agents.js";
+import { detectImportAgents, importAgentDir } from "./detect-import-agents.js";
 
 describe("detectImportAgents", () => {
   let home: string;
@@ -69,8 +66,8 @@ describe("detectImportAgents", () => {
     expect(importAgentDir("codex", { home, env: {} })).toBe(
       join(home, ".codex"),
     );
-    expect(importAgentDir("codex", { home, env: { CODEX_STATE_DIR: "/x" } })).toBe(
-      "/x",
-    );
+    expect(
+      importAgentDir("codex", { home, env: { CODEX_STATE_DIR: "/x" } }),
+    ).toBe("/x");
   });
 });

@@ -159,7 +159,11 @@ export function StatusBar({
  * row, and Ink wraps rather than clips, so an over-long chip would turn
  * the header into a paragraph and push the whole app down the screen.
  */
-function chipBudget(columns: number, brand: boolean, title: string | null): number {
+function chipBudget(
+  columns: number,
+  brand: boolean,
+  title: string | null,
+): number {
   return Math.max(0, rawBudget(columns, brand, title));
 }
 
@@ -168,11 +172,18 @@ function chipBudget(columns: number, brand: boolean, title: string | null): numb
  * must be added to THIS number — adding it after the clamp turned a
  * 42-column deficit into 18 phantom cells and wrapped the bar.
  */
-function rawBudget(columns: number, brand: boolean, title: string | null): number {
+function rawBudget(
+  columns: number,
+  brand: boolean,
+  title: string | null,
+): number {
   const BRAND = 22;
   const BREADCRUMB = 14;
   const used =
-    (brand ? BRAND : 0) + BREADCRUMB + SESSION_TAG + (title ? title.length + 4 : 0);
+    (brand ? BRAND : 0) +
+    BREADCRUMB +
+    SESSION_TAG +
+    (title ? title.length + 4 : 0);
   return columns - used - 2;
 }
 
@@ -222,7 +233,9 @@ function Breadcrumb({
 }): ReactElement {
   const mouse = useMouseCommands();
   const tabLabel =
-    state.uiMode === "debug" ? menuPlaceByTab(state.activeTab)?.label : undefined;
+    state.uiMode === "debug"
+      ? menuPlaceByTab(state.activeTab)?.label
+      : undefined;
   const label = (
     <Text>
       <Chip label={tracked(SECTION_LABELS[section])} tone="badge" />

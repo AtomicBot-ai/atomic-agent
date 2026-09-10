@@ -78,7 +78,9 @@ describe("createSelectionPassthrough", () => {
 
   it("leaves ordinary clicks alone so existing targets keep working", () => {
     const tracking = makeTracking();
-    const passthrough = createSelectionPassthrough({ tracking: () => tracking });
+    const passthrough = createSelectionPassthrough({
+      tracking: () => tracking,
+    });
     expect(passthrough.observe(press())).toBe(false);
     expect(passthrough.observe(press({ ctrl: true }))).toBe(false);
     expect(
@@ -127,7 +129,9 @@ describe("createSelectionPassthrough", () => {
 
   it("resumes early on request", () => {
     const tracking = makeTracking();
-    const passthrough = createSelectionPassthrough({ tracking: () => tracking });
+    const passthrough = createSelectionPassthrough({
+      tracking: () => tracking,
+    });
     passthrough.observe(press({ shift: true }));
     passthrough.resumeNow();
     expect(tracking.isSuspended()).toBe(false);
@@ -155,7 +159,9 @@ describe("createSelectionPassthrough", () => {
 
   it("drops the pending resume on dispose", () => {
     const tracking = makeTracking();
-    const passthrough = createSelectionPassthrough({ tracking: () => tracking });
+    const passthrough = createSelectionPassthrough({
+      tracking: () => tracking,
+    });
     passthrough.observe(press({ shift: true }));
     passthrough.dispose();
     vi.advanceTimersByTime(DEFAULT_SELECTION_WINDOW_MS);

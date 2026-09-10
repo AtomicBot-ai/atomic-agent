@@ -42,9 +42,7 @@ export function TasksPanel(props: TasksPanelProps): ReactElement {
           now={now}
         />
       ) : null}
-      {panel.mode === "detail" ? (
-        <TasksDetail panel={panel} now={now} />
-      ) : null}
+      {panel.mode === "detail" ? <TasksDetail panel={panel} now={now} /> : null}
       {panel.mode === "create" && panel.createForm ? (
         <TasksCreateForm form={panel.createForm} />
       ) : null}

@@ -7,7 +7,9 @@
  */
 const CLEAR_SCREEN_AND_HOME = "\u001B[2J\u001B[H";
 
-export function clearTtyScreen(stdout: NodeJS.WriteStream = process.stdout): void {
+export function clearTtyScreen(
+  stdout: NodeJS.WriteStream = process.stdout,
+): void {
   if (stdout.isTTY !== true) return;
   stdout.write(CLEAR_SCREEN_AND_HOME);
 }

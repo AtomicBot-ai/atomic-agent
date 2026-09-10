@@ -1,6 +1,10 @@
 import type { AgentLoopEvent } from "../../agent/agent-loop.js";
 
-import type { TelegramApi, TelegramLogger } from "./outbound-sender.js";
+import {
+  withThread,
+  type TelegramApi,
+  type TelegramLogger,
+} from "./outbound-sender.js";
 
 /**
  * Minimum gap between two progress edits. Telegram's practical per-chat
@@ -95,6 +99,8 @@ export class TelegramProgressIndicator {
     private readonly chatId: number,
     private readonly logger?: TelegramLogger,
     private readonly minEditIntervalMs: number = PROGRESS_MIN_EDIT_INTERVAL_MS,
+    /** Forum-topic id so the bubble appears in the topic that asked. */
+    private readonly threadId?: number,
   ) {}
 
   /** Post the initial indicator bubble. Fire-and-forget. */
@@ -103,9 +109,11 @@ export class TelegramProgressIndicator {
     this.chain = this.chain.then(async () => {
       if (this.removed) return;
       try {
-        const sent = await this.api.sendMessage(this.chatId, text, {
-          disable_notification: true,
-        });
+        const sent = await this.api.sendMessage(
+          this.chatId,
+          text,
+          withThread({ disable_notification: true }, this.threadId),
+        );
         const messageId =
           typeof sent === "object" && sent !== null && "message_id" in sent
             ? (sent as { message_id?: number }).message_id
@@ -114,9 +122,9 @@ export class TelegramProgressIndicator {
           // The turn finished while we were sending; don't leave a stale
           // bubble behind.
           if (typeof messageId === "number") {
-            await this.api.deleteMessage?.(this.chatId, messageId).catch(
-              () => undefined,
-            );
+            await this.api
+              .deleteMessage?.(this.chatId, messageId)
+              .catch(() => undefined);
           }
           return;
         }

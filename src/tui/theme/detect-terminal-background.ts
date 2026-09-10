@@ -72,7 +72,8 @@ export function detectTerminalBackground(
 
     // P9 / P10: remember state to restore after the probe.
     const hadRaw = stdin.isRaw === true;
-    const wasPaused = typeof stdin.isPaused === "function" ? stdin.isPaused() : false;
+    const wasPaused =
+      typeof stdin.isPaused === "function" ? stdin.isPaused() : false;
 
     const cleanup = (): void => {
       if (timer) clearTimeout(timer);

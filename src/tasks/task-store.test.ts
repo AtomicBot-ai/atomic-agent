@@ -109,7 +109,9 @@ describe("TaskStore", () => {
     );
     const pending = store.listPending();
     expect(pending.map((t) => t.id)).toEqual([a.id, b.id, c.id]);
-    expect(store.listPending({ sessionId: "s-2" }).map((t) => t.id)).toEqual([c.id]);
+    expect(store.listPending({ sessionId: "s-2" }).map((t) => t.id)).toEqual([
+      c.id,
+    ]);
   });
 
   it("markRunning bumps attempts, clears prior error, and is idempotent on the second call", () => {
@@ -237,7 +239,9 @@ describe("TaskStore", () => {
       { sessionId: "s-1", userMessage: "b", origin: "cli", maxAttempts: 1 },
       2_000,
     );
-    expect(store.list({ status: "cancelled" }).map((t) => t.id)).toEqual([a.id]);
+    expect(store.list({ status: "cancelled" }).map((t) => t.id)).toEqual([
+      a.id,
+    ]);
     expect(store.list({ status: ["pending", "cancelled"] }).length).toBe(2);
   });
 
@@ -398,7 +402,9 @@ describe("TaskStore", () => {
       );
     `);
     const before = raw
-      .prepare("SELECT COUNT(*) AS n FROM pragma_table_info('tasks') WHERE name = 'notify'")
+      .prepare(
+        "SELECT COUNT(*) AS n FROM pragma_table_info('tasks') WHERE name = 'notify'",
+      )
       .get() as { n: number };
     expect(before.n).toBe(0);
     raw.close();
@@ -431,7 +437,9 @@ describe("TaskStore", () => {
     const after = new DatabaseCtor(dbFile);
     try {
       const col = after
-        .prepare("SELECT COUNT(*) AS n FROM pragma_table_info('tasks') WHERE name = 'notify'")
+        .prepare(
+          "SELECT COUNT(*) AS n FROM pragma_table_info('tasks') WHERE name = 'notify'",
+        )
         .get() as { n: number };
       expect(col.n).toBe(1);
       const version = after

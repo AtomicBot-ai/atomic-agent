@@ -40,10 +40,7 @@ function defer(): {
  * iterations so a wrong assumption fails fast instead of hanging the
  * test runner.
  */
-async function waitUntil(
-  predicate: () => boolean,
-  limit = 50,
-): Promise<void> {
+async function waitUntil(predicate: () => boolean, limit = 50): Promise<void> {
   for (let i = 0; i < limit; i += 1) {
     if (predicate()) return;
     await Promise.resolve();

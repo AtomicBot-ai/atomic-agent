@@ -4,9 +4,11 @@ import type { AtomicAgentConfig } from "../../config/index.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 import type { AgentMetrics } from "../../tracing/agent-metrics.js";
 
+import type { TelegramSettingsSink } from "./telegram-settings.js";
 import type { InboundCallbackUpdate } from "./approval-bridge.js";
 import type { InboundTextUpdate } from "./inbound-handler.js";
 import type { TelegramApi } from "./outbound-sender.js";
+import type { InboundFileUpdate } from "./telegram-file-update.js";
 import type { ChannelLock } from "./telegram-lockfile.js";
 
 /**
@@ -15,14 +17,34 @@ import type { ChannelLock } from "./telegram-lockfile.js";
  * `start` / `stop` and invokes the registered text handler with
  * fabricated updates.
  */
+/** Optional callbacks a bot factory may report through. */
+export interface BotFactoryHooks {
+  /** A failure inside grammy's own middleware / polling loop. */
+  onError?: (error: Error) => void;
+}
+
 export interface BotInstance {
   readonly api: TelegramApi & {
-    getMe(): Promise<{ id: number; username?: string }>;
+    getMe(): Promise<{
+      id: number;
+      username?: string;
+      /** `false` = privacy mode on: plain @mentions in groups are withheld. */
+      can_read_all_group_messages?: boolean;
+    }>;
     setMyCommands?(
       cmds: ReadonlyArray<{ command: string; description: string }>,
     ): Promise<unknown>;
   };
   setTextHandler(handler: (u: InboundTextUpdate) => void | Promise<void>): void;
+  /**
+   * Register the handler for file-bearing messages (photo, document,
+   * video, audio, voice, animation, video note, sticker). Optional so
+   * a fake bot that only exercises the text path still satisfies the
+   * interface; the grammy adapter always provides it.
+   */
+  setFileHandler?(
+    handler: (u: InboundFileUpdate) => void | Promise<void>,
+  ): void;
   /**
    * Register the inline-keyboard callback handler. Optional because a
    * bot that never sends a keyboard does not need one — slice 1 ran
@@ -32,19 +54,25 @@ export interface BotInstance {
     handler: (u: InboundCallbackUpdate) => void | Promise<void>,
   ): void;
   /**
-   * Begin long-polling. Implementations are fire-and-forget — the
-   * polling loop runs in the background until `stop()` is called and
-   * any internal promise from grammy's `bot.start()` is left unawaited.
+   * Begin long-polling. Still fire-and-forget from the caller's point
+   * of view — the loop runs in the background — but the loop's *death*
+   * is now reported.
+   *
    * `onStart` fires once the first `getUpdates` request has been
-   * dispatched.
+   * dispatched. `onStopped` fires when the polling loop ends for any
+   * reason: a clean `stop()`, or a fatal error such as Telegram's 409
+   * when a second process starts polling the same token. Without it the
+   * channel had no way to learn its poller had died and went on
+   * reporting `up` while silently receiving nothing.
    */
-  start(onStart: () => void): void;
+  start(onStart: () => void, onStopped?: (error?: unknown) => void): void;
   /** Stop polling. Resolves when the in-flight update settles. */
   stop(): Promise<void>;
 }
 
 export type BotFactory = (
   token: string,
+  hooks?: BotFactoryHooks,
 ) => BotInstance | Promise<BotInstance>;
 
 export interface TelegramChannelDeps {
@@ -75,6 +103,17 @@ export interface TelegramChannelDeps {
    * `config.paths.stateDir`. Tests point this at a tmp file.
    */
   userConfigPath?: string;
+  /**
+   * Owner override for a swarm unit. `undefined` (the primary channel)
+   * reads `config.telegram.ownerUserId`; a unit passes its own.
+   */
+  ownerUserId?: number | null;
+  /**
+   * Where `setEnabled` / `setOwnerUserId` / `setToken` persist. Defaults
+   * to `config.telegram` + `TELEGRAM_BOT_TOKEN`; a swarm unit supplies a
+   * sink that writes its own config entry and `.env` key.
+   */
+  settings?: TelegramSettingsSink;
 }
 
 /**

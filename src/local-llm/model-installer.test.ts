@@ -4,10 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import {
-  getLocalModelDef,
-  type LocalModelDef,
-} from "./models-catalog.js";
+import { getLocalModelDef, type LocalModelDef } from "./models-catalog.js";
 import {
   downloadMmproj,
   downloadModel,

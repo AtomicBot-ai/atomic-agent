@@ -7,7 +7,10 @@ import {
   selectLlmPanelRows,
 } from "../llm-panel/llm-panel-selectors.js";
 import type { LocalModelsPanelState } from "../local-models/local-models-panel-state.js";
-import { LLM_PANEL_MODES, type LlmPanelMode } from "../llm-panel/llm-panel-state.js";
+import {
+  LLM_PANEL_MODES,
+  type LlmPanelMode,
+} from "../llm-panel/llm-panel-state.js";
 import { isLocalModelsHfOpen } from "../local-models/local-models-hf-keys.js";
 import { LlmModeRows } from "./llm-mode-rows.js";
 import { LocalModelsHuggingFaceBranch } from "./local-models-hf-branch.js";
@@ -97,7 +100,9 @@ export function LlmPanel({
         <LlmModeRows rows={rows} state={state} maxRows={listBudget} />
       </Box>
       <Box marginTop={useFull ? 1 : 0} flexDirection="column">
-        <Text color={theme.colors.muted}>{footerHint(state.llmPanel.mode, useFull)}</Text>
+        <Text color={theme.colors.muted}>
+          {footerHint(state.llmPanel.mode, useFull)}
+        </Text>
       </Box>
     </Box>
   );
@@ -165,10 +170,11 @@ function RouteCard({
           : "not configured"}
       </Text>
       <Text color={theme.colors.muted}>
-        local daemon: {formatDaemon(state)} · mode {state.localModelsPanel.configMode}
+        local daemon: {formatDaemon(state)} · mode{" "}
+        {state.localModelsPanel.configMode}
         {state.localModelsPanel.configMode === "external"
           ? ` · ${state.session.llamaUrl}`
-          : ""}
+          : " · R restart"}
       </Text>
     </Box>
   );
@@ -189,8 +195,23 @@ function footerHint(mode: LlmPanelMode, useFull: boolean): string {
       : "j/k · < > reorder · a add · d remove · l local · ←/→ pane";
   }
   if (mode === "local") {
+    // `←/→ switch pane` is the short form of the pane list the other
+    // hints spell out, so `R restart` is paid for out of an existing
+    // hint rather than added on top: the full strip ends up SHORTER than
+    // it was (115 columns against 128), which is what matters, because
+    // the header budgets this footer as two rows and Ink wraps rather
+    // than clips. It still takes both rows below ~116 columns — as it
+    // did before, and as the Cloud pane's 129-column strip does.
+    //
+    // The compact strip does NOT list it. It is budgeted as one row of a
+    // 3-row header and the supported floor is 40x16 (`minimum-window-
+    // size.test.tsx`), which leaves 38 columns once the root padding is
+    // paid: `R restart` pushed it to 46 and wrapped it onto a second row
+    // the header has not budgeted, and Ink paints the overflow over the
+    // list rather than clipping it. Compact already omits `s start/stop`,
+    // `e`/`E`, `B` and `L` on the same rule — the keys keep working.
     return useFull
-      ? "j/k move · Enter selected action · a add from hugging face · ←/→ switch Local/Cloud/External/Fallback · s start/stop · r refresh"
+      ? "j/k move · Enter selected action · a add from hugging face · ←/→ switch pane · s start/stop · R restart · r refresh"
       : "j/k · Enter · a add · ←/→ mode · r";
   }
   return useFull
@@ -209,7 +230,9 @@ function ModeHeader({ mode }: { mode: LlmPanelMode }): ReactElement {
             <Text
               bold
               color={
-                candidate === mode ? theme.colors.accentSoft : theme.colors.muted
+                candidate === mode
+                  ? theme.colors.accentSoft
+                  : theme.colors.muted
               }
             >
               {MODE_LABELS[candidate]}
@@ -300,7 +323,8 @@ function StartingBanner(): ReactElement {
         ⟳ Model is starting — please stand by
       </Text>
       <Text color={theme.colors.muted}>
-        Loading the model into llama-server. Inputs are paused until it is ready.
+        Loading the model into llama-server. Inputs are paused until it is
+        ready.
       </Text>
     </Box>
   );
@@ -335,7 +359,9 @@ function DownloadBanner({
   const totalPart =
     pull.totalBytes > 0 ? ` / ${formatDownloadBytes(pull.totalBytes)}` : "";
   const target =
-    pull.modelId === "_backend" ? "target: backend zip" : `model: ${pull.modelId}`;
+    pull.modelId === "_backend"
+      ? "target: backend zip"
+      : `model: ${pull.modelId}`;
   return (
     <Box flexDirection="column">
       <Text bold color={theme.colors.accentSoft}>
@@ -375,4 +401,3 @@ function formatDaemon(state: TuiState): string {
   }
   return `pid ${panel.daemon.pid} health unreachable`;
 }
-

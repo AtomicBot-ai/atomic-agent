@@ -14,7 +14,9 @@ describe("llamaEndpointUrl", () => {
     const paths = ["/health", "/props", "/completion", "/v1/models"];
     for (const base of bases) {
       for (const path of paths) {
-        expect(llamaEndpointUrl(base, path)).toBe(new URL(path, base).toString());
+        expect(llamaEndpointUrl(base, path)).toBe(
+          new URL(path, base).toString(),
+        );
       }
     }
   });

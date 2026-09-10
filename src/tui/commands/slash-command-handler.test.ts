@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { dispatchSlashCommand } from "./slash-command-handler.js";
+import { SLASH_COMMANDS } from "./slash-commands.js";
 
 describe("dispatchSlashCommand", () => {
   it("lists slash commands with descriptions for /help", () => {
@@ -11,6 +12,31 @@ describe("dispatchSlashCommand", () => {
     expect(result.systemMessage).toContain("clear chat transcript");
     expect(result.systemMessage).toContain("/quit");
     expect(result.systemMessage).toContain("aliases: /exit");
+  });
+
+  it("opens the Integrations tab for /integrations", () => {
+    // Registering a MenuPlaceNode with a `slash` only lists the command
+    // in the palette and binds its chord -- execution still needs a case
+    // here, and without one the command answers "not yet implemented".
+    const result = dispatchSlashCommand("/integrations");
+    expect(result.systemMessage).toBeUndefined();
+    expect(result.actions).toEqual([
+      { type: "ui_mode_set", mode: "debug" },
+      { type: "tab_changed", tab: "integrations" },
+      { type: "integrations_message_cleared" },
+    ]);
+  });
+
+  it("leaves no palette command without a dispatch case", () => {
+    // The generic guard for the bug above: every command the palette
+    // advertises must actually do something when typed.
+    for (const command of SLASH_COMMANDS) {
+      const result = dispatchSlashCommand(`/${command.name}`);
+      expect(
+        result.systemMessage ?? "",
+        `/${command.name} is listed but not dispatched`,
+      ).not.toContain("not yet implemented");
+    }
   });
 
   it("forwards non-slash input as a regular message", () => {
@@ -62,6 +88,27 @@ describe("dispatchSlashCommand", () => {
   it("returns to the Run section for /run (alias of /chat)", () => {
     const result = dispatchSlashCommand("/run");
     expect(result.actions).toEqual([{ type: "ui_mode_set", mode: "chat" }]);
+  });
+
+  it("bare /runmode opens the composer's backend switch", () => {
+    const result = dispatchSlashCommand("/runmode");
+    expect(result.actions).toEqual([
+      { type: "composer_switch_opened", kind: "backend" },
+    ]);
+    expect(result.runModeVerb).toBeUndefined();
+  });
+
+  it("/runmode <mode> and /runmode status hand a verb to the caller", () => {
+    expect(dispatchSlashCommand("/runmode fusion").runModeVerb).toBe("fusion");
+    expect(dispatchSlashCommand("/runmode fusion").actions).toEqual([]);
+    expect(dispatchSlashCommand("/runmode status").runModeVerb).toBe("status");
+  });
+
+  it("/runmode with an unknown mode prints usage and does nothing", () => {
+    const result = dispatchSlashCommand("/runmode hybrid");
+    expect(result.actions).toEqual([]);
+    expect(result.runModeVerb).toBeUndefined();
+    expect(result.systemMessage).toMatch(/unknown run mode "hybrid"/);
   });
 
   it("switches to debug mode and tab for /logs", () => {
@@ -161,6 +208,13 @@ describe("dispatchSlashCommand", () => {
     const result = dispatchSlashCommand("/skill enable");
     expect(result.skillEnableName).toBeUndefined();
     expect(result.systemMessage).toMatch(/usage: \/skill enable/);
+  });
+
+  it("signals triggerIssueReport for /report without a chat line", () => {
+    const result = dispatchSlashCommand("/report");
+    expect(result.triggerIssueReport).toBe(true);
+    expect(result.clearBuffer).toBe(true);
+    expect(result.systemMessage).toBeUndefined();
   });
 
   it("signals triggerDebugBundleDump for /dump", () => {
@@ -272,10 +326,27 @@ describe("dispatchSlashCommand", () => {
     expect(result.systemMessage).toContain("one request");
   });
 
-  it("names /llm check in the usage line so it is discoverable", () => {
+  it("asks the orchestrator to bounce the local model server on /llm restart", () => {
+    const result = dispatchSlashCommand("/llm restart");
+    // A reducer no-op on purpose: `submit-handler` intercepts it and
+    // calls `onLocalModelsDaemonRestartRequested`, the only path that
+    // reaches `LocalModelsOrchestrator.restartDaemon`.
+    expect(result.actions).toEqual([
+      { type: "local_models_daemon_restart_requested" },
+    ]);
+    // Deliberately not "restarting…": the same command answers "nothing
+    // local to restart" on a cloud route, and the chat line must not
+    // contradict the feed.
+    expect(result.systemMessage).toContain(
+      "asking the local model server to restart",
+    );
+  });
+
+  it("names /llm check and /llm restart in the usage line so they are discoverable", () => {
     const result = dispatchSlashCommand("/llm nonsense");
     expect(result.actions).toEqual([]);
     expect(result.systemMessage).toContain("/llm check");
+    expect(result.systemMessage).toContain("/llm restart");
   });
 
   it("signals triggerLocalModelsStatus for /models status", () => {
@@ -424,7 +495,9 @@ describe("dispatchSlashCommand", () => {
     });
     expect(queue.setWhileBusyMode).toBeUndefined();
 
-    expect(dispatchSlashCommand("/queue clear").setWhileBusyMode).toBeUndefined();
+    expect(
+      dispatchSlashCommand("/queue clear").setWhileBusyMode,
+    ).toBeUndefined();
   });
 
   it("/uninstall opens the ladder and asks for a plan — it removes nothing", () => {
@@ -436,5 +509,4 @@ describe("dispatchSlashCommand", () => {
     expect(result.triggerQuit).toBe(false);
     expect(result.triggerAbort).toBe(false);
   });
-
 });

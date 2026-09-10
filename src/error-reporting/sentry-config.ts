@@ -8,7 +8,8 @@
  * short-circuits and never opens a connection — this lets a build ship
  * with error reporting stubbed out until a real DSN is filled in.
  */
-export const SENTRY_DSN: string = "https://a8fd56d7868a50e55650ccf704a5fdf3@o4511710615699456.ingest.us.sentry.io/4511727478636544";
+export const SENTRY_DSN: string =
+  "https://a8fd56d7868a50e55650ccf704a5fdf3@o4511710615699456.ingest.us.sentry.io/4511727478636544";
 
 /** Sentinel that disables error reporting when used as the DSN. */
 export const SENTRY_PLACEHOLDER_DSN = "PLACEHOLDER";

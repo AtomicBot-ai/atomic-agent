@@ -21,6 +21,7 @@ import {
   type ImportItemResult,
   type ImportReport,
 } from "../import-report.js";
+import { reconcileImportedSession } from "../reconcile-session.js";
 import { splitMemoryNote } from "../split-note.js";
 import type { ClaudeCodeSource } from "./claude-code-source.js";
 import type { ClaudeCodeOptionId } from "./import-options.js";
@@ -43,15 +44,6 @@ export interface ImportMemoryTarget {
   store(input: { content: string; tags?: string[]; source?: "user" }): unknown;
 }
 
-/**
- * Why the sessions cap exists at all: `~/.claude/projects` grows to
- * gigabytes, and the first-run flow must not spend minutes previewing
- * transcripts nobody asked to keep. The CLI leaves `limit` unset
- * (import everything) unless `--limit` says otherwise; the onboarding
- * step imports this many newest sessions instead.
- */
-export const ONBOARDING_SESSION_LIMIT = 100;
-
 export interface ClaudeCodeImporterDeps {
   source: ClaudeCodeSource;
   sessionStore: SessionStore;
@@ -73,7 +65,15 @@ export interface ClaudeCodeRunOptions {
   execute: boolean;
   /** Overwrite differing destinations instead of flagging a conflict. */
   overwrite: boolean;
-  /** Cap on the number of sessions processed (newest first). */
+  /**
+   * Cap on the number of sessions processed (newest first). Unset means
+   * every session: the first-run flow used to cap this at 100 because
+   * `~/.claude/projects` grows to gigabytes, but a cap that nothing
+   * later lifts leaves the operator with a history that silently stops
+   * at some point in the past. The listing sorts by mtime without
+   * opening a file, and only the sessions the cap admits are parsed, so
+   * the cost of "everything" is paid once and then skipped on re-runs.
+   */
   limit?: number;
 }
 
@@ -89,7 +89,9 @@ export interface ClaudeCodeRunOptions {
 export class ClaudeCodeImporter {
   constructor(private readonly deps: ClaudeCodeImporterDeps) {}
 
-  async run(options: ClaudeCodeRunOptions): Promise<ImportReport<ClaudeCodeOptionId>> {
+  async run(
+    options: ClaudeCodeRunOptions,
+  ): Promise<ImportReport<ClaudeCodeOptionId>> {
     const items: ImportItemResult<ClaudeCodeOptionId>[] = [];
     const selected = new Set(options.options);
 
@@ -193,7 +195,11 @@ export class ClaudeCodeImporter {
     try {
       files = this.deps.source.listMemoryFiles();
     } catch (err) {
-      items.push({ kind: "memory", status: "error", reason: errorMessage(err) });
+      items.push({
+        kind: "memory",
+        status: "error",
+        reason: errorMessage(err),
+      });
       return;
     }
     if (files.length === 0) {
@@ -344,7 +350,15 @@ export class ClaudeCodeImporter {
       try {
         const session = this.deps.source.readSession(meta);
         if (session.messages.length === 0) {
-          // Warm-up / title-only transcript files: nothing to keep.
+          // Warm-up / title-only transcript files: nothing to keep, but
+          // the report still lists them so its counts add up to what
+          // the listing found.
+          items.push({
+            kind: "sessions",
+            source: meta.id,
+            status: "skipped",
+            reason: "no messages",
+          });
           continue;
         }
         mapped = mapClaudeCodeSession(session, this.deps.workingDirFallback);
@@ -372,23 +386,18 @@ export class ClaudeCodeImporter {
       destination: mapped.id,
       status: "migrated",
     };
-    const existing = this.deps.sessionStore.load(mapped.id);
-    if (!existing) {
-      if (options.execute) this.deps.sessionStore.save(mapped);
-      return base;
-    }
-    if (sessionsMatch(existing, mapped)) {
-      return { ...base, status: "skipped", reason: "already matches" };
-    }
-    if (!options.overwrite) {
-      return {
-        ...base,
-        status: "conflict",
-        reason: "destination differs; use --overwrite",
-      };
-    }
-    if (options.execute) this.deps.sessionStore.save(mapped);
-    return { ...base, status: "migrated", reason: "overwritten" };
+    const outcome = reconcileImportedSession({
+      existing: this.deps.sessionStore.load(mapped.id),
+      mapped,
+      execute: options.execute,
+      overwrite: options.overwrite,
+      save: (state) => this.deps.sessionStore.save(state),
+    });
+    return {
+      ...base,
+      status: outcome.status,
+      ...(outcome.reason !== undefined ? { reason: outcome.reason } : {}),
+    };
   }
 
   private importSecrets(
@@ -448,12 +457,6 @@ function manifestsMatch(sourceDir: string, targetDir: string): boolean {
   } catch {
     return false;
   }
-}
-
-/** Structural equality of two sessions' transcripts. */
-function sessionsMatch(a: SessionState, b: SessionState): boolean {
-  if (a.turns.length !== b.turns.length) return false;
-  return JSON.stringify(a.turns) === JSON.stringify(b.turns);
 }
 
 function errorMessage(err: unknown): string {

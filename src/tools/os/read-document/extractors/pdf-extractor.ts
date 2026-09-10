@@ -148,8 +148,7 @@ function clampPageRange(
  * on `globalThis.pdfjsWorker`, which works identically in both runtimes.
  */
 let pdfJsPromise:
-  | Promise<typeof import("pdfjs-dist/legacy/build/pdf.mjs")>
-  | undefined;
+  Promise<typeof import("pdfjs-dist/legacy/build/pdf.mjs")> | undefined;
 function loadPdfJs(): Promise<
   typeof import("pdfjs-dist/legacy/build/pdf.mjs")
 > {
@@ -202,7 +201,9 @@ function loadPdfJs(): Promise<
  * If the real `@napi-rs/canvas` *is* installed we leave it alone, so a normal
  * npm install keeps genuine canvas support.
  */
-async function withQuietCanvasResolution<T>(load: () => Promise<T>): Promise<T> {
+async function withQuietCanvasResolution<T>(
+  load: () => Promise<T>,
+): Promise<T> {
   if (canvasPackageIsInstalled()) return load();
 
   // `Module._load` is a private Node API, but it is the only interception
@@ -263,8 +264,7 @@ interface PdfWorkerGlobal {
 async function ensurePdfWorkerOnMainThread(): Promise<void> {
   const slot = globalThis as unknown as PdfWorkerGlobal;
   if (slot.pdfjsWorker?.WorkerMessageHandler) return;
-  const workerModule = (await import(
-    "pdfjs-dist/legacy/build/pdf.worker.mjs"
-  )) as PdfWorkerModule;
+  const workerModule =
+    (await import("pdfjs-dist/legacy/build/pdf.worker.mjs")) as PdfWorkerModule;
   slot.pdfjsWorker = workerModule;
 }

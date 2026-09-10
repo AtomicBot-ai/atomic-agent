@@ -183,8 +183,7 @@ describe("browser tools on a fake backend", () => {
     const tool = buildBrowserNavigateTool(backend, autoApprove());
     const result = await tool.run({ url: "https://example.com/" }, CTX);
     const snap = result.details.worldSnapshot as
-      | { kind: string; digest: string; text: string }
-      | undefined;
+      { kind: string; digest: string; text: string } | undefined;
     expect(snap).toBeDefined();
     expect(snap?.kind).toBe("browser");
     expect(snap?.digest).toBe("deadbeef");
@@ -273,9 +272,7 @@ describe("browser tools on a fake backend", () => {
     // rely on session.worldSnapshot + `### world` as the single source.
     expect(result.summary).not.toContain("[ref=e1]");
     expect(result.details.refCount).toBe(2);
-    const snap = result.details.worldSnapshot as
-      | { text: string }
-      | undefined;
+    const snap = result.details.worldSnapshot as { text: string } | undefined;
     expect(snap?.text).toContain("[ref=e1]");
   });
 
@@ -283,8 +280,7 @@ describe("browser tools on a fake backend", () => {
     const tool = buildBrowserReadAriaTool(backend);
     const result = await tool.run({}, CTX);
     const snap = result.details.worldSnapshot as
-      | { kind: string; digest: string; text: string }
-      | undefined;
+      { kind: string; digest: string; text: string } | undefined;
     expect(snap?.kind).toBe("browser");
     expect(snap?.digest).toBe("deadbeef");
     expect(snap?.text).toContain("[ref=e1]");
@@ -292,7 +288,10 @@ describe("browser tools on a fake backend", () => {
 
   it("search builds a search URL via the backend", async () => {
     const tool = buildBrowserSearchTool(backend);
-    const result = await tool.run({ query: "atomic agent", engine: "bing" }, CTX);
+    const result = await tool.run(
+      { query: "atomic agent", engine: "bing" },
+      CTX,
+    );
     expect(result.status).toBe("ok");
     expect(backend.lastSearch?.engine).toBe("bing");
     expect(result.details.url).toContain("atomic%20agent");
@@ -302,8 +301,7 @@ describe("browser tools on a fake backend", () => {
     const tool = buildBrowserSearchTool(backend);
     const result = await tool.run({ query: "hermes" }, CTX);
     const snap = result.details.worldSnapshot as
-      | { kind: string; digest: string; text: string }
-      | undefined;
+      { kind: string; digest: string; text: string } | undefined;
     expect(snap?.kind).toBe("browser");
     expect(snap?.digest).toBe("deadbeef");
   });
@@ -421,7 +419,12 @@ describe("browser tools on a fake backend", () => {
     for (const tool of buildBrowserTools(backend, autoApprove())) {
       registry.register(tool);
     }
-    expect(registry.list().map((t) => t.name).sort()).toEqual([
+    expect(
+      registry
+        .list()
+        .map((t) => t.name)
+        .sort(),
+    ).toEqual([
       "browser.click",
       "browser.navigate",
       "browser.read_aria",
@@ -454,7 +457,11 @@ describe("browser tools on a fake backend", () => {
   });
 
   it("scroll to top resets position", async () => {
-    backend.scrollState = { scrollY: 1500, scrollHeight: 3000, viewportHeight: 800 };
+    backend.scrollState = {
+      scrollY: 1500,
+      scrollHeight: 3000,
+      viewportHeight: 800,
+    };
     const tool = buildBrowserScrollTool(backend);
     const result = await tool.run({ direction: "top" }, CTX);
     expect(result.details.scrollY).toBe(0);

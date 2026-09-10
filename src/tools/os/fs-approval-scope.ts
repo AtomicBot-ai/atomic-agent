@@ -213,7 +213,10 @@ async function canonicalizeDeepestExisting(
       if ((err as NodeJS.ErrnoException).code !== "ENOENT") return null;
       const parent = dirname(current);
       if (parent === current) return null; // hit the fs root, still ENOENT
-      suffix = suffix.length === 0 ? basenameOf(current) : join(basenameOf(current), suffix);
+      suffix =
+        suffix.length === 0
+          ? basenameOf(current)
+          : join(basenameOf(current), suffix);
       current = parent;
     }
   }

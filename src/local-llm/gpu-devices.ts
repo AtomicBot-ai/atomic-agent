@@ -79,7 +79,11 @@ export function parseListDevices(output: string): GpuDevice[] {
     if (!line) continue;
 
     const canonical = line.match(/^([A-Za-z]+\d+):\s*(.+)$/);
-    if (!canonical || canonical[1] === undefined || canonical[2] === undefined) {
+    if (
+      !canonical ||
+      canonical[1] === undefined ||
+      canonical[2] === undefined
+    ) {
       continue;
     }
     const id = canonical[1];
@@ -110,7 +114,12 @@ export function parseListDevices(output: string): GpuDevice[] {
       }
       continue;
     }
-    const device: GpuDevice = { id, description: rest, totalMemMiB, freeMemMiB };
+    const device: GpuDevice = {
+      id,
+      description: rest,
+      totalMemMiB,
+      freeMemMiB,
+    };
     byId.set(id, device);
     devices.push(device);
   }
@@ -145,7 +154,8 @@ export function pickBestDevice(devices: readonly GpuDevice[]): string | null {
   );
   if (candidates.length === 0) return null;
   const ranked = [...candidates].sort((a, b) => {
-    const rank = deviceClassRank(b.description) - deviceClassRank(a.description);
+    const rank =
+      deviceClassRank(b.description) - deviceClassRank(a.description);
     if (rank !== 0) return rank;
     return b.totalMemMiB - a.totalMemMiB;
   });
@@ -161,10 +171,14 @@ export function pickBestDevice(devices: readonly GpuDevice[]): string | null {
  */
 export async function listVulkanDevices(binPath: string): Promise<GpuDevice[]> {
   try {
-    const { stdout, stderr } = await execFileAsync(binPath, ["--list-devices"], {
-      timeout: 5000,
-      maxBuffer: 1024 * 1024,
-    });
+    const { stdout, stderr } = await execFileAsync(
+      binPath,
+      ["--list-devices"],
+      {
+        timeout: 5000,
+        maxBuffer: 1024 * 1024,
+      },
+    );
     return parseListDevices(`${stdout}\n${stderr}`);
   } catch (err) {
     const e = err as { stdout?: string; stderr?: string };

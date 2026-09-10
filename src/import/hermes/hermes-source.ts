@@ -124,13 +124,18 @@ export class HermesSource {
     return this.db;
   }
 
+  /**
+   * Every session, newest-first by `started_at` (id as the tiebreak), so
+   * a `limit` keeps the most recent N — the same contract every other
+   * source's listing honours.
+   */
   readSessions(): HermesSession[] {
     const db = this.openDb();
     const rows = db
       .prepare(
         `SELECT id, cwd, title, model, started_at, archived
            FROM sessions
-          ORDER BY started_at ASC, id ASC`,
+          ORDER BY started_at DESC, id ASC`,
       )
       .all() as SessionRow[];
     return rows.map((row) => ({
@@ -181,8 +186,10 @@ export class HermesSource {
       throw new HermesSourceError(`failed to parse ${path}: ${message}`);
     }
     const jobs =
-      parsed && typeof parsed === "object" && Array.isArray((parsed as { jobs?: unknown }).jobs)
-        ? ((parsed as { jobs: unknown[] }).jobs)
+      parsed &&
+      typeof parsed === "object" &&
+      Array.isArray((parsed as { jobs?: unknown }).jobs)
+        ? (parsed as { jobs: unknown[] }).jobs
         : [];
     const result: HermesCronJob[] = [];
     for (const raw of jobs) {

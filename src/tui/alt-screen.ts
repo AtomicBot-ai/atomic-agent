@@ -37,7 +37,9 @@ export interface AltScreenOptions {
  * TTY (piped output, CI) the helpers are silent no-ops so automated
  * harnesses continue to see the final frame on stdout.
  */
-export function enterAltScreen(options: AltScreenOptions = {}): AltScreenController {
+export function enterAltScreen(
+  options: AltScreenOptions = {},
+): AltScreenController {
   const stdout = options.stdout ?? process.stdout;
   const hideCursor = options.hideCursor ?? true;
   if (!streamIsTty(stdout)) {

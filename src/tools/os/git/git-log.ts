@@ -38,7 +38,12 @@ export const osGitLogTool: ToolDefinition = {
     const revisionRange = parseOptionalString(rawArgs.revisionRange);
     const filterPath = parseOptionalString(rawArgs.path);
 
-    const args: string[] = ["log", `--pretty=format:${LOG_FORMAT}`, `-n`, String(limit)];
+    const args: string[] = [
+      "log",
+      `--pretty=format:${LOG_FORMAT}`,
+      `-n`,
+      String(limit),
+    ];
     if (revisionRange) args.push(revisionRange);
     if (filterPath) args.push("--", filterPath);
 
@@ -92,15 +97,8 @@ function parseLog(stdout: string): GitLogEntry[] {
     if (!trimmed) continue;
     const fields = trimmed.split(US);
     if (fields.length < 7) continue;
-    const [hash, shortHash, author, authorEmail, date, subject, body] = fields as [
-      string,
-      string,
-      string,
-      string,
-      string,
-      string,
-      string,
-    ];
+    const [hash, shortHash, author, authorEmail, date, subject, body] =
+      fields as [string, string, string, string, string, string, string];
     const entry: GitLogEntry = {
       hash,
       shortHash,
@@ -119,9 +117,6 @@ function parseLog(stdout: string): GitLogEntry[] {
 function formatHumanLog(entries: readonly GitLogEntry[]): string {
   if (entries.length === 0) return "(no commits)";
   return entries
-    .map(
-      (e) =>
-        `${e.shortHash}  ${e.date}  ${e.author}\n    ${e.subject}`,
-    )
+    .map((e) => `${e.shortHash}  ${e.date}  ${e.author}\n    ${e.subject}`)
     .join("\n");
 }

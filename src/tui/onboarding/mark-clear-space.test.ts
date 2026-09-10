@@ -56,7 +56,8 @@ describe("computeMarkClearSpans", () => {
     });
     const claimed = new Set(spans.map((span) => span.row));
     for (const row of [0, 1, 9, 10, 11]) expect(claimed.has(row)).toBe(false);
-    for (const row of [2, 3, 4, 5, 6, 7, 8]) expect(claimed.has(row)).toBe(true);
+    for (const row of [2, 3, 4, 5, 6, 7, 8])
+      expect(claimed.has(row)).toBe(true);
   });
 
   it("stops at the canvas rather than running off it", () => {

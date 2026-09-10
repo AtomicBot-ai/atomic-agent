@@ -80,6 +80,22 @@ function formatTraceEvent(event: TraceEvent, raw: boolean): string {
       }`;
     case "parse_retry":
       return `${head} step=${event.stepIndex} attempt=${event.attempt} reason=${event.reason}`;
+    case "task_continued":
+      return `${head} steps=${event.stepsTaken}/${event.stepCeiling} elapsed=${Math.round(
+        event.elapsedMs / 1000,
+      )}s`;
+    case "parse_failure_recovered":
+      return `${head} step=${event.stepIndex} attempt=${event.attempt}/${event.budget} reason=${truncate(event.reason, 120, raw)}`;
+    case "provider_waiting":
+      return `${head} attempt=${event.attempt} waited=${Math.round(
+        event.waitedMs / 1000,
+      )}s/${Math.round(event.maxWaitMs / 1000)}s next=${Math.round(
+        event.nextRetryMs / 1000,
+      )}s reason=${truncate(event.reason, 120, raw)}`;
+    case "provider_recovered":
+      return `${head} waited=${Math.round(event.waitedMs / 1000)}s`;
+    case "completion_truncated":
+      return `${head} step=${event.stepIndex} cause=${event.cause} reply=${event.completionTokens} prompt=${event.promptTokens} cap=${event.requestedMaxTokens} retry=${event.retry}:${event.retryValue}`;
     case "loop_detected":
       return `${head} step=${event.stepIndex} tool=${event.tool} count=${event.count}${
         event.detector !== undefined ? ` detector=${event.detector}` : ""

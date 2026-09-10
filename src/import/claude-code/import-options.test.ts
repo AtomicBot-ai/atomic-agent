@@ -16,14 +16,15 @@ describe("resolveClaudeCodeOptions", () => {
   });
 
   it("applies exclude and keeps registry order", () => {
-    expect(resolveClaudeCodeOptions({ exclude: ["sessions", "memory"] })).toEqual([
-      "skills",
-      "mcp",
-    ]);
+    expect(
+      resolveClaudeCodeOptions({ exclude: ["sessions", "memory"] }),
+    ).toEqual(["skills", "mcp"]);
   });
 
   it("adds secrets only through the explicit flag", () => {
-    expect(resolveClaudeCodeOptions({ migrateSecrets: true })).toContain("secrets");
+    expect(resolveClaudeCodeOptions({ migrateSecrets: true })).toContain(
+      "secrets",
+    );
     expect(() => resolveClaudeCodeOptions({ include: ["secrets"] })).toThrow(
       ClaudeCodeOptionError,
     );

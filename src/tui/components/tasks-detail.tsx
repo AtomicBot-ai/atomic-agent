@@ -72,7 +72,7 @@ function HeaderBlock({
     <Box flexDirection="column">
       <Text bold color={theme.colors.accentSoft}>
         {row.id}
-        <Text color={theme.colors.muted}>  ·  {row.origin}</Text>
+        <Text color={theme.colors.muted}> · {row.origin}</Text>
       </Text>
       <Text>
         <Text color={theme.colors.muted}>status:</Text> {row.status}
@@ -88,11 +88,10 @@ function HeaderBlock({
         </Text>
       </Text>
       <Text>
-        <Text color={theme.colors.muted}>attempts:</Text>{" "}
-        {row.attempts}/{row.maxAttempts}
+        <Text color={theme.colors.muted}>attempts:</Text> {row.attempts}/
+        {row.maxAttempts}
         {"  "}
-        <Text color={theme.colors.muted}>session:</Text>{" "}
-        {row.sessionId ?? "—"}
+        <Text color={theme.colors.muted}>session:</Text> {row.sessionId ?? "—"}
       </Text>
       <Text color={theme.colors.muted}>
         created: {formatUnixMs(row.createdAt)} · updated:{" "}

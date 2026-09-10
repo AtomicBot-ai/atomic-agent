@@ -235,7 +235,10 @@ describe("handleAppKey", () => {
       sidebarVisible: false,
     });
     expect(handled).toBe(true);
-    expect(dispatch).toHaveBeenCalledWith({ type: "ui_mode_set", mode: "debug" });
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "ui_mode_set",
+      mode: "debug",
+    });
     expect(dispatch).toHaveBeenCalledWith({ type: "tab_changed", tab: "feed" });
   });
 
@@ -307,7 +310,10 @@ describe("handleAppKey", () => {
       sidebarVisible: true,
     });
     expect(handled).toBe(true);
-    expect(dispatch).toHaveBeenCalledWith({ type: "ui_mode_set", mode: "debug" });
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "ui_mode_set",
+      mode: "debug",
+    });
     // Shift+Tab from chat wraps to the last Manage tab (Privacy).
     expect(dispatch).toHaveBeenCalledWith({
       type: "tab_changed",
@@ -331,7 +337,10 @@ describe("handleAppKey", () => {
       sidebarVisible: true,
     });
     expect(handled).toBe(true);
-    expect(dispatch).toHaveBeenCalledWith({ type: "ui_mode_set", mode: "debug" });
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "ui_mode_set",
+      mode: "debug",
+    });
     expect(dispatch).toHaveBeenCalledWith({ type: "tab_changed", tab: "feed" });
   });
 
@@ -797,7 +806,10 @@ describe("handlePanelEscape", () => {
       dispatch,
     });
     expect(consumed).toBe(true);
-    expect(dispatch).toHaveBeenCalledWith({ type: "ui_mode_set", mode: "chat" });
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "ui_mode_set",
+      mode: "chat",
+    });
   });
 
   it("leaves the panel alone when its own layer already claimed Esc", () => {
@@ -873,7 +885,10 @@ describe("Ctrl+T — Enter-while-busy mode", () => {
   });
 
   it("persists the opposite direction from queue mode", () => {
-    const state = { ...createInitialTuiState(stubSession()), whileBusyMode: "queue" as const };
+    const state = {
+      ...createInitialTuiState(stubSession()),
+      whileBusyMode: "queue" as const,
+    };
     const c = ctx(state);
     handleAppKey("t", emptyKey({ ctrl: true }), c);
     expect(c.callbacks.onWhileBusyModePersistRequested).toHaveBeenCalledWith(
@@ -902,7 +917,6 @@ describe("Ctrl+T — Enter-while-busy mode", () => {
     });
   });
 });
-
 
 describe("handleAppKey during onboarding", () => {
   function splashState() {

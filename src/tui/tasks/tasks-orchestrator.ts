@@ -2,10 +2,7 @@ import type { AgentRuntime } from "../../runtime/bootstrap.js";
 import type { TaskRecord, TaskSchedule } from "../../tasks/task-types.js";
 import type { TuiEventBus } from "../tui-app.js";
 import { toTaskSummaryRows } from "./tasks-summary.js";
-import type {
-  TaskCreateKind,
-  TaskFiringEntry,
-} from "./tasks-panel-state.js";
+import type { TaskCreateKind, TaskFiringEntry } from "./tasks-panel-state.js";
 
 export interface TasksOrchestratorDeps {
   /** Current live session id, or `null` when the user has not typed anything yet. */
@@ -48,7 +45,8 @@ export class TasksOrchestrator {
     private readonly deps: TasksOrchestratorDeps,
     options: TasksOrchestratorOptions = {},
   ) {
-    this.refreshIntervalMs = options.refreshIntervalMs ?? DEFAULT_REFRESH_INTERVAL_MS;
+    this.refreshIntervalMs =
+      options.refreshIntervalMs ?? DEFAULT_REFRESH_INTERVAL_MS;
     this.listLimit = options.listLimit ?? DEFAULT_LIST_LIMIT;
   }
 
@@ -56,7 +54,10 @@ export class TasksOrchestrator {
   startAutoRefresh(): void {
     if (this.refreshTimer) return;
     this.refresh();
-    this.refreshTimer = setInterval(() => this.refresh(), this.refreshIntervalMs);
+    this.refreshTimer = setInterval(
+      () => this.refresh(),
+      this.refreshIntervalMs,
+    );
   }
 
   shutdown(): void {

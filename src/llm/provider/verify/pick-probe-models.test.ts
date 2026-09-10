@@ -1,8 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-async function importFresh(): Promise<
-  typeof import("./pick-probe-models.js")
-> {
+async function importFresh(): Promise<typeof import("./pick-probe-models.js")> {
   // The OpenRouter catalog caches at module scope, so a test that primes
   // it would otherwise leak into the next one.
   vi.resetModules();
@@ -17,7 +15,8 @@ describe("pickProbeModels", () => {
   it("never probes OpenRouter with a free model", async () => {
     // A zero-cost model answers 200 on a key with no credit at all,
     // which is exactly the case the check exists to catch.
-    const { pickProbeModels, cheapestPaidOpenRouterModel } = await importFresh();
+    const { pickProbeModels, cheapestPaidOpenRouterModel } =
+      await importFresh();
     const cheapest = cheapestPaidOpenRouterModel();
     expect(cheapest).not.toBeNull();
     expect(cheapest).not.toBe("openrouter/auto");
@@ -28,9 +27,8 @@ describe("pickProbeModels", () => {
   });
 
   it("keeps the free rows of a live catalog out of the choice", async () => {
-    const { refreshOpenRouterChatCatalogFromApi } = await import(
-      "../openrouter/fetch-openrouter-chat-catalog.js"
-    );
+    const { refreshOpenRouterChatCatalogFromApi } =
+      await import("../openrouter/fetch-openrouter-chat-catalog.js");
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => ({
@@ -57,14 +55,14 @@ describe("pickProbeModels", () => {
     );
     await refreshOpenRouterChatCatalogFromApi();
 
-    const { cheapestPaidOpenRouterModel } = await import(
-      "./pick-probe-models.js"
-    );
+    const { cheapestPaidOpenRouterModel } =
+      await import("./pick-probe-models.js");
     expect(cheapestPaidOpenRouterModel()).toBe("vendor/cheap-model");
   });
 
   it("adds the operator's own pick as the fallback candidate", async () => {
-    const { pickProbeModels, cheapestPaidOpenRouterModel } = await importFresh();
+    const { pickProbeModels, cheapestPaidOpenRouterModel } =
+      await importFresh();
     const picks = pickProbeModels({
       kind: "openrouter",
       selectedModelId: "vendor/picked",
@@ -74,15 +72,16 @@ describe("pickProbeModels", () => {
 
   it("probes the chosen model where the catalog has no prices", async () => {
     const { pickProbeModels } = await importFresh();
-    const { AIMLAPI_DEFAULT_CHAT_MODEL } = await import(
-      "../aimlapi/aimlapi-models-catalog.js"
-    );
-    const { GEMINI_DEFAULT_CHAT_MODEL } = await import(
-      "../gemini/gemini-provider.js"
-    );
+    const { AIMLAPI_DEFAULT_CHAT_MODEL } =
+      await import("../aimlapi/aimlapi-models-catalog.js");
+    const { GEMINI_DEFAULT_CHAT_MODEL } =
+      await import("../gemini/gemini-provider.js");
 
     expect(
-      pickProbeModels({ kind: "aimlapi", selectedModelId: "openai/gpt-5-nano" }),
+      pickProbeModels({
+        kind: "aimlapi",
+        selectedModelId: "openai/gpt-5-nano",
+      }),
     ).toEqual(["openai/gpt-5-nano", AIMLAPI_DEFAULT_CHAT_MODEL]);
     expect(pickProbeModels({ kind: "gemini" })).toEqual([
       GEMINI_DEFAULT_CHAT_MODEL,

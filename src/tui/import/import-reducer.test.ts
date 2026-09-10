@@ -58,6 +58,36 @@ describe("reduceImportAction", () => {
     expect(next!.importPanel.form.focus).toBe("sourceType");
   });
 
+  it("switches to claude-code and codex, keeping the secrets opt-in they support", () => {
+    const base = createInitialTuiState(SESSION);
+    base.importPanel.form.secrets = true;
+    const claude = reduceImportAction(base, {
+      type: "import_source_set",
+      source: "claude-code",
+    });
+    expect(claude!.importPanel.form.source).toBe("claude-code");
+    expect(claude!.importPanel.form.sourceDir).toMatch(/\.claude$|CLAUDE/);
+    expect(claude!.importPanel.form.secrets).toBe(true);
+
+    const codex = reduceImportAction(claude!, {
+      type: "import_source_set",
+      source: "codex",
+    });
+    expect(codex!.importPanel.form.source).toBe("codex");
+    expect(codex!.importPanel.form.sourceDir).toMatch(/\.codex$|CODEX/);
+    expect(codex!.importPanel.form.secrets).toBe(true);
+  });
+
+  it("toggles the skills / memory / mcp rows the new sources add", () => {
+    const state = createInitialTuiState(SESSION);
+    const next = reduceImportAction(state, {
+      type: "import_toggled",
+      field: "mcp",
+    });
+    expect(next!.importPanel.form.mcp).toBe(false);
+    expect(next!.importPanel.form.skills).toBe(true);
+  });
+
   it("is a no-op when switching to the already-active source", () => {
     const state = createInitialTuiState(SESSION);
     const next = reduceImportAction(state, {

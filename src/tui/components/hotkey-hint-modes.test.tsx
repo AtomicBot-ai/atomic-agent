@@ -15,7 +15,8 @@ import { HotkeyHint } from "./hotkey-hint.js";
  * is byte-identical to Enter), and the Ctrl+C/Ctrl+X pair (copy/cut
  * while the composer holds a live selection, abort/quit otherwise).
  */
-const ANSI = /[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g;
+const ANSI =
+  /[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g;
 const WIDE = 200;
 
 function renderHint(state: TuiState): string {

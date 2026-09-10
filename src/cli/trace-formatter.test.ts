@@ -30,6 +30,31 @@ function render(events: readonly TraceEvent[]): string {
   return formatTraceChronology(events);
 }
 
+describe("formatTraceChronology completion_truncated", () => {
+  it("prints the cause, the counts and the retry on one line", () => {
+    const out = render([
+      {
+        type: "completion_truncated",
+        seq: 3,
+        sessionId: "s-1",
+        ts: Date.parse("2026-09-01T10:00:00.000Z"),
+        turnIndex: 0,
+        stepIndex: 2,
+        cause: "reply_cap",
+        completionTokens: 8_192,
+        promptTokens: 6_000,
+        requestedMaxTokens: 8_192,
+        retry: "raise_cap",
+        retryValue: 32_768,
+      },
+    ]);
+    expect(out).toContain("completion_truncated");
+    expect(out).toContain(
+      "step=2 cause=reply_cap reply=8192 prompt=6000 cap=8192 retry=raise_cap:32768",
+    );
+  });
+});
+
 describe("formatTraceChronology loop_detected", () => {
   it("renders the bare line for a trace that predates the detector fields", () => {
     const line = render([loopDetected({ tool: "noop", count: 3 })]);
@@ -45,7 +70,9 @@ describe("formatTraceChronology loop_detected", () => {
     // Every detector benefits: "count=3" alone never said whether the
     // generic repeat counter, the wandering spread or a test re-run was
     // what tripped.
-    const line = render([loopDetected({ detector: "wandering", tool: "noop" })]);
+    const line = render([
+      loopDetected({ detector: "wandering", tool: "noop" }),
+    ]);
     expect(line).toContain("detector=wandering");
     expect(line).not.toContain("path=");
   });
@@ -97,5 +124,33 @@ describe("formatTraceChronology loop_detected", () => {
     const only = formatTraceChronology(events, { step: 4 });
     expect(only.split("\n")).toHaveLength(1);
     expect(only).toContain("detector=generic_repeat");
+  });
+});
+
+describe("formatTraceChronology parse_failure_recovered", () => {
+  const event: TraceEvent = {
+    type: "parse_failure_recovered",
+    seq: 11,
+    sessionId: "s-1",
+    ts: Date.parse("2026-09-01T10:00:00.000Z"),
+    turnIndex: 0,
+    stepIndex: 2,
+    attempt: 1,
+    budget: 2,
+    reason: 'tool call "os.fs.write" arguments are not a valid JSON object',
+  };
+
+  it("says which step was retried, how far into the budget, and why", () => {
+    // Without this row a post-mortem sees an inference with no tool call
+    // and no text behind it, and nothing saying the step was retried.
+    const line = render([event]);
+    expect(line).toContain("#11 parse_failure_recovered");
+    expect(line).toContain("step=2 attempt=1/2");
+    expect(line).toContain("os.fs.write");
+  });
+
+  it("truncates a reason that quotes the model's own output", () => {
+    const line = render([{ ...event, reason: "x".repeat(400) }]);
+    expect(line.length).toBeLessThan(300);
   });
 });

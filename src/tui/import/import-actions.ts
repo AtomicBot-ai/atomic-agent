@@ -21,16 +21,28 @@ export type ImportAction =
   /** A preview / execute op started — clear the prior notice. */
   | { type: "import_preview_started" }
   | { type: "import_execute_started" }
-  /** Preview report is ready — switch to the `preview` mode. */
-  | { type: "import_preview_ready"; report: ImportReport }
+  /**
+   * Preview / executed report is ready. `storeWarning` carries anything
+   * the operator should know about the destination store itself — rows
+   * that cannot be read, and so cannot be listed or reconciled — which
+   * has no other surface: it is discovered at boot, when the chat is
+   * still on the start page and nothing is there to print it.
+   */
+  | {
+      type: "import_preview_ready";
+      report: ImportReport;
+      storeWarning?: string;
+    }
   /** Executed report is ready — switch to the `done` mode. */
-  | { type: "import_execute_done"; report: ImportReport }
+  | { type: "import_execute_done"; report: ImportReport; storeWarning?: string }
   /** Preview / execute failed — surface a notice and return to `configure`. */
   | { type: "import_failed"; error: string }
   /** Return to the configure form, keeping the current form buffers. */
   | { type: "import_reset" };
 
 /** Narrow runtime guard used by the root reducer to dispatch. */
-export function isImportAction(action: { type: string }): action is ImportAction {
+export function isImportAction(action: {
+  type: string;
+}): action is ImportAction {
   return action.type.startsWith("import_");
 }

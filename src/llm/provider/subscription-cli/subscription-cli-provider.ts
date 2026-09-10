@@ -145,15 +145,16 @@ export class SubscriptionCliProvider implements LlmProvider {
     request: CompletionRequest,
   ): Promise<{ path?: string; cleanup: () => Promise<void> }> {
     const noop = { cleanup: async () => {} };
-    if (
-      this.descriptor.schemaDelivery !== "file" ||
-      !request.responseFormat
-    ) {
+    if (this.descriptor.schemaDelivery !== "file" || !request.responseFormat) {
       return noop;
     }
     const dir = await mkdtemp(join(tmpdir(), "atomic-cli-schema-"));
     const path = join(dir, "schema.json");
-    await writeFile(path, JSON.stringify(request.responseFormat.schema), "utf8");
+    await writeFile(
+      path,
+      JSON.stringify(request.responseFormat.schema),
+      "utf8",
+    );
     return {
       path,
       cleanup: async () => {
@@ -192,9 +193,7 @@ export class SubscriptionCliProvider implements LlmProvider {
     }
 
     if (final === null) {
-      throw new Error(
-        `${this.binary} stream ended without a result envelope`,
-      );
+      throw new Error(`${this.binary} stream ended without a result envelope`);
     }
     const result = this.descriptor.parseResult(final, this.model);
     // Safety net for a stream schema we do not control: if no delta was

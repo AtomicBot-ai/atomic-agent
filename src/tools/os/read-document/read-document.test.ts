@@ -58,9 +58,8 @@ describe("os.fs.read_document dispatcher", () => {
           { format: "pdf", text: "PDF content", pageCount: 3 },
           () => seen.push("pdf"),
         ),
-        docx: fakeExtractor(
-          { format: "docx", text: "DOCX content" },
-          () => seen.push("docx"),
+        docx: fakeExtractor({ format: "docx", text: "DOCX content" }, () =>
+          seen.push("docx"),
         ),
       },
     });
@@ -109,7 +108,7 @@ describe("os.fs.read_document dispatcher", () => {
   // models into `format: "text"` — not a known format — instead of over to
   // os.fs.read. These pin both halves of the recovery hint.
   it.each(["py", "ts", "rs"])(
-    "points .%s source files at os.fs.read and names format: \"plain\"",
+    'points .%s source files at os.fs.read and names format: "plain"',
     async (ext) => {
       const tool = buildOsFsReadDocumentTool({});
       const path = join(dir, `module.${ext}`);
@@ -131,7 +130,7 @@ describe("os.fs.read_document dispatcher", () => {
     },
   );
 
-  it("offers os.fs.read and format: \"plain\" for an unknown binary extension", async () => {
+  it('offers os.fs.read and format: "plain" for an unknown binary extension', async () => {
     const tool = buildOsFsReadDocumentTool({});
     const path = join(dir, "blob.qzx");
     await writeFile(path, Buffer.from([0x00, 0x01, 0x02]));
@@ -186,14 +185,30 @@ describe("os.fs.read_document dispatcher", () => {
     const seen: string[] = [];
     const tool = buildOsFsReadDocumentTool({
       extractors: {
-        pdf: fakeExtractor({ format: "pdf", text: "p" }, () => seen.push("pdf")),
-        docx: fakeExtractor({ format: "docx", text: "d" }, () => seen.push("docx")),
-        doc: fakeExtractor({ format: "doc", text: "l" }, () => seen.push("doc")),
-        xlsx: fakeExtractor({ format: "xlsx", text: "x" }, () => seen.push("xlsx")),
-        rtf: fakeExtractor({ format: "rtf", text: "r" }, () => seen.push("rtf")),
-        odt: fakeExtractor({ format: "odt", text: "o" }, () => seen.push("odt")),
-        pptx: fakeExtractor({ format: "pptx", text: "s" }, () => seen.push("pptx")),
-        plain: fakeExtractor({ format: "plain", text: "t" }, () => seen.push("plain")),
+        pdf: fakeExtractor({ format: "pdf", text: "p" }, () =>
+          seen.push("pdf"),
+        ),
+        docx: fakeExtractor({ format: "docx", text: "d" }, () =>
+          seen.push("docx"),
+        ),
+        doc: fakeExtractor({ format: "doc", text: "l" }, () =>
+          seen.push("doc"),
+        ),
+        xlsx: fakeExtractor({ format: "xlsx", text: "x" }, () =>
+          seen.push("xlsx"),
+        ),
+        rtf: fakeExtractor({ format: "rtf", text: "r" }, () =>
+          seen.push("rtf"),
+        ),
+        odt: fakeExtractor({ format: "odt", text: "o" }, () =>
+          seen.push("odt"),
+        ),
+        pptx: fakeExtractor({ format: "pptx", text: "s" }, () =>
+          seen.push("pptx"),
+        ),
+        plain: fakeExtractor({ format: "plain", text: "t" }, () =>
+          seen.push("plain"),
+        ),
       },
     });
     // Every arm of the switch is represented, including the ones the first
@@ -336,10 +351,7 @@ describe("os.fs.read_document dispatcher", () => {
     });
     const path = join(dir, "sheet.xlsx");
     await writeFile(path, Buffer.from("fake"));
-    await tool.run(
-      { path, sheets: ["Revenue", 2] },
-      makeCtx(dir),
-    );
+    await tool.run({ path, sheets: ["Revenue", 2] }, makeCtx(dir));
     expect(captured?.sheets).toEqual(["Revenue", 2]);
   });
 
@@ -365,8 +377,6 @@ describe("os.fs.read_document dispatcher", () => {
     const path = join(dir, "a.pdf");
     await writeFile(path, Buffer.from("%PDF"));
     const result = await tool.run({ path }, makeCtx(dir));
-    expect(result.details.warnings).toEqual([
-      "page 2 had no extractable text",
-    ]);
+    expect(result.details.warnings).toEqual(["page 2 had no extractable text"]);
   });
 });

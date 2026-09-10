@@ -23,7 +23,9 @@ const TOOL_DESCRIPTOR_BY_NAME: ReadonlyMap<string, ToolDescriptor> = new Map(
   DEFAULT_TOOL_DESCRIPTORS.map((d) => [d.name, d] as const),
 );
 
-export function getToolDescriptorByName(name: string): ToolDescriptor | undefined {
+export function getToolDescriptorByName(
+  name: string,
+): ToolDescriptor | undefined {
   return TOOL_DESCRIPTOR_BY_NAME.get(name);
 }
 

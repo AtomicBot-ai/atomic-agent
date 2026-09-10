@@ -56,7 +56,9 @@ function killProcessTree(proc: ChildProcess): void {
   }
 }
 
-export async function spawnChrome(input: SpawnChromeInput): Promise<RunningChrome> {
+export async function spawnChrome(
+  input: SpawnChromeInput,
+): Promise<RunningChrome> {
   await mkdir(input.userDataDir, { recursive: true });
 
   const proc = spawn(input.executablePath, [...input.args], {
@@ -125,8 +127,7 @@ async function waitForCdpReady(input: WaitForCdpInput): Promise<void> {
     }
     await delay(input.pollIntervalMs);
   }
-  const detail =
-    lastErr instanceof Error ? `: ${lastErr.message}` : "";
+  const detail = lastErr instanceof Error ? `: ${lastErr.message}` : "";
   throw new Error(
     `CDP endpoint ${input.cdpUrl}/json/version did not become ready within ${input.timeoutMs}ms${detail}`,
   );

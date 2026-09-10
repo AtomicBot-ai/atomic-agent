@@ -7,15 +7,8 @@ import {
   compressToolResult,
   type CompressedToolResult,
 } from "../compressor/result-compressor.js";
-import {
-  executeBatch,
-  planBatch,
-  toBatchInputs,
-} from "./batch-executor.js";
-import {
-  LOOP_VETO_DENIED_REASON,
-  ToolLoopTracker,
-} from "./loop-detector.js";
+import { executeBatch, planBatch, toBatchInputs } from "./batch-executor.js";
+import { LOOP_VETO_DENIED_REASON, ToolLoopTracker } from "./loop-detector.js";
 
 function ctx(signal: AbortSignal) {
   return {
@@ -219,7 +212,8 @@ describe("executeBatch", () => {
 
   it("serialises browser calls in batch-index order", async () => {
     const order: number[] = [];
-    const make = (idx: number) =>
+    const make =
+      (idx: number) =>
       async (_args: Record<string, unknown>): Promise<CompressedToolResult> => {
         await new Promise((r) => setTimeout(r, 30));
         order.push(idx);
@@ -412,7 +406,9 @@ describe("executeBatch", () => {
       );
       expect(out.results).toHaveLength(2);
       expect(out.results.map((r) => r.batchIndex)).toEqual([0, 1]);
-      expect(out.results.every((r) => r.compressed?.status === "ok")).toBe(true);
+      expect(out.results.every((r) => r.compressed?.status === "ok")).toBe(
+        true,
+      );
       // Barrier guarantee: even though the store is slow (40ms) and
       // the reply is instant, the reply must observe the store finish
       // before it starts.
@@ -606,12 +602,16 @@ describe("executeBatch", () => {
   // Issue #186: the veto body must name the invariant that held across
   // the blocked attempts and offer a concrete alternative.
   it("veto body names the repeated host and offers the search-first alternative", async () => {
-    const registry = buildRegistry({ "os.web.fetch": async () => okResult("os.web.fetch") });
+    const registry = buildRegistry({
+      "os.web.fetch": async () => okResult("os.web.fetch"),
+    });
     const tracker = new ToolLoopTracker({
       warningThreshold: 2,
       criticalThreshold: 2,
     });
-    const args = { url: "https://web.archive.org/web/2020/https://x.test/a?k=SECRET" };
+    const args = {
+      url: "https://web.archive.org/web/2020/https://x.test/a?k=SECRET",
+    };
     seedCriticalStreak(tracker, "os.web.fetch", args, 2);
     const out = await executeBatch(
       toBatchInputs([{ tool: "os.web.fetch", args }]),
@@ -627,12 +627,16 @@ describe("executeBatch", () => {
   });
 
   it("veto body names the command for a shell loop", async () => {
-    const registry = buildRegistry({ "os.shell.run": async () => okResult("os.shell.run") });
+    const registry = buildRegistry({
+      "os.shell.run": async () => okResult("os.shell.run"),
+    });
     const tracker = new ToolLoopTracker({
       warningThreshold: 2,
       criticalThreshold: 2,
     });
-    const args = { command: "curl -s https://x.test --header 'Authorization: Bearer SECRET'" };
+    const args = {
+      command: "curl -s https://x.test --header 'Authorization: Bearer SECRET'",
+    };
     seedCriticalStreak(tracker, "os.shell.run", args, 2);
     const out = await executeBatch(
       toBatchInputs([{ tool: "os.shell.run", args }]),
@@ -645,7 +649,9 @@ describe("executeBatch", () => {
   });
 
   it("veto body degrades to generic wording when args carry no extractable target", async () => {
-    const registry = buildRegistry({ "os.fs.read": async () => okResult("os.fs.read") });
+    const registry = buildRegistry({
+      "os.fs.read": async () => okResult("os.fs.read"),
+    });
     const tracker = new ToolLoopTracker({
       warningThreshold: 2,
       criticalThreshold: 2,
@@ -658,7 +664,9 @@ describe("executeBatch", () => {
     );
     const body = out.results[0]!.compressed!.summary;
     expect(body).toContain("BLOCKED");
-    expect(body).toContain("2 consecutive calls returned the same no-progress outcome");
+    expect(body).toContain(
+      "2 consecutive calls returned the same no-progress outcome",
+    );
     expect(body).not.toContain("undefined");
   });
 
@@ -711,7 +719,9 @@ describe("executeBatch", () => {
   });
 
   it("does not throw and stays generic when args are malformed", async () => {
-    const registry = buildRegistry({ "os.web.fetch": async () => okResult("os.web.fetch") });
+    const registry = buildRegistry({
+      "os.web.fetch": async () => okResult("os.web.fetch"),
+    });
     const tracker = new ToolLoopTracker({
       warningThreshold: 2,
       criticalThreshold: 2,
@@ -933,7 +943,10 @@ describe("executeBatch under plan mode", () => {
     const inputs = toBatchInputs([
       { tool: "os.fs.write", args: { path: "a", content: "x" } },
     ]);
-    const base = { ...ctx(new AbortController().signal), isPlanMode: () => planning };
+    const base = {
+      ...ctx(new AbortController().signal),
+      isPlanMode: () => planning,
+    };
     await executeBatch(inputs, registry, base);
     expect(write).not.toHaveBeenCalled();
     // The getter is read per call, so the flip is observed by the next

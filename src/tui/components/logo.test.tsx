@@ -13,7 +13,9 @@ describe("Logo", () => {
     const { lastFrame } = render(<Logo />);
     const frame = strip(lastFrame() ?? "");
     expect(frame).toContain("#".repeat(45));
-    expect(frame).toContain("\u2584\u2580\u2588 \u2580\u2588\u2580 \u2588\u2580\u2588");
+    expect(frame).toContain(
+      "\u2584\u2580\u2588 \u2580\u2588\u2580 \u2588\u2580\u2588",
+    );
     expect(frame).toContain("Local AI-First Agent");
   });
 
@@ -21,7 +23,9 @@ describe("Logo", () => {
     const { lastFrame } = render(<Logo compact />);
     const frame = strip(lastFrame() ?? "");
     expect(frame).toContain("#".repeat(45));
-    expect(frame).not.toContain("\u2584\u2580\u2588 \u2580\u2588\u2580 \u2588\u2580\u2588");
+    expect(frame).not.toContain(
+      "\u2584\u2580\u2588 \u2580\u2588\u2580 \u2588\u2580\u2588",
+    );
     expect(frame).not.toContain("Local AI-First Agent");
   });
 });

@@ -384,7 +384,9 @@ function parseNoteLine(line: string): ReflectionNote | null {
   let tags: string[] = [];
   const tagMatch = payload.match(/\s*\[tags=([^\]]*)\]\s*$/);
   if (tagMatch) {
-    body = payload.slice(0, tagMatch.index ?? payload.length - tagMatch[0].length).trimEnd();
+    body = payload
+      .slice(0, tagMatch.index ?? payload.length - tagMatch[0].length)
+      .trimEnd();
     tags = extractTags(tagMatch[1] ?? "");
   }
 
@@ -422,7 +424,9 @@ function extractTags(raw: string): string[] {
   const parts = raw
     .split(",")
     .map((t) => t.trim().toLowerCase())
-    .filter((t) => /^[a-z0-9][a-z0-9_-]*$/.test(t) && t.length <= NOTE_TAG_MAX_LENGTH);
+    .filter(
+      (t) => /^[a-z0-9][a-z0-9_-]*$/.test(t) && t.length <= NOTE_TAG_MAX_LENGTH,
+    );
   const deduped: string[] = [];
   for (const tag of parts) {
     if (deduped.length >= NOTE_MAX_TAGS) break;

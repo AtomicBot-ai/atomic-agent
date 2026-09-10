@@ -12,7 +12,14 @@ export type TurnOrigin =
   | "http"
   | "sidecar"
   | "scheduler"
-  | "telegram";
+  | "telegram"
+  | "discord"
+  /**
+   * A fusion worker turn, submitted by the orchestrator turn on the
+   * parent session — not a person sending a message. Treated like
+   * `scheduler` wherever origin gates analytics or the usage meter.
+   */
+  | "fusion";
 
 /**
  * Per-turn event sink. Installed atomically when a submission starts
@@ -83,18 +90,20 @@ export class TurnController {
     context: { sessionId: string; origin: TurnOrigin },
   ) => void;
 
-  constructor(opts: {
-    /**
-     * Optional sink for `eventHook` failures. Called once per thrown
-     * value with the originating session id and submission origin.
-     * When unset, hook errors are swallowed silently — the queue is
-     * never affected either way.
-     */
-    onHookError?: (
-      err: unknown,
-      context: { sessionId: string; origin: TurnOrigin },
-    ) => void;
-  } = {}) {
+  constructor(
+    opts: {
+      /**
+       * Optional sink for `eventHook` failures. Called once per thrown
+       * value with the originating session id and submission origin.
+       * When unset, hook errors are swallowed silently — the queue is
+       * never affected either way.
+       */
+      onHookError?: (
+        err: unknown,
+        context: { sessionId: string; origin: TurnOrigin },
+      ) => void;
+    } = {},
+  ) {
     if (opts.onHookError) this.onHookError = opts.onHookError;
   }
 

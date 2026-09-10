@@ -76,9 +76,7 @@ describe("NeighborEvolver", () => {
     });
     const report = evolver.apply({
       sessionId: "s1",
-      evolves: [
-        { targetId: seeded.id, addTags: ["playwright", "selectors"] },
-      ],
+      evolves: [{ targetId: seeded.id, addTags: ["playwright", "selectors"] }],
     });
     expect(report.applied).toBe(1);
     const after = h.store.get(seeded.id);
@@ -133,9 +131,7 @@ describe("NeighborEvolver", () => {
     for (let i = 0; i < 25; i += 1) {
       evolver.apply({
         sessionId: "s1",
-        evolves: [
-          { targetId: seeded.id, addTags: [`tag_${i}`] },
-        ],
+        evolves: [{ targetId: seeded.id, addTags: [`tag_${i}`] }],
       });
     }
     const after = h.store.get(seeded.id);

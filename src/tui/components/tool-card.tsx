@@ -32,40 +32,43 @@ export function ToolCard({ card, expanded }: ToolCardProps): ReactElement {
   const color = toColor(status);
   const glyph = toGlyph(status);
   const argsPreview = previewToolArgs(card.args);
-  const duration = isFinalised && card.finishedAt
-    ? `${card.finishedAt - card.startedAt}ms`
-    : "…";
+  const duration =
+    isFinalised && card.finishedAt
+      ? `${card.finishedAt - card.startedAt}ms`
+      : "…";
   const header = (
     <ExpandToggle cardId={card.id}>
-    <Text>
-      <Text color={color}>
-        {theme.glyphs.toolBoxTopLeft}
-        {theme.glyphs.toolBoxHorizontal} {glyph} {card.tool}
-      </Text>
-      <Text color={theme.colors.muted}>
-        {" "}
-        {theme.glyphs.dotSeparator} {duration}
-      </Text>
-      {isFinalised && card.truncated ? (
-        <Text color={theme.colors.warn}>
-          {" "}
-          {theme.glyphs.dotSeparator} truncated
+      <Text>
+        <Text color={color}>
+          {theme.glyphs.toolBoxTopLeft}
+          {theme.glyphs.toolBoxHorizontal} {glyph} {card.tool}
         </Text>
-      ) : null}
-      {argsPreview ? (
         <Text color={theme.colors.muted}>
-          {"  "}
-          {argsPreview}
+          {" "}
+          {theme.glyphs.dotSeparator} {duration}
         </Text>
-      ) : null}
-    </Text>
+        {isFinalised && card.truncated ? (
+          <Text color={theme.colors.warn}>
+            {" "}
+            {theme.glyphs.dotSeparator} truncated
+          </Text>
+        ) : null}
+        {argsPreview ? (
+          <Text color={theme.colors.muted}>
+            {"  "}
+            {argsPreview}
+          </Text>
+        ) : null}
+      </Text>
     </ExpandToggle>
   );
   if (!expanded) {
     return (
       <Box flexDirection="column" marginBottom={1}>
         {header}
-        {isFinalised ? <SummaryLine summary={card.summary} color={color} /> : null}
+        {isFinalised ? (
+          <SummaryLine summary={card.summary} color={color} />
+        ) : null}
       </Box>
     );
   }
@@ -75,7 +78,7 @@ export function ToolCard({ card, expanded }: ToolCardProps): ReactElement {
       <Box flexDirection="column" marginLeft={2}>
         <Text color={theme.colors.muted}>args</Text>
         {splitLines(formatToolArgsBlock(card.args)).map((line, idx) => (
-          <Text key={`a-${idx}`}>  {line}</Text>
+          <Text key={`a-${idx}`}> {line}</Text>
         ))}
         {isFinalised ? (
           <>

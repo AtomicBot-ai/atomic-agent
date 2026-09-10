@@ -1,5 +1,11 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -51,10 +57,12 @@ describe("user config file IO", () => {
 
   it("ensureUserConfigFileSync creates defaults and warns once", () => {
     const path = getUserConfigPath(dir);
-    const warn = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const warn = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
     const first = ensureUserConfigFileSync(path);
     expect(first).toEqual(USER_CONFIG_DEFAULTS);
-    expect(readFileSync(path, "utf8")).toContain("\"localModels\"");
+    expect(readFileSync(path, "utf8")).toContain('"localModels"');
     expect(warn).toHaveBeenCalledOnce();
 
     const second = ensureUserConfigFileSync(path);
@@ -86,7 +94,9 @@ describe("user config file IO", () => {
     };
     writeFileSync(path, JSON.stringify(v5, null, 2) + "\n", "utf8");
 
-    const warn = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const warn = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
     const migrated = ensureUserConfigFileSync(path);
 
     expect(migrated.version).toBe(USER_CONFIG_VERSION);
@@ -107,7 +117,9 @@ describe("user config file IO", () => {
 
     const calls = warn.mock.calls.map((args) => String(args[0]));
     expect(
-      calls.some((line) => line.includes(`migrated config v5 → v${USER_CONFIG_VERSION}`)),
+      calls.some((line) =>
+        line.includes(`migrated config v5 → v${USER_CONFIG_VERSION}`),
+      ),
     ).toBe(true);
     warn.mockRestore();
   });
@@ -314,8 +326,7 @@ describe("user config file IO", () => {
     const localModelsWithoutV12 = {
       url: USER_CONFIG_DEFAULTS.localModels.url,
       mode: USER_CONFIG_DEFAULTS.localModels.mode,
-      completionMaxTokens:
-        USER_CONFIG_DEFAULTS.localModels.completionMaxTokens,
+      completionMaxTokens: USER_CONFIG_DEFAULTS.localModels.completionMaxTokens,
       managed: USER_CONFIG_DEFAULTS.localModels.managed,
     };
     const memoryWithoutV12 = {
@@ -417,6 +428,28 @@ describe("user config file IO", () => {
     warn.mockRestore();
   });
 
+  it("ensureUserConfigFileSync migrates v51 → v52 by filling notifications defaults", () => {
+    const path = getUserConfigPath(dir);
+    const v51 = {
+      version: 51,
+      telegram: { ...USER_CONFIG_DEFAULTS.telegram, ownerUserId: 7 },
+    };
+    writeFileSync(path, JSON.stringify(v51, null, 2) + "\n", "utf8");
+
+    const warn = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+    const migrated = ensureUserConfigFileSync(path);
+
+    expect(migrated.version).toBe(USER_CONFIG_VERSION);
+    expect(migrated.notifications).toEqual(USER_CONFIG_DEFAULTS.notifications);
+    expect(migrated.telegram.ownerUserId).toBe(7);
+    const onDisk = JSON.parse(readFileSync(path, "utf8"));
+    expect(onDisk.version).toBe(USER_CONFIG_VERSION);
+    expect(onDisk.notifications).toEqual({ downloads: { channel: null } });
+    warn.mockRestore();
+  });
+
   it("ensureUserConfigFileSync migrates v8 → v9 by filling telegram defaults", () => {
     const path = getUserConfigPath(dir);
     const v8 = {
@@ -433,7 +466,9 @@ describe("user config file IO", () => {
     };
     writeFileSync(path, JSON.stringify(v8, null, 2) + "\n", "utf8");
 
-    const warn = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const warn = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
     const migrated = ensureUserConfigFileSync(path);
 
     expect(migrated.version).toBe(USER_CONFIG_VERSION);
@@ -446,14 +481,17 @@ describe("user config file IO", () => {
 
     const calls = warn.mock.calls.map((args) => String(args[0]));
     expect(
-      calls.some((line) => line.includes(`migrated config v8 → v${USER_CONFIG_VERSION}`)),
+      calls.some((line) =>
+        line.includes(`migrated config v8 → v${USER_CONFIG_VERSION}`),
+      ),
     ).toBe(true);
     warn.mockRestore();
   });
 
   it("ensureUserConfigFileSync migrates v36 → v37: approvalRequired:false becomes level 5 on disk", () => {
     const path = getUserConfigPath(dir);
-    const { approvalLevel: _dropped, ...legacyAgent } = USER_CONFIG_DEFAULTS.agent;
+    const { approvalLevel: _dropped, ...legacyAgent } =
+      USER_CONFIG_DEFAULTS.agent;
     const v36 = {
       version: 36,
       localModels: USER_CONFIG_DEFAULTS.localModels,
@@ -463,7 +501,9 @@ describe("user config file IO", () => {
     };
     writeFileSync(path, JSON.stringify(v36, null, 2) + "\n", "utf8");
 
-    const warn = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const warn = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
     const migrated = ensureUserConfigFileSync(path);
 
     expect(migrated.version).toBe(USER_CONFIG_VERSION);
@@ -477,7 +517,9 @@ describe("user config file IO", () => {
 
     const calls = warn.mock.calls.map((args) => String(args[0]));
     expect(
-      calls.some((line) => line.includes(`migrated config v36 → v${USER_CONFIG_VERSION}`)),
+      calls.some((line) =>
+        line.includes(`migrated config v36 → v${USER_CONFIG_VERSION}`),
+      ),
     ).toBe(true);
     warn.mockRestore();
   });
@@ -506,7 +548,9 @@ describe("user config file IO", () => {
     };
     writeFileSync(path, JSON.stringify(v6, null, 2) + "\n", "utf8");
 
-    const warn = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const warn = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
     const migrated = ensureUserConfigFileSync(path);
 
     expect(migrated.version).toBe(USER_CONFIG_VERSION);
@@ -523,7 +567,9 @@ describe("user config file IO", () => {
 
     const calls = warn.mock.calls.map((args) => String(args[0]));
     expect(
-      calls.some((line) => line.includes(`migrated config v6 → v${USER_CONFIG_VERSION}`)),
+      calls.some((line) =>
+        line.includes(`migrated config v6 → v${USER_CONFIG_VERSION}`),
+      ),
     ).toBe(true);
     warn.mockRestore();
   });
@@ -557,9 +603,9 @@ describe("user config file IO", () => {
       writeFileSync(path, JSON.stringify(future, null, 2) + "\n", "utf8");
       const loaded = readUserConfigFileSync(path);
       expect(loaded?.version).toBe(USER_CONFIG_VERSION + 1);
-      expect((loaded as unknown as Record<string, unknown>).blockFromTheFuture).toEqual(
-        { keep: "me" },
-      );
+      expect(
+        (loaded as unknown as Record<string, unknown>).blockFromTheFuture,
+      ).toEqual({ keep: "me" });
     });
 
     it("is not rewritten at startup", () => {
@@ -567,7 +613,9 @@ describe("user config file IO", () => {
       const text = JSON.stringify(future, null, 2) + "\n";
       writeFileSync(path, text, "utf8");
 
-      const warn = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+      const warn = vi
+        .spyOn(process.stderr, "write")
+        .mockImplementation(() => true);
       const result = ensureUserConfigFileSync(path);
       expect(result.version).toBe(USER_CONFIG_VERSION + 1);
       // No "migrated config v43 → v42" line, and the bytes are untouched.
@@ -592,9 +640,15 @@ describe("user config file IO", () => {
 
     it("still lets an older file be migrated up", () => {
       const path = getUserConfigPath(dir);
-      writeFileSync(path, JSON.stringify({ version: 39 }, null, 2) + "\n", "utf8");
+      writeFileSync(
+        path,
+        JSON.stringify({ version: 39 }, null, 2) + "\n",
+        "utf8",
+      );
 
-      const warn = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+      const warn = vi
+        .spyOn(process.stderr, "write")
+        .mockImplementation(() => true);
       const result = ensureUserConfigFileSync(path);
       expect(result.version).toBe(USER_CONFIG_VERSION);
       expect(warn).toHaveBeenCalledOnce();
@@ -610,7 +664,9 @@ describe("user config file IO", () => {
     writeUserConfigFileSync(path, USER_CONFIG_DEFAULTS);
     const before = statSync(path).mtimeMs;
 
-    const warn = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const warn = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
     const result = ensureUserConfigFileSync(path);
     expect(result).toEqual(USER_CONFIG_DEFAULTS);
     expect(warn).not.toHaveBeenCalled();

@@ -1,10 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import type { ParsedSentryDsn } from "./sentry-config.js";
-import type {
-  ScrubbedErrorEvent,
-  SentryStackFrame,
-} from "./error-scrubber.js";
+import type { ScrubbedErrorEvent, SentryStackFrame } from "./error-scrubber.js";
 
 /** Constant context stamped on every envelope. */
 export interface EnvelopeMeta {
@@ -53,6 +50,8 @@ export function buildEnvelope(
   if (ev.code) tags.code = ev.code;
   if (ev.httpStatus !== undefined) tags.http_status = String(ev.httpStatus);
   if (ev.reason) tags.reason = ev.reason;
+  if (ev.toolTransport) tags.tool_transport = ev.toolTransport;
+  if (ev.failureStage) tags.failure_stage = ev.failureStage;
   if (ev.tool) tags.tool = ev.tool;
   if (ev.transportHost) tags.transport_host = ev.transportHost;
 

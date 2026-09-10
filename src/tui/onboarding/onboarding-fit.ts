@@ -41,7 +41,8 @@ export function computeOnboardingFit(size: {
   rows: number;
 }): OnboardingFit {
   const minimal =
-    size.columns < ONBOARDING_MINIMAL_COLUMNS || size.rows < ONBOARDING_MINIMAL_ROWS;
+    size.columns < ONBOARDING_MINIMAL_COLUMNS ||
+    size.rows < ONBOARDING_MINIMAL_ROWS;
   if (minimal) {
     return {
       tier: "minimal",
@@ -52,7 +53,8 @@ export function computeOnboardingFit(size: {
     };
   }
   const full =
-    size.columns >= ONBOARDING_FULL_COLUMNS && size.rows >= ONBOARDING_FULL_ROWS;
+    size.columns >= ONBOARDING_FULL_COLUMNS &&
+    size.rows >= ONBOARDING_FULL_ROWS;
   if (full) {
     return {
       tier: "full",

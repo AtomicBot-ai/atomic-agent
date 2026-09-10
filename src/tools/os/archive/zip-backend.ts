@@ -41,7 +41,8 @@ export class ZipBackend implements ArchiveBackend {
       const rawSize = (file as JSZipObjectInternal)._data?.uncompressedSize;
       if (typeof rawSize === "number") entry.size = rawSize;
       const rawCompressed = (file as JSZipObjectInternal)._data?.compressedSize;
-      if (typeof rawCompressed === "number") entry.compressedSize = rawCompressed;
+      if (typeof rawCompressed === "number")
+        entry.compressedSize = rawCompressed;
       if (kind === "symlink") {
         entry.linkTarget = (await file.async("string")).trim();
       }
@@ -73,7 +74,9 @@ export class ZipBackend implements ArchiveBackend {
     const includeMatches = (p: string) =>
       !options.include || options.include.length === 0
         ? true
-        : options.include.some((prefix) => p === prefix || p.startsWith(prefix + "/"));
+        : options.include.some(
+            (prefix) => p === prefix || p.startsWith(prefix + "/"),
+          );
 
     for (const [rawName, file] of Object.entries(zip.files)) {
       const kind = classifyZipEntry(rawName, file);
@@ -155,7 +158,10 @@ export class ZipBackend implements ArchiveBackend {
   }
 }
 
-function classifyZipEntry(name: string, file: JSZip.JSZipObject): ArchiveEntryKind {
+function classifyZipEntry(
+  name: string,
+  file: JSZip.JSZipObject,
+): ArchiveEntryKind {
   if (file.dir || name.endsWith("/")) return "directory";
   if (isUnixSymlink(file)) return "symlink";
   return "file";

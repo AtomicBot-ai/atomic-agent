@@ -209,7 +209,9 @@ describe("refreshOpenRouterChatCatalogFromApi", () => {
 
     const ok = await refreshOpenRouterChatCatalogFromApi();
     expect(ok).toBe(true);
-    expect(listOpenRouterChatPicks().map((p) => p.id)).toContain("vendor/silent");
+    expect(listOpenRouterChatPicks().map((p) => p.id)).toContain(
+      "vendor/silent",
+    );
   });
 
   it("still drops models that explicitly lack tools", async () => {

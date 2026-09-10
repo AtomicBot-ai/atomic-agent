@@ -116,7 +116,10 @@ export async function openTerminalWindow(
     }) as (...args: never[]) => void);
     // A launcher still running after the window is treated as a
     // successfully opened window (direct emulators live as long as it).
-    timer = setTimeout(() => settle({ ok: true, label: launch.label }), settleMs);
+    timer = setTimeout(
+      () => settle({ ok: true, label: launch.label }),
+      settleMs,
+    );
   });
 }
 

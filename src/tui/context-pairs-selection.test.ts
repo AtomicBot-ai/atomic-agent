@@ -96,7 +96,10 @@ describe("and retires when measurement agrees", () => {
     const after = reduceTuiState(chose(5), {
       type: "agent_event",
       // Step events reach the reducer wrapped in `llm_event`.
-      event: { type: "llm_event", event: { type: "prompt_built", prompt: prompt(5) } },
+      event: {
+        type: "llm_event",
+        event: { type: "prompt_built", prompt: prompt(5) },
+      },
     });
     expect(after.contextPanelPairsDraft).toBeNull();
     expect(after.contextUsage.conversationPairsCap).toBe(5);
@@ -107,7 +110,10 @@ describe("and retires when measurement agrees", () => {
     // snap it back to the old value in front of them.
     const after = reduceTuiState(chose(5), {
       type: "agent_event",
-      event: { type: "llm_event", event: { type: "prompt_built", prompt: prompt(20) } },
+      event: {
+        type: "llm_event",
+        event: { type: "prompt_built", prompt: prompt(20) },
+      },
     });
     expect(after.contextPanelPairsDraft).toBe(5);
   });
@@ -120,14 +126,20 @@ describe("and retires when measurement agrees", () => {
  */
 describe("selecting a task count", () => {
   it("takes the number it was given", () => {
-    const next = reduceUiAction(chose(20), { type: "context_pairs_selected", pairs: 7 });
+    const next = reduceUiAction(chose(20), {
+      type: "context_pairs_selected",
+      pairs: 7,
+    });
     expect(next?.contextPanelPairsDraft).toBe(7);
   });
 
   it("cannot drift when two land before a render", () => {
     // Both presses were decided against the same base of 20; each wrote
     // what it decided. Replaying them must end where the writes did.
-    const first = reduceUiAction(chose(20), { type: "context_pairs_selected", pairs: 19 });
+    const first = reduceUiAction(chose(20), {
+      type: "context_pairs_selected",
+      pairs: 19,
+    });
     const second = reduceUiAction(first as TuiState, {
       type: "context_pairs_selected",
       pairs: 18,
@@ -148,7 +160,10 @@ describe("selecting a task count", () => {
 
   it("ignores a selection while the panel is closed", () => {
     const shut: TuiState = { ...chose(20), contextPanelOpen: false };
-    const next = reduceUiAction(shut, { type: "context_pairs_selected", pairs: 3 });
+    const next = reduceUiAction(shut, {
+      type: "context_pairs_selected",
+      pairs: 3,
+    });
     expect((next ?? shut).contextPanelPairsDraft).toBe(20);
   });
 });

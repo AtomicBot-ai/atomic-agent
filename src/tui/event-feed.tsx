@@ -10,8 +10,16 @@ interface EventFeedProps {
 export function EventFeed({ state, maxVisible }: EventFeedProps): ReactElement {
   const visible = state.feed.slice(-maxVisible);
   return (
-    <Box flexDirection="column" flexGrow={1} borderStyle="round" borderColor="gray" paddingX={1}>
-      <Text color="gray">── feed ──────────────────────────────────────────</Text>
+    <Box
+      flexDirection="column"
+      flexGrow={1}
+      borderStyle="round"
+      borderColor="gray"
+      paddingX={1}
+    >
+      <Text color="gray">
+        ── feed ──────────────────────────────────────────
+      </Text>
       {visible.length === 0 ? (
         <Text color="gray">waiting for agent events…</Text>
       ) : (

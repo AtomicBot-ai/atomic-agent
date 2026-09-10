@@ -40,6 +40,21 @@ export interface ResolvedFallbackChain {
 const LOCAL_KIND = "llama-server";
 
 /**
+ * Which side of the local/cloud divide a provider sits on.
+ *
+ * Only `llama-server` is local — it is the one kind that runs the weights
+ * in this process's own child. Everything else, `subscription-cli`
+ * included, is a remote service: driving a vendor CLI still ships the
+ * prompt to that vendor's frontier model over the network, so it belongs
+ * with the cloud providers even though the transport is a subprocess.
+ */
+type ProviderClass = "local" | "cloud";
+
+function providerClass(kind: string | undefined): ProviderClass {
+  return kind === LOCAL_KIND ? "local" : "cloud";
+}
+
+/**
  * Build the effective fallback chain from resolved LLM config.
  *
  * Rules (AGENTS.md §"Provider fallback chain"):
@@ -54,6 +69,33 @@ const LOCAL_KIND = "llama-server";
  *    llama-server provider id to the tail if it is not already present.
  *    When no local provider is configured, append nothing.
  *  - De-duplicate while preserving first-seen order.
+ *  - **Fail over within the primary's own class first.** After the head,
+ *    the rest of the chain is grouped: providers of the same class as the
+ *    primary, then the others.
+ *
+ * ### Why the class grouping
+ *
+ * A fallback is a substitution, and substitutions are not equal. Dropping
+ * from a paid frontier cloud model to a 4-bit local one changes far more
+ * than availability: context window, tool-calling fidelity, instruction
+ * following, and the shape of the answers the user has been reading all
+ * session. Moving to *another* cloud provider changes almost none of
+ * that. So the chain should exhaust the near substitutes before it
+ * reaches for the far one — the local model is the backstop that keeps
+ * the agent alive when the network is gone, not the first thing to try
+ * when one vendor returns a 500.
+ *
+ * The rule is symmetric. A deployment whose primary is local has chosen
+ * local on purpose (offline, privacy, cost); its first fallback should be
+ * another local provider if one is configured, and only then a cloud
+ * service that sends the prompt off the machine.
+ *
+ * Grouping is a **stable partition**, never a sort: an explicit
+ * `fallback.chain` is a stated operator preference, so the relative order
+ * the operator wrote survives inside each class. `appendLocal` keeps its
+ * meaning too — the auto-appended local provider is still appended, it
+ * just lands in the local group, which for a cloud primary is the tail
+ * exactly as before.
  */
 export function resolveFallbackChain(
   resolved: ResolvedLlmConfig,
@@ -82,18 +124,44 @@ export function resolveFallbackChain(
   const appendLocal = fallback?.appendLocal ?? true;
   const chain = [...withPrimary];
   if (appendLocal) {
-    const localId = resolved.providers.find(
-      (p) => p.kind === LOCAL_KIND,
-    )?.id;
+    const localId = resolved.providers.find((p) => p.kind === LOCAL_KIND)?.id;
     if (localId && !chain.includes(localId)) {
       chain.push(localId);
     }
   }
 
   return {
-    chain: dedupe(chain.filter((id) => configuredIds.has(id))),
+    chain: groupByPrimaryClass(
+      dedupe(chain.filter((id) => configuredIds.has(id))),
+      resolved.providers,
+    ),
     timing: resolveTiming(fallback),
   };
+}
+
+/**
+ * Keep the head where it is and stable-partition the tail so the
+ * primary's own class comes first. See the class-grouping rationale on
+ * `resolveFallbackChain`.
+ */
+function groupByPrimaryClass(
+  ids: readonly string[],
+  providers: ResolvedLlmConfig["providers"],
+): string[] {
+  if (ids.length < 3) {
+    // 0 or 1 entries have nothing to order; 2 entries are head + one
+    // fallback, and the only fallback keeps its place whatever its class.
+    return [...ids];
+  }
+  const kindById = new Map(providers.map((p) => [p.id, p.kind]));
+  const classOf = (id: string): ProviderClass =>
+    providerClass(kindById.get(id));
+
+  const [head, ...rest] = ids as [string, ...string[]];
+  const primary = classOf(head);
+  const near = rest.filter((id) => classOf(id) === primary);
+  const far = rest.filter((id) => classOf(id) !== primary);
+  return [head, ...near, ...far];
 }
 
 function resolveTiming(

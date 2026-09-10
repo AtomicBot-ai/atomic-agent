@@ -106,7 +106,10 @@ function moveContentsFlat(from: string, to: string): void {
  * `/.../backend/build`. Used after the flatten step to delete the
  * now-empty wrapper tree.
  */
-function topLevelWrapper(backendRoot: string, fileInside: string): string | null {
+function topLevelWrapper(
+  backendRoot: string,
+  fileInside: string,
+): string | null {
   const rel = relative(backendRoot, fileInside);
   // `relative` yields platform-native separators: `/` on POSIX, `\` on
   // Windows. Match either so the wrapper dir is cleaned up on both.
@@ -264,4 +267,3 @@ export function swapInStagedBackend(
   }
   rmDirQuiet(retiredDir);
 }
-

@@ -73,7 +73,10 @@ export function handleLocalModelsHfKey(
       return true;
     }
     if (key.return && panel.hf.repo) {
-      ctx.callbacks.onLocalModelsHfAddRequested?.(panel.hf.repo, panel.hf.cursor);
+      ctx.callbacks.onLocalModelsHfAddRequested?.(
+        panel.hf.repo,
+        panel.hf.cursor,
+      );
       return true;
     }
     return true;

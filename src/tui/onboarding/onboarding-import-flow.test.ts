@@ -9,7 +9,10 @@ import type { TuiAction } from "../tui-action.js";
 import { createInitialTuiState, type TuiState } from "../tui-state.js";
 import type { OnboardingImportPlan } from "./import-step.js";
 import { handleOnboardingStepKey } from "./onboarding-step-keys.js";
-import { createOnboardingState, type OnboardingStep } from "./onboarding-state.js";
+import {
+  createOnboardingState,
+  type OnboardingStep,
+} from "./onboarding-state.js";
 
 function escKey(): Key {
   return { ...returnKey(), return: false, escape: true };
@@ -17,7 +20,12 @@ function escKey(): Key {
 
 const AGENTS = [
   { id: "hermes" as const, label: "Hermes", dir: "/h", enabled: true },
-  { id: "claude-code" as const, label: "Claude Code", dir: "/c", enabled: true },
+  {
+    id: "claude-code" as const,
+    label: "Claude Code",
+    dir: "/c",
+    enabled: true,
+  },
 ];
 
 // Pick-screen row indices for the AGENTS fixture with both ticked:
@@ -228,7 +236,10 @@ describe("import flow keys", () => {
   });
 
   it("enter on an actionable preview asks for the write", () => {
-    const report = buildReport([{ kind: "Hermes sessions", status: "migrated" }], false);
+    const report = buildReport(
+      [{ kind: "Hermes sessions", status: "migrated" }],
+      false,
+    );
     const driven = drive(stateAt("import_preview", { importReport: report }));
     driven.handle("", returnKey());
     expect(driven.actions).toEqual([{ type: "onboarding_import_run_started" }]);
@@ -236,7 +247,10 @@ describe("import flow keys", () => {
   });
 
   it("enter on an empty preview finishes without writing", () => {
-    const report = buildReport([{ kind: "Hermes sessions", status: "skipped" }], false);
+    const report = buildReport(
+      [{ kind: "Hermes sessions", status: "skipped" }],
+      false,
+    );
     const driven = drive(stateAt("import_preview", { importReport: report }));
     driven.handle("", returnKey());
     expect(driven.actions).toEqual([

@@ -5,7 +5,11 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { decideOnboarding, needsOnboarding } from "./needs-onboarding.js";
 import { persistOnboardingState } from "../persist-onboarding-state.js";
-import { getConfig, resetConfigCache, USER_CONFIG_VERSION } from "../../config/index.js";
+import {
+  getConfig,
+  resetConfigCache,
+  USER_CONFIG_VERSION,
+} from "../../config/index.js";
 
 const STATE_DIR_ENV = "ATOMIC_AGENT_STATE_DIR";
 const STAMP = "2026-08-21T18:04:05.000Z";
@@ -38,7 +42,10 @@ describe("decideOnboarding", () => {
   });
 
   it("opens on a fresh install", () => {
-    expect(decideOnboarding()).toEqual({ needed: true, reason: "fresh_install" });
+    expect(decideOnboarding()).toEqual({
+      needed: true,
+      reason: "fresh_install",
+    });
   });
 
   it("stays shut once the flow completed", () => {
@@ -57,7 +64,11 @@ describe("decideOnboarding", () => {
         activeTextProvider: "openrouter",
         activeEmbeddingProvider: "local-llama",
         providers: [
-          { id: "local-llama", kind: "llama-server", url: "http://127.0.0.1:8080" },
+          {
+            id: "local-llama",
+            kind: "llama-server",
+            url: "http://127.0.0.1:8080",
+          },
           {
             id: "openrouter",
             kind: "openrouter",
@@ -69,15 +80,23 @@ describe("decideOnboarding", () => {
     });
     process.env.OPENROUTER_API_KEY = "sk-or-test";
     try {
-      expect(decideOnboarding()).toEqual({ needed: false, reason: "backend_configured" });
+      expect(decideOnboarding()).toEqual({
+        needed: false,
+        reason: "backend_configured",
+      });
     } finally {
       delete process.env.OPENROUTER_API_KEY;
     }
   });
 
   it("stays shut when an external llama-server URL was configured", () => {
-    writeConfig(stateDir, { localModels: { mode: "external", url: "http://10.0.0.4:8080" } });
-    expect(decideOnboarding()).toEqual({ needed: false, reason: "backend_configured" });
+    writeConfig(stateDir, {
+      localModels: { mode: "external", url: "http://10.0.0.4:8080" },
+    });
+    expect(decideOnboarding()).toEqual({
+      needed: false,
+      reason: "backend_configured",
+    });
   });
 
   it("still opens on the shipped defaults — a default URL nobody chose is not a backend", () => {
@@ -93,6 +112,9 @@ describe("decideOnboarding", () => {
     // `isManagedModeReadyOnDisk` also wants the weights on disk, which a
     // temp state dir does not have; `isLocalBackendConfigured` is the one
     // that answers here, and a chosen model is a deliberate choice.
-    expect(decideOnboarding()).toEqual({ needed: false, reason: "backend_configured" });
+    expect(decideOnboarding()).toEqual({
+      needed: false,
+      reason: "backend_configured",
+    });
   });
 });

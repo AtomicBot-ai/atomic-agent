@@ -41,7 +41,9 @@ export function useTransferRate(
     }
     if (elapsedSeconds <= 0) return;
     const sample = delta / elapsedSeconds;
-    setRate((prev) => (prev === null ? sample : prev + SMOOTHING * (sample - prev)));
+    setRate((prev) =>
+      prev === null ? sample : prev + SMOOTHING * (sample - prev),
+    );
   }, [transferredBytes]);
 
   const remaining = Math.max(0, totalBytes - transferredBytes);
@@ -60,7 +62,8 @@ export function formatEta(seconds: number | null): string {
   if (seconds === null) return "estimating…";
   if (seconds < 60) return "less than a minute left";
   const minutes = Math.round(seconds / 60);
-  if (minutes < 60) return `about ${minutes} minute${minutes === 1 ? "" : "s"} left`;
+  if (minutes < 60)
+    return `about ${minutes} minute${minutes === 1 ? "" : "s"} left`;
   const hours = Math.floor(minutes / 60);
   const rest = minutes % 60;
   return `about ${hours}h ${rest}m left`;

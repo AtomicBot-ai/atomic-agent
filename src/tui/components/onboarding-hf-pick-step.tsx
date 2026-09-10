@@ -25,7 +25,10 @@ export function measureOnboardingHfPickStep(
 ): number {
   if (!repo) return 0;
   const { visible, below } = windowHfChoices(repo, cursor);
-  const lines = [repo.repoId, ...visible.map((choice) => hfChoiceLine(choice, true))];
+  const lines = [
+    repo.repoId,
+    ...visible.map((choice) => hfChoiceLine(choice, true)),
+  ];
   if (below > 0) lines.push(`   ↓ ${below} more`);
   if (repo.hidden) lines.push(`   ${repo.hidden}`);
   if (repo.mmproj) lines.push(HF_MMPROJ_LINE);

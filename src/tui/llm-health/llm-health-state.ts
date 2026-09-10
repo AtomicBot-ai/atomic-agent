@@ -12,11 +12,7 @@
  * ✕ error).
  */
 export type LlmHealthStatus =
-  | "unknown"
-  | "probing"
-  | "healthy"
-  | "unreachable"
-  | "error";
+  "unknown" | "probing" | "healthy" | "unreachable" | "error";
 
 export interface LlmHealthState {
   status: LlmHealthStatus;

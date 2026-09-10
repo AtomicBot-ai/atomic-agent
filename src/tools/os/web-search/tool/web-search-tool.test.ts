@@ -159,7 +159,11 @@ describe("os.web.search", () => {
   it("falls back to the next provider when the primary is blocked", async () => {
     const searxngJson = JSON.stringify({
       results: [
-        { title: "Sx Result", url: "https://sx.example/p", content: "sx snippet" },
+        {
+          title: "Sx Result",
+          url: "https://sx.example/p",
+          content: "sx snippet",
+        },
       ],
     });
     const tool = buildOsWebSearchTool({

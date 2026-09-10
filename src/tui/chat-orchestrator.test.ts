@@ -17,7 +17,11 @@ const cloudGateFacts = (): LocalTurnGateFacts => ({
 });
 
 interface Deferred {
-  promise: Promise<{ session: ReturnType<typeof session>; reason: string; stepCount: number }>;
+  promise: Promise<{
+    session: ReturnType<typeof session>;
+    reason: string;
+    stepCount: number;
+  }>;
   resolve: () => void;
 }
 
@@ -32,7 +36,8 @@ function deferred(id: string): Deferred {
     reason: string;
     stepCount: number;
   }>((res) => {
-    resolve = () => res({ session: session(id), reason: "reply", stepCount: 1 });
+    resolve = () =>
+      res({ session: session(id), reason: "reply", stepCount: 1 });
   });
   return { promise, resolve };
 }
@@ -52,9 +57,17 @@ function stubRuntime(
     steer: () => false,
     runTurn: (_s: unknown, text: string, opts: { signal: AbortSignal }) =>
       runTurn(text, opts),
-    sessionStore: { listRecent: () => [], load: () => null },
+    sessionStore: {
+      listSummaries: () => [],
+      countUnreadable: () => 0,
+      listRecent: () => [],
+      load: () => null,
+    },
     approvals: { clearSessionGrants: () => undefined },
-    config: { update: { checkOnStartup: false, repo: "x/y" }, tracing: { trace: { dir: "/tmp", enabled: false } } },
+    config: {
+      update: { checkOnStartup: false, repo: "x/y" },
+      tracing: { trace: { dir: "/tmp", enabled: false } },
+    },
     profileStore: { list: () => [] },
     skillCatalog: [],
   } as unknown as AgentRuntime;
@@ -74,7 +87,8 @@ describe("ChatOrchestrator message queue", () => {
     bus.subscribe((a) => actions.push(a));
     const orchestrator = new ChatOrchestrator(stubRuntime(runTurn), bus, {
       maxSteps: 5,
-      llamaUrl: "http://127.0.0.1:8080", readGateFacts: cloudGateFacts,
+      llamaUrl: "http://127.0.0.1:8080",
+      readGateFacts: cloudGateFacts,
     });
 
     orchestrator.sendMessage("first");
@@ -101,7 +115,8 @@ describe("ChatOrchestrator message queue", () => {
     bus.subscribe((a) => actions.push(a));
     const orchestrator = new ChatOrchestrator(stubRuntime(runTurn), bus, {
       maxSteps: 5,
-      llamaUrl: "http://127.0.0.1:8080", readGateFacts: cloudGateFacts,
+      llamaUrl: "http://127.0.0.1:8080",
+      readGateFacts: cloudGateFacts,
     });
 
     orchestrator.sendMessage("running");
@@ -128,7 +143,11 @@ describe("ChatOrchestrator message queue", () => {
     const orchestrator = new ChatOrchestrator(
       stubRuntime(() => new Promise(() => undefined)),
       bus,
-      { maxSteps: 5, llamaUrl: "http://127.0.0.1:8080", readGateFacts: cloudGateFacts },
+      {
+        maxSteps: 5,
+        llamaUrl: "http://127.0.0.1:8080",
+        readGateFacts: cloudGateFacts,
+      },
     );
     orchestrator.clearQueue();
     // The idle boundary re-syncs an (empty) queue unconditionally; what
@@ -149,7 +168,8 @@ describe("ChatOrchestrator abort", () => {
     bus.subscribe((a) => actions.push(a));
     const orchestrator = new ChatOrchestrator(stubRuntime(runTurn), bus, {
       maxSteps: 5,
-      llamaUrl: "http://127.0.0.1:8080", readGateFacts: cloudGateFacts,
+      llamaUrl: "http://127.0.0.1:8080",
+      readGateFacts: cloudGateFacts,
     });
 
     orchestrator.sendMessage("running");
@@ -182,7 +202,8 @@ describe("ChatOrchestrator abort", () => {
     bus.subscribe((a) => actions.push(a));
     const orchestrator = new ChatOrchestrator(stubRuntime(runTurn), bus, {
       maxSteps: 5,
-      llamaUrl: "http://127.0.0.1:8080", readGateFacts: cloudGateFacts,
+      llamaUrl: "http://127.0.0.1:8080",
+      readGateFacts: cloudGateFacts,
     });
 
     orchestrator.sendMessage("running");
@@ -192,9 +213,9 @@ describe("ChatOrchestrator abort", () => {
     // The idle boundary re-syncs an (empty) queue unconditionally; what
     // must not happen is a non-empty snapshot or an "aborted:" notice.
     expect(queueSnapshots(actions).every((q) => q.length === 0)).toBe(true);
-    expect(noticeLines(actions).filter((l) => l.startsWith("aborted:"))).toEqual(
-      [],
-    );
+    expect(
+      noticeLines(actions).filter((l) => l.startsWith("aborted:")),
+    ).toEqual([]);
   });
 });
 
@@ -211,7 +232,8 @@ describe("ChatOrchestrator queue bound", () => {
     bus.subscribe((a) => actions.push(a));
     const orchestrator = new ChatOrchestrator(stubRuntime(runTurn), bus, {
       maxSteps: 5,
-      llamaUrl: "http://127.0.0.1:8080", readGateFacts: cloudGateFacts,
+      llamaUrl: "http://127.0.0.1:8080",
+      readGateFacts: cloudGateFacts,
     });
 
     orchestrator.sendMessage("running");
@@ -226,7 +248,9 @@ describe("ChatOrchestrator queue bound", () => {
     expect(queued.at(-1)).toBe(`parked-${MAX_QUEUED_MESSAGES - 1}`);
     expect(runTurn).toHaveBeenCalledTimes(1);
 
-    const full = noticeLines(actions).filter((l) => l.startsWith("queue: full"));
+    const full = noticeLines(actions).filter((l) =>
+      l.startsWith("queue: full"),
+    );
     expect(full).toHaveLength(3);
     expect(full.at(-1)).toBe(
       `queue: full at ${MAX_QUEUED_MESSAGES} — dropped 3 messages (returned to the editor); Esc stops the run, /queue clear empties it`,
@@ -246,7 +270,8 @@ describe("ChatOrchestrator queue bound", () => {
     bus.subscribe((a) => actions.push(a));
     const orchestrator = new ChatOrchestrator(stubRuntime(runTurn), bus, {
       maxSteps: 5,
-      llamaUrl: "http://127.0.0.1:8080", readGateFacts: cloudGateFacts,
+      llamaUrl: "http://127.0.0.1:8080",
+      readGateFacts: cloudGateFacts,
     });
 
     orchestrator.sendMessage("running");
@@ -271,7 +296,8 @@ describe("ChatOrchestrator queue bound", () => {
     bus.subscribe((a) => actions.push(a));
     const orchestrator = new ChatOrchestrator(stubRuntime(runTurn), bus, {
       maxSteps: 5,
-      llamaUrl: "http://127.0.0.1:8080", readGateFacts: cloudGateFacts,
+      llamaUrl: "http://127.0.0.1:8080",
+      readGateFacts: cloudGateFacts,
     });
 
     orchestrator.sendMessage("running");
@@ -285,7 +311,9 @@ describe("ChatOrchestrator queue bound", () => {
       orchestrator.sendMessage(`again-${i}`);
     }
 
-    const full = noticeLines(actions).filter((l) => l.startsWith("queue: full"));
+    const full = noticeLines(actions).filter((l) =>
+      l.startsWith("queue: full"),
+    );
     // Two drops before the clear, then the counter restarts at 1 after it.
     expect(full.at(-1)).toBe(
       `queue: full at ${MAX_QUEUED_MESSAGES} — dropped 1 message (returned to the editor); Esc stops the run, /queue clear empties it`,
@@ -304,8 +332,9 @@ describe("ChatOrchestrator pre-turn local gate", () => {
 
   function gateBlocks(actions: readonly TuiAction[]): readonly string[] {
     return actions
-      .filter((a): a is Extract<TuiAction, { type: "turn_gate_blocked" }> =>
-        a.type === "turn_gate_blocked",
+      .filter(
+        (a): a is Extract<TuiAction, { type: "turn_gate_blocked" }> =>
+          a.type === "turn_gate_blocked",
       )
       .map((a) => a.text);
   }
@@ -435,16 +464,18 @@ function settle(): Promise<void> {
 
 function noticeLines(actions: readonly TuiAction[]): readonly string[] {
   return actions
-    .filter((a): a is Extract<TuiAction, { type: "runtime_info" }> =>
-      a.type === "runtime_info",
+    .filter(
+      (a): a is Extract<TuiAction, { type: "runtime_info" }> =>
+        a.type === "runtime_info",
     )
     .map((a) => a.line);
 }
 
 function queueSnapshots(actions: readonly TuiAction[]): readonly string[][] {
   return actions
-    .filter((a): a is Extract<TuiAction, { type: "queue_changed" }> =>
-      a.type === "queue_changed",
+    .filter(
+      (a): a is Extract<TuiAction, { type: "queue_changed" }> =>
+        a.type === "queue_changed",
     )
     .map((a) => [...a.queued]);
 }

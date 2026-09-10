@@ -212,11 +212,16 @@ describe("onboarding mouse", () => {
       button: "none",
       wheel: "down",
     });
-    expect(view.actions).toContainEqual({ type: "onboarding_cursor_moved", delta: 1 });
+    expect(view.actions).toContainEqual({
+      type: "onboarding_cursor_moved",
+      delta: 1,
+    });
     // Claimed at the flow's layer, so the app's viewport-wide wheel
     // target — the one that scrolls the invisible transcript — is never
     // consulted; nothing chat-shaped may leak out of the flow.
-    expect(view.actions.every((action) => action.type !== "chat_scrolled")).toBe(true);
+    expect(
+      view.actions.every((action) => action.type !== "chat_scrolled"),
+    ).toBe(true);
     view.unmount();
   });
 
@@ -245,7 +250,10 @@ describe("onboarding mouse", () => {
       "wait_or_jump",
       { localModelId: "gemma-4-e4b" },
       (state) => {
-        state.localModelsPanel = { ...state.localModelsPanel, pull: { ...PULL } };
+        state.localModelsPanel = {
+          ...state.localModelsPanel,
+          pull: { ...PULL },
+        };
       },
     );
     await sendUntilClaimed(select, "Add another cloud provider");
@@ -258,7 +266,10 @@ describe("onboarding mouse", () => {
       "wait_or_jump",
       { localModelId: "gemma-4-e4b" },
       (state) => {
-        state.localModelsPanel = { ...state.localModelsPanel, pull: { ...PULL } };
+        state.localModelsPanel = {
+          ...state.localModelsPanel,
+          pull: { ...PULL },
+        };
       },
     );
     await sendUntilClaimed(activate, "Start using the agent now");
@@ -283,7 +294,10 @@ describe("onboarding mouse", () => {
       "local_download",
       { localModelId: "gemma-4-e4b" },
       (state) => {
-        state.localModelsPanel = { ...state.localModelsPanel, pull: { ...PULL } };
+        state.localModelsPanel = {
+          ...state.localModelsPanel,
+          pull: { ...PULL },
+        };
       },
     );
     await sendUntilClaimed(view, "Don’t want to wait?");
@@ -299,7 +313,10 @@ describe("onboarding mouse", () => {
       "local_download",
       { localModelId: "gemma-4-e4b" },
       (state) => {
-        state.localModelsPanel = { ...state.localModelsPanel, pull: { ...PULL } };
+        state.localModelsPanel = {
+          ...state.localModelsPanel,
+          pull: { ...PULL },
+        };
       },
     );
     await sendUntilClaimed(view, "Or skip the wait");
@@ -316,7 +333,10 @@ describe("onboarding mouse", () => {
       "local_download",
       { localModelId: "gemma-4-e4b" },
       (state) => {
-        state.localModelsPanel = { ...state.localModelsPanel, pull: { ...PULL } };
+        state.localModelsPanel = {
+          ...state.localModelsPanel,
+          pull: { ...PULL },
+        };
       },
     );
     await sendUntilClaimed(view, "Downloading", {
@@ -370,7 +390,9 @@ describe("onboarding mouse", () => {
   it("hf_pick: a click on an unselected file row moves the cursor there", async () => {
     const view = mount("local_hf_pick", { hfRepo: HF_REPO, cursor: 0 });
     await sendUntilClaimed(view, "Qwen3-0.6B-Q8_0.gguf");
-    expect(view.actions).toEqual([{ type: "onboarding_cursor_set", cursor: 1 }]);
+    expect(view.actions).toEqual([
+      { type: "onboarding_cursor_set", cursor: 1 },
+    ]);
     expect(view.pulls).toEqual([]);
     view.unmount();
   });
@@ -411,7 +433,10 @@ describe("onboarding mouse", () => {
       type: "onboarding_hf_reference_changed",
       value: "",
     });
-    expect(view.actions).toContainEqual({ type: "onboarding_error_set", error: null });
+    expect(view.actions).toContainEqual({
+      type: "onboarding_error_set",
+      error: null,
+    });
     view.unmount();
   });
 });

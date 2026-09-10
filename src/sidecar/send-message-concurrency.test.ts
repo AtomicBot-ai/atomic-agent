@@ -111,7 +111,9 @@ describe("sidecar send_message concurrency", () => {
       },
     });
 
-    const session = runtime.createSession({ metadata: { source: "sidecar-test" } });
+    const session = runtime.createSession({
+      metadata: { source: "sidecar-test" },
+    });
     const active: ActiveSession = { session };
     const controller = new AbortController();
     const sendMessage = makeSendMessageHandler(runtime, active, controller);

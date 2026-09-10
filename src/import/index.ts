@@ -5,6 +5,11 @@ export type {
   ImportItemStatus,
   ImportReport,
 } from "./import-report.js";
+export { reconcileImportedSession } from "./reconcile-session.js";
+export type {
+  ReconcileImportedSessionArgs,
+  ReconcileImportedSessionResult,
+} from "./reconcile-session.js";
 
 // Hermes source.
 export {
@@ -49,6 +54,7 @@ export {
   OPENCLAW_SESSION_ID_PREFIX,
   resolveOpenclawOptions,
   mapOpenclawSession,
+  openclawSessionId,
   mapOpenclawCronJob,
 } from "./openclaw/index.js";
 export type {
@@ -75,7 +81,6 @@ export {
   ClaudeCodeSourceError,
   mapClaudeCodeMcpServer,
   mapClaudeCodeSession,
-  ONBOARDING_SESSION_LIMIT,
   resolveClaudeCodeOptions,
 } from "./claude-code/index.js";
 export type {

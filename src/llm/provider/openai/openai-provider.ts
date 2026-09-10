@@ -34,7 +34,11 @@ import { isNetworkError } from "../../reliability/network-error.js";
 import { normaliseOpenAiChatResponse } from "./openai-normalise-response.js";
 import { normalizeOpenAiBaseUrl } from "./normalize-openai-base-url.js";
 import { describeImageViaOpenAi } from "./openai-describe-image.js";
-import { adaptQwenCompletionResult, adaptQwenTaggedToolResponse } from "./qwen-tagged-tool-response-adapter.js";
+import {
+  adaptQwenCompletionResult,
+  adaptQwenTaggedToolResponse,
+} from "./qwen-tagged-tool-response-adapter.js";
+import type { CreditLimitLogger } from "./plan-credit-limit-retry.js";
 
 export interface OpenAiProviderOptions {
   id: string;
@@ -63,6 +67,15 @@ export interface OpenAiProviderOptions {
    * this passthrough cannot override.
    */
   extraBody?: Record<string, unknown>;
+  /** Output ceiling for this provider; absent means the model's maximum. */
+  maxOutputTokens?: number;
+  /**
+   * Sink for the credit-limit retry warning (`plan-credit-limit-retry.ts`).
+   * Wired from the provider factory context so the notice lands wherever
+   * the rest of the runtime logs; without it the client falls back to a
+   * stderr line rather than recovering silently.
+   */
+  logger?: CreditLimitLogger;
 }
 
 export class OpenAiProvider implements LlmProvider {
@@ -77,12 +90,14 @@ export class OpenAiProvider implements LlmProvider {
   private readonly apiPathPrefix: string;
   private readonly taggedToolCompatibility: "qwen" | undefined;
   private readonly extraBody: Record<string, unknown> | undefined;
+  private readonly maxOutputTokens: number | undefined;
 
   constructor(options: OpenAiProviderOptions) {
     this.id = options.id;
     this.name = options.id;
     this.toolCallAdapter = options.toolCallAdapter ?? openAiToolCallAdapter;
-    this.streamConsumer = options.streamConsumer ??
+    this.streamConsumer =
+      options.streamConsumer ??
       createOpenAiStreamConsumer(options.reasoningFormat ?? "delta_reasoning");
     this.capabilities = {
       vision: options.supportsVision ?? true,
@@ -98,6 +113,7 @@ export class OpenAiProvider implements LlmProvider {
     this.apiPathPrefix = normalizeApiPathPrefix(options.apiPathPrefix ?? "/v1");
     this.taggedToolCompatibility = options.taggedToolCompatibility;
     this.extraBody = options.extraBody;
+    this.maxOutputTokens = options.maxOutputTokens;
     this.http = {
       baseUrl: normalizeOpenAiBaseUrl(options.baseUrl),
       apiKey: options.apiKey,
@@ -106,11 +122,18 @@ export class OpenAiProvider implements LlmProvider {
       requestTimeoutMs: options.requestTimeoutMs ?? 600_000,
       fetchImpl: options.fetchImpl ?? fetch,
       label: options.id,
+      ...(options.logger ? { logger: options.logger } : {}),
     };
   }
 
   async complete(request: CompletionRequest): Promise<CompletionResult> {
-    const body = buildOpenAiChatBody(request, this.defaultChatModel, false, this.extraBody);
+    const body = buildOpenAiChatBody(
+      request,
+      this.defaultChatModel,
+      false,
+      this.extraBody,
+      this.maxOutputTokens,
+    );
     const json = await openAiPostJson(
       this.http,
       `${this.apiPathPrefix}/chat/completions`,
@@ -127,7 +150,13 @@ export class OpenAiProvider implements LlmProvider {
   async *completeStream(
     request: CompletionRequest,
   ): AsyncGenerator<StreamChunk, CompletionResult, void> {
-    const body = buildOpenAiChatBody(request, this.defaultChatModel, true, this.extraBody);
+    const body = buildOpenAiChatBody(
+      request,
+      this.defaultChatModel,
+      true,
+      this.extraBody,
+      this.maxOutputTokens,
+    );
     const path = `${this.apiPathPrefix}/chat/completions`;
     let accumulated = "";
     let accumulatedReasoning = "";
@@ -163,11 +192,21 @@ export class OpenAiProvider implements LlmProvider {
     // because this loop issues network requests, and a loop whose only
     // termination is a helper's return value is one edit away from
     // hammering a provider forever.
-    attempts: for (let attempt = 1; attempt <= OPENAI_MAX_ATTEMPTS; attempt += 1) {
+    attempts: for (
+      let attempt = 1;
+      attempt <= OPENAI_MAX_ATTEMPTS;
+      attempt += 1
+    ) {
       try {
         // Opening the stream (connect + status check) happens inside the
         // client's bounded retry, strictly before the first chunk exists.
-        const res = await openAiStartStream(this.http, path, body, request, budget);
+        const res = await openAiStartStream(
+          this.http,
+          path,
+          body,
+          request,
+          budget,
+        );
         // A reopen starts from an empty transcript: whatever the dead
         // attempt accumulated was never yielded and must not be mixed
         // into the fresh one. With the built-in stream consumer nothing
@@ -187,7 +226,8 @@ export class OpenAiProvider implements LlmProvider {
           }
           const chunk = next.value;
           if (chunk.delta) accumulated += chunk.delta;
-          if (chunk.reasoningDelta) accumulatedReasoning += chunk.reasoningDelta;
+          if (chunk.reasoningDelta)
+            accumulatedReasoning += chunk.reasoningDelta;
           if (!chunk.done) {
             // Set before the yield, deliberately: a caller that throws
             // into this generator (`generator.throw()`, which is how a
@@ -210,7 +250,8 @@ export class OpenAiProvider implements LlmProvider {
         // report an immediate provider-down signal, so the fallback chain
         // switches links and starts the very completion the user just
         // stopped. `signal.reason` is abort-shaped by construction.
-        if (request.signal?.aborted) throw cancellationError(request.signal, err);
+        if (request.signal?.aborted)
+          throw cancellationError(request.signal, err);
         if (!canReopenStream(err, committed, budget)) throw err;
         // No `res.body.cancel()` here, on purpose. The only way to reach
         // this line with a response in hand is `isNetworkError(err)` on
@@ -218,7 +259,10 @@ export class OpenAiProvider implements LlmProvider {
         // errored, `cancel()` on an errored stream rejects with the
         // stored error, and undici has already destroyed the socket. A
         // cancel call would be a swallowed no-op dressed up as hygiene.
-        await openAiRetryBackoff(OPENAI_MAX_ATTEMPTS - budget.remaining, request.signal);
+        await openAiRetryBackoff(
+          OPENAI_MAX_ATTEMPTS - budget.remaining,
+          request.signal,
+        );
         // `sleep()` resolves on abort instead of rejecting, so without
         // this the loop walks out of the backoff straight into the next
         // open. Today that open throws before it fetches
@@ -230,7 +274,8 @@ export class OpenAiProvider implements LlmProvider {
         // tests. It stays because the invariant belongs to this loop:
         // once the caller has cancelled, this loop issues nothing more,
         // whatever the HTTP client decides to do about aborted signals.
-        if (request.signal?.aborted) throw cancellationError(request.signal, err);
+        if (request.signal?.aborted)
+          throw cancellationError(request.signal, err);
       }
     }
     if (!streamEnded) {
@@ -251,7 +296,10 @@ export class OpenAiProvider implements LlmProvider {
     if (accumulated.length > 0 && final.content.length === 0) {
       final.content = accumulated;
     }
-    if (accumulatedReasoning.length > 0 && final.reasoningContent.length === 0) {
+    if (
+      accumulatedReasoning.length > 0 &&
+      final.reasoningContent.length === 0
+    ) {
       final.reasoningContent = accumulatedReasoning;
     }
     // Tagged Qwen calls are synthesized only after the stream has been
@@ -272,10 +320,13 @@ export class OpenAiProvider implements LlmProvider {
   async health(): Promise<ProviderHealthResult> {
     const start = Date.now();
     try {
-      const res = await this.http.fetchImpl(`${this.http.baseUrl}${this.apiPathPrefix}/models`, {
-        method: "GET",
-        headers: buildOpenAiHeaders(this.http, false),
-      });
+      const res = await this.http.fetchImpl(
+        `${this.http.baseUrl}${this.apiPathPrefix}/models`,
+        {
+          method: "GET",
+          headers: buildOpenAiHeaders(this.http, false),
+        },
+      );
       return {
         reachable: res.ok,
         status: res.status,
@@ -311,7 +362,9 @@ export class OpenAiProvider implements LlmProvider {
   async listModels(): Promise<readonly string[]> {
     const json = await openAiGetJson(this.http, `${this.apiPathPrefix}/models`);
     const data = (json.data as Array<{ id?: string }> | undefined) ?? [];
-    return data.map((row) => row.id).filter((id): id is string => typeof id === "string");
+    return data
+      .map((row) => row.id)
+      .filter((id): id is string => typeof id === "string");
   }
 }
 

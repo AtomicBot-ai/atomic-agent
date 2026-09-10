@@ -121,7 +121,8 @@ describe("ToolLoopTracker veto exclusion and breaker", () => {
     const tracker = new ToolLoopTracker({ criticalThreshold: 3 });
     const args = { ref: "e1" };
     const result = mkResult({ summary: "same" });
-    for (let i = 0; i < 3; i += 1) cycle(tracker, "browser.click", args, result);
+    for (let i = 0; i < 3; i += 1)
+      cycle(tracker, "browser.click", args, result);
 
     const first = tracker.check("browser.click", args);
     expect(first.level).toBe("critical");
@@ -147,7 +148,8 @@ describe("ToolLoopTracker veto exclusion and breaker", () => {
     });
     const args = { ref: "e1" };
     const result = mkResult({ summary: "same" });
-    for (let i = 0; i < 3; i += 1) cycle(tracker, "browser.click", args, result);
+    for (let i = 0; i < 3; i += 1)
+      cycle(tracker, "browser.click", args, result);
     const veto = mkResult({
       status: "error",
       details: { deniedReason: LOOP_VETO_DENIED_REASON },
@@ -203,7 +205,10 @@ describe("ToolLoopTracker.observeBatchComposite", () => {
     { tool: "os.fs.read", args: { path: "a" } },
     { tool: "os.fs.read", args: { path: "b" } },
   ];
-  const results = [mkResult({ summary: "ok-a" }), mkResult({ summary: "ok-b" })];
+  const results = [
+    mkResult({ summary: "ok-a" }),
+    mkResult({ summary: "ok-b" }),
+  ];
 
   it("flags an identical batch repeated enough times", () => {
     const tracker = new ToolLoopTracker({
@@ -222,9 +227,9 @@ describe("ToolLoopTracker.observeBatchComposite", () => {
     const permuted = [calls[1]!, calls[0]!];
     const permutedResults = [results[1]!, results[0]!];
     expect(tracker.observeBatchComposite(calls, results).level).toBe("ok");
-    expect(
-      tracker.observeBatchComposite(permuted, permutedResults).level,
-    ).toBe("ok");
+    expect(tracker.observeBatchComposite(permuted, permutedResults).level).toBe(
+      "ok",
+    );
     expect(tracker.observeBatchComposite(calls, results).level).toBe("ok");
   });
 });
@@ -329,15 +334,16 @@ describe("extractLoopTarget", () => {
         url: "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed",
       }),
     ).toBe("eutils.ncbi.nlm.nih.gov");
-    expect(extractLoopTarget("os.web.fetch", { url: "en.wikipedia.org/wiki/X" })).toBe(
-      "en.wikipedia.org",
-    );
+    expect(
+      extractLoopTarget("os.web.fetch", { url: "en.wikipedia.org/wiki/X" }),
+    ).toBe("en.wikipedia.org");
   });
 
   it("reduces a shell command to the executable name only", () => {
     expect(
       extractLoopTarget("os.shell.run", {
-        command: "curl -s https://x.test/a --header 'Authorization: Bearer SECRET'",
+        command:
+          "curl -s https://x.test/a --header 'Authorization: Bearer SECRET'",
       }),
     ).toBe("curl");
   });
@@ -349,8 +355,12 @@ describe("extractLoopTarget", () => {
     expect(extractLoopTarget("os.web.fetch", null)).toBeUndefined();
     expect(extractLoopTarget("os.web.fetch", undefined)).toBeUndefined();
     expect(extractLoopTarget("os.web.fetch", "not-an-object")).toBeUndefined();
-    expect(extractLoopTarget("os.shell.run", { command: "   " })).toBeUndefined();
-    expect(extractLoopTarget("browser.click", { selector: "#a" })).toBeUndefined();
+    expect(
+      extractLoopTarget("os.shell.run", { command: "   " }),
+    ).toBeUndefined();
+    expect(
+      extractLoopTarget("browser.click", { selector: "#a" }),
+    ).toBeUndefined();
   });
 
   it("never throws on hostile or malformed URL values", () => {
@@ -420,7 +430,9 @@ describe("veto message names the invariant and an alternative (issue #186)", () 
     const veto = formatVetoInstruction({ tool: "noop", count: 5 });
     expect(veto).toContain("BLOCKED");
     expect(veto).toContain("`noop`");
-    expect(veto).toContain("5 consecutive calls returned the same no-progress outcome");
+    expect(veto).toContain(
+      "5 consecutive calls returned the same no-progress outcome",
+    );
     expect(veto).not.toContain("undefined");
     expect(veto.toLowerCase()).toContain("do not repeat");
   });
@@ -492,19 +504,36 @@ describe("ToolLoopTracker wandering detector", () => {
       wanderingThreshold: 3,
       wanderingEscalation: 4,
     });
-    cycle(tracker, "os.http.request", { url: "u1" }, mkResult({ summary: "r1" }));
-    cycle(tracker, "os.http.request", { url: "u2" }, mkResult({ summary: "r2" }));
-    cycle(tracker, "os.http.request", { url: "u3" }, mkResult({ summary: "r3" }));
+    cycle(
+      tracker,
+      "os.http.request",
+      { url: "u1" },
+      mkResult({ summary: "r1" }),
+    );
+    cycle(
+      tracker,
+      "os.http.request",
+      { url: "u2" },
+      mkResult({ summary: "r2" }),
+    );
+    cycle(
+      tracker,
+      "os.http.request",
+      { url: "u3" },
+      mkResult({ summary: "r3" }),
+    );
     // A new (4th) distinct signature crosses the escalation spread of 4.
-    expect(
-      tracker.isWanderingEscalated("os.http.request", { url: "u4" }),
-    ).toBe(true);
+    expect(tracker.isWanderingEscalated("os.http.request", { url: "u4" })).toBe(
+      true,
+    );
     // An already-seen signature keeps the spread at 3 (no escalation).
-    expect(
-      tracker.isWanderingEscalated("os.http.request", { url: "u3" }),
-    ).toBe(false);
+    expect(tracker.isWanderingEscalated("os.http.request", { url: "u3" })).toBe(
+      false,
+    );
     // Non-wandering tools never escalate on spread.
-    expect(tracker.isWanderingEscalated("os.fs.read", { path: "z" })).toBe(false);
+    expect(tracker.isWanderingEscalated("os.fs.read", { path: "z" })).toBe(
+      false,
+    );
   });
 
   it("flags a wandering loop on distinct web searches (query spam)", () => {
@@ -512,8 +541,18 @@ describe("ToolLoopTracker wandering detector", () => {
       wanderingThreshold: 3,
       wanderingEscalation: 9,
     });
-    cycle(tracker, "os.web.search", { query: "q1" }, mkResult({ summary: "r1" }));
-    cycle(tracker, "os.web.search", { query: "q2" }, mkResult({ summary: "r2" }));
+    cycle(
+      tracker,
+      "os.web.search",
+      { query: "q1" },
+      mkResult({ summary: "r1" }),
+    );
+    cycle(
+      tracker,
+      "os.web.search",
+      { query: "q2" },
+      mkResult({ summary: "r2" }),
+    );
     const verdict = tracker.check("os.web.search", { query: "q3" });
     expect(verdict.level).toBe("warn");
     expect(verdict.detector).toBe("wandering");
@@ -536,12 +575,22 @@ describe("hashToolOutcome volatile stripping", () => {
     const a = mkResult({
       tool: "os.http.request",
       summary: "body",
-      details: { url: "u", status: 200, timeTotalSeconds: 0.11, sizeDownload: 1234 },
+      details: {
+        url: "u",
+        status: 200,
+        timeTotalSeconds: 0.11,
+        sizeDownload: 1234,
+      },
     });
     const b = mkResult({
       tool: "os.http.request",
       summary: "body",
-      details: { url: "u", status: 200, timeTotalSeconds: 0.93, sizeDownload: 1240 },
+      details: {
+        url: "u",
+        status: 200,
+        timeTotalSeconds: 0.93,
+        sizeDownload: 1240,
+      },
     });
     expect(hashToolOutcome("os.http.request", {}, a)).toBe(
       hashToolOutcome("os.http.request", {}, b),

@@ -34,7 +34,14 @@ describe("isBlockedIp", () => {
   });
 
   it("blocks IPv6 loopback / link-local / unique-local / mapped-v4", () => {
-    for (const ip of ["::1", "::", "fe80::1", "fc00::1", "fd12::3", "::ffff:127.0.0.1"]) {
+    for (const ip of [
+      "::1",
+      "::",
+      "fe80::1",
+      "fc00::1",
+      "fd12::3",
+      "::ffff:127.0.0.1",
+    ]) {
       expect(isBlockedIp(ip), ip).toBe(true);
     }
   });
@@ -72,9 +79,12 @@ describe("assertHostAllowed", () => {
       }));
 
   it("returns a pinned address when all resolved addresses are public", async () => {
-    const pinned = await assertHostAllowed(parseHttpUrl("https://example.com"), {
-      lookup: lookupTo("93.184.216.34"),
-    });
+    const pinned = await assertHostAllowed(
+      parseHttpUrl("https://example.com"),
+      {
+        lookup: lookupTo("93.184.216.34"),
+      },
+    );
     expect(pinned).toEqual(["93.184.216.34"]);
   });
 
@@ -88,9 +98,16 @@ describe("assertHostAllowed", () => {
    * curl may try in any order.
    */
   it("returns every safe address, in resolver order", async () => {
-    const pinned = await assertHostAllowed(parseHttpUrl("https://example.com"), {
-      lookup: lookupTo("2606:2800:220:1::1", "93.184.216.34", "93.184.216.35"),
-    });
+    const pinned = await assertHostAllowed(
+      parseHttpUrl("https://example.com"),
+      {
+        lookup: lookupTo(
+          "2606:2800:220:1::1",
+          "93.184.216.34",
+          "93.184.216.35",
+        ),
+      },
+    );
     expect(pinned).toEqual([
       "2606:2800:220:1::1",
       "93.184.216.34",
@@ -147,7 +164,9 @@ describe("assertHostAllowed", () => {
       throw new Error("ENOTFOUND");
     };
     await expect(
-      assertHostAllowed(parseHttpUrl("https://nx.example"), { lookup: failing }),
+      assertHostAllowed(parseHttpUrl("https://nx.example"), {
+        lookup: failing,
+      }),
     ).rejects.toBeInstanceOf(SsrfBlockedError);
   });
 });

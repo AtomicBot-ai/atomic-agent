@@ -43,6 +43,7 @@ import {
   chatModelsList,
   configSetWhole,
   readWholeConfig,
+  setRunMode,
   localDaemonRunning,
   modelsStop,
   providerHasKey,
@@ -1393,6 +1394,14 @@ function wireIpc(client: AgentClient): void {
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
+  });
+
+  ipcMain.handle("cli:runMode", (_event, payload: unknown) => {
+    const p = (payload || {}) as { mode?: unknown; workers?: unknown };
+    if (p.mode !== "local" && p.mode !== "cloud" && p.mode !== "fusion") {
+      return { ok: false, error: "mode must be local, cloud or fusion" };
+    }
+    return setRunMode(p.mode, typeof p.workers === "number" ? { workers: p.workers } : undefined);
   });
 
   ipcMain.handle("app:build", () => ({
@@ -5088,6 +5097,36 @@ async function hfAndDeltaTest(
     "steer: the while-busy send button no longer promises a queue",
     !!sendBtn && sendBtn.title === "Steer this turn" && sendBtn.act === "send",
     JSON.stringify(sendBtn),
+  );
+
+  /* F3 — a parked turn says so.
+     The agent waits out a provider outage rather than failing the turn, and
+     until this branch merged it told only the TUI. The window showed nothing
+     between the last token and a failure minutes later — "(no reply) · turn
+     failed" with no explanation of the ninety seconds in between, which is
+     what the tester read as a dead app. */
+  type WaitStrip = { shown: boolean; ann: string | null; readout: string | null; reason: string | null; stop: boolean };
+  const waitStrip = await js<WaitStrip>(
+    "window.__waitFrame({attempt:5, waited_ms:65000, max_wait_ms:300000, next_retry_ms:30000, reason:'fetch failed'})",
+  );
+  check(
+    "a parked turn shows which attempt it is on and when it tries again",
+    waitStrip.shown && /waiting/i.test(waitStrip.ann ?? "")
+      && /attempt 5/.test(waitStrip.readout ?? "")
+      && /next try \d+s/.test(waitStrip.readout ?? "")
+      && waitStrip.stop,
+    JSON.stringify(waitStrip),
+  );
+  check(
+    "and it says what went wrong in words, not undici's",
+    /no connection/.test(waitStrip.reason ?? "") && !/fetch failed/.test(waitStrip.reason ?? ""),
+    JSON.stringify(waitStrip.reason),
+  );
+  const backAgain = await js<{ shown: boolean; said: string }>("window.__waitRecover()");
+  check(
+    "the readout goes when the provider answers again, and says so",
+    !backAgain.shown && /answered again/i.test(backAgain.said),
+    JSON.stringify(backAgain),
   );
 
   /* F14 — "typing / showed no commands".

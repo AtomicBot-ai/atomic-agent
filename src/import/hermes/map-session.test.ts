@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { packConversation } from "../../session/conversation-turn.js";
 import { mapHermesSession } from "./map-session.js";
 import type { HermesMessage, HermesSession } from "./hermes-source.js";
 
@@ -49,7 +50,14 @@ describe("mapHermesSession", () => {
   it("converts REAL second timestamps to integer milliseconds", () => {
     const state = mapHermesSession(
       session({ startedAtSeconds: 1_700_000_000.5 }),
-      [msg({ id: 1, role: "user", content: "hi", timestampSeconds: 1_700_000_123.4 })],
+      [
+        msg({
+          id: 1,
+          role: "user",
+          content: "hi",
+          timestampSeconds: 1_700_000_123.4,
+        }),
+      ],
       "/fallback",
     );
     expect(state.createdAt).toBe(1_700_000_000_500);
@@ -136,7 +144,9 @@ describe("mapHermesSession", () => {
     expect(state.turns).toHaveLength(2);
     expect(state.turns[0]).toMatchObject({ tool: "a", reasoning: "r" });
     expect(state.turns[1]).toMatchObject({ tool: "b" });
-    expect((state.turns[1] as { reasoning?: string }).reasoning).toBeUndefined();
+    expect(
+      (state.turns[1] as { reasoning?: string }).reasoning,
+    ).toBeUndefined();
   });
 
   it("wraps malformed tool-call arguments in a _raw field", () => {
@@ -165,5 +175,107 @@ describe("mapHermesSession", () => {
       "/fallback",
     );
     expect(state.turns.map((t) => t.kind)).toEqual(["user"]);
+  });
+
+  it("emits the reply before the calls when a row carries both", () => {
+    const toolCalls = JSON.stringify([
+      { function: { name: "read_file", arguments: '{"path":"a"}' } },
+    ]);
+    const state = mapHermesSession(
+      session(),
+      [
+        msg({
+          id: 1,
+          role: "assistant",
+          content: "Let me read it",
+          toolCalls,
+          reasoning: "r",
+        }),
+      ],
+      "/fallback",
+    );
+    expect(state.turns).toEqual([
+      {
+        kind: "assistant_reply",
+        text: "Let me read it",
+        reasoning: "r",
+        at: 1_700_000_000_000,
+      },
+      {
+        kind: "assistant_tool_call",
+        tool: "read_file",
+        args: { path: "a" },
+        at: 1_700_000_000_000,
+      },
+    ]);
+    expect(state.turnCount).toBe(1);
+  });
+
+  it("drops assistant and user rows with nothing to show", () => {
+    const state = mapHermesSession(
+      session(),
+      [
+        msg({ id: 1, role: "user", content: "" }),
+        msg({ id: 2, role: "assistant", content: "", reasoning: "" }),
+        msg({
+          id: 3,
+          role: "assistant",
+          content: null,
+          reasoning: "only thought",
+        }),
+        msg({ id: 4, role: "user", content: "hi" }),
+      ],
+      "/fallback",
+    );
+    expect(state.turns).toEqual([
+      {
+        kind: "assistant_reply",
+        text: "",
+        reasoning: "only thought",
+        at: 1_700_000_000_000,
+      },
+      { kind: "user", text: "hi", at: 1_700_000_000_000 },
+    ]);
+  });
+
+  it("records macro-turn starts so the pairs cap segments reply-then-call tasks", () => {
+    const toolCalls = JSON.stringify([
+      { function: { name: "read_file", arguments: "{}" } },
+    ]);
+    const state = mapHermesSession(
+      session(),
+      [
+        msg({ id: 1, role: "user", content: "read it" }),
+        msg({ id: 2, role: "assistant", content: "reading", toolCalls }),
+        msg({ id: 3, role: "tool", toolName: "read_file", content: "..." }),
+        msg({ id: 4, role: "user", content: "now delete it" }),
+        msg({ id: 5, role: "assistant", content: "deleted" }),
+      ],
+      "/fallback",
+    );
+    expect(state.turns.map((t) => t.kind)).toEqual([
+      "user",
+      "assistant_reply",
+      "assistant_tool_call",
+      "tool_result",
+      "user",
+      "assistant_reply",
+    ]);
+    expect(state.macroTurnStarts).toEqual([4]);
+
+    const packed = packConversation(state.turns, 10_000, {
+      maxPairs: 1,
+      macroTurnStarts: state.macroTurnStarts,
+    });
+    expect(packed.visiblePairs).toBe(1);
+    expect(packed.droppedPairs).toBe(1);
+    expect(packed.visibleTurns).toEqual(state.turns.slice(4));
+    // Without the recorded starts the derived scan fuses both tasks.
+    expect(
+      packConversation(state.turns, 10_000, { maxPairs: 1 }).visiblePairs,
+    ).toBe(1);
+    expect(
+      packConversation(state.turns, 10_000, { maxPairs: 1 }).droppedPairs,
+    ).toBe(0);
   });
 });

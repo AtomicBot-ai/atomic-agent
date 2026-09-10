@@ -18,9 +18,7 @@ const MAX_LIST_LIMIT = 100;
 const DEFAULT_LIST_LIMIT = 30;
 const MAX_READ_CHARS = 16_000;
 
-export function buildMcpResourceListTool(
-  manager: McpManager,
-): ToolDefinition {
+export function buildMcpResourceListTool(manager: McpManager): ToolDefinition {
   return {
     name: "mcp.resource.list",
     description:
@@ -50,7 +48,8 @@ export function buildMcpResourceListTool(
       return compressToolResult({
         tool: "mcp.resource.list",
         status: "ok",
-        output: lines.length === 0 ? `(no resources on ${server})` : lines.join("\n"),
+        output:
+          lines.length === 0 ? `(no resources on ${server})` : lines.join("\n"),
         details: {
           server,
           count: rows.length,
@@ -61,9 +60,7 @@ export function buildMcpResourceListTool(
   };
 }
 
-export function buildMcpResourceReadTool(
-  manager: McpManager,
-): ToolDefinition {
+export function buildMcpResourceReadTool(manager: McpManager): ToolDefinition {
   return {
     name: "mcp.resource.read",
     description:

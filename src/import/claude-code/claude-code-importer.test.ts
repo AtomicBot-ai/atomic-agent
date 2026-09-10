@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  appendFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -63,20 +64,35 @@ describe("ClaudeCodeImporter", () => {
     sourceDir = join(home, ".claude");
     mkdirSync(sourceDir, { recursive: true });
     stateDir = mkdtempSync(join(tmpdir(), "cc-imp-dst-"));
-    sessionStore = new SessionStore({ dbFile: join(stateDir, "sessions.sqlite") });
+    sessionStore = new SessionStore({
+      dbFile: join(stateDir, "sessions.sqlite"),
+    });
     memoryContents = [];
   });
 
   afterEach(() => {
     sessionStore.close();
-    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
-    rmSync(stateDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    rmSync(home, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 100,
+    });
+    rmSync(stateDir, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 100,
+    });
   });
 
   function seedSkill(): void {
     mkdirSync(join(sourceDir, "skills", "triage"), { recursive: true });
     writeFileSync(join(sourceDir, "skills", "triage", "SKILL.md"), SKILL_MD);
-    writeFileSync(join(sourceDir, "skills", "triage", "notes.txt"), "extra file");
+    writeFileSync(
+      join(sourceDir, "skills", "triage", "notes.txt"),
+      "extra file",
+    );
   }
 
   function seedSession(): void {
@@ -94,7 +110,10 @@ describe("ClaudeCodeImporter", () => {
         line({
           type: "assistant",
           timestamp: "2026-08-02T10:00:01Z",
-          message: { role: "assistant", content: [{ type: "text", text: "hello" }] },
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "hello" }],
+          },
         }),
       ].join(""),
     );
@@ -107,7 +126,9 @@ describe("ClaudeCodeImporter", () => {
     writeFileSync(
       join(home, ".claude.json"),
       JSON.stringify({
-        mcpServers: { linear: { type: "http", url: "https://mcp.linear.app/mcp" } },
+        mcpServers: {
+          linear: { type: "http", url: "https://mcp.linear.app/mcp" },
+        },
       }),
     );
     writeFileSync(
@@ -127,8 +148,12 @@ describe("ClaudeCodeImporter", () => {
     expect(report.summary.migrated).toBe(5);
 
     // Skill dir copied whole, under the manifest name.
-    expect(existsSync(join(stateDir, "skills", "triage", "SKILL.md"))).toBe(true);
-    expect(existsSync(join(stateDir, "skills", "triage", "notes.txt"))).toBe(true);
+    expect(existsSync(join(stateDir, "skills", "triage", "SKILL.md"))).toBe(
+      true,
+    );
+    expect(existsSync(join(stateDir, "skills", "triage", "notes.txt"))).toBe(
+      true,
+    );
     // Memory note stored.
     expect(memoryContents).toEqual(["be brief"]);
     // MCP server appended to the user config.
@@ -177,14 +202,21 @@ describe("ClaudeCodeImporter", () => {
       SKILL_MD.replace("Sort the inbox", "Sort the inbox twice"),
     );
     const third = await buildImporter().run({
-      options: resolveClaudeCodeOptions({ exclude: ["memory", "mcp", "sessions"] }),
+      options: resolveClaudeCodeOptions({
+        exclude: ["memory", "mcp", "sessions"],
+      }),
       execute: true,
       overwrite: false,
     });
-    expect(third.items[0]).toMatchObject({ kind: "skills", status: "conflict" });
+    expect(third.items[0]).toMatchObject({
+      kind: "skills",
+      status: "conflict",
+    });
 
     const forced = await buildImporter().run({
-      options: resolveClaudeCodeOptions({ exclude: ["memory", "mcp", "sessions"] }),
+      options: resolveClaudeCodeOptions({
+        exclude: ["memory", "mcp", "sessions"],
+      }),
       execute: true,
       overwrite: true,
     });
@@ -195,11 +227,43 @@ describe("ClaudeCodeImporter", () => {
     });
   });
 
+  it("picks up turns a session gained since the last import", async () => {
+    seedSession();
+    const options = resolveClaudeCodeOptions({
+      exclude: ["skills", "memory", "mcp"],
+    });
+    await buildImporter().run({ options, execute: true, overwrite: false });
+    expect(sessionStore.load("claude-code:s1")?.turns).toHaveLength(2);
+
+    // The operator kept talking to Claude Code: the transcript grew.
+    appendFileSync(
+      join(sourceDir, "projects", "-work", "s1.jsonl"),
+      line({
+        type: "user",
+        timestamp: "2026-08-02T10:05:00Z",
+        message: { role: "user", content: "and one more thing" },
+      }),
+    );
+    const second = await buildImporter().run({
+      options,
+      execute: true,
+      overwrite: false,
+    });
+    expect(second.items[0]).toMatchObject({
+      kind: "sessions",
+      status: "migrated",
+      reason: "updated (+1 turns)",
+    });
+    expect(sessionStore.load("claude-code:s1")?.turns).toHaveLength(3);
+  });
+
   it("skips an mcp server whose name is already configured", async () => {
     writeFileSync(
       join(home, ".claude.json"),
       JSON.stringify({
-        mcpServers: { linear: { type: "http", url: "https://mcp.linear.app/mcp" } },
+        mcpServers: {
+          linear: { type: "http", url: "https://mcp.linear.app/mcp" },
+        },
       }),
     );
     const importer = buildImporter();
@@ -233,19 +297,48 @@ describe("ClaudeCodeImporter", () => {
       );
     }
     const report = await buildImporter().run({
-      options: resolveClaudeCodeOptions({ exclude: ["skills", "memory", "mcp"] }),
+      options: resolveClaudeCodeOptions({
+        exclude: ["skills", "memory", "mcp"],
+      }),
       execute: false,
       overwrite: false,
     });
     expect(report.items.filter((i) => i.kind === "sessions")).toHaveLength(3);
 
     const limited = await buildImporter().run({
-      options: resolveClaudeCodeOptions({ exclude: ["skills", "memory", "mcp"] }),
+      options: resolveClaudeCodeOptions({
+        exclude: ["skills", "memory", "mcp"],
+      }),
       execute: false,
       overwrite: false,
       limit: 2,
     });
     expect(limited.items.filter((i) => i.kind === "sessions")).toHaveLength(2);
+  });
+
+  it("lists a transcript without messages as skipped, so counts add up", async () => {
+    const projectDir = join(sourceDir, "projects", "p");
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(
+      join(projectDir, "warmup.jsonl"),
+      line({ type: "ai-title", aiTitle: "nothing said yet" }),
+    );
+    const report = await buildImporter().run({
+      options: resolveClaudeCodeOptions({
+        exclude: ["skills", "memory", "mcp"],
+      }),
+      execute: true,
+      overwrite: false,
+    });
+    expect(report.items).toEqual([
+      {
+        kind: "sessions",
+        source: "warmup",
+        status: "skipped",
+        reason: "no messages",
+      },
+    ]);
+    expect(sessionStore.load("claude-code:warmup")).toBeNull();
   });
 
   it("reports empty domains as skipped with a reason", async () => {

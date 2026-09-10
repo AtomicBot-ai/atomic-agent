@@ -36,14 +36,16 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
   },
   {
     name: "browser.scroll",
-    summary: "Scroll the page; does not refresh ARIA — read_aria after if needed.",
+    summary:
+      "Scroll the page; does not refresh ARIA — read_aria after if needed.",
     argsSchema: `{ direction: "up" | "down" | "top" | "bottom", amount?: "page" | "half" | number }`,
   },
   {
     name: "os.shell.run",
     summary:
       "Run a shell command in the working directory (may require approval). Not for deleting user files — use os.fs.trash when the user wants paths removed.",
-    argsSchema: "{ cmd: string, args: string[], cwd?: string, timeoutMs?: number }",
+    argsSchema:
+      "{ cmd: string, args: string[], cwd?: string, timeoutMs?: number }",
   },
   {
     name: "os.fs.read",
@@ -66,9 +68,9 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
   {
     name: "os.fs.list",
     summary:
-      "Non-recursive directory listing (default maxEntries=200). Header shows full totals—when matched/total is much larger than shown, narrow with extensions (e.g. [\"pdf\"]), pattern (glob-like *foo*), or sort (name|size|mtime); recurse with os.fs.glob. Do not treat the visible slice as the whole tree.",
+      'Non-recursive directory listing (default maxEntries=200). Header shows full totals—when matched/total is much larger than shown, narrow with extensions (e.g. ["pdf"]), pattern (glob-like *foo*), or sort (name|size|mtime); recurse with os.fs.glob. Do not treat the visible slice as the whole tree.',
     argsSchema:
-      "{ path: string, pattern?: string, kind?: \"file\" | \"dir\", extensions?: string[], sort?: \"name\" | \"size\" | \"mtime\", maxEntries?: number }",
+      '{ path: string, pattern?: string, kind?: "file" | "dir", extensions?: string[], sort?: "name" | "size" | "mtime", maxEntries?: number }',
   },
   {
     name: "os.fs.glob",
@@ -93,8 +95,10 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
   },
   {
     name: "os.fs.edit",
-    summary: "Surgical string replace; oldString must be unique unless replaceAll (may require approval).",
-    argsSchema: "{ path: string, oldString: string, newString: string, replaceAll?: boolean }",
+    summary:
+      "Surgical string replace; oldString must be unique unless replaceAll (may require approval).",
+    argsSchema:
+      "{ path: string, oldString: string, newString: string, replaceAll?: boolean }",
   },
   {
     // Models reach for read_document on `.py` / `.ts` source files, hit the
@@ -149,7 +153,8 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
   },
   {
     name: "os.fs.patch",
-    summary: "Preview (default) or apply a unified-diff patch (apply=true may require approval).",
+    summary:
+      "Preview (default) or apply a unified-diff patch (apply=true may require approval).",
     argsSchema:
       "{ patch?: string, patchPath?: string, apply?: boolean, rootDir?: string, fuzzFactor?: number, stripComponents?: number }",
     tier: "rare",
@@ -169,12 +174,14 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
   {
     name: "os.git.log",
     summary: "Commit history with structured fields. Read-only.",
-    argsSchema: "{ repo?: string, limit?: number, revisionRange?: string, path?: string }",
+    argsSchema:
+      "{ repo?: string, limit?: number, revisionRange?: string, path?: string }",
   },
   {
     name: "os.git.diff",
     summary: "Unified diff (working tree, index, or revisions). Read-only.",
-    argsSchema: "{ repo?: string, revisionRange?: string, staged?: boolean, paths?: string[], context?: number }",
+    argsSchema:
+      "{ repo?: string, revisionRange?: string, staged?: boolean, paths?: string[], context?: number }",
   },
   {
     name: "os.git.show",
@@ -191,8 +198,140 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
   },
   {
     name: "os.git.branch",
-    summary: "List branches; optional remotes, pattern, or contains. Read-only.",
-    argsSchema: "{ repo?: string, includeRemote?: boolean, contains?: string, pattern?: string }",
+    summary:
+      "List branches; optional remotes, pattern, or contains. Read-only.",
+    argsSchema:
+      "{ repo?: string, includeRemote?: boolean, contains?: string, pattern?: string }",
+    tier: "rare",
+  },
+  {
+    name: "os.git.checkout",
+    summary:
+      "Switch to a branch, or create one first (may require approval). Never discards local changes.",
+    argsSchema:
+      "{ branch: string, create?: boolean, startPoint?: string, repo?: string }",
+  },
+  {
+    name: "os.git.commit",
+    summary:
+      "Stage (`paths` or `all`) and commit with `message` (may require approval). Neither → commits what is already staged.",
+    argsSchema:
+      "{ message: string, paths?: string[], all?: boolean, repo?: string }",
+  },
+  {
+    name: "os.git.push",
+    summary:
+      "Push the current (or named) branch to a remote, `-u` by default (may require approval). No force-push. Uses the connected GitHub token for github.com.",
+    argsSchema:
+      "{ remote?: string, branch?: string, setUpstream?: boolean, repo?: string }",
+  },
+  {
+    name: "github.whoami",
+    summary:
+      "The GitHub account behind the connected token, plus its scopes. Read-only.",
+    argsSchema: "{}",
+    tier: "rare",
+  },
+  {
+    name: "github.pr.list",
+    summary:
+      "List pull requests of a repo (default: origin of the working dir). Read-only.",
+    argsSchema: `{ repo?: string /* owner/name */, state?: "open" | "closed" | "all", limit?: number }`,
+    tier: "rare",
+  },
+  {
+    name: "github.pr.create",
+    summary:
+      "Open a pull request (may require approval). Push the branch with os.git.push first. `head`/`base`/`repo` default to the current branch, the repo's default branch and origin.",
+    argsSchema:
+      "{ title: string, body?: string, head?: string, base?: string, draft?: boolean, repo?: string /* owner/name */ }",
+    tier: "rare",
+  },
+  {
+    name: "github.issue.list",
+    summary:
+      "List issues of a repo (default: origin), PRs excluded. Read-only.",
+    argsSchema: `{ repo?: string /* owner/name */, state?: "open" | "closed" | "all", labels?: string[], limit?: number }`,
+    tier: "rare",
+  },
+  {
+    name: "github.issue.create",
+    summary: "File an issue (may require approval).",
+    argsSchema:
+      "{ title: string, body?: string, labels?: string[], repo?: string /* owner/name */ }",
+    tier: "rare",
+  },
+  {
+    name: "github.issue.comment",
+    summary:
+      "Comment on an issue or pull request by number (may require approval).",
+    argsSchema:
+      "{ number: number, body: string, repo?: string /* owner/name */ }",
+    tier: "rare",
+  },
+  {
+    name: "os.git.remote",
+    summary:
+      "List, add, re-point or remove remotes. add/set-url need Remote sync on and approval; URLs with embedded credentials are refused.",
+    argsSchema: `{ repo?: string, action?: "list" | "add" | "set-url" | "remove", name?: string, url?: string }`,
+    tier: "rare",
+  },
+  {
+    name: "os.git.fetch",
+    summary: "Fetch a remote (default origin) or all. Needs Remote sync on; approval-gated.",
+    argsSchema: "{ repo?: string, remote?: string, all?: boolean, prune?: boolean }",
+    tier: "rare",
+  },
+  {
+    name: "os.git.pull",
+    summary: "Pull the current branch's upstream, fast-forward only unless rebase. Needs Remote sync on; approval-gated.",
+    argsSchema: "{ repo?: string, remote?: string, branch?: string, rebase?: boolean }",
+    tier: "rare",
+  },
+  {
+    name: "os.git.push",
+    summary:
+      "Push a branch (default: current) to a remote (default origin); sets upstream on first push; never forces. Needs Remote sync on; approval-gated.",
+    argsSchema: "{ repo?: string, remote?: string, branch?: string }",
+    examples: ['{"remote":"origin"}'],
+    tier: "rare",
+  },
+  {
+    name: "os.git.clone",
+    summary: "Clone a repository into the working directory (or dest). Needs Remote sync on; approval-gated.",
+    argsSchema: "{ url: string, dest?: string, branch?: string, depth?: number }",
+    examples: ['{"url":"https://github.com/owner/repo.git"}'],
+    tier: "rare",
+  },
+  {
+    name: "os.git.init",
+    summary:
+      "Create a local git repository (no remote); optional repo-local identity. No-op on an existing repo. Approval like a file write.",
+    argsSchema:
+      "{ path?: string, initialBranch?: string, userName?: string, userEmail?: string }",
+    tier: "rare",
+  },
+  {
+    name: "os.git.add",
+    summary:
+      "Stage changes (`all` = everything, or `paths`); `unstage` reverses. Approval like a file write.",
+    argsSchema:
+      "{ repo?: string, paths?: string[], all?: boolean, unstage?: boolean }",
+    examples: ['{"all":true}'],
+  },
+  {
+    name: "os.git.commit",
+    summary:
+      "Commit staged changes with a message; `all` also commits tracked modifications. Approval like a file write.",
+    argsSchema: "{ repo?: string, message: string, all?: boolean }",
+    examples: ['{"message":"feat: add parser"}'],
+  },
+  {
+    name: "os.git.checkout",
+    summary:
+      "Switch branches; `create` makes a new one (optionally from `startPoint`). Branches only, never paths. Approval like a file write.",
+    argsSchema:
+      "{ repo?: string, branch: string, create?: boolean, startPoint?: string }",
     tier: "rare",
   },
   {

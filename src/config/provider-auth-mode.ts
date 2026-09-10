@@ -27,7 +27,6 @@ export function usesExternalCliAuth(
   entry: Pick<UserLlmProviderEntry, "kind" | "subscriptionCli">,
 ): boolean {
   return (
-    entry.kind === SUBSCRIPTION_CLI_KIND &&
-    Boolean(entry.subscriptionCli?.cli)
+    entry.kind === SUBSCRIPTION_CLI_KIND && Boolean(entry.subscriptionCli?.cli)
   );
 }

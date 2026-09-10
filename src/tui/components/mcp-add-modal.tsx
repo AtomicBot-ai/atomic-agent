@@ -54,9 +54,7 @@ export function McpAddModal({
     <Box
       flexDirection="column"
       borderStyle="round"
-      borderColor={
-        state.error ? theme.colors.error : theme.colors.accentSoft
-      }
+      borderColor={state.error ? theme.colors.error : theme.colors.accentSoft}
       paddingX={1}
       marginY={1}
       width="100%"
@@ -66,21 +64,19 @@ export function McpAddModal({
       </Text>
       <Box marginTop={1} flexDirection="column" width="100%">
         <Text color={theme.colors.muted}>
-          Paste one MCP server config as JSON. Bare object, or the
-          Claude Desktop / Cursor envelope `{"{ \"mcpServers\": { ... } }"}`.
+          Paste one MCP server config as JSON. Bare object, or the Claude
+          Desktop / Cursor envelope `{'{ "mcpServers": { ... } }'}`.
         </Text>
         <Text color={theme.colors.muted}>
-          Top-level `command` + `args` (no `transport` wrapper) is also
-          accepted and auto-promoted to stdio.
+          Top-level `command` + `args` (no `transport` wrapper) is also accepted
+          and auto-promoted to stdio.
         </Text>
       </Box>
       <Box
         marginTop={1}
         flexDirection="column"
         borderStyle="single"
-        borderColor={
-          state.error ? theme.colors.error : theme.colors.border
-        }
+        borderColor={state.error ? theme.colors.error : theme.colors.border}
         paddingX={1}
         width="100%"
       >
@@ -112,8 +108,8 @@ export function McpAddModal({
       ) : null}
       <Box marginTop={1} width="100%">
         <Text color={theme.colors.muted}>
-          Enter: submit · Shift/Alt+Enter: newline · Esc: cancel ·
-          restart atomic-agent for the new server to connect
+          Enter: submit · Shift/Alt+Enter: newline · Esc: cancel · restart
+          atomic-agent for the new server to connect
         </Text>
       </Box>
     </Box>

@@ -60,7 +60,8 @@ function makeOptions(): WebSearchProviderOptions {
  * deps is heavy; instead we inject behaviour by mocking the registry module.
  */
 vi.mock("./provider-registry.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("./provider-registry.js")>();
+  const actual =
+    await importOriginal<typeof import("./provider-registry.js")>();
   return {
     ...actual,
     resolveProviderByName: vi.fn(),
@@ -271,7 +272,11 @@ describe("a provider under a standing rate limit", () => {
     let clock = T0;
 
     await runWebSearchWithFallback({
-      config, deps: {}, options: makeOptions(), cooldown, now: () => clock,
+      config,
+      deps: {},
+      options: makeOptions(),
+      cooldown,
+      now: () => clock,
     });
     clock = T0 + 61_000;
     await runWebSearchWithFallback({
@@ -288,12 +293,16 @@ describe("a provider under a standing rate limit", () => {
     // The other half of #179: the chain worked, so nothing failed, so
     // nothing was reported — and a whole campaign was quietly served by
     // the weaker provider.
-    const { } = limitedThenFallback();
+    const {} = limitedThenFallback();
     const cooldown = createProviderCooldown();
     const config = makeConfig({ provider: "exa", fallback: ["duckduckgo"] });
 
     const first = await runWebSearchWithFallback({
-      config, deps: {}, options: makeOptions(), cooldown, now: () => T0,
+      config,
+      deps: {},
+      options: makeOptions(),
+      cooldown,
+      now: () => T0,
     });
     expect(first.degraded).toEqual([
       "exa rate limited (HTTP 429), parked for 1m",
@@ -321,12 +330,22 @@ describe("a provider under a standing rate limit", () => {
     const config = makeConfig({ provider: "exa", fallback: [] });
 
     await runWebSearchWithFallback({
-      config, deps: {}, options: makeOptions(), cache, cooldown, now: () => T0,
+      config,
+      deps: {},
+      options: makeOptions(),
+      cache,
+      cooldown,
+      now: () => T0,
     });
     cooldown.park("exa", T0, null);
 
     const out = await runWebSearchWithFallback({
-      config, deps: {}, options: makeOptions(), cache, cooldown, now: () => T0,
+      config,
+      deps: {},
+      options: makeOptions(),
+      cache,
+      cooldown,
+      now: () => T0,
     });
     expect(out.fromCache).toBe(true);
     expect(out.results).toEqual([RESULT]);
@@ -364,7 +383,9 @@ describe("a provider under a standing rate limit", () => {
     const config = makeConfig({ provider: "exa", fallback: ["duckduckgo"] });
     for (let i = 0; i < 3; i++) {
       await runWebSearchWithFallback({
-        config, deps: {}, options: { ...makeOptions(), query: `q${i}` },
+        config,
+        deps: {},
+        options: { ...makeOptions(), query: `q${i}` },
       });
     }
     expect(exa.search).toHaveBeenCalledTimes(3);

@@ -59,7 +59,10 @@ function reducePanel(
       return { ...panel, cursor: nextCursor };
     }
     case "tasks_cursor_set":
-      return { ...panel, cursor: clampCursor(action.row, visibleLength(panel)) };
+      return {
+        ...panel,
+        cursor: clampCursor(action.row, visibleLength(panel)),
+      };
     case "tasks_filter_cycled":
       return {
         ...panel,
@@ -123,7 +126,10 @@ function reducePanel(
       return { ...panel, mode: "list", createForm: null };
     case "tasks_create_form_updated": {
       if (!panel.createForm) return panel;
-      const merged: TaskCreateFormState = { ...panel.createForm, ...action.patch };
+      const merged: TaskCreateFormState = {
+        ...panel.createForm,
+        ...action.patch,
+      };
       return { ...panel, createForm: merged };
     }
     case "tasks_create_focus_set":

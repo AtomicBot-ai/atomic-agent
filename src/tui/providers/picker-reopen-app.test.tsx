@@ -18,7 +18,8 @@ import { ProvidersOrchestrator } from "./providers-orchestrator.js";
  */
 
 vi.mock("../../config/index.js", async (importOriginal) => {
-  const original = await importOriginal<typeof import("../../config/index.js")>();
+  const original =
+    await importOriginal<typeof import("../../config/index.js")>();
   return {
     ...original,
     getConfig: () => currentConfig,
@@ -50,9 +51,7 @@ function configWithNous(baseUrl: string): AtomicAgentConfig {
 const SESSION = fakeSession({ workingDir: "/tmp/smoke" });
 
 function strip(value: string): string {
-  return value
-    .replace(/\[[0-9;]*m/g, "")
-    .replace(/\]8;;[^]*/g, "");
+  return value.replace(/\[[0-9;]*m/g, "").replace(/\]8;;[^]*/g, "");
 }
 
 const tick = () => new Promise((r) => setTimeout(r, 25));
@@ -152,8 +151,9 @@ describe("full-app inline model list (ink render, real orchestrator)", () => {
 
   it("windows 354 models to a dozen visible rows with an (n/N) counter", async () => {
     currentConfig = configWithNous("https://app-354.nous.example");
-    const models = Array.from({ length: 354 }, (_, i) =>
-      `vendor/model-${String(i).padStart(3, "0")}`,
+    const models = Array.from(
+      { length: 354 },
+      (_, i) => `vendor/model-${String(i).padStart(3, "0")}`,
     );
     vi.stubGlobal(
       "fetch",

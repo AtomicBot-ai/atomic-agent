@@ -29,7 +29,10 @@ function emptyKey(overrides: Partial<Key> = {}): Key {
   };
 }
 
-function link(providerId: string, over: Partial<FallbackLinkRow> = {}): FallbackLinkRow {
+function link(
+  providerId: string,
+  over: Partial<FallbackLinkRow> = {},
+): FallbackLinkRow {
   return {
     providerId,
     modelLabel: null,
@@ -89,7 +92,11 @@ function press(input: string, key: Key, state: TuiState) {
 
 describe("fallback pane key routing", () => {
   it("moves the selected link down with > via the callback, not dispatch", () => {
-    const { handled, dispatched, calls } = press(">", emptyKey(), fallbackState());
+    const { handled, dispatched, calls } = press(
+      ">",
+      emptyKey(),
+      fallbackState(),
+    );
     expect(handled).toBe(true);
     expect(calls).toEqual([["move", "cloud-b", 1]]);
     expect(dispatched).toEqual([]);

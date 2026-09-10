@@ -7,8 +7,7 @@ import type { OpenclawCronJob } from "./openclaw-source.js";
 
 /** Outcome of mapping one OpenClaw cron job. */
 export type MapCronResult =
-  | { kind: "task"; input: TaskCreateInput }
-  | { kind: "skip"; reason: string };
+  { kind: "task"; input: TaskCreateInput } | { kind: "skip"; reason: string };
 
 export interface MapCronOptions {
   /** Retry budget applied to the created task. */

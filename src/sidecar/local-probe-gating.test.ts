@@ -172,16 +172,18 @@ describe("sidecar start_session — local probe gating", () => {
           defaultChatModel: "cloudy-1",
           apiKey: "sk-test",
         },
-        { id: "local-llama-embed", kind: "llama-server", url: "http://127.0.0.1:19092" },
+        {
+          id: "local-llama-embed",
+          kind: "llama-server",
+          url: "http://127.0.0.1:19092",
+        },
       ],
       toolTransport: "auto",
     });
 
     const { messages, shutdown } = await startSession();
     try {
-      expect(
-        messages.some((m) => m.kind === "response" && m.ok),
-      ).toBe(true);
+      expect(messages.some((m) => m.kind === "response" && m.ok)).toBe(true);
       expect(urls.filter((u) => u.includes(TEXT_PORT))).toEqual([]);
       expect(
         messages.filter(

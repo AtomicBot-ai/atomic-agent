@@ -4,14 +4,23 @@ import React, { type ReactElement } from "react";
 import { describe, expect, it } from "vitest";
 
 import { ROOT_PADDING_LEFT } from "../layout.js";
-import { buildLocalModelPicks, orderLocalModelPicks } from "../onboarding/local-model-picks.js";
+import {
+  buildLocalModelPicks,
+  orderLocalModelPicks,
+} from "../onboarding/local-model-picks.js";
 import { computeOnboardingFit } from "../onboarding/onboarding-fit.js";
-import { measureOnboardingChooseStep, OnboardingChooseStep } from "./onboarding-choose-step.js";
+import {
+  measureOnboardingChooseStep,
+  OnboardingChooseStep,
+} from "./onboarding-choose-step.js";
 import {
   measureOnboardingDownloadStep,
   OnboardingDownloadStep,
 } from "./onboarding-download-step.js";
-import { measureOnboardingHeader, OnboardingHeader } from "./onboarding-header.js";
+import {
+  measureOnboardingHeader,
+  OnboardingHeader,
+} from "./onboarding-header.js";
 import {
   measureOnboardingLocalPickStep,
   OnboardingLocalPickStep,
@@ -20,7 +29,10 @@ import {
   measureOnboardingProposeStep,
   OnboardingProposeStep,
 } from "./onboarding-propose-step.js";
-import { measureOnboardingUrlStep, OnboardingUrlStep } from "./onboarding-url-step.js";
+import {
+  measureOnboardingUrlStep,
+  OnboardingUrlStep,
+} from "./onboarding-url-step.js";
 import { layOutOnboardingSurface } from "./onboarding-surface-layout.js";
 import {
   measureOnboardingWaitOrJumpStep,
@@ -61,7 +73,12 @@ function widestDrawn(lines: readonly string[]): number {
  * frame reports the truncated row rather than the row that was asked
  * for.
  */
-const cases: { name: string; measured: number; element: ReactElement; exact: boolean }[] = [
+const cases: {
+  name: string;
+  measured: number;
+  element: ReactElement;
+  exact: boolean;
+}[] = [
   {
     name: "the brand lockup with its mark",
     measured: measureOnboardingHeader("setup · step 1 of 2", "sm"),
@@ -94,7 +111,9 @@ const cases: { name: string; measured: number; element: ReactElement; exact: boo
       ramGb: 16,
       fit: FULL,
     }),
-    element: <OnboardingLocalPickStep picks={PICKS} cursor={0} ramGb={16} fit={FULL} />,
+    element: (
+      <OnboardingLocalPickStep picks={PICKS} cursor={0} ramGb={16} fit={FULL} />
+    ),
     exact: true,
   },
   {
@@ -122,7 +141,11 @@ const cases: { name: string; measured: number; element: ReactElement; exact: boo
       configuredLabel: "Cloud model ready",
     }),
     element: (
-      <OnboardingProposeStep offer="local" configuredLabel="Cloud model ready" cursor={0} />
+      <OnboardingProposeStep
+        offer="local"
+        configuredLabel="Cloud model ready"
+        cursor={0}
+      />
     ),
     exact: true,
   },
@@ -227,7 +250,9 @@ describe("the download step's placement", () => {
     });
     expect(measured).toBeLessThan(98);
     expect(placement.width).toBe(measured);
-    expect(placement.left).toBe(Math.floor((100 - measured) / 2) - ROOT_PADDING_LEFT);
+    expect(placement.left).toBe(
+      Math.floor((100 - measured) / 2) - ROOT_PADDING_LEFT,
+    );
     expect(placement.left).toBeGreaterThan(0);
   });
 });
@@ -237,7 +262,8 @@ describe("the per-step block measures", () => {
     it(`measures ${testCase.name}`, () => {
       const drawn = widestDrawn(drawnLines(testCase.element));
       expect(drawn).toBeGreaterThan(0);
-      if (testCase.exact) expect(Math.min(testCase.measured, TEST_COLUMNS)).toBe(drawn);
+      if (testCase.exact)
+        expect(Math.min(testCase.measured, TEST_COLUMNS)).toBe(drawn);
       else expect(testCase.measured).toBeGreaterThanOrEqual(drawn);
     });
 

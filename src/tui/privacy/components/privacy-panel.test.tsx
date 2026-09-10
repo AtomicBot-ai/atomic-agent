@@ -24,7 +24,9 @@ function flat(frame: string | undefined): string {
 }
 
 function renderFlat(overrides: Partial<PrivacyPanelState> = {}): string {
-  return flat(render(<PrivacyPanel panel={panelState(overrides)} />).lastFrame());
+  return flat(
+    render(<PrivacyPanel panel={panelState(overrides)} />).lastFrame(),
+  );
 }
 
 describe("PrivacyPanel", () => {

@@ -32,7 +32,9 @@ describe("persistOnboardingState", () => {
   it("writes a stamp to config.json and getConfig() picks it up", () => {
     expect(getConfig().tui.onboarding.completedAt).toBeNull();
     persistOnboardingState({ completedAt: STAMP });
-    const onDisk = JSON.parse(readFileSync(getConfig().paths.userConfigFile, "utf8"));
+    const onDisk = JSON.parse(
+      readFileSync(getConfig().paths.userConfigFile, "utf8"),
+    );
     expect(onDisk.tui.onboarding.completedAt).toBe(STAMP);
     expect(getConfig().tui.onboarding.completedAt).toBe(STAMP);
   });
@@ -52,7 +54,9 @@ describe("persistOnboardingState", () => {
 
   it("round-trips localSetupSeenAt through the file", () => {
     persistOnboardingState({ localSetupSeenAt: STAMP });
-    const onDisk = JSON.parse(readFileSync(getConfig().paths.userConfigFile, "utf8"));
+    const onDisk = JSON.parse(
+      readFileSync(getConfig().paths.userConfigFile, "utf8"),
+    );
     expect(onDisk.tui.onboarding.localSetupSeenAt).toBe(STAMP);
     expect(getConfig().tui.onboarding.localSetupSeenAt).toBe(STAMP);
   });

@@ -42,14 +42,12 @@ describe("claudeCliAdapter argv", () => {
     expect(args).toContain("--print");
     expect(args).toContain("--strict-mcp-config");
     expect(args).toContain("--no-session-persistence");
-    expect(args.slice(args.indexOf("--tools"), args.indexOf("--tools") + 2)).toEqual([
-      "--tools",
-      "",
-    ]);
-    expect(args.slice(args.indexOf("--model"), args.indexOf("--model") + 2)).toEqual([
-      "--model",
-      "sonnet",
-    ]);
+    expect(
+      args.slice(args.indexOf("--tools"), args.indexOf("--tools") + 2),
+    ).toEqual(["--tools", ""]);
+    expect(
+      args.slice(args.indexOf("--model"), args.indexOf("--model") + 2),
+    ).toEqual(["--model", "sonnet"]);
     expect(
       args.slice(
         args.indexOf("--output-format"),
@@ -110,9 +108,9 @@ describe("claudeCliAdapter argv", () => {
       ...input,
       responseSchema: schema,
     });
-    expect(
-      withSchema[withSchema.indexOf("--json-schema") + 1],
-    ).toBe(JSON.stringify(schema));
+    expect(withSchema[withSchema.indexOf("--json-schema") + 1]).toBe(
+      JSON.stringify(schema),
+    );
 
     const huge = { type: "object", description: "x".repeat(40_000) };
     expect(
@@ -293,7 +291,10 @@ describe("claudeCliAdapter parseStreamEvent", () => {
           rate_limit_info: { status: "rejected", rateLimitType: "five_hour" },
         }),
       ),
-    ).toEqual({ kind: "notice", message: "claude rate limit rejected (five_hour)" });
+    ).toEqual({
+      kind: "notice",
+      message: "claude rate limit rejected (five_hour)",
+    });
   });
 
   it("ignores unknown, empty and malformed lines instead of failing", () => {
@@ -305,7 +306,9 @@ describe("claudeCliAdapter parseStreamEvent", () => {
       JSON.stringify({ type: "assistant", message: {} }),
       JSON.stringify({ type: "stream_event", event: { type: "message_stop" } }),
     ]) {
-      expect(claudeCliAdapter.parseStreamEvent(line)).toEqual({ kind: "ignore" });
+      expect(claudeCliAdapter.parseStreamEvent(line)).toEqual({
+        kind: "ignore",
+      });
     }
   });
 });

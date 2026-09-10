@@ -138,9 +138,10 @@ function CompatChatModelStep(props: {
   const isCompat = w.kind === "openai-compatible";
   const isGemini = w.kind === "gemini";
   const canList = isCompat || isGemini;
-  const [status, setStatus] = useState<{ loading: boolean; error: string | null }>(
-    { loading: canList, error: null },
-  );
+  const [status, setStatus] = useState<{
+    loading: boolean;
+    error: string | null;
+  }>({ loading: canList, error: null });
 
   useEffect(() => {
     // Only these kinds have a live model surface worth listing: openai-compatible
@@ -222,14 +223,14 @@ function CompatChatModelStep(props: {
   const hint = w.submitting
     ? CHECKING_KEY_HINT
     : !canList
-    ? "Enter to save · Esc back"
-    : status.loading
-      ? isGemini
-        ? "listing models from Gemini…"
-        : `listing models from ${baseUrl}/v1/models…`
-      : status.error
-      ? `${explainModelListError(status.error, w)} · type the id · Enter to save`
-      : "Enter to save · Backspace to empty for the model list · Esc back";
+      ? "Enter to save · Esc back"
+      : status.loading
+        ? isGemini
+          ? "listing models from Gemini…"
+          : `listing models from ${baseUrl}/v1/models…`
+        : status.error
+          ? `${explainModelListError(status.error, w)} · type the id · Enter to save`
+          : "Enter to save · Backspace to empty for the model list · Esc back";
   return renderLineField({
     title: "Chat model id",
     value: w.chatModelLine,
@@ -261,7 +262,9 @@ function CatalogChatModelStep(props: {
 }): ReactElement {
   const { wizard: w, kind } = props;
   const getCached =
-    kind === "openrouter" ? getCachedOpenRouterChatPicks : getCachedAimlapiChatPicks;
+    kind === "openrouter"
+      ? getCachedOpenRouterChatPicks
+      : getCachedAimlapiChatPicks;
   const [loading, setLoading] = useState(() => getCached() === null);
 
   useEffect(() => {
@@ -293,7 +296,9 @@ function CatalogChatModelStep(props: {
   }, [kind]);
 
   const service =
-    kind === "openrouter" ? "Chat model (OpenRouter)" : "Chat model (AI/ML API)";
+    kind === "openrouter"
+      ? "Chat model (OpenRouter)"
+      : "Chat model (AI/ML API)";
   // The active price facet rides on the title so it stays visible even
   // while the search box owns the hint line: a list narrowed to free
   // rows must say so wherever the operator happens to be looking.
@@ -351,8 +356,10 @@ export function ProvidersWizard(props: {
 }): ReactElement {
   const w = props.wizard;
   const maxRows = props.maxRows === undefined ? {} : { maxRows: props.maxRows };
-  const route = props.mouseRoute === undefined ? {} : { route: props.mouseRoute };
-  const modeLabel = w.mode === "configure" ? `configure ${w.providerId}` : "add provider";
+  const route =
+    props.mouseRoute === undefined ? {} : { route: props.mouseRoute };
+  const modeLabel =
+    w.mode === "configure" ? `configure ${w.providerId}` : "add provider";
 
   if (w.phase === "pick_kind") {
     return renderPickList({
@@ -398,9 +405,7 @@ export function ProvidersWizard(props: {
           <Text color={theme.colors.muted}>{"> "}</Text>
           <Text color={theme.colors.accent}>{maskedKey(w.apiKeyBuffer)}</Text>
         </PasteFieldTarget>
-        {w.error ? (
-          <Text color={theme.colors.error}>! {w.error}</Text>
-        ) : null}
+        {w.error ? <Text color={theme.colors.error}>! {w.error}</Text> : null}
         <Text color={theme.colors.muted}>
           Enter to continue · Esc back · Backspace edit
           {w.submitting ? ` · ${CHECKING_KEY_HINT}` : ""}
@@ -413,7 +418,9 @@ export function ProvidersWizard(props: {
     w.phase === "pick_chat_model" &&
     (w.kind === "openrouter" || w.kind === "aimlapi")
   ) {
-    return <CatalogChatModelStep wizard={w} kind={w.kind} {...maxRows} {...route} />;
+    return (
+      <CatalogChatModelStep wizard={w} kind={w.kind} {...maxRows} {...route} />
+    );
   }
 
   if (

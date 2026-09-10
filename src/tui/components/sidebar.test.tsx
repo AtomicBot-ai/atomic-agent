@@ -8,7 +8,8 @@ import {
 import type { TaskSummaryRow } from "../tasks/tasks-panel-state.js";
 import type { SessionPickerEntry } from "../tui-state.js";
 
-const ANSI = /[\u001b\u009b][[()#;?]*.{0,2}(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g;
+const ANSI =
+  /[\u001b\u009b][[()#;?]*.{0,2}(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g;
 
 function strip(text: string): string {
   return text.replace(ANSI, "");
@@ -22,6 +23,7 @@ const SESSIONS: readonly SessionPickerEntry[] = [
     stepCount: 5,
     updatedAt: Date.now() - 60_000,
     preview: "first ever message in the session",
+    pinned: false,
   },
   {
     sessionId: "ghijkl5678",
@@ -30,6 +32,7 @@ const SESSIONS: readonly SessionPickerEntry[] = [
     stepCount: 2,
     updatedAt: Date.now() - 600_000,
     preview: "another conversation",
+    pinned: false,
   },
 ];
 
@@ -147,7 +150,11 @@ describe("Sidebar", () => {
     // prop is the projected slice — counting it is how "5 running"
     // got printed under seven live tasks.
     const rows = Array.from({ length: 7 }, (_, idx) =>
-      taskRow({ id: `run-${idx}`, status: "running", userMessage: `run ${idx}` }),
+      taskRow({
+        id: `run-${idx}`,
+        status: "running",
+        userMessage: `run ${idx}`,
+      }),
     );
     const { lastFrame } = render(
       <Sidebar
@@ -272,6 +279,7 @@ describe("Sidebar", () => {
       ...SESSIONS[0]!,
       sessionId: `s-${idx}`,
       preview: `session number ${idx}`,
+      pinned: false,
     }));
     const manyTasks = Array.from({ length: 8 }, (_, idx) =>
       taskRow({ id: `t-${idx}`, userMessage: `task number ${idx}` }),
@@ -329,7 +337,9 @@ describe("Sidebar", () => {
   });
 
   it("narrows the previews with the rail rather than overflowing it", () => {
-    const long = [{ ...SESSIONS[0]!, preview: "a very long session preview indeed" }];
+    const long = [
+      { ...SESSIONS[0]!, preview: "a very long session preview indeed" },
+    ];
     const { lastFrame } = render(
       <Sidebar
         width={24}
@@ -347,5 +357,91 @@ describe("Sidebar", () => {
       .reduce((acc, line) => Math.max(acc, line.replace(/\s+$/, "").length), 0);
     expect(widest).toBeLessThanOrEqual(24);
     expect(strip(lastFrame() ?? "")).toContain("…");
+  });
+});
+
+describe("Sidebar session drag feedback", () => {
+  it("paints ↕ on the row in hand and the chevron on the slot under the pointer", () => {
+    const { lastFrame } = render(
+      <Sidebar
+        width={30}
+        sessions={SESSIONS}
+        sessionsCursor={1}
+        sessionDrag={{ sessionId: "ghijkl5678", from: 1, over: 0 }}
+        currentSessionId={null}
+        tasks={[]}
+        tasksCursor={0}
+        activeSection="sessions"
+        focused={true}
+      />,
+    );
+    const text = strip(lastFrame() ?? "");
+    // The previews are two columns shorter than they were before the
+    // pin mark took its cells, so match a prefix the rail still fits.
+    expect(text).toMatch(/↕ [^\n]*another conver/);
+    expect(text).toMatch(/▸ [^\n]*first ever mes/);
+  });
+
+  it("paints the pin mark on every session row", () => {
+    const { lastFrame } = render(
+      <Sidebar
+        width={30}
+        sessions={[SESSIONS[0]!, { ...SESSIONS[1]!, pinned: true }]}
+        sessionsCursor={0}
+        currentSessionId={null}
+        tasks={[]}
+        tasksCursor={0}
+        activeSection="sessions"
+        focused={true}
+      />,
+    );
+    const lines = strip(lastFrame() ?? "").split("\n");
+    const first = lines.find((line) => line.includes("first ever")) ?? "";
+    const second = lines.find((line) => line.includes("another conv")) ?? "";
+    // Both rows carry it — the mark says "pinned / not pinned", which a
+    // mark that only appeared on the selected row could not.
+    expect(first).toContain("↑");
+    expect(second).toContain("↑");
+    // …at the right edge of the row, past the preview.
+    expect(first.lastIndexOf("↑")).toBeGreaterThan(first.indexOf("first ever"));
+  });
+
+  it("puts pinned rows above the rest exactly as it is handed them", () => {
+    // Ordering is the rail orchestrator's job; the component draws the
+    // list in the order it receives, pins included.
+    const pinned = { ...SESSIONS[1]!, pinned: true };
+    const { lastFrame } = render(
+      <Sidebar
+        width={30}
+        sessions={[pinned, SESSIONS[0]!]}
+        sessionsCursor={0}
+        currentSessionId={null}
+        tasks={[]}
+        tasksCursor={0}
+        activeSection="sessions"
+        focused={true}
+      />,
+    );
+    const lines = strip(lastFrame() ?? "").split("\n");
+    const pinnedRow = lines.findIndex((line) => line.includes("another conv"));
+    const plainRow = lines.findIndex((line) => line.includes("first ever"));
+    expect(pinnedRow).toBeGreaterThan(-1);
+    expect(pinnedRow).toBeLessThan(plainRow);
+  });
+
+  it("paints no drag marks when nothing is dragged", () => {
+    const { lastFrame } = render(
+      <Sidebar
+        width={30}
+        sessions={SESSIONS}
+        sessionsCursor={1}
+        currentSessionId={null}
+        tasks={[]}
+        tasksCursor={0}
+        activeSection="sessions"
+        focused={true}
+      />,
+    );
+    expect(strip(lastFrame() ?? "")).not.toContain("↕");
   });
 });

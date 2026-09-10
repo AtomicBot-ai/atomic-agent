@@ -62,7 +62,9 @@ export function baseUrlForWizard(wizard: ProvidersWizardState): string {
 function keyLookupEntryForWizard(
   wizard: ProvidersWizardState,
 ): UserLlmProviderEntry {
-  const preset = wizard.presetId ? findProviderPreset(wizard.presetId) : undefined;
+  const preset = wizard.presetId
+    ? findProviderPreset(wizard.presetId)
+    : undefined;
   const kind = wizard.kind ?? "openai-compatible";
   return {
     id: wizard.providerId ?? preset?.id ?? kind,
@@ -115,7 +117,9 @@ export function envHintForWizard(wizard: ProvidersWizardState): string {
   // CLI-backed providers read no env var; the key screen is skipped
   // entirely, so there is no variable to name.
   if (wizard.kind && subscriptionCliForWizardKind(wizard.kind)) return "";
-  const preset = wizard.presetId ? findProviderPreset(wizard.presetId) : undefined;
+  const preset = wizard.presetId
+    ? findProviderPreset(wizard.presetId)
+    : undefined;
   if (preset) return preset.envVar;
   if (wizard.kind === "openrouter") return "OPENROUTER_API_KEY";
   if (wizard.kind === "aimlapi") return "AIMLAPI_API_KEY";
@@ -133,14 +137,18 @@ export function wizardKeyIsOptional(wizard: ProvidersWizardState): boolean {
   // A CLI-backed provider authenticates from the CLI's own session —
   // there is no key by construction, not merely an optional one.
   if (wizard.kind && subscriptionCliForWizardKind(wizard.kind)) return true;
-  const preset = wizard.presetId ? findProviderPreset(wizard.presetId) : undefined;
+  const preset = wizard.presetId
+    ? findProviderPreset(wizard.presetId)
+    : undefined;
   if (preset && (preset.local || preset.listsModelsWithoutKey)) return true;
   // A hand-added compat endpoint pointing at a loopback address is a
   // local server too, even without a matching preset. A raw
   // `llama-server` on `http://127.0.0.1:9931` needs no key, so an empty
   // one is valid there. The wizard collects the base URL before the key
   // screen for this kind, so the URL is known by the time this runs.
-  return wizard.kind === "openai-compatible" && isLoopbackBaseUrl(wizard.baseUrlLine);
+  return (
+    wizard.kind === "openai-compatible" && isLoopbackBaseUrl(wizard.baseUrlLine)
+  );
 }
 
 /**
@@ -174,9 +182,7 @@ export function emptyKeyMeaningForWizard(wizard: ProvidersWizardState): string {
  * stored entry the same way, so reconfiguring a provider whose key is
  * already saved passes with a blank screen instead of demanding it again.
  */
-export function apiKeyPhaseError(
-  wizard: ProvidersWizardState,
-): string | null {
+export function apiKeyPhaseError(wizard: ProvidersWizardState): string | null {
   const typed = wizard.apiKeyBuffer.trim();
   // A non-ASCII key cannot go into an HTTP header. Refusing it here
   // names the problem on the key screen rather than letting the first
@@ -206,7 +212,9 @@ const KIND_SERVICE_LABELS: Record<ProvidersWizardKind, string> = {
 
 /** Service name for headings and for every sentence about a failure. */
 export function providerLabelForWizard(wizard: ProvidersWizardState): string {
-  const preset = wizard.presetId ? findProviderPreset(wizard.presetId) : undefined;
+  const preset = wizard.presetId
+    ? findProviderPreset(wizard.presetId)
+    : undefined;
   if (preset) return preset.label;
   return wizard.kind ? KIND_SERVICE_LABELS[wizard.kind] : "provider";
 }
@@ -225,7 +233,11 @@ export function chosenModelForWizard(wizard: ProvidersWizardState): string {
 export function endpointForKind(
   kind: ProvidersWizardKind,
   wizard: ProvidersWizardState,
-): { baseUrl: string; apiPathPrefix: string; extraHeaders?: Record<string, string> } {
+): {
+  baseUrl: string;
+  apiPathPrefix: string;
+  extraHeaders?: Record<string, string>;
+} {
   if (kind === "openrouter") {
     return {
       baseUrl: DEFAULT_OPENROUTER_BASE,

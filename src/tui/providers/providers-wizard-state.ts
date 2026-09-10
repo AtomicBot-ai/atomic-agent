@@ -119,7 +119,8 @@ export function createProvidersWizardState(
   // the CLI's own session. Opening configure on the key screen would be
   // the dead end `advanceWizardPhase` already skips on the add path, so
   // reconfiguring lands on the one thing that is editable: the model.
-  const cliBacked = kind !== null && subscriptionCliForWizardKind(kind) !== null;
+  const cliBacked =
+    kind !== null && subscriptionCliForWizardKind(kind) !== null;
   const phase: ProvidersWizardPhase = !configure
     ? "pick_kind"
     : cliBacked

@@ -17,35 +17,43 @@ function stream(body: string): ReturnType<typeof accumulateProbeStream> {
   return accumulateProbeStream(body);
 }
 
-const CALL_EVENT =
-  `data: ${JSON.stringify({
-    choices: [
-      {
-        delta: {
-          tool_calls: [
-            {
-              index: 0,
-              id: "call_1",
-              type: "function",
-              function: { name: CONTRACT_PROBE_TOOL_NAME, arguments: '{"ok":true}' },
+const CALL_EVENT = `data: ${JSON.stringify({
+  choices: [
+    {
+      delta: {
+        tool_calls: [
+          {
+            index: 0,
+            id: "call_1",
+            type: "function",
+            function: {
+              name: CONTRACT_PROBE_TOOL_NAME,
+              arguments: '{"ok":true}',
             },
-          ],
-        },
+          },
+        ],
       },
-    ],
-  })}\n\n`;
+    },
+  ],
+})}\n\n`;
 const FINISH_EVENT = `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "tool_calls" }] })}\n\ndata: [DONE]\n\n`;
 
 describe("classifyContractProbeHttpFailure", () => {
   it("names an authentication refusal", () => {
     expect(
-      classifyContractProbeHttpFailure(401, '{"error":"No auth credentials found"}'),
+      classifyContractProbeHttpFailure(
+        401,
+        '{"error":"No auth credentials found"}',
+      ),
     ).toBe("endpoint_auth_failed");
   });
 
   it("buckets quota exhaustion and gateway throttling together", () => {
     expect(
-      classifyContractProbeHttpFailure(429, '{"error":{"code":"insufficient_quota"}}'),
+      classifyContractProbeHttpFailure(
+        429,
+        '{"error":{"code":"insufficient_quota"}}',
+      ),
     ).toBe("quota_or_routing_failed");
     expect(classifyContractProbeHttpFailure(402, "Insufficient credits")).toBe(
       "quota_or_routing_failed",
@@ -68,13 +76,17 @@ describe("classifyContractProbeHttpFailure", () => {
     // This is the case the ladder exists for: a bare 400 with `tools` in
     // the body proves nothing on its own, and guessing from wording is
     // exactly what makes a diagnosis wrong.
-    expect(classifyContractProbeHttpFailure(400, "Bad Request")).toBe("provider_error");
+    expect(classifyContractProbeHttpFailure(400, "Bad Request")).toBe(
+      "provider_error",
+    );
     expect(contractProbeFailureIsTerminal("provider_error")).toBe(false);
   });
 
   it("treats key, quota and model refusals as terminal", () => {
     expect(contractProbeFailureIsTerminal("endpoint_auth_failed")).toBe(true);
-    expect(contractProbeFailureIsTerminal("quota_or_routing_failed")).toBe(true);
+    expect(contractProbeFailureIsTerminal("quota_or_routing_failed")).toBe(
+      true,
+    );
     expect(contractProbeFailureIsTerminal("model_unavailable")).toBe(true);
   });
 });
@@ -104,9 +116,9 @@ describe("classifyProbeStream", () => {
         },
       ],
     })}\n\n`;
-    expect(classifyProbeStream(stream(empty + FINISH_EVENT), "required_named")).toBe(
-      "tools_supported",
-    );
+    expect(
+      classifyProbeStream(stream(empty + FINISH_EVENT), "required_named"),
+    ).toBe("tools_supported");
   });
 
   it("calls a text answer under auto inconclusive, never unsupported", () => {
@@ -144,16 +156,19 @@ describe("classifyProbeStream", () => {
               {
                 index: 0,
                 type: "function",
-                function: { name: CONTRACT_PROBE_TOOL_NAME, arguments: '{"ok":' },
+                function: {
+                  name: CONTRACT_PROBE_TOOL_NAME,
+                  arguments: '{"ok":',
+                },
               },
             ],
           },
         },
       ],
     })}\n\n`;
-    expect(classifyProbeStream(stream(truncated + FINISH_EVENT), "required_named")).toBe(
-      "malformed_tool_call",
-    );
+    expect(
+      classifyProbeStream(stream(truncated + FINISH_EVENT), "required_named"),
+    ).toBe("malformed_tool_call");
   });
 
   it("reports tool-call deltas that never named a function", () => {
@@ -161,14 +176,16 @@ describe("classifyProbeStream", () => {
       choices: [
         {
           delta: {
-            tool_calls: [{ index: 0, type: "function", function: { arguments: "{}" } }],
+            tool_calls: [
+              { index: 0, type: "function", function: { arguments: "{}" } },
+            ],
           },
         },
       ],
     })}\n\n`;
-    expect(classifyProbeStream(stream(nameless + FINISH_EVENT), "required_named")).toBe(
-      "malformed_tool_call",
-    );
+    expect(
+      classifyProbeStream(stream(nameless + FINISH_EVENT), "required_named"),
+    ).toBe("malformed_tool_call");
   });
 
   it("reports a call naming a function that was never offered", () => {
@@ -187,9 +204,9 @@ describe("classifyProbeStream", () => {
         },
       ],
     })}\n\n`;
-    expect(classifyProbeStream(stream(wrong + FINISH_EVENT), "required_named")).toBe(
-      "malformed_tool_call",
-    );
+    expect(
+      classifyProbeStream(stream(wrong + FINISH_EVENT), "required_named"),
+    ).toBe("malformed_tool_call");
   });
 });
 

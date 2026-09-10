@@ -134,7 +134,10 @@ function ItemList({
   }
   const start = Math.max(
     0,
-    Math.min(items.length - maxRows, Math.max(0, cursor - Math.floor(maxRows / 2))),
+    Math.min(
+      items.length - maxRows,
+      Math.max(0, cursor - Math.floor(maxRows / 2)),
+    ),
   );
   const end = Math.min(items.length, start + maxRows);
   const slice = items.slice(start, end);
@@ -162,7 +165,10 @@ function ItemList({
   );
 }
 
-function formatTool(t: McpToolMeta): { primary: string; secondary: string | null } {
+function formatTool(t: McpToolMeta): {
+  primary: string;
+  secondary: string | null;
+} {
   return {
     primary: `${t.rawName} (${t.resourceClass})`,
     secondary: t.description || null,

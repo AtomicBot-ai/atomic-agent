@@ -75,12 +75,17 @@ function fakeProvider(
       supportsPromptCache: false,
       reasoningFormat: "none",
     },
-    toolCallAdapter: transport === "native_tools" ? openAiToolCallAdapter : null,
+    toolCallAdapter:
+      transport === "native_tools" ? openAiToolCallAdapter : null,
     streamConsumer: null,
     complete: serve,
     async *completeStream(request) {
       const result = await serve(request);
-      yield { delta: result.content, reasoningDelta: "", done: true } as StreamChunk;
+      yield {
+        delta: result.content,
+        reasoningDelta: "",
+        done: true,
+      } as StreamChunk;
       return result;
     },
     async describeImage() {
@@ -108,12 +113,20 @@ function grammarFinish(): CompletionResult {
     reasoningContent: "",
     stop: true,
     truncated: false,
-    timing: { promptMs: 1, predictedMs: 1, promptTokens: 10, predictedTokens: 5 },
+    timing: {
+      promptMs: 1,
+      predictedMs: 1,
+      promptTokens: 10,
+      predictedTokens: 5,
+    },
     cacheHitTokens: 0,
     slotId: 0,
     modelId: "local-model",
     toolCalls: [
-      { type: "function", function: { name: "reply", arguments: '{"text":"WRONG native parse"}' } },
+      {
+        type: "function",
+        function: { name: "reply", arguments: '{"text":"WRONG native parse"}' },
+      },
     ],
   };
 }
@@ -134,7 +147,14 @@ describe("provider fallback chain end-to-end through the agent loop", () => {
     // provider. The request went out grammar/native-agnostic; the reply
     // must be parsed with the SERVED (grammar) transport, not the primary.
     const primary = fakeProvider("cloud", "native_tools", async () => {
-      throw new OpenAiHttpError("rate limited", 429, "http://cloud", false, null, "cloud");
+      throw new OpenAiHttpError(
+        "rate limited",
+        429,
+        "http://cloud",
+        false,
+        null,
+        "cloud",
+      );
     });
     const local = fakeProvider("local", "grammar", async () => grammarFinish());
     const providers = new Map<string, LlmProvider>([
@@ -178,7 +198,10 @@ describe("provider fallback chain end-to-end through the agent loop", () => {
         };
         const result =
           transport === "native_tools"
-            ? await provider.complete({ ...base, ...(params.tools ? { tools: params.tools } : {}) })
+            ? await provider.complete({
+                ...base,
+                ...(params.tools ? { tools: params.tools } : {}),
+              })
             : await provider.complete({
                 ...base,
                 grammar: params.grammar,
@@ -228,7 +251,14 @@ describe("provider fallback chain end-to-end through the agent loop", () => {
 
   it("streaming path: primary 429 falls over to a grammar link and the streamed reply parses under the served transport", async () => {
     const primary = fakeProvider("cloud", "native_tools", async () => {
-      throw new OpenAiHttpError("rate limited", 429, "http://cloud", false, null, "cloud");
+      throw new OpenAiHttpError(
+        "rate limited",
+        429,
+        "http://cloud",
+        false,
+        null,
+        "cloud",
+      );
     });
     const local = fakeProvider("local", "grammar", async () => grammarFinish());
     const providers = new Map<string, LlmProvider>([
@@ -236,7 +266,10 @@ describe("provider fallback chain end-to-end through the agent loop", () => {
       ["local", local],
     ]);
     const chain = new ProviderFallbackChain({
-      resolve: () => ({ chain: ["cloud", "local"], timing: DEFAULT_FALLBACK_TIMING }),
+      resolve: () => ({
+        chain: ["cloud", "local"],
+        timing: DEFAULT_FALLBACK_TIMING,
+      }),
     });
 
     const llmCompleteStream = (params: {
@@ -247,7 +280,11 @@ describe("provider fallback chain end-to-end through the agent loop", () => {
       signal?: AbortSignal;
       tools?: ReadonlyArray<Record<string, unknown>>;
     }): AsyncGenerator<StreamChunk, CompletionResult, void> => {
-      async function* run(): AsyncGenerator<StreamChunk, CompletionResult, void> {
+      async function* run(): AsyncGenerator<
+        StreamChunk,
+        CompletionResult,
+        void
+      > {
         // First-chunk priming happens implicitly here: the 429 throws
         // before any yield, so runWithFallback advances to the local link.
         let served: ToolCallTransport = "grammar";
@@ -260,7 +297,10 @@ describe("provider fallback chain end-to-end through the agent loop", () => {
           };
           const stream =
             served === "native_tools"
-              ? provider.completeStream({ ...base, ...(params.tools ? { tools: params.tools } : {}) })
+              ? provider.completeStream({
+                  ...base,
+                  ...(params.tools ? { tools: params.tools } : {}),
+                })
               : provider.completeStream({
                   ...base,
                   grammar: params.grammar,
@@ -313,7 +353,9 @@ describe("provider fallback chain end-to-end through the agent loop", () => {
   // per-chunk `servedTransport` stamp and the per-link prompt
   // substitution are pinned end-to-end, not re-implemented inline.
 
-  function thinkSeamDeps(providers: Map<string, LlmProvider>): FallbackSeamDeps {
+  function thinkSeamDeps(
+    providers: Map<string, LlmProvider>,
+  ): FallbackSeamDeps {
     const chain = new ProviderFallbackChain({
       resolve: () => ({
         chain: ["cloud", "local"],
@@ -340,7 +382,12 @@ describe("provider fallback chain end-to-end through the agent loop", () => {
       reasoningContent: "",
       stop: true,
       truncated: false,
-      timing: { promptMs: 1, predictedMs: 1, promptTokens: 10, predictedTokens: 5 },
+      timing: {
+        promptMs: 1,
+        predictedMs: 1,
+        promptTokens: 10,
+        predictedTokens: 5,
+      },
       cacheHitTokens: 0,
       slotId: 0,
       modelId: "local-model",
@@ -352,7 +399,14 @@ describe("provider fallback chain end-to-end through the agent loop", () => {
     const localPrompts: string[] = [];
     const primary = fakeProvider("cloud", "native_tools", async (request) => {
       cloudPrompts.push(request.prompt);
-      throw new OpenAiHttpError("rate limited", 429, "http://cloud", false, null, "cloud");
+      throw new OpenAiHttpError(
+        "rate limited",
+        429,
+        "http://cloud",
+        false,
+        null,
+        "cloud",
+      );
     });
     const local: LlmProvider = {
       ...fakeProvider("local", "grammar", async () => thinkFinish()),
@@ -361,7 +415,11 @@ describe("provider fallback chain end-to-end through the agent loop", () => {
       async *completeStream(request) {
         localPrompts.push(request.prompt);
         yield { delta: "deliberating about", reasoningDelta: "", done: false };
-        yield { delta: " the wrap-up</think>\n", reasoningDelta: "", done: false };
+        yield {
+          delta: " the wrap-up</think>\n",
+          reasoningDelta: "",
+          done: false,
+        };
         yield {
           delta: '{"tool":"finish","args":{"summary":"done"}}',
           reasoningDelta: "",
@@ -399,7 +457,10 @@ describe("provider fallback chain end-to-end through the agent loop", () => {
       },
     });
 
-    const session = createEmptySessionState({ id: "s-e2e-think-stream", workingDir });
+    const session = createEmptySessionState({
+      id: "s-e2e-think-stream",
+      workingDir,
+    });
     const result = await loop.runTurn(session, {
       userMessage: "wrap up",
       maxSteps: 3,
@@ -424,7 +485,14 @@ describe("provider fallback chain end-to-end through the agent loop", () => {
   it("think profile, unary: a grammar-served fallover completion still surfaces its reasoning and reaches finish", async () => {
     const localPrompts: string[] = [];
     const primary = fakeProvider("cloud", "native_tools", async () => {
-      throw new OpenAiHttpError("rate limited", 429, "http://cloud", false, null, "cloud");
+      throw new OpenAiHttpError(
+        "rate limited",
+        429,
+        "http://cloud",
+        false,
+        null,
+        "cloud",
+      );
     });
     const local = fakeProvider("local", "grammar", async (request) => {
       localPrompts.push(request.prompt);
@@ -458,7 +526,10 @@ describe("provider fallback chain end-to-end through the agent loop", () => {
       },
     });
 
-    const session = createEmptySessionState({ id: "s-e2e-think-unary", workingDir });
+    const session = createEmptySessionState({
+      id: "s-e2e-think-unary",
+      workingDir,
+    });
     const result = await loop.runTurn(session, {
       userMessage: "wrap up",
       maxSteps: 3,

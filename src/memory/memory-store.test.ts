@@ -52,10 +52,7 @@ describe("MemoryStore", () => {
 
   it("recall ranks exact-phrase matches above unrelated rows", () => {
     store.store({ content: "the cat sat on the mat" }, 1);
-    store.store(
-      { content: "unrelated trivia about dogs and fish" },
-      2,
-    );
+    store.store({ content: "unrelated trivia about dogs and fish" }, 2);
     store.store({ content: "cats love warm spots" }, 3);
     const hits = store.recall("cat", { k: 3 });
     expect(hits.length).toBeGreaterThanOrEqual(1);
@@ -75,14 +72,8 @@ describe("MemoryStore", () => {
   });
 
   it("scope=project filters by working_dir", () => {
-    store.store(
-      { content: "project-local detail", workingDir: "/repos/a" },
-      1,
-    );
-    store.store(
-      { content: "other project detail", workingDir: "/repos/b" },
-      2,
-    );
+    store.store({ content: "project-local detail", workingDir: "/repos/a" }, 1);
+    store.store({ content: "other project detail", workingDir: "/repos/b" }, 2);
     const a = store.recall("detail", {
       scope: "project",
       workingDir: "/repos/a",
@@ -157,7 +148,10 @@ describe("MemoryStore", () => {
   });
 
   it("listIndex clips preview to previewChars with an ellipsis", () => {
-    store.store({ content: "a very long single-line note with plenty of padding text" }, 1);
+    store.store(
+      { content: "a very long single-line note with plenty of padding text" },
+      1,
+    );
     const [entry] = store.listIndex({ previewChars: 10 });
     expect(entry?.preview.length).toBe(10);
     expect(entry?.preview.endsWith("…")).toBe(true);
@@ -180,9 +174,9 @@ describe("MemoryStore", () => {
   });
 
   it("rejects invalid tags", () => {
-    expect(() =>
-      store.store({ content: "ok", tags: ["good", ""] }),
-    ).toThrow(MemoryValidationError);
+    expect(() => store.store({ content: "ok", tags: ["good", ""] })).toThrow(
+      MemoryValidationError,
+    );
     expect(() =>
       store.store({
         content: "ok",

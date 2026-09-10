@@ -376,11 +376,23 @@ describe("LessonStore", () => {
     });
     try {
       clock = 1_000_000;
-      const a = store.create({ activation: "a", principle: "p", parentIds: [1] });
+      const a = store.create({
+        activation: "a",
+        principle: "p",
+        parentIds: [1],
+      });
       clock = 1_100_000;
-      const b = store.create({ activation: "b", principle: "p", parentIds: [2] });
+      const b = store.create({
+        activation: "b",
+        principle: "p",
+        parentIds: [2],
+      });
       clock = 1_200_000;
-      const c = store.create({ activation: "c", principle: "p", parentIds: [3] });
+      const c = store.create({
+        activation: "c",
+        principle: "p",
+        parentIds: [3],
+      });
       const ids = store.pickAgeDeprecationCandidates({
         now: 5_000_000,
         deprecationAgeMs: 100_000,

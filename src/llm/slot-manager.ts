@@ -67,6 +67,17 @@ export class SlotManager {
   }
 
   /**
+   * Slots `acquire()` can actually hand out: the configured count minus
+   * the reflection reservation. This — not `getSlotCount()` — is how many
+   * turns can run against the local server without two of them sharing a
+   * slot and evicting each other's KV cache; the fusion fan-out sizes its
+   * concurrent worker count from it.
+   */
+  poolSize(): number {
+    return this.slotPool.length;
+  }
+
+  /**
    * Re-size the pool to the server's actual slot count, discovered from a
    * later `/props` probe. No-op when the count is unchanged, so the common
    * refresh path costs nothing and never disturbs live cache affinity.

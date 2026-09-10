@@ -8,7 +8,10 @@ export function resolveModelsDir(dataDir: string): string {
   return join(dataDir, "models");
 }
 
-export function resolveServerBinPath(dataDir: string, binaryName: string): string {
+export function resolveServerBinPath(
+  dataDir: string,
+  binaryName: string,
+): string {
   return join(resolveBackendDir(dataDir), binaryName);
 }
 

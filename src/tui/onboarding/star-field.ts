@@ -132,7 +132,8 @@ export function computeStarField(options: StarFieldOptions): Star[] {
   const target = Math.round(columns * rows * STARS_PER_CELL * density);
   if (target <= 0) return stars;
   const clusters = buildClusters(sky, options.halo);
-  const clustered = clusters.length > 0 ? Math.round(target * CLUSTERED_SHARE) : 0;
+  const clustered =
+    clusters.length > 0 ? Math.round(target * CLUSTERED_SHARE) : 0;
   for (let i = 0; i < clustered; i += 1) {
     placeClusterStar(sky, clusters[i % clusters.length]!);
   }
@@ -168,7 +169,11 @@ function placeHalo(sky: Sky, halo: StarHalo): void {
 
 function buildClusters(sky: Sky, halo: StarHalo | undefined): Cluster[] {
   const side = Math.sqrt(sky.columns * sky.rows);
-  const wanted = clamp(Math.round(side / CLUSTER_SPACING), MIN_CLUSTERS, MAX_CLUSTERS);
+  const wanted = clamp(
+    Math.round(side / CLUSTER_SPACING),
+    MIN_CLUSTERS,
+    MAX_CLUSTERS,
+  );
   const radius = clamp(sky.columns / 8, MIN_CLUSTER_RADIUS, MAX_CLUSTER_RADIUS);
   const clusters: Cluster[] = [];
   for (let i = 0; i < wanted; i += 1) {
@@ -180,8 +185,13 @@ function buildClusters(sky: Sky, halo: StarHalo | undefined): Cluster[] {
       if (!sky.free(column, row)) continue;
       // Clusters keep out to the far side of the arc, so an unlucky
       // seed cannot drop a core on top of the mark's swarm and bury it.
-      if (halo && visualDistance(halo.center, { column, row }) < halo.radius) continue;
-      if (clusters.some((other) => visualDistance(other, { column, row }) < radius)) {
+      if (halo && visualDistance(halo.center, { column, row }) < halo.radius)
+        continue;
+      if (
+        clusters.some(
+          (other) => visualDistance(other, { column, row }) < radius,
+        )
+      ) {
         continue;
       }
       clusters.push({ column, row, radius });
@@ -199,7 +209,9 @@ function placeClusterStar(sky: Sky, cluster: Cluster): void {
     // comes out looking like a ring rather than a cluster.
     const reach = cluster.radius * sky.random() ** 2;
     const column = Math.round(cluster.column + Math.cos(angle) * reach);
-    const row = Math.round(cluster.row + (Math.sin(angle) * reach) / CELL_ASPECT);
+    const row = Math.round(
+      cluster.row + (Math.sin(angle) * reach) / CELL_ASPECT,
+    );
     if (!sky.free(column, row)) continue;
     sky.place(column, row, pickTier(CLUSTER_TIERS, sky.random()));
     return;

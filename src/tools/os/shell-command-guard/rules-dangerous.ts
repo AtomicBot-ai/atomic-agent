@@ -115,7 +115,8 @@ const DANGEROUS_PATTERNS: readonly PatternRule[] = [
   },
   {
     id: "dangerous.win_ps_download_exec",
-    regex: /\b(?:iwr|invoke-webrequest|curl|wget)\b.*\|\s*(?:iex|invoke-expression)\b/,
+    regex:
+      /\b(?:iwr|invoke-webrequest|curl|wget)\b.*\|\s*(?:iex|invoke-expression)\b/,
     reason: "download piped into PowerShell",
   },
 ];

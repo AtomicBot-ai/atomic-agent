@@ -449,9 +449,9 @@ describe("ConsolidatorJob (phase 5, scenario 5.A)", () => {
     });
     h.lessonStore.markDeprecated(a.id, "aged_out");
     // BM25 recall (active-only by default) drops the deprecated row.
-    expect(h.lessonStore.recall({ query: "needle" }).map((l) => l.id)).not.toContain(
-      a.id,
-    );
+    expect(
+      h.lessonStore.recall({ query: "needle" }).map((l) => l.id),
+    ).not.toContain(a.id);
     // `getById` returns it regardless of status.
     expect(h.lessonStore.getById(a.id)?.status).toBe("deprecated");
   });
@@ -653,14 +653,10 @@ describe("ConsolidatorJob (phase 5, scenario 5.A)", () => {
     const c = h.memoryStore.store({ content: "note C", source: "agent" });
     h.linkStore.add({ fromId: a.id, toId: b.id, kind: "RELATES_TO" });
     h.linkStore.add({ fromId: b.id, toId: c.id, kind: "RELATES_TO" });
-    const [r1, r2] = await Promise.all([
-      h.job.runOnce(),
-      h.job.runOnce(),
-    ]);
+    const [r1, r2] = await Promise.all([h.job.runOnce(), h.job.runOnce()]);
     // Exactly one tick does the work; the other returns the zero
     // summary thanks to the `running` guard.
-    const totalCreated =
-      (r1.lessonsCreated ?? 0) + (r2.lessonsCreated ?? 0);
+    const totalCreated = (r1.lessonsCreated ?? 0) + (r2.lessonsCreated ?? 0);
     expect(totalCreated).toBe(1);
   });
 });

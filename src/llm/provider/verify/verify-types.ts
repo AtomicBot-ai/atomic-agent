@@ -7,10 +7,7 @@
 
 /** The cloud kinds a key can be checked for. Local servers never carry one. */
 export type ProviderVerifyKind =
-  | "openrouter"
-  | "aimlapi"
-  | "gemini"
-  | "openai-compatible";
+  "openrouter" | "aimlapi" | "gemini" | "openai-compatible";
 
 export type ProviderVerifyStatus =
   /** The provider answered a real completion: the key is live and funded. */

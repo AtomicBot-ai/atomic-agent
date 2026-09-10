@@ -28,15 +28,13 @@ export function PrivacyPanel({ panel }: PrivacyPanelProps): ReactElement {
         >
           {panel.analyticsEnabled ? "on" : "off"}
         </Text>
-        {panel.busy ? (
-          <Text color={theme.colors.muted}>{"  "}…</Text>
-        ) : null}
+        {panel.busy ? <Text color={theme.colors.muted}>{"  "}…</Text> : null}
       </Box>
       <Box marginTop={1} flexDirection="column">
         <Text color={theme.colors.muted}>
-          {"   "}Product analytics + crash reports, fully anonymous. No
-          message content, paths, args, or IP ever leave this machine —
-          only an install id and coarse counters.
+          {"   "}Product analytics + crash reports, fully anonymous. No message
+          content, paths, args, or IP ever leave this machine — only an install
+          id and coarse counters.
         </Text>
       </Box>
       <Box marginTop={1}>
@@ -47,18 +45,25 @@ export function PrivacyPanel({ panel }: PrivacyPanelProps): ReactElement {
       <Box marginTop={1} flexDirection="column">
         {sessionGrantLines(panel.sessionGrants).map((line) => (
           <Text key={line} color={theme.colors.muted}>
-            {"   "}{line}
+            {"   "}
+            {line}
           </Text>
         ))}
       </Box>
       {panel.message ? (
         <Box marginTop={1}>
-          <Text color={theme.colors.accentSoft}>{"   "}{panel.message}</Text>
+          <Text color={theme.colors.accentSoft}>
+            {"   "}
+            {panel.message}
+          </Text>
         </Box>
       ) : null}
       {panel.lastError ? (
         <Box marginTop={1}>
-          <Text color={theme.colors.error}>{"   "}{panel.lastError}</Text>
+          <Text color={theme.colors.error}>
+            {"   "}
+            {panel.lastError}
+          </Text>
         </Box>
       ) : null}
       <Box marginTop={1}>

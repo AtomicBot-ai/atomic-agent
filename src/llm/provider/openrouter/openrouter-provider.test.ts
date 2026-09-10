@@ -48,7 +48,9 @@ describe("OpenRouterProvider", () => {
 
     expect(sent?.get("HTTP-Referer")).toBe("https://example.com");
     expect(sent?.get("X-Title")).toBe("Example App");
-    expect(sent?.get("X-OpenRouter-Categories")).toBe("cli-agent,personal-agent");
+    expect(sent?.get("X-OpenRouter-Categories")).toBe(
+      "cli-agent,personal-agent",
+    );
   });
 
   it("posts chat completions to /api/v1/chat/completions (not double /v1)", async () => {
@@ -90,7 +92,9 @@ describe("OpenRouterProvider", () => {
   it("builds the streaming final result from SSE without a second request", async () => {
     const bodies: Record<string, unknown>[] = [];
     const fetchImpl = vi.fn(async (_url: string, init?: RequestInit) => {
-      bodies.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
+      bodies.push(
+        JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>,
+      );
       return new Response(
         sse([
           {
@@ -111,7 +115,7 @@ describe("OpenRouterProvider", () => {
                       type: "function",
                       function: {
                         name: "reply",
-                        arguments: "{\"text\":\"hel",
+                        arguments: '{"text":"hel',
                       },
                     },
                   ],
@@ -129,7 +133,7 @@ describe("OpenRouterProvider", () => {
                   tool_calls: [
                     {
                       index: 0,
-                      function: { arguments: "lo\"}" },
+                      function: { arguments: 'lo"}' },
                     },
                   ],
                 },
@@ -199,13 +203,15 @@ describe("OpenRouterProvider", () => {
       {
         id: "call-1",
         type: "function",
-        function: { name: "reply", arguments: "{\"text\":\"hello\"}" },
+        function: { name: "reply", arguments: '{"text":"hello"}' },
       },
     ]);
   });
 });
 
-function sse(events: readonly Array<Record<string, unknown> | string>): ReadableStream<Uint8Array> {
+function sse(
+  events: readonly Array<Record<string, unknown> | string>,
+): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
   return new ReadableStream({
     start(controller) {

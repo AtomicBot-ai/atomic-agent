@@ -43,7 +43,11 @@ const DETAIL_COLUMN = ROW_MARKER.length + LABEL_COLUMNS;
  * measure trims makes Ink wrap the invisible pad cells instead of
  * clipping them, growing the block taller than it was measured.
  */
-function labelCell(selected: boolean, label: string, fit: OnboardingFit): string {
+function labelCell(
+  selected: boolean,
+  label: string,
+  fit: OnboardingFit,
+): string {
   return `${rowPrefix(selected)}${fit.rowDetails ? label.padEnd(LABEL_COLUMNS) : label}`;
 }
 
@@ -55,7 +59,8 @@ export function measureOnboardingChooseStep(fit: OnboardingFit): number {
     lines.push(
       `${labelCell(true, choice.label, fit)}${fit.rowDetails ? choice.detail[0] : ""}`,
     );
-    if (fit.rowDetails) lines.push(`${" ".repeat(DETAIL_COLUMN)}${choice.detail[1]}`);
+    if (fit.rowDetails)
+      lines.push(`${" ".repeat(DETAIL_COLUMN)}${choice.detail[1]}`);
   }
   return widestLine(lines);
 }
@@ -90,7 +95,10 @@ export function OnboardingChooseStep(props: {
           >
             <Box flexDirection="column" marginBottom={1}>
               <Box flexDirection="row">
-                <Text color={selected ? theme.colors.accent : undefined} bold={selected}>
+                <Text
+                  color={selected ? theme.colors.accent : undefined}
+                  bold={selected}
+                >
                   {labelCell(selected, choice.label, props.fit)}
                 </Text>
                 {props.fit.rowDetails ? (

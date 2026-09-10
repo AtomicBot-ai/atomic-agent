@@ -13,9 +13,18 @@ import {
   resolveModelFilePath,
   resolveMmprojFilePath,
 } from "./backend-paths.js";
-import { downloadFile, type DownloadProgressFn } from "./download-file.js";
+import { downloadFile, type DownloadFileOptions } from "./download-file.js";
 
-export function isModelDownloaded(dataDir: string, model: LocalModelDef): boolean {
+/** What a model pull lets its caller steer: progress, retry notices, cancel. */
+export type ModelDownloadOptions = Pick<
+  DownloadFileOptions,
+  "onProgress" | "onRetry" | "signal"
+>;
+
+export function isModelDownloaded(
+  dataDir: string,
+  model: LocalModelDef,
+): boolean {
   return existsSync(resolveModelFilePath(dataDir, model.id, model.filename));
 }
 
@@ -44,7 +53,7 @@ export function isMmprojDownloaded(
 export async function downloadModel(
   dataDir: string,
   model: LocalModelDef,
-  opts?: { onProgress?: DownloadProgressFn; signal?: AbortSignal },
+  opts?: ModelDownloadOptions,
 ): Promise<void> {
   const dest = resolveModelFilePath(dataDir, model.id, model.filename);
   if (existsSync(dest)) return;
@@ -60,7 +69,7 @@ export async function downloadModel(
 export async function downloadMmproj(
   dataDir: string,
   model: LocalModelDef,
-  opts?: { onProgress?: DownloadProgressFn; signal?: AbortSignal },
+  opts?: ModelDownloadOptions,
 ): Promise<void> {
   if (!model.supportsVision || !model.mmprojUrl || !model.mmprojFilename) {
     throw new Error(
@@ -111,7 +120,7 @@ export function isEmbeddingModelDownloaded(
 export async function downloadEmbeddingModel(
   dataDir: string,
   model: EmbeddingModelDef,
-  opts?: { onProgress?: DownloadProgressFn; signal?: AbortSignal },
+  opts?: ModelDownloadOptions,
 ): Promise<void> {
   const dest = resolveModelFilePath(dataDir, model.id, model.filename);
   if (existsSync(dest)) return;

@@ -70,7 +70,8 @@ export function reduceUiAction(
       for (const msg of state.messages) {
         for (const card of msg.toolCards ?? []) next[card.id] = action.expanded;
       }
-      for (const card of state.streamingToolCards) next[card.id] = action.expanded;
+      for (const card of state.streamingToolCards)
+        next[card.id] = action.expanded;
       return { ...state, toolsExpandedById: next };
     }
     case "menu_opened":
@@ -163,7 +164,10 @@ export function reduceUiAction(
     }
     case "slash_palette_cursor_set": {
       const max = Math.max(0, filterSlashCommands(state.slashQuery).length - 1);
-      return { ...state, slashPaletteCursor: Math.min(max, Math.max(0, action.row)) };
+      return {
+        ...state,
+        slashPaletteCursor: Math.min(max, Math.max(0, action.row)),
+      };
     }
     case "input_history_navigated":
       return navigateInputHistory(state, action.delta);
@@ -199,8 +203,7 @@ export function reduceUiAction(
       if (!state.codingModeMenu) return state;
       const count = CODING_MODES.length;
       // Wraps, like every other list in the app.
-      const next =
-        (state.codingModeMenu.cursor + action.delta + count) % count;
+      const next = (state.codingModeMenu.cursor + action.delta + count) % count;
       return { ...state, codingModeMenu: { cursor: next } };
     }
     case "coding_mode_cycled": {
@@ -210,7 +213,9 @@ export function reduceUiAction(
       // picking the row you were already on is a decision too, and
       // leaving the popup up would read as the click not landing.
       if (next === state.codingMode) {
-        return state.codingModeMenu ? { ...state, codingModeMenu: null } : state;
+        return state.codingModeMenu
+          ? { ...state, codingModeMenu: null }
+          : state;
       }
       // The reducer owns the *displayed* mode only. Applying it to the
       // runtime (the approval level and the plan-mode flag) is the
@@ -290,10 +295,13 @@ export function reduceUiAction(
       };
     case "recent_sessions_updated": {
       const max = Math.max(0, action.sessions.length - 1);
+      // A refreshed list is a different list: the row a drag started
+      // on may have moved or gone, so the drag feedback ends with it.
       return {
         ...state,
         recentSessions: action.sessions,
         sidebarCursor: Math.min(state.sidebarCursor, max),
+        sidebarDrag: null,
       };
     }
     case "chat_focus_toggled":
@@ -302,7 +310,11 @@ export function reduceUiAction(
         chatFocus: state.chatFocus === "editor" ? "sidebar" : "editor",
       };
     case "chat_focus_set":
-      return { ...state, chatFocus: action.focus };
+      return {
+        ...state,
+        chatFocus: action.focus,
+        sidebarDrag: action.focus === "sidebar" ? state.sidebarDrag : null,
+      };
     case "sidebar_collapse_toggled": {
       const collapsed = !state.sidebarCollapsed;
       // Folding the rail away takes its focus stop with it, so the
@@ -351,7 +363,10 @@ export function reduceUiAction(
       return { ...state, sidebarTasksCursor: next };
     }
     case "sidebar_tasks_cursor_set": {
-      const max = Math.max(0, selectSidebarTasks(state.tasksPanel.rows).length - 1);
+      const max = Math.max(
+        0,
+        selectSidebarTasks(state.tasksPanel.rows).length - 1,
+      );
       return {
         ...state,
         sidebarTasksCursor: Math.min(max, Math.max(0, action.row)),
@@ -420,6 +435,7 @@ export function reduceUiAction(
         chatFocus: "editor",
         sidebarSection: "sessions",
         sidebarCursor: 0,
+        sidebarDrag: null,
         sidebarTasksCursor: 0,
         queuedMessages: [],
       };
@@ -448,7 +464,10 @@ function navigateInputHistory(state: TuiState, delta: 1 | -1): TuiState {
   }
   // Entering recall parks the live draft; stepping back past the newest
   // entry hands it back verbatim instead of clearing the editor.
-  const draft = state.inputHistoryCursor === null ? state.inputValue : state.inputHistoryDraft;
+  const draft =
+    state.inputHistoryCursor === null
+      ? state.inputValue
+      : state.inputHistoryDraft;
   const value = cursor === null ? (draft ?? "") : (history[cursor] ?? "");
   return {
     ...state,

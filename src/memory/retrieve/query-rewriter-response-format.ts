@@ -26,7 +26,7 @@ export const QUERY_REWRITER_RESPONSE_FORMAT: ResponseFormatJsonSchema = {
   name: "query_rewriter_v1",
   description:
     "Rewrite the latest ambiguous user message into a self-contained " +
-    "search query. Use the literal token \"NONE\" when no rewrite is possible.",
+    'search query. Use the literal token "NONE" when no rewrite is possible.',
   strict: true,
   schema: {
     type: "object",

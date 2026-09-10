@@ -92,6 +92,9 @@ describe("contextUsageFromPrompt", () => {
   });
 
   it("reports a cloud prompt's unknown window as unknown", () => {
-    expect(contextUsageFromPrompt(builtPrompt({ contextWindow: null })).contextWindow).toBeNull();
+    expect(
+      contextUsageFromPrompt(builtPrompt({ contextWindow: null }))
+        .contextWindow,
+    ).toBeNull();
   });
 });

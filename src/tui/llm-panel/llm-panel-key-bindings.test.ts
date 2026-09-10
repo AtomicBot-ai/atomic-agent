@@ -6,6 +6,7 @@ import type { TuiAppCallbacks } from "../tui-app.js";
 import { createInitialTuiState } from "../tui-state.js";
 import { fakeSession } from "../test-fixtures.js";
 import { handleLlmPanelKey } from "./llm-panel-key-bindings.js";
+import { selectLocalRows } from "./llm-panel-row-builders.js";
 
 function emptyKey(overrides: Partial<Key> = {}): Key {
   return {
@@ -281,6 +282,145 @@ describe("handleLlmPanelKey", () => {
     expect(dispatched).not.toContainEqual({ type: "llm_dashboard_opened" });
   });
 
+  it("Enter on a downloaded vision row with a missing projector goes live and fetches the projector", () => {
+    const onSetActive = vi.fn();
+    const onSetActiveText = vi.fn();
+    const onPull = vi.fn();
+    const seeded = seededState();
+    const state = {
+      ...seeded,
+      providersPanel: {
+        ...seeded.providersPanel,
+        rows: seeded.providersPanel.rows.map((row) => ({
+          ...row,
+          isActiveText: row.id === "openrouter",
+        })),
+      },
+      localModelsPanel: {
+        ...seeded.localModelsPanel,
+        rows: seeded.localModelsPanel.rows.map((row) => ({
+          ...row,
+          def: { ...row.def, supportsVision: true },
+          mmprojStatus: "missing" as const,
+        })),
+      },
+      llmPanel: { ...seeded.llmPanel, mode: "local" as const, localCursor: 0 },
+    };
+    handleLlmPanelKey("", emptyKey({ return: true }), {
+      state,
+      dispatch: vi.fn(),
+      callbacks: callbacks({
+        onLocalModelsSetActiveRequested: onSetActive,
+        onProvidersSetActiveText: onSetActiveText,
+        onLocalModelsPullRequested: onPull,
+      }),
+    });
+    // The weights work on their own — the model must not wait on a
+    // projector the repo may have stopped serving.
+    expect(onSetActive).toHaveBeenCalledWith("qwen-3.5-4b");
+    expect(onSetActiveText).toHaveBeenCalledWith("local-llama");
+    expect(onPull).toHaveBeenCalledWith("qwen-3.5-4b", "mmproj-only");
+  });
+
+  it("Enter on the live vision row with a missing projector only retries the projector", () => {
+    const onSetActive = vi.fn();
+    const onStart = vi.fn();
+    const onPull = vi.fn();
+    const seeded = seededState();
+    const state = {
+      ...seeded,
+      localModelsPanel: {
+        ...seeded.localModelsPanel,
+        rows: seeded.localModelsPanel.rows.map((row) => ({
+          ...row,
+          active: true,
+          def: { ...row.def, supportsVision: true },
+          mmprojStatus: "missing" as const,
+        })),
+      },
+      llmPanel: { ...seeded.llmPanel, mode: "local" as const, localCursor: 0 },
+    };
+    handleLlmPanelKey("", emptyKey({ return: true }), {
+      state,
+      dispatch: vi.fn(),
+      callbacks: callbacks({
+        onLocalModelsSetActiveRequested: onSetActive,
+        onLocalModelsDaemonStartRequested: onStart,
+        onLocalModelsPullRequested: onPull,
+      }),
+    });
+    expect(onSetActive).not.toHaveBeenCalled();
+    expect(onStart).not.toHaveBeenCalled();
+    expect(onPull).toHaveBeenCalledWith("qwen-3.5-4b", "mmproj-only");
+  });
+
+  it("says what Enter does on a vision row whose projector is missing", () => {
+    const seeded = seededState();
+    const withMissing = (active: boolean) => ({
+      ...seeded,
+      localModelsPanel: {
+        ...seeded.localModelsPanel,
+        rows: seeded.localModelsPanel.rows.map((row) => ({
+          ...row,
+          active,
+          def: { ...row.def, supportsVision: true },
+          mmprojStatus: "missing" as const,
+        })),
+      },
+    });
+    const hint = (state: ReturnType<typeof withMissing>) =>
+      selectLocalRows(state).find((row) => row.kind === "localTextModel")?.enterEffect;
+    expect(hint(withMissing(false))).toBe(
+      "Enter: select model, download projector for qwen-3.5-4b",
+    );
+    expect(hint(withMissing(true))).toBe(
+      "Enter: download projector for qwen-3.5-4b (text chat works without it)",
+    );
+  });
+
+  it("restarts the local model server on `R`, without touching stop/start", () => {
+    const onRestart = vi.fn();
+    const onStop = vi.fn();
+    const onStart = vi.fn();
+    const onRefresh = vi.fn();
+    const state = seededState();
+    const dispatched: TuiAction[] = [];
+    const handled = handleLlmPanelKey("R", emptyKey({ shift: true }), {
+      state,
+      dispatch: (action) => dispatched.push(action),
+      callbacks: callbacks({
+        onLocalModelsDaemonRestartRequested: onRestart,
+        onLocalModelsDaemonStopRequested: onStop,
+        onLocalModelsDaemonStartRequested: onStart,
+        onLocalModelsRefreshRequested: onRefresh,
+      }),
+    });
+    expect(handled).toBe(true);
+    expect(onRestart).toHaveBeenCalledTimes(1);
+    // `R` must not degrade into the `s` toggle (which stops the
+    // embedding daemon too) or into `r` (refresh).
+    expect(onStop).not.toHaveBeenCalled();
+    expect(onStart).not.toHaveBeenCalled();
+    expect(onRefresh).not.toHaveBeenCalled();
+    expect(dispatched).toEqual([]);
+  });
+
+  it("keeps lowercase `r` on refresh so the restart key cannot be hit by accident", () => {
+    const onRestart = vi.fn();
+    const onRefresh = vi.fn();
+    const state = seededState();
+    handleLlmPanelKey("r", emptyKey(), {
+      state,
+      dispatch: () => {},
+      callbacks: callbacks({
+        onLocalModelsDaemonRestartRequested: onRestart,
+        onLocalModelsRefreshRequested: onRefresh,
+      }),
+    });
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+    expect(onRestart).not.toHaveBeenCalled();
+  });
+
   it("opens the slash-command palette when `/` is pressed", () => {
     const state = seededState();
     const dispatched: TuiAction[] = [];
@@ -403,3 +543,36 @@ function localDef(id: LocalModelDef["id"]): LocalModelDef {
     supportsVision: false,
   };
 }
+
+describe("handleLlmPanelKey — tell me when it lands", () => {
+  function llmState() {
+    const initial = createInitialTuiState(fakeSession());
+    return { ...initial, uiMode: "debug" as const, activeTab: "llm" as const };
+  }
+
+  it("N asks to reopen the prompt from the live LLM pane", () => {
+    const onRequest = vi.fn();
+    const handled = handleLlmPanelKey("N", emptyKey({ shift: true }), {
+      state: llmState(),
+      dispatch: vi.fn(),
+      callbacks: callbacks({ onLocalModelsNotifyPromptRequested: onRequest }),
+    });
+    expect(handled).toBe(true);
+    expect(onRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("answers the open prompt before any pane hotkey — n is 'no', not Add Provider", () => {
+    const onChoice = vi.fn();
+    const dispatch = vi.fn();
+    const base = llmState();
+    const state = {
+      ...base,
+      localModelsPanel: { ...base.localModelsPanel, notifyPrompt: { label: "Qwen", current: null } },
+    };
+    const cb = callbacks({ onLocalModelsNotifyChoice: onChoice });
+    expect(handleLlmPanelKey("n", emptyKey(), { state, dispatch, callbacks: cb })).toBe(true);
+    expect(handleLlmPanelKey("t", emptyKey(), { state, dispatch, callbacks: cb })).toBe(true);
+    expect(onChoice.mock.calls.map((c) => c[0])).toEqual(["off", "telegram"]);
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+});

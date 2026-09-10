@@ -118,7 +118,12 @@ describe("mergeMcpDescriptors", () => {
 
   it("appends MCP descriptors after base entries", () => {
     const mcp: ToolDescriptor[] = [
-      { name: "mcp.docs.search", summary: "[mcp:docs]", argsSchema: "{}", tier: "frequent" },
+      {
+        name: "mcp.docs.search",
+        summary: "[mcp:docs]",
+        argsSchema: "{}",
+        tier: "frequent",
+      },
     ];
     const out = mergeMcpDescriptors(base, mcp);
     expect(out.map((d) => d.name)).toEqual([

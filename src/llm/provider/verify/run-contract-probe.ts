@@ -57,7 +57,10 @@ import {
   classifyProbeStream,
   contractProbeFailureIsTerminal,
 } from "./classify-contract-probe.js";
-import { isAbortError, classifyVerifyTransportError } from "./classify-verify-response.js";
+import {
+  isAbortError,
+  classifyVerifyTransportError,
+} from "./classify-verify-response.js";
 import {
   CONTRACT_PROBE_TOOL_NAME,
   contractProbeToolDefinition,
@@ -136,7 +139,12 @@ export async function runProviderContractProbe(
   });
 
   if (model.length === 0) {
-    return emit("model_unavailable", null, null, "no model configured to probe");
+    return emit(
+      "model_unavailable",
+      null,
+      null,
+      "no model configured to probe",
+    );
   }
 
   const run = async (body: Record<string, unknown>): Promise<RungOutcome> =>
@@ -158,7 +166,10 @@ export async function runProviderContractProbe(
   let forcedRefusal: { httpStatus: number; body: string } | null = null;
   let forcedIgnored: { httpStatus: number; detail: string } | null = null;
   if (forced.kind === "stream") {
-    const forcedStatus = classifyProbeStream(forced.observation, "required_named");
+    const forcedStatus = classifyProbeStream(
+      forced.observation,
+      "required_named",
+    );
     if (forcedStatus !== "forced_tool_choice_ignored") {
       return emit(
         forcedStatus,
@@ -182,7 +193,12 @@ export async function runProviderContractProbe(
       forced.body,
     );
     if (contractProbeFailureIsTerminal(forcedStatus)) {
-      return emit(forcedStatus, forced.httpStatus, "required_named", forced.body);
+      return emit(
+        forcedStatus,
+        forced.httpStatus,
+        "required_named",
+        forced.body,
+      );
     }
     forcedRefusal = { httpStatus: forced.httpStatus, body: forced.body };
   }
@@ -219,9 +235,17 @@ export async function runProviderContractProbe(
         forcedIgnored.detail,
       );
     }
-    return emit(autoStatus, auto.httpStatus, "auto", streamDetail(auto.observation));
+    return emit(
+      autoStatus,
+      auto.httpStatus,
+      "auto",
+      streamDetail(auto.observation),
+    );
   }
-  const autoStatus = classifyContractProbeHttpFailure(auto.httpStatus, auto.body);
+  const autoStatus = classifyContractProbeHttpFailure(
+    auto.httpStatus,
+    auto.body,
+  );
   if (contractProbeFailureIsTerminal(autoStatus)) {
     return emit(autoStatus, auto.httpStatus, "auto", auto.body);
   }
@@ -248,7 +272,9 @@ export async function runProviderContractProbe(
   );
   // The control failed too, so nothing here was ever about tools.
   return emit(
-    contractProbeFailureIsTerminal(controlStatus) ? controlStatus : "provider_error",
+    contractProbeFailureIsTerminal(controlStatus)
+      ? controlStatus
+      : "provider_error",
     control.httpStatus,
     null,
     control.body,
@@ -282,7 +308,11 @@ async function runRung(
   }
   const remainingMs = ctx.deadline - Date.now();
   if (remainingMs <= 0) {
-    return { kind: "aborted", status: "timeout", detail: "probe deadline reached" };
+    return {
+      kind: "aborted",
+      status: "timeout",
+      detail: "probe deadline reached",
+    };
   }
   ctx.state.requests += 1;
 
@@ -307,7 +337,11 @@ async function runRung(
     );
   } catch (err) {
     if (ctx.signal?.aborted || isAbortError(err)) {
-      return { kind: "aborted", status: "cancelled", detail: "probe cancelled" };
+      return {
+        kind: "aborted",
+        status: "cancelled",
+        detail: "probe cancelled",
+      };
     }
     // Transport failures are read by the key check's classifier, so a
     // refused connection or an expired deadline means the same thing in
@@ -364,7 +398,8 @@ async function runRung(
 /**
  * The probe request, in the same shape `buildOpenAiChatBody` gives a
  * real turn — the streamed transport, the tools payload,
- * `parallel_tool_calls`, and the `max_tokens` cap a turn always carries.
+ * `parallel_tool_calls`, the `max_tokens` cap a turn always carries and
+ * the `stream_options` usage request that goes with every stream.
  * Sending anything less would let a route pass the probe and then fail
  * the first message on a field the probe never showed it.
  *
@@ -387,6 +422,7 @@ function probeBody(
     temperature: 0,
     max_tokens: PROBE_MAX_TOKENS,
     stream: true,
+    stream_options: { include_usage: true },
   };
   if (mode === null) return body;
   body.tools = [contractProbeToolDefinition()];
@@ -432,7 +468,11 @@ async function readStreamBounded(
   signal?: AbortSignal,
 ): Promise<{ text: string; timedOut: boolean; aborted: boolean }> {
   if (!res.body) {
-    return { text: await res.text().catch(() => ""), timedOut: false, aborted: false };
+    return {
+      text: await res.text().catch(() => ""),
+      timedOut: false,
+      aborted: false,
+    };
   }
   const reader = res.body.getReader();
   const decoder = new TextDecoder();

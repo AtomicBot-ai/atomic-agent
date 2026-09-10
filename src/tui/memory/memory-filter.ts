@@ -24,8 +24,7 @@ export function cycleMemoryChannel(
   available: readonly MemoryChannel[],
   direction: 1 | -1,
 ): MemoryChannel {
-  const order =
-    available.length > 0 ? available : MEMORY_CHANNEL_ORDER;
+  const order = available.length > 0 ? available : MEMORY_CHANNEL_ORDER;
   const idx = order.indexOf(current);
   const safe = idx === -1 ? 0 : idx;
   const next = (safe + direction + order.length) % order.length;

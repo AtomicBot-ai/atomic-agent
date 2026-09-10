@@ -1,4 +1,8 @@
 import { ConfigValidationError } from "./config-validation-error.js";
+import {
+  parseLlmRunModeConfig,
+  type UserLlmRunModeConfig,
+} from "./llm-run-mode-config.js";
 import { SUBSCRIPTION_CLI_KIND } from "./provider-auth-mode.js";
 
 export type UserLlmToolTransport = "auto" | "grammar" | "native_tools";
@@ -59,6 +63,13 @@ export type UserLlmProviderEntry = {
   supportsVision?: boolean;
   requestTimeoutMs?: number;
   /**
+   * Hard ceiling on this provider's output, in tokens. Absent means no
+   * ceiling: the service applies the model's own maximum, which is what
+   * makes a long single-file answer possible. Set it to bound spend or
+   * to satisfy a service that requires the field.
+   */
+  maxOutputTokens?: number;
+  /**
    * Prompt-caching policy for this provider. Declared in the config
    * schema and on `LlmProviderConfigEntry`; no provider reads it yet,
    * so today it only has to survive the round-trip through config.
@@ -114,16 +125,14 @@ export type UserModelEntry = {
   supportsTools?: "none" | "basic" | "parallel" | "strict";
   supportsPromptCache?: boolean;
   reasoningFormat?:
-    | "none"
-    | "delta_reasoning"
-    | "delta_thinking"
-    | "delta_reasoning_content";
+    "none" | "delta_reasoning" | "delta_thinking" | "delta_reasoning_content";
   pricing?: {
     input: number;
     output: number;
     cacheRead?: number;
     cacheWrite?: number;
-  };};
+  };
+};
 
 export type UserLlmFallbackConfig = {
   chain?: string[];
@@ -140,6 +149,8 @@ export type UserLlmFileConfig = {
   toolTransport: UserLlmToolTransport;
   providers: UserLlmProviderEntry[];
   fallback?: UserLlmFallbackConfig;
+  /** Run mode (local | cloud | fusion) and the fusion legs. See `llm-run-mode-config.ts`. */
+  runMode?: UserLlmRunModeConfig;
 };
 
 const PROVIDER_ID_RE = /^[a-z][a-z0-9-]{0,31}$/;
@@ -163,10 +174,7 @@ function parseProviderId(raw: unknown, field: string): string {
   return raw;
 }
 
-function parseOptionalString(
-  raw: unknown,
-  field: string,
-): string | undefined {
+function parseOptionalString(raw: unknown, field: string): string | undefined {
   if (raw === undefined || raw === null) return undefined;
   if (typeof raw !== "string" || raw.length === 0) {
     throw new ConfigValidationError(field, "expected non-empty string");
@@ -227,7 +235,10 @@ export function parseLlmProviderEntry(
     apiKey: parseOptionalString(obj.apiKey, `${field}.apiKey`),
     model: parseOptionalString(obj.model, `${field}.model`),
     baseUrl: parseOptionalString(obj.baseUrl, `${field}.baseUrl`),
-    apiKeyEnvVar: parseOptionalString(obj.apiKeyEnvVar, `${field}.apiKeyEnvVar`),
+    apiKeyEnvVar: parseOptionalString(
+      obj.apiKeyEnvVar,
+      `${field}.apiKeyEnvVar`,
+    ),
     defaultChatModel: parseOptionalString(
       obj.defaultChatModel,
       `${field}.defaultChatModel`,
@@ -274,6 +285,19 @@ export function parseLlmProviderEntry(
               throw new ConfigValidationError(
                 `${field}.requestTimeoutMs`,
                 "expected positive number",
+              );
+            })(),
+    maxOutputTokens:
+      obj.maxOutputTokens === undefined
+        ? undefined
+        : typeof obj.maxOutputTokens === "number" &&
+            Number.isInteger(obj.maxOutputTokens) &&
+            obj.maxOutputTokens > 0
+          ? obj.maxOutputTokens
+          : (() => {
+              throw new ConfigValidationError(
+                `${field}.maxOutputTokens`,
+                "expected positive integer",
               );
             })(),
     promptCache: parseOptionalEnum<
@@ -391,7 +415,10 @@ function parseOptionalEnum<T extends string>(
 ): T | undefined {
   if (raw === undefined || raw === null) return undefined;
   if (typeof raw !== "string" || !allowed.has(raw)) {
-    throw new ConfigValidationError(field, `expected ${[...allowed].join("|")}`);
+    throw new ConfigValidationError(
+      field,
+      `expected ${[...allowed].join("|")}`,
+    );
   }
   return raw as T;
 }
@@ -564,7 +591,10 @@ export function parseLlmFallbackConfig(
 
   if (obj.chain !== undefined) {
     if (!Array.isArray(obj.chain)) {
-      throw new ConfigValidationError(`${field}.chain`, "expected array of provider ids");
+      throw new ConfigValidationError(
+        `${field}.chain`,
+        "expected array of provider ids",
+      );
     }
     const chain = obj.chain.map((v, i) =>
       parseProviderId(v, `${field}.chain[${i}]`),
@@ -582,7 +612,10 @@ export function parseLlmFallbackConfig(
 
   if (obj.appendLocal !== undefined) {
     if (typeof obj.appendLocal !== "boolean") {
-      throw new ConfigValidationError(`${field}.appendLocal`, "expected boolean");
+      throw new ConfigValidationError(
+        `${field}.appendLocal`,
+        "expected boolean",
+      );
     }
     out.appendLocal = obj.appendLocal;
   }
@@ -661,6 +694,10 @@ export function parseUserLlmFileConfig(
           new Set(providers.map((p) => p.id)),
           "llm.fallback",
         );
+  const runMode =
+    obj.runMode === undefined || obj.runMode === null
+      ? undefined
+      : parseLlmRunModeConfig(obj.runMode, providers, "llm.runMode");
 
   return {
     activeTextProvider,
@@ -668,5 +705,6 @@ export function parseUserLlmFileConfig(
     toolTransport: toolTransportRaw,
     providers,
     ...(fallback ? { fallback } : {}),
+    ...(runMode ? { runMode } : {}),
   };
 }

@@ -33,7 +33,10 @@ export function SessionPicker(props: SessionPickerProps): ReactElement {
   const visible = sessions.slice(windowStart, windowStart + MAX_ROWS);
   const visibleCursor = clamped - windowStart;
   const hiddenBefore = windowStart;
-  const hiddenAfter = Math.max(0, sessions.length - windowStart - visible.length);
+  const hiddenAfter = Math.max(
+    0,
+    sessions.length - windowStart - visible.length,
+  );
   return (
     <Box
       borderStyle="round"
@@ -81,7 +84,11 @@ export function SessionPicker(props: SessionPickerProps): ReactElement {
   );
 }
 
-function computeWindowStart(cursor: number, total: number, size: number): number {
+function computeWindowStart(
+  cursor: number,
+  total: number,
+  size: number,
+): number {
   if (total <= size) return 0;
   if (cursor < size) return 0;
   return Math.min(cursor - size + 1, total - size);
@@ -96,22 +103,30 @@ function PickerRow({
   selected: boolean;
   current: boolean;
 }): ReactElement {
-  const idShort = entry.sessionId.length > 10
-    ? `${entry.sessionId.slice(0, 10)}…`
-    : entry.sessionId;
+  const idShort =
+    entry.sessionId.length > 10
+      ? `${entry.sessionId.slice(0, 10)}…`
+      : entry.sessionId;
   const when = formatRelative(entry.updatedAt);
   const cwd = shortenCwd(entry.workingDir);
   const preview = truncate(entry.preview, 48);
   const marker = current ? theme.glyphs.assistantMarker : " ";
   const chevron = selected ? theme.glyphs.chevronRight : " ";
+  // The picker lists the rail's list, pinned block first — the same
+  // `↑` says why those rows are on top.
+  const pin = entry.pinned ? theme.glyphs.pinned : " ";
   return (
     <Box>
-      <Text color={selected ? theme.colors.accentSoft : theme.colors.muted} bold={selected}>
-        {chevron} {marker} {idShort}
+      <Text
+        color={selected ? theme.colors.accentSoft : theme.colors.muted}
+        bold={selected}
+      >
+        {chevron} {marker} {pin} {idShort}
       </Text>
       <Text color={theme.colors.muted}>
         {"  "}
-        {when} · {entry.turnCount} turn{entry.turnCount === 1 ? "" : "s"} · {cwd}
+        {when} · {entry.turnCount} turn{entry.turnCount === 1 ? "" : "s"} ·{" "}
+        {cwd}
       </Text>
       {preview.length > 0 ? (
         <Text color={theme.colors.muted}>
@@ -133,7 +148,8 @@ function formatRelative(ts: number): string {
 
 function shortenCwd(dir: string): string {
   const home = process.env["HOME"];
-  const short = home && dir.startsWith(home) ? `~${dir.slice(home.length)}` : dir;
+  const short =
+    home && dir.startsWith(home) ? `~${dir.slice(home.length)}` : dir;
   if (short.length <= 32) return short;
   return `…${short.slice(-31)}`;
 }

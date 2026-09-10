@@ -160,7 +160,14 @@ export function createUninstallSkillHandler(): HttpHandler {
 }
 
 function resolveSkillsTarget(
-  ctx: { runtime: { config: { paths: { globalSkillsDir: string; projectSkillsDirName: string } }; capabilities: { workingDir: string } } },
+  ctx: {
+    runtime: {
+      config: {
+        paths: { globalSkillsDir: string; projectSkillsDirName: string };
+      };
+      capabilities: { workingDir: string };
+    };
+  },
   source: "global" | "project",
 ): string {
   if (source === "project") {

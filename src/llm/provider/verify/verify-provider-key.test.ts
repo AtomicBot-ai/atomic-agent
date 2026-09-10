@@ -37,11 +37,14 @@ describe("verifyProviderKey", () => {
 
     expect(result).toMatchObject({ status: "ok", probedModel: "cheap-model" });
     expect(fetchImpl).toHaveBeenCalledTimes(1);
-    const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
+    const [url, init] = fetchImpl.mock.calls[0] as unknown as [
+      string,
+      RequestInit,
+    ];
     expect(url).toBe("https://api.example.com/v1/chat/completions");
-    expect(
-      (init.headers as Record<string, string>).authorization,
-    ).toBe("Bearer sk-secret-key");
+    expect((init.headers as Record<string, string>).authorization).toBe(
+      "Bearer sk-secret-key",
+    );
     expect(bodyOf(fetchImpl.mock.calls[0] as never)).toMatchObject({
       model: "cheap-model",
       max_tokens: 1,
@@ -89,7 +92,10 @@ describe("verifyProviderKey", () => {
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
       return "max_tokens" in body
         ? response(
-            { error: "Unsupported parameter: 'max_tokens'. Use 'max_completion_tokens'." },
+            {
+              error:
+                "Unsupported parameter: 'max_tokens'. Use 'max_completion_tokens'.",
+            },
             400,
           )
         : response({ choices: [] });

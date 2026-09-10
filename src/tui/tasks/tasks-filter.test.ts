@@ -53,7 +53,10 @@ describe("filterAndSortTaskRows", () => {
       row({ id: "a", status: "pending" }),
       row({ id: "b", status: "completed" }),
     ];
-    const result = filterAndSortTaskRows(rows, { status: "completed", search: "" });
+    const result = filterAndSortTaskRows(rows, {
+      status: "completed",
+      search: "",
+    });
     expect(result.map((r) => r.id)).toEqual(["b"]);
   });
 
@@ -62,7 +65,10 @@ describe("filterAndSortTaskRows", () => {
       row({ id: "a", recurring: true, status: "running" }),
       row({ id: "b", recurring: false, status: "running" }),
     ];
-    const result = filterAndSortTaskRows(rows, { status: "recurring", search: "" });
+    const result = filterAndSortTaskRows(rows, {
+      status: "recurring",
+      search: "",
+    });
     expect(result.map((r) => r.id)).toEqual(["a"]);
   });
 
@@ -72,13 +78,19 @@ describe("filterAndSortTaskRows", () => {
       row({ id: "def", userMessage: "pong", sessionId: "qrs" }),
     ];
     expect(
-      filterAndSortTaskRows(rows, { status: "all", search: "pong" }).map((r) => r.id),
+      filterAndSortTaskRows(rows, { status: "all", search: "pong" }).map(
+        (r) => r.id,
+      ),
     ).toEqual(["def"]);
     expect(
-      filterAndSortTaskRows(rows, { status: "all", search: "xyz" }).map((r) => r.id),
+      filterAndSortTaskRows(rows, { status: "all", search: "xyz" }).map(
+        (r) => r.id,
+      ),
     ).toEqual(["abc"]);
     expect(
-      filterAndSortTaskRows(rows, { status: "all", search: "AbC" }).map((r) => r.id),
+      filterAndSortTaskRows(rows, { status: "all", search: "AbC" }).map(
+        (r) => r.id,
+      ),
     ).toEqual(["abc"]);
   });
 });

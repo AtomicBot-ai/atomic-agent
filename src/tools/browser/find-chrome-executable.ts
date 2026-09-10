@@ -144,7 +144,13 @@ function windowsCandidates(): readonly BrowserExecutable[] {
     candidates.push(
       {
         kind: "chrome",
-        path: join(localAppData, "Google", "Chrome", "Application", "chrome.exe"),
+        path: join(
+          localAppData,
+          "Google",
+          "Chrome",
+          "Application",
+          "chrome.exe",
+        ),
       },
       {
         kind: "canary",
@@ -158,7 +164,13 @@ function windowsCandidates(): readonly BrowserExecutable[] {
       },
       {
         kind: "edge",
-        path: join(localAppData, "Microsoft", "Edge", "Application", "msedge.exe"),
+        path: join(
+          localAppData,
+          "Microsoft",
+          "Edge",
+          "Application",
+          "msedge.exe",
+        ),
       },
       {
         kind: "brave",
@@ -189,7 +201,13 @@ function windowsCandidates(): readonly BrowserExecutable[] {
     },
     {
       kind: "edge",
-      path: join(programFiles, "Microsoft", "Edge", "Application", "msedge.exe"),
+      path: join(
+        programFiles,
+        "Microsoft",
+        "Edge",
+        "Application",
+        "msedge.exe",
+      ),
     },
     {
       kind: "edge",
@@ -244,9 +262,7 @@ export function findChromeExecutable(
 ): BrowserExecutable | null {
   if (opts.executablePath) {
     if (!exists(opts.executablePath)) {
-      throw new Error(
-        `browser executable not found: ${opts.executablePath}`,
-      );
+      throw new Error(`browser executable not found: ${opts.executablePath}`);
     }
     return { kind: "custom", path: opts.executablePath };
   }

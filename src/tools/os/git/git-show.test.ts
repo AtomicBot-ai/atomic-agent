@@ -1,7 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { rm } from "node:fs/promises";
 import { osGitShowTool } from "./git-show.js";
-import { makeCtx, makeGitRepo, runGitRaw, writeRepoFile } from "./test-helpers.js";
+import {
+  makeCtx,
+  makeGitRepo,
+  runGitRaw,
+  writeRepoFile,
+} from "./test-helpers.js";
 
 describe("os.git.show", () => {
   let repo: string;
@@ -16,7 +21,13 @@ describe("os.git.show", () => {
     await writeRepoFile(repo, "a.txt", "one\n");
     await writeRepoFile(repo, "b.txt", "two\n");
     await runGitRaw(repo, ["add", "."]);
-    await runGitRaw(repo, ["commit", "-m", "seed the repo", "-m", "extended body"]);
+    await runGitRaw(repo, [
+      "commit",
+      "-m",
+      "seed the repo",
+      "-m",
+      "extended body",
+    ]);
 
     const result = await osGitShowTool.run({}, makeCtx(repo));
     expect(result.status).toBe("ok");
@@ -44,9 +55,7 @@ describe("os.git.show", () => {
     await writeRepoFile(repo, "a.txt", "first\n");
     await runGitRaw(repo, ["add", "."]);
     await runGitRaw(repo, ["commit", "-m", "first"]);
-    const first = (
-      await runGitRaw(repo, ["rev-parse", "HEAD"])
-    ).stdout.trim();
+    const first = (await runGitRaw(repo, ["rev-parse", "HEAD"])).stdout.trim();
     await writeRepoFile(repo, "b.txt", "second\n");
     await runGitRaw(repo, ["add", "."]);
     await runGitRaw(repo, ["commit", "-m", "second"]);

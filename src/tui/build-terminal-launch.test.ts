@@ -6,7 +6,9 @@ import {
   type TerminalLaunchInput,
 } from "./build-terminal-launch.js";
 
-function input(overrides: Partial<TerminalLaunchInput> = {}): TerminalLaunchInput {
+function input(
+  overrides: Partial<TerminalLaunchInput> = {},
+): TerminalLaunchInput {
   return {
     platform: "darwin",
     execPath: "/usr/local/bin/node",
@@ -44,9 +46,9 @@ describe("agentArgv", () => {
 
   it("always asks for the tui explicitly", () => {
     // The parent may have been started as `atomic-agent` with no args.
-    expect(agentArgv(input({ argv: ["/usr/local/bin/node", "/opt/a.js"] }))).toContain(
-      "tui",
-    );
+    expect(
+      agentArgv(input({ argv: ["/usr/local/bin/node", "/opt/a.js"] })),
+    ).toContain("tui");
   });
 });
 
@@ -90,7 +92,9 @@ describe("buildTerminalLaunch — macOS", () => {
     // AppleScript escaper so the shell still sees exactly one.
     expect(script).toContain(`cd '/home/o'\\\\''brien/work'`);
     // And nothing unescaped can close the AppleScript string literal.
-    const body = script.slice(script.indexOf("do script ") + "do script ".length);
+    const body = script.slice(
+      script.indexOf("do script ") + "do script ".length,
+    );
     expect(body.slice(1, -1)).not.toMatch(/(^|[^\\])"/);
   });
 });
@@ -151,7 +155,13 @@ describe("buildTerminalLaunch — Windows", () => {
       }),
     );
     expect(launch?.cmd).toBe("wt.exe");
-    expect(launch?.args.slice(0, 5)).toEqual(["-w", "-1", "nt", "-d", "C:\\work"]);
+    expect(launch?.args.slice(0, 5)).toEqual([
+      "-w",
+      "-1",
+      "nt",
+      "-d",
+      "C:\\work",
+    ]);
     // The agent runs under `cmd /k` inside wt too: the env prefix must
     // reach Windows Terminal and a startup error must stay on screen.
     expect(launch?.args.slice(5, 7)).toEqual(["cmd", "/k"]);

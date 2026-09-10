@@ -21,6 +21,10 @@ import type { TuiState } from "./tui-state.js";
  * decline the event so it falls through to whatever is underneath.
  */
 export function resolveBackdropDismissal(state: TuiState): TuiAction | null {
+  // Above the uninstall ladder: it can open from the help menu over
+  // anything, and cancelling it is always the safe reading of a click
+  // outside -- nothing has been sent until the confirm step says so.
+  if (state.issueReport) return { type: "issue_report_closed" };
   if (state.uninstall) return { type: "uninstall_closed" };
   if (state.sessionDelete) return { type: "session_delete_closed" };
   if (state.contextPanelOpen) return { type: "context_panel_closed" };
@@ -51,7 +55,5 @@ export function resolveBackdropDismissal(state: TuiState): TuiAction | null {
  * cursor.
  */
 export function backdropRevertsThemePreview(state: TuiState): boolean {
-  return (
-    resolveBackdropDismissal(state)?.type === "theme_picker_closed"
-  );
+  return resolveBackdropDismissal(state)?.type === "theme_picker_closed";
 }

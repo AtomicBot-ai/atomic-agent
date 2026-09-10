@@ -37,9 +37,9 @@ describe("usesExternalCliAuth", () => {
       expect(usesExternalCliAuth({ kind })).toBe(false);
       // Even a hand-edited config that bolts the block onto another kind
       // must not be treated as CLI-authenticated.
-      expect(usesExternalCliAuth({ kind, subscriptionCli: { cli: "claude" } })).toBe(
-        false,
-      );
+      expect(
+        usesExternalCliAuth({ kind, subscriptionCli: { cli: "claude" } }),
+      ).toBe(false);
     }
   });
 });

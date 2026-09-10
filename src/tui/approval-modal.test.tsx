@@ -19,7 +19,10 @@ function request(overrides: Partial<ApprovalRequest> = {}): ApprovalRequest {
  * The modal takes the target-field props from the app shell; every test
  * that is not about the field renders it closed.
  */
-function frameOf(req: ApprovalRequest, pathDraft: string | null = null): string {
+function frameOf(
+  req: ApprovalRequest,
+  pathDraft: string | null = null,
+): string {
   return (
     render(
       <ApprovalModal
@@ -147,7 +150,9 @@ describe("ApprovalModal", () => {
     // knowing: you may answer in words instead. Ink wraps the footer at
     // the terminal width, so strip the box chrome and collapse
     // whitespace before matching.
-    const frame = frameOf(request()).replace(/[\u2550-\u256c]/g, " ").replace(/\s+/g, " ");
+    const frame = frameOf(request())
+      .replace(/[\u2550-\u256c]/g, " ")
+      .replace(/\s+/g, " ");
     expect(frame).toContain("the composer stays live");
     expect(frame).not.toContain("keys work while the input is empty");
   });

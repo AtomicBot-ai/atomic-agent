@@ -35,8 +35,12 @@ describe("parseModelsSearchArgs", () => {
   });
 
   it("rejects a non-positive limit and unknown flags", () => {
-    expect(() => parseModelsSearchArgs(["x", "--limit", "0"])).toThrow(/--limit/);
-    expect(() => parseModelsSearchArgs(["x", "--nope"])).toThrow(/unknown flag/);
+    expect(() => parseModelsSearchArgs(["x", "--limit", "0"])).toThrow(
+      /--limit/,
+    );
+    expect(() => parseModelsSearchArgs(["x", "--nope"])).toThrow(
+      /unknown flag/,
+    );
   });
 });
 
@@ -55,7 +59,11 @@ describe("runModelsSearch", () => {
           activeEmbeddingProvider: "or",
           toolTransport: "auto",
           providers: [
-            { id: "or", kind: "openrouter", defaultChatModel: "openrouter/auto" },
+            {
+              id: "or",
+              kind: "openrouter",
+              defaultChatModel: "openrouter/auto",
+            },
             {
               id: "vllm",
               kind: "openai-compatible",

@@ -53,7 +53,10 @@ export function switchLlmMode(
   dispatch: (action: TuiAction) => void,
   delta = 1,
 ): void {
-  dispatch({ type: "llm_mode_set", mode: nextMode(state.llmPanel.mode, delta) });
+  dispatch({
+    type: "llm_mode_set",
+    mode: nextMode(state.llmPanel.mode, delta),
+  });
 }
 
 export function openProviderConfig(
@@ -63,8 +66,9 @@ export function openProviderConfig(
   const configurable = (row: ProviderRow): boolean =>
     configureWizardKindForRow(row) !== null;
   const provider =
-    state.providersPanel.rows.find((row) => configurable(row) && row.isActiveText) ??
-    state.providersPanel.rows.find(configurable);
+    state.providersPanel.rows.find(
+      (row) => configurable(row) && row.isActiveText,
+    ) ?? state.providersPanel.rows.find(configurable);
   if (provider) openProviderConfigFor(provider, dispatch);
   else {
     dispatch({
@@ -86,7 +90,8 @@ export function activateProviderEmbedding(
   callbacks: TuiAppCallbacks,
 ): void {
   const active = state.providersPanel.rows.find(
-    (row) => row.isActiveText && row.kind !== "llama-server" && row.embeddingModel,
+    (row) =>
+      row.isActiveText && row.kind !== "llama-server" && row.embeddingModel,
   );
   if (active) callbacks.onProvidersSetActiveEmbedding?.(active.id);
 }
@@ -141,10 +146,6 @@ function triggerLocalChatModel(
     callbacks.onLocalModelsPullRequested?.(model.id, "with-mmproj");
     return;
   }
-  if (model.mmprojStatus === "missing") {
-    callbacks.onLocalModelsPullRequested?.(model.id, "mmproj-only");
-    return;
-  }
   if (!model.active) callbacks.onLocalModelsSetActiveRequested?.(model.id);
   if (!isLocalTextActive(state)) {
     callbacks.onProvidersSetActiveText?.("local-llama");
@@ -153,6 +154,12 @@ function triggerLocalChatModel(
     state.localModelsPanel.daemon.running ||
     state.localModelsPanel.daemonPhase === "starting";
   if (model.active && !chatUp) callbacks.onLocalModelsDaemonStartRequested?.();
+  // A vision row whose projector is not here yet: the weights work on
+  // their own, so the model goes live first and the projector follows.
+  // A projector the repo stopped serving then costs vision, not the model.
+  if (model.mmprojStatus === "missing") {
+    callbacks.onLocalModelsPullRequested?.(model.id, "mmproj-only");
+  }
 }
 
 function triggerLocalEmbeddingModel(
@@ -175,7 +182,8 @@ function triggerLocalEmbeddingModel(
     callbacks.onProvidersSetActiveEmbedding?.("local-llama");
     return;
   }
-  if (!localProviderActive) callbacks.onProvidersSetActiveEmbedding?.("local-llama");
+  if (!localProviderActive)
+    callbacks.onProvidersSetActiveEmbedding?.("local-llama");
   if (!daemon?.enabled) {
     callbacks.onLocalModelsEmbeddingToggleEnabledRequested?.();
     return;

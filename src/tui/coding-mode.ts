@@ -144,10 +144,7 @@ export function resolveCodingMode(
 }
 
 /** The next mode in the ring; `back` walks it the other way. */
-export function cycleCodingMode(
-  mode: CodingMode,
-  back = false,
-): CodingMode {
+export function cycleCodingMode(mode: CodingMode, back = false): CodingMode {
   const index = CODING_MODES.indexOf(mode);
   const from = index === -1 ? 0 : index;
   const step = back ? -1 : 1;

@@ -17,7 +17,9 @@ import { classifyFailure } from "./classify-failure.js";
 
 describe("classifyFailure", () => {
   it("returns the category of an LlmFailure instance directly", () => {
-    expect(classifyFailure(new TransportError("x", null, "u"))).toBe("transport");
+    expect(classifyFailure(new TransportError("x", null, "u"))).toBe(
+      "transport",
+    );
     expect(classifyFailure(new GrammarError("x", "y"))).toBe("grammar");
     expect(classifyFailure(new ModelError("empty", "x"))).toBe("model");
     expect(classifyFailure(new ToolExecutionError("t", "x"))).toBe("tool");
@@ -65,9 +67,12 @@ describe("classifyFailure", () => {
 
 describe("classifyFailure — raw network failures", () => {
   it("maps undici's `fetch failed` to transport, not tool", () => {
-    const inner = Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:19091"), {
-      code: "ECONNREFUSED",
-    });
+    const inner = Object.assign(
+      new Error("connect ECONNREFUSED 127.0.0.1:19091"),
+      {
+        code: "ECONNREFUSED",
+      },
+    );
     const err = Object.assign(new TypeError("fetch failed"), { cause: inner });
     expect(classifyFailure(err)).toBe("transport");
   });

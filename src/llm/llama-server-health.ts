@@ -32,7 +32,12 @@ export interface HealthResult {
    * the probe pass falsely and let the chat route switch onto a server
    * the llama.cpp client then hangs against (#65, #66).
    */
-  kind: "llama-server" | "llama-loading" | "openai-compat" | "llama-auth" | "unknown";
+  kind:
+    | "llama-server"
+    | "llama-loading"
+    | "openai-compat"
+    | "llama-auth"
+    | "unknown";
   error: string | null;
   latencyMs: number;
 }
@@ -52,7 +57,9 @@ export interface HealthCheckOptions {
   verifyAuth?: boolean;
 }
 
-function buildHeaders(apiKey: string | null | undefined): Record<string, string> {
+function buildHeaders(
+  apiKey: string | null | undefined,
+): Record<string, string> {
   const headers: Record<string, string> = { accept: "application/json" };
   if (apiKey) headers.authorization = `Bearer ${apiKey}`;
   return headers;
@@ -151,7 +158,9 @@ function bodyLooksLikeLlamaLoading(text: string): boolean {
     const error = (parsed as { error?: unknown }).error;
     if (typeof error !== "object" || error === null) return false;
     const message = (error as { message?: unknown }).message;
-    return typeof message === "string" && message.toLowerCase().includes("loading");
+    return (
+      typeof message === "string" && message.toLowerCase().includes("loading")
+    );
   } catch {
     return false;
   }
@@ -196,7 +205,6 @@ function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-
 /**
  * Pings the external llama-server `/health` endpoint with exponential backoff.
  * Returns the first successful probe or the last failure after all retries.
@@ -209,7 +217,8 @@ export async function checkLlamaServer(
   const url = llamaEndpointUrl(base, config.localModels.healthPath);
   const timeoutMs = options.timeoutMs ?? config.localModels.healthTimeoutMs;
   const retries = options.retries ?? config.localModels.healthRetries;
-  const backoffMs = options.backoffMs ?? config.localModels.healthRetryBackoffMs;
+  const backoffMs =
+    options.backoffMs ?? config.localModels.healthRetryBackoffMs;
   const apiKey = options.apiKey ?? config.localModels.apiKey;
 
   let last: HealthResult | null = null;
@@ -246,7 +255,10 @@ export async function checkLlamaServer(
   const suggestsDifferentServer =
     failed.kind === "unknown" &&
     (failed.status === 200 || failed.status === 404);
-  if (suggestsDifferentServer && (await probeOpenAiCompat(base, timeoutMs, apiKey))) {
+  if (
+    suggestsDifferentServer &&
+    (await probeOpenAiCompat(base, timeoutMs, apiKey))
+  ) {
     return { ...failed, kind: "openai-compat" };
   }
   return failed;
@@ -268,4 +280,3 @@ export function formatLlamaUnreachableHint(url: string): string {
     `  or point elsewhere:  atomic-agent config set localModels.url <url>`,
   ].join("\n");
 }
-

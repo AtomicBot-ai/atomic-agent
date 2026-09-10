@@ -22,7 +22,8 @@ import { fitToWidth } from "./fit-to-width.js";
  * than guessed, so renaming a mode cannot silently clip it.
  */
 const LABEL_WIDTH =
-  Math.max(...CODING_MODES.map((mode) => codingModeLook(mode).label.length)) + 6;
+  Math.max(...CODING_MODES.map((mode) => codingModeLook(mode).label.length)) +
+  6;
 
 /**
  * The narrowest the menu may get before it stops laying the detail
@@ -45,8 +46,9 @@ export function codingMenuContentWidth(): number {
   // longest line does not sit flush against the right border, +2 for
   // the border columns themselves.
   const detail =
-    Math.max(...CODING_MODES.map((mode) => codingModeLook(mode).detail.length)) +
-    2;
+    Math.max(
+      ...CODING_MODES.map((mode) => codingModeLook(mode).detail.length),
+    ) + 2;
   return LABEL_WIDTH + detail + 2;
 }
 
@@ -97,8 +99,8 @@ export function CodingModePopup({
   // own line, never by truncating it.
   const wanted = codingMenuContentWidth();
   const width = Math.max(24, Math.min(wanted, availableColumns - 2));
-  const stacked = width < Math.min(wanted, MIN_TWO_COLUMN_WIDTH)
-    || width < wanted;
+  const stacked =
+    width < Math.min(wanted, MIN_TWO_COLUMN_WIDTH) || width < wanted;
   // Interior columns between the two border columns. Ink's `paddingX` is
   // not painted by our rows — it leaves real gaps — so the one-column
   // gutter is baked into every string instead.

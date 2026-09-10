@@ -64,7 +64,12 @@ describe("useOnboardingLifecycle import offer", () => {
       process.env[STATE_DIR_ENV] = originalEnv;
     }
     resetConfigCache();
-    rmSync(stateDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    rmSync(stateDir, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 100,
+    });
   });
 
   it("raises the import step instead of settling when agents exist", () => {
@@ -79,7 +84,9 @@ describe("useOnboardingLifecycle import offer", () => {
     expect(actions).toEqual([
       {
         type: "onboarding_import_opened",
-        agents: [{ id: "hermes", label: "Hermes", dir: "/tmp/h", enabled: false }],
+        agents: [
+          { id: "hermes", label: "Hermes", dir: "/tmp/h", enabled: false },
+        ],
       },
     ]);
     // Offered once, stamped now; the flow itself is not yet retired.
@@ -89,7 +96,11 @@ describe("useOnboardingLifecycle import offer", () => {
 
   it("settles once the offer was already made", () => {
     render(
-      <Harness outcome="custom" detectAgents={() => ONE_AGENT} dispatch={() => {}} />,
+      <Harness
+        outcome="custom"
+        detectAgents={() => ONE_AGENT}
+        dispatch={() => {}}
+      />,
     );
     const actions: TuiAction[] = [];
     render(
@@ -99,16 +110,26 @@ describe("useOnboardingLifecycle import offer", () => {
         dispatch={(a) => actions.push(a)}
       />,
     );
-    expect(actions).toContainEqual({ type: "onboarding_set", onboarding: null });
+    expect(actions).toContainEqual({
+      type: "onboarding_set",
+      onboarding: null,
+    });
     expect(getConfig().tui.onboarding.completedAt).not.toBeNull();
   });
 
   it("settles straight through when nothing is detected", () => {
     const actions: TuiAction[] = [];
     render(
-      <Harness outcome="custom" detectAgents={() => []} dispatch={(a) => actions.push(a)} />,
+      <Harness
+        outcome="custom"
+        detectAgents={() => []}
+        dispatch={(a) => actions.push(a)}
+      />,
     );
-    expect(actions).toContainEqual({ type: "onboarding_set", onboarding: null });
+    expect(actions).toContainEqual({
+      type: "onboarding_set",
+      onboarding: null,
+    });
     // An offer that never appeared must not claim its once-only slot.
     expect(getConfig().tui.onboarding.importOfferedAt).toBeNull();
   });
@@ -117,7 +138,11 @@ describe("useOnboardingLifecycle import offer", () => {
     const detect = vi.fn(() => ONE_AGENT);
     const actions: TuiAction[] = [];
     render(
-      <Harness outcome="skipped" detectAgents={detect} dispatch={(a) => actions.push(a)} />,
+      <Harness
+        outcome="skipped"
+        detectAgents={detect}
+        dispatch={(a) => actions.push(a)}
+      />,
     );
     expect(detect).toHaveBeenCalled();
     expect(actions.map((a) => a.type)).toContain("onboarding_import_opened");

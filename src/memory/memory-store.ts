@@ -873,9 +873,7 @@ export class MemoryStore {
   releaseConsolidationLease(id: number): boolean {
     const normalizedId = validateId(id);
     const r = this.db
-      .prepare(
-        `UPDATE memories SET consolidating_at = NULL WHERE id = ?`,
-      )
+      .prepare(`UPDATE memories SET consolidating_at = NULL WHERE id = ?`)
       .run(normalizedId) as { changes: number };
     return r.changes > 0;
   }
@@ -924,12 +922,9 @@ export class MemoryStore {
     }
     const now = opts.now ?? this.now();
     const row = this.db
-      .prepare(
-        `SELECT tags, consolidating_at FROM memories WHERE id = ?`,
-      )
+      .prepare(`SELECT tags, consolidating_at FROM memories WHERE id = ?`)
       .get(normalizedId) as
-      | { tags: string | null; consolidating_at: number | null }
-      | undefined;
+      { tags: string | null; consolidating_at: number | null } | undefined;
     if (!row) return { outcome: "missing" };
     if (row.consolidating_at !== null) {
       const elapsed = now - row.consolidating_at;
@@ -1152,7 +1147,16 @@ export class MemoryStore {
 
 export class MemoryValidationError extends Error {
   constructor(
-    public readonly field: "content" | "tags" | "query" | "id" | "source" | "sessionId" | "workingDir" | "k" | "limit",
+    public readonly field:
+      | "content"
+      | "tags"
+      | "query"
+      | "id"
+      | "source"
+      | "sessionId"
+      | "workingDir"
+      | "k"
+      | "limit",
     message: string,
   ) {
     super(message);
@@ -1198,17 +1202,11 @@ function validateTags(raw: unknown): string[] {
   for (let i = 0; i < raw.length; i += 1) {
     const entry = raw[i];
     if (typeof entry !== "string") {
-      throw new MemoryValidationError(
-        "tags",
-        `tags[${i}] must be a string`,
-      );
+      throw new MemoryValidationError("tags", `tags[${i}] must be a string`);
     }
     const trimmed = entry.trim();
     if (trimmed.length === 0) {
-      throw new MemoryValidationError(
-        "tags",
-        `tags[${i}] must be non-empty`,
-      );
+      throw new MemoryValidationError("tags", `tags[${i}] must be non-empty`);
     }
     if (trimmed.length > MEMORY_TAG_MAX_LENGTH) {
       throw new MemoryValidationError(
@@ -1292,11 +1290,7 @@ function validateOptionalString(
 }
 
 function validateId(raw: unknown): number {
-  if (
-    typeof raw !== "number" ||
-    !Number.isInteger(raw) ||
-    raw <= 0
-  ) {
+  if (typeof raw !== "number" || !Number.isInteger(raw) || raw <= 0) {
     throw new MemoryValidationError(
       "id",
       `id must be a positive integer, got ${JSON.stringify(raw)}`,
@@ -1335,8 +1329,7 @@ function rowToEntry(row: MemoryRow): MemoryEntry {
     // Memory-v2 phase 1A: columns default to 0 / NULL when read from
     // a v3 row migrated forward by `V4_MIGRATION`. Stored as INTEGER
     // in SQLite — coerce explicitly so JS-side comparisons stay safe.
-    recallCount:
-      typeof row.recall_count === "number" ? row.recall_count : 0,
+    recallCount: typeof row.recall_count === "number" ? row.recall_count : 0,
     lastRecalledAt:
       typeof row.last_recalled_at === "number" ? row.last_recalled_at : null,
   };
@@ -1418,17 +1411,19 @@ function mergeTagSets(a: string[], b: string[]): string[] {
  * does not blow up on long notes.
  */
 export function renderNotePreview(content: string, maxChars: number): string {
-  const firstLine = content
-    .split(/\r?\n/)
-    .map((l) => l.trim())
-    .find((l) => l.length > 0) ?? "";
+  const firstLine =
+    content
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .find((l) => l.length > 0) ?? "";
   if (firstLine.length <= maxChars) return firstLine;
   if (maxChars <= 1) return firstLine.slice(0, maxChars);
   return `${firstLine.slice(0, maxChars - 1)}…`;
 }
 
 function clampPreviewChars(raw: unknown): number {
-  if (raw === undefined || raw === null) return MEMORY_INDEX_PREVIEW_CHARS_DEFAULT;
+  if (raw === undefined || raw === null)
+    return MEMORY_INDEX_PREVIEW_CHARS_DEFAULT;
   if (typeof raw !== "number" || !Number.isInteger(raw) || raw < 1) {
     return MEMORY_INDEX_PREVIEW_CHARS_DEFAULT;
   }

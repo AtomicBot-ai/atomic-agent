@@ -130,7 +130,10 @@ function parseLine(
 function readWithRetry(
   path: string,
   deps: DotenvIoDeps,
-): { kind: "ok"; raw: string } | { kind: "missing" } | { kind: "failed"; failure: DotenvReadFailure } {
+):
+  | { kind: "ok"; raw: string }
+  | { kind: "missing" }
+  | { kind: "failed"; failure: DotenvReadFailure } {
   for (let attempt = 1; attempt <= READ_ATTEMPTS; attempt += 1) {
     try {
       return { kind: "ok", raw: deps.readFile(path) };
@@ -144,7 +147,11 @@ function readWithRetry(
       if (attempt === READ_ATTEMPTS) {
         return { kind: "failed", failure };
       }
-      deps.sleep(READ_BACKOFF_MS[attempt - 1] ?? READ_BACKOFF_MS[READ_BACKOFF_MS.length - 1] ?? 50);
+      deps.sleep(
+        READ_BACKOFF_MS[attempt - 1] ??
+          READ_BACKOFF_MS[READ_BACKOFF_MS.length - 1] ??
+          50,
+      );
     }
   }
   // Unreachable: the loop always returns. Keeps tsc's control-flow happy.
@@ -162,7 +169,8 @@ export function formatDotenvReadWarning(
   failure: DotenvReadFailure,
   platform: NodeJS.Platform = process.platform,
 ): string {
-  const attempts = failure.attempts === 1 ? "1 attempt" : `${failure.attempts} attempts`;
+  const attempts =
+    failure.attempts === 1 ? "1 attempt" : `${failure.attempts} attempts`;
   const code = failure.code ?? "unknown error";
   const fix =
     platform === "win32"
@@ -224,7 +232,9 @@ export function loadDotenvFromStateDir(
   const lines = read.raw.split(/\r?\n/);
   for (let i = 0; i < lines.length; i += 1) {
     const parsed = parseLine(lines[i] ?? "", i + 1, (reason) => {
-      process.stderr.write(`atomic-agent: skipping ${path} entry — ${reason}\n`);
+      process.stderr.write(
+        `atomic-agent: skipping ${path} entry — ${reason}\n`,
+      );
     });
     if (parsed === null) continue;
 

@@ -7,19 +7,28 @@ import type { ComposerSwitchAction } from "./composer-switch/composer-switch-act
 import type { ContextMenuState } from "./context-menu/context-menu-state.js";
 import type { LocalModelsAction } from "./local-models/local-models-actions.js";
 import type { TasksAction } from "./tasks/tasks-actions.js";
+import type { SessionRailAction } from "./session-rail/session-rail-actions.js";
 import type { SkillsAction } from "./skills/skills-actions.js";
 import type { MemoryAction } from "./memory/memory-actions.js";
 import type { McpAction } from "./mcp/mcp-actions.js";
 import type { ImportAction } from "./import/import-actions.js";
 import type { TelegramAction } from "./telegram/telegram-actions.js";
 import type { PrivacyAction } from "./privacy/privacy-actions.js";
+import type { IntegrationsAction } from "./integrations/integrations-actions.js";
+import type { SwarmAction } from "./swarm/swarm-actions.js";
+import type { IssueReportAction } from "./issue-report/issue-report-state.js";
 import type { ProvidersAction } from "./providers/providers-actions.js";
 import type { LlmPanelAction } from "./llm-panel/llm-panel-actions.js";
 import type { OnboardingAction } from "./onboarding/onboarding-actions.js";
 import type { UninstallAction } from "./uninstall/uninstall-actions.js";
 import type { FallbackPanelAction } from "./llm-panel/fallback/fallback-panel-actions.js";
 import type { WhileBusySubmitMode } from "../config/index.js";
-import type { ChatMessage, SessionPickerEntry, TuiTab, TuiUiMode } from "./tui-state.js";
+import type {
+  ChatMessage,
+  SessionPickerEntry,
+  TuiTab,
+  TuiUiMode,
+} from "./tui-state.js";
 import type { ContextUsageState } from "../session/context-usage.js";
 
 /**
@@ -306,11 +315,15 @@ export type TuiAction =
   | ComposerSwitchAction
   | LocalModelsAction
   | TasksAction
+  | SessionRailAction
   | SkillsAction
   | MemoryAction
   | McpAction
   | TelegramAction
   | PrivacyAction
+  | IntegrationsAction
+  | SwarmAction
+  | IssueReportAction
   | ProvidersAction
   | OnboardingAction
   | UninstallAction

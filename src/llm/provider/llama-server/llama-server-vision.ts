@@ -28,7 +28,12 @@ export function resolveVisionCapabilities(opts: {
 }
 
 export function detectImageMime(bytes: Uint8Array): string {
-  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+  if (
+    bytes.length >= 3 &&
+    bytes[0] === 0xff &&
+    bytes[1] === 0xd8 &&
+    bytes[2] === 0xff
+  ) {
     return "image/jpeg";
   }
   if (
@@ -152,7 +157,9 @@ export async function describeImageViaLlamaServer(opts: {
       `vision request returned http ${res.status}: ${errBody.slice(0, 200)}`,
     );
   }
-  const json = (await res.json().catch(() => null)) as ChatCompletionResponse | null;
+  const json = (await res
+    .json()
+    .catch(() => null)) as ChatCompletionResponse | null;
   const content = json?.choices?.[0]?.message?.content ?? "";
 
   return {

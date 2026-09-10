@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { resolvePlatformAsset, UnsupportedPlatformError } from "./platform-assets.js";
+import {
+  resolvePlatformAsset,
+  UnsupportedPlatformError,
+} from "./platform-assets.js";
 
 describe("platform-assets", () => {
   it("resolves darwin arm64", () => {
@@ -22,7 +25,9 @@ describe("platform-assets", () => {
   });
 
   it("throws on darwin x64 (Intel)", () => {
-    expect(() => resolvePlatformAsset("darwin", "x64")).toThrow(UnsupportedPlatformError);
+    expect(() => resolvePlatformAsset("darwin", "x64")).toThrow(
+      UnsupportedPlatformError,
+    );
   });
 
   it("throws on linux arm64", () => {

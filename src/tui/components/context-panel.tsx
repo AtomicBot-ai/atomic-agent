@@ -101,7 +101,8 @@ export function ContextPanel({
   if (measured === null) {
     return (
       <PanelFrame
-        offsetTop={Math.max(0, Math.floor((availableRows - 7) / 2))}         offsetLeft={Math.max(0, Math.floor((availableColumns - width) / 2))}
+        offsetTop={Math.max(0, Math.floor((availableRows - 7) / 2))}
+        offsetLeft={Math.max(0, Math.floor((availableColumns - width) / 2))}
         width={width}
       >
         <Text color={chromeTheme.colors.railForeground} bold>
@@ -141,8 +142,7 @@ export function ContextPanel({
   // The breakdown costs its own rule as well as its rows, so it needs
   // two spare lines before the first one is worth drawing.
   const roomForRows = availableRows - CHROME_ROWS - 1;
-  const bodyRows =
-    roomForRows >= 1 ? Math.min(rows.length, roomForRows) : 0;
+  const bodyRows = roomForRows >= 1 ? Math.min(rows.length, roomForRows) : 0;
   const visible = rows.slice(0, bodyRows);
   const height = CHROME_ROWS + (visible.length > 0 ? visible.length + 1 : 0);
   const offsetTop = Math.max(0, Math.floor((availableRows - height) / 2));
@@ -161,7 +161,9 @@ export function ContextPanel({
         <Text
           key={row.label}
           color={
-            row.dim ? chromeTheme.colors.railMuted : chromeTheme.colors.railForeground
+            row.dim
+              ? chromeTheme.colors.railMuted
+              : chromeTheme.colors.railForeground
           }
         >
           {fitToWidth(renderRow(row, usage, largest), inner)}
@@ -186,7 +188,9 @@ export function ContextPanel({
         inner={inner}
         {...(onStepPairs ? { onStep: onStepPairs } : {})}
       />
-      <Text color={chromeTheme.colors.railMuted}>{fitToWidth(` ${footer(usage)}`, inner)}</Text>
+      <Text color={chromeTheme.colors.railMuted}>
+        {fitToWidth(` ${footer(usage)}`, inner)}
+      </Text>
     </PanelFrame>
   );
 }
@@ -215,10 +219,13 @@ function buildRows(
   }));
   if (usage.contextWindow === null) return rows;
   if (reservedForReply !== null && reservedForReply > 0) {
-    rows.push({ label: "reserved for reply", tokens: reservedForReply, dim: true });
+    rows.push({
+      label: "reserved for reply",
+      tokens: reservedForReply,
+      dim: true,
+    });
   }
-  const free =
-    usage.contextWindow - usage.tokens - (reservedForReply ?? 0);
+  const free = usage.contextWindow - usage.tokens - (reservedForReply ?? 0);
   rows.push({ label: "free", tokens: Math.max(0, free), dim: true });
   return rows;
 }
@@ -235,9 +242,9 @@ function renderRow(
   // A section that rounds to nothing still cost something. `0%` claims
   // it was free.
   const rounded = Math.round(share);
-  const percent = (rounded === 0 && row.tokens > 0 ? "<1%" : `${rounded}%`).padStart(
-    PERCENT_WIDTH,
-  );
+  const percent = (
+    rounded === 0 && row.tokens > 0 ? "<1%" : `${rounded}%`
+  ).padStart(PERCENT_WIDTH);
   // Accounting rows get their share but no gauge: a bar for "free" would
   // compete with the bars above it for the same eye, and it is the one
   // quantity the reader can infer from the others.

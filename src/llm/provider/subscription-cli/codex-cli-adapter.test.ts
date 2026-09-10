@@ -6,7 +6,11 @@ import {
   SubscriptionCliInvocationError,
 } from "./subscription-cli-errors.js";
 
-const input = { model: "", systemPrompt: "SYSTEM", extraArgs: [] as readonly string[] };
+const input = {
+  model: "",
+  systemPrompt: "SYSTEM",
+  extraArgs: [] as readonly string[],
+};
 
 /** Captured verbatim from `codex exec --json` v0.148.0. */
 const SUCCESS = [
@@ -63,7 +67,9 @@ describe("codexCliAdapter argv", () => {
       ...input,
       responseSchemaPath: "/tmp/s/schema.json",
     });
-    expect(args[args.indexOf("--output-schema") + 1]).toBe("/tmp/s/schema.json");
+    expect(args[args.indexOf("--output-schema") + 1]).toBe(
+      "/tmp/s/schema.json",
+    );
     expect(args).not.toContain("--json-schema");
   });
 
@@ -80,7 +86,9 @@ describe("codexCliAdapter argv", () => {
   it("carries the steering in stdin, since codex has no system-prompt flag", () => {
     const stdin = codexCliAdapter.buildStdin("PROMPT", "SYSTEM");
     expect(stdin).toBe("SYSTEM\n\nPROMPT");
-    expect(codexCliAdapter.completeArgs(input)).not.toContain("--system-prompt");
+    expect(codexCliAdapter.completeArgs(input)).not.toContain(
+      "--system-prompt",
+    );
   });
 });
 
@@ -106,7 +114,10 @@ describe("codexCliAdapter parseResult", () => {
       JSON.stringify({ type: "turn.started" }),
       JSON.stringify({
         type: "turn.failed",
-        error: { message: "The 'x' model is not supported when using Codex with a ChatGPT account." },
+        error: {
+          message:
+            "The 'x' model is not supported when using Codex with a ChatGPT account.",
+        },
       }),
     ].join("\n");
     expect(() => codexCliAdapter.parseResult(failed, "")).toThrow(
@@ -140,7 +151,11 @@ describe("codexCliAdapter parseResult", () => {
     const withWarning = [
       JSON.stringify({
         type: "item.completed",
-        item: { id: "item_0", type: "error", message: "Model metadata not found" },
+        item: {
+          id: "item_0",
+          type: "error",
+          message: "Model metadata not found",
+        },
       }),
       JSON.stringify({
         type: "item.completed",

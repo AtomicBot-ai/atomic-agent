@@ -27,6 +27,11 @@ export type TraceEvent =
   | TraceToolInvocation
   | TraceParseRetry
   | TraceLoopDetected
+  | TraceTaskContinued
+  | TraceProviderWaiting
+  | TraceProviderRecovered
+  | TraceCompletionTruncated
+  | TraceParseFailureRecovered
   | TraceLessonDeprecated
   | TraceVoteApplied
   | TraceVoteRejected
@@ -159,6 +164,70 @@ export interface TraceParseRetry extends TraceEventBase {
   stepIndex: number;
   attempt: number;
   reason: string;
+}
+
+/**
+ * A leg of the task finished and the work carried on. The trace is
+ * where "did it stop, or is it still going?" gets answered after the
+ * fact, so the two numbers that decide it are both here.
+ */
+export interface TraceTaskContinued extends TraceEventBase {
+  type: "task_continued";
+  turnIndex: number;
+  stepsTaken: number;
+  elapsedMs: number;
+  stepCeiling: number;
+}
+
+/** The turn was parked because the provider stopped answering. */
+export interface TraceProviderWaiting extends TraceEventBase {
+  type: "provider_waiting";
+  turnIndex: number;
+  stepIndex?: number;
+  attempt: number;
+  waitedMs: number;
+  maxWaitMs: number;
+  nextRetryMs: number;
+  reason: string;
+}
+
+/**
+ * A completion could not be read as tool calls and the turn spent
+ * another step on it instead of ending. This is the row that explains
+ * an inference with no tool call and no text behind it — without it a
+ * post-mortem sees a step that simply did nothing.
+ */
+export interface TraceParseFailureRecovered extends TraceEventBase {
+  type: "parse_failure_recovered";
+  turnIndex: number;
+  stepIndex: number;
+  attempt: number;
+  budget: number;
+  reason: string;
+}
+
+/** The provider answered again and the parked turn resumed. */
+export interface TraceProviderRecovered extends TraceEventBase {
+  type: "provider_recovered";
+  turnIndex: number;
+  waitedMs: number;
+}
+
+/**
+ * A reply the server cut short is being retried with a different
+ * request. `retry` says which: `raise_cap` with the new cap in
+ * `retryValue`, or `fit_window` with the learned context window.
+ */
+export interface TraceCompletionTruncated extends TraceEventBase {
+  type: "completion_truncated";
+  turnIndex: number;
+  stepIndex: number;
+  cause: "reply_cap" | "context_window" | "output_limit" | "unknown";
+  completionTokens: number;
+  promptTokens: number;
+  requestedMaxTokens: number;
+  retry: "raise_cap" | "fit_window";
+  retryValue: number;
 }
 
 export interface TraceLoopDetected extends TraceEventBase {

@@ -155,7 +155,9 @@ export interface ProviderContractProbeResult {
 export function contractProbeProvesToolSupport(
   status: ProviderContractStatus,
 ): boolean {
-  return status === "tools_supported" || status === "forced_tool_choice_rejected";
+  return (
+    status === "tools_supported" || status === "forced_tool_choice_rejected"
+  );
 }
 
 /**

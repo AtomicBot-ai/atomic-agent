@@ -1,7 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { rm } from "node:fs/promises";
 import { osGitStatusTool } from "./git-status.js";
-import { makeCtx, makeGitRepo, runGitRaw, writeRepoFile } from "./test-helpers.js";
+import {
+  makeCtx,
+  makeGitRepo,
+  runGitRaw,
+  writeRepoFile,
+} from "./test-helpers.js";
 
 describe("os.git.status", () => {
   let repo: string;
@@ -38,7 +43,11 @@ describe("os.git.status", () => {
     const result = await osGitStatusTool.run({}, makeCtx(repo));
     expect(result.details.clean).toBe(false);
     const paths = (
-      result.details.entries as { path: string; indexStatus: string; workingStatus: string }[]
+      result.details.entries as {
+        path: string;
+        indexStatus: string;
+        workingStatus: string;
+      }[]
     ).map((e) => `${e.indexStatus}${e.workingStatus}:${e.path}`);
     expect(paths).toContain(" M:a.txt");
     expect(paths).toContain("??:b.txt");
@@ -53,7 +62,11 @@ describe("os.git.status", () => {
 
     const result = await osGitStatusTool.run({}, makeCtx(repo));
     const renamed = (
-      result.details.entries as { path: string; indexStatus: string; renamedFrom?: string }[]
+      result.details.entries as {
+        path: string;
+        indexStatus: string;
+        renamedFrom?: string;
+      }[]
     ).find((e) => e.indexStatus === "R");
     expect(renamed?.path).toBe("new.txt");
     expect(renamed?.renamedFrom).toBe("old.txt");
@@ -61,10 +74,7 @@ describe("os.git.status", () => {
 
   it("accepts an explicit repo argument", async () => {
     await writeRepoFile(repo, "x.txt", "x\n");
-    const result = await osGitStatusTool.run(
-      { repo },
-      makeCtx("/tmp"),
-    );
+    const result = await osGitStatusTool.run({ repo }, makeCtx("/tmp"));
     expect(result.details.clean).toBe(false);
   });
 });

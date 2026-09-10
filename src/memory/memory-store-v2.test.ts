@@ -34,12 +34,14 @@ describe("MemoryStore v2 phase 1A", () => {
     rmSync(tmp, { recursive: true, force: true });
   });
 
-  function makeStore(opts: {
-    maxEntries?: number;
-    dedup?: { enabled: boolean; fts5Threshold: number };
-    eviction?: { utilityWeighted: boolean; maxAgeMs: number };
-    now?: () => number;
-  } = {}): MemoryStore {
+  function makeStore(
+    opts: {
+      maxEntries?: number;
+      dedup?: { enabled: boolean; fts5Threshold: number };
+      eviction?: { utilityWeighted: boolean; maxAgeMs: number };
+      now?: () => number;
+    } = {},
+  ): MemoryStore {
     return new MemoryStore({
       dbFile: join(tmp, `${captured.length}.sqlite`),
       maxEntries: opts.maxEntries ?? 100,

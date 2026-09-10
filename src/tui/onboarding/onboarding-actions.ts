@@ -21,7 +21,11 @@ export type OnboardingAction =
    */
   | { type: "onboarding_cursor_moved"; delta: number; length?: number }
   | { type: "onboarding_cursor_set"; cursor: number }
-  | { type: "onboarding_url_changed"; field: "chat" | "embedding"; value: string }
+  | {
+      type: "onboarding_url_changed";
+      field: "chat" | "embedding";
+      value: string;
+    }
   | { type: "onboarding_busy_set"; busy: boolean }
   | { type: "onboarding_error_set"; error: string | null }
   /** The local branch committed to a model and moved to the download. */
@@ -50,9 +54,16 @@ export type OnboardingAction =
    * the ticked agents (everything but secrets); the preview's confirm
    * re-runs whatever is already stored and sends none.
    */
-  | { type: "onboarding_import_run_started"; options?: OnboardingImportOptionRow[] }
+  | {
+      type: "onboarding_import_run_started";
+      options?: OnboardingImportOptionRow[];
+    }
   /** The importers answered. Preview lands on `import_preview`, an executed run on `import_done`. */
-  | { type: "onboarding_import_report"; report: ImportReport; executed: boolean }
+  | {
+      type: "onboarding_import_report";
+      report: ImportReport;
+      executed: boolean;
+    }
   /** A run failed outright (option resolution, source access, …). */
   | { type: "onboarding_import_failed"; error: string }
   /** Offer the other backend once the first one works. */

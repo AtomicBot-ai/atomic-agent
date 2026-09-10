@@ -7,7 +7,10 @@ import {
   recommendLocalModel,
   FIRST_RUN_MAX_DOWNLOAD_GB,
 } from "./local-model-picks.js";
-import { LOCAL_MODELS_CATALOG, setCustomLocalModels } from "../../local-llm/index.js";
+import {
+  LOCAL_MODELS_CATALOG,
+  setCustomLocalModels,
+} from "../../local-llm/index.js";
 import type { LocalModelDef, LocalModelId } from "../../local-llm/index.js";
 
 function def(
@@ -196,7 +199,8 @@ describe("describeDownloadingModel", () => {
         id: "custom-unsloth-qwen3-4b-gguf-qwen3-4b-ud-q4_k_xl",
         name: "unsloth/Qwen3-4B-GGUF · Qwen3-4B-UD-Q4_K_XL.gguf",
         filename: "Qwen3-4B-UD-Q4_K_XL.gguf",
-        huggingFaceUrl: "https://huggingface.co/unsloth/Qwen3-4B-GGUF/resolve/main/x.gguf",
+        huggingFaceUrl:
+          "https://huggingface.co/unsloth/Qwen3-4B-GGUF/resolve/main/x.gguf",
         fileSizeGb: 2.4,
         sizeLabel: "2.4 GB",
         description: "Added from huggingface.co/unsloth/Qwen3-4B-GGUF",
@@ -209,7 +213,9 @@ describe("describeDownloadingModel", () => {
       },
     ]);
     expect(
-      describeDownloadingModel("custom-unsloth-qwen3-4b-gguf-qwen3-4b-ud-q4_k_xl"),
+      describeDownloadingModel(
+        "custom-unsloth-qwen3-4b-gguf-qwen3-4b-ud-q4_k_xl",
+      ),
     ).toBe("Qwen3-4B-UD-Q4_K_XL");
     setCustomLocalModels([]);
   });

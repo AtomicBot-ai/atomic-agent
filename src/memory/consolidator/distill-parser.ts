@@ -179,9 +179,13 @@ function parseDistillJsonShape(raw: string): ParsedDistill | null {
   if (kindField !== "lesson") return null;
 
   const activation =
-    typeof obj["activation"] === "string" ? (obj["activation"] as string).trim() : "";
+    typeof obj["activation"] === "string"
+      ? (obj["activation"] as string).trim()
+      : "";
   const principle =
-    typeof obj["principle"] === "string" ? (obj["principle"] as string).trim() : "";
+    typeof obj["principle"] === "string"
+      ? (obj["principle"] as string).trim()
+      : "";
   // Sentinel form ("(no consensus)" / "(no durable advice)") still
   // wins on the JSON path so the model has a deterministic abstain
   // even when the prompt routed it through Structured Outputs.
@@ -388,7 +392,9 @@ function parseProcedureJsonShape(raw: unknown): ParsedProcedure {
       `procedure activation exceeds ${PROCEDURE_ACTIVATION_MAX_LENGTH} chars`,
     );
   }
-  const rawSteps = Array.isArray(rec["steps"]) ? (rec["steps"] as unknown[]) : [];
+  const rawSteps = Array.isArray(rec["steps"])
+    ? (rec["steps"] as unknown[])
+    : [];
   if (rawSteps.length < PROCEDURE_MIN_STEPS) {
     throw new ProcedureDistillParseError(
       "too_few_steps",
@@ -478,7 +484,10 @@ function parseProcedureLine(line: string): ParsedProcedure {
     );
   }
   const activation = activationMatch[1]!.trim();
-  if (activation.length === 0 || activation.length > PROCEDURE_ACTIVATION_MAX_LENGTH) {
+  if (
+    activation.length === 0 ||
+    activation.length > PROCEDURE_ACTIVATION_MAX_LENGTH
+  ) {
     throw new ProcedureDistillParseError(
       activation.length === 0 ? "missing_activation" : "oversized_activation",
       `procedure activation must be 1..${PROCEDURE_ACTIVATION_MAX_LENGTH} chars`,

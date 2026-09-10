@@ -4,9 +4,7 @@ import { toSlashCommands } from "../menu/menu-registry.js";
 import { SplashBanner } from "./splash-banner.js";
 
 function strip(value: string): string {
-  return value
-    .replace(/\[[0-9;]*m/g, "")
-    .replace(/\]8;;[^]*/g, "");
+  return value.replace(/\[[0-9;]*m/g, "").replace(/\]8;;[^]*/g, "");
 }
 
 /**
@@ -28,7 +26,9 @@ describe("SplashBanner", () => {
     // splash draws the ASCII stroke, so this is `#`, not a block glyph.
     expect(frame).toContain("#".repeat(45));
     // Both halves of the `ATOMIC AGENT` half-block wordmark.
-    expect(frame).toContain("\u2584\u2580\u2588 \u2580\u2588\u2580 \u2588\u2580\u2588");
+    expect(frame).toContain(
+      "\u2584\u2580\u2588 \u2580\u2588\u2580 \u2588\u2580\u2588",
+    );
     expect(frame).toContain("\u2588\u2580\u2588  \u2588  \u2588\u2584\u2588");
     expect(frame).toContain("Local AI-First Agent");
   });

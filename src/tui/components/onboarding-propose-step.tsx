@@ -25,7 +25,8 @@ function acceptRow(offer: NonNullable<SecondBackendOffer>): {
   return offer === "local"
     ? {
         label: "Set up local models too",
-        detail: "one download, then it runs offline and costs nothing per token",
+        detail:
+          "one download, then it runs offline and costs nothing per token",
       }
     : {
         label: "Set up a cloud model too",
@@ -76,7 +77,12 @@ export function OnboardingProposeStep(props: {
           </Text>
         ))}
       </Box>
-      <Row selected={props.cursor === 0} index={0} label={accept.label} detail={accept.detail} />
+      <Row
+        selected={props.cursor === 0}
+        index={0}
+        label={accept.label}
+        detail={accept.detail}
+      />
       <Row
         selected={props.cursor === 1}
         index={1}
@@ -105,7 +111,10 @@ function Row(props: {
       onActivate={pressEnter(handleOnboardingStepKey)}
     >
       <Box flexDirection="column" marginBottom={1}>
-        <Text color={props.selected ? theme.colors.accent : undefined} bold={props.selected}>
+        <Text
+          color={props.selected ? theme.colors.accent : undefined}
+          bold={props.selected}
+        >
           {`${rowPrefix(props.selected)}${props.label}`}
         </Text>
         <Text color={theme.colors.muted}>{`${ROW_INDENT}${props.detail}`}</Text>

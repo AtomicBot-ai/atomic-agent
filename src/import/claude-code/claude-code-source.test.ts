@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -25,9 +31,15 @@ describe("ClaudeCodeSource", () => {
 
   it("lists only skill dirs holding a SKILL.md", () => {
     mkdirSync(join(stateDir, "skills", "beta"), { recursive: true });
-    writeFileSync(join(stateDir, "skills", "beta", "SKILL.md"), "---\nname: beta\n---\n");
+    writeFileSync(
+      join(stateDir, "skills", "beta", "SKILL.md"),
+      "---\nname: beta\n---\n",
+    );
     mkdirSync(join(stateDir, "skills", "alpha"), { recursive: true });
-    writeFileSync(join(stateDir, "skills", "alpha", "SKILL.md"), "---\nname: alpha\n---\n");
+    writeFileSync(
+      join(stateDir, "skills", "alpha", "SKILL.md"),
+      "---\nname: alpha\n---\n",
+    );
     mkdirSync(join(stateDir, "skills", "not-a-skill"), { recursive: true });
 
     const source = new ClaudeCodeSource(stateDir);
@@ -112,7 +124,12 @@ describe("ClaudeCodeSource", () => {
             content: [
               { type: "thinking", thinking: "look at CI first" },
               { type: "text", text: "on it" },
-              { type: "tool_use", id: "t1", name: "Bash", input: { command: "make" } },
+              {
+                type: "tool_use",
+                id: "t1",
+                name: "Bash",
+                input: { command: "make" },
+              },
             ],
           },
         }),
@@ -122,7 +139,12 @@ describe("ClaudeCodeSource", () => {
           message: {
             role: "user",
             content: [
-              { type: "tool_result", tool_use_id: "t1", content: "built", is_error: false },
+              {
+                type: "tool_result",
+                tool_use_id: "t1",
+                content: "built",
+                is_error: false,
+              },
             ],
           },
         }),
@@ -135,8 +157,16 @@ describe("ClaudeCodeSource", () => {
         "not json at all\n",
       ].join(""),
     );
-    utimesSync(older, new Date("2026-08-01T10:00:00Z"), new Date("2026-08-01T10:00:00Z"));
-    utimesSync(newer, new Date("2026-08-02T10:00:00Z"), new Date("2026-08-02T10:00:00Z"));
+    utimesSync(
+      older,
+      new Date("2026-08-01T10:00:00Z"),
+      new Date("2026-08-01T10:00:00Z"),
+    );
+    utimesSync(
+      newer,
+      new Date("2026-08-02T10:00:00Z"),
+      new Date("2026-08-02T10:00:00Z"),
+    );
 
     const source = new ClaudeCodeSource(stateDir);
     const metas = source.listSessions();
@@ -158,6 +188,37 @@ describe("ClaudeCodeSource", () => {
     ]);
     expect(session.messages[2]!.blocks).toEqual([
       { type: "toolResult", toolUseId: "t1", text: "built", isError: false },
+    ]);
+  });
+
+  it("stamps rows without a timestamp with the file mtime, keeping the id", () => {
+    const projectDir = join(stateDir, "projects", "p");
+    mkdirSync(projectDir, { recursive: true });
+    const file = join(projectDir, "no-clock.jsonl");
+    writeFileSync(
+      file,
+      [
+        line({ type: "user", message: { role: "user", content: "hi" } }),
+        line({
+          type: "assistant",
+          timestamp: "not a date",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "yo" }],
+          },
+        }),
+      ].join(""),
+    );
+    const mtime = new Date("2026-08-03T12:00:00Z");
+    utimesSync(file, mtime, mtime);
+
+    const source = new ClaudeCodeSource(stateDir);
+    const meta = source.listSessions()[0]!;
+    const session = source.readSession(meta);
+    expect(session.id).toBe("no-clock");
+    expect(session.messages.map((m) => m.atMs)).toEqual([
+      mtime.getTime(),
+      mtime.getTime(),
     ]);
   });
 

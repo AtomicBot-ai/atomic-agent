@@ -17,7 +17,10 @@ async function closedPort(): Promise<number> {
 }
 
 /** Minimal llama-server imitation: answers `/health` the way llama.cpp does. */
-async function startFakeLlama(): Promise<{ url: string; stop: () => Promise<void> }> {
+async function startFakeLlama(): Promise<{
+  url: string;
+  stop: () => Promise<void>;
+}> {
   const srv: Server = createServer((req, res) => {
     if (req.url === "/health") {
       res.writeHead(200, { "content-type": "application/json" });

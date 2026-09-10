@@ -48,19 +48,16 @@ export function buildNotesRecallTool(
       const scope = rawArgs.scope === "project" ? "project" : "all";
       try {
         const entries = options.store.recall(query, {
-            k,
-            scope,
-            workingDir: scope === "project" ? ctx.workingDir : null,
-            tags: rawArgs.tags as string[] | undefined,
-          },
-        );
+          k,
+          scope,
+          workingDir: scope === "project" ? ctx.workingDir : null,
+          tags: rawArgs.tags as string[] | undefined,
+        });
         const output =
           entries.length === 0
             ? "(no matches)"
             : entries
-                .map(
-                  (e) => `- #${e.id} ${truncatePreview(e.content, 240)}`,
-                )
+                .map((e) => `- #${e.id} ${truncatePreview(e.content, 240)}`)
                 .join("\n");
         return compressToolResult(
           {

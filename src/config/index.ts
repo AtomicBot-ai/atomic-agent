@@ -1,11 +1,16 @@
 export type {
   AtomicAgentConfig,
   BrowserChannel,
+  GitConfig,
   HttpApprovalMode,
   LocalLlmMode,
   LogLevel,
   OnboardingState,
+  SessionRailConfig,
   TelegramConfig,
+  NotificationsConfig,
+  DownloadNotifyChannelSetting,
+  AtomicMailConfig,
   TelegramParseMode,
   UserConfigFile,
   UserManagedLocalLlmConfig,
@@ -20,6 +25,7 @@ export {
   USER_CONFIG_DEFAULTS,
   USER_CONFIG_VERSION,
   parseOnboardingState,
+  parseSessionRailConfig,
   parseUserConfigFile,
   parseWhileBusySubmit,
 } from "./config-schema.js";
@@ -55,10 +61,22 @@ export {
   SUBSCRIPTION_CLI_KIND,
   usesExternalCliAuth,
 } from "./provider-auth-mode.js";
-export type {
-  DotenvLoadResult,
-  DotenvReadFailure,
-} from "./load-dotenv.js";
+export {
+  DEFAULT_FUSION_WORKERS,
+  DEFAULT_FUSION_WORKER_MAX_STEPS,
+  DEFAULT_FUSION_WORKER_TIMEOUT_MS,
+  FUSION_WORKERS_MAX,
+  FUSION_WORKERS_MIN,
+  LOCAL_PROVIDER_KIND,
+  RUN_MODE_NAMES,
+  parseLlmRunModeConfig,
+  scrubRunModeProviderPins,
+  type RunModeName,
+  type RunModeProviderRef,
+  type UserLlmFusionConfig,
+  type UserLlmRunModeConfig,
+} from "./llm-run-mode-config.js";
+export type { DotenvLoadResult, DotenvReadFailure } from "./load-dotenv.js";
 export { DotenvWriterError, setDotenvKey } from "./dotenv-writer.js";
 export type { SetDotenvKeyResult } from "./dotenv-writer.js";
 export { addCustomModel, removeCustomModel } from "./custom-models-store.js";
@@ -66,3 +84,6 @@ export {
   parseCustomLocalModel,
   parseCustomLocalModels,
 } from "./custom-models-schema.js";
+
+/** Swarm units — extra Telegram / Discord bots (config v52). */
+export type { SwarmConfig, SwarmUnitConfig } from "./config-schema.js";

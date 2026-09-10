@@ -144,7 +144,10 @@ function mount(
  * appears in, so the first click can fall on a cell nothing owns yet —
  * the same reason `mouse-app.test.tsx` re-sends its clicks.
  */
-async function clickCopy(app: Harness, copied: readonly string[]): Promise<void> {
+async function clickCopy(
+  app: Harness,
+  copied: readonly string[],
+): Promise<void> {
   await waitUntil(() => app.frame().includes("[copy]"), "the idle label");
   for (let attempt = 0; attempt < 40; attempt += 1) {
     if (copied.length > 0) return;
@@ -223,7 +226,10 @@ describe("ChatCopyButton", () => {
         <ChatCopyButton text="second message" />
       </>,
     );
-    await waitUntil(() => app.frame().split("[copy]").length === 3, "both buttons");
+    await waitUntil(
+      () => app.frame().split("[copy]").length === 3,
+      "both buttons",
+    );
     // The second button is the second `[copy]` on screen — one row down.
     const first = locate(app.frame(), "[copy]");
     for (let attempt = 0; attempt < 40 && copied.length === 0; attempt += 1) {
@@ -237,9 +243,15 @@ describe("ChatCopyButton", () => {
   it("does not leave a timer behind when unmounted mid-badge", async () => {
     fakeBadgeTimerOnly();
     const { writer, copied } = recordingWriter();
-    const app = mount(writer, <ChatCopyButton text="hi" revertAfterMs={5_000} />);
+    const app = mount(
+      writer,
+      <ChatCopyButton text="hi" revertAfterMs={5_000} />,
+    );
     await clickCopy(app, copied);
-    await waitUntil(() => app.frame().includes("[copied!]"), "the copied badge");
+    await waitUntil(
+      () => app.frame().includes("[copied!]"),
+      "the copied badge",
+    );
     // Only the badge window is faked, so this count is the component's
     // pending revert and nothing else.
     expect(vi.getTimerCount()).toBe(1);
@@ -257,12 +269,16 @@ describe("ChatCopyButton label timer", () => {
       <ChatCopyButton text="hi" revertAfterMs={5_000} />,
     );
     await clickCopy(app, copied);
-    await waitUntil(() => app.frame().includes("[copied!]"), "the copied badge");
+    await waitUntil(
+      () => app.frame().includes("[copied!]"),
+      "the copied badge",
+    );
     vi.advanceTimersByTime(4_999);
     expect(app.frame()).toContain("[copied!]");
     vi.advanceTimersByTime(1);
     await waitUntil(
-      () => app.frame().includes("[copy]") && !app.frame().includes("[copied!]"),
+      () =>
+        app.frame().includes("[copy]") && !app.frame().includes("[copied!]"),
       "the label reverting on its own",
     );
     app.unmount();
@@ -276,7 +292,10 @@ describe("ChatCopyButton label timer", () => {
       <ChatCopyButton text="hi" revertAfterMs={5_000} />,
     );
     await clickCopy(app, copied);
-    await waitUntil(() => app.frame().includes("[copied!]"), "the copied badge");
+    await waitUntil(
+      () => app.frame().includes("[copied!]"),
+      "the copied badge",
+    );
     vi.advanceTimersByTime(4_000);
     const seen = copied.length;
     app.clickAt("[copied!]");

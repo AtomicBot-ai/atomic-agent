@@ -1,8 +1,5 @@
 export { StdioProtocol, framed } from "./stdio-protocol.js";
-export type {
-  RequestHandler,
-  StdioProtocolOptions,
-} from "./stdio-protocol.js";
+export type { RequestHandler, StdioProtocolOptions } from "./stdio-protocol.js";
 export { MessageRouter } from "./message-router.js";
 export type { RouteHandler } from "./message-router.js";
 export {

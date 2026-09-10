@@ -29,7 +29,10 @@ export function buildBrowserTabsTool(
         );
       }
       const input: TabsInput = { action };
-      if (typeof rawArgs.index === "number" && Number.isInteger(rawArgs.index)) {
+      if (
+        typeof rawArgs.index === "number" &&
+        Number.isInteger(rawArgs.index)
+      ) {
         input.index = rawArgs.index;
       }
       if (typeof rawArgs.url === "string" && rawArgs.url.length > 0) {
@@ -39,7 +42,11 @@ export function buildBrowserTabsTool(
       // Mirror browser.navigate: tabs.new with a URL is the same danger surface
       // (file://, javascript:, data:, chrome://). Without this gate the model
       // can exfiltrate local files or execute script by opening a secondary tab.
-      if (action === "new" && input.url !== undefined && !isSafeUrl(input.url)) {
+      if (
+        action === "new" &&
+        input.url !== undefined &&
+        !isSafeUrl(input.url)
+      ) {
         await requireApproval(
           options,
           {

@@ -35,9 +35,18 @@ describe("tool-resource-class", () => {
       "os.fs.trash",
       "os.fs.patch",
       "os.fs.archive.extract",
+      "os.git.init",
+      "os.git.add",
+      "os.git.commit",
+      "os.git.checkout",
       "os.proc.kill",
       "os.http.request",
       "skill.run_script",
+      "os.git.remote",
+      "os.git.fetch",
+      "os.git.pull",
+      "os.git.push",
+      "os.git.clone",
     ] as const;
     for (const name of expected) {
       expect(resourceClassFor(name)).toBe("approval_gated");

@@ -131,7 +131,10 @@ export function describeRejectedGgufFiles(
  * fixed row budget, and Ink 7 overlaps the rows above rather than
  * clipping, so a wrap here would paint over the file list.
  */
-export function ramWarningFor(fileSizeGb: number, hostRamGb: number): string | null {
+export function ramWarningFor(
+  fileSizeGb: number,
+  hostRamGb: number,
+): string | null {
   if (fileSizeGb <= 0 || hostRamGb <= 0) return null;
   if (fileSizeGb <= hostRamGb) return null;
   return (

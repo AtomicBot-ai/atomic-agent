@@ -279,7 +279,10 @@ describe("captureModelConfigured", () => {
     const client = fakeClient();
     const store = fakeStore();
     captureModelConfigured(client, store, ctx);
-    captureModelConfigured(client, store, { provider: "llama.cpp", kind: "local" });
+    captureModelConfigured(client, store, {
+      provider: "llama.cpp",
+      kind: "local",
+    });
     expect(client.capture).toHaveBeenCalledTimes(1);
   });
 
@@ -293,7 +296,10 @@ describe("captureModelConfigured", () => {
   it("carries no model id, key, or url — only provider and kind", () => {
     const client = fakeClient();
     const store = fakeStore();
-    captureModelConfigured(client, store, { provider: "llama.cpp", kind: "local" });
+    captureModelConfigured(client, store, {
+      provider: "llama.cpp",
+      kind: "local",
+    });
     const payload = client.capture.mock.calls[0][1];
     expect(Object.keys(payload).sort()).toEqual(["kind", "provider"]);
   });

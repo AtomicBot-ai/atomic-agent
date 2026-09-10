@@ -1,4 +1,10 @@
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Key } from "ink";
@@ -71,7 +77,11 @@ function seedConfig(stateDir: string): void {
       providers: [
         { id: "cloud-a", kind: "openrouter", defaultChatModel: "vendor/a" },
         { id: "cloud-b", kind: "aimlapi", defaultChatModel: "vendor/b" },
-        { id: "local-llama", kind: "llama-server", url: "http://127.0.0.1:8080" },
+        {
+          id: "local-llama",
+          kind: "llama-server",
+          url: "http://127.0.0.1:8080",
+        },
       ],
       fallback: { chain: ["cloud-a", "cloud-b"], appendLocal: false },
     },
@@ -80,7 +90,9 @@ function seedConfig(stateDir: string): void {
 }
 
 function readChain(stateDir: string): unknown {
-  const onDisk = JSON.parse(readFileSync(join(stateDir, "config.json"), "utf8"));
+  const onDisk = JSON.parse(
+    readFileSync(join(stateDir, "config.json"), "utf8"),
+  );
   return onDisk.llm?.fallback?.chain;
 }
 

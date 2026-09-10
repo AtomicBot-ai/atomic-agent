@@ -120,9 +120,7 @@ function parseSide(
       `os.fs.diff: side ${side} must not set both \`${side}Path\` and \`${side}Text\``,
     );
   }
-  return hasPath
-    ? { aPath: rawPath as string }
-    : { aText: rawText as string };
+  return hasPath ? { aPath: rawPath as string } : { aText: rawText as string };
 }
 
 function parseLabel(
@@ -135,7 +133,11 @@ function parseLabel(
   return side;
 }
 
-function parsePositiveInt(raw: unknown, fallback: number, field: string): number {
+function parsePositiveInt(
+  raw: unknown,
+  fallback: number,
+  field: string,
+): number {
   if (raw === undefined || raw === null) return fallback;
   if (typeof raw !== "number" || !Number.isFinite(raw) || raw < 0) {
     throw new Error(`os.fs.diff: \`${field}\` must be a non-negative number`);
@@ -170,7 +172,11 @@ async function resolveSide(
   return await readFile(abs, "utf8");
 }
 
-function rewriteHeaders(patch: string, _aLabel: string, bLabel: string): string {
+function rewriteHeaders(
+  patch: string,
+  _aLabel: string,
+  bLabel: string,
+): string {
   // `createPatch` emits lines like:
   //   Index: <aLabel>
   //   ===================================================================

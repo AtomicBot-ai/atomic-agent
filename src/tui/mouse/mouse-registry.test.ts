@@ -67,9 +67,13 @@ describe("absoluteRect", () => {
   });
 
   it("clips against an ancestor that hides overflow", () => {
-    const viewport = node({ left: 0, top: 0, width: 40, height: 5 }, undefined, {
-      overflowY: "hidden",
-    });
+    const viewport = node(
+      { left: 0, top: 0, width: 40, height: 5 },
+      undefined,
+      {
+        overflowY: "hidden",
+      },
+    );
     const scrolled = node({ left: 0, top: 3, width: 40, height: 4 }, viewport);
     expect(absoluteRect(scrolled)).toEqual({
       left: 0,
@@ -80,10 +84,17 @@ describe("absoluteRect", () => {
   });
 
   it("drops a row scrolled fully out of a clipping viewport", () => {
-    const viewport = node({ left: 0, top: 0, width: 40, height: 5 }, undefined, {
-      overflowY: "hidden",
-    });
-    const offscreen = node({ left: 0, top: -4, width: 40, height: 1 }, viewport);
+    const viewport = node(
+      { left: 0, top: 0, width: 40, height: 5 },
+      undefined,
+      {
+        overflowY: "hidden",
+      },
+    );
+    const offscreen = node(
+      { left: 0, top: -4, width: 40, height: 1 },
+      viewport,
+    );
     expect(absoluteRect(offscreen)).toBeNull();
   });
 });

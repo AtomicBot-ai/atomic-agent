@@ -35,7 +35,10 @@ describe("classifyHeap", () => {
 
   it("reports the real numbers in MB, matching the #121 crash", () => {
     // The reported crash: 4083 MB used against a ~4288 MB ceiling.
-    const s = classifyHeap({ usedBytes: 4083 * 1_048_576, limitBytes: 4288 * 1_048_576 });
+    const s = classifyHeap({
+      usedBytes: 4083 * 1_048_576,
+      limitBytes: 4288 * 1_048_576,
+    });
     expect(s.severity).toBe("critical");
     expect(s.message).toContain("4083 MB");
     expect(s.message).toContain("4288 MB");

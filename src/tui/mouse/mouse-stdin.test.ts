@@ -5,9 +5,7 @@ import type { TuiMouseEvent } from "./mouse-event.js";
 
 /** Long enough for the ESC-split hold to have flushed. */
 function sleepPastEscFlush(): Promise<void> {
-  return new Promise((resolve) =>
-    setTimeout(resolve, ESC_SPLIT_FLUSH_MS + 20),
-  );
+  return new Promise((resolve) => setTimeout(resolve, ESC_SPLIT_FLUSH_MS + 20));
 }
 
 const ESC = "\u001B";

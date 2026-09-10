@@ -151,7 +151,9 @@ function parseArgs(raw: Record<string, unknown>): {
   // Windows-style input parses on every host platform; falls back to
   // the trimmed input when basename is empty.
   const lastSegment = basename(rawName.replace(/\\/g, "/"));
-  const query = normalizeForMatch(lastSegment.length > 0 ? lastSegment : rawName);
+  const query = normalizeForMatch(
+    lastSegment.length > 0 ? lastSegment : rawName,
+  );
 
   const limit =
     typeof raw.limit === "number" && Number.isFinite(raw.limit)
@@ -214,10 +216,14 @@ function renderOutput(
   const { best } = splitBestTier(sorted);
   const hit = best.length === 1 ? best[0] : undefined;
   if (hit !== undefined) {
-    const lines = [`project "${rawName}" -> ${hit.path} (source: ${hit.source})`];
+    const lines = [
+      `project "${rawName}" -> ${hit.path} (source: ${hit.source})`,
+    ];
     const weaker = displayed.filter((c) => c.path !== hit.path);
     if (weaker.length > 0) {
-      lines.push(`weaker matches (mention only if the resolved path looks wrong):`);
+      lines.push(
+        `weaker matches (mention only if the resolved path looks wrong):`,
+      );
       for (const alt of weaker) lines.push(`  - ${alt.path} (${alt.source})`);
     }
     return [...lines, ...notes].join("\n");
@@ -229,7 +235,9 @@ function renderOutput(
     ];
     for (const c of displayed) lines.push(`  - ${c.path} (${c.source})`);
     if (sorted.length > displayed.length) {
-      lines.push(`  (and ${sorted.length - displayed.length} more; raise limit to list them)`);
+      lines.push(
+        `  (and ${sorted.length - displayed.length} more; raise limit to list them)`,
+      );
     }
     return [...lines, ...notes].join("\n");
   }

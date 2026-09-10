@@ -3,17 +3,17 @@ import { describe, expect, it } from "vitest";
 import { createInitialTuiState } from "../tui-state.js";
 import type { TuiAction } from "../tui-action.js";
 import { reduceMcpAction } from "./mcp-reducer.js";
-import type {
-  McpServerDetail,
-  McpServerRow,
-} from "./mcp-panel-state.js";
+import type { McpServerDetail, McpServerRow } from "./mcp-panel-state.js";
 
 function dispatch(state = createInitialTuiState(), action: TuiAction) {
   const next = reduceMcpAction(state, action);
   return next ?? state;
 }
 
-function row(name: string, overrides: Partial<McpServerRow> = {}): McpServerRow {
+function row(
+  name: string,
+  overrides: Partial<McpServerRow> = {},
+): McpServerRow {
   return {
     name,
     description: "",
@@ -46,7 +46,10 @@ describe("reduceMcpAction", () => {
   it("returns null for non-mcp actions", () => {
     const initial = createInitialTuiState();
     expect(
-      reduceMcpAction(initial, { type: "runtime_info", line: "x" } as TuiAction),
+      reduceMcpAction(initial, {
+        type: "runtime_info",
+        line: "x",
+      } as TuiAction),
     ).toBeNull();
   });
 
@@ -215,7 +218,10 @@ describe("reduceMcpAction", () => {
         type: "mcp_add_validation_failed",
         error: "old error",
       });
-      const next = dispatch(s, { type: "mcp_add_json_changed", json: '{"a":1}' });
+      const next = dispatch(s, {
+        type: "mcp_add_json_changed",
+        json: '{"a":1}',
+      });
       expect(next.mcpPanel.addModal?.json).toBe('{"a":1}');
       expect(next.mcpPanel.addModal?.error).toBeNull();
     });
@@ -283,11 +289,9 @@ describe("reduceMcpAction", () => {
       s = dispatch(s, { type: "mcp_add_modal_opened" });
       const next = dispatch(s, {
         type: "mcp_add_json_changed",
-        json: "{\n\t\"name\": \"x\",\r\n\t\"y\": 1\n}",
+        json: '{\n\t"name": "x",\r\n\t"y": 1\n}',
       });
-      expect(next.mcpPanel.addModal?.json).toBe(
-        '{  "name": "x",   "y": 1 }',
-      );
+      expect(next.mcpPanel.addModal?.json).toBe('{  "name": "x",   "y": 1 }');
       // The flattened form is still parseable JSON.
       expect(() => JSON.parse(next.mcpPanel.addModal!.json)).not.toThrow();
     });

@@ -99,50 +99,53 @@ export function EditorBody({
     cursor.row,
     maxVisibleLines ?? lines.length,
   );
-  const bodyRef = useMouseTarget((hit) => {
-    // Local rows are window rows: the body only paints the slice, so a
-    // click's line index is offset by everything scrolled off above.
-    const row = lineWindow.start + hit.localY;
-    const col = hit.localX - GUTTER_COLUMNS;
-    if (isSecondaryPress(hit.event)) {
-      // The menu anchors at the clicked SCREEN cell, so the local
-      // coordinates are folded back into absolutes here — the one place
-      // that has both the rect and the local offsets.
-      return (
-        onSecondaryPress?.({
-          x: hit.rect.left + hit.localX,
-          y: hit.rect.top + hit.localY,
-        }) ?? false
-      );
-    }
-    // A press starts a drag AND places the caret: press-move-release is
-    // one gesture, and a press that turns out to be a plain click has
-    // already done the right thing by the time the release arrives.
-    if (isPrimaryPress(hit.event)) {
-      onClickCursor?.(row, col);
-      onDragStart?.(row, col);
-      // Take the pointer for the gesture: hit-testing routes by
-      // position, so a drag that wanders out of the composer would
-      // otherwise deliver its motion — and its release — to whatever
-      // sits under the cursor, leaving the selection neither extended
-      // nor ended.
-      draggingRef.current = true;
-      mouse?.registry.capturePointer(bodyRef);
-      return true;
-    }
-    if (!draggingRef.current) return false;
-    if (hit.event.kind === "motion" && hit.event.button === "left") {
-      onDragMove?.(row, col);
-      return true;
-    }
-    if (hit.event.kind === "release") {
-      draggingRef.current = false;
-      mouse?.registry.releasePointer();
-      onDragEnd?.();
-      return true;
-    }
-    return false;
-  }, { layer: mouseLayer });
+  const bodyRef = useMouseTarget(
+    (hit) => {
+      // Local rows are window rows: the body only paints the slice, so a
+      // click's line index is offset by everything scrolled off above.
+      const row = lineWindow.start + hit.localY;
+      const col = hit.localX - GUTTER_COLUMNS;
+      if (isSecondaryPress(hit.event)) {
+        // The menu anchors at the clicked SCREEN cell, so the local
+        // coordinates are folded back into absolutes here — the one place
+        // that has both the rect and the local offsets.
+        return (
+          onSecondaryPress?.({
+            x: hit.rect.left + hit.localX,
+            y: hit.rect.top + hit.localY,
+          }) ?? false
+        );
+      }
+      // A press starts a drag AND places the caret: press-move-release is
+      // one gesture, and a press that turns out to be a plain click has
+      // already done the right thing by the time the release arrives.
+      if (isPrimaryPress(hit.event)) {
+        onClickCursor?.(row, col);
+        onDragStart?.(row, col);
+        // Take the pointer for the gesture: hit-testing routes by
+        // position, so a drag that wanders out of the composer would
+        // otherwise deliver its motion — and its release — to whatever
+        // sits under the cursor, leaving the selection neither extended
+        // nor ended.
+        draggingRef.current = true;
+        mouse?.registry.capturePointer(bodyRef);
+        return true;
+      }
+      if (!draggingRef.current) return false;
+      if (hit.event.kind === "motion" && hit.event.button === "left") {
+        onDragMove?.(row, col);
+        return true;
+      }
+      if (hit.event.kind === "release") {
+        draggingRef.current = false;
+        mouse?.registry.releasePointer();
+        onDragEnd?.();
+        return true;
+      }
+      return false;
+    },
+    { layer: mouseLayer },
+  );
   if (value.length === 0) {
     return (
       <Box ref={bodyRef}>
@@ -159,7 +162,10 @@ export function EditorBody({
     lineStarts.push(offset);
     offset += line.length + 1;
   }
-  const visible = lines.slice(lineWindow.start, lineWindow.start + lineWindow.count);
+  const visible = lines.slice(
+    lineWindow.start,
+    lineWindow.start + lineWindow.count,
+  );
   return (
     <Box flexDirection="column" ref={bodyRef}>
       {visible.map((line, sliceIdx) => {

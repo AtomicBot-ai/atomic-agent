@@ -1,12 +1,13 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
 
-import { llmHealthLook } from "../components/llm-health-badge.js";
 import { useMouseCommands, useMouseTarget } from "../mouse/mouse-context.js";
 import { isPrimaryPress } from "../mouse/mouse-event.js";
 import { theme } from "../theme/theme.js";
 import { openLocalModelsPane } from "./composer-switch-activate.js";
-import type { ComposerBackendMeta } from "./composer-switch-rows.js";
+import { fusionSurfaceInk, fusionSurfaceMuted } from "../theme/fusion-tint.js";
+import { BackendControl } from "./composer-backend-control.js";
+import type { ComposerBackendMeta } from "./composer-backend-selectors.js";
 import type { ComposerSwitchKind } from "./composer-switch-state.js";
 
 /** What the model slot says when the local route has no weights on disk. */
@@ -22,6 +23,13 @@ export interface ComposerMetaControlsProps {
    * on disk — see `selectComposerNeedsModelDownload`.
    */
   needsModelDownload?: boolean;
+  /** Paint on the Fusion surface: white ink, orange-warmed separators. */
+  fusion?: boolean;
+  /**
+   * Fusion's fourth control, `2 workers`: the local half of the route.
+   * `null` off the fusion route, where the strip has three controls.
+   */
+  workers?: string | null;
   /**
    * Mouse layer the click targets register on. The composer floats over
    * the chat log with a `MOUSE_LAYER_PANEL` backstop behind it (see
@@ -72,18 +80,27 @@ export function ComposerMetaControls({
   provider,
   model,
   needsModelDownload = false,
+  workers = null,
+  fusion = false,
   mouseLayer,
 }: ComposerMetaControlsProps): ReactElement | null {
   if (!backend && !provider && !model && !needsModelDownload) return null;
   return (
     <>
-      {backend ? <BackendControl backend={backend} mouseLayer={mouseLayer} /> : null}
+      {backend ? (
+        <BackendControl
+          backend={backend}
+          fusion={fusion}
+          mouseLayer={mouseLayer}
+        />
+      ) : null}
       {provider ? (
         <Control
           kind="provider"
           label={provider}
           lead={Boolean(backend)}
           shrink={1}
+          fusion={fusion}
           mouseLayer={mouseLayer}
         />
       ) : null}
@@ -98,6 +115,17 @@ export function ComposerMetaControls({
           label={model}
           lead={Boolean(backend || provider)}
           shrink={3}
+          fusion={fusion}
+          mouseLayer={mouseLayer}
+        />
+      ) : null}
+      {workers ? (
+        <Control
+          kind="workers"
+          label={workers}
+          lead={Boolean(backend || provider || model)}
+          shrink={2}
+          fusion={fusion}
           mouseLayer={mouseLayer}
         />
       ) : null}
@@ -153,75 +181,13 @@ function DownloadModelControl({
   );
 }
 
-export interface ComposerBackendLook {
-  readonly glyph: string;
-  readonly color: string;
-  /**
-   * Retained for callers that render the probe in full — the Models
-   * pane does. The composer row deliberately shows the dot alone.
-   */
-  readonly word: string | null;
-}
-
-/**
- * What the backend control shows for its status — or `null` for silence.
- *
- * `unknown` draws nothing at all: the shared glyph table's `·` is the
- * very character the row uses as a separator, and the old health pill
- * never appeared in this state either (`localConfigured` gated it), so
- * silence *is* the pill's information content. Cloud keeps its
- * historical green dot but no word — there is no probe behind it, and
- * printing "healthy" would claim an observation nobody made. Local and
- * custom carry the probe's word (healthy / probing / down / error) the
- * way the pill did.
- *
- * The look is asked for on the `"rail"` ground: this control sits on the
- * meta bar, and every dot the table hands back for the page — green,
- * amber, red — was picked to be read against the terminal's own
- * background. Only `unreachable` used to be corrected for that, one
- * token at a time; the ground is now a parameter, so all five come back
- * right.
- */
-export function composerBackendLook(
-  backend: ComposerBackendMeta,
-): ComposerBackendLook | null {
-  if (backend.status === "unknown") return null;
-  const look = llmHealthLook(backend.status, "rail");
-  return {
-    glyph: look.glyph,
-    color: look.color,
-    word: backend.kind === "cloud" ? null : look.label,
-  };
-}
-
-function BackendControl({
-  backend,
-  mouseLayer,
-}: {
-  backend: ComposerBackendMeta;
-  mouseLayer?: number;
-}): ReactElement {
-  const look = composerBackendLook(backend);
-  return (
-    <Control
-      kind="backend"
-      label={backend.kind}
-      glyph={
-        look ? (
-          <Text color={look.color} bold>{`${look.glyph} `}</Text>
-        ) : undefined
-      }
-      mouseLayer={mouseLayer}
-    />
-  );
-}
-
 function Control({
   kind,
   label,
   glyph,
   lead = false,
   shrink = 0,
+  fusion = false,
   mouseLayer,
 }: {
   kind: ComposerSwitchKind;
@@ -240,6 +206,8 @@ function Control({
    * that name the whole route, and losing it costs more than either.
    */
   shrink?: number;
+  /** Paint on the Fusion surface instead of the rail. */
+  fusion?: boolean;
   /** See `ComposerMetaControlsProps.mouseLayer`. */
   mouseLayer?: number;
 }): ReactElement {
@@ -260,13 +228,16 @@ function Control({
     <Box ref={ref} flexShrink={shrink} minWidth={0}>
       <Text wrap="truncate">
         {lead ? (
-          <Text color={theme.colors.railMuted}>
+          <Text color={fusion ? fusionSurfaceMuted() : theme.colors.railMuted}>
             {" "}
             {theme.glyphs.dotSeparator}{" "}
           </Text>
         ) : null}
         {glyph ?? null}
-        <Text color={theme.colors.railForeground} bold>
+        <Text
+          color={fusion ? fusionSurfaceInk() : theme.colors.railForeground}
+          bold
+        >
           {label}
         </Text>
       </Text>

@@ -10,9 +10,7 @@ export {
 } from "./undelivered-steers.js";
 export type { UndeliveredSteer } from "./undelivered-steers.js";
 
-export {
-  createHttpServer,
-} from "./http-server.js";
+export { createHttpServer } from "./http-server.js";
 export type {
   HttpServerHandle,
   HttpServerOptions,

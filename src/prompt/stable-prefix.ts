@@ -1,4 +1,8 @@
 import type { ToolCallTransport } from "../llm/provider/completion-types.js";
+import { COMPOSIO_GUIDANCE, isComposioActive } from "./composio-guidance.js";
+import { GITHUB_GUIDANCE, isGithubActive } from "./github-guidance.js";
+import { buildFusionGuidance, isFusionActive } from "./fusion-guidance.js";
+import type { FusionMachineFacts } from "./fusion-machine-facts.js";
 import { formatSkillCatalogLine } from "../skills/skill-catalog.js";
 
 /**
@@ -53,6 +57,8 @@ export interface CapabilitiesSummary {
   hasClipboard: boolean;
   hasWmctrl: boolean;
   hasNotifications: boolean;
+  /** The agent's own e-mail address (Atomic Mail), when an inbox exists. */
+  emailAddress?: string | null;
 }
 
 export interface SkillCatalogEntry {
@@ -89,6 +95,15 @@ export interface StablePrefixInput {
    * prefix byte-identical to the legacy output (KV-cache safe).
    */
   toolTransport?: ToolCallTransport;
+  /**
+   * What this machine serves fusion workers with — slot count and local
+   * model. Read only when the `### fusion` block renders at all, so a
+   * non-fusion install's prefix stays byte-identical whatever is passed
+   * here. Omitted, the block keeps its behavioural lines and states no
+   * numbers; see `fusion-machine-facts.ts` for why an unknown fact is
+   * left unsaid rather than guessed.
+   */
+  fusion?: FusionMachineFacts;
 }
 
 /**
@@ -183,6 +198,20 @@ export const WINDOWS_PLATFORM_HINT = [
 ].join("\n");
 
 export function buildStablePrefix(input: StablePrefixInput): string {
+  // Present only while a Composio session is mounted, so an install
+  // with no key pays nothing for it and its prefix is byte-identical
+  // to before the integration existed.
+  const composioActive = isComposioActive(input.toolDescriptors);
+  // Same contract for GitHub: the `github.*` descriptors are only in
+  // the catalog while the hub holds a token.
+  const githubActive = isGithubActive(input.toolDescriptors);
+  const integrationsBlock = [
+    ...(composioActive ? [COMPOSIO_GUIDANCE] : []),
+    ...(githubActive ? [GITHUB_GUIDANCE] : []),
+  ];
+  // Same contract as the Composio block: present only while the tool it
+  // describes is mounted, so a non-fusion install pays zero bytes.
+  const fusionActive = isFusionActive(input.toolDescriptors);
   const nativeTools = input.toolTransport === "native_tools";
   const persona =
     input.systemPersona ??
@@ -242,6 +271,12 @@ export function buildStablePrefix(input: StablePrefixInput): string {
     `### capabilities`,
     caps,
     ``,
+    ...(integrationsBlock.length > 0
+      ? [`### integrations`, integrationsBlock.join("\n"), ``]
+      : []),
+    ...(fusionActive
+      ? [`### fusion`, buildFusionGuidance(input.fusion), ``]
+      : []),
     `### instructions`,
     // The emission instructions are the one transport-dependent block.
     // Grammar links parse text-JSON (GBNF-constrained locally), so they
@@ -276,9 +311,7 @@ export function formatToolFrequent(descriptor: ToolDescriptor): string {
   if (!descriptor.examples || descriptor.examples.length === 0) {
     return head;
   }
-  const examples = descriptor.examples
-    .map((ex) => `    - ${ex}`)
-    .join("\n");
+  const examples = descriptor.examples.map((ex) => `    - ${ex}`).join("\n");
   return `${head}\n  examples:\n${examples}`;
 }
 
@@ -303,7 +336,7 @@ export function formatToolForLoadedTail(
   return `${head}\n  examples:\n${ex}`;
 }
 
-function formatCapabilities(caps: CapabilitiesSummary): string {
+export function formatCapabilities(caps: CapabilitiesSummary): string {
   return [
     `platform: ${caps.platform}/${caps.arch}`,
     `browser: ${caps.browserChannel}`,
@@ -311,6 +344,8 @@ function formatCapabilities(caps: CapabilitiesSummary): string {
     `clipboard: ${caps.hasClipboard ? "yes" : "no"}`,
     `wmctrl: ${caps.hasWmctrl ? "yes" : "no"}`,
     `notifications: ${caps.hasNotifications ? "yes" : "no"}`,
+    ...(caps.emailAddress
+      ? [`email: ${caps.emailAddress} (os.email.inbox / os.email.send)`]
+      : []),
   ].join("\n");
 }
-

@@ -11,10 +11,7 @@ export { McpClient } from "./mcp-client.js";
 export type { McpClientDeps, McpSamplingHandler } from "./mcp-client.js";
 
 export { McpManager } from "./mcp-manager.js";
-export type {
-  McpManagerDeps,
-  McpStatusSink,
-} from "./mcp-manager.js";
+export type { McpManagerDeps, McpStatusSink } from "./mcp-manager.js";
 
 export { createMcpToolDefinition } from "./mcp-tool-adapter.js";
 export type { McpToolGateOptions } from "./mcp-tool-adapter.js";

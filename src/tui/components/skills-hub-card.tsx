@@ -66,7 +66,9 @@ export function SkillsHubCard(props: SkillsHubCardProps): ReactElement {
       </Box>
       {installError ? (
         <Box marginTop={1}>
-          <Text color={theme.colors.error}>! install failed: {installError}</Text>
+          <Text color={theme.colors.error}>
+            ! install failed: {installError}
+          </Text>
         </Box>
       ) : null}
       <Box marginTop={1}>
@@ -95,7 +97,10 @@ function renderBody(
     );
   }
   const lines = card.body.split("\n");
-  const start = Math.max(0, Math.min(scroll, Math.max(0, lines.length - maxLines)));
+  const start = Math.max(
+    0,
+    Math.min(scroll, Math.max(0, lines.length - maxLines)),
+  );
   const window = lines.slice(start, start + maxLines);
   const above = start;
   const below = Math.max(0, lines.length - (start + window.length));

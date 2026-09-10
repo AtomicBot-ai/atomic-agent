@@ -201,10 +201,7 @@ function unwrapEmbeddingField(value: unknown): number[] | null {
   return null;
 }
 
-function mergeSignals(
-  a: AbortSignal | undefined,
-  b: AbortSignal,
-): AbortSignal {
+function mergeSignals(a: AbortSignal | undefined, b: AbortSignal): AbortSignal {
   if (!a) return b;
   const ctrl = new AbortController();
   const onAbortA = () => ctrl.abort(a.reason);

@@ -100,13 +100,16 @@ export function useOnboardingLifecycle(input: {
           outcome,
           cloudReady: isCloudTextProviderReady(),
           localReady: isLocalBackendConfigured(),
-          alreadyProposed: config.tui.onboarding.proposedSecondBackendAt !== null,
+          alreadyProposed:
+            config.tui.onboarding.proposedSecondBackendAt !== null,
           localSetupSeen: config.tui.onboarding.localSetupSeenAt !== null,
         });
     if (offer) {
       // Recorded when it is shown, not when it is answered: the offer
       // was made either way, and a declined offer must not come back.
-      persistOnboardingState({ proposedSecondBackendAt: new Date().toISOString() });
+      persistOnboardingState({
+        proposedSecondBackendAt: new Date().toISOString(),
+      });
       dispatch({ type: "onboarding_second_backend_offered", offer });
       return;
     }
@@ -134,7 +137,9 @@ export function useOnboardingLifecycle(input: {
     }
     settling.current = true;
     const now = new Date().toISOString();
-    persistOnboardingState(outcome === "skipped" ? { skippedAt: now } : { completedAt: now });
+    persistOnboardingState(
+      outcome === "skipped" ? { skippedAt: now } : { completedAt: now },
+    );
     onFinished?.(outcome);
     dispatch({ type: "onboarding_set", onboarding: null });
   }, [

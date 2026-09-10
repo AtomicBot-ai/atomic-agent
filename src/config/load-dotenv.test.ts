@@ -179,11 +179,9 @@ describe("loadDotenvFromStateDir", () => {
   it("rejects keys that do not match the canonical pattern", () => {
     writeFileSync(
       join(dir, ".env"),
-      [
-        "lowercase=nope",
-        "with-dash=nope",
-        "ATOMIC_DOTENV_TEST_FOO=fine",
-      ].join("\n"),
+      ["lowercase=nope", "with-dash=nope", "ATOMIC_DOTENV_TEST_FOO=fine"].join(
+        "\n",
+      ),
       "utf8",
     );
 

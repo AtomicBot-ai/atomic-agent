@@ -13,7 +13,10 @@ export interface ToolDefinition {
   name: string;
   description: string;
   readonly: boolean;
-  run: (args: Record<string, unknown>, ctx: ToolContext) => Promise<CompressedToolResult>;
+  run: (
+    args: Record<string, unknown>,
+    ctx: ToolContext,
+  ) => Promise<CompressedToolResult>;
 }
 
 export class ToolNotFoundError extends Error {

@@ -6,11 +6,7 @@
  * gate for credentials.
  */
 export type ClaudeCodeOptionId =
-  | "skills"
-  | "memory"
-  | "mcp"
-  | "sessions"
-  | "secrets";
+  "skills" | "memory" | "mcp" | "sessions" | "secrets";
 
 export interface ClaudeCodeOptionMeta {
   id: ClaudeCodeOptionId;

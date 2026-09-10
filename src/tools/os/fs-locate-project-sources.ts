@@ -67,13 +67,21 @@ export function normalizeForMatch(input: string): string {
 }
 
 /** The working dir itself plus every ancestor, bounded by path depth. */
-export function collectCwdChain(workingDir: string, query: string): Candidate[] {
+export function collectCwdChain(
+  workingDir: string,
+  query: string,
+): Candidate[] {
   const out: Candidate[] = [];
   let dir = resolve(workingDir);
   for (;;) {
     const tier = matchTier(basename(dir), query);
     if (tier !== null) {
-      out.push({ path: dir, source: "cwd", tier, recency: Number.MAX_SAFE_INTEGER });
+      out.push({
+        path: dir,
+        source: "cwd",
+        tier,
+        recency: Number.MAX_SAFE_INTEGER,
+      });
     }
     const parent = dirname(dir);
     if (parent === dir) break;
@@ -91,13 +99,19 @@ export function collectSessionHistory(
     if (typeof s.workingDir !== "string" || s.workingDir.length === 0) continue;
     const dir = resolve(s.workingDir);
     const seen = newestByDir.get(dir);
-    if (seen === undefined || s.updatedAt > seen) newestByDir.set(dir, s.updatedAt);
+    if (seen === undefined || s.updatedAt > seen)
+      newestByDir.set(dir, s.updatedAt);
   }
   const out: Candidate[] = [];
   for (const [dir, updatedAt] of newestByDir) {
     const tier = matchTier(basename(dir), query);
     if (tier === null) continue;
-    out.push({ path: dir, source: "session-history", tier, recency: updatedAt });
+    out.push({
+      path: dir,
+      source: "session-history",
+      tier,
+      recency: updatedAt,
+    });
   }
   return out;
 }
@@ -265,7 +279,9 @@ export async function dropMissingDirs(
  * search (its last segment may still match a source). The returned
  * path is realpath'd when possible.
  */
-export async function resolveDirectPath(rawName: string): Promise<string | null> {
+export async function resolveDirectPath(
+  rawName: string,
+): Promise<string | null> {
   const expanded = expandHome(rawName);
   if (!isAbsolute(expanded)) return null;
   try {

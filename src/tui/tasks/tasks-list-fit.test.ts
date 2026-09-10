@@ -199,7 +199,9 @@ describe("row budget", () => {
 
   it("always leaves at least one task row", () => {
     for (let budget = 1; budget <= 6; budget += 1) {
-      expect(computeTasksListFit(budget, 50).listRows).toBeGreaterThanOrEqual(1);
+      expect(computeTasksListFit(budget, 50).listRows).toBeGreaterThanOrEqual(
+        1,
+      );
     }
   });
 });

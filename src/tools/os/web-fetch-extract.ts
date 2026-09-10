@@ -93,7 +93,9 @@ function tryReadability(
  *  4. `raw` — non-HTML, non-markdown payload (JSON, plain text) returned
  *     untouched.
  */
-export function extractWebContent(params: ExtractWebContentParams): ExtractResult {
+export function extractWebContent(
+  params: ExtractWebContentParams,
+): ExtractResult {
   const { body, contentType, url, mode } = params;
   const ct = (contentType ?? "").toLowerCase();
 
@@ -111,7 +113,10 @@ export function extractWebContent(params: ExtractWebContentParams): ExtractResul
     }
     const stripped = stripScriptStyle(body);
     return {
-      text: mode === "markdown" ? htmlToMarkdown(stripped) : convertHtmlToText(stripped),
+      text:
+        mode === "markdown"
+          ? htmlToMarkdown(stripped)
+          : convertHtmlToText(stripped),
       extractor: "basic",
     };
   }

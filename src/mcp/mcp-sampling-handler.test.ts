@@ -20,7 +20,10 @@ function defaultResult(content = "answer"): CompletionResult {
     reasoningContent: "",
     stop: true,
     truncated: false,
-    timing: { promptTokens: 5, predictedTokens: 3 } as CompletionResult["timing"],
+    timing: {
+      promptTokens: 5,
+      predictedTokens: 3,
+    } as CompletionResult["timing"],
     cacheHitTokens: 0,
     slotId: -1,
     modelId: "test-model",
@@ -137,7 +140,9 @@ describe("createMcpSamplingHandler", () => {
 
   it("packages the completion as an MCP CreateMessageResult", async () => {
     const handler = createMcpSamplingHandler({
-      llamaServerClient: makeFakeLlama(async () => defaultResult("hello world")),
+      llamaServerClient: makeFakeLlama(async () =>
+        defaultResult("hello world"),
+      ),
       server: "*",
     });
     const result = await handler(

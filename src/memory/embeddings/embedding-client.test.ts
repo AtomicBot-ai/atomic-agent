@@ -14,9 +14,7 @@ describe("LlamaEmbeddingClient", () => {
       init?: globalThis.RequestInit,
     ): Promise<Response> => {
       const url = typeof input === "string" ? input : input.toString();
-      const body = init?.body
-        ? JSON.parse(init.body as string)
-        : null;
+      const body = init?.body ? JSON.parse(init.body as string) : null;
       return handler({ url, body });
     };
   }
@@ -64,10 +62,9 @@ describe("LlamaEmbeddingClient", () => {
   it("accepts nested { embedding: number[][] } shape", async () => {
     const fetchFn = makeFetch(
       () =>
-        new Response(
-          JSON.stringify({ embedding: [[1, 2, 3]] }),
-          { status: 200 },
-        ),
+        new Response(JSON.stringify({ embedding: [[1, 2, 3]] }), {
+          status: 200,
+        }),
     );
     const c = new LlamaEmbeddingClient({
       url: "http://x",
@@ -103,10 +100,9 @@ describe("LlamaEmbeddingClient", () => {
     // top-level array even for a single input, with embedding nested.
     const fetchFn = makeFetch(
       () =>
-        new Response(
-          JSON.stringify([{ index: 0, embedding: [[4, 5, 6]] }]),
-          { status: 200 },
-        ),
+        new Response(JSON.stringify([{ index: 0, embedding: [[4, 5, 6]] }]), {
+          status: 200,
+        }),
     );
     const c = new LlamaEmbeddingClient({
       url: "http://x",
@@ -122,10 +118,9 @@ describe("LlamaEmbeddingClient", () => {
     // Defensive: same variant (D) but embedding is flat rather than nested.
     const fetchFn = makeFetch(
       () =>
-        new Response(
-          JSON.stringify([{ index: 0, embedding: [7, 8, 9] }]),
-          { status: 200 },
-        ),
+        new Response(JSON.stringify([{ index: 0, embedding: [7, 8, 9] }]), {
+          status: 200,
+        }),
     );
     const c = new LlamaEmbeddingClient({
       url: "http://x",

@@ -28,12 +28,16 @@ function wizard(
   };
 }
 
-function stubChatCompletions(status: number, body: unknown): ReturnType<typeof vi.fn> {
-  const fetchMock = vi.fn(async () =>
-    new Response(typeof body === "string" ? body : JSON.stringify(body), {
-      status,
-      headers: { "content-type": "application/json" },
-    }),
+function stubChatCompletions(
+  status: number,
+  body: unknown,
+): ReturnType<typeof vi.fn> {
+  const fetchMock = vi.fn(
+    async () =>
+      new Response(typeof body === "string" ? body : JSON.stringify(body), {
+        status,
+        headers: { "content-type": "application/json" },
+      }),
   );
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;

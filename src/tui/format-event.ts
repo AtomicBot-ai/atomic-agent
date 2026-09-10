@@ -6,7 +6,12 @@
 
 export type FeedLineInput =
   | { type: "step_started"; stepIndex: number }
-  | { type: "step_finished"; stepIndex: number; summary: string; durationMs: number }
+  | {
+      type: "step_finished";
+      stepIndex: number;
+      summary: string;
+      durationMs: number;
+    }
   | {
       type: "prompt_captured";
       stepIndex: number;
@@ -71,7 +76,10 @@ export function formatFeedLine(input: FeedLineInput): string {
   }
 }
 
-function formatBatch(input: { batchIndex?: number; batchSize?: number }): string {
+function formatBatch(input: {
+  batchIndex?: number;
+  batchSize?: number;
+}): string {
   if (!input.batchSize || input.batchSize <= 1) return "";
   const index = input.batchIndex ?? 0;
   return `[${index + 1}/${input.batchSize}] `;

@@ -119,7 +119,11 @@ function apiRowToEntry(m: OpenRouterApiModel): ModelCatalogEntry {
   };
 }
 
-function labelForPick(id: string, entry: ModelCatalogEntry, name?: string): string {
+function labelForPick(
+  id: string,
+  entry: ModelCatalogEntry,
+  name?: string,
+): string {
   if (id === "openrouter/auto") {
     return "recommended · OpenRouter Auto (picks route)";
   }
@@ -152,7 +156,8 @@ function picksFromStaticCatalog(): readonly OpenRouterChatPick[] {
   return out;
 }
 
-export function getCachedOpenRouterChatPicks(): readonly OpenRouterChatPick[] | null {
+export function getCachedOpenRouterChatPicks():
+  readonly OpenRouterChatPick[] | null {
   if (!cached) return null;
   if (Date.now() - cached.fetchedAt > CACHE_TTL_MS) return null;
   return cached.picks;

@@ -84,7 +84,8 @@ export function parseTuiArgs(args: string[]): TuiArgsResult {
       case "--max-steps": {
         const value = args[++i];
         const parsed = value ? Number.parseInt(value, 10) : NaN;
-        if (!Number.isFinite(parsed)) return { error: "--max-steps expects an integer" };
+        if (!Number.isFinite(parsed))
+          return { error: "--max-steps expects an integer" };
         maxSteps = parsed;
         break;
       }
@@ -106,7 +107,10 @@ export function parseTuiArgs(args: string[]): TuiArgsResult {
         // `--fake-update --no-mouse` here beats a banner advertising
         // "v--no-mouse" ten minutes into a test session.
         if (!value || value.startsWith("-"))
-          return { error: "--fake-update requires a version (e.g. --fake-update 9.9.9)" };
+          return {
+            error:
+              "--fake-update requires a version (e.g. --fake-update 9.9.9)",
+          };
         fakeUpdateVersion = value.replace(/^v/, "");
         break;
       }
@@ -139,4 +143,3 @@ export function nonInteractiveStdinError(
   if (stdin.isTTY) return null;
   return "atomic-agent needs an interactive terminal — use 'atomic-agent run' for scripts.";
 }
-

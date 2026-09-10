@@ -69,7 +69,11 @@ export function buildOsProcKillTool(
 }
 
 function parseArgs(raw: Record<string, unknown>): KillArgs {
-  if (typeof raw.pid !== "number" || !Number.isFinite(raw.pid) || raw.pid <= 0) {
+  if (
+    typeof raw.pid !== "number" ||
+    !Number.isFinite(raw.pid) ||
+    raw.pid <= 0
+  ) {
     throw new Error("os.proc.kill: `pid` must be a positive number");
   }
   const pid = Math.floor(raw.pid);

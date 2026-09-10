@@ -110,7 +110,9 @@ describe("ProfileStore (bi-temporal phase 4)", () => {
         .get() as { c: number };
       expect(activeCount.c).toBe(1);
       const totalCount = db
-        .prepare(`SELECT COUNT(*) AS c FROM profile_facts WHERE key = 'language'`)
+        .prepare(
+          `SELECT COUNT(*) AS c FROM profile_facts WHERE key = 'language'`,
+        )
         .get() as { c: number };
       expect(totalCount.c).toBe(2);
       // The partial unique index is what enforces this — make sure
@@ -168,12 +170,7 @@ describe("ProfileStore (bi-temporal phase 4)", () => {
 
   it("cross-key supersession via supersedesKey opt flips the source row", () => {
     h.store.set("name", "Alex", 1_000);
-    h.store.set(
-      "full_name",
-      "Alexei Kalina",
-      { supersedesKey: "name" },
-      2_000,
-    );
+    h.store.set("full_name", "Alexei Kalina", { supersedesKey: "name" }, 2_000);
     // `name` no longer active.
     expect(h.store.get("name")).toBeNull();
     // `full_name` is active.

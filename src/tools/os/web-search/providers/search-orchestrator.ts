@@ -97,7 +97,12 @@ export async function runWebSearchWithFallback(
       if (cached.length > 0) {
         return { results: cached, provider: name, fromCache: true, degraded };
       }
-      lastEmpty = { results: cached, provider: name, fromCache: true, degraded };
+      lastEmpty = {
+        results: cached,
+        provider: name,
+        fromCache: true,
+        degraded,
+      };
       continue;
     }
 

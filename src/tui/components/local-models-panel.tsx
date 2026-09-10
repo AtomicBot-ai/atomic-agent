@@ -16,6 +16,8 @@ import {
   type LocalModelsPanelState,
   type RamFit,
 } from "../local-models/local-models-panel-state.js";
+import { describePullWaiting } from "../local-models/describe-pull-waiting.js";
+import { NotifyPromptBox } from "./notify-prompt-box.js";
 import type { LocalModelDef } from "../../local-llm/index.js";
 import { renderProgressBar } from "./render-progress-bar.js";
 
@@ -60,7 +62,11 @@ function renderDaemonStatus(panel: LocalModelsPanelState): DaemonStatusRender {
   const d = panel.daemon;
   if (!d.running) return { glyph: "✗", color: "red", label: "stopped" };
   if (d.loading) {
-    return { glyph: "⟳", color: "yellow", label: `loading model (pid ${d.pid})` };
+    return {
+      glyph: "⟳",
+      color: "yellow",
+      label: `loading model (pid ${d.pid})`,
+    };
   }
   if (d.healthy) {
     return {
@@ -118,9 +124,7 @@ function renderEmbeddingDaemonLine(
   info: EmbeddingDaemonInfo | null,
 ): ReactElement {
   if (!info) {
-    return (
-      <Text color={theme.colors.muted}>embeddings ? (probing…)</Text>
-    );
+    return <Text color={theme.colors.muted}>embeddings ? (probing…)</Text>;
   }
   if (!info.enabled) {
     return (
@@ -136,9 +140,7 @@ function renderEmbeddingDaemonLine(
     return <Text color="yellow">embeddings ⏸ {hint}</Text>;
   }
   if (info.loading) {
-    return (
-      <Text color="yellow">embeddings ⟳ loading (pid {info.pid})</Text>
-    );
+    return <Text color="yellow">embeddings ⟳ loading (pid {info.pid})</Text>;
   }
   if (info.healthy) {
     const id = info.activeModelId ?? "?";
@@ -178,7 +180,11 @@ function ramFitLabel(fit: RamFit, def: LocalModelDef): string {
   }
 }
 
-function DownloadBanners({ panel }: { panel: LocalModelsPanelState }): ReactElement | null {
+function DownloadBanners({
+  panel,
+}: {
+  panel: LocalModelsPanelState;
+}): ReactElement | null {
   const pulls = [panel.pull, panel.embeddingPull].filter(
     (pull): pull is NonNullable<typeof pull> => pull !== null,
   );
@@ -201,14 +207,15 @@ function DownloadBanner({
   const bar = renderProgressBar(pull.percent, w);
   const total = pull.totalBytes > 0 ? pull.totalBytes : null;
   const xfer = formatDownloadBytes(pull.transferredBytes);
-  const totalPart =
-    total !== null ? ` / ${formatDownloadBytes(total)}` : "";
+  const totalPart = total !== null ? ` / ${formatDownloadBytes(total)}` : "";
   const isModel = pull.modelId !== "_backend";
   const modelLine = isModel ? `model: ${pull.modelId}` : "target: backend zip";
+  const waiting = pull.waiting ?? null;
   return (
     <Box flexDirection="column">
-      <Text bold color={theme.colors.accentSoft}>
-        downloading — {pull.label}
+      <Text bold color={waiting ? theme.colors.warn : theme.colors.accentSoft}>
+        {waiting ? "download paused — " : "downloading — "}
+        {pull.label}
       </Text>
       <Text color={theme.colors.muted}>{modelLine}</Text>
       <Text>
@@ -222,6 +229,9 @@ function DownloadBanner({
           {totalPart}
         </Text>
       </Text>
+      {waiting ? (
+        <Text color={theme.colors.warn}>{describePullWaiting(waiting)}</Text>
+      ) : null}
     </Box>
   );
 }
@@ -260,17 +270,17 @@ export function LocalModelsPanel({
         : null;
     const enterHint = rowPull
       ? rowPull.totalBytes > 0
-        ? `downloading… ${rowPull.percent}%`
-        : "downloading…"
+        ? `downloading… ${rowPull.percent}% · x cancel`
+        : "downloading… · x cancel"
       : !row.downloaded
-      ? row.def.supportsVision
-        ? "Enter — download (gguf + mmproj)"
-        : "Enter — download"
-      : row.mmprojStatus === "missing"
-        ? "Enter — download mmproj"
-        : !row.active
-          ? "Enter — set active"
-          : "Enter — already active";
+        ? row.def.supportsVision
+          ? "Enter — download (gguf + mmproj)"
+          : "Enter — download"
+        : row.mmprojStatus === "missing"
+          ? "Enter — download mmproj"
+          : !row.active
+            ? "Enter — set active"
+            : "Enter — already active";
     const fit = classifyRamFit(m, panel.totalRamGb);
     const vramFit = classifyVramFit(m, panel.gpuBudgetGb);
     return (
@@ -313,9 +323,7 @@ export function LocalModelsPanel({
             GPU ~{panel.gpuBudgetGb.toFixed(1)} GB — may fail to load / crash
           </Text>
         ) : null}
-        <Text color={theme.colors.muted}>
-          {enterHint} · Esc back
-        </Text>
+        <Text color={theme.colors.muted}>{enterHint} · Esc back</Text>
       </Box>
     );
   }
@@ -326,12 +334,19 @@ export function LocalModelsPanel({
   const useFullFooter = maxRows >= FULL_FOOTER_ROWS + FULL_FOOTER_MIN_LIST;
   const footerRows = useFullFooter ? FULL_FOOTER_ROWS : COMPACT_FOOTER_ROWS;
   const modalRows =
+    (panel.notifyPrompt ? 7 : 0) +
     (panel.embeddingOnboardingPrompt ? 6 : 0) +
     (panel.removeConfirmId ? 5 : 0) +
     (panel.embeddingRemoveConfirmId ? 5 : 0);
   const listBudget = Math.max(3, maxRows - footerRows - modalRows);
   return (
     <Box flexDirection="column">
+      {panel.notifyPrompt ? (
+        <NotifyPromptBox
+          prompt={panel.notifyPrompt}
+          pull={panel.pull ?? panel.embeddingPull}
+        />
+      ) : null}
       {panel.embeddingOnboardingPrompt ? (
         <Box
           flexDirection="column"
@@ -350,16 +365,15 @@ export function LocalModelsPanel({
             </Text>
           </Text>
           <Text color={theme.colors.muted}>
-            Improves memory recall by blending BM25 with vector search.
-            Runs as a paired daemon alongside chat — starts and stops
-            together. Can be configured later from this panel.
+            Improves memory recall by blending BM25 with vector search. Runs as
+            a paired daemon alongside chat — starts and stops together. Can be
+            configured later from this panel.
           </Text>
           <Text>
             <Text bold color="green">
               (y)
             </Text>{" "}
-            download + enable ·{" "}
-            <Text bold>(n)</Text>/Esc skip for now
+            download + enable · <Text bold>(n)</Text>/Esc skip for now
           </Text>
         </Box>
       ) : null}
@@ -380,15 +394,14 @@ export function LocalModelsPanel({
               .supportsVision
               ? "(and mmproj) "
               : ""}
-            from disk. If the daemon is serving this model it will be
-            stopped first.
+            from disk. If the daemon is serving this model it will be stopped
+            first.
           </Text>
           <Text>
             <Text bold color="red">
               (y)
             </Text>{" "}
-            confirm ·{" "}
-            <Text bold>(n)</Text>/Esc cancel
+            confirm · <Text bold>(n)</Text>/Esc cancel
           </Text>
         </Box>
       ) : null}
@@ -404,16 +417,14 @@ export function LocalModelsPanel({
             ⚠ Delete embedding model: {panel.embeddingRemoveConfirmId}
           </Text>
           <Text color={theme.colors.muted}>
-            Removes the embedding GGUF from disk. If the embedding daemon
-            is serving this model it will be stopped first; chat stays
-            up.
+            Removes the embedding GGUF from disk. If the embedding daemon is
+            serving this model it will be stopped first; chat stays up.
           </Text>
           <Text>
             <Text bold color="red">
               (y)
             </Text>{" "}
-            confirm ·{" "}
-            <Text bold>(n)</Text>/Esc cancel
+            confirm · <Text bold>(n)</Text>/Esc cancel
           </Text>
         </Box>
       ) : null}
@@ -421,12 +432,12 @@ export function LocalModelsPanel({
       {useFullFooter ? (
         <Box marginTop={1} flexDirection="column">
           <DownloadBanners panel={panel} />
-          {panel.errorLine ? (
-            <Text color="red">{panel.errorLine}</Text>
-          ) : null}
+          {panel.errorLine ? <Text color="red">{panel.errorLine}</Text> : null}
           <Text color={theme.colors.muted}>
             mode: {panel.configMode}
-            {panel.totalRamGb !== null ? ` · host RAM ${panel.totalRamGb} GB` : ""}
+            {panel.totalRamGb !== null
+              ? ` · host RAM ${panel.totalRamGb} GB`
+              : ""}
             {panel.lastRefreshedAt
               ? ` · refreshed ${new Date(panel.lastRefreshedAt).toLocaleTimeString()}`
               : ""}
@@ -440,20 +451,23 @@ export function LocalModelsPanel({
             <Text color={theme.colors.muted}>
               data dir: {panel.dataDir} · backend{" "}
               {panel.backend.currentTag ?? "—"}
-              {panel.backend.updateAvailable === true ? " (update available)" : ""}
+              {panel.backend.updateAvailable === true
+                ? " (update available)"
+                : ""}
               {panel.backend.autoUpdate ? "" : " · auto-update off"}
             </Text>
           ) : null}
           <Text color={theme.colors.muted}>
-            j/k move · Enter pull/activate (embedding: *row + Enter starts server) · a add from hugging face · g gguf · i info · d remove · s chat+embedding · E embeddings on/off · G gpu · U auto-update · B · r · L
+            j/k move · Enter pull/activate (embedding: *row + Enter starts
+            server) · a add from hugging face · g gguf · x cancel download · i
+            info · d remove · s chat+embedding · E embeddings on/off · G gpu · U
+            auto-update · B · r · L
           </Text>
         </Box>
       ) : (
         <Box flexDirection="column">
           <DownloadBanners panel={panel} />
-          {panel.errorLine ? (
-            <Text color="red">{panel.errorLine}</Text>
-          ) : null}
+          {panel.errorLine ? <Text color="red">{panel.errorLine}</Text> : null}
           {renderDaemonLine(panel)}
           <Text color={theme.colors.muted}>
             j/k · Enter · a add · d remove · s start · r
@@ -541,7 +555,9 @@ function WindowedModelRows({
           Embedding models ({panel.embeddingRows.length})
           <Text color={theme.colors.muted}> · paired with chat daemon</Text>
         </Text>
-        {embeddingVisible.map(({ row, i }) => renderEmbeddingRow(panel, row, i))}
+        {embeddingVisible.map(({ row, i }) =>
+          renderEmbeddingRow(panel, row, i),
+        )}
       </Box>
       {win.hiddenAfter > 0 ? (
         <Text color={theme.colors.muted}>↓ {win.hiddenAfter} below</Text>
@@ -552,9 +568,7 @@ function WindowedModelRows({
 
 function renderChatRows(panel: LocalModelsPanelState): ReactElement {
   if (panel.rows.length === 0) {
-    return (
-      <Text color={theme.colors.muted}>(no chat models in catalog)</Text>
-    );
+    return <Text color={theme.colors.muted}>(no chat models in catalog)</Text>;
   }
   return (
     <Box flexDirection="column">
@@ -606,40 +620,49 @@ function renderChatRow(
       }
       onActivate={pressEnter(handleLocalModelsTabKey)}
     >
-    <Box flexDirection="row">
-      <Text
-        color={rowColor}
-        bold={isCursor || downloading}
-        dimColor={insufficient && !isCursor}
-        wrap="truncate-end"
-      >
-        {isCursor ? "> " : "  "}
-        {r.active ? "* " : ""}
-        {r.id} {r.def.sizeLabel}
-      </Text>
-      <Text color={r.downloaded ? "green" : theme.colors.muted} wrap="truncate-end">
-        {" "}
-        [{renderRowAvailability(r)}]
-      </Text>
-      {r.def.tag ? (
-        <Text color={theme.colors.accent} wrap="truncate-end"> [{r.def.tag}]</Text>
-      ) : null}
-      {fit ? (
-        <Text color={ramFitColor(fit)} wrap="truncate-end">
-          {" "}
-          {fit === "ok" ? "✓ RAM" : fit === "tight" ? "△ RAM" : "✗ RAM"}
+      <Box flexDirection="row">
+        <Text
+          color={rowColor}
+          bold={isCursor || downloading}
+          dimColor={insufficient && !isCursor}
+          wrap="truncate-end"
+        >
+          {isCursor ? "> " : "  "}
+          {r.active ? "* " : ""}
+          {r.id} {r.def.sizeLabel}
         </Text>
-      ) : null}
-      {vramFit === "insufficient" ? (
-        <Text color={theme.colors.warnStrong} wrap="truncate-end"> Not enough VRAM</Text>
-      ) : null}
-      {downloading ? (
-        <Text color="yellow" wrap="truncate-end">
+        <Text
+          color={r.downloaded ? "green" : theme.colors.muted}
+          wrap="truncate-end"
+        >
           {" "}
-          [{mini}] {panel.pull!.percent}%
+          [{renderRowAvailability(r)}]
         </Text>
-      ) : null}
-    </Box>
+        {r.def.tag ? (
+          <Text color={theme.colors.accent} wrap="truncate-end">
+            {" "}
+            [{r.def.tag}]
+          </Text>
+        ) : null}
+        {fit ? (
+          <Text color={ramFitColor(fit)} wrap="truncate-end">
+            {" "}
+            {fit === "ok" ? "✓ RAM" : fit === "tight" ? "△ RAM" : "✗ RAM"}
+          </Text>
+        ) : null}
+        {vramFit === "insufficient" ? (
+          <Text color={theme.colors.warnStrong} wrap="truncate-end">
+            {" "}
+            Not enough VRAM
+          </Text>
+        ) : null}
+        {downloading ? (
+          <Text color="yellow" wrap="truncate-end">
+            {" "}
+            [{mini}] {panel.pull!.percent}%
+          </Text>
+        ) : null}
+      </Box>
     </MouseListRow>
   );
 }
@@ -652,9 +675,7 @@ function renderChatRow(
 function renderEmbeddingRows(panel: LocalModelsPanelState): ReactElement {
   if (panel.embeddingRows.length === 0) {
     return (
-      <Text color={theme.colors.muted}>
-        (no embedding models in catalog)
-      </Text>
+      <Text color={theme.colors.muted}>(no embedding models in catalog)</Text>
     );
   }
   return (
@@ -700,30 +721,34 @@ function renderEmbeddingRow(
       }
       onActivate={pressEnter(handleLocalModelsTabKey)}
     >
-    <Box flexDirection="row">
-      <Text color={rowColor} bold={isCursor || downloading} wrap="truncate-end">
-        {isCursor ? "> " : "  "}
-        {r.active ? "* " : ""}
-        {r.id} {r.def.sizeLabel}
-      </Text>
-      <Text color={r.downloaded ? "green" : theme.colors.muted} wrap="truncate-end">
-        {" "}
-        [{r.downloaded ? "gguf" : "remote"}]
-      </Text>
-      <Text color={theme.colors.muted} wrap="truncate-end">
-        {" "}
-        dim {r.def.dim}
-      </Text>
-      {downloading ? (
-        <Text color="yellow" wrap="truncate-end">
-          {" "}
-          [{mini}] {panel.embeddingPull!.percent}%
+      <Box flexDirection="row">
+        <Text
+          color={rowColor}
+          bold={isCursor || downloading}
+          wrap="truncate-end"
+        >
+          {isCursor ? "> " : "  "}
+          {r.active ? "* " : ""}
+          {r.id} {r.def.sizeLabel}
         </Text>
-      ) : null}
-    </Box>
+        <Text
+          color={r.downloaded ? "green" : theme.colors.muted}
+          wrap="truncate-end"
+        >
+          {" "}
+          [{r.downloaded ? "gguf" : "remote"}]
+        </Text>
+        <Text color={theme.colors.muted} wrap="truncate-end">
+          {" "}
+          dim {r.def.dim}
+        </Text>
+        {downloading ? (
+          <Text color="yellow" wrap="truncate-end">
+            {" "}
+            [{mini}] {panel.embeddingPull!.percent}%
+          </Text>
+        ) : null}
+      </Box>
     </MouseListRow>
   );
 }
-
-
-

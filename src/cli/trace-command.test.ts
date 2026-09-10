@@ -114,8 +114,10 @@ describe("traceCommand", () => {
   it("prints help when no subcommand is passed", async () => {
     const code = await traceCommand([]);
     expect(code).toBe(0);
-    const written = (process.stdout.write as ReturnType<typeof vi.fn>).mock
-      .calls.map((c) => c[0])
+    const written = (
+      process.stdout.write as ReturnType<typeof vi.fn>
+    ).mock.calls
+      .map((c) => c[0])
       .join("");
     expect(written).toMatch(/atomic-agent trace/);
   });
@@ -123,8 +125,8 @@ describe("traceCommand", () => {
   it("lists available traces", async () => {
     const code = await traceCommand(["list"]);
     expect(code).toBe(0);
-    const output = (process.stdout.write as ReturnType<typeof vi.fn>).mock
-      .calls.map((c) => c[0])
+    const output = (process.stdout.write as ReturnType<typeof vi.fn>).mock.calls
+      .map((c) => c[0])
       .join("");
     expect(output).toContain("s-fixture");
     expect(output).toContain("/work");
@@ -133,8 +135,8 @@ describe("traceCommand", () => {
   it("shows a chronology with default (non-raw) truncation", async () => {
     const code = await traceCommand(["show", "s-fixture"]);
     expect(code).toBe(0);
-    const output = (process.stdout.write as ReturnType<typeof vi.fn>).mock
-      .calls.map((c) => c[0])
+    const output = (process.stdout.write as ReturnType<typeof vi.fn>).mock.calls
+      .map((c) => c[0])
       .join("");
     expect(output).toContain("session_started");
     expect(output).toContain("prompt_captured");
@@ -147,8 +149,8 @@ describe("traceCommand", () => {
   it("includes raw tail and content when --raw is set", async () => {
     const code = await traceCommand(["show", "s-fixture", "--raw"]);
     expect(code).toBe(0);
-    const output = (process.stdout.write as ReturnType<typeof vi.fn>).mock
-      .calls.map((c) => c[0])
+    const output = (process.stdout.write as ReturnType<typeof vi.fn>).mock.calls
+      .map((c) => c[0])
       .join("");
     expect(output).toContain("### conversation");
     expect(output).toContain('{"tool":"reply"');
@@ -157,8 +159,8 @@ describe("traceCommand", () => {
   it("filters by --step", async () => {
     const code = await traceCommand(["show", "s-fixture", "--step", "0"]);
     expect(code).toBe(0);
-    const output = (process.stdout.write as ReturnType<typeof vi.fn>).mock
-      .calls.map((c) => c[0])
+    const output = (process.stdout.write as ReturnType<typeof vi.fn>).mock.calls
+      .map((c) => c[0])
       .join("");
     expect(output).toContain("step_started");
     expect(output).not.toContain("session_started");
@@ -173,8 +175,8 @@ describe("traceCommand", () => {
       "json",
     ]);
     expect(code).toBe(0);
-    const output = (process.stdout.write as ReturnType<typeof vi.fn>).mock
-      .calls.map((c) => c[0])
+    const output = (process.stdout.write as ReturnType<typeof vi.fn>).mock.calls
+      .map((c) => c[0])
       .join("");
     const parsed = JSON.parse(output);
     expect(Array.isArray(parsed)).toBe(true);
@@ -213,12 +215,12 @@ describe("traceCommand", () => {
       // The fixture's recorded hash can never match a live prefix, so
       // replay always reports drift (exit code 2).
       expect(code).toBe(2);
-      const output = (process.stdout.write as ReturnType<typeof vi.fn>).mock
-        .calls.map((c) => c[0])
+      const output = (
+        process.stdout.write as ReturnType<typeof vi.fn>
+      ).mock.calls
+        .map((c) => c[0])
         .join("");
-      const row = output
-        .split("\n")
-        .find((line) => line.includes("DRIFT"));
+      const row = output.split("\n").find((line) => line.includes("DRIFT"));
       expect(row).toBeDefined();
       const columns = (row as string).trim().split(/\s+/);
       const currentHash = columns[columns.length - 1] as string;

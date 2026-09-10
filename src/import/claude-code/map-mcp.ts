@@ -17,7 +17,9 @@ export type MapMcpResult =
   | { kind: "server"; server: McpServerConfig }
   | { kind: "skip"; reason: string };
 
-export function mapClaudeCodeMcpServer(entry: ClaudeCodeMcpServer): MapMcpResult {
+export function mapClaudeCodeMcpServer(
+  entry: ClaudeCodeMcpServer,
+): MapMcpResult {
   const raw = entry.raw;
   const type = typeof raw.type === "string" ? raw.type : null;
 
@@ -51,7 +53,8 @@ export function mapClaudeCodeMcpServer(entry: ClaudeCodeMcpServer): MapMcpResult
   try {
     const out = parseMcpServers([candidate], "mcp.servers");
     const first = out[0];
-    if (!first) return { kind: "skip", reason: "validation produced no config" };
+    if (!first)
+      return { kind: "skip", reason: "validation produced no config" };
     return { kind: "server", server: first };
   } catch (err) {
     if (err instanceof ConfigValidationError) {

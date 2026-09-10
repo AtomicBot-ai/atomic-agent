@@ -23,6 +23,13 @@ export function resolveChatTemplatePath(model: LocalModelDef): string | null {
   }
 
   const here = dirname(fileURLToPath(import.meta.url));
-  const candidate = resolve(here, "..", "..", "assets", "ai-models", model.chatTemplateAsset);
+  const candidate = resolve(
+    here,
+    "..",
+    "..",
+    "assets",
+    "ai-models",
+    model.chatTemplateAsset,
+  );
   return existsSync(candidate) ? candidate : null;
 }

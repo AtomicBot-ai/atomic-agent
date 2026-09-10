@@ -67,7 +67,10 @@ describe("POST /api/webhooks/:name", () => {
     expect(second.sessionId).toBe(first.sessionId);
     const file = join(harness.stateDir, "webhook-sessions.json");
     expect(existsSync(file)).toBe(true);
-    const map = JSON.parse(readFileSync(file, "utf8")) as Record<string, string>;
+    const map = JSON.parse(readFileSync(file, "utf8")) as Record<
+      string,
+      string
+    >;
     expect(map.daily).toBe(first.sessionId);
   });
 

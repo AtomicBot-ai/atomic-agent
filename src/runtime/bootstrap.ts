@@ -7,6 +7,7 @@ import {
   getConfig,
   getTrustConfigPaths,
   resetConfigCache,
+  getUserConfigPath,
 } from "../config/index.js";
 
 import type { LlmStreamParams } from "../agent/step-executor.js";
@@ -16,6 +17,8 @@ import type { TurnEventHook, TurnOrigin } from "./turn-controller.js";
 import type { ChannelStatus } from "./channel-status.js";
 
 import { TelegramChannel } from "../channels/telegram/index.js";
+import { DiscordChannel, DiscordLockfile } from "../channels/discord/index.js";
+import { SwarmRegistry } from "../channels/swarm/index.js";
 import type { BotFactory } from "../channels/telegram/index.js";
 
 import {
@@ -60,10 +63,14 @@ import { buildBrowserTools } from "../tools/browser/index.js";
 import { PlaywrightBackend } from "../tools/browser/playwright-backend.js";
 import type { BrowserBackend } from "../tools/browser/browser-backend.js";
 import { registerOsTools } from "../tools/os/index.js";
+import { registerGithubTools } from "../tools/github/index.js";
+import { resolveGithubToken } from "../github/index.js";
 import { registerSkillTools } from "../tools/skill/index.js";
 import { buildToolViewTool } from "../tools/tool-view/index.js";
 import { registerMemoryTools } from "../tools/memory/index.js";
 import { registerTaskTools } from "../tools/tasks/index.js";
+import { buildFusionDelegateTool } from "../tools/fusion/index.js";
+import { resolveRunMode, type ResolvedRunMode } from "../llm/run-mode/index.js";
 import { registerVisionTools } from "../tools/vision/index.js";
 import {
   type LlmProvider,
@@ -79,12 +86,9 @@ import {
   createLocalLinkPreparer,
   DeferredLocalBackendProbes,
 } from "../llm/local-backend-gate.js";
-import { catalogForProvider } from "../llm/provider/catalog-for-provider.js";
 import { CostAccumulator } from "../llm/provider/cost-accumulator.js";
-import {
-  resolveModel,
-  type ResolvedModel,
-} from "../llm/provider/model-resolver.js";
+import type { ResolvedModel } from "../llm/provider/model-resolver.js";
+import { resolveModelPricingFor } from "./resolve-model-pricing.js";
 import {
   ProviderFallbackChain,
   resolveFallbackChain,
@@ -151,6 +155,7 @@ import { seedStarterSkillsIfMissing } from "../skills/seed-starter-skills.js";
 
 import { DEFAULT_TOOL_DESCRIPTORS } from "../prompt/tool-descriptors.js";
 import { filterToolDescriptorsByConfig } from "./filter-disabled-tools.js";
+import { readAtomicMailApiKey } from "../atomic-mail/index.js";
 import { buildCapabilities } from "../prompt/capabilities.js";
 import { minUsableContextWindow } from "../prompt/token-budget.js";
 import type {
@@ -165,10 +170,13 @@ import type { AgentLoopEvent, RunTurnResult } from "../agent/agent-loop.js";
 import {
   SessionStore,
   createEmptySessionState,
+  createFusionWorkerSession,
+  readFusionWorkerMeta,
   contextUsageFromPrompt,
   recordTurn,
   userTurn,
   type ContextUsageState,
+  type FusionWorkerMeta,
   SESSION_LLM_METADATA_KEY,
   type SessionLlmStamp,
   type SessionState,
@@ -182,6 +190,7 @@ import { TaskRunner, TaskStore } from "../tasks/index.js";
 import { Scheduler } from "../scheduler/index.js";
 import { WebhookSessionStore } from "../http/webhook-session-store.js";
 
+import { resolveComposioServerConfig } from "../composio/index.js";
 import { StructuredLogger } from "../tracing/structured-logger.js";
 import type { LogSink } from "../tracing/structured-logger.js";
 import { MetricsCollector } from "../tracing/metrics-collector.js";
@@ -453,6 +462,18 @@ export interface AgentRuntime {
    */
   readonly telegramChannel: TelegramChannel | null;
   /**
+   * Discord remote-control channel, or `null` when the build never
+   * constructed one. Same contract as `telegramChannel`.
+   */
+  readonly discordChannel: DiscordChannel | null;
+  /**
+   * Extra Telegram / Discord bots (`config.swarm.units`), or `null` when
+   * the build never constructed the registry. Same contract as the
+   * primary channels: constructed unconditionally, units started only
+   * when enabled with a token.
+   */
+  readonly swarm: SwarmRegistry | null;
+  /**
    * MCP client manager. **Always non-null** — constructed even when
    * `config.mcp.servers[]` is empty so the live-control surface stays
    * uniform with the Telegram channel pattern. When no servers are
@@ -480,9 +501,7 @@ export interface AgentRuntime {
    * Create a fresh session state (id, workingDir, optional metadata),
    * persist it, and return it. User messages are fed through `runTurn`.
    */
-  createSession(input?: {
-    metadata?: Record<string, unknown>;
-  }): SessionState;
+  createSession(input?: { metadata?: Record<string, unknown> }): SessionState;
   /**
    * Drive one chat turn: append the user message, run the agent loop
    * until the model emits `reply` (or `finish`), persist the resulting
@@ -495,6 +514,13 @@ export interface AgentRuntime {
    * NDJSON, future scheduler) pass an `eventHook` — events are routed
    * to the hook of the currently-running submission for that session
    * only. `origin` is informational; defaults to `"cli"`.
+   *
+   * `providerId` pins every completion of the turn to one configured
+   * provider and bypasses the fallback chain (a fusion worker on the
+   * local leg); an id the registry does not know rejects before the
+   * turn is queued — a pinned worker fails loudly rather than silently
+   * running on the active provider. `taskMaxDurationMs` is the turn's
+   * wall-clock ceiling (see `RunTurnOptions`).
    */
   runTurn(
     session: SessionState,
@@ -504,6 +530,13 @@ export interface AgentRuntime {
       signal?: AbortSignal;
       eventHook?: TurnEventHook;
       origin?: TurnOrigin;
+      providerId?: string;
+      taskMaxDurationMs?: number;
+      /**
+       * Hide tools from this turn (see `RunTurnOptions.toolFilter`).
+       * `fusion.delegate` narrows a worker's catalog with it.
+       */
+      toolFilter?: (name: string) => boolean;
     },
   ): Promise<RunTurnResult>;
   /**
@@ -522,8 +555,24 @@ export interface AgentRuntime {
   executeTurn(
     session: SessionState,
     userMessage: string,
-    options?: { maxSteps?: number; signal?: AbortSignal },
+    options?: {
+      maxSteps?: number;
+      signal?: AbortSignal;
+      providerId?: string;
+      taskMaxDurationMs?: number;
+      toolFilter?: (name: string) => boolean;
+    },
   ): Promise<RunTurnResult>;
+  /**
+   * Mint an in-memory fusion worker session stamped with `meta`. Unlike
+   * `createSession` it is NOT persisted and opens no trace recorder; a
+   * turn run on it is `ephemeral` (no memory recall, reflection or
+   * lesson bump) and is never saved, so the id never reaches the session
+   * list. The orchestrator reads the returned transcript and discards
+   * it. See `src/session/fusion-worker-session.ts`.
+   */
+  createEphemeralSession(meta: FusionWorkerMeta): SessionState;
+
   /**
    * Build — never run, never persist — the prompt the next turn would
    * open with, for a composer's context readout before any message is
@@ -663,7 +712,9 @@ export async function createAgentRuntime(
     level: config.log.level,
     sinks: logSinks,
   });
-  const metrics = new AgentMetrics(new MetricsCollector({ sinks: metricSinks }));
+  const metrics = new AgentMetrics(
+    new MetricsCollector({ sinks: metricSinks }),
+  );
 
   // Anonymous product analytics (PostHog). Opt-out via
   // `config.analytics.enabled = false`. The client is `null` when
@@ -893,11 +944,19 @@ export async function createAgentRuntime(
    * closure (built later) routes through here, and so does the provider
    * fallback chain's notice sink — a `provider_switched` event surfaces
    * exactly like any other loop event (trace recorder, TUI/HTTP/sidecar
-   * event streams, host handler). Resolving the session from the per-turn
-   * ALS frame keeps two concurrent sessions from cross-contaminating.
+   * event streams, host handler).
+   *
+   * The session is a PARAMETER, not a read of the ambient ALS frame:
+   * `emitAgentLoopEvent` below supplies it from the frame for every
+   * ordinary caller, while the fusion fan-out supplies the parent's id
+   * explicitly from inside a worker's frame. Either way the id is what
+   * keeps two concurrent sessions from cross-contaminating.
    */
-  const emitAgentLoopEvent = (event: AgentLoopEvent): void => {
-    const ctx = turnContext.getStore();
+  const emitAgentLoopEventFor = (
+    sessionId: string | undefined,
+    event: AgentLoopEvent,
+  ): void => {
+    const ctx = sessionId === undefined ? undefined : { sessionId };
     if (ctx) {
       const recorder = touchRecorder(ctx.sessionId);
       recorder?.onAgentEvent(event);
@@ -932,6 +991,19 @@ export async function createAgentRuntime(
       });
     }
     options.handlers?.onAgentEvent?.(event, ctx?.sessionId);
+  };
+
+  /**
+   * The ALS-resolving form every in-turn caller uses. Split from
+   * `emitAgentLoopEventFor` for one caller that cannot use it:
+   * `fusion.delegate` emits its worker progress from inside a worker
+   * turn's event hook, which runs under the WORKER's ALS frame, and
+   * those events belong to the parent — the worker session has no
+   * recorder, no hook and no UI, so an event tagged with its id reaches
+   * nobody at all.
+   */
+  const emitAgentLoopEvent = (event: AgentLoopEvent): void => {
+    emitAgentLoopEventFor(turnContext.getStore()?.sessionId, event);
   };
 
   // Cross-provider fallover breaker. Owns no timer — every decision is
@@ -1001,9 +1073,12 @@ export async function createAgentRuntime(
           url: config.localModels.url,
         });
         if (config.localModels.mode === "managed") {
-          logger.warn(managedLocalLlmHealthFailureHint(config.localModels.managed.port), {
-            mode: "managed",
-          });
+          logger.warn(
+            managedLocalLlmHealthFailureHint(config.localModels.managed.port),
+            {
+              mode: "managed",
+            },
+          );
         }
       } else {
         logger.info("llama-server reachable", {
@@ -1012,19 +1087,25 @@ export async function createAgentRuntime(
         });
       }
     } else if (options.overrides?.deferLlamaHealthCheck) {
-      logger.info("llama-server health check deferred; runtime will refresh on first turn", {
-        url: config.localModels.url,
-      });
+      logger.info(
+        "llama-server health check deferred; runtime will refresh on first turn",
+        {
+          url: config.localModels.url,
+        },
+      );
     }
   };
 
   if (localTextActiveAtBoot) {
     await runBootHealthProbe();
   } else {
-    logger.info("local llama probes skipped; active text provider is not local", {
-      activeTextProvider: resolveLlmConfig(config).activeTextProvider,
-      url: config.localModels.url,
-    });
+    logger.info(
+      "local llama probes skipped; active text provider is not local",
+      {
+        activeTextProvider: resolveLlmConfig(config).activeTextProvider,
+        url: config.localModels.url,
+      },
+    );
   }
 
   const llama = new LlamaServerClient();
@@ -1118,6 +1199,8 @@ export async function createAgentRuntime(
   const capabilities = await buildCapabilities({
     workingDir,
     browserChannel: config.browser.channel,
+    // Only an inbox this machine holds the key for is the agent's to use.
+    emailAddress: readAtomicMailApiKey() ? config.atomicMail.address : null,
   });
 
   // Memory-v2 phase 7a — fail-fast clamp/decay validation. The
@@ -1336,7 +1419,20 @@ export async function createAgentRuntime(
     // Pinned by the `#256` seam case in bootstrap.test.ts — the direct
     // persistence tests cannot see this line.
     stateDir: config.paths.stateDir,
+    // The closed-repository switch, read live: the Integrations hub
+    // writes `git.remoteSync` and resets the config cache, so the very
+    // next `git push` through the shell sees the new answer without a
+    // restart. The guard never reads config itself.
+    shellPolicy: {
+      isGitRemoteSyncEnabled: () => getConfig().git.remoteSync,
+    },
   });
+  // Always registered; each call resolves `GITHUB_TOKEN` afresh so a
+  // token saved in the Integrations hub works on the next turn. The
+  // descriptors, by contrast, are gated on the token (see
+  // `rebuildToolDescriptorsFromMcp`) so the model never sees tools it
+  // cannot exercise.
+  registerGithubTools(toolRegistry, dangerous);
   registerSkillTools(toolRegistry, skillRegistry, dangerous);
   toolRegistry.register(buildToolViewTool());
   registerMemoryTools(toolRegistry, {
@@ -1466,6 +1562,19 @@ export async function createAgentRuntime(
   };
 
   /**
+   * The live run mode. Re-read per call, never captured: the resolver's
+   * rule is that `llm.activeTextProvider` is authoritative, so an
+   * operator who switches provider by hand drops out of fusion on the
+   * next read and `fusion.delegate` must see that immediately.
+   */
+  const resolveCurrentRunMode = (): ResolvedRunMode => {
+    const fresh = getConfig();
+    return resolveRunMode(resolveLlmConfig(fresh), {
+      managedModelId: fresh.localModels.managed.modelId,
+    });
+  };
+
+  /**
    * Real model identifier for analytics. Cloud providers carry the model
    * in their config entry (`defaultChatModel` / `model`). Local llama-server
    * has no model name in its synthesized `local-llama` entry, so we prefer
@@ -1506,28 +1615,15 @@ export async function createAgentRuntime(
   const turnUsageMeter = new TurnUsageMeter();
 
   /**
-   * Pricing for a model id on the active provider, when any is known.
-   *
-   * Two sources, in `resolveModel`'s own precedence: a hand-configured
-   * `userModels[].pricing` first, then the provider's bundled catalog.
-   * The catalog is what makes cost work out of the box on OpenRouter and
-   * aimlapi, whose published prices ship with the agent; without it only
-   * operators who priced their models by hand ever saw a `cost_usd`.
-   *
-   * Local runners still resolve to no pricing, which is why turn cost is
-   * reported as absent rather than zero for them.
+   * Pricing for a model id on the provider that served it (default: the
+   * active one). See `resolveModelPricingFor` for the sources and why
+   * the served id, not the active id, is the right key.
    */
   const resolveModelPricing = (
     modelId: string | null,
-  ): ResolvedModel | undefined => {
-    if (!modelId) return undefined;
-    const resolved = resolveLlmConfig(getConfig());
-    const entry = resolved.providers.find(
-      (p) => p.id === resolved.activeTextProvider,
-    );
-    if (!entry) return undefined;
-    return resolveModel(entry, modelId, catalogForProvider(entry));
-  };
+    providerId?: string,
+  ): ResolvedModel | undefined =>
+    resolveModelPricingFor(resolveLlmConfig(getConfig()), modelId, providerId);
 
   /**
    * The active model's context window, for providers the `/props` probe
@@ -1544,10 +1640,43 @@ export async function createAgentRuntime(
    * Resolved per step rather than captured once, so switching model
    * mid-session is picked up by the next prompt.
    */
+  /**
+   * Context windows the model server revealed by cutting a reply short
+   * — `completion_truncated` with cause `context_window`, where prompt +
+   * reply tokens is the window. Keyed by provider and model, kept for the
+   * life of the process: the same server keeps the same window, and a
+   * restart may well change it (llama.cpp `-c`, Lemonade's auto-sizing).
+   * A demonstrated window overrides the catalogue's nominal 128k default
+   * and clamps a real catalogue entry, since a server can run a model
+   * with less context than the model supports.
+   */
+  const observedContextWindows = new Map<string, number>();
+  const activeModelKey = (): string =>
+    `${resolveLlmConfig(getConfig()).activeTextProvider}/${resolveActiveModelName()}`;
+  const observeContextWindow = (contextWindow: number): void => {
+    if (!Number.isFinite(contextWindow) || contextWindow <= 0) return;
+    const key = activeModelKey();
+    const known = observedContextWindows.get(key);
+    observedContextWindows.set(
+      key,
+      known === undefined ? contextWindow : Math.min(known, contextWindow),
+    );
+  };
+  const forgetContextWindowBelow = (tokens: number): void => {
+    const key = activeModelKey();
+    const known = observedContextWindows.get(key);
+    if (known !== undefined && tokens > known)
+      observedContextWindows.delete(key);
+  };
   const resolveCatalogContextWindow = (): number | null => {
+    const observed = observedContextWindows.get(activeModelKey());
     const model = resolveModelPricing(resolveActiveModelName());
-    if (!model || model.source === "default") return null;
-    return model.contextWindow > 0 ? model.contextWindow : null;
+    const catalogued =
+      !model || model.source === "default" || model.contextWindow <= 0
+        ? null
+        : model.contextWindow;
+    if (observed === undefined) return catalogued;
+    return catalogued === null ? observed : Math.min(observed, catalogued);
   };
 
   // Vision reuses the active text provider when it exposes describeImage.
@@ -1572,7 +1701,21 @@ export async function createAgentRuntime(
   // blocks bootstrap. Catalog growth after this point (hot-add
   // server) requires a rebuild of the stable prefix / grammar
   // (currently a runtime restart — see AGENTS.md §"MCP client").
-  const mcpServerConfigs = config.mcp?.servers ?? [];
+  // Composio rides the same rails: when a key is configured we mint (or
+  // reuse) a tool-router session and mount its hosted endpoint as one
+  // more MCP server. With no key `resolveComposioServerConfig` returns
+  // `undefined` and this line is the only trace of the integration —
+  // no server, no tools, nothing for the model to reach for. Failure is
+  // soft: an unreachable Composio must not stop the agent from booting.
+  const composioServerConfig = await resolveComposioServerConfig({
+    composio: config.composio,
+    userConfigFile: config.paths.userConfigFile,
+    logger,
+  });
+  const mcpServerConfigs = [
+    ...(config.mcp?.servers ?? []),
+    ...(composioServerConfig ? [composioServerConfig] : []),
+  ];
   const mcpEnabled = mcpServerConfigs.length > 0;
   const mcpManager = new McpManager(mcpServerConfigs, {
     toolRegistry,
@@ -1631,7 +1774,8 @@ export async function createAgentRuntime(
     grammar = applyMcpToolNameRule(baseGrammar, rule);
     logger.info("mcp: manager started", {
       configured: mcpServerConfigs.length,
-      connected: mcpManager.listStatuses().filter((s) => s.state === "up").length,
+      connected: mcpManager.listStatuses().filter((s) => s.state === "up")
+        .length,
       tools: mcpToolMetas.length,
     });
   }
@@ -1673,7 +1817,18 @@ export async function createAgentRuntime(
         agentToolsEnabled:
           config.tasks.enabled && config.tasks.agentToolsEnabled,
       },
+      email: {
+        available:
+          readAtomicMailApiKey() !== null && config.atomicMail.address !== null,
+      },
       mcp: { enabled: liveMcpEnabled },
+      // Read at rebuild time, not boot time: the Integrations hub calls
+      // `refreshMcp()` after a token save, which lands here.
+      github: { connected: resolveGithubToken() !== null },
+      // The fan-out descriptor (and the `### fusion` guidance block that
+      // keys off it) only exists while the resolver says fusion — an
+      // orchestrator that cannot delegate must not be told it can.
+      fusion: { enabled: resolveCurrentRunMode().effective === "fusion" },
     });
     if (!liveMcpEnabled) return base;
     return mergeMcpDescriptors(
@@ -1681,7 +1836,39 @@ export async function createAgentRuntime(
       buildMcpToolDescriptors(mcpManager.listAllToolMeta()),
     );
   };
-  let effectiveToolDescriptors = rebuildToolDescriptorsFromMcp();
+  /**
+   * The descriptor list the loop reads, with a LIVE fusion gate.
+   *
+   * The gate cannot be a boot snapshot. `resolveCurrentRunMode()`
+   * changes answer the moment the operator switches the active provider
+   * or the stored mode — Manage → LLM writes the config file and resets
+   * the config cache in the same breath — and a list frozen at boot left
+   * the whole mode inert: an operator who started on local or cloud and
+   * switched into fusion got the mode's chrome, no `fusion.delegate`
+   * descriptor and no `### fusion` guidance, so the orchestrator never
+   * reached for the tool and fusion silently did nothing until a
+   * restart.
+   *
+   * Rebuilding is not free (it filters the whole catalog and re-merges
+   * the MCP descriptors), so the array is memoised on the gate: while
+   * the gate holds, every read returns the *same array identity* and the
+   * stable prefix stays byte-identical. When the gate flips the prefix
+   * legitimately changes once and that session's KV cache is dropped —
+   * exactly what installing a skill or live-adding an MCP server
+   * (`refreshMcp`) already costs, and for the same reason: the tool
+   * catalog changed, so the prefix must.
+   */
+  let cachedToolDescriptors = rebuildToolDescriptorsFromMcp();
+  let cachedFusionGate = resolveCurrentRunMode().effective === "fusion";
+  const rebuildToolDescriptors = (): readonly ToolDescriptor[] => {
+    cachedFusionGate = resolveCurrentRunMode().effective === "fusion";
+    cachedToolDescriptors = rebuildToolDescriptorsFromMcp();
+    return cachedToolDescriptors;
+  };
+  const effectiveToolDescriptors = (): readonly ToolDescriptor[] =>
+    (resolveCurrentRunMode().effective === "fusion") === cachedFusionGate
+      ? cachedToolDescriptors
+      : rebuildToolDescriptors();
   if (config.vision.enabled) {
     logger.info("vision provider configured", {
       provider: visionProvider?.name ?? "(none)",
@@ -1699,9 +1886,10 @@ export async function createAgentRuntime(
   const recordUnaryUsage = (
     params: LlmStreamParams,
     result: CompletionResult,
+    servedProviderId: string,
   ): void => {
     if (!result.usage) return;
-    const model = resolveModelPricing(result.modelId);
+    const model = resolveModelPricing(result.modelId, servedProviderId);
     if (costAccumulator) {
       costAccumulator.recordTurn({
         modelId: result.modelId,
@@ -1721,15 +1909,36 @@ export async function createAgentRuntime(
   const recordStreamUsage = (
     sessionId: string | undefined,
     result: CompletionResult,
+    servedProviderId: string,
   ): void => {
     if (!result.usage || !sessionId) return;
-    const model = resolveModelPricing(result.modelId);
+    const model = resolveModelPricing(result.modelId, servedProviderId);
     turnUsageMeter.record({
       sessionId,
       usage: result.usage,
       ...(model ? { model } : {}),
     });
   };
+
+  /**
+   * Warm a `llama-server` link before it is asked to infer: replay the
+   * probes a cloud boot deferred, refresh a stale profile, and let the
+   * loop know a local link is serving. A no-op for every other kind.
+   *
+   * Two callers, one seam. The fallback chain uses it when a cloud→local
+   * fallover is about to happen, and `fusion.delegate` uses it before it
+   * fans out — same problem, since a fusion boot is cloud-active and
+   * leaves the local backend on deferred state (plain profile, one-slot
+   * pool, no `/props`) until something reaches for it.
+   */
+  const prepareLocalLink = createLocalLinkPreparer({
+    gate: localBackend,
+    isLocalLink: (providerId) =>
+      providerIdIsLlamaServer(resolveLlmConfig(getConfig()), providerId),
+    refreshIfStale: async () => {
+      await profileManager?.refreshIfStale();
+    },
+  });
 
   const fallbackSeamDeps: FallbackSeamDeps = {
     fallbackChain,
@@ -1739,18 +1948,10 @@ export async function createAgentRuntime(
     },
     // Issue #112. The one place that knows a cloud→local fallover is
     // about to happen: the chain has already picked the link and the
-    // completion has not been sent. A `llama-server` link reached from a
-    // cloud boot runs on deferred state (plain profile, one-slot pool,
-    // no `/props`), so warm it here rather than infer against it.
-    // No-op on every other attempt — one boolean after the first call.
-    prepareLink: createLocalLinkPreparer({
-      gate: localBackend,
-      isLocalLink: (providerId) =>
-        providerIdIsLlamaServer(resolveLlmConfig(getConfig()), providerId),
-      refreshIfStale: async () => {
-        await profileManager?.refreshIfStale();
-      },
-    }),
+    // completion has not been sent, so warm it here rather than infer
+    // against it. No-op on every other attempt — one boolean after the
+    // first call. See `prepareLocalLink` above.
+    prepareLink: prepareLocalLink,
     recordUnaryUsage,
     recordStreamUsage,
   };
@@ -1761,10 +1962,10 @@ export async function createAgentRuntime(
 
   const llmCompleteStream = options.overrides?.disableStreaming
     ? undefined
-    : options.overrides?.llamaCompleteStream ??
+    : (options.overrides?.llamaCompleteStream ??
       (options.overrides?.llamaComplete
         ? undefined
-        : createFallbackStreamer(fallbackSeamDeps));
+        : createFallbackStreamer(fallbackSeamDeps)));
 
   const taskStore = new TaskStore({ dbFile: config.paths.tasksDbFile });
   const webhookSessionStore = new WebhookSessionStore(
@@ -1892,6 +2093,7 @@ export async function createAgentRuntime(
       linkGenerator,
       notesStore,
       minCandidates: config.memory.links.minCandidates,
+      logger,
     });
   }
 
@@ -1978,6 +2180,7 @@ export async function createAgentRuntime(
       lessonStore,
       profileStore,
       procedureStore: config.memory.procedures.enabled ? procedureStore : null,
+      logger,
     });
   }
 
@@ -2136,10 +2339,24 @@ export async function createAgentRuntime(
     // Mid-turn steering: the loop drains this at every step boundary.
     steeringInbox,
     ...(llmCompleteStream ? { llmCompleteStream } : {}),
-    toolDescriptors: effectiveToolDescriptors,
+    toolDescriptors: effectiveToolDescriptors(),
     capabilities,
     profile,
     contextWindow: resolveCatalogContextWindow,
+    onContextWindowObserved: observeContextWindow,
+    onContextWindowExceeded: forgetContextWindowBelow,
+    // A pinned turn (`RunTurnOptions.providerId`, a fusion worker on the
+    // local leg) is built for the pinned link's wire shape, not the
+    // active provider's that the four getters below describe.
+    resolveLlmSlice: (providerId: string) => {
+      const slice = resolveActiveLlmSlice(providerId);
+      return {
+        toolTransport: slice.transport,
+        toolCallAdapter: slice.adapter,
+        supportsSlotAffinity: slice.slotAffinity,
+        supportsParallelTools: slice.parallelTools,
+      };
+    },
     ...(profileManager ? { profileManager } : {}),
     // Gates the two `/props` refreshes the loop owns, and carries the
     // lazy restore for a switch back to a local provider (issue #112).
@@ -2162,8 +2379,7 @@ export async function createAgentRuntime(
             enabled: true,
             triggerEveryTurns:
               config.memory.reflection.segmentation.triggerEveryTurns,
-            windowTurns:
-              config.memory.reflection.segmentation.windowTurns,
+            windowTurns: config.memory.reflection.segmentation.windowTurns,
           },
         }
       : {}),
@@ -2205,7 +2421,7 @@ export async function createAgentRuntime(
   });
   Object.defineProperty(loopDeps, "toolDescriptors", {
     enumerable: true,
-    get: () => effectiveToolDescriptors,
+    get: () => effectiveToolDescriptors(),
   });
   Object.defineProperty(loopDeps, "toolTransport", {
     enumerable: true,
@@ -2237,6 +2453,8 @@ export async function createAgentRuntime(
   // store. The variable is bound in the `let` slot below; the closure
   // resolves it lazily so the order-of-construction concern is local.
   let telegramChannelForShutdown: TelegramChannel | null = null;
+  let discordChannelForShutdown: DiscordChannel | null = null;
+  let swarmForShutdown: SwarmRegistry | null = null;
   let shutdownCalled = false;
   const shutdown = async (): Promise<void> => {
     if (shutdownCalled) return;
@@ -2257,6 +2475,27 @@ export async function createAgentRuntime(
         await telegramChannelForShutdown.stop();
       } catch (err) {
         logger.warn("telegram: shutdown failed", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+    if (discordChannelForShutdown) {
+      try {
+        // Stops the gateway, aborts in-flight turns and releases the
+        // single-instance lock. Runs alongside the Telegram teardown,
+        // before the LLM client goes away.
+        await discordChannelForShutdown.stop();
+      } catch (err) {
+        logger.warn("discord: shutdown failed", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+    if (swarmForShutdown) {
+      try {
+        await swarmForShutdown.stopAll();
+      } catch (err) {
+        logger.warn("swarm: shutdown failed", {
           error: err instanceof Error ? err.message : String(err),
         });
       }
@@ -2378,7 +2617,7 @@ export async function createAgentRuntime(
     const metas = mcpManager.listAllToolMeta();
     const rule = buildMcpToolNameRule(metas);
     grammar = applyMcpToolNameRule(baseGrammar, rule);
-    effectiveToolDescriptors = rebuildToolDescriptorsFromMcp();
+    rebuildToolDescriptors();
     logger.info("mcp: catalog refreshed", {
       servers: serverCount,
       tools: metas.length,
@@ -2454,6 +2693,61 @@ export async function createAgentRuntime(
     return state;
   };
 
+  // In memory only: no `sessionStore.save`, no `ensureRecorder`. The
+  // worker stamp is what `executeTurn` keys its skips on.
+  const createEphemeralSession = (meta: FusionWorkerMeta): SessionState =>
+    createFusionWorkerSession({ workingDir, meta });
+
+  /**
+   * The loop-side budget for one turn. An explicit `maxSteps` from a
+   * caller (a durable task that pins its own budget, `run --max-steps`)
+   * is a *ceiling* that caller chose — honour it as one. Absent that,
+   * the config value is the leg length and `agent.task.*` supplies the
+   * ceiling, so an ordinary turn runs the task to completion instead of
+   * stopping at the first checkpoint. The provider pin and the duration
+   * ceiling ride along unchanged.
+   */
+  const buildLoopTurnBudget = (runOptions: {
+    maxSteps?: number;
+    signal?: AbortSignal;
+    providerId?: string;
+    taskMaxDurationMs?: number;
+    toolFilter?: (name: string) => boolean;
+  }) => ({
+    maxSteps: Math.min(
+      config.agent.maxSteps,
+      runOptions.maxSteps ?? config.agent.maxSteps,
+    ),
+    ...(runOptions.maxSteps === undefined
+      ? {}
+      : { taskMaxSteps: runOptions.maxSteps }),
+    ...(runOptions.taskMaxDurationMs === undefined
+      ? {}
+      : { taskMaxDurationMs: runOptions.taskMaxDurationMs }),
+    ...(runOptions.providerId === undefined
+      ? {}
+      : { providerId: runOptions.providerId }),
+    ...(runOptions.toolFilter === undefined
+      ? {}
+      : { toolFilter: runOptions.toolFilter }),
+    signal: runOptions.signal ?? new AbortController().signal,
+  });
+
+  /**
+   * A pinned turn must land on the provider it names. The registry is
+   * the authority; an id it does not hold would otherwise degrade to the
+   * active provider inside `resolveActiveLlmSlice` — for a fusion worker
+   * that means silently running on the cloud leg.
+   */
+  const assertKnownProvider = (providerId: string | undefined): void => {
+    if (providerId === undefined) return;
+    if (!providerRegistry.getProvider(providerId)) {
+      throw new Error(
+        `cannot pin turn to llm provider "${providerId}": not configured`,
+      );
+    }
+  };
+
   // Lane B — context before the first message (item 3). The same inputs
   // the loop hands buildPrompt for a real step (agent-loop.ts step
   // context + step-executor.ts promptInput), minus the per-step extras
@@ -2487,7 +2781,10 @@ export async function createAgentRuntime(
     const transport = resolveActiveLlmSlice().transport;
     return buildPrompt({
       session,
-      toolDescriptors: effectiveToolDescriptors,
+      // Called, not read: main made the descriptors late-bound so a live MCP
+      // add/remove is visible without a restart. The preview wants the same
+      // catalogue the next real turn would get.
+      toolDescriptors: effectiveToolDescriptors(),
       capabilities,
       skillCatalog,
       currentDate: formatCurrentDate(new Date()),
@@ -2507,8 +2804,34 @@ export async function createAgentRuntime(
   const executeTurn = async (
     session: SessionState,
     userMessage: string,
-    runOptions: { maxSteps?: number; signal?: AbortSignal } = {},
+    runOptions: {
+      maxSteps?: number;
+      signal?: AbortSignal;
+      providerId?: string;
+      taskMaxDurationMs?: number;
+      toolFilter?: (name: string) => boolean;
+    } = {},
   ): Promise<RunTurnResult> => {
+    assertKnownProvider(runOptions.providerId);
+    // A fusion worker session is throwaway: no recorder, no trace pin, no
+    // memory, and — at the end — no save. The parent session's turn
+    // owns the durable record of what the worker did.
+    const worker = readFusionWorkerMeta(session.metadata);
+    if (worker) {
+      return turnContext.run({ sessionId: session.id }, async () => {
+        try {
+          return await loop.runTurn(session, {
+            userMessage,
+            ephemeral: true,
+            ...buildLoopTurnBudget(runOptions),
+          });
+        } finally {
+          // The prompt_captured hook still records the worker's window
+          // occupancy under its id; nothing persists it, so drop it.
+          lastTurnContextUsage.delete(session.id);
+        }
+      });
+    }
     ensureRecorder(session);
     // Pin this session for the duration of the turn. Without it a burst of
     // new sessions can push this one's recorder out mid-turn, after which
@@ -2530,10 +2853,15 @@ export async function createAgentRuntime(
     };
     return turnContext.run({ sessionId: session.id }, async () => {
       try {
+        // An explicit `maxSteps` from a caller (a durable task that pins
+        // its own budget, `run --max-steps`) is a *ceiling* that caller
+        // chose — honour it as one. Absent that, the config value is the
+        // leg length and `agent.task.*` supplies the ceiling, so an
+        // ordinary turn runs the task to completion instead of stopping
+        // at the first checkpoint.
         const result = await loop.runTurn(session, {
           userMessage,
-          maxSteps: runOptions.maxSteps ?? config.agent.maxSteps,
-          signal: runOptions.signal ?? new AbortController().signal,
+          ...buildLoopTurnBudget(runOptions),
         });
         // Stamp the turn's window occupancy so the stored session can
         // restore the TUI's context gauge when it is reopened. A turn
@@ -2597,8 +2925,14 @@ export async function createAgentRuntime(
       signal?: AbortSignal;
       eventHook?: TurnEventHook;
       origin?: TurnOrigin;
+      providerId?: string;
+      taskMaxDurationMs?: number;
+      toolFilter?: (name: string) => boolean;
     } = {},
   ): Promise<RunTurnResult> => {
+    // Before the queue, so a bad pin rejects now rather than after
+    // waiting behind whatever is running on the session.
+    assertKnownProvider(runOptions.providerId);
     const origin = runOptions.origin ?? "cli";
     const submission = {
       sessionId: session.id,
@@ -2633,7 +2967,10 @@ export async function createAgentRuntime(
     // attempt. On throw we have no result, so only `outcome: "failed"`
     // is known. `captureMessageSent` no-ops when analytics is disabled
     // and also fires the one-time `first_message_sent`.
-    if (origin === "scheduler") {
+    // A fusion worker turn is excluded for the same reason: it is the
+    // orchestrator fanning out, not a person; the parent session's turn
+    // is the one `message_sent` and the meter already count.
+    if (origin === "scheduler" || origin === "fusion") {
       return turnController.enqueue(submission);
     }
     const startedAt = Date.now();
@@ -2700,11 +3037,42 @@ export async function createAgentRuntime(
     taskStore,
     taskRunner,
     createSession,
-    agentToolsEnabled:
-      config.tasks.enabled && config.tasks.agentToolsEnabled,
+    agentToolsEnabled: config.tasks.enabled && config.tasks.agentToolsEnabled,
     defaultMaxAttempts: config.tasks.maxAttempts,
     defaultListLimit: 20,
   });
+
+  // The orchestrator's fan-out. Registered UNCONDITIONALLY: the tool
+  // re-reads `resolveRunMode()` on every call and refuses when fusion is
+  // not effective, which is the correct and only gate it needs. A boot
+  // gate here was worse than redundant — it made the tool unreachable
+  // for the rest of the process to anyone who switched into fusion
+  // mid-session, so the mode ran with its chip, its tint and its config
+  // and no way to delegate. What the model is *told* about still tracks
+  // the live mode: `effectiveToolDescriptors()` adds and drops the
+  // descriptor (and with it the `### fusion` guidance) as the resolver's
+  // answer changes.
+  toolRegistry.register(
+    buildFusionDelegateTool({
+      runTurn: (session, userMessage, turnOptions) =>
+        runTurn(session, userMessage, turnOptions),
+      createEphemeralSession,
+      approvals,
+      slotManager,
+      resolveRunMode: resolveCurrentRunMode,
+      workerSupportsSlotAffinity: (providerId) =>
+        providerRegistry.getProvider(providerId)?.capabilities
+          .supportsSlotAffinity ?? false,
+      warmWorkerBackend: prepareLocalLink,
+      // The PARENT's id, explicitly: the hook these fire from runs
+      // under the worker's ALS frame, where the ambient session is a
+      // throwaway nobody is listening to.
+      emitEvent: emitAgentLoopEventFor,
+      workingDir,
+      outputCharCap: config.agent.batchToolResultCharCap,
+      logger,
+    }),
+  );
 
   const scheduler =
     config.tasks.enabled && config.tasks.schedulerEnabled
@@ -2732,10 +3100,7 @@ export async function createAgentRuntime(
   // when no slot was reserved (memory.reflection disabled or only one
   // llama-server slot) we fall back to slotId=-1 (no KV-cache reuse).
   let consolidatorJob: ConsolidatorJob | null = null;
-  if (
-    config.memory.lessons.enabled &&
-    config.memory.consolidation.enabled
-  ) {
+  if (config.memory.lessons.enabled && config.memory.consolidation.enabled) {
     // One monotonic counter shared by every consolidator-origin trace
     // event (distill outcome + lesson/procedure deprecation) so the
     // synthetic `consolidator.ndjson` file stays totally ordered across
@@ -2813,8 +3178,7 @@ export async function createAgentRuntime(
         intervalMs: config.memory.consolidation.intervalMs,
         cooldownMs: config.memory.consolidation.cooldownMs,
         minClusterSize: config.memory.consolidation.minClusterSize,
-        maxClustersPerTick:
-          config.memory.consolidation.maxClustersPerTick,
+        maxClustersPerTick: config.memory.consolidation.maxClustersPerTick,
         requireSharedTag: config.memory.consolidation.requireSharedTag,
         consolidationLeaseMs: 60_000,
         // Memory-v2 phase 6 — wire the age-based deprecation
@@ -2951,14 +3315,17 @@ export async function createAgentRuntime(
     scheduler,
     webhookSessionStore,
     telegramChannel: null,
+    discordChannel: null,
+    swarm: null,
     mcpManager,
     providerRegistry,
     capabilities,
-    toolDescriptors: effectiveToolDescriptors,
+    toolDescriptors: effectiveToolDescriptors(),
     grammar,
     logger,
     metrics,
     createSession,
+    createEphemeralSession,
     runTurn,
     executeTurn,
     previewPrompt,
@@ -2978,10 +3345,22 @@ export async function createAgentRuntime(
       planMode = on;
     },
     shutdown,
-  } as AgentRuntime & { telegramChannel: TelegramChannel | null };
+  } as AgentRuntime & {
+    telegramChannel: TelegramChannel | null;
+    discordChannel: DiscordChannel | null;
+    swarm: SwarmRegistry | null;
+  };
   Object.defineProperty(runtime, "skillCatalog", {
     enumerable: true,
     get: () => skillCatalog,
+  });
+  // Same late binding as the loop's own getter: `/tools`, the sidecar
+  // and every host that reads the catalog off the runtime must see the
+  // fusion descriptor appear and disappear with the live run mode, not
+  // with whatever the mode was when bootstrap ran.
+  Object.defineProperty(runtime, "toolDescriptors", {
+    enumerable: true,
+    get: () => effectiveToolDescriptors(),
   });
 
   // Telegram remote-control channel. The channel is always constructed
@@ -3015,6 +3394,53 @@ export async function createAgentRuntime(
       });
     });
   }
+
+  // Discord: same shape as Telegram — constructed unconditionally so
+  // the Integrations hub can report its state, started only when the
+  // operator enabled it. `start()` is fire-and-forget so a slow
+  // `/users/@me` probe never delays the first turn, and a missing
+  // token settles as `disabled` rather than `down` (an unconfigured
+  // integration is a resting state, not a failure).
+  const discordChannel = new DiscordChannel({
+    runtime,
+    logger,
+    approvals,
+    approvalRouter,
+    enabled: config.discord.enabled,
+    ownerUserIds: config.discord.ownerUserIds,
+    sessionPointerPath: resolve(config.paths.stateDir, "discord-session.json"),
+    inboxDir: resolve(config.paths.stateDir, "inbox", "discord"),
+    lock: new DiscordLockfile(resolve(config.paths.stateDir, "discord.lock")),
+    onStatus: (status) => options.handlers?.onChannelStatus?.(status),
+  });
+  runtime.discordChannel = discordChannel;
+  discordChannelForShutdown = discordChannel;
+  if (config.discord.enabled) {
+    void discordChannel.start().catch((err) => {
+      logger.error("discord: start() rejected unexpectedly", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+  }
+
+  // Swarm: extra bots beside the two primaries. Constructed
+  // unconditionally so the Swarm tab can list them; each enabled unit
+  // with a token is started fire-and-forget, like the primaries.
+  const swarm = new SwarmRegistry({
+    runtime,
+    config,
+    logger,
+    approvals,
+    approvalRouter,
+    stateDir: config.paths.stateDir,
+    userConfigFile: getUserConfigPath(config.paths.stateDir),
+    ...(options.overrides?.telegramBotFactory
+      ? { telegramBotFactory: options.overrides.telegramBotFactory }
+      : {}),
+  });
+  runtime.swarm = swarm;
+  swarmForShutdown = swarm;
+  void swarm.startEnabled();
 
   // Deferred from the Scheduler construction site above: the first
   // due tick must not race the Telegram channel construction, so task
@@ -3106,7 +3532,8 @@ function logResolvedProfile(
   logger: StructuredLogger,
 ): ResolvedModelProfile {
   const resolved = detectModelProfile(props);
-  const alias = typeof props.model_alias === "string" ? props.model_alias : null;
+  const alias =
+    typeof props.model_alias === "string" ? props.model_alias : null;
   const totalSlots = extractTotalSlots(props);
   logger.info("model profile resolved", {
     id: resolved.id,
@@ -3223,9 +3650,7 @@ function buildReflectionRunner(args: {
     reflectionSlotId,
     timeoutMs: memory.reflection.timeoutMs,
     maxFactsPerCall: memory.reflection.maxFactsPerCall,
-    maxNotesPerCall: notesWriteEnabled
-      ? memory.reflection.maxNotesPerCall
-      : 0,
+    maxNotesPerCall: notesWriteEnabled ? memory.reflection.maxNotesPerCall : 0,
     // v2.5 typed-NOTE extraction (Phase C). Threaded as a
     // boolean dep so the runner can pick the typed reflection prefix
     // and the parser can project [type=X] into the `type:<X>` tag.

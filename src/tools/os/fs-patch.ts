@@ -46,7 +46,12 @@ export function buildOsFsPatchTool(
 
       const previews = await Promise.all(
         parsed.map((hunkFile) =>
-          dryRunFile(hunkFile, args.rootDir, args.fuzzFactor, args.stripComponents),
+          dryRunFile(
+            hunkFile,
+            args.rootDir,
+            args.fuzzFactor,
+            args.stripComponents,
+          ),
         ),
       );
 
@@ -146,9 +151,7 @@ function parseNonNegativeInt(
 ): number {
   if (raw === undefined || raw === null) return fallback;
   if (typeof raw !== "number" || !Number.isFinite(raw) || raw < 0) {
-    throw new Error(
-      `os.fs.patch: \`${field}\` must be a non-negative number`,
-    );
+    throw new Error(`os.fs.patch: \`${field}\` must be a non-negative number`);
   }
   return Math.floor(raw);
 }
@@ -157,7 +160,9 @@ function safeParsePatch(source: string): StructuredPatch[] {
   try {
     return parsePatch(source) as StructuredPatch[];
   } catch (err) {
-    throw new Error(`os.fs.patch: failed to parse patch — ${(err as Error).message}`);
+    throw new Error(
+      `os.fs.patch: failed to parse patch — ${(err as Error).message}`,
+    );
   }
 }
 
@@ -173,9 +178,7 @@ async function dryRunFile(
   stripComponents: number,
 ): Promise<PreviewOutcome> {
   const targetRel = pickTargetPath(hunkFile, stripComponents);
-  const abs = isAbsolute(targetRel)
-    ? targetRel
-    : resolve(rootDir, targetRel);
+  const abs = isAbsolute(targetRel) ? targetRel : resolve(rootDir, targetRel);
   const counts = countLines(hunkFile);
 
   let originalContent = "";
@@ -236,9 +239,10 @@ function pickTargetPath(
 ): string {
   // Prefer the "new" side; fall back to the "old" side for pure deletions.
   const raw =
-    typeof hunkFile.newFileName === "string" && hunkFile.newFileName !== "/dev/null"
+    typeof hunkFile.newFileName === "string" &&
+    hunkFile.newFileName !== "/dev/null"
       ? hunkFile.newFileName
-      : hunkFile.oldFileName ?? "";
+      : (hunkFile.oldFileName ?? "");
   return stripPathComponents(raw, stripComponents);
 }
 

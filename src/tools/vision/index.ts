@@ -3,10 +3,7 @@ import type { LlmProvider } from "../../llm/index.js";
 import { buildVisionDescribeTool } from "./describe.js";
 
 export { buildVisionDescribeTool } from "./describe.js";
-export {
-  loadImageFile,
-  UnsupportedImageFormatError,
-} from "./load-image.js";
+export { loadImageFile, UnsupportedImageFormatError } from "./load-image.js";
 export type { LoadedImage } from "./load-image.js";
 
 export interface RegisterVisionToolsOptions {

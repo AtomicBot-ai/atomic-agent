@@ -92,7 +92,10 @@ export async function requireApproval(
   // that returns `pathOverride` for a call with no `redirectablePath` is
   // answering a question nobody asked, so it is dropped here rather than
   // handed to a tool that would not know what to do with it.
-  if (prompt.redirectablePath === undefined || decision.pathOverride === undefined) {
+  if (
+    prompt.redirectablePath === undefined ||
+    decision.pathOverride === undefined
+  ) {
     return {};
   }
   return { pathOverride: decision.pathOverride };

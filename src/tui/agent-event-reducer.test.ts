@@ -1,3 +1,4 @@
+import { withReportHint } from "./format-agent-error-for-chat.js";
 import { describe, expect, it } from "vitest";
 import type { BuiltPrompt } from "../prompt/build-prompt-types.js";
 import { reduceTuiState, type TuiAction } from "./agent-event-reducer.js";
@@ -29,6 +30,143 @@ function fakeSession(overrides: Partial<TuiSessionInfo> = {}): TuiSessionInfo {
 function apply(state: TuiState, actions: TuiAction[]): TuiState {
   return actions.reduce(reduceTuiState, state);
 }
+
+describe("reduceTuiState fusion worker progress", () => {
+  const feedLines = (
+    events: Parameters<typeof reduceTuiState>[1][],
+  ): string[] =>
+    apply(createInitialTuiState(fakeSession()), events).feed.map((f) => f.line);
+
+  it("shows one line when a worker starts and one when it finishes", () => {
+    // A fan-out can hold the orchestrator's turn for minutes with no
+    // steps of its own to show; without these lines the TUI goes quiet.
+    const lines = feedLines([
+      {
+        type: "agent_event",
+        event: {
+          type: "fusion_worker",
+          taskId: "t1",
+          title: "Map the routes",
+          phase: "started",
+        },
+      },
+      {
+        type: "agent_event",
+        event: {
+          type: "fusion_worker",
+          taskId: "t1",
+          title: "Map the routes",
+          phase: "finished",
+          stepCount: 5,
+          durationMs: 9000,
+          summary: "12 routes, 3 unauthenticated",
+        },
+      },
+    ]);
+    expect(lines).toEqual([
+      "» worker Map the routes: started",
+      "» worker Map the routes: done — 5 steps, 12 routes, 3 unauthenticated",
+    ]);
+  });
+
+  it("renders the failed and cancelled phases distinctly", () => {
+    const lines = feedLines([
+      {
+        type: "agent_event",
+        event: {
+          type: "fusion_worker",
+          taskId: "t1",
+          title: "A",
+          phase: "failed",
+          summary: "provider exploded",
+        },
+      },
+      {
+        type: "agent_event",
+        event: {
+          type: "fusion_worker",
+          taskId: "t2",
+          title: "B",
+          phase: "cancelled",
+        },
+      },
+    ]);
+    expect(lines).toEqual([
+      "» worker A: failed — provider exploded",
+      "» worker B: cancelled",
+    ]);
+  });
+
+  it("attributes every line to the model that ran it", () => {
+    // Fusion is the one mode where two models on two bills share a
+    // single turn, and a worker's own step events are dropped by the
+    // reducer's session filter — so these lines are the only place the
+    // division of work is visible at all.
+    const lines = feedLines([
+      {
+        type: "agent_event",
+        event: {
+          type: "fusion_worker",
+          taskId: "fusion.delegate",
+          title: "2 tasks",
+          phase: "tool",
+          role: "orchestrator",
+          model: "claude-sonnet-4.5",
+          tool: "fusion.delegate",
+        },
+      },
+      {
+        type: "agent_event",
+        event: {
+          type: "fusion_worker",
+          taskId: "t2",
+          title: "2",
+          phase: "tool",
+          role: "worker",
+          model: "qwen-3.5-4b",
+          tool: "os.fs.write",
+        },
+      },
+      {
+        type: "agent_event",
+        event: {
+          type: "fusion_worker",
+          taskId: "t2",
+          title: "2",
+          phase: "finished",
+          role: "worker",
+          model: "qwen-3.5-4b",
+          stepCount: 4,
+        },
+      },
+    ]);
+    expect(lines).toEqual([
+      "» orchestrator · claude-sonnet-4.5 — fusion.delegate (2 tasks)",
+      "» worker 2 · qwen-3.5-4b — os.fs.write",
+      "» worker 2 · qwen-3.5-4b: done — 4 steps",
+    ]);
+  });
+
+  it("does not disturb the turn's own status or step counter", () => {
+    // These events belong to the parent turn as a whole, not to any one
+    // of its steps — they must not read as a step boundary.
+    const running = apply(createInitialTuiState(fakeSession()), [
+      { type: "agent_event", event: { type: "step_started", stepIndex: 3 } },
+    ]);
+    const after = reduceTuiState(running, {
+      type: "agent_event",
+      event: {
+        type: "fusion_worker",
+        taskId: "t1",
+        title: "A",
+        phase: "started",
+      },
+    });
+    expect(after.status).toBe(running.status);
+    expect(after.currentStep).toBe(3);
+    expect(after.feed.at(-1)?.stepIndex).toBeNull();
+  });
+});
 
 describe("reduceTuiState", () => {
   it("should transition to running when step_started arrives", () => {
@@ -145,9 +283,7 @@ describe("reduceTuiState", () => {
   });
 
   describe("context usage", () => {
-    const prompt = (
-      overrides: Partial<BuiltPrompt> = {},
-    ): BuiltPrompt =>
+    const prompt = (overrides: Partial<BuiltPrompt> = {}): BuiltPrompt =>
       ({
         text: "",
         stablePrefix: "",
@@ -285,8 +421,12 @@ describe("reduceTuiState", () => {
     });
 
     it("resets when the transcript is cleared or the session changes", () => {
-      const built = apply(createInitialTuiState(fakeSession()), [promptBuilt()]);
-      expect(reduceTuiState(built, { type: "chat_cleared" }).contextUsage.tokens).toBeNull();
+      const built = apply(createInitialTuiState(fakeSession()), [
+        promptBuilt(),
+      ]);
+      expect(
+        reduceTuiState(built, { type: "chat_cleared" }).contextUsage.tokens,
+      ).toBeNull();
       expect(
         reduceTuiState(built, { type: "session_created", sessionId: "s2" })
           .contextUsage.tokens,
@@ -298,11 +438,26 @@ describe("reduceTuiState", () => {
     const initial = createInitialTuiState(fakeSession());
     const ts = Date.now();
     const next = apply(initial, [
-      { type: "metric", sample: { name: "llm.prompt_tokens", value: 2400, timestamp: ts } },
-      { type: "metric", sample: { name: "llm.completion_tokens", value: 32, timestamp: ts } },
-      { type: "metric", sample: { name: "llm.duration_ms", value: 850, timestamp: ts } },
-      { type: "metric", sample: { name: "llm.cache_reused", value: 1, timestamp: ts } },
-      { type: "metric", sample: { name: "llm.cache_reused", value: 0, timestamp: ts } },
+      {
+        type: "metric",
+        sample: { name: "llm.prompt_tokens", value: 2400, timestamp: ts },
+      },
+      {
+        type: "metric",
+        sample: { name: "llm.completion_tokens", value: 32, timestamp: ts },
+      },
+      {
+        type: "metric",
+        sample: { name: "llm.duration_ms", value: 850, timestamp: ts },
+      },
+      {
+        type: "metric",
+        sample: { name: "llm.cache_reused", value: 1, timestamp: ts },
+      },
+      {
+        type: "metric",
+        sample: { name: "llm.cache_reused", value: 0, timestamp: ts },
+      },
     ]);
     expect(next.metrics.promptTokensLast).toBe(2400);
     expect(next.metrics.completionTokensLast).toBe(32);
@@ -315,10 +470,16 @@ describe("reduceTuiState", () => {
   it("should return to idle and archive run on loop_completed with finish", () => {
     const initial = createInitialTuiState(fakeSession());
     const next = apply(initial, [
-      { type: "agent_event", event: { type: "user_message", text: "check email" } },
+      {
+        type: "agent_event",
+        event: { type: "user_message", text: "check email" },
+      },
       { type: "message_submitted" },
       { type: "agent_event", event: { type: "step_started", stepIndex: 0 } },
-      { type: "agent_event", event: { type: "loop_completed", reason: "finish" } },
+      {
+        type: "agent_event",
+        event: { type: "loop_completed", reason: "finish" },
+      },
     ]);
     expect(next.status).toBe("idle");
     expect(next.lastRunStatus).toBe("completed: finish");
@@ -331,7 +492,10 @@ describe("reduceTuiState", () => {
     const initial = createInitialTuiState(fakeSession());
     const next = apply(initial, [
       { type: "message_submitted" },
-      { type: "agent_event", event: { type: "loop_completed", reason: "cancelled" } },
+      {
+        type: "agent_event",
+        event: { type: "loop_completed", reason: "cancelled" },
+      },
     ]);
     expect(next.status).toBe("idle");
     expect(next.runHistory[0]?.outcome).toBe("cancelled");
@@ -341,7 +505,14 @@ describe("reduceTuiState", () => {
     const initial = createInitialTuiState(fakeSession());
     const next = apply(initial, [
       { type: "message_submitted" },
-      { type: "agent_event", event: { type: "loop_failed", error: new Error("boom"), category: "tool" } },
+      {
+        type: "agent_event",
+        event: {
+          type: "loop_failed",
+          error: new Error("boom"),
+          category: "tool",
+        },
+      },
     ]);
     expect(next.status).toBe("idle");
     expect(next.lastRunStatus).toBe("failed [tool]: boom");
@@ -350,13 +521,16 @@ describe("reduceTuiState", () => {
     const errMsg = next.messages.find(
       (m) => m.role === "system" && m.variant === "warn",
     );
-    expect(errMsg?.text).toBe("Turn failed [tool]: boom");
+    expect(errMsg?.text).toBe(withReportHint("Turn failed [tool]: boom"));
   });
 
   it("renders a calm stopped-by-user notice with a retry prompt on a cancelled loop_failed", () => {
     const initial = createInitialTuiState(fakeSession());
     const next = apply(initial, [
-      { type: "agent_event", event: { type: "user_message", text: "count the stars" } },
+      {
+        type: "agent_event",
+        event: { type: "user_message", text: "count the stars" },
+      },
       { type: "message_submitted" },
       {
         type: "agent_event",
@@ -389,7 +563,10 @@ describe("reduceTuiState", () => {
     // operator's stop, not a provider failure.
     const initial = createInitialTuiState(fakeSession());
     const next = apply(initial, [
-      { type: "agent_event", event: { type: "user_message", text: "count the stars" } },
+      {
+        type: "agent_event",
+        event: { type: "user_message", text: "count the stars" },
+      },
       { type: "message_submitted" },
       { type: "abort_requested" },
       {
@@ -424,7 +601,9 @@ describe("reduceTuiState", () => {
     const warn = next.messages.find(
       (m) => m.role === "system" && m.variant === "warn",
     );
-    expect(warn?.text).toBe("Turn failed [model]: model returned empty content");
+    expect(warn?.text).toBe(
+      withReportHint("Turn failed [model]: model returned empty content"),
+    );
   });
 
   it("leaves retryText off the stopped notice when no user message exists to re-run", () => {
@@ -486,7 +665,13 @@ describe("reduceTuiState", () => {
     const next = apply(initial, [
       {
         type: "providers_refresh",
-        rows: [providerRow({ id: "openrouter", kind: "openrouter", isActiveText: true })],
+        rows: [
+          providerRow({
+            id: "openrouter",
+            kind: "openrouter",
+            isActiveText: true,
+          }),
+        ],
       },
       { type: "message_submitted" },
       {
@@ -501,7 +686,54 @@ describe("reduceTuiState", () => {
     const errMsg = next.messages.find(
       (m) => m.role === "system" && m.variant === "warn",
     );
-    expect(errMsg?.text).toBe("Turn failed [transport]: fetch failed");
+    // Exactly the base line and nothing else. `fetch failed` is undici's
+    // catch-all for a connection that never opened as much as for one
+    // that died (verified on Node 22.22.2: `ENOTFOUND` and `ECONNREFUSED`
+    // both surface as this bare string), so neither hint may fire — the
+    // llama one names the wrong server on a cloud route, and the drop one
+    // would assert a reply was cut off on a turn that may have completed
+    // zero steps.
+    expect(errMsg?.text).toBe(
+      withReportHint("Turn failed [transport]: fetch failed"),
+    );
+  });
+
+  it("explains a cloud route's mid-stream drop through the whole reducer", () => {
+    // The reported shape: a cloud provider's stream dies mid-body and
+    // undici's message is the single word `terminated`.
+    // Source: Discord #feedback-and-bugs, 2026-09-03.
+    const initial = createInitialTuiState(fakeSession());
+    const next = apply(initial, [
+      {
+        type: "providers_refresh",
+        rows: [
+          providerRow({
+            id: "openrouter",
+            kind: "openrouter",
+            isActiveText: true,
+          }),
+        ],
+      },
+      { type: "message_submitted" },
+      {
+        type: "agent_event",
+        event: {
+          type: "loop_failed",
+          error: new Error("terminated"),
+          category: "transport",
+        },
+      },
+    ]);
+    const errMsg = next.messages.find(
+      (m) => m.role === "system" && m.variant === "warn",
+    );
+    expect(errMsg?.text).toContain("Turn failed [transport]: terminated");
+    expect(errMsg?.text).toContain(
+      "the connection to the model dropped before the reply finished",
+    );
+    expect(errMsg?.text).toContain(
+      "the steps that already finished are kept in this session",
+    );
   });
 
   it("maps loop_completed reason failed to failed outcome", () => {
@@ -674,6 +906,41 @@ describe("reduceTuiState", () => {
     expect(lastMessage?.reasoningBlocks).toContain("plan v2");
   });
 
+  it("carries reply attachments onto the finalised assistant message", () => {
+    const initial = createInitialTuiState(fakeSession());
+    const next = apply(initial, [
+      { type: "message_submitted" },
+      {
+        type: "agent_event",
+        event: {
+          type: "llm_event",
+          event: {
+            type: "assistant_reply",
+            text: "here is the report",
+            attachments: ["/tmp/report.pdf"],
+          },
+        },
+      },
+    ]);
+    expect(next.messages.at(-1)).toMatchObject({
+      role: "assistant",
+      text: "here is the report",
+      attachments: ["/tmp/report.pdf"],
+    });
+    // A reply without attachments does not grow a stray field.
+    const plain = apply(initial, [
+      { type: "message_submitted" },
+      {
+        type: "agent_event",
+        event: {
+          type: "llm_event",
+          event: { type: "assistant_reply", text: "plain" },
+        },
+      },
+    ]);
+    expect(plain.messages.at(-1)).not.toHaveProperty("attachments");
+  });
+
   it("should clear live reasoning on assistant_reply so the tail does not re-expand it", () => {
     const initial = createInitialTuiState(fakeSession());
     const next = apply(initial, [
@@ -682,7 +949,11 @@ describe("reduceTuiState", () => {
         type: "agent_event",
         event: {
           type: "llm_event",
-          event: { type: "reasoning", stepIndex: 0, text: "some chain of thought" },
+          event: {
+            type: "reasoning",
+            stepIndex: 0,
+            text: "some chain of thought",
+          },
         },
       },
       {
@@ -706,7 +977,9 @@ describe("reduceTuiState", () => {
     expect(next.streamingAssistantText).toBeNull();
     expect(next.streamingToolCalls).toEqual([]);
     expect(next.streamingToolCards).toEqual([]);
-    expect(next.messages.at(-1)?.reasoningBlocks).toContain("some chain of thought");
+    expect(next.messages.at(-1)?.reasoningBlocks).toContain(
+      "some chain of thought",
+    );
   });
 
   it("mirrors approval_level_changed into state.session for the diagnostics line", () => {
@@ -750,7 +1023,11 @@ describe("reduceTuiState", () => {
 
     const next = reduceTuiState(running, {
       type: "agent_event",
-      event: { type: "steer_applied", text: "use the staging db", stepIndex: 1 },
+      event: {
+        type: "steer_applied",
+        text: "use the staging db",
+        stepIndex: 1,
+      },
     });
 
     // The operator's words show up as a user message, in the same
@@ -817,6 +1094,398 @@ describe("reduceTuiState", () => {
   });
 });
 
+describe("truncated completion", () => {
+  it("says what was cut and what the retry changes", () => {
+    const next = reduceTuiState(createInitialTuiState(fakeSession()), {
+      type: "agent_event",
+      event: {
+        type: "completion_truncated",
+        stepIndex: 3,
+        cause: "reply_cap",
+        completionTokens: 8_192,
+        promptTokens: 6_000,
+        requestedMaxTokens: 8_192,
+        retry: { kind: "raise_cap", maxTokens: 32_768 },
+      } as never,
+    });
+    const line = next.feed.at(-1)?.line ?? "";
+    expect(line).toContain("reply cut off at 8192 tokens");
+    expect(line).toContain("step 4");
+    expect(line).toContain("32768-token cap");
+    expect(next.feed.at(-1)?.color).toBe("yellow");
+  });
+
+  it("explains a window retry in the operator's terms", () => {
+    const next = reduceTuiState(createInitialTuiState(fakeSession()), {
+      type: "agent_event",
+      event: {
+        type: "completion_truncated",
+        stepIndex: 0,
+        cause: "context_window",
+        completionTokens: 2_768,
+        promptTokens: 30_000,
+        requestedMaxTokens: 8_192,
+        retry: { kind: "fit_window", contextWindow: 32_768 },
+      } as never,
+    });
+    const line = next.feed.at(-1)?.line ?? "";
+    expect(line).toContain("ran out of context at ~32768 tokens");
+    expect(line).toContain("trimming the conversation");
+  });
+});
+
+describe("parse-failure recovery", () => {
+  const recovered = (over: Record<string, unknown> = {}): TuiAction => ({
+    type: "agent_event",
+    event: {
+      type: "parse_failure_recovered",
+      stepIndex: 3,
+      attempt: 1,
+      budget: 2,
+      reason: 'tool call "os.fs.write" arguments are not a valid JSON object',
+      ...over,
+    } as never,
+  });
+
+  it("says the output was rejected and that the turn is trying again", () => {
+    const next = reduceTuiState(
+      createInitialTuiState(fakeSession()),
+      recovered(),
+    );
+    const line = next.feed.at(-1)?.line ?? "";
+    expect(line).toContain("could not be read as a tool call");
+    expect(line).toContain("os.fs.write");
+    expect(line).toContain("(1/2)");
+  });
+
+  it("clips a reason that quotes the model's own output", () => {
+    const next = reduceTuiState(
+      createInitialTuiState(fakeSession()),
+      recovered({ reason: "x".repeat(500) }),
+    );
+    expect((next.feed.at(-1)?.line ?? "").length).toBeLessThan(250);
+  });
+
+  it("leaves one line per recovery, not one per step", () => {
+    const next = apply(createInitialTuiState(fakeSession()), [
+      recovered(),
+      recovered({ attempt: 2, stepIndex: 4 }),
+    ]);
+    const lines = next.feed.filter((row) =>
+      row.line.includes("could not be read as a tool call"),
+    );
+    expect(lines).toHaveLength(2);
+  });
+});
+
+describe("provider outage", () => {
+  const waiting = (over: Record<string, unknown> = {}): TuiAction => ({
+    type: "agent_event",
+    event: {
+      type: "provider_waiting",
+      attempt: 1,
+      waitedMs: 0,
+      maxWaitMs: 300_000,
+      nextRetryMs: 2_000,
+      reason: "fetch failed",
+      ...over,
+    } as never,
+  });
+
+  const step = (stepIndex: number): TuiAction => ({
+    type: "agent_event",
+    event: { type: "step_started", stepIndex },
+  });
+
+  const reasoningDelta = (stepIndex: number, text: string): TuiAction => ({
+    type: "agent_event",
+    event: {
+      type: "llm_event",
+      event: { type: "reasoning_delta", stepIndex, text },
+    } as never,
+  });
+
+  it("shows the outage and says how long it will keep trying", () => {
+    const next = reduceTuiState(
+      createInitialTuiState(fakeSession()),
+      waiting(),
+    );
+    expect(next.providerOutage).toMatchObject({
+      reason: "fetch failed",
+      attempt: 1,
+      phase: "parked",
+      givenUp: false,
+    });
+    expect(next.providerOutage?.sinceTs).toBeGreaterThan(0);
+    expect(next.feed.at(-1)?.line).toContain("provider not answering");
+    expect(next.feed.at(-1)?.line).toContain("retrying in 2s");
+  });
+
+  it("flips to `retrying` when the parked step goes back on the wire", () => {
+    // The loop emits nothing between the backoff and
+    // `provider_recovered`, which only lands once the replayed step has
+    // *finished*. `step_started` during an outage is the one event that
+    // says the retry is live, and without it a step that streams for
+    // minutes leaves the row counting a wait that is already over.
+    const parked = apply(createInitialTuiState(fakeSession()), [
+      step(4),
+      waiting(),
+    ]);
+    expect(parked.providerOutage).toMatchObject({ phase: "parked" });
+    const retrying = reduceTuiState(parked, step(4));
+    expect(retrying.providerOutage).toMatchObject({
+      phase: "retrying",
+      attempt: 1,
+      // The wait total is not rewritten — the next `provider_waiting`
+      // owns it, and the readout counts the retry off `sinceTs`.
+      waitedMs: 0,
+    });
+    expect(retrying.providerOutage?.sinceTs).toBeGreaterThanOrEqual(
+      parked.providerOutage?.sinceTs ?? 0,
+    );
+  });
+
+  it("drops the dead attempt's reasoning instead of splicing the retry onto it", () => {
+    // `appendReasoningDelta` merges into the trailing entry whenever the
+    // step index matches, so the retry's thinking used to be welded onto
+    // the tail of the attempt whose socket died — the model's reasoning
+    // shown twice, joined mid-sentence.
+    const next = apply(createInitialTuiState(fakeSession()), [
+      step(2),
+      reasoningDelta(2, "first attempt thinking"),
+      waiting({ reason: "terminated" }),
+      step(2),
+      reasoningDelta(2, "retry thinking"),
+    ]);
+    expect(next.reasoning).toHaveLength(1);
+    expect(next.reasoning[0]?.text).toBe("retry thinking");
+  });
+
+  it("clears the dead attempt's streamed reply and half-parsed tool calls", () => {
+    const parked: TuiState = {
+      ...apply(createInitialTuiState(fakeSession()), [step(1), waiting()]),
+      streamingAssistantText: "half a sentence before the socket",
+      streamingToolCalls: [
+        {
+          id: "call_1",
+          stepIndex: 1,
+          tool: "os.fs.read",
+          args: {},
+          startedAt: Date.now(),
+        },
+      ],
+    };
+    const retrying = reduceTuiState(parked, step(1));
+    expect(retrying.streamingAssistantText).toBeNull();
+    expect(retrying.streamingToolCalls).toEqual([]);
+  });
+
+  it("leaves an ordinary step start completely alone", () => {
+    // The retry branch hangs off `step_started`, which every turn fires
+    // for every step. With no outage live it must change nothing.
+    const before = apply(createInitialTuiState(fakeSession()), [
+      step(0),
+      reasoningDelta(0, "thinking"),
+    ]);
+    const after = reduceTuiState(
+      { ...before, streamingAssistantText: "partial" },
+      step(0),
+    );
+    expect(after.providerOutage).toBeNull();
+    expect(after.reasoning).toHaveLength(1);
+    expect(after.reasoning[0]?.text).toBe("thinking");
+    expect(after.streamingAssistantText).toBe("partial");
+  });
+
+  it("does not turn a given-up outage back into a live wait", () => {
+    // The badge is past tense and sticky until a turn actually
+    // succeeds; the next turn's first step must not restart a countdown.
+    const dead = apply(createInitialTuiState(fakeSession()), [
+      waiting(),
+      {
+        type: "agent_event",
+        event: {
+          type: "loop_failed",
+          error: new Error("fetch failed"),
+          category: "transport",
+        },
+      },
+    ]);
+    const next = reduceTuiState(dead, step(0));
+    expect(next.providerOutage).toMatchObject({
+      givenUp: true,
+      phase: "parked",
+    });
+  });
+
+  const turnFinished = (reason: string): TuiAction => ({
+    type: "agent_event",
+    event: {
+      type: "turn_finished",
+      turnIndex: 0,
+      reason,
+      stepCount: 1,
+      durationMs: 20,
+    } as never,
+  });
+
+  it.each(["cancelled", "max_steps"])(
+    "takes a live wait down with the turn that ended %s",
+    (reason) => {
+      // `waiting` and `retrying` are claims about a turn that is on the
+      // wire. Esc during the backoff is the ending the loop's own feed
+      // line advertises ("· Esc stops"), and it used to leave the
+      // readout standing and counting — measured live at 19s and
+      // climbing, fourteen seconds after the loop was dead.
+      const ended = apply(createInitialTuiState(fakeSession()), [
+        step(0),
+        waiting(),
+        turnFinished(reason),
+      ]);
+      expect(ended.providerOutage).toBeNull();
+    },
+  );
+
+  it("does not read the next turn's first step as the parked one", () => {
+    const ended = apply(createInitialTuiState(fakeSession()), [
+      step(0),
+      waiting(),
+      turnFinished("cancelled"),
+    ]);
+    const fresh = apply(ended, [
+      { type: "agent_event", event: { type: "turn_started" } as never },
+      step(0),
+    ]);
+    expect(fresh.providerOutage).toBeNull();
+  });
+
+  it("keeps the given-up badge across an aborted turn", () => {
+    // Sticky on purpose: the next message fails the same way until the
+    // link is back, and a state that clears itself between attempts is
+    // how eight identical failures read as eight separate surprises.
+    const dead = apply(createInitialTuiState(fakeSession()), [
+      waiting(),
+      {
+        type: "agent_event",
+        event: {
+          type: "loop_failed",
+          error: new Error("fetch failed"),
+          category: "transport",
+        },
+      },
+      turnFinished("failed"),
+    ]);
+    expect(dead.providerOutage).toMatchObject({ givenUp: true });
+    expect(
+      reduceTuiState(dead, turnFinished("cancelled")).providerOutage,
+    ).toMatchObject({ givenUp: true });
+  });
+
+  it("clears the given-up badge once a turn reaches the model", () => {
+    const dead = apply(createInitialTuiState(fakeSession()), [
+      waiting(),
+      {
+        type: "agent_event",
+        event: {
+          type: "loop_failed",
+          error: new Error("fetch failed"),
+          category: "transport",
+        },
+      },
+      turnFinished("failed"),
+    ]);
+    expect(
+      reduceTuiState(dead, turnFinished("reply")).providerOutage,
+    ).toBeNull();
+  });
+
+  it("does not repeat the feed line on every retry", () => {
+    // The backoff fires every few seconds at first; the meta-row carries
+    // the live numbers, so a wall of identical lines would only bury the
+    // work above it.
+    const next = apply(createInitialTuiState(fakeSession()), [
+      waiting(),
+      waiting({ attempt: 2, waitedMs: 2_000, nextRetryMs: 4_000 }),
+      waiting({ attempt: 3, waitedMs: 6_000, nextRetryMs: 8_000 }),
+    ]);
+    expect(
+      next.feed.filter((f) => f.line.includes("provider not answering")),
+    ).toHaveLength(1);
+    expect(next.providerOutage).toMatchObject({ attempt: 3, waitedMs: 6_000 });
+  });
+
+  it("clears on recovery and says how long it waited", () => {
+    const next = apply(createInitialTuiState(fakeSession()), [
+      waiting(),
+      {
+        type: "agent_event",
+        event: { type: "provider_recovered", waitedMs: 6_000 } as never,
+      },
+    ]);
+    expect(next.providerOutage).toBeNull();
+    expect(next.feed.at(-1)?.line).toContain(
+      "provider answered again after 6s",
+    );
+  });
+
+  it("stays on screen when the wait ran out and the turn failed", () => {
+    // The sticky half: the next message will fail the same way, and a
+    // state that cleared between attempts is how eight identical
+    // failures read as eight separate surprises.
+    const next = apply(createInitialTuiState(fakeSession()), [
+      waiting(),
+      {
+        type: "agent_event",
+        event: {
+          type: "loop_failed",
+          error: new Error("fetch failed"),
+          category: "transport",
+        },
+      },
+    ]);
+    expect(next.providerOutage).toMatchObject({ givenUp: true });
+  });
+
+  it("clears when a turn actually completes", () => {
+    const next = apply(createInitialTuiState(fakeSession()), [
+      waiting(),
+      {
+        type: "agent_event",
+        event: {
+          type: "turn_finished",
+          turnIndex: 0,
+          reason: "reply",
+          stepCount: 3,
+          durationMs: 10,
+        },
+      },
+    ]);
+    expect(next.providerOutage).toBeNull();
+  });
+
+  it("leaves the context gauge alone", () => {
+    // The readout at the bottom of the screen is driven by
+    // `prompt_built` / `llm_completed` only. A parked turn builds no new
+    // prompt and gets no completion, so the gauge must hold the last
+    // measured value rather than resetting, moving or disappearing.
+    const built = createInitialTuiState(fakeSession());
+    const withUsage: TuiState = {
+      ...built,
+      contextUsage: { ...built.contextUsage, tokens: 12_345, window: 32_768 },
+    };
+    const next = apply(withUsage, [
+      waiting(),
+      waiting({ attempt: 2, waitedMs: 2_000 }),
+      {
+        type: "agent_event",
+        event: { type: "provider_recovered", waitedMs: 6_000 } as never,
+      },
+    ]);
+    expect(next.contextUsage.tokens).toBe(12_345);
+    expect(next.contextUsage.window).toBe(32_768);
+  });
+});
+
 describe("llm health visibility", () => {
   it("does not mark local as configured just because a probe failed", () => {
     const state = apply(createInitialTuiState(fakeSession()), [
@@ -869,7 +1538,6 @@ describe("llm health visibility", () => {
   });
 });
 
-
 describe("turn_gate_blocked", () => {
   it("after a fresh submit: prints the warn message and hands the composer back", () => {
     const submitted = apply(createInitialTuiState(fakeSession()), [
@@ -896,9 +1564,15 @@ describe("turn_gate_blocked", () => {
       // A full earlier turn, so the trap has bait: the blocked text
       // never reaches `state.messages`, and a history entry minted for
       // the block would carry THIS message instead.
-      { type: "agent_event", event: { type: "user_message", text: "earlier turn" } },
+      {
+        type: "agent_event",
+        event: { type: "user_message", text: "earlier turn" },
+      },
       { type: "message_submitted" },
-      { type: "agent_event", event: { type: "loop_completed", reason: "finish" } },
+      {
+        type: "agent_event",
+        event: { type: "loop_completed", reason: "finish" },
+      },
       { type: "message_submitted" },
       {
         type: "turn_gate_blocked",
@@ -955,5 +1629,59 @@ describe("update banner state", () => {
       { type: "update_started" },
     ]);
     expect(reduceTuiState(running, offer)).toBe(running);
+  });
+});
+
+describe("a fallover away from the primary is said in the chat, not only the feed", () => {
+  const away = {
+    type: "provider_switched" as const,
+    direction: "away" as const,
+    from: "openrouter",
+    to: "local-llama",
+    reason: '"openrouter" rejected the request (402).',
+  };
+
+  it("posts one system message naming the cause and what answers now", () => {
+    const next = apply(createInitialTuiState(fakeSession()), [
+      { type: "agent_event", event: away },
+    ]);
+    const system = next.messages.filter((m) => m.role === "system");
+    expect(system).toHaveLength(1);
+    expect(system[0]?.text).toContain("openrouter");
+    expect(system[0]?.text).toContain("local-llama");
+    expect(system[0]?.variant).toBe("warn");
+    // and it carries the offer to go and change the order
+    expect(system[0]?.action).toBe("configure-fallback");
+    // and the feed line the Fallback pane relies on is still there
+    expect(next.feed.some((f) => f.line.includes("failed over"))).toBe(true);
+  });
+
+  it("does not repeat itself when the chain re-announces the same switch", () => {
+    const s = apply(createInitialTuiState(fakeSession()), [
+      { type: "agent_event", event: away },
+      { type: "agent_event", event: away },
+    ]);
+    expect(s.messages.filter((m) => m.role === "system")).toHaveLength(1);
+  });
+
+  it("says nothing in the chat when the primary recovers", () => {
+    const first = apply(createInitialTuiState(fakeSession()), [
+      { type: "agent_event", event: away },
+    ]);
+    const before = first.messages.length;
+    const s = apply(first, [
+      {
+        type: "agent_event",
+        event: {
+          type: "provider_switched",
+          direction: "back",
+          from: "local-llama",
+          to: "openrouter",
+          reason: "probe ok",
+        },
+      },
+    ]);
+    expect(s.messages).toHaveLength(before);
+    expect(s.feed.some((f) => f.line.includes("recovered primary"))).toBe(true);
   });
 });

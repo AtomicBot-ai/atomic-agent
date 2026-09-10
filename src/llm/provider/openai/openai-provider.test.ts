@@ -17,25 +17,33 @@ const tools: NonNullable<CompletionRequest["tools"]> = [
 ];
 
 function fakeFetch(message: Record<string, unknown>) {
-  return vi.fn(async () =>
-    new Response(
-      JSON.stringify({
-        model: "qwen-test",
-        choices: [{ message, finish_reason: "stop" }],
-        usage: { prompt_tokens: 1, completion_tokens: 2, total_tokens: 3 },
-      }),
-      { status: 200, headers: { "content-type": "application/json" } },
-    ),
+  return vi.fn(
+    async () =>
+      new Response(
+        JSON.stringify({
+          model: "qwen-test",
+          choices: [{ message, finish_reason: "stop" }],
+          usage: { prompt_tokens: 1, completion_tokens: 2, total_tokens: 3 },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
   );
 }
 
 /** SSE-shaped fake for the streaming path: emits `content` as one delta, then done. */
 function fakeStreamFetch(content: string) {
-  const frame = (obj: Record<string, unknown>) => `data: ${JSON.stringify(obj)}\n\n`;
+  const frame = (obj: Record<string, unknown>) =>
+    `data: ${JSON.stringify(obj)}\n\n`;
   const body =
     frame({
       model: "qwen-test",
-      choices: [{ index: 0, delta: { role: "assistant", content }, finish_reason: null }],
+      choices: [
+        {
+          index: 0,
+          delta: { role: "assistant", content },
+          finish_reason: null,
+        },
+      ],
     }) +
     frame({
       model: "qwen-test",
@@ -93,7 +101,10 @@ describe("OpenAiProvider qwen tagged-tool compatibility", () => {
     const tagged =
       "<tool_call><function=os.fs.read><parameter=path>/tmp/a</parameter></function></tool_call>";
     const result = await provider(
-      fakeFetch({ role: "assistant", content: tagged }) as unknown as typeof fetch,
+      fakeFetch({
+        role: "assistant",
+        content: tagged,
+      }) as unknown as typeof fetch,
       undefined,
     ).complete({ prompt: "read", tools });
 
@@ -138,6 +149,9 @@ describe("OpenAiProvider qwen tagged-tool compatibility", () => {
     expect(final.value.finishReason).toBe("tool_calls");
 
     const init = fetchImpl.mock.calls[0]?.[1] as RequestInit;
-    expect(JSON.parse(String(init.body))).toMatchObject({ stream: true, tools });
+    expect(JSON.parse(String(init.body))).toMatchObject({
+      stream: true,
+      tools,
+    });
   });
 });

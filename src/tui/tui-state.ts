@@ -10,6 +10,7 @@ import type { ContextMenuState } from "./context-menu/context-menu-state.js";
 import type { ApprovalRequest } from "../approval/approval-gate.js";
 import type { WhileBusySubmitMode } from "../config/index.js";
 import type { OnboardingUiState } from "./onboarding/onboarding-state.js";
+import type { SidebarDragState } from "./session-rail/session-rail-actions.js";
 import type {
   LatestResult,
   LoadedSkillBody,
@@ -59,6 +60,15 @@ import {
   type PrivacyPanelState,
 } from "./privacy/privacy-panel-state.js";
 import {
+  createInitialIntegrationsPanelState,
+  type IntegrationsPanelState,
+} from "./integrations/integrations-panel-state.js";
+import type { IssueReportState } from "./issue-report/issue-report-state.js";
+import {
+  createInitialSwarmPanelState,
+  type SwarmPanelState,
+} from "./swarm/swarm-panel-state.js";
+import {
   createInitialProvidersPanelState,
   type ProvidersPanelState,
 } from "./providers/providers-panel-state.js";
@@ -84,11 +94,7 @@ import type { UninstallFlowState } from "./uninstall/uninstall-state.js";
  * recorded in `runHistory`; the live status is always one of
  * `idle | running | awaiting_approval`.
  */
-export type TuiStatus =
-  | "idle"
-  | "running"
-  | "awaiting_approval"
-  | "quitting";
+export type TuiStatus = "idle" | "running" | "awaiting_approval" | "quitting";
 
 export type RunOutcome = "completed" | "failed" | "cancelled";
 
@@ -114,11 +120,12 @@ export type TuiTab =
   | "llm"
   | "models"
   | "llm-logs"
-  | "telegram"
   | "mcp"
   | "providers"
   | "import"
-  | "privacy";
+  | "privacy"
+  | "integrations"
+  | "swarm";
 
 /**
  * Top-level UI mode: `chat` is the default single-scroll openclaw-style
@@ -144,12 +151,21 @@ export interface ChatMessage {
    * the aborted turn's user message — never the notice's own text.
    */
   retryText?: string;
+  /**
+   * An action this notice offers, rendered as a button beside `[copy]`.
+   * `configure-fallback` is set on the notice a provider fallover
+   * leaves in the chat: the switch changed which model answers, and the
+   * pane that changes it back is one most operators have never opened.
+   */
+  action?: "configure-fallback";
   /** Number of tool steps the assistant ran inside this turn. */
   toolSteps?: number;
   /** Tool cards (call + result) attached to this assistant turn. */
   toolCards?: readonly ToolCardEntry[];
   /** Reasoning blocks captured during this assistant turn. */
   reasoningBlocks?: readonly string[];
+  /** Absolute paths of files the reply delivered (`reply.attachments`). */
+  attachments?: readonly string[];
   timestamp: number;
 }
 
@@ -289,6 +305,12 @@ export interface SessionPickerEntry {
   updatedAt: number;
   /** First user message snippet (trimmed) or "(empty)" for blank sessions. */
   preview: string;
+  /**
+   * Pinned to the top of the rail (`tui.sessionRail.pinned`). Stamped by
+   * the rail orchestrator when it arranges the list; `false` everywhere
+   * an entry is built.
+   */
+  pinned: boolean;
 }
 
 /**
@@ -309,6 +331,12 @@ export interface TuiState {
   stepStartedAt: number | null;
   /** Timestamp of the running loop start, used to compute a live duration. */
   runStartedAt: number | null;
+  /**
+   * Legs of the fusion fan-out running right now, for the chat's own
+   * readout. Empty off fusion and between turns. See
+   * `fusion-live-workers.ts`.
+   */
+  fusionLiveWorkers: readonly import("./fusion-live-workers.js").FusionLiveWorker[];
   feed: FeedEntry[];
   /** Chat transcript: human-friendly view onto the session turn list. */
   messages: ChatMessage[];
@@ -354,6 +382,42 @@ export interface TuiState {
    * page off screen to acknowledge a keystroke.
    */
   composerNotice: string | null;
+  /**
+   * Live provider outage, or `null` when the link is answering.
+   *
+   * Sticky on purpose: it survives the failed turn that ended the wait
+   * and stays on screen until a turn actually succeeds. Nine identical
+   * one-second failures with nothing on screen between them is what a
+   * dead provider used to look like from the operator's chair.
+   */
+  providerOutage: {
+    /** Scrubbed reason from the transport failure. */
+    reason: string;
+    /** Wall-clock ms already spent waiting in this outage. */
+    waitedMs: number;
+    /** Ceiling from `agent.providerWait.maxWaitMs`. */
+    maxWaitMs: number;
+    /** Retry attempts made so far. */
+    attempt: number;
+    /**
+     * Which half of the retry cycle the turn is in.
+     *
+     * `parked` is the backoff sleep — nothing is on the wire and the
+     * only useful facts are how long it has waited and how long it may.
+     * `retrying` is the replayed step, which can stream for minutes; a
+     * row that still counted the *wait* through it read as frozen, and
+     * the operator had no way to tell a live retry from a dead one.
+     */
+    phase: "parked" | "retrying";
+    /**
+     * Wall clock when `phase` was entered. The readout counts from here
+     * on a one-second tick rather than from `waitedMs`, which only moves
+     * when the loop emits another event.
+     */
+    sinceTs: number;
+    /** `true` once the wait budget ran out and the turn failed. */
+    givenUp: boolean;
+  } | null;
   /**
    * Open "delete the session?" confirmation, or `null`. Carries the
    * preview so the dialog can name what is about to go, and the focused
@@ -506,10 +570,15 @@ export interface TuiState {
   memoryPanel: MemoryPanelState;
   /** State slice driving the MCP tab (read-only MCP server / catalog inspection). */
   mcpPanel: McpPanelState;
-  /** State slice driving the Import tab (one-shot Hermes -> atomic-agent migration). */
+  /** State slice driving the Import tab (bring your data over from another agent). */
   importPanel: ImportPanelState;
   /** State slice driving the Privacy tab (data-egress preferences). */
   privacyPanel: PrivacyPanelState;
+  /** State slice driving the Integrations tab (third-party credentials). */
+  integrationsPanel: IntegrationsPanelState;
+  swarmPanel: SwarmPanelState;
+  /** The "Report an issue on GitHub" popup, or `null` when closed. */
+  issueReport: IssueReportState | null;
   /** Cloud / local LLM provider registry (hot-swap active text provider). */
   providersPanel: ProvidersPanelState;
   /** Unified operator LLM panel combining provider routing and local daemon state. */
@@ -567,6 +636,14 @@ export interface TuiState {
    * disturb the sidebar selection.
    */
   sidebarCursor: number;
+  /**
+   * A session row being dragged to a new slot, or `null`. Paint-only
+   * feedback (`↕` on the dragged row, a marker on the slot under the
+   * pointer); the reorder itself reaches the orchestrator through
+   * `onSessionMoveRequested` on release. Cleared by the release, by a
+   * list refresh, and by focus leaving the rail.
+   */
+  sidebarDrag: SidebarDragState | null;
   /**
    * Highlighted row in the sidebar's tasks list. Bounded by the number
    * of rows produced by `selectSidebarTasks` at render time; the
@@ -679,9 +756,10 @@ export function createInitialTuiState(
   layout?: InitialTuiLayoutOptions,
 ): TuiState {
   const requestedTab = layout?.activeTab ?? "feed";
-  const activeTab = requestedTab === "models" || requestedTab === "providers"
-    ? "llm"
-    : requestedTab;
+  const activeTab =
+    requestedTab === "models" || requestedTab === "providers"
+      ? "llm"
+      : requestedTab;
   const llmPanel = createInitialLlmPanelState();
   if (requestedTab === "models") llmPanel.syncModeToActiveRoute = true;
   if (requestedTab === "providers") llmPanel.mode = "cloud";
@@ -691,6 +769,7 @@ export function createInitialTuiState(
     currentStep: 0,
     stepStartedAt: null,
     runStartedAt: null,
+    fusionLiveWorkers: [],
     feed: [],
     messages: [],
     currentTurnToolSteps: 0,
@@ -702,6 +781,7 @@ export function createInitialTuiState(
     approvalPathDraft: null,
     composerHasSelection: false,
     composerNotice: null,
+    providerOutage: null,
     sessionDelete: null,
     uninstall: null,
     loadedSkills: [],
@@ -762,6 +842,9 @@ export function createInitialTuiState(
     mcpPanel: createInitialMcpPanelState(),
     importPanel: createInitialImportPanelState(),
     privacyPanel: createInitialPrivacyPanelState(),
+    integrationsPanel: createInitialIntegrationsPanelState(),
+    swarmPanel: createInitialSwarmPanelState(),
+    issueReport: null,
     providersPanel: createInitialProvidersPanelState(),
     llmPanel,
     fallbackPanel: createInitialFallbackPanelState(),
@@ -778,6 +861,7 @@ export function createInitialTuiState(
     sidebarSection: "sessions",
     sidebarCollapsed: false,
     sidebarCursor: 0,
+    sidebarDrag: null,
     sidebarTasksCursor: 0,
     chatScrollOffset: 0,
     queuedMessages: [],

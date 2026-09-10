@@ -39,7 +39,10 @@ function stripDownloadCommand(raw: string): string {
  * case-sensitive, so `hf://Qwen/…` would silently resolve to nothing.
  */
 function parseHfSchemeRef(raw: string): HuggingFaceModelRef {
-  const segments = raw.replace(/^hf:\/\//i, "").split("/").filter(Boolean);
+  const segments = raw
+    .replace(/^hf:\/\//i, "")
+    .split("/")
+    .filter(Boolean);
   const head = segments[0]?.toLowerCase();
   if (head === "datasets" || head === "spaces") {
     throw new Error(
@@ -49,7 +52,9 @@ function parseHfSchemeRef(raw: string): HuggingFaceModelRef {
   if (head === "models") segments.shift();
   const [owner, repoAndRevision, ...fileSegments] = segments;
   if (!owner || !repoAndRevision) {
-    throw new Error(`hf:// reference is missing <owner>/<name>: ${JSON.stringify(raw)}`);
+    throw new Error(
+      `hf:// reference is missing <owner>/<name>: ${JSON.stringify(raw)}`,
+    );
   }
   // Only the simple `repo@rev` form is supported, which is the one the
   // CLI prints; a revision containing a slash (`refs/pr/1`) would be
@@ -80,7 +85,8 @@ function parseHfSchemeRef(raw: string): HuggingFaceModelRef {
 export function parseHuggingFaceModelRef(raw: string): HuggingFaceModelRef {
   const command = stripDownloadCommand(raw.trim());
   const trimmed = command.replace(/[?#].*$/, "");
-  if (trimmed.length === 0) throw new Error("Type a repo id or a huggingface.co URL.");
+  if (trimmed.length === 0)
+    throw new Error("Type a repo id or a huggingface.co URL.");
 
   if (/^hf:\/\//i.test(trimmed)) return parseHfSchemeRef(trimmed);
 
@@ -88,7 +94,11 @@ export function parseHuggingFaceModelRef(raw: string): HuggingFaceModelRef {
   // token has to look like a repo id, so an ordinary two-word phrase
   // still falls through to the URL branch and is rejected there.
   const tokens = trimmed.split(/\s+/);
-  if (tokens.length === 2 && REPO_ID_RE.test(tokens[0]!) && /\.gguf$/i.test(tokens[1]!)) {
+  if (
+    tokens.length === 2 &&
+    REPO_ID_RE.test(tokens[0]!) &&
+    /\.gguf$/i.test(tokens[1]!)
+  ) {
     return { repoId: tokens[0]!, revision: "main", filePath: tokens[1]! };
   }
 
@@ -98,7 +108,9 @@ export function parseHuggingFaceModelRef(raw: string): HuggingFaceModelRef {
 
   let url: URL;
   try {
-    url = new URL(/^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`);
+    url = new URL(
+      /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`,
+    );
   } catch {
     throw new Error(
       `Not a Hugging Face URL or an owner/name id: ${JSON.stringify(raw.trim())}`,
@@ -121,6 +133,7 @@ export function parseHuggingFaceModelRef(raw: string): HuggingFaceModelRef {
     }
     return { repoId, revision: revision || "main", filePath };
   }
-  if (verb === "tree") return { repoId, revision: revision || "main", filePath: null };
+  if (verb === "tree")
+    return { repoId, revision: revision || "main", filePath: null };
   return { repoId, revision: "main", filePath: null };
 }

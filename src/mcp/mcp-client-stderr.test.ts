@@ -21,7 +21,7 @@ describe("McpClient stdio failure diagnostics", () => {
   it("reports the child's stderr instead of a bare 'Connection closed'", async () => {
     const client = new McpClient(
       serverThatDies(
-        "console.error(\"Error [ERR_REQUIRE_ESM]: require() of ES Module /srv/tool.js not supported\"); process.exit(1);",
+        'console.error("Error [ERR_REQUIRE_ESM]: require() of ES Module /srv/tool.js not supported"); process.exit(1);',
       ),
     );
 

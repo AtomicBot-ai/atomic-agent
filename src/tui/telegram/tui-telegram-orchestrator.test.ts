@@ -129,9 +129,7 @@ describe("TuiTelegramOrchestrator", () => {
       makeRuntime(makeFakeChannel()),
       makeBus(),
     );
-    expect(
-      orch.forwardStatus({ channel: "other", state: "up" }),
-    ).toBe(false);
+    expect(orch.forwardStatus({ channel: "other", state: "up" })).toBe(false);
   });
 
   it("forwardStatus emits status_changed for telegram channel", () => {
@@ -438,9 +436,7 @@ describe("TuiTelegramOrchestrator", () => {
       const bus = makeBus();
       const orch = new TuiTelegramOrchestrator(makeRuntime(null), bus);
       await orch.advanceConnect();
-      expect(
-        bus.actions.find((a) => a.type === "runtime_info"),
-      ).toBeDefined();
+      expect(bus.actions.find((a) => a.type === "runtime_info")).toBeDefined();
     });
 
     it("ignores a second concurrent advanceConnect while the first is in flight", async () => {

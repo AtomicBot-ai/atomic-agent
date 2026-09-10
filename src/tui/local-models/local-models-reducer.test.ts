@@ -82,7 +82,9 @@ describe("reduceLocalModelsAction", () => {
     expect(state.localModelsPanel.rows).toHaveLength(1);
     expect(state.localModelsPanel.lastRefreshedAt).toBe(42);
     expect(state.localModelsPanel.dataDir).toBe("/tmp/data");
-    expect(state.localModelsPanel.embeddingDaemon).toEqual(DEFAULT_EMBEDDING_DAEMON);
+    expect(state.localModelsPanel.embeddingDaemon).toEqual(
+      DEFAULT_EMBEDDING_DAEMON,
+    );
     expect(state.localModelsPanel.embeddingRows).toEqual([]);
   });
 
@@ -209,7 +211,10 @@ describe("reduceLocalModelsAction", () => {
       totalBytes: 100,
     });
     expect(state.localModelsPanel.pull?.percent).toBe(50);
-    state = reduceTuiState(state, { type: "local_models_pull_failed", error: "boom" });
+    state = reduceTuiState(state, {
+      type: "local_models_pull_failed",
+      error: "boom",
+    });
     expect(state.localModelsPanel.mode).toBe("list");
     expect(state.localModelsPanel.errorLine).toBe("boom");
   });
@@ -456,8 +461,20 @@ describe("the Hugging Face branch's slice", () => {
     repoId: "unsloth/Qwen3.5-4B-GGUF",
     revision: "main",
     choices: [
-      { path: "a.gguf", filename: "a.gguf", sizeBytes: 1, fileSizeGb: 1, sizeLabel: "1 GB" },
-      { path: "b.gguf", filename: "b.gguf", sizeBytes: 2, fileSizeGb: 2, sizeLabel: "2 GB" },
+      {
+        path: "a.gguf",
+        filename: "a.gguf",
+        sizeBytes: 1,
+        fileSizeGb: 1,
+        sizeLabel: "1 GB",
+      },
+      {
+        path: "b.gguf",
+        filename: "b.gguf",
+        sizeBytes: 2,
+        fileSizeGb: 2,
+        sizeLabel: "2 GB",
+      },
     ],
     mmproj: null,
     hidden: null,
@@ -467,7 +484,10 @@ describe("the Hugging Face branch's slice", () => {
     actions: readonly TuiAction[],
     from: TuiState = createInitialTuiState(SESSION),
   ): TuiState {
-    return actions.reduce((state, action) => reduceTuiState(state, action), from);
+    return actions.reduce(
+      (state, action) => reduceTuiState(state, action),
+      from,
+    );
   }
 
   it("keeps a resolved repo across an escape back to the reference", () => {

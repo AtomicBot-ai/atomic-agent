@@ -72,6 +72,11 @@ export interface DaemonStartOptions {
    * byte-identical.
    */
   tensorSplit?: readonly number[];
+  /**
+   * Request slots (`localModels.managed.parallel`). Undefined keeps the
+   * historical `--parallel 2` so existing launches stay byte-identical.
+   */
+  parallel?: number;
 }
 
 /**
@@ -105,7 +110,7 @@ export function buildLlamaServerArgs(
     "--cache-type-v",
     "turbo3",
     "--parallel",
-    "2",
+    String(opts.parallel ?? 2),
     "-kvu",
     "-a",
     modelAlias,
@@ -116,8 +121,17 @@ export function buildLlamaServerArgs(
   if (opts.device && opts.device !== "cpu") {
     args.push("--device", opts.device);
   }
-  if (opts.device !== "cpu" && opts.tensorSplit && opts.tensorSplit.length > 0) {
-    args.push("--split-mode", "layer", "--tensor-split", opts.tensorSplit.join(","));
+  if (
+    opts.device !== "cpu" &&
+    opts.tensorSplit &&
+    opts.tensorSplit.length > 0
+  ) {
+    args.push(
+      "--split-mode",
+      "layer",
+      "--tensor-split",
+      opts.tensorSplit.join(","),
+    );
   }
   if (opts.chatTemplateFile) {
     args.push("--chat-template-file", opts.chatTemplateFile);
@@ -159,7 +173,11 @@ export function buildLlamaServerArgs(
 async function resolveEffectiveContextSize(
   binPath: string,
   device: string | undefined,
-  model: { fileSizeGb: number; maxContextLength: number; mmprojFileSizeGb?: number },
+  model: {
+    fileSizeGb: number;
+    maxContextLength: number;
+    mmprojFileSizeGb?: number;
+  },
   opts: { configured: number; hasMmproj: boolean },
 ): Promise<number> {
   let freeVramMiB: number | null = null;
@@ -192,7 +210,9 @@ export async function probeLlamaHealth(
     const res = await fetch(`http://127.0.0.1:${port}/health`, {
       signal: signal ?? AbortSignal.timeout(2000),
     });
-    const body = (await res.json().catch(() => null)) as { status?: string } | null;
+    const body = (await res.json().catch(() => null)) as {
+      status?: string;
+    } | null;
     if (res.ok && body?.status === "ok") return "ok";
     if (body?.status === "loading model") return "loading";
     return res.ok ? "ok" : "down";
@@ -232,7 +252,9 @@ export function classifyPidLiveness(pid: number): "alive" | "foreign" | "dead" {
     process.kill(pid, 0);
     return "alive";
   } catch (err) {
-    return (err as NodeJS.ErrnoException | null)?.code === "EPERM" ? "foreign" : "dead";
+    return (err as NodeJS.ErrnoException | null)?.code === "EPERM"
+      ? "foreign"
+      : "dead";
   }
 }
 
@@ -289,7 +311,11 @@ export class DaemonHealthError extends Error {
   }
 }
 
-async function waitForHealthOkWithLog(dataDir: string, port: number, timeoutMs: number): Promise<void> {
+async function waitForHealthOkWithLog(
+  dataDir: string,
+  port: number,
+  timeoutMs: number,
+): Promise<void> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     const r = await probeLlamaHealth(port);
@@ -309,7 +335,9 @@ async function waitForHealthOkWithLog(dataDir: string, port: number, timeoutMs: 
   );
 }
 
-export async function startDaemon(opts: DaemonStartOptions): Promise<{ pid: number }> {
+export async function startDaemon(
+  opts: DaemonStartOptions,
+): Promise<{ pid: number }> {
   const pidPath = resolvePidFilePath(opts.dataDir);
   const existing = readRunningPid(opts.dataDir);
   if (existing !== null) {
@@ -323,7 +351,11 @@ export async function startDaemon(opts: DaemonStartOptions): Promise<{ pid: numb
   }
 
   const model = getLocalModelDef(opts.modelId);
-  const modelPath = resolveModelFilePath(opts.dataDir, model.id, model.filename);
+  const modelPath = resolveModelFilePath(
+    opts.dataDir,
+    model.id,
+    model.filename,
+  );
   if (!existsSync(modelPath)) {
     throw new Error(
       `model ${opts.modelId} not downloaded; run 'atomic-agent models pull ${opts.modelId}'`,
@@ -338,10 +370,15 @@ export async function startDaemon(opts: DaemonStartOptions): Promise<{ pid: numb
   const device = await resolveManagedDevice(binPath, opts.device, {
     multiGpu: (opts.tensorSplit?.length ?? 0) > 0,
   });
-  const contextSize = await resolveEffectiveContextSize(binPath, device, model, {
-    configured: opts.contextSize ?? 0,
-    hasMmproj: Boolean(opts.mmprojFile),
-  });
+  const contextSize = await resolveEffectiveContextSize(
+    binPath,
+    device,
+    model,
+    {
+      configured: opts.contextSize ?? 0,
+      hasMmproj: Boolean(opts.mmprojFile),
+    },
+  );
   const args = buildLlamaServerArgs(
     { ...opts, device },
     modelPath,
@@ -406,7 +443,10 @@ export async function stopDaemon(
   const timeoutMs = opts?.timeoutMs ?? 3000;
   if (process.platform === "win32") {
     try {
-      execSync(`taskkill /PID ${pid} /T /F`, { timeout: 5000, stdio: "ignore" });
+      execSync(`taskkill /PID ${pid} /T /F`, {
+        timeout: 5000,
+        stdio: "ignore",
+      });
     } catch {
       /* ignore */
     }
@@ -440,7 +480,10 @@ export async function stopDaemon(
   }
 }
 
-export async function getDaemonStatus(dataDir: string, port: number): Promise<DaemonStatus> {
+export async function getDaemonStatus(
+  dataDir: string,
+  port: number,
+): Promise<DaemonStatus> {
   const pid = readRunningPid(dataDir);
   const h = await probeLlamaHealth(port);
   return {
@@ -526,13 +569,15 @@ export async function startEmbeddingDaemon(
   const { binaryName } = resolvePlatformAsset();
   const binPath = resolveServerBinPath(opts.dataDir, binaryName);
   if (!existsSync(binPath)) {
-    throw new Error(
-      "backend not downloaded; run 'atomic-agent models update'",
-    );
+    throw new Error("backend not downloaded; run 'atomic-agent models update'");
   }
 
   const model = getEmbeddingModelDef(opts.modelId);
-  const modelPath = resolveModelFilePath(opts.dataDir, model.id, model.filename);
+  const modelPath = resolveModelFilePath(
+    opts.dataDir,
+    model.id,
+    model.filename,
+  );
   if (!existsSync(modelPath)) {
     throw new Error(
       `embedding model ${opts.modelId} not downloaded; run 'atomic-agent models pull-embedding ${opts.modelId}'`,
@@ -623,7 +668,10 @@ export async function stopEmbeddingDaemon(
   const timeoutMs = opts?.timeoutMs ?? 3000;
   if (process.platform === "win32") {
     try {
-      execSync(`taskkill /PID ${pid} /T /F`, { timeout: 5000, stdio: "ignore" });
+      execSync(`taskkill /PID ${pid} /T /F`, {
+        timeout: 5000,
+        stdio: "ignore",
+      });
     } catch {
       /* ignore */
     }
@@ -694,10 +742,7 @@ export async function getEmbeddingDaemonStatus(
  */
 export interface StartBothResult {
   chat: { pid: number };
-  embedding:
-    | { pid: number }
-    | { error: string }
-    | { skipped: true };
+  embedding: { pid: number } | { error: string } | { skipped: true };
 }
 
 export async function startChatAndEmbeddingDaemons(opts: {
@@ -751,7 +796,9 @@ export async function stopChatAndEmbeddingDaemons(
   }
   if (errors.length > 0) {
     throw new Error(
-      errors.map((e) => (e instanceof Error ? e.message : String(e))).join("; "),
+      errors
+        .map((e) => (e instanceof Error ? e.message : String(e)))
+        .join("; "),
     );
   }
 }

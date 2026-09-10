@@ -17,7 +17,10 @@ export {
 export type {
   InboundContext,
   InboundTextUpdate,
+  TelegramBotIdentity,
+  TelegramTarget,
 } from "./inbound-handler.js";
+export { addressedText, stripBotMention, threadOf } from "./inbound-handler.js";
 export { ApprovalBridge } from "./approval-bridge.js";
 export type {
   ApprovalBridgeDeps,
@@ -26,6 +29,8 @@ export type {
 export type { TelegramApi } from "./outbound-sender.js";
 export {
   TelegramSessionPointer,
+  telegramChatKey,
+  type TelegramChatSessionEntry,
   type TelegramSessionPointerData,
 } from "./telegram-session-pointer.js";
 export {
@@ -44,3 +49,8 @@ export {
   writeTelegramToken,
 } from "./telegram-settings.js";
 export type { PersistedTelegramSettings } from "./telegram-settings.js";
+export {
+  fetchTelegramApi,
+  sendTelegramOneShot,
+  type OneShotTelegramInput,
+} from "./one-shot-sender.js";

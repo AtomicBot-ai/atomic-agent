@@ -45,7 +45,11 @@ describe("createExaProvider", () => {
     const previous = process.env.EXA_API_KEY;
     process.env.EXA_API_KEY = "test-key";
     const calls: Array<{ args: string[]; input?: string }> = [];
-    const runCommand = (async (_cmd: string, args: string[], opts: { input?: string }) => {
+    const runCommand = (async (
+      _cmd: string,
+      args: string[],
+      opts: { input?: string },
+    ) => {
       calls.push({ args, input: opts.input });
       return {
         command: "curl",
@@ -54,7 +58,9 @@ describe("createExaProvider", () => {
         signal: null,
         stdout: curlStdout(
           JSON.stringify({
-            results: [{ title: "A", url: "https://example.com", highlights: ["S"] }],
+            results: [
+              { title: "A", url: "https://example.com", highlights: ["S"] },
+            ],
           }),
         ),
         stderr: "",

@@ -1,5 +1,12 @@
 import { buildOpenAiAuthHeaders } from "./openai-auth-headers.js";
 import { readErrnoCode } from "../../errno-code.js";
+import {
+  creditLimitRetryContext,
+  creditLimitRetryMessage,
+  planCreditLimitRetry,
+  type CreditLimitLogger,
+  type CreditLimitRetryPlan,
+} from "./plan-credit-limit-retry.js";
 
 export type OpenAiHttpDeps = {
   baseUrl: string;
@@ -15,6 +22,12 @@ export type OpenAiHttpDeps = {
   fetchImpl: typeof fetch;
   /** Provider id shown in user-facing failure messages ("openrouter"). */
   label: string;
+  /**
+   * Where the credit-limit retry announces itself. Absent falls back to a
+   * stderr line — this recovery changes what was sent and why, so it must
+   * never be silent, even for a provider constructed without a logger.
+   */
+  logger?: CreditLimitLogger;
 };
 
 /**
@@ -85,15 +98,35 @@ export function humanizeOpenAiHttpError(err: OpenAiHttpError): string {
   if (err.status === 404) {
     return `${who} answered 404 (not found). The model id or the base URL is likely wrong.`;
   }
+  if (err.status === 402) {
+    /* Reached only after the credit-limit retry declined or failed, so the
+       ceiling is not the fixable part any more — say what is.
+
+       And say what the PROVIDER said, when it said anything. Two branches
+       met here in the desktop merge: one explaining the mechanism (the
+       service reserves the whole output ceiling against your balance), one
+       insisting that a 402 must not throw away the provider's own sentence,
+       because OpenRouter's reads "This request requires more credits, or
+       fewer max_tokens. You requested up to 8192 tokens, but can only afford
+       7181" — an instruction with the actual numbers in it. Neither is worth
+       losing, so a 402 carries both when the body has something to carry. */
+    const own = providerReason(err);
+    const mechanism =
+      `Top up the account, or lower localModels.completionMaxTokens: ` +
+      `the service reserves the whole output ceiling against your balance.`;
+    return own
+      ? `${who} rejected the request (402). ${own} ${mechanism}`
+      : `${who} rejected the request (402). ${mechanism}`;
+  }
   if (err.status === 429) {
     return `${who} is rate-limiting this key (429). Tried ${OPENAI_MAX_ATTEMPTS} times — wait a minute and retry.`;
   }
   if (err.status >= 500) {
     return `${who} is having server trouble (${err.status}). Tried ${OPENAI_MAX_ATTEMPTS} times — this is on the provider, not your setup.`;
   }
-  // Everything else — 402 payment required, 400 bad request, 413, 422 —
-  // has no wording of its own here, and a bare "rejected the request
-  // (402)" throws away the only sentence that could have helped. The
+  // Everything else — 400 bad request, 413, 422 — has no wording of its own
+  // here, and a bare "rejected the request (400)" throws away the only
+  // sentence that could have helped. The
   // provider already said what was wrong and what to do about it:
   // OpenRouter's 402 reads "This request requires more credits, or fewer
   // max_tokens. You requested up to 8192 tokens, but can only afford
@@ -272,13 +305,68 @@ export async function openAiPostJson(
   body: Record<string, unknown>,
   request: { signal?: AbortSignal },
 ): Promise<Record<string, unknown>> {
-  return runOpenAiWithRetry(deps, path, request.signal, async () => {
-    const res = await openAiFetch(deps, path, body, request, false, "POST");
-    if (!res.ok) {
-      throw await httpErrorFromResponse(deps, path, res);
-    }
-    return (await res.json()) as Record<string, unknown>;
-  });
+  return withCreditLimitRetry(deps, body, (attemptBody) =>
+    runOpenAiWithRetry(deps, path, request.signal, async () => {
+      const res = await openAiFetch(
+        deps,
+        path,
+        attemptBody,
+        request,
+        false,
+        "POST",
+      );
+      if (!res.ok) {
+        throw await httpErrorFromResponse(deps, path, res);
+      }
+      return (await res.json()) as Record<string, unknown>;
+    }),
+  );
+}
+
+/**
+ * Recover the one HTTP failure that is fixable by changing the request
+ * rather than by waiting or switching providers: a 402 that names how
+ * many output tokens the balance can actually afford.
+ *
+ * This sits **outside** `runOpenAiWithRetry` on purpose. A 402 is
+ * deterministic, so the retry budget correctly refuses to replay it; what
+ * is needed is not another attempt at the same request but a *different*
+ * request. Hence exactly one extra send, with a lowered `max_tokens`, and
+ * no wrapping of that send — a second 402 means the balance genuinely
+ * cannot cover a usable turn, and the operator must see the provider's own
+ * message rather than watch the client whittle the ceiling down in a loop.
+ *
+ * Everything else keeps its existing path: the per-provider retry budget
+ * is untouched, and any failure this declines to handle propagates
+ * unchanged so the fallback chain classifies it exactly as before.
+ */
+async function withCreditLimitRetry<T>(
+  deps: OpenAiHttpDeps,
+  body: Record<string, unknown>,
+  send: (body: Record<string, unknown>) => Promise<T>,
+): Promise<T> {
+  try {
+    return await send(body);
+  } catch (err) {
+    if (!(err instanceof OpenAiHttpError)) throw err;
+    const plan = planCreditLimitRetry(err);
+    if (!plan) throw err;
+    warnCreditLimitRetry(deps, plan);
+    return await send({ ...body, max_tokens: plan.retryMaxTokens });
+  }
+}
+
+function warnCreditLimitRetry(
+  deps: OpenAiHttpDeps,
+  plan: CreditLimitRetryPlan,
+): void {
+  const message = creditLimitRetryMessage(deps.label, plan);
+  const context = creditLimitRetryContext(deps.label, plan);
+  if (deps.logger) {
+    deps.logger.warn(message, context);
+    return;
+  }
+  process.stderr.write(`[atomic-agent] ${message}\n`);
 }
 
 /**
@@ -303,13 +391,31 @@ export async function openAiStartStream(
   request: { signal?: AbortSignal },
   budget?: OpenAiAttemptBudget,
 ): Promise<Response & { body: NonNullable<Response["body"]> }> {
-  return runOpenAiWithRetry(deps, path, request.signal, async () => {
-    const res = await openAiFetch(deps, path, body, request, true, "POST");
-    if (!res.ok || !res.body) {
-      throw await httpErrorFromResponse(deps, path, res);
-    }
-    return res as Response & { body: NonNullable<Response["body"]> };
-  }, budget);
+  // The credit-limit retry wraps the open, not the stream: a 402 is
+  // refused before any bytes exist, so re-sending with a lower ceiling
+  // cannot duplicate output — the same argument the open-retry makes.
+  return withCreditLimitRetry(deps, body, (attemptBody) =>
+    runOpenAiWithRetry(
+      deps,
+      path,
+      request.signal,
+      async () => {
+        const res = await openAiFetch(
+          deps,
+          path,
+          attemptBody,
+          request,
+          true,
+          "POST",
+        );
+        if (!res.ok || !res.body) {
+          throw await httpErrorFromResponse(deps, path, res);
+        }
+        return res as Response & { body: NonNullable<Response["body"]> };
+      },
+      budget,
+    ),
+  );
 }
 
 /**

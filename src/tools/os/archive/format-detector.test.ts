@@ -42,8 +42,12 @@ describe("detectArchiveFormat", () => {
   });
 
   it("falls back to magic when extension is unknown", () => {
-    expect(detectArchiveFormat("weird", head([0x50, 0x4b, 0x03, 0x04]))).toBe("zip");
-    expect(detectArchiveFormat("weird", head([0x1f, 0x8b, 0x00, 0x00]))).toBe("gz");
+    expect(detectArchiveFormat("weird", head([0x50, 0x4b, 0x03, 0x04]))).toBe(
+      "zip",
+    );
+    expect(detectArchiveFormat("weird", head([0x1f, 0x8b, 0x00, 0x00]))).toBe(
+      "gz",
+    );
     expect(detectArchiveFormat("weird", tarLikeHeader())).toBe("tar");
   });
 

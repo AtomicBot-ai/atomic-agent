@@ -1,11 +1,15 @@
 import {
   readUserConfigFileSync,
+  resetConfigCache,
   USER_CONFIG_DEFAULTS,
   writeUserConfigFileSync,
   type TelegramParseMode,
   type UserConfigFile,
 } from "../../config/index.js";
-import { setDotenvKey, type SetDotenvKeyResult } from "../../config/dotenv-writer.js";
+import {
+  setDotenvKey,
+  type SetDotenvKeyResult,
+} from "../../config/dotenv-writer.js";
 
 /**
  * Token-only environment variable. Lives in `<stateDir>/.env`, never
@@ -75,6 +79,11 @@ export function writeTelegramSettings(
     },
   };
   writeUserConfigFileSync(paths.userConfigPath, next);
+  // Every reader of `telegram.*` goes through the process-wide config
+  // cache. Leaving it stale is how the Integrations hub ended up
+  // showing `Channel: off` next to a channel that was up -- and acting
+  // on that stale value the next time the operator pressed the toggle.
+  resetConfigCache();
   return {
     enabled: next.telegram.enabled,
     ownerUserId: next.telegram.ownerUserId,
@@ -103,4 +112,28 @@ export function writeTelegramToken(
     process.env[TELEGRAM_BOT_TOKEN_KEY] = token;
   }
   return result;
+}
+
+/**
+ * Where a channel's live-control setters persist. The primary channel
+ * writes `config.telegram` + `TELEGRAM_BOT_TOKEN`; a swarm unit writes
+ * its own `swarm.units[]` entry and its own `.env` key instead, so two
+ * bots never overwrite each other's settings.
+ */
+export interface TelegramSettingsSink {
+  writeSettings(patch: Partial<PersistedTelegramSettings>): void;
+  writeToken(token: string | null): void;
+}
+
+export function defaultTelegramSettingsSink(
+  paths: TelegramSettingsPaths,
+): TelegramSettingsSink {
+  return {
+    writeSettings: (patch) => {
+      writeTelegramSettings(paths, patch);
+    },
+    writeToken: (token) => {
+      writeTelegramToken(paths, token);
+    },
+  };
 }

@@ -5,6 +5,7 @@ import { PasteFieldTarget } from "../context-menu/paste-field-target.js";
 import { pasteIntoLlmModalField } from "../llm-panel/llm-panel-paste.js";
 import { theme } from "../theme/theme.js";
 import type { TuiState } from "../tui-state.js";
+import { NotifyPromptBox } from "./notify-prompt-box.js";
 import { ProvidersWizard } from "./providers-wizard.js";
 import { parseExternalUrl } from "../llm-panel/llm-panel-modal-key-bindings.js";
 import { filteredPickerModels } from "../providers/providers-panel-state.js";
@@ -55,6 +56,7 @@ export function hasLlmModal(state: TuiState): boolean {
     state.providersPanel.wizard !== null ||
     state.providersPanel.removeConfirm !== null ||
     state.localModelsPanel.embeddingOnboardingPrompt !== null ||
+    state.localModelsPanel.notifyPrompt !== null ||
     state.localModelsPanel.removeConfirmId !== null ||
     state.localModelsPanel.embeddingRemoveConfirmId !== null ||
     state.providersPanel.chatModelPicker !== null ||
@@ -81,15 +83,31 @@ export function LlmPanelModals({
   }
   if (state.providersPanel.removeConfirm) {
     return (
-      <PromptBox tone="danger" title={`Remove provider ${state.providersPanel.removeConfirm.id}?`}>
+      <PromptBox
+        tone="danger"
+        title={`Remove provider ${state.providersPanel.removeConfirm.id}?`}
+      >
         <Text color={theme.colors.muted}>y confirm · n/Esc cancel</Text>
       </PromptBox>
+    );
+  }
+  if (state.localModelsPanel.notifyPrompt) {
+    return (
+      <NotifyPromptBox
+        prompt={state.localModelsPanel.notifyPrompt}
+        pull={
+          state.localModelsPanel.pull ?? state.localModelsPanel.embeddingPull
+        }
+      />
     );
   }
   if (state.localModelsPanel.embeddingOnboardingPrompt) {
     const p = state.localModelsPanel.embeddingOnboardingPrompt;
     return (
-      <PromptBox tone="accent" title="Download embedding model for hybrid recall?">
+      <PromptBox
+        tone="accent"
+        title="Download embedding model for hybrid recall?"
+      >
         <Text>
           {p.name} <Text color={theme.colors.muted}>({p.sizeLabel})</Text>
         </Text>
@@ -99,8 +117,13 @@ export function LlmPanelModals({
   }
   if (state.localModelsPanel.removeConfirmId) {
     return (
-      <PromptBox tone="danger" title={`Delete local model ${state.localModelsPanel.removeConfirmId}?`}>
-        <Text color={theme.colors.muted}>Removes GGUF/mmproj files. y confirm · n/Esc cancel</Text>
+      <PromptBox
+        tone="danger"
+        title={`Delete local model ${state.localModelsPanel.removeConfirmId}?`}
+      >
+        <Text color={theme.colors.muted}>
+          Removes GGUF/mmproj files. y confirm · n/Esc cancel
+        </Text>
       </PromptBox>
     );
   }
@@ -164,7 +187,9 @@ export function LlmPanelModals({
       rows.length === 0
         ? "no match"
         : `${picker.cursor + 1}/${rows.length}${
-            rows.length !== picker.models.length ? ` of ${picker.models.length}` : ""
+            rows.length !== picker.models.length
+              ? ` of ${picker.models.length}`
+              : ""
           }`;
     return (
       <PromptBox tone="accent" title={`Models — ${picker.providerId}`}>
@@ -195,7 +220,9 @@ export function LlmPanelModals({
             >
               {selected ? "› " : "  "}
               {id}
-              {isCurrent ? <Text color={theme.colors.success}> current</Text> : null}
+              {isCurrent ? (
+                <Text color={theme.colors.success}> current</Text>
+              ) : null}
             </Text>
           );
         })}
@@ -240,8 +267,8 @@ export function LlmPanelModals({
         }
       >
         <Text wrap="truncate-end">
-          {url} answers like {ollama ? "Ollama" : "an OpenAI-compatible server"},
-          which the External llama.cpp route cannot drive.
+          {url} answers like {ollama ? "Ollama" : "an OpenAI-compatible server"}
+          , which the External llama.cpp route cannot drive.
         </Text>
         <Text color={theme.colors.muted}>
           y open the provider wizard with this URL · n/Esc dismiss
@@ -253,8 +280,8 @@ export function LlmPanelModals({
     return (
       <PromptBox tone="accent" title="Stop local daemons now?">
         <Text color={theme.colors.muted}>
-          Cloud provider {state.llmPanel.stopLocalDaemonsPrompt.providerId} is active.
-          Stop local chat+embedding daemons? y stop · n/Esc keep running
+          Cloud provider {state.llmPanel.stopLocalDaemonsPrompt.providerId} is
+          active. Stop local chat+embedding daemons? y stop · n/Esc keep running
         </Text>
       </PromptBox>
     );
@@ -271,7 +298,8 @@ function PromptBox({
   title: string;
   children: ReactNode;
 }): ReactElement {
-  const color = tone === "danger" ? theme.colors.error : theme.colors.accentSoft;
+  const color =
+    tone === "danger" ? theme.colors.error : theme.colors.accentSoft;
   return (
     <Box
       flexDirection="column"

@@ -4,7 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { resetConfigCache } from "../config/config-cache.js";
-import { getUserConfigPath, writeUserConfigFileSync } from "../config/config-file.js";
+import {
+  getUserConfigPath,
+  writeUserConfigFileSync,
+} from "../config/config-file.js";
 import { USER_CONFIG_DEFAULTS } from "../config/config-schema.js";
 import { getConfig } from "../config/index.js";
 import {

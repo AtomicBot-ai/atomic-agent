@@ -31,6 +31,7 @@
 
 import { DOCUMENT_FORMATS } from "../tools/os/read-document/extractors/extractor-types.js";
 import type { ToolDescriptor } from "./stable-prefix.js";
+import { GITHUB_TOOL_ARGS_SCHEMAS } from "./github-tool-args-schemas.js";
 
 type Schema = Record<string, unknown>;
 
@@ -411,6 +412,64 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
       pattern: stringSchema,
     }),
   ],
+  [
+    "os.git.init",
+    obj({
+      path: stringSchema,
+      initialBranch: stringSchema,
+      userName: stringSchema,
+      userEmail: stringSchema,
+    }),
+  ],
+  [
+    "os.git.add",
+    obj({
+      repo: stringSchema,
+      paths: stringArraySchema,
+      all: booleanSchema,
+      unstage: booleanSchema,
+    }),
+  ],
+  [
+    "os.git.remote",
+    obj({
+      repo: stringSchema,
+      action: { type: "string", enum: ["list", "add", "set-url", "remove"] },
+      name: stringSchema,
+      url: stringSchema,
+    }),
+  ],
+  [
+    "os.git.fetch",
+    obj({
+      repo: stringSchema,
+      remote: stringSchema,
+      all: booleanSchema,
+      prune: booleanSchema,
+    }),
+  ],
+  [
+    "os.git.pull",
+    obj({
+      repo: stringSchema,
+      remote: stringSchema,
+      branch: stringSchema,
+      rebase: booleanSchema,
+    }),
+  ],
+  [
+    "os.git.clone",
+    obj(
+      {
+        url: stringSchema,
+        dest: stringSchema,
+        branch: stringSchema,
+        depth: numberSchema,
+      },
+      ["url"],
+    ),
+  ],
+  ...GITHUB_TOOL_ARGS_SCHEMAS,
 
   // ── os.proc ──────────────────────────────────────────────────────────────
   ["os.proc.list", obj({ filter: stringSchema, limit: numberSchema })],
@@ -480,10 +539,19 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
   ["os.window.focus", obj({ title: stringSchema }, ["title"])],
   [
     "os.notify",
-    obj(
-      { title: stringSchema, message: stringSchema, sound: booleanSchema },
-      ["title", "message"],
-    ),
+    obj({ title: stringSchema, message: stringSchema, sound: booleanSchema }, [
+      "title",
+      "message",
+    ]),
+  ],
+  ["os.email.inbox", obj({ limit: numberSchema })],
+  [
+    "os.email.send",
+    obj({ to: stringSchema, subject: stringSchema, text: stringSchema }, [
+      "to",
+      "subject",
+      "text",
+    ]),
   ],
 
   // ── skill / tool ─────────────────────────────────────────────────────────
@@ -522,10 +590,7 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
   // ── memory.notes ─────────────────────────────────────────────────────────
   [
     "memory.notes.store",
-    obj(
-      { content: stringSchema, tags: stringArraySchema },
-      ["content"],
-    ),
+    obj({ content: stringSchema, tags: stringArraySchema }, ["content"]),
   ],
   [
     "memory.notes.recall",
@@ -632,12 +697,44 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
     ),
   ],
 
+  // ── fusion fan-out ───────────────────────────────────────────────────────
+  [
+    "fusion.delegate",
+    obj(
+      {
+        tasks: {
+          type: "array",
+          minItems: 1,
+          maxItems: 8,
+          items: obj(
+            {
+              id: stringSchema,
+              title: stringSchema,
+              instructions: stringSchema,
+              deliverable: stringSchema,
+              files: { ...stringArraySchema, maxItems: 32 },
+            },
+            ["id", "title", "instructions"],
+          ),
+        },
+        // No upper bound: the orchestrator sizes its own fan-out and
+        // the tool bounds the number by the task count and the server's
+        // request slots. See `delegate-args.ts`.
+        maxWorkers: { type: "integer", minimum: 1 },
+      },
+      ["tasks"],
+    ),
+  ],
+
   // ── terminal verbs ───────────────────────────────────────────────────────
   // The OpenAI adapter overrides these with hand-tuned schemas (see
   // `descriptorToJsonSchema` in openai-tool-call-adapter.ts), but we
   // keep entries here so the "every default tool ships a schema" pin
   // test stays exhaustive.
-  ["reply", obj({ text: stringSchema }, ["text"])],
+  [
+    "reply",
+    obj({ text: stringSchema, attachments: stringArraySchema }, ["text"]),
+  ],
   ["finish", obj({ summary: stringSchema, text: stringSchema })],
 ]);
 
@@ -646,9 +743,7 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
  * `undefined` when none is registered (the OpenAI adapter falls back
  * to an open object in that case).
  */
-export function getDefaultArgsJsonSchema(
-  name: string,
-): Schema | undefined {
+export function getDefaultArgsJsonSchema(name: string): Schema | undefined {
   return DEFAULT_TOOL_ARGS_SCHEMAS.get(name);
 }
 

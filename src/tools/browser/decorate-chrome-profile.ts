@@ -30,7 +30,11 @@ function safeReadJson(file: string): Record<string, unknown> | null {
     if (!fs.existsSync(file)) return null;
     const raw = fs.readFileSync(file, "utf8");
     const parsed = JSON.parse(raw) as unknown;
-    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      Array.isArray(parsed)
+    ) {
       return null;
     }
     return parsed as Record<string, unknown>;
@@ -76,7 +80,11 @@ export function decorateChromeProfile(
   const localStatePath = path.join(userDataDir, "Local State");
   const localState = safeReadJson(localStatePath) ?? {};
   setDeep(localState, ["profile", "info_cache", "Default", "name"], name);
-  setDeep(localState, ["profile", "info_cache", "Default", "shortcut_name"], name);
+  setDeep(
+    localState,
+    ["profile", "info_cache", "Default", "shortcut_name"],
+    name,
+  );
   setDeep(localState, ["profile", "info_cache", "Default", "user_name"], name);
   safeWriteJson(localStatePath, localState);
 

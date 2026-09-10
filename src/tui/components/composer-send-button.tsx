@@ -45,9 +45,7 @@ export function ComposerSendButton({
   const background = enabled
     ? theme.colors.chipBackground
     : theme.colors.badgeBackground;
-  const foreground = enabled
-    ? theme.colors.chipForeground
-    : theme.colors.muted;
+  const foreground = enabled ? theme.colors.chipForeground : theme.colors.muted;
   const chip = (
     <Text backgroundColor={background} color={foreground} bold={enabled}>
       {SEND_LABEL}

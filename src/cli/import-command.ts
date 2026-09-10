@@ -48,7 +48,7 @@ const HELP =
     "  --include a,b             Add options (sessions,cron)",
     "  --exclude a,b             Remove options",
     "  --migrate-secrets         Also copy OPENROUTER_API_KEY / AIMLAPI_API_KEY into <stateDir>/.env",
-    "  --limit N                 Cap the number of sessions imported",
+    "  --limit N                 Cap the number of sessions imported (newest first)",
     "  --overwrite               Overwrite destinations that differ (default: flag as conflict)",
     "  --dry-run                 Preview only; never write",
     "  --yes                     Skip the interactive confirmation",
@@ -58,7 +58,7 @@ const HELP =
     "  --agent <name>            OpenClaw agent whose sessions to import (default main)",
     "  --include a,b             Add options (sessions,cron)",
     "  --exclude a,b             Remove options",
-    "  --limit N                 Cap the number of sessions imported",
+    "  --limit N                 Cap the number of sessions imported (newest first)",
     "  --overwrite               Overwrite destinations that differ (default: flag as conflict)",
     "  --dry-run                 Preview only; never write",
     "  --yes                     Skip the interactive confirmation",
@@ -191,8 +191,7 @@ async function importHermes(args: string[]): Promise<number> {
       return 0;
     }
 
-    const actionable =
-      preview.summary.migrated + preview.summary.conflict > 0;
+    const actionable = preview.summary.migrated + preview.summary.conflict > 0;
     if (!actionable) {
       process.stdout.write("\nNothing to import.\n");
       return 0;
@@ -291,8 +290,7 @@ async function importOpenclaw(args: string[]): Promise<number> {
       return 0;
     }
 
-    const actionable =
-      preview.summary.migrated + preview.summary.conflict > 0;
+    const actionable = preview.summary.migrated + preview.summary.conflict > 0;
     if (!actionable) {
       process.stdout.write("\nNothing to import.\n");
       return 0;
@@ -402,8 +400,7 @@ async function importClaudeCode(args: string[]): Promise<number> {
       return 0;
     }
 
-    const actionable =
-      preview.summary.migrated + preview.summary.conflict > 0;
+    const actionable = preview.summary.migrated + preview.summary.conflict > 0;
     if (!actionable) {
       process.stdout.write("\nNothing to import.\n");
       return 0;
@@ -512,8 +509,7 @@ async function importCodex(args: string[]): Promise<number> {
       return 0;
     }
 
-    const actionable =
-      preview.summary.migrated + preview.summary.conflict > 0;
+    const actionable = preview.summary.migrated + preview.summary.conflict > 0;
     if (!actionable) {
       process.stdout.write("\nNothing to import.\n");
       return 0;

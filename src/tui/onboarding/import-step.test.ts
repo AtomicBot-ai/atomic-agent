@@ -35,7 +35,12 @@ describe("buildImportPickRows", () => {
       index === 0 ? { ...row, enabled: true } : row,
     );
     const rows = buildImportPickRows(agents);
-    expect(rows.map((r) => r.kind)).toEqual(["agent", "agent", "import", "skip"]);
+    expect(rows.map((r) => r.kind)).toEqual([
+      "agent",
+      "agent",
+      "import",
+      "skip",
+    ]);
     const action = rows[2];
     expect(action?.kind === "import" && action.picked).toBe(1);
   });

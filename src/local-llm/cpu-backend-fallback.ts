@@ -1,6 +1,9 @@
 import { downloadBackend } from "./backend-installer.js";
 import type { DownloadProgressFn } from "./download-file.js";
-import { DaemonHealthError, stopChatAndEmbeddingDaemons } from "./daemon-lifecycle.js";
+import {
+  DaemonHealthError,
+  stopChatAndEmbeddingDaemons,
+} from "./daemon-lifecycle.js";
 import {
   isWindowsGpuBackendAsset,
   setConfiguredBackendVariant,

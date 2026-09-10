@@ -369,6 +369,77 @@ export function createTraceRecorder(
           currentStepIndex = null;
           pendingCalls = new Map();
           return;
+        case "task_continued":
+          push({
+            type: "task_continued",
+            seq: nextSeq(),
+            sessionId,
+            ts: now(),
+            turnIndex: currentTurnIndex,
+            stepsTaken: event.stepsTaken,
+            elapsedMs: event.elapsedMs,
+            stepCeiling: event.stepCeiling,
+          });
+          return;
+        case "parse_failure_recovered":
+          push({
+            type: "parse_failure_recovered",
+            seq: nextSeq(),
+            sessionId,
+            ts: now(),
+            turnIndex: currentTurnIndex,
+            stepIndex: event.stepIndex,
+            attempt: event.attempt,
+            budget: event.budget,
+            reason: event.reason,
+          });
+          return;
+        case "provider_waiting":
+          push({
+            type: "provider_waiting",
+            seq: nextSeq(),
+            sessionId,
+            ts: now(),
+            turnIndex: currentTurnIndex,
+            ...(currentStepIndex !== null
+              ? { stepIndex: currentStepIndex }
+              : {}),
+            attempt: event.attempt,
+            waitedMs: event.waitedMs,
+            maxWaitMs: event.maxWaitMs,
+            nextRetryMs: event.nextRetryMs,
+            reason: event.reason,
+          });
+          return;
+        case "provider_recovered":
+          push({
+            type: "provider_recovered",
+            seq: nextSeq(),
+            sessionId,
+            ts: now(),
+            turnIndex: currentTurnIndex,
+            waitedMs: event.waitedMs,
+          });
+          return;
+        case "completion_truncated":
+          push({
+            type: "completion_truncated",
+            seq: nextSeq(),
+            sessionId,
+            ts: now(),
+            turnIndex: currentTurnIndex,
+            stepIndex: event.stepIndex,
+            cause: event.cause,
+            completionTokens: event.completionTokens,
+            promptTokens: event.promptTokens,
+            requestedMaxTokens: event.requestedMaxTokens,
+            retry: event.retry.kind,
+            retryValue:
+              event.retry.kind === "raise_cap"
+                ? event.retry.maxTokens
+                : event.retry.contextWindow,
+          });
+          return;
         case "loop_detected":
           push({
             type: "loop_detected",

@@ -6,11 +6,7 @@ import { join } from "node:path";
 import { createNdjsonTraceSink, traceFilePath } from "./trace-sink.js";
 import type { TraceEvent } from "./trace-event.js";
 
-function baseEvent(
-  sessionId: string,
-  seq: number,
-  ts: number,
-): TraceEvent {
+function baseEvent(sessionId: string, seq: number, ts: number): TraceEvent {
   return {
     type: "step_started",
     sessionId,

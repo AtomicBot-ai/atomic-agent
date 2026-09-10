@@ -24,7 +24,10 @@ const CAPS: CapabilitiesSummary = {
 const SKILLS: SkillCatalogEntry[] = [];
 
 function sessionWith(turns: ConversationTurn[]): SessionState {
-  return { ...createEmptySessionState({ id: "s", workingDir: "/work" }), turns };
+  return {
+    ...createEmptySessionState({ id: "s", workingDir: "/work" }),
+    turns,
+  };
 }
 
 function task(i: number): ConversationTurn[] {

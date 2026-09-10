@@ -250,7 +250,7 @@ function Footer({
   if (flow.step === "review" && (flow.preview?.rows.length ?? 0) > 0) {
     return (
       <Box width={inner}>
-        <Text>{" "}</Text>
+        <Text> </Text>
         <DialogButton
           label="Cancel"
           tone="primary"

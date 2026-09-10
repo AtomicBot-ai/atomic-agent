@@ -25,7 +25,9 @@ export interface DocExtractorClient {
 
 export function createDocExtractor(
   loadClient: () => Promise<DocExtractorClient>,
-  writeTempFile: (data: Buffer) => Promise<{ path: string; cleanup: () => Promise<void> }>,
+  writeTempFile: (
+    data: Buffer,
+  ) => Promise<{ path: string; cleanup: () => Promise<void> }>,
 ): Extractor {
   return async (input) => {
     const warnings: string[] = [];
@@ -69,8 +71,7 @@ async function defaultTempWrite(
 
 async function defaultLoadClient(): Promise<DocExtractorClient> {
   const mod = (await import("word-extractor")) as
-    | { default: new () => DocExtractorClient }
-    | (new () => DocExtractorClient);
+    { default: new () => DocExtractorClient } | (new () => DocExtractorClient);
   const Ctor = "default" in mod ? mod.default : mod;
   return new Ctor();
 }

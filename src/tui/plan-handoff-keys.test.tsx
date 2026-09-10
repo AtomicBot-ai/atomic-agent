@@ -4,7 +4,11 @@ import { describe, expect, it, vi } from "vitest";
 import { PLAN_CHORDS, handleAppKey } from "./app-key-bindings.js";
 import type { CodingMode } from "./coding-mode.js";
 import { makeTuiEventBus, TuiApp, type TuiAppCallbacks } from "./tui-app.js";
-import { createInitialTuiState, type TuiSessionInfo, type TuiState } from "./tui-state.js";
+import {
+  createInitialTuiState,
+  type TuiSessionInfo,
+  type TuiState,
+} from "./tui-state.js";
 
 const SESSION: TuiSessionInfo = {
   sessionId: null,

@@ -51,3 +51,24 @@ describe("probeNotifications (linux)", () => {
     expect(await probeNotifications("linux", whichFor())).toBe(false);
   });
 });
+
+describe("the agent's own e-mail address", () => {
+  it("is advertised only when an inbox exists, and reads as a tool hint", async () => {
+    const { buildCapabilities } = await import("./capabilities.js");
+    const { formatCapabilities } = await import("./stable-prefix.js");
+    const without = await buildCapabilities({
+      workingDir: "/w",
+      browserChannel: "chrome",
+    });
+    expect(without.emailAddress).toBeUndefined();
+    expect(formatCapabilities(without)).not.toMatch(/email:/);
+    const withInbox = await buildCapabilities({
+      workingDir: "/w",
+      browserChannel: "chrome",
+      emailAddress: "atag-1@atomicmail.ai",
+    });
+    expect(formatCapabilities(withInbox)).toContain(
+      "email: atag-1@atomicmail.ai (os.email.inbox / os.email.send)",
+    );
+  });
+});

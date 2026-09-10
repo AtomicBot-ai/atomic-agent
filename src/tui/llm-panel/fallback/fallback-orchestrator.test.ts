@@ -1,4 +1,10 @@
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -42,7 +48,11 @@ function seedConfig(stateDir: string, fallback?: unknown): void {
       providers: [
         { id: "cloud-a", kind: "openrouter", defaultChatModel: "vendor/a" },
         { id: "cloud-b", kind: "aimlapi", defaultChatModel: "vendor/b" },
-        { id: "local-llama", kind: "llama-server", url: "http://127.0.0.1:8080" },
+        {
+          id: "local-llama",
+          kind: "llama-server",
+          url: "http://127.0.0.1:8080",
+        },
       ],
       ...(fallback ? { fallback } : {}),
     },
@@ -52,7 +62,9 @@ function seedConfig(stateDir: string, fallback?: unknown): void {
 }
 
 function readFallback(stateDir: string): Record<string, unknown> | undefined {
-  const onDisk = JSON.parse(readFileSync(join(stateDir, "config.json"), "utf8"));
+  const onDisk = JSON.parse(
+    readFileSync(join(stateDir, "config.json"), "utf8"),
+  );
   return onDisk.llm?.fallback;
 }
 
@@ -86,7 +98,9 @@ describe("FallbackOrchestrator persistence", () => {
       addableProviderIds: ["local-llama"],
     });
     expect(
-      (refresh as { links: { providerId: string }[] }).links.map((l) => l.providerId),
+      (refresh as { links: { providerId: string }[] }).links.map(
+        (l) => l.providerId,
+      ),
     ).toEqual(["cloud-a", "cloud-b"]);
   });
 
@@ -204,7 +218,8 @@ describe("FallbackOrchestrator persistence", () => {
     expect(refresh).toBeDefined();
     // resolveFallbackChain hoists cloud-b (the new active) to the head.
     expect(
-      (refresh as { links: { providerId: string; isActive: boolean }[] }).links[0],
+      (refresh as { links: { providerId: string; isActive: boolean }[] })
+        .links[0],
     ).toMatchObject({ providerId: "cloud-b", isActive: true });
   });
 });

@@ -4,6 +4,7 @@ import {
   parseUserLlmFileConfig,
   type UserLlmFileConfig,
 } from "./llm-config.js";
+import type { UserLlmRunModeConfig } from "./llm-run-mode-config.js";
 
 export type { ApprovalLevel } from "../approval/approval-level.js";
 import type { DotenvLoadResult } from "./load-dotenv.js";
@@ -16,6 +17,14 @@ import {
   isBackendVariantPreference,
   type BackendVariantPreference,
 } from "../local-llm/windows-backend-variant.js";
+import {
+  DEFAULT_DOWNLOAD_CONNECTIONS,
+  MAX_DOWNLOAD_CONNECTIONS,
+} from "../local-llm/download-settings.js";
+import {
+  DEFAULT_HF_ENDPOINT,
+  normalizeHuggingFaceEndpoint,
+} from "../local-llm/huggingface-endpoint.js";
 import { parseCustomLocalModels } from "./custom-models-schema.js";
 import {
   MCP_SERVER_NAME_MAX_LENGTH,
@@ -215,6 +224,8 @@ export interface AtomicAgentConfig {
      * healthy. Disabled / unreachable ⇒ FTS5-only recall path.
      */
     embeddings: UserManagedEmbeddingLlmConfig;
+    /** Parallel-connection download settings (config v52). */
+    download: LocalModelDownloadConfig;
   };
   /**
    * Outcome of the startup `<stateDir>/.env` load performed by
@@ -247,7 +258,54 @@ export interface AtomicAgentConfig {
   };
   agent: {
     tokenBudget: number;
+    /**
+     * Steps in one *leg* of a task — a checkpoint interval, not the end
+     * of the work.
+     *
+     * It used to be the end of the work, and that was the wrong unit: a
+     * step is one model turn plus its tool calls, while what the user
+     * asked for ("register on these ten sites") is a task made of
+     * hundreds of them. Ending the task on a step count meant a long job
+     * stopped mid-way with `(stopped: max_steps reached without a
+     * reply)` and no way to continue. Now the loop reaches this number,
+     * checks that the leg actually made progress, says so, and carries
+     * on — up to {@link UserConfigFile.agent.task}.
+     */
     maxSteps: number;
+    /**
+     * What to do when the model provider stops answering.
+     *
+     * A dead endpoint used to end the turn after three fast retries
+     * (~1s), so an outage of minutes turned every message the operator
+     * sent into a one-second failure and the work in flight was
+     * abandoned. Waiting is the honest response: the turn is parked,
+     * the same step is retried on a backoff, and the run continues the
+     * moment the provider answers.
+     */
+    providerWait: {
+      /** `false` restores the old behaviour: fail the turn immediately. */
+      enabled: boolean;
+      /** Give up (and fail the turn) after waiting this long in one outage. */
+      maxWaitMs: number;
+    };
+    /**
+     * Ceilings for one task. These, not `maxSteps`, are what actually
+     * end a run that is still making progress.
+     */
+    task: {
+      /**
+       * Hard ceiling on steps for one task. Reached, the loop spends its
+       * last step summarising instead of being cut off mid-edit.
+       */
+      maxSteps: number;
+      /** Wall-clock ceiling for one task. Same graceful ending. */
+      maxDurationMs: number;
+      /**
+       * Carry on past a leg boundary while the work is progressing.
+       * Off means the historical behaviour: stop at `agent.maxSteps`.
+       */
+      autoContinue: boolean;
+    };
     toolTimeoutMs: number;
     /**
      * Boot value for the five-step approval ladder (1 = ask for
@@ -790,6 +848,7 @@ export interface AtomicAgentConfig {
     whileBusySubmit: WhileBusySubmitMode;
     mouse: boolean;
     onboarding: OnboardingState;
+    sessionRail: SessionRailConfig;
   };
   /**
    * Anonymous product analytics (PostHog). Mirrors
@@ -808,6 +867,27 @@ export interface AtomicAgentConfig {
    * the master kill switch and the single-operator owner id.
    */
   telegram: TelegramConfig;
+  /**
+   * Discord remote-control channel. Mirrors `UserConfigFile.discord`.
+   * The bot token is not stored here — see `DiscordConfig`.
+   */
+  discord: DiscordConfig;
+  /** Extra Telegram / Discord bots. Mirrors `UserConfigFile.swarm`. */
+  swarm: SwarmConfig;
+  /** Out-of-band pings. Mirrors `UserConfigFile.notifications`. */
+  notifications: NotificationsConfig;
+  /** The agent's own inbox. Mirrors `UserConfigFile.atomicMail`. */
+  atomicMail: AtomicMailConfig;
+  /**
+   * Git remote-sync policy. Mirrors `UserConfigFile.git`. The GitHub
+   * token is not stored here — see `GitConfig`.
+   */
+  git: GitConfig;
+  /**
+   * Composio integration. Mirrors `UserConfigFile.composio`. The API
+   * key is not stored here — see `ComposioConfig`.
+   */
+  composio: ComposioConfig;
   /**
    * MCP (Model Context Protocol) client configuration. Mirrors
    * `UserConfigFile.mcp`. Each entry in `servers[]` becomes a
@@ -908,6 +988,13 @@ export interface AtomicAgentConfig {
       probeThrottleMs?: number;
       failureWindowMs?: number;
     };
+    /**
+     * Run mode: `local` | `cloud` | `fusion`, plus the fusion legs
+     * (cloud orchestrator + llama-server workers). Additive —
+     * `activeTextProvider` stays authoritative; see
+     * `src/llm/run-mode/resolve-run-mode.ts`.
+     */
+    runMode?: UserLlmRunModeConfig;
   };
 }
 
@@ -925,6 +1012,116 @@ export type TelegramParseMode = "plain" | "html";
  * messages whose `from.id` matches `ownerUserId` are dispatched into
  * the agent loop. Group chats are dropped unconditionally.
  */
+/**
+ * Discord remote-control channel. The bot relays DMs and @mentions to
+ * the agent and posts replies back, the same shape as the Telegram
+ * channel.
+ *
+ * As with `TelegramConfig`, the bot token is **not** stored here — it
+ * lives in `<stateDir>/.env` as `DISCORD_BOT_TOKEN`. This block only
+ * carries the kill switch and the single-operator owner id.
+ */
+export interface DiscordConfig {
+  /** Master kill switch. `false` constructs the channel but never starts it. */
+  enabled: boolean;
+  /**
+   * Discord snowflakes of every permitted operator. **Strings**, not
+   * numbers: snowflakes exceed `Number.MAX_SAFE_INTEGER`, so parsing
+   * one as a number silently corrupts the last digits and would let
+   * the wrong account drive the agent. Empty means unpaired — the
+   * channel refuses every message until at least one id is set.
+   *
+   * A v51 file's scalar `ownerUserId` is folded in as the first entry,
+   * so an existing single-owner setup keeps working untouched.
+   */
+  ownerUserIds: string[];
+}
+
+/**
+ * One extra bot in the swarm: a second (third, …) Telegram or Discord
+ * bot on the same runtime, with its own token, owner and label, so an
+ * operator can point different bots at different rooms or roles. The
+ * primary `telegram` / `discord` blocks stay as they are; units are
+ * additional. The token lives in `<stateDir>/.env` under `tokenEnv`,
+ * never here. Added in config v52.
+ */
+export interface SwarmUnitConfig {
+  /** Stable slug, unique across units: `[a-z0-9][a-z0-9-]{0,31}`. */
+  id: string;
+  kind: "telegram" | "discord";
+  /** Display name in the Swarm tab and in session labels. */
+  label: string;
+  /** Free text: what this bot is for ("ops", "research"). Informational for now. */
+  role: string;
+  enabled: boolean;
+  /** Name of the `.env` key holding this unit's bot token. */
+  tokenEnv: string;
+  /**
+   * The sole operator this unit listens to, as a string for both kinds
+   * (Discord snowflakes exceed `Number.MAX_SAFE_INTEGER`; Telegram ids
+   * are parsed back to a number at construction). `null` = unpaired.
+   */
+  ownerUserId: string | null;
+}
+
+export interface SwarmConfig {
+  units: SwarmUnitConfig[];
+}
+
+/**
+ * Git remote-sync policy. Added in config v52.
+ *
+ * The agent can drive a repository that never leaves the machine: with
+ * `remoteSync: false` (the default) every network git verb — `push`,
+ * `fetch`, `pull`, `clone`, `remote add` / `set-url` — is refused before
+ * any approval prompt, both through the dedicated `os.git.*` tools and
+ * through `os.shell.run`. Flipping it on lets the agent sync a
+ * repository with its remotes, each operation still going through the
+ * approval ladder. The GitHub token itself is **not** stored here — it
+ * lives in `<stateDir>/.env` as `GITHUB_TOKEN`, written by the
+ * Integrations hub, like every other credential.
+ */
+export interface GitConfig {
+  /** `false` keeps every repository local-only; the safe default. */
+  remoteSync: boolean;
+}
+
+/**
+ * Composio integration. Composio is a hosted catalogue of 1500+ SaaS
+ * toolkits (Gmail, Slack, Notion, Linear, …) that also brokers each
+ * app's OAuth. The agent reaches it as an ordinary MCP server: a
+ * tool-router session yields a Streamable-HTTP MCP endpoint carrying
+ * four meta-tools, and `src/mcp/` does the rest.
+ *
+ * As with `TelegramConfig`, the API key is **not** stored here — it
+ * lives in `<stateDir>/.env` under the name in `apiKeyEnv` and is
+ * loaded at bootstrap by `loadDotenvFromStateDir`. A missing key is
+ * the integration's real gate: no key, no MCP server, no Composio
+ * tool in the registry.
+ */
+export interface ComposioConfig {
+  /**
+   * Master kill switch. `false` keeps the integration dormant even
+   * when a key is present — the escape hatch for an operator who
+   * wants the key on disk but the toolkits off.
+   */
+  enabled: boolean;
+  /** Name of the env var holding the API key. */
+  apiKeyEnv: string;
+  /**
+   * Stable anonymous install id scoping Composio connected accounts.
+   * Minted once as a random UUID and never derived from the operator's
+   * email: Composio's docs advise against emails as user ids, and an
+   * email is PII the integration has no reason to disclose. Losing it
+   * means re-authorising every connected app, so it is persisted.
+   */
+  userId: string | null;
+  /** Cached tool-router session id (`trs_…`), so a boot costs no API call. */
+  sessionId: string | null;
+  /** Cached MCP endpoint for `sessionId`. */
+  mcpUrl: string | null;
+}
+
 export interface TelegramConfig {
   /** Master kill switch. When `false`, the channel is constructed but never started. */
   enabled: boolean;
@@ -952,6 +1149,47 @@ export interface TelegramConfig {
    * `true` via the defaults-fallback in `parseUserConfigFile`.
    */
   progressIndicator: boolean;
+}
+
+/** Where a finished (or failed) background model download is reported. */
+export type DownloadNotifyChannelSetting =
+  "telegram" | "discord" | "email" | "off";
+
+export interface NotificationsConfig {
+  downloads: {
+    /**
+     * `null` means the operator has not been asked yet: the Models tab
+     * asks once, the first time a pull starts, and remembers the answer
+     * here. `"off"` is a remembered "no". Added in config v52.
+     */
+    channel: DownloadNotifyChannelSetting | null;
+  };
+}
+
+/**
+ * Atomic Mail — the agent's own `@atomicmail.ai` inbox. The API key
+ * lives in `<stateDir>/.env` as `ATOMIC_MAIL_API_KEY`; this block holds
+ * what is not secret: the address, and the owner's verified e-mail.
+ * Added in config v53.
+ */
+export interface AtomicMailConfig {
+  /** `name@atomicmail.ai`, once registered. */
+  address: string | null;
+  /** The JMAP account id that goes with it. */
+  accountId: string | null;
+  /** Where the operator wants to be reached. */
+  ownerEmail: string | null;
+  /** ISO time the operator typed the code back; `null` = not yet. */
+  ownerVerifiedAt: string | null;
+  /** A code has been sent and not yet typed back. Never the code itself. */
+  pendingVerification: {
+    email: string;
+    /** sha256 of the six digits. */
+    codeHash: string;
+    expiresAt: string;
+    /** Wrong guesses so far; the code is dropped after a few. */
+    attempts: number;
+  } | null;
 }
 
 /**
@@ -1028,6 +1266,14 @@ export interface UserManagedLocalLlmConfig {
    */
   tensorSplit: number[];
   /**
+   * llama-server request slots (`--parallel`) for the managed chat
+   * daemon, 1..8. Default `2` — the value that was hard-coded before
+   * config v52, so older files launch byte-identically. Fusion workers
+   * run one per slot; raising this is what lets them run concurrently
+   * instead of queueing on the server. Applied on the next daemon start.
+   */
+  parallel: number;
+  /**
    * Stop the managed chat daemon when the last CLI session exits.
    * `true` (default) — closing the terminal frees the RAM/VRAM the
    * model was holding; a second live session keeps the daemon up (see
@@ -1056,6 +1302,27 @@ export interface UserManagedLocalLlmConfig {
  * `enabled=false` (default) ⇒ no second daemon, no embedding writes,
  * no hybrid recall — observably identical to phase 1A.
  */
+/**
+ * How model and backend files are fetched. Added in config v52.
+ * `connections` is the number of parallel HTTP range requests one file
+ * is split across (1–64). Hugging Face's CDN caps each connection, so
+ * one stream is slow regardless of the link; `1` restores the old
+ * single-stream behaviour. The `ATOMIC_AGENT_DOWNLOAD_CONNECTIONS` env
+ * var, when set, wins over this file value (operator override).
+ */
+export interface LocalModelDownloadConfig {
+  connections: number;
+  /**
+   * Origin that serves Hugging Face for this install (config v53), e.g.
+   * a regional mirror. Catalogue and custom-model URLs stay canonical
+   * `https://huggingface.co/...`; the endpoint is applied at request
+   * time, so switching it never invalidates a partial download. The
+   * `HF_ENDPOINT` env var (what `huggingface_hub` honours) wins over
+   * this value when set.
+   */
+  hfEndpoint: string;
+}
+
 export interface UserManagedEmbeddingLlmConfig {
   enabled: boolean;
   /** `EmbeddingModelId` from the catalog, or `null` when not chosen. */
@@ -1100,6 +1367,8 @@ export interface UserConfigFile {
      * `{ enabled: false, modelId: null, port: 19092 }`.
      */
     embeddings: UserManagedEmbeddingLlmConfig;
+    /** Parallel-connection download settings (config v52). */
+    download: LocalModelDownloadConfig;
     /**
      * GGUF models the operator added from an arbitrary Hugging Face repo
      * (config v44). Each entry is a whole `LocalModelDef` with a
@@ -1112,7 +1381,19 @@ export interface UserConfigFile {
   log: { level: LogLevel };
   agent: {
     tokenBudget: number;
+    /** Steps in one leg of a task — a checkpoint, not the end of it. */
     maxSteps: number;
+    /** Wait out a provider outage instead of failing the turn. */
+    providerWait: {
+      enabled: boolean;
+      maxWaitMs: number;
+    };
+    /** Ceilings that actually end a task. See the runtime type above. */
+    task: {
+      maxSteps: number;
+      maxDurationMs: number;
+      autoContinue: boolean;
+    };
     toolTimeoutMs: number;
     /**
      * Five-step approval ladder (config v37). Replaces the binary
@@ -1571,12 +1852,18 @@ export interface UserConfigFile {
    * wheel scrolling. Turning it off restores the terminal's own
    * drag-to-select, which mouse reporting takes over — see `/mouse` and
    * `--no-mouse`. Older files are upgraded with `mouse: true`.
+   *
+   * `sessionRail` (config v52) remembers the operator's own ordering of
+   * the rail's Sessions list, and (v53) which threads are pinned to its
+   * top — see {@link SessionRailConfig}. Older files are upgraded with
+   * an empty order, which means "by recency", and nothing pinned.
    */
   tui: {
     theme: string;
     whileBusySubmit: WhileBusySubmitMode;
     mouse: boolean;
     onboarding: OnboardingState;
+    sessionRail: SessionRailConfig;
   };
   /**
    * Anonymous product analytics (PostHog). Added in config v33. Older
@@ -1596,6 +1883,41 @@ export interface UserConfigFile {
    * here — see `TelegramConfig` for rationale.
    */
   telegram: TelegramConfig;
+  /**
+   * Discord remote-control channel. Added in config v51. Older files
+   * are transparently upgraded with `{ enabled: false, ownerUserId:
+   * null }`, which starts nothing.
+   */
+  discord: DiscordConfig;
+  /**
+   * Extra Telegram / Discord bots ("swarm units"). Added in config v52.
+   * Older files are transparently upgraded with `{ units: [] }`.
+   */
+  swarm: SwarmConfig;
+  /**
+   * Out-of-band pings — today, where a background model download
+   * reports when it lands. Added in config v55. Older files are
+   * transparently upgraded with `{ downloads: { channel: null } }`,
+   * which means "ask on the next pull".
+   */
+  notifications: NotificationsConfig;
+  /**
+   * Atomic Mail. Added in config v56. Older files are transparently
+   * upgraded with every field `null`: no inbox, no owner, nothing sent.
+   */
+  atomicMail: AtomicMailConfig;
+  /**
+   * Git remote-sync policy. Added in config v62. Older files are
+   * transparently upgraded with `{ remoteSync: false }`, which keeps
+   * every repository on this machine until the operator says otherwise.
+   */
+  git: GitConfig;
+  /**
+   * Composio integration. Added in config v50. Older files are
+   * transparently upgraded with the defaults below, which leave the
+   * integration inert until a key is written to `<stateDir>/.env`.
+   */
+  composio: ComposioConfig;
   /**
    * MCP client servers. Added in config v23. Each entry declares one
    * external MCP server the runtime will connect to at bootstrap and
@@ -1698,7 +2020,54 @@ export interface UserConfigFile {
 // taken: a declined offer must not come back on a re-run after a reset.
 // Additive: an older file parses with it `null`, which reads as "never
 // offered", the same answer that file has always implied.
-export const USER_CONFIG_VERSION = 49;
+// v50: new `composio` block wiring the Composio toolkit catalogue in as
+// an MCP server. Additive and inert by default — the block carries a
+// switch, an env-var *name*, and cached session ids, never the key
+// itself, and an older file inherits defaults that mount nothing until
+// a key is written to `<stateDir>/.env`.
+// v51: new `discord` block for the Discord remote-control channel.
+// Additive and inert by default — the channel is off, unpaired, and the
+// bot token lives in `<stateDir>/.env`, never here.
+// v52: new `swarm` block — extra Telegram / Discord bots on one runtime,
+// each with its own token (`.env`), owner and label. Default `{ units: [] }`.
+// v53: localModels gains `download.connections` — how many parallel range
+// requests one model/backend file is split across (default 16). Older
+// files inherit the default; `1` is the previous single-stream behaviour.
+// v54: `download.hfEndpoint` — the origin that serves Hugging Face (a
+// mirror for regions where huggingface.co is slow or blocked). Default is
+// the canonical host; `HF_ENDPOINT` in the environment overrides it.
+// v55: new `notifications` block — where a background model download
+// reports when it lands. Additive: `channel: null` means "not asked yet",
+// which is what every older file has always implied.
+// v56: new `atomicMail` block — the agent's own inbox and the owner's
+// verified e-mail. Additive and inert: every field starts `null`; the API
+// key lives in `<stateDir>/.env`, never here.
+// v57: `llm.runMode` (mode local|cloud|fusion + the fusion legs and
+// worker count) and `localModels.managed.parallel` (llama-server
+// `--parallel`, default 2 = the previously hard-coded value). Additive:
+// an older file parses with `runMode` absent and `parallel` 2, which
+// launches the daemon with byte-identical args.
+// v58: new `tui.sessionRail` block holding the operator's manual order of
+// the rail's Sessions list (`order: string[]`, session ids). Additive: an
+// older file inherits `[]`, which keeps the list sorted by recency until
+// the operator moves a row for the first time.
+// v59: `tui.sessionRail.pinned` (`string[]`, session ids) — the threads
+// the operator pinned to the top of the rail. Additive: an older file
+// inherits `[]`, nothing pinned, and `order` keeps its v58 meaning.
+// v60: `localModels.completionMaxTokens` accepts `0` — "no client-side
+// cap", generate until a stop token or the context window fills — and
+// provider entries accept `maxOutputTokens`, the per-provider cloud
+// ceiling that replaces the local knob a cloud request used to borrow.
+// Additive: an older file keeps its positive cap and no entry ceiling.
+// v61: `discord.ownerUserId` (scalar) becomes `discord.ownerUserIds`
+// (list) so a bot can answer to more than one person. A pre-v61 file's
+// scalar is folded in as the first entry on read, so nothing an
+// operator already configured stops working.
+// v62: new `git` block carrying the remote-sync policy. Additive and
+// closed by default — `remoteSync: false` refuses every network git verb
+// so a repository the agent versions stays on this machine; the GitHub
+// token lives in `<stateDir>/.env`, never here.
+export const USER_CONFIG_VERSION = 62;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -1836,6 +2205,19 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   46,
   47,
   48,
+  49,
+  50,
+  51,
+  52,
+  53,
+  54,
+  55,
+  56,
+  57,
+  58,
+  59,
+  60,
+  61,
   USER_CONFIG_VERSION,
 ];
 
@@ -1855,6 +2237,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       backendVariant: "auto",
       contextSize: 0,
       tensorSplit: [],
+      parallel: 2,
     },
     embeddings: {
       enabled: false,
@@ -1862,12 +2245,33 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       port: 19092,
       url: "http://127.0.0.1:19092",
     },
+    download: {
+      connections: DEFAULT_DOWNLOAD_CONNECTIONS,
+      hfEndpoint: DEFAULT_HF_ENDPOINT,
+    },
     customModels: [],
   },
   log: { level: "info" },
   agent: {
     tokenBudget: 3000,
     maxSteps: 25,
+    providerWait: {
+      enabled: true,
+      // Five minutes covers the outages people actually hit — a laptop
+      // waking, a VPN reconnecting, a provider's gateway restarting —
+      // without leaving a turn parked all afternoon. The task's own
+      // wall-clock ceiling still applies on top.
+      maxWaitMs: 300_000,
+    },
+    task: {
+      // ~40 legs of 25. Large enough for the multi-hour browser jobs
+      // people actually ask for, small enough that a runaway is bounded
+      // and visible: every leg boundary reports steps, elapsed time and
+      // the ceiling it is counting towards.
+      maxSteps: 1000,
+      maxDurationMs: 7_200_000,
+      autoContinue: true,
+    },
     toolTimeoutMs: 60_000,
     approvalLevel: 1,
     conversationMaxTokens: 32_000,
@@ -2088,6 +2492,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
     theme: "auto",
     whileBusySubmit: "steer",
     mouse: true,
+    sessionRail: { order: [], pinned: [] },
     onboarding: {
       completedAt: null,
       importOfferedAt: null,
@@ -2105,6 +2510,46 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
     ownerUserId: null,
     parseMode: "html",
     progressIndicator: true,
+  },
+  discord: {
+    // Added in v51. Off by default: an unpaired channel with a token
+    // would connect and then refuse every message, which looks broken.
+    enabled: false,
+    // v52: a list. Empty is the unpaired state the switch above assumes.
+    ownerUserIds: [],
+  },
+  swarm: {
+    // Added in v52. No extra bots until the operator adds one.
+    units: [],
+  },
+  notifications: {
+    // Added in v55. `null` = not asked yet; the Models tab asks once.
+    downloads: {
+      channel: null,
+    },
+  },
+  atomicMail: {
+    // Added in v56. Nothing until the operator registers an inbox.
+    address: null,
+    accountId: null,
+    ownerEmail: null,
+    ownerVerifiedAt: null,
+    pendingVerification: null,
+  },
+  git: {
+    // Added in v52. Off by default: a repository the agent versions must
+    // not reach a remote until the operator deliberately opens the door.
+    remoteSync: false,
+  },
+  composio: {
+    // Added in v50. `enabled: true` is safe because the key, not this
+    // flag, is what actually mounts anything: with no key in the env
+    // the runtime opens no connection and registers no tool.
+    enabled: true,
+    apiKeyEnv: "COMPOSIO_API_KEY",
+    userId: null,
+    sessionId: null,
+    mcpUrl: null,
   },
   mcp: {
     // Added in v23. Empty by default — the operator declares MCP
@@ -2239,7 +2684,10 @@ function parseOptionalManagedModelId(
   return s;
 }
 
-export function parseBrowserChannel(raw: unknown, field: string): BrowserChannel {
+export function parseBrowserChannel(
+  raw: unknown,
+  field: string,
+): BrowserChannel {
   if (raw === "chrome" || raw === "msedge" || raw === "chromium") return raw;
   throw new ConfigValidationError(
     field,
@@ -2251,7 +2699,12 @@ export function parseWebSearchProviderName(
   raw: unknown,
   field: string,
 ): WebSearchProviderName {
-  if (raw === "duckduckgo" || raw === "searxng" || raw === "exa" || raw === "brave") {
+  if (
+    raw === "duckduckgo" ||
+    raw === "searxng" ||
+    raw === "exa" ||
+    raw === "brave"
+  ) {
     return raw;
   }
   throw new ConfigValidationError(
@@ -2335,6 +2788,65 @@ function coerceFloatLike(raw: unknown): number {
     : NaN;
 }
 
+/**
+ * Parse `agent.task` — the ceilings that end a task that is still
+ * making progress. Absent block means the defaults, so an older config
+ * file simply gains the behaviour.
+ *
+ * The floor on `maxSteps` is deliberate: a ceiling below one leg would
+ * make `agent.maxSteps` the terminator again through the back door, and
+ * silently, which is the exact confusion this block exists to remove.
+ */
+function parseProviderWait(
+  raw: unknown,
+): UserConfigFile["agent"]["providerWait"] {
+  const defaults = USER_CONFIG_DEFAULTS.agent.providerWait;
+  if (raw === undefined || raw === null) return defaults;
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw new ConfigValidationError(
+      "agent.providerWait",
+      `expected object, got ${JSON.stringify(raw)}`,
+    );
+  }
+  const wait = raw as Record<string, unknown>;
+  return {
+    enabled: parseBool(
+      wait.enabled ?? defaults.enabled,
+      "agent.providerWait.enabled",
+    ),
+    maxWaitMs: parsePositiveInt(
+      wait.maxWaitMs ?? defaults.maxWaitMs,
+      "agent.providerWait.maxWaitMs",
+    ),
+  };
+}
+
+function parseAgentTask(raw: unknown): UserConfigFile["agent"]["task"] {
+  const defaults = USER_CONFIG_DEFAULTS.agent.task;
+  if (raw === undefined || raw === null) return defaults;
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw new ConfigValidationError(
+      "agent.task",
+      `expected object, got ${JSON.stringify(raw)}`,
+    );
+  }
+  const task = raw as Record<string, unknown>;
+  return {
+    maxSteps: parsePositiveInt(
+      task.maxSteps ?? defaults.maxSteps,
+      "agent.task.maxSteps",
+    ),
+    maxDurationMs: parsePositiveInt(
+      task.maxDurationMs ?? defaults.maxDurationMs,
+      "agent.task.maxDurationMs",
+    ),
+    autoContinue: parseBool(
+      task.autoContinue ?? defaults.autoContinue,
+      "agent.task.autoContinue",
+    ),
+  };
+}
+
 export function parsePositiveInt(raw: unknown, field: string): number {
   const value = coerceIntLike(raw);
   if (!Number.isFinite(value) || !Number.isInteger(value) || value <= 0) {
@@ -2353,6 +2865,24 @@ export function parsePositiveInt(raw: unknown, field: string): number {
  * counterpart silently clamps because operator-supplied env vars are
  * less strict than file-supplied user config.
  */
+/**
+ * `localModels.completionMaxTokens` — the local runner's `n_predict`.
+ *
+ * `0` means **no client-side cap**: llama.cpp then generates until the
+ * model emits a stop token or the context window fills. That is the
+ * honest ceiling for a local run, and it is what an operator asking for
+ * one long file wants. It costs wall-clock time, not memory — the
+ * machine's exposure is fixed at daemon start by the model and
+ * `--ctx-size`, not by how many tokens a single reply runs to — so the
+ * only thing a cap buys locally is a bound on a runaway generation.
+ * Anything else is the usual 64..131072 window.
+ */
+export function parseLocalCompletionCap(raw: unknown, field: string): number {
+  const value = coerceIntLike(raw);
+  if (value === 0) return 0;
+  return parseBoundedPositiveInt(raw, field, 64, 131_072);
+}
+
 export function parseBoundedPositiveInt(
   raw: unknown,
   field: string,
@@ -2431,10 +2961,7 @@ export function parseUnitInterval(raw: unknown, field: string): number {
  * which trivially destroys all signal) but `1` is allowed (no
  * decay at all, mostly useful for tests and offline replay).
  */
-export function parseHalfOpenUnitInterval(
-  raw: unknown,
-  field: string,
-): number {
+export function parseHalfOpenUnitInterval(raw: unknown, field: string): number {
   const value = coerceFloatLike(raw);
   if (!Number.isFinite(value) || value <= 0 || value > 1) {
     throw new ConfigValidationError(
@@ -2444,7 +2971,6 @@ export function parseHalfOpenUnitInterval(
   }
   return value;
 }
-
 
 export function parseBool(raw: unknown, field: string): boolean {
   if (typeof raw === "boolean") return raw;
@@ -2509,6 +3035,109 @@ export function parseNonEmptyString(raw: unknown, field: string): string {
   );
 }
 
+/**
+ * Parse an optional string that is meaningfully absent. `undefined`
+ * (key missing) and `null` (explicitly cleared) both read as `null`,
+ * so a cleared cache entry and a never-written one behave alike.
+ */
+export const SWARM_UNIT_ID = /^[a-z0-9][a-z0-9-]{0,31}$/;
+const SWARM_TOKEN_ENV = /^[A-Z_][A-Z0-9_]*$/;
+const SWARM_LABEL_MAX = 40;
+const SWARM_ROLE_MAX = 120;
+
+/**
+ * `swarm.units[]`. Every unit is checked in full — a half-valid unit
+ * would construct a channel that can never start — and ids / token
+ * env names must be unique or two units would share a bot.
+ */
+function parseSwarmUnits(value: unknown, field: string): SwarmUnitConfig[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) {
+    throw new ConfigValidationError(field, "must be an array");
+  }
+  const ids = new Set<string>();
+  const envs = new Set<string>();
+  return value.map((raw, i) => {
+    const at = `${field}[${i}]`;
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      throw new ConfigValidationError(at, "must be an object");
+    }
+    const u = raw as Record<string, unknown>;
+    const id = parseNonEmptyString(u.id, `${at}.id`);
+    if (!SWARM_UNIT_ID.test(id)) {
+      throw new ConfigValidationError(
+        `${at}.id`,
+        "must match [a-z0-9][a-z0-9-]{0,31}",
+      );
+    }
+    if (ids.has(id))
+      throw new ConfigValidationError(`${at}.id`, `duplicate id '${id}'`);
+    ids.add(id);
+    if (u.kind !== "telegram" && u.kind !== "discord") {
+      throw new ConfigValidationError(
+        `${at}.kind`,
+        'must be "telegram" or "discord"',
+      );
+    }
+    const label = parseNonEmptyString(u.label, `${at}.label`);
+    if (label.length > SWARM_LABEL_MAX) {
+      throw new ConfigValidationError(
+        `${at}.label`,
+        `must be at most ${SWARM_LABEL_MAX} characters`,
+      );
+    }
+    const role = u.role === undefined || u.role === null ? "" : u.role;
+    if (typeof role !== "string" || role.length > SWARM_ROLE_MAX) {
+      throw new ConfigValidationError(
+        `${at}.role`,
+        `must be a string of at most ${SWARM_ROLE_MAX} characters`,
+      );
+    }
+    const tokenEnv = parseNonEmptyString(u.tokenEnv, `${at}.tokenEnv`);
+    if (!SWARM_TOKEN_ENV.test(tokenEnv)) {
+      throw new ConfigValidationError(
+        `${at}.tokenEnv`,
+        "must be an env var name ([A-Z_][A-Z0-9_]*)",
+      );
+    }
+    if (envs.has(tokenEnv)) {
+      throw new ConfigValidationError(
+        `${at}.tokenEnv`,
+        `duplicate token env '${tokenEnv}'`,
+      );
+    }
+    envs.add(tokenEnv);
+    const ownerUserId = parseNullableString(u.ownerUserId, `${at}.ownerUserId`);
+    if (ownerUserId !== null && !/^\d{1,25}$/.test(ownerUserId)) {
+      throw new ConfigValidationError(
+        `${at}.ownerUserId`,
+        "must be a numeric user id",
+      );
+    }
+    return {
+      id,
+      kind: u.kind,
+      label,
+      role,
+      enabled: parseBool(u.enabled ?? false, `${at}.enabled`),
+      tokenEnv,
+      ownerUserId,
+    };
+  });
+}
+
+function parseNullableString(raw: unknown, field: string): string | null {
+  if (raw === undefined || raw === null) return null;
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+  throw new ConfigValidationError(
+    field,
+    `expected string or null, got ${JSON.stringify(raw)}`,
+  );
+}
+
 export function parseHttpApprovalMode(
   raw: unknown,
   field: string,
@@ -2532,10 +3161,16 @@ function resolveHttpApprovalMode(
   raw: unknown,
   field: string,
 ): HttpApprovalMode {
-  if (inputVersion < 25 && (raw === undefined || raw === null || raw === "writes")) {
+  if (
+    inputVersion < 25 &&
+    (raw === undefined || raw === null || raw === "writes")
+  ) {
     return "never";
   }
-  return parseHttpApprovalMode(raw ?? USER_CONFIG_DEFAULTS.http.approvalMode, field);
+  return parseHttpApprovalMode(
+    raw ?? USER_CONFIG_DEFAULTS.http.approvalMode,
+    field,
+  );
 }
 
 export function parseApprovalLevel(raw: unknown, field: string): ApprovalLevel {
@@ -2704,7 +3339,67 @@ export function parseSkillNameArray(raw: unknown, field: string): string[] {
   return result;
 }
 
-const TAP_REPO_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/;
+const TAP_REPO_RE =
+  /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/;
+
+/**
+ * A Discord snowflake as it appears in the client's "Copy User ID":
+ * 15-25 digits. Validated here as well as in the hub's field so a
+ * hand-edited `config.json` cannot arm an owner id that can never
+ * match an author id.
+ */
+const DISCORD_SNOWFLAKE_RE = /^\d{15,25}$/;
+
+/**
+ * Parse `discord.ownerUserIds`, accepting the v51 scalar
+ * `discord.ownerUserId` as a one-entry list.
+ *
+ * Both keys present is not an error — the list wins and the scalar is
+ * ignored, which is what a file written by v52 and then hand-edited by
+ * someone following v51 docs should do. Order is preserved and
+ * duplicates are dropped so the parsed shape is canonical.
+ */
+export function parseDiscordOwnerUserIds(
+  discord: Record<string, unknown>,
+): string[] {
+  const field = "discord.ownerUserIds";
+  const raw = discord.ownerUserIds;
+  if (raw === undefined || raw === null) {
+    const legacy = parseNullableString(
+      discord.ownerUserId,
+      "discord.ownerUserId",
+    );
+    if (legacy === null) return [];
+    if (!DISCORD_SNOWFLAKE_RE.test(legacy)) {
+      throw new ConfigValidationError(
+        "discord.ownerUserId",
+        `expected a 15-25 digit Discord user id, got ${JSON.stringify(legacy)}`,
+      );
+    }
+    return [legacy];
+  }
+  if (!Array.isArray(raw)) {
+    throw new ConfigValidationError(
+      field,
+      `expected string[], got ${JSON.stringify(raw)}`,
+    );
+  }
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (let i = 0; i < raw.length; i++) {
+    const entry = raw[i];
+    if (typeof entry !== "string" || !DISCORD_SNOWFLAKE_RE.test(entry)) {
+      throw new ConfigValidationError(
+        `${field}[${i}]`,
+        `expected a 15-25 digit Discord user id, got ${JSON.stringify(entry)}`,
+      );
+    }
+    if (seen.has(entry)) continue;
+    seen.add(entry);
+    result.push(entry);
+  }
+  return result;
+}
 
 /**
  * Parse the skill hub `taps` list — GitHub `owner/repo` repository
@@ -2805,7 +3500,11 @@ export function parseWebhookMap(
         "webhook name must match [a-zA-Z0-9_-]+",
       );
     }
-    if (rawCfg === null || typeof rawCfg !== "object" || Array.isArray(rawCfg)) {
+    if (
+      rawCfg === null ||
+      typeof rawCfg !== "object" ||
+      Array.isArray(rawCfg)
+    ) {
       throw new ConfigValidationError(
         `${field}.${name}`,
         `expected object, got ${JSON.stringify(rawCfg)}`,
@@ -2829,7 +3528,10 @@ export function parseWebhookMap(
     }
     let sessionId: string | undefined;
     if (cfg.sessionId !== undefined && cfg.sessionId !== null) {
-      sessionId = parseNonEmptyString(cfg.sessionId, `${field}.${name}.sessionId`);
+      sessionId = parseNonEmptyString(
+        cfg.sessionId,
+        `${field}.${name}.sessionId`,
+      );
     }
     if (sessionMode === "named" && !sessionId) {
       throw new ConfigValidationError(
@@ -2843,7 +3545,10 @@ export function parseWebhookMap(
     }
     let schedule: TaskSchedule | undefined;
     if (cfg.schedule !== undefined && cfg.schedule !== null) {
-      schedule = parseWebhookSchedule(cfg.schedule, `${field}.${name}.schedule`);
+      schedule = parseWebhookSchedule(
+        cfg.schedule,
+        `${field}.${name}.schedule`,
+      );
     }
     out[name] = {
       userMessageTemplate,
@@ -2864,13 +3569,20 @@ function parseWebhookSchedule(raw: unknown, field: string): TaskSchedule {
   if (obj.kind === "at") {
     const at = obj.at;
     if (typeof at !== "number" || !Number.isFinite(at)) {
-      throw new ConfigValidationError(`${field}.at`, "expected finite number (Unix ms)");
+      throw new ConfigValidationError(
+        `${field}.at`,
+        "expected finite number (Unix ms)",
+      );
     }
     return { kind: "at", at };
   }
   if (obj.kind === "interval") {
     const everyMs = obj.everyMs;
-    if (typeof everyMs !== "number" || !Number.isInteger(everyMs) || everyMs <= 0) {
+    if (
+      typeof everyMs !== "number" ||
+      !Number.isInteger(everyMs) ||
+      everyMs <= 0
+    ) {
       throw new ConfigValidationError(
         `${field}.everyMs`,
         "expected positive integer",
@@ -2879,7 +3591,10 @@ function parseWebhookSchedule(raw: unknown, field: string): TaskSchedule {
     return { kind: "interval", everyMs };
   }
   if (obj.kind === "cron") {
-    const expression = parseNonEmptyString(obj.expression, `${field}.expression`);
+    const expression = parseNonEmptyString(
+      obj.expression,
+      `${field}.expression`,
+    );
     const tz = typeof obj.tz === "string" ? obj.tz : undefined;
     return { kind: "cron", expression, ...(tz ? { tz } : {}) };
   }
@@ -2895,7 +3610,10 @@ export function parseUrl(raw: unknown, field: string): string {
     new URL(str);
     return str;
   } catch {
-    throw new ConfigValidationError(field, `expected valid URL, got ${JSON.stringify(raw)}`);
+    throw new ConfigValidationError(
+      field,
+      `expected valid URL, got ${JSON.stringify(raw)}`,
+    );
   }
 }
 
@@ -2913,7 +3631,10 @@ function parseMcpEnv(
 ): Record<string, string> | undefined {
   if (raw === null || raw === undefined) return undefined;
   if (typeof raw !== "object" || Array.isArray(raw)) {
-    throw new ConfigValidationError(field, `expected object, got ${JSON.stringify(raw)}`);
+    throw new ConfigValidationError(
+      field,
+      `expected object, got ${JSON.stringify(raw)}`,
+    );
   }
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
@@ -2924,7 +3645,10 @@ function parseMcpEnv(
       );
     }
     if (typeof v !== "string") {
-      throw new ConfigValidationError(`${field}.${k}`, "env value must be a string");
+      throw new ConfigValidationError(
+        `${field}.${k}`,
+        "env value must be a string",
+      );
     }
     out[k] = v;
   }
@@ -2942,7 +3666,10 @@ function parseMcpHeaders(
 ): Record<string, string> | undefined {
   if (raw === null || raw === undefined) return undefined;
   if (typeof raw !== "object" || Array.isArray(raw)) {
-    throw new ConfigValidationError(field, `expected object, got ${JSON.stringify(raw)}`);
+    throw new ConfigValidationError(
+      field,
+      `expected object, got ${JSON.stringify(raw)}`,
+    );
   }
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
@@ -2953,7 +3680,10 @@ function parseMcpHeaders(
       );
     }
     if (typeof v !== "string") {
-      throw new ConfigValidationError(`${field}.${k}`, "http header value must be a string");
+      throw new ConfigValidationError(
+        `${field}.${k}`,
+        "http header value must be a string",
+      );
     }
     out[k] = v;
   }
@@ -2967,7 +3697,10 @@ function parseMcpTransport(raw: unknown, field: string): McpTransport {
   const obj = raw as Record<string, unknown>;
   if (obj.kind === "stdio") {
     const command = parseNonEmptyString(obj.command, `${field}.command`);
-    const args = obj.args === undefined ? undefined : parseStringArrayOrNull(obj.args, `${field}.args`);
+    const args =
+      obj.args === undefined
+        ? undefined
+        : parseStringArrayOrNull(obj.args, `${field}.args`);
     const cwd =
       obj.cwd === undefined || obj.cwd === null
         ? undefined
@@ -3022,7 +3755,10 @@ export function parseMcpServers(
 ): McpServerConfig[] {
   if (raw === undefined || raw === null) return [];
   if (!Array.isArray(raw)) {
-    throw new ConfigValidationError(field, `expected array, got ${JSON.stringify(raw)}`);
+    throw new ConfigValidationError(
+      field,
+      `expected array, got ${JSON.stringify(raw)}`,
+    );
   }
   const out: McpServerConfig[] = [];
   const seen = new Set<string>();
@@ -3063,7 +3799,10 @@ export function parseMcpServers(
       cfg.description === undefined || cfg.description === null
         ? undefined
         : parseNonEmptyString(cfg.description, `${field}[${i}].description`);
-    const transport = parseMcpTransport(cfg.transport, `${field}[${i}].transport`);
+    const transport = parseMcpTransport(
+      cfg.transport,
+      `${field}[${i}].transport`,
+    );
     const trust =
       cfg.trust === undefined || cfg.trust === null
         ? undefined
@@ -3130,13 +3869,29 @@ function unknownTopLevelKeys(
  * keys are carried through verbatim (forward compat); unknown keys
  * *inside* a known block are still dropped.
  */
+function parseHfEndpoint(value: unknown, path: string): string {
+  const normalized =
+    typeof value === "string" ? normalizeHuggingFaceEndpoint(value) : null;
+  if (!normalized) {
+    throw new ConfigValidationError(
+      path,
+      `must be an http(s) origin such as "https://hf-mirror.com", got ${JSON.stringify(value)}`,
+    );
+  }
+  return normalized;
+}
+
 export function parseUserConfigFile(raw: unknown): UserConfigFile {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
     throw new ConfigValidationError("<root>", "expected JSON object");
   }
   const obj = raw as Record<string, unknown>;
   const version = obj.version ?? USER_CONFIG_VERSION;
-  if (typeof version !== "number" || !Number.isSafeInteger(version) || version < 1) {
+  if (
+    typeof version !== "number" ||
+    !Number.isSafeInteger(version) ||
+    version < 1
+  ) {
     throw new ConfigValidationError(
       "version",
       `unsupported config version ${JSON.stringify(version)}; expected a positive whole number`,
@@ -3152,7 +3907,10 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
   // them — and turns any rollback to an older build into a dead install.
   // The newer number is preserved in the result (and unknown top-level
   // keys with it) so writing the file back cannot downgrade it.
-  if (!SUPPORTED_INPUT_VERSIONS.includes(version) && version < USER_CONFIG_VERSION) {
+  if (
+    !SUPPORTED_INPUT_VERSIONS.includes(version) &&
+    version < USER_CONFIG_VERSION
+  ) {
     throw new ConfigValidationError(
       "version",
       `unsupported config version ${JSON.stringify(version)}; expected one of ${SUPPORTED_INPUT_VERSIONS.join(", ")}`,
@@ -3221,19 +3979,29 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
   const memoryReflectionTypedNotes =
     (memoryReflection.typedNotes as Record<string, unknown> | undefined) ?? {};
   const memoryReflectionSegmentation =
-    (memoryReflection.segmentation as Record<string, unknown> | undefined) ?? {};
+    (memoryReflection.segmentation as Record<string, unknown> | undefined) ??
+    {};
   const memoryRetrieve =
     (memory.retrieve as Record<string, unknown> | undefined) ?? {};
   const memoryRetrieveRewriter =
     (memoryRetrieve.rewriter as Record<string, unknown> | undefined) ?? {};
   const memoryRetrieveRewriterEmbeddingGate =
     (memoryRetrieveRewriter.embeddingGate as
-      | Record<string, unknown>
-      | undefined) ?? {};
+      Record<string, unknown> | undefined) ?? {};
   const webhooks = parseWebhookMap(obj.webhooks ?? {}, "webhooks");
   const vision = (obj.vision as Record<string, unknown> | undefined) ?? {};
   const skills = (obj.skills as Record<string, unknown> | undefined) ?? {};
   const telegram = (obj.telegram as Record<string, unknown> | undefined) ?? {};
+  const composio = (obj.composio as Record<string, unknown> | undefined) ?? {};
+  const discord = (obj.discord as Record<string, unknown> | undefined) ?? {};
+  const swarm = (obj.swarm as Record<string, unknown> | undefined) ?? {};
+  const notifications =
+    (obj.notifications as Record<string, unknown> | undefined) ?? {};
+  const notificationsDownloads =
+    (notifications.downloads as Record<string, unknown> | undefined) ?? {};
+  const atomicMail =
+    (obj.atomicMail as Record<string, unknown> | undefined) ?? {};
+  const git = (obj.git as Record<string, unknown> | undefined) ?? {};
   const tui = (obj.tui as Record<string, unknown> | undefined) ?? {};
   const analytics =
     (obj.analytics as Record<string, unknown> | undefined) ?? {};
@@ -3259,7 +4027,8 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
       "localModels.managed.port",
     ),
     dataDirOverride:
-      rawManaged.dataDirOverride === null || rawManaged.dataDirOverride === undefined
+      rawManaged.dataDirOverride === null ||
+      rawManaged.dataDirOverride === undefined
         ? null
         : parseNonEmptyString(
             rawManaged.dataDirOverride,
@@ -3289,6 +4058,12 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
       rawManaged.tensorSplit,
       "localModels.managed.tensorSplit",
     ),
+    parallel: parseBoundedPositiveInt(
+      rawManaged.parallel ?? USER_CONFIG_DEFAULTS.localModels.managed.parallel,
+      "localModels.managed.parallel",
+      1,
+      8,
+    ),
   };
 
   const rawEmbeddings =
@@ -3308,6 +4083,23 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
     url: parseUrl(
       rawEmbeddings.url ?? `http://127.0.0.1:${embeddingsPort}`,
       "localModels.embeddings.url",
+    ),
+  };
+
+  const rawDownload =
+    (localModels.download as Record<string, unknown> | undefined) ?? {};
+  const download: LocalModelDownloadConfig = {
+    connections: parseBoundedPositiveInt(
+      rawDownload.connections ??
+        USER_CONFIG_DEFAULTS.localModels.download.connections,
+      "localModels.download.connections",
+      1,
+      MAX_DOWNLOAD_CONNECTIONS,
+    ),
+    hfEndpoint: parseHfEndpoint(
+      rawDownload.hfEndpoint ??
+        USER_CONFIG_DEFAULTS.localModels.download.hfEndpoint,
+      "localModels.download.hfEndpoint",
     ),
   };
 
@@ -3348,19 +4140,21 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
     localModels: {
       url: localModelsUrl,
       mode: localModelsMode,
-      completionMaxTokens: parseBoundedPositiveInt(
+      completionMaxTokens: parseLocalCompletionCap(
         localModels.completionMaxTokens ??
           USER_CONFIG_DEFAULTS.localModels.completionMaxTokens,
         "localModels.completionMaxTokens",
-        64,
-        131_072,
       ),
       managed,
       embeddings: embeddingsDaemon,
+      download,
       customModels,
     },
     log: {
-      level: parseLogLevel(log.level ?? USER_CONFIG_DEFAULTS.log.level, "log.level"),
+      level: parseLogLevel(
+        log.level ?? USER_CONFIG_DEFAULTS.log.level,
+        "log.level",
+      ),
     },
     agent: {
       tokenBudget: parsePositiveInt(
@@ -3371,6 +4165,8 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         agent.maxSteps ?? USER_CONFIG_DEFAULTS.agent.maxSteps,
         "agent.maxSteps",
       ),
+      providerWait: parseProviderWait(agent.providerWait),
+      task: parseAgentTask(agent.task),
       toolTimeoutMs: parsePositiveInt(
         agent.toolTimeoutMs ?? USER_CONFIG_DEFAULTS.agent.toolTimeoutMs,
         "agent.toolTimeoutMs",
@@ -3452,7 +4248,8 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
           1440,
         ),
         persistCache: parseBool(
-          webSearch.persistCache ?? USER_CONFIG_DEFAULTS.web.search.persistCache,
+          webSearch.persistCache ??
+            USER_CONFIG_DEFAULTS.web.search.persistCache,
           "web.search.persistCache",
         ),
         fallback: parseWebSearchFallback(
@@ -3472,7 +4269,8 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         },
         exa: {
           endpoint: parseNonEmptyString(
-            webSearchExa.endpoint ?? USER_CONFIG_DEFAULTS.web.search.exa.endpoint,
+            webSearchExa.endpoint ??
+              USER_CONFIG_DEFAULTS.web.search.exa.endpoint,
             "web.search.exa.endpoint",
           ),
           apiEndpoint: parseNonEmptyString(
@@ -3481,7 +4279,8 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
             "web.search.exa.apiEndpoint",
           ),
           apiKeyEnv: parseNonEmptyString(
-            webSearchExa.apiKeyEnv ?? USER_CONFIG_DEFAULTS.web.search.exa.apiKeyEnv,
+            webSearchExa.apiKeyEnv ??
+              USER_CONFIG_DEFAULTS.web.search.exa.apiKeyEnv,
             "web.search.exa.apiKeyEnv",
           ),
         },
@@ -3993,8 +4792,12 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         tui.whileBusySubmit ?? USER_CONFIG_DEFAULTS.tui.whileBusySubmit,
         "tui.whileBusySubmit",
       ),
-      mouse: parseBool(tui.mouse ?? USER_CONFIG_DEFAULTS.tui.mouse, "tui.mouse"),
+      mouse: parseBool(
+        tui.mouse ?? USER_CONFIG_DEFAULTS.tui.mouse,
+        "tui.mouse",
+      ),
       onboarding: parseOnboardingState(tui.onboarding),
+      sessionRail: parseSessionRailConfig(tui.sessionRail),
     },
     analytics: {
       enabled: parseBool(
@@ -4020,6 +4823,63 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
           USER_CONFIG_DEFAULTS.telegram.progressIndicator,
         "telegram.progressIndicator",
       ),
+    },
+    discord: {
+      enabled: parseBool(
+        discord.enabled ?? USER_CONFIG_DEFAULTS.discord.enabled,
+        "discord.enabled",
+      ),
+      ownerUserIds: parseDiscordOwnerUserIds(discord),
+    },
+    swarm: {
+      units: parseSwarmUnits(swarm.units, "swarm.units"),
+    },
+    notifications: {
+      downloads: {
+        channel: parseDownloadNotifyChannel(
+          notificationsDownloads.channel ??
+            USER_CONFIG_DEFAULTS.notifications.downloads.channel,
+          "notifications.downloads.channel",
+        ),
+      },
+    },
+    atomicMail: {
+      address: parseNullableString(atomicMail.address, "atomicMail.address"),
+      accountId: parseNullableString(
+        atomicMail.accountId,
+        "atomicMail.accountId",
+      ),
+      ownerEmail: parseNullableString(
+        atomicMail.ownerEmail,
+        "atomicMail.ownerEmail",
+      ),
+      ownerVerifiedAt: parseNullableString(
+        atomicMail.ownerVerifiedAt,
+        "atomicMail.ownerVerifiedAt",
+      ),
+      pendingVerification: parsePendingVerification(
+        atomicMail.pendingVerification,
+        "atomicMail.pendingVerification",
+      ),
+    },
+    git: {
+      remoteSync: parseBool(
+        git.remoteSync ?? USER_CONFIG_DEFAULTS.git.remoteSync,
+        "git.remoteSync",
+      ),
+    },
+    composio: {
+      enabled: parseBool(
+        composio.enabled ?? USER_CONFIG_DEFAULTS.composio.enabled,
+        "composio.enabled",
+      ),
+      apiKeyEnv: parseNonEmptyString(
+        composio.apiKeyEnv ?? USER_CONFIG_DEFAULTS.composio.apiKeyEnv,
+        "composio.apiKeyEnv",
+      ),
+      userId: parseNullableString(composio.userId, "composio.userId"),
+      sessionId: parseNullableString(composio.sessionId, "composio.sessionId"),
+      mcpUrl: parseNullableString(composio.mcpUrl, "composio.mcpUrl"),
     },
     mcp: {
       servers: parseMcpServers(mcp.servers, "mcp.servers"),
@@ -4083,6 +4943,27 @@ export function parseWhileBusySubmit(
  *   survives a launch: an interrupted first run is exactly the case
  *   where an operator would otherwise be shown it twice.
  */
+/**
+ * The rail's Sessions list order, as the operator arranged it.
+ *
+ * Empty means the list is sorted by recency, the way it always was. The
+ * first Shift+↑/↓ or row drag snapshots the list as displayed into
+ * `order`; from then on those ids keep this order and sessions the list
+ * has never seen (a newer thread, an id not in `order`) are inserted at
+ * the top. Ids that no longer exist are ignored on read and dropped on
+ * the next write.
+ */
+export interface SessionRailConfig {
+  order: string[];
+  /**
+   * Session ids pinned to the top of the rail (config v53). Pinned rows
+   * form a block above everything else; inside the block they follow
+   * `order` like any other row. A pinned id that no longer exists is
+   * ignored on read and dropped on the next write.
+   */
+  pinned: string[];
+}
+
 export interface OnboardingState {
   completedAt: string | null;
   introSeenAt: string | null;
@@ -4098,6 +4979,48 @@ export interface OnboardingState {
  * throwing — an older config file must never fail to load because it
  * predates the block.
  */
+/**
+ * Parse `tui.sessionRail`. Absent → the recency default, nothing pinned.
+ * `order` and `pinned` are lists of session ids; entries that are not
+ * non-empty strings are dropped rather than rejected — a hand-edited or
+ * partially written id costs one row its remembered place, not the
+ * whole config file — and duplicates keep their first position so the
+ * on-disk form stays canonical.
+ */
+export function parseSessionRailConfig(raw: unknown): SessionRailConfig {
+  if (raw === undefined || raw === null) return { order: [], pinned: [] };
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw new ConfigValidationError(
+      "tui.sessionRail",
+      `expected object, got ${JSON.stringify(raw)}`,
+    );
+  }
+  const block = raw as Record<string, unknown>;
+  return {
+    order: parseSessionIdList(block.order, "tui.sessionRail.order"),
+    pinned: parseSessionIdList(block.pinned, "tui.sessionRail.pinned"),
+  };
+}
+
+function parseSessionIdList(raw: unknown, path: string): string[] {
+  if (raw === undefined || raw === null) return [];
+  if (!Array.isArray(raw)) {
+    throw new ConfigValidationError(
+      path,
+      `expected string[], got ${JSON.stringify(raw)}`,
+    );
+  }
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== "string" || entry.length === 0) continue;
+    if (seen.has(entry)) continue;
+    seen.add(entry);
+    result.push(entry);
+  }
+  return result;
+}
+
 export function parseOnboardingState(raw: unknown): OnboardingState {
   const defaults = USER_CONFIG_DEFAULTS.tui.onboarding;
   if (raw === undefined || raw === null) return { ...defaults };
@@ -4109,8 +5032,14 @@ export function parseOnboardingState(raw: unknown): OnboardingState {
   }
   const obj = raw as Record<string, unknown>;
   return {
-    completedAt: parseTimestampOrNull(obj.completedAt, "tui.onboarding.completedAt"),
-    introSeenAt: parseTimestampOrNull(obj.introSeenAt, "tui.onboarding.introSeenAt"),
+    completedAt: parseTimestampOrNull(
+      obj.completedAt,
+      "tui.onboarding.completedAt",
+    ),
+    introSeenAt: parseTimestampOrNull(
+      obj.introSeenAt,
+      "tui.onboarding.introSeenAt",
+    ),
     skippedAt: parseTimestampOrNull(obj.skippedAt, "tui.onboarding.skippedAt"),
     proposedSecondBackendAt: parseTimestampOrNull(
       obj.proposedSecondBackendAt,
@@ -4133,7 +5062,10 @@ export function parseOnboardingState(raw: unknown): OnboardingState {
  * stamp is rejected at load instead of producing an `Invalid Date`
  * somewhere far away.
  */
-export function parseTimestampOrNull(raw: unknown, field: string): string | null {
+export function parseTimestampOrNull(
+  raw: unknown,
+  field: string,
+): string | null {
   if (raw === undefined || raw === null) return null;
   const s = parseNonEmptyString(raw, field);
   if (Number.isNaN(Date.parse(s))) {
@@ -4156,12 +5088,56 @@ export function parseThemeName(raw: unknown, field: string): string {
   return trimmed.length === 0 ? "auto" : trimmed;
 }
 
+function parsePendingVerification(
+  raw: unknown,
+  field: string,
+): AtomicMailConfig["pendingVerification"] {
+  if (raw === null || raw === undefined) return null;
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw new ConfigValidationError(field, "expected an object or null");
+  }
+  const o = raw as Record<string, unknown>;
+  const email = parseNullableString(o.email, `${field}.email`);
+  const codeHash = parseNullableString(o.codeHash, `${field}.codeHash`);
+  const expiresAt = parseNullableString(o.expiresAt, `${field}.expiresAt`);
+  if (!email || !codeHash || !expiresAt) {
+    throw new ConfigValidationError(
+      field,
+      "expected email, codeHash and expiresAt",
+    );
+  }
+  const attempts =
+    typeof o.attempts === "number" && o.attempts >= 0
+      ? Math.floor(o.attempts)
+      : 0;
+  return { email, codeHash, expiresAt, attempts };
+}
+
 /**
  * Parse the agent-reply parse mode for outbound Telegram messages.
  * Accepts `"plain"` and `"html"` only — `markdownV2` is intentionally
  * excluded (see `TelegramParseMode` doc-comment for rationale).
  */
-export function parseTelegramParseMode(
+export function parseDownloadNotifyChannel(
+  raw: unknown,
+  field: string,
+): DownloadNotifyChannelSetting | null {
+  if (raw === null || raw === undefined) return null;
+  if (
+    raw === "telegram" ||
+    raw === "discord" ||
+    raw === "email" ||
+    raw === "off"
+  ) {
+    return raw;
+  }
+  throw new ConfigValidationError(
+    field,
+    `expected "telegram", "discord", "email", "off" or null, got ${JSON.stringify(raw)}`,
+  );
+}
+
+function parseTelegramParseMode(
   raw: unknown,
   field: string,
 ): TelegramParseMode {
@@ -4186,11 +5162,7 @@ export function parseTelegramOwnerId(
 ): number | null {
   if (raw === null || raw === undefined) return null;
   const value =
-    typeof raw === "number"
-      ? raw
-      : typeof raw === "string"
-        ? Number(raw)
-        : NaN;
+    typeof raw === "number" ? raw : typeof raw === "string" ? Number(raw) : NaN;
   if (
     !Number.isFinite(value) ||
     !Number.isInteger(value) ||

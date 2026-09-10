@@ -219,7 +219,9 @@ function formatEvents(
       ? `(no events within ${timeoutMs}ms)`
       : "(watch stopped before timeout)";
   }
-  const lines = events.map((e) => `${e.timestamp}  ${e.kind.padEnd(9)} ${e.path}`);
+  const lines = events.map(
+    (e) => `${e.timestamp}  ${e.kind.padEnd(9)} ${e.path}`,
+  );
   if (timedOut) lines.push(`(timeout reached after ${timeoutMs}ms)`);
   return lines.join("\n");
 }

@@ -17,7 +17,9 @@ interface MarkdownRendererProps {
  * trees. Unknown token types degrade to raw text so the renderer is
  * always safe to call on partially-formatted model output.
  */
-export function MarkdownRenderer({ text }: MarkdownRendererProps): ReactElement {
+export function MarkdownRenderer({
+  text,
+}: MarkdownRendererProps): ReactElement {
   const tokens = safeLex(text);
   if (tokens === null) return <Text>{text}</Text>;
   return (
@@ -68,9 +70,7 @@ function renderBlockToken(token: Token, key: number): ReactElement | null {
         </Text>
       );
     default:
-      return (
-        <Text key={key}>{(token as { raw?: string }).raw ?? ""}</Text>
-      );
+      return <Text key={key}>{(token as { raw?: string }).raw ?? ""}</Text>;
   }
 }
 
@@ -99,9 +99,7 @@ function CodeBlock({ token }: { token: Tokens.Code }): ReactElement {
   const lines = highlighted.split("\n");
   return (
     <Box flexDirection="column" marginY={1} paddingLeft={1}>
-      <Text color={theme.colors.muted}>
-        ``` {language}
-      </Text>
+      <Text color={theme.colors.muted}>``` {language}</Text>
       {lines.map((line, idx) => (
         <Text key={idx}>{line}</Text>
       ))}
@@ -110,7 +108,11 @@ function CodeBlock({ token }: { token: Tokens.Code }): ReactElement {
   );
 }
 
-function BlockquoteBlock({ token }: { token: Tokens.Blockquote }): ReactElement {
+function BlockquoteBlock({
+  token,
+}: {
+  token: Tokens.Blockquote;
+}): ReactElement {
   return (
     <Box
       flexDirection="column"
@@ -161,9 +163,7 @@ function ListItem({
   depth: number;
 }): ReactElement {
   const tokens = item.tokens ?? [];
-  const nestedLists = tokens.filter(
-    (t): t is Tokens.List => t.type === "list",
-  );
+  const nestedLists = tokens.filter((t): t is Tokens.List => t.type === "list");
   const inlineTokens = tokens.filter((t) => t.type !== "list");
   const indent = "  ".repeat(depth);
   return (

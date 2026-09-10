@@ -4,7 +4,10 @@ import {
   OpenRouterEmbeddingProvider,
 } from "./openai-embedding-provider.js";
 import { registerEmbeddingProviderKind } from "./embedding-provider-registry.js";
-import { getEmbeddingModelDef, isKnownEmbeddingModelId } from "../../local-llm/models-catalog.js";
+import {
+  getEmbeddingModelDef,
+  isKnownEmbeddingModelId,
+} from "../../local-llm/models-catalog.js";
 import {
   OPENROUTER_APP_CATEGORIES,
   OPENROUTER_APP_REFERER,
@@ -15,7 +18,9 @@ export function registerBuiltInEmbeddingProviderKinds(): void {
   registerEmbeddingProviderKind("llama-server", async ({ config, entry }) => {
     const modelId = config.localModels.embeddings.modelId;
     if (!modelId || !isKnownEmbeddingModelId(modelId)) {
-      throw new Error("llama-server embedding provider requires a known modelId");
+      throw new Error(
+        "llama-server embedding provider requires a known modelId",
+      );
     }
     const def = getEmbeddingModelDef(modelId);
     const port = config.localModels.embeddings.port;

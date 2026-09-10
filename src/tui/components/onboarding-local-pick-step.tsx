@@ -26,7 +26,11 @@ function explainerLine(ramGb: number): string {
   return `One download, then it runs offline. This machine reports ${ramGb} GB of RAM.`;
 }
 
-function pickRow(pick: LocalModelPick, selected: boolean, fit: OnboardingFit): string {
+function pickRow(
+  pick: LocalModelPick,
+  selected: boolean,
+  fit: OnboardingFit,
+): string {
   return (
     `${rowPrefix(selected)}${pick.label.padEnd(LABEL_COLUMNS)}` +
     `${pick.sizeLabel.padStart(SIZE_COLUMNS)}${NOTE_GAP}${note(pick, fit)}`
@@ -68,7 +72,9 @@ export function measureOnboardingLocalPickStep(props: {
   fit: OnboardingFit;
 }): number {
   const { visible, below } = windowLocalPicks(props.picks, props.cursor);
-  const lines: string[] = props.fit.explainer ? [explainerLine(props.ramGb)] : [];
+  const lines: string[] = props.fit.explainer
+    ? [explainerLine(props.ramGb)]
+    : [];
   lines.push("Recommended models");
   // Measured as if every row were selected: the marker is the same width
   // as the blank indent, so this only spares the caller a cursor lookup.
@@ -140,7 +146,10 @@ export function OnboardingLocalPickStep(props: {
         selected={onHuggingFace}
         onSelect={(mouse) =>
           // The pinned row sits past the curated picks in cursor space.
-          mouse.dispatch({ type: "onboarding_cursor_set", cursor: props.picks.length })
+          mouse.dispatch({
+            type: "onboarding_cursor_set",
+            cursor: props.picks.length,
+          })
         }
         onActivate={pressEnter(handleOnboardingStepKey)}
       >
@@ -151,7 +160,9 @@ export function OnboardingLocalPickStep(props: {
         >
           {`${rowPrefix(onHuggingFace)}${HUGGING_FACE_ROW_LABEL}`}
           {props.fit.rowDetails ? (
-            <Text color={theme.colors.muted}>{`   ${HUGGING_FACE_ROW_NOTE}`}</Text>
+            <Text
+              color={theme.colors.muted}
+            >{`   ${HUGGING_FACE_ROW_NOTE}`}</Text>
           ) : null}
         </Text>
       </MouseListRow>

@@ -4,6 +4,8 @@ import {
   extractSafeCode,
   extractSafeReason,
   extractSafeTool,
+  extractSafeFailureStage,
+  extractSafeToolTransport,
   extractSafeTransportHost,
   sanitizeStack,
   scrubError,
@@ -107,8 +109,46 @@ describe("extractSafeReason", () => {
   });
 
   it("drops an unrecognised reason (could be freeform text)", () => {
-    expect(extractSafeReason({ reason: "user typed something weird" })).toBeUndefined();
+    expect(
+      extractSafeReason({ reason: "user typed something weird" }),
+    ).toBeUndefined();
     expect(extractSafeReason(null)).toBeUndefined();
+  });
+});
+
+describe("extractSafeToolTransport", () => {
+  it("allows the known ToolCallTransport enum values", () => {
+    expect(extractSafeToolTransport({ transport: "grammar" })).toBe("grammar");
+    expect(extractSafeToolTransport({ transport: "native_tools" })).toBe(
+      "native_tools",
+    );
+  });
+
+  it("drops an unrecognised transport (could be freeform text)", () => {
+    expect(
+      extractSafeToolTransport({ transport: "grammar for /Users/alex/x.txt" }),
+    ).toBeUndefined();
+    expect(extractSafeToolTransport({ transport: "" })).toBeUndefined();
+    expect(extractSafeToolTransport({ transport: 7 })).toBeUndefined();
+    expect(extractSafeToolTransport({})).toBeUndefined();
+    expect(extractSafeToolTransport(null)).toBeUndefined();
+  });
+});
+
+describe("extractSafeFailureStage", () => {
+  it("allows the known ModelFailureStage enum values", () => {
+    expect(extractSafeFailureStage({ stage: "initial" })).toBe("initial");
+    expect(extractSafeFailureStage({ stage: "repair" })).toBe("repair");
+  });
+
+  it("drops an unrecognised stage (could be freeform text)", () => {
+    expect(
+      extractSafeFailureStage({ stage: "repair of /Users/alex/x.txt" }),
+    ).toBeUndefined();
+    expect(extractSafeFailureStage({ stage: "" })).toBeUndefined();
+    expect(extractSafeFailureStage({ stage: 2 })).toBeUndefined();
+    expect(extractSafeFailureStage({})).toBeUndefined();
+    expect(extractSafeFailureStage(null)).toBeUndefined();
   });
 });
 
@@ -119,7 +159,9 @@ describe("extractSafeTool", () => {
   });
 
   it("drops a tool value that is not a bounded identifier (could echo model output)", () => {
-    expect(extractSafeTool({ tool: "please read /Users/alex/notes.txt" })).toBeUndefined();
+    expect(
+      extractSafeTool({ tool: "please read /Users/alex/notes.txt" }),
+    ).toBeUndefined();
     expect(extractSafeTool({ tool: "a".repeat(65) })).toBeUndefined();
   });
 });
@@ -173,6 +215,58 @@ describe("scrubError", () => {
     });
     const ev = scrubError(err, { source: "llm_failure" });
     expect(ev.reason).toBe("truncated");
+  });
+
+  it("carries ModelError.transport through when it is a known enum value", () => {
+    const err = Object.assign(new Error("empty completion"), {
+      name: "ModelError",
+      category: "model",
+      reason: "empty",
+      transport: "native_tools",
+    });
+    const ev = scrubError(err, { source: "llm_failure" });
+    expect(ev.reason).toBe("empty");
+    expect(ev.toolTransport).toBe("native_tools");
+  });
+
+  it("drops a bogus ModelError.transport rather than reporting it", () => {
+    const err = Object.assign(new Error("empty completion"), {
+      name: "ModelError",
+      category: "model",
+      reason: "empty",
+      transport: "totally made up /Users/alex",
+    });
+    const ev = scrubError(err, { source: "llm_failure" });
+    expect(ev.reason).toBe("empty");
+    expect(ev.toolTransport).toBeUndefined();
+  });
+
+  it("carries ModelError.stage through when it is a known enum value", () => {
+    // The axis `transport` does not cover: the same reason=empty +
+    // transport=native_tools pair is raised both by the by-design
+    // first-attempt route and after a repair that came back empty.
+    const err = Object.assign(new Error("empty completion"), {
+      name: "ModelError",
+      category: "model",
+      reason: "empty",
+      transport: "native_tools",
+      stage: "repair",
+    });
+    const ev = scrubError(err, { source: "llm_failure" });
+    expect(ev.toolTransport).toBe("native_tools");
+    expect(ev.failureStage).toBe("repair");
+  });
+
+  it("drops a bogus ModelError.stage rather than reporting it", () => {
+    const err = Object.assign(new Error("empty completion"), {
+      name: "ModelError",
+      category: "model",
+      reason: "empty",
+      stage: "stage 3 of /Users/alex/session.json",
+    });
+    const ev = scrubError(err, { source: "llm_failure" });
+    expect(ev.reason).toBe("empty");
+    expect(ev.failureStage).toBeUndefined();
   });
 
   it("carries ToolExecutionError.tool through when it is a bounded identifier", () => {

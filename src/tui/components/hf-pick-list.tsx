@@ -47,7 +47,9 @@ export function HfPickList(props: {
   const cursor = Math.min(props.cursor, Math.max(0, choices.length - 1));
   const { visible, below, start } = windowHfChoices(props.repo, props.cursor);
   const selected = choices[cursor];
-  const warning = selected ? ramWarningFor(selected.fileSizeGb, props.ramGb) : null;
+  const warning = selected
+    ? ramWarningFor(selected.fileSizeGb, props.ramGb)
+    : null;
   return (
     <Box flexDirection="column" flexShrink={0}>
       <Text bold>{props.repo.repoId}</Text>
@@ -74,7 +76,9 @@ export function HfPickList(props: {
         );
       })}
       {below > 0 ? (
-        <Text color={theme.colors.muted}>{`${" ".repeat(3)}↓ ${below} more`}</Text>
+        <Text
+          color={theme.colors.muted}
+        >{`${" ".repeat(3)}↓ ${below} more`}</Text>
       ) : null}
       {props.repo.hidden ? (
         <Text color={theme.colors.muted} wrap="truncate">
@@ -87,10 +91,16 @@ export function HfPickList(props: {
         </Text>
       ) : null}
       {warning ? (
-        <Text color={theme.colors.warn} wrap="truncate">{`   ⚠ ${warning}`}</Text>
+        <Text
+          color={theme.colors.warn}
+          wrap="truncate"
+        >{`   ⚠ ${warning}`}</Text>
       ) : null}
       {props.error ? (
-        <Text color={theme.colors.error} wrap="truncate">{`   ${props.error}`}</Text>
+        <Text
+          color={theme.colors.error}
+          wrap="truncate"
+        >{`   ${props.error}`}</Text>
       ) : null}
     </Box>
   );
@@ -111,7 +121,11 @@ export function hfChoiceLine(
 export function windowHfChoices(
   repo: HuggingFaceRepoChoices,
   rawCursor: number,
-): { visible: HuggingFaceRepoChoices["choices"]; below: number; start: number } {
+): {
+  visible: HuggingFaceRepoChoices["choices"];
+  below: number;
+  start: number;
+} {
   const { choices } = repo;
   const cursor = Math.min(rawCursor, Math.max(0, choices.length - 1));
   const start = Math.max(

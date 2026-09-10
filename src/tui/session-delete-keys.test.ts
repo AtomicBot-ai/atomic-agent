@@ -79,7 +79,9 @@ describe("session delete confirmation keys", () => {
   it("deletes on y", () => {
     const c = ctx(confirming());
     expect(handleAppKey("y", key(), c)).toBe(true);
-    expect(c.callbacks.onSessionDeleteConfirmed).toHaveBeenCalledWith("s-doomed");
+    expect(c.callbacks.onSessionDeleteConfirmed).toHaveBeenCalledWith(
+      "s-doomed",
+    );
     expect(c.dispatch).toHaveBeenCalledWith({ type: "session_delete_closed" });
   });
 
@@ -91,7 +93,9 @@ describe("session delete confirmation keys", () => {
       const c = ctx(confirming());
       expect(handleAppKey(stroke.input, stroke.k, c)).toBe(true);
       expect(c.callbacks.onSessionDeleteConfirmed).not.toHaveBeenCalled();
-      expect(c.dispatch).toHaveBeenCalledWith({ type: "session_delete_closed" });
+      expect(c.dispatch).toHaveBeenCalledWith({
+        type: "session_delete_closed",
+      });
     }
   });
 
@@ -107,7 +111,9 @@ describe("session delete confirmation keys", () => {
   it("Enter deletes once the cursor is moved to Yes", () => {
     const c = ctx(confirming("yes"));
     expect(handleAppKey("", key({ return: true }), c)).toBe(true);
-    expect(c.callbacks.onSessionDeleteConfirmed).toHaveBeenCalledWith("s-doomed");
+    expect(c.callbacks.onSessionDeleteConfirmed).toHaveBeenCalledWith(
+      "s-doomed",
+    );
   });
 
   it("arrows and Tab move between the two controls", () => {

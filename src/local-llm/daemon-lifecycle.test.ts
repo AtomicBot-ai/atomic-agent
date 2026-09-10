@@ -1,4 +1,10 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -73,6 +79,23 @@ describe("buildLlamaServerArgs", () => {
     expect(args).not.toContain("--chat-template-file");
     // No effective context passed ⇒ no --ctx-size (llama.cpp default).
     expect(args).not.toContain("--ctx-size");
+  });
+
+  it("threads localModels.managed.parallel into --parallel, default 2", () => {
+    const args = buildLlamaServerArgs(
+      { ...baseOpts, parallel: 4 },
+      "/tmp/data/models/qwen-3.5-4b/Qwen3.5-4B-Q4_K_M.gguf",
+      "qwen-3.5-4b",
+    );
+    const at = args.indexOf("--parallel");
+    expect(at).toBeGreaterThan(0);
+    expect(args[at + 1]).toBe("4");
+    const defaults = buildLlamaServerArgs(
+      baseOpts,
+      "/tmp/data/models/qwen-3.5-4b/Qwen3.5-4B-Q4_K_M.gguf",
+      "qwen-3.5-4b",
+    );
+    expect(defaults[defaults.indexOf("--parallel") + 1]).toBe("2");
   });
 
   it("appends --ctx-size when an effective context size is provided", () => {
@@ -335,7 +358,9 @@ describe("readRunningPid (cross-user ownership)", () => {
       const pidPath = resolvePidFilePath(dataDir);
       writeFileSync(pidPath, "4242", "utf-8");
       vi.spyOn(process, "kill").mockImplementation(() => {
-        const err = new Error("operation not permitted") as NodeJS.ErrnoException;
+        const err = new Error(
+          "operation not permitted",
+        ) as NodeJS.ErrnoException;
         err.code = "EPERM";
         throw err;
       });
@@ -365,7 +390,9 @@ describe("readRunningPid (cross-user ownership)", () => {
       const pidPath = resolveEmbeddingPidFilePath(dataDir);
       writeFileSync(pidPath, "7777", "utf-8");
       vi.spyOn(process, "kill").mockImplementation(() => {
-        const err = new Error("operation not permitted") as NodeJS.ErrnoException;
+        const err = new Error(
+          "operation not permitted",
+        ) as NodeJS.ErrnoException;
         err.code = "EPERM";
         throw err;
       });
@@ -381,7 +408,9 @@ describe("stopDaemon / stopEmbeddingDaemon (cross-user ownership)", () => {
     vi.restoreAllMocks();
   });
 
-  async function withTempDataDir(fn: (dataDir: string) => Promise<void>): Promise<void> {
+  async function withTempDataDir(
+    fn: (dataDir: string) => Promise<void>,
+  ): Promise<void> {
     const dataDir = mkdtempSync(`${tmpdir()}/atomic-daemon-stop-`);
     try {
       await fn(dataDir);
@@ -404,7 +433,9 @@ describe("stopDaemon / stopEmbeddingDaemon (cross-user ownership)", () => {
       writeFileSync(pidPath, "4242", "utf-8");
       mockKillEperm();
 
-      await expect(stopDaemon(dataDir)).rejects.toBeInstanceOf(ForeignDaemonError);
+      await expect(stopDaemon(dataDir)).rejects.toBeInstanceOf(
+        ForeignDaemonError,
+      );
       expect(existsSync(pidPath)).toBe(true);
     });
   });
@@ -430,7 +461,9 @@ describe("stopDaemon / stopEmbeddingDaemon (cross-user ownership)", () => {
       writeFileSync(pidPath, "7777", "utf-8");
       mockKillEperm();
 
-      await expect(stopEmbeddingDaemon(dataDir)).rejects.toBeInstanceOf(ForeignDaemonError);
+      await expect(stopEmbeddingDaemon(dataDir)).rejects.toBeInstanceOf(
+        ForeignDaemonError,
+      );
       expect(existsSync(pidPath)).toBe(true);
     });
   });

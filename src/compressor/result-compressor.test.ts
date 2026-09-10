@@ -4,13 +4,19 @@ import { summariseLog } from "./log-summarizer.js";
 
 describe("compressToolResult", () => {
   it("keeps short output unchanged except formatting", () => {
-    const out = compressToolResult({ tool: "read_file", status: "ok", output: "hello" });
+    const out = compressToolResult({
+      tool: "read_file",
+      status: "ok",
+      output: "hello",
+    });
     expect(out.summary).toContain("hello");
     expect(out.truncated).toBe(false);
   });
 
   it("trims long output to the configured tail and marks truncation", () => {
-    const longOutput = Array.from({ length: 400 }, (_, i) => `line ${i}`).join("\n");
+    const longOutput = Array.from({ length: 400 }, (_, i) => `line ${i}`).join(
+      "\n",
+    );
     const out = compressToolResult(
       { tool: "run_test", status: "ok", output: longOutput },
       { maxSummaryLength: 200, maxTailLines: 4 },
@@ -28,7 +34,11 @@ describe("compressToolResult", () => {
       "E   AssertionError: session None after refresh",
       "====== 1 failed, 2 passed in 0.12s ======",
     ].join("\n");
-    const out = compressToolResult({ tool: "run_test", status: "error", output: log });
+    const out = compressToolResult({
+      tool: "run_test",
+      status: "error",
+      output: log,
+    });
     expect(out.summary).toMatch(/key:/);
     expect(out.summary).toContain("AssertionError");
   });

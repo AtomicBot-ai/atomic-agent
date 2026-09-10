@@ -17,7 +17,9 @@ export interface SubshellInvocation {
   args: string[];
 }
 
-export function buildSubshellInvocation(commandLine: string): SubshellInvocation {
+export function buildSubshellInvocation(
+  commandLine: string,
+): SubshellInvocation {
   if (process.platform === "win32") {
     const comSpec =
       typeof process.env.ComSpec === "string" && process.env.ComSpec.length > 0

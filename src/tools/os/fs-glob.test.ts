@@ -86,10 +86,7 @@ describe("os.fs.glob", () => {
     await writeFile(join(dir, "c.js"), "", "utf8");
     await mkdir(join(dir, "sub"));
     await writeFile(join(dir, "sub", "d.ts"), "", "utf8");
-    const result = await osFsGlobTool.run(
-      { pattern: "**/*.ts" },
-      makeCtx(dir),
-    );
+    const result = await osFsGlobTool.run({ pattern: "**/*.ts" }, makeCtx(dir));
     expect(result.status).toBe("ok");
     expect((result.details.files as string[]).sort()).toEqual([
       "a.ts",
@@ -102,10 +99,7 @@ describe("os.fs.glob", () => {
     await mkdir(join(dir, "node_modules", "foo"), { recursive: true });
     await writeFile(join(dir, "node_modules", "foo", "skip.ts"), "", "utf8");
     await writeFile(join(dir, "keep.ts"), "", "utf8");
-    const result = await osFsGlobTool.run(
-      { pattern: "**/*.ts" },
-      makeCtx(dir),
-    );
+    const result = await osFsGlobTool.run({ pattern: "**/*.ts" }, makeCtx(dir));
     expect(result.details.files).toEqual(["keep.ts"]);
   });
 
@@ -245,7 +239,13 @@ describe("os.fs.glob", () => {
   });
 
   it("default ignore skips .cache, Library, .cargo and similar caches", async () => {
-    for (const trashy of [".cache", "Library", ".cargo", "__pycache__", ".npm"]) {
+    for (const trashy of [
+      ".cache",
+      "Library",
+      ".cargo",
+      "__pycache__",
+      ".npm",
+    ]) {
       await mkdir(join(dir, trashy));
       await writeFile(join(dir, trashy, "noise.txt"), "", "utf8");
     }

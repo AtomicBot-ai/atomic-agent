@@ -70,6 +70,20 @@ export interface ApprovalDecision {
 
 export type ApprovalEmitter = (request: ApprovalRequest) => void;
 
+/**
+ * What the gate does for a session's request that would otherwise
+ * prompt. `refuse` resolves it denied with `reason`, emitting nothing:
+ * for a session with nobody at the other end of a prompt (a fusion
+ * worker — the operator's surface is showing the parent session), where
+ * parking the turn on an unanswerable question would hold it until the
+ * process exits. Auto-approval still wins first: a level or a grant that
+ * would run the call without asking still runs it.
+ */
+export interface SessionApprovalPolicy {
+  onPrompt: "refuse";
+  reason: string;
+}
+
 /** A live, in-memory view of a session's point grants. Diagnostic only. */
 export interface SessionGrantsSnapshot {
   categories: readonly ApprovalCategory[];
@@ -134,10 +148,26 @@ export class ApprovalGate {
     string,
     { categories: Set<ApprovalCategory>; shapes: Set<string> }
   >();
+  /** Per-session prompt policies, keyed like the grants. See `SessionApprovalPolicy`. */
+  private readonly policiesBySession = new Map<string, SessionApprovalPolicy>();
 
   constructor(options: { emit: ApprovalEmitter; level?: ApprovalLevel }) {
     this.emitter = options.emit;
     this.level = options.level ?? MIN_APPROVAL_LEVEL;
+  }
+
+  /**
+   * Install a prompt policy for `sessionId`. Applies only to requests
+   * from that session, and only to the ones auto-approval does not
+   * already settle. Replaces any earlier policy for the session.
+   */
+  setSessionPolicy(sessionId: string, policy: SessionApprovalPolicy): void {
+    this.policiesBySession.set(sessionId, policy);
+  }
+
+  /** Remove the session's policy so its requests prompt again. */
+  clearSessionPolicy(sessionId: string): void {
+    this.policiesBySession.delete(sessionId);
   }
 
   /**
@@ -201,7 +231,21 @@ export class ApprovalGate {
     const approvalId = params.approvalId ?? randomUUID();
     const request: ApprovalRequest = { ...params, approvalId };
     const auto = this.autoApproval(request);
-    if (auto) return Promise.resolve({ approvalId, approved: true, reason: auto });
+    if (auto)
+      return Promise.resolve({ approvalId, approved: true, reason: auto });
+    if (auto)
+      return Promise.resolve({ approvalId, approved: true, reason: auto });
+    // Would prompt from here on. A session under a refuse policy gets its
+    // denial now, and no emitter ever sees the request — there is no
+    // surface that could answer it.
+    const policy = this.policiesBySession.get(request.sessionId);
+    if (policy?.onPrompt === "refuse") {
+      return Promise.resolve({
+        approvalId,
+        approved: false,
+        reason: policy.reason,
+      });
+    }
     return new Promise<ApprovalDecision>((resolve, reject) => {
       const onAbort = (): void => {
         this.pending.delete(approvalId);
@@ -291,9 +335,10 @@ export class ApprovalGate {
   }
 
   /** Get (or lazily create) the grant set for a session id. */
-  private grantsForSession(
-    sessionId: string,
-  ): { categories: Set<ApprovalCategory>; shapes: Set<string> } {
+  private grantsForSession(sessionId: string): {
+    categories: Set<ApprovalCategory>;
+    shapes: Set<string>;
+  } {
     let entry = this.grantsBySession.get(sessionId);
     if (!entry) {
       entry = { categories: new Set(), shapes: new Set() };

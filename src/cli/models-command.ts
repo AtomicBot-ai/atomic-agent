@@ -14,18 +14,26 @@ import {
   runLocalModelsUseDevice,
   runLocalModelsUseEmbedding,
 } from "./models-handlers.js";
+import {
+  runLocalModelsDownloads,
+  runLocalModelsPullWorker,
+} from "./models-downloads.js";
 import { runModelsSearch } from "./models-search-command.js";
 
 const HELP =
   [
     "atomic-agent models — manage the local-LLM runtime (llama.cpp backend + GGUF models)",
     "",
-    "Available only when config.localModels.mode = \"managed\" (see `atomic-agent config`).",
+    'Available only when config.localModels.mode = "managed" (see `atomic-agent config`).',
     "",
     "Subcommands:",
     "  list                          Show model catalog + disk presence (active marked with *)",
-    "  pull <id>                     Download a GGUF model from Hugging Face",
-    "  use <id>                      Set active model and switch mode to \"managed\"",
+    "  pull <id> [--background]      Download a GGUF model from Hugging Face (resumes a partial;",
+    "            [--mmproj]          --background keeps going after this terminal closes;",
+    "                                --mmproj also fetches the vision projector)",
+    "  downloads [cancel <id>|clear] List background downloads, stop one (partial kept), or",
+    "                                forget finished records",
+    '  use <id>                      Set active model and switch mode to "managed"',
     "  status                        Show mode, backend version, active model, daemon/health",
     "  start                         Spawn detached llama-server daemon (writes .pid)",
     "  stop                          Stop daemon (SIGTERM → SIGKILL after 3s)",
@@ -45,7 +53,7 @@ const HELP =
     "",
     "Embedding subcommands (memory-v2 phase 1B — second daemon for /embedding):",
     "  list-embeddings               Show embedding catalog + disk presence + daemon health",
-    "  pull-embedding <id>           Download an embedding GGUF",
+    "  pull-embedding <id>           Download an embedding GGUF (--background as for pull)",
     "  use-embedding <id>|--disable  Enable + select an embedding model (or turn off)",
     "                                Note: 'start' brings both chat and embedding up;",
     "                                if the embedding daemon fails the chat one stays up.",
@@ -54,6 +62,8 @@ const HELP =
     "  atomic-agent models list",
     "  atomic-agent models search claude vision",
     "  atomic-agent models pull qwen-3.5-4b",
+    "  atomic-agent models pull --background qwen-3.5-35b",
+    "  atomic-agent models downloads",
     "  atomic-agent models use qwen-3.5-4b",
     "  atomic-agent models pull-embedding nomic-embed-text-v1.5",
     "  atomic-agent models use-embedding nomic-embed-text-v1.5",
@@ -76,7 +86,11 @@ export async function modelsCommand(args: string[]): Promise<number> {
       case "list":
         return runLocalModelsList();
       case "pull":
-        return runLocalModelsPull(args[1]);
+        return runLocalModelsPull(args.slice(1));
+      case "pull-worker":
+        return runLocalModelsPullWorker(args.slice(1));
+      case "downloads":
+        return runLocalModelsDownloads(args.slice(1));
       case "use":
         return runLocalModelsUse(args[1]);
       case "status":
@@ -96,7 +110,7 @@ export async function modelsCommand(args: string[]): Promise<number> {
       case "list-embeddings":
         return runLocalModelsListEmbeddings();
       case "pull-embedding":
-        return runLocalModelsPullEmbedding(args[1]);
+        return runLocalModelsPullEmbedding(args.slice(1));
       case "use-embedding":
         return runLocalModelsUseEmbedding(args[1]);
       default:

@@ -13,9 +13,20 @@ import type { TuiState } from "../tui-state.js";
 import { fakeSession } from "../test-fixtures.js";
 
 const KEY = {
-  upArrow: false, downArrow: false, leftArrow: false, rightArrow: false,
-  pageDown: false, pageUp: false, return: false, escape: false, ctrl: false,
-  shift: false, tab: false, backspace: false, delete: false, meta: false,
+  upArrow: false,
+  downArrow: false,
+  leftArrow: false,
+  rightArrow: false,
+  pageDown: false,
+  pageUp: false,
+  return: false,
+  escape: false,
+  ctrl: false,
+  shift: false,
+  tab: false,
+  backspace: false,
+  delete: false,
+  meta: false,
 } as const;
 
 function open(patch: Partial<TuiState> = {}): TuiState {
@@ -60,7 +71,16 @@ describe("menu rows", () => {
     expect(selectMenuTitle(state)).toContain("Manage");
     const labels = selectMenuItems(state).map((r) => r.node.label);
     expect(labels).toEqual([
-      "Tasks", "Skills", "Memory", "MCP", "LLM", "Telegram", "Import", "Privacy",
+      "Tasks",
+      "Skills",
+      "Memory",
+      "MCP",
+      "Integrations",
+      "Swarm",
+      "LLM",
+      "Telegram",
+      "Import",
+      "Privacy",
     ]);
   });
 
@@ -85,7 +105,9 @@ describe("menu rows", () => {
       tasksPanel: { ...base.tasksPanel, rows: [{}, {}] as never },
       menuPath: "go.manage",
     });
-    const tasks = selectMenuItems(state).find((r) => r.node.id === "go.manage.tasks");
+    const tasks = selectMenuItems(state).find(
+      (r) => r.node.id === "go.manage.tasks",
+    );
     expect(tasks?.status).toBe("2 tasks");
   });
 });
@@ -135,7 +157,11 @@ describe("menu keys", () => {
   });
 
   it("swallows every key while open so no panel below can act on it", () => {
-    for (const [input, key] of [["x", {}], ["", { tab: true }], ["", { pageUp: true }]] as const) {
+    for (const [input, key] of [
+      ["x", {}],
+      ["", { tab: true }],
+      ["", { pageUp: true }],
+    ] as const) {
       expect(drive(open(), input, key).handled).toBe(true);
     }
   });
@@ -154,7 +180,9 @@ describe("leader chords", () => {
 
   it("resolves nothing for an unclaimed key or an escape", () => {
     expect(resolveLeaderChord("z", KEY as never)).toBeNull();
-    expect(resolveLeaderChord("", { ...KEY, escape: true } as never)).toBeNull();
+    expect(
+      resolveLeaderChord("", { ...KEY, escape: true } as never),
+    ).toBeNull();
   });
 
   it("resolves nothing while a modifier is held, so ctrl+c stays reachable", () => {
@@ -163,8 +191,12 @@ describe("leader chords", () => {
     // instead of aborting; ctrl+q would quit and ctrl+l would leave the
     // conventional clear-screen unreachable.
     for (const input of ["c", "q", "l", "t"]) {
-      expect(resolveLeaderChord(input, { ...KEY, ctrl: true } as never)).toBeNull();
-      expect(resolveLeaderChord(input, { ...KEY, meta: true } as never)).toBeNull();
+      expect(
+        resolveLeaderChord(input, { ...KEY, ctrl: true } as never),
+      ).toBeNull();
+      expect(
+        resolveLeaderChord(input, { ...KEY, meta: true } as never),
+      ).toBeNull();
     }
   });
 });

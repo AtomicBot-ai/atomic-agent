@@ -84,18 +84,58 @@ describe("selection extension via shift+arrows", () => {
     cursor: number;
     expectedCursor: number;
   }> = [
-    { name: "shift+left", key: k({ leftArrow: true, shift: true }), cursor: 4, expectedCursor: 3 },
-    { name: "shift+right", key: k({ rightArrow: true, shift: true }), cursor: 3, expectedCursor: 4 },
-    { name: "shift+up", key: k({ upArrow: true, shift: true }), cursor: 4, expectedCursor: 1 },
-    { name: "shift+down", key: k({ downArrow: true, shift: true }), cursor: 1, expectedCursor: 4 },
+    {
+      name: "shift+left",
+      key: k({ leftArrow: true, shift: true }),
+      cursor: 4,
+      expectedCursor: 3,
+    },
+    {
+      name: "shift+right",
+      key: k({ rightArrow: true, shift: true }),
+      cursor: 3,
+      expectedCursor: 4,
+    },
+    {
+      name: "shift+up",
+      key: k({ upArrow: true, shift: true }),
+      cursor: 4,
+      expectedCursor: 1,
+    },
+    {
+      name: "shift+down",
+      key: k({ downArrow: true, shift: true }),
+      cursor: 1,
+      expectedCursor: 4,
+    },
     // Line-boundary variants: shift+home / shift+end pick to the edges
     // of the current line.
-    { name: "shift+home", key: k({ home: true, shift: true }), cursor: 4, expectedCursor: 3 },
-    { name: "shift+end", key: k({ end: true, shift: true }), cursor: 3, expectedCursor: 5 },
+    {
+      name: "shift+home",
+      key: k({ home: true, shift: true }),
+      cursor: 4,
+      expectedCursor: 3,
+    },
+    {
+      name: "shift+end",
+      key: k({ end: true, shift: true }),
+      cursor: 3,
+      expectedCursor: 5,
+    },
     // Buffer-boundary variants: shift+up on the first line goes to 0
     // (never history), shift+down on the last line goes to the end.
-    { name: "shift+up on first line", key: k({ upArrow: true, shift: true }), cursor: 1, expectedCursor: 0 },
-    { name: "shift+down on last line", key: k({ downArrow: true, shift: true }), cursor: 4, expectedCursor: 5 },
+    {
+      name: "shift+up on first line",
+      key: k({ upArrow: true, shift: true }),
+      cursor: 1,
+      expectedCursor: 0,
+    },
+    {
+      name: "shift+down on last line",
+      key: k({ downArrow: true, shift: true }),
+      cursor: 4,
+      expectedCursor: 5,
+    },
   ];
   for (const c of cases) {
     it(`${c.name} anchors at the cursor and moves`, () => {

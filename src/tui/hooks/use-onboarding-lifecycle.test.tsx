@@ -82,7 +82,9 @@ describe("useOnboardingLifecycle step reporting", () => {
   it("still reports the outcome when `finished` first renders without one", () => {
     const onStep = vi.fn();
     const view = render(<Harness step="finished" onStep={onStep} />);
-    view.rerender(<Harness step="finished" outcome="skipped" onStep={onStep} />);
+    view.rerender(
+      <Harness step="finished" outcome="skipped" onStep={onStep} />,
+    );
     expect(onStep).toHaveBeenCalledWith("finished", "skipped");
   });
 });

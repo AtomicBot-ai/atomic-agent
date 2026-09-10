@@ -46,7 +46,9 @@ export type ModelsSearchOptions = {
 
 const DEFAULT_LIMIT = 30;
 
-export function parseModelsSearchArgs(args: readonly string[]): ModelsSearchOptions {
+export function parseModelsSearchArgs(
+  args: readonly string[],
+): ModelsSearchOptions {
   const terms: string[] = [];
   let provider: string | null = null;
   let limit = DEFAULT_LIMIT;
@@ -99,7 +101,8 @@ export async function collectHits(
     };
     // Bundled snapshot first: it is curated, ordered, and the only
     // source that carries embedding rows.
-    for (const [id, catalogEntry] of catalogForProvider(entry)) add(id, catalogEntry);
+    for (const [id, catalogEntry] of catalogForProvider(entry))
+      add(id, catalogEntry);
     // Then whatever the live picker cache holds. `listXChatPicks` falls
     // back to the same snapshot when nothing has been fetched, so this
     // only ever adds ids — after `--refresh` it is the fresh catalog.
@@ -118,7 +121,8 @@ export async function collectHits(
  */
 async function refreshCatalog(entry: LlmProviderConfigEntry): Promise<void> {
   try {
-    if (entry.kind === "openrouter") await refreshOpenRouterChatCatalogFromApi();
+    if (entry.kind === "openrouter")
+      await refreshOpenRouterChatCatalogFromApi();
     else if (entry.kind === "aimlapi") await refreshAimlapiChatCatalogFromApi();
   } catch {
     /* keep the bundled snapshot */
@@ -137,7 +141,10 @@ async function liveCompatModels(
   entry: LlmProviderConfigEntry,
 ): Promise<readonly string[]> {
   if (!entry.baseUrl) return [];
-  if (entry.kind !== "openai-compatible" && entry.kind !== "qwen-openai-compatible") {
+  if (
+    entry.kind !== "openai-compatible" &&
+    entry.kind !== "qwen-openai-compatible"
+  ) {
     return [];
   }
   try {
@@ -159,7 +166,9 @@ function formatHit(hit: ModelSearchHit): string {
   return `${hit.providerId.padEnd(14)} ${hit.id.padEnd(42)} ${details}`;
 }
 
-export async function runModelsSearch(args: readonly string[]): Promise<number> {
+export async function runModelsSearch(
+  args: readonly string[],
+): Promise<number> {
   let options: ModelsSearchOptions;
   try {
     options = parseModelsSearchArgs(args);
@@ -179,7 +188,9 @@ export async function runModelsSearch(args: readonly string[]): Promise<number> 
     options.provider === null ? true : entry.id === options.provider,
   );
   if (options.provider !== null && entries.length === 0) {
-    process.stderr.write(`no configured provider with id "${options.provider}"\n`);
+    process.stderr.write(
+      `no configured provider with id "${options.provider}"\n`,
+    );
     return 1;
   }
 

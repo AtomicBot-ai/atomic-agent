@@ -120,7 +120,8 @@ export function parseReadCoverage(
   const startLine = asLineNumber(record.startLine);
   const endLine = asLineNumber(record.endLine);
   const totalLines = asLineNumber(record.totalLines);
-  if (startLine === null || endLine === null || totalLines === null) return null;
+  if (startLine === null || endLine === null || totalLines === null)
+    return null;
   // An empty return is reported as 0/0; anything else must be a real,
   // non-inverted range. A half-zero pair (0/5, 3/0) is incoherent.
   const empty = startLine === 0 && endLine === 0;

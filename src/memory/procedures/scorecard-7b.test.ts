@@ -147,7 +147,10 @@ describe("scorecard 7b.A — procedural cluster → lesson + procedure in one LL
   it("persists one lesson and one procedure for a procedural cluster (7b.A.1, 7b.A.7, 7b.A.8)", async () => {
     f = makeFixture();
     seedClusterMemories(f, 4, ["lint", "vendor"]);
-    const procedureTraces: Array<{ id: number; parentLessonIds: readonly number[] }> = [];
+    const procedureTraces: Array<{
+      id: number;
+      parentLessonIds: readonly number[];
+    }> = [];
     let lastTickResult;
     // re-wire via fresh consolidator that has the trace hook
     const consolidatorWithTrace = new ConsolidatorJob(
@@ -235,11 +238,11 @@ describe("scorecard 7b.D — invariant 20: runtime never auto-executes Procedure
     // doctrine note inside `procedures-recall.ts` does not trip
     // the gate.
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { execSync } = require("node:child_process") as typeof import("node:child_process");
-    const out = execSync(
-      `rg -n "toolHint" src --type ts || true`,
-      { encoding: "utf8" },
-    );
+    const { execSync } =
+      require("node:child_process") as typeof import("node:child_process");
+    const out = execSync(`rg -n "toolHint" src --type ts || true`, {
+      encoding: "utf8",
+    });
     const offending = out
       .split(/\r?\n/)
       .filter((line) => line.length > 0)
@@ -274,20 +277,14 @@ describe("scorecard 7b.E — `### procedures` respects token budget and ranks by
     f = makeFixture();
     const high = f.procedureStore.create({
       activation: "high priority procedure with descriptive activation text",
-      steps: [
-        { description: "step one" },
-        { description: "step two" },
-      ],
+      steps: [{ description: "step one" }, { description: "step two" }],
       tags: ["a"],
       parentLessonIds: [1],
       parentMemoryIds: [1],
     });
     const low = f.procedureStore.create({
       activation: "low priority procedure with descriptive activation text",
-      steps: [
-        { description: "step one" },
-        { description: "step two" },
-      ],
+      steps: [{ description: "step one" }, { description: "step two" }],
       tags: ["b"],
       parentLessonIds: [2],
       parentMemoryIds: [2],
@@ -296,8 +293,14 @@ describe("scorecard 7b.E — `### procedures` respects token budget and ranks by
     // multiple sqlite connections to the same file see each other's
     // writes immediately (WAL mode, single-process).
     const db = f.memoryStore.getDatabaseHandleForEmbeddings();
-    db.prepare("UPDATE procedures SET vote_score = ? WHERE id = ?").run(3, high.id);
-    db.prepare("UPDATE procedures SET vote_score = ? WHERE id = ?").run(-1, low.id);
+    db.prepare("UPDATE procedures SET vote_score = ? WHERE id = ?").run(
+      3,
+      high.id,
+    );
+    db.prepare("UPDATE procedures SET vote_score = ? WHERE id = ?").run(
+      -1,
+      low.id,
+    );
 
     const index = f.procedureStore.listIndex();
     // listIndex orders by vote_score DESC, so the high-vote item

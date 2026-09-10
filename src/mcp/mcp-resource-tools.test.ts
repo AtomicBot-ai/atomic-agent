@@ -124,10 +124,7 @@ describe("mcp.resource.read", () => {
       },
     });
     const tool = buildMcpResourceReadTool(mgr);
-    const result = await tool.run(
-      { server: "docs", uri: "file:///foo" },
-      ctx,
-    );
+    const result = await tool.run({ server: "docs", uri: "file:///foo" }, ctx);
     expect(result.status).toBe("error");
     expect(result.summary).toContain("not connected");
   });

@@ -4,7 +4,8 @@ export function normaliseOpenAiChatResponse(
   json: Record<string, unknown>,
   defaultChatModel: string,
 ): CompletionResult {
-  const choice = (json.choices as Array<Record<string, unknown>> | undefined)?.[0] ?? {};
+  const choice =
+    (json.choices as Array<Record<string, unknown>> | undefined)?.[0] ?? {};
   const message = (choice.message as Record<string, unknown> | undefined) ?? {};
   const usage = (json.usage as Record<string, unknown> | undefined) ?? {};
   const toolCalls = message.tool_calls as CompletionResult["toolCalls"];
@@ -13,7 +14,9 @@ export function normaliseOpenAiChatResponse(
   // preserve_thinking, DeepSeek-R1) return their CoT in a dedicated
   // `reasoning_content` field alongside `content`.
   const reasoningContent =
-    typeof message.reasoning_content === "string" ? message.reasoning_content : "";
+    typeof message.reasoning_content === "string"
+      ? message.reasoning_content
+      : "";
   return {
     content,
     reasoningContent,

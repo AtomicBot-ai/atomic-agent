@@ -25,7 +25,9 @@ describe("readDotenvValue", () => {
   it("reads a key, strips quotes, skips comments", () => {
     writeFileSync(
       join(dir, ".env"),
-      ["# comment", "", "A=1", 'B="two words"', "C='three'", "BROKEN"].join("\n"),
+      ["# comment", "", "A=1", 'B="two words"', "C='three'", "BROKEN"].join(
+        "\n",
+      ),
     );
     const path = join(dir, ".env");
     expect(readDotenvValue(path, "A")).toBe("1");
@@ -38,7 +40,7 @@ describe("stripDotenvQuotes", () => {
   it("strips only one matching pair", () => {
     expect(stripDotenvQuotes('"x"')).toBe("x");
     expect(stripDotenvQuotes("'x'")).toBe("x");
-    expect(stripDotenvQuotes('"x\'')).toBe('"x\'');
+    expect(stripDotenvQuotes("\"x'")).toBe("\"x'");
     expect(stripDotenvQuotes('""x""')).toBe('"x"');
   });
 });

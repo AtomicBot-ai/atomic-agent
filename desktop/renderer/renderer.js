@@ -565,6 +565,19 @@ let FIRSTRUN = null;
    version, not the route name: `/api/coding-mode` is our word for it and
    means nothing to the person reading it. */
 const MODE_NEEDS_NEWER = 'Coding modes need Atomic Agent 0.5.7 or newer.';
+/* F3 — the turn is parked, not dead.
+   The agent waits out a provider outage instead of failing: same step, tried
+   again after a backoff, up to a budget. It has always told the TUI; the
+   frames only started reaching other hosts when the desktop merge forwarded
+   them over SSE. Without them the window showed nothing at all between the
+   last token and a failure minutes later, which is exactly what the tester
+   read as a dead app before she started clicking.
+
+   `until` is the wall-clock the next retry is due, so the readout counts down
+   on its own tick rather than trusting a number that arrived once. */
+let WAIT = null;
+let WAIT_TICK = 0;
+
 let BUILD = null;
 /* F1 — provider ids whose key was saved without ever being checked. Read from
    main at boot; a provider stays on this list until a turn actually succeeds
@@ -691,7 +704,15 @@ const MENU_GROUPS = [
   ['Help', [
     {id:'help.commands', label:'Commands'},
     {id:'help.tools', label:'List built-in tools'},
-    {id:'help.dump', label:'Write debug bundle', chord:'d', na:true},
+    /* N3 made this real — it used to toast "not available in the desktop". */
+    {id:'help.dump', label:'Write debug bundle', chord:'d'},
+    /* The TUI's `/report` files a GitHub issue with your logs attached. That
+       flow reaches the runtime directly and has no route or CLI behind it, so
+       this is the desktop's own version of the same intent rather than a port
+       of the same screen: write the bundle, then open the issue form with the
+       build already filled in. What leaves the machine is still your choice —
+       the bundle is a file you attach if you want to. */
+    {id:'help.report', label:'Report an issue…', chord:'R'},
     {id:'help.quit', label:'Quit', chord:'q'},
   ]],
   ['Danger zone', [
@@ -711,6 +732,7 @@ const MENU_ACTS = {
   'setup.theme':'palette:theme', 'setup.sidebar':'toggle:sidebar', 'setup.analytics':'settings:privacy',
   'setup.skill':'settings:skills', 'setup.task':'settings:tasks',
   'help.commands':'palette', 'help.tools':'tools', 'help.quit':'quit',
+  'help.dump':'dump', 'help.report':'help.report',
 };
 /* ids === MANAGE_TABS (src/tui/section.ts), labels from buildManageTabs. */
 const SETTINGS_TABS = [['tasks','Tasks','tasks'],['skills','Skills','skills'],['memory','Memory','doc'],['mcp','MCP','link'],
@@ -1092,7 +1114,8 @@ const keycaps = (str) => str ? str.split(' ').map((k) => '<span class="kc">' + e
 
 // slash registry in the registry's own rank order (rank is user-visible)
 const SLASH = [
-  ['dump','write debug zip to ~/Documents/atomic-agent-debug'],
+  ['dump','write a debug bundle — logs and config, secrets removed'],
+  ['report','report an issue, with a bundle you choose whether to attach'],
   ['help','list available slash commands'],
   ['tools','list built-in tools (fs, shell, browser, memory, vision)','<query>'],
   ['theme','switch the UI theme','<name>|list'],
@@ -1855,6 +1878,15 @@ function composer() {
   const status = S.pending
     ? '<div class="statusstrip gated">' + ic('warn') + 'Waiting for your approval'
       + '<button class="btn-g" style="text-decoration:underline" data-act="jump:appr">Jump to request</button></div>'
+    /* F3 — a parked turn says so, and says when it tries again. The brief's
+       shape: WAITING · <provider> · ATTEMPT n · NEXT TRY 30s, with a Stop.
+       Caution, not critical: nothing has failed yet. */
+    : WAIT
+    ? '<div class="statusstrip waiting">'
+      + '<span class="ann caution">Waiting</span>'
+      + '<span class="readout">' + esc(waitReadout()) + '</span>'
+      + (WAIT.reason ? '<span class="ob-help">' + esc(humanWaitReason(WAIT.reason)) + '</span>' : '')
+      + '<button class="btn-g" data-act="stop" style="margin-left:auto">Stop</button></div>'
     : S.busy
     ? '<div class="statusstrip"><span class="threedot"><i></i><i></i><i></i></span><span>' + S.phase + '</span>'
       + '<span class="mono ter tnum" style="margin-left:auto">' + (S.elapsed / 10).toFixed(1) + 's</span>'
@@ -3205,6 +3237,39 @@ function act(a) {
      about how the provider is saved and activated differs; only whether we
      were allowed to claim the key works. */
   if (a === 'wiz:saveUnchecked') { WIZ.acceptUnchecked = true; wizNext(); return; }
+  if (a === 'help.report' || a === 'report') {
+    close(); render();
+    const b2 = BUILD || {};
+    const body = [
+      'What happened:', '', '', 'What I expected:', '', '',
+      '---', 'Atomic Agent ' + (b2.version || '?') + ' · ' + (b2.platform || '?') + ' ' + (b2.arch || '?'),
+      'Agent: ' + (S.live.binary || 'not started'),
+    ].join('\n');
+    const url = 'https://github.com/AtomicBot-ai/atomic-agent/issues/new'
+      + '?title=' + encodeURIComponent('[desktop] ')
+      + '&body=' + encodeURIComponent(body);
+    if (BR && BR.debugBundle) {
+      BR.debugBundle().then((res) => {
+        if (res && res.ok) toast('Debug bundle written', res.path + ' — attach it if you want to');
+      }).catch(() => {});
+    }
+    if (BR && BR.openExternal) BR.openExternal(url);
+    return;
+  }
+  if (a.startsWith('runmode:')) {
+    const rest = a.slice('runmode:'.length);
+    const workers = rest.startsWith('workers:') ? Number(rest.slice('workers:'.length)) : null;
+    const cur = (LIVE_CONFIG && LIVE_CONFIG.llm && LIVE_CONFIG.llm.runMode) || {};
+    const mode = workers === null ? rest : (cur.mode || 'fusion');
+    if (!BR || !BR.setRunMode) return;
+    BR.setRunMode(mode, workers === null ? undefined : workers).then(async (res) => {
+      if (!res || !res.ok) { LLMP.msg = {text: (res && res.error) || 'could not set the run mode'}; render(); return; }
+      await refreshLiveConfig();
+      LLMP.msg = {text: 'Run mode: ' + mode + (workers === null ? '' : ' · ' + workers + ' workers'), restart: true};
+      render();
+    });
+    return;
+  }
   /* F6 — both ways out of the model step run the SAME save path: wizNext
      again, with the choice made. Nothing about how the provider is written
      differs between "use default" and picking a row. */
@@ -4370,6 +4435,32 @@ function refreshSend() {
   const b = document.querySelector('.sendbtn');
   if (b) b.outerHTML = sendButton();
 }
+/** The waiting line: who, which attempt, and how long until the next try. */
+function waitReadout() {
+  if (!WAIT) return '';
+  const id = selActiveProviderId() || 'the provider';
+  const left = Math.max(0, Math.round((WAIT.until - Date.now()) / 1000));
+  const waited = Math.round((WAIT.waitedMs + Math.max(0, WAIT.nextRetryMs - left * 1000)) / 1000);
+  return id + ' · attempt ' + WAIT.attempt + ' · next try ' + left + 's · waited ' + waited + 's';
+}
+
+/** The agent's reason, in words. `fetch failed` is undici's, not a person's. */
+function humanWaitReason(reason) {
+  const r = String(reason || '');
+  if (/^fetch failed/i.test(r)) return 'no connection';
+  if (/terminated|socket hang up|other side closed/i.test(r)) return 'connection dropped mid-reply';
+  if (/timed out|ETIMEDOUT/i.test(r)) return 'the provider stopped answering';
+  return r.length > 60 ? r.slice(0, 57) + '…' : r;
+}
+
+/* Repaint only the readout. A render() here would rebuild the composer once a
+   second and take the caret with it. */
+function refreshWaitStrip() {
+  const el = document.querySelector('.statusstrip.waiting .readout');
+  if (!el) { render(); return; }
+  el.textContent = waitReadout();
+}
+
 function refreshSlash() {
   /* F14, the second half. Typing `/` never goes through render() — the
      composer repaints in place so the caret does not move — so THIS is the
@@ -4977,6 +5068,27 @@ function onChatEvent(ev) {
     renderSidebar();
     return;
   }
+  if (ev.kind === 'provider_waiting') {
+    const p = ev.payload || {};
+    WAIT = {
+      attempt: Number(p.attempt) || 1,
+      waitedMs: Number(p.waited_ms) || 0,
+      maxWaitMs: Number(p.max_wait_ms) || 0,
+      nextRetryMs: Number(p.next_retry_ms) || 0,
+      reason: typeof p.reason === 'string' ? p.reason : '',
+      until: Date.now() + (Number(p.next_retry_ms) || 0),
+    };
+    if (!WAIT_TICK) WAIT_TICK = setInterval(() => { if (WAIT) refreshWaitStrip(); }, 1000);
+    render();
+    return;
+  }
+  if (ev.kind === 'provider_recovered') {
+    WAIT = null;
+    if (WAIT_TICK) { clearInterval(WAIT_TICK); WAIT_TICK = 0; }
+    appSay('Provider answered again after ' + Math.round((Number((ev.payload || {}).waited_ms) || 0) / 1000) + ' s');
+    render();
+    return;
+  }
   if (ev.kind === 'reasoning_progress') {
     const text = pick(ev.payload, 'delta', 'text', 'content') || '';
     if (!text || !item) return;   // review fix: no streaming item on screen, nothing to splice against
@@ -5092,6 +5204,8 @@ function onChatEvent(ev) {
     // sent-and-not-yet-echoed list goes with it — a `steer_applied` for this
     // turn cannot arrive after its done frame, and carrying entries into the
     // next turn would swallow a bubble there.
+    /* The park is over when the turn is, whatever the outcome. */
+    if (WAIT) { WAIT = null; if (WAIT_TICK) { clearInterval(WAIT_TICK); WAIT_TICK = 0; } }
     /* F1 — a turn that COMPLETED on a provider is the proof its key works,
        and the only thing that can retire the UNVERIFIED cell. An error or an
        abort proves nothing either way, so the badge stays. */
@@ -13936,6 +14050,7 @@ function llmTab() {
     + (LLMP.daemonPhase === 'starting' ? '<div class="tuimodal llm-start"><b class="sk-on">⟳ Model is starting — please stand by</b><div class="ter">Loading the model into llama-server. Inputs are paused until it is ready.</div></div>' : '')
     + (mode === 'local' && LLMP.pulling ? llmDownloadBannerHTML() : '')
     + llmRouteCardHTML()
+    + llmRunModeHTML()
     + '<div class="llm-modehead"><span>Mode: </span>' + LLM_PANEL_MODES.map((m, i) => (i ? '<span class="ter"> | </span>' : '')
         + '<button class="llmmode' + (m === mode ? ' on' : '') + '" data-act="llm:mode:' + m + '">' + esc(LLM_MODE_LABELS[m]) + '</button>').join('') + '</div>'
     + '<div class="ter">Press ←/→ to switch mode</div>'
@@ -13946,6 +14061,46 @@ function llmTab() {
 }
 /* llm-panel.tsx RouteCard. `current:` is the provider's chat model; for the local route the TUI shows the daemon's /props model —
    the desktop has no /props, so `atag models status` "active model:" stands in, then localModels.managed.modelId (the critique's fallback). */
+/* The run mode — the one thing the TUI had here that this window did not.
+   Three modes, and `fusion` is the interesting one: a cloud model
+   orchestrating several llama-server workers. It is ordinary config
+   (`llm.runMode`), additive to the active provider, so it sits above the
+   route card rather than replacing it — the route still says who answers. */
+function llmRunModeHTML() {
+  const cfg = (LIVE_CONFIG && LIVE_CONFIG.llm && LIVE_CONFIG.llm.runMode) || {};
+  const mode = cfg.mode || 'cloud';
+  const workers = (cfg.fusion && cfg.fusion.workers) || 3;
+  const MODES = [
+    ['local', 'Local', 'everything runs on this Mac'],
+    ['cloud', 'Cloud', 'everything runs on the provider'],
+    ['fusion', 'Fusion', 'a cloud model plans, local workers do the work'],
+  ];
+  const localReady = !!(LIVE_CONFIG && LIVE_CONFIG.localModels
+    && LIVE_CONFIG.localModels.managed && LIVE_CONFIG.localModels.managed.modelId);
+  return '<div class="legend">Run mode</div>'
+    + '<div class="rows runmoderows">'
+    + MODES.map(([id, label, why]) =>
+        '<button class="row' + (id === mode ? ' on' : '') + '" data-act="runmode:' + id + '">'
+        + '<span class="col"><span class="nm">' + esc(label) + '</span>'
+        + '<span class="sub">' + esc(why) + '</span></span>'
+        + (id === mode ? '<span class="ann lit">Active</span>' : '')
+        + '</button>').join('')
+    + '</div>'
+    + (mode === 'fusion'
+        ? '<div class="ob-help">'
+          + esc('Workers: ' + workers + '. ')
+          + esc(localReady
+              ? 'The orchestrator uses the provider above; the workers use the local model.'
+              : 'Fusion needs a local model as well — choose one under Local, or the workers have nothing to run on.')
+          + '</div>'
+          + '<div class="runmodeworkers">'
+          + [1, 2, 3, 4, 6, 8].map((n) =>
+              '<button class="btn' + (n === workers ? ' btn-s' : '') + '" data-act="runmode:workers:' + n + '">'
+              + n + '</button>').join('')
+          + '</div>'
+        : '');
+}
+
 function llmRouteCardHTML() {
   const activeId = llmActiveTextId();
   const active = llmProvider(activeId);
@@ -16474,6 +16629,23 @@ if (typeof window !== 'undefined') {
   window.__firstRun = () => FIRSTRUN;
   /* F10 — what the app last said about itself, and the console's record of
      it. The transcript is asserted separately, and must NOT carry these. */
+  /* F3 — the parked-turn readout, driven through the same frame the agent
+     sends. Reads back what a person would see, not the state behind it. */
+  window.__waitFrame = (payload) => {
+    onChatEvent({turnId: S.turnId || 'wait-probe', kind: 'provider_waiting', payload});
+    const strip = document.querySelector('.statusstrip.waiting');
+    return {
+      shown: !!strip,
+      ann: strip ? (strip.querySelector('.ann') || {}).textContent : null,
+      readout: strip ? (strip.querySelector('.readout') || {}).textContent : null,
+      reason: strip ? (strip.querySelector('.ob-help') || {}).textContent : null,
+      stop: strip ? !!strip.querySelector('[data-act="stop"]') : false,
+    };
+  };
+  window.__waitRecover = () => {
+    onChatEvent({turnId: S.turnId || 'wait-probe', kind: 'provider_recovered', payload: {waited_ms: 65000}});
+    return {shown: !!document.querySelector('.statusstrip.waiting'), said: APPSTATUS.text};
+  };
   window.__appStatus = () => ({
     text: APPSTATUS.text,
     tone: APPSTATUS.tone,

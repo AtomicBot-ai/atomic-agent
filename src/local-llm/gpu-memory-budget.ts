@@ -48,7 +48,9 @@ export interface ResolveGpuBudgetInput {
  *
  * Pure — no IO.
  */
-export function resolveGpuBudgetGb(input: ResolveGpuBudgetInput): number | null {
+export function resolveGpuBudgetGb(
+  input: ResolveGpuBudgetInput,
+): number | null {
   const { platform, totalRamBytes, devices, configuredDevice } = input;
   if (platform === "darwin") {
     if (totalRamBytes <= 0) return null;

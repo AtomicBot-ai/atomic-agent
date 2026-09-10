@@ -119,9 +119,9 @@ describe("ProfileStore", () => {
     expect(() => store.set("_leading_underscore", "x")).toThrow(
       ProfileValidationError,
     );
-    expect(() => store.set("a".repeat(PROFILE_KEY_MAX_LENGTH + 1), "x")).toThrow(
-      ProfileValidationError,
-    );
+    expect(() =>
+      store.set("a".repeat(PROFILE_KEY_MAX_LENGTH + 1), "x"),
+    ).toThrow(ProfileValidationError);
   });
 
   it("rejects invalid values", () => {

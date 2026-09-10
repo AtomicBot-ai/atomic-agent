@@ -1,4 +1,9 @@
 import { CODING_MODES, type CodingMode } from "./coding-mode.js";
+import {
+  ISSUE_REPORT_LEVELS,
+  type IssueReportLevel,
+} from "./issue-report/report-levels.js";
+import type { IssueReportState } from "./issue-report/issue-report-state.js";
 import { handleComposerSwitchKey } from "./composer-switch/composer-switch-key-bindings.js";
 import type { ComposerSwitchRow } from "./composer-switch/composer-switch-rows.js";
 import { handleContextPanelKey } from "./context-panel-keys.js";
@@ -19,6 +24,10 @@ import {
 import type { MenuNode } from "./menu/menu-registry.js";
 import { cycleNavSlot, type NavSlot } from "./section.js";
 import { selectSidebarTasks } from "./sidebar-tasks-selector.js";
+import {
+  handleSessionMoveKey,
+  handleSessionPinKey,
+} from "./session-rail/index.js";
 import type { TuiAction } from "./tui-action.js";
 import type { TuiState } from "./tui-state.js";
 import { isUninstallConfirmed } from "./uninstall/uninstall-state.js";
@@ -57,6 +66,12 @@ export interface AppKeyCallbacks {
   onSessionDeleteConfirmed?(sessionId: string): void;
   /** The word was typed and Enter pressed — take the app down and remove it. */
   onUninstallConfirmed?(): void;
+  /** Issue-report popup: a level was chosen (enter or 1-3). */
+  onIssueReportPickRequested?(level: IssueReportLevel, state: TuiState): void;
+  /** Issue-report popup: the operator confirmed sending. */
+  onIssueReportSendRequested?(): void;
+  /** Issue-report popup: dismissed on any step. */
+  onIssueReportCloseRequested?(): void;
   onApprovalDecision(
     approvalId: string,
     approved: boolean,
@@ -70,6 +85,10 @@ export interface AppKeyCallbacks {
   onQuit(): void;
   /** Optional — called when Enter is pressed on the focused sidebar row. */
   onSessionSwitchRequested?(sessionId: string): void;
+  /** Shift+↑/↓ in the rail: put the selected session on slot `toIndex`. */
+  onSessionMoveRequested?(sessionId: string, toIndex: number): void;
+  /** `p` in the rail, or a row's `↑`: pin the selected session, or release it. */
+  onSessionPinToggled?(sessionId: string): void;
   /**
    * Optional — called when Enter is pressed on a sidebar Tasks row.
    * The handler is expected to switch to the Tasks debug tab and open
@@ -186,15 +205,14 @@ export function isPanelModalOpen(state: TuiState): boolean {
     state.uiMode === "debug" &&
     state.activeTab === "models" &&
     (state.localModelsPanel.mode === "backendUpdate" ||
-      state.localModelsPanel.removeConfirmId !== null);
+      state.localModelsPanel.removeConfirmId !== null ||
+      state.localModelsPanel.notifyPrompt !== null);
   // Telegram tab disables the editor outright (the panel owns letter
   // hotkeys), so on entry Tab/Shift+Tab still cycle. The "busy" flag
   // applies only when a modal is open and Tab/letters need to be
   // captured by the modal layer instead of cycling away from it.
   const telegramTabBusy =
-    state.uiMode === "debug" &&
-    state.activeTab === "telegram" &&
-    state.telegramPanel.mode !== "list";
+    state.uiMode === "debug" && state.telegramPanel.mode !== "list";
   // MCP tab is "busy" while a modal is open: the add-server modal
   // owns its own MultiLineEditor and the panel must keep capturing
   // letter/Tab keys; the remove-confirm modal claims `y`/`n` and Esc
@@ -218,6 +236,7 @@ export function isPanelModalOpen(state: TuiState): boolean {
       state.localModelsPanel.removeConfirmId !== null ||
       state.localModelsPanel.embeddingRemoveConfirmId !== null ||
       state.localModelsPanel.embeddingOnboardingPrompt !== null ||
+      state.localModelsPanel.notifyPrompt !== null ||
       state.providersPanel.chatModelPicker !== null ||
       state.llmPanel.externalUrlDraft !== null ||
       state.llmPanel.externalCompatSteerUrl !== null ||
@@ -314,6 +333,14 @@ export function handleAppKey(
       return true;
     }
   }
+  // The issue-report popup is modal: it owns every key while it is up.
+  // Above the approval keys, or `y` / `n` / a digit typed at the popup
+  // would answer a pending approval instead. Ctrl+C alone falls
+  // through, so the app's quit path stays reachable under it.
+  if (state.issueReport && !(key.ctrl && input === "c")) {
+    handleIssueReportKey(input, key, state.issueReport, ctx);
+    return true;
+  }
   // Only the visible thread's question is answerable from the
   // keyboard. The reducer never arms `pendingApproval` for another
   // session (a background request surfaces as a notice instead), but
@@ -368,7 +395,13 @@ export function handleAppKey(
   }
   // The menu and its leader sit above every panel guard on purpose: they are
   // the way out of a panel, so a panel must never be able to swallow them.
-  if (handleMenuKey(input, key, { state, dispatch, activate: ctx.activateMenuNode })) {
+  if (
+    handleMenuKey(input, key, {
+      state,
+      dispatch,
+      activate: ctx.activateMenuNode,
+    })
+  ) {
     return true;
   }
   // Below the menu on purpose: the `ctrl+g` leader should still reach
@@ -685,6 +718,9 @@ function handleSidebarKey(
     dispatch({ type: "chat_focus_set", focus: "editor" });
     return true;
   }
+  // Shift+↑/↓ moves the selected session row; checked before the plain
+  // arrows because Ink reports the chord with `upArrow` set as well.
+  if (handleSessionMoveKey(key, ctx)) return true;
   if (key.upArrow) {
     if (state.sidebarSection === "tasks") {
       dispatch({ type: "sidebar_tasks_cursor_moved", delta: -1 });
@@ -720,6 +756,10 @@ function handleSidebarKey(
     }
     return true;
   }
+  // `p` is the keyboard twin of the row's `↑`, for the same reason `x`
+  // is the twin of `[x]`: the mark is painted whether or not mouse
+  // reporting is on.
+  if (handleSessionPinKey(input, key, ctx)) return true;
   if (key.return) {
     if (state.sidebarSection === "tasks") {
       const visible = selectSidebarTasks(state.tasksPanel.rows);
@@ -758,11 +798,7 @@ export function applyNavSlot(
   dispatch({ type: "tab_changed", tab: slot.tab });
 }
 
-function handleUpdateKey(
-  input: string,
-  key: Key,
-  ctx: AppKeyContext,
-): boolean {
+function handleUpdateKey(input: string, key: Key, ctx: AppKeyContext): boolean {
   if (key.ctrl || key.meta) return false;
   const lower = input.toLowerCase();
   if (lower === "y") {
@@ -831,12 +867,7 @@ export function decideApproval(
 
 /** What a keystroke means to the approval prompt, if anything. */
 export type ApprovalHotkey =
-  | "approve"
-  | "grant_category"
-  | "grant_shape"
-  | "edit_path"
-  | "deny"
-  | "abort";
+  "approve" | "grant_category" | "grant_shape" | "edit_path" | "deny" | "abort";
 
 /**
  * The chord each approval verb answers to, and the label the button
@@ -931,8 +962,10 @@ export function approvalHotkey(
 
 /** Whether this request offers a retarget (`[e]`). */
 export function canEditPath(request: ApprovalRequest): boolean {
-  return typeof request.redirectablePath === "string"
-    && request.redirectablePath.length > 0;
+  return (
+    typeof request.redirectablePath === "string" &&
+    request.redirectablePath.length > 0
+  );
 }
 
 /**
@@ -1084,7 +1117,13 @@ function handleUninstallKey(
     dispatch({ type: "uninstall_typed_set", typed: flow.typed.slice(0, -1) });
     return true;
   }
-  if (input && !key.upArrow && !key.downArrow && !key.leftArrow && !key.rightArrow) {
+  if (
+    input &&
+    !key.upArrow &&
+    !key.downArrow &&
+    !key.leftArrow &&
+    !key.rightArrow
+  ) {
     // Capped at a little over the word's length: a paste of a whole
     // paragraph should not become a field the operator has to clear
     // one backspace at a time.
@@ -1135,5 +1174,57 @@ function handleApprovalKey(
       return true;
     default:
       return false;
+  }
+}
+
+function handleIssueReportKey(
+  input: string,
+  key: Key,
+  report: IssueReportState,
+  ctx: AppKeyContext,
+): void {
+  const { state, dispatch, callbacks } = ctx;
+  const close = (): void => {
+    // The orchestrator forgets its prepared report; the reducer closes
+    // the popup. Both, so a stub without the callback still closes.
+    callbacks.onIssueReportCloseRequested?.();
+    dispatch({ type: "issue_report_closed" });
+  };
+  // A send in flight cannot be abandoned: the issue may already exist
+  // and the link is the only thing left to show. A build can — the
+  // orchestrator drops a result that arrives after the close.
+  if (report.step === "sending") return;
+  if (report.step === "building") {
+    if (key.escape) close();
+    return;
+  }
+  if (key.escape || report.step === "sent" || report.step === "error") {
+    close();
+    return;
+  }
+  if (report.step === "pick") {
+    if (key.upArrow || key.downArrow || input === "j" || input === "k") {
+      dispatch({
+        type: "issue_report_cursor_moved",
+        delta: key.downArrow || input === "j" ? 1 : -1,
+      });
+      return;
+    }
+    const digit = /^[1-9]$/.test(input) ? Number(input) - 1 : -1;
+    const picked =
+      digit >= 0
+        ? ISSUE_REPORT_LEVELS[digit]
+        : key.return
+          ? ISSUE_REPORT_LEVELS[report.cursor]
+          : undefined;
+    if (picked) callbacks.onIssueReportPickRequested?.(picked.level, state);
+    return;
+  }
+  if (report.step === "confirm") {
+    if (input === "n") {
+      close();
+      return;
+    }
+    if (key.return || input === "y") callbacks.onIssueReportSendRequested?.();
   }
 }

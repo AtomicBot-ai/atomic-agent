@@ -74,6 +74,20 @@ export interface LocalModelRow {
   mmprojStatus: MmprojStatus;
 }
 
+/**
+ * The worker is between attempts, waiting for the network to come
+ * back. The counter is not moving and that is expected — the banner
+ * says so instead of looking hung.
+ */
+export interface LocalModelsPullWaiting {
+  /** The last attempt's error, e.g. `fetch failed`. */
+  reason: string;
+  /** Consecutive attempts without progress. */
+  attempt: number;
+  /** ISO timestamp of the next attempt. */
+  nextRetryAt: string;
+}
+
 export interface LocalModelsPullState {
   kind: "chat" | "embedding" | "backend";
   modelId: LocalModelId | EmbeddingModelId | "_backend";
@@ -82,6 +96,8 @@ export interface LocalModelsPullState {
   transferredBytes: number;
   totalBytes: number;
   error: string | null;
+  /** Set while the worker waits out an outage; absent or `null` while bytes flow. */
+  waiting?: LocalModelsPullWaiting | null;
 }
 
 /**
@@ -138,6 +154,19 @@ export interface LocalModelsDaemonInfo {
  * presses a key, before the health probe catches up on the next refresh.
  */
 export type DaemonPhase = "idle" | "starting" | "stopping";
+
+/** Where a download's end-of-job ping may go, as offered by the prompt. */
+export type LocalModelsNotifyChoice = "telegram" | "discord" | "email" | "off";
+
+/**
+ * The "tell me when it lands?" modal. `label` names the download it is
+ * about — or "future downloads" when opened with `N` and nothing is in
+ * flight. `current` is the remembered answer, shown as the default.
+ */
+export interface LocalModelsNotifyPrompt {
+  label: string;
+  current: LocalModelsNotifyChoice | null;
+}
 
 export interface LocalModelsPanelState {
   mode: LocalModelsPanelMode;
@@ -203,6 +232,8 @@ export interface LocalModelsPanelState {
     name: string;
     sizeLabel: string;
   } | null;
+  /** See `LocalModelsNotifyPrompt`. `null` when closed. */
+  notifyPrompt: LocalModelsNotifyPrompt | null;
 }
 
 /**
@@ -285,6 +316,7 @@ export function createInitialLocalModelsPanelState(
     embeddingRemoveConfirmId: null,
     hf: createInitialLocalModelsHfState(),
     embeddingOnboardingPrompt: null,
+    notifyPrompt: null,
   };
 }
 

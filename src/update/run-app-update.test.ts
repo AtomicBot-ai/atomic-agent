@@ -7,7 +7,9 @@ import {
 
 describe("canSelfUpdate", () => {
   it("allows the installed binary on POSIX", () => {
-    expect(canSelfUpdate("linux", "/home/u/.local/bin/atomic-agent")).toBe(true);
+    expect(canSelfUpdate("linux", "/home/u/.local/bin/atomic-agent")).toBe(
+      true,
+    );
     expect(canSelfUpdate("darwin", "/Users/u/.local/bin/atomic-agent")).toBe(
       true,
     );
@@ -15,7 +17,10 @@ describe("canSelfUpdate", () => {
 
   it("allows the installed binary on Windows", () => {
     expect(
-      canSelfUpdate("win32", "C:\\Users\\u\\AppData\\Local\\atomic-agent\\atomic-agent.exe"),
+      canSelfUpdate(
+        "win32",
+        "C:\\Users\\u\\AppData\\Local\\atomic-agent\\atomic-agent.exe",
+      ),
     ).toBe(true);
   });
 

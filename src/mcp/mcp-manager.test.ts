@@ -119,7 +119,9 @@ describe("McpManager", () => {
 
   it("constructs one client per configured server", () => {
     const tools = new ToolRegistry();
-    new McpManager([stdioConfig("a"), stdioConfig("b")], { toolRegistry: tools });
+    new McpManager([stdioConfig("a"), stdioConfig("b")], {
+      toolRegistry: tools,
+    });
     expect(CONSTRUCTED).toEqual(["a", "b"]);
   });
 
@@ -362,11 +364,12 @@ describe("McpManager", () => {
       toolRegistry: tools,
     });
     await mgr.start();
-    expect(mgr.listAllToolMeta().map((m) => m.qualifiedName).sort()).toEqual([
-      "mcp.a.x",
-      "mcp.b.y",
-      "mcp.b.z",
-    ]);
+    expect(
+      mgr
+        .listAllToolMeta()
+        .map((m) => m.qualifiedName)
+        .sort(),
+    ).toEqual(["mcp.a.x", "mcp.b.y", "mcp.b.z"]);
   });
 
   it("getClient / getCatalog return undefined for unknown servers", () => {
@@ -414,7 +417,9 @@ describe("McpManager", () => {
           prompts: [],
         },
       });
-      const mgr = new McpManager([stdioConfig("docs")], { toolRegistry: tools });
+      const mgr = new McpManager([stdioConfig("docs")], {
+        toolRegistry: tools,
+      });
       await mgr.start();
       expect(connectSpy).toHaveBeenCalledTimes(1);
       const result = await mgr.addServerLive(stdioConfig("docs"));
@@ -457,12 +462,17 @@ describe("McpManager", () => {
           prompts: [],
         },
       });
-      const mgr = new McpManager([stdioConfig("docs")], { toolRegistry: tools });
+      const mgr = new McpManager([stdioConfig("docs")], {
+        toolRegistry: tools,
+      });
       await mgr.start();
       expect(tools.has("mcp.docs.search")).toBe(true);
       const result = await mgr.removeServerLive("docs");
       expect(result.removed).toBe(true);
-      expect(result.tools.sort()).toEqual(["mcp.docs.lookup", "mcp.docs.search"]);
+      expect(result.tools.sort()).toEqual([
+        "mcp.docs.lookup",
+        "mcp.docs.search",
+      ]);
       expect(tools.has("mcp.docs.search")).toBe(false);
       expect(tools.has("mcp.docs.lookup")).toBe(false);
       expect(closeSpy).toHaveBeenCalledTimes(1);
@@ -492,11 +502,17 @@ describe("McpManager", () => {
       });
       const mgr = new McpManager([], { toolRegistry: tools });
       await mgr.start();
-      const before = tools.list().map((d) => d.name).sort();
+      const before = tools
+        .list()
+        .map((d) => d.name)
+        .sort();
       await mgr.addServerLive(stdioConfig("docs"));
       expect(tools.has("mcp.docs.search")).toBe(true);
       await mgr.removeServerLive("docs");
-      const after = tools.list().map((d) => d.name).sort();
+      const after = tools
+        .list()
+        .map((d) => d.name)
+        .sort();
       expect(after).toEqual(before);
     });
   });

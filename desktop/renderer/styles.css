@@ -1841,3 +1841,9 @@ body{font-family:var(--font-ui);font-size:var(--fs-cap);letter-spacing:0}
 .slashrow .cmd{color:var(--ink);font-weight:500}
 .slashrow .ds{color:var(--ink-2)}
 .slashrow .hint{color:var(--ink-3)}
+
+/* The run mode (Settings › LLM). Three rows, and the worker count only when
+   fusion is the one running — a control for a mode you are not in is noise. */
+.runmoderows{border:1px solid var(--line);margin-bottom:var(--s4)}
+.runmodeworkers{display:flex;gap:var(--s1);margin-top:var(--s2)}
+.runmodeworkers .btn{min-width:32px;justify-content:center}

@@ -140,7 +140,10 @@ function parseResult(stdout: string, fallbackModel: string): CompletionResult {
       `api_error_status ${status}`,
     );
   }
-  if (envelope.is_error || (envelope.subtype && envelope.subtype !== "success")) {
+  if (
+    envelope.is_error ||
+    (envelope.subtype && envelope.subtype !== "success")
+  ) {
     // The message is the only description of subscription rate limits and
     // usage caps, so it is passed through rather than summarised away.
     throw new SubscriptionCliInvocationError(

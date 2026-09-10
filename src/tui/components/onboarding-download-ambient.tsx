@@ -33,7 +33,10 @@ export function downloadAmbientRows(input: {
 }): number {
   const free =
     input.viewportRows -
-    countOnboardingDownloadBlockRows({ mark: input.mark, offerCloud: input.offerCloud });
+    countOnboardingDownloadBlockRows({
+      mark: input.mark,
+      offerCloud: input.offerCloud,
+    });
   return Math.max(0, Math.floor(free / 2) - 1);
 }
 
@@ -88,5 +91,7 @@ export function OnboardingDownloadAmbient(props: {
     ...(props.atomStepMs === undefined ? {} : { stepMs: props.atomStepMs }),
   });
   if (!active) return null;
-  return <OnboardingAtomField field={field} columns={fieldColumns} rows={rows} />;
+  return (
+    <OnboardingAtomField field={field} columns={fieldColumns} rows={rows} />
+  );
 }

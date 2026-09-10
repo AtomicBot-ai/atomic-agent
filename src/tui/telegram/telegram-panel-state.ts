@@ -13,10 +13,7 @@ import type { ChannelState } from "../../runtime/channel-status.js";
  *  - `pairingResult`— modal showing the claimed owner before auto-close.
  */
 export type TelegramPanelMode =
-  | "list"
-  | "tokenPrompt"
-  | "pairingActive"
-  | "pairingResult";
+  "list" | "tokenPrompt" | "pairingActive" | "pairingResult";
 
 /**
  * Buffered state for the masked token-entry modal. The buffer is

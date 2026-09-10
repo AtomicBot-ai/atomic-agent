@@ -6,7 +6,10 @@ import { createInitialTuiState, type TuiState } from "../tui-state.js";
 import { fakeSession } from "../test-fixtures.js";
 import type { TuiAction } from "../tui-action.js";
 import type { TuiAppCallbacks } from "../tui-app.js";
-import { selectCloudModelSection, selectCloudRows } from "./llm-panel-row-builders.js";
+import {
+  selectCloudModelSection,
+  selectCloudRows,
+} from "./llm-panel-row-builders.js";
 import type { LlmPanelRow } from "./llm-panel-selectors.js";
 import { triggerLlmPrimary } from "./llm-panel-primary-actions.js";
 
@@ -136,15 +139,17 @@ describe("inline cloud model section from the openai-compat cache", () => {
       enterEffect: "Current: xai/grok-4",
     });
     expect(rows.map((row) => row.modelId).sort()).toEqual(models.sort());
-    expect(
-      rows.find((row) => row.modelId === "grok-2"),
-    ).toMatchObject({ primaryAction: "use", enterEffect: "Enter: use xai/grok-2" });
+    expect(rows.find((row) => row.modelId === "grok-2")).toMatchObject({
+      primaryAction: "use",
+      enterEffect: "Enter: use xai/grok-2",
+    });
     expect(selectCloudModelSection(state).status).toBe("ready");
   });
 
   it("keeps all 354 models as rows: the renderer windows, the list does not cap", async () => {
-    const models = Array.from({ length: 354 }, (_, i) =>
-      `m-${String(i).padStart(3, "0")}`,
+    const models = Array.from(
+      { length: 354 },
+      (_, i) => `m-${String(i).padStart(3, "0")}`,
     );
     await seedCompatCache("https://inference.nous.example", models);
     const state = stateWith([
@@ -205,7 +210,10 @@ describe("inline cloud model section from the openai-compat cache", () => {
 
     const rows = chatRows(state);
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ modelId: "grok-4", primaryAction: "current" });
+    expect(rows[0]).toMatchObject({
+      modelId: "grok-4",
+      primaryAction: "current",
+    });
     expect(selectCloudModelSection(state).status).toBe("loading");
   });
 
@@ -223,7 +231,11 @@ describe("inline cloud model section from the openai-compat cache", () => {
       },
     );
     const rows = chatRows(state);
-    expect(rows.map((row) => row.modelId)).toEqual(["grok-4", "live-a", "live-b"]);
+    expect(rows.map((row) => row.modelId)).toEqual([
+      "grok-4",
+      "live-a",
+      "live-b",
+    ]);
   });
 
   it("falls back to one current-model row and surfaces the message on fetch error", () => {
@@ -241,7 +253,10 @@ describe("inline cloud model section from the openai-compat cache", () => {
     );
     const rows = chatRows(state);
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ modelId: "grok-4", primaryAction: "current" });
+    expect(rows[0]).toMatchObject({
+      modelId: "grok-4",
+      primaryAction: "current",
+    });
     const section = selectCloudModelSection(state);
     expect(section.status).toBe("error");
     expect(section.error).toContain("ENOTFOUND");
@@ -277,7 +292,11 @@ describe("inline cloud model section for curated providers", () => {
 
 describe("inline cloud model section for gemini", () => {
   it("reads the gemini-keyed cache (no baseUrl), current model first", async () => {
-    await seedGeminiCache(["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash"]);
+    await seedGeminiCache([
+      "gemini-2.5-flash",
+      "gemini-2.5-pro",
+      "gemini-2.0-flash",
+    ]);
     const state = stateWith([geminiProvider()]);
 
     const rows = chatRows(state);

@@ -90,9 +90,13 @@ describe("useRotatingPlaceholder", () => {
     rerender(<Probe phrases={["a", "b", "c"]} intervalMs={1000} active />);
     expect(strip(lastFrame() ?? "")).toContain("b");
 
-    rerender(<Probe phrases={["a", "b", "c"]} intervalMs={1000} active={false} />);
+    rerender(
+      <Probe phrases={["a", "b", "c"]} intervalMs={1000} active={false} />,
+    );
     vi.advanceTimersByTime(5000);
-    rerender(<Probe phrases={["a", "b", "c"]} intervalMs={1000} active={false} />);
+    rerender(
+      <Probe phrases={["a", "b", "c"]} intervalMs={1000} active={false} />,
+    );
     // Five intervals passed and the phrase did not move, which means no
     // render was scheduled for it either.
     expect(strip(lastFrame() ?? "")).toContain("b");
@@ -106,7 +110,9 @@ describe("useRotatingPlaceholder", () => {
 
   it("defaults to active, so existing callers are unchanged", () => {
     const spy = vi.spyOn(global, "setInterval");
-    const { unmount } = render(<Probe phrases={["a", "b"]} intervalMs={1000} />);
+    const { unmount } = render(
+      <Probe phrases={["a", "b"]} intervalMs={1000} />,
+    );
     expect(spy).toHaveBeenCalled();
     spy.mockRestore();
     unmount();

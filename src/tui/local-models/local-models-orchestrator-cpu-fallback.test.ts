@@ -5,10 +5,9 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../local-llm/index.js", async () => {
-  const actual =
-    await vi.importActual<typeof import("../../local-llm/index.js")>(
-      "../../local-llm/index.js",
-    );
+  const actual = await vi.importActual<
+    typeof import("../../local-llm/index.js")
+  >("../../local-llm/index.js");
   return {
     ...actual,
     getDaemonStatus: vi.fn(),
@@ -80,7 +79,9 @@ describe("LocalModelsOrchestrator CPU-backend fallback", () => {
     vi.mocked(localLlm.fallBackToCpuBackend)
       .mockReset()
       .mockResolvedValue({ tag: "turboquant-x" });
-    vi.mocked(localLlm.resolveManagedDevice).mockReset().mockResolvedValue(undefined);
+    vi.mocked(localLlm.resolveManagedDevice)
+      .mockReset()
+      .mockResolvedValue(undefined);
     vi.mocked(localLlm.listVulkanDevices).mockReset().mockResolvedValue([]);
     vi.mocked(localLlm.probeNvidiaVramMiB).mockReset().mockResolvedValue(null);
     vi.mocked(localLlm.maybeAutoUpdateBackend).mockReset();
@@ -98,13 +99,16 @@ describe("LocalModelsOrchestrator CPU-backend fallback", () => {
     const dataDir = prepareManagedWindowsInstall();
     vi.mocked(localLlm.startChatAndEmbeddingDaemons)
       .mockRejectedValueOnce(healthError())
-      .mockResolvedValueOnce({ chat: { pid: 4242 }, embedding: { skipped: true } });
+      .mockResolvedValueOnce({
+        chat: { pid: 4242 },
+        embedding: { skipped: true },
+      });
 
     const { orchestrator, actions } = makeOrchestrator();
 
-    await expect(orchestrator.startDaemon({ backendAlreadyChecked: true })).resolves.toBe(
-      true,
-    );
+    await expect(
+      orchestrator.startDaemon({ backendAlreadyChecked: true }),
+    ).resolves.toBe(true);
 
     expect(localLlm.fallBackToCpuBackend).toHaveBeenCalledTimes(1);
     expect(localLlm.startChatAndEmbeddingDaemons).toHaveBeenCalledTimes(2);
@@ -113,54 +117,80 @@ describe("LocalModelsOrchestrator CPU-backend fallback", () => {
     // process memory.
     expect(getConfig().localModels.managed.backendVariant).toBe("cpu");
     const lines = actions.map((a) => a.line).filter(Boolean);
-    expect(lines.some((l) => l!.includes("falling back to the CPU build"))).toBe(true);
-    expect(lines.some((l) => l!.includes('recorded backendVariant "cpu"'))).toBe(true);
+    expect(
+      lines.some((l) => l!.includes("falling back to the CPU build")),
+    ).toBe(true);
+    expect(
+      lines.some((l) => l!.includes('recorded backendVariant "cpu"')),
+    ).toBe(true);
     // Download surfaced as a regular backend pull so the panel shows it.
-    expect(actions.some((a) => a.type === "local_models_pull_started")).toBe(true);
-    expect(actions.some((a) => a.type === "local_models_pull_finished")).toBe(true);
+    expect(actions.some((a) => a.type === "local_models_pull_started")).toBe(
+      true,
+    );
+    expect(actions.some((a) => a.type === "local_models_pull_finished")).toBe(
+      true,
+    );
 
     // The download must carry a deadline and live progress — without
     // them a stalled-open connection pins the start forever with zero
     // feedback (the exact hazard the auto-update path guards against).
-    const [calledDataDir, dlOpts] = vi.mocked(localLlm.fallBackToCpuBackend).mock
-      .calls[0]! as [string, { signal?: AbortSignal; onProgress?: (p: number, t: number, tot: number) => void }];
+    const [calledDataDir, dlOpts] = vi.mocked(localLlm.fallBackToCpuBackend)
+      .mock.calls[0]! as [
+      string,
+      {
+        signal?: AbortSignal;
+        onProgress?: (p: number, t: number, tot: number) => void;
+      },
+    ];
     expect(calledDataDir).toBe(dataDir);
     expect(dlOpts.signal).toBeInstanceOf(AbortSignal);
     expect(dlOpts.onProgress).toBeTypeOf("function");
     dlOpts.onProgress!(50, 15_000_000, 30_000_000);
     expect(
-      actions.some((a) => a.type === "local_models_pull_progress" && a.percent === 50),
+      actions.some(
+        (a) => a.type === "local_models_pull_progress" && a.percent === 50,
+      ),
     ).toBe(true);
   });
 
   it("falls back at most once — a CPU build that also fails to serve stops", async () => {
     prepareManagedWindowsInstall();
-    vi.mocked(localLlm.startChatAndEmbeddingDaemons).mockRejectedValue(healthError());
+    vi.mocked(localLlm.startChatAndEmbeddingDaemons).mockRejectedValue(
+      healthError(),
+    );
 
     const { orchestrator, actions } = makeOrchestrator();
 
-    await expect(orchestrator.startDaemon({ backendAlreadyChecked: true })).resolves.toBe(
-      false,
-    );
+    await expect(
+      orchestrator.startDaemon({ backendAlreadyChecked: true }),
+    ).resolves.toBe(false);
 
     expect(localLlm.fallBackToCpuBackend).toHaveBeenCalledTimes(1);
     expect(localLlm.startChatAndEmbeddingDaemons).toHaveBeenCalledTimes(2);
-    expect(actions.some((a) => a.type === "local_models_daemon_error_set")).toBe(true);
+    expect(
+      actions.some((a) => a.type === "local_models_daemon_error_set"),
+    ).toBe(true);
   });
 
   it("reports the failure and gives up when the CPU download itself fails", async () => {
     prepareManagedWindowsInstall();
-    vi.mocked(localLlm.startChatAndEmbeddingDaemons).mockRejectedValue(healthError());
-    vi.mocked(localLlm.fallBackToCpuBackend).mockRejectedValue(new Error("HTTP 503"));
+    vi.mocked(localLlm.startChatAndEmbeddingDaemons).mockRejectedValue(
+      healthError(),
+    );
+    vi.mocked(localLlm.fallBackToCpuBackend).mockRejectedValue(
+      new Error("HTTP 503"),
+    );
 
     const { orchestrator, actions } = makeOrchestrator();
 
-    await expect(orchestrator.startDaemon({ backendAlreadyChecked: true })).resolves.toBe(
-      false,
-    );
+    await expect(
+      orchestrator.startDaemon({ backendAlreadyChecked: true }),
+    ).resolves.toBe(false);
 
     expect(localLlm.startChatAndEmbeddingDaemons).toHaveBeenCalledTimes(1);
-    expect(actions.some((a) => a.type === "local_models_pull_failed")).toBe(true);
+    expect(actions.some((a) => a.type === "local_models_pull_failed")).toBe(
+      true,
+    );
     const err = actions.find((a) => a.type === "local_models_daemon_error_set");
     expect(err?.message).toContain("CPU backend fallback failed — HTTP 503");
     expect(err?.message).toContain("original start failure");
@@ -174,9 +204,9 @@ describe("LocalModelsOrchestrator CPU-backend fallback", () => {
 
     const { orchestrator, actions } = makeOrchestrator();
 
-    await expect(orchestrator.startDaemon({ backendAlreadyChecked: true })).resolves.toBe(
-      false,
-    );
+    await expect(
+      orchestrator.startDaemon({ backendAlreadyChecked: true }),
+    ).resolves.toBe(false);
 
     expect(localLlm.fallBackToCpuBackend).not.toHaveBeenCalled();
     expect(getConfig().localModels.managed.backendVariant).toBe("auto");
@@ -186,13 +216,15 @@ describe("LocalModelsOrchestrator CPU-backend fallback", () => {
 
   it("never falls back when the CPU build is already installed", async () => {
     prepareManagedWindowsInstall(WINDOWS_BACKEND_ASSETS.cpu);
-    vi.mocked(localLlm.startChatAndEmbeddingDaemons).mockRejectedValue(healthError());
+    vi.mocked(localLlm.startChatAndEmbeddingDaemons).mockRejectedValue(
+      healthError(),
+    );
 
     const { orchestrator } = makeOrchestrator();
 
-    await expect(orchestrator.startDaemon({ backendAlreadyChecked: true })).resolves.toBe(
-      false,
-    );
+    await expect(
+      orchestrator.startDaemon({ backendAlreadyChecked: true }),
+    ).resolves.toBe(false);
 
     expect(localLlm.fallBackToCpuBackend).not.toHaveBeenCalled();
   });

@@ -40,7 +40,12 @@ describe("os.fs.diff", () => {
 
   it("diffs inline strings", async () => {
     const result = await osFsDiffTool.run(
-      { aText: "alpha\nbeta\n", bText: "alpha\nBETA\n", aLabel: "old", bLabel: "new" },
+      {
+        aText: "alpha\nbeta\n",
+        bText: "alpha\nBETA\n",
+        aLabel: "old",
+        bLabel: "new",
+      },
       makeCtx(dir),
     );
     expect(result.details.identical).toBe(false);

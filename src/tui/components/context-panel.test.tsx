@@ -64,7 +64,9 @@ function lines(
 
 describe("ContextPanel", () => {
   it("titles itself with the prompt total and the window", () => {
-    expect(lines(usage())[1]).toContain("context · 39.9k of 131.1k window · 30%");
+    expect(lines(usage())[1]).toContain(
+      "context · 39.9k of 131.1k window · 30%",
+    );
   });
 
   it("lists every section with its tokens and share", () => {
@@ -89,7 +91,9 @@ describe("ContextPanel", () => {
 
   /** A section that rounds to nothing still cost something. */
   it("writes <1% rather than 0% for a section that rounds away", () => {
-    expect(lines(usage()).join("\n")).toContain("session facts           610  <1%");
+    expect(lines(usage()).join("\n")).toContain(
+      "session facts           610  <1%",
+    );
   });
 
   it("accounts for the reply reservation and what is left", () => {
@@ -190,7 +194,6 @@ describe("before anything has been measured", () => {
   });
 });
 
-
 /**
  * What stood below the rule was three lines of prose about a token
  * ceiling — a `transcript` measurement, a sentence naming
@@ -258,7 +261,8 @@ describe("recalculating as the selector moves", () => {
 
   it("gives the window back as tasks come off", () => {
     const freeOf = (draft: number | null): string =>
-      lines(usage(), 100, 24, 4096, draft).find((l) => l.includes("free")) ?? "";
+      lines(usage(), 100, 24, 4096, draft).find((l) => l.includes("free")) ??
+      "";
     expect(freeOf(8)).not.toBe(freeOf(2));
     expect(freeOf(2)).toContain("%");
   });
@@ -311,9 +315,7 @@ describe("on the shortest pane the app can hand it", () => {
     // Two rules and nothing between them reads as a rendering fault.
     // Interior rules only — the frame's own top and bottom are drawn
     // from the same glyph and are not what this is about.
-    const rules = drawn(6).filter(
-      (l) => /│[─—]+│/.test(l.replace(/\s/g, "")),
-    );
+    const rules = drawn(6).filter((l) => /│[─—]+│/.test(l.replace(/\s/g, "")));
     expect(rules.length).toBeLessThanOrEqual(1);
   });
 

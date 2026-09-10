@@ -122,9 +122,9 @@ describe("stepping the task selector", () => {
     // The editor is unfocused while the panel owns input, so a `-` that
     // fell through would land in the buffer and surprise the operator
     // later.
-    expect(handleContextPanelKey("-", key(), { state: open(), dispatch: () => {} })).toBe(
-      true,
-    );
+    expect(
+      handleContextPanelKey("-", key(), { state: open(), dispatch: () => {} }),
+    ).toBe(true);
   });
 
   it("leaves closing to the keys that close", () => {

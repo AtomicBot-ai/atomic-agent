@@ -21,19 +21,39 @@ describe("collision rarity at production geometry", () => {
   const rarity: { name: string; bounds: AtomBounds; maxHot: number }[] = [
     // 90×20 terminal: the minimum budget that still draws a field.
     // Measured 39/2000 hot steps (2.0%).
-    { name: "the minimum field (89×3)", bounds: { columns: 89, rows: 3 }, maxHot: 80 },
+    {
+      name: "the minimum field (89×3)",
+      bounds: { columns: 89, rows: 3 },
+      maxHot: 80,
+    },
     // 80×20 terminal. Measured 50/2000 (2.5%).
-    { name: "a narrow minimum (79×3)", bounds: { columns: 79, rows: 3 }, maxHot: 100 },
+    {
+      name: "a narrow minimum (79×3)",
+      bounds: { columns: 79, rows: 3 },
+      maxHot: 100,
+    },
     // 100×24 terminal. Measured 144/2000 (7.2%).
-    { name: "a mid-size pane (99×7)", bounds: { columns: 99, rows: 7 }, maxHot: 250 },
+    {
+      name: "a mid-size pane (99×7)",
+      bounds: { columns: 99, rows: 7 },
+      maxHot: 250,
+    },
     // 100×30 terminal. Measured 126/2000 (6.3%).
-    { name: "a full-size pane (99×13)", bounds: { columns: 99, rows: 13 }, maxHot: 250 },
+    {
+      name: "a full-size pane (99×13)",
+      bounds: { columns: 99, rows: 13 },
+      maxHot: 250,
+    },
   ];
 
   for (const tier of rarity) {
     it(`keeps collisions rare on ${tier.name}`, () => {
       const count = atomPopulation(tier.bounds);
-      let state = createAtomField({ bounds: tier.bounds, count, seed: 20260821 });
+      let state = createAtomField({
+        bounds: tier.bounds,
+        count,
+        seed: 20260821,
+      });
       let hotSteps = 0;
       for (let i = 0; i < 2000; i += 1) {
         state = stepAtoms(state, tier.bounds);

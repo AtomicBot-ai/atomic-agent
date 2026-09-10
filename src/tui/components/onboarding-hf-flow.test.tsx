@@ -99,8 +99,9 @@ describe("OnboardingHuggingFaceFlow", () => {
       strip(view.lastFrame() ?? "").includes("asking huggingface.co"),
     );
     view.stdin.write("\u001b");
-    await until("lookup cancelled", () =>
-      !strip(view.lastFrame() ?? "").includes("asking huggingface.co"),
+    await until(
+      "lookup cancelled",
+      () => !strip(view.lastFrame() ?? "").includes("asking huggingface.co"),
     );
     expect(signal?.aborted).toBe(true);
     // What was typed survives the cancel — the point of cancelling is
@@ -122,8 +123,9 @@ describe("OnboardingHuggingFaceFlow", () => {
       strip(view.lastFrame() ?? "").includes("asking huggingface.co"),
     );
     view.stdin.write("\u001b");
-    await until("lookup cancelled", () =>
-      !strip(view.lastFrame() ?? "").includes("asking huggingface.co"),
+    await until(
+      "lookup cancelled",
+      () => !strip(view.lastFrame() ?? "").includes("asking huggingface.co"),
     );
     settle(CHOICES);
     // Give a wrongly-surviving dispatch every chance to land.

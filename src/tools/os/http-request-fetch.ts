@@ -146,10 +146,7 @@ export async function executeGuardedHttpRequest(
     } catch (err) {
       // Only a curl timeout is worth another attempt; a missing binary, an
       // SSRF rejection, or an aborted run must surface immediately.
-      if (
-        !isCurlTransportError(err) ||
-        err.exitCode !== CURL_EXIT_TIMEOUT
-      ) {
+      if (!isCurlTransportError(err) || err.exitCode !== CURL_EXIT_TIMEOUT) {
         throw err;
       }
       failure = err;
@@ -318,8 +315,7 @@ async function sendGuardedRequestOnce(
       const err = new Error(formatCurlError(result));
       (err as Error & { curlExit: true; command: string[] }).curlExit = true;
       (err as Error & { command: string[] }).command = lastCommand;
-      (err as Error & { exitCode: number | null }).exitCode =
-        result.exitCode;
+      (err as Error & { exitCode: number | null }).exitCode = result.exitCode;
       (err as Error & { stderr: string }).stderr = result.stderr.trim();
       throw err;
     }
@@ -344,7 +340,11 @@ async function sendGuardedRequestOnce(
       }
       state.redirects += 1;
       // Curl -L semantics: 301/302/303 drop to GET without body; 307/308 keep method+body.
-      if (parsed.status === 301 || parsed.status === 302 || parsed.status === 303) {
+      if (
+        parsed.status === 301 ||
+        parsed.status === 302 ||
+        parsed.status === 303
+      ) {
         method = "GET";
         body = undefined;
       }
@@ -367,9 +367,7 @@ async function sendGuardedRequestOnce(
   }
 }
 
-export function isCurlTransportError(
-  err: unknown,
-): err is Error & {
+export function isCurlTransportError(err: unknown): err is Error & {
   curlExit: true;
   command: string[];
   exitCode: number | null;

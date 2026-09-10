@@ -74,7 +74,9 @@ function KindRow({
       {kinds.map((candidate, idx) => (
         <Text
           key={candidate}
-          color={candidate === kind ? theme.colors.accentSoft : theme.colors.muted}
+          color={
+            candidate === kind ? theme.colors.accentSoft : theme.colors.muted
+          }
           bold={candidate === kind}
         >
           {idx > 0 ? " / " : ""}
@@ -125,9 +127,7 @@ function FieldRow({
   focused: boolean;
 }): ReactElement {
   const display = value.length > 0 ? value : placeholder;
-  const color = value.length > 0
-    ? theme.colors.accentSoft
-    : theme.colors.muted;
+  const color = value.length > 0 ? theme.colors.accentSoft : theme.colors.muted;
   return (
     <Box>
       <Text color={theme.colors.muted}>{labelPrefix(label, focused)}</Text>
@@ -196,9 +196,7 @@ export function focusAfter(
   order: readonly TaskCreateFocus[],
 ): TaskCreateFocus {
   const filtered =
-    form.kind === "cron"
-      ? order
-      : order.filter((step) => step !== "tz");
+    form.kind === "cron" ? order : order.filter((step) => step !== "tz");
   const idx = filtered.indexOf(form.focus);
   const safe = idx === -1 ? 0 : idx;
   const next = (safe + delta + filtered.length) % filtered.length;

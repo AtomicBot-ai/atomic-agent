@@ -37,17 +37,18 @@ export function createLogNdjsonSink(emit: SidecarEventEmitter): LogSink {
  */
 export function createMetricNdjsonSink(emit: SidecarEventEmitter): MetricSink {
   return (sample: MetricSample) => {
-    const event: SidecarEvent<"metric", MetricPayload & { timestamp: number }> = {
-      kind: "event",
-      id: randomUUID(),
-      type: "metric",
-      payload: {
-        name: sample.name,
-        value: sample.value,
-        ...(sample.tags ? { tags: sample.tags } : {}),
-        timestamp: sample.timestamp,
-      },
-    };
+    const event: SidecarEvent<"metric", MetricPayload & { timestamp: number }> =
+      {
+        kind: "event",
+        id: randomUUID(),
+        type: "metric",
+        payload: {
+          name: sample.name,
+          value: sample.value,
+          ...(sample.tags ? { tags: sample.tags } : {}),
+          timestamp: sample.timestamp,
+        },
+      };
     emit(event);
   };
 }

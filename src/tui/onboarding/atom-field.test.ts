@@ -29,7 +29,11 @@ function field(atoms: Atom[], seed = 7): AtomFieldState {
   return { atoms, seed, step: 0, nextId: atoms.length + 1 };
 }
 
-function run(state: AtomFieldState, steps: number, bounds = BOUNDS): AtomFieldState {
+function run(
+  state: AtomFieldState,
+  steps: number,
+  bounds = BOUNDS,
+): AtomFieldState {
   let next = state;
   for (let i = 0; i < steps; i += 1) next = stepAtoms(next, bounds);
   return next;
@@ -134,7 +138,10 @@ describe("stepAtoms bouncing", () => {
   }
 
   it("keeps every atom inside the pane across a long run", () => {
-    const state = run(createAtomField({ bounds: BOUNDS, count: 6, seed: 11 }), 500);
+    const state = run(
+      createAtomField({ bounds: BOUNDS, count: 6, seed: 11 }),
+      500,
+    );
     for (const placed of state.atoms) {
       expect(placed.column).toBeGreaterThanOrEqual(0);
       expect(placed.column).toBeLessThanOrEqual(BOUNDS.columns - ATOM_WIDTH);
@@ -144,7 +151,11 @@ describe("stepAtoms bouncing", () => {
   });
 
   it("pulls atoms back in when the terminal shrinks under them", () => {
-    const wide = createAtomField({ bounds: { columns: 200, rows: 40 }, count: 5, seed: 8 });
+    const wide = createAtomField({
+      bounds: { columns: 200, rows: 40 },
+      count: 5,
+      seed: 8,
+    });
     const narrow = stepAtoms(wide, BOUNDS);
     for (const placed of narrow.atoms) {
       expect(placed.column).toBeLessThanOrEqual(BOUNDS.columns - ATOM_WIDTH);
@@ -169,11 +180,16 @@ describe("stepAtoms lifecycle", () => {
     expect(after.dormantSteps).toBe(0);
     expect(after.lifeSteps).toBeGreaterThan(0);
     expect(after.id).not.toBe(before.id);
-    expect(after.column === before.column && after.row === before.row).toBe(false);
+    expect(after.column === before.column && after.row === before.row).toBe(
+      false,
+    );
   });
 
   it("holds the population steady across a run full of retirements", () => {
-    const state = run(createAtomField({ bounds: BOUNDS, count: 5, seed: 21 }), 400);
+    const state = run(
+      createAtomField({ bounds: BOUNDS, count: 5, seed: 21 }),
+      400,
+    );
     expect(state.atoms).toHaveLength(5);
     // Some came and went; the count never moved.
     expect(state.nextId).toBeGreaterThan(5);
@@ -184,7 +200,8 @@ describe("stepAtoms lifecycle", () => {
     let sawDormant = false;
     for (let i = 0; i < 400; i += 1) {
       state = stepAtoms(state, BOUNDS);
-      if (state.atoms.some((placed) => placed.dormantSteps > 0)) sawDormant = true;
+      if (state.atoms.some((placed) => placed.dormantSteps > 0))
+        sawDormant = true;
     }
     expect(sawDormant).toBe(true);
   });
@@ -237,7 +254,13 @@ describe("stepAtoms collisions", () => {
   it("leaves atoms whose glyphs clear each other alone", () => {
     const apart = [
       atom({ id: 1, column: 10, row: 4, columnVelocity: 0, rowVelocity: 0 }),
-      atom({ id: 2, column: 10 + ATOM_WIDTH, row: 4, columnVelocity: 0, rowVelocity: 0 }),
+      atom({
+        id: 2,
+        column: 10 + ATOM_WIDTH,
+        row: 4,
+        columnVelocity: 0,
+        rowVelocity: 0,
+      }),
     ];
     const after = stepAtoms(field(apart), BOUNDS).atoms;
     expect(after.every((placed) => placed.hotSteps === 0)).toBe(true);

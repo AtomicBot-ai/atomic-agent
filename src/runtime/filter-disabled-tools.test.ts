@@ -19,10 +19,15 @@ const ALL_OPEN: ToolGateConfig = {
   },
   tasks: { agentToolsEnabled: true },
   mcp: { enabled: true },
+  github: { connected: true },
+  email: { available: true },
+  fusion: { enabled: true },
 };
 
 function nameSet(
-  result: readonly { name: string }[] | ReturnType<typeof filterToolDescriptorsByConfig>,
+  result:
+    | readonly { name: string }[]
+    | ReturnType<typeof filterToolDescriptorsByConfig>,
 ): Set<string> {
   return new Set(Array.from(result, (d) => d.name));
 }
@@ -114,6 +119,22 @@ describe("filterToolDescriptorsByConfig", () => {
     expect(nameSet(filtered).has("memory.procedures.recall")).toBe(false);
   });
 
+  it("drops every github.* descriptor when no token is in the hub", () => {
+    // The tools stay registered and would answer "GitHub is not
+    // connected"; a catalog entry for them only invites the model to try.
+    const filtered = filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, {
+      ...ALL_OPEN,
+      github: { connected: false },
+    });
+    const names = nameSet(filtered);
+    for (const name of GATED_TOOL_NAMES.github) {
+      expect(names.has(name)).toBe(false);
+    }
+    // The git write tools are not GitHub-specific and stay.
+    expect(names.has("os.git.push")).toBe(true);
+    expect(names.has("os.git.commit")).toBe(true);
+  });
+
   it("drops every tasks.* descriptor when agent tools are disabled", () => {
     const filtered = filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, {
       ...ALL_OPEN,
@@ -129,11 +150,29 @@ describe("filterToolDescriptorsByConfig", () => {
     const filtered = filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, {
       ...ALL_OPEN,
       mcp: { enabled: false },
+      email: { available: false },
     });
     const names = nameSet(filtered);
     for (const dropped of GATED_TOOL_NAMES.mcp) {
       expect(names.has(dropped)).toBe(false);
     }
+  });
+
+  it("drops fusion.delegate when fusion is not the effective run mode", () => {
+    // The gate is what keeps a non-fusion install from advertising a
+    // fan-out it cannot perform -- and, because the `### fusion`
+    // guidance block keys off this same descriptor, what keeps its
+    // stable prefix byte-identical to a build without the feature.
+    const filtered = filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, {
+      ...ALL_OPEN,
+      fusion: { enabled: false },
+    });
+    expect(nameSet(filtered).has("fusion.delegate")).toBe(false);
+    expect(
+      nameSet(
+        filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, ALL_OPEN),
+      ).has("fusion.delegate"),
+    ).toBe(true);
   });
 
   it("drops everything gated when every switch is off", () => {
@@ -149,6 +188,9 @@ describe("filterToolDescriptorsByConfig", () => {
       },
       tasks: { agentToolsEnabled: false },
       mcp: { enabled: false },
+      github: { connected: false },
+      email: { available: false },
+      fusion: { enabled: false },
     });
     const names = nameSet(filtered);
     const allGated = [
@@ -161,6 +203,7 @@ describe("filterToolDescriptorsByConfig", () => {
       ...GATED_TOOL_NAMES.memoryProcedures,
       ...GATED_TOOL_NAMES.tasks,
       ...GATED_TOOL_NAMES.mcp,
+      ...GATED_TOOL_NAMES.fusion,
     ];
     for (const dropped of allGated) {
       expect(names.has(dropped)).toBe(false);
@@ -181,9 +224,30 @@ describe("filterToolDescriptorsByConfig", () => {
       ...GATED_TOOL_NAMES.memoryProcedures,
       ...GATED_TOOL_NAMES.tasks,
       ...GATED_TOOL_NAMES.mcp,
+      ...GATED_TOOL_NAMES.fusion,
     ];
     for (const name of allGated) {
       expect(known.has(name)).toBe(true);
     }
+  });
+});
+
+describe("e-mail gate", () => {
+  it("drops os.email.* from the prefix when no inbox is registered, keeps them otherwise", () => {
+    const withInbox = nameSet(
+      filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, ALL_OPEN),
+    );
+    expect(withInbox.has("os.email.inbox")).toBe(true);
+    expect(withInbox.has("os.email.send")).toBe(true);
+    const without = nameSet(
+      filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, {
+        ...ALL_OPEN,
+        email: { available: false },
+      }),
+    );
+    expect(without.has("os.email.inbox")).toBe(false);
+    expect(without.has("os.email.send")).toBe(false);
+    // Nothing else moves with it.
+    expect(without.size).toBe(withInbox.size - 2);
   });
 });

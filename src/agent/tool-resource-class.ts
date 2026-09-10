@@ -93,6 +93,28 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   "os.git.show": "pure_read",
   "os.git.blame": "pure_read",
   "os.git.branch": "pure_read",
+  // os.git.* — network verbs; gated by the remote-sync switch, then approval
+  "os.git.remote": "approval_gated",
+  "os.git.fetch": "approval_gated",
+  "os.git.pull": "approval_gated",
+  "os.git.push": "approval_gated",
+  "os.git.clone": "approval_gated",
+
+  // os.git.* — mutating locally; each goes through requireApproval
+  "os.git.checkout": "approval_gated",
+  "os.git.commit": "approval_gated",
+
+  // github.* — REST reads are free; writes publish under the user's name
+  "github.whoami": "pure_read",
+  "github.pr.list": "pure_read",
+  "github.issue.list": "pure_read",
+  "github.pr.create": "approval_gated",
+  "github.issue.create": "approval_gated",
+  "github.issue.comment": "approval_gated",
+
+  // os.git.* — local writes; approval-gated like fs writes
+  "os.git.init": "approval_gated",
+  "os.git.add": "approval_gated",
 
   // os.proc.*
   "os.proc.list": "pure_read",
@@ -112,6 +134,10 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   "os.window.list": "pure_read",
   "os.window.focus": "memory_write",
   "os.notify": "memory_write",
+
+  // os.email.* — the agent's own inbox
+  "os.email.inbox": "pure_read",
+  "os.email.send": "approval_gated",
 
   // discovery
   "skill.view": "pure_read",
@@ -139,6 +165,12 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   // vision
   "vision.describe": "vision",
 
+  // fusion — `approval_gated` is the "must be solo" class, and that is
+  // what this needs: one call runs several worker turns concurrently
+  // inside itself, for minutes. Batching it beside other tools would
+  // stack the orchestrator's own fan-out on top of the fan-out.
+  "fusion.delegate": "approval_gated",
+
   // mcp.* discovery / read tools — pure_read regardless of per-server
   // trust because they only inspect the local catalog or fetch
   // declared resources/prompts. Per-server-tool calls go through
@@ -162,7 +194,8 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
  * is consulted only when the static lookup misses, so it cannot
  * override the built-in classes.
  */
-let dynamicResourceClassResolver: ((toolName: string) => ResourceClass | null) | null = null;
+let dynamicResourceClassResolver:
+  ((toolName: string) => ResourceClass | null) | null = null;
 
 /**
  * Install a dynamic resolver. Pass `null` to unregister (e.g. during

@@ -1,4 +1,7 @@
-import { OpenAiProvider, type OpenAiProviderOptions } from "../openai/openai-provider.js";
+import {
+  OpenAiProvider,
+  type OpenAiProviderOptions,
+} from "../openai/openai-provider.js";
 
 /** Root without `/v1` — {@link OpenAiProvider} appends `/v1/chat/completions`. */
 export const DEFAULT_OPENROUTER_BASE = "https://openrouter.ai/api";
@@ -10,14 +13,18 @@ export const DEFAULT_OPENROUTER_BASE = "https://openrouter.ai/api";
  * the title is the display name and the categories place us in the
  * marketplace boards. See https://openrouter.ai/docs/app-attribution.
  */
-export const OPENROUTER_APP_REFERER = "https://github.com/AtomicBot-ai/atomic-agent";
+export const OPENROUTER_APP_REFERER =
+  "https://github.com/AtomicBot-ai/atomic-agent";
 export const OPENROUTER_APP_TITLE = "Atomic Agent";
 export const OPENROUTER_APP_CATEGORIES = "cli-agent,personal-agent";
 
 /** Strips a trailing `/v1` so paths are not doubled (`/api/v1/v1/...`). */
 export { normalizeOpenAiBaseUrl as normalizeOpenRouterBaseUrl } from "../openai/normalize-openai-base-url.js";
 
-export type OpenRouterProviderOptions = Omit<OpenAiProviderOptions, "baseUrl"> & {
+export type OpenRouterProviderOptions = Omit<
+  OpenAiProviderOptions,
+  "baseUrl"
+> & {
   baseUrl?: string;
   httpReferer?: string;
   xTitle?: string;

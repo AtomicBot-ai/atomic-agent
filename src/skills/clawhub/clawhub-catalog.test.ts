@@ -46,10 +46,7 @@ describe("searchClawHub", () => {
   });
 
   it("keeps relevance order for ties (stable sort)", async () => {
-    const client = fakeClient([
-      summary("first", 100),
-      summary("second", 100),
-    ]);
+    const client = fakeClient([summary("first", 100), summary("second", 100)]);
     const entries = await searchClawHub(client, "x");
     expect(entries.map((e) => e.identifier)).toEqual([
       "@alice/first",

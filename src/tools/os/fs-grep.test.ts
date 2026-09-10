@@ -36,9 +36,7 @@ function makeCtx(): ToolContext {
   };
 }
 
-function makeCommandResult(
-  overrides: Partial<CommandResult>,
-): CommandResult {
+function makeCommandResult(overrides: Partial<CommandResult>): CommandResult {
   return {
     command: "rg",
     args: [],
@@ -188,10 +186,7 @@ describe("os.fs.grep", () => {
       resolveRgPath: () => "/fake/rg",
       runCommand: async () => makeCommandResult({ stdout }),
     });
-    const result = await tool.run(
-      { pattern: "hit", headLimit: 2 },
-      makeCtx(),
-    );
+    const result = await tool.run({ pattern: "hit", headLimit: 2 }, makeCtx());
     expect(result.details.truncated).toBe(true);
     expect(result.summary).toContain("1: hit1");
     expect(result.summary).toContain("2: hit2");
@@ -314,10 +309,7 @@ describe("os.fs.grep", () => {
         return makeCommandResult({ stdout: "" });
       },
     });
-    await tool.run(
-      { pattern: "foo", contextAround: 2 },
-      makeCtx(),
-    );
+    await tool.run({ pattern: "foo", contextAround: 2 }, makeCtx());
     const before = capturedArgs.indexOf("-B");
     const after = capturedArgs.indexOf("-A");
     expect(before).toBeGreaterThan(-1);

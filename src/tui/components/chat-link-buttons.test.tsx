@@ -141,9 +141,9 @@ describe("extractMessageUrls", () => {
   });
 
   it("dedupes on the normalised target", () => {
-    expect(
-      extractMessageUrls("https://a.io twice https://a.io"),
-    ).toEqual(["https://a.io"]);
+    expect(extractMessageUrls("https://a.io twice https://a.io")).toEqual([
+      "https://a.io",
+    ]);
   });
 
   it("is empty for a message without URLs", () => {

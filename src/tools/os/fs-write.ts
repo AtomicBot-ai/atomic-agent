@@ -40,7 +40,8 @@ export function buildOsFsWriteTool(
           : "replace";
       const absolute = resolveUserPath(path, ctx.workingDir);
 
-      const preview = content.length > 400 ? `${content.slice(0, 400)}…` : content;
+      const preview =
+        content.length > 400 ? `${content.slice(0, 400)}…` : content;
 
       // The operator can retarget the write from the prompt ("put it in
       // ~/Documents/apple-site instead"). A retarget is never a silent
@@ -73,7 +74,9 @@ export function buildOsFsWriteTool(
 
         const typed = outcome.pathOverride.trim();
         if (typed.length === 0) {
-          throw new Error("os.fs.write: empty target path from the approval prompt");
+          throw new Error(
+            "os.fs.write: empty target path from the approval prompt",
+          );
         }
         if (++redirects > MAX_REDIRECTS) {
           throw new Error(

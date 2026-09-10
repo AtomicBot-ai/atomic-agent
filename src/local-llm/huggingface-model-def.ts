@@ -5,7 +5,10 @@
  * that shape and needs no second one.
  */
 
-import { resolveHuggingFaceFileUrl, type HuggingFaceFile } from "./huggingface-api.js";
+import {
+  resolveHuggingFaceFileUrl,
+  type HuggingFaceFile,
+} from "./huggingface-api.js";
 import type { LocalModelDef, LocalModelId } from "./models-catalog.js";
 
 const BYTES_PER_GB = 1024 * 1024 * 1024;
@@ -15,8 +18,14 @@ const BYTES_PER_GB = 1024 * 1024 * 1024;
  * is created verbatim from this, so the character filter has to survive
  * Windows path rules as well as POSIX ones.
  */
-export function buildCustomModelId(repoId: string, filePath: string): LocalModelId {
-  const base = filePath.split("/").pop()!.replace(/\.gguf$/i, "");
+export function buildCustomModelId(
+  repoId: string,
+  filePath: string,
+): LocalModelId {
+  const base = filePath
+    .split("/")
+    .pop()!
+    .replace(/\.gguf$/i, "");
   const slug = `${repoId}-${base}`
     .toLowerCase()
     .replace(/[^a-z0-9._-]+/g, "-")
@@ -28,7 +37,9 @@ export function buildCustomModelId(repoId: string, filePath: string): LocalModel
 export function formatGgufSize(bytes: number): string {
   if (bytes <= 0) return "unknown";
   const gb = bytes / BYTES_PER_GB;
-  return gb >= 1 ? `${gb.toFixed(1)} GB` : `${Math.round(bytes / (1024 * 1024))} MB`;
+  return gb >= 1
+    ? `${gb.toFixed(1)} GB`
+    : `${Math.round(bytes / (1024 * 1024))} MB`;
 }
 
 export function ggufSizeGb(bytes: number): number {

@@ -237,7 +237,11 @@ export class LlmHealthPoller {
       // hammer `/props` every tick on older llama.cpp builds.
       this.modelFetchedForUrl = true;
       if (this.stopped) return;
-      this.emitter.emit({ type: "llm_model_updated", model: label, contextWindow });
+      this.emitter.emit({
+        type: "llm_model_updated",
+        model: label,
+        contextWindow,
+      });
     } catch {
       // Swallow: a one-off `/props` failure must not disturb the
       // health loop. We simply retry on the next URL change.
@@ -257,12 +261,14 @@ export class LlmHealthPoller {
 function extractModelLabel(props: Record<string, unknown>): string | null {
   const candidates: Array<unknown> = [
     props["model_alias"],
-    (props["default_generation_settings"] as Record<string, unknown> | undefined)?.[
-      "model"
-    ],
-    (props["default_generation_settings"] as Record<string, unknown> | undefined)?.[
-      "model_alias"
-    ],
+    (
+      props["default_generation_settings"] as
+        Record<string, unknown> | undefined
+    )?.["model"],
+    (
+      props["default_generation_settings"] as
+        Record<string, unknown> | undefined
+    )?.["model_alias"],
     props["model"],
     props["model_path"],
   ];
@@ -288,13 +294,18 @@ function basename(value: string): string {
  */
 function extractContextWindow(props: Record<string, unknown>): number | null {
   const candidates: Array<unknown> = [
-    (props["default_generation_settings"] as Record<string, unknown> | undefined)?.[
-      "n_ctx"
-    ],
+    (
+      props["default_generation_settings"] as
+        Record<string, unknown> | undefined
+    )?.["n_ctx"],
     props["n_ctx"],
   ];
   for (const candidate of candidates) {
-    if (typeof candidate === "number" && Number.isFinite(candidate) && candidate > 0) {
+    if (
+      typeof candidate === "number" &&
+      Number.isFinite(candidate) &&
+      candidate > 0
+    ) {
       return candidate;
     }
   }

@@ -1055,6 +1055,21 @@ export interface UserConfigShape {
     toolTransport?: string;
     providers?: ProviderEntry[];
     fallback?: { chain?: string[]; appendLocal?: boolean };
+    /* The TUI's run mode. Additive: `activeTextProvider` stays authoritative,
+       and `fusion` is the one mode that needs both legs — a cloud model
+       orchestrating several llama-server workers. */
+    runMode?: {
+      mode?: "local" | "cloud" | "fusion";
+      fusion?: {
+        orchestratorProvider?: string;
+        orchestratorModel?: string;
+        workerProvider?: string;
+        workerModel?: string;
+        workers?: number;
+        workerMaxSteps?: number;
+        workerTimeoutMs?: number;
+      };
+    };
   };
 }
 
@@ -1332,6 +1347,37 @@ export function providerHasKey(entry: ProviderEntry, names: KeyEnvNames = keyNam
 }
 
 /** Ids of the configured cloud providers that have a usable key, for the selector's row copy. */
+/**
+ * The run mode, as the TUI's `/runmode` writes it.
+ *
+ * The desktop had no way to reach this at all: three run modes in the TUI
+ * (local, cloud, and fusion — a cloud model orchestrating local workers) and
+ * a window that could only pick a provider. It is ordinary config, so it goes
+ * through the same whole-file path every other write here uses; there is no
+ * route for it and inventing one would be a second source of truth.
+ */
+export async function setRunMode(
+  mode: "local" | "cloud" | "fusion",
+  fusion?: { workers?: number },
+): Promise<WriteResult> {
+  return withConfigLock(async () => {
+    const read = await readWholeConfig();
+    if (!read.ok || !read.config) return { ok: false, changed: false, error: read.error };
+    const cfg = read.config;
+    const llm = (cfg.llm ??= {});
+    const run = (llm.runMode ??= {});
+    const before = JSON.stringify(run);
+    run.mode = mode;
+    if (fusion?.workers !== undefined) {
+      const f = (run.fusion ??= {});
+      f.workers = Math.max(1, Math.min(16, Math.floor(fusion.workers)));
+    }
+    if (JSON.stringify(run) === before) return { ok: true, changed: false };
+    const w = await writeWholeConfig(cfg);
+    return w.ok ? { ok: true, changed: true } : { ok: false, changed: false, error: w.error };
+  });
+}
+
 export async function providersReady(): Promise<{ ok: boolean; ids?: string[]; error?: string }> {
   const read = await readWholeConfig();
   if (!read.ok || !read.config) return { ok: false, error: read.error };

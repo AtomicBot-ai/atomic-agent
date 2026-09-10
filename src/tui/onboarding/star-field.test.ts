@@ -7,7 +7,12 @@ import type { StarTier } from "./star-tiers.js";
 const CANVAS = { columns: 96, rows: 20 } as const;
 
 function countByTier(stars: readonly Star[]): Record<StarTier, number> {
-  const counts: Record<StarTier, number> = { bright: 0, mid: 0, dim: 0, faint: 0 };
+  const counts: Record<StarTier, number> = {
+    bright: 0,
+    mid: 0,
+    dim: 0,
+    faint: 0,
+  };
   for (const star of stars) counts[star.tier] += 1;
   return counts;
 }
@@ -17,12 +22,19 @@ function countByTier(stars: readonly Star[]): Record<StarTier, number> {
  * uniformly is Poisson and sits near 1; clumping pushes it up, which is
  * the only way to say "clustered" as a number rather than by eye.
  */
-function dispersion(stars: readonly Star[], columns: number, rows: number): number {
+function dispersion(
+  stars: readonly Star[],
+  columns: number,
+  rows: number,
+): number {
   const across = 8;
   const down = 4;
   const tiles = new Array<number>(across * down).fill(0);
   for (const star of stars) {
-    const tx = Math.min(across - 1, Math.floor((star.column / columns) * across));
+    const tx = Math.min(
+      across - 1,
+      Math.floor((star.column / columns) * across),
+    );
     const ty = Math.min(down - 1, Math.floor((star.row / rows) * down));
     tiles[ty * across + tx] += 1;
   }
@@ -122,10 +134,16 @@ describe("computeStarField", () => {
           star.column <= secondRowNineSpan.to,
       ),
     ).toBe(true);
-    for (const star of computeStarField({ ...CANVAS, seed, clearSpans: spans })) {
+    for (const star of computeStarField({
+      ...CANVAS,
+      seed,
+      clearSpans: spans,
+    })) {
       // Every span on the row, not just the first: the option is an
       // arbitrary list, and a second span on one row must also hold.
-      for (const span of spans.filter((candidate) => candidate.row === star.row)) {
+      for (const span of spans.filter(
+        (candidate) => candidate.row === star.row,
+      )) {
         expect(star.column < span.from || star.column > span.to).toBe(true);
       }
     }

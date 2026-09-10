@@ -4,9 +4,12 @@ import { readErrnoCode } from "./errno-code.js";
 
 describe("readErrnoCode", () => {
   it("reads the errno off the error itself", () => {
-    const err = Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:19091"), {
-      code: "ECONNREFUSED",
-    });
+    const err = Object.assign(
+      new Error("connect ECONNREFUSED 127.0.0.1:19091"),
+      {
+        code: "ECONNREFUSED",
+      },
+    );
     expect(readErrnoCode(err)).toBe("ECONNREFUSED");
   });
 
@@ -25,7 +28,9 @@ describe("readErrnoCode", () => {
       code: "UND_ERR_SOCKET",
     });
     expect(
-      readErrnoCode(Object.assign(new TypeError("fetch failed"), { cause: inner })),
+      readErrnoCode(
+        Object.assign(new TypeError("fetch failed"), { cause: inner }),
+      ),
     ).toBe("UND_ERR_SOCKET");
   });
 

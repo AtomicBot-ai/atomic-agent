@@ -32,10 +32,7 @@ describe("memory.profile.set", () => {
 
   it("upserts a fact and persists it in the store", async () => {
     const tool = buildProfileSetTool({ store });
-    const result = await tool.run(
-      { key: "language", value: "ru" },
-      makeCtx(),
-    );
+    const result = await tool.run({ key: "language", value: "ru" }, makeCtx());
     expect(result.status).toBe("ok");
     expect(result.details.key).toBe("language");
     expect(result.details.value).toBe("ru");
@@ -45,30 +42,21 @@ describe("memory.profile.set", () => {
 
   it("returns an error tool-result for invalid keys", async () => {
     const tool = buildProfileSetTool({ store });
-    const result = await tool.run(
-      { key: "has space", value: "x" },
-      makeCtx(),
-    );
+    const result = await tool.run({ key: "has space", value: "x" }, makeCtx());
     expect(result.status).toBe("error");
     expect(result.details.field).toBe("key");
   });
 
   it("returns an error tool-result for empty values", async () => {
     const tool = buildProfileSetTool({ store });
-    const result = await tool.run(
-      { key: "ok", value: "" },
-      makeCtx(),
-    );
+    const result = await tool.run({ key: "ok", value: "" }, makeCtx());
     expect(result.status).toBe("error");
     expect(result.details.field).toBe("value");
   });
 
   it("defaults pinned=true when the flag is omitted", async () => {
     const tool = buildProfileSetTool({ store });
-    const result = await tool.run(
-      { key: "language", value: "ru" },
-      makeCtx(),
-    );
+    const result = await tool.run({ key: "language", value: "ru" }, makeCtx());
     expect(result.status).toBe("ok");
     expect(result.details.pinned).toBe(true);
     expect(result.details.keywords).toEqual([]);

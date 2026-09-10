@@ -35,7 +35,9 @@ describe("attachStderrTail", () => {
 
   it("tolerates a missing stream and a stream error", async () => {
     expect(attachStderrTail(null).read()).toBe("");
-    await expect(attachStderrTail(undefined).settle(5)).resolves.toBeUndefined();
+    await expect(
+      attachStderrTail(undefined).settle(5),
+    ).resolves.toBeUndefined();
 
     const stream = new PassThrough();
     const tail = attachStderrTail(stream);
@@ -75,7 +77,9 @@ describe("formatStderrTail", () => {
   it("strips ANSI colour and clips long output", () => {
     const coloured = "\u001B[31mENOENT: no such file\u001B[0m";
     expect(formatStderrTail(coloured)).toBe("ENOENT: no such file");
-    expect(formatStderrTail(`Error: ${"y".repeat(400)}`, 3, 50)).toHaveLength(50);
+    expect(formatStderrTail(`Error: ${"y".repeat(400)}`, 3, 50)).toHaveLength(
+      50,
+    );
   });
 
   it("returns empty for a silent server", () => {

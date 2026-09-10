@@ -11,7 +11,8 @@ import {
 /** Widest line this step draws, for the block that centres it. */
 export function measureOnboardingHfRefStep(error: string | null): number {
   const lines = [HF_REF_TITLE_LINE, HF_REF_EXAMPLES_LINE];
-  if (error) lines.push(" ".repeat(Math.min(HF_REF_ERROR_COLUMNS, error.length)));
+  if (error)
+    lines.push(" ".repeat(Math.min(HF_REF_ERROR_COLUMNS, error.length)));
   return widestLine(lines);
 }
 

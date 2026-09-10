@@ -10,9 +10,7 @@ import {
   type LocalTurnGateFacts,
 } from "./local-turn-gate.js";
 
-const facts = (
-  over: Partial<LocalTurnGateFacts> = {},
-): LocalTurnGateFacts => ({
+const facts = (over: Partial<LocalTurnGateFacts> = {}): LocalTurnGateFacts => ({
   activeProviderIsLocal: true,
   managedMode: true,
   modelId: "qwen-3.5-4b",
@@ -34,7 +32,9 @@ const pull = (
   ...over,
 });
 
-const llmConfig = (over: Partial<ResolvedLlmConfig> = {}): ResolvedLlmConfig => ({
+const llmConfig = (
+  over: Partial<ResolvedLlmConfig> = {},
+): ResolvedLlmConfig => ({
   activeTextProvider: "local-llama",
   activeEmbeddingProvider: "local-llama-embed",
   providers: [
@@ -51,7 +51,11 @@ describe("activeTextProviderIsLlamaServer — detection is by KIND, not id", () 
         llmConfig({
           activeTextProvider: "my-llama",
           providers: [
-            { id: "my-llama", kind: "llama-server", url: "http://10.0.0.4:9090" },
+            {
+              id: "my-llama",
+              kind: "llama-server",
+              url: "http://10.0.0.4:9090",
+            },
           ],
         }),
       ),
@@ -64,7 +68,11 @@ describe("activeTextProviderIsLlamaServer — detection is by KIND, not id", () 
         llmConfig({
           activeTextProvider: "openrouter",
           providers: [
-            { id: "local-llama", kind: "llama-server", url: "http://127.0.0.1:8080" },
+            {
+              id: "local-llama",
+              kind: "llama-server",
+              url: "http://127.0.0.1:8080",
+            },
             { id: "openrouter", kind: "openrouter" },
           ],
         }),
@@ -185,15 +193,15 @@ describe("downloadProgressFor", () => {
   });
 
   it("has no honest numbers before content-length arrives", () => {
-    expect(
-      downloadProgressFor(pull({ totalBytes: 0 }), "qwen-3.5-4b"),
-    ).toBe("downloading now…");
+    expect(downloadProgressFor(pull({ totalBytes: 0 }), "qwen-3.5-4b")).toBe(
+      "downloading now…",
+    );
   });
 
   it("ignores embedding pulls and null", () => {
-    expect(downloadProgressFor(pull({ kind: "embedding" }), "qwen-3.5-4b")).toBe(
-      null,
-    );
+    expect(
+      downloadProgressFor(pull({ kind: "embedding" }), "qwen-3.5-4b"),
+    ).toBe(null);
     expect(downloadProgressFor(null, "qwen-3.5-4b")).toBe(null);
   });
 });

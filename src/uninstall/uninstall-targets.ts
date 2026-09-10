@@ -111,7 +111,10 @@ export function planUninstallTargets(
     },
   ];
 
-  if (!isInstalledBinary(input.execPath, input.platform) || !input.binaryPresent) {
+  if (
+    !isInstalledBinary(input.execPath, input.platform) ||
+    !input.binaryPresent
+  ) {
     // A dev checkout is uninstalled with `git`; saying so is the whole
     // point of returning data-only rather than guessing an install dir.
     return targets;

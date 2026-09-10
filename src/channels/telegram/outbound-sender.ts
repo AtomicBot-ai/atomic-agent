@@ -26,6 +26,7 @@ export interface TelegramApi {
   sendChatAction?(
     chatId: number,
     action: "typing",
+    opts?: Record<string, unknown>,
   ): Promise<unknown>;
   editMessageText?(
     chatId: number,
@@ -48,6 +49,32 @@ export interface TelegramApi {
   answerCallbackQuery?(
     callbackQueryId: string,
     opts?: Record<string, unknown>,
+  ): Promise<unknown>;
+  /**
+   * Fetch an inbound file's bytes by `file_id` (`getFile` + the
+   * token-bearing download URL). Optional because only the inbound
+   * file path needs it and only the grammy adapter can provide it —
+   * it is the one place that holds the token the URL requires. When
+   * absent the handler reports the attachment as unsupported rather
+   * than dropping it silently.
+   */
+  downloadFile?(fileId: string): Promise<Uint8Array>;
+
+  /**
+   * Upload a local file to a chat — `sendPhoto` for `kind: "photo"`,
+   * `sendDocument` otherwise. Optional because only the grammy adapter
+   * can build an `InputFile`, and a fake that never sends files need
+   * not implement it. When absent, `sendAttachments` reports every
+   * file as unsupported rather than dropping it.
+   */
+  sendFile?(
+    chatId: number,
+    file: {
+      path: string;
+      kind: "photo" | "document";
+      /** Forum topic to deliver into, when the chat has topics. */
+      threadId?: number;
+    },
   ): Promise<unknown>;
 }
 
@@ -72,6 +99,13 @@ export interface OutboundSendOptions {
    * reply. See AGENTS.md §"Telegram remote-control channel".
    */
   parseMode?: TelegramParseMode;
+  /**
+   * Forum-topic id (`message_thread_id`) when the reply belongs to a
+   * topic inside a supergroup. Without it Telegram posts the message
+   * into the group's General topic, away from the conversation that
+   * asked. Omit for private chats and plain groups.
+   */
+  threadId?: number;
 }
 
 export interface OutboundSendResult {
@@ -128,7 +162,7 @@ export async function sendOutbound(
   for (let i = 0; i < chunks.length; i += 1) {
     const rawChunk = chunks[i]!;
     const formatted = formatChunk(rawChunk, parseMode);
-    const sendOpts = parseModeSendOptions(parseMode);
+    const sendOpts = withThread(parseModeSendOptions(parseMode), opts.threadId);
     try {
       await opts.api.sendMessage(opts.chatId, formatted, sendOpts);
     } catch (err) {
@@ -161,7 +195,11 @@ export async function sendOutbound(
           error: stringifyError(err),
         });
         try {
-          await opts.api.sendMessage(opts.chatId, rawChunk);
+          await opts.api.sendMessage(
+            opts.chatId,
+            rawChunk,
+            withThread(undefined, opts.threadId),
+          );
         } catch (secondErr) {
           dropped += 1;
           opts.logger?.warn("telegram: plain-text fallback also failed", {
@@ -186,6 +224,19 @@ export async function sendOutbound(
 function formatChunk(raw: string, parseMode: TelegramParseMode): string {
   if (parseMode === "html") return convertMarkdownToTelegramHtml(raw);
   return raw;
+}
+
+/**
+ * Fold `message_thread_id` into a `sendMessage` options bag. Returns
+ * the bag untouched (possibly `undefined`) when there is no topic, so
+ * private-chat sends keep their exact pre-topic wire shape.
+ */
+export function withThread(
+  sendOpts: Record<string, unknown> | undefined,
+  threadId: number | undefined,
+): Record<string, unknown> | undefined {
+  if (threadId === undefined) return sendOpts;
+  return { ...(sendOpts ?? {}), message_thread_id: threadId };
 }
 
 function parseModeSendOptions(

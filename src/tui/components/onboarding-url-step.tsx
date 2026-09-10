@@ -67,7 +67,9 @@ export function OnboardingUrlStep(props: {
         {TITLES[props.kind]}
         <Text color={theme.colors.muted}>{HEALTH_NOTE}</Text>
       </Text>
-      {embedding ? <Text color={theme.colors.muted}>{EMBEDDING_NOTE}</Text> : null}
+      {embedding ? (
+        <Text color={theme.colors.muted}>{EMBEDDING_NOTE}</Text>
+      ) : null}
       <Box marginTop={1}>
         <MultiLineEditor
           value={props.value}
@@ -84,7 +86,9 @@ export function OnboardingUrlStep(props: {
         />
       </Box>
       {props.busy ? <Text color={theme.colors.muted}>{PROBING}</Text> : null}
-      {props.error ? <Text color={theme.colors.error}>{props.error}</Text> : null}
+      {props.error ? (
+        <Text color={theme.colors.error}>{props.error}</Text>
+      ) : null}
     </Box>
   );
 }

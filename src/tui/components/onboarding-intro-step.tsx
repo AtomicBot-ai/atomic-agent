@@ -120,7 +120,8 @@ export function OnboardingIntroStep(props: {
   // measure. Centring each row on its own would make them jitter as the
   // tagline grows.
   const pad = (text: string): string =>
-    " ".repeat(Math.max(0, Math.floor((props.columns - text.length) / 2))) + text;
+    " ".repeat(Math.max(0, Math.floor((props.columns - text.length) / 2))) +
+    text;
   const cursor = done ? "" : "▌";
 
   return (
@@ -184,7 +185,11 @@ function ArtRow({ row }: { row: string }): ReactElement {
   return (
     <Text wrap="truncate">
       {runs.map((run, index) => (
-        <Text key={index} bold={BOLD_KINDS.has(run.kind)} color={colorFor(run.kind)}>
+        <Text
+          key={index}
+          bold={BOLD_KINDS.has(run.kind)}
+          color={colorFor(run.kind)}
+        >
           {run.text}
         </Text>
       ))}
@@ -193,7 +198,11 @@ function ArtRow({ row }: { row: string }): ReactElement {
 }
 
 /** The mark is solid, and the brightest stars are the ones that glare. */
-const BOLD_KINDS: ReadonlySet<RunKind> = new Set<RunKind>(["face", "depth", "bright"]);
+const BOLD_KINDS: ReadonlySet<RunKind> = new Set<RunKind>([
+  "face",
+  "depth",
+  "bright",
+]);
 
 function colorFor(kind: RunKind): string {
   switch (kind) {

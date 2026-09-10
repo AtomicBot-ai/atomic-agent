@@ -9,6 +9,7 @@ import {
   type ImportFormState,
   type ImportToggleField,
 } from "./import-panel-state.js";
+import { nextImportSource } from "./import-sources.js";
 
 export interface ImportTabKeyContext {
   state: TuiState;
@@ -24,8 +25,9 @@ export interface ImportTabKeyContext {
  * Navigation deliberately uses ↑/↓ (not Tab) so the global Tab cycler
  * keeps moving between dashboard tabs — the form never traps the
  * operator. Letter keys type into the focused text field (`source` /
- * `limit`); space / ←/→ flip the boolean toggles; Enter on the `run`
- * row triggers the dry-run preview.
+ * `limit`); space / ←/→ flip the boolean toggles and cycle the source
+ * type (→ / space / Enter forward, ← back); Enter on the `run` row
+ * triggers the dry-run preview.
  */
 export function handleImportTabKey(
   input: string,
@@ -72,7 +74,10 @@ function handleConfigureKey(
       return true;
     }
     if (form.focus === "sourceType") {
-      dispatch({ type: "import_source_set", source: otherSource(form) });
+      dispatch({
+        type: "import_source_set",
+        source: nextImportSource(form.source, 1),
+      });
       return true;
     }
     if (isToggleFocus(form.focus)) {
@@ -84,7 +89,10 @@ function handleConfigureKey(
   }
   if (form.focus === "sourceType") {
     if (input === " " || key.leftArrow || key.rightArrow) {
-      dispatch({ type: "import_source_set", source: otherSource(form) });
+      dispatch({
+        type: "import_source_set",
+        source: nextImportSource(form.source, key.leftArrow ? -1 : 1),
+      });
       return true;
     }
     return true; // swallow stray letters on the source-type row
@@ -128,7 +136,11 @@ function handlePreviewKey(
   return true;
 }
 
-function handleDoneKey(_input: string, key: Key, ctx: ImportTabKeyContext): boolean {
+function handleDoneKey(
+  _input: string,
+  key: Key,
+  ctx: ImportTabKeyContext,
+): boolean {
   if (key.return || key.escape) {
     ctx.dispatch({ type: "import_reset" });
     return true;
@@ -153,10 +165,6 @@ function applyTextEdit(
 
 function isToggleFocus(focus: ImportFormFocus): focus is ImportToggleField {
   return (IMPORT_TOGGLE_FIELDS as readonly string[]).includes(focus);
-}
-
-function otherSource(form: ImportFormState): ImportFormState["source"] {
-  return form.source === "hermes" ? "openclaw" : "hermes";
 }
 
 function focusAfter(form: ImportFormState, delta: 1 | -1): ImportFormFocus {

@@ -73,7 +73,9 @@ describe("POST /v1/chat/completions (non-stream)", () => {
       messages: [{ role: "user", content: "hello" }],
     });
     expect(response.status).toBe(200);
-    expect(response.headers.get(SESSION_ID_HEADER.toLowerCase())).toMatch(/^api-/);
+    expect(response.headers.get(SESSION_ID_HEADER.toLowerCase())).toMatch(
+      /^api-/,
+    );
     const body = (await response.json()) as {
       object: string;
       choices: Array<{ message: { content: string; role: string } }>;
@@ -153,8 +155,12 @@ describe("POST /v1/chat/completions concurrency contract", () => {
     };
     const harness = await startTestHarness({ llamaComplete });
     try {
-      const sessionA = harness.runtime.createSession({ metadata: { source: "tA" } });
-      const sessionB = harness.runtime.createSession({ metadata: { source: "tB" } });
+      const sessionA = harness.runtime.createSession({
+        metadata: { source: "tA" },
+      });
+      const sessionB = harness.runtime.createSession({
+        metadata: { source: "tB" },
+      });
       const promiseA = postChat(
         harness.baseUrl,
         { messages: [{ role: "user", content: "msg-A" }] },
@@ -220,7 +226,9 @@ describe("POST /v1/chat/completions concurrency contract", () => {
     };
     const harness = await startTestHarness({ llamaComplete });
     try {
-      const session = harness.runtime.createSession({ metadata: { source: "fifo" } });
+      const session = harness.runtime.createSession({
+        metadata: { source: "fifo" },
+      });
       const promise1 = postChat(
         harness.baseUrl,
         { messages: [{ role: "user", content: "first" }] },
@@ -371,7 +379,9 @@ describe("POST /v1/chat/completions (streaming)", () => {
       expect(text).not.toMatch(/chat\.completion\.session/);
       expect(text).toMatch(/"content":"after one tool"/);
       expect(text).toMatch(/data: \[DONE\]/);
-      expect(response.headers.get(SESSION_ID_HEADER.toLowerCase())).toMatch(/^api-/);
+      expect(response.headers.get(SESSION_ID_HEADER.toLowerCase())).toMatch(
+        /^api-/,
+      );
     } finally {
       await harness.cleanup();
     }
@@ -523,7 +533,10 @@ describe("POST /v1/chat/completions undelivered steers", () => {
    * agent step — the recall/reflection helper prompts run on the same
    * session id before the loop's first drain.
    */
-  function steeringLlama(sessionIdRef: { current: string | null }, text: string) {
+  function steeringLlama(
+    sessionIdRef: { current: string | null },
+    text: string,
+  ) {
     let steered = false;
     return async (params: {
       sessionId: string;
@@ -560,7 +573,11 @@ describe("POST /v1/chat/completions undelivered steers", () => {
       });
       expect(response.status).toBe(200);
       const body = (await response.json()) as {
-        undelivered_steers?: Array<{ seq: number; text: string; parked_at: number }>;
+        undelivered_steers?: Array<{
+          seq: number;
+          text: string;
+          parked_at: number;
+        }>;
       };
       expect(body.undelivered_steers).toEqual([
         {
@@ -575,7 +592,9 @@ describe("POST /v1/chat/completions undelivered steers", () => {
       expect(parked.map((e) => e.seq)).toEqual(
         body.undelivered_steers?.map((e) => e.seq),
       );
-      expect(harness.handle.undeliveredSteers.ack(session.id, parked[0]!.seq)).toBe(1);
+      expect(
+        harness.handle.undeliveredSteers.ack(session.id, parked[0]!.seq),
+      ).toBe(1);
     } finally {
       await harness.cleanup();
     }

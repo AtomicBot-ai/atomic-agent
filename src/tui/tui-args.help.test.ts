@@ -13,7 +13,13 @@ describe("parseTuiArgs --help", () => {
   });
 
   it("documents every real flag in the help text", () => {
-    for (const flag of ["--cwd", "--working-dir", "--max-steps", "--no-approval", "--skip-llama-setup"]) {
+    for (const flag of [
+      "--cwd",
+      "--working-dir",
+      "--max-steps",
+      "--no-approval",
+      "--skip-llama-setup",
+    ]) {
       expect(TUI_HELP).toContain(flag);
     }
   });

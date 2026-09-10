@@ -10,7 +10,12 @@ import type { UninstallPreview } from "./uninstall-state.js";
 
 const PREVIEW: UninstallPreview = {
   rows: [
-    { path: "/Users/op/.atomic-agent", label: "state", size: "1.7 GB", group: "data" },
+    {
+      path: "/Users/op/.atomic-agent",
+      label: "state",
+      size: "1.7 GB",
+      group: "data",
+    },
   ],
   total: "1.7 GB",
   devCheckout: false,
@@ -103,7 +108,11 @@ describe("uninstall ladder keys", () => {
   });
 
   it("enter on the review step closes while the cursor sits on cancel", () => {
-    const { dispatch } = press(openAt("review"), "", emptyKey({ return: true }));
+    const { dispatch } = press(
+      openAt("review"),
+      "",
+      emptyKey({ return: true }),
+    );
     expect(dispatch).toHaveBeenCalledWith({ type: "uninstall_closed" });
   });
 
@@ -130,10 +139,11 @@ describe("uninstall ladder keys", () => {
 
   it("enter does nothing until the word is complete", () => {
     let state = openAt("confirm");
-    state = reduceUninstallAction(state, {
-      type: "uninstall_typed_set",
-      typed: "uninstal",
-    }) ?? state;
+    state =
+      reduceUninstallAction(state, {
+        type: "uninstall_typed_set",
+        typed: "uninstal",
+      }) ?? state;
     const { dispatch, onUninstallConfirmed } = press(
       state,
       "",
@@ -145,10 +155,11 @@ describe("uninstall ladder keys", () => {
 
   it("enter fires once the word is complete", () => {
     let state = openAt("confirm");
-    state = reduceUninstallAction(state, {
-      type: "uninstall_typed_set",
-      typed: "uninstall",
-    }) ?? state;
+    state =
+      reduceUninstallAction(state, {
+        type: "uninstall_typed_set",
+        typed: "uninstall",
+      }) ?? state;
     const { dispatch, onUninstallConfirmed } = press(
       state,
       "",
@@ -163,10 +174,11 @@ describe("uninstall ladder keys", () => {
 
   it("backspace clears what was typed", () => {
     let state = openAt("confirm");
-    state = reduceUninstallAction(state, {
-      type: "uninstall_typed_set",
-      typed: "uni",
-    }) ?? state;
+    state =
+      reduceUninstallAction(state, {
+        type: "uninstall_typed_set",
+        typed: "uni",
+      }) ?? state;
     const { dispatch } = press(state, "", emptyKey({ backspace: true }));
     expect(dispatch).toHaveBeenCalledWith({
       type: "uninstall_typed_set",

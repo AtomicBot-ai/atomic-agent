@@ -153,7 +153,10 @@ async function sendOnce(
       truncated: result.truncated,
     };
     chain.push(currentUrl.toString());
-    if (REDIRECT_STATUSES.has(response.status) && response.redirectUrl.length > 0) {
+    if (
+      REDIRECT_STATUSES.has(response.status) &&
+      response.redirectUrl.length > 0
+    ) {
       if (hop >= MAX_REDIRECTS) {
         throw new Error(`too many redirects (> ${MAX_REDIRECTS})`);
       }
@@ -199,7 +202,8 @@ function buildCurlArgs(input: {
   timeoutMs: number;
 }): string[] {
   const host = input.url.hostname.replace(/^\[|\]$/g, "");
-  const port = input.url.port || (input.url.protocol === "https:" ? "443" : "80");
+  const port =
+    input.url.port || (input.url.protocol === "https:" ? "443" : "80");
   const args = [
     "-sS",
     // Send `[`, `]`, `{`, `}` in URLs literally. Without this curl reads them

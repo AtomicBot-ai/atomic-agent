@@ -10,7 +10,8 @@ export const osGitDiffTool: ToolDefinition = {
   async run(rawArgs, ctx) {
     const repo = typeof rawArgs.repo === "string" ? rawArgs.repo : undefined;
     const revisionRange =
-      typeof rawArgs.revisionRange === "string" && rawArgs.revisionRange.length > 0
+      typeof rawArgs.revisionRange === "string" &&
+      rawArgs.revisionRange.length > 0
         ? rawArgs.revisionRange
         : undefined;
     const staged = rawArgs.staged === true;

@@ -357,7 +357,11 @@ export class ToolLoopTracker {
    * counter. A real (non-veto) outcome resets the veto counter when its
    * signature differs from the one currently being vetoed.
    */
-  recordOutcome(tool: string, args: unknown, result: CompressedToolResult): void {
+  recordOutcome(
+    tool: string,
+    args: unknown,
+    result: CompressedToolResult,
+  ): void {
     this.noteTestOutcome(tool, args, result);
     if (isLoopVetoResult(result)) {
       this.patchLatestPending(tool, args, { vetoed: true });
@@ -480,10 +484,13 @@ export class ToolLoopTracker {
    */
   recordRead(observation: ReadObservation): void {
     const prev = this.readCoverage.get(observation.path);
-    const sameVersion = prev !== undefined && sameReadVersion(prev, observation);
+    const sameVersion =
+      prev !== undefined && sameReadVersion(prev, observation);
     const covered = sameVersion ? prev.covered : [];
     const fresh =
-      observation.span === null ? 0 : newlyCoveredCount(covered, observation.span);
+      observation.span === null
+        ? 0
+        : newlyCoveredCount(covered, observation.span);
     // Re-insert rather than mutate in place so the map's iteration order
     // stays "least recently read first" for eviction.
     this.readCoverage.delete(observation.path);
@@ -491,7 +498,9 @@ export class ToolLoopTracker {
       contentHash: observation.contentHash,
       numbered: observation.numbered,
       covered:
-        observation.span === null ? covered : mergeRange(covered, observation.span),
+        observation.span === null
+          ? covered
+          : mergeRange(covered, observation.span),
       noProgress: sameVersion && fresh === 0 ? prev.noProgress + 1 : 0,
     });
     if (this.readCoverage.size > MAX_TRACKED_READ_FILES) {
@@ -585,7 +594,11 @@ export class ToolLoopTracker {
       BATCH_LOOP_LABEL,
       argsHash,
     );
-    const repeatCount = getRepeatCount(this.history, BATCH_LOOP_LABEL, argsHash);
+    const repeatCount = getRepeatCount(
+      this.history,
+      BATCH_LOOP_LABEL,
+      argsHash,
+    );
     let verdict: LoopCheckVerdict;
     if (noProgress.count >= this.criticalThreshold) {
       verdict = {
@@ -729,7 +742,9 @@ function stripVolatile(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stripVolatile);
   if (value === null || typeof value !== "object") return value;
   const stripped: Record<string, unknown> = {};
-  for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+  for (const [key, nested] of Object.entries(
+    value as Record<string, unknown>,
+  )) {
     if (VOLATILE_RESULT_KEYS.has(key)) continue;
     stripped[key] = stripVolatile(nested);
   }

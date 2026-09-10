@@ -42,13 +42,255 @@ describe("formatAgentErrorForChat", () => {
     expect(text).toContain("atomic-agent models start");
   });
 
-  it("keeps the hint away from cloud providers — advice about the wrong server", () => {
+  it("keeps every hint away from a cloud `fetch failed` — nothing was in flight", () => {
+    // `fetch failed` is undici's outer catch-all and is ALSO what it
+    // throws when the connection never opened at all: verified on Node
+    // 22.22.2, both `ENOTFOUND` (unresolvable host) and `ECONNREFUSED`
+    // (closed port) produce exactly this message, with the errno only on
+    // `cause`. So neither hint may fire on it — not the llama one (wrong
+    // server on a cloud route) and not the drop one, whose first line
+    // claims a reply was cut off.
     expect(
       formatAgentErrorForChat("transport", "fetch failed", {
         activeProviderIsLocal: false,
         llamaUrl: "http://127.0.0.1:19091",
       }),
     ).toBe("Turn failed [transport]: fetch failed");
+  });
+
+  it("keeps every hint away from a cloud transport failure that is not a drop", () => {
+    expect(
+      formatAgentErrorForChat("transport", "upstream HTTP 503", {
+        activeProviderIsLocal: false,
+        llamaUrl: "http://127.0.0.1:19091",
+      }),
+    ).toBe("Turn failed [transport]: upstream HTTP 503");
+  });
+
+  // The reported failure: a multi-step research turn whose LLM call died
+  // mid-body on a cloud provider. undici's bare word for it is
+  // `terminated`, and that single word was the entire message the
+  // operator got — nothing about the connection, nothing about the six
+  // steps that had already succeeded.
+  // Source: Discord #feedback-and-bugs, 2026-09-03.
+  it("explains a mid-stream drop and where the finished steps went", () => {
+    const text = formatAgentErrorForChat("transport", "terminated", {
+      activeProviderIsLocal: false,
+      llamaUrl: "http://127.0.0.1:19091",
+    });
+    expect(text).toContain("Turn failed [transport]: terminated");
+    expect(text).toContain(
+      "the connection to the model dropped before the reply finished",
+    );
+    expect(text).toContain("kept in this session");
+    expect(text).toContain("ask to continue from there");
+    expect(text).toContain("re-sending the whole task starts it over");
+  });
+
+  it.each([
+    "terminated",
+    "read ECONNRESET: socket hang up",
+    "other side closed",
+  ])("recognises the drop family: %s", (message) => {
+    expect(
+      formatAgentErrorForChat("transport", message, {
+        activeProviderIsLocal: false,
+        llamaUrl: "http://127.0.0.1:19091",
+      }),
+    ).toContain("the steps that already finished are kept in this session");
+  });
+
+  it.each([
+    "connection reset",
+    "upstream HTTP 502 (bad gateway)",
+    "request timed out after 120s",
+    "terminated the request early",
+    // A network failure the classifier still files as `transport` (both
+    // are in `NETWORK_MESSAGES`), but where no reply was ever in flight:
+    // undici's catch-all for a connection that never opened, and a TLS
+    // handshake that never completed. The hint would be false.
+    "fetch failed",
+    "Client network socket disconnected before secure TLS connection was established",
+  ])("leaves unrelated transport failures bare: %s", (message) => {
+    expect(
+      formatAgentErrorForChat("transport", message, {
+        activeProviderIsLocal: false,
+        llamaUrl: "http://127.0.0.1:19091",
+      }),
+    ).toBe(`Turn failed [transport]: ${message}`);
+  });
+
+  it("keys the hint off the raw message, not the truncated body", () => {
+    // The one behaviour that separates `looksLikeMidStreamDrop(message)`
+    // from `looksLikeMidStreamDrop(body)`: a drop phrase sitting past the
+    // 480-char body cap. Under 800 chars, so the wall does not fire and
+    // the only transformation is the truncation. Switch the predicate's
+    // argument to `body` and this test fails — that mutation used to
+    // survive the whole suite.
+    const long = `${"x".repeat(600)} socket hang up`;
+    const text = formatAgentErrorForChat("transport", long, {
+      activeProviderIsLocal: false,
+      llamaUrl: "http://127.0.0.1:19091",
+    });
+    const [head, ...hint] = text.split("\n");
+    expect(head).not.toContain("socket hang up");
+    expect(hint.join("\n")).toBe(
+      [
+        "the connection to the model dropped before the reply finished",
+        "  the steps that already finished are kept in this session — ask to continue from there; re-sending the whole task starts it over",
+      ].join("\n"),
+    );
+  });
+
+  // When the wall substitution fires, `body` stops being the transport's
+  // words and becomes a rival account of the same failure, and printing
+  // the drop hint underneath it tells the operator two incompatible
+  // stories in three lines. Exactly one can be true and this function
+  // cannot tell which, so it stays out of the argument.
+  //
+  // Note what this does NOT assume: that the wall is right. It is not,
+  // on plenty of payloads (see the pre-existing-defect note in the pull
+  // request) — but a wrong wall plus a contradicting hint is worse than
+  // a wrong wall alone, so the guard holds either way.
+  //
+  // Every case here uses an unanchored drop phrase (`socket hang up`),
+  // so the drop arm genuinely matches and the `!diagnosedAsWall` guard is
+  // the only thing suppressing the hint. A `terminated …` case would be
+  // vacuous: `/^terminated$/i` is anchored and never matches a string
+  // with a page glued to it, so it passed with the guard mutated away.
+  it.each([
+    [
+      "a document-marker wall with a status in it",
+      "socket hang up <!DOCTYPE html><html><body>404 not found</body></html>",
+      "upstream HTTP 404 (wrong API URL or provider config)",
+    ],
+    [
+      "a document-marker wall with no status in it",
+      "socket hang up <html><body>gateway unavailable</body></html>",
+      "upstream returned HTML instead of JSON (check API URL and provider)",
+    ],
+    [
+      "a payload walled by sheer bulk, with a status scraped out of it",
+      `socket hang up <center>502 Bad Gateway</center>${"x".repeat(900)}`,
+      "upstream HTTP 502 (wrong API URL or provider config)",
+    ],
+  ])(
+    "drops the hint when the body was replaced: %s",
+    (_name, message, body) => {
+      expect(
+        formatAgentErrorForChat("transport", message, {
+          activeProviderIsLocal: false,
+          llamaUrl: "http://127.0.0.1:19091",
+        }),
+      ).toBe(`Turn failed [transport]: ${body}`);
+    },
+  );
+
+  // The wall's second entrance — sheer bulk — is a threshold, and a
+  // threshold nobody tests drifts. Both sides pinned: `800 → 799` kills
+  // the first of these, `800 → 801` kills the second. The point here is
+  // not that the threshold is well chosen (it is not — see the
+  // pre-existing-defect note in the pull request); it is that this
+  // change leaves it exactly where `main` had it.
+  const WALL_EDGE = `socket hang up <div>${"x".repeat(780)}`;
+
+  it("leaves a payload of exactly 800 chars to the drop arm", () => {
+    expect(WALL_EDGE).toHaveLength(800);
+    const text = formatAgentErrorForChat("transport", WALL_EDGE, {
+      activeProviderIsLocal: false,
+      llamaUrl: "http://127.0.0.1:19091",
+    });
+    expect(text.split("\n")[0]).toBe(
+      `Turn failed [transport]: ${WALL_EDGE.slice(0, 480)}…`,
+    );
+    expect(text).toContain(
+      "the connection to the model dropped before the reply finished",
+    );
+  });
+
+  it("treats a payload of 801 chars as a wall", () => {
+    const overEdge = `${WALL_EDGE}x`;
+    expect(overEdge).toHaveLength(801);
+    expect(
+      formatAgentErrorForChat("transport", overEdge, {
+        activeProviderIsLocal: false,
+        llamaUrl: "http://127.0.0.1:19091",
+      }),
+    ).toBe(
+      "Turn failed [transport]: upstream returned HTML instead of JSON (check API URL and provider)",
+    );
+  });
+
+  it("reads the drop phrase through whitespace, exactly as the body does", () => {
+    // `body` is whitespace-collapsed; the predicate used to read the raw
+    // `message`, so a phrase broken across lines printed in the body and
+    // had its explanation withheld. One normalisation now feeds both.
+    // Not reachable from undici's own strings, but a subprocess's stderr
+    // reaches this formatter verbatim, newlines and all.
+    expect(
+      formatAgentErrorForChat("transport", "socket\nhang\nup", {
+        activeProviderIsLocal: false,
+        llamaUrl: "http://127.0.0.1:19091",
+      }),
+    ).toBe(
+      [
+        "Turn failed [transport]: socket hang up",
+        "the connection to the model dropped before the reply finished",
+        "  the steps that already finished are kept in this session — ask to continue from there; re-sending the whole task starts it over",
+      ].join("\n"),
+    );
+  });
+
+  it.each(["tool", "runtime"])(
+    "keeps the drop hint out of the %s category",
+    (category) => {
+      // `runtime` is the only other shape production produces: the
+      // orchestrator's catch arm (`chat-orchestrator.ts`) calls
+      // `formatAgentErrorForChat("runtime", msg)` with no provider
+      // context, so it can never reach the transport branch at all.
+      expect(formatAgentErrorForChat(category, "terminated")).toBe(
+        `Turn failed [${category}]: terminated`,
+      );
+    },
+  );
+
+  it("prefers the llama hint when a local provider drops mid-stream", () => {
+    // Both arms match. The local one wins: "start llama-server" is a fix,
+    // the drop hint is only an explanation.
+    const text = formatAgentErrorForChat("transport", "terminated", {
+      activeProviderIsLocal: true,
+      llamaUrl: "http://127.0.0.1:19091",
+    });
+    expect(text).toBe(
+      [
+        "Turn failed [transport]: terminated",
+        "llama-server is not reachable at http://127.0.0.1:19091",
+        "  start it with:       atomic-agent models start",
+        "  or point elsewhere:  atomic-agent config set localModels.url <url>",
+      ].join("\n"),
+    );
+  });
+
+  it("truncates the body, never the hint", () => {
+    // Under the 800-char HTML-wall threshold, over the 480-char body cap.
+    const long = `socket hang up ${"x".repeat(600)}`;
+    const text = formatAgentErrorForChat("transport", long, {
+      activeProviderIsLocal: false,
+      llamaUrl: "http://127.0.0.1:19091",
+    });
+    const [head, ...hint] = text.split("\n");
+    expect(head!.startsWith("Turn failed [transport]: socket hang up")).toBe(
+      true,
+    );
+    expect(head!.endsWith("…")).toBe(true);
+    // 480-char body cap + the "Turn failed [transport]: " prefix + "…".
+    expect(head!.length).toBe("Turn failed [transport]: ".length + 480 + 1);
+    expect(hint.join("\n")).toBe(
+      [
+        "the connection to the model dropped before the reply finished",
+        "  the steps that already finished are kept in this session — ask to continue from there; re-sending the whole task starts it over",
+      ].join("\n"),
+    );
   });
 
   it("keeps the hint away from non-transport failures", () => {

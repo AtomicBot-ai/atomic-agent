@@ -37,10 +37,12 @@ interface Fixture {
   dispose: () => void;
 }
 
-function makeFixture(opts: {
-  voteSignalDecay?: number;
-  deprecationAgeMs?: number;
-} = {}): Fixture {
+function makeFixture(
+  opts: {
+    voteSignalDecay?: number;
+    deprecationAgeMs?: number;
+  } = {},
+): Fixture {
   const dir = mkdtempSync(join(tmpdir(), "atomic-scorecard-7a-"));
   const memoryStore = new MemoryStore({
     dbFile: join(dir, "memory.sqlite"),
@@ -108,7 +110,10 @@ describe("scorecard 7a.A — downvote evicts before age", () => {
   afterEach(() => f?.dispose());
 
   it("a downvoted unused lesson is deprecated on the next consolidator tick (7a.A.1)", async () => {
-    f = makeFixture({ voteSignalDecay: 0.95, deprecationAgeMs: 30 * 86400_000 });
+    f = makeFixture({
+      voteSignalDecay: 0.95,
+      deprecationAgeMs: 30 * 86400_000,
+    });
     const lesson = f.lessonStore.create({
       activation: "ride",
       principle: "praise",
@@ -229,9 +234,7 @@ describe("scorecard 7a.C — clamp + invalid config fail-fast", () => {
       version: 16,
       memory: { voting: { enabled: true, signalDecay: 1.5 } },
     };
-    expect(() => parseUserConfigFile(bad)).toThrow(
-      /signalDecay/,
-    );
+    expect(() => parseUserConfigFile(bad)).toThrow(/signalDecay/);
   });
 });
 

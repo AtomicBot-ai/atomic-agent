@@ -1,13 +1,28 @@
 import { describe, expect, it } from "vitest";
 import type { Key } from "ink";
 import { handleOnboardingKey } from "./onboarding-key-bindings.js";
-import { createOnboardingState, type OnboardingUiState } from "./onboarding-state.js";
+import {
+  createOnboardingState,
+  type OnboardingUiState,
+} from "./onboarding-state.js";
 
 const NO_KEY: Key = {
-  upArrow: false, downArrow: false, leftArrow: false, rightArrow: false,
-  pageDown: false, pageUp: false, return: false, escape: false, ctrl: false,
-  shift: false, tab: false, backspace: false, delete: false, meta: false,
-  home: false, end: false,
+  upArrow: false,
+  downArrow: false,
+  leftArrow: false,
+  rightArrow: false,
+  pageDown: false,
+  pageUp: false,
+  return: false,
+  escape: false,
+  ctrl: false,
+  shift: false,
+  tab: false,
+  backspace: false,
+  delete: false,
+  meta: false,
+  home: false,
+  end: false,
 } as Key;
 
 const key = (over: Partial<Key>): Key => ({ ...NO_KEY, ...over });
@@ -31,8 +46,16 @@ describe("handleOnboardingKey", () => {
   });
 
   it("picks the row under the cursor on Enter", () => {
-    const result = handleOnboardingKey("", key({ return: true }), base({ cursor: 1 }));
-    expect(result).toEqual({ handled: true, actions: [], intent: { kind: "pick", choice: "cloud" } });
+    const result = handleOnboardingKey(
+      "",
+      key({ return: true }),
+      base({ cursor: 1 }),
+    );
+    expect(result).toEqual({
+      handled: true,
+      actions: [],
+      intent: { kind: "pick", choice: "cloud" },
+    });
   });
 
   it("maps the digit shortcuts positionally", () => {
@@ -57,7 +80,11 @@ describe("handleOnboardingKey", () => {
    * after `parse-keypress.ts`. Every one of them has to dismiss the
    * splash, because the splash says "any key" and means it.
    */
-  const INTRO_INVENTORY: readonly { name: string; input: string; key: Partial<Key> }[] = [
+  const INTRO_INVENTORY: readonly {
+    name: string;
+    input: string;
+    key: Partial<Key>;
+  }[] = [
     { name: "a letter", input: "x", key: {} },
     { name: "a digit", input: "7", key: {} },
     { name: "space", input: " ", key: {} },
@@ -80,7 +107,11 @@ describe("handleOnboardingKey", () => {
     // the handler actually receives for them.
     { name: "a function key", input: "", key: {} },
     { name: "alt+f", input: "f", key: { meta: true } },
-    { name: "a ctrl chord that is not ctrl+c", input: "d", key: { ctrl: true } },
+    {
+      name: "a ctrl chord that is not ctrl+c",
+      input: "d",
+      key: { ctrl: true },
+    },
   ];
 
   for (const testCase of INTRO_INVENTORY) {
@@ -99,22 +130,37 @@ describe("handleOnboardingKey", () => {
   }
 
   it("does not claim ctrl+c on the splash either", () => {
-    expect(handleOnboardingKey("c", key({ ctrl: true }), base({ step: "intro" }))).toEqual({
+    expect(
+      handleOnboardingKey("c", key({ ctrl: true }), base({ step: "intro" })),
+    ).toEqual({
       handled: false,
     });
   });
 
   it("lets Ctrl+C through so quitting works during setup", () => {
-    expect(handleOnboardingKey("c", key({ ctrl: true }), base())).toEqual({ handled: false });
+    expect(handleOnboardingKey("c", key({ ctrl: true }), base())).toEqual({
+      handled: false,
+    });
   });
 
   it("swallows unknown keys — there is nothing behind the flow to reach", () => {
-    expect(handleOnboardingKey("z", NO_KEY, base())).toEqual({ handled: true, actions: [] });
+    expect(handleOnboardingKey("z", NO_KEY, base())).toEqual({
+      handled: true,
+      actions: [],
+    });
   });
 
   it("acts on nothing while a child owns the keyboard, but still swallows", () => {
-    for (const step of ["cloud", "custom_chat_url", "custom_embedding_url"] as const) {
-      const result = handleOnboardingKey("", key({ escape: true }), base({ step }));
+    for (const step of [
+      "cloud",
+      "custom_chat_url",
+      "custom_embedding_url",
+    ] as const) {
+      const result = handleOnboardingKey(
+        "",
+        key({ escape: true }),
+        base({ step }),
+      );
       expect(result).toEqual({ handled: true, actions: [] });
     }
   });

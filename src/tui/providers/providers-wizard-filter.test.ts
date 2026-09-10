@@ -9,8 +9,14 @@ import {
 import { clampCursor, visibleKindRows } from "./providers-wizard-phases.js";
 
 const ROWS: readonly WizardFilterRow[] = [
-  { id: "anthropic/claude-opus-5", label: "anthropic/claude-opus-5 · 200k · $$" },
-  { id: "claude-cli", label: "Claude Code subscription (drives your `claude` CLI)" },
+  {
+    id: "anthropic/claude-opus-5",
+    label: "anthropic/claude-opus-5 · 200k · $$",
+  },
+  {
+    id: "claude-cli",
+    label: "Claude Code subscription (drives your `claude` CLI)",
+  },
   { id: "gemini", label: "Gemini (Google AI)" },
   { id: "qwen/qwen3-coder", label: "qwen/qwen3-coder · 256k · tools" },
 ];
@@ -116,16 +122,17 @@ describe("filterWizardRows", () => {
 });
 
 describe("cursor clamping against a filtered list", () => {
-  const cases: readonly { query: string; cursor: number; expected: number }[] = [
-    { query: "", cursor: 3, expected: 3 },
-    // The list shrank under a cursor that was deep in it: the last row of
-    // the filtered list is what the render highlights, so it is what
-    // Enter has to select.
-    { query: "cli", cursor: 20, expected: 1 },
-    { query: "gemini", cursor: 20, expected: 0 },
-    { query: "no-such-provider", cursor: 20, expected: 0 },
-    { query: "cli", cursor: -4, expected: 0 },
-  ];
+  const cases: readonly { query: string; cursor: number; expected: number }[] =
+    [
+      { query: "", cursor: 3, expected: 3 },
+      // The list shrank under a cursor that was deep in it: the last row of
+      // the filtered list is what the render highlights, so it is what
+      // Enter has to select.
+      { query: "cli", cursor: 20, expected: 1 },
+      { query: "gemini", cursor: 20, expected: 0 },
+      { query: "no-such-provider", cursor: 20, expected: 0 },
+      { query: "cli", cursor: -4, expected: 0 },
+    ];
 
   for (const testCase of cases) {
     it(`clamps cursor ${testCase.cursor} for "${testCase.query}"`, () => {

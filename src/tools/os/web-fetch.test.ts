@@ -49,7 +49,11 @@ function fakeSleep(): {
 }
 
 function makeRunCommand(
-  responder: (url: string) => { stdout: string; exitCode?: number; stderr?: string },
+  responder: (url: string) => {
+    stdout: string;
+    exitCode?: number;
+    stderr?: string;
+  },
 ): typeof RunCommandType {
   return (async (_command: string, args: string[]) => {
     const url = args[args.length - 1] ?? "";
@@ -109,7 +113,9 @@ describe("parseCurlMeta", () => {
   });
 
   it("yields no Retry-After when header_json is absent (older curl)", () => {
-    const parsed = parseCurlMeta(`body\n${MARKER}503|text/html||4|%{header_json}`);
+    const parsed = parseCurlMeta(
+      `body\n${MARKER}503|text/html||4|%{header_json}`,
+    );
     expect(parsed.status).toBe(503);
     expect(parsed.retryAfterMs).toBeNull();
   });
@@ -119,7 +125,11 @@ describe("os.web.fetch tool", () => {
   it("fetches and extracts an article via Readability", async () => {
     const tool = buildOsWebFetchTool({
       runCommand: makeRunCommand(() => ({
-        stdout: curlStdout({ body: ARTICLE, status: 200, contentType: "text/html" }),
+        stdout: curlStdout({
+          body: ARTICLE,
+          status: 200,
+          contentType: "text/html",
+        }),
       })),
       lookup: publicLookup,
     });
@@ -144,7 +154,11 @@ describe("os.web.fetch tool", () => {
           };
         }
         return {
-          stdout: curlStdout({ body: ARTICLE, status: 200, contentType: "text/html" }),
+          stdout: curlStdout({
+            body: ARTICLE,
+            status: 200,
+            contentType: "text/html",
+          }),
         };
       }),
     );
@@ -184,7 +198,11 @@ describe("os.web.fetch tool", () => {
     const big = `<html><body><article><h1>t</h1><p>${"word ".repeat(5000)}</p></article></body></html>`;
     const tool = buildOsWebFetchTool({
       runCommand: makeRunCommand(() => ({
-        stdout: curlStdout({ body: big, status: 200, contentType: "text/html" }),
+        stdout: curlStdout({
+          body: big,
+          status: 200,
+          contentType: "text/html",
+        }),
       })),
       lookup: publicLookup,
     });
@@ -212,7 +230,10 @@ describe("os.web.fetch tool", () => {
       })),
       lookup: publicLookup,
     });
-    const result = await tool.run({ url: "https://example.com/missing" }, ctx());
+    const result = await tool.run(
+      { url: "https://example.com/missing" },
+      ctx(),
+    );
     expect(result.status).toBe("error");
     expect(result.summary).toContain("HTTP 404");
     expect(result.details.status).toBe(404);
@@ -265,13 +286,15 @@ describe("os.web.fetch tool", () => {
 // Issue #181 — 236 timeout failures each burned a fixed 30s of the task
 // budget, with no connect timeout and no way to shorten the wait.
 describe("os.web.fetch timeouts (#181)", () => {
-  function cfg(fetch: Partial<{
-    timeoutMs: number;
-    connectTimeoutMs: number;
-    maxRetries: number;
-    retryBaseDelayMs: number;
-    retryMaxDelayMs: number;
-  }>) {
+  function cfg(
+    fetch: Partial<{
+      timeoutMs: number;
+      connectTimeoutMs: number;
+      maxRetries: number;
+      retryBaseDelayMs: number;
+      retryMaxDelayMs: number;
+    }>,
+  ) {
     return {
       web: {
         search: USER_CONFIG_DEFAULTS.web.search,
@@ -283,7 +306,11 @@ describe("os.web.fetch timeouts (#181)", () => {
   it("passes --connect-timeout so dead hosts fail fast", async () => {
     const run = vi.fn(
       makeRunCommand(() => ({
-        stdout: curlStdout({ body: ARTICLE, status: 200, contentType: "text/html" }),
+        stdout: curlStdout({
+          body: ARTICLE,
+          status: 200,
+          contentType: "text/html",
+        }),
       })),
     );
     const tool = buildOsWebFetchTool({ runCommand: run, lookup: publicLookup });
@@ -296,7 +323,11 @@ describe("os.web.fetch timeouts (#181)", () => {
   it("uses the configured timeoutMs for --max-time", async () => {
     const run = vi.fn(
       makeRunCommand(() => ({
-        stdout: curlStdout({ body: ARTICLE, status: 200, contentType: "text/html" }),
+        stdout: curlStdout({
+          body: ARTICLE,
+          status: 200,
+          contentType: "text/html",
+        }),
       })),
     );
     const tool = buildOsWebFetchTool({
@@ -313,7 +344,11 @@ describe("os.web.fetch timeouts (#181)", () => {
   it("lets a per-call timeoutMs override the configured default", async () => {
     const run = vi.fn(
       makeRunCommand(() => ({
-        stdout: curlStdout({ body: ARTICLE, status: 200, contentType: "text/html" }),
+        stdout: curlStdout({
+          body: ARTICLE,
+          status: 200,
+          contentType: "text/html",
+        }),
       })),
     );
     const tool = buildOsWebFetchTool({
@@ -329,7 +364,11 @@ describe("os.web.fetch timeouts (#181)", () => {
   it("never lets the connect budget exceed a smaller per-call timeout", async () => {
     const run = vi.fn(
       makeRunCommand(() => ({
-        stdout: curlStdout({ body: ARTICLE, status: 200, contentType: "text/html" }),
+        stdout: curlStdout({
+          body: ARTICLE,
+          status: 200,
+          contentType: "text/html",
+        }),
       })),
     );
     const tool = buildOsWebFetchTool({
@@ -364,12 +403,20 @@ describe("os.web.fetch retries (#180)", () => {
           };
         }
         return {
-          stdout: curlStdout({ body: ARTICLE, status: 200, contentType: "text/html" }),
+          stdout: curlStdout({
+            body: ARTICLE,
+            status: 200,
+            contentType: "text/html",
+          }),
         };
       }),
     );
     const { sleep, waits } = fakeSleep();
-    const tool = buildOsWebFetchTool({ runCommand: run, lookup: publicLookup, sleep });
+    const tool = buildOsWebFetchTool({
+      runCommand: run,
+      lookup: publicLookup,
+      sleep,
+    });
     const result = await tool.run({ url: ARCHIVE_URL }, ctx());
     expect(result.status).toBe("ok");
     expect(result.details.status).toBe(200);
@@ -389,7 +436,11 @@ describe("os.web.fetch retries (#180)", () => {
       })),
     );
     const { sleep, waits } = fakeSleep();
-    const tool = buildOsWebFetchTool({ runCommand: run, lookup: publicLookup, sleep });
+    const tool = buildOsWebFetchTool({
+      runCommand: run,
+      lookup: publicLookup,
+      sleep,
+    });
     const result = await tool.run({ url: ARCHIVE_URL }, ctx());
     expect(result.status).toBe("error");
     expect(result.details.status).toBe(503);
@@ -409,8 +460,15 @@ describe("os.web.fetch retries (#180)", () => {
       })),
     );
     const { sleep, waits } = fakeSleep();
-    const tool = buildOsWebFetchTool({ runCommand: run, lookup: publicLookup, sleep });
-    const result = await tool.run({ url: "https://example.com/missing" }, ctx());
+    const tool = buildOsWebFetchTool({
+      runCommand: run,
+      lookup: publicLookup,
+      sleep,
+    });
+    const result = await tool.run(
+      { url: "https://example.com/missing" },
+      ctx(),
+    );
     expect(result.status).toBe("error");
     expect(run).toHaveBeenCalledTimes(1);
     expect(waits).toEqual([]);
@@ -429,12 +487,20 @@ describe("os.web.fetch retries (#180)", () => {
           };
         }
         return {
-          stdout: curlStdout({ body: ARTICLE, status: 200, contentType: "text/html" }),
+          stdout: curlStdout({
+            body: ARTICLE,
+            status: 200,
+            contentType: "text/html",
+          }),
         };
       }),
     );
     const { sleep } = fakeSleep();
-    const tool = buildOsWebFetchTool({ runCommand: run, lookup: publicLookup, sleep });
+    const tool = buildOsWebFetchTool({
+      runCommand: run,
+      lookup: publicLookup,
+      sleep,
+    });
     const result = await tool.run({ url: "https://example.com/slow" }, ctx());
     expect(result.status).toBe("ok");
     expect(run).toHaveBeenCalledTimes(2);
@@ -449,7 +515,11 @@ describe("os.web.fetch retries (#180)", () => {
       })),
     );
     const { sleep } = fakeSleep();
-    const tool = buildOsWebFetchTool({ runCommand: run, lookup: publicLookup, sleep });
+    const tool = buildOsWebFetchTool({
+      runCommand: run,
+      lookup: publicLookup,
+      sleep,
+    });
     const result = await tool.run({ url: "https://nope.invalid/x" }, ctx());
     expect(result.status).toBe("error");
     expect(result.summary).toContain("Could not resolve host");
@@ -472,13 +542,24 @@ describe("os.web.fetch retries (#180)", () => {
           };
         }
         return {
-          stdout: curlStdout({ body: ARTICLE, status: 200, contentType: "text/html" }),
+          stdout: curlStdout({
+            body: ARTICLE,
+            status: 200,
+            contentType: "text/html",
+          }),
         };
       }),
     );
     const { sleep, waits } = fakeSleep();
-    const tool = buildOsWebFetchTool({ runCommand: run, lookup: publicLookup, sleep });
-    const result = await tool.run({ url: "https://example.com/limited" }, ctx());
+    const tool = buildOsWebFetchTool({
+      runCommand: run,
+      lookup: publicLookup,
+      sleep,
+    });
+    const result = await tool.run(
+      { url: "https://example.com/limited" },
+      ctx(),
+    );
     expect(result.status).toBe("ok");
     // 2s from the header, not the 500ms base delay.
     expect(waits).toEqual([2_000]);
@@ -496,7 +577,11 @@ describe("os.web.fetch retries (#180)", () => {
       })),
     );
     const { sleep, waits } = fakeSleep();
-    const tool = buildOsWebFetchTool({ runCommand: run, lookup: publicLookup, sleep });
+    const tool = buildOsWebFetchTool({
+      runCommand: run,
+      lookup: publicLookup,
+      sleep,
+    });
     await tool.run({ url: ARCHIVE_URL }, ctx());
     // Never parks the agent for an hour — capped at the 5s default.
     expect(waits).toEqual([5_000, 5_000]);
@@ -532,12 +617,20 @@ describe("os.web.fetch retries (#180)", () => {
         // The task is cancelled while the first attempt is in flight.
         controller.abort();
         return {
-          stdout: curlStdout({ body: "", status: 503, contentType: "text/html" }),
+          stdout: curlStdout({
+            body: "",
+            status: 503,
+            contentType: "text/html",
+          }),
         };
       }),
     );
     const { sleep, waits } = fakeSleep();
-    const tool = buildOsWebFetchTool({ runCommand: run, lookup: publicLookup, sleep });
+    const tool = buildOsWebFetchTool({
+      runCommand: run,
+      lookup: publicLookup,
+      sleep,
+    });
     const result = await tool.run(
       { url: ARCHIVE_URL },
       { ...ctx(), signal: controller.signal },
@@ -552,7 +645,10 @@ describe("os.web.fetch retries (#180)", () => {
  * The reachability half: what curl is actually told to do.
  */
 describe("os.web.fetch reaches a host the way a browser would", () => {
-  function captureArgs(): { args: string[][]; runCommand: typeof RunCommandType } {
+  function captureArgs(): {
+    args: string[][];
+    runCommand: typeof RunCommandType;
+  } {
     const args: string[][] = [];
     const runCommand = (async (_command: string, argv: string[]) => {
       args.push(argv);

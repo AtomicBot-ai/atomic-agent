@@ -29,8 +29,7 @@ function callbacks(): TuiAppCallbacks {
   };
 }
 
-const strip = (value: string): string =>
-  value.replace(/\u001B\[[0-9;]*m/g, "");
+const strip = (value: string): string => value.replace(/\u001B\[[0-9;]*m/g, "");
 
 const delay = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));

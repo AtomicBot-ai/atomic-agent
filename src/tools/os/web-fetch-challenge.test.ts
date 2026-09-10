@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  describeChallenge,
-  detectChallenge,
-} from "./web-fetch-challenge.js";
+import { describeChallenge, detectChallenge } from "./web-fetch-challenge.js";
 
 const CLOUDFLARE_200 = `<!DOCTYPE html><html><head><title>Just a moment...</title>
 <meta http-equiv="refresh" content="390"></head><body>

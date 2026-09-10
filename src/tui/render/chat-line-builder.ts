@@ -5,10 +5,7 @@ import {
   type ReactElement,
   type ReactNode,
 } from "react";
-import {
-  formatToolArgsBlock,
-  previewToolArgs,
-} from "./tool-args-preview.js";
+import { formatToolArgsBlock, previewToolArgs } from "./tool-args-preview.js";
 import { wrapText } from "./wrap-text.js";
 import { theme } from "../theme/theme.js";
 import type {
@@ -121,13 +118,9 @@ function appendStreamingTail(
     appendToolCard(b, call, ctx.toolsExpanded[call.id] ?? false, ctx);
   }
   if (state.streamingAssistantText !== null) {
-    appendBubble(
-      b,
-      state.streamingAssistantText,
-      theme.colors.assistant,
-      ctx,
-      { markdown: false },
-    );
+    appendBubble(b, state.streamingAssistantText, theme.colors.assistant, ctx, {
+      markdown: false,
+    });
   }
 }
 
@@ -282,11 +275,7 @@ function appendToolCard(
           )
         : null,
       argsPreview
-        ? createElement(
-            Text,
-            { color: theme.colors.muted },
-            `  ${argsPreview}`,
-          )
+        ? createElement(Text, { color: theme.colors.muted }, `  ${argsPreview}`)
         : null,
     ),
   );
@@ -334,11 +323,7 @@ function pushBlank(b: BuilderState): void {
 function pushRibbon(b: BuilderState, color: string): void {
   const key = `cl-${b.next++}`;
   b.lines.push(
-    createElement(
-      Text,
-      { key },
-      createElement(Text, { color }, RIBBON_GLYPH),
-    ),
+    createElement(Text, { key }, createElement(Text, { color }, RIBBON_GLYPH)),
   );
 }
 
@@ -372,9 +357,7 @@ function pushRibbonBodyMuted(
 
 function pushPlain(b: BuilderState, body: string, color?: string): void {
   const key = `cl-${b.next++}`;
-  const node: ReactNode = color
-    ? createElement(Text, { color }, body)
-    : body;
+  const node: ReactNode = color ? createElement(Text, { color }, body) : body;
   b.lines.push(createElement(Text, { key }, node ?? createElement(Fragment)));
 }
 

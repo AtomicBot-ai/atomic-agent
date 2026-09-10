@@ -66,7 +66,8 @@ export function parseBraveJson(
     results.push({
       title: raw.title.trim(),
       url: raw.url.trim(),
-      snippet: typeof raw.description === "string" ? raw.description.trim() : "",
+      snippet:
+        typeof raw.description === "string" ? raw.description.trim() : "",
       ...(typeof raw.age === "string" ? { published: raw.age.trim() } : {}),
     });
     if (results.length >= maxResults) break;

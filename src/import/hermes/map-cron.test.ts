@@ -63,7 +63,10 @@ describe("mapHermesCronJob", () => {
       job({ schedule: { kind: "once", run_at: "2020-01-01T00:00:00Z" } }),
       { maxAttempts: 3, now: NOW },
     );
-    expect(result).toEqual({ kind: "skip", reason: "one-shot scheduled in the past" });
+    expect(result).toEqual({
+      kind: "skip",
+      reason: "one-shot scheduled in the past",
+    });
   });
 
   it("skips a disabled job", () => {
@@ -93,10 +96,10 @@ describe("mapHermesCronJob", () => {
   });
 
   it("skips an unsupported schedule kind", () => {
-    const result = mapHermesCronJob(
-      job({ schedule: { kind: "weekly" } }),
-      { maxAttempts: 3, now: NOW },
-    );
+    const result = mapHermesCronJob(job({ schedule: { kind: "weekly" } }), {
+      maxAttempts: 3,
+      now: NOW,
+    });
     expect(result.kind).toBe("skip");
     if (result.kind !== "skip") return;
     expect(result.reason).toContain("unsupported schedule kind");

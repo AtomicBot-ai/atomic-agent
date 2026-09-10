@@ -2,9 +2,7 @@ import { join } from "node:path";
 
 import { compressToolResult } from "../../../../compressor/result-compressor.js";
 import type { AtomicAgentConfig } from "../../../../config/index.js";
-import {
-  runCommand as defaultRunCommand,
-} from "../../../../sandbox/command-runner.js";
+import { runCommand as defaultRunCommand } from "../../../../sandbox/command-runner.js";
 import type { ToolDefinition } from "../../../tool-registry.js";
 import type { HostLookup } from "../../web-fetch-ssrf-guard.js";
 import { runWebSearchWithFallback } from "../providers/index.js";
@@ -48,7 +46,9 @@ interface WebSearchArgs {
   maxResults: number;
 }
 
-export function buildOsWebSearchTool(options: OsWebSearchOptions): ToolDefinition {
+export function buildOsWebSearchTool(
+  options: OsWebSearchOptions,
+): ToolDefinition {
   // The cache lives in this closure (NOT a global singleton). It persists
   // across tool invocations so repeated identical queries skip the HTTP
   // round-trip — the primary defence against provider rate-limiting. Given
@@ -84,7 +84,8 @@ export function buildOsWebSearchTool(options: OsWebSearchOptions): ToolDefinitio
   });
   if (missingKey) {
     const warn =
-      options.warn ?? ((message: string) => process.stderr.write(`${message}\n`));
+      options.warn ??
+      ((message: string) => process.stderr.write(`${message}\n`));
     warn(missingKey.message);
   }
   return {
@@ -102,7 +103,8 @@ export function buildOsWebSearchTool(options: OsWebSearchOptions): ToolDefinitio
         return compressToolResult({
           tool: TOOL_NAME,
           status: "error",
-          output: "os.web.search is disabled by config (`web.search.enabled = false`).",
+          output:
+            "os.web.search is disabled by config (`web.search.enabled = false`).",
           details: { provider: cfg.provider },
         });
       }
@@ -128,7 +130,8 @@ export function buildOsWebSearchTool(options: OsWebSearchOptions): ToolDefinitio
           {
             tool: TOOL_NAME,
             status: "ok",
-            output: renderNotes(outcome.degraded) + renderResults(outcome.results),
+            output:
+              renderNotes(outcome.degraded) + renderResults(outcome.results),
             details: {
               provider: outcome.provider,
               fromCache: outcome.fromCache,
@@ -168,7 +171,10 @@ function parseArgs(
     throw new Error(`${TOOL_NAME}: \`query\` must be a non-empty string`);
   }
   let maxResults = defaultMaxResults;
-  if (typeof rawArgs.maxResults === "number" && Number.isFinite(rawArgs.maxResults)) {
+  if (
+    typeof rawArgs.maxResults === "number" &&
+    Number.isFinite(rawArgs.maxResults)
+  ) {
     maxResults = Math.trunc(rawArgs.maxResults);
   }
   maxResults = Math.min(MAX_RESULTS_CAP, Math.max(1, maxResults));

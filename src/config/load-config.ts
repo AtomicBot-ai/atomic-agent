@@ -9,11 +9,10 @@ import {
   type BrowserChannel,
   type LogLevel,
 } from "./config-schema.js";
-import {
-  ensureUserConfigFileSync,
-  getUserConfigPath,
-} from "./config-file.js";
+import { ensureUserConfigFileSync, getUserConfigPath } from "./config-file.js";
 import { setCustomLocalModels } from "../local-llm/models-catalog.js";
+import { setDefaultDownloadConnections } from "../local-llm/download-settings.js";
+import { setDefaultHuggingFaceEndpoint } from "../local-llm/huggingface-endpoint.js";
 import { setConfiguredBackendVariant } from "../local-llm/windows-backend-variant.js";
 import { loadDotenvFromStateDir } from "./load-dotenv.js";
 import { resolveLlmProviderApiKey } from "./resolve-llm-api-key.js";
@@ -50,7 +49,10 @@ function readBool(key: string, fallback: boolean): boolean {
   return ["1", "true", "yes", "on"].includes(raw.toLowerCase());
 }
 
-function readBrowserChannel(key: string, fallback: BrowserChannel): BrowserChannel {
+function readBrowserChannel(
+  key: string,
+  fallback: BrowserChannel,
+): BrowserChannel {
   const raw = readEnv(key)?.toLowerCase();
   if (raw === "chrome" || raw === "msedge" || raw === "chromium") return raw;
   return fallback;
@@ -123,6 +125,11 @@ export function loadConfig(): AtomicAgentConfig {
   // visible to `resolveDownloadAsset`, which runs deep inside the
   // config-free local-llm layer.
   setConfiguredBackendVariant(user.localModels.managed.backendVariant);
+  // And the download fan-out: `downloadFile` is reached from the CLI, the
+  // TUI and the detached pull worker, none of which should have to
+  // thread a config value down to it.
+  setDefaultDownloadConnections(user.localModels.download.connections);
+  setDefaultHuggingFaceEndpoint(user.localModels.download.hfEndpoint);
   const grammarsDir = resolveAssetDir("ATOMIC_AGENT_GRAMMARS_DIR", "grammars");
 
   const browserChannel: BrowserChannel = readBrowserChannel(
@@ -189,6 +196,7 @@ export function loadConfig(): AtomicAgentConfig {
       mode: user.localModels.mode,
       managed: { ...user.localModels.managed },
       embeddings: { ...user.localModels.embeddings },
+      download: { ...user.localModels.download },
     },
     paths: {
       stateDir,
@@ -206,6 +214,8 @@ export function loadConfig(): AtomicAgentConfig {
     agent: {
       tokenBudget: user.agent.tokenBudget,
       maxSteps: user.agent.maxSteps,
+      providerWait: user.agent.providerWait,
+      task: user.agent.task,
       toolTimeoutMs: user.agent.toolTimeoutMs,
       approvalLevel: user.agent.approvalLevel,
       stablePrefixHashSalt:
@@ -327,7 +337,10 @@ export function loadConfig(): AtomicAgentConfig {
     },
     log: { level: logLevel },
     tasks: {
-      enabled: readBool("ATOMIC_AGENT_TASKS_ENABLED", ENV_DEFAULTS.TASKS_ENABLED),
+      enabled: readBool(
+        "ATOMIC_AGENT_TASKS_ENABLED",
+        ENV_DEFAULTS.TASKS_ENABLED,
+      ),
       maxAttempts: readInt(
         "ATOMIC_AGENT_TASKS_MAX_ATTEMPTS",
         ENV_DEFAULTS.TASKS_MAX_ATTEMPTS,
@@ -510,6 +523,10 @@ export function loadConfig(): AtomicAgentConfig {
       whileBusySubmit: user.tui.whileBusySubmit,
       mouse: user.tui.mouse,
       onboarding: { ...user.tui.onboarding },
+      sessionRail: {
+        order: [...user.tui.sessionRail.order],
+        pinned: [...user.tui.sessionRail.pinned],
+      },
     },
     analytics: {
       enabled: user.analytics.enabled,
@@ -519,6 +536,35 @@ export function loadConfig(): AtomicAgentConfig {
       ownerUserId: user.telegram.ownerUserId,
       parseMode: user.telegram.parseMode,
       progressIndicator: user.telegram.progressIndicator,
+    },
+    discord: {
+      enabled: user.discord.enabled,
+      ownerUserIds: user.discord.ownerUserIds,
+    },
+    swarm: {
+      units: user.swarm.units.map((u) => ({ ...u })),
+    },
+    notifications: {
+      downloads: {
+        channel: user.notifications.downloads.channel,
+      },
+    },
+    atomicMail: {
+      address: user.atomicMail.address,
+      accountId: user.atomicMail.accountId,
+      ownerEmail: user.atomicMail.ownerEmail,
+      ownerVerifiedAt: user.atomicMail.ownerVerifiedAt,
+      pendingVerification: user.atomicMail.pendingVerification,
+    },
+    git: {
+      remoteSync: user.git.remoteSync,
+    },
+    composio: {
+      enabled: user.composio.enabled,
+      apiKeyEnv: user.composio.apiKeyEnv,
+      userId: user.composio.userId,
+      sessionId: user.composio.sessionId,
+      mcpUrl: user.composio.mcpUrl,
     },
     mcp: {
       // Servers are owned by the user-config file. Deep clone the
@@ -549,5 +595,6 @@ function mapUserLlmToRuntime(
       };
     }),
     ...(llm.fallback ? { fallback: llm.fallback } : {}),
+    ...(llm.runMode ? { runMode: llm.runMode } : {}),
   };
 }

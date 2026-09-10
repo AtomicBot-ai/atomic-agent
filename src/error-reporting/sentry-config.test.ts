@@ -4,9 +4,7 @@ import { parseSentryDsn } from "./sentry-config.js";
 
 describe("parseSentryDsn", () => {
   it("parses a standard ingest DSN", () => {
-    const parsed = parseSentryDsn(
-      "https://abc123@o42.ingest.sentry.io/987",
-    );
+    const parsed = parseSentryDsn("https://abc123@o42.ingest.sentry.io/987");
     expect(parsed).not.toBeNull();
     expect(parsed?.publicKey).toBe("abc123");
     expect(parsed?.host).toBe("o42.ingest.sentry.io");

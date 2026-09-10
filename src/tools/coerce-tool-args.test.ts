@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { ToolRegistry, type ToolContext, type ToolDefinition } from "./tool-registry.js";
+import {
+  ToolRegistry,
+  type ToolContext,
+  type ToolDefinition,
+} from "./tool-registry.js";
 import { coerceToolArgs } from "./coerce-tool-args.js";
 
 const ctx: ToolContext = {
@@ -10,7 +14,10 @@ const ctx: ToolContext = {
 };
 
 /** Records the args a tool actually received after registry coercion. */
-function spyTool(name: string): { definition: ToolDefinition; seen: () => Record<string, unknown> } {
+function spyTool(name: string): {
+  definition: ToolDefinition;
+  seen: () => Record<string, unknown>;
+} {
   let received: Record<string, unknown> = {};
   return {
     seen: () => received,
@@ -43,7 +50,10 @@ describe("coerceToolArgs — real failing calls from the campaign", () => {
       prompt: "read the numbers",
       paths: '["/var/crops/num_04.png", "/var/crops/num_05.png"]',
     });
-    expect(seen.paths).toEqual(["/var/crops/num_04.png", "/var/crops/num_05.png"]);
+    expect(seen.paths).toEqual([
+      "/var/crops/num_04.png",
+      "/var/crops/num_05.png",
+    ]);
     expect(seen.prompt).toBe("read the numbers");
   });
 
@@ -72,7 +82,10 @@ describe("coerceToolArgs — real failing calls from the campaign", () => {
   });
 
   it("unwraps a stringified number for browser.scroll (1 occurrence)", async () => {
-    const seen = await invokeWith("browser.scroll", { direction: "down", amount: "3000" });
+    const seen = await invokeWith("browser.scroll", {
+      direction: "down",
+      amount: "3000",
+    });
     expect(seen).toEqual({ direction: "down", amount: 3000 });
   });
 });
@@ -80,29 +93,37 @@ describe("coerceToolArgs — real failing calls from the campaign", () => {
 describe("coerceToolArgs — the union case (browser.scroll `amount`)", () => {
   // `amount` is anyOf: ["page" | "half"] | number. The enum strings are
   // legal values as written and must survive; a numeric string is not.
-  it("leaves the enum string \"page\" untouched", () => {
-    expect(coerceToolArgs("browser.scroll", { direction: "down", amount: "page" })).toEqual({
+  it('leaves the enum string "page" untouched', () => {
+    expect(
+      coerceToolArgs("browser.scroll", { direction: "down", amount: "page" }),
+    ).toEqual({
       direction: "down",
       amount: "page",
     });
   });
 
-  it("leaves the enum string \"half\" untouched", () => {
-    expect(coerceToolArgs("browser.scroll", { direction: "up", amount: "half" })).toEqual({
+  it('leaves the enum string "half" untouched', () => {
+    expect(
+      coerceToolArgs("browser.scroll", { direction: "up", amount: "half" }),
+    ).toEqual({
       direction: "up",
       amount: "half",
     });
   });
 
   it("converts a numeric string on the same union field", () => {
-    expect(coerceToolArgs("browser.scroll", { direction: "down", amount: "3000" })).toEqual({
+    expect(
+      coerceToolArgs("browser.scroll", { direction: "down", amount: "3000" }),
+    ).toEqual({
       direction: "down",
       amount: 3000,
     });
   });
 
   it("passes an off-schema string through for the tool to reject", () => {
-    expect(coerceToolArgs("browser.scroll", { direction: "down", amount: "lots" })).toEqual({
+    expect(
+      coerceToolArgs("browser.scroll", { direction: "down", amount: "lots" }),
+    ).toEqual({
       direction: "down",
       amount: "lots",
     });
@@ -111,7 +132,11 @@ describe("coerceToolArgs — the union case (browser.scroll `amount`)", () => {
   it("leaves a JSON-looking string on a string|object field alone", () => {
     // os.http.request.body accepts a raw string, so `{"a":1}` is a
     // legitimate body rather than an over-encoded object.
-    const args = { url: "https://example.com", method: "POST", body: '{"a":1}' };
+    const args = {
+      url: "https://example.com",
+      method: "POST",
+      body: '{"a":1}',
+    };
     expect(coerceToolArgs("os.http.request", args).body).toBe('{"a":1}');
   });
 });
@@ -125,7 +150,9 @@ describe("coerceToolArgs — do no harm", () => {
   it("passes an uncoercible number string through unchanged", () => {
     const args = { path: "a.pdf", maxBytes: "not-a-number" };
     expect(coerceToolArgs("os.fs.read_document", args)).toEqual(args);
-    expect(coerceToolArgs("os.fs.read_document", args).maxBytes).toBe("not-a-number");
+    expect(coerceToolArgs("os.fs.read_document", args).maxBytes).toBe(
+      "not-a-number",
+    );
   });
 
   it("passes malformed JSON for an array field through without throwing", () => {
@@ -198,7 +225,8 @@ describe("ToolRegistry.invoke integration", () => {
       name: "vision.describe",
       description: "d",
       readonly: true,
-      run: async (args) => ({ status: "ok", summary: String(args.paths), details: {} }) as never,
+      run: async (args) =>
+        ({ status: "ok", summary: String(args.paths), details: {} }) as never,
     });
     const result = await registry.invoke(
       "vision.describe",
@@ -210,8 +238,8 @@ describe("ToolRegistry.invoke integration", () => {
 
   it("still throws ToolNotFoundError before any coercion", async () => {
     const registry = new ToolRegistry();
-    await expect(registry.invoke("nope.missing", { a: "1" }, ctx)).rejects.toThrow(
-      /tool not registered/,
-    );
+    await expect(
+      registry.invoke("nope.missing", { a: "1" }, ctx),
+    ).rejects.toThrow(/tool not registered/);
   });
 });

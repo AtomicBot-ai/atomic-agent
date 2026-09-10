@@ -107,7 +107,9 @@ describe("llm-config", () => {
       },
     });
 
-    expect(parsed.llm?.providers.find((provider) => provider.id === "qwen")).toMatchObject({
+    expect(
+      parsed.llm?.providers.find((provider) => provider.id === "qwen"),
+    ).toMatchObject({
       kind: "qwen-openai-compatible",
       baseUrl: "https://example.invalid",
       defaultChatModel: "qwen-test",
@@ -121,9 +123,17 @@ describe("llm-config", () => {
       activeEmbeddingProvider: "local-llama",
       toolTransport: "auto" as const,
       providers: [
-        { id: "local-llama", kind: "llama-server", url: "http://127.0.0.1:19091" },
+        {
+          id: "local-llama",
+          kind: "llama-server",
+          url: "http://127.0.0.1:19091",
+        },
         { id: "openrouter", kind: "openrouter", defaultChatModel: "gpt" },
-        { id: "groq", kind: "openai-compatible", defaultChatModel: "llama-3.3" },
+        {
+          id: "groq",
+          kind: "openai-compatible",
+          defaultChatModel: "llama-3.3",
+        },
       ],
       fallback,
     },
@@ -154,7 +164,9 @@ describe("llm-config", () => {
 
   it("rejects a non-positive failureThreshold", () => {
     expect(() =>
-      parseUserConfigFile(baseLlm({ chain: ["openrouter"], failureThreshold: 0 })),
+      parseUserConfigFile(
+        baseLlm({ chain: ["openrouter"], failureThreshold: 0 }),
+      ),
     ).toThrow(/failureThreshold/);
   });
 
@@ -183,7 +195,9 @@ describe("llm-config", () => {
 
   it("rejects a non-boolean appendLocal", () => {
     expect(() =>
-      parseUserConfigFile(baseLlm({ chain: ["openrouter"], appendLocal: "yes" })),
+      parseUserConfigFile(
+        baseLlm({ chain: ["openrouter"], appendLocal: "yes" }),
+      ),
     ).toThrow(/appendLocal/);
   });
 
@@ -195,12 +209,59 @@ describe("llm-config", () => {
         activeEmbeddingProvider: "local-llama",
         toolTransport: "auto",
         providers: [
-          { id: "local-llama", kind: "llama-server", url: "http://127.0.0.1:19091" },
+          {
+            id: "local-llama",
+            kind: "llama-server",
+            url: "http://127.0.0.1:19091",
+          },
           { id: "openrouter", kind: "openrouter", defaultChatModel: "gpt" },
         ],
       },
     });
     expect(parsed.llm?.fallback).toBeUndefined();
+  });
+
+  it("round-trips llm.runMode and validates its pins against llm.providers", () => {
+    const parsed = parseUserConfigFile({
+      ...baseLlm(undefined),
+      llm: {
+        ...baseLlm(undefined).llm,
+        runMode: {
+          mode: "fusion",
+          fusion: {
+            orchestratorProvider: "openrouter",
+            workerProvider: "local-llama",
+            workers: 3,
+          },
+        },
+      },
+    });
+    expect(parsed.llm?.runMode).toEqual({
+      mode: "fusion",
+      fusion: {
+        orchestratorProvider: "openrouter",
+        workerProvider: "local-llama",
+        workers: 3,
+      },
+    });
+    expect(() =>
+      parseUserConfigFile({
+        ...baseLlm(undefined),
+        llm: {
+          ...baseLlm(undefined).llm,
+          runMode: { fusion: { orchestratorProvider: "local-llama" } },
+        },
+      }),
+    ).toThrow(/llm\.runMode\.fusion\.orchestratorProvider/);
+  });
+
+  it("omits runMode entirely when not configured", () => {
+    expect(
+      parseUserConfigFile(baseLlm(undefined)).llm?.runMode,
+    ).toBeUndefined();
+    expect(
+      "runMode" in (parseUserConfigFile(baseLlm(undefined)).llm ?? {}),
+    ).toBe(false);
   });
 
   it("parses extraBody on an openai-compatible provider entry", () => {
@@ -238,8 +299,17 @@ describe("llm-config", () => {
       activeEmbeddingProvider: "local-llama",
       toolTransport: "auto" as const,
       providers: [
-        { id: "local-llama", kind: "llama-server", url: "http://127.0.0.1:19091" },
-        { id: "openrouter", kind: "openrouter", defaultChatModel: "gpt", ...extra },
+        {
+          id: "local-llama",
+          kind: "llama-server",
+          url: "http://127.0.0.1:19091",
+        },
+        {
+          id: "openrouter",
+          kind: "openrouter",
+          defaultChatModel: "gpt",
+          ...extra,
+        },
       ],
     },
   });
@@ -265,7 +335,9 @@ describe("llm-config", () => {
 
   it("rejects a non-object providerPreferences", () => {
     expect(() =>
-      parseUserConfigFile(withProviderField({ providerPreferences: ["anthropic"] })),
+      parseUserConfigFile(
+        withProviderField({ providerPreferences: ["anthropic"] }),
+      ),
     ).toThrow(/llm\.providers\[1\]\.providerPreferences/);
   });
 
@@ -276,7 +348,11 @@ describe("llm-config", () => {
       activeEmbeddingProvider: "local-llama",
       toolTransport: "auto" as const,
       providers: [
-        { id: "local-llama", kind: "llama-server", url: "http://127.0.0.1:19091" },
+        {
+          id: "local-llama",
+          kind: "llama-server",
+          url: "http://127.0.0.1:19091",
+        },
         {
           id: "model-studio",
           kind: "qwen-openai-compatible",
@@ -361,9 +437,7 @@ describe("llm-config", () => {
   it("rejects userModels pricing that is missing a rate", () => {
     expect(() =>
       parseUserConfigFile(
-        withUserModels([
-          { id: "a", kind: "chat", pricing: { input: 0.0004 } },
-        ]),
+        withUserModels([{ id: "a", kind: "chat", pricing: { input: 0.0004 } }]),
       ),
     ).toThrow(/llm\.providers\[1\]\.userModels\[0\]\.pricing\.output/);
   });
@@ -504,5 +578,51 @@ describe("llm-config", () => {
         },
       }),
     ).toThrow(/extraArgs\[1\]/);
+  });
+});
+
+describe("provider maxOutputTokens", () => {
+  const withEntry = (maxOutputTokens: unknown) => ({
+    version: USER_CONFIG_VERSION,
+    llm: {
+      activeTextProvider: "openrouter",
+      activeEmbeddingProvider: "local-llama",
+      toolTransport: "auto" as const,
+      providers: [
+        {
+          id: "local-llama",
+          kind: "llama-server",
+          url: "http://127.0.0.1:19091",
+        },
+        {
+          id: "openrouter",
+          kind: "openrouter",
+          defaultChatModel: "gpt",
+          maxOutputTokens,
+        },
+      ],
+    },
+  });
+
+  it("round-trips a per-provider ceiling", () => {
+    const parsed = parseUserConfigFile(withEntry(64_000));
+    expect(
+      parsed.llm?.providers.find((p) => p.id === "openrouter")?.maxOutputTokens,
+    ).toBe(64_000);
+  });
+
+  it("is absent by default — the model's own maximum applies", () => {
+    const parsed = parseUserConfigFile(withEntry(undefined));
+    expect(
+      parsed.llm?.providers.find((p) => p.id === "openrouter")?.maxOutputTokens,
+    ).toBeUndefined();
+  });
+
+  it("rejects a non-positive or fractional ceiling", () => {
+    for (const bad of [0, -1, 1.5, "lots"]) {
+      expect(() => parseUserConfigFile(withEntry(bad))).toThrow(
+        /maxOutputTokens/,
+      );
+    }
   });
 });

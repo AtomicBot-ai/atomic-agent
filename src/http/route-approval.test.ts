@@ -33,10 +33,16 @@ describe("POST /api/approval/resolve", () => {
     const response = await fetch(`${harness.baseUrl}/api/approval/resolve`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ approvalId: "approval-1", decision: "allow-once" }),
+      body: JSON.stringify({
+        approvalId: "approval-1",
+        decision: "allow-once",
+      }),
     });
     expect(response.status).toBe(200);
-    const body = (await response.json()) as { resolved: boolean; approved: boolean };
+    const body = (await response.json()) as {
+      resolved: boolean;
+      approved: boolean;
+    };
     expect(body.resolved).toBe(true);
     expect(body.approved).toBe(true);
 

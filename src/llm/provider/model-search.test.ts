@@ -41,7 +41,10 @@ const CATALOG: readonly { id: string; entry: ModelCatalogEntry }[] = [
   },
   {
     id: "qwen/qwen3.6-flash",
-    entry: entry({ contextWindow: 1_000_000, pricing: { input: 0.19, output: 1.13 } }),
+    entry: entry({
+      contextWindow: 1_000_000,
+      pricing: { input: 0.19, output: 1.13 },
+    }),
   },
   {
     id: "openai/gpt-oss-20b",
@@ -70,7 +73,9 @@ describe("searchModels", () => {
       "anthropic/claude-opus-5",
       "anthropic/claude-haiku-4.5",
     ]);
-    expect(ids(searchModels(CATALOG, "OPUS"))).toEqual(["anthropic/claude-opus-5"]);
+    expect(ids(searchModels(CATALOG, "OPUS"))).toEqual([
+      "anthropic/claude-opus-5",
+    ]);
   });
 
   it("ANDs multiple terms instead of matching the raw string", () => {
@@ -91,12 +96,17 @@ describe("searchModels", () => {
     // The tag follows the rendered price, so a router row is "routed",
     // never "free", and never "cheap" either.
     const auto = [
-      { id: "openrouter/auto", entry: entry({ pricing: { input: 0, output: 0 } }) },
+      {
+        id: "openrouter/auto",
+        entry: entry({ pricing: { input: 0, output: 0 } }),
+      },
     ];
     expect(ids(searchModels(auto, "routed"))).toEqual(["openrouter/auto"]);
     expect(searchModels(auto, "free")).toEqual([]);
     expect(searchModels(auto, "cheap")).toEqual([]);
-    expect(ids(searchModels(CATALOG, "cache"))).toEqual(["anthropic/claude-opus-5"]);
+    expect(ids(searchModels(CATALOG, "cache"))).toEqual([
+      "anthropic/claude-opus-5",
+    ]);
     expect(ids(searchModels(CATALOG, "cheap"))).toEqual([
       "anthropic/claude-haiku-4.5",
       "qwen/qwen3.6-flash",
@@ -199,7 +209,9 @@ describe("context window terms", () => {
     expect(ids(searchModels(WINDOWS, "128k"))).toEqual(["vendor/foxtrot"]);
     expect(ids(searchModels(WINDOWS, "200k"))).toEqual(["vendor/golf"]);
     // A window that was never binary keeps only its decimal reading.
-    const decimal = [{ id: "vendor/hotel", entry: entry({ contextWindow: 200_000 }) }];
+    const decimal = [
+      { id: "vendor/hotel", entry: entry({ contextWindow: 200_000 }) },
+    ];
     expect(ids(searchModels(decimal, "200k"))).toEqual(["vendor/hotel"]);
     expect(searchModels(decimal, "195k")).toEqual([]);
   });

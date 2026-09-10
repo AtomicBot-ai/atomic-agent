@@ -8,7 +8,9 @@ import {
 describe("parseRewriterOutput", () => {
   it("extracts the body from a well-formed envelope", () => {
     expect(
-      parseRewriterOutput("<rewritten_query>FTS5 ranking algorithm</rewritten_query>"),
+      parseRewriterOutput(
+        "<rewritten_query>FTS5 ranking algorithm</rewritten_query>",
+      ),
     ).toBe("FTS5 ranking algorithm");
   });
 
@@ -30,7 +32,9 @@ describe("parseRewriterOutput", () => {
   });
 
   it("returns null on empty body", () => {
-    expect(parseRewriterOutput("<rewritten_query></rewritten_query>")).toBeNull();
+    expect(
+      parseRewriterOutput("<rewritten_query></rewritten_query>"),
+    ).toBeNull();
     expect(
       parseRewriterOutput("<rewritten_query>   </rewritten_query>"),
     ).toBeNull();
@@ -38,7 +42,9 @@ describe("parseRewriterOutput", () => {
 
   it("clamps an oversized body to REWRITTEN_QUERY_MAX_LENGTH", () => {
     const huge = "x".repeat(REWRITTEN_QUERY_MAX_LENGTH + 50);
-    const out = parseRewriterOutput(`<rewritten_query>${huge}</rewritten_query>`);
+    const out = parseRewriterOutput(
+      `<rewritten_query>${huge}</rewritten_query>`,
+    );
     expect(out).not.toBeNull();
     expect(out!.length).toBe(REWRITTEN_QUERY_MAX_LENGTH);
   });
@@ -121,9 +127,9 @@ describe("parseRewriterOutput", () => {
 
     it("when both formats coexist, the JSON branch wins on parseable JSON; otherwise envelope wins", () => {
       // Pure JSON body — JSON path wins.
-      expect(
-        parseRewriterOutput('{"rewritten_query":"json wins"}'),
-      ).toBe("json wins");
+      expect(parseRewriterOutput('{"rewritten_query":"json wins"}')).toBe(
+        "json wins",
+      );
       // Mixed body starting with `{` but JSON.parse fails on the
       // trailing envelope — falls through to the envelope parser
       // which extracts "envelope". This is intentional: we only

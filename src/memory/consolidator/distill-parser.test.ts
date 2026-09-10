@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  DistillParseError,
-  parseDistillOutput,
-} from "./distill-parser.js";
+import { DistillParseError, parseDistillOutput } from "./distill-parser.js";
 
 describe("parseDistillOutput", () => {
   it("parses a well-formed LESSON line with all fields", () => {
@@ -43,26 +40,24 @@ describe("parseDistillOutput", () => {
   });
 
   it("throws when there is no LESSON line", () => {
-    expect(() =>
-      parseDistillOutput("some prose without a LESSON tag"),
-    ).toThrow(DistillParseError);
+    expect(() => parseDistillOutput("some prose without a LESSON tag")).toThrow(
+      DistillParseError,
+    );
   });
 
   it("throws on missing activation / principle", () => {
-    expect(() =>
-      parseDistillOutput(`LESSON principle="ok"`),
-    ).toThrow(DistillParseError);
-    expect(() =>
-      parseDistillOutput(`LESSON activation="ok"`),
-    ).toThrow(DistillParseError);
+    expect(() => parseDistillOutput(`LESSON principle="ok"`)).toThrow(
+      DistillParseError,
+    );
+    expect(() => parseDistillOutput(`LESSON activation="ok"`)).toThrow(
+      DistillParseError,
+    );
   });
 
   it("throws on oversized activation", () => {
     const big = "x".repeat(300);
     expect(() =>
-      parseDistillOutput(
-        `LESSON activation="${big}"; principle="ok"\n`,
-      ),
+      parseDistillOutput(`LESSON activation="${big}"; principle="ok"\n`),
     ).toThrow(DistillParseError);
   });
 
@@ -165,9 +160,9 @@ describe("parseDistillOutput", () => {
       // body starts with `{`, JSON.parse succeeds, but `kind` is
       // missing → JSON branch returns null. The text branch then
       // looks for a LESSON line and finds none → throws.
-      expect(() =>
-        parseDistillOutput(JSON.stringify({ foo: "bar" })),
-      ).toThrow(DistillParseError);
+      expect(() => parseDistillOutput(JSON.stringify({ foo: "bar" }))).toThrow(
+        DistillParseError,
+      );
     });
   });
 });

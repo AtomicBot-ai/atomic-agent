@@ -124,10 +124,12 @@ describe("createLocalLinkPreparer", () => {
    * because deleting any one of them from an inline closure inside
    * `buildRuntime` used to survive every test in the tree.
    */
-  const build = (opts: {
-    isLocalLink?: (id: string) => boolean;
-    probedAtBoot?: boolean;
-  } = {}) => {
+  const build = (
+    opts: {
+      isLocalLink?: (id: string) => boolean;
+      probedAtBoot?: boolean;
+    } = {},
+  ) => {
     const restore = vi.fn(async () => {});
     const refreshIfStale = vi.fn(async () => {});
     const gate = new DeferredLocalBackendProbes(

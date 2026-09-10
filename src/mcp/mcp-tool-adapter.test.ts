@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { ApprovalGate, ApprovalRequest } from "../approval/approval-gate.js";
+import type {
+  ApprovalGate,
+  ApprovalRequest,
+} from "../approval/approval-gate.js";
 import type { DangerousToolOptions } from "../approval/dangerous-tool.js";
 import type { ToolContext } from "../tools/tool-registry.js";
 
@@ -29,7 +32,11 @@ function metaOf(
 }
 
 function fakeClient(
-  callTool: (rawName: string, args: Record<string, unknown>, signal?: AbortSignal) => Promise<unknown>,
+  callTool: (
+    rawName: string,
+    args: Record<string, unknown>,
+    signal?: AbortSignal,
+  ) => Promise<unknown>,
 ): McpClient {
   // Duck-typed minimal stub — only callTool is exercised by the adapter.
   return { callTool } as unknown as McpClient;
@@ -75,7 +82,9 @@ describe("projectMcpResponseToText", () => {
   });
 
   it("renders legacy `toolResult` shape as pretty-printed JSON", () => {
-    const out = projectMcpResponseToText({ toolResult: { ok: true, count: 3 } });
+    const out = projectMcpResponseToText({
+      toolResult: { ok: true, count: 3 },
+    });
     expect(out).toBe('{\n  "ok": true,\n  "count": 3\n}');
   });
 
@@ -186,7 +195,8 @@ describe("createMcpToolDefinition", () => {
   });
 
   it("forwards args verbatim to client.callTool", async () => {
-    let received: { rawName: string; args: Record<string, unknown> } | null = null;
+    let received: { rawName: string; args: Record<string, unknown> } | null =
+      null;
     const def = createMcpToolDefinition(
       metaOf("github", "create_issue"),
       fakeClient(async (rawName, args) => {

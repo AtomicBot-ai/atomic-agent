@@ -37,7 +37,11 @@ describe("search-cache", () => {
   });
 
   it("evicts oldest entries FIFO past maxEntries", () => {
-    const cache = createSearchCache({ ttlMs: 1000, maxEntries: 2, now: () => 0 });
+    const cache = createSearchCache({
+      ttlMs: 1000,
+      maxEntries: 2,
+      now: () => 0,
+    });
     cache.set("a", RESULTS);
     cache.set("b", RESULTS);
     cache.set("c", RESULTS);

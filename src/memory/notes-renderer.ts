@@ -19,7 +19,9 @@ export function renderRecalledSection(
   opts: { previewChars: number },
 ): string {
   if (entries.length === 0) return "(no notes recalled)";
-  return entries.map((e) => renderRecalledLine(e, opts.previewChars)).join("\n");
+  return entries
+    .map((e) => renderRecalledLine(e, opts.previewChars))
+    .join("\n");
 }
 
 /**
