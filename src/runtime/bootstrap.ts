@@ -1660,6 +1660,7 @@ export async function createAgentRuntime(
     enabled: config.vision.enabled,
     maxImagesPerCall: config.vision.maxImagesPerCall,
     maxImageBytes: config.vision.maxImageBytes,
+    logger,
   });
   // MCP client subsystem. The manager is always constructed so the
   // live-control surface (TUI panel, slash commands — planned) stays
