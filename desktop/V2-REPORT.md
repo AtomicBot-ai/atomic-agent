@@ -272,6 +272,38 @@ bundle:fetch-assets && npm run bundle:build-binary && npm run bundle:package`
 at the repo root, and then `better_sqlite3.node` must be the one built
 against that same Node.
 
+## The version wall a tester hit
+
+Switching model gave her:
+
+    config set failed: version 51 is newer than this build understands (49)
+
+Her settings file had been written by a newer agent than the one inside her
+DMG, and the agent refuses to write a file from a format it does not know —
+correct, because writing it would silently drop whatever that format added.
+What was wrong is that the agent's sentence went to a person.
+
+**This branch caused it.** Bundling the agent means the app prefers its own
+over anything installed; before that it used whatever `atag` was on the
+machine, which was the same v0.5.6 agent (schema 51) that had written her
+file. A bundled agent understanding 49 put a state directory in front of it
+that it could not write.
+
+Reproduced both halves before changing anything, using the whole-file write
+this app actually performs — the dotted-key form does not trip the guard at
+all, which is why a first attempt looked fine:
+
+| agent | whole-file write of a v51 config |
+|---|---|
+| in her DMG (49) | `config set failed: version 51 …` — her exact error |
+| in this DMG (62) | writes, and migrates 51 → 62 |
+
+The synced agent fixes her case, and the failure now explains itself if it
+ever recurs — translated at `writeWholeConfig`, the single choke point every
+config write goes through. The shipped app was verified against a config
+pinned to 51 rather than a clean fixture: 496 checks green, and the file came
+out at 62.
+
 ## What is still not signed
 
 The build is **ad-hoc signed and not notarised**. macOS refuses the first
