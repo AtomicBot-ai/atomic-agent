@@ -140,8 +140,15 @@ export interface AgentLoopDependencies {
    */
   supportsParallelTools?: boolean;
   /**
+   * Whether the active model declares `supportsTools: "strict"`, so the
+   * native-tools request should constrain the decode to the tool
+   * schemas. Defaults to `false`: the level is opt-in per model and
+   * every tool the adapter cannot express strictly ships unchanged.
+   */
+  strictTools?: boolean;
+  /**
    * Resolve the wire slice for a provider a turn is pinned to
-   * (`RunTurnOptions.providerId`). The four global fields above describe
+   * (`RunTurnOptions.providerId`). The global fields above describe
    * the ACTIVE provider; a fusion worker turn runs on a different one
    * (the local leg) inside the same process, so its steps must be built
    * for that link's transport, adapter and slot affinity, not the
@@ -277,8 +284,8 @@ export interface ReflectionSegmentationConfig {
 }
 
 /**
- * The per-link wire shape a pinned turn is built for — the same four
- * facts `AgentLoopDependencies` carries for the active provider, resolved
+ * The per-link wire shape a pinned turn is built for — the same facts
+ * `AgentLoopDependencies` carries for the active provider, resolved
  * for the pinned one instead. See `AgentLoopDependencies.resolveLlmSlice`.
  */
 export interface ResolvedTurnLlmSlice {
@@ -286,6 +293,7 @@ export interface ResolvedTurnLlmSlice {
   toolCallAdapter: ToolCallAdapter | null;
   supportsSlotAffinity: boolean;
   supportsParallelTools: boolean;
+  strictTools: boolean;
 }
 
 export interface MemoryContextProviderInput {
@@ -1218,6 +1226,8 @@ export class AgentLoop {
               pinnedSlice?.supportsParallelTools ??
               this.deps.supportsParallelTools ??
               true,
+            strictTools:
+              pinnedSlice?.strictTools ?? this.deps.strictTools ?? false,
             ...(options.providerId !== undefined
               ? { providerId: options.providerId }
               : {}),

@@ -82,7 +82,10 @@ import type {
   ResponseFormatJsonSchema,
   ToolCallTransport,
 } from "../llm/provider/completion-types.js";
-import type { ToolCallAdapter } from "../llm/provider/adapters/tool-call-adapter.js";
+import {
+  hasStrictFunctionTools,
+  type ToolCallAdapter,
+} from "../llm/provider/adapters/tool-call-adapter.js";
 import { openAiToolCallAdapter } from "../llm/provider/openai/openai-tool-call-adapter.js";
 import type { ProfileFact } from "../memory/profile-store.js";
 import type { AgentMetrics } from "../tracing/agent-metrics.js";
@@ -205,6 +208,14 @@ export interface StepDependencies {
    * grammar-only wiring.
    */
   supportsParallelTools?: boolean;
+  /**
+   * The resolved model declares `supportsTools: "strict"`, so the
+   * native-tools request asks the provider to constrain the decode to
+   * the tool schemas. Off unless the operator sets that level by hand
+   * on a `llm.providers[].userModels[]` entry; the adapter still
+   * refuses per tool whatever it cannot express strictly.
+   */
+  strictTools?: boolean;
   /**
    * Provider pin for every completion this step issues (initial call
    * and repair retry alike). Forwarded verbatim as
@@ -729,6 +740,7 @@ async function executeStepInner(
     completion,
     deps.profile,
     parseDepsFor(completion, deps),
+    stepToolDescriptors,
   );
   if (ctx.terminalOnly && parsed.ok) {
     const nonTerminal = parsed.batch.calls.find(
@@ -922,7 +934,12 @@ async function executeStepInner(
       );
     }
 
-    parsed = tryParseToolCalls(completion, deps.profile, retryParseDeps);
+    parsed = tryParseToolCalls(
+      completion,
+      deps.profile,
+      retryParseDeps,
+      stepToolDescriptors,
+    );
     if (ctx.terminalOnly && parsed.ok) {
       const nonTerminal = parsed.batch.calls.find(
         ({ tool }) => tool !== "reply" && tool !== "finish",
@@ -1416,10 +1433,15 @@ function isGrammarEmptyCompletionWorthRepairing(
  * grammar, not as OpenAI `tool_calls`. Absent `servedTransport` (the
  * direct, non-wrapped path), the configured transport is authoritative.
  */
+type ParseDeps = Pick<
+  StepDependencies,
+  "toolTransport" | "toolCallAdapter" | "strictTools"
+>;
+
 function parseDepsFor(
   completion: CompletionResult,
-  deps: Pick<StepDependencies, "toolTransport" | "toolCallAdapter">,
-): Pick<StepDependencies, "toolTransport" | "toolCallAdapter"> {
+  deps: ParseDeps,
+): ParseDeps {
   const served = completion.servedTransport;
   if (served === undefined || served === deps.toolTransport) return deps;
   return {
@@ -1427,6 +1449,9 @@ function parseDepsFor(
     // A grammar link needs no adapter; a native link uses the default
     // OpenAI adapter unless the caller carried a custom one for it.
     toolCallAdapter: served === "native_tools" ? deps.toolCallAdapter : null,
+    ...(deps.strictTools !== undefined
+      ? { strictTools: deps.strictTools }
+      : {}),
   };
 }
 
@@ -1439,7 +1464,11 @@ function parseDepsFor(
 function tryParseToolCalls(
   completion: CompletionResult,
   profile: ModelProfile,
-  deps: Pick<StepDependencies, "toolTransport" | "toolCallAdapter">,
+  deps: ParseDeps,
+  // The descriptor list the REQUEST was built from: the strict-marked
+  // names have to be derived from the same input, or the undo on the
+  // way in stops matching the rewrite on the way out.
+  toolDescriptors: readonly ToolDescriptor[],
 ): ToolCallBatchParseResult {
   const assumeOpenReasoning = completionAssumesOpenReasoning(
     profile,
@@ -1454,7 +1483,18 @@ function tryParseToolCalls(
           profile,
           assumeOpenReasoning,
         );
-        const batch = adapter.toolCallsToBatch(completion.toolCalls, reasoning);
+        // Per ARGUMENT, not per batch and not even per tool: only the
+        // arguments this adapter moved from optional into `required`
+        // carry a `null` the schema put there, so only those get the
+        // rewrite undone. The map comes from the same adapter and the
+        // same descriptor list the request was built from.
+        const strictWidenedArgs =
+          deps.strictTools === true && adapter.strictWidenedArgs
+            ? adapter.strictWidenedArgs(toolDescriptors, { strict: true })
+            : undefined;
+        const batch = adapter.toolCallsToBatch(completion.toolCalls, reasoning, {
+          ...(strictWidenedArgs ? { strictWidenedArgs } : {}),
+        });
         if (batch.calls.length === 0) {
           return {
             ok: false,
@@ -1626,6 +1666,7 @@ function buildLlmStreamParams(args: {
     | "toolTransport"
     | "toolCallAdapter"
     | "supportsParallelTools"
+    | "strictTools"
     | "providerId"
   >;
   slotId: number;
@@ -1647,6 +1688,9 @@ function buildLlmStreamParams(args: {
     return base;
   }
   const adapter = args.deps.toolCallAdapter ?? openAiToolCallAdapter;
+  const tools = adapter.descriptorsToTools(args.toolDescriptors, {
+    strict: args.deps.strictTools === true,
+  });
   return {
     ...base,
     // Keep `grammar` populated (not blanked) even on the native path: the
@@ -1654,7 +1698,7 @@ function buildLlmStreamParams(args: {
     // llama-server link, which needs the GBNF. Native (cloud) providers
     // ignore `grammar` entirely and read `tools`, so carrying both makes
     // the request valid for whichever link actually serves it.
-    tools: adapter.descriptorsToTools(args.toolDescriptors),
+    tools,
     // `auto` instead of `required`. Three production-observed reasons:
     //   * Qwen-thinking providers (Alibaba gate) reject `required` outright
     //     with `<400> InvalidParameter: tool_choice does not support being
@@ -1678,7 +1722,26 @@ function buildLlmStreamParams(args: {
     // (Gemini) lack stable indices for parallel calls, so the setting
     // must reach the wire, not just the executor's batch planner
     // (issue #104).
+    //
+    // A request carrying strict tools has a third veto, and it is not
+    // optional: OpenAI states that Structured Outputs is not compatible
+    // with parallel function calls — "when a parallel function call is
+    // generated, it may not match supplied schemas" — and says to set
+    // `parallel_tool_calls: false`. Leaving it at `true` would mark
+    // every convertible tool `strict` and still get best-effort
+    // adherence, which is the exact symptom this feature exists to
+    // cure, so the operator who turns strict on gets one tool call per
+    // response on the wire. (Credit: the parallel work on #402 found
+    // this; this branch had missed it.) The executor's own
+    // `maxParallelToolCalls` batching is untouched — a model that
+    // emits several calls anyway is still planned and run the same way.
+    //
+    // Keyed to the emitted array, not to `deps.strictTools`: strict is
+    // granted per tool, and an adapter that ignored the option, or a
+    // descriptor set where nothing converted, must not silently lose
+    // parallel calls for a request that is not constrained at all.
     parallelToolCalls:
+      !hasStrictFunctionTools(tools) &&
       getConfig().agent.maxParallelToolCalls > 1 &&
       (args.deps.supportsParallelTools ?? true),
   };

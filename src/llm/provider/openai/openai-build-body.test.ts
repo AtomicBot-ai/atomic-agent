@@ -275,3 +275,82 @@ describe("buildOpenAiChatBody — the provider's own ceiling", () => {
     ).toBe(false);
   });
 });
+
+describe("buildOpenAiChatBody — strict tools and parallel calls", () => {
+  const strictTool = {
+    type: "function",
+    function: {
+      name: "os__fs__read",
+      description: "read a file",
+      strict: true,
+      parameters: {
+        type: "object",
+        properties: { path: { type: "string" } },
+        required: ["path"],
+        additionalProperties: false,
+      },
+    },
+  };
+  const plainTool = {
+    type: "function",
+    function: {
+      name: "os__fs__list",
+      description: "list a directory",
+      parameters: {
+        type: "object",
+        properties: { path: { type: "string" } },
+        required: ["path"],
+      },
+    },
+  };
+
+  it("sends parallel_tool_calls: false when any function is strict", () => {
+    // OpenAI: Structured Outputs is not compatible with parallel
+    // function calls. Marking tools `strict` and leaving this `true`
+    // buys best-effort adherence, i.e. the bug the level exists to fix.
+    const body = buildOpenAiChatBody(
+      { prompt: "hi", tools: [plainTool, strictTool], parallelToolCalls: true },
+      "gpt-test",
+      false,
+    );
+    expect(body.parallel_tool_calls).toBe(false);
+  });
+
+  it("overrides a caller that asked for parallel calls", () => {
+    // The wire floor, not a second opinion: whoever built the request
+    // may not have known about strict tools, and a `true` reaching the
+    // provider alongside `strict: true` is the failure mode.
+    const body = buildOpenAiChatBody(
+      { prompt: "hi", tools: [strictTool], parallelToolCalls: true },
+      "gpt-test",
+      false,
+    );
+    expect(body.parallel_tool_calls).toBe(false);
+  });
+
+  it("leaves a non-strict tools array exactly as it was", () => {
+    // The flag is off for every stock config, and off it must not move
+    // a byte. A tools array with no `strict: true` anywhere is the
+    // definition of that.
+    const body = buildOpenAiChatBody(
+      { prompt: "hi", tools: [plainTool], parallelToolCalls: true },
+      "gpt-test",
+      false,
+    );
+    expect(body.parallel_tool_calls).toBe(true);
+    expect(body.tools).toEqual([plainTool]);
+  });
+
+  it("still honours an explicit single-call request under strict tools", () => {
+    const body = buildOpenAiChatBody(
+      {
+        prompt: "hi",
+        tools: [strictTool],
+        parallelToolCalls: false,
+      },
+      "gpt-test",
+      false,
+    );
+    expect(body.parallel_tool_calls).toBe(false);
+  });
+});

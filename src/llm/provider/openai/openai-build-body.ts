@@ -1,4 +1,5 @@
 import type { CompletionRequest } from "../completion-types.js";
+import { hasStrictFunctionTools } from "../adapters/tool-call-adapter.js";
 import { filterCloudCompletionRequest } from "./sampling-filter.js";
 
 /**
@@ -59,7 +60,18 @@ export function buildOpenAiChatBody(
   if (typeof filtered.seed === "number") body.seed = filtered.seed;
   if (filtered.tools && filtered.tools.length > 0) {
     body.tools = filtered.tools;
-    body.parallel_tool_calls = filtered.parallelToolCalls ?? true;
+    // Structured Outputs and parallel function calls do not compose:
+    // OpenAI documents that a parallel call generated under strict mode
+    // "may not match supplied schemas" and says to send
+    // `parallel_tool_calls: false`. The caller decides this — see
+    // `buildLlmStreamParams` — and this line is the floor under that
+    // decision: whoever builds a request carrying a `strict: true`
+    // function cannot end up asking for parallel calls with it,
+    // including the callers that never learned about the setting.
+    // Keyed to the array itself, so the two points cannot disagree.
+    body.parallel_tool_calls =
+      !hasStrictFunctionTools(filtered.tools) &&
+      (filtered.parallelToolCalls ?? true);
     if (filtered.toolChoice !== undefined) {
       body.tool_choice = filtered.toolChoice;
     }

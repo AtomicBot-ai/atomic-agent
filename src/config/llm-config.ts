@@ -115,6 +115,10 @@ export type UserLlmProviderEntry = {
  * Note `supportsTools` here is a support *level*, not the boolean of
  * the same name on the provider entry: a model can advertise strict or
  * parallel tool calling independently of whether the transport does.
+ * `"strict"` is the one level with a wire effect — it asks the provider
+ * to constrain the decode to the tool schemas, per tool and only where
+ * the schema can be expressed strictly. See AGENTS.md §"Strict tool
+ * schemas".
  */
 export type UserModelEntry = {
   id: string;

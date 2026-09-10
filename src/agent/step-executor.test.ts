@@ -15,6 +15,7 @@ import { createEmptySessionState } from "../session/session-state.js";
 import { DEFAULT_TOOL_DESCRIPTORS } from "../prompt/tool-descriptors.js";
 import { replyTool } from "../tools/conversation/reply.js";
 import { resetConfigCache } from "../config/index.js";
+import { buildOpenAiChatBody } from "../llm/provider/openai/openai-build-body.js";
 import type {
   CapabilitiesSummary,
   SkillCatalogEntry,
@@ -1941,6 +1942,7 @@ describe("parallelToolCalls derivation (issue #104)", () => {
   async function captureStreamParams(deps?: {
     supportsParallelTools?: boolean;
     maxParallelToolCallsEnv?: string;
+    strictTools?: boolean;
   }) {
     if (deps?.maxParallelToolCallsEnv !== undefined) {
       process.env.ATOMIC_AGENT_MAX_PARALLEL_TOOL_CALLS =
@@ -1952,7 +1954,10 @@ describe("parallelToolCalls derivation (issue #104)", () => {
       id: "s-parallel-flag",
       workingDir: "/w",
     });
-    let captured: { parallelToolCalls?: boolean } | null = null;
+    let captured: {
+      parallelToolCalls?: boolean;
+      tools?: ReadonlyArray<Record<string, unknown>>;
+    } | null = null;
     const outcome = await executeStep(
       {
         session,
@@ -1967,7 +1972,10 @@ describe("parallelToolCalls derivation (issue #104)", () => {
         registry,
         slotManager: new SlotManager(2),
         llmComplete: async (params) => {
-          captured = { parallelToolCalls: params.parallelToolCalls };
+          captured = {
+            parallelToolCalls: params.parallelToolCalls,
+            ...(params.tools ? { tools: params.tools } : {}),
+          };
           return {
             content: JSON.stringify([
               {
@@ -1996,6 +2004,9 @@ describe("parallelToolCalls derivation (issue #104)", () => {
         supportsSlotAffinity: false,
         ...(deps?.supportsParallelTools !== undefined
           ? { supportsParallelTools: deps.supportsParallelTools }
+          : {}),
+        ...(deps?.strictTools !== undefined
+          ? { strictTools: deps.strictTools }
           : {}),
       },
     );
@@ -2029,6 +2040,78 @@ describe("parallelToolCalls derivation (issue #104)", () => {
       maxParallelToolCallsEnv: "8",
     });
     expect(captured.parallelToolCalls).toBe(true);
+  });
+
+  /**
+   * The fourth veto, and the one that is not a preference: OpenAI
+   * documents that Structured Outputs is not compatible with parallel
+   * function calls — a parallel call generated under strict mode "may
+   * not match supplied schemas" — and says to send
+   * `parallel_tool_calls: false`. A request that marks tools `strict`
+   * and still asks for parallel calls buys best-effort adherence, which
+   * is exactly the symptom `supportsTools: "strict"` exists to cure.
+   */
+  it("sends parallelToolCalls false under strict tools, whatever the cap says", async () => {
+    const captured = await captureStreamParams({
+      strictTools: true,
+      supportsParallelTools: true,
+      maxParallelToolCallsEnv: "8",
+    });
+    expect(
+      captured.tools?.some(
+        (t) =>
+          (t.function as { strict?: boolean } | undefined)?.strict === true,
+      ),
+    ).toBe(true);
+    expect(captured.parallelToolCalls).toBe(false);
+  });
+
+  it("reaches the wire body as parallel_tool_calls: false", async () => {
+    // End to end, because that is the only place the two facts meet:
+    // the executor decides, `buildOpenAiChatBody` serialises, and a
+    // regression in either one is invisible from the other's tests.
+    const captured = await captureStreamParams({
+      strictTools: true,
+      supportsParallelTools: true,
+      maxParallelToolCallsEnv: "8",
+    });
+    const body = buildOpenAiChatBody(
+      {
+        prompt: "read the file",
+        tools: captured.tools,
+        ...(captured.parallelToolCalls !== undefined
+          ? { parallelToolCalls: captured.parallelToolCalls }
+          : {}),
+      },
+      "mercury-2.5",
+      false,
+    );
+    expect(body.parallel_tool_calls).toBe(false);
+  });
+
+  it("leaves the wire body alone when the level is off", async () => {
+    // The other half: no strict marking anywhere, so nothing about this
+    // request may differ from what it was before the feature existed.
+    const captured = await captureStreamParams({
+      supportsParallelTools: true,
+      maxParallelToolCallsEnv: "8",
+    });
+    expect(
+      captured.tools?.some(
+        (t) =>
+          (t.function as { strict?: boolean } | undefined)?.strict === true,
+      ),
+    ).toBe(false);
+    const body = buildOpenAiChatBody(
+      {
+        prompt: "read the file",
+        tools: captured.tools,
+        parallelToolCalls: captured.parallelToolCalls ?? true,
+      },
+      "mercury-2.5",
+      false,
+    );
+    expect(body.parallel_tool_calls).toBe(true);
   });
 });
 
@@ -3205,6 +3288,194 @@ describe("truncated completions", () => {
       reason: "truncated",
       stage: "repair",
       truncation: { cause: "reply_cap", requestedMaxTokens: 8_192 },
+    });
+  });
+});
+
+describe('strictTools wiring (supportsTools: "strict")', () => {
+  // Two tools, one convertible and one not, so the per-tool half of the
+  // contract is exercised in both directions of the same step.
+  const convertible = {
+    name: "acme.put",
+    tier: "frequent" as const,
+    summary: "store a value",
+    argsSchema: "{ key: string, note?: string }",
+    argsJsonSchema: {
+      type: "object",
+      properties: { key: { type: "string" }, note: { type: "string" } },
+      required: ["key"],
+      additionalProperties: false,
+    } as Record<string, unknown>,
+  };
+  // Left open by its server, so closing it would forbid arguments it
+  // accepts today: the converter refuses, and the function ships exactly
+  // as it does with the level off — including its REQUIRED nullable.
+  const refused = {
+    name: "acme.raw",
+    tier: "frequent" as const,
+    summary: "store a raw value",
+    argsSchema: "{ key: string, value: string | null }",
+    argsJsonSchema: {
+      type: "object",
+      properties: {
+        key: { type: "string" },
+        value: { type: ["string", "null"] },
+      },
+      required: ["key", "value"],
+    } as Record<string, unknown>,
+  };
+
+  // Converts (it closes itself) AND has a required nullable next to an
+  // optional one: the case where "the tool converted" and "this
+  // argument was widened" come apart. Keyed per tool, the null-drop ate
+  // `value` here on its way to the server.
+  const convertedNullable = {
+    name: "acme.mixed",
+    tier: "frequent" as const,
+    summary: "store a value that may legitimately be null",
+    argsSchema: "{ key: string, value: string | null, note?: string }",
+    argsJsonSchema: {
+      type: "object",
+      properties: {
+        key: { type: "string" },
+        value: { anyOf: [{ type: "string" }, { type: "null" }] },
+        note: { type: "string" },
+      },
+      required: ["key", "value"],
+      additionalProperties: false,
+    } as Record<string, unknown>,
+  };
+
+  // One call per step: a two-call batch is rejected before dispatch
+  // because these invented tools carry no resource class.
+  async function runStrictStep(
+    call: { name: string; args: Record<string, unknown> } = {
+      name: "acme__put",
+      args: { key: "k", note: null },
+    },
+  ): Promise<{
+    tools: ReadonlyArray<Record<string, unknown>>;
+    argsSeen: Record<string, Record<string, unknown>>;
+  }> {
+    const argsSeen: Record<string, Record<string, unknown>> = {};
+    const registry = new ToolRegistry();
+    for (const name of [
+      convertible.name,
+      convertedNullable.name,
+      refused.name,
+    ]) {
+      registry.register({
+        name,
+        description: name,
+        readonly: true,
+        async run(args: Record<string, unknown>) {
+          argsSeen[name] = args;
+          return compressToolResult({ tool: name, status: "ok", output: "ok" });
+        },
+      });
+    }
+    let tools: ReadonlyArray<Record<string, unknown>> = [];
+    const outcome = await executeStep(
+      {
+        session: createEmptySessionState({ id: "s-strict", workingDir: "/w" }),
+        toolDescriptors: [convertible, convertedNullable, refused],
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        stepIndex: 0,
+        signal: new AbortController().signal,
+        userMessage: "store both",
+      },
+      {
+        registry,
+        slotManager: new SlotManager(2),
+        async llmComplete(params) {
+          tools = (params.tools ?? []) as ReadonlyArray<
+            Record<string, unknown>
+          >;
+          return {
+            content: "",
+            reasoningContent: "",
+            stop: true,
+            truncated: false,
+            timing: {
+              promptMs: 1,
+              predictedMs: 1,
+              promptTokens: 20,
+              predictedTokens: 5,
+            },
+            cacheHitTokens: 0,
+            slotId: -1,
+            modelId: "mercury-2.5",
+            toolCalls: [
+              {
+                id: "c1",
+                type: "function",
+                function: {
+                  name: call.name,
+                  arguments: JSON.stringify(call.args),
+                },
+              },
+            ],
+          };
+        },
+        grammar: "",
+        profile: PLAIN_INSTRUCT_PROFILE,
+        toolTransport: "native_tools",
+        toolCallAdapter: null,
+        supportsSlotAffinity: false,
+        strictTools: true,
+      },
+    );
+    expect(outcome.toolResults.every((r) => r.status === "ok")).toBe(true);
+    return { tools, argsSeen };
+  }
+
+  it("marks only the convertible function strict on the wire", async () => {
+    const { tools } = await runStrictStep();
+    const byName = new Map(
+      tools.map((t) => [
+        (t as { function: { name: string } }).function.name,
+        t as { function: { strict?: boolean } },
+      ]),
+    );
+    expect(byName.get("acme__put")?.function.strict).toBe(true);
+    expect(byName.get("acme__raw")?.function.strict).toBeUndefined();
+  });
+
+  it("undoes the null padding for that function and only that one", async () => {
+    // Converted: the null is the schema's doing (an optional forced
+    // into `required`), so the tool sees the absent key it would see
+    // with the level off.
+    const converted = await runStrictStep({
+      name: "acme__put",
+      args: { key: "k", note: null },
+    });
+    expect(converted.argsSeen["acme.put"]).toEqual({ key: "k" });
+    // Refused: the null is the model's answer to the tool's OWN schema,
+    // in which `value` is required and nullable. Deleting it would hand
+    // the server a call missing a required key.
+    const untouched = await runStrictStep({
+      name: "acme__raw",
+      args: { key: "k", value: null },
+    });
+    expect(untouched.argsSeen["acme.raw"]).toEqual({ key: "k", value: null });
+  });
+
+  it("keeps a required nullable argument of a function that converted", () => {
+    // The undo is per ARGUMENT. `acme.mixed` converted — `note` was
+    // widened — but `value` was already required and already nullable,
+    // so it shipped byte-identical and its null is the model answering
+    // the tool's own schema.
+    return runStrictStep({
+      name: "acme__mixed",
+      args: { key: "k", value: null, note: null },
+    }).then(({ tools, argsSeen }) => {
+      const mixed = tools.find(
+        (t) =>
+          (t as { function: { name: string } }).function.name === "acme__mixed",
+      ) as { function: { strict?: boolean } };
+      expect(mixed.function.strict).toBe(true);
+      expect(argsSeen["acme.mixed"]).toEqual({ key: "k", value: null });
     });
   });
 });
