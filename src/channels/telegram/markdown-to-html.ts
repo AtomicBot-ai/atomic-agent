@@ -240,7 +240,9 @@ function renderBold(s: string): string {
 // them. `\p{M}` is in the set because a mark is part of the word it
 // sits on — without it the keycap `1️⃣*x*` would open emphasis (the
 // character immediately before the `*` is U+20E3 COMBINING ENCLOSING
-// KEYCAP) where the bare `1*x*` does not.
+// KEYCAP) where the bare `1*x*` does not. Not every mark attaches to
+// a word, though — see `VARIATION_SELECTOR` below for the exception
+// that class needs.
 //
 // These are Unicode classes rather than `\w`, which is ASCII-only in
 // JS. With `\w` the guards silently stopped applying to non-Latin
@@ -248,6 +250,31 @@ function renderBold(s: string): string {
 // `слово_это_слово` lost its underscores where `snake_case_name` kept
 // them.
 const WORD_FLANK = String.raw`\p{L}\p{N}\p{M}_`;
+
+// Variation selectors (U+FE00–U+FE0F). These are `\p{M}` and so land
+// in `WORD_FLANK`, but the thing they attach to is usually not a word:
+// VARIATION SELECTOR-16 is what turns a bare symbol into an emoji, so
+// `⚠️`, `❗️`, `ℹ️`, `⭐️`, `▶️` and the rest end in a mark that belongs
+// to a symbol. Counting it as a word character disabled single-`*`
+// and `_` italics after every one of them: `⚠️*Do not* run this` came
+// out with the asterisks visible while the selector-less
+// `⚠*Do not*` rendered `<i>`, and over U+2000–U+2BFF that was 2,791
+// of 3,072 code points losing italics the moment the selector was
+// appended.
+//
+// So a variation selector is accepted as the character *before* an
+// opening delimiter, and only there. Before an opening delimiter a
+// selector belongs to whatever precedes it, and judging the run by a
+// selector rather than by its base is what caused the bug above.
+// After a closing delimiter it belongs to the delimiter itself:
+// `*` is an emoji base, so in `*x*️⃣` the trailing `*️⃣` is a keycap
+// and taking it as a closing delimiter would emit `<i>x</i>️⃣` and
+// delete the `*` out of an emoji — the same character loss the word
+// guard exists to prevent. There the mark keeps blocking.
+//
+// U+20E3 COMBINING ENCLOSING KEYCAP is not a variation selector and
+// is not listed here, so `1️⃣*x*` stays literal like the bare `1*x*`.
+const VARIATION_SELECTOR = String.raw`\uFE00-\uFE0F`;
 
 // Scripts written without spaces between words, exempted from the `*`
 // word guard.
@@ -274,14 +301,14 @@ const WORD_FLANK = String.raw`\p{L}\p{N}\p{M}_`;
 const SPACELESS_SCRIPT = String.raw`\p{scx=Han}\p{scx=Hiragana}\p{scx=Katakana}\p{scx=Hangul}\p{scx=Bopomofo}\p{scx=Thai}\p{scx=Lao}\p{scx=Khmer}\p{scx=Myanmar}\p{scx=Tibetan}`;
 
 const ITALIC_STAR = new RegExp(
-  `(^|[^*${WORD_FLANK}]|[${SPACELESS_SCRIPT}])` +
+  `(^|[^*${WORD_FLANK}]|[${SPACELESS_SCRIPT}]|[${VARIATION_SELECTOR}])` +
     String.raw`\*([^*\s](?:[^*\n]*?[^*\s])?)\*` +
     `(?!\\*)(?:(?=[${SPACELESS_SCRIPT}])|(?![${WORD_FLANK}]))`,
   "gu",
 );
 
 const ITALIC_UNDERSCORE = new RegExp(
-  `(^|[^${WORD_FLANK}])` +
+  `(^|[^${WORD_FLANK}]|[${VARIATION_SELECTOR}])` +
     String.raw`_([^_\s](?:[^_\n]*?[^_\s])?)_` +
     `(?![${WORD_FLANK}])`,
   "gu",
@@ -361,10 +388,22 @@ function renderItalic(s: string): string {
   //    same class of damage these nets exist to stop.
   //
   // Neither net is a well-formedness proof for the converter as a
-  // whole. A raw `<` typed by the user still reaches the output
-  // unescaped through `escapeNonTagText` (`convert("<b>hello")` is
-  // `"<b>hello"`, on this branch and on `origin/main` alike); that is a
-  // separate, pre-existing hole and is not addressed here.
+  // whole. Two pre-existing holes stay open, both of them identical on
+  // `origin/main` and neither addressed here:
+  //
+  //  - A raw `<` typed by the user reaches the output unescaped
+  //    through `escapeNonTagText` (`convert("<b>hello")` is
+  //    `"<b>hello"`).
+  //  - `renderBold` and `renderStrikethrough` run after `renderLinks`
+  //    and have no `tagMask` / `tagsBalanced` of their own, so a `**`
+  //    or `~~` pair can still cross an emitted `<a href="…">`:
+  //    `convert("[**](tg:*)**")` is `'<a href="tg:*"><b></a></b>'`
+  //    and `convert("~~**[_](tg:_)~~**")` is
+  //    `'<s><b><a href="tg:_">_</a></s></b>'` — crossing tags with no
+  //    user-typed `<` anywhere. The nets above shrink this class by
+  //    roughly 8x on an anchor-template sweep and add nothing to it,
+  //    but they do not close it: what remains is bold and
+  //    strikethrough, not italics.
   return renderItalicPass(renderItalicPass(s, ITALIC_STAR), ITALIC_UNDERSCORE);
 }
 

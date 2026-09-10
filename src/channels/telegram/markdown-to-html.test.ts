@@ -123,6 +123,16 @@ describe("convertMarkdownToTelegramHtml", () => {
       // marks so the keycap behaves like the bare digit beside it.
       ["a keycap-flanked pair", "1️⃣*x*", "1️⃣*x*"],
       ["a digit-flanked pair", "1*x*", "1*x*"],
+      // A `*` carrying VARIATION SELECTOR-16 is itself part of the
+      // `*️⃣` keycap emoji, so it is not a closing delimiter: reading
+      // it as one would emit `<i>x</i>️⃣` and delete the `*` out of
+      // an emoji. This is why the selector exemption applies to the
+      // opening flank only.
+      ["a pair closed by a keycap asterisk", "*x*️⃣", "*x*️⃣"],
+      // Combining marks that really are part of a word still block:
+      // Devanagari `की` ends in U+0940, decomposed `é` in U+0301.
+      ["a Devanagari-flanked pair", "की*x*", "की*x*"],
+      ["a pair flanked by a decomposed letter", "é*x*", "é*x*"],
     ];
     for (const [name, input, expected] of literal) {
       it(`leaves ${name} literal`, () => {
@@ -162,6 +172,24 @@ describe("convertMarkdownToTelegramHtml", () => {
       ["Japanese prose", "これは*重要*です", "これは<i>重要</i>です"],
       ["Korean prose", "이것은*중요*합니다", "이것은<i>중요</i>합니다"],
       ["Thai prose", "ราคา*สอง*บาท", "ราคา<i>สอง</i>บาท"],
+      // VARIATION SELECTOR-16 is a combining mark and so falls in
+      // `WORD_FLANK`, but the `⚠` it attaches to is a symbol, not a
+      // word. Counting it disabled italics after every emoji spelled
+      // with a selector — which is most of the ones agents reach for
+      // at the start of a warning line.
+      [
+        "a run opened after a variation-selector emoji",
+        "⚠️*Do not* run this",
+        "⚠️<i>Do not</i> run this",
+      ],
+      [
+        "an underscore run opened after a variation-selector emoji",
+        "ℹ️_note_",
+        "ℹ️<i>note</i>",
+      ],
+      // The same symbol without the selector always worked; the two
+      // have to agree.
+      ["a run opened after a bare symbol", "⚠*x*", "⚠<i>x</i>"],
     ];
     for (const [name, input, expected] of emphasised) {
       it(`still emphasises ${name}`, () => {
