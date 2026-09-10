@@ -54,6 +54,36 @@ describe("createTraceRecorder", () => {
     });
   });
 
+  it("records an empty-completion recovery against the current turn and step", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-empty", emit, now });
+    rec.onAgentEvent({ type: "turn_started", turnIndex: 4 } as AgentLoopEvent);
+    rec.onAgentEvent({
+      type: "empty_completion_recovered",
+      stepIndex: 6,
+      attempt: 1,
+      budget: 1,
+    } as AgentLoopEvent);
+    const recorded = events.find(
+      (e) => e.type === "empty_completion_recovered",
+    );
+    // `turnIndex` comes from the recorder's own cursor, the rest from
+    // the loop event — an empty completion leaves nothing else in the
+    // trace, so a wrong index here strands the only row that shows the
+    // step happened.
+    expect(recorded).toMatchObject({
+      type: "empty_completion_recovered",
+      sessionId: "s-empty",
+      turnIndex: 4,
+      stepIndex: 6,
+      attempt: 1,
+      budget: 1,
+      ts: 1000,
+    });
+    // No `reason`: there was no output to have rejected.
+    expect(recorded).not.toHaveProperty("reason");
+  });
+
   it("attaches user_message to the next turn_started", () => {
     const { events, emit } = collector();
     const rec = createTraceRecorder({ sessionId: "s-2", emit, now });

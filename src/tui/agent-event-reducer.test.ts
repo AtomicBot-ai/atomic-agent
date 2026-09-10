@@ -1178,6 +1178,60 @@ describe("parse-failure recovery", () => {
   });
 });
 
+describe("empty-completion recovery", () => {
+  const recovered = (over: Record<string, unknown> = {}): TuiAction => ({
+    type: "agent_event",
+    event: {
+      type: "empty_completion_recovered",
+      stepIndex: 3,
+      attempt: 1,
+      budget: 1,
+      ...over,
+    } as never,
+  });
+
+  it("says the reply was empty and that the turn is trying again", () => {
+    // The whole point of the line: an empty completion produces no tool
+    // call, no text and no error, so a feed without it shows a step
+    // that appears never to have happened.
+    const next = reduceTuiState(
+      createInitialTuiState(fakeSession()),
+      recovered(),
+    );
+    const row = next.feed.at(-1);
+    expect(row?.kind).toBe("runtime_info");
+    expect(row?.line ?? "").toContain("empty reply");
+    expect(row?.line ?? "").toContain("trying again");
+    expect(row?.line ?? "").toContain("(1/1)");
+    expect(row?.color).toBe("yellow");
+    // Attributed to the step it happened on, not to the turn.
+    expect(row?.stepIndex).toBe(3);
+  });
+
+  it("does not read as a step boundary", () => {
+    // The recovery is a failure inside the step that was already
+    // running; the status line and the step counter belong to it.
+    const running = apply(createInitialTuiState(fakeSession()), [
+      { type: "agent_event", event: { type: "step_started", stepIndex: 3 } },
+    ]);
+    const next = reduceTuiState(running, recovered());
+    expect(next.status).toBe(running.status);
+    expect(next.currentStep).toBe(3);
+  });
+
+  it("leaves one line per recovery, and says which attempt each is", () => {
+    const next = apply(createInitialTuiState(fakeSession()), [
+      recovered(),
+      recovered({ stepIndex: 7, attempt: 1, budget: 1 }),
+    ]);
+    const lines = next.feed
+      .filter((row) => row.line.includes("empty reply"))
+      .map((row) => row.line);
+    expect(lines).toHaveLength(2);
+    expect(lines.every((line) => line.includes("(1/1)"))).toBe(true);
+  });
+});
+
 describe("provider outage", () => {
   const waiting = (over: Record<string, unknown> = {}): TuiAction => ({
     type: "agent_event",

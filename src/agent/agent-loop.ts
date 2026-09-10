@@ -934,14 +934,44 @@ export class AgentLoop {
      */
     let parseRecoveries = 0;
     /**
-     * Completions this turn that came back with nothing in any channel
-     * and were spent another step on. Bounded by
+     * Empty completions spent another step on, counted only while they
+     * are CONSECUTIVE — any completion that carried something resets it
+     * (see the reset next to `stepsTaken += 1` below). Bounded by
      * `EMPTY_COMPLETION_RECOVERY_BUDGET`, and separate from
      * `parseRecoveries` because the two shapes are different evidence:
      * an unparseable body is a model that tried, an empty one is a model
      * that emitted no tokens at all.
      */
     let emptyRecoveries = 0;
+    /**
+     * Is there a step left for a recovery to actually be spent in?
+     *
+     * A recovery that "spends a step" is a promise of another
+     * inference: the operator is told the turn is trying again, and the
+     * failure is dropped on the strength of that. All three ceilings
+     * can make that promise false. The task and time ceilings are
+     * already covered — the finalization guard above preempts every
+     * recovery on the last allowed step and on any step that starts
+     * past the duration ceiling, which is why the `stepCeiling` test
+     * here is belt-and-braces — but the LEG boundary is not covered by
+     * anything. A recovery taken on the final step of a
+     * leg that has produced nothing usable lands on the `no_progress`
+     * break, which leaves the loop before `executeStep` runs again: the
+     * announced retry never happens, the step is burnt for nothing, and
+     * the model diagnosis is swallowed into "ran out of steps" — taking
+     * the error report with it, since only `loop_failed` is captured.
+     *
+     * Reading `legMadeProgress` here is reading exactly what the
+     * boundary will read: a recovery cannot set it (it produced nothing
+     * usable, by definition), and nothing else runs in between.
+     */
+    const recoveryStepAvailable = (stepIndex: number): boolean => {
+      const next = stepIndex + 1;
+      if (next >= stepCeiling) return false;
+      const boundaryRuns =
+        next > 0 && next % legSteps === 0 && next !== lastBoundaryIndex;
+      return !boundaryRuns || legMadeProgress;
+    };
     // Per-turn no-progress loop tracker (OpenClaw-style). Threaded into
     // `executeStep` so the synchronous batch gate can veto looping calls
     // before they are dispatched; the agent loop consumes the resulting
@@ -1196,6 +1226,12 @@ export class AgentLoop {
         }
         state = outcome.nextSession;
         stepsTaken += 1;
+        // A completion the step could act on. Whatever run of empty
+        // completions was in progress is over: the link has just proved
+        // it answers, so an empty one later in this turn is a fresh
+        // event and is owed its own retry, and the terminal message can
+        // keep saying "twice in a row" and mean it.
+        emptyRecoveries = 0;
         const tokensUsed =
           (outcome.completion.timing?.promptTokens ??
             outcome.prompt.tokens.total) +
@@ -1478,6 +1514,12 @@ export class AgentLoop {
           if (retry.kind === "fit_window") {
             this.deps.onContextWindowObserved?.(retry.contextWindow);
           }
+          // A cut reply is still tokens on the wire, so — like the
+          // parse failure below — it breaks any run of empty
+          // completions. (A provider outage does not: it produces no
+          // completion at all, so the empties on either side of it are
+          // still consecutive completions.)
+          emptyRecoveries = 0;
           // The notice the cut attempt carried (loop detector, steering,
           // a trimmed batch) is still owed to the retry.
           pendingNotice = composeTruncationNotice(
@@ -1541,13 +1583,22 @@ export class AgentLoop {
         // The step is counted. It consumed an inference, and leaving
         // `legMadeProgress` false means a leg made entirely of rejected
         // completions still stops at the boundary as `no_progress`.
+        //
+        // `recoveryStepAvailable` is the leg-boundary half of the
+        // finalization guard above: a recovery on the last step of a
+        // barren leg would announce a retry the `no_progress` break
+        // never performs.
         if (
           !cancelled &&
           parseRecoveries < PARSE_RECOVERY_BUDGET &&
+          recoveryStepAvailable(i) &&
           isRecoverableParseFailure(err)
         ) {
           parseRecoveries += 1;
           stepsTaken += 1;
+          // The model emitted tokens, just not readable ones — so this
+          // breaks any run of empty completions.
+          emptyRecoveries = 0;
           // The notice this step was carrying (loop detector, steering,
           // a trimmed batch) is still owed to the next one.
           pendingNotice = composeParseFailureNotice(
@@ -1587,9 +1638,15 @@ export class AgentLoop {
         // The step is counted, as the parse recovery is: it consumed an
         // inference, and a leg made of empty completions must still
         // reach its boundary as `no_progress`.
+        //
+        // And it is only taken when a step is actually left to spend:
+        // on the last step of a barren leg the retry would be announced
+        // and never performed, and the operator would be handed
+        // "ran out of steps" in place of the model's own diagnosis.
         if (
           !cancelled &&
           emptyRecoveries < EMPTY_COMPLETION_RECOVERY_BUDGET &&
+          recoveryStepAvailable(i) &&
           isRecoverableEmptyCompletion(err)
         ) {
           emptyRecoveries += 1;

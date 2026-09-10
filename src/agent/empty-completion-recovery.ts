@@ -31,7 +31,7 @@
 import { ModelError } from "../llm/index.js";
 
 /**
- * Recoveries allowed per turn.
+ * Recoveries allowed per RUN of consecutive empty completions.
  *
  * One, not the two `PARSE_RECOVERY_BUDGET` allows. An unparseable body
  * is a model that tried and slipped on serialization, and a second
@@ -41,10 +41,25 @@ import { ModelError } from "../llm/index.js";
  * Two nothings in a row is enough evidence, and a third empty
  * inference only delays the message the operator has to read anyway.
  *
- * Per turn rather than per step index, because the recovery step moves
- * forward instead of replaying the index: a turn whose link has stopped
- * answering would otherwise buy a fresh empty retry at every one of its
- * steps and burn the whole leg discovering the same thing.
+ * "In a row" is the whole of the scoping, and the agent loop enforces
+ * it: any completion that carried something — a step that ran, a body
+ * that failed to parse, a reply the server cut short — resets the
+ * count. Two consequences, both wanted:
+ *
+ *  - A link that has stopped answering still buys exactly ONE retry
+ *    for the whole turn, because nothing ever resets the count: the
+ *    turn does not get to burn a leg rediscovering the same silence,
+ *    which is what a per-step budget would have cost.
+ *  - A model that answered a step and then went quiet gets the same
+ *    one nudge the first empty got. It has just proved the link works,
+ *    so its silence is a fresh event, not the second half of an old
+ *    one — and a per-turn budget would have denied it a retry on the
+ *    strength of an empty completion twenty steps and a dozen working
+ *    tool calls ago.
+ *
+ * It is also what makes {@link repeatedEmptyCompletionError}'s message
+ * true: the turn only ever says "twice in a row" about two empties
+ * with no completion of any kind between them.
  */
 export const EMPTY_COMPLETION_RECOVERY_BUDGET = 1;
 
@@ -107,9 +122,22 @@ export function composeEmptyCompletionNotice(
  *
  * `detectModelFailure`'s own message describes one empty completion, and
  * an operator reading it after a silent retry would reasonably conclude
- * the runtime never tried. Say the count instead, and keep every
- * diagnostic tag (`transport`, `stage`) so the Sentry cluster this fixes
- * stays distinguishable from a first-and-only empty.
+ * the runtime never tried. Say the count instead — and only ever about
+ * two empties with nothing between them, which is what the consecutive
+ * budget above guarantees.
+ *
+ * The tags (`reason`, `transport`, `stage`) and the `cause` chain are
+ * kept so this stays the SAME Sentry issue as the empty it wraps, not a
+ * new one: `pickFrames` prefers the cause's stack, so the fingerprint's
+ * top frame remains the original step-executor throw. That is
+ * deliberate — a doubled empty is the same defect on the same link, and
+ * splitting it into its own cluster would fragment the very volume this
+ * recovery is measured by. Sentry will therefore NOT show the two
+ * apart: the rewritten message is for the operator's terminal, and the
+ * scrubber never transmits a message (`STATIC_MESSAGE_ERRORS` is empty
+ * by design). The trace is where the two are told apart — a turn that
+ * spent its retry carries an `empty_completion_recovered` event and one
+ * that failed on the first empty does not.
  */
 export function repeatedEmptyCompletionError(err: ModelError): ModelError {
   return new ModelError(
