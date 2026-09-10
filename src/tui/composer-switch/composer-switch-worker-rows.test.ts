@@ -6,10 +6,7 @@ import {
   localState,
 } from "./composer-switch-fixtures.js";
 import { selectComposerSwitchRows } from "./composer-switch-rows.js";
-import {
-  selectComposerWorkersLabel,
-  selectWorkerRows,
-} from "./composer-switch-worker-rows.js";
+import { selectWorkerRows } from "./composer-switch-worker-rows.js";
 
 describe("the workers switch", () => {
   it("offers both kinds for the worker slot, and no counts", () => {
@@ -83,41 +80,4 @@ describe("the workers switch", () => {
   });
 });
 
-describe("the meta bar's worker label", () => {
-  it("states the machine's capacity on the fusion route, not a setting", () => {
-    // "up to N": N is what this machine serves at once, not a number
-    // anyone picked and not a promise about this turn.
-    expect(selectComposerWorkersLabel(fusionState())).toBe("up to 2 workers");
-    expect(selectComposerWorkersLabel(fusionState({ workers: 1 }))).toBe(
-      "up to 1 worker",
-    );
-  });
 
-  it("says nothing anywhere else", () => {
-    expect(selectComposerWorkersLabel(cloudState())).toBeNull();
-    expect(selectComposerWorkersLabel(localState())).toBeNull();
-    expect(
-      selectComposerWorkersLabel(fusionState({ effective: "cloud" })),
-    ).toBeNull();
-  });
-});
-
-describe("the meta bar with the legs swapped", () => {
-  it("stops quoting a slot count when the workers are in the cloud", () => {
-    // `up to N` is llama-server's request-slot count. A cloud worker leg
-    // has no such pool, and the idle daemon's number would be a fact
-    // about the wrong machine.
-    const base = fusionState();
-    const state = {
-      ...base,
-      providersPanel: {
-        ...base.providersPanel,
-        runMode: {
-          ...base.providersPanel.runMode!,
-          workerProviderId: "aimlapi",
-        },
-      },
-    };
-    expect(selectComposerWorkersLabel(state)).toBe("cloud workers");
-  });
-});

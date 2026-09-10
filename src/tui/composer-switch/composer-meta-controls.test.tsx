@@ -141,24 +141,23 @@ describe("the composer's route line", () => {
     expect(out).not.toContain("healthy");
   });
 
-  it("adds the worker count as a fourth control on the fusion route", () => {
-    const { lastFrame, unmount } = render(
-      <Box>
-        <ComposerMetaControls
-          backend={{ kind: "fusion", status: "healthy" }}
-          provider="openrouter"
-          model="claude-opus-5 ⇄ qwen-3.5-4b"
-          workers="3 workers"
-        />
-      </Box>,
+  it("does not spend a segment on the worker count", () => {
+    // It was a capacity, not a choice, and it cost columns the route
+    // names needed — the screenshot that killed it showed `up to 2
+    // work…` colliding with the steer hint. Both legs are already named
+    // by the model segment, and the worker slot is one ←/→ away inside
+    // the popup.
+    const { lastFrame } = render(
+      <ComposerMetaControls
+        backend={{ label: "fusion", tone: "fusion" }}
+        provider="openrouter"
+        model="claude-opus-5 ⇄ qwen-3.5-4b"
+        fusion
+      />,
     );
-    const text = plain(lastFrame() ?? "");
-    unmount();
-    expect(text).toContain("3 workers");
-    // Last: where it runs, who serves it, which model, how many workers.
-    expect(text.indexOf("claude-opus-5")).toBeLessThan(
-      text.indexOf("3 workers"),
-    );
+    const frame = lastFrame() ?? "";
+    expect(frame).not.toMatch(/worker/i);
+    expect(frame).toContain("qwen-3.5-4b");
   });
 
   it("draws no fourth control when there are no workers to count", () => {

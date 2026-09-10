@@ -59,7 +59,6 @@ import {
   runComposerSwitchRow,
   selectComposerBackend,
   selectComposerBackendMeta,
-  selectComposerWorkersLabel,
   selectComposerNeedsModelDownload,
   type ComposerSwitchRow,
 } from "./composer-switch/index.js";
@@ -1714,8 +1713,6 @@ export function TuiApp({
   // Managed-local with an empty catalog: the model slot becomes
   // `download model` and points at the pane that pulls one.
   const promptNeedsModelDownload = selectComposerNeedsModelDownload(state);
-  // Fusion's fourth control: the worker count, `null` on every other route.
-  const promptWorkers = selectComposerWorkersLabel(state);
   // A notice outranks the route for the couple of seconds it is up: it
   // is the answer to a keystroke the operator just made, and the route
   // is ambient.
@@ -2300,7 +2297,6 @@ export function TuiApp({
                         model={promptLlm.model}
                         provider={promptLlm.provider}
                         needsModelDownload={promptNeedsModelDownload}
-                        workers={promptWorkers}
                         leftSlot={promptLeftSlot}
                         rightSlot={promptRightSlot}
                         contextSlot={promptContextSlot}
