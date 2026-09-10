@@ -1080,7 +1080,7 @@ function ic(n, cls) {
        has no radius above 2px anywhere else. */
     + 'stroke-linecap="square" stroke-linejoin="miter"' + (cls ? ' class="' + cls + '"' : '') + '>' + (P[n] || '') + '</svg>';
 }
-const MARK_COLOR = '<svg width="16" height="16" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" fill="var(--red)"/><path fill="var(--on-fill)" d="M35.24 49.92a1.25 1.25 0 0 0 1.3-1.24 12.2 12.2 0 0 1 12.14-12.14 1.25 1.25 0 0 0 1.24-1.3v-6.47c0-.69-.56-1.24-1.24-1.24H37.72c-.69 0-1.24-.56-1.24-1.25V15.32c0-.69-.56-1.24-1.24-1.24h-6.47c-.69 0-1.24.56-1.3 1.24A12.2 12.2 0 0 1 15.32 27.46c-.68.06-1.24.61-1.24 1.3v6.47c0 .69.56 1.24 1.24 1.24h10.96c.69 0 1.24.56 1.24 1.25v10.95c0 .69.56 1.24 1.24 1.24z"/></svg>';
+const MARK_COLOR = '<svg width="16" height="16" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" fill="var(--accent)"/><path fill="var(--on-fill)" d="M35.24 49.92a1.25 1.25 0 0 0 1.3-1.24 12.2 12.2 0 0 1 12.14-12.14 1.25 1.25 0 0 0 1.24-1.3v-6.47c0-.69-.56-1.24-1.24-1.24H37.72c-.69 0-1.24-.56-1.24-1.25V15.32c0-.69-.56-1.24-1.24-1.24h-6.47c-.69 0-1.24.56-1.3 1.24A12.2 12.2 0 0 1 15.32 27.46c-.68.06-1.24.61-1.24 1.3v6.47c0 .69.56 1.24 1.24 1.24h10.96c.69 0 1.24.56 1.24 1.25v10.95c0 .69.56 1.24 1.24 1.24z"/></svg>';
 const MARK_MONO = '<svg width="20" height="20" viewBox="0 0 64 64" fill="currentColor" aria-hidden="true"><path d="M35.24 49.92a1.25 1.25 0 0 0 1.3-1.24 12.2 12.2 0 0 1 12.14-12.14 1.25 1.25 0 0 0 1.24-1.3v-6.47c0-.69-.56-1.24-1.24-1.24H37.72c-.69 0-1.24-.56-1.24-1.25V15.32c0-.69-.56-1.24-1.24-1.24h-6.47c-.69 0-1.24.56-1.3 1.24A12.2 12.2 0 0 1 15.32 27.46c-.68.06-1.24.61-1.24 1.3v6.47c0 .69.56 1.24 1.24 1.24h10.96c.69 0 1.24.56 1.24 1.25v10.95c0 .69.56 1.24 1.24 1.24z"/></svg>';
 
 const dur = (ms) => ms == null ? '…' : ms + 'ms';   // item 4: as the TUI prints it (tool-card.tsx), never X.Xs
@@ -1880,8 +1880,18 @@ function composer() {
     // when there is nothing to say, so refreshVoice() can repaint it by
     // outerHTML without a render() that would move the caret.
     + voiceStripHTML()
+    /* F14 — the command list, OUTSIDE the composer.
+       It is `position:absolute; bottom:100%`, so it lays itself out entirely
+       above whatever it is positioned against. Rendered inside `.composer`,
+       which is `position:relative; overflow:hidden`, that put every pixel of
+       it outside the clip — the element was in the DOM with its rows and a
+       sensible bounding rect, and none of it was ever on screen. Typing `/`
+       had shown nothing since the popover was written.
+
+       It hangs off `.composerwrap` now, which is the same anchor visually
+       (the composer is its last child) and does not clip. */
+    + (S.slash ? slashPopover() : '')
     + '<div class="composer' + (running ? ' running' : '') + '" id="composer">'
-      + (S.slash ? slashPopover() : '')
       // Item 1 (plan hand-off): src/tui/tui-app.tsx:2011 verbatim while the
       // offer stands. It is the user's third clause — "texting in the input
       // field would reconfigure the plan" — said where they are about to type.
@@ -4361,9 +4371,18 @@ function refreshSend() {
   if (b) b.outerHTML = sendButton();
 }
 function refreshSlash() {
-  const c = $('#composer'); if (!c) return;
-  const old = c.querySelector('.slash'); if (old) old.remove();
-  c.insertAdjacentHTML('afterbegin', slashPopover());
+  /* F14, the second half. Typing `/` never goes through render() — the
+     composer repaints in place so the caret does not move — so THIS is the
+     path that actually puts the command list on screen, and it was inserting
+     it inside `#composer`, which clips. The popover was therefore invisible
+     exactly when a person types, and visible only in the rare frame where a
+     full render happened to draw it. Both paths put it in the same place now:
+     immediately before the composer, inside the wrapper that does not clip. */
+  const wrap = $('.composerwrap'); if (!wrap) return;
+  const old = wrap.querySelector('.slash'); if (old) old.remove();
+  const composer = wrap.querySelector('#composer');
+  if (composer) composer.insertAdjacentHTML('beforebegin', slashPopover());
+  else wrap.insertAdjacentHTML('beforeend', slashPopover());
   refreshSend();
 }
 function refreshPalette() {
@@ -11616,6 +11635,34 @@ if (typeof window !== 'undefined') {
   window.__ctxTitle = () => ((document.querySelector('.popover .hd') || {}).textContent || '');
   window.__ctxBasis = () => ((document.querySelector('.popover .ctxbasis') || {}).textContent || '');
   window.__ctxDraft = (t) => { S.draft = t; CTX.draftTokens = estimateTokens(t); if (CTX.source === 'projected') CTX.tokens = CTX.stablePrefix + CTX.draftTokens; render(); return CTX.tokens; };
+  /* F14 — the command list, through the path a KEYSTROKE takes.
+     Typing never calls render(); it calls the composer's input handler, which
+     calls refreshSlash(). Driving the draft directly would test the wrong
+     path — the one that was never broken — so this dispatches a real `input`
+     event on the textarea and then reports whether the popover is actually
+     PAINTED where it claims to be, not merely present in the DOM. A clipped
+     element has a perfectly reasonable bounding rect; that is what let this
+     bug be called not-a-bug. */
+  window.__slashType = (text) => {
+    const el = document.getElementById('entry');
+    if (!el) return {typed: false};
+    el.value = text;
+    el.dispatchEvent(new Event('input', {bubbles: true}));
+    const pop = document.querySelector('.slash');
+    if (!pop) return {typed: true, present: false};
+    const r = pop.getBoundingClientRect();
+    const at = (dy) => {
+      const n = document.elementFromPoint(r.left + r.width / 2, r.top + dy);
+      return !!n && (n === pop || pop.contains(n));
+    };
+    return {
+      typed: true, present: true,
+      rows: pop.querySelectorAll('.slashrow').length,
+      parent: pop.parentElement ? pop.parentElement.className : '',
+      onScreen: r.top >= 0 && r.bottom <= window.innerHeight && r.height > 0,
+      painted: at(10) && at(r.height / 2) && at(Math.max(10, r.height - 10)),
+    };
+  };
   window.__ctxClose = () => { act('close'); render(); };
   window.__ctxChip = () => { const el = document.querySelector('.cfoot .ctxbtn'); return el ? {label:(el.querySelector('.gaugelb') || {}).textContent || '', proj:el.classList.contains('proj')} : null; };
   window.__ctxNew = () => { act('session:new'); return refreshContext().then(() => window.__ctx()); };

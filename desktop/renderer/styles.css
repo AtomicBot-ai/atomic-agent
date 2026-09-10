@@ -1,7 +1,7 @@
 /* ============================================================
    TOKENS — Atomic Agent
    The system is the NASA Graphics Standards Manual (Danne & Blackburn,
-   1975): a white ground, one red doing structural work, no gradients, no
+   1975): a white ground, one accent doing structural work, no gradients, no
    radius worth the name. It is the same system atomicagent.io ships, so the
    app and the site read as one product.
 
@@ -20,23 +20,42 @@
   --p-paper:#FFFFFF; --p-panel:#F4F5F6; --p-panel-2:#EBEDEF; --p-ground:#E3E5E7;
   --p-ink:#101112; --p-ink-2:#4A4E52; --p-ink-3:#797E83;
   --p-line:#D8DBDE; --p-line-hair:#EBEDEF;
-  --p-red:#E4002B; --p-red-deep:#B30021; --p-amber:#E8A317; --p-black:#0B0B0C;
+  /* Atomic blue — the site's own `--blue`, so the app and atomicagent.io
+     are the same product. It is already ~10:1 on white, so the `-deep`
+     variant is a genuine step darker for pressed states rather than a
+     contrast rescue. */
+  --p-accent:#0B3D91; --p-accent-deep:#082C6B; --p-amber:#E8A317; --p-black:#0B0B0C;
+  --p-critical:#C4342F;
 
   /* Ink */
   --i-paper:#0E0F10; --i-panel:#17191B; --i-panel-2:#1E2124; --i-ground:#000000;
   --i-ink:#EDEFF1; --i-ink-2:#A6ACB2; --i-ink-3:#767C82;
   --i-line:#2A2E32; --i-line-hair:#212528;
-  --i-red:#FF3D2E; --i-red-deep:#FF6A5C; --i-amber:#F0B44A; --i-black:#000000;
+  /* Lifted for a dark ground: #0B3D91 on #0E0F10 is 1.6:1 and unreadable.
+     Same hue, taken up until it carries. */
+  --i-accent:#5B9DFF; --i-accent-deep:#8FBCFF; --i-amber:#F0B44A; --i-black:#000000;
+  --i-critical:#FF6A5C;
 
   /* Live palette — Paper by default */
   --paper:var(--p-paper); --panel:var(--p-panel); --panel-2:var(--p-panel-2);
   --ground:var(--p-ground);
   --ink:var(--p-ink); --ink-2:var(--p-ink-2); --ink-3:var(--p-ink-3);
   --line:var(--p-line); --line-hair:var(--p-line-hair);
-  --red:var(--p-red); --red-deep:var(--p-red-deep); --amber:var(--p-amber);
+  --accent:var(--p-accent); --accent-deep:var(--p-accent-deep); --amber:var(--p-amber);
+  /* Three states, and only three: nominal (ink), caution (amber),
+     critical (red). The ACCENT is the brand and the primary action; it
+     used to be red too, which is why `--danger` could be an alias for
+     it. With a blue accent, failure needs its own colour or every error
+     in the app renders in the brand. */
+  --critical:var(--p-critical);
   --black:var(--p-black);
-  /* The only label colour that may sit on a red or ink fill. */
-  --on-fill:#FFFFFF;
+  /* The label colour that sits ON a filled accent, and it has to follow the
+     theme. Paper's accent is a deep blue and takes white (10:1); Ink's is a
+     lifted blue and takes near-black (7:1) — white on it is 1.5:1, which is
+     no label at all. This was one value while the accent was red, because
+     both reds were dark enough for white. */
+  --p-on-fill:#FFFFFF; --i-on-fill:#0B0B0C;
+  --on-fill:var(--p-on-fill);
 
   /* Type. Inter for what a person wrote, DM Mono for what a machine wrote. */
   --font-ui:"Inter","Helvetica Neue",Helvetica,Arial,sans-serif;
@@ -58,7 +77,7 @@
      pointing them at the system converts every one of them at once, and each
      is a semantic mapping, not a rename:
        there is no green — a done step is a filled square and the word DONE;
-       there are no washes — selection is a 3px red rule over --panel;
+       there are no washes — selection is a 3px accent rule over --panel;
        there are no shadows — a 1px rule separates, in both themes. */
   --bg-desktop:var(--ground); --bg-window:var(--paper); --bg-content:var(--paper);
   --bg-raised:var(--panel); --bg-overlay:var(--paper); --bg-sunken:var(--panel-2);
@@ -66,12 +85,14 @@
   --text-primary:var(--ink); --text-secondary:var(--ink-2);
   --text-tertiary:var(--ink-3); --text-disabled:var(--ink-3);
   --line-soft:var(--line-hair); --line-strong:var(--ink-3);
-  --accent:var(--red); --accent-hover:var(--red-deep); --accent-press:var(--red-deep);
-  --accent-text:var(--red-deep); --accent-wash:var(--panel);
-  --accent-wash-soft:var(--panel); --accent-line:var(--red);
+  /* `--accent` is a live token now, not a bridged one — it used to be an
+     alias for `--red`, and renaming that left it pointing at itself. */
+  --accent-hover:var(--accent-deep); --accent-press:var(--accent-deep);
+  --accent-text:var(--accent-deep); --accent-wash:var(--panel);
+  --accent-wash-soft:var(--panel); --accent-line:var(--accent);
   --success:var(--ink); --success-wash:var(--panel); --ok:var(--ink);
   --warn:var(--amber); --warn-wash:var(--panel); --warn-border:var(--amber);
-  --danger:var(--red); --danger-wash:var(--panel);
+  --danger:var(--critical); --danger-wash:var(--panel);
   --shadow-overlay:0 0 0 1px var(--line); --shadow-window:0 0 0 1px var(--line);
   --sidebar-tint:var(--panel);
 }
@@ -80,7 +101,9 @@
   --ground:var(--i-ground);
   --ink:var(--i-ink); --ink-2:var(--i-ink-2); --ink-3:var(--i-ink-3);
   --line:var(--i-line); --line-hair:var(--i-line-hair);
-  --red:var(--i-red); --red-deep:var(--i-red-deep); --amber:var(--i-amber);
+  --accent:var(--i-accent); --accent-deep:var(--i-accent-deep); --amber:var(--i-amber);
+  --critical:var(--i-critical);
+  --on-fill:var(--i-on-fill);
   --black:var(--i-black);
 }}
 :root[data-theme="dark"] {
@@ -88,7 +111,9 @@
   --ground:var(--i-ground);
   --ink:var(--i-ink); --ink-2:var(--i-ink-2); --ink-3:var(--i-ink-3);
   --line:var(--i-line); --line-hair:var(--i-line-hair);
-  --red:var(--i-red); --red-deep:var(--i-red-deep); --amber:var(--i-amber);
+  --accent:var(--i-accent); --accent-deep:var(--i-accent-deep); --amber:var(--i-amber);
+  --critical:var(--i-critical);
+  --on-fill:var(--i-on-fill);
   --black:var(--i-black);
 }
 @media (prefers-reduced-motion: reduce) {
@@ -150,8 +175,8 @@ svg{display:block;flex:none}
    and the first control. */
 .lights{width:98px;flex:none}
 .lg{width:12px;height:12px;border-radius:0;border:0;padding:0;background:var(--panel-2);cursor:pointer}
-.lg-a{background:var(--red)}
-.lg-a:hover{background:var(--red-deep)}
+.lg-a{background:var(--accent)}
+.lg-a:hover{background:var(--accent-deep)}
 .tb-title{display:flex;flex-direction:column;justify-content:center;min-width:0}
 .tb-title b{font-size:15px;font-weight:600;letter-spacing:-.01em;white-space:nowrap}
 .tb-title span{font-size:11px;line-height:14px;color:var(--text-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -994,7 +1019,7 @@ button.menurow:hover{background:var(--bg-hover)}
 .ob-introc .ob-markbig svg{width:64px;height:64px;display:block}
 .ob-introc .ob-word{margin:0;font-size:var(--fs-display);font-weight:600;
   letter-spacing:var(--tr-display);line-height:1.15;color:var(--ink)}
-.ob-introc .ob-rule{width:100%;max-width:420px;border:0;border-top:var(--rule) solid var(--red);margin:0}
+.ob-introc .ob-rule{width:100%;max-width:420px;border:0;border-top:var(--rule) solid var(--accent);margin:0}
 .ob-introc .ob-build{font-family:var(--font-mono);font-size:var(--fs-cap);color:var(--ink-2)}
 .ob-introc .ob-any{font-size:var(--fs-label);letter-spacing:var(--tr-label);
   text-transform:uppercase;color:var(--ink-3);margin-top:var(--s5)}
@@ -1465,7 +1490,7 @@ body{font-family:var(--font-ui);font-size:var(--fs-cap);letter-spacing:0}
 /* Rules. One 3px rule under a screen title, hairlines between rows — never
    both on the same object. */
 .rule-title{border:0;border-top:var(--rule) solid var(--ink);margin:var(--s4) 0 var(--s5)}
-.rule-title.red{border-top-color:var(--red)}
+.rule-title.red{border-top-color:var(--accent)}
 .rule-hair{border:0;border-top:1px solid var(--line-hair);margin:0}
 
 /* Button. Three ranks and nothing else. */
@@ -1476,14 +1501,14 @@ body{font-family:var(--font-ui);font-size:var(--fs-cap);letter-spacing:0}
   border-color var(--t-state) var(--ease)}
 .b.sm{height:28px;padding:0 var(--s3)}
 .b:hover{background:var(--panel)}
-.b-primary{background:var(--red);border-color:var(--red);color:var(--on-fill)}
-.b-primary:hover{background:var(--red-deep);border-color:var(--red-deep)}
+.b-primary{background:var(--accent);border-color:var(--accent);color:var(--on-fill)}
+.b-primary:hover{background:var(--accent-deep);border-color:var(--accent-deep)}
 .b-quiet{border-color:transparent;background:transparent;color:var(--ink-2)}
 .b-quiet:hover{background:var(--panel);color:var(--ink)}
 .b:disabled,.b[aria-disabled="true"]{background:var(--panel);border-color:var(--line);
   color:var(--ink-3);cursor:default}
 .b-primary:disabled{background:var(--panel);border-color:var(--line);color:var(--ink-3)}
-.b:focus-visible{outline:2px solid var(--red);outline-offset:1px}
+.b:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 
 /* Annunciator. A lit or unlit legend cell — the caution-and-warning panel's
    one idea. Never animated beyond the state swap. */
@@ -1493,7 +1518,7 @@ body{font-family:var(--font-ui);font-size:var(--fs-cap);letter-spacing:0}
   text-transform:uppercase;white-space:nowrap}
 .ann.lit{background:var(--ink);color:var(--paper)}
 .ann.caution{background:var(--amber);color:var(--p-ink)}
-.ann.critical{background:var(--red);color:var(--on-fill)}
+.ann.critical{background:var(--accent);color:var(--on-fill)}
 
 /* Legend plate. The recessed strip that names the group of controls under
    it — this replaces every free-floating heading. */
@@ -1524,8 +1549,8 @@ body{font-family:var(--font-ui);font-size:var(--fs-cap);letter-spacing:0}
   text-align:left;color:var(--ink);transition:background var(--t-state) var(--ease)}
 .rows > .row:hover{background:var(--panel)}
 .rows > .row[aria-selected="true"],.rows > .row.on{background:var(--panel);
-  border-left-color:var(--red)}
-.rows > .row:focus-visible{outline:2px solid var(--red);outline-offset:-2px}
+  border-left-color:var(--accent)}
+.rows > .row:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
 .rows .row .nm{font-weight:500}
 .rows .row .sub{font-family:var(--font-mono);font-size:var(--fs-label);color:var(--ink-3)}
 
@@ -1540,7 +1565,7 @@ body{font-family:var(--font-ui);font-size:var(--fs-cap);letter-spacing:0}
 /* Guarded action. Irreversible things make you lift the cover first — the
    button replaces itself in place, no modal. */
 .guard{display:inline-flex;align-items:center;gap:var(--s1)}
-.guard .b-confirm{background:var(--red);border-color:var(--red);color:var(--on-fill)}
+.guard .b-confirm{background:var(--accent);border-color:var(--accent);color:var(--on-fill)}
 
 /* Checklist card. Numbered steps with a status column. */
 .chk{display:flex;flex-direction:column;border:1px solid var(--line);background:var(--paper)}
@@ -1551,7 +1576,7 @@ body{font-family:var(--font-ui);font-size:var(--fs-cap);letter-spacing:0}
 .chk .st{font:500 var(--fs-label)/1 var(--font-ui);letter-spacing:var(--tr-label);
   text-transform:uppercase;color:var(--ink-3)}
 .chk .st.done{color:var(--ink)}
-.chk .st.failed{color:var(--red-deep)}
+.chk .st.failed{color:var(--critical)}
 
 /* The scrollbar never sits on top of the text it scrolls. */
 .scroller,#content,.pane,.tabbody{scrollbar-gutter:stable}
@@ -1565,9 +1590,9 @@ body{font-family:var(--font-ui);font-size:var(--fs-cap);letter-spacing:0}
   transition:background var(--t-state) var(--ease),border-color var(--t-state) var(--ease)}
 .btn:hover{background:var(--panel);color:var(--ink)}
 .btn.sm{height:28px;padding:0 var(--s3)}
-.btn-p{background:var(--red);border-color:var(--red);color:var(--on-fill)}
-.btn-p:hover{background:var(--red-deep);border-color:var(--red-deep);color:var(--on-fill)}
-.btn-p:active{background:var(--red-deep)}
+.btn-p{background:var(--accent);border-color:var(--accent);color:var(--on-fill)}
+.btn-p:hover{background:var(--accent-deep);border-color:var(--accent-deep);color:var(--on-fill)}
+.btn-p:active{background:var(--accent-deep)}
 .btn-s,.sb-settings{border-color:var(--line);background:var(--paper);color:var(--ink);font-weight:500}
 .btn-s:hover,.sb-settings:hover{background:var(--panel);border-color:var(--line)}
 .btn-t{border-color:var(--line);background:var(--paper);color:var(--ink);font-weight:500}
@@ -1575,13 +1600,13 @@ body{font-family:var(--font-ui);font-size:var(--fs-cap);letter-spacing:0}
 .btn-g{border-color:transparent;background:transparent;color:var(--ink-2);font-weight:500}
 .btn-g:hover{background:var(--panel);color:var(--ink)}
 .btn[disabled]{background:var(--panel);border-color:var(--line);color:var(--ink-3);cursor:default}
-.btn:focus-visible{outline:2px solid var(--red);outline-offset:1px}
+.btn:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 /* Selection is a red rule over panel, never a coloured wash. */
 .seg{background:var(--panel);border:1px solid var(--line);padding:0;gap:0}
 .seg button{border-radius:0;border-right:1px solid var(--line);color:var(--ink-2)}
 .seg button:last-child{border-right:0}
 .seg button.on,.seg.spend button.on{background:var(--paper);color:var(--ink);font-weight:500;
-  box-shadow:inset 0 calc(var(--rule) * -1) 0 var(--red)}
+  box-shadow:inset 0 calc(var(--rule) * -1) 0 var(--accent)}
 
 /* ---------------- the first-run flow, as a checklist card ----------------
    The step block used to be a centred 560px column of centred text with the
@@ -1601,7 +1626,7 @@ body{font-family:var(--font-ui);font-size:var(--fs-cap);letter-spacing:0}
   text-transform:uppercase;color:var(--ink-3)}
 .ob-stepmark .n{font-family:var(--font-mono)}
 .ob-stepmark.on{color:var(--ink)}
-.ob-headrule{border:0;border-top:var(--rule) solid var(--red);margin:var(--s4) 0 var(--s5)}
+.ob-headrule{border:0;border-top:var(--rule) solid var(--accent);margin:var(--s4) 0 var(--s5)}
 .ob-title{margin:0;font-size:var(--fs-title);line-height:1.2;font-weight:600;
   letter-spacing:var(--tr-sub);color:var(--ink)}
 /* Body copy at reading size, and never wider than 62 characters. */
@@ -1619,14 +1644,14 @@ body{font-family:var(--font-ui);font-size:var(--fs-cap);letter-spacing:0}
   transition:background var(--t-state) var(--ease)}
 .ob-list .ob-row:last-child{border-bottom:0}
 .ob-row:hover{background:var(--panel)}
-.ob-row.on{background:var(--panel);border-left-color:var(--red);border-color:transparent}
+.ob-row.on{background:var(--panel);border-left-color:var(--accent);border-color:transparent}
 .ob-row.on{border-bottom-color:var(--line-hair)}
 .ob-row:active{background:var(--panel-2)}
-.ob-row .mk{color:var(--red);font-family:var(--font-mono)}
+.ob-row .mk{color:var(--accent);font-family:var(--font-mono)}
 .ob-row .t{font-size:var(--fs-body);font-weight:500;color:var(--ink)}
 .ob-row.on .t{color:var(--ink)}
 .ob-row .d{font-size:var(--fs-cap);color:var(--ink-2);display:block;line-height:1.45;max-width:62ch}
-.ob-row:focus-visible{outline:2px solid var(--red);outline-offset:-2px}
+.ob-row:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
 
 /* The hint strip is chrome, not content: it sits at the foot of the window. */
 .ob-hints{color:var(--ink-3)}
@@ -1642,7 +1667,7 @@ body{font-family:var(--font-ui);font-size:var(--fs-cap);letter-spacing:0}
 .ob-flabel{font:500 var(--fs-label)/1.45 var(--font-ui);letter-spacing:var(--tr-label);
   text-transform:uppercase;color:var(--ink-3);margin-top:var(--s2)}
 .ob-help{font-size:var(--fs-cap);color:var(--ink-3);max-width:62ch;line-height:1.45}
-.ob-err{color:var(--red-deep);white-space:pre-wrap;max-width:62ch;font-size:var(--fs-cap);line-height:1.45}
+.ob-err{color:var(--critical);white-space:pre-wrap;max-width:62ch;font-size:var(--fs-cap);line-height:1.45}
 /* The field is an inset well, and the focus ring is the red the system uses
    for attention — not a second accent. */
 .ob-inp{height:32px;padding:0 var(--s3);background:var(--panel-2);border:1px solid var(--line);
@@ -1650,7 +1675,7 @@ body{font-family:var(--font-ui);font-size:var(--fs-cap);letter-spacing:0}
   transition:border-color var(--t-state) var(--ease)}
 .ob-inp::placeholder{color:var(--ink-3)}
 .ob-inp:hover{border-color:var(--ink-3)}
-.ob-inp:focus{border-color:var(--red);outline:none}
+.ob-inp:focus{border-color:var(--accent);outline:none}
 .ob-inp:disabled{background:var(--panel);color:var(--ink-3);cursor:not-allowed}
 /* No lift on press: 120ms linear state changes, nothing that springs. */
 .ob-foot .btn-g:active,.ob-foot .btn-p:active,.ob-wiz .ob-foot .btn:active{transform:none;background:var(--panel-2)}
@@ -1668,8 +1693,8 @@ body{font-family:var(--font-ui);font-size:var(--fs-cap);letter-spacing:0}
   transition:background var(--t-state) var(--ease)}
 .prows .prow:last-child{border-bottom:0}
 .prow:hover{background:var(--panel)}
-.prow.on{background:var(--panel);border-left-color:var(--red)}
-.prow:focus-visible{outline:2px solid var(--red);outline-offset:-2px}
+.prow.on{background:var(--panel);border-left-color:var(--accent)}
+.prow:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
 .prow .col{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1}
 .prow .nm{font-size:var(--fs-body);font-weight:500;color:var(--ink)}
 .prow .ep{font-family:var(--font-mono);font-size:var(--fs-label);color:var(--ink-3);
@@ -1725,8 +1750,8 @@ body{font-family:var(--font-ui);font-size:var(--fs-cap);letter-spacing:0}
 .msgacts.shown .msgact{width:auto;height:24px;padding:0 var(--s2);gap:var(--s1);
   border:1px solid var(--line);border-radius:var(--r);color:var(--ink-2);background:var(--paper)}
 .msgacts.shown .msgact:hover{background:var(--panel);color:var(--ink)}
-.msgacts.shown .msgact.danger{color:var(--red-deep);border-color:var(--line)}
-.msgacts.shown .msgact.danger:hover{background:var(--panel);color:var(--red-deep)}
+.msgacts.shown .msgact.danger{color:var(--critical);border-color:var(--line)}
+.msgacts.shown .msgact.danger:hover{background:var(--panel);color:var(--critical)}
 .msgactlb{font:500 var(--fs-label)/1 var(--font-ui);letter-spacing:var(--tr-label);
   text-transform:uppercase}
 
@@ -1748,8 +1773,8 @@ body{font-family:var(--font-ui);font-size:var(--fs-cap);letter-spacing:0}
   color:var(--ink-2);font-size:var(--fs-cap);font-weight:500;border:0;background:transparent;
   box-shadow:inset 0 -1px 0 transparent}
 .settab:hover{background:var(--panel);color:var(--ink)}
-.settab.on{color:var(--ink);box-shadow:inset 0 calc(var(--rule) * -1) 0 var(--red)}
-.settab:focus-visible{outline:2px solid var(--red);outline-offset:-2px}
+.settab.on{color:var(--ink);box-shadow:inset 0 calc(var(--rule) * -1) 0 var(--accent)}
+.settab:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
 /* The scrollbar never sits on top of the text it scrolls. */
 .setbody,.setmenu{scrollbar-gutter:stable;padding-right:var(--s2)}
 /* The diagnostics data plate, at the foot of the window. */
@@ -1797,3 +1822,22 @@ body{font-family:var(--font-ui);font-size:var(--fs-cap);letter-spacing:0}
 .ob-phase{flex-wrap:nowrap;white-space:nowrap}
 .ob-phase .pt{font-variant-numeric:tabular-nums;white-space:nowrap;
   min-width:22ch;display:inline-block}
+
+/* F14 — the command list is anchored on the composer's WRAPPER, because the
+   composer itself clips (it has to: the running indicator and the field's own
+   corners depend on it). The wrapper is the same anchor visually — the
+   composer is its last child — and the popover keeps its own scroller so a
+   long list cannot run off the top of the window. */
+.composerwrap{position:relative}
+.composerwrap > .slash{bottom:auto;top:auto;left:var(--s6);right:var(--s6);width:auto;
+  max-width:none;transform:translateY(-100%);margin-top:calc(var(--s2) * -1)}
+.slash{background:var(--paper);border:1px solid var(--line);border-radius:var(--r);
+  box-shadow:none;max-height:min(48vh,360px);overflow-y:auto;z-index:40;scrollbar-gutter:stable}
+.slashlist{display:flex;flex-direction:column}
+.slashrow{height:32px;border:0;background:transparent;text-align:left;cursor:pointer;
+  border-left:var(--rule) solid transparent}
+.slashrow:hover{background:var(--panel)}
+.slashrow.on{background:var(--panel);border-left-color:var(--accent)}
+.slashrow .cmd{color:var(--ink);font-weight:500}
+.slashrow .ds{color:var(--ink-2)}
+.slashrow .hint{color:var(--ink-3)}

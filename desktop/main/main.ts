@@ -5090,6 +5090,36 @@ async function hfAndDeltaTest(
     JSON.stringify(sendBtn),
   );
 
+  /* F14 — "typing / showed no commands".
+     I closed this once as not-a-bug on the strength of a DOM query that found
+     the popover with 33 rows and a sensible bounding rect. It was clipped:
+     `.slash` is `position:absolute; bottom:100%`, it was rendered inside
+     `.composer`, and `.composer` is `overflow:hidden` — so every pixel of it
+     lay outside the clip. A rect tells you where a box WOULD be, not whether
+     anyone can see it.
+
+     So this asserts paint: elementFromPoint at three heights inside the
+     popover must land on the popover. And it types, because typing is the
+     path that was broken — the keystroke path repaints in place through
+     refreshSlash() and never calls render(). */
+  const slashTyped = await js<{
+    typed: boolean; present?: boolean; rows?: number; parent?: string;
+    onScreen?: boolean; painted?: boolean;
+  }>("window.__slashType('/')");
+  const slashCleared = await js<{ present?: boolean }>("window.__slashType('')");
+  check(
+    "the command list is on screen when you type a slash, not merely in the DOM",
+    slashTyped.typed && slashTyped.present === true && (slashTyped.rows ?? 0) > 5
+      && slashTyped.onScreen === true && slashTyped.painted === true
+      && /composerwrap/.test(slashTyped.parent ?? ""),
+    JSON.stringify(slashTyped),
+  );
+  check(
+    "and it goes away when the slash does",
+    slashCleared.present !== true,
+    JSON.stringify(slashCleared),
+  );
+
   /* ---- DRIFT: the SSE error frame carries its message ---- */
   const errored = await js<{ busy: boolean; lines: string[] }>(
     `window.__chatEvent({turnId:${JSON.stringify(turnA)}, kind:'error', error:'boom', category:'transport'})`,
