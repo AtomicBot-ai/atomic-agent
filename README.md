@@ -433,7 +433,7 @@ atomic-agent serve \
 
 `POST /v1/chat/completions` maps one request to one full macro-turn: `user -> 0..N tool steps -> reply`. Atomic-specific routes expose sessions, approvals, tasks, webhooks, events, skills, config, and capabilities.
 
-`serve` boots the same runtime the TUI does, so an enabled Telegram or Discord channel — and every enabled swarm bot — comes up in this process too. That makes `serve` the way to keep the bots answering with no TUI open; it stays in the foreground until you stop it and does not restart itself. A channel is single-instance: the first process to start it takes a lockfile in the state dir, and a second one leaves that channel down with `already running in another atomic-agent (pid N)` instead of retrying — so keep the bots in one process, this one or the TUI.
+`serve` boots the same runtime the TUI does, so an enabled Telegram or Discord channel — and every enabled swarm bot that has a token — comes up in this process too. That makes `serve` the way to keep the bots answering with no TUI open; it stays in the foreground until you stop it and does not restart itself. A channel is single-instance: the first process to start it takes a lockfile in the state dir, and a second one leaves that channel down with `already running in another atomic-agent (pid N)` instead of retrying — so keep the bots in one process, this one or the TUI.
 
 </details>
 
